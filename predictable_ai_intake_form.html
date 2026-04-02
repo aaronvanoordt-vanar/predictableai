@@ -1,0 +1,243 @@
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-sans); }
+  .wrap { max-width: 680px; margin: 0 auto; padding: 2rem 1rem 3rem; }
+  .logo-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 2.5rem; }
+  .logo-mark { width: 32px; height: 32px; background: #0A0A0A; border-radius: 6px; display: flex; align-items: center; justify-content: center; }
+  .logo-mark span { color: #fff; font-size: 13px; font-weight: 500; letter-spacing: 0.5px; }
+  .logo-text { font-size: 15px; font-weight: 500; color: var(--color-text-primary); letter-spacing: 0.3px; }
+  .logo-sub { font-size: 11px; color: var(--color-text-secondary); letter-spacing: 1.5px; text-transform: uppercase; margin-top: 1px; }
+  .header { margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 0.5px solid var(--color-border-tertiary); }
+  .header h1 { font-size: 22px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 6px; }
+  .header p { font-size: 14px; color: var(--color-text-secondary); line-height: 1.6; }
+  .section { margin-bottom: 2rem; }
+  .section-label { font-size: 11px; font-weight: 500; letter-spacing: 1.4px; text-transform: uppercase; color: var(--color-text-secondary); margin-bottom: 1rem; padding-bottom: 6px; border-bottom: 0.5px solid var(--color-border-tertiary); }
+  .field { margin-bottom: 1.25rem; }
+  .field label { display: block; font-size: 13px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 6px; }
+  .field .hint { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 6px; }
+  .field input, .field textarea, .field select {
+    width: 100%; font-size: 14px; padding: 10px 12px;
+    background: var(--color-background-primary);
+    border: 0.5px solid var(--color-border-secondary);
+    border-radius: var(--border-radius-md);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    transition: border-color 0.15s;
+    outline: none;
+  }
+  .field input:focus, .field textarea:focus, .field select:focus {
+    border-color: var(--color-border-primary);
+    box-shadow: 0 0 0 3px rgba(0,0,0,0.06);
+  }
+  .field textarea { resize: vertical; min-height: 90px; line-height: 1.6; }
+  .field select { appearance: none; cursor: pointer; }
+  .tag-input-wrap { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: var(--color-background-primary); min-height: 44px; cursor: text; }
+  .tag-input-wrap:focus-within { border-color: var(--color-border-primary); box-shadow: 0 0 0 3px rgba(0,0,0,0.06); }
+  .tag { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px 3px 10px; background: var(--color-background-secondary); border: 0.5px solid var(--color-border-secondary); border-radius: 20px; font-size: 12px; color: var(--color-text-primary); }
+  .tag button { background: none; border: none; cursor: pointer; font-size: 14px; line-height: 1; color: var(--color-text-secondary); padding: 0; }
+  .tag-input-wrap input { border: none; outline: none; background: transparent; font-size: 13px; color: var(--color-text-primary); font-family: var(--font-sans); min-width: 120px; flex: 1; padding: 2px 0; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .pricing-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .pricing-card { border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 12px; cursor: pointer; transition: border-color 0.15s; }
+  .pricing-card:hover { border-color: var(--color-border-primary); }
+  .pricing-card.selected { border: 1.5px solid #0A0A0A; background: var(--color-background-secondary); }
+  .pricing-card .pc-label { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
+  .pricing-card .pc-desc { font-size: 12px; color: var(--color-text-secondary); margin-top: 2px; }
+  .submit-area { margin-top: 2.5rem; padding-top: 1.5rem; border-top: 0.5px solid var(--color-border-tertiary); display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  .submit-note { font-size: 12px; color: var(--color-text-secondary); line-height: 1.5; max-width: 320px; }
+  .btn-submit { padding: 11px 28px; background: #0A0A0A; color: #fff; border: none; border-radius: var(--border-radius-md); font-size: 14px; font-weight: 500; font-family: var(--font-sans); cursor: pointer; letter-spacing: 0.2px; transition: opacity 0.15s; white-space: nowrap; }
+  .btn-submit:hover { opacity: 0.85; }
+  .btn-submit:active { opacity: 0.7; }
+  .toast { display: none; margin-top: 1rem; padding: 12px 16px; background: var(--color-background-success); border: 0.5px solid var(--color-border-success); border-radius: var(--border-radius-md); font-size: 13px; color: var(--color-text-success); }
+  .error-msg { font-size: 12px; color: var(--color-text-danger); margin-top: 4px; display: none; }
+  @media (max-width: 480px) { .row, .pricing-grid { grid-template-columns: 1fr; } .submit-area { flex-direction: column; align-items: flex-start; } }
+</style>
+
+<div class="wrap">
+  <div class="logo-bar">
+    <div class="logo-mark"><span>P</span></div>
+    <div>
+      <div class="logo-text">Predictable.ai</div>
+      <div class="logo-sub">by VANAR</div>
+    </div>
+  </div>
+
+  <div class="header">
+    <h1>Inteligencia comercial de tu empresa</h1>
+    <p>Esta información nos permite construir tu sistema de revenue desde la estructura real de tu negocio. Tómate 5 minutos — cada campo impacta directamente en la precisión del sistema.</p>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Empresa</div>
+
+    <div class="field">
+      <label>Sitio web de la empresa</label>
+      <div class="hint">Ingresa la URL principal. Ej: https://tuempresa.com</div>
+      <input type="url" id="url" placeholder="https://" />
+      <div class="error-msg" id="err-url">Ingresa una URL válida.</div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label>Producto o servicio principal</label>
+        <input type="text" id="producto" placeholder="Ej: Software de gestión de contratos" />
+      </div>
+      <div class="field">
+        <label>País o países donde operan</label>
+        <input type="text" id="paises" placeholder="Ej: México, Colombia, Perú" />
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Modelo comercial</div>
+
+    <div class="field">
+      <label>Canales de venta actuales</label>
+      <div class="hint">Escribe un canal y presiona Enter para añadirlo.</div>
+      <div class="tag-input-wrap" id="canales-wrap">
+        <input type="text" id="canales-input" placeholder="Ej: Outbound, inbound, referidos..." />
+      </div>
+      <input type="hidden" id="canales-value" />
+    </div>
+
+    <div class="field">
+      <label>Modelo de pricing</label>
+      <div class="pricing-grid" id="pricing-grid">
+        <div class="pricing-card" data-val="suscripcion">
+          <div class="pc-label">Suscripción</div>
+          <div class="pc-desc">Mensual o anual recurrente</div>
+        </div>
+        <div class="pricing-card" data-val="proyecto">
+          <div class="pc-label">Por proyecto</div>
+          <div class="pc-desc">Fee único o por entregable</div>
+        </div>
+        <div class="pricing-card" data-val="uso">
+          <div class="pc-label">Por uso</div>
+          <div class="pc-desc">Consumo, volumen o transacción</div>
+        </div>
+        <div class="pricing-card" data-val="hibrido">
+          <div class="pc-label">Híbrido</div>
+          <div class="pc-desc">Combinación de modelos</div>
+        </div>
+      </div>
+      <input type="hidden" id="pricing-value" />
+      <div class="error-msg" id="err-pricing">Selecciona un modelo de pricing.</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Competencia</div>
+    <div class="field">
+      <label>Principales competidores</label>
+      <div class="hint">Escribe el nombre de cada competidor y presiona Enter.</div>
+      <div class="tag-input-wrap" id="comp-wrap">
+        <input type="text" id="comp-input" placeholder="Ej: HubSpot, Salesforce..." />
+      </div>
+      <input type="hidden" id="comp-value" />
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Contexto comercial</div>
+    <div class="field">
+      <label>¿Cuál es el principal problema que resuelve tu producto o servicio?</label>
+      <div class="hint">Descríbelo desde la perspectiva del cliente, no del producto.</div>
+      <textarea id="problema" placeholder="Ej: Las empresas pierden tiempo y dinero gestionando contratos en hojas de cálculo, sin visibilidad ni control del proceso..."></textarea>
+    </div>
+    <div class="field">
+      <label>¿Qué resultado concreto obtiene el cliente?</label>
+      <div class="hint">Resultado medible o transformación que genera tu solución.</div>
+      <textarea id="resultado" placeholder="Ej: Reducen hasta un 60% el tiempo de ciclo contractual y eliminan errores de cumplimiento..."></textarea>
+    </div>
+  </div>
+
+  <div class="submit-area">
+    <div class="submit-note">Tu información se almacena de forma segura y se usa exclusivamente para configurar tu sistema de revenue.</div>
+    <button class="btn-submit" id="btn-submit">Enviar información</button>
+  </div>
+  <div class="toast" id="toast">Información enviada correctamente. El equipo de Predictable.ai la recibirá en breve.</div>
+</div>
+
+<script>
+  function makeTagInput(wrapId, inputId, hiddenId) {
+    const wrap = document.getElementById(wrapId);
+    const input = document.getElementById(inputId);
+    const hidden = document.getElementById(hiddenId);
+    let tags = [];
+    function render() {
+      Array.from(wrap.querySelectorAll('.tag')).forEach(t => t.remove());
+      tags.forEach((tag, i) => {
+        const el = document.createElement('div');
+        el.className = 'tag';
+        el.innerHTML = tag + '<button type="button" data-i="' + i + '">×</button>';
+        wrap.insertBefore(el, input);
+      });
+      hidden.value = tags.join(', ');
+    }
+    input.addEventListener('keydown', function(e) {
+      if ((e.key === 'Enter' || e.key === ',') && this.value.trim()) {
+        e.preventDefault();
+        tags.push(this.value.trim());
+        this.value = '';
+        render();
+      }
+    });
+    wrap.addEventListener('click', function(e) {
+      if (e.target.dataset.i !== undefined) {
+        tags.splice(+e.target.dataset.i, 1);
+        render();
+      } else {
+        input.focus();
+      }
+    });
+  }
+  makeTagInput('canales-wrap', 'canales-input', 'canales-value');
+  makeTagInput('comp-wrap', 'comp-input', 'comp-value');
+
+  document.querySelectorAll('.pricing-card').forEach(card => {
+    card.addEventListener('click', function() {
+      document.querySelectorAll('.pricing-card').forEach(c => c.classList.remove('selected'));
+      this.classList.add('selected');
+      document.getElementById('pricing-value').value = this.dataset.val;
+      document.getElementById('err-pricing').style.display = 'none';
+    });
+  });
+
+  document.getElementById('btn-submit').addEventListener('click', function() {
+    let valid = true;
+    const url = document.getElementById('url').value.trim();
+    const errUrl = document.getElementById('err-url');
+    if (!url || !url.startsWith('http')) {
+      errUrl.style.display = 'block'; valid = false;
+    } else { errUrl.style.display = 'none'; }
+    const pricing = document.getElementById('pricing-value').value;
+    const errPricing = document.getElementById('err-pricing');
+    if (!pricing) {
+      errPricing.style.display = 'block'; valid = false;
+    } else { errPricing.style.display = 'none'; }
+    if (!valid) return;
+    const data = {
+      url: url,
+      producto: document.getElementById('producto').value.trim(),
+      paises: document.getElementById('paises').value.trim(),
+      canales: document.getElementById('canales-value').value,
+      pricing: pricing,
+      competidores: document.getElementById('comp-value').value,
+      problema: document.getElementById('problema').value.trim(),
+      resultado: document.getElementById('resultado').value.trim(),
+      timestamp: new Date().toISOString()
+    };
+    fetch('https://script.google.com/macros/s/AKfycbyqn857XBHX7jbAM68xe7TFtGm9MNbMc9-h8i4UNdAWOd4A4gPKKzo3o4MgZXJzLOkuFw/exec', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+    this.textContent = 'Enviando...';
+    this.disabled = true;
+    setTimeout(() => {
+      document.getElementById('toast').style.display = 'block';
+      this.textContent = 'Enviado';
+    }, 800);
+  });
+</script>
