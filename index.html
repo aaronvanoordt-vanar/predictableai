@@ -1,243 +1,729 @@
-
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Predictable.ai — Inteligencia Comercial</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: var(--font-sans); }
-  .wrap { max-width: 680px; margin: 0 auto; padding: 2rem 1rem 3rem; }
-  .logo-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 2.5rem; }
-  .logo-mark { width: 32px; height: 32px; background: #0A0A0A; border-radius: 6px; display: flex; align-items: center; justify-content: center; }
-  .logo-mark span { color: #fff; font-size: 13px; font-weight: 500; letter-spacing: 0.5px; }
-  .logo-text { font-size: 15px; font-weight: 500; color: var(--color-text-primary); letter-spacing: 0.3px; }
-  .logo-sub { font-size: 11px; color: var(--color-text-secondary); letter-spacing: 1.5px; text-transform: uppercase; margin-top: 1px; }
-  .header { margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 0.5px solid var(--color-border-tertiary); }
-  .header h1 { font-size: 22px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 6px; }
-  .header p { font-size: 14px; color: var(--color-text-secondary); line-height: 1.6; }
-  .section { margin-bottom: 2rem; }
-  .section-label { font-size: 11px; font-weight: 500; letter-spacing: 1.4px; text-transform: uppercase; color: var(--color-text-secondary); margin-bottom: 1rem; padding-bottom: 6px; border-bottom: 0.5px solid var(--color-border-tertiary); }
-  .field { margin-bottom: 1.25rem; }
-  .field label { display: block; font-size: 13px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 6px; }
-  .field .hint { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 6px; }
-  .field input, .field textarea, .field select {
-    width: 100%; font-size: 14px; padding: 10px 12px;
-    background: var(--color-background-primary);
-    border: 0.5px solid var(--color-border-secondary);
-    border-radius: var(--border-radius-md);
-    color: var(--color-text-primary);
-    font-family: var(--font-sans);
-    transition: border-color 0.15s;
-    outline: none;
-  }
-  .field input:focus, .field textarea:focus, .field select:focus {
-    border-color: var(--color-border-primary);
-    box-shadow: 0 0 0 3px rgba(0,0,0,0.06);
-  }
-  .field textarea { resize: vertical; min-height: 90px; line-height: 1.6; }
-  .field select { appearance: none; cursor: pointer; }
-  .tag-input-wrap { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: var(--color-background-primary); min-height: 44px; cursor: text; }
-  .tag-input-wrap:focus-within { border-color: var(--color-border-primary); box-shadow: 0 0 0 3px rgba(0,0,0,0.06); }
-  .tag { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px 3px 10px; background: var(--color-background-secondary); border: 0.5px solid var(--color-border-secondary); border-radius: 20px; font-size: 12px; color: var(--color-text-primary); }
-  .tag button { background: none; border: none; cursor: pointer; font-size: 14px; line-height: 1; color: var(--color-text-secondary); padding: 0; }
-  .tag-input-wrap input { border: none; outline: none; background: transparent; font-size: 13px; color: var(--color-text-primary); font-family: var(--font-sans); min-width: 120px; flex: 1; padding: 2px 0; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-  .pricing-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .pricing-card { border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 12px; cursor: pointer; transition: border-color 0.15s; }
-  .pricing-card:hover { border-color: var(--color-border-primary); }
-  .pricing-card.selected { border: 1.5px solid #0A0A0A; background: var(--color-background-secondary); }
-  .pricing-card .pc-label { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
-  .pricing-card .pc-desc { font-size: 12px; color: var(--color-text-secondary); margin-top: 2px; }
-  .submit-area { margin-top: 2.5rem; padding-top: 1.5rem; border-top: 0.5px solid var(--color-border-tertiary); display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-  .submit-note { font-size: 12px; color: var(--color-text-secondary); line-height: 1.5; max-width: 320px; }
-  .btn-submit { padding: 11px 28px; background: #0A0A0A; color: #fff; border: none; border-radius: var(--border-radius-md); font-size: 14px; font-weight: 500; font-family: var(--font-sans); cursor: pointer; letter-spacing: 0.2px; transition: opacity 0.15s; white-space: nowrap; }
-  .btn-submit:hover { opacity: 0.85; }
-  .btn-submit:active { opacity: 0.7; }
-  .toast { display: none; margin-top: 1rem; padding: 12px 16px; background: var(--color-background-success); border: 0.5px solid var(--color-border-success); border-radius: var(--border-radius-md); font-size: 13px; color: var(--color-text-success); }
-  .error-msg { font-size: 12px; color: var(--color-text-danger); margin-top: 4px; display: none; }
-  @media (max-width: 480px) { .row, .pricing-grid { grid-template-columns: 1fr; } .submit-area { flex-direction: column; align-items: flex-start; } }
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#08080A;
+  --surface:#0F0F12;
+  --surface2:#16161A;
+  --surface3:#1E1E24;
+  --border:#252529;
+  --border2:#33333A;
+  --text:#EEEEF2;
+  --muted:#6B6B7A;
+  --subtle:#9898A8;
+  --accent:#8B7CF6;
+  --accent-dim:rgba(139,124,246,0.15);
+  --accent-glow:rgba(139,124,246,0.08);
+  --success:#22C88A;
+  --success-dim:rgba(34,200,138,0.12);
+  --danger:#F04747;
+  --danger-dim:rgba(240,71,71,0.12);
+  --warning:#F0A500;
+  --r:10px;
+  --r-lg:16px;
+  --r-xl:20px;
+}
+html{scroll-behavior:smooth}
+body{
+  font-family:'DM Sans',sans-serif;
+  background:var(--bg);
+  color:var(--text);
+  min-height:100vh;
+  line-height:1.6;
+}
+
+/* ── Noise texture overlay ── */
+body::before{
+  content:'';
+  position:fixed;inset:0;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events:none;
+  z-index:0;
+  opacity:0.4;
+}
+
+/* ── Grid lines background ── */
+body::after{
+  content:'';
+  position:fixed;inset:0;
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size:80px 80px;
+  opacity:0.3;
+  pointer-events:none;
+  z-index:0;
+}
+
+.page{
+  position:relative;z-index:1;
+  max-width:760px;
+  margin:0 auto;
+  padding:0 1.5rem 5rem;
+}
+
+/* ── TOP HEADER ── */
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:1.75rem 0 1.75rem;
+  border-bottom:1px solid var(--border);
+  margin-bottom:3rem;
+}
+.brand{display:flex;align-items:center;gap:12px}
+.brand-mark{
+  width:36px;height:36px;
+  background:var(--accent);
+  border-radius:10px;
+  display:flex;align-items:center;justify-content:center;
+  position:relative;
+}
+.brand-mark::after{
+  content:'';
+  position:absolute;inset:-1px;
+  border-radius:11px;
+  background:linear-gradient(135deg,rgba(255,255,255,0.15),transparent);
+  pointer-events:none;
+}
+.brand-mark svg{width:18px;height:18px}
+.brand-name{
+  font-family:'Syne',sans-serif;
+  font-size:16px;font-weight:600;
+  color:var(--text);letter-spacing:0.3px;
+}
+.brand-sub{font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-top:1px}
+.status-pill{
+  display:flex;align-items:center;gap:7px;
+  background:var(--surface2);
+  border:1px solid var(--border);
+  border-radius:30px;
+  padding:7px 14px;
+  font-size:12px;color:var(--subtle);
+}
+.status-dot{
+  width:7px;height:7px;border-radius:50%;
+  background:var(--success);
+  box-shadow:0 0 8px var(--success);
+  animation:pulse 2s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+
+/* ── HERO ── */
+.hero{margin-bottom:2.75rem}
+.hero-tag{
+  display:inline-flex;align-items:center;gap:6px;
+  background:var(--accent-dim);
+  border:1px solid rgba(139,124,246,0.25);
+  border-radius:30px;
+  padding:5px 14px;
+  font-size:12px;color:var(--accent);
+  letter-spacing:0.3px;
+  margin-bottom:1.25rem;
+}
+.hero h1{
+  font-family:'Syne',sans-serif;
+  font-size:clamp(28px,5vw,42px);
+  font-weight:600;
+  line-height:1.15;
+  color:var(--text);
+  margin-bottom:1rem;
+  letter-spacing:-0.5px;
+}
+.hero h1 em{
+  font-style:normal;
+  color:var(--accent);
+}
+.hero p{
+  font-size:15px;
+  color:var(--subtle);
+  max-width:540px;
+  line-height:1.7;
+}
+
+/* ── PROGRESS ── */
+.progress-wrap{
+  display:flex;align-items:center;gap:14px;
+  margin-bottom:2.5rem;
+}
+.progress-bar{
+  flex:1;height:3px;
+  background:var(--surface3);
+  border-radius:3px;overflow:hidden;
+}
+.progress-fill{
+  height:100%;
+  background:linear-gradient(90deg,var(--accent),#B09AFF);
+  border-radius:3px;
+  width:0%;
+  transition:width 0.4s cubic-bezier(0.4,0,0.2,1);
+}
+.progress-label{
+  font-size:12px;color:var(--muted);
+  min-width:36px;text-align:right;
+}
+
+/* ── SECTION ── */
+.section{margin-bottom:2rem}
+.section-header{
+  display:flex;align-items:center;gap:10px;
+  margin-bottom:1rem;
+}
+.section-num{
+  width:22px;height:22px;border-radius:50%;
+  background:var(--surface3);
+  border:1px solid var(--border2);
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:500;color:var(--muted);
+  flex-shrink:0;
+}
+.section-label{
+  font-size:11px;font-weight:500;
+  letter-spacing:1.6px;text-transform:uppercase;
+  color:var(--muted);
+}
+
+/* ── CARD ── */
+.card{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--r-xl);
+  padding:1.75rem;
+  position:relative;
+  overflow:hidden;
+}
+.card::before{
+  content:'';
+  position:absolute;
+  top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(139,124,246,0.3),transparent);
+}
+
+/* ── FIELDS ── */
+.field{margin-bottom:1.5rem}
+.field:last-child{margin-bottom:0}
+.field>label{
+  display:block;
+  font-size:13px;font-weight:500;
+  color:var(--text);
+  margin-bottom:5px;
+}
+.hint{
+  font-size:12px;color:var(--muted);
+  margin-bottom:8px;line-height:1.5;
+}
+input[type=text],
+input[type=url],
+textarea{
+  width:100%;
+  font-size:14px;
+  padding:12px 15px;
+  background:var(--surface2);
+  border:1px solid var(--border);
+  border-radius:var(--r);
+  color:var(--text);
+  font-family:'DM Sans',sans-serif;
+  outline:none;
+  transition:border-color 0.2s,box-shadow 0.2s,background 0.2s;
+  -webkit-appearance:none;
+}
+input[type=text]::placeholder,
+input[type=url]::placeholder,
+textarea::placeholder{color:var(--muted)}
+input[type=text]:hover,
+input[type=url]:hover,
+textarea:hover{border-color:var(--border2);background:var(--surface3)}
+input[type=text]:focus,
+input[type=url]:focus,
+textarea:focus{
+  border-color:var(--accent);
+  background:var(--surface2);
+  box-shadow:0 0 0 3px var(--accent-glow);
+}
+textarea{resize:vertical;min-height:96px;line-height:1.65}
+
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+
+/* ── TAG INPUT ── */
+.tag-wrap{
+  display:flex;flex-wrap:wrap;gap:6px;
+  padding:9px 11px;
+  border:1px solid var(--border);
+  border-radius:var(--r);
+  background:var(--surface2);
+  min-height:48px;cursor:text;
+  transition:border-color 0.2s,box-shadow 0.2s;
+}
+.tag-wrap:hover{border-color:var(--border2);background:var(--surface3)}
+.tag-wrap:focus-within{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-glow);
+  background:var(--surface2);
+}
+.tag{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:4px 12px;
+  background:var(--accent-dim);
+  border:1px solid rgba(139,124,246,0.3);
+  border-radius:20px;
+  font-size:12px;color:#C4BAFF;
+  animation:fadeIn 0.15s ease;
+}
+@keyframes fadeIn{from{opacity:0;transform:scale(0.9)}to{opacity:1;transform:scale(1)}}
+.tag button{
+  background:none;border:none;cursor:pointer;
+  font-size:14px;line-height:1;
+  color:rgba(196,186,255,0.6);padding:0;
+  transition:color 0.1s;
+}
+.tag button:hover{color:#C4BAFF}
+.tag-wrap input{
+  border:none;outline:none;background:transparent;
+  font-size:13px;color:var(--text);
+  font-family:'DM Sans',sans-serif;
+  min-width:100px;flex:1;padding:2px 0;
+}
+.tag-wrap input::placeholder{color:var(--muted)}
+
+/* ── PRICING GRID ── */
+.pricing-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pc{
+  border:1px solid var(--border);
+  border-radius:var(--r);
+  padding:14px 16px;cursor:pointer;
+  transition:all 0.2s;
+  background:var(--surface2);
+  position:relative;overflow:hidden;
+}
+.pc:hover{border-color:var(--border2);background:var(--surface3)}
+.pc.sel{
+  border-color:var(--accent);
+  background:var(--accent-dim);
+}
+.pc.sel::after{
+  content:'';
+  position:absolute;top:0;left:0;right:0;height:2px;
+  background:var(--accent);
+}
+.pc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.pc-name{font-size:13px;font-weight:500;color:var(--text)}
+.pc-radio{
+  width:17px;height:17px;border-radius:50%;
+  border:1.5px solid var(--border2);
+  display:flex;align-items:center;justify-content:center;
+  transition:all 0.2s;flex-shrink:0;
+}
+.pc.sel .pc-radio{border-color:var(--accent);background:var(--accent)}
+.pc-radio-dot{
+  width:6px;height:6px;border-radius:50%;
+  background:#fff;opacity:0;transition:opacity 0.15s;
+}
+.pc.sel .pc-radio-dot{opacity:1}
+.pc-desc{font-size:12px;color:var(--muted)}
+
+/* ── CHAR COUNT ── */
+.char-count{font-size:11px;color:var(--muted);text-align:right;margin-top:5px}
+
+/* ── ERROR ── */
+.err{
+  font-size:12px;color:var(--danger);
+  margin-top:5px;display:none;
+  animation:fadeIn 0.15s ease;
+}
+
+/* ── DIVIDER ── */
+.divider{height:1px;background:var(--border);margin:2rem 0}
+
+/* ── SUBMIT ── */
+.submit-wrap{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:1.5rem;margin-top:2.5rem;
+}
+.submit-note{font-size:12px;color:var(--muted);line-height:1.6;max-width:340px}
+.submit-note strong{color:var(--subtle);font-weight:400}
+.btn-submit{
+  padding:13px 36px;
+  background:var(--accent);
+  color:#fff;border:none;
+  border-radius:var(--r);
+  font-size:14px;font-weight:500;
+  font-family:'DM Sans',sans-serif;
+  cursor:pointer;letter-spacing:0.2px;
+  transition:opacity 0.15s,transform 0.1s,box-shadow 0.2s;
+  white-space:nowrap;
+  position:relative;overflow:hidden;
+}
+.btn-submit:hover{
+  opacity:0.9;
+  box-shadow:0 0 24px rgba(139,124,246,0.4);
+}
+.btn-submit:active{transform:scale(0.97)}
+.btn-submit:disabled{opacity:0.4;cursor:not-allowed;box-shadow:none}
+.btn-submit .spinner{
+  display:none;
+  width:15px;height:15px;
+  border:2px solid rgba(255,255,255,0.3);
+  border-top-color:#fff;
+  border-radius:50%;
+  animation:spin 0.7s linear infinite;
+  margin-right:8px;
+  vertical-align:middle;
+}
+.btn-submit.loading .spinner{display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── TOAST ── */
+.toast{
+  display:none;
+  margin-top:1.25rem;
+  padding:16px 20px;
+  background:var(--success-dim);
+  border:1px solid rgba(34,200,138,0.25);
+  border-radius:var(--r-lg);
+  animation:slideUp 0.3s ease;
+}
+@keyframes slideUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.toast-title{
+  font-size:14px;font-weight:500;
+  color:var(--success);margin-bottom:3px;
+}
+.toast-msg{font-size:13px;color:rgba(34,200,138,0.7);line-height:1.5}
+
+/* ── FOOTER ── */
+.footer{
+  margin-top:3rem;padding-top:1.5rem;
+  border-top:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.footer-brand{
+  font-family:'Syne',sans-serif;
+  font-size:12px;color:var(--muted);letter-spacing:0.5px;
+}
+.footer-brand span{color:var(--accent)}
+.footer-note{font-size:11px;color:var(--muted)}
+
+/* ── RESPONSIVE ── */
+@media(max-width:560px){
+  .row2,.pricing-grid{grid-template-columns:1fr}
+  .submit-wrap{flex-direction:column;align-items:flex-start}
+  .btn-submit{width:100%;text-align:center}
+  .topbar{flex-wrap:wrap;gap:12px}
+  .hero h1{font-size:28px}
+}
 </style>
+</head>
+<body>
 
-<div class="wrap">
-  <div class="logo-bar">
-    <div class="logo-mark"><span>P</span></div>
-    <div>
-      <div class="logo-text">Predictable.ai</div>
-      <div class="logo-sub">by VANAR</div>
+<div class="page">
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M4 9L7.5 13L14 5" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-name">Predictable.ai</div>
+        <div class="brand-sub">by VANAR</div>
+      </div>
+    </div>
+    <div class="status-pill">
+      <div class="status-dot"></div>
+      Configuración activa
     </div>
   </div>
 
-  <div class="header">
-    <h1>Inteligencia comercial de tu empresa</h1>
-    <p>Esta información nos permite construir tu sistema de revenue desde la estructura real de tu negocio. Tómate 5 minutos — cada campo impacta directamente en la precisión del sistema.</p>
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-tag">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M5 3v2l1 1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      Revenue Execution Intelligence
+    </div>
+    <h1>Cuéntanos sobre<br><em>tu negocio</em></h1>
+    <p>Esta información construye tu sistema de revenue desde la estructura real de tu empresa. Cada campo impacta directamente en la precisión del modelo.</p>
   </div>
 
+  <!-- PROGRESS -->
+  <div class="progress-wrap">
+    <div class="progress-bar"><div class="progress-fill" id="prog"></div></div>
+    <div class="progress-label" id="prog-label">0%</div>
+  </div>
+
+  <!-- SECTION 1: EMPRESA -->
   <div class="section">
-    <div class="section-label">Empresa</div>
-
-    <div class="field">
-      <label>Sitio web de la empresa</label>
-      <div class="hint">Ingresa la URL principal. Ej: https://tuempresa.com</div>
-      <input type="url" id="url" placeholder="https://" />
-      <div class="error-msg" id="err-url">Ingresa una URL válida.</div>
+    <div class="section-header">
+      <div class="section-num">1</div>
+      <div class="section-label">Empresa</div>
     </div>
-
-    <div class="row">
+    <div class="card">
       <div class="field">
-        <label>Producto o servicio principal</label>
-        <input type="text" id="producto" placeholder="Ej: Software de gestión de contratos" />
+        <label>Sitio web</label>
+        <div class="hint">URL principal de la empresa</div>
+        <input type="url" id="f-url" placeholder="https://tuempresa.com" oninput="updateProgress()"/>
+        <div class="err" id="e-url">Ingresa una URL válida (debe comenzar con https://)</div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label>Producto o servicio principal</label>
+          <input type="text" id="f-producto" placeholder="Ej: Software de contratos" oninput="updateProgress()"/>
+        </div>
+        <div class="field">
+          <label>País o países donde operan</label>
+          <input type="text" id="f-paises" placeholder="Ej: México, Colombia, Perú" oninput="updateProgress()"/>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 2: MODELO COMERCIAL -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-num">2</div>
+      <div class="section-label">Modelo comercial</div>
+    </div>
+    <div class="card">
+      <div class="field">
+        <label>Canales de venta actuales</label>
+        <div class="hint">Escribe cada canal y presiona Enter para añadirlo</div>
+        <div class="tag-wrap" id="tw-canales">
+          <input id="ti-canales" placeholder="Ej: Outbound, inbound, referidos..."/>
+        </div>
+        <input type="hidden" id="f-canales"/>
       </div>
       <div class="field">
-        <label>País o países donde operan</label>
-        <input type="text" id="paises" placeholder="Ej: México, Colombia, Perú" />
+        <label>Modelo de pricing</label>
+        <div class="pricing-grid">
+          <div class="pc" data-v="Suscripción" onclick="selPricing(this)">
+            <div class="pc-top">
+              <span class="pc-name">Suscripción</span>
+              <div class="pc-radio"><div class="pc-radio-dot"></div></div>
+            </div>
+            <div class="pc-desc">Mensual o anual recurrente</div>
+          </div>
+          <div class="pc" data-v="Por proyecto" onclick="selPricing(this)">
+            <div class="pc-top">
+              <span class="pc-name">Por proyecto</span>
+              <div class="pc-radio"><div class="pc-radio-dot"></div></div>
+            </div>
+            <div class="pc-desc">Fee único o por entregable</div>
+          </div>
+          <div class="pc" data-v="Por uso" onclick="selPricing(this)">
+            <div class="pc-top">
+              <span class="pc-name">Por uso</span>
+              <div class="pc-radio"><div class="pc-radio-dot"></div></div>
+            </div>
+            <div class="pc-desc">Consumo, volumen o transacción</div>
+          </div>
+          <div class="pc" data-v="Híbrido" onclick="selPricing(this)">
+            <div class="pc-top">
+              <span class="pc-name">Híbrido</span>
+              <div class="pc-radio"><div class="pc-radio-dot"></div></div>
+            </div>
+            <div class="pc-desc">Combinación de modelos</div>
+          </div>
+        </div>
+        <input type="hidden" id="f-pricing"/>
+        <div class="err" id="e-pricing">Selecciona un modelo de pricing</div>
       </div>
     </div>
   </div>
 
+  <!-- SECTION 3: COMPETENCIA -->
   <div class="section">
-    <div class="section-label">Modelo comercial</div>
-
-    <div class="field">
-      <label>Canales de venta actuales</label>
-      <div class="hint">Escribe un canal y presiona Enter para añadirlo.</div>
-      <div class="tag-input-wrap" id="canales-wrap">
-        <input type="text" id="canales-input" placeholder="Ej: Outbound, inbound, referidos..." />
-      </div>
-      <input type="hidden" id="canales-value" />
+    <div class="section-header">
+      <div class="section-num">3</div>
+      <div class="section-label">Competencia</div>
     </div>
-
-    <div class="field">
-      <label>Modelo de pricing</label>
-      <div class="pricing-grid" id="pricing-grid">
-        <div class="pricing-card" data-val="suscripcion">
-          <div class="pc-label">Suscripción</div>
-          <div class="pc-desc">Mensual o anual recurrente</div>
+    <div class="card">
+      <div class="field">
+        <label>Competidores principales</label>
+        <div class="hint">Escribe el nombre de cada competidor y presiona Enter</div>
+        <div class="tag-wrap" id="tw-comp">
+          <input id="ti-comp" placeholder="Ej: HubSpot, Salesforce, Pipedrive..."/>
         </div>
-        <div class="pricing-card" data-val="proyecto">
-          <div class="pc-label">Por proyecto</div>
-          <div class="pc-desc">Fee único o por entregable</div>
-        </div>
-        <div class="pricing-card" data-val="uso">
-          <div class="pc-label">Por uso</div>
-          <div class="pc-desc">Consumo, volumen o transacción</div>
-        </div>
-        <div class="pricing-card" data-val="hibrido">
-          <div class="pc-label">Híbrido</div>
-          <div class="pc-desc">Combinación de modelos</div>
-        </div>
+        <input type="hidden" id="f-comp"/>
       </div>
-      <input type="hidden" id="pricing-value" />
-      <div class="error-msg" id="err-pricing">Selecciona un modelo de pricing.</div>
     </div>
   </div>
 
+  <!-- SECTION 4: CONTEXTO COMERCIAL -->
   <div class="section">
-    <div class="section-label">Competencia</div>
-    <div class="field">
-      <label>Principales competidores</label>
-      <div class="hint">Escribe el nombre de cada competidor y presiona Enter.</div>
-      <div class="tag-input-wrap" id="comp-wrap">
-        <input type="text" id="comp-input" placeholder="Ej: HubSpot, Salesforce..." />
+    <div class="section-header">
+      <div class="section-num">4</div>
+      <div class="section-label">Contexto comercial</div>
+    </div>
+    <div class="card">
+      <div class="field">
+        <label>¿Qué problema resuelve tu producto o servicio?</label>
+        <div class="hint">Descríbelo desde la perspectiva del cliente, no del producto</div>
+        <textarea id="f-problema" maxlength="600"
+          placeholder="Ej: Las empresas pierden tiempo y dinero gestionando contratos en hojas de cálculo, sin visibilidad ni control del proceso..."
+          oninput="updateProgress();countChars('f-problema','cc-prob')"></textarea>
+        <div class="char-count" id="cc-prob">0 / 600</div>
       </div>
-      <input type="hidden" id="comp-value" />
+      <div class="field">
+        <label>¿Qué resultado concreto obtiene el cliente?</label>
+        <div class="hint">Resultado medible o transformación que genera tu solución</div>
+        <textarea id="f-resultado" maxlength="600"
+          placeholder="Ej: Reducen hasta un 60% el tiempo de ciclo contractual y eliminan errores de cumplimiento..."
+          oninput="updateProgress();countChars('f-resultado','cc-res')"></textarea>
+        <div class="char-count" id="cc-res">0 / 600</div>
+      </div>
     </div>
   </div>
 
-  <div class="section">
-    <div class="section-label">Contexto comercial</div>
-    <div class="field">
-      <label>¿Cuál es el principal problema que resuelve tu producto o servicio?</label>
-      <div class="hint">Descríbelo desde la perspectiva del cliente, no del producto.</div>
-      <textarea id="problema" placeholder="Ej: Las empresas pierden tiempo y dinero gestionando contratos en hojas de cálculo, sin visibilidad ni control del proceso..."></textarea>
+  <!-- SUBMIT -->
+  <div class="submit-wrap">
+    <div class="submit-note">
+      Tu información se almacena de forma segura y se usa exclusivamente para construir tu sistema de revenue en <strong>Predictable.ai</strong>.
     </div>
-    <div class="field">
-      <label>¿Qué resultado concreto obtiene el cliente?</label>
-      <div class="hint">Resultado medible o transformación que genera tu solución.</div>
-      <textarea id="resultado" placeholder="Ej: Reducen hasta un 60% el tiempo de ciclo contractual y eliminan errores de cumplimiento..."></textarea>
-    </div>
+    <button class="btn-submit" id="btn-send" onclick="handleSubmit()">
+      <span class="spinner"></span>
+      Enviar información
+    </button>
   </div>
 
-  <div class="submit-area">
-    <div class="submit-note">Tu información se almacena de forma segura y se usa exclusivamente para configurar tu sistema de revenue.</div>
-    <button class="btn-submit" id="btn-submit">Enviar información</button>
+  <div class="toast" id="toast">
+    <div class="toast-title">Información enviada correctamente</div>
+    <div class="toast-msg">El equipo de Predictable.ai la recibirá en breve y comenzará a configurar tu sistema de revenue.</div>
   </div>
-  <div class="toast" id="toast">Información enviada correctamente. El equipo de Predictable.ai la recibirá en breve.</div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div class="footer-brand"><span>Predictable.ai</span> — by VANAR</div>
+    <div class="footer-note">Revenue Execution Infrastructure</div>
+  </div>
+
 </div>
 
 <script>
-  function makeTagInput(wrapId, inputId, hiddenId) {
-    const wrap = document.getElementById(wrapId);
-    const input = document.getElementById(inputId);
-    const hidden = document.getElementById(hiddenId);
-    let tags = [];
-    function render() {
-      Array.from(wrap.querySelectorAll('.tag')).forEach(t => t.remove());
-      tags.forEach((tag, i) => {
-        const el = document.createElement('div');
-        el.className = 'tag';
-        el.innerHTML = tag + '<button type="button" data-i="' + i + '">×</button>';
-        wrap.insertBefore(el, input);
+const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbzXzlEPHXFNHty30D9rBvnbHw_gfh3NtwhSiZsS4KMMxJfLzoeuo_jibJnIbLtRBer6Ng/exec';
+
+function makeTagInput(wrapId, inputId, hiddenId) {
+  const wrap = document.getElementById(wrapId);
+  const inp = document.getElementById(inputId);
+  const hid = document.getElementById(hiddenId);
+  let tags = [];
+  function render() {
+    wrap.querySelectorAll('.tag').forEach(t => t.remove());
+    tags.forEach((tag, i) => {
+      const el = document.createElement('div');
+      el.className = 'tag';
+      const btn = document.createElement('button');
+      btn.textContent = '×';
+      btn.type = 'button';
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        tags.splice(i, 1);
+        render();
+        updateProgress();
       });
-      hidden.value = tags.join(', ');
-    }
-    input.addEventListener('keydown', function(e) {
-      if ((e.key === 'Enter' || e.key === ',') && this.value.trim()) {
-        e.preventDefault();
-        tags.push(this.value.trim());
-        this.value = '';
-        render();
-      }
+      el.appendChild(document.createTextNode(tag));
+      el.appendChild(btn);
+      wrap.insertBefore(el, inp);
     });
-    wrap.addEventListener('click', function(e) {
-      if (e.target.dataset.i !== undefined) {
-        tags.splice(+e.target.dataset.i, 1);
-        render();
-      } else {
-        input.focus();
-      }
-    });
+    hid.value = tags.join(', ');
   }
-  makeTagInput('canales-wrap', 'canales-input', 'canales-value');
-  makeTagInput('comp-wrap', 'comp-input', 'comp-value');
-
-  document.querySelectorAll('.pricing-card').forEach(card => {
-    card.addEventListener('click', function() {
-      document.querySelectorAll('.pricing-card').forEach(c => c.classList.remove('selected'));
-      this.classList.add('selected');
-      document.getElementById('pricing-value').value = this.dataset.val;
-      document.getElementById('err-pricing').style.display = 'none';
-    });
+  inp.addEventListener('keydown', function(e) {
+    if ((e.key === 'Enter' || e.key === ',') && this.value.trim()) {
+      e.preventDefault();
+      tags.push(this.value.trim());
+      this.value = '';
+      render();
+      updateProgress();
+    }
   });
+  wrap.addEventListener('click', () => inp.focus());
+}
 
-  document.getElementById('btn-submit').addEventListener('click', function() {
-    let valid = true;
-    const url = document.getElementById('url').value.trim();
-    const errUrl = document.getElementById('err-url');
-    if (!url || !url.startsWith('http')) {
-      errUrl.style.display = 'block'; valid = false;
-    } else { errUrl.style.display = 'none'; }
-    const pricing = document.getElementById('pricing-value').value;
-    const errPricing = document.getElementById('err-pricing');
-    if (!pricing) {
-      errPricing.style.display = 'block'; valid = false;
-    } else { errPricing.style.display = 'none'; }
-    if (!valid) return;
-    const data = {
-      url: url,
-      producto: document.getElementById('producto').value.trim(),
-      paises: document.getElementById('paises').value.trim(),
-      canales: document.getElementById('canales-value').value,
-      pricing: pricing,
-      competidores: document.getElementById('comp-value').value,
-      problema: document.getElementById('problema').value.trim(),
-      resultado: document.getElementById('resultado').value.trim(),
-      timestamp: new Date().toISOString()
-    };
-    fetch('https://script.google.com/macros/s/AKfycbyqn857XBHX7jbAM68xe7TFtGm9MNbMc9-h8i4UNdAWOd4A4gPKKzo3o4MgZXJzLOkuFw/exec', {
+makeTagInput('tw-canales', 'ti-canales', 'f-canales');
+makeTagInput('tw-comp', 'ti-comp', 'f-comp');
+
+function selPricing(el) {
+  document.querySelectorAll('.pc').forEach(c => c.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('f-pricing').value = el.dataset.v;
+  document.getElementById('e-pricing').style.display = 'none';
+  updateProgress();
+}
+
+function countChars(fieldId, countId) {
+  const v = document.getElementById(fieldId).value.length;
+  document.getElementById(countId).textContent = v + ' / 600';
+}
+
+function updateProgress() {
+  const fields = ['f-url','f-producto','f-paises','f-canales','f-pricing','f-comp','f-problema','f-resultado'];
+  const filled = fields.filter(id => document.getElementById(id).value.trim() !== '').length;
+  const pct = Math.round((filled / fields.length) * 100);
+  document.getElementById('prog').style.width = pct + '%';
+  document.getElementById('prog-label').textContent = pct + '%';
+}
+
+function validate() {
+  let ok = true;
+  const url = document.getElementById('f-url').value.trim();
+  const eu = document.getElementById('e-url');
+  if (!url || !url.startsWith('http')) {
+    eu.style.display = 'block'; ok = false;
+  } else {
+    eu.style.display = 'none';
+  }
+  const pr = document.getElementById('f-pricing').value;
+  const ep = document.getElementById('e-pricing');
+  if (!pr) {
+    ep.style.display = 'block'; ok = false;
+  } else {
+    ep.style.display = 'none';
+  }
+  return ok;
+}
+
+async function handleSubmit() {
+  if (!validate()) return;
+  const btn = document.getElementById('btn-send');
+  btn.disabled = true;
+  btn.classList.add('loading');
+  btn.childNodes[btn.childNodes.length - 1].textContent = ' Enviando...';
+
+  const data = {
+    timestamp: new Date().toISOString(),
+    url: document.getElementById('f-url').value.trim(),
+    producto: document.getElementById('f-producto').value.trim(),
+    paises: document.getElementById('f-paises').value.trim(),
+    canales: document.getElementById('f-canales').value,
+    pricing: document.getElementById('f-pricing').value,
+    competidores: document.getElementById('f-comp').value,
+    problema: document.getElementById('f-problema').value.trim(),
+    resultado: document.getElementById('f-resultado').value.trim()
+  };
+
+  try {
+    await fetch(SHEETS_URL, {
       method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
-    this.textContent = 'Enviando...';
-    this.disabled = true;
-    setTimeout(() => {
-      document.getElementById('toast').style.display = 'block';
-      this.textContent = 'Enviado';
-    }, 800);
-  });
+    btn.classList.remove('loading');
+    btn.childNodes[btn.childNodes.length - 1].textContent = ' Enviado';
+    document.getElementById('toast').style.display = 'block';
+    document.getElementById('toast').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch(err) {
+    btn.disabled = false;
+    btn.classList.remove('loading');
+    btn.childNodes[btn.childNodes.length - 1].textContent = ' Enviar información';
+    alert('Error al conectar. Verifica tu conexión e intenta de nuevo.');
+  }
+}
 </script>
+</body>
+</html>
