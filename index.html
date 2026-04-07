@@ -4,802 +4,1453 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Market Intelligence — Predictable.ai by VANAR</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --ink:#08111F;
-  --ink2:#0D1D35;
-  --ink3:#162840;
-  --blue:#1848C8;
-  --blue2:#2558E0;
-  --blue3:#3B6FFF;
-  --pale:#EDF2FF;
-  --pale2:#D6E2FF;
-  --white:#FFFFFF;
-  --bg:#F2F5FB;
-  --surf:#FFFFFF;
-  --bdr:#E0E8F5;
-  --bdr2:#C8D6EE;
-  --txt:#08111F;
-  --mut:#4B5E7E;
-  --sub:#8A9BBE;
-  --gold:#B8922A;
-  --ok:#0B7A5C;
-  --ok-bg:#E5F5EE;
-  --err:#B8311A;
-  --err-bg:#FDF0EC;
-  --wrn:#8A5C00;
-  --wrn-bg:#FDF5E0;
-  --sw:248px;
-  --hh:54px;
-}
-html,body{height:100%;font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(--txt);font-size:13px;line-height:1.6;overflow:hidden}
-
-/* ══ LAYOUT ══ */
-.shell{display:flex;height:100vh}
-
-/* ══ SIDEBAR ══ */
-.sb{
-  width:var(--sw);flex-shrink:0;
-  background:var(--ink);
-  display:flex;flex-direction:column;
-  border-right:1px solid rgba(255,255,255,0.05);
-  position:relative;
-}
-.sb-top{padding:18px 16px 14px;border-bottom:1px solid rgba(255,255,255,0.06)}
-.sb-brand{display:flex;align-items:center;gap:9px;margin-bottom:12px}
-.sb-mark{
-  width:28px;height:28px;border-radius:7px;
-  background:var(--blue2);
-  display:flex;align-items:center;justify-content:center;flex-shrink:0;
-}
-.sb-mark svg{width:13px;height:13px}
-.sb-name{font-family:'Instrument Serif',serif;font-size:14px;color:#fff;letter-spacing:.1px}
-.sb-byline{font-size:9px;color:rgba(255,255,255,.3);letter-spacing:2px;text-transform:uppercase;margin-top:1px}
-.sb-project{
-  padding:8px 10px;background:rgba(255,255,255,.05);
-  border:1px solid rgba(255,255,255,.07);border-radius:7px;
-}
-.sb-proj-lbl{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,.25);margin-bottom:3px}
-.sb-proj-name{font-size:12px;color:rgba(255,255,255,.65);font-weight:400}
-
-.sb-nav{flex:1;overflow-y:auto;padding:10px 10px 0;scrollbar-width:none}
-.sb-nav::-webkit-scrollbar{display:none}
-.sb-cat{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,.2);padding:10px 6px 5px}
-.sb-link{
-  display:flex;align-items:center;gap:9px;
-  padding:8px 9px;border-radius:7px;cursor:pointer;
-  transition:background .15s;margin-bottom:1px;
-  text-decoration:none;
-}
-.sb-link:hover{background:rgba(255,255,255,.06)}
-.sb-link.here{background:rgba(24,72,200,.25);border:1px solid rgba(59,111,255,.2)}
-.sb-link.soon{opacity:.38;pointer-events:none;cursor:default}
-.sb-ico{
-  width:26px;height:26px;border-radius:5px;flex-shrink:0;
-  background:rgba(255,255,255,.07);
-  display:flex;align-items:center;justify-content:center;font-size:12px;
-}
-.sb-link.here .sb-ico{background:var(--blue2)}
-.sb-link-body{flex:1;min-width:0}
-.sb-link-name{font-size:12px;color:rgba(255,255,255,.6);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sb-link.here .sb-link-name{color:#fff;font-weight:500}
-.sb-link-sub{font-size:10px;color:rgba(255,255,255,.22)}
-.sb-pill{
-  font-size:9px;font-weight:600;letter-spacing:.5px;
-  padding:2px 6px;border-radius:20px;flex-shrink:0;
-}
-.pill-live{background:rgba(59,111,255,.2);color:#7FA8FF}
-.pill-soon{background:rgba(255,255,255,.07);color:rgba(255,255,255,.25)}
-
-.sb-foot{padding:12px 10px;border-top:1px solid rgba(255,255,255,.06)}
-.sb-progress-row{display:flex;justify-content:space-between;margin-bottom:5px}
-.sb-progress-row span{font-size:10px;color:rgba(255,255,255,.3)}
-.sb-progress-row strong{font-size:10px;color:var(--gold)}
-.sb-bar{height:2px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden;margin-bottom:11px}
-.sb-bar-fill{height:100%;background:linear-gradient(90deg,var(--blue2),var(--gold));border-radius:2px;transition:width .4s ease;width:0%}
-.sb-submit{
-  width:100%;padding:8px;background:var(--blue2);color:#fff;
-  border:none;border-radius:7px;font-size:12px;font-weight:500;
-  font-family:'Plus Jakarta Sans',sans-serif;cursor:pointer;
-  transition:opacity .15s;letter-spacing:.2px;
-}
-.sb-submit:hover{opacity:.88}
-.sb-submit:disabled{opacity:.35;cursor:not-allowed}
-
-/* ══ MAIN ══ */
-.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-.topbar{
-  height:var(--hh);flex-shrink:0;
-  background:var(--surf);border-bottom:1px solid var(--bdr);
-  display:flex;align-items:center;padding:0 28px;gap:14px;
-}
-.tb-title{font-family:'Instrument Serif',serif;font-size:16px;color:var(--txt);flex:1}
-.tb-badge{
-  display:flex;align-items:center;gap:5px;
-  padding:4px 11px;border-radius:20px;
-  background:var(--pale);border:1px solid var(--pale2);
-  font-size:11px;font-weight:500;color:var(--blue);
-}
-.ldot{width:5px;height:5px;border-radius:50%;background:#22C88A;animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.tb-pct{font-size:12px;font-weight:500;color:var(--mut)}
-
-/* scroll area */
-.scroll{flex:1;overflow-y:auto;padding:28px 32px 80px}
-.scroll::-webkit-scrollbar{width:4px}
-.scroll::-webkit-scrollbar-thumb{background:var(--bdr2);border-radius:4px}
-
-/* ══ BLOCKS ══ */
-.page-banner{
-  background:var(--ink2);border-radius:14px;
-  padding:22px 26px;margin-bottom:22px;position:relative;overflow:hidden;
-}
-.page-banner::before{
-  content:'';position:absolute;top:0;left:0;right:0;height:2px;
-  background:linear-gradient(90deg,var(--blue2),var(--gold),transparent);
-}
-.pb-eyebrow{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.28);margin-bottom:5px}
-.pb-title{font-family:'Instrument Serif',serif;font-size:20px;color:#fff;margin-bottom:5px}
-.pb-desc{font-size:12px;color:rgba(255,255,255,.42);line-height:1.65;max-width:580px}
-.pb-meta{display:flex;align-items:center;gap:16px;margin-top:12px}
-.pb-tag{
-  font-size:10px;padding:3px 10px;border-radius:20px;
-  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);
-  color:rgba(255,255,255,.4);
+/* ═══════════════════════════════════════════
+   TIPOGRAFÍA APPLE — SF Pro / System Font Stack
+═══════════════════════════════════════════ */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-.block{background:var(--surf);border:1px solid var(--bdr);border-radius:14px;padding:22px 24px;margin-bottom:16px}
-.block-hdr{
-  display:flex;align-items:center;gap:8px;
-  margin-bottom:18px;padding-bottom:14px;
-  border-bottom:1px solid var(--bdr);
-}
-.block-icon{font-size:14px}
-.block-title{font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--mut);flex:1}
-.block-badge{font-size:9px;padding:2px 8px;border-radius:20px;background:var(--pale);color:var(--blue);font-weight:600;letter-spacing:.3px}
+:root {
+  /* Apple System Font Stack */
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+          "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", "Fira Code", "Cascadia Code", monospace;
 
-/* fields */
-.field{margin-bottom:16px}
-.field:last-child{margin-bottom:0}
-.field>label{display:block;font-size:12px;font-weight:500;color:var(--txt);margin-bottom:5px}
-.fhint{font-size:11px;color:var(--sub);margin-bottom:7px;font-style:italic;line-height:1.5}
-.field input,.field textarea,.field select{
-  width:100%;font-size:12px;padding:9px 12px;
-  background:var(--bg);border:1px solid var(--bdr);border-radius:7px;
-  color:var(--txt);font-family:'Plus Jakarta Sans',sans-serif;
-  outline:none;transition:border-color .15s,box-shadow .15s,background .15s;
-}
-.field input::placeholder,.field textarea::placeholder{color:var(--sub)}
-.field input:focus,.field textarea:focus{
-  border-color:var(--blue2);background:var(--white);
-  box-shadow:0 0 0 3px rgba(24,72,200,.07);
-}
-.field textarea{resize:vertical;min-height:78px;line-height:1.6}
-.g2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  /* Color palette — corporate navy + blue */
+  --navy:    #0A1628;
+  --navy2:   #0E1E38;
+  --navy3:   #132344;
+  --navy4:   #1A2D52;
+  --blue:    #1746C0;
+  --blue2:   #1F56D6;
+  --blue3:   #2E69F0;
+  --blue-lt: #EBF1FF;
+  --blue-lt2:#D4E3FF;
+  --blue-lt3:#B8CCFF;
 
-/* radio pills */
-.rpills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:0}
-.rpill{
-  padding:5px 13px;border-radius:20px;
-  border:1.5px solid var(--bdr);background:var(--bg);
-  font-size:11px;color:var(--mut);cursor:pointer;transition:all .15s;user-select:none;
-}
-.rpill:hover{border-color:var(--bdr2);color:var(--txt)}
-.rpill.on{border-color:var(--blue);background:var(--pale);color:var(--blue);font-weight:500}
+  --white:  #FFFFFF;
+  --bg:     #F0F3FA;
+  --surf:   #FFFFFF;
+  --surf2:  #F7F9FD;
 
-/* tags */
-.tagbox{
-  display:flex;flex-wrap:wrap;gap:5px;
-  padding:7px 9px;border:1px solid var(--bdr);border-radius:7px;
-  background:var(--bg);min-height:38px;cursor:text;
-  transition:border-color .15s,box-shadow .15s;
-}
-.tagbox:focus-within{border-color:var(--blue2);box-shadow:0 0 0 3px rgba(24,72,200,.07);background:var(--white)}
-.chip{
-  display:inline-flex;align-items:center;gap:4px;
-  padding:2px 9px;background:var(--pale);border:1px solid var(--pale2);
-  border-radius:20px;font-size:11px;color:var(--blue);
-}
-.chip button{background:none;border:none;cursor:pointer;font-size:12px;color:var(--blue);opacity:.5;padding:0;line-height:1}
-.chip button:hover{opacity:1}
-.tagbox input{border:none;outline:none;background:transparent;font-size:12px;color:var(--txt);font-family:'Plus Jakarta Sans',sans-serif;min-width:80px;flex:1;padding:1px 0}
-.tagbox input::placeholder{color:var(--sub)}
+  --bdr:    #E2E8F5;
+  --bdr2:   #CAD5EE;
+  --bdr3:   #B0C0E0;
 
-/* multi-row */
-.multirow{display:flex;flex-direction:column;gap:7px}
-.multirow-item{display:flex;gap:7px;align-items:center}
-.multirow-item input{flex:1}
-.btn-rm{
-  width:26px;height:26px;border-radius:50%;border:1px solid var(--bdr);
-  background:var(--white);color:var(--sub);font-size:14px;
-  cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;
-  transition:all .15s;
-}
-.btn-rm:hover{border-color:var(--err);color:var(--err);background:var(--err-bg)}
-.btn-add{
-  display:inline-flex;align-items:center;gap:4px;
-  padding:5px 12px;background:var(--pale);border:1px solid var(--pale2);
-  border-radius:7px;font-size:11px;font-weight:500;color:var(--blue);
-  cursor:pointer;transition:all .15s;font-family:'Plus Jakarta Sans',sans-serif;margin-top:6px;
-}
-.btn-add:hover{background:var(--pale2)}
+  --text:   #09111E;
+  --text2:  #1E2D48;
+  --muted:  #4A5E82;
+  --sub:    #7A8FAE;
+  --hint:   #A0B0CC;
 
-/* divider */
-.div{height:1px;background:var(--bdr);margin:18px 0}
+  --gold:   #B07D20;
+  --gold2:  #D4A030;
 
-/* section anchor label */
-.sec-anchor{
-  display:flex;align-items:center;gap:8px;
-  margin:28px 0 14px;
-}
-.sec-num{
-  width:22px;height:22px;border-radius:50%;
-  background:var(--ink);color:#fff;
-  display:flex;align-items:center;justify-content:center;
-  font-size:10px;font-weight:600;flex-shrink:0;
-}
-.sec-label{font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--mut)}
-.sec-line{flex:1;height:1px;background:var(--bdr)}
+  --ok:     #0A7A5A;
+  --ok-bg:  #E3F5EE;
+  --ok-bdr: rgba(10,122,90,.18);
 
-/* ══ MATRIZ ══ */
-.rol-grid{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:4px}
-.rol-pill{
-  padding:6px 13px;border-radius:20px;border:1.5px solid var(--bdr);
-  background:var(--bg);font-size:11px;color:var(--mut);
-  cursor:pointer;transition:all .15s;user-select:none;
-}
-.rol-pill:hover{border-color:var(--bdr2);color:var(--txt)}
-.rol-pill.on{border-color:var(--blue);background:var(--pale);color:var(--blue);font-weight:500}
+  --warn:   #895600;
+  --warn-bg:#FDF5DF;
+  --warn-bdr:rgba(137,86,0,.18);
 
-.mcard{background:var(--surf);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;margin-bottom:12px}
-.mcard-top{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:12px 16px;background:var(--ink2);cursor:pointer;
-  border-bottom:1px solid rgba(255,255,255,.04);
-}
-.mcard-left{display:flex;align-items:center;gap:10px}
-.mcard-avatar{
-  width:28px;height:28px;border-radius:6px;
-  background:rgba(255,255,255,.1);
-  display:flex;align-items:center;justify-content:center;
-  font-size:10px;font-weight:600;color:rgba(255,255,255,.5);flex-shrink:0;
-}
-.mcard-rname{font-size:12px;font-weight:500;color:#fff}
-.mcard-status{font-size:10px;color:rgba(255,255,255,.25)}
-.mcard-chev{font-size:10px;color:rgba(255,255,255,.3);transition:transform .2s}
-.mcard-chev.up{transform:rotate(180deg)}
+  --err:    #B02818;
+  --err-bg: #FDF0EC;
+  --err-bdr:rgba(176,40,24,.18);
 
-.mcard-body{padding:16px;display:none}
-.mcard-body.open{display:block}
-.mfield-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
-.mf>label{
-  display:flex;align-items:center;gap:6px;
-  font-size:10px;font-weight:600;letter-spacing:.5px;color:var(--mut);
-  margin-bottom:5px;
-}
-.mbadge{font-size:9px;padding:1px 7px;border-radius:20px;font-weight:700;letter-spacing:.3px}
-.mb-p{background:#FEF3DF;color:#7A4A00}
-.mb-s{background:var(--pale);color:var(--blue)}
-.mb-i{background:var(--err-bg);color:var(--err)}
-.mb-sol{background:#F0EEFF;color:#4530A0}
-.mb-r{background:var(--ok-bg);color:var(--ok)}
-.mf textarea{
-  width:100%;font-size:11px;padding:9px 11px;min-height:80px;
-  background:var(--bg);border:1px solid var(--bdr);border-radius:7px;
-  color:var(--txt);font-family:'Plus Jakarta Sans',sans-serif;
-  outline:none;resize:vertical;line-height:1.6;
-  transition:border-color .15s,box-shadow .15s;
-}
-.mf textarea:focus{border-color:var(--blue2);box-shadow:0 0 0 3px rgba(24,72,200,.07);background:var(--white)}
+  --sb-w:   252px;
+  --hh:     52px;
 
-/* AI panel */
-.aipanel{display:none;margin-top:6px;border-radius:7px;overflow:hidden;border:1px solid var(--pale2)}
-.aipanel.show{display:block;animation:fadein .2s ease}
-@keyframes fadein{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
-.aipanel-hdr{
-  display:flex;align-items:center;gap:6px;
-  padding:7px 10px;background:var(--pale);border-bottom:1px solid var(--pale2);
-}
-.ai-star{font-size:11px}
-.ai-lbl{font-size:10px;font-weight:600;color:var(--blue);letter-spacing:.3px;flex:1}
-.ai-thinking{display:flex;gap:3px;align-items:center}
-.ai-d{width:4px;height:4px;border-radius:50%;background:var(--blue);animation:blink 1.1s infinite}
-.ai-d:nth-child(2){animation-delay:.18s}
-.ai-d:nth-child(3){animation-delay:.36s}
-@keyframes blink{0%,100%{opacity:.15}50%{opacity:1}}
-.aipanel-body{padding:10px 12px;background:var(--white)}
-.score-row{display:flex;align-items:center;gap:8px;margin-bottom:7px}
-.score-track{flex:1;height:3px;background:var(--bdr);border-radius:3px;overflow:hidden}
-.score-fill{height:100%;border-radius:3px;transition:width .5s ease}
-.s-lo .score-fill{background:var(--err)}
-.s-mid .score-fill{background:var(--wrn)}
-.s-hi .score-fill{background:var(--ok)}
-.score-txt{font-size:10px;font-weight:700;min-width:58px;text-align:right}
-.s-lo .score-txt{color:var(--err)}
-.s-mid .score-txt{color:var(--wrn)}
-.s-hi .score-txt{color:var(--ok)}
-.ai-eval{font-size:11px;color:var(--mut);line-height:1.65}
-.ai-sugg-box{
-  margin-top:8px;padding:9px 11px;
-  background:var(--pale);border:1px solid var(--pale2);border-radius:7px;
-}
-.ai-sugg-lbl{font-size:9px;font-weight:700;color:var(--blue);letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px}
-.ai-sugg-text{font-size:11px;color:var(--ink2);line-height:1.65}
-.btn-apply{
-  display:inline-flex;align-items:center;gap:4px;
-  margin-top:6px;padding:4px 11px;
-  background:var(--white);border:1px solid var(--bdr2);border-radius:20px;
-  font-size:10px;font-weight:500;color:var(--blue);
-  cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s;
-}
-.btn-apply:hover{background:var(--blue2);color:#fff;border-color:var(--blue2)}
+  --r:      8px;
+  --r-lg:   12px;
+  --r-xl:   16px;
+  --r-2xl:  20px;
 
-/* ══ SUBMIT ══ */
-.submit-wrap{
-  background:var(--ink2);border-radius:14px;padding:22px 26px;
-  margin-top:24px;display:flex;align-items:center;justify-content:space-between;gap:20px;
-  position:relative;overflow:hidden;
+  --shadow-sm: 0 1px 3px rgba(9,17,30,.06), 0 1px 2px rgba(9,17,30,.04);
+  --shadow:    0 2px 8px rgba(9,17,30,.08), 0 1px 3px rgba(9,17,30,.05);
+  --shadow-lg: 0 8px 24px rgba(9,17,30,.10), 0 2px 6px rgba(9,17,30,.06);
 }
-.submit-wrap::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,var(--blue2),var(--gold),transparent)}
-.submit-note{font-size:12px;color:rgba(255,255,255,.38);line-height:1.6;max-width:380px}
-.submit-note strong{color:rgba(255,255,255,.65);font-weight:400}
-.btn-main{
-  padding:11px 30px;background:var(--blue2);color:#fff;
-  border:none;border-radius:8px;font-size:12px;font-weight:500;
-  font-family:'Plus Jakarta Sans',sans-serif;cursor:pointer;
-  transition:all .15s;white-space:nowrap;letter-spacing:.2px;
-  box-shadow:0 2px 12px rgba(24,72,200,.35);
+
+html, body {
+  height: 100%;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
 }
-.btn-main:hover{background:var(--blue3);box-shadow:0 4px 20px rgba(24,72,200,.45)}
-.btn-main:active{transform:scale(.98)}
-.btn-main:disabled{opacity:.4;cursor:not-allowed;box-shadow:none}
-.spin{display:none;width:12px;height:12px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:middle;margin-right:6px}
-.btn-main.loading .spin{display:inline-block}
-@keyframes sp{to{transform:rotate(360deg)}}
-.toast{display:none;margin-top:12px;padding:12px 16px;background:var(--ok-bg);border:1px solid rgba(11,122,92,.2);border-radius:9px}
-.toast-t{font-size:12px;font-weight:500;color:var(--ok);margin-bottom:2px}
-.toast-m{font-size:11px;color:rgba(11,122,92,.65)}
+
+/* ═══════════════════════════════════════════
+   LAYOUT
+═══════════════════════════════════════════ */
+.app { display: flex; height: 100vh; }
+
+/* ═══════════════════════════════════════════
+   SIDEBAR
+═══════════════════════════════════════════ */
+.sidebar {
+  width: var(--sb-w);
+  flex-shrink: 0;
+  background: var(--navy);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(255,255,255,.05);
+  position: relative;
+  z-index: 20;
+}
+
+/* Brand */
+.sb-brand {
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  flex-shrink: 0;
+}
+.sb-logo-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 13px;
+}
+.sb-mark {
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  background: var(--blue2);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(31,86,214,.4);
+}
+.sb-mark svg { width: 13px; height: 13px; }
+.sb-brand-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: -.1px;
+}
+.sb-brand-by {
+  font-size: 9px;
+  color: rgba(255,255,255,.3);
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  margin-top: 1px;
+}
+.sb-workspace {
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: var(--r);
+  padding: 8px 10px;
+}
+.sb-ws-label {
+  font-size: 9px;
+  color: rgba(255,255,255,.25);
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+.sb-ws-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255,255,255,.65);
+}
+
+/* Nav */
+.sb-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 10px 0;
+  scrollbar-width: none;
+}
+.sb-nav::-webkit-scrollbar { display: none; }
+
+.sb-section-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: rgba(255,255,255,.2);
+  padding: 10px 7px 5px;
+}
+
+.sb-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: var(--r);
+  cursor: pointer;
+  transition: background .12s;
+  margin-bottom: 1px;
+  border: 1px solid transparent;
+  user-select: none;
+}
+.sb-item:hover { background: rgba(255,255,255,.05); }
+.sb-item.active {
+  background: rgba(31,86,214,.22);
+  border-color: rgba(46,105,240,.25);
+}
+.sb-item.disabled {
+  opacity: .38;
+  cursor: default;
+  pointer-events: none;
+}
+
+.sb-icon {
+  width: 26px; height: 26px;
+  border-radius: 6px;
+  background: rgba(255,255,255,.07);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px;
+  flex-shrink: 0;
+  transition: background .12s;
+}
+.sb-item.active .sb-icon { background: var(--blue2); }
+
+.sb-item-body { flex: 1; min-width: 0; }
+.sb-item-name {
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(255,255,255,.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+.sb-item.active .sb-item-name {
+  color: #fff;
+  font-weight: 500;
+}
+.sb-item-sub {
+  font-size: 10px;
+  color: rgba(255,255,255,.22);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sb-tag {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .3px;
+  padding: 2px 7px;
+  border-radius: 20px;
+  flex-shrink: 0;
+}
+.tag-live { background: rgba(46,105,240,.22); color: #7DAAFF; }
+.tag-soon { background: rgba(255,255,255,.07); color: rgba(255,255,255,.22); }
+
+/* Footer */
+.sb-footer {
+  padding: 12px 12px;
+  border-top: 1px solid rgba(255,255,255,.06);
+  flex-shrink: 0;
+}
+.sb-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+}
+.sb-progress-header span { font-size: 10px; color: rgba(255,255,255,.3); }
+.sb-progress-header strong { font-size: 10px; color: var(--gold2); font-weight: 600; }
+.sb-progressbar {
+  height: 2px;
+  background: rgba(255,255,255,.07);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 11px;
+}
+.sb-progressbar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue3), var(--gold2));
+  border-radius: 2px;
+  width: 0%;
+  transition: width .4s cubic-bezier(.4,0,.2,1);
+}
+.sb-save-btn {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--blue2);
+  color: #fff;
+  border: none;
+  border-radius: var(--r);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background .15s, box-shadow .15s;
+  letter-spacing: -.1px;
+  box-shadow: 0 1px 4px rgba(31,86,214,.35);
+}
+.sb-save-btn:hover { background: var(--blue3); box-shadow: 0 2px 8px rgba(31,86,214,.45); }
+.sb-save-btn:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
+
+/* ═══════════════════════════════════════════
+   TOPBAR
+═══════════════════════════════════════════ */
+.topbar {
+  height: var(--hh);
+  flex-shrink: 0;
+  background: var(--surf);
+  border-bottom: 1px solid var(--bdr);
+  display: flex;
+  align-items: center;
+  padding: 0 28px;
+  gap: 14px;
+}
+.topbar-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  flex: 1;
+  letter-spacing: -.2px;
+}
+.topbar-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 11px;
+  border-radius: 20px;
+  background: var(--blue-lt);
+  border: 1px solid var(--blue-lt2);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--blue);
+}
+.live-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: #22C88A;
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+.topbar-pct {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* ═══════════════════════════════════════════
+   MAIN CONTENT
+═══════════════════════════════════════════ */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px 32px 80px;
+  scroll-behavior: smooth;
+}
+.content::-webkit-scrollbar { width: 4px; }
+.content::-webkit-scrollbar-track { background: transparent; }
+.content::-webkit-scrollbar-thumb { background: var(--bdr2); border-radius: 4px; }
+
+/* ═══════════════════════════════════════════
+   HERO BANNER
+═══════════════════════════════════════════ */
+.hero-banner {
+  background: var(--navy2);
+  border-radius: var(--r-2xl);
+  padding: 26px 30px;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+}
+.hero-banner::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1.5px;
+  background: linear-gradient(90deg, var(--blue3), var(--gold2), transparent);
+}
+.hero-banner::after {
+  content: '';
+  position: absolute;
+  top: -80px; right: -60px;
+  width: 200px; height: 200px;
+  background: radial-gradient(circle, rgba(31,86,214,.12) 0%, transparent 70%);
+  pointer-events: none;
+}
+.hero-eyebrow {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  color: rgba(255,255,255,.28);
+  margin-bottom: 6px;
+}
+.hero-title {
+  font-size: 22px;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: -.4px;
+  margin-bottom: 8px;
+}
+.hero-desc {
+  font-size: 13px;
+  color: rgba(255,255,255,.42);
+  line-height: 1.65;
+  max-width: 560px;
+  font-weight: 300;
+}
+.hero-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+.hero-chip {
+  padding: 4px 11px;
+  border-radius: 20px;
+  background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.09);
+  font-size: 11px;
+  color: rgba(255,255,255,.38);
+  font-weight: 400;
+}
+
+/* ═══════════════════════════════════════════
+   SECTION HEADERS
+═══════════════════════════════════════════ */
+.sec-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 28px 0 14px;
+}
+.sec-number {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--navy);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.sec-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1.3px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sec-line { flex: 1; height: 1px; background: var(--bdr); }
+
+/* ═══════════════════════════════════════════
+   CARDS
+═══════════════════════════════════════════ */
+.card {
+  background: var(--surf);
+  border: 1px solid var(--bdr);
+  border-radius: var(--r-xl);
+  padding: 22px 24px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-bottom: 14px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--bdr);
+}
+.card-icon {
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  background: var(--blue-lt);
+  border: 1px solid var(--blue-lt2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.card-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  flex: 1;
+  letter-spacing: -.1px;
+}
+.card-badge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 9px;
+  border-radius: 20px;
+  background: var(--blue-lt);
+  color: var(--blue);
+  border: 1px solid var(--blue-lt2);
+}
+
+/* ═══════════════════════════════════════════
+   FORM FIELDS
+═══════════════════════════════════════════ */
+.field { margin-bottom: 18px; }
+.field:last-child { margin-bottom: 0; }
+
+.field > label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text2);
+  margin-bottom: 5px;
+  letter-spacing: -.1px;
+}
+
+.field-hint {
+  font-size: 11px;
+  color: var(--sub);
+  margin-bottom: 7px;
+  line-height: 1.5;
+  font-style: italic;
+  font-weight: 300;
+}
+
+input[type="text"],
+input[type="url"],
+textarea {
+  width: 100%;
+  font-size: 13px;
+  font-family: var(--font);
+  padding: 9px 12px;
+  background: var(--bg);
+  border: 1px solid var(--bdr);
+  border-radius: var(--r);
+  color: var(--text);
+  outline: none;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+  -webkit-appearance: none;
+}
+input::placeholder, textarea::placeholder { color: var(--hint); font-weight: 300; }
+input:hover, textarea:hover { border-color: var(--bdr2); }
+input:focus, textarea:focus {
+  border-color: var(--blue2);
+  background: var(--white);
+  box-shadow: 0 0 0 3px rgba(31,86,214,.08);
+}
+textarea {
+  resize: vertical;
+  min-height: 82px;
+  line-height: 1.6;
+}
+
+/* Grids */
+.g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+
+/* Radio pills */
+.pill-group { display: flex; flex-wrap: wrap; gap: 7px; }
+.pill {
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1.5px solid var(--bdr);
+  background: var(--bg);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all .12s;
+  user-select: none;
+  font-family: var(--font);
+}
+.pill:hover { border-color: var(--bdr2); color: var(--text2); background: var(--surf); }
+.pill.on {
+  border-color: var(--blue2);
+  background: var(--blue-lt);
+  color: var(--blue);
+  font-weight: 500;
+}
+
+/* Tag input */
+.tagbox {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--bdr);
+  border-radius: var(--r);
+  min-height: 40px;
+  cursor: text;
+  transition: border-color .15s, box-shadow .15s;
+}
+.tagbox:focus-within {
+  border-color: var(--blue2);
+  background: var(--white);
+  box-shadow: 0 0 0 3px rgba(31,86,214,.08);
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  background: var(--blue-lt);
+  border: 1px solid var(--blue-lt2);
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--blue);
+}
+.tag-chip button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--blue);
+  opacity: .5;
+  padding: 0;
+  line-height: 1;
+  font-family: var(--font);
+}
+.tag-chip button:hover { opacity: 1; }
+.tagbox input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 12px;
+  font-family: var(--font);
+  color: var(--text);
+  min-width: 90px;
+  flex: 1;
+  padding: 2px 0;
+}
+.tagbox input::placeholder { color: var(--hint); font-weight: 300; }
+
+/* Multi-input */
+.multiblock { display: flex; flex-direction: column; gap: 8px; }
+.multirow { display: flex; align-items: center; gap: 8px; }
+.multirow input { flex: 1; }
+.btn-rm {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--bdr);
+  background: var(--white);
+  color: var(--sub);
+  font-size: 15px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: all .12s;
+}
+.btn-rm:hover { border-color: var(--err-bdr); color: var(--err); background: var(--err-bg); }
+.btn-add-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  background: var(--blue-lt);
+  border: 1px solid var(--blue-lt2);
+  border-radius: var(--r);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--blue);
+  cursor: pointer;
+  transition: all .12s;
+  font-family: var(--font);
+  margin-top: 6px;
+}
+.btn-add-row:hover { background: var(--blue-lt2); }
+
+.divider { height: 1px; background: var(--bdr); margin: 18px 0; }
+
+/* ═══════════════════════════════════════════
+   MATRIZ DE ROLES
+═══════════════════════════════════════════ */
+.rol-selector { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 6px; }
+.rol-pill {
+  padding: 5px 13px;
+  border-radius: 20px;
+  border: 1.5px solid var(--bdr);
+  background: var(--bg);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all .12s;
+  user-select: none;
+  font-family: var(--font);
+}
+.rol-pill:hover { border-color: var(--bdr2); color: var(--text2); background: var(--surf); }
+.rol-pill.on {
+  border-color: var(--blue2);
+  background: var(--blue-lt);
+  color: var(--blue);
+  font-weight: 500;
+}
+
+/* Matriz card */
+.mcard {
+  background: var(--surf);
+  border: 1px solid var(--bdr);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  margin-bottom: 10px;
+  box-shadow: var(--shadow-sm);
+}
+.mcard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 18px;
+  background: var(--navy3);
+  cursor: pointer;
+  transition: background .12s;
+}
+.mcard-header:hover { background: var(--navy4); }
+.mcard-left { display: flex; align-items: center; gap: 11px; }
+.mcard-avatar {
+  width: 30px; height: 30px;
+  border-radius: 7px;
+  background: rgba(255,255,255,.1);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255,255,255,.55);
+  flex-shrink: 0;
+  letter-spacing: .5px;
+}
+.mcard-role { font-size: 13px; font-weight: 500; color: #fff; letter-spacing: -.1px; }
+.mcard-status { font-size: 11px; color: rgba(255,255,255,.3); margin-top: 1px; }
+.mcard-chevron {
+  font-size: 10px;
+  color: rgba(255,255,255,.3);
+  transition: transform .2s;
+}
+.mcard-chevron.open { transform: rotate(180deg); }
+
+.mcard-body { padding: 18px; display: none; }
+.mcard-body.open { display: block; }
+
+/* Matriz grid */
+.matriz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+
+.mfield {}
+.mfield-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+}
+.mfield-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+.mb-problema { background: #FEF3DC; color: #7A4800; }
+.mb-sintomas { background: var(--blue-lt); color: var(--blue); }
+.mb-impacto  { background: var(--err-bg); color: var(--err); }
+.mb-solucion { background: #F0EEFF; color: #4530A0; }
+.mb-resultado{ background: var(--ok-bg); color: var(--ok); }
+.mfield-title { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: -.1px; }
+
+.mfield textarea {
+  width: 100%;
+  font-size: 12px;
+  font-family: var(--font);
+  padding: 9px 12px;
+  min-height: 88px;
+  background: var(--bg);
+  border: 1px solid var(--bdr);
+  border-radius: var(--r);
+  color: var(--text);
+  outline: none;
+  resize: vertical;
+  line-height: 1.6;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.mfield textarea::placeholder { color: var(--hint); font-weight: 300; font-size: 11px; }
+.mfield textarea:focus {
+  border-color: var(--blue2);
+  background: var(--white);
+  box-shadow: 0 0 0 3px rgba(31,86,214,.08);
+}
+
+/* ═══════════════════════════════════════════
+   AI FEEDBACK PANEL — Redesigned
+═══════════════════════════════════════════ */
+.ai-panel {
+  margin-top: 7px;
+  border-radius: var(--r);
+  overflow: hidden;
+  border: 1px solid var(--blue-lt2);
+  display: none;
+  animation: slidedown .18s ease;
+}
+.ai-panel.visible { display: block; }
+@keyframes slidedown { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+
+.ai-panel-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  background: var(--blue-lt);
+  border-bottom: 1px solid var(--blue-lt2);
+}
+.ai-icon-star { font-size: 11px; }
+.ai-label { font-size: 10px; font-weight: 600; color: var(--blue); letter-spacing: .2px; flex: 1; }
+.ai-thinking-dots {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+.ai-thinking-dots span {
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--blue);
+  animation: blink 1.1s ease-in-out infinite;
+  display: inline-block;
+}
+.ai-thinking-dots span:nth-child(2) { animation-delay: .18s; }
+.ai-thinking-dots span:nth-child(3) { animation-delay: .36s; }
+@keyframes blink { 0%,100%{opacity:.15} 50%{opacity:1} }
+
+.ai-panel-body {
+  padding: 11px 13px;
+  background: var(--white);
+}
+
+/* Score bar */
+.ai-score-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 8px;
+}
+.ai-score-track {
+  flex: 1;
+  height: 4px;
+  background: var(--bdr);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ai-score-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width .5s cubic-bezier(.4,0,.2,1);
+}
+.score-lo .ai-score-fill { background: var(--err); }
+.score-mid .ai-score-fill { background: var(--warn); }
+.score-hi .ai-score-fill { background: var(--ok); }
+
+.ai-score-label {
+  font-size: 11px;
+  font-weight: 700;
+  min-width: 75px;
+  text-align: right;
+  letter-spacing: -.1px;
+}
+.score-lo .ai-score-label { color: var(--err); }
+.score-mid .ai-score-label { color: var(--warn); }
+.score-hi .ai-score-label { color: var(--ok); }
+
+/* Feedback text */
+.ai-feedback-text {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.65;
+  margin-bottom: 0;
+  font-weight: 400;
+}
+
+/* Suggestion box */
+.ai-suggestion {
+  margin-top: 9px;
+  padding: 11px 13px;
+  background: var(--blue-lt);
+  border: 1px solid var(--blue-lt2);
+  border-radius: var(--r);
+}
+.ai-suggestion-label {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--blue);
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+.ai-suggestion-text {
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.65;
+  font-weight: 400;
+}
+.btn-apply {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 4px 12px;
+  background: var(--white);
+  border: 1px solid var(--blue-lt3);
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--blue);
+  cursor: pointer;
+  font-family: var(--font);
+  transition: all .12s;
+}
+.btn-apply:hover {
+  background: var(--blue2);
+  color: #fff;
+  border-color: var(--blue2);
+}
+
+/* ═══════════════════════════════════════════
+   SUBMIT BLOCK
+═══════════════════════════════════════════ */
+.submit-block {
+  background: var(--navy2);
+  border-radius: var(--r-2xl);
+  padding: 24px 28px;
+  margin-top: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  position: relative;
+  overflow: hidden;
+}
+.submit-block::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1.5px;
+  background: linear-gradient(90deg, var(--blue3), var(--gold2), transparent);
+}
+.submit-note {
+  font-size: 12px;
+  color: rgba(255,255,255,.38);
+  line-height: 1.65;
+  max-width: 400px;
+  font-weight: 300;
+}
+.submit-note strong { color: rgba(255,255,255,.65); font-weight: 500; }
+.btn-submit {
+  padding: 11px 28px;
+  background: var(--blue2);
+  color: #fff;
+  border: none;
+  border-radius: var(--r);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+  letter-spacing: -.1px;
+  box-shadow: 0 2px 10px rgba(31,86,214,.4);
+  transition: all .15s;
+}
+.btn-submit:hover { background: var(--blue3); box-shadow: 0 4px 16px rgba(31,86,214,.5); }
+.btn-submit:active { transform: scale(.98); }
+.btn-submit:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
+.btn-submit .spinner {
+  display: none;
+  width: 13px; height: 13px;
+  border: 2px solid rgba(255,255,255,.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  vertical-align: middle;
+  margin-right: 7px;
+}
+.btn-submit.loading .spinner { display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.toast-success {
+  display: none;
+  margin-top: 12px;
+  padding: 13px 16px;
+  background: var(--ok-bg);
+  border: 1px solid var(--ok-bdr);
+  border-radius: var(--r-lg);
+}
+.toast-title { font-size: 13px; font-weight: 600; color: var(--ok); margin-bottom: 2px; }
+.toast-msg { font-size: 12px; color: rgba(10,122,90,.65); font-weight: 300; }
+
+/* ═══════════════════════════════════════════
+   UTILITIES
+═══════════════════════════════════════════ */
+.err-msg { font-size: 11px; color: var(--err); margin-top: 4px; display: none; }
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+  .g2, .g3, .matriz-grid { grid-template-columns: 1fr; }
+  .content { padding: 18px 16px 60px; }
+}
 </style>
 </head>
 <body>
-<div class="shell">
+<div class="app">
 
-<!-- ══ SIDEBAR ══ -->
-<nav class="sb">
-  <div class="sb-top">
-    <div class="sb-brand">
+<!-- ═══════════════ SIDEBAR ═══════════════ -->
+<nav class="sidebar">
+  <div class="sb-brand">
+    <div class="sb-logo-row">
       <div class="sb-mark">
-        <svg viewBox="0 0 13 13" fill="none"><path d="M2 6.5L5 10L11 3" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <svg viewBox="0 0 13 13" fill="none">
+          <path d="M2 6.5L5 10.5L11 2.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
       </div>
       <div>
-        <div class="sb-name">Predictable.ai</div>
-        <div class="sb-byline">by VANAR</div>
+        <div class="sb-brand-name">Predictable.ai</div>
+        <div class="sb-brand-by">by VANAR</div>
       </div>
     </div>
-    <div class="sb-project">
-      <div class="sb-proj-lbl">Módulo activo</div>
-      <div class="sb-proj-name" id="sb-client">Market Intelligence</div>
+    <div class="sb-workspace">
+      <div class="sb-ws-label">Proyecto activo</div>
+      <div class="sb-ws-name" id="sb-client-name">Market Intelligence</div>
     </div>
   </div>
 
   <div class="sb-nav">
-    <div class="sb-cat">Activo</div>
+    <div class="sb-section-label">Activo</div>
 
-    <a class="sb-link here" onclick="scrollTo('sec-empresa')">
-      <div class="sb-ico">🏢</div>
-      <div class="sb-link-body">
-        <div class="sb-link-name">Market Intelligence</div>
-        <div class="sb-link-sub">Intake Form completo</div>
+    <div class="sb-item active">
+      <div class="sb-icon">🏢</div>
+      <div class="sb-item-body">
+        <div class="sb-item-name">Market Intelligence</div>
+        <div class="sb-item-sub">Intake Form completo</div>
       </div>
-      <span class="sb-pill pill-live">Live</span>
-    </a>
+      <span class="sb-tag tag-live">Live</span>
+    </div>
 
-    <div class="sb-cat" style="margin-top:6px">Próximamente</div>
+    <div class="sb-section-label" style="margin-top:8px">Próximamente</div>
 
-    <a class="sb-link soon">
-      <div class="sb-ico">🔍</div>
-      <div class="sb-link-body">
-        <div class="sb-link-name">Revenue Architecture</div>
-        <div class="sb-link-sub">Diseño del sistema</div>
+    <div class="sb-item disabled">
+      <div class="sb-icon">🔍</div>
+      <div class="sb-item-body">
+        <div class="sb-item-name">Revenue Architecture</div>
+        <div class="sb-item-sub">Diseño del sistema de revenue</div>
       </div>
-      <span class="sb-pill pill-soon">Soon</span>
-    </a>
-    <a class="sb-link soon">
-      <div class="sb-ico">🎯</div>
-      <div class="sb-link-body">
-        <div class="sb-link-name">Hunting Systems</div>
-        <div class="sb-link-sub">Prospección automatizada</div>
+      <span class="sb-tag tag-soon">Soon</span>
+    </div>
+
+    <div class="sb-item disabled">
+      <div class="sb-icon">🎯</div>
+      <div class="sb-item-body">
+        <div class="sb-item-name">Hunting Systems</div>
+        <div class="sb-item-sub">Prospección automatizada</div>
       </div>
-      <span class="sb-pill pill-soon">Soon</span>
-    </a>
-    <a class="sb-link soon">
-      <div class="sb-ico">⚙️</div>
-      <div class="sb-link-body">
-        <div class="sb-link-name">Commercial OS</div>
-        <div class="sb-link-sub">CRM & procesos</div>
+      <span class="sb-tag tag-soon">Soon</span>
+    </div>
+
+    <div class="sb-item disabled">
+      <div class="sb-icon">⚙️</div>
+      <div class="sb-item-body">
+        <div class="sb-item-name">Commercial OS</div>
+        <div class="sb-item-sub">CRM & procesos comerciales</div>
       </div>
-      <span class="sb-pill pill-soon">Soon</span>
-    </a>
-    <a class="sb-link soon">
-      <div class="sb-ico">📋</div>
-      <div class="sb-link-body">
-        <div class="sb-link-name">Tender & Bid</div>
-        <div class="sb-link-sub">Licitaciones</div>
+      <span class="sb-tag tag-soon">Soon</span>
+    </div>
+
+    <div class="sb-item disabled">
+      <div class="sb-icon">📋</div>
+      <div class="sb-item-body">
+        <div class="sb-item-name">Tender & Bid</div>
+        <div class="sb-item-sub">Gestión de licitaciones</div>
       </div>
-      <span class="sb-pill pill-soon">Soon</span>
-    </a>
-    <a class="sb-link soon">
-      <div class="sb-ico">📈</div>
-      <div class="sb-link-body">
-        <div class="sb-link-name">Revenue Assurance</div>
-        <div class="sb-link-sub">Control y métricas</div>
+      <span class="sb-tag tag-soon">Soon</span>
+    </div>
+
+    <div class="sb-item disabled">
+      <div class="sb-icon">📈</div>
+      <div class="sb-item-body">
+        <div class="sb-item-name">Revenue Assurance</div>
+        <div class="sb-item-sub">Control y métricas</div>
       </div>
-      <span class="sb-pill pill-soon">Soon</span>
-    </a>
+      <span class="sb-tag tag-soon">Soon</span>
+    </div>
   </div>
 
-  <div class="sb-foot">
-    <div class="sb-progress-row">
+  <div class="sb-footer">
+    <div class="sb-progress-header">
       <span>Completado</span>
-      <strong id="sb-pct">0%</strong>
+      <strong id="sb-pct-label">0%</strong>
     </div>
-    <div class="sb-bar"><div class="sb-bar-fill" id="sb-fill"></div></div>
-    <button class="sb-submit" id="sb-btn" onclick="enviar()">
+    <div class="sb-progressbar">
+      <div class="sb-progressbar-fill" id="sb-fill"></div>
+    </div>
+    <button class="sb-save-btn" id="sb-save-btn" onclick="submitForm()">
       Guardar y enviar
     </button>
   </div>
 </nav>
 
-<!-- ══ MAIN ══ -->
+<!-- ═══════════════ MAIN ═══════════════ -->
 <div class="main">
+
+  <!-- Topbar -->
   <div class="topbar">
-    <div class="tb-title">Market Intelligence — Intake Form</div>
-    <span class="tb-badge"><span class="ldot"></span>En progreso</span>
-    <span class="tb-pct" id="tb-pct">0% completado</span>
+    <div class="topbar-title">Market Intelligence — Intake Form</div>
+    <div class="topbar-status">
+      <div class="live-dot"></div>
+      En progreso
+    </div>
+    <div class="topbar-pct" id="topbar-pct">0% completado</div>
   </div>
 
-  <div class="scroll" id="scroll-area">
+  <!-- Content -->
+  <div class="content" id="main-scroll">
 
-    <!-- BANNER -->
-    <div class="page-banner">
-      <div class="pb-eyebrow">Predictable.ai · Revenue Execution Infrastructure</div>
-      <div class="pb-title">Inteligencia de mercado</div>
-      <div class="pb-desc">Completa este formulario con lo que ya sabes de tu empresa. No necesitas buscar ni calcular nada — con tus respuestas construiremos un análisis de mercado de primer nivel que incluye competencia, tamaño de mercado, oportunidades y recomendaciones accionables.</div>
-      <div class="pb-meta">
-        <span class="pb-tag">⏱ 20–30 minutos</span>
-        <span class="pb-tag">5 secciones</span>
-        <span class="pb-tag">Datos seguros</span>
+    <!-- Hero -->
+    <div class="hero-banner">
+      <div class="hero-eyebrow">Predictable.ai · Revenue Execution Infrastructure</div>
+      <div class="hero-title">Inteligencia de mercado</div>
+      <div class="hero-desc">
+        Completa este formulario con lo que ya sabes de tu empresa. No necesitas buscar ni calcular nada —
+        con tus respuestas construiremos un análisis de primer nivel que incluye competencia, tamaño de mercado,
+        oportunidades y recomendaciones accionables.
+      </div>
+      <div class="hero-meta">
+        <span class="hero-chip">⏱ 20–30 minutos</span>
+        <span class="hero-chip">5 secciones</span>
+        <span class="hero-chip">Datos seguros y confidenciales</span>
       </div>
     </div>
 
-    <!-- ─── SEC 1: TU EMPRESA ─── -->
-    <div class="sec-anchor" id="sec-empresa">
-      <div class="sec-num">1</div>
-      <div class="sec-label">Tu empresa</div>
+    <!-- ─── SECCIÓN 1: TU EMPRESA ─── -->
+    <div class="sec-header" id="sec-empresa">
+      <div class="sec-number">1</div>
+      <div class="sec-title">Tu empresa</div>
       <div class="sec-line"></div>
     </div>
 
-    <div class="block">
-      <div class="block-hdr">
-        <span class="block-icon">🏢</span>
-        <span class="block-title">Datos generales</span>
-        <span class="block-badge">Empresa</span>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">🏢</div>
+        <div class="card-title">Datos generales</div>
+        <span class="card-badge">Empresa</span>
       </div>
       <div class="g2">
         <div class="field">
           <label>Nombre de la empresa</label>
-          <input id="e-nombre" type="text" placeholder="Nombre comercial y/o razón social" oninput="prog()"/>
+          <input id="f-nombre" type="text" placeholder="Nombre comercial y/o razón social" oninput="updateProgress()"/>
         </div>
         <div class="field">
           <label>Sitio web</label>
-          <input id="e-web" type="url" placeholder="https://tuempresa.com" oninput="prog()"/>
+          <input id="f-web" type="url" placeholder="https://tuempresa.com" oninput="updateProgress()"/>
         </div>
       </div>
       <div class="field">
         <label>¿A qué se dedica la empresa?</label>
-        <div class="fhint">En 2–3 oraciones. Ej: Somos una empresa de logística que transporta carga pesada para mineras en el sur del Perú</div>
-        <textarea id="e-desc" placeholder="Describe brevemente tu empresa y lo que hace..." oninput="prog()"></textarea>
+        <div class="field-hint">En 2–3 oraciones. Ej: Somos una empresa de logística que transporta carga pesada para mineras en el sur del Perú.</div>
+        <textarea id="f-desc" placeholder="Describe brevemente tu empresa y lo que hace..." oninput="updateProgress()"></textarea>
       </div>
       <div class="g3">
         <div class="field">
           <label>Años de operación</label>
-          <input id="e-anos" type="text" placeholder="Ej: 8 años (desde 2016)" oninput="prog()"/>
+          <input id="f-anos" type="text" placeholder="Ej: 8 años (desde 2016)" oninput="updateProgress()"/>
         </div>
         <div class="field">
           <label>Número de empleados</label>
-          <input id="e-emp" type="text" placeholder="Ej: 45 empleados, 12 en ventas" oninput="prog()"/>
+          <input id="f-emp" type="text" placeholder="Ej: 45 empleados, 12 en ventas" oninput="updateProgress()"/>
         </div>
         <div class="field">
           <label>Ciudad(es) / regiones donde opera</label>
-          <input id="e-ciudades" type="text" placeholder="Ej: Lima, Arequipa, Cusco" oninput="prog()"/>
+          <input id="f-ciudades" type="text" placeholder="Ej: Lima, Arequipa, Cusco" oninput="updateProgress()"/>
         </div>
       </div>
       <div class="field">
         <label>Estructura societaria</label>
-        <div class="fhint">¿Empresa familiar, socios, parte de un grupo más grande?</div>
-        <input id="e-sociedad" type="text" placeholder="Ej: Empresa familiar — socios padre e hijo / Parte del Grupo XYZ" oninput="prog()"/>
+        <div class="field-hint">¿Empresa familiar, socios externos, parte de un grupo más grande?</div>
+        <input id="f-sociedad" type="text" placeholder="Ej: Empresa familiar — socios padre e hijo / Parte del Grupo XYZ" oninput="updateProgress()"/>
       </div>
     </div>
 
-    <div class="block">
-      <div class="block-hdr">
-        <span class="block-icon">👥</span>
-        <span class="block-title">Clientes y ventas</span>
-        <span class="block-badge">Empresa</span>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">👥</div>
+        <div class="card-title">Clientes y ventas</div>
+        <span class="card-badge">Empresa</span>
       </div>
       <div class="field">
         <label>¿Quién es tu cliente típico?</label>
-        <div class="fhint">Industria, tamaño, perfil de quien toma la decisión, dolor principal</div>
-        <textarea id="e-cliente" placeholder="Ej: Empresas medianas del sector retail, con 50–200 trabajadores, que buscan reducir costos de almacén..." oninput="prog()"></textarea>
+        <div class="field-hint">Industria, tamaño de empresa, perfil del decisor, dolor principal que los lleva a comprarte.</div>
+        <textarea id="f-cliente" placeholder="Ej: Empresas medianas del sector retail, con 50–200 trabajadores, cuyo gerente de operaciones busca reducir costos de almacén y mejorar tiempos de entrega..." oninput="updateProgress()"></textarea>
       </div>
       <div class="field">
-        <label>¿Cuál es el principal problema que le resuelves?</label>
-        <div class="fhint">El «dolor» real que tienen antes de comprarte</div>
-        <textarea id="e-problema" placeholder="Ej: Les quitamos el dolor de gestionar su flota propia — no tienen que comprar camiones ni contratar choferes..." oninput="prog()"></textarea>
+        <label>¿Cuál es el principal problema que le resuelves a tu cliente?</label>
+        <div class="field-hint">El «dolor» real que tienen antes de comprarte. Cuanto más específico, mejor.</div>
+        <textarea id="f-problema" placeholder="Ej: Les quitamos el dolor de gestionar su flota propia — no tienen que comprar camiones ni contratar choferes, y reducen costos logísticos en un 30%..." oninput="updateProgress()"></textarea>
       </div>
       <div class="g2">
         <div class="field">
-          <label>Clientes activos (aprox.)</label>
-          <input id="e-nclientes" type="text" placeholder="Ej: 15 recurrentes / 200 al mes" oninput="prog()"/>
+          <label>Clientes activos aproximados</label>
+          <input id="f-nclientes" type="text" placeholder="Ej: 15 clientes recurrentes / unos 200 clientes al mes" oninput="updateProgress()"/>
         </div>
         <div class="field">
-          <label>Ticket promedio / rango de precio</label>
-          <input id="e-ticket" type="text" placeholder="Ej: S/. 5,000 a 50,000 mensuales / $200 ticket prom." oninput="prog()"/>
+          <label>Ticket promedio o rango de precio por venta</label>
+          <input id="f-ticket" type="text" placeholder="Ej: S/. 5,000 a 50,000 mensuales / Ticket prom: $200" oninput="updateProgress()"/>
         </div>
       </div>
       <div class="field">
         <label>2–3 clientes más importantes</label>
-        <div class="fhint">Solo el rubro si prefieres no dar nombres</div>
-        <input id="e-clientes-top" type="text" placeholder="Ej: Una AFP, una cadena de supermercados, una minera" oninput="prog()"/>
+        <div class="field-hint">Solo el rubro si prefieres no dar nombres. Ej: Una AFP, una cadena de supermercados, una minera.</div>
+        <input id="f-top-clientes" type="text" placeholder="Ej: Una AFP, una cadena de supermercados, una empresa minera" oninput="updateProgress()"/>
       </div>
       <div class="field">
         <label>¿Cómo consigues nuevos clientes hoy?</label>
-        <div class="fhint">Escribe cada canal y presiona Enter</div>
-        <div class="tagbox" id="tb-canales"><input id="ti-canales" placeholder="Ej: Referidos, LinkedIn, ferias, Google Ads..."/></div>
-        <input type="hidden" id="e-canales"/>
+        <div class="field-hint">Escribe cada canal y presiona Enter para añadirlo.</div>
+        <div class="tagbox" id="tagbox-canales">
+          <input id="ti-canales" placeholder="Ej: Referidos, LinkedIn, ferias comerciales, Google Ads..."/>
+        </div>
+        <input type="hidden" id="f-canales"/>
       </div>
     </div>
 
-    <!-- ─── SEC 2: PRODUCTO ─── -->
-    <div class="sec-anchor" id="sec-producto">
-      <div class="sec-num">2</div>
-      <div class="sec-label">Producto y servicio</div>
+    <!-- ─── SECCIÓN 2: PRODUCTO ─── -->
+    <div class="sec-header" id="sec-producto">
+      <div class="sec-number">2</div>
+      <div class="sec-title">Producto y servicio</div>
       <div class="sec-line"></div>
     </div>
 
-    <div class="block">
-      <div class="block-hdr">
-        <span class="block-icon">🎯</span>
-        <span class="block-title">Lo que vendes</span>
-        <span class="block-badge">Producto</span>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">🎯</div>
+        <div class="card-title">Lo que vendes</div>
+        <span class="card-badge">Producto</span>
       </div>
       <div class="field">
-        <label>Productos o servicios que ofreces (lista todos)</label>
-        <div class="fhint">Ej: (1) Transporte de carga, (2) Almacenaje, (3) Picking & packing. El 70% de ingresos viene del transporte.</div>
-        <textarea id="p-lista" placeholder="Lista todos con su peso aproximado en ventas..." oninput="prog()"></textarea>
-      </div>
-      <div class="field">
-        <label>Producto / servicio estrella</label>
-        <input id="p-estrella" type="text" placeholder="El que más ingresos genera o el que más clientes compran" oninput="prog()"/>
+        <label>¿Qué productos o servicios vendes? Lista todos.</label>
+        <div class="field-hint">Ej: (1) Transporte de carga, (2) Almacenaje, (3) Picking & packing. El 70% de ingresos viene del transporte.</div>
+        <textarea id="f-productos" placeholder="Lista todos tus productos o servicios con su peso aproximado en ingresos..." oninput="updateProgress()"></textarea>
       </div>
       <div class="g2">
         <div class="field">
-          <label>Tu precio vs la competencia</label>
-          <div class="rpills">
-            <div class="rpill" onclick="pick(this,'p-precio')" data-v="Más barato">Más barato</div>
-            <div class="rpill" onclick="pick(this,'p-precio')" data-v="Similar">Similar</div>
-            <div class="rpill" onclick="pick(this,'p-precio')" data-v="Más caro">Más caro</div>
-          </div>
-          <input type="hidden" id="p-precio"/>
-          <input type="text" id="p-precio-por" style="margin-top:8px" placeholder="¿Por qué?" oninput="prog()"/>
+          <label>Producto / servicio estrella</label>
+          <div class="field-hint">El que más ingresos genera o el que más clientes compran.</div>
+          <input id="f-estrella" type="text" placeholder="El que más ingresos genera..." oninput="updateProgress()"/>
         </div>
         <div class="field">
           <label>¿Cómo se entrega al cliente?</label>
-          <div class="rpills">
-            <div class="rpill" onclick="pick(this,'p-entrega')" data-v="Presencial">Presencial</div>
-            <div class="rpill" onclick="pick(this,'p-entrega')" data-v="Envío físico">Envío físico</div>
-            <div class="rpill" onclick="pick(this,'p-entrega')" data-v="Digital">Digital</div>
-            <div class="rpill" onclick="pick(this,'p-entrega')" data-v="Instalación">Instalación</div>
-            <div class="rpill" onclick="pick(this,'p-entrega')" data-v="Mixto">Mixto</div>
+          <div class="pill-group" style="margin-top:4px">
+            <div class="pill" onclick="selectPill(this,'f-entrega')" data-v="Visita presencial">Visita presencial</div>
+            <div class="pill" onclick="selectPill(this,'f-entrega')" data-v="Envío físico">Envío físico</div>
+            <div class="pill" onclick="selectPill(this,'f-entrega')" data-v="Digital / cloud">Digital / cloud</div>
+            <div class="pill" onclick="selectPill(this,'f-entrega')" data-v="Instalación en sitio">Instalación en sitio</div>
+            <div class="pill" onclick="selectPill(this,'f-entrega')" data-v="Mixto">Mixto</div>
           </div>
-          <input type="hidden" id="p-entrega"/>
+          <input type="hidden" id="f-entrega"/>
         </div>
       </div>
       <div class="field">
-        <label>Tu ventaja — lo que la competencia NO tiene</label>
-        <div class="fhint">Ej: Certificación ISO 9001, entrega en 24h, app propia, 20 años en el mercado</div>
-        <textarea id="p-ventaja" placeholder="¿Qué te diferencia genuinamente?" oninput="prog()"></textarea>
+        <label>Tu precio vs la competencia</label>
+        <div class="pill-group" style="margin-bottom:8px">
+          <div class="pill" onclick="selectPill(this,'f-precio')" data-v="Más barato">Más barato</div>
+          <div class="pill" onclick="selectPill(this,'f-precio')" data-v="Similar">Similar</div>
+          <div class="pill" onclick="selectPill(this,'f-precio')" data-v="Más caro">Más caro</div>
+        </div>
+        <input type="hidden" id="f-precio"/>
+        <input id="f-precio-por" type="text" placeholder="¿Por qué? Explica brevemente..." oninput="updateProgress()"/>
+      </div>
+      <div class="field">
+        <label>Tu ventaja competitiva — lo que la competencia NO tiene</label>
+        <div class="field-hint">Ej: Certificación ISO 9001, entregamos en 24h, tenemos app propia, llevamos 20 años en el mercado.</div>
+        <textarea id="f-ventaja" placeholder="¿Qué te diferencia genuinamente de la competencia?" oninput="updateProgress()"></textarea>
       </div>
     </div>
 
-    <div class="block">
-      <div class="block-hdr">
-        <span class="block-icon">📊</span>
-        <span class="block-title">Estado actual y retos</span>
-        <span class="block-badge">Producto</span>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">📊</div>
+        <div class="card-title">Estado actual y retos</div>
+        <span class="card-badge">Producto</span>
       </div>
       <div class="field">
         <label>Tendencia de ventas en el último año</label>
-        <div class="rpills" style="margin-bottom:8px">
-          <div class="rpill" onclick="pick(this,'p-tend')" data-v="Creciendo">📈 Creciendo</div>
-          <div class="rpill" onclick="pick(this,'p-tend')" data-v="Estables">➡️ Estables</div>
-          <div class="rpill" onclick="pick(this,'p-tend')" data-v="Bajando">📉 Bajando</div>
+        <div class="pill-group" style="margin-bottom:10px">
+          <div class="pill" onclick="selectPill(this,'f-tendencia')" data-v="Creciendo">📈 Creciendo</div>
+          <div class="pill" onclick="selectPill(this,'f-tendencia')" data-v="Estables">➡️ Estables</div>
+          <div class="pill" onclick="selectPill(this,'f-tendencia')" data-v="Bajando">📉 Bajando</div>
         </div>
-        <input type="hidden" id="p-tend"/>
-        <textarea id="p-tend-por" placeholder="Comenta brevemente por qué crees que es así..." oninput="prog()"></textarea>
+        <input type="hidden" id="f-tendencia"/>
+        <textarea id="f-tendencia-por" placeholder="Comenta brevemente por qué crees que es así..." oninput="updateProgress()"></textarea>
       </div>
       <div class="g2">
         <div class="field">
           <label>¿Qué frena más tu crecimiento hoy?</label>
-          <textarea id="p-freno" placeholder="Ej: Falta presencia digital / poco capital / la competencia gana en precio..." oninput="prog()"></textarea>
+          <textarea id="f-freno" placeholder="Ej: Falta presencia digital / poco capital / la competencia nos gana en precio / no tenemos equipo de ventas..." oninput="updateProgress()"></textarea>
         </div>
         <div class="field">
           <label>¿Qué te pide el cliente que aún no puedes ofrecer?</label>
-          <textarea id="p-gap" placeholder="Oportunidades que ves pero que no has podido capitalizar..." oninput="prog()"></textarea>
+          <textarea id="f-gap" placeholder="Oportunidades que ves pero que no has podido capitalizar aún..." oninput="updateProgress()"></textarea>
         </div>
       </div>
     </div>
 
-    <!-- ─── SEC 3: COMPETENCIA ─── -->
-    <div class="sec-anchor" id="sec-comp">
-      <div class="sec-num">3</div>
-      <div class="sec-label">Competencia</div>
+    <!-- ─── SECCIÓN 3: COMPETENCIA ─── -->
+    <div class="sec-header" id="sec-comp">
+      <div class="sec-number">3</div>
+      <div class="sec-title">Competencia</div>
       <div class="sec-line"></div>
     </div>
 
-    <div class="block">
-      <div class="block-hdr">
-        <span class="block-icon">🥊</span>
-        <span class="block-title">Tus competidores</span>
-        <span class="block-badge">Competencia</span>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">🥊</div>
+        <div class="card-title">Tus competidores</div>
+        <span class="card-badge">Competencia</span>
       </div>
       <div class="field">
         <label>Competidores principales (3–5)</label>
-        <div class="fhint">Los que más te quitan clientes o los que más te preocupan. Escribe cada uno y presiona Enter</div>
-        <div class="tagbox" id="tb-comp"><input id="ti-comp" placeholder="Ej: Empresa A, importaciones de China..."/></div>
-        <input type="hidden" id="c-comp"/>
+        <div class="field-hint">Los que más te quitan clientes o los que más te preocupan. Escribe cada uno y presiona Enter.</div>
+        <div class="tagbox" id="tagbox-comp">
+          <input id="ti-comp" placeholder="Ej: Empresa A, importaciones de China, startup X..."/>
+        </div>
+        <input type="hidden" id="f-competidores"/>
       </div>
       <div class="g2">
         <div class="field">
           <label>¿Qué hace bien tu competidor más fuerte?</label>
-          <textarea id="c-bien" placeholder="Lo que honestamente hacen mejor que tú..." oninput="prog()"></textarea>
+          <div class="field-hint">Lo que tú reconoces honestamente que hacen mejor.</div>
+          <textarea id="f-comp-bien" placeholder="Sus fortalezas reales..." oninput="updateProgress()"></textarea>
         </div>
         <div class="field">
           <label>¿Qué hace mal o qué les critica el mercado?</label>
-          <textarea id="c-mal" placeholder="Quejas que has escuchado de sus clientes..." oninput="prog()"></textarea>
+          <div class="field-hint">Quejas que has escuchado de sus clientes, debilidades conocidas.</div>
+          <textarea id="f-comp-mal" placeholder="Sus debilidades y puntos ciegos..." oninput="updateProgress()"></textarea>
         </div>
       </div>
       <div class="g2">
         <div class="field">
-          <label>¿Hay productos importados que compitan?</label>
-          <textarea id="c-import" placeholder="Ej: Maquinaria china que llega 30% más barata / No aplica" oninput="prog()"></textarea>
+          <label>¿Hay productos importados que compitan contigo?</label>
+          <textarea id="f-importados" placeholder="Ej: Maquinaria china que llega 30% más barata / No aplica a nuestro servicio" oninput="updateProgress()"></textarea>
         </div>
         <div class="field">
-          <label>Precios de la competencia vs los tuyos</label>
-          <textarea id="c-precios" placeholder="Ej: Cobran similar / 20% menos / más caros pero con más marca" oninput="prog()"></textarea>
+          <label>¿Cuánto cobra la competencia vs tú?</label>
+          <textarea id="f-comp-precio" placeholder="Ej: Cobran similar / 20% menos / son más caros pero con más marca" oninput="updateProgress()"></textarea>
         </div>
       </div>
-      <div class="div"></div>
+      <div class="divider"></div>
       <div class="field">
         <label>Cuando un cliente te compara con la competencia, ¿qué le dices?</label>
-        <div class="fhint">Tu argumento real — no el que suena bien, el que realmente usas</div>
-        <textarea id="c-pitch" placeholder="Tu pitch de diferenciación real..." oninput="prog()"></textarea>
+        <div class="field-hint">Tu argumento de venta real — no el que suena bien, el que realmente usas frente al cliente.</div>
+        <textarea id="f-pitch" placeholder="Tu pitch de diferenciación real..." oninput="updateProgress()"></textarea>
       </div>
       <div class="g2">
         <div class="field">
           <label>¿Por qué te han preferido tus clientes sobre la competencia?</label>
-          <textarea id="c-porq" placeholder="La razón honesta: precio, confianza, velocidad, calidad..." oninput="prog()"></textarea>
+          <div class="field-hint">La razón real: precio, confianza, velocidad, calidad, relación personal, etc.</div>
+          <textarea id="f-porq" placeholder="La razón honesta por la que te eligen..." oninput="updateProgress()"></textarea>
         </div>
         <div class="field">
           <label>¿Han aparecido competidores nuevos en los últimos 2 años?</label>
-          <textarea id="c-nuevos" placeholder="Startups, empresas extranjeras, actores grandes nuevos en tu segmento..." oninput="prog()"></textarea>
+          <textarea id="f-nuevos-comp" placeholder="Startups, empresas extranjeras, actores grandes que antes no jugaban en tu segmento..." oninput="updateProgress()"></textarea>
         </div>
       </div>
     </div>
 
-    <!-- ─── SEC 4: MERCADO ─── -->
-    <div class="sec-anchor" id="sec-mkt">
-      <div class="sec-num">4</div>
-      <div class="sec-label">Mercado y contexto</div>
+    <!-- ─── SECCIÓN 4: MERCADO ─── -->
+    <div class="sec-header" id="sec-mkt">
+      <div class="sec-number">4</div>
+      <div class="sec-title">Mercado y contexto</div>
       <div class="sec-line"></div>
     </div>
 
-    <div class="block">
-      <div class="block-hdr">
-        <span class="block-icon">💡</span>
-        <span class="block-title">Tu mercado</span>
-        <span class="block-badge">Mercado</span>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">🌎</div>
+        <div class="card-title">Tu mercado</div>
+        <span class="card-badge">Mercado</span>
       </div>
       <div class="g2">
         <div class="field">
           <label>¿En qué país(es) vendes actualmente?</label>
-          <input id="m-paises" type="text" placeholder="Ej: Solo Perú / Perú y Colombia" oninput="prog()"/>
+          <input id="f-paises" type="text" placeholder="Ej: Solo Perú / Perú y Colombia / Exportamos a Chile" oninput="updateProgress()"/>
         </div>
         <div class="field">
           <label>¿A qué países te gustaría expandirte?</label>
-          <input id="m-exp" type="text" placeholder="Ej: Bolivia y Ecuador en 2 años / Solo nacional" oninput="prog()"/>
+          <input id="f-expansion" type="text" placeholder="Ej: Bolivia y Ecuador en 2 años / Por ahora solo nacional" oninput="updateProgress()"/>
         </div>
       </div>
       <div class="field">
         <label>Tu sector — ¿creciendo, estable o en caída?</label>
-        <div class="rpills" style="margin-bottom:8px">
-          <div class="rpill" onclick="pick(this,'m-sect')" data-v="Creciendo">📈 Creciendo</div>
-          <div class="rpill" onclick="pick(this,'m-sect')" data-v="Estable">➡️ Estable</div>
-          <div class="rpill" onclick="pick(this,'m-sect')" data-v="En caída">📉 En caída</div>
+        <div class="pill-group" style="margin-bottom:10px">
+          <div class="pill" onclick="selectPill(this,'f-sector')" data-v="Creciendo">📈 Creciendo</div>
+          <div class="pill" onclick="selectPill(this,'f-sector')" data-v="Estable">➡️ Estable</div>
+          <div class="pill" onclick="selectPill(this,'f-sector')" data-v="En caída">📉 En caída</div>
         </div>
-        <input type="hidden" id="m-sect"/>
-        <textarea id="m-sect-por" placeholder="¿Por qué crees que es así?" oninput="prog()"></textarea>
+        <input type="hidden" id="f-sector"/>
+        <textarea id="f-sector-por" placeholder="¿Por qué crees que es así? Tu percepción como experto del sector." oninput="updateProgress()"></textarea>
       </div>
       <div class="g2">
         <div class="field">
           <label>¿Qué está cambiando en tu industria últimamente?</label>
-          <textarea id="m-cambios" placeholder="Digitalización, nuevas regulaciones, cambio en hábitos, entrada de grandes cadenas..." oninput="prog()"></textarea>
+          <textarea id="f-cambios" placeholder="Ej: Digitalización acelerada, nuevas regulaciones ambientales, cambio en hábitos del consumidor..." oninput="updateProgress()"></textarea>
         </div>
         <div class="field">
           <label>¿Qué tan grande crees que es tu mercado?</label>
-          <textarea id="m-size" placeholder="Ej: Unas 500 empresas podrían ser mis clientes / El mercado mueve $50M al año" oninput="prog()"></textarea>
+          <div class="field-hint">Tu estimación intuitiva está bien. No necesitas datos exactos.</div>
+          <textarea id="f-market-size" placeholder="Ej: Unas 500 empresas podrían ser mis clientes / El mercado mueve unos $50M al año" oninput="updateProgress()"></textarea>
         </div>
       </div>
     </div>
 
-    <div class="block">
-      <div class="block-hdr">
-        <span class="block-icon">⚠️</span>
-        <span class="block-title">Riesgos y oportunidades</span>
-        <span class="block-badge">Mercado</span>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">⚡</div>
+        <div class="card-title">Riesgos y oportunidades</div>
+        <span class="card-badge">Mercado</span>
       </div>
       <div class="g2">
         <div class="field">
           <label>¿Qué te preocupa más del entorno externo?</label>
-          <textarea id="m-riesgo" placeholder="Inestabilidad política, tipo de cambio, que llegue una empresa grande, nueva regulación..." oninput="prog()"></textarea>
+          <textarea id="f-riesgo" placeholder="Ej: Inestabilidad política, tipo de cambio, que llegue una empresa grande del extranjero, nueva regulación..." oninput="updateProgress()"></textarea>
         </div>
         <div class="field">
-          <label>¿Qué oportunidad grande ves que nadie aprovecha bien?</label>
-          <textarea id="m-opp" placeholder="El gap que percibes — un segmento, una región, un problema sin resolver..." oninput="prog()"></textarea>
+          <label>¿Qué oportunidad grande ves que nadie está aprovechando bien?</label>
+          <textarea id="f-opp" placeholder="El gap que percibes — puede ser un segmento, una región, un problema sin resolver..." oninput="updateProgress()"></textarea>
         </div>
       </div>
       <div class="g2">
         <div class="field">
-          <label>¿Dependes de algún proveedor o insumo crítico?</label>
-          <textarea id="m-prov" placeholder="Ej: Importamos 80% de materia prima de un solo proveedor en China" oninput="prog()"></textarea>
+          <label>¿Dependes de algún proveedor o insumo crítico difícil de reemplazar?</label>
+          <textarea id="f-proveedor" placeholder="Ej: Importamos el 80% de nuestra materia prima de un solo proveedor en China / No, todo es local" oninput="updateProgress()"></textarea>
         </div>
         <div class="field">
-          <label>¿El Estado (licitaciones) es relevante para tu negocio?</label>
-          <div class="rpills" style="margin-bottom:8px">
-            <div class="rpill" onclick="pick(this,'m-estado')" data-v="Sí, ya vendemos">Sí, ya vendemos</div>
-            <div class="rpill" onclick="pick(this,'m-estado')" data-v="Quisiéramos entrar">Quisiéramos entrar</div>
-            <div class="rpill" onclick="pick(this,'m-estado')" data-v="No aplica">No aplica</div>
+          <label>¿Vender al Estado (licitaciones) es relevante para tu negocio?</label>
+          <div class="pill-group" style="margin-bottom:8px">
+            <div class="pill" onclick="selectPill(this,'f-estado')" data-v="Sí, ya vendemos">Sí, ya vendemos</div>
+            <div class="pill" onclick="selectPill(this,'f-estado')" data-v="Quisiéramos entrar">Quisiéramos entrar</div>
+            <div class="pill" onclick="selectPill(this,'f-estado')" data-v="No aplica">No aplica</div>
           </div>
-          <input type="hidden" id="m-estado"/>
+          <input type="hidden" id="f-estado"/>
         </div>
       </div>
       <div class="field">
         <label>¿Algún dato, noticia o cambio reciente que debamos saber?</label>
-        <textarea id="m-noticia" placeholder="Algo que pasó en tu sector, con un competidor, o en el mercado que consideres relevante..." oninput="prog()"></textarea>
+        <div class="field-hint">Algo que pasó en tu sector, con un competidor, o en el mercado que consideres importante para el análisis.</div>
+        <textarea id="f-noticia" placeholder="Contexto reciente relevante para el análisis..." oninput="updateProgress()"></textarea>
       </div>
     </div>
 
-    <!-- ─── SEC 5: MATRIZ ─── -->
-    <div class="sec-anchor" id="sec-matriz">
-      <div class="sec-num">5</div>
-      <div class="sec-label">Matriz de roles comerciales</div>
+    <!-- ─── SECCIÓN 5: MATRIZ ─── -->
+    <div class="sec-header" id="sec-matriz">
+      <div class="sec-number">5</div>
+      <div class="sec-title">Matriz de roles comerciales</div>
       <div class="sec-line"></div>
     </div>
 
-    <div class="block">
-      <div class="block-hdr">
-        <span class="block-icon">📊</span>
-        <span class="block-title">Inteligencia comercial por rol</span>
-        <span class="block-badge">IA Asistida</span>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">🤖</div>
+        <div class="card-title">Inteligencia comercial por rol</div>
+        <span class="card-badge">IA Asistida</span>
       </div>
-      <p style="font-size:12px;color:var(--mut);margin-bottom:14px;line-height:1.65">
-        Selecciona los roles a los que vendes y completa la matriz. El <strong style="color:var(--blue)">asistente de IA</strong> evalúa cada campo en tiempo real comparándolo con el estándar profesional de una matriz de inteligencia comercial B2B — te da un score, feedback específico y una versión mejorada si aplica.
+      <p style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:16px;font-weight:300">
+        Selecciona los roles a los que le vendes y completa la matriz. El <strong style="color:var(--blue);font-weight:600">asistente de calidad</strong> evalúa cada campo en tiempo real comparándolo con el estándar de matrices comerciales B2B profesionales — te da un score del 1 al 10, feedback directo sobre qué falta, y una versión mejorada si el texto no alcanza el nivel requerido.
       </p>
-      <div class="rol-grid" id="rol-grid">
+      <div class="rol-selector" id="rol-selector">
         <div class="rol-pill" onclick="toggleRol(this)" data-rol="CEO / Gerente General">CEO / Gerente General</div>
         <div class="rol-pill" onclick="toggleRol(this)" data-rol="Gerente Comercial">Gerente Comercial</div>
         <div class="rol-pill" onclick="toggleRol(this)" data-rol="Gerente de Ventas">Gerente de Ventas</div>
@@ -807,391 +1458,602 @@ html,body{height:100%;font-family:'Plus Jakarta Sans',sans-serif;background:var(
         <div class="rol-pill" onclick="toggleRol(this)" data-rol="Gerente de Operaciones">Gerente de Operaciones</div>
         <div class="rol-pill" onclick="toggleRol(this)" data-rol="Gerente de RRHH">Gerente de RRHH</div>
         <div class="rol-pill" onclick="toggleRol(this)" data-rol="CFO / Gerente Financiero">CFO / Gerente Financiero</div>
-        <div class="rol-pill" onclick="toggleRol(this)" data-rol="CTO / Director Tecnología">CTO / Director Tecnología</div>
-        <div class="rol-pill" onclick="toggleRol(this)" data-rol="Gerente de CX">Gerente de CX</div>
+        <div class="rol-pill" onclick="toggleRol(this)" data-rol="CTO / Director de Tecnología">CTO / Director Tecnología</div>
+        <div class="rol-pill" onclick="toggleRol(this)" data-rol="Gerente de Experiencia de Cliente">Gerente de CX</div>
         <div class="rol-pill" onclick="toggleRol(this)" data-rol="Socio / Fundador">Socio / Fundador</div>
       </div>
-      <p style="font-size:11px;color:var(--sub);font-style:italic">Selecciona los roles para desplegar sus tarjetas de análisis</p>
+      <p style="font-size:11px;color:var(--sub);font-style:italic;margin-top:4px">Selecciona un rol para desplegar su tarjeta de análisis.</p>
     </div>
 
-    <div id="mcard-area"></div>
+    <div id="mcard-container"></div>
     <input type="hidden" id="f-matriz"/>
 
-    <!-- SUBMIT -->
-    <div class="submit-wrap">
+    <!-- Submit -->
+    <div class="submit-block">
       <div class="submit-note">
-        Al enviar, toda la información llega a tu Google Sheet de <strong>Predictable.ai</strong> en tiempo real. Podrás editar y reenviar en cualquier momento.
+        Al enviar, toda la información llega directamente a tu Google Sheet de <strong>Predictable.ai</strong> en tiempo real. Podrás regresar y reenviar en cualquier momento con información actualizada.
       </div>
-      <button class="btn-main" id="btn-enviar" onclick="enviar()">
-        <span class="spin"></span>Enviar información
+      <button class="btn-submit" id="btn-submit" onclick="submitForm()">
+        <span class="spinner"></span>Enviar información
       </button>
     </div>
-    <div class="toast" id="toast">
-      <div class="toast-t">✓ Información enviada correctamente</div>
-      <div class="toast-m">El equipo de Predictable.ai la recibirá en breve y comenzará tu análisis de mercado.</div>
+    <div class="toast-success" id="toast">
+      <div class="toast-title">✓ Información enviada correctamente</div>
+      <div class="toast-msg">El equipo de Predictable.ai la recibirá en breve y comenzará a trabajar en tu análisis de mercado.</div>
     </div>
 
-  </div><!-- /scroll -->
+  </div><!-- /content -->
 </div><!-- /main -->
-</div><!-- /shell -->
+</div><!-- /app -->
 
 <script>
-const GS = 'https://script.google.com/macros/s/AKfycbzXzlEPHXFNHty30D9rBvnbHw_gfh3NtwhSiZsS4KMMxJfLzoeuo_jibJnIbLtRBer6Ng/exec';
+'use strict';
 
-// ── TAG INPUTS ──
-function makeTag(boxId, inputId, hidId) {
+// ═══════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════
+const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbzXzlEPHXFNHty30D9rBvnbHw_gfh3NtwhSiZsS4KMMxJfLzoeuo_jibJnIbLtRBer6Ng/exec';
+const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
+const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
+
+// ═══════════════════════════════════════════
+// TAG INPUTS
+// ═══════════════════════════════════════════
+function setupTagInput(boxId, inputId, hiddenId) {
   const box = document.getElementById(boxId);
   const inp = document.getElementById(inputId);
-  const hid = document.getElementById(hidId);
-  let tags = [];
+  const hid = document.getElementById(hiddenId);
+  const tags = [];
+
   function render() {
-    box.querySelectorAll('.chip').forEach(c => c.remove());
-    tags.forEach((t, i) => {
-      const el = document.createElement('div'); el.className = 'chip';
-      el.appendChild(document.createTextNode(t));
-      const btn = document.createElement('button'); btn.textContent = '×'; btn.type = 'button';
-      btn.addEventListener('click', e => { e.stopPropagation(); tags.splice(i,1); render(); prog(); });
-      el.appendChild(btn); box.insertBefore(el, inp);
+    box.querySelectorAll('.tag-chip').forEach(c => c.remove());
+    tags.forEach((tag, i) => {
+      const chip = document.createElement('div');
+      chip.className = 'tag-chip';
+      chip.appendChild(document.createTextNode(tag));
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = '×';
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        tags.splice(i, 1);
+        render();
+        updateProgress();
+      });
+      chip.appendChild(btn);
+      box.insertBefore(chip, inp);
     });
     hid.value = tags.join(', ');
   }
+
   inp.addEventListener('keydown', function(e) {
-    if ((e.key==='Enter'||e.key===',') && this.value.trim()) {
-      e.preventDefault(); tags.push(this.value.trim()); this.value=''; render(); prog();
+    if ((e.key === 'Enter' || e.key === ',') && this.value.trim()) {
+      e.preventDefault();
+      tags.push(this.value.trim());
+      this.value = '';
+      render();
+      updateProgress();
     }
   });
   box.addEventListener('click', () => inp.focus());
 }
-makeTag('tb-canales','ti-canales','e-canales');
-makeTag('tb-comp','ti-comp','c-comp');
 
-// ── RADIO PILLS ──
-function pick(el, hidId) {
-  el.closest('.rpills').querySelectorAll('.rpill').forEach(r => r.classList.remove('on'));
+setupTagInput('tagbox-canales', 'ti-canales', 'f-canales');
+setupTagInput('tagbox-comp', 'ti-comp', 'f-competidores');
+
+// ═══════════════════════════════════════════
+// RADIO PILLS
+// ═══════════════════════════════════════════
+function selectPill(el, hiddenId) {
+  el.closest('.pill-group').querySelectorAll('.pill').forEach(p => p.classList.remove('on'));
   el.classList.add('on');
-  document.getElementById(hidId).value = el.dataset.v;
-  prog();
+  document.getElementById(hiddenId).value = el.dataset.v;
+  updateProgress();
 }
 
-// ── PROGRESS ──
-const FIELDS = [
-  'e-nombre','e-web','e-desc','e-cliente','e-problema','e-canales',
-  'p-lista','p-estrella','p-ventaja','p-tend-por','p-freno',
-  'c-comp','c-bien','c-mal','c-pitch','c-porq',
-  'm-paises','m-sect','m-riesgo','m-opp',
+// ═══════════════════════════════════════════
+// PROGRESS
+// ═══════════════════════════════════════════
+const PROGRESS_FIELDS = [
+  'f-nombre', 'f-web', 'f-desc', 'f-cliente', 'f-problema', 'f-canales',
+  'f-productos', 'f-estrella', 'f-ventaja', 'f-tendencia-por', 'f-freno',
+  'f-competidores', 'f-comp-bien', 'f-comp-mal', 'f-pitch', 'f-porq',
+  'f-paises', 'f-sector', 'f-riesgo', 'f-opp',
   'f-matriz'
 ];
-function prog() {
-  const clientName = document.getElementById('e-nombre').value.trim();
-  if (clientName) document.getElementById('sb-client').textContent = clientName;
-  const filled = FIELDS.filter(id => { const el = document.getElementById(id); return el && el.value.trim(); }).length;
-  const pct = Math.round((filled / FIELDS.length) * 100);
-  document.getElementById('sb-pct').textContent = pct + '%';
+
+function updateProgress() {
+  const clientName = document.getElementById('f-nombre').value.trim();
+  if (clientName) {
+    document.getElementById('sb-client-name').textContent = clientName;
+  }
+
+  const filled = PROGRESS_FIELDS.filter(id => {
+    const el = document.getElementById(id);
+    return el && el.value.trim().length > 0;
+  }).length;
+
+  const pct = Math.round((filled / PROGRESS_FIELDS.length) * 100);
   document.getElementById('sb-fill').style.width = pct + '%';
-  document.getElementById('tb-pct').textContent = pct + '% completado';
+  document.getElementById('sb-pct-label').textContent = pct + '%';
+  document.getElementById('topbar-pct').textContent = pct + '% completado';
 }
 
-// ── MATRIZ ──
-const roles = new Set();
-const timers = {};
-const lastVal = {};
-window._suggs = {};
+// Listen to all inputs
+document.querySelectorAll('input[type="text"], input[type="url"], textarea').forEach(el => {
+  el.addEventListener('input', updateProgress);
+});
 
-function sid(s) { return s.replace(/[^a-zA-Z0-9]/g,'_'); }
-
-const CAMPOS = {
-  p:  {
-    label:'Problema', badge:'mb-p', btxt:'Problema',
-    hint:'El problema central que enfrenta este rol desde SU perspectiva, no desde tu producto.',
-    desc:'Debe estar escrito desde la perspectiva del ejecutivo, en bullets concisos, sin mencionar la solución. Específico para este rol — no genérico.',
-    ejemplos:[
-      '- Alta tasa de rotación de clientes que cambian fácilmente por precio o promociones.\n- Dependencia de promociones para retener, lo que erosiona márgenes.\n- Dificultad para diferenciar la empresa frente a competidores más agresivos.',
-      '- Canales tradicionales saturados y poco eficientes.\n- Dificultad para ofrecer experiencia homogénea y trazable en todos los puntos de contacto.',
-      '- Dificultad para atraer y retener talento con beneficios diferenciadores.\n- Altos niveles de rotación en áreas críticas (atención, soporte, ventas).'
+// ═══════════════════════════════════════════
+// MATRIZ — CAMPO DEFINITIONS con ejemplos reales
+// ═══════════════════════════════════════════
+const CAMPO_DEFS = {
+  problema: {
+    label: 'Problema',
+    badge: 'mb-problema',
+    badgeText: 'Problema',
+    placeholder: '¿Cuál es el problema central que enfrenta este rol? Escríbelo desde su perspectiva, no desde tu producto. Usa bullets cortos.',
+    criterio: 'Debe estar escrito desde la perspectiva del ejecutivo, en bullets concisos (con guion), sin mencionar la solución. Específico para este rol — no genérico.',
+    ejemplos: [
+      '- Alta tasa de rotación de clientes que cambian fácilmente por precio o promociones.\n- Dependencia de promociones de precio para atraer o retener usuarios, lo cual erosiona márgenes.\n- Retos para retención y fidelización, impactando la rentabilidad del negocio.',
+      '- Canales tradicionales (teléfono, mail) saturados y poco eficientes.\n- Dificultad para ofrecer una experiencia homogénea y trazable en todos los puntos de contacto.',
+      '- Dificultad para atraer y retener talento con beneficios diferenciadores.\n- Altos niveles de rotación en áreas críticas (atención, soporte, ventas).',
+      '- Dificultad para garantizar disponibilidad y desempeño uniforme de la red de proveedores.\n- Baja visibilidad en tiempo real del desempeño de proveedores.'
     ]
   },
-  s:  {
-    label:'Síntomas', badge:'mb-s', btxt:'Síntomas',
-    hint:'Señales visibles y situaciones concretas que experimenta este rol en su día a día.',
-    desc:'Evidencias observables, no causas. Lo que el rol VE y SIENTE antes de saber que tiene un problema. Concreto y específico para su posición.',
-    ejemplos:[
-      '- Largos tiempos de espera y clientes que deben repetir información en distintos canales.\n- NPS por debajo de objetivos dos trimestres consecutivos.',
-      '- Retos para retención y fidelización impactando la rentabilidad del negocio.\n- Alto costo de adquisición de nuevos usuarios.',
-      '- Empleados perciben los beneficios actuales como limitados o poco relevantes.\n- Quejas relacionadas con falta de apoyo en salud, bienestar o emergencias.'
+  sintomas: {
+    label: 'Síntomas',
+    badge: 'mb-sintomas',
+    badgeText: 'Síntomas',
+    placeholder: '¿Qué señales visibles experimenta este rol que delatan el problema? Evidencias observables, no causas.',
+    criterio: 'Evidencias observables en el día a día de este rol. Lo que VE y SIENTE. No son causas ni consecuencias — son señales concretas que indican que el problema existe.',
+    ejemplos: [
+      '- Tiempos de espera elevados; clientes frustrados; consultas sin respuesta.\n- Percepción de que todos los planes "ofrecen lo mismo".\n- Baja atracción hacia campañas sin beneficios tangibles.',
+      '- Altos tiempos de respuesta.\n- Quejas recurrentes de clientes.\n- Reprocesos y errores en asignaciones.\n- Falta de información centralizada.',
+      '- Empleados perciben los beneficios actuales como limitados o poco relevantes.\n- Quejas relacionadas con falta de apoyo en salud, bienestar o emergencias.',
+      '- Reclamos frecuentes por incumplimiento.\n- Costos operativos elevados.\n- Equipo desgastado por manejo manual de quejas.'
     ]
   },
-  i:  {
-    label:'Impacto negativo', badge:'mb-i', btxt:'Impacto',
-    hint:'Consecuencias reales si el problema no se resuelve — financiero, operativo, humano.',
-    desc:'Debe incluir al menos una dimensión financiera u operativa concreta. Cuantificable cuando sea posible. Conectado directamente con el problema descrito.',
-    ejemplos:[
-      '- Reducción en rentabilidad y cuota de mercado.\n- Pérdida de participación frente a competidores más agresivos.\n- Dificultad para diferenciar la empresa frente a la competencia.',
-      '- Baja fidelización y aumento del churn por mala experiencia.\n- Imagen de marca deteriorada frente a la competencia.',
-      '- Costos elevados por rotación y procesos de selección.\n- Disminución del compromiso y productividad del personal.'
+  impacto: {
+    label: 'Impacto negativo',
+    badge: 'mb-impacto',
+    badgeText: 'Impacto',
+    placeholder: '¿Qué consecuencias reales tiene si el problema no se resuelve? Financiero, operativo, humano.',
+    criterio: 'Consecuencias concretas si no se resuelve. Debe incluir al menos una dimensión financiera u operativa específica. Cuantificable cuando sea posible. Conectado con el problema descrito.',
+    ejemplos: [
+      '- Reducción en rentabilidad y cuota de mercado.\n- Pérdida de participación de mercado frente a competidores más agresivos.\n- Dificultad para diferenciar la empresa frente a la competencia.',
+      '- Retrasos en resolución de casos, sobrecarga en atención, incremento de costos por reprocesos.',
+      '- Costos elevados por rotación y procesos de selección.\n- Disminución del compromiso y productividad del personal.',
+      '- Pérdida de contratos clave por incumplimiento de SLA.\n- Elevación de costos operativos por ineficiencia logística.'
     ]
   },
-  sol:{
-    label:'Solución propuesta', badge:'mb-sol', btxt:'Solución',
-    hint:'Cómo resuelve específicamente tu producto o servicio el problema de ESTE rol.',
-    desc:'Debe conectar directamente con el problema descrito arriba. Sin lenguaje genérico de ventas. Específico para las responsabilidades y dolores de este rol.',
-    ejemplos:[
-      '- Generar ingresos adicionales: implementamos programas de asistencia que los clientes pueden adquirir como beneficios premium.\n- Posicionar la compañía no solo como proveedor sino como aliado integral del cliente.',
+  solucion: {
+    label: 'Solución propuesta',
+    badge: 'mb-solucion',
+    badgeText: 'Solución',
+    placeholder: '¿Cómo resuelve específicamente tu producto o servicio el problema de ESTE rol? Conecta directamente con el problema descrito.',
+    criterio: 'Debe conectar directamente con el problema descrito. Sin lenguaje genérico de ventas. Específico para las responsabilidades y dolores de este rol. Menciona la solución concreta.',
+    ejemplos: [
+      '- Generar ingresos adicionales: implementamos programas de asistencia que los clientes pueden adquirir como beneficios premium, con participación en ingresos para la empresa.\n- Posicionar la compañía no solo como proveedor de conectividad, sino como aliado integral.',
       '- Plataforma omnicanal que centraliza todos los canales (voz, chat, mail, redes) en una única vista.\n- Encuestas integradas y calificaciones de servicio para seguimiento y mejora continua.',
-      '- Implementar programas de asistencia para colaboradores (salud, hogar, auto, viaje) como parte del paquete de beneficios.\n- Acompañamiento 24/7 que incrementa la percepción de respaldo de la empresa hacia sus empleados.'
+      '- Implementar programas de asistencia para colaboradores (salud, hogar, auto, viaje) como parte del paquete de beneficios.\n- Acompañamiento 24/7 que incrementa la percepción de respaldo de la empresa hacia sus empleados.',
+      '- Plataforma con monitoreo en tiempo real, geolocalización de proveedores, reportería en línea y asignación automática en menos de 40 segundos.'
     ]
   },
-  r:  {
-    label:'Resultados esperados', badge:'mb-r', btxt:'Resultados',
-    hint:'Resultados concretos y medibles que obtiene este rol con tu solución.',
-    desc:'Cuantitativos cuando sea posible — porcentajes, métricas, tiempos. Sin promesas vagas. Conectados con el impacto negativo que se quiere eliminar.',
-    ejemplos:[
+  resultados: {
+    label: 'Resultados esperados',
+    badge: 'mb-resultado',
+    badgeText: 'Resultados',
+    placeholder: '¿Qué resultado concreto y medible obtiene este rol con tu solución? Incluye métricas o porcentajes cuando sea posible.',
+    criterio: 'Resultados cuantitativos o cualitativos concretos. Con porcentajes, tiempos o métricas cuando sea posible. Sin promesas vagas. Conectados con el impacto que se quiere eliminar.',
+    ejemplos: [
       '- Mejora del NPS y satisfacción del cliente en un 20% (con tasas históricas >96%).\n- Transparencia en reportería 100%.',
       '- Reducción del 25% en la carga de canales tradicionales.\n- Disminución de costos operativos en hasta un 40% gracias a la optimización de procesos.',
-      '- Implementar programas de asistencia para colaboradores como parte del paquete de beneficios.\n- Acompañamiento 24/7 que incrementa la percepción de respaldo.'
+      '- Reducción de costos operativos hasta en 40%.\n- Cumplimiento de SLA con mayor eficiencia.\n- Experiencia de usuario con visibilidad completa de la asignación de su servicio.',
+      '- Optimización de costos hasta en 40%.\n- 100% transparencia en gastos.\n- Mayor previsibilidad financiera y reducción de costos ocultos.'
     ]
   }
 };
 
+const CAMPO_KEYS = ['problema', 'sintomas', 'impacto', 'solucion', 'resultados'];
+
+// ═══════════════════════════════════════════
+// MATRIZ CARDS
+// ═══════════════════════════════════════════
+const rolesActivos = new Set();
+const aiTimers = {};
+const aiLastText = {};
+window._aiSuggestions = {};
+
+function sanitizeId(str) {
+  return str.replace(/[^a-zA-Z0-9]/g, '_');
+}
+
 function toggleRol(el) {
   const rol = el.dataset.rol;
-  if (roles.has(rol)) {
-    roles.delete(rol); el.classList.remove('on');
-    const c = document.getElementById('mc-'+sid(rol)); if (c) c.remove();
+  if (rolesActivos.has(rol)) {
+    rolesActivos.delete(rol);
+    el.classList.remove('on');
+    const card = document.getElementById('mc-' + sanitizeId(rol));
+    if (card) card.remove();
   } else {
-    roles.add(rol); el.classList.add('on');
-    buildCard(rol);
+    rolesActivos.add(rol);
+    el.classList.add('on');
+    buildMatrizCard(rol);
   }
   syncMatriz();
 }
 
-function buildCard(rol) {
-  const id = sid(rol);
-  const initials = rol.split(/[\s\/]+/).filter(w=>w.length>1).slice(0,2).map(w=>w[0]).join('').toUpperCase();
-  const wrap = document.getElementById('mcard-area');
-  const card = document.createElement('div');
-  card.className = 'mcard'; card.id = 'mc-'+id;
-
-  const campos4 = ['p','s','i','sol'];
-  const fieldsHTML = campos4.map(k => {
-    const c = CAMPOS[k];
-    return `<div class="mf">
-      <label><span class="mbadge ${c.badge}">${c.btxt}</span>${c.label}</label>
-      <textarea id="mf-${k}-${id}" data-id="${id}" data-k="${k}" data-rol="${rol.replace(/"/g,'&quot;')}"
-        placeholder="${c.hint}"
-        oninput="syncMatriz();scheduleAI(this.dataset.id,this.dataset.k,this.value,this.dataset.rol)"></textarea>
-      <div class="aipanel" id="ap-${k}-${id}">
-        <div class="aipanel-hdr">
-          <span class="ai-star">✦</span>
-          <span class="ai-lbl">Asistente de calidad</span>
-          <div class="ai-thinking" id="at-${k}-${id}" style="display:none">
-            <div class="ai-d"></div><div class="ai-d"></div><div class="ai-d"></div>
-          </div>
-        </div>
-        <div class="aipanel-body" id="ab-${k}-${id}"></div>
-      </div>
-    </div>`;
-  }).join('');
-
-  const rC = CAMPOS.r;
-  card.innerHTML = `
-    <div class="mcard-top" onclick="toggleCard('${id}')">
-      <div class="mcard-left">
-        <div class="mcard-avatar">${initials}</div>
-        <div>
-          <div class="mcard-rname">${rol}</div>
-          <div class="mcard-status">Completa los 5 campos</div>
-        </div>
-      </div>
-      <span class="mcard-chev up" id="mchv-${id}">▾</span>
-    </div>
-    <div class="mcard-body open" id="mb-${id}">
-      <div class="mfield-grid">${fieldsHTML}</div>
-      <div class="mf">
-        <label><span class="mbadge ${rC.badge}">${rC.btxt}</span>${rC.label}</label>
-        <textarea id="mf-r-${id}" data-id="${id}" data-k="r" data-rol="${rol.replace(/"/g,'&quot;')}"
-          placeholder="${rC.hint}" style="min-height:60px"
-          oninput="syncMatriz();scheduleAI(this.dataset.id,'r',this.value,this.dataset.rol)"></textarea>
-        <div class="aipanel" id="ap-r-${id}">
-          <div class="aipanel-hdr">
-            <span class="ai-star">✦</span>
-            <span class="ai-lbl">Asistente de calidad</span>
-            <div class="ai-thinking" id="at-r-${id}" style="display:none">
-              <div class="ai-d"></div><div class="ai-d"></div><div class="ai-d"></div>
-            </div>
-          </div>
-          <div class="aipanel-body" id="ab-r-${id}"></div>
-        </div>
-      </div>
-    </div>`;
-  wrap.appendChild(card);
+function getInitials(rol) {
+  return rol
+    .split(/[\s\/\-]+/)
+    .filter(w => w.length > 2)
+    .slice(0, 2)
+    .map(w => w[0].toUpperCase())
+    .join('');
 }
 
-function toggleCard(id) {
-  const body = document.getElementById('mb-'+id);
-  const chev = document.getElementById('mchv-'+id);
-  const open = body.classList.contains('open');
-  body.classList.toggle('open', !open);
-  body.style.display = open ? 'none' : 'block';
-  chev.classList.toggle('up', !open);
+function buildMatrizCard(rol) {
+  const id = sanitizeId(rol);
+  const container = document.getElementById('mcard-container');
+  const card = document.createElement('div');
+  card.className = 'mcard';
+  card.id = 'mc-' + id;
+
+  // Build 2x2 grid for first 4 campos + full-width resultados
+  const campos4 = CAMPO_KEYS.slice(0, 4);
+  const gridHTML = campos4.map(k => {
+    const def = CAMPO_DEFS[k];
+    return `
+      <div class="mfield">
+        <div class="mfield-label">
+          <span class="mfield-badge ${def.badge}">${def.badgeText}</span>
+          <span class="mfield-title">${def.label}</span>
+        </div>
+        <textarea
+          id="mf-${k}-${id}"
+          data-rolid="${id}"
+          data-campo="${k}"
+          data-rolname="${rol.replace(/"/g, '&quot;')}"
+          placeholder="${def.placeholder}"
+          oninput="syncMatriz(); triggerAI(this.dataset.rolid, this.dataset.campo, this.value, this.dataset.rolname)"
+        ></textarea>
+        <div class="ai-panel" id="ai-${k}-${id}">
+          <div class="ai-panel-top">
+            <span class="ai-icon-star">✦</span>
+            <span class="ai-label">Asistente de calidad</span>
+            <div class="ai-thinking-dots" id="ai-dots-${k}-${id}" style="display:none">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+          <div class="ai-panel-body" id="ai-body-${k}-${id}"></div>
+        </div>
+      </div>`;
+  }).join('');
+
+  const rDef = CAMPO_DEFS.resultados;
+  card.innerHTML = `
+    <div class="mcard-header" onclick="toggleMCard('${id}')">
+      <div class="mcard-left">
+        <div class="mcard-avatar">${getInitials(rol)}</div>
+        <div>
+          <div class="mcard-role">${rol}</div>
+          <div class="mcard-status">Completa los 5 campos del análisis</div>
+        </div>
+      </div>
+      <span class="mcard-chevron open" id="mchev-${id}">▾</span>
+    </div>
+    <div class="mcard-body open" id="mb-${id}">
+      <div class="matriz-grid">${gridHTML}</div>
+      <div class="mfield" style="margin-top:4px">
+        <div class="mfield-label">
+          <span class="mfield-badge ${rDef.badge}">${rDef.badgeText}</span>
+          <span class="mfield-title">${rDef.label}</span>
+        </div>
+        <textarea
+          id="mf-resultados-${id}"
+          data-rolid="${id}"
+          data-campo="resultados"
+          data-rolname="${rol.replace(/"/g, '&quot;')}"
+          style="min-height:68px"
+          placeholder="${rDef.placeholder}"
+          oninput="syncMatriz(); triggerAI(this.dataset.rolid, 'resultados', this.value, this.dataset.rolname)"
+        ></textarea>
+        <div class="ai-panel" id="ai-resultados-${id}">
+          <div class="ai-panel-top">
+            <span class="ai-icon-star">✦</span>
+            <span class="ai-label">Asistente de calidad</span>
+            <div class="ai-thinking-dots" id="ai-dots-resultados-${id}" style="display:none">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+          <div class="ai-panel-body" id="ai-body-resultados-${id}"></div>
+        </div>
+      </div>
+    </div>`;
+
+  container.appendChild(card);
+}
+
+function toggleMCard(id) {
+  const body = document.getElementById('mb-' + id);
+  const chev = document.getElementById('mchev-' + id);
+  const isOpen = body.classList.contains('open');
+  body.classList.toggle('open', !isOpen);
+  body.style.display = isOpen ? 'none' : 'block';
+  chev.classList.toggle('open', !isOpen);
 }
 
 function syncMatriz() {
   const data = {};
-  roles.forEach(rol => {
-    const id = sid(rol); data[rol] = {};
-    ['p','s','i','sol','r'].forEach(k => {
+  rolesActivos.forEach(rol => {
+    const id = sanitizeId(rol);
+    data[rol] = {};
+    CAMPO_KEYS.forEach(k => {
       const el = document.getElementById(`mf-${k}-${id}`);
       data[rol][k] = el ? el.value : '';
     });
   });
   document.getElementById('f-matriz').value = JSON.stringify(data);
-  prog();
+  updateProgress();
 }
 
-// ── AI FEEDBACK CON EJEMPLOS REALES DE LA MATRIZ ──
-function scheduleAI(id, k, text, rol) {
-  const key = id+'_'+k;
-  clearTimeout(timers[key]);
-  const panel = document.getElementById(`ap-${k}-${id}`);
-  const thinking = document.getElementById(`at-${k}-${id}`);
-  const body = document.getElementById(`ab-${k}-${id}`);
-  if (text.trim().length < 20) { panel.classList.remove('show'); return; }
-  panel.classList.add('show');
-  thinking.style.display = 'flex';
-  body.innerHTML = '';
-  timers[key] = setTimeout(() => {
-    if (text === lastVal[key]) return;
-    lastVal[key] = text;
-    callAI(id, k, text, rol, thinking, body);
-  }, 1600);
+// ═══════════════════════════════════════════
+// AI FEEDBACK — INMEDIATO Y DIRECTO
+// ═══════════════════════════════════════════
+function triggerAI(rolId, campo, text, rolName) {
+  const timerKey = rolId + '_' + campo;
+
+  clearTimeout(aiTimers[timerKey]);
+
+  const panel    = document.getElementById(`ai-${campo}-${rolId}`);
+  const dotsEl   = document.getElementById(`ai-dots-${campo}-${rolId}`);
+  const bodyEl   = document.getElementById(`ai-body-${campo}-${rolId}`);
+
+  // Activar panel desde el primer carácter útil (threshold muy bajo: 8 chars)
+  if (!text || text.trim().length < 8) {
+    panel.classList.remove('visible');
+    return;
+  }
+
+  // Mostrar panel inmediatamente con spinner
+  panel.classList.add('visible');
+  dotsEl.style.display = 'flex';
+  bodyEl.innerHTML = '';
+
+  // Debounce de 1.2 segundos para no llamar en cada tecla
+  aiTimers[timerKey] = setTimeout(() => {
+    if (text === aiLastText[timerKey]) return;
+    aiLastText[timerKey] = text;
+    callClaudeAI(rolId, campo, text, rolName, dotsEl, bodyEl);
+  }, 1200);
 }
 
-async function callAI(id, k, text, rol, thinkEl, bodyEl) {
-  const c = CAMPOS[k];
-  const ejemplosCombinados = c.ejemplos.join('\n\n---\n');
-  const empresa = document.getElementById('e-nombre').value || '(no especificada)';
-  const producto = document.getElementById('p-lista').value || document.getElementById('p-estrella').value || '(no especificado)';
-  const problemaGral = document.getElementById('e-problema').value || '(no especificado)';
+async function callClaudeAI(rolId, campo, text, rolName, dotsEl, bodyEl) {
+  const def = CAMPO_DEFS[campo];
+  const ejemplosCombinados = def.ejemplos.join('\n\n---\n\n');
 
-  const prompt = `Eres un experto en revenue operations y matrices de inteligencia comercial B2B. Estás evaluando el campo "${c.label}" de la matriz para el rol "${rol}".
+  const empresa   = document.getElementById('f-nombre').value || '(no especificada aún)';
+  const producto  = document.getElementById('f-productos').value || document.getElementById('f-estrella').value || '(no especificado aún)';
+  const problema  = document.getElementById('f-problema').value || '(no especificado aún)';
+  const ventaja   = document.getElementById('f-ventaja').value || '(no especificada aún)';
 
-EMPRESA: ${empresa}
-PRODUCTO/SERVICIO: ${producto}
-PROBLEMA GENERAL QUE RESUELVEN: ${problemaGral}
+  const prompt = `Eres un experto en revenue operations y construcción de matrices de inteligencia comercial B2B de alto nivel. Tu trabajo es evaluar y mejorar el campo "${def.label}" de la matriz para el rol "${rolName}".
 
-CRITERIO ESTRICTO PARA ESTE CAMPO:
-${c.desc}
+CONTEXTO DE LA EMPRESA:
+- Empresa: ${empresa}
+- Producto/Servicio: ${producto}
+- Problema que resuelven: ${problema}
+- Ventaja competitiva: ${ventaja}
 
-EJEMPLOS REALES DEL ESTÁNDAR ESPERADO (tomados de matrices profesionales B2B):
+CRITERIO ESTRICTO PARA EL CAMPO "${def.label}":
+${def.criterio}
+
+EJEMPLOS REALES DEL ESTÁNDAR (matrices B2B profesionales — este es el nivel que debe alcanzar):
 ${ejemplosCombinados}
 
-TEXTO INGRESADO POR EL USUARIO:
+TEXTO INGRESADO POR EL USUARIO PARA "${rolName}":
 "${text}"
 
-Evalúa el texto del usuario con criterio ESTRICTO comparándolo con los ejemplos del estándar. Analiza:
-1. ¿Está escrito desde la perspectiva del ${rol} (no del vendedor)?
-2. ¿Es específico o genérico?
-3. ¿El formato es correcto (bullets cortos, directos, concretos)?
-4. ¿Tiene la profundidad y especificidad de los ejemplos?
-5. ¿Conecta con el contexto real de la empresa?
+INSTRUCCIONES DE EVALUACIÓN:
+1. Compara el texto del usuario con los ejemplos del estándar. Sé ESTRICTO y DIRECTO.
+2. Si el texto es demasiado corto, genérico, en prosa (sin bullets), o no refleja la perspectiva del ${rolName} sino del vendedor — puntúa bajo (1-4).
+3. Si tiene buena dirección pero le falta especificidad, bullets o profundidad — puntúa medio (5-7).
+4. Solo puntúa alto (8-10) si realmente alcanza el nivel de los ejemplos: bullets concretos, perspectiva del rol, sin lenguaje de vendedor.
+5. SIEMPRE proporciona la sugerencia a menos que el score sea 9 o 10. Incluso scores de 7-8 deben tener sugerencia mejorada.
 
-IMPORTANTE: Sé directo y honesto. Un score alto (8-10) solo si realmente alcanza el estándar de los ejemplos. No seas condescendiente.
-
-Responde SOLO en JSON sin backticks:
-{"score":<1-10>,"evaluacion":"<máximo 2 frases directas: qué está bien y exactamente qué falta para alcanzar el estándar>","sugerencia":"<reescribe el texto del usuario con el formato y profundidad de los ejemplos, manteniendo su contexto de negocio. null si score>=8>"}`;
+Responde SOLO en JSON sin backticks ni markdown:
+{
+  "score": <número entero del 1 al 10>,
+  "evaluacion": "<2-3 frases directas y honestas: qué está bien, exactamente qué falta, y por qué no alcanza el estándar aún>",
+  "sugerencia": "<reescritura completa del texto del usuario con el formato de bullets, la especificidad y la perspectiva de los ejemplos del estándar, adaptado al contexto de la empresa del usuario. null solo si score es 9 o 10>"
+}`;
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method:'POST', headers:{'Content-Type':'application/json'},
+    const response = await fetch(CLAUDE_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model:'claude-sonnet-4-20250514', max_tokens:600,
-        messages:[{role:'user',content:prompt}]
+        model: CLAUDE_MODEL,
+        max_tokens: 700,
+        messages: [{ role: 'user', content: prompt }]
       })
     });
-    const data = await res.json();
-    const raw = data.content[0].text.trim().replace(/```json|```/g,'');
-    const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)[0]);
-    thinkEl.style.display = 'none';
 
-    const score = Math.min(10, Math.max(1, parsed.score || 1));
-    const cls = score >= 8 ? 's-hi' : score >= 5 ? 's-mid' : 's-lo';
-    const lbl = score >= 8 ? 'Excelente' : score >= 5 ? 'Mejorable' : 'Incompleto';
-    const pct = Math.round((score/10)*100);
-    const sk = `${id}_${k}`;
-    if (parsed.sugerencia) { window._suggs[sk] = parsed.sugerencia; }
+    if (!response.ok) throw new Error('API error: ' + response.status);
 
+    const data = await response.json();
+    const rawText = data.content[0].text.trim().replace(/```json|```/g, '');
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON found');
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    dotsEl.style.display = 'none';
+    renderAIFeedback(parsed, rolId, campo, bodyEl);
+
+  } catch (err) {
+    dotsEl.style.display = 'none';
+    // En caso de error, mostrar mensaje útil en lugar de "no se pudo analizar"
     bodyEl.innerHTML = `
-      <div class="score-row ${cls}">
-        <div class="score-track"><div class="score-fill" style="width:${pct}%"></div></div>
-        <span class="score-txt">${score}/10 — ${lbl}</span>
+      <div class="ai-score-row score-lo">
+        <div class="ai-score-track">
+          <div class="ai-score-fill" style="width:30%"></div>
+        </div>
+        <span class="ai-score-label">Analizando...</span>
       </div>
-      <div class="ai-eval">${parsed.evaluacion || ''}</div>
-      ${parsed.sugerencia ? `
-      <div class="ai-sugg-box">
-        <div class="ai-sugg-lbl">✦ Versión al estándar</div>
-        <div class="ai-sugg-text">${parsed.sugerencia.replace(/\n/g,'<br>')}</div>
-        <button class="btn-apply" onclick="applySugg('mf-${k}-${id}','${sk}','${k}','${id}')">Aplicar esta versión →</button>
-      </div>` : ''}`;
-  } catch(e) {
-    thinkEl.style.display = 'none';
-    bodyEl.innerHTML = '<span style="font-size:11px;color:var(--sub)">No se pudo analizar. Continúa escribiendo.</span>';
+      <div class="ai-feedback-text">Sigue escribiendo — el asistente evaluará tu respuesta cuando tengas más contenido.</div>`;
   }
 }
 
-function applySugg(fieldId, sk, k, id) {
-  const f = document.getElementById(fieldId);
-  const s = (window._suggs||{})[sk];
-  if (f && s) {
-    f.value = s; syncMatriz();
-    const b = document.getElementById(`ab-${k}-${id}`);
-    if (b) b.innerHTML = '<span style="font-size:11px;color:var(--ok)">✓ Versión aplicada. Puedes seguir editando.</span>';
+function renderAIFeedback(parsed, rolId, campo, bodyEl) {
+  const score = Math.min(10, Math.max(1, parseInt(parsed.score) || 1));
+  const scoreClass = score >= 8 ? 'score-hi' : score >= 5 ? 'score-mid' : 'score-lo';
+  const scoreLabel = score >= 8 ? `${score}/10 — Excelente` : score >= 5 ? `${score}/10 — Mejorable` : `${score}/10 — Incompleto`;
+  const fillPct = Math.round((score / 10) * 100);
+
+  const storeKey = `${rolId}_${campo}`;
+  if (parsed.sugerencia && parsed.sugerencia !== 'null') {
+    window._aiSuggestions[storeKey] = parsed.sugerencia;
+  }
+
+  let html = `
+    <div class="ai-score-row ${scoreClass}">
+      <div class="ai-score-track">
+        <div class="ai-score-fill" style="width:${fillPct}%"></div>
+      </div>
+      <span class="ai-score-label">${scoreLabel}</span>
+    </div>
+    <div class="ai-feedback-text">${parsed.evaluacion || ''}</div>`;
+
+  if (parsed.sugerencia && parsed.sugerencia !== 'null') {
+    const fieldId = `mf-${campo}-${rolId}`;
+    html += `
+      <div class="ai-suggestion">
+        <div class="ai-suggestion-label">✦ Versión al estándar</div>
+        <div class="ai-suggestion-text">${parsed.sugerencia.replace(/\n/g, '<br>')}</div>
+        <button class="btn-apply" onclick="applySuggestion('${fieldId}', '${storeKey}', '${campo}', '${rolId}')">
+          Aplicar esta versión →
+        </button>
+      </div>`;
+  }
+
+  bodyEl.innerHTML = html;
+}
+
+function applySuggestion(fieldId, storeKey, campo, rolId) {
+  const field = document.getElementById(fieldId);
+  const suggestion = (window._aiSuggestions || {})[storeKey];
+  if (field && suggestion) {
+    field.value = suggestion;
+    syncMatriz();
+    const bodyEl = document.getElementById(`ai-body-${campo}-${rolId}`);
+    if (bodyEl) {
+      bodyEl.innerHTML = `
+        <div class="ai-score-row score-hi">
+          <div class="ai-score-track"><div class="ai-score-fill" style="width:100%"></div></div>
+          <span class="ai-score-label">Versión aplicada</span>
+        </div>
+        <div class="ai-feedback-text" style="color:var(--ok)">✓ Se aplicó la versión sugerida. Puedes editarla y personalizarla.</div>`;
+    }
   }
 }
 
-// ── SUBMIT ──
-async function enviar() {
-  const btn = document.getElementById('btn-enviar');
-  const sbBtn = document.getElementById('sb-btn');
-  btn.disabled = true; sbBtn.disabled = true; btn.classList.add('loading');
-  const g = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+// ═══════════════════════════════════════════
+// SUBMIT
+// ═══════════════════════════════════════════
+async function submitForm() {
+  const submitBtn = document.getElementById('btn-submit');
+  const sbBtn = document.getElementById('sb-save-btn');
+
+  submitBtn.disabled = true;
+  sbBtn.disabled = true;
+  submitBtn.classList.add('loading');
+  const lastChild = submitBtn.lastChild;
+  if (lastChild && lastChild.nodeType === 3) {
+    submitBtn.lastChild.textContent = ' Enviando...';
+  }
+
+  function val(id) {
+    const el = document.getElementById(id);
+    return el ? el.value.trim() : '';
+  }
+
   const payload = {
-    timestamp: new Date().toISOString(),
-    nombre:g('e-nombre'), web:g('e-web'), desc:g('e-desc'),
-    anos:g('e-anos'), empleados:g('e-emp'), ciudades:g('e-ciudades'),
-    sociedad:g('e-sociedad'), cliente:g('e-cliente'), problema:g('e-problema'),
-    n_clientes:g('e-nclientes'), ticket:g('e-ticket'),
-    clientes_top:g('e-clientes-top'), canales:g('e-canales'),
-    productos:g('p-lista'), estrella:g('p-estrella'),
-    precio:g('p-precio'), precio_por:g('p-precio-por'),
-    entrega:g('p-entrega'), ventaja:g('p-ventaja'),
-    tendencia:g('p-tend'), tend_por:g('p-tend-por'),
-    freno:g('p-freno'), gap:g('p-gap'),
-    competidores:g('c-comp'), comp_bien:g('c-bien'), comp_mal:g('c-mal'),
-    importados:g('c-import'), precios_comp:g('c-precios'),
-    pitch:g('c-pitch'), porq:g('c-porq'), nuevos:g('c-nuevos'),
-    paises:g('m-paises'), expansion:g('m-exp'),
-    sector:g('m-sect'), sect_por:g('m-sect-por'),
-    cambios:g('m-cambios'), market_size:g('m-size'),
-    riesgo:g('m-riesgo'), oportunidad:g('m-opp'),
-    proveedor:g('m-prov'), estado:g('m-estado'), noticia:g('m-noticia'),
-    matriz:g('f-matriz'),
+    timestamp:     new Date().toISOString(),
+    // Sección 1
+    nombre:        val('f-nombre'),
+    web:           val('f-web'),
+    descripcion:   val('f-desc'),
+    anos:          val('f-anos'),
+    empleados:     val('f-emp'),
+    ciudades:      val('f-ciudades'),
+    sociedad:      val('f-sociedad'),
+    cliente:       val('f-cliente'),
+    problema:      val('f-problema'),
+    n_clientes:    val('f-nclientes'),
+    ticket:        val('f-ticket'),
+    top_clientes:  val('f-top-clientes'),
+    canales:       val('f-canales'),
+    // Sección 2
+    productos:     val('f-productos'),
+    estrella:      val('f-estrella'),
+    precio:        val('f-precio'),
+    precio_razon:  val('f-precio-por'),
+    entrega:       val('f-entrega'),
+    ventaja:       val('f-ventaja'),
+    tendencia:     val('f-tendencia'),
+    tendencia_por: val('f-tendencia-por'),
+    freno:         val('f-freno'),
+    gap:           val('f-gap'),
+    // Sección 3
+    competidores:  val('f-competidores'),
+    comp_bien:     val('f-comp-bien'),
+    comp_mal:      val('f-comp-mal'),
+    importados:    val('f-importados'),
+    comp_precio:   val('f-comp-precio'),
+    pitch:         val('f-pitch'),
+    porq:          val('f-porq'),
+    nuevos_comp:   val('f-nuevos-comp'),
+    // Sección 4
+    paises:        val('f-paises'),
+    expansion:     val('f-expansion'),
+    sector:        val('f-sector'),
+    sector_por:    val('f-sector-por'),
+    cambios:       val('f-cambios'),
+    market_size:   val('f-market-size'),
+    riesgo:        val('f-riesgo'),
+    opp:           val('f-opp'),
+    proveedor:     val('f-proveedor'),
+    estado:        val('f-estado'),
+    noticia:       val('f-noticia'),
+    // Sección 5
+    matriz:        val('f-matriz'),
   };
+
   try {
-    await fetch(GS, {method:'POST', mode:'no-cors', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    await fetch(SHEETS_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
     document.getElementById('toast').style.display = 'block';
-    btn.textContent = '✓ Enviado';
-  } catch(e) {
-    btn.disabled = false; sbBtn.disabled = false; btn.classList.remove('loading');
-    btn.textContent = 'Enviar información';
-    alert('Error al enviar. Verifica tu conexión.');
+    submitBtn.classList.remove('loading');
+    submitBtn.lastChild.textContent = ' ✓ Enviado';
+    document.getElementById('toast').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  } catch (err) {
+    submitBtn.disabled = false;
+    sbBtn.disabled = false;
+    submitBtn.classList.remove('loading');
+    submitBtn.lastChild.textContent = ' Enviar información';
+    alert('Error al enviar. Verifica tu conexión e intenta de nuevo.');
   }
 }
 
-// scroll events for inputs
-document.querySelectorAll('input[type=text],input[type=url],textarea').forEach(el => {
-  el.addEventListener('input', prog);
-});
-prog();
+// Init
+updateProgress();
 </script>
 </body>
 </html>
