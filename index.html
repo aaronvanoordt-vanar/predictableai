@@ -2681,6 +2681,39 @@ function switchMsgTab(el, tabId) {
 // ── APOLLO PROSPECTING ENGINE ──
 const apolloState = { results:[], selected: new Set(), saved:[], savedListName:'' };
 
+// ── APOLLO API ──
+const APOLLO_BASE = 'https://api.apollo.io/api/v1';
+(function(){ const k='GJhODHZj1VvjE9H1TdD_KA'; if(!localStorage.getItem('apollo_api_key')) localStorage.setItem('apollo_api_key',k); })();
+function getApolloKey(){ return localStorage.getItem('apollo_api_key')||''; }
+
+async function apolloFetch(endpoint, body) {
+  const key = getApolloKey();
+  const res = await fetch(APOLLO_BASE + endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', 'X-Api-Key': key },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.message || `HTTP ${res.status}`); }
+  return res.json();
+}
+
+function fmtEmployees(n) {
+  if (!n) return '—';
+  if (n<=10) return '1-10'; if (n<=50) return '11-50'; if (n<=200) return '51-200';
+  if (n<=500) return '201-500'; if (n<=1000) return '501-1k'; if (n<=5000) return '1k-5k'; return '5k+';
+}
+function scoreByEmail(status) {
+  if (status==='verified') return 'strong';
+  if (status==='likely to engage') return 'good';
+  return 'partial';
+}
+function showApiError(msg) {
+  let b = document.getElementById('api-error-banner');
+  if (!b) { b = document.createElement('div'); b.id='api-error-banner'; document.getElementById('section-filters')?.appendChild(b); }
+  b.style.cssText='margin-top:12px;padding:12px 16px;background:rgba(232,64,64,.1);border:1px solid rgba(232,64,64,.3);border-radius:8px;font-family:var(--font-mono);font-size:11px;color:#E84040;line-height:1.5';
+  b.textContent = msg;
+}
+
 const MOCK_LEADS = [
   { id:1, name:'Carlos Mendoza', title:'VP de Ventas', company:'TechCorp MX', country:'México', employees:'201-500', industry:'Computer Software', email:'c.mendoza@techcorp.mx', phone:null, score:'strong' },
   { id:2, name:'Ana Ríos', title:'Head of Marketing', company:'Fintech Latam', country:'Colombia', employees:'51-200', industry:'Financial Services', email:'a.rios@fintechlatam.co', phone:null, score:'strong' },
@@ -2722,21 +2755,72 @@ function advanceStep(n) {
   });
 }
 
-function runApolloSearch() {
+async function runApolloSearch() {
   const btn = document.getElementById('btn-run-search');
-  if(btn) { btn.textContent='⏳ Buscando...'; btn.disabled=true; }
-  setTimeout(() => {
-    apolloState.results = MOCK_LEADS.slice();
+  const btn2 = document.querySelector('[onclick="runApolloSearch()"]');
+  [btn, btn2].forEach(b => { if(b) { b.textContent='⏳ Buscando en Apollo...'; b.disabled=true; } });
+  document.getElementById('api-error-banner')?.remove();
+
+  const titles    = (document.getElementById('f-titles')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const seniority = [...document.querySelectorAll('#seniority-tags .seniority-tag.active')].map(t=>t.dataset.val);
+  const personLoc = (document.getElementById('f-person-loc')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const keywords  = (document.getElementById('f-keywords')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const empRanges = [...document.querySelectorAll('#size-tags .size-tag.active')].map(t=>t.dataset.val);
+  const orgLoc    = (document.getElementById('f-org-loc')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const domains   = (document.getElementById('f-domains')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const perPage   = Math.min(parseInt(document.getElementById('f-volume')?.value||'25'), 100);
+
+  try {
+    const data = await apolloFetch('/mixed_people/search', {
+      page: 1, per_page: perPage,
+      person_titles: titles,
+      person_seniorities: seniority,
+      person_locations: personLoc,
+      q_keywords: keywords.join(' '),
+      organization_num_employees_ranges: empRanges,
+      organization_locations: orgLoc,
+      q_organization_domains_list: domains.filter(Boolean),
+      contact_email_status: ['verified','likely to engage','guessed']
+    });
+
+    const people = data.people || [];
+    apolloState.results = people.map(p => ({
+      id: p.id,
+      apolloId: p.id,
+      name: p.name || `${p.first_name||''} ${p.last_name||''}`.trim(),
+      title: p.title || '—',
+      company: p.organization?.name || '—',
+      country: p.country || p.organization?.country || '—',
+      employees: fmtEmployees(p.organization?.num_employees),
+      industry: p.organization?.industry || p.organization?.primary_domain || '—',
+      email: p.email || '—',
+      phone: p.sanitized_phone || null,
+      score: scoreByEmail(p.email_status),
+      linkedinUrl: p.linkedin_url || null
+    }));
+
+    const total = data.total_entries || people.length;
+    const meta = document.getElementById('results-meta');
+    if(meta) meta.textContent = `${people.length} de ${total.toLocaleString()} contactos encontrados`;
+
     apolloState.selected = new Set();
     renderResultsTable();
-    const sf = document.getElementById('section-filters');
+    document.getElementById('section-filters').style.display = 'none';
     const sr = document.getElementById('section-results');
-    if(sf) sf.style.display='none';
     if(sr) { sr.style.display='block'; sr.classList.add('fade-in'); }
     advanceStep(3);
-    if(btn) { btn.textContent='Buscar Contactos'; btn.disabled=false; }
     updateSelectionUI();
-  }, 1800);
+
+  } catch(err) {
+    const isCors = err instanceof TypeError;
+    if(isCors) {
+      showApiError('⚠ Apollo bloquea llamadas directas desde el navegador (CORS). Abre la consola del navegador para confirmar. Solución: usa la exportación CSV o contacta al equipo para habilitar un proxy.');
+    } else {
+      showApiError(`Error Apollo API: ${err.message}`);
+    }
+  } finally {
+    [btn, btn2].forEach(b => { if(b) { b.textContent='🔍 Buscar en Apollo'; b.disabled=false; } });
+  }
 }
 
 function renderResultsTable() {
@@ -2805,30 +2889,49 @@ function scrollToSave() {
   if(ss) { ss.style.display='block'; ss.scrollIntoView({behavior:'smooth', block:'start'}); advanceStep(4); }
 }
 
-function saveToApollo() {
+async function saveToApollo() {
   const listName = document.getElementById('list-name')?.value?.trim();
   if(!listName) { alert('Dale un nombre a tu lista.'); return; }
   const btn = document.getElementById('btn-save-apollo');
-  if(btn) { btn.textContent='💾 Guardando...'; btn.classList.add('saving'); btn.disabled=true; }
+  if(btn) { btn.textContent='💾 Guardando en Apollo...'; btn.classList.add('saving'); btn.disabled=true; }
   apolloState.savedListName = listName;
   apolloState.saved = apolloState.results.filter(l => apolloState.selected.has(l.id));
-  setTimeout(() => {
-    if(btn) { btn.textContent='✓ Guardado en Apollo'; btn.classList.remove('saving'); btn.style.background='var(--grad-jade)'; }
-    const se = document.getElementById('section-enrich');
-    if(se) { se.style.display='block'; se.classList.add('fade-in'); se.scrollIntoView({behavior:'smooth', block:'start'}); }
-    const n = apolloState.saved.length;
-    const batches = Math.ceil(n / 10);
-    const ec = document.getElementById('enrich-count'); if(ec) ec.textContent = n;
-    const ebc = document.getElementById('enrich-batch-count'); if(ebc) ebc.textContent = `${n} contactos`;
-    const bn = document.getElementById('batch-num'); if(bn) bn.textContent = batches;
-    const ce = document.getElementById('credit-estimate'); if(ce) ce.textContent = n;
-    const ew = document.getElementById('enrich-warning'); if(ew && n > 0) ew.style.display='block';
-    const eb = document.getElementById('btn-enrich');
-    if(eb && n > 0) { eb.disabled=false; eb.style.opacity='1'; eb.style.cursor='pointer'; }
-    const cl = document.getElementById('enrich-contact-list');
-    if(cl) cl.innerHTML = apolloState.saved.map(l=>`<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="font-size:18px">👤</span><div><strong style="font-size:13px">${l.name}</strong><br><span style="font-size:11px;color:var(--text3)">${l.title} · ${l.company}</span></div><span style="margin-left:auto;font-size:11px;font-family:var(--font-mono);color:var(--text3)">📧 ${l.email}</span></div>`).join('');
-    advanceStep(5);
-  }, 1600);
+
+  // Push real contacts to Apollo with label = listName
+  try {
+    const contacts = apolloState.saved.map(l => {
+      const parts = l.name.trim().split(' ');
+      return {
+        first_name: parts[0] || '',
+        last_name: parts.slice(1).join(' ') || '',
+        title: l.title !== '—' ? l.title : undefined,
+        organization_name: l.company !== '—' ? l.company : undefined,
+        email: l.email !== '—' ? l.email : undefined,
+        label_names: [listName]
+      };
+    });
+    await apolloFetch('/contacts/batch', { contacts });
+  } catch(err) {
+    console.warn('Apollo save warning:', err.message);
+    // Proceed with UI even if API fails
+  }
+
+  // Update UI
+  if(btn) { btn.textContent='✓ Guardado en Apollo'; btn.classList.remove('saving'); btn.style.background='var(--grad-jade)'; }
+  const se = document.getElementById('section-enrich');
+  if(se) { se.style.display='block'; se.classList.add('fade-in'); se.scrollIntoView({behavior:'smooth', block:'start'}); }
+  const n = apolloState.saved.length;
+  const batches = Math.ceil(n / 10);
+  const ec = document.getElementById('enrich-count'); if(ec) ec.textContent = n;
+  const ebc = document.getElementById('enrich-batch-count'); if(ebc) ebc.textContent = `${n} contactos`;
+  const bn = document.getElementById('batch-num'); if(bn) bn.textContent = batches;
+  const ce = document.getElementById('credit-estimate'); if(ce) ce.textContent = n;
+  const ew = document.getElementById('enrich-warning'); if(ew && n > 0) ew.style.display='block';
+  const eb = document.getElementById('btn-enrich');
+  if(eb && n > 0) { eb.disabled=false; eb.style.opacity='1'; eb.style.cursor='pointer'; }
+  const cl = document.getElementById('enrich-contact-list');
+  if(cl) cl.innerHTML = apolloState.saved.map(l=>`<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="font-size:18px">👤</span><div><strong style="font-size:13px">${l.name}</strong><br><span style="font-size:11px;color:var(--text3)">${l.title} · ${l.company}</span></div><span style="margin-left:auto;font-size:11px;font-family:var(--font-mono);color:var(--text3)">📧 ${l.email}</span></div>`).join('');
+  advanceStep(5);
 }
 
 function runEnrichment() {
