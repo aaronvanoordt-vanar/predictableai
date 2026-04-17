@@ -2913,21 +2913,21 @@ async function saveToApollo() {
 
   // Push real contacts to Apollo with label = listName
   try {
-    const contacts = apolloState.saved.map(l => {
+    await Promise.all(apolloState.saved.map(async l => {
       const parts = l.name.trim().split(' ');
-      return {
+      const body = {
         first_name: parts[0] || '',
         last_name: parts.slice(1).join(' ') || '',
         title: l.title !== '—' ? l.title : undefined,
         organization_name: l.company !== '—' ? l.company : undefined,
-        email: l.email !== '—' ? l.email : undefined,
         label_names: [listName]
       };
-    });
-    await apolloFetch('/contacts/batch', { contacts });
+      if(l.email && l.email !== '—' && !l.email.startsWith('📧')) body.email = l.email;
+      try { await apolloFetch('/contacts', body); } catch(e) { /* skip duplicates */ }
+    }));
+    console.log('[Apollo] Saved', apolloState.saved.length, 'contacts with label:', listName);
   } catch(err) {
     console.warn('Apollo save warning:', err.message);
-    // Proceed with UI even if API fails
   }
 
   // Update UI
