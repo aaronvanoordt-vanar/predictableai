@@ -2777,15 +2777,16 @@ async function runApolloSearch() {
 
   const payload = {
     page: 1, per_page: perPage,
-    person_titles: titles,
-    person_seniorities: seniority,
-    person_locations: personLoc,
-    q_keywords: keywords.join(' '),
-    organization_num_employees_ranges: empRanges,
-    organization_locations: orgLoc,
-    q_organization_domains_list: domains.filter(Boolean),
-    contact_email_status: ['verified','likely to engage','guessed']
+    person_titles: titles.length ? titles : undefined,
+    person_seniorities: seniority.length ? seniority : undefined,
+    person_locations: personLoc.length ? personLoc : undefined,
+    organization_num_employees_ranges: empRanges.length ? empRanges : undefined,
+    organization_locations: orgLoc.length ? orgLoc : undefined,
+    q_organization_domains_list: domains.length ? domains : undefined,
+    q_organization_keyword_tags: keywords.length ? keywords : undefined
   };
+  // Remove undefined keys
+  Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
   console.log('[Apollo] Payload:', JSON.stringify(payload));
   console.log('[Apollo] Base URL:', APOLLO_BASE);
 
@@ -2793,7 +2794,8 @@ async function runApolloSearch() {
     const data = await apolloFetch('/mixed_people/api_search', payload);
     console.log('[Apollo] Response keys:', Object.keys(data), '| people:', data.people?.length, '| total:', data.total_entries, '| error:', data.error);
 
-    if(data.error) { showApiError(`Apollo: ${data.error}`); return; }
+    if(data.error) { showApiError(`Apollo error: ${data.error}`); return; }
+    if(!data.people) { showApiError(`Respuesta inesperada: ${JSON.stringify(data).slice(0,200)}`); return; }
 
     const people = data.people || [];
     apolloState.results = people.map(p => ({
