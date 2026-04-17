@@ -2757,6 +2757,10 @@ function advanceStep(n) {
 }
 
 async function runApolloSearch() {
+  // Make sure filters section is visible so we can read values
+  const sf = document.getElementById('section-filters');
+  if(sf) sf.style.display = 'block';
+
   const btn = document.getElementById('btn-run-search');
   const btn2 = document.querySelector('[onclick="runApolloSearch()"]');
   [btn, btn2].forEach(b => { if(b) { b.textContent='⏳ Buscando en Apollo...'; b.disabled=true; } });
@@ -2771,31 +2775,38 @@ async function runApolloSearch() {
   const domains   = (document.getElementById('f-domains')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
   const perPage   = Math.min(parseInt(document.getElementById('f-volume')?.value||'25'), 100);
 
+  const payload = {
+    page: 1, per_page: perPage,
+    person_titles: titles,
+    person_seniorities: seniority,
+    person_locations: personLoc,
+    q_keywords: keywords.join(' '),
+    organization_num_employees_ranges: empRanges,
+    organization_locations: orgLoc,
+    q_organization_domains_list: domains.filter(Boolean),
+    contact_email_status: ['verified','likely to engage','guessed']
+  };
+  console.log('[Apollo] Payload:', JSON.stringify(payload));
+  console.log('[Apollo] Base URL:', APOLLO_BASE);
+
   try {
-    const data = await apolloFetch('/mixed_people/api_search', {
-      page: 1, per_page: perPage,
-      person_titles: titles,
-      person_seniorities: seniority,
-      person_locations: personLoc,
-      q_keywords: keywords.join(' '),
-      organization_num_employees_ranges: empRanges,
-      organization_locations: orgLoc,
-      q_organization_domains_list: domains.filter(Boolean),
-      contact_email_status: ['verified','likely to engage','guessed']
-    });
+    const data = await apolloFetch('/mixed_people/api_search', payload);
+    console.log('[Apollo] Response keys:', Object.keys(data), '| people:', data.people?.length, '| total:', data.total_entries, '| error:', data.error);
+
+    if(data.error) { showApiError(`Apollo: ${data.error}`); return; }
 
     const people = data.people || [];
     apolloState.results = people.map(p => ({
       id: p.id,
       apolloId: p.id,
-      name: p.name || `${p.first_name||''} ${p.last_name||''}`.trim(),
+      name: `${p.first_name||''} ${p.last_name_obfuscated||p.last_name||''}`.trim() || p.name || '—',
       title: p.title || '—',
       company: p.organization?.name || '—',
-      country: p.country || p.organization?.country || '—',
+      country: p.country || '—',
       employees: fmtEmployees(p.organization?.num_employees),
-      industry: p.organization?.industry || p.organization?.primary_domain || '—',
-      email: p.email || '—',
-      phone: p.sanitized_phone || null,
+      industry: p.organization?.industry || '—',
+      email: p.email || (p.has_email ? '📧 disponible' : '—'),
+      phone: p.sanitized_phone || (p.has_direct_phone === 'Yes' ? '📞 disponible' : null),
       score: scoreByEmail(p.email_status),
       linkedinUrl: p.linkedin_url || null
     }));
@@ -2806,16 +2817,16 @@ async function runApolloSearch() {
 
     apolloState.selected = new Set();
     renderResultsTable();
-    document.getElementById('section-filters').style.display = 'none';
+    if(sf) sf.style.display = 'none';
     const sr = document.getElementById('section-results');
     if(sr) { sr.style.display='block'; sr.classList.add('fade-in'); }
     advanceStep(3);
     updateSelectionUI();
 
   } catch(err) {
-    const isCors = err instanceof TypeError;
-    if(isCors) {
-      showApiError('⚠ Apollo bloquea llamadas directas desde el navegador (CORS). Abre la consola del navegador para confirmar. Solución: usa la exportación CSV o contacta al equipo para habilitar un proxy.');
+    console.error('[Apollo] Error:', err);
+    if(err instanceof TypeError) {
+      showApiError('⚠ Error de conexión. Asegúrate de que el servidor proxy esté corriendo: python3 server.py');
     } else {
       showApiError(`Error Apollo API: ${err.message}`);
     }
