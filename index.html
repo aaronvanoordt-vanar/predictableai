@@ -1801,9 +1801,9 @@ textarea { resize:vertical; min-height:76px; }
           <tbody id="results-tbody"></tbody>
         </table>
       </div>
-      <div id="selection-bar" style="display:none;margin-top:14px;padding:12px 16px;background:var(--teal-dim);border:1px solid rgba(0,196,212,.3);border-radius:var(--r-sm);display:flex;align-items:center;gap:12px">
-        <span style="font-family:var(--font-mono);font-size:12px;color:var(--teal)" id="selection-count">0 contactos seleccionados</span>
-        <button class="btn btn-teal btn-sm" onclick="scrollToSave()" style="margin-left:auto">Guardar selección en Apollo →</button>
+      <div id="selection-bar" style="display:none;margin-top:14px;padding:12px 16px;background:var(--teal-dim);border:1px solid rgba(0,196,212,.3);border-radius:var(--r-sm);align-items:center;gap:12px">
+        <span style="font-family:var(--font-mono);font-size:12px;color:var(--teal)"><span id="sel-count">0</span> contactos seleccionados</span>
+        <button id="btn-scroll-save" class="btn btn-teal btn-sm" onclick="scrollToSave()" style="margin-left:auto">Guardar selección en Apollo →</button>
       </div>
     </div>
   </div>
@@ -2759,7 +2759,7 @@ function toggleAllChecks(checked) {
 function selectAll(on) { toggleAllChecks(on); }
 
 function selectTopN() {
-  const n = parseInt(document.getElementById('top-n-input')?.value || '5');
+  const n = parseInt(document.getElementById('top-n')?.value || '5');
   apolloState.selected.clear();
   document.querySelectorAll('#results-tbody .contact-check').forEach((cb, i) => {
     cb.checked = i < n;
@@ -2772,11 +2772,19 @@ function updateSelectionUI() {
   const count = apolloState.selected.size;
   const bar = document.getElementById('selection-bar');
   const selCount = document.getElementById('sel-count');
-  const saveBtn = document.getElementById('btn-scroll-save');
+  const saveBtn = document.getElementById('btn-save-apollo');
+  const saveCount = document.getElementById('save-count');
+  const saveSummary = document.getElementById('save-summary');
   const enrichCount = document.getElementById('enrich-count');
   if(bar) bar.style.display = count > 0 ? 'flex' : 'none';
   if(selCount) selCount.textContent = count;
-  if(saveBtn) saveBtn.disabled = count === 0;
+  if(saveCount) saveCount.textContent = count;
+  if(saveSummary) saveSummary.textContent = count > 0 ? `${count} contacto${count>1?'s':''} listos para guardar` : 'Selecciona contactos en la tabla para guardar';
+  if(saveBtn) {
+    saveBtn.disabled = count === 0;
+    saveBtn.style.opacity = count > 0 ? '1' : '.5';
+    saveBtn.style.cursor = count > 0 ? 'pointer' : 'not-allowed';
+  }
   if(enrichCount) enrichCount.textContent = apolloState.saved.length || count;
 }
 
@@ -2786,7 +2794,7 @@ function scrollToSave() {
 }
 
 function saveToApollo() {
-  const listName = document.getElementById('list-name-input')?.value?.trim();
+  const listName = document.getElementById('list-name')?.value?.trim();
   if(!listName) { alert('Dale un nombre a tu lista.'); return; }
   const btn = document.getElementById('btn-save-apollo');
   if(btn) { btn.textContent='💾 Guardando...'; btn.classList.add('saving'); btn.disabled=true; }
