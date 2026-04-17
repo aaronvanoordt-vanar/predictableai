@@ -619,6 +619,23 @@ textarea { resize:vertical; min-height:76px; }
 .icp-filter-row input[type=checkbox] { accent-color:var(--gold); width:13px; height:13px; }
 .icp-filter-row .count { color:var(--text3); font-size:10px; margin-left:auto; }
 
+/* ── APOLLO PROSPECTING ENGINE ── */
+.seniority-tag, .size-tag {
+  padding: 4px 11px; border-radius: 99px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  border: 1px solid var(--border2); color: var(--text3);
+  transition: all .14s; user-select: none;
+}
+.seniority-tag.active { background: var(--teal-dim); border-color: var(--teal); color: var(--teal); }
+.size-tag.active      { background: var(--gold-dim); border-color: var(--gold); color: var(--gold-bright); }
+.seniority-tag:hover, .size-tag:hover { border-color: var(--border2); color: var(--text); }
+.contact-check { accent-color: var(--teal); width: 14px; height: 14px; cursor: pointer; }
+.fit-strong { background: var(--jade-dim);  color: var(--jade);        padding:2px 8px; border-radius:99px; font-family:var(--font-mono); font-size:10px; font-weight:700; }
+.fit-good   { background: var(--gold-dim);  color: var(--gold-bright); padding:2px 8px; border-radius:99px; font-family:var(--font-mono); font-size:10px; font-weight:700; }
+.fit-partial{ background: var(--surface3);  color: var(--text3);       padding:2px 8px; border-radius:99px; font-family:var(--font-mono); font-size:10px; font-weight:700; }
+@keyframes saving { 0%{opacity:.4} 50%{opacity:1} 100%{opacity:.4} }
+.saving { animation: saving 1.2s ease infinite; }
+
 /* ── PULSE ── */
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
 .pulse { animation: pulse 2s ease-in-out infinite; }
@@ -1647,55 +1664,249 @@ textarea { resize:vertical; min-height:76px; }
 <!-- ═══════ PAGE: PRO APOLLO ═══════ -->
 <div class="page fade-in" id="page-pro-apollo">
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
-    <div><div class="topbar-title">Apollo Sequences</div><div class="topbar-sub">Módulo 2 · ICP → Apollo → Contactos enriquecidos → Secuencia activa</div></div>
+    <div><div class="topbar-title">Apollo Prospecting Engine</div><div class="topbar-sub" style="font-family:var(--font-mono)">Módulo 2 · ICP → Búsqueda → Selección → Guardar lista → Enrichment</div></div>
     <div class="topbar-actions">
-      <button class="btn btn-teal btn-sm" onclick="launchApollo()">🚀 Buscar leads ahora</button>
+      <button class="btn btn-ghost btn-sm" onclick="nav(document.querySelector('[data-page=pro-icp]'),'pro-icp')">← Editar ICP</button>
+      <button id="btn-run-search" class="btn btn-teal btn-sm" onclick="runApolloSearch()">🔍 Ejecutar búsqueda</button>
     </div>
   </div>
 
-  <div class="steps">
-    <div class="step done"><div class="step-num">✓</div> ICP definido</div>
-    <div class="step active"><div class="step-num">2</div> Búsqueda Apollo</div>
-    <div class="step"><div class="step-num">3</div> Enrichment</div>
-    <div class="step"><div class="step-num">4</div> Asignar secuencia</div>
-    <div class="step"><div class="step-num">5</div> Activar en respond.io</div>
+  <div class="steps" id="apollo-steps">
+    <div class="step done"   id="step-icp"><div class="step-num">✓</div>ICP definido</div>
+    <div class="step active" id="step-search"><div class="step-num">2</div>Búsqueda Apollo</div>
+    <div class="step"        id="step-results"><div class="step-num">3</div>Resultados</div>
+    <div class="step"        id="step-save"><div class="step-num">4</div>Guardar lista</div>
+    <div class="step"        id="step-enrich"><div class="step-num">5</div>Enrichment</div>
   </div>
 
-  <div class="chart-card">
-    <div style="font-size:15px;font-weight:800;margin-bottom:18px">Criterios de búsqueda (desde ICP)</div>
-    <div class="form-grid">
-      <div class="form-group"><label>Títulos a buscar</label>
-        <input type="text" value="CEO, Founder, Director de Ventas, VP Sales, Head of Revenue"></div>
-      <div class="form-group"><label>Industrias</label>
-        <input type="text" value="SaaS, Tech, Professional Services, Real Estate"></div>
-      <div class="form-group"><label>Países</label>
-        <input type="text" value="Mexico, Colombia, Peru, Chile"></div>
-      <div class="form-group"><label>Tamaño empresa (empleados)</label>
-        <input type="text" value="11-200"></div>
-      <div class="form-group"><label>Keywords en bio/descripción</label>
-        <input type="text" value="revenue, sales, growth, B2B"></div>
-      <div class="form-group"><label>Secuencia destino</label>
-        <select><option selected>SaaS CEOs LATAM Q2</option><option>Head of Sales - MX</option><option>+ Crear nueva secuencia</option></select></div>
+  <!-- FILTROS -->
+  <div class="chart-card" id="section-filters">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+      <div>
+        <div style="font-family:var(--font-display);font-size:15px;font-weight:800">Filtros de búsqueda</div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);margin-top:3px">Auto-populado desde ICP Builder · edita según necesites</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="resetFilters()">↺ Resetear</button>
     </div>
-    <div style="margin-top:20px;display:flex;gap:12px">
-      <button class="btn btn-teal" onclick="launchApollo()">🔍 Buscar en Apollo · ~500 contactos estimados</button>
-      <button class="btn btn-ghost">Ver últimos resultados</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
+      <!-- PERSONAS -->
+      <div>
+        <div style="font-family:var(--font-mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--teal);margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:8px">👤 Filtros de persona</div>
+        <div class="form-grid" style="grid-template-columns:1fr">
+          <div class="form-group">
+            <label>Títulos / cargos</label>
+            <textarea id="f-titles" style="height:64px;font-family:var(--font-mono);font-size:11px">CEO, Founder, Director de Ventas, VP Sales, Head of Revenue, Chief Revenue Officer</textarea>
+          </div>
+          <div class="form-group">
+            <label>Seniority (person_seniorities)</label>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px" id="seniority-tags">
+              <span class="seniority-tag active" data-val="owner"   onclick="toggleTag(this)">Owner</span>
+              <span class="seniority-tag active" data-val="founder" onclick="toggleTag(this)">Founder</span>
+              <span class="seniority-tag active" data-val="c_suite" onclick="toggleTag(this)">C-Suite</span>
+              <span class="seniority-tag active" data-val="vp"      onclick="toggleTag(this)">VP</span>
+              <span class="seniority-tag active" data-val="director"onclick="toggleTag(this)">Director</span>
+              <span class="seniority-tag"        data-val="manager" onclick="toggleTag(this)">Manager</span>
+              <span class="seniority-tag"        data-val="senior"  onclick="toggleTag(this)">Senior</span>
+              <span class="seniority-tag"        data-val="entry"   onclick="toggleTag(this)">Entry</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Países de persona</label>
+            <input id="f-person-loc" type="text" value="Mexico, Colombia, Peru, Chile, Argentina" style="font-family:var(--font-mono);font-size:11px">
+          </div>
+          <div class="form-group">
+            <label>Excluir personas (dominios)</label>
+            <input id="f-exclude-people" type="text" placeholder="Ej: competidor.com" style="font-family:var(--font-mono);font-size:11px">
+          </div>
+        </div>
+      </div>
+      <!-- EMPRESAS -->
+      <div>
+        <div style="font-family:var(--font-mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gold-bright);margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:8px">🏢 Filtros de empresa</div>
+        <div class="form-grid" style="grid-template-columns:1fr">
+          <div class="form-group">
+            <label>Keywords de industria</label>
+            <textarea id="f-keywords" style="height:64px;font-family:var(--font-mono);font-size:11px">SaaS, B2B software, technology, professional services, real estate, fintech</textarea>
+          </div>
+          <div class="form-group">
+            <label>Rango de empleados</label>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px" id="size-tags">
+              <span class="size-tag"        data-val="1,10"     onclick="toggleTag(this)">1–10</span>
+              <span class="size-tag active" data-val="11,50"    onclick="toggleTag(this)">11–50</span>
+              <span class="size-tag active" data-val="51,200"   onclick="toggleTag(this)">51–200</span>
+              <span class="size-tag active" data-val="201,500"  onclick="toggleTag(this)">201–500</span>
+              <span class="size-tag"        data-val="501,1000" onclick="toggleTag(this)">501–1k</span>
+              <span class="size-tag"        data-val="1001,10000" onclick="toggleTag(this)">1k–10k</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Países de empresa</label>
+            <input id="f-org-loc" type="text" value="Mexico, Colombia, Peru, Chile" style="font-family:var(--font-mono);font-size:11px">
+          </div>
+          <div class="form-group">
+            <label>Dominios específicos — opcional</label>
+            <input id="f-domains" type="text" placeholder="Ej: hubspot.com, salesforce.com" style="font-family:var(--font-mono);font-size:11px">
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Volumen + botón -->
+    <div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border);display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div class="form-group" style="flex:0 0 auto">
+        <label>Volumen máximo a buscar</label>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <input id="f-volume" type="number" value="25" min="1" max="100" style="width:90px;font-family:var(--font-mono);font-weight:700;font-size:16px;text-align:center">
+          <div style="display:flex;flex-direction:column;gap:3px">
+            <span style="font-family:var(--font-mono);font-size:9px;color:var(--text3)">Contactos a buscar</span>
+            <span style="font-family:var(--font-mono);font-size:9px;color:var(--jade)">Máx. 100 por búsqueda</span>
+          </div>
+        </div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:10px;align-items:center">
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);text-align:right">
+          <div>Búsqueda consume ~1 crédito Apollo</div>
+          <div style="color:var(--amber)">Enrichment cobra por contacto</div>
+        </div>
+        <button class="btn btn-teal" style="padding:12px 24px;font-size:13px" onclick="runApolloSearch()">
+          🔍 Buscar en Apollo
+        </button>
+      </div>
     </div>
   </div>
 
-  <div id="apollo-results" style="display:none">
-    <div class="table-card">
-      <div class="table-head"><span style="font-size:14px;font-weight:700">Resultados · 487 contactos</span><div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm">↓ CSV</button><button class="btn btn-teal btn-sm">→ Agregar a secuencia</button></div></div>
-      <table>
-        <thead><tr><th>Nombre</th><th>Cargo</th><th>Empresa</th><th>País</th><th>Email</th><th>Score ICP</th></tr></thead>
-        <tbody>
-          <tr><td><strong>Carlos Mendoza</strong></td><td>CEO</td><td>TechStack MX</td><td>🇲🇽 México</td><td>✓ Verificado</td><td><span class="pill pill-green">94</span></td></tr>
-          <tr><td><strong>Ana Rodrigues</strong></td><td>VP Sales</td><td>GrowthLab CO</td><td>🇨🇴 Colombia</td><td>✓ Verificado</td><td><span class="pill pill-green">89</span></td></tr>
-          <tr><td><strong>Pablo Fuentes</strong></td><td>Director Comercial</td><td>PropApp PE</td><td>🇵🇪 Perú</td><td>✓ Verificado</td><td><span class="pill pill-green">85</span></td></tr>
-          <tr><td><strong>Sofía Lara</strong></td><td>Founder</td><td>B2B Consulting CL</td><td>🇨🇱 Chile</td><td>⚠ Probable</td><td><span class="pill pill-amber">72</span></td></tr>
-          <tr><td colspan="6" style="text-align:center;color:var(--text3);font-size:12px">... y 483 más</td></tr>
-        </tbody>
-      </table>
+  <!-- RESULTADOS -->
+  <div id="section-results" style="display:none">
+    <div class="chart-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-family:var(--font-display);font-size:15px;font-weight:800">Resultados de búsqueda</div>
+          <div id="results-meta" style="font-family:var(--font-mono);font-size:10px;color:var(--text3);margin-top:3px">— contactos encontrados</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="selectAll(true)">☑ Todos</button>
+          <button class="btn btn-ghost btn-sm" onclick="selectAll(false)">☐ Ninguno</button>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-family:var(--font-mono);font-size:10px;color:var(--text3)">Top</span>
+            <input id="top-n" type="number" value="10" min="1" style="width:56px;font-family:var(--font-mono);font-size:12px;text-align:center;padding:5px 8px">
+            <button class="btn btn-ghost btn-sm" onclick="selectTopN()">Seleccionar</button>
+          </div>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table id="results-table">
+          <thead><tr>
+            <th style="width:32px"><input type="checkbox" id="check-all" onchange="toggleAllChecks(this.checked)" style="accent-color:var(--teal)"></th>
+            <th>#</th><th>Nombre</th><th>Cargo</th><th>Empresa</th><th>Empleados</th><th>País</th><th>Email</th><th>ICP Fit</th>
+          </tr></thead>
+          <tbody id="results-tbody"></tbody>
+        </table>
+      </div>
+      <div id="selection-bar" style="display:none;margin-top:14px;padding:12px 16px;background:var(--teal-dim);border:1px solid rgba(0,196,212,.3);border-radius:var(--r-sm);display:flex;align-items:center;gap:12px">
+        <span style="font-family:var(--font-mono);font-size:12px;color:var(--teal)" id="selection-count">0 contactos seleccionados</span>
+        <button class="btn btn-teal btn-sm" onclick="scrollToSave()" style="margin-left:auto">Guardar selección en Apollo →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- GUARDAR EN APOLLO -->
+  <div id="section-save" style="display:none">
+    <div class="chart-card" style="border-color:rgba(0,196,212,.25)">
+      <div style="font-family:var(--font-display);font-size:15px;font-weight:800;margin-bottom:16px;color:var(--teal)">💾 Guardar contactos en Apollo</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="form-group">
+          <label>Nombre de la lista en Apollo</label>
+          <input id="list-name" type="text" placeholder="Ej: SaaS CEOs LATAM Q2 2026" style="font-size:14px;font-weight:600">
+          <span style="font-family:var(--font-mono);font-size:9px;color:var(--text3);margin-top:3px">Este nombre aparecerá en Apollo como segmento de contactos</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="padding:12px;background:var(--surface2);border-radius:var(--r-sm);display:flex;align-items:center;gap:10px">
+            <div style="width:16px;height:16px;border-radius:3px;background:var(--jade);display:flex;align-items:center;justify-content:center;font-size:10px;color:#000;font-weight:700;flex-shrink:0">✓</div>
+            <div><div style="font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--jade)">run_dedupe: true</div><div style="font-size:11px;color:var(--text3)">Deduplicación automática siempre activa</div></div>
+          </div>
+          <div style="padding:12px;background:var(--surface2);border-radius:var(--r-sm);display:flex;align-items:center;gap:10px">
+            <div style="width:16px;height:16px;border-radius:3px;background:var(--jade);display:flex;align-items:center;justify-content:center;font-size:10px;color:#000;font-weight:700;flex-shrink:0">✓</div>
+            <div><div style="font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--jade)">reveal_personal_emails: true</div><div style="font-size:11px;color:var(--text3)">Emails personales incluidos en el guardado</div></div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:14px">
+        <div id="save-summary" style="font-family:var(--font-mono);font-size:11px;color:var(--text3)">Selecciona contactos en la tabla para guardar</div>
+        <button id="btn-save-apollo" class="btn btn-teal" style="margin-left:auto;opacity:.5;cursor:not-allowed" disabled onclick="saveToApollo()">
+          💾 Guardar <span id="save-count">0</span> contactos en Apollo
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ENRICHMENT -->
+  <div id="section-enrich" style="display:none">
+    <div class="chart-card" style="border-color:rgba(37,99,235,.2)">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;gap:12px">
+        <div>
+          <div style="font-family:var(--font-display);font-size:15px;font-weight:800;color:var(--gold-bright)">📞 Enrichment de teléfonos</div>
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);margin-top:3px">Enriquece teléfonos directos y móviles de los contactos guardados</div>
+        </div>
+        <div style="padding:10px 14px;background:rgba(232,64,64,.08);border:1px solid rgba(232,64,64,.25);border-radius:var(--r-sm);text-align:right;flex-shrink:0">
+          <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end">
+            <span style="font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--red)">Waterfall enrichment</span>
+            <div style="width:34px;height:18px;background:var(--surface3);border-radius:9px;border:1px solid rgba(232,64,64,.3);cursor:not-allowed;position:relative">
+              <div style="position:absolute;top:2px;left:2px;width:14px;height:14px;background:#555;border-radius:50%"></div>
+            </div>
+          </div>
+          <div style="font-family:var(--font-mono);font-size:9px;color:var(--red);margin-top:4px">SIEMPRE DESACTIVADO 🔒</div>
+          <div style="font-family:var(--font-mono);font-size:9px;color:var(--text3);margin-top:2px">No se usan proveedores externos</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+        <div style="padding:12px;background:var(--surface2);border-radius:var(--r-sm);border:1px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <div style="width:16px;height:16px;border-radius:3px;background:var(--jade);display:flex;align-items:center;justify-content:center;font-size:10px;color:#000;font-weight:700">✓</div>
+            <span style="font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--jade)">reveal_phone_number</span>
+          </div>
+          <div style="font-size:11px;color:var(--text3)">Teléfono directo y móvil desde base Apollo</div>
+        </div>
+        <div style="padding:12px;background:var(--surface2);border-radius:var(--r-sm);border:1px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <div style="width:16px;height:16px;border-radius:3px;background:var(--jade);display:flex;align-items:center;justify-content:center;font-size:10px;color:#000;font-weight:700">✓</div>
+            <span style="font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--jade)">reveal_personal_emails</span>
+          </div>
+          <div style="font-size:11px;color:var(--text3)">Emails personales incluidos siempre</div>
+        </div>
+        <div style="padding:12px;background:rgba(232,64,64,.05);border-radius:var(--r-sm);border:1px solid rgba(232,64,64,.2)">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <div style="width:16px;height:16px;border-radius:3px;background:var(--surface3);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--red);font-weight:700">✕</div>
+            <span style="font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--red)">waterfall_request</span>
+          </div>
+          <div style="font-size:11px;color:var(--red)">Desactivado · Solo fuentes Apollo propias</div>
+        </div>
+      </div>
+      <div style="padding:14px;background:var(--surface2);border-radius:var(--r-sm);border:1px solid var(--border);margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-family:var(--font-mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">Contactos a enriquecer</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-family:var(--font-mono);font-size:10px;color:var(--text3)">Lotes de 10 · consume 1 crédito c/u</span>
+            <span id="enrich-batch-count" class="pill pill-gold" style="font-family:var(--font-mono)">0 contactos</span>
+          </div>
+        </div>
+        <div id="enrich-contact-list" style="display:flex;flex-direction:column;gap:6px;max-height:180px;overflow-y:auto">
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text3);text-align:center;padding:20px">
+            Guarda contactos en Apollo primero para enriquecerlos
+          </div>
+        </div>
+      </div>
+      <div id="enrich-warning" style="display:none;padding:10px 14px;background:var(--gold-dim);border:1px solid rgba(37,99,235,.25);border-radius:var(--r-sm);margin-bottom:12px">
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--gold-bright)">
+          ⚠ <strong>Aviso de créditos:</strong> Este enrichment consumirá aproximadamente <strong id="credit-estimate">0</strong> créditos Apollo. Waterfall enrichment está DESACTIVADO.
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3)">
+          Lotes de 10 · <span id="batch-num">0</span> lotes estimados
+        </div>
+        <button id="btn-enrich" class="btn btn-primary" style="margin-left:auto;opacity:.5;cursor:not-allowed" disabled onclick="runEnrichment()">
+          ⚡ Enriquecer teléfonos de <span id="enrich-count">0</span> contactos
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -2455,19 +2666,154 @@ function switchMsgTab(el, tabId) {
   document.getElementById(tabId).style.display = 'block';
 }
 
-// ── APOLLO ──
-function launchApollo() {
-  const btn = document.querySelector('[onclick="launchApollo()"]');
-  if(btn) { btn.textContent = '⏳ Buscando...'; btn.disabled = true; }
+// ── APOLLO PROSPECTING ENGINE ──
+const apolloState = { results:[], selected: new Set(), saved:[], savedListName:'' };
+
+const MOCK_LEADS = [
+  { id:1, name:'Carlos Mendoza', title:'VP de Ventas', company:'TechCorp MX', country:'México', employees:'201-500', industry:'Computer Software', email:'c.mendoza@techcorp.mx', phone:null, score:'strong' },
+  { id:2, name:'Ana Ríos', title:'Head of Marketing', company:'Fintech Latam', country:'Colombia', employees:'51-200', industry:'Financial Services', email:'a.rios@fintechlatam.co', phone:null, score:'strong' },
+  { id:3, name:'Pedro Soto', title:'Director de Operaciones', company:'LogiChile', country:'Chile', employees:'201-500', industry:'Logistics and Supply Chain', email:'p.soto@logichile.cl', phone:null, score:'good' },
+  { id:4, name:'Lucía Vargas', title:'CEO', company:'EduOnline PE', country:'Perú', employees:'11-50', industry:'E-Learning', email:'l.vargas@eduonline.pe', phone:null, score:'strong' },
+  { id:5, name:'Miguel Torres', title:'CTO', company:'SaaS Argentina', country:'Argentina', employees:'51-200', industry:'Internet', email:'m.torres@saas.ar', phone:null, score:'good' },
+  { id:6, name:'Sofía Castillo', title:'VP de Producto', company:'RetailMX', country:'México', employees:'501-1000', industry:'Retail', email:'s.castillo@retailmx.com', phone:null, score:'good' },
+  { id:7, name:'Andrés Mejía', title:'Director Comercial', company:'ConsultCol', country:'Colombia', employees:'11-50', industry:'Management Consulting', email:'a.mejia@consultcol.co', phone:null, score:'partial' },
+  { id:8, name:'Valentina Cruz', title:'Head of Growth', company:'AdTech Latam', country:'Argentina', employees:'51-200', industry:'Marketing and Advertising', email:'v.cruz@adtech.lat', phone:null, score:'partial' },
+  { id:9, name:'Rodrigo Lima', title:'Country Manager', company:'HRSoft BR', country:'Brasil', employees:'201-500', industry:'Human Resources', email:'r.lima@hrsoft.com.br', phone:null, score:'good' },
+  { id:10, name:'Isabella Moreno', title:'Directora de TI', company:'InsuraTech', country:'México', employees:'1001-5000', industry:'Insurance', email:'i.moreno@insuratech.mx', phone:null, score:'partial' },
+];
+
+function toggleTag(el) { el.classList.toggle('active'); }
+
+function resetFilters() {
+  document.querySelectorAll('#section-filters .seniority-tag, #section-filters .size-tag').forEach(t => t.classList.remove('active'));
+  ['apollo-titles','apollo-keywords','apollo-countries'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
+  const vol = document.getElementById('apollo-volume'); if(vol) vol.value = 500;
+}
+
+function getFilters() {
+  const seniority = [...document.querySelectorAll('#section-filters .seniority-tag.active')].map(t => t.textContent.trim());
+  const sizes = [...document.querySelectorAll('#section-filters .size-tag.active')].map(t => t.textContent.trim());
+  const titles = (document.getElementById('apollo-titles')?.value || '').split(',').map(s=>s.trim()).filter(Boolean);
+  const keywords = (document.getElementById('apollo-keywords')?.value || '').split(',').map(s=>s.trim()).filter(Boolean);
+  const countries = (document.getElementById('apollo-countries')?.value || '').split(',').map(s=>s.trim()).filter(Boolean);
+  const volume = parseInt(document.getElementById('apollo-volume')?.value || '500');
+  return { seniority, sizes, titles, keywords, countries, volume };
+}
+
+function advanceStep(n) {
+  document.querySelectorAll('#apollo-steps .step').forEach((el, i) => {
+    el.classList.remove('active','done');
+    const num = el.querySelector('.step-num');
+    if(i < n-1) { el.classList.add('done'); if(num) num.textContent='✓'; }
+    else if(i === n-1) { el.classList.add('active'); if(num) num.textContent = i+1; }
+    else { if(num) num.textContent = i+1; }
+  });
+}
+
+function runApolloSearch() {
+  const btn = document.getElementById('btn-run-search');
+  if(btn) { btn.textContent='⏳ Buscando...'; btn.disabled=true; }
   setTimeout(() => {
-    if(btn) { btn.textContent = '✓ 487 contactos encontrados'; btn.style.background = 'var(--grad-jade)'; }
-    const results = document.getElementById('apollo-results');
-    if(results) { results.style.display='block'; results.classList.add('fade-in'); }
-    // Advance step
-    const steps = document.querySelectorAll('#page-pro-apollo .step');
-    if(steps[1]) { steps[1].classList.remove('active'); steps[1].classList.add('done'); steps[1].querySelector('.step-num').textContent='✓'; }
-    if(steps[2]) { steps[2].classList.add('active'); }
+    apolloState.results = MOCK_LEADS.slice();
+    apolloState.selected = new Set();
+    renderResultsTable();
+    const sf = document.getElementById('section-filters');
+    const sr = document.getElementById('section-results');
+    if(sf) sf.style.display='none';
+    if(sr) { sr.style.display='block'; sr.classList.add('fade-in'); }
+    advanceStep(3);
+    if(btn) { btn.textContent='Buscar Contactos'; btn.disabled=false; }
+    updateSelectionUI();
   }, 1800);
+}
+
+function renderResultsTable() {
+  const tbody = document.getElementById('results-tbody');
+  if(!tbody) return;
+  const fitLabel = { strong:'Strong Fit', good:'Good Fit', partial:'Partial Fit' };
+  const fitClass = { strong:'fit-strong', good:'fit-good', partial:'fit-partial' };
+  tbody.innerHTML = apolloState.results.map(l => `
+    <tr>
+      <td><input type="checkbox" class="contact-check" ${apolloState.selected.has(l.id)?'checked':''} onchange="toggleContact(${l.id},this.checked)"></td>
+      <td><strong>${l.name}</strong><br><span style="color:var(--text3);font-size:11px">${l.title}</span></td>
+      <td>${l.company}<br><span style="color:var(--text3);font-size:11px">${l.country} · ${l.employees}</span></td>
+      <td><span style="font-size:11px;color:var(--text2)">${l.industry}</span></td>
+      <td><span style="font-size:11px;font-family:var(--font-mono)">${l.email}</span></td>
+      <td>${l.phone ? `<span style="font-size:11px;font-family:var(--font-mono)">${l.phone}</span>` : '<span style="color:var(--text3);font-size:11px">—</span>'}</td>
+      <td><span class="${fitClass[l.score]}">${fitLabel[l.score]}</span></td>
+    </tr>`).join('');
+}
+
+function toggleContact(id, checked) {
+  if(checked) apolloState.selected.add(id); else apolloState.selected.delete(id);
+  updateSelectionUI();
+}
+
+function toggleAllChecks(checked) {
+  document.querySelectorAll('#results-tbody .contact-check').forEach(cb => { cb.checked = checked; });
+  if(checked) apolloState.results.forEach(l => apolloState.selected.add(l.id));
+  else apolloState.selected.clear();
+  updateSelectionUI();
+}
+
+function selectAll(on) { toggleAllChecks(on); }
+
+function selectTopN() {
+  const n = parseInt(document.getElementById('top-n-input')?.value || '5');
+  apolloState.selected.clear();
+  document.querySelectorAll('#results-tbody .contact-check').forEach((cb, i) => {
+    cb.checked = i < n;
+    if(i < n && apolloState.results[i]) apolloState.selected.add(apolloState.results[i].id);
+  });
+  updateSelectionUI();
+}
+
+function updateSelectionUI() {
+  const count = apolloState.selected.size;
+  const bar = document.getElementById('selection-bar');
+  const selCount = document.getElementById('sel-count');
+  const saveBtn = document.getElementById('btn-scroll-save');
+  const enrichCount = document.getElementById('enrich-count');
+  if(bar) bar.style.display = count > 0 ? 'flex' : 'none';
+  if(selCount) selCount.textContent = count;
+  if(saveBtn) saveBtn.disabled = count === 0;
+  if(enrichCount) enrichCount.textContent = apolloState.saved.length || count;
+}
+
+function scrollToSave() {
+  const ss = document.getElementById('section-save');
+  if(ss) { ss.style.display='block'; ss.scrollIntoView({behavior:'smooth', block:'start'}); advanceStep(4); }
+}
+
+function saveToApollo() {
+  const listName = document.getElementById('list-name-input')?.value?.trim();
+  if(!listName) { alert('Dale un nombre a tu lista.'); return; }
+  const btn = document.getElementById('btn-save-apollo');
+  if(btn) { btn.textContent='💾 Guardando...'; btn.classList.add('saving'); btn.disabled=true; }
+  apolloState.savedListName = listName;
+  apolloState.saved = apolloState.results.filter(l => apolloState.selected.has(l.id));
+  setTimeout(() => {
+    if(btn) { btn.textContent='✓ Guardado en Apollo'; btn.classList.remove('saving'); btn.style.background='var(--grad-jade)'; }
+    const se = document.getElementById('section-enrich');
+    if(se) { se.style.display='block'; se.classList.add('fade-in'); se.scrollIntoView({behavior:'smooth', block:'start'}); }
+    const ec = document.getElementById('enrich-count'); if(ec) ec.textContent = apolloState.saved.length;
+    const cl = document.getElementById('enrich-contact-list');
+    if(cl) cl.innerHTML = apolloState.saved.map(l=>`<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="font-size:18px">👤</span><div><strong style="font-size:13px">${l.name}</strong><br><span style="font-size:11px;color:var(--text3)">${l.title} · ${l.company}</span></div><span style="margin-left:auto;font-size:11px;font-family:var(--font-mono);color:var(--text3)">📧 ${l.email}</span></div>`).join('');
+    advanceStep(5);
+  }, 1600);
+}
+
+function runEnrichment() {
+  const btn = document.getElementById('btn-enrich');
+  if(btn) { btn.textContent='⏳ Enriqueciendo...'; btn.classList.add('saving'); btn.disabled=true; }
+  setTimeout(() => {
+    apolloState.saved.forEach(l => { if(!l.phone) l.phone = `+52 55 ${Math.floor(1000+Math.random()*9000)}-${Math.floor(1000+Math.random()*9000)}`; });
+    renderResultsTable();
+    const cl = document.getElementById('enrich-contact-list');
+    if(cl) cl.innerHTML = apolloState.saved.map(l=>`<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="font-size:18px">👤</span><div><strong style="font-size:13px">${l.name}</strong><br><span style="font-size:11px;color:var(--text3)">${l.title} · ${l.company}</span></div><div style="margin-left:auto;text-align:right"><div style="font-size:11px;font-family:var(--font-mono);color:var(--text2)">📧 ${l.email}</div><div style="font-size:11px;font-family:var(--font-mono);color:var(--jade)">📞 ${l.phone}</div></div></div>`).join('');
+    if(btn) { btn.textContent='✓ Enriquecimiento Completo'; btn.classList.remove('saving'); btn.style.background='var(--grad-jade)'; btn.disabled=false; }
+    advanceStep(5);
+  }, 2200);
 }
 
 // ── MATRIX WIZARD ──
