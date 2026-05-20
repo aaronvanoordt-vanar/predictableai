@@ -135,18 +135,19 @@
       let frameCount = 0;
       audioProcessor.onaudioprocess = function (e) {
         if (!dgSocket || dgSocket.readyState !== WebSocket.OPEN) return;
-        const left = e.inputBuffer.getChannelData(0);
-        const right = e.inputBuffer.numberOfChannels > 1 ? e.inputBuffer.getChannelData(1) : new Float32Array(left.length);
-        // Mezclar en mono: (L + R) / 2
-        const mono = new Int16Array(left.length);
+        const left = e.inputBuffer.getChannelData(0);   // canal 0 = tab/Lead
+        const right = e.inputBuffer.numberOfChannels > 1 ? e.inputBuffer.getChannelData(1) : new Float32Array(left.length);   // canal 1 = mic/SDR
+        // STEREO intercalado L,R,L,R,... → Deepgram lo separa por channel_index
+        const interleaved = new Int16Array(left.length * 2);
         for (let i = 0; i < left.length; i++) {
-          const mixed = (left[i] + right[i]) * 0.5;
-          const s = Math.max(-1, Math.min(1, mixed));
-          mono[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          const sL = Math.max(-1, Math.min(1, left[i]));
+          const sR = Math.max(-1, Math.min(1, right[i]));
+          interleaved[i*2] = sL < 0 ? sL * 0x8000 : sL * 0x7FFF;
+          interleaved[i*2+1] = sR < 0 ? sR * 0x8000 : sR * 0x7FFF;
         }
-        dgSocket.send(mono.buffer);
+        dgSocket.send(interleaved.buffer);
         frameCount++;
-        if (frameCount === 1) console.log('[Coach] Primer frame de audio enviado a Deepgram');
+        if (frameCount === 1) console.log('[Coach] Primer frame de audio stereo enviado (L=Lead, R=SDR)');
         if (frameCount % 100 === 0) console.log('[Coach] Frames enviados:', frameCount);
       };
 
@@ -161,12 +162,12 @@
 
   // ─── DEEPGRAM DIRECTO (con token temporal) ─────────────────
   function connectDeepgramDirect(accessToken) {
-    // Parámetros simples: mono primero para descartar problemas de multichannel
+    // STEREO + multichannel para separar SDR (canal 1) y Lead (canal 0)
     const params = [
       'model=nova-2', 'language=multi',
       'interim_results=true', 'endpointing=300',
       'utterance_end_ms=1000', 'smart_format=true', 'punctuate=true',
-      'encoding=linear16', 'sample_rate=16000', 'channels=1'
+      'encoding=linear16', 'sample_rate=16000', 'channels=2', 'multichannel=true'
     ].join('&');
 
     // JWT Grant Token: probamos primero como subprotocol bearer (forma correcta)
