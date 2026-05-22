@@ -4,8 +4,8 @@
  * Valida y guarda el linkedin_company_url en profiles.
  * Tras guardar, redirige al app.
  *
- * IMPORTANTE: esta pantalla SOLO debe ser accesible para users autenticados
- * que aún NO tienen onboarded=true. Si vienen acá ya onboardeados, los redirigimos.
+ * v2: usa UPSERT para auto-reparar casos donde la row de profiles
+ *     fue borrada manualmente desde Supabase pero el auth.users existe.
  */
 (function () {
   'use strict';
@@ -14,58 +14,81 @@
 
   // Regex permisiva pero estricta para LinkedIn company:
   //   https://[www.]linkedin.com/company/<slug>[/...]
-  // Acepta query strings opcionales para preservar el URL si el user copió uno largo
   const LINKEDIN_COMPANY_RE = /^https?:\/\/(www\.)?linkedin\.com\/company\/([a-zA-Z0-9_\-\.~]+)\/?(\?.*)?$/i;
 
   document.addEventListener('DOMContentLoaded', init);
 
   async function init() {
-    // 1. Verificar sesión
-    const session = await window.supabaseHelpers.getSession();
-    if (!session) {
+    // 1. Verificar sesión REAL contra el servidor (no solo localStorage)
+    const user = await window.supabaseHelpers.getUser();
+    if (!user) {
+      // Token stale o user borrado: limpiar y volver a login
+      await window.supabaseClient.auth.signOut().catch(() => {});
+      localStorage.clear();
       window.location.replace('./auth.html');
       return;
     }
 
-    const user = session.user;
     $('#user-chip').textContent = user.email;
 
-    // 2. Si ya está onboarded, ir al app
-    const profile = await window.supabaseHelpers.getMyProfile();
+    // 2. Auto-reparar: si no existe row en profiles, crearla
+    let profile = await window.supabaseHelpers.getMyProfile();
+    if (!profile) {
+      console.warn('[onboarding] profile missing, auto-creating');
+      const { data: created, error: createErr } = await window.supabaseClient
+        .from('profiles')
+        .insert({ id: user.id, email: user.email })
+        .select()
+        .single();
+      if (createErr) {
+        console.error('[onboarding] cannot create profile', createErr);
+        showStatus('err', 'No se pudo inicializar tu perfil: ' + escapeHtml(createErr.message) + '. <a href="#" id="link-logout-now">Cerrar sesión</a>');
+        bindLogoutLink();
+        return;
+      }
+      profile = created;
+    }
+
+    // 3. Si ya está onboarded, ir al app
     if (profile && profile.onboarded && profile.linkedin_company_url) {
       window.location.replace(window.APP_URL || './index.html');
       return;
     }
 
-    // 3. Si por alguna razón hay URL guardada pero no marcado onboarded, prellenar
+    // 4. Prellenar si había URL previa
     if (profile && profile.linkedin_company_url) {
       $('#inp-linkedin').value = profile.linkedin_company_url;
     }
 
-    // 4. Bind handlers
+    // 5. Bind handlers
     $('#btn-submit').addEventListener('click', handleSubmit);
     $('#inp-linkedin').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSubmit(); });
     $('#link-logout').addEventListener('click', async (e) => {
       e.preventDefault();
       await window.supabaseHelpers.signOut();
     });
-
-    // 5. Hint en vivo mientras escriben
     $('#inp-linkedin').addEventListener('input', livePreview);
+  }
+
+  function bindLogoutLink() {
+    const lnk = document.getElementById('link-logout-now');
+    if (lnk) lnk.addEventListener('click', async (e) => {
+      e.preventDefault();
+      await window.supabaseClient.auth.signOut().catch(() => {});
+      localStorage.clear();
+      window.location.replace('./auth.html');
+    });
   }
 
   function livePreview() {
     const v = $('#inp-linkedin').value.trim();
-    const status = $('#status');
     if (!v) { hideStatus(); return; }
-
     const clean = normalizeUrl(v);
     if (LINKEDIN_COMPANY_RE.test(clean)) {
       const m = clean.match(LINKEDIN_COMPANY_RE);
-      const slug = m && m[2];
-      showStatus('info', 'Detectamos la empresa <strong>' + escapeHtml(slug) + '</strong>. Cuando aprietes Continuar, lo guardamos.');
+      showStatus('info', 'Detectamos la empresa <strong>' + escapeHtml(m[2]) + '</strong>. Aprieta Continuar para guardar.');
     } else if (/linkedin\.com\/in\//.test(v)) {
-      showStatus('err', 'Esa es una URL de <strong>perfil personal</strong>. Necesitamos la URL de la <strong>página de empresa</strong>. Ej: linkedin.com/company/eleva-co/');
+      showStatus('err', 'Esa es una URL de <strong>perfil personal</strong>. Necesitamos la página de <strong>empresa</strong>. Ej: linkedin.com/company/eleva-co/');
     } else if (v.length > 6) {
       showStatus('err', 'URL no válida. Debe empezar con <span class="example">https://www.linkedin.com/company/</span>');
     } else {
@@ -75,11 +98,7 @@
 
   async function handleSubmit() {
     const raw = $('#inp-linkedin').value.trim();
-    if (!raw) {
-      showStatus('err', 'Por favor pega la URL de tu empresa en LinkedIn.');
-      $('#inp-linkedin').focus();
-      return;
-    }
+    if (!raw) { showStatus('err', 'Por favor pega la URL de tu empresa en LinkedIn.'); $('#inp-linkedin').focus(); return; }
     const url = normalizeUrl(raw);
     if (!LINKEDIN_COMPANY_RE.test(url)) {
       showStatus('err', 'URL no válida. Debe ser la página de empresa: <span class="example">linkedin.com/company/...</span>');
@@ -87,24 +106,49 @@
       return;
     }
 
-    const session = await window.supabaseHelpers.getSession();
-    if (!session) { window.location.replace('./auth.html'); return; }
+    const user = await window.supabaseHelpers.getUser();
+    if (!user) {
+      await window.supabaseClient.auth.signOut().catch(() => {});
+      localStorage.clear();
+      window.location.replace('./auth.html');
+      return;
+    }
 
     showStatus('info', '<span class="spinner"></span> Guardando…');
     $('#btn-submit').disabled = true;
 
-    const { error } = await window.supabaseClient
+    // UPSERT — funciona tanto si la row existe como si no
+    const { data, error } = await window.supabaseClient
       .from('profiles')
-      .update({
+      .upsert({
+        id: user.id,
+        email: user.email,
         linkedin_company_url: url,
         onboarded: true,
         onboarded_at: new Date().toISOString()
-      })
-      .eq('id', session.user.id);
+      }, { onConflict: 'id' })
+      .select()
+      .single();
 
     if (error) {
       $('#btn-submit').disabled = false;
-      showStatus('err', 'Error al guardar: ' + escapeHtml(error.message));
+      // Mensajes más claros según el tipo de error
+      let msg = error.message;
+      if (/check constraint/i.test(msg) || /linkedin_company_url_format/i.test(msg)) {
+        msg = 'La URL no pasó la validación del servidor. Debe ser exactamente linkedin.com/company/<empresa>/';
+      } else if (/duplicate key/i.test(msg)) {
+        msg = 'Conflicto al guardar. Refresca la página e intenta de nuevo.';
+      } else if (/permission denied|new row violates row-level security/i.test(msg)) {
+        msg = 'Tu sesión expiró o no tienes permiso. Cierra sesión y vuelve a entrar.';
+      }
+      showStatus('err', 'Error: ' + escapeHtml(msg));
+      return;
+    }
+
+    // Sanity check: confirmar que sí se guardó
+    if (!data || !data.onboarded || !data.linkedin_company_url) {
+      $('#btn-submit').disabled = false;
+      showStatus('err', 'No se pudo confirmar el guardado. Verifica tu sesión y reintenta.');
       return;
     }
 
@@ -115,15 +159,10 @@
   }
 
   // ────────────────────────────────────────────────────────
-  // Helpers
-  // ────────────────────────────────────────────────────────
   function normalizeUrl(raw) {
     let v = raw.trim();
-    // Agregar https:// si el user escribió sin scheme
     if (!/^https?:\/\//i.test(v)) v = 'https://' + v;
-    // Quitar trailing slash extra para consistencia
     v = v.replace(/\/+$/, '/');
-    // Si no termina en / pero tampoco tiene query, ponerle /
     if (!/\?/.test(v) && !v.endsWith('/')) v = v + '/';
     return v;
   }
@@ -131,6 +170,7 @@
     const el = $('#status');
     el.className = 'status show ' + type;
     el.innerHTML = html;
+    bindLogoutLink();
   }
   function hideStatus() { $('#status').className = 'status'; }
   function escapeHtml(s) {
