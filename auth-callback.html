@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Predictable.ai — Procesando…</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #0d1117; color: #e6edf3; font-family: 'Inter', sans-serif; }
+  .box { text-align: center; }
+  .spinner { width: 40px; height: 40px; border: 3px solid #2d333b; border-top-color: #00c4d4; border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto 20px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .msg { color: #aab2bd; font-size: 14px; }
+  .err { color: #e84040; margin-top: 12px; font-size: 13px; }
+  a { color: #00c4d4; }
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="spinner"></div>
+  <div class="msg" id="msg">Procesando autenticación…</div>
+  <div class="err" id="err"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabase-client.js"></script>
+<script>
+  (async function () {
+    // detectSessionInUrl ya parseó el hash; ahora solo enrutamos.
+    try {
+      const session = await window.supabaseHelpers.getSession();
+      if (!session) {
+        // Quizá el hash aún no se procesó; esperar un tick
+        await new Promise(r => setTimeout(r, 800));
+        const s2 = await window.supabaseHelpers.getSession();
+        if (!s2) {
+          document.getElementById('msg').textContent = 'No se pudo iniciar sesión.';
+          document.getElementById('err').innerHTML = 'Vuelve a <a href="./auth.html">intentarlo</a>.';
+          return;
+        }
+      }
+      // Esperar 700ms para que el trigger handle_new_user haya corrido en Supabase
+      await new Promise(r => setTimeout(r, 700));
+      const profile = await window.supabaseHelpers.getMyProfile();
+      if (!profile || !profile.onboarded || !profile.linkedin_company_url) {
+        window.location.replace('./onboarding.html');
+      } else {
+        window.location.replace(window.APP_URL || './index.html');
+      }
+    } catch (e) {
+      document.getElementById('err').textContent = 'Error: ' + e.message;
+    }
+  })();
+</script>
+</body>
+</html>
