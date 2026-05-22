@@ -1,12 +1,10 @@
 /**
- * auth.js — Lógica de la pantalla auth.html
+ * auth.js — Lógica de la pantalla auth.html (v3)
  *
- * Maneja:
- *  - Tabs Sign in / Sign up
- *  - Google OAuth
- *  - Email + password (signin, signup, password reset)
- *  - Email verification flow
- *  - Redirección a onboarding o app según estado del profile
+ * Cambio importante v3:
+ *   Removido `prompt: 'consent'` del OAuth de Google.
+ *   Antes: Google forzaba la pantalla de consentimiento CADA vez que iniciabas sesión.
+ *   Ahora: Google solo la muestra la PRIMERA vez (signup). Returning users entran directo.
  */
 (function () {
   'use strict';
@@ -14,33 +12,26 @@
   const $ = (sel) => document.querySelector(sel);
   let mode = 'signin'; // 'signin' | 'signup' | 'forgot'
 
-  // ────────────────────────────────────────────────────────
-  // INIT
-  // ────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', init);
 
   async function init() {
-    // Si ya hay session activa, redirigir
     const session = await window.supabaseHelpers.getSession();
     if (session && session.user) {
       await routeAfterAuth();
       return;
     }
 
-    // Bind tabs
     document.querySelectorAll('.tab').forEach(t => {
       t.addEventListener('click', () => setMode(t.getAttribute('data-mode')));
     });
     $('#btn-google').addEventListener('click', handleGoogle);
     $('#btn-submit').addEventListener('click', handleSubmit);
-    $('#link-forgot').addEventListener('click', (e) => { e.preventDefault(); setMode('forgot'); });
+    const fg = $('#link-forgot'); if (fg) fg.addEventListener('click', (e) => { e.preventDefault(); setMode('forgot'); });
 
-    // Enter para submit
     [$('#inp-email'), $('#inp-password')].forEach(inp => {
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSubmit(); });
     });
 
-    // Listener de cambios de sesión (por si llega el callback de OAuth en esta misma página)
     window.supabaseClient.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session) {
         await routeAfterAuth();
@@ -48,9 +39,6 @@
     });
   }
 
-  // ────────────────────────────────────────────────────────
-  // Mode switching
-  // ────────────────────────────────────────────────────────
   function setMode(newMode) {
     mode = newMode;
     document.querySelectorAll('.tab').forEach(t => {
@@ -80,34 +68,34 @@
       $('#footer-link').innerHTML = '<a href="#" id="link-back-signin">← Volver a iniciar sesión</a>';
     }
     hideStatus();
-    // Re-bind dynamically added links
     const back = $('#link-back-signin'); if (back) back.addEventListener('click', (e) => { e.preventDefault(); setMode('signin'); });
     const fg = $('#link-forgot'); if (fg) fg.addEventListener('click', (e) => { e.preventDefault(); setMode('forgot'); });
   }
 
   // ────────────────────────────────────────────────────────
-  // Google OAuth
+  // Google OAuth (v3: sin prompt:'consent', usuario recurrente NO ve pantalla)
   // ────────────────────────────────────────────────────────
   async function handleGoogle() {
     showStatus('info', '<span class="spinner"></span> Redirigiendo a Google…');
     $('#btn-google').disabled = true;
+
+    // NOTA importante: NO incluimos `prompt: 'consent'` en queryParams.
+    // Con esto, Google muestra la pantalla SOLO en el primer login del usuario.
+    // En logins subsecuentes, el browser hace el flow silenciosamente.
     const { error } = await window.supabaseClient.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.AUTH_REDIRECT_URL,
-        queryParams: { access_type: 'offline', prompt: 'consent' }
+        redirectTo: window.AUTH_REDIRECT_URL
+        // queryParams: {}  ← omitido a propósito. Si en algún momento necesitas
+        // forzar selector de cuenta (por ej. tras logout), usa prompt:'select_account'
       }
     });
     if (error) {
       showStatus('err', 'Error con Google: ' + escapeHtml(error.message));
       $('#btn-google').disabled = false;
     }
-    // Si no hay error, el browser redirige a Google y vuelve a auth-callback.html
   }
 
-  // ────────────────────────────────────────────────────────
-  // Email submit
-  // ────────────────────────────────────────────────────────
   async function handleSubmit() {
     const email = $('#inp-email').value.trim();
     const password = $('#inp-password').value;
@@ -131,9 +119,7 @@
           options: { emailRedirectTo: window.AUTH_REDIRECT_URL }
         });
         if (error) throw error;
-        // Si "Confirm email" está ON en Supabase, data.user existe pero session = null
         if (data.session) {
-          // Email confirmation deshabilitada — entra directo
           await routeAfterAuth();
         } else {
           showStatus('ok', '✅ Cuenta creada. <strong>Revisa tu email</strong> para verificarla y vuelve aquí a iniciar sesión.');
@@ -159,12 +145,8 @@
     }
   }
 
-  // ────────────────────────────────────────────────────────
-  // Routing post-auth
-  // ────────────────────────────────────────────────────────
   async function routeAfterAuth() {
     const profile = await window.supabaseHelpers.getMyProfile();
-    // Si el profile aún no existe (el trigger demora un instante), esperamos y reintentamos
     if (!profile) {
       await new Promise(r => setTimeout(r, 600));
       const p2 = await window.supabaseHelpers.getMyProfile();
@@ -179,9 +161,6 @@
     }
   }
 
-  // ────────────────────────────────────────────────────────
-  // UI helpers
-  // ────────────────────────────────────────────────────────
   function showStatus(type, html) {
     const el = $('#status');
     el.className = 'status show ' + type;
