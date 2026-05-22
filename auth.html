@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Predictable.ai — Acceso</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%2300c4d4'/></svg>">
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --surface2: #1f2630; --border: #2d333b;
+    --text: #e6edf3; --text2: #aab2bd; --text3: #6e7681;
+    --teal: #00c4d4; --jade: #1ec18f; --red: #e84040; --green: #10b981; --amber: #f0c060;
+    --font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font); min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+    background-image: radial-gradient(circle at 20% 10%, rgba(0,196,212,.08), transparent 50%),
+                      radial-gradient(circle at 80% 90%, rgba(30,193,143,.06), transparent 50%);
+  }
+  .card {
+    width: 100%; max-width: 420px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 32px 32px 28px;
+    box-shadow: 0 24px 80px rgba(0,0,0,.5);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 8px rgba(0,196,212,.6); }
+  .brand-name { font-weight: 700; font-size: 15px; letter-spacing: -.2px; }
+  h1 { font-size: 22px; margin: 14px 0 4px; letter-spacing: -.5px; }
+  .sub { color: var(--text3); font-size: 13px; margin-bottom: 22px; }
+
+  /* Tabs */
+  .tabs { display: flex; background: var(--surface2); border-radius: 10px; padding: 4px; margin-bottom: 20px; }
+  .tab {
+    flex: 1; text-align: center; padding: 8px 12px; border-radius: 7px;
+    font-size: 13px; font-weight: 600; color: var(--text2); cursor: pointer;
+    transition: all .15s;
+  }
+  .tab.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+
+  /* Botón Google */
+  .btn-google {
+    width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
+    padding: 11px 14px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 9px; color: var(--text); font-size: 13.5px; font-weight: 600;
+    cursor: pointer; transition: all .15s;
+  }
+  .btn-google:hover { background: var(--surface); border-color: var(--text3); }
+  .btn-google svg { width: 18px; height: 18px; }
+
+  /* Divider */
+  .divider {
+    display: flex; align-items: center; gap: 10px; margin: 18px 0;
+    color: var(--text3); font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+  }
+  .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  /* Form */
+  .form-group { margin-bottom: 14px; }
+  label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .5px; color: var(--text3); text-transform: uppercase; margin-bottom: 6px; }
+  input {
+    width: 100%; padding: 11px 13px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 9px; color: var(--text); font-family: inherit; font-size: 13.5px;
+    transition: border-color .12s;
+  }
+  input:focus { outline: none; border-color: var(--teal); }
+  input::placeholder { color: var(--text3); }
+
+  .btn-primary {
+    width: 100%; padding: 11px 14px; background: var(--teal); border: 0; border-radius: 9px;
+    color: #002a30; font-size: 14px; font-weight: 700; cursor: pointer;
+    transition: all .12s; margin-top: 4px;
+  }
+  .btn-primary:hover:not([disabled]) { background: #14d4e4; }
+  .btn-primary[disabled] { opacity: .5; cursor: not-allowed; }
+
+  .footer-note { margin-top: 18px; text-align: center; font-size: 12px; color: var(--text3); }
+  .footer-note a { color: var(--teal); text-decoration: none; }
+  .footer-note a:hover { text-decoration: underline; }
+
+  .status {
+    margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 12.5px;
+    display: none;
+  }
+  .status.show { display: block; }
+  .status.ok    { background: rgba(16,185,129,.10); color: var(--green); border: 1px solid rgba(16,185,129,.3); }
+  .status.err   { background: rgba(232,64,64,.10);  color: var(--red);   border: 1px solid rgba(232,64,64,.3); }
+  .status.info  { background: rgba(0,196,212,.10);  color: var(--teal);  border: 1px solid rgba(0,196,212,.3); }
+
+  /* Spinner */
+  .spinner {
+    display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor;
+    border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite;
+    vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .legal { font-size: 11px; color: var(--text3); text-align: center; margin-top: 18px; line-height: 1.55; }
+  .legal a { color: var(--text2); }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="brand">
+    <div class="brand-dot"></div>
+    <span class="brand-name">Predictable.ai</span>
+  </div>
+  <h1 id="title">Bienvenido</h1>
+  <p class="sub" id="subtitle">Accede a tu cuenta o regístrate para empezar.</p>
+
+  <div class="tabs">
+    <div class="tab active" data-mode="signin">Iniciar sesión</div>
+    <div class="tab" data-mode="signup">Crear cuenta</div>
+  </div>
+
+  <!-- Google -->
+  <button class="btn-google" id="btn-google">
+    <svg viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5.36c1.62 0 3.07.56 4.21 1.66l3.13-3.13C17.43 1.97 14.91 1 12 1 7.39 1 3.44 3.64 1.6 7.5l3.65 2.84C6.13 7.66 8.86 5.36 12 5.36z"/><path fill="#4285F4" d="M23 12c0-.79-.07-1.55-.2-2.27H12v4.3h6.18c-.27 1.45-1.08 2.68-2.3 3.5l3.55 2.76C21.55 18.43 23 15.49 23 12z"/><path fill="#FBBC05" d="M5.25 14.34A6.62 6.62 0 0 1 4.9 12c0-.81.14-1.6.36-2.34L1.6 6.82A11 11 0 0 0 .5 12c0 1.76.42 3.42 1.1 4.96l3.65-2.62z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.55-2.76c-1 .67-2.27 1.06-3.73 1.06-3.14 0-5.86-2.31-6.81-5.34L1.6 16.96C3.45 20.83 7.39 23 12 23z"/></svg>
+    <span id="google-label">Continuar con Google</span>
+  </button>
+
+  <div class="divider">o con email</div>
+
+  <!-- Form -->
+  <div class="form-group">
+    <label>Email</label>
+    <input id="inp-email" type="email" autocomplete="email" placeholder="tu@empresa.com">
+  </div>
+  <div class="form-group">
+    <label>Contraseña</label>
+    <input id="inp-password" type="password" autocomplete="current-password" placeholder="Mínimo 6 caracteres">
+  </div>
+
+  <button class="btn-primary" id="btn-submit">Iniciar sesión</button>
+
+  <div class="footer-note" id="footer-link">
+    ¿Olvidaste tu contraseña? <a href="#" id="link-forgot">Recupérala</a>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <div class="legal">
+    Al continuar aceptas los Términos de servicio y la Política de privacidad de Predictable.ai.
+  </div>
+</div>
+
+<!-- Supabase SDK desde CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabase-client.js"></script>
+<script src="js/auth.js"></script>
+
+</body>
+</html>
