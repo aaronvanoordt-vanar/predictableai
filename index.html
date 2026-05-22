@@ -77,7 +77,16 @@ body::before {
   border-right: 1px solid var(--border);
   display:flex; flex-direction:column;
   height:100vh; position:fixed; left:0; top:0; z-index:100;
+  overflow:hidden;
 }
+.sidebar-logo { flex-shrink:0; }
+.sidebar-nav {
+  flex:1; min-height:0;
+  overflow-y:auto; overflow-x:hidden;
+  padding-bottom:8px;
+}
+.sidebar-nav::-webkit-scrollbar { width:4px; }
+.sidebar-nav::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px; }
 
 .sidebar-logo {
   padding: 18px 16px 16px;
@@ -131,8 +140,10 @@ body::before {
 .nav-badge.jade { background:var(--jade-dim); color:var(--jade); }
 
 .sidebar-footer {
-  margin-top:auto; padding:14px;
+  flex-shrink:0;
+  padding:14px;
   border-top:1px solid var(--border);
+  background: var(--surface);
   position: relative;
 }
 .user-pill {
@@ -824,6 +835,7 @@ html, body {
   <div class="sidebar-logo">
     <img src="logo.png" alt="Predictable.ai" style="width:100%;max-width:160px;display:block;object-fit:contain">
   </div>
+  <div class="sidebar-nav">
 
   <div class="sidebar-section">Overview</div>
   <div class="nav-item active" data-page="dashboard" onclick="nav(this,'dashboard')">
@@ -887,6 +899,8 @@ html, body {
   <div class="nav-item" data-page="ventas-reportes" onclick="nav(this,'ventas-reportes')" style="padding-left:24px;font-size:12px">
     <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M3 14V6l4-4h6v12H3z"/><path d="M7 2v4H3"/><path d="M6 9h4M6 11h3"/></svg>
     Reportes SDR
+  </div>
+
   </div>
 
   <div class="sidebar-footer">
