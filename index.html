@@ -133,21 +133,96 @@ body::before {
 .sidebar-footer {
   margin-top:auto; padding:14px;
   border-top:1px solid var(--border);
+  position: relative;
 }
 .user-pill {
   display:flex; align-items:center; gap:10px;
   padding:8px; border-radius:var(--r-sm);
   cursor:pointer; transition:.14s;
+  user-select:none;
 }
 .user-pill:hover { background:var(--surface2); }
+.user-pill.open { background:var(--surface2); }
+.user-pill-info {
+  flex:1; min-width:0;
+  display:flex; flex-direction:column; gap:1px;
+  overflow:hidden;
+}
+.user-pill-caret {
+  width:12px; height:12px; opacity:.5;
+  transition: transform .15s;
+  flex-shrink:0;
+}
+.user-pill.open .user-pill-caret { transform: rotate(180deg); opacity:1; }
 .avatar {
   width:28px; height:28px; border-radius:50%;
   background: var(--grad-gold);
   display:flex; align-items:center; justify-content:center;
   font-family:var(--font-display); font-size:11px; font-weight:800;
+  flex-shrink:0;
 }
-.user-name { font-size:12.5px; font-weight:600; font-family:var(--font-display); }
-.user-role { font-family:var(--font-mono); font-size:10px; color:var(--text3); }
+.user-name {
+  font-size:12.5px; font-weight:600; font-family:var(--font-display);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.user-role {
+  font-family:var(--font-mono); font-size:10px; color:var(--text3);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+
+/* Dropdown que abre HACIA ARRIBA */
+.user-dropdown {
+  display:none;
+  position:absolute;
+  bottom: calc(100% - 4px);
+  left:14px; right:14px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  padding:6px;
+  box-shadow: 0 -8px 32px rgba(0,0,0,.5);
+  z-index:200;
+  animation: user-dropdown-up .14s ease;
+}
+.user-dropdown.open { display:block; }
+@keyframes user-dropdown-up {
+  from { opacity:0; transform: translateY(8px); }
+  to   { opacity:1; transform: translateY(0); }
+}
+.user-dropdown-header {
+  padding:10px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom:4px;
+}
+.user-dropdown-name {
+  font-family: var(--font-display);
+  font-size:13px; font-weight:600; color: var(--text);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.user-dropdown-email {
+  font-family: var(--font-mono);
+  font-size:10.5px; color: var(--text3);
+  margin-top:3px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.user-dropdown-item {
+  display:flex; align-items:center; gap:9px;
+  width:100%; padding:8px 11px;
+  background:transparent; border:0;
+  color: var(--text2); font-size:12.5px;
+  border-radius: var(--r-sm);
+  cursor:pointer; text-align:left;
+  font-family: var(--font-body);
+  transition: background .12s;
+}
+.user-dropdown-item:hover { background: var(--surface2); color: var(--text); }
+.user-dropdown-item.danger { color: var(--red); }
+.user-dropdown-item.danger:hover { background: rgba(232,64,64,.08); color: var(--red); }
+.user-dropdown-item svg { width:14px; height:14px; opacity:.7; flex-shrink:0; }
+.user-dropdown-divider {
+  height:1px; background: var(--border);
+  margin:4px 0;
+}
 
 /* ── MAIN ── */
 .main {
@@ -170,10 +245,6 @@ body::before {
   backdrop-filter:blur(8px);
   position:sticky; top:0; z-index:50;
 }
-<button class="btn btn-ghost btn-sm" onclick="window.supabaseHelpers.signOut()">
-  Cerrar sesión
-</button>
-
 .topbar-title {
   font-family: var(--font-display);
   font-size:17px; font-weight:800; letter-spacing:-.4px;
@@ -819,13 +890,43 @@ html, body {
   </div>
 
   <div class="sidebar-footer">
-    <div class="user-pill">
-      <div class="avatar">AV</div>
-      <div>
-        <div class="user-name">Aarón Vanoordt</div>
-        <div class="user-role">Admin · Vanar</div>
+
+    <!-- Dropdown que abre HACIA ARRIBA cuando el pill recibe click -->
+    <div class="user-dropdown" id="user-dropdown">
+      <div class="user-dropdown-header">
+        <div class="user-dropdown-name" id="user-dropdown-name">—</div>
+        <div class="user-dropdown-email" id="user-dropdown-email">—</div>
       </div>
+      <button class="user-dropdown-item" id="user-dropdown-settings">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5">
+          <circle cx="8" cy="8" r="2"/>
+          <path d="M13 8a5 5 0 0 0-.1-1.1l1.4-1.1-1.5-2.6-1.7.6a5 5 0 0 0-1.9-1.1L8.8 1H7.2l-.4 1.7a5 5 0 0 0-1.9 1.1l-1.7-.6L1.7 5.8l1.4 1.1A5 5 0 0 0 3 8c0 .4 0 .7.1 1.1l-1.4 1.1 1.5 2.6 1.7-.6a5 5 0 0 0 1.9 1.1l.4 1.7h1.6l.4-1.7a5 5 0 0 0 1.9-1.1l1.7.6 1.5-2.6-1.4-1.1c.1-.4.1-.7.1-1.1z"/>
+        </svg>
+        Ajustes
+      </button>
+      <div class="user-dropdown-divider"></div>
+      <button class="user-dropdown-item danger" id="user-dropdown-logout">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5">
+          <path d="M6 14H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h3"/>
+          <path d="M10 11l3-3-3-3"/>
+          <path d="M13 8H6"/>
+        </svg>
+        Cerrar sesión
+      </button>
     </div>
+
+    <!-- Pill clickable con info dinámica -->
+    <div class="user-pill" id="user-pill" onclick="userMenuToggle(event)">
+      <div class="avatar" id="user-pill-avatar">AV</div>
+      <div class="user-pill-info">
+        <div class="user-name" id="user-pill-name">Cargando…</div>
+        <div class="user-role" id="user-pill-role">—</div>
+      </div>
+      <svg class="user-pill-caret" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5">
+        <path d="M4 6l4 4 4-4"/>
+      </svg>
+    </div>
+
   </div>
 </nav>
 
@@ -842,114 +943,7 @@ html, body {
       <div class="topbar-sub">Bienvenido, Aarón · Semana 15 · Q2 2026</div>
     </div>
     <div class="topbar-actions">
-      <!--
-═══════════════════════════════════════════════════════════════════════
-  LOGOUT BUTTON — Snippets para distintos lugares de tu app
-═══════════════════════════════════════════════════════════════════════
- 
-  Tres opciones según dónde quieras ponerlo. Elige UNA.
- 
-  Las tres requieren que tengas cargados estos scripts:
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-    <script src="js/config.js"></script>
-    <script src="js/supabase-client.js"></script>
-    <script src="js/auth-guard.js"></script>
-═══════════════════════════════════════════════════════════════════════
--->
- 
- 
-<!-- ─────────────────────────────────────────────────────────────── -->
-<!-- OPCIÓN 1 (Recomendado) — Avatar dropdown en topbar               -->
-<!-- ─────────────────────────────────────────────────────────────── -->
-<!-- Es el patrón estándar de SaaS (Slack, Notion, Linear, etc).
-     Pegar dentro de tu .topbar-actions, idealmente como ÚLTIMO elemento.
-     Ya carga el email del usuario automáticamente del currentProfile.    -->
- 
-<div class="user-menu" id="user-menu" style="position:relative">
-  <button id="user-menu-trigger" style="display:flex;align-items:center;gap:8px;
-    background:var(--surface2);border:1px solid var(--border);border-radius:20px;
-    padding:5px 12px 5px 5px;cursor:pointer;color:var(--text)">
-    <span id="user-avatar" style="width:26px;height:26px;border-radius:50%;
-      background:var(--teal);color:#002a30;display:inline-flex;
-      align-items:center;justify-content:center;font-weight:700;font-size:12px">—</span>
-    <span id="user-name-chip" style="font-size:12px;color:var(--text2)">…</span>
-    <span style="font-size:10px;color:var(--text3);margin-left:2px">▾</span>
-  </button>
-  <div id="user-menu-dropdown" style="display:none;position:absolute;top:calc(100% + 6px);
-    right:0;background:var(--surface);border:1px solid var(--border);
-    border-radius:10px;padding:6px;min-width:200px;
-    box-shadow:0 12px 32px rgba(0,0,0,.5);z-index:9000">
-    <div style="padding:8px 10px;border-bottom:1px solid var(--border);margin-bottom:4px">
-      <div id="user-menu-name" style="font-size:13px;font-weight:600">—</div>
-      <div id="user-menu-email" style="font-size:11px;color:var(--text3);margin-top:2px">—</div>
-    </div>
-    <button class="user-menu-item" onclick="ui && ui.nav && ui.nav('settings')"
-      style="display:block;width:100%;text-align:left;padding:8px 10px;background:transparent;
-      border:0;color:var(--text2);font-size:13px;border-radius:6px;cursor:pointer">
-      ⚙️ Ajustes
-    </button>
-    <button class="user-menu-item" id="user-menu-logout"
-      style="display:block;width:100%;text-align:left;padding:8px 10px;background:transparent;
-      border:0;color:var(--red);font-size:13px;border-radius:6px;cursor:pointer">
-      🚪 Cerrar sesión
-    </button>
-  </div>
-</div>
- 
-<style>
-  .user-menu-item:hover { background: var(--surface2) !important; }
-  #user-menu-trigger:hover { background: var(--surface3) !important; }
-</style>
- 
-<script>
-  // Lógica del dropdown (pegar UNA vez en index.html, al final del body)
-  (function() {
-    function setup() {
-      const trigger = document.getElementById('user-menu-trigger');
-      const dropdown = document.getElementById('user-menu-dropdown');
-      const logoutBtn = document.getElementById('user-menu-logout');
-      if (!trigger) return;
- 
-      // Llenar info del user
-      function fillInfo() {
-        if (!window.currentUser) return;
-        const email = window.currentUser.email;
-        const name  = (window.currentProfile && window.currentProfile.full_name) || email.split('@')[0];
-        document.getElementById('user-name-chip').textContent = name;
-        document.getElementById('user-menu-name').textContent = name;
-        document.getElementById('user-menu-email').textContent = email;
-        document.getElementById('user-avatar').textContent = name.charAt(0).toUpperCase();
-      }
-      // Esperar a que el guard cargue currentUser
-      if (window.currentUser) fillInfo();
-      else {
-        const iv = setInterval(() => {
-          if (window.currentUser) { clearInterval(iv); fillInfo(); }
-        }, 200);
-      }
- 
-      // Toggle dropdown
-      trigger.addEventListener('click', (e) => {
-        e.stopPropagation();
-        dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
-      });
-      document.addEventListener('click', (e) => {
-        if (!document.getElementById('user-menu').contains(e.target)) dropdown.style.display = 'none';
-      });
- 
-      // Logout
-      logoutBtn.addEventListener('click', async () => {
-        if (!confirm('¿Cerrar sesión?')) return;
-        await window.supabaseClient.auth.signOut();
-        localStorage.clear();
-        location.href = './auth.html';
-      });
-    }
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setup);
-    else setup();
-  })();
-</script>
-      <button class="btn btn-ghost btn-sm">↗ Exportar</button>
+            <button class="btn btn-ghost btn-sm">↗ Exportar</button>
       <button class="btn btn-primary btn-sm">+ Nueva campaña</button>
     </div>
   </div>
@@ -3763,6 +3757,85 @@ window.nav = function(el, pageId) {
 window.addEventListener('DOMContentLoaded', () => {
   setTimeout(initCounters, 300);
 });
+</script>
+
+<!-- ═══ Sidebar User Menu (logout/settings con dropdown UP) ═══ -->
+<script>
+(function () {
+  'use strict';
+  function $(s) { return document.querySelector(s); }
+  function getInitials(name, email) {
+    const src = (name || email || '?').trim();
+    const parts = src.split(/\s+|[._@]/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return src.slice(0, 2).toUpperCase();
+  }
+  function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+  function extractCompanySlug(url) {
+    if (!url) return '';
+    const m = url.match(/linkedin\.com\/company\/([a-zA-Z0-9_\-\.~]+)/i);
+    return m ? m[1].replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '';
+  }
+  function fillUserMenu() {
+    const u = window.currentUser;
+    const p = window.currentProfile;
+    if (!u) return false;
+    const name  = (p && p.full_name) || u.email.split('@')[0];
+    const email = u.email;
+    const company = (p && (p.company_name || extractCompanySlug(p.linkedin_company_url))) || '';
+    const role  = (p && p.role) ? capitalize(p.role) : 'User';
+    $('#user-pill-avatar').textContent = getInitials(name, email);
+    $('#user-pill-name').textContent   = capitalize(name);
+    $('#user-pill-role').textContent   = company ? (role + ' · ' + company) : role;
+    $('#user-dropdown-name').textContent  = capitalize(name);
+    $('#user-dropdown-email').textContent = email;
+    return true;
+  }
+  window.userMenuToggle = function (e) {
+    if (e) e.stopPropagation();
+    const pill = $('#user-pill');
+    const drop = $('#user-dropdown');
+    if (drop.classList.contains('open')) {
+      drop.classList.remove('open'); pill.classList.remove('open');
+    } else {
+      drop.classList.add('open'); pill.classList.add('open');
+    }
+  };
+  function close() {
+    const d = $('#user-dropdown'); if (d) d.classList.remove('open');
+    const p = $('#user-pill'); if (p) p.classList.remove('open');
+  }
+  document.addEventListener('click', (e) => {
+    const pill = $('#user-pill');
+    const drop = $('#user-dropdown');
+    if (!pill || !drop) return;
+    if (!pill.contains(e.target) && !drop.contains(e.target)) close();
+  });
+  function setup() {
+    const settingsBtn = $('#user-dropdown-settings');
+    const logoutBtn   = $('#user-dropdown-logout');
+    if (!settingsBtn || !logoutBtn) return;
+    settingsBtn.addEventListener('click', () => {
+      close();
+      if (typeof nav === 'function') {
+        const item = document.querySelector('[data-page="settings"]') || document.querySelector('[data-page="ajustes"]');
+        if (item) nav(item, item.getAttribute('data-page'));
+        else alert('Crear página Ajustes con data-page="settings"');
+      }
+    });
+    logoutBtn.addEventListener('click', async () => {
+      if (!confirm('¿Cerrar sesión?')) return;
+      try { if (window.supabaseClient) await window.supabaseClient.auth.signOut(); } catch (e) {}
+      try { localStorage.clear(); } catch (e) {}
+      location.href = './auth.html';
+    });
+    if (!fillUserMenu()) {
+      const iv = setInterval(() => { if (fillUserMenu()) clearInterval(iv); }, 200);
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setup);
+  else setup();
+})();
 </script>
 
 </body>
