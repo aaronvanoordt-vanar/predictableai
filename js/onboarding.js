@@ -152,9 +152,9 @@
       return;
     }
 
-    showStatus('ok', '✅ Listo. Redirigiendo al app…');
+    showStatus('ok', '✅ Listo. Un paso más…');
     setTimeout(() => {
-      window.location.replace(window.APP_URL || './index.html');
+      window.location.replace('./miforms/');
     }, 700);
   }
 
