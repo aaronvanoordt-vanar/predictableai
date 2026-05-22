@@ -89,6 +89,30 @@
   .fine-print a { color: var(--text2); text-decoration: none; }
   .fine-print a:hover { color: var(--teal); }
 
+  .loading-screen { text-align: center; padding: 60px 20px; color: var(--text2); }
+  .spinner-big {
+    width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--teal);
+    border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto 16px;
+  }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid currentColor; border-right-color: transparent;
+    border-radius: 50%; animation: spin .7s linear infinite;
+    vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .status {
+    margin-top: 14px; padding: 10px 12px; border-radius: 8px;
+    font-size: 13px; display: none; line-height: 1.5;
+  }
+  .status.show { display: block; }
+  .status.ok   { background: rgba(16,185,129,.10); color: var(--green); border: 1px solid rgba(16,185,129,.3); }
+  .status.err  { background: rgba(232,64,64,.10);  color: var(--red);   border: 1px solid rgba(232,64,64,.3); }
+  .status.info { background: rgba(0,196,212,.10);  color: var(--teal);  border: 1px solid rgba(0,196,212,.3); }
+
+  .counter.warn { color: #e6a23c; }
+
   @media (max-width: 520px) {
     .card { padding: 24px 22px 22px; }
     h1 { font-size: 22px; }
@@ -98,57 +122,72 @@
 </head>
 <body>
 
-<div class="card">
+<div class="card" id="card">
 
-  <div class="logo-wrap">
-    <img src="../logo.png" alt="">
-    <span class="wordmark">predictable<span class="dot">.</span>ai</span>
+  <div id="loading" class="loading-screen">
+    <div class="spinner-big"></div>
+    <div>Cargando…</div>
   </div>
 
-  <h1>Calibremos tu Intelligence Hub</h1>
-  <p class="sub">
-    En Predictable.ai no te damos noticias — te damos <strong>inteligencia accionable</strong>
-    sobre tu mercado, competidores y oportunidades de crecimiento. Para que cada reporte hable
-    de <strong>tu negocio</strong>, necesitamos dos cosas.
-  </p>
-
-  <hr class="divider">
-
-  <div class="form-group">
-    <label>LinkedIn de tu empresa</label>
-    <input type="url" placeholder="https://linkedin.com/company/tu-empresa" autocomplete="url">
-    <div class="hint">
-      Con esto enmarcamos cada análisis en tu industria, identificamos automáticamente
-      a tus competidores y los movimientos que te impactan.
+  <div id="form-content" style="display:none">
+    <div class="logo-wrap">
+      <img src="../logo.png" alt="">
+      <span class="wordmark">predictable<span class="dot">.</span>ai</span>
     </div>
-  </div>
 
-  <hr class="divider">
-
-  <div class="form-group">
-    <p class="question">¿Qué quisieras saber periódicamente de tu mercado?</p>
-    <p class="question-hint">
-      Piensa en lo que hoy te cuesta saber — movimientos de competidores, tendencias de
-      compra, señales de riesgo, cambios regulatorios. Mientras más específico, mejor
-      calibramos tu Hub.
+    <h1>Calibremos tu Intelligence Hub</h1>
+    <p class="sub">
+      En Predictable.ai no te damos noticias — te damos <strong>inteligencia accionable</strong>
+      sobre tu mercado, competidores y oportunidades de crecimiento. Para que cada reporte hable
+      de <strong>tu negocio</strong>, necesitamos dos cosas.
     </p>
-    <textarea
-      rows="6"
-      maxlength="1000"
-      placeholder="Ejemplo: cada semana quiero saber si un competidor lanzó algo nuevo o cambió su precio, y cada mes cuáles industrias están aumentando su gasto en mi categoría…"></textarea>
-    <div class="counter">0 / 1000 caracteres</div>
+
+    <hr class="divider">
+
+    <div class="form-group">
+      <label>LinkedIn de tu empresa</label>
+      <input id="inp-linkedin" type="url" placeholder="https://linkedin.com/company/tu-empresa" autocomplete="url">
+      <div class="hint">
+        Con esto enmarcamos cada análisis en tu industria, identificamos automáticamente
+        a tus competidores y los movimientos que te impactan.
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <div class="form-group">
+      <p class="question">¿Qué quisieras saber periódicamente de tu mercado?</p>
+      <p class="question-hint">
+        Piensa en lo que hoy te cuesta saber — movimientos de competidores, tendencias de
+        compra, señales de riesgo, cambios regulatorios. Mientras más específico, mejor
+        calibramos tu Hub.
+      </p>
+      <textarea
+        id="inp-what-to-know"
+        rows="6"
+        maxlength="1000"
+        placeholder="Ejemplo: cada semana quiero saber si un competidor lanzó algo nuevo o cambió su precio, y cada mes cuáles industrias están aumentando su gasto en mi categoría…"></textarea>
+      <div class="counter"><span id="counter">0</span> / 1000 caracteres</div>
+    </div>
+
+    <hr class="divider">
+
+    <button class="btn-primary" id="btn-submit" disabled>Activar mi Intelligence Hub →</button>
+
+    <div id="status" class="status"></div>
+
+    <p class="fine-print">
+      Tu respuesta entrena cómo se construye <strong>tu</strong> Hub. No se comparte con nadie más.
+      · <a href="#" id="link-logout">Salir</a>
+    </p>
   </div>
-
-  <hr class="divider">
-
-  <button class="btn-primary">Activar mi Intelligence Hub →</button>
-
-  <p class="fine-print">
-    Tu respuesta entrena cómo se construye <strong>tu</strong> Hub. No se comparte con nadie más.
-    · <a href="#">Salir</a>
-  </p>
 
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="../js/config.js"></script>
+<script src="../js/supabase-client.js"></script>
+<script src="../js/miforms.js"></script>
 
 </body>
 </html>

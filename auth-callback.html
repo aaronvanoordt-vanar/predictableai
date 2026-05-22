@@ -40,12 +40,10 @@
       }
       // Esperar 700ms para que el trigger handle_new_user haya corrido en Supabase
       await new Promise(r => setTimeout(r, 700));
-      const profile = await window.supabaseHelpers.getMyProfile();
-      if (!profile || !profile.onboarded || !profile.linkedin_company_url) {
-        window.location.replace('./onboarding.html');
-        return;
-      }
 
+      // /miforms es ahora el landing post-signup. Captura LinkedIn de la empresa
+      // + la pregunta de market intelligence en una sola pantalla.
+      // Si ya completó el intake, pasa directo al hub.
       const user = await window.supabaseHelpers.getUser();
       const { data: intake } = await window.supabaseClient
         .from('intel_hub_intake')
