@@ -1,23 +1,20 @@
-## gstack (REQUIRED — global install)
+## gstack (lazy install)
 
-**Before doing ANY work, verify gstack is installed:**
+gstack is auto-installed the first time you invoke a gstack skill
+(/qa, /ship, /review, /investigate, /browse) in a session. The install is
+handled transparently by `.claude/hooks/check-gstack.sh` and takes ~20s
+the first time only.
+
+**Do NOT check for gstack before starting work.** Normal coding (Edit, Write,
+Bash, tests, builds, non-gstack skills like /verify, /code-review, /run)
+does not require gstack and proceeds without overhead.
+
+Use /browse for all web browsing once gstack is loaded.
+Use ~/.claude/skills/gstack/... for gstack file paths (the global path).
+
+If the auto-install fails, install manually:
 
 ```bash
-test -d ~/.claude/skills/gstack/bin && echo "GSTACK_OK" || echo "GSTACK_MISSING"
+git clone --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack
+cd ~/.claude/skills/gstack && ./setup --team
 ```
-
-If GSTACK_MISSING: STOP. Do not proceed. Tell the user:
-
-> gstack is required for all AI-assisted work in this repo.
-> Install it:
-> ```bash
-> git clone --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack
-> cd ~/.claude/skills/gstack && ./setup --team
-> ```
-> Then restart your AI coding tool.
-
-Do not skip skills, ignore gstack errors, or work around missing gstack.
-
-Using gstack skills: After install, skills like /qa, /ship, /review, /investigate,
-and /browse are available. Use /browse for all web browsing.
-Use ~/.claude/skills/gstack/... for gstack file paths (the global path).
