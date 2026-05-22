@@ -19,7 +19,9 @@
   const MIN_CHARS = 20;
   const MAX_CHARS = 1000;
   const AUTH_PATH = '../auth.html';
-  const HUB_PATH = '../index.html';
+  // Use an absolute path to root. window.APP_URL from config.js is './index.html',
+  // which from /miforms/ resolves to /miforms/index.html (itself) — would loop.
+  const HUB_PATH = '/';
 
   const LINKEDIN_COMPANY_RE = /^https?:\/\/(www\.)?linkedin\.com\/company\/([a-zA-Z0-9_\-\.~]+)\/?(\?.*)?$/i;
 
@@ -50,7 +52,7 @@
 
     const existing = await fetchIntake(user.id);
     if (existing && existing.what_to_know && existing.what_to_know.trim().length > 0) {
-      window.location.replace(window.APP_URL || HUB_PATH);
+      window.location.replace(HUB_PATH);
       return;
     }
 
@@ -192,7 +194,7 @@
 
     showStatus('ok', '✅ Listo. Activando tu Intelligence Hub…');
     setTimeout(() => {
-      window.location.replace(window.APP_URL || HUB_PATH);
+      window.location.replace(HUB_PATH);
     }, 700);
   }
 
