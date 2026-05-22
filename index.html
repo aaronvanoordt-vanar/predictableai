@@ -824,6 +824,74 @@ html, body {
   }
 }
 
+
+/* ═══ Logout confirmation modal ═══ */
+.logout-overlay {
+  display:none;
+  position:fixed; inset:0;
+  background: rgba(7,8,11,.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index:9999;
+  align-items:center; justify-content:center;
+  animation: logout-fade .15s ease;
+}
+.logout-overlay.open { display:flex; }
+@keyframes logout-fade { from { opacity:0; } to { opacity:1; } }
+
+.logout-modal {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  padding: 24px 24px 20px;
+  width: 380px; max-width: 92vw;
+  box-shadow: 0 24px 80px rgba(0,0,0,.6);
+  animation: logout-pop .18s cubic-bezier(.16,.84,.44,1);
+}
+@keyframes logout-pop {
+  from { opacity:0; transform: translateY(12px) scale(.97); }
+  to   { opacity:1; transform: translateY(0) scale(1); }
+}
+.logout-modal .icon-wrap {
+  width: 44px; height: 44px; border-radius: 50%;
+  background: rgba(232,64,64,.10);
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 14px;
+}
+.logout-modal .icon-wrap svg { width: 22px; height: 22px; color: var(--red); }
+.logout-modal h3 {
+  font-family: var(--font-display);
+  font-size: 18px; font-weight: 700;
+  color: var(--text);
+  margin: 0 0 6px;
+}
+.logout-modal p {
+  font-size: 13px; color: var(--text2);
+  line-height: 1.55; margin: 0 0 20px;
+}
+.logout-modal-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+}
+.logout-btn {
+  padding: 9px 16px; border-radius: var(--r-sm);
+  font-family: var(--font-body); font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: all .12s;
+  border: 1px solid transparent;
+}
+.logout-btn-cancel {
+  background: var(--surface2);
+  border-color: var(--border);
+  color: var(--text2);
+}
+.logout-btn-cancel:hover { background: var(--surface3); color: var(--text); }
+.logout-btn-confirm {
+  background: var(--red);
+  color: white;
+  border-color: var(--red);
+}
+.logout-btn-confirm:hover { filter: brightness(1.1); }
+.logout-btn-confirm:active { transform: scale(.97); }
+
 </style>
 </head>
 <body>
@@ -3837,11 +3905,41 @@ window.addEventListener('DOMContentLoaded', () => {
         else alert('Crear página Ajustes con data-page="settings"');
       }
     });
-    logoutBtn.addEventListener('click', async () => {
-      if (!confirm('¿Cerrar sesión?')) return;
-      try { if (window.supabaseClient) await window.supabaseClient.auth.signOut(); } catch (e) {}
-      try { localStorage.clear(); } catch (e) {}
-      location.href = './auth.html';
+    logoutBtn.addEventListener('click', () => {
+      close();  // cerrar el dropdown del sidebar primero
+      const overlay = document.getElementById('logout-overlay');
+      const confirmBtn = document.getElementById('logout-confirm');
+      const cancelBtn  = document.getElementById('logout-cancel');
+      if (!overlay) return;
+
+      // Abrir modal
+      overlay.classList.add('open');
+      confirmBtn.focus();
+
+      const cleanup = () => {
+        overlay.classList.remove('open');
+        document.removeEventListener('keydown', onKey);
+        overlay.removeEventListener('click', onBackdrop);
+        confirmBtn.removeEventListener('click', onConfirm);
+        cancelBtn.removeEventListener('click', cleanup);
+      };
+      const onConfirm = async () => {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Cerrando…';
+        try { if (window.supabaseClient) await window.supabaseClient.auth.signOut(); } catch (e) {}
+        try { localStorage.clear(); } catch (e) {}
+        location.href = './auth.html';
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') cleanup();
+        if (e.key === 'Enter')  onConfirm();
+      };
+      const onBackdrop = (e) => { if (e.target === overlay) cleanup(); };
+
+      confirmBtn.addEventListener('click', onConfirm);
+      cancelBtn.addEventListener('click', cleanup);
+      overlay.addEventListener('click', onBackdrop);
+      document.addEventListener('keydown', onKey);
     });
     if (!fillUserMenu()) {
       const iv = setInterval(() => { if (fillUserMenu()) clearInterval(iv); }, 200);
@@ -3851,6 +3949,25 @@ window.addEventListener('DOMContentLoaded', () => {
   else setup();
 })();
 </script>
+
+<!-- ═══ Logout confirmation modal (in-page, reemplaza confirm() nativo) ═══ -->
+<div class="logout-overlay" id="logout-overlay">
+  <div class="logout-modal" role="dialog" aria-modal="true" aria-labelledby="logout-modal-title">
+    <div class="icon-wrap">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+        <path d="M16 17l5-5-5-5"/>
+        <path d="M21 12H9"/>
+      </svg>
+    </div>
+    <h3 id="logout-modal-title">¿Cerrar sesión?</h3>
+    <p>Tendrás que volver a iniciar sesión para acceder a tu cuenta.</p>
+    <div class="logout-modal-actions">
+      <button class="logout-btn logout-btn-cancel" id="logout-cancel">Cancelar</button>
+      <button class="logout-btn logout-btn-confirm" id="logout-confirm">Cerrar sesión</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
