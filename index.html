@@ -4301,18 +4301,72 @@ window.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .25s'; setTimeout(() => el.remove(), 250); }, 2800);
   }
 
+  async function waitForSupabase(maxMs) {
+    const start = Date.now();
+    while (!window.supabaseClient) {
+      if (Date.now() - start > (maxMs || 5000)) return null;
+      await new Promise(r => setTimeout(r, 150));
+    }
+    return window.supabaseClient;
+  }
+
   async function loadSettings() {
-    if (!window.supabaseClient) {
-      toast('Supabase no esta listo. Recarga la pagina.', 'err');
+    // Mostrar estado de carga mientras se inicializa
+    const nameInp = document.getElementById('set-full-name');
+    if (nameInp) nameInp.placeholder = 'Cargando...';
+
+    const client = await waitForSupabase(5000);
+    if (!client) {
+      toast('No se pudo conectar a Supabase. Abre la consola (F12) y ejecuta <code>predictableDiag()</code> para diagnosticar.', 'err');
+      console.error('[settings] window.supabaseClient no disponible despues de 5s');
+      console.error('Causas probables: js/config.js no cargo, anon key invalido, o SDK Supabase bloqueado.');
       return;
     }
-    const { data: { user } } = await window.supabaseClient.auth.getUser();
+
+    let user;
+    try {
+      const r = await client.auth.getUser();
+      user = r.data && r.data.user;
+    } catch (e) {
+      toast('Error obteniendo usuario: ' + e.message, 'err');
+      console.error('[settings] auth.getUser fallo:', e);
+      return;
+    }
     if (!user) {
       location.href = './auth.html';
       return;
     }
-    const { data: profile } = await window.supabaseClient
-      .from('profiles').select('*').eq('id', user.id).maybeSingle();
+
+    let profile = null;
+    try {
+      const r = await client.from('profiles').select('*').eq('id', user.id).maybeSingle();
+      if (r.error) {
+        toast('Error leyendo perfil: ' + r.error.message + '. Verifica RLS en Supabase.', 'err');
+        console.error('[settings] SELECT profiles fallo:', r.error);
+      }
+      profile = r.data;
+    } catch (e) {
+      toast('Error consultando profiles: ' + e.message, 'err');
+      console.error('[settings] from(profiles) fallo:', e);
+      return;
+    }
+
+    if (nameInp) nameInp.placeholder = 'Tu nombre';
+
+    // Si por alguna razon no existe el profile, lo creamos
+    if (!profile) {
+      console.warn('[settings] profile missing, auto-creating');
+      const { data: created, error: createErr } = await client
+        .from('profiles')
+        .insert({ id: user.id, email: user.email })
+        .select()
+        .maybeSingle();
+      if (createErr) {
+        toast('No se pudo crear tu perfil: ' + createErr.message, 'err');
+        return;
+      }
+      profile = created || { id: user.id, email: user.email };
+    }
 
     // Perfil
     $('#set-full-name').value = (profile && profile.full_name) || '';
@@ -4579,6 +4633,44 @@ window.addEventListener('DOMContentLoaded', () => {
       roleEl.textContent = company ? (role + ' . ' + company) : role;
     }
     if (dropName) dropName.textContent = cap(name);
+  };
+
+  // ─── Helper de diagnostico global ─────────────────────────
+  window.predictableDiag = async function () {
+    console.group('=== DIAGNOSTICO PREDICTABLE ===');
+    const sdk = typeof supabase !== 'undefined';
+    const cfg = window.SUPABASE_CONFIG || null;
+    const client = window.supabaseClient || null;
+    console.log('1. SDK Supabase cargado :', sdk ? 'SI' : 'NO');
+    console.log('2. SUPABASE_CONFIG      :', cfg);
+    if (cfg && cfg.anonKey === 'PEGA_AQUI_TU_ANON_KEY') {
+      console.warn('   >> Tu anonKey sigue siendo el placeholder. Editalo en js/config.js');
+    }
+    console.log('3. supabaseClient       :', client ? 'OK' : 'NO INICIALIZADO');
+    console.log('4. currentUser          :', window.currentUser);
+    console.log('5. currentProfile       :', window.currentProfile);
+
+    if (client) {
+      try {
+        const { data: { user } } = await client.auth.getUser();
+        console.log('6. auth.getUser()       :', user ? user.email : 'sin sesion');
+        if (user) {
+          const { data, error } = await client.from('profiles').select('*').eq('id', user.id).maybeSingle();
+          console.log('7. profiles row         :', error ? 'ERROR: ' + error.message : (data ? 'OK' : 'no existe'));
+          if (error) {
+            console.warn('   >> Probable: faltan policies RLS o el SQL del schema no corrio completo.');
+            console.warn('   >> Corre supabase-schema.sql completo en el SQL Editor de Supabase.');
+          }
+        }
+      } catch (e) {
+        console.error('   >> Error en queries:', e);
+      }
+    } else {
+      console.warn('   >> Como no hay supabaseClient, nada mas funciona.');
+      console.warn('   >> Revisa: 1) js/config.js cargado, 2) anon key correcto, 3) SDK CDN accesible.');
+    }
+    console.groupEnd();
+    return { sdk, cfg, client: !!client, user: window.currentUser, profile: window.currentProfile };
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setup);
