@@ -4269,6 +4269,24 @@ window.addEventListener('DOMContentLoaded', () => {
 (function () {
   'use strict';
 
+  // ─── FIX: mover page-settings a ser hijo directo de <main> ────
+  // El HTML inicial quedo anidado dentro de otra page (bug de
+  // insertion durante la generacion del archivo). Esto lo corrige.
+  function fixSettingsLocation() {
+    const settings = document.getElementById('page-settings');
+    const main = document.querySelector('main.main');
+    if (!settings || !main) return;
+    if (settings.parentElement !== main) {
+      console.log('[settings] re-parenting page-settings a <main>');
+      main.appendChild(settings);
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', fixSettingsLocation);
+  } else {
+    fixSettingsLocation();
+  }
+
   const $ = (s) => document.querySelector(s);
   const LINKEDIN_RE = /^https?:\/\/(www\.)?linkedin\.com\/company\/([a-zA-Z0-9_\-\.~]+)\/?(\?.*)?$/i;
 
