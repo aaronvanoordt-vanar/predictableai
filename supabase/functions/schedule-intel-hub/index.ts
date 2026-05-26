@@ -116,6 +116,8 @@ Deno.serve(async (req: Request) => {
 
     console.log(`[scheduler] cadence=${cadence} users_due=${usersNeedingRefresh.size}`);
 
+    const schedulerSecret = Deno.env.get("SCHEDULER_SECRET") ?? "";
+
     // Fan out — call generate-intel-hub for each user
     const promises = Array.from(usersNeedingRefresh).map(async (userId) => {
       const sectionsForUser = userSectionsNeeded[userId];
@@ -123,7 +125,7 @@ Deno.serve(async (req: Request) => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${serviceKey}`,
+          "X-Hub-Secret": schedulerSecret,
         },
         body: JSON.stringify({
           user_id: userId,

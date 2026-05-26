@@ -5,20 +5,20 @@
  * Uses Claude's built-in web_search tool to fetch current market data,
  * then stores structured JSON results in intelligence_hub_reports.
  *
- * Accepted callers:
- *   • Browser (authenticated user)  → triggered_by: 'onboarding' | 'manual'
- *   • schedule-intel-hub function   → triggered_by: 'schedule' (uses service_role key)
+ * Auth:
+ *   • Browser callers  → Authorization: Bearer <user JWT>
+ *   • Scheduler        → X-Hub-Secret: <SCHEDULER_SECRET>
  *
  * POST body:
  *   {
- *     user_id?:      string,    // optional when auth header present (uses JWT sub)
+ *     user_id?:      string,    // required when called by scheduler
  *     sections?:     string[],  // omit to generate all sections
  *     triggered_by:  'onboarding' | 'manual' | 'schedule',
- *     // For 'manual': credits are checked & deducted here, 1 per section.
  *   }
  *
- * Required secrets (set via: supabase secrets set KEY=value):
+ * Required secrets:
  *   ANTHROPIC_API_KEY
+ *   SCHEDULER_SECRET
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -107,6 +107,10 @@ const SECTION_MAP = new Map(SECTIONS.map((s) => [s.key, s]));
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function nextRefreshAt(cadence: string): Date {
   const now = new Date();
   const OFFSETS: Record<string, number> = {
@@ -124,7 +128,7 @@ function corsHeaders(origin: string) {
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Hub-Secret",
   };
 }
 
@@ -145,7 +149,8 @@ interface ContentItem {
 async function callClaude(
   apiKey: string,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  attempt = 0
 ): Promise<string> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -164,13 +169,19 @@ async function callClaude(
     }),
   });
 
+  // Retry on rate limit
+  if (res.status === 429 && attempt < 3) {
+    console.warn(`[gen] 429 rate limit — waiting 10s before retry ${attempt + 1}`);
+    await sleep(10000);
+    return callClaude(apiKey, systemPrompt, userPrompt, attempt + 1);
+  }
+
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Anthropic API ${res.status}: ${err}`);
   }
 
   const msg = await res.json();
-  // Extract last text block (web search results are incorporated before final text)
   const textBlocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
   if (!textBlocks.length) throw new Error("No text block in Claude response");
   return textBlocks[textBlocks.length - 1].text ?? "";
@@ -228,12 +239,18 @@ Search the web now and generate the ${section.title} section for this company.`;
 
   const raw = await callClaude(apiKey, systemPrompt, userPrompt);
 
-  // Strip any accidental markdown fences
+  // Strip markdown fences and extract JSON object robustly
   const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  return JSON.parse(cleaned) as GeneratedContent;
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error(`No JSON object found in response: ${cleaned.slice(0, 200)}`);
+  return JSON.parse(jsonMatch[0]) as GeneratedContent;
 }
 
 // ── Core generation logic ─────────────────────────────────────────────────────
+// Processes sections in batches of BATCH_SIZE to run in parallel.
+// This keeps total time well under the 150s edge function wall-time limit.
+
+const BATCH_SIZE = 3;
 
 async function runGeneration(
   supabase: SupabaseClient,
@@ -259,11 +276,11 @@ async function runGeneration(
   const companyUrl = intake.company_linkedin_url ?? "unknown";
   const whatToKnow = intake.what_to_know;
 
-  // Mark all requested sections as 'generating'
   const sections = sectionKeys
     .map((k) => SECTION_MAP.get(k))
     .filter(Boolean) as SectionDef[];
 
+  // Mark all as 'generating'
   await supabase.from("intelligence_hub_reports").upsert(
     sections.map((s) => ({
       user_id: userId,
@@ -276,37 +293,48 @@ async function runGeneration(
     { onConflict: "user_id,section_key" }
   );
 
-  // Generate each section (sequential to respect Claude rate limits)
-  for (const section of sections) {
-    try {
-      const content = await generateSection(apiKey, section, companyUrl, whatToKnow, today);
-      await supabase.from("intelligence_hub_reports").upsert(
-        {
-          user_id: userId,
-          section_key: section.key,
-          cadence: section.cadence,
-          status: "ready",
-          content,
-          error_message: null,
-          generated_at: new Date().toISOString(),
-          next_refresh_at: nextRefreshAt(section.cadence).toISOString(),
-        },
-        { onConflict: "user_id,section_key" }
-      );
-      console.log(`[gen] ✓ ${section.key} for ${userId} (${triggeredBy})`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[gen] ✗ ${section.key}: ${msg}`);
-      await supabase.from("intelligence_hub_reports").upsert(
-        {
-          user_id: userId,
-          section_key: section.key,
-          cadence: section.cadence,
-          status: "error",
-          error_message: msg.slice(0, 500),
-        },
-        { onConflict: "user_id,section_key" }
-      );
+  // Process in batches to stay within wall-time limits while still being fast
+  for (let i = 0; i < sections.length; i += BATCH_SIZE) {
+    const batch = sections.slice(i, i + BATCH_SIZE);
+
+    await Promise.all(
+      batch.map(async (section) => {
+        try {
+          const content = await generateSection(apiKey, section, companyUrl, whatToKnow, today);
+          await supabase.from("intelligence_hub_reports").upsert(
+            {
+              user_id: userId,
+              section_key: section.key,
+              cadence: section.cadence,
+              status: "ready",
+              content,
+              error_message: null,
+              generated_at: new Date().toISOString(),
+              next_refresh_at: nextRefreshAt(section.cadence).toISOString(),
+            },
+            { onConflict: "user_id,section_key" }
+          );
+          console.log(`[gen] ✓ ${section.key} for ${userId} (${triggeredBy})`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[gen] ✗ ${section.key}: ${msg}`);
+          await supabase.from("intelligence_hub_reports").upsert(
+            {
+              user_id: userId,
+              section_key: section.key,
+              cadence: section.cadence,
+              status: "error",
+              error_message: msg.slice(0, 500),
+            },
+            { onConflict: "user_id,section_key" }
+          );
+        }
+      })
+    );
+
+    // Brief pause between batches to avoid rate-limit bursts
+    if (i + BATCH_SIZE < sections.length) {
+      await sleep(1500);
     }
   }
 }
@@ -324,24 +352,24 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Method not allowed" }, 405, headers);
   }
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const anonKey     = Deno.env.get("SUPABASE_ANON_KEY")!;
-  const apiKey      = Deno.env.get("ANTHROPIC_API_KEY");
+  const supabaseUrl    = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey     = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const anonKey        = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const apiKey         = Deno.env.get("ANTHROPIC_API_KEY");
+  const schedulerSecret = Deno.env.get("SCHEDULER_SECRET") ?? "";
 
   if (!apiKey) {
     return json({ error: "ANTHROPIC_API_KEY not configured" }, 500, headers);
   }
 
-  const authHeader = req.headers.get("Authorization") ?? "";
-  const isServiceRole = authHeader === `Bearer ${serviceKey}`;
+  // Auth: X-Hub-Secret for scheduler, JWT for browser
+  const hubSecret = req.headers.get("X-Hub-Secret") ?? "";
+  const isServiceRole = schedulerSecret !== "" && hubSecret === schedulerSecret;
 
-  // Authenticate browser callers via JWT
   let userId: string | null = null;
-  if (isServiceRole) {
-    // Scheduler: user_id must be in the body
-    userId = null; // will be set from body below
-  } else {
+
+  if (!isServiceRole) {
+    const authHeader = req.headers.get("Authorization") ?? "";
     const supabaseAuth = createClient(supabaseUrl, anonKey);
     const token = authHeader.replace("Bearer ", "");
     const { data: { user }, error } = await supabaseAuth.auth.getUser(token);
@@ -366,11 +394,11 @@ Deno.serve(async (req: Request) => {
   const triggeredBy = body.triggered_by ?? "manual";
   const requestedSections = body.sections ?? SECTIONS.map((s) => s.key);
 
-  // ── Manual refresh: check & deduct credits ──
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false },
   });
 
+  // ── Manual refresh: check & deduct credits ──
   if (triggeredBy === "manual") {
     const cost = requestedSections.length;
     const { data: credits } = await supabase
@@ -387,7 +415,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Deduct and log
     await supabase
       .from("user_credits")
       .update({ balance: credits.balance - cost })
@@ -403,22 +430,7 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  // Mark as generating immediately so the frontend sees the spinner
-  await supabase.from("intelligence_hub_reports").upsert(
-    requestedSections
-      .map((sk) => SECTION_MAP.get(sk))
-      .filter(Boolean)
-      .map((s) => ({
-        user_id: userId,
-        section_key: (s as SectionDef).key,
-        cadence: (s as SectionDef).cadence,
-        status: "generating",
-      })),
-    { onConflict: "user_id,section_key" }
-  );
-
-  // Run generation in background so we can return immediately
-  // (EdgeRuntime.waitUntil keeps the function alive after response)
+  // Kick off background generation and return 202 immediately
   const generationPromise = runGeneration(
     supabase,
     apiKey,
@@ -432,7 +444,6 @@ Deno.serve(async (req: Request) => {
     // @ts-ignore
     EdgeRuntime.waitUntil(generationPromise);
   } else {
-    // Fallback: await (blocking) in environments without waitUntil
     await generationPromise;
   }
 
