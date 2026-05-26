@@ -141,7 +141,7 @@ body::before {
   box-shadow: 0 0 0 1px var(--hair-3), 0 4px 10px -4px rgba(31,75,255,0.4);
   flex-shrink: 0;
 }
-.sidebar-logo .logo-mark svg { width: 16px; height: 16px; display: block; }
+.sidebar-logo .logo-mark svg { width: 18px; height: 18px; display: block; }
 .sidebar-logo .logo-name {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -1758,11 +1758,25 @@ html, body {
   <!-- Brand -->
   <div class="sidebar-logo">
     <div class="logo-mark">
-      <svg viewBox="0 0 18 18" fill="none">
-        <rect x="2" y="2" width="6" height="6" rx="1.5" fill="#2F66FF" opacity=".9"/>
-        <rect x="10" y="2" width="6" height="6" rx="1.5" fill="#4F86FF" opacity=".6"/>
-        <rect x="2" y="10" width="6" height="6" rx="1.5" fill="#4F86FF" opacity=".6"/>
-        <rect x="10" y="10" width="6" height="6" rx="1.5" fill="#2F66FF" opacity=".9"/>
+      <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="ag" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0%" stop-color="#2563eb"/>
+            <stop offset="100%" stop-color="#06b6d4"/>
+          </linearGradient>
+        </defs>
+        <path d="M18 86 L18 14 Q18 9 23 9 L52 9 Q80 9 80 31 Q80 54 52 54 L18 54"
+              stroke="white" stroke-width="13" fill="none"
+              stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="30" y1="77" x2="56" y2="33"
+              stroke="url(#ag)" stroke-width="8" stroke-linecap="round"/>
+        <polyline points="46,27 57,32 52,44"
+                  stroke="url(#ag)" stroke-width="8"
+                  stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <circle cx="22" cy="83" r="13" fill="#2563eb"/>
+        <text x="22" y="88" text-anchor="middle"
+              font-size="15" font-weight="900" fill="white"
+              font-family="Arial, sans-serif">$</text>
       </svg>
     </div>
     <span class="logo-name">predictable<span class="logo-dot">.ai</span></span>
@@ -1772,10 +1786,10 @@ html, body {
 
     <!-- Workspace -->
     <div class="ws-switch">
-      <div class="ws-av">P</div>
+      <div class="ws-av" id="ws-av">P</div>
       <div class="ws-body">
         <div class="ws-name" id="ws-name">Workspace</div>
-        <div class="ws-plan">Pro · Revenue OS</div>
+        <div class="ws-plan" id="ws-plan">Pro · Revenue OS</div>
       </div>
       <span class="ws-caret">⌄</span>
     </div>
@@ -1852,7 +1866,7 @@ html, body {
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 13v2M11 13v2M3 15h10"/></svg>
       Meeting Coach
     </div>
-    <div class="nav-item" data-page="ventas-reportes" onclick="nav(this,'ventas-reportes')" style="margin-left:20px;font-size:12px">
+    <div class="nav-item" data-page="ventas-reportes" data-admin-only="true" onclick="nav(this,'ventas-reportes')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M3 14V6l4-4h6v12H3z"/><path d="M7 2v4H3"/><path d="M6 9h4M6 11h3"/></svg>
       Reportes SDR
     </div>
@@ -5145,6 +5159,19 @@ window.addEventListener('DOMContentLoaded', () => {
     $('#user-pill-role').textContent   = company ? (role + ' · ' + company) : role;
     $('#user-dropdown-name').textContent  = capitalize(name);
     $('#user-dropdown-email').textContent = email;
+    // Update workspace switcher
+    const wsName = document.getElementById('ws-name');
+    if (wsName && company) wsName.textContent = company;
+    const wsAv = document.getElementById('ws-av');
+    if (wsAv) wsAv.textContent = company ? company.charAt(0).toUpperCase() : 'P';
+    const wsPlan = document.getElementById('ws-plan');
+    if (wsPlan) wsPlan.textContent = role + ' · Revenue OS';
+    // Apply role-based nav visibility
+    const rawRole = (p && p.role) ? p.role.toLowerCase() : '';
+    const isAdmin = rawRole === 'admin' || rawRole === 'director';
+    document.querySelectorAll('[data-admin-only="true"]').forEach(el => {
+      el.style.display = isAdmin ? '' : 'none';
+    });
     return true;
   }
   window.userMenuToggle = function (e) {
@@ -5631,9 +5658,22 @@ window.addEventListener('DOMContentLoaded', () => {
       roleEl.textContent = company ? (role + ' · ' + company) : role;
     }
     if (dropName) dropName.textContent = cap(name);
-    // Update workspace name in sidebar
+    // Update workspace switcher in sidebar
     const wsName = document.getElementById('ws-name');
     if (wsName && company) wsName.textContent = company;
+    const wsAv = document.getElementById('ws-av');
+    if (wsAv) wsAv.textContent = company ? company.charAt(0).toUpperCase() : 'P';
+    const wsPlan = document.getElementById('ws-plan');
+    if (wsPlan) {
+      const roleLabel = (p && p.role) ? cap(p.role) : 'Pro';
+      wsPlan.textContent = roleLabel + ' · Revenue OS';
+    }
+    // Apply role-based nav visibility
+    const rawRoleR = (p && p.role) ? p.role.toLowerCase() : '';
+    const isAdmin = rawRoleR === 'admin' || rawRoleR === 'director';
+    document.querySelectorAll('[data-admin-only="true"]').forEach(el => {
+      el.style.display = isAdmin ? '' : 'none';
+    });
     // Update sidebar status time
     const sfStatus = document.getElementById('sf-status');
     if (sfStatus) {
