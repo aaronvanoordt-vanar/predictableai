@@ -1777,24 +1777,11 @@ html, body {
 
     <!-- INTELIGENCIA -->
     <div class="sidebar-section">
-      <div class="lbl">Inteligencia <span class="lbl-cnt">3</span></div>
+      <div class="lbl">Inteligencia</div>
     </div>
-    <div class="nav-item" data-page="mi-overview" onclick="nav(this,'mi-overview')">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
-      Market Intelligence
-      <span class="nav-badge">3</span>
-    </div>
-    <div class="nav-item" data-page="mi-matrix" onclick="nav(this,'mi-matrix')" style="margin-left:20px;font-size:12px">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M2 6h12M6 2v12"/></svg>
-      Matriz de Input
-    </div>
-    <div class="nav-item" data-page="mi-dashboard" onclick="nav(this,'mi-dashboard')" style="margin-left:20px;font-size:12px">
+    <div class="nav-item" data-page="mi-dashboard" onclick="nav(this,'mi-dashboard')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 12l4-4 3 3 5-6"/></svg>
       Intelligence Hub
-    </div>
-    <div class="nav-item" data-page="mi-accionables" onclick="nav(this,'mi-accionables')" style="margin-left:20px;font-size:12px">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M13 8l-5 5-5-5M8 3v10"/></svg>
-      Accionables GTM
     </div>
 
     <!-- EJECUTAR -->
@@ -1956,12 +1943,12 @@ html, body {
 
   <!-- MODULE STATUS ROW -->
   <div class="row">
-    <div class="card" style="cursor:pointer" onclick="nav(document.querySelector('[data-page=mi-overview]'),'mi-overview')">
+    <div class="card" style="cursor:pointer" onclick="nav(document.querySelector('[data-page=mi-dashboard]'),'mi-dashboard')">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div>
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--teal);margin-bottom:8px">Módulo 1</div>
-          <div style="font-size:16px;font-weight:800">Market Intelligence</div>
-          <div style="font-size:12px;color:var(--text2);margin-top:4px">3 insights accionables · Actualizado hace 2h</div>
+          <div style="font-size:16px;font-weight:800">Intelligence Hub</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:4px">IA activa · Actualización automática</div>
         </div>
         <span class="pill pill-green">Activo</span>
       </div>
