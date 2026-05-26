@@ -105,6 +105,58 @@ const SECTIONS: SectionDef[] = [
 
 const SECTION_MAP = new Map(SECTIONS.map((s) => [s.key, s]));
 
+// ── Intake data type ──────────────────────────────────────────────────────────
+
+interface IntakeData {
+  what_to_know:           string | null;
+  company_linkedin_url:   string | null;
+  company_industry:       string | null;
+  company_employee_count: string | null;
+  company_country:        string | null;
+  company_website:        string | null;
+  company_about:          string | null;
+  company_solutions:      string | null;
+  icp_company_sizes:      string | null;
+  icp_industries:         string | null;
+  icp_roles:              string | null;
+  icp_geographies:        string | null;
+  icp_pain_points:        string | null;
+  value_problem_solved:   string | null;
+  value_proposition:      string | null;
+  value_success_cases:    string | null;
+}
+
+function buildCompanyContext(intake: IntakeData): string {
+  const lines: string[] = ["=== COMPANY PROFILE ==="];
+
+  if (intake.company_linkedin_url)   lines.push(`LinkedIn: ${intake.company_linkedin_url}`);
+  if (intake.company_industry)       lines.push(`Industry: ${intake.company_industry}`);
+  if (intake.company_employee_count) lines.push(`Size: ${intake.company_employee_count}`);
+  if (intake.company_country)        lines.push(`Country: ${intake.company_country}`);
+  if (intake.company_website)        lines.push(`Website: ${intake.company_website}`);
+  if (intake.company_about)          lines.push(`About: ${intake.company_about}`);
+  if (intake.company_solutions)      lines.push(`Products/Solutions: ${intake.company_solutions}`);
+
+  lines.push("", "=== IDEAL CUSTOMER PROFILE (ICP) ===");
+  if (intake.icp_company_sizes) lines.push(`Target Company Sizes: ${intake.icp_company_sizes}`);
+  if (intake.icp_industries)    lines.push(`Target Industries: ${intake.icp_industries}`);
+  if (intake.icp_roles)         lines.push(`Decision Maker Roles: ${intake.icp_roles}`);
+  if (intake.icp_geographies)   lines.push(`Target Geographies: ${intake.icp_geographies}`);
+  if (intake.icp_pain_points)   lines.push(`ICP Pain Points: ${intake.icp_pain_points}`);
+
+  lines.push("", "=== VALUE PROPOSITION ===");
+  if (intake.value_problem_solved) lines.push(`Problem Solved: ${intake.value_problem_solved}`);
+  if (intake.value_proposition)    lines.push(`Value Proposition: ${intake.value_proposition}`);
+  if (intake.value_success_cases)  lines.push(`Success Cases: ${intake.value_success_cases}`);
+
+  if (intake.what_to_know) {
+    lines.push("", "=== SPECIFIC INTELLIGENCE REQUESTS ===");
+    lines.push(intake.what_to_know);
+  }
+
+  return lines.join("\n");
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function sleep(ms: number) {
@@ -114,14 +166,9 @@ function sleep(ms: number) {
 function nextRefreshAt(cadence: string): Date {
   const now = new Date();
   const OFFSETS: Record<string, number> = {
-    daily: 1,
-    weekly: 7,
-    monthly: 30,
-    quarterly: 90,
-    yearly: 365,
+    daily: 1, weekly: 7, monthly: 30, quarterly: 90, yearly: 365,
   };
-  const days = OFFSETS[cadence] ?? 1;
-  return new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+  return new Date(now.getTime() + (OFFSETS[cadence] ?? 1) * 24 * 60 * 60 * 1000);
 }
 
 function corsHeaders(origin: string) {
@@ -141,10 +188,7 @@ function json(body: unknown, status = 200, extraHeaders: Record<string, string> 
 
 // ── Claude web-search call ───────────────────────────────────────────────────
 
-interface ContentItem {
-  type: string;
-  text?: string;
-}
+interface ContentItem { type: string; text?: string; }
 
 async function callClaude(
   apiKey: string,
@@ -169,7 +213,6 @@ async function callClaude(
     }),
   });
 
-  // Retry on rate limit
   if (res.status === 429 && attempt < 3) {
     console.warn(`[gen] 429 rate limit — waiting 10s before retry ${attempt + 1}`);
     await sleep(10000);
@@ -204,8 +247,7 @@ interface GeneratedContent {
 async function generateSection(
   apiKey: string,
   section: SectionDef,
-  companyUrl: string,
-  whatToKnow: string,
+  companyContext: string,
   today: string
 ): Promise<GeneratedContent> {
   const systemPrompt = `You are a market intelligence agent for B2B SaaS companies.
@@ -226,44 +268,37 @@ Return exactly this structure:
   ],
   "action": "One specific action the sales team should take today/this week based on this intelligence"
 }
-Return 3-6 items. Prioritize recency and specificity over generality.`;
+Return 3-6 items. Prioritize recency and specificity over generality.
+All analysis must be HIGHLY SPECIFIC to this company's context, ICP, and value proposition — never generic.`;
 
-  const userPrompt = `Company LinkedIn: ${companyUrl}
-Context the user provided: ${whatToKnow}
+  const userPrompt = `${companyContext}
 
+---
 Section to generate: ${section.title}
 
 Research task: ${section.researchPrompt}
 
-Search the web now and generate the ${section.title} section for this company.`;
+Search the web now and generate the ${section.title} section. Make your analysis highly specific to THIS company — their products, their exact ICP (industries, roles, geographies), and how the market intelligence directly impacts their go-to-market strategy.`;
 
   const raw = await callClaude(apiKey, systemPrompt, userPrompt);
-
-  // Strip markdown fences
   const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
-  // Try direct parse first
   try {
     return JSON.parse(cleaned) as GeneratedContent;
   } catch (_) {
-    // Fall back to extracting the outermost {...} block character by character
-    // to handle cases where Claude appends extra text after the JSON object
     const start = cleaned.indexOf("{");
     if (start === -1) throw new Error(`No JSON object found in response: ${cleaned.slice(0, 200)}`);
-    let depth = 0;
-    let end = -1;
+    let depth = 0, end = -1;
     for (let i = start; i < cleaned.length; i++) {
       if (cleaned[i] === "{") depth++;
       else if (cleaned[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
     }
-    if (end === -1) throw new Error(`Unterminated JSON object in response (max_tokens may be too low): ${cleaned.slice(0, 200)}`);
+    if (end === -1) throw new Error(`Unterminated JSON object: ${cleaned.slice(0, 200)}`);
     return JSON.parse(cleaned.slice(start, end + 1)) as GeneratedContent;
   }
 }
 
 // ── Core generation logic ─────────────────────────────────────────────────────
-// Processes sections in batches of BATCH_SIZE to run in parallel.
-// This keeps total time well under the 150s edge function wall-time limit.
 
 const BATCH_SIZE = 3;
 
@@ -276,26 +311,29 @@ async function runGeneration(
 ) {
   const today = new Date().toISOString().slice(0, 10);
 
-  // Fetch user context
   const { data: intake } = await supabase
     .from("intel_hub_intake")
-    .select("what_to_know, company_linkedin_url")
+    .select(`
+      what_to_know, company_linkedin_url,
+      company_industry, company_employee_count, company_country,
+      company_website, company_about, company_solutions,
+      icp_company_sizes, icp_industries, icp_roles, icp_geographies, icp_pain_points,
+      value_problem_solved, value_proposition, value_success_cases
+    `)
     .eq("user_id", userId)
     .maybeSingle();
 
-  if (!intake?.what_to_know) {
+  if (!intake) {
     console.error(`[gen] No intake for user ${userId}`);
     return;
   }
 
-  const companyUrl = intake.company_linkedin_url ?? "unknown";
-  const whatToKnow = intake.what_to_know;
+  const companyContext = buildCompanyContext(intake as IntakeData);
 
   const sections = sectionKeys
     .map((k) => SECTION_MAP.get(k))
     .filter(Boolean) as SectionDef[];
 
-  // Mark all as 'generating'
   await supabase.from("intelligence_hub_reports").upsert(
     sections.map((s) => ({
       user_id: userId,
@@ -308,14 +346,13 @@ async function runGeneration(
     { onConflict: "user_id,section_key" }
   );
 
-  // Process in batches to stay within wall-time limits while still being fast
   for (let i = 0; i < sections.length; i += BATCH_SIZE) {
     const batch = sections.slice(i, i + BATCH_SIZE);
 
     await Promise.all(
       batch.map(async (section) => {
         try {
-          const content = await generateSection(apiKey, section, companyUrl, whatToKnow, today);
+          const content = await generateSection(apiKey, section, companyContext, today);
           await supabase.from("intelligence_hub_reports").upsert(
             {
               user_id: userId,
@@ -347,10 +384,7 @@ async function runGeneration(
       })
     );
 
-    // Brief pause between batches to avoid rate-limit bursts
-    if (i + BATCH_SIZE < sections.length) {
-      await sleep(1500);
-    }
+    if (i + BATCH_SIZE < sections.length) await sleep(1500);
   }
 }
 
@@ -360,24 +394,17 @@ Deno.serve(async (req: Request) => {
   const origin = req.headers.get("origin") ?? "*";
   const headers = corsHeaders(origin);
 
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers });
-  }
-  if (req.method !== "POST") {
-    return json({ error: "Method not allowed" }, 405, headers);
-  }
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405, headers);
 
-  const supabaseUrl    = Deno.env.get("SUPABASE_URL")!;
-  const serviceKey     = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const anonKey        = Deno.env.get("SUPABASE_ANON_KEY")!;
-  const apiKey         = Deno.env.get("ANTHROPIC_API_KEY");
+  const supabaseUrl     = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey      = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const anonKey         = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const apiKey          = Deno.env.get("ANTHROPIC_API_KEY");
   const schedulerSecret = Deno.env.get("SCHEDULER_SECRET") ?? "";
 
-  if (!apiKey) {
-    return json({ error: "ANTHROPIC_API_KEY not configured" }, 500, headers);
-  }
+  if (!apiKey) return json({ error: "ANTHROPIC_API_KEY not configured" }, 500, headers);
 
-  // Auth: X-Hub-Secret for scheduler, JWT for browser
   const hubSecret = req.headers.get("X-Hub-Secret") ?? "";
   const isServiceRole = schedulerSecret !== "" && hubSecret === schedulerSecret;
 
@@ -397,28 +424,20 @@ Deno.serve(async (req: Request) => {
     sections?: string[];
     triggered_by: "onboarding" | "manual" | "schedule";
   };
-  try {
-    body = await req.json();
-  } catch {
-    return json({ error: "Invalid JSON body" }, 400, headers);
-  }
+  try { body = await req.json(); }
+  catch { return json({ error: "Invalid JSON body" }, 400, headers); }
 
   if (isServiceRole && body.user_id) userId = body.user_id;
   if (!userId) return json({ error: "user_id required" }, 400, headers);
 
   const triggeredBy = body.triggered_by ?? "manual";
-  // On onboarding, only generate the two free daily sections to avoid rate limits
-  // and keep the initial experience fast (weekly/monthly/etc show "coming soon" in UI)
   const defaultSections = triggeredBy === "onboarding"
     ? SECTIONS.filter((s) => s.cadence === "daily" && !s.locked).map((s) => s.key)
     : SECTIONS.map((s) => s.key);
   const requestedSections = body.sections ?? defaultSections;
 
-  const supabase = createClient(supabaseUrl, serviceKey, {
-    auth: { persistSession: false },
-  });
+  const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
-  // ── Manual refresh: check & deduct credits ──
   if (triggeredBy === "manual") {
     const cost = requestedSections.length;
     const { data: credits } = await supabase
@@ -430,33 +449,23 @@ Deno.serve(async (req: Request) => {
     if (!credits || credits.balance < cost) {
       return json(
         { error: "insufficient_credits", balance: credits?.balance ?? 0, cost },
-        402,
-        headers
+        402, headers
       );
     }
 
-    await supabase
-      .from("user_credits")
+    await supabase.from("user_credits")
       .update({ balance: credits.balance - cost })
       .eq("user_id", userId);
 
     await supabase.from("credit_transactions").insert(
       requestedSections.map((sk) => ({
-        user_id: userId,
-        delta: -1,
-        reason: "manual_refresh",
-        section_key: sk,
+        user_id: userId, delta: -1, reason: "manual_refresh", section_key: sk,
       }))
     );
   }
 
-  // Kick off background generation and return 202 immediately
   const generationPromise = runGeneration(
-    supabase,
-    apiKey,
-    userId!,
-    requestedSections,
-    triggeredBy
+    supabase, apiKey, userId!, requestedSections, triggeredBy
   );
 
   // @ts-ignore — Supabase Edge Runtime global
@@ -469,7 +478,6 @@ Deno.serve(async (req: Request) => {
 
   return json(
     { status: "started", sections: requestedSections, triggered_by: triggeredBy },
-    202,
-    headers
+    202, headers
   );
 });

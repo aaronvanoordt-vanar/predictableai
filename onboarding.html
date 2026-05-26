@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>Predictable.ai — Conecta tu empresa</title>
+<title>Predictable.ai — Configura tu Hub</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%2300c4d4'/></svg>">
 <style>
@@ -15,111 +15,270 @@
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--text); font-family: var(--font);
-    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px;
+    min-height: 100vh; display: flex; align-items: flex-start; justify-content: center;
+    padding: 32px 20px;
     background-image: radial-gradient(circle at 80% 10%, rgba(0,196,212,.08), transparent 50%),
                       radial-gradient(circle at 10% 90%, rgba(30,193,143,.06), transparent 50%);
   }
   .card {
-    width: 100%; max-width: 540px;
+    width: 100%; max-width: 560px;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 16px; padding: 36px 36px 28px;
+    border-radius: 16px; padding: 32px 36px 28px;
     box-shadow: 0 24px 80px rgba(0,0,0,.5);
-  }
-  .step { color: var(--text3); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; margin-bottom: 8px; }
-  h1 { font-size: 24px; margin: 0 0 10px; letter-spacing: -.5px; }
-  .sub { color: var(--text2); font-size: 14px; margin-bottom: 24px; line-height: 1.55; }
-  .sub strong { color: var(--text); }
-
-  .form-group { margin-bottom: 18px; }
-  label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .5px; color: var(--text3); text-transform: uppercase; margin-bottom: 8px; }
-  input {
-    width: 100%; padding: 13px 14px; background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 9px; color: var(--text); font-family: inherit; font-size: 14px;
-    transition: border-color .12s;
-  }
-  input:focus { outline: none; border-color: var(--teal); }
-  input::placeholder { color: var(--text3); }
-
-  .hint { font-size: 12px; color: var(--text3); margin-top: 6px; line-height: 1.5; }
-  .example { font-family: 'JetBrains Mono', monospace; color: var(--text2); background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
-
-  .btn-primary {
-    width: 100%; padding: 12px 14px; background: var(--teal); border: 0; border-radius: 9px;
-    color: #002a30; font-size: 14px; font-weight: 700; cursor: pointer;
-    transition: all .12s;
-  }
-  .btn-primary:hover:not([disabled]) { background: #14d4e4; }
-  .btn-primary[disabled] { opacity: .5; cursor: not-allowed; }
-  .btn-ghost {
-    background: transparent; border: 1px solid var(--border); color: var(--text2);
-    width: 100%; padding: 10px; border-radius: 8px; font-size: 12.5px; cursor: pointer;
-    margin-top: 10px;
+    margin-bottom: 32px;
   }
 
-  .status { margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; display: none; }
-  .status.show { display: block; }
-  .status.ok    { background: rgba(16,185,129,.10); color: var(--green); border: 1px solid rgba(16,185,129,.3); }
-  .status.err   { background: rgba(232,64,64,.10);  color: var(--red);   border: 1px solid rgba(232,64,64,.3); }
-  .status.info  { background: rgba(0,196,212,.10);  color: var(--teal);  border: 1px solid rgba(0,196,212,.3); }
-  .spinner { display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px;}
-  @keyframes spin{to{transform:rotate(360deg);}}
+  /* Progress */
+  .progress-wrap { margin-bottom: 22px; }
+  .progress-bar { height: 3px; background: var(--border); border-radius: 2px; margin-bottom: 8px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--teal); border-radius: 2px; transition: width .4s ease; }
+  .step-label { font-size: 11px; color: var(--text3); letter-spacing: .5px; text-transform: uppercase; font-weight: 600; }
 
+  /* User chip */
   .user-chip {
     display: inline-flex; align-items: center; gap: 8px;
     background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 20px; padding: 6px 12px; font-size: 12px; color: var(--text2);
-    margin-bottom: 18px;
+    border-radius: 20px; padding: 5px 12px; font-size: 12px; color: var(--text2);
+    margin-bottom: 20px;
   }
 
-  .why-box {
-    background: rgba(0,196,212,.06); border: 1px solid rgba(0,196,212,.18);
-    border-radius: 10px; padding: 14px 16px; margin-bottom: 22px; font-size: 13px; line-height: 1.55;
-  }
-  .why-box .title { color: var(--teal); font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
-  .why-box ul { margin: 4px 0; padding-left: 20px; color: var(--text2); }
-  .why-box li { margin-bottom: 3px; }
+  .step-icon { font-size: 28px; margin-bottom: 12px; }
+  h1 { font-size: 22px; margin: 0 0 10px; letter-spacing: -.4px; }
+  .sub { color: var(--text2); font-size: 13.5px; margin: 0 0 24px; line-height: 1.6; }
+  .sub strong { color: var(--text); }
 
-  .logout-link {
-    display: block; text-align: center; margin-top: 20px;
-    font-size: 12px; color: var(--text3); text-decoration: none;
+  .form-group { margin-bottom: 18px; }
+  label {
+    display: block; font-size: 11px; font-weight: 700; letter-spacing: .5px;
+    color: var(--text3); text-transform: uppercase; margin-bottom: 7px;
   }
+  input, textarea {
+    width: 100%; padding: 12px 13px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 9px; color: var(--text); font-family: inherit; font-size: 14px;
+    transition: border-color .12s;
+  }
+  textarea { resize: vertical; min-height: 100px; line-height: 1.6; }
+  input:focus, textarea:focus { outline: none; border-color: var(--teal); }
+  input::placeholder, textarea::placeholder { color: var(--text3); }
+
+  .hint { font-size: 12px; color: var(--text3); margin-top: 6px; line-height: 1.5; }
+  .example { font-family: monospace; color: var(--text2); background: var(--surface2); padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+
+  /* Pill selection */
+  .pill-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+  .pill-opt {
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: 20px;
+    font-size: 12px; color: var(--text2); cursor: pointer;
+    transition: all .12s; user-select: none;
+  }
+  .pill-opt:hover { border-color: var(--teal); color: var(--teal); }
+  .pill-opt.selected { background: rgba(0,196,212,.12); border-color: var(--teal); color: var(--teal); }
+
+  /* Counter */
+  .counter { font-size: 11px; color: var(--text3); text-align: right; margin-top: 5px; }
+  .counter.warn { color: #e6a23c; }
+
+  hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
+
+  .btn-primary {
+    width: 100%; padding: 13px 14px; background: var(--teal); border: 0; border-radius: 9px;
+    color: #002a30; font-size: 14px; font-weight: 700; cursor: pointer; transition: all .12s;
+    font-family: inherit;
+  }
+  .btn-primary:hover:not([disabled]) { background: #14d4e4; }
+  .btn-primary[disabled] { opacity: .5; cursor: not-allowed; }
+
+  .status { margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; display: none; line-height: 1.5; }
+  .status.show { display: block; }
+  .status.ok  { background: rgba(16,185,129,.10); color: var(--green); border: 1px solid rgba(16,185,129,.3); }
+  .status.err { background: rgba(232,64,64,.10);  color: var(--red);   border: 1px solid rgba(232,64,64,.3); }
+  .status.inf { background: rgba(0,196,212,.10);  color: var(--teal);  border: 1px solid rgba(0,196,212,.3); }
+
+  .spinner { display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .logout-link { display: block; text-align: center; margin-top: 18px; font-size: 12px; color: var(--text3); text-decoration: none; }
   .logout-link:hover { color: var(--text2); }
+
+  /* Step 5: generating */
+  .gen-wrap { text-align: center; padding: 20px 0 16px; }
+  .gen-ring {
+    width: 56px; height: 56px; border: 3px solid var(--border); border-top-color: var(--teal);
+    border-radius: 50%; animation: spin .9s linear infinite; margin: 0 auto 20px;
+  }
+  .gen-title { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+  .gen-sub { color: var(--text2); font-size: 13px; line-height: 1.6; margin-bottom: 22px; }
+  .gen-items { display: flex; flex-direction: column; gap: 10px; }
+  .gen-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; font-size: 13px; color: var(--text3);
+    transition: border-color .3s, color .3s;
+  }
+  .gen-item.active { border-color: var(--teal); color: var(--text); }
+  .gen-item.done   { border-color: rgba(16,185,129,.35); color: var(--green); }
+  .gen-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex-shrink: 0; transition: background .3s; }
+  .gen-item.active .gen-dot { background: var(--teal); animation: pulse 1.2s ease infinite; }
+  .gen-item.done   .gen-dot { background: var(--green); animation: none; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+  @media (max-width: 520px) {
+    .card { padding: 24px 22px 22px; }
+    h1 { font-size: 20px; }
+    body { padding: 20px 12px; }
+  }
 </style>
 </head>
 <body>
 
 <div class="card">
+  <!-- Progress bar -->
+  <div class="progress-wrap">
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:20%"></div></div>
+    <div class="step-label" id="step-label">Paso 1 de 5</div>
+  </div>
+
   <span class="user-chip" id="user-chip">Cargando…</span>
 
-  <div class="step">Paso 1 de 1</div>
-  <h1>Conecta tu empresa</h1>
-  <p class="sub">Antes de empezar, necesitamos el <strong>LinkedIn de tu empresa</strong>. Con eso vamos a configurar tu cuenta y enriquecer tu información automáticamente.</p>
+  <!-- ═══ STEP 1: LinkedIn + Phone ═══ -->
+  <div id="step-1">
+    <div class="step-icon">🔗</div>
+    <h1>Conecta tu empresa</h1>
+    <p class="sub">Con el <strong>LinkedIn de tu empresa</strong>, identificamos automáticamente tu industria, tamaño y competidores directos — sin que tengas que ingresar nada más.</p>
 
-  <div class="why-box">
-    <div class="title">¿Para qué lo usamos?</div>
-    <ul>
-      <li>Identificar tu industria y ICP automático.</li>
-      <li>Pre-cargar el contexto de tu empresa en los reportes.</li>
-      <li>Personalizar el coaching según tu vertical.</li>
-    </ul>
+    <div class="form-group">
+      <label>LinkedIn de tu empresa</label>
+      <input id="inp-linkedin" type="url" placeholder="https://linkedin.com/company/tu-empresa/">
+      <div class="hint">Ejemplo: <span class="example">linkedin.com/company/eleva-co/</span></div>
+    </div>
+
+    <div class="form-group">
+      <label>Teléfono de contacto</label>
+      <input id="inp-phone" type="tel" placeholder="+1 555 123 4567">
+      <div class="hint">Para alertas urgentes de mercado (WhatsApp).</div>
+    </div>
+
+    <button class="btn-primary" id="btn-s1">Continuar →</button>
   </div>
 
-  <div class="form-group">
-    <label>URL de LinkedIn de tu empresa</label>
-    <input id="inp-linkedin" type="url" placeholder="https://www.linkedin.com/company/tu-empresa/" autocomplete="url">
-    <div class="hint">Ejemplo: <span class="example">https://www.linkedin.com/company/eleva-co/</span></div>
+  <!-- ═══ STEP 2: Survey ═══ -->
+  <div id="step-2" style="display:none">
+    <div class="step-icon">📡</div>
+    <h1>¿Qué quieres monitorear?</h1>
+    <p class="sub">Cuéntanos qué información de mercado te resulta más difícil de obtener hoy. <strong>Mientras más específico, mejor calibrado quedará tu Hub.</strong></p>
+
+    <div class="form-group">
+      <label>¿Qué quisieras saber periódicamente de tu mercado?</label>
+      <textarea id="inp-what-to-know" rows="6" maxlength="1000"
+        placeholder="Ej: Quiero saber si mis competidores cambiaron precios o lanzaron features nuevas. También qué industrias están aumentando su gasto en soluciones como la mía, y señales de compra de mis ICPs ideales…"></textarea>
+      <div class="counter"><span id="char-count">0</span> / 1000</div>
+    </div>
+
+    <button class="btn-primary" id="btn-s2" disabled>Continuar →</button>
   </div>
 
-  <button class="btn-primary" id="btn-submit">Continuar →</button>
-  <a href="#" class="logout-link" id="link-logout">Salir y volver a iniciar sesión</a>
+  <!-- ═══ STEP 3: ICP ═══ -->
+  <div id="step-3" style="display:none">
+    <div class="step-icon">🎯</div>
+    <h1>Define tu cliente ideal</h1>
+    <p class="sub">Esto permite que los agentes focalicen la inteligencia en las <strong>oportunidades más relevantes</strong> para tu negocio — no análisis genéricos.</p>
+
+    <div class="form-group">
+      <label>Tamaño de empresa que buscas</label>
+      <div class="pill-group" id="icp-sizes">
+        <div class="pill-opt" data-val="1-10">1–10</div>
+        <div class="pill-opt" data-val="11-50">11–50</div>
+        <div class="pill-opt" data-val="51-200">51–200</div>
+        <div class="pill-opt" data-val="201-1000">201–1000</div>
+        <div class="pill-opt" data-val="1000+">1000+</div>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Industrias objetivo</label>
+      <input id="inp-icp-industries" type="text" placeholder="Ej: SaaS, Fintech, Retail, Manufactura">
+      <div class="hint">Separa con comas.</div>
+    </div>
+
+    <div class="form-group">
+      <label>Roles de decisión que apuntas</label>
+      <input id="inp-icp-roles" type="text" placeholder="Ej: CEO, VP Ventas, Director Comercial, CRO">
+      <div class="hint">Separa con comas.</div>
+    </div>
+
+    <div class="form-group">
+      <label>Geografías objetivo</label>
+      <input id="inp-icp-geos" type="text" placeholder="Ej: LATAM, México, Colombia, España">
+      <div class="hint">Separa con comas.</div>
+    </div>
+
+    <div class="form-group">
+      <label>Principal dolor que resuelves en tu ICP</label>
+      <textarea id="inp-icp-pain" rows="3" maxlength="400"
+        placeholder="Ej: No tener visibilidad de los movimientos de competidores ni señales de compra del mercado en tiempo real…"></textarea>
+    </div>
+
+    <button class="btn-primary" id="btn-s3">Continuar →</button>
+  </div>
+
+  <!-- ═══ STEP 4: Value Proposition ═══ -->
+  <div id="step-4" style="display:none">
+    <div class="step-icon">💡</div>
+    <h1>Tu propuesta de valor</h1>
+    <p class="sub">Esta información entrena a los agentes para identificar las oportunidades y amenazas más relevantes para <strong>tu solución específica</strong>.</p>
+
+    <div class="form-group">
+      <label>¿Qué problema específico resuelves?</label>
+      <textarea id="inp-vp-problem" rows="3" maxlength="500"
+        placeholder="Ej: Los equipos de ventas B2B pierden deals por no tener visibilidad de los movimientos de la competencia ni señales de compra del mercado…"></textarea>
+    </div>
+
+    <div class="form-group">
+      <label>Tu propuesta de valor diferenciada</label>
+      <textarea id="inp-vp-value" rows="3" maxlength="500"
+        placeholder="Ej: Somos el único Revenue OS que combina Market Intelligence en tiempo real, prospección con IA y coaching de ventas en una sola plataforma para equipos B2B en LATAM…"></textarea>
+    </div>
+
+    <div class="form-group">
+      <label>Casos de éxito o social proof <span style="font-weight:400;text-transform:none;letter-spacing:0">(opcional)</span></label>
+      <textarea id="inp-vp-cases" rows="3" maxlength="500"
+        placeholder="Ej: Ayudamos a TechCorp a aumentar su tasa de cierre un 35% en 90 días. Clientes como Finanzas360 confían en nosotros para…"></textarea>
+    </div>
+
+    <button class="btn-primary" id="btn-s4">Activar mi Intelligence Hub →</button>
+  </div>
+
+  <!-- ═══ STEP 5: Generating ═══ -->
+  <div id="step-5" style="display:none">
+    <div class="gen-wrap">
+      <div class="gen-ring"></div>
+    </div>
+    <p class="gen-title">Activando tu Intelligence Hub</p>
+    <p class="gen-sub">Nuestros agentes de IA están investigando tu mercado, competidores y oportunidades. La primera generación tarda unos minutos — luego se actualiza automáticamente.</p>
+
+    <div class="gen-items">
+      <div class="gen-item" id="gen-a">
+        <div class="gen-dot"></div>
+        🔍 Analizando tu empresa y competidores directos
+      </div>
+      <div class="gen-item" id="gen-b">
+        <div class="gen-dot"></div>
+        📊 Buscando señales de mercado de las últimas 24h
+      </div>
+      <div class="gen-item" id="gen-c">
+        <div class="gen-dot"></div>
+        ⚡ Generando insights accionables para tu GTM
+      </div>
+    </div>
+  </div>
 
   <div id="status" class="status"></div>
+  <a href="#" class="logout-link" id="link-logout">Salir y volver a iniciar sesión</a>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="js/config.js"></script>
 <script src="js/supabase-client.js"></script>
 <script src="js/onboarding.js"></script>
-
 </body>
 </html>
