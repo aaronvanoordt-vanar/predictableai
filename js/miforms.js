@@ -192,10 +192,33 @@
       return;
     }
 
-    showStatus('ok', '✅ Listo. Activando tu Intelligence Hub…');
+    showStatus('ok', '✅ Listo. Lanzando tu Intelligence Hub con IA…');
+
+    // Fire-and-forget: trigger the Claude agent for all sections.
+    // We don't await so the browser isn't blocked; the agent runs in the cloud.
+    triggerInitialGeneration(user).catch(e => console.warn('[miforms] trigger', e));
+
     setTimeout(() => {
       window.location.replace(HUB_PATH);
-    }, 700);
+    }, 900);
+  }
+
+  async function triggerInitialGeneration(user) {
+    const SUPABASE_URL    = window.SUPABASE_CONFIG?.url ?? '';
+    const GENERATE_FN_URL = SUPABASE_URL + '/functions/v1/generate-intel-hub';
+
+    const { data: sessionData } = await window.supabaseClient.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    if (!token) return;
+
+    await fetch(GENERATE_FN_URL, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': 'Bearer ' + token,
+      },
+      body: JSON.stringify({ triggered_by: 'onboarding' }),
+    });
   }
 
   function friendlyError(context, msg) {

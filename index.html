@@ -1036,6 +1036,204 @@ html, body {
 .settings-pill.teal { background: var(--teal-dim); color: var(--teal); border-color: rgba(0,196,212,.3); }
 .settings-pill.jade { background: var(--jade-dim); color: var(--jade); border-color: rgba(0,200,120,.3); }
 
+/* ── Intelligence Hub ────────────────────────────────────── */
+.ih-loading {
+  display: flex; align-items: center; gap: 12px;
+  color: var(--text3); font-size: 13px; padding: 40px 0;
+}
+.ih-spinner {
+  width: 18px; height: 18px;
+  border: 2px solid var(--border2); border-top-color: var(--teal);
+  border-radius: 50%; animation: spin .8s linear infinite; flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.ih-cadence-group { margin-bottom: 32px; }
+.ih-cadence-header {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 14px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.ih-cadence-label {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  letter-spacing: 1px; text-transform: uppercase; color: var(--text2);
+}
+.ih-cadence-badge {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+  padding: 2px 7px; border-radius: 99px;
+  background: var(--surface3); color: var(--text3); letter-spacing: .5px;
+  text-transform: uppercase;
+}
+
+.ih-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.ih-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  display: flex; flex-direction: column;
+  transition: border-color .15s;
+}
+.ih-card:hover { border-color: var(--border2); }
+.ih-card-ready { border-color: var(--border2); }
+.ih-card-generating { border-color: rgba(0,196,212,.25); }
+.ih-card-error { border-color: rgba(232,64,64,.25); }
+.ih-card-locked { opacity: .7; }
+
+.ih-card-header {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.ih-card-title-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.ih-card-title {
+  font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: -.1px;
+}
+.ih-lock-badge {
+  font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 99px;
+  background: rgba(37,99,235,.12); color: var(--gold-bright);
+  border: 1px solid rgba(37,99,235,.25);
+}
+.ih-card-meta {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.ih-status-indicator {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; color: var(--text3);
+}
+.ih-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+.ih-dot-pending    { background: var(--text3); }
+.ih-dot-generating { background: var(--teal); animation: pulse-dot 1.2s ease-in-out infinite; }
+.ih-dot-ready      { background: var(--jade); }
+.ih-dot-error      { background: var(--red); }
+@keyframes pulse-dot {
+  0%,100% { opacity: 1; } 50% { opacity: .35; }
+}
+.ih-next-refresh {
+  font-size: 10px; color: var(--text3); font-family: var(--font-mono);
+}
+
+.ih-card-body {
+  padding: 14px 16px; flex: 1;
+}
+
+/* Generating skeleton */
+.ih-generating { display: flex; flex-direction: column; gap: 10px; }
+.ih-gen-bar {
+  height: 10px; border-radius: 5px; background: var(--surface3);
+  width: 90%;
+  animation: shimmer 1.6s ease-in-out infinite;
+  background: linear-gradient(90deg, var(--surface3) 25%, var(--surface2) 50%, var(--surface3) 75%);
+  background-size: 200% 100%;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.ih-gen-label {
+  font-size: 11px; color: var(--text3); margin-top: 4px; font-style: italic;
+}
+
+/* Error state */
+.ih-error-body {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 12px; color: var(--red); line-height: 1.5;
+}
+
+/* Content */
+.ih-headline {
+  font-size: 14px; font-weight: 700; color: var(--text);
+  line-height: 1.35; margin-bottom: 8px;
+}
+.ih-summary {
+  font-size: 12.5px; color: var(--text2); line-height: 1.6; margin-bottom: 14px;
+}
+.ih-items { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.ih-item {
+  background: var(--surface2); border-radius: var(--r-sm);
+  padding: 10px 12px;
+}
+.ih-item-header {
+  display: flex; align-items: center; gap: 7px; margin-bottom: 5px;
+}
+.ih-urgency-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+}
+.ih-item-title {
+  font-size: 12px; font-weight: 700; color: var(--text);
+}
+.ih-item-body {
+  font-size: 12px; color: var(--text2); line-height: 1.55; margin-bottom: 6px;
+}
+.ih-item-impl {
+  font-size: 11.5px; color: var(--text2); line-height: 1.5;
+  border-left: 2px solid var(--teal); padding-left: 8px;
+}
+.ih-impl-label {
+  font-weight: 700; color: var(--teal); margin-right: 4px;
+}
+.ih-action {
+  background: var(--jade-dim); border: 1px solid rgba(0,200,120,.2);
+  border-radius: var(--r-sm); padding: 10px 12px;
+  font-size: 12px; color: var(--text); line-height: 1.5;
+}
+.ih-action-label {
+  display: block; font-size: 10px; font-weight: 700; color: var(--jade);
+  text-transform: uppercase; letter-spacing: .6px; margin-bottom: 4px;
+}
+.ih-empty {
+  font-size: 12px; color: var(--text3); font-style: italic;
+}
+
+/* Locked overlay */
+.ih-locked-overlay {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; padding: 24px;
+  text-align: center; color: var(--text3); font-size: 12px;
+}
+
+/* Card footer */
+.ih-card-footer {
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: flex-end;
+}
+.ih-refresh-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 11px; border-radius: var(--r-sm);
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  background: var(--surface2); border: 1px solid var(--border2);
+  color: var(--text2); transition: all .12s;
+}
+.ih-refresh-btn:hover:not([disabled]) {
+  background: var(--teal-dim); border-color: rgba(0,196,212,.3); color: var(--teal);
+}
+.ih-refresh-btn[disabled] { opacity: .5; cursor: not-allowed; }
+.ih-btn-spinner {
+  display: inline-block; width: 10px; height: 10px;
+  border: 1.5px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+.ih-lock-hint {
+  font-size: 11px; color: var(--text3); font-style: italic;
+}
+
+/* Credit badge in topbar */
+.ih-credit-chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: var(--r-sm);
+  background: var(--surface2); border: 1px solid var(--border2);
+  font-size: 11.5px; color: var(--text2); font-family: var(--font-mono);
+}
+.ih-credit-chip svg { color: var(--gold-bright); }
+
 </style>
 </head>
 <body>
@@ -1725,61 +1923,20 @@ html, body {
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
     <div>
       <div class="topbar-title">Intelligence Hub</div>
-      <div class="topbar-sub">Módulo 1 · Análisis actualizado: 14 Abr 2026 · 09:42</div>
+      <div class="topbar-sub">Módulo 1 · Inteligencia de mercado generada por IA, actualizada automáticamente</div>
     </div>
     <div class="topbar-actions">
-      <button class="btn btn-ghost btn-sm">↓ Exportar PDF</button>
-      <button class="btn btn-primary btn-sm">↻ Re-analizar</button>
+      <div class="ih-credit-chip">
+        <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
+        <span id="ih-credit-badge">— créditos</span>
+      </div>
     </div>
   </div>
 
-  <!-- Market position map -->
-  <div class="row">
-    <div class="chart-card" style="flex:1">
-      <div class="chart-header"><span class="chart-title">Posicionamiento de mercado</span><span class="pill pill-blue">2x2 precio vs. alcance</span></div>
-      <div class="chart-wrap"><canvas id="posChart"></canvas></div>
-    </div>
-    <div class="chart-card" style="flex:1">
-      <div class="chart-header"><span class="chart-title">Tendencias de búsqueda</span><span class="pill pill-gray">Google Trends · 12m</span></div>
-      <div class="chart-wrap"><canvas id="trendsChart"></canvas></div>
-    </div>
-  </div>
-
-  <!-- Consumer behavior signals -->
-  <div class="chart-card">
-    <div class="chart-header">
-      <span class="chart-title">Señales del consumidor B2B</span>
-      <span class="pill pill-amber">Impacta estrategia de producto</span>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:4px">
-      <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:14px">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--teal);margin-bottom:8px">Qué más valoran</div>
-        <div class="score-row" style="gap:8px">
-          <div><div class="score-label"><span style="font-size:12px">Time-to-value rápido</span><span style="font-size:12px;font-weight:700">92%</span></div><div class="score-bar"><div class="score-fill" style="width:92%;background:var(--gradient-gold)"></div></div></div>
-          <div><div class="score-label"><span style="font-size:12px">Integración con CRM</span><span style="font-size:12px;font-weight:700">87%</span></div><div class="score-bar"><div class="score-fill" style="width:87%;background:var(--gradient-gold)"></div></div></div>
-          <div><div class="score-label"><span style="font-size:12px">ROI demostrable</span><span style="font-size:12px;font-weight:700">84%</span></div><div class="score-bar"><div class="score-fill" style="width:84%;background:var(--gradient-gold)"></div></div></div>
-          <div><div class="score-label"><span style="font-size:12px">Onboarding &lt;1 semana</span><span style="font-size:12px;font-weight:700">79%</span></div><div class="score-bar"><div class="score-fill" style="width:79%;background:var(--gradient-gold)"></div></div></div>
-        </div>
-      </div>
-      <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:14px">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--amber);margin-bottom:8px">Por qué no compran</div>
-        <div class="score-row" style="gap:8px">
-          <div><div class="score-label"><span style="font-size:12px">"Ya tenemos una herramienta"</span><span style="font-size:12px;font-weight:700">68%</span></div><div class="score-bar"><div class="score-fill" style="width:68%;background:linear-gradient(90deg,#2563EB,#1E40AF)"></div></div></div>
-          <div><div class="score-label"><span style="font-size:12px">Precio no justificado</span><span style="font-size:12px;font-weight:700">54%</span></div><div class="score-bar"><div class="score-fill" style="width:54%;background:linear-gradient(90deg,#2563EB,#1E40AF)"></div></div></div>
-          <div><div class="score-label"><span style="font-size:12px">Necesita aprobación board</span><span style="font-size:12px;font-weight:700">41%</span></div><div class="score-bar"><div class="score-fill" style="width:41%;background:linear-gradient(90deg,#2563EB,#1E40AF)"></div></div></div>
-          <div><div class="score-label"><span style="font-size:12px">No prioridad ahora</span><span style="font-size:12px;font-weight:700">37%</span></div><div class="score-bar"><div class="score-fill" style="width:37%;background:linear-gradient(90deg,#2563EB,#1E40AF)"></div></div></div>
-        </div>
-      </div>
-      <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:14px">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--green);margin-bottom:8px">Adaptaciones de producto</div>
-        <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--text2)">
-          <div style="display:flex;gap:8px"><span style="color:var(--green);font-weight:700">→</span> Ofrece prueba de 14 días sin fricción</div>
-          <div style="display:flex;gap:8px"><span style="color:var(--green);font-weight:700">→</span> Construye ROI calculator en el onboarding</div>
-          <div style="display:flex;gap:8px"><span style="color:var(--green);font-weight:700">→</span> Integración nativa HubSpot/Salesforce</div>
-          <div style="display:flex;gap:8px"><span style="color:var(--green);font-weight:700">→</span> Case study con número concreto (ej: 42 reuniones/mes)</div>
-          <div style="display:flex;gap:8px"><span style="color:var(--green);font-weight:700">→</span> Deck ejecutivo para presentar al board</div>
-        </div>
-      </div>
+  <div id="ih-container">
+    <div class="ih-loading">
+      <div class="ih-spinner"></div>
+      <span>Cargando Intelligence Hub…</span>
     </div>
   </div>
 </div>
@@ -3023,6 +3180,7 @@ html, body {
 <script src="js/apollo-sequences.js"></script>
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
+<script src="js/intel-hub.js"></script>
 <script>
 // ── END MEETING ──
 function endMeeting() {
@@ -3151,6 +3309,7 @@ async function loadLastMeeting() {
 ════════════════════════════════════════════ -->
 <script>
 // ── NAVIGATION ──
+let _activePageId = null;
 function nav(el, pageId) {
   document.querySelectorAll('.nav-item').forEach(n => {
     n.classList.remove('active','m2','m3');
@@ -3164,6 +3323,15 @@ function nav(el, pageId) {
   const target = document.getElementById('page-' + pageId);
   if (target) { target.classList.add('active'); target.classList.add('fade-in'); }
   window.scrollTo(0,0);
+
+  // Intelligence Hub lifecycle
+  if (_activePageId === 'mi-dashboard' && pageId !== 'mi-dashboard') {
+    if (typeof window.intelHubDestroy === 'function') window.intelHubDestroy();
+  }
+  if (pageId === 'mi-dashboard' && _activePageId !== 'mi-dashboard') {
+    if (typeof window.intelHubInit === 'function') window.intelHubInit();
+  }
+  _activePageId = pageId;
 }
 
 // ── CHARTS ──
