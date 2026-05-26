@@ -162,7 +162,7 @@ async function callClaude(
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
-      max_tokens: 2048,
+      max_tokens: 4096,
       system: systemPrompt,
       tools: [{ type: "web_search_20250305", name: "web_search" }],
       messages: [{ role: "user", content: userPrompt }],
@@ -239,11 +239,26 @@ Search the web now and generate the ${section.title} section for this company.`;
 
   const raw = await callClaude(apiKey, systemPrompt, userPrompt);
 
-  // Strip markdown fences and extract JSON object robustly
+  // Strip markdown fences
   const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error(`No JSON object found in response: ${cleaned.slice(0, 200)}`);
-  return JSON.parse(jsonMatch[0]) as GeneratedContent;
+
+  // Try direct parse first
+  try {
+    return JSON.parse(cleaned) as GeneratedContent;
+  } catch (_) {
+    // Fall back to extracting the outermost {...} block character by character
+    // to handle cases where Claude appends extra text after the JSON object
+    const start = cleaned.indexOf("{");
+    if (start === -1) throw new Error(`No JSON object found in response: ${cleaned.slice(0, 200)}`);
+    let depth = 0;
+    let end = -1;
+    for (let i = start; i < cleaned.length; i++) {
+      if (cleaned[i] === "{") depth++;
+      else if (cleaned[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end === -1) throw new Error(`Unterminated JSON object in response (max_tokens may be too low): ${cleaned.slice(0, 200)}`);
+    return JSON.parse(cleaned.slice(start, end + 1)) as GeneratedContent;
+  }
 }
 
 // ── Core generation logic ─────────────────────────────────────────────────────
@@ -392,7 +407,12 @@ Deno.serve(async (req: Request) => {
   if (!userId) return json({ error: "user_id required" }, 400, headers);
 
   const triggeredBy = body.triggered_by ?? "manual";
-  const requestedSections = body.sections ?? SECTIONS.map((s) => s.key);
+  // On onboarding, only generate the two free daily sections to avoid rate limits
+  // and keep the initial experience fast (weekly/monthly/etc show "coming soon" in UI)
+  const defaultSections = triggeredBy === "onboarding"
+    ? SECTIONS.filter((s) => s.cadence === "daily" && !s.locked).map((s) => s.key)
+    : SECTIONS.map((s) => s.key);
+  const requestedSections = body.sections ?? defaultSections;
 
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false },
