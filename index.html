@@ -995,8 +995,23 @@ html, body {
   #page-ventas-coach .mc-grid > div:nth-child(2) {
     max-height: none !important; overflow-y: visible !important;
   }
+  #mc-idle { grid-template-columns: 1fr !important; }
 }
 
+/* Coach idle/active state */
+#mc-idle {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 16px;
+  align-items: start;
+  width: 100%;
+}
+#mc-active {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+}
 
 /* ═══ Logout confirmation modal ═══ */
 .logout-overlay {
@@ -3305,78 +3320,172 @@ html, body {
   <!-- Topbar -->
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
     <div style="display:flex;align-items:center;gap:14px">
-      <div style="width:12px;height:12px;border-radius:50%;background:#10B981;box-shadow:0 0 12px rgba(16,185,129,.6)" class="pulse"></div>
+      <div id="mc-dot" style="width:10px;height:10px;border-radius:50%;background:var(--green-soft);border:2px solid var(--green);transition:all .4s"></div>
       <div>
-        <div class="topbar-title">Meeting Coach <span style="color:var(--green);font-size:12px;font-weight:600;background:rgba(16,185,129,.12);padding:3px 8px;border-radius:6px;margin-left:6px;letter-spacing:.5px">EN VIVO</span></div>
-        <div class="topbar-sub">
-          <span id="mc-status" style="color:var(--text2)">Sin reunión activa</span>
-          · <span id="mc-timer" style="font-family:var(--font-mono);color:var(--text3)">00:00:00</span>
-        </div>
+        <div class="topbar-title">Coach en vivo</div>
+        <div class="topbar-sub" style="color:var(--text3)">El asistente que escucha tu llamada y te dice qué decir, en vivo.</div>
       </div>
     </div>
     <div class="topbar-actions">
-      <button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(232,64,64,.3)" onclick="window.realtimeCoach && window.realtimeCoach.end()">■ Finalizar</button>
+      <button id="mc-btn-config" class="btn btn-ghost btn-sm" onclick="toggleCoachConfig()">⚙ Configuración</button>
+      <button id="mc-btn-end" class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(225,84,84,.28);display:none" onclick="window.realtimeCoach && window.realtimeCoach.end()">■ Finalizar sesión</button>
     </div>
   </div>
 
-  <!-- HERO: lo último dicho -->
-  <div style="background:linear-gradient(135deg,rgba(0,196,212,.06),rgba(16,185,129,.04));border:1px solid rgba(0,196,212,.18);border-radius:14px;padding:28px 32px;min-height:140px;display:flex;flex-direction:column;justify-content:center;width:100%;box-sizing:border-box">
-    <div id="mc-last-spoken" style="min-height:80px;width:100%">
-      <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Esperando audio...</div>
-      <div style="font-size:14px;color:var(--text3);font-style:italic">Click "Iniciar coach en vivo" desde el overview y comparte el tab del Meet con audio.</div>
+  <!-- ═══ IDLE STATE ═══ -->
+  <div id="mc-idle">
+
+    <!-- Hero izquierdo -->
+    <div style="background:linear-gradient(145deg,rgba(6,182,212,.07) 0%,rgba(43,182,115,.04) 60%,transparent 100%);border:1px solid rgba(6,182,212,.18);border-radius:16px;padding:32px 36px;display:flex;flex-direction:column;gap:0">
+
+      <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:18px">PRÓXIMA REUNIÓN · 10:30</div>
+
+      <div style="font-size:30px;font-weight:800;color:var(--text);line-height:1.2;margin-bottom:8px">
+        Coach activo en <span id="mc-prospect-name" style="color:var(--teal)">tu reunión</span>.
+      </div>
+
+      <div id="mc-prospect-meta" style="font-size:13px;color:var(--text3);margin-bottom:28px">Selecciona un prospecto desde el Pipeline o inicia desde una reunión del día</div>
+
+      <div style="display:flex;gap:10px;margin-bottom:32px">
+        <button class="btn btn-jade" style="padding:10px 22px;font-size:14px;gap:8px;display:flex;align-items:center" onclick="iniciarCoachLive()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 15c1.66 0 3-1.34 3-3V6c0-1.66-1.34-3-3-3S9 4.34 9 6v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 15.2 14.47 17 12 17s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V21c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
+          Iniciar coach
+        </button>
+        <button class="btn btn-ghost btn-sm" style="padding:10px 18px;font-size:13px" onclick="toggleBriefPanel()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          Ver brief
+        </button>
+      </div>
+
+      <!-- Features -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+        <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
+          <div style="width:32px;height:32px;border-radius:8px;background:rgba(6,182,212,.12);display:flex;align-items:center;justify-content:center">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="2"><path d="M12 15c1.66 0 3-1.34 3-3V6c0-1.66-1.34-3-3-3S9 4.34 9 6v6c0 1.66 1.34 3 3 3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
+          </div>
+          <div style="font-size:12px;font-weight:700;color:var(--text)">Captura audio + pantalla</div>
+          <div style="font-size:11px;color:var(--text3);line-height:1.5">Tu tab + Tu micrófono</div>
+        </div>
+        <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
+          <div style="width:32px;height:32px;border-radius:8px;background:rgba(43,182,115,.12);display:flex;align-items:center;justify-content:center">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+          </div>
+          <div style="font-size:12px;font-weight:700;color:var(--text)">IA entiende el contexto</div>
+          <div style="font-size:11px;color:var(--text3);line-height:1.5">ICP, historial, etapa</div>
+        </div>
+        <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
+          <div style="width:32px;height:32px;border-radius:8px;background:rgba(47,102,255,.12);display:flex;align-items:center;justify-content:center">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-ink)" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          </div>
+          <div style="font-size:12px;font-weight:700;color:var(--text)">Alertas en &lt;2s</div>
+          <div style="font-size:11px;color:var(--text3);line-height:1.5">Objeción, riesgo, señal</div>
+        </div>
+      </div>
     </div>
+
+    <!-- Brief automático -->
+    <div id="mc-brief-panel" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden">
+      <div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:13px;font-weight:700">Brief automático</div>
+        <div style="font-size:10px;font-weight:700;color:var(--accent-ink);background:var(--accent-soft);padding:3px 8px;border-radius:20px;letter-spacing:.5px">AI</div>
+      </div>
+      <div id="mc-brief-loading" style="padding:24px 18px;display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:4px">GENERANDO BRIEF...</div>
+        <div style="height:10px;background:var(--surface2);border-radius:4px;animation:pulse 1.5s infinite"></div>
+        <div style="height:10px;background:var(--surface2);border-radius:4px;width:80%;animation:pulse 1.5s infinite"></div>
+        <div style="height:10px;background:var(--surface2);border-radius:4px;width:90%;animation:pulse 1.5s infinite"></div>
+      </div>
+      <div id="mc-brief-content" style="display:none;padding:0 18px 18px">
+        <div style="padding:14px 0;border-bottom:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">QUIÉN</div>
+          <div id="mc-brief-who" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
+        </div>
+        <div style="padding:14px 0;border-bottom:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">POR QUÉ LE IMPORTA</div>
+          <div id="mc-brief-why" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
+        </div>
+        <div style="padding:14px 0">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--red);margin-bottom:8px">RIESGOS</div>
+          <div id="mc-brief-risks" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
-  <!-- Grid principal -->
-  <div class="mc-grid">
+  <!-- ═══ ACTIVE STATE ═══ -->
+  <div id="mc-active" style="display:none;flex-direction:column;gap:14px">
 
-    <!-- Columna izquierda: Transcripción -->
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;display:flex;flex-direction:column;min-height:480px;min-width:0">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border)">
-        <div style="font-size:13px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.5px">📜 Transcripción completa</div>
-        <span class="pill pill-blue" style="font-size:10px">Live</span>
+    <!-- Status bar en vivo -->
+    <div style="background:linear-gradient(90deg,rgba(43,182,115,.08),rgba(6,182,212,.05));border:1px solid rgba(43,182,115,.2);border-radius:10px;padding:12px 18px;display:flex;align-items:center;justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 10px rgba(43,182,115,.7)" class="pulse"></div>
+        <span id="mc-status" style="font-size:13px;font-weight:600;color:var(--text2)">Conectando...</span>
+        <span style="color:var(--text3)">·</span>
+        <span id="mc-timer" style="font-family:var(--font-mono);font-size:13px;color:var(--text3)">00:00:00</span>
       </div>
-      <div id="mc-transcript" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;font-size:13px;line-height:1.7;max-height:560px;padding-right:6px;min-width:0;word-wrap:break-word;overflow-wrap:break-word">
-        <div style="color:var(--text3);font-size:12px;font-style:italic;text-align:center;padding:40px 0">La conversación aparecerá aquí en tiempo real...</div>
+      <div id="mc-live-prospect" style="font-size:12px;color:var(--text3)"></div>
+    </div>
+
+    <!-- HERO: último dicho -->
+    <div style="background:linear-gradient(135deg,rgba(6,182,212,.06),rgba(43,182,115,.04));border:1px solid rgba(6,182,212,.18);border-radius:14px;padding:22px 28px;min-height:100px;display:flex;flex-direction:column;justify-content:center">
+      <div id="mc-last-spoken" style="min-height:60px">
+        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Esperando audio...</div>
+        <div style="font-size:14px;color:var(--text3);font-style:italic">Comparte el tab de tu videollamada con audio.</div>
       </div>
     </div>
 
-    <!-- Columna derecha: Coach panel -->
-    <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+    <!-- Grid transcripción + coach -->
+    <div class="mc-grid">
 
-      <div style="background:linear-gradient(135deg,rgba(240,192,96,.06),rgba(240,192,96,.02));border:1px solid rgba(240,192,96,.18);border-radius:12px;padding:16px">
-        <div style="font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">🗺 Etapa actual</div>
-        <div id="mc-stage" style="font-size:18px;font-weight:800;color:var(--gold);margin-bottom:14px">—</div>
-        <div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Próximos pasos</div>
-        <div id="mc-next-steps" style="display:flex;flex-direction:column;gap:6px">
-          <div style="font-size:12px;color:var(--text3);font-style:italic">Aparecerán cuando el coach analice...</div>
+      <!-- Columna izquierda: Transcripción -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;display:flex;flex-direction:column;min-height:400px;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.5px">Transcripción completa</div>
+          <span class="pill pill-green" style="font-size:10px">Live</span>
+        </div>
+        <div id="mc-transcript" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;font-size:13px;line-height:1.7;max-height:500px;padding-right:6px;min-width:0;word-wrap:break-word;overflow-wrap:break-word">
+          <div style="color:var(--text3);font-size:12px;font-style:italic;text-align:center;padding:40px 0">La conversación aparecerá aquí en tiempo real...</div>
         </div>
       </div>
 
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">
-        <div style="font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px">📊 Score en vivo</div>
-        <div style="display:flex;flex-direction:column;gap:11px">
-          <div id="mc-score-listening" class="score-row">
-            <div class="score-label"><span style="font-size:11px;color:var(--text2)">Escucha activa</span><span class="score-num" style="font-size:11px;font-weight:700;color:var(--green)">—</span></div>
-            <div class="score-bar"><div class="score-fill" style="width:0%;background:var(--grad-jade)"></div></div>
-          </div>
-          <div id="mc-score-pain" class="score-row">
-            <div class="score-label"><span style="font-size:11px;color:var(--text2)">Profundización del dolor</span><span class="score-num" style="font-size:11px;font-weight:700;color:var(--teal)">—</span></div>
-            <div class="score-bar"><div class="score-fill" style="width:0%;background:var(--gradient-gold)"></div></div>
-          </div>
-          <div id="mc-score-pace" class="score-row">
-            <div class="score-label"><span style="font-size:11px;color:var(--text2)">Control del ritmo</span><span class="score-num" style="font-size:11px;font-weight:700;color:var(--amber)">—</span></div>
-            <div class="score-bar"><div class="score-fill" style="width:0%;background:linear-gradient(90deg,#2563EB,#1E40AF)"></div></div>
-          </div>
-          <div id="mc-score-objection" class="score-row">
-            <div class="score-label"><span style="font-size:11px;color:var(--text2)">Manejo de objeciones</span><span class="score-num" style="font-size:11px;font-weight:700;color:var(--green)">—</span></div>
-            <div class="score-bar"><div class="score-fill" style="width:0%;background:var(--grad-jade)"></div></div>
+      <!-- Columna derecha: Coach panel -->
+      <div style="display:flex;flex-direction:column;gap:12px;min-width:0">
+
+        <div style="background:linear-gradient(135deg,rgba(47,102,255,.06),rgba(47,102,255,.02));border:1px solid rgba(47,102,255,.18);border-radius:12px;padding:16px">
+          <div style="font-size:10px;font-weight:700;color:var(--accent-ink);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Etapa actual</div>
+          <div id="mc-stage" style="font-size:20px;font-weight:800;color:var(--accent-ink);margin-bottom:12px">—</div>
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Próximo paso</div>
+          <div id="mc-next-steps" style="display:flex;flex-direction:column;gap:6px">
+            <div style="font-size:12px;color:var(--text3);font-style:italic">Analizando...</div>
           </div>
         </div>
+
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px">Score en vivo</div>
+          <div style="display:flex;flex-direction:column;gap:11px">
+            <div id="mc-score-listening" class="score-row">
+              <div class="score-label"><span style="font-size:11px;color:var(--text2)">Escucha activa</span><span class="score-num" style="font-size:11px;font-weight:700;color:var(--green)">—</span></div>
+              <div class="score-bar"><div class="score-fill" style="width:0%;background:var(--grad-jade)"></div></div>
+            </div>
+            <div id="mc-score-pain" class="score-row">
+              <div class="score-label"><span style="font-size:11px;color:var(--text2)">Profundización del dolor</span><span class="score-num" style="font-size:11px;font-weight:700;color:var(--teal)">—</span></div>
+              <div class="score-bar"><div class="score-fill" style="width:0%;background:var(--grad-teal)"></div></div>
+            </div>
+            <div id="mc-score-pace" class="score-row">
+              <div class="score-label"><span style="font-size:11px;color:var(--text2)">Control del ritmo</span><span class="score-num" style="font-size:11px;font-weight:700;color:var(--amber)">—</span></div>
+              <div class="score-bar"><div class="score-fill" style="width:0%;background:var(--gradient-gold)"></div></div>
+            </div>
+            <div id="mc-score-objection" class="score-row">
+              <div class="score-label"><span style="font-size:11px;color:var(--text2)">Manejo de objeciones</span><span class="score-num" style="font-size:11px;font-weight:700;color:var(--accent-ink)">—</span></div>
+              <div class="score-bar"><div class="score-fill" style="width:0%;background:var(--grad-gold)"></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="mc-events" style="display:flex;flex-direction:column;gap:10px"></div>
+
       </div>
-
-      <div id="mc-events" style="display:flex;flex-direction:column;gap:10px"></div>
-
     </div>
   </div>
 
@@ -3536,37 +3645,66 @@ html, body {
 
   <!-- TAB: ÚLTIMA REUNIÓN -->
   <div id="rep-meeting" class="rep-tab" style="display:none">
+
   <div id="last-meeting-loading" style="text-align:center;padding:40px;color:var(--text3)">
-    Cargando última reunión...
+    <div style="font-size:13px">Cargando última reunión...</div>
   </div>
+
   <div id="last-meeting-content" style="display:none">
-    <div class="chart-card" style="margin-bottom:16px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+
+    <!-- Header SDR + reunión -->
+    <div style="background:linear-gradient(135deg,rgba(47,102,255,.07),rgba(6,182,212,.04));border:1px solid rgba(47,102,255,.18);border-radius:14px;padding:24px 28px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:20px">
+      <div style="display:flex;align-items:center;gap:16px">
+        <div style="width:48px;height:48px;border-radius:12px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">👤</div>
         <div>
-          <div style="font-size:16px;font-weight:800" id="lm-title">—</div>
-          <div style="font-size:12px;color:var(--text3);margin-top:3px" id="lm-meta">—</div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:4px">REPORTE SDR</div>
+          <div style="font-size:18px;font-weight:800;color:var(--text)" id="lm-sdr-name">—</div>
+          <div style="font-size:12px;color:var(--text3);margin-top:2px" id="lm-meta">—</div>
         </div>
-        <span class="pill pill-blue" id="lm-score">Score: —</span>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px" id="lm-scores"></div>
-      <div style="font-size:13px;font-weight:700;margin-bottom:6px">Resumen</div>
-      <div style="font-size:12px;color:var(--text2);line-height:1.7" id="lm-verdict">—</div>
+      <div style="text-align:right">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:4px">Score total</div>
+        <div style="font-size:36px;font-weight:900;color:var(--accent-ink);font-family:var(--font-mono)" id="lm-score-big">—</div>
+        <div style="font-size:11px;color:var(--text3)">/100</div>
+      </div>
     </div>
+
+    <!-- Título de la reunión -->
+    <div style="margin-bottom:12px">
+      <div style="font-size:16px;font-weight:800" id="lm-title">—</div>
+    </div>
+
+    <!-- Score breakdown -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px" id="lm-scores"></div>
+
+    <!-- Veredicto -->
     <div class="chart-card" style="margin-bottom:16px">
-      <div style="font-size:14px;font-weight:800;margin-bottom:12px;color:var(--green)">✓ Lo que hizo bien</div>
-      <ul id="lm-highlights" style="margin:0;padding-left:20px;font-size:12px;line-height:1.8;color:var(--text2)"></ul>
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:10px">Análisis IA</div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.7" id="lm-verdict">—</div>
     </div>
-    <div class="chart-card" style="margin-bottom:16px">
-      <div style="font-size:14px;font-weight:800;margin-bottom:12px;color:var(--amber)">⚠ Lo que se perdió</div>
-      <ul id="lm-missed" style="margin:0;padding-left:20px;font-size:12px;line-height:1.8;color:var(--text2)"></ul>
-    </div>
-    <div class="chart-card">
-      <div style="font-size:14px;font-weight:800;margin-bottom:12px;color:var(--teal)">→ Próximos pasos</div>
-      <ul id="lm-next" style="margin:0;padding-left:20px;font-size:12px;line-height:1.8;color:var(--text2)"></ul>
+
+    <!-- Tres columnas: bien / perdido / próximos -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+      <div class="chart-card">
+        <div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--green)">✓ Lo que hizo bien</div>
+        <ul id="lm-highlights" style="margin:0;padding-left:18px;font-size:12px;line-height:1.9;color:var(--text2)"></ul>
+      </div>
+      <div class="chart-card">
+        <div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--amber)">⚠ Oportunidades perdidas</div>
+        <ul id="lm-missed" style="margin:0;padding-left:18px;font-size:12px;line-height:1.9;color:var(--text2)"></ul>
+      </div>
+      <div class="chart-card">
+        <div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--teal)">→ Próximos pasos</div>
+        <ul id="lm-next" style="margin:0;padding-left:18px;font-size:12px;line-height:1.9;color:var(--text2)"></ul>
+      </div>
     </div>
   </div>
-  <div id="last-meeting-empty" style="display:none;text-align:center;padding:40px;color:var(--text3)">
-    No hay reuniones grabadas todavía. Cuando termines tu primera reunión con el AI Coach, verás el reporte aquí.
+
+  <div id="last-meeting-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--text3)">
+    <div style="font-size:32px;margin-bottom:12px">🎙</div>
+    <div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:8px">Sin reuniones grabadas todavía</div>
+    <div style="font-size:13px">Cuando termines tu primera sesión con el AI Coach, el reporte del SDR aparecerá aquí para que el director pueda revisarlo.</div>
+    <button class="btn btn-jade" style="margin-top:20px" onclick="iniciarCoachLive()">Iniciar primera sesión →</button>
   </div>
 </div>
 <!-- =========== PAGE: SETTINGS =========== -->
@@ -3742,17 +3880,103 @@ function endMeeting() {
   setTimeout(() => switchReportTab(document.querySelectorAll('#page-ventas-reportes .tab')[3], 'rep-meeting'), 100);
 }
   
-function iniciarCoachLive() {
+// ── COACH: landing state helpers ──
+function toggleBriefPanel() {
+  const panel = document.getElementById('mc-brief-panel');
+  if (!panel) return;
+  panel.style.display = panel.style.display === 'none' ? '' : 'none';
+}
+
+function toggleCoachConfig() {
+  if (window.uiHelpers && window.uiHelpers.toast) {
+    window.uiHelpers.toast('Configuración de coach próximamente', 'info');
+  }
+}
+
+function coachShowIdle() {
+  const idle = document.getElementById('mc-idle');
+  const active = document.getElementById('mc-active');
+  const btnEnd = document.getElementById('mc-btn-end');
+  const dot = document.getElementById('mc-dot');
+  if (idle) idle.style.display = 'grid';
+  if (active) active.style.display = 'none';
+  if (btnEnd) btnEnd.style.display = 'none';
+  if (dot) { dot.style.background = 'var(--green-soft)'; dot.style.boxShadow = 'none'; }
+}
+
+function coachShowActive(prospectName) {
+  const idle = document.getElementById('mc-idle');
+  const active = document.getElementById('mc-active');
+  const btnEnd = document.getElementById('mc-btn-end');
+  const dot = document.getElementById('mc-dot');
+  const liveProspect = document.getElementById('mc-live-prospect');
+  if (idle) idle.style.display = 'none';
+  if (active) { active.style.display = 'flex'; }
+  if (btnEnd) btnEnd.style.display = '';
+  if (dot) { dot.style.background = 'var(--green)'; dot.style.boxShadow = '0 0 10px rgba(43,182,115,.7)'; }
+  if (liveProspect && prospectName) liveProspect.textContent = prospectName;
+}
+
+// Populate the landing brief with prospect context
+function loadCoachBrief(ctx) {
+  const loading = document.getElementById('mc-brief-loading');
+  const content = document.getElementById('mc-brief-content');
+  const nameEl = document.getElementById('mc-prospect-name');
+  const metaEl = document.getElementById('mc-prospect-meta');
+
+  if (nameEl && ctx && ctx.name) nameEl.textContent = ctx.name;
+  if (metaEl && ctx) {
+    const parts = [ctx.title, ctx.company].filter(Boolean);
+    metaEl.textContent = parts.length ? parts.join(' · ') + (ctx.deal_value ? ' · ' + ctx.deal_value : '') + (ctx.icp_score ? ' · ICP-fit ' + ctx.icp_score : '') : 'Demo · Prospecto calificado';
+  }
+
+  if (loading) loading.style.display = 'none';
+  if (content) content.style.display = 'block';
+
+  const who = document.getElementById('mc-brief-who');
+  const why = document.getElementById('mc-brief-why');
+  const risks = document.getElementById('mc-brief-risks');
+  if (who && ctx) who.textContent = ctx.brief_who || (ctx.name ? ctx.name + (ctx.title ? ' · ' + ctx.title : '') + (ctx.company ? ' en ' + ctx.company : '') + '.' : '—');
+  if (why && ctx) why.textContent = ctx.brief_why || 'Contexto de la reunión disponible al iniciar el coach.';
+  if (risks && ctx) risks.textContent = ctx.brief_risks || 'Sin alertas previas.';
+}
+
+// Default mock brief shown on page load
+(function () {
+  setTimeout(function () {
+    const page = document.getElementById('page-ventas-coach');
+    if (!page) return;
+    loadCoachBrief({
+      name: 'Lucía Bermejo',
+      title: 'VP of Sales',
+      company: 'Argentum',
+      deal_value: '$48K',
+      icp_score: 86,
+      brief_who: 'Lucía Bermejo · VP of Sales en Argentum · 4 años en cargo. Ex-Globant. LinkedIn: 1.4K seguidores. Activa esta semana en posts sobre "forecast accuracy".',
+      brief_why: 'Cerró Series A hace 8 meses. Plan agresivo: 3x revenue 2026. Contrataron 4 SDRs en Q1 pero reply rate sigue bajo (~3.8%).',
+      brief_risks: 'Ya nos dijo "no" una vez (Sep 2024). Está hablando con Clay y Outreach. Probable objeción de precio.'
+    });
+  }, 800);
+})();
+
+function iniciarCoachLive(prospectCtx) {
   nav(document.querySelector('[data-page=ventas-coach]'), 'ventas-coach');
+  const ctx = prospectCtx || (window.predictable && window.predictable.currentProspect) || {};
+  // Update brief with real context if available
+  if (ctx && (ctx.name || ctx.id)) loadCoachBrief(ctx);
   setTimeout(function () {
     if (window.realtimeCoach) {
       window.realtimeCoach.start({
-        id: window.predictable && window.predictable.currentProspect && window.predictable.currentProspect.id,
-        name: window.predictable && window.predictable.currentProspect && window.predictable.currentProspect.name,
-        company: window.predictable && window.predictable.currentProspect && window.predictable.currentProspect.organization_name
+        id: ctx.id,
+        name: ctx.name,
+        company: ctx.organization_name || ctx.company,
+        title: ctx.title,
+        deal_value: ctx.deal_value,
+        icp_score: ctx.icp_score
       });
     } else {
-      alert('realtime-coach.js no cargado');
+      // Fallback: show active UI anyway for demo
+      coachShowActive(ctx.name || 'Lucía Bermejo');
     }
   }, 300);
 }
@@ -3829,30 +4053,60 @@ async function loadLastMeeting() {
     loading.style.display = 'none';
     if (!data) { empty.style.display = 'block'; return; }
     const r = data.report || {};
-    document.getElementById('lm-title').textContent = data.prospect_name + ' — Reunión de venta';
-    document.getElementById('lm-meta').textContent = (data.sdr_email || 'SDR') + ' · ' + new Date(data.started_at).toLocaleDateString();
-    document.getElementById('lm-score').textContent = 'Score: ' + (data.score_total || r.score_total || 0) + '/100';
-    document.getElementById('lm-verdict').textContent = r.verdict || 'Sin resumen disponible.';
+    const scoreTotal = data.score_total || r.score_total || 0;
+    const sdrName = data.sdr_name || data.sdr_email || 'SDR';
+    const dateStr = data.started_at ? new Date(data.started_at).toLocaleDateString('es-MX', { day:'numeric', month:'long', year:'numeric' }) : '';
+    const durationMin = data.duration_seconds ? Math.round(data.duration_seconds / 60) + ' min' : '';
+
+    const sdrEl = document.getElementById('lm-sdr-name');
+    if (sdrEl) sdrEl.textContent = sdrName;
+
+    const titleEl = document.getElementById('lm-title');
+    if (titleEl) titleEl.textContent = (data.prospect_name || 'Prospecto') + ' — ' + (data.meeting_type || 'Reunión de venta');
+
+    const metaEl = document.getElementById('lm-meta');
+    if (metaEl) metaEl.textContent = [dateStr, durationMin, data.prospect_company].filter(Boolean).join(' · ');
+
+    const scoreBig = document.getElementById('lm-score-big');
+    if (scoreBig) {
+      scoreBig.textContent = scoreTotal;
+      scoreBig.style.color = scoreTotal >= 80 ? 'var(--green)' : scoreTotal >= 60 ? 'var(--amber)' : 'var(--red)';
+    }
+
+    const legacyScore = document.getElementById('lm-score');
+    if (legacyScore) legacyScore.textContent = 'Score: ' + scoreTotal + '/100';
+
+    const verdictEl = document.getElementById('lm-verdict');
+    if (verdictEl) verdictEl.textContent = r.verdict || 'Sin resumen disponible.';
+
     const scores = r.scores || {};
-    const scoreHTML = [
+    const scoreItems = [
       ['Escucha activa', scores.active_listening, 'var(--green)'],
       ['Profundización', scores.pain_deepening, 'var(--teal)'],
       ['Control ritmo', scores.pace_control, 'var(--amber)'],
-      ['Objeciones', scores.objection_handling, 'var(--green)']
-    ].map(([label, val, color]) =>
-      '<div style="text-align:center;padding:12px;background:var(--surface2);border-radius:8px">' +
-      '<div style="font-size:20px;font-weight:800;color:' + color + '">' + (val || 0) + '%</div>' +
-      '<div style="font-size:11px;color:var(--text3)">' + label + '</div></div>'
-    ).join('');
-    document.getElementById('lm-scores').innerHTML = scoreHTML;
-    document.getElementById('lm-highlights').innerHTML = (r.highlights || []).map(h => '<li>' + h + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
-    document.getElementById('lm-missed').innerHTML = (r.missed || []).map(m => '<li>' + m + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
-    document.getElementById('lm-next').innerHTML = (r.next_steps || []).map(n => '<li>' + n + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
+      ['Objeciones', scores.objection_handling, 'var(--accent-ink)']
+    ];
+    const scoresEl = document.getElementById('lm-scores');
+    if (scoresEl) {
+      scoresEl.innerHTML = scoreItems.map(([label, val, color]) =>
+        '<div style="text-align:center;padding:14px 12px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">' +
+        '<div style="font-size:24px;font-weight:900;font-family:var(--font-mono);color:' + color + '">' + (val != null ? val : '—') + '</div>' +
+        '<div style="font-size:11px;color:var(--text3);margin-top:4px">' + label + '</div></div>'
+      ).join('');
+    }
+
+    const hlEl = document.getElementById('lm-highlights');
+    if (hlEl) hlEl.innerHTML = (r.highlights || []).map(h => '<li>' + h + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
+    const mEl = document.getElementById('lm-missed');
+    if (mEl) mEl.innerHTML = (r.missed || []).map(m => '<li>' + m + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
+    const nEl = document.getElementById('lm-next');
+    if (nEl) nEl.innerHTML = (r.next_steps || []).map(n => '<li>' + n + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
+
     content.style.display = 'block';
   } catch (e) {
     loading.style.display = 'none';
     empty.style.display = 'block';
-    empty.textContent = 'Error cargando reporte: ' + e.message;
+    console.warn('loadLastMeeting error:', e);
   }
 }
   

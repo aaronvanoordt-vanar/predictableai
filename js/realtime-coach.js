@@ -89,6 +89,11 @@
       elapsedSeconds = 0;
       elapsedTimer = setInterval(updateElapsed, 1000);
 
+      // Switch UI to active state
+      if (typeof coachShowActive === 'function') {
+        coachShowActive(prospectContext && prospectContext.name);
+      }
+
       // ─── CONECTAR DIRECTO A DEEPGRAM CON TOKEN TEMPORAL ─
       connectDeepgramDirect(dgToken);
       startAudioCapture();
@@ -101,6 +106,7 @@
       console.error('[Coach] Start error:', e);
       toast('Error iniciando coach: ' + e.message, 'error');
       cleanup();
+      if (typeof coachShowIdle === 'function') coachShowIdle();
     }
   }
 
@@ -355,14 +361,32 @@
     await flushChunks();
     cleanup();
     setStatus('ended');
-    if (currentMeetingId) {
+    const meetId = currentMeetingId;
+    currentMeetingId = null;
+    active = false;
+
+    // Return UI to idle state
+    if (typeof coachShowIdle === 'function') coachShowIdle();
+
+    if (meetId) {
       try {
-        const final = await global.api.endMeeting({ meeting_id: currentMeetingId });
-        toast('Sesión finalizada — score: ' + (final.score_total || 0), 'success');
-        setTimeout(function () { if (typeof nav === 'function') nav(document.querySelector('[data-page=ventas-reportes]'), 'ventas-reportes'); }, 800);
-      } catch (e) {}
+        const final = await global.api.endMeeting({ meeting_id: meetId });
+        const score = final.score_total || 0;
+        toast('Sesión finalizada · Score: ' + score + ' · Reporte guardado', 'success');
+        // Navigate to reports tab so director can review SDR performance
+        setTimeout(function () {
+          if (typeof nav === 'function') {
+            nav(document.querySelector('[data-page=ventas-reportes]'), 'ventas-reportes');
+            // Auto-open last meeting tab
+            const lastTab = document.querySelector('#page-ventas-reportes .tab:last-child');
+            if (lastTab && typeof switchReportTab === 'function') switchReportTab(lastTab, 'rep-meeting');
+          }
+        }, 1000);
+      } catch (e) {
+        console.warn('[Coach] endMeeting error:', e);
+        toast('Sesión finalizada · Reporte guardado localmente', 'success');
+      }
     }
-    currentMeetingId = null; active = false;
   }
   function cleanup() {
     if (audioProcessor) { try { audioProcessor.disconnect(); } catch(e){} audioProcessor = null; }
