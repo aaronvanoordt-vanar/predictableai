@@ -34,6 +34,7 @@
   const CADENCE_ORDER   = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'];
   const CADENCE_LABELS  = { daily: 'Diario', weekly: 'Semanal', monthly: 'Mensual', quarterly: 'Trimestral', yearly: 'Anual' };
   const URGENCY_COLORS  = { high: '#e84040', medium: '#f59e0b', low: '#10b981' };
+  const LIVE_CADENCES   = ['daily']; // only these cadences show real data
 
   // ── State ────────────────────────────────────────────────────────────────────
 
@@ -164,34 +165,44 @@
       ? '<span class="ih-lock-badge">🔒 Pro</span>'
       : '';
 
-    const refreshBtn = !isLocked
-      ? `<button class="ih-refresh-btn" data-refresh-section="${section.key}" title="Actualizar manualmente (${CREDIT_COST} crédito)">
-           <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="2"><path d="M1 8a7 7 0 1 0 1.2-3.9M1 4v4h4"/></svg>
-           ${CREDIT_COST} crédito
-         </button>`
-      : `<span class="ih-lock-hint">Actualiza a Pro</span>`;
+    const isComingSoon = !LIVE_CADENCES.includes(section.cadence) && !isLocked;
 
     const bodyHtml = isLocked && status !== 'ready'
       ? `<div class="ih-locked-overlay">
            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
            <p>Esta sección requiere el plan Pro</p>
          </div>`
+      : isComingSoon
+      ? `<div class="ih-coming-soon">
+           <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+           <p class="ih-coming-soon-title">Estamos trabajando en esto</p>
+           <p class="ih-coming-soon-body">Necesitamos más tiempo para poder entregarte esta información con la calidad que mereces. Estará disponible pronto.</p>
+         </div>`
       : renderCardBody(status, content);
 
+    const footerHtml = isLocked
+      ? `<span class="ih-lock-hint">Actualiza a Pro</span>`
+      : isComingSoon
+      ? `<span class="ih-coming-soon-badge">Próximamente</span>`
+      : `<button class="ih-refresh-btn" data-refresh-section="${section.key}" title="Actualizar manualmente (${CREDIT_COST} crédito)">
+           <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="2"><path d="M1 8a7 7 0 1 0 1.2-3.9M1 4v4h4"/></svg>
+           ${CREDIT_COST} crédito
+         </button>`;
+
     return `
-      <div class="ih-card ih-card-${status}${isLocked ? ' ih-card-locked' : ''}">
+      <div class="ih-card ih-card-${isComingSoon ? 'coming-soon' : status}${isLocked ? ' ih-card-locked' : ''}${isComingSoon ? ' ih-card-coming-soon' : ''}">
         <div class="ih-card-header">
           <div class="ih-card-title-row">
             <span class="ih-card-title">${section.title}</span>
             ${lockBadge}
           </div>
           <div class="ih-card-meta">
-            <span class="ih-status-indicator">${statusDot}</span>
-            ${nextAt && status === 'ready' ? `<span class="ih-next-refresh">Próxima: ${nextAt}</span>` : ''}
+            ${isComingSoon ? '' : `<span class="ih-status-indicator">${statusDot}</span>`}
+            ${nextAt && status === 'ready' && !isComingSoon ? `<span class="ih-next-refresh">Próxima: ${nextAt}</span>` : ''}
           </div>
         </div>
         <div class="ih-card-body">${bodyHtml}</div>
-        <div class="ih-card-footer">${refreshBtn}</div>
+        <div class="ih-card-footer">${footerHtml}</div>
       </div>`;
   }
 
