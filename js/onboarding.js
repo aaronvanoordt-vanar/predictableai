@@ -253,7 +253,7 @@
     showStatus('inf', '<span class="spinner"></span> Guardando tu ICP…');
 
     try {
-      const { error } = await window.supabaseClient
+      const { error: intakeErr } = await window.supabaseClient
         .from('intel_hub_intake')
         .update({
           icp_company_sizes: sizes || null,
@@ -264,7 +264,20 @@
           onboarding_step:   3,
         })
         .eq('user_id', currentUser.id);
-      if (error) throw new Error(error.message);
+      if (intakeErr) throw new Error(intakeErr.message);
+
+      const { error: icpErr } = await window.supabaseClient
+        .from('client_icp')
+        .upsert({
+          profile_id:   currentUser.id,
+          company_sizes: sizes || null,
+          industries:    industries || null,
+          roles:         roles || null,
+          geographies:   geos || null,
+          pain_points:   pain || null,
+        }, { onConflict: 'profile_id' });
+      if (icpErr) throw new Error(icpErr.message);
+
       goToStep(4);
     } catch (err) {
       btn.disabled = false;
