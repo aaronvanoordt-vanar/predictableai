@@ -2,44 +2,338 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>Predictable.ai — Redirigiendo…</title>
+<title>Predictable.ai — Intelligence Wishlist</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%232F66FF'/></svg>">
 <style>
-  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
-         background:#0d1117; color:#aab2bd; font-family:system-ui,sans-serif; font-size:14px; }
-  .spinner { width:32px; height:32px; border:3px solid #2d333b; border-top-color:#00c4d4;
-             border-radius:50%; animation:spin .8s linear infinite; margin:0 auto 14px; }
-  @keyframes spin { to { transform:rotate(360deg); } }
-  .box { text-align:center; }
+  :root{
+    --bg:#08080C; --surface:#0E0E16; --surface2:#14141F; --surface3:#1B1B28; --surface4:#22222F;
+    --border:rgba(255,255,255,.07); --border2:rgba(255,255,255,.12); --border3:rgba(255,255,255,.20);
+    --ink:#FFF; --ink-2:rgba(255,255,255,.78); --ink-3:rgba(255,255,255,.52); --ink-4:rgba(255,255,255,.32); --ink-5:rgba(255,255,255,.16);
+    --accent:#2F66FF; --accent-2:#4F86FF; --accent-soft:rgba(47,102,255,.14); --accent-ink:#8EB0FF;
+    --gold:#F5B544; --gold-soft:rgba(245,181,68,.14);
+    --green:#2BB673; --green-soft:rgba(43,182,115,.14);
+    --red:#E15454; --red-soft:rgba(225,84,84,.14);
+    --purple:#7C5CFC; --purple-soft:rgba(124,92,252,.14);
+    --font:'Inter',system-ui,-apple-system,sans-serif;
+    --mono:'JetBrains Mono','SF Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg);color:var(--ink);font-family:var(--font);
+    min-height:100vh;line-height:1.5;
+    background-image:
+      radial-gradient(ellipse 800px 500px at 80% -10%,rgba(47,102,255,.10),transparent 60%),
+      radial-gradient(ellipse 700px 400px at -10% 90%,rgba(124,92,252,.08),transparent 60%);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:880px;margin:0 auto;padding:36px 22px 80px}
+  .topnav{display:flex;align-items:center;justify-content:space-between;margin-bottom:34px}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:14px;letter-spacing:-.2px}
+  .brand-dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+  .back{font-size:12px;color:var(--ink-3);text-decoration:none;display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border-radius:8px;border:1px solid var(--border);transition:.15s}
+  .back:hover{color:var(--ink);border-color:var(--border2);background:var(--surface)}
+
+  .loading{display:flex;align-items:center;justify-content:center;gap:10px;padding:80px 0;color:var(--ink-3);font-size:13px}
+  .spinner{width:14px;height:14px;border:2px solid var(--surface3);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .hero{padding:6px 0 22px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--accent-ink);display:inline-flex;align-items:center;gap:8px;padding:5px 11px;border:1px solid rgba(47,102,255,.28);border-radius:999px;background:var(--accent-soft);margin-bottom:18px}
+  .eyebrow .ed{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 1.6s ease infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(47,102,255,.55)}70%{box-shadow:0 0 0 10px rgba(47,102,255,0)}100%{box-shadow:0 0 0 0 rgba(47,102,255,0)}}
+  h1{font-size:34px;line-height:1.1;letter-spacing:-1px;font-weight:700;margin:0 0 12px}
+  h1 .hl{background:linear-gradient(90deg,#4F86FF,#7C5CFC);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:15px;color:var(--ink-3);max-width:640px;margin:0}
+  .lede em{font-style:normal;color:var(--ink-2)}
+
+  .recv{margin:28px 0 36px;border:1px solid var(--border);border-radius:16px;background:linear-gradient(180deg,var(--surface),rgba(20,20,31,.6));overflow:hidden}
+  .recv-hd{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .recv-hd .l{display:flex;align-items:center;gap:10px}
+  .recv-hd .check{width:22px;height:22px;border-radius:50%;background:var(--green-soft);color:var(--green);display:grid;place-items:center;font-size:13px;font-weight:700;border:1px solid rgba(43,182,115,.3)}
+  .recv-hd .t{font-size:13px;font-weight:600}
+  .recv-hd .t small{color:var(--ink-3);font-weight:400;display:block;font-size:11.5px;margin-top:1px}
+  .recv-hd .stat{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.1em;text-transform:uppercase}
+  .recv-hd .stat b{color:var(--green);font-weight:700}
+  .recv-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;background:var(--border)}
+  @media (max-width:720px){.recv-grid{grid-template-columns:repeat(2,1fr)}}
+  .recv-col{padding:14px 16px;background:var(--surface);min-height:120px}
+  .recv-col .cd{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--ink-4);text-transform:uppercase;margin-bottom:9px}
+  .recv-col ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+  .recv-col li{font-size:12px;color:var(--ink-2);display:flex;gap:7px;align-items:flex-start;line-height:1.4}
+  .recv-col li::before{content:"";flex-shrink:0;width:5px;height:5px;border-radius:50%;background:var(--green);margin-top:7px;opacity:.7}
+
+  .sec-title{display:flex;align-items:center;gap:10px;margin:38px 0 6px}
+  .sec-title .n{font-family:var(--mono);font-size:11px;color:var(--ink-4);letter-spacing:.12em}
+  .sec-title h2{margin:0;font-size:20px;letter-spacing:-.4px;font-weight:600}
+  .sec-title h2 em{font-style:normal;color:var(--accent-ink)}
+  .sec-sub{color:var(--ink-3);font-size:13.5px;margin:0 0 18px;line-height:1.55;max-width:640px}
+
+  .cad-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .cad-pill{padding:8px 14px;border-radius:999px;border:1px solid var(--border2);background:var(--surface2);color:var(--ink-2);font-size:12.5px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:.15s;font-family:inherit}
+  .cad-pill:hover{border-color:var(--border3);color:var(--ink)}
+  .cad-pill.on{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 4px 14px -4px rgba(47,102,255,.5)}
+  .cad-pill .badge{background:rgba(255,255,255,.18);font-size:10px;padding:1px 7px;border-radius:999px;font-family:var(--mono)}
+  .cad-pill:not(.on) .badge{background:var(--surface3);color:var(--ink-3)}
+
+  .wish-pane{display:none;animation:fade .35s ease}
+  .wish-pane.on{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .wish-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+  .wish{position:relative;padding:14px 14px 13px;border:1px solid var(--border2);background:var(--surface);border-radius:12px;cursor:pointer;transition:.15s;display:flex;flex-direction:column;gap:5px}
+  .wish:hover{border-color:var(--border3);background:var(--surface2);transform:translateY(-1px)}
+  .wish.on{border-color:var(--accent);background:linear-gradient(180deg,rgba(47,102,255,.10),rgba(47,102,255,.03))}
+  .wish .ic{font-size:18px;line-height:1;margin-bottom:2px}
+  .wish .ttl{font-size:13.5px;font-weight:600;letter-spacing:-.2px;color:var(--ink);line-height:1.35;padding-right:24px}
+  .wish .desc{font-size:11.5px;color:var(--ink-3);line-height:1.45}
+  .wish .chk{position:absolute;top:12px;right:12px;width:18px;height:18px;border-radius:50%;border:1.5px solid var(--border3);display:grid;place-items:center;background:var(--surface);transition:.15s}
+  .wish.on .chk{border-color:var(--accent);background:var(--accent)}
+  .wish.on .chk::after{content:"";width:8px;height:5px;border-left:1.5px solid #fff;border-bottom:1.5px solid #fff;transform:rotate(-45deg) translate(1px,-1px)}
+
+  .req-card{margin-top:14px;padding:18px;border:1px solid var(--border2);background:linear-gradient(180deg,var(--surface),var(--surface2));border-radius:14px}
+  .req-prefix{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--ink-2);margin-bottom:11px}
+  .req-prefix .ic{width:26px;height:26px;border-radius:8px;background:var(--purple-soft);color:var(--purple);display:grid;place-items:center;font-size:14px}
+  .req-prefix em{font-style:normal;font-weight:500;color:var(--ink)}
+  .req-input-wrap{position:relative}
+  .req-input{width:100%;padding:13px 14px;background:var(--surface3);border:1px solid var(--border2);border-radius:10px;color:var(--ink);font-family:inherit;font-size:14px;line-height:1.5;transition:.15s;outline:none}
+  .req-input:focus{border-color:var(--purple);background:var(--surface4)}
+  .req-input::placeholder{color:var(--ink-5)}
+  .req-add-row{display:flex;gap:8px;margin-top:8px;align-items:center}
+  .req-add-btn{padding:9px 14px;border-radius:9px;border:1px solid var(--purple);background:var(--purple-soft);color:#fff;font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:.15s}
+  .req-add-btn:hover:not(:disabled){background:var(--purple);transform:translateY(-1px)}
+  .req-add-btn:disabled{opacity:.35;cursor:not-allowed}
+  .req-add-hint{font-size:11.5px;color:var(--ink-4);font-family:var(--mono);letter-spacing:.04em}
+  .req-suggest{margin-top:14px;display:flex;flex-wrap:wrap;gap:6px}
+  .req-suggest-lbl{width:100%;font-size:10.5px;color:var(--ink-4);font-family:var(--mono);letter-spacing:.12em;text-transform:uppercase;margin-bottom:2px}
+  .req-sug{padding:6px 11px;border-radius:999px;border:1px dashed var(--border2);background:transparent;color:var(--ink-3);font-size:11.5px;cursor:pointer;transition:.15s;font-family:inherit}
+  .req-sug:hover{border-color:var(--purple);color:var(--ink);border-style:solid;background:var(--purple-soft)}
+  .req-sug::before{content:"+";color:var(--purple);font-weight:700;margin-right:5px}
+  .req-list{margin-top:14px;display:flex;flex-direction:column;gap:7px}
+  .req-item{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface3);font-size:13px;color:var(--ink-2)}
+  .req-item .num{font-family:var(--mono);color:var(--purple);font-size:11px;font-weight:700;margin-top:2px}
+  .req-item .txt{flex:1;line-height:1.4}
+  .req-item .x{cursor:pointer;color:var(--ink-4);font-size:18px;line-height:1;padding:0 6px;border-radius:4px;transition:.15s;background:transparent;border:0;font-family:inherit}
+  .req-item .x:hover{color:var(--red);background:var(--red-soft)}
+
+  .val-card{margin-top:14px;padding:20px;border:1px solid var(--border2);border-radius:14px;background:linear-gradient(135deg,rgba(245,181,68,.06),rgba(124,92,252,.04));position:relative;overflow:hidden}
+  .val-card::before{content:"";position:absolute;top:-40px;right:-40px;width:160px;height:160px;background:radial-gradient(circle,rgba(245,181,68,.18),transparent 60%);pointer-events:none}
+  .val-q{font-size:15.5px;font-weight:600;margin:0 0 4px;letter-spacing:-.2px;display:flex;align-items:center;gap:8px}
+  .val-q .ic{font-size:18px}
+  .val-q-sub{font-size:12.5px;color:var(--ink-3);margin:0 0 16px}
+  .val-row{display:flex;gap:8px;flex-wrap:wrap}
+  .val-opt{flex:1;min-width:140px;padding:13px 12px;border-radius:11px;border:1px solid var(--border2);background:var(--surface);cursor:pointer;transition:.15s;text-align:center;font-family:inherit}
+  .val-opt:hover{border-color:var(--border3);background:var(--surface2)}
+  .val-opt.on{border-color:var(--gold);background:var(--gold-soft);box-shadow:0 6px 18px -10px rgba(245,181,68,.6)}
+  .val-opt .em{font-size:22px;line-height:1;margin-bottom:6px}
+  .val-opt .lb{font-size:13px;font-weight:600;color:var(--ink);letter-spacing:-.1px}
+  .val-opt .sb{font-size:11px;color:var(--ink-4);margin-top:3px}
+  .val-opt.on .sb{color:var(--gold)}
+
+  .freq-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
+  @media (max-width:560px){.freq-row{grid-template-columns:1fr}}
+  .freq-card{padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+  .freq-card .qq{font-size:12.5px;color:var(--ink-3);margin-bottom:10px;line-height:1.45}
+  .seg-ctrl{display:flex;gap:4px;background:var(--surface3);padding:3px;border-radius:9px;border:1px solid var(--border)}
+  .seg-btn{flex:1;padding:7px 6px;border-radius:7px;background:transparent;border:0;color:var(--ink-3);font-size:11.5px;font-weight:500;cursor:pointer;transition:.15s;font-family:inherit;text-align:center}
+  .seg-btn:hover{color:var(--ink)}
+  .seg-btn.on{background:var(--accent);color:#fff;box-shadow:0 2px 6px -2px rgba(47,102,255,.5)}
+
+  .foot{margin-top:30px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding-top:22px;border-top:1px solid var(--border)}
+  .counter{font-size:12.5px;color:var(--ink-3);font-family:var(--mono);letter-spacing:.06em}
+  .counter b{color:var(--accent-ink);font-weight:700}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:13px 22px;border-radius:11px;border:0;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;transition:.15s;letter-spacing:-.1px;text-decoration:none}
+  .btn-primary{background:var(--accent);color:#fff;box-shadow:0 8px 24px -10px rgba(47,102,255,.6)}
+  .btn-primary:hover:not(:disabled){background:var(--accent-2);transform:translateY(-1px)}
+  .btn-primary:disabled{opacity:.4;cursor:not-allowed;box-shadow:none}
+  .btn-ghost{background:transparent;color:var(--ink-3);border:1px solid var(--border2)}
+  .btn-ghost:hover{color:var(--ink);border-color:var(--border3)}
+
+  .status{margin-top:14px;padding:11px 14px;border-radius:10px;font-size:13px;display:none}
+  .status.show{display:block}
+  .status.ok{background:var(--green-soft);color:var(--green);border:1px solid rgba(43,182,115,.3)}
+  .status.err{background:var(--red-soft);color:var(--red);border:1px solid rgba(225,84,84,.3)}
+
+  .ty{display:none;text-align:center;padding:60px 20px;animation:fade .4s ease}
+  .ty.show{display:block}
+  .ty .em{font-size:54px;margin-bottom:8px;filter:drop-shadow(0 4px 12px rgba(43,182,115,.4))}
+  .ty h2{font-size:26px;margin:0 0 10px;letter-spacing:-.5px}
+  .ty p{color:var(--ink-3);font-size:14px;max-width:480px;margin:0 auto 24px;line-height:1.6}
+  .ty .summary{display:inline-flex;gap:20px;padding:14px 22px;background:var(--surface);border:1px solid var(--border2);border-radius:12px;margin-bottom:24px;flex-wrap:wrap;justify-content:center}
+  .ty .summary .sv{font-size:24px;font-weight:700;letter-spacing:-.5px}
+  .ty .summary .sl{font-size:10.5px;color:var(--ink-4);font-family:var(--mono);letter-spacing:.12em;text-transform:uppercase;margin-top:2px}
+
+  @media (max-width:560px){
+    h1{font-size:26px}
+    .wrap{padding:24px 16px 60px}
+    .recv-col{padding:11px 12px;min-height:auto}
+  }
 </style>
 </head>
 <body>
-<div class="box">
-  <div class="spinner"></div>
-  <div>Redirigiendo…</div>
+
+<div class="wrap">
+
+  <div class="topnav">
+    <div class="brand"><div class="brand-dot"></div>Predictable<span style="color:var(--ink-3);font-weight:400">.ai</span></div>
+    <a class="back" href="/" id="link-back">← Volver al Hub</a>
+  </div>
+
+  <div id="loading" class="loading"><div class="spinner"></div>Cargando…</div>
+
+  <div id="survey" style="display:none">
+
+    <section class="hero">
+      <span class="eyebrow"><span class="ed"></span>Calibración de inteligencia · 60 segundos</span>
+      <h1>Hoy ya recibes inteligencia 24/7.<br><span class="hl">¿Qué más matarías por saber?</span></h1>
+      <p class="lede">Tu agente está corriendo. Estos son los reportes que ya generamos automáticamente para ti — basados en tu ICP, tu mercado y tus competidores. Decinos qué señales <em>faltan</em> para que la inteligencia se vuelva <em>irreemplazable</em>.</p>
+    </section>
+
+    <div class="recv">
+      <div class="recv-hd">
+        <div class="l">
+          <div class="check">✓</div>
+          <div class="t">Ya estás recibiendo<small>11 reportes activos · 5 cadencias · refresh automático</small></div>
+        </div>
+        <div class="stat"><b>LIVE</b> · agente activo</div>
+      </div>
+      <div class="recv-grid">
+        <div class="recv-col">
+          <div class="cd">Diario</div>
+          <ul>
+            <li>Industry Insight Digest</li>
+            <li>Competitor Threat Radar</li>
+            <li>Prospecting Recs</li>
+          </ul>
+        </div>
+        <div class="recv-col">
+          <div class="cd">Semanal</div>
+          <ul>
+            <li>Benchmark competitivo</li>
+            <li>Revenue Opportunities</li>
+            <li>Strategic Actions</li>
+          </ul>
+        </div>
+        <div class="recv-col">
+          <div class="cd">Mensual</div>
+          <ul>
+            <li>Consumer Behavioral</li>
+            <li>Market Snapshot</li>
+            <li>Future Innovations</li>
+          </ul>
+        </div>
+        <div class="recv-col">
+          <div class="cd">Trimestral</div>
+          <ul>
+            <li>PESTEL completo</li>
+          </ul>
+        </div>
+        <div class="recv-col">
+          <div class="cd">Anual</div>
+          <ul>
+            <li>Market Architecture · TAM / SAM / SOM</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec-title">
+      <span class="n">01</span>
+      <h2>Activá la inteligencia que te mueve la aguja</h2>
+    </div>
+    <p class="sec-sub">Marcá las señales que cambiarían tu día si las recibieras. Mientras más marques, más afilamos tu agente para vos.</p>
+
+    <div class="cad-row" id="cad-row"></div>
+    <div id="wish-panes"></div>
+
+    <div class="sec-title">
+      <span class="n">02</span>
+      <h2>Y si pudieras pedirle <em>cualquier cosa</em>…</h2>
+    </div>
+    <p class="sec-sub">Una señal específica que ningún reporte estándar captura todavía. Estas son las que nos dicen qué construir después.</p>
+
+    <div class="req-card">
+      <div class="req-prefix">
+        <div class="ic">💭</div>
+        <div>Ojalá Predictable pudiera decirme cuando <em>…</em></div>
+      </div>
+      <div class="req-input-wrap">
+        <input id="req-input" class="req-input" type="text" placeholder="…un competidor cambia su posicionamiento" maxlength="180">
+      </div>
+      <div class="req-add-row">
+        <button id="req-add" class="req-add-btn" disabled>+ Agregar pedido</button>
+        <span class="req-add-hint">⌘ + Enter</span>
+      </div>
+      <div class="req-suggest" id="req-suggest"></div>
+      <div class="req-list" id="req-list"></div>
+    </div>
+
+    <div class="sec-title">
+      <span class="n">03</span>
+      <h2>¿Qué tan crítico es esto para vos?</h2>
+    </div>
+    <p class="sec-sub">Esto nos ayuda a entender si lo que pediste es un "nice to have" o una palanca real de revenue.</p>
+
+    <div class="val-card">
+      <div class="val-q"><span class="ic">⚡</span>Si recibieras estas señales mañana, ¿qué tan grande sería el impacto?</div>
+      <p class="val-q-sub">Sé honesto — preferimos un "meh" claro que un "muy útil" tibio.</p>
+      <div class="val-row" id="val-impact">
+        <button class="val-opt" data-val="curious"><div class="em">🙂</div><div class="lb">Curioso</div><div class="sb">Lo leería</div></button>
+        <button class="val-opt" data-val="useful"><div class="em">🎯</div><div class="lb">Útil</div><div class="sb">Cambiaría decisiones</div></button>
+        <button class="val-opt" data-val="critical"><div class="em">🔥</div><div class="lb">Crítico</div><div class="sb">Mueve revenue</div></button>
+        <button class="val-opt" data-val="kill"><div class="em">💎</div><div class="lb">Mataría por esto</div><div class="sb">Pagaría extra</div></button>
+      </div>
+
+      <div class="freq-row">
+        <div class="freq-card">
+          <div class="qq">¿Con qué frecuencia querrías recibirlo?</div>
+          <div class="seg-ctrl" id="seg-freq">
+            <button class="seg-btn" data-val="realtime">Tiempo real</button>
+            <button class="seg-btn" data-val="daily">Diario</button>
+            <button class="seg-btn" data-val="weekly">Semanal</button>
+            <button class="seg-btn" data-val="ondemand">A pedido</button>
+          </div>
+        </div>
+        <div class="freq-card">
+          <div class="qq">¿Pagarías un add-on por tener esto incluido?</div>
+          <div class="seg-ctrl" id="seg-pay">
+            <button class="seg-btn" data-val="no">No</button>
+            <button class="seg-btn" data-val="maybe">Tal vez</button>
+            <button class="seg-btn" data-val="yes">Sí</button>
+            <button class="seg-btn" data-val="already">Lo necesito ya</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <div class="counter" id="counter"><b>0</b> señales activadas · <b>0</b> pedidos personalizados</div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-ghost" id="btn-skip">Más tarde</button>
+        <button class="btn btn-primary" id="btn-submit" disabled>Calibrar mi agente →</button>
+      </div>
+    </div>
+
+    <div id="status" class="status"></div>
+  </div>
+
+  <div id="ty" class="ty">
+    <div class="em">✦</div>
+    <h2>Agente recalibrado.</h2>
+    <p>Tomamos tus señales y las estamos integrando al motor. La próxima generación de inteligencia vendrá afinada a lo que realmente te mueve.</p>
+    <div class="summary">
+      <div><div class="sv" id="ty-wishes">0</div><div class="sl">Señales activadas</div></div>
+      <div><div class="sv" id="ty-custom">0</div><div class="sl">Pedidos custom</div></div>
+      <div><div class="sv" id="ty-impact">—</div><div class="sl">Impacto declarado</div></div>
+    </div>
+    <a href="/" class="btn btn-primary">Volver al Intelligence Hub →</a>
+  </div>
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="../js/config.js"></script>
 <script src="../js/supabase-client.js"></script>
-<script>
-(async function () {
-  try {
-    const { data: { user } } = await window.supabaseClient.auth.getUser();
-    if (!user) { window.location.replace('../auth.html'); return; }
-
-    const { data: profile } = await window.supabaseClient
-      .from('profiles').select('onboarded').eq('id', user.id).maybeSingle();
-
-    if (profile?.onboarded) {
-      window.location.replace('/');
-    } else {
-      window.location.replace('../onboarding.html');
-    }
-  } catch (e) {
-    window.location.replace('../onboarding.html');
-  }
-})();
-</script>
+<script src="js/feedback.js"></script>
 </body>
 </html>

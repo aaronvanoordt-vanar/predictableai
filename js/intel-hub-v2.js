@@ -462,6 +462,10 @@
           <p class="v2-sub">${lang === 'es' ? 'Inteligencia de mercado accionable, generada por IA 24/7 para tu ICP exacto.' : 'Actionable market intelligence, AI-generated 24/7 for your exact ICP.'}</p>
         </div>
         <div class="v2-page-hd-r">
+          <a href="/miforms/" class="v2-wishlist-cta" title="${lang === 'es' ? 'Calibrá tu agente · decinos qué señales más querés' : 'Calibrate your agent · tell us which signals you want most'}">
+            <span class="v2-wishlist-icon">✦</span>
+            <span class="v2-wishlist-lbl">${lang === 'es' ? '¿Qué más matarías por saber?' : 'What else would you kill to know?'}</span>
+          </a>
           <div class="v2-stat">
             <div class="v2-stat-lbl">${lang === 'es' ? 'SEÑALES HOY' : 'SIGNALS TODAY'}</div>
             <div class="v2-stat-v" id="v2-signals-count">0</div>

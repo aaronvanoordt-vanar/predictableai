@@ -1505,6 +1505,18 @@ html, body {
 .v2-stat-lbl { font-size: 9.5px; letter-spacing: 0.16em; color: var(--ink-4); text-transform: uppercase; }
 .v2-stat-v { font-family: var(--font-mono); font-size: 22px; font-weight: 500; letter-spacing: -0.015em; color: var(--ink); display: flex; align-items: baseline; gap: 8px; }
 .v2-stat-v.warn { color: var(--amber); }
+.v2-wishlist-cta {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 14px; border-radius: 999px;
+  border: 1px solid rgba(124,92,252,.35);
+  background: linear-gradient(135deg, rgba(47,102,255,.10), rgba(124,92,252,.10));
+  color: var(--ink); font-size: 12px; font-weight: 600; letter-spacing: -.1px;
+  text-decoration: none; cursor: pointer; transition: all .15s ease;
+  align-self: center; white-space: nowrap;
+}
+.v2-wishlist-cta:hover { transform: translateY(-1px); border-color: rgba(124,92,252,.6); box-shadow: 0 8px 22px -10px rgba(124,92,252,.55); }
+.v2-wishlist-cta .v2-wishlist-icon { color: #B49DFF; font-size: 13px; }
+@media (max-width: 720px) { .v2-wishlist-cta .v2-wishlist-lbl { display: none; } }
 
 /* spacer between modules */
 .ih-v2-shell > div:not(:first-child) { margin-top: 28px; }
