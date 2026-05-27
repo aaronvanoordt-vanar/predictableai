@@ -31,56 +31,18 @@
   .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 8px rgba(0,196,212,.6); }
   .brand-name { font-weight: 700; font-size: 15px; letter-spacing: -.2px; }
   h1 { font-size: 22px; margin: 14px 0 4px; letter-spacing: -.5px; }
-  .sub { color: var(--text3); font-size: 13px; margin-bottom: 22px; }
+  .sub { color: var(--text3); font-size: 13px; margin-bottom: 24px; }
 
-  /* Tabs */
-  .tabs { display: flex; background: var(--surface2); border-radius: 10px; padding: 4px; margin-bottom: 20px; }
-  .tab {
-    flex: 1; text-align: center; padding: 8px 12px; border-radius: 7px;
-    font-size: 13px; font-weight: 600; color: var(--text2); cursor: pointer;
-    transition: all .15s;
-  }
-  .tab.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,.4); }
-
-  /* Botón Google */
-  .btn-google {
+  /* Botones OAuth */
+  .btn-oauth {
     width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
     padding: 11px 14px; background: var(--surface2); border: 1px solid var(--border);
     border-radius: 9px; color: var(--text); font-size: 13.5px; font-weight: 600;
-    cursor: pointer; transition: all .15s;
+    cursor: pointer; transition: all .15s; margin-bottom: 10px;
   }
-  .btn-google:hover { background: var(--surface); border-color: var(--text3); }
-  .btn-google svg { width: 18px; height: 18px; }
-
-  /* Divider */
-  .divider {
-    display: flex; align-items: center; gap: 10px; margin: 18px 0;
-    color: var(--text3); font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
-  }
-  .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-
-  /* Form */
-  .form-group { margin-bottom: 14px; }
-  label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .5px; color: var(--text3); text-transform: uppercase; margin-bottom: 6px; }
-  input {
-    width: 100%; padding: 11px 13px; background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 9px; color: var(--text); font-family: inherit; font-size: 13.5px;
-    transition: border-color .12s;
-  }
-  input:focus { outline: none; border-color: var(--teal); }
-  input::placeholder { color: var(--text3); }
-
-  .btn-primary {
-    width: 100%; padding: 11px 14px; background: var(--teal); border: 0; border-radius: 9px;
-    color: #002a30; font-size: 14px; font-weight: 700; cursor: pointer;
-    transition: all .12s; margin-top: 4px;
-  }
-  .btn-primary:hover:not([disabled]) { background: #14d4e4; }
-  .btn-primary[disabled] { opacity: .5; cursor: not-allowed; }
-
-  .footer-note { margin-top: 18px; text-align: center; font-size: 12px; color: var(--text3); }
-  .footer-note a { color: var(--teal); text-decoration: none; }
-  .footer-note a:hover { text-decoration: underline; }
+  .btn-oauth:hover:not([disabled]) { background: var(--surface); border-color: var(--text3); }
+  .btn-oauth[disabled] { opacity: .5; cursor: not-allowed; }
+  .btn-oauth svg { width: 18px; height: 18px; flex-shrink: 0; }
 
   .status {
     margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 12.5px;
@@ -110,37 +72,20 @@
     <div class="brand-dot"></div>
     <span class="brand-name">Predictable.ai</span>
   </div>
-  <h1 id="title">Bienvenido</h1>
-  <p class="sub" id="subtitle">Accede a tu cuenta o regístrate para empezar.</p>
-
-  <div class="tabs">
-    <div class="tab active" data-mode="signin">Iniciar sesión</div>
-    <div class="tab" data-mode="signup">Crear cuenta</div>
-  </div>
+  <h1>Bienvenido</h1>
+  <p class="sub">Accede a tu cuenta o regístrate para empezar.</p>
 
   <!-- Google -->
-  <button class="btn-google" id="btn-google">
+  <button class="btn-oauth" id="btn-google">
     <svg viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5.36c1.62 0 3.07.56 4.21 1.66l3.13-3.13C17.43 1.97 14.91 1 12 1 7.39 1 3.44 3.64 1.6 7.5l3.65 2.84C6.13 7.66 8.86 5.36 12 5.36z"/><path fill="#4285F4" d="M23 12c0-.79-.07-1.55-.2-2.27H12v4.3h6.18c-.27 1.45-1.08 2.68-2.3 3.5l3.55 2.76C21.55 18.43 23 15.49 23 12z"/><path fill="#FBBC05" d="M5.25 14.34A6.62 6.62 0 0 1 4.9 12c0-.81.14-1.6.36-2.34L1.6 6.82A11 11 0 0 0 .5 12c0 1.76.42 3.42 1.1 4.96l3.65-2.62z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.55-2.76c-1 .67-2.27 1.06-3.73 1.06-3.14 0-5.86-2.31-6.81-5.34L1.6 16.96C3.45 20.83 7.39 23 12 23z"/></svg>
-    <span id="google-label">Continuar con Google</span>
+    Continuar con Google
   </button>
 
-  <div class="divider">o con email</div>
-
-  <!-- Form -->
-  <div class="form-group">
-    <label>Email</label>
-    <input id="inp-email" type="email" autocomplete="email" placeholder="tu@empresa.com">
-  </div>
-  <div class="form-group">
-    <label>Contraseña</label>
-    <input id="inp-password" type="password" autocomplete="current-password" placeholder="Mínimo 6 caracteres">
-  </div>
-
-  <button class="btn-primary" id="btn-submit">Iniciar sesión</button>
-
-  <div class="footer-note" id="footer-link">
-    ¿Olvidaste tu contraseña? <a href="#" id="link-forgot">Recupérala</a>
-  </div>
+  <!-- LinkedIn -->
+  <button class="btn-oauth" id="btn-linkedin">
+    <svg viewBox="0 0 24 24" fill="#0A66C2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+    Continuar con LinkedIn
+  </button>
 
   <div id="status" class="status"></div>
 

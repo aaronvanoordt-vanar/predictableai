@@ -1,16 +1,14 @@
 /**
- * auth.js — Lógica de la pantalla auth.html (v3)
+ * auth.js — Lógica de la pantalla auth.html (v4)
  *
- * Cambio importante v3:
- *   Removido `prompt: 'consent'` del OAuth de Google.
- *   Antes: Google forzaba la pantalla de consentimiento CADA vez que iniciabas sesión.
- *   Ahora: Google solo la muestra la PRIMERA vez (signup). Returning users entran directo.
+ * Solo OAuth: Google y LinkedIn.
+ * Supabase maneja automáticamente sign-in vs sign-up:
+ * si el usuario ya existe, inicia sesión; si no, crea la cuenta.
  */
 (function () {
   'use strict';
 
   const $ = (sel) => document.querySelector(sel);
-  let mode = 'signin'; // 'signin' | 'signup' | 'forgot'
 
   document.addEventListener('DOMContentLoaded', init);
 
@@ -21,16 +19,8 @@
       return;
     }
 
-    document.querySelectorAll('.tab').forEach(t => {
-      t.addEventListener('click', () => setMode(t.getAttribute('data-mode')));
-    });
-    $('#btn-google').addEventListener('click', handleGoogle);
-    $('#btn-submit').addEventListener('click', handleSubmit);
-    const fg = $('#link-forgot'); if (fg) fg.addEventListener('click', (e) => { e.preventDefault(); setMode('forgot'); });
-
-    [$('#inp-email'), $('#inp-password')].forEach(inp => {
-      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSubmit(); });
-    });
+    $('#btn-google').addEventListener('click', () => handleOAuth('google'));
+    $('#btn-linkedin').addEventListener('click', () => handleOAuth('linkedin_oidc'));
 
     window.supabaseClient.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session) {
@@ -39,109 +29,26 @@
     });
   }
 
-  function setMode(newMode) {
-    mode = newMode;
-    document.querySelectorAll('.tab').forEach(t => {
-      t.classList.toggle('active', t.getAttribute('data-mode') === (mode === 'forgot' ? 'signin' : mode));
-    });
-    if (mode === 'signin') {
-      $('#title').textContent = 'Bienvenido';
-      $('#subtitle').textContent = 'Accede a tu cuenta.';
-      $('#btn-submit').textContent = 'Iniciar sesión';
-      $('#google-label').textContent = 'Continuar con Google';
-      $('#inp-password').style.display = '';
-      $('#inp-password').setAttribute('autocomplete', 'current-password');
-      $('#footer-link').innerHTML = '¿Olvidaste tu contraseña? <a href="#" id="link-forgot">Recupérala</a>';
-    } else if (mode === 'signup') {
-      $('#title').textContent = 'Crea tu cuenta';
-      $('#subtitle').textContent = 'Empieza a usar Predictable.ai hoy.';
-      $('#btn-submit').textContent = 'Registrarme';
-      $('#google-label').textContent = 'Registrarme con Google';
-      $('#inp-password').style.display = '';
-      $('#inp-password').setAttribute('autocomplete', 'new-password');
-      $('#footer-link').innerHTML = 'Te enviaremos un email para verificar tu cuenta.';
-    } else if (mode === 'forgot') {
-      $('#title').textContent = 'Recuperar contraseña';
-      $('#subtitle').textContent = 'Te enviamos un link para resetearla.';
-      $('#btn-submit').textContent = 'Enviar link';
-      $('#inp-password').style.display = 'none';
-      $('#footer-link').innerHTML = '<a href="#" id="link-back-signin">← Volver a iniciar sesión</a>';
-    }
-    hideStatus();
-    const back = $('#link-back-signin'); if (back) back.addEventListener('click', (e) => { e.preventDefault(); setMode('signin'); });
-    const fg = $('#link-forgot'); if (fg) fg.addEventListener('click', (e) => { e.preventDefault(); setMode('forgot'); });
-  }
-
   // ────────────────────────────────────────────────────────
-  // Google OAuth (v3: sin prompt:'consent', usuario recurrente NO ve pantalla)
+  // OAuth (Google / LinkedIn)
+  // Sin prompt:'consent' → returning users entran directo sin pantalla de selección.
+  // Supabase detecta si el usuario existe y hace login; si no, crea la cuenta.
   // ────────────────────────────────────────────────────────
-  async function handleGoogle() {
-    showStatus('info', '<span class="spinner"></span> Redirigiendo a Google…');
-    $('#btn-google').disabled = true;
+  async function handleOAuth(provider) {
+    const btnId = provider === 'google' ? '#btn-google' : '#btn-linkedin';
+    const label = provider === 'google' ? 'Google' : 'LinkedIn';
 
-    // NOTA importante: NO incluimos `prompt: 'consent'` en queryParams.
-    // Con esto, Google muestra la pantalla SOLO en el primer login del usuario.
-    // En logins subsecuentes, el browser hace el flow silenciosamente.
+    showStatus('info', `<span class="spinner"></span> Redirigiendo a ${label}…`);
+    $(btnId).disabled = true;
+
     const { error } = await window.supabaseClient.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.AUTH_REDIRECT_URL
-        // queryParams: {}  ← omitido a propósito. Si en algún momento necesitas
-        // forzar selector de cuenta (por ej. tras logout), usa prompt:'select_account'
-      }
+      provider,
+      options: { redirectTo: window.AUTH_REDIRECT_URL }
     });
+
     if (error) {
-      showStatus('err', 'Error con Google: ' + escapeHtml(error.message));
-      $('#btn-google').disabled = false;
-    }
-  }
-
-  async function handleSubmit() {
-    const email = $('#inp-email').value.trim();
-    const password = $('#inp-password').value;
-
-    if (!email) return showStatus('err', 'Email es obligatorio.');
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showStatus('err', 'Email inválido.');
-
-    $('#btn-submit').disabled = true;
-
-    try {
-      if (mode === 'signup') {
-        if (!password || password.length < 6) {
-          showStatus('err', 'La contraseña debe tener al menos 6 caracteres.');
-          $('#btn-submit').disabled = false;
-          return;
-        }
-        showStatus('info', '<span class="spinner"></span> Creando cuenta…');
-        const { data, error } = await window.supabaseClient.auth.signUp({
-          email: email,
-          password: password,
-          options: { emailRedirectTo: window.AUTH_REDIRECT_URL }
-        });
-        if (error) throw error;
-        if (data.session) {
-          await routeAfterAuth();
-        } else {
-          showStatus('ok', '✅ Cuenta creada. <strong>Revisa tu email</strong> para verificarla y vuelve aquí a iniciar sesión.');
-        }
-      } else if (mode === 'signin') {
-        if (!password) { showStatus('err', 'Contraseña es obligatoria.'); $('#btn-submit').disabled = false; return; }
-        showStatus('info', '<span class="spinner"></span> Iniciando sesión…');
-        const { data, error } = await window.supabaseClient.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        await routeAfterAuth();
-      } else if (mode === 'forgot') {
-        showStatus('info', '<span class="spinner"></span> Enviando…');
-        const { error } = await window.supabaseClient.auth.resetPasswordForEmail(email, {
-          redirectTo: window.location.origin + '/auth-reset.html'
-        });
-        if (error) throw error;
-        showStatus('ok', '✅ Te enviamos un email con el link para resetear tu contraseña.');
-      }
-    } catch (e) {
-      showStatus('err', 'Error: ' + escapeHtml(e.message || String(e)));
-    } finally {
-      $('#btn-submit').disabled = false;
+      showStatus('err', `Error con ${label}: ` + escapeHtml(error.message));
+      $(btnId).disabled = false;
     }
   }
 
@@ -166,7 +73,7 @@
     el.className = 'status show ' + type;
     el.innerHTML = html;
   }
-  function hideStatus() { $('#status').className = 'status'; }
+
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
   }
