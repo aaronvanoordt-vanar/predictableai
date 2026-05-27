@@ -141,6 +141,27 @@
 
     container.innerHTML = html || '<p style="color:var(--text3)">No hay secciones disponibles.</p>';
 
+    // If no reports are ready yet, blur the matrix and show a generating banner
+    const hasAnyReady = [...reportMap.values()].some(r => r.status === 'ready');
+    if (!hasAnyReady && html) {
+      container.querySelectorAll('.ih-cadence-group').forEach(g => {
+        g.style.filter = 'blur(5px)';
+        g.style.pointerEvents = 'none';
+        g.style.userSelect = 'none';
+      });
+      const banner = document.createElement('div');
+      banner.className = 'ih-preview-banner';
+      banner.innerHTML = `
+        <div class="ih-preview-banner-inner">
+          <div class="ih-preview-spinner"></div>
+          <div>
+            <div class="ih-preview-title">Generando tu inteligencia de mercado</div>
+            <div class="ih-preview-body">Nuestros agentes de IA están investigando tu mercado y competidores. Los resultados aparecerán aquí en los próximos minutos.</div>
+          </div>
+        </div>`;
+      container.insertBefore(banner, container.firstChild);
+    }
+
     // Attach event listeners
     container.querySelectorAll('[data-refresh-section]').forEach((btn) => {
       btn.addEventListener('click', () => handleManualRefresh(btn.dataset.refreshSection, btn, container, userId));
