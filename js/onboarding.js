@@ -365,10 +365,10 @@
     callEdgeFn(GENERATE_FN_URL, { triggered_by: 'onboarding' })
       .catch(e => console.warn('[onboarding] generate-intel-hub (non-blocking):', e));
 
-    // Redirect to app after animation completes
+    // Redirect to app after brief animation
     setTimeout(() => {
       window.location.replace('./index.html');
-    }, 7000);
+    }, 3000);
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────────────
