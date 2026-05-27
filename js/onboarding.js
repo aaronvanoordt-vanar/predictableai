@@ -1,14 +1,15 @@
 /**
- * onboarding.js — Multi-step onboarding wizard
+ * onboarding.js — 4-step onboarding wizard
  *
  * Steps:
  *   1. LinkedIn URL + Phone
- *   2. Market intelligence survey (what_to_know)
+ *   2. Country
  *   3. ICP (Ideal Customer Profile)
- *   4. Value proposition
- *   5. Generating (trigger edge function + redirect to app)
+ *   4. Generating (trigger edge function + redirect to app)
  *
  * Progress is saved to Supabase so users can resume if they close mid-flow.
+ * The Market Intelligence survey and Value Proposition steps are removed —
+ * these are now captured via the in-app "Unlock Intelligence" experience.
  */
 (function () {
   'use strict';
@@ -18,7 +19,7 @@
   const ENRICH_FN_URL   = SUPABASE_URL + '/functions/v1/enrich-company';
   const GENERATE_FN_URL = SUPABASE_URL + '/functions/v1/generate-intel-hub';
   const LINKEDIN_RE     = /^https?:\/\/(www\.)?linkedin\.com\/company\/([a-zA-Z0-9_\-\.~]+)\/?(\?.*)?$/i;
-  const MIN_SURVEY      = 20;
+  const TOTAL_STEPS     = 4;
 
   let currentUser = null;
 
@@ -42,7 +43,6 @@
       await window.supabaseHelpers.signOut();
     });
 
-    // If already fully onboarded, go to app
     const { data: profile } = await window.supabaseClient
       .from('profiles')
       .select('onboarded, linkedin_company_url')
@@ -54,44 +54,38 @@
       return;
     }
 
-    // Fetch intake to determine resume point
     const { data: intake } = await window.supabaseClient
       .from('intel_hub_intake')
-      .select('onboarding_step, company_linkedin_url, phone')
+      .select('onboarding_step, company_linkedin_url, phone, country')
       .eq('user_id', user.id)
       .maybeSingle();
 
-    // Pre-fill step 1 fields if data exists
     if (intake?.company_linkedin_url) {
       $('inp-linkedin').value = intake.company_linkedin_url;
     } else if (profile?.linkedin_company_url) {
       $('inp-linkedin').value = profile.linkedin_company_url;
     }
-    if (intake?.phone) {
-      $('inp-phone').value = intake.phone;
-    }
+    if (intake?.phone) $('inp-phone').value = intake.phone;
+    if (intake?.country) $('inp-country').value = intake.country;
 
     bindAllSteps();
 
     const step = intake?.onboarding_step ?? 0;
-    goToStep(Math.max(1, Math.min(step + 1, 5)));
+    goToStep(Math.max(1, Math.min(step + 1, TOTAL_STEPS)));
 
-    // If step 4 was completed but profiles.onboarded wasn't set (edge case), fix it
-    if (step >= 4) {
-      runGenerating();
-    }
+    if (step >= 3) runGenerating();
   }
 
   // ── STEP NAVIGATION ───────────────────────────────────────────────────────────
 
   function goToStep(n) {
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= TOTAL_STEPS; i++) {
       const el = $('step-' + i);
       if (el) el.style.display = (i === n) ? '' : 'none';
     }
-    $('progress-fill').style.width = (n * 20) + '%';
-    $('step-label').textContent = n < 5 ? `Paso ${n} de 5` : 'Activando…';
-    $('link-logout').style.display = n < 5 ? 'block' : 'none';
+    $('progress-fill').style.width = (n / TOTAL_STEPS * 100) + '%';
+    $('step-label').textContent = n < TOTAL_STEPS ? `Paso ${n} de ${TOTAL_STEPS - 1}` : 'Activando…';
+    $('link-logout').style.display = n < TOTAL_STEPS ? 'block' : 'none';
     hideStatus();
     window.scrollTo(0, 0);
   }
@@ -102,7 +96,6 @@
     bindStep1();
     bindStep2();
     bindStep3();
-    bindStep4();
   }
 
   // ── STEP 1: LinkedIn + Phone ──────────────────────────────────────────────────
@@ -146,30 +139,28 @@
       $('inp-linkedin').focus();
       return;
     }
+
     btn.disabled = true;
     showStatus('inf', '<span class="spinner"></span> Guardando y analizando tu empresa…');
 
     try {
-      // Save LinkedIn URL to profile
       await window.supabaseClient.from('profiles').upsert({
         id: currentUser.id,
         email: currentUser.email,
         linkedin_company_url: url,
       }, { onConflict: 'id' });
 
-      // Upsert intake with step 1 data
       const { error: intakeErr } = await window.supabaseClient
         .from('intel_hub_intake')
         .upsert({
           user_id: currentUser.id,
           company_linkedin_url: url,
-          phone: phone,
+          phone: phone || null,
           onboarding_step: 1,
         }, { onConflict: 'user_id' });
 
       if (intakeErr) throw new Error(intakeErr.message);
 
-      // Fire-and-forget: enrich company data via Claude web research
       callEdgeFn(ENRICH_FN_URL, { linkedin_url: url }).catch(e =>
         console.warn('[onboarding] enrich-company (non-blocking):', e)
       );
@@ -181,32 +172,20 @@
     }
   }
 
-  // ── STEP 2: Survey ────────────────────────────────────────────────────────────
+  // ── STEP 2: Country ───────────────────────────────────────────────────────────
 
   function bindStep2() {
-    const btn     = $('btn-s2');
-    const ta      = $('inp-what-to-know');
-    const counter = $('char-count');
-
-    ta.addEventListener('input', () => {
-      const len = ta.value.length;
-      counter.textContent = len;
-      counter.parentElement.classList.toggle('warn', len > 900);
-      btn.disabled = ta.value.trim().length < MIN_SURVEY;
-    });
-
-    btn.addEventListener('click', handleStep2);
-    ta.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !btn.disabled) handleStep2();
-    });
+    $('btn-s2').addEventListener('click', handleStep2);
+    $('inp-country').addEventListener('keydown', e => { if (e.key === 'Enter') handleStep2(); });
   }
 
   async function handleStep2() {
-    const val = $('inp-what-to-know').value.trim();
-    const btn = $('btn-s2');
+    const country = $('inp-country').value.trim();
+    const btn     = $('btn-s2');
 
-    if (val.length < MIN_SURVEY) {
-      showStatus('err', 'Describe un poco más (al menos 20 caracteres).');
+    if (!country) {
+      showStatus('err', 'Selecciona el país principal de tu empresa.');
+      $('inp-country').focus();
       return;
     }
 
@@ -216,7 +195,7 @@
     try {
       const { error } = await window.supabaseClient
         .from('intel_hub_intake')
-        .update({ what_to_know: val, onboarding_step: 2 })
+        .update({ country: country, onboarding_step: 2 })
         .eq('user_id', currentUser.id);
       if (error) throw new Error(error.message);
       goToStep(3);
@@ -245,88 +224,49 @@
     const pain       = $('inp-icp-pain').value.trim();
 
     if (!industries && !roles && !pain) {
-      showStatus('err', 'Completa al menos las industrias objetivo, roles de decisión y el dolor principal.');
+      showStatus('err', 'Completa al menos las industrias objetivo, roles de decisión o el dolor principal.');
       return;
     }
 
     btn.disabled = true;
-    showStatus('inf', '<span class="spinner"></span> Guardando tu ICP…');
+    showStatus('inf', '<span class="spinner"></span> Guardando tu ICP y activando el Hub…');
 
     try {
       const { error: intakeErr } = await window.supabaseClient
         .from('intel_hub_intake')
         .update({
-          icp_company_sizes: sizes || null,
-          icp_industries:    industries || null,
-          icp_roles:         roles || null,
-          icp_geographies:   geos || null,
-          icp_pain_points:   pain || null,
-          onboarding_step:   3,
+          icp_company_sizes:   sizes || null,
+          icp_industries:      industries || null,
+          icp_roles:           roles || null,
+          icp_geographies:     geos || null,
+          icp_pain_points:     pain || null,
+          onboarding_step:     3,
+          onboarding_complete: true,
         })
         .eq('user_id', currentUser.id);
       if (intakeErr) throw new Error(intakeErr.message);
 
-      const { error: icpErr } = await window.supabaseClient
+      // Mirror ICP to dedicated table (non-blocking)
+      window.supabaseClient
         .from('client_icp')
         .upsert({
-          profile_id:   currentUser.id,
+          profile_id:    currentUser.id,
           company_sizes: sizes || null,
           industries:    industries || null,
           roles:         roles || null,
           geographies:   geos || null,
           pain_points:   pain || null,
-        }, { onConflict: 'profile_id' });
-      if (icpErr) throw new Error(icpErr.message);
+        }, { onConflict: 'profile_id' })
+        .then(({ error: icpErr }) => {
+          if (icpErr) console.warn('[onboarding] client_icp upsert:', icpErr.message);
+        });
 
-      goToStep(4);
-    } catch (err) {
-      btn.disabled = false;
-      showStatus('err', 'Error al guardar: ' + esc(err.message));
-    }
-  }
-
-  // ── STEP 4: Value Proposition ─────────────────────────────────────────────────
-
-  function bindStep4() {
-    $('btn-s4').addEventListener('click', handleStep4);
-  }
-
-  async function handleStep4() {
-    const btn     = $('btn-s4');
-    const problem = $('inp-vp-problem').value.trim();
-    const value   = $('inp-vp-value').value.trim();
-    const cases   = $('inp-vp-cases').value.trim();
-
-    if (!problem || !value) {
-      showStatus('err', 'Completa el problema que resuelves y tu propuesta de valor.');
-      return;
-    }
-
-    btn.disabled = true;
-    showStatus('inf', '<span class="spinner"></span> Guardando y activando tu Hub…');
-
-    try {
-      // Save value proposition + mark onboarding complete in intake
-      const { error: intakeErr } = await window.supabaseClient
-        .from('intel_hub_intake')
-        .update({
-          value_problem_solved: problem,
-          value_proposition:    value,
-          value_success_cases:  cases || null,
-          onboarding_step:      4,
-          onboarding_complete:  true,
-        })
-        .eq('user_id', currentUser.id);
-      if (intakeErr) throw new Error(intakeErr.message);
-
-      // Mark profile as fully onboarded
       const { error: profileErr } = await window.supabaseClient
         .from('profiles')
         .update({ onboarded: true, onboarded_at: new Date().toISOString() })
         .eq('id', currentUser.id);
       if (profileErr) throw new Error(profileErr.message);
 
-      goToStep(5);
       runGenerating();
     } catch (err) {
       btn.disabled = false;
@@ -334,19 +274,17 @@
     }
   }
 
-  // ── STEP 5: Generating ────────────────────────────────────────────────────────
+  // ── STEP 4: Generating ────────────────────────────────────────────────────────
 
   async function runGenerating() {
-    // Ensure profile is marked onboarded (safety net for edge cases)
     await window.supabaseClient
       .from('profiles')
       .update({ onboarded: true, onboarded_at: new Date().toISOString() })
       .eq('id', currentUser.id)
       .catch(() => {});
 
-    goToStep(5);
+    goToStep(4);
 
-    // Animate agent items
     const genItems = [$('gen-a'), $('gen-b'), $('gen-c')];
     let idx = 0;
     const tick = setInterval(() => {
@@ -361,7 +299,6 @@
       if (idx > genItems.length) clearInterval(tick);
     }, 2000);
 
-    // Trigger generation (fire-and-forget; runs in background on Supabase)
     callEdgeFn(GENERATE_FN_URL, { triggered_by: 'onboarding' })
       .catch(e => console.warn('[onboarding] generate-intel-hub (non-blocking):', e));
 
