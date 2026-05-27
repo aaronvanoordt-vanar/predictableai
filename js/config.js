@@ -1,6 +1,7 @@
 // js/config.js
 window.PREDICTABLE_CONFIG = {
   APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbxWQsb07WZxqbqld04M4rLIQRypONsY7s3EIczFBpV6PvIHDbSrSnfLp4nohLJTBG4jmw/exec",
+  APOLLO_WORKER_URL: "https://predictable-apollo.aaron-78b.workers.dev/",
  
   REQUEST_TIMEOUT_MS: 60000,
   APOLLO_DEFAULT_PER_PAGE: 25,
