@@ -5010,61 +5010,6 @@ function syncIcpFromMatrix() {
   }
 }
 
-
-  // Departments
-  const deptEl = document.getElementById('icp-departments');
-  if (deptEl) {
-    deptEl.innerHTML = '';
-    document.querySelectorAll('#matrix-step-4 input[id^="dept-"]').forEach(cb => {
-      const row = document.createElement('div');
-      row.className = 'icp-filter-row';
-      row.innerHTML = `<input type="checkbox" ${cb.checked ? 'checked' : ''}> <span>${cb.value}</span>`;
-      deptEl.appendChild(row);
-    });
-  }
-
-  // Locations
-  const locEl = document.getElementById('icp-locations');
-  if (locEl) {
-    locEl.innerHTML = '';
-    document.querySelectorAll('#country-checkboxes input:checked').forEach(cb => {
-      if (!latamExcluded.has(cb.value)) {
-        const tag = document.createElement('span');
-        tag.className = 'icp-tag icp-tag-active';
-        tag.textContent = cb.value;
-        locEl.appendChild(tag);
-      }
-    });
-    if (!locEl.children.length) locEl.innerHTML = '<span style="font-size:12px;color:var(--text3)">Sin países seleccionados</span>';
-  }
-
-  // Employees
-  const empEl = document.getElementById('icp-employees');
-  if (empEl) {
-    empEl.innerHTML = '';
-    document.querySelectorAll('#emp-size-checkboxes input:checked').forEach(cb => {
-      const tag = document.createElement('span');
-      tag.className = 'icp-tag icp-tag-active';
-      tag.textContent = cb.value;
-      empEl.appendChild(tag);
-    });
-    if (!empEl.children.length) empEl.innerHTML = '<span style="font-size:12px;color:var(--text3)">Sin rango seleccionado</span>';
-  }
-
-  // Industries
-  const indEl = document.getElementById('icp-industries');
-  if (indEl) {
-    indEl.innerHTML = '';
-    document.querySelectorAll('#industry-checkboxes input:checked').forEach(cb => {
-      const tag = document.createElement('span');
-      tag.className = 'icp-tag icp-tag-active';
-      tag.textContent = cb.value;
-      indEl.appendChild(tag);
-    });
-    if (!indEl.children.length) indEl.innerHTML = '<span style="font-size:12px;color:var(--text3)">Sin industrias seleccionadas</span>';
-  }
-}
-
 function syncApolloSearch() {
   const countries = [];
   document.querySelectorAll('#country-checkboxes input:checked').forEach(cb => {
