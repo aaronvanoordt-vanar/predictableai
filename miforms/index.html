@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>Predictable.ai — Intelligence Wishlist</title>
+<title>Predictable.ai — Desbloquea tu Intelligence Hub</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%232F66FF'/></svg>">
 <style>
@@ -32,8 +32,8 @@
   .topnav{display:flex;align-items:center;justify-content:space-between;margin-bottom:34px}
   .brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:14px;letter-spacing:-.2px}
   .brand-dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
-  .back{font-size:12px;color:var(--ink-3);text-decoration:none;display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border-radius:8px;border:1px solid var(--border);transition:.15s}
-  .back:hover{color:var(--ink);border-color:var(--border2);background:var(--surface)}
+  .logout{font-size:12px;color:var(--ink-3);text-decoration:none;display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border-radius:8px;border:1px solid var(--border);transition:.15s;background:transparent;cursor:pointer;font-family:inherit}
+  .logout:hover{color:var(--ink);border-color:var(--border2);background:var(--surface)}
 
   .loading{display:flex;align-items:center;justify-content:center;gap:10px;padding:80px 0;color:var(--ink-3);font-size:13px}
   .spinner{width:14px;height:14px;border:2px solid var(--surface3);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
@@ -51,37 +51,39 @@
   .recv{margin:28px 0 36px;border:1px solid var(--border);border-radius:16px;background:linear-gradient(180deg,var(--surface),rgba(20,20,31,.6));overflow:hidden}
   .recv-hd{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
   .recv-hd .l{display:flex;align-items:center;gap:10px}
-  .recv-hd .check{width:22px;height:22px;border-radius:50%;background:var(--green-soft);color:var(--green);display:grid;place-items:center;font-size:13px;font-weight:700;border:1px solid rgba(43,182,115,.3)}
+  .recv-hd .check{width:22px;height:22px;border-radius:6px;background:var(--accent-soft);color:var(--accent-ink);display:grid;place-items:center;font-size:13px;font-weight:700;border:1px solid rgba(47,102,255,.28)}
   .recv-hd .t{font-size:13px;font-weight:600}
   .recv-hd .t small{color:var(--ink-3);font-weight:400;display:block;font-size:11.5px;margin-top:1px}
   .recv-hd .stat{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.1em;text-transform:uppercase}
-  .recv-hd .stat b{color:var(--green);font-weight:700}
+  .recv-hd .stat b{color:var(--gold);font-weight:700}
   .recv-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;background:var(--border)}
   @media (max-width:720px){.recv-grid{grid-template-columns:repeat(2,1fr)}}
   .recv-col{padding:14px 16px;background:var(--surface);min-height:120px}
   .recv-col .cd{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--ink-4);text-transform:uppercase;margin-bottom:9px}
   .recv-col ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
   .recv-col li{font-size:12px;color:var(--ink-2);display:flex;gap:7px;align-items:flex-start;line-height:1.4}
-  .recv-col li::before{content:"";flex-shrink:0;width:5px;height:5px;border-radius:50%;background:var(--green);margin-top:7px;opacity:.7}
+  .recv-col li::before{content:"";flex-shrink:0;width:5px;height:5px;border-radius:50%;background:var(--accent-ink);margin-top:7px;opacity:.7}
 
   .sec-title{display:flex;align-items:center;gap:10px;margin:38px 0 6px}
   .sec-title .n{font-family:var(--mono);font-size:11px;color:var(--ink-4);letter-spacing:.12em}
   .sec-title h2{margin:0;font-size:20px;letter-spacing:-.4px;font-weight:600}
   .sec-title h2 em{font-style:normal;color:var(--accent-ink)}
+  .sec-title .req{font-size:10px;font-family:var(--mono);letter-spacing:.1em;color:var(--gold);padding:2px 8px;border:1px solid rgba(245,181,68,.3);border-radius:999px;background:var(--gold-soft);text-transform:uppercase}
   .sec-sub{color:var(--ink-3);font-size:13.5px;margin:0 0 18px;line-height:1.55;max-width:640px}
 
   .cad-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
-  .cad-pill{padding:8px 14px;border-radius:999px;border:1px solid var(--border2);background:var(--surface2);color:var(--ink-2);font-size:12.5px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:.15s;font-family:inherit}
+  .cad-pill{padding:8px 14px;border-radius:999px;border:1px solid var(--border2);background:var(--surface2);color:var(--ink-2);font-size:12.5px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:.15s;font-family:inherit;position:relative}
   .cad-pill:hover{border-color:var(--border3);color:var(--ink)}
   .cad-pill.on{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 4px 14px -4px rgba(47,102,255,.5)}
   .cad-pill .badge{background:rgba(255,255,255,.18);font-size:10px;padding:1px 7px;border-radius:999px;font-family:var(--mono)}
   .cad-pill:not(.on) .badge{background:var(--surface3);color:var(--ink-3)}
+  .cad-pill.missing::after{content:"";position:absolute;top:-3px;right:-3px;width:10px;height:10px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 2px var(--bg)}
 
   .wish-pane{display:none;animation:fade .35s ease}
   .wish-pane.on{display:block}
   @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
   .wish-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
-  .wish{position:relative;padding:14px 14px 13px;border:1px solid var(--border2);background:var(--surface);border-radius:12px;cursor:pointer;transition:.15s;display:flex;flex-direction:column;gap:5px}
+  .wish{position:relative;padding:14px 14px 13px;border:1px solid var(--border2);background:var(--surface);border-radius:12px;cursor:pointer;transition:.15s;display:flex;flex-direction:column;gap:5px;text-align:left;font-family:inherit;color:var(--ink)}
   .wish:hover{border-color:var(--border3);background:var(--surface2);transform:translateY(-1px)}
   .wish.on{border-color:var(--accent);background:linear-gradient(180deg,rgba(47,102,255,.10),rgba(47,102,255,.03))}
   .wish .ic{font-size:18px;line-height:1;margin-bottom:2px}
@@ -122,7 +124,7 @@
   .val-q .ic{font-size:18px}
   .val-q-sub{font-size:12.5px;color:var(--ink-3);margin:0 0 16px}
   .val-row{display:flex;gap:8px;flex-wrap:wrap}
-  .val-opt{flex:1;min-width:140px;padding:13px 12px;border-radius:11px;border:1px solid var(--border2);background:var(--surface);cursor:pointer;transition:.15s;text-align:center;font-family:inherit}
+  .val-opt{flex:1;min-width:140px;padding:13px 12px;border-radius:11px;border:1px solid var(--border2);background:var(--surface);cursor:pointer;transition:.15s;text-align:center;font-family:inherit;color:var(--ink)}
   .val-opt:hover{border-color:var(--border3);background:var(--surface2)}
   .val-opt.on{border-color:var(--gold);background:var(--gold-soft);box-shadow:0 6px 18px -10px rgba(245,181,68,.6)}
   .val-opt .em{font-size:22px;line-height:1;margin-bottom:6px}
@@ -140,14 +142,13 @@
   .seg-btn.on{background:var(--accent);color:#fff;box-shadow:0 2px 6px -2px rgba(47,102,255,.5)}
 
   .foot{margin-top:30px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding-top:22px;border-top:1px solid var(--border)}
-  .counter{font-size:12.5px;color:var(--ink-3);font-family:var(--mono);letter-spacing:.06em}
+  .counter{font-size:12.5px;color:var(--ink-3);font-family:var(--mono);letter-spacing:.06em;line-height:1.6}
   .counter b{color:var(--accent-ink);font-weight:700}
+  .counter .miss{color:var(--gold)}
   .btn{display:inline-flex;align-items:center;gap:8px;padding:13px 22px;border-radius:11px;border:0;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;transition:.15s;letter-spacing:-.1px;text-decoration:none}
   .btn-primary{background:var(--accent);color:#fff;box-shadow:0 8px 24px -10px rgba(47,102,255,.6)}
   .btn-primary:hover:not(:disabled){background:var(--accent-2);transform:translateY(-1px)}
   .btn-primary:disabled{opacity:.4;cursor:not-allowed;box-shadow:none}
-  .btn-ghost{background:transparent;color:var(--ink-3);border:1px solid var(--border2)}
-  .btn-ghost:hover{color:var(--ink);border-color:var(--border3)}
 
   .status{margin-top:14px;padding:11px 14px;border-radius:10px;font-size:13px;display:none}
   .status.show{display:block}
@@ -176,7 +177,7 @@
 
   <div class="topnav">
     <div class="brand"><div class="brand-dot"></div>Predictable<span style="color:var(--ink-3);font-weight:400">.ai</span></div>
-    <a class="back" href="/" id="link-back">← Volver al Hub</a>
+    <button class="logout" id="link-logout" type="button">Cerrar sesión</button>
   </div>
 
   <div id="loading" class="loading"><div class="spinner"></div>Cargando…</div>
@@ -184,18 +185,18 @@
   <div id="survey" style="display:none">
 
     <section class="hero">
-      <span class="eyebrow"><span class="ed"></span>Calibración de inteligencia · 60 segundos</span>
-      <h1>Hoy ya recibes inteligencia 24/7.<br><span class="hl">¿Qué más matarías por saber?</span></h1>
-      <p class="lede">Tu agente está corriendo. Estos son los reportes que ya generamos automáticamente para ti — basados en tu ICP, tu mercado y tus competidores. Decinos qué señales <em>faltan</em> para que la inteligencia se vuelva <em>irreemplazable</em>.</p>
+      <span class="eyebrow"><span class="ed"></span>Calibración inicial · 60 segundos · obligatorio</span>
+      <h1>Tu Intelligence Hub está listo para encenderse.<br><span class="hl">Dinos qué quieres saber.</span></h1>
+      <p class="lede">Para activar tu Hub, necesitamos calibrar tu agente de IA. Esto es lo que <em>vas a empezar a recibir</em> en cuanto termines este formulario — adaptado a tu ICP, tu mercado y tus competidores. Completa todos los campos para desbloquear.</p>
     </section>
 
     <div class="recv">
       <div class="recv-hd">
         <div class="l">
-          <div class="check">✓</div>
-          <div class="t">Ya estás recibiendo<small>11 reportes activos · 5 cadencias · refresh automático</small></div>
+          <div class="check">→</div>
+          <div class="t">Esto vas a desbloquear<small>11 reportes automáticos · 5 cadencias · refresco continuo</small></div>
         </div>
-        <div class="stat"><b>LIVE</b> · agente activo</div>
+        <div class="stat"><b>PENDIENTE</b> · listo para activar</div>
       </div>
       <div class="recv-grid">
         <div class="recv-col">
@@ -239,23 +240,25 @@
 
     <div class="sec-title">
       <span class="n">01</span>
-      <h2>Activá la inteligencia que te mueve la aguja</h2>
+      <h2>Elige las señales prioritarias en cada cadencia</h2>
+      <span class="req">Obligatorio</span>
     </div>
-    <p class="sec-sub">Marcá las señales que cambiarían tu día si las recibieras. Mientras más marques, más afilamos tu agente para vos.</p>
+    <p class="sec-sub">Selecciona al menos <b>una señal por cadencia</b>. Estas son las que harán que tu Hub se sienta hecho a tu medida desde el primer reporte.</p>
 
     <div class="cad-row" id="cad-row"></div>
     <div id="wish-panes"></div>
 
     <div class="sec-title">
       <span class="n">02</span>
-      <h2>Y si pudieras pedirle <em>cualquier cosa</em>…</h2>
+      <h2>Pide una señal <em>única para ti</em></h2>
+      <span class="req">Obligatorio</span>
     </div>
-    <p class="sec-sub">Una señal específica que ningún reporte estándar captura todavía. Estas son las que nos dicen qué construir después.</p>
+    <p class="sec-sub">Una señal específica que ningún reporte estándar captura — algo que solo tú necesitas saber. Agrega al menos <b>un pedido personalizado</b> (puedes agregar más).</p>
 
     <div class="req-card">
       <div class="req-prefix">
         <div class="ic">💭</div>
-        <div>Ojalá Predictable pudiera decirme cuando <em>…</em></div>
+        <div>Me encantaría que Predictable me avise cuando <em>…</em></div>
       </div>
       <div class="req-input-wrap">
         <input id="req-input" class="req-input" type="text" placeholder="…un competidor cambia su posicionamiento" maxlength="180">
@@ -270,63 +273,61 @@
 
     <div class="sec-title">
       <span class="n">03</span>
-      <h2>¿Qué tan crítico es esto para vos?</h2>
+      <h2>¿Qué tan crítico es esto para tu negocio?</h2>
+      <span class="req">Obligatorio</span>
     </div>
-    <p class="sec-sub">Esto nos ayuda a entender si lo que pediste es un "nice to have" o una palanca real de revenue.</p>
+    <p class="sec-sub">Esto nos ayuda a entender si tus pedidos son un "nice to have" o una palanca real de revenue. Responde las tres preguntas.</p>
 
     <div class="val-card">
       <div class="val-q"><span class="ic">⚡</span>Si recibieras estas señales mañana, ¿qué tan grande sería el impacto?</div>
-      <p class="val-q-sub">Sé honesto — preferimos un "meh" claro que un "muy útil" tibio.</p>
+      <p class="val-q-sub">Sé honesto — preferimos un "meh" claro a un "muy útil" tibio.</p>
       <div class="val-row" id="val-impact">
-        <button class="val-opt" data-val="curious"><div class="em">🙂</div><div class="lb">Curioso</div><div class="sb">Lo leería</div></button>
-        <button class="val-opt" data-val="useful"><div class="em">🎯</div><div class="lb">Útil</div><div class="sb">Cambiaría decisiones</div></button>
-        <button class="val-opt" data-val="critical"><div class="em">🔥</div><div class="lb">Crítico</div><div class="sb">Mueve revenue</div></button>
-        <button class="val-opt" data-val="kill"><div class="em">💎</div><div class="lb">Mataría por esto</div><div class="sb">Pagaría extra</div></button>
+        <button class="val-opt" data-val="curious" type="button"><div class="em">🙂</div><div class="lb">Curioso</div><div class="sb">Lo leería</div></button>
+        <button class="val-opt" data-val="useful"  type="button"><div class="em">🎯</div><div class="lb">Útil</div><div class="sb">Cambiaría decisiones</div></button>
+        <button class="val-opt" data-val="critical" type="button"><div class="em">🔥</div><div class="lb">Crítico</div><div class="sb">Mueve revenue</div></button>
+        <button class="val-opt" data-val="kill"    type="button"><div class="em">💎</div><div class="lb">Indispensable</div><div class="sb">Pagaría extra</div></button>
       </div>
 
       <div class="freq-row">
         <div class="freq-card">
-          <div class="qq">¿Con qué frecuencia querrías recibirlo?</div>
+          <div class="qq">¿Con qué frecuencia quieres recibirlo?</div>
           <div class="seg-ctrl" id="seg-freq">
-            <button class="seg-btn" data-val="realtime">Tiempo real</button>
-            <button class="seg-btn" data-val="daily">Diario</button>
-            <button class="seg-btn" data-val="weekly">Semanal</button>
-            <button class="seg-btn" data-val="ondemand">A pedido</button>
+            <button class="seg-btn" data-val="realtime" type="button">Tiempo real</button>
+            <button class="seg-btn" data-val="daily"    type="button">Diario</button>
+            <button class="seg-btn" data-val="weekly"   type="button">Semanal</button>
+            <button class="seg-btn" data-val="ondemand" type="button">A pedido</button>
           </div>
         </div>
         <div class="freq-card">
           <div class="qq">¿Pagarías un add-on por tener esto incluido?</div>
           <div class="seg-ctrl" id="seg-pay">
-            <button class="seg-btn" data-val="no">No</button>
-            <button class="seg-btn" data-val="maybe">Tal vez</button>
-            <button class="seg-btn" data-val="yes">Sí</button>
-            <button class="seg-btn" data-val="already">Lo necesito ya</button>
+            <button class="seg-btn" data-val="no"      type="button">No</button>
+            <button class="seg-btn" data-val="maybe"   type="button">Tal vez</button>
+            <button class="seg-btn" data-val="yes"     type="button">Sí</button>
+            <button class="seg-btn" data-val="already" type="button">Lo necesito ya</button>
           </div>
         </div>
       </div>
     </div>
 
     <div class="foot">
-      <div class="counter" id="counter"><b>0</b> señales activadas · <b>0</b> pedidos personalizados</div>
-      <div style="display:flex;gap:10px">
-        <button class="btn btn-ghost" id="btn-skip">Más tarde</button>
-        <button class="btn btn-primary" id="btn-submit" disabled>Calibrar mi agente →</button>
-      </div>
+      <div class="counter" id="counter">Completa todos los campos para desbloquear.</div>
+      <button class="btn btn-primary" id="btn-submit" disabled>🔓 Desbloquear mi Intelligence Hub →</button>
     </div>
 
     <div id="status" class="status"></div>
   </div>
 
   <div id="ty" class="ty">
-    <div class="em">✦</div>
-    <h2>Agente recalibrado.</h2>
-    <p>Tomamos tus señales y las estamos integrando al motor. La próxima generación de inteligencia vendrá afinada a lo que realmente te mueve.</p>
+    <div class="em">🔓</div>
+    <h2>Hub desbloqueado.</h2>
+    <p>Tu agente está corriendo con la calibración que nos diste. En unos segundos te llevamos al Intelligence Hub con la primera tanda de reportes.</p>
     <div class="summary">
       <div><div class="sv" id="ty-wishes">0</div><div class="sl">Señales activadas</div></div>
-      <div><div class="sv" id="ty-custom">0</div><div class="sl">Pedidos custom</div></div>
+      <div><div class="sv" id="ty-custom">0</div><div class="sl">Pedidos personalizados</div></div>
       <div><div class="sv" id="ty-impact">—</div><div class="sl">Impacto declarado</div></div>
     </div>
-    <a href="/" class="btn btn-primary">Volver al Intelligence Hub →</a>
+    <a href="/" class="btn btn-primary">Entrar al Intelligence Hub →</a>
   </div>
 
 </div>

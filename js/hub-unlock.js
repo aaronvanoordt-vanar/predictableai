@@ -1,24 +1,14 @@
 /**
- * hub-unlock.js — Locked Intelligence Hub overlay + guided unlock experience
+ * hub-unlock.js — Locked Intelligence Hub overlay
  *
  * Flow:
  *   1. On hub page init: check intel_hub_intake.hub_unlocked
  *   2. If false: blur #ih-v2-shell + show lock overlay inside #page-mi-dashboard
- *   3. "Unlock Intelligence" button → 3-screen guided card-selection modal
- *      Screen 1: "¿Qué quieres monitorear?" (multi-select)
- *      Screen 2: "¿Con qué frecuencia lo necesitas?" (single-select)
- *      Screen 3: "¿Cuál es tu objetivo principal?" (single-select)
- *   4. On completion: save signals to hub_unlock_signals, set hub_unlocked=true,
- *      run success animation, remove blur + overlay.
+ *   3. "Desbloquear mi Hub" button → redirects to /miforms/ (calibration survey)
+ *   4. The survey sets hub_unlocked=true and bounces the user back here.
  */
 (function () {
   'use strict';
-
-  const UNLOCK_STEPS = 3;
-
-  let unlockData     = { monitors: [], cadence: null, goal: null };
-  let currentScreen  = 1;
-  let currentUserId  = null;
 
   // ── Styles ───────────────────────────────────────────────────────────────────
 
@@ -383,7 +373,6 @@
 
     const user = await window.supabaseHelpers?.getUser();
     if (!user) return;
-    currentUserId = user.id;
 
     // Clean up any stale overlay from a previous navigation
     document.getElementById('hub-lock-overlay')?.remove();
@@ -415,7 +404,9 @@
     overlay.innerHTML = lockOverlayHTML();
     page.appendChild(overlay);
 
-    overlay.querySelector('#hub-unlock-btn')?.addEventListener('click', openUnlockFlow);
+    overlay.querySelector('#hub-unlock-btn')?.addEventListener('click', () => {
+      window.location.assign('/miforms/');
+    });
   };
 
   // ── Lock overlay markup ───────────────────────────────────────────────────────
@@ -440,10 +431,10 @@
           Market Intelligence listo
         </div>
 
-        <div class="hub-lock-headline">Tu Hub está generándose</div>
+        <div class="hub-lock-headline">Tu Hub está listo para encenderse</div>
         <div class="hub-lock-sub">
-          Personaliza tu inteligencia de mercado en menos de 2 minutos
-          y desbloquea acceso completo a tu Hub.
+          Calibra tu agente de IA con la inteligencia que quieres recibir
+          y desbloquea acceso completo a tu Intelligence Hub.
         </div>
 
         <button class="hub-unlock-cta" id="hub-unlock-btn">
@@ -452,224 +443,15 @@
             <rect x="3" y="11" width="18" height="11" rx="2"/>
             <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
           </svg>
-          Unlock Intelligence
+          Desbloquear mi Hub
         </button>
 
-        <div class="hub-lock-footnote">Sin formularios · Menos de 2 minutos</div>
+        <div class="hub-lock-footnote">Calibración inicial · ~60 segundos</div>
       </div>
     `;
   }
 
-  // ── Unlock flow ───────────────────────────────────────────────────────────────
+  // Unlock flow lives at /miforms/ — the inline 3-screen modal was removed
+  // in favor of the full Matrix calibration survey that gates hub_unlocked.
 
-  function openUnlockFlow() {
-    unlockData    = { monitors: [], cadence: null, goal: null };
-    currentScreen = 1;
-
-    const modal = document.createElement('div');
-    modal.id = 'hub-unlock-modal';
-    modal.innerHTML = '<div class="hub-modal-card" id="hub-modal-inner"></div>';
-    document.body.appendChild(modal);
-
-    renderScreen(1);
-    requestAnimationFrame(() => modal.classList.add('hub-modal-visible'));
-  }
-
-  function renderScreen(n) {
-    const inner = document.getElementById('hub-modal-inner');
-    if (!inner) return;
-
-    const pct = Math.round(((n - 1) / UNLOCK_STEPS) * 100);
-
-    const screenContent = n === 1 ? screen1HTML()
-                        : n === 2 ? screen2HTML()
-                        :           screen3HTML();
-
-    inner.innerHTML = `
-      <div class="hub-unlock-progress">
-        <div class="hub-unlock-track">
-          <div class="hub-unlock-fill" style="width:${pct}%"></div>
-        </div>
-        <div class="hub-unlock-step-lbl">Paso ${n} de ${UNLOCK_STEPS}</div>
-      </div>
-      ${screenContent}
-    `;
-
-    inner.querySelectorAll('.hub-ucard').forEach(card => {
-      card.addEventListener('click', () => {
-        if (n === 1) {
-          card.classList.toggle('hub-ucard-selected');
-          syncMultiHint(inner);
-        } else {
-          inner.querySelectorAll('.hub-ucard').forEach(c => c.classList.remove('hub-ucard-selected'));
-          card.classList.add('hub-ucard-selected');
-          inner.querySelector('.hub-unlock-next').disabled = false;
-        }
-      });
-    });
-
-    inner.querySelector('.hub-unlock-next')?.addEventListener('click', () => advance(n));
-  }
-
-  function syncMultiHint(inner) {
-    const selected = inner.querySelectorAll('.hub-ucard.hub-ucard-selected').length;
-    const hint = inner.querySelector('.hub-unlock-multi-hint');
-    const btn  = inner.querySelector('.hub-unlock-next');
-    if (hint) {
-      hint.textContent = selected > 0
-        ? `${selected} seleccionado${selected > 1 ? 's' : ''}`
-        : 'Selecciona al menos uno';
-      hint.classList.toggle('has-selection', selected > 0);
-    }
-    if (btn) btn.disabled = selected === 0;
-  }
-
-  function advance(n) {
-    const inner = document.getElementById('hub-modal-inner');
-    if (!inner) return;
-
-    if (n === 1) {
-      const selected = [...inner.querySelectorAll('.hub-ucard.hub-ucard-selected')]
-                        .map(c => c.dataset.val);
-      if (!selected.length) return;
-      unlockData.monitors = selected;
-    } else if (n === 2) {
-      const sel = inner.querySelector('.hub-ucard.hub-ucard-selected');
-      if (!sel) return;
-      unlockData.cadence = sel.dataset.val;
-    } else if (n === 3) {
-      const sel = inner.querySelector('.hub-ucard.hub-ucard-selected');
-      if (!sel) return;
-      unlockData.goal = sel.dataset.val;
-      finishUnlock();
-      return;
-    }
-
-    currentScreen = n + 1;
-    renderScreen(currentScreen);
-  }
-
-  // ── Screen templates ──────────────────────────────────────────────────────────
-
-  function mkCards(items) {
-    return items.map(({ val, icon, title, desc }) => `
-      <div class="hub-ucard" data-val="${val}">
-        <span class="hub-ucard-icon">${icon}</span>
-        <div class="hub-ucard-title">${title}</div>
-        <div class="hub-ucard-desc">${desc}</div>
-      </div>
-    `).join('');
-  }
-
-  function screen1HTML() {
-    const items = [
-      { val: 'competitor_moves',   icon: '🕵️', title: 'Movimientos de competidores',    desc: 'Precios, features, campañas y estrategia' },
-      { val: 'buying_signals',     icon: '🎯', title: 'Señales de intención de compra',  desc: 'Detecta quién está listo para comprar' },
-      { val: 'market_trends',      icon: '📈', title: 'Tendencias emergentes',           desc: 'Qué está cambiando en tu industria' },
-      { val: 'winning_messages',   icon: '💬', title: 'Mensajes que convierten',         desc: 'Narrativas y posicionamiento ganador' },
-      { val: 'new_segments',       icon: '🌱', title: 'Nuevos segmentos de mercado',     desc: 'Oportunidades sin explotar en tu categoría' },
-      { val: 'market_predictions', icon: '🔮', title: 'Predicciones de mercado',         desc: 'Movimientos futuros antes que tu competencia' },
-      { val: 'deal_losses',        icon: '❓', title: 'Por qué se pierden deals',        desc: 'Insights para mejorar tu tasa de cierre' },
-      { val: 'benchmarks',         icon: '🏆', title: 'Benchmarks competitivos',         desc: 'Cómo te posicionas vs. la competencia' },
-    ];
-    return `
-      <div class="hub-unlock-title">¿Qué quieres monitorear?</div>
-      <div class="hub-unlock-sub">Selecciona la inteligencia que cambiaría tu forma de vender.</div>
-      <div class="hub-unlock-multi-hint">Selecciona al menos uno</div>
-      <div class="hub-unlock-grid">${mkCards(items)}</div>
-      <button class="hub-unlock-next" disabled>Continuar →</button>
-    `;
-  }
-
-  function screen2HTML() {
-    const items = [
-      { val: 'daily',     icon: '⚡', title: 'Diario',     desc: 'Alertas inmediatas para reaccionar rápido a cambios del mercado' },
-      { val: 'weekly',    icon: '📅', title: 'Semanal',    desc: 'Resumen estratégico para planificar tu semana de ventas' },
-      { val: 'monthly',   icon: '📊', title: 'Mensual',    desc: 'Análisis profundo de tu posición competitiva en el mercado' },
-      { val: 'quarterly', icon: '🗓', title: 'Trimestral', desc: 'Perspectiva macro para decisiones estratégicas del quarter' },
-    ];
-    return `
-      <div class="hub-unlock-title">¿Con qué frecuencia lo necesitas?</div>
-      <div class="hub-unlock-sub">Te enviamos inteligencia según tu ritmo de trabajo y toma de decisiones.</div>
-      <div class="hub-unlock-grid col-1">${mkCards(items)}</div>
-      <button class="hub-unlock-next" disabled>Continuar →</button>
-    `;
-  }
-
-  function screen3HTML() {
-    const items = [
-      { val: 'close_more_deals',  icon: '💰', title: 'Cerrar más deals',          desc: 'Mejorar conversión y acortar el ciclo de venta' },
-      { val: 'beat_competition',  icon: '🏃', title: 'Ganarle a la competencia',  desc: 'Posicionarme mejor y ganar cuota de mercado' },
-      { val: 'new_markets',       icon: '🌱', title: 'Entrar a nuevos mercados',   desc: 'Expandir a nuevas geografías o segmentos' },
-      { val: 'retain_customers',  icon: '🔄', title: 'Retener más clientes',       desc: 'Reducir churn y aumentar el NRR' },
-      { val: 'better_messaging',  icon: '📣', title: 'Mejorar mi messaging',       desc: 'Comunicar mejor mi valor diferenciado' },
-    ];
-    return `
-      <div class="hub-unlock-title">¿Cuál es tu objetivo principal?</div>
-      <div class="hub-unlock-sub">Esto calibra tu Hub para enfocarse en lo que más te importa ahora mismo.</div>
-      <div class="hub-unlock-grid col-1">${mkCards(items)}</div>
-      <button class="hub-unlock-next" disabled>Desbloquear mi Hub →</button>
-    `;
-  }
-
-  // ── Finish unlock ─────────────────────────────────────────────────────────────
-
-  async function finishUnlock() {
-    const modal = document.getElementById('hub-unlock-modal');
-    if (modal) {
-      modal.classList.remove('hub-modal-visible');
-      setTimeout(() => modal.remove(), 300);
-    }
-
-    const successEl = document.createElement('div');
-    successEl.id = 'hub-unlock-success';
-    successEl.innerHTML = `
-      <div class="hub-success-emoji">🔓</div>
-      <div class="hub-success-title">¡Acceso desbloqueado!</div>
-      <div class="hub-success-sub">Calibrando tu Intelligence Hub…</div>
-    `;
-    document.body.appendChild(successEl);
-    requestAnimationFrame(() => successEl.classList.add('hub-success-visible'));
-
-    try {
-      await window.supabaseClient
-        .from('intel_hub_intake')
-        .update({
-          hub_unlocked:       true,
-          hub_unlocked_at:    new Date().toISOString(),
-          hub_unlock_signals: unlockData,
-          what_to_know:       monitorsToText(unlockData.monitors),
-        })
-        .eq('user_id', currentUserId);
-    } catch (err) {
-      console.warn('[hub-unlock] Supabase save error:', err);
-    }
-
-    setTimeout(() => {
-      successEl.classList.remove('hub-success-visible');
-      setTimeout(() => {
-        successEl.remove();
-        document.getElementById('hub-lock-overlay')?.remove();
-        document.getElementById('ih-v2-shell')?.classList.remove('hub-blurred');
-      }, 400);
-    }, 2400);
-  }
-
-  // ── Helpers ───────────────────────────────────────────────────────────────────
-
-  function monitorsToText(monitors) {
-    const labels = {
-      competitor_moves:   'movimientos y precios de competidores',
-      buying_signals:     'señales de intención de compra de prospectos',
-      market_trends:      'tendencias emergentes del mercado',
-      winning_messages:   'mensajes y narrativas que están convirtiendo',
-      new_segments:       'nuevos segmentos y oportunidades de mercado',
-      market_predictions: 'predicciones y cambios futuros de mercado',
-      deal_losses:        'razones por las que se pierden deals',
-      benchmarks:         'benchmarks competitivos',
-    };
-    const parts = (monitors || []).map(m => labels[m] || m);
-    if (!parts.length) return null;
-    return `Quiero monitorear: ${parts.join(', ')}.`;
-  }
 })();
