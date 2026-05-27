@@ -4234,7 +4234,7 @@ const apolloState = { results:[], selected: new Set(), saved:[], savedListName:'
 
 // ── APOLLO API ──
 const APOLLO_KEY  = 'sQAAncojXI8VIRWgWr9ZYA';
-const APOLLO_BASE = 'https://predictableai.aaronvanoordt.workers.dev/proxy/apollo';
+const APOLLO_BASE = 'https://predictable-apollo.aaron-78b.workers.dev/';
 function getApolloKey(){ try{ return localStorage.getItem('apollo_api_key')||APOLLO_KEY; }catch(e){ return APOLLO_KEY; } }
 
 async function apolloFetch(endpoint, body) {
@@ -4528,7 +4528,7 @@ async function saveToApollo() {
   advanceStep(5);
 }
 
-const WORKER_BASE = 'https://predictableai.aaronvanoordt.workers.dev';
+const WORKER_BASE = 'https://predictable-apollo.aaron-78b.workers.dev/';
 const WEBHOOK_URL = WORKER_BASE + '/webhook/apollo';
 
 async function enrichContacts(contacts, onProgress) {
