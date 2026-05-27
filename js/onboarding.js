@@ -1,31 +1,25 @@
 /**
- * onboarding.js — 4-step onboarding wizard
+ * onboarding.js — 2-step onboarding wizard
  *
- * Steps:
- *   1. LinkedIn URL + Phone
- *   2. Country
- *   3. ICP (Ideal Customer Profile)
- *   4. Generating (trigger edge function + redirect to app)
+ * Step 1: LinkedIn company URL + phone  → saved to profiles + intel_hub_intake
+ * Step 2: ICP (Ideal Customer Profile)  → saved to client_icp + intel_hub_intake
  *
- * Progress is saved to Supabase so users can resume if they close mid-flow.
- * The Market Intelligence survey and Value Proposition steps are removed —
- * these are now captured via the in-app "Unlock Intelligence" experience.
+ * After Step 2: profile.onboarded = true and user is redirected straight
+ * to the Intelligence Hub (locked overlay handled by hub-unlock.js).
+ *
+ * No backend agents are triggered during onboarding — the user unlocks
+ * the hub later via the in-app "Unlock Intelligence" flow.
  */
 (function () {
   'use strict';
 
   const $ = id => document.getElementById(id);
-  const SUPABASE_URL    = window.SUPABASE_CONFIG?.url ?? '';
-  const ENRICH_FN_URL   = SUPABASE_URL + '/functions/v1/enrich-company';
-  const GENERATE_FN_URL = SUPABASE_URL + '/functions/v1/generate-intel-hub';
-  const LINKEDIN_RE     = /^https?:\/\/(www\.)?linkedin\.com\/company\/([a-zA-Z0-9_\-\.~]+)\/?(\?.*)?$/i;
-  const TOTAL_STEPS     = 4;
+  const LINKEDIN_RE = /^https?:\/\/(www\.)?linkedin\.com\/company\/([a-zA-Z0-9_\-\.~]+)\/?(\?.*)?$/i;
+  const TOTAL_STEPS = 2;
 
   let currentUser = null;
 
   document.addEventListener('DOMContentLoaded', init);
-
-  // ── INIT ──────────────────────────────────────────────────────────────────────
 
   async function init() {
     const user = await window.supabaseHelpers.getUser();
@@ -45,38 +39,32 @@
 
     const { data: profile } = await window.supabaseClient
       .from('profiles')
-      .select('onboarded, linkedin_company_url')
+      .select('onboarded, linkedin_company_url, phone')
       .eq('id', user.id)
       .maybeSingle();
 
     if (profile?.onboarded) {
-      window.location.replace('./index.html');
+      redirectToHub();
       return;
     }
 
     const { data: intake } = await window.supabaseClient
       .from('intel_hub_intake')
-      .select('onboarding_step, company_linkedin_url, phone, country')
+      .select('onboarding_step, company_linkedin_url')
       .eq('user_id', user.id)
       .maybeSingle();
 
-    if (intake?.company_linkedin_url) {
-      $('inp-linkedin').value = intake.company_linkedin_url;
-    } else if (profile?.linkedin_company_url) {
-      $('inp-linkedin').value = profile.linkedin_company_url;
-    }
-    if (intake?.phone) $('inp-phone').value = intake.phone;
-    if (intake?.country) $('inp-country').value = intake.country;
+    if (profile?.linkedin_company_url) $('inp-linkedin').value = profile.linkedin_company_url;
+    else if (intake?.company_linkedin_url) $('inp-linkedin').value = intake.company_linkedin_url;
+    if (profile?.phone) $('inp-phone').value = profile.phone;
 
-    bindAllSteps();
+    bindStep1();
+    bindStep2();
 
-    const step = intake?.onboarding_step ?? 0;
-    goToStep(Math.max(1, Math.min(step + 1, TOTAL_STEPS)));
-
-    if (step >= 3) runGenerating();
+    // Resume on step 2 if step 1 was already saved
+    const startAt = (intake?.onboarding_step ?? 0) >= 1 ? 2 : 1;
+    goToStep(startAt);
   }
-
-  // ── STEP NAVIGATION ───────────────────────────────────────────────────────────
 
   function goToStep(n) {
     for (let i = 1; i <= TOTAL_STEPS; i++) {
@@ -84,18 +72,9 @@
       if (el) el.style.display = (i === n) ? '' : 'none';
     }
     $('progress-fill').style.width = (n / TOTAL_STEPS * 100) + '%';
-    $('step-label').textContent = n < TOTAL_STEPS ? `Paso ${n} de ${TOTAL_STEPS - 1}` : 'Activando…';
-    $('link-logout').style.display = n < TOTAL_STEPS ? 'block' : 'none';
+    $('step-label').textContent = `Paso ${n} de ${TOTAL_STEPS}`;
     hideStatus();
     window.scrollTo(0, 0);
-  }
-
-  // ── BIND ALL HANDLERS ─────────────────────────────────────────────────────────
-
-  function bindAllSteps() {
-    bindStep1();
-    bindStep2();
-    bindStep3();
   }
 
   // ── STEP 1: LinkedIn + Phone ──────────────────────────────────────────────────
@@ -121,6 +100,7 @@
 
     $('btn-s1').addEventListener('click', handleStep1);
     lnk.addEventListener('keydown', e => { if (e.key === 'Enter') handleStep1(); });
+    $('inp-phone').addEventListener('keydown', e => { if (e.key === 'Enter') handleStep1(); });
   }
 
   async function handleStep1() {
@@ -141,14 +121,16 @@
     }
 
     btn.disabled = true;
-    showStatus('inf', '<span class="spinner"></span> Guardando y analizando tu empresa…');
+    showStatus('inf', '<span class="spinner"></span> Guardando…');
 
     try {
-      await window.supabaseClient.from('profiles').upsert({
+      const { error: profileErr } = await window.supabaseClient.from('profiles').upsert({
         id: currentUser.id,
         email: currentUser.email,
         linkedin_company_url: url,
+        phone: phone || null,
       }, { onConflict: 'id' });
+      if (profileErr) throw new Error('profiles: ' + profileErr.message);
 
       const { error: intakeErr } = await window.supabaseClient
         .from('intel_hub_intake')
@@ -158,12 +140,7 @@
           phone: phone || null,
           onboarding_step: 1,
         }, { onConflict: 'user_id' });
-
-      if (intakeErr) throw new Error(intakeErr.message);
-
-      callEdgeFn(ENRICH_FN_URL, { linkedin_url: url }).catch(e =>
-        console.warn('[onboarding] enrich-company (non-blocking):', e)
-      );
+      if (intakeErr) throw new Error('intel_hub_intake: ' + intakeErr.message);
 
       goToStep(2);
     } catch (err) {
@@ -172,50 +149,17 @@
     }
   }
 
-  // ── STEP 2: Country ───────────────────────────────────────────────────────────
+  // ── STEP 2: ICP ──────────────────────────────────────────────────────────────
 
   function bindStep2() {
-    $('btn-s2').addEventListener('click', handleStep2);
-    $('inp-country').addEventListener('keydown', e => { if (e.key === 'Enter') handleStep2(); });
-  }
-
-  async function handleStep2() {
-    const country = $('inp-country').value.trim();
-    const btn     = $('btn-s2');
-
-    if (!country) {
-      showStatus('err', 'Selecciona el país principal de tu empresa.');
-      $('inp-country').focus();
-      return;
-    }
-
-    btn.disabled = true;
-    showStatus('inf', '<span class="spinner"></span> Guardando…');
-
-    try {
-      const { error } = await window.supabaseClient
-        .from('intel_hub_intake')
-        .update({ country: country, onboarding_step: 2 })
-        .eq('user_id', currentUser.id);
-      if (error) throw new Error(error.message);
-      goToStep(3);
-    } catch (err) {
-      btn.disabled = false;
-      showStatus('err', 'Error al guardar: ' + esc(err.message));
-    }
-  }
-
-  // ── STEP 3: ICP ──────────────────────────────────────────────────────────────
-
-  function bindStep3() {
     document.querySelectorAll('#icp-sizes .pill-opt').forEach(pill => {
       pill.addEventListener('click', () => pill.classList.toggle('selected'));
     });
-    $('btn-s3').addEventListener('click', handleStep3);
+    $('btn-s2').addEventListener('click', handleStep2);
   }
 
-  async function handleStep3() {
-    const btn        = $('btn-s3');
+  async function handleStep2() {
+    const btn        = $('btn-s2');
     const sizes      = [...document.querySelectorAll('#icp-sizes .pill-opt.selected')]
                         .map(p => p.dataset.val).join(', ');
     const industries = $('inp-icp-industries').value.trim();
@@ -229,7 +173,7 @@
     }
 
     btn.disabled = true;
-    showStatus('inf', '<span class="spinner"></span> Guardando tu ICP y activando el Hub…');
+    showStatus('inf', '<span class="spinner"></span> Guardando tu ICP…');
 
     try {
       const { error: intakeErr } = await window.supabaseClient
@@ -240,14 +184,13 @@
           icp_roles:           roles || null,
           icp_geographies:     geos || null,
           icp_pain_points:     pain || null,
-          onboarding_step:     3,
+          onboarding_step:     2,
           onboarding_complete: true,
         })
         .eq('user_id', currentUser.id);
-      if (intakeErr) throw new Error(intakeErr.message);
+      if (intakeErr) throw new Error('intel_hub_intake: ' + intakeErr.message);
 
-      // Mirror ICP to dedicated table (non-blocking)
-      window.supabaseClient
+      const { error: icpErr } = await window.supabaseClient
         .from('client_icp')
         .upsert({
           profile_id:    currentUser.id,
@@ -256,70 +199,27 @@
           roles:         roles || null,
           geographies:   geos || null,
           pain_points:   pain || null,
-        }, { onConflict: 'profile_id' })
-        .then(({ error: icpErr }) => {
-          if (icpErr) console.warn('[onboarding] client_icp upsert:', icpErr.message);
-        });
+        }, { onConflict: 'profile_id' });
+      if (icpErr) throw new Error('client_icp: ' + icpErr.message);
 
       const { error: profileErr } = await window.supabaseClient
         .from('profiles')
         .update({ onboarded: true, onboarded_at: new Date().toISOString() })
         .eq('id', currentUser.id);
-      if (profileErr) throw new Error(profileErr.message);
+      if (profileErr) throw new Error('profiles: ' + profileErr.message);
 
-      runGenerating();
+      redirectToHub();
     } catch (err) {
       btn.disabled = false;
-      showStatus('err', 'Error al activar: ' + esc(err.message));
+      showStatus('err', 'Error al guardar: ' + esc(err.message));
     }
   }
 
-  // ── STEP 4: Generating ────────────────────────────────────────────────────────
-
-  async function runGenerating() {
-    await window.supabaseClient
-      .from('profiles')
-      .update({ onboarded: true, onboarded_at: new Date().toISOString() })
-      .eq('id', currentUser.id)
-      .catch(() => {});
-
-    goToStep(4);
-
-    const genItems = [$('gen-a'), $('gen-b'), $('gen-c')];
-    let idx = 0;
-    const tick = setInterval(() => {
-      if (idx > 0 && genItems[idx - 1]) {
-        genItems[idx - 1].classList.remove('active');
-        genItems[idx - 1].classList.add('done');
-      }
-      if (idx < genItems.length && genItems[idx]) {
-        genItems[idx].classList.add('active');
-      }
-      idx++;
-      if (idx > genItems.length) clearInterval(tick);
-    }, 2000);
-
-    callEdgeFn(GENERATE_FN_URL, { triggered_by: 'onboarding' })
-      .catch(e => console.warn('[onboarding] generate-intel-hub (non-blocking):', e));
-
-    // Redirect to app after brief animation
-    setTimeout(() => {
-      window.location.replace('./index.html');
-    }, 3000);
+  function redirectToHub() {
+    window.location.replace('./index.html#mi-dashboard');
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────────────
-
-  async function callEdgeFn(url, body) {
-    const { data: sess } = await window.supabaseClient.auth.getSession();
-    const token = sess?.session?.access_token;
-    if (!token) throw new Error('No active session');
-    return fetch(url, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-      body:    JSON.stringify(body),
-    });
-  }
 
   function normalizeUrl(raw) {
     let v = String(raw || '').trim();
