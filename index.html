@@ -1882,6 +1882,8 @@ html, body {
       Reportes SDR
     </div>
 
+    <div class="nav-item" data-page="settings" onclick="if(typeof window.openSettingsPage==='function')window.openSettingsPage()" style="display:none"></div>
+
   </div>
 
   <div class="sidebar-footer">
@@ -5629,13 +5631,17 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Exponer para que el user-menu del sidebar pueda llamarlo
   window.openSettingsPage = function () {
-    const item = document.querySelector('[data-page="settings"]');
-    if (item && typeof window.nav === 'function') {
-      window.nav(item, 'settings');
-    } else if (typeof window.nav === 'function') {
-      window.nav({ classList: { add: () => {}, remove: () => {} } }, 'settings');
+    // Quitar active de todos los nav items y pages
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active', 'm2', 'm3'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    // Activar la página de ajustes directamente
+    const target = document.getElementById('page-settings');
+    if (target) {
+      target.classList.add('active');
+      target.classList.add('fade-in');
     }
-    setTimeout(loadSettings, 50);
+    window.scrollTo(0, 0);
+    loadSettings();
   };
 
   // Refrescar el pill del sidebar cuando se guarda algo
