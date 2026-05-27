@@ -4174,6 +4174,15 @@ function nav(el, pageId) {
   _activePageId = pageId;
 }
 
+// Hash-based deep link: e.g. /index.html#mi-dashboard activates that page on load.
+// Used by onboarding to drop the user straight into the Intelligence Hub.
+window.addEventListener('DOMContentLoaded', () => {
+  const hash = (location.hash || '').replace(/^#/, '');
+  if (!hash) return;
+  const navEl = document.querySelector(`.nav-item[data-page="${hash}"]`);
+  if (navEl) setTimeout(() => window.nav(navEl, hash), 0);
+});
+
 // ── CHARTS ──
 const chartDefaults = {
   color: '#5A6279',

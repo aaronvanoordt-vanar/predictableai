@@ -123,8 +123,8 @@
 
 <div class="card">
   <div class="progress-wrap">
-    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:25%"></div></div>
-    <div class="step-label" id="step-label">Paso 1 de 3</div>
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:50%"></div></div>
+    <div class="step-label" id="step-label">Paso 1 de 2</div>
   </div>
 
   <span class="user-chip" id="user-chip">Cargando…</span>
@@ -150,53 +150,8 @@
     <button class="btn-primary" id="btn-s1">Continuar →</button>
   </div>
 
-  <!-- ═══ STEP 2: Country ═══ -->
+  <!-- ═══ STEP 2: ICP ═══ -->
   <div id="step-2" style="display:none">
-    <div class="step-icon">🌎</div>
-    <h1>¿Dónde opera tu empresa?</h1>
-    <p class="sub">Tu país nos ayuda a <strong>calibrar la inteligencia de mercado</strong> para tu contexto geográfico y económico.</p>
-
-    <div class="form-group">
-      <label>País principal</label>
-      <select id="inp-country">
-        <option value="" disabled selected>Selecciona tu país…</option>
-        <optgroup label="LATAM">
-          <option value="México">México</option>
-          <option value="Colombia">Colombia</option>
-          <option value="Argentina">Argentina</option>
-          <option value="Brasil">Brasil</option>
-          <option value="Chile">Chile</option>
-          <option value="Perú">Perú</option>
-          <option value="Ecuador">Ecuador</option>
-          <option value="Costa Rica">Costa Rica</option>
-          <option value="Panamá">Panamá</option>
-          <option value="Uruguay">Uruguay</option>
-          <option value="Paraguay">Paraguay</option>
-          <option value="Bolivia">Bolivia</option>
-          <option value="Venezuela">Venezuela</option>
-          <option value="Guatemala">Guatemala</option>
-          <option value="Honduras">Honduras</option>
-          <option value="El Salvador">El Salvador</option>
-          <option value="Nicaragua">Nicaragua</option>
-          <option value="República Dominicana">República Dominicana</option>
-        </optgroup>
-        <optgroup label="Norte América y Europa">
-          <option value="Estados Unidos">Estados Unidos</option>
-          <option value="Canadá">Canadá</option>
-          <option value="España">España</option>
-          <option value="Portugal">Portugal</option>
-        </optgroup>
-        <optgroup label="Otro">
-          <option value="Otro">Otro</option>
-        </optgroup>
-      </select>
-    </div>
-
-    <button class="btn-primary" id="btn-s2">Continuar →</button>
-  </div>
-
-  <!-- ═══ STEP 3: ICP ═══ -->
-  <div id="step-3" style="display:none">
     <div class="step-icon">🎯</div>
     <h1>Define tu cliente ideal</h1>
     <p class="sub">Esto permite que los agentes focalicen la inteligencia en las <strong>oportunidades más relevantes</strong> para tu negocio — no análisis genéricos.</p>
@@ -236,31 +191,7 @@
         placeholder="Ej: Falta de visibilidad de movimientos de competidores y señales de compra en tiempo real…"></textarea>
     </div>
 
-    <button class="btn-primary" id="btn-s3">Activar mi Intelligence Hub →</button>
-  </div>
-
-  <!-- ═══ STEP 4: Generating ═══ -->
-  <div id="step-4" style="display:none">
-    <div class="gen-wrap">
-      <div class="gen-ring"></div>
-    </div>
-    <p class="gen-title">Activando tu Intelligence Hub</p>
-    <p class="gen-sub">Nuestros agentes de IA están investigando tu mercado, competidores y oportunidades. La primera generación tarda unos minutos — luego se actualiza automáticamente.</p>
-
-    <div class="gen-items">
-      <div class="gen-item" id="gen-a">
-        <div class="gen-dot"></div>
-        🔍 Analizando tu empresa y competidores directos
-      </div>
-      <div class="gen-item" id="gen-b">
-        <div class="gen-dot"></div>
-        📊 Buscando señales de mercado de las últimas 24h
-      </div>
-      <div class="gen-item" id="gen-c">
-        <div class="gen-dot"></div>
-        ⚡ Generando insights accionables para tu GTM
-      </div>
-    </div>
+    <button class="btn-primary" id="btn-s2">Entrar a mi Intelligence Hub →</button>
   </div>
 
   <div id="status" class="status"></div>
