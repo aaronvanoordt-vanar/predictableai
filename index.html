@@ -3899,6 +3899,7 @@ html, body {
 <script src="js/realtime-coach.js"></script>
 <script src="js/intel-hub.js"></script>
 <script src="js/intel-hub-v2.js"></script>
+<script src="js/hub-unlock.js"></script>
 <script>
 // ── END MEETING ──
 function endMeeting() {
@@ -4167,6 +4168,7 @@ function nav(el, pageId) {
     setTimeout(() => {
       if (typeof window.ihV2Init === 'function') window.ihV2Init();
       else if (typeof window.intelHubInit === 'function') window.intelHubInit();
+      if (typeof window.hubUnlockInit === 'function') window.hubUnlockInit();
     }, 50);
   }
   _activePageId = pageId;
