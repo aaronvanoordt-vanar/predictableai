@@ -2722,31 +2722,28 @@ html, body {
         </div>
       </div>
 
-      <!-- Technologies -->
-      <div class="chart-card" style="padding:14px">
-        <div style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--gold);margin-bottom:10px">Technologies</div>
-        <div style="display:flex;flex-wrap:wrap;gap:5px">
-          <span class="icp-tag icp-tag-active">HubSpot</span>
-          <span class="icp-tag icp-tag-active">Salesforce</span>
-          <span class="icp-tag icp-tag-active">Pipedrive</span>
-          <span class="icp-tag">Zoho CRM</span>
-          <span class="icp-tag">Monday.com</span>
-          <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px">+ Add</button>
-        </div>
-      </div>
+      <!-- Technologies (autocomplete real Apollo) -->
+<div class="chart-card" style="padding:14px">
+  <div style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--gold);margin-bottom:10px">Technologies</div>
+  <input id="icp-tech-input" type="text" placeholder="Empieza a escribir: salesforce, hubspot..."
+         style="width:100%;padding:6px 10px;background:var(--surface3);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;margin-bottom:8px">
+  <div style="display:flex;flex-wrap:wrap;gap:5px" id="icp-tech-active"></div>
+</div>
 
-      <!-- Company -->
-      <div class="chart-card" style="padding:14px">
-        <div style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--gold);margin-bottom:10px">Company</div>
-        <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Exclude competitors</div>
-        <div style="display:flex;flex-wrap:wrap;gap:5px">
-          <span class="icp-tag icp-tag-exclude">HubSpot</span>
-          <span class="icp-tag icp-tag-exclude">Salesforce</span>
-          <span class="icp-tag icp-tag-exclude">Apollo.io</span>
-          <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px">+ Add</button>
-        </div>
-      </div>
-    </div>
+
+      <!-- Company (autocomplete real) -->
+<div class="chart-card" style="padding:14px">
+  <div style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--gold);margin-bottom:10px">Company</div>
+  <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Empresas similares (referencia)</div>
+  <input id="icp-company-input" type="text" placeholder="Buscar empresa..."
+         style="width:100%;padding:6px 10px;background:var(--surface3);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;margin-bottom:8px">
+  <div style="display:flex;flex-wrap:wrap;gap:5px" id="icp-company-list"></div>
+ 
+  <div style="font-size:11px;color:var(--text2);margin:14px 0 8px">Exclude competitors</div>
+  <input id="icp-exclude-comp-input" type="text" placeholder="Buscar empresa a excluir..."
+         style="width:100%;padding:6px 10px;background:var(--surface3);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;margin-bottom:8px">
+  <div style="display:flex;flex-wrap:wrap;gap:5px" id="icp-exclude-list"></div>
+</div>
 
     <!-- RIGHT: ICP score + context -->
     <div style="display:flex;flex-direction:column;gap:14px">
@@ -4970,17 +4967,12 @@ function removeCompetitor(btn) {
 const MGMT_COUNTS = { Owner:'2.6M', Founder:'2.0M', 'C suite':'2.6M', Partner:'1.8M', Vp:'3.2M', Head:'3.3M', Director:'9.9M', Manager:'43.5M', Senior:'11.4M', Entry:'156.6M', Intern:'1.9M' };
 
 function syncIcpFromMatrix() {
-  // Management Level
-  const mgmtEl = document.getElementById('icp-mgmt-level');
-  if (mgmtEl) {
-    mgmtEl.innerHTML = '';
-    document.querySelectorAll('#matrix-step-4 input[id^="ml-"]').forEach(cb => {
-      const row = document.createElement('div');
-      row.className = 'icp-filter-row';
-      row.innerHTML = `<input type="checkbox" ${cb.checked ? 'checked' : ''}> <span>${cb.value}</span><span class="count">${MGMT_COUNTS[cb.value] || ''}</span>`;
-      mgmtEl.appendChild(row);
-    });
+  // Reemplazada por apollo-icp-chips.js que carga datos REALES de Apollo
+  if (window.apolloChips) {
+    window.apolloChips.populateICPBuilder();
   }
+}
+
 
   // Departments
   const deptEl = document.getElementById('icp-departments');
