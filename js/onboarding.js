@@ -146,12 +146,6 @@
       $('inp-linkedin').focus();
       return;
     }
-    if (!phone) {
-      showStatus('err', 'Ingresa un teléfono de contacto.');
-      $('inp-phone').focus();
-      return;
-    }
-
     btn.disabled = true;
     showStatus('inf', '<span class="spinner"></span> Guardando y analizando tu empresa…');
 
