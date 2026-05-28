@@ -375,28 +375,51 @@
     };
 
     try {
-      const { error } = await window.supabaseClient
-        .from('intel_hub_intake')
-        .upsert({
-          user_id:            state.user.id,
-          hub_unlocked:       true,
-          hub_unlocked_at:    new Date().toISOString(),
-          hub_unlock_signals: payload,
-          what_to_know:       JSON.stringify(payload),
-        }, { onConflict: 'user_id' });
 
-      if (error) throw error;
+  const { error } = await window.supabaseClient
 
-      $('#ty-wishes').textContent = state.selected.size;
-      $('#ty-custom').textContent = state.customReq.length;
-      $('#ty-impact').textContent = impactLabel(state.impact);
-      $('#survey').style.display = 'none';
-      $('#ty').classList.add('show');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+    .from('intel_hub_intake')
 
-      // Auto-redirect to the hub after a beat.
-      setTimeout(() => { window.location.replace(HUB_PATH); }, 2400);
-    } catch (e) {
+    .upsert({
+
+      user_id:            state.user.id,
+
+      hub_unlocked:       true,
+
+      hub_unlocked_at:    new Date().toISOString(),
+
+      hub_unlock_signals: payload,
+
+      what_to_know:       JSON.stringify(payload),
+
+    }, { onConflict: 'user_id' });
+
+  if (error) throw error;
+
+  // ── NUEVO: trigger enrich-company que encadenará con generate-intel-hub ──
+
+  // Es non-blocking: la edge function responde 202 inmediatamente y corre en background
+
+  triggerEnrichment().catch(err => console.warn('[unlock] enrich failed:', err));
+
+  $('#ty-wishes').textContent = state.selected.size;
+
+  $('#ty-custom').textContent = state.customReq.length;
+
+  $('#ty-impact').textContent = impactLabel(state.impact);
+
+  $('#survey').style.display = 'none';
+
+  $('#ty').classList.add('show');
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  // Auto-redirect to the hub after a beat.
+
+  setTimeout(() => { window.location.replace(HUB_PATH); }, 2400);
+
+}
+ catch (e) {
       console.error('[feedback] submit', e);
       btn.disabled = false;
       btn.innerHTML = '🔓 Desbloquear mi Intelligence Hub →';
@@ -428,4 +451,82 @@
     return String(s).replace(/[&<>"']/g, m => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]));
   }
   function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+  async function triggerEnrichment() {
+
+  try {
+
+    // 1. Obtener LinkedIn URL del profile
+
+    const { data: profile } = await window.supabaseClient
+
+      .from('profiles')
+
+      .select('linkedin_company_url')
+
+      .eq('id', state.user.id)
+
+      .maybeSingle();
+
+    const linkedinUrl = profile?.linkedin_company_url;
+
+    if (!linkedinUrl) {
+
+      console.warn('[unlock] no linkedin URL, skipping enrich');
+
+      return;
+
+    }
+
+    // 2. Llamar enrich-company con JWT del user
+
+    const session = (await window.supabaseClient.auth.getSession()).data.session;
+
+    if (!session) {
+
+      console.warn('[unlock] no session, skipping enrich');
+
+      return;
+
+    }
+
+    const supabaseUrl = window.SUPABASE_CONFIG?.url ?? '';
+
+    const enrichUrl = supabaseUrl + '/functions/v1/enrich-company';
+
+    const resp = await fetch(enrichUrl, {
+
+      method: 'POST',
+
+      headers: {
+
+        'Content-Type': 'application/json',
+
+        'Authorization': 'Bearer ' + session.access_token,
+
+      },
+
+      body: JSON.stringify({ linkedin_url: linkedinUrl }),
+
+    });
+
+    if (resp.ok) {
+
+      console.log('[unlock] enrich-company kicked off ✓');
+
+    } else {
+
+      const txt = await resp.text();
+
+      console.warn('[unlock] enrich-company returned', resp.status, txt.slice(0, 200));
+
+    }
+
+  } catch (e) {
+
+    console.error('[unlock] triggerEnrichment failed:', e);
+
+  }
+
+}
+
 })();
