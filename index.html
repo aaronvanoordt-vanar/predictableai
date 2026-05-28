@@ -4170,6 +4170,8 @@ function nav(el, pageId) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const target = document.getElementById('page-' + pageId);
   if (target) { target.classList.add('active'); target.classList.add('fade-in'); }
+  const mainEl = document.querySelector('main.main');
+  if (mainEl) mainEl.scrollTop = 0;
   window.scrollTo(0,0);
 
   // Intelligence Hub lifecycle
