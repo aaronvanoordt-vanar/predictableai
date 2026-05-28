@@ -4038,15 +4038,15 @@ function switchReportTab(el, tabId) {
 function initReportCharts() {
   if (window._repChartsInit) return;
   window._repChartsInit = true;
-  new Chart(document.getElementById('sdrScoreChart'), {
+  try { if (document.getElementById('sdrScoreChart')) { new Chart(document.getElementById('sdrScoreChart'), {
     type: 'bar',
     data: {
       labels: ['Camila Soto','Miguel Torres','Valeria Cruz','Diego Reyes'],
       datasets: [{ label: 'Score', data: [88,82,74,61], backgroundColor: ['#10B981','#2563EB','#2563EB','#F59E0B'], borderRadius: 6 }]
     },
     options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#8A9BBF'}}, y:{min:0,max:100,grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#8A9BBF'}} } }
-  });
-  new Chart(document.getElementById('sdrMeetingsChart'), {
+  }); } } catch(e) { console.warn('[chart skip sdrScoreChart]', e.message); }
+  try { if (document.getElementById('sdrMeetingsChart')) { new Chart(document.getElementById('sdrMeetingsChart'), {
     type: 'bar',
     data: {
       labels: ['S12','S13','S14','S15'],
@@ -4058,28 +4058,28 @@ function initReportCharts() {
       ]
     },
     options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#8A9BBF',font:{size:10}}}}, scales:{ x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#8A9BBF'}}, y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#8A9BBF'}} } }
-  });
+  }); } } catch(e) { console.warn('[chart skip sdrMeetingsChart]', e.message); }
 }
 
 function initDealsCharts() {
   if (window._dealsChartsInit) return;
   window._dealsChartsInit = true;
-  new Chart(document.getElementById('lostReasonsChart'), {
+  try { if (document.getElementById('lostReasonsChart')) { new Chart(document.getElementById('lostReasonsChart'), {
     type: 'doughnut',
     data: {
       labels: ['Ya tienen herramienta','Sin urgencia creada','Precio','No champion interno','Sin follow-up'],
       datasets: [{ data: [34,22,18,14,12], backgroundColor: ['#EF4444','#F59E0B','#00C4D4','#2563EB','#6B7280'], borderWidth:0 }]
     },
     options: { responsive:true, maintainAspectRatio:false, cutout:'60%', plugins:{legend:{position:'bottom',labels:{color:'#8A9BBF',font:{size:10},padding:8}}} }
-  });
-  new Chart(document.getElementById('lostStageChart'), {
+  }); } } catch(e) { console.warn('[chart skip lostReasonsChart]', e.message); }
+  try { if (document.getElementById('lostStageChart')) { new Chart(document.getElementById('lostStageChart'), {
     type: 'bar',
     data: {
       labels: ['Discovery','Demo','Propuesta','Negociación'],
       datasets: [{ label: 'Deals perdidos', data: [8,5,7,3], backgroundColor: '#E84040', borderRadius: 4 }]
     },
     options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#8A9BBF'}}, y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#8A9BBF'}} } }
-  });
+  }); } } catch(e) { console.warn('[chart skip lostStageChart]', e.message); }
 }
 async function loadLastMeeting() {
   const loading = document.getElementById('last-meeting-loading');
@@ -4208,7 +4208,7 @@ const chartDefaults = {
 
 window.addEventListener('DOMContentLoaded', () => {
   // Pipeline chart
-  new Chart(document.getElementById('pipelineChart'), {
+  try { if (document.getElementById('pipelineChart')) { new Chart(document.getElementById('pipelineChart'), {
     type: 'bar',
     data: {
       labels: ['Sem 12','Sem 13','Sem 14','Sem 15'],
@@ -4219,20 +4219,20 @@ window.addEventListener('DOMContentLoaded', () => {
       ]
     },
     options: { ...chartDefaults, responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#5A6279', font: { size: 11 } } } } }
-  });
+  }); } } catch(e) { console.warn('[chart skip pipelineChart]', e.message); }
 
   // Channel donut
-  new Chart(document.getElementById('channelChart'), {
+  try { if (document.getElementById('channelChart')) { new Chart(document.getElementById('channelChart'), {
     type: 'doughnut',
     data: {
       labels: ['Email', 'LinkedIn', 'WhatsApp', 'SMS'],
       datasets: [{ data: [52, 28, 14, 6], backgroundColor: ['#2563EB','#00C4D4','#10B981','#F59E0B'], borderWidth: 0 }]
     },
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: '#5A6279', font: { size: 11 }, padding: 12 } } }, cutout: '65%' }
-  });
+  }); } } catch(e) { console.warn('[chart skip channelChart]', e.message); }
 
   // Positioning scatter
-  new Chart(document.getElementById('posChart'), {
+  try { if (document.getElementById('posChart')) { new Chart(document.getElementById('posChart'), {
     type: 'scatter',
     data: {
       datasets: [
@@ -4251,10 +4251,10 @@ window.addEventListener('DOMContentLoaded', () => {
         y: { min:0, max:10, title: { display:true, text:'Amplitud de funciones', color:'#4E5F7A' }, grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { color: '#5A6279' } }
       }
     }
-  });
+  }); } } catch(e) { console.warn('[chart skip posChart]', e.message); }
 
   // Trends line chart
-  new Chart(document.getElementById('trendsChart'), {
+  try { if (document.getElementById('trendsChart')) { new Chart(document.getElementById('trendsChart'), {
     type: 'line',
     data: {
       labels: ['May','Jun','Jul','Ago','Sep','Oct','Nov','Dic','Ene','Feb','Mar','Abr'],
@@ -4265,7 +4265,7 @@ window.addEventListener('DOMContentLoaded', () => {
       ]
     },
     options: { ...chartDefaults, responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#5A6279', font: { size: 10 } } } } }
-  });
+  }); } } catch(e) { console.warn('[chart skip trendsChart]', e.message); }
 });
 
 // ── MSG TABS ──
