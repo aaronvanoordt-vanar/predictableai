@@ -1,17 +1,15 @@
 /**
- * intel-hub-real-data.js
+ * intel-hub-real-data.js  (v2 — MutationObserver, no timeout)
  * ────────────────────────────────────────────────────────────────────
  * Replaces the MOCK data in intel-hub-v2.js with REAL data from
- * intelligence_hub_reports. Overrides DOM elements that v2 renders.
+ * intelligence_hub_reports.
  *
- * Targets these v2 sections:
- *   1. Page header stats: #v2-signals-count, #v2-actions-count, #v2-threats-count
- *   2. Briefing Hero: #bh-headline, #bh-item-{0,1,2}, #bh-meta-{0,1,2},
- *      #bh-time, #bh-conf, #bh-sources, #bh-agents
- *   3. Signal Stream: #ss-list  (replaces .ss-row children)
- *   4. Action Queue: .aq-list   (replaces .aq-row children)
- *
- * Load AFTER intel-hub.js and intel-hub-v2.js in your HTML.
+ * Cambios respecto a v1:
+ *   - Ya NO timeoutea. Usa MutationObserver para esperar a que el user
+ *     navegue al Intel Hub y v2 renderice #bh-headline.
+ *   - Re-corre el override cada vez que v2 re-renderiza (al navegar
+ *     entre pages, refrescar, etc.).
+ *   - Loadea reports una sola vez al inicio + Realtime para updates.
  */
 (function () {
   'use strict';
@@ -30,13 +28,14 @@
     market_architecture:          { kind: 'MKT',  who_es: 'TAM/SAM/SOM', who_en: 'TAM/SAM/SOM', tone: 'k-c' },
   };
 
-  const URGENCY_TONE       = { high: 'r', medium: 'g', low: 'b' };
-  const URGENCY_LABEL_ES   = { high: 'Crítico', medium: 'Oportunidad', low: 'Señal' };
-  const URGENCY_LABEL_EN   = { high: 'Critical', medium: 'Opportunity', low: 'Signal' };
+  const URGENCY_TONE     = { high: 'r', medium: 'g', low: 'b' };
+  const URGENCY_LABEL_ES = { high: 'Crítico', medium: 'Oportunidad', low: 'Señal' };
+  const URGENCY_LABEL_EN = { high: 'Critical', medium: 'Opportunity', low: 'Signal' };
 
   let reports = {};
   let supabaseChannel = null;
-  let booted = false;
+  let observer = null;
+  let lastOverrideAt = 0;
 
   // ── Boot ──────────────────────────────────────────────────────────────────────
   if (document.readyState === 'loading') {
@@ -46,29 +45,54 @@
   }
 
   function boot() {
-    // Wait for supabase + v2 DOM to be ready
-    let tries = 0;
-    const iv = setInterval(() => {
-      tries++;
-      const v2Ready = document.getElementById('bh-headline')
-                   && document.getElementById('ss-list')
-                   && document.querySelector('.aq-list');
-      if (window.supabaseClient && v2Ready) {
-        clearInterval(iv);
-        if (!booted) { booted = true; init(); }
-      } else if (tries > 60) {  // 60 * 250ms = 15s
-        clearInterval(iv);
-        console.warn('[intel-real] timed out waiting for supabase + v2 DOM (tries:', tries, ')');
-      }
-    }, 250);
+    console.log('[intel-real] booted, waiting for supabaseClient + v2 DOM');
+    // 1) Pre-load reports as soon as Supabase is ready
+    waitForSupabase().then(loadReports).then(subscribeRealtime);
+
+    // 2) Watch the DOM forever. When #bh-headline appears (user navigates to
+    //    intel hub and v2 renders), apply the override.
+    setupObserver();
+
+    // 3) Apply override now in case v2 already rendered (e.g. deep-linked)
+    if (document.getElementById('bh-headline')) {
+      console.log('[intel-real] v2 already rendered, applying override now');
+      tryOverride();
+    }
   }
 
-  async function init() {
-    console.log('[intel-real] init');
-    await loadReports();
-    subscribeRealtime();
+  async function waitForSupabase() {
+    while (!window.supabaseClient) {
+      await new Promise(r => setTimeout(r, 200));
+    }
   }
 
+  function setupObserver() {
+    if (observer) return;
+    observer = new MutationObserver((mutations) => {
+      // Cheap check: did anything that could be the brief hero appear?
+      const brief = document.getElementById('bh-headline');
+      if (!brief) return;
+      // Throttle: don't override more than once every 500ms
+      const now = Date.now();
+      if (now - lastOverrideAt < 500) return;
+      tryOverride();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    console.log('[intel-real] MutationObserver active on body');
+  }
+
+  function tryOverride() {
+    const headline = document.getElementById('bh-headline');
+    if (!headline) return;
+    // Only override if v2 has finished rendering (look for all 3 hero slots)
+    if (!document.getElementById('bh-item-0')) return;
+
+    lastOverrideAt = Date.now();
+    console.log('[intel-real] v2 detected → applying override');
+    overrideAllUI();
+  }
+
+  // ── Data loading ──────────────────────────────────────────────────────────────
   async function loadReports() {
     try {
       const { data: { user } } = await window.supabaseClient.auth.getUser();
@@ -79,17 +103,16 @@
         .select('section_key, status, content, generated_at, error_message')
         .eq('user_id', user.id);
 
-      if (error) { console.warn('[intel-real] load error:', error); return; }
+      if (error) { console.warn('[intel-real] load:', error); return; }
 
       reports = {};
       (data || []).forEach(r => { reports[r.section_key] = r; });
 
-      const readyCount = Object.values(reports).filter(r => r.status === 'ready').length;
-      console.log(`[intel-real] loaded ${Object.keys(reports).length} reports (${readyCount} ready)`);
+      const ready = Object.values(reports).filter(r => r.status === 'ready').length;
+      console.log(`[intel-real] loaded ${Object.keys(reports).length} reports (${ready} ready)`);
 
-      // Override v2 mocks AFTER v2 finishes its countUp animations (~1.5s)
-      // If reports are already ready when v2 just rendered, give v2 time to finish
-      setTimeout(() => overrideAllUI(), 100);
+      // Try to override now (might fire before v2 renders, no problem)
+      tryOverride();
     } catch (e) {
       console.error('[intel-real] load exception:', e);
     }
@@ -106,15 +129,14 @@
         () => { console.log('[intel-real] realtime change'); loadReports(); }
       )
       .subscribe();
+    console.log('[intel-real] subscribed to Realtime');
   }
 
   // ── Main override pipeline ────────────────────────────────────────────────────
   function overrideAllUI() {
     const readyReports = Object.values(reports).filter(r => r.status === 'ready' && r.content);
-
     if (readyReports.length === 0) {
       showGeneratingState();
-      // Also clear stats
       setHeaderStat('v2-signals-count', 0);
       setHeaderStat('v2-actions-count', 0);
       setHeaderStat('v2-threats-count', 0);
@@ -144,7 +166,7 @@
     });
   }
 
-  // ── Header stats (top right counters) ─────────────────────────────────────────
+  // ── Header stats ──────────────────────────────────────────────────────────────
   function overrideHeaderStats(readyReports) {
     let signals = 0, actions = 0, threats = 0;
     readyReports.forEach(r => {
@@ -164,12 +186,11 @@
     if (el) el.textContent = String(value);
   }
 
-  // ── Briefing Hero ────────────────────────────────────────────────────────────
+  // ── Briefing Hero ─────────────────────────────────────────────────────────────
   function overrideBriefingHero(readyReports) {
     const lang = currentLang();
     const dailyKeys = ['industry_insight_digest', 'competitor_threat_radar', 'prospecting_recommendations'];
 
-    // Collect items from daily reports first (priority)
     const items = [];
     dailyKeys.forEach(key => {
       const r = reports[key];
@@ -183,7 +204,6 @@
       }
     });
 
-    // Fallback to all ready reports if no daily items
     if (items.length === 0) {
       readyReports.forEach(r => {
         if (Array.isArray(r.content?.items)) {
@@ -197,13 +217,11 @@
       });
     }
 
-    // Sort by urgency
     const urgRank = { high: 0, medium: 1, low: 2 };
     items.sort((a, b) => (urgRank[a.urgency] ?? 3) - (urgRank[b.urgency] ?? 3));
 
     const top3 = items.slice(0, 3);
 
-    // Headline
     const headline = document.getElementById('bh-headline');
     if (headline) {
       headline.textContent = top3.length > 0
@@ -211,7 +229,6 @@
         : (lang === 'es' ? 'Tu Intelligence Hub está activo.' : 'Your Intelligence Hub is live.');
     }
 
-    // Items
     [0, 1, 2].forEach(i => {
       const item = top3[i];
       const txt  = document.getElementById(`bh-item-${i}`);
@@ -242,43 +259,28 @@
     });
   }
 
-  // ── Briefing Hero footer (time / sources / agents / confidence) ──────────────
+  // ── Briefing Hero footer (counters) ───────────────────────────────────────────
   function overrideBriefFooter(readyReports) {
-    // bh-time = latest generated_at hour:minute
-    const latest = readyReports
-      .map(r => r.generated_at)
-      .filter(Boolean)
-      .sort()
-      .reverse()[0];
+    const latest = readyReports.map(r => r.generated_at).filter(Boolean).sort().reverse()[0];
     if (latest) {
       const timeEl = document.getElementById('bh-time');
       if (timeEl) timeEl.textContent = formatTime(latest);
     }
-
-    // bh-sources = total items across all reports
     let totalSources = 0;
-    readyReports.forEach(r => {
-      if (Array.isArray(r.content?.items)) totalSources += r.content.items.length;
-    });
+    readyReports.forEach(r => { if (Array.isArray(r.content?.items)) totalSources += r.content.items.length; });
     setHeaderStat('bh-sources', totalSources);
-
-    // bh-agents = unique section keys that are ready
     setHeaderStat('bh-agents', readyReports.length);
-
-    // bh-conf = average confidence (estimated from urgency mix)
     let totalConf = 0, count = 0;
     readyReports.forEach(r => { totalConf += estimateConfidence(r); count++; });
-    const avgConf = count > 0 ? Math.round(totalConf / count) : 0;
-    setHeaderStat('bh-conf', avgConf);
+    setHeaderStat('bh-conf', count > 0 ? Math.round(totalConf / count) : 0);
   }
 
-  // ── Signal Stream ────────────────────────────────────────────────────────────
+  // ── Signal Stream ─────────────────────────────────────────────────────────────
   function overrideSignalStream(readyReports) {
     const lang = currentLang();
     const list = document.getElementById('ss-list');
     if (!list) return;
 
-    // Build signals from all reports
     const signals = [];
     readyReports.forEach(r => {
       const meta = SECTION_META[r.section_key];
@@ -294,13 +296,11 @@
       });
     });
 
-    // Sort by ts (most recent first)
     signals.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
 
     if (signals.length === 0) {
       list.innerHTML = `<div class="ss-row" style="opacity:.5;padding:14px">
-        <span class="ss-ts">—</span>
-        <span></span>
+        <span class="ss-ts">—</span><span></span>
         <div><div class="ss-who">Sin señales aún</div>
         <div class="ss-evt">${lang === 'es' ? 'Los agentes están analizando…' : 'Agents are analyzing…'}</div></div>
         <span></span><span></span>
@@ -308,7 +308,6 @@
       return;
     }
 
-    // Replace existing rows with our real signals (max 8)
     list.innerHTML = signals.slice(0, 8).map(s => `
       <div class="ss-row">
         <span class="ss-ts">${escapeHtml(s.ts)}</span>
@@ -322,17 +321,15 @@
       </div>
     `).join('');
 
-    // Pause the v2 mock stream by setting a flag
     window.__intelRealOverride = true;
   }
 
-  // ── Action Queue ─────────────────────────────────────────────────────────────
+  // ── Action Queue ──────────────────────────────────────────────────────────────
   function overrideActionQueue(readyReports) {
     const lang = currentLang();
     const list = document.querySelector('.aq-card .aq-list');
     if (!list) return;
 
-    // Build actions from `action` field of each report
     const actions = [];
     readyReports.forEach(r => {
       if (!r.content?.action) return;
@@ -378,21 +375,17 @@
     `).join('');
   }
 
-  // ── Helpers ──────────────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────────
   function currentLang() {
     return document.body.getAttribute('data-lang') === 'en' ? 'en' : 'es';
   }
-
   function formatTime(iso) {
     if (!iso) return '';
     try {
       const d = new Date(iso);
-      const h = String(d.getHours()).padStart(2, '0');
-      const m = String(d.getMinutes()).padStart(2, '0');
-      return `${h}:${m}`;
+      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
     } catch (e) { return ''; }
   }
-
   function formatRelTime(iso, lang) {
     if (!iso) return '';
     try {
@@ -405,27 +398,26 @@
       return lang === 'es' ? `hace ${diffD}d` : `${diffD}d ago`;
     } catch (e) { return ''; }
   }
-
   function estimateConfidence(r) {
     if (!Array.isArray(r.content?.items)) return 75;
     const highCount = r.content.items.filter(i => i.urgency === 'high').length;
     return Math.min(95, 70 + highCount * 5);
   }
-
   function stripStr(s, max) {
     if (!s) return '';
     const str = String(s).trim();
     return str.length > max ? str.slice(0, max - 1) + '…' : str;
   }
-
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[m]));
   }
 
-  // ── Expose manual triggers for debugging ──────────────────────────────────────
+  // ── Debug helpers ─────────────────────────────────────────────────────────────
   window.intelHubReload    = loadReports;
   window.intelHubOverride  = overrideAllUI;
   window.__intelHubReports = () => reports;
+
+  console.log('[intel-real] script loaded (MutationObserver mode)');
 })();
