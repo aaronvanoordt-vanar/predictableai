@@ -1,35 +1,30 @@
 /**
- * intel-hub-cadence-tabs.js (v3-fix-UI — premium look + cite sanitizer)
+ * intel-hub-cadence-tabs.js (v4 — executive command center)
+ * UI-only redesign. All agent/backend/data logic unchanged.
  */
 
 (function () {
   'use strict';
 
   const SECTIONS = [
-    { key: 'industry_insight_digest',      title: 'Industry Insight Digest',      cadence: 'daily',   order: 1, locked: false, icon: '📡' },
-    { key: 'competitor_threat_radar',      title: 'Competitor Threat Radar',      cadence: 'daily',   order: 2, locked: false, icon: '⚡' },
-    { key: 'prospecting_recommendations',  title: 'Prospecting Recommendations',  cadence: 'daily',   order: 3, locked: true,  icon: '🎯' },
-    { key: 'benchmark',                    title: 'Benchmark',                    cadence: 'weekly',  order: 1, locked: false, icon: '📊' },
-    { key: 'revenue_opportunities',        title: 'Revenue Opportunities',        cadence: 'weekly',  order: 2, locked: false, icon: '💰' },
-    { key: 'strategic_actions',            title: 'Strategic Actions',            cadence: 'weekly',  order: 3, locked: false, icon: '🎬' },
-    { key: 'consumer_behavioral_analysis', title: 'Consumer Behavioral Analysis', cadence: 'monthly', order: 1, locked: false, icon: '🧠' },
-    { key: 'market_snapshot',              title: 'Market Snapshot',              cadence: 'monthly', order: 2, locked: false, icon: '🗺️' },
-    { key: 'future_innovations',           title: 'Future Innovations',           cadence: 'monthly', order: 3, locked: false, icon: '🔮' },
+    { key: 'revenue_opportunities',        title: 'Revenue Opportunities',   cadence: 'weekly',  order: 1, locked: false, icon: '💰', color: '#00C878' },
+    { key: 'competitor_threat_radar',      title: 'Competitor Threats',      cadence: 'daily',   order: 2, locked: false, icon: '⚡', color: '#E84040' },
+    { key: 'industry_insight_digest',      title: 'Market Signals',          cadence: 'daily',   order: 3, locked: false, icon: '📡', color: '#2563EB' },
+    { key: 'strategic_actions',            title: 'Strategic Actions',       cadence: 'weekly',  order: 4, locked: false, icon: '🎬', color: '#F59E0B' },
+    { key: 'benchmark',                    title: 'Competitive Benchmark',   cadence: 'weekly',  order: 5, locked: false, icon: '📊', color: '#8B5CF6', fullWidth: true },
+    { key: 'consumer_behavioral_analysis', title: 'Buyer Behavior',          cadence: 'monthly', order: 6, locked: false, icon: '🧠', color: '#00C4D4' },
+    { key: 'market_snapshot',              title: 'Market Snapshot',         cadence: 'monthly', order: 7, locked: false, icon: '🗺️', color: '#6366F1' },
+    { key: 'future_innovations',           title: 'Future Watch',            cadence: 'monthly', order: 8, locked: false, icon: '🔮', color: '#A855F7', fullWidth: true },
+    { key: 'prospecting_recommendations',  title: 'Prospecting Intel',       cadence: 'daily',   order: 9, locked: true,  icon: '🎯', color: '#F59E0B', fullWidth: true },
   ];
-  const CADENCES = [
-    { key: 'daily',     label: 'Daily' },
-    { key: 'weekly',    label: 'Weekly' },
-    { key: 'monthly',   label: 'Monthly' },
-    { key: 'quarterly', label: 'Quarterly', comingSoon: true },
-    { key: 'yearly',    label: 'Yearly',    comingSoon: true },
-  ];
+
   const STATE = {
-    user: null, activeTab: 'daily',
+    user: null,
     reports: {}, feedback: {}, learning: {},
     generating: false, initialized: false,
   };
 
-  function log(...a) { console.log('[intel-cadence]', ...a); }
+  function log(...a) { console.log('[intel-hub-v4]', ...a); }
 
   async function waitForSupabase() {
     for (let i = 0; i < 80; i++) { if (window.supabaseClient) return true; await new Promise(r => setTimeout(r, 100)); }
@@ -55,11 +50,13 @@
     log(`loaded ${data?.length || 0} reports`);
     renderIfMounted();
   }
+
   async function loadFeedback() {
     const { data } = await window.supabaseClient.from('intel_hub_feedback').select('section_key, item_index, rating').eq('user_id', STATE.user.id);
     STATE.feedback = {};
     (data || []).forEach(f => { STATE.feedback[`${f.section_key}_${f.item_index}`] = f.rating; });
   }
+
   async function loadLearning() {
     const { data } = await window.supabaseClient.from('intel_hub_learning').select('*').eq('user_id', STATE.user.id);
     STATE.learning = {};
@@ -67,7 +64,7 @@
   }
 
   function subscribeRealtime() {
-    window.supabaseClient.channel('intel-v3-' + STATE.user.id)
+    window.supabaseClient.channel('intel-v4-' + STATE.user.id)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'intelligence_hub_reports',
         filter: `user_id=eq.${STATE.user.id}`,
@@ -85,194 +82,472 @@
     const tryMount = () => {
       const page = document.getElementById('page-mi-dashboard');
       if (!page) return false;
-      if (page.querySelector('.ih-cadence-wrap')) return true;
-      injectTabs(page);
+      if (page.querySelector('.ihx-wrap')) return true;
+      injectDashboard(page);
       return true;
     };
     if (tryMount()) return;
     new MutationObserver(() => tryMount()).observe(document.body, { childList: true, subtree: true });
   }
 
-  function injectTabs(page) {
-    const wrap = document.createElement('section');
-    wrap.className = 'ih-cadence-wrap';
-    wrap.innerHTML = `
-      <div class="ih-toolbar">
-        <button class="ih-btn-generate" id="ih-btn-generate">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
-          <span>Generar / Actualizar</span>
-        </button>
-        <span class="ih-toolbar-hint">~10-14 creditos por generacion completa</span>
-      </div>
-      <div class="ih-cadence-tabs" role="tablist">
-        ${CADENCES.map(c => `<button class="ih-tab ${c.key === STATE.activeTab ? 'is-active' : ''}" data-tab="${c.key}" ${c.comingSoon ? 'data-soon="1"' : ''}><span>${c.label}</span>${c.comingSoon ? '<em>Pronto</em>' : ''}</button>`).join('')}
-      </div>
-      <div class="ih-progress" id="ih-progress" style="display:none"></div>
-      <div class="ih-cadence-body" id="ih-cadence-body"></div>`;
-    const briefHero = page.querySelector('#brief-hero, .briefing-hero, .v2-briefing');
-    if (briefHero?.parentNode) briefHero.parentNode.insertBefore(wrap, briefHero.nextSibling);
-    else page.appendChild(wrap);
+  // ─── INJECTION ───────────────────────────────────────────
 
-    wrap.querySelectorAll('.ih-tab').forEach(btn => btn.addEventListener('click', () => {
-      if (btn.dataset.soon) return;
-      STATE.activeTab = btn.dataset.tab;
-      wrap.querySelectorAll('.ih-tab').forEach(b => b.classList.toggle('is-active', b === btn));
-      renderActiveTab();
-    }));
+  function injectDashboard(page) {
+    const v2Shell = page.querySelector('#ih-v2-shell');
+    if (v2Shell) v2Shell.innerHTML = '';
+    const container = v2Shell || page;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'ihx-wrap';
+    wrap.innerHTML = `
+      <div class="ihx-toolbar">
+        <button class="ihx-btn-generate" id="ih-btn-generate">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+          <span>Actualizar inteligencia</span>
+        </button>
+        <div class="ihx-status-bar">
+          <div class="ihx-status-dot" id="ihx-status-dot"></div>
+          <span class="ihx-status-text" id="ihx-status-text">Cargando…</span>
+        </div>
+        <span class="ihx-toolbar-hint">~10–14 créditos por generación completa</span>
+      </div>
+      <div class="ihx-progress" id="ih-progress" style="display:none"></div>
+      <div id="ihx-summary"></div>
+      <div class="ihx-modules" id="ihx-body"></div>`;
+
+    container.appendChild(wrap);
+
     wrap.querySelector('#ih-btn-generate').addEventListener('click', () => generateAll({ force: false }));
     wrap.addEventListener('click', async (ev) => {
       const fb = ev.target.closest('[data-fb]');
-      if (fb) { ev.preventDefault(); await submitFeedback(fb); return; }
-      const lt = ev.target.closest('[data-learn-toggle]');
-      if (lt) lt.parentElement.querySelector('.ih-learn-panel')?.classList.toggle('show');
+      if (fb) { ev.preventDefault(); await submitFeedback(fb); }
     });
+
     injectStyles();
-    renderActiveTab();
+    renderDashboard();
   }
 
-  function renderIfMounted() { if (document.getElementById('ih-cadence-body')) renderActiveTab(); overrideHeaderStats(); }
-
-  function renderActiveTab() {
-    const body = document.getElementById('ih-cadence-body');
-    if (!body) return;
-    const cad = CADENCES.find(c => c.key === STATE.activeTab);
-    if (cad?.comingSoon) { body.innerHTML = `<div class="ih-empty"><h3>${cad.label} — proximamente</h3><p>Esta cadencia llega en una proxima release.</p></div>`; return; }
-    const sections = SECTIONS.filter(s => s.cadence === STATE.activeTab).sort((a, b) => a.order - b.order);
-    body.innerHTML = sections.map(renderSection).join('');
+  function renderIfMounted() {
+    if (document.getElementById('ihx-body')) renderDashboard();
+    overrideHeaderStats();
   }
 
-  // ────────── Sanitizer: limpia <cite index="..."> y otros tags raros del agente ──────────
-  function cleanText(s) {
-    if (!s) return '';
-    let txt = String(s);
-    // Sacar tags <cite index="X,Y">contenido</cite> dejando solo el contenido
-    txt = txt.replace(/<cite\s+index="[^"]*">([\s\S]*?)<\/cite>/gi, '$1');
-    // Sacar cualquier tag HTML residual
-    txt = txt.replace(/<\/?[a-z][^>]*>/gi, '');
-    // Colapsar espacios múltiples
-    txt = txt.replace(/\s+/g, ' ').trim();
-    return txt;
+  // ─── DASHBOARD ───────────────────────────────────────────
+
+  function renderDashboard() {
+    updateStatus();
+    renderExecutiveSummary();
+    renderModules();
   }
 
-  // Extrae los índices de cita del texto para mostrarlos como pills al final
-  function extractCiteIndices(s) {
-    if (!s) return [];
-    const idxs = new Set();
-    const re = /<cite\s+index="([^"]+)">/gi;
-    let m;
-    while ((m = re.exec(s))) {
-      m[1].split(',').forEach(n => idxs.add(n.trim()));
-    }
-    return Array.from(idxs).sort((a, b) => Number(a) - Number(b));
-  }
+  function updateStatus() {
+    const dot = document.getElementById('ihx-status-dot');
+    const txt = document.getElementById('ihx-status-text');
+    if (!dot || !txt) return;
 
-  function renderSection(s) {
-    const rep = STATE.reports[s.key];
-    const learn = STATE.learning[s.key];
-    const rulesCount = learn?.distilled_rules?.length || 0;
-    let inner;
-    if (!rep) {
-      inner = `<div class="ih-state ih-state-empty">
-        <div class="ih-state-ico">○</div>
-        <div class="ih-state-text">Sin generar — apretá <strong>Generar / Actualizar</strong> arriba</div>
-      </div>`;
-    } else if (rep.status === 'generating') {
-      inner = `<div class="ih-state ih-state-loading">
-        <div class="ih-state-spin"></div>
-        <div class="ih-state-text">Los agentes están generando…</div>
-      </div>`;
-    } else if (rep.status === 'error') {
-      inner = `<div class="ih-state ih-state-error">
-        <div class="ih-state-ico">!</div>
-        <div class="ih-state-text">Error al generar<br><small>${escapeHtml(rep.error_message || 'unknown')}</small></div>
-      </div>`;
+    const reps = Object.values(STATE.reports);
+    const ready = reps.filter(r => r.status === 'ready');
+    const generating = reps.filter(r => r.status === 'generating');
+
+    if (STATE.generating || generating.length > 0) {
+      dot.className = 'ihx-status-dot is-generating';
+      txt.textContent = generating.length > 0 ? `Generando ${generating.length} sección${generating.length !== 1 ? 'es' : ''}…` : 'Generando…';
+    } else if (ready.length > 0) {
+      const latest = ready.reduce((acc, r) => {
+        const d = new Date(r.generated_at || 0);
+        return d > acc ? d : acc;
+      }, new Date(0));
+      dot.className = 'ihx-status-dot is-ready';
+      txt.textContent = `Inteligencia lista · Actualizada ${fmtRelative(latest)}`;
+    } else if (reps.length === 0) {
+      dot.className = 'ihx-status-dot is-empty';
+      txt.textContent = 'Sin generar — haz clic en Actualizar inteligencia';
     } else {
-      const c = rep.content || {};
-      const items = c.items || [];
-      const headline = cleanText(c.headline);
-      const action = cleanText(c.action);
-      inner = `
-        ${headline ? `<p class="ih-headline">${escapeHtml(headline)}</p>` : ''}
-        <div class="ih-items">${items.map((it, i) => renderItem(s, it, i)).join('')}</div>
-        ${action ? `
-          <div class="ih-action">
-            <span class="ih-action-label">Acción recomendada</span>
-            <span class="ih-action-text">${escapeHtml(action)}</span>
-          </div>` : ''}
-        <div class="ih-meta">
-          <span>${rep.generated_at ? '⏱ ' + fmtDate(rep.generated_at) : ''}</span>
-          ${c.confidence != null ? `<span class="ih-confidence">Confianza <strong>${Math.round(c.confidence * 100)}%</strong></span>` : ''}
-          <span class="ih-items-count">${items.length} insight${items.length === 1 ? '' : 's'}</span>
-        </div>`;
+      dot.className = 'ihx-status-dot is-empty';
+      txt.textContent = 'Sin inteligencia disponible';
     }
-    const learnedPanel = rulesCount > 0 ? `
-      <div class="ih-learn">
-        <button class="ih-learn-btn" data-learn-toggle>${rulesCount} reglas aprendidas</button>
-        <div class="ih-learn-panel"><h4>Reglas estables aprendidas del feedback</h4><ul>${(learn.distilled_rules || []).map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul></div>
-      </div>` : '';
-    return `
-      <article class="ih-card ${s.locked ? 'is-locked' : ''}" data-section="${s.key}">
-        <header class="ih-card-h">
-          <div class="ih-card-title">
-            <span class="ih-card-icon">${s.icon}</span>
-            <h3>${escapeHtml(s.title)}</h3>
-          </div>
-          <div class="ih-card-actions">${learnedPanel}${s.locked ? '<span class="ih-lock">Bloqueado</span>' : ''}</div>
-        </header>
-        <div class="ih-card-body">${inner}</div>
-      </article>`;
   }
 
-  function renderItem(s, it, i) {
-    const urgency = it.urgency || 'medium';
-    const fbKey = `${s.key}_${i}`;
-    const current = STATE.feedback[fbKey];
-    const title = cleanText(it.title);
-    const body = cleanText(it.body);
-    const objection = cleanText(it.objection_handler);
-    const impl = cleanText(it.script_implication);
-    const idxNum = String(i + 1).padStart(2, '0');
-    // Combinar índices de citas de title+body
-    const citeIdxs = [...extractCiteIndices(it.title), ...extractCiteIndices(it.body)];
-    const uniqueCites = [...new Set(citeIdxs)];
+  // ─── EXECUTIVE SUMMARY ───────────────────────────────────
 
-    return `
-      <div class="ih-item ih-u-${urgency}">
-        <div class="ih-item-row">
-          <span class="ih-item-num">${idxNum}</span>
-          <div class="ih-item-content">
-            ${title ? `<div class="ih-item-t">${escapeHtml(title)}</div>` : ''}
-            ${body ? `<div class="ih-item-b">${escapeHtml(body)}</div>` : ''}
-            ${objection ? `<div class="ih-handler"><span class="ih-handler-tag">objeción</span> ${escapeHtml(objection)}</div>` : ''}
-            ${impl ? `<div class="ih-handler"><span class="ih-handler-tag">script</span> ${escapeHtml(impl)}</div>` : ''}
-            ${it.cta_locked ? `<button class="ih-cta-locked">${escapeHtml(it.cta_locked)}</button>` : ''}
-            <div class="ih-item-foot">
-              <div class="ih-item-foot-left">
-                ${it.source ? `<a class="ih-src" href="${it.source}" target="_blank" rel="noopener">fuente original</a>` : ''}
-                ${uniqueCites.length ? `<span class="ih-cites">${uniqueCites.map(n => `<span class="ih-cite-pill">${escapeHtml(n)}</span>`).join('')}</span>` : ''}
-              </div>
-              <div class="ih-fb">
-                <button class="ih-fb-btn ${current === 'up'   ? 'is-active' : ''}" data-fb="up"   data-section="${s.key}" data-idx="${i}" data-title="${escapeHtml(title)}" title="útil">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H7a2 2 0 0 1-2-2V12a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L15 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>
-                </button>
-                <button class="ih-fb-btn ${current === 'down' ? 'is-active' : ''}" data-fb="down" data-section="${s.key}" data-idx="${i}" data-title="${escapeHtml(title)}" title="no útil">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H17a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L9 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>
-                </button>
-              </div>
-            </div>
-          </div>
+  function renderExecutiveSummary() {
+    const el = document.getElementById('ihx-summary');
+    if (!el) return;
+
+    const get = (key) => {
+      const rep = STATE.reports[key];
+      if (!rep || rep.status !== 'ready' || !rep.content) return null;
+      return rep.content;
+    };
+    const topItem = (content) => {
+      if (!content) return null;
+      const items = content.items || [];
+      return items.find(it => it.urgency === 'high') || items[0] || null;
+    };
+
+    const opp  = get('revenue_opportunities');
+    const thr  = get('competitor_threat_radar');
+    const sig  = get('industry_insight_digest');
+    const beh  = get('consumer_behavioral_analysis');
+    const act  = get('strategic_actions');
+
+    const cards = [
+      { key: 'opportunity', label: 'Mayor Oportunidad',    icon: '🔥', color: '#00C878', text: topItem(opp)?.title,  sub: topItem(opp)?.body },
+      { key: 'threat',      label: 'Mayor Amenaza',        icon: '⚠️', color: '#E84040', text: topItem(thr)?.title,  sub: topItem(thr)?.body },
+      { key: 'signal',      label: 'Señal de Mercado',     icon: '📈', color: '#2563EB', text: topItem(sig)?.title,  sub: topItem(sig)?.body },
+      { key: 'shift',       label: 'Cambio del Comprador', icon: '🧠', color: '#00C4D4', text: topItem(beh)?.title,  sub: topItem(beh)?.body },
+      { key: 'action',      label: 'Acción Prioritaria',   icon: '🎯', color: '#F59E0B', text: act?.action || topItem(act)?.title, sub: null },
+    ];
+
+    const hasData = cards.some(c => c.text);
+    if (!hasData) {
+      el.innerHTML = `
+        <div class="ihx-summary-empty">
+          <div class="ihx-summary-empty-icon">⚡</div>
+          <div class="ihx-summary-empty-title">Tu primer briefing ejecutivo te espera</div>
+          <div class="ihx-summary-empty-sub">Haz clic en <strong>Actualizar inteligencia</strong> para ver oportunidades, amenazas y señales de mercado al instante</div>
+        </div>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <div class="ihx-summary">
+        <div class="ihx-summary-eyebrow">RESUMEN EJECUTIVO</div>
+        <div class="ihx-summary-grid">
+          ${cards.map(c => {
+            const text = c.text ? cleanText(c.text) : null;
+            const sub  = c.sub  ? cleanText(c.sub)  : null;
+            const empty = !text;
+            return `
+              <div class="ihx-exec-card ihx-exec-${c.key} ${empty ? 'is-empty' : ''}" style="--card-color:${c.color}">
+                <div class="ihx-exec-top">
+                  <span class="ihx-exec-icon">${c.icon}</span>
+                  <span class="ihx-exec-label">${c.label}</span>
+                </div>
+                <div class="ihx-exec-signal">${empty ? '<span class="ihx-exec-pending">Pendiente</span>' : escapeHtml(text)}</div>
+                ${sub && !empty ? `<div class="ihx-exec-sub">${escapeHtml(sub.substring(0, 90))}${sub.length > 90 ? '…' : ''}</div>` : ''}
+              </div>`;
+          }).join('')}
         </div>
       </div>`;
   }
 
+  // ─── MODULES ─────────────────────────────────────────────
+
+  function renderModules() {
+    const body = document.getElementById('ihx-body');
+    if (!body) return;
+    const sorted = [...SECTIONS].sort((a, b) => a.order - b.order);
+    body.innerHTML = sorted.map(s => renderModule(s)).join('');
+  }
+
+  function renderModule(s) {
+    const rep   = STATE.reports[s.key];
+    const learn = STATE.learning[s.key];
+    const rules = learn?.distilled_rules || [];
+    const isReady = rep?.status === 'ready' && rep?.content;
+
+    let inner;
+    if (s.locked) {
+      inner = renderLockedState(s);
+    } else if (!rep) {
+      inner = `<div class="ihx-state-empty"><span>Sin generar</span></div>`;
+    } else if (rep.status === 'generating') {
+      inner = `<div class="ihx-state-gen"><div class="ihx-spin"></div><span>Generando inteligencia…</span></div>`;
+    } else if (rep.status === 'error') {
+      inner = `<div class="ihx-state-err">Error al generar <small>${escapeHtml(rep.error_message || '')}</small></div>`;
+    } else {
+      inner = renderSectionContent(rep, s);
+    }
+
+    const ts = isReady && rep.generated_at ? `<span class="ihx-mod-ts">${fmtRelative(new Date(rep.generated_at))}</span>` : '';
+    const learnBtn = rules.length > 0 ? `
+      <button class="ihx-learn-btn" onclick="this.closest('.ihx-module').querySelector('.ihx-learn-panel').classList.toggle('is-open')">
+        🧠 ${rules.length} aprendidas
+      </button>` : '';
+
+    return `
+      <article class="ihx-module ${s.fullWidth ? 'ihx-full' : ''} ${s.locked ? 'is-locked' : ''}" data-section="${s.key}" style="--accent:${s.color}">
+        <header class="ihx-mod-h">
+          <div class="ihx-mod-title">
+            <div class="ihx-mod-icon">${s.icon}</div>
+            <h3>${escapeHtml(s.title)}</h3>
+          </div>
+          <div class="ihx-mod-meta">
+            ${ts}
+            ${learnBtn}
+            ${s.locked ? '<span class="ihx-pro-tag">PRO</span>' : ''}
+          </div>
+        </header>
+        <div class="ihx-mod-body">${inner}</div>
+        ${rules.length > 0 ? `
+          <div class="ihx-learn-panel">
+            <div class="ihx-learn-title">Reglas aprendidas del feedback</div>
+            <ul>${rules.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>
+          </div>` : ''}
+      </article>`;
+  }
+
+  // ─── SECTION CONTENT ─────────────────────────────────────
+
+  function renderSectionContent(rep, s) {
+    const c = rep.content || {};
+    const items = c.items || [];
+    switch (s.key) {
+      case 'competitor_threat_radar':      return renderThreats(c, items, s);
+      case 'revenue_opportunities':        return renderOpportunities(c, items, s);
+      case 'industry_insight_digest':      return renderSignals(c, items, s);
+      case 'strategic_actions':            return renderActions(c, items, s);
+      case 'benchmark':                    return renderBenchmark(c, items, s);
+      case 'consumer_behavioral_analysis': return renderBehavior(c, items, s);
+      case 'market_snapshot':              return renderSnapshot(c, items, s);
+      case 'future_innovations':           return renderFuture(c, items, s);
+      default:                             return renderGeneric(c, items, s);
+    }
+  }
+
+  function renderThreats(c, items, s) {
+    return `
+      ${headline(c)}
+      <div class="ihx-threat-list">
+        ${items.map((it, i) => `
+          <div class="ihx-threat-row ihx-u-${it.urgency || 'medium'}">
+            <div class="ihx-threat-left">
+              <span class="ihx-sev ihx-sev-${it.urgency || 'medium'}">${severityIcon(it.urgency)}</span>
+            </div>
+            <div class="ihx-threat-content">
+              <div class="ihx-t">${escapeHtml(cleanText(it.title))}</div>
+              <div class="ihx-b">${escapeHtml(cleanText(it.body))}</div>
+              ${it.implication ? implication(it.implication, 'impacto') : ''}
+            </div>
+            ${foot(s, it, i)}
+          </div>`).join('')}
+      </div>
+      ${action(c)} ${conf(c)}`;
+  }
+
+  function renderOpportunities(c, items, s) {
+    return `
+      ${headline(c)}
+      <div class="ihx-opp-list">
+        ${items.map((it, i) => `
+          <div class="ihx-opp-row">
+            <div class="ihx-opp-num">${String(i + 1).padStart(2, '0')}</div>
+            <div class="ihx-opp-content">
+              <div class="ihx-t">${escapeHtml(cleanText(it.title))}</div>
+              <div class="ihx-b">${escapeHtml(cleanText(it.body))}</div>
+              ${it.implication ? implication(it.implication, 'oportunidad') : ''}
+            </div>
+            <div class="ihx-opp-score-wrap">
+              <div class="ihx-opp-score-track"><div class="ihx-opp-score-fill" style="width:${urgScore(it.urgency)}%"></div></div>
+              <span class="ihx-urgency-chip ihx-u-${it.urgency || 'medium'}">${urgLabel(it.urgency)}</span>
+            </div>
+            ${foot(s, it, i)}
+          </div>`).join('')}
+      </div>
+      ${action(c)} ${conf(c)}`;
+  }
+
+  function renderSignals(c, items, s) {
+    return `
+      ${headline(c)}
+      <div class="ihx-signal-list">
+        ${items.map((it, i) => `
+          <div class="ihx-signal-row">
+            <div class="ihx-signal-dot ihx-u-${it.urgency || 'medium'}"></div>
+            <div class="ihx-signal-content">
+              <div class="ihx-t">${escapeHtml(cleanText(it.title))}</div>
+              <div class="ihx-b">${escapeHtml(cleanText(it.body))}</div>
+            </div>
+            <span class="ihx-urgency-chip ihx-u-${it.urgency || 'medium'} ihx-chip-sm">${urgLabel(it.urgency)}</span>
+            ${foot(s, it, i)}
+          </div>`).join('')}
+      </div>
+      ${action(c)} ${conf(c)}`;
+  }
+
+  function renderActions(c, items, s) {
+    const cat = (it) => {
+      const t = (it.title || '').toLowerCase();
+      if (/^(avoid|no |stop|evitar|reducir|don't)/.test(t)) return 'avoid';
+      if (/^(test|pilot|probar|explorar|consider|evaluar)/.test(t)) return 'test';
+      return it.urgency === 'high' ? 'do' : it.urgency === 'medium' ? 'test' : 'watch';
+    };
+    const groups = { do: [], test: [], watch: [] };
+    items.forEach((it, i) => { const k = cat(it); (groups[k] || groups.watch).push({ ...it, _i: i }); });
+
+    const col = (label, emoji, clr, list) => `
+      <div class="ihx-act-col">
+        <div class="ihx-act-col-h" style="color:${clr}">${emoji} ${label}</div>
+        ${list.length === 0 ? '<div class="ihx-act-empty">—</div>' : list.map(it => `
+          <div class="ihx-act-item">
+            <div class="ihx-t">${escapeHtml(cleanText(it.title))}</div>
+            <div class="ihx-b">${escapeHtml(cleanText(it.body))}</div>
+            ${foot(s, it, it._i)}
+          </div>`).join('')}
+      </div>`;
+
+    return `
+      ${headline(c)}
+      <div class="ihx-act-grid">
+        ${col('HACER', '🟢', '#00C878', groups.do)}
+        ${col('PROBAR', '🟡', '#F59E0B', groups.test)}
+        ${col('OBSERVAR', '⚪', '#6E7B96', groups.watch)}
+      </div>
+      ${action(c)} ${conf(c)}`;
+  }
+
+  function renderBenchmark(c, items, s) {
+    return `
+      ${headline(c)}
+      <div class="ihx-bench-grid">
+        ${items.map((it, i) => `
+          <div class="ihx-bench-card">
+            <div class="ihx-bench-hd">
+              <div class="ihx-bench-av">${(cleanText(it.title) || '?')[0].toUpperCase()}</div>
+              <div class="ihx-bench-name">${escapeHtml(cleanText(it.title))}</div>
+              <span class="ihx-urgency-chip ihx-u-${it.urgency || 'medium'}">${urgLabel(it.urgency)}</span>
+            </div>
+            <div class="ihx-b">${escapeHtml(cleanText(it.body))}</div>
+            ${it.implication ? implication(it.implication, 'táctica') : ''}
+            ${foot(s, it, i)}
+          </div>`).join('')}
+      </div>
+      ${action(c)} ${conf(c)}`;
+  }
+
+  function renderBehavior(c, items, s) {
+    return `
+      ${headline(c)}
+      <div class="ihx-beh-list">
+        ${items.map((it, i) => `
+          <div class="ihx-beh-row">
+            <div class="ihx-beh-arrow">→</div>
+            <div class="ihx-beh-content">
+              <div class="ihx-t">${escapeHtml(cleanText(it.title))}</div>
+              <div class="ihx-b">${escapeHtml(cleanText(it.body))}</div>
+              ${it.implication ? implication(it.implication, 'implicación') : ''}
+              ${it.objection_handler ? implication(it.objection_handler, 'objeción') : ''}
+            </div>
+            ${foot(s, it, i)}
+          </div>`).join('')}
+      </div>
+      ${action(c)} ${conf(c)}`;
+  }
+
+  function renderSnapshot(c, items, s) {
+    return `
+      ${headline(c)}
+      <div class="ihx-snap-grid">
+        ${items.map((it, i) => `
+          <div class="ihx-snap-card">
+            <div class="ihx-snap-label">${escapeHtml(cleanText(it.title))}</div>
+            <div class="ihx-snap-body">${escapeHtml(cleanText(it.body))}</div>
+            ${it.implication ? `<div class="ihx-snap-impl">${escapeHtml(cleanText(it.implication))}</div>` : ''}
+            ${foot(s, it, i)}
+          </div>`).join('')}
+      </div>
+      ${action(c)} ${conf(c)}`;
+  }
+
+  function renderFuture(c, items, s) {
+    const hor = (u) => u === 'high' ? '3–6 meses' : u === 'medium' ? '6–12 meses' : '12–18+ meses';
+    return `
+      ${headline(c)}
+      <div class="ihx-future-list">
+        ${items.map((it, i) => `
+          <div class="ihx-future-row">
+            <div class="ihx-future-hor">
+              <span class="ihx-hor-badge ihx-u-${it.urgency || 'medium'}">${hor(it.urgency)}</span>
+            </div>
+            <div class="ihx-future-content">
+              <div class="ihx-t">${escapeHtml(cleanText(it.title))}</div>
+              <div class="ihx-b">${escapeHtml(cleanText(it.body))}</div>
+              ${it.implication ? implication(it.implication, 'adaptación') : ''}
+            </div>
+            ${foot(s, it, i)}
+          </div>`).join('')}
+      </div>
+      ${action(c)} ${conf(c)}`;
+  }
+
+  function renderGeneric(c, items, s) {
+    return `
+      ${headline(c)}
+      <div class="ihx-generic-list">
+        ${items.map((it, i) => `
+          <div class="ihx-generic-row ihx-u-${it.urgency || 'medium'}">
+            <span class="ihx-generic-num">${String(i + 1).padStart(2, '0')}</span>
+            <div class="ihx-generic-content">
+              <div class="ihx-t">${escapeHtml(cleanText(it.title))}</div>
+              <div class="ihx-b">${escapeHtml(cleanText(it.body))}</div>
+            </div>
+            ${foot(s, it, i)}
+          </div>`).join('')}
+      </div>
+      ${action(c)} ${conf(c)}`;
+  }
+
+  function renderLockedState(s) {
+    return `
+      <div class="ihx-locked">
+        <div class="ihx-locked-icon">🔒</div>
+        <div class="ihx-locked-title">Disponible en Plan Pro</div>
+        <div class="ihx-locked-desc">Desbloquea señales de prospección con timing de compra, intent data y contactos prioritarios recomendados por IA.</div>
+        <button class="ihx-locked-cta">Actualizar a Pro →</button>
+      </div>`;
+  }
+
+  // ─── SUBCOMPONENTS ───────────────────────────────────────
+
+  function headline(c) {
+    const h = cleanText(c.headline);
+    return h ? `<p class="ihx-headline">${escapeHtml(h)}</p>` : '';
+  }
+
+  function implication(text, tag) {
+    const t = cleanText(text);
+    return t ? `<div class="ihx-impl"><span class="ihx-impl-tag">${tag}</span>${escapeHtml(t)}</div>` : '';
+  }
+
+  function action(c) {
+    const a = cleanText(c.action);
+    return a ? `<div class="ihx-action-banner"><span class="ihx-action-tag">ACCIÓN</span><span>${escapeHtml(a)}</span></div>` : '';
+  }
+
+  function conf(c) {
+    return c.confidence != null
+      ? `<div class="ihx-conf">Confianza <strong>${Math.round(c.confidence * 100)}%</strong></div>`
+      : '';
+  }
+
+  function foot(s, it, i) {
+    const cur = STATE.feedback[`${s.key}_${i}`];
+    const title = escapeHtml(cleanText(it.title));
+    return `
+      <div class="ihx-foot">
+        ${it.source ? `<a class="ihx-src" href="${it.source}" target="_blank" rel="noopener">fuente</a>` : '<span></span>'}
+        <div class="ihx-fb">
+          <button class="ihx-fb-btn ${cur === 'up' ? 'is-up' : ''}" data-fb="up" data-section="${s.key}" data-idx="${i}" data-title="${title}" title="Útil">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H7a2 2 0 0 1-2-2V12a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L15 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>
+          </button>
+          <button class="ihx-fb-btn ${cur === 'down' ? 'is-dn' : ''}" data-fb="down" data-section="${s.key}" data-idx="${i}" data-title="${title}" title="No útil">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H17a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L9 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>
+          </button>
+        </div>
+      </div>`;
+  }
+
+  // ─── FEEDBACK & GENERATE (logic unchanged) ───────────────
+
   async function submitFeedback(btn) {
     const sectionKey = btn.dataset.section;
-    const itemIndex = parseInt(btn.dataset.idx, 10);
-    const itemTitle = btn.dataset.title || null;
-    const rating = btn.dataset.fb;
-    const fbKey = `${sectionKey}_${itemIndex}`;
+    const itemIndex  = parseInt(btn.dataset.idx, 10);
+    const itemTitle  = btn.dataset.title || null;
+    const rating     = btn.dataset.fb;
+    const fbKey      = `${sectionKey}_${itemIndex}`;
     STATE.feedback[fbKey] = rating;
-    renderActiveTab();
+    renderDashboard();
     let note = null;
     if (rating === 'down') note = window.prompt('¿Por qué no te sirvió? (opcional, ayuda al sistema a aprender)', '') || null;
     const reportId = STATE.reports[sectionKey]?.id || null;
@@ -280,17 +555,18 @@
       user_id: STATE.user.id, section_key: sectionKey, report_id: reportId,
       item_index: itemIndex, item_title: itemTitle, rating, note,
     });
-    if (error) { console.warn('[feedback]', error); delete STATE.feedback[fbKey]; renderActiveTab(); }
+    if (error) { console.warn('[feedback]', error); delete STATE.feedback[fbKey]; renderDashboard(); }
   }
 
   async function generateAll({ force = false } = {}) {
     if (STATE.generating) return;
     STATE.generating = true;
-    const btn = document.getElementById('ih-btn-generate');
+    const btn  = document.getElementById('ih-btn-generate');
     const prog = document.getElementById('ih-progress');
     btn.disabled = true;
     btn.querySelector('span').textContent = 'Generando…';
     prog.style.display = 'block';
+    updateStatus();
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
       const url = window.SUPABASE_CONFIG.url + '/functions/v1/generate-intel-hub-v3';
@@ -302,8 +578,8 @@
       });
       const planData = await planResp.json();
       if (planResp.status === 402) { prog.textContent = `❌ Sin créditos suficientes (balance: ${planData.balance || 0})`; return; }
-      const plan = planData.plan || [];
-      const toRun = plan.filter(p => !p.skip).map(p => p.section_key);
+      const plan    = planData.plan || [];
+      const toRun   = plan.filter(p => !p.skip).map(p => p.section_key);
       const skipped = plan.length - toRun.length;
       if (toRun.length === 0) { prog.textContent = `✓ Nada que generar — las ${skipped} secciones ya están al día.`; return; }
       let done = 0;
@@ -322,15 +598,18 @@
         done++;
         await new Promise(r => setTimeout(r, 5000));
       }
-      prog.textContent = `✓ Listo. ${done}/${toRun.length} generadas. ${skipped} skipped.`;
+      prog.textContent = `✓ Listo. ${done}/${toRun.length} generadas. ${skipped} ya estaban al día.`;
       await Promise.all([loadReports(), loadLearning()]);
     } finally {
       STATE.generating = false;
       btn.disabled = false;
-      btn.querySelector('span').textContent = 'Generar / Actualizar';
+      btn.querySelector('span').textContent = 'Actualizar inteligencia';
+      updateStatus();
       setTimeout(() => { prog.style.display = 'none'; }, 6000);
     }
   }
+
+  // ─── UTILS ───────────────────────────────────────────────
 
   function overrideHeaderStats() {
     const reps = Object.values(STATE.reports).filter(r => r.status === 'ready' && r.content);
@@ -338,252 +617,431 @@
     reps.forEach(r => {
       const items = r.content.items || [];
       signals += items.length;
-      if (r.content.action) actions += 1;
+      if (r.content.action) actions++;
       threats += items.filter(it => it.urgency === 'high').length;
     });
     setText('#v2-signals-count', signals);
     setText('#v2-actions-count', actions);
     setText('#v2-threats-count', threats);
   }
+
+  function cleanText(s) {
+    if (!s) return '';
+    let t = String(s);
+    t = t.replace(/<cite\s+index="[^"]*">([\s\S]*?)<\/cite>/gi, '$1');
+    t = t.replace(/<\/?[a-z][^>]*>/gi, '');
+    t = t.replace(/\s+/g, ' ').trim();
+    return t;
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function fmtRelative(date) {
+    const diff  = Date.now() - date.getTime();
+    const mins  = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days  = Math.floor(diff / 86400000);
+    if (mins < 1)  return 'ahora mismo';
+    if (mins < 60) return `hace ${mins}m`;
+    if (hours < 24) return `hace ${hours}h`;
+    return `hace ${days}d`;
+  }
+
   function setText(sel, v) { const el = document.querySelector(sel); if (el) el.textContent = String(v); }
-  function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  function fmtDate(iso) { try { return new Date(iso).toLocaleString('es', {dateStyle:'short',timeStyle:'short'}); } catch { return iso; } }
+  function urgLabel(u) { return u === 'high' ? 'CRÍTICO' : u === 'low' ? 'BAJO' : 'MEDIO'; }
+  function urgScore(u) { return u === 'high' ? 92 : u === 'medium' ? 58 : 32; }
+  function severityIcon(u) { return u === 'high' ? '🔴' : u === 'low' ? '🟢' : '🟡'; }
+
+  // ─── STYLES ──────────────────────────────────────────────
 
   function injectStyles() {
-    if (document.getElementById('ih-cadence-styles-v3fix-ui')) return;
+    if (document.getElementById('ihx-styles')) return;
     const s = document.createElement('style');
-    s.id = 'ih-cadence-styles-v3fix-ui';
+    s.id = 'ihx-styles';
     s.textContent = `
-      .ih-cadence-wrap { margin: 24px 0; font-family: inherit; }
+/* ── WRAP ── */
+.ihx-wrap { margin: 0; font-family: inherit; }
 
-      /* TOOLBAR */
-      .ih-toolbar {
-        display: flex; gap: 16px; align-items: center; justify-content: space-between;
-        margin-bottom: 18px; padding: 14px 18px;
-        background: linear-gradient(135deg, rgba(37,99,235,0.08), rgba(0,196,212,0.04));
-        border: 1px solid rgba(37,99,235,0.18); border-radius: 12px;
-      }
-      .ih-btn-generate {
-        display: inline-flex; align-items: center; gap: 8px;
-        background: linear-gradient(135deg, #2563EB, #1d4ed8); color: #fff;
-        border: 0; padding: 10px 18px; border-radius: 8px;
-        font: inherit; font-weight: 600; font-size: 13px; letter-spacing: 0.1px;
-        cursor: pointer; transition: transform .12s, box-shadow .12s;
-        box-shadow: 0 4px 12px rgba(37,99,235,0.25);
-      }
-      .ih-btn-generate:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(37,99,235,0.35); }
-      .ih-btn-generate:disabled { background: #4A5269; cursor: not-allowed; box-shadow: none; }
-      .ih-toolbar-hint { color: #8A9BBF; font-size: 12px; }
+/* ── TOOLBAR ── */
+.ihx-toolbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 20px; margin-bottom: 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  background: rgba(0,0,0,0.15);
+}
+.ihx-btn-generate {
+  display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0;
+  background: linear-gradient(135deg, #2563EB, #1d4ed8); color: #fff;
+  border: 0; padding: 9px 16px; border-radius: 8px;
+  font: inherit; font-weight: 600; font-size: 13px;
+  cursor: pointer; transition: box-shadow .15s, transform .1s;
+  box-shadow: 0 3px 10px rgba(37,99,235,0.3);
+}
+.ihx-btn-generate:hover:not(:disabled) { box-shadow: 0 5px 16px rgba(37,99,235,0.45); transform: translateY(-1px); }
+.ihx-btn-generate:disabled { background: #374151; cursor: not-allowed; box-shadow: none; }
+.ihx-status-bar { display: flex; align-items: center; gap: 8px; flex: 1; }
+.ihx-status-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: #374151; transition: background .3s;
+}
+.ihx-status-dot.is-ready { background: #00C878; box-shadow: 0 0 6px rgba(0,200,120,0.5); }
+.ihx-status-dot.is-generating {
+  background: #2563EB;
+  animation: ihx-pulse 1.2s ease-in-out infinite;
+}
+.ihx-status-dot.is-empty { background: #6E7B96; }
+@keyframes ihx-pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+.ihx-status-text { font-size: 12px; color: #8A9BBF; }
+.ihx-toolbar-hint { font-size: 11px; color: #4A5269; margin-left: auto; white-space: nowrap; }
 
-      /* PROGRESS */
-      .ih-progress {
-        margin-bottom: 14px; padding: 10px 14px;
-        background: rgba(0,196,212,0.06); border-left: 3px solid #00C4D4;
-        border-radius: 6px; color: #C7D2E3; font-size: 12.5px; font-family: 'SF Mono','Monaco',monospace;
-      }
+/* ── PROGRESS ── */
+.ihx-progress {
+  padding: 10px 20px; background: rgba(0,196,212,0.06);
+  border-left: 3px solid #00C4D4; color: #C7D2E3;
+  font-size: 12px; font-family: 'SF Mono','Monaco',monospace;
+}
 
-      /* TABS */
-      .ih-cadence-tabs {
-        display: flex; gap: 2px; margin-bottom: 20px;
-        border-bottom: 1px solid rgba(255,255,255,0.06);
-      }
-      .ih-tab {
-        background: transparent; border: 0; color: #6E7B96; padding: 12px 18px;
-        font: inherit; font-size: 13px; font-weight: 500;
-        cursor: pointer; border-bottom: 2px solid transparent;
-        display: flex; gap: 6px; align-items: center; transition: color .15s;
-        position: relative; top: 1px;
-      }
-      .ih-tab:hover { color: #C7D2E3; }
-      .ih-tab.is-active { color: #fff; border-bottom-color: #2563EB; }
-      .ih-tab[data-soon="1"] { opacity: .45; cursor: not-allowed; }
-      .ih-tab em {
-        font-style: normal; font-size: 9.5px; padding: 2px 6px;
-        background: rgba(255,255,255,0.06); border-radius: 4px;
-        color: #8A9BBF; text-transform: uppercase; letter-spacing: 0.4px;
-      }
+/* ── EXECUTIVE SUMMARY ── */
+.ihx-summary { padding: 24px 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.ihx-summary-eyebrow {
+  font-size: 10px; font-weight: 700; letter-spacing: 1.2px;
+  color: #4A5269; margin-bottom: 14px; text-transform: uppercase;
+}
+.ihx-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+@media (max-width: 1200px) { .ihx-summary-grid { grid-template-columns: repeat(3,1fr); } }
+@media (max-width: 700px)  { .ihx-summary-grid { grid-template-columns: 1fr 1fr; } }
 
-      .ih-cadence-body { display: grid; gap: 18px; }
+.ihx-exec-card {
+  background: rgba(255,255,255,0.028);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px; padding: 14px 14px 12px;
+  border-top: 2px solid var(--card-color);
+  transition: border-color .2s, background .2s;
+  cursor: default;
+}
+.ihx-exec-card:hover { background: rgba(255,255,255,0.045); }
+.ihx-exec-card.is-empty { opacity: .45; }
+.ihx-exec-top { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; }
+.ihx-exec-icon { font-size: 15px; line-height: 1; }
+.ihx-exec-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.7px; color: #6E7B96;
+}
+.ihx-exec-signal {
+  font-size: 13px; font-weight: 600; color: #E5EAF5;
+  line-height: 1.45; margin-bottom: 6px;
+}
+.ihx-exec-sub {
+  font-size: 11.5px; color: #6E7B96; line-height: 1.5;
+}
+.ihx-exec-pending { color: #374151; font-style: italic; font-weight: 400; }
 
-      /* CARD */
-      .ih-card {
-        background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.012));
-        border: 1px solid rgba(255,255,255,0.06); border-radius: 14px; padding: 22px;
-        transition: border-color .2s, transform .12s;
-      }
-      .ih-card:hover { border-color: rgba(255,255,255,0.1); }
-      .ih-card.is-locked {
-        border-color: rgba(245,158,11,0.35);
-        background: linear-gradient(180deg, rgba(245,158,11,0.06), rgba(255,255,255,0.012));
-      }
-      .ih-card-h {
-        display: flex; justify-content: space-between; align-items: center; gap: 12px;
-        margin-bottom: 16px; padding-bottom: 12px;
-        border-bottom: 1px solid rgba(255,255,255,0.05);
-      }
-      .ih-card-title { display: flex; gap: 10px; align-items: center; }
-      .ih-card-icon { font-size: 18px; line-height: 1; }
-      .ih-card-h h3 { font-size: 15px; color: #fff; margin: 0; font-weight: 600; letter-spacing: 0.1px; }
-      .ih-card-actions { display: flex; gap: 8px; align-items: center; }
-      .ih-lock {
-        font-size: 10.5px; color: #F59E0B; background: rgba(245,158,11,0.12);
-        padding: 4px 9px; border-radius: 5px; font-weight: 600;
-        text-transform: uppercase; letter-spacing: 0.5px;
-      }
+.ihx-summary-empty {
+  padding: 40px 20px; text-align: center;
+  background: rgba(255,255,255,0.018); border-radius: 14px;
+  border: 1px dashed rgba(255,255,255,0.07);
+}
+.ihx-summary-empty-icon { font-size: 32px; margin-bottom: 12px; opacity: .6; }
+.ihx-summary-empty-title { font-size: 15px; font-weight: 600; color: #C7D2E3; margin-bottom: 8px; }
+.ihx-summary-empty-sub { font-size: 13px; color: #6E7B96; line-height: 1.6; }
 
-      /* LEARNED RULES */
-      .ih-learn { position: relative; }
-      .ih-learn-btn {
-        background: linear-gradient(135deg, rgba(124,58,237,0.15), rgba(167,139,250,0.08));
-        color: #C4B5FD; border: 1px solid rgba(124,58,237,0.35);
-        padding: 5px 11px; border-radius: 6px;
-        font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
-        display: inline-flex; align-items: center; gap: 5px;
-      }
-      .ih-learn-btn::before { content: '🧠'; }
-      .ih-learn-btn:hover { background: rgba(124,58,237,0.25); }
-      .ih-learn-panel {
-        display: none; position: absolute; right: 0; top: 36px; width: 340px;
-        background: #161B2C; border: 1px solid rgba(124,58,237,0.4);
-        border-radius: 10px; padding: 14px 16px; z-index: 30;
-        box-shadow: 0 16px 40px rgba(0,0,0,0.5);
-      }
-      .ih-learn-panel.show { display: block; }
-      .ih-learn-panel h4 { font-size: 11px; color: #A78BFA; text-transform: uppercase; letter-spacing: 0.6px; margin: 0 0 10px; font-weight: 600; }
-      .ih-learn-panel ul { margin: 0; padding-left: 16px; }
-      .ih-learn-panel li { color: #C7D2E3; font-size: 12.5px; line-height: 1.55; margin-bottom: 6px; }
+/* ── MODULE GRID ── */
+.ihx-modules {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 20px;
+}
+@media (max-width: 900px) { .ihx-modules { grid-template-columns: 1fr; } }
 
-      /* HEADLINE */
-      .ih-headline {
-        color: #E5EAF5; font-size: 15px; line-height: 1.55; margin: 0 0 18px;
-        font-weight: 500; letter-spacing: 0.05px;
-      }
+.ihx-module {
+  background: linear-gradient(180deg, rgba(255,255,255,0.025) 0%, rgba(255,255,255,0.012) 100%);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 14px; overflow: hidden;
+  transition: border-color .2s;
+}
+.ihx-module:hover { border-color: rgba(255,255,255,0.1); }
+.ihx-module.ihx-full { grid-column: span 2; }
+@media (max-width: 900px) { .ihx-module.ihx-full { grid-column: span 1; } }
+.ihx-module.is-locked { border-color: rgba(245,158,11,0.2); }
 
-      /* ITEMS */
-      .ih-items { display: grid; gap: 12px; }
-      .ih-item {
-        background: rgba(255,255,255,0.022); border-radius: 10px;
-        padding: 14px 16px; border-left: 3px solid #2563EB;
-        transition: background .15s;
-      }
-      .ih-item:hover { background: rgba(255,255,255,0.04); }
-      .ih-item.ih-u-high   { border-left-color: #E84040; }
-      .ih-item.ih-u-medium { border-left-color: #F59E0B; }
-      .ih-item.ih-u-low    { border-left-color: #00C878; }
-      .ih-item-row { display: flex; gap: 14px; align-items: flex-start; }
-      .ih-item-num {
-        font-family: 'SF Mono','Monaco',monospace; font-size: 14px;
-        color: #6E7B96; font-weight: 600; min-width: 24px; padding-top: 1px;
-        letter-spacing: 0.5px;
-      }
-      .ih-item-content { flex: 1; min-width: 0; }
-      .ih-item-t { color: #fff; font-size: 13.5px; font-weight: 600; margin-bottom: 6px; line-height: 1.45; }
-      .ih-item-b { color: #A0AEC8; font-size: 12.5px; line-height: 1.6; }
+.ihx-mod-h {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.ihx-mod-title { display: flex; align-items: center; gap: 10px; }
+.ihx-mod-icon {
+  width: 30px; height: 30px; border-radius: 8px;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+  display: flex; align-items: center; justify-content: center; font-size: 15px;
+}
+.ihx-mod-h h3 { font-size: 13.5px; font-weight: 600; color: #E5EAF5; margin: 0; letter-spacing: 0.05px; }
+.ihx-mod-meta { display: flex; align-items: center; gap: 10px; }
+.ihx-mod-ts { font-size: 11px; color: #4A5269; }
+.ihx-pro-tag {
+  font-size: 9.5px; font-weight: 700; color: #F59E0B;
+  background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.25);
+  padding: 3px 8px; border-radius: 4px; letter-spacing: 0.5px;
+}
+.ihx-learn-btn {
+  font-size: 10.5px; color: #A78BFA; background: rgba(124,58,237,0.1);
+  border: 1px solid rgba(124,58,237,0.25); border-radius: 5px;
+  padding: 4px 9px; cursor: pointer; font: inherit; font-size: 10.5px;
+}
+.ihx-learn-btn:hover { background: rgba(124,58,237,0.2); }
+.ihx-learn-panel {
+  display: none; padding: 12px 18px;
+  background: rgba(124,58,237,0.06); border-top: 1px solid rgba(124,58,237,0.15);
+}
+.ihx-learn-panel.is-open { display: block; }
+.ihx-learn-title { font-size: 10px; font-weight: 700; color: #A78BFA; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px; }
+.ihx-learn-panel ul { margin: 0; padding-left: 16px; }
+.ihx-learn-panel li { font-size: 12px; color: #C7D2E3; line-height: 1.55; margin-bottom: 5px; }
 
-      .ih-handler {
-        margin-top: 8px; padding: 8px 10px; background: rgba(0,196,212,0.06);
-        border-left: 2px solid #00C4D4; border-radius: 4px;
-        color: #C7D2E3; font-size: 12px; line-height: 1.5;
-      }
-      .ih-handler-tag {
-        display: inline-block; font-size: 9.5px; font-weight: 700;
-        color: #00C4D4; text-transform: uppercase; letter-spacing: 0.6px;
-        background: rgba(0,196,212,0.12); padding: 1px 6px; border-radius: 3px;
-        margin-right: 6px;
-      }
+.ihx-mod-body { padding: 16px 18px 18px; }
 
-      .ih-cta-locked {
-        background: linear-gradient(135deg, #F59E0B, #FB923C); color: #1A1F2E;
-        border: 0; padding: 7px 14px; border-radius: 6px;
-        font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer;
-        margin-top: 10px; letter-spacing: 0.2px;
-      }
+/* ── SHARED TEXT ── */
+.ihx-headline {
+  font-size: 13px; font-weight: 500; color: #C7D2E3; line-height: 1.55;
+  margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.ihx-t { font-size: 13px; font-weight: 600; color: #E5EAF5; line-height: 1.4; margin-bottom: 5px; }
+.ihx-b {
+  font-size: 12px; color: #8A9BBF; line-height: 1.6;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ihx-impl {
+  margin-top: 8px; padding: 7px 10px;
+  background: rgba(0,196,212,0.05); border-left: 2px solid #00C4D4;
+  border-radius: 4px; font-size: 11.5px; color: #A0B4C8; line-height: 1.5;
+}
+.ihx-impl-tag {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  color: #00C4D4; background: rgba(0,196,212,0.12);
+  padding: 1px 5px; border-radius: 3px; margin-right: 6px; letter-spacing: 0.5px;
+}
 
-      .ih-item-foot {
-        display: flex; justify-content: space-between; align-items: center;
-        margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.04);
-      }
-      .ih-item-foot-left { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-      .ih-src {
-        color: #6E7B96; font-size: 11px; text-decoration: none;
-        border-bottom: 1px dashed rgba(110,123,150,0.4); padding-bottom: 1px;
-      }
-      .ih-src:hover { color: #00C4D4; border-bottom-color: #00C4D4; }
-      .ih-cites { display: inline-flex; gap: 4px; }
-      .ih-cite-pill {
-        display: inline-block; min-width: 18px; text-align: center;
-        font-size: 10px; font-weight: 600; color: #8A9BBF;
-        background: rgba(138,155,191,0.1); padding: 2px 6px; border-radius: 4px;
-        font-family: 'SF Mono','Monaco',monospace;
-      }
+/* ── URGENCY ── */
+.ihx-urgency-chip {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.5px;
+  padding: 2px 7px; border-radius: 4px; text-transform: uppercase; white-space: nowrap;
+}
+.ihx-urgency-chip.ihx-u-high  { color: #E84040; background: rgba(232,64,64,0.12); }
+.ihx-urgency-chip.ihx-u-medium { color: #F59E0B; background: rgba(245,158,11,0.12); }
+.ihx-urgency-chip.ihx-u-low   { color: #00C878; background: rgba(0,200,120,0.12); }
+.ihx-chip-sm { font-size: 9px; padding: 1px 6px; }
 
-      .ih-fb { display: flex; gap: 4px; }
-      .ih-fb-btn {
-        background: transparent; border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 6px; padding: 5px 8px; cursor: pointer;
-        color: #6E7B96; display: inline-flex; align-items: center;
-        transition: all .15s;
-      }
-      .ih-fb-btn:hover { background: rgba(255,255,255,0.06); color: #C7D2E3; }
-      .ih-fb-btn.is-active { background: rgba(37,99,235,0.18); border-color: #2563EB; color: #2563EB; }
-      .ih-fb-btn.is-active[data-fb="down"] { background: rgba(232,64,64,0.18); border-color: #E84040; color: #E84040; }
+/* ── FOOT ── */
+.ihx-foot {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.04);
+}
+.ihx-src {
+  font-size: 11px; color: #4A5269; text-decoration: none;
+  border-bottom: 1px dashed rgba(74,82,105,0.4);
+}
+.ihx-src:hover { color: #00C4D4; border-bottom-color: #00C4D4; }
+.ihx-fb { display: flex; gap: 3px; }
+.ihx-fb-btn {
+  background: transparent; border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 5px; padding: 4px 7px; cursor: pointer; color: #4A5269;
+  display: flex; align-items: center; transition: all .15s;
+}
+.ihx-fb-btn:hover { color: #C7D2E3; background: rgba(255,255,255,0.05); }
+.ihx-fb-btn.is-up  { color: #00C878; background: rgba(0,200,120,0.1);  border-color: rgba(0,200,120,0.3); }
+.ihx-fb-btn.is-dn  { color: #E84040; background: rgba(232,64,64,0.1); border-color: rgba(232,64,64,0.3); }
 
-      /* ACTION BANNER */
-      .ih-action {
-        margin-top: 18px; padding: 14px 16px;
-        background: linear-gradient(135deg, rgba(37,99,235,0.12), rgba(0,196,212,0.06));
-        border: 1px solid rgba(37,99,235,0.22); border-radius: 10px;
-        display: flex; gap: 12px; align-items: flex-start;
-      }
-      .ih-action-label {
-        font-size: 10.5px; font-weight: 700; color: #2563EB;
-        text-transform: uppercase; letter-spacing: 0.7px;
-        background: rgba(37,99,235,0.15); padding: 3px 8px; border-radius: 4px;
-        white-space: nowrap; margin-top: 1px;
-      }
-      .ih-action-text { color: #E5EAF5; font-size: 13px; line-height: 1.55; }
+/* ── ACTION BANNER ── */
+.ihx-action-banner {
+  margin-top: 16px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start;
+  background: rgba(37,99,235,0.08); border: 1px solid rgba(37,99,235,0.18); border-radius: 8px;
+}
+.ihx-action-tag {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.7px; color: #2563EB;
+  background: rgba(37,99,235,0.15); padding: 2px 7px; border-radius: 3px; white-space: nowrap; margin-top: 1px;
+}
+.ihx-action-banner span:last-child { font-size: 12.5px; color: #C7D2E3; line-height: 1.55; }
 
-      /* META */
-      .ih-meta {
-        margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.04);
-        display: flex; gap: 14px; flex-wrap: wrap;
-        font-size: 11px; color: #6E7B96;
-      }
-      .ih-meta .ih-confidence strong { color: #00C878; font-weight: 600; }
-      .ih-items-count { margin-left: auto; }
+/* ── CONFIDENCE ── */
+.ihx-conf {
+  margin-top: 10px; font-size: 11px; color: #4A5269; text-align: right;
+}
+.ihx-conf strong { color: #00C878; }
 
-      /* STATES (empty / loading / error) */
-      .ih-state {
-        padding: 30px 20px; text-align: center;
-        display: flex; flex-direction: column; align-items: center; gap: 10px;
-      }
-      .ih-state-ico {
-        width: 36px; height: 36px; border-radius: 50%;
-        display: flex; align-items: center; justify-content: center;
-        font-size: 16px; font-weight: 600;
-      }
-      .ih-state-empty .ih-state-ico { background: rgba(255,255,255,0.04); color: #6E7B96; }
-      .ih-state-error .ih-state-ico { background: rgba(232,64,64,0.12); color: #E84040; }
-      .ih-state-spin {
-        width: 28px; height: 28px; border-radius: 50%;
-        border: 2.5px solid rgba(37,99,235,0.2); border-top-color: #2563EB;
-        animation: ih-spin 0.8s linear infinite;
-      }
-      @keyframes ih-spin { to { transform: rotate(360deg); } }
-      .ih-state-text { color: #8A9BBF; font-size: 12.5px; line-height: 1.55; }
-      .ih-state-text small { color: #6E7B96; font-size: 11.5px; }
-      .ih-state-error .ih-state-text { color: #E84040; }
+/* ── THREAT SECTION ── */
+.ihx-threat-list { display: grid; gap: 10px; }
+.ihx-threat-row {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 12px 14px; border-radius: 10px;
+  background: rgba(255,255,255,0.018);
+  border-left: 3px solid #E84040;
+}
+.ihx-threat-row.ihx-u-medium { border-left-color: #F59E0B; }
+.ihx-threat-row.ihx-u-low    { border-left-color: #00C878; }
+.ihx-threat-left { flex-shrink: 0; }
+.ihx-sev { font-size: 15px; line-height: 1; }
+.ihx-threat-content { flex: 1; min-width: 0; }
 
-      .ih-empty { color: #8A9BBF; padding: 40px 20px; text-align: center; }
-      .ih-empty h3 { color: #fff; margin: 0 0 6px; font-size: 16px; }
-      .ih-empty p { color: #6E7B96; font-size: 13px; margin: 0; }
+/* ── OPPORTUNITY SECTION ── */
+.ihx-opp-list { display: grid; gap: 10px; }
+.ihx-opp-row {
+  display: grid; grid-template-columns: 28px 1fr auto;
+  gap: 12px; align-items: start;
+  padding: 12px 14px; background: rgba(255,255,255,0.018);
+  border-radius: 10px; border-left: 3px solid #00C878;
+}
+.ihx-opp-num {
+  font-family: 'SF Mono','Monaco',monospace;
+  font-size: 13px; font-weight: 700; color: #00C878; padding-top: 2px;
+}
+.ihx-opp-content { min-width: 0; }
+.ihx-opp-score-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; padding-top: 3px; }
+.ihx-opp-score-track { width: 60px; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; }
+.ihx-opp-score-fill { height: 100%; background: linear-gradient(90deg, #00C878, #34d399); border-radius: 2px; }
+
+/* ── SIGNAL SECTION ── */
+.ihx-signal-list { display: grid; gap: 2px; }
+.ihx-signal-row {
+  display: grid; grid-template-columns: 12px 1fr auto;
+  gap: 12px; align-items: start; padding: 11px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.ihx-signal-row:last-child { border-bottom: none; }
+.ihx-signal-dot {
+  width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0;
+  background: #2563EB;
+}
+.ihx-signal-dot.ihx-u-high   { background: #E84040; }
+.ihx-signal-dot.ihx-u-medium { background: #F59E0B; }
+.ihx-signal-dot.ihx-u-low    { background: #00C878; }
+.ihx-signal-content { min-width: 0; }
+
+/* ── STRATEGIC ACTIONS ── */
+.ihx-act-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
+@media (max-width: 700px) { .ihx-act-grid { grid-template-columns: 1fr; } }
+.ihx-act-col { background: rgba(255,255,255,0.018); border-radius: 10px; padding: 12px 14px; }
+.ihx-act-col-h { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; margin-bottom: 10px; }
+.ihx-act-empty { font-size: 12px; color: #374151; }
+.ihx-act-item {
+  padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.ihx-act-item:last-child { border-bottom: none; padding-bottom: 0; }
+
+/* ── BENCHMARK SECTION ── */
+.ihx-bench-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px;
+}
+.ihx-bench-card {
+  background: rgba(255,255,255,0.022); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px; padding: 14px;
+}
+.ihx-bench-hd { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.ihx-bench-av {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: rgba(139,92,246,0.2); border: 1px solid rgba(139,92,246,0.3);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; color: #A78BFA;
+}
+.ihx-bench-name { font-size: 12.5px; font-weight: 600; color: #E5EAF5; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── BEHAVIOR SECTION ── */
+.ihx-beh-list { display: grid; gap: 12px; }
+.ihx-beh-row { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.ihx-beh-row:last-child { border-bottom: none; padding-bottom: 0; }
+.ihx-beh-arrow {
+  font-size: 16px; color: #00C4D4; flex-shrink: 0;
+  margin-top: 2px; font-weight: 600;
+}
+.ihx-beh-content { flex: 1; min-width: 0; }
+
+/* ── SNAPSHOT SECTION ── */
+.ihx-snap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.ihx-snap-card {
+  background: rgba(255,255,255,0.025); border-radius: 10px; padding: 14px;
+  border: 1px solid rgba(99,102,241,0.15);
+}
+.ihx-snap-label { font-size: 12px; font-weight: 700; color: #A5B4FC; margin-bottom: 6px; line-height: 1.3; }
+.ihx-snap-body  { font-size: 12px; color: #8A9BBF; line-height: 1.55; }
+.ihx-snap-impl  { font-size: 11px; color: #6E7B96; margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.04); }
+
+/* ── FUTURE SECTION ── */
+.ihx-future-list { display: grid; gap: 14px; }
+.ihx-future-row { display: grid; grid-template-columns: 100px 1fr; gap: 14px; align-items: start; }
+.ihx-future-hor { display: flex; justify-content: flex-end; padding-top: 3px; }
+.ihx-hor-badge {
+  font-size: 10px; font-weight: 700; text-align: center;
+  padding: 4px 8px; border-radius: 5px; letter-spacing: 0.3px;
+}
+.ihx-hor-badge.ihx-u-high   { background: rgba(232,64,64,0.1);   color: #E84040; border: 1px solid rgba(232,64,64,0.2); }
+.ihx-hor-badge.ihx-u-medium { background: rgba(245,158,11,0.1);  color: #F59E0B; border: 1px solid rgba(245,158,11,0.2); }
+.ihx-hor-badge.ihx-u-low    { background: rgba(168,85,247,0.1);  color: #C084FC; border: 1px solid rgba(168,85,247,0.2); }
+.ihx-future-content { min-width: 0; }
+
+/* ── GENERIC SECTION ── */
+.ihx-generic-list { display: grid; gap: 10px; }
+.ihx-generic-row {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 11px 14px; background: rgba(255,255,255,0.018);
+  border-radius: 10px; border-left: 3px solid rgba(255,255,255,0.1);
+}
+.ihx-generic-row.ihx-u-high   { border-left-color: #E84040; }
+.ihx-generic-row.ihx-u-medium { border-left-color: #F59E0B; }
+.ihx-generic-row.ihx-u-low    { border-left-color: #00C878; }
+.ihx-generic-num {
+  font-family: 'SF Mono','Monaco',monospace; font-size: 13px;
+  font-weight: 600; color: #4A5269; min-width: 22px; padding-top: 1px;
+}
+.ihx-generic-content { flex: 1; min-width: 0; }
+
+/* ── STATES ── */
+.ihx-state-empty {
+  padding: 28px; text-align: center;
+  color: #4A5269; font-size: 13px;
+}
+.ihx-state-gen {
+  padding: 28px; display: flex; align-items: center; justify-content: center; gap: 12px;
+  color: #6E7B96; font-size: 12.5px;
+}
+.ihx-spin {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid rgba(37,99,235,0.2); border-top-color: #2563EB;
+  animation: ihx-spin .75s linear infinite;
+}
+@keyframes ihx-spin { to { transform: rotate(360deg); } }
+.ihx-state-err {
+  padding: 20px; color: #E84040; font-size: 12.5px; display: flex; flex-direction: column; gap: 4px;
+}
+.ihx-state-err small { color: #B44040; font-size: 11px; }
+
+/* ── LOCKED ── */
+.ihx-locked {
+  padding: 32px 20px; text-align: center;
+  background: linear-gradient(135deg, rgba(245,158,11,0.04), rgba(251,146,60,0.02));
+}
+.ihx-locked-icon { font-size: 28px; margin-bottom: 12px; opacity: .7; }
+.ihx-locked-title { font-size: 14px; font-weight: 600; color: #F59E0B; margin-bottom: 8px; }
+.ihx-locked-desc { font-size: 12.5px; color: #6E7B96; line-height: 1.6; margin-bottom: 16px; max-width: 360px; margin-left: auto; margin-right: auto; }
+.ihx-locked-cta {
+  display: inline-block;
+  background: linear-gradient(135deg, #F59E0B, #FB923C); color: #1A1F2E;
+  border: 0; padding: 9px 18px; border-radius: 8px;
+  font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
+}
+.ihx-locked-cta:hover { opacity: .9; }
     `;
     document.head.appendChild(s);
   }
 
-  window.intelCadenceReload = () => Promise.all([loadReports(), loadFeedback(), loadLearning()]);
+  window.intelCadenceReload   = () => Promise.all([loadReports(), loadFeedback(), loadLearning()]);
   window.intelCadenceGenerate = (opts) => generateAll(opts || {});
-  window.__intelCadence = () => ({ ...STATE });
+  window.__intelCadence       = () => ({ ...STATE });
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
