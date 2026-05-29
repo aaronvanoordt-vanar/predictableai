@@ -1883,9 +1883,9 @@ html, body {
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 13v2M11 13v2M3 15h10"/></svg>
       Meeting Coach
     </div>
-    <div class="nav-item" data-page="ventas-reportes" data-admin-only="true" onclick="nav(this,'ventas-reportes')" style="margin-left:20px;font-size:12px">
+    <div class="nav-item" data-page="ventas-reportes" onclick="nav(this,'ventas-reportes')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M3 14V6l4-4h6v12H3z"/><path d="M7 2v4H3"/><path d="M6 9h4M6 11h3"/></svg>
-      Reportes SDR
+      <span id="nav-reportes-label">Reportes</span>
     </div>
 
     <div class="nav-item" data-page="settings" onclick="if(typeof window.openSettingsPage==='function')window.openSettingsPage()" style="display:none"></div>
@@ -3525,22 +3525,58 @@ html, body {
 <!-- ═══════ PAGE: VENTAS REPORTES ═══════ -->
 <div class="page fade-in" id="page-ventas-reportes">
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
-    <div><div class="topbar-title">Reportes SDR</div><div class="topbar-sub">Módulo 3 · Visibilidad total sobre el performance del equipo de ventas</div></div>
+    <div>
+      <div class="topbar-title" id="rep-topbar-title">Reportes</div>
+      <div class="topbar-sub" id="rep-topbar-sub">Módulo 3 · Tu performance en reuniones de venta</div>
+    </div>
     <div class="topbar-actions">
       <button class="btn btn-ghost btn-sm">↓ Exportar PDF</button>
-      <button class="btn btn-jade btn-sm">Enviar al director</button>
+      <button class="btn btn-jade btn-sm" id="rep-btn-director" style="display:none">Enviar al director</button>
     </div>
   </div>
 
   <div class="tabs" style="margin-bottom:16px">
-    <div class="tab active" onclick="switchReportTab(this,'rep-equipo')">👥 Equipo</div>
-    <div class="tab" onclick="switchReportTab(this,'rep-deals')">💰 Deals perdidos</div>
+    <div class="tab" id="tab-rep-my-perf" data-sdr-tab="true" onclick="switchReportTab(this,'rep-my-perf')">📊 Mi rendimiento</div>
+    <div class="tab" id="tab-rep-equipo" data-admin-tab="true" onclick="switchReportTab(this,'rep-equipo')">👥 Equipo</div>
+    <div class="tab" id="tab-rep-deals" data-admin-tab="true" onclick="switchReportTab(this,'rep-deals')">💰 Deals perdidos</div>
     <div class="tab" onclick="switchReportTab(this,'rep-objeciones')">🛡 Objeciones</div>
     <div class="tab" onclick="switchReportTab(this,'rep-meeting')">📄 Última reunión</div>
   </div>
 
+  <!-- TAB: MI RENDIMIENTO (SDR personal) -->
+  <div id="rep-my-perf" class="rep-tab" style="display:none">
+    <div id="my-perf-loading" style="text-align:center;padding:40px;color:var(--text3)">
+      <div style="font-size:13px">Cargando tu historial...</div>
+    </div>
+    <div id="my-perf-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--text3)">
+      <div style="font-size:32px;margin-bottom:12px">📊</div>
+      <div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:8px">Sin reuniones registradas todavía</div>
+      <div style="font-size:13px">Cuando completes sesiones con el AI Coach, tu historial de performance aparecerá aquí.</div>
+      <button class="btn btn-jade" style="margin-top:20px" onclick="nav(document.querySelector('[data-page=ventas-coach]'),'ventas-coach')">Iniciar sesión →</button>
+    </div>
+    <div id="my-perf-content" style="display:none">
+      <!-- Score summary cards -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px" id="my-perf-summary"></div>
+      <!-- Historical chart -->
+      <div class="chart-card" style="margin-bottom:16px">
+        <div class="chart-header"><span class="chart-title">Score por reunión (historial)</span></div>
+        <div class="chart-wrap"><canvas id="myPerfHistoryChart"></canvas></div>
+      </div>
+      <!-- Meetings table -->
+      <div class="table-card">
+        <div class="table-head"><span style="font-size:14px;font-weight:700">Mis reuniones</span></div>
+        <table>
+          <thead><tr>
+            <th>Prospecto</th><th>Empresa</th><th>Fecha</th><th>Duración</th><th>Score</th><th>Escucha</th><th>Objeciones</th><th>Discovery</th>
+          </tr></thead>
+          <tbody id="my-perf-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- TAB: EQUIPO -->
-  <div id="rep-equipo" class="rep-tab">
+  <div id="rep-equipo" class="rep-tab" style="display:none">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="chart-card">
         <div class="chart-header"><span class="chart-title">Score promedio por SDR</span></div>
@@ -3915,7 +3951,10 @@ html, body {
 // ── END MEETING ──
 function endMeeting() {
   nav(document.querySelector('[data-page=ventas-reportes]'), 'ventas-reportes');
-  setTimeout(() => switchReportTab(document.querySelectorAll('#page-ventas-reportes .tab')[3], 'rep-meeting'), 100);
+  setTimeout(() => {
+    const lastMeetingTab = document.querySelector('#page-ventas-reportes .tab[onclick*="rep-meeting"]');
+    if (lastMeetingTab && typeof switchReportTab === 'function') switchReportTab(lastMeetingTab, 'rep-meeting');
+  }, 200);
 }
   
 // ── COACH: landing state helpers ──
@@ -4027,10 +4066,41 @@ function switchReportTab(el, tabId) {
   document.querySelectorAll('.rep-tab').forEach(t => t.style.display = 'none');
   document.getElementById(tabId).style.display = 'block';
 
-  // Init charts on demand
-  if (tabId === 'rep-equipo') initReportCharts();
+  // Init charts / data on demand
+  if (tabId === 'rep-equipo') loadTeamFromSupabase();
   if (tabId === 'rep-deals') initDealsCharts();
   if (tabId === 'rep-meeting') loadLastMeeting();
+  if (tabId === 'rep-my-perf') loadMyPerformance();
+}
+
+function initReportPageForRole() {
+  const p = window.currentProfile;
+  const rawRole = (p && p.role) ? p.role.toLowerCase() : '';
+  const isAdmin = rawRole === 'admin' || rawRole === 'director';
+
+  // Show/hide tabs and topbar elements
+  document.querySelectorAll('[data-admin-tab]').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
+  document.querySelectorAll('[data-sdr-tab]').forEach(el => { el.style.display = isAdmin ? 'none' : ''; });
+  const btnDir = document.getElementById('rep-btn-director');
+  if (btnDir) btnDir.style.display = isAdmin ? '' : 'none';
+  const titleEl = document.getElementById('rep-topbar-title');
+  const subEl   = document.getElementById('rep-topbar-sub');
+  const navLabel = document.getElementById('nav-reportes-label');
+  if (isAdmin) {
+    if (titleEl) titleEl.textContent = 'Reportes SDR';
+    if (subEl) subEl.textContent = 'Módulo 3 · Visibilidad total sobre el performance del equipo de ventas';
+    if (navLabel) navLabel.textContent = 'Reportes SDR';
+    // Activate equipo tab by default for admin
+    const equipoTab = document.getElementById('tab-rep-equipo');
+    if (equipoTab) switchReportTab(equipoTab, 'rep-equipo');
+  } else {
+    if (titleEl) titleEl.textContent = 'Mi rendimiento';
+    if (subEl) subEl.textContent = 'Módulo 3 · Tu historial de performance en reuniones de venta';
+    if (navLabel) navLabel.textContent = 'Mi rendimiento';
+    // Activate personal tab by default for SDR
+    const myPerfTab = document.getElementById('tab-rep-my-perf');
+    if (myPerfTab) switchReportTab(myPerfTab, 'rep-my-perf');
+  }
 }
 
 function initReportCharts() {
@@ -4141,13 +4211,252 @@ async function loadLastMeeting() {
     if (nEl) nEl.innerHTML = (r.next_steps || []).map(n => '<li>' + n + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
 
     content.style.display = 'block';
+
+    // Persist to sales_reports in Supabase
+    saveMeetingReportToSupabase(data);
+
   } catch (e) {
     loading.style.display = 'none';
     empty.style.display = 'block';
     console.warn('loadLastMeeting error:', e);
   }
 }
-  
+
+async function saveMeetingReportToSupabase(data) {
+  try {
+    const sb = window.supabaseClient;
+    const u  = window.currentUser;
+    const p  = window.currentProfile;
+    if (!sb || !u) return;
+    const r = data.report || {};
+    const scores = r.scores || {};
+    const row = {
+      user_id:                  u.id,
+      company_name:             (p && p.company_name) || null,
+      meeting_id:               data.meeting_id || null,
+      sdr_name:                 data.sdr_name || data.sdr_email || (p && p.full_name) || u.email,
+      sdr_email:                data.sdr_email || u.email,
+      prospect_name:            data.prospect_name || null,
+      prospect_company:         data.prospect_company || null,
+      meeting_type:             data.meeting_type || null,
+      meeting_url:              data.meeting_url || null,
+      started_at:               data.started_at || null,
+      ended_at:                 data.ended_at || null,
+      duration_seconds:         data.duration_seconds || null,
+      score_total:              data.score_total || r.score_total || 0,
+      score_active_listening:   scores.active_listening || null,
+      score_pain_deepening:     scores.pain_deepening || null,
+      score_pace_control:       scores.pace_control || null,
+      score_objection_handling: scores.objection_handling || null,
+      report:                   r,
+      status:                   'completed'
+    };
+    // Upsert by meeting_id to avoid duplicates; if no meeting_id just insert
+    if (row.meeting_id) {
+      await sb.from('sales_reports').upsert(row, { onConflict: 'meeting_id' });
+    } else {
+      await sb.from('sales_reports').insert(row);
+    }
+  } catch (e) {
+    console.warn('[sales_reports] save error:', e);
+  }
+}
+
+async function loadMyPerformance() {
+  const loadingEl = document.getElementById('my-perf-loading');
+  const emptyEl   = document.getElementById('my-perf-empty');
+  const contentEl = document.getElementById('my-perf-content');
+  if (!loadingEl) return;
+  loadingEl.style.display = 'block';
+  emptyEl.style.display   = 'none';
+  contentEl.style.display = 'none';
+  try {
+    const sb = window.supabaseClient;
+    const u  = window.currentUser;
+    if (!sb || !u) { loadingEl.style.display='none'; emptyEl.style.display='block'; return; }
+    const { data, error } = await sb.from('sales_reports')
+      .select('*')
+      .eq('user_id', u.id)
+      .order('started_at', { ascending: false })
+      .limit(20);
+    loadingEl.style.display = 'none';
+    if (error || !data || data.length === 0) { emptyEl.style.display = 'block'; return; }
+
+    // Summary cards
+    const avg = (arr, key) => {
+      const vals = arr.map(r => r[key]).filter(v => v != null);
+      return vals.length ? Math.round(vals.reduce((a,b)=>a+b,0)/vals.length) : null;
+    };
+    const summaryEl = document.getElementById('my-perf-summary');
+    if (summaryEl) {
+      const cards = [
+        ['Score promedio', avg(data,'score_total'), 'var(--accent-ink)'],
+        ['Escucha activa', avg(data,'score_active_listening'), 'var(--green)'],
+        ['Objeciones', avg(data,'score_objection_handling'), 'var(--teal)'],
+        ['Discovery', avg(data,'score_pain_deepening'), 'var(--amber)']
+      ];
+      summaryEl.innerHTML = cards.map(([label,val,color]) =>
+        '<div style="text-align:center;padding:16px 12px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">' +
+        '<div style="font-size:28px;font-weight:900;font-family:var(--font-mono);color:'+color+'">'+(val!=null?val:'—')+'</div>' +
+        '<div style="font-size:11px;color:var(--text3);margin-top:4px">'+label+'</div>' +
+        '<div style="font-size:10px;color:var(--text3)">promedio ('+data.length+' reuniones)</div></div>'
+      ).join('');
+    }
+
+    // History chart
+    try {
+      const chartEl = document.getElementById('myPerfHistoryChart');
+      if (chartEl && typeof Chart !== 'undefined') {
+        if (chartEl._chartInstance) chartEl._chartInstance.destroy();
+        const sorted = [...data].reverse();
+        chartEl._chartInstance = new Chart(chartEl, {
+          type: 'line',
+          data: {
+            labels: sorted.map((r,i) => r.prospect_name || ('Reunión '+(i+1))),
+            datasets: [{
+              label: 'Score',
+              data: sorted.map(r => r.score_total || 0),
+              borderColor: '#00C878',
+              backgroundColor: 'rgba(0,200,120,0.08)',
+              tension: 0.3,
+              fill: true,
+              pointRadius: 5,
+              pointBackgroundColor: '#00C878'
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { grid: { color:'rgba(255,255,255,0.04)' }, ticks: { color:'#8A9BBF', maxRotation:30 } },
+              y: { min:0, max:100, grid: { color:'rgba(255,255,255,0.04)' }, ticks: { color:'#8A9BBF' } }
+            }
+          }
+        });
+      }
+    } catch(e) { console.warn('[myPerfChart]', e); }
+
+    // Table rows
+    const tbody = document.getElementById('my-perf-rows');
+    if (tbody) {
+      const scoreColor = s => s >= 80 ? 'var(--green)' : s >= 60 ? 'var(--amber)' : 'var(--red)';
+      const scoreBar = v => v != null
+        ? '<div class="score-bar" style="width:80px"><div class="score-fill" style="width:'+v+'%;background:var(--grad-jade)"></div></div>'
+        : '—';
+      tbody.innerHTML = data.map(r => {
+        const date = r.started_at ? new Date(r.started_at).toLocaleDateString('es-MX',{day:'numeric',month:'short',year:'numeric'}) : '—';
+        const dur  = r.duration_seconds ? Math.round(r.duration_seconds/60)+' min' : '—';
+        const sc   = r.score_total || 0;
+        return '<tr>' +
+          '<td><strong>'+(r.prospect_name||'—')+'</strong></td>' +
+          '<td>'+(r.prospect_company||'—')+'</td>' +
+          '<td>'+date+'</td>' +
+          '<td>'+dur+'</td>' +
+          '<td><span class="pill" style="background:'+scoreColor(sc)+'22;color:'+scoreColor(sc)+'">'+sc+'</span></td>' +
+          '<td>'+scoreBar(r.score_active_listening)+'</td>' +
+          '<td>'+scoreBar(r.score_objection_handling)+'</td>' +
+          '<td>'+scoreBar(r.score_pain_deepening)+'</td>' +
+          '</tr>';
+      }).join('');
+    }
+
+    contentEl.style.display = 'block';
+  } catch(e) {
+    loadingEl.style.display = 'none';
+    emptyEl.style.display   = 'block';
+    console.warn('[loadMyPerformance]', e);
+  }
+}
+
+async function loadTeamFromSupabase() {
+  const tbody = document.querySelector('#rep-equipo tbody');
+  if (!tbody) { initReportCharts(); return; }
+  try {
+    const sb = window.supabaseClient;
+    const p  = window.currentProfile;
+    if (!sb || !p || !p.company_name) { initReportCharts(); return; }
+    const { data, error } = await sb.from('sales_reports')
+      .select('*')
+      .eq('company_name', p.company_name)
+      .order('started_at', { ascending: false });
+    if (error || !data || data.length === 0) { initReportCharts(); return; }
+
+    // Group by sdr_email
+    const bySDR = {};
+    data.forEach(r => {
+      const key = r.sdr_email || r.sdr_name || r.user_id;
+      if (!bySDR[key]) bySDR[key] = { name: r.sdr_name || r.sdr_email || key, rows: [] };
+      bySDR[key].rows.push(r);
+    });
+
+    const avg = (arr, key) => {
+      const vals = arr.map(r => r[key]).filter(v => v != null);
+      return vals.length ? Math.round(vals.reduce((a,b)=>a+b,0)/vals.length) : 0;
+    };
+    const scoreColor = s => s >= 80 ? 'var(--green)' : s >= 60 ? 'var(--amber)' : 'var(--red)';
+    const scoreBarW  = v => '<div class="score-bar" style="width:100px"><div class="score-fill" style="width:'+v+'%;background:var(--grad-jade)"></div></div>';
+
+    const sdrs = Object.values(bySDR).map(sdr => ({
+      ...sdr,
+      meetings:  sdr.rows.length,
+      avgScore:  avg(sdr.rows,'score_total'),
+      avgListen: avg(sdr.rows,'score_active_listening'),
+      avgObj:    avg(sdr.rows,'score_objection_handling'),
+      avgDisc:   avg(sdr.rows,'score_pain_deepening'),
+      deals:     sdr.rows.filter(r => r.score_total >= 70).length
+    })).sort((a,b) => b.avgScore - a.avgScore);
+
+    tbody.innerHTML = sdrs.map(sdr => {
+      const badge = sdr.avgScore >= 80
+        ? '<span class="pill pill-green">Top performer</span>'
+        : sdr.avgScore >= 65
+        ? '<span class="pill pill-amber">En desarrollo</span>'
+        : '<span class="pill pill-red">⚠ Necesita coaching</span>';
+      return '<tr>' +
+        '<td><strong>'+sdr.name+'</strong></td>' +
+        '<td>'+sdr.meetings+'</td>' +
+        '<td><span class="pill" style="background:'+scoreColor(sdr.avgScore)+'22;color:'+scoreColor(sdr.avgScore)+'">'+sdr.avgScore+'</span></td>' +
+        '<td>'+scoreBarW(sdr.avgListen)+'</td>' +
+        '<td>'+scoreBarW(sdr.avgObj)+'</td>' +
+        '<td>'+scoreBarW(sdr.avgDisc)+'</td>' +
+        '<td>'+sdr.deals+'/'+sdr.meetings+' <span style="color:var(--teal)">('+Math.round(sdr.deals/Math.max(sdr.meetings,1)*100)+'%)</span></td>' +
+        '<td>'+badge+'</td>' +
+        '</tr>';
+    }).join('');
+
+    // Rebuild charts with live data
+    window._repChartsInit = false;
+    const labels = sdrs.map(s => s.name);
+    const scores = sdrs.map(s => s.avgScore);
+    const colors = scores.map(s => s>=80?'#10B981':s>=65?'#2563EB':'#F59E0B');
+    try {
+      const el = document.getElementById('sdrScoreChart');
+      if (el && typeof Chart !== 'undefined') {
+        if (el._ci) el._ci.destroy();
+        el._ci = new Chart(el, {
+          type:'bar',
+          data:{ labels, datasets:[{ label:'Score', data:scores, backgroundColor:colors, borderRadius:6 }] },
+          options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#8A9BBF'}},y:{min:0,max:100,grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#8A9BBF'}}} }
+        });
+      }
+    } catch(e){}
+    try {
+      const el = document.getElementById('sdrMeetingsChart');
+      if (el && typeof Chart !== 'undefined') {
+        if (el._ci) el._ci.destroy();
+        el._ci = new Chart(el, {
+          type:'bar',
+          data:{ labels, datasets:[{ label:'Reuniones', data:sdrs.map(s=>s.meetings), backgroundColor:'#2563EB', borderRadius:4 }] },
+          options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#8A9BBF'}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#8A9BBF'}}} }
+        });
+      }
+    } catch(e){}
+  } catch(e) {
+    console.warn('[loadTeamFromSupabase]', e);
+    initReportCharts();
+  }
+}
+
 </script>
 
 <!-- ═══════════════════════════════════════════
@@ -4185,6 +4494,11 @@ function nav(el, pageId) {
     }, 50);
   }
   _activePageId = pageId;
+
+  // Re-apply role-based tab state when navigating to reports
+  if (pageId === 'ventas-reportes' && typeof initReportPageForRole === 'function') {
+    initReportPageForRole();
+  }
 }
 
 // Hash-based deep link: e.g. /index.html#mi-dashboard activates that page on load.
@@ -5148,6 +5462,8 @@ window.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('[data-admin-only="true"]').forEach(el => {
       el.style.display = isAdmin ? '' : 'none';
     });
+    // Initialize reports page role-based tabs
+    initReportPageForRole();
     return true;
   }
   window.userMenuToggle = function (e) {
