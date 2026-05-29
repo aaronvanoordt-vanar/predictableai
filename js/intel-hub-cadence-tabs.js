@@ -249,7 +249,7 @@
           if (j.errors > 0) console.warn(section_key, j.results);
         } catch (e) { console.warn(section_key, e); }
         done++;
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 5000)); // 5s entre secciones para no chocar TPM (50K tokens/min tier 1)
       }
       prog.textContent = `Done. ${done}/${toRun.length} generadas. ${skipped} skipped.`;
       await Promise.all([loadReports(), loadLearning()]);
