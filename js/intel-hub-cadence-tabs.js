@@ -1,11 +1,9 @@
 /**
- * intel-hub-cadence-tabs.js (v4 — executive command center)
- * UI-only redesign. All agent/backend/data logic unchanged.
+ * intel-hub-cadence-tabs.js (v4.1 — executive command center + force button)
+ * UI-only redesign. Logic adapted for v3-fix edge function (1 credit per section uniform).
  */
-
 (function () {
   'use strict';
-
   const SECTIONS = [
     { key: 'revenue_opportunities',        title: 'Revenue Opportunities',   cadence: 'weekly',  order: 1, locked: false, icon: '💰', color: '#00C878' },
     { key: 'competitor_threat_radar',      title: 'Competitor Threats',      cadence: 'daily',   order: 2, locked: false, icon: '⚡', color: '#E84040' },
@@ -17,20 +15,16 @@
     { key: 'future_innovations',           title: 'Future Watch',            cadence: 'monthly', order: 8, locked: false, icon: '🔮', color: '#A855F7', fullWidth: true },
     { key: 'prospecting_recommendations',  title: 'Prospecting Intel',       cadence: 'daily',   order: 9, locked: true,  icon: '🎯', color: '#F59E0B', fullWidth: true },
   ];
-
   const STATE = {
     user: null,
     reports: {}, feedback: {}, learning: {},
     generating: false, initialized: false,
   };
-
   function log(...a) { console.log('[intel-hub-v4]', ...a); }
-
   async function waitForSupabase() {
     for (let i = 0; i < 80; i++) { if (window.supabaseClient) return true; await new Promise(r => setTimeout(r, 100)); }
     return false;
   }
-
   async function init() {
     if (STATE.initialized) return;
     STATE.initialized = true;
@@ -42,7 +36,6 @@
     subscribeRealtime();
     mountObserver();
   }
-
   async function loadReports() {
     const { data } = await window.supabaseClient.from('intelligence_hub_reports').select('*').eq('user_id', STATE.user.id);
     STATE.reports = {};
@@ -50,19 +43,16 @@
     log(`loaded ${data?.length || 0} reports`);
     renderIfMounted();
   }
-
   async function loadFeedback() {
     const { data } = await window.supabaseClient.from('intel_hub_feedback').select('section_key, item_index, rating').eq('user_id', STATE.user.id);
     STATE.feedback = {};
     (data || []).forEach(f => { STATE.feedback[`${f.section_key}_${f.item_index}`] = f.rating; });
   }
-
   async function loadLearning() {
     const { data } = await window.supabaseClient.from('intel_hub_learning').select('*').eq('user_id', STATE.user.id);
     STATE.learning = {};
     (data || []).forEach(l => { STATE.learning[l.section_key] = l; });
   }
-
   function subscribeRealtime() {
     window.supabaseClient.channel('intel-v4-' + STATE.user.id)
       .on('postgres_changes', {
@@ -77,7 +67,6 @@
       })
       .subscribe();
   }
-
   function mountObserver() {
     const tryMount = () => {
       const page = document.getElementById('page-mi-dashboard');
@@ -89,14 +78,11 @@
     if (tryMount()) return;
     new MutationObserver(() => tryMount()).observe(document.body, { childList: true, subtree: true });
   }
-
   // ─── INJECTION ───────────────────────────────────────────
-
   function injectDashboard(page) {
     const v2Shell = page.querySelector('#ih-v2-shell');
     if (v2Shell) v2Shell.innerHTML = '';
     const container = v2Shell || page;
-
     const wrap = document.createElement('div');
     wrap.className = 'ihx-wrap';
     wrap.innerHTML = `
@@ -105,50 +91,50 @@
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
           <span>Actualizar inteligencia</span>
         </button>
+        <button class="ihx-btn-force" id="ih-btn-generate-all" title="Regenera todas las 9 secciones (saltea cadence). Costo: 9 créditos.">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v5h5"/></svg>
+          <span>Regenerar todo</span>
+        </button>
         <div class="ihx-status-bar">
           <div class="ihx-status-dot" id="ihx-status-dot"></div>
           <span class="ihx-status-text" id="ihx-status-text">Cargando…</span>
         </div>
-        <span class="ihx-toolbar-hint">~10–14 créditos por generación completa</span>
+        <span class="ihx-toolbar-hint">1 crédito por sección · 9 por generación completa</span>
       </div>
       <div class="ihx-progress" id="ih-progress" style="display:none"></div>
       <div id="ihx-summary"></div>
       <div class="ihx-modules" id="ihx-body"></div>`;
-
     container.appendChild(wrap);
-
     wrap.querySelector('#ih-btn-generate').addEventListener('click', () => generateAll({ force: false }));
+    wrap.querySelector('#ih-btn-generate-all').addEventListener('click', () => {
+      if (confirm('Esto regenera las 9 secciones (saltea cadence). Costo: 9 créditos. ¿Continuar?')) {
+        generateAll({ force: true });
+      }
+    });
     wrap.addEventListener('click', async (ev) => {
       const fb = ev.target.closest('[data-fb]');
       if (fb) { ev.preventDefault(); await submitFeedback(fb); }
     });
-
     injectStyles();
     renderDashboard();
   }
-
   function renderIfMounted() {
     if (document.getElementById('ihx-body')) renderDashboard();
     overrideHeaderStats();
   }
-
   // ─── DASHBOARD ───────────────────────────────────────────
-
   function renderDashboard() {
     updateStatus();
     renderExecutiveSummary();
     renderModules();
   }
-
   function updateStatus() {
     const dot = document.getElementById('ihx-status-dot');
     const txt = document.getElementById('ihx-status-text');
     if (!dot || !txt) return;
-
     const reps = Object.values(STATE.reports);
     const ready = reps.filter(r => r.status === 'ready');
     const generating = reps.filter(r => r.status === 'generating');
-
     if (STATE.generating || generating.length > 0) {
       dot.className = 'ihx-status-dot is-generating';
       txt.textContent = generating.length > 0 ? `Generando ${generating.length} sección${generating.length !== 1 ? 'es' : ''}…` : 'Generando…';
@@ -167,13 +153,10 @@
       txt.textContent = 'Sin inteligencia disponible';
     }
   }
-
   // ─── EXECUTIVE SUMMARY ───────────────────────────────────
-
   function renderExecutiveSummary() {
     const el = document.getElementById('ihx-summary');
     if (!el) return;
-
     const get = (key) => {
       const rep = STATE.reports[key];
       if (!rep || rep.status !== 'ready' || !rep.content) return null;
@@ -184,13 +167,11 @@
       const items = content.items || [];
       return items.find(it => it.urgency === 'high') || items[0] || null;
     };
-
     const opp  = get('revenue_opportunities');
     const thr  = get('competitor_threat_radar');
     const sig  = get('industry_insight_digest');
     const beh  = get('consumer_behavioral_analysis');
     const act  = get('strategic_actions');
-
     const cards = [
       { key: 'opportunity', label: 'Mayor Oportunidad',    icon: '🔥', color: '#00C878', text: topItem(opp)?.title,  sub: topItem(opp)?.body },
       { key: 'threat',      label: 'Mayor Amenaza',        icon: '⚠️', color: '#E84040', text: topItem(thr)?.title,  sub: topItem(thr)?.body },
@@ -198,7 +179,6 @@
       { key: 'shift',       label: 'Cambio del Comprador', icon: '🧠', color: '#00C4D4', text: topItem(beh)?.title,  sub: topItem(beh)?.body },
       { key: 'action',      label: 'Acción Prioritaria',   icon: '🎯', color: '#F59E0B', text: act?.action || topItem(act)?.title, sub: null },
     ];
-
     const hasData = cards.some(c => c.text);
     if (!hasData) {
       el.innerHTML = `
@@ -209,7 +189,6 @@
         </div>`;
       return;
     }
-
     el.innerHTML = `
       <div class="ihx-summary">
         <div class="ihx-summary-eyebrow">RESUMEN EJECUTIVO</div>
@@ -231,22 +210,18 @@
         </div>
       </div>`;
   }
-
   // ─── MODULES ─────────────────────────────────────────────
-
   function renderModules() {
     const body = document.getElementById('ihx-body');
     if (!body) return;
     const sorted = [...SECTIONS].sort((a, b) => a.order - b.order);
     body.innerHTML = sorted.map(s => renderModule(s)).join('');
   }
-
   function renderModule(s) {
     const rep   = STATE.reports[s.key];
     const learn = STATE.learning[s.key];
     const rules = learn?.distilled_rules || [];
     const isReady = rep?.status === 'ready' && rep?.content;
-
     let inner;
     if (s.locked) {
       inner = renderLockedState(s);
@@ -259,13 +234,11 @@
     } else {
       inner = renderSectionContent(rep, s);
     }
-
     const ts = isReady && rep.generated_at ? `<span class="ihx-mod-ts">${fmtRelative(new Date(rep.generated_at))}</span>` : '';
     const learnBtn = rules.length > 0 ? `
       <button class="ihx-learn-btn" onclick="this.closest('.ihx-module').querySelector('.ihx-learn-panel').classList.toggle('is-open')">
         🧠 ${rules.length} aprendidas
       </button>` : '';
-
     return `
       <article class="ihx-module ${s.fullWidth ? 'ihx-full' : ''} ${s.locked ? 'is-locked' : ''}" data-section="${s.key}" style="--accent:${s.color}">
         <header class="ihx-mod-h">
@@ -287,9 +260,7 @@
           </div>` : ''}
       </article>`;
   }
-
   // ─── SECTION CONTENT ─────────────────────────────────────
-
   function renderSectionContent(rep, s) {
     const c = rep.content || {};
     const items = c.items || [];
@@ -305,7 +276,6 @@
       default:                             return renderGeneric(c, items, s);
     }
   }
-
   function renderThreats(c, items, s) {
     return `
       ${headline(c)}
@@ -325,7 +295,6 @@
       </div>
       ${action(c)} ${conf(c)}`;
   }
-
   function renderOpportunities(c, items, s) {
     return `
       ${headline(c)}
@@ -347,7 +316,6 @@
       </div>
       ${action(c)} ${conf(c)}`;
   }
-
   function renderSignals(c, items, s) {
     return `
       ${headline(c)}
@@ -365,7 +333,6 @@
       </div>
       ${action(c)} ${conf(c)}`;
   }
-
   function renderActions(c, items, s) {
     const cat = (it) => {
       const t = (it.title || '').toLowerCase();
@@ -375,7 +342,6 @@
     };
     const groups = { do: [], test: [], watch: [] };
     items.forEach((it, i) => { const k = cat(it); (groups[k] || groups.watch).push({ ...it, _i: i }); });
-
     const col = (label, emoji, clr, list) => `
       <div class="ihx-act-col">
         <div class="ihx-act-col-h" style="color:${clr}">${emoji} ${label}</div>
@@ -386,7 +352,6 @@
             ${foot(s, it, it._i)}
           </div>`).join('')}
       </div>`;
-
     return `
       ${headline(c)}
       <div class="ihx-act-grid">
@@ -396,7 +361,6 @@
       </div>
       ${action(c)} ${conf(c)}`;
   }
-
   function renderBenchmark(c, items, s) {
     return `
       ${headline(c)}
@@ -415,7 +379,6 @@
       </div>
       ${action(c)} ${conf(c)}`;
   }
-
   function renderBehavior(c, items, s) {
     return `
       ${headline(c)}
@@ -434,7 +397,6 @@
       </div>
       ${action(c)} ${conf(c)}`;
   }
-
   function renderSnapshot(c, items, s) {
     return `
       ${headline(c)}
@@ -449,7 +411,6 @@
       </div>
       ${action(c)} ${conf(c)}`;
   }
-
   function renderFuture(c, items, s) {
     const hor = (u) => u === 'high' ? '3–6 meses' : u === 'medium' ? '6–12 meses' : '12–18+ meses';
     return `
@@ -470,7 +431,6 @@
       </div>
       ${action(c)} ${conf(c)}`;
   }
-
   function renderGeneric(c, items, s) {
     return `
       ${headline(c)}
@@ -487,7 +447,6 @@
       </div>
       ${action(c)} ${conf(c)}`;
   }
-
   function renderLockedState(s) {
     return `
       <div class="ihx-locked">
@@ -497,30 +456,24 @@
         <button class="ihx-locked-cta">Actualizar a Pro →</button>
       </div>`;
   }
-
   // ─── SUBCOMPONENTS ───────────────────────────────────────
-
   function headline(c) {
     const h = cleanText(c.headline);
     return h ? `<p class="ihx-headline">${escapeHtml(h)}</p>` : '';
   }
-
   function implication(text, tag) {
     const t = cleanText(text);
     return t ? `<div class="ihx-impl"><span class="ihx-impl-tag">${tag}</span>${escapeHtml(t)}</div>` : '';
   }
-
   function action(c) {
     const a = cleanText(c.action);
     return a ? `<div class="ihx-action-banner"><span class="ihx-action-tag">ACCIÓN</span><span>${escapeHtml(a)}</span></div>` : '';
   }
-
   function conf(c) {
     return c.confidence != null
       ? `<div class="ihx-conf">Confianza <strong>${Math.round(c.confidence * 100)}%</strong></div>`
       : '';
   }
-
   function foot(s, it, i) {
     const cur = STATE.feedback[`${s.key}_${i}`];
     const title = escapeHtml(cleanText(it.title));
@@ -537,9 +490,7 @@
         </div>
       </div>`;
   }
-
-  // ─── FEEDBACK & GENERATE (logic unchanged) ───────────────
-
+  // ─── FEEDBACK & GENERATE ─────────────────────────────────
   async function submitFeedback(btn) {
     const sectionKey = btn.dataset.section;
     const itemIndex  = parseInt(btn.dataset.idx, 10);
@@ -557,14 +508,15 @@
     });
     if (error) { console.warn('[feedback]', error); delete STATE.feedback[fbKey]; renderDashboard(); }
   }
-
   async function generateAll({ force = false } = {}) {
     if (STATE.generating) return;
     STATE.generating = true;
-    const btn  = document.getElementById('ih-btn-generate');
-    const prog = document.getElementById('ih-progress');
-    btn.disabled = true;
-    btn.querySelector('span').textContent = 'Generando…';
+    const btnMissing = document.getElementById('ih-btn-generate');
+    const btnAll     = document.getElementById('ih-btn-generate-all');
+    const prog       = document.getElementById('ih-progress');
+    btnMissing.disabled = true;
+    btnAll.disabled     = true;
+    btnMissing.querySelector('span').textContent = 'Generando…';
     prog.style.display = 'block';
     updateStatus();
     try {
@@ -581,7 +533,12 @@
       const plan    = planData.plan || [];
       const toRun   = plan.filter(p => !p.skip).map(p => p.section_key);
       const skipped = plan.length - toRun.length;
-      if (toRun.length === 0) { prog.textContent = `✓ Nada que generar — las ${skipped} secciones ya están al día.`; return; }
+      if (toRun.length === 0) {
+        prog.innerHTML = `<strong>✓ Todo al día</strong> — las ${skipped} secciones ya están dentro de su cadence.<br><small>Para regenerar igualmente usá <strong>Regenerar todo</strong>.</small>`;
+        return;
+      }
+      prog.innerHTML = `Generando <strong>${toRun.length}</strong> secciones (${skipped} omitidas por cadence). Costo: <strong>${toRun.length} créditos</strong>.`;
+      await new Promise(r => setTimeout(r, 1200));
       let done = 0;
       for (const section_key of toRun) {
         prog.textContent = `${done + 1}/${toRun.length} · ${section_key.replace(/_/g, ' ')}…`;
@@ -602,15 +559,14 @@
       await Promise.all([loadReports(), loadLearning()]);
     } finally {
       STATE.generating = false;
-      btn.disabled = false;
-      btn.querySelector('span').textContent = 'Actualizar inteligencia';
+      btnMissing.disabled = false;
+      btnAll.disabled     = false;
+      btnMissing.querySelector('span').textContent = 'Actualizar inteligencia';
       updateStatus();
       setTimeout(() => { prog.style.display = 'none'; }, 6000);
     }
   }
-
   // ─── UTILS ───────────────────────────────────────────────
-
   function overrideHeaderStats() {
     const reps = Object.values(STATE.reports).filter(r => r.status === 'ready' && r.content);
     let signals = 0, actions = 0, threats = 0;
@@ -624,7 +580,6 @@
     setText('#v2-actions-count', actions);
     setText('#v2-threats-count', threats);
   }
-
   function cleanText(s) {
     if (!s) return '';
     let t = String(s);
@@ -633,11 +588,9 @@
     t = t.replace(/\s+/g, ' ').trim();
     return t;
   }
-
   function escapeHtml(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
-
   function fmtRelative(date) {
     const diff  = Date.now() - date.getTime();
     const mins  = Math.floor(diff / 60000);
@@ -648,14 +601,11 @@
     if (hours < 24) return `hace ${hours}h`;
     return `hace ${days}d`;
   }
-
   function setText(sel, v) { const el = document.querySelector(sel); if (el) el.textContent = String(v); }
   function urgLabel(u) { return u === 'high' ? 'CRÍTICO' : u === 'low' ? 'BAJO' : 'MEDIO'; }
   function urgScore(u) { return u === 'high' ? 92 : u === 'medium' ? 58 : 32; }
   function severityIcon(u) { return u === 'high' ? '🔴' : u === 'low' ? '🟢' : '🟡'; }
-
   // ─── STYLES ──────────────────────────────────────────────
-
   function injectStyles() {
     if (document.getElementById('ihx-styles')) return;
     const s = document.createElement('style');
@@ -663,10 +613,9 @@
     s.textContent = `
 /* ── WRAP ── */
 .ihx-wrap { margin: 0; font-family: inherit; }
-
 /* ── TOOLBAR ── */
 .ihx-toolbar {
-  display: flex; align-items: center; gap: 16px;
+  display: flex; align-items: center; gap: 12px;
   padding: 14px 20px; margin-bottom: 0;
   border-bottom: 1px solid rgba(255,255,255,0.05);
   background: rgba(0,0,0,0.15);
@@ -681,6 +630,17 @@
 }
 .ihx-btn-generate:hover:not(:disabled) { box-shadow: 0 5px 16px rgba(37,99,235,0.45); transform: translateY(-1px); }
 .ihx-btn-generate:disabled { background: #374151; cursor: not-allowed; box-shadow: none; }
+.ihx-btn-force {
+  display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0;
+  background: rgba(255,255,255,0.04); color: #C7D2E3;
+  border: 1px solid rgba(255,255,255,0.1); padding: 8px 14px; border-radius: 8px;
+  font: inherit; font-weight: 500; font-size: 12.5px;
+  cursor: pointer; transition: all .15s;
+}
+.ihx-btn-force:hover:not(:disabled) {
+  background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); color: #fff;
+}
+.ihx-btn-force:disabled { opacity: .4; cursor: not-allowed; }
 .ihx-status-bar { display: flex; align-items: center; gap: 8px; flex: 1; }
 .ihx-status-dot {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
@@ -695,14 +655,13 @@
 @keyframes ihx-pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
 .ihx-status-text { font-size: 12px; color: #8A9BBF; }
 .ihx-toolbar-hint { font-size: 11px; color: #4A5269; margin-left: auto; white-space: nowrap; }
-
 /* ── PROGRESS ── */
 .ihx-progress {
   padding: 10px 20px; background: rgba(0,196,212,0.06);
   border-left: 3px solid #00C4D4; color: #C7D2E3;
   font-size: 12px; font-family: 'SF Mono','Monaco',monospace;
 }
-
+.ihx-progress small { color: #6E7B96; font-size: 11px; }
 /* ── EXECUTIVE SUMMARY ── */
 .ihx-summary { padding: 24px 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.05); }
 .ihx-summary-eyebrow {
@@ -716,7 +675,6 @@
 }
 @media (max-width: 1200px) { .ihx-summary-grid { grid-template-columns: repeat(3,1fr); } }
 @media (max-width: 700px)  { .ihx-summary-grid { grid-template-columns: 1fr 1fr; } }
-
 .ihx-exec-card {
   background: rgba(255,255,255,0.028);
   border: 1px solid rgba(255,255,255,0.06);
@@ -741,7 +699,6 @@
   font-size: 11.5px; color: #6E7B96; line-height: 1.5;
 }
 .ihx-exec-pending { color: #374151; font-style: italic; font-weight: 400; }
-
 .ihx-summary-empty {
   padding: 40px 20px; text-align: center;
   background: rgba(255,255,255,0.018); border-radius: 14px;
@@ -750,7 +707,6 @@
 .ihx-summary-empty-icon { font-size: 32px; margin-bottom: 12px; opacity: .6; }
 .ihx-summary-empty-title { font-size: 15px; font-weight: 600; color: #C7D2E3; margin-bottom: 8px; }
 .ihx-summary-empty-sub { font-size: 13px; color: #6E7B96; line-height: 1.6; }
-
 /* ── MODULE GRID ── */
 .ihx-modules {
   display: grid;
@@ -759,7 +715,6 @@
   padding: 20px;
 }
 @media (max-width: 900px) { .ihx-modules { grid-template-columns: 1fr; } }
-
 .ihx-module {
   background: linear-gradient(180deg, rgba(255,255,255,0.025) 0%, rgba(255,255,255,0.012) 100%);
   border: 1px solid rgba(255,255,255,0.06);
@@ -770,7 +725,6 @@
 .ihx-module.ihx-full { grid-column: span 2; }
 @media (max-width: 900px) { .ihx-module.ihx-full { grid-column: span 1; } }
 .ihx-module.is-locked { border-color: rgba(245,158,11,0.2); }
-
 .ihx-mod-h {
   display: flex; justify-content: space-between; align-items: center;
   padding: 16px 18px 14px;
@@ -804,9 +758,7 @@
 .ihx-learn-title { font-size: 10px; font-weight: 700; color: #A78BFA; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px; }
 .ihx-learn-panel ul { margin: 0; padding-left: 16px; }
 .ihx-learn-panel li { font-size: 12px; color: #C7D2E3; line-height: 1.55; margin-bottom: 5px; }
-
 .ihx-mod-body { padding: 16px 18px 18px; }
-
 /* ── SHARED TEXT ── */
 .ihx-headline {
   font-size: 13px; font-weight: 500; color: #C7D2E3; line-height: 1.55;
@@ -827,7 +779,6 @@
   color: #00C4D4; background: rgba(0,196,212,0.12);
   padding: 1px 5px; border-radius: 3px; margin-right: 6px; letter-spacing: 0.5px;
 }
-
 /* ── URGENCY ── */
 .ihx-urgency-chip {
   font-size: 9.5px; font-weight: 700; letter-spacing: 0.5px;
@@ -837,7 +788,6 @@
 .ihx-urgency-chip.ihx-u-medium { color: #F59E0B; background: rgba(245,158,11,0.12); }
 .ihx-urgency-chip.ihx-u-low   { color: #00C878; background: rgba(0,200,120,0.12); }
 .ihx-chip-sm { font-size: 9px; padding: 1px 6px; }
-
 /* ── FOOT ── */
 .ihx-foot {
   display: flex; justify-content: space-between; align-items: center;
@@ -857,7 +807,6 @@
 .ihx-fb-btn:hover { color: #C7D2E3; background: rgba(255,255,255,0.05); }
 .ihx-fb-btn.is-up  { color: #00C878; background: rgba(0,200,120,0.1);  border-color: rgba(0,200,120,0.3); }
 .ihx-fb-btn.is-dn  { color: #E84040; background: rgba(232,64,64,0.1); border-color: rgba(232,64,64,0.3); }
-
 /* ── ACTION BANNER ── */
 .ihx-action-banner {
   margin-top: 16px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start;
@@ -868,13 +817,11 @@
   background: rgba(37,99,235,0.15); padding: 2px 7px; border-radius: 3px; white-space: nowrap; margin-top: 1px;
 }
 .ihx-action-banner span:last-child { font-size: 12.5px; color: #C7D2E3; line-height: 1.55; }
-
 /* ── CONFIDENCE ── */
 .ihx-conf {
   margin-top: 10px; font-size: 11px; color: #4A5269; text-align: right;
 }
 .ihx-conf strong { color: #00C878; }
-
 /* ── THREAT SECTION ── */
 .ihx-threat-list { display: grid; gap: 10px; }
 .ihx-threat-row {
@@ -888,7 +835,6 @@
 .ihx-threat-left { flex-shrink: 0; }
 .ihx-sev { font-size: 15px; line-height: 1; }
 .ihx-threat-content { flex: 1; min-width: 0; }
-
 /* ── OPPORTUNITY SECTION ── */
 .ihx-opp-list { display: grid; gap: 10px; }
 .ihx-opp-row {
@@ -905,7 +851,6 @@
 .ihx-opp-score-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; padding-top: 3px; }
 .ihx-opp-score-track { width: 60px; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; }
 .ihx-opp-score-fill { height: 100%; background: linear-gradient(90deg, #00C878, #34d399); border-radius: 2px; }
-
 /* ── SIGNAL SECTION ── */
 .ihx-signal-list { display: grid; gap: 2px; }
 .ihx-signal-row {
@@ -922,7 +867,6 @@
 .ihx-signal-dot.ihx-u-medium { background: #F59E0B; }
 .ihx-signal-dot.ihx-u-low    { background: #00C878; }
 .ihx-signal-content { min-width: 0; }
-
 /* ── STRATEGIC ACTIONS ── */
 .ihx-act-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
 @media (max-width: 700px) { .ihx-act-grid { grid-template-columns: 1fr; } }
@@ -933,7 +877,6 @@
   padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
 }
 .ihx-act-item:last-child { border-bottom: none; padding-bottom: 0; }
-
 /* ── BENCHMARK SECTION ── */
 .ihx-bench-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px;
@@ -950,7 +893,6 @@
   font-size: 14px; font-weight: 700; color: #A78BFA;
 }
 .ihx-bench-name { font-size: 12.5px; font-weight: 600; color: #E5EAF5; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 /* ── BEHAVIOR SECTION ── */
 .ihx-beh-list { display: grid; gap: 12px; }
 .ihx-beh-row { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
@@ -960,7 +902,6 @@
   margin-top: 2px; font-weight: 600;
 }
 .ihx-beh-content { flex: 1; min-width: 0; }
-
 /* ── SNAPSHOT SECTION ── */
 .ihx-snap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
 .ihx-snap-card {
@@ -970,7 +911,6 @@
 .ihx-snap-label { font-size: 12px; font-weight: 700; color: #A5B4FC; margin-bottom: 6px; line-height: 1.3; }
 .ihx-snap-body  { font-size: 12px; color: #8A9BBF; line-height: 1.55; }
 .ihx-snap-impl  { font-size: 11px; color: #6E7B96; margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.04); }
-
 /* ── FUTURE SECTION ── */
 .ihx-future-list { display: grid; gap: 14px; }
 .ihx-future-row { display: grid; grid-template-columns: 100px 1fr; gap: 14px; align-items: start; }
@@ -983,7 +923,6 @@
 .ihx-hor-badge.ihx-u-medium { background: rgba(245,158,11,0.1);  color: #F59E0B; border: 1px solid rgba(245,158,11,0.2); }
 .ihx-hor-badge.ihx-u-low    { background: rgba(168,85,247,0.1);  color: #C084FC; border: 1px solid rgba(168,85,247,0.2); }
 .ihx-future-content { min-width: 0; }
-
 /* ── GENERIC SECTION ── */
 .ihx-generic-list { display: grid; gap: 10px; }
 .ihx-generic-row {
@@ -999,7 +938,6 @@
   font-weight: 600; color: #4A5269; min-width: 22px; padding-top: 1px;
 }
 .ihx-generic-content { flex: 1; min-width: 0; }
-
 /* ── STATES ── */
 .ihx-state-empty {
   padding: 28px; text-align: center;
@@ -1019,7 +957,6 @@
   padding: 20px; color: #E84040; font-size: 12.5px; display: flex; flex-direction: column; gap: 4px;
 }
 .ihx-state-err small { color: #B44040; font-size: 11px; }
-
 /* ── LOCKED ── */
 .ihx-locked {
   padding: 32px 20px; text-align: center;
@@ -1038,11 +975,9 @@
     `;
     document.head.appendChild(s);
   }
-
   window.intelCadenceReload   = () => Promise.all([loadReports(), loadFeedback(), loadLearning()]);
   window.intelCadenceGenerate = (opts) => generateAll(opts || {});
   window.__intelCadence       = () => ({ ...STATE });
-
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
