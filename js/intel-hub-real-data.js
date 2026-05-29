@@ -1,423 +1,371 @@
 /**
- * intel-hub-real-data.js  (v2 — MutationObserver, no timeout)
- * ────────────────────────────────────────────────────────────────────
- * Replaces the MOCK data in intel-hub-v2.js with REAL data from
- * intelligence_hub_reports.
+ * intel-hub-cadence-tabs.js  (v3 — con feedback 👍/👎 para self-learning)
  *
- * Cambios respecto a v1:
- *   - Ya NO timeoutea. Usa MutationObserver para esperar a que el user
- *     navegue al Intel Hub y v2 renderice #bh-headline.
- *   - Re-corre el override cada vez que v2 re-renderiza (al navegar
- *     entre pages, refrescar, etc.).
- *   - Loadea reports una sola vez al inicio + Realtime para updates.
+ * Cambios vs v2:
+ *  + Botones 👍/👎 por item (escriben en intel_hub_feedback vía PostgREST + RLS)
+ *  + Estado visual: si ya votaste, mostrá tu rating
+ *  + Banner cuando una sección fue "skipped_recent" (no se gastaron créditos)
+ *  + Toggle "Mostrar reglas aprendidas" por sección
  */
+
 (function () {
   'use strict';
 
-  const SECTION_META = {
-    industry_insight_digest:      { kind: 'MKT',  who_es: 'Industry',    who_en: 'Industry',    tone: 'k-b' },
-    competitor_threat_radar:      { kind: 'COMP', who_es: 'Competidor',  who_en: 'Competitor',  tone: 'k-w' },
-    prospecting_recommendations:  { kind: 'INT',  who_es: 'Prospect',    who_en: 'Prospect',    tone: 'k-b' },
-    benchmark:                    { kind: 'COMP', who_es: 'Benchmark',   who_en: 'Benchmark',   tone: 'k-c' },
-    revenue_opportunities:        { kind: 'FUND', who_es: 'Revenue',     who_en: 'Revenue',     tone: 'k-g' },
-    strategic_actions:            { kind: 'INT',  who_es: 'Strategy',    who_en: 'Strategy',    tone: 'k-c' },
-    consumer_behavioral_analysis: { kind: 'MKT',  who_es: 'Behavior',    who_en: 'Behavior',    tone: 'k-c' },
-    market_snapshot:              { kind: 'MKT',  who_es: 'Market',      who_en: 'Market',      tone: 'k-c' },
-    future_innovations:           { kind: 'TECH', who_es: 'Innovation',  who_en: 'Innovation',  tone: 'k-b' },
-    pestel:                       { kind: 'MKT',  who_es: 'PESTEL',      who_en: 'PESTEL',      tone: 'k-c' },
-    market_architecture:          { kind: 'MKT',  who_es: 'TAM/SAM/SOM', who_en: 'TAM/SAM/SOM', tone: 'k-c' },
+  const SECTIONS = [
+    { key: 'industry_insight_digest',      title: 'Industry Insight Digest',      cadence: 'daily',     order: 1, locked: false },
+    { key: 'competitor_threat_radar',      title: 'Competitor Threat Radar',      cadence: 'daily',     order: 2, locked: false },
+    { key: 'prospecting_recommendations',  title: 'Prospecting Recommendations',  cadence: 'daily',     order: 3, locked: true  },
+    { key: 'benchmark',                    title: 'Benchmark',                    cadence: 'weekly',    order: 1, locked: false },
+    { key: 'revenue_opportunities',        title: 'Revenue Opportunities',        cadence: 'weekly',    order: 2, locked: false },
+    { key: 'strategic_actions',            title: 'Strategic Actions',            cadence: 'weekly',    order: 3, locked: false },
+    { key: 'consumer_behavioral_analysis', title: 'Consumer Behavioral Analysis', cadence: 'monthly',   order: 1, locked: false },
+    { key: 'market_snapshot',              title: 'Market Snapshot',              cadence: 'monthly',   order: 2, locked: false },
+    { key: 'future_innovations',           title: 'Future Innovations',           cadence: 'monthly',   order: 3, locked: false },
+  ];
+
+  const CADENCES = [
+    { key: 'daily',     label: 'Daily' },
+    { key: 'weekly',    label: 'Weekly' },
+    { key: 'monthly',   label: 'Monthly' },
+    { key: 'quarterly', label: 'Quarterly', comingSoon: true },
+    { key: 'yearly',    label: 'Yearly',    comingSoon: true },
+  ];
+
+  const STATE = {
+    user: null,
+    activeTab: 'daily',
+    reports: {},     // section_key → report row
+    feedback: {},    // `${section_key}_${item_idx}` → rating
+    learning: {},    // section_key → { distilled_rules: [...] }
+    initialized: false,
   };
 
-  const URGENCY_TONE     = { high: 'r', medium: 'g', low: 'b' };
-  const URGENCY_LABEL_ES = { high: 'Crítico', medium: 'Oportunidad', low: 'Señal' };
-  const URGENCY_LABEL_EN = { high: 'Critical', medium: 'Opportunity', low: 'Signal' };
-
-  let reports = {};
-  let supabaseChannel = null;
-  let observer = null;
-  let lastOverrideAt = 0;
-
-  // ── Boot ──────────────────────────────────────────────────────────────────────
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', boot);
-  } else {
-    boot();
-  }
-
-  function boot() {
-    console.log('[intel-real] booted, waiting for supabaseClient + v2 DOM');
-    // 1) Pre-load reports as soon as Supabase is ready
-    waitForSupabase().then(loadReports).then(subscribeRealtime);
-
-    // 2) Watch the DOM forever. When #bh-headline appears (user navigates to
-    //    intel hub and v2 renders), apply the override.
-    setupObserver();
-
-    // 3) Apply override now in case v2 already rendered (e.g. deep-linked)
-    if (document.getElementById('bh-headline')) {
-      console.log('[intel-real] v2 already rendered, applying override now');
-      tryOverride();
-    }
-  }
+  function log(...a) { console.log('[intel-cadence]', ...a); }
 
   async function waitForSupabase() {
-    while (!window.supabaseClient) {
-      await new Promise(r => setTimeout(r, 200));
+    for (let i = 0; i < 80; i++) {
+      if (window.supabaseClient) return true;
+      await new Promise((r) => setTimeout(r, 100));
     }
+    return false;
   }
 
-  function setupObserver() {
-    if (observer) return;
-    observer = new MutationObserver((mutations) => {
-      // Cheap check: did anything that could be the brief hero appear?
-      const brief = document.getElementById('bh-headline');
-      if (!brief) return;
-      // Throttle: don't override more than once every 500ms
-      const now = Date.now();
-      if (now - lastOverrideAt < 500) return;
-      tryOverride();
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    console.log('[intel-real] MutationObserver active on body');
+  async function init() {
+    if (STATE.initialized) return;
+    STATE.initialized = true;
+    log('init v3');
+    if (!(await waitForSupabase())) return log('no supabase');
+    const { data: { user } } = await window.supabaseClient.auth.getUser();
+    if (!user) return log('no user');
+    STATE.user = user;
+    await Promise.all([loadReports(), loadFeedback(), loadLearning()]);
+    subscribeRealtime();
+    mountObserver();
   }
 
-  function tryOverride() {
-    const headline = document.getElementById('bh-headline');
-    if (!headline) return;
-    // Only override if v2 has finished rendering (look for all 3 hero slots)
-    if (!document.getElementById('bh-item-0')) return;
-
-    lastOverrideAt = Date.now();
-    console.log('[intel-real] v2 detected → applying override');
-    overrideAllUI();
-  }
-
-  // ── Data loading ──────────────────────────────────────────────────────────────
   async function loadReports() {
-    try {
-      const { data: { user } } = await window.supabaseClient.auth.getUser();
-      if (!user) { console.warn('[intel-real] no user'); return; }
+    const { data } = await window.supabaseClient
+      .from('intelligence_hub_reports').select('*').eq('user_id', STATE.user.id);
+    STATE.reports = {};
+    (data || []).forEach((r) => { STATE.reports[r.section_key] = r; });
+    log(`loaded ${data?.length || 0} reports`);
+    renderIfMounted();
+  }
 
-      const { data, error } = await window.supabaseClient
-        .from('intelligence_hub_reports')
-        .select('section_key, status, content, generated_at, error_message')
-        .eq('user_id', user.id);
+  async function loadFeedback() {
+    const { data } = await window.supabaseClient
+      .from('intel_hub_feedback').select('section_key, item_index, rating')
+      .eq('user_id', STATE.user.id);
+    STATE.feedback = {};
+    (data || []).forEach((f) => { STATE.feedback[`${f.section_key}_${f.item_index}`] = f.rating; });
+  }
 
-      if (error) { console.warn('[intel-real] load:', error); return; }
-
-      reports = {};
-      (data || []).forEach(r => { reports[r.section_key] = r; });
-
-      const ready = Object.values(reports).filter(r => r.status === 'ready').length;
-      console.log(`[intel-real] loaded ${Object.keys(reports).length} reports (${ready} ready)`);
-
-      // Try to override now (might fire before v2 renders, no problem)
-      tryOverride();
-    } catch (e) {
-      console.error('[intel-real] load exception:', e);
-    }
+  async function loadLearning() {
+    const { data } = await window.supabaseClient
+      .from('intel_hub_learning').select('*').eq('user_id', STATE.user.id);
+    STATE.learning = {};
+    (data || []).forEach((l) => { STATE.learning[l.section_key] = l; });
   }
 
   function subscribeRealtime() {
-    if (supabaseChannel) {
-      try { window.supabaseClient.removeChannel(supabaseChannel); } catch (e) {}
-    }
-    supabaseChannel = window.supabaseClient
-      .channel('intel-real-data')
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'intelligence_hub_reports' },
-        () => { console.log('[intel-real] realtime change'); loadReports(); }
-      )
+    window.supabaseClient.channel('intel-v3-' + STATE.user.id)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'intelligence_hub_reports',
+        filter: `user_id=eq.${STATE.user.id}`,
+      }, (payload) => {
+        const row = payload.new || payload.old;
+        if (!row?.section_key) return;
+        if (payload.eventType === 'DELETE') delete STATE.reports[row.section_key];
+        else STATE.reports[row.section_key] = row;
+        renderIfMounted();
+      })
       .subscribe();
-    console.log('[intel-real] subscribed to Realtime');
   }
 
-  // ── Main override pipeline ────────────────────────────────────────────────────
-  function overrideAllUI() {
-    const readyReports = Object.values(reports).filter(r => r.status === 'ready' && r.content);
-    if (readyReports.length === 0) {
-      showGeneratingState();
-      setHeaderStat('v2-signals-count', 0);
-      setHeaderStat('v2-actions-count', 0);
-      setHeaderStat('v2-threats-count', 0);
-      return;
-    }
+  // ────────── Mount ──────────
 
-    overrideHeaderStats(readyReports);
-    overrideBriefingHero(readyReports);
-    overrideSignalStream(readyReports);
-    overrideActionQueue(readyReports);
-    overrideBriefFooter(readyReports);
+  function mountObserver() {
+    const tryMount = () => {
+      const page = document.getElementById('page-mi-dashboard');
+      if (!page) return false;
+      if (page.querySelector('.ih-cadence-wrap')) return true;
+      injectTabs(page);
+      return true;
+    };
+    if (tryMount()) return;
+    new MutationObserver(() => tryMount()).observe(document.body, { childList: true, subtree: true });
   }
 
-  function showGeneratingState() {
-    const lang = currentLang();
-    const headline = document.getElementById('bh-headline');
-    if (headline) {
-      headline.textContent = lang === 'es'
-        ? 'Los agentes están generando tu inteligencia…'
-        : 'Agents are generating your intelligence…';
-    }
-    [0, 1, 2].forEach(i => {
-      const txt = document.getElementById(`bh-item-${i}`);
-      const meta = document.getElementById(`bh-meta-${i}`);
-      if (txt)  txt.innerHTML  = '<em style="opacity:.5">Generando…</em>';
-      if (meta) meta.innerHTML = '';
-    });
-  }
+  function injectTabs(page) {
+    const wrap = document.createElement('section');
+    wrap.className = 'ih-cadence-wrap';
+    wrap.innerHTML = `
+      <div class="ih-cadence-tabs" role="tablist">
+        ${CADENCES.map((c) => `
+          <button class="ih-tab ${c.key === STATE.activeTab ? 'is-active' : ''}"
+                  data-tab="${c.key}" ${c.comingSoon ? 'data-soon="1"' : ''}>
+            <span>${c.label}</span>${c.comingSoon ? '<em>Pronto</em>' : ''}
+          </button>`).join('')}
+      </div>
+      <div class="ih-cadence-body" id="ih-cadence-body"></div>
+    `;
+    const briefHero = page.querySelector('#brief-hero, .briefing-hero, .v2-briefing');
+    if (briefHero?.parentNode) briefHero.parentNode.insertBefore(wrap, briefHero.nextSibling);
+    else page.appendChild(wrap);
 
-  // ── Header stats ──────────────────────────────────────────────────────────────
-  function overrideHeaderStats(readyReports) {
-    let signals = 0, actions = 0, threats = 0;
-    readyReports.forEach(r => {
-      if (r.content?.items) {
-        signals += r.content.items.length;
-        r.content.items.forEach(it => { if (it.urgency === 'high') threats++; });
-      }
-      if (r.content?.action) actions++;
-    });
-    setHeaderStat('v2-signals-count', signals);
-    setHeaderStat('v2-actions-count', actions);
-    setHeaderStat('v2-threats-count', threats);
-  }
-
-  function setHeaderStat(id, value) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = String(value);
-  }
-
-  // ── Briefing Hero ─────────────────────────────────────────────────────────────
-  function overrideBriefingHero(readyReports) {
-    const lang = currentLang();
-    const dailyKeys = ['industry_insight_digest', 'competitor_threat_radar', 'prospecting_recommendations'];
-
-    const items = [];
-    dailyKeys.forEach(key => {
-      const r = reports[key];
-      if (r?.status === 'ready' && Array.isArray(r.content?.items)) {
-        r.content.items.forEach(it => items.push({
-          ...it,
-          section_key: key,
-          source: SECTION_META[key]?.[lang === 'es' ? 'who_es' : 'who_en'] || key,
-          generated_at: r.generated_at,
-        }));
-      }
-    });
-
-    if (items.length === 0) {
-      readyReports.forEach(r => {
-        if (Array.isArray(r.content?.items)) {
-          r.content.items.forEach(it => items.push({
-            ...it,
-            section_key: r.section_key,
-            source: SECTION_META[r.section_key]?.[lang === 'es' ? 'who_es' : 'who_en'] || r.section_key,
-            generated_at: r.generated_at,
-          }));
-        }
+    wrap.querySelectorAll('.ih-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (btn.dataset.soon) return;
+        STATE.activeTab = btn.dataset.tab;
+        wrap.querySelectorAll('.ih-tab').forEach((b) => b.classList.toggle('is-active', b === btn));
+        renderActiveTab();
       });
-    }
+    });
 
-    const urgRank = { high: 0, medium: 1, low: 2 };
-    items.sort((a, b) => (urgRank[a.urgency] ?? 3) - (urgRank[b.urgency] ?? 3));
-
-    const top3 = items.slice(0, 3);
-
-    const headline = document.getElementById('bh-headline');
-    if (headline) {
-      headline.textContent = top3.length > 0
-        ? (lang === 'es' ? 'Tres cosas importan para vos hoy.' : 'Three things matter for you today.')
-        : (lang === 'es' ? 'Tu Intelligence Hub está activo.' : 'Your Intelligence Hub is live.');
-    }
-
-    [0, 1, 2].forEach(i => {
-      const item = top3[i];
-      const txt  = document.getElementById(`bh-item-${i}`);
-      const meta = document.getElementById(`bh-meta-${i}`);
-
-      if (!item) {
-        if (txt)  txt.innerHTML  = '<em style="opacity:.4">—</em>';
-        if (meta) meta.innerHTML = '';
+    // Delegated click handler para feedback
+    wrap.addEventListener('click', async (ev) => {
+      const fbBtn = ev.target.closest('[data-fb]');
+      if (fbBtn) {
+        ev.preventDefault();
+        await submitFeedback(fbBtn);
         return;
       }
-
-      const bodyText = item.title
-        ? `<strong>${escapeHtml(item.title)}</strong> ${escapeHtml(stripStr(item.body, 140))}`
-        : escapeHtml(stripStr(item.body || item.implication, 200));
-
-      if (txt) txt.innerHTML = bodyText;
-
-      if (meta) {
-        const tone = URGENCY_TONE[item.urgency] || 'b';
-        const impact = lang === 'es'
-          ? (URGENCY_LABEL_ES[item.urgency] || 'Insight')
-          : (URGENCY_LABEL_EN[item.urgency] || 'Insight');
-        meta.innerHTML = `
-          <span class="brief-tag ${tone}">${impact}</span>
-          <span class="brief-item-src">${escapeHtml(item.source)} · ${formatRelTime(item.generated_at, lang)}</span>
-        `;
+      const learnToggle = ev.target.closest('[data-learn-toggle]');
+      if (learnToggle) {
+        const panel = learnToggle.parentElement.querySelector('.ih-learn-panel');
+        if (panel) panel.classList.toggle('show');
       }
     });
+
+    injectStyles();
+    renderActiveTab();
   }
 
-  // ── Briefing Hero footer (counters) ───────────────────────────────────────────
-  function overrideBriefFooter(readyReports) {
-    const latest = readyReports.map(r => r.generated_at).filter(Boolean).sort().reverse()[0];
-    if (latest) {
-      const timeEl = document.getElementById('bh-time');
-      if (timeEl) timeEl.textContent = formatTime(latest);
-    }
-    let totalSources = 0;
-    readyReports.forEach(r => { if (Array.isArray(r.content?.items)) totalSources += r.content.items.length; });
-    setHeaderStat('bh-sources', totalSources);
-    setHeaderStat('bh-agents', readyReports.length);
-    let totalConf = 0, count = 0;
-    readyReports.forEach(r => { totalConf += estimateConfidence(r); count++; });
-    setHeaderStat('bh-conf', count > 0 ? Math.round(totalConf / count) : 0);
+  function renderIfMounted() {
+    if (document.getElementById('ih-cadence-body')) renderActiveTab();
+    overrideHeaderStats();
   }
 
-  // ── Signal Stream ─────────────────────────────────────────────────────────────
-  function overrideSignalStream(readyReports) {
-    const lang = currentLang();
-    const list = document.getElementById('ss-list');
-    if (!list) return;
-
-    const signals = [];
-    readyReports.forEach(r => {
-      const meta = SECTION_META[r.section_key];
-      if (!meta || !Array.isArray(r.content?.items)) return;
-      r.content.items.forEach(it => {
-        signals.push({
-          ts:   formatTime(r.generated_at),
-          kind: meta.kind,
-          tone: meta.tone,
-          who:  meta[lang === 'es' ? 'who_es' : 'who_en'],
-          evt:  stripStr(it.title || it.body, 80),
-        });
-      });
-    });
-
-    signals.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
-
-    if (signals.length === 0) {
-      list.innerHTML = `<div class="ss-row" style="opacity:.5;padding:14px">
-        <span class="ss-ts">—</span><span></span>
-        <div><div class="ss-who">Sin señales aún</div>
-        <div class="ss-evt">${lang === 'es' ? 'Los agentes están analizando…' : 'Agents are analyzing…'}</div></div>
-        <span></span><span></span>
-      </div>`;
+  function renderActiveTab() {
+    const body = document.getElementById('ih-cadence-body');
+    if (!body) return;
+    const cad = CADENCES.find((c) => c.key === STATE.activeTab);
+    if (cad?.comingSoon) {
+      body.innerHTML = `<div class="ih-empty"><h3>${cad.label} — próximamente</h3></div>`;
       return;
     }
-
-    list.innerHTML = signals.slice(0, 8).map(s => `
-      <div class="ss-row">
-        <span class="ss-ts">${escapeHtml(s.ts)}</span>
-        <span class="ss-kind ${s.tone}"><span class="ss-kind-dot"></span>${escapeHtml(s.kind)}</span>
-        <div>
-          <div class="ss-who">${escapeHtml(s.who)}</div>
-          <div class="ss-evt">${escapeHtml(s.evt)}</div>
-        </div>
-        <span></span>
-        <span class="ss-go">→</span>
-      </div>
-    `).join('');
-
-    window.__intelRealOverride = true;
+    const sections = SECTIONS.filter((s) => s.cadence === STATE.activeTab).sort((a, b) => a.order - b.order);
+    body.innerHTML = sections.map((s) => renderSection(s)).join('');
   }
 
-  // ── Action Queue ──────────────────────────────────────────────────────────────
-  function overrideActionQueue(readyReports) {
-    const lang = currentLang();
-    const list = document.querySelector('.aq-card .aq-list');
-    if (!list) return;
+  function renderSection(s) {
+    const rep = STATE.reports[s.key];
+    const learn = STATE.learning[s.key];
+    const rulesCount = learn?.distilled_rules?.length || 0;
 
-    const actions = [];
-    readyReports.forEach(r => {
-      if (!r.content?.action) return;
-      const sectionLabel = SECTION_META[r.section_key]?.[lang === 'es' ? 'who_es' : 'who_en'] || r.section_key;
-      actions.push({
-        title: stripStr(r.content.headline || (lang === 'es' ? 'Acción sugerida' : 'Suggested action'), 100),
-        ctx:   stripStr(r.content.action, 200),
-        conf:  estimateConfidence(r),
-        impact: sectionLabel,
-        tone:  'b',
-        cta:   lang === 'es' ? 'Ver detalle' : 'View detail',
-      });
-    });
-
-    if (actions.length === 0) {
-      list.innerHTML = `<div class="aq-row" style="opacity:.5">
-        <div class="aq-rank">—</div>
-        <div class="aq-body">
-          <div class="aq-title">${lang === 'es' ? 'Sin acciones pendientes' : 'No pending actions'}</div>
-          <div class="aq-ctx">${lang === 'es' ? 'Los agentes están preparando recomendaciones.' : 'Agents are preparing recommendations.'}</div>
+    let inner;
+    if (!rep) inner = `<div class="ih-loading">Generando…</div>`;
+    else if (rep.status === 'generating' || rep.status === 'pending') inner = `<div class="ih-loading">Los agentes están generando…</div>`;
+    else if (rep.status === 'error') inner = `<div class="ih-error">Error: ${escapeHtml(rep.error_message || 'unknown')}</div>`;
+    else {
+      const c = rep.content || {};
+      const items = c.items || [];
+      inner = `
+        ${c.headline ? `<p class="ih-headline">${escapeHtml(c.headline)}</p>` : ''}
+        <ul class="ih-items">
+          ${items.map((it, i) => renderItem(s, it, i)).join('')}
+        </ul>
+        ${c.action ? `<div class="ih-action"><strong>Acción</strong> · ${escapeHtml(c.action)}</div>` : ''}
+        <div class="ih-meta">
+          ${rep.generated_at ? `Generado ${fmtDate(rep.generated_at)}` : ''}
+          ${c.confidence != null ? ` · Confianza ${Math.round(c.confidence * 100)}%` : ''}
         </div>
-      </div>`;
-      return;
+      `;
     }
 
-    list.innerHTML = actions.slice(0, 5).map((a, i) => `
-      <div class="aq-row" style="animation-delay:${i * 0.08}s">
-        <div class="aq-rank">0${i + 1}</div>
-        <div class="aq-body">
-          <div class="aq-title">${escapeHtml(a.title)}</div>
-          <div class="aq-ctx">${escapeHtml(a.ctx)}</div>
-          <div class="aq-meta">
-            <div class="aq-conf">
-              <span class="aq-conf-num">${a.conf}%</span>
-              <div class="aq-conf-bar"><span style="width:${a.conf}%"></span></div>
-              <span class="aq-conf-lbl">${lang === 'es' ? 'Confianza' : 'Confidence'}</span>
-            </div>
-            <span class="brief-tag ${a.tone}">${escapeHtml(a.impact)}</span>
+    const learnedPanel = rulesCount > 0 ? `
+      <div class="ih-learn">
+        <button class="ih-learn-btn" data-learn-toggle>🧠 ${rulesCount} reglas aprendidas</button>
+        <div class="ih-learn-panel">
+          <ul>${(learn.distilled_rules || []).map((r) => `<li>${escapeHtml(r)}</li>`).join('')}</ul>
+        </div>
+      </div>` : '';
+
+    return `
+      <article class="ih-card ${s.locked ? 'is-locked' : ''}" data-section="${s.key}">
+        <header class="ih-card-h">
+          <h3>${escapeHtml(s.title)}</h3>
+          <div class="ih-card-actions">
+            ${learnedPanel}
+            ${s.locked ? '<span class="ih-lock">🔒 Bloqueado</span>' : ''}
+          </div>
+        </header>
+        <div class="ih-card-body">${inner}</div>
+      </article>`;
+  }
+
+  function renderItem(s, it, i) {
+    const urgency = it.urgency || 'medium';
+    const fbKey = `${s.key}_${i}`;
+    const currentRating = STATE.feedback[fbKey];
+    return `
+      <li class="ih-item ih-u-${urgency} ${s.locked ? 'is-locked-item' : ''}">
+        ${it.title ? `<div class="ih-item-t">${escapeHtml(it.title)}</div>` : ''}
+        ${it.body  ? `<div class="ih-item-b">${escapeHtml(it.body)}</div>`   : ''}
+        ${it.objection_handler ? `<div class="ih-handler">↳ ${escapeHtml(it.objection_handler)}</div>` : ''}
+        ${it.script_implication ? `<div class="ih-handler">↳ ${escapeHtml(it.script_implication)}</div>` : ''}
+        ${it.cta_locked ? `<button class="ih-cta-locked">${escapeHtml(it.cta_locked)}</button>` : ''}
+        <div class="ih-item-foot">
+          ${it.source ? `<a class="ih-src" href="${it.source}" target="_blank" rel="noopener">fuente</a>` : ''}
+          <div class="ih-fb">
+            <button class="ih-fb-btn ${currentRating === 'up'   ? 'is-active' : ''}" data-fb="up"   data-section="${s.key}" data-idx="${i}" data-title="${escapeHtml(it.title || '')}" title="útil">👍</button>
+            <button class="ih-fb-btn ${currentRating === 'down' ? 'is-active' : ''}" data-fb="down" data-section="${s.key}" data-idx="${i}" data-title="${escapeHtml(it.title || '')}" title="no útil">👎</button>
           </div>
         </div>
-        <button class="aq-cta">${escapeHtml(a.cta)} <span class="arr">→</span></button>
-      </div>
-    `).join('');
+      </li>`;
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────────
-  function currentLang() {
-    return document.body.getAttribute('data-lang') === 'en' ? 'en' : 'es';
-  }
-  function formatTime(iso) {
-    if (!iso) return '';
-    try {
-      const d = new Date(iso);
-      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-    } catch (e) { return ''; }
-  }
-  function formatRelTime(iso, lang) {
-    if (!iso) return '';
-    try {
-      const d = new Date(iso);
-      const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
-      if (diffMin < 60) return lang === 'es' ? `hace ${diffMin}m` : `${diffMin}m ago`;
-      const diffH = Math.floor(diffMin / 60);
-      if (diffH < 24) return lang === 'es' ? `hace ${diffH}h` : `${diffH}h ago`;
-      const diffD = Math.floor(diffH / 24);
-      return lang === 'es' ? `hace ${diffD}d` : `${diffD}d ago`;
-    } catch (e) { return ''; }
-  }
-  function estimateConfidence(r) {
-    if (!Array.isArray(r.content?.items)) return 75;
-    const highCount = r.content.items.filter(i => i.urgency === 'high').length;
-    return Math.min(95, 70 + highCount * 5);
-  }
-  function stripStr(s, max) {
-    if (!s) return '';
-    const str = String(s).trim();
-    return str.length > max ? str.slice(0, max - 1) + '…' : str;
-  }
-  function escapeHtml(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, m => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[m]));
+  // ────────── Feedback submit ──────────
+
+  async function submitFeedback(btn) {
+    const sectionKey = btn.dataset.section;
+    const itemIndex = parseInt(btn.dataset.idx, 10);
+    const itemTitle = btn.dataset.title || null;
+    const rating = btn.dataset.fb;
+    const fbKey = `${sectionKey}_${itemIndex}`;
+
+    // Optimistic UI
+    STATE.feedback[fbKey] = rating;
+    renderActiveTab();
+
+    // Si fue 👎, pedí nota opcional inline (prompt simple, no bloqueante)
+    let note = null;
+    if (rating === 'down') {
+      note = window.prompt('¿Por qué no te sirvió? (opcional, ayuda al sistema a aprender)', '') || null;
+    }
+
+    // Get report_id si existe
+    const report = STATE.reports[sectionKey];
+    const reportId = report?.id || null;
+
+    // Upsert via PostgREST + RLS
+    const { error } = await window.supabaseClient
+      .from('intel_hub_feedback')
+      .insert({
+        user_id: STATE.user.id,
+        section_key: sectionKey,
+        report_id: reportId,
+        item_index: itemIndex,
+        item_title: itemTitle,
+        rating,
+        note,
+      });
+
+    if (error) {
+      console.warn('[feedback insert error]', error);
+      delete STATE.feedback[fbKey];
+      renderActiveTab();
+    }
   }
 
-  // ── Debug helpers ─────────────────────────────────────────────────────────────
-  window.intelHubReload    = loadReports;
-  window.intelHubOverride  = overrideAllUI;
-  window.__intelHubReports = () => reports;
+  // ────────── Header stats ──────────
 
-  console.log('[intel-real] script loaded (MutationObserver mode)');
+  function overrideHeaderStats() {
+    const reports = Object.values(STATE.reports).filter((r) => r.status === 'ready' && r.content);
+    let signals = 0, actions = 0, threats = 0;
+    reports.forEach((r) => {
+      const items = r.content.items || [];
+      signals += items.length;
+      if (r.content.action) actions += 1;
+      threats += items.filter((it) => it.urgency === 'high').length;
+    });
+    setText('#v2-signals-count', signals);
+    setText('#v2-actions-count', actions);
+    setText('#v2-threats-count', threats);
+  }
+  function setText(sel, v) { const el = document.querySelector(sel); if (el) el.textContent = String(v); }
+
+  // ────────── Utils ──────────
+
+  function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function fmtDate(iso) { try { return new Date(iso).toLocaleString('es', {dateStyle:'short',timeStyle:'short'}); } catch { return iso; } }
+
+  // ────────── Styles ──────────
+
+  function injectStyles() {
+    if (document.getElementById('ih-cadence-styles-v3')) return;
+    const style = document.createElement('style');
+    style.id = 'ih-cadence-styles-v3';
+    style.textContent = `
+      .ih-cadence-wrap { margin: 24px 0; }
+      .ih-cadence-tabs { display: flex; gap: 4px; border-bottom: 1px solid rgba(255,255,255,0.08); margin-bottom: 16px; }
+      .ih-tab { background: transparent; border: 0; color: #8A9BBF; padding: 10px 16px; font: inherit; cursor: pointer; border-bottom: 2px solid transparent; display: flex; gap: 6px; align-items: center; }
+      .ih-tab:hover { color: #C7D2E3; }
+      .ih-tab.is-active { color: #fff; border-bottom-color: #2563EB; }
+      .ih-tab[data-soon="1"] { opacity: .55; cursor: not-allowed; }
+      .ih-tab em { font-style: normal; font-size: 10px; padding: 2px 6px; background: rgba(255,255,255,0.08); border-radius: 4px; color: #8A9BBF; }
+      .ih-cadence-body { display: grid; gap: 16px; }
+      .ih-card { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 18px; }
+      .ih-card.is-locked { border-color: rgba(245, 158, 11, 0.4); background: linear-gradient(180deg, rgba(245,158,11,0.04), rgba(255,255,255,0.02)); }
+      .ih-card-h { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+      .ih-card-h h3 { font-size: 15px; color: #fff; margin: 0; font-weight: 600; }
+      .ih-card-actions { display: flex; gap: 8px; align-items: center; }
+      .ih-lock { font-size: 11px; color: #F59E0B; background: rgba(245,158,11,0.1); padding: 4px 8px; border-radius: 4px; }
+      .ih-learn { position: relative; }
+      .ih-learn-btn { background: rgba(124,58,237,0.12); color: #C4B5FD; border: 1px solid rgba(124,58,237,0.3); padding: 4px 10px; border-radius: 6px; font: inherit; font-size: 11px; cursor: pointer; }
+      .ih-learn-panel { display: none; position: absolute; right: 0; top: 32px; width: 320px; background: #1A1F2E; border: 1px solid rgba(124,58,237,0.4); border-radius: 8px; padding: 12px; z-index: 20; box-shadow: 0 12px 32px rgba(0,0,0,0.4); }
+      .ih-learn-panel.show { display: block; }
+      .ih-learn-panel ul { margin: 0; padding-left: 18px; }
+      .ih-learn-panel li { color: #C7D2E3; font-size: 12px; line-height: 1.5; margin-bottom: 4px; }
+      .ih-headline { color: #C7D2E3; font-size: 14px; margin: 0 0 12px; font-weight: 500; }
+      .ih-items { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+      .ih-item { padding: 10px 12px; background: rgba(255,255,255,0.025); border-radius: 8px; border-left: 3px solid #2563EB; }
+      .ih-item.ih-u-high   { border-left-color: #E84040; }
+      .ih-item.ih-u-medium { border-left-color: #F59E0B; }
+      .ih-item.ih-u-low    { border-left-color: #00C878; }
+      .ih-item-t { color: #fff; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+      .ih-item-b { color: #8A9BBF; font-size: 12.5px; line-height: 1.5; }
+      .ih-handler { color: #00C4D4; font-size: 12px; margin-top: 6px; }
+      .ih-item-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+      .ih-src { color: #5A6279; font-size: 11px; text-decoration: underline; }
+      .ih-fb { display: flex; gap: 4px; }
+      .ih-fb-btn { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 3px 7px; cursor: pointer; font-size: 13px; transition: all .15s; }
+      .ih-fb-btn:hover { background: rgba(255,255,255,0.1); }
+      .ih-fb-btn.is-active { background: rgba(37,99,235,0.2); border-color: #2563EB; }
+      .ih-cta-locked { background: #F59E0B; color: #1A1F2E; border: 0; padding: 6px 12px; border-radius: 6px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; margin-top: 8px; }
+      .ih-action { margin-top: 12px; padding: 10px; background: rgba(37,99,235,0.08); border-radius: 6px; color: #C7D2E3; font-size: 13px; }
+      .ih-meta { margin-top: 10px; font-size: 11px; color: #5A6279; }
+      .ih-loading, .ih-error, .ih-empty { color: #8A9BBF; padding: 24px; text-align: center; font-size: 13px; }
+      .ih-error { color: #E84040; }
+      .ih-empty h3 { color: #fff; margin: 0 0 8px; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // Debug
+  window.intelCadenceReload = () => Promise.all([loadReports(), loadFeedback(), loadLearning()]);
+  window.__intelCadence = () => ({ ...STATE });
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
