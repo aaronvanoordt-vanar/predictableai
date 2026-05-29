@@ -3900,6 +3900,36 @@ html, body {
       </div>
     </div>
 
+    <!-- ===== GESTIÓN DE EQUIPO (solo admin/director) ===== -->
+    <div class="settings-card" id="settings-team-card" style="display:none">
+      <div class="settings-card-header">
+        <div class="icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5">
+            <circle cx="5.5" cy="5" r="2"/><circle cx="10.5" cy="5" r="2"/>
+            <path d="M1 14c0-2.5 2-4 4.5-4M15 14c0-2.5-2-4-4.5-4M8 10c2.5 0 4.5 1.5 4.5 4H3.5C3.5 11.5 5.5 10 8 10z"/>
+          </svg>
+        </div>
+        <div class="settings-card-title">Gestión de equipo</div>
+      </div>
+      <div class="settings-card-sub">Asigna roles a los miembros de tu empresa. Los cambios aplican de inmediato.</div>
+
+      <div id="team-loading" style="padding:20px 0;text-align:center;color:var(--text3);font-size:13px">Cargando miembros...</div>
+      <div id="team-empty" style="display:none;padding:20px 0;color:var(--text3);font-size:13px">No hay otros miembros en tu empresa todavía.</div>
+      <div id="team-table-wrap" style="display:none;margin-top:8px">
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border)">
+              <th style="text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);padding:8px 4px">Miembro</th>
+              <th style="text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);padding:8px 4px">Email</th>
+              <th style="text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);padding:8px 4px">Rol</th>
+              <th style="width:80px"></th>
+            </tr>
+          </thead>
+          <tbody id="team-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- ===== DANGER ZONE ===== -->
     <div class="settings-card danger">
       <div class="settings-card-header">
@@ -6020,6 +6050,122 @@ window.addEventListener('DOMContentLoaded', () => {
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setup);
   else setup();
+})();
+</script>
+
+<script>
+// ─── GESTIÓN DE EQUIPO (admin/director) ───────────────────────────────────
+(function () {
+  const ROLES = ['admin', 'director', 'sdr'];
+
+  async function loadTeamMembers() {
+    const card    = document.getElementById('settings-team-card');
+    const loading = document.getElementById('team-loading');
+    const empty   = document.getElementById('team-empty');
+    const wrap    = document.getElementById('team-table-wrap');
+    const tbody   = document.getElementById('team-tbody');
+    if (!card) return;
+
+    // Show card only for admin/director
+    const p = window.currentProfile;
+    const rawRole = (p && p.role) ? p.role.toLowerCase() : '';
+    const isAdmin = rawRole === 'admin' || rawRole === 'director';
+    card.style.display = isAdmin ? '' : 'none';
+    if (!isAdmin) return;
+
+    loading.style.display = 'block';
+    empty.style.display   = 'none';
+    wrap.style.display    = 'none';
+
+    try {
+      const sb = window.supabaseClient;
+      const u  = window.currentUser;
+      if (!sb || !u || !p || !p.company_name) {
+        loading.style.display = 'none'; empty.style.display = 'block'; return;
+      }
+      const { data, error } = await sb.from('profiles')
+        .select('id, full_name, role, company_name')
+        .eq('company_name', p.company_name)
+        .neq('id', u.id)
+        .order('full_name');
+
+      loading.style.display = 'none';
+      if (error || !data || data.length === 0) {
+        empty.style.display = 'block'; return;
+      }
+
+      tbody.innerHTML = data.map(member => {
+        const name  = member.full_name || '—';
+        const role  = (member.role || 'sdr').toLowerCase();
+        const opts  = ROLES.map(r =>
+          '<option value="'+r+'"'+(r===role?' selected':'')+'>'+capitalize(r)+'</option>'
+        ).join('');
+        return '<tr style="border-bottom:1px solid var(--border)" data-member-id="'+member.id+'">' +
+          '<td style="padding:10px 4px;font-size:13px;font-weight:600">'+esc(name)+'</td>' +
+          '<td style="padding:10px 4px;font-size:12px;color:var(--text3)" id="team-email-'+member.id+'">—</td>' +
+          '<td style="padding:10px 4px">' +
+            '<select class="settings-input team-role-select" style="padding:4px 8px;height:auto;width:130px" data-member-id="'+member.id+'">' +
+              opts +
+            '</select>' +
+          '</td>' +
+          '<td style="padding:10px 4px;text-align:right">' +
+            '<button class="settings-btn settings-btn-primary" style="padding:4px 12px;font-size:12px" onclick="saveTeamMemberRole(\''+member.id+'\',this)">Guardar</button>' +
+          '</td>' +
+          '</tr>';
+      }).join('');
+
+      wrap.style.display = 'block';
+    } catch(e) {
+      loading.style.display = 'none';
+      empty.style.display   = 'block';
+      console.warn('[team-mgmt] loadTeamMembers error:', e);
+    }
+  }
+
+  function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+  function esc(s) { return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
+  window.saveTeamMemberRole = async function (memberId, btn) {
+    const select = document.querySelector('.team-role-select[data-member-id="'+memberId+'"]');
+    if (!select) return;
+    const newRole = select.value;
+    const orig = btn.textContent;
+    btn.textContent = 'Guardando...'; btn.disabled = true;
+    try {
+      const sb = window.supabaseClient;
+      const { error } = await sb.from('profiles')
+        .update({ role: newRole })
+        .eq('id', memberId);
+      if (error) throw error;
+      btn.textContent = '✓ Listo';
+      btn.style.background = 'var(--green)';
+      setTimeout(() => { btn.textContent = orig; btn.style.background = ''; btn.disabled = false; }, 2000);
+    } catch(e) {
+      btn.textContent = 'Error'; btn.style.background = 'var(--red)';
+      console.warn('[team-mgmt] saveRole error:', e);
+      setTimeout(() => { btn.textContent = orig; btn.style.background = ''; btn.disabled = false; }, 2500);
+    }
+  };
+
+  // Hook: cargar al abrir settings
+  const _origOpen = window.openSettingsPage;
+  window.openSettingsPage = function () {
+    if (_origOpen) _origOpen.apply(this, arguments);
+    setTimeout(loadTeamMembers, 80);
+  };
+
+  // Hook: cargar al navegar a settings via nav()
+  const _origNav = window.nav;
+  if (typeof _origNav === 'function') {
+    window.nav = function (el, pageId) {
+      const r = _origNav.apply(this, arguments);
+      if (pageId === 'settings') setTimeout(loadTeamMembers, 80);
+      return r;
+    };
+  }
+
+  // Hook: cargar cuando el perfil ya esté disponible
+  document.addEventListener('predictable:profile-ready', () => loadTeamMembers());
 })();
 </script>
 
