@@ -373,13 +373,12 @@
         const final = await global.api.endMeeting({ meeting_id: meetId });
         const score = final.score_total || 0;
         toast('Sesión finalizada · Score: ' + score + ' · Reporte guardado', 'success');
-        // Navigate to reports tab so director can review SDR performance
+        // Navigate to reports → last meeting tab
         setTimeout(function () {
           if (typeof nav === 'function') {
             nav(document.querySelector('[data-page=ventas-reportes]'), 'ventas-reportes');
-            // Auto-open last meeting tab
-            const lastTab = document.querySelector('#page-ventas-reportes .tab:last-child');
-            if (lastTab && typeof switchReportTab === 'function') switchReportTab(lastTab, 'rep-meeting');
+            const lastMeetingTab = document.querySelector('#page-ventas-reportes .tab[onclick*="rep-meeting"]');
+            if (lastMeetingTab && typeof switchReportTab === 'function') switchReportTab(lastMeetingTab, 'rep-meeting');
           }
         }, 1000);
       } catch (e) {
