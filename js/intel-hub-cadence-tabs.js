@@ -492,80 +492,177 @@
   }
   // ─── FEEDBACK & GENERATE ─────────────────────────────────
   async function submitFeedback(btn) {
-    const sectionKey = btn.dataset.section;
-    const itemIndex  = parseInt(btn.dataset.idx, 10);
-    const itemTitle  = btn.dataset.title || null;
-    const rating     = btn.dataset.fb;
-    const fbKey      = `${sectionKey}_${itemIndex}`;
-    STATE.feedback[fbKey] = rating;
-    renderDashboard();
-    let note = null;
-    if (rating === 'down') note = window.prompt('¿Por qué no te sirvió? (opcional, ayuda al sistema a aprender)', '') || null;
-    const reportId = STATE.reports[sectionKey]?.id || null;
-    const { error } = await window.supabaseClient.from('intel_hub_feedback').insert({
-      user_id: STATE.user.id, section_key: sectionKey, report_id: reportId,
-      item_index: itemIndex, item_title: itemTitle, rating, note,
-    });
-    if (error) { console.warn('[feedback]', error); delete STATE.feedback[fbKey]; renderDashboard(); }
-  }
+
+  const sectionKey = btn.dataset.section;
+
+  const itemIndex  = parseInt(btn.dataset.idx, 10);
+
+  const itemTitle  = btn.dataset.title || null;
+
+  const rating     = btn.dataset.fb;
+
+  const fbKey      = `${sectionKey}_${itemIndex}`;
+
+  STATE.feedback[fbKey] = rating;
+
+  renderDashboard();
+
+  let note = null;
+
+  if (rating === 'down') note = window.prompt('¿Por qué no te sirvió? (opcional, ayuda al sistema a aprender)', '') || null;
+
+  const reportId = STATE.reports[sectionKey]?.id || null;
+
+  const { error } = await window.supabaseClient.from('intel_hub_feedback').insert({
+
+    user_id: STATE.user.id, section_key: sectionKey, report_id: reportId,
+
+    item_index: itemIndex, item_title: itemTitle, rating, note,
+
+  });
+
+  if (error) { console.warn('[feedback]', error); delete STATE.feedback[fbKey]; renderDashboard(); return; }
+
+  // v4: sync feedback al memory store del agent (self-learning)
+
+  try {
+
+    const session = (await window.supabaseClient.auth.getSession()).data.session;
+
+    fetch(window.SUPABASE_CONFIG.url + '/functions/v1/intel-agent-feedback-sync', {
+
+      method: 'POST',
+
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+
+      body: JSON.stringify({ section_key: sectionKey }),
+
+    }).catch(e => console.warn('[feedback-sync]', e));
+
+  } catch (e) { console.warn('[feedback-sync init]', e); }
+
+}
   async function generateAll({ force = false } = {}) {
-    if (STATE.generating) return;
-    STATE.generating = true;
-    const btnMissing = document.getElementById('ih-btn-generate');
-    const btnAll     = document.getElementById('ih-btn-generate-all');
-    const prog       = document.getElementById('ih-progress');
-    btnMissing.disabled = true;
-    btnAll.disabled     = true;
-    btnMissing.querySelector('span').textContent = 'Generando…';
-    prog.style.display = 'block';
-    updateStatus();
-    try {
-      const session = (await window.supabaseClient.auth.getSession()).data.session;
-      const url = window.SUPABASE_CONFIG.url + '/functions/v1/generate-intel-hub-v3';
-      prog.textContent = 'Calculando qué secciones generar…';
-      const planResp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-        body: JSON.stringify({ force, plan_only: true }),
-      });
-      const planData = await planResp.json();
-      if (planResp.status === 402) { prog.textContent = `❌ Sin créditos suficientes (balance: ${planData.balance || 0})`; return; }
-      const plan    = planData.plan || [];
-      const toRun   = plan.filter(p => !p.skip).map(p => p.section_key);
-      const skipped = plan.length - toRun.length;
-      if (toRun.length === 0) {
-        prog.innerHTML = `<strong>✓ Todo al día</strong> — las ${skipped} secciones ya están dentro de su cadence.<br><small>Para regenerar igualmente usá <strong>Regenerar todo</strong>.</small>`;
-        return;
-      }
-      prog.innerHTML = `Generando <strong>${toRun.length}</strong> secciones (${skipped} omitidas por cadence). Costo: <strong>${toRun.length} créditos</strong>.`;
-      await new Promise(r => setTimeout(r, 1200));
-      let done = 0;
-      for (const section_key of toRun) {
-        prog.textContent = `${done + 1}/${toRun.length} · ${section_key.replace(/_/g, ' ')}…`;
-        try {
-          const r = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-            body: JSON.stringify({ force: true, sections: [section_key] }),
-          });
-          const j = await r.json();
-          if (r.status === 402) { prog.textContent = `Sin créditos. Generadas ${done}/${toRun.length}.`; return; }
-          if (j.errors > 0) console.warn(section_key, j.results);
-        } catch (e) { console.warn(section_key, e); }
-        done++;
-        await new Promise(r => setTimeout(r, 5000));
-      }
-      prog.textContent = `✓ Listo. ${done}/${toRun.length} generadas. ${skipped} ya estaban al día.`;
-      await Promise.all([loadReports(), loadLearning()]);
-    } finally {
-      STATE.generating = false;
-      btnMissing.disabled = false;
-      btnAll.disabled     = false;
-      btnMissing.querySelector('span').textContent = 'Actualizar inteligencia';
-      updateStatus();
-      setTimeout(() => { prog.style.display = 'none'; }, 6000);
+
+  if (STATE.generating) return;
+
+  STATE.generating = true;
+
+  const btnMissing = document.getElementById('ih-btn-generate');
+
+  const btnAll     = document.getElementById('ih-btn-generate-all');
+
+  const prog       = document.getElementById('ih-progress');
+
+  btnMissing.disabled = true;
+
+  if (btnAll) btnAll.disabled = true;
+
+  btnMissing.querySelector('span').textContent = 'Iniciando agentes…';
+
+  prog.style.display = 'block';
+
+  updateStatus();
+
+  try {
+
+    const session = (await window.supabaseClient.auth.getSession()).data.session;
+
+    const url = window.SUPABASE_CONFIG.url + '/functions/v1/intel-agent-start';
+
+    prog.textContent = 'Calculando qué secciones generar…';
+
+    const planResp = await fetch(url, {
+
+      method: 'POST',
+
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+
+      body: JSON.stringify({ force, plan_only: true }),
+
+    });
+
+    const planData = await planResp.json();
+
+    if (planResp.status === 402) {
+
+      prog.textContent = `❌ Sin créditos suficientes (balance: ${planData.balance || 0})`;
+
+      return;
+
     }
+
+    const plan    = planData.plan || [];
+
+    const toRun   = plan.filter(p => !p.skip).map(p => p.section_key);
+
+    const skipped = plan.length - toRun.length;
+
+    if (toRun.length === 0) {
+
+      prog.innerHTML = `<strong>✓ Todo al día</strong> — las ${skipped} secciones ya están dentro de su cadence.<br><small>Para regenerar igualmente usá <strong>Regenerar todo</strong>.</small>`;
+
+      return;
+
+    }
+
+    prog.innerHTML = `Iniciando <strong>${toRun.length}</strong> agentes en paralelo (${skipped} omitidas por cadence). Costo: <strong>${toRun.length} créditos</strong>.`;
+
+    const r = await fetch(url, {
+
+      method: 'POST',
+
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+
+      body: JSON.stringify({ force, sections: toRun }),
+
+    });
+
+    const j = await r.json();
+
+    if (r.status === 402) {
+
+      prog.textContent = `❌ Sin créditos suficientes (balance: ${j.balance || 0})`;
+
+      return;
+
+    }
+
+    if (j.error) {
+
+      prog.textContent = `❌ Error: ${j.detail || j.error}`;
+
+      return;
+
+    }
+
+    prog.innerHTML = `🚀 <strong>${j.started}</strong> agentes corriendo en Anthropic.<br><small>Los reportes van apareciendo en tiempo real a medida que cada agente termina. Tiempo estimado: 1-3 min.</small>`;
+
+    await loadReports();
+
+  } catch (e) {
+
+    console.error('[generateAll]', e);
+
+    prog.textContent = `❌ Error: ${e.message}`;
+
+  } finally {
+
+    STATE.generating = false;
+
+    btnMissing.disabled = false;
+
+    if (btnAll) btnAll.disabled = false;
+
+    btnMissing.querySelector('span').textContent = 'Actualizar inteligencia';
+
+    updateStatus();
+
+    setTimeout(() => { prog.style.display = 'none'; }, 10000);
+
   }
+
+}
   // ─── UTILS ───────────────────────────────────────────────
   function overrideHeaderStats() {
     const reps = Object.values(STATE.reports).filter(r => r.status === 'ready' && r.content);
