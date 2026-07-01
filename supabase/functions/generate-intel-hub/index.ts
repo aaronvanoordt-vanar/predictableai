@@ -440,22 +440,23 @@ Deno.serve(async (req: Request) => {
 
   if (triggeredBy === "manual") {
     const cost = requestedSections.length;
-    const { data: credits } = await supabase
-      .from("user_credits")
-      .select("balance")
-      .eq("user_id", userId)
-      .single();
 
-    if (!credits || credits.balance < cost) {
+    // Atomic deduction (single guarded UPDATE) — no read-then-write race.
+    // Returns the new balance, or null when the balance was insufficient.
+    const { data: newBalance, error: spendErr } = await supabase
+      .rpc("spend_credits", { p_user_id: userId, p_amount: cost });
+
+    if (spendErr || newBalance === null || newBalance === undefined) {
+      const { data: credits } = await supabase
+        .from("user_credits")
+        .select("balance")
+        .eq("user_id", userId)
+        .maybeSingle();
       return json(
         { error: "insufficient_credits", balance: credits?.balance ?? 0, cost },
         402, headers
       );
     }
-
-    await supabase.from("user_credits")
-      .update({ balance: credits.balance - cost })
-      .eq("user_id", userId);
 
     await supabase.from("credit_transactions").insert(
       requestedSections.map((sk) => ({

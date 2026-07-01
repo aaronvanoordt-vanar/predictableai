@@ -46,8 +46,12 @@
   // ─── INICIO ───────────────────────────────────────────────
   async function start(prospectContext) {
     if (!cfg.WORKER_URL) {
-      alert('WORKER_URL no configurado en js/config.js'); return;
+      toast('WORKER_URL no configurado en js/config.js', 'error'); return;
     }
+    // Guard de re-entrancy: un segundo start() sin cerrar el anterior filtra
+    // el timer, el WebSocket y los tracks de mic/pantalla.
+    if (active) { console.warn('[Coach] Ya hay una sesión activa; ignorando start().'); return; }
+    active = true;
     try {
       console.log('[Coach] 1/4 Pidiendo token a Deepgram via Worker...');
       const dgToken = await getDeepgramToken();
@@ -395,6 +399,8 @@
     if (dgSocket) { try { dgSocket.close(); } catch(e){} dgSocket = null; }
     if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
     utteranceBuffer = [];
+    // Liberar el guard de re-entrancy para permitir reiniciar tras un fallo.
+    active = false;
   }
   function esc(s) {
     return String(s==null?'':s).replace(/[&<>"']/g, function(c){

@@ -47,6 +47,15 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Unauthorized" }, 401);
   }
 
+  // Fail loudly if the shared secret is missing: without it every fan-out call
+  // to generate-intel-hub is rejected 401 and the whole scheduler silently
+  // no-ops. Surface it here instead of per-user failures.
+  const schedulerSecret = Deno.env.get("SCHEDULER_SECRET") ?? "";
+  if (!schedulerSecret) {
+    console.error("[scheduler] SCHEDULER_SECRET is not set — aborting.");
+    return json({ error: "SCHEDULER_SECRET not configured" }, 500);
+  }
+
   let body: { cadence?: string } = {};
   try { body = await req.json(); } catch { /* no body = run all */ }
 
@@ -115,8 +124,6 @@ Deno.serve(async (req: Request) => {
     }
 
     console.log(`[scheduler] cadence=${cadence} users_due=${usersNeedingRefresh.size}`);
-
-    const schedulerSecret = Deno.env.get("SCHEDULER_SECRET") ?? "";
 
     // Fan out — call generate-intel-hub for each user
     const promises = Array.from(usersNeedingRefresh).map(async (userId) => {

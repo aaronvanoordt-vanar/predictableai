@@ -84,11 +84,34 @@
     return String(str).split(",").map((s) => s.trim()).filter(Boolean);
   }
 
+  // Escapa texto antes de inyectarlo en innerHTML — previene XSS cuando se
+  // renderiza data de Apollo / Supabase / LLM / localStorage con template strings.
+  function escHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  // Devuelve una URL segura para usar en href/src, o '#' si el esquema no es
+  // http(s)/mailto/tel — bloquea javascript:, data:, vbscript:, etc.
+  function safeUrl(u) {
+    const raw = String(u == null ? "" : u).trim();
+    if (!raw) return "#";
+    if (/^(https?:|mailto:|tel:)/i.test(raw)) return raw;
+    if (/^[/#.]/.test(raw) || /^[\w.-]+(\/|$)/.test(raw)) return raw; // relativa
+    return "#";
+  }
+
+  global.escHtml = escHtml;
+  global.safeUrl = safeUrl;
+
   global.uiHelpers = {
     toast,
     setButtonLoading,
     showErrorInline,
     getMultiSelectValues,
     csv,
+    escHtml,
+    safeUrl,
   };
 })(window);
