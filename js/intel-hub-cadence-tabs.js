@@ -76,7 +76,11 @@
       return true;
     };
     if (tryMount()) return;
-    new MutationObserver(() => tryMount()).observe(document.body, { childList: true, subtree: true });
+    // Desconectar el observer una vez montado para no correr en cada mutación
+    // del DOM de toda la app (fuga de rendimiento).
+    const obs = new MutationObserver(() => { if (tryMount()) obs.disconnect(); });
+    STATE._observer = obs;
+    obs.observe(document.body, { childList: true, subtree: true });
   }
   // ─── INJECTION ───────────────────────────────────────────
   function injectDashboard(page) {
@@ -479,7 +483,7 @@
     const title = escapeHtml(cleanText(it.title));
     return `
       <div class="ihx-foot">
-        ${it.source ? `<a class="ihx-src" href="${it.source}" target="_blank" rel="noopener">fuente</a>` : '<span></span>'}
+        ${it.source ? `<a class="ihx-src" href="${escapeHtml(safeSourceUrl(it.source))}" target="_blank" rel="noopener noreferrer">fuente</a>` : '<span></span>'}
         <div class="ihx-fb">
           <button class="ihx-fb-btn ${cur === 'up' ? 'is-up' : ''}" data-fb="up" data-section="${s.key}" data-idx="${i}" data-title="${title}" title="Útil">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H7a2 2 0 0 1-2-2V12a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L15 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>
@@ -546,19 +550,24 @@
 
   if (STATE.generating) return;
 
-  STATE.generating = true;
-
   const btnMissing = document.getElementById('ih-btn-generate');
 
   const btnAll     = document.getElementById('ih-btn-generate-all');
 
   const prog       = document.getElementById('ih-progress');
 
+  // El hub aún no está montado (p.ej. se llamó window.intelCadenceGenerate
+  // antes de tiempo): no hay UI que actualizar, abortamos sin romper.
+  if (!btnMissing || !prog) { log('generateAll: hub no montado aún'); return; }
+
+  STATE.generating = true;
+
   btnMissing.disabled = true;
 
   if (btnAll) btnAll.disabled = true;
 
-  btnMissing.querySelector('span').textContent = 'Iniciando agentes…';
+  const btnSpan = btnMissing.querySelector('span');
+  if (btnSpan) btnSpan.textContent = 'Iniciando agentes…';
 
   prog.style.display = 'block';
 
@@ -687,6 +696,11 @@
   }
   function escapeHtml(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  // Solo permite http(s) en el href de "fuente" — bloquea javascript:/data: etc.
+  function safeSourceUrl(u) {
+    const raw = String(u ?? '').trim();
+    return /^https?:\/\//i.test(raw) ? raw : '#';
   }
   function fmtRelative(date) {
     const diff  = Date.now() - date.getTime();
@@ -1075,6 +1089,17 @@
   window.intelCadenceReload   = () => Promise.all([loadReports(), loadFeedback(), loadLearning()]);
   window.intelCadenceGenerate = (opts) => generateAll(opts || {});
   window.__intelCadence       = () => ({ ...STATE });
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-  else init();
+  // init() nunca debe romper silenciosamente: si rechaza, el usuario se queda
+  // en "Cargando…" para siempre. Capturamos y mostramos el estado.
+  function safeInit() {
+    Promise.resolve().then(init).catch((err) => {
+      console.error('[intel-hub-v4] init falló:', err);
+      const dot = document.getElementById('ihx-status-dot');
+      const txt = document.getElementById('ihx-status-text');
+      if (dot) dot.style.background = 'var(--red, #E84040)';
+      if (txt) txt.textContent = 'No se pudo cargar la inteligencia. Recarga la página.';
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', safeInit);
+  else safeInit();
 })();

@@ -11,10 +11,17 @@
       throw new Error("APPS_SCRIPT_URL no configurado en js/config.js");
     }
 
+    // Atribuir la acción al usuario realmente autenticado, no a un email fijo.
+    const authedEmail =
+      (global.currentProfile && global.currentProfile.email) ||
+      (global.currentUser && global.currentUser.email) ||
+      cfg.CURRENT_USER_EMAIL ||
+      null;
+
     const body = JSON.stringify({
       action,
       payload,
-      user_email: cfg.CURRENT_USER_EMAIL || null,
+      user_email: authedEmail,
       ts: new Date().toISOString(),
     });
 

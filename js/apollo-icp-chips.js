@@ -159,7 +159,7 @@
       }
       dropdown.innerHTML = results.map((r, i) => `
         <div data-idx="${i}" style="padding:7px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;border-bottom:1px solid var(--border)">
-          ${r.logo ? '<img src="' + r.logo + '" style="width:18px;height:18px;border-radius:3px;object-fit:cover" onerror="this.style.display=\'none\'">' : ''}
+          ${safeLogo(r.logo) ? '<img src="' + escapeHtml(safeLogo(r.logo)) + '" style="width:18px;height:18px;border-radius:3px;object-fit:cover" onerror="this.style.display=\'none\'">' : ''}
           <div style="flex:1;min-width:0">
             <div style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.name)}</div>
             ${r.sub ? '<div style="color:var(--text3);font-size:10px">' + escapeHtml(r.sub) + '</div>' : ''}
@@ -231,6 +231,11 @@
 
   function escapeHtml(s) {
     return String(s || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  }
+  // Solo permite logos vía http(s) — evita data:/javascript: en el src.
+  function safeLogo(u) {
+    const raw = String(u || '').trim();
+    return /^https?:\/\//i.test(raw) ? raw : '';
   }
 
   // ─── API publica ─────────────────────────────────────────

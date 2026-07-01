@@ -3963,7 +3963,6 @@ html, body {
 <script src="js/supabase-client.js"></script>
 <script src="js/auth-guard.js"></script>
 <!-- ═════ Predictable JS modules ═════ -->
-<script src="js/config.js"></script>
 <script src="js/ui-helpers.js"></script>
 <script src="js/api.js"></script>
 <script src="js/apollo-enums.js"></script>
@@ -4233,12 +4232,13 @@ async function loadLastMeeting() {
       ).join('');
     }
 
+    const e = window.escHtml || (s => s);
     const hlEl = document.getElementById('lm-highlights');
-    if (hlEl) hlEl.innerHTML = (r.highlights || []).map(h => '<li>' + h + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
+    if (hlEl) hlEl.innerHTML = (r.highlights || []).map(h => '<li>' + e(h) + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
     const mEl = document.getElementById('lm-missed');
-    if (mEl) mEl.innerHTML = (r.missed || []).map(m => '<li>' + m + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
+    if (mEl) mEl.innerHTML = (r.missed || []).map(m => '<li>' + e(m) + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
     const nEl = document.getElementById('lm-next');
-    if (nEl) nEl.innerHTML = (r.next_steps || []).map(n => '<li>' + n + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
+    if (nEl) nEl.innerHTML = (r.next_steps || []).map(n => '<li>' + e(n) + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
 
     content.style.display = 'block';
 
@@ -4377,9 +4377,10 @@ async function loadMyPerformance() {
         const date = r.started_at ? new Date(r.started_at).toLocaleDateString('es-MX',{day:'numeric',month:'short',year:'numeric'}) : '—';
         const dur  = r.duration_seconds ? Math.round(r.duration_seconds/60)+' min' : '—';
         const sc   = r.score_total || 0;
+        const e = window.escHtml || (s => s);
         return '<tr>' +
-          '<td><strong>'+(r.prospect_name||'—')+'</strong></td>' +
-          '<td>'+(r.prospect_company||'—')+'</td>' +
+          '<td><strong>'+e(r.prospect_name||'—')+'</strong></td>' +
+          '<td>'+e(r.prospect_company||'—')+'</td>' +
           '<td>'+date+'</td>' +
           '<td>'+dur+'</td>' +
           '<td><span class="pill" style="background:'+scoreColor(sc)+'22;color:'+scoreColor(sc)+'">'+sc+'</span></td>' +
@@ -4442,8 +4443,9 @@ async function loadTeamFromSupabase() {
         : sdr.avgScore >= 65
         ? '<span class="pill pill-amber">En desarrollo</span>'
         : '<span class="pill pill-red">⚠ Necesita coaching</span>';
+      const e = window.escHtml || (s => s);
       return '<tr>' +
-        '<td><strong>'+sdr.name+'</strong></td>' +
+        '<td><strong>'+e(sdr.name)+'</strong></td>' +
         '<td>'+sdr.meetings+'</td>' +
         '<td><span class="pill" style="background:'+scoreColor(sdr.avgScore)+'22;color:'+scoreColor(sdr.avgScore)+'">'+sdr.avgScore+'</span></td>' +
         '<td>'+scoreBarW(sdr.avgListen)+'</td>' +
@@ -4796,15 +4798,24 @@ function renderResultsTable() {
   if(!tbody) return;
   const fitLabel = { strong:'Strong Fit', good:'Good Fit', partial:'Partial Fit' };
   const fitClass = { strong:'fit-strong', good:'fit-good', partial:'fit-partial' };
+  const e = window.escHtml || (s => s);
+  if (!apolloState.results.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="padding:40px 16px;text-align:center;color:var(--text3)">' +
+      '<div style="font-size:26px;margin-bottom:8px">🔍</div>' +
+      'Ningún contacto coincide con estos filtros.<br>' +
+      '<span style="font-size:12px">Prueba ampliar seniority, tamaño de empresa o quitar palabras clave.</span>' +
+      '</td></tr>';
+    return;
+  }
   tbody.innerHTML = apolloState.results.map(l => `
     <tr>
-      <td><input type="checkbox" class="contact-check" ${apolloState.selected.has(l.id)?'checked':''} onchange="toggleContact(${l.id},this.checked)"></td>
-      <td><strong>${l.name}</strong><br><span style="color:var(--text3);font-size:11px">${l.title}</span></td>
-      <td>${l.company}<br><span style="color:var(--text3);font-size:11px">${l.country} · ${l.employees}</span></td>
-      <td><span style="font-size:11px;color:var(--text2)">${l.industry}</span></td>
-      <td><span style="font-size:11px;font-family:var(--font-mono)">${l.email}</span></td>
-      <td>${l.phone ? `<span style="font-size:11px;font-family:var(--font-mono)">${l.phone}</span>` : '<span style="color:var(--text3);font-size:11px">—</span>'}</td>
-      <td><span class="${fitClass[l.score]}">${fitLabel[l.score]}</span></td>
+      <td><input type="checkbox" class="contact-check" ${apolloState.selected.has(l.id)?'checked':''} onchange="toggleContact(${Number(l.id)||0},this.checked)"></td>
+      <td><strong>${e(l.name)}</strong><br><span style="color:var(--text3);font-size:11px">${e(l.title)}</span></td>
+      <td>${e(l.company)}<br><span style="color:var(--text3);font-size:11px">${e(l.country)} · ${e(l.employees)}</span></td>
+      <td><span style="font-size:11px;color:var(--text2)">${e(l.industry)}</span></td>
+      <td><span style="font-size:11px;font-family:var(--font-mono)">${e(l.email)}</span></td>
+      <td>${l.phone ? `<span style="font-size:11px;font-family:var(--font-mono)">${e(l.phone)}</span>` : '<span style="color:var(--text3);font-size:11px">—</span>'}</td>
+      <td><span class="${fitClass[l.score]||''}">${e(fitLabel[l.score]||l.score||'')}</span></td>
     </tr>`).join('');
 }
 
@@ -4859,7 +4870,11 @@ function scrollToSave() {
 
 async function saveToApollo() {
   const listName = document.getElementById('list-name')?.value?.trim();
-  if(!listName) { alert('Dale un nombre a tu lista.'); return; }
+  if(!listName) {
+    if (window.uiHelpers) window.uiHelpers.toast('Dale un nombre a tu lista.', 'warn'); else alert('Dale un nombre a tu lista.');
+    document.getElementById('list-name')?.focus();
+    return;
+  }
   const btn = document.getElementById('btn-save-apollo');
   if(btn) { btn.textContent='💾 Guardando en Apollo...'; btn.classList.add('saving'); btn.disabled=true; }
   apolloState.savedListName = listName;
@@ -4915,7 +4930,7 @@ async function saveToApollo() {
   const eb = document.getElementById('btn-enrich');
   if(eb && n > 0) { eb.disabled=false; eb.style.opacity='1'; eb.style.cursor='pointer'; }
   const cl = document.getElementById('enrich-contact-list');
-  if(cl) cl.innerHTML = apolloState.saved.map(l=>`<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="font-size:18px">👤</span><div><strong style="font-size:13px">${l.name}</strong><br><span style="font-size:11px;color:var(--text3)">${l.title} · ${l.company}</span></div><span style="margin-left:auto;font-size:11px;font-family:var(--font-mono);color:var(--text3)">📧 ${l.email}</span></div>`).join('');
+  if(cl) { const e = window.escHtml || (s=>s); cl.innerHTML = apolloState.saved.map(l=>`<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="font-size:18px">👤</span><div><strong style="font-size:13px">${e(l.name)}</strong><br><span style="font-size:11px;color:var(--text3)">${e(l.title)} · ${e(l.company)}</span></div><span style="margin-left:auto;font-size:11px;font-family:var(--font-mono);color:var(--text3)">📧 ${e(l.email)}</span></div>`).join(''); }
   advanceStep(5);
 }
 
@@ -5054,6 +5069,7 @@ function renderSavedLists() {
   }
   if(empty) empty.style.display = 'none';
   if(!container) return;
+  const e = window.escHtml || (s => s);
   container.innerHTML = stored.map((list, li) => {
     const date = new Date(list.savedAt).toLocaleDateString('es-MX', {day:'numeric',month:'short',year:'numeric'});
     const withPhone = list.contacts.filter(c => c.phone && !c.phone.includes('disponible')).length;
@@ -5065,7 +5081,7 @@ function renderSavedLists() {
         <div style="display:flex;align-items:center;gap:12px">
           <div style="width:36px;height:36px;border-radius:8px;background:var(--teal-dim);display:flex;align-items:center;justify-content:center;font-size:16px">📋</div>
           <div>
-            <div style="font-weight:700;font-size:14px">${list.name}</div>
+            <div style="font-weight:700;font-size:14px">${e(list.name)}</div>
             <div style="font-size:11px;color:var(--text3);margin-top:2px">${list.contacts.length} contactos · Guardado ${date}</div>
           </div>
         </div>
@@ -5099,11 +5115,11 @@ function renderSavedLists() {
             </tr></thead>
             <tbody id="lista-tbody-${li}">
               ${list.contacts.map(c => `<tr style="border-top:1px solid var(--border)">
-                <td style="padding:8px 16px;font-weight:600">${c.name}</td>
-                <td style="padding:8px;color:var(--text2)">${c.title||'—'}</td>
-                <td style="padding:8px;color:var(--text2)">${c.company||'—'}</td>
-                <td style="padding:8px;font-family:var(--font-mono);font-size:11px;color:${c.email&&!c.email.includes('📧')?'var(--teal)':'var(--text3)'}">${c.email||'—'}</td>
-                <td style="padding:8px 16px;font-family:var(--font-mono);font-size:11px;color:${c.phone&&!c.phone.includes('disponible')?'var(--jade)':'var(--text3)'}">${c.phone||'—'}</td>
+                <td style="padding:8px 16px;font-weight:600">${e(c.name)}</td>
+                <td style="padding:8px;color:var(--text2)">${e(c.title||'—')}</td>
+                <td style="padding:8px;color:var(--text2)">${e(c.company||'—')}</td>
+                <td style="padding:8px;font-family:var(--font-mono);font-size:11px;color:${c.email&&!c.email.includes('📧')?'var(--teal)':'var(--text3)'}">${e(c.email||'—')}</td>
+                <td style="padding:8px 16px;font-family:var(--font-mono);font-size:11px;color:${c.phone&&!c.phone.includes('disponible')?'var(--jade)':'var(--text3)'}">${e(c.phone||'—')}</td>
               </tr>`).join('')}
             </tbody>
           </table>
