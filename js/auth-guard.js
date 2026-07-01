@@ -81,7 +81,7 @@
 
   function showError(msg) {
     document.documentElement.style.visibility = '';
-    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0d1117;color:#e84040;font-family:sans-serif;text-align:center;padding:20px"><div><p>' + msg + '</p><p style="margin-top:14px"><a href="#" onclick="(async()=>{await window.supabaseClient.auth.signOut().catch(()=>{});localStorage.clear();location.href=\'./auth.html\';})();return false;" style="color:#00c4d4">Limpiar sesión y volver a iniciar</a></p></div></div>';
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#F7F8FA;color:#D64545;font-family:sans-serif;text-align:center;padding:20px"><div><p>' + msg + '</p><p style="margin-top:14px"><a href="#" onclick="(async()=>{await window.supabaseClient.auth.signOut().catch(()=>{});localStorage.clear();location.href=\'./auth.html\';})();return false;" style="color:#1F4BFF">Limpiar sesión y volver a iniciar</a></p></div></div>';
   }
 
   if (document.readyState === 'loading') {
