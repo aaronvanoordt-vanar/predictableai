@@ -9,6 +9,10 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+/* Tema antes del primer paint (evita flash) */
+(function(){try{var t=localStorage.getItem('predictable-theme');if(t==='dark'){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();
+</script>
 <style>
 
 :root {
@@ -99,6 +103,93 @@
   --shadow-1: 0 1px 2px rgba(10,10,15,0.04);
   --shadow-2: 0 1px 2px rgba(10,10,15,0.04), 0 8px 24px -12px rgba(10,10,15,0.10);
   --shadow-3: 0 2px 6px rgba(10,10,15,0.06), 0 20px 48px -20px rgba(10,10,15,0.18);
+
+  /* Chrome */
+  --glass:          rgba(247,248,250,.82);
+  --frost:          rgba(247,248,250,.92);
+  --frost-mid:      rgba(247,248,250,.82);
+  --frost-soft:     rgba(247,248,250,.72);
+  --surface-raised: #FFFFFF;
+  --dot-grid:       rgba(10,10,15,0.045);
+  --scroll-thumb:       rgba(10,10,15,0.12);
+  --scroll-thumb-hover: rgba(10,10,15,0.22);
+  --wa-bg:     #E9F1E6;
+  --wa-bubble: #FFFFFF;
+
+  color-scheme: light;
+}
+
+/* ═══ DARK THEME ═══ */
+html[data-theme="dark"] {
+  --bg:        #0B0C10;
+  --bg-1:      #0F1015;
+  --bg-2:      #14151B;
+  --bg-3:      #1A1B22;
+  --surface:   #13141A;
+  --surface2:  #1A1B23;
+  --surface3:  #24252F;
+  --hair:      rgba(255,255,255,0.08);
+  --hair-2:    rgba(255,255,255,0.05);
+  --hair-3:    rgba(255,255,255,0.15);
+
+  --ink:       #F5F6F8;
+  --ink-2:     rgba(245,246,248,0.80);
+  --ink-3:     rgba(245,246,248,0.56);
+  --ink-4:     rgba(245,246,248,0.40);
+  --ink-5:     rgba(245,246,248,0.24);
+
+  --accent:        #3B68FF;
+  --accent-2:      #5C82FF;
+  --accent-soft:   rgba(92,130,255,0.16);
+  --accent-soft-2: rgba(92,130,255,0.08);
+  --accent-ink:    #8FA8FF;
+  --cyan:          #2CB8D4;
+  --cyan-soft:     rgba(44,184,212,0.14);
+
+  --green:      #33C284;
+  --green-soft: rgba(51,194,132,0.14);
+  --red:        #E66A6A;
+  --red-soft:   rgba(230,106,106,0.13);
+  --amber:      #DFA24E;
+  --amber-soft: rgba(223,162,78,0.13);
+  --gold:       #3B68FF;
+
+  --border:       rgba(255,255,255,0.08);
+  --border2:      rgba(255,255,255,0.15);
+  --text:         #F5F6F8;
+  --text2:        rgba(245,246,248,0.64);
+  --text3:        rgba(245,246,248,0.46);
+  --jade:         #33C284;
+  --jade-dim:     rgba(51,194,132,0.14);
+  --jade-glow:    rgba(51,194,132,0.24);
+  --teal:         #2CB8D4;
+  --teal-dim:     rgba(44,184,212,0.14);
+  --teal-glow:    rgba(44,184,212,0.24);
+  --gold-bright:  #8FA8FF;
+  --gold-dim:     rgba(92,130,255,0.15);
+  --gold-glow:    rgba(92,130,255,0.25);
+  --purple:       #A18BFF;
+  --purple-dim:   rgba(161,139,255,0.13);
+  --blue-dim:     rgba(92,130,255,0.11);
+  --green-dim:    rgba(51,194,132,0.12);
+  --gradient-green: linear-gradient(135deg,#33C284,#1E9463);
+
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.30);
+  --shadow-2: 0 1px 2px rgba(0,0,0,0.30), 0 8px 24px -12px rgba(0,0,0,0.50);
+  --shadow-3: 0 2px 6px rgba(0,0,0,0.35), 0 20px 48px -20px rgba(0,0,0,0.65);
+
+  --glass:          rgba(11,12,16,.82);
+  --frost:          rgba(11,12,16,.92);
+  --frost-mid:      rgba(11,12,16,.82);
+  --frost-soft:     rgba(11,12,16,.72);
+  --surface-raised: #262834;
+  --dot-grid:       rgba(255,255,255,0.05);
+  --scroll-thumb:       rgba(255,255,255,0.14);
+  --scroll-thumb-hover: rgba(255,255,255,0.26);
+  --wa-bg:     #17211A;
+  --wa-bubble: #23302A;
+
+  color-scheme: dark;
 }
 
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
@@ -119,7 +210,7 @@ body {
 body::before {
   content:'';
   position:fixed; inset:0; z-index:0; pointer-events:none;
-  background-image: radial-gradient(circle, rgba(10,10,15,0.045) 1px, transparent 1px);
+  background-image: radial-gradient(circle, var(--dot-grid) 1px, transparent 1px);
   background-size: 32px 32px;
   opacity: .5;
 }
@@ -176,39 +267,32 @@ body::before {
 .sidebar-nav::-webkit-scrollbar { width:4px; }
 .sidebar-nav::-webkit-scrollbar-thumb { background:var(--surface3); border-radius:2px; }
 
-.ws-switch {
-  margin: 12px 12px 6px;
-  padding: 8px 10px;
-  border-radius: var(--r-md);
-  background: var(--surface);
-  border: 1px solid var(--hair);
-  display: flex; align-items: center; gap: 10px;
+/* ── THEME TOGGLE ── */
+.theme-toggle {
+  display: flex; gap: 2px;
+  margin: 8px 12px 4px;
+  padding: 3px;
+  background: var(--surface2);
+  border: 1px solid var(--hair-2);
+  border-radius: 999px;
+}
+.tt-opt {
+  flex: 1;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 5px 8px;
+  border: 0; border-radius: 999px;
+  background: transparent; color: var(--ink-3);
+  font-family: var(--font-sans); font-size: 11px; font-weight: 500;
   cursor: pointer;
-  transition: border-color .15s;
+  transition: background .15s, color .15s, box-shadow .15s;
 }
-.ws-switch:hover { border-color: var(--hair-3); }
-.ws-av {
-  width: 22px; height: 22px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, #FF7A45, #C84A4A);
-  color: #fff;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
+.tt-opt:hover { color: var(--ink); }
+.tt-opt.on {
+  background: var(--surface-raised);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(10,10,15,.10), 0 0 0 1px var(--hair-2);
 }
-.ws-body { flex: 1; min-width: 0; }
-.ws-name { font-size: 12.5px; font-weight: 500; line-height: 1.1; color: var(--ink); }
-.ws-plan {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-4);
-  margin-top: 2px;
-}
-.ws-caret { color: var(--ink-4); font-family: var(--font-mono); font-size: 10px; }
+.tt-opt svg { width: 13px; height: 13px; }
 
 .sidebar-section {
   padding: 14px 12px 4px;
@@ -409,7 +493,7 @@ body::before {
   height: var(--topbar-h);
   border-bottom:1px solid var(--hair);
   display:flex; align-items:center; gap:16px;
-  background: rgba(247,248,250,.82);
+  background: var(--glass);
   backdrop-filter:blur(16px) saturate(1.4);
   -webkit-backdrop-filter: blur(16px) saturate(1.4);
   position:sticky; top:0; z-index:50;
@@ -505,6 +589,25 @@ body::before {
 .card.legacy { padding: 18px 20px; flex: 1; border-radius: var(--r); }
 /* module status cards on dashboard sit directly in a .row and need padding */
 .row > .card { padding: 18px 20px; }
+
+/* ── AREA CARDS (dashboard) ── */
+.area-card { cursor: pointer; }
+.area-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; }
+.area-icon {
+  width: 38px; height: 38px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+}
+.area-icon svg { width: 19px; height: 19px; }
+.area-go {
+  font-family: var(--font-mono); font-size: 15px; color: var(--ink-5);
+  transition: color .15s, transform .15s;
+}
+.area-card:hover .area-go { color: var(--accent-2); transform: translateX(3px); }
+.area-name { font-size: 15.5px; font-weight: 600; letter-spacing: -0.015em; }
+.area-desc { font-size: 12px; color: var(--ink-3); line-height: 1.55; margin-top: 4px; min-height: 36px; }
+.area-bar { height: 4px; background: var(--surface3); border-radius: 2px; margin-top: 14px; overflow: hidden; }
+.area-bar > span { display: block; height: 100%; border-radius: 2px; }
+.area-meta { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; color: var(--ink-4); margin-top: 8px; }
 
 /* card header / body pattern */
 .card .hd {
@@ -702,9 +805,9 @@ textarea { resize:vertical; min-height:76px; }
   background: transparent; border: 0;
 }
 .tab.active {
-  background: #FFFFFF;
+  background: var(--surface-raised);
   color: var(--ink);
-  box-shadow: 0 1px 2px rgba(10,10,15,0.08), 0 0 0 1px rgba(10,10,15,0.04);
+  box-shadow: 0 1px 2px rgba(10,10,15,0.08), 0 0 0 1px var(--hair-2);
 }
 
 /* ── PIPELINE ── */
@@ -735,23 +838,43 @@ textarea { resize:vertical; min-height:76px; }
   margin-top:6px; color:var(--gold-bright);
 }
 
-/* ── MODULE INTRO ── */
-.module-intro {
-  background: linear-gradient(135deg, var(--surface), var(--surface2));
-  border:1px solid var(--border);
-  border-radius:var(--r); padding:26px;
-  display:flex; align-items:center; gap:22px;
+/* ── PAGE HERO ── */
+.page-hero { padding: 10px 2px 2px; }
+.ph-eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--ink-4); font-weight: 500;
 }
-.module-intro-icon {
-  width:56px; height:56px; border-radius:14px;
-  display:flex; align-items:center; justify-content:center;
-  font-size:26px; flex-shrink:0;
+.ph-title {
+  font-size: 30px; font-weight: 500; letter-spacing: -0.03em; line-height: 1.08;
+  margin: 12px 0 8px; color: var(--ink); text-wrap: pretty;
 }
-.module-intro-title {
-  font-family:var(--font-display);
-  font-size:19px; font-weight:800; margin-bottom:6px; letter-spacing:-.3px;
+.ph-title em { font-style: normal; color: var(--accent-2); }
+.ph-sub { font-size: 13.5px; color: var(--ink-3); line-height: 1.6; max-width: 660px; }
+
+/* ── FLOW (prospección) ── */
+.flow { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding: 4px 0; }
+.flow-cell {
+  min-width: 132px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
 }
-.module-intro-desc { font-size:12.5px; color:var(--text2); line-height:1.65; max-width:600px; }
+.flow-ic {
+  width: 42px; height: 42px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface2); border: 1px solid var(--hair);
+}
+.flow-ic svg { width: 19px; height: 19px; }
+.flow-name { font-size: 12px; font-weight: 600; letter-spacing: -0.005em; color: var(--ink); }
+.flow-sub { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.06em; color: var(--ink-4); }
+.flow-link {
+  flex: 1; min-width: 28px; height: 1px; margin-top: 21px;
+  background: var(--hair-3); position: relative;
+}
+.flow-link::after {
+  content: "›"; position: absolute; right: -2px; top: -9px;
+  font-family: var(--font-mono); font-size: 12px; color: var(--ink-4);
+}
 
 /* ── INSIGHT GRID ── */
 .insight-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
@@ -935,14 +1058,14 @@ html, body {
   width: 8px;
 }
 .main::-webkit-scrollbar-track {
-  background: rgba(10,10,15,0.02);
+  background: transparent;
 }
 .main::-webkit-scrollbar-thumb {
-  background: rgba(10,10,15,0.12);
+  background: var(--scroll-thumb);
   border-radius: 4px;
 }
 .main::-webkit-scrollbar-thumb:hover {
-  background: rgba(10,10,15,0.22);
+  background: var(--scroll-thumb-hover);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1238,6 +1361,29 @@ html, body {
 }
 .settings-pill.teal { background: var(--teal-dim); color: var(--teal); border-color: rgba(0,196,212,.3); }
 .settings-pill.jade { background: var(--jade-dim); color: var(--jade); border-color: rgba(0,200,120,.3); }
+
+/* ── ROLE SEGMENTED CONTROL ── */
+.role-seg {
+  display: inline-flex; gap: 2px;
+  padding: 3px;
+  background: var(--surface3);
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-md);
+}
+.role-opt {
+  padding: 6px 16px;
+  border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--ink-3);
+  font-family: var(--font-sans); font-size: 12.5px; font-weight: 500;
+  cursor: pointer;
+  transition: background .15s, color .15s, box-shadow .15s;
+}
+.role-opt:hover { color: var(--ink); }
+.role-opt.on {
+  background: var(--surface-raised); color: var(--ink);
+  box-shadow: 0 1px 2px rgba(10,10,15,0.08), 0 0 0 1px var(--hair-2);
+}
+.role-opt[disabled] { opacity: .55; cursor: wait; }
 
 /* ── Intelligence Hub ────────────────────────────────────── */
 .ih-loading {
@@ -1763,7 +1909,7 @@ html, body {
   color: var(--ink-3); transition: background .15s, color .15s; min-width: 86px;
 }
 .ig-tab:hover { color: var(--ink); }
-.ig-tab.on { background: #FFFFFF; color: var(--ink); box-shadow: 0 1px 2px rgba(10,10,15,0.08), 0 0 0 1px rgba(10,10,15,0.04); }
+.ig-tab.on { background: var(--surface-raised); color: var(--ink); box-shadow: 0 1px 2px rgba(10,10,15,0.08), 0 0 0 1px var(--hair-2); }
 .ig-tab-l { font-size: 13px; font-weight: 500; letter-spacing: -0.005em; }
 .ig-tab-d { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.16em; color: var(--ink-4); text-transform: uppercase; }
 .ig-tab.on .ig-tab-d { color: var(--ink-3); }
@@ -1835,16 +1981,6 @@ html, body {
 
   <div class="sidebar-nav">
 
-    <!-- Workspace -->
-    <div class="ws-switch">
-      <div class="ws-av" id="ws-av">P</div>
-      <div class="ws-body">
-        <div class="ws-name" id="ws-name">Workspace</div>
-        <div class="ws-plan" id="ws-plan">Pro · Revenue OS</div>
-      </div>
-      <span class="ws-caret">⌄</span>
-    </div>
-
     <!-- OPERAR -->
     <div class="sidebar-section">
       <div class="lbl">Operar</div>
@@ -1852,7 +1988,6 @@ html, body {
     <div class="nav-item active" data-page="dashboard" onclick="nav(this,'dashboard')">
       <svg class="nav-icon" fill="none" viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity=".7"/><rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor"/><rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".7"/></svg>
       Dashboard
-      <span class="nav-live-dot"></span>
     </div>
 
     <!-- INTELIGENCIA -->
@@ -1871,7 +2006,6 @@ html, body {
     <div class="nav-item" data-page="pro-overview" onclick="nav(this,'pro-overview')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="6" cy="5" r="3"/><path d="M1 14c0-3 2.5-5 5-5M14 11l-3 3-1.5-1.5"/></svg>
       Prospección
-      <span class="nav-badge teal">7</span>
     </div>
     <div class="nav-item" data-page="pro-icp" onclick="nav(this,'pro-icp')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M8 1l2 4 5 .5-3.5 3.5 1 5L8 12l-4.5 2 1-5L1 5.5 6 5z"/></svg>
@@ -1898,7 +2032,6 @@ html, body {
     <div class="nav-item" data-page="ventas-overview" onclick="nav(this,'ventas-overview')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="1.5"/><path d="M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1"/><path d="M8 9v-2M7 8h2"/></svg>
       Ventas AI
-      <span class="nav-badge jade">2</span>
     </div>
     <div class="nav-item" data-page="ventas-coach" onclick="nav(this,'ventas-coach')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 13v2M11 13v2M3 15h10"/></svg>
@@ -1914,13 +2047,19 @@ html, body {
   </div>
 
   <div class="sidebar-footer">
-    <!-- AI Status -->
-    <div class="side-foot-status">
-      <div class="sf-pulse"><span></span></div>
-      <div class="sf-meta">
-        <div class="sf-meta-t">Predictable AI</div>
-        <div class="sf-meta-s" id="sf-status">OPERANDO · 06:14</div>
-      </div>
+    <!-- Guía de primeros pasos (montada por js/onboarding-tour.js) -->
+    <div id="tour-launcher"></div>
+
+    <!-- Tema -->
+    <div class="theme-toggle" id="theme-toggle" role="radiogroup" aria-label="Tema de la interfaz">
+      <button type="button" class="tt-opt on" data-thm="light" aria-label="Tema claro">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.4"><circle cx="8" cy="8" r="3.2"/><path d="M8 1v1.6M8 13.4V15M15 8h-1.6M2.6 8H1M12.9 3.1l-1.1 1.1M4.2 11.8l-1.1 1.1M12.9 12.9l-1.1-1.1M4.2 4.2L3.1 3.1"/></svg>
+        Claro
+      </button>
+      <button type="button" class="tt-opt" data-thm="dark" aria-label="Tema oscuro">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.4"><path d="M13.5 9.5A6 6 0 016.5 2.5a6 6 0 107 7z"/></svg>
+        Oscuro
+      </button>
     </div>
 
     <!-- Dropdown que abre HACIA ARRIBA cuando el pill recibe click -->
@@ -1971,12 +2110,12 @@ html, body {
 <div class="page active fade-in" id="page-dashboard">
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
     <div>
-      <div class="topbar-title">Revenue OS</div>
-      <div class="topbar-sub">Bienvenido, Aarón · Semana 15 · Q2 2026</div>
+      <div class="topbar-title" id="dash-greeting">Revenue OS</div>
+      <div class="topbar-sub" id="dash-sub">Tu operación de revenue, en un vistazo</div>
     </div>
     <div class="topbar-actions">
-            <button class="btn btn-ghost btn-sm">↗ Exportar</button>
-      <button class="btn btn-primary btn-sm">+ Nueva campaña</button>
+      <button class="btn btn-ghost btn-sm">Exportar</button>
+      <button class="btn btn-primary btn-sm" onclick="nav(document.querySelector('[data-page=pro-apollo]'),'pro-apollo')">+ Nueva campaña</button>
     </div>
   </div>
 
@@ -2023,51 +2162,45 @@ html, body {
     </div>
   </div>
 
-  <!-- MODULE STATUS ROW -->
+  <!-- ÁREAS DEL PRODUCTO -->
   <div class="row">
-    <div class="card" style="cursor:pointer" onclick="nav(document.querySelector('[data-page=mi-dashboard]'),'mi-dashboard')">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--teal);margin-bottom:8px">Módulo 1</div>
-          <div style="font-size:16px;font-weight:800">Intelligence Hub</div>
-          <div style="font-size:12px;color:var(--text2);margin-top:4px">IA activa · Actualización automática</div>
+    <div class="card area-card" onclick="nav(document.querySelector('[data-page=mi-dashboard]'),'mi-dashboard')">
+      <div class="area-top">
+        <div class="area-icon" style="color:var(--accent-2);background:var(--accent-soft)">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M2.5 15l5-5 3.5 3.5 6.5-7.5"/><path d="M13 6h4.5v4.5"/></svg>
         </div>
-        <span class="pill pill-green">Activo</span>
+        <span class="area-go">→</span>
       </div>
-      <div style="margin-top:16px;height:4px;background:var(--surface3);border-radius:2px">
-        <div style="height:4px;width:78%;background:var(--gradient-gold);border-radius:2px"></div>
-      </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px">78% matriz completada</div>
+      <div class="area-name">Intelligence Hub</div>
+      <div class="area-desc">Informes diarios, señales y amenazas generados por tus agentes.</div>
+      <div class="area-bar"><span style="width:78%;background:linear-gradient(90deg,var(--accent),var(--accent-2))"></span></div>
+      <div class="area-meta">Matriz de contexto al 78%</div>
     </div>
 
-    <div class="card" style="cursor:pointer" onclick="nav(document.querySelector('[data-page=pro-overview]'),'pro-overview')">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--gold);margin-bottom:8px">Módulo 2</div>
-          <div style="font-size:16px;font-weight:800">Prospección</div>
-          <div style="font-size:12px;color:var(--text2);margin-top:4px">7 secuencias activas · 1,247 contactos</div>
+    <div class="card area-card" onclick="nav(document.querySelector('[data-page=pro-overview]'),'pro-overview')">
+      <div class="area-top">
+        <div class="area-icon" style="color:var(--cyan);background:var(--cyan-soft)">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><circle cx="8" cy="7" r="3.5"/><path d="M2 17.5c0-3.5 3-5.5 6-5.5M14 13.5l2 2 3.5-4"/></svg>
         </div>
-        <span class="pill pill-green">Activo</span>
+        <span class="area-go">→</span>
       </div>
-      <div style="margin-top:16px;height:4px;background:var(--surface3);border-radius:2px">
-        <div style="height:4px;width:92%;background:var(--grad-teal);border-radius:2px"></div>
-      </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px">ICP definido · Apollo conectado</div>
+      <div class="area-name">Prospección</div>
+      <div class="area-desc">7 secuencias activas · 1,247 contactos en cadencia multi-canal.</div>
+      <div class="area-bar"><span style="width:92%;background:var(--grad-teal)"></span></div>
+      <div class="area-meta">ICP definido · Apollo conectado</div>
     </div>
 
-    <div class="card" style="cursor:pointer" onclick="nav(document.querySelector('[data-page=ventas-overview]'),'ventas-overview')">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--green);margin-bottom:8px">Módulo 3</div>
-          <div style="font-size:16px;font-weight:800">Ventas AI</div>
-          <div style="font-size:12px;color:var(--text2);margin-top:4px">2 reuniones hoy · 12 analizadas</div>
+    <div class="card area-card" onclick="nav(document.querySelector('[data-page=ventas-overview]'),'ventas-overview')">
+      <div class="area-top">
+        <div class="area-icon" style="color:var(--green);background:var(--green-soft)">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><rect x="2" y="4.5" width="16" height="11" rx="2"/><path d="M6.5 18.5h7M7 9.5l2 2 4-4"/></svg>
         </div>
-        <span class="pill pill-amber">2 hoy</span>
+        <span class="area-go">→</span>
       </div>
-      <div style="margin-top:16px;height:4px;background:var(--surface3);border-radius:2px">
-        <div style="height:4px;width:55%;background:var(--grad-jade);border-radius:2px"></div>
-      </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px">Coach activo · Reporte semanal listo</div>
+      <div class="area-name">Ventas AI</div>
+      <div class="area-desc">2 reuniones hoy con coach en vivo · 12 analizadas este mes.</div>
+      <div class="area-bar"><span style="width:55%;background:var(--grad-jade)"></span></div>
+      <div class="area-meta">Reporte semanal listo</div>
     </div>
   </div>
 
@@ -2111,20 +2244,18 @@ html, body {
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
     <div>
       <div class="topbar-title">Market Intelligence</div>
-      <div class="topbar-sub">Módulo 1 · Transformamos datos de mercado en ventaja competitiva</div>
+      <div class="topbar-sub">Transforma datos de mercado en ventaja competitiva</div>
     </div>
     <div class="topbar-actions">
-      <button class="btn btn-ghost btn-sm">↻ Actualizar</button>
+      <button class="btn btn-ghost btn-sm">Actualizar</button>
       <button class="btn btn-primary btn-sm" onclick="nav(document.querySelector('[data-page=mi-matrix]'),'mi-matrix')">+ Completar Matriz</button>
     </div>
   </div>
 
-  <div class="module-intro">
-    <div class="module-intro-icon" style="background:var(--blue-dim)">🔭</div>
-    <div>
-      <div class="module-intro-title">Market Intelligence <span style="color:var(--teal)">.ai</span></div>
-      <div class="module-intro-desc">No es un resumen de newsletters ni un informe genérico de tendencias. Es un <strong>dashboard de inteligencia accionable</strong>: te dice exactamente cómo ajustar tu go-to-market, qué reinvenciones necesita tu producto, cómo se mueve el consumidor y qué ventajas competitivas explotar en tu próxima prospección.</div>
-    </div>
+  <div class="page-hero">
+    <span class="ph-eyebrow">Market Intelligence</span>
+    <div class="ph-title">Inteligencia que se vuelve <em>acción</em>.</div>
+    <div class="ph-sub">No es un resumen de newsletters: es inteligencia accionable sobre tu go-to-market, tu producto, tu consumidor y las ventajas competitivas que puedes explotar en tu próxima prospección.</div>
   </div>
 
   <div class="stat-grid">
@@ -2152,13 +2283,13 @@ html, body {
 
   <div class="row">
     <button class="btn btn-primary" style="flex:1;justify-content:center;padding:14px" onclick="nav(document.querySelector('[data-page=mi-matrix]'),'mi-matrix')">
-      📋 Completar / Revisar Matriz de Input
+      Completar / Revisar Matriz de Input
     </button>
     <button class="btn btn-ghost" style="flex:1;justify-content:center;padding:14px" onclick="nav(document.querySelector('[data-page=mi-dashboard]'),'mi-dashboard')">
-      📊 Ver Intelligence Hub
+      Ver Intelligence Hub
     </button>
     <button class="btn btn-ghost" style="flex:1;justify-content:center;padding:14px" onclick="nav(document.querySelector('[data-page=mi-accionables]'),'mi-accionables')">
-      ⚡ Ver Accionables GTM
+      Ver Accionables GTM
     </button>
   </div>
 
@@ -2188,11 +2319,11 @@ html, body {
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
     <div>
       <div class="topbar-title">Matriz de Input</div>
-      <div class="topbar-sub">Módulo 1 · Define el contexto para que la IA genere inteligencia relevante</div>
+      <div class="topbar-sub">Define el contexto para que la IA genere inteligencia relevante</div>
     </div>
     <div class="topbar-actions">
       <button class="btn btn-ghost btn-sm">Guardar borrador</button>
-      <button class="btn btn-primary btn-sm" onclick="runAnalysis()">▶ Analizar con IA</button>
+      <button class="btn btn-primary btn-sm" onclick="runAnalysis()">Analizar con IA</button>
     </div>
   </div>
 
@@ -2295,7 +2426,7 @@ html, body {
         <label>Países de prospección</label>
         <div style="background:var(--surface3);border:1px solid var(--border2);border-radius:var(--r);padding:14px">
           <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-todo-latam" onclick="toggleLatam()" style="font-size:11px;font-weight:700">🌎 Todo LATAM</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-todo-latam" onclick="toggleLatam()" style="font-size:11px;font-weight:700">Todo LATAM</button>
             <button type="button" class="btn btn-ghost btn-sm" onclick="clearCountries()" style="font-size:11px">Limpiar todo</button>
           </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px" id="country-checkboxes">
@@ -2521,7 +2652,7 @@ html, body {
     </div>
     <div style="display:flex;justify-content:space-between;margin-top:20px">
       <button class="btn btn-ghost" onclick="showStep(4)">← Anterior</button>
-      <button class="btn btn-primary" onclick="runAnalysis()">▶ Analizar con IA</button>
+      <button class="btn btn-primary" onclick="runAnalysis()">Analizar con IA</button>
     </div>
   </div>
 </div>
@@ -2532,13 +2663,9 @@ html, body {
   <div class="topbar">
     <div>
       <div class="topbar-title">Intelligence Hub</div>
-      <div class="topbar-sub">MÓDULO 1 · IA 24/7</div>
+      <div class="topbar-sub">Inteligencia de mercado, actualizada por tus agentes</div>
     </div>
     <div class="topbar-actions">
-      <div class="topbar-pill">
-        <span class="dot"></span>
-        LIVE
-      </div>
       <div class="ih-credit-chip">
         <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
         <span id="ih-credit-badge">— créditos</span>
@@ -2568,7 +2695,7 @@ html, body {
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
     <div>
       <div class="topbar-title">Accionables GTM</div>
-      <div class="topbar-sub">Módulo 1 · Qué hacer esta semana para mover el mercado</div>
+      <div class="topbar-sub">Qué hacer esta semana para mover el mercado</div>
     </div>
   </div>
 
@@ -2630,7 +2757,7 @@ html, body {
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
     <div>
       <div class="topbar-title">Prospección</div>
-      <div class="topbar-sub">Módulo 2 · Del ICP al meeting en calendar — sin fricciones</div>
+      <div class="topbar-sub">Del ICP al meeting en calendar, sin fricciones</div>
     </div>
     <div class="topbar-actions">
       <button class="btn btn-ghost btn-sm" onclick="nav(document.querySelector('[data-page=pro-icp]'),'pro-icp')">Editar ICP</button>
@@ -2638,12 +2765,10 @@ html, body {
     </div>
   </div>
 
-  <div class="module-intro">
-    <div class="module-intro-icon" style="background:var(--purple-dim)">🎯</div>
-    <div>
-      <div class="module-intro-title">Prospección <span style="color:var(--gold)">.ai</span></div>
-      <div class="module-intro-desc">Define tu ICP con los frameworks de targeting más probados (Josh, Chris Orlob, Alex Boyd), construye tu base de datos con Apollo, dispara cadencias multi-canal (email · LinkedIn · WhatsApp · SMS) desde respond.io y agenda reuniones directo en Google Calendar. Todo en un solo flujo.</div>
-    </div>
+  <div class="page-hero">
+    <span class="ph-eyebrow">Prospección</span>
+    <div class="ph-title">Del ICP al meeting, <em>sin fricción</em>.</div>
+    <div class="ph-sub">Define tu cliente ideal, construye la base con Apollo, dispara cadencias multi-canal y agenda directo en tu calendario — todo en un solo flujo.</div>
   </div>
 
   <div class="stat-grid">
@@ -2672,35 +2797,35 @@ html, body {
   <!-- Flow diagram -->
   <div class="chart-card">
     <div class="chart-header"><span class="chart-title">Flujo de prospección activo</span></div>
-    <div style="display:flex;align-items:center;gap:0;overflow-x:auto;padding:8px 0">
-      <div style="text-align:center;min-width:120px">
-        <div style="width:48px;height:48px;border-radius:12px;background:var(--blue-dim);border:2px solid var(--teal);display:flex;align-items:center;justify-content:center;font-size:20px;margin:0 auto 8px">🗺️</div>
-        <div style="font-size:11px;font-weight:700;color:var(--teal)">ICP Builder</div>
-        <div style="font-size:10px;color:var(--text3)">Definido</div>
+    <div class="flow">
+      <div class="flow-cell">
+        <div class="flow-ic" style="color:var(--accent-2)"><svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M10 2l2.2 4.5 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5L2.8 7.2l5-.7z"/></svg></div>
+        <div class="flow-name">ICP Builder</div>
+        <div class="flow-sub">Definido</div>
       </div>
-      <div style="flex:1;height:2px;background:linear-gradient(90deg,var(--teal),var(--gold));min-width:40px"></div>
-      <div style="text-align:center;min-width:120px">
-        <div style="width:48px;height:48px;border-radius:12px;background:var(--purple-dim);border:2px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:20px;margin:0 auto 8px">🔍</div>
-        <div style="font-size:11px;font-weight:700;color:var(--gold)">Apollo Search</div>
-        <div style="font-size:10px;color:var(--text3)">1,247 contactos</div>
+      <div class="flow-link"></div>
+      <div class="flow-cell">
+        <div class="flow-ic" style="color:var(--cyan)"><svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><circle cx="9" cy="9" r="5.5"/><path d="M13.5 13.5L17.5 17.5"/></svg></div>
+        <div class="flow-name">Apollo Search</div>
+        <div class="flow-sub">1,247 contactos</div>
       </div>
-      <div style="flex:1;height:2px;background:linear-gradient(90deg,var(--gold),var(--amber));min-width:40px"></div>
-      <div style="text-align:center;min-width:120px">
-        <div style="width:48px;height:48px;border-radius:12px;background:rgba(245,158,11,.12);border:2px solid var(--amber);display:flex;align-items:center;justify-content:center;font-size:20px;margin:0 auto 8px">💬</div>
-        <div style="font-size:11px;font-weight:700;color:var(--amber)">respond.io</div>
-        <div style="font-size:10px;color:var(--text3)">Email · LI · WA</div>
+      <div class="flow-link"></div>
+      <div class="flow-cell">
+        <div class="flow-ic" style="color:var(--amber)"><svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 5a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H7l-4 3V5z"/></svg></div>
+        <div class="flow-name">respond.io</div>
+        <div class="flow-sub">Email · LI · WA</div>
       </div>
-      <div style="flex:1;height:2px;background:linear-gradient(90deg,var(--amber),var(--green));min-width:40px"></div>
-      <div style="text-align:center;min-width:120px">
-        <div style="width:48px;height:48px;border-radius:12px;background:var(--green-dim);border:2px solid var(--green);display:flex;align-items:center;justify-content:center;font-size:20px;margin:0 auto 8px">📅</div>
-        <div style="font-size:11px;font-weight:700;color:var(--green)">Google Calendar</div>
-        <div style="font-size:10px;color:var(--text3)">11 reuniones</div>
+      <div class="flow-link"></div>
+      <div class="flow-cell">
+        <div class="flow-ic" style="color:var(--green)"><svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><rect x="3" y="4" width="14" height="13" rx="2"/><path d="M3 8h14M7 2v3M13 2v3M7 12l2 2 4-4"/></svg></div>
+        <div class="flow-name">Google Calendar</div>
+        <div class="flow-sub">11 reuniones</div>
       </div>
-      <div style="flex:1;height:2px;background:linear-gradient(90deg,var(--green),var(--teal));min-width:40px"></div>
-      <div style="text-align:center;min-width:120px">
-        <div style="width:48px;height:48px;border-radius:12px;background:var(--blue-dim);border:2px solid var(--teal);display:flex;align-items:center;justify-content:center;font-size:20px;margin:0 auto 8px">🤖</div>
-        <div style="font-size:11px;font-weight:700;color:var(--teal)">Ventas AI</div>
-        <div style="font-size:10px;color:var(--text3)">Módulo 3</div>
+      <div class="flow-link"></div>
+      <div class="flow-cell">
+        <div class="flow-ic" style="color:var(--purple)"><svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><rect x="3" y="5" width="14" height="10" rx="2"/><path d="M7 18h6M8 9.5l1.5 1.5 3-3"/></svg></div>
+        <div class="flow-name">Ventas AI</div>
+        <div class="flow-sub">Coach en vivo</div>
       </div>
     </div>
   </div>
@@ -2724,9 +2849,9 @@ html, body {
 <!-- ═══════ PAGE: PRO ICP ═══════ -->
 <div class="page fade-in" id="page-pro-icp">
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
-    <div><div class="topbar-title">ICP Builder</div><div class="topbar-sub">Módulo 2 · Perfil de búsqueda Apollo generado desde tu Matriz de Input</div></div>
+    <div><div class="topbar-title">ICP Builder</div><div class="topbar-sub">Perfil de búsqueda Apollo generado desde tu Matriz de Input</div></div>
     <div class="topbar-actions">
-      <button class="btn btn-ghost btn-sm" onclick="syncIcpFromMatrix()">↻ Sincronizar desde Matriz</button>
+      <button class="btn btn-ghost btn-sm" onclick="syncIcpFromMatrix()">Sincronizar desde Matriz</button>
       <button class="btn btn-teal btn-sm" onclick="nav(document.querySelector('[data-page=pro-apollo]'),'pro-apollo');syncApolloSearch()">Buscar en Apollo →</button>
     </div>
   </div>
@@ -2805,7 +2930,7 @@ html, body {
 
       <!-- Score card -->
       <div class="chart-card">
-        <div style="font-size:14px;font-weight:800;margin-bottom:16px;color:var(--jade)">📊 ICP Score</div>
+        <div style="font-size:14px;font-weight:800;margin-bottom:16px;color:var(--jade)">ICP Score</div>
         <div style="display:flex;flex-direction:column;gap:12px">
           <div class="score-row"><div class="score-label"><span>Especificidad firmográfica</span><span style="font-weight:700;color:var(--jade)">88%</span></div><div class="score-bar"><div class="score-fill" style="width:88%;background:var(--grad-jade)"></div></div></div>
           <div class="score-row"><div class="score-label"><span>Claridad del buyer persona</span><span style="font-weight:700;color:var(--jade)">91%</span></div><div class="score-bar"><div class="score-fill" style="width:91%;background:var(--grad-jade)"></div></div></div>
@@ -2819,7 +2944,7 @@ html, body {
 
       <!-- Pain points & triggers -->
       <div class="chart-card">
-        <div style="font-size:14px;font-weight:800;margin-bottom:14px;color:var(--teal)">🧠 Contexto psicográfico</div>
+        <div style="font-size:14px;font-weight:800;margin-bottom:14px;color:var(--teal)">Contexto psicográfico</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
           <div>
             <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--text2);margin-bottom:8px">Pain points</div>
@@ -2834,7 +2959,7 @@ html, body {
 
       <!-- Negative ICP -->
       <div class="chart-card">
-        <div style="font-size:14px;font-weight:800;margin-bottom:14px;color:var(--red)">🚫 ICP Negativo</div>
+        <div style="font-size:14px;font-weight:800;margin-bottom:14px;color:var(--red)">ICP negativo</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
           <div>
             <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:8px">Industrias excluidas</div>
@@ -2862,10 +2987,10 @@ html, body {
 <!-- ═══════ PAGE: PRO APOLLO ═══════ -->
 <div class="page fade-in" id="page-pro-apollo">
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
-    <div><div class="topbar-title">Apollo Prospecting Engine</div><div class="topbar-sub" style="font-family:var(--font-mono)">Módulo 2 · ICP → Búsqueda → Selección → Guardar lista → Enrichment</div></div>
+    <div><div class="topbar-title">Apollo Prospecting Engine</div><div class="topbar-sub" style="font-family:var(--font-mono)">ICP → Búsqueda → Selección → Guardar lista → Enrichment</div></div>
     <div class="topbar-actions">
       <button class="btn btn-ghost btn-sm" onclick="nav(document.querySelector('[data-page=pro-icp]'),'pro-icp')">← Editar ICP</button>
-      <button id="btn-run-search" class="btn btn-teal btn-sm" onclick="runApolloSearch()">🔍 Ejecutar búsqueda</button>
+      <button id="btn-run-search" class="btn btn-teal btn-sm" onclick="runApolloSearch()">Ejecutar búsqueda</button>
     </div>
   </div>
 
@@ -2884,12 +3009,12 @@ html, body {
         <div style="font-family:var(--font-display);font-size:15px;font-weight:800">Filtros de búsqueda</div>
         <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);margin-top:3px">Auto-populado desde ICP Builder · edita según necesites</div>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="resetFilters()">↺ Resetear</button>
+      <button class="btn btn-ghost btn-sm" onclick="resetFilters()">Resetear</button>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
       <!-- PERSONAS -->
       <div>
-        <div style="font-family:var(--font-mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--teal);margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:8px">👤 Filtros de persona</div>
+        <div style="font-family:var(--font-mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--teal);margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:8px">Persona</div>
         <div class="form-grid" style="grid-template-columns:1fr">
           <div class="form-group">
             <label>Títulos / cargos</label>
@@ -2920,7 +3045,7 @@ html, body {
       </div>
       <!-- EMPRESAS -->
       <div>
-        <div style="font-family:var(--font-mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gold-bright);margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:8px">🏢 Filtros de empresa</div>
+        <div style="font-family:var(--font-mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gold-bright);margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:8px">Empresa</div>
         <div class="form-grid" style="grid-template-columns:1fr">
           <div class="form-group">
             <label>Keywords de industria</label>
@@ -2966,7 +3091,7 @@ html, body {
           <div style="color:var(--amber)">Enrichment cobra por contacto</div>
         </div>
         <button class="btn btn-teal" style="padding:12px 24px;font-size:13px" onclick="runApolloSearch()">
-          🔍 Buscar en Apollo
+          Buscar en Apollo
         </button>
       </div>
     </div>
@@ -2984,8 +3109,8 @@ html, body {
           </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button class="btn btn-ghost btn-sm" onclick="selectAll(true)">☑ Todos</button>
-          <button class="btn btn-ghost btn-sm" onclick="selectAll(false)">☐ Ninguno</button>
+          <button class="btn btn-ghost btn-sm" onclick="selectAll(true)">Todos</button>
+          <button class="btn btn-ghost btn-sm" onclick="selectAll(false)">Ninguno</button>
           <div style="display:flex;align-items:center;gap:6px">
             <span style="font-family:var(--font-mono);font-size:10px;color:var(--text3)">Top</span>
             <input id="top-n" type="number" value="10" min="1" style="width:56px;font-family:var(--font-mono);font-size:12px;text-align:center;padding:5px 8px">
@@ -3012,7 +3137,7 @@ html, body {
   <!-- GUARDAR EN APOLLO -->
   <div id="section-save" style="display:none">
     <div class="chart-card" style="border-color:rgba(0,196,212,.25)">
-      <div style="font-family:var(--font-display);font-size:15px;font-weight:800;margin-bottom:16px;color:var(--teal)">💾 Guardar contactos en Apollo</div>
+      <div style="font-family:var(--font-display);font-size:15px;font-weight:800;margin-bottom:16px;color:var(--teal)">Guardar contactos en Apollo</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
         <div class="form-group">
           <label>Nombre de la lista en Apollo</label>
@@ -3033,7 +3158,7 @@ html, body {
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:14px">
         <div id="save-summary" style="font-family:var(--font-mono);font-size:11px;color:var(--text3)">Selecciona contactos en la tabla para guardar</div>
         <button id="btn-save-apollo" class="btn btn-teal" style="margin-left:auto;opacity:.5;cursor:not-allowed" disabled onclick="saveToApollo()">
-          💾 Guardar <span id="save-count">0</span> contactos en Apollo
+          Guardar <span id="save-count">0</span> contactos en Apollo
         </button>
       </div>
     </div>
@@ -3044,7 +3169,7 @@ html, body {
     <div class="chart-card" style="border-color:rgba(37,99,235,.2)">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;gap:12px">
         <div>
-          <div style="font-family:var(--font-display);font-size:15px;font-weight:800;color:var(--gold-bright)">📞 Enrichment de teléfonos</div>
+          <div style="font-family:var(--font-display);font-size:15px;font-weight:800;color:var(--gold-bright)">Enrichment de teléfonos</div>
           <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);margin-top:3px">Enriquece teléfonos directos y móviles de los contactos guardados</div>
         </div>
         <div style="padding:10px 14px;background:rgba(232,64,64,.08);border:1px solid rgba(232,64,64,.25);border-radius:var(--r-sm);text-align:right;flex-shrink:0">
@@ -3054,7 +3179,7 @@ html, body {
               <div style="position:absolute;top:2px;left:2px;width:14px;height:14px;background:#555;border-radius:50%"></div>
             </div>
           </div>
-          <div style="font-family:var(--font-mono);font-size:9px;color:var(--red);margin-top:4px">SIEMPRE DESACTIVADO 🔒</div>
+          <div style="font-family:var(--font-mono);font-size:9px;color:var(--red);margin-top:4px">Siempre desactivado</div>
           <div style="font-family:var(--font-mono);font-size:9px;color:var(--text3);margin-top:2px">No se usan proveedores externos</div>
         </div>
       </div>
@@ -3097,7 +3222,7 @@ html, body {
       </div>
       <div id="enrich-warning" style="display:none;padding:10px 14px;background:var(--gold-dim);border:1px solid rgba(37,99,235,.25);border-radius:var(--r-sm);margin-bottom:12px">
         <div style="font-family:var(--font-mono);font-size:10px;color:var(--gold-bright)">
-          ⚠ <strong>Aviso de créditos:</strong> Este enrichment consumirá aproximadamente <strong id="credit-estimate">0</strong> créditos Apollo. Waterfall enrichment está DESACTIVADO.
+          <strong>Aviso de créditos:</strong> Este enrichment consumirá aproximadamente <strong id="credit-estimate">0</strong> créditos Apollo. Waterfall enrichment está DESACTIVADO.
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:12px">
@@ -3105,19 +3230,19 @@ html, body {
           Lotes de 10 · <span id="batch-num">0</span> lotes estimados
         </div>
         <button id="btn-enrich" class="btn btn-primary" style="margin-left:auto;opacity:.5;cursor:not-allowed" disabled onclick="runEnrichment()">
-          ⚡ Enriquecer teléfonos de <span id="enrich-count">0</span> contactos
+          Enriquecer teléfonos de <span id="enrich-count">0</span> contactos
         </button>
       </div>
       <!-- CSV EXPORT -->
       <div id="csv-export-row" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);align-items:center;gap:12px">
         <div>
-          <div style="font-family:var(--font-display);font-size:13px;font-weight:700">📄 Exportar para mensajes y llamadas</div>
+          <div style="font-family:var(--font-display);font-size:13px;font-weight:700">Exportar para mensajes y llamadas</div>
           <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);margin-top:2px">CSV listo para importar en tu herramienta de outreach o dialer</div>
         </div>
         <div style="display:flex;gap:8px;margin-left:auto">
-          <button class="btn btn-ghost btn-sm" onclick="downloadCSV('email')">📧 CSV Email</button>
-          <button class="btn btn-ghost btn-sm" onclick="downloadCSV('phone')">📞 CSV Llamadas</button>
-          <button class="btn btn-primary btn-sm" onclick="downloadCSV('full')">⬇ CSV Completo</button>
+          <button class="btn btn-ghost btn-sm" onclick="downloadCSV('email')">CSV Email</button>
+          <button class="btn btn-ghost btn-sm" onclick="downloadCSV('phone')">CSV Llamadas</button>
+          <button class="btn btn-primary btn-sm" onclick="downloadCSV('full')">Descargar CSV completo</button>
         </div>
       </div>
     </div>
@@ -3127,7 +3252,7 @@ html, body {
 <!-- ═══════ PAGE: PRO MENSAJES ═══════ -->
 <div class="page fade-in" id="page-pro-listas">
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
-    <div><div class="topbar-title">Listas guardadas</div><div class="topbar-sub">Módulo 2 · Contactos guardados en Apollo — enriquece y exporta sin repetir la búsqueda</div></div>
+    <div><div class="topbar-title">Listas guardadas</div><div class="topbar-sub">Contactos guardados en Apollo — enriquece y exporta sin repetir la búsqueda</div></div>
     <div class="topbar-actions">
       <button class="btn btn-teal btn-sm" onclick="nav(document.querySelector('[data-page=pro-apollo]'),'pro-apollo');syncApolloSearch()">+ Nueva búsqueda</button>
     </div>
@@ -3143,7 +3268,7 @@ html, body {
 
 <div class="page fade-in" id="page-pro-mensajes">
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
-    <div><div class="topbar-title">Mensajes & Cadencias</div><div class="topbar-sub">Módulo 2 · Secuencias multi-canal entrenadas para no sonar a ventas</div></div>
+    <div><div class="topbar-title">Mensajes & Cadencias</div><div class="topbar-sub">Secuencias multi-canal entrenadas para no sonar a ventas</div></div>
     <div class="topbar-actions">
       <button class="btn btn-ghost btn-sm">+ Nueva cadencia</button>
       <button class="btn btn-teal btn-sm">Activar en respond.io</button>
@@ -3151,10 +3276,10 @@ html, body {
   </div>
 
   <div class="tabs" style="margin-bottom:16px">
-    <div class="tab active" onclick="switchMsgTab(this,'tab-email')">📧 Email</div>
-    <div class="tab" onclick="switchMsgTab(this,'tab-linkedin')">💼 LinkedIn</div>
-    <div class="tab" onclick="switchMsgTab(this,'tab-whatsapp')">📱 WhatsApp</div>
-    <div class="tab" onclick="switchMsgTab(this,'tab-sms')">💬 SMS</div>
+    <div class="tab active" onclick="switchMsgTab(this,'tab-email')">Email</div>
+    <div class="tab" onclick="switchMsgTab(this,'tab-linkedin')">LinkedIn</div>
+    <div class="tab" onclick="switchMsgTab(this,'tab-whatsapp')">WhatsApp</div>
+    <div class="tab" onclick="switchMsgTab(this,'tab-sms')">SMS</div>
   </div>
 
   <!-- EMAIL TAB -->
@@ -3186,7 +3311,7 @@ html, body {
       <div id="email-content" class="chart-card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
           <div><div style="font-size:15px;font-weight:800">Día 1 — Primer contacto</div><div style="font-size:12px;color:var(--text3);margin-top:2px">Open rate promedio: 41% · Reply rate: 9.1%</div></div>
-          <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm">✏ Editar</button><button class="btn btn-teal btn-sm">↗ Usar</button></div>
+          <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm">Editar</button><button class="btn btn-teal btn-sm">Usar</button></div>
         </div>
         <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:16px;font-size:13px;line-height:1.8;color:var(--text)">
           <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:8px">ASUNTO</div>
@@ -3201,7 +3326,7 @@ html, body {
           <div>Aarón</div>
         </div>
         <div style="margin-top:12px;padding:10px 14px;background:var(--green-dim);border-radius:var(--radius-sm);border:1px solid rgba(16,185,129,.2)">
-          <div style="font-size:11px;font-weight:700;color:var(--green);margin-bottom:4px">💡 Por qué funciona</div>
+          <div style="font-size:11px;font-weight:700;color:var(--green);margin-bottom:4px">Por qué funciona</div>
           <div style="font-size:12px;color:var(--text2)">Pregunta abierta que no vende nada. Nombra el dolor exacto (forecast como intuición). Usa el nombre de su empresa para contextualizar. Corto — 3 oraciones. Basado en el framework de Sam's Perfect Email: Subject Line de curiosidad + Pain point + Pregunta de calificación.</div>
         </div>
       </div>
@@ -3247,9 +3372,9 @@ html, body {
   <div id="tab-whatsapp" class="msg-tab" style="display:none">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="chart-card">
-        <div style="font-size:13px;font-weight:700;margin-bottom:16px;color:var(--green)">📱 WA — Primer mensaje</div>
-        <div style="background:#E9F1E6;border-radius:var(--radius-sm);padding:16px;max-width:300px">
-          <div style="background:#FFFFFF;box-shadow:0 1px 2px rgba(10,10,15,.08);border-radius:8px 8px 8px 2px;padding:10px 12px;font-size:13px;line-height:1.7;color:var(--text)">
+        <div style="font-size:13px;font-weight:700;margin-bottom:16px;color:var(--green)">WhatsApp — Primer mensaje</div>
+        <div style="background:var(--wa-bg);border-radius:var(--radius-sm);padding:16px;max-width:300px">
+          <div style="background:var(--wa-bubble);box-shadow:0 1px 2px rgba(10,10,15,.08);border-radius:8px 8px 8px 2px;padding:10px 12px;font-size:13px;line-height:1.7;color:var(--text)">
             Hola %%first_name%%, soy Aarón. Vi que lideran ventas en %%company%% — ¿tienen unos minutos para hablar esta semana?
           </div>
           <div style="font-size:10px;color:var(--text3);margin-top:4px;text-align:right">✓✓ Entregado</div>
@@ -3257,9 +3382,9 @@ html, body {
         <div style="margin-top:12px;font-size:11px;color:var(--text3)">Máximo 1 oración. Sin contexto. Pide tiempo, no explica nada.</div>
       </div>
       <div class="chart-card">
-        <div style="font-size:13px;font-weight:700;margin-bottom:16px;color:var(--green)">📱 WA — Si responde "¿de qué se trata?"</div>
-        <div style="background:#E9F1E6;border-radius:var(--radius-sm);padding:16px;max-width:300px">
-          <div style="background:#FFFFFF;box-shadow:0 1px 2px rgba(10,10,15,.08);border-radius:8px 8px 8px 2px;padding:10px 12px;font-size:13px;line-height:1.7;color:var(--text)">
+        <div style="font-size:13px;font-weight:700;margin-bottom:16px;color:var(--green)">WhatsApp — Si responde "¿de qué se trata?"</div>
+        <div style="background:var(--wa-bg);border-radius:var(--radius-sm);padding:16px;max-width:300px">
+          <div style="background:var(--wa-bubble);box-shadow:0 1px 2px rgba(10,10,15,.08);border-radius:8px 8px 8px 2px;padding:10px 12px;font-size:13px;line-height:1.7;color:var(--text)">
             Ayudamos a directores de ventas a tener más claridad sobre si van a cerrar el mes — sin depender de Excel ni de corazonadas. ¿Vale la pena hablar 20 min?
           </div>
         </div>
@@ -3275,7 +3400,7 @@ html, body {
       <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:16px;font-size:13px;line-height:1.8">
         Hola %%first_name%%, soy Aarón de Predictable. ¿15 min esta semana para ver si podemos ayudar a {{company}} con predictabilidad en ventas? [Calendly link]
       </div>
-      <div style="margin-top:10px;font-size:11px;color:var(--amber)">⚠ Usar solo tras warm-up por otro canal. Máximo 160 caracteres.</div>
+      <div style="margin-top:10px;font-size:11px;color:var(--amber)">Usar solo tras warm-up por otro canal. Máximo 160 caracteres.</div>
     </div>
   </div>
 </div>
@@ -3283,19 +3408,17 @@ html, body {
 <!-- ═══════ PAGE: VENTAS OVERVIEW ═══════ -->
 <div class="page fade-in" id="page-ventas-overview">
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
-    <div><div class="topbar-title">Ventas AI</div><div class="topbar-sub">Módulo 3 · Meeting coach en vivo + visibilidad total sobre tu equipo SDR</div></div>
+    <div><div class="topbar-title">Ventas AI</div><div class="topbar-sub">Meeting coach en vivo y visibilidad total sobre tu equipo</div></div>
     <div class="topbar-actions">
-      <button class="btn btn-ghost btn-sm" onclick="nav(document.querySelector('[data-page=ventas-reportes]'),'ventas-reportes')">📊 Ver reportes</button>
-      <button class="btn btn-jade btn-sm" onclick="iniciarCoachLive()">🟢 Iniciar coach en vivo</button>
+      <button class="btn btn-ghost btn-sm" onclick="nav(document.querySelector('[data-page=ventas-reportes]'),'ventas-reportes')">Ver reportes</button>
+      <button class="btn btn-jade btn-sm" onclick="iniciarCoachLive()">Iniciar coach en vivo</button>
     </div>
   </div>
 
-  <div class="module-intro">
-    <div class="module-intro-icon" style="background:var(--green-dim)">🤖</div>
-    <div>
-      <div class="module-intro-title">Ventas <span style="color:var(--green)">AI</span></div>
-      <div class="module-intro-desc">Como MeetGeek o Fireflies, pero entrenado en las mejores técnicas de ventas B2B (Predictable Revenue, $100M Leads, El Camino del Lobo). Entra a tu Google Meet, Teams o Zoom y le da al vendedor guía en tiempo real: cómo manejar objeciones, qué decir ahora, qué sabe de este prospecto desde el módulo de prospección. Al terminar genera un reporte para que el director vea exactamente cómo está performando cada SDR.</div>
-    </div>
+  <div class="page-hero">
+    <span class="ph-eyebrow">Ventas AI</span>
+    <div class="ph-title">Un copiloto en cada <em>llamada</em>.</div>
+    <div class="ph-sub">Entrenado en las mejores técnicas de ventas B2B, entra a tu Meet, Teams o Zoom y guía al vendedor en tiempo real: objeciones, siguiente paso y contexto del prospecto. Al terminar, el director recibe el reporte de cada SDR.</div>
   </div>
 
   <div class="stat-grid">
@@ -3380,7 +3503,7 @@ html, body {
       </div>
     </div>
     <div class="topbar-actions">
-      <button id="mc-btn-config" class="btn btn-ghost btn-sm" onclick="toggleCoachConfig()">⚙ Configuración</button>
+      <button id="mc-btn-config" class="btn btn-ghost btn-sm" onclick="toggleCoachConfig()">Configuración</button>
       <button id="mc-btn-end" class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(225,84,84,.28);display:none" onclick="window.realtimeCoach && window.realtimeCoach.end()">■ Finalizar sesión</button>
     </div>
   </div>
@@ -3548,20 +3671,20 @@ html, body {
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
     <div>
       <div class="topbar-title" id="rep-topbar-title">Reportes</div>
-      <div class="topbar-sub" id="rep-topbar-sub">Módulo 3 · Tu performance en reuniones de venta</div>
+      <div class="topbar-sub" id="rep-topbar-sub">Tu performance en reuniones de venta</div>
     </div>
     <div class="topbar-actions">
-      <button class="btn btn-ghost btn-sm">↓ Exportar PDF</button>
+      <button class="btn btn-ghost btn-sm">Exportar PDF</button>
       <button class="btn btn-jade btn-sm" id="rep-btn-director" style="display:none">Enviar al director</button>
     </div>
   </div>
 
   <div class="tabs" style="margin-bottom:16px">
-    <div class="tab" id="tab-rep-my-perf" data-sdr-tab="true" onclick="switchReportTab(this,'rep-my-perf')">📊 Mi rendimiento</div>
-    <div class="tab" id="tab-rep-equipo" data-admin-tab="true" onclick="switchReportTab(this,'rep-equipo')">👥 Equipo</div>
-    <div class="tab" id="tab-rep-deals" data-admin-tab="true" onclick="switchReportTab(this,'rep-deals')">💰 Deals perdidos</div>
-    <div class="tab" onclick="switchReportTab(this,'rep-objeciones')">🛡 Objeciones</div>
-    <div class="tab" onclick="switchReportTab(this,'rep-meeting')">📄 Última reunión</div>
+    <div class="tab" id="tab-rep-my-perf" data-sdr-tab="true" onclick="switchReportTab(this,'rep-my-perf')">Mi rendimiento</div>
+    <div class="tab" id="tab-rep-equipo" data-admin-tab="true" onclick="switchReportTab(this,'rep-equipo')">Equipo</div>
+    <div class="tab" id="tab-rep-deals" data-admin-tab="true" onclick="switchReportTab(this,'rep-deals')">Deals perdidos</div>
+    <div class="tab" onclick="switchReportTab(this,'rep-objeciones')">Objeciones</div>
+    <div class="tab" onclick="switchReportTab(this,'rep-meeting')">Última reunión</div>
   </div>
 
   <!-- TAB: MI RENDIMIENTO (SDR personal) -->
@@ -3837,6 +3960,18 @@ html, body {
         </div>
       </div>
 
+      <div class="settings-row">
+        <div class="settings-row-label">Rol</div>
+        <div class="settings-row-value">
+          <div class="role-seg" id="set-role-seg" role="radiogroup" aria-label="Tu rol">
+            <button type="button" class="role-opt" data-role="sdr">SDR</button>
+            <button type="button" class="role-opt" data-role="director">Director</button>
+            <button type="button" class="role-opt" data-role="admin">Admin</button>
+          </div>
+          <div class="settings-row-hint" id="set-role-hint">Define qué vistas y reportes ves. Directors y admins gestionan al equipo.</div>
+        </div>
+      </div>
+
       <div class="settings-actions">
         <button class="settings-btn settings-btn-primary" id="set-save-profile">Guardar cambios</button>
       </div>
@@ -3997,6 +4132,81 @@ html, body {
 <!-- <script src="js/intel-hub-v2.js"></script> -->
 <script src="js/intel-hub-cadence-tabs.js"></script>
 <script src="js/hub-unlock.js"></script>
+<script src="js/onboarding-tour.js"></script>
+<script>
+// ─── ROL PROPIO (SDR / Director / Admin) ───────────────────────────
+(function () {
+  'use strict';
+  const seg = () => document.getElementById('set-role-seg');
+
+  function paint(role) {
+    const s = seg(); if (!s) return;
+    s.querySelectorAll('.role-opt').forEach(b => b.classList.toggle('on', b.dataset.role === role));
+  }
+
+  function currentRole() {
+    const p = window.currentProfile;
+    return (p && p.role) ? p.role.toLowerCase() : 'sdr';
+  }
+
+  function applyRoleEverywhere(role) {
+    const p = window.currentProfile;
+    if (p) p.role = role;
+    // Pill del sidebar
+    const roleEl = document.getElementById('user-pill-role');
+    if (roleEl && p) {
+      const company = p.company_name || '';
+      const cap = role.charAt(0).toUpperCase() + role.slice(1);
+      roleEl.textContent = company ? (cap + ' · ' + company) : cap;
+    }
+    // Visibilidad admin
+    const isAdmin = role === 'admin' || role === 'director';
+    document.querySelectorAll('[data-admin-only="true"]').forEach(el => {
+      el.style.display = isAdmin ? '' : 'none';
+    });
+    const teamCard = document.getElementById('settings-team-card');
+    if (teamCard) teamCard.style.display = isAdmin ? '' : 'none';
+    // Tabs de reportes según rol
+    if (typeof initReportPageForRole === 'function') { try { initReportPageForRole(); } catch (e) {} }
+  }
+
+  async function saveRole(role, btn) {
+    const prev = currentRole();
+    if (role === prev) return;
+    const s = seg();
+    s.querySelectorAll('.role-opt').forEach(b => b.disabled = true);
+    paint(role);
+    try {
+      const sb = window.supabaseClient;
+      const u = window.currentUser;
+      if (!sb || !u) throw new Error('Sesión no disponible');
+      const { error } = await sb.from('profiles').update({ role }).eq('id', u.id);
+      if (error) throw error;
+      applyRoleEverywhere(role);
+      if (window.uiHelpers && window.uiHelpers.toast) window.uiHelpers.toast('Rol actualizado a ' + role.toUpperCase(), 'success');
+    } catch (e) {
+      paint(prev);
+      if (window.uiHelpers && window.uiHelpers.toast) window.uiHelpers.toast('No se pudo cambiar el rol: ' + (e.message || e), 'error');
+    } finally {
+      s.querySelectorAll('.role-opt').forEach(b => b.disabled = false);
+    }
+  }
+
+  function init() {
+    const s = seg(); if (!s || s.dataset.wired) return;
+    s.dataset.wired = '1';
+    s.querySelectorAll('.role-opt').forEach(b => {
+      b.addEventListener('click', () => saveRole(b.dataset.role, b));
+    });
+    paint(currentRole());
+  }
+
+  document.addEventListener('predictable:profile-ready', () => { init(); paint(currentRole()); });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+  setTimeout(() => { init(); paint(currentRole()); }, 1500);
+})();
+</script>
 <script>
 // ── END MEETING ──
 function endMeeting() {
@@ -4138,14 +4348,14 @@ function initReportPageForRole() {
   const navLabel = document.getElementById('nav-reportes-label');
   if (isAdmin) {
     if (titleEl) titleEl.textContent = 'Reportes SDR';
-    if (subEl) subEl.textContent = 'Módulo 3 · Visibilidad total sobre el performance del equipo de ventas';
+    if (subEl) subEl.textContent = 'Visibilidad total sobre el performance del equipo de ventas';
     if (navLabel) navLabel.textContent = 'Reportes SDR';
     // Activate equipo tab by default for admin
     const equipoTab = document.getElementById('tab-rep-equipo');
     if (equipoTab) switchReportTab(equipoTab, 'rep-equipo');
   } else {
     if (titleEl) titleEl.textContent = 'Mi rendimiento';
-    if (subEl) subEl.textContent = 'Módulo 3 · Tu historial de performance en reuniones de venta';
+    if (subEl) subEl.textContent = 'Tu historial de performance en reuniones de venta';
     if (navLabel) navLabel.textContent = 'Mi rendimiento';
     // Activate personal tab by default for SDR
     const myPerfTab = document.getElementById('tab-rep-my-perf');
@@ -4162,7 +4372,7 @@ function initReportCharts() {
       labels: ['Camila Soto','Miguel Torres','Valeria Cruz','Diego Reyes'],
       datasets: [{ label: 'Score', data: [88,82,74,61], backgroundColor: ['#10B981','#2563EB','#2563EB','#F59E0B'], borderRadius: 6 }]
     },
-    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{grid:{color:'rgba(10,10,15,0.05)'},ticks:{color:'#6A7286'}}, y:{min:0,max:100,grid:{color:'rgba(10,10,15,0.05)'},ticks:{color:'#6A7286'}} } }
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{grid:{color:'rgba(138,145,163,0.16)'},ticks:{color:'#8A91A3'}}, y:{min:0,max:100,grid:{color:'rgba(138,145,163,0.16)'},ticks:{color:'#8A91A3'}} } }
   }); } } catch(e) { console.warn('[chart skip sdrScoreChart]', e.message); }
   try { if (document.getElementById('sdrMeetingsChart')) { new Chart(document.getElementById('sdrMeetingsChart'), {
     type: 'bar',
@@ -4175,7 +4385,7 @@ function initReportCharts() {
         { label: 'Diego', data: [2,2,2,2], backgroundColor: '#D9952B', borderRadius: 3 },
       ]
     },
-    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#6A7286',font:{size:10}}}}, scales:{ x:{grid:{color:'rgba(10,10,15,0.05)'},ticks:{color:'#6A7286'}}, y:{grid:{color:'rgba(10,10,15,0.05)'},ticks:{color:'#6A7286'}} } }
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#8A91A3',font:{size:10}}}}, scales:{ x:{grid:{color:'rgba(138,145,163,0.16)'},ticks:{color:'#8A91A3'}}, y:{grid:{color:'rgba(138,145,163,0.16)'},ticks:{color:'#8A91A3'}} } }
   }); } } catch(e) { console.warn('[chart skip sdrMeetingsChart]', e.message); }
 }
 
@@ -4188,7 +4398,7 @@ function initDealsCharts() {
       labels: ['Ya tienen herramienta','Sin urgencia creada','Precio','No champion interno','Sin follow-up'],
       datasets: [{ data: [34,22,18,14,12], backgroundColor: ['#EF4444','#F59E0B','#00C4D4','#2563EB','#6B7280'], borderWidth:0 }]
     },
-    options: { responsive:true, maintainAspectRatio:false, cutout:'60%', plugins:{legend:{position:'bottom',labels:{color:'#6A7286',font:{size:10},padding:8}}} }
+    options: { responsive:true, maintainAspectRatio:false, cutout:'60%', plugins:{legend:{position:'bottom',labels:{color:'#8A91A3',font:{size:10},padding:8}}} }
   }); } } catch(e) { console.warn('[chart skip lostReasonsChart]', e.message); }
   try { if (document.getElementById('lostStageChart')) { new Chart(document.getElementById('lostStageChart'), {
     type: 'bar',
@@ -4196,7 +4406,7 @@ function initDealsCharts() {
       labels: ['Discovery','Demo','Propuesta','Negociación'],
       datasets: [{ label: 'Deals perdidos', data: [8,5,7,3], backgroundColor: '#E84040', borderRadius: 4 }]
     },
-    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{grid:{color:'rgba(10,10,15,0.05)'},ticks:{color:'#6A7286'}}, y:{grid:{color:'rgba(10,10,15,0.05)'},ticks:{color:'#6A7286'}} } }
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{grid:{color:'rgba(138,145,163,0.16)'},ticks:{color:'#8A91A3'}}, y:{grid:{color:'rgba(138,145,163,0.16)'},ticks:{color:'#8A91A3'}} } }
   }); } } catch(e) { console.warn('[chart skip lostStageChart]', e.message); }
 }
 async function loadLastMeeting() {
@@ -4379,8 +4589,8 @@ async function loadMyPerformance() {
             responsive: true, maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-              x: { grid: { color:'rgba(10,10,15,0.05)' }, ticks: { color:'#6A7286', maxRotation:30 } },
-              y: { min:0, max:100, grid: { color:'rgba(10,10,15,0.05)' }, ticks: { color:'#6A7286' } }
+              x: { grid: { color:'rgba(138,145,163,0.16)' }, ticks: { color:'#8A91A3', maxRotation:30 } },
+              y: { min:0, max:100, grid: { color:'rgba(138,145,163,0.16)' }, ticks: { color:'#8A91A3' } }
             }
           }
         });
@@ -4489,7 +4699,7 @@ async function loadTeamFromSupabase() {
         el._ci = new Chart(el, {
           type:'bar',
           data:{ labels, datasets:[{ label:'Score', data:scores, backgroundColor:colors, borderRadius:6 }] },
-          options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{color:'rgba(10,10,15,0.05)'},ticks:{color:'#6A7286'}},y:{min:0,max:100,grid:{color:'rgba(10,10,15,0.05)'},ticks:{color:'#6A7286'}}} }
+          options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{color:'rgba(138,145,163,0.16)'},ticks:{color:'#8A91A3'}},y:{min:0,max:100,grid:{color:'rgba(138,145,163,0.16)'},ticks:{color:'#8A91A3'}}} }
         });
       }
     } catch(e){}
@@ -4500,7 +4710,7 @@ async function loadTeamFromSupabase() {
         el._ci = new Chart(el, {
           type:'bar',
           data:{ labels, datasets:[{ label:'Reuniones', data:sdrs.map(s=>s.meetings), backgroundColor:'#2563EB', borderRadius:4 }] },
-          options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{color:'rgba(10,10,15,0.05)'},ticks:{color:'#6A7286'}},y:{grid:{color:'rgba(10,10,15,0.05)'},ticks:{color:'#6A7286'}}} }
+          options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{color:'rgba(138,145,163,0.16)'},ticks:{color:'#8A91A3'}},y:{grid:{color:'rgba(138,145,163,0.16)'},ticks:{color:'#8A91A3'}}} }
         });
       }
     } catch(e){}
@@ -4516,6 +4726,21 @@ async function loadTeamFromSupabase() {
   JS — Placeholder for Module 3 pages (injected separately)
 ════════════════════════════════════════════ -->
 <script>
+// ── THEME ──
+window.setTheme = function (t) {
+  if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');
+  try { localStorage.setItem('predictable-theme', t); } catch (e) {}
+  document.querySelectorAll('.tt-opt').forEach(b => b.classList.toggle('on', b.dataset.thm === t));
+};
+window.addEventListener('DOMContentLoaded', () => {
+  const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  document.querySelectorAll('.tt-opt').forEach(b => {
+    b.classList.toggle('on', b.dataset.thm === current);
+    b.addEventListener('click', () => window.setTheme(b.dataset.thm));
+  });
+});
+
 // ── NAVIGATION ──
 let _activePageId = null;
 function nav(el, pageId) {
@@ -4565,11 +4790,11 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // ── CHARTS ──
 const chartDefaults = {
-  color: '#5A6279',
-  plugins: { legend: { labels: { color: '#5A6279', font: { size: 11 } } } },
+  color: '#8A91A3',
+  plugins: { legend: { labels: { color: '#8A91A3', font: { size: 11 } } } },
   scales: {
-    x: { grid: { color: 'rgba(10,10,15,0.04)' }, ticks: { color: '#5A6279', font: { size: 11 } } },
-    y: { grid: { color: 'rgba(10,10,15,0.04)' }, ticks: { color: '#5A6279', font: { size: 11 } } }
+    x: { grid: { color: 'rgba(138,145,163,0.13)' }, ticks: { color: '#8A91A3', font: { size: 11 } } },
+    y: { grid: { color: 'rgba(138,145,163,0.13)' }, ticks: { color: '#8A91A3', font: { size: 11 } } }
   }
 };
 
@@ -4585,7 +4810,7 @@ window.addEventListener('DOMContentLoaded', () => {
         { label: 'Meetings', data: [8, 10, 9, 11], backgroundColor: 'rgba(16,185,129,0.7)', borderRadius: 4 }
       ]
     },
-    options: { ...chartDefaults, responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#5A6279', font: { size: 11 } } } } }
+    options: { ...chartDefaults, responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#8A91A3', font: { size: 11 } } } } }
   }); } } catch(e) { console.warn('[chart skip pipelineChart]', e.message); }
 
   // Channel donut
@@ -4595,7 +4820,7 @@ window.addEventListener('DOMContentLoaded', () => {
       labels: ['Email', 'LinkedIn', 'WhatsApp', 'SMS'],
       datasets: [{ data: [52, 28, 14, 6], backgroundColor: ['#2563EB','#00C4D4','#10B981','#F59E0B'], borderWidth: 0 }]
     },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: '#5A6279', font: { size: 11 }, padding: 12 } } }, cutout: '65%' }
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: '#8A91A3', font: { size: 11 }, padding: 12 } } }, cutout: '65%' }
   }); } } catch(e) { console.warn('[chart skip channelChart]', e.message); }
 
   // Positioning scatter
@@ -4612,10 +4837,10 @@ window.addEventListener('DOMContentLoaded', () => {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: '#5A6279', font: { size: 11 } } } },
+      plugins: { legend: { labels: { color: '#8A91A3', font: { size: 11 } } } },
       scales: {
-        x: { min:0, max:10, title: { display:true, text:'Precio', color:'#4E5F7A' }, grid: { color: 'rgba(10,10,15,0.04)' }, ticks: { color: '#5A6279' } },
-        y: { min:0, max:10, title: { display:true, text:'Amplitud de funciones', color:'#4E5F7A' }, grid: { color: 'rgba(10,10,15,0.04)' }, ticks: { color: '#5A6279' } }
+        x: { min:0, max:10, title: { display:true, text:'Precio', color:'#8A91A3' }, grid: { color: 'rgba(138,145,163,0.13)' }, ticks: { color: '#8A91A3' } },
+        y: { min:0, max:10, title: { display:true, text:'Amplitud de funciones', color:'#8A91A3' }, grid: { color: 'rgba(138,145,163,0.13)' }, ticks: { color: '#8A91A3' } }
       }
     }
   }); } } catch(e) { console.warn('[chart skip posChart]', e.message); }
@@ -4631,7 +4856,7 @@ window.addEventListener('DOMContentLoaded', () => {
         { label: 'crm alternativa', data: [35,33,36,34,37,35,38,40,42,41,44,47], borderColor:'#00C878', tension:.4, pointRadius:3 }
       ]
     },
-    options: { ...chartDefaults, responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#5A6279', font: { size: 10 } } } } }
+    options: { ...chartDefaults, responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#8A91A3', font: { size: 10 } } } } }
   }); } } catch(e) { console.warn('[chart skip trendsChart]', e.message); }
 });
 
@@ -4810,7 +5035,7 @@ async function runApolloSearch() {
     console.error('[Apollo] Error:', err);
     showApiError(`Error: ${err.message || err.toString()} (${err.constructor?.name})`);
   } finally {
-    [btn, btn2].forEach(b => { if(b) { b.textContent='🔍 Buscar en Apollo'; b.disabled=false; } });
+    [btn, btn2].forEach(b => { if(b) { b.textContent='Buscar en Apollo'; b.disabled=false; } });
   }
 }
 
@@ -4897,7 +5122,7 @@ async function saveToApollo() {
     return;
   }
   const btn = document.getElementById('btn-save-apollo');
-  if(btn) { btn.textContent='💾 Guardando en Apollo...'; btn.classList.add('saving'); btn.disabled=true; }
+  if(btn) { btn.textContent='Guardando en Apollo…'; btn.classList.add('saving'); btn.disabled=true; }
   apolloState.savedListName = listName;
   apolloState.saved = apolloState.results.filter(l => apolloState.selected.has(l.id));
 
@@ -5000,7 +5225,7 @@ async function checkPhones(li) {
   const list = stored[li];
   if(!list) return;
   const btn = document.getElementById(`check-btn-${li}`);
-  if(btn) { btn.textContent = '🔄 Verificando...'; btn.disabled = true; }
+  if(btn) { btn.textContent = 'Verificando…'; btn.disabled = true; }
 
   const ids = (list.pendingPhoneIds || list.contacts.filter(c => c.apolloId).map(c => c.apolloId));
   try {
@@ -5024,11 +5249,11 @@ async function checkPhones(li) {
 
     const newBtn = document.getElementById(`check-btn-${li}`);
     if(newBtn) {
-      newBtn.textContent = found > 0 ? `✓ ${found} teléfonos obtenidos` : '🔄 Verificar teléfonos';
+      newBtn.textContent = found > 0 ? `✓ ${found} teléfonos obtenidos` : 'Verificar teléfonos';
       newBtn.disabled = false;
     }
   } catch(e) {
-    if(btn) { btn.textContent = '🔄 Verificar teléfonos'; btn.disabled = false; }
+    if(btn) { btn.textContent = 'Verificar teléfonos'; btn.disabled = false; }
   }
 }
 
@@ -5064,7 +5289,7 @@ async function runEnrichment() {
 
   } catch(err) {
     console.error('[Enrich] Error:', err);
-    if(btn) { btn.textContent='⚡ Reintentar'; btn.classList.remove('saving'); btn.disabled=false; }
+    if(btn) { btn.textContent='Reintentar'; btn.classList.remove('saving'); btn.disabled=false; }
     showApiError(`Error en enrichment: ${err.message}`);
   }
 }
@@ -5120,7 +5345,7 @@ function renderSavedLists() {
             <button class="btn btn-ghost btn-sm" onclick="exportListaCSV(${li},'email')">CSV Email</button>
             <button class="btn btn-ghost btn-sm" onclick="exportListaCSV(${li},'phone')">CSV Llamadas</button>
             <button class="btn btn-ghost btn-sm" onclick="exportListaCSV(${li},'full')">CSV Completo</button>
-            <button class="btn btn-teal btn-sm" id="enrich-btn-${li}" onclick="enrichLista(${li})">⚡ Enriquecer teléfonos</button>
+            <button class="btn btn-teal btn-sm" id="enrich-btn-${li}" onclick="enrichLista(${li})">Enriquecer teléfonos</button>
             <button class="btn btn-ghost btn-sm" id="check-btn-${li}" onclick="checkPhones(${li})" style="display:${list.pendingPhoneIds && list.pendingPhoneIds.length ? 'inline-flex' : 'none'}">🔄 Verificar teléfonos</button>
             <button class="btn btn-ghost btn-sm" style="color:var(--red);opacity:.6" onclick="deleteLista(${li})">Eliminar</button>
           </div>
@@ -5184,7 +5409,7 @@ async function enrichLista(li) {
   console.log('[enrichLista] contactos:', list.contacts.length, 'con apolloId:', withId);
 
   if(withId === 0) {
-    if(btn) { btn.disabled = false; btn.textContent = '⚡ Enriquecer teléfonos'; }
+    if(btn) { btn.disabled = false; btn.textContent = 'Enriquecer teléfonos'; }
     alert('Estos contactos no tienen Apollo ID. Por favor guarda una nueva lista desde Apollo Sequences para poder enriquecer.');
     return;
   }
@@ -5222,7 +5447,7 @@ async function enrichLista(li) {
   } catch(err) {
     console.error('[enrichLista] error:', err);
     const b = document.getElementById(`enrich-btn-${li}`);
-    if(b) { b.textContent = '⚡ Reintentar'; b.disabled = false; }
+    if(b) { b.textContent = 'Reintentar'; b.disabled = false; }
     alert('Error en enrichment: ' + err.message);
   }
 }
@@ -5516,6 +5741,18 @@ window.addEventListener('DOMContentLoaded', () => {
     $('#user-pill-role').textContent   = company ? (role + ' · ' + company) : role;
     $('#user-dropdown-name').textContent  = capitalize(name);
     $('#user-dropdown-email').textContent = email;
+    // Saludo real en el dashboard
+    const greet = document.getElementById('dash-greeting');
+    const dashSub = document.getElementById('dash-sub');
+    if (greet) {
+      const h = new Date().getHours();
+      const salut = h < 12 ? 'Buenos días' : h < 19 ? 'Buenas tardes' : 'Buenas noches';
+      greet.textContent = salut + ', ' + capitalize(name.split(' ')[0]);
+    }
+    if (dashSub) {
+      const fecha = new Date().toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' });
+      dashSub.textContent = fecha.charAt(0).toUpperCase() + fecha.slice(1) + (company ? ' · ' + company : '');
+    }
     // Update workspace switcher
     const wsName = document.getElementById('ws-name');
     if (wsName && company) wsName.textContent = company;

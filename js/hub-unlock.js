@@ -34,9 +34,9 @@
         align-items: center;
         justify-content: center;
         background: linear-gradient(180deg,
-          rgba(247,248,250,0.72) 0%,
-          rgba(247,248,250,0.92) 50%,
-          rgba(247,248,250,0.82) 100%
+          var(--frost-soft, rgba(247,248,250,0.72)) 0%,
+          var(--frost, rgba(247,248,250,0.9)) 50%,
+          var(--frost-mid, rgba(247,248,250,0.82)) 100%
         );
         backdrop-filter: blur(3px);
         -webkit-backdrop-filter: blur(3px);
@@ -136,7 +136,7 @@
         position: fixed;
         inset: 0;
         z-index: 900;
-        background: rgba(247,248,250,0.92);
+        background: var(--frost, rgba(247,248,250,0.9));
         backdrop-filter: blur(14px);
         -webkit-backdrop-filter: blur(14px);
         display: flex;
@@ -155,10 +155,10 @@
         width: 100%;
         max-width: 600px;
         background: var(--surface, #FFFFFF);
-        border: 1px solid rgba(10,10,15,0.10);
+        border: 1px solid var(--hair, rgba(10,10,15,0.08));
         border-radius: 22px;
         padding: 38px 40px 36px;
-        box-shadow: 0 2px 6px rgba(10,10,15,0.06), 0 40px 90px -30px rgba(10,10,15,0.30);
+        box-shadow: var(--shadow-3, 0 2px 6px rgba(10,10,15,0.06), 0 20px 48px -20px rgba(10,10,15,0.18));
         animation: hub-modal-in 0.32s cubic-bezier(0.22,1,0.36,1);
       }
 
@@ -173,7 +173,7 @@
 
       .hub-unlock-track {
         height: 3px;
-        background: rgba(10,10,15,0.08);
+        background: var(--surface3, #ECEEF3);
         border-radius: 2px;
         overflow: hidden;
         margin-bottom: 10px;
@@ -188,7 +188,7 @@
 
       .hub-unlock-step-lbl {
         font-size: 11px;
-        color: rgba(10,10,15,0.40);
+        color: var(--ink-4, rgba(10,10,15,0.40));
         letter-spacing: 0.5px;
         text-transform: uppercase;
         font-weight: 600;
@@ -206,14 +206,14 @@
 
       .hub-unlock-sub {
         font-size: 13.5px;
-        color: rgba(10,10,15,0.55);
+        color: var(--ink-3, rgba(10,10,15,0.55));
         line-height: 1.6;
         margin-bottom: 22px;
       }
 
       .hub-unlock-multi-hint {
         font-size: 11.5px;
-        color: rgba(10,10,15,0.38);
+        color: var(--ink-4, rgba(10,10,15,0.38));
         margin-bottom: 12px;
         text-align: right;
         transition: color 0.15s;
@@ -236,8 +236,8 @@
 
       .hub-ucard {
         padding: 14px 16px;
-        background: rgba(10,10,15,0.02);
-        border: 1.5px solid rgba(10,10,15,0.09);
+        background: var(--surface2, #F6F7F9);
+        border: 1.5px solid var(--hair, rgba(10,10,15,0.08));
         border-radius: 13px;
         cursor: pointer;
         transition: border-color 0.12s, background 0.12s, transform 0.1s;
@@ -266,7 +266,7 @@
       .hub-ucard-title {
         font-size: 13px;
         font-weight: 600;
-        color: rgba(10,10,15,0.85);
+        color: var(--ink-2, rgba(10,10,15,0.85));
         margin-bottom: 3px;
         line-height: 1.3;
         transition: color 0.12s;
@@ -274,7 +274,7 @@
 
       .hub-ucard-desc {
         font-size: 11.5px;
-        color: rgba(10,10,15,0.48);
+        color: var(--ink-3, rgba(10,10,15,0.48));
         line-height: 1.4;
       }
 
@@ -353,7 +353,7 @@
 
       .hub-success-sub {
         font-size: 14px;
-        color: rgba(10,10,15,0.48);
+        color: var(--ink-3, rgba(10,10,15,0.48));
       }
 
       @media (max-width: 580px) {
