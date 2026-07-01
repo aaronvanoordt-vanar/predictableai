@@ -34,9 +34,9 @@
         align-items: center;
         justify-content: center;
         background: linear-gradient(180deg,
-          rgba(8,8,12,0.72) 0%,
-          rgba(8,8,12,0.90) 50%,
-          rgba(8,8,12,0.80) 100%
+          rgba(247,248,250,0.72) 0%,
+          rgba(247,248,250,0.92) 50%,
+          rgba(247,248,250,0.82) 100%
         );
         backdrop-filter: blur(3px);
         -webkit-backdrop-filter: blur(3px);
@@ -58,12 +58,12 @@
         color: var(--accent);
         margin-bottom: 22px;
         animation: hub-lock-breathe 2.8s ease-in-out infinite;
-        filter: drop-shadow(0 0 10px rgba(47,102,255,0.35));
+        filter: drop-shadow(0 0 10px rgba(31,75,255,0.35));
       }
 
       @keyframes hub-lock-breathe {
-        0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 10px rgba(47,102,255,0.35)); }
-        50%       { transform: scale(1.05); filter: drop-shadow(0 0 22px rgba(47,102,255,0.6)); }
+        0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 10px rgba(31,75,255,0.35)); }
+        50%       { transform: scale(1.05); filter: drop-shadow(0 0 22px rgba(31,75,255,0.6)); }
       }
 
       .hub-lock-pill {
@@ -73,7 +73,7 @@
         font-size: 11px;
         color: var(--accent-ink);
         background: var(--accent-soft-2);
-        border: 1px solid rgba(47,102,255,0.22);
+        border: 1px solid rgba(31,75,255,0.22);
         border-radius: 20px;
         padding: 4px 12px;
         margin-bottom: 18px;
@@ -122,7 +122,7 @@
       .hub-unlock-cta:hover {
         background: var(--accent-2);
         transform: translateY(-1px);
-        box-shadow: 0 10px 30px rgba(47,102,255,0.40);
+        box-shadow: 0 10px 30px rgba(31,75,255,0.40);
       }
 
       .hub-lock-footnote {
@@ -136,7 +136,7 @@
         position: fixed;
         inset: 0;
         z-index: 900;
-        background: rgba(8,8,12,0.95);
+        background: rgba(247,248,250,0.92);
         backdrop-filter: blur(14px);
         -webkit-backdrop-filter: blur(14px);
         display: flex;
@@ -154,11 +154,11 @@
       .hub-modal-card {
         width: 100%;
         max-width: 600px;
-        background: var(--surface, #11111A);
-        border: 1px solid rgba(255,255,255,0.12);
+        background: var(--surface, #FFFFFF);
+        border: 1px solid rgba(10,10,15,0.10);
         border-radius: 22px;
         padding: 38px 40px 36px;
-        box-shadow: 0 40px 120px rgba(0,0,0,0.75), 0 0 0 1px rgba(47,102,255,0.08);
+        box-shadow: 0 2px 6px rgba(10,10,15,0.06), 0 40px 90px -30px rgba(10,10,15,0.30);
         animation: hub-modal-in 0.32s cubic-bezier(0.22,1,0.36,1);
       }
 
@@ -173,7 +173,7 @@
 
       .hub-unlock-track {
         height: 3px;
-        background: rgba(255,255,255,0.08);
+        background: rgba(10,10,15,0.08);
         border-radius: 2px;
         overflow: hidden;
         margin-bottom: 10px;
@@ -188,7 +188,7 @@
 
       .hub-unlock-step-lbl {
         font-size: 11px;
-        color: rgba(255,255,255,0.3);
+        color: rgba(10,10,15,0.40);
         letter-spacing: 0.5px;
         text-transform: uppercase;
         font-weight: 600;
@@ -197,7 +197,7 @@
       .hub-unlock-title {
         font-size: 22px;
         font-weight: 700;
-        color: var(--ink, #fff);
+        color: var(--ink, #0A0A0F);
         letter-spacing: -0.45px;
         margin-bottom: 6px;
         font-family: var(--font-display, system-ui);
@@ -206,21 +206,21 @@
 
       .hub-unlock-sub {
         font-size: 13.5px;
-        color: rgba(255,255,255,0.50);
+        color: rgba(10,10,15,0.55);
         line-height: 1.6;
         margin-bottom: 22px;
       }
 
       .hub-unlock-multi-hint {
         font-size: 11.5px;
-        color: rgba(255,255,255,0.28);
+        color: rgba(10,10,15,0.38);
         margin-bottom: 12px;
         text-align: right;
         transition: color 0.15s;
       }
 
       .hub-unlock-multi-hint.has-selection {
-        color: var(--accent-ink, #6E9BFF);
+        color: var(--accent-ink, #1A3FD6);
       }
 
       .hub-unlock-grid {
@@ -236,8 +236,8 @@
 
       .hub-ucard {
         padding: 14px 16px;
-        background: rgba(255,255,255,0.03);
-        border: 1.5px solid rgba(255,255,255,0.07);
+        background: rgba(10,10,15,0.02);
+        border: 1.5px solid rgba(10,10,15,0.09);
         border-radius: 13px;
         cursor: pointer;
         transition: border-color 0.12s, background 0.12s, transform 0.1s;
@@ -246,14 +246,14 @@
       }
 
       .hub-ucard:hover {
-        border-color: rgba(47,102,255,0.45);
-        background: rgba(47,102,255,0.06);
+        border-color: rgba(31,75,255,0.45);
+        background: rgba(31,75,255,0.06);
         transform: translateY(-1px);
       }
 
       .hub-ucard.hub-ucard-selected {
-        border-color: var(--accent, #2F66FF);
-        background: rgba(47,102,255,0.12);
+        border-color: var(--accent, #1F4BFF);
+        background: rgba(31,75,255,0.12);
       }
 
       .hub-ucard-icon {
@@ -266,7 +266,7 @@
       .hub-ucard-title {
         font-size: 13px;
         font-weight: 600;
-        color: rgba(255,255,255,0.85);
+        color: rgba(10,10,15,0.85);
         margin-bottom: 3px;
         line-height: 1.3;
         transition: color 0.12s;
@@ -274,22 +274,22 @@
 
       .hub-ucard-desc {
         font-size: 11.5px;
-        color: rgba(255,255,255,0.38);
+        color: rgba(10,10,15,0.48);
         line-height: 1.4;
       }
 
       .hub-ucard.hub-ucard-selected .hub-ucard-title {
-        color: var(--accent-ink, #6E9BFF);
+        color: var(--accent-ink, #1A3FD6);
       }
 
       .hub-ucard.hub-ucard-selected .hub-ucard-desc {
-        color: rgba(110,155,255,0.65);
+        color: rgba(26,63,214,0.65);
       }
 
       .hub-unlock-next {
         width: 100%;
         padding: 14px 20px;
-        background: var(--accent, #2F66FF);
+        background: var(--accent, #1F4BFF);
         border: none;
         border-radius: 11px;
         color: #fff;
@@ -353,7 +353,7 @@
 
       .hub-success-sub {
         font-size: 14px;
-        color: rgba(255,255,255,0.45);
+        color: rgba(10,10,15,0.48);
       }
 
       @media (max-width: 580px) {

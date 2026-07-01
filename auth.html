@@ -4,13 +4,17 @@
 <meta charset="utf-8">
 <title>Predictable.ai — Acceso</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%2300c4d4'/></svg>">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0d1117; --surface: #161b22; --surface2: #1f2630; --border: #2d333b;
-    --text: #e6edf3; --text2: #aab2bd; --text3: #6e7681;
-    --teal: #00c4d4; --jade: #1ec18f; --red: #e84040; --green: #10b981; --amber: #f0c060;
-    --font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --bg: #F7F8FA; --surface: #FFFFFF; --surface2: #F6F7F9; --border: rgba(10,10,15,0.08);
+    --text: #0A0A0F; --text2: rgba(10,10,15,0.62); --text3: rgba(10,10,15,0.45);
+    --accent: #1F4BFF; --accent-2: #3B68FF;
+    --teal: #0891B2; --jade: #0EA968; --red: #D64545; --green: #0EA968; --amber: #B87514;
+    --font: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
   }
   * { box-sizing: border-box; }
   body {
@@ -18,40 +22,45 @@
     font-family: var(--font); min-height: 100vh;
     display: flex; align-items: center; justify-content: center;
     padding: 20px;
-    background-image: radial-gradient(circle at 20% 10%, rgba(0,196,212,.08), transparent 50%),
-                      radial-gradient(circle at 80% 90%, rgba(30,193,143,.06), transparent 50%);
+    -webkit-font-smoothing: antialiased;
+    background-image: radial-gradient(circle at 20% 10%, rgba(31,75,255,.06), transparent 50%),
+                      radial-gradient(circle at 80% 90%, rgba(14,169,104,.05), transparent 50%);
   }
   .card {
     width: 100%; max-width: 420px;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 16px; padding: 32px 32px 28px;
-    box-shadow: 0 24px 80px rgba(0,0,0,.5);
+    border-radius: 18px; padding: 32px 32px 28px;
+    box-shadow: 0 2px 6px rgba(10,10,15,.05), 0 24px 64px -24px rgba(10,10,15,.18);
   }
   .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-  .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 8px rgba(0,196,212,.6); }
-  .brand-name { font-weight: 700; font-size: 15px; letter-spacing: -.2px; }
-  h1 { font-size: 22px; margin: 14px 0 4px; letter-spacing: -.5px; }
-  .sub { color: var(--text3); font-size: 13px; margin-bottom: 24px; }
+  .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(31,75,255,.12); }
+  .brand-name { font-weight: 600; font-size: 15px; letter-spacing: -.2px; }
+  h1 { font-size: 24px; font-weight: 600; margin: 16px 0 4px; letter-spacing: -.6px; }
+  .sub { color: var(--text3); font-size: 13.5px; margin-bottom: 24px; }
 
   /* Botones OAuth */
   .btn-oauth {
     width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
-    padding: 11px 14px; background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 9px; color: var(--text); font-size: 13.5px; font-weight: 600;
+    padding: 12px 14px; background: var(--surface); border: 1px solid rgba(10,10,15,0.13);
+    border-radius: 10px; color: var(--text); font-size: 13.5px; font-weight: 500;
+    font-family: var(--font);
     cursor: pointer; transition: all .15s; margin-bottom: 10px;
+    box-shadow: 0 1px 2px rgba(10,10,15,.04);
   }
-  .btn-oauth:hover:not([disabled]) { background: var(--surface); border-color: var(--text3); }
+  .btn-oauth:hover:not([disabled]) { background: var(--surface2); border-color: rgba(10,10,15,0.22); transform: translateY(-1px); box-shadow: 0 4px 12px -4px rgba(10,10,15,.12); }
+  .btn-oauth:active:not([disabled]) { transform: translateY(0); }
   .btn-oauth[disabled] { opacity: .5; cursor: not-allowed; }
   .btn-oauth svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .btn-oauth:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   .status {
-    margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 12.5px;
+    margin-top: 14px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px;
     display: none;
   }
   .status.show { display: block; }
-  .status.ok    { background: rgba(16,185,129,.10); color: var(--green); border: 1px solid rgba(16,185,129,.3); }
-  .status.err   { background: rgba(232,64,64,.10);  color: var(--red);   border: 1px solid rgba(232,64,64,.3); }
-  .status.info  { background: rgba(0,196,212,.10);  color: var(--teal);  border: 1px solid rgba(0,196,212,.3); }
+  .status.ok    { background: #E9F7F0; color: #0B7F4F; border: 1px solid rgba(14,169,104,.30); }
+  .status.err   { background: #FBEDED; color: #B03A3A; border: 1px solid rgba(214,69,69,.30); }
+  .status.info  { background: #EEF2FF; color: #1A3FD6; border: 1px solid rgba(31,75,255,.25); }
 
   /* Spinner */
   .spinner {
@@ -60,6 +69,9 @@
     vertical-align: middle; margin-right: 6px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  }
 
   .legal { font-size: 11px; color: var(--text3); text-align: center; margin-top: 18px; line-height: 1.55; }
   .legal a { color: var(--text2); }

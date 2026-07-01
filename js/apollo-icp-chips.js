@@ -130,7 +130,7 @@
     dropdown.style.cssText = 'position:absolute;top:calc(100% + 4px);left:0;right:0;' +
       'background:var(--surface);border:1px solid var(--border2);border-radius:6px;' +
       'max-height:220px;overflow-y:auto;z-index:1000;display:none;' +
-      'box-shadow:0 8px 20px rgba(0,0,0,.4)';
+      'box-shadow:0 8px 20px rgba(10,10,15,.14)';
     wrapper.appendChild(dropdown);
 
     let timer = null;

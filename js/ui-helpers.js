@@ -20,18 +20,18 @@
   function toast(message, type = "info") {
     const container = ensureToastContainer();
     const colors = {
-      info:    { bg: "rgba(79,142,247,.12)", bd: "#4F8EF7", fg: "#E8EDF8" },
-      success: { bg: "rgba(16,185,129,.12)", bd: "#10B981", fg: "#E8EDF8" },
-      error:   { bg: "rgba(239,68,68,.12)",  bd: "#EF4444", fg: "#E8EDF8" },
-      warn:    { bg: "rgba(245,158,11,.12)", bd: "#F59E0B", fg: "#E8EDF8" },
-    }[type] || { bg: "#0D1424", bd: "#1E2D47", fg: "#E8EDF8" };
+      info:    { bg: "#EEF2FF", bd: "rgba(31,75,255,.30)",  fg: "#1A3FD6" },
+      success: { bg: "#E9F7F0", bd: "rgba(14,169,104,.35)", fg: "#0B7F4F" },
+      error:   { bg: "#FBEDED", bd: "rgba(214,69,69,.35)",  fg: "#B03A3A" },
+      warn:    { bg: "#FBF3E4", bd: "rgba(199,126,18,.35)", fg: "#96610E" },
+    }[type] || { bg: "#FFFFFF", bd: "rgba(10,10,15,.12)", fg: "#0A0A0F" };
 
     const t = document.createElement("div");
     t.style.cssText = `
       background:${colors.bg}; border:1px solid ${colors.bd};
       color:${colors.fg}; padding:12px 14px; border-radius:10px;
       font-size:13px; line-height:1.5;
-      box-shadow:0 4px 16px rgba(0,0,0,.4);
+      box-shadow:0 4px 16px rgba(10,10,15,.14);
       animation: fadeIn .25s ease;`;
     t.textContent = message;
     container.appendChild(t);
@@ -64,8 +64,8 @@
     if (!container) return;
     const div = document.createElement("div");
     div.style.cssText = `
-      background:rgba(239,68,68,.08); border:1px solid rgba(239,68,68,.3);
-      color:#EF4444; padding:12px 14px; border-radius:10px;
+      background:#FBEDED; border:1px solid rgba(214,69,69,.35);
+      color:#B03A3A; padding:12px 14px; border-radius:10px;
       font-size:13px; margin-top:12px;`;
     div.textContent = "⚠ " + (err?.message || err || "Error inesperado");
     container.appendChild(div);
