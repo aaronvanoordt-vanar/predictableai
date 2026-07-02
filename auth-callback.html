@@ -56,6 +56,18 @@
 
       if (!profile || !profile.onboarded) {
         window.location.replace('./onboarding.html');
+        return;
+      }
+
+      const user = await window.supabaseHelpers.getUser();
+      const { data: intake } = await window.supabaseClient
+        .from('intel_hub_intake')
+        .select('what_to_know')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!intake || !intake.what_to_know) {
+        window.location.replace('./miforms/');
       } else {
         window.location.replace(window.APP_URL || './index.html');
       }
