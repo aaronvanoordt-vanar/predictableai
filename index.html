@@ -2631,21 +2631,8 @@ html, body {
     </div>
   </div>
 
-  <!-- v2 shell (populated by intel-hub-v2.js) -->
-  <div id="ih-v2-shell" class="ih-v2-shell">
-    <!-- Loading state -->
-    <div style="padding:40px 28px;display:flex;align-items:center;gap:12px;color:var(--ink-3);font-family:var(--font-mono);font-size:12px;letter-spacing:0.1em">
-      <div style="width:16px;height:16px;border:2px solid var(--surface3);border-top-color:var(--accent);border-radius:50%;animation:ispin .8s linear infinite;flex-shrink:0"></div>
-      Inicializando agente…
-    </div>
-    <!-- Real data container (intel-hub.js populates this) -->
-    <div id="ih-container" style="display:none">
-      <div class="ih-loading">
-        <div class="ih-spinner"></div>
-        <span>Cargando Intelligence Hub…</span>
-      </div>
-    </div>
-  </div>
+  <!-- Punto de montaje del Intelligence Hub (intel-hub-cadence-tabs.js inyecta aquí) -->
+  <div id="ih-v2-shell" class="ih-v2-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: MI ACCIONABLES ═══════ -->
@@ -3931,9 +3918,7 @@ html, body {
 <script src="js/apollo-sequences.js"></script>
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
-<!-- v3 cleanup: intel-hub.js (UI vieja con botones que gastaban créditos del endpoint viejo) e intel-hub-v2.js (maqueta) DESACTIVADOS. Toda la UI ahora corre por intel-hub-cadence-tabs.js -->
-<!-- <script src="js/intel-hub.js"></script> -->
-<!-- <script src="js/intel-hub-v2.js"></script> -->
+<!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js"></script>
 <script src="js/hub-unlock.js"></script>
 <script src="js/onboarding-tour.js"></script>
@@ -4628,18 +4613,17 @@ function switchMsgTab(el, tabId) {
 const apolloState = { results:[], selected: new Set(), saved:[], savedListName:'' };
 
 // ── APOLLO API ──
-const APOLLO_KEY  = 'sQAAncojXI8VIRWgWr9ZYA';
-const APOLLO_BASE = 'https://predictable-apollo.aaron-78b.workers.dev/';
-function getApolloKey(){ try{ return localStorage.getItem('apollo_api_key')||APOLLO_KEY; }catch(e){ return APOLLO_KEY; } }
-
+// Las llamadas van por la edge function apollo-proxy: la API key vive en los
+// secrets de Supabase y nunca llega al navegador. Requiere sesión activa.
 async function apolloFetch(endpoint, body) {
-  const key = getApolloKey();
-  const res = await fetch(APOLLO_BASE + endpoint, {
+  const session = (await window.supabaseClient.auth.getSession()).data.session;
+  if (!session) throw new Error('Sesión expirada — vuelve a iniciar sesión');
+  const res = await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/apollo-proxy', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Api-Key': key },
-    body: JSON.stringify(body)
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+    body: JSON.stringify({ endpoint, body })
   });
-  if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.message || `HTTP ${res.status}`); }
+  if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.message || e.error || `HTTP ${res.status}`); }
   return res.json();
 }
 
@@ -4659,19 +4643,6 @@ function showApiError(msg) {
   b.style.cssText='margin-top:12px;padding:12px 16px;background:rgba(232,64,64,.1);border:1px solid rgba(232,64,64,.3);border-radius:8px;font-family:var(--font-mono);font-size:11px;color:#E84040;line-height:1.5';
   b.textContent = msg;
 }
-
-const MOCK_LEADS = [
-  { id:1, name:'Carlos Mendoza', title:'VP de Ventas', company:'TechCorp MX', country:'México', employees:'201-500', industry:'Computer Software', email:'c.mendoza@techcorp.mx', phone:null, score:'strong' },
-  { id:2, name:'Ana Ríos', title:'Head of Marketing', company:'Fintech Latam', country:'Colombia', employees:'51-200', industry:'Financial Services', email:'a.rios@fintechlatam.co', phone:null, score:'strong' },
-  { id:3, name:'Pedro Soto', title:'Director de Operaciones', company:'LogiChile', country:'Chile', employees:'201-500', industry:'Logistics and Supply Chain', email:'p.soto@logichile.cl', phone:null, score:'good' },
-  { id:4, name:'Lucía Vargas', title:'CEO', company:'EduOnline PE', country:'Perú', employees:'11-50', industry:'E-Learning', email:'l.vargas@eduonline.pe', phone:null, score:'strong' },
-  { id:5, name:'Miguel Torres', title:'CTO', company:'SaaS Argentina', country:'Argentina', employees:'51-200', industry:'Internet', email:'m.torres@saas.ar', phone:null, score:'good' },
-  { id:6, name:'Sofía Castillo', title:'VP de Producto', company:'RetailMX', country:'México', employees:'501-1000', industry:'Retail', email:'s.castillo@retailmx.com', phone:null, score:'good' },
-  { id:7, name:'Andrés Mejía', title:'Director Comercial', company:'ConsultCol', country:'Colombia', employees:'11-50', industry:'Management Consulting', email:'a.mejia@consultcol.co', phone:null, score:'partial' },
-  { id:8, name:'Valentina Cruz', title:'Head of Growth', company:'AdTech Latam', country:'Argentina', employees:'51-200', industry:'Marketing and Advertising', email:'v.cruz@adtech.lat', phone:null, score:'partial' },
-  { id:9, name:'Rodrigo Lima', title:'Country Manager', company:'HRSoft BR', country:'Brasil', employees:'201-500', industry:'Human Resources', email:'r.lima@hrsoft.com.br', phone:null, score:'good' },
-  { id:10, name:'Isabella Moreno', title:'Directora de TI', company:'InsuraTech', country:'México', employees:'1001-5000', industry:'Insurance', email:'i.moreno@insuratech.mx', phone:null, score:'partial' },
-];
 
 function toggleTag(el) { el.classList.toggle('active'); }
 

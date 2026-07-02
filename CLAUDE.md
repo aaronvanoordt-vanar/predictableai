@@ -23,14 +23,15 @@ There is no package.json, no npm install, no test suite. Verification = `scripts
 - **Page flow:** `landing.html` → `auth.html` → `auth-callback.html` → `onboarding.html` → `index.html` (the app).
 - **`index.html` is a ~6,200-line monolith**: all views, all CSS, and large inline `<script>` blocks (Apollo integration ~line 4600+, settings/auth UI ~5700+). Two production outages came from edits here: orphan leftover code causing a `SyntaxError` that killed every inline function (PR #18), and unbalanced `<div>`s causing a black screen on navigation (commit 0a151b4). After ANY edit to it, `node scripts/check.mjs` runs automatically via hook — if it fails, fix before continuing. Prefer adding new features as `js/` modules over growing the inline scripts.
 - **Script load order matters** (globals, no modules): `js/config.js` → `js/supabase-client.js` → `js/auth-guard.js` → feature modules. Never reorder the `<script>` tags in `index.html` without checking dependencies.
-- **DEAD files — do not edit or load:** `js/intel-hub.js`, `js/intel-hub-v2.js`, `js/intel-hub-real-data.js` (three superseded generations of the Intelligence Hub, deactivated around `index.html:3934`). The ACTIVE implementation is `js/intel-hub-cadence-tabs.js`. If asked to change the Intelligence Hub, that is the only file plus its containers in `index.html`.
+- **Intelligence Hub = `js/intel-hub-cadence-tabs.js`**, mounted into `#ih-v2-shell` in `index.html`. Three older generations (`intel-hub.js`, `intel-hub-v2.js`, `intel-hub-real-data.js`) were deleted from the repo — do not resurrect them from git history.
 - **`miforms/`** is a separate mini-app (feedback/intake survey), used as the Hub unlock gate.
 
 ## Supabase
 
 - Project config in `js/config.js` (URL + anon key — the anon key is public by design; RLS enforces access).
 - `supabase/migrations/` — applied to production. **Never modify an existing migration; always add a new file.** Note in the PR body that a migration must be applied.
-- `supabase/functions/` — 3 Deno edge functions (`enrich-company`, `generate-intel-hub`, `schedule-intel-hub`). They do **not** auto-deploy; say "requires `supabase functions deploy <name>`" in the PR body when you change one.
+- `supabase/functions/` — 4 Deno edge functions (`enrich-company`, `generate-intel-hub`, `schedule-intel-hub`, `apollo-proxy`). They do **not** auto-deploy; say "requires `supabase functions deploy <name>`" in the PR body when you change one.
+- **All Apollo API calls go through the `apollo-proxy` edge function** (secret `APOLLO_API_KEY`, JWT required). Never call Apollo directly from the client or put its key in any file.
 - Key tables: `profiles` (incl. `role`), `sales_reports`, `intelligence_hub_reports`, `client_icp`, credits. Roles: admin / director / SDR.
 
 ## Security invariants (violations have shipped before — see docs/SESSION_AUDIT_2026-07-02.md)
