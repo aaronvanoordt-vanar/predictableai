@@ -9,7 +9,9 @@ const path = require('path');
 const url = require('url');
 
 const PORT = 3000;
-const APOLLO_KEY = 'GJhODHZj1VvjE9H1TdD_KA';
+// La key NUNCA va hardcodeada (este repo es público). Para usar el proxy local:
+//   APOLLO_API_KEY=tu_key node server.js
+const APOLLO_KEY = process.env.APOLLO_API_KEY || '';
 const APOLLO_HOST = 'api.apollo.io';
 
 const server = http.createServer((req, res) => {

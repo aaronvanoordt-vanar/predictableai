@@ -58,9 +58,7 @@ function checkHtml(file) {
 function checkSecrets(file) {
   const src = readFileSync(file, 'utf8');
   const lines = src.split('\n');
-  // Known already-exposed keys are grandfathered so CI starts green;
-  // they still MUST be rotated (see audit). Anything new fails.
-  const grandfathered = ['sQAAncojXI8VIRWgWr9ZYA', 'GJhODHZj1VvjE9H1TdD_KA'];
+  const grandfathered = [];
   const patterns = [
     /sk-ant-[A-Za-z0-9_-]{20,}/, // Anthropic
     /(?:api[_-]?key|apikey|secret|token)\s*[:=]\s*['"][A-Za-z0-9_-]{16,}['"]/i,
