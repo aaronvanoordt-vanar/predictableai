@@ -9,17 +9,35 @@
  *       verify_jwt alone also accepts the public anon key, which would make
  *       this an open proxy anyone could use to burn Apollo credits (the same
  *       class of hole PR #25 fixed in decrement_credits).
+ *
+ * The allowlist pins the upstream HTTP method server-side — the client only
+ * names the endpoint, never the method. For phone reveals
+ * (reveal_phone_number: true on /people/match or /people/bulk_match) this
+ * function injects the apollo-webhook callback URL itself; any
+ * client-supplied webhook_url is always discarded, so Apollo can never be
+ * pointed at an attacker-controlled server.
+ *
  * POST body: { "endpoint": "/people/match", "body": { ... } }
  * Required secrets: APOLLO_API_KEY
+ *                   APOLLO_WEBHOOK_SECRET (only for phone-reveal requests)
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const ALLOWED_ENDPOINTS = new Set([
-  "/mixed_people/api_search",
-  "/people/match",
-  "/contacts",
+// endpoint → upstream HTTP method, fixed server-side.
+const STATIC_ENDPOINTS = new Map<string, "GET" | "POST">([
+  ["/mixed_people/api_search", "POST"],
+  ["/people/match", "POST"],
+  ["/people/bulk_match", "POST"],
+  ["/contacts", "POST"],
+  ["/contacts/search", "POST"],
+  ["/emailer_campaigns/search", "POST"],
+  ["/email_accounts", "GET"],
+  ["/labels", "GET"],
 ]);
+
+// Dynamic entry: add contacts to a sequence (24-hex Apollo campaign id).
+const ADD_CONTACT_IDS_RE = /^\/emailer_campaigns\/[a-f0-9]{24}\/add_contact_ids$/;
 
 function corsHeaders(origin: string) {
   return {
@@ -59,19 +77,48 @@ Deno.serve(async (req) => {
   }
 
   const endpoint = payload.endpoint;
-  if (typeof endpoint !== "string" || !ALLOWED_ENDPOINTS.has(endpoint)) {
+  if (typeof endpoint !== "string") {
     return json({ error: "Endpoint not allowed" }, 400, cors);
   }
+  let method = STATIC_ENDPOINTS.get(endpoint);
+  if (!method && ADD_CONTACT_IDS_RE.test(endpoint)) method = "POST";
+  if (!method) return json({ error: "Endpoint not allowed" }, 400, cors);
 
-  const res = await fetch("https://api.apollo.io/api/v1" + endpoint, {
-    method: "POST",
+  const body: Record<string, unknown> =
+    payload.body && typeof payload.body === "object" && !Array.isArray(payload.body)
+      ? { ...(payload.body as Record<string, unknown>) }
+      : {};
+
+  // SECURITY: never forward a client-supplied webhook_url — Apollo would POST
+  // the revealed data (and our secret token pattern) wherever it points.
+  delete body.webhook_url;
+
+  if (endpoint === "/people/match" || endpoint === "/people/bulk_match") {
+    if (body.reveal_phone_number === true) {
+      const webhookSecret = Deno.env.get("APOLLO_WEBHOOK_SECRET");
+      if (!webhookSecret) {
+        return json({ error: "APOLLO_WEBHOOK_SECRET secret not configured" }, 503, cors);
+      }
+      body.webhook_url =
+        `${Deno.env.get("SUPABASE_URL")!}/functions/v1/apollo-webhook` +
+        `?token=${encodeURIComponent(webhookSecret)}`;
+    } else {
+      delete body.reveal_phone_number;
+    }
+  }
+
+  const init: RequestInit = {
+    method,
     headers: {
-      "Content-Type": "application/json",
       "Cache-Control": "no-cache",
       "X-Api-Key": apiKey,
+      ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
     },
-    body: JSON.stringify(payload.body ?? {}),
-  });
+  };
+  // Apollo's GET endpoints here take no params — forward with no body.
+  if (method === "POST") init.body = JSON.stringify(body);
+
+  const res = await fetch("https://api.apollo.io/api/v1" + endpoint, init);
 
   const text = await res.text();
   return new Response(text, {

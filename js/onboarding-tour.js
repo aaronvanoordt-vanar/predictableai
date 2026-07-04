@@ -19,8 +19,8 @@
     { id: 's1', title: 'Explora tu Intelligence Hub', desc: 'Conoce los informes que tus agentes generan a diario.', credits: 20, page: 'mi-dashboard', icon: 'chart' },
     { id: 's2', title: 'Completa tu Matriz de Input', desc: 'Dale contexto a la IA: empresa, mercado y competidores.', credits: 30, page: 'mi-matrix', icon: 'grid' },
     { id: 's3', title: 'Define tu ICP', desc: 'Ajusta el perfil de cliente ideal que alimenta la prospección.', credits: 25, page: 'pro-icp', icon: 'target' },
-    { id: 's4', title: 'Corre tu primera búsqueda en Apollo', desc: 'Encuentra contactos que calzan tu ICP en segundos.', credits: 35, page: 'pro-apollo', icon: 'search' },
-    { id: 's5', title: 'Guarda tu primera lista', desc: 'Crea un segmento reutilizable para tus cadencias.', credits: 40, page: 'pro-apollo', icon: 'bookmark' },
+    { id: 's4', title: 'Corre tu primera búsqueda en Apollo', desc: 'Encuentra contactos que calzan tu ICP en segundos.', credits: 35, page: 'pro-main', icon: 'search' },
+    { id: 's5', title: 'Guarda tu primera lista', desc: 'Crea un segmento reutilizable para tus cadencias.', credits: 40, page: 'pro-main', icon: 'bookmark' },
     { id: 's6', title: 'Prueba el Meeting Coach', desc: 'Recibe guía en vivo durante tus llamadas de venta.', credits: 30, page: 'ventas-coach', icon: 'mic' },
     { id: 's7', title: 'Configura tu equipo y rol', desc: 'Asigna roles SDR, Director o Admin en Ajustes.', credits: 20, page: 'settings', icon: 'users' }
   ];
