@@ -161,6 +161,9 @@
   }
   function csvCell(v) {
     var s = String(v == null ? '' : v);
+    // Datos de Apollo = no confiables: neutralizar inyección de fórmulas
+    // (=, +, -, @) al abrir el CSV en Excel/Sheets.
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
   function copyText(text) {
@@ -1002,6 +1005,8 @@
         s.searchError = null;
         if (fromButton) s.selectedRows.clear();
         renderResults();
+        // Señal para el tour de onboarding (paso "primera búsqueda")
+        try { document.dispatchEvent(new CustomEvent('prospecting:search-run')); } catch (_) {}
       })
       .catch(function (e) {
         s.searchError = errMsg(e);
@@ -1255,16 +1260,20 @@
           refreshBadge();
           res = res || {};
           var failed = res.failed || [];
+          var warnings = res.warnings || []; // guardados, pero sin email
           toast(
             fmtNum(res.added || 0) + ' agregados · ' + fmtNum(res.alreadyInList || 0) + ' ya estaban en la lista' +
+            (warnings.length ? ' · ' + fmtNum(warnings.length) + ' sin email' : '') +
             (failed.length ? ' · ' + fmtNum(failed.length) + ' fallaron' : ''),
-            failed.length ? 'warn' : 'success'
+            (failed.length || warnings.length) ? 'warn' : 'success'
           );
           state.search.selectedRows.clear();
           renderResults();
-          if (failed.length) {
+          // Señal para el tour de onboarding (paso "primera lista")
+          if (res.added) { try { document.dispatchEvent(new CustomEvent('prospecting:list-saved')); } catch (_) {} }
+          if (failed.length || warnings.length) {
             failHost.innerHTML = '';
-            failHost.appendChild(modalFailList(failed));
+            failHost.appendChild(modalFailList(failed.concat(warnings)));
             api.setBusy(false);
             if (api.buttons[1]) api.buttons[1].style.display = 'none';
             if (api.buttons[0]) { api.buttons[0].textContent = 'Cerrar'; api.buttons[0].disabled = false; api.buttons[0].style.opacity = ''; }
@@ -1307,7 +1316,9 @@
           st.selected.clear();
         }
         renderListsLeft();
-        if (st.activeListId) return reloadMembers();
+        // No re-consultar si los miembros ya están en memoria (hay botón
+        // "Actualizar" para el refresh manual, p. ej. teléfonos async).
+        if (st.activeListId) return st.members.length ? renderListsRight() : reloadMembers();
         renderListsRight();
       });
   }
@@ -1322,6 +1333,16 @@
       '<input id="pros-newlist-name" type="text" placeholder="Nombre de la lista" style="flex:1;min-width:0">' +
       '<button type="button" class="btn btn-primary" data-action="create-list">Crear</button>' +
       '</div></div>';
+    // Listas de la versión anterior (localStorage) pendientes de importar
+    var legacyCount = 0;
+    try { legacyCount = pd().hasLegacyListsPendingImport ? pd().hasLegacyListsPendingImport() : 0; } catch (_) {}
+    if (legacyCount > 0) {
+      html += '<div class="chart-card" style="border-color:rgba(199,126,18,.35)">' +
+        '<div style="font-size:13px;font-weight:600">Listas de la versión anterior</div>' +
+        '<div style="font-size:12px;color:var(--text2);margin:6px 0 10px">Encontramos ' + esc(fmtNum(legacyCount)) + ' contactos guardados en este navegador (incluye teléfonos y emails ya enriquecidos). Impórtalos para no perderlos.</div>' +
+        '<button type="button" class="btn btn-teal btn-sm" data-action="import-legacy">Importar a mis listas</button>' +
+        '</div>';
+    }
     if (st.loadingLists) {
       html += '<div style="font-size:12.5px;color:var(--text3);padding:4px 2px">Cargando listas…</div>';
     } else if (st.listsError) {
@@ -1476,6 +1497,18 @@
           });
         })
         .then(function () { restore(); }, function (e) { restore(); throw e; });
+    }
+    if (action === 'import-legacy') {
+      var restoreImp = btnLoading(btn, '⏳ Importando…');
+      return Promise.resolve()
+        .then(function () { return pd().importLegacyLists({}); })
+        .then(function (res) {
+          state.cache.lists = null;
+          refreshBadge();
+          toast(fmtNum((res && res.lists) || 0) + ' listas y ' + fmtNum((res && res.members) || 0) + ' contactos importados.', 'success');
+          return initListasTab();
+        })
+        .then(function () { restoreImp(); }, function (e) { restoreImp(); throw e; });
     }
     if (action === 'delete-list') return openDeleteListModal(btn.getAttribute('data-id'));
     if (action === 'select-list') {
@@ -1943,7 +1976,7 @@
     renderSenderCard();
     renderWaList();
     return loadLists(false)
-      .catch(function (e) { st.membersError = st.listId ? st.membersError : null; toast(errMsg(e), 'error'); })
+      .catch(function (e) { toast(errMsg(e), 'error'); })
       .then(function () {
         if (st.listId && !findList(st.listId)) { st.listId = ''; st.members = []; st.selected.clear(); st.expanded.clear(); }
         renderWaList();
@@ -2321,6 +2354,56 @@
     }
   }
 
+  // ── Prefill desde el ICP Builder ───────────────────────────────────────
+  // Lee las selecciones de chips del ICP (módulo apollo-icp-chips o su
+  // localStorage) y las vuelca en los filtros de Búsqueda.
+  function readIcpSelections(containerId) {
+    var chips = window.apolloChips;
+    if (chips && typeof chips.getSelected === 'function') {
+      try {
+        var v = chips.getSelected(containerId);
+        if (Array.isArray(v) && v.length) return v;
+      } catch (_) {}
+    }
+    try {
+      var stored = JSON.parse(localStorage.getItem('apollo_icp_state_v1') || '{}');
+      if (Array.isArray(stored[containerId])) return stored[containerId];
+    } catch (_) {}
+    return [];
+  }
+
+  function prefillFromICP() {
+    try {
+      ensureBuilt();
+      var f = state.search.filters;
+      var mapped = 0;
+      var seniorities = readIcpSelections('icp-mgmt-level');
+      var locations = readIcpSelections('icp-locations');
+      var employees = readIcpSelections('icp-employees');
+      var industries = readIcpSelections('icp-industries');
+      var tech = readIcpSelections('icp-tech-active').map(techSlug).filter(Boolean);
+      if (seniorities.length) { f.person_seniorities = seniorities.slice(); mapped++; }
+      if (locations.length) { f.person_locations = locations.slice(); mapped++; }
+      if (employees.length) { f.organization_num_employees_ranges = employees.slice(); mapped++; }
+      if (industries.length) { f.industry_tags = industries.slice(); mapped++; }
+      if (tech.length) { f.tech_any = tech; mapped++; }
+      if (!mapped) {
+        toast('Tu ICP no tiene selecciones aún — defínelas en el ICP Builder.', 'warn');
+        return;
+      }
+      persistFilters();
+      if (state.search.panelHost) {
+        state.search.panelHost.innerHTML = '';
+        state.search.panelHost.appendChild(buildFilterPanel());
+      }
+      updateFilterBadges();
+      toast('Filtros cargados desde tu ICP. Presiona «Buscar».', 'success');
+    } catch (e) {
+      console.error('[prospecting]', e);
+      toast(errMsg(e), 'error');
+    }
+  }
+
   // ── Public API ─────────────────────────────────────────────────────────
   window.prospecting = {
     show: function (tabId) {
@@ -2332,8 +2415,21 @@
         toast(errMsg(e), 'error');
       }
     },
+    prefillFromICP: prefillFromICP,
     refreshBadge: refreshBadge,
   };
+
+  // Badge de listas al cargar la app (la versión anterior lo poblaba en cada
+  // load): esperar a que auth-guard exponga la sesión y refrescar una vez.
+  (function initBadgeOnLoad() {
+    var tries = 0;
+    function tick() {
+      if (window.currentUser) { refreshBadge(); return; }
+      if (++tries < 30) setTimeout(tick, 1000);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(tick, 500); });
+    else setTimeout(tick, 500);
+  })();
 
   console.log('[prospecting] module loaded');
 })();

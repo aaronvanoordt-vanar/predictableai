@@ -101,61 +101,56 @@ Deno.serve(async (req) => {
     { auth: { persistSession: false } },
   );
 
-  // Payloads are small (single-digit people) — finish DB work before acking.
+  // Payloads are small — one batched SELECT for all persons, then the
+  // per-row UPDATEs (independent writes) in parallel before acking.
+  const byPerson = new Map<string, PhoneNumber[]>();
   for (const person of people) {
     const personId = person?.id;
     if (typeof personId !== "string" || !personId) {
       console.warn("[apollo-webhook] person entry without id, skipping");
       continue;
     }
-
-    const numbers: PhoneNumber[] = Array.isArray(person.phone_numbers)
-      ? (person.phone_numbers as PhoneNumber[])
-      : [];
-    const phone = bestNumber(numbers);
-
-    const { data: rows, error: selErr } = await supa
-      .from("prospect_list_members")
-      .select("id, snapshot")
-      .eq("apollo_person_id", personId)
-      .eq("phone_status", "pending");
-
-    if (selErr) {
-      console.error(`[apollo-webhook] select failed for ${personId}:`, selErr.message);
-      continue;
-    }
-    if (!rows || !rows.length) {
-      console.warn(`[apollo-webhook] no pending rows for person ${personId}`);
-      continue;
-    }
-
-    for (const row of rows) {
-      const snapshot = {
-        ...((row.snapshot && typeof row.snapshot === "object") ? row.snapshot : {}),
-        phone_numbers: numbers,
-      };
-      const update = phone
-        ? {
-            phone,
-            phone_status: "revealed",
-            enriched_at: new Date().toISOString(),
-            snapshot,
-          }
-        : { phone_status: "unavailable", snapshot };
-
-      const { error: updErr } = await supa
-        .from("prospect_list_members")
-        .update(update)
-        .eq("id", row.id);
-      if (updErr) {
-        console.error(`[apollo-webhook] update failed for row ${row.id}:`, updErr.message);
-      }
-    }
-
-    console.log(
-      `[apollo-webhook] ✓ ${personId}: ${rows.length} row(s) → ${phone ? "revealed" : "unavailable"}`,
+    byPerson.set(
+      personId,
+      Array.isArray(person.phone_numbers) ? (person.phone_numbers as PhoneNumber[]) : [],
     );
   }
+  if (!byPerson.size) return json({ received: true });
+
+  const { data: rows, error: selErr } = await supa
+    .from("prospect_list_members")
+    .select("id, apollo_person_id, snapshot")
+    .in("apollo_person_id", [...byPerson.keys()])
+    .eq("phone_status", "pending");
+
+  if (selErr) {
+    console.error("[apollo-webhook] select failed:", selErr.message);
+    return json({ received: true });
+  }
+  if (!rows || !rows.length) {
+    console.warn("[apollo-webhook] no pending rows for", [...byPerson.keys()].join(","));
+    return json({ received: true });
+  }
+
+  await Promise.all(rows.map((row) => {
+    const numbers = byPerson.get(row.apollo_person_id as string) ?? [];
+    const phone = bestNumber(numbers);
+    const snapshot = {
+      ...((row.snapshot && typeof row.snapshot === "object") ? row.snapshot : {}),
+      phone_numbers: numbers,
+    };
+    const update = phone
+      ? { phone, phone_status: "revealed", enriched_at: new Date().toISOString(), snapshot }
+      : { phone_status: "unavailable", snapshot };
+    return supa
+      .from("prospect_list_members")
+      .update(update)
+      .eq("id", row.id)
+      .then(({ error: updErr }) => {
+        if (updErr) console.error(`[apollo-webhook] update failed for row ${row.id}:`, updErr.message);
+      });
+  }));
+  console.log(`[apollo-webhook] ✓ ${rows.length} row(s) across ${byPerson.size} person(s)`);
 
   return json({ received: true });
 });

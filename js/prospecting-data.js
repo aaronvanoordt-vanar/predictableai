@@ -47,8 +47,15 @@
     let body = null;
     try { body = await res.json(); } catch (_) { /* respuesta no-JSON */ }
     if (!res.ok) {
-      const detail = body?.error || body?.message || ('HTTP ' + res.status);
-      const err = new Error(apolloErrorMessage(detail, res.status));
+      const detail = body?.detail || body?.error || body?.message || ('HTTP ' + res.status);
+      // Solo el proxy habla con Apollo: no etiquetar errores de otras
+      // functions (p. ej. la IA de generate-outreach) como "Error de Apollo".
+      const msg = fnName === 'apollo-proxy'
+        ? apolloErrorMessage(detail, res.status)
+        : res.status === 401
+          ? 'Sesión expirada. Vuelve a iniciar sesión.'
+          : 'No se pudo generar el contenido (' + detail + '). Reintenta.';
+      const err = new Error(msg);
       err.status = res.status;
       err.detail = detail;
       throw err;
@@ -71,6 +78,8 @@
       return 'Apollo limitó las solicitudes (429). Espera un minuto y reintenta.';
     if (status === 402 || d.includes('insufficient') || d.includes('credit'))
       return 'No hay créditos suficientes en tu cuenta de Apollo.';
+    if (d.includes('endpoint not allowed'))
+      return 'El proxy de Apollo no reconoce este endpoint — hay que volver a desplegar apollo-proxy (supabase functions deploy apollo-proxy).';
     return 'Error de Apollo: ' + detail;
   }
 
@@ -226,24 +235,39 @@
     // Deduplicar contra los miembros existentes de la lista
     const { data: existing, error: exErr } = await sb()
       .from('prospect_list_members')
-      .select('apollo_person_id')
+      .select('apollo_person_id, apollo_contact_id')
       .eq('list_id', list.id);
     if (exErr) throw new Error('No se pudo leer la lista: ' + exErr.message);
     const existingIds = new Set((existing || []).map((r) => r.apollo_person_id).filter(Boolean));
+    const existingContactIds = new Set((existing || []).map((r) => r.apollo_contact_id).filter(Boolean));
 
-    const fresh = people.filter((p) => p?.id && !existingIds.has(p.id));
-    const alreadyInList = people.length - fresh.length;
+    // Las filas "Guardado" de la búsqueda son CONTACTOS de Apollo (otro
+    // espacio de IDs): su id NO es un person id — no pasan por bulk_match
+    // y ya traen el email desbloqueado. El unique de la tabla no cubre
+    // apollo_person_id NULL, así que se deduplican aquí por contact id.
+    const savedContacts = people.filter((p) => p?._saved && p?.id && !existingContactIds.has(p.id));
+    const fresh = people.filter((p) => !p?._saved && p?.id && !existingIds.has(p.id));
+    const alreadyInList = people.length - fresh.length - savedContacts.length;
 
-    let added = 0;
     let creditsUsed = 0;
     const failed = [];
+    const warnings = []; // guardados pero sin email enriquecido
     const rows = [];
+
+    for (const c of savedContacts) {
+      const row = personToRow(c, null, userId, list.id, c.id);
+      row.apollo_person_id = c.person_id || null; // solo si Apollo lo expone
+      row.email = isMaskedEmail(c.email) ? null : c.email;
+      row.enriched_at = row.email ? new Date().toISOString() : null;
+      rows.push(row);
+    }
 
     // 1. Enriquecer email vía bulk_match en lotes de 10
     for (let i = 0; i < fresh.length; i += BULK_MATCH_CHUNK) {
       const chunk = fresh.slice(i, i + BULK_MATCH_CHUNK);
       progress({ done: Math.min(i, fresh.length), total: fresh.length, phase: 'enriching' });
       let matches = new Array(chunk.length).fill(null);
+      let chunkError = null;
       try {
         const res = await apolloProxy('/people/bulk_match', {
           details: chunk.map((p) => ({ id: p.id })),
@@ -252,8 +276,9 @@
         matches = res?.matches || matches;
         creditsUsed += res?.credits_consumed ?? matches.filter(Boolean).length;
       } catch (e) {
-        // El lote falló completo: registramos y seguimos con snapshot de búsqueda
-        chunk.forEach((p) => failed.push({ name: p.name || p.id, error: e.message }));
+        // El lote falló completo: se guardan igual (con snapshot de búsqueda),
+        // pero sin email — se reporta como advertencia, no como fallo.
+        chunkError = e.message;
       }
 
       // 2. Crear contacto en Apollo (label = nombre de la lista) y armar fila
@@ -267,20 +292,28 @@
           // No bloquea el guardado local: la pestaña Secuencias reintenta al enrolar.
           console.warn('[prospecting-data] contacto Apollo falló:', e.message);
         }
+        if (chunkError || (!row.email && !match)) {
+          warnings.push({
+            name: person.name || person.id,
+            error: 'Guardado sin email' + (chunkError ? ' — ' + chunkError : ' (Apollo no encontró match)'),
+          });
+        }
         rows.push(row);
       }
     }
 
-    // 3. Persistir en Supabase
+    // 3. Persistir en Supabase (added = filas realmente insertadas)
+    let added = 0;
     if (rows.length) {
       progress({ done: fresh.length, total: fresh.length, phase: 'saving' });
-      const { error } = await sb().from('prospect_list_members')
-        .upsert(rows, { onConflict: 'list_id,apollo_person_id', ignoreDuplicates: true });
+      const { data: inserted, error } = await sb().from('prospect_list_members')
+        .upsert(rows, { onConflict: 'list_id,apollo_person_id', ignoreDuplicates: true })
+        .select('id');
       if (error) throw new Error('No se pudieron guardar los contactos: ' + error.message);
-      added = rows.length;
+      added = inserted ? inserted.length : rows.length;
     }
 
-    return { added, alreadyInList, failed, creditsUsed };
+    return { added, alreadyInList, failed, warnings, creditsUsed };
   }
 
   // ── Enriquecimiento (emails personales + teléfonos) ────────
@@ -294,11 +327,26 @@
     let phonePending = 0;
     const failed = [];
 
-    for (let i = 0; i < members.length; i++) {
-      const m = members[i];
-      progress({ done: i, total: members.length, phase: 'enriching' });
+    const enrichable = members.filter((m) => m.apollo_person_id);
+    members.filter((m) => !m.apollo_person_id).forEach((m) =>
+      failed.push({ name: m.name || m.email || 'contacto', error: 'Sin ID de persona de Apollo — este registro vino como contacto ya guardado; su email ya está enriquecido.' }));
+
+    // El webhook de Apollo solo actualiza filas en 'pending' y Apollo puede
+    // llamar ANTES de que termine el loop: marcar pending por adelantado
+    // (se revierte para los que fallen).
+    if (revealPhones && enrichable.length) {
+      const { error } = await sb().from('prospect_list_members')
+        .update({ phone_status: 'pending' })
+        .in('id', enrichable.map((m) => m.id))
+        .in('phone_status', ['none', 'unavailable']);
+      if (error) throw new Error('No se pudo preparar el enriquecimiento: ' + error.message);
+    }
+
+    const patches = []; // {id, patch} — se aplican en paralelo al final
+    for (let i = 0; i < enrichable.length; i++) {
+      const m = enrichable[i];
+      progress({ done: i, total: enrichable.length, phase: 'enriching' });
       try {
-        if (!m.apollo_person_id) throw new Error('Sin ID de Apollo — vuelve a agregarlo desde Búsqueda.');
         const res = await apolloProxy('/people/match', {
           id: m.apollo_person_id,
           reveal_personal_emails: true,
@@ -319,21 +367,31 @@
             patch.phone = syncPhone;
             patch.phone_status = 'revealed';
           } else if (revealPhones) {
-            patch.phone_status = 'pending';
-            phonePending++;
+            phonePending++; // queda en 'pending' (ya marcado arriba)
           }
           patch.snapshot = Object.assign({}, m.snapshot || {}, person);
         } else if (revealPhones) {
-          patch.phone_status = 'pending';
           phonePending++;
         }
-        await updateMember(m.id, patch);
+        patches.push({ id: m.id, patch });
         updated++;
       } catch (e) {
         failed.push({ name: m.name || m.email || 'contacto', error: e.message });
+        // Revertir el 'pending' adelantado al valor original (nunca pisar 'revealed')
+        if (revealPhones && (m.phone_status === 'none' || m.phone_status === 'unavailable')) {
+          patches.push({ id: m.id, patch: { phone_status: m.phone_status } });
+        }
       }
     }
-    progress({ done: members.length, total: members.length, phase: 'enriching' });
+
+    progress({ done: enrichable.length, total: enrichable.length, phase: 'saving' });
+    const results = await Promise.allSettled(patches.map((p) => updateMember(p.id, p.patch)));
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') {
+        const m = enrichable.find((x) => x.id === patches[i].id);
+        failed.push({ name: m?.name || 'contacto', error: 'No se pudo guardar: ' + r.reason?.message });
+      }
+    });
     return { updated, phonePending, failed };
   }
 
@@ -406,32 +464,106 @@
       contact_ids: ready.map((r) => r.contactId),
       send_email_from_email_account_id: emailAccountId,
     });
-    const enrolledIds = new Set((data?.contacts || []).map((c) => c.id));
+    // Una respuesta sin contactos = Apollo NO enroló a nadie (duplicados,
+    // email sin verificar, etc.) — jamás tratarla como éxito.
+    const enrolledIds = new Set((Array.isArray(data?.contacts) ? data.contacts : []).map((c) => c.id));
 
-    // 3. Marcar estado en Supabase
-    let enrolled = 0;
+    // 3. Marcar estado en Supabase (una sola escritura — mismo valor para todos)
+    const okMembers = [];
     for (const r of ready) {
-      const ok = enrolledIds.size === 0 || enrolledIds.has(r.contactId);
-      if (!ok) {
-        failed.push({ name: r.member.name || 'contacto', error: 'Apollo no lo enroló (revisa duplicados o verificación de email).' });
-        continue;
-      }
-      enrolled++;
-      await updateMember(r.member.id, {
-        sequence_status: {
-          sequence_id: sequence.id,
-          sequence_name: sequence.name,
-          enrolled_at: new Date().toISOString(),
-        },
-      });
+      if (enrolledIds.has(r.contactId)) okMembers.push(r.member);
+      else failed.push({ name: r.member.name || 'contacto', error: 'Apollo no lo enroló (ya está en otra secuencia, email sin verificar o duplicado).' });
     }
-    return { enrolled, failed };
+    if (okMembers.length) {
+      const { error } = await sb().from('prospect_list_members')
+        .update({
+          sequence_status: {
+            sequence_id: sequence.id,
+            sequence_name: sequence.name,
+            enrolled_at: new Date().toISOString(),
+          },
+        })
+        .in('id', okMembers.map((m) => m.id));
+      if (error) {
+        // Enrolados en Apollo pero sin marcar localmente: avisar sin revertir.
+        failed.push({ name: '(estado local)', error: 'Enrolados en Apollo, pero no se pudo guardar el estado: ' + error.message });
+      }
+    }
+    return { enrolled: okMembers.length, failed };
+  }
+
+  // ── Importación de listas legadas (localStorage 'apollo_lists') ────
+  // La versión anterior guardaba las listas (incl. enrichment pagado) solo
+  // en el navegador. Esto las migra una vez a Supabase.
+
+  function readLegacyLists() {
+    try {
+      const raw = JSON.parse(localStorage.getItem('apollo_lists') || 'null');
+      if (!Array.isArray(raw)) return [];
+      return raw.filter((l) => l && Array.isArray(l.contacts) && l.contacts.length);
+    } catch (_) { return []; }
+  }
+
+  async function importLegacyLists({ onProgress } = {}) {
+    const legacy = readLegacyLists();
+    if (!legacy.length) return { lists: 0, members: 0 };
+    const userId = await getUserId();
+    const progress = typeof onProgress === 'function' ? onProgress : () => {};
+    const isApolloId = (v) => /^[a-f0-9]{24}$/.test(String(v || ''));
+    let listsCreated = 0;
+    let membersCreated = 0;
+
+    for (let i = 0; i < legacy.length; i++) {
+      const old = legacy[i];
+      progress({ done: i, total: legacy.length });
+      let list;
+      try {
+        list = await createList(old.name || 'Lista importada ' + (i + 1));
+      } catch (e) {
+        if (!/ese nombre/.test(e.message)) throw e;
+        list = await createList((old.name || 'Lista importada') + ' (importada)');
+      }
+      listsCreated++;
+      const rows = (old.contacts || []).map((c) => ({
+        list_id: list.id,
+        user_id: userId,
+        apollo_person_id: isApolloId(c.apolloId) ? c.apolloId : (isApolloId(c.id) ? c.id : null),
+        name: c.name || null,
+        title: c.title || null,
+        company: c.company || null,
+        linkedin_url: c.linkedinUrl || null,
+        email: isMaskedEmail(c.email) ? null : (c.email || null),
+        phone: c.phone || null,
+        phone_status: c.phone ? 'revealed' : 'none',
+        country: c.country || null,
+        snapshot: c,
+        enriched_at: (c.email || c.phone) ? new Date().toISOString() : null,
+      }));
+      if (rows.length) {
+        const { data: inserted, error } = await sb().from('prospect_list_members')
+          .upsert(rows, { onConflict: 'list_id,apollo_person_id', ignoreDuplicates: true })
+          .select('id');
+        if (error) throw new Error('No se pudo importar «' + list.name + '»: ' + error.message);
+        membersCreated += inserted ? inserted.length : rows.length;
+      }
+    }
+    try { localStorage.setItem('apollo_lists_imported_v1', '1'); } catch (_) { /* ignore */ }
+    return { lists: listsCreated, members: membersCreated };
+  }
+
+  function hasLegacyListsPendingImport() {
+    try {
+      if (localStorage.getItem('apollo_lists_imported_v1')) return 0;
+      return readLegacyLists().reduce((n, l) => n + l.contacts.length, 0);
+    } catch (_) { return 0; }
   }
 
   // ── Mensajes personalizados (edge function generate-outreach) ──
 
   async function generateOutreach({ member, sender }) {
     if (!member) throw new Error('Falta el contacto.');
+    if (!member.name && !member.first_name) throw new Error('Este lead no tiene nombre — no se puede personalizar.');
+    if (!member.company && !member.title) throw new Error('Este lead no tiene empresa ni cargo — no hay contexto para personalizar el mensaje.');
     const lead = {
       name: member.name || '',
       first_name: member.first_name || (member.name || '').split(' ')[0] || '',
@@ -457,7 +589,10 @@
     const fallbackName = profile.name || user.user_metadata?.full_name || (user.email || '').split('@')[0] || '';
     return {
       name: stored?.name || fallbackName,
-      role: stored?.role || profile.role || '',
+      // OJO: profiles.role es el rol de PERMISOS ('admin'/'sdr', en inglés) —
+      // no es un cargo y no debe colarse en el saludo. El usuario escribe
+      // su cargo real en la tarjeta "Tu presentación".
+      role: stored?.role || '',
       company: stored?.company || profile.company_name || '',
     };
   }
@@ -504,6 +639,8 @@
     fetchEmailAccounts,
     enrollInSequence,
     generateOutreach,
+    importLegacyLists,
+    hasLegacyListsPendingImport,
     getSenderInfo,
     saveSenderInfo,
     firstWhatsAppMessage,

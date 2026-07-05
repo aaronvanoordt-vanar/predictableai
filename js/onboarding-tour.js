@@ -418,8 +418,17 @@
       window.nav.__tourWrapped = true;
     }
     wrapFn('runAnalysis', 's2');
-    wrapFn('runApolloSearch', 's4');
-    wrapFn('saveToApollo', 's5');
+    // s4/s5: el nuevo workspace de Prospección (js/prospecting.js) emite
+    // eventos en lugar de exponer funciones globales envolvibles.
+    if (!document.__tourProspectingHooks) {
+      document.__tourProspectingHooks = true;
+      document.addEventListener('prospecting:search-run', function () {
+        try { markDone('s4'); } catch (e) { /* noop */ }
+      });
+      document.addEventListener('prospecting:list-saved', function () {
+        try { markDone('s5'); } catch (e) { /* noop */ }
+      });
+    }
     wrapFn('iniciarCoachLive', 's6');
   }
 

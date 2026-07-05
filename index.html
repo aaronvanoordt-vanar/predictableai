@@ -2667,7 +2667,7 @@ html, body {
     <div><div class="topbar-title">ICP Builder</div><div class="topbar-sub">Perfil de búsqueda Apollo generado desde tu Matriz de Input</div></div>
     <div class="topbar-actions">
       <button class="btn btn-ghost btn-sm" onclick="syncIcpFromMatrix()">Sincronizar desde Matriz</button>
-      <button class="btn btn-teal btn-sm" onclick="nav(document.querySelector('[data-page=pro-main]'),'pro-main');if(window.prospecting)window.prospecting.show('busqueda')">Buscar en Apollo →</button>
+      <button class="btn btn-teal btn-sm" onclick="nav(document.querySelector('[data-page=pro-main]'),'pro-main');if(window.prospecting){window.prospecting.show('busqueda');window.prospecting.prefillFromICP()}">Buscar en Apollo →</button>
     </div>
   </div>
 
@@ -4039,11 +4039,21 @@ function nav(el, pageId) {
 
 // Hash-based deep link: e.g. /index.html#mi-dashboard activates that page on load.
 // Used by onboarding to drop the user straight into the Intelligence Hub.
+// Alias de páginas de prospección retiradas → nueva página pro-main + tab.
+const PRO_HASH_ALIASES = {
+  'pro-overview': 'busqueda', 'pro-apollo': 'busqueda',
+  'pro-listas': 'listas', 'pro-mensajes': 'outreach',
+};
 window.addEventListener('DOMContentLoaded', () => {
-  const hash = (location.hash || '').replace(/^#/, '');
+  let hash = (location.hash || '').replace(/^#/, '');
   if (!hash) return;
+  const proTab = PRO_HASH_ALIASES[hash];
+  if (proTab) hash = 'pro-main';
   const navEl = document.querySelector(`.nav-item[data-page="${hash}"]`);
-  if (navEl) setTimeout(() => window.nav(navEl, hash), 0);
+  if (navEl) setTimeout(() => {
+    window.nav(navEl, hash);
+    if (proTab && window.prospecting) window.prospecting.show(proTab);
+  }, 0);
 });
 
 

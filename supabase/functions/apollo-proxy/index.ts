@@ -36,8 +36,11 @@ const STATIC_ENDPOINTS = new Map<string, "GET" | "POST">([
   ["/labels", "GET"],
 ]);
 
-// Dynamic entry: add contacts to a sequence (24-hex Apollo campaign id).
-const ADD_CONTACT_IDS_RE = /^\/emailer_campaigns\/[a-f0-9]{24}\/add_contact_ids$/;
+// Dynamic entry: add contacts to a sequence. The id segment is validated by
+// SHAPE only (URL-safe token, no slashes) — the anti-abuse guarantee is the
+// path pattern, not Apollo's internal id encoding (today 24-hex Mongo-style,
+// but that is Apollo's implementation detail and may change).
+const ADD_CONTACT_IDS_RE = /^\/emailer_campaigns\/[A-Za-z0-9_-]{8,64}\/add_contact_ids$/;
 
 function corsHeaders(origin: string) {
   return {

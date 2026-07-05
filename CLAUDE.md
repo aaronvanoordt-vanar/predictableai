@@ -21,7 +21,8 @@ There is no package.json, no npm install, no test suite. Verification = `scripts
 ## Architecture
 
 - **Page flow:** `landing.html` → `auth.html` → `auth-callback.html` → `onboarding.html` → `index.html` (the app).
-- **`index.html` is a ~6,200-line monolith**: all views, all CSS, and large inline `<script>` blocks (Apollo integration ~line 4600+, settings/auth UI ~5700+). Two production outages came from edits here: orphan leftover code causing a `SyntaxError` that killed every inline function (PR #18), and unbalanced `<div>`s causing a black screen on navigation (commit 0a151b4). After ANY edit to it, `node scripts/check.mjs` runs automatically via hook — if it fails, fix before continuing. Prefer adding new features as `js/` modules over growing the inline scripts.
+- **`index.html` is a ~5,000-line monolith**: all views, all CSS, and large inline `<script>` blocks (nav/theme, coach/reports, settings/auth UI). Two production outages came from edits here: orphan leftover code causing a `SyntaxError` that killed every inline function (PR #18), and unbalanced `<div>`s causing a black screen on navigation (commit 0a151b4). After ANY edit to it, `node scripts/check.mjs` runs automatically via hook — if it fails, fix before continuing. Prefer adding new features as `js/` modules over growing the inline scripts.
+- **Prospección = `js/prospecting.js` (UI, 4 tabs: Búsqueda / Listas / Secuencias / WhatsApp & LinkedIn) + `js/prospecting-data.js` (data layer)**, mounted into `#prospecting-shell` in page `pro-main`. Lists live in Supabase (`prospect_lists` / `prospect_list_members`), NOT localStorage. The old inline "Apollo Prospecting Engine" and `js/apollo-sequences.js` were removed (PR #31) — do not resurrect them.
 - **Script load order matters** (globals, no modules): `js/config.js` → `js/supabase-client.js` → `js/auth-guard.js` → feature modules. Never reorder the `<script>` tags in `index.html` without checking dependencies.
 - **Intelligence Hub = `js/intel-hub-cadence-tabs.js`**, mounted into `#ih-v2-shell` in `index.html`. Three older generations (`intel-hub.js`, `intel-hub-v2.js`, `intel-hub-real-data.js`) were deleted from the repo — do not resurrect them from git history.
 - **`miforms/`** is a separate mini-app (feedback/intake survey), used as the Hub unlock gate.
@@ -30,9 +31,9 @@ There is no package.json, no npm install, no test suite. Verification = `scripts
 
 - Project config in `js/config.js` (URL + anon key — the anon key is public by design; RLS enforces access).
 - `supabase/migrations/` — applied to production. **Never modify an existing migration; always add a new file.** Note in the PR body that a migration must be applied.
-- `supabase/functions/` — 4 Deno edge functions (`enrich-company`, `generate-intel-hub`, `schedule-intel-hub`, `apollo-proxy`). They do **not** auto-deploy; say "requires `supabase functions deploy <name>`" in the PR body when you change one.
+- `supabase/functions/` — 6 Deno edge functions (`enrich-company`, `generate-intel-hub`, `schedule-intel-hub`, `apollo-proxy`, `apollo-webhook`, `generate-outreach`). They do **not** auto-deploy; say "requires `supabase functions deploy <name>`" in the PR body when you change one. **`apollo-webhook` must be deployed with `--no-verify-jwt`** (Apollo calls it; it self-authenticates via `?token=` against `APOLLO_WEBHOOK_SECRET`) — redeploying it with JWT verification silently breaks async phone reveals.
 - **All Apollo API calls go through the `apollo-proxy` edge function** (secret `APOLLO_API_KEY`, JWT required). Never call Apollo directly from the client or put its key in any file.
-- Key tables: `profiles` (incl. `role`), `sales_reports`, `intelligence_hub_reports`, `client_icp`, credits. Roles: admin / director / SDR.
+- Key tables: `profiles` (incl. `role`), `sales_reports`, `intelligence_hub_reports`, `client_icp`, `prospect_lists`/`prospect_list_members` (client-writable, owner-scoped RLS), credits. Roles: admin / director / SDR.
 
 ## Security invariants (violations have shipped before — see docs/SESSION_AUDIT_2026-07-02.md)
 
