@@ -59,7 +59,6 @@
         return;
       }
 
-      const user = await window.supabaseHelpers.getUser();
       const { data: intake } = await window.supabaseClient
         .from('intel_hub_intake')
         .select('what_to_know')
