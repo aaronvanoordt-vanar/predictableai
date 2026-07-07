@@ -2884,7 +2884,24 @@
       toast(errMsg(e), 'error');
       return Promise.resolve();
     }
-    var chain = Promise.resolve();
+    // La matriz + brief del vendedor son inputs de la personalización:
+    // antes del lote se asegura que el brief exista (si no, se genera y se
+    // espera). Si aun así no queda listo, se avisa y se genera con la matriz
+    // cruda; si no hay matriz, ensureBriefReady lanza y el lote se aborta.
+    var chain = Promise.resolve()
+      .then(function () { return d.ensureBriefReady(setWaProg); })
+      .then(function (status) {
+        if (status !== 'ready') {
+          toast('Tu brief no está listo (' + status + '): se personalizará solo con la matriz de tu empresa.', 'warn');
+        }
+        loadWaBrief();
+      }, function (e) {
+        st.generating = false;
+        setWaProg(null);
+        renderWaList();
+        toast(errMsg(e), 'error');
+        throw e; // corta el lote — el catch final lo absorbe
+      });
     members.forEach(function (m, i) {
       chain = chain.then(function () {
         setWaProg('Generando ' + fmtNum(i + 1) + ' de ' + fmtNum(members.length) + '…');
@@ -2899,7 +2916,7 @@
           .catch(function (e) { failed.push({ name: m.name || '—', error: errMsg(e) }); });
       });
     });
-    return chain.then(function () {
+    return chain.catch(function () { /* lote abortado: ya se avisó */ }).then(function () {
       st.generating = false;
       setWaProg(null);
       renderWaList();
@@ -3014,6 +3031,13 @@
       };
       window.predictable = window.predictable || {};
       window.predictable.currentProspect = ctx;
+      // Persistir el handoff en Supabase (coach_lead_context): el coach lo
+      // restaura tras un reload o desde otro dispositivo. No bloquea la navegación.
+      try {
+        Promise.resolve(pd().saveCoachContext(m.id, ctx)).catch(function (e) {
+          console.warn('[prospecting] no se pudo persistir el contexto del coach:', e.message);
+        });
+      } catch (e) { console.warn('[prospecting] coach context:', e.message); }
       var navEl = document.querySelector('[data-page="ventas-coach"]');
       if (navEl && typeof window.nav === 'function') window.nav(navEl, 'ventas-coach');
       if (typeof window.loadCoachBrief === 'function') window.loadCoachBrief(ctx);

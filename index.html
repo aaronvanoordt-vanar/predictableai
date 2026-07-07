@@ -2626,7 +2626,7 @@ html, body {
     <div class="topbar-actions">
       <div class="ih-credit-chip">
         <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
-        <span id="ih-credit-badge">— créditos</span>
+        <span id="ih-credit-badge">Créditos ilimitados (beta)</span>
       </div>
     </div>
   </div>
@@ -3906,6 +3906,21 @@ function nav(el, pageId) {
 
   // Recordar la última sección para restaurarla si el usuario refresca la página.
   try { if (pageId) localStorage.setItem('predictable_last_section', pageId); } catch (e) {}
+
+  // AI coach: si no hay lead en memoria (p. ej. tras un reload), restaurar el
+  // último handoff de Prospección desde Supabase (coach_lead_context).
+  if (pageId === 'ventas-coach') {
+    const cur = window.predictable && window.predictable.currentProspect;
+    if (!(cur && (cur.name || cur.id)) && window.prospectingData && window.prospectingData.fetchLatestCoachContext) {
+      window.prospectingData.fetchLatestCoachContext().then(function (lead) {
+        if (lead && (lead.name || lead.id)) {
+          window.predictable = window.predictable || {};
+          window.predictable.currentProspect = lead;
+          if (typeof loadCoachBrief === 'function') loadCoachBrief(lead);
+        }
+      }).catch(function (e) { console.warn('[coach] no se pudo restaurar el contexto:', e.message); });
+    }
+  }
 }
 
 // Hash-based deep link: e.g. /index.html#mi-dashboard activates that page on load.

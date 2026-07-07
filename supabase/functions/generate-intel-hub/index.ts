@@ -438,7 +438,12 @@ Deno.serve(async (req: Request) => {
 
   const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
-  if (triggeredBy === "manual") {
+  // TEMP (fase de construcción, 2026-07): créditos ilimitados para no frenar
+  // los tests — no se descuenta ni se bloquea por balance. Volver a false
+  // para reactivar el cobro por sección.
+  const UNLIMITED_CREDITS = true;
+
+  if (triggeredBy === "manual" && !UNLIMITED_CREDITS) {
     const cost = requestedSections.length;
 
     // Atomic deduction (single guarded UPDATE) — no read-then-write race.
