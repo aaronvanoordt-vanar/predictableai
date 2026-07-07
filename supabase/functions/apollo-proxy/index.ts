@@ -41,10 +41,15 @@ const STATIC_ENDPOINTS = new Map<string, "GET" | "POST">([
 // SHAPE only (URL-safe token, no slashes) — the anti-abuse guarantee is the
 // path pattern, not Apollo's internal id encoding (today 24-hex Mongo-style,
 // but that is Apollo's implementation detail and may change).
-//   • add_contact_ids  — enroll contacts into a sequence
-//   • emailer_steps    — append an email step when creating a sequence in-app
+//   • add_contact_ids — enroll contacts into a sequence
+//
+// NOTE: adding email steps to a sequence has no public API — Apollo's own
+// web app does it via a PUT to app.apollo.io/api/v1/sequences/{id}
+// authenticated with the user's browser session (cookie + CSRF token), not
+// an API key. There is no server-side equivalent, so that endpoint is
+// intentionally not allowlisted here — see createSequence() in
+// js/prospecting-data.js.
 const ADD_CONTACT_IDS_RE = /^\/emailer_campaigns\/[A-Za-z0-9_-]{8,64}\/add_contact_ids$/;
-const EMAILER_STEPS_RE = /^\/emailer_campaigns\/[A-Za-z0-9_-]{8,64}\/emailer_steps$/;
 
 function corsHeaders(origin: string) {
   return {
@@ -90,7 +95,7 @@ Deno.serve(async (req) => {
     return json({ error: "Endpoint not allowed" }, 400, cors);
   }
   let method = STATIC_ENDPOINTS.get(endpoint);
-  if (!method && (ADD_CONTACT_IDS_RE.test(endpoint) || EMAILER_STEPS_RE.test(endpoint))) method = "POST";
+  if (!method && ADD_CONTACT_IDS_RE.test(endpoint)) method = "POST";
   if (!method) return json({ error: "Endpoint not allowed" }, 400, cors);
 
   const body: Record<string, unknown> =
