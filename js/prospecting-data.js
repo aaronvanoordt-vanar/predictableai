@@ -156,6 +156,41 @@
     if (error) throw new Error('No se pudo eliminar la lista: ' + error.message);
   }
 
+  // ── Búsquedas guardadas (Supabase, RLS por dueño) ──────────
+  // Apollo no expone una API pública para "saved searches" — solo persiste
+  // los criterios de filtro en Predictable. Guardar también en Apollo se
+  // logra reutilizando addPeopleToList con los resultados ya cargados.
+
+  async function fetchSavedSearches() {
+    const { data, error } = await sb()
+      .from('prospect_saved_searches')
+      .select('id, name, filters, created_at')
+      .order('created_at', { ascending: false });
+    if (error) throw new Error('No se pudieron cargar tus búsquedas guardadas: ' + error.message);
+    return data || [];
+  }
+
+  async function createSavedSearch(name, filters) {
+    const clean = String(name || '').trim();
+    if (!clean) throw new Error('Escribe un nombre para la búsqueda.');
+    const userId = await getUserId();
+    const { data, error } = await sb()
+      .from('prospect_saved_searches')
+      .insert({ user_id: userId, name: clean, filters: filters || {} })
+      .select()
+      .single();
+    if (error) {
+      if (String(error.code) === '23505') throw new Error('Ya tienes una búsqueda guardada con ese nombre.');
+      throw new Error('No se pudo guardar la búsqueda: ' + error.message);
+    }
+    return data;
+  }
+
+  async function deleteSavedSearch(id) {
+    const { error } = await sb().from('prospect_saved_searches').delete().eq('id', id);
+    if (error) throw new Error('No se pudo eliminar la búsqueda guardada: ' + error.message);
+  }
+
   async function fetchMembers(listId) {
     const { data, error } = await sb()
       .from('prospect_list_members')
@@ -699,6 +734,9 @@
     fetchLists,
     createList,
     deleteList,
+    fetchSavedSearches,
+    createSavedSearch,
+    deleteSavedSearch,
     fetchMembers,
     deleteMembers,
     addPeopleToList,
