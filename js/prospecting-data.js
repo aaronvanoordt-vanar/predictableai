@@ -852,6 +852,28 @@
   // Persiste el handoff Prospección → coach en Supabase (una fila por usuario)
   // para que sobreviva recargas y otros dispositivos.
 
+  // Construye el contexto que viaja al coach desde un prospect_list_member:
+  // quién es, por qué le importa (hipótesis del angle), riesgos (objeción +
+  // neutralizador) y el outreach completo. Lo usan tanto el botón "Preparar
+  // reunión con el coach" (Prospección) como el selector de lead del coach.
+  function buildCoachLeadContext(m) {
+    const ang = (m.outreach && m.outreach.angle) || {};
+    return {
+      id: String(m.id),
+      name: m.name || '',
+      title: m.title || '',
+      company: m.company || '',
+      brief_who: (m.name || '—') + (m.title ? ' · ' + m.title : '') + (m.company ? ' en ' + m.company : '') + '.',
+      brief_why: ang.hypothesis
+        ? ang.hypothesis + (ang.social_proof && ang.social_proof !== 'ninguno' ? ' Social proof sugerido: ' + ang.social_proof + '.' : '')
+        : 'Lead trabajado desde Prospección.',
+      brief_risks: ang.objection
+        ? 'Objeción probable: ' + ang.objection + (ang.neutralizer ? '. Neutralizador: ' + ang.neutralizer + '.' : '')
+        : 'Sin alertas previas.',
+      outreach: m.outreach || null,
+    };
+  }
+
   async function saveCoachContext(memberId, ctx) {
     const userId = await getUserId();
     const { error } = await sb().from('coach_lead_context').upsert(
@@ -940,6 +962,7 @@
     ensureBriefReady,
     fetchClientBrief,
     generateClientBrief,
+    buildCoachLeadContext,
     saveCoachContext,
     fetchLatestCoachContext,
     importLegacyLists,

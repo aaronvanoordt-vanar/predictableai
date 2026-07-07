@@ -3018,21 +3018,7 @@
     if (action === 'wa-coach' && m) {
       // Puente Prospección → AI coach: el brief del lead (quién es, dolor
       // probable, objeción + neutralizador) viaja como contexto de la reunión.
-      var ang = (m.outreach && m.outreach.angle) || {};
-      var ctx = {
-        id: String(m.id),
-        name: m.name || '',
-        title: m.title || '',
-        company: m.company || '',
-        brief_who: (m.name || '—') + (m.title ? ' · ' + m.title : '') + (m.company ? ' en ' + m.company : '') + '.',
-        brief_why: ang.hypothesis
-          ? ang.hypothesis + (ang.social_proof && ang.social_proof !== 'ninguno' ? ' Social proof sugerido: ' + ang.social_proof + '.' : '')
-          : 'Lead trabajado desde Prospección.',
-        brief_risks: ang.objection
-          ? 'Objeción probable: ' + ang.objection + (ang.neutralizer ? '. Neutralizador: ' + ang.neutralizer + '.' : '')
-          : 'Sin alertas previas.',
-        outreach: m.outreach || null,
-      };
+      var ctx = pd().buildCoachLeadContext(m);
       window.predictable = window.predictable || {};
       window.predictable.currentProspect = ctx;
       // Persistir el handoff en Supabase (coach_lead_context): el coach lo

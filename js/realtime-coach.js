@@ -48,6 +48,12 @@
     if (!cfg.WORKER_URL) {
       toast('WORKER_URL no configurado en js/config.js', 'error'); return;
     }
+    // Sin lead no hay sesión: el reporte, el brief y el contexto del coach
+    // dependen del contacto elegido en el selector del Meeting Coach.
+    if (!prospectContext || !(prospectContext.id || prospectContext.name)) {
+      toast('Selecciona el lead de esta reunión antes de iniciar el coach.', 'warn');
+      return;
+    }
     // Guard de re-entrancy: un segundo start() sin cerrar el anterior filtra
     // el timer, el WebSocket y los tracks de mic/pantalla.
     if (active) { console.warn('[Coach] Ya hay una sesión activa; ignorando start().'); return; }
@@ -58,13 +64,35 @@
 
       console.log('[Coach] 2/4 Pidiendo captura de pantalla...');
       displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+        // displaySurface:'monitor' hace que el picker abra en "Pantalla completa";
+        // systemAudio:'include' muestra el checkbox de audio del sistema.
+        video: { displaySurface: 'monitor' },
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        systemAudio: 'include',
+        monitorTypeSurfaces: 'include',
+        selfBrowserSurface: 'exclude'
       });
 
+      // El navegador no permite FORZAR la superficie: validar lo elegido.
+      // Una pestaña o ventana deja de oírse en cuanto el cliente cambia de
+      // app/tab — solo pantalla completa garantiza capturar toda la reunión.
+      const vTrack = displayStream.getVideoTracks()[0];
+      const surface = (vTrack && typeof vTrack.getSettings === 'function')
+        ? vTrack.getSettings().displaySurface : null;
+      if (surface && surface !== 'monitor') {
+        cleanup();
+        toast('Compartiste una ' + (surface === 'browser' ? 'pestaña' : 'ventana') +
+          '. Comparte la pantalla completa para que el coach escuche toda la reunión.', 'error');
+        if (typeof coachShowIdle === 'function') coachShowIdle();
+        return;
+      }
+
       if (displayStream.getAudioTracks().length === 0) {
-        displayStream.getTracks().forEach(function (t) { t.stop(); });
-        toast('Debes marcar "Compartir audio del tab"', 'error'); return;
+        cleanup();
+        toast('No se captó el audio de la reunión. Al compartir la pantalla completa, ' +
+          'marca "Compartir audio del sistema" (requiere Chrome/Edge/Arc actualizado).', 'error');
+        if (typeof coachShowIdle === 'function') coachShowIdle();
+        return;
       }
 
       console.log('[Coach] 3/4 Pidiendo permiso del mic...');
