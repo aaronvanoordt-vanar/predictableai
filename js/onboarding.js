@@ -1,21 +1,46 @@
 /**
- * onboarding.js — 2-step onboarding wizard
+ * onboarding.js — one-step onboarding
  *
- * Step 1: LinkedIn company URL + phone  → saved to profiles + intel_hub_intake
- * Step 2: ICP (Ideal Customer Profile)  → saved to client_icp + intel_hub_intake
+ * Único paso: LinkedIn de la empresa + teléfono (ambos obligatorios, el
+ * teléfono con código de país a la izquierda) → profiles + intel_hub_intake,
+ * y directo al dashboard.
  *
- * After Step 2: profile.onboarded = true and user is redirected straight
- * to the Intelligence Hub (locked overlay handled by hub-unlock.js).
- *
- * No backend agents are triggered during onboarding — the user unlocks
- * the hub later via the in-app "Unlock Intelligence" flow.
+ * Todo lo demás se deriva solo: al guardar se dispara la edge function
+ * enrich-company, que extrae la página web desde el LinkedIn, la investiga
+ * (industria, tamaño, país, about, soluciones) y lo almacena en
+ * intel_hub_intake — de ahí lo consumen generate-intel-hub y
+ * generate-client-brief. El ICP ya no se pregunta aquí: se arma con los
+ * filtros que el usuario usa en Prospección → Búsqueda (search people).
  */
 (function () {
   'use strict';
 
   const $ = id => document.getElementById(id);
   const LINKEDIN_RE = /^https?:\/\/(www\.)?linkedin\.com\/company\/([a-zA-Z0-9_\-\.~]+)\/?(\?.*)?$/i;
-  const TOTAL_STEPS = 2;
+
+  // Código de país a la izquierda del teléfono. LATAM primero, luego resto.
+  const DIAL_CODES = [
+    { code: '+51',  label: '🇵🇪 +51 · Perú' },
+    { code: '+52',  label: '🇲🇽 +52 · México' },
+    { code: '+57',  label: '🇨🇴 +57 · Colombia' },
+    { code: '+54',  label: '🇦🇷 +54 · Argentina' },
+    { code: '+56',  label: '🇨🇱 +56 · Chile' },
+    { code: '+593', label: '🇪🇨 +593 · Ecuador' },
+    { code: '+591', label: '🇧🇴 +591 · Bolivia' },
+    { code: '+598', label: '🇺🇾 +598 · Uruguay' },
+    { code: '+595', label: '🇵🇾 +595 · Paraguay' },
+    { code: '+58',  label: '🇻🇪 +58 · Venezuela' },
+    { code: '+55',  label: '🇧🇷 +55 · Brasil' },
+    { code: '+506', label: '🇨🇷 +506 · Costa Rica' },
+    { code: '+507', label: '🇵🇦 +507 · Panamá' },
+    { code: '+502', label: '🇬🇹 +502 · Guatemala' },
+    { code: '+503', label: '🇸🇻 +503 · El Salvador' },
+    { code: '+504', label: '🇭🇳 +504 · Honduras' },
+    { code: '+505', label: '🇳🇮 +505 · Nicaragua' },
+    { code: '+34',  label: '🇪🇸 +34 · España' },
+    { code: '+1',   label: '🇺🇸 +1 · EE.UU. / Canadá' },
+    { code: '+44',  label: '🇬🇧 +44 · Reino Unido' },
+  ];
 
   let currentUser = null;
 
@@ -37,49 +62,56 @@
       await window.supabaseHelpers.signOut();
     });
 
+    fillDialCodes();
+
     const { data: profile } = await window.supabaseClient
       .from('profiles')
       .select('onboarded, linkedin_company_url, phone')
       .eq('id', user.id)
       .maybeSingle();
 
-    if (profile?.onboarded) {
-      redirectToHub();
+    if (profile?.onboarded && profile?.linkedin_company_url) {
+      redirectToDashboard();
       return;
     }
 
-    const { data: intake } = await window.supabaseClient
-      .from('intel_hub_intake')
-      .select('onboarding_step, company_linkedin_url')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
     if (profile?.linkedin_company_url) $('inp-linkedin').value = profile.linkedin_company_url;
-    else if (intake?.company_linkedin_url) $('inp-linkedin').value = intake.company_linkedin_url;
-    if (profile?.phone) $('inp-phone').value = profile.phone;
-
-    bindStep1();
-    bindStep2();
-
-    // Resume on step 2 if step 1 was already saved
-    const startAt = (intake?.onboarding_step ?? 0) >= 1 ? 2 : 1;
-    goToStep(startAt);
-  }
-
-  function goToStep(n) {
-    for (let i = 1; i <= TOTAL_STEPS; i++) {
-      const el = $('step-' + i);
-      if (el) el.style.display = (i === n) ? '' : 'none';
+    else {
+      const { data: intake } = await window.supabaseClient
+        .from('intel_hub_intake')
+        .select('company_linkedin_url')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (intake?.company_linkedin_url) $('inp-linkedin').value = intake.company_linkedin_url;
     }
-    $('progress-fill').style.width = (n / TOTAL_STEPS * 100) + '%';
-    $('step-label').textContent = `Paso ${n} de ${TOTAL_STEPS}`;
-    hideStatus();
-    window.scrollTo(0, 0);
+    if (profile?.phone) prefillPhone(profile.phone);
+
+    bindForm();
   }
 
-  // ── STEP 1: LinkedIn + Phone ──────────────────────────────────────────────────
+  function fillDialCodes() {
+    const sel = $('inp-phone-code');
+    sel.innerHTML = DIAL_CODES.map(d =>
+      `<option value="${d.code}">${d.label}</option>`
+    ).join('');
+    sel.value = '+51';
+  }
 
-  function bindStep1() {
+  function prefillPhone(stored) {
+    const m = String(stored).trim().match(/^(\+\d{1,3})\s*(.*)$/);
+    if (!m) { $('inp-phone').value = stored; return; }
+    // Prefijo más largo primero para no confundir +51 con +506, etc.
+    const match = [...DIAL_CODES].sort((a, b) => b.code.length - a.code.length)
+      .find(d => (m[1] + m[2]).startsWith(d.code));
+    if (match) {
+      $('inp-phone-code').value = match.code;
+      $('inp-phone').value = (m[1] + m[2]).slice(match.code.length).trim();
+    } else {
+      $('inp-phone').value = m[2] || '';
+    }
+  }
+
+  function bindForm() {
     const lnk = $('inp-linkedin');
 
     lnk.addEventListener('input', () => {
@@ -98,15 +130,16 @@
       }
     });
 
-    $('btn-s1').addEventListener('click', handleStep1);
-    lnk.addEventListener('keydown', e => { if (e.key === 'Enter') handleStep1(); });
-    $('inp-phone').addEventListener('keydown', e => { if (e.key === 'Enter') handleStep1(); });
+    $('btn-s1').addEventListener('click', handleSubmit);
+    lnk.addEventListener('keydown', e => { if (e.key === 'Enter') handleSubmit(); });
+    $('inp-phone').addEventListener('keydown', e => { if (e.key === 'Enter') handleSubmit(); });
   }
 
-  async function handleStep1() {
-    const raw   = $('inp-linkedin').value.trim();
-    const phone = $('inp-phone').value.trim();
-    const btn   = $('btn-s1');
+  async function handleSubmit() {
+    const raw      = $('inp-linkedin').value.trim();
+    const dialCode = $('inp-phone-code').value;
+    const phoneRaw = $('inp-phone').value.trim();
+    const btn      = $('btn-s1');
 
     if (!raw) {
       showStatus('err', 'Ingresa la URL de LinkedIn de tu empresa.');
@@ -120,6 +153,14 @@
       return;
     }
 
+    const phoneDigits = phoneRaw.replace(/[\s\-().]/g, '');
+    if (!/^\d{6,15}$/.test(phoneDigits)) {
+      showStatus('err', 'Ingresa un teléfono válido (solo números, sin el código de país).');
+      $('inp-phone').focus();
+      return;
+    }
+    const phone = `${dialCode} ${phoneDigits}`;
+
     btn.disabled = true;
     showStatus('inf', '<span class="spinner"></span> Guardando…');
 
@@ -128,7 +169,9 @@
         id: currentUser.id,
         email: currentUser.email,
         linkedin_company_url: url,
-        phone: phone || null,
+        phone,
+        onboarded: true,
+        onboarded_at: new Date().toISOString(),
       }, { onConflict: 'id' });
       if (profileErr) throw new Error('profiles: ' + profileErr.message);
 
@@ -137,85 +180,44 @@
         .upsert({
           user_id: currentUser.id,
           company_linkedin_url: url,
-          phone: phone || null,
+          phone,
           onboarding_step: 1,
+          onboarding_complete: true,
         }, { onConflict: 'user_id' });
       if (intakeErr) throw new Error('intel_hub_intake: ' + intakeErr.message);
 
-      goToStep(2);
+      // Extracción web en background: enrich-company investiga la página web
+      // de la empresa (desde el LinkedIn) y guarda el resultado en
+      // intel_hub_intake para que el Intelligence Hub lo consuma.
+      await triggerEnrichment(url);
+
+      redirectToDashboard();
     } catch (err) {
       btn.disabled = false;
       showStatus('err', 'Error al guardar: ' + esc(err.message));
     }
   }
 
-  // ── STEP 2: ICP ──────────────────────────────────────────────────────────────
-
-  function bindStep2() {
-    document.querySelectorAll('#icp-sizes .pill-opt').forEach(pill => {
-      pill.addEventListener('click', () => pill.classList.toggle('selected'));
-    });
-    $('btn-s2').addEventListener('click', handleStep2);
-  }
-
-  async function handleStep2() {
-    const btn        = $('btn-s2');
-    const sizes      = [...document.querySelectorAll('#icp-sizes .pill-opt.selected')]
-                        .map(p => p.dataset.val).join(', ');
-    const industries = $('inp-icp-industries').value.trim();
-    const roles      = $('inp-icp-roles').value.trim();
-    const geos       = $('inp-icp-geos').value.trim();
-    const pain       = $('inp-icp-pain').value.trim();
-
-    if (!industries && !roles && !pain) {
-      showStatus('err', 'Completa al menos las industrias objetivo, roles de decisión o el dolor principal.');
-      return;
-    }
-
-    btn.disabled = true;
-    showStatus('inf', '<span class="spinner"></span> Guardando tu ICP…');
-
+  async function triggerEnrichment(linkedinUrl) {
     try {
-      const { error: intakeErr } = await window.supabaseClient
-        .from('intel_hub_intake')
-        .update({
-          icp_company_sizes:   sizes || null,
-          icp_industries:      industries || null,
-          icp_roles:           roles || null,
-          icp_geographies:     geos || null,
-          icp_pain_points:     pain || null,
-          onboarding_step:     2,
-          onboarding_complete: true,
-        })
-        .eq('user_id', currentUser.id);
-      if (intakeErr) throw new Error('intel_hub_intake: ' + intakeErr.message);
-
-      const { error: icpErr } = await window.supabaseClient
-        .from('client_icp')
-        .upsert({
-          profile_id:    currentUser.id,
-          company_sizes: sizes || null,
-          industries:    industries || null,
-          roles:         roles || null,
-          geographies:   geos || null,
-          pain_points:   pain || null,
-        }, { onConflict: 'profile_id' });
-      if (icpErr) throw new Error('client_icp: ' + icpErr.message);
-
-      const { error: profileErr } = await window.supabaseClient
-        .from('profiles')
-        .update({ onboarded: true, onboarded_at: new Date().toISOString() })
-        .eq('id', currentUser.id);
-      if (profileErr) throw new Error('profiles: ' + profileErr.message);
-
-      redirectToHub();
-    } catch (err) {
-      btn.disabled = false;
-      showStatus('err', 'Error al guardar: ' + esc(err.message));
+      const session = (await window.supabaseClient.auth.getSession()).data.session;
+      if (!session) return;
+      // keepalive: la request sobrevive al redirect inmediato al dashboard.
+      fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
+        method: 'POST',
+        keepalive: true,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + session.access_token,
+        },
+        body: JSON.stringify({ linkedin_url: linkedinUrl }),
+      }).catch(e => console.warn('[onboarding] enrich-company:', e));
+    } catch (e) {
+      console.warn('[onboarding] enrich trigger failed:', e);
     }
   }
 
-  function redirectToHub() {
+  function redirectToDashboard() {
     window.location.replace('./index.html#mi-dashboard');
   }
 

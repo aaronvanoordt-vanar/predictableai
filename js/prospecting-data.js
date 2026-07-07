@@ -119,6 +119,69 @@
     };
   }
 
+  // ── ICP desde la búsqueda (Supabase: client_icp + intel_hub_intake) ─
+  // El ICP ya no se pregunta en el onboarding: se arma con los filtros que el
+  // usuario usa en Búsqueda (search people) y se persiste para que el
+  // Intelligence Hub (generate-intel-hub) y el brief (generate-client-brief)
+  // lo consuman. Best-effort: nunca lanza ni bloquea la búsqueda.
+
+  let lastIcpSignature = null; // evita re-escribir en cada página de resultados
+
+  async function syncIcpFromSearch(filters) {
+    try {
+      const f = filters || {};
+      const join = (a) => (Array.isArray(a) ? a.filter(Boolean) : []).join(', ');
+      const roles = join(f.person_titles) || join(f.person_seniorities);
+      const geos = join([...new Set(
+        [].concat(f.person_locations || [], f.organization_locations || [])
+      )]);
+      const sizes = join((f.organization_num_employees_ranges || [])
+        .map((r) => String(r).replace(',', '-')));
+      const industries = join([...new Set(
+        [].concat(f.q_organization_keyword_tags || [], f.market_segments || [])
+      )]);
+
+      if (!roles && !geos && !sizes && !industries) return;
+
+      const signature = JSON.stringify([roles, geos, sizes, industries]);
+      if (signature === lastIcpSignature) return;
+
+      const userId = await getUserId();
+
+      // Solo columnas con valor: el upsert de PostgREST no toca las que no
+      // se envían, así una búsqueda sin (p. ej.) industria no borra la previa.
+      const icp = {};
+      if (roles) icp.roles = roles;
+      if (geos) icp.geographies = geos;
+      if (sizes) icp.company_sizes = sizes;
+      if (industries) icp.industries = industries;
+
+      const intake = {};
+      if (roles) intake.icp_roles = roles;
+      if (geos) intake.icp_geographies = geos;
+      if (sizes) intake.icp_company_sizes = sizes;
+      if (industries) intake.icp_industries = industries;
+
+      const [r1, r2] = await Promise.all([
+        sb().from('client_icp').upsert(
+          { profile_id: userId, ...icp },
+          { onConflict: 'profile_id' }
+        ),
+        sb().from('intel_hub_intake').upsert(
+          { user_id: userId, ...intake },
+          { onConflict: 'user_id' }
+        ),
+      ]);
+      if (r1.error || r2.error) {
+        console.warn('[icp-sync]', r1.error || r2.error);
+        return;
+      }
+      lastIcpSignature = signature;
+    } catch (e) {
+      console.warn('[icp-sync]', e);
+    }
+  }
+
   // ── Listas (Supabase, RLS por dueño) ───────────────────────
 
   async function fetchLists() {
@@ -855,6 +918,7 @@
   // ── API pública ────────────────────────────────────────────
   global.prospectingData = {
     searchPeople,
+    syncIcpFromSearch,
     fetchLists,
     createList,
     deleteList,

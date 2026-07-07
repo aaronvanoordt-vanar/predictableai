@@ -203,7 +203,7 @@ Deno.serve(async (req: Request) => {
   ]);
 
   if (!intake && !profile?.linkedin_company_url) {
-    return json({ error: "no_intake", detail: "Completa el onboarding (LinkedIn de tu empresa e ICP) antes de generar tu brief." }, 400, h);
+    return json({ error: "no_intake", detail: "Completa el onboarding (LinkedIn de tu empresa) antes de generar tu brief." }, 400, h);
   }
 
   await supa.from("client_brief").upsert(

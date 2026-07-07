@@ -1,14 +1,21 @@
 /**
  * hub-unlock.js — Locked Intelligence Hub overlay
  *
- * Flow:
+ * Flow (cuando GATE_ENABLED = true):
  *   1. On hub page init: check intel_hub_intake.hub_unlocked
  *   2. If false: blur #ih-v2-shell + show lock overlay inside #page-mi-dashboard
  *   3. "Desbloquear mi Hub" button → redirects to /miforms/ (calibration survey)
  *   4. The survey sets hub_unlocked=true and bounces the user back here.
+ *
+ * GATE_ENABLED = false (estado actual): el hub queda abierto sin encuesta.
  */
 (function () {
   'use strict';
+
+  // TEMP (2026-07, fase de testing): el hub NO se restringe a completar la
+  // encuesta de calibración (/miforms/). Volver a true para reactivar el gate
+  // de hub_unlocked con el overlay bloqueado.
+  const GATE_ENABLED = false;
 
   // ── Styles ───────────────────────────────────────────────────────────────────
 
@@ -369,6 +376,14 @@
   // ── Entry point ───────────────────────────────────────────────────────────────
 
   window.hubUnlockInit = async function () {
+    if (!GATE_ENABLED) {
+      // Gate desactivado: asegurar que no quede blur ni overlay de una
+      // versión anterior y dejar el hub totalmente operativo.
+      document.getElementById('ih-v2-shell')?.classList.remove('hub-blurred');
+      document.getElementById('hub-lock-overlay')?.remove();
+      return;
+    }
+
     injectStyles();
 
     const user = await window.supabaseHelpers?.getUser();
