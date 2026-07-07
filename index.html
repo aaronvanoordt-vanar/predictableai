@@ -3903,6 +3903,9 @@ function nav(el, pageId) {
   if (pageId === 'ventas-reportes' && typeof initReportPageForRole === 'function') {
     initReportPageForRole();
   }
+
+  // Recordar la última sección para restaurarla si el usuario refresca la página.
+  try { if (pageId) localStorage.setItem('predictable_last_section', pageId); } catch (e) {}
 }
 
 // Hash-based deep link: e.g. /index.html#mi-dashboard activates that page on load.
@@ -3914,9 +3917,28 @@ const PRO_HASH_ALIASES = {
 };
 window.addEventListener('DOMContentLoaded', () => {
   let hash = (location.hash || '').replace(/^#/, '');
-  if (!hash) return;
-  const proTab = PRO_HASH_ALIASES[hash];
+  let proTab = PRO_HASH_ALIASES[hash];
   if (proTab) hash = 'pro-main';
+
+  // Sin hash explícito: restaurar la última sección visitada para que un
+  // refresh no devuelva al usuario al dashboard.
+  if (!hash) {
+    try {
+      const last = localStorage.getItem('predictable_last_section');
+      if (last && last !== 'dashboard') hash = last;
+    } catch (e) {}
+    if (!hash) return;
+  }
+
+  if (hash === 'pro-main' && !proTab) {
+    try { proTab = localStorage.getItem('predictable_pros_tab') || null; } catch (e) {}
+  }
+
+  if (hash === 'settings' && typeof window.openSettingsPage === 'function') {
+    setTimeout(() => window.openSettingsPage(), 0);
+    return;
+  }
+
   const navEl = document.querySelector(`.nav-item[data-page="${hash}"]`);
   if (navEl) setTimeout(() => {
     window.nav(navEl, hash);
@@ -4638,6 +4660,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
     window.scrollTo(0, 0);
     loadSettings();
+    try { localStorage.setItem('predictable_last_section', 'settings'); } catch (e) {}
   };
 
   // Refrescar el pill del sidebar cuando se guarda algo
