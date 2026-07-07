@@ -2368,7 +2368,13 @@
       renderWaList();
       if (ok) toast('Mensajes generados para ' + fmtNum(ok) + ' contactos.', failed.length ? 'warn' : 'success');
       if (failed.length) {
-        toast('Fallaron ' + fmtNum(failed.length) + ': ' + failed.map(function (x) { return x.name; }).join(', '), 'error');
+        // Surface the real reason (all failures usually share one cause, e.g. the
+        // Anthropic call failing) instead of only listing names — otherwise the
+        // user sees "Fallaron 1: <name>" with no clue what to fix.
+        console.error('[prospecting] outreach generation failures:', failed);
+        var names = failed.map(function (x) { return x.name; }).join(', ');
+        var reason = (failed[0] && failed[0].error) ? failed[0].error : 'Error desconocido';
+        toast('No se pudo generar para ' + fmtNum(failed.length) + ' (' + names + '): ' + reason, 'error');
       }
     });
   }
