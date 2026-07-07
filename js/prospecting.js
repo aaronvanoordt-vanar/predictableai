@@ -1168,7 +1168,12 @@
   function recoTotal() {
     var res = state.search.results;
     var pg = (res && res.pagination) || {};
-    return pg.total_entries != null ? pg.total_entries : 0;
+    var rows = (state.search.pageRows || []).length;
+    // Same Apollo quirk as renderResults(): total_entries can report 0 even
+    // when people/contacts came back. Trusting it literally here made the
+    // recommended-search widget think it found nobody and exhaust every
+    // broadening step, ending on "0 personas — es lo máximo con tu ICP".
+    return (pg.total_entries != null && pg.total_entries > 0) ? pg.total_entries : rows;
   }
 
   function waitForBrief() {
@@ -1434,6 +1439,7 @@
       (!totalKnown && rows.length ? '≥' : '') + esc(fmtNum(total)) +
       '</b> personas encontradas' +
       (partial ? ' <span style="color:var(--text3)">· resultados parciales, máx. 50.000 visibles</span>' : '') +
+      (!totalKnown && rows.length ? ' <span style="color:var(--text3)">· Apollo no reporta el total exacto para esta búsqueda; usa «›» para ver más</span>' : '') +
       '</div>' +
       '<div style="display:flex;align-items:center;gap:8px">' +
       '<select data-action="per-page" style="padding:5px 8px;font-size:12px">' +
