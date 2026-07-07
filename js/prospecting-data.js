@@ -697,20 +697,66 @@
   // Personalización en 5 capas (Mercado → Industria → Empresa → Rol → Persona)
   // usando el brief del cliente (client_brief) + insights del Intelligence Hub.
 
+  // Garantiza que el brief ("MI Cliente", la síntesis de la matriz) exista
+  // antes de personalizar: si no está listo, dispara generate-client-brief y
+  // espera a que termine (~1 min). Si la matriz (intel_hub_intake) no existe,
+  // lanza — sin matriz no hay base honesta para personalizar.
+  // Devuelve el status final ('ready' | 'error' | ...) para que la UI avise
+  // si se generará solo con la matriz cruda.
+  let briefReadyUntil = 0; // cache: evita re-consultar en cada lead del lote
+  async function ensureBriefReady(onStatus) {
+    const notify = typeof onStatus === 'function' ? onStatus : function () {};
+    if (Date.now() < briefReadyUntil) return 'ready';
+    let brief = await fetchClientBrief();
+    if (brief?.status === 'ready') {
+      briefReadyUntil = Date.now() + 10 * 60 * 1000;
+      return 'ready';
+    }
+    if (!brief || brief.status !== 'generating') {
+      notify('Generando el contexto de tu empresa (matriz + investigación)…');
+      try {
+        await generateClientBrief();
+      } catch (e) {
+        // Sin matriz no hay nada que esperar: el error del server ya es accionable.
+        if (/onboarding|intake/i.test(String(e.detail || e.message))) throw e;
+        return brief?.status || 'missing';
+      }
+    } else {
+      notify('Tu contexto de empresa aún se está generando…');
+    }
+    for (let i = 0; i < 24; i++) { // hasta ~2 min
+      await new Promise((r) => setTimeout(r, 5000));
+      brief = await fetchClientBrief();
+      if (brief?.status === 'ready') {
+        briefReadyUntil = Date.now() + 10 * 60 * 1000;
+        return 'ready';
+      }
+      if (brief?.status === 'error') return 'error';
+    }
+    return brief?.status || 'missing';
+  }
+
   async function generateOutreach({ member, sender }) {
     if (!member) throw new Error('Falta el contacto.');
     if (!member.name && !member.first_name) throw new Error('Este lead no tiene nombre — no se puede personalizar.');
     if (!member.company && !member.title) throw new Error('Este lead no tiene empresa ni cargo — no hay contexto para personalizar el mensaje.');
+    const snap = member.snapshot || {};
+    const org = snap.organization || {};
     const lead = {
       name: member.name || '',
       first_name: member.first_name || (member.name || '').split(' ')[0] || '',
       title: member.title || '',
       company: member.company || '',
-      company_domain: member.company_domain || member.snapshot?.organization?.primary_domain || '',
-      industry: member.snapshot?.organization?.industry || '',
+      company_domain: member.company_domain || org.primary_domain || '',
+      industry: org.industry || '',
       country: member.country || '',
       city: member.city || '',
       linkedin_url: member.linkedin_url || '',
+      // Señales del enrichment (Apollo) — afinan las capas Rol/Empresa.
+      headline: snap.headline || '',
+      seniority: snap.seniority || '',
+      departments: snap.departments || [],
+      company_size: org.estimated_num_employees ? String(org.estimated_num_employees) : '',
     };
     const data = await edgeFetch('generate-outreach', { lead, sender: sender || getSenderInfo() });
     if (!data?.whatsapp_followup || !data?.linkedin_message) {
@@ -737,6 +783,28 @@
 
   async function generateClientBrief() {
     return edgeFetch('generate-client-brief', {});
+  }
+
+  // ── Contexto del lead para el AI coach (coach_lead_context) ──
+  // Persiste el handoff Prospección → coach en Supabase (una fila por usuario)
+  // para que sobreviva recargas y otros dispositivos.
+
+  async function saveCoachContext(memberId, ctx) {
+    const userId = await getUserId();
+    const { error } = await sb().from('coach_lead_context').upsert(
+      { user_id: userId, member_id: memberId || null, lead: ctx || {} },
+      { onConflict: 'user_id' }
+    );
+    if (error) throw new Error('No se pudo guardar el contexto para el coach: ' + error.message);
+  }
+
+  async function fetchLatestCoachContext() {
+    const { data, error } = await sb()
+      .from('coach_lead_context')
+      .select('lead, member_id, updated_at')
+      .maybeSingle();
+    if (error) throw new Error('No se pudo leer el contexto del coach: ' + error.message);
+    return data?.lead || null;
   }
 
   // ── Remitente (para el saludo de WhatsApp) ─────────────────
@@ -805,8 +873,11 @@
     createSequence,
     enrollInSequence,
     generateOutreach,
+    ensureBriefReady,
     fetchClientBrief,
     generateClientBrief,
+    saveCoachContext,
+    fetchLatestCoachContext,
     importLegacyLists,
     hasLegacyListsPendingImport,
     getSenderInfo,

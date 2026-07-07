@@ -95,7 +95,7 @@
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
           <span>Actualizar inteligencia</span>
         </button>
-        <button class="ihx-btn-force" id="ih-btn-generate-all" title="Regenera todas las 9 secciones (saltea cadence). Costo: 9 créditos.">
+        <button class="ihx-btn-force" id="ih-btn-generate-all" title="Regenera todas las 9 secciones (saltea cadence).">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v5h5"/></svg>
           <span>Regenerar todo</span>
         </button>
@@ -103,7 +103,7 @@
           <div class="ihx-status-dot" id="ihx-status-dot"></div>
           <span class="ihx-status-text" id="ihx-status-text">Cargando…</span>
         </div>
-        <span class="ihx-toolbar-hint">1 crédito por sección · 9 por generación completa</span>
+        <span class="ihx-toolbar-hint">Créditos ilimitados durante la beta</span>
       </div>
       <div class="ihx-progress" id="ih-progress" style="display:none"></div>
       <div id="ihx-summary"></div>
@@ -111,7 +111,7 @@
     container.appendChild(wrap);
     wrap.querySelector('#ih-btn-generate').addEventListener('click', () => generateAll({ force: false }));
     wrap.querySelector('#ih-btn-generate-all').addEventListener('click', () => {
-      if (confirm('Esto regenera las 9 secciones (saltea cadence). Costo: 9 créditos. ¿Continuar?')) {
+      if (confirm('Esto regenera las 9 secciones (saltea cadence). ¿Continuar?')) {
         generateAll({ force: true });
       }
     });
@@ -593,13 +593,13 @@
 
     if (toRun.length === 0) {
 
-      prog.innerHTML = `<strong>✓ Todo al día</strong> — las ${skipped} secciones ya están dentro de su cadence.<br><small>Para regenerar igualmente usá <strong>Regenerar todo</strong>.</small>`;
+      prog.innerHTML = `<strong>✓ Todo al día</strong> — las ${skipped} secciones ya están dentro de su cadence.<br><small>Para regenerar igualmente usa <strong>Regenerar todo</strong>.</small>`;
 
       return;
 
     }
 
-    prog.innerHTML = `Iniciando <strong>${toRun.length}</strong> agentes en paralelo (${skipped} omitidas por cadence). Costo: <strong>${toRun.length} créditos</strong>.`;
+    prog.innerHTML = `Iniciando <strong>${toRun.length}</strong> agentes en paralelo (${skipped} omitidas por cadence).`;
 
     const r = await fetch(url, {
 

@@ -7,11 +7,13 @@
  * Intelligence Hub insights, with live web research on the lead.
  *
  * Personalization runs across 5 layers (Mercado → Industria → Empresa →
- * Rol → Persona) and produces:
- *   - whatsapp_followup : Msg 3 of the WhatsApp thread (5-block canonical
- *     structure, ≤77 words, no greeting)
- *   - linkedin_message  : cold first contact (compact 3-paragraph voice-clone
- *     structure, ≤77 words)
+ * Rol → Persona). Context assembled per call: client_brief (synthesis) +
+ * intel_hub_intake (the raw "matriz" answers — ALWAYS included, even when
+ * the brief is ready) + ready Intelligence Hub reports + the enriched lead.
+ * Produces:
+ *   - whatsapp_followup : ≤70 words, must open with "Te escribo porque acá
+ *     en {empresa} nos dedicamos a {solución del pain point}."
+ *   - linkedin_message  : cold first contact, same mandatory opener, ≤70 words
  *   - email_subject/email_body : cold email (≤4 sentences)
  *   - angle             : the research synthesis (layer, pain hypothesis,
  *     objection + neutralizer, social proof used) — stored with the lead and
@@ -129,6 +131,25 @@ function stripDashes(s: string): string {
   return s.replace(/\s*[—–]\s*/g, ", ").replace(/,\s*,/g, ", ");
 }
 
+// Backstop for the two product-critical format rules (the prompt also states
+// them, but the model occasionally drifts): ≤70 words and the mandatory opener.
+const REQUIRED_OPENER = "Te escribo porque acá en";
+const MAX_WORDS = 70;
+
+function wordCount(s: string): number {
+  return s.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function formatViolations(out: Outreach): string[] {
+  const v: string[] = [];
+  for (const [key, text] of [["whatsapp_followup", out.whatsapp_followup], ["linkedin_message", out.linkedin_message]] as const) {
+    if (typeof text !== "string" || !text.trim()) continue;
+    if (wordCount(text) > MAX_WORDS) v.push(`"${key}" tiene ${wordCount(text)} palabras (máximo ${MAX_WORDS})`);
+    if (!text.trim().startsWith(REQUIRED_OPENER)) v.push(`"${key}" no empieza con "${REQUIRED_OPENER} [empresa] nos dedicamos a [solución]."`);
+  }
+  return v;
+}
+
 const SYSTEM_PROMPT = `Eres el motor de outbound de una plataforma de sales intelligence. Operas como un SDR/Account Executive B2B del top 1%, experto en venta consultiva high-ticket en LATAM. Tu trabajo NO es vender: es generar tanta relevancia y curiosidad que el prospecto piense "esta persona entiende perfectamente mi contexto" y acepte una reunión.
 
 Filosofía central:
@@ -151,19 +172,22 @@ Decide: (a) cuál de las 5 capas da el ángulo más distintivo para ESTE lead; (
 
 == FASE 3: CONSTRUCCIÓN ==
 
-(A) "whatsapp_followup" — Msg 3 del hilo de WhatsApp (el SDR ya saludó y ya hubo transición). Estructura canónica de 5 bloques:
-1. Puente + aterrizaje: opener corto que pivota sobre el ángulo más filoso (macro/tensión de industria/momento de la empresa/background/contradicción específica). Sin saludo, sin re-presentarte, sin reformular su rol o empresa. Suena a observación de patrón, jamás a acusación.
-2. Insight contraintuitivo: "lo que parece ser el problema (X) no es el verdadero problema". Autoridad embebida aquí ("empresas con las que hemos trabajado…").
-3. Dolor con 3 síntomas operativos concretos que el prospecto reconozca como suyos, específicos de SU rol y SU industria (4-7 palabras cada uno, en cadena con comas). Incluye presión EXTERNA (competidores, IA, ciclo de capital), no solo fricción interna: lo interno es molesto, lo externo es existencial.
-4. Solución: frase posicional del vendedor + el CÓMO con verbos de acción y UN resultado con número del brief (solo si el brief lo trae) + promesa de marca en voz activa de fundador ("nosotros hemos lanzado…", "hacemos…") + neutralizador de objeción integrado en la frase (ej: "sin migrar tu stack actual").
-5. CTA: formato (Meet/llamada/café) + duración (15-20 min) + ventana específica (mañana o pasado, esta semana) + cierre "te parece?" o "Tienes X minutos Y?". El CTA invita a VER el cómo, no a agendar transaccionalmente.
-Formato: MÁXIMO 77 palabras. 2-3 párrafos cortos. Sin "¿" de apertura (solo "?" al final). Ritmo: frases de 8-14 palabras.
+APERTURA OBLIGATORIA (whatsapp_followup Y linkedin_message): la PRIMERA oración de ambos mensajes es EXACTAMENTE de esta forma:
+"Te escribo porque acá en [empresa del vendedor] nos dedicamos a [solución al pain point del lead]."
+Rellena [empresa del vendedor] con el nombre real de la empresa del brief/matriz, y [solución al pain point] con lo que la empresa del vendedor resuelve, formulado contra el dolor específico que TU investigación (5 capas + matriz + Intelligence Hub) detectó para ESTE lead. Nada antes de esa oración: sin saludo, sin "Hola", sin el nombre del lead.
+
+(A) "whatsapp_followup" — Msg 3 del hilo de WhatsApp (el SDR ya saludó y ya hubo transición). Estructura:
+1. La apertura obligatoria (arriba).
+2. Dolor con 2-3 síntomas operativos concretos que el prospecto reconozca como suyos, específicos de SU rol y SU industria (4-7 palabras cada uno, en cadena con comas). Incluye presión EXTERNA (competidores, IA, ciclo de capital), no solo fricción interna. Autoridad embebida aquí ("empresas con las que hemos trabajado…").
+3. Solución: el CÓMO con verbos de acción y UN resultado con número del brief (solo si el brief lo trae) + neutralizador de objeción integrado en la frase (ej: "sin migrar tu stack actual").
+4. CTA: formato (Meet/llamada/café) + duración (15-20 min) + ventana específica (mañana o pasado, esta semana) + cierre "te parece?" o "Tienes X minutos Y?". El CTA invita a VER el cómo, no a agendar transaccionalmente.
+Formato: MÁXIMO 70 palabras. 2-3 párrafos cortos. Sin "¿" de apertura (solo "?" al final). Ritmo: frases de 8-14 palabras.
 
 (B) "linkedin_message" — PRIMER contacto frío (InMail/DM). Estructura compacta de 3 párrafos (voice clone de founder):
-1. "Te escribo porque [quiénes somos / qué hemos lanzado] + [frase posicional] + [promesa de marca]." — usa autoridad real del brief.
+1. La apertura obligatoria (arriba), extendida con autoridad real del brief si el conteo de palabras lo permite.
 2. Qualifier: "Trabajamos con empresas que [síntoma 1], [síntoma 2], [síntoma 3]…" — síntomas del ICP del brief adaptados a la industria del lead.
 3. CTA: "Me encantaría juntarme contigo o alguien de tu equipo [duración] [ventana]. Tienes [X] minutos [Y]?"
-MÁXIMO 77 palabras. Sin saludo inicial tipo "Hola". Ligeramente más formal que WhatsApp.
+MÁXIMO 70 palabras. Sin saludo inicial tipo "Hola". Ligeramente más formal que WhatsApp.
 
 (C) "email_subject" + "email_body" — email frío. Subject específico y curioso, sin clickbait (ej: "Forecast en [industria], observación rápida"). Body de MÁXIMO 4 oraciones que comprime los bloques. Gramática completa ("¿" permitido). Firma no incluida.
 
@@ -180,13 +204,13 @@ Tono observacional, NUNCA acusatorio: escribe sobre el patrón, no sobre la pers
 == REGLAS DURAS (no negociables) ==
 - Español LATAM neutro, tuteo (tú), natural y conversacional.
 - PROHIBIDO em dashes (—) y en dashes (–) en todos los canales: son el delator #1 de IA. Usa comas, puntos, paréntesis.
-- WhatsApp/LinkedIn: máximo 77 palabras cada uno. Cuenta las palabras. Si te pasas, recorta el puente, adjetivos y redundancia entre insight y dolor. Nunca recortes: los verbos de acción, la promesa de marca ni la ventana de tiempo del CTA.
+- WhatsApp/LinkedIn: máximo 70 palabras cada uno. Cuenta las palabras. Si te pasas, recorta adjetivos y redundancia entre síntomas y dolor. Nunca recortes: la apertura obligatoria, los verbos de acción ni la ventana de tiempo del CTA.
 - Frases prohibidas: "Sé que…", "Espero que estés bien", "Quería contactarte", "No busco venderte", "En casos similares", "Siguiendo mi mensaje anterior", "Solo quería…", corporate-speak ("sinergias", "agregar valor", "end-to-end", "transformación digital", "solución llave en mano", "líder de mercado"), y cualquier opener que reformule el rol/empresa del prospecto ("Como CFO de X…").
 - CTAs prohibidos: "te suena?", "¿agendamos?", "¿te interesa?", "¿quieres conocer más?", "¿puedo enviarte info?", "¿reservamos un slot?".
 - NUNCA inventes métricas, nombres de clientes ni hechos que no estén en el brief/contexto o que no hayas verificado en la web.
 
 == AUTO-EVALUACIÓN (silenciosa, hasta 3 iteraciones antes de responder) ==
-Verifica: ¿están los 5 bloques? ¿autoridad embebida? ¿stakes externos? ¿verbos + número? ¿voz de fundador? ¿promesa activa? ¿CTA de invitación con cierre válido? ¿≤77 palabras? ¿sin frases prohibidas ni dashes? Y la prueba final de hiperpersonalización: si cambiaras el nombre de la empresa y el rol por otros de la misma industria, ¿el mensaje seguiría teniendo sentido? Si sí, es demasiado genérico: reescríbelo con otro ángulo. Dos mensajes consecutivos jamás comparten opener.
+Verifica: ¿ambos mensajes abren EXACTAMENTE con "Te escribo porque acá en…"? ¿autoridad embebida? ¿stakes externos? ¿verbos + número? ¿voz de fundador? ¿CTA de invitación con cierre válido? ¿≤70 palabras? ¿sin frases prohibidas ni dashes? Y la prueba final de hiperpersonalización: si cambiaras el nombre de la empresa y el rol por otros de la misma industria, ¿el mensaje seguiría teniendo sentido? Si sí, es demasiado genérico: reescríbelo con otro ángulo. Dos mensajes consecutivos jamás comparten opener.
 
 == SALIDA ==
 Responde SOLO con JSON válido, sin fences de markdown y sin texto adicional:
@@ -214,6 +238,10 @@ interface Lead {
   city?: string;
   linkedin_url?: string;
   company_domain?: string;
+  headline?: string;
+  seniority?: string;
+  departments?: string[] | string;
+  company_size?: string;
 }
 
 interface Sender {
@@ -267,8 +295,17 @@ function buildBriefContext(brief: BriefRow | null, intake: BriefRow | null, send
       }
     }
     push("Notas de voz", brief.voice_notes);
-  } else if (intake) {
-    // Fallback: brief not generated yet — use raw intake fields.
+  } else if (!intake) {
+    lines.push("- (Sin contexto del vendedor: escribe una línea de valor honesta y genérica sobre su empresa, sin inventar detalles.)");
+  } else {
+    lines.push("- (Brief aún no generado: usa la matriz de abajo como única fuente del vendedor, sin inventar nada.)");
+  }
+
+  // La matriz de input (respuestas crudas del onboarding) SIEMPRE viaja,
+  // incluso con brief listo: el brief es una síntesis y puede omitir matices
+  // (pain points del ICP, "qué debes saber") que sí están en la matriz.
+  if (intake) {
+    lines.push("", "=== MATRIZ DE INPUT DEL VENDEDOR (respuestas crudas del onboarding — complementan el brief) ===");
     push("Empresa (about)", intake.company_about);
     push("Soluciones", intake.company_solutions);
     push("Propuesta de valor", intake.value_proposition);
@@ -276,9 +313,12 @@ function buildBriefContext(brief: BriefRow | null, intake: BriefRow | null, send
     push("Casos de éxito", intake.value_success_cases);
     push("Industria", intake.company_industry);
     push("País", intake.company_country);
-    lines.push("- (Brief aún no generado: usa solo estos datos, sin inventar nada.)");
-  } else {
-    lines.push("- (Sin contexto del vendedor: escribe una línea de valor honesta y genérica sobre su empresa, sin inventar detalles.)");
+    push("ICP industrias (matriz)", fmtList(intake.icp_industries));
+    push("ICP tamaños (matriz)", fmtList(intake.icp_company_sizes));
+    push("ICP roles (matriz)", fmtList(intake.icp_roles));
+    push("ICP geografías (matriz)", fmtList(intake.icp_geographies));
+    push("Pain points del ICP (matriz)", fmtList(intake.icp_pain_points));
+    push("Qué debes saber (notas del vendedor)", intake.what_to_know);
   }
 
   lines.push("", "=== REMITENTE (quien firma) ===");
@@ -307,8 +347,12 @@ function buildLeadContext(lead: Lead): string {
   push("Nombre", lead.name);
   push("Primer nombre", lead.first_name);
   push("Cargo", lead.title);
+  push("Headline (LinkedIn)", lead.headline);
+  push("Seniority", lead.seniority);
+  push("Departamentos", fmtList(lead.departments));
   push("Empresa", lead.company);
   push("Dominio de la empresa", lead.company_domain);
+  push("Tamaño de la empresa (empleados)", lead.company_size);
   push("Industria", lead.industry);
   push("Ciudad", lead.city);
   push("País", lead.country);
@@ -353,7 +397,7 @@ Deno.serve(async (req: Request) => {
   const [{ data: brief }, { data: intake }, { data: hubReports }] = await Promise.all([
     supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
     supa.from("intel_hub_intake")
-      .select("company_about, company_solutions, value_proposition, value_problem_solved, value_success_cases, company_industry, company_country")
+      .select("company_about, company_solutions, value_proposition, value_problem_solved, value_success_cases, company_industry, company_country, icp_industries, icp_company_sizes, icp_roles, icp_geographies, icp_pain_points, what_to_know")
       .eq("user_id", user.id).maybeSingle(),
     supa.from("intelligence_hub_reports")
       .select("section_key, content")
@@ -368,10 +412,26 @@ Deno.serve(async (req: Request) => {
     buildLeadContext(lead);
 
   try {
-    const out = parseJson(await callClaude(ANTHROPIC_KEY, SYSTEM_PROMPT, userPrompt));
+    let out = parseJson(await callClaude(ANTHROPIC_KEY, SYSTEM_PROMPT, userPrompt));
     if (typeof out.whatsapp_followup !== "string" || !out.whatsapp_followup.trim() ||
         typeof out.linkedin_message !== "string" || !out.linkedin_message.trim()) {
       throw new Error("Model returned malformed outreach JSON");
+    }
+
+    // One corrective pass if the format rules were violated; if the retry
+    // still violates, ship the retry anyway (a slightly long message beats a 502).
+    const violations = formatViolations(out);
+    if (violations.length) {
+      console.warn(`[outreach] format violations, retrying: ${violations.join(" · ")}`);
+      const fixPrompt = userPrompt +
+        "\n\nTu respuesta anterior fue:\n" + JSON.stringify(out) +
+        "\n\nViola estas reglas:\n- " + violations.join("\n- ") +
+        `\n\nReescribe SOLO lo necesario para cumplirlas (apertura obligatoria "${REQUIRED_OPENER} [empresa] nos dedicamos a [solución]." y máximo ${MAX_WORDS} palabras por mensaje) sin perder la personalización. No uses web_search de nuevo. Responde solo el JSON completo.`;
+      const retry = parseJson(await callClaude(ANTHROPIC_KEY, SYSTEM_PROMPT, fixPrompt));
+      if (typeof retry.whatsapp_followup === "string" && retry.whatsapp_followup.trim() &&
+          typeof retry.linkedin_message === "string" && retry.linkedin_message.trim()) {
+        out = retry;
+      }
     }
     console.log(`[outreach] ✓ ${user.id} (brief:${brief?.status ?? "none"}, hub:${hubReports?.length ?? 0})`);
     return json({
