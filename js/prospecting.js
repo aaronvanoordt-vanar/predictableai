@@ -40,6 +40,8 @@
       resultsEl: null,
       searchBtn: null,
       badgeSecs: [],
+      recoHost: null,
+      reco: { running: false, msg: '', note: '' },
     },
     listas: {
       leftEl: null, rightEl: null,
@@ -57,11 +59,12 @@
       loadingSources: false,
     },
     wa: {
-      senderHost: null, listHost: null,
+      senderHost: null, listHost: null, briefHost: null,
       listId: '',
       members: [], selected: new Set(), expanded: new Set(),
       loadingMembers: false, membersError: null,
       generating: false,
+      brief: null, briefLoading: false,
     },
   };
 
@@ -1007,9 +1010,194 @@
     toast('Filtros restablecidos.', 'info');
   }
 
+  // ── Búsqueda recomendada: ICP del cliente (client_brief) → filtros Apollo ──
+  // El brief lo genera generate-client-brief a partir del onboarding + web
+  // research; aquí solo se aplica y se amplía hasta alcanzar RECO_TARGET.
+  var RECO_TARGET = 1000;
+  var RECO_LATAM = ['Mexico', 'Colombia', 'Peru', 'Chile', 'Argentina', 'Ecuador',
+    'Guatemala', 'Panama', 'Uruguay', 'Paraguay', 'Bolivia', 'Costa Rica', 'Dominican Republic'];
+
+  function renderRecoCard() {
+    var host = state.search.recoHost;
+    if (!host) return;
+    var r = state.search.reco;
+    host.innerHTML = '';
+    var btn = h('button', {
+      type: 'button', class: 'btn btn-primary btn-sm',
+      text: r.running ? '⏳ Trabajando…' : 'Aplicar búsqueda recomendada',
+    });
+    btn.disabled = !!r.running;
+    btn.addEventListener('click', guarded(function () { return runRecommendedSearch(); }));
+    host.appendChild(h('div', { class: 'chart-card', style: 'margin-bottom:14px' },
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap' },
+        h('div', { style: 'min-width:220px;flex:1' },
+          h('div', { class: 'chart-title', text: 'Búsqueda recomendada según tu empresa' }),
+          h('div', { style: 'font-size:12.5px;color:var(--text3);margin-top:4px;line-height:1.5', text: 'Armamos los filtros con tu ICP y el contexto de tu Intelligence Hub, y los ampliamos hasta encontrar al menos ' + fmtNum(RECO_TARGET) + ' personas.' })),
+        btn),
+      r.msg ? h('div', { style: 'font-size:12px;color:var(--text2);margin-top:8px', text: r.msg }) : null,
+      r.note ? h('div', { style: 'font-size:12px;color:var(--accent-ink);margin-top:4px;line-height:1.5', text: r.note }) : null));
+  }
+
+  function setReco(patch) {
+    Object.assign(state.search.reco, patch);
+    renderRecoCard();
+  }
+
+  // Vuelca el payload recomendado (validado contra los enums de Apollo)
+  // sobre el estado de filtros y reconstruye el panel.
+  function applyRecommendedFilters(p) {
+    var f = defaultFilters();
+    var E = enums();
+    function arr(v) { return Array.isArray(v) ? v.filter(function (x) { return typeof x === 'string' && x.trim(); }) : []; }
+    function allowed(list, values) {
+      var ok = new Set((list || []).map(function (o) { return o.value; }));
+      return values.filter(function (v) { return ok.has(v); });
+    }
+    f.person_titles = arr(p.person_titles).slice(0, 15);
+    f.include_similar_titles = p.include_similar_titles !== false;
+    f.person_seniorities = allowed(E.seniorities, arr(p.person_seniorities));
+    f.person_locations = arr(p.person_locations).slice(0, 20);
+    f.organization_num_employees_ranges = allowed(E.employee_ranges, arr(p.organization_num_employees_ranges));
+    f.q_organization_keyword_tags = arr(p.q_organization_keyword_tags).slice(0, 6);
+    state.search.filters = f;
+    persistFilters();
+    if (state.search.panelHost) {
+      state.search.panelHost.innerHTML = '';
+      state.search.panelHost.appendChild(buildFilterPanel());
+    }
+    updateFilterBadges();
+  }
+
+  // Un paso de ampliación por llamada; devuelve la descripción del paso o
+  // null cuando ya no hay nada razonable que ampliar (la geografía se
+  // respeta salvo el paso LATAM: sin ubicación el outbound pierde sentido).
+  function broadenOnce(f) {
+    var E = enums();
+    if (!f.include_similar_titles && f.person_titles.length) {
+      f.include_similar_titles = true;
+      return 'títulos similares incluidos';
+    }
+    if (f.q_organization_keyword_tags.length) {
+      f.q_organization_keyword_tags = [];
+      return 'keywords de industria eliminadas';
+    }
+    var ranges = (E.employee_ranges || []).map(function (o) { return o.value; });
+    var cur = f.organization_num_employees_ranges;
+    if (cur.length && cur.length < ranges.length) {
+      var idxs = cur.map(function (v) { return ranges.indexOf(v); }).filter(function (i) { return i >= 0; });
+      if (idxs.length) {
+        var lo = Math.max(0, Math.min.apply(null, idxs) - 1);
+        var hi = Math.min(ranges.length - 1, Math.max.apply(null, idxs) + 1);
+        var next = ranges.slice(lo, hi + 1);
+        if (next.length > cur.length) {
+          f.organization_num_employees_ranges = next;
+          return 'rango de empleados ampliado';
+        }
+      }
+      f.organization_num_employees_ranges = [];
+      return 'filtro de tamaño de empresa eliminado';
+    }
+    if (f.person_seniorities.length) {
+      f.person_seniorities = [];
+      return 'filtro de seniority eliminado';
+    }
+    if (cur.length) {
+      f.organization_num_employees_ranges = [];
+      return 'filtro de tamaño de empresa eliminado';
+    }
+    var isLatam = f.person_locations.length &&
+      f.person_locations.every(function (c) { return RECO_LATAM.indexOf(c) !== -1; });
+    if (isLatam && f.person_locations.length < RECO_LATAM.length) {
+      f.person_locations = RECO_LATAM.slice();
+      return 'geografía ampliada a toda LATAM';
+    }
+    return null;
+  }
+
+  function recoTotal() {
+    var res = state.search.results;
+    var pg = (res && res.pagination) || {};
+    return pg.total_entries != null ? pg.total_entries : 0;
+  }
+
+  function waitForBrief() {
+    // Espera (poll cada 6s, máx ~2 min) a que generate-client-brief termine.
+    var tries = 0;
+    function step() {
+      tries++;
+      return Promise.resolve(pd().fetchClientBrief()).then(function (b) {
+        if (b && b.status === 'ready') return b;
+        if (b && b.status === 'error') {
+          throw new Error('No se pudo generar tu brief: ' + (b.error_message || 'error desconocido') + '. Reintenta.');
+        }
+        if (tries >= 20) throw new Error('Tu brief sigue generándose. Vuelve a intentarlo en un minuto.');
+        setReco({ msg: 'La IA está leyendo tu web y tu LinkedIn para entender tu empresa… (' + (tries * 6) + 's)' });
+        return new Promise(function (resolve) { setTimeout(resolve, 6000); }).then(step);
+      });
+    }
+    return step();
+  }
+
+  function runRecommendedSearch() {
+    var s = state.search;
+    if (s.reco.running || s.loading) return Promise.resolve();
+    setReco({ running: true, msg: 'Cargando el contexto de tu empresa…', note: '' });
+    return Promise.resolve(pd().fetchClientBrief())
+      .then(function (brief) {
+        if (brief && brief.status === 'ready' && brief.recommended_filters) return brief;
+        if (!brief || brief.status === 'error' || (brief.status === 'ready' && !brief.recommended_filters)) {
+          setReco({ msg: 'Aún no tienes un brief: lo estamos generando desde tu onboarding y tu web…' });
+          return Promise.resolve(pd().generateClientBrief()).then(waitForBrief);
+        }
+        return waitForBrief(); // status pending/generating
+      })
+      .then(function (brief) {
+        if (!brief.recommended_filters) throw new Error('Tu brief no incluye filtros recomendados. Regenera tu brief desde la pestaña WhatsApp & LinkedIn.');
+        applyRecommendedFilters(brief.recommended_filters);
+        setReco({ msg: 'Buscando con los filtros de tu ICP…' });
+        var applied = [];
+        function searchAndBroaden() {
+          return runSearch(1, true).then(function () {
+            var total = recoTotal();
+            if (s.searchError) throw new Error(s.searchError);
+            if (total >= RECO_TARGET) return total;
+            var desc = broadenOnce(s.filters);
+            if (!desc) return total;
+            applied.push(desc);
+            persistFilters();
+            if (s.panelHost) {
+              s.panelHost.innerHTML = '';
+              s.panelHost.appendChild(buildFilterPanel());
+            }
+            updateFilterBadges();
+            setReco({ msg: 'Solo ' + fmtNum(total) + ' personas — ampliando: ' + desc + '…' });
+            return searchAndBroaden();
+          });
+        }
+        return searchAndBroaden().then(function (total) {
+          return { total: total, applied: applied };
+        });
+      })
+      .then(function (r) {
+        var note = r.total >= RECO_TARGET
+          ? '✓ ' + fmtNum(r.total) + ' personas encontradas con tu ICP.'
+          : '✓ ' + fmtNum(r.total) + ' personas — es lo máximo con tu ICP, incluso ampliado.';
+        if (r.applied.length) note += ' Ajustes aplicados: ' + r.applied.join(', ') + '.';
+        setReco({ running: false, msg: '', note: note });
+      })
+      .catch(function (e) {
+        setReco({ running: false, msg: '', note: '' });
+        toast(errMsg(e), 'error');
+      });
+  }
+
   // ══ TAB 1: BÚSQUEDA — search + results ══════════════════════════════════
   function buildSearchPane() {
     var pane = state.panes.busqueda;
+    var recoHost = h('div', null);
+    pane.appendChild(recoHost);
+    state.search.recoHost = recoHost;
+    renderRecoCard();
     var filterHost = h('div', null);
     var results = h('div', { style: 'min-width:0' });
     pane.appendChild(h('div', { class: 'pros-grid' }, filterHost, results));
@@ -2100,10 +2288,13 @@
   // ══ TAB 4: WHATSAPP & LINKEDIN ═══════════════════════════════════════════
   function buildWaPane() {
     var pane = state.panes.outreach;
+    var briefHost = h('div', null);
     var senderHost = h('div', null);
     var listHost = h('div', null);
+    pane.appendChild(briefHost);
     pane.appendChild(senderHost);
     pane.appendChild(listHost);
+    state.wa.briefHost = briefHost;
     state.wa.senderHost = senderHost;
     state.wa.listHost = listHost;
     pane.addEventListener('click', guarded(onWaClick));
@@ -2112,8 +2303,10 @@
 
   function initWaTab() {
     var st = state.wa;
+    renderBriefCard();
     renderSenderCard();
     renderWaList();
+    loadWaBrief();
     return loadLists(false)
       .catch(function (e) { toast(errMsg(e), 'error'); })
       .then(function () {
@@ -2121,6 +2314,52 @@
         renderWaList();
         if (st.listId && !st.members.length) return reloadWaMembers();
       });
+  }
+
+  // ── Contexto de la empresa (client_brief) ────────────────────────────────
+  // Los mensajes se personalizan con este brief; esta tarjeta muestra su
+  // estado y permite (re)generarlo sin salir de Prospección.
+  function loadWaBrief() {
+    var st = state.wa;
+    st.briefLoading = true;
+    renderBriefCard();
+    return Promise.resolve()
+      .then(function () { return pd().fetchClientBrief(); })
+      .then(function (b) { st.brief = b; })
+      .catch(function (e) { console.warn('[prospecting] brief:', e.message); })
+      .then(function () { st.briefLoading = false; renderBriefCard(); });
+  }
+
+  function renderBriefCard() {
+    var st = state.wa;
+    var host = st.briefHost;
+    if (!host) return;
+    host.innerHTML = '';
+    var b = st.brief;
+    var left = h('div', { style: 'min-width:220px;flex:1' });
+    left.appendChild(h('div', { class: 'chart-title', text: 'Contexto de tu empresa' }));
+    var btn = null;
+    if (st.briefLoading) {
+      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text3);margin-top:4px', text: 'Cargando…' }));
+    } else if (b && b.status === 'ready') {
+      var resumen = b.positional_phrase || b.what_it_does || b.company_name || '';
+      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:4px;line-height:1.5' },
+        h('span', { class: 'pill pill-green', text: 'Listo' }), ' ',
+        resumen ? String(resumen) : ''));
+      left.appendChild(h('div', { style: 'font-size:11.5px;color:var(--text3);margin-top:6px;line-height:1.5', text: 'Cada mensaje se personaliza en 5 capas (mercado → industria → empresa → rol → persona) usando este contexto y tu Intelligence Hub.' }));
+      btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'brief-generate', text: 'Actualizar contexto' });
+    } else if (b && b.status === 'generating') {
+      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:4px', text: '⏳ La IA está leyendo tu web y tu LinkedIn para entender qué hace tu empresa…' }));
+      btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'brief-refresh', text: 'Revisar estado' });
+    } else if (b && b.status === 'error') {
+      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--red);margin-top:4px', text: '⚠ No se pudo generar: ' + (b.error_message || 'error desconocido') }));
+      btn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'brief-generate', text: 'Reintentar' });
+    } else {
+      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:4px;line-height:1.5', text: 'Genera el contexto de tu empresa para que los mensajes hablen de lo que haces y de cómo ayudas a tu cliente, no de un rol genérico.' }));
+      btn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'brief-generate', text: 'Generar contexto' });
+    }
+    host.appendChild(h('div', { class: 'chart-card', style: 'margin-bottom:14px' },
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap' }, left, btn)));
   }
 
   function getSenderSafe() {
@@ -2228,7 +2467,35 @@
       '</div>' +
       '<div class="pros-hint">Cópialo y pégalo manualmente en el inbox de LinkedIn — así respetas sus políticas de uso.</div>' +
       '</div>';
-    html += '<div><button type="button" class="btn btn-ghost btn-sm" data-action="wa-regen" data-id="' + id + '">Regenerar</button></div>';
+    // (d) Email frío (mismo motor de personalización)
+    var emailS = (m.outreach && m.outreach.email_subject) || '';
+    var emailB = (m.outreach && m.outreach.email_body) || '';
+    if (emailS || emailB) {
+      html += '<div class="pros-msgblock"><div class="pros-msgblock-title">Email frío</div>' +
+        (emailS ? '<div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Asunto: ' + esc(emailS) + '</div>' : '') +
+        (emailB ? '<div style="font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word">' + esc(emailB) + '</div>' : '') +
+        '<div class="pros-actions"><button type="button" class="btn btn-ghost btn-sm" data-action="wa-copy-email" data-id="' + id + '">Copiar email</button></div>' +
+        '</div>';
+    }
+    // (e) Ángulo de personalización (síntesis de las 5 capas — lo consume el coach)
+    var angle = (m.outreach && m.outreach.angle) || null;
+    if (angle) {
+      html += '<div class="pros-msgblock"><div class="pros-msgblock-title">Ángulo de personalización</div>' +
+        '<div style="font-size:12.5px;line-height:1.7;color:var(--text2)">' +
+        (angle.layer ? '<div><b>Capa del ángulo:</b> ' + esc(angle.layer) + '</div>' : '') +
+        (angle.hypothesis ? '<div><b>Dolor probable:</b> ' + esc(angle.hypothesis) + '</div>' : '') +
+        (angle.objection ? '<div><b>Objeción esperada:</b> ' + esc(angle.objection) + (angle.neutralizer ? ' · <i>Neutralizador:</i> ' + esc(angle.neutralizer) : '') + '</div>' : '') +
+        (angle.social_proof && angle.social_proof !== 'ninguno' ? '<div><b>Social proof usado:</b> ' + esc(angle.social_proof) + '</div>' : '') +
+        '</div>' +
+        '<div class="pros-hint">Este contexto queda guardado con el lead y lo usa el AI coach si se agenda una reunión.</div>' +
+        '</div>';
+    }
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="wa-regen" data-id="' + id + '">Regenerar</button>' +
+      ((m.outreach && m.outreach.generated_at)
+        ? '<button type="button" class="btn btn-teal btn-sm" data-action="wa-coach" data-id="' + id + '">Preparar reunión con el coach</button>'
+        : '') +
+      '</div>';
     html += '</div>';
     return html;
   }
@@ -2442,6 +2709,46 @@
       var li = m.outreach && m.outreach.linkedin_message;
       if (!li) return toast('Genera los mensajes con IA para ver el mensaje de LinkedIn.', 'warn');
       return copyText(li);
+    }
+    if (action === 'wa-copy-email' && m) {
+      var es = (m.outreach && m.outreach.email_subject) || '';
+      var eb = (m.outreach && m.outreach.email_body) || '';
+      if (!es && !eb) return toast('Genera los mensajes con IA para ver el email.', 'warn');
+      return copyText((es ? 'Asunto: ' + es + '\n\n' : '') + eb);
+    }
+    if (action === 'brief-generate') {
+      return Promise.resolve(pd().generateClientBrief()).then(function () {
+        st.brief = Object.assign({}, st.brief || {}, { status: 'generating' });
+        renderBriefCard();
+        toast('Generando el contexto de tu empresa. Toma alrededor de un minuto.', 'info');
+      });
+    }
+    if (action === 'brief-refresh') return loadWaBrief();
+    if (action === 'wa-coach' && m) {
+      // Puente Prospección → AI coach: el brief del lead (quién es, dolor
+      // probable, objeción + neutralizador) viaja como contexto de la reunión.
+      var ang = (m.outreach && m.outreach.angle) || {};
+      var ctx = {
+        id: String(m.id),
+        name: m.name || '',
+        title: m.title || '',
+        company: m.company || '',
+        brief_who: (m.name || '—') + (m.title ? ' · ' + m.title : '') + (m.company ? ' en ' + m.company : '') + '.',
+        brief_why: ang.hypothesis
+          ? ang.hypothesis + (ang.social_proof && ang.social_proof !== 'ninguno' ? ' Social proof sugerido: ' + ang.social_proof + '.' : '')
+          : 'Lead trabajado desde Prospección.',
+        brief_risks: ang.objection
+          ? 'Objeción probable: ' + ang.objection + (ang.neutralizer ? '. Neutralizador: ' + ang.neutralizer + '.' : '')
+          : 'Sin alertas previas.',
+        outreach: m.outreach || null,
+      };
+      window.predictable = window.predictable || {};
+      window.predictable.currentProspect = ctx;
+      var navEl = document.querySelector('[data-page="ventas-coach"]');
+      if (navEl && typeof window.nav === 'function') window.nav(navEl, 'ventas-coach');
+      if (typeof window.loadCoachBrief === 'function') window.loadCoachBrief(ctx);
+      toast('Contexto del lead cargado en el coach.', 'success');
+      return;
     }
   }
 
