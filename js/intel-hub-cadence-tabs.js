@@ -527,25 +527,31 @@
 
   if (error) { console.warn('[feedback]', error); delete STATE.feedback[fbKey]; renderDashboard(); return; }
 
-  // v4: sync feedback al memory store del agent (self-learning)
-
-  try {
-
-    const session = (await window.supabaseClient.auth.getSession()).data.session;
-
-    fetch(window.SUPABASE_CONFIG.url + '/functions/v1/intel-agent-feedback-sync', {
-
-      method: 'POST',
-
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-
-      body: JSON.stringify({ section_key: sectionKey }),
-
-    }).catch(e => console.warn('[feedback-sync]', e));
-
-  } catch (e) { console.warn('[feedback-sync init]', e); }
-
 }
+  // Una sección se considera "vencida" (elegible para --force=false) si:
+  //  - nunca se generó, o
+  //  - terminó en error, o
+  //  - está 'ready' pero pasó su next_refresh_at, o
+  //  - quedó en 'generating' hace más de STALE_GENERATING_MS (corrida previa
+  //    que nunca cerró — p.ej. la función se cayó antes de escribir el
+  //    resultado). Sin este chequeo, una sección atascada en "Generando…"
+  //    queda bloqueada para siempre porque cada click la sigue considerando
+  //    "en curso" y la salta.
+  const STALE_GENERATING_MS = 5 * 60 * 1000;
+  function isDue(section) {
+    const rep = STATE.reports[section.key];
+    if (!rep) return true;
+    if (rep.status === 'error') return true;
+    if (rep.status === 'generating') {
+      const started = new Date(rep.updated_at || rep.created_at || 0).getTime();
+      return (Date.now() - started) > STALE_GENERATING_MS;
+    }
+    if (rep.status === 'ready') {
+      if (!rep.next_refresh_at) return true;
+      return new Date(rep.next_refresh_at).getTime() <= Date.now();
+    }
+    return true;
+  }
   async function generateAll({ force = false } = {}) {
 
   if (STATE.generating) return;
@@ -577,35 +583,13 @@
 
     const session = (await window.supabaseClient.auth.getSession()).data.session;
 
-    const url = window.SUPABASE_CONFIG.url + '/functions/v1/intel-agent-start';
+    const url = window.SUPABASE_CONFIG.url + '/functions/v1/generate-intel-hub';
 
-    prog.textContent = 'Calculando qué secciones generar…';
+    const candidates = SECTIONS.filter(s => !s.locked);
 
-    const planResp = await fetch(url, {
+    const toRun   = (force ? candidates : candidates.filter(isDue)).map(s => s.key);
 
-      method: 'POST',
-
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-
-      body: JSON.stringify({ force, plan_only: true }),
-
-    });
-
-    const planData = await planResp.json();
-
-    if (planResp.status === 402) {
-
-      prog.textContent = `❌ Sin créditos suficientes (balance: ${planData.balance || 0})`;
-
-      return;
-
-    }
-
-    const plan    = planData.plan || [];
-
-    const toRun   = plan.filter(p => !p.skip).map(p => p.section_key);
-
-    const skipped = plan.length - toRun.length;
+    const skipped = candidates.length - toRun.length;
 
     if (toRun.length === 0) {
 
@@ -623,11 +607,12 @@
 
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
 
-      body: JSON.stringify({ force, sections: toRun }),
+      body: JSON.stringify({ sections: toRun, triggered_by: 'manual' }),
 
     });
 
-    const j = await r.json();
+    let j = {};
+    try { j = await r.json(); } catch (_) { /* respuesta no-JSON */ }
 
     if (r.status === 402) {
 
@@ -637,15 +622,15 @@
 
     }
 
-    if (j.error) {
+    if (!r.ok || j.error) {
 
-      prog.textContent = `❌ Error: ${j.detail || j.error}`;
+      prog.textContent = `❌ Error: ${j.detail || j.error || ('HTTP ' + r.status)}`;
 
       return;
 
     }
 
-    prog.innerHTML = `🚀 <strong>${j.started}</strong> agentes corriendo en Anthropic.<br><small>Los reportes van apareciendo en tiempo real a medida que cada agente termina. Tiempo estimado: 1-3 min.</small>`;
+    prog.innerHTML = `🚀 <strong>${toRun.length}</strong> agentes corriendo en Anthropic.<br><small>Los reportes van apareciendo en tiempo real a medida que cada agente termina. Tiempo estimado: 1-3 min.</small>`;
 
     // Integración con Prospección: la misma corrida del hub refresca el brief
     // del cliente (client_brief / "MI Cliente"), que generate-outreach y la
