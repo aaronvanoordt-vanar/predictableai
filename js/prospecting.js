@@ -44,6 +44,7 @@
       resultsEl: null,
       searchBtn: null,
       badgeSecs: [],
+      refreshSavedSearches: null,
       recoHost: null,
       reco: { running: false, msg: '', note: '' },
     },
@@ -761,6 +762,12 @@
           list.appendChild(h('div', { style: 'display:flex;align-items:center;gap:4px' }, loadBtn, delBtn));
         });
       }
+      state.search.refreshSavedSearches = function () {
+        return loadSavedSearches(true).then(function (rows) {
+          renderList(rows);
+          updateFilterBadges();
+        });
+      };
       loadSavedSearches(false).then(renderList).catch(function (e) {
         list.innerHTML = '';
         list.appendChild(h('div', { style: 'font-size:12px;color:var(--red)', text: errMsg(e) }));
@@ -1711,6 +1718,9 @@
       return Promise.resolve(pd().createSavedSearch(name, state.search.filters))
         .then(function () {
           state.cache.savedSearches = null;
+          if (state.search.refreshSavedSearches) {
+            state.search.refreshSavedSearches().catch(function () { /* silent: panel refresh is best-effort */ });
+          }
           if (!alsoApollo.checked || !rows.length) return null;
           prog.set('Guardando en Apollo…');
           return Promise.resolve(pd().createList(name)).then(function (list) {
