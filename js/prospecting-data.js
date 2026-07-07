@@ -316,6 +316,75 @@
     return { added, alreadyInList, failed, warnings, creditsUsed };
   }
 
+  // ── Agregar contacto manualmente ────────────────────────────
+  // Inserta directo en Supabase (sin pasar por Apollo /contacts): estos
+  // contactos no tienen apollo_person_id, así que nunca chocan con el
+  // UNIQUE(list_id, apollo_person_id) (NULL nunca colisiona en Postgres).
+
+  async function addManualMember({ list, contact }) {
+    if (!list?.id) throw new Error('Selecciona una lista válida.');
+    const c = contact || {};
+    const firstName = String(c.first_name || '').trim();
+    const lastName = String(c.last_name || '').trim();
+    const email = String(c.email || '').trim();
+    if (!firstName && !lastName && !email) {
+      throw new Error('Escribe al menos un nombre o un correo.');
+    }
+    const userId = await getUserId();
+    const phone = String(c.phone || '').trim();
+    const row = {
+      list_id: list.id,
+      user_id: userId,
+      apollo_person_id: null,
+      apollo_contact_id: null,
+      first_name: firstName || null,
+      last_name: lastName || null,
+      name: [firstName, lastName].filter(Boolean).join(' ') || null,
+      title: String(c.title || '').trim() || null,
+      company: null,
+      company_domain: null,
+      linkedin_url: String(c.linkedin_url || '').trim() || null,
+      email: email || null,
+      email_status: null,
+      phone: phone || null,
+      phone_status: phone ? 'revealed' : 'none',
+      city: null,
+      state: null,
+      country: String(c.country || '').trim() || null,
+      snapshot: {},
+      enriched_at: (email || phone) ? new Date().toISOString() : null,
+    };
+    const { data, error } = await sb().from('prospect_list_members').insert(row).select().single();
+    if (error) throw new Error('No se pudo agregar el contacto: ' + error.message);
+    return data;
+  }
+
+  // Autocompletar datos desde una URL de LinkedIn vía Apollo (1 crédito si
+  // encuentra match). Devuelve null si Apollo no encontró a la persona.
+
+  async function matchByLinkedinUrl(url) {
+    const clean = String(url || '').trim();
+    if (!clean) throw new Error('Pega una URL de LinkedIn.');
+    const data = await apolloProxy('/people/match', {
+      linkedin_url: clean,
+      reveal_personal_emails: true,
+    });
+    const p = data?.person;
+    if (!p) return null;
+    const org = p.organization || {};
+    const phone = (p.phone_numbers || []).map((n) => n?.sanitized_number || n?.raw_number).find(Boolean) || '';
+    return {
+      first_name: p.first_name || '',
+      last_name: p.last_name || '',
+      title: p.title || '',
+      email: isMaskedEmail(p.email) ? '' : (p.email || ''),
+      phone,
+      country: p.country || '',
+      company: org.name || '',
+      linkedin_url: p.linkedin_url || clean,
+    };
+  }
+
   // ── Enriquecimiento (emails personales + teléfonos) ────────
   // El teléfono es asíncrono: Apollo lo envía al edge function
   // apollo-webhook, que actualiza la fila (phone_status pending → revealed).
@@ -633,6 +702,8 @@
     fetchMembers,
     deleteMembers,
     addPeopleToList,
+    addManualMember,
+    matchByLinkedinUrl,
     enrichMembers,
     updateMember,
     fetchSequences,
