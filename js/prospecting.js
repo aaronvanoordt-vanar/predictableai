@@ -1374,6 +1374,10 @@
         s.searchError = null;
         if (fromButton) s.selectedRows.clear();
         renderResults();
+        // El ICP se arma aquí (ya no en el onboarding): los filtros de esta
+        // búsqueda se persisten en Supabase (client_icp + intel_hub_intake)
+        // para que el Intelligence Hub y el brief del cliente los consuman.
+        pd().syncIcpFromSearch(payload);
         // Señal para el tour de onboarding (paso "primera búsqueda")
         try { document.dispatchEvent(new CustomEvent('prospecting:search-run')); } catch (_) {}
       })
