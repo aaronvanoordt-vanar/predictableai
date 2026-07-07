@@ -135,6 +135,9 @@ Deno.serve(async (req) => {
   const res = await fetch("https://api.apollo.io/api/v1" + endpoint, init);
 
   const text = await res.text();
+  if (!res.ok) {
+    console.error(`[apollo-proxy] upstream ${res.status} for ${endpoint}: ${text.slice(0, 300)}`);
+  }
   return new Response(text, {
     status: res.status,
     headers: { "Content-Type": "application/json", ...cors },
