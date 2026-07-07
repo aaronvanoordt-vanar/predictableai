@@ -2011,13 +2011,13 @@ html, body {
     <div class="sidebar-section">
       <div class="lbl">Ejecutar</div>
     </div>
-    <div class="nav-item" data-page="pro-main" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('busqueda')">
+    <div class="nav-item" data-page="pro-main" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('resumen')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="6" cy="5" r="3"/><path d="M1 14c0-3 2.5-5 5-5M14 11l-3 3-1.5-1.5"/></svg>
       Prospección
     </div>
     <div class="nav-item" data-page="pro-icp" onclick="nav(this,'pro-icp')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M8 1l2 4 5 .5-3.5 3.5 1 5L8 12l-4.5 2 1-5L1 5.5 6 5z"/></svg>
-      ICP Builder
+      Search People
     </div>
     <div class="nav-item" data-page="pro-main" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('listas')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 6h6M5 9h4"/></svg>
@@ -2664,7 +2664,7 @@ html, body {
 <!-- ═══════ PAGE: PRO ICP ═══════ -->
 <div class="page fade-in" id="page-pro-icp">
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
-    <div><div class="topbar-title">ICP Builder</div><div class="topbar-sub">Perfil de búsqueda Apollo generado desde tu Matriz de Input</div></div>
+    <div><div class="topbar-title">Search People</div><div class="topbar-sub">Perfil de búsqueda Apollo generado desde tu Matriz de Input</div></div>
     <div class="topbar-actions">
       <button class="btn btn-ghost btn-sm" onclick="syncIcpFromMatrix()">Sincronizar desde Matriz</button>
       <button class="btn btn-teal btn-sm" onclick="nav(document.querySelector('[data-page=pro-main]'),'pro-main');if(window.prospecting){window.prospecting.show('busqueda');window.prospecting.prefillFromICP()}">Buscar en Apollo →</button>
@@ -4027,7 +4027,7 @@ function nav(el, pageId) {
   if (pageId === 'pro-main' && window.prospecting && typeof window.prospecting.show === 'function') {
     setTimeout(() => {
       const shell = document.getElementById('prospecting-shell');
-      if (shell && !shell.childElementCount) window.prospecting.show('busqueda');
+      if (shell && !shell.childElementCount) window.prospecting.show('resumen');
     }, 0);
   }
 
