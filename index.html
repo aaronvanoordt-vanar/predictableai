@@ -2130,22 +2130,22 @@ html, body {
   <div class="stat-grid">
     <div class="stat-card">
       <div class="stat-label">Reuniones generadas</div>
-      <div class="stat-val">—</div>
+      <div class="stat-val" id="stat-reuniones">—</div>
       <div class="stat-sub">Se calcula con tus campañas activas</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Contactos en secuencia</div>
-      <div class="stat-val">—</div>
+      <div class="stat-val" id="stat-contactos">—</div>
       <div class="stat-sub">Guarda tu primera lista para empezar</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Open rate emails</div>
-      <div class="stat-val">—</div>
+      <div class="stat-val" id="stat-openrate">—</div>
       <div class="stat-sub">Disponible al activar cadencias</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Score del equipo</div>
-      <div class="stat-val">—</div>
+      <div class="stat-val" id="stat-score">—</div>
       <div class="stat-sub">Se genera con el Meeting Coach</div>
     </div>
   </div>
@@ -4196,6 +4196,39 @@ function runAnalysis() {
 </script>
 
 <script>
+// ── LOAD DASHBOARD STATS ──
+async function loadDashboardStats() {
+  try {
+    const sb = window.supabaseClient;
+    if (!sb) return;
+
+    const { data: lists, error: listsError } = await sb
+      .from('prospect_lists')
+      .select('id, prospect_list_members(count)')
+      .order('created_at', { ascending: false });
+
+    if (listsError) {
+      console.warn('[dashboard] Error loading lists:', listsError.message);
+      return;
+    }
+
+    let totalContactos = 0;
+    if (lists && lists.length > 0) {
+      for (const list of lists) {
+        const count = list.prospect_list_members?.[0]?.count ?? 0;
+        totalContactos += count;
+      }
+    }
+
+    const statContactos = document.getElementById('stat-contactos');
+    if (statContactos) {
+      statContactos.setAttribute('data-count', totalContactos);
+    }
+  } catch (e) {
+    console.warn('[dashboard] Failed to load stats:', e.message);
+  }
+}
+
 // ── COUNT-UP ANIMATION ──
 function countUp(el, target, duration = 1200, prefix = '', suffix = '') {
   const isFloat = String(target).includes('.');
@@ -4225,11 +4258,13 @@ function initCounters() {
 const _origNav = window.nav;
 window.nav = function(el, pageId) {
   _origNav && _origNav(el, pageId);
-  if (pageId === 'dashboard') setTimeout(initCounters, 150);
+  if (pageId === 'dashboard') {
+    loadDashboardStats().then(() => setTimeout(initCounters, 150));
+  }
 };
 
 window.addEventListener('DOMContentLoaded', () => {
-  setTimeout(initCounters, 300);
+  loadDashboardStats().then(() => setTimeout(initCounters, 300));
 });
 </script>
 
