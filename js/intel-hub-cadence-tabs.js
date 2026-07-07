@@ -647,6 +647,15 @@
 
     prog.innerHTML = `🚀 <strong>${j.started}</strong> agentes corriendo en Anthropic.<br><small>Los reportes van apareciendo en tiempo real a medida que cada agente termina. Tiempo estimado: 1-3 min.</small>`;
 
+    // Integración con Prospección: la misma corrida del hub refresca el brief
+    // del cliente (client_brief / "MI Cliente"), que generate-outreach y la
+    // búsqueda recomendada consumen. Best-effort — no bloquea el hub.
+    fetch(window.SUPABASE_CONFIG.url + '/functions/v1/generate-client-brief', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+      body: '{}',
+    }).catch(e => console.warn('[client-brief]', e));
+
     await loadReports();
 
   } catch (e) {

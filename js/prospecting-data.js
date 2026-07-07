@@ -746,6 +746,8 @@
   }
 
   // ── Mensajes personalizados (edge function generate-outreach) ──
+  // Personalización en 5 capas (Mercado → Industria → Empresa → Rol → Persona)
+  // usando el brief del cliente (client_brief) + insights del Intelligence Hub.
 
   async function generateOutreach({ member, sender }) {
     if (!member) throw new Error('Falta el contacto.');
@@ -756,14 +758,37 @@
       first_name: member.first_name || (member.name || '').split(' ')[0] || '',
       title: member.title || '',
       company: member.company || '',
+      company_domain: member.company_domain || member.snapshot?.organization?.primary_domain || '',
       industry: member.snapshot?.organization?.industry || '',
       country: member.country || '',
+      city: member.city || '',
+      linkedin_url: member.linkedin_url || '',
     };
     const data = await edgeFetch('generate-outreach', { lead, sender: sender || getSenderInfo() });
     if (!data?.whatsapp_followup || !data?.linkedin_message) {
       throw new Error('La IA no devolvió los mensajes. Reintenta.');
     }
-    return { whatsapp_followup: data.whatsapp_followup, linkedin_message: data.linkedin_message };
+    return {
+      whatsapp_followup: data.whatsapp_followup,
+      linkedin_message: data.linkedin_message,
+      email_subject: data.email_subject || '',
+      email_body: data.email_body || '',
+      angle: (data.angle && typeof data.angle === 'object') ? data.angle : null,
+    };
+  }
+
+  // ── Brief del cliente ("MI Cliente") ────────────────────────
+  // Contexto del vendedor generado por generate-client-brief: identidad,
+  // mecanismo, ICP, social proof y filtros Apollo recomendados. RLS por dueño.
+
+  async function fetchClientBrief() {
+    const { data, error } = await sb().from('client_brief').select('*').maybeSingle();
+    if (error) throw new Error('No se pudo leer tu brief: ' + error.message);
+    return data || null;
+  }
+
+  async function generateClientBrief() {
+    return edgeFetch('generate-client-brief', {});
   }
 
   // ── Remitente (para el saludo de WhatsApp) ─────────────────
@@ -832,6 +857,8 @@
     createSequence,
     enrollInSequence,
     generateOutreach,
+    fetchClientBrief,
+    generateClientBrief,
     importLegacyLists,
     hasLegacyListsPendingImport,
     getSenderInfo,
