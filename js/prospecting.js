@@ -2079,7 +2079,11 @@
       return { value: String(a.id), label: a.email || '—' };
     }));
 
-    var html = '<div class="chart-card"><div class="chart-title">Enrolar contactos en una secuencia</div>' +
+    var html = '<div class="chart-card">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
+      '<div class="chart-title" style="margin:0">Enrolar contactos en una secuencia</div>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="seq-create">+ Nueva secuencia</button>' +
+      '</div>' +
       '<div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-top:12px">' +
       '<div class="form-group"><div class="pros-lbl">Lista</div>' + selectHtml('seq-list', listOpts, st.listId) + '</div>' +
       '<div class="form-group"><div class="pros-lbl">Secuencia de Apollo</div>' + selectHtml('seq-seq', seqOpts, st.sequenceId) + '</div>' +
@@ -2095,11 +2099,11 @@
 
     if (!st.loadingSources && !st.seqError && state.cache.sequences && !seqs.length) {
       html += '<div class="table-card">' +
-        emptyHtml(SVG_MAIL, 'No hay secuencias en tu cuenta de Apollo',
-          'Créalas en app.apollo.io y vuelve a cargar.',
+        emptyHtml(SVG_MAIL, 'Aún no tienes secuencias',
+          'Crea tu primera secuencia aquí mismo — sin salir de la app.',
           '<div class="pros-actions" style="justify-content:center;margin-top:6px">' +
-          '<a class="btn btn-ghost btn-sm" href="https://app.apollo.io/#/sequences" target="_blank" rel="noopener">Abrir Apollo →</a>' +
-          '<button type="button" class="btn btn-primary btn-sm" data-action="seq-retry">Reintentar</button>' +
+          '<button type="button" class="btn btn-primary btn-sm" data-action="seq-create">+ Crear secuencia</button>' +
+          '<button type="button" class="btn btn-ghost btn-sm" data-action="seq-retry">Reintentar</button>' +
           '</div>') +
         '</div>';
     }
@@ -2203,7 +2207,111 @@
       state.cache.accounts = null;
       return initSeqTab();
     }
+    if (action === 'seq-create') return openCreateSeqModal();
     if (action === 'seq-enroll') return openEnrollModal();
+  }
+
+  // Crear una secuencia (nombre + N correos) directamente en Apollo, para que
+  // el usuario no tenga que salir de la app.
+  function openCreateSeqModal() {
+    var st = state.seq;
+    var acct = (state.cache.accounts || []).find(function (a) { return String(a.id) === String(st.accountId); });
+    var steps = [{ delayDays: 0, subject: '', body: '' }];
+    var stepsHost = h('div', { style: 'display:flex;flex-direction:column;gap:14px' });
+    var prog = progressLine();
+    var failHost = h('div', null);
+
+    function renderSteps() {
+      stepsHost.innerHTML = '';
+      steps.forEach(function (s, i) {
+        var head = h('div', { style: 'display:flex;align-items:center;gap:8px' },
+          h('span', { class: 'pros-msgblock-title', text: 'Correo ' + (i + 1) }));
+        if (i === 0) {
+          head.appendChild(h('span', { style: 'margin-left:auto;font-size:11.5px;color:var(--text3)', text: 'Se envía al enrolar' }));
+        } else {
+          var delayIn = h('input', { type: 'number', min: '0', style: 'width:60px' });
+          delayIn.value = String(s.delayDays);
+          delayIn.addEventListener('input', function () { s.delayDays = delayIn.value; });
+          head.appendChild(h('span', { style: 'margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)' },
+            'Esperar', delayIn, 'días'));
+          var rm = h('button', { type: 'button', class: 'pros-iconbtn', 'aria-label': 'Quitar correo', html: SVG_TRASH });
+          rm.addEventListener('click', function () { steps.splice(i, 1); renderSteps(); });
+          head.appendChild(rm);
+        }
+        var subj = h('input', { type: 'text', placeholder: 'Asunto del correo' });
+        subj.value = s.subject;
+        subj.addEventListener('input', function () { s.subject = subj.value; });
+        var body = h('textarea', { rows: '5', placeholder: 'Escribe el correo… Puedes usar variables de Apollo como {{first_name}}.', style: 'resize:vertical;width:100%' });
+        body.value = s.body;
+        body.addEventListener('input', function () { s.body = body.value; });
+        stepsHost.appendChild(h('div', { class: 'pros-msgblock' }, head, subj, body));
+      });
+    }
+    renderSteps();
+
+    var addBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '+ Agregar correo' });
+    addBtn.addEventListener('click', function () { steps.push({ delayDays: 3, subject: '', body: '' }); renderSteps(); });
+
+    var nameIn = h('input', { type: 'text', placeholder: 'Ej. Prospección Q3' });
+    var bodyN = h('div', { style: 'display:flex;flex-direction:column;gap:14px' },
+      h('div', null, h('div', { class: 'pros-lbl', style: 'margin-bottom:6px', text: 'Nombre de la secuencia' }), nameIn),
+      h('div', { class: 'pros-hint', text: acct
+        ? ('Se enviará desde ' + (acct.email || '') + '. La secuencia se crea en pausa: revísala y actívala en Apollo antes de que empiece a enviar.')
+        : 'Consejo: selecciona una cuenta de envío en la pantalla anterior antes de crear la secuencia. La secuencia se crea en pausa hasta que la actives.' }),
+      stepsHost, addBtn, prog.el, failHost);
+
+    var api = openModal({
+      title: 'Crear secuencia',
+      width: 560,
+      bodyNode: bodyN,
+      actions: [
+        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
+        {
+          label: 'Crear secuencia',
+          className: 'btn btn-primary',
+          onClick: function () {
+            var name = nameIn.value.trim();
+            if (!name) return toast('Escribe un nombre para la secuencia.', 'warn');
+            for (var i = 0; i < steps.length; i++) {
+              if (!steps[i].subject.trim() || !steps[i].body.trim()) {
+                return toast('El correo ' + (i + 1) + ' necesita asunto y cuerpo.', 'warn');
+              }
+            }
+            api.setBusy(true);
+            prog.set('Creando secuencia…');
+            return Promise.resolve(pd().createSequence({
+              name: name,
+              emailAccountId: st.accountId || '',
+              steps: steps,
+            })).then(function (res) {
+              prog.hide();
+              res = res || {};
+              var fails = res.stepFailures || [];
+              state.cache.sequences = (state.cache.sequences || []).concat([{
+                id: res.id, name: res.name, active: !!res.active, num_steps: res.num_steps,
+              }]);
+              st.sequenceId = String(res.id);
+              renderSeqPane();
+              if (fails.length) {
+                failHost.innerHTML = '';
+                failHost.appendChild(modalFailList(fails));
+                api.setBusy(false);
+                toast('Secuencia creada, pero ' + fmtNum(fails.length) + ' correo(s) fallaron.', 'warn');
+                if (api.buttons[1]) api.buttons[1].style.display = 'none';
+                if (api.buttons[0]) { api.buttons[0].textContent = 'Cerrar'; api.buttons[0].disabled = false; api.buttons[0].style.opacity = ''; }
+              } else {
+                toast('Secuencia «' + (res.name || name) + '» creada con ' + fmtNum(res.num_steps || 0) + ' correo(s).', 'success');
+                api.close();
+              }
+            }).catch(function (e) {
+              prog.hide();
+              api.setBusy(false);
+              toast(errMsg(e), 'error');
+            });
+          },
+        },
+      ],
+    });
   }
 
   function openEnrollModal() {
