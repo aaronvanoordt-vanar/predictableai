@@ -210,6 +210,31 @@
   var SVG_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z"/></svg>';
   var SVG_LINK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14L21 3"/><path d="M15 3h6v6"/><path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>';
   var SVG_TRASH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>';
+  var SVG_USER_PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>';
+
+  // Códigos de país más usados en LatAm + España/EE.UU. (celular es texto
+  // libre — esto solo evita que cada usuario tenga que teclear el «+»).
+  var PHONE_COUNTRY_CODES = [
+    { code: '+52', label: 'México (+52)' },
+    { code: '+57', label: 'Colombia (+57)' },
+    { code: '+54', label: 'Argentina (+54)' },
+    { code: '+56', label: 'Chile (+56)' },
+    { code: '+51', label: 'Perú (+51)' },
+    { code: '+55', label: 'Brasil (+55)' },
+    { code: '+593', label: 'Ecuador (+593)' },
+    { code: '+507', label: 'Panamá (+507)' },
+    { code: '+506', label: 'Costa Rica (+506)' },
+    { code: '+502', label: 'Guatemala (+502)' },
+    { code: '+1', label: 'EE.UU. / Rep. Dominicana / Puerto Rico (+1)' },
+    { code: '+598', label: 'Uruguay (+598)' },
+    { code: '+58', label: 'Venezuela (+58)' },
+    { code: '+591', label: 'Bolivia (+591)' },
+    { code: '+595', label: 'Paraguay (+595)' },
+    { code: '+504', label: 'Honduras (+504)' },
+    { code: '+503', label: 'El Salvador (+503)' },
+    { code: '+505', label: 'Nicaragua (+505)' },
+    { code: '+34', label: 'España (+34)' },
+  ];
 
   // ── Scoped CSS (every selector prefixed with #prospecting-shell) ───────
   var SCOPED_CSS = [
@@ -267,6 +292,17 @@
     '#prospecting-shell .pros-progress { display:none; align-items:center; gap:7px; font-size:12px; color:var(--text2); }',
     '#prospecting-shell .pros-progress.on { display:inline-flex; }',
     '#prospecting-shell table input[type=checkbox] { accent-color:var(--accent); width:14px; height:14px; cursor:pointer; }',
+  ].join('\n');
+
+  // Manual-add form grid lives inside a modal (outside #prospecting-shell),
+  // so its rules are scoped to a dedicated class instead.
+  var MANUAL_FORM_CSS = [
+    '.pros-manual-form { display:flex; flex-direction:column; gap:12px; }',
+    '.pros-manual-row { display:flex; gap:10px; }',
+    '.pros-manual-row > * { flex:1; min-width:0; }',
+    '.pros-manual-row .pros-phone-code { flex:0 0 auto; width:150px; }',
+    '.pros-manual-linkedin { display:flex; gap:8px; align-items:flex-start; }',
+    '.pros-manual-linkedin input { flex:1; min-width:0; }',
   ].join('\n');
 
   // ── Modal + progress helpers (reuse .logout-overlay/.logout-modal) ─────
@@ -1403,6 +1439,7 @@
       '<div><div style="font-weight:600;font-size:13.5px">' + esc((list && list.name) || 'Lista') + '</div>' +
       '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos</div></div>' +
       '<div class="pros-actions">' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>' +
       '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected"' + (n ? '' : ' disabled') + '>Enriquecer seleccionados</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-members">Actualizar</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="export-csv"' + (st.members.length ? '' : ' disabled') + '>Exportar CSV</button>' +
@@ -1517,6 +1554,7 @@
       renderListsLeft();
       return reloadMembers();
     }
+    if (action === 'add-manual') return openAddManualModal();
     if (action === 'enrich-selected') return openEnrichModal();
     if (action === 'refresh-members') {
       // Refetch lists too (member counts) — phones arrive asynchronously.
@@ -1554,6 +1592,107 @@
         });
       },
     });
+  }
+
+  // ── "Agregar manualmente" modal ─────────────────────────────────────────
+  function openAddManualModal() {
+    var st = state.listas;
+    var list = findList(st.activeListId);
+    if (!list) return toast('Selecciona una lista primero.', 'warn');
+
+    var liUrl = h('input', { type: 'url', placeholder: 'https://linkedin.com/in/…' });
+    var liBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Autocompletar con Apollo' });
+    var firstName = h('input', { type: 'text', placeholder: 'Nombre' });
+    var lastName = h('input', { type: 'text', placeholder: 'Apellido' });
+    var codeSel = h('select', { class: 'pros-phone-code' });
+    codeSel.appendChild(h('option', { value: '', text: 'Código' }));
+    PHONE_COUNTRY_CODES.forEach(function (c) {
+      codeSel.appendChild(h('option', { value: c.code, text: c.label }));
+    });
+    var phoneInput = h('input', { type: 'tel', placeholder: 'Celular' });
+    var countryInput = h('input', { type: 'text', placeholder: 'País' });
+    var roleInput = h('input', { type: 'text', placeholder: 'Rol / cargo' });
+    var emailInput = h('input', { type: 'email', placeholder: 'correo@empresa.com' });
+    var prog = progressLine();
+
+    var bodyN = h('div', { class: 'pros-manual-form' },
+      h('div', null,
+        h('div', { class: 'pros-lbl', style: 'margin-bottom:6px', text: 'LinkedIn' }),
+        h('div', { class: 'pros-manual-linkedin' }, liUrl, liBtn),
+        h('div', { class: 'pros-hint', style: 'margin-top:4px', text: 'Pega la URL del perfil y presiona «Autocompletar» para traer los datos desde Apollo (usa 1 crédito si encuentra el perfil).' })),
+      h('div', { class: 'pros-manual-row' }, firstName, lastName),
+      h('div', { class: 'pros-manual-row' }, codeSel, phoneInput),
+      h('div', { class: 'pros-manual-row' }, countryInput, roleInput),
+      emailInput,
+      prog.el);
+
+    var api = openModal({
+      title: 'Agregar contacto manualmente',
+      width: 440,
+      bodyNode: bodyN,
+      actions: [
+        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
+        { label: 'Agregar', className: 'btn btn-primary', onClick: onConfirm },
+      ],
+    });
+
+    liBtn.addEventListener('click', guarded(function () {
+      var url = liUrl.value.trim();
+      if (!url) return toast('Pega una URL de LinkedIn primero.', 'warn');
+      var restore = btnLoading(liBtn, '⏳ Buscando…');
+      return Promise.resolve(pd().matchByLinkedinUrl(url))
+        .then(function (match) {
+          if (!match) {
+            toast('No encontramos ese perfil en Apollo. Completa los datos manualmente.', 'warn');
+            return;
+          }
+          if (match.first_name) firstName.value = match.first_name;
+          if (match.last_name) lastName.value = match.last_name;
+          if (match.title) roleInput.value = match.title;
+          if (match.email) emailInput.value = match.email;
+          if (match.country) countryInput.value = match.country;
+          if (match.phone) phoneInput.value = match.phone;
+          if (match.linkedin_url) liUrl.value = match.linkedin_url;
+          toast('Datos completados desde Apollo.', 'success');
+        })
+        .then(function () { restore(); }, function (e) { restore(); throw e; });
+    }));
+
+    function onConfirm() {
+      var code = codeSel.value.trim();
+      var celular = digitsOnly(phoneInput.value);
+      var phone = celular ? (code + celular) : '';
+      var contact = {
+        first_name: firstName.value.trim(),
+        last_name: lastName.value.trim(),
+        title: roleInput.value.trim(),
+        email: emailInput.value.trim(),
+        country: countryInput.value.trim(),
+        phone: phone,
+        linkedin_url: liUrl.value.trim(),
+      };
+      api.setBusy(true);
+      prog.set('Guardando…');
+      return Promise.resolve(pd().addManualMember({ list: list, contact: contact }))
+        .then(function () {
+          prog.hide();
+          state.cache.lists = null;
+          return loadLists(true).catch(function () {}).then(function () {
+            refreshBadge();
+            renderListsLeft();
+            return reloadMembers();
+          });
+        })
+        .then(function () {
+          toast('Contacto agregado a «' + (list.name || '') + '».', 'success');
+          api.close();
+        })
+        .catch(function (e) {
+          prog.hide();
+          api.setBusy(false);
+          toast(errMsg(e), 'error');
+        });
+    }
   }
 
   function openEnrichModal() {
@@ -2308,7 +2447,7 @@
     state.shell = shell;
     state.search.filters = loadFiltersFromStorage();
     shell.innerHTML = '';
-    shell.appendChild(h('style', { text: SCOPED_CSS }));
+    shell.appendChild(h('style', { text: SCOPED_CSS + '\n' + MANUAL_FORM_CSS }));
     shell.appendChild(h('div', null,
       h('div', { class: 'pros-title', text: 'Prospección' }),
       h('div', { class: 'pros-subtitle', text: 'Encuentra, enriquece y contacta a tus prospectos — todo desde un solo lugar.' })));
