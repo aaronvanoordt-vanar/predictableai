@@ -1,13 +1,17 @@
 /**
- * js/prospecting.js — Prospecting workspace UI (Búsqueda / Listas / Secuencias / WhatsApp & LinkedIn)
+ * js/prospecting.js — Prospecting workspace UI (Resumen / Búsqueda / Listas / Secuencias / WhatsApp & LinkedIn)
  * ─────────────────────────────────────────────────────────────────────────────
  * Self-contained view module for the prospecting-architecture redesign.
  * Renders into #prospecting-shell (inside #page-pro-main). Lazy: the first
- * call to window.prospecting.show(tabId) builds the shell (header + tab bar +
- * 4 tab panes); subsequent calls switch tabs and (re)load that tab's data.
+ * call to window.prospecting.show(tabId) builds the shell (5 panes, no
+ * in-page tab bar — navigation between panes is driven entirely by the left
+ * sidebar, which calls show(tabId) directly, to avoid duplicating nav UI).
+ * "Resumen" is a metrics overview of the whole module; the actual Apollo
+ * filter/search UI is the "Búsqueda" pane (surfaced in the sidebar as
+ * "Search People" — the two are the same feature, not separate ones).
  *
  * Public API:
- *   window.prospecting.show(tabId)   // tabId: 'busqueda'|'listas'|'secuencias'|'outreach'
+ *   window.prospecting.show(tabId)   // tabId: 'resumen'|'busqueda'|'listas'|'secuencias'|'outreach'
  *   window.prospecting.refreshBadge()// updates #nav-listas-badge with list count
  *
  * Data layer: window.prospectingData (built in parallel — referenced lazily
@@ -23,9 +27,9 @@
     built: false,
     activeTab: null,
     shell: null,
-    tabsEl: null,
     panes: {},
-    cache: { lists: null, sequences: null, accounts: null },
+    cache: { lists: null, sequences: null, accounts: null, savedSearches: null },
+    resumen: { host: null },
     search: {
       filters: null,
       results: null,
@@ -69,6 +73,7 @@
   };
 
   var TABS = [
+    { id: 'resumen',    label: 'Resumen' },
     { id: 'busqueda',   label: 'Búsqueda' },
     { id: 'listas',     label: 'Listas' },
     { id: 'secuencias', label: 'Secuencias' },
@@ -447,6 +452,14 @@
     return (state.cache.lists || []).find(function (l) { return String(l.id) === String(id); }) || null;
   }
 
+  function loadSavedSearches(force) {
+    if (!force && state.cache.savedSearches) return Promise.resolve(state.cache.savedSearches);
+    return Promise.resolve(pd().fetchSavedSearches()).then(function (rows) {
+      state.cache.savedSearches = Array.isArray(rows) ? rows : [];
+      return state.cache.savedSearches;
+    });
+  }
+
   function refreshBadge() {
     try {
       var el = document.getElementById('nav-listas-badge');
@@ -709,6 +722,44 @@
       keys.forEach(function (k) { if (f()[k] !== '' && f()[k] != null && f()[k] !== false) n++; });
       return n;
     }
+
+    // 0. Búsquedas guardadas
+    section('Búsquedas guardadas', function () { return (state.cache.savedSearches || []).length; }, function (body) {
+      var list = h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
+        h('div', { style: 'font-size:12px;color:var(--text3)', text: 'Cargando…' }));
+      body.appendChild(list);
+      function renderList(rows) {
+        list.innerHTML = '';
+        if (!rows.length) {
+          list.appendChild(h('div', { style: 'font-size:12px;color:var(--text3)', text: 'Aún no guardas ninguna búsqueda.' }));
+          return;
+        }
+        rows.forEach(function (row) {
+          var loadBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'flex:1;justify-content:flex-start', text: row.name });
+          loadBtn.addEventListener('click', guarded(function () {
+            state.search.filters = Object.assign(defaultFilters(), row.filters || {});
+            persistFilters();
+            state.search.panelHost.innerHTML = '';
+            state.search.panelHost.appendChild(buildFilterPanel());
+            updateFilterBadges();
+            toast('Búsqueda «' + row.name + '» cargada.', 'info');
+            runSearch(1, true);
+          }));
+          var delBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '🗑', title: 'Eliminar' });
+          delBtn.addEventListener('click', guarded(function () {
+            return Promise.resolve(pd().deleteSavedSearch(row.id)).then(function () {
+              state.cache.savedSearches = null;
+              return loadSavedSearches(true);
+            }).then(function (rows2) { renderList(rows2); updateFilterBadges(); toast('Búsqueda eliminada.', 'info'); });
+          }));
+          list.appendChild(h('div', { style: 'display:flex;align-items:center;gap:4px' }, loadBtn, delBtn));
+        });
+      }
+      loadSavedSearches(false).then(renderList).catch(function (e) {
+        list.innerHTML = '';
+        list.appendChild(h('div', { style: 'font-size:12px;color:var(--red)', text: errMsg(e) }));
+      });
+    });
 
     // 1. Cargos
     section('Cargos', function (x) { return x.person_titles.length + x.person_seniorities.length; }, function (body) {
@@ -1191,6 +1242,66 @@
       });
   }
 
+  // ══ TAB 0: RESUMEN — overview of the module's real metrics ═══════════════
+  function buildResumenPane() {
+    var pane = state.panes.resumen;
+    var host = h('div', null, h('div', { style: 'font-size:13px;color:var(--text3)', text: 'Cargando métricas…' }));
+    pane.appendChild(host);
+    state.resumen.host = host;
+  }
+
+  function statCard(label, value, sub) {
+    return h('div', { class: 'chart-card', style: 'padding:16px' },
+      h('div', { style: 'font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px', text: label }),
+      h('div', { style: 'font-size:26px;font-weight:800;color:var(--text);margin-top:6px', text: value }),
+      sub ? h('div', { style: 'font-size:12px;color:var(--text3);margin-top:4px', text: sub }) : null);
+  }
+
+  function initResumenTab() {
+    var host = state.resumen.host;
+    if (!host) return Promise.resolve();
+    return Promise.all([
+      loadLists(false).catch(function () { return []; }),
+      Promise.resolve(pd().fetchSequences()).catch(function () { return []; }),
+      loadSavedSearches(false).catch(function () { return []; }),
+    ]).then(function (r) {
+      var lists = r[0] || [];
+      var sequences = r[1] || [];
+      var searches = r[2] || [];
+      var totalMembers = lists.reduce(function (n, l) { return n + (l.member_count || 0); }, 0);
+      var activeSeqs = sequences.filter(function (s) { return s.active; }).length;
+      host.innerHTML = '';
+      host.appendChild(h('div', { class: 'pros-grid-300', style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px' },
+        statCard('Prospectos guardados', fmtNum(totalMembers), lists.length ? fmtNum(lists.length) + ' lista(s)' : 'Aún no tienes listas'),
+        statCard('Búsquedas guardadas', fmtNum(searches.length), 'En Búsqueda → Guardar búsqueda'),
+        statCard('Secuencias en Apollo', fmtNum(sequences.length), activeSeqs ? fmtNum(activeSeqs) + ' activa(s)' : 'Ninguna activa'),
+      ));
+      var actions = h('div', { class: 'chart-card', style: 'padding:16px;display:flex;flex-direction:column;gap:10px' },
+        h('div', { style: 'font-size:13px;font-weight:700;color:var(--text)', text: '¿Qué quieres hacer?' }),
+        h('div', { style: 'display:flex;flex-wrap:wrap;gap:8px' },
+          quickLink('Buscar personas', 'busqueda'),
+          quickLink('Ver listas', 'listas'),
+          quickLink('Secuencias', 'secuencias'),
+          quickLink('WhatsApp & LinkedIn', 'outreach')));
+      host.appendChild(actions);
+    }).catch(function (e) {
+      host.innerHTML = '';
+      host.appendChild(h('div', { class: 'pros-note-red', text: '⚠ ' + errMsg(e) }));
+    });
+  }
+
+  function quickLink(label, tabId) {
+    var btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: label });
+    btn.addEventListener('click', guarded(function () {
+      // Click the matching sidebar item (not just switchTab) so the sidebar's
+      // active-item highlight stays in sync with the pane actually shown.
+      var navItem = document.querySelector('.nav-item[data-pros-tab="' + tabId + '"]');
+      if (navItem) navItem.click();
+      else switchTab(tabId);
+    }));
+    return btn;
+  }
+
   // ══ TAB 1: BÚSQUEDA — search + results ══════════════════════════════════
   function buildSearchPane() {
     var pane = state.panes.busqueda;
@@ -1198,6 +1309,9 @@
     pane.appendChild(recoHost);
     state.search.recoHost = recoHost;
     renderRecoCard();
+    var saveSearchBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '💾 Guardar búsqueda' });
+    saveSearchBtn.addEventListener('click', guarded(function () { openSaveSearchModal(); }));
+    pane.appendChild(h('div', { style: 'display:flex;justify-content:flex-end;margin-bottom:10px' }, saveSearchBtn));
     var filterHost = h('div', null);
     var results = h('div', { style: 'min-width:0' });
     pane.appendChild(h('div', { class: 'pros-grid' }, filterHost, results));
@@ -1300,13 +1414,25 @@
     s.rowsByKey = new Map(rows.map(function (r) { return [r._key, r]; }));
 
     var pg = res.pagination || {};
-    var total = pg.total_entries != null ? pg.total_entries : rows.length;
     var pageNum = pg.page || s.page || 1;
+    // Apollo's mixed_people/api_search sometimes reports total_entries: 0 (and
+    // total_pages accordingly) even when it returns a full page of people —
+    // trusting that literally used to show "0 personas encontradas" and trap
+    // the user on page 1. Treat a reported total of 0 as "unknown" whenever
+    // rows actually came back, and never let a stale totalPages block paging
+    // past a page that came back full (there may still be more).
+    var reportedTotal = pg.total_entries;
+    var totalKnown = reportedTotal != null && reportedTotal > 0;
+    var total = totalKnown ? reportedTotal : rows.length;
     var totalPages = pg.total_pages || 1;
+    var fullPage = rows.length >= s.perPage;
+    var hasNextPage = fullPage ? true : pageNum < totalPages;
     var partial = !!res.partial_results_only;
 
     var html = '<div class="pros-results-head">' +
-      '<div style="font-size:13px;color:var(--text2)"><b style="color:var(--text)">' + esc(fmtNum(total)) + '</b> personas encontradas' +
+      '<div style="font-size:13px;color:var(--text2)"><b style="color:var(--text)">' +
+      (!totalKnown && rows.length ? '≥' : '') + esc(fmtNum(total)) +
+      '</b> personas encontradas' +
       (partial ? ' <span style="color:var(--text3)">· resultados parciales, máx. 50.000 visibles</span>' : '') +
       '</div>' +
       '<div style="display:flex;align-items:center;gap:8px">' +
@@ -1316,8 +1442,8 @@
       }).join('') +
       '</select>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="page-prev"' + (pageNum <= 1 ? ' disabled' : '') + '>‹</button>' +
-      '<span style="font-size:12px;color:var(--text2);white-space:nowrap">Página ' + esc(fmtNum(pageNum)) + ' de ' + esc(fmtNum(totalPages)) + '</span>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="page-next"' + (pageNum >= totalPages ? ' disabled' : '') + '>›</button>' +
+      '<span style="font-size:12px;color:var(--text2);white-space:nowrap">Página ' + esc(fmtNum(pageNum)) + (totalKnown ? ' de ' + esc(fmtNum(totalPages)) : '') + '</span>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="page-next"' + (hasNextPage ? '' : ' disabled') + '>›</button>' +
       '</div></div>';
 
     var crumbs = res.breadcrumbs || [];
@@ -1504,6 +1630,67 @@
           } else {
             api.close();
           }
+        })
+        .catch(function (e) {
+          prog.hide();
+          api.setBusy(false);
+          toast(errMsg(e), 'error');
+        });
+    }
+  }
+
+  // ── "Guardar búsqueda" modal ────────────────────────────────────────────
+  // Persiste los criterios de filtro en Predictable. Como el API público de
+  // Apollo no expone "saved searches", la casilla opcional reutiliza el
+  // mismo mecanismo de "Agregar a lista" para guardar también los resultados
+  // ya cargados como una lista/contactos etiquetados en Apollo.
+  function openSaveSearchModal() {
+    var nameInput = h('input', { type: 'text', placeholder: 'Ej. VPs de ventas en México', style: 'width:100%' });
+    var rows = state.search.pageRows || [];
+    var alsoApollo = h('input', { type: 'checkbox', disabled: !rows.length });
+    var prog = progressLine();
+    var mLbl = 'display:block;font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px';
+    var bodyN = h('div', null,
+      h('div', { style: mLbl, text: 'Nombre de la búsqueda' }),
+      nameInput,
+      h('label', { style: 'display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text2);margin-top:14px;cursor:' + (rows.length ? 'pointer' : 'not-allowed') },
+        alsoApollo,
+        h('span', { text: rows.length
+          ? 'También guardar los ' + fmtNum(rows.length) + ' resultados de esta página como lista en Apollo (≈1 crédito por persona).'
+          : 'Ejecuta una búsqueda con resultados para poder guardarlos también en Apollo.' })),
+      prog.el);
+    var api = openModal({
+      title: 'Guardar búsqueda',
+      bodyNode: bodyN,
+      actions: [
+        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
+        { label: 'Guardar', className: 'btn btn-primary', onClick: onConfirm },
+      ],
+    });
+
+    function onConfirm() {
+      var name = nameInput.value.trim();
+      if (!name) { toast('Escribe un nombre para la búsqueda.', 'warn'); return; }
+      api.setBusy(true);
+      return Promise.resolve(pd().createSavedSearch(name, state.search.filters))
+        .then(function () {
+          state.cache.savedSearches = null;
+          if (!alsoApollo.checked || !rows.length) return null;
+          prog.set('Guardando en Apollo…');
+          return Promise.resolve(pd().createList(name)).then(function (list) {
+            return pd().addPeopleToList({
+              list: list,
+              people: rows,
+              onProgress: function (p) {
+                prog.set('Enriqueciendo ' + fmtNum((p && p.done) || 0) + ' de ' + fmtNum((p && p.total) || rows.length) + '…');
+              },
+            });
+          }).then(function () { state.cache.lists = null; refreshBadge(); });
+        })
+        .then(function () {
+          prog.hide();
+          toast('Búsqueda «' + name + '» guardada.', 'success');
+          api.close();
         })
         .catch(function (e) {
           prog.hide();
@@ -2087,7 +2274,11 @@
       return { value: String(a.id), label: a.email || '—' };
     }));
 
-    var html = '<div class="chart-card"><div class="chart-title">Enrolar contactos en una secuencia</div>' +
+    var html = '<div class="chart-card">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
+      '<div class="chart-title" style="margin:0">Enrolar contactos en una secuencia</div>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="seq-create">+ Nueva secuencia</button>' +
+      '</div>' +
       '<div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-top:12px">' +
       '<div class="form-group"><div class="pros-lbl">Lista</div>' + selectHtml('seq-list', listOpts, st.listId) + '</div>' +
       '<div class="form-group"><div class="pros-lbl">Secuencia de Apollo</div>' + selectHtml('seq-seq', seqOpts, st.sequenceId) + '</div>' +
@@ -2103,11 +2294,11 @@
 
     if (!st.loadingSources && !st.seqError && state.cache.sequences && !seqs.length) {
       html += '<div class="table-card">' +
-        emptyHtml(SVG_MAIL, 'No hay secuencias en tu cuenta de Apollo',
-          'Créalas en app.apollo.io y vuelve a cargar.',
+        emptyHtml(SVG_MAIL, 'Aún no tienes secuencias',
+          'Crea tu primera secuencia aquí mismo — sin salir de la app.',
           '<div class="pros-actions" style="justify-content:center;margin-top:6px">' +
-          '<a class="btn btn-ghost btn-sm" href="https://app.apollo.io/#/sequences" target="_blank" rel="noopener">Abrir Apollo →</a>' +
-          '<button type="button" class="btn btn-primary btn-sm" data-action="seq-retry">Reintentar</button>' +
+          '<button type="button" class="btn btn-primary btn-sm" data-action="seq-create">+ Crear secuencia</button>' +
+          '<button type="button" class="btn btn-ghost btn-sm" data-action="seq-retry">Reintentar</button>' +
           '</div>') +
         '</div>';
     }
@@ -2211,7 +2402,111 @@
       state.cache.accounts = null;
       return initSeqTab();
     }
+    if (action === 'seq-create') return openCreateSeqModal();
     if (action === 'seq-enroll') return openEnrollModal();
+  }
+
+  // Crear una secuencia (nombre + N correos) directamente en Apollo, para que
+  // el usuario no tenga que salir de la app.
+  function openCreateSeqModal() {
+    var st = state.seq;
+    var acct = (state.cache.accounts || []).find(function (a) { return String(a.id) === String(st.accountId); });
+    var steps = [{ delayDays: 0, subject: '', body: '' }];
+    var stepsHost = h('div', { style: 'display:flex;flex-direction:column;gap:14px' });
+    var prog = progressLine();
+    var failHost = h('div', null);
+
+    function renderSteps() {
+      stepsHost.innerHTML = '';
+      steps.forEach(function (s, i) {
+        var head = h('div', { style: 'display:flex;align-items:center;gap:8px' },
+          h('span', { class: 'pros-msgblock-title', text: 'Correo ' + (i + 1) }));
+        if (i === 0) {
+          head.appendChild(h('span', { style: 'margin-left:auto;font-size:11.5px;color:var(--text3)', text: 'Se envía al enrolar' }));
+        } else {
+          var delayIn = h('input', { type: 'number', min: '0', style: 'width:60px' });
+          delayIn.value = String(s.delayDays);
+          delayIn.addEventListener('input', function () { s.delayDays = delayIn.value; });
+          head.appendChild(h('span', { style: 'margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)' },
+            'Esperar', delayIn, 'días'));
+          var rm = h('button', { type: 'button', class: 'pros-iconbtn', 'aria-label': 'Quitar correo', html: SVG_TRASH });
+          rm.addEventListener('click', function () { steps.splice(i, 1); renderSteps(); });
+          head.appendChild(rm);
+        }
+        var subj = h('input', { type: 'text', placeholder: 'Asunto del correo' });
+        subj.value = s.subject;
+        subj.addEventListener('input', function () { s.subject = subj.value; });
+        var body = h('textarea', { rows: '5', placeholder: 'Escribe el correo… Puedes usar variables de Apollo como {{first_name}}.', style: 'resize:vertical;width:100%' });
+        body.value = s.body;
+        body.addEventListener('input', function () { s.body = body.value; });
+        stepsHost.appendChild(h('div', { class: 'pros-msgblock' }, head, subj, body));
+      });
+    }
+    renderSteps();
+
+    var addBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '+ Agregar correo' });
+    addBtn.addEventListener('click', function () { steps.push({ delayDays: 3, subject: '', body: '' }); renderSteps(); });
+
+    var nameIn = h('input', { type: 'text', placeholder: 'Ej. Prospección Q3' });
+    var bodyN = h('div', { style: 'display:flex;flex-direction:column;gap:14px' },
+      h('div', null, h('div', { class: 'pros-lbl', style: 'margin-bottom:6px', text: 'Nombre de la secuencia' }), nameIn),
+      h('div', { class: 'pros-hint', text: acct
+        ? ('Se enviará desde ' + (acct.email || '') + '. La secuencia se crea en pausa: revísala y actívala en Apollo antes de que empiece a enviar.')
+        : 'Consejo: selecciona una cuenta de envío en la pantalla anterior antes de crear la secuencia. La secuencia se crea en pausa hasta que la actives.' }),
+      stepsHost, addBtn, prog.el, failHost);
+
+    var api = openModal({
+      title: 'Crear secuencia',
+      width: 560,
+      bodyNode: bodyN,
+      actions: [
+        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
+        {
+          label: 'Crear secuencia',
+          className: 'btn btn-primary',
+          onClick: function () {
+            var name = nameIn.value.trim();
+            if (!name) return toast('Escribe un nombre para la secuencia.', 'warn');
+            for (var i = 0; i < steps.length; i++) {
+              if (!steps[i].subject.trim() || !steps[i].body.trim()) {
+                return toast('El correo ' + (i + 1) + ' necesita asunto y cuerpo.', 'warn');
+              }
+            }
+            api.setBusy(true);
+            prog.set('Creando secuencia…');
+            return Promise.resolve(pd().createSequence({
+              name: name,
+              emailAccountId: st.accountId || '',
+              steps: steps,
+            })).then(function (res) {
+              prog.hide();
+              res = res || {};
+              var fails = res.stepFailures || [];
+              state.cache.sequences = (state.cache.sequences || []).concat([{
+                id: res.id, name: res.name, active: !!res.active, num_steps: res.num_steps,
+              }]);
+              st.sequenceId = String(res.id);
+              renderSeqPane();
+              if (fails.length) {
+                failHost.innerHTML = '';
+                failHost.appendChild(modalFailList(fails));
+                api.setBusy(false);
+                toast('Secuencia creada, pero ' + fmtNum(fails.length) + ' correo(s) fallaron.', 'warn');
+                if (api.buttons[1]) api.buttons[1].style.display = 'none';
+                if (api.buttons[0]) { api.buttons[0].textContent = 'Cerrar'; api.buttons[0].disabled = false; api.buttons[0].style.opacity = ''; }
+              } else {
+                toast('Secuencia «' + (res.name || name) + '» creada con ' + fmtNum(res.num_steps || 0) + ' correo(s).', 'success');
+                api.close();
+              }
+            }).catch(function (e) {
+              prog.hide();
+              api.setBusy(false);
+              toast(errMsg(e), 'error');
+            });
+          },
+        },
+      ],
+    });
   }
 
   function openEnrollModal() {
@@ -2764,20 +3059,17 @@
     shell.appendChild(h('div', null,
       h('div', { class: 'pros-title', text: 'Prospección' }),
       h('div', { class: 'pros-subtitle', text: 'Encuentra, enriquece y contacta a tus prospectos — todo desde un solo lugar.' })));
-    var tabsEl = h('div', { class: 'tabs', role: 'tablist' });
-    TABS.forEach(function (t) {
-      var tab = h('button', { type: 'button', class: 'tab', 'data-tab': t.id, text: t.label });
-      tab.addEventListener('click', guarded(function () { switchTab(t.id); }));
-      tabsEl.appendChild(tab);
-    });
-    shell.appendChild(tabsEl);
-    state.tabsEl = tabsEl;
+    // No in-page tab bar here on purpose — the left sidebar (Prospección /
+    // Search People / Listas guardadas / Secuencias / WhatsApp & LinkedIn)
+    // is the only navigation between these panes; a second, duplicate set
+    // of tabs at the top of the page confused users about which nav to use.
     state.panes = {};
     TABS.forEach(function (t) {
       var p = h('div', { class: 'pros-pane', id: 'pros-pane-' + t.id });
       state.panes[t.id] = p;
       shell.appendChild(p);
     });
+    buildResumenPane();
     buildSearchPane();
     buildListasPane();
     buildSeqPane();
@@ -2786,16 +3078,14 @@
   }
 
   function switchTab(tabId) {
-    if (!state.panes[tabId]) tabId = 'busqueda';
+    if (!state.panes[tabId]) tabId = 'resumen';
     state.activeTab = tabId;
-    Array.prototype.forEach.call(state.tabsEl.children, function (t) {
-      t.classList.toggle('active', t.getAttribute('data-tab') === tabId);
-    });
     TABS.forEach(function (t) {
       state.panes[t.id].classList.toggle('active', t.id === tabId);
     });
     var loader = null;
-    if (tabId === 'listas') loader = initListasTab;
+    if (tabId === 'resumen') loader = initResumenTab;
+    else if (tabId === 'listas') loader = initListasTab;
     else if (tabId === 'secuencias') loader = initSeqTab;
     else if (tabId === 'outreach') loader = initWaTab;
     if (loader) {
@@ -2806,68 +3096,17 @@
     }
   }
 
-  // ── Prefill desde el ICP Builder ───────────────────────────────────────
-  // Lee las selecciones de chips del ICP (módulo apollo-icp-chips o su
-  // localStorage) y las vuelca en los filtros de Búsqueda.
-  function readIcpSelections(containerId) {
-    var chips = window.apolloChips;
-    if (chips && typeof chips.getSelected === 'function') {
-      try {
-        var v = chips.getSelected(containerId);
-        if (Array.isArray(v) && v.length) return v;
-      } catch (_) {}
-    }
-    try {
-      var stored = JSON.parse(localStorage.getItem('apollo_icp_state_v1') || '{}');
-      if (Array.isArray(stored[containerId])) return stored[containerId];
-    } catch (_) {}
-    return [];
-  }
-
-  function prefillFromICP() {
-    try {
-      ensureBuilt();
-      var f = state.search.filters;
-      var mapped = 0;
-      var seniorities = readIcpSelections('icp-mgmt-level');
-      var locations = readIcpSelections('icp-locations');
-      var employees = readIcpSelections('icp-employees');
-      var industries = readIcpSelections('icp-industries');
-      var tech = readIcpSelections('icp-tech-active').map(techSlug).filter(Boolean);
-      if (seniorities.length) { f.person_seniorities = seniorities.slice(); mapped++; }
-      if (locations.length) { f.person_locations = locations.slice(); mapped++; }
-      if (employees.length) { f.organization_num_employees_ranges = employees.slice(); mapped++; }
-      if (industries.length) { f.industry_tags = industries.slice(); mapped++; }
-      if (tech.length) { f.tech_any = tech; mapped++; }
-      if (!mapped) {
-        toast('Tu ICP no tiene selecciones aún — defínelas en el ICP Builder.', 'warn');
-        return;
-      }
-      persistFilters();
-      if (state.search.panelHost) {
-        state.search.panelHost.innerHTML = '';
-        state.search.panelHost.appendChild(buildFilterPanel());
-      }
-      updateFilterBadges();
-      toast('Filtros cargados desde tu ICP. Presiona «Buscar».', 'success');
-    } catch (e) {
-      console.error('[prospecting]', e);
-      toast(errMsg(e), 'error');
-    }
-  }
-
   // ── Public API ─────────────────────────────────────────────────────────
   window.prospecting = {
     show: function (tabId) {
       try {
         ensureBuilt();
-        switchTab(tabId || state.activeTab || 'busqueda');
+        switchTab(tabId || state.activeTab || 'resumen');
       } catch (e) {
         console.error('[prospecting]', e);
         toast(errMsg(e), 'error');
       }
     },
-    prefillFromICP: prefillFromICP,
     refreshBadge: refreshBadge,
   };
 

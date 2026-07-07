@@ -156,6 +156,41 @@
     if (error) throw new Error('No se pudo eliminar la lista: ' + error.message);
   }
 
+  // ── Búsquedas guardadas (Supabase, RLS por dueño) ──────────
+  // Apollo no expone una API pública para "saved searches" — solo persiste
+  // los criterios de filtro en Predictable. Guardar también en Apollo se
+  // logra reutilizando addPeopleToList con los resultados ya cargados.
+
+  async function fetchSavedSearches() {
+    const { data, error } = await sb()
+      .from('prospect_saved_searches')
+      .select('id, name, filters, created_at')
+      .order('created_at', { ascending: false });
+    if (error) throw new Error('No se pudieron cargar tus búsquedas guardadas: ' + error.message);
+    return data || [];
+  }
+
+  async function createSavedSearch(name, filters) {
+    const clean = String(name || '').trim();
+    if (!clean) throw new Error('Escribe un nombre para la búsqueda.');
+    const userId = await getUserId();
+    const { data, error } = await sb()
+      .from('prospect_saved_searches')
+      .insert({ user_id: userId, name: clean, filters: filters || {} })
+      .select()
+      .single();
+    if (error) {
+      if (String(error.code) === '23505') throw new Error('Ya tienes una búsqueda guardada con ese nombre.');
+      throw new Error('No se pudo guardar la búsqueda: ' + error.message);
+    }
+    return data;
+  }
+
+  async function deleteSavedSearch(id) {
+    const { error } = await sb().from('prospect_saved_searches').delete().eq('id', id);
+    if (error) throw new Error('No se pudo eliminar la búsqueda guardada: ' + error.message);
+  }
+
   async function fetchMembers(listId) {
     const { data, error } = await sb()
       .from('prospect_list_members')
@@ -485,6 +520,89 @@
     }));
   }
 
+  // Texto plano → HTML seguro para body_html de Apollo (escapa y respeta
+  // saltos de línea). El editor solo captura texto, nunca HTML del usuario.
+  function textToHtml(text) {
+    return String(text == null ? '' : text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\r\n?/g, '\n')
+      .replace(/\n/g, '<br>');
+  }
+
+  // ── Crear una secuencia (sin salir de la app) ──────────────
+  // Igual que fetchSequences/enroll: requiere master key (Apollo devuelve 403
+  // si no lo es — el mensaje se traduce en apolloErrorMessage). No consume
+  // créditos: crear secuencias/pasos es gratis.
+  //
+  // Flujo verificado contra Apollo:
+  //   1. POST /emailer_campaigns  → crea el "shell" (name + permisos).
+  //      Apollo ignora pasos en línea aquí; se agregan uno por uno.
+  //   2. POST /emailer_campaigns/{id}/emailer_steps por cada correo, con la
+  //      plantilla (asunto + cuerpo) en línea vía emailer_template.
+  //
+  // Devuelve la secuencia recién creada (para seleccionarla en la UI) y la
+  // lista de pasos que fallaron, si los hubo.
+  async function createSequence({ name, steps, emailAccountId }) {
+    const clean = String(name || '').trim();
+    if (!clean) throw new Error('Escribe un nombre para la secuencia.');
+    if (!Array.isArray(steps) || !steps.length) {
+      throw new Error('Agrega al menos un correo a la secuencia.');
+    }
+    const norm = steps.map((s, i) => {
+      const subject = String(s?.subject || '').trim();
+      const body = String(s?.body || '').trim();
+      if (!subject) throw new Error('El correo ' + (i + 1) + ' necesita un asunto.');
+      if (!body) throw new Error('El correo ' + (i + 1) + ' necesita un cuerpo.');
+      // El primer correo sale al enrolar (espera 0); el resto espera N días.
+      const wait = i === 0 ? 0 : Math.max(0, Math.round(Number(s.delayDays) || 0));
+      return { subject, body, waitDays: wait };
+    });
+
+    // 1. Crear el shell de la secuencia
+    const created = await apolloProxy('/emailer_campaigns', {
+      name: clean,
+      permissions: 'private',
+    });
+    const campaign = created?.emailer_campaign;
+    if (!campaign?.id) throw new Error('Apollo no devolvió la secuencia creada. Reintenta.');
+
+    // 2. Agregar cada correo como un paso (plantilla en línea)
+    const stepFailures = [];
+    let stepsCreated = 0;
+    for (let i = 0; i < norm.length; i++) {
+      const s = norm[i];
+      try {
+        const stepBody = {
+          emailer_campaign_id: campaign.id,
+          emailer_step_type: 'auto_email',
+          wait_mode: 'day',
+          wait_time: s.waitDays,
+          emailer_template: {
+            name: s.subject.slice(0, 80),
+            subject: s.subject,
+            body_html: textToHtml(s.body),
+            body_text: s.body,
+          },
+        };
+        if (emailAccountId) stepBody.send_email_from_email_account_id = emailAccountId;
+        await apolloProxy('/emailer_campaigns/' + campaign.id + '/emailer_steps', stepBody);
+        stepsCreated++;
+      } catch (e) {
+        stepFailures.push({ name: 'Correo ' + (i + 1), error: e.message });
+      }
+    }
+
+    return {
+      id: campaign.id,
+      name: campaign.name || clean,
+      active: !!campaign.active,
+      num_steps: stepsCreated,
+      stepFailures,
+    };
+  }
+
   async function enrollInSequence({ sequence, emailAccountId, members, listName, onProgress }) {
     if (!sequence?.id) throw new Error('Selecciona una secuencia.');
     if (!emailAccountId) throw new Error('Selecciona la cuenta de correo remitente.');
@@ -724,6 +842,9 @@
     fetchLists,
     createList,
     deleteList,
+    fetchSavedSearches,
+    createSavedSearch,
+    deleteSavedSearch,
     fetchMembers,
     deleteMembers,
     addPeopleToList,
@@ -733,6 +854,7 @@
     updateMember,
     fetchSequences,
     fetchEmailAccounts,
+    createSequence,
     enrollInSequence,
     generateOutreach,
     fetchClientBrief,

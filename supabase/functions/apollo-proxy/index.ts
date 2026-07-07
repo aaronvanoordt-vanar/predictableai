@@ -32,15 +32,19 @@ const STATIC_ENDPOINTS = new Map<string, "GET" | "POST">([
   ["/contacts", "POST"],
   ["/contacts/search", "POST"],
   ["/emailer_campaigns/search", "POST"],
+  ["/emailer_campaigns", "POST"],
   ["/email_accounts", "GET"],
   ["/labels", "GET"],
 ]);
 
-// Dynamic entry: add contacts to a sequence. The id segment is validated by
+// Dynamic entries: per-sequence sub-resources. The id segment is validated by
 // SHAPE only (URL-safe token, no slashes) — the anti-abuse guarantee is the
 // path pattern, not Apollo's internal id encoding (today 24-hex Mongo-style,
 // but that is Apollo's implementation detail and may change).
+//   • add_contact_ids  — enroll contacts into a sequence
+//   • emailer_steps    — append an email step when creating a sequence in-app
 const ADD_CONTACT_IDS_RE = /^\/emailer_campaigns\/[A-Za-z0-9_-]{8,64}\/add_contact_ids$/;
+const EMAILER_STEPS_RE = /^\/emailer_campaigns\/[A-Za-z0-9_-]{8,64}\/emailer_steps$/;
 
 function corsHeaders(origin: string) {
   return {
@@ -62,7 +66,9 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (req.method !== "POST") return json({ error: "POST only" }, 405, cors);
 
-  const apiKey = Deno.env.get("APOLLO_API_KEY");
+  // Trim to tolerate a stray newline/space in the stored secret (a trailing
+  // newline in APOLLO_API_KEY once made Apollo reject every call).
+  const apiKey = (Deno.env.get("APOLLO_API_KEY") ?? "").trim();
   if (!apiKey) return json({ error: "APOLLO_API_KEY secret not configured" }, 503, cors);
 
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
@@ -84,7 +90,7 @@ Deno.serve(async (req) => {
     return json({ error: "Endpoint not allowed" }, 400, cors);
   }
   let method = STATIC_ENDPOINTS.get(endpoint);
-  if (!method && ADD_CONTACT_IDS_RE.test(endpoint)) method = "POST";
+  if (!method && (ADD_CONTACT_IDS_RE.test(endpoint) || EMAILER_STEPS_RE.test(endpoint))) method = "POST";
   if (!method) return json({ error: "Endpoint not allowed" }, 400, cors);
 
   const body: Record<string, unknown> =

@@ -18,7 +18,6 @@
   var STEPS = [
     { id: 's1', title: 'Explora tu Intelligence Hub', desc: 'Conoce los informes que tus agentes generan a diario.', credits: 20, page: 'mi-dashboard', icon: 'chart' },
     { id: 's2', title: 'Completa tu Matriz de Input', desc: 'Dale contexto a la IA: empresa, mercado y competidores.', credits: 30, page: 'mi-matrix', icon: 'grid' },
-    { id: 's3', title: 'Define tu ICP', desc: 'Ajusta el perfil de cliente ideal que alimenta la prospección.', credits: 25, page: 'pro-icp', icon: 'target' },
     { id: 's4', title: 'Corre tu primera búsqueda en Apollo', desc: 'Encuentra contactos que calzan tu ICP en segundos.', credits: 35, page: 'pro-main', icon: 'search' },
     { id: 's5', title: 'Guarda tu primera lista', desc: 'Crea un segmento reutilizable para tus cadencias.', credits: 40, page: 'pro-main', icon: 'bookmark' },
     { id: 's6', title: 'Prueba el Meeting Coach', desc: 'Recibe guía en vivo durante tus llamadas de venta.', credits: 30, page: 'ventas-coach', icon: 'mic' },
@@ -39,8 +38,7 @@
     return {
       done: (d && typeof d.done === 'object' && d.done) || {},
       credits: (d && typeof d.credits === 'number') ? d.credits : 0,
-      dismissed: !!(d && d.dismissed),
-      icpVisits: (d && typeof d.icpVisits === 'number') ? d.icpVisits : 0
+      dismissed: !!(d && d.dismissed)
     };
   }
 
@@ -387,11 +385,6 @@
   function onNavigate(pageId) {
     if (pageId === 'mi-dashboard') markDone('s1');
     if (pageId === 'settings') markDone('s7');
-    if (pageId === 'pro-icp' && !state.done.s3) {
-      state.icpVisits += 1;
-      save();
-      if (state.icpVisits >= 2) markDone('s3'); // fallback: segunda visita
-    }
   }
 
   // Encadena una función global sin romper la original
@@ -453,8 +446,6 @@
 
     installDetection();
     setTimeout(installDetection, 1500); // reintento: scripts que definen tarde
-
-    document.addEventListener('apollo-icp-change', function () { markDone('s3'); });
   }
 
   if (document.readyState === 'loading') {
