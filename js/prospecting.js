@@ -300,6 +300,12 @@
     '#prospecting-shell .pros-progress { display:none; align-items:center; gap:7px; font-size:12px; color:var(--text2); }',
     '#prospecting-shell .pros-progress.on { display:inline-flex; }',
     '#prospecting-shell table input[type=checkbox] { accent-color:var(--accent); width:14px; height:14px; cursor:pointer; }',
+    '#prospecting-shell .pros-skeleton { background:var(--surface2); border-radius:var(--r-md); animation:skeleton-pulse 2s infinite; }',
+    '@keyframes skeleton-pulse { 0%, 100% { opacity:.6; } 50% { opacity:1; } }',
+    '#prospecting-shell .pros-skeleton-card { display:flex; flex-direction:column; gap:12px; padding:16px; background:var(--surface); border:1px solid var(--hair); border-radius:var(--r-md); }',
+    '#prospecting-shell .pros-skeleton-label { height:12px; width:80px; }',
+    '#prospecting-shell .pros-skeleton-value { height:28px; width:60%; margin-top:6px; }',
+    '#prospecting-shell .pros-skeleton-sub { height:12px; width:40%; margin-top:4px; }',
   ].join('\n');
 
   // Manual-add form grid lives inside a modal (outside #prospecting-shell),
@@ -1250,7 +1256,7 @@
   // ══ TAB 0: RESUMEN — overview of the module's real metrics ═══════════════
   function buildResumenPane() {
     var pane = state.panes.resumen;
-    var host = h('div', null, h('div', { style: 'font-size:13px;color:var(--text3)', text: 'Cargando métricas…' }));
+    var host = skeletonResumenLoading();
     pane.appendChild(host);
     state.resumen.host = host;
   }
@@ -1260,6 +1266,26 @@
       h('div', { style: 'font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px', text: label }),
       h('div', { style: 'font-size:26px;font-weight:800;color:var(--text);margin-top:6px', text: value }),
       sub ? h('div', { style: 'font-size:12px;color:var(--text3);margin-top:4px', text: sub }) : null);
+  }
+
+  function skeletonStatCard() {
+    return h('div', { class: 'chart-card pros-skeleton-card' },
+      h('div', { class: 'pros-skeleton pros-skeleton-label' }),
+      h('div', { class: 'pros-skeleton pros-skeleton-value' }),
+      h('div', { class: 'pros-skeleton pros-skeleton-sub' }));
+  }
+
+  function skeletonResumenLoading() {
+    var grid = h('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px' });
+    for (var i = 0; i < 3; i++) {
+      grid.appendChild(skeletonStatCard());
+    }
+    var card = h('div', { class: 'chart-card pros-skeleton-card', style: 'padding:16px' });
+    for (var j = 0; j < 4; j++) {
+      card.appendChild(h('div', { class: 'pros-skeleton', style: 'height:32px;margin-bottom:10px' }));
+    }
+    var host = h('div', null, grid, card);
+    return host;
   }
 
   function initResumenTab() {
