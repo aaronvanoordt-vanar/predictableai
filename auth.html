@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #F7F8FA; --surface: #FFFFFF; --surface2: #F6F7F9; --border: rgba(10,10,15,0.08);
@@ -15,39 +15,93 @@
     --accent: #1F4BFF; --accent-2: #3B68FF;
     --teal: #0891B2; --jade: #0EA968; --red: #D64545; --green: #0EA968; --amber: #B87514;
     --font: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-mono: 'Geist Mono', ui-monospace, monospace;
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
     font-family: var(--font); min-height: 100vh;
-    display: flex; align-items: center; justify-content: center;
-    padding: 20px;
     -webkit-font-smoothing: antialiased;
-    background-image: radial-gradient(circle at 20% 10%, rgba(31,75,255,.06), transparent 50%),
-                      radial-gradient(circle at 80% 90%, rgba(14,169,104,.05), transparent 50%);
   }
+
+  .auth-shell { display: flex; min-height: 100vh; }
+
+  /* ───────────────────────── Brand panel ───────────────────────── */
+  .brand-panel {
+    position: relative; overflow: hidden; flex: 1 1 44%;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: 48px; color: #fff;
+    background:
+      radial-gradient(circle at 15% 12%, rgba(59,104,255,.55), transparent 55%),
+      radial-gradient(circle at 85% 88%, rgba(8,145,178,.45), transparent 50%),
+      linear-gradient(160deg, #0A0A0F 0%, #0C1230 45%, #101B45 100%);
+  }
+  .brand-panel::before {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(circle at 30% 20%, black, transparent 70%);
+            mask-image: radial-gradient(circle at 30% 20%, black, transparent 70%);
+  }
+  .brand-panel::after {
+    content: ''; position: absolute; width: 520px; height: 520px; right: -180px; bottom: -220px;
+    border-radius: 50%; background: radial-gradient(circle, rgba(14,169,104,.28), transparent 70%);
+    pointer-events: none;
+  }
+  .panel-top, .panel-mid, .panel-bottom { position: relative; z-index: 1; }
+
+  .panel-top { display: flex; align-items: center; gap: 12px; }
+  .panel-top .mark { width: 34px; height: 34px; flex-shrink: 0; }
+  .panel-top .word { font-weight: 600; font-size: 16px; letter-spacing: -.2px; }
+  .panel-top .word .dot { color: var(--accent-2); }
+
+  .panel-mid { max-width: 420px; }
+  .panel-mid .mark-lg { width: 68px; height: 68px; margin-bottom: 28px; filter: drop-shadow(0 8px 30px rgba(31,75,255,.45)); }
+  .panel-mid h1 {
+    font-size: clamp(28px, 3.4vw, 38px); line-height: 1.12; font-weight: 700;
+    letter-spacing: -1px; margin: 0 0 16px;
+  }
+  .panel-mid h1 .accent { background: linear-gradient(90deg, #7FA1FF, #6FE3D9); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .panel-mid p { font-size: 14.5px; line-height: 1.6; color: rgba(255,255,255,.62); margin: 0; }
+
+  .panel-bottom { display: flex; gap: 28px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: rgba(255,255,255,.4); }
+  .panel-bottom b { color: rgba(255,255,255,.78); font-weight: 600; }
+
+  /* ───────────────────────── Auth form side ───────────────────────── */
+  .auth-main {
+    flex: 1 1 56%; display: flex; align-items: center; justify-content: center;
+    padding: 32px 20px; position: relative;
+    background-image: radial-gradient(circle at 80% 15%, rgba(31,75,255,.06), transparent 50%);
+  }
+
+  .mobile-brand { display: none; align-items: center; justify-content: center; gap: 10px; margin-bottom: 22px; }
+  .mobile-brand .mark { width: 24px; height: 24px; }
+  .mobile-brand .word { font-weight: 600; font-size: 15px; letter-spacing: -.2px; }
+  .mobile-brand .word .dot { color: var(--accent); }
+
   .card {
-    width: 100%; max-width: 420px;
+    width: 100%; max-width: 400px;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 18px; padding: 32px 32px 28px;
-    box-shadow: 0 2px 6px rgba(10,10,15,.05), 0 24px 64px -24px rgba(10,10,15,.18);
+    border-radius: 20px; padding: 34px 32px 28px;
+    box-shadow: 0 2px 6px rgba(10,10,15,.05), 0 30px 70px -28px rgba(10,10,15,.22);
   }
-  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-  .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(31,75,255,.12); }
-  .brand-name { font-weight: 600; font-size: 15px; letter-spacing: -.2px; }
-  h1 { font-size: 24px; font-weight: 600; margin: 16px 0 4px; letter-spacing: -.6px; }
-  .sub { color: var(--text3); font-size: 13.5px; margin-bottom: 24px; }
+
+  h1.title { font-size: 25px; font-weight: 700; margin: 0 0 6px; letter-spacing: -.6px; }
+  .sub { color: var(--text3); font-size: 13.5px; margin-bottom: 26px; }
 
   /* Botones OAuth */
   .btn-oauth {
     width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
     padding: 12px 14px; background: var(--surface); border: 1px solid rgba(10,10,15,0.13);
-    border-radius: 10px; color: var(--text); font-size: 13.5px; font-weight: 500;
+    border-radius: 11px; color: var(--text); font-size: 13.5px; font-weight: 500;
     font-family: var(--font);
     cursor: pointer; transition: all .15s; margin-bottom: 10px;
     box-shadow: 0 1px 2px rgba(10,10,15,.04);
   }
-  .btn-oauth:hover:not([disabled]) { background: var(--surface2); border-color: rgba(10,10,15,0.22); transform: translateY(-1px); box-shadow: 0 4px 12px -4px rgba(10,10,15,.12); }
+  .btn-oauth:hover:not([disabled]) { background: var(--surface2); border-color: rgba(10,10,15,0.22); transform: translateY(-1px); box-shadow: 0 6px 16px -6px rgba(10,10,15,.16); }
   .btn-oauth:active:not([disabled]) { transform: translateY(0); }
   .btn-oauth[disabled] { opacity: .5; cursor: not-allowed; }
   .btn-oauth svg { width: 18px; height: 18px; flex-shrink: 0; }
@@ -73,37 +127,120 @@
     *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
   }
 
-  .legal { font-size: 11px; color: var(--text3); text-align: center; margin-top: 18px; line-height: 1.55; }
+  .legal { font-size: 11px; color: var(--text3); text-align: center; margin-top: 20px; line-height: 1.55; }
   .legal a { color: var(--text2); }
+
+  @media (max-width: 880px) {
+    .brand-panel { display: none; }
+    .mobile-brand { display: flex; }
+    .auth-main { padding: 40px 20px; }
+  }
 </style>
 </head>
 <body>
 
-<div class="card">
-  <div class="brand">
-    <div class="brand-dot"></div>
-    <span class="brand-name">Predictable.ai</span>
-  </div>
-  <h1>Bienvenido</h1>
-  <p class="sub">Accede a tu cuenta o regístrate para empezar.</p>
+<div class="auth-shell">
 
-  <!-- Google -->
-  <button class="btn-oauth" id="btn-google">
-    <svg viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5.36c1.62 0 3.07.56 4.21 1.66l3.13-3.13C17.43 1.97 14.91 1 12 1 7.39 1 3.44 3.64 1.6 7.5l3.65 2.84C6.13 7.66 8.86 5.36 12 5.36z"/><path fill="#4285F4" d="M23 12c0-.79-.07-1.55-.2-2.27H12v4.3h6.18c-.27 1.45-1.08 2.68-2.3 3.5l3.55 2.76C21.55 18.43 23 15.49 23 12z"/><path fill="#FBBC05" d="M5.25 14.34A6.62 6.62 0 0 1 4.9 12c0-.81.14-1.6.36-2.34L1.6 6.82A11 11 0 0 0 .5 12c0 1.76.42 3.42 1.1 4.96l3.65-2.62z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.55-2.76c-1 .67-2.27 1.06-3.73 1.06-3.14 0-5.86-2.31-6.81-5.34L1.6 16.96C3.45 20.83 7.39 23 12 23z"/></svg>
-    Continuar con Google
-  </button>
+  <!-- ───────────────────────── Brand panel (desktop) ───────────────────────── -->
+  <aside class="brand-panel">
+    <div class="panel-top">
+      <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
+        <defs>
+          <linearGradient id="ag1" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0%" stop-color="#2563eb"/>
+            <stop offset="100%" stop-color="#06b6d4"/>
+          </linearGradient>
+        </defs>
+        <path d="M18 86 L18 14 Q18 9 23 9 L52 9 Q80 9 80 31 Q80 54 52 54 L18 54"
+              stroke="white" stroke-width="13" fill="none"
+              stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="30" y1="77" x2="56" y2="33" stroke="url(#ag1)" stroke-width="8" stroke-linecap="round"/>
+        <polyline points="46,27 57,32 52,44" stroke="url(#ag1)" stroke-width="8"
+                  stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <circle cx="22" cy="83" r="13" fill="#2563eb"/>
+        <text x="22" y="88" text-anchor="middle" font-size="15" font-weight="900" fill="white" font-family="Arial, sans-serif">$</text>
+      </svg>
+      <span class="word">Predictable<span class="dot">.</span>ai</span>
+    </div>
 
-  <!-- LinkedIn -->
-  <button class="btn-oauth" id="btn-linkedin">
-    <svg viewBox="0 0 24 24" fill="#0A66C2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
-    Continuar con LinkedIn
-  </button>
+    <div class="panel-mid">
+      <svg class="mark-lg" viewBox="0 0 100 100" aria-hidden="true">
+        <use href="#p-mark-shared"/>
+      </svg>
+      <h1>El <span class="accent">Revenue OS</span> de LATAM.</h1>
+      <p>Prospección, inteligencia de cuentas y outreach personalizado — todo en un solo lugar, hecho para equipos comerciales de LATAM.</p>
+    </div>
 
-  <div id="status" class="status"></div>
+    <div class="panel-bottom">
+      <span><b>Gratis</b> para empezar</span>
+      <span><b>Sin</b> tarjeta</span>
+      <span><b>5 min</b> de setup</span>
+    </div>
+  </aside>
 
-  <div class="legal">
-    Al continuar aceptas los Términos de servicio y la Política de privacidad de Predictable.ai.
-  </div>
+  <!-- shared defs so the large mark above doesn't duplicate gradient ids -->
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <g id="p-mark-shared">
+        <path d="M18 86 L18 14 Q18 9 23 9 L52 9 Q80 9 80 31 Q80 54 52 54 L18 54"
+              stroke="white" stroke-width="13" fill="none"
+              stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="30" y1="77" x2="56" y2="33" stroke="url(#ag1)" stroke-width="8" stroke-linecap="round"/>
+        <polyline points="46,27 57,32 52,44" stroke="url(#ag1)" stroke-width="8"
+                  stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <circle cx="22" cy="83" r="13" fill="#2563eb"/>
+        <text x="22" y="88" text-anchor="middle" font-size="15" font-weight="900" fill="white" font-family="Arial, sans-serif">$</text>
+      </g>
+    </defs>
+  </svg>
+
+  <!-- ───────────────────────── Form side ───────────────────────── -->
+  <main class="auth-main">
+    <div>
+      <div class="mobile-brand">
+        <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
+          <defs>
+            <linearGradient id="ag2" x1="0" y1="1" x2="1" y2="0">
+              <stop offset="0%" stop-color="#2563eb"/>
+              <stop offset="100%" stop-color="#06b6d4"/>
+            </linearGradient>
+          </defs>
+          <path d="M18 86 L18 14 Q18 9 23 9 L52 9 Q80 9 80 31 Q80 54 52 54 L18 54"
+                stroke="#0A0A0F" stroke-width="13" fill="none"
+                stroke-linecap="round" stroke-linejoin="round"/>
+          <line x1="30" y1="77" x2="56" y2="33" stroke="url(#ag2)" stroke-width="8" stroke-linecap="round"/>
+          <polyline points="46,27 57,32 52,44" stroke="url(#ag2)" stroke-width="8"
+                    stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <circle cx="22" cy="83" r="13" fill="#2563eb"/>
+          <text x="22" y="88" text-anchor="middle" font-size="15" font-weight="900" fill="white" font-family="Arial, sans-serif">$</text>
+        </svg>
+        <span class="word">Predictable<span class="dot">.</span>ai</span>
+      </div>
+
+      <div class="card">
+        <h1 class="title">Bienvenido</h1>
+        <p class="sub">Accede a tu cuenta o regístrate para empezar.</p>
+
+        <!-- Google -->
+        <button class="btn-oauth" id="btn-google">
+          <svg viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5.36c1.62 0 3.07.56 4.21 1.66l3.13-3.13C17.43 1.97 14.91 1 12 1 7.39 1 3.44 3.64 1.6 7.5l3.65 2.84C6.13 7.66 8.86 5.36 12 5.36z"/><path fill="#4285F4" d="M23 12c0-.79-.07-1.55-.2-2.27H12v4.3h6.18c-.27 1.45-1.08 2.68-2.3 3.5l3.55 2.76C21.55 18.43 23 15.49 23 12z"/><path fill="#FBBC05" d="M5.25 14.34A6.62 6.62 0 0 1 4.9 12c0-.81.14-1.6.36-2.34L1.6 6.82A11 11 0 0 0 .5 12c0 1.76.42 3.42 1.1 4.96l3.65-2.62z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.55-2.76c-1 .67-2.27 1.06-3.73 1.06-3.14 0-5.86-2.31-6.81-5.34L1.6 16.96C3.45 20.83 7.39 23 12 23z"/></svg>
+          Continuar con Google
+        </button>
+
+        <!-- LinkedIn -->
+        <button class="btn-oauth" id="btn-linkedin">
+          <svg viewBox="0 0 24 24" fill="#0A66C2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+          Continuar con LinkedIn
+        </button>
+
+        <div id="status" class="status"></div>
+
+        <div class="legal">
+          Al continuar aceptas los Términos de servicio y la Política de privacidad de Predictable.ai.
+        </div>
+      </div>
+    </div>
+  </main>
 </div>
 
 <!-- Supabase SDK desde CDN -->
