@@ -3,11 +3,12 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Self-contained view module for the prospecting-architecture redesign.
  * Renders into #prospecting-shell (inside #page-pro-main). Lazy: the first
- * call to window.prospecting.show(tabId) builds the shell (header + tab bar +
- * 5 tab panes); subsequent calls switch tabs and (re)load that tab's data.
+ * call to window.prospecting.show(tabId) builds the shell (5 panes, no
+ * in-page tab bar — navigation between panes is driven entirely by the left
+ * sidebar, which calls show(tabId) directly, to avoid duplicating nav UI).
  * "Resumen" is a metrics overview of the whole module; the actual Apollo
- * filter/search UI is the "Búsqueda" tab (surfaced in the sidebar as the
- * separate "Search People" page/shortcut, which prefills these same filters).
+ * filter/search UI is the "Búsqueda" pane (surfaced in the sidebar as
+ * "Search People" — the two are the same feature, not separate ones).
  *
  * Public API:
  *   window.prospecting.show(tabId)   // tabId: 'resumen'|'busqueda'|'listas'|'secuencias'|'outreach'
@@ -26,7 +27,6 @@
     built: false,
     activeTab: null,
     shell: null,
-    tabsEl: null,
     panes: {},
     cache: { lists: null, sequences: null, accounts: null, savedSearches: null },
     resumen: { host: null },
@@ -1030,11 +1030,9 @@
     searchBtn.addEventListener('click', guarded(function () { return runSearch(1, true); }));
     var clearBtn = h('button', { type: 'button', class: 'btn btn-ghost', style: 'width:100%;justify-content:center', text: 'Limpiar filtros' });
     clearBtn.addEventListener('click', guarded(function () { clearFilters(); }));
-    var saveSearchBtn = h('button', { type: 'button', class: 'btn btn-ghost', style: 'width:100%;justify-content:center', text: '💾 Guardar búsqueda' });
-    saveSearchBtn.addEventListener('click', guarded(function () { openSaveSearchModal(); }));
     panel.appendChild(h('div', { style: 'padding:14px;display:flex;flex-direction:column;gap:10px' },
       h('div', { style: 'font-size:11.5px;color:var(--text3);line-height:1.5', text: 'Intent, lookalikes y filtros de educación no están disponibles vía el API de Apollo.' }),
-      searchBtn, saveSearchBtn, clearBtn));
+      searchBtn, clearBtn));
     state.search.searchBtn = searchBtn;
     return panel;
   }
@@ -1110,13 +1108,22 @@
 
   function quickLink(label, tabId) {
     var btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: label });
-    btn.addEventListener('click', guarded(function () { switchTab(tabId); }));
+    btn.addEventListener('click', guarded(function () {
+      // Click the matching sidebar item (not just switchTab) so the sidebar's
+      // active-item highlight stays in sync with the pane actually shown.
+      var navItem = document.querySelector('.nav-item[data-pros-tab="' + tabId + '"]');
+      if (navItem) navItem.click();
+      else switchTab(tabId);
+    }));
     return btn;
   }
 
   // ══ TAB 1: BÚSQUEDA — search + results ══════════════════════════════════
   function buildSearchPane() {
     var pane = state.panes.busqueda;
+    var saveSearchBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '💾 Guardar búsqueda' });
+    saveSearchBtn.addEventListener('click', guarded(function () { openSaveSearchModal(); }));
+    pane.appendChild(h('div', { style: 'display:flex;justify-content:flex-end;margin-bottom:10px' }, saveSearchBtn));
     var filterHost = h('div', null);
     var results = h('div', { style: 'min-width:0' });
     pane.appendChild(h('div', { class: 'pros-grid' }, filterHost, results));
@@ -2745,14 +2752,10 @@
     shell.appendChild(h('div', null,
       h('div', { class: 'pros-title', text: 'Prospección' }),
       h('div', { class: 'pros-subtitle', text: 'Encuentra, enriquece y contacta a tus prospectos — todo desde un solo lugar.' })));
-    var tabsEl = h('div', { class: 'tabs', role: 'tablist' });
-    TABS.forEach(function (t) {
-      var tab = h('button', { type: 'button', class: 'tab', 'data-tab': t.id, text: t.label });
-      tab.addEventListener('click', guarded(function () { switchTab(t.id); }));
-      tabsEl.appendChild(tab);
-    });
-    shell.appendChild(tabsEl);
-    state.tabsEl = tabsEl;
+    // No in-page tab bar here on purpose — the left sidebar (Prospección /
+    // Search People / Listas guardadas / Secuencias / WhatsApp & LinkedIn)
+    // is the only navigation between these panes; a second, duplicate set
+    // of tabs at the top of the page confused users about which nav to use.
     state.panes = {};
     TABS.forEach(function (t) {
       var p = h('div', { class: 'pros-pane', id: 'pros-pane-' + t.id });
@@ -2770,9 +2773,6 @@
   function switchTab(tabId) {
     if (!state.panes[tabId]) tabId = 'resumen';
     state.activeTab = tabId;
-    Array.prototype.forEach.call(state.tabsEl.children, function (t) {
-      t.classList.toggle('active', t.getAttribute('data-tab') === tabId);
-    });
     TABS.forEach(function (t) {
       state.panes[t.id].classList.toggle('active', t.id === tabId);
     });
@@ -2789,68 +2789,17 @@
     }
   }
 
-  // ── Prefill desde el ICP Builder ───────────────────────────────────────
-  // Lee las selecciones de chips del ICP (módulo apollo-icp-chips o su
-  // localStorage) y las vuelca en los filtros de Búsqueda.
-  function readIcpSelections(containerId) {
-    var chips = window.apolloChips;
-    if (chips && typeof chips.getSelected === 'function') {
-      try {
-        var v = chips.getSelected(containerId);
-        if (Array.isArray(v) && v.length) return v;
-      } catch (_) {}
-    }
-    try {
-      var stored = JSON.parse(localStorage.getItem('apollo_icp_state_v1') || '{}');
-      if (Array.isArray(stored[containerId])) return stored[containerId];
-    } catch (_) {}
-    return [];
-  }
-
-  function prefillFromICP() {
-    try {
-      ensureBuilt();
-      var f = state.search.filters;
-      var mapped = 0;
-      var seniorities = readIcpSelections('icp-mgmt-level');
-      var locations = readIcpSelections('icp-locations');
-      var employees = readIcpSelections('icp-employees');
-      var industries = readIcpSelections('icp-industries');
-      var tech = readIcpSelections('icp-tech-active').map(techSlug).filter(Boolean);
-      if (seniorities.length) { f.person_seniorities = seniorities.slice(); mapped++; }
-      if (locations.length) { f.person_locations = locations.slice(); mapped++; }
-      if (employees.length) { f.organization_num_employees_ranges = employees.slice(); mapped++; }
-      if (industries.length) { f.industry_tags = industries.slice(); mapped++; }
-      if (tech.length) { f.tech_any = tech; mapped++; }
-      if (!mapped) {
-        toast('Tu ICP no tiene selecciones aún — defínelas en Search People.', 'warn');
-        return;
-      }
-      persistFilters();
-      if (state.search.panelHost) {
-        state.search.panelHost.innerHTML = '';
-        state.search.panelHost.appendChild(buildFilterPanel());
-      }
-      updateFilterBadges();
-      toast('Filtros cargados desde tu ICP. Presiona «Buscar».', 'success');
-    } catch (e) {
-      console.error('[prospecting]', e);
-      toast(errMsg(e), 'error');
-    }
-  }
-
   // ── Public API ─────────────────────────────────────────────────────────
   window.prospecting = {
     show: function (tabId) {
       try {
         ensureBuilt();
-        switchTab(tabId || state.activeTab || 'busqueda');
+        switchTab(tabId || state.activeTab || 'resumen');
       } catch (e) {
         console.error('[prospecting]', e);
         toast(errMsg(e), 'error');
       }
     },
-    prefillFromICP: prefillFromICP,
     refreshBadge: refreshBadge,
   };
 
