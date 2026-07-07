@@ -66,7 +66,9 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (req.method !== "POST") return json({ error: "POST only" }, 405, cors);
 
-  const apiKey = Deno.env.get("APOLLO_API_KEY");
+  // Trim to tolerate a stray newline/space in the stored secret (a trailing
+  // newline in APOLLO_API_KEY once made Apollo reject every call).
+  const apiKey = (Deno.env.get("APOLLO_API_KEY") ?? "").trim();
   if (!apiKey) return json({ error: "APOLLO_API_KEY secret not configured" }, 503, cors);
 
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
