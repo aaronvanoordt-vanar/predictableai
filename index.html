@@ -2744,7 +2744,19 @@ html, body {
         Tu copiloto para <span id="mc-prospect-name" style="color:var(--teal)">la próxima reunión</span>.
       </div>
 
-      <div id="mc-prospect-meta" style="font-size:13px;color:var(--text3);margin-bottom:28px">Selecciona un prospecto desde el Pipeline o inicia desde una reunión del día</div>
+      <div id="mc-prospect-meta" style="font-size:13px;color:var(--text3);margin-bottom:22px">Elige con quién es la reunión para cargar su brief — el coach no inicia sin un lead.</div>
+
+      <!-- Selector de lead (obligatorio): se llena desde las Listas guardadas de Prospección -->
+      <div id="mc-lead-block" style="max-width:440px;margin-bottom:24px">
+        <label for="mc-lead-select" style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Lead de esta reunión</label>
+        <select id="mc-lead-select" style="width:100%">
+          <option value="">Cargando tus leads…</option>
+        </select>
+        <div id="mc-lead-empty" style="display:none;font-size:12.5px;color:var(--text3);line-height:1.6">
+          Aún no tienes leads guardados. Busca prospectos y guárdalos en una lista desde Prospección; aquí podrás elegirlos para la reunión.
+          <div style="margin-top:10px"><button class="btn btn-ghost btn-sm" onclick="nav(document.querySelector('[data-page=pro-main]'),'pro-main')">Ir a Prospección →</button></div>
+        </div>
+      </div>
 
       <div style="display:flex;gap:10px;margin-bottom:32px">
         <button class="btn btn-jade" style="padding:10px 22px;font-size:14px;gap:8px;display:flex;align-items:center" onclick="iniciarCoachLive()">
@@ -2764,7 +2776,7 @@ html, body {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="2"><path d="M12 15c1.66 0 3-1.34 3-3V6c0-1.66-1.34-3-3-3S9 4.34 9 6v6c0 1.66 1.34 3 3 3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
           </div>
           <div style="font-size:12px;font-weight:700;color:var(--text)">Captura audio + pantalla</div>
-          <div style="font-size:11px;color:var(--text3);line-height:1.5">Tu tab + Tu micrófono</div>
+          <div style="font-size:11px;color:var(--text3);line-height:1.5">Pantalla completa con audio + tu micrófono</div>
         </div>
         <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
           <div style="width:32px;height:32px;border-radius:8px;background:rgba(43,182,115,.12);display:flex;align-items:center;justify-content:center">
@@ -2834,7 +2846,7 @@ html, body {
     <div style="background:linear-gradient(135deg,rgba(6,182,212,.06),rgba(43,182,115,.04));border:1px solid rgba(6,182,212,.18);border-radius:14px;padding:22px 28px;min-height:100px;display:flex;flex-direction:column;justify-content:center">
       <div id="mc-last-spoken" style="min-height:60px">
         <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Esperando audio...</div>
-        <div style="font-size:14px;color:var(--text3);font-style:italic">Comparte el tab de tu videollamada con audio.</div>
+        <div style="font-size:14px;color:var(--text3);font-style:italic">Comparte tu pantalla completa con "Compartir audio del sistema" activado.</div>
       </div>
     </div>
 
@@ -3292,6 +3304,7 @@ html, body {
 <script src="js/prospecting.js"></script>
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
+<script src="js/coach-lead-picker.js"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js"></script>
 <script src="js/hub-unlock.js"></script>
@@ -3427,7 +3440,7 @@ function loadCoachBrief(ctx) {
   if (nameEl && ctx && ctx.name) nameEl.textContent = ctx.name;
   if (metaEl && ctx) {
     const parts = [ctx.title, ctx.company].filter(Boolean);
-    metaEl.textContent = parts.length ? parts.join(' · ') + (ctx.deal_value ? ' · ' + ctx.deal_value : '') + (ctx.icp_score ? ' · ICP-fit ' + ctx.icp_score : '') : 'Demo · Prospecto calificado';
+    metaEl.textContent = parts.length ? parts.join(' · ') + (ctx.deal_value ? ' · ' + ctx.deal_value : '') + (ctx.icp_score ? ' · ICP-fit ' + ctx.icp_score : '') : 'Lead seleccionado para esta reunión';
   }
 
   if (loading) loading.style.display = 'none';
@@ -3446,9 +3459,25 @@ function loadCoachBrief(ctx) {
 
 function iniciarCoachLive(prospectCtx) {
   nav(document.querySelector('[data-page=ventas-coach]'), 'ventas-coach');
-  const ctx = prospectCtx || (window.predictable && window.predictable.currentProspect) || {};
-  // Update brief with real context if available
-  if (ctx && (ctx.name || ctx.id)) loadCoachBrief(ctx);
+  const ctx = prospectCtx || (window.predictable && window.predictable.currentProspect) || null;
+
+  // Sin lead no hay sesión: el reporte y el brief dependen del contacto elegido.
+  if (!ctx || !(ctx.id || ctx.name)) {
+    if (window.uiHelpers && window.uiHelpers.toast) {
+      window.uiHelpers.toast('Selecciona el lead de esta reunión antes de iniciar el coach.', 'warn');
+    }
+    setTimeout(function () {
+      const sel = document.getElementById('mc-lead-select');
+      if (!sel) return;
+      sel.focus();
+      sel.style.outline = '2px solid var(--amber)';
+      sel.style.outlineOffset = '2px';
+      setTimeout(function () { sel.style.outline = ''; sel.style.outlineOffset = ''; }, 2500);
+    }, 350);
+    return;
+  }
+
+  loadCoachBrief(ctx);
   setTimeout(function () {
     if (window.realtimeCoach) {
       window.realtimeCoach.start({
@@ -3459,9 +3488,8 @@ function iniciarCoachLive(prospectCtx) {
         deal_value: ctx.deal_value,
         icp_score: ctx.icp_score
       });
-    } else {
-      // Fallback: show active UI anyway for demo
-      coachShowActive(ctx.name || 'Lucía Bermejo');
+    } else if (window.uiHelpers && window.uiHelpers.toast) {
+      window.uiHelpers.toast('El módulo del coach no cargó. Recarga la página e intenta de nuevo.', 'error');
     }
   }, 300);
 }
@@ -3907,19 +3935,10 @@ function nav(el, pageId) {
   // Recordar la última sección para restaurarla si el usuario refresca la página.
   try { if (pageId) localStorage.setItem('predictable_last_section', pageId); } catch (e) {}
 
-  // AI coach: si no hay lead en memoria (p. ej. tras un reload), restaurar el
-  // último handoff de Prospección desde Supabase (coach_lead_context).
-  if (pageId === 'ventas-coach') {
-    const cur = window.predictable && window.predictable.currentProspect;
-    if (!(cur && (cur.name || cur.id)) && window.prospectingData && window.prospectingData.fetchLatestCoachContext) {
-      window.prospectingData.fetchLatestCoachContext().then(function (lead) {
-        if (lead && (lead.name || lead.id)) {
-          window.predictable = window.predictable || {};
-          window.predictable.currentProspect = lead;
-          if (typeof loadCoachBrief === 'function') loadCoachBrief(lead);
-        }
-      }).catch(function (e) { console.warn('[coach] no se pudo restaurar el contexto:', e.message); });
-    }
+  // AI coach: restaurar el último handoff de Prospección (coach_lead_context)
+  // y llenar el selector de lead con las Listas guardadas (js/coach-lead-picker.js).
+  if (pageId === 'ventas-coach' && window.coachLeadPicker) {
+    window.coachLeadPicker.sync();
   }
 }
 
