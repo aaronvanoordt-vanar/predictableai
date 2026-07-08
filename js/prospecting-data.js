@@ -219,6 +219,13 @@
     if (error) throw new Error('No se pudo eliminar la lista: ' + error.message);
   }
 
+  async function renameList(listId, newName) {
+    const clean = String(newName || '').trim();
+    if (!clean) throw new Error('Escribe un nombre para la lista.');
+    const { error } = await sb().from('prospect_lists').update({ name: clean }).eq('id', listId);
+    if (error) throw new Error('No se pudo renombrar la lista: ' + error.message);
+  }
+
   // ── Búsquedas guardadas (Supabase, RLS por dueño) ──────────
   // Apollo no expone una API pública para "saved searches" — solo persiste
   // los criterios de filtro en Predictable. Guardar también en Apollo se
@@ -944,6 +951,7 @@
     fetchLists,
     createList,
     deleteList,
+    renameList,
     fetchSavedSearches,
     createSavedSearch,
     deleteSavedSearch,

@@ -1817,6 +1817,7 @@
           '<div style="font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(l.name || '—') + '</div>' +
           '<div class="pros-cellsub">' + esc(fmtNum(l.member_count || 0)) + ' contactos · ' + esc(fmtDate(l.created_at)) + '</div>' +
           '</div>' +
+          '<button type="button" class="pros-iconbtn" data-action="rename-list" data-id="' + esc(String(l.id)) + '" title="Renombrar lista" style="font-size:14px">✎</button>' +
           '<button type="button" class="pros-iconbtn" data-action="delete-list" data-id="' + esc(String(l.id)) + '" title="Eliminar lista">' + SVG_TRASH + '</button>' +
           '</div>';
       }).join('');
@@ -1968,6 +1969,7 @@
         })
         .then(function () { restoreImp(); }, function (e) { restoreImp(); throw e; });
     }
+    if (action === 'rename-list') return openRenameListModal(btn.getAttribute('data-id'));
     if (action === 'delete-list') return openDeleteListModal(btn.getAttribute('data-id'));
     if (action === 'select-list') {
       st.activeListId = btn.getAttribute('data-id');
@@ -2013,6 +2015,46 @@
         });
       },
     });
+  }
+
+  function openRenameListModal(listId) {
+    var list = findList(listId);
+    if (!list) return;
+    var nameInput = h('input', { type: 'text', class: 'form-input', value: list.name || '' });
+    var api = openModal({
+      title: 'Renombrar lista',
+      width: 360,
+      bodyNode: h('div', null,
+        h('label', { style: 'display:block;font-size:12.5px;color:var(--text2);margin-bottom:8px;font-weight:600', text: 'Nuevo nombre' }),
+        nameInput),
+      actions: [
+        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
+        { label: 'Renombrar', className: 'btn btn-primary', onClick: onConfirm },
+      ],
+    });
+    nameInput.focus();
+    nameInput.select();
+    function onConfirm() {
+      var newName = nameInput.value.trim();
+      if (!newName) return toast('Escribe un nombre para la lista.', 'warn');
+      if (newName === list.name) return api.close();
+      api.setBusy(true);
+      return Promise.resolve(pd().renameList(list.id, newName))
+        .then(function () {
+          state.cache.lists = null;
+          return loadLists(false);
+        })
+        .then(function () {
+          refreshBadge();
+          renderListsLeft();
+          toast('Lista renombrada a «' + newName + '».', 'success');
+          api.close();
+        })
+        .catch(function (e) {
+          api.setBusy(false);
+          toast(errMsg(e), 'error');
+        });
+    }
   }
 
   // ── "Agregar manualmente" modal ─────────────────────────────────────────
