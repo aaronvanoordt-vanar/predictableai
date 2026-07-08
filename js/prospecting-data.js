@@ -278,7 +278,7 @@
   }
 
   async function updateMember(memberId, patch) {
-    const allowed = ['email', 'email_status', 'phone', 'phone_status', 'outreach', 'sequence_status', 'apollo_contact_id', 'snapshot', 'enriched_at'];
+    const allowed = ['email', 'email_status', 'phone', 'phone_status', 'outreach', 'outreach_status', 'sequence_status', 'apollo_contact_id', 'snapshot', 'enriched_at'];
     const safe = {};
     for (const k of allowed) if (k in (patch || {})) safe[k] = patch[k];
     if (!Object.keys(safe).length) return;
