@@ -1180,15 +1180,23 @@
     return null;
   }
 
+  // Devuelve { value, exact }. `exact:true` cuando Apollo reporta el total;
+  // `exact:false` cuando no lo reporta y `value` es solo un piso (las filas de
+  // esta página).
   function recoTotal() {
     var res = state.search.results;
     var pg = (res && res.pagination) || {};
     var rows = (state.search.pageRows || []).length;
     // Same Apollo quirk as renderResults(): total_entries can report 0 even
     // when people/contacts came back. Trusting it literally here made the
-    // recommended-search widget think it found nobody and exhaust every
-    // broadening step, ending on "0 personas — es lo máximo con tu ICP".
-    return (pg.total_entries != null && pg.total_entries > 0) ? pg.total_entries : rows;
+    // recommended-search widget think it found only one page (the 25 filas de
+    // paginación) and report "25 personas — es lo máximo con tu ICP" aunque
+    // Apollo tenga miles más. Un total positivo es exacto; si no, `rows` es un
+    // piso ("≥ rows"), no el total.
+    if (pg.total_entries != null && pg.total_entries > 0) {
+      return { value: pg.total_entries, exact: true };
+    }
+    return { value: rows, exact: false };
   }
 
   function waitForBrief() {
@@ -1229,9 +1237,17 @@
         var applied = [];
         function searchAndBroaden() {
           return runSearch(1, true).then(function () {
-            var total = recoTotal();
             if (s.searchError) throw new Error(s.searchError);
-            if (total >= RECO_TARGET) return total;
+            var total = recoTotal();
+            var fullPage = (s.pageRows || []).length >= s.perPage;
+            // Total exacto conocido y ya alcanzamos el objetivo → listo.
+            if (total.exact && total.value >= RECO_TARGET) return total;
+            // Apollo no reporta el total exacto pero volvió una página llena:
+            // hay claramente más de una página de resultados. Seguir ampliando
+            // una búsqueda que ya devuelve una página completa solo empeora la
+            // segmentación, así que paramos y reportamos el conteo como piso
+            // (mismo criterio que renderResults()).
+            if (!total.exact && fullPage) return total;
             var desc = broadenOnce(s.filters);
             if (!desc) return total;
             applied.push(desc);
@@ -1241,7 +1257,7 @@
               s.panelHost.appendChild(buildFilterPanel());
             }
             updateFilterBadges();
-            setReco({ msg: 'Solo ' + fmtNum(total) + ' personas — ampliando: ' + desc + '…' });
+            setReco({ msg: 'Solo ' + fmtNum(total.value) + ' personas — ampliando: ' + desc + '…' });
             return searchAndBroaden();
           });
         }
@@ -1250,9 +1266,17 @@
         });
       })
       .then(function (r) {
-        var note = r.total >= RECO_TARGET
-          ? '✓ ' + fmtNum(r.total) + ' personas encontradas con tu ICP.'
-          : '✓ ' + fmtNum(r.total) + ' personas — es lo máximo con tu ICP, incluso ampliado.';
+        var t = r.total;
+        var note;
+        if (!t.exact) {
+          // Apollo no da el total exacto para esta búsqueda: `value` es un piso.
+          note = '✓ Más de ' + fmtNum(t.value) + ' personas encontradas con tu ICP. ' +
+            'Apollo no reporta el total exacto para esta búsqueda; usa la paginación de resultados para ver más.';
+        } else if (t.value >= RECO_TARGET) {
+          note = '✓ ' + fmtNum(t.value) + ' personas encontradas con tu ICP.';
+        } else {
+          note = '✓ ' + fmtNum(t.value) + ' personas — es lo máximo con tu ICP, incluso ampliado.';
+        }
         if (r.applied.length) note += ' Ajustes aplicados: ' + r.applied.join(', ') + '.';
         setReco({ running: false, msg: '', note: note });
       })
