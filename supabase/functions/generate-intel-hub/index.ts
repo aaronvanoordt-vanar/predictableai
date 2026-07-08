@@ -105,6 +105,27 @@ const SECTIONS: SectionDef[] = [
 
 const SECTION_MAP = new Map(SECTIONS.map((s) => [s.key, s]));
 
+// ── Claude model selection ───────────────────────────────────────────────────
+//
+// Default is the cheapest/oldest still-active model so credit usage stays low
+// unless a user explicitly opts into a pricier one from Settings. Keep this
+// allowlist in sync with the picker in index.html's settings page — never
+// pass a user-supplied string straight to the Anthropic API.
+
+const DEFAULT_MODEL = "claude-haiku-4-5";
+
+const ALLOWED_MODELS = new Set([
+  "claude-haiku-4-5",
+  "claude-sonnet-4-6",
+  "claude-sonnet-5",
+  "claude-opus-4-8",
+]);
+
+function resolveModel(preferred: string | null | undefined): string {
+  if (preferred && ALLOWED_MODELS.has(preferred)) return preferred;
+  return DEFAULT_MODEL;
+}
+
 // ── Intake data type ──────────────────────────────────────────────────────────
 
 interface IntakeData {
@@ -192,6 +213,7 @@ interface ContentItem { type: string; text?: string; }
 
 async function callClaude(
   apiKey: string,
+  model: string,
   systemPrompt: string,
   userPrompt: string,
   attempt = 0
@@ -205,7 +227,7 @@ async function callClaude(
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-6",
+      model,
       max_tokens: 4096,
       system: systemPrompt,
       tools: [{ type: "web_search_20250305", name: "web_search" }],
@@ -216,7 +238,7 @@ async function callClaude(
   if (res.status === 429 && attempt < 3) {
     console.warn(`[gen] 429 rate limit — waiting 10s before retry ${attempt + 1}`);
     await sleep(10000);
-    return callClaude(apiKey, systemPrompt, userPrompt, attempt + 1);
+    return callClaude(apiKey, model, systemPrompt, userPrompt, attempt + 1);
   }
 
   if (!res.ok) {
@@ -246,6 +268,7 @@ interface GeneratedContent {
 
 async function generateSection(
   apiKey: string,
+  model: string,
   section: SectionDef,
   companyContext: string,
   today: string
@@ -280,7 +303,7 @@ Research task: ${section.researchPrompt}
 
 Search the web now and generate the ${section.title} section. Make your analysis highly specific to THIS company — their products, their exact ICP (industries, roles, geographies), and how the market intelligence directly impacts their go-to-market strategy.`;
 
-  const raw = await callClaude(apiKey, systemPrompt, userPrompt);
+  const raw = await callClaude(apiKey, model, systemPrompt, userPrompt);
   const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
   try {
@@ -310,6 +333,13 @@ async function runGeneration(
   triggeredBy: string
 ) {
   const today = new Date().toISOString().slice(0, 10);
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("preferred_claude_model")
+    .eq("id", userId)
+    .maybeSingle();
+  const model = resolveModel(profile?.preferred_claude_model);
 
   const { data: intake } = await supabase
     .from("intel_hub_intake")
@@ -352,7 +382,7 @@ async function runGeneration(
     await Promise.all(
       batch.map(async (section) => {
         try {
-          const content = await generateSection(apiKey, section, companyContext, today);
+          const content = await generateSection(apiKey, model, section, companyContext, today);
           await supabase.from("intelligence_hub_reports").upsert(
             {
               user_id: userId,
