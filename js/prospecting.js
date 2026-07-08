@@ -734,8 +734,9 @@
 
     // 0. Búsquedas guardadas
     section('Búsquedas guardadas', function () { return (state.cache.savedSearches || []).length; }, function (body) {
-      var list = h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
-        h('div', { style: 'font-size:12px;color:var(--text3)', text: 'Cargando…' }));
+      var list = h('div', { style: 'display:flex;flex-direction:column;gap:6px' });
+      if (window.Skeleton) list.innerHTML = window.Skeleton.listRows(2, { avatar: false });
+      else list.appendChild(h('div', { style: 'font-size:12px;color:var(--text3)', text: 'Cargando…' }));
       body.appendChild(list);
       function renderList(rows) {
         list.innerHTML = '';
@@ -1399,6 +1400,15 @@
     } catch (e) { s.loading = false; restore(); throw e; }
     payload.page = page;
     payload.per_page = s.perPage;
+    if (s.resultsEl && window.Skeleton) {
+      var skRows = Math.min(10, Math.max(5, s.perPage || 6));
+      s.resultsEl.innerHTML =
+        '<div class="pros-results-head">' + window.Skeleton.line(210, 13) +
+          '<div style="display:flex;align-items:center;gap:8px">' +
+            window.Skeleton.line(110, 28) + window.Skeleton.line(120, 28) +
+          '</div></div>' +
+        window.Skeleton.tableCard({ cols: 6, rows: skRows, title: false });
+    }
     return Promise.resolve()
       .then(function () { return pd().searchPeople(payload); })
       .then(function (res) {
@@ -1597,8 +1607,12 @@
     var people = Array.from(state.search.selectedRows.values());
     if (!people.length) return toast('Selecciona al menos un prospecto.', 'warn');
 
-    var listBox = h('div', { style: 'display:flex;flex-direction:column;gap:6px;max-height:180px;overflow-y:auto;margin:6px 0 12px' },
-      h('div', { style: 'font-size:12px;color:var(--text3)', text: 'Cargando listas…' }));
+    var listBox = h('div', { style: 'display:flex;flex-direction:column;gap:6px;max-height:180px;overflow-y:auto;margin:6px 0 12px' });
+    if (window.Skeleton) {
+      listBox.innerHTML = window.Skeleton.listRows(3, { avatar: false });
+    } else {
+      listBox.appendChild(h('div', { style: 'font-size:12px;color:var(--text3)', text: 'Cargando listas…' }));
+    }
     var nameInput = h('input', { type: 'text', placeholder: 'Nombre de la nueva lista', style: 'width:100%' });
     var prog = progressLine();
     var failHost = h('div', null);
@@ -1827,7 +1841,9 @@
         '</div>';
     }
     if (st.loadingLists) {
-      html += '<div style="font-size:12.5px;color:var(--text3);padding:4px 2px">Cargando listas…</div>';
+      html += window.Skeleton
+        ? '<div style="margin-top:4px">' + window.Skeleton.listRows(4, { avatar: false, trailing: true }) + '</div>'
+        : '<div style="font-size:12.5px;color:var(--text3);padding:4px 2px">Cargando listas…</div>';
     } else if (st.listsError) {
       html += '<div class="pros-note-red" style="margin-top:0">⚠ ' + esc(st.listsError) + '</div>';
     } else if (!lists.length) {
@@ -1896,7 +1912,11 @@
       '<button type="button" class="btn btn-ghost btn-sm" data-action="delete-members" style="color:var(--red)"' + (n ? '' : ' disabled') + '>Eliminar</button>' +
       '</div></div>';
     if (st.loadingMembers) {
-      html += '<div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando contactos…</div>';
+      html += window.Skeleton
+        ? '<div class="pros-scroll-x"><table><tbody>' +
+            window.Skeleton.tableRows(['30%', '40%', '35%', '45%', '30%', '25%', '28%'], 6) +
+          '</tbody></table></div>'
+        : '<div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando contactos…</div>';
     } else if (st.membersError) {
       html += '<div style="padding:16px"><div class="pros-note-red" style="margin-top:0">⚠ ' + esc(st.membersError) + '</div></div>';
     } else if (!st.members.length) {
@@ -2460,7 +2480,11 @@
           'Elige la lista cuyos contactos quieres enrolar en la secuencia.') +
         '</div>';
     } else if (st.loadingMembers) {
-      html += '<div class="table-card"><div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando contactos…</div></div>';
+      html += window.Skeleton
+        ? '<div class="table-card"><div class="pros-scroll-x"><table><tbody>' +
+            window.Skeleton.tableRows(['30%', '40%', '35%', '30%'], 6) +
+          '</tbody></table></div></div>'
+        : '<div class="table-card"><div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando contactos…</div></div>';
     } else if (st.membersError) {
       html += '<div class="pros-note-red" style="margin-top:0">⚠ ' + esc(st.membersError) + '</div>';
     } else if (!st.members.length) {
@@ -2729,7 +2753,12 @@
     left.appendChild(h('div', { class: 'chart-title', text: 'Contexto de tu empresa' }));
     var btn = null;
     if (st.briefLoading) {
-      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text3);margin-top:4px', text: 'Cargando…' }));
+      if (window.Skeleton) {
+        left.appendChild(h('div', { style: 'margin-top:8px;display:flex;flex-direction:column;gap:8px', html:
+          window.Skeleton.line('90%', 11) + window.Skeleton.line('75%', 11) }));
+      } else {
+        left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text3);margin-top:4px', text: 'Cargando…' }));
+      }
     } else if (b && b.status === 'ready') {
       var resumen = b.positional_phrase || b.what_it_does || b.company_name || '';
       left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:4px;line-height:1.5' },
@@ -2940,7 +2969,11 @@
       html += emptyHtml(SVG_CHAT, 'Selecciona una lista',
         'Elige la lista de contactos a los que quieres escribir por WhatsApp o LinkedIn.');
     } else if (st.loadingMembers) {
-      html += '<div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando contactos…</div>';
+      html += window.Skeleton
+        ? '<div class="pros-scroll-x"><table><tbody>' +
+            window.Skeleton.tableRows(['30%', '38%', '32%', '45%'], 6) +
+          '</tbody></table></div>'
+        : '<div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando contactos…</div>';
     } else if (st.membersError) {
       html += '<div style="padding:16px"><div class="pros-note-red" style="margin-top:0">⚠ ' + esc(st.membersError) + '</div></div>';
     } else if (!st.members.length) {

@@ -1952,6 +1952,60 @@ html, body {
 }
 .ih-credit-chip svg { color: var(--gold-bright); }
 
+/* ═══════════════════════════════════════════════════════
+   SKELETON LOADERS — shared system (js/skeletons.js builds
+   markup on top of these classes). Theme-aware + honours
+   prefers-reduced-motion. Tokens only; no hardcoded colors.
+   ═══════════════════════════════════════════════════════ */
+:root { --sk-sheen: rgba(255,255,255,0.55); }
+html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
+
+.sk {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface3);
+  border-radius: var(--r-sm);
+  display: block;
+}
+.sk::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent 0%, var(--sk-sheen) 50%, transparent 100%);
+  animation: sk-sweep 1.5s ease-in-out infinite;
+}
+@keyframes sk-sweep { 100% { transform: translateX(100%); } }
+
+/* Primitive line — width/height set inline by the builder */
+.sk-line   { height: 12px; border-radius: 999px; }
+.sk-circle { border-radius: 50%; flex-shrink: 0; }
+.sk-block  { border-radius: var(--r-md); }
+
+/* Card shell that mirrors real cards so layout never jumps */
+.sk-card {
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sk-grid { display: grid; gap: 12px; }
+.sk-row  { display: flex; align-items: center; gap: 12px; }
+
+/* Reveal: real content fades in once it replaces the skeleton */
+.sk-reveal { animation: sk-reveal .32s ease both; }
+@keyframes sk-reveal { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .sk::after { animation: none; }
+  .sk { animation: sk-pulse 1.8s ease-in-out infinite; }
+  .sk-reveal { animation: none; }
+  @keyframes sk-pulse { 0%,100% { opacity: .7; } 50% { opacity: 1; } }
+}
+
 </style>
 </head>
 <body>
@@ -2098,8 +2152,8 @@ html, body {
     <div class="user-pill" id="user-pill" onclick="userMenuToggle(event)">
       <div class="avatar" id="user-pill-avatar">AV</div>
       <div class="user-pill-info">
-        <div class="user-name" id="user-pill-name">Cargando…</div>
-        <div class="user-role" id="user-pill-role">—</div>
+        <div class="user-name" id="user-pill-name"><span class="sk sk-line" style="width:88px;height:11px"></span></div>
+        <div class="user-role" id="user-pill-role"><span class="sk sk-line" style="width:52px;height:9px"></span></div>
       </div>
       <svg class="user-pill-caret" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5">
         <path d="M4 6l4 4 4-4"/>
@@ -2631,8 +2685,22 @@ html, body {
     </div>
   </div>
 
-  <!-- Punto de montaje del Intelligence Hub (intel-hub-cadence-tabs.js inyecta aquí) -->
-  <div id="ih-v2-shell" class="ih-v2-shell"></div>
+  <!-- Punto de montaje del Intelligence Hub (intel-hub-cadence-tabs.js inyecta aquí).
+       Skeleton estático de arranque: el módulo hace innerHTML='' al montar y lo reemplaza. -->
+  <div id="ih-v2-shell" class="ih-v2-shell">
+    <div id="ih-boot-skeleton" style="padding-top:28px">
+      <div class="sk-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+        <div class="sk-card"><span class="sk sk-line" style="width:60%;height:10px"></span><span class="sk sk-line" style="width:90%;height:14px"></span><span class="sk sk-line" style="width:75%;height:11px"></span></div>
+        <div class="sk-card"><span class="sk sk-line" style="width:60%;height:10px"></span><span class="sk sk-line" style="width:90%;height:14px"></span><span class="sk sk-line" style="width:75%;height:11px"></span></div>
+        <div class="sk-card"><span class="sk sk-line" style="width:60%;height:10px"></span><span class="sk sk-line" style="width:90%;height:14px"></span><span class="sk sk-line" style="width:75%;height:11px"></span></div>
+        <div class="sk-card"><span class="sk sk-line" style="width:60%;height:10px"></span><span class="sk sk-line" style="width:90%;height:14px"></span><span class="sk sk-line" style="width:75%;height:11px"></span></div>
+      </div>
+      <div class="sk-grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr));margin-top:28px">
+        <div class="sk-card" style="height:180px"><span class="sk sk-line" style="width:45%;height:14px"></span><span class="sk sk-line" style="width:100%;height:11px"></span><span class="sk sk-line" style="width:92%;height:11px"></span><span class="sk sk-line" style="width:70%;height:11px"></span></div>
+        <div class="sk-card" style="height:180px"><span class="sk sk-line" style="width:45%;height:14px"></span><span class="sk sk-line" style="width:100%;height:11px"></span><span class="sk sk-line" style="width:92%;height:11px"></span><span class="sk sk-line" style="width:70%;height:11px"></span></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ═══════ PAGE: MI ACCIONABLES ═══════ -->
@@ -2806,9 +2874,9 @@ html, body {
       </div>
       <div id="mc-brief-loading" style="display:none;padding:24px 18px;flex-direction:column;gap:10px">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:4px">GENERANDO BRIEF...</div>
-        <div style="height:10px;background:var(--surface2);border-radius:4px;animation:pulse 1.5s infinite"></div>
-        <div style="height:10px;background:var(--surface2);border-radius:4px;width:80%;animation:pulse 1.5s infinite"></div>
-        <div style="height:10px;background:var(--surface2);border-radius:4px;width:90%;animation:pulse 1.5s infinite"></div>
+        <span class="sk sk-line" style="height:10px"></span>
+        <span class="sk sk-line" style="height:10px;width:80%"></span>
+        <span class="sk sk-line" style="height:10px;width:90%"></span>
       </div>
       <div id="mc-brief-content" style="display:none;padding:0 18px 18px">
         <div style="padding:14px 0;border-bottom:1px solid var(--border)">
@@ -3329,6 +3397,7 @@ html, body {
 <script src="js/auth-guard.js"></script>
 <!-- ═════ Predictable JS modules ═════ -->
 <script src="js/ui-helpers.js"></script>
+<script src="js/skeletons.js"></script>
 <script src="js/api.js"></script>
 <script src="js/apollo-enums.js"></script>
 <script src="js/prospecting-data.js"></script>
@@ -3579,6 +3648,18 @@ async function loadLastMeeting() {
   const loading = document.getElementById('last-meeting-loading');
   const content = document.getElementById('last-meeting-content');
   const empty = document.getElementById('last-meeting-empty');
+  if (window.Skeleton) {
+    const S = window.Skeleton;
+    loading.style.cssText = 'text-align:left';
+    loading.innerHTML =
+      '<div class="sk-card" style="flex-direction:row;align-items:center;justify-content:space-between;margin-bottom:16px">' +
+        '<div class="sk-row">' + S.circle(48) +
+          '<div style="display:flex;flex-direction:column;gap:8px">' + S.line(90, 10) + S.line(150, 16) + S.line(120, 10) + '</div>' +
+        '</div>' + S.line(56, 34) +
+      '</div>' +
+      S.statCards(4, { min: 130 }) +
+      '<div class="sk-card" style="margin-top:16px">' + S.line('40%', 13) + S.paragraph(3) + '</div>';
+  }
   loading.style.display = 'block';
   content.style.display = 'none';
   empty.style.display = 'none';
@@ -3638,6 +3719,7 @@ async function loadLastMeeting() {
     if (nEl) nEl.innerHTML = (r.next_steps || []).map(n => '<li>' + e(n) + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
 
     content.style.display = 'block';
+    content.classList.add('sk-reveal');
 
     // Persist to sales_reports in Supabase
     saveMeetingReportToSupabase(data);
@@ -3694,6 +3776,20 @@ async function loadMyPerformance() {
   const emptyEl   = document.getElementById('my-perf-empty');
   const contentEl = document.getElementById('my-perf-content');
   if (!loadingEl) return;
+  if (window.Skeleton) {
+    const S = window.Skeleton;
+    loadingEl.style.cssText = 'text-align:left';
+    loadingEl.innerHTML =
+      S.statCards(4, { min: 150 }) +
+      '<div class="sk-card" style="margin-top:16px;height:220px;justify-content:flex-end">' +
+        '<div class="sk-row" style="align-items:flex-end;gap:8px;height:100%">' +
+          [40, 65, 50, 80, 55, 72, 60].map(function (hpct) {
+            return S.block('100%', hpct + '%', 'flex:1');
+          }).join('') +
+        '</div>' +
+      '</div>' +
+      S.tableCard({ cols: 5, rows: 5 });
+  }
   loadingEl.style.display = 'block';
   emptyEl.style.display   = 'none';
   contentEl.style.display = 'none';
@@ -3789,6 +3885,7 @@ async function loadMyPerformance() {
     }
 
     contentEl.style.display = 'block';
+    contentEl.classList.add('sk-reveal');
   } catch(e) {
     loadingEl.style.display = 'none';
     emptyEl.style.display   = 'block';
@@ -3799,23 +3896,38 @@ async function loadMyPerformance() {
 async function loadTeamFromSupabase() {
   const tbody = document.querySelector('#rep-equipo tbody');
   if (!tbody) { initReportCharts(); return; }
+  const eqEmpty = document.getElementById('equipo-empty');
+  const eqContent = document.getElementById('equipo-content');
+  const host = document.getElementById('rep-equipo');
+  let skEl = null;
+  if (window.Skeleton && host) {
+    const S = window.Skeleton;
+    if (eqEmpty) eqEmpty.style.display = 'none';
+    if (eqContent) eqContent.style.display = 'none';
+    skEl = document.createElement('div');
+    skEl.innerHTML =
+      '<div class="sk-grid" style="grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">' +
+        '<div class="sk-card" style="height:210px">' + S.line('45%', 13) + S.block('100%', '78%') + '</div>' +
+        '<div class="sk-card" style="height:210px">' + S.line('45%', 13) + S.block('100%', '78%') + '</div>' +
+      '</div>' + S.tableCard({ cols: 6, rows: 5 });
+    host.insertBefore(skEl, host.firstChild);
+  }
   try {
     const sb = window.supabaseClient;
     const p  = window.currentProfile;
-    if (!sb || !p || !p.company_name) { initReportCharts(); return; }
+    if (!sb || !p || !p.company_name) { if (skEl) skEl.remove(); initReportCharts(); return; }
     const { data, error } = await sb.from('sales_reports')
       .select('*')
       .eq('company_name', p.company_name)
       .order('started_at', { ascending: false });
-    const eqEmpty = document.getElementById('equipo-empty');
-    const eqContent = document.getElementById('equipo-content');
+    if (skEl) skEl.remove();
     if (error || !data || data.length === 0) {
       if (eqEmpty) eqEmpty.style.display = '';
       if (eqContent) eqContent.style.display = 'none';
       return;
     }
     if (eqEmpty) eqEmpty.style.display = 'none';
-    if (eqContent) eqContent.style.display = '';
+    if (eqContent) { eqContent.style.display = ''; eqContent.classList.add('sk-reveal'); }
 
     // Group by sdr_email
     const bySDR = {};
@@ -3889,6 +4001,7 @@ async function loadTeamFromSupabase() {
       }
     } catch(e){}
   } catch(e) {
+    if (skEl) skEl.remove();
     console.warn('[loadTeamFromSupabase]', e);
     initReportCharts();
   }
@@ -4207,18 +4320,40 @@ function initCounters() {
   });
 }
 
+// ── KPI skeleton loaders ──
+const DASH_STAT_IDS = ['stat-reuniones', 'stat-contactos', 'stat-openrate', 'stat-score'];
+function setDashboardStatsLoading() {
+  DASH_STAT_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el || el.querySelector('.sk')) return;
+    if (el._skPrev == null) el._skPrev = el.textContent;
+    el.innerHTML = window.Skeleton ? window.Skeleton.line(64, 24) : '';
+  });
+}
+function clearDashboardStatsLoading() {
+  DASH_STAT_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el || !el.querySelector('.sk')) return;
+    el.textContent = el._skPrev != null ? el._skPrev : '—';
+    el.classList.add('sk-reveal');
+  });
+}
+function refreshDashboard() {
+  setDashboardStatsLoading();
+  loadDashboardStats().then(() => {
+    clearDashboardStatsLoading();
+    setTimeout(initCounters, 40);
+  });
+}
+
 // Run on dashboard load and whenever nav hits dashboard
 const _origNav = window.nav;
 window.nav = function(el, pageId) {
   _origNav && _origNav(el, pageId);
-  if (pageId === 'dashboard') {
-    loadDashboardStats().then(() => setTimeout(initCounters, 150));
-  }
+  if (pageId === 'dashboard') refreshDashboard();
 };
 
-window.addEventListener('DOMContentLoaded', () => {
-  loadDashboardStats().then(() => setTimeout(initCounters, 300));
-});
+window.addEventListener('DOMContentLoaded', refreshDashboard);
 </script>
 
 <!-- ═══ Sidebar User Menu (logout/settings con dropdown UP) ═══ -->
@@ -4884,6 +5019,10 @@ window.addEventListener('DOMContentLoaded', () => {
     card.style.display = isAdmin ? '' : 'none';
     if (!isAdmin) return;
 
+    if (window.Skeleton) {
+      loading.style.cssText = 'padding:8px 0';
+      loading.innerHTML = window.Skeleton.listRows(4, { trailing: true });
+    }
     loading.style.display = 'block';
     empty.style.display   = 'none';
     wrap.style.display    = 'none';
