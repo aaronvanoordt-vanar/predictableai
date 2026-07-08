@@ -3156,6 +3156,9 @@
     if (!state.panes[tabId]) tabId = 'resumen';
     state.activeTab = tabId;
     try { localStorage.setItem('predictable_pros_tab', tabId); } catch (e) {}
+    // Respaldo en el hash de la URL: sobrevive un refresh aunque localStorage
+    // falle silenciosamente (modo privado, extensiones de privacidad, etc.).
+    try { history.replaceState(null, '', '#pro-main:' + tabId); } catch (e) {}
     TABS.forEach(function (t) {
       state.panes[t.id].classList.toggle('active', t.id === tabId);
     });
