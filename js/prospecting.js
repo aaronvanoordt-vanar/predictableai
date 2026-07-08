@@ -2838,7 +2838,9 @@
       ? '<span class="pill pill-amber"><span class="saving">⏳</span> Generando…</span>'
       : (m.outreach && m.outreach.generated_at)
         ? '<span class="pill pill-green">Generados</span>'
-        : '<span style="color:var(--text3)">—</span>';
+        : (m.outreach_status === 'error')
+          ? '<span class="pill pill-red">Error</span>'
+          : '<span style="color:var(--text3)">—</span>';
     var html = '<tr>' +
       '<td><input type="checkbox" data-action="wa-check" data-id="' + id + '"' + checked + '></td>' +
       '<td><div style="font-weight:600">' + esc(name) + '</div>' +
@@ -2986,10 +2988,15 @@
           .then(function () { return d.generateOutreach({ member: m, sender: sender }); })
           .then(function (res) {
             var outreach = Object.assign({}, res, { generated_at: new Date().toISOString() });
-            return Promise.resolve(d.updateMember(m.id, { outreach: outreach, outreach_status: 'ready' })).then(function () {
+            // The generated message is the critical, already-paid-for write —
+            // it must not be lost even if outreach_status fails for any reason
+            // (e.g. a schema drift), so it goes in its own call, not bundled
+            // with the best-effort status flag.
+            return Promise.resolve(d.updateMember(m.id, { outreach: outreach })).then(function () {
               m.outreach = outreach;
               m.outreach_status = 'ready';
               ok++;
+              return Promise.resolve(d.updateMember(m.id, { outreach_status: 'ready' })).catch(function () {});
             });
           })
           .catch(function (e) {
