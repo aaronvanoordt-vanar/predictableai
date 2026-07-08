@@ -1511,10 +1511,20 @@
     var reportedTotal = pg.total_entries;
     var totalKnown = reportedTotal != null && reportedTotal > 0;
     var total = totalKnown ? reportedTotal : rows.length;
-    var totalPages = pg.total_pages || 1;
+    // Prefer Apollo's total_pages; if it's missing but the total is known,
+    // derive it from the count and the current page size.
+    var totalPages = pg.total_pages ||
+      (totalKnown ? Math.max(1, Math.ceil(total / (s.perPage || 25))) : 1);
     var fullPage = rows.length >= s.perPage;
     var hasNextPage = fullPage ? true : pageNum < totalPages;
     var partial = !!res.partial_results_only;
+    // Siempre mostramos "Página N de X". Con total conocido, X = total de
+    // páginas. Cuando Apollo no reporta el total, X es un piso honesto: si hay
+    // página siguiente, "N+" (al menos N páginas, hay más); si esta es la
+    // última página, X = N (ya sabemos el total real: la página actual).
+    var totalPagesLabel = totalKnown
+      ? fmtNum(totalPages)
+      : (hasNextPage ? fmtNum(pageNum) + '+' : fmtNum(pageNum));
 
     var html = '<div class="pros-results-head">' +
       '<div style="font-size:13px;color:var(--text2)"><b style="color:var(--text)">' +
@@ -1530,7 +1540,7 @@
       }).join('') +
       '</select>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="page-prev"' + (pageNum <= 1 ? ' disabled' : '') + '>‹</button>' +
-      '<span style="font-size:12px;color:var(--text2);white-space:nowrap">Página ' + esc(fmtNum(pageNum)) + (totalKnown ? ' de ' + esc(fmtNum(totalPages)) : '') + '</span>' +
+      '<span style="font-size:12px;color:var(--text2);white-space:nowrap">Página ' + esc(fmtNum(pageNum)) + ' de ' + esc(totalPagesLabel) + '</span>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="page-next"' + (hasNextPage ? '' : ' disabled') + '>›</button>' +
       '</div></div>';
 
