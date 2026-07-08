@@ -18,7 +18,7 @@
   const STATE = {
     user: null,
     reports: {}, feedback: {}, learning: {},
-    generating: false, initialized: false,
+    generating: false, initialized: false, autoHealed: false,
   };
   function log(...a) { console.log('[intel-hub-v4]', ...a); }
   async function waitForSupabase() {
@@ -121,6 +121,20 @@
     });
     injectStyles();
     renderDashboard();
+    autoHealStale();
+  }
+  // Secciones que quedaron en 'generating' por una corrida previa que nunca
+  // cerró (crash, timeout, falla de créditos a mitad de proceso) se reintentan
+  // solas al montar el hub, en vez de quedar mostrando el spinner para siempre.
+  function autoHealStale() {
+    if (STATE.autoHealed) return;
+    const staleKeys = SECTIONS
+      .filter(s => !s.locked && isStaleGenerating(STATE.reports[s.key]))
+      .map(s => s.key);
+    if (staleKeys.length === 0) return;
+    STATE.autoHealed = true;
+    log(`auto-heal: reintentando ${staleKeys.length} sección(es) interrumpida(s)`, staleKeys);
+    generateAll({ only: staleKeys }).catch(e => log('auto-heal error', e));
   }
   function renderIfMounted() {
     if (document.getElementById('ihx-body')) renderDashboard();
@@ -232,7 +246,9 @@
     } else if (!rep) {
       inner = `<div class="ihx-state-empty"><span>Sin generar</span></div>`;
     } else if (rep.status === 'generating') {
-      inner = `<div class="ihx-state-gen"><div class="ihx-spin"></div><span>Generando inteligencia…</span></div>`;
+      inner = isStaleGenerating(rep)
+        ? `<div class="ihx-state-err">Se interrumpió la generación anterior <small>Reintentando automáticamente…</small></div>`
+        : `<div class="ihx-state-gen"><div class="ihx-spin"></div><span>Generando inteligencia…</span></div>`;
     } else if (rep.status === 'error') {
       inner = `<div class="ihx-state-err">Error al generar <small>${escapeHtml(rep.error_message || '')}</small></div>`;
     } else {
@@ -538,21 +554,23 @@
   //    queda bloqueada para siempre porque cada click la sigue considerando
   //    "en curso" y la salta.
   const STALE_GENERATING_MS = 5 * 60 * 1000;
+  function isStaleGenerating(rep) {
+    if (!rep || rep.status !== 'generating') return false;
+    const started = new Date(rep.updated_at || rep.created_at || 0).getTime();
+    return (Date.now() - started) > STALE_GENERATING_MS;
+  }
   function isDue(section) {
     const rep = STATE.reports[section.key];
     if (!rep) return true;
     if (rep.status === 'error') return true;
-    if (rep.status === 'generating') {
-      const started = new Date(rep.updated_at || rep.created_at || 0).getTime();
-      return (Date.now() - started) > STALE_GENERATING_MS;
-    }
+    if (rep.status === 'generating') return isStaleGenerating(rep);
     if (rep.status === 'ready') {
       if (!rep.next_refresh_at) return true;
       return new Date(rep.next_refresh_at).getTime() <= Date.now();
     }
     return true;
   }
-  async function generateAll({ force = false } = {}) {
+  async function generateAll({ force = false, only = null } = {}) {
 
   if (STATE.generating) return;
 
@@ -587,7 +605,9 @@
 
     const candidates = SECTIONS.filter(s => !s.locked);
 
-    const toRun   = (force ? candidates : candidates.filter(isDue)).map(s => s.key);
+    const toRun   = only
+      ? candidates.filter(s => only.includes(s.key)).map(s => s.key)
+      : (force ? candidates : candidates.filter(isDue)).map(s => s.key);
 
     const skipped = candidates.length - toRun.length;
 
