@@ -3189,6 +3189,37 @@ html, body {
       </div>
     </div>
 
+    <!-- ===== INTELIGENCIA (modelo de Claude) ===== -->
+    <div class="settings-card">
+      <div class="settings-card-header">
+        <div class="icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5">
+            <path d="M8 1.5l1.6 3.6 3.9.5-2.9 2.7.8 3.9L8 10.3l-3.4 1.9.8-3.9-2.9-2.7 3.9-.5z"/>
+          </svg>
+        </div>
+        <div class="settings-card-title">Intelligence Hub</div>
+      </div>
+      <div class="settings-card-sub">Elegí qué modelo de Claude genera tus reportes de inteligencia. Por defecto usamos el modelo más económico para cuidar tus créditos.</div>
+
+      <div class="settings-row">
+        <div class="settings-row-label">Modelo de generación</div>
+        <div class="settings-row-value">
+          <select class="settings-input" id="set-claude-model">
+            <option value="">Automático (recomendado, más económico)</option>
+            <option value="claude-haiku-4-5">Claude Haiku 4.5 — rápido y económico</option>
+            <option value="claude-sonnet-4-6">Claude Sonnet 4.6 — equilibrado</option>
+            <option value="claude-sonnet-5">Claude Sonnet 5 — alta calidad</option>
+            <option value="claude-opus-4-8">Claude Opus 4.8 — máxima calidad</option>
+          </select>
+          <div class="settings-row-hint">Aplica solo a la generación del Intelligence Hub. Modelos más avanzados consumen más créditos.</div>
+        </div>
+      </div>
+
+      <div class="settings-actions">
+        <button class="settings-btn settings-btn-primary" id="set-save-claude-model">Guardar modelo</button>
+      </div>
+    </div>
+
     <!-- ===== CUENTA ===== -->
     <div class="settings-card">
       <div class="settings-card-header">
@@ -4460,6 +4491,10 @@ window.addEventListener('DOMContentLoaded', () => {
     $('#set-company-name').value = (profile && profile.company_name) || '';
     $('#set-linkedin-url').value = (profile && profile.linkedin_company_url) || '';
 
+    // Intelligence Hub — modelo de Claude
+    const modelSel = $('#set-claude-model');
+    if (modelSel) modelSel.value = (profile && profile.preferred_claude_model) || '';
+
     // Cuenta
     const provider = (user.app_metadata && user.app_metadata.provider) || 'email';
     $('#set-provider').textContent = provider === 'google' ? 'Google' : 'Email + Password';
@@ -4498,6 +4533,26 @@ window.addEventListener('DOMContentLoaded', () => {
       if (window.currentProfile) window.currentProfile.full_name = fullName;
       if (typeof window.refreshUserMenu === 'function') window.refreshUserMenu();
       toast('Perfil actualizado correctamente.', 'ok');
+    } catch (e) {
+      toast('Error: ' + e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = orig;
+    }
+  }
+
+  async function saveClaudeModel() {
+    const btn = $('#set-save-claude-model');
+    btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando...';
+    try {
+      const value = $('#set-claude-model').value || null;
+      const { user } = window.__currentSettings;
+      const { error } = await window.supabaseClient
+        .from('profiles')
+        .update({ preferred_claude_model: value })
+        .eq('id', user.id);
+      if (error) throw error;
+      if (window.currentProfile) window.currentProfile.preferred_claude_model = value;
+      toast('Modelo de Intelligence Hub actualizado.', 'ok');
     } catch (e) {
       toast('Error: ' + e.message, 'err');
     } finally {
@@ -4643,6 +4698,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (!$('#set-save-profile')) return; // pagina no presente
     $('#set-save-profile').addEventListener('click', saveProfile);
     $('#set-save-company').addEventListener('click', saveCompany);
+    if ($('#set-save-claude-model')) $('#set-save-claude-model').addEventListener('click', saveClaudeModel);
     $('#set-reset-password').addEventListener('click', resetPassword);
     $('#set-delete-account').addEventListener('click', deleteAccount);
 
