@@ -1889,6 +1889,8 @@
       '<div class="pros-actions">' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>' +
       '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected"' + (n ? '' : ' disabled') + '>Enriquecer seleccionados</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="to-sequence"' + (n ? '' : ' disabled') + '>Agregar a secuencia</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="to-outreach"' + (n ? '' : ' disabled') + '>Generar mensajes</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-members">Actualizar</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="export-csv"' + (st.members.length ? '' : ' disabled') + '>Exportar CSV</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="delete-members" style="color:var(--red)"' + (n ? '' : ' disabled') + '>Eliminar</button>' +
@@ -1916,6 +1918,10 @@
     var n = state.listas.selected.size;
     var enrichBtn = host.querySelector('[data-action="enrich-selected"]');
     if (enrichBtn) enrichBtn.disabled = !n;
+    var seqBtn = host.querySelector('[data-action="to-sequence"]');
+    if (seqBtn) seqBtn.disabled = !n;
+    var outreachBtn = host.querySelector('[data-action="to-outreach"]');
+    if (outreachBtn) outreachBtn.disabled = !n;
     var delBtn = host.querySelector('[data-action="delete-members"]');
     if (delBtn) delBtn.disabled = !n;
   }
@@ -1939,6 +1945,35 @@
   function selectedListMembers() {
     var st = state.listas;
     return st.members.filter(function (m) { return st.selected.has(String(m.id)); });
+  }
+
+  // Carry the current list + selected leads over to the Secuencias or
+  // WhatsApp & LinkedIn tab so the user can finish the action there in a
+  // single click. Nothing is enrolled or generated here — only the list and
+  // the selection move, pre-loaded, so the target tab opens ready to act.
+  function sendSelectionToTab(tabId) {
+    var src = state.listas;
+    if (!src.activeListId) return;
+    var members = selectedListMembers();
+    if (!members.length) return toast('Selecciona al menos un contacto.', 'warn');
+    var ids = members.map(function (m) { return String(m.id); });
+    if (tabId === 'secuencias') {
+      var stq = state.seq;
+      stq.listId = String(src.activeListId);
+      stq.members = src.members.slice();
+      stq.selected = new Set(ids);
+    } else if (tabId === 'outreach') {
+      var stw = state.wa;
+      stw.listId = String(src.activeListId);
+      stw.members = src.members.slice();
+      stw.selected = new Set(ids);
+      stw.expanded = new Set();
+    }
+    // Click the matching sidebar item (not just switchTab) so the sidebar's
+    // active-item highlight stays in sync with the pane actually shown.
+    var navItem = document.querySelector('.nav-item[data-pros-tab="' + tabId + '"]');
+    if (navItem) navItem.click();
+    else switchTab(tabId);
   }
 
   function onListasChange(e) {
@@ -2005,6 +2040,8 @@
     }
     if (action === 'add-manual') return openAddManualModal();
     if (action === 'enrich-selected') return openEnrichModal();
+    if (action === 'to-sequence') return sendSelectionToTab('secuencias');
+    if (action === 'to-outreach') return sendSelectionToTab('outreach');
     if (action === 'refresh-members') {
       // Refetch lists too (member counts) — phones arrive asynchronously.
       return loadLists(true)
