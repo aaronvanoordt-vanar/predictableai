@@ -28,9 +28,13 @@
  *       revisit if outreach generation gets real volume.
  *
  * POST body: {
- *   "lead":   { "name", "first_name", "title", "company", "industry",
- *               "country", "city", "linkedin_url", "company_domain" },
- *   "sender": { "name", "role", "company" }
+ *   "lead":      { "name", "first_name", "title", "company", "industry",
+ *                  "country", "city", "linkedin_url", "company_domain" },
+ *   "sender":    { "name", "role", "company" },
+ *   "member_id": "<prospect_list_members.id>" (optional — when present, the
+ *                result is written server-side to that row's `outreach`
+ *                column before the response is sent, so the message isn't
+ *                lost if the caller's tab reloads/closes mid-request)
  * }
  * Response 200: {
  *   "whatsapp_followup": "...", "linkedin_message": "...",
@@ -379,10 +383,11 @@ Deno.serve(async (req: Request) => {
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
 
-  let body: { lead?: Lead; sender?: Sender };
+  let body: { lead?: Lead; sender?: Sender; member_id?: string };
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400, h); }
 
   const lead = body.lead;
+  const memberId = typeof body.member_id === "string" && body.member_id.trim() ? body.member_id.trim() : null;
   const sender: Sender = (body.sender && typeof body.sender === "object") ? body.sender : {};
   if (
     !lead || typeof lead !== "object" ||
@@ -434,13 +439,28 @@ Deno.serve(async (req: Request) => {
       }
     }
     console.log(`[outreach] ✓ ${user.id} (brief:${brief?.status ?? "none"}, hub:${hubReports?.length ?? 0})`);
-    return json({
+    const result = {
       whatsapp_followup: stripDashes(out.whatsapp_followup),
       linkedin_message: stripDashes(out.linkedin_message),
       email_subject: typeof out.email_subject === "string" ? stripDashes(out.email_subject) : "",
       email_body: typeof out.email_body === "string" ? stripDashes(out.email_body) : "",
       angle: (out.angle && typeof out.angle === "object") ? out.angle : null,
-    }, 200, h);
+    };
+
+    // Write-back so the message survives even if the caller disconnects
+    // before the response arrives (e.g. a page reload mid-generation) — the
+    // owner check (.eq("user_id", user.id)) is required since this uses the
+    // service role, which bypasses RLS.
+    if (memberId) {
+      const { error: writeErr } = await supa
+        .from("prospect_list_members")
+        .update({ outreach: { ...result, generated_at: new Date().toISOString() } })
+        .eq("id", memberId)
+        .eq("user_id", user.id);
+      if (writeErr) console.error("[outreach] write-back failed:", writeErr);
+    }
+
+    return json(result, 200, h);
   } catch (err) {
     console.error("[outreach] error:", err);
     return json({ error: "llm_error", detail: String(err) }, 502, h);

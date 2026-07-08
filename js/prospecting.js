@@ -298,8 +298,10 @@
     '#prospecting-shell .pros-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }',
     '#prospecting-shell .pros-note-red { background:var(--red-soft); border:1px solid rgba(214,69,69,.35); color:var(--red); padding:11px 13px; border-radius:var(--r-md); font-size:12.5px; line-height:1.5; margin-top:12px; }',
     '#prospecting-shell .pros-note-amber { background:var(--amber-soft); border:1px solid rgba(199,126,18,.30); color:var(--amber); padding:11px 13px; border-radius:var(--r-md); font-size:12.5px; line-height:1.5; margin-top:12px; }',
-    '#prospecting-shell .pros-progress { display:none; align-items:center; gap:7px; font-size:12px; color:var(--text2); }',
+    '#prospecting-shell .pros-progress { display:none; align-items:center; gap:8px; font-size:12px; color:var(--text2); }',
     '#prospecting-shell .pros-progress.on { display:inline-flex; }',
+    '#prospecting-shell .pros-progress-bar { width:96px; height:6px; border-radius:99px; background:var(--surface2); border:1px solid var(--hair); overflow:hidden; flex:0 0 auto; }',
+    '#prospecting-shell .pros-progress-fill { display:block; height:100%; width:0%; border-radius:99px; background:var(--accent-2, var(--gold)); transition:width .25s ease; }',
     '#prospecting-shell table input[type=checkbox] { accent-color:var(--accent); width:14px; height:14px; cursor:pointer; }',
     '#prospecting-shell .pros-skeleton { background:var(--surface2); border-radius:var(--r-md); animation:skeleton-pulse 2s infinite; }',
     '@keyframes skeleton-pulse { 0%, 100% { opacity:.6; } 50% { opacity:1; } }',
@@ -2864,7 +2866,9 @@
       '<div style="display:flex;align-items:center;gap:10px"><span class="pros-lbl">Lista</span>' +
       selectHtml('wa-list', listOpts, st.listId) + '</div>' +
       '<div style="display:flex;align-items:center;gap:10px">' +
-      '<span class="pros-progress" data-wa-prog><span class="saving">⏳</span><span data-wa-prog-text></span></span>' +
+      '<span class="pros-progress" data-wa-prog>' +
+      '<span class="pros-progress-bar"><span class="pros-progress-fill" data-wa-prog-fill></span></span>' +
+      '<span data-wa-prog-text></span></span>' +
       '<button type="button" class="btn btn-primary btn-sm" data-action="wa-generate"' + ((n && !st.generating) ? '' : ' disabled') + '>Generar mensajes con IA</button>' +
       '</div></div>';
     if (!st.listId) {
@@ -2887,14 +2891,22 @@
     host.innerHTML = html;
   }
 
-  function setWaProg(text) {
+  function setWaProg(text, pct) {
     var host = state.wa.listHost;
     if (!host) return;
     var wrap = host.querySelector('[data-wa-prog]');
     var span = host.querySelector('[data-wa-prog-text]');
+    var fill = host.querySelector('[data-wa-prog-fill]');
     if (!wrap || !span) return;
-    if (text) { wrap.classList.add('on'); span.textContent = text; }
-    else { wrap.classList.remove('on'); span.textContent = ''; }
+    if (text) {
+      wrap.classList.add('on');
+      span.textContent = text;
+      if (fill) fill.style.width = (typeof pct === 'number' ? Math.max(0, Math.min(100, pct)) : 0) + '%';
+    } else {
+      wrap.classList.remove('on');
+      span.textContent = '';
+      if (fill) fill.style.width = '0%';
+    }
   }
 
   function updateWaToolbar() {
@@ -2960,7 +2972,7 @@
       });
     members.forEach(function (m, i) {
       chain = chain.then(function () {
-        setWaProg('Generando ' + fmtNum(i + 1) + ' de ' + fmtNum(members.length) + '…');
+        setWaProg('Generando ' + fmtNum(i + 1) + ' de ' + fmtNum(members.length) + '…', (i / members.length) * 100);
         return Promise.resolve(d.generateOutreach({ member: m, sender: sender }))
           .then(function (res) {
             var outreach = Object.assign({}, res, { generated_at: new Date().toISOString() });

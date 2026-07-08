@@ -828,7 +828,9 @@
       departments: snap.departments || [],
       company_size: org.estimated_num_employees ? String(org.estimated_num_employees) : '',
     };
-    const data = await edgeFetch('generate-outreach', { lead, sender: sender || getSenderInfo() });
+    // member_id lets the function persist the result server-side (survives
+    // the browser reloading or the tab closing mid-generation).
+    const data = await edgeFetch('generate-outreach', { lead, sender: sender || getSenderInfo(), member_id: member.id });
     if (!data?.whatsapp_followup || !data?.linkedin_message) {
       throw new Error('La IA no devolvió los mensajes. Reintenta.');
     }
