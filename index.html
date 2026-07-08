@@ -2882,6 +2882,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         <div style="padding:14px 0;border-bottom:1px solid var(--border)">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">QUIÉN</div>
           <div id="mc-brief-who" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
+          <div id="mc-brief-hook" style="display:none;margin-top:8px;padding:8px 10px;background:var(--accent-soft);border-radius:8px;font-size:12.5px;color:var(--accent-ink);line-height:1.55"></div>
         </div>
         <div style="padding:14px 0;border-bottom:1px solid var(--border)">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">POR QUÉ LE IMPORTA</div>
@@ -2890,6 +2891,19 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         <div style="padding:14px 0">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--red);margin-bottom:8px">RIESGOS</div>
           <div id="mc-brief-risks" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
+        </div>
+        <!-- Preparación de reunión (coach_prep del nuevo generate-outreach) — oculta para leads con outreach antiguo -->
+        <div id="mc-brief-open-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--teal);margin-bottom:8px">CÓMO ABRIR</div>
+          <div id="mc-brief-open" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
+        </div>
+        <div id="mc-brief-ask-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">QUÉ PREGUNTAR</div>
+          <ul id="mc-brief-ask" style="margin:0;padding-left:16px;font-size:13px;color:var(--text2);line-height:1.7"></ul>
+        </div>
+        <div id="mc-brief-signals-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--green);margin-bottom:8px">SEÑALES A VALIDAR</div>
+          <ul id="mc-brief-signals" style="margin:0;padding-left:16px;font-size:13px;color:var(--text2);line-height:1.7"></ul>
         </div>
       </div>
     </div>
@@ -3059,109 +3073,37 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
 
-  <!-- TAB: OBJECIONES -->
+  <!-- TAB: OBJECIONES (datos reales de reuniones analizadas — se llena vía getObjectionsReport) -->
   <div id="rep-objeciones" class="rep-tab" style="display:none">
-    <div class="chart-card">
-      <div class="chart-header"><span class="chart-title">Top objeciones y cómo manejarlas</span><span class="pill pill-gray">Playbook</span></div>
-      <div style="display:flex;flex-direction:column;gap:14px;margin-top:8px">
-        <div style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden">
-          <div style="padding:12px 16px;background:var(--surface2);display:flex;justify-content:space-between;align-items:center">
-            <div><span style="font-size:13px;font-weight:700">"Ya tenemos una herramienta"</span></div>
-            
-          </div>
-          <div style="padding:14px 16px;font-size:12px;color:var(--text2);line-height:1.7">
-            <strong style="color:var(--text)">Framework (Chris Orlob):</strong> No pelees con la herramienta. Pregunta: "¿Y esa herramienta les está dando predictabilidad en el forecast?" Si la respuesta es no o dudan, ese es el dolor. Reencuadra: "No somos un reemplazo, somos la capa de inteligencia encima."
-            <br><br>
-            <strong style="color:var(--green)">Script probado:</strong> "Entiendo, ¿y cómo están usando [herramienta] para saber con certeza si el equipo va a cerrar el mes? ¿Hay un número confiable o es más una estimación?"
-          </div>
-        </div>
-        <div style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden">
-          <div style="padding:12px 16px;background:var(--surface2);display:flex;justify-content:space-between;align-items:center">
-            <div><span style="font-size:13px;font-weight:700">"Mándame más información"</span></div>
-            
-          </div>
-          <div style="padding:14px 16px;font-size:12px;color:var(--text2);line-height:1.7">
-            <strong style="color:var(--text)">Framework ($100M Leads — Hormozi):</strong> "Mándame info" = no hay suficiente dolor articulado todavía. La solución no es mandar el deck, es profundizar el dolor. Siempre responde con: "Con gusto, ¿qué específicamente necesitarías ver para que valga la pena una segunda llamada?"
-            <br><br>
-            <strong style="color:var(--green)">Script:</strong> "Claro — ¿qué sería lo más relevante para ti? ¿El ROI, cómo funciona la integración, o casos de empresas como la tuya?"
-          </div>
-        </div>
-        <div style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden">
-          <div style="padding:12px 16px;background:var(--surface2);display:flex;justify-content:space-between;align-items:center">
-            <div><span style="font-size:13px;font-weight:700">"No es prioridad ahora"</span></div>
-            
-          </div>
-          <div style="padding:14px 16px;font-size:12px;color:var(--text2);line-height:1.7">
-            <strong style="color:var(--text)">Framework (El Camino del Lobo — Belfort):</strong> Crear urgencia sin presionar. La pregunta es: ¿por qué no es prioridad? Generalmente hay una razón real atrás. Encuentra qué está compitiendo por esa prioridad.
-            <br><br>
-            <strong style="color:var(--green)">Script:</strong> "Tiene sentido. ¿Qué tendría que pasar en los próximos 30 días para que sí se volviera prioridad? ¿Hay un evento o resultado que lo dispare?"
-          </div>
-        </div>
-      </div>
+    <div style="margin-bottom:14px">
+      <div id="obj-title" style="font-size:16px;font-weight:800">Objeciones</div>
+      <div id="obj-sub" style="font-size:12.5px;color:var(--text3);margin-top:2px">Detectadas por la IA en las reuniones analizadas por el coach.</div>
+    </div>
+    <div id="obj-loading" style="text-align:center;padding:40px;color:var(--text3)">
+      <div style="font-size:13px">Analizando objeciones...</div>
+    </div>
+    <div id="obj-content" style="display:none"></div>
+    <div id="obj-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--text3)">
+      <div style="font-size:32px;margin-bottom:12px">🛡</div>
+      <div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:8px">Aún no hay objeciones detectadas</div>
+      <div id="obj-empty-sub" style="font-size:13px;max-width:460px;margin:0 auto;line-height:1.6">Esta vista se llena conforme el coach analiza reuniones: cada objeción real queda registrada con su frecuencia, cómo se manejó y la mejor respuesta sugerida.</div>
+      <button class="btn btn-jade" style="margin-top:20px" onclick="iniciarCoachLive()">Iniciar una sesión →</button>
     </div>
   </div>
 
-  <!-- TAB: ÚLTIMA REUNIÓN -->
+  <!-- TAB: ÚLTIMA REUNIÓN (se renderiza completo desde loadLastMeeting con el reporte real) -->
   <div id="rep-meeting" class="rep-tab" style="display:none">
 
   <div id="last-meeting-loading" style="text-align:center;padding:40px;color:var(--text3)">
     <div style="font-size:13px">Cargando última reunión...</div>
   </div>
 
-  <div id="last-meeting-content" style="display:none">
-
-    <!-- Header SDR + reunión -->
-    <div style="background:linear-gradient(135deg,rgba(47,102,255,.07),rgba(6,182,212,.04));border:1px solid rgba(47,102,255,.18);border-radius:14px;padding:24px 28px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:20px">
-      <div style="display:flex;align-items:center;gap:16px">
-        <div style="width:48px;height:48px;border-radius:12px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">👤</div>
-        <div>
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:4px">REPORTE SDR</div>
-          <div style="font-size:18px;font-weight:800;color:var(--text)" id="lm-sdr-name">—</div>
-          <div style="font-size:12px;color:var(--text3);margin-top:2px" id="lm-meta">—</div>
-        </div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:11px;color:var(--text3);margin-bottom:4px">Score total</div>
-        <div style="font-size:36px;font-weight:900;color:var(--accent-ink);font-family:var(--font-mono)" id="lm-score-big">—</div>
-        <div style="font-size:11px;color:var(--text3)">/100</div>
-      </div>
-    </div>
-
-    <!-- Título de la reunión -->
-    <div style="margin-bottom:12px">
-      <div style="font-size:16px;font-weight:800" id="lm-title">—</div>
-    </div>
-
-    <!-- Score breakdown -->
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px" id="lm-scores"></div>
-
-    <!-- Veredicto -->
-    <div class="chart-card" style="margin-bottom:16px">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:10px">Análisis IA</div>
-      <div style="font-size:13px;color:var(--text2);line-height:1.7" id="lm-verdict">—</div>
-    </div>
-
-    <!-- Tres columnas: bien / perdido / próximos -->
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-      <div class="chart-card">
-        <div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--green)">✓ Lo que hizo bien</div>
-        <ul id="lm-highlights" style="margin:0;padding-left:18px;font-size:12px;line-height:1.9;color:var(--text2)"></ul>
-      </div>
-      <div class="chart-card">
-        <div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--amber)">⚠ Oportunidades perdidas</div>
-        <ul id="lm-missed" style="margin:0;padding-left:18px;font-size:12px;line-height:1.9;color:var(--text2)"></ul>
-      </div>
-      <div class="chart-card">
-        <div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--teal)">→ Próximos pasos</div>
-        <ul id="lm-next" style="margin:0;padding-left:18px;font-size:12px;line-height:1.9;color:var(--text2)"></ul>
-      </div>
-    </div>
-  </div>
+  <div id="last-meeting-content" style="display:none"></div>
 
   <div id="last-meeting-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--text3)">
     <div style="font-size:32px;margin-bottom:12px">🎙</div>
     <div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:8px">Sin reuniones grabadas todavía</div>
-    <div style="font-size:13px">Cuando termines tu primera sesión con el AI Coach, el reporte del SDR aparecerá aquí para que el director pueda revisarlo.</div>
+    <div style="font-size:13px">Cuando termines tu primera sesión con el AI Coach, el reporte completo de la reunión aparecerá aquí.</div>
     <button class="btn btn-jade" style="margin-top:20px" onclick="iniciarCoachLive()">Iniciar primera sesión →</button>
   </div>
 </div>
@@ -3553,7 +3495,58 @@ function loadCoachBrief(ctx) {
   const risks = document.getElementById('mc-brief-risks');
   if (who && ctx) who.textContent = ctx.brief_who || (ctx.name ? ctx.name + (ctx.title ? ' · ' + ctx.title : '') + (ctx.company ? ' en ' + ctx.company : '') + '.' : '—');
   if (why && ctx) why.textContent = ctx.brief_why || 'Contexto de la reunión disponible al iniciar el coach.';
-  if (risks && ctx) risks.textContent = ctx.brief_risks || 'Sin alertas previas.';
+
+  // RIESGOS: base del angle + riesgos específicos del coach_prep (si existen)
+  const prepForRisks = (ctx && ctx.coach_prep && typeof ctx.coach_prep === 'object') ? ctx.coach_prep : null;
+  const prepRisks = (prepForRisks && Array.isArray(prepForRisks.riesgos)) ? prepForRisks.riesgos.filter(Boolean) : [];
+  if (risks && ctx) {
+    const escR = window.escHtml || (s => String(s == null ? '' : s));
+    const baseRisk = ctx.brief_risks || 'Sin alertas previas.';
+    if (prepRisks.length) {
+      risks.innerHTML = escR(baseRisk) +
+        '<ul style="margin:6px 0 0;padding-left:16px">' +
+        prepRisks.map(r => '<li>' + escR(r) + '</li>').join('') +
+        '</ul>';
+    } else {
+      risks.textContent = baseRisk;
+    }
+  }
+
+  // Gancho personal (angle.person_hook del nuevo generate-outreach)
+  const hookEl = document.getElementById('mc-brief-hook');
+  if (hookEl) {
+    const hook = ctx && ctx.person_hook;
+    if (hook) {
+      hookEl.textContent = 'Gancho personal: ' + hook;
+      hookEl.style.display = 'block';
+    } else {
+      hookEl.textContent = '';
+      hookEl.style.display = 'none';
+    }
+  }
+
+  // Preparación de reunión (coach_prep) — solo para leads con outreach nuevo;
+  // con outreach antiguo se mantiene el brief de QUIÉN / POR QUÉ / RIESGOS.
+  const prep = (ctx && ctx.coach_prep && typeof ctx.coach_prep === 'object') ? ctx.coach_prep : null;
+  const esc = window.escHtml || (s => String(s == null ? '' : s));
+
+  const openSec = document.getElementById('mc-brief-open-sec');
+  const openEl = document.getElementById('mc-brief-open');
+  const showOpen = !!(prep && prep.como_abrir);
+  if (openSec) openSec.style.display = showOpen ? 'block' : 'none';
+  if (openEl) openEl.textContent = showOpen ? prep.como_abrir : '';
+
+  const askSec = document.getElementById('mc-brief-ask-sec');
+  const askEl = document.getElementById('mc-brief-ask');
+  const asks = (prep && Array.isArray(prep.que_preguntar)) ? prep.que_preguntar.filter(Boolean) : [];
+  if (askSec) askSec.style.display = asks.length ? 'block' : 'none';
+  if (askEl) askEl.innerHTML = asks.map(q => '<li>' + esc(q) + '</li>').join('');
+
+  const sigSec = document.getElementById('mc-brief-signals-sec');
+  const sigEl = document.getElementById('mc-brief-signals');
+  const sigs = (prep && Array.isArray(prep.senales_a_validar)) ? prep.senales_a_validar.filter(Boolean) : [];
+  if (sigSec) sigSec.style.display = sigs.length ? 'block' : 'none';
+  if (sigEl) sigEl.innerHTML = sigs.map(s => '<li>' + esc(s) + '</li>').join('');
 }
 
 
@@ -3586,7 +3579,11 @@ function iniciarCoachLive(prospectCtx) {
         company: ctx.organization_name || ctx.company,
         title: ctx.title,
         deal_value: ctx.deal_value,
-        icp_score: ctx.icp_score
+        icp_score: ctx.icp_score,
+        // Preparación de reunión del nuevo generate-outreach (additivo:
+        // el coach en vivo la recibe como contexto extra si existe).
+        coach_prep: ctx.coach_prep || null,
+        person_hook: ctx.person_hook || null
       });
     } else if (window.uiHelpers && window.uiHelpers.toast) {
       window.uiHelpers.toast('El módulo del coach no cargó. Recarga la página e intenta de nuevo.', 'error');
@@ -3607,6 +3604,7 @@ function switchReportTab(el, tabId) {
   if (tabId === 'rep-deals') initDealsCharts();
   if (tabId === 'rep-meeting') loadLastMeeting();
   if (tabId === 'rep-my-perf') loadMyPerformance();
+  if (tabId === 'rep-objeciones') loadObjectionsReport();
 }
 
 function initReportPageForRole() {
@@ -3644,6 +3642,239 @@ function initReportCharts() {
 }
 
 function initDealsCharts() { /* la vista de deals muestra empty state hasta tener reuniones analizadas */ }
+// ── ÚLTIMA REUNIÓN ──────────────────────────────────────────
+// Renderiza el reporte post-reunión completo. Soporta el schema NUEVO del
+// edge function sales-coach (resumen, insights, objeciones detalladas,
+// feedback del coach, temperatura_lead, probabilidad_avance) y hace
+// fallback a reportes históricos con el schema viejo (verdict, scores,
+// highlights, missed, next_steps como strings): pinta lo que exista.
+// El backend ya persiste el reporte en sales_reports — aquí solo se lee.
+function renderLastMeetingReport(data) {
+  const e = window.escHtml || (s => String(s == null ? '' : s));
+  const r = data.report || {};
+  const scoreTotal = Math.round(Number(data.score_total != null ? data.score_total : r.score_total) || 0);
+  const scoreColor = scoreTotal >= 80 ? 'var(--green)' : scoreTotal >= 60 ? 'var(--amber)' : 'var(--red)';
+  const sdrName = data.sdr_name || data.sdr_email || 'SDR';
+  const dateStr = data.started_at ? new Date(data.started_at).toLocaleDateString('es-MX', { day:'numeric', month:'long', year:'numeric' }) : '';
+  const durationMin = data.duration_seconds ? Math.round(data.duration_seconds / 60) + ' min' : '';
+  const meta = [dateStr, durationMin, sdrName, data.prospect_company].filter(Boolean).join(' · ');
+
+  const TEMP = {
+    frio:     { label: 'Lead frío',     color: 'var(--teal)',  soft: 'var(--cyan-soft)' },
+    tibio:    { label: 'Lead tibio',    color: 'var(--amber)', soft: 'var(--amber-soft)' },
+    caliente: { label: 'Lead caliente', color: 'var(--green)', soft: 'var(--green-soft)' }
+  };
+  const tempKey = String(r.temperatura_lead || '').toLowerCase().replace('í', 'i');
+  const temp = TEMP[tempKey] || null;
+
+  const prob = (r.probabilidad_avance != null && !isNaN(Number(r.probabilidad_avance)))
+    ? Math.max(0, Math.min(100, Math.round(Number(r.probabilidad_avance)))) : null;
+  const probColor = prob == null ? 'var(--text3)' : prob >= 70 ? 'var(--green)' : prob >= 40 ? 'var(--amber)' : 'var(--red)';
+
+  let html = '';
+
+  // ── Header: prospecto + fecha + score + temperatura + probabilidad ──
+  html += '<div style="background:linear-gradient(135deg,rgba(47,102,255,.07),rgba(6,182,212,.04));border:1px solid rgba(47,102,255,.18);border-radius:14px;padding:24px 28px;margin-bottom:16px">';
+  html +=   '<div style="display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap">';
+  html +=     '<div style="display:flex;align-items:center;gap:16px;min-width:0">';
+  html +=       '<div style="width:48px;height:48px;border-radius:12px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">👤</div>';
+  html +=       '<div style="min-width:0">';
+  html +=         '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:4px">ÚLTIMA REUNIÓN</div>';
+  html +=         '<div style="font-size:18px;font-weight:800;color:var(--text)">' + e(data.prospect_name || 'Prospecto') + (data.meeting_type ? ' <span style="font-weight:600;color:var(--text3)">— ' + e(data.meeting_type) + '</span>' : '') + '</div>';
+  html +=         '<div style="font-size:12px;color:var(--text3);margin-top:2px">' + e(meta || '—') + '</div>';
+  html +=       '</div>';
+  html +=     '</div>';
+  html +=     '<div style="display:flex;align-items:center;gap:18px">';
+  if (temp) {
+    html +=     '<span style="font-size:11px;font-weight:700;padding:5px 12px;border-radius:20px;background:' + temp.soft + ';color:' + temp.color + ';border:1px solid ' + temp.color + ';white-space:nowrap">' + temp.label + '</span>';
+  }
+  html +=       '<div style="text-align:right">';
+  html +=         '<div style="font-size:11px;color:var(--text3);margin-bottom:4px">Score total</div>';
+  html +=         '<div style="font-size:36px;font-weight:900;font-family:var(--font-mono);line-height:1;color:' + scoreColor + '">' + scoreTotal + '</div>';
+  html +=         '<div style="font-size:11px;color:var(--text3)">/100</div>';
+  html +=       '</div>';
+  html +=     '</div>';
+  html +=   '</div>';
+  if (prob != null) {
+    html += '<div style="margin-top:18px">';
+    html +=   '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+    html +=     '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">Probabilidad de avance</span>';
+    html +=     '<span style="font-size:13px;font-weight:800;font-family:var(--font-mono);color:' + probColor + '">' + prob + '%</span>';
+    html +=   '</div>';
+    html +=   '<div style="height:8px;border-radius:4px;background:var(--surface2);border:1px solid var(--border);overflow:hidden">';
+    html +=     '<div style="height:100%;width:' + prob + '%;border-radius:4px;background:' + probColor + '"></div>';
+    html +=   '</div>';
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // ── Resumen (schema nuevo) ──
+  if (r.resumen) {
+    html += '<div class="chart-card" style="margin-bottom:16px">';
+    html +=   '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:10px">Resumen</div>';
+    html +=   '<div style="font-size:13.5px;color:var(--text2);line-height:1.7">' + e(r.resumen) + '</div>';
+    html += '</div>';
+  }
+
+  // ── Skill scores (ambos schemas) ──
+  const scores = r.scores || {};
+  const scoreItems = [
+    ['Escucha activa', scores.active_listening, 'var(--green)'],
+    ['Profundización del dolor', scores.pain_deepening, 'var(--teal)'],
+    ['Control del ritmo', scores.pace_control, 'var(--amber)'],
+    ['Manejo de objeciones', scores.objection_handling, 'var(--accent-ink)']
+  ];
+  if (scoreItems.some(it => it[1] != null)) {
+    html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">';
+    scoreItems.forEach(function (it) {
+      html += '<div style="text-align:center;padding:14px 12px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">';
+      html +=   '<div style="font-size:24px;font-weight:900;font-family:var(--font-mono);color:' + it[2] + '">' + (it[1] != null ? e(Math.round(Number(it[1]) || 0)) : '—') + '</div>';
+      html +=   '<div style="font-size:11px;color:var(--text3);margin-top:4px">' + it[0] + '</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+
+  // ── Insights clave (schema nuevo) ──
+  const INSIGHT_TIPOS = {
+    oportunidad:  { label: 'Oportunidad',     color: 'var(--green)',      soft: 'var(--green-soft)' },
+    riesgo:       { label: 'Riesgo',          color: 'var(--red)',        soft: 'var(--red-soft)' },
+    senal_compra: { label: 'Señal de compra', color: 'var(--teal)',       soft: 'var(--cyan-soft)' },
+    dato_clave:   { label: 'Dato clave',      color: 'var(--accent-ink)', soft: 'var(--accent-soft)' }
+  };
+  const insights = Array.isArray(r.insights) ? r.insights.filter(function (i) { return i && (i.titulo || i.detalle); }) : [];
+  if (insights.length) {
+    html += '<div style="margin-bottom:16px">';
+    html +=   '<div style="font-size:13px;font-weight:800;margin-bottom:10px">Insights clave</div>';
+    html +=   '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">';
+    insights.forEach(function (ins) {
+      const t = INSIGHT_TIPOS[String(ins.tipo || '').toLowerCase()] || { label: ins.tipo || 'Insight', color: 'var(--text3)', soft: 'var(--surface2)' };
+      html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px">';
+      html +=   '<span style="display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:3px 9px;border-radius:20px;background:' + t.soft + ';color:' + t.color + ';margin-bottom:8px">' + e(t.label) + '</span>';
+      if (ins.titulo) html += '<div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">' + e(ins.titulo) + '</div>';
+      if (ins.detalle) html += '<div style="font-size:12.5px;color:var(--text2);line-height:1.6">' + e(ins.detalle) + '</div>';
+      html += '</div>';
+    });
+    html +=   '</div>';
+    html += '</div>';
+  }
+
+  // ── Objeciones reales de la reunión (schema nuevo: array de objetos) ──
+  const RESULT = {
+    superada:    { label: 'Superada',    color: 'var(--green)', soft: 'var(--green-soft)' },
+    parcial:     { label: 'Parcial',     color: 'var(--amber)', soft: 'var(--amber-soft)' },
+    no_resuelta: { label: 'No resuelta', color: 'var(--red)',   soft: 'var(--red-soft)' }
+  };
+  const objections = (Array.isArray(r.objections) ? r.objections : []).filter(function (o) { return o && typeof o === 'object' && (o.objection || o.quote); });
+  if (objections.length) {
+    html += '<div style="margin-bottom:16px">';
+    html +=   '<div style="font-size:13px;font-weight:800;margin-bottom:10px">Objeciones reales de la reunión</div>';
+    html +=   '<div style="display:flex;flex-direction:column;gap:10px">';
+    objections.forEach(function (o) {
+      const res = RESULT[String(o.result || '').toLowerCase()] || null;
+      html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px">';
+      html +=   '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">';
+      html +=     '<span style="font-size:13px;font-weight:700;color:var(--text)">' + e(o.objection || 'Objeción') + '</span>';
+      if (o.categoria) html += '<span class="pill pill-gray" style="font-size:10px;text-transform:capitalize">' + e(o.categoria) + '</span>';
+      if (res) html +=   '<span style="font-size:10px;font-weight:700;padding:3px 9px;border-radius:20px;background:' + res.soft + ';color:' + res.color + ';margin-left:auto">' + res.label + '</span>';
+      html +=   '</div>';
+      if (o.quote) {
+        html += '<div style="border-left:3px solid var(--border);padding:6px 12px;margin-bottom:10px;font-size:12.5px;color:var(--text2);font-style:italic;line-height:1.6">“' + e(o.quote) + '”</div>';
+      }
+      if (o.how_handled) {
+        html += '<div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:8px"><strong style="color:var(--text)">Cómo se manejó:</strong> ' + e(o.how_handled) + '</div>';
+      }
+      if (o.suggested_response) {
+        html += '<div style="background:var(--green-soft);border:1px solid rgba(14,169,104,.25);border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.6;color:var(--text2)"><strong style="color:var(--green)">Respuesta sugerida:</strong> ' + e(o.suggested_response) + '</div>';
+      }
+      html += '</div>';
+    });
+    html +=   '</div>';
+    html += '</div>';
+  }
+
+  // ── Lo que hizo bien / oportunidades perdidas (ambos schemas) ──
+  const highlights = Array.isArray(r.highlights) ? r.highlights.filter(Boolean) : [];
+  const missed = Array.isArray(r.missed) ? r.missed.filter(Boolean) : [];
+  if (highlights.length || missed.length) {
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">';
+    html +=   '<div class="chart-card">';
+    html +=     '<div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--green)">✓ Lo que hizo bien</div>';
+    html +=     '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.9;color:var(--text2)">' + (highlights.map(function (h) { return '<li>' + e(h) + '</li>'; }).join('') || '<li style="color:var(--text3)">—</li>') + '</ul>';
+    html +=   '</div>';
+    html +=   '<div class="chart-card">';
+    html +=     '<div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--amber)">⚠ Oportunidades perdidas</div>';
+    html +=     '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.9;color:var(--text2)">' + (missed.map(function (m) { return '<li>' + e(m) + '</li>'; }).join('') || '<li style="color:var(--text3)">—</li>') + '</ul>';
+    html +=   '</div>';
+    html += '</div>';
+  }
+
+  // ── Feedback del coach (schema nuevo) ──
+  const fb = (r.feedback && typeof r.feedback === 'object') ? r.feedback : null;
+  const fort = fb && Array.isArray(fb.fortalezas) ? fb.fortalezas.filter(Boolean) : [];
+  const mejoras = fb && Array.isArray(fb.areas_mejora) ? fb.areas_mejora.filter(Boolean) : [];
+  if (fb && (fort.length || mejoras.length || fb.consejo_principal)) {
+    html += '<div class="chart-card" style="margin-bottom:16px">';
+    html +=   '<div style="font-size:13px;font-weight:800;margin-bottom:12px">Feedback del coach</div>';
+    if (fort.length || mejoras.length) {
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:' + (fb.consejo_principal ? '14px' : '0') + '">';
+      html +=   '<div>';
+      html +=     '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--green);margin-bottom:8px">Fortalezas</div>';
+      html +=     '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.8;color:var(--text2)">' + (fort.map(function (f) { return '<li>' + e(f) + '</li>'; }).join('') || '<li style="color:var(--text3)">—</li>') + '</ul>';
+      html +=   '</div>';
+      html +=   '<div>';
+      html +=     '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--amber);margin-bottom:8px">Áreas de mejora</div>';
+      html +=     '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.8;color:var(--text2)">' + (mejoras.map(function (m) { return '<li>' + e(m) + '</li>'; }).join('') || '<li style="color:var(--text3)">—</li>') + '</ul>';
+      html +=   '</div>';
+      html += '</div>';
+    }
+    if (fb.consejo_principal) {
+      html += '<div style="background:var(--accent-soft);border:1px solid rgba(47,102,255,.22);border-radius:10px;padding:14px 16px">';
+      html +=   '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--accent-ink);margin-bottom:6px">Consejo principal</div>';
+      html +=   '<div style="font-size:13.5px;font-weight:600;color:var(--text);line-height:1.6">' + e(fb.consejo_principal) + '</div>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  // ── Próximos pasos (nuevo: objetos {accion,detalle,cuando} · viejo: strings) ──
+  const nextSteps = Array.isArray(r.next_steps) ? r.next_steps.filter(Boolean) : [];
+  if (nextSteps.length) {
+    html += '<div class="chart-card" style="margin-bottom:16px">';
+    html +=   '<div style="font-size:13px;font-weight:800;margin-bottom:12px">Próximos pasos</div>';
+    html +=   '<div style="display:flex;flex-direction:column;gap:10px">';
+    nextSteps.forEach(function (n) {
+      const isObj = n && typeof n === 'object';
+      const accion = isObj ? (n.accion || '') : String(n);
+      const detalle = isObj ? (n.detalle || '') : '';
+      const cuando = isObj ? (n.cuando || '') : '';
+      if (!accion && !detalle) return;
+      html += '<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px">';
+      html +=   '<div style="width:18px;height:18px;border-radius:5px;border:2px solid var(--teal);flex-shrink:0;margin-top:1px"></div>';
+      html +=   '<div style="min-width:0;flex:1">';
+      html +=     '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
+      html +=       '<span style="font-size:13px;font-weight:700;color:var(--text)">' + e(accion || detalle) + '</span>';
+      if (cuando) html += '<span class="pill pill-teal" style="font-size:10px">' + e(cuando) + '</span>';
+      html +=     '</div>';
+      if (accion && detalle) html += '<div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-top:3px">' + e(detalle) + '</div>';
+      html +=   '</div>';
+      html += '</div>';
+    });
+    html +=   '</div>';
+    html += '</div>';
+  }
+
+  // ── Veredicto (ambos schemas) ──
+  if (r.verdict) {
+    html += '<div class="chart-card">';
+    html +=   '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">Veredicto</div>';
+    html +=   '<div style="font-size:15px;font-weight:700;color:var(--text);line-height:1.6">' + e(r.verdict) + '</div>';
+    html += '</div>';
+  }
+
+  return html;
+}
+
 async function loadLastMeeting() {
   const loading = document.getElementById('last-meeting-loading');
   const content = document.getElementById('last-meeting-content');
@@ -3667,63 +3898,9 @@ async function loadLastMeeting() {
     const data = await window.api.getLastMeetingReport({});
     loading.style.display = 'none';
     if (!data) { empty.style.display = 'block'; return; }
-    const r = data.report || {};
-    const scoreTotal = data.score_total || r.score_total || 0;
-    const sdrName = data.sdr_name || data.sdr_email || 'SDR';
-    const dateStr = data.started_at ? new Date(data.started_at).toLocaleDateString('es-MX', { day:'numeric', month:'long', year:'numeric' }) : '';
-    const durationMin = data.duration_seconds ? Math.round(data.duration_seconds / 60) + ' min' : '';
-
-    const sdrEl = document.getElementById('lm-sdr-name');
-    if (sdrEl) sdrEl.textContent = sdrName;
-
-    const titleEl = document.getElementById('lm-title');
-    if (titleEl) titleEl.textContent = (data.prospect_name || 'Prospecto') + ' — ' + (data.meeting_type || 'Reunión de venta');
-
-    const metaEl = document.getElementById('lm-meta');
-    if (metaEl) metaEl.textContent = [dateStr, durationMin, data.prospect_company].filter(Boolean).join(' · ');
-
-    const scoreBig = document.getElementById('lm-score-big');
-    if (scoreBig) {
-      scoreBig.textContent = scoreTotal;
-      scoreBig.style.color = scoreTotal >= 80 ? 'var(--green)' : scoreTotal >= 60 ? 'var(--amber)' : 'var(--red)';
-    }
-
-    const legacyScore = document.getElementById('lm-score');
-    if (legacyScore) legacyScore.textContent = 'Score: ' + scoreTotal + '/100';
-
-    const verdictEl = document.getElementById('lm-verdict');
-    if (verdictEl) verdictEl.textContent = r.verdict || 'Sin resumen disponible.';
-
-    const scores = r.scores || {};
-    const scoreItems = [
-      ['Escucha activa', scores.active_listening, 'var(--green)'],
-      ['Profundización', scores.pain_deepening, 'var(--teal)'],
-      ['Control ritmo', scores.pace_control, 'var(--amber)'],
-      ['Objeciones', scores.objection_handling, 'var(--accent-ink)']
-    ];
-    const scoresEl = document.getElementById('lm-scores');
-    if (scoresEl) {
-      scoresEl.innerHTML = scoreItems.map(([label, val, color]) =>
-        '<div style="text-align:center;padding:14px 12px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">' +
-        '<div style="font-size:24px;font-weight:900;font-family:var(--font-mono);color:' + color + '">' + (val != null ? val : '—') + '</div>' +
-        '<div style="font-size:11px;color:var(--text3);margin-top:4px">' + label + '</div></div>'
-      ).join('');
-    }
-
-    const e = window.escHtml || (s => s);
-    const hlEl = document.getElementById('lm-highlights');
-    if (hlEl) hlEl.innerHTML = (r.highlights || []).map(h => '<li>' + e(h) + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
-    const mEl = document.getElementById('lm-missed');
-    if (mEl) mEl.innerHTML = (r.missed || []).map(m => '<li>' + e(m) + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
-    const nEl = document.getElementById('lm-next');
-    if (nEl) nEl.innerHTML = (r.next_steps || []).map(n => '<li>' + e(n) + '</li>').join('') || '<li style="color:var(--text3)">—</li>';
-
+    content.innerHTML = renderLastMeetingReport(data);
     content.style.display = 'block';
     content.classList.add('sk-reveal');
-
-    // Persist to sales_reports in Supabase
-    saveMeetingReportToSupabase(data);
-
   } catch (e) {
     loading.style.display = 'none';
     empty.style.display = 'block';
@@ -3731,43 +3908,97 @@ async function loadLastMeeting() {
   }
 }
 
-async function saveMeetingReportToSupabase(data) {
+// ── OBJECIONES (datos reales, vía sales-coach/getObjectionsReport) ──
+// El backend decide el alcance según el rol del JWT: SDR ve sus propias
+// objeciones; admin/director ven las de todo el equipo. Aquí solo se
+// adapta el copy y se pinta el ranking.
+async function loadObjectionsReport() {
+  const loading = document.getElementById('obj-loading');
+  const content = document.getElementById('obj-content');
+  const empty = document.getElementById('obj-empty');
+  const titleEl = document.getElementById('obj-title');
+  const subEl = document.getElementById('obj-sub');
+  if (!loading || !content || !empty) return;
+
+  const p = window.currentProfile;
+  const role = (p && p.role) ? String(p.role).toLowerCase() : 'sdr';
+  const isAdmin = role === 'admin' || role === 'director';
+  if (titleEl) titleEl.textContent = isAdmin ? 'Objeciones más comunes del equipo' : 'Tus objeciones más frecuentes';
+  if (subEl) subEl.textContent = isAdmin
+    ? 'Detectadas por la IA en las reuniones de todos los SDRs, ordenadas por frecuencia.'
+    : 'Detectadas por la IA en tus reuniones analizadas por el coach, ordenadas por frecuencia.';
+
+  loading.style.display = 'block';
+  content.style.display = 'none';
+  empty.style.display = 'none';
+
   try {
-    const sb = window.supabaseClient;
-    const u  = window.currentUser;
-    const p  = window.currentProfile;
-    if (!sb || !u) return;
-    const r = data.report || {};
-    const scores = r.scores || {};
-    const row = {
-      user_id:                  u.id,
-      company_name:             (p && p.company_name) || null,
-      meeting_id:               data.meeting_id || null,
-      sdr_name:                 data.sdr_name || data.sdr_email || (p && p.full_name) || u.email,
-      sdr_email:                data.sdr_email || u.email,
-      prospect_name:            data.prospect_name || null,
-      prospect_company:         data.prospect_company || null,
-      meeting_type:             data.meeting_type || null,
-      meeting_url:              data.meeting_url || null,
-      started_at:               data.started_at || null,
-      ended_at:                 data.ended_at || null,
-      duration_seconds:         data.duration_seconds || null,
-      score_total:              data.score_total || r.score_total || 0,
-      score_active_listening:   scores.active_listening || null,
-      score_pain_deepening:     scores.pain_deepening || null,
-      score_pace_control:       scores.pace_control || null,
-      score_objection_handling: scores.objection_handling || null,
-      report:                   r,
-      status:                   'completed'
-    };
-    // Upsert by meeting_id to avoid duplicates; if no meeting_id just insert
-    if (row.meeting_id) {
-      await sb.from('sales_reports').upsert(row, { onConflict: 'meeting_id' });
-    } else {
-      await sb.from('sales_reports').insert(row);
+    const data = await window.api.getObjectionsReport();
+    loading.style.display = 'none';
+    const list = (data && Array.isArray(data.objections)) ? data.objections.filter(Boolean) : [];
+    if (!list.length) { empty.style.display = 'block'; return; }
+
+    const e = window.escHtml || (s => String(s == null ? '' : s));
+    let html = '';
+    if (data.total_detected != null) {
+      html += '<div style="font-size:12px;color:var(--text3);margin-bottom:12px">' + e(data.total_detected) + ' objeciones detectadas en total.</div>';
     }
-  } catch (e) {
-    console.warn('[sales_reports] save error:', e);
+    html += '<div style="display:flex;flex-direction:column;gap:12px">';
+    list.forEach(function (o, idx) {
+      const count = Math.round(Number(o.count) || 0);
+      const inLost = Math.round(Number(o.in_lost) || 0);
+      const inWon = Math.round(Number(o.in_won) || 0);
+      const lostRate = (o.lost_rate != null && !isNaN(Number(o.lost_rate)))
+        ? Math.max(0, Math.min(100, Math.round(Number(o.lost_rate)))) : null;
+      const lostColor = lostRate == null ? 'var(--text3)' : lostRate >= 60 ? 'var(--red)' : lostRate >= 30 ? 'var(--amber)' : 'var(--green)';
+      const quotes = Array.isArray(o.examples) ? o.examples.filter(Boolean).slice(0, 3) : [];
+
+      html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden">';
+      // Header: rank + título + count + categoría
+      html +=   '<div style="padding:14px 16px;background:var(--surface2);display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
+      html +=     '<span style="font-size:12px;font-weight:800;font-family:var(--font-mono);color:var(--text3);flex-shrink:0">#' + (idx + 1) + '</span>';
+      html +=     '<span style="font-size:13.5px;font-weight:700;color:var(--text)">' + e(o.title || 'Objeción') + '</span>';
+      html +=     '<span class="pill pill-blue" style="font-size:10px;font-family:var(--font-mono)">' + count + 'x</span>';
+      if (o.categoria) html += '<span class="pill pill-gray" style="font-size:10px;text-transform:capitalize">' + e(o.categoria) + '</span>';
+      if (lostRate != null) {
+        html +=   '<span style="margin-left:auto;font-size:11px;font-weight:700;color:' + lostColor + '">' + lostRate + '% en deals perdidos</span>';
+      }
+      html +=   '</div>';
+      html +=   '<div style="padding:14px 16px">';
+      // Quotes reales
+      if (quotes.length) {
+        html +=   '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">';
+        quotes.forEach(function (q) {
+          html += '<div style="border-left:3px solid var(--border);padding:4px 12px;font-size:12.5px;color:var(--text2);font-style:italic;line-height:1.6">“' + e(q) + '”</div>';
+        });
+        html +=   '</div>';
+      }
+      // Mejor respuesta sugerida
+      if (o.top_suggestion) {
+        html += '<div style="background:var(--green-soft);border:1px solid rgba(14,169,104,.25);border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.6;color:var(--text2);margin-bottom:10px"><strong style="color:var(--green)">Respuesta sugerida:</strong> ' + e(o.top_suggestion) + '</div>';
+      }
+      // Split ganadas / perdidas
+      html +=     '<div style="display:flex;gap:14px;font-size:11.5px;color:var(--text3)">';
+      html +=       '<span>En reuniones ganadas: <strong style="color:var(--green)">' + inWon + '</strong></span>';
+      html +=       '<span>En reuniones perdidas: <strong style="color:var(--red)">' + inLost + '</strong></span>';
+      html +=     '</div>';
+      html +=   '</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+    content.innerHTML = html;
+    content.style.display = 'block';
+    content.classList.add('sk-reveal');
+  } catch (err) {
+    loading.style.display = 'none';
+    const e = window.escHtml || (s => String(s == null ? '' : s));
+    content.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3)">' +
+      '<div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:6px">No se pudieron cargar las objeciones</div>' +
+      '<div style="font-size:12.5px">' + e(err && err.message ? err.message : 'Error inesperado') + '</div>' +
+      '</div>';
+    content.style.display = 'block';
+    console.warn('loadObjectionsReport error:', err);
   }
 }
 

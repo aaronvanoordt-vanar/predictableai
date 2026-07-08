@@ -840,6 +840,10 @@
       email_subject: data.email_subject || '',
       email_body: data.email_body || '',
       angle: (data.angle && typeof data.angle === 'object') ? data.angle : null,
+      // Preparación para la reunión (la consume el AI coach) — additivo,
+      // puede venir null en respuestas del backend anterior.
+      coach_prep: (data.coach_prep && typeof data.coach_prep === 'object') ? data.coach_prep : null,
+      generated_via: data.generated_via || null,
     };
   }
 
@@ -879,6 +883,10 @@
       brief_risks: ang.objection
         ? 'Objeción probable: ' + ang.objection + (ang.neutralizer ? '. Neutralizador: ' + ang.neutralizer + '.' : '')
         : 'Sin alertas previas.',
+      // Preparación de reunión generada junto con el outreach (nuevo
+      // generate-outreach). null para leads con outreach antiguo.
+      coach_prep: (m.outreach && m.outreach.coach_prep) || null,
+      person_hook: ang.person_hook || null,
       outreach: m.outreach || null,
     };
   }
