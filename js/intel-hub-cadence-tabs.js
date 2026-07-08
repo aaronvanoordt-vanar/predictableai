@@ -28,9 +28,12 @@
   async function init() {
     if (STATE.initialized) return;
     STATE.initialized = true;
-    if (!(await waitForSupabase())) return log('no supabase');
+    // Sin sesión / sin supabase no hay datos: montamos igual para que el
+    // skeleton de arranque (#ih-boot-skeleton) se reemplace por el empty
+    // state real en vez de quedar cargando para siempre.
+    if (!(await waitForSupabase())) { mountObserver(); return log('no supabase'); }
     const { data: { user } } = await window.supabaseClient.auth.getUser();
-    if (!user) return log('no user');
+    if (!user) { mountObserver(); return log('no user'); }
     STATE.user = user;
     await Promise.all([loadReports(), loadFeedback(), loadLearning()]);
     subscribeRealtime();
@@ -1110,6 +1113,9 @@
   function safeInit() {
     Promise.resolve().then(init).catch((err) => {
       console.error('[intel-hub-v4] init falló:', err);
+      // Montar el shell aunque init falle: reemplaza el skeleton de arranque
+      // por la UI real (con estado de error) en vez de dejarlo cargando.
+      try { mountObserver(); } catch (_) {}
       const dot = document.getElementById('ihx-status-dot');
       const txt = document.getElementById('ihx-status-text');
       if (dot) dot.style.background = 'var(--red, #D64545)';
