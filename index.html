@@ -4020,7 +4020,14 @@ window.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
-  const navEl = document.querySelector(`.nav-item[data-page="${hash}"]`);
+  // Para pro-main hay 5 nav-items con el mismo data-page (uno por sub-tab);
+  // sin esto, querySelector siempre agarra el primero ("Prospección"/resumen)
+  // y el sidebar se queda resaltando ese aunque el contenido restaurado sea
+  // otra pestaña (Búsqueda, Listas, Secuencias, WhatsApp & LinkedIn).
+  const navEl = (hash === 'pro-main' && proTab)
+    ? (document.querySelector(`.nav-item[data-page="pro-main"][data-pros-tab="${proTab}"]`) ||
+       document.querySelector(`.nav-item[data-page="${hash}"]`))
+    : document.querySelector(`.nav-item[data-page="${hash}"]`);
   if (navEl) setTimeout(() => {
     window.nav(navEl, hash);
     if (proTab && window.prospecting) window.prospecting.show(proTab);
