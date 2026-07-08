@@ -454,7 +454,10 @@ Deno.serve(async (req: Request) => {
     if (memberId) {
       const { error: writeErr } = await supa
         .from("prospect_list_members")
-        .update({ outreach: { ...result, generated_at: new Date().toISOString() } })
+        .update({
+          outreach: { ...result, generated_at: new Date().toISOString() },
+          outreach_status: "ready",
+        })
         .eq("id", memberId)
         .eq("user_id", user.id);
       if (writeErr) console.error("[outreach] write-back failed:", writeErr);
@@ -463,6 +466,17 @@ Deno.serve(async (req: Request) => {
     return json(result, 200, h);
   } catch (err) {
     console.error("[outreach] error:", err);
+    // Best-effort: clear the "generating" status the client set before the
+    // call, so a reload after a failed generation shows the real state
+    // instead of a stuck spinner.
+    if (memberId) {
+      await supa
+        .from("prospect_list_members")
+        .update({ outreach_status: "error" })
+        .eq("id", memberId)
+        .eq("user_id", user.id)
+        .then(({ error }) => { if (error) console.error("[outreach] status write-back failed:", error); });
+    }
     return json({ error: "llm_error", detail: String(err) }, 502, h);
   }
 });

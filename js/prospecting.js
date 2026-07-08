@@ -2834,9 +2834,11 @@
     var checked = st.selected.has(String(m.id)) ? ' checked' : '';
     var expanded = st.expanded.has(String(m.id));
     var name = m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim() || '—';
-    var msgs = (m.outreach && m.outreach.generated_at)
-      ? '<span class="pill pill-green">Generados</span>'
-      : '<span style="color:var(--text3)">—</span>';
+    var msgs = m.outreach_status === 'generating'
+      ? '<span class="pill pill-amber"><span class="saving">⏳</span> Generando…</span>'
+      : (m.outreach && m.outreach.generated_at)
+        ? '<span class="pill pill-green">Generados</span>'
+        : '<span style="color:var(--text3)">—</span>';
     var html = '<tr>' +
       '<td><input type="checkbox" data-action="wa-check" data-id="' + id + '"' + checked + '></td>' +
       '<td><div style="font-weight:600">' + esc(name) + '</div>' +
@@ -2973,15 +2975,28 @@
     members.forEach(function (m, i) {
       chain = chain.then(function () {
         setWaProg('Generando ' + fmtNum(i + 1) + ' de ' + fmtNum(members.length) + '…', (i / members.length) * 100);
-        return Promise.resolve(d.generateOutreach({ member: m, sender: sender }))
+        // Persist "generating" before the call (not just in-memory) so a
+        // reload mid-batch shows this lead as in-progress instead of
+        // looking untouched — the edge function overwrites this with the
+        // final status regardless of whether this tab is still around to
+        // see it.
+        m.outreach_status = 'generating';
+        renderWaList();
+        return Promise.resolve(d.updateMember(m.id, { outreach_status: 'generating' })).catch(function () {})
+          .then(function () { return d.generateOutreach({ member: m, sender: sender }); })
           .then(function (res) {
             var outreach = Object.assign({}, res, { generated_at: new Date().toISOString() });
-            return Promise.resolve(d.updateMember(m.id, { outreach: outreach })).then(function () {
+            return Promise.resolve(d.updateMember(m.id, { outreach: outreach, outreach_status: 'ready' })).then(function () {
               m.outreach = outreach;
+              m.outreach_status = 'ready';
               ok++;
             });
           })
-          .catch(function (e) { failed.push({ name: m.name || '—', error: errMsg(e) }); });
+          .catch(function (e) {
+            m.outreach_status = 'error';
+            Promise.resolve(d.updateMember(m.id, { outreach_status: 'error' })).catch(function () {});
+            failed.push({ name: m.name || '—', error: errMsg(e) });
+          });
       });
     });
     return chain.catch(function () { /* lote abortado: ya se avisó */ }).then(function () {
