@@ -3954,7 +3954,11 @@ function nav(el, pageId) {
   if (pageId === 'pro-main' && window.prospecting && typeof window.prospecting.show === 'function') {
     setTimeout(() => {
       const shell = document.getElementById('prospecting-shell');
-      if (shell && !shell.childElementCount) window.prospecting.show('resumen');
+      if (shell && !shell.childElementCount) {
+        let savedTab = 'resumen';
+        try { savedTab = localStorage.getItem('predictable_pros_tab') || 'resumen'; } catch (e) {}
+        window.prospecting.show(savedTab);
+      }
     }, 0);
   }
 
