@@ -220,6 +220,10 @@
   var SVG_LINK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14L21 3"/><path d="M15 3h6v6"/><path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>';
   var SVG_TRASH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>';
   var SVG_USER_PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>';
+  // Icon matching the Secuencias destination-tab sidebar glyph.
+  var SVG_SEQ_TAB = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M5 8l2 2 4-4"/></svg>';
+  // Sparkle — marks buttons that generate content with IA.
+  var SVG_SPARK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18 9.5l-4.2 1.8L12 16l-1.8-4.7L6 9.5l4.2-1.8z"/><path d="M18.5 14l.9 2.3 2.1.9-2.1.9-.9 2.3-.9-2.3-2.1-.9 2.1-.9z"/></svg>';
 
   // Códigos de país más usados en LatAm + España/EE.UU. (celular es texto
   // libre — esto solo evita que cada usuario tenga que teclear el «+»).
@@ -296,6 +300,11 @@
     '#prospecting-shell .pros-msgblock-title { font-family:var(--font-mono); font-size:10px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-4); }',
     '#prospecting-shell .pros-hint { font-size:11.5px; color:var(--text3); line-height:1.5; }',
     '#prospecting-shell .pros-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }',
+    // AI-generation buttons: blue gradient so they read as "powered by IA".
+    '#prospecting-shell .btn-ai { background:linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%); color:#fff; border-color:transparent; box-shadow:0 1px 2px rgba(31,75,255,.25), 0 8px 20px -10px rgba(90,96,240,.6); }',
+    '#prospecting-shell .btn-ai:hover { filter:brightness(1.07); box-shadow:0 1px 2px rgba(31,75,255,.3), 0 12px 28px -10px rgba(90,96,240,.78); }',
+    '#prospecting-shell .btn-ai svg { color:#fff; }',
+    '#prospecting-shell .btn-ai[disabled] { opacity:.5; cursor:not-allowed; filter:none; box-shadow:none; }',
     '#prospecting-shell .pros-note-red { background:var(--red-soft); border:1px solid rgba(214,69,69,.35); color:var(--red); padding:11px 13px; border-radius:var(--r-md); font-size:12.5px; line-height:1.5; margin-top:12px; }',
     '#prospecting-shell .pros-note-amber { background:var(--amber-soft); border:1px solid rgba(199,126,18,.30); color:var(--amber); padding:11px 13px; border-radius:var(--r-md); font-size:12.5px; line-height:1.5; margin-top:12px; }',
     '#prospecting-shell .pros-progress { display:none; align-items:center; gap:8px; font-size:12px; color:var(--text2); }',
@@ -1883,18 +1892,24 @@
     var list = findList(st.activeListId);
     var n = st.selected.size;
     var html = '<div class="table-card">' +
-      '<div class="table-head" style="gap:12px;flex-wrap:wrap">' +
+      // Header: título + "Enriquecer" en la esquina superior derecha.
+      '<div class="table-head" style="gap:12px;flex-wrap:wrap;align-items:flex-start">' +
       '<div><div style="font-weight:600;font-size:13.5px">' + esc((list && list.name) || 'Lista') + '</div>' +
       '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos</div></div>' +
-      '<div class="pros-actions">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>' +
       '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected"' + (n ? '' : ' disabled') + '>Enriquecer seleccionados</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="to-sequence"' + (n ? '' : ' disabled') + '>Agregar a secuencia</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="to-outreach"' + (n ? '' : ' disabled') + '>Generar mensajes</button>' +
+      '</div>' +
+      // Fila 1 — acciones sobre los leads seleccionados (secuencia / IA).
+      '<div class="pros-actions" style="padding:12px 18px 0">' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="to-sequence"' + (n ? '' : ' disabled') + '>' + SVG_SEQ_TAB + ' Agregar a secuencia</button>' +
+      '<button type="button" class="btn btn-ai btn-sm" data-action="to-outreach"' + (n ? '' : ' disabled') + '>' + SVG_SPARK + ' Generar mensajes con IA</button>' +
+      '</div>' +
+      // Fila 2 — acciones sobre la lista.
+      '<div class="pros-actions" style="padding:10px 18px 14px">' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-members">Actualizar</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="export-csv"' + (st.members.length ? '' : ' disabled') + '>Exportar CSV</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="delete-members" style="color:var(--red)"' + (n ? '' : ' disabled') + '>Eliminar</button>' +
-      '</div></div>';
+      '</div>';
     if (st.loadingMembers) {
       html += '<div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando contactos…</div>';
     } else if (st.membersError) {
@@ -2736,16 +2751,16 @@
         h('span', { class: 'pill pill-green', text: 'Listo' }), ' ',
         resumen ? String(resumen) : ''));
       left.appendChild(h('div', { style: 'font-size:11.5px;color:var(--text3);margin-top:6px;line-height:1.5', text: 'Cada mensaje se personaliza en 5 capas (mercado → industria → empresa → rol → persona) usando este contexto y tu Intelligence Hub.' }));
-      btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'brief-generate', text: 'Actualizar contexto' });
+      btn = h('button', { type: 'button', class: 'btn btn-ai btn-sm', 'data-action': 'brief-generate', html: SVG_SPARK + ' Actualizar contexto' });
     } else if (b && b.status === 'generating') {
       left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:4px', text: '⏳ La IA está leyendo tu web y tu LinkedIn para entender qué hace tu empresa…' }));
       btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'brief-refresh', text: 'Revisar estado' });
     } else if (b && b.status === 'error') {
       left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--red);margin-top:4px', text: '⚠ No se pudo generar: ' + (b.error_message || 'error desconocido') }));
-      btn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'brief-generate', text: 'Reintentar' });
+      btn = h('button', { type: 'button', class: 'btn btn-ai btn-sm', 'data-action': 'brief-generate', html: SVG_SPARK + ' Reintentar' });
     } else {
       left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:4px;line-height:1.5', text: 'Genera el contexto de tu empresa para que los mensajes hablen de lo que haces y de cómo ayudas a tu cliente, no de un rol genérico.' }));
-      btn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'brief-generate', text: 'Generar contexto' });
+      btn = h('button', { type: 'button', class: 'btn btn-ai btn-sm', 'data-action': 'brief-generate', html: SVG_SPARK + ' Generar contexto' });
     }
     host.appendChild(h('div', { class: 'chart-card', style: 'margin-bottom:14px' },
       h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap' }, left, btn)));
@@ -2880,7 +2895,7 @@
         '</div>';
     }
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="wa-regen" data-id="' + id + '">Regenerar</button>' +
+      '<button type="button" class="btn btn-ai btn-sm" data-action="wa-regen" data-id="' + id + '">' + SVG_SPARK + ' Regenerar</button>' +
       ((m.outreach && m.outreach.generated_at)
         ? '<button type="button" class="btn btn-teal btn-sm" data-action="wa-coach" data-id="' + id + '">Preparar reunión con el coach</button>'
         : '') +
@@ -2934,7 +2949,7 @@
       '<span class="pros-progress" data-wa-prog>' +
       '<span class="pros-progress-bar"><span class="pros-progress-fill" data-wa-prog-fill></span></span>' +
       '<span data-wa-prog-text></span></span>' +
-      '<button type="button" class="btn btn-primary btn-sm" data-action="wa-generate"' + ((n && !st.generating) ? '' : ' disabled') + '>Generar mensajes con IA</button>' +
+      '<button type="button" class="btn btn-ai btn-sm" data-action="wa-generate"' + ((n && !st.generating) ? '' : ' disabled') + '>' + SVG_SPARK + ' Generar mensajes con IA</button>' +
       '</div></div>';
     if (!st.listId) {
       html += emptyHtml(SVG_CHAT, 'Selecciona una lista',
