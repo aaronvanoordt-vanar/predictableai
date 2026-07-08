@@ -3968,7 +3968,11 @@ function nav(el, pageId) {
   }
 
   // Recordar la última sección para restaurarla si el usuario refresca la página.
+  // Se guarda tanto en localStorage como en el hash de la URL: si localStorage
+  // falla silenciosamente (modo privado, extensiones de privacidad, cuota
+  // agotada) el hash sigue sobreviviendo un refresh porque es parte de la URL.
   try { if (pageId) localStorage.setItem('predictable_last_section', pageId); } catch (e) {}
+  try { if (pageId) history.replaceState(null, '', '#' + pageId); } catch (e) {}
 
   // AI coach: restaurar el último handoff de Prospección (coach_lead_context)
   // y llenar el selector de lead con las Listas guardadas (js/coach-lead-picker.js).
@@ -3988,6 +3992,14 @@ window.addEventListener('DOMContentLoaded', () => {
   let hash = (location.hash || '').replace(/^#/, '');
   let proTab = PRO_HASH_ALIASES[hash];
   if (proTab) hash = 'pro-main';
+
+  // Formato "pro-main:tabId" que nav()/switchTab() escriben en el hash en
+  // cada navegación (vía history.replaceState) — respaldo que sobrevive un
+  // refresh aunque localStorage falle silenciosamente (modo privado, etc.).
+  if (!proTab && hash.indexOf('pro-main:') === 0) {
+    proTab = hash.slice('pro-main:'.length) || null;
+    hash = 'pro-main';
+  }
 
   // Sin hash explícito: restaurar la última sección visitada para que un
   // refresh no devuelva al usuario al dashboard.
@@ -4755,6 +4767,7 @@ window.addEventListener('DOMContentLoaded', () => {
     window.scrollTo(0, 0);
     loadSettings();
     try { localStorage.setItem('predictable_last_section', 'settings'); } catch (e) {}
+    try { history.replaceState(null, '', '#settings'); } catch (e) {}
   };
 
   // Refrescar el pill del sidebar cuando se guarda algo
