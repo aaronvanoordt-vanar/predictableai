@@ -27,6 +27,13 @@ const CADENCE_SECTIONS: Record<string, string[]> = {
 
 const ALL_CADENCES = Object.keys(CADENCE_SECTIONS) as Array<keyof typeof CADENCE_SECTIONS>;
 
+// Mirrors STALE_GENERATING_MS in js/intel-hub-cadence-tabs.js. A row stuck in
+// 'generating' past this window means a previous run crashed/timed out
+// (or failed mid-way, e.g. on a credit check) without writing a final
+// status — without this cutoff the scheduler treats it as still in
+// progress and skips it on every cron tick forever.
+const STALE_GENERATING_MS = 5 * 60 * 1000;
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -94,15 +101,18 @@ Deno.serve(async (req: Request) => {
     // For each section in this cadence, find users who are due
     const { data: existingReports } = await supabase
       .from("intelligence_hub_reports")
-      .select("user_id, section_key, next_refresh_at, status")
+      .select("user_id, section_key, next_refresh_at, status, updated_at")
       .in("user_id", userIds)
       .in("section_key", sections);
 
     // Build a set of (user_id, section_key) that are already up-to-date
     const upToDate = new Set<string>();
     for (const row of existingReports ?? []) {
+      const stillGenerating =
+        row.status === "generating" &&
+        Date.now() - new Date(row.updated_at).getTime() < STALE_GENERATING_MS;
       if (
-        row.status === "generating" ||
+        stillGenerating ||
         (row.next_refresh_at && row.next_refresh_at > now && row.status === "ready")
       ) {
         upToDate.add(`${row.user_id}::${row.section_key}`);
