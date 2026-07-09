@@ -3,10 +3,18 @@
  *
  * Port of the Google Apps Script meeting-coach backend ("Ventas AI") to
  * Supabase: Google Sheets → Postgres (coach_meetings, coach_transcript_chunks,
- * coach_events, meeting_objections — see migration 20260709000001_sales_coach.sql),
- * same AI engine (OpenAI gpt-4o-mini, temperature 0.3, response_format
- * json_object), same transcription sources (Deepgram client-side chunks via
- * ingestLocalChunks + Recall.ai realtime webhook for bot mode).
+ * coach_events, meeting_objections — see migration 20260709000001_sales_coach.sql).
+ *
+ * AI engine: Anthropic Claude (v2 — replaced the Apps Script's OpenAI
+ * gpt-4o-mini at the user's request, reusing the ANTHROPIC_API_KEY secret the
+ * other edge functions already use). Final report → claude-opus-4-8 (runs once
+ * per meeting, quality-critical); live bot-mode coaching → claude-haiku-4-5
+ * (fires every few seconds of conversation, latency/cost-critical). Both use
+ * structured outputs (output_config.format json_schema), so the JSON shape is
+ * guaranteed — the schema-enforced equivalent of OpenAI's response_format.
+ * Speech-to-text is unchanged: Deepgram client-side chunks via
+ * ingestLocalChunks + Recall.ai realtime webhook for bot mode (Claude does
+ * not transcribe audio).
  *
  * ── Contract (preserved from Apps Script so js/api.js keeps working) ────────
  *   POST JSON { action, payload }  →  { ok: true, data } | { ok: false, error }
@@ -75,7 +83,8 @@
  *     "probabilidad_avance": 0-100
  *   }
  *
- * Required secrets: OPENAI_API_KEY, RECALL_API_KEY, RECALL_WEBHOOK_SECRET
+ * Required secrets: ANTHROPIC_API_KEY (already set — shared with the other
+ * edge functions). RECALL_API_KEY + RECALL_WEBHOOK_SECRET only for bot mode.
  * (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are injected by the platform.)
  */
 
@@ -242,36 +251,203 @@ function insufficientReport() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// OpenAI caller — SAME engine and params as the Apps Script (vai_callOpenAI):
-// gpt-4o-mini, temperature 0.3, response_format json_object.
+// Claude caller — Anthropic Messages API with structured outputs
+// (output_config.format json_schema ⇒ the first content block is guaranteed
+// to be text containing JSON valid against the schema; no defensive parsing).
+// The report runs on Opus (once per meeting, quality-critical); live bot-mode
+// coaching runs on Haiku (fires every few seconds, latency/cost-critical).
+// No sampling params: Opus 4.8 rejects temperature/top_p/top_k.
 // ───────────────────────────────────────────────────────────────────────────
+const REPORT_MODEL = "claude-opus-4-8";
+const LIVE_COACH_MODEL = "claude-haiku-4-5";
+
 // deno-lint-ignore no-explicit-any
-async function callOpenAI(systemPrompt: string, userPrompt: string): Promise<any> {
-  const key = Deno.env.get("OPENAI_API_KEY");
-  if (!key) throw new Error("OPENAI_API_KEY no configurada");
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      temperature: 0.3,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-    }),
-  });
-  const txt = await res.text();
-  if (!res.ok) throw new Error(`OpenAI ${res.status}: ${txt.slice(0, 400)}`);
-  const data = JSON.parse(txt);
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) throw new Error("OpenAI: respuesta sin contenido");
-  return JSON.parse(content);
+async function callClaude(
+  model: string,
+  systemPrompt: string,
+  userPrompt: string,
+  schema: Record<string, unknown>,
+  maxTokens: number,
+  // deno-lint-ignore no-explicit-any
+): Promise<any> {
+  const key = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!key) throw new Error("ANTHROPIC_API_KEY no configurada");
+
+  let lastErr = "";
+  for (let attempt = 0; attempt <= 2; attempt++) {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        system: systemPrompt,
+        output_config: { format: { type: "json_schema", schema } },
+        messages: [{ role: "user", content: userPrompt }],
+      }),
+    });
+
+    // Retry transient failures (rate limit / overload); fail fast on 4xx.
+    if ((res.status === 429 || res.status === 529 || res.status >= 500) && attempt < 2) {
+      lastErr = `${res.status}: ${(await res.text()).slice(0, 300)}`;
+      console.warn(`[sales-coach] Anthropic ${lastErr} — retry ${attempt + 1}/2`);
+      await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
+      continue;
+    }
+    const txt = await res.text();
+    if (!res.ok) throw new Error(`Anthropic ${res.status}: ${txt.slice(0, 400)}`);
+
+    const data = JSON.parse(txt);
+    if (data?.stop_reason === "refusal") {
+      throw new Error("Anthropic: la solicitud fue rechazada por los clasificadores de seguridad");
+    }
+    // deno-lint-ignore no-explicit-any
+    const block = (Array.isArray(data?.content) ? data.content : []).find((b: any) => b?.type === "text");
+    if (!block?.text) throw new Error(`Anthropic: respuesta sin contenido (stop_reason: ${data?.stop_reason})`);
+    return JSON.parse(block.text);
+  }
+  throw new Error(`Anthropic no disponible tras reintentos (${lastErr})`);
 }
+
+// JSON Schemas for structured outputs. Constraint notes: only supported
+// keywords (type/properties/required/additionalProperties:false/enum/items/
+// description) — numeric ranges like 0-100 are conveyed by the prompt, not
+// the schema (minimum/maximum are unsupported).
+const SCORES_SCHEMA = {
+  type: "object",
+  properties: {
+    active_listening: { type: "integer", description: "0-100" },
+    pain_deepening: { type: "integer", description: "0-100" },
+    pace_control: { type: "integer", description: "0-100" },
+    objection_handling: { type: "integer", description: "0-100" },
+  },
+  required: ["active_listening", "pain_deepening", "pace_control", "objection_handling"],
+  additionalProperties: false,
+};
+
+const REPORT_SCHEMA = {
+  type: "object",
+  properties: {
+    score_total: { type: "integer", description: "0-100" },
+    scores: SCORES_SCHEMA,
+    resumen: { type: "string" },
+    insights: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          titulo: { type: "string" },
+          detalle: { type: "string" },
+          tipo: { type: "string", enum: ["oportunidad", "riesgo", "senal_compra", "dato_clave"] },
+        },
+        required: ["titulo", "detalle", "tipo"],
+        additionalProperties: false,
+      },
+    },
+    objections: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          objection: { type: "string" },
+          quote: { type: "string", description: "cita textual del transcript" },
+          categoria: {
+            type: "string",
+            enum: ["precio", "timing", "autoridad", "necesidad", "confianza", "competencia", "otro"],
+          },
+          how_handled: { type: "string" },
+          result: { type: "string", enum: ["superada", "parcial", "no_resuelta"] },
+          suggested_response: { type: "string" },
+        },
+        required: ["objection", "quote", "categoria", "how_handled", "result", "suggested_response"],
+        additionalProperties: false,
+      },
+    },
+    highlights: { type: "array", items: { type: "string" } },
+    missed: { type: "array", items: { type: "string" } },
+    feedback: {
+      type: "object",
+      properties: {
+        fortalezas: { type: "array", items: { type: "string" } },
+        areas_mejora: { type: "array", items: { type: "string" } },
+        consejo_principal: { type: "string" },
+      },
+      required: ["fortalezas", "areas_mejora", "consejo_principal"],
+      additionalProperties: false,
+    },
+    next_steps: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          accion: { type: "string" },
+          detalle: { type: "string" },
+          cuando: { type: "string" },
+        },
+        required: ["accion", "detalle", "cuando"],
+        additionalProperties: false,
+      },
+    },
+    verdict: { type: "string" },
+    temperatura_lead: { type: "string", enum: ["frio", "tibio", "caliente"] },
+    probabilidad_avance: { type: "integer", description: "0-100" },
+  },
+  required: [
+    "score_total", "scores", "resumen", "insights", "objections", "highlights",
+    "missed", "feedback", "next_steps", "verdict", "temperatura_lead", "probabilidad_avance",
+  ],
+  additionalProperties: false,
+};
+
+const COACH_SCHEMA = {
+  type: "object",
+  properties: {
+    state: {
+      type: "object",
+      properties: {
+        stage: { type: "string", enum: ["rapport", "discovery", "reframe", "demo", "negotiation", "close"] },
+        rapport_strength: { type: "integer", description: "0-100" },
+        pain_clarity: { type: "integer", description: "0-100" },
+        pain_quantified: { type: "boolean" },
+        champion_identified: { type: "boolean" },
+        budget_known: { type: "boolean" },
+        next_step_secured: { type: "boolean" },
+        momentum: { type: "string", enum: ["rising", "stable", "falling"] },
+        risk_flags: { type: "array", items: { type: "string" } },
+        scores: SCORES_SCHEMA,
+      },
+      required: [
+        "stage", "rapport_strength", "pain_clarity", "pain_quantified", "champion_identified",
+        "budget_known", "next_step_secured", "momentum", "risk_flags", "scores",
+      ],
+      additionalProperties: false,
+    },
+    alerts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["objection", "positive_signal", "risk", "stage_guidance"] },
+          severity: { type: "string", enum: ["info", "warn", "critical"] },
+          title: { type: "string" },
+          explanation: { type: "string" },
+          suggested_phrase: { type: "string" },
+          suggested_question: { type: "string", description: "vacío si no aplica" },
+        },
+        required: ["type", "severity", "title", "explanation", "suggested_phrase", "suggested_question"],
+        additionalProperties: false,
+      },
+    },
+    next_steps: { type: "array", items: { type: "string" } },
+    summary_so_far: { type: "string" },
+  },
+  required: ["state", "alerts", "next_steps", "summary_so_far"],
+  additionalProperties: false,
+};
 
 // ───────────────────────────────────────────────────────────────────────────
 // Shared types / helpers
@@ -443,7 +619,7 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
 
   let llm: Json;
   try {
-    llm = await callOpenAI(SYSTEM_PROMPT_COACH, userPrompt);
+    llm = await callClaude(LIVE_COACH_MODEL, SYSTEM_PROMPT_COACH, userPrompt, COACH_SCHEMA, 2048);
   } catch (e) {
     // Same fallback the Apps Script used on LLM/parse errors.
     console.error("[sales-coach] LLM error:", e);
@@ -633,7 +809,13 @@ async function actionEndMeeting(ctx: Ctx, p: Json): Promise<Json> {
   if (chunks.length === 0 || fullTranscript.trim().length < 20) {
     report = insufficientReport();
   } else {
-    report = await callOpenAI(SYSTEM_PROMPT_REPORT, buildReportUserPrompt(meeting, fullTranscript));
+    report = await callClaude(
+      REPORT_MODEL,
+      SYSTEM_PROMPT_REPORT,
+      buildReportUserPrompt(meeting, fullTranscript),
+      REPORT_SCHEMA,
+      8192,
+    );
   }
   const scoreTotal = numOrNull(report?.score_total) ?? 0;
 

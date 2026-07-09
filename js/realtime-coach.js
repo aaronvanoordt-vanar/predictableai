@@ -103,6 +103,8 @@
         console.log('[Coach] Mic OK');
       } catch (e) {
         console.warn('[Coach] Sin mic:', e); micStream = null;
+        toast('Sin acceso al micrófono: tu voz NO se transcribirá. Habilita el permiso ' +
+          '(candado en la barra de direcciones) y reinicia el coach.', 'warn');
       }
 
       console.log('[Coach] 4/4 Registrando meeting...');
@@ -145,7 +147,19 @@
   function startAudioCapture() {
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-      console.log('[Coach] AudioContext sampleRate:', audioCtx.sampleRate);
+      console.log('[Coach] AudioContext sampleRate:', audioCtx.sampleRate, 'state:', audioCtx.state);
+
+      // Chrome puede crear el contexto 'suspended' (política de autoplay):
+      // sin resume() el pipeline no procesa NI UN frame y el coach queda
+      // sordo aunque el estado diga "Escuchando".
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().then(function () {
+          console.log('[Coach] AudioContext reanudado, state:', audioCtx.state);
+        }).catch(function (e) {
+          console.error('[Coach] AudioContext resume falló:', e);
+          toast('El navegador bloqueó la captura de audio. Haz clic en la página y reinicia el coach.', 'error');
+        });
+      }
 
       const tabAudio = new MediaStream(displayStream.getAudioTracks());
       const tabSource = audioCtx.createMediaStreamSource(tabAudio);
@@ -192,6 +206,15 @@
       merger.connect(audioProcessor);
       audioProcessor.connect(audioCtx.destination);
       console.log('[Coach] Audio capture dual iniciada');
+
+      // Watchdog: si a los 8s no salió ni un frame de audio, avisar en la UI
+      // en lugar de dejar la sesión "escuchando" en silencio indefinidamente.
+      setTimeout(function () {
+        if (active && frameCount === 0) {
+          toast('No está llegando audio al coach. Verifica que marcaste "Compartir audio ' +
+            'del sistema" y el permiso del micrófono, y reinicia la sesión.', 'error');
+        }
+      }, 8000);
     } catch (e) {
       console.error('[Coach] AudioContext error:', e);
       toast('Error de audio: ' + e.message, 'error');
