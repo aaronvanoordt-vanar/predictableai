@@ -2926,6 +2926,7 @@
       html += '<div class="pros-msgblock"><div class="pros-msgblock-title">Ángulo de personalización</div>' +
         '<div style="font-size:12.5px;line-height:1.7;color:var(--text2)">' +
         (angle.layer ? '<div><b>Capa del ángulo:</b> ' + esc(angle.layer) + '</div>' : '') +
+        (angle.person_hook ? '<div><b>Gancho personal:</b> ' + esc(angle.person_hook) + '</div>' : '') +
         (angle.hypothesis ? '<div><b>Dolor probable:</b> ' + esc(angle.hypothesis) + '</div>' : '') +
         (angle.objection ? '<div><b>Objeción esperada:</b> ' + esc(angle.objection) + (angle.neutralizer ? ' · <i>Neutralizador:</i> ' + esc(angle.neutralizer) : '') + '</div>' : '') +
         (angle.social_proof && angle.social_proof !== 'ninguno' ? '<div><b>Social proof usado:</b> ' + esc(angle.social_proof) + '</div>' : '') +

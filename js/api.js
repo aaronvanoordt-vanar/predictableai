@@ -1,29 +1,34 @@
 // js/api.js
 // ───────────────────────────────────────────────────────────
-// Wrapper único para hablar con el backend Apps Script.
-// Usa text/plain a propósito para evitar CORS preflight.
+// Wrapper único para hablar con el backend del Meeting Coach:
+// el edge function `sales-coach` de Supabase (reemplaza al
+// antiguo Apps Script). Autentica con el JWT de la sesión
+// Supabase; el backend identifica al usuario por el token.
 // ───────────────────────────────────────────────────────────
 (function (global) {
   const cfg = global.PREDICTABLE_CONFIG || {};
 
-  async function call(action, payload = {}) {
-    if (!cfg.APPS_SCRIPT_URL || cfg.APPS_SCRIPT_URL.includes("XXXXXX")) {
-      throw new Error("APPS_SCRIPT_URL no configurado en js/config.js");
+  function salesCoachUrl() {
+    const sup = global.SUPABASE_CONFIG || {};
+    if (!sup.url) {
+      throw new Error("SUPABASE_CONFIG.url no configurado en js/config.js");
     }
+    return sup.url.replace(/\/$/, "") + "/functions/v1/sales-coach";
+  }
 
-    // Atribuir la acción al usuario realmente autenticado, no a un email fijo.
-    const authedEmail =
-      (global.currentProfile && global.currentProfile.email) ||
-      (global.currentUser && global.currentUser.email) ||
-      cfg.CURRENT_USER_EMAIL ||
-      null;
+  async function getAccessToken() {
+    const sb = global.supabaseClient;
+    if (!sb) throw new Error("Supabase no está inicializado. Recarga la página.");
+    const { data } = await sb.auth.getSession();
+    const token = data && data.session && data.session.access_token;
+    if (!token) throw new Error("Sesión expirada. Vuelve a iniciar sesión.");
+    return token;
+  }
 
-    const body = JSON.stringify({
-      action,
-      payload,
-      user_email: authedEmail,
-      ts: new Date().toISOString(),
-    });
+  async function call(action, payload = {}) {
+    const url = salesCoachUrl();
+    const token = await getAccessToken();
+    const anonKey = (global.SUPABASE_CONFIG && global.SUPABASE_CONFIG.anonKey) || "";
 
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -32,25 +37,33 @@
     );
 
     try {
-      const res = await fetch(cfg.APPS_SCRIPT_URL, {
+      const res = await fetch(url, {
         method: "POST",
-        // text/plain evita preflight CORS con Apps Script
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + token,
+          apikey: anonKey,
+        },
+        body: JSON.stringify({ action, payload }),
         signal: controller.signal,
-        redirect: "follow",
       });
 
       clearTimeout(timeout);
 
+      let json = null;
+      try { json = await res.json(); } catch (_) { /* respuesta no-JSON */ }
+
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status} ${res.statusText}`);
+        const detail = (json && (json.error || json.message)) || (res.status + " " + res.statusText);
+        throw new Error(
+          res.status === 401
+            ? "Sesión expirada. Vuelve a iniciar sesión."
+            : "Error del backend (" + detail + ")"
+        );
       }
 
-      const json = await res.json();
-
-      if (!json.ok) {
-        throw new Error(json.error || "Error desconocido del backend");
+      if (!json || json.ok !== true) {
+        throw new Error((json && json.error) || "Error desconocido del backend");
       }
       return json.data;
     } catch (err) {
@@ -61,34 +74,29 @@
   }
 
   // ── API pública ────────────────────────────────────────────
+  // Nota: los wrappers de Apollo/ICP del viejo Apps Script
+  // (saveICP, searchApolloPeople, searchApolloSequences,
+  // addContactsToSequence) fueron eliminados — esas rutas viven
+  // ahora en Supabase (apollo-proxy vía js/prospecting-data.js).
   global.api = {
-    // Guarda / upsert del ICP en Sheets
-    saveICP: (icp) => call("saveICP", { icp }),
-
-    // Lanza búsqueda Apollo mixed_people/search
-    // payload = { icp_id?, filters: {...mapeado Apollo} }
-    searchApolloPeople: (payload) => call("searchApolloPeople", payload),
-
-    // Lista secuencias activas en Apollo (emailer_campaigns)
-    searchApolloSequences: () => call("searchApolloSequences", {}),
-
-    // Toma lista de personas Apollo → crea contactos → los mete a secuencia
-    // payload = { run_id, sequence_id, apollo_person_ids, send_email_from_email_account_id? }
-    addContactsToSequence: (payload) =>
-      call("addContactsToSequence", payload),
-
-    // Healthcheck opcional
+    // Healthcheck
     ping: () => call("ping", {}),
-     // ── Ventas AI ──
-    startMeeting:     (p) => call('startMeeting', p),
-    getMeetingState:  (p) => call('getMeetingState', p),
-    endMeeting:       (p) => call('endMeeting', p),
-    getSDRReport:     (p) => call('getSDRReport', p),
-    ingestLocalChunks: (p) => call('ingestLocalChunks', p),
-    ingestLocalEvent:  (p) => call('ingestLocalEvent', p),
 
-    getLastMeetingReport: (p) => call('getLastMeetingReport', p || {}),
+    // ── Ventas AI (Meeting Coach) ──
+    startMeeting:      (p) => call("startMeeting", p),
+    getMeetingState:   (p) => call("getMeetingState", p),
+    endMeeting:        (p) => call("endMeeting", p),
+    getSDRReport:      (p) => call("getSDRReport", p),
+    ingestLocalChunks: (p) => call("ingestLocalChunks", p),
+    ingestLocalEvent:  (p) => call("ingestLocalEvent", p),
 
+    getLastMeetingReport: (p) => call("getLastMeetingReport", p || {}),
 
+    // Resultado de la reunión (ganado/perdido/seguimiento/sin_respuesta)
+    setMeetingOutcome: (p) => call("setMeetingOutcome", p),
+
+    // Objeciones agregadas (el backend decide el alcance según rol:
+    // SDR = propias, admin/director = todo el equipo)
+    getObjectionsReport: (p) => call("getObjectionsReport", p || {}),
   };
 })(window);
