@@ -501,9 +501,9 @@
     let phonePending = 0;
     const failed = [];
 
-    const enrichable = members.filter((m) => m.apollo_person_id);
-    members.filter((m) => !m.apollo_person_id).forEach((m) =>
-      failed.push({ name: m.name || m.email || 'contacto', error: 'Sin ID de persona de Apollo — este registro vino como contacto ya guardado; su email ya está enriquecido.' }));
+    const enrichable = members.filter((m) => m.apollo_person_id || m.email || m.linkedin_url || m.name);
+    members.filter((m) => !m.apollo_person_id && !m.email && !m.linkedin_url && !m.name).forEach((m) =>
+      failed.push({ name: m.name || m.email || 'contacto', error: 'No hay datos suficientes (nombre, email o LinkedIn) para buscarlo en Apollo.' }));
 
     // El webhook de Apollo solo actualiza filas en 'pending' y Apollo puede
     // llamar ANTES de que termine el loop: marcar pending por adelantado
@@ -521,14 +521,23 @@
       const m = enrichable[i];
       progress({ done: i, total: enrichable.length, phase: 'enriching' });
       try {
-        const res = await apolloProxy('/people/match', {
-          id: m.apollo_person_id,
+        const query = m.apollo_person_id
+          ? { id: m.apollo_person_id }
+          : {
+              email: m.email || undefined,
+              linkedin_url: m.linkedin_url || undefined,
+              first_name: m.first_name || undefined,
+              last_name: m.last_name || undefined,
+              organization_name: m.company || undefined,
+            };
+        const res = await apolloProxy('/people/match', Object.assign(query, {
           reveal_personal_emails: true,
           reveal_phone_number: !!revealPhones,
-        });
+        }));
         const person = res?.person || null;
         const patch = { enriched_at: new Date().toISOString() };
         if (person) {
+          if (!m.apollo_person_id && person.id) patch.apollo_person_id = person.id;
           const work = isMaskedEmail(person.email) ? null : person.email;
           const personal = (person.personal_emails || []).find((e) => !isMaskedEmail(e)) || null;
           if (work || personal) patch.email = m.email || work || personal;
