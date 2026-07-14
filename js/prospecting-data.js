@@ -226,6 +226,23 @@
     if (error) throw new Error('No se pudo renombrar la lista: ' + error.message);
   }
 
+  // Apollo person/contact IDs ya guardados en las listas indicadas — se usa
+  // para excluir de la búsqueda a personas ya trabajadas antes (no volver a
+  // contactar a quien ya está en una lista).
+  async function fetchListMemberIds(listIds) {
+    const ids = (listIds || []).filter(Boolean);
+    if (!ids.length) return { personIds: new Set(), contactIds: new Set() };
+    const { data, error } = await sb()
+      .from('prospect_list_members')
+      .select('apollo_person_id, apollo_contact_id')
+      .in('list_id', ids);
+    if (error) throw new Error('No se pudieron leer las listas a excluir: ' + error.message);
+    return {
+      personIds: new Set((data || []).map((r) => r.apollo_person_id).filter(Boolean)),
+      contactIds: new Set((data || []).map((r) => r.apollo_contact_id).filter(Boolean)),
+    };
+  }
+
   // ── Búsquedas guardadas (Supabase, RLS por dueño) ──────────
   // Apollo no expone una API pública para "saved searches" — solo persiste
   // los criterios de filtro en Predictable. Guardar también en Apollo se
@@ -971,6 +988,7 @@
     createList,
     deleteList,
     renameList,
+    fetchListMemberIds,
     fetchSavedSearches,
     createSavedSearch,
     deleteSavedSearch,
