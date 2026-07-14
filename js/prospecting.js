@@ -493,6 +493,8 @@
   // ══ TAB 1: BÚSQUEDA — filter state ══════════════════════════════════════
   function defaultFilters() {
     return {
+      // Excluir listas (personas ya guardadas — no repetir contacto)
+      exclude_list_ids: [],
       // Cargos
       person_titles: [], include_similar_titles: true, person_seniorities: [],
       // Ubicación
@@ -786,7 +788,40 @@
       });
     });
 
-    // 1. Cargos
+    // 1. Excluir listas — no volver a mostrar a quien ya está guardado
+    section('Excluir listas', function (x) { return x.exclude_list_ids.length; }, function (body) {
+      body.appendChild(lbl('No mostrar personas ya guardadas en'));
+      var chipsHost = h('div', null);
+      if (window.Skeleton) chipsHost.innerHTML = window.Skeleton.listRows(2, { avatar: false });
+      else chipsHost.appendChild(h('div', { style: 'font-size:12px;color:var(--text3)', text: 'Cargando…' }));
+      body.appendChild(chipsHost);
+      body.appendChild(h('div', {
+        style: 'font-size:11.5px;color:var(--text3);margin-top:6px;line-height:1.4',
+        text: 'Oculta de los resultados a quienes ya están en las listas seleccionadas, para no volver a contactarlos.',
+      }));
+      function renderChips(lists) {
+        chipsHost.innerHTML = '';
+        if (!lists.length) {
+          chipsHost.appendChild(h('div', { style: 'font-size:12px;color:var(--text3)', text: 'Aún no tienes listas guardadas.' }));
+          return;
+        }
+        var validIds = new Set(lists.map(function (l) { return String(l.id); }));
+        f().exclude_list_ids = f().exclude_list_ids.filter(function (id) { return validIds.has(id); });
+        chipsHost.appendChild(chipGroup({
+          options: lists.map(function (l) { return { label: l.name + ' (' + fmtNum(l.member_count || 0) + ')', value: String(l.id) }; }),
+          get: function () { return f().exclude_list_ids; }, onChange: changed,
+        }));
+      }
+      state.search.refreshExcludeLists = function () {
+        return loadLists(true).then(renderChips);
+      };
+      loadLists(false).then(renderChips).catch(function (e) {
+        chipsHost.innerHTML = '';
+        chipsHost.appendChild(h('div', { style: 'font-size:12px;color:var(--red)', text: errMsg(e) }));
+      });
+    });
+
+    // 2. Cargos
     section('Cargos', function (x) { return x.person_titles.length + x.person_seniorities.length; }, function (body) {
       body.appendChild(lbl('Cargos'));
       body.appendChild(tagInput({
@@ -804,7 +839,7 @@
       }));
     }, true);
 
-    // 2. Ubicación
+    // 3. Ubicación
     section('Ubicación', function (x) { return x.person_locations.length + x.organization_locations.length; }, function (body) {
       body.appendChild(lbl('Ubicación de la persona'));
       var countryChips = null;
@@ -827,7 +862,7 @@
       }));
     });
 
-    // 3. Email
+    // 4. Email
     section('Email', function (x) { return x.contact_email_status.length; }, function (body) {
       body.appendChild(lbl('Estado del email'));
       body.appendChild(chipGroup({
@@ -836,7 +871,7 @@
       }));
     });
 
-    // 4. Nº de empleados
+    // 5. Nº de empleados
     section('Nº de empleados', function (x) { return x.organization_num_employees_ranges.length; }, function (body) {
       body.appendChild(chipGroup({
         options: enums().employee_ranges || [],
@@ -844,7 +879,7 @@
       }));
     });
 
-    // 5. Industria y keywords
+    // 6. Industria y keywords
     section('Industria y keywords', function (x) {
       return x.industry_tags.length + x.q_organization_keyword_tags.length + x.market_segments.length +
         (x.q_keywords && String(x.q_keywords).trim() ? 1 : 0);
@@ -885,7 +920,7 @@
       }));
     });
 
-    // 6. Empresa
+    // 7. Empresa
     section('Empresa', function (x) { return x.q_organization_domains_list.length + x.person_linkedin_urls.length; }, function (body) {
       body.appendChild(lbl('Dominios'));
       body.appendChild(tagInput({
@@ -900,7 +935,7 @@
       }));
     });
 
-    // 7. Tecnologías
+    // 8. Tecnologías
     section('Tecnologías', function (x) { return x.tech_any.length + x.tech_all.length + x.tech_not.length; }, function (body) {
       body.appendChild(lbl('Usa alguna de'));
       body.appendChild(tagInput({
@@ -920,7 +955,7 @@
       body.appendChild(h('div', { class: 'pros-hint', text: 'Se normaliza al slug de Apollo (minúsculas, espacios y puntos → guion bajo).' }));
     });
 
-    // 8. Financiero
+    // 9. Financiero
     section('Financiero', function (x) {
       return scalarCount(['revenue_min', 'revenue_max', 'founded_min', 'founded_max']) +
         (x.organization_include_unknown_founded_year ? 1 : 0);
@@ -941,7 +976,7 @@
       }));
     });
 
-    // 9. Señales de contratación
+    // 10. Señales de contratación
     section('Señales de contratación', function (x) {
       return x.q_organization_job_titles.length + x.organization_job_locations.length +
         scalarCount(['jobs_min', 'jobs_max', 'job_posted_min', 'job_posted_max']);
@@ -968,7 +1003,7 @@
       ));
     });
 
-    // 10. Experiencia
+    // 11. Experiencia
     section('Experiencia', function () {
       return scalarCount(['years_title_min', 'years_title_max', 'yoe_min', 'yoe_max']);
     }, function (body) {
@@ -984,7 +1019,7 @@
       ));
     });
 
-    // 11. Avanzado
+    // 12. Avanzado
     section('Avanzado', function (x) {
       var deptActive = (x.dept_counts || []).filter(function (r) { return r && r.key && (r.min !== '' || r.max !== ''); }).length;
       return deptActive + scalarCount(['growth_min', 'growth_max', 'growth_months']) +
@@ -1398,6 +1433,45 @@
     renderResults();
   }
 
+  // Person/contact IDs ya guardados en las listas marcadas para excluir.
+  // Cacheado por firma de IDs seleccionados: cambiar de página no debe
+  // re-consultar Supabase en cada llamada a runSearch().
+  function getExcludedIds() {
+    var s = state.search;
+    var ids = (s.filters.exclude_list_ids || []).slice();
+    if (!ids.length) return Promise.resolve(null);
+    var sig = ids.slice().sort().join(',');
+    if (s._excludeCache && s._excludeCache.sig === sig) return Promise.resolve(s._excludeCache.data);
+    return Promise.resolve(pd().fetchListMemberIds(ids)).then(function (data) {
+      s._excludeCache = { sig: sig, data: data };
+      return data;
+    });
+  }
+
+  // Quita del resultado a quienes ya están guardados en las listas excluidas
+  // (best-effort: si la consulta de exclusión falla, se muestran los
+  // resultados sin filtrar en vez de bloquear la búsqueda).
+  function applyListExclusions(res) {
+    return getExcludedIds().then(function (excluded) {
+      if (!excluded || (!excluded.personIds.size && !excluded.contactIds.size)) return res;
+      var removed = 0;
+      var people = (res.people || []).filter(function (p) {
+        var hit = !!(p && p.id && excluded.personIds.has(p.id));
+        if (hit) removed++;
+        return !hit;
+      });
+      var contacts = (res.contacts || []).filter(function (c) {
+        var hit = !!(c && ((c.id && excluded.contactIds.has(c.id)) || (c.person_id && excluded.personIds.has(c.person_id))));
+        if (hit) removed++;
+        return !hit;
+      });
+      return Object.assign({}, res, { people: people, contacts: contacts, _excludedCount: removed });
+    }).catch(function (e) {
+      console.warn('[prospecting] exclude-lists filter falló:', e);
+      return res;
+    });
+  }
+
   function runSearch(page, fromButton) {
     var s = state.search;
     if (s.loading) return Promise.resolve();
@@ -1420,6 +1494,7 @@
     }
     return Promise.resolve()
       .then(function () { return pd().searchPeople(payload); })
+      .then(function (res) { return applyListExclusions(res); })
       .then(function (res) {
         s.results = res || {};
         s.page = (res && res.pagination && res.pagination.page) || page;
@@ -1543,6 +1618,11 @@
       '<span style="font-size:12px;color:var(--text2);white-space:nowrap">Página ' + esc(fmtNum(pageNum)) + ' de ' + esc(totalPagesLabel) + '</span>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="page-next"' + (hasNextPage ? '' : ' disabled') + '>›</button>' +
       '</div></div>';
+
+    if (res._excludedCount) {
+      html += '<div style="font-size:12px;color:var(--text3);margin-top:6px">' +
+        '🚫 ' + esc(fmtNum(res._excludedCount)) + ' persona(s) ocultadas de esta página por ya estar en las listas excluidas.</div>';
+    }
 
     var crumbs = res.breadcrumbs || [];
     if (crumbs.length) {
@@ -1710,6 +1790,11 @@
           prog.hide();
           state.cache.lists = null;
           refreshBadge();
+          // La gente recién guardada debe poder excluirse de inmediato en la
+          // próxima búsqueda — invalida el caché de exclusión y refresca los
+          // chips de listas del panel de filtros.
+          state.search._excludeCache = null;
+          if (state.search.refreshExcludeLists) state.search.refreshExcludeLists();
           res = res || {};
           var failed = res.failed || [];
           var warnings = res.warnings || []; // guardados, pero sin email
