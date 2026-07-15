@@ -2079,6 +2079,11 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 4a1 1 0 011-1h10a1 1 0 011 1v7a1 1 0 01-1 1H5l-3 2V4z"/></svg>
       WhatsApp &amp; LinkedIn
     </div>
+    <div class="nav-item" data-page="wa-inbox" onclick="nav(this,'wa-inbox');if(window.waInbox)window.waInbox.show()" style="margin-left:20px;font-size:12px">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M13.5 8A5.5 5.5 0 112.9 6.1L2 13l3.1-.9A5.5 5.5 0 0013.5 8z"/><path d="M6 7h4M6 9.2h2.5"/></svg>
+      Inbox WhatsApp
+      <span id="nav-wa-badge" class="nav-badge teal" style="display:none">0</span>
+    </div>
 
     <!-- APRENDER -->
     <div class="sidebar-section">
@@ -2716,6 +2721,11 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   <div id="prospecting-shell" style="display:flex;flex-direction:column;min-width:0;width:100%"></div>
 </div>
 
+<!-- ═══════ PAGE: INBOX WHATSAPP (js/whatsapp-inbox.js) ═══════ -->
+<div class="page fade-in" id="page-wa-inbox" style="padding:0;gap:0;">
+  <div id="wa-inbox-shell"></div>
+</div>
+
 
 <!-- ═══════ PAGE: VENTAS OVERVIEW ═══════ -->
 <div class="page fade-in" id="page-ventas-overview">
@@ -3332,6 +3342,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/apollo-enums.js"></script>
 <script src="js/prospecting-data.js"></script>
 <script src="js/prospecting.js"></script>
+<script src="js/whatsapp-inbox.js"></script>
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
 <script src="js/coach-lead-picker.js"></script>
@@ -4291,6 +4302,15 @@ function nav(el, pageId) {
         try { savedTab = localStorage.getItem('predictable_pros_tab') || 'resumen'; } catch (e) {}
         window.prospecting.show(savedTab);
       }
+    }, 0);
+  }
+
+  // Inbox WhatsApp lifecycle: igual que pro-main, si la página se activa por
+  // deep-link/hash el onclick del sidebar no corre — montamos el módulo aquí.
+  if (pageId === 'wa-inbox' && window.waInbox && typeof window.waInbox.show === 'function') {
+    setTimeout(() => {
+      const shell = document.getElementById('wa-inbox-shell');
+      if (shell && !shell.childElementCount) window.waInbox.show();
     }, 0);
   }
 
