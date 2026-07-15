@@ -51,6 +51,7 @@
     member: null,                // fila prospect_list_members de la conv activa
     memberLists: {},             // list_id → nombre
     followups: [],
+    notes: [],                   // notas con timestamp de la conversación activa
     filter: 'all',
     search: '',
     replyTo: null,
@@ -257,6 +258,14 @@
 '.wai-fu-when{font-size:11px;font-weight:600;color:var(--accent-ink)}' +
 '.wai-fu-when.failed{color:var(--red)}.wai-fu-when.sent{color:var(--green)}' +
 '.wai-fu-body{color:var(--ink-3);white-space:pre-wrap;word-break:break-word}' +
+'.wai-note-input{width:100%;padding:8px 11px;border:1px solid var(--hair-3);border-radius:var(--r-md);background:var(--surface2);color:var(--ink);font-size:12.5px;font-family:var(--font-body);outline:none;box-sizing:border-box;resize:vertical;min-height:40px}' +
+'.wai-note-input:focus{border-color:var(--accent);background:var(--surface)}' +
+'.wai-note-item{display:flex;flex-direction:column;gap:5px;border:1px solid var(--hair);border-radius:var(--r-md);padding:8px 10px;background:var(--surface2)}' +
+'.wai-note-body{font-size:12.5px;color:var(--ink-2);white-space:pre-wrap;word-break:break-word;line-height:1.5}' +
+'.wai-note-foot{display:flex;justify-content:space-between;align-items:center;gap:8px}' +
+'.wai-note-when{font-size:11px;font-weight:600;color:var(--ink-4)}' +
+'.wai-note-del{background:none;border:0;padding:0;cursor:pointer;font-size:11px;color:var(--ink-4);font-family:inherit}' +
+'.wai-note-del:hover{color:var(--red)}' +
 '.wai-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--ink-3);text-align:center;padding:30px}' +
 '.wai-modal-ovl{position:fixed;inset:0;background:rgba(10,10,15,.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}' +
 '.wai-modal{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-3);width:100%;max-width:520px;max-height:88vh;overflow-y:auto;padding:20px 22px;display:flex;flex-direction:column;gap:12px}' +
@@ -489,6 +498,9 @@
         app_secret: inSecret.value.trim(),
       }).then(function (res) {
         toast('Número conectado: ' + (res.display_phone || ''), 'success');
+        if (res && res.webhook_subscribed === false) {
+          toast('No se pudo activar la recepción automática: ' + (res.webhook_subscribe_error || 'revisa el WABA ID y los permisos del token.'), 'error');
+        }
         return loadAccount().then(function () {
           renderRoot();
           subscribeRealtime();
@@ -525,6 +537,24 @@
     box.appendChild(codeRow('Callback URL', whUrl));
     box.appendChild(codeRow('Verify token', acc.verify_token || ''));
     box.appendChild(el('div', { class: 'wai-hint', text: 'Después de verificar, en "Webhook fields" suscríbete al campo "messages". Sin esto no llegan los mensajes entrantes ni los estados de entrega.' }));
+
+    box.appendChild(el('div', { class: 'wai-hint', style: 'margin-top:4px', text: '¿Ya configuraste el webhook pero no llegan los mensajes? Activa la suscripción de tu cuenta de WhatsApp Business con la app de Meta:' }));
+    var reBtn = el('button', { class: 'btn btn-primary btn-sm', style: 'align-self:flex-start', text: 'Reactivar recepción de mensajes' });
+    reBtn.addEventListener('click', function () {
+      reBtn.disabled = true;
+      reBtn.textContent = 'Activando…';
+      edge('resubscribe', {}).then(function () {
+        toast('Recepción de mensajes activada. Ya deberías recibir los mensajes entrantes.', 'success');
+        loadAccount().then(renderRoot);
+        reBtn.disabled = false;
+        reBtn.textContent = 'Reactivar recepción de mensajes';
+      }).catch(function (e) {
+        toast(errMsg(e), 'error');
+        reBtn.disabled = false;
+        reBtn.textContent = 'Reactivar recepción de mensajes';
+      });
+    });
+    box.appendChild(reBtn);
     return box;
   }
 
@@ -666,6 +696,7 @@
     state.hasOlder = false;
     state.member = null;
     state.followups = [];
+    state.notes = [];
     renderConvList();
     renderChat();
     renderDetail();
@@ -1552,7 +1583,76 @@
     var body = el('div', { style: 'display:flex;flex-direction:column;gap:10px' });
     var msg = el('textarea', { rows: '3', placeholder: 'Mensaje de seguimiento…' });
     msg.value = prefill != null ? prefill : ((input && input.value.trim()) || '');
-    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Mensaje' }), msg));
+    var textField = el('div', { class: 'wai-field' }, el('label', { text: 'Mensaje' }), msg);
+    body.appendChild(textField);
+
+    // Plantilla: cargada bajo demanda, solo cuando el usuario activa el modo plantilla.
+    var tplState = { tpl: null, list: null, inputs: [] };
+    var tplField = el('div', { class: 'wai-field', style: 'display:none' });
+    var tplSelectHost = el('div');
+    var tplParamsHost = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
+    tplField.appendChild(el('label', { text: 'Plantilla' }));
+    tplField.appendChild(tplSelectHost);
+    tplField.appendChild(tplParamsHost);
+    body.appendChild(tplField);
+
+    function renderTplParams() {
+      tplParamsHost.innerHTML = '';
+      tplState.inputs = [];
+      var tpl = tplState.tpl;
+      if (!tpl) return;
+      var placeholders = [];
+      var re = /\{\{(\d+)\}\}/g, m;
+      while ((m = re.exec(tpl.body || '')) !== null) {
+        var n = parseInt(m[1], 10);
+        if (placeholders.indexOf(n) === -1) placeholders.push(n);
+      }
+      placeholders.sort(function (a, b) { return a - b; });
+      tplParamsHost.appendChild(el('div', { class: 'wai-fu-body', style: 'white-space:pre-wrap', text: tpl.body || '' }));
+      placeholders.forEach(function (n) {
+        var pin = el('input', { type: 'text', placeholder: 'Valor para {{' + n + '}}' });
+        tplState.inputs.push({ n: n, input: pin });
+        tplParamsHost.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Variable {{' + n + '}}' }), pin));
+      });
+    }
+
+    function loadTemplatesInto() {
+      tplSelectHost.innerHTML = 'Cargando plantillas…';
+      edge('templates', {}).then(function (res) {
+        var tpls = (res && res.templates) || [];
+        tplState.list = tpls;
+        tplSelectHost.innerHTML = '';
+        if (!tpls.length) {
+          tplSelectHost.appendChild(el('div', { class: 'wai-hint', text: 'No tienes plantillas aprobadas. Créalas en Meta Business Suite → WhatsApp Manager.' }));
+          return;
+        }
+        var sel = el('select');
+        sel.appendChild(el('option', { value: '', text: 'Selecciona una plantilla…' }));
+        tpls.forEach(function (t, i) {
+          sel.appendChild(el('option', { value: String(i), text: t.name + ' · ' + t.language }));
+        });
+        sel.addEventListener('change', function () {
+          tplState.tpl = sel.value !== '' ? tpls[parseInt(sel.value, 10)] : null;
+          renderTplParams();
+        });
+        tplSelectHost.appendChild(sel);
+      }).catch(function (e) {
+        tplSelectHost.innerHTML = '';
+        tplSelectHost.appendChild(el('div', { style: 'font-size:12px;color:var(--red)', text: errMsg(e) }));
+      });
+    }
+
+    var tplToggleRow = el('label', { style: 'display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer' });
+    var tplToggle = el('input', { type: 'checkbox' });
+    tplToggleRow.appendChild(tplToggle);
+    tplToggleRow.appendChild(document.createTextNode('Enviar como plantilla (necesario si para esa fecha ya pasaron 24 h desde el último mensaje del contacto)'));
+    body.appendChild(tplToggleRow);
+    tplToggle.addEventListener('change', function () {
+      var on = tplToggle.checked;
+      textField.style.display = on ? 'none' : '';
+      tplField.style.display = on ? '' : 'none';
+      if (on && tplState.list === null) loadTemplatesInto();
+    });
 
     var when = el('input', { type: 'datetime-local' });
     when.value = toLocalInputValue(new Date(Date.now() + 3600000));
@@ -1567,35 +1667,58 @@
           d.setHours(9, 0, 0, 0);
         } else d = new Date(Date.now() + opt[1] * 1000);
         when.value = toLocalInputValue(d);
+        // Más de 24 h: sugerir plantilla automáticamente si aún no se eligió modo.
+        if (d.getTime() > Date.now() + 24 * 3600000 && !tplToggle.checked) {
+          tplToggle.checked = true;
+          tplToggle.dispatchEvent(new Event('change'));
+        }
       });
       quick.appendChild(b);
     });
     body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Enviar el' }), quick, when));
-    body.appendChild(el('div', { class: 'wai-hint', text: 'Ojo: si para esa fecha el contacto lleva más de 24 h sin escribirte, WhatsApp rechazará el mensaje libre y el seguimiento quedará marcado como fallido.' }));
+    body.appendChild(el('div', { class: 'wai-hint', text: 'Ojo: si para esa fecha el contacto lleva más de 24 h sin escribirte, WhatsApp rechazará el mensaje libre y el seguimiento quedará marcado como fallido. Activa "Enviar como plantilla" para evitarlo.' }));
 
     openModal('Programar seguimiento', body, [
       { label: 'Cancelar', className: 'btn btn-ghost btn-sm' },
       {
         label: 'Programar', className: 'btn btn-primary btn-sm',
         onClick: function (api) {
-          var text = msg.value.trim();
-          if (!text) { toast('Escribe el mensaje de seguimiento.', 'warn'); return; }
           var d = when.value ? new Date(when.value) : null;
           if (!d || isNaN(d.getTime()) || d.getTime() < Date.now() + 30000) {
             toast('Elige una fecha y hora futuras.', 'warn');
             return;
           }
-          api.setBusy(true);
-          return sb().from('whatsapp_followups').insert({
+
+          var row = {
             user_id: state.uid,
             conversation_id: conv.id,
-            body: text,
             send_at: d.toISOString(),
-          }).then(function (r) {
+          };
+
+          if (tplToggle.checked) {
+            var tpl = tplState.tpl;
+            if (!tpl) { toast('Elige una plantilla.', 'warn'); return; }
+            var params = tplState.inputs.map(function (i) { return i.input.value.trim(); });
+            if (params.some(function (v) { return !v; })) { toast('Completa todas las variables de la plantilla.', 'warn'); return; }
+            var preview = String(tpl.body || '');
+            tplState.inputs.forEach(function (item, i) { preview = preview.split('{{' + item.n + '}}').join(params[i]); });
+            row.kind = 'template';
+            row.template_name = tpl.name;
+            row.template_language = tpl.language;
+            row.template_params = params;
+            row.body = preview;
+          } else {
+            var text = msg.value.trim();
+            if (!text) { toast('Escribe el mensaje de seguimiento.', 'warn'); return; }
+            row.body = text;
+          }
+
+          api.setBusy(true);
+          return sb().from('whatsapp_followups').insert(row).then(function (r) {
             if (r.error) throw new Error(r.error.message);
             api.close();
             toast('Seguimiento programado para ' + fmtFull(d.toISOString()) + '.', 'success');
-            if (input && msg.value === input.value) { input.value = ''; input.style.height = 'auto'; }
+            if (input && !tplToggle.checked && msg.value === input.value) { input.value = ''; input.style.height = 'auto'; }
             loadFollowupsForActive();
             loadPendingFollowups();
           });
@@ -1632,6 +1755,58 @@
       });
   }
 
+  // ── Notas con timestamp ──────────────────────────────────────────────────
+  function loadNotesForActive() {
+    var convId = state.activeConvId;
+    if (!convId) return;
+    sb().from('whatsapp_notes')
+      .select('*')
+      .eq('conversation_id', convId)
+      .order('created_at', { ascending: false })
+      .limit(100)
+      .then(function (r) {
+        if (convId !== state.activeConvId) return;
+        state.notes = r.data || [];
+        renderDetail();
+      });
+  }
+
+  function addNote(text, btn) {
+    var conv = activeConv();
+    if (!conv) return;
+    var body = String(text || '').trim();
+    if (!body) return;
+    if (body.length > 4000) { toast('La nota es demasiado larga (máximo 4000 caracteres).', 'warn'); return; }
+    if (btn) btn.disabled = true;
+    getUid().then(function (uid) {
+      return sb().from('whatsapp_notes').insert({
+        user_id: uid,
+        conversation_id: conv.id,
+        member_id: conv.member_id || null,
+        body: body,
+      });
+    }).then(function (r) {
+      if (r.error) throw new Error(r.error.message);
+      toast('Nota agregada.', 'success');
+      loadNotesForActive();
+    }).catch(function (e) {
+      if (btn) btn.disabled = false;
+      toast(errMsg(e), 'error');
+    });
+  }
+
+  function deleteNote(id) {
+    if (!window.confirm('¿Eliminar esta nota?')) return;
+    sb().from('whatsapp_notes')
+      .delete()
+      .eq('id', id)
+      .then(function (r) {
+        if (r.error) { toast(r.error.message, 'error'); return; }
+        toast('Nota eliminada.', 'info');
+        loadNotesForActive();
+      });
+  }
+
   // ── Ficha del contacto (columna derecha) ─────────────────────────────────
   function loadDetail() {
     var conv = activeConv();
@@ -1655,6 +1830,7 @@
         });
     }
     loadFollowupsForActive();
+    loadNotesForActive();
   }
 
   function dRow(label, valueNode) {
@@ -1734,6 +1910,7 @@
       state.followups.forEach(function (f) {
         var whenCls = f.status === 'failed' ? ' failed' : (f.status === 'sent' ? ' sent' : '');
         var label = { pending: 'Programado · ', processing: 'Enviando · ', sent: 'Enviado · ', failed: 'Falló · ', cancelled: 'Cancelado · ' }[f.status] || '';
+        if (f.kind === 'template') label += 'Plantilla (' + f.template_name + ') · ';
         var item = el('div', { class: 'wai-fu-item' },
           el('div', { class: 'wai-fu-when' + whenCls, text: label + fmtFull(f.send_at) }),
           el('div', { class: 'wai-fu-body', text: f.body }));
@@ -1749,6 +1926,43 @@
       });
     }
     host.appendChild(fuSec);
+
+    // ── Notas con timestamp ──────────────────────────────────────────────────
+    var noteSec = el('div', { class: 'wai-d-sec' });
+    noteSec.appendChild(el('div', { class: 'wai-d-title', text: 'Notas' }));
+
+    var noteInput = el('textarea', { class: 'wai-note-input', rows: '2', placeholder: 'Escribe una nota sobre este lead…' });
+    var noteBar = el('div', { style: 'display:flex;justify-content:flex-end' });
+    var noteBtn = el('button', { class: 'btn btn-primary btn-sm', text: 'Agregar nota' });
+    noteBtn.disabled = true;
+    noteInput.addEventListener('input', function () { noteBtn.disabled = !noteInput.value.trim(); });
+    noteInput.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && noteInput.value.trim()) {
+        e.preventDefault();
+        addNote(noteInput.value, noteBtn);
+      }
+    });
+    noteBtn.addEventListener('click', function () { addNote(noteInput.value, noteBtn); });
+    noteBar.appendChild(noteBtn);
+    noteSec.appendChild(el('div', { class: 'wai-field' }, noteInput));
+    noteSec.appendChild(noteBar);
+
+    if (!state.notes.length) {
+      noteSec.appendChild(el('div', { class: 'wai-hint', text: 'Sin notas todavía. Registra lo que hablaste, objeciones o próximos pasos; cada nota queda con fecha y hora.' }));
+    } else {
+      state.notes.forEach(function (n) {
+        var item = el('div', { class: 'wai-note-item' },
+          el('div', { class: 'wai-note-body', text: n.body }));
+        var foot = el('div', { class: 'wai-note-foot' },
+          el('span', { class: 'wai-note-when', text: fmtFull(n.created_at) }));
+        var del = el('button', { class: 'wai-note-del', title: 'Eliminar nota', text: 'Eliminar' });
+        del.addEventListener('click', function () { deleteNote(n.id); });
+        foot.appendChild(del);
+        item.appendChild(foot);
+        noteSec.appendChild(item);
+      });
+    }
+    host.appendChild(noteSec);
 
     var danger = el('div', { class: 'wai-d-sec' });
     var del = el('button', { class: 'btn btn-ghost btn-sm', style: 'color:var(--red);align-self:flex-start', text: 'Eliminar conversación' });
