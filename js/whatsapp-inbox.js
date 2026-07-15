@@ -1302,24 +1302,38 @@
     });
   }
 
-  function openTemplateParamsModal(conv, tpl) {
-    var placeholders = [];
-    var re = /\{\{(\d+)\}\}/g, m;
-    while ((m = re.exec(tpl.body || '')) !== null) {
-      var n = parseInt(m[1], 10);
-      if (placeholders.indexOf(n) === -1) placeholders.push(n);
+  /**
+   * A template's placeholders are either all numeric ({{1}}, {{2}}…,
+   * "positional" format) or all names ({{nombre}}, "named" format) — Meta
+   * templates use one or the other consistently. Detected from the raw text
+   * since the approved-templates list only carries the body string.
+   */
+  function templateVars(text) {
+    var named = [], positional = [], seen = {};
+    var re = /\{\{([a-zA-Z0-9_]+)\}\}/g, m;
+    while ((m = re.exec(text || '')) !== null) {
+      if (seen[m[1]]) continue;
+      seen[m[1]] = true;
+      if (/^\d+$/.test(m[1])) positional.push(parseInt(m[1], 10));
+      else named.push(m[1]);
     }
-    placeholders.sort(function (a, b) { return a - b; });
+    positional.sort(function (a, b) { return a - b; });
+    return named.length ? { named: true, keys: named } : { named: false, keys: positional };
+  }
+
+  function openTemplateParamsModal(conv, tpl) {
+    var bodyStr = tpl.body || '';
+    var vars = templateVars(bodyStr);
 
     var body = el('div', { style: 'display:flex;flex-direction:column;gap:10px' });
     body.appendChild(el('div', { class: 'wai-fu-item' },
       el('div', { class: 'wai-fu-when', text: tpl.name + ' · ' + tpl.language }),
-      el('div', { class: 'wai-fu-body', text: tpl.body || '' })));
+      el('div', { class: 'wai-fu-body', text: bodyStr })));
     var inputs = [];
-    placeholders.forEach(function (n) {
-      var input = el('input', { type: 'text', placeholder: 'Valor para {{' + n + '}}' });
-      inputs.push(input);
-      body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Variable {{' + n + '}}' }), input));
+    vars.keys.forEach(function (key) {
+      var input = el('input', { type: 'text', placeholder: 'Valor para {{' + key + '}}' });
+      inputs.push({ key: key, input: input });
+      body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Variable {{' + key + '}}' }), input));
     });
 
     openModal('Enviar "' + tpl.name + '"', body, [
@@ -1327,18 +1341,25 @@
       {
         label: 'Enviar plantilla', className: 'btn btn-primary btn-sm',
         onClick: function (api) {
-          var params = inputs.map(function (i) { return i.value.trim(); });
-          if (params.some(function (v) { return !v; })) { toast('Completa todas las variables.', 'warn'); return; }
+          var values = inputs.map(function (i) { return i.input.value.trim(); });
+          if (values.some(function (v) { return !v; })) { toast('Completa todas las variables.', 'warn'); return; }
           api.setBusy(true);
-          var preview = String(tpl.body || '');
-          placeholders.forEach(function (n, i) { preview = preview.split('{{' + n + '}}').join(params[i]); });
-          return edge('send_template', {
+          var preview = bodyStr;
+          inputs.forEach(function (item, i) { preview = preview.split('{{' + item.key + '}}').join(values[i]); });
+          var payload = {
             conversation_id: conv.id,
             template_name: tpl.name,
             language: tpl.language,
-            body_params: params,
             preview_body: preview,
-          }).then(function (res) {
+          };
+          if (vars.named) {
+            var namedParams = {};
+            inputs.forEach(function (item, i) { namedParams[item.key] = values[i]; });
+            payload.body_params_named = namedParams;
+          } else {
+            payload.body_params = values;
+          }
+          return edge('send_template', payload).then(function (res) {
             api.close();
             if (res && res.message) appendMessage(res.message);
             toast('Plantilla enviada.', 'success');
@@ -1363,13 +1384,26 @@
     ['pt_BR', 'Portugués (Brasil)'],
   ];
 
-  function extractVarsClient(text) {
-    var found = [], re = /\{\{(\d+)\}\}/g, m;
+  // Mirrors Meta's own regex for named parameter names: lowercase letters,
+  // numbers and underscores, must not start with a digit.
+  var NAMED_VAR_RE = /\{\{([a-z][a-z0-9_]{0,29})\}\}/g;
+  var POSITIONAL_VAR_RE = /\{\{(\d+)\}\}/g;
+
+  function extractPositionalVarsClient(text) {
+    var found = [], re = new RegExp(POSITIONAL_VAR_RE), m;
     while ((m = re.exec(text || '')) !== null) {
       var n = parseInt(m[1], 10);
       if (found.indexOf(n) === -1) found.push(n);
     }
     found.sort(function (a, b) { return a - b; });
+    return found;
+  }
+
+  function extractNamedVarsClient(text) {
+    var found = [], re = new RegExp(NAMED_VAR_RE), m;
+    while ((m = re.exec(text || '')) !== null) {
+      if (found.indexOf(m[1]) === -1) found.push(m[1]);
+    }
     return found;
   }
 
@@ -1445,10 +1479,19 @@
 
   function openCreateTemplateModal(onDone) {
     var buttons = []; // [{type, text, url, phone}]
+    var varFormat = 'positional'; // 'positional' | 'named' — Meta's "Tipo de variable"
     var body = el('div', { style: 'display:flex;flex-direction:column;gap:10px;min-width:360px' });
 
-    var name = el('input', { type: 'text', placeholder: 'ej. bienvenida_prospecto' });
-    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Nombre (minúsculas, números y "_", sin espacios)' }), name));
+    body.appendChild(el('div', { class: 'wai-d-title', text: 'Nombre e idioma de la plantilla' }));
+    var nameRow = el('div', { style: 'display:flex;gap:10px' });
+    var name = el('input', { type: 'text', placeholder: 'ej. bienvenida_prospecto', style: 'flex:2' });
+    var language = el('select', { style: 'flex:1' });
+    TEMPLATE_LANGS.forEach(function (o) {
+      language.appendChild(el('option', { value: o[0], text: o[1] }));
+    });
+    nameRow.appendChild(el('div', { class: 'wai-field', style: 'flex:2' }, el('label', { text: 'Asigna un nombre a la plantilla (minúsculas, números y "_")' }), name));
+    nameRow.appendChild(el('div', { class: 'wai-field', style: 'flex:1' }, el('label', { text: 'Selecciona un idioma' }), language));
+    body.appendChild(nameRow);
 
     var category = el('select', {});
     [['MARKETING', 'Marketing'], ['UTILITY', 'Utility (transaccional)']].forEach(function (o) {
@@ -1456,29 +1499,70 @@
     });
     body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Categoría' }), category));
 
-    var language = el('select', {});
-    TEMPLATE_LANGS.forEach(function (o) {
-      language.appendChild(el('option', { value: o[0], text: o[1] }));
-    });
-    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Idioma' }), language));
+    body.appendChild(el('div', { class: 'wai-d-title', style: 'margin-top:6px', text: 'Contenido' }));
+    body.appendChild(el('div', { class: 'wai-hint', text: 'Agrega un encabezado, cuerpo y pie de página a tu plantilla. Meta revisará el contenido y las variables para garantizar la seguridad de sus servicios. El encabezado admite solo texto (encabezados con imagen/video/documento no están disponibles todavía).' }));
 
-    var headerText = el('input', { type: 'text', placeholder: 'Opcional — admite una variable {{1}}', maxlength: '60' });
-    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Encabezado (opcional)' }), headerText));
+    var varFormatSel = el('select', {});
+    [['positional', 'Número'], ['named', 'Texto (variable con nombre, ej. {{nombre}})']].forEach(function (o) {
+      varFormatSel.appendChild(el('option', { value: o[0], text: o[1] }));
+    });
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Tipo de variable' }), varFormatSel));
+
+    var headerText = el('input', { type: 'text', placeholder: 'Agrega una breve línea de texto en el encabezado', maxlength: '60' });
+    var headerAddVarBtn = el('button', { class: 'wai-chipbtn', text: '+ Agregar variable' });
+    body.appendChild(el('div', { class: 'wai-field' },
+      el('div', { style: 'display:flex;justify-content:space-between;align-items:center' },
+        el('label', { text: 'Título · Opcional' }), headerAddVarBtn),
+      headerText));
     var headerExampleWrap = el('div');
     body.appendChild(headerExampleWrap);
 
-    var bodyText = el('textarea', { rows: '4', placeholder: 'Hola {{1}}, …  Usa {{1}}, {{2}}… para variables.', maxlength: '1024' });
-    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Cuerpo del mensaje' }), bodyText));
+    var bodyText = el('textarea', { rows: '4', placeholder: 'Escribe el cuerpo de tu mensaje…', maxlength: '1024' });
+    var bodyAddVarBtn = el('button', { class: 'wai-chipbtn', text: '+ Agregar variable' });
+    body.appendChild(el('div', { class: 'wai-field' },
+      el('div', { style: 'display:flex;justify-content:space-between;align-items:center' },
+        el('label', { text: 'Cuerpo' }), bodyAddVarBtn),
+      bodyText));
     var bodyExamplesWrap = el('div', { style: 'display:flex;flex-direction:column;gap:6px' });
     body.appendChild(bodyExamplesWrap);
 
-    var footerText = el('input', { type: 'text', placeholder: 'Opcional, sin variables', maxlength: '60' });
-    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Pie (opcional)' }), footerText));
+    var footerText = el('input', { type: 'text', placeholder: 'Agrega una breve línea de texto en la parte inferior', maxlength: '60' });
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Pie de página · Opcional' }), footerText));
 
+    body.appendChild(el('div', { class: 'wai-d-title', style: 'margin-top:6px', text: 'Botones · Opcional' }));
+    body.appendChild(el('div', { class: 'wai-hint', text: 'Crea botones para que los clientes puedan responder tu mensaje o realizar una acción. Puedes agregar un máximo de 10 botones.' }));
     var buttonsWrap = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
-    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Botones (opcional, máx. 3)' }), buttonsWrap));
-    var addBtnRow = el('button', { class: 'wai-chipbtn', text: '+ Añadir botón' });
+    body.appendChild(buttonsWrap);
+    var addBtnRow = el('button', { class: 'wai-chipbtn', text: '+ Agregar botón' });
     body.appendChild(addBtnRow);
+
+    function insertAtCursor(input, text) {
+      var start = input.selectionStart != null ? input.selectionStart : input.value.length;
+      var end = input.selectionEnd != null ? input.selectionEnd : input.value.length;
+      input.value = input.value.slice(0, start) + text + input.value.slice(end);
+      input.dispatchEvent(new Event('input'));
+      input.focus();
+      var pos = start + text.length;
+      if (input.setSelectionRange) input.setSelectionRange(pos, pos);
+    }
+
+    function nextVarToken(existingText) {
+      if (varFormat === 'named') {
+        var used = extractNamedVarsClient(existingText);
+        var n = 1;
+        while (used.indexOf('variable_' + n) !== -1) n++;
+        return '{{variable_' + n + '}}';
+      }
+      var nums = extractPositionalVarsClient(existingText);
+      return '{{' + (nums.length ? Math.max.apply(null, nums) + 1 : 1) + '}}';
+    }
+    headerAddVarBtn.addEventListener('click', function () {
+      // Header supports at most one variable regardless of format.
+      var has = varFormat === 'named' ? extractNamedVarsClient(headerText.value).length : extractPositionalVarsClient(headerText.value).length;
+      if (has) { toast('El encabezado admite como máximo una variable.', 'warn'); return; }
+      insertAtCursor(headerText, varFormat === 'named' ? '{{nombre}}' : '{{1}}');
+    });
+    bodyAddVarBtn.addEventListener('click', function () { insertAtCursor(bodyText, nextVarToken(bodyText.value)); });
 
     function renderButtons() {
       buttonsWrap.innerHTML = '';
@@ -1514,23 +1598,43 @@
 
         buttonsWrap.appendChild(row);
       });
-      addBtnRow.style.display = buttons.length >= 3 ? 'none' : '';
+      addBtnRow.style.display = buttons.length >= 10 ? 'none' : '';
     }
     addBtnRow.addEventListener('click', function () { buttons.push({ type: 'QUICK_REPLY', text: '' }); renderButtons(); });
     renderButtons();
 
     function renderExamples() {
       headerExampleWrap.innerHTML = '';
-      if (extractVarsClient(headerText.value).length) {
-        var hIn = el('input', { type: 'text', placeholder: 'Valor de ejemplo para {{1}} del encabezado' });
+      var headerHasVar = varFormat === 'named' ? extractNamedVarsClient(headerText.value).length : extractPositionalVarsClient(headerText.value).length;
+      if (headerHasVar) {
+        var hIn = el('input', { type: 'text', placeholder: 'Valor de ejemplo para la variable del encabezado (ej. Aarón)' });
         headerExampleWrap.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Ejemplo de la variable del encabezado' }), hIn));
       }
       bodyExamplesWrap.innerHTML = '';
-      extractVarsClient(bodyText.value).forEach(function (n) {
-        var bIn = el('input', { type: 'text', placeholder: 'Valor de ejemplo para {{' + n + '}}' });
-        bodyExamplesWrap.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Ejemplo de {{' + n + '}}' }), bIn));
-      });
+      if (varFormat === 'named') {
+        var namedKeys = extractNamedVarsClient(bodyText.value);
+        if (namedKeys.length) {
+          bodyExamplesWrap.appendChild(el('div', { style: 'font-size:12px;font-weight:600;color:var(--ink-2)', text: 'Muestras de variables' }));
+          bodyExamplesWrap.appendChild(el('div', { class: 'wai-hint', text: 'Incluye una muestra de cada variable para que Meta pueda revisar la plantilla. No incluyas datos reales de clientes.' }));
+        }
+        namedKeys.forEach(function (key) {
+          var bIn = el('input', { type: 'text', placeholder: 'Valor de ejemplo para {{' + key + '}} (ej. Aarón)' });
+          bIn.setAttribute('data-key', key);
+          bodyExamplesWrap.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Ejemplo de {{' + key + '}}' }), bIn));
+        });
+      } else {
+        var nums = extractPositionalVarsClient(bodyText.value);
+        if (nums.length) {
+          bodyExamplesWrap.appendChild(el('div', { style: 'font-size:12px;font-weight:600;color:var(--ink-2)', text: 'Muestras de variables' }));
+          bodyExamplesWrap.appendChild(el('div', { class: 'wai-hint', text: 'Incluye una muestra de cada variable para que Meta pueda revisar la plantilla. No incluyas datos reales de clientes.' }));
+        }
+        nums.forEach(function (n) {
+          var bIn = el('input', { type: 'text', placeholder: 'Valor de ejemplo para {{' + n + '}} (ej. Aarón)' });
+          bodyExamplesWrap.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Ejemplo de {{' + n + '}}' }), bIn));
+        });
+      }
     }
+    varFormatSel.addEventListener('change', function () { varFormat = varFormatSel.value; renderExamples(); });
     headerText.addEventListener('input', renderExamples);
     bodyText.addEventListener('input', renderExamples);
     renderExamples();
@@ -1545,20 +1649,29 @@
             return;
           }
           var headerEx = headerExampleWrap.querySelector('input');
-          var bodyExInputs = Array.prototype.slice.call(bodyExamplesWrap.querySelectorAll('input'));
           var payload = {
             name: name.value.trim(),
             category: category.value,
             language: language.value,
+            variable_format: varFormat,
             header_text: headerText.value.trim(),
             header_example: headerEx ? headerEx.value.trim() : '',
             body: bodyText.value.trim(),
-            body_examples: bodyExInputs.map(function (i) { return i.value.trim(); }),
             footer_text: footerText.value.trim(),
             buttons: buttons.filter(function (b) { return b.text && b.text.trim(); }).map(function (b) {
               return { type: b.type, text: b.text.trim(), url: b.url, phone_number: b.phone };
             }),
           };
+          if (varFormat === 'named') {
+            var namedExamples = {};
+            Array.prototype.forEach.call(bodyExamplesWrap.querySelectorAll('input[data-key]'), function (i) {
+              namedExamples[i.getAttribute('data-key')] = i.value.trim();
+            });
+            payload.body_examples_named = namedExamples;
+          } else {
+            payload.body_examples = Array.prototype.slice.call(bodyExamplesWrap.querySelectorAll('input'))
+              .map(function (i) { return i.value.trim(); });
+          }
           api.setBusy(true);
           return edge('template_create', payload).then(function () {
             api.close();
