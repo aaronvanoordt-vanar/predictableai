@@ -1519,7 +1519,12 @@
   function searchRowHtml(row) {
     var key = row._key;
     var checked = state.search.selectedRows.has(key) ? ' checked' : '';
-    var org = row.organization || {};
+    // Búsqueda mezcla dos esquemas de Apollo: personas nuevas traen la
+    // empresa anidada en `organization`, pero los ya guardados como contacto
+    // ("Guardado") solo traen `organization_name`/`account` planos.
+    var org = row.organization || row.account || {};
+    var companyName = org.name || row.organization_name || '—';
+    var companyDomain = org.primary_domain || org.domain || row.organization_domain || '';
     var name = row.name || ((row.first_name || '') + ' ' + (row.last_name || '')).trim() || '—';
     var loc = [row.city, row.country].filter(Boolean).join(', ');
     var emailCell;
@@ -1535,8 +1540,8 @@
       '<td><input type="checkbox" data-action="row-check" data-key="' + esc(key) + '"' + checked + '></td>' +
       '<td><div style="font-weight:600">' + esc(name) + '</div>' +
         (row.title ? '<div class="pros-cellsub" style="font-size:12px">' + esc(row.title) + '</div>' : '') + '</td>' +
-      '<td>' + esc(org.name || '—') +
-        (org.primary_domain ? '<div class="pros-cellsub">' + esc(org.primary_domain) + '</div>' : '') + '</td>' +
+      '<td>' + esc(companyName) +
+        (companyDomain ? '<div class="pros-cellsub">' + esc(companyDomain) + '</div>' : '') + '</td>' +
       '<td>' + esc(loc || '—') + '</td>' +
       '<td>' + emailCell + '</td>' +
       '<td>' + linkedinCell(row.linkedin_url) + '</td>' +
