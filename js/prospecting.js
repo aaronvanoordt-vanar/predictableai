@@ -2969,7 +2969,10 @@
     // (a) fixed first message
     html += '<div class="pros-msgblock"><div class="pros-msgblock-title">1er mensaje — WhatsApp</div>' +
       '<div class="pros-wa-bubble">' + esc(greet || '—') + '</div>' +
-      '<div class="pros-actions"><button type="button" class="btn btn-teal btn-sm" data-action="wa-send-greet" data-id="' + id + '"' + (greetLink ? '' : ' disabled') + '>Enviar saludo</button></div>' +
+      '<div class="pros-actions">' +
+      '<button type="button" class="btn btn-teal btn-sm" data-action="wa-send-greet" data-id="' + id + '"' + (greetLink ? '' : ' disabled') + '>Enviar saludo</button>' +
+      (window.waInbox ? '<button type="button" class="btn btn-ghost btn-sm" data-action="wa-inbox-open" data-id="' + id + '"' + (m.phone ? '' : ' disabled') + ' title="Conversación por la API de WhatsApp, con historial y seguimientos">Abrir en Inbox</button>' : '') +
+      '</div>' +
       (greetLink ? '' : noPhoneHint) +
       '</div>';
     // (b) AI follow-up
@@ -3286,6 +3289,11 @@
       var f2 = m.outreach && m.outreach.whatsapp_followup;
       if (!f2) return toast('Genera los mensajes con IA para ver el seguimiento.', 'warn');
       return copyText(f2);
+    }
+    if (action === 'wa-inbox-open' && m) {
+      if (!m.phone) return toast('Enriquece el teléfono de este lead en la pestaña Listas.', 'warn');
+      if (!window.waInbox) return toast('El Inbox de WhatsApp aún no está cargado. Recarga la página.', 'warn');
+      return window.waInbox.openForMember(m.id, greetingSafe(getSenderSafe()));
     }
     if (action === 'li-copy' && m) {
       var li = m.outreach && m.outreach.linkedin_message;
