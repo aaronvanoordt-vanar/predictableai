@@ -228,7 +228,8 @@ const SYSTEM_PROMPT_REPORT = [
   '- Las objeciones deben ser REALES, verbalizadas por el prospecto en el transcript, con su cita textual en "quote". Si no se verbalizó ninguna objeción, devuelve "objections": [].',
   "- NUNCA inventes datos, métricas, nombres ni citas. Cada insight debe estar sustentado en el transcript o en el contexto entregado.",
   "- Usa el contexto del lead (su empresa, su dolor, el ángulo de outreach) para que el análisis sea relevante a ese deal en particular.",
-  '- Si el transcript tiene menos de 5 intervenciones: todos los scores en 0, todos los arrays vacíos, "temperatura_lead": "frio", "probabilidad_avance": 0 y "verdict": "Transcript insuficiente para analizar — la reunión fue muy corta o el audio no se capturó".',
+  '- Una reunión corta NO es lo mismo que una reunión vacía: si el transcript, aunque tenga pocas intervenciones, contiene contenido real (una objeción, un dato del prospecto, una señal de avance o retroceso), repórtalo con normalidad — no lo descartes ni pongas los arrays en vacío solo por ser corto.',
+  '- Reserva "temperatura_lead": "frio", "probabilidad_avance": 0, scores en 0 y "verdict": "Transcript insuficiente para analizar — la reunión fue muy corta o el audio no se capturó" únicamente para transcripts sin contenido analizable (solo saludos, silencio, audio no capturado, o texto sin preguntas ni respuestas sustantivas).',
   "- Español neutro latinoamericano (tú). Sé directo y específico.",
 ].join("\n");
 

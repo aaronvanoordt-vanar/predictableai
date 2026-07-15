@@ -310,7 +310,12 @@
 
   function personToRow(person, match, userId, listId, contactId) {
     const p = match || person || {};
-    const org = p.organization || person?.organization || {};
+    // Apollo's Person schema nests the employer under `organization`, but its
+    // Contact schema (returned for people already saved as Apollo contacts —
+    // Búsqueda's "Guardado" rows) only carries the employer as flat
+    // `organization_name`/`account` fields. Check every shape so the company
+    // is never lost depending on which schema the row came from.
+    const org = p.organization || person?.organization || p.account || person?.account || {};
     const email = isMaskedEmail(p.email) ? null : p.email;
     return {
       list_id: listId,
@@ -321,8 +326,8 @@
       last_name: p.last_name || null,
       name: p.name || [p.first_name, p.last_name].filter(Boolean).join(' ') || null,
       title: p.title || null,
-      company: org.name || p.organization_name || null,
-      company_domain: org.primary_domain || null,
+      company: org.name || p.organization_name || person?.organization_name || null,
+      company_domain: org.primary_domain || org.domain || p.organization_domain || null,
       linkedin_url: p.linkedin_url || null,
       email,
       email_status: p.email_status || null,
