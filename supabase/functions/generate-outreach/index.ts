@@ -886,9 +886,21 @@ Deno.serve(async (req: Request) => {
     return json({ error: "lead.name and lead.company (or lead.title) required" }, 400, h);
   }
 
+  const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+
+  // Cobro: 3 créditos por mensaje (catálogo js/credit-costs.js). Se verifica el
+  // saldo ANTES de gastar en el LLM/agente, pero el descuento atómico se hace
+  // solo si la generación tiene éxito (ver antes del return 200), para no
+  // cobrar por un mensaje fallido.
+  const OUTREACH_COST = 3;
+  const { data: obCredits } = await supa
+    .from("user_credits").select("balance").eq("user_id", user.id).maybeSingle();
+  if ((obCredits?.balance ?? 0) < OUTREACH_COST) {
+    return json({ error: "insufficient_credits", balance: obCredits?.balance ?? 0, cost: OUTREACH_COST }, 402, h);
+  }
+
   // Seller context: client_brief (preferred) → intake fallback + hub insights,
   // plus the member's Apollo snapshot (persona/empresa) when member_id given.
-  const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const [{ data: brief }, { data: intake }, { data: hubReports }, memberRes] = await Promise.all([
     supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
     supa.from("intel_hub_intake")
@@ -998,6 +1010,19 @@ Deno.serve(async (req: Request) => {
         .eq("id", memberId)
         .eq("user_id", user.id);
       if (writeErr) console.error("[outreach] write-back failed:", writeErr);
+    }
+
+    // Cobro solo tras éxito. Descuento atómico; si otro request agotó el saldo
+    // en paralelo, se registra y se entrega el mensaje igual (no rehacemos el
+    // trabajo ya pagado en cómputo por un caso de carrera de 3 créditos).
+    const { data: obSpent, error: obSpendErr } = await supa
+      .rpc("spend_credits", { p_user_id: user.id, p_amount: OUTREACH_COST });
+    if (obSpendErr || obSpent === null || obSpent === undefined) {
+      console.error("[outreach] charge after success failed (race/insufficient):", obSpendErr);
+    } else {
+      await supa.from("credit_transactions").insert({
+        user_id: user.id, delta: -OUTREACH_COST, reason: "outreach_message",
+      });
     }
 
     return json(result, 200, h);

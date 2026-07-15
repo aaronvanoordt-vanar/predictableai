@@ -121,6 +121,32 @@ Deno.serve(async (req) => {
     }
   }
 
+  // ── Cobro de créditos por enriquecimiento (catálogo js/credit-costs.js) ──
+  // 1 crédito por email, 6 por teléfono, por persona. Solo match/bulk_match
+  // (revelar datos de contacto) cobran; búsqueda y CRUD son gratis. Se verifica
+  // el saldo ANTES de quemar créditos de Apollo, y se descuenta tras el éxito.
+  let creditCost = 0;
+  let creditReason = "enrich_email";
+  if (endpoint === "/people/match" || endpoint === "/people/bulk_match") {
+    const people = endpoint === "/people/bulk_match"
+      ? (Array.isArray(body.details) ? body.details.length : 1)
+      : 1;
+    const perPerson = body.reveal_phone_number === true ? 6 : 1;
+    creditCost = people * perPerson;
+    creditReason = body.reveal_phone_number === true ? "enrich_phone" : "enrich_email";
+  }
+
+  const admin = creditCost > 0
+    ? createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } })
+    : null;
+
+  if (admin) {
+    const { data: c } = await admin.from("user_credits").select("balance").eq("user_id", user.id).maybeSingle();
+    if ((c?.balance ?? 0) < creditCost) {
+      return json({ error: "insufficient_credits", balance: c?.balance ?? 0, cost: creditCost }, 402, cors);
+    }
+  }
+
   const init: RequestInit = {
     method,
     headers: {
@@ -138,6 +164,17 @@ Deno.serve(async (req) => {
   if (!res.ok) {
     console.error(`[apollo-proxy] upstream ${res.status} for ${endpoint}: ${text.slice(0, 300)}`);
   }
+
+  // Cobrar solo si Apollo respondió OK (no cobramos por un enriquecimiento fallido).
+  if (admin && res.ok) {
+    const { data: spent, error: spendErr } = await admin.rpc("spend_credits", { p_user_id: user.id, p_amount: creditCost });
+    if (spendErr || spent === null || spent === undefined) {
+      console.error("[apollo-proxy] credit charge failed (race/insufficient):", spendErr);
+    } else {
+      await admin.from("credit_transactions").insert({ user_id: user.id, delta: -creditCost, reason: creditReason });
+    }
+  }
+
   return new Response(text, {
     status: res.status,
     headers: { "Content-Type": "application/json", ...cors },
