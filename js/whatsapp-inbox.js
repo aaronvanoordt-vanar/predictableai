@@ -397,6 +397,11 @@
         return b;
       })(),
       (function () {
+        var b = el('button', { class: 'btn btn-ghost btn-sm', text: '📋 Plantillas' });
+        b.addEventListener('click', openManageTemplatesModal);
+        return b;
+      })(),
+      (function () {
         var b = el('button', { class: 'btn btn-ghost btn-sm', text: '⚙ Conexión' });
         b.addEventListener('click', openSettingsModal);
         return b;
@@ -1306,6 +1311,228 @@
             api.close();
             if (res && res.message) appendMessage(res.message);
             toast('Plantilla enviada.', 'success');
+          });
+        },
+      },
+    ]);
+  }
+
+  // ── Gestión de plantillas (crear + enviar a Meta para aprobación) ───────
+  var TEMPLATE_STATUS_LABEL = {
+    PENDING: 'En revisión', APPROVED: 'Aprobada', REJECTED: 'Rechazada',
+    PAUSED: 'Pausada', DISABLED: 'Deshabilitada', IN_APPEAL: 'En apelación',
+  };
+  var TEMPLATE_STATUS_COLOR = {
+    PENDING: 'var(--amber)', APPROVED: 'var(--green)', REJECTED: 'var(--red)',
+    PAUSED: 'var(--red)', DISABLED: 'var(--red)', IN_APPEAL: 'var(--amber)',
+  };
+  var TEMPLATE_LANGS = [
+    ['es_MX', 'Español (México)'], ['es', 'Español'], ['es_AR', 'Español (Argentina)'],
+    ['es_CO', 'Español (Colombia)'], ['es_ES', 'Español (España)'], ['en_US', 'Inglés (EE. UU.)'],
+    ['pt_BR', 'Portugués (Brasil)'],
+  ];
+
+  function extractVarsClient(text) {
+    var found = [], re = /\{\{(\d+)\}\}/g, m;
+    while ((m = re.exec(text || '')) !== null) {
+      var n = parseInt(m[1], 10);
+      if (found.indexOf(n) === -1) found.push(n);
+    }
+    found.sort(function (a, b) { return a - b; });
+    return found;
+  }
+
+  function openManageTemplatesModal() {
+    var body = el('div', { style: 'display:flex;flex-direction:column;gap:10px;min-width:340px' });
+    body.appendChild(el('div', { class: 'wai-hint', text: 'Crea plantillas y envíalas a Meta para su aprobación. Solo se pueden usar para enviar mensajes (primer contacto o fuera de la ventana de 24 h) una vez que Meta las aprueba — puede tardar minutos u horas.' }));
+
+    var newBtn = el('button', { class: 'btn btn-primary btn-sm', text: '+ Nueva plantilla' });
+    var syncBtn = el('button', { class: 'btn btn-ghost btn-sm', text: '🔄 Actualizar estado' });
+    body.appendChild(el('div', { style: 'display:flex;gap:8px' }, newBtn, syncBtn));
+
+    var listHost = el('div', { style: 'display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto' });
+    listHost.innerHTML = window.Skeleton ? window.Skeleton.listRows(3, { avatar: false }) : 'Cargando…';
+    body.appendChild(listHost);
+
+    function renderList(templates) {
+      listHost.innerHTML = '';
+      if (!templates.length) {
+        listHost.appendChild(el('div', { class: 'wai-hint', text: 'Aún no has creado ninguna plantilla.' }));
+        return;
+      }
+      templates.forEach(function (t) {
+        var statusEl = el('span', {
+          style: 'font-size:11px;font-weight:700;color:' + (TEMPLATE_STATUS_COLOR[t.status] || 'var(--accent-ink)'),
+          text: TEMPLATE_STATUS_LABEL[t.status] || t.status,
+        });
+        var head = el('div', { style: 'display:flex;align-items:center;gap:8px;justify-content:space-between' },
+          el('div', { class: 'wai-fu-when', text: t.name + ' · ' + t.language + ' · ' + t.category }),
+          statusEl);
+        var bodyComp = (Array.isArray(t.components) ? t.components : []).filter(function (c) { return c && c.type === 'BODY'; })[0];
+        var item = el('div', { class: 'wai-fu-item' },
+          head,
+          el('div', { class: 'wai-fu-body', text: (bodyComp && bodyComp.text) || '' }));
+        if (t.status === 'REJECTED' && t.rejection_reason) {
+          item.appendChild(el('div', { style: 'font-size:11px;color:var(--red)', text: 'Motivo: ' + t.rejection_reason }));
+        }
+        var del = el('button', { class: 'btn btn-ghost btn-sm', style: 'color:var(--red);align-self:flex-start;margin-top:4px', text: 'Eliminar' });
+        del.addEventListener('click', function () {
+          if (!window.confirm('¿Eliminar la plantilla "' + t.name + '"? Esto también la borra de Meta.')) return;
+          del.disabled = true;
+          edge('template_delete', { id: t.id }).then(function () {
+            toast('Plantilla eliminada.', 'info');
+            return reload();
+          }).catch(function (e) { toast(errMsg(e), 'error'); del.disabled = false; });
+        });
+        item.appendChild(del);
+        listHost.appendChild(item);
+      });
+    }
+
+    function reload() {
+      listHost.innerHTML = window.Skeleton ? window.Skeleton.listRows(3, { avatar: false }) : 'Cargando…';
+      return edge('template_list', {}).then(function (res) {
+        renderList((res && res.templates) || []);
+      }).catch(function (e) {
+        listHost.innerHTML = '';
+        listHost.appendChild(el('div', { style: 'font-size:12px;color:var(--red)', text: errMsg(e) }));
+      });
+    }
+
+    newBtn.addEventListener('click', function () { openCreateTemplateModal(reload); });
+    syncBtn.addEventListener('click', function () {
+      syncBtn.disabled = true;
+      edge('template_sync', {}).then(function (res) {
+        renderList((res && res.templates) || []);
+        toast('Estado actualizado.', 'success');
+      }).catch(function (e) { toast(errMsg(e), 'error'); }).then(function () { syncBtn.disabled = false; });
+    });
+
+    openModal('Plantillas de WhatsApp', body, [{ label: 'Cerrar', className: 'btn btn-primary btn-sm' }]);
+    reload();
+  }
+
+  function openCreateTemplateModal(onDone) {
+    var buttons = []; // [{type, text, url, phone}]
+    var body = el('div', { style: 'display:flex;flex-direction:column;gap:10px;min-width:360px' });
+
+    var name = el('input', { type: 'text', placeholder: 'ej. bienvenida_prospecto' });
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Nombre (minúsculas, números y "_", sin espacios)' }), name));
+
+    var category = el('select', {});
+    [['MARKETING', 'Marketing'], ['UTILITY', 'Utility (transaccional)']].forEach(function (o) {
+      category.appendChild(el('option', { value: o[0], text: o[1] }));
+    });
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Categoría' }), category));
+
+    var language = el('select', {});
+    TEMPLATE_LANGS.forEach(function (o) {
+      language.appendChild(el('option', { value: o[0], text: o[1] }));
+    });
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Idioma' }), language));
+
+    var headerText = el('input', { type: 'text', placeholder: 'Opcional — admite una variable {{1}}', maxlength: '60' });
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Encabezado (opcional)' }), headerText));
+    var headerExampleWrap = el('div');
+    body.appendChild(headerExampleWrap);
+
+    var bodyText = el('textarea', { rows: '4', placeholder: 'Hola {{1}}, …  Usa {{1}}, {{2}}… para variables.', maxlength: '1024' });
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Cuerpo del mensaje' }), bodyText));
+    var bodyExamplesWrap = el('div', { style: 'display:flex;flex-direction:column;gap:6px' });
+    body.appendChild(bodyExamplesWrap);
+
+    var footerText = el('input', { type: 'text', placeholder: 'Opcional, sin variables', maxlength: '60' });
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Pie (opcional)' }), footerText));
+
+    var buttonsWrap = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Botones (opcional, máx. 3)' }), buttonsWrap));
+    var addBtnRow = el('button', { class: 'wai-chipbtn', text: '+ Añadir botón' });
+    body.appendChild(addBtnRow);
+
+    function renderButtons() {
+      buttonsWrap.innerHTML = '';
+      buttons.forEach(function (b, idx) {
+        var typeSel = el('select', {});
+        [['QUICK_REPLY', 'Respuesta rápida'], ['URL', 'Enlace'], ['PHONE_NUMBER', 'Llamar']].forEach(function (o) {
+          typeSel.appendChild(el('option', { value: o[0], text: o[1] }));
+        });
+        typeSel.value = b.type || 'QUICK_REPLY';
+        typeSel.addEventListener('change', function () { b.type = typeSel.value; renderButtons(); });
+
+        var textIn = el('input', { type: 'text', placeholder: 'Texto del botón', maxlength: '25' });
+        textIn.value = b.text || '';
+        textIn.addEventListener('input', function () { b.text = textIn.value; });
+
+        var row = el('div', { style: 'display:flex;gap:6px;align-items:center' }, typeSel, textIn);
+
+        if (typeSel.value === 'URL') {
+          var urlIn = el('input', { type: 'text', placeholder: 'https://…' });
+          urlIn.value = b.url || '';
+          urlIn.addEventListener('input', function () { b.url = urlIn.value; });
+          row.appendChild(urlIn);
+        } else if (typeSel.value === 'PHONE_NUMBER') {
+          var phoneIn = el('input', { type: 'text', placeholder: 'Teléfono con código de país' });
+          phoneIn.value = b.phone || '';
+          phoneIn.addEventListener('input', function () { b.phone = phoneIn.value; });
+          row.appendChild(phoneIn);
+        }
+
+        var rm = el('button', { class: 'wai-iconbtn', style: 'width:26px;height:26px;font-size:13px', text: '✕' });
+        rm.addEventListener('click', function () { buttons.splice(idx, 1); renderButtons(); });
+        row.appendChild(rm);
+
+        buttonsWrap.appendChild(row);
+      });
+      addBtnRow.style.display = buttons.length >= 3 ? 'none' : '';
+    }
+    addBtnRow.addEventListener('click', function () { buttons.push({ type: 'QUICK_REPLY', text: '' }); renderButtons(); });
+    renderButtons();
+
+    function renderExamples() {
+      headerExampleWrap.innerHTML = '';
+      if (extractVarsClient(headerText.value).length) {
+        var hIn = el('input', { type: 'text', placeholder: 'Valor de ejemplo para {{1}} del encabezado' });
+        headerExampleWrap.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Ejemplo de la variable del encabezado' }), hIn));
+      }
+      bodyExamplesWrap.innerHTML = '';
+      extractVarsClient(bodyText.value).forEach(function (n) {
+        var bIn = el('input', { type: 'text', placeholder: 'Valor de ejemplo para {{' + n + '}}' });
+        bodyExamplesWrap.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Ejemplo de {{' + n + '}}' }), bIn));
+      });
+    }
+    headerText.addEventListener('input', renderExamples);
+    bodyText.addEventListener('input', renderExamples);
+    renderExamples();
+
+    openModal('Nueva plantilla', body, [
+      { label: 'Cancelar', className: 'btn btn-ghost btn-sm' },
+      {
+        label: 'Enviar a Meta para aprobación', className: 'btn btn-primary btn-sm',
+        onClick: function (api) {
+          if (!name.value.trim() || !bodyText.value.trim()) {
+            toast('Completa al menos el nombre y el cuerpo del mensaje.', 'warn');
+            return;
+          }
+          var headerEx = headerExampleWrap.querySelector('input');
+          var bodyExInputs = Array.prototype.slice.call(bodyExamplesWrap.querySelectorAll('input'));
+          var payload = {
+            name: name.value.trim(),
+            category: category.value,
+            language: language.value,
+            header_text: headerText.value.trim(),
+            header_example: headerEx ? headerEx.value.trim() : '',
+            body: bodyText.value.trim(),
+            body_examples: bodyExInputs.map(function (i) { return i.value.trim(); }),
+            footer_text: footerText.value.trim(),
+            buttons: buttons.filter(function (b) { return b.text && b.text.trim(); }).map(function (b) {
+              return { type: b.type, text: b.text.trim(), url: b.url, phone_number: b.phone };
+            }),
+          };
+          api.setBusy(true);
+          return edge('template_create', payload).then(function () {
+            api.close();
+            toast('Plantilla enviada a Meta. Revisa su estado en unos minutos con "Actualizar estado".', 'success');
+            if (onDone) onDone();
           });
         },
       },
