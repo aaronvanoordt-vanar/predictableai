@@ -507,7 +507,9 @@ body::before {
   font-family: var(--font-mono);
   font-size:10px; color:var(--ink-4); margin-top:2px; letter-spacing: 0.06em;
 }
-.topbar-actions { margin-left:auto; display:flex; gap:8px; align-items: center; }
+/* margin-right leaves room for the fixed global credits chip (js/credits.js),
+   which always sits top-right of the viewport regardless of active page. */
+.topbar-actions { margin-left:auto; margin-right:200px; display:flex; gap:8px; align-items: center; }
 .topbar-pill {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 5px 10px;
@@ -1943,15 +1945,6 @@ html, body {
 .aa-rail::-webkit-scrollbar { height: 6px; }
 .aa-rail::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 999px; }
 
-/* Credit badge in topbar */
-.ih-credit-chip {
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px 12px; border-radius: var(--r-sm);
-  background: var(--surface2); border: 1px solid var(--border2);
-  font-size: 11.5px; color: var(--text2); font-family: var(--font-mono);
-}
-.ih-credit-chip svg { color: var(--gold-bright); }
-
 /* ═══════════════════════════════════════════════════════
    SKELETON LOADERS — shared system (js/skeletons.js builds
    markup on top of these classes). Theme-aware + honours
@@ -2677,12 +2670,6 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <div class="topbar-title">Intelligence Hub</div>
       <div class="topbar-sub">Inteligencia de mercado, actualizada por tus agentes</div>
     </div>
-    <div class="topbar-actions">
-      <div class="ih-credit-chip">
-        <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
-        <span id="ih-credit-badge">Créditos ilimitados (beta)</span>
-      </div>
-    </div>
   </div>
 
   <!-- Punto de montaje del Intelligence Hub (intel-hub-cadence-tabs.js inyecta aquí).
@@ -3339,6 +3326,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/auth-guard.js"></script>
 <!-- ═════ Predictable JS modules ═════ -->
 <script src="js/ui-helpers.js"></script>
+<script src="js/credits.js"></script>
 <script src="js/skeletons.js"></script>
 <script src="js/api.js"></script>
 <script src="js/apollo-enums.js"></script>
