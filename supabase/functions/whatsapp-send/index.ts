@@ -128,6 +128,48 @@ function publicMediaUrl(path: string): string {
   }`;
 }
 
+/**
+ * Subscribe the WABA to this app so Meta actually forwards inbound messages
+ * AND delivery/read statuses to whatsapp-webhook. Verifying the webhook URL
+ * (the GET handshake) is NOT enough on its own — without this POST the
+ * subscription stays inert and nothing is ever delivered. Idempotent: Meta
+ * returns {success:true} whether or not the WABA was already subscribed.
+ */
+async function subscribeWaba(
+  wabaId: string | null,
+  accessToken: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!wabaId) {
+    return {
+      ok: false,
+      error:
+        "Sin WABA ID no se puede activar la recepción automática de mensajes. Agrega tu WhatsApp Business Account ID y vuelve a conectar.",
+    };
+  }
+  try {
+    const res = await fetch(`${GRAPH}/${wabaId}/subscribed_apps`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.success === false) {
+      console.error(`[wa-send] subscribed_apps failed: ${JSON.stringify(data).slice(0, 400)}`);
+      const code = data?.error?.code;
+      if (code === 200 || code === 10 || code === 299) {
+        return {
+          ok: false,
+          error:
+            "El token no tiene el permiso whatsapp_business_management, necesario para activar la recepción de mensajes. Regenera el token con ese permiso y vuelve a conectar.",
+        };
+      }
+      return { ok: false, error: metaErrorMessage(data?.error) };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "No se pudo suscribir la app en Meta." };
+  }
+}
+
 async function getAccount(supa: SupabaseClient, userId: string): Promise<Json> {
   const { data } = await supa
     .from("whatsapp_accounts")
@@ -242,12 +284,44 @@ async function actionConnect(supa: SupabaseClient, userId: string, p: Json): Pro
     throw new Error(`No se pudo guardar la conexión: ${error.message}`);
   }
 
+  // Turn on webhook delivery for this WABA. Best-effort: a failure here doesn't
+  // undo the connection (the user can retry via the "resubscribe" action), but
+  // we record it so the UI can tell them messages won't arrive until it's fixed.
+  const sub = await subscribeWaba(wabaId, accessToken);
+  if (!sub.ok) {
+    await supa
+      .from("whatsapp_accounts")
+      .update({ last_error: sub.error ?? "No se pudo activar la recepción de mensajes." })
+      .eq("user_id", userId);
+  }
+
   return {
     display_phone: row.display_phone,
     display_name: row.display_name,
     verify_token: row.verify_token,
     webhook_url: `${Deno.env.get("SUPABASE_URL")}/functions/v1/whatsapp-webhook`,
+    webhook_subscribed: sub.ok,
+    webhook_subscribe_error: sub.ok ? null : sub.error,
   };
+}
+
+/**
+ * Re-run the WABA→app subscription for an already-connected account, without
+ * re-entering credentials. Fixes accounts connected before auto-subscription
+ * existed, or when the first attempt failed (e.g. token missing a permission).
+ */
+async function actionResubscribe(supa: SupabaseClient, userId: string): Promise<Json> {
+  const account = await getAccount(supa, userId);
+  const sub = await subscribeWaba(account.waba_id ?? null, account.access_token);
+  if (!sub.ok) {
+    await supa.from("whatsapp_accounts").update({ last_error: sub.error ?? null }).eq("id", account.id);
+    const e = new Error(sub.error ?? "No se pudo activar la recepción de mensajes.");
+    // deno-lint-ignore no-explicit-any
+    (e as any).status = 422;
+    throw e;
+  }
+  await supa.from("whatsapp_accounts").update({ last_error: null }).eq("id", account.id);
+  return { webhook_subscribed: true };
 }
 
 async function actionStartConversation(supa: SupabaseClient, userId: string, p: Json): Promise<Json> {
@@ -696,6 +770,7 @@ Deno.serve(async (req) => {
         data = { ok: true };
         break;
       }
+      case "resubscribe":        data = await actionResubscribe(supa, user.id); break;
       case "start_conversation": data = await actionStartConversation(supa, user.id, payload); break;
       case "send":               data = await actionSend(supa, user.id, payload); break;
       case "react":              data = await actionReact(supa, user.id, payload); break;

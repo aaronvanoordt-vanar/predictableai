@@ -498,6 +498,9 @@
         app_secret: inSecret.value.trim(),
       }).then(function (res) {
         toast('Número conectado: ' + (res.display_phone || ''), 'success');
+        if (res && res.webhook_subscribed === false) {
+          toast('No se pudo activar la recepción automática: ' + (res.webhook_subscribe_error || 'revisa el WABA ID y los permisos del token.'), 'error');
+        }
         return loadAccount().then(function () {
           renderRoot();
           subscribeRealtime();
@@ -534,6 +537,24 @@
     box.appendChild(codeRow('Callback URL', whUrl));
     box.appendChild(codeRow('Verify token', acc.verify_token || ''));
     box.appendChild(el('div', { class: 'wai-hint', text: 'Después de verificar, en "Webhook fields" suscríbete al campo "messages". Sin esto no llegan los mensajes entrantes ni los estados de entrega.' }));
+
+    box.appendChild(el('div', { class: 'wai-hint', style: 'margin-top:4px', text: '¿Ya configuraste el webhook pero no llegan los mensajes? Activa la suscripción de tu cuenta de WhatsApp Business con la app de Meta:' }));
+    var reBtn = el('button', { class: 'btn btn-primary btn-sm', style: 'align-self:flex-start', text: 'Reactivar recepción de mensajes' });
+    reBtn.addEventListener('click', function () {
+      reBtn.disabled = true;
+      reBtn.textContent = 'Activando…';
+      edge('resubscribe', {}).then(function () {
+        toast('Recepción de mensajes activada. Ya deberías recibir los mensajes entrantes.', 'success');
+        loadAccount().then(renderRoot);
+        reBtn.disabled = false;
+        reBtn.textContent = 'Reactivar recepción de mensajes';
+      }).catch(function (e) {
+        toast(errMsg(e), 'error');
+        reBtn.disabled = false;
+        reBtn.textContent = 'Reactivar recepción de mensajes';
+      });
+    });
+    box.appendChild(reBtn);
     return box;
   }
 
