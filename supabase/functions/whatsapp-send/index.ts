@@ -27,6 +27,18 @@
  *  • send_template      {conversation_id, template_name, language,
  *                        body_params?: string[], preview_body?}
  *       Needed for first contact / outside the 24 h customer-service window.
+ *  • template_list       {}   local whatsapp_templates rows (any status).
+ *  • template_create     {name, category, language, header_text?,
+ *                         header_example?, body, body_examples?: string[],
+ *                         footer_text?, buttons?: [{type, text, url?,
+ *                         phone_number?}]}
+ *       Builds the Meta "components" payload, submits it to
+ *       /{waba_id}/message_templates for review, and stores the result
+ *       (status starts as PENDING — Meta reviews asynchronously).
+ *  • template_sync       {}   polls Meta for every non-terminal template and
+ *                             updates local status/rejection_reason.
+ *  • template_delete      {id}  deletes the template (all languages of that
+ *                                name) from Meta, then the local row.
  *
  * Required secrets: none beyond the platform-provided SUPABASE_* vars — every
  * user's Meta credentials live in their whatsapp_accounts row.
@@ -431,6 +443,185 @@ async function actionTemplates(supa: SupabaseClient, userId: string): Promise<Js
   return { templates };
 }
 
+/** Distinct {{n}} placeholder numbers found in a template string, ascending. */
+function extractVars(text: string): number[] {
+  const found = new Set<number>();
+  const re = /\{\{(\d+)\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) found.add(Number(m[1]));
+  return Array.from(found).sort((a, b) => a - b);
+}
+
+async function actionTemplateList(supa: SupabaseClient, userId: string): Promise<Json> {
+  const { data, error } = await supa
+    .from("whatsapp_templates")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return { templates: data ?? [] };
+}
+
+async function actionTemplateCreate(supa: SupabaseClient, userId: string, p: Json): Promise<Json> {
+  const account = await getAccount(supa, userId);
+  if (!account.waba_id) {
+    throw new Error("Agrega tu WhatsApp Business Account ID (WABA ID) en Configuración de WhatsApp para crear plantillas.");
+  }
+
+  const name = String(p?.name ?? "").trim().toLowerCase();
+  if (!/^[a-z0-9_]{1,512}$/.test(name)) {
+    throw new Error("El nombre debe usar solo minúsculas, números y guiones bajos (sin espacios ni acentos).");
+  }
+
+  const category = String(p?.category ?? "").trim().toUpperCase();
+  if (category !== "MARKETING" && category !== "UTILITY") {
+    throw new Error("Elige una categoría válida (Marketing o Utility).");
+  }
+
+  const language = String(p?.language ?? "").trim();
+  if (!/^[a-z]{2}(_[A-Z]{2})?$/.test(language)) {
+    throw new Error("Código de idioma inválido (ej. es_MX, es, en_US).");
+  }
+
+  const bodyText = String(p?.body ?? "").trim();
+  if (bodyText.length < 1 || bodyText.length > 1024) {
+    throw new Error("El cuerpo del mensaje debe tener entre 1 y 1024 caracteres.");
+  }
+  const bodyVars = extractVars(bodyText);
+  const bodyExamples = Array.isArray(p?.body_examples) ? p.body_examples.map((x: Json) => String(x ?? "").trim()) : [];
+  if (bodyVars.length && (bodyExamples.length !== bodyVars.length || bodyExamples.some((x: string) => !x))) {
+    throw new Error("Agrega un valor de ejemplo para cada variable {{n}} del cuerpo.");
+  }
+
+  const components: Json[] = [];
+
+  const headerText = String(p?.header_text ?? "").trim();
+  if (headerText) {
+    if (headerText.length > 60) throw new Error("El encabezado no puede superar 60 caracteres.");
+    const headerVars = extractVars(headerText);
+    if (headerVars.length > 1) throw new Error("El encabezado admite como máximo una variable {{1}}.");
+    const headerComponent: Json = { type: "HEADER", format: "TEXT", text: headerText };
+    if (headerVars.length) {
+      const ex = String(p?.header_example ?? "").trim();
+      if (!ex) throw new Error("Agrega un valor de ejemplo para la variable del encabezado.");
+      headerComponent.example = { header_text: [ex] };
+    }
+    components.push(headerComponent);
+  }
+
+  const bodyComponent: Json = { type: "BODY", text: bodyText };
+  if (bodyVars.length) bodyComponent.example = { body_text: [bodyExamples] };
+  components.push(bodyComponent);
+
+  const footerText = String(p?.footer_text ?? "").trim();
+  if (footerText) {
+    if (footerText.length > 60) throw new Error("El pie no puede superar 60 caracteres.");
+    components.push({ type: "FOOTER", text: footerText });
+  }
+
+  const buttonsIn = Array.isArray(p?.buttons) ? p.buttons.slice(0, 3) : [];
+  if (buttonsIn.length) {
+    const buttons = buttonsIn.map((b: Json) => {
+      const type = String(b?.type ?? "").trim().toUpperCase();
+      const text = String(b?.text ?? "").trim().slice(0, 25);
+      if (!text) throw new Error("Cada botón necesita un texto.");
+      if (type === "QUICK_REPLY") return { type, text };
+      if (type === "URL") {
+        const url = String(b?.url ?? "").trim();
+        if (!/^https?:\/\//.test(url)) throw new Error("El botón de enlace necesita una URL válida (https://…).");
+        return { type, text, url };
+      }
+      if (type === "PHONE_NUMBER") {
+        const phone = digits(b?.phone_number);
+        if (!phone) throw new Error("El botón de llamada necesita un número de teléfono.");
+        return { type, text, phone_number: "+" + phone };
+      }
+      throw new Error("Tipo de botón no soportado.");
+    });
+    components.push({ type: "BUTTONS", buttons });
+  }
+
+  const res = await fetch(`${GRAPH}/${account.waba_id}/message_templates`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${account.access_token}`,
+    },
+    body: JSON.stringify({ name, category, language, components }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(metaErrorMessage(data?.error));
+
+  const { data: row, error } = await supa
+    .from("whatsapp_templates")
+    .insert({
+      user_id: userId,
+      account_id: account.id,
+      name,
+      category,
+      language,
+      components,
+      status: data?.status || "PENDING",
+      meta_template_id: data?.id ? String(data.id) : null,
+    })
+    .select()
+    .single();
+  if (error) throw new Error(`Se envió a Meta pero no se pudo guardar localmente: ${error.message}`);
+  return { template: row };
+}
+
+async function actionTemplateSync(supa: SupabaseClient, userId: string): Promise<Json> {
+  const account = await getAccount(supa, userId);
+  const { data: rows } = await supa
+    .from("whatsapp_templates")
+    .select("id, meta_template_id, status")
+    .eq("user_id", userId)
+    .in("status", ["PENDING", "IN_APPEAL"]);
+
+  for (const row of (rows ?? []) as Json[]) {
+    if (!row.meta_template_id) continue;
+    try {
+      const res = await fetch(
+        `${GRAPH}/${row.meta_template_id}?fields=status,rejected_reason`,
+        { headers: { Authorization: `Bearer ${account.access_token}` } },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) continue;
+      if (data?.status && data.status !== row.status) {
+        await supa
+          .from("whatsapp_templates")
+          .update({ status: data.status, rejection_reason: data.rejected_reason || null })
+          .eq("id", row.id);
+      }
+    } catch (_) { /* best-effort — one bad poll shouldn't break the sync */ }
+  }
+  return await actionTemplateList(supa, userId);
+}
+
+async function actionTemplateDelete(supa: SupabaseClient, userId: string, p: Json): Promise<Json> {
+  const { data: row } = await supa
+    .from("whatsapp_templates")
+    .select("*")
+    .eq("id", String(p?.id ?? ""))
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!row) throw new Error("Plantilla no encontrada.");
+  const account = await getAccount(supa, userId);
+
+  const res = await fetch(
+    `${GRAPH}/${account.waba_id}/message_templates?name=${encodeURIComponent(row.name)}`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${account.access_token}` } },
+  );
+  if (!res.ok && res.status !== 404) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(metaErrorMessage(data?.error));
+  }
+
+  const { error } = await supa.from("whatsapp_templates").delete().eq("id", row.id);
+  if (error) throw new Error(`No se pudo borrar localmente: ${error.message}`);
+  return { ok: true };
+}
+
 async function actionSendTemplate(supa: SupabaseClient, userId: string, p: Json): Promise<Json> {
   const conv = await getConversation(supa, userId, p?.conversation_id);
   const account = await getAccount(supa, userId);
@@ -511,6 +702,10 @@ Deno.serve(async (req) => {
       case "mark_read":          data = await actionMarkRead(supa, user.id, payload); break;
       case "templates":          data = await actionTemplates(supa, user.id); break;
       case "send_template":      data = await actionSendTemplate(supa, user.id, payload); break;
+      case "template_list":      data = await actionTemplateList(supa, user.id); break;
+      case "template_create":    data = await actionTemplateCreate(supa, user.id, payload); break;
+      case "template_sync":      data = await actionTemplateSync(supa, user.id); break;
+      case "template_delete":    data = await actionTemplateDelete(supa, user.id, payload); break;
       default:
         return json({ error: "Acción no soportada" }, 400);
     }
