@@ -468,13 +468,18 @@ Deno.serve(async (req: Request) => {
 
   const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
-  // TEMP (fase de construcción, 2026-07): créditos ilimitados para no frenar
-  // los tests — no se descuenta ni se bloquea por balance. Volver a false
-  // para reactivar el cobro por sección.
-  const UNLIMITED_CREDITS = true;
-
-  if (triggeredBy === "manual" && !UNLIMITED_CREDITS) {
-    const cost = requestedSections.length;
+  // Cobro por ítem (catálogo js/credit-costs.js): 2 créditos por sección con
+  // el modelo por defecto (Haiku), 4 con un modelo premium (Opus/Sonnet). Solo
+  // el trigger 'manual' cobra; onboarding/schedule son del sistema y van gratis.
+  if (triggeredBy === "manual") {
+    const { data: chargeProfile } = await supabase
+      .from("profiles")
+      .select("preferred_claude_model")
+      .eq("id", userId)
+      .maybeSingle();
+    const chargeModel = resolveModel(chargeProfile?.preferred_claude_model);
+    const perItem = chargeModel === DEFAULT_MODEL ? 2 : 4;
+    const cost = requestedSections.length * perItem;
 
     // Atomic deduction (single guarded UPDATE) — no read-then-write race.
     // Returns the new balance, or null when the balance was insufficient.
@@ -495,7 +500,7 @@ Deno.serve(async (req: Request) => {
 
     await supabase.from("credit_transactions").insert(
       requestedSections.map((sk) => ({
-        user_id: userId, delta: -1, reason: "manual_refresh", section_key: sk,
+        user_id: userId, delta: -perItem, reason: "intel_hub_item", section_key: sk,
       }))
     );
   }

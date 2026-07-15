@@ -649,6 +649,16 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
 // Actions
 // ───────────────────────────────────────────────────────────────────────────
 async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
+  // Guardia: se necesita al menos el costo base de una reunión (8 créditos) para
+  // iniciar. El costo real (base + bloques de bot) se cobra al cerrar (endMeeting).
+  if (ctx.userId) {
+    const { data: c } = await ctx.supa
+      .from("user_credits").select("balance").eq("user_id", ctx.userId).maybeSingle();
+    if ((c?.balance ?? 0) < 8) {
+      return { error: "insufficient_credits", balance: c?.balance ?? 0, cost: 8 };
+    }
+  }
+
   const context = (p?.context && typeof p.context === "object") ? p.context : {};
   const base = {
     meeting_url: strOrNull(p?.meeting_url) ?? "local-capture://realtime",
@@ -827,6 +837,29 @@ async function actionEndMeeting(ctx: Ctx, p: Json): Promise<Json> {
     score_total: scoreTotal,
   }).eq("id", meeting.id);
   if (updErr) throw new Error(updErr.message);
+
+  // ── Cobro de la reunión (catálogo js/credit-costs.js) ──────────────────
+  // 8 créditos base (modo local) + 30 por cada 10 min en modo bot (Recall.ai).
+  // Se cobra una sola vez: la guardia de idempotencia de arriba (status closed)
+  // impide un doble cobro si endMeeting se llama otra vez.
+  if (meeting.user_id) {
+    const durSec = meeting.started_at
+      ? Math.max(0, Math.round((new Date(endedAt).getTime() - new Date(meeting.started_at).getTime()) / 1000))
+      : 0;
+    const isBot = !!meeting.recall_bot_id;
+    const botBlocks = isBot ? Math.ceil(durSec / 600) : 0; // 600 s = bloque de 10 min
+    const coachCost = 8 + botBlocks * 30;
+    const { data: spent, error: spendErr } = await ctx.supa
+      .rpc("spend_credits", { p_user_id: meeting.user_id, p_amount: coachCost });
+    if (spendErr || spent === null || spent === undefined) {
+      console.error("[sales-coach] coach charge failed (insufficient/race):", spendErr);
+    } else {
+      await ctx.supa.from("credit_transactions").insert({
+        user_id: meeting.user_id, delta: -coachCost,
+        reason: isBot ? "coach_bot_meeting" : "coach_meeting",
+      });
+    }
+  }
 
   // Extract the report's REAL objections into meeting_objections
   // (delete-then-insert keeps a re-run from duplicating rows).

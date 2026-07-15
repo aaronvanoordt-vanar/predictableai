@@ -243,6 +243,25 @@
       .subscribe();
   }
 
+  // API global: abrir la pasarela de compra y refrescar el saldo desde
+  // cualquier módulo (p.ej. al recibir un 402 insufficient_credits de una edge
+  // function). window.credits.prompt() avisa y abre el modal de compra.
+  global.credits = {
+    open: openModal,
+    close: closeModal,
+    refresh: refreshBalance,
+    prompt: function (info) {
+      const cost = info && info.cost;
+      const bal = info && info.balance;
+      if (global.uiHelpers && global.uiHelpers.toast) {
+        const detail = (cost != null && bal != null)
+          ? ` Necesitas ${cost} y tienes ${bal}.` : '';
+        global.uiHelpers.toast('Créditos insuficientes.' + detail + ' Recarga para continuar.', 'warn');
+      }
+      openModal();
+    },
+  };
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {

@@ -46,7 +46,7 @@
     // Modo local: 1 reporte Opus al cerrar. Raw ~US$0.25.
     coach_meeting:          { credits: 8,  label: 'por reunión',         variable: false },
     // Modo bot (Recall.ai + coaching en vivo): escala fuerte con la duración.
-    coach_bot_block:        { credits: 30, label: 'por cada 15 min en modo bot', variable: true },
+    coach_bot_block:        { credits: 30, label: 'por cada 10 min en modo bot', variable: true },
   };
 
   function get(key) {
