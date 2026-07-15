@@ -1325,7 +1325,76 @@
     var body = el('div', { style: 'display:flex;flex-direction:column;gap:10px' });
     var msg = el('textarea', { rows: '3', placeholder: 'Mensaje de seguimiento…' });
     msg.value = prefill != null ? prefill : ((input && input.value.trim()) || '');
-    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Mensaje' }), msg));
+    var textField = el('div', { class: 'wai-field' }, el('label', { text: 'Mensaje' }), msg);
+    body.appendChild(textField);
+
+    // Plantilla: cargada bajo demanda, solo cuando el usuario activa el modo plantilla.
+    var tplState = { tpl: null, list: null, inputs: [] };
+    var tplField = el('div', { class: 'wai-field', style: 'display:none' });
+    var tplSelectHost = el('div');
+    var tplParamsHost = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
+    tplField.appendChild(el('label', { text: 'Plantilla' }));
+    tplField.appendChild(tplSelectHost);
+    tplField.appendChild(tplParamsHost);
+    body.appendChild(tplField);
+
+    function renderTplParams() {
+      tplParamsHost.innerHTML = '';
+      tplState.inputs = [];
+      var tpl = tplState.tpl;
+      if (!tpl) return;
+      var placeholders = [];
+      var re = /\{\{(\d+)\}\}/g, m;
+      while ((m = re.exec(tpl.body || '')) !== null) {
+        var n = parseInt(m[1], 10);
+        if (placeholders.indexOf(n) === -1) placeholders.push(n);
+      }
+      placeholders.sort(function (a, b) { return a - b; });
+      tplParamsHost.appendChild(el('div', { class: 'wai-fu-body', style: 'white-space:pre-wrap', text: tpl.body || '' }));
+      placeholders.forEach(function (n) {
+        var pin = el('input', { type: 'text', placeholder: 'Valor para {{' + n + '}}' });
+        tplState.inputs.push({ n: n, input: pin });
+        tplParamsHost.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Variable {{' + n + '}}' }), pin));
+      });
+    }
+
+    function loadTemplatesInto() {
+      tplSelectHost.innerHTML = 'Cargando plantillas…';
+      edge('templates', {}).then(function (res) {
+        var tpls = (res && res.templates) || [];
+        tplState.list = tpls;
+        tplSelectHost.innerHTML = '';
+        if (!tpls.length) {
+          tplSelectHost.appendChild(el('div', { class: 'wai-hint', text: 'No tienes plantillas aprobadas. Créalas en Meta Business Suite → WhatsApp Manager.' }));
+          return;
+        }
+        var sel = el('select');
+        sel.appendChild(el('option', { value: '', text: 'Selecciona una plantilla…' }));
+        tpls.forEach(function (t, i) {
+          sel.appendChild(el('option', { value: String(i), text: t.name + ' · ' + t.language }));
+        });
+        sel.addEventListener('change', function () {
+          tplState.tpl = sel.value !== '' ? tpls[parseInt(sel.value, 10)] : null;
+          renderTplParams();
+        });
+        tplSelectHost.appendChild(sel);
+      }).catch(function (e) {
+        tplSelectHost.innerHTML = '';
+        tplSelectHost.appendChild(el('div', { style: 'font-size:12px;color:var(--red)', text: errMsg(e) }));
+      });
+    }
+
+    var tplToggleRow = el('label', { style: 'display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer' });
+    var tplToggle = el('input', { type: 'checkbox' });
+    tplToggleRow.appendChild(tplToggle);
+    tplToggleRow.appendChild(document.createTextNode('Enviar como plantilla (necesario si para esa fecha ya pasaron 24 h desde el último mensaje del contacto)'));
+    body.appendChild(tplToggleRow);
+    tplToggle.addEventListener('change', function () {
+      var on = tplToggle.checked;
+      textField.style.display = on ? 'none' : '';
+      tplField.style.display = on ? '' : 'none';
+      if (on && tplState.list === null) loadTemplatesInto();
+    });
 
     var when = el('input', { type: 'datetime-local' });
     when.value = toLocalInputValue(new Date(Date.now() + 3600000));
@@ -1340,35 +1409,58 @@
           d.setHours(9, 0, 0, 0);
         } else d = new Date(Date.now() + opt[1] * 1000);
         when.value = toLocalInputValue(d);
+        // Más de 24 h: sugerir plantilla automáticamente si aún no se eligió modo.
+        if (d.getTime() > Date.now() + 24 * 3600000 && !tplToggle.checked) {
+          tplToggle.checked = true;
+          tplToggle.dispatchEvent(new Event('change'));
+        }
       });
       quick.appendChild(b);
     });
     body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Enviar el' }), quick, when));
-    body.appendChild(el('div', { class: 'wai-hint', text: 'Ojo: si para esa fecha el contacto lleva más de 24 h sin escribirte, WhatsApp rechazará el mensaje libre y el seguimiento quedará marcado como fallido.' }));
+    body.appendChild(el('div', { class: 'wai-hint', text: 'Ojo: si para esa fecha el contacto lleva más de 24 h sin escribirte, WhatsApp rechazará el mensaje libre y el seguimiento quedará marcado como fallido. Activa "Enviar como plantilla" para evitarlo.' }));
 
     openModal('Programar seguimiento', body, [
       { label: 'Cancelar', className: 'btn btn-ghost btn-sm' },
       {
         label: 'Programar', className: 'btn btn-primary btn-sm',
         onClick: function (api) {
-          var text = msg.value.trim();
-          if (!text) { toast('Escribe el mensaje de seguimiento.', 'warn'); return; }
           var d = when.value ? new Date(when.value) : null;
           if (!d || isNaN(d.getTime()) || d.getTime() < Date.now() + 30000) {
             toast('Elige una fecha y hora futuras.', 'warn');
             return;
           }
-          api.setBusy(true);
-          return sb().from('whatsapp_followups').insert({
+
+          var row = {
             user_id: state.uid,
             conversation_id: conv.id,
-            body: text,
             send_at: d.toISOString(),
-          }).then(function (r) {
+          };
+
+          if (tplToggle.checked) {
+            var tpl = tplState.tpl;
+            if (!tpl) { toast('Elige una plantilla.', 'warn'); return; }
+            var params = tplState.inputs.map(function (i) { return i.input.value.trim(); });
+            if (params.some(function (v) { return !v; })) { toast('Completa todas las variables de la plantilla.', 'warn'); return; }
+            var preview = String(tpl.body || '');
+            tplState.inputs.forEach(function (item, i) { preview = preview.split('{{' + item.n + '}}').join(params[i]); });
+            row.kind = 'template';
+            row.template_name = tpl.name;
+            row.template_language = tpl.language;
+            row.template_params = params;
+            row.body = preview;
+          } else {
+            var text = msg.value.trim();
+            if (!text) { toast('Escribe el mensaje de seguimiento.', 'warn'); return; }
+            row.body = text;
+          }
+
+          api.setBusy(true);
+          return sb().from('whatsapp_followups').insert(row).then(function (r) {
             if (r.error) throw new Error(r.error.message);
             api.close();
             toast('Seguimiento programado para ' + fmtFull(d.toISOString()) + '.', 'success');
-            if (input && msg.value === input.value) { input.value = ''; input.style.height = 'auto'; }
+            if (input && !tplToggle.checked && msg.value === input.value) { input.value = ''; input.style.height = 'auto'; }
             loadFollowupsForActive();
             loadPendingFollowups();
           });
@@ -1507,6 +1599,7 @@
       state.followups.forEach(function (f) {
         var whenCls = f.status === 'failed' ? ' failed' : (f.status === 'sent' ? ' sent' : '');
         var label = { pending: 'Programado · ', processing: 'Enviando · ', sent: 'Enviado · ', failed: 'Falló · ', cancelled: 'Cancelado · ' }[f.status] || '';
+        if (f.kind === 'template') label += 'Plantilla (' + f.template_name + ') · ';
         var item = el('div', { class: 'wai-fu-item' },
           el('div', { class: 'wai-fu-when' + whenCls, text: label + fmtFull(f.send_at) }),
           el('div', { class: 'wai-fu-body', text: f.body }));
