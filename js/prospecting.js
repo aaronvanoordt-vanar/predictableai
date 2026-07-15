@@ -3013,16 +3013,26 @@
         '<div class="pros-actions"><button type="button" class="btn btn-ghost btn-sm" data-action="wa-copy-email" data-id="' + id + '">Copiar email</button></div>' +
         '</div>';
     }
-    // (e) Ángulo de personalización (síntesis de las 5 capas — lo consume el coach)
-    var angle = (m.outreach && m.outreach.angle) || null;
-    if (angle) {
+    // (e) Ángulo de personalización (síntesis de las 5 capas — lo consume el coach).
+    // Usa el mismo buildCoachLeadContext() que alimenta el AI coach, con sus
+    // mismos textos de respaldo, para que ambas superficies muestren la misma info.
+    if (m.outreach && m.outreach.generated_at) {
+      var angle = (m.outreach.angle && typeof m.outreach.angle === 'object') ? m.outreach.angle : {};
+      var coachCtx = (window.prospectingData && window.prospectingData.buildCoachLeadContext)
+        ? window.prospectingData.buildCoachLeadContext(m)
+        : null;
+      var prep = (coachCtx && coachCtx.coach_prep && typeof coachCtx.coach_prep === 'object') ? coachCtx.coach_prep : null;
+      var personHook = (coachCtx && coachCtx.person_hook) || angle.person_hook || null;
+      var why = (coachCtx && coachCtx.brief_why) || 'Contexto de la reunión disponible al iniciar el coach.';
+      var risks = (coachCtx && coachCtx.brief_risks) || 'Sin alertas previas.';
       html += '<div class="pros-msgblock"><div class="pros-msgblock-title">Ángulo de personalización</div>' +
         '<div style="font-size:12.5px;line-height:1.7;color:var(--text2)">' +
         (angle.layer ? '<div><b>Capa del ángulo:</b> ' + esc(angle.layer) + '</div>' : '') +
-        (angle.person_hook ? '<div><b>Gancho personal:</b> ' + esc(angle.person_hook) + '</div>' : '') +
-        (angle.hypothesis ? '<div><b>Dolor probable:</b> ' + esc(angle.hypothesis) + '</div>' : '') +
-        (angle.objection ? '<div><b>Objeción esperada:</b> ' + esc(angle.objection) + (angle.neutralizer ? ' · <i>Neutralizador:</i> ' + esc(angle.neutralizer) : '') + '</div>' : '') +
+        (personHook ? '<div><b>Gancho personal:</b> ' + esc(personHook) + '</div>' : '') +
+        '<div><b>Por qué le importa:</b> ' + esc(why) + '</div>' +
+        '<div><b>Riesgos / objeción:</b> ' + esc(risks) + '</div>' +
         (angle.social_proof && angle.social_proof !== 'ninguno' ? '<div><b>Social proof usado:</b> ' + esc(angle.social_proof) + '</div>' : '') +
+        (prep && prep.como_abrir ? '<div><b>Cómo abrir:</b> ' + esc(prep.como_abrir) + '</div>' : '') +
         '</div>' +
         '<div class="pros-hint">Este contexto queda guardado con el lead y lo usa el AI coach si se agenda una reunión.</div>' +
         '</div>';
