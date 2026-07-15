@@ -2012,12 +2012,12 @@
       '<div class="table-head" style="gap:12px;flex-wrap:wrap;align-items:flex-start">' +
       '<div><div style="font-weight:600;font-size:13.5px">' + esc((list && list.name) || 'Lista') + '</div>' +
       '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos</div></div>' +
-      '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected"' + (n ? '' : ' disabled') + '>Enriquecer seleccionados</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_email" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer seleccionados</button>' +
       '</div>' +
       // Fila 1 — acciones sobre los leads seleccionados (secuencia / IA).
       '<div class="pros-actions" style="padding:12px 18px 0">' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="to-sequence"' + (n ? '' : ' disabled') + '>' + SVG_SEQ_TAB + ' Agregar a secuencia</button>' +
-      '<button type="button" class="btn btn-ai btn-sm" data-action="to-outreach"' + (n ? '' : ' disabled') + '>' + SVG_SPARK + ' Generar mensajes con IA</button>' +
+      '<button type="button" class="btn btn-ai btn-sm" data-action="to-outreach" data-credit-cost="outreach_message" data-credit-muted' + (n ? '' : ' disabled') + '>' + SVG_SPARK + ' Generar mensajes con IA</button>' +
       '</div>' +
       // Fila 2 — acciones sobre la lista.
       '<div class="pros-actions" style="padding:10px 18px 14px">' +
@@ -3079,7 +3079,7 @@
       '<span class="pros-progress" data-wa-prog>' +
       '<span class="pros-progress-bar"><span class="pros-progress-fill" data-wa-prog-fill></span></span>' +
       '<span data-wa-prog-text></span></span>' +
-      '<button type="button" class="btn btn-ai btn-sm" data-action="wa-generate"' + ((n && !st.generating) ? '' : ' disabled') + '>' + SVG_SPARK + ' Generar mensajes con IA</button>' +
+      '<button type="button" class="btn btn-ai btn-sm" data-action="wa-generate" data-credit-cost="outreach_message" data-credit-muted' + ((n && !st.generating) ? '' : ' disabled') + '>' + SVG_SPARK + ' Generar mensajes con IA</button>' +
       '</div></div>';
     if (!st.listId) {
       html += emptyHtml(SVG_CHAT, 'Selecciona una lista',

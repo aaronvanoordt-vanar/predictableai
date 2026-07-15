@@ -94,11 +94,11 @@
     wrap.className = 'ihx-wrap';
     wrap.innerHTML = `
       <div class="ihx-toolbar">
-        <button class="ihx-btn-generate" id="ih-btn-generate">
+        <button class="ihx-btn-generate" id="ih-btn-generate" data-credit-cost="intel_hub_refresh" data-credit-muted>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
           <span>Actualizar inteligencia</span>
         </button>
-        <button class="ihx-btn-force" id="ih-btn-generate-all" title="Regenera todas las 9 secciones (saltea cadence).">
+        <button class="ihx-btn-force" id="ih-btn-generate-all" title="Regenera todas las secciones (saltea cadence).">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v5h5"/></svg>
           <span>Regenerar todo</span>
         </button>
@@ -106,7 +106,7 @@
           <div class="ihx-status-dot" id="ihx-status-dot"></div>
           <span class="ihx-status-text" id="ihx-status-text">Cargando…</span>
         </div>
-        <span class="ihx-toolbar-hint">Créditos ilimitados durante la beta</span>
+        <span class="ihx-toolbar-hint">Cada ítem cuesta 2 créditos al actualizarse · gratis durante la beta</span>
       </div>
       <div class="ihx-progress" id="ih-progress" style="display:none"></div>
       <div id="ihx-summary"></div>
