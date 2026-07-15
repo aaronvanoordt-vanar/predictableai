@@ -51,6 +51,7 @@
     member: null,                // fila prospect_list_members de la conv activa
     memberLists: {},             // list_id → nombre
     followups: [],
+    notes: [],                   // notas con timestamp de la conversación activa
     filter: 'all',
     search: '',
     replyTo: null,
@@ -257,6 +258,14 @@
 '.wai-fu-when{font-size:11px;font-weight:600;color:var(--accent-ink)}' +
 '.wai-fu-when.failed{color:var(--red)}.wai-fu-when.sent{color:var(--green)}' +
 '.wai-fu-body{color:var(--ink-3);white-space:pre-wrap;word-break:break-word}' +
+'.wai-note-input{width:100%;padding:8px 11px;border:1px solid var(--hair-3);border-radius:var(--r-md);background:var(--surface2);color:var(--ink);font-size:12.5px;font-family:var(--font-body);outline:none;box-sizing:border-box;resize:vertical;min-height:40px}' +
+'.wai-note-input:focus{border-color:var(--accent);background:var(--surface)}' +
+'.wai-note-item{display:flex;flex-direction:column;gap:5px;border:1px solid var(--hair);border-radius:var(--r-md);padding:8px 10px;background:var(--surface2)}' +
+'.wai-note-body{font-size:12.5px;color:var(--ink-2);white-space:pre-wrap;word-break:break-word;line-height:1.5}' +
+'.wai-note-foot{display:flex;justify-content:space-between;align-items:center;gap:8px}' +
+'.wai-note-when{font-size:11px;font-weight:600;color:var(--ink-4)}' +
+'.wai-note-del{background:none;border:0;padding:0;cursor:pointer;font-size:11px;color:var(--ink-4);font-family:inherit}' +
+'.wai-note-del:hover{color:var(--red)}' +
 '.wai-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--ink-3);text-align:center;padding:30px}' +
 '.wai-modal-ovl{position:fixed;inset:0;background:rgba(10,10,15,.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}' +
 '.wai-modal{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);box-shadow:var(--shadow-3);width:100%;max-width:520px;max-height:88vh;overflow-y:auto;padding:20px 22px;display:flex;flex-direction:column;gap:12px}' +
@@ -666,6 +675,7 @@
     state.hasOlder = false;
     state.member = null;
     state.followups = [];
+    state.notes = [];
     renderConvList();
     renderChat();
     renderDetail();
@@ -1724,6 +1734,58 @@
       });
   }
 
+  // ── Notas con timestamp ──────────────────────────────────────────────────
+  function loadNotesForActive() {
+    var convId = state.activeConvId;
+    if (!convId) return;
+    sb().from('whatsapp_notes')
+      .select('*')
+      .eq('conversation_id', convId)
+      .order('created_at', { ascending: false })
+      .limit(100)
+      .then(function (r) {
+        if (convId !== state.activeConvId) return;
+        state.notes = r.data || [];
+        renderDetail();
+      });
+  }
+
+  function addNote(text, btn) {
+    var conv = activeConv();
+    if (!conv) return;
+    var body = String(text || '').trim();
+    if (!body) return;
+    if (body.length > 4000) { toast('La nota es demasiado larga (máximo 4000 caracteres).', 'warn'); return; }
+    if (btn) btn.disabled = true;
+    getUid().then(function (uid) {
+      return sb().from('whatsapp_notes').insert({
+        user_id: uid,
+        conversation_id: conv.id,
+        member_id: conv.member_id || null,
+        body: body,
+      });
+    }).then(function (r) {
+      if (r.error) throw new Error(r.error.message);
+      toast('Nota agregada.', 'success');
+      loadNotesForActive();
+    }).catch(function (e) {
+      if (btn) btn.disabled = false;
+      toast(errMsg(e), 'error');
+    });
+  }
+
+  function deleteNote(id) {
+    if (!window.confirm('¿Eliminar esta nota?')) return;
+    sb().from('whatsapp_notes')
+      .delete()
+      .eq('id', id)
+      .then(function (r) {
+        if (r.error) { toast(r.error.message, 'error'); return; }
+        toast('Nota eliminada.', 'info');
+        loadNotesForActive();
+      });
+  }
+
   // ── Ficha del contacto (columna derecha) ─────────────────────────────────
   function loadDetail() {
     var conv = activeConv();
@@ -1747,6 +1809,7 @@
         });
     }
     loadFollowupsForActive();
+    loadNotesForActive();
   }
 
   function dRow(label, valueNode) {
@@ -1842,6 +1905,43 @@
       });
     }
     host.appendChild(fuSec);
+
+    // ── Notas con timestamp ──────────────────────────────────────────────────
+    var noteSec = el('div', { class: 'wai-d-sec' });
+    noteSec.appendChild(el('div', { class: 'wai-d-title', text: 'Notas' }));
+
+    var noteInput = el('textarea', { class: 'wai-note-input', rows: '2', placeholder: 'Escribe una nota sobre este lead…' });
+    var noteBar = el('div', { style: 'display:flex;justify-content:flex-end' });
+    var noteBtn = el('button', { class: 'btn btn-primary btn-sm', text: 'Agregar nota' });
+    noteBtn.disabled = true;
+    noteInput.addEventListener('input', function () { noteBtn.disabled = !noteInput.value.trim(); });
+    noteInput.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && noteInput.value.trim()) {
+        e.preventDefault();
+        addNote(noteInput.value, noteBtn);
+      }
+    });
+    noteBtn.addEventListener('click', function () { addNote(noteInput.value, noteBtn); });
+    noteBar.appendChild(noteBtn);
+    noteSec.appendChild(el('div', { class: 'wai-field' }, noteInput));
+    noteSec.appendChild(noteBar);
+
+    if (!state.notes.length) {
+      noteSec.appendChild(el('div', { class: 'wai-hint', text: 'Sin notas todavía. Registra lo que hablaste, objeciones o próximos pasos; cada nota queda con fecha y hora.' }));
+    } else {
+      state.notes.forEach(function (n) {
+        var item = el('div', { class: 'wai-note-item' },
+          el('div', { class: 'wai-note-body', text: n.body }));
+        var foot = el('div', { class: 'wai-note-foot' },
+          el('span', { class: 'wai-note-when', text: fmtFull(n.created_at) }));
+        var del = el('button', { class: 'wai-note-del', title: 'Eliminar nota', text: 'Eliminar' });
+        del.addEventListener('click', function () { deleteNote(n.id); });
+        foot.appendChild(del);
+        item.appendChild(foot);
+        noteSec.appendChild(item);
+      });
+    }
+    host.appendChild(noteSec);
 
     var danger = el('div', { class: 'wai-d-sec' });
     var del = el('button', { class: 'btn btn-ghost btn-sm', style: 'color:var(--red);align-self:flex-start', text: 'Eliminar conversación' });
