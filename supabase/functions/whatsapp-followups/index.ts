@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
   const now = new Date().toISOString();
   const { data: due, error: dueErr } = await supa
     .from("whatsapp_followups")
-    .select("id, user_id, conversation_id, body, send_at")
+    .select("id, user_id, conversation_id, body, send_at, kind, template_name, template_language, template_params")
     .eq("status", "pending")
     .lte("send_at", now)
     .order("send_at", { ascending: true })
@@ -138,19 +138,41 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      const isTemplate = fu.kind === "template";
+      const params: string[] = Array.isArray(fu.template_params)
+        ? fu.template_params.map((x: Json) => String(x ?? ""))
+        : [];
+      const template: Json = isTemplate
+        ? {
+          name: fu.template_name,
+          language: { code: fu.template_language },
+          ...(params.length
+            ? { components: [{ type: "body", parameters: params.map((text) => ({ type: "text", text })) }] }
+            : {}),
+        }
+        : null;
+
       const res = await fetch(`${GRAPH}/${account.phone_number_id}/messages`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${account.access_token}`,
         },
-        body: JSON.stringify({
-          messaging_product: "whatsapp",
-          recipient_type: "individual",
-          to: conv.wa_id,
-          type: "text",
-          text: { body: fu.body, preview_url: true },
-        }),
+        body: JSON.stringify(isTemplate
+          ? {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: conv.wa_id,
+            type: "template",
+            template,
+          }
+          : {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: conv.wa_id,
+            type: "text",
+            text: { body: fu.body, preview_url: true },
+          }),
       });
       const data = await res.json().catch(() => ({}));
 
@@ -168,7 +190,7 @@ Deno.serve(async (req) => {
           user_id: conv.user_id,
           wamid: data?.messages?.[0]?.id ?? null,
           direction: "out",
-          type: "text",
+          type: isTemplate ? "template" : "text",
           body: fu.body,
           status: "pending",
           sent_at: sentAt,
