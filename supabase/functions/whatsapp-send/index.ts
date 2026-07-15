@@ -25,16 +25,26 @@
  *  • mark_read          {conversation_id}     (resets unread + read receipt)
  *  • templates          {}                    (approved templates, needs waba_id)
  *  • send_template      {conversation_id, template_name, language,
- *                        body_params?: string[], preview_body?}
+ *                        body_params?: string[], body_params_named?:
+ *                        Record<string, string>, preview_body?}
  *       Needed for first contact / outside the 24 h customer-service window.
+ *       body_params is positional ({{1}}, {{2}}…); body_params_named is for
+ *       templates created with variable_format "named" ({{customer_name}}).
  *  • template_list       {}   local whatsapp_templates rows (any status).
- *  • template_create     {name, category, language, header_text?,
- *                         header_example?, body, body_examples?: string[],
+ *  • template_create     {name, category, language,
+ *                         variable_format?: "positional" | "named",
+ *                         header_text?, header_example?, body,
+ *                         body_examples?: string[] (positional),
+ *                         body_examples_named?: Record<string, string>,
  *                         footer_text?, buttons?: [{type, text, url?,
- *                         phone_number?}]}
+ *                         phone_number?}] (up to 10)}
  *       Builds the Meta "components" payload, submits it to
  *       /{waba_id}/message_templates for review, and stores the result
  *       (status starts as PENDING — Meta reviews asynchronously).
+ *       variable_format "named" lets the body/header use readable
+ *       placeholders like {{nombre}} instead of {{1}} (Meta's
+ *       parameter_format: NAMED) — mirrors WhatsApp Manager's "Tipo de
+ *       variable" selector.
  *  • template_sync       {}   polls Meta for every non-terminal template and
  *                             updates local status/rejection_reason.
  *  • template_delete      {id}  deletes the template (all languages of that
@@ -518,12 +528,23 @@ async function actionTemplates(supa: SupabaseClient, userId: string): Promise<Js
 }
 
 /** Distinct {{n}} placeholder numbers found in a template string, ascending. */
-function extractVars(text: string): number[] {
+function extractPositionalVars(text: string): number[] {
   const found = new Set<number>();
   const re = /\{\{(\d+)\}\}/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) found.add(Number(m[1]));
   return Array.from(found).sort((a, b) => a - b);
+}
+
+/** Distinct {{name}} placeholders found in a template string, first-seen order. */
+function extractNamedVars(text: string): string[] {
+  const found: string[] = [];
+  const re = /\{\{([a-z][a-z0-9_]{0,29})\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (!found.includes(m[1])) found.push(m[1]);
+  }
+  return found;
 }
 
 async function actionTemplateList(supa: SupabaseClient, userId: string): Promise<Json> {
@@ -557,14 +578,11 @@ async function actionTemplateCreate(supa: SupabaseClient, userId: string, p: Jso
     throw new Error("Código de idioma inválido (ej. es_MX, es, en_US).");
   }
 
+  const namedFormat = String(p?.variable_format ?? "positional").trim().toLowerCase() === "named";
+
   const bodyText = String(p?.body ?? "").trim();
   if (bodyText.length < 1 || bodyText.length > 1024) {
     throw new Error("El cuerpo del mensaje debe tener entre 1 y 1024 caracteres.");
-  }
-  const bodyVars = extractVars(bodyText);
-  const bodyExamples = Array.isArray(p?.body_examples) ? p.body_examples.map((x: Json) => String(x ?? "").trim()) : [];
-  if (bodyVars.length && (bodyExamples.length !== bodyVars.length || bodyExamples.some((x: string) => !x))) {
-    throw new Error("Agrega un valor de ejemplo para cada variable {{n}} del cuerpo.");
   }
 
   const components: Json[] = [];
@@ -572,19 +590,46 @@ async function actionTemplateCreate(supa: SupabaseClient, userId: string, p: Jso
   const headerText = String(p?.header_text ?? "").trim();
   if (headerText) {
     if (headerText.length > 60) throw new Error("El encabezado no puede superar 60 caracteres.");
-    const headerVars = extractVars(headerText);
-    if (headerVars.length > 1) throw new Error("El encabezado admite como máximo una variable {{1}}.");
     const headerComponent: Json = { type: "HEADER", format: "TEXT", text: headerText };
-    if (headerVars.length) {
-      const ex = String(p?.header_example ?? "").trim();
-      if (!ex) throw new Error("Agrega un valor de ejemplo para la variable del encabezado.");
-      headerComponent.example = { header_text: [ex] };
+    if (namedFormat) {
+      const headerVars = extractNamedVars(headerText);
+      if (headerVars.length > 1) throw new Error("El encabezado admite como máximo una variable.");
+      if (headerVars.length) {
+        const ex = String(p?.header_example ?? "").trim();
+        if (!ex) throw new Error("Agrega un valor de ejemplo para la variable del encabezado.");
+        headerComponent.example = { header_text_named_params: [{ param_name: headerVars[0], example: ex }] };
+      }
+    } else {
+      const headerVars = extractPositionalVars(headerText);
+      if (headerVars.length > 1) throw new Error("El encabezado admite como máximo una variable {{1}}.");
+      if (headerVars.length) {
+        const ex = String(p?.header_example ?? "").trim();
+        if (!ex) throw new Error("Agrega un valor de ejemplo para la variable del encabezado.");
+        headerComponent.example = { header_text: [ex] };
+      }
     }
     components.push(headerComponent);
   }
 
   const bodyComponent: Json = { type: "BODY", text: bodyText };
-  if (bodyVars.length) bodyComponent.example = { body_text: [bodyExamples] };
+  if (namedFormat) {
+    const bodyVars = extractNamedVars(bodyText);
+    const named = p?.body_examples_named && typeof p.body_examples_named === "object" ? p.body_examples_named : {};
+    if (bodyVars.length) {
+      const missing = bodyVars.find((v) => !String(named[v] ?? "").trim());
+      if (missing) throw new Error(`Agrega un valor de ejemplo para la variable {{${missing}}}.`);
+      bodyComponent.example = {
+        body_text_named_params: bodyVars.map((v) => ({ param_name: v, example: String(named[v]).trim() })),
+      };
+    }
+  } else {
+    const bodyVars = extractPositionalVars(bodyText);
+    const bodyExamples = Array.isArray(p?.body_examples) ? p.body_examples.map((x: Json) => String(x ?? "").trim()) : [];
+    if (bodyVars.length && (bodyExamples.length !== bodyVars.length || bodyExamples.some((x: string) => !x))) {
+      throw new Error("Agrega un valor de ejemplo para cada variable {{n}} del cuerpo.");
+    }
+    if (bodyVars.length) bodyComponent.example = { body_text: [bodyExamples] };
+  }
   components.push(bodyComponent);
 
   const footerText = String(p?.footer_text ?? "").trim();
@@ -593,7 +638,11 @@ async function actionTemplateCreate(supa: SupabaseClient, userId: string, p: Jso
     components.push({ type: "FOOTER", text: footerText });
   }
 
-  const buttonsIn = Array.isArray(p?.buttons) ? p.buttons.slice(0, 3) : [];
+  // Meta allows up to 10 buttons total (quick replies), or up to 3 total when
+  // mixing in URL/PHONE_NUMBER call-to-action buttons — exact combination
+  // rules are enforced by Meta itself; we only cap the raw count here and let
+  // metaErrorMessage() surface the real reason for an invalid combination.
+  const buttonsIn = Array.isArray(p?.buttons) ? p.buttons.slice(0, 10) : [];
   if (buttonsIn.length) {
     const buttons = buttonsIn.map((b: Json) => {
       const type = String(b?.type ?? "").trim().toUpperCase();
@@ -621,7 +670,13 @@ async function actionTemplateCreate(supa: SupabaseClient, userId: string, p: Jso
       "Content-Type": "application/json",
       Authorization: `Bearer ${account.access_token}`,
     },
-    body: JSON.stringify({ name, category, language, components }),
+    body: JSON.stringify({
+      name,
+      category,
+      language,
+      parameter_format: namedFormat ? "NAMED" : "POSITIONAL",
+      components,
+    }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(metaErrorMessage(data?.error));
@@ -702,12 +757,22 @@ async function actionSendTemplate(supa: SupabaseClient, userId: string, p: Json)
   const name = String(p?.template_name ?? "").trim();
   const language = String(p?.language ?? "").trim();
   if (!name || !language) throw new Error("Elige una plantilla.");
+  const namedParams = p?.body_params_named && typeof p.body_params_named === "object" ? p.body_params_named : null;
   const params = Array.isArray(p?.body_params)
     ? p.body_params.map((x: Json) => String(x ?? "")).slice(0, 20)
     : [];
 
   const template: Json = { name, language: { code: language } };
-  if (params.length) {
+  if (namedParams && Object.keys(namedParams).length) {
+    template.components = [{
+      type: "body",
+      parameters: Object.entries(namedParams).map(([parameter_name, text]) => ({
+        type: "text",
+        parameter_name,
+        text: String(text ?? ""),
+      })),
+    }];
+  } else if (params.length) {
     template.components = [{
       type: "body",
       parameters: params.map((text: string) => ({ type: "text", text })),
