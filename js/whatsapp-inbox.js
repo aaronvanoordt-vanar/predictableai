@@ -429,7 +429,6 @@
       el('div', { class: 'wai-top-status' },
         el('span', { class: 'wai-dot' + (acc.status === 'error' ? ' err' : '') }),
         el('span', { text: (acc.display_phone || acc.phone_number_id) + (acc.display_name ? ' · ' + acc.display_name : '') })),
-      el('div', { style: 'flex:1' }),
       (function () {
         var b = el('button', { class: 'btn btn-primary btn-sm', text: '+ Nueva conversación' });
         b.addEventListener('click', openNewConversationModal);
