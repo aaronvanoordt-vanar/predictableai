@@ -371,6 +371,38 @@
     return node;
   }
 
+  // ── Chip de créditos global (js/credits.js) ────────────────────────────────
+  // El chip vive normalmente fijo en la esquina superior derecha de toda la
+  // app. Aquí se reubica dentro de la barra superior del inbox para que quede
+  // alineado con los botones. Es CRÍTICO devolverlo a <body> antes de que se
+  // destruya (shell.innerHTML='') o de salir de esta página: si queda
+  // atrapado dentro de #wa-inbox-shell, desaparece de toda la app en cuanto
+  // la página deja de estar activa (display:none) o se pierde al re-renderizar.
+  var creditsChipRetryTimer = null;
+
+  function attachCreditsChip() {
+    if (creditsChipRetryTimer) { clearTimeout(creditsChipRetryTimer); creditsChipRetryTimer = null; }
+    var attempts = 0;
+    (function tryAttach() {
+      var chip = document.getElementById('credits-chip');
+      var bar = document.getElementById('wai-top');
+      if (chip && bar) {
+        if (!bar.contains(chip)) bar.appendChild(chip);
+        return;
+      }
+      attempts++;
+      if (attempts < 20) creditsChipRetryTimer = setTimeout(tryAttach, 150);
+    })();
+  }
+
+  function releaseCreditsChip() {
+    if (creditsChipRetryTimer) { clearTimeout(creditsChipRetryTimer); creditsChipRetryTimer = null; }
+    var chip = document.getElementById('credits-chip');
+    if (chip && chip.parentNode !== document.body) {
+      document.body.appendChild(chip);
+    }
+  }
+
   function copyText(text) {
     var p = navigator.clipboard && navigator.clipboard.writeText
       ? navigator.clipboard.writeText(text)
@@ -401,6 +433,7 @@
         loadPendingFollowups();
       }
     }).catch(function (e) {
+      releaseCreditsChip();
       state.shell.innerHTML = '';
       state.shell.appendChild(el('div', { class: 'wai-empty' },
         el('div', { class: 'empty-title', text: 'No se pudo cargar el inbox' }),
@@ -422,6 +455,7 @@
 
   function renderRoot() {
     var shell = state.shell;
+    releaseCreditsChip();
     shell.innerHTML = '';
     if (!state.account) { renderConnect(shell); return; }
 
@@ -486,18 +520,14 @@
     renderChat();
     renderDetail();
 
-    // Mover créditos al top bar si existen
-    setTimeout(function () {
-      var chip = document.getElementById('credits-chip');
-      var topBar = document.getElementById('wai-top');
-      if (chip && topBar && !topBar.contains(chip)) {
-        topBar.appendChild(chip);
-      }
-    }, 100);
+    // Mover créditos al top bar si existen (con reintentos: credits.js
+    // puede seguir cargando cuando el inbox termina de montarse).
+    attachCreditsChip();
   }
 
   // ── Vista de conexión (sin cuenta) ───────────────────────────────────────
   function renderConnect(shell) {
+    releaseCreditsChip();
     shell.innerHTML = '';
     var wrap = el('div', { class: 'wai-connect-wrap' });
     var box = el('div', { class: 'wai-connect' });
@@ -3014,6 +3044,7 @@
     refreshBadge: refreshBadge,
     openForMember: openForMember,
     showTemplates: showTemplates,
+    releaseCreditsChip: releaseCreditsChip,
   };
 
   // Badge al cargar la app (sin montar el inbox): una consulta ligera.
