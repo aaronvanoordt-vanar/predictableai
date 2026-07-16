@@ -197,7 +197,7 @@
     if (document.getElementById('wai-css')) return;
     var css = '' +
 '#wa-inbox-shell{display:flex;flex-direction:column;height:100vh;min-width:0;background:var(--bg)}' +
-'#wa-inbox-shell #credits-chip{position:static;background:transparent;border:none;box-shadow:none;padding:0 0 0 12px;margin:0;gap:4px}' +
+'#wai-top #credits-chip,#wai-top + #credits-chip{position:static !important;top:auto !important;right:auto !important;background:transparent;border:none;box-shadow:none;padding:0 0 0 12px;margin:0;gap:4px}' +
 '#wai-top{position:relative}' +
 '.wai-top{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--hair);background:var(--surface);flex-shrink:0}' +
 '.wai-top-title{font-size:15px;font-weight:650;letter-spacing:-0.01em;color:var(--ink)}' +
@@ -485,6 +485,15 @@
     renderConvList();
     renderChat();
     renderDetail();
+
+    // Mover créditos al top bar si existen
+    setTimeout(function () {
+      var chip = document.getElementById('credits-chip');
+      var topBar = document.getElementById('wai-top');
+      if (chip && topBar && !topBar.contains(chip)) {
+        topBar.appendChild(chip);
+      }
+    }, 100);
   }
 
   // ── Vista de conexión (sin cuenta) ───────────────────────────────────────
