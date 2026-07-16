@@ -13,6 +13,19 @@
   const BULK_MATCH_CHUNK = 10; // límite del API de Apollo (people/bulk_match)
   const SENDER_LS_KEY = 'prospecting_sender_v1';
 
+  // ── Pipeline CRM (columna contact_status de prospect_list_members) ──
+  // Valores = datos en Supabase (no traducir); labels = UI en español.
+  const CONTACT_STATUSES = [
+    { value: 'no_contactado',    label: 'No contactado',     pill: 'gray'  },
+    { value: 'saludo_enviado',   label: 'Saludo enviado',    pill: 'blue'  },
+    { value: 'reunion_agendada', label: 'Reunión conseguida', pill: 'green' },
+    { value: 'reunion_tomada',   label: 'Reunión tomada',    pill: 'teal'  },
+    { value: 'no_interesado',    label: 'No interesado',     pill: 'red'   },
+    { value: 'no_show',          label: 'No se presentó',    pill: 'amber' },
+  ];
+  // Estados que cuentan como "reunión conseguida" en el dashboard.
+  const MEETING_STATUSES = ['reunion_agendada', 'reunion_tomada'];
+
   // ── Helpers base ───────────────────────────────────────────
 
   function sb() {
@@ -295,12 +308,130 @@
   }
 
   async function updateMember(memberId, patch) {
-    const allowed = ['email', 'email_status', 'phone', 'phone_status', 'outreach', 'outreach_status', 'sequence_status', 'apollo_contact_id', 'snapshot', 'enriched_at'];
+    const allowed = ['email', 'email_status', 'phone', 'phone_status', 'outreach', 'outreach_status', 'sequence_status', 'apollo_contact_id', 'snapshot', 'enriched_at', 'contact_status', 'company', 'company_domain', 'title', 'first_name', 'last_name', 'name', 'linkedin_url', 'country'];
     const safe = {};
     for (const k of allowed) if (k in (patch || {})) safe[k] = patch[k];
     if (!Object.keys(safe).length) return;
     const { error } = await sb().from('prospect_list_members').update(safe).eq('id', memberId);
     if (error) throw new Error('No se pudo actualizar el contacto: ' + error.message);
+  }
+
+  // ── Contactos (CRM): todos los miembros de todas las listas ─────────
+  // Una sola consulta con el nombre de la lista embebido (FK list_id) para
+  // que la pestaña Contactos muestre a qué lista pertenece cada persona.
+  async function fetchAllContacts() {
+    const { data, error } = await sb()
+      .from('prospect_list_members')
+      .select('*, prospect_lists(id, name)')
+      .order('created_at', { ascending: false });
+    if (error) throw new Error('No se pudieron cargar tus contactos: ' + error.message);
+    return (data || []).map((m) => {
+      m.list_name = (m.prospect_lists && m.prospect_lists.name) || '—';
+      return m;
+    });
+  }
+
+  // Cambia el estado CRM de un contacto (se refleja en Contactos, Inbox y
+  // el dashboard porque todos leen la misma fila de Supabase).
+  async function setContactStatus(memberId, status) {
+    const valid = CONTACT_STATUSES.some((s) => s.value === status);
+    if (!valid) throw new Error('Estado de contacto inválido.');
+    await updateMember(memberId, { contact_status: status });
+  }
+
+  // Conteo de reuniones conseguidas (reunion_agendada + reunion_tomada) —
+  // lo consume el KPI "Reuniones generadas" del dashboard.
+  async function countMeetings() {
+    const { count, error } = await sb()
+      .from('prospect_list_members')
+      .select('id', { count: 'exact', head: true })
+      .in('contact_status', MEETING_STATUSES);
+    if (error) throw new Error('No se pudieron contar las reuniones: ' + error.message);
+    return count || 0;
+  }
+
+  // ── Plantillas locales (message_templates — texto libre con variables) ──
+  // Independientes de las plantillas de Meta: viven en Supabase, no
+  // requieren WABA ID ni aprobación, y se usan en campañas de WhatsApp.
+
+  async function fetchMessageTemplates() {
+    const { data, error } = await sb()
+      .from('message_templates')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw new Error('No se pudieron cargar tus plantillas: ' + error.message);
+    return data || [];
+  }
+
+  async function createMessageTemplate({ name, body, channel }) {
+    const cleanName = String(name || '').trim();
+    const cleanBody = String(body || '').trim();
+    if (!cleanName) throw new Error('Escribe un nombre para la plantilla.');
+    if (!cleanBody) throw new Error('Escribe el contenido de la plantilla.');
+    const userId = await getUserId();
+    const { data, error } = await sb()
+      .from('message_templates')
+      .insert({ user_id: userId, name: cleanName, body: cleanBody, channel: channel || 'whatsapp' })
+      .select()
+      .single();
+    if (error) {
+      if (String(error.code) === '23505') throw new Error('Ya tienes una plantilla con ese nombre.');
+      throw new Error('No se pudo guardar la plantilla: ' + error.message);
+    }
+    return data;
+  }
+
+  async function updateMessageTemplate(id, { name, body, channel }) {
+    const patch = {};
+    if (name != null) patch.name = String(name).trim();
+    if (body != null) patch.body = String(body).trim();
+    if (channel != null) patch.channel = channel;
+    const { error } = await sb().from('message_templates').update(patch).eq('id', id);
+    if (error) throw new Error('No se pudo actualizar la plantilla: ' + error.message);
+  }
+
+  async function deleteMessageTemplate(id) {
+    const { error } = await sb().from('message_templates').delete().eq('id', id);
+    if (error) throw new Error('No se pudo eliminar la plantilla: ' + error.message);
+  }
+
+  // Sustituye {{nombre}} / {{apellido}} / {{nombre_completo}} / {{empresa}} /
+  // {{rol}} con los datos reales del contacto (campañas y previews).
+  function renderTemplateForMember(body, member) {
+    const m = member || {};
+    const firstName = m.first_name || String(m.name || '').split(' ')[0] || '';
+    const values = {
+      nombre: firstName,
+      apellido: m.last_name || '',
+      nombre_completo: m.name || [m.first_name, m.last_name].filter(Boolean).join(' ') || firstName,
+      empresa: m.company || '',
+      rol: m.title || '',
+    };
+    return String(body || '').replace(/\{\{\s*([a-zA-Z_]+)\s*\}\}/g, (full, key) => {
+      const k = key.toLowerCase();
+      return (k in values) ? values[k] : full;
+    });
+  }
+
+  // Variables sin dato real para este contacto (aviso antes de enviar).
+  function missingTemplateVars(body, member) {
+    const rendered = renderTemplateForMember(body, member);
+    const out = [];
+    const re = /\{\{\s*([a-zA-Z_]+)\s*\}\}/g;
+    let match;
+    while ((match = re.exec(rendered)) !== null) {
+      if (out.indexOf(match[1]) === -1) out.push(match[1]);
+    }
+    // También variables conocidas cuyo valor quedó vacío
+    ['nombre', 'empresa', 'rol'].forEach((k) => {
+      const hasVar = new RegExp('\\{\\{\\s*' + k + '\\s*\\}\\}').test(String(body || ''));
+      if (!hasVar) return;
+      const val = k === 'nombre'
+        ? (member?.first_name || String(member?.name || '').split(' ')[0] || '')
+        : k === 'empresa' ? (member?.company || '') : (member?.title || '');
+      if (!val && out.indexOf(k) === -1) out.push(k);
+    });
+    return out;
   }
 
   // ── Agregar personas a una lista ───────────────────────────
@@ -459,17 +590,52 @@
     }
     const userId = await getUserId();
     const phone = String(c.phone || '').trim();
+    let company = String(c.company || '').trim();
+    let companyDomain = '';
+    let title = String(c.title || '').trim();
+    let apolloPersonId = null;
+    let snapshot = {};
+
+    // La empresa del contacto se jala automáticamente: si el usuario no la
+    // escribió, se busca a la persona en Apollo (email / LinkedIn / nombre)
+    // y se completa empresa + dominio + cargo. Best-effort: si Apollo no la
+    // encuentra, el contacto se guarda igual con lo que se escribió.
+    if (!company && (email || c.linkedin_url || (firstName && lastName))) {
+      try {
+        const res = await apolloProxy('/people/match', cleanFilters({
+          email: email || undefined,
+          linkedin_url: String(c.linkedin_url || '').trim() || undefined,
+          first_name: firstName || undefined,
+          last_name: lastName || undefined,
+          reveal_personal_emails: false,
+        }));
+        const p = res?.person;
+        if (p) {
+          const org = p.organization || {};
+          company = org.name || p.organization_name || '';
+          companyDomain = org.primary_domain || org.domain || '';
+          if (!title) title = p.title || '';
+          apolloPersonId = p.id || null;
+          snapshot = p;
+        }
+      } catch (e) {
+        console.warn('[prospecting-data] auto-empresa (Apollo) falló:', e.message);
+      }
+    } else if (company && !companyDomain) {
+      companyDomain = normalizeCompanyDomain(c.company_domain);
+    }
+
     const row = {
       list_id: list.id,
       user_id: userId,
-      apollo_person_id: null,
+      apollo_person_id: apolloPersonId,
       apollo_contact_id: null,
       first_name: firstName || null,
       last_name: lastName || null,
       name: [firstName, lastName].filter(Boolean).join(' ') || null,
-      title: String(c.title || '').trim() || null,
-      company: null,
-      company_domain: null,
+      title: title || null,
+      company: company || null,
+      company_domain: companyDomain || null,
       linkedin_url: String(c.linkedin_url || '').trim() || null,
       email: email || null,
       email_status: null,
@@ -478,12 +644,18 @@
       city: null,
       state: null,
       country: String(c.country || '').trim() || null,
-      snapshot: {},
+      snapshot: snapshot,
       enriched_at: (email || phone) ? new Date().toISOString() : null,
     };
     const { data, error } = await sb().from('prospect_list_members').insert(row).select().single();
     if (error) throw new Error('No se pudo agregar el contacto: ' + error.message);
     return data;
+  }
+
+  function normalizeCompanyDomain(s) {
+    let v = String(s || '').trim().toLowerCase();
+    v = v.replace(/^https?:\/\//, '').replace(/^www\./, '');
+    return v.split(/[/?#]/)[0];
   }
 
   // Autocompletar datos desde una URL de LinkedIn vía Apollo (1 crédito si
@@ -987,9 +1159,20 @@
 
   // ── API pública ────────────────────────────────────────────
   global.prospectingData = {
+    CONTACT_STATUSES,
+    MEETING_STATUSES,
     searchPeople,
     syncIcpFromSearch,
     fetchLists,
+    fetchAllContacts,
+    setContactStatus,
+    countMeetings,
+    fetchMessageTemplates,
+    createMessageTemplate,
+    updateMessageTemplate,
+    deleteMessageTemplate,
+    renderTemplateForMember,
+    missingTemplateVars,
     createList,
     deleteList,
     renameList,
