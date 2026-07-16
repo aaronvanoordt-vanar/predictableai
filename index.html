@@ -4309,6 +4309,13 @@ function nav(el, pageId) {
       if (typeof window.hubUnlockInit === 'function') window.hubUnlockInit();
     }, 50);
   }
+  // El inbox mueve el chip de créditos (global, fijo arriba a la derecha)
+  // dentro de su propia barra superior. Al salir de la página hay que
+  // devolverlo a <body>, si no queda atrapado dentro de #page-wa-inbox
+  // (display:none) y desaparece de toda la app.
+  if (_activePageId === 'wa-inbox' && pageId !== 'wa-inbox' && window.waInbox && typeof window.waInbox.releaseCreditsChip === 'function') {
+    window.waInbox.releaseCreditsChip();
+  }
   _activePageId = pageId;
 
   // Prospección lifecycle: si la página se activa por una vía programática
