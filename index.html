@@ -2071,18 +2071,26 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       Listas guardadas
       <span id="nav-listas-badge" class="nav-badge teal" style="display:none">0</span>
     </div>
+    <div class="nav-item" data-page="pro-main" data-pros-tab="contactos" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('contactos')" style="margin-left:20px;font-size:12px">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="5.5" cy="5.5" r="2.5"/><circle cx="11" cy="6.5" r="2"/><path d="M1.5 13.5c0-2.2 1.8-4 4-4s4 1.8 4 4M10 9.8c1.8.3 3.2 1.6 3.2 3.7"/></svg>
+      Contactos
+    </div>
     <div class="nav-item" data-page="pro-main" data-pros-tab="secuencias" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('secuencias')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M5 8l2 2 4-4"/></svg>
       Secuencias
     </div>
     <div class="nav-item" data-page="pro-main" data-pros-tab="outreach" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('outreach')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 4a1 1 0 011-1h10a1 1 0 011 1v7a1 1 0 01-1 1H5l-3 2V4z"/></svg>
-      WhatsApp &amp; LinkedIn
+      Generador de mensajes IA
     </div>
     <div class="nav-item" data-page="wa-inbox" onclick="nav(this,'wa-inbox');if(window.waInbox)window.waInbox.show()" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M13.5 8A5.5 5.5 0 112.9 6.1L2 13l3.1-.9A5.5 5.5 0 0013.5 8z"/><path d="M6 7h4M6 9.2h2.5"/></svg>
       Inbox WhatsApp
       <span id="nav-wa-badge" class="nav-badge teal" style="display:none">0</span>
+    </div>
+    <div class="nav-item" data-page="wa-templates" onclick="nav(this,'wa-templates');if(window.waInbox)window.waInbox.showTemplates()" style="margin-left:20px;font-size:12px">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2.5" y="2" width="11" height="12" rx="1.5"/><path d="M5 5.5h6M5 8h6M5 10.5h3.5"/></svg>
+      Plantillas
     </div>
 
     <!-- APRENDER -->
@@ -2120,6 +2128,12 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         <svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.4"><path d="M13.5 9.5A6 6 0 016.5 2.5a6 6 0 107 7z"/></svg>
         Oscuro
       </button>
+    </div>
+
+    <!-- Idioma (js/i18n.js) -->
+    <div class="theme-toggle" id="lang-toggle" role="radiogroup" aria-label="Idioma de la interfaz">
+      <button type="button" class="tt-opt on" data-lang="es" aria-label="Español">ES · Español</button>
+      <button type="button" class="tt-opt" data-lang="en" aria-label="English">EN · English</button>
     </div>
 
     <!-- Dropdown que abre HACIA ARRIBA cuando el pill recibe click -->
@@ -2183,7 +2197,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="stat-card">
       <div class="stat-label">Reuniones generadas</div>
       <div class="stat-val" id="stat-reuniones">—</div>
-      <div class="stat-sub">Se calcula con tus campañas activas</div>
+      <div class="stat-sub">Marcadas con «Reunión conseguida» en el Inbox o el CRM</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Contactos en secuencia</div>
@@ -2716,7 +2730,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   </div>
 </div>
 
-<!-- ═══════ PAGE: PROSPECCIÓN (Búsqueda · Listas · Secuencias · WhatsApp & LinkedIn) ═══════ -->
+<!-- ═══════ PAGE: PROSPECCIÓN (Búsqueda · Listas · Contactos · Secuencias · Generador de mensajes IA) ═══════ -->
 <div class="page fade-in" id="page-pro-main">
   <div id="prospecting-shell" style="display:flex;flex-direction:column;min-width:0;width:100%"></div>
 </div>
@@ -2724,6 +2738,11 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <!-- ═══════ PAGE: INBOX WHATSAPP (js/whatsapp-inbox.js) ═══════ -->
 <div class="page fade-in" id="page-wa-inbox" style="padding:52px 0 0;gap:0;">
   <div id="wa-inbox-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: PLANTILLAS DE MENSAJES (js/whatsapp-inbox.js → showTemplates) ═══════ -->
+<div class="page fade-in" id="page-wa-templates" style="padding:52px 0 0;gap:0;">
+  <div id="wa-templates-shell" style="display:flex;flex-direction:column;min-width:0;width:100%"></div>
 </div>
 
 
@@ -3339,6 +3358,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/credit-costs.js"></script>
 <script src="js/credits.js"></script>
 <script src="js/skeletons.js"></script>
+<script src="js/i18n.js"></script>
 <script src="js/api.js"></script>
 <script src="js/apollo-enums.js"></script>
 <script src="js/prospecting-data.js"></script>
@@ -4373,10 +4393,11 @@ window.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
-  // Para pro-main hay 5 nav-items con el mismo data-page (uno por sub-tab);
+  // Para pro-main hay 6 nav-items con el mismo data-page (uno por sub-tab);
   // sin esto, querySelector siempre agarra el primero ("Prospección"/resumen)
   // y el sidebar se queda resaltando ese aunque el contenido restaurado sea
-  // otra pestaña (Búsqueda, Listas, Secuencias, WhatsApp & LinkedIn).
+  // otra pestaña (Búsqueda, Listas, Contactos, Secuencias, Generador de
+  // mensajes IA).
   const navEl = (hash === 'pro-main' && proTab)
     ? (document.querySelector(`.nav-item[data-page="pro-main"][data-pros-tab="${proTab}"]`) ||
        document.querySelector(`.nav-item[data-page="${hash}"]`))
@@ -4384,6 +4405,10 @@ window.addEventListener('DOMContentLoaded', () => {
   if (navEl) setTimeout(() => {
     window.nav(navEl, hash);
     if (proTab && window.prospecting) window.prospecting.show(proTab);
+    // Páginas con shell propio: montarlas también al restaurar (el onclick
+    // del nav-item no corre en este camino).
+    if (hash === 'wa-inbox' && window.waInbox) window.waInbox.show();
+    if (hash === 'wa-templates' && window.waInbox) window.waInbox.showTemplates();
   }, 0);
 });
 
@@ -4536,6 +4561,19 @@ async function loadDashboardStats() {
     const statContactos = document.getElementById('stat-contactos');
     if (statContactos) {
       statContactos.setAttribute('data-count', totalContactos);
+    }
+
+    // Reuniones conseguidas (contact_status = reunion_agendada/reunion_tomada,
+    // marcadas desde el Inbox de WhatsApp o el CRM de Contactos).
+    const { count: meetings, error: meetErr } = await sb
+      .from('prospect_list_members')
+      .select('id', { count: 'exact', head: true })
+      .in('contact_status', ['reunion_agendada', 'reunion_tomada']);
+    if (!meetErr) {
+      const statReuniones = document.getElementById('stat-reuniones');
+      if (statReuniones) statReuniones.setAttribute('data-count', meetings || 0);
+    } else {
+      console.warn('[dashboard] Error loading meetings:', meetErr.message);
     }
   } catch (e) {
     console.warn('[dashboard] Failed to load stats:', e.message);

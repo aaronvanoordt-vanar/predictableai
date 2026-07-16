@@ -1,17 +1,20 @@
 /**
- * js/prospecting.js — Prospecting workspace UI (Resumen / Búsqueda / Listas / Secuencias / WhatsApp & LinkedIn)
+ * js/prospecting.js — Prospecting workspace UI (Resumen / Búsqueda / Listas /
+ * Contactos / Secuencias / Generador de mensajes IA)
  * ─────────────────────────────────────────────────────────────────────────────
  * Self-contained view module for the prospecting-architecture redesign.
  * Renders into #prospecting-shell (inside #page-pro-main). Lazy: the first
- * call to window.prospecting.show(tabId) builds the shell (5 panes, no
+ * call to window.prospecting.show(tabId) builds the shell (6 panes, no
  * in-page tab bar — navigation between panes is driven entirely by the left
  * sidebar, which calls show(tabId) directly, to avoid duplicating nav UI).
  * "Resumen" is a metrics overview of the whole module; the actual Apollo
  * filter/search UI is the "Búsqueda" pane (surfaced in the sidebar as
  * "Search People" — the two are the same feature, not separate ones).
+ * "Contactos" is the CRM: every member of every list in one table, with the
+ * list it belongs to and its pipeline status (contact_status in Supabase).
  *
  * Public API:
- *   window.prospecting.show(tabId)   // tabId: 'resumen'|'busqueda'|'listas'|'secuencias'|'outreach'
+ *   window.prospecting.show(tabId)   // 'resumen'|'busqueda'|'listas'|'contactos'|'secuencias'|'outreach'
  *   window.prospecting.refreshBadge()// updates #nav-listas-badge with list count
  *
  * Data layer: window.prospectingData (built in parallel — referenced lazily
@@ -71,14 +74,23 @@
       generating: false,
       brief: null, briefLoading: false,
     },
+    contactos: {
+      rootEl: null,
+      rows: [],
+      loading: false, error: null,
+      q: '', statusFilter: '', listFilter: '',
+      channel: null,           // suscripción realtime a prospect_list_members
+      refreshTimer: null,
+    },
   };
 
   var TABS = [
     { id: 'resumen',    label: 'Resumen' },
     { id: 'busqueda',   label: 'Búsqueda' },
     { id: 'listas',     label: 'Listas' },
+    { id: 'contactos',  label: 'Contactos' },
     { id: 'secuencias', label: 'Secuencias' },
-    { id: 'outreach',   label: 'WhatsApp & LinkedIn' },
+    { id: 'outreach',   label: 'Generador de mensajes IA' },
   ];
 
   // 14 valid department keys for organization_department_or_subdepartment_counts
@@ -318,6 +330,16 @@
     '#prospecting-shell .pros-skeleton-label { height:12px; width:80px; }',
     '#prospecting-shell .pros-skeleton-value { height:28px; width:60%; margin-top:6px; }',
     '#prospecting-shell .pros-skeleton-sub { height:12px; width:40%; margin-top:4px; }',
+    // Contactos (CRM): selector de estado inline en la tabla
+    '#prospecting-shell .pros-status-sel { font-size:12px; padding:4px 8px; border-radius:99px; border:1px solid var(--border); background:var(--surface2); cursor:pointer; max-width:170px; }',
+    '#prospecting-shell .pros-status-no_contactado { color:var(--text2); }',
+    '#prospecting-shell .pros-status-saludo_enviado { color:var(--accent-ink); border-color:var(--accent-soft-2, var(--border)); background:var(--accent-soft); }',
+    '#prospecting-shell .pros-status-reunion_agendada { color:var(--green); background:var(--green-soft); border-color:rgba(38,150,92,.35); }',
+    '#prospecting-shell .pros-status-reunion_tomada { color:var(--teal, var(--green)); background:var(--green-soft); border-color:rgba(38,150,92,.35); }',
+    '#prospecting-shell .pros-status-no_interesado { color:var(--red); background:var(--red-soft); border-color:rgba(214,69,69,.35); }',
+    '#prospecting-shell .pros-status-no_show { color:var(--amber); background:var(--amber-soft); border-color:rgba(199,126,18,.35); }',
+    '#prospecting-shell .pros-ct-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }',
+    '#prospecting-shell .pros-ct-toolbar input[type=search] { flex:1; min-width:180px; }',
   ].join('\n');
 
   // Manual-add form grid lives inside a modal (outside #prospecting-shell),
@@ -456,6 +478,26 @@
       return '<span class="pill pill-purple">' + esc(m.sequence_status.sequence_name) + '</span>';
     }
     return '<span style="color:var(--text3)">—</span>';
+  }
+
+  // ── Estados CRM (contact_status) ────────────────────────────────────────
+  function contactStatuses() {
+    var d = window.prospectingData;
+    return (d && d.CONTACT_STATUSES) || [];
+  }
+
+  function statusMeta(value) {
+    return contactStatuses().find(function (s) { return s.value === value; }) ||
+      { value: 'no_contactado', label: 'No contactado', pill: 'gray' };
+  }
+
+  // <select> inline para cambiar el estado de un contacto desde la tabla.
+  function statusSelectHtml(m) {
+    var cur = m.contact_status || 'no_contactado';
+    return '<select data-action="ct-status" data-id="' + esc(String(m.id)) + '" class="pros-status-sel pros-status-' + esc(cur) + '">' +
+      contactStatuses().map(function (s) {
+        return '<option value="' + esc(s.value) + '"' + (s.value === cur ? ' selected' : '') + '>' + esc(s.label) + '</option>';
+      }).join('') + '</select>';
   }
 
   // ── Shared data loaders ────────────────────────────────────────────────
@@ -1276,7 +1318,7 @@
         return waitForBrief(); // status pending/generating
       })
       .then(function (brief) {
-        if (!brief.recommended_filters) throw new Error('Tu brief no incluye filtros recomendados. Regenera tu brief desde la pestaña WhatsApp & LinkedIn.');
+        if (!brief.recommended_filters) throw new Error('Tu brief no incluye filtros recomendados. Regenera tu brief desde la pestaña Generador de mensajes IA.');
         applyRecommendedFilters(brief.recommended_filters);
         setReco({ msg: 'Buscando con los filtros de tu ICP…' });
         var applied = [];
@@ -1390,8 +1432,9 @@
         h('div', { style: 'display:flex;flex-wrap:wrap;gap:8px' },
           quickLink('Buscar personas', 'busqueda'),
           quickLink('Ver listas', 'listas'),
+          quickLink('Contactos (CRM)', 'contactos'),
           quickLink('Secuencias', 'secuencias'),
-          quickLink('WhatsApp & LinkedIn', 'outreach')));
+          quickLink('Generador de mensajes IA', 'outreach')));
       host.appendChild(actions);
     }).catch(function (e) {
       host.innerHTML = '';
@@ -1922,9 +1965,10 @@
           st.selected.clear();
         }
         renderListsLeft();
-        // No re-consultar si los miembros ya están en memoria (hay botón
-        // "Actualizar" para el refresh manual, p. ej. teléfonos async).
-        if (st.activeListId) return st.members.length ? renderListsRight() : reloadMembers();
+        // Siempre re-consultar a Supabase al entrar: un contacto pudo cambiar
+        // desde Contactos, el Inbox u otro dispositivo (teléfonos async,
+        // estado CRM, outreach) y esta pestaña debe reflejarlo.
+        if (st.activeListId) return reloadMembers();
         renderListsRight();
       });
   }
@@ -2273,6 +2317,7 @@
     var phoneInput = h('input', { type: 'tel', placeholder: 'Celular' });
     var countryInput = h('input', { type: 'text', placeholder: 'País' });
     var roleInput = h('input', { type: 'text', placeholder: 'Rol / cargo' });
+    var companyInput = h('input', { type: 'text', placeholder: 'Empresa (se completa sola si la dejas vacía)' });
     var emailInput = h('input', { type: 'email', placeholder: 'correo@empresa.com' });
     var prog = progressLine();
 
@@ -2284,7 +2329,9 @@
       h('div', { class: 'pros-manual-row' }, firstName, lastName),
       h('div', { class: 'pros-manual-row' }, codeSel, phoneInput),
       h('div', { class: 'pros-manual-row' }, countryInput, roleInput),
+      companyInput,
       emailInput,
+      h('div', { class: 'pros-hint', text: 'Si no escribes la empresa, la buscamos automáticamente en Apollo con el email, LinkedIn o nombre del contacto al guardarlo.' }),
       prog.el);
 
     var api = openModal({
@@ -2310,6 +2357,7 @@
           if (match.first_name) firstName.value = match.first_name;
           if (match.last_name) lastName.value = match.last_name;
           if (match.title) roleInput.value = match.title;
+          if (match.company) companyInput.value = match.company;
           if (match.email) emailInput.value = match.email;
           if (match.country) countryInput.value = match.country;
           if (match.phone) phoneInput.value = match.phone;
@@ -2327,13 +2375,14 @@
         first_name: firstName.value.trim(),
         last_name: lastName.value.trim(),
         title: roleInput.value.trim(),
+        company: companyInput.value.trim(),
         email: emailInput.value.trim(),
         country: countryInput.value.trim(),
         phone: phone,
         linkedin_url: liUrl.value.trim(),
       };
       api.setBusy(true);
-      prog.set('Guardando…');
+      prog.set(contact.company ? 'Guardando…' : 'Buscando la empresa en Apollo y guardando…');
       return Promise.resolve(pd().addManualMember({ list: list, contact: contact }))
         .then(function () {
           prog.hide();
@@ -2462,6 +2511,219 @@
     a.remove();
     setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
     toast('CSV exportado (' + fmtNum(rows.length) + ' contactos).', 'success');
+  }
+
+  // ══ TAB 2.5: CONTACTOS (CRM) ═════════════════════════════════════════════
+  // Todos los contactos de todas las listas en una sola tabla, con la lista a
+  // la que pertenecen y su estado en el pipeline (contact_status). Los datos
+  // SIEMPRE se leen de Supabase al entrar y se refrescan por realtime, así un
+  // cambio hecho en cualquier otra pestaña/dispositivo se ve aquí al instante.
+  function buildContactosPane() {
+    var pane = state.panes.contactos;
+    var root = h('div', { style: 'display:flex;flex-direction:column;gap:14px' });
+    pane.appendChild(root);
+    state.contactos.rootEl = root;
+    pane.addEventListener('click', guarded(onContactosClick));
+    pane.addEventListener('change', guarded(onContactosChange));
+    pane.addEventListener('input', onContactosInput);
+  }
+
+  function initContactosTab() {
+    subscribeContactosRealtime();
+    return reloadContactos();
+  }
+
+  function reloadContactos() {
+    var st = state.contactos;
+    st.loading = true;
+    st.error = null;
+    renderContactos();
+    return Promise.resolve()
+      .then(function () { return pd().fetchAllContacts(); })
+      .then(function (rows) { st.rows = Array.isArray(rows) ? rows : []; })
+      .catch(function (e) { st.rows = []; st.error = errMsg(e); })
+      .then(function () {
+        st.loading = false;
+        renderContactos();
+      });
+  }
+
+  // Realtime: cualquier cambio en prospect_list_members (desde el Inbox, otra
+  // pestaña u otro dispositivo) refresca el CRM sin recargar la página.
+  function subscribeContactosRealtime() {
+    var st = state.contactos;
+    if (st.channel || !window.supabaseClient || !window.currentUser) return;
+    try {
+      st.channel = window.supabaseClient
+        .channel('pros-contactos-' + window.currentUser.id)
+        .on('postgres_changes',
+          { event: '*', schema: 'public', table: 'prospect_list_members', filter: 'user_id=eq.' + window.currentUser.id },
+          function () {
+            if (state.activeTab !== 'contactos') return;
+            clearTimeout(st.refreshTimer);
+            st.refreshTimer = setTimeout(function () { reloadContactos(); }, 600);
+          })
+        .subscribe();
+    } catch (e) {
+      console.warn('[prospecting] realtime contactos no disponible:', e);
+    }
+  }
+
+  function visibleContactos() {
+    var st = state.contactos;
+    var q = st.q.trim().toLowerCase();
+    return st.rows.filter(function (m) {
+      if (st.statusFilter && (m.contact_status || 'no_contactado') !== st.statusFilter) return false;
+      if (st.listFilter && String(m.list_id) !== st.listFilter) return false;
+      if (!q) return true;
+      var hay = [m.name, m.first_name, m.last_name, m.company, m.title, m.email, m.phone, m.list_name]
+        .filter(Boolean).join(' ').toLowerCase();
+      return hay.indexOf(q) !== -1;
+    });
+  }
+
+  function contactoRowHtml(m) {
+    var name = m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim() || '—';
+    var inboxBtn = (window.waInbox && m.phone)
+      ? '<button type="button" class="btn btn-ghost btn-sm" data-action="ct-inbox" data-id="' + esc(String(m.id)) + '" title="Abrir conversación de WhatsApp">💬</button>'
+      : '';
+    return '<tr>' +
+      '<td><div style="font-weight:600">' + esc(name) + '</div>' +
+        (m.title ? '<div class="pros-cellsub" style="font-size:12px">' + esc(m.title) + '</div>' : '') + '</td>' +
+      '<td>' + esc(m.company || '—') +
+        (m.company_domain ? '<div class="pros-cellsub">' + esc(m.company_domain) + '</div>' : '') + '</td>' +
+      '<td><span class="pill pill-purple">' + esc(m.list_name || '—') + '</span></td>' +
+      '<td>' + statusSelectHtml(m) + '</td>' +
+      '<td>' + memberEmailCell(m) + '</td>' +
+      '<td>' + memberPhoneCell(m) + '</td>' +
+      '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
+      '<td style="white-space:nowrap">' + inboxBtn + '</td>' +
+      '</tr>';
+  }
+
+  function renderContactos() {
+    var st = state.contactos;
+    var root = st.rootEl;
+    if (!root) return;
+    var rows = visibleContactos();
+    var total = st.rows.length;
+    var meetings = st.rows.filter(function (m) {
+      return m.contact_status === 'reunion_agendada' || m.contact_status === 'reunion_tomada';
+    }).length;
+    var contacted = st.rows.filter(function (m) {
+      return m.contact_status && m.contact_status !== 'no_contactado';
+    }).length;
+
+    var listOpts = {};
+    st.rows.forEach(function (m) { if (m.list_id) listOpts[String(m.list_id)] = m.list_name || '—'; });
+
+    var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px">' +
+      '<div class="chart-card" style="padding:14px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Contactos</div><div style="font-size:24px;font-weight:800;margin-top:4px">' + esc(fmtNum(total)) + '</div></div>' +
+      '<div class="chart-card" style="padding:14px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Contactados</div><div style="font-size:24px;font-weight:800;margin-top:4px">' + esc(fmtNum(contacted)) + '</div></div>' +
+      '<div class="chart-card" style="padding:14px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Reuniones conseguidas</div><div style="font-size:24px;font-weight:800;margin-top:4px;color:var(--green)">' + esc(fmtNum(meetings)) + '</div></div>' +
+      '</div>';
+
+    html += '<div class="table-card">' +
+      '<div class="pros-ct-toolbar" style="padding:14px 18px;border-bottom:1px solid var(--hair)">' +
+      '<input type="search" data-action="ct-search" placeholder="Buscar por nombre, empresa, email…" value="' + esc(st.q) + '">' +
+      '<select data-action="ct-filter-status"><option value="">Todos los estados</option>' +
+      contactStatuses().map(function (s) {
+        return '<option value="' + esc(s.value) + '"' + (st.statusFilter === s.value ? ' selected' : '') + '>' + esc(s.label) + '</option>';
+      }).join('') + '</select>' +
+      '<select data-action="ct-filter-list"><option value="">Todas las listas</option>' +
+      Object.keys(listOpts).map(function (id) {
+        return '<option value="' + esc(id) + '"' + (st.listFilter === id ? ' selected' : '') + '>' + esc(listOpts[id]) + '</option>';
+      }).join('') + '</select>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="ct-refresh">Actualizar</button>' +
+      '</div>';
+
+    if (st.loading) {
+      html += window.Skeleton
+        ? '<div class="pros-scroll-x"><table><tbody>' +
+            window.Skeleton.tableRows(['30%', '35%', '25%', '30%', '40%', '28%', '18%', '14%'], 7) +
+          '</tbody></table></div>'
+        : '<div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando contactos…</div>';
+    } else if (st.error) {
+      html += '<div style="padding:16px"><div class="pros-note-red" style="margin-top:0">⚠ ' + esc(st.error) + '</div></div>';
+    } else if (!total) {
+      html += emptyHtml(SVG_LIST, 'Aún no tienes contactos',
+        'Busca personas en la pestaña Búsqueda y guárdalas en una lista: todas aparecerán aquí, tu CRM de prospección.');
+    } else if (!rows.length) {
+      html += emptyHtml(SVG_SEARCH, 'Sin resultados', 'Ningún contacto coincide con la búsqueda o los filtros.');
+    } else {
+      html += '<div class="pros-scroll-x"><table><thead><tr>' +
+        '<th>Nombre</th><th>Empresa</th><th>Lista</th><th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th><th></th>' +
+        '</tr></thead><tbody>' + rows.map(contactoRowHtml).join('') + '</tbody></table></div>';
+      html += '<div style="padding:10px 18px;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(total)) + ' contactos · El estado se actualiza al instante en todo el sistema (Inbox, dashboard y este CRM leen la misma base).</div>';
+    }
+    html += '</div>';
+    root.innerHTML = html;
+  }
+
+  function findContacto(id) {
+    return state.contactos.rows.find(function (m) { return String(m.id) === String(id); }) || null;
+  }
+
+  function onContactosInput(e) {
+    var t = e.target;
+    if (!t.getAttribute || t.getAttribute('data-action') !== 'ct-search') return;
+    var st = state.contactos;
+    st.q = t.value || '';
+    clearTimeout(st.refreshTimer);
+    st.refreshTimer = setTimeout(function () {
+      // Re-render solo la tabla conservando el foco del buscador.
+      var hadFocus = document.activeElement === t;
+      var pos = t.selectionStart;
+      renderContactos();
+      if (hadFocus) {
+        var again = st.rootEl && st.rootEl.querySelector('[data-action="ct-search"]');
+        if (again) {
+          again.focus();
+          try { again.setSelectionRange(pos, pos); } catch (_) {}
+        }
+      }
+    }, 250);
+  }
+
+  function onContactosChange(e) {
+    var t = e.target;
+    var action = t.getAttribute && t.getAttribute('data-action');
+    var st = state.contactos;
+    if (action === 'ct-status') {
+      var id = t.getAttribute('data-id');
+      var m = findContacto(id);
+      if (!m) return;
+      var next = t.value;
+      var prev = m.contact_status || 'no_contactado';
+      if (next === prev) return;
+      m.contact_status = next; // optimista; se revierte si falla
+      t.className = 'pros-status-sel pros-status-' + next;
+      return Promise.resolve(pd().setContactStatus(id, next))
+        .then(function () {
+          toast('Estado actualizado a «' + statusMeta(next).label + '».', 'success');
+          renderContactos();
+        })
+        .catch(function (err) {
+          m.contact_status = prev;
+          renderContactos();
+          throw err;
+        });
+    }
+    if (action === 'ct-filter-status') { st.statusFilter = t.value; renderContactos(); return; }
+    if (action === 'ct-filter-list') { st.listFilter = t.value; renderContactos(); return; }
+  }
+
+  function onContactosClick(e) {
+    var btn = e.target.closest ? e.target.closest('[data-action]') : null;
+    if (!btn) return;
+    var action = btn.getAttribute('data-action');
+    if (action === 'ct-refresh') return reloadContactos();
+    if (action === 'ct-inbox') {
+      var m = findContacto(btn.getAttribute('data-id'));
+      if (!m) return;
+      if (!window.waInbox) return toast('El Inbox de WhatsApp aún no está cargado. Recarga la página.', 'warn');
+      return window.waInbox.openForMember(m.id, '');
+    }
   }
 
   // ══ TAB 3: SECUENCIAS ════════════════════════════════════════════════════
@@ -2840,7 +3102,10 @@
       .then(function () {
         if (st.listId && !findList(st.listId)) { st.listId = ''; st.members = []; st.selected.clear(); st.expanded.clear(); }
         renderWaList();
-        if (st.listId && !st.members.length) return reloadWaMembers();
+        // Siempre re-consultar al entrar (salvo cuando Listas acaba de
+        // precargar la selección con sendSelectionToTab): los mensajes IA
+        // pudieron generarse/regenerarse desde el Inbox u otra pestaña.
+        if (st.listId && !st.selected.size) return reloadWaMembers();
       });
   }
 
@@ -3375,6 +3640,7 @@
     buildResumenPane();
     buildSearchPane();
     buildListasPane();
+    buildContactosPane();
     buildSeqPane();
     buildWaPane();
     state.built = true;
@@ -3393,6 +3659,7 @@
     var loader = null;
     if (tabId === 'resumen') loader = initResumenTab;
     else if (tabId === 'listas') loader = initListasTab;
+    else if (tabId === 'contactos') loader = initContactosTab;
     else if (tabId === 'secuencias') loader = initSeqTab;
     else if (tabId === 'outreach') loader = initWaTab;
     if (loader) {

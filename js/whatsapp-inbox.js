@@ -85,6 +85,36 @@
     });
   }
 
+  // Capa de datos de Prospección (plantillas locales, estado CRM, mensajes IA).
+  // Se carga antes que este módulo en index.html; referencia lazy por si acaso.
+  function pd() {
+    var d = window.prospectingData;
+    if (!d) throw new Error('El módulo de datos de prospección aún no está cargado. Recarga la página.');
+    return d;
+  }
+
+  function contactStatuses() {
+    var d = window.prospectingData;
+    return (d && d.CONTACT_STATUSES) || [];
+  }
+
+  function statusLabel(value) {
+    var s = contactStatuses().find(function (x) { return x.value === value; });
+    return s ? s.label : 'No contactado';
+  }
+
+  // Respuestas entrantes que cuentan como "no me escribas más" (quick reply
+  // "Stop" de las plantillas o texto equivalente).
+  var OPT_OUT_RE = /^\s*(stop|alto|baja|no,?\s*gracias|no me interesa|no estoy interesad[oa])[.!]?\s*$/i;
+  function conversationOptedOut() {
+    return state.messages.some(function (m) {
+      return m.direction === 'in' && m.body && OPT_OUT_RE.test(m.body);
+    });
+  }
+  function conversationHasReply() {
+    return state.messages.some(function (m) { return m.direction === 'in'; });
+  }
+
   function edge(action, payload) {
     return sb().auth.getSession().then(function (r) {
       var token = r && r.data && r.data.session && r.data.session.access_token;
@@ -403,6 +433,11 @@
       (function () {
         var b = el('button', { class: 'btn btn-primary btn-sm', text: '+ Nueva conversación' });
         b.addEventListener('click', openNewConversationModal);
+        return b;
+      })(),
+      (function () {
+        var b = el('button', { class: 'btn btn-teal btn-sm', text: '📣 Enviar campaña' });
+        b.addEventListener('click', openCampaignModal);
         return b;
       })(),
       (function () {
@@ -731,6 +766,9 @@
       state.messages = older ? batch.concat(state.messages) : batch;
       renderThread(!older);
       renderWindowNote();
+      // La ficha depende de los mensajes (¿ya respondió? ¿pidió stop?) —
+      // re-render cuando el hilo termina de cargar.
+      if (!older) renderDetail();
     });
   }
 
@@ -1407,22 +1445,132 @@
     return found;
   }
 
-  function openManageTemplatesModal() {
+  // ── Plantillas locales (message_templates en Supabase) ──────────────────
+  // Independientes de Meta: se guardan al instante, sin WABA ID ni proceso de
+  // aprobación, y se usan en campañas y mensajes dentro de la ventana de 24 h.
+  var TEMPLATE_VARS = ['nombre', 'apellido', 'nombre_completo', 'empresa', 'rol'];
+
+  function openLocalTemplateModal(existing, onDone) {
     var body = el('div', { style: 'display:flex;flex-direction:column;gap:10px;min-width:340px' });
-    body.appendChild(el('div', { class: 'wai-hint', text: 'Crea plantillas y envíalas a Meta para su aprobación. Solo se pueden usar para enviar mensajes (primer contacto o fuera de la ventana de 24 h) una vez que Meta las aprueba — puede tardar minutos u horas.' }));
+    var nameIn = el('input', { type: 'text', placeholder: 'ej. Saludo inicial B2B', maxlength: '120' });
+    if (existing) nameIn.value = existing.name || '';
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Nombre de la plantilla' }), nameIn));
+
+    var bodyIn = el('textarea', { rows: '5', maxlength: '4096', placeholder: 'Hola {{nombre}}! Soy … Vi que en {{empresa}} …' });
+    if (existing) bodyIn.value = existing.body || '';
+    var varsRow = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' });
+    TEMPLATE_VARS.forEach(function (v) {
+      var chip = el('button', { class: 'wai-chipbtn', text: '+ {{' + v + '}}' });
+      chip.addEventListener('click', function () {
+        var s = bodyIn.selectionStart != null ? bodyIn.selectionStart : bodyIn.value.length;
+        var token = '{{' + v + '}}';
+        bodyIn.value = bodyIn.value.slice(0, s) + token + bodyIn.value.slice(bodyIn.selectionEnd != null ? bodyIn.selectionEnd : s);
+        bodyIn.focus();
+        var pos = s + token.length;
+        if (bodyIn.setSelectionRange) bodyIn.setSelectionRange(pos, pos);
+      });
+      varsRow.appendChild(chip);
+    });
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Mensaje' }), bodyIn));
+    body.appendChild(varsRow);
+    body.appendChild(el('div', { class: 'wai-hint', text: 'Las variables se reemplazan con los datos reales de cada contacto al enviar: {{nombre}}, {{apellido}}, {{nombre_completo}}, {{empresa}} y {{rol}}. Se guarda al instante en tu cuenta — no pasa por la aprobación de Meta, así que solo sirve para chats donde el contacto ya respondió (ventana de 24 h) o como texto base para campañas.' }));
+
+    openModal(existing ? 'Editar plantilla local' : 'Nueva plantilla local', body, [
+      { label: 'Cancelar', className: 'btn btn-ghost btn-sm' },
+      {
+        label: existing ? 'Guardar cambios' : 'Guardar plantilla', className: 'btn btn-primary btn-sm',
+        onClick: function (api) {
+          var name = nameIn.value.trim();
+          var text = bodyIn.value.trim();
+          if (!name || !text) { toast('Completa el nombre y el mensaje.', 'warn'); return; }
+          api.setBusy(true);
+          var p = existing
+            ? pd().updateMessageTemplate(existing.id, { name: name, body: text })
+            : pd().createMessageTemplate({ name: name, body: text, channel: 'whatsapp' });
+          return Promise.resolve(p).then(function () {
+            api.close();
+            toast(existing ? 'Plantilla actualizada.' : 'Plantilla guardada.', 'success');
+            if (onDone) onDone();
+          });
+        },
+      },
+    ]);
+  }
+
+  function buildLocalTemplatesSection() {
+    var box = el('div', { style: 'display:flex;flex-direction:column;gap:10px' });
+    box.appendChild(el('div', { class: 'wai-d-title', text: 'Plantillas locales (sin aprobación de Meta)' }));
+    box.appendChild(el('div', { class: 'wai-hint', text: 'Se guardan en tu cuenta y están disponibles al instante para campañas y respuestas. Solo llegan si el contacto te escribió en las últimas 24 h; para el primer contacto usa una plantilla aprobada de Meta.' }));
+    var newBtn = el('button', { class: 'btn btn-primary btn-sm', style: 'align-self:flex-start', text: '+ Nueva plantilla local' });
+    box.appendChild(newBtn);
+    var listHost = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
+    listHost.innerHTML = window.Skeleton ? window.Skeleton.listRows(2, { avatar: false }) : 'Cargando…';
+    box.appendChild(listHost);
+
+    function renderList(tpls) {
+      listHost.innerHTML = '';
+      if (!tpls.length) {
+        listHost.appendChild(el('div', { class: 'wai-hint', text: 'Aún no tienes plantillas locales. Crea la primera para usarla en campañas.' }));
+        return;
+      }
+      tpls.forEach(function (t) {
+        var item = el('div', { class: 'wai-fu-item' },
+          el('div', { class: 'wai-fu-when', text: t.name }),
+          el('div', { class: 'wai-fu-body', text: t.body }));
+        var row = el('div', { style: 'display:flex;gap:8px;margin-top:4px' });
+        var editB = el('button', { class: 'btn btn-ghost btn-sm', text: 'Editar' });
+        editB.addEventListener('click', function () { openLocalTemplateModal(t, reload); });
+        var delB = el('button', { class: 'btn btn-ghost btn-sm', style: 'color:var(--red)', text: 'Eliminar' });
+        delB.addEventListener('click', function () {
+          if (!window.confirm('¿Eliminar la plantilla local "' + t.name + '"?')) return;
+          delB.disabled = true;
+          Promise.resolve(pd().deleteMessageTemplate(t.id)).then(function () {
+            toast('Plantilla eliminada.', 'info');
+            reload();
+          }).catch(function (e) { toast(errMsg(e), 'error'); delB.disabled = false; });
+        });
+        row.appendChild(editB);
+        row.appendChild(delB);
+        item.appendChild(row);
+        listHost.appendChild(item);
+      });
+    }
+
+    function reload() {
+      return Promise.resolve(pd().fetchMessageTemplates()).then(renderList).catch(function (e) {
+        listHost.innerHTML = '';
+        listHost.appendChild(el('div', { style: 'font-size:12px;color:var(--red)', text: errMsg(e) }));
+      });
+    }
+
+    newBtn.addEventListener('click', function () { openLocalTemplateModal(null, reload); });
+    reload();
+    return box;
+  }
+
+  // ── Plantillas de Meta (aprobación vía whatsapp-send) ────────────────────
+  function buildMetaTemplatesSection() {
+    var box = el('div', { style: 'display:flex;flex-direction:column;gap:10px' });
+    box.appendChild(el('div', { class: 'wai-d-title', text: 'Plantillas de Meta (primer contacto / fuera de 24 h)' }));
+    box.appendChild(el('div', { class: 'wai-hint', text: 'Crea plantillas y envíalas a Meta para su aprobación. Solo se pueden usar para enviar mensajes (primer contacto o fuera de la ventana de 24 h) una vez que Meta las aprueba — puede tardar minutos u horas.' }));
+
+    if (!state.account) {
+      box.appendChild(el('div', { class: 'wai-hint', text: 'Conecta tu número de WhatsApp (Inbox WhatsApp → Conexión) para crear y sincronizar plantillas de Meta. Mientras tanto puedes usar las plantillas locales de arriba.' }));
+      return box;
+    }
 
     var newBtn = el('button', { class: 'btn btn-primary btn-sm', text: '+ Nueva plantilla' });
     var syncBtn = el('button', { class: 'btn btn-ghost btn-sm', text: '🔄 Actualizar estado' });
-    body.appendChild(el('div', { style: 'display:flex;gap:8px' }, newBtn, syncBtn));
+    box.appendChild(el('div', { style: 'display:flex;gap:8px' }, newBtn, syncBtn));
 
-    var listHost = el('div', { style: 'display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto' });
+    var listHost = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
     listHost.innerHTML = window.Skeleton ? window.Skeleton.listRows(3, { avatar: false }) : 'Cargando…';
-    body.appendChild(listHost);
+    box.appendChild(listHost);
 
     function renderList(templates) {
       listHost.innerHTML = '';
       if (!templates.length) {
-        listHost.appendChild(el('div', { class: 'wai-hint', text: 'Aún no has creado ninguna plantilla.' }));
+        listHost.appendChild(el('div', { class: 'wai-hint', text: 'Aún no has creado ninguna plantilla de Meta.' }));
         return;
       }
       templates.forEach(function (t) {
@@ -1473,8 +1621,46 @@
       }).catch(function (e) { toast(errMsg(e), 'error'); }).then(function () { syncBtn.disabled = false; });
     });
 
-    openModal('Plantillas de WhatsApp', body, [{ label: 'Cerrar', className: 'btn btn-primary btn-sm' }]);
     reload();
+    return box;
+  }
+
+  function openManageTemplatesModal() {
+    var body = el('div', { style: 'display:flex;flex-direction:column;gap:16px;min-width:340px;max-height:70vh;overflow-y:auto' });
+    body.appendChild(buildLocalTemplatesSection());
+    body.appendChild(el('div', { style: 'border-top:1px solid var(--hair)' }));
+    body.appendChild(buildMetaTemplatesSection());
+    openModal('Plantillas de WhatsApp', body, [{ label: 'Cerrar', className: 'btn btn-primary btn-sm' }]);
+  }
+
+  // ── Página "Plantillas" (#wa-templates-shell) ────────────────────────────
+  // Las plantillas también viven fuera del inbox: se pueden ver y crear desde
+  // el sidebar sin abrir una conversación.
+  function showTemplates() {
+    var shell = document.getElementById('wa-templates-shell');
+    if (!shell) return;
+    injectCss();
+    shell.innerHTML = '';
+    shell.appendChild(el('div', { style: 'padding:22px 26px;display:flex;flex-direction:column;gap:6px' },
+      el('div', { style: 'font-family:var(--font-display);font-size:20px;font-weight:700;letter-spacing:-0.02em;color:var(--text)', text: 'Plantillas de mensajes' }),
+      el('div', { style: 'font-size:13px;color:var(--text2)', text: 'Crea y gestiona las plantillas que usas en campañas y en el Inbox de WhatsApp.' })));
+    var grid = el('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px;padding:0 26px 26px;align-items:start' });
+    var localCard = el('div', { class: 'card', style: 'padding:18px' });
+    var metaCard = el('div', { class: 'card', style: 'padding:18px' });
+    grid.appendChild(localCard);
+    grid.appendChild(metaCard);
+    shell.appendChild(grid);
+
+    Promise.resolve()
+      .then(function () { return getUid(); })
+      .then(function () {
+        if (state.account === undefined) return loadAccount();
+      })
+      .catch(function () { /* la sección Meta mostrará el aviso de conexión */ })
+      .then(function () {
+        localCard.appendChild(buildLocalTemplatesSection());
+        metaCard.appendChild(buildMetaTemplatesSection());
+      });
   }
 
   function openCreateTemplateModal(onDone) {
@@ -1681,6 +1867,322 @@
         },
       },
     ]);
+  }
+
+  // ── Campañas: enviar una plantilla a toda una lista ──────────────────────
+  // Selecciona una lista de Prospección + una plantilla (local o aprobada de
+  // Meta) y envía el mensaje a cada contacto con teléfono, reemplazando las
+  // variables ({{nombre}}, {{empresa}}, {{rol}}…) con los datos reales.
+  function memberVarValue(m, key) {
+    switch (key) {
+      case 'nombre': return m.first_name || String(m.name || '').split(' ')[0] || '';
+      case 'apellido': return m.last_name || '';
+      case 'nombre_completo': return m.name || [m.first_name, m.last_name].filter(Boolean).join(' ') || '';
+      case 'empresa': return m.company || '';
+      case 'rol': return m.title || '';
+      default: return '';
+    }
+  }
+
+  var CAMPAIGN_VAR_SOURCES = [
+    ['nombre', 'Nombre del contacto'],
+    ['apellido', 'Apellido'],
+    ['nombre_completo', 'Nombre completo'],
+    ['empresa', 'Empresa'],
+    ['rol', 'Rol / cargo'],
+    ['fijo', 'Texto fijo…'],
+  ];
+
+  function guessVarSource(key) {
+    var k = String(key).toLowerCase();
+    if (/nombre_completo|full/.test(k)) return 'nombre_completo';
+    if (/nombre|name|1/.test(k)) return 'nombre';
+    if (/apellido|last/.test(k)) return 'apellido';
+    if (/empresa|company|2/.test(k)) return 'empresa';
+    if (/rol|cargo|title|puesto|3/.test(k)) return 'rol';
+    return 'nombre';
+  }
+
+  function openCampaignModal() {
+    if (!state.account) { toast('Primero conecta tu número de WhatsApp.', 'warn'); return; }
+    var body = el('div', { style: 'display:flex;flex-direction:column;gap:12px;min-width:360px;max-height:70vh;overflow-y:auto' });
+    body.appendChild(el('div', { class: 'wai-hint', text: 'Envía una plantilla a todos los contactos con teléfono de una de tus listas. Las variables se completan con los datos de cada persona y el estado del contacto pasa a «Saludo enviado».' }));
+
+    // Lista + audiencia
+    var listSel = el('select', {});
+    listSel.appendChild(el('option', { value: '', text: 'Cargando listas…' }));
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Lista de prospección' }), listSel));
+    var audSel = el('select', {});
+    [['no_contactado', 'Solo contactos aún no contactados (recomendado)'], ['all', 'Todos los contactos de la lista']].forEach(function (o) {
+      audSel.appendChild(el('option', { value: o[0], text: o[1] }));
+    });
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Enviar a' }), audSel));
+    var countLine = el('div', { class: 'wai-hint', text: 'Elige una lista para ver cuántos contactos recibirán el mensaje.' });
+    body.appendChild(countLine);
+
+    // Tipo de plantilla
+    var typeSel = el('select', {});
+    [['meta', 'Plantilla aprobada de Meta (funciona como primer contacto)'], ['local', 'Plantilla local (solo si el contacto escribió en las últimas 24 h)']].forEach(function (o) {
+      typeSel.appendChild(el('option', { value: o[0], text: o[1] }));
+    });
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Tipo de plantilla' }), typeSel));
+
+    var tplSel = el('select', {});
+    body.appendChild(el('div', { class: 'wai-field' }, el('label', { text: 'Plantilla' }), tplSel));
+    var varsHost = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
+    body.appendChild(varsHost);
+    var previewHost = el('div');
+    body.appendChild(previewHost);
+    var progHost = el('div');
+    body.appendChild(progHost);
+    var resultHost = el('div');
+    body.appendChild(resultHost);
+
+    var stateC = {
+      lists: [], members: [], recipients: [],
+      metaTpls: [], localTpls: [],
+      tpl: null, type: 'meta',
+      varRows: [], // {key, srcSel, fixedIn}
+      sending: false,
+    };
+
+    function eligibleMembers() {
+      var aud = audSel.value;
+      return stateC.members.filter(function (m) {
+        if (digitsOf(m.phone).length < 8) return false;
+        if (aud === 'no_contactado' && (m.contact_status || 'no_contactado') !== 'no_contactado') return false;
+        return true;
+      });
+    }
+
+    function refreshCount() {
+      stateC.recipients = eligibleMembers();
+      var noPhone = stateC.members.filter(function (m) { return digitsOf(m.phone).length < 8; }).length;
+      countLine.textContent = listSel.value
+        ? (stateC.recipients.length + ' contacto(s) recibirán el mensaje.' +
+           (noPhone ? ' ' + noPhone + ' sin teléfono quedan fuera (enriquécelos en Prospección → Listas).' : ''))
+        : 'Elige una lista para ver cuántos contactos recibirán el mensaje.';
+      renderPreview();
+    }
+
+    function renderVarRows() {
+      varsHost.innerHTML = '';
+      stateC.varRows = [];
+      if (stateC.type !== 'meta' || !stateC.tpl) return;
+      var vars = templateVars(stateC.tpl.body || '');
+      if (!vars.keys.length) return;
+      varsHost.appendChild(el('div', { class: 'wai-d-title', text: 'Variables de la plantilla' }));
+      varsHost.appendChild(el('div', { class: 'wai-hint', text: 'Indica con qué dato del contacto se llena cada variable.' }));
+      vars.keys.forEach(function (key) {
+        var srcSel = el('select', { style: 'flex:1' });
+        CAMPAIGN_VAR_SOURCES.forEach(function (o) {
+          srcSel.appendChild(el('option', { value: o[0], text: o[1] }));
+        });
+        srcSel.value = guessVarSource(key);
+        var fixedIn = el('input', { type: 'text', placeholder: 'Texto fijo', style: 'flex:1;display:none' });
+        srcSel.addEventListener('change', function () {
+          fixedIn.style.display = srcSel.value === 'fijo' ? '' : 'none';
+          renderPreview();
+        });
+        fixedIn.addEventListener('input', renderPreview);
+        var row = el('div', { style: 'display:flex;gap:8px;align-items:center' },
+          el('span', { style: 'font-family:var(--font-mono);font-size:11.5px;color:var(--ink-3);flex:0 0 auto', text: '{{' + key + '}}' }),
+          srcSel, fixedIn);
+        stateC.varRows.push({ key: key, srcSel: srcSel, fixedIn: fixedIn, named: vars.named });
+        varsHost.appendChild(row);
+      });
+    }
+
+    function campaignValues(m) {
+      // → {values: {key: text}, missing: [key]} para plantillas Meta.
+      var values = {};
+      var missing = [];
+      stateC.varRows.forEach(function (r) {
+        var v = r.srcSel.value === 'fijo' ? r.fixedIn.value.trim() : memberVarValue(m, r.srcSel.value);
+        if (!v) missing.push(String(r.key));
+        values[r.key] = v;
+      });
+      return { values: values, missing: missing };
+    }
+
+    function renderedFor(m) {
+      // Texto final para un contacto (preview + envío local + preview_body).
+      if (!stateC.tpl) return '';
+      if (stateC.type === 'local') return pd().renderTemplateForMember(stateC.tpl.body || '', m);
+      var out = String(stateC.tpl.body || '');
+      var cv = campaignValues(m);
+      Object.keys(cv.values).forEach(function (k) {
+        out = out.split('{{' + k + '}}').join(cv.values[k] || ('{{' + k + '}}'));
+      });
+      return out;
+    }
+
+    function renderPreview() {
+      previewHost.innerHTML = '';
+      if (!stateC.tpl || !stateC.recipients.length) return;
+      var first = stateC.recipients[0];
+      previewHost.appendChild(el('div', { class: 'wai-field' },
+        el('label', { text: 'Vista previa (' + (first.name || first.first_name || 'primer contacto') + ')' }),
+        el('div', { class: 'wai-fu-item' }, el('div', { class: 'wai-fu-body', text: renderedFor(first) }))));
+    }
+
+    function refreshTplOptions() {
+      stateC.type = typeSel.value;
+      stateC.tpl = null;
+      tplSel.innerHTML = '';
+      var src = stateC.type === 'meta' ? stateC.metaTpls : stateC.localTpls;
+      if (!src.length) {
+        tplSel.appendChild(el('option', { value: '', text: stateC.type === 'meta' ? 'No tienes plantillas aprobadas por Meta' : 'No tienes plantillas locales — créalas en 📋 Plantillas' }));
+      } else {
+        tplSel.appendChild(el('option', { value: '', text: 'Selecciona una plantilla…' }));
+        src.forEach(function (t, i) {
+          tplSel.appendChild(el('option', { value: String(i), text: t.name + (t.language ? ' · ' + t.language : '') }));
+        });
+      }
+      renderVarRows();
+      renderPreview();
+    }
+
+    listSel.addEventListener('change', function () {
+      stateC.members = [];
+      refreshCount();
+      if (!listSel.value) return;
+      countLine.textContent = 'Cargando contactos…';
+      Promise.resolve(pd().fetchMembers(listSel.value)).then(function (rows) {
+        stateC.members = rows || [];
+        refreshCount();
+      }).catch(function (e) { countLine.textContent = errMsg(e); });
+    });
+    audSel.addEventListener('change', refreshCount);
+    typeSel.addEventListener('change', refreshTplOptions);
+    tplSel.addEventListener('change', function () {
+      var src = stateC.type === 'meta' ? stateC.metaTpls : stateC.localTpls;
+      stateC.tpl = tplSel.value === '' ? null : src[parseInt(tplSel.value, 10)] || null;
+      renderVarRows();
+      renderPreview();
+    });
+
+    var modal = openModal('Enviar campaña de WhatsApp', body, [
+      { label: 'Cancelar', className: 'btn btn-ghost btn-sm' },
+      {
+        label: 'Enviar campaña', className: 'btn btn-primary btn-sm',
+        onClick: function (api) {
+          if (stateC.sending) return;
+          if (!listSel.value) { toast('Elige una lista.', 'warn'); return; }
+          if (!stateC.tpl) { toast('Elige una plantilla.', 'warn'); return; }
+          var recipients = eligibleMembers();
+          if (!recipients.length) { toast('No hay contactos con teléfono para esta campaña.', 'warn'); return; }
+          if (!window.confirm('Se enviará "' + (stateC.tpl.name || 'plantilla') + '" a ' + recipients.length + ' contacto(s) por WhatsApp. ¿Continuar?')) return;
+          stateC.sending = true;
+          api.setBusy(true);
+          return runCampaign(recipients, api);
+        },
+      },
+    ]);
+
+    function runCampaign(recipients, api) {
+      var sent = 0;
+      var skipped = [];
+      var failed = [];
+      progHost.innerHTML = '';
+      var progLine = el('div', { class: 'wai-hint', text: 'Enviando…' });
+      progHost.appendChild(progLine);
+
+      var chain = Promise.resolve();
+      recipients.forEach(function (m, i) {
+        chain = chain.then(function () {
+          progLine.textContent = 'Enviando ' + (i + 1) + ' de ' + recipients.length + '… (' + (m.name || m.phone || '') + ')';
+          // Variables sin dato → se omite (mejor que mandar un hueco vacío).
+          if (stateC.type === 'local') {
+            var missing = pd().missingTemplateVars(stateC.tpl.body || '', m);
+            if (missing.length) {
+              skipped.push({ name: m.name || m.phone, why: 'sin dato para {{' + missing.join('}}, {{') + '}}' });
+              return;
+            }
+          } else {
+            var cv = campaignValues(m);
+            if (cv.missing.length) {
+              skipped.push({ name: m.name || m.phone, why: 'sin dato para {{' + cv.missing.join('}}, {{') + '}}' });
+              return;
+            }
+          }
+          return edge('start_conversation', { member_id: m.id }).then(function (res) {
+            var conv = res && res.conversation;
+            if (!conv) throw new Error('No se pudo abrir la conversación.');
+            if (stateC.type === 'local') {
+              return edge('send', { conversation_id: conv.id, kind: 'text', body: renderedFor(m) });
+            }
+            var payload = {
+              conversation_id: conv.id,
+              template_name: stateC.tpl.name,
+              language: stateC.tpl.language,
+              preview_body: renderedFor(m),
+            };
+            var cv2 = campaignValues(m);
+            if (stateC.varRows.length && stateC.varRows[0].named) {
+              payload.body_params_named = cv2.values;
+            } else {
+              payload.body_params = stateC.varRows
+                .slice()
+                .sort(function (a, b) { return parseInt(a.key, 10) - parseInt(b.key, 10); })
+                .map(function (r) { return cv2.values[r.key]; });
+            }
+            return edge('send_template', payload);
+          }).then(function () {
+            sent++;
+            // El primer mensaje ya salió → el contacto pasa a "Saludo enviado"
+            // en el CRM (best-effort; no aborta la campaña si falla).
+            if (!m.contact_status || m.contact_status === 'no_contactado') {
+              return Promise.resolve(pd().setContactStatus(m.id, 'saludo_enviado')).catch(function () {});
+            }
+          }).catch(function (e) {
+            failed.push({ name: m.name || m.phone, why: errMsg(e) });
+          }).then(function () {
+            // Pausa corta entre envíos para no saturar la API de Meta.
+            return new Promise(function (r) { setTimeout(r, 350); });
+          });
+        });
+      });
+
+      return chain.then(function () {
+        stateC.sending = false;
+        progLine.textContent = '';
+        resultHost.innerHTML = '';
+        var summary = el('div', { class: 'wai-fu-item' },
+          el('div', { class: 'wai-fu-when' + (failed.length ? ' failed' : ' sent'), text: 'Campaña terminada: ' + sent + ' enviados · ' + skipped.length + ' omitidos · ' + failed.length + ' fallidos' }));
+        skipped.concat(failed).slice(0, 20).forEach(function (x) {
+          summary.appendChild(el('div', { style: 'font-size:11.5px;color:var(--ink-3)', text: (x.name || '—') + ': ' + x.why }));
+        });
+        resultHost.appendChild(summary);
+        toast('Campaña enviada a ' + sent + ' contacto(s).', failed.length ? 'warn' : 'success');
+        loadConversations();
+        api.setBusy(false);
+      });
+    }
+
+    // Cargar fuentes (listas + plantillas)
+    Promise.resolve(pd().fetchLists()).then(function (lists) {
+      stateC.lists = lists || [];
+      listSel.innerHTML = '';
+      listSel.appendChild(el('option', { value: '', text: stateC.lists.length ? 'Selecciona una lista…' : 'Aún no tienes listas (créalas en Prospección)' }));
+      stateC.lists.forEach(function (l) {
+        listSel.appendChild(el('option', { value: String(l.id), text: (l.name || '—') + ' (' + (l.member_count || 0) + ')' }));
+      });
+    }).catch(function (e) { toast(errMsg(e), 'error'); });
+    Promise.resolve(pd().fetchMessageTemplates()).then(function (tpls) {
+      stateC.localTpls = tpls || [];
+      refreshTplOptions();
+    }).catch(function () { /* sección local vacía */ });
+    edge('templates', {}).then(function (res) {
+      stateC.metaTpls = (res && res.templates) || [];
+      refreshTplOptions();
+    }).catch(function () {
+      // Sin WABA ID o sin plantillas aprobadas: la campaña puede seguir con
+      // plantillas locales — no se bloquea con un error.
+      stateC.metaTpls = [];
+      refreshTplOptions();
+    });
+    void modal;
   }
 
   // ── Seguimientos programados ─────────────────────────────────────────────
@@ -2004,10 +2506,157 @@
     }
     host.appendChild(info);
 
+    // ── Estado CRM del lead (se refleja en Contactos y en el dashboard) ────
+    if (m) {
+      var crm = el('div', { class: 'wai-d-sec' });
+      crm.appendChild(el('div', { class: 'wai-d-title', text: 'Estado del lead' }));
+      var stSel = el('select', { style: 'width:100%;padding:7px 10px;border:1px solid var(--hair-3);border-radius:var(--r-md);background:var(--surface2);color:var(--ink);font-size:12.5px;font-family:var(--font-body)' });
+      var curStatus = m.contact_status || 'no_contactado';
+      contactStatuses().forEach(function (s) {
+        var opt = el('option', { value: s.value, text: s.label });
+        if (s.value === curStatus) opt.setAttribute('selected', 'selected');
+        stSel.appendChild(opt);
+      });
+      stSel.addEventListener('change', function () {
+        var next = stSel.value;
+        var prev = m.contact_status || 'no_contactado';
+        if (next === prev) return;
+        stSel.disabled = true;
+        Promise.resolve(pd().setContactStatus(m.id, next)).then(function () {
+          m.contact_status = next;
+          toast('Estado actualizado a «' + statusLabel(next) + '».', 'success');
+          renderDetail();
+        }).catch(function (e) {
+          stSel.value = prev;
+          toast(errMsg(e), 'error');
+        }).then(function () { stSel.disabled = false; });
+      });
+      crm.appendChild(stSel);
+      if (curStatus !== 'reunion_agendada' && curStatus !== 'reunion_tomada') {
+        var meetBtn = el('button', { class: 'btn btn-primary btn-sm', style: 'align-self:flex-start', text: '📅 Reunión conseguida' });
+        meetBtn.addEventListener('click', function () {
+          meetBtn.disabled = true;
+          Promise.resolve(pd().setContactStatus(m.id, 'reunion_agendada')).then(function () {
+            m.contact_status = 'reunion_agendada';
+            toast('¡Reunión conseguida! Se contará en tu dashboard y en Contactos.', 'success');
+            renderDetail();
+          }).catch(function (e) { meetBtn.disabled = false; toast(errMsg(e), 'error'); });
+        });
+        crm.appendChild(meetBtn);
+        crm.appendChild(el('div', { class: 'wai-hint', text: 'Al marcarla, la reunión suma en «Reuniones generadas» del dashboard y el contacto pasa a «Reunión conseguida» en el CRM.' }));
+      } else {
+        crm.appendChild(el('div', { class: 'wai-hint', text: '🎉 Este lead ya tiene reunión ' + (curStatus === 'reunion_tomada' ? 'tomada' : 'agendada') + '. Prepárala con el Meeting Coach.' }));
+      }
+      host.appendChild(crm);
+    }
+
+    // ── Siguiente paso sugerido (IA) ────────────────────────────────────────
+    if (m) {
+      var ai = el('div', { class: 'wai-d-sec' });
+      ai.appendChild(el('div', { class: 'wai-d-title', text: 'Mensaje IA' }));
+      var followTxt = (m.outreach && m.outreach.whatsapp_followup) || '';
+      var replied = conversationHasReply();
+      var optedOut = conversationOptedOut();
+
+      if (optedOut) {
+        ai.appendChild(el('div', { class: 'wai-hint', style: 'color:var(--red)', text: 'El contacto pidió no recibir más mensajes (respondió "stop" o similar). No le envíes el seguimiento.' }));
+        if ((m.contact_status || 'no_contactado') !== 'no_interesado') {
+          var niBtn = el('button', { class: 'btn btn-ghost btn-sm', style: 'align-self:flex-start;color:var(--red)', text: 'Marcar como No interesado' });
+          niBtn.addEventListener('click', function () {
+            niBtn.disabled = true;
+            Promise.resolve(pd().setContactStatus(m.id, 'no_interesado')).then(function () {
+              m.contact_status = 'no_interesado';
+              toast('Contacto marcado como No interesado.', 'info');
+              renderDetail();
+            }).catch(function (e) { niBtn.disabled = false; toast(errMsg(e), 'error'); });
+          });
+          ai.appendChild(niBtn);
+        }
+      } else if (followTxt) {
+        if (replied) {
+          ai.appendChild(el('div', { class: 'wai-hint', style: 'color:var(--green);font-weight:600', text: '✓ El lead respondió — este es el momento de enviar el mensaje generado por IA.' }));
+        } else {
+          ai.appendChild(el('div', { class: 'wai-hint', text: 'Mensaje generado por IA listo. Envíalo cuando el lead responda a tu saludo.' }));
+        }
+        ai.appendChild(el('div', { class: 'wai-fu-item' }, el('div', { class: 'wai-fu-body', text: followTxt })));
+        var useBtn = el('button', { class: replied ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm', style: 'align-self:flex-start', text: 'Usar en el chat' });
+        useBtn.addEventListener('click', function () {
+          var input = document.getElementById('wai-input');
+          if (!input) return;
+          input.value = followTxt;
+          input.dispatchEvent(new Event('input'));
+          input.focus();
+          toast('Mensaje insertado — revísalo y presiona enviar.', 'info');
+        });
+        ai.appendChild(useBtn);
+      } else {
+        ai.appendChild(el('div', { class: 'wai-hint', text: replied
+          ? 'El lead respondió y aún no tienes un mensaje personalizado. Genera uno con IA usando tu Intelligence Hub y el contexto de tu empresa.'
+          : 'Aún no generas el mensaje personalizado de este lead.' }));
+        var genBtn = el('button', { class: 'btn btn-primary btn-sm', style: 'align-self:flex-start', text: '✨ Generar mensaje con IA' });
+        genBtn.addEventListener('click', function () {
+          genBtn.disabled = true;
+          genBtn.textContent = '⏳ Generando…';
+          var d = pd();
+          Promise.resolve(d.ensureBriefReady(function () {}))
+            .catch(function (e) { throw e; })
+            .then(function () { return d.generateOutreach({ member: m, sender: d.getSenderInfo() }); })
+            .then(function (res) {
+              var outreach = Object.assign({}, res, { generated_at: new Date().toISOString() });
+              return Promise.resolve(d.updateMember(m.id, { outreach: outreach, outreach_status: 'ready' })).then(function () {
+                m.outreach = outreach;
+                toast('Mensaje generado.', 'success');
+                renderDetail();
+              });
+            })
+            .catch(function (e) {
+              genBtn.disabled = false;
+              genBtn.textContent = '✨ Generar mensaje con IA';
+              toast(errMsg(e), 'error');
+            });
+        });
+        ai.appendChild(genBtn);
+      }
+      host.appendChild(ai);
+    }
+
+    // ── Approach sugerido (síntesis del Intelligence Hub + brief) ──────────
     if (m && m.outreach && m.outreach.angle) {
-      host.appendChild(el('div', { class: 'wai-d-sec' },
-        el('div', { class: 'wai-d-title', text: 'Ángulo de outreach (IA)' }),
-        el('div', { style: 'font-size:12.5px;color:var(--ink-2);line-height:1.55;white-space:pre-wrap', text: String(m.outreach.angle) })));
+      var angle = m.outreach.angle;
+      var angleSec = el('div', { class: 'wai-d-sec' },
+        el('div', { class: 'wai-d-title', text: 'Approach sugerido (IA)' }));
+      if (angle && typeof angle === 'object') {
+        if (angle.hypothesis) angleSec.appendChild(dRow('Por qué le importa', String(angle.hypothesis)));
+        if (angle.person_hook) angleSec.appendChild(dRow('Gancho personal', String(angle.person_hook)));
+        if (angle.objection) angleSec.appendChild(dRow('Objeción probable', String(angle.objection) + (angle.neutralizer ? ' → ' + String(angle.neutralizer) : '')));
+        if (angle.social_proof && angle.social_proof !== 'ninguno') angleSec.appendChild(dRow('Social proof', String(angle.social_proof)));
+      } else {
+        angleSec.appendChild(el('div', { style: 'font-size:12.5px;color:var(--ink-2);line-height:1.55;white-space:pre-wrap', text: String(angle) }));
+      }
+      host.appendChild(angleSec);
+    }
+
+    // ── Puente al Meeting Coach ─────────────────────────────────────────────
+    if (m && m.outreach && m.outreach.generated_at && window.prospectingData && window.prospectingData.buildCoachLeadContext) {
+      var coachSec = el('div', { class: 'wai-d-sec' });
+      var coachBtn = el('button', { class: 'btn btn-teal btn-sm', style: 'align-self:flex-start', text: '🎧 Preparar reunión con el coach' });
+      coachBtn.addEventListener('click', function () {
+        var d = pd();
+        var ctx = d.buildCoachLeadContext(m);
+        window.predictable = window.predictable || {};
+        window.predictable.currentProspect = ctx;
+        try {
+          Promise.resolve(d.saveCoachContext(m.id, ctx)).catch(function (e) {
+            console.warn('[wa-inbox] no se pudo persistir el contexto del coach:', e.message);
+          });
+        } catch (e) { /* no bloquea la navegación */ }
+        var navEl = document.querySelector('[data-page="ventas-coach"]');
+        if (navEl && typeof window.nav === 'function') window.nav(navEl, 'ventas-coach');
+        if (typeof window.loadCoachBrief === 'function') window.loadCoachBrief(ctx);
+        toast('Contexto del lead cargado en el coach.', 'success');
+      });
+      coachSec.appendChild(coachBtn);
+      host.appendChild(coachSec);
     }
 
     var fuSec = el('div', { class: 'wai-d-sec' });
@@ -2340,6 +2989,7 @@
     show: show,
     refreshBadge: refreshBadge,
     openForMember: openForMember,
+    showTemplates: showTemplates,
   };
 
   // Badge al cargar la app (sin montar el inbox): una consulta ligera.
