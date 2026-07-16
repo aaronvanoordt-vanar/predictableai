@@ -2473,7 +2473,19 @@
       el('div', { style: 'font-size:14.5px;font-weight:650;color:var(--ink)', text: name }),
       el('div', { style: 'font-size:12px;color:var(--ink-3)', text: (m && [m.title, m.company].filter(Boolean).join(' · ')) || ('+' + conv.wa_id) })));
 
-    var info = el('div', { class: 'wai-d-sec' }, el('div', { class: 'wai-d-title', text: 'Datos del contacto' }));
+    var infoTitleRow = el('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:8px' },
+      el('div', { class: 'wai-d-title', text: 'Datos del contacto' }));
+    if (m && window.prospecting && typeof window.prospecting.openEditContact === 'function') {
+      var editBtn = el('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'padding:2px 8px', text: '✎ Editar' });
+      editBtn.addEventListener('click', function () {
+        window.prospecting.openEditContact(m, function (patch) {
+          Object.assign(m, patch);
+          renderDetail();
+        });
+      });
+      infoTitleRow.appendChild(editBtn);
+    }
+    var info = el('div', { class: 'wai-d-sec' }, infoTitleRow);
     info.appendChild(dRow('WhatsApp', '+' + conv.wa_id));
     if (m) {
       if (m.email) {

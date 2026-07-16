@@ -2035,6 +2035,7 @@
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
       '<td>' + seqStatusCell(m) + '</td>' +
+      '<td><button type="button" class="pros-iconbtn" data-action="edit-member" data-id="' + id + '" title="Editar contacto">✎</button></td>' +
       '</tr>';
   }
 
@@ -2084,7 +2085,7 @@
       var allChecked = st.members.every(function (m) { return st.selected.has(String(m.id)); });
       html += '<div class="pros-scroll-x"><table><thead><tr>' +
         '<th style="width:34px"><input type="checkbox" data-action="mem-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-        '<th>Nombre</th><th>Empresa</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th><th>Secuencia</th>' +
+        '<th>Nombre</th><th>Empresa</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th><th>Secuencia</th><th></th>' +
         '</tr></thead><tbody>' + st.members.map(listMemberRowHtml).join('') + '</tbody></table></div>';
     }
     html += '</div>';
@@ -2229,6 +2230,14 @@
     }
     if (action === 'export-csv') return exportListCsv();
     if (action === 'delete-members') return openDeleteMembersModal();
+    if (action === 'edit-member') {
+      var mem = st.members.find(function (x) { return String(x.id) === String(btn.getAttribute('data-id')); });
+      if (!mem) return;
+      return openEditContactModal(mem, function (patch) {
+        Object.assign(mem, patch);
+        renderListsRight();
+      });
+    }
   }
 
   function openDeleteListModal(listId) {
@@ -2399,6 +2408,79 @@
         })
         .catch(function (e) {
           prog.hide();
+          api.setBusy(false);
+          toast(errMsg(e), 'error');
+        });
+    }
+  }
+
+  // ── "Editar contacto" modal — reutilizable desde Listas, Contactos y el
+  // panel de detalle del Inbox de WhatsApp. Recibe la fila completa de
+  // prospect_list_members y, al guardar, actualiza esos mismos campos vía
+  // pd().updateMember (el mismo primitivo que ya usa el estado CRM).
+  function openEditContactModal(member, onSaved) {
+    if (!member || member.id == null) return;
+    var firstName = h('input', { type: 'text', placeholder: 'Nombre', value: member.first_name || '' });
+    var lastName = h('input', { type: 'text', placeholder: 'Apellido', value: member.last_name || '' });
+    var roleInput = h('input', { type: 'text', placeholder: 'Cargo', value: member.title || '' });
+    var companyInput = h('input', { type: 'text', placeholder: 'Empresa', value: member.company || '' });
+    var companyDomainInput = h('input', { type: 'text', placeholder: 'Dominio (ej: empresa.com)', value: member.company_domain || '' });
+    var emailInput = h('input', { type: 'email', placeholder: 'correo@empresa.com', value: member.email || '' });
+    var phoneInput = h('input', { type: 'tel', placeholder: 'Celular (con código de país)', value: member.phone || '' });
+    var liUrl = h('input', { type: 'url', placeholder: 'https://linkedin.com/in/…', value: member.linkedin_url || '' });
+    var cityInput = h('input', { type: 'text', placeholder: 'Ciudad', value: member.city || '' });
+    var stateInput = h('input', { type: 'text', placeholder: 'Estado / provincia', value: member.state || '' });
+    var countryInput = h('input', { type: 'text', placeholder: 'País', value: member.country || '' });
+
+    var bodyN = h('div', { class: 'pros-manual-form' },
+      h('div', { class: 'pros-manual-row' }, firstName, lastName),
+      roleInput,
+      h('div', { class: 'pros-manual-row' }, companyInput, companyDomainInput),
+      emailInput,
+      phoneInput,
+      liUrl,
+      h('div', { class: 'pros-manual-row' }, cityInput, stateInput),
+      countryInput);
+
+    var api = openModal({
+      title: 'Editar contacto',
+      width: 440,
+      bodyNode: bodyN,
+      actions: [
+        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
+        { label: 'Guardar', className: 'btn btn-primary', onClick: onConfirm },
+      ],
+    });
+    firstName.focus();
+
+    function onConfirm() {
+      var fn = firstName.value.trim();
+      var ln = lastName.value.trim();
+      if (!fn && !ln && !emailInput.value.trim()) {
+        return toast('Escribe al menos un nombre o un correo.', 'warn');
+      }
+      var patch = {
+        first_name: fn || null,
+        last_name: ln || null,
+        name: [fn, ln].filter(Boolean).join(' ') || null,
+        title: roleInput.value.trim() || null,
+        company: companyInput.value.trim() || null,
+        company_domain: companyDomainInput.value.trim() || null,
+        email: emailInput.value.trim() || null,
+        phone: phoneInput.value.trim() || null,
+        linkedin_url: liUrl.value.trim() || null,
+        city: cityInput.value.trim() || null,
+        state: stateInput.value.trim() || null,
+        country: countryInput.value.trim() || null,
+      };
+      api.setBusy(true);
+      return Promise.resolve(pd().updateMember(member.id, patch))
+        .then(function () {
+          toast('Contacto actualizado.', 'success');
+          api.close();
+          if (typeof onSaved === 'function') onSaved(patch);
+        })
+        .catch(function (e) {
           api.setBusy(false);
           toast(errMsg(e), 'error');
         });
@@ -2587,6 +2669,7 @@
     var inboxBtn = (window.waInbox && m.phone)
       ? '<button type="button" class="btn btn-ghost btn-sm" data-action="ct-inbox" data-id="' + esc(String(m.id)) + '" title="Abrir conversación de WhatsApp">💬</button>'
       : '';
+    var editBtn = '<button type="button" class="pros-iconbtn" data-action="ct-edit" data-id="' + esc(String(m.id)) + '" title="Editar contacto">✎</button>';
     return '<tr>' +
       '<td><div style="font-weight:600">' + esc(name) + '</div>' +
         (m.title ? '<div class="pros-cellsub" style="font-size:12px">' + esc(m.title) + '</div>' : '') + '</td>' +
@@ -2597,7 +2680,7 @@
       '<td>' + memberEmailCell(m) + '</td>' +
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
-      '<td style="white-space:nowrap">' + inboxBtn + '</td>' +
+      '<td style="white-space:nowrap">' + editBtn + inboxBtn + '</td>' +
       '</tr>';
   }
 
@@ -2718,6 +2801,14 @@
     if (!btn) return;
     var action = btn.getAttribute('data-action');
     if (action === 'ct-refresh') return reloadContactos();
+    if (action === 'ct-edit') {
+      var mEdit = findContacto(btn.getAttribute('data-id'));
+      if (!mEdit) return;
+      return openEditContactModal(mEdit, function (patch) {
+        Object.assign(mEdit, patch);
+        renderContactos();
+      });
+    }
     if (action === 'ct-inbox') {
       var m = findContacto(btn.getAttribute('data-id'));
       if (!m) return;
@@ -3682,6 +3773,7 @@
       }
     },
     refreshBadge: refreshBadge,
+    openEditContact: openEditContactModal,
   };
 
   // Badge de listas al cargar la app (la versión anterior lo poblaba en cada
