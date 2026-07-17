@@ -6,6 +6,11 @@
  *   - Company "About" description
  *   - Products/solutions offered
  *
+ * Runs as two separate research calls (LinkedIn, then the discovered
+ * website) instead of one opaque call, writing a real progress checkpoint
+ * to intel_hub_intake after each step — the client shows an actual
+ * percentage instead of an indeterminate spinner.
+ *
  * Stores enriched data in intel_hub_intake.
  *
  * Auth: Bearer <user JWT>
@@ -58,16 +63,8 @@ async function callClaude(apiKey: string, system: string, user: string): Promise
   return blocks[blocks.length - 1].text ?? "";
 }
 
-interface Enriched {
-  industry: string;
-  employee_count: string;
-  country: string;
-  website: string;
-  about: string;
-  solutions: string;
-}
-
-function parseJson(raw: string): Enriched {
+// deno-lint-ignore no-explicit-any
+function parseJson(raw: string): any {
   const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   try { return JSON.parse(cleaned); } catch (_) { /* fall through */ }
   const s = cleaned.indexOf("{");
@@ -81,28 +78,56 @@ function parseJson(raw: string): Enriched {
   return JSON.parse(cleaned.slice(s, e + 1));
 }
 
-async function enrichCompany(apiKey: string, linkedinUrl: string): Promise<Enriched> {
-  const system = `You are a company research agent. Search the web to gather data about a company from their LinkedIn URL and website.
+interface LinkedInFindings {
+  industry: string;
+  employee_count: string;
+  country: string;
+  website: string;
+  about: string;
+}
+
+async function researchLinkedIn(apiKey: string, linkedinUrl: string): Promise<LinkedInFindings> {
+  const system = `You are a company research agent. Search the web for this company's LinkedIn page.
 Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
   "industry": "Main industry/sector (e.g. 'B2B SaaS - Sales Technology')",
   "employee_count": "Approximate size (e.g. '50-200 employees')",
   "country": "Primary country (e.g. 'Colombia')",
-  "website": "Company website URL (e.g. 'https://company.com')",
-  "about": "2-3 sentences: what they do, mission, years of experience, market presence",
-  "solutions": "Comma-separated main products/services (e.g. 'Revenue forecasting, Pipeline analytics, AI sales coaching')"
+  "website": "Company website URL found on the LinkedIn page, e.g. 'https://company.com'. Empty string if not found.",
+  "about": "2-3 sentences: what they do, mission, years of experience, market presence"
 }
 If specific data is not found, provide a reasonable estimate based on available information.`;
+  const prompt = `Search this LinkedIn company page and extract industry, employee count, country, website URL, and about section:\n${linkedinUrl}`;
+  const raw = await callClaude(apiKey, system, prompt);
+  const p = parseJson(raw);
+  return {
+    industry: typeof p.industry === "string" ? p.industry : "",
+    employee_count: typeof p.employee_count === "string" ? p.employee_count : "",
+    country: typeof p.country === "string" ? p.country : "",
+    website: typeof p.website === "string" ? p.website : "",
+    about: typeof p.about === "string" ? p.about : "",
+  };
+}
 
-  const prompt = `Research this company thoroughly:
-LinkedIn URL: ${linkedinUrl}
+interface WebsiteFindings {
+  solutions: string;
+  about: string;
+}
 
-Steps:
-1. Search their LinkedIn company page for: name, industry, employee count, country, website URL, about section
-2. Search their company website to understand their main products and solutions offered
-3. Return all gathered data as JSON`;
-
-  return parseJson(await callClaude(apiKey, system, prompt));
+async function researchWebsite(apiKey: string, website: string, fallbackAbout: string): Promise<WebsiteFindings> {
+  const system = `You are a company research agent. Search this company's website to understand their products and services.
+Respond ONLY with valid JSON, no markdown fences, no explanation:
+{
+  "solutions": "Comma-separated main products/services (e.g. 'Revenue forecasting, Pipeline analytics, AI sales coaching')",
+  "about": "2-3 sentences: what they do, mission, years of experience, market presence. Only fill this in if you found something more specific than what's already known; otherwise return an empty string."
+}`;
+  const prompt = `Search this company website and extract their main products/services offered:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}`;
+  const raw = await callClaude(apiKey, system, prompt);
+  const p = parseJson(raw);
+  return {
+    solutions: typeof p.solutions === "string" ? p.solutions : "",
+    about: typeof p.about === "string" ? p.about : "",
+  };
 }
 
 Deno.serve(async (req: Request) => {
@@ -131,31 +156,58 @@ Deno.serve(async (req: Request) => {
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
+  const setProgress = (progress: number, step: string) =>
+    supa.from("intel_hub_intake").update({
+      company_enrichment_progress: progress,
+      company_enrichment_step: step,
+    }).eq("user_id", user.id);
+
   // Mark enrichment as running
   await supa.from("intel_hub_intake").upsert({
     user_id: user.id,
     company_linkedin_url: body.linkedin_url,
     company_enrichment_status: "running",
+    company_enrichment_progress: 5,
+    company_enrichment_step: "Buscando tu empresa en LinkedIn…",
   }, { onConflict: "user_id" });
 
   const work = (async () => {
     try {
-      const e = await enrichCompany(ANTHROPIC_KEY, body.linkedin_url!);
+      const li = await researchLinkedIn(ANTHROPIC_KEY, body.linkedin_url!);
+
+      let solutions = "";
+      let about = li.about;
+      if (li.website) {
+        await setProgress(55, "Revisando tu página web…");
+        try {
+          const site = await researchWebsite(ANTHROPIC_KEY, li.website, li.about);
+          solutions = site.solutions;
+          if (site.about) about = site.about;
+        } catch (siteErr) {
+          console.warn("[enrich] website step failed, keeping LinkedIn-only data:", siteErr);
+        }
+      } else {
+        await setProgress(55, "No encontramos una página web pública en tu LinkedIn…");
+      }
+
       await supa.from("intel_hub_intake").update({
-        company_industry:          e.industry,
-        company_employee_count:    e.employee_count,
-        company_country:           e.country,
-        company_website:           e.website,
-        company_about:             e.about,
-        company_solutions:         e.solutions,
-        company_enrichment_status: "done",
-        company_enrichment_at:     new Date().toISOString(),
+        company_industry:            li.industry,
+        company_employee_count:      li.employee_count,
+        company_country:             li.country,
+        company_website:             li.website,
+        company_about:               about,
+        company_solutions:           solutions,
+        company_enrichment_status:   "done",
+        company_enrichment_progress: 100,
+        company_enrichment_step:     "Listo",
+        company_enrichment_at:       new Date().toISOString(),
       }).eq("user_id", user.id);
       console.log(`[enrich] ✓ ${user.id}`);
     } catch (err) {
       console.error("[enrich] error:", err);
       await supa.from("intel_hub_intake").update({
         company_enrichment_status: "error",
+        company_enrichment_step:   "Ocurrió un error durante la investigación",
       }).eq("user_id", user.id);
     }
   })();
