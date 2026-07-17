@@ -166,6 +166,12 @@
     STATE.profile = profile || null;
     STATE.researchLoaded = true;
   }
+  // company_solutions se guarda como texto separado por comas; en la UI se
+  // edita como una lista de cajas individuales, una por solución.
+  function parseSolutions(raw) {
+    const list = (raw || '').split(',').map(s => s.trim()).filter(Boolean);
+    return list.length ? list : [''];
+  }
   function renderResearch() {
     const el = document.getElementById('ih-research-shell');
     if (!el) return;
@@ -177,24 +183,27 @@
       : brief.status === 'generating' ? 'Generando…'
       : brief.status === 'error' ? 'Error' : 'Sin generar';
     const sourceLabel = brief.source === 'edited' ? 'Editado manualmente' : 'Generado automáticamente';
-    const enrichFailed = intake.company_enrichment_status === 'error' || intake.company_enrichment_status === 'running';
-    const enrichMissing = !intake.company_website && intake.company_enrichment_status !== 'running';
-    const showRetry = (enrichFailed || enrichMissing) && !!linkedinUrl;
+    const isRunning = intake.company_enrichment_status === 'running';
+    const solutions = parseSolutions(intake.company_solutions);
+    const solutionRow = (val) => `
+      <div class="ihx-chip-row">
+        <input type="text" class="ihx-solution-input" value="${escapeHtml(val)}" placeholder="Ej: Prospección con IA">
+        <button type="button" class="ihx-chip-remove" data-remove-solution title="Quitar">×</button>
+      </div>`;
     el.innerHTML = `
       <div class="ihx-research">
         <div class="ihx-research-hint">
           Esto es lo que la plataforma investigó de tu empresa para personalizar el hub y los mensajes de prospección.
           Corrígelo si algo no es exacto — tus cambios se usan de inmediato.
         </div>
-        ${showRetry ? `
-          <div class="ihx-research-retry">
-            <span>${intake.company_enrichment_status === 'running'
-              ? 'Buscando tu página web y contexto de empresa a partir de tu LinkedIn…'
-              : 'No pudimos encontrar automáticamente tu página web a partir de tu LinkedIn. Puedes completarla abajo a mano, o reintentar la búsqueda.'}</span>
-            <button type="button" class="ihx-btn-force" id="ihx-retry-enrich" ${intake.company_enrichment_status === 'running' ? 'disabled' : ''}>
-              ${intake.company_enrichment_status === 'running' ? 'Buscando…' : 'Reintentar investigación'}
-            </button>
-          </div>` : ''}
+        <div class="ihx-research-retry">
+          <span>${isRunning
+            ? 'Buscando tu página web y contexto de empresa a partir de tu LinkedIn…'
+            : 'Si algo no es correcto (p. ej. el país o la página web), puedes volver a investigar desde tu LinkedIn — esto reemplaza los campos de abajo con lo que encuentre.'}</span>
+          <button type="button" class="ihx-btn-force" id="ihx-retry-enrich" ${(isRunning || !linkedinUrl) ? 'disabled' : ''}>
+            ${isRunning ? 'Buscando…' : 'Actualizar investigación'}
+          </button>
+        </div>
         <div class="ihx-research-meta">
           <span class="ihx-research-status ihx-rs-${escapeHtml(brief.status || 'pending')}">${escapeHtml(statusLabel)}</span>
           ${brief.generated_at ? `<span>${escapeHtml(sourceLabel)} · ${fmtRelative(new Date(brief.generated_at))}</span>` : ''}
@@ -223,10 +232,11 @@
             <span>Contexto que sacó de tu empresa</span>
             <textarea name="company_about" rows="3" placeholder="Qué entendió sobre tu empresa">${escapeHtml(intake.company_about || '')}</textarea>
           </label>
-          <label class="ihx-field">
+          <div class="ihx-field">
             <span>Soluciones que cree que ofreces</span>
-            <textarea name="company_solutions" rows="3" placeholder="Qué productos/servicios cree que vendes">${escapeHtml(intake.company_solutions || '')}</textarea>
-          </label>
+            <div class="ihx-chip-list" id="ihx-solutions-list">${solutions.map(solutionRow).join('')}</div>
+            <button type="button" class="ihx-chip-add" id="ihx-solutions-add">+ Agregar solución</button>
+          </div>
           <label class="ihx-field">
             <span>Cómo lo resume (frase posicional)</span>
             <input type="text" name="positional_phrase" value="${escapeHtml(brief.positional_phrase || '')}">
@@ -253,10 +263,22 @@
     if (form) form.addEventListener('submit', saveResearch);
     const retryBtn = document.getElementById('ihx-retry-enrich');
     if (retryBtn) retryBtn.addEventListener('click', () => retryEnrichment(linkedinUrl));
+    const solutionsList = document.getElementById('ihx-solutions-list');
+    const addBtn = document.getElementById('ihx-solutions-add');
+    if (addBtn) addBtn.addEventListener('click', () => {
+      solutionsList.insertAdjacentHTML('beforeend', solutionRow(''));
+    });
+    if (solutionsList) solutionsList.addEventListener('click', (ev) => {
+      const rm = ev.target.closest('[data-remove-solution]');
+      if (!rm) return;
+      const rows = solutionsList.querySelectorAll('.ihx-chip-row');
+      if (rows.length > 1) rm.closest('.ihx-chip-row').remove();
+      else rm.closest('.ihx-chip-row').querySelector('.ihx-solution-input').value = '';
+    });
   }
   // Vuelve a disparar enrich-company (LinkedIn → website/industria/about/soluciones)
-  // cuando la corrida original falló o nunca corrió — misma función que usa
-  // el onboarding, así el usuario no queda con el formulario permanentemente vacío.
+  // a demanda del usuario — misma función que usa el onboarding. Reemplaza los
+  // campos de investigación con lo que encuentre en esta nueva corrida.
   async function retryEnrichment(linkedinUrl) {
     if (!STATE.user || !linkedinUrl) return;
     try {
@@ -292,13 +314,15 @@
     if (msg) msg.textContent = 'Guardando…';
     const fd = new FormData(ev.target);
     const val = (k) => (fd.get(k) || '').toString().trim();
+    const solutions = Array.from(ev.target.querySelectorAll('.ihx-solution-input'))
+      .map(inp => inp.value.trim()).filter(Boolean);
     const intakePatch = {
       company_website: val('company_website') || null,
       company_industry: val('company_industry') || null,
       company_employee_count: val('company_employee_count') || null,
       company_country: val('company_country') || null,
       company_about: val('company_about') || null,
-      company_solutions: val('company_solutions') || null,
+      company_solutions: solutions.length ? solutions.join(', ') : null,
     };
     const outcomes = val('key_outcomes').split('\n').map(s => s.trim()).filter(Boolean);
     const briefPatch = {
@@ -1012,6 +1036,22 @@
 .ihx-field input:focus, .ihx-field textarea:focus { outline: none; border-color: var(--accent, #1F4BFF); }
 .ihx-field-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 @media (max-width: 600px) { .ihx-field-row { grid-template-columns: 1fr; } }
+.ihx-chip-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.ihx-chip-row { display: flex; align-items: center; gap: 8px; }
+.ihx-chip-row .ihx-solution-input { flex: 1; }
+.ihx-chip-remove {
+  flex-shrink: 0; width: 26px; height: 26px; border-radius: 6px;
+  background: transparent; border: 1px solid var(--hair-3, rgba(10,10,15,0.13));
+  color: var(--ink-4, #9CA2AE); font-size: 15px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: all .15s;
+}
+.ihx-chip-remove:hover { color: var(--red, #D64545); border-color: rgba(214,69,69,0.3); background: rgba(214,69,69,0.08); }
+.ihx-chip-add {
+  background: transparent; border: 1px dashed var(--hair-3, rgba(10,10,15,0.13)); border-radius: 6px;
+  padding: 6px 12px; font: inherit; font-size: 12px; font-weight: 600; color: var(--ink-4, #8A909C);
+  cursor: pointer; transition: all .15s;
+}
+.ihx-chip-add:hover { color: var(--accent, #1F4BFF); border-color: var(--accent, #1F4BFF); }
 .ihx-research-actions { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
 .ihx-research-saved { font-size: 12px; color: var(--ink-4, #8A909C); }
 /* ── PROGRESS ── */
