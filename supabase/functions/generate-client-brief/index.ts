@@ -186,6 +186,29 @@ function buildUserPrompt(
   return lines.join("\n");
 }
 
+// Inteligencia del hub del día (Prospecting Recommendations + Industry Insight
+// Digest): se anexa al prompt para que recommended_filters y buying_triggers
+// reflejen lo que los agentes de mercado encontraron HOY — es el puente entre
+// el Intelligence Hub y la Búsqueda recomendada de Prospección.
+// deno-lint-ignore no-explicit-any
+function buildHubIntelBlock(reports: Array<{ section_key: string; content: any }> | null): string {
+  if (!reports?.length) return "";
+  const lines: string[] = ["", "=== TODAY'S MARKET INTELLIGENCE (from this seller's Intelligence Hub — recommended_filters and buying_triggers MUST reflect these findings when they suggest specific segments, roles, geographies or angles) ==="];
+  for (const r of reports) {
+    const c = r.content || {};
+    if (typeof c.headline === "string" && c.headline) lines.push(`[${r.section_key}] ${c.headline}`);
+    const pts = Array.isArray(c.key_points) ? c.key_points.slice(0, 4) : [];
+    for (const p of pts) if (typeof p === "string" && p.trim()) lines.push(`  - ${p}`);
+    const recs = Array.isArray(c.recommendations) ? c.recommendations.slice(0, 3) : [];
+    for (const rec of recs) {
+      if (!rec || typeof rec !== "object") continue;
+      const bits = [rec.title, rec.search_adjustment].filter((x: unknown) => typeof x === "string" && x).join(" — ");
+      if (bits) lines.push(`  - ${bits}`);
+    }
+  }
+  return lines.length > 2 ? lines.join("\n") : "";
+}
+
 Deno.serve(async (req: Request) => {
   const h = corsHeaders(req.headers.get("Origin") ?? "*");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: h });
@@ -204,7 +227,7 @@ Deno.serve(async (req: Request) => {
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
-  const [{ data: intake }, { data: profile }, { data: icp }, { data: docs }] = await Promise.all([
+  const [{ data: intake }, { data: profile }, { data: icp }, { data: docs }, { data: hubReports }] = await Promise.all([
     supa.from("intel_hub_intake").select(`
       company_linkedin_url, company_industry, company_employee_count, company_country,
       company_website, company_about, company_solutions,
@@ -214,6 +237,9 @@ Deno.serve(async (req: Request) => {
     supa.from("profiles").select("company_name, linkedin_company_url").eq("id", user.id).maybeSingle(),
     supa.from("client_icp").select("company_sizes, industries, roles, geographies, pain_points").eq("profile_id", user.id).maybeSingle(),
     supa.from("company_documents").select("summary").eq("user_id", user.id).eq("status", "done").not("summary", "is", null),
+    supa.from("intelligence_hub_reports").select("section_key, content")
+      .eq("user_id", user.id).eq("status", "ready")
+      .in("section_key", ["prospecting_recommendations", "industry_insight_digest"]),
   ]);
   const documentSummaries = (docs ?? []).map((d) => d.summary as string).filter(Boolean);
 
@@ -231,7 +257,7 @@ Deno.serve(async (req: Request) => {
       const raw = await callClaude(
         ANTHROPIC_KEY,
         SYSTEM_PROMPT,
-        buildUserPrompt(intake as IntakeRow | null, profile, icp, documentSummaries),
+        buildUserPrompt(intake as IntakeRow | null, profile, icp, documentSummaries) + buildHubIntelBlock(hubReports),
       );
       const b = parseJson(raw);
       const arr = (v: unknown) => (Array.isArray(v) ? v : []);
