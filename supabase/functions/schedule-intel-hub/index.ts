@@ -18,11 +18,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const CADENCE_SECTIONS: Record<string, string[]> = {
-  daily:     ["industry_insight_digest", "competitor_threat_radar", "prospecting_recommendations"],
-  weekly:    ["benchmark", "revenue_opportunities", "strategic_actions"],
-  monthly:   ["consumer_behavioral_analysis", "market_snapshot", "future_innovations"],
-  quarterly: ["pestel"],
-  yearly:    ["market_architecture"],
+  daily:   ["industry_insight_digest", "competitor_threat_radar", "prospecting_recommendations"],
+  weekly:  ["benchmark", "revenue_opportunities", "strategic_actions"],
+  monthly: ["consumer_behavioral_analysis", "market_snapshot", "future_innovations"],
 };
 
 const ALL_CADENCES = Object.keys(CADENCE_SECTIONS) as Array<keyof typeof CADENCE_SECTIONS>;

@@ -728,7 +728,12 @@ function buildHubContext(reports: Array<Record<string, any>>): string {
     const c = r.content || {};
     const bits = [c.headline, c.summary].filter(Boolean).join(" · ");
     if (bits) lines.push(`- [${r.section_key}] ${bits}`);
-    const items = Array.isArray(c.items) ? c.items.slice(0, 2) : [];
+    // v2 envelope: key_points reemplaza a items como digest uniforme por sección.
+    const points = Array.isArray(c.key_points) ? c.key_points.slice(0, 4) : [];
+    for (const p of points) {
+      if (typeof p === "string" && p.trim()) lines.push(`    · ${truncate(p, 450)}`);
+    }
+    const items = points.length ? [] : (Array.isArray(c.items) ? c.items.slice(0, 2) : []);
     for (const it of items) {
       if (!it || typeof it !== "object") continue;
       const parts = [it.title, it.body, it.implication ? `Implicación: ${it.implication}` : ""]
@@ -909,7 +914,7 @@ Deno.serve(async (req: Request) => {
     supa.from("intelligence_hub_reports")
       .select("section_key, content")
       .eq("user_id", user.id).eq("status", "ready")
-      .in("section_key", ["pestel", "market_snapshot", "industry_insight_digest", "competitor_threat_radar"])
+      .in("section_key", ["prospecting_recommendations", "market_snapshot", "industry_insight_digest", "competitor_threat_radar"])
       .order("generated_at", { ascending: false }).limit(4),
     memberId
       ? supa.from("prospect_list_members").select("snapshot").eq("id", memberId).eq("user_id", user.id).maybeSingle()
