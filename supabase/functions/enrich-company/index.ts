@@ -6,15 +6,23 @@
  *   - Company "About" description
  *   - Products/solutions offered
  *
- * Runs as two separate research calls (LinkedIn, then the discovered
- * website) instead of one opaque call, writing a real progress checkpoint
- * to intel_hub_intake after each step — the client shows an actual
- * percentage instead of an indeterminate spinner.
+ * Runs as separate research calls (LinkedIn, then the discovered website)
+ * instead of one opaque call, writing a real progress checkpoint to
+ * intel_hub_intake after each step — the client shows an actual percentage
+ * instead of an indeterminate spinner.
+ *
+ * Two entry points, matching the two ways a user can kick off research:
+ *   - { linkedin_url } — full pass starting from the LinkedIn page (also
+ *     discovers/overwrites industry, size, country, website).
+ *   - { website_url } — website-only pass when the user has typed their own
+ *     website instead: only refines solutions/about, leaves everything else
+ *     (industry, size, country, LinkedIn URL) untouched.
  *
  * Stores enriched data in intel_hub_intake.
  *
  * Auth: Bearer <user JWT>
  * POST body: { "linkedin_url": "https://linkedin.com/company/acme" }
+ *         or: { "website_url": "https://company.com" }
  * Required secrets: ANTHROPIC_API_KEY
  */
 
@@ -150,9 +158,11 @@ Deno.serve(async (req: Request) => {
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
 
-  let body: { linkedin_url?: string };
+  let body: { linkedin_url?: string; website_url?: string };
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400, h); }
-  if (!body.linkedin_url) return json({ error: "linkedin_url required" }, 400, h);
+  if (!body.linkedin_url && !body.website_url) {
+    return json({ error: "linkedin_url or website_url required" }, 400, h);
+  }
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
@@ -162,55 +172,97 @@ Deno.serve(async (req: Request) => {
       company_enrichment_step: step,
     }).eq("user_id", user.id);
 
-  // Mark enrichment as running
-  await supa.from("intel_hub_intake").upsert({
-    user_id: user.id,
-    company_linkedin_url: body.linkedin_url,
-    company_enrichment_status: "running",
-    company_enrichment_progress: 5,
-    company_enrichment_step: "Buscando tu empresa en LinkedIn…",
-  }, { onConflict: "user_id" });
+  const fail = async (err: unknown) => {
+    console.error("[enrich] error:", err);
+    await supa.from("intel_hub_intake").update({
+      company_enrichment_status: "error",
+      company_enrichment_step:   "Ocurrió un error durante la investigación",
+    }).eq("user_id", user.id);
+  };
 
-  const work = (async () => {
-    try {
-      const li = await researchLinkedIn(ANTHROPIC_KEY, body.linkedin_url!);
+  let work: Promise<void>;
 
-      let solutions = "";
-      let about = li.about;
-      if (li.website) {
-        await setProgress(55, "Revisando tu página web…");
-        try {
-          const site = await researchWebsite(ANTHROPIC_KEY, li.website, li.about);
-          solutions = site.solutions;
-          if (site.about) about = site.about;
-        } catch (siteErr) {
-          console.warn("[enrich] website step failed, keeping LinkedIn-only data:", siteErr);
+  if (body.linkedin_url) {
+    // Full pass starting from LinkedIn: also discovers/overwrites industry,
+    // size, country and website — the user explicitly asked to redo the
+    // whole research from scratch.
+    await supa.from("intel_hub_intake").upsert({
+      user_id: user.id,
+      company_linkedin_url: body.linkedin_url,
+      company_enrichment_status: "running",
+      company_enrichment_progress: 5,
+      company_enrichment_step: "Buscando tu empresa en LinkedIn…",
+    }, { onConflict: "user_id" });
+
+    work = (async () => {
+      try {
+        const li = await researchLinkedIn(ANTHROPIC_KEY, body.linkedin_url!);
+
+        let solutions = "";
+        let about = li.about;
+        if (li.website) {
+          await setProgress(55, "Revisando tu página web…");
+          try {
+            const site = await researchWebsite(ANTHROPIC_KEY, li.website, li.about);
+            solutions = site.solutions;
+            if (site.about) about = site.about;
+          } catch (siteErr) {
+            console.warn("[enrich] website step failed, keeping LinkedIn-only data:", siteErr);
+          }
+        } else {
+          await setProgress(55, "No encontramos una página web pública en tu LinkedIn…");
         }
-      } else {
-        await setProgress(55, "No encontramos una página web pública en tu LinkedIn…");
-      }
 
-      await supa.from("intel_hub_intake").update({
-        company_industry:            li.industry,
-        company_employee_count:      li.employee_count,
-        company_country:             li.country,
-        company_website:             li.website,
-        company_about:               about,
-        company_solutions:           solutions,
-        company_enrichment_status:   "done",
-        company_enrichment_progress: 100,
-        company_enrichment_step:     "Listo",
-        company_enrichment_at:       new Date().toISOString(),
-      }).eq("user_id", user.id);
-      console.log(`[enrich] ✓ ${user.id}`);
-    } catch (err) {
-      console.error("[enrich] error:", err);
-      await supa.from("intel_hub_intake").update({
-        company_enrichment_status: "error",
-        company_enrichment_step:   "Ocurrió un error durante la investigación",
-      }).eq("user_id", user.id);
-    }
-  })();
+        await supa.from("intel_hub_intake").update({
+          company_industry:            li.industry,
+          company_employee_count:      li.employee_count,
+          company_country:             li.country,
+          company_website:             li.website,
+          company_about:               about,
+          company_solutions:           solutions,
+          company_enrichment_status:   "done",
+          company_enrichment_progress: 100,
+          company_enrichment_step:     "Listo",
+          company_enrichment_at:       new Date().toISOString(),
+        }).eq("user_id", user.id);
+        console.log(`[enrich] ✓ linkedin ${user.id}`);
+      } catch (err) {
+        await fail(err);
+      }
+    })();
+  } else {
+    // Website-only pass: the user typed their own website — only refine
+    // solutions/about from it, leave industry/size/country/LinkedIn as-is.
+    const website = body.website_url!;
+    const { data: existing } = await supa.from("intel_hub_intake")
+      .select("company_about").eq("user_id", user.id).maybeSingle();
+
+    await supa.from("intel_hub_intake").upsert({
+      user_id: user.id,
+      company_website: website,
+      company_enrichment_status: "running",
+      company_enrichment_progress: 20,
+      company_enrichment_step: "Revisando tu página web…",
+    }, { onConflict: "user_id" });
+
+    work = (async () => {
+      try {
+        const site = await researchWebsite(ANTHROPIC_KEY, website, existing?.company_about ?? "");
+        await supa.from("intel_hub_intake").update({
+          company_website:             website,
+          company_solutions:           site.solutions,
+          ...(site.about ? { company_about: site.about } : {}),
+          company_enrichment_status:   "done",
+          company_enrichment_progress: 100,
+          company_enrichment_step:     "Listo",
+          company_enrichment_at:       new Date().toISOString(),
+        }).eq("user_id", user.id);
+        console.log(`[enrich] ✓ website ${user.id}`);
+      } catch (err) {
+        await fail(err);
+      }
+    })();
+  }
 
   // @ts-ignore
   if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {

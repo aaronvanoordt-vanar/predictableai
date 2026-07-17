@@ -4,6 +4,7 @@
  */
 (function () {
   'use strict';
+  const SVG_SPARK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18 9.5l-4.2 1.8L12 16l-1.8-4.7L6 9.5l4.2-1.8z"/><path d="M18.5 14l.9 2.3 2.1.9-2.1.9-.9 2.3-.9-2.3-2.1-.9 2.1-.9z"/></svg>';
   const SECTIONS = [
     { key: 'revenue_opportunities',        title: 'Revenue Opportunities',   cadence: 'weekly',  order: 1, locked: false, icon: '💰', color: '#0EA968' },
     { key: 'competitor_threat_radar',      title: 'Competitor Threats',      cadence: 'daily',   order: 2, locked: false, icon: '⚡', color: '#D64545' },
@@ -227,25 +228,27 @@
       <div class="ihx-research">
         <div class="ihx-research-hint">
           Esto es lo que la plataforma investigó de tu empresa para personalizar el hub y los mensajes de prospección.
-          Corrígelo si algo no es exacto — tus cambios se usan de inmediato.
+          Corrígelo si algo no es exacto, o vuelve a investigar con IA — tus cambios se usan de inmediato.
         </div>
-        <div class="ihx-research-retry">
-          <div class="ihx-research-retry-top">
-            <span>${isRunning
-              ? (intake.company_enrichment_step || 'Investigando…') + ' — esta página se actualiza sola cuando termine.'
-              : stale
-                ? 'La búsqueda anterior tardó demasiado y no terminó. Puedes intentarlo de nuevo.'
-                : 'Si algo no es correcto (p. ej. el país o la página web), puedes volver a investigar desde tu LinkedIn — esto reemplaza los campos de abajo con lo que encuentre.'}</span>
-            <button type="button" class="ihx-btn-force" id="ihx-retry-enrich" ${(isRunning || !linkedinUrl) ? 'disabled' : ''}>
-              ${isRunning ? 'Buscando…' : 'Actualizar investigación'}
-            </button>
+        ${stale ? `<div class="ihx-research-warn">La búsqueda anterior tardó demasiado y no terminó. Puedes intentarlo de nuevo.</div>` : ''}
+        <div class="ihx-research-panel">
+          <div class="ihx-research-panel-text">
+            <strong>Investigar desde tu LinkedIn</strong>
+            <span>Vuelve a buscar tu página web y el contexto de tu empresa a partir del LinkedIn que registraste al crear tu cuenta. Esto reemplaza los campos de abajo con lo que encuentre.</span>
           </div>
-          ${isRunning ? `
+          <button type="button" class="ihx-btn-ai" id="ihx-retry-enrich-linkedin" ${(isRunning || !linkedinUrl) ? 'disabled' : ''}>
+            ${SVG_SPARK}<span>${isRunning ? 'Investigando…' : 'Investigar con IA'}</span>
+          </button>
+        </div>
+        ${isRunning ? `
+          <div class="ihx-progress-panel">
+            <span class="ihx-progress-label">${escapeHtml(intake.company_enrichment_step || 'Investigando…')}</span>
             <div class="ihx-progress-row">
               <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${intake.company_enrichment_progress || 0}%"></div></div>
               <span class="ihx-progress-pct">${intake.company_enrichment_progress || 0}%</span>
-            </div>` : ''}
-        </div>
+            </div>
+            <span class="ihx-progress-note">Esta página se actualiza sola cuando termine.</span>
+          </div>` : ''}
         <div class="ihx-research-meta">
           <span class="ihx-research-status ihx-rs-${escapeHtml(brief.status || 'pending')}">${escapeHtml(statusLabel)}</span>
           ${brief.generated_at ? `<span>${escapeHtml(sourceLabel)} · ${fmtRelative(new Date(brief.generated_at))}</span>` : ''}
@@ -254,7 +257,12 @@
         <form id="ihx-research-form">
           <label class="ihx-field">
             <span>Página web considerada</span>
-            <input type="url" name="company_website" value="${escapeHtml(intake.company_website || '')}" placeholder="https://tuempresa.com">
+            <div class="ihx-field-with-btn">
+              <input type="url" id="ihx-website-input" name="company_website" value="${escapeHtml(intake.company_website || '')}" placeholder="https://tuempresa.com">
+              <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-website" ${isRunning ? 'disabled' : ''} title="Investigar a partir de esta página">
+                ${SVG_SPARK}<span>Investigar</span>
+              </button>
+            </div>
           </label>
           <div class="ihx-field-row">
             <label class="ihx-field">
@@ -303,8 +311,15 @@
       </div>`;
     const form = document.getElementById('ihx-research-form');
     if (form) form.addEventListener('submit', saveResearch);
-    const retryBtn = document.getElementById('ihx-retry-enrich');
-    if (retryBtn) retryBtn.addEventListener('click', () => retryEnrichment(linkedinUrl));
+    const retryLinkedinBtn = document.getElementById('ihx-retry-enrich-linkedin');
+    if (retryLinkedinBtn) retryLinkedinBtn.addEventListener('click', () => retryEnrichmentFromLinkedin(linkedinUrl));
+    const retryWebsiteBtn = document.getElementById('ihx-retry-enrich-website');
+    const websiteInput = document.getElementById('ihx-website-input');
+    if (retryWebsiteBtn) retryWebsiteBtn.addEventListener('click', () => {
+      const website = (websiteInput?.value || '').trim();
+      if (!website) { websiteInput?.focus(); return; }
+      retryEnrichmentFromWebsite(website);
+    });
     const solutionsList = document.getElementById('ihx-solutions-list');
     const addBtn = document.getElementById('ihx-solutions-add');
     if (addBtn) addBtn.addEventListener('click', () => {
@@ -318,12 +333,12 @@
       else rm.closest('.ihx-chip-row').querySelector('.ihx-solution-input').value = '';
     });
   }
-  // Vuelve a disparar enrich-company (LinkedIn → website/industria/about/soluciones)
-  // a demanda del usuario — misma función que usa el onboarding. Reemplaza los
-  // campos de investigación con lo que encuentre en esta nueva corrida. El
-  // resultado llega solo vía subscribeResearchRealtime() — no hay que hacer
-  // polling ni pedirle al usuario que refresque la página.
-  async function retryEnrichment(linkedinUrl) {
+  // Dispara enrich-company a demanda del usuario — misma función que usa el
+  // onboarding. Dos entradas posibles según qué botón se use: desde LinkedIn
+  // (reemplaza todo: industria/tamaño/país/web) o desde una web puesta a mano
+  // (solo refina soluciones/contexto). El resultado llega solo vía
+  // subscribeResearchRealtime() — no hay que hacer polling ni refrescar.
+  async function retryEnrichmentFromLinkedin(linkedinUrl) {
     if (!STATE.user || !linkedinUrl) return;
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
@@ -341,7 +356,29 @@
         body: JSON.stringify({ linkedin_url: linkedinUrl }),
       });
     } catch (e) {
-      console.error('[research] retry enrichment error', e);
+      console.error('[research] retry enrichment from linkedin error', e);
+    }
+  }
+  async function retryEnrichmentFromWebsite(website) {
+    if (!STATE.user || !website) return;
+    try {
+      const session = (await window.supabaseClient.auth.getSession()).data.session;
+      STATE.intake = {
+        ...STATE.intake,
+        company_website: website,
+        company_enrichment_status: 'running',
+        company_enrichment_progress: 20,
+        company_enrichment_step: 'Revisando tu página web…',
+        updated_at: new Date().toISOString(),
+      };
+      renderResearch();
+      await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+        body: JSON.stringify({ website_url: website }),
+      });
+    } catch (e) {
+      console.error('[research] retry enrichment from website error', e);
     }
   }
   async function saveResearch(ev) {
@@ -1050,25 +1087,54 @@
 /* ── RESEARCH PAGE ── */
 .ihx-research { padding: 24px 28px; max-width: 720px; }
 .ihx-research-hint { font-size: 12.5px; color: var(--ink-4, #8A909C); line-height: 1.6; margin-bottom: 14px; }
-.ihx-research-retry {
-  padding: 12px 14px; margin-bottom: 16px;
+.ihx-research-warn {
+  padding: 10px 14px; margin-bottom: 12px;
   background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.25); border-radius: 8px;
   font-size: 12.5px; color: var(--ink-2, #3D4352); line-height: 1.5;
 }
-.ihx-research-retry-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
-.ihx-research-retry .ihx-btn-force { flex-shrink: 0; }
-.ihx-progress-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.ihx-research-panel {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 14px 16px; margin-bottom: 12px;
+  background: var(--surface2, #F6F7F9); border: 1px solid var(--hair, rgba(10,10,15,0.08)); border-radius: 10px;
+}
+.ihx-research-panel-text { display: flex; flex-direction: column; gap: 3px; min-width: 220px; flex: 1; }
+.ihx-research-panel-text strong { font-size: 13px; font-weight: 600; color: var(--ink, #16181D); }
+.ihx-research-panel-text span { font-size: 12px; color: var(--ink-4, #8A909C); line-height: 1.5; }
+/* Botones "generar con IA": mismo degradado que el resto de la app
+   (Generar mensajes con IA, etc.) para que se lean como acciones de IA. */
+.ihx-btn-ai {
+  display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0;
+  background: linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%);
+  color: #fff; border: 0; border-radius: 8px; padding: 9px 16px;
+  font: inherit; font-weight: 600; font-size: 12.5px; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(31,75,255,.25), 0 8px 20px -10px rgba(90,96,240,.6);
+  transition: filter .15s, box-shadow .15s, transform .1s;
+  white-space: nowrap;
+}
+.ihx-btn-ai:hover:not(:disabled) { filter: brightness(1.07); box-shadow: 0 1px 2px rgba(31,75,255,.3), 0 12px 28px -10px rgba(90,96,240,.78); transform: translateY(-1px); }
+.ihx-btn-ai:disabled { opacity: .5; cursor: not-allowed; filter: none; box-shadow: none; transform: none; }
+.ihx-btn-ai svg { flex-shrink: 0; }
+.ihx-btn-ai-sm { padding: 8px 12px; font-size: 12px; }
+.ihx-field-with-btn { display: flex; gap: 8px; align-items: stretch; }
+.ihx-field-with-btn input { flex: 1; }
+.ihx-progress-panel {
+  padding: 12px 16px; margin-bottom: 16px; border-radius: 10px;
+  background: var(--accent-soft-2, rgba(31,75,255,0.05)); border: 1px solid rgba(31,75,255,0.18);
+}
+.ihx-progress-label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-2, #3D4352); margin-bottom: 8px; }
+.ihx-progress-note { display: block; margin-top: 6px; font-size: 11px; color: var(--ink-4, #9CA2AE); }
+.ihx-progress-row { display: flex; align-items: center; gap: 10px; }
 .ihx-progress-bar {
   flex: 1; height: 6px; border-radius: 3px; overflow: hidden;
-  background: rgba(245,158,11,0.18);
+  background: rgba(31,75,255,0.12);
 }
 .ihx-progress-bar-fill {
   height: 100%; border-radius: 3px;
-  background: var(--amber, #C77E12);
+  background: linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%);
   transition: width .6s ease;
 }
 .ihx-progress-pct {
-  flex-shrink: 0; font-size: 11px; font-weight: 700; color: var(--amber, #C77E12);
+  flex-shrink: 0; font-size: 11px; font-weight: 700; color: var(--accent, #1F4BFF);
   font-variant-numeric: tabular-nums; min-width: 30px; text-align: right;
 }
 .ihx-research-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px; font-size: 11.5px; color: var(--ink-4, #9CA2AE); }
