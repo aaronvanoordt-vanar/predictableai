@@ -178,8 +178,17 @@
         event: '*', schema: 'public', table: 'intel_hub_intake',
         filter: `user_id=eq.${STATE.user.id}`,
       }, (payload) => {
+        const prevStatus = STATE.intake?.company_enrichment_status;
         STATE.intake = payload.new || null;
         renderResearch();
+        // Cuando la investigación (LinkedIn o web) termina, el contexto de la
+        // empresa cambió: regeneramos client_brief para que ese contexto fluya
+        // al resto de la plataforma (búsqueda recomendada por recommended_filters,
+        // generate-outreach de 5 capas y, de ahí, el AI Sales Coach). Sin esto
+        // el nuevo contexto quedaría solo en esta pantalla.
+        if (STATE.intake?.company_enrichment_status === 'done' && prevStatus === 'running') {
+          triggerClientBriefRefresh();
+        }
       })
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'client_brief',
@@ -189,6 +198,20 @@
         renderResearch();
       })
       .subscribe();
+  }
+  // Regenera client_brief a partir del intel_hub_intake ya actualizado. Best-effort:
+  // si falla no rompe la pantalla de investigación. El resultado llega solo por
+  // la suscripción realtime a client_brief.
+  async function triggerClientBriefRefresh() {
+    try {
+      const session = (await window.supabaseClient.auth.getSession()).data.session;
+      if (!session) return;
+      await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/generate-client-brief', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+        body: '{}',
+      });
+    } catch (e) { console.warn('[research] client-brief refresh error', e); }
   }
   // Si enrich-company muere a mitad de camino (timeout, crash) sin llegar a
   // escribir status done/error, la fila queda en 'running' para siempre — sin
@@ -255,15 +278,21 @@
           ${brief.status === 'error' && brief.error_message ? `<span class="ihx-research-err">${escapeHtml(brief.error_message)}</span>` : ''}
         </div>
         <form id="ihx-research-form">
-          <label class="ihx-field">
+          <div class="ihx-field">
             <span>Página web considerada</span>
+            <p class="ihx-field-help">No se buscará desde tu LinkedIn registrado, sino desde la página web que escribas aquí. Al investigarla se actualizará el contexto de <strong>toda tu empresa</strong> (industria, soluciones y demás).</p>
             <div class="ihx-field-with-btn">
               <input type="url" id="ihx-website-input" name="company_website" value="${escapeHtml(intake.company_website || '')}" placeholder="https://tuempresa.com">
               <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-website" ${isRunning ? 'disabled' : ''} title="Investigar a partir de esta página">
-                ${SVG_SPARK}<span>Investigar</span>
+                ${SVG_SPARK}<span>${isRunning ? 'Investigando…' : 'Investigar con IA'}</span>
               </button>
             </div>
-          </label>
+            ${isRunning ? `
+              <div class="ihx-progress-row" style="margin-top:10px">
+                <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${intake.company_enrichment_progress || 0}%"></div></div>
+                <span class="ihx-progress-pct">${intake.company_enrichment_progress || 0}%</span>
+              </div>` : ''}
+          </div>
           <div class="ihx-field-row">
             <label class="ihx-field">
               <span>Industria</span>
@@ -1147,7 +1176,11 @@
 .ihx-research-status.ihx-rs-generating { color: var(--accent, #1F4BFF); background: rgba(31,75,255,0.12); }
 .ihx-research-err { color: var(--red, #D64545); }
 .ihx-field { display: block; margin-bottom: 14px; }
-.ihx-field span { display: block; font-size: 11.5px; font-weight: 600; color: var(--ink-3, #5A6272); margin-bottom: 5px; }
+/* Solo el label directo del campo — NO los <span> anidados dentro de botones
+   (p. ej. el texto blanco de los botones "Investigar con IA"). */
+.ihx-field > span { display: block; font-size: 11.5px; font-weight: 600; color: var(--ink-3, #5A6272); margin-bottom: 5px; }
+.ihx-field-help { margin: 0 0 8px; font-size: 11.5px; color: var(--ink-4, #8A909C); line-height: 1.5; }
+.ihx-field-help strong { color: var(--ink-3, #5A6272); font-weight: 700; }
 .ihx-field input, .ihx-field textarea {
   width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; color: var(--ink, #16181D);
   background: var(--surface, #FFFFFF); border: 1px solid var(--hair-3, rgba(10,10,15,0.13));
