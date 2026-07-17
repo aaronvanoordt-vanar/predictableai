@@ -158,7 +158,7 @@
         .select('company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, company_enrichment_status, company_enrichment_at, company_enrichment_progress, company_enrichment_step, company_linkedin_url, updated_at')
         .eq('user_id', STATE.user.id).maybeSingle(),
       window.supabaseClient.from('client_brief')
-        .select('what_it_does, mechanism, key_outcomes, positional_phrase, brand_promise, status, source, generated_at, error_message')
+        .select('what_it_does, mechanism, key_outcomes, positional_phrase, brand_promise, status, source, generated_at, error_message, updated_at')
         .eq('user_id', STATE.user.id).maybeSingle(),
       window.supabaseClient.from('profiles').select('linkedin_company_url').eq('id', STATE.user.id).maybeSingle(),
     ]);
@@ -222,6 +222,17 @@
     const started = new Date(intake.updated_at || 0).getTime();
     return (Date.now() - started) > STALE_ENRICHING_MS;
   }
+  // Mismo problema puede pasar en generate-client-brief (llamada a Claude con
+  // varias búsquedas web, más lenta todavía): si la función se cae a mitad de
+  // camino, client_brief queda en 'generating' para siempre y el usuario ve
+  // "Generando…" sin fin. Le damos más margen (5 min) porque esta llamada es
+  // más pesada que la de enrich-company.
+  const STALE_BRIEF_MS = 5 * 60 * 1000;
+  function isStaleBrief(brief) {
+    if (!brief || brief.status !== 'generating') return false;
+    const started = new Date(brief.updated_at || 0).getTime();
+    return (Date.now() - started) > STALE_BRIEF_MS;
+  }
   // company_solutions se guarda como texto separado por comas; en la UI se
   // edita como una lista de cajas individuales, una por solución.
   function parseSolutions(raw) {
@@ -235,12 +246,17 @@
     const brief = STATE.brief || {};
     const linkedinUrl = intake.company_linkedin_url || STATE.profile?.linkedin_company_url || null;
     const outcomes = Array.isArray(brief.key_outcomes) ? brief.key_outcomes.join('\n') : '';
-    const statusLabel = brief.status === 'ready' ? 'Lista'
+    const briefStale = isStaleBrief(brief);
+    const statusLabel = briefStale ? 'Tardó demasiado'
+      : brief.status === 'ready' ? 'Lista'
       : brief.status === 'generating' ? 'Generando…'
       : brief.status === 'error' ? 'Error' : 'Sin generar';
     const sourceLabel = brief.source === 'edited' ? 'Editado manualmente' : 'Generado automáticamente';
     const stale = isStaleEnriching(intake);
     const isRunning = intake.company_enrichment_status === 'running' && !stale;
+    // Qué acción disparó la corrida actual — para mostrar UNA sola barra de
+    // progreso (junto al botón que se usó), no las dos a la vez.
+    const runSource = isRunning ? (STATE.researchSource || 'linkedin') : null;
     const solutions = parseSolutions(intake.company_solutions);
     const solutionRow = (val) => `
       <div class="ihx-chip-row">
@@ -263,7 +279,7 @@
             ${SVG_SPARK}<span>${isRunning ? 'Investigando…' : 'Investigar con IA'}</span>
           </button>
         </div>
-        ${isRunning ? `
+        ${(runSource === 'linkedin') ? `
           <div class="ihx-progress-panel">
             <span class="ihx-progress-label">${escapeHtml(intake.company_enrichment_step || 'Investigando…')}</span>
             <div class="ihx-progress-row">
@@ -273,9 +289,12 @@
             <span class="ihx-progress-note">Esta página se actualiza sola cuando termine.</span>
           </div>` : ''}
         <div class="ihx-research-meta">
-          <span class="ihx-research-status ihx-rs-${escapeHtml(brief.status || 'pending')}">${escapeHtml(statusLabel)}</span>
+          <span class="ihx-research-status ihx-rs-${escapeHtml(briefStale ? 'error' : (brief.status || 'pending'))}">${escapeHtml(statusLabel)}</span>
           ${brief.generated_at ? `<span>${escapeHtml(sourceLabel)} · ${fmtRelative(new Date(brief.generated_at))}</span>` : ''}
           ${brief.status === 'error' && brief.error_message ? `<span class="ihx-research-err">${escapeHtml(brief.error_message)}</span>` : ''}
+          ${briefStale ? `
+            <span class="ihx-research-err">La actualización del contexto tardó demasiado y no terminó.</span>
+            <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-brief">${SVG_SPARK}<span>Reintentar</span></button>` : ''}
         </div>
         <form id="ihx-research-form">
           <div class="ihx-field">
@@ -284,15 +303,17 @@
             <div class="ihx-field-with-btn">
               <input type="url" id="ihx-website-input" name="company_website" value="${escapeHtml(intake.company_website || '')}" placeholder="https://tuempresa.com">
               <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-website" ${isRunning ? 'disabled' : ''} title="Investigar a partir de esta página">
-                ${SVG_SPARK}<span>${isRunning ? 'Investigando…' : 'Investigar con IA'}</span>
+                ${SVG_SPARK}<span>${runSource === 'website' ? 'Investigando…' : 'Investigar con IA'}</span>
               </button>
             </div>
-            ${isRunning ? `
+            ${(runSource === 'website') ? `
               <div class="ihx-progress-row" style="margin-top:10px">
                 <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${intake.company_enrichment_progress || 0}%"></div></div>
                 <span class="ihx-progress-pct">${intake.company_enrichment_progress || 0}%</span>
-              </div>` : ''}
+              </div>
+              <span class="ihx-progress-note">${escapeHtml(intake.company_enrichment_step || 'Investigando…')} — esta página se actualiza sola cuando termine.</span>` : ''}
           </div>
+          <p class="ihx-field-help">Industria, tamaño y país se obtuvieron de tu LinkedIn registrado — investigar solo tu página web no los actualiza. Corrígelos a mano si hace falta, o usa "Investigar con IA" desde LinkedIn arriba para volver a buscarlos.</p>
           <div class="ihx-field-row">
             <label class="ihx-field">
               <span>Industria</span>
@@ -349,6 +370,12 @@
       if (!website) { websiteInput?.focus(); return; }
       retryEnrichmentFromWebsite(website);
     });
+    const retryBriefBtn = document.getElementById('ihx-retry-brief');
+    if (retryBriefBtn) retryBriefBtn.addEventListener('click', () => {
+      STATE.brief = { ...STATE.brief, status: 'generating', updated_at: new Date().toISOString(), error_message: null };
+      renderResearch();
+      triggerClientBriefRefresh();
+    });
     const solutionsList = document.getElementById('ihx-solutions-list');
     const addBtn = document.getElementById('ihx-solutions-add');
     if (addBtn) addBtn.addEventListener('click', () => {
@@ -371,6 +398,7 @@
     if (!STATE.user || !linkedinUrl) return;
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
+      STATE.researchSource = 'linkedin';
       STATE.intake = {
         ...STATE.intake,
         company_enrichment_status: 'running',
@@ -392,6 +420,7 @@
     if (!STATE.user || !website) return;
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
+      STATE.researchSource = 'website';
       STATE.intake = {
         ...STATE.intake,
         company_website: website,
