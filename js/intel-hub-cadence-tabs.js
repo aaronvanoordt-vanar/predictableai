@@ -154,7 +154,7 @@
     if (!STATE.user) return;
     const [{ data: intake }, { data: brief }, { data: profile }] = await Promise.all([
       window.supabaseClient.from('intel_hub_intake')
-        .select('company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, company_enrichment_status, company_enrichment_at, company_linkedin_url, updated_at')
+        .select('company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, company_enrichment_status, company_enrichment_at, company_enrichment_progress, company_enrichment_step, company_linkedin_url, updated_at')
         .eq('user_id', STATE.user.id).maybeSingle(),
       window.supabaseClient.from('client_brief')
         .select('what_it_does, mechanism, key_outcomes, positional_phrase, brand_promise, status, source, generated_at, error_message')
@@ -232,7 +232,7 @@
         <div class="ihx-research-retry">
           <div class="ihx-research-retry-top">
             <span>${isRunning
-              ? 'Buscando tu página web y contexto de empresa a partir de tu LinkedIn… esta página se actualiza sola cuando termine.'
+              ? (intake.company_enrichment_step || 'Investigando…') + ' — esta página se actualiza sola cuando termine.'
               : stale
                 ? 'La búsqueda anterior tardó demasiado y no terminó. Puedes intentarlo de nuevo.'
                 : 'Si algo no es correcto (p. ej. el país o la página web), puedes volver a investigar desde tu LinkedIn — esto reemplaza los campos de abajo con lo que encuentre.'}</span>
@@ -240,7 +240,11 @@
               ${isRunning ? 'Buscando…' : 'Actualizar investigación'}
             </button>
           </div>
-          ${isRunning ? `<div class="ihx-progress-bar"><div class="ihx-progress-bar-fill"></div></div>` : ''}
+          ${isRunning ? `
+            <div class="ihx-progress-row">
+              <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${intake.company_enrichment_progress || 0}%"></div></div>
+              <span class="ihx-progress-pct">${intake.company_enrichment_progress || 0}%</span>
+            </div>` : ''}
         </div>
         <div class="ihx-research-meta">
           <span class="ihx-research-status ihx-rs-${escapeHtml(brief.status || 'pending')}">${escapeHtml(statusLabel)}</span>
@@ -323,7 +327,13 @@
     if (!STATE.user || !linkedinUrl) return;
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
-      STATE.intake = { ...STATE.intake, company_enrichment_status: 'running', updated_at: new Date().toISOString() };
+      STATE.intake = {
+        ...STATE.intake,
+        company_enrichment_status: 'running',
+        company_enrichment_progress: 5,
+        company_enrichment_step: 'Buscando tu empresa en LinkedIn…',
+        updated_at: new Date().toISOString(),
+      };
       renderResearch();
       await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
         method: 'POST',
@@ -1047,18 +1057,19 @@
 }
 .ihx-research-retry-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .ihx-research-retry .ihx-btn-force { flex-shrink: 0; }
+.ihx-progress-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .ihx-progress-bar {
-  margin-top: 10px; height: 4px; border-radius: 2px; overflow: hidden;
+  flex: 1; height: 6px; border-radius: 3px; overflow: hidden;
   background: rgba(245,158,11,0.18);
 }
 .ihx-progress-bar-fill {
-  height: 100%; width: 40%; border-radius: 2px;
+  height: 100%; border-radius: 3px;
   background: var(--amber, #C77E12);
-  animation: ihx-progress-slide 1.3s ease-in-out infinite;
+  transition: width .6s ease;
 }
-@keyframes ihx-progress-slide {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(250%); }
+.ihx-progress-pct {
+  flex-shrink: 0; font-size: 11px; font-weight: 700; color: var(--amber, #C77E12);
+  font-variant-numeric: tabular-nums; min-width: 30px; text-align: right;
 }
 .ihx-research-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px; font-size: 11.5px; color: var(--ink-4, #9CA2AE); }
 .ihx-research-status {
