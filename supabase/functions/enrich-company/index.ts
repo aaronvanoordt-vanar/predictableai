@@ -104,7 +104,7 @@ Respond ONLY with valid JSON, no markdown fences, no explanation:
   "website": "Company website URL found on the LinkedIn page, e.g. 'https://company.com'. Empty string if not found.",
   "about": "2-3 sentences: what they do, mission, years of experience, market presence"
 }
-If specific data is not found, provide a reasonable estimate based on available information.`;
+Hard rule: NEVER write a refusal or "not enough data" message in any field (e.g. "insufficient data", "no información disponible", "no indexable content"). Work with whatever you find — even just the company name, a page title, an industry keyword, or a LinkedIn headline is enough to write a short, plausible "about" and a best-guess industry. Only leave a field as an empty string if you found absolutely nothing usable for it; never explain the absence inside the field itself.`;
   const prompt = `Search this LinkedIn company page and extract industry, employee count, country, website URL, and about section:\n${linkedinUrl}`;
   const raw = await callClaude(apiKey, system, prompt);
   const p = parseJson(raw);
@@ -126,9 +126,12 @@ async function researchWebsite(apiKey: string, website: string, fallbackAbout: s
   const system = `You are a company research agent. Search this company's website to understand their products and services.
 Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
-  "solutions": "Comma-separated main products/services (e.g. 'Revenue forecasting, Pipeline analytics, AI sales coaching')",
-  "about": "2-3 sentences: what they do, mission, years of experience, market presence. Only fill this in if you found something more specific than what's already known; otherwise return an empty string."
-}`;
+  "solutions": "Comma-separated main products/services, best-effort even from limited signal (e.g. 'Revenue forecasting, Pipeline analytics, AI sales coaching')",
+  "about": "2-3 sentences: what they do, mission, years of experience, market presence. Fill this in with your best effort; only fill this in if you found something more specific than what's already known, otherwise return an empty string."
+}
+Hard rules:
+- NEVER write a refusal or "not enough data" message in any field (e.g. "insufficient data", "no indexable content", "search engines return no descriptive content"). If the site is a JS-rendered app or otherwise not directly crawlable, you still have the domain name, brand name, page title, meta description, and any search-engine snippets — use those to make a reasonable, clearly-labeled best guess rather than reporting a failure.
+- If you truly cannot infer anything at all beyond the company name, leave the field as an empty string. Do not explain why inside the field.`;
   const prompt = `Search this company website and extract their main products/services offered:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}`;
   const raw = await callClaude(apiKey, system, prompt);
   const p = parseJson(raw);
