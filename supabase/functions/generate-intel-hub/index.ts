@@ -742,7 +742,7 @@ async function callClaude(
     },
     body: JSON.stringify({
       model,
-      max_tokens: 4096,
+      max_tokens: 8192,
       system: systemPrompt,
       tools: [{ type: "web_search_20250305", name: "web_search" }],
       messages: [{ role: "user", content: userPrompt }],
@@ -804,25 +804,37 @@ Research task: ${section.researchPrompt}
 
 Search the web now and produce the JSON for this segment, tailored to THIS company — their products, their exact ICP (industries, roles, geographies), and how the findings change their go-to-market actions.`;
 
-  const raw = await callClaude(apiKey, model, systemPrompt, userPrompt);
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  function extractJson(raw: string): GeneratedContent {
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+    let parsed: GeneratedContent;
+    try {
+      parsed = JSON.parse(cleaned) as GeneratedContent;
+    } catch (_) {
+      const start = cleaned.indexOf("{");
+      if (start === -1) throw new Error(`No JSON object found in response: ${cleaned.slice(0, 200)}`);
+      let depth = 0, end = -1;
+      for (let i = start; i < cleaned.length; i++) {
+        if (cleaned[i] === "{") depth++;
+        else if (cleaned[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+      }
+      if (end === -1) throw new Error(`Unterminated JSON object: ${cleaned.slice(0, 200)}`);
+      parsed = JSON.parse(cleaned.slice(start, end + 1)) as GeneratedContent;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Response is not a JSON object");
+    }
+    return parsed;
+  }
 
   let parsed: GeneratedContent;
   try {
-    parsed = JSON.parse(cleaned) as GeneratedContent;
-  } catch (_) {
-    const start = cleaned.indexOf("{");
-    if (start === -1) throw new Error(`No JSON object found in response: ${cleaned.slice(0, 200)}`);
-    let depth = 0, end = -1;
-    for (let i = start; i < cleaned.length; i++) {
-      if (cleaned[i] === "{") depth++;
-      else if (cleaned[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
-    }
-    if (end === -1) throw new Error(`Unterminated JSON object: ${cleaned.slice(0, 200)}`);
-    parsed = JSON.parse(cleaned.slice(start, end + 1)) as GeneratedContent;
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Response is not a JSON object");
+    parsed = extractJson(await callClaude(apiKey, model, systemPrompt, userPrompt));
+  } catch (firstErr) {
+    // A model turn that spends its whole token budget on web-search reasoning
+    // and gets cut off before ever emitting JSON produces pure prose with no
+    // "{" at all — retry once before failing the section outright.
+    console.warn(`[gen] ${section.key}: first attempt failed (${firstErr instanceof Error ? firstErr.message : firstErr}), retrying once`);
+    parsed = extractJson(await callClaude(apiKey, model, systemPrompt, userPrompt));
   }
   // Generated with the v2 prompts — stamp the envelope version if the model
   // omitted it, so the frontend routes it to the segment renderer.
