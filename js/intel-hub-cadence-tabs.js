@@ -19,6 +19,8 @@
     user: null,
     reports: {}, feedback: {}, learning: {},
     generating: false, initialized: false, autoHealed: false,
+    activeTab: 'intel',
+    intake: null, brief: null, researchLoaded: false, researchDirty: false, researchSaving: false,
   };
   function log(...a) { console.log('[intel-hub-v4]', ...a); }
   async function waitForSupabase() {
@@ -109,14 +111,25 @@
         <span class="ihx-toolbar-hint">Cada ítem cuesta 2 créditos al actualizarse · gratis durante la beta</span>
       </div>
       <div class="ihx-progress" id="ih-progress" style="display:none"></div>
-      <div id="ihx-summary"></div>
-      <div class="ihx-modules" id="ihx-body"></div>`;
+      <div class="ihx-tabstrip" id="ihx-tabstrip">
+        <button class="ihx-tab is-active" data-tab="intel">Inteligencia</button>
+        <button class="ihx-tab" data-tab="research">Investigación</button>
+      </div>
+      <div id="ihx-pane-intel">
+        <div id="ihx-summary"></div>
+        <div class="ihx-modules" id="ihx-body"></div>
+      </div>
+      <div id="ihx-pane-research" style="display:none"></div>`;
     container.appendChild(wrap);
     wrap.querySelector('#ih-btn-generate').addEventListener('click', () => generateAll({ force: false }));
     wrap.querySelector('#ih-btn-generate-all').addEventListener('click', () => {
       if (confirm('Esto regenera las 9 secciones (saltea cadence). ¿Continuar?')) {
         generateAll({ force: true });
       }
+    });
+    wrap.querySelector('#ihx-tabstrip').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-tab]');
+      if (btn) switchTab(btn.dataset.tab);
     });
     wrap.addEventListener('click', async (ev) => {
       const fb = ev.target.closest('[data-fb]');
@@ -125,6 +138,152 @@
     injectStyles();
     renderDashboard();
     autoHealStale();
+  }
+  // ─── TABS ────────────────────────────────────────────────
+  function switchTab(tab) {
+    STATE.activeTab = tab;
+    const strip = document.getElementById('ihx-tabstrip');
+    if (strip) strip.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('is-active', b.dataset.tab === tab));
+    const intelPane = document.getElementById('ihx-pane-intel');
+    const researchPane = document.getElementById('ihx-pane-research');
+    if (intelPane) intelPane.style.display = tab === 'intel' ? '' : 'none';
+    if (researchPane) researchPane.style.display = tab === 'research' ? '' : 'none';
+    if (tab === 'research') {
+      if (!STATE.researchLoaded) loadResearch().then(renderResearch);
+      else renderResearch();
+    }
+  }
+  // ─── RESEARCH TAB (qué investigó la plataforma sobre la empresa) ──
+  async function loadResearch() {
+    if (!STATE.user) return;
+    const [{ data: intake }, { data: brief }] = await Promise.all([
+      window.supabaseClient.from('intel_hub_intake')
+        .select('company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, company_enrichment_status')
+        .eq('user_id', STATE.user.id).maybeSingle(),
+      window.supabaseClient.from('client_brief')
+        .select('what_it_does, mechanism, key_outcomes, positional_phrase, brand_promise, status, source, generated_at, error_message')
+        .eq('user_id', STATE.user.id).maybeSingle(),
+    ]);
+    STATE.intake = intake || null;
+    STATE.brief = brief || null;
+    STATE.researchLoaded = true;
+  }
+  function renderResearch() {
+    const el = document.getElementById('ihx-pane-research');
+    if (!el) return;
+    const intake = STATE.intake || {};
+    const brief = STATE.brief || {};
+    const outcomes = Array.isArray(brief.key_outcomes) ? brief.key_outcomes.join('\n') : '';
+    const statusLabel = brief.status === 'ready' ? 'Lista'
+      : brief.status === 'generating' ? 'Generando…'
+      : brief.status === 'error' ? 'Error' : 'Sin generar';
+    const sourceLabel = brief.source === 'edited' ? 'Editado manualmente' : 'Generado automáticamente';
+    el.innerHTML = `
+      <div class="ihx-research">
+        <div class="ihx-research-hint">
+          Esto es lo que la plataforma investigó de tu empresa para personalizar el hub y los mensajes de prospección.
+          Corrígelo si algo no es exacto — tus cambios se usan de inmediato.
+        </div>
+        <div class="ihx-research-meta">
+          <span class="ihx-research-status ihx-rs-${escapeHtml(brief.status || 'pending')}">${escapeHtml(statusLabel)}</span>
+          ${brief.generated_at ? `<span>${escapeHtml(sourceLabel)} · ${fmtRelative(new Date(brief.generated_at))}</span>` : ''}
+          ${brief.status === 'error' && brief.error_message ? `<span class="ihx-research-err">${escapeHtml(brief.error_message)}</span>` : ''}
+        </div>
+        <form id="ihx-research-form">
+          <label class="ihx-field">
+            <span>Página web considerada</span>
+            <input type="url" name="company_website" value="${escapeHtml(intake.company_website || '')}" placeholder="https://tuempresa.com">
+          </label>
+          <div class="ihx-field-row">
+            <label class="ihx-field">
+              <span>Industria</span>
+              <input type="text" name="company_industry" value="${escapeHtml(intake.company_industry || '')}">
+            </label>
+            <label class="ihx-field">
+              <span>Tamaño</span>
+              <input type="text" name="company_employee_count" value="${escapeHtml(intake.company_employee_count || '')}">
+            </label>
+            <label class="ihx-field">
+              <span>País</span>
+              <input type="text" name="company_country" value="${escapeHtml(intake.company_country || '')}">
+            </label>
+          </div>
+          <label class="ihx-field">
+            <span>Contexto que sacó de tu empresa</span>
+            <textarea name="company_about" rows="3" placeholder="Qué entendió sobre tu empresa">${escapeHtml(intake.company_about || '')}</textarea>
+          </label>
+          <label class="ihx-field">
+            <span>Soluciones que cree que ofreces</span>
+            <textarea name="company_solutions" rows="3" placeholder="Qué productos/servicios cree que vendes">${escapeHtml(intake.company_solutions || '')}</textarea>
+          </label>
+          <label class="ihx-field">
+            <span>Cómo lo resume (frase posicional)</span>
+            <input type="text" name="positional_phrase" value="${escapeHtml(brief.positional_phrase || '')}">
+          </label>
+          <label class="ihx-field">
+            <span>Qué hace, en una frase</span>
+            <input type="text" name="what_it_does" value="${escapeHtml(brief.what_it_does || '')}">
+          </label>
+          <label class="ihx-field">
+            <span>Mecanismo (cómo lo entrega)</span>
+            <textarea name="mechanism" rows="3">${escapeHtml(brief.mechanism || '')}</textarea>
+          </label>
+          <label class="ihx-field">
+            <span>Resultados con números (uno por línea)</span>
+            <textarea name="key_outcomes" rows="3" placeholder="Ej: Reduce el ciclo de venta en 30%">${escapeHtml(outcomes)}</textarea>
+          </label>
+          <div class="ihx-research-actions">
+            <button type="submit" class="ihx-btn-generate" id="ihx-research-save">Guardar cambios</button>
+            <span class="ihx-research-saved" id="ihx-research-saved-msg"></span>
+          </div>
+        </form>
+      </div>`;
+    const form = document.getElementById('ihx-research-form');
+    if (form) form.addEventListener('submit', saveResearch);
+  }
+  async function saveResearch(ev) {
+    ev.preventDefault();
+    if (STATE.researchSaving || !STATE.user) return;
+    STATE.researchSaving = true;
+    const btn = document.getElementById('ihx-research-save');
+    const msg = document.getElementById('ihx-research-saved-msg');
+    if (btn) btn.disabled = true;
+    if (msg) msg.textContent = 'Guardando…';
+    const fd = new FormData(ev.target);
+    const val = (k) => (fd.get(k) || '').toString().trim();
+    const intakePatch = {
+      company_website: val('company_website') || null,
+      company_industry: val('company_industry') || null,
+      company_employee_count: val('company_employee_count') || null,
+      company_country: val('company_country') || null,
+      company_about: val('company_about') || null,
+      company_solutions: val('company_solutions') || null,
+    };
+    const outcomes = val('key_outcomes').split('\n').map(s => s.trim()).filter(Boolean);
+    const briefPatch = {
+      positional_phrase: val('positional_phrase') || null,
+      what_it_does: val('what_it_does') || null,
+      mechanism: val('mechanism') || null,
+      key_outcomes: outcomes,
+      source: 'edited',
+    };
+    try {
+      const [r1, r2] = await Promise.all([
+        window.supabaseClient.from('intel_hub_intake').update(intakePatch).eq('user_id', STATE.user.id),
+        window.supabaseClient.from('client_brief').update(briefPatch).eq('user_id', STATE.user.id),
+      ]);
+      if (r1.error || r2.error) throw (r1.error || r2.error);
+      STATE.intake = { ...STATE.intake, ...intakePatch };
+      STATE.brief = { ...STATE.brief, ...briefPatch };
+      if (msg) msg.textContent = '✓ Guardado';
+    } catch (e) {
+      console.error('[research] save error', e);
+      if (msg) msg.textContent = '❌ No se pudo guardar';
+    } finally {
+      STATE.researchSaving = false;
+      if (btn) btn.disabled = false;
+      setTimeout(() => { const m = document.getElementById('ihx-research-saved-msg'); if (m) m.textContent = ''; }, 4000);
+    }
   }
   // Secciones que quedaron en 'generating' por una corrida previa que nunca
   // cerró (crash, timeout, falla de créditos a mitad de proceso) se reintentan
@@ -783,6 +942,39 @@
 @keyframes ihx-pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
 .ihx-status-text { font-size: 12px; color: var(--ink-3, #5A6272); }
 .ihx-toolbar-hint { font-size: 11px; color: var(--ink-4, #9CA2AE); margin-left: auto; white-space: nowrap; }
+/* ── TABSTRIP ── */
+.ihx-tabstrip { display: flex; gap: 4px; padding: 10px 20px 0; border-bottom: 1px solid var(--hair, rgba(10,10,15,0.08)); }
+.ihx-tab {
+  background: transparent; border: 0; border-bottom: 2px solid transparent;
+  padding: 8px 4px 10px; margin-right: 20px; font: inherit; font-size: 13px; font-weight: 600;
+  color: var(--ink-4, #8A909C); cursor: pointer; transition: color .15s, border-color .15s;
+}
+.ihx-tab:hover { color: var(--ink-2, #3D4352); }
+.ihx-tab.is-active { color: var(--accent, #1F4BFF); border-bottom-color: var(--accent, #1F4BFF); }
+/* ── RESEARCH TAB ── */
+.ihx-research { padding: 20px; max-width: 720px; }
+.ihx-research-hint { font-size: 12.5px; color: var(--ink-4, #8A909C); line-height: 1.6; margin-bottom: 14px; }
+.ihx-research-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px; font-size: 11.5px; color: var(--ink-4, #9CA2AE); }
+.ihx-research-status {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 2px 8px; border-radius: 4px; background: rgba(10,10,15,0.06); color: var(--ink-3, #5A6272);
+}
+.ihx-research-status.ihx-rs-ready { color: var(--green, #0EA968); background: rgba(14,169,104,0.12); }
+.ihx-research-status.ihx-rs-error { color: var(--red, #D64545); background: rgba(214,69,69,0.12); }
+.ihx-research-status.ihx-rs-generating { color: var(--accent, #1F4BFF); background: rgba(31,75,255,0.12); }
+.ihx-research-err { color: var(--red, #D64545); }
+.ihx-field { display: block; margin-bottom: 14px; }
+.ihx-field span { display: block; font-size: 11.5px; font-weight: 600; color: var(--ink-3, #5A6272); margin-bottom: 5px; }
+.ihx-field input, .ihx-field textarea {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; color: var(--ink, #16181D);
+  background: var(--surface, #FFFFFF); border: 1px solid var(--hair-3, rgba(10,10,15,0.13));
+  border-radius: 8px; padding: 8px 10px; resize: vertical;
+}
+.ihx-field input:focus, .ihx-field textarea:focus { outline: none; border-color: var(--accent, #1F4BFF); }
+.ihx-field-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 600px) { .ihx-field-row { grid-template-columns: 1fr; } }
+.ihx-research-actions { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+.ihx-research-saved { font-size: 12px; color: var(--ink-4, #8A909C); }
 /* ── PROGRESS ── */
 .ihx-progress {
   padding: 10px 20px; background: rgba(8,145,178,0.06);
