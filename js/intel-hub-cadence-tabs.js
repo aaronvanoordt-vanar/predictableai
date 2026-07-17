@@ -138,7 +138,7 @@
       if (shell.dataset.mounted) return true;
       shell.dataset.mounted = '1';
       injectStyles();
-      loadResearch().then(renderResearch);
+      loadResearch().then(() => { renderResearch(); subscribeResearchRealtime(); });
       return true;
     };
     if (tryMount()) return;
@@ -154,7 +154,7 @@
     if (!STATE.user) return;
     const [{ data: intake }, { data: brief }, { data: profile }] = await Promise.all([
       window.supabaseClient.from('intel_hub_intake')
-        .select('company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, company_enrichment_status, company_linkedin_url')
+        .select('company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, company_enrichment_status, company_enrichment_at, company_linkedin_url, updated_at')
         .eq('user_id', STATE.user.id).maybeSingle(),
       window.supabaseClient.from('client_brief')
         .select('what_it_does, mechanism, key_outcomes, positional_phrase, brand_promise, status, source, generated_at, error_message')
@@ -165,6 +165,38 @@
     STATE.brief = brief || null;
     STATE.profile = profile || null;
     STATE.researchLoaded = true;
+  }
+  // Se suscribe una sola vez por sesión de página: cualquier cambio en la fila
+  // (la corrida de enrich-company terminando, o el usuario editando desde otra
+  // pestaña) se refleja al instante, sin que el usuario tenga que refrescar.
+  function subscribeResearchRealtime() {
+    if (STATE._researchRealtimeSubscribed || !STATE.user) return;
+    STATE._researchRealtimeSubscribed = true;
+    window.supabaseClient.channel('research-' + STATE.user.id)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'intel_hub_intake',
+        filter: `user_id=eq.${STATE.user.id}`,
+      }, (payload) => {
+        STATE.intake = payload.new || null;
+        renderResearch();
+      })
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'client_brief',
+        filter: `user_id=eq.${STATE.user.id}`,
+      }, (payload) => {
+        STATE.brief = payload.new || null;
+        renderResearch();
+      })
+      .subscribe();
+  }
+  // Si enrich-company muere a mitad de camino (timeout, crash) sin llegar a
+  // escribir status done/error, la fila queda en 'running' para siempre — sin
+  // esto el botón quedaría deshabilitado de por vida.
+  const STALE_ENRICHING_MS = 3 * 60 * 1000;
+  function isStaleEnriching(intake) {
+    if (!intake || intake.company_enrichment_status !== 'running') return false;
+    const started = new Date(intake.updated_at || 0).getTime();
+    return (Date.now() - started) > STALE_ENRICHING_MS;
   }
   // company_solutions se guarda como texto separado por comas; en la UI se
   // edita como una lista de cajas individuales, una por solución.
@@ -183,7 +215,8 @@
       : brief.status === 'generating' ? 'Generando…'
       : brief.status === 'error' ? 'Error' : 'Sin generar';
     const sourceLabel = brief.source === 'edited' ? 'Editado manualmente' : 'Generado automáticamente';
-    const isRunning = intake.company_enrichment_status === 'running';
+    const stale = isStaleEnriching(intake);
+    const isRunning = intake.company_enrichment_status === 'running' && !stale;
     const solutions = parseSolutions(intake.company_solutions);
     const solutionRow = (val) => `
       <div class="ihx-chip-row">
@@ -197,12 +230,17 @@
           Corrígelo si algo no es exacto — tus cambios se usan de inmediato.
         </div>
         <div class="ihx-research-retry">
-          <span>${isRunning
-            ? 'Buscando tu página web y contexto de empresa a partir de tu LinkedIn…'
-            : 'Si algo no es correcto (p. ej. el país o la página web), puedes volver a investigar desde tu LinkedIn — esto reemplaza los campos de abajo con lo que encuentre.'}</span>
-          <button type="button" class="ihx-btn-force" id="ihx-retry-enrich" ${(isRunning || !linkedinUrl) ? 'disabled' : ''}>
-            ${isRunning ? 'Buscando…' : 'Actualizar investigación'}
-          </button>
+          <div class="ihx-research-retry-top">
+            <span>${isRunning
+              ? 'Buscando tu página web y contexto de empresa a partir de tu LinkedIn… esta página se actualiza sola cuando termine.'
+              : stale
+                ? 'La búsqueda anterior tardó demasiado y no terminó. Puedes intentarlo de nuevo.'
+                : 'Si algo no es correcto (p. ej. el país o la página web), puedes volver a investigar desde tu LinkedIn — esto reemplaza los campos de abajo con lo que encuentre.'}</span>
+            <button type="button" class="ihx-btn-force" id="ihx-retry-enrich" ${(isRunning || !linkedinUrl) ? 'disabled' : ''}>
+              ${isRunning ? 'Buscando…' : 'Actualizar investigación'}
+            </button>
+          </div>
+          ${isRunning ? `<div class="ihx-progress-bar"><div class="ihx-progress-bar-fill"></div></div>` : ''}
         </div>
         <div class="ihx-research-meta">
           <span class="ihx-research-status ihx-rs-${escapeHtml(brief.status || 'pending')}">${escapeHtml(statusLabel)}</span>
@@ -278,31 +316,23 @@
   }
   // Vuelve a disparar enrich-company (LinkedIn → website/industria/about/soluciones)
   // a demanda del usuario — misma función que usa el onboarding. Reemplaza los
-  // campos de investigación con lo que encuentre en esta nueva corrida.
+  // campos de investigación con lo que encuentre en esta nueva corrida. El
+  // resultado llega solo vía subscribeResearchRealtime() — no hay que hacer
+  // polling ni pedirle al usuario que refresque la página.
   async function retryEnrichment(linkedinUrl) {
     if (!STATE.user || !linkedinUrl) return;
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
-      await window.supabaseClient.from('intel_hub_intake').update({ company_enrichment_status: 'running' }).eq('user_id', STATE.user.id);
-      STATE.intake = { ...STATE.intake, company_enrichment_status: 'running' };
+      STATE.intake = { ...STATE.intake, company_enrichment_status: 'running', updated_at: new Date().toISOString() };
       renderResearch();
       await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
         body: JSON.stringify({ linkedin_url: linkedinUrl }),
       });
-      pollEnrichment();
     } catch (e) {
       console.error('[research] retry enrichment error', e);
     }
-  }
-  function pollEnrichment(attempt = 0) {
-    if (attempt >= 12) return; // ~36s máximo
-    setTimeout(async () => {
-      await loadResearch();
-      renderResearch();
-      if (STATE.intake?.company_enrichment_status === 'running') pollEnrichment(attempt + 1);
-    }, 3000);
   }
   async function saveResearch(ev) {
     ev.preventDefault();
@@ -1011,12 +1041,25 @@
 .ihx-research { padding: 24px 28px; max-width: 720px; }
 .ihx-research-hint { font-size: 12.5px; color: var(--ink-4, #8A909C); line-height: 1.6; margin-bottom: 14px; }
 .ihx-research-retry {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
   padding: 12px 14px; margin-bottom: 16px;
   background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.25); border-radius: 8px;
   font-size: 12.5px; color: var(--ink-2, #3D4352); line-height: 1.5;
 }
+.ihx-research-retry-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .ihx-research-retry .ihx-btn-force { flex-shrink: 0; }
+.ihx-progress-bar {
+  margin-top: 10px; height: 4px; border-radius: 2px; overflow: hidden;
+  background: rgba(245,158,11,0.18);
+}
+.ihx-progress-bar-fill {
+  height: 100%; width: 40%; border-radius: 2px;
+  background: var(--amber, #C77E12);
+  animation: ihx-progress-slide 1.3s ease-in-out infinite;
+}
+@keyframes ihx-progress-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
 .ihx-research-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px; font-size: 11.5px; color: var(--ink-4, #9CA2AE); }
 .ihx-research-status {
   font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
