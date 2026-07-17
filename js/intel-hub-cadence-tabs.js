@@ -147,6 +147,8 @@
     wrap.addEventListener('click', async (ev) => {
       const fb = ev.target.closest('[data-fb]');
       if (fb) { ev.preventDefault(); await submitFeedback(fb); return; }
+      const refresh = ev.target.closest('[data-refresh-section]');
+      if (refresh) { ev.preventDefault(); generateAll({ only: [refresh.dataset.refreshSection] }); return; }
       const tab = ev.target.closest('[data-cadence]');
       if (tab) { setCadence(tab.dataset.cadence); }
     });
@@ -765,6 +767,14 @@
       <button class="ihx-learn-btn" onclick="this.closest('.ihx-module').querySelector('.ihx-learn-panel').classList.toggle('is-open')">
         🧠 ${rules.length} aprendidas
       </button>` : '';
+    // Bloqueado si hay una corrida en curso (esta u otra) o si este segmento en
+    // particular ya está generando — evita disparar el mismo agente dos veces.
+    const genLock = STATE.generating || (rep?.status === 'generating' && !isStaleGenerating(rep));
+    const creditLabel = (window.creditCosts && window.creditCosts.format('intel_hub_item')) || '2 créditos';
+    const refreshBtn = `
+      <button class="ihx-mod-refresh" data-refresh-section="${s.key}" title="Actualizar solo este segmento · ${creditLabel}" ${genLock ? 'disabled' : ''}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+      </button>`;
     return `
       <article class="ihx-module" data-section="${s.key}" style="--accent-seg:${s.color}">
         <header class="ihx-mod-h">
@@ -777,6 +787,7 @@
           </div>
           <div class="ihx-mod-meta">
             ${ts}
+            ${refreshBtn}
             ${learnBtn}
           </div>
         </header>
@@ -2443,7 +2454,7 @@ function finBoltSvg() {
     const btnSpan = btnMissing.querySelector('span');
     if (btnSpan) btnSpan.textContent = 'Iniciando agentes…';
     prog.style.display = 'block';
-    updateStatus();
+    renderDashboard(); // refleja de inmediato los botones de refresh por módulo bloqueados
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
       const url = window.SUPABASE_CONFIG.url + '/functions/v1/generate-intel-hub';
@@ -2455,7 +2466,9 @@ function finBoltSvg() {
         prog.innerHTML = `<strong>✓ Todo al día</strong> — los ${skipped} segmentos ya están dentro de su cadence.<br><small>Para regenerar igualmente usa <strong>Regenerar todo</strong>.</small>`;
         return;
       }
-      prog.innerHTML = `Iniciando <strong>${toRun.length}</strong> agentes en paralelo (${skipped} omitidos por cadence).`;
+      prog.innerHTML = only
+        ? `Actualizando <strong>${SECTIONS.find(s => s.key === toRun[0])?.title || toRun[0]}</strong>…`
+        : `Iniciando <strong>${toRun.length}</strong> agentes en paralelo (${skipped} omitidos por cadence).`;
       const r = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
@@ -2489,7 +2502,7 @@ function finBoltSvg() {
       btnMissing.disabled = false;
       if (btnAll) btnAll.disabled = false;
       btnMissing.querySelector('span').textContent = 'Actualizar inteligencia';
-      updateStatus();
+      renderDashboard();
       setTimeout(() => { prog.style.display = 'none'; }, 10000);
     }
   }
@@ -2776,6 +2789,16 @@ function finBoltSvg() {
 .ihx-mod-sub { font-size: 11.5px; color: var(--ink-4, #8A909C); line-height: 1.4; }
 .ihx-mod-meta { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .ihx-mod-ts { font-size: 11px; color: var(--ink-4, #9CA2AE); white-space: nowrap; }
+.ihx-mod-refresh {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; border-radius: 6px; flex-shrink: 0;
+  background: transparent; color: var(--ink-4, #9CA2AE);
+  border: 1px solid var(--hair-3, rgba(10,10,15,0.13));
+  cursor: pointer; transition: all .15s;
+}
+.ihx-mod-refresh:hover:not(:disabled) { background: var(--accent-soft, rgba(31,75,255,0.1)); color: var(--accent, #1F4BFF); border-color: var(--accent, #1F4BFF); }
+.ihx-mod-refresh:disabled { opacity: .35; cursor: not-allowed; }
+.ihx-mod-refresh svg { display: block; }
 .ihx-learn-btn {
   color: var(--purple, #7C5CFC); background: rgba(124,58,237,0.1);
   border: 1px solid rgba(124,58,237,0.25); border-radius: 5px;
