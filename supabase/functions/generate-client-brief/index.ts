@@ -116,6 +116,14 @@ Research the company (web_search their website and LinkedIn page, max 5 searches
     "person_locations": ["countries in English, e.g. 'Mexico', 'Colombia', 'Peru'"],
     "organization_num_employees_ranges": ["subset of: '1,10','11,20','21,50','51,100','101,200','201,500','501,1000','1001,2000','2001,5000','5001,10000','10001+'"],
     "q_organization_keyword_tags": ["0-6 short English industry keywords, e.g. 'fintech', 'logistics'. Use [] if industries are broad."]
+  },
+  "enrichment": {
+    "website": "the company's primary website URL you found via research, e.g. 'https://company.com'. Empty string if not found.",
+    "industry": "main industry/sector, e.g. 'B2B SaaS - Sales Technology'. Empty string if unknown.",
+    "employee_count": "approximate size, e.g. '50-200 employees'. Empty string if unknown.",
+    "country": "primary country, e.g. 'Colombia'. Empty string if unknown.",
+    "about": "2-3 sentences in Spanish: what they do, mission, years of experience, market presence. Empty string if unknown.",
+    "solutions": "comma-separated main products/services, e.g. 'Revenue forecasting, Pipeline analytics, AI sales coaching'. Empty string if unknown."
   }
 }
 
@@ -240,6 +248,25 @@ Deno.serve(async (req: Request) => {
         source:              "auto",
         generated_at:        new Date().toISOString(),
       }).eq("user_id", user.id);
+
+      // Self-heal intel_hub_intake: si enrich-company nunca corrió o falló
+      // (company_website etc. quedaron null), esta misma investigación ya
+      // encontró esos datos — los usamos para rellenar solo lo que faltaba,
+      // sin pisar nada que el usuario ya haya corregido a mano.
+      const enr = (b.enrichment && typeof b.enrichment === "object") ? b.enrichment : {};
+      const intakeRow = intake as IntakeRow | null;
+      const fill: Record<string, string> = {};
+      if (!intakeRow?.company_website && str(enr.website)) fill.company_website = str(enr.website);
+      if (!intakeRow?.company_industry && str(enr.industry)) fill.company_industry = str(enr.industry);
+      if (!intakeRow?.company_employee_count && str(enr.employee_count)) fill.company_employee_count = str(enr.employee_count);
+      if (!intakeRow?.company_country && str(enr.country)) fill.company_country = str(enr.country);
+      if (!intakeRow?.company_about && str(enr.about)) fill.company_about = str(enr.about);
+      if (!intakeRow?.company_solutions && str(enr.solutions)) fill.company_solutions = str(enr.solutions);
+      if (Object.keys(fill).length > 0) {
+        fill.company_enrichment_status = "done";
+        fill.company_enrichment_at = new Date().toISOString();
+        await supa.from("intel_hub_intake").update(fill).eq("user_id", user.id);
+      }
       console.log(`[brief] ✓ ${user.id}`);
     } catch (err) {
       console.error("[brief] error:", err);
