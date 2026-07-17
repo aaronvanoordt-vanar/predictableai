@@ -19,8 +19,7 @@
     user: null,
     reports: {}, feedback: {}, learning: {},
     generating: false, initialized: false, autoHealed: false,
-    activeTab: 'intel',
-    intake: null, brief: null, researchLoaded: false, researchDirty: false, researchSaving: false,
+    intake: null, brief: null, profile: null, researchLoaded: false, researchSaving: false,
   };
   function log(...a) { console.log('[intel-hub-v4]', ...a); }
   async function waitForSupabase() {
@@ -33,6 +32,7 @@
     // Sin sesión / sin supabase no hay datos: montamos igual para que el
     // skeleton de arranque (#ih-boot-skeleton) se reemplace por el empty
     // state real en vez de quedar cargando para siempre.
+    mountResearchObserver();
     if (!(await waitForSupabase())) { mountObserver(); return log('no supabase'); }
     const { data: { user } } = await window.supabaseClient.auth.getUser();
     if (!user) { mountObserver(); return log('no user'); }
@@ -111,25 +111,14 @@
         <span class="ihx-toolbar-hint">Cada ítem cuesta 2 créditos al actualizarse · gratis durante la beta</span>
       </div>
       <div class="ihx-progress" id="ih-progress" style="display:none"></div>
-      <div class="ihx-tabstrip" id="ihx-tabstrip">
-        <button class="ihx-tab is-active" data-tab="intel">Inteligencia</button>
-        <button class="ihx-tab" data-tab="research">Investigación</button>
-      </div>
-      <div id="ihx-pane-intel">
-        <div id="ihx-summary"></div>
-        <div class="ihx-modules" id="ihx-body"></div>
-      </div>
-      <div id="ihx-pane-research" style="display:none"></div>`;
+      <div id="ihx-summary"></div>
+      <div class="ihx-modules" id="ihx-body"></div>`;
     container.appendChild(wrap);
     wrap.querySelector('#ih-btn-generate').addEventListener('click', () => generateAll({ force: false }));
     wrap.querySelector('#ih-btn-generate-all').addEventListener('click', () => {
       if (confirm('Esto regenera las 9 secciones (saltea cadence). ¿Continuar?')) {
         generateAll({ force: true });
       }
-    });
-    wrap.querySelector('#ihx-tabstrip').addEventListener('click', (ev) => {
-      const btn = ev.target.closest('[data-tab]');
-      if (btn) switchTab(btn.dataset.tab);
     });
     wrap.addEventListener('click', async (ev) => {
       const fb = ev.target.closest('[data-fb]');
@@ -139,51 +128,73 @@
     renderDashboard();
     autoHealStale();
   }
-  // ─── TABS ────────────────────────────────────────────────
-  function switchTab(tab) {
-    STATE.activeTab = tab;
-    const strip = document.getElementById('ihx-tabstrip');
-    if (strip) strip.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('is-active', b.dataset.tab === tab));
-    const intelPane = document.getElementById('ihx-pane-intel');
-    const researchPane = document.getElementById('ihx-pane-research');
-    if (intelPane) intelPane.style.display = tab === 'intel' ? '' : 'none';
-    if (researchPane) researchPane.style.display = tab === 'research' ? '' : 'none';
-    if (tab === 'research') {
-      if (!STATE.researchLoaded) loadResearch().then(renderResearch);
-      else renderResearch();
-    }
+  // ─── RESEARCH PAGE (qué investigó la plataforma sobre la empresa) ──
+  // Página propia en el sidebar (arriba de Intelligence Hub), independiente
+  // del mount del dashboard — se monta sola cuando aparece #ih-research-shell.
+  function mountResearchObserver() {
+    const tryMount = () => {
+      const shell = document.getElementById('ih-research-shell');
+      if (!shell) return false;
+      if (shell.dataset.mounted) return true;
+      shell.dataset.mounted = '1';
+      injectStyles();
+      loadResearch().then(renderResearch);
+      return true;
+    };
+    if (tryMount()) return;
+    const obs = new MutationObserver(() => { if (tryMount()) obs.disconnect(); });
+    obs.observe(document.body, { childList: true, subtree: true });
   }
-  // ─── RESEARCH TAB (qué investigó la plataforma sobre la empresa) ──
   async function loadResearch() {
+    if (!(await waitForSupabase())) return;
+    if (!STATE.user) {
+      const { data: { user } } = await window.supabaseClient.auth.getUser();
+      STATE.user = user || null;
+    }
     if (!STATE.user) return;
-    const [{ data: intake }, { data: brief }] = await Promise.all([
+    const [{ data: intake }, { data: brief }, { data: profile }] = await Promise.all([
       window.supabaseClient.from('intel_hub_intake')
-        .select('company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, company_enrichment_status')
+        .select('company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, company_enrichment_status, company_linkedin_url')
         .eq('user_id', STATE.user.id).maybeSingle(),
       window.supabaseClient.from('client_brief')
         .select('what_it_does, mechanism, key_outcomes, positional_phrase, brand_promise, status, source, generated_at, error_message')
         .eq('user_id', STATE.user.id).maybeSingle(),
+      window.supabaseClient.from('profiles').select('linkedin_company_url').eq('id', STATE.user.id).maybeSingle(),
     ]);
     STATE.intake = intake || null;
     STATE.brief = brief || null;
+    STATE.profile = profile || null;
     STATE.researchLoaded = true;
   }
   function renderResearch() {
-    const el = document.getElementById('ihx-pane-research');
+    const el = document.getElementById('ih-research-shell');
     if (!el) return;
     const intake = STATE.intake || {};
     const brief = STATE.brief || {};
+    const linkedinUrl = intake.company_linkedin_url || STATE.profile?.linkedin_company_url || null;
     const outcomes = Array.isArray(brief.key_outcomes) ? brief.key_outcomes.join('\n') : '';
     const statusLabel = brief.status === 'ready' ? 'Lista'
       : brief.status === 'generating' ? 'Generando…'
       : brief.status === 'error' ? 'Error' : 'Sin generar';
     const sourceLabel = brief.source === 'edited' ? 'Editado manualmente' : 'Generado automáticamente';
+    const enrichFailed = intake.company_enrichment_status === 'error' || intake.company_enrichment_status === 'running';
+    const enrichMissing = !intake.company_website && intake.company_enrichment_status !== 'running';
+    const showRetry = (enrichFailed || enrichMissing) && !!linkedinUrl;
     el.innerHTML = `
       <div class="ihx-research">
         <div class="ihx-research-hint">
           Esto es lo que la plataforma investigó de tu empresa para personalizar el hub y los mensajes de prospección.
           Corrígelo si algo no es exacto — tus cambios se usan de inmediato.
         </div>
+        ${showRetry ? `
+          <div class="ihx-research-retry">
+            <span>${intake.company_enrichment_status === 'running'
+              ? 'Buscando tu página web y contexto de empresa a partir de tu LinkedIn…'
+              : 'No pudimos encontrar automáticamente tu página web a partir de tu LinkedIn. Puedes completarla abajo a mano, o reintentar la búsqueda.'}</span>
+            <button type="button" class="ihx-btn-force" id="ihx-retry-enrich" ${intake.company_enrichment_status === 'running' ? 'disabled' : ''}>
+              ${intake.company_enrichment_status === 'running' ? 'Buscando…' : 'Reintentar investigación'}
+            </button>
+          </div>` : ''}
         <div class="ihx-research-meta">
           <span class="ihx-research-status ihx-rs-${escapeHtml(brief.status || 'pending')}">${escapeHtml(statusLabel)}</span>
           ${brief.generated_at ? `<span>${escapeHtml(sourceLabel)} · ${fmtRelative(new Date(brief.generated_at))}</span>` : ''}
@@ -240,6 +251,36 @@
       </div>`;
     const form = document.getElementById('ihx-research-form');
     if (form) form.addEventListener('submit', saveResearch);
+    const retryBtn = document.getElementById('ihx-retry-enrich');
+    if (retryBtn) retryBtn.addEventListener('click', () => retryEnrichment(linkedinUrl));
+  }
+  // Vuelve a disparar enrich-company (LinkedIn → website/industria/about/soluciones)
+  // cuando la corrida original falló o nunca corrió — misma función que usa
+  // el onboarding, así el usuario no queda con el formulario permanentemente vacío.
+  async function retryEnrichment(linkedinUrl) {
+    if (!STATE.user || !linkedinUrl) return;
+    try {
+      const session = (await window.supabaseClient.auth.getSession()).data.session;
+      await window.supabaseClient.from('intel_hub_intake').update({ company_enrichment_status: 'running' }).eq('user_id', STATE.user.id);
+      STATE.intake = { ...STATE.intake, company_enrichment_status: 'running' };
+      renderResearch();
+      await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+        body: JSON.stringify({ linkedin_url: linkedinUrl }),
+      });
+      pollEnrichment();
+    } catch (e) {
+      console.error('[research] retry enrichment error', e);
+    }
+  }
+  function pollEnrichment(attempt = 0) {
+    if (attempt >= 12) return; // ~36s máximo
+    setTimeout(async () => {
+      await loadResearch();
+      renderResearch();
+      if (STATE.intake?.company_enrichment_status === 'running') pollEnrichment(attempt + 1);
+    }, 3000);
   }
   async function saveResearch(ev) {
     ev.preventDefault();
@@ -942,18 +983,16 @@
 @keyframes ihx-pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
 .ihx-status-text { font-size: 12px; color: var(--ink-3, #5A6272); }
 .ihx-toolbar-hint { font-size: 11px; color: var(--ink-4, #9CA2AE); margin-left: auto; white-space: nowrap; }
-/* ── TABSTRIP ── */
-.ihx-tabstrip { display: flex; gap: 4px; padding: 10px 20px 0; border-bottom: 1px solid var(--hair, rgba(10,10,15,0.08)); }
-.ihx-tab {
-  background: transparent; border: 0; border-bottom: 2px solid transparent;
-  padding: 8px 4px 10px; margin-right: 20px; font: inherit; font-size: 13px; font-weight: 600;
-  color: var(--ink-4, #8A909C); cursor: pointer; transition: color .15s, border-color .15s;
-}
-.ihx-tab:hover { color: var(--ink-2, #3D4352); }
-.ihx-tab.is-active { color: var(--accent, #1F4BFF); border-bottom-color: var(--accent, #1F4BFF); }
-/* ── RESEARCH TAB ── */
-.ihx-research { padding: 20px; max-width: 720px; }
+/* ── RESEARCH PAGE ── */
+.ihx-research { padding: 24px 28px; max-width: 720px; }
 .ihx-research-hint { font-size: 12.5px; color: var(--ink-4, #8A909C); line-height: 1.6; margin-bottom: 14px; }
+.ihx-research-retry {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; margin-bottom: 16px;
+  background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.25); border-radius: 8px;
+  font-size: 12.5px; color: var(--ink-2, #3D4352); line-height: 1.5;
+}
+.ihx-research-retry .ihx-btn-force { flex-shrink: 0; }
 .ihx-research-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px; font-size: 11.5px; color: var(--ink-4, #9CA2AE); }
 .ihx-research-status {
   font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;

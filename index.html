@@ -2049,6 +2049,10 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="sidebar-section">
       <div class="lbl">Inteligencia</div>
     </div>
+    <div class="nav-item" data-page="mi-research" onclick="nav(this,'mi-research')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5L10.3 10.3"/></svg>
+      Investigación
+    </div>
     <div class="nav-item" data-page="mi-dashboard" onclick="nav(this,'mi-dashboard')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 12l4-4 3 3 5-6"/></svg>
       Intelligence Hub
@@ -2679,6 +2683,17 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <button class="btn btn-primary" onclick="runAnalysis()">Analizar con IA</button>
     </div>
   </div>
+</div>
+
+<!-- ═══════ PAGE: MI INVESTIGACIÓN ═══════ -->
+<div class="page fade-in" id="page-mi-research" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Investigación</div>
+      <div class="topbar-sub">Lo que la plataforma investigó sobre tu empresa — revísalo y corrígelo</div>
+    </div>
+  </div>
+  <div id="ih-research-shell" class="ih-v2-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: MI DASHBOARD ═══════ -->
