@@ -156,6 +156,7 @@ function buildUserPrompt(
   intake: IntakeRow | null,
   profile: { company_name?: string | null; linkedin_company_url?: string | null } | null,
   icp: { company_sizes?: string | null; industries?: string | null; roles?: string | null; geographies?: string | null; pain_points?: string | null } | null,
+  documentSummaries: string[],
 ): string {
   const lines: string[] = ["=== INTAKE DATA (collected at onboarding — trusted source) ==="];
   const push = (label: string, v: string | null | undefined) => { if (v) lines.push(`${label}: ${v}`); };
@@ -177,6 +178,10 @@ function buildUserPrompt(
   push("Target geographies", intake?.icp_geographies ?? icp?.geographies);
   push("ICP pain points", intake?.icp_pain_points ?? icp?.pain_points);
   push("What they want to know about their market", intake?.what_to_know);
+  if (documentSummaries.length) {
+    lines.push("", "=== UPLOADED COMPANY DOCUMENTS (summarized from one-pagers/decks the seller uploaded — trusted source) ===");
+    documentSummaries.forEach((s, i) => { lines.push(`Document ${i + 1}:`, s, ""); });
+  }
   lines.push("", "Research this company now (website + LinkedIn) and produce the JSON brief.");
   return lines.join("\n");
 }
@@ -222,7 +227,7 @@ Deno.serve(async (req: Request) => {
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
-  const [{ data: intake }, { data: profile }, { data: icp }, { data: hubReports }] = await Promise.all([
+  const [{ data: intake }, { data: profile }, { data: icp }, { data: docs }, { data: hubReports }] = await Promise.all([
     supa.from("intel_hub_intake").select(`
       company_linkedin_url, company_industry, company_employee_count, company_country,
       company_website, company_about, company_solutions,
@@ -231,10 +236,12 @@ Deno.serve(async (req: Request) => {
     `).eq("user_id", user.id).maybeSingle(),
     supa.from("profiles").select("company_name, linkedin_company_url").eq("id", user.id).maybeSingle(),
     supa.from("client_icp").select("company_sizes, industries, roles, geographies, pain_points").eq("profile_id", user.id).maybeSingle(),
+    supa.from("company_documents").select("summary").eq("user_id", user.id).eq("status", "done").not("summary", "is", null),
     supa.from("intelligence_hub_reports").select("section_key, content")
       .eq("user_id", user.id).eq("status", "ready")
       .in("section_key", ["prospecting_recommendations", "industry_insight_digest"]),
   ]);
+  const documentSummaries = (docs ?? []).map((d) => d.summary as string).filter(Boolean);
 
   if (!intake && !profile?.linkedin_company_url) {
     return json({ error: "no_intake", detail: "Completa el onboarding (LinkedIn de tu empresa) antes de generar tu brief." }, 400, h);
@@ -250,7 +257,7 @@ Deno.serve(async (req: Request) => {
       const raw = await callClaude(
         ANTHROPIC_KEY,
         SYSTEM_PROMPT,
-        buildUserPrompt(intake as IntakeRow | null, profile, icp) + buildHubIntelBlock(hubReports),
+        buildUserPrompt(intake as IntakeRow | null, profile, icp, documentSummaries) + buildHubIntelBlock(hubReports),
       );
       const b = parseJson(raw);
       const arr = (v: unknown) => (Array.isArray(v) ? v : []);

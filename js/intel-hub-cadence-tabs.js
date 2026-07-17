@@ -43,7 +43,7 @@
     reports: {}, feedback: {}, learning: {},
     generating: false, initialized: false, autoHealed: false,
     cadence: null,
-    intake: null, brief: null, profile: null, researchLoaded: false, researchSaving: false,
+    intake: null, brief: null, profile: null, documents: [], researchLoaded: false, researchSaving: false,
   };
   function log(...a) { console.log('[intel-hub-v5]', ...a); }
   async function waitForSupabase() {
@@ -178,18 +178,22 @@
       STATE.user = user || null;
     }
     if (!STATE.user) return;
-    const [{ data: intake }, { data: brief }, { data: profile }] = await Promise.all([
+    const [{ data: intake }, { data: brief }, { data: profile }, { data: docs }] = await Promise.all([
       window.supabaseClient.from('intel_hub_intake')
-        .select('company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, company_enrichment_status, company_enrichment_at, company_enrichment_progress, company_enrichment_step, company_linkedin_url, updated_at')
+        .select('company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, icp_pain_points, company_enrichment_status, company_enrichment_at, company_enrichment_progress, company_enrichment_step, company_linkedin_url, updated_at')
         .eq('user_id', STATE.user.id).maybeSingle(),
       window.supabaseClient.from('client_brief')
         .select('what_it_does, mechanism, key_outcomes, positional_phrase, brand_promise, status, source, generated_at, error_message, updated_at')
         .eq('user_id', STATE.user.id).maybeSingle(),
       window.supabaseClient.from('profiles').select('linkedin_company_url').eq('id', STATE.user.id).maybeSingle(),
+      window.supabaseClient.from('company_documents')
+        .select('id, file_name, storage_path, status, summary, error_message, created_at')
+        .eq('user_id', STATE.user.id).order('created_at', { ascending: false }),
     ]);
     STATE.intake = intake || null;
     STATE.brief = brief || null;
     STATE.profile = profile || null;
+    STATE.documents = docs || [];
     STATE.researchLoaded = true;
   }
   // Se suscribe una sola vez por sesión de página: cualquier cambio en la fila
@@ -220,6 +224,19 @@
         filter: `user_id=eq.${STATE.user.id}`,
       }, (payload) => {
         STATE.brief = payload.new || null;
+        renderResearch();
+      })
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'company_documents',
+        filter: `user_id=eq.${STATE.user.id}`,
+      }, (payload) => {
+        const row = payload.new || payload.old;
+        if (!row?.id) return;
+        const docs = STATE.documents || [];
+        const idx = docs.findIndex(d => d.id === row.id);
+        if (payload.eventType === 'DELETE') { if (idx >= 0) docs.splice(idx, 1); }
+        else if (idx >= 0) docs[idx] = row;
+        else docs.unshift(row);
         renderResearch();
       })
       .subscribe();
@@ -263,6 +280,24 @@
   function parseSolutions(raw) {
     const list = (raw || '').split(',').map(s => s.trim()).filter(Boolean);
     return list.length ? list : [''];
+  }
+  function docStatusLabel(status) {
+    return status === 'done' ? 'Analizado'
+      : status === 'analyzing' ? 'Analizando…'
+      : status === 'error' ? 'Error' : 'Pendiente';
+  }
+  function renderDocumentList(docs) {
+    if (!docs.length) return '<div class="ihx-doc-empty">Aún no subiste ningún documento.</div>';
+    return docs.map(d => `
+      <div class="ihx-doc-row" data-doc-id="${escapeHtml(d.id)}">
+        <div class="ihx-doc-row-top">
+          <span class="ihx-doc-name">${escapeHtml(d.file_name)}</span>
+          <span class="ihx-doc-status ihx-doc-status-${escapeHtml(d.status)}">${docStatusLabel(d.status)}</span>
+          <button type="button" class="ihx-doc-remove" data-remove-doc title="Eliminar">×</button>
+        </div>
+        ${d.status === 'done' && d.summary ? `<p class="ihx-doc-summary">${escapeHtml(d.summary)}</p>` : ''}
+        ${d.status === 'error' && d.error_message ? `<p class="ihx-doc-error">${escapeHtml(d.error_message)}</p>` : ''}
+      </div>`).join('');
   }
   function renderResearch() {
     const el = document.getElementById('ih-research-shell');
@@ -338,51 +373,90 @@
               </div>
               <span class="ihx-progress-note">${escapeHtml(intake.company_enrichment_step || 'Investigando…')} — esta página se actualiza sola cuando termine.</span>` : ''}
           </div>
-          <p class="ihx-field-help">Industria, tamaño y país se obtuvieron de tu LinkedIn registrado — investigar solo tu página web no los actualiza. Corrígelos a mano si hace falta, o usa "Investigar con IA" desde LinkedIn arriba para volver a buscarlos.</p>
-          <div class="ihx-field-row">
+          <div class="ihx-context-card">
+            <div class="ihx-context-card-h">1. Contexto de la empresa</div>
             <label class="ihx-field">
-              <span>Industria</span>
-              <input type="text" name="company_industry" value="${escapeHtml(intake.company_industry || '')}">
+              <span>Qué es y a qué se dedica</span>
+              <textarea name="company_about" rows="3" placeholder="Qué entendió sobre tu empresa">${escapeHtml(intake.company_about || '')}</textarea>
             </label>
             <label class="ihx-field">
-              <span>Tamaño</span>
-              <input type="text" name="company_employee_count" value="${escapeHtml(intake.company_employee_count || '')}">
+              <span>Qué hace, en una frase</span>
+              <input type="text" name="what_it_does" value="${escapeHtml(brief.what_it_does || '')}">
             </label>
             <label class="ihx-field">
-              <span>País</span>
-              <input type="text" name="company_country" value="${escapeHtml(intake.company_country || '')}">
+              <span>Cómo lo hace (mecanismo)</span>
+              <textarea name="mechanism" rows="3">${escapeHtml(brief.mechanism || '')}</textarea>
             </label>
           </div>
-          <label class="ihx-field">
-            <span>Contexto que sacó de tu empresa</span>
-            <textarea name="company_about" rows="3" placeholder="Qué entendió sobre tu empresa">${escapeHtml(intake.company_about || '')}</textarea>
-          </label>
-          <div class="ihx-field">
-            <span>Soluciones que cree que ofreces</span>
-            <div class="ihx-chip-list" id="ihx-solutions-list">${solutions.map(solutionRow).join('')}</div>
-            <button type="button" class="ihx-chip-add" id="ihx-solutions-add">+ Agregar solución</button>
+
+          <div class="ihx-context-card">
+            <div class="ihx-context-card-h">2. Industria, tamaño y país</div>
+            <p class="ihx-field-help">Estos tres datos se obtienen de tu LinkedIn registrado — investigar solo tu página web no los actualiza. Corrígelos a mano si hace falta, o usa "Investigar con IA" desde LinkedIn arriba para volver a buscarlos.</p>
+            <div class="ihx-field-row">
+              <label class="ihx-field">
+                <span>Industria</span>
+                <input type="text" name="company_industry" value="${escapeHtml(intake.company_industry || '')}">
+              </label>
+              <label class="ihx-field">
+                <span>Tamaño</span>
+                <input type="text" name="company_employee_count" value="${escapeHtml(intake.company_employee_count || '')}">
+              </label>
+              <label class="ihx-field">
+                <span>País</span>
+                <input type="text" name="company_country" value="${escapeHtml(intake.company_country || '')}">
+              </label>
+            </div>
           </div>
-          <label class="ihx-field">
-            <span>Cómo lo resume (frase posicional)</span>
-            <input type="text" name="positional_phrase" value="${escapeHtml(brief.positional_phrase || '')}">
-          </label>
-          <label class="ihx-field">
-            <span>Qué hace, en una frase</span>
-            <input type="text" name="what_it_does" value="${escapeHtml(brief.what_it_does || '')}">
-          </label>
-          <label class="ihx-field">
-            <span>Mecanismo (cómo lo entrega)</span>
-            <textarea name="mechanism" rows="3">${escapeHtml(brief.mechanism || '')}</textarea>
-          </label>
-          <label class="ihx-field">
-            <span>Resultados con números (uno por línea)</span>
-            <textarea name="key_outcomes" rows="3" placeholder="Ej: Reduce el ciclo de venta en 30%">${escapeHtml(outcomes)}</textarea>
-          </label>
+
+          <div class="ihx-context-card">
+            <div class="ihx-context-card-h">3. Pain points del ICP identificados</div>
+            <label class="ihx-field">
+              <span>Qué problemas tiene tu cliente objetivo</span>
+              <textarea name="icp_pain_points" rows="3" placeholder="Ej: Pierden visibilidad de su pipeline y no saben priorizar leads">${escapeHtml(intake.icp_pain_points || '')}</textarea>
+            </label>
+          </div>
+
+          <div class="ihx-context-card">
+            <div class="ihx-context-card-h">4. Soluciones para esos pain points</div>
+            <label class="ihx-field">
+              <span>Qué ofreces para resolverlos</span>
+              <div class="ihx-chip-list" id="ihx-solutions-list">${solutions.map(solutionRow).join('')}</div>
+              <button type="button" class="ihx-chip-add" id="ihx-solutions-add">+ Agregar solución</button>
+            </label>
+          </div>
+
+          <div class="ihx-context-card">
+            <div class="ihx-context-card-h">5. Frase posicional / eslogan</div>
+            <label class="ihx-field">
+              <span>Cómo lo resume</span>
+              <input type="text" name="positional_phrase" value="${escapeHtml(brief.positional_phrase || '')}">
+            </label>
+          </div>
+
+          <div class="ihx-context-card">
+            <div class="ihx-context-card-h">6. Resultados cualitativos</div>
+            <label class="ihx-field">
+              <span>Logros o casos de éxito (uno por línea, con o sin números)</span>
+              <textarea name="key_outcomes" rows="3" placeholder="Ej: Ayudamos a equipos comerciales a priorizar sus leads más calientes">${escapeHtml(outcomes)}</textarea>
+            </label>
+          </div>
+
           <div class="ihx-research-actions">
             <button type="submit" class="ihx-btn-generate" id="ihx-research-save">Guardar cambios</button>
             <span class="ihx-research-saved" id="ihx-research-saved-msg"></span>
           </div>
         </form>
+
+        <div class="ihx-context-card">
+          <div class="ihx-context-card-h">7. Sube PDFs para darle más contexto a la IA</div>
+          <p class="ihx-field-help">One-pagers, presentaciones ejecutivas, etc. La IA los lee y usa lo que encuentre la próxima vez que actualice el contexto de tu empresa.</p>
+          <div class="ihx-doc-upload">
+            <input type="file" id="ihx-doc-input" accept="application/pdf">
+            <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-doc-upload-btn">${SVG_SPARK}<span>Subir y analizar</span></button>
+          </div>
+          <span class="ihx-doc-upload-msg" id="ihx-doc-upload-msg"></span>
+          <div class="ihx-doc-list" id="ihx-doc-list">${renderDocumentList(STATE.documents || [])}</div>
+        </div>
       </div>`;
     const form = document.getElementById('ihx-research-form');
     if (form) form.addEventListener('submit', saveResearch);
@@ -412,6 +486,26 @@
       const rows = solutionsList.querySelectorAll('.ihx-chip-row');
       if (rows.length > 1) rm.closest('.ihx-chip-row').remove();
       else rm.closest('.ihx-chip-row').querySelector('.ihx-solution-input').value = '';
+    });
+    const docInput = document.getElementById('ihx-doc-input');
+    const docUploadBtn = document.getElementById('ihx-doc-upload-btn');
+    if (docUploadBtn) docUploadBtn.addEventListener('click', () => {
+      const file = docInput?.files?.[0];
+      if (!file) { docInput?.click(); return; }
+      uploadCompanyDocument(file);
+    });
+    if (docInput) docInput.addEventListener('change', () => {
+      const file = docInput.files?.[0];
+      if (file) uploadCompanyDocument(file);
+    });
+    const docList = document.getElementById('ihx-doc-list');
+    if (docList) docList.addEventListener('click', (ev) => {
+      const rm = ev.target.closest('[data-remove-doc]');
+      if (!rm) return;
+      const row = rm.closest('.ihx-doc-row');
+      const docId = row?.dataset.docId;
+      const doc = (STATE.documents || []).find(d => d.id === docId);
+      if (doc && confirm(`¿Eliminar "${doc.file_name}"?`)) deleteCompanyDocument(doc);
     });
   }
   // Dispara enrich-company a demanda del usuario — misma función que usa el
@@ -464,6 +558,58 @@
       console.error('[research] retry enrichment from website error', e);
     }
   }
+  const DOC_MAX_BYTES = 20 * 1024 * 1024; // 20MB
+  async function uploadCompanyDocument(file) {
+    if (!STATE.user || !file) return;
+    const msg = document.getElementById('ihx-doc-upload-msg');
+    const btn = document.getElementById('ihx-doc-upload-btn');
+    if (file.type !== 'application/pdf') { if (msg) msg.textContent = 'Solo se aceptan archivos PDF.'; return; }
+    if (file.size > DOC_MAX_BYTES) { if (msg) msg.textContent = 'El archivo es muy grande (máx. 20MB).'; return; }
+    if (btn) btn.disabled = true;
+    if (msg) msg.textContent = 'Subiendo…';
+    try {
+      const uuid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+      const path = STATE.user.id + '/' + uuid + '.pdf';
+      const { error: upErr } = await window.supabaseClient.storage.from('company-documents')
+        .upload(path, file, { contentType: 'application/pdf', upsert: false });
+      if (upErr) throw new Error(upErr.message);
+      const { data: row, error: insErr } = await window.supabaseClient.from('company_documents')
+        .insert({
+          user_id: STATE.user.id, file_name: file.name, storage_path: path,
+          mime_type: file.type, size_bytes: file.size, status: 'pending',
+        }).select().single();
+      if (insErr) throw new Error(insErr.message);
+      STATE.documents = [row, ...(STATE.documents || [])];
+      renderResearch();
+      if (msg) msg.textContent = 'Analizando…';
+      const session = (await window.supabaseClient.auth.getSession()).data.session;
+      await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/analyze-company-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+        body: JSON.stringify({ document_id: row.id }),
+      });
+    } catch (e) {
+      console.error('[research] upload document error', e);
+      const m = document.getElementById('ihx-doc-upload-msg');
+      if (m) m.textContent = '❌ No se pudo subir el documento.';
+    } finally {
+      const b = document.getElementById('ihx-doc-upload-btn');
+      if (b) b.disabled = false;
+      const input = document.getElementById('ihx-doc-input');
+      if (input) input.value = '';
+    }
+  }
+  async function deleteCompanyDocument(doc) {
+    if (!STATE.user || !doc) return;
+    try {
+      await window.supabaseClient.storage.from('company-documents').remove([doc.storage_path]);
+    } catch (e) { console.warn('[research] storage remove warning', e); }
+    const { error } = await window.supabaseClient.from('company_documents').delete().eq('id', doc.id);
+    if (!error) {
+      STATE.documents = (STATE.documents || []).filter(d => d.id !== doc.id);
+      renderResearch();
+    }
+  }
   async function saveResearch(ev) {
     ev.preventDefault();
     if (STATE.researchSaving || !STATE.user) return;
@@ -483,6 +629,7 @@
       company_country: val('company_country') || null,
       company_about: val('company_about') || null,
       company_solutions: solutions.length ? solutions.join(', ') : null,
+      icp_pain_points: val('icp_pain_points') || null,
     };
     const outcomes = val('key_outcomes').split('\n').map(s => s.trim()).filter(Boolean);
     const briefPatch = {
@@ -2518,6 +2665,44 @@ function finBoltSvg() {
 .ihx-chip-add:hover { color: var(--accent, #1F4BFF); border-color: var(--accent, #1F4BFF); }
 .ihx-research-actions { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
 .ihx-research-saved { font-size: 12px; color: var(--ink-4, #8A909C); }
+/* ── CONTEXT CARDS (1-7) ── */
+.ihx-context-card {
+  padding: 16px 18px; margin-bottom: 14px;
+  background: var(--surface, #FFFFFF); border: 1px solid var(--hair, rgba(10,10,15,0.08)); border-radius: 10px;
+}
+.ihx-context-card-h {
+  font-size: 12.5px; font-weight: 700; color: var(--ink, #16181D);
+  margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--hair, rgba(10,10,15,0.08));
+}
+.ihx-context-card .ihx-field:last-child { margin-bottom: 0; }
+/* ── DOCUMENT UPLOAD (card 7) ── */
+.ihx-doc-upload { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+.ihx-doc-upload input[type="file"] { font-size: 12px; color: var(--ink-3, #5A6272); max-width: 260px; }
+.ihx-doc-upload-msg { display: block; font-size: 12px; color: var(--ink-4, #8A909C); margin-bottom: 10px; min-height: 16px; }
+.ihx-doc-list { display: flex; flex-direction: column; gap: 8px; }
+.ihx-doc-empty { font-size: 12px; color: var(--ink-5, #C4C9D2); padding: 8px 0; }
+.ihx-doc-row {
+  padding: 10px 12px; background: var(--surface2, #F6F7F9);
+  border: 1px solid var(--hair, rgba(10,10,15,0.08)); border-radius: 8px;
+}
+.ihx-doc-row-top { display: flex; align-items: center; gap: 10px; }
+.ihx-doc-name { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--ink, #16181D); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ihx-doc-status {
+  flex-shrink: 0; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 2px 7px; border-radius: 4px; background: rgba(10,10,15,0.06); color: var(--ink-3, #5A6272);
+}
+.ihx-doc-status-done { color: var(--green, #0EA968); background: rgba(14,169,104,0.12); }
+.ihx-doc-status-error { color: var(--red, #D64545); background: rgba(214,69,69,0.12); }
+.ihx-doc-status-analyzing, .ihx-doc-status-pending { color: var(--accent, #1F4BFF); background: rgba(31,75,255,0.12); }
+.ihx-doc-remove {
+  flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px;
+  background: transparent; border: 1px solid var(--hair-3, rgba(10,10,15,0.13));
+  color: var(--ink-4, #9CA2AE); font-size: 14px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: all .15s;
+}
+.ihx-doc-remove:hover { color: var(--red, #D64545); border-color: rgba(214,69,69,0.3); background: rgba(214,69,69,0.08); }
+.ihx-doc-summary { margin: 8px 0 0; font-size: 12px; color: var(--ink-3, #5A6272); line-height: 1.6; white-space: pre-wrap; }
+.ihx-doc-error { margin: 8px 0 0; font-size: 12px; color: var(--red, #D64545); }
 /* ── PROGRESS ── */
 .ihx-progress {
   padding: 10px 20px; background: rgba(8,145,178,0.06);
