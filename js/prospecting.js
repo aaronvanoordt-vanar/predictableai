@@ -230,7 +230,8 @@
   var SVG_MAIL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>';
   var SVG_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z"/></svg>';
   var SVG_LINK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14L21 3"/><path d="M15 3h6v6"/><path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>';
-  var SVG_TRASH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>';
+  var SVG_EDIT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+  var SVG_TRASH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>';
   var SVG_USER_PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>';
   // Icon matching the Secuencias destination-tab sidebar glyph.
   var SVG_SEQ_TAB = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M5 8l2 2 4-4"/></svg>';
@@ -2573,6 +2574,25 @@
     });
   }
 
+  function openDeleteContactoModal(contacto) {
+    if (!contacto) return;
+    var name = contacto.name || ((contacto.first_name || '') + ' ' + (contacto.last_name || '')).trim() || 'Contacto sin nombre';
+    confirmModal({
+      title: 'Eliminar contacto',
+      message: 'Se eliminará el contacto «' + name + '» de «' + (contacto.list_name || 'sin lista') + '». El contacto ya creado en Apollo no se borra.',
+      confirmLabel: 'Eliminar',
+      danger: true,
+      onConfirm: function () {
+        return Promise.resolve(pd().deleteMembers([contacto.id])).then(function () {
+          state.cache.lists = null;
+          return reloadContactos().then(function () {
+            toast('Contacto eliminado.', 'success');
+          });
+        });
+      },
+    });
+  }
+
   function exportListCsv() {
     var st = state.listas;
     var list = findList(st.activeListId);
@@ -2669,7 +2689,8 @@
     var inboxBtn = (window.waInbox && m.phone)
       ? '<button type="button" class="btn btn-ghost btn-sm" data-action="ct-inbox" data-id="' + esc(String(m.id)) + '" title="Abrir conversación de WhatsApp">💬</button>'
       : '';
-    var editBtn = '<button type="button" class="pros-iconbtn" data-action="ct-edit" data-id="' + esc(String(m.id)) + '" title="Editar contacto">✎</button>';
+    var editBtn = '<button type="button" class="pros-iconbtn" data-action="ct-edit" data-id="' + esc(String(m.id)) + '" title="Editar contacto">' + SVG_EDIT + '</button>';
+    var deleteBtn = '<button type="button" class="pros-iconbtn" data-action="ct-delete" data-id="' + esc(String(m.id)) + '" title="Eliminar contacto">' + SVG_TRASH + '</button>';
     return '<tr>' +
       '<td><div style="font-weight:600">' + esc(name) + '</div>' +
         (m.title ? '<div class="pros-cellsub" style="font-size:12px">' + esc(m.title) + '</div>' : '') + '</td>' +
@@ -2680,7 +2701,7 @@
       '<td>' + memberEmailCell(m) + '</td>' +
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
-      '<td style="white-space:nowrap">' + editBtn + inboxBtn + '</td>' +
+      '<td style="white-space:nowrap">' + editBtn + deleteBtn + inboxBtn + '</td>' +
       '</tr>';
   }
 
@@ -2808,6 +2829,11 @@
         Object.assign(mEdit, patch);
         renderContactos();
       });
+    }
+    if (action === 'ct-delete') {
+      var mDel = findContacto(btn.getAttribute('data-id'));
+      if (!mDel) return;
+      return openDeleteContactoModal(mDel);
     }
     if (action === 'ct-inbox') {
       var m = findContacto(btn.getAttribute('data-id'));
