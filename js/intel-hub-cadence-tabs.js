@@ -427,22 +427,8 @@
             <span class="ihx-research-err">La actualización del contexto tardó demasiado y no terminó.</span>
             <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-brief">${SVG_SPARK}<span>Reintentar</span></button>` : ''}
         </div>
-        <div class="ihx-context-progress">
-          <div class="ihx-context-progress-copy">
-            <span class="ihx-context-progress-eyebrow">Tu contexto de empresa</span>
-            <strong>${progress.complete} de 7 pasos completados</strong>
-            <span>La IA puede completar todo y tú puedes revisar cada tarjeta.</span>
-          </div>
-          <div class="ihx-context-progress-action">
-            <span class="ihx-context-progress-pct">${progress.percent}%</span>
-            <button type="button" class="ihx-btn-ai" id="ihx-generate-all-context" ${isRunning ? 'disabled' : ''}>${SVG_SPARK}<span>${isRunning ? 'Completando…' : 'Completar todo con IA'}</span></button>
-          </div>
-          <div class="ihx-context-progress-track" role="progressbar" aria-label="Progreso del contexto de empresa" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.percent}">
-            <span style="width:${progress.percent}%"></span>
-          </div>
-        </div>
-        <form id="ihx-research-form" class="ihx-context-gallery">
-          <div class="ihx-field">
+        <form id="ihx-research-form">
+          <div class="ihx-field ihx-website-panel">
             <span>Página web considerada</span>
             <p class="ihx-field-help">No se buscará desde tu LinkedIn registrado, sino desde la página web que escribas aquí. Al investigarla se actualizará el contexto de <strong>toda tu empresa</strong> (industria, soluciones y demás).</p>
             <div class="ihx-field-with-btn">
@@ -458,6 +444,21 @@
               </div>
               <span class="ihx-progress-note">${escapeHtml(intake.company_enrichment_step || 'Investigando…')} — esta página se actualiza sola cuando termine.</span>` : ''}
           </div>
+          <div class="ihx-context-progress">
+            <div class="ihx-context-progress-copy">
+              <span class="ihx-context-progress-eyebrow">Tu contexto de empresa</span>
+              <strong>${progress.complete} de 7 pasos completados</strong>
+              <span>La IA puede completar todo y tú puedes revisar cada tarjeta.</span>
+            </div>
+            <div class="ihx-context-progress-action">
+              <span class="ihx-context-progress-pct">${progress.percent}%</span>
+              <button type="button" class="ihx-btn-ai" id="ihx-generate-all-context" ${isRunning ? 'disabled' : ''}>${SVG_SPARK}<span>${isRunning ? 'Completando…' : 'Completar todo con IA'}</span></button>
+            </div>
+            <div class="ihx-context-progress-track" role="progressbar" aria-label="Progreso del contexto de empresa" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.percent}">
+              <span style="width:${progress.percent}%"></span>
+            </div>
+          </div>
+          <div class="ihx-context-gallery">
           ${sectionCardStart('company')}
             <label class="ihx-field">
               <span>Qué es y a qué se dedica</span>
@@ -532,6 +533,7 @@
           <div class="ihx-research-actions">
             <button type="submit" class="ihx-btn-generate" id="ihx-research-save">Guardar cambios</button>
             <span class="ihx-research-saved" id="ihx-research-saved-msg"></span>
+          </div>
           </div>
         </form>
 
@@ -2711,6 +2713,13 @@ function finBoltSvg() {
 .ihx-research-panel-text { display: flex; flex-direction: column; gap: 3px; min-width: 220px; flex: 1; }
 .ihx-research-panel-text strong { font-size: 13px; font-weight: 600; color: var(--ink, #16181D); }
 .ihx-research-panel-text span { font-size: 12px; color: var(--ink-4, #8A909C); line-height: 1.5; }
+.ihx-website-panel {
+  margin: 12px 0 0; padding: 14px 16px;
+  background: var(--surface2, #F6F7F9); border: 1px solid var(--hair, rgba(10,10,15,.08)); border-radius: 10px;
+}
+.ihx-website-panel > span { color: var(--ink, #16181D); font-size: 12.5px; font-weight: 700; }
+.ihx-website-panel .ihx-field-help { max-width: 820px; margin-bottom: 9px; }
+.ihx-website-panel .ihx-field-with-btn { max-width: 760px; }
 /* Botones "generar con IA": mismo degradado que el resto de la app
    (Generar mensajes con IA, etc.) para que se lean como acciones de IA. */
 .ihx-btn-ai {
