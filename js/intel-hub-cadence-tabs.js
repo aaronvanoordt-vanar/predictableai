@@ -44,6 +44,7 @@
     generating: false, initialized: false, autoHealed: false,
     cadence: null,
     intake: null, brief: null, profile: null, documents: [], researchLoaded: false, researchSaving: false,
+    researchOpenSection: 'company', researchGeneratingSection: null,
   };
   function log(...a) { console.log('[intel-hub-v5]', ...a); }
   async function waitForSupabase() {
@@ -211,6 +212,9 @@
       }, (payload) => {
         const prevStatus = STATE.intake?.company_enrichment_status;
         STATE.intake = payload.new || null;
+        if (['done', 'error'].includes(STATE.intake?.company_enrichment_status)) {
+          STATE.researchGeneratingSection = null;
+        }
         renderResearch();
         // Cuando la investigación (LinkedIn o web) termina, el contexto de la
         // empresa cambió: regeneramos client_brief para que ese contexto fluya
@@ -226,6 +230,7 @@
         filter: `user_id=eq.${STATE.user.id}`,
       }, (payload) => {
         STATE.brief = payload.new || null;
+        if (['ready', 'error'].includes(STATE.brief?.status)) STATE.researchGeneratingSection = null;
         renderResearch();
       })
       .on('postgres_changes', {
@@ -301,6 +306,51 @@
         ${d.status === 'error' && d.error_message ? `<p class="ihx-doc-error">${escapeHtml(d.error_message)}</p>` : ''}
       </div>`).join('');
   }
+  const RESEARCH_SECTIONS = [
+    { key: 'company', title: 'Contexto de la empresa', number: '01' },
+    { key: 'firmographics', title: 'Industria, tamaño y país', number: '02' },
+    { key: 'pains', title: 'Pain points del ICP', number: '03' },
+    { key: 'solutions', title: 'Soluciones', number: '04' },
+    { key: 'positioning', title: 'Frase posicional', number: '05' },
+    { key: 'outcomes', title: 'Resultados cualitativos', number: '06' },
+    { key: 'summary', title: 'Resumen estratégico', number: '07' },
+  ];
+  function hasText(value) {
+    return Array.isArray(value) ? value.some(hasText) : String(value || '').trim().length > 0;
+  }
+  function researchSectionState(key, intake = {}, brief = {}) {
+    const solutions = parseSolutions(intake.company_solutions).filter(hasText);
+    const completeMap = {
+      company: [intake.company_about, brief.what_it_does, brief.mechanism].every(hasText),
+      firmographics: [intake.company_industry, intake.company_employee_count, intake.company_country].every(hasText),
+      pains: hasText(intake.icp_pain_points),
+      solutions: solutions.length > 0,
+      positioning: hasText(brief.positional_phrase),
+      outcomes: hasText(brief.key_outcomes),
+    };
+    completeMap.summary = Object.values(completeMap).every(Boolean);
+    const summaries = {
+      company: brief.what_it_does || intake.company_about || 'Describe qué hace tu empresa.',
+      firmographics: [intake.company_industry, intake.company_employee_count, intake.company_country].filter(hasText).join(' · ') || 'Añade industria, tamaño y país.',
+      pains: intake.icp_pain_points || 'Identifica los problemas de tu cliente ideal.',
+      solutions: solutions.join(' · ') || 'Explica cómo resuelves esos problemas.',
+      positioning: brief.positional_phrase || 'Define una frase clara de posicionamiento.',
+      outcomes: Array.isArray(brief.key_outcomes) ? brief.key_outcomes.join(' · ') : (brief.key_outcomes || 'Añade resultados y casos de éxito.'),
+      summary: completeMap.summary
+        ? `${brief.positional_phrase}. ${brief.what_it_does}`
+        : 'Se construirá automáticamente al completar los pasos anteriores.',
+    };
+    return { complete: Boolean(completeMap[key]), summary: summaries[key] || '' };
+  }
+  function researchProgress(intake = {}, brief = {}) {
+    const complete = RESEARCH_SECTIONS.filter(s => researchSectionState(s.key, intake, brief).complete).length;
+    return { complete, percent: Math.round((complete / RESEARCH_SECTIONS.length) * 100) };
+  }
+  function researchStatusLabel(key, intake, brief, isRunning) {
+    if (STATE.researchGeneratingSection === key && isRunning) return 'Generando…';
+    if (!researchSectionState(key, intake, brief).complete) return 'Pendiente';
+    return brief.source === 'edited' ? 'Revisado' : 'Generado por IA';
+  }
   function renderResearch() {
     const el = document.getElementById('ih-research-shell');
     if (!el) return;
@@ -320,6 +370,27 @@
     // progreso (junto al botón que se usó), no las dos a la vez.
     const runSource = isRunning ? (STATE.researchSource || 'linkedin') : null;
     const solutions = parseSolutions(intake.company_solutions);
+    const progress = researchProgress(intake, brief);
+    const sectionCardStart = (key) => {
+      const section = RESEARCH_SECTIONS.find(s => s.key === key);
+      const sectionState = researchSectionState(key, intake, brief);
+      const expanded = STATE.researchOpenSection === key;
+      const status = researchStatusLabel(key, intake, brief, isRunning);
+      return `
+        <section class="ihx-context-card ${expanded ? 'is-expanded' : ''} ${sectionState.complete ? 'is-complete' : 'is-pending'}" data-research-section="${key}">
+          <button type="button" class="ihx-context-card-toggle" aria-expanded="${expanded}">
+            <span class="ihx-context-card-num">${section.number}</span>
+            <span class="ihx-context-card-title">${escapeHtml(section.title)}</span>
+            <span class="ihx-context-card-status">${sectionState.complete ? '✓ ' : ''}${escapeHtml(status)}</span>
+            <span class="ihx-context-card-chevron" aria-hidden="true">↗</span>
+            <span class="ihx-context-card-summary">${escapeHtml(sectionState.summary)}</span>
+          </button>
+          <div class="ihx-context-card-body">`;
+    };
+    const sectionCardEnd = (key, canGenerate = true) => `
+            ${canGenerate ? `<button type="button" class="ihx-btn-ai ihx-btn-ai-sm ihx-card-ai" data-generate-research="${key}" ${isRunning ? 'disabled' : ''}>${SVG_SPARK}<span>${STATE.researchGeneratingSection === key && isRunning ? 'Generando…' : 'Generar / mejorar con IA'}</span></button>` : ''}
+          </div>
+        </section>`;
     const solutionRow = (val) => `
       <div class="ihx-chip-row">
         <input type="text" class="ihx-solution-input" value="${escapeHtml(val)}" placeholder="Ej: Prospección con IA">
@@ -358,7 +429,21 @@
             <span class="ihx-research-err">La actualización del contexto tardó demasiado y no terminó.</span>
             <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-brief">${SVG_SPARK}<span>Reintentar</span></button>` : ''}
         </div>
-        <form id="ihx-research-form">
+        <div class="ihx-context-progress">
+          <div class="ihx-context-progress-copy">
+            <span class="ihx-context-progress-eyebrow">Tu contexto de empresa</span>
+            <strong>${progress.complete} de 7 pasos completados</strong>
+            <span>La IA puede completar todo y tú puedes revisar cada tarjeta.</span>
+          </div>
+          <div class="ihx-context-progress-action">
+            <span class="ihx-context-progress-pct">${progress.percent}%</span>
+            <button type="button" class="ihx-btn-ai" id="ihx-generate-all-context" ${isRunning ? 'disabled' : ''}>${SVG_SPARK}<span>${isRunning ? 'Completando…' : 'Completar todo con IA'}</span></button>
+          </div>
+          <div class="ihx-context-progress-track" role="progressbar" aria-label="Progreso del contexto de empresa" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.percent}">
+            <span style="width:${progress.percent}%"></span>
+          </div>
+        </div>
+        <form id="ihx-research-form" class="ihx-context-gallery">
           <div class="ihx-field">
             <span>Página web considerada</span>
             <p class="ihx-field-help">No se buscará desde tu LinkedIn registrado, sino desde la página web que escribas aquí. Al investigarla se actualizará el contexto de <strong>toda tu empresa</strong> (industria, soluciones y demás).</p>
@@ -375,8 +460,7 @@
               </div>
               <span class="ihx-progress-note">${escapeHtml(intake.company_enrichment_step || 'Investigando…')} — esta página se actualiza sola cuando termine.</span>` : ''}
           </div>
-          <div class="ihx-context-card">
-            <div class="ihx-context-card-h">1. Contexto de la empresa</div>
+          ${sectionCardStart('company')}
             <label class="ihx-field">
               <span>Qué es y a qué se dedica</span>
               <textarea name="company_about" rows="3" placeholder="Qué entendió sobre tu empresa">${escapeHtml(intake.company_about || '')}</textarea>
@@ -389,10 +473,9 @@
               <span>Cómo lo hace (mecanismo)</span>
               <textarea name="mechanism" rows="3">${escapeHtml(brief.mechanism || '')}</textarea>
             </label>
-          </div>
+          ${sectionCardEnd('company')}
 
-          <div class="ihx-context-card">
-            <div class="ihx-context-card-h">2. Industria, tamaño y país</div>
+          ${sectionCardStart('firmographics')}
             <p class="ihx-field-help">Estos tres datos se obtienen de tu LinkedIn registrado — investigar solo tu página web no los actualiza. Corrígelos a mano si hace falta, o usa "Investigar con IA" desde LinkedIn arriba para volver a buscarlos.</p>
             <div class="ihx-field-row">
               <label class="ihx-field">
@@ -408,40 +491,45 @@
                 <input type="text" name="company_country" value="${escapeHtml(intake.company_country || '')}">
               </label>
             </div>
-          </div>
+          ${sectionCardEnd('firmographics')}
 
-          <div class="ihx-context-card">
-            <div class="ihx-context-card-h">3. Pain points del ICP identificados</div>
+          ${sectionCardStart('pains')}
             <label class="ihx-field">
               <span>Qué problemas tiene tu cliente objetivo</span>
               <textarea name="icp_pain_points" rows="3" placeholder="Ej: Pierden visibilidad de su pipeline y no saben priorizar leads">${escapeHtml(intake.icp_pain_points || '')}</textarea>
             </label>
-          </div>
+          ${sectionCardEnd('pains')}
 
-          <div class="ihx-context-card">
-            <div class="ihx-context-card-h">4. Soluciones para esos pain points</div>
+          ${sectionCardStart('solutions')}
             <label class="ihx-field">
               <span>Qué ofreces para resolverlos</span>
               <div class="ihx-chip-list" id="ihx-solutions-list">${solutions.map(solutionRow).join('')}</div>
               <button type="button" class="ihx-chip-add" id="ihx-solutions-add">+ Agregar solución</button>
             </label>
-          </div>
+          ${sectionCardEnd('solutions')}
 
-          <div class="ihx-context-card">
-            <div class="ihx-context-card-h">5. Frase posicional / eslogan</div>
+          ${sectionCardStart('positioning')}
             <label class="ihx-field">
               <span>Cómo lo resume</span>
               <input type="text" name="positional_phrase" value="${escapeHtml(brief.positional_phrase || '')}">
             </label>
-          </div>
+          ${sectionCardEnd('positioning')}
 
-          <div class="ihx-context-card">
-            <div class="ihx-context-card-h">6. Resultados cualitativos</div>
+          ${sectionCardStart('outcomes')}
             <label class="ihx-field">
               <span>Logros o casos de éxito (uno por línea, con o sin números)</span>
               <textarea name="key_outcomes" rows="3" placeholder="Ej: Ayudamos a equipos comerciales a priorizar sus leads más calientes">${escapeHtml(outcomes)}</textarea>
             </label>
-          </div>
+          ${sectionCardEnd('outcomes')}
+
+          ${sectionCardStart('summary')}
+            <div class="ihx-summary-panel">
+              <span class="ihx-summary-label">Síntesis generada por IA</span>
+              <strong>${escapeHtml(brief.positional_phrase || 'Tu posicionamiento aparecerá aquí.')}</strong>
+              <p>${escapeHtml(brief.what_it_does || intake.company_about || 'Completa los pasos anteriores para construir el resumen estratégico.')}</p>
+              ${brief.mechanism ? `<p>${escapeHtml(brief.mechanism)}</p>` : ''}
+            </div>
+          ${sectionCardEnd('summary')}
 
           <div class="ihx-research-actions">
             <button type="submit" class="ihx-btn-generate" id="ihx-research-save">Guardar cambios</button>
@@ -449,8 +537,8 @@
           </div>
         </form>
 
-        <div class="ihx-context-card">
-          <div class="ihx-context-card-h">7. Sube PDFs para darle más contexto a la IA</div>
+        <div class="ihx-context-sources">
+          <div class="ihx-context-card-h">Fuentes adicionales para la IA</div>
           <p class="ihx-field-help">One-pagers, presentaciones ejecutivas, etc. La IA los lee y usa lo que encuentre la próxima vez que actualice el contexto de tu empresa.</p>
           <div class="ihx-doc-upload">
             <input type="file" id="ihx-doc-input" accept="application/pdf">
@@ -470,6 +558,42 @@
       const website = (websiteInput?.value || '').trim();
       if (!website) { websiteInput?.focus(); return; }
       retryEnrichmentFromWebsite(website);
+    });
+    const runContextAI = (sectionKey = 'all') => {
+      STATE.researchGeneratingSection = sectionKey;
+      if (sectionKey !== 'all') STATE.researchOpenSection = sectionKey;
+      if (sectionKey === 'summary') {
+        STATE.brief = { ...STATE.brief, status: 'generating', updated_at: new Date().toISOString(), error_message: null };
+        renderResearch();
+        triggerClientBriefRefresh();
+        return;
+      }
+      const sourceWebsite = (websiteInput?.value || intake.company_website || '').trim();
+      if (linkedinUrl) retryEnrichmentFromLinkedin(linkedinUrl);
+      else if (sourceWebsite) retryEnrichmentFromWebsite(sourceWebsite);
+      else {
+        STATE.researchGeneratingSection = null;
+        websiteInput?.focus();
+      }
+    };
+    const generateAllContextBtn = document.getElementById('ihx-generate-all-context');
+    if (generateAllContextBtn) generateAllContextBtn.addEventListener('click', () => runContextAI('all'));
+    el.querySelectorAll('[data-generate-research]').forEach(btn => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        runContextAI(btn.dataset.generateResearch);
+      });
+    });
+    el.querySelectorAll('.ihx-context-card-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const card = btn.closest('[data-research-section]');
+        const key = card?.dataset.researchSection;
+        STATE.researchOpenSection = STATE.researchOpenSection === key ? null : key;
+        renderResearch();
+        requestAnimationFrame(() => {
+          document.querySelector(`[data-research-section="${key}"] .ihx-context-card-toggle`)?.focus({ preventScroll: true });
+        });
+      });
     });
     const retryBriefBtn = document.getElementById('ihx-retry-brief');
     if (retryBriefBtn) retryBriefBtn.addEventListener('click', () => {
@@ -2585,7 +2709,7 @@ function finBoltSvg() {
 .ihx-toolbar-hint { font-size: 11px; color: var(--ink-4, #9CA2AE); margin-left: auto; white-space: nowrap; }
 @media (max-width: 700px) { .ihx-toolbar { flex-wrap: wrap; } .ihx-toolbar-hint { display: none; } }
 /* ── RESEARCH PAGE ── */
-.ihx-research { padding: 24px 28px; max-width: 720px; }
+.ihx-research { padding: 24px 28px 48px; max-width: 1180px; }
 .ihx-research-hint { font-size: 12.5px; color: var(--ink-4, #8A909C); line-height: 1.6; margin-bottom: 14px; }
 .ihx-research-warn {
   padding: 10px 14px; margin-bottom: 12px;
@@ -2676,18 +2800,79 @@ function finBoltSvg() {
   cursor: pointer; transition: all .15s;
 }
 .ihx-chip-add:hover { color: var(--accent, #1F4BFF); border-color: var(--accent, #1F4BFF); }
-.ihx-research-actions { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+.ihx-research-actions { display: flex; align-items: center; gap: 12px; grid-column: 1 / -1; margin-top: 2px; }
 .ihx-research-saved { font-size: 12px; color: var(--ink-4, #8A909C); }
 /* ── CONTEXT CARDS (1-7) ── */
-.ihx-context-card {
-  padding: 16px 18px; margin-bottom: 14px;
-  background: var(--surface, #FFFFFF); border: 1px solid var(--hair, rgba(10,10,15,0.08)); border-radius: 10px;
+.ihx-context-progress {
+  display: grid; grid-template-columns: 1fr auto; gap: 14px 20px;
+  margin: 22px 0 16px; padding: 18px 20px;
+  background: linear-gradient(135deg, rgba(31,75,255,.07), rgba(110,92,245,.04));
+  border: 1px solid rgba(31,75,255,.16); border-radius: 14px;
 }
+.ihx-context-progress-copy { display: flex; flex-direction: column; gap: 3px; }
+.ihx-context-progress-copy strong { color: var(--ink, #16181D); font-size: 16px; }
+.ihx-context-progress-copy > span:last-child { color: var(--ink-4, #8A909C); font-size: 12px; }
+.ihx-context-progress-eyebrow { color: var(--accent, #1F4BFF); font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.ihx-context-progress-action { display: flex; align-items: center; gap: 14px; }
+.ihx-context-progress-pct { color: var(--accent, #1F4BFF); font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.ihx-context-progress-track { grid-column: 1 / -1; height: 8px; overflow: hidden; background: rgba(31,75,255,.11); border-radius: 999px; }
+.ihx-context-progress-track > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #1F4BFF, #6E5CF5); transition: width .35s ease; }
+.ihx-context-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.ihx-context-card {
+  min-width: 0; aspect-ratio: 1 / 1; overflow: hidden;
+  background: var(--surface, #FFFFFF); border: 1px solid var(--hair, rgba(10,10,15,0.09)); border-radius: 14px;
+  box-shadow: 0 8px 28px -24px rgba(18,32,73,.55);
+  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.ihx-context-card:hover { transform: translateY(-2px); border-color: rgba(31,75,255,.28); box-shadow: 0 14px 30px -22px rgba(31,75,255,.45); }
+.ihx-context-card.is-complete { border-color: rgba(14,169,104,.28); }
+.ihx-context-card.is-expanded { grid-column: 1 / -1; aspect-ratio: auto; overflow: visible; transform: none; border-color: rgba(31,75,255,.35); box-shadow: 0 18px 38px -28px rgba(31,75,255,.55); }
+.ihx-context-card-toggle {
+  position: relative; display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: auto 1fr auto;
+  gap: 10px 9px; width: 100%; height: 100%; min-height: 190px; padding: 16px;
+  border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer;
+}
+.ihx-context-card-toggle:focus-visible { outline: 3px solid rgba(31,75,255,.35); outline-offset: -3px; border-radius: 13px; }
+.ihx-context-card-num { color: var(--accent, #1F4BFF); font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.ihx-context-card-title { color: var(--ink, #16181D); font-size: 14px; font-weight: 750; line-height: 1.25; }
+.ihx-context-card-status { grid-column: 1 / 3; align-self: end; color: var(--ink-4, #8A909C); font-size: 10.5px; font-weight: 700; }
+.ihx-context-card.is-complete .ihx-context-card-status { color: var(--green, #0EA968); }
+.ihx-context-card-chevron { color: var(--ink-5, #C4C9D2); font-size: 14px; transition: transform .18s ease; }
+.ihx-context-card.is-expanded .ihx-context-card-chevron { transform: rotate(90deg); }
+.ihx-context-card-summary {
+  grid-column: 1 / -1; display: -webkit-box; align-self: start; overflow: hidden;
+  color: var(--ink-3, #5A6272); font-size: 11.5px; line-height: 1.5;
+  -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+}
+.ihx-context-card.is-expanded .ihx-context-card-toggle { height: auto; min-height: 0; padding-bottom: 12px; border-bottom: 1px solid var(--hair, rgba(10,10,15,.08)); }
+.ihx-context-card.is-expanded .ihx-context-card-summary { -webkit-line-clamp: 1; }
+.ihx-context-card-body { display: none; padding: 18px; }
+.ihx-context-card.is-expanded .ihx-context-card-body { display: block; animation: ihx-card-open .2s ease-out; }
+.ihx-card-ai { margin-top: 8px; }
+.ihx-summary-panel { display: grid; gap: 9px; padding: 16px; background: var(--surface2, #F6F7F9); border-radius: 10px; }
+.ihx-summary-label { color: var(--accent, #1F4BFF); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.ihx-summary-panel strong { color: var(--ink, #16181D); font-size: 15px; }
+.ihx-summary-panel p { margin: 0; color: var(--ink-3, #5A6272); font-size: 12.5px; line-height: 1.6; }
+.ihx-context-sources { margin-top: 18px; padding: 18px; background: var(--surface, #FFFFFF); border: 1px solid var(--hair, rgba(10,10,15,.08)); border-radius: 14px; }
 .ihx-context-card-h {
   font-size: 12.5px; font-weight: 700; color: var(--ink, #16181D);
   margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--hair, rgba(10,10,15,0.08));
 }
 .ihx-context-card .ihx-field:last-child { margin-bottom: 0; }
+@keyframes ihx-card-open { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+@media (max-width: 1099px) { .ihx-context-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 699px) {
+  .ihx-research { padding: 18px 14px 36px; }
+  .ihx-context-gallery { grid-template-columns: 1fr; }
+  .ihx-context-progress { grid-template-columns: 1fr; padding: 16px; }
+  .ihx-context-progress-action { justify-content: space-between; }
+  .ihx-context-progress-track { grid-column: 1; }
+  .ihx-context-card { aspect-ratio: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ihx-context-card, .ihx-context-card-chevron, .ihx-context-progress-track > span { transition: none; }
+  .ihx-context-card.is-expanded .ihx-context-card-body { animation: none; }
+}
 /* ── DOCUMENT UPLOAD (card 7) ── */
 .ihx-doc-upload { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
 .ihx-doc-upload input[type="file"] { font-size: 12px; color: var(--ink-3, #5A6272); max-width: 260px; }
