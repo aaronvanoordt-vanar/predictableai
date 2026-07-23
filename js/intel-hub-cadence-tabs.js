@@ -374,17 +374,15 @@
     const sectionCardStart = (key) => {
       const section = RESEARCH_SECTIONS.find(s => s.key === key);
       const sectionState = researchSectionState(key, intake, brief);
-      const expanded = STATE.researchOpenSection === key;
       const status = researchStatusLabel(key, intake, brief, isRunning);
       return `
-        <section class="ihx-context-card ${expanded ? 'is-expanded' : ''} ${sectionState.complete ? 'is-complete' : 'is-pending'}" data-research-section="${key}">
-          <button type="button" class="ihx-context-card-toggle" aria-expanded="${expanded}">
+        <section class="ihx-context-card ${sectionState.complete ? 'is-complete' : 'is-pending'}" data-research-section="${key}">
+          <div class="ihx-context-card-toggle">
             <span class="ihx-context-card-num">${section.number}</span>
             <span class="ihx-context-card-title">${escapeHtml(section.title)}</span>
             <span class="ihx-context-card-status">${sectionState.complete ? '✓ ' : ''}${escapeHtml(status)}</span>
-            <span class="ihx-context-card-chevron" aria-hidden="true">↗</span>
             <span class="ihx-context-card-summary">${escapeHtml(sectionState.summary)}</span>
-          </button>
+          </div>
           <div class="ihx-context-card-body">`;
     };
     const sectionCardEnd = (key, canGenerate = true) => `
@@ -582,17 +580,6 @@
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation();
         runContextAI(btn.dataset.generateResearch);
-      });
-    });
-    el.querySelectorAll('.ihx-context-card-toggle').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const card = btn.closest('[data-research-section]');
-        const key = card?.dataset.researchSection;
-        STATE.researchOpenSection = STATE.researchOpenSection === key ? null : key;
-        renderResearch();
-        requestAnimationFrame(() => {
-          document.querySelector(`[data-research-section="${key}"] .ihx-context-card-toggle`)?.focus({ preventScroll: true });
-        });
       });
     });
     const retryBriefBtn = document.getElementById('ihx-retry-brief');
@@ -2817,61 +2804,58 @@ function finBoltSvg() {
 .ihx-context-progress-pct { color: var(--accent, #1F4BFF); font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .ihx-context-progress-track { grid-column: 1 / -1; height: 8px; overflow: hidden; background: rgba(31,75,255,.11); border-radius: 999px; }
 .ihx-context-progress-track > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #1F4BFF, #6E5CF5); transition: width .35s ease; }
-.ihx-context-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.ihx-context-gallery { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 12px; align-items: stretch; }
 .ihx-context-card {
-  min-width: 0; aspect-ratio: 1 / 1; overflow: hidden;
+  min-width: 0; display: flex; flex-direction: column; overflow: hidden;
   background: var(--surface, #FFFFFF); border: 1px solid var(--hair, rgba(10,10,15,0.09)); border-radius: 14px;
   box-shadow: 0 8px 28px -24px rgba(18,32,73,.55);
   transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
 }
 .ihx-context-card:hover { transform: translateY(-2px); border-color: rgba(31,75,255,.28); box-shadow: 0 14px 30px -22px rgba(31,75,255,.45); }
 .ihx-context-card.is-complete { border-color: rgba(14,169,104,.28); }
-.ihx-context-card.is-expanded { grid-column: 1 / -1; aspect-ratio: auto; overflow: visible; transform: none; border-color: rgba(31,75,255,.35); box-shadow: 0 18px 38px -28px rgba(31,75,255,.55); }
 .ihx-context-card-toggle {
-  position: relative; display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: auto 1fr auto;
-  gap: 10px 9px; width: 100%; height: 100%; min-height: 190px; padding: 16px;
-  border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer;
+  position: relative; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto auto;
+  gap: 6px 8px; width: 100%; padding: 13px 14px 10px;
+  border: 0; background: transparent; color: inherit; text-align: left; font: inherit;
 }
-.ihx-context-card-toggle:focus-visible { outline: 3px solid rgba(31,75,255,.35); outline-offset: -3px; border-radius: 13px; }
 .ihx-context-card-num { color: var(--accent, #1F4BFF); font-size: 11px; font-weight: 800; letter-spacing: .08em; }
-.ihx-context-card-title { color: var(--ink, #16181D); font-size: 14px; font-weight: 750; line-height: 1.25; }
-.ihx-context-card-status { grid-column: 1 / 3; align-self: end; color: var(--ink-4, #8A909C); font-size: 10.5px; font-weight: 700; }
+.ihx-context-card-title { color: var(--ink, #16181D); font-size: 13px; font-weight: 750; line-height: 1.25; }
+.ihx-context-card-status { grid-column: 1 / -1; color: var(--ink-4, #8A909C); font-size: 10px; font-weight: 700; }
 .ihx-context-card.is-complete .ihx-context-card-status { color: var(--green, #0EA968); }
-.ihx-context-card-chevron { color: var(--ink-5, #C4C9D2); font-size: 14px; transition: transform .18s ease; }
-.ihx-context-card.is-expanded .ihx-context-card-chevron { transform: rotate(90deg); }
 .ihx-context-card-summary {
-  grid-column: 1 / -1; display: -webkit-box; align-self: start; overflow: hidden;
-  color: var(--ink-3, #5A6272); font-size: 11.5px; line-height: 1.5;
-  -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  grid-column: 1 / -1; display: -webkit-box; overflow: hidden;
+  color: var(--ink-3, #5A6272); font-size: 10.5px; line-height: 1.4;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
-.ihx-context-card.is-expanded .ihx-context-card-toggle { height: auto; min-height: 0; padding-bottom: 12px; border-bottom: 1px solid var(--hair, rgba(10,10,15,.08)); }
-.ihx-context-card.is-expanded .ihx-context-card-summary { -webkit-line-clamp: 1; }
-.ihx-context-card-body { display: none; padding: 18px; }
-.ihx-context-card.is-expanded .ihx-context-card-body { display: block; animation: ihx-card-open .2s ease-out; }
-.ihx-card-ai { margin-top: 8px; }
-.ihx-summary-panel { display: grid; gap: 9px; padding: 16px; background: var(--surface2, #F6F7F9); border-radius: 10px; }
+.ihx-context-card-body { display: flex; flex: 1; flex-direction: column; padding: 10px 14px 14px; border-top: 1px solid var(--hair, rgba(10,10,15,.07)); }
+.ihx-context-card-body .ihx-field { margin-bottom: 9px; }
+.ihx-context-card-body .ihx-field > span { margin-bottom: 4px; font-size: 8.5px; }
+.ihx-context-card-body .ihx-field-help { margin: 0 0 8px; font-size: 9.5px; line-height: 1.4; }
+.ihx-context-card-body .ihx-field-row { grid-template-columns: 1fr; gap: 6px; }
+.ihx-context-card-body input, .ihx-context-card-body textarea { padding: 6px 8px; font-size: 11px; }
+.ihx-context-card-body textarea { min-height: 48px; max-height: 76px; }
+.ihx-card-ai { align-self: flex-start; margin-top: auto; padding: 7px 10px; font-size: 10px; }
+.ihx-summary-panel { display: grid; gap: 7px; padding: 12px; background: var(--surface2, #F6F7F9); border-radius: 10px; }
 .ihx-summary-label { color: var(--accent, #1F4BFF); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-.ihx-summary-panel strong { color: var(--ink, #16181D); font-size: 15px; }
-.ihx-summary-panel p { margin: 0; color: var(--ink-3, #5A6272); font-size: 12.5px; line-height: 1.6; }
+.ihx-summary-panel strong { color: var(--ink, #16181D); font-size: 12px; }
+.ihx-summary-panel p { margin: 0; color: var(--ink-3, #5A6272); font-size: 10.5px; line-height: 1.45; }
 .ihx-context-sources { margin-top: 18px; padding: 18px; background: var(--surface, #FFFFFF); border: 1px solid var(--hair, rgba(10,10,15,.08)); border-radius: 14px; }
 .ihx-context-card-h {
   font-size: 12.5px; font-weight: 700; color: var(--ink, #16181D);
   margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--hair, rgba(10,10,15,0.08));
 }
 .ihx-context-card .ihx-field:last-child { margin-bottom: 0; }
-@keyframes ihx-card-open { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
-@media (max-width: 1099px) { .ihx-context-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1199px) { .ihx-context-gallery { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 899px) { .ihx-context-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 699px) {
   .ihx-research { padding: 18px 14px 36px; }
   .ihx-context-gallery { grid-template-columns: 1fr; }
   .ihx-context-progress { grid-template-columns: 1fr; padding: 16px; }
   .ihx-context-progress-action { justify-content: space-between; }
   .ihx-context-progress-track { grid-column: 1; }
-  .ihx-context-card { aspect-ratio: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .ihx-context-card, .ihx-context-card-chevron, .ihx-context-progress-track > span { transition: none; }
-  .ihx-context-card.is-expanded .ihx-context-card-body { animation: none; }
+  .ihx-context-card, .ihx-context-progress-track > span { transition: none; }
 }
 /* ── DOCUMENT UPLOAD (card 7) ── */
 .ihx-doc-upload { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
