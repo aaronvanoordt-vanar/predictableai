@@ -404,14 +404,18 @@
           Corrígelo si algo no es exacto, o vuelve a investigar con IA — tus cambios se usan de inmediato.
         </div>
         ${stale ? `<div class="ihx-research-warn">La búsqueda anterior tardó demasiado y no terminó. Puedes intentarlo de nuevo.</div>` : ''}
-        <div class="ihx-research-panel">
+        <div class="ihx-research-panel ihx-research-panel-editable">
           <div class="ihx-research-panel-text">
             <strong>Investigar desde tu LinkedIn</strong>
-            <span>Vuelve a buscar tu página web y el contexto de tu empresa a partir del LinkedIn que registraste al crear tu cuenta. Esto reemplaza los campos de abajo con lo que encuentre.</span>
+            <span>Vuelve a buscar tu página web y el contexto de tu empresa a partir de este LinkedIn. Esto reemplaza los campos de abajo con lo que encuentre. Corrige el link si no es el correcto.</span>
           </div>
-          <button type="button" class="ihx-btn-ai" id="ihx-retry-enrich-linkedin" ${(isRunning || !linkedinUrl) ? 'disabled' : ''}>
-            ${SVG_SPARK}<span>${isRunning ? 'Investigando…' : 'Investigar con IA'}</span>
-          </button>
+          <div class="ihx-field-with-btn">
+            <input type="url" id="ihx-linkedin-input" name="company_linkedin_url" value="${escapeHtml(linkedinUrl || '')}" placeholder="https://linkedin.com/company/tuempresa">
+            <button type="button" class="ihx-btn-force ihx-btn-ai-sm" id="ihx-save-linkedin">Guardar</button>
+            <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-linkedin" ${isRunning ? 'disabled' : ''}>
+              ${SVG_SPARK}<span>${runSource === 'linkedin' ? 'Investigando…' : 'Investigar con IA'}</span>
+            </button>
+          </div>
         </div>
         ${(runSource === 'linkedin') ? `
           <div class="ihx-progress-panel">
@@ -553,8 +557,15 @@
       </div>`;
     const form = document.getElementById('ihx-research-form');
     if (form) form.addEventListener('submit', saveResearch);
+    const linkedinInput = document.getElementById('ihx-linkedin-input');
     const retryLinkedinBtn = document.getElementById('ihx-retry-enrich-linkedin');
-    if (retryLinkedinBtn) retryLinkedinBtn.addEventListener('click', () => retryEnrichmentFromLinkedin(linkedinUrl));
+    if (retryLinkedinBtn) retryLinkedinBtn.addEventListener('click', () => {
+      const url = (linkedinInput?.value || '').trim();
+      if (!url) { linkedinInput?.focus(); return; }
+      retryEnrichmentFromLinkedin(url);
+    });
+    const saveLinkedinBtn = document.getElementById('ihx-save-linkedin');
+    if (saveLinkedinBtn) saveLinkedinBtn.addEventListener('click', () => saveLinkedinUrl((linkedinInput?.value || '').trim(), saveLinkedinBtn));
     const retryWebsiteBtn = document.getElementById('ihx-retry-enrich-website');
     const websiteInput = document.getElementById('ihx-website-input');
     if (retryWebsiteBtn) retryWebsiteBtn.addEventListener('click', () => {
@@ -571,8 +582,9 @@
         triggerClientBriefRefresh();
         return;
       }
+      const sourceLinkedin = (linkedinInput?.value || intake.company_linkedin_url || '').trim();
       const sourceWebsite = (websiteInput?.value || intake.company_website || '').trim();
-      if (linkedinUrl) retryEnrichmentFromLinkedin(linkedinUrl);
+      if (sourceLinkedin) retryEnrichmentFromLinkedin(sourceLinkedin);
       else if (sourceWebsite) retryEnrichmentFromWebsite(sourceWebsite);
       else {
         STATE.researchGeneratingSection = null;
@@ -726,6 +738,26 @@
     if (!error) {
       STATE.documents = (STATE.documents || []).filter(d => d.id !== doc.id);
       renderResearch();
+    }
+  }
+  // Guarda solo el LinkedIn de la empresa, sin disparar una investigación —
+  // para cuando el usuario solo quiere corregir el link (p. ej. estaba mal
+  // registrado) sin volver a pedirle a la IA que busque de nuevo.
+  async function saveLinkedinUrl(url, btn) {
+    if (!STATE.user) return;
+    const original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
+    try {
+      const { error } = await window.supabaseClient.from('intel_hub_intake')
+        .upsert({ user_id: STATE.user.id, company_linkedin_url: url || null }, { onConflict: 'user_id' });
+      if (error) throw error;
+      STATE.intake = { ...STATE.intake, company_linkedin_url: url || null };
+      if (btn) btn.textContent = '✓ Guardado';
+    } catch (e) {
+      console.error('[research] save linkedin error', e);
+      if (btn) btn.textContent = '❌ Error';
+    } finally {
+      setTimeout(() => { if (btn) { btn.textContent = original; btn.disabled = false; } }, 1500);
     }
   }
   async function saveResearch(ev) {
@@ -2716,6 +2748,7 @@ function finBoltSvg() {
 .ihx-research-panel-text { display: flex; flex-direction: column; gap: 3px; min-width: 220px; flex: 1; }
 .ihx-research-panel-text strong { font-size: 13px; font-weight: 600; color: var(--ink, #16181D); }
 .ihx-research-panel-text span { font-size: 12px; color: var(--ink-4, #8A909C); line-height: 1.5; }
+.ihx-research-panel-editable .ihx-field-with-btn { flex: 1 1 360px; max-width: 480px; }
 .ihx-website-panel {
   margin: 12px 0 0; padding: 14px 16px;
   background: var(--surface2, #F6F7F9); border: 1px solid var(--hair, rgba(10,10,15,.08)); border-radius: 10px;
