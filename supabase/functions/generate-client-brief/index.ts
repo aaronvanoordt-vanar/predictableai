@@ -87,7 +87,7 @@ function parseJson(raw: string): any {
 
 const SYSTEM_PROMPT = `You are the onboarding engine of a B2B sales-intelligence platform. You build a "client brief": the seller context used to write hyper-personalized outbound messages on behalf of this company.
 
-Research the company (web_search their website and LinkedIn page, max 5 searches) and combine what you find with the intake data provided. Then respond with ONLY valid JSON (no markdown fences, no prose) with exactly this shape:
+Research the company (web_search their website and LinkedIn page, max 5 searches) and combine what you find with the intake data provided. The "Website" and "LinkedIn" values in the intake data below (when present) are the ground truth for which company this is — scope your searches to those exact domains/pages (e.g. a site-scoped query) rather than a generic search for the company name. A generic name search can surface an unrelated, similarly-named business (business-registry filings, franchises, or a company in a completely different industry); never pull facts from a result you can't trace back to the given website/LinkedIn URL or to the intake data itself. If a search result's industry or description contradicts the intake data provided, discard it rather than trusting the search over the intake. Then respond with ONLY valid JSON (no markdown fences, no prose) with exactly this shape:
 
 {
   "company_name": "string",

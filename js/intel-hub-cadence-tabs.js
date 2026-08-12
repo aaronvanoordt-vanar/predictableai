@@ -478,7 +478,7 @@
           ${sectionCardEnd('company')}
 
           ${sectionCardStart('firmographics')}
-            <p class="ihx-field-help">Estos tres datos se obtienen de tu LinkedIn registrado — investigar solo tu página web no los actualiza. Corrígelos a mano si hace falta, o usa "Investigar con IA" desde LinkedIn arriba para volver a buscarlos.</p>
+            <p class="ihx-field-help">Estos tres datos se completan investigando tu LinkedIn registrado o tu página web guardada. Corrígelos a mano si hace falta, o usa cualquiera de los botones "Investigar con IA" arriba para volver a buscarlos.</p>
             <div class="ihx-field-row">
               <label class="ihx-field">
                 <span>Industria</span>
