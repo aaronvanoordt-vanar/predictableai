@@ -1,10 +1,19 @@
 /**
  * enrich-company — Supabase Edge Function
  *
- * Takes a LinkedIn company URL and uses Claude with web_search to find:
+ * Takes a LinkedIn company URL and/or a saved website URL and uses Claude
+ * with web_search to find:
  *   - Industry, employee count, country, website URL
  *   - Company "About" description
  *   - Products/solutions offered
+ *   - ICP pain points
+ *
+ * Every research prompt is grounded to the exact URL given (LinkedIn page or
+ * website domain) rather than a generic name search — a blind search for the
+ * company name can surface an unrelated, similarly-named business (e.g. a
+ * business-registry filing for a different industry) and silently poison
+ * every downstream field. See CLAUDE.md / PR history for the incident this
+ * guards against.
  *
  * Runs as separate research calls (LinkedIn, then the discovered website)
  * instead of one opaque call, writing a real progress checkpoint to
@@ -13,10 +22,16 @@
  *
  * Two entry points, matching the two ways a user can kick off research:
  *   - { linkedin_url } — full pass starting from the LinkedIn page (also
- *     discovers/overwrites industry, size, country, website).
- *   - { website_url } — website-only pass when the user has typed their own
- *     website instead: only refines solutions/about, leaves everything else
- *     (industry, size, country, LinkedIn URL) untouched.
+ *     discovers/overwrites industry, size, country, website; fills pain
+ *     points from the discovered site since LinkedIn itself doesn't have them).
+ *   - { website_url } — website-only pass when the user has typed/kept their
+ *     own saved website: this is the source of truth for about, solutions,
+ *     pain points, and fills industry/size/country whenever the site itself
+ *     evidences them (LinkedIn URL is left untouched either way).
+ *
+ * Together with generate-client-brief (which derives what_it_does, mechanism,
+ * positional_phrase and key_outcomes from this same grounded data), this
+ * covers all 7 modules of "Contexto de tu empresa" end to end.
  *
  * Stores enriched data in intel_hub_intake.
  *
@@ -95,7 +110,7 @@ interface LinkedInFindings {
 }
 
 async function researchLinkedIn(apiKey: string, linkedinUrl: string): Promise<LinkedInFindings> {
-  const system = `You are a company research agent. Search the web for this company's LinkedIn page.
+  const system = `You are a company research agent. Open this EXACT LinkedIn company page URL and read its own content (About section, headline, website link on the page) — do not run a generic search for the company name and grab whatever ranks first.
 Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
   "industry": "Main industry/sector (e.g. 'B2B SaaS - Sales Technology')",
@@ -104,8 +119,10 @@ Respond ONLY with valid JSON, no markdown fences, no explanation:
   "website": "Company website URL found on the LinkedIn page, e.g. 'https://company.com'. Empty string if not found.",
   "about": "2-3 sentences: what they do, mission, years of experience, market presence"
 }
-Hard rule: NEVER write a refusal or "not enough data" message in any field (e.g. "insufficient data", "no información disponible", "no indexable content"). Work with whatever you find — even just the company name, a page title, an industry keyword, or a LinkedIn headline is enough to write a short, plausible "about" and a best-guess industry. Only leave a field as an empty string if you found absolutely nothing usable for it; never explain the absence inside the field itself.`;
-  const prompt = `Search this LinkedIn company page and extract industry, employee count, country, website URL, and about section:\n${linkedinUrl}`;
+Hard rules:
+- Identity guardrail: many company names collide with unrelated businesses (holding companies, franchises, or completely different industries registered under a similar or identical name). Before using any fact, confirm it comes from THIS LinkedIn page's own content — never substitute a business-registry entry, directory listing, or a same-named company you found via a broader search just because it ranked well. If you cannot confirm a fact belongs to this exact page, leave that field empty rather than guessing from a different company.
+- NEVER write a refusal or "not enough data" message in any field (e.g. "insufficient data", "no información disponible", "no indexable content"). Work with whatever you find on THIS page — even just the company name, a page title, an industry keyword, or a LinkedIn headline is enough to write a short, plausible "about" and a best-guess industry. Only leave a field as an empty string if you found absolutely nothing usable for it on this page; never explain the absence inside the field itself.`;
+  const prompt = `Open this exact LinkedIn company page and extract industry, employee count, country, website URL, and about section — all must come from this page's own content, not from a different company that happens to share a name:\n${linkedinUrl}`;
   const raw = await callClaude(apiKey, system, prompt);
   const p = parseJson(raw);
   return {
@@ -120,24 +137,39 @@ Hard rule: NEVER write a refusal or "not enough data" message in any field (e.g.
 interface WebsiteFindings {
   solutions: string;
   about: string;
+  industry: string;
+  employee_count: string;
+  country: string;
+  pain_points: string;
 }
 
 async function researchWebsite(apiKey: string, website: string, fallbackAbout: string): Promise<WebsiteFindings> {
-  const system = `You are a company research agent. Search this company's website to understand their products and services.
+  const system = `You are a company research agent. Your ONLY source is the exact website URL given below — read that site's own pages (home, about, product/solutions, pricing) directly. Do NOT run a generic search for the company's name and pull in whatever ranks first: many company names collide with unrelated businesses (holding companies, franchises, business-registry entries, or completely different industries), and using their data instead of the actual site's content is the single most common failure mode here.
 Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
-  "solutions": "Comma-separated main products/services, best-effort even from limited signal (e.g. 'Revenue forecasting, Pipeline analytics, AI sales coaching')",
-  "about": "2-3 sentences: what they do, mission, years of experience, market presence. Fill this in with your best effort; only fill this in if you found something more specific than what's already known, otherwise return an empty string."
+  "solutions": "Comma-separated main products/services actually described on this site, best-effort even from limited signal (e.g. 'Revenue forecasting, Pipeline analytics, AI sales coaching')",
+  "about": "2-3 sentences: what they do, mission, years of experience, market presence — as described on THIS site. Only fill this in if you found something more specific than what's already known, otherwise return an empty string.",
+  "industry": "Main industry/sector as evidenced by this site's own content (e.g. 'B2B SaaS - Sales Technology'). Empty string if not inferable from the site.",
+  "employee_count": "Approximate team/company size if the site states or implies it (e.g. '50-200 employees'). Empty string if not inferable.",
+  "country": "Primary country of operation as evidenced by the site (address, phone code, language/market cues). Empty string if not inferable.",
+  "pain_points": "1-3 sentences in Spanish: the problems this company's target customer has, as implied by the site's own messaging (headlines, value proposition, case studies). Empty string if not inferable."
 }
 Hard rules:
-- NEVER write a refusal or "not enough data" message in any field (e.g. "insufficient data", "no indexable content", "search engines return no descriptive content"). If the site is a JS-rendered app or otherwise not directly crawlable, you still have the domain name, brand name, page title, meta description, and any search-engine snippets — use those to make a reasonable, clearly-labeled best guess rather than reporting a failure.
-- If you truly cannot infer anything at all beyond the company name, leave the field as an empty string. Do not explain why inside the field.`;
-  const prompt = `Search this company website and extract their main products/services offered:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}`;
+- Identity guardrail: before writing any field, confirm the fact comes from a page actually reachable at this website's own domain — never substitute a same-named but unrelated company's data (e.g. a business-registry filing for a different industry) just because it ranked well in a search.
+- NEVER write a refusal or "not enough data" message in any field (e.g. "insufficient data", "no indexable content", "search engines return no descriptive content"). If the site is a JS-rendered app or otherwise not directly crawlable, you still have the domain name, brand name, page title, meta description, and any search-engine snippets scoped to this domain — use those to make a reasonable, clearly-labeled best guess rather than reporting a failure.
+- If you truly cannot infer a field at all from this specific domain, leave it as an empty string. Do not explain why inside the field.`;
+  let hostname = website;
+  try { hostname = new URL(website).hostname; } catch { /* keep raw string if not a well-formed URL */ }
+  const prompt = `Visit this exact company website (search with a site-scoped query like site:${hostname} if you need to, but every fact must trace back to this domain) and extract solutions, about, industry, employee count, country, and target-customer pain points:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}`;
   const raw = await callClaude(apiKey, system, prompt);
   const p = parseJson(raw);
   return {
     solutions: typeof p.solutions === "string" ? p.solutions : "",
     about: typeof p.about === "string" ? p.about : "",
+    industry: typeof p.industry === "string" ? p.industry : "",
+    employee_count: typeof p.employee_count === "string" ? p.employee_count : "",
+    country: typeof p.country === "string" ? p.country : "",
+    pain_points: typeof p.pain_points === "string" ? p.pain_points : "",
   };
 }
 
@@ -203,12 +235,22 @@ Deno.serve(async (req: Request) => {
 
         let solutions = "";
         let about = li.about;
+        let industry = li.industry;
+        let employeeCount = li.employee_count;
+        let country = li.country;
+        let painPoints = "";
         if (li.website) {
           await setProgress(55, "Revisando tu página web…");
           try {
             const site = await researchWebsite(ANTHROPIC_KEY, li.website, li.about);
             solutions = site.solutions;
             if (site.about) about = site.about;
+            // LinkedIn is the primary source for firmographics; the website
+            // only fills gaps LinkedIn itself didn't find.
+            if (!industry && site.industry) industry = site.industry;
+            if (!employeeCount && site.employee_count) employeeCount = site.employee_count;
+            if (!country && site.country) country = site.country;
+            painPoints = site.pain_points;
           } catch (siteErr) {
             console.warn("[enrich] website step failed, keeping LinkedIn-only data:", siteErr);
           }
@@ -217,12 +259,13 @@ Deno.serve(async (req: Request) => {
         }
 
         await supa.from("intel_hub_intake").update({
-          company_industry:            li.industry,
-          company_employee_count:      li.employee_count,
-          company_country:             li.country,
+          company_industry:            industry,
+          company_employee_count:      employeeCount,
+          company_country:             country,
           company_website:             li.website,
           company_about:               about,
           company_solutions:           solutions,
+          ...(painPoints ? { icp_pain_points: painPoints } : {}),
           company_enrichment_status:   "done",
           company_enrichment_progress: 100,
           company_enrichment_step:     "Listo",
@@ -234,8 +277,9 @@ Deno.serve(async (req: Request) => {
       }
     })();
   } else {
-    // Website-only pass: the user typed their own website — only refine
-    // solutions/about from it, leave industry/size/country/LinkedIn as-is.
+    // Website-only pass: the user typed/kept their own saved website — this
+    // is the source of truth for all of the company-context module fields,
+    // not just solutions/about. LinkedIn URL itself is left untouched.
     const website = body.website_url!;
     const { data: existing } = await supa.from("intel_hub_intake")
       .select("company_about").eq("user_id", user.id).maybeSingle();
@@ -255,6 +299,10 @@ Deno.serve(async (req: Request) => {
           company_website:             website,
           company_solutions:           site.solutions,
           ...(site.about ? { company_about: site.about } : {}),
+          ...(site.industry ? { company_industry: site.industry } : {}),
+          ...(site.employee_count ? { company_employee_count: site.employee_count } : {}),
+          ...(site.country ? { company_country: site.country } : {}),
+          ...(site.pain_points ? { icp_pain_points: site.pain_points } : {}),
           company_enrichment_status:   "done",
           company_enrichment_progress: 100,
           company_enrichment_step:     "Listo",
