@@ -385,8 +385,11 @@
           </div>
           <div class="ihx-context-card-body">`;
     };
-    const sectionCardEnd = (key, canGenerate = true) => `
-            ${canGenerate ? `<button type="button" class="ihx-btn-ai ihx-btn-ai-sm ihx-card-ai" data-generate-research="${key}" ${isRunning ? 'disabled' : ''}>${SVG_SPARK}<span>${STATE.researchGeneratingSection === key && isRunning ? 'Generando…' : 'Generar / mejorar con IA'}</span></button>` : ''}
+    const sectionCardEnd = (key, canGenerate = true, canSave = true) => `
+            <div class="ihx-card-actions">
+              ${canSave ? `<button type="submit" class="ihx-btn-force ihx-card-save">Guardar cambios</button>` : ''}
+              ${canGenerate ? `<button type="button" class="ihx-btn-ai ihx-btn-ai-sm ihx-card-ai" data-generate-research="${key}" ${isRunning ? 'disabled' : ''}>${SVG_SPARK}<span>${STATE.researchGeneratingSection === key && isRunning ? 'Generando…' : 'Generar / mejorar con IA'}</span></button>` : ''}
+            </div>
           </div>
         </section>`;
     const solutionRow = (val) => `
@@ -528,7 +531,7 @@
               <p>${escapeHtml(brief.what_it_does || intake.company_about || 'Completa los pasos anteriores para construir el resumen estratégico.')}</p>
               ${brief.mechanism ? `<p>${escapeHtml(brief.mechanism)}</p>` : ''}
             </div>
-          ${sectionCardEnd('summary')}
+          ${sectionCardEnd('summary', true, false)}
 
           <div class="ihx-research-actions">
             <button type="submit" class="ihx-btn-generate" id="ihx-research-save">Guardar cambios</button>
@@ -2843,7 +2846,9 @@ function finBoltSvg() {
 .ihx-context-card-body .ihx-field-row { grid-template-columns: 1fr; gap: 6px; }
 .ihx-context-card-body input, .ihx-context-card-body textarea { padding: 7px 9px; font-size: 11.5px; }
 .ihx-context-card-body textarea { min-height: 56px; max-height: 82px; }
-.ihx-card-ai { align-self: flex-start; margin-top: auto; padding: 7px 10px; font-size: 10px; }
+.ihx-card-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+.ihx-card-ai { align-self: auto; margin-top: 0; padding: 7px 10px; font-size: 10px; }
+.ihx-card-save { padding: 7px 10px; font-size: 10px; flex-shrink: 0; }
 .ihx-summary-panel { display: grid; gap: 7px; padding: 12px; background: var(--surface2, #F6F7F9); border-radius: 10px; }
 .ihx-summary-label { color: var(--accent, #1F4BFF); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .ihx-summary-panel strong { color: var(--ink, #16181D); font-size: 12px; }
