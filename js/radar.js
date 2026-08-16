@@ -38,6 +38,7 @@
     channel: null,
     pollTimer: null,
     busy: false,
+    driving: false, // true mientras este tab está avanzando el run etapa por etapa
     showRerun: false,
   };
 
@@ -55,6 +56,10 @@
     render();
     ensureRealtime();
     syncPolling();
+    // Si aterrizamos sobre un run en curso (redirect del onboarding, refresh
+    // de la página, o un run que quedó a medias en una sesión anterior),
+    // retomamos desde la etapa que le falte — cada etapa es idempotente.
+    maybeResume();
   }
 
   async function loadLatestRun() {
@@ -111,40 +116,96 @@
     }
   }
 
-  // ── Ejecutar una investigación ─────────────────────────────────────────────
+  // ── Ejecutar una investigación (protocolo por etapas) ──────────────────────
+  //
+  // Cada llamada a generate-radar hace UNA sola unidad de trabajo acotada
+  // (una llamada a Claude, o un lote chico de Apollo) y devuelve next_stage.
+  // Este cliente encadena las llamadas mientras la página está abierta — así
+  // ninguna invocación individual corre el riesgo de que el runtime de Edge
+  // Functions la mate a medio camino (ver comentario en la edge function).
+  // Cada etapa es idempotente, así que reintentar/retomar siempre es seguro.
+
+  async function postRadar(body) {
+    const session = (await global.supabaseClient.auth.getSession()).data.session;
+    if (!session) throw new Error('Tu sesión expiró. Recarga la página.');
+    const res = await fetch(global.SUPABASE_CONFIG.url + '/functions/v1/generate-radar', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token,
+      },
+      body: JSON.stringify(body || {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 402) {
+      throw new Error('No tienes créditos suficientes: esta investigación cuesta ' + (data.cost || 12) + ' créditos y tienes ' + (data.balance || 0) + '.');
+    }
+    if (res.status === 409) return { conflict: true, run_id: data.run_id };
+    if (!res.ok) throw new Error(data.error || ('Error ' + res.status));
+    return data;
+  }
+
+  // A partir de lo que ya tiene guardado el run, decide en qué etapa retomar.
+  function nextStageFor(run) {
+    if (!run.signal_hypothesis) return { stage: 'strategy', offset: 0 };
+    const companies = Array.isArray(run.companies) ? run.companies : [];
+    if (!companies.length) return { stage: 'research', offset: 0 };
+    const done = companies.filter((c) => c && c.dm_done).length;
+    return { stage: 'decision_makers', offset: done };
+  }
+
+  function maybeResume() {
+    if (state.driving || state.busy) return;
+    const run = state.run;
+    if (run && (run.status === 'generating' || run.status === 'pending')) resumeRun(run);
+  }
+
+  function resumeRun(run) {
+    const { stage, offset } = nextStageFor(run);
+    driveRun(run.id, stage, offset);
+  }
+
+  async function driveRun(runId, stage, offset) {
+    if (state.driving) return;
+    state.driving = true;
+    try {
+      let curStage = stage;
+      let curOffset = offset || 0;
+      while (curStage) {
+        const data = await postRadar({ run_id: runId, stage: curStage, offset: curOffset });
+        await loadLatestRun();
+        render();
+        syncPolling();
+        if (!data || data.status === 'error' || data.status === 'ready') break;
+        if (data.next_stage === 'decision_makers') { curStage = 'decision_makers'; curOffset = data.offset || 0; }
+        else if (data.next_stage) { curStage = data.next_stage; curOffset = 0; }
+        else break;
+      }
+    } catch (e) {
+      console.warn('[radar] drive:', e);
+      await loadLatestRun();
+      render();
+    } finally {
+      state.driving = false;
+    }
+  }
 
   async function startRun(customPrompt) {
-    if (state.busy) return;
+    if (state.busy || state.driving) return;
     state.busy = true;
     render();
     try {
-      const session = (await global.supabaseClient.auth.getSession()).data.session;
-      if (!session) throw new Error('Tu sesión expiró. Recarga la página.');
-      const res = await fetch(global.SUPABASE_CONFIG.url + '/functions/v1/generate-radar', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + session.access_token,
-        },
-        body: JSON.stringify(customPrompt ? { custom_prompt: customPrompt } : {}),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 402) {
-        throw new Error('No tienes créditos suficientes: esta investigación cuesta ' + (data.cost || 12) + ' créditos y tienes ' + (data.balance || 0) + '.');
-      }
-      if (res.status === 409) {
-        // Ya hay una investigación corriendo — solo recargar y mostrarla.
-      } else if (!res.ok) {
-        throw new Error(data.error || ('Error ' + res.status));
-      }
+      const data = await postRadar(customPrompt ? { custom_prompt: customPrompt } : {});
       state.showRerun = false;
       await loadLatestRun();
+      if (!data.conflict) render();
     } catch (e) {
       alert(e.message || 'No se pudo iniciar la investigación.');
     } finally {
       state.busy = false;
       render();
       syncPolling();
+      maybeResume();
     }
   }
 
@@ -247,6 +308,16 @@
       ? '<div class="rdr-signal card"><div class="rdr-signal-lbl">Señal detectada</div>' +
         '<div class="rdr-signal-txt">' + esc(run.signal_hypothesis) + '</div></div>'
       : '';
+    // Cada etapa es corta (una llamada a Claude o un lote chico de Apollo);
+    // si pasó bastante desde la última actualización y este tab no está
+    // avanzándola, algo se interrumpió (red, tab en background, etc.) —
+    // ofrecemos un botón en vez de dejar la barra congelada sin salida.
+    const secsStale = run.updated_at ? Math.floor((Date.now() - new Date(run.updated_at).getTime()) / 1000) : 0;
+    const stuck = !state.driving && secsStale > 45;
+    const stuckPanel = stuck
+      ? '<div class="rdr-stuck">Esto está tardando más de lo normal.' +
+        '<button class="btn btn-ghost btn-sm" data-act="resume-stage" ' + (state.busy ? 'disabled' : '') + '>Reintentar esta etapa</button></div>'
+      : '';
     return '<div class="rdr-wrap">' +
       header('Tu radar está investigando. Esto toma unos minutos — puedes quedarte a mirar o explorar la app; te avisamos aquí.') +
       hypothesis +
@@ -257,6 +328,7 @@
         '<div class="rdr-bar"><div class="rdr-bar-fill" style="width:' + pct + '%"></div></div>' +
         (log.length ? '<div class="rdr-log">' + log.slice(-8).map((l) =>
           '<div class="rdr-log-line">' + esc(l && l.text ? l.text : '') + '</div>').join('') + '</div>' : '') +
+        stuckPanel +
       '</div>' +
     '</div>';
   }
@@ -364,6 +436,8 @@
           const i = parseInt(b.getAttribute('data-idx'), 10);
           const companies = Array.isArray(state.run && state.run.companies) ? state.run.companies : [];
           if (companies[i]) saveToList([companies[i]]);
+        } else if (act === 'resume-stage') {
+          if (state.run) resumeRun(state.run);
         }
       });
     });
@@ -398,6 +472,7 @@
       '.rdr-log{margin-top:14px;display:flex;flex-direction:column;gap:5px;border-top:1px solid var(--hair);padding-top:12px}',
       '.rdr-log-line{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-4)}',
       '.rdr-log-line:last-child{color:var(--ink-2)}',
+      '.rdr-stuck{margin-top:14px;padding-top:12px;border-top:1px solid var(--hair);display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12.5px;color:var(--ink-3)}',
       '.rdr-co{padding:18px 20px;display:flex;flex-direction:column;gap:12px}',
       '.rdr-co-head{display:flex;flex-direction:column;gap:7px}',
       '.rdr-co-name{font-size:15.5px;font-weight:700;color:var(--ink);display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}',
