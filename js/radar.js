@@ -148,8 +148,12 @@
   // A partir de lo que ya tiene guardado el run, decide en qué etapa retomar.
   function nextStageFor(run) {
     if (!run.signal_hypothesis) return { stage: 'strategy', offset: 0 };
+    const angles = (run.signal_strategy && Array.isArray(run.signal_strategy.search_angles))
+      ? run.signal_strategy.search_angles : [];
+    const anglesDone = run.research_offset || 0;
+    if (anglesDone < angles.length) return { stage: 'research', offset: anglesDone };
     const companies = Array.isArray(run.companies) ? run.companies : [];
-    if (!companies.length) return { stage: 'research', offset: 0 };
+    if (!companies.length) return { stage: 'research', offset: anglesDone };
     const done = companies.filter((c) => c && c.dm_done).length;
     return { stage: 'decision_makers', offset: done };
   }
@@ -177,8 +181,7 @@
         render();
         syncPolling();
         if (!data || data.status === 'error' || data.status === 'ready') break;
-        if (data.next_stage === 'decision_makers') { curStage = 'decision_makers'; curOffset = data.offset || 0; }
-        else if (data.next_stage) { curStage = data.next_stage; curOffset = 0; }
+        if (data.next_stage) { curStage = data.next_stage; curOffset = data.offset || 0; }
         else break;
       }
     } catch (e) {

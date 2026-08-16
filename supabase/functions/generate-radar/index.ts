@@ -20,7 +20,11 @@
  *
  *   POST { }                                    → create a run, return run_id
  *   POST { run_id, stage: "strategy" }           → derive signal hypothesis
- *   POST { run_id, stage: "research" }            → find companies + evidence
+ *   POST { run_id, stage: "research", offset }    → find companies + evidence
+ *          for ONE search angle (offset = angle index into
+ *          signal_strategy.search_angles, tracked via research_offset).
+ *          Repeats — one angle per call, same idempotent offset pattern as
+ *          decision_makers below — until every angle has run, then moves on.
  *   POST { run_id, stage: "decision_makers",
  *          offset }                              → Apollo lookup for a batch
  *          of companies starting at offset; finalizes (charges credits,
@@ -172,7 +176,10 @@ Hard rules:
 - If a custom prompt from the user is provided, it is the ground truth for the signal: refine it into angles/queries, do not replace it with your own idea.
 - signal_hypothesis in Spanish; everything else may be English.`;
 
-const RESEARCH_SYSTEM = `You are the "Radar" researcher of a B2B sales-intelligence platform. You receive a seller's context and a signal strategy. Execute the strategy with web_search and find REAL companies currently showing the signal — companies that are ideal targets for this seller to contact now.
+// Runs ONCE PER SEARCH ANGLE (see handleResearch) rather than once for the
+// whole strategy — a single call covering all angles routinely ran long
+// enough to hit the Edge Runtime's isolate kill (see file header comment).
+const RESEARCH_SYSTEM = `You are the "Radar" researcher of a B2B sales-intelligence platform. You receive a seller's context and ONE research angle from a broader signal strategy — other angles are covered by separate calls, so focus ONLY on this one. Execute this angle's queries with web_search and find REAL companies currently showing the signal — companies that are ideal targets for this seller to contact now.
 
 Respond with ONLY valid JSON (no markdown fences, no prose):
 {
@@ -189,13 +196,13 @@ Respond with ONLY valid JSON (no markdown fences, no prose):
       "decision_maker_titles": ["2-5 English job titles to look for at THIS company"]
     }
   ],
-  "coverage_note": "1 sentence in Spanish ONLY if you found fewer than the requested minimum — say honestly what limited the search. Empty string otherwise."
+  "coverage_note": "1 sentence in Spanish ONLY if this angle yielded few/no companies — say honestly what limited the search. Empty string otherwise."
 }
 
 Hard rules — violating any of these makes the output worthless:
 - EVERY company must be real and every evidence.url must come from an actual web_search result you saw. NEVER invent companies, URLs, or facts. A company you cannot back with at least 1 evidence URL must be dropped, not padded.
-- Target minimum 5 companies, maximum ${MAX_COMPANIES}. If honest research yields fewer than 5, return fewer and explain in coverage_note — an invented company is far worse than a short list.
-- You have a limited search budget: spend it efficiently across the strategy's angles rather than exhausting it on one angle.
+- Up to 4 companies for THIS angle — do not try to cover the whole strategy, another call handles the other angles. If this angle honestly yields fewer, return fewer and explain in coverage_note.
+- Do not re-report a company already listed in "COMPANIES ALREADY FOUND" below, even if this angle's queries surface it again.
 - Respect target_geographies and exclusions from the strategy. Never include the seller's own company or direct competitors (companies selling the same thing the seller sells — they are rivals, not buyers).
 - Companies must be plausible BUYERS with budget: match the seller's ICP sizes when known.
 - Prefer signal recency: evidence from the last 12 months beats older evidence.
@@ -379,6 +386,7 @@ interface RunRow {
   companies: any[];
   // deno-lint-ignore no-explicit-any
   signal_strategy: any;
+  research_offset: number;
   error_message: string | null;
   updated_at: string;
 }
@@ -411,21 +419,40 @@ async function handleStrategy(supa: any, run: RunRow, anthropicKey: string, h: R
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleResearch(supa: any, run: RunRow, anthropicKey: string, h: Record<string, string>) {
+async function handleResearch(supa: any, run: RunRow, anthropicKey: string, offset: number, h: Record<string, string>) {
   try {
-    const sellerContext = await loadSellerContext(supa, run.user_id);
     const strategy = run.signal_strategy || {};
+    // deno-lint-ignore no-explicit-any
+    const angles: any[] = Array.isArray(strategy.search_angles) ? strategy.search_angles : [];
+    if (!angles.length) throw new Error("La estrategia de investigación no definió ángulos de búsqueda.");
+
+    const idx = Math.max(0, Math.min(offset || 0, angles.length - 1));
+    const angle = angles[idx];
+    const existing = (Array.isArray(run.companies) ? run.companies : []).slice(0, MAX_COMPANIES);
+
+    const sellerContext = await loadSellerContext(supa, run.user_id);
     const researchPrompt =
-      `${sellerContext}\n\n=== SIGNAL STRATEGY TO EXECUTE ===\n${JSON.stringify(strategy, null, 2)}` +
-      `\n\nExecute the strategy now. Search the web following the angles/queries above and return the JSON described in your instructions.`;
-    const raw = await callClaude(anthropicKey, RESEARCH_SYSTEM, researchPrompt, { maxTokens: 5000, maxSearches: 6 });
+      `${sellerContext}\n\n=== SIGNAL STRATEGY (context only — angle below is your scope) ===\n` +
+      JSON.stringify({
+        target_geographies: strategy.target_geographies,
+        exclusions: strategy.exclusions,
+      }, null, 2) +
+      `\n\n=== YOUR RESEARCH ANGLE FOR THIS CALL ===\n${JSON.stringify(angle, null, 2)}` +
+      (existing.length
+        ? `\n\n=== COMPANIES ALREADY FOUND (do not repeat) ===\n${existing.map((c: { name?: string }) => c.name).join(", ")}`
+        : "") +
+      `\n\nExecute ONLY this angle now. Search the web following its queries and return the JSON described in your instructions.`;
+    const maxSearches = Math.max(1, Math.min(3, asStrArr(angle?.queries).length || 2));
+    const raw = await callClaude(anthropicKey, RESEARCH_SYSTEM, researchPrompt, { maxTokens: 3200, maxSearches });
     const research = parseJson(raw);
 
     // deno-lint-ignore no-explicit-any
     const rawCompanies: any[] = Array.isArray(research.companies) ? research.companies : [];
-    const companies = rawCompanies
+    const existingNames = new Set(existing.map((c: { name?: string }) => asStr(c.name).trim().toLowerCase()));
+    // deno-lint-ignore no-explicit-any
+    const newCompanies = rawCompanies
       .filter((c) => asStr(c?.name).trim() && Array.isArray(c?.evidence) && c.evidence.length)
-      .slice(0, MAX_COMPANIES)
+      .filter((c) => !existingNames.has(asStr(c.name).trim().toLowerCase()))
       .map((c) => ({
         name: asStr(c.name).trim(),
         website: asStr(c.website).trim(),
@@ -444,18 +471,36 @@ async function handleResearch(supa: any, run: RunRow, anthropicKey: string, h: R
         dm_done: false, // internal bookkeeping — stripped before status=ready
       }));
 
-    if (!companies.length) {
-      throw new Error(asStr(research.coverage_note) || "La investigación no encontró empresas con evidencia verificable. Intenta con un prompt de señal más específico.");
-    }
+    const merged = existing.concat(newCompanies).slice(0, MAX_COMPANIES);
     const coverageNote = asStr(research.coverage_note).trim();
+    const nextOffset = idx + 1;
+    const moreAnglesLeft = nextOffset < angles.length && merged.length < MAX_COMPANIES;
+
+    if (moreAnglesLeft) {
+      await supa.from("radar_runs").update({
+        companies: merged,
+        research_offset: nextOffset,
+        progress: 25 + Math.round((nextOffset / angles.length) * 30),
+        progress_step: merged.length
+          ? `${merged.length} empresa${merged.length === 1 ? "" : "s"} encontrada${merged.length === 1 ? "" : "s"} — ampliando la búsqueda…`
+          : "Buscando empresas con la señal…",
+        error_message: coverageNote || null,
+      }).eq("id", run.id);
+      return json({ status: "ok", run_id: run.id, next_stage: "research", offset: nextOffset }, 200, h);
+    }
+
+    if (!merged.length) {
+      throw new Error(coverageNote || "La investigación no encontró empresas con evidencia verificable. Intenta con un prompt de señal más específico.");
+    }
 
     await supa.from("radar_runs").update({
-      companies,
+      companies: merged,
+      research_offset: angles.length,
       progress: 55,
-      progress_step: `${companies.length} empresa${companies.length === 1 ? "" : "s"} con la señal encontrada${companies.length === 1 ? "" : "s"} — buscando decision makers…`,
+      progress_step: `${merged.length} empresa${merged.length === 1 ? "" : "s"} con la señal encontrada${merged.length === 1 ? "" : "s"} — buscando decision makers…`,
       error_message: coverageNote || null,
     }).eq("id", run.id);
-    return json({ status: "ok", run_id: run.id, next_stage: "decision_makers", offset: 0, total: companies.length }, 200, h);
+    return json({ status: "ok", run_id: run.id, next_stage: "decision_makers", offset: 0, total: merged.length }, 200, h);
   } catch (err) {
     return await fail(supa, run.id, err, h);
   }
@@ -581,7 +626,7 @@ Deno.serve(async (req: Request) => {
   }
 
   if (stage === "strategy") return await handleStrategy(supa, run, ANTHROPIC_KEY, h);
-  if (stage === "research") return await handleResearch(supa, run, ANTHROPIC_KEY, h);
+  if (stage === "research") return await handleResearch(supa, run, ANTHROPIC_KEY, Number(body.offset) || 0, h);
   if (stage === "decision_makers") return await handleDecisionMakers(supa, run, APOLLO_KEY, Number(body.offset) || 0, h);
   return json({ error: "stage inválido" }, 400, h);
 });
