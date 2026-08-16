@@ -2044,6 +2044,10 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity=".7"/><rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor"/><rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".7"/></svg>
       Dashboard
     </div>
+    <div class="nav-item" data-page="radar" onclick="nav(this,'radar');if(window.radar)window.radar.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="3.5" opacity=".5"/><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/><path d="M8 8l4.2-4.2"/></svg>
+      Radar
+    </div>
 
     <!-- INTELIGENCIA -->
     <div class="sidebar-section">
@@ -2288,6 +2292,11 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 </div>
 
 <!-- ═══════ PAGE: MI OVERVIEW ═══════ -->
+<!-- RADAR: descubrimiento de empresas target con IA (módulo js/radar.js) -->
+<div class="page fade-in" id="page-radar" style="padding:0;gap:0;">
+  <div id="radar-shell"></div>
+</div>
+
 <div class="page fade-in" id="page-mi-overview">
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
     <div>
@@ -3393,6 +3402,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/apollo-enums.js"></script>
 <script src="js/prospecting-data.js"></script>
 <script src="js/prospecting.js"></script>
+<script src="js/radar.js"></script>
 <script src="js/whatsapp-inbox.js"></script>
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
@@ -4367,6 +4377,16 @@ function nav(el, pageId) {
         try { savedTab = localStorage.getItem('predictable_pros_tab') || 'resumen'; } catch (e) {}
         window.prospecting.show(savedTab);
       }
+    }, 0);
+  }
+
+  // Radar lifecycle: el onboarding redirige a #radar (deep-link), camino en el
+  // que el onclick del sidebar no corre — montamos el módulo aquí. El guard de
+  // childElementCount evita re-montar sobre lo que el onclick ya montó.
+  if (pageId === 'radar' && window.radar && typeof window.radar.show === 'function') {
+    setTimeout(() => {
+      const shellEl = document.getElementById('radar-shell');
+      if (shellEl && !shellEl.childElementCount) window.radar.show();
     }, 0);
   }
 
