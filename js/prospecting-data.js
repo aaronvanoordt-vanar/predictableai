@@ -256,6 +256,100 @@
     };
   }
 
+  // ── Importar listas desde Apollo ────────────────────────────
+  // Apollo no expone una API pública para "saved searches" (solo para
+  // Lists/Labels) — ver fetchSavedSearches más abajo. Esto trae las listas
+  // (labels) que ya existen en la cuenta de Apollo del usuario y copia sus
+  // contactos a una lista nueva de Predictable (prospect_lists), fusionando
+  // con el flujo existente en vez de crear una vista aparte.
+
+  async function fetchApolloLists() {
+    const data = await apolloProxy('/labels', {});
+    return (data?.labels || []).filter((l) => l && l.id != null).map((l) => ({
+      id: l.id,
+      name: l.name || 'Sin nombre',
+      modality: l.modality || 'contacts',
+      count: l.cached_count ?? l.count ?? l.contacts_count ?? null,
+    }));
+  }
+
+  const APOLLO_LIST_IMPORT_MAX_PAGES = 50; // 50 × 100 = 5,000 contactos por importación
+
+  async function fetchApolloListContacts(labelId, onProgress) {
+    const progress = typeof onProgress === 'function' ? onProgress : () => {};
+    const perPage = 100;
+    const contacts = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const data = await apolloProxy('/contacts/search', {
+        contact_label_ids: [labelId],
+        page,
+        per_page: perPage,
+      });
+      contacts.push(...(data?.contacts || []));
+      totalPages = data?.pagination?.total_pages || 1;
+      progress({ done: page, total: Math.min(totalPages, APOLLO_LIST_IMPORT_MAX_PAGES) });
+      page++;
+    } while (page <= totalPages && page <= APOLLO_LIST_IMPORT_MAX_PAGES);
+    return { contacts, truncated: totalPages > APOLLO_LIST_IMPORT_MAX_PAGES };
+  }
+
+  async function importApolloList({ apolloListId, apolloListName, onProgress }) {
+    if (apolloListId == null) throw new Error('Selecciona una lista de Apollo.');
+    const userId = await getUserId();
+    const progress = typeof onProgress === 'function' ? onProgress : () => {};
+
+    // 1. Crear (o reutilizar, con sufijo si el nombre ya existe) la lista local.
+    const baseName = String(apolloListName || 'Lista de Apollo').trim() || 'Lista de Apollo';
+    let list;
+    try {
+      list = await createList(baseName);
+    } catch (e) {
+      if (!/ese nombre/.test(e.message)) throw e;
+      list = await createList(baseName + ' (Apollo)');
+    }
+
+    // 2. Traer los contactos de esa lista en Apollo (paginado).
+    const { contacts, truncated } = await fetchApolloListContacts(
+      apolloListId,
+      (p) => progress(Object.assign({ phase: 'fetching' }, p))
+    );
+
+    // 3. Deduplicar contra miembros ya guardados en la lista (por contact id
+    // de Apollo — mismo criterio que las filas "Guardado" en addPeopleToList).
+    const { data: existing, error: exErr } = await sb()
+      .from('prospect_list_members')
+      .select('apollo_contact_id')
+      .eq('list_id', list.id);
+    if (exErr) throw new Error('No se pudo leer la lista: ' + exErr.message);
+    const existingContactIds = new Set((existing || []).map((r) => r.apollo_contact_id).filter(Boolean));
+    const fresh = contacts.filter((c) => c?.id && !existingContactIds.has(c.id));
+    const alreadyInList = contacts.length - fresh.length;
+
+    // 4. Insertar en Supabase.
+    progress({ phase: 'saving', done: 0, total: fresh.length });
+    const rows = fresh.map((c) => {
+      const row = personToRow(c, null, userId, list.id, c.id);
+      row.apollo_person_id = c.person_id || null;
+      row.email = isMaskedEmail(c.email) ? null : c.email;
+      row.phone = (c.phone_numbers || []).map((n) => n?.sanitized_number || n?.raw_number).find(Boolean) || null;
+      row.phone_status = row.phone ? 'revealed' : 'none';
+      row.enriched_at = (row.email || row.phone) ? new Date().toISOString() : null;
+      return row;
+    });
+    let added = 0;
+    if (rows.length) {
+      const { data: inserted, error } = await sb().from('prospect_list_members')
+        .upsert(rows, { onConflict: 'list_id,apollo_person_id', ignoreDuplicates: true })
+        .select('id');
+      if (error) throw new Error('No se pudieron guardar los contactos importados: ' + error.message);
+      added = inserted ? inserted.length : rows.length;
+    }
+
+    return { list, added, alreadyInList, truncated, total: contacts.length };
+  }
+
   // ── Búsquedas guardadas (Supabase, RLS por dueño) ──────────
   // Apollo no expone una API pública para "saved searches" — solo persiste
   // los criterios de filtro en Predictable. Guardar también en Apollo se
@@ -1164,6 +1258,8 @@
     searchPeople,
     syncIcpFromSearch,
     fetchLists,
+    fetchApolloLists,
+    importApolloList,
     fetchAllContacts,
     setContactStatus,
     countMeetings,
