@@ -32,6 +32,12 @@
     // total depende de cuántas secciones estén vencidas por cadence.
     intel_hub_refresh:      { credits: 2,  label: 'por ítem que se actualice', variable: true },
 
+    // ── Radar (descubrimiento de empresas target con IA) ──────────────
+    // Investigación profunda: Sonnet con ~15 búsquedas web + Apollo search.
+    // Raw ~US$0.40. El PRIMER run es gratis (hook del onboarding); este
+    // precio aplica a re-runs y prompts propios. Cobro real: generate-radar.
+    radar_run:              { credits: 12, label: 'por investigación',   variable: false },
+
     // ── Prospección / Outreach ────────────────────────────────────────
     outreach_message:       { credits: 3,  label: 'por mensaje',         variable: false },
 

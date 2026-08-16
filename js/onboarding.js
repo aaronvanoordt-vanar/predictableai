@@ -191,7 +191,15 @@
       // intel_hub_intake para que el Intelligence Hub lo consuma.
       await triggerEnrichment(url);
 
-      redirectToDashboard();
+      // Radar (aha moment): generate-radar deriva la señal de compra desde el
+      // LinkedIn y sale a cazar empresas target. Se espera el 202 (rápido: la
+      // función inserta la fila radar_runs antes de investigar en background)
+      // para que al aterrizar en #radar ya exista el run y se vea el progreso
+      // en vivo. Si falla, la página Radar ofrece iniciarlo manualmente.
+      showStatus('inf', '<span class="spinner"></span> Iniciando tu Radar: la IA saldrá a buscar tus empresas target…');
+      await triggerRadar();
+
+      window.location.replace('./index.html#radar');
     } catch (err) {
       btn.disabled = false;
       showStatus('err', 'Error al guardar: ' + esc(err.message));
@@ -214,6 +222,24 @@
       }).catch(e => console.warn('[onboarding] enrich-company:', e));
     } catch (e) {
       console.warn('[onboarding] enrich trigger failed:', e);
+    }
+  }
+
+  async function triggerRadar() {
+    try {
+      const session = (await window.supabaseClient.auth.getSession()).data.session;
+      if (!session) return;
+      await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/generate-radar', {
+        method: 'POST',
+        keepalive: true,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + session.access_token,
+        },
+        body: JSON.stringify({}),
+      });
+    } catch (e) {
+      console.warn('[onboarding] generate-radar:', e);
     }
   }
 
