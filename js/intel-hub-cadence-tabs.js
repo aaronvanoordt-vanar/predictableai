@@ -44,7 +44,7 @@
     generating: false, initialized: false, autoHealed: false,
     cadence: null,
     intake: null, brief: null, profile: null, documents: [], researchLoaded: false, researchSaving: false,
-    researchOpenSection: 'company', researchGeneratingSection: null,
+    researchOpenSection: 'company', researchGeneratingSection: null, researchLayoutKey: null,
   };
   function log(...a) { console.log('[intel-hub-v5]', ...a); }
   async function waitForSupabase() {
@@ -215,14 +215,21 @@
         if (['done', 'error'].includes(STATE.intake?.company_enrichment_status)) {
           STATE.researchGeneratingSection = null;
         }
-        renderResearch();
+        // enrich-company escribe la fila varias veces por corrida (una por
+        // paso terminado), así que aquí NO se re-renderiza todo: se parchean
+        // los campos que cambiaron. Así las tarjetas se van llenando en vivo
+        // sin perder el foco de lo que el usuario esté escribiendo ni cortar
+        // la animación de la barra de progreso.
+        refreshResearchView();
         // Cuando la investigación (LinkedIn o web) termina, el contexto de la
-        // empresa cambió: regeneramos client_brief para que ese contexto fluya
+        // empresa cambió: client_brief se regenera para que ese contexto fluya
         // al resto de la plataforma (búsqueda recomendada por recommended_filters,
-        // generate-outreach de 5 capas y, de ahí, el AI Sales Coach). Sin esto
-        // el nuevo contexto quedaría solo en esta pantalla.
+        // generate-outreach de 5 capas y, de ahí, el AI Sales Coach). Ese
+        // disparo ahora lo hace enrich-company al terminar (ahorra un salto de
+        // realtime + un arranque en frío); esto es solo la red de seguridad por
+        // si esa llamada del servidor no prendió.
         if (STATE.intake?.company_enrichment_status === 'done' && prevStatus === 'running') {
-          triggerClientBriefRefresh();
+          ensureClientBriefRefresh();
         }
       })
       .on('postgres_changes', {
@@ -231,7 +238,7 @@
       }, (payload) => {
         STATE.brief = payload.new || null;
         if (['ready', 'error'].includes(STATE.brief?.status)) STATE.researchGeneratingSection = null;
-        renderResearch();
+        refreshResearchView();
       })
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'company_documents',
@@ -261,6 +268,21 @@
         body: '{}',
       });
     } catch (e) { console.warn('[research] client-brief refresh error', e); }
+  }
+  // enrich-company dispara generate-client-brief él mismo al terminar. Si esa
+  // llamada del servidor no prendió (red, cold start), en unos segundos el
+  // brief seguiría sin moverse: ahí sí lo pedimos desde el cliente. Evita el
+  // doble disparo del camino feliz, que costaba créditos y generaba carreras.
+  const BRIEF_KICKOFF_GRACE_MS = 8000;
+  function ensureClientBriefRefresh() {
+    const startedFrom = STATE.brief?.updated_at || null;
+    setTimeout(() => {
+      const moved = STATE.brief?.status === 'generating'
+        || (STATE.brief?.updated_at && STATE.brief.updated_at !== startedFrom);
+      if (moved) return;
+      console.warn('[research] client-brief no arrancó desde el servidor, reintentando desde el cliente');
+      triggerClientBriefRefresh();
+    }, BRIEF_KICKOFF_GRACE_MS);
   }
   // Si enrich-company muere a mitad de camino (timeout, crash) sin llegar a
   // escribir status done/error, la fila queda en 'running' para siempre — sin
@@ -350,6 +372,204 @@
     if (STATE.researchGeneratingSection === key && isRunning) return 'Generando…';
     if (!researchSectionState(key, intake, brief).complete) return 'Pendiente';
     return brief.source === 'edited' ? 'Revisado' : 'Generado por IA';
+  }
+  function isEnriching(intake) {
+    return intake?.company_enrichment_status === 'running' && !isStaleEnriching(intake);
+  }
+
+  // ─── BARRA DE PROGRESO ────────────────────────────────────
+  // El servidor manda checkpoints reales (8 → 45 → 85 → 90 → 100), pero entre
+  // uno y otro pueden pasar 20-30 segundos: una barra que se queda quieta se
+  // lee como "se colgó". Este ticker interpola: salta rápido al checkpoint
+  // nuevo y después avanza en cámara lenta hacia un techo asintótico, así
+  // siempre se ve movimiento sin nunca adelantarse al progreso real.
+  const PROGRESS_TICK_MS = 120;
+  const PROGRESS_CREEP_HEADROOM = 26; // cuánto puede adelantarse al checkpoint
+  const PROGRESS_CREEP_CEILING = 97;  // el 100% solo lo pone el servidor
+  const PROGRESS_UI = { shown: 0, target: 0, timer: null };
+  function paintProgress() {
+    const shell = document.getElementById('ih-research-shell');
+    if (!shell) return;
+    const pct = Math.min(100, Math.round(PROGRESS_UI.shown));
+    shell.querySelectorAll('.ihx-progress-bar-fill').forEach(el => { el.style.width = pct + '%'; });
+    shell.querySelectorAll('.ihx-progress-pct').forEach(el => { el.textContent = pct + '%'; });
+  }
+  function stopProgressTicker() {
+    if (PROGRESS_UI.timer) { clearInterval(PROGRESS_UI.timer); PROGRESS_UI.timer = null; }
+  }
+  // Una corrida nueva no debe heredar el 100% de la anterior.
+  function resetProgress() {
+    stopProgressTicker();
+    PROGRESS_UI.shown = 0;
+    PROGRESS_UI.target = 0;
+  }
+  function startProgressTicker() {
+    if (PROGRESS_UI.timer) return;
+    PROGRESS_UI.timer = setInterval(() => {
+      if (!document.getElementById('ih-research-shell')) return stopProgressTicker();
+      const target = PROGRESS_UI.target;
+      if (PROGRESS_UI.shown < target) {
+        // Alcanzar un checkpoint recién llegado: rápido, pero animado.
+        PROGRESS_UI.shown = Math.min(target, PROGRESS_UI.shown + Math.max(0.7, (target - PROGRESS_UI.shown) * 0.16));
+      } else if (target < 100) {
+        // Entre checkpoints: avance lento y decreciente, nunca pasa del techo.
+        const ceiling = Math.min(target + PROGRESS_CREEP_HEADROOM, PROGRESS_CREEP_CEILING);
+        if (PROGRESS_UI.shown >= ceiling - 0.05) return;
+        PROGRESS_UI.shown += (ceiling - PROGRESS_UI.shown) * 0.011;
+      } else if (PROGRESS_UI.shown >= 100) {
+        paintProgress();
+        return stopProgressTicker();
+      }
+      paintProgress();
+    }, PROGRESS_TICK_MS);
+  }
+  function syncProgress(intake, running) {
+    const server = Number(intake?.company_enrichment_progress) || 0;
+    if (!running) {
+      stopProgressTicker();
+      PROGRESS_UI.target = server;
+      PROGRESS_UI.shown = server;
+      paintProgress();
+      return;
+    }
+    PROGRESS_UI.target = Math.max(PROGRESS_UI.target, server);
+    if (PROGRESS_UI.shown > PROGRESS_UI.target) PROGRESS_UI.shown = PROGRESS_UI.target;
+    paintProgress();
+    startProgressTicker();
+  }
+
+  // ─── ACTUALIZACIÓN EN VIVO (sin re-render) ────────────────
+  // enrich-company escribe la fila varias veces por corrida. Re-renderizar el
+  // formulario entero en cada escritura tiraría el foco, el scroll y el texto
+  // a medio escribir, así que solo se re-renderiza cuando cambia la estructura
+  // (paneles de progreso que aparecen/desaparecen, botones que se habilitan) y
+  // el resto se parchea campo por campo.
+  function researchLayoutKey(intake, brief) {
+    const running = isEnriching(intake);
+    return [
+      running ? '1' : '0',
+      running ? (STATE.researchSource || 'linkedin') : '-',
+      isStaleEnriching(intake) ? '1' : '0',
+      isStaleBrief(brief) ? '1' : '0',
+      brief?.status === 'error' && brief?.error_message ? '1' : '0',
+      brief?.generated_at ? '1' : '0',
+    ].join('|');
+  }
+  function flashFilled(el) {
+    const host = el.closest('.ihx-field') || el;
+    host.classList.remove('ihx-just-filled');
+    void host.offsetWidth; // reinicia la animación si se vuelve a llenar
+    host.classList.add('ihx-just-filled');
+    setTimeout(() => host.classList.remove('ihx-just-filled'), 1600);
+  }
+  function setLiveValue(el, value) {
+    if (!el || el === document.activeElement) return; // nunca pisar lo que se está escribiendo
+    const next = value == null ? '' : String(value);
+    if (el.value === next) return;
+    const wasEmpty = !el.value.trim();
+    el.value = next;
+    if (next.trim() && wasEmpty) flashFilled(el);
+  }
+  function patchSolutionsList(shell, raw) {
+    const list = shell.querySelector('#ihx-solutions-list');
+    if (!list || list.contains(document.activeElement)) return;
+    const inputs = Array.from(list.querySelectorAll('.ihx-solution-input'));
+    const current = inputs.map(i => i.value.trim()).filter(Boolean).join(', ');
+    const next = parseSolutions(raw).filter(Boolean);
+    if (current === next.join(', ')) return;
+    const wasEmpty = !current;
+    list.innerHTML = (next.length ? next : ['']).map(val => `
+      <div class="ihx-chip-row">
+        <input type="text" class="ihx-solution-input" value="${escapeHtml(val)}" placeholder="Ej: Prospección con IA">
+        <button type="button" class="ihx-chip-remove" data-remove-solution title="Quitar">×</button>
+      </div>`).join('');
+    if (next.length && wasEmpty) flashFilled(list);
+  }
+  function patchResearchLive() {
+    const shell = document.getElementById('ih-research-shell');
+    if (!shell || !shell.querySelector('#ihx-research-form')) return;
+    const intake = STATE.intake || {};
+    const brief = STATE.brief || {};
+    const running = isEnriching(intake);
+    const q = (sel) => shell.querySelector(sel);
+
+    setLiveValue(q('[name="company_website"]'), intake.company_website || '');
+    setLiveValue(q('[name="company_about"]'), intake.company_about || '');
+    setLiveValue(q('[name="company_industry"]'), intake.company_industry || '');
+    setLiveValue(q('[name="company_employee_count"]'), intake.company_employee_count || '');
+    setLiveValue(q('[name="company_country"]'), intake.company_country || '');
+    setLiveValue(q('[name="icp_pain_points"]'), intake.icp_pain_points || '');
+    setLiveValue(q('[name="what_it_does"]'), brief.what_it_does || '');
+    setLiveValue(q('[name="mechanism"]'), brief.mechanism || '');
+    setLiveValue(q('[name="positional_phrase"]'), brief.positional_phrase || '');
+    setLiveValue(q('[name="key_outcomes"]'),
+      Array.isArray(brief.key_outcomes) ? brief.key_outcomes.join('\n') : (brief.key_outcomes || ''));
+    patchSolutionsList(shell, intake.company_solutions);
+
+    // Tarjeta 07: la síntesis es texto de solo lectura, se reescribe entera.
+    const panel = q('.ihx-summary-panel');
+    if (panel) {
+      const strong = panel.querySelector('strong');
+      const paras = panel.querySelectorAll('p');
+      if (strong) strong.textContent = brief.positional_phrase || 'Tu posicionamiento aparecerá aquí.';
+      if (paras[0]) paras[0].textContent = brief.what_it_does || intake.company_about
+        || 'Completa los pasos anteriores para construir el resumen estratégico.';
+      if (paras[1]) paras[1].textContent = brief.mechanism || '';
+    }
+
+    // Estado de cada tarjeta (Pendiente / Generando… / ✓ Generado por IA).
+    RESEARCH_SECTIONS.forEach(section => {
+      const card = shell.querySelector(`[data-research-section="${section.key}"]`);
+      if (!card) return;
+      const state = researchSectionState(section.key, intake, brief);
+      const justCompleted = state.complete && !card.classList.contains('is-complete');
+      card.classList.toggle('is-complete', state.complete);
+      card.classList.toggle('is-pending', !state.complete);
+      if (justCompleted) {
+        card.classList.remove('ihx-card-completed');
+        void card.offsetWidth;
+        card.classList.add('ihx-card-completed');
+        setTimeout(() => card.classList.remove('ihx-card-completed'), 1600);
+      }
+      const statusEl = card.querySelector('.ihx-context-card-status');
+      const label = `${state.complete ? '✓ ' : ''}${researchStatusLabel(section.key, intake, brief, running)}`;
+      if (statusEl && statusEl.textContent !== label) statusEl.textContent = label;
+      const summaryEl = card.querySelector('.ihx-context-card-summary');
+      if (summaryEl && summaryEl.textContent !== state.summary) summaryEl.textContent = state.summary;
+    });
+
+    // Cabecera "N de 7 pasos completados".
+    const progress = researchProgress(intake, brief);
+    const stepsEl = q('.ihx-context-progress-copy strong');
+    if (stepsEl) stepsEl.textContent = `${progress.complete} de 7 pasos completados`;
+    const pctEl = q('.ihx-context-progress-pct');
+    if (pctEl) pctEl.textContent = `${progress.percent}%`;
+    const track = q('.ihx-context-progress-track');
+    if (track) {
+      track.setAttribute('aria-valuenow', String(progress.percent));
+      const bar = track.firstElementChild;
+      if (bar) bar.style.width = progress.percent + '%';
+    }
+
+    // Paso actual de la investigación + barra animada.
+    const stepText = intake.company_enrichment_step || 'Investigando…';
+    const labelEl = q('.ihx-progress-label');
+    if (labelEl) labelEl.textContent = stepText;
+    const noteEl = q('.ihx-website-panel .ihx-progress-note');
+    if (noteEl) noteEl.textContent = `${stepText} — esta página se actualiza sola cuando termine.`;
+    syncProgress(intake, running);
+  }
+  // Punto de entrada único para los cambios que llegan por realtime: parchea si
+  // la estructura no cambió, re-renderiza solo cuando hace falta.
+  function refreshResearchView() {
+    const shell = document.getElementById('ih-research-shell');
+    if (!shell) return;
+    const key = researchLayoutKey(STATE.intake || {}, STATE.brief || {});
+    if (!shell.querySelector('#ihx-research-form') || key !== STATE.researchLayoutKey) {
+      renderResearch();
+      return;
+    }
+    patchResearchLive();
   }
   function renderResearch() {
     const el = document.getElementById('ih-research-shell');
@@ -637,6 +857,11 @@
       const doc = (STATE.documents || []).find(d => d.id === docId);
       if (doc && confirm(`¿Eliminar "${doc.file_name}"?`)) deleteCompanyDocument(doc);
     });
+    // Deja constancia de con qué estructura se pintó, para que los cambios que
+    // lleguen después se puedan parchear en vez de re-renderizar, y arranca (o
+    // detiene) la animación de la barra según si hay una corrida en curso.
+    STATE.researchLayoutKey = researchLayoutKey(intake, brief);
+    syncProgress(intake, isRunning);
   }
   // Dispara enrich-company a demanda del usuario — misma función que usa el
   // onboarding. Dos entradas posibles según qué botón se use: desde LinkedIn
@@ -651,10 +876,11 @@
       STATE.intake = {
         ...STATE.intake,
         company_enrichment_status: 'running',
-        company_enrichment_progress: 5,
+        company_enrichment_progress: 8,
         company_enrichment_step: 'Buscando tu empresa en LinkedIn…',
         updated_at: new Date().toISOString(),
       };
+      resetProgress();
       renderResearch();
       await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
         method: 'POST',
@@ -678,6 +904,7 @@
         company_enrichment_step: 'Revisando tu página web…',
         updated_at: new Date().toISOString(),
       };
+      resetProgress();
       renderResearch();
       await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
         method: 'POST',
@@ -2785,9 +3012,41 @@ function finBoltSvg() {
   background: rgba(31,75,255,0.12);
 }
 .ihx-progress-bar-fill {
-  height: 100%; border-radius: 3px;
+  position: relative; height: 100%; border-radius: 3px; overflow: hidden;
   background: linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%);
-  transition: width .6s ease;
+  /* El ticker de JS actualiza el ancho cada ~120ms: con easing la barra se ve
+     entrecortada, así que la transición es lineal y del largo del tick. */
+  transition: width .14s linear;
+}
+/* Franjas en movimiento: dejan claro que el trabajo sigue en curso aunque el
+   porcentaje avance despacio entre checkpoints del servidor. */
+.ihx-progress-bar-fill::after {
+  content: ''; position: absolute; inset: 0;
+  background-image: linear-gradient(115deg,
+    rgba(255,255,255,0) 0%, rgba(255,255,255,.38) 50%, rgba(255,255,255,0) 100%);
+  background-size: 90px 100%; background-repeat: repeat-x;
+  animation: ihxProgressStripes 1.15s linear infinite;
+}
+@keyframes ihxProgressStripes { from { background-position: -90px 0; } to { background-position: 0 0; } }
+/* Un campo que acaba de llenarse solo se ilumina un momento, para que el
+   usuario vea cuál se completó sin tener que releer toda la tarjeta. */
+.ihx-just-filled input, .ihx-just-filled textarea, .ihx-just-filled .ihx-solution-input {
+  animation: ihxJustFilled 1.5s ease-out;
+}
+@keyframes ihxJustFilled {
+  0%   { border-color: rgba(31,75,255,.75); background: rgba(31,75,255,.10); box-shadow: 0 0 0 3px rgba(31,75,255,.14); }
+  70%  { border-color: rgba(31,75,255,.35); background: rgba(31,75,255,.04); box-shadow: 0 0 0 3px rgba(31,75,255,0); }
+  100% { border-color: inherit; background: inherit; box-shadow: none; }
+}
+.ihx-context-card.ihx-card-completed { animation: ihxCardCompleted 1.5s ease-out; }
+@keyframes ihxCardCompleted {
+  0%   { border-color: rgba(14,169,104,.7); box-shadow: 0 0 0 3px rgba(14,169,104,.16); }
+  100% { border-color: rgba(14,169,104,.28); box-shadow: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ihx-progress-bar-fill::after { animation: none; }
+  .ihx-just-filled input, .ihx-just-filled textarea,
+  .ihx-just-filled .ihx-solution-input, .ihx-context-card.ihx-card-completed { animation: none; }
 }
 .ihx-progress-pct {
   flex-shrink: 0; font-size: 11px; font-weight: 700; color: var(--accent, #1F4BFF);

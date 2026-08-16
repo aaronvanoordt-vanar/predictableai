@@ -15,10 +15,31 @@
  * every downstream field. See CLAUDE.md / PR history for the incident this
  * guards against.
  *
- * Runs as separate research calls (LinkedIn, then the discovered website)
- * instead of one opaque call, writing a real progress checkpoint to
- * intel_hub_intake after each step — the client shows an actual percentage
- * instead of an indeterminate spinner.
+ * ── Latency design (the whole point of the shape below) ──────────────────
+ * The naive version was one long serial chain: LinkedIn → website → (client
+ * notices "done") → generate-client-brief, with every field written only at
+ * the very end. Three things fix that here:
+ *
+ *  1. Bounded, filtered search. Each call uses web_search_20260209 (dynamic
+ *     filtering: results are filtered server-side before they reach the model's
+ *     context) with an explicit `max_uses` cap and a right-sized `max_tokens`,
+ *     so a single step can no longer wander through a dozen search rounds.
+ *     `effort: "medium"` keeps these focused extraction calls from
+ *     over-deliberating — same fields, less thinking spend.
+ *  2. Fan-out instead of one fat call. The website pass is split into two
+ *     narrower prompts (profile vs. ICP pain points) that run concurrently,
+ *     so the website phase costs max(a, b) instead of a + b, and each prompt
+ *     is more focused than the combined one it replaces.
+ *  3. Progressive writes. Every step commits its own fields to
+ *     intel_hub_intake the moment it resolves, together with a real progress
+ *     checkpoint. The client subscribes via realtime, so the cards on
+ *     "Contexto de tu empresa" fill in one by one while the run is still going
+ *     instead of all at once at the end.
+ *
+ * Finally, generate-client-brief is kicked off from here as soon as the
+ * context is written, instead of waiting for the browser to notice the "done"
+ * status and issue the call itself (that round-trip cost a realtime hop plus a
+ * second cold start before the brief-derived cards could even start).
  *
  * Two entry points, matching the two ways a user can kick off research:
  *   - { linkedin_url } — full pass starting from the LinkedIn page (also
@@ -60,30 +81,48 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
 
 interface ContentItem { type: string; text?: string; }
 
-async function callClaude(apiKey: string, system: string, user: string): Promise<string> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-beta": "web-search-2025-03-05",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2048,
-      system,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: user }],
-    }),
-  });
+interface CallOpts {
+  /** Hard cap on web_search rounds. This is the single biggest latency lever
+   *  in this function: without it a step can search a dozen times. */
+  maxUses: number;
+  /** Right-sized for the JSON each prompt returns — these are small objects. */
+  maxTokens: number;
+}
 
-  if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-
-  const msg = await res.json();
-  const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
-  if (!blocks.length) throw new Error("No text in Claude response");
-  return blocks[blocks.length - 1].text ?? "";
+async function callClaude(apiKey: string, system: string, user: string, opts: CallOpts): Promise<string> {
+  let lastErr = "";
+  for (let attempt = 0; attempt <= 2; attempt++) {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: opts.maxTokens,
+        system,
+        // Dynamic filtering (web_search_20260209) trims search results before
+        // they enter the context window — fewer tokens to read back, so the
+        // step finishes sooner without losing grounding. No beta header needed.
+        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: opts.maxUses }],
+        output_config: { effort: "medium" },
+        messages: [{ role: "user", content: user }],
+      }),
+    });
+    if (res.status === 429 && attempt < 2) {
+      lastErr = await res.text();
+      await new Promise((r) => setTimeout(r, 5000));
+      continue;
+    }
+    if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
+    const msg = await res.json();
+    const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
+    if (!blocks.length) throw new Error("No text in Claude response");
+    return blocks[blocks.length - 1].text ?? "";
+  }
+  throw new Error(`Anthropic 429 after retries: ${lastErr}`);
 }
 
 // deno-lint-ignore no-explicit-any
@@ -100,6 +139,15 @@ function parseJson(raw: string): any {
   if (e === -1) throw new Error("Unterminated JSON in response");
   return JSON.parse(cleaned.slice(s, e + 1));
 }
+
+const str = (v: unknown) => (typeof v === "string" ? v : "");
+
+// Shared identity guardrail: repeated verbatim in every prompt because it is
+// the one rule that, when dropped, silently poisons every downstream field.
+const IDENTITY_GUARDRAIL = `Hard rules:
+- Identity guardrail: many company names collide with unrelated businesses (holding companies, franchises, business-registry entries, or completely different industries). Before using any fact, confirm it comes from the exact source given below — never substitute a business-registry entry, directory listing, or a same-named company you found via a broader search just because it ranked well.
+- NEVER write a refusal or "not enough data" message in any field (e.g. "insufficient data", "no información disponible", "no indexable content"). Work with whatever you find — even just the company name, a page title, or an industry keyword is enough for a short, plausible best guess. Only leave a field as an empty string if you found absolutely nothing usable for it; never explain the absence inside the field itself.
+- Be efficient: a couple of well-targeted searches is enough. Do not keep searching once you can fill the fields.`;
 
 interface LinkedInFindings {
   industry: string;
@@ -119,58 +167,71 @@ Respond ONLY with valid JSON, no markdown fences, no explanation:
   "website": "Company website URL found on the LinkedIn page, e.g. 'https://company.com'. Empty string if not found.",
   "about": "2-3 sentences: what they do, mission, years of experience, market presence"
 }
-Hard rules:
-- Identity guardrail: many company names collide with unrelated businesses (holding companies, franchises, or completely different industries registered under a similar or identical name). Before using any fact, confirm it comes from THIS LinkedIn page's own content — never substitute a business-registry entry, directory listing, or a same-named company you found via a broader search just because it ranked well. If you cannot confirm a fact belongs to this exact page, leave that field empty rather than guessing from a different company.
-- NEVER write a refusal or "not enough data" message in any field (e.g. "insufficient data", "no información disponible", "no indexable content"). Work with whatever you find on THIS page — even just the company name, a page title, an industry keyword, or a LinkedIn headline is enough to write a short, plausible "about" and a best-guess industry. Only leave a field as an empty string if you found absolutely nothing usable for it on this page; never explain the absence inside the field itself.`;
+${IDENTITY_GUARDRAIL}
+- Your only source is THIS LinkedIn page. If you cannot confirm a fact belongs to this exact page, leave that field empty rather than guessing from a different company.`;
   const prompt = `Open this exact LinkedIn company page and extract industry, employee count, country, website URL, and about section — all must come from this page's own content, not from a different company that happens to share a name:\n${linkedinUrl}`;
-  const raw = await callClaude(apiKey, system, prompt);
-  const p = parseJson(raw);
+  const p = parseJson(await callClaude(apiKey, system, prompt, { maxUses: 3, maxTokens: 1024 }));
   return {
-    industry: typeof p.industry === "string" ? p.industry : "",
-    employee_count: typeof p.employee_count === "string" ? p.employee_count : "",
-    country: typeof p.country === "string" ? p.country : "",
-    website: typeof p.website === "string" ? p.website : "",
-    about: typeof p.about === "string" ? p.about : "",
+    industry: str(p.industry),
+    employee_count: str(p.employee_count),
+    country: str(p.country),
+    website: str(p.website),
+    about: str(p.about),
   };
 }
 
-interface WebsiteFindings {
+function siteScope(website: string): string {
+  try { return new URL(website).hostname; } catch { return website; }
+}
+
+// The website pass used to be one prompt returning six fields. It is now two
+// narrower prompts that run concurrently: the firmographic/solutions profile,
+// and the ICP pain points. Same fields, roughly half the wall-clock, and each
+// prompt is tighter than the combined one it replaces.
+interface WebsiteProfile {
   solutions: string;
   about: string;
   industry: string;
   employee_count: string;
   country: string;
-  pain_points: string;
 }
 
-async function researchWebsite(apiKey: string, website: string, fallbackAbout: string): Promise<WebsiteFindings> {
-  const system = `You are a company research agent. Your ONLY source is the exact website URL given below — read that site's own pages (home, about, product/solutions, pricing) directly. Do NOT run a generic search for the company's name and pull in whatever ranks first: many company names collide with unrelated businesses (holding companies, franchises, business-registry entries, or completely different industries), and using their data instead of the actual site's content is the single most common failure mode here.
+async function researchWebsiteProfile(apiKey: string, website: string, fallbackAbout: string): Promise<WebsiteProfile> {
+  const system = `You are a company research agent. Your ONLY source is the exact website URL given below — read that site's own pages (home, about, product/solutions) directly. Do NOT run a generic search for the company's name and pull in whatever ranks first: using an unrelated same-named company's data instead of the actual site's content is the single most common failure mode here.
 Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
   "solutions": "Comma-separated main products/services actually described on this site, best-effort even from limited signal (e.g. 'Revenue forecasting, Pipeline analytics, AI sales coaching')",
   "about": "2-3 sentences: what they do, mission, years of experience, market presence — as described on THIS site. Only fill this in if you found something more specific than what's already known, otherwise return an empty string.",
   "industry": "Main industry/sector as evidenced by this site's own content (e.g. 'B2B SaaS - Sales Technology'). Empty string if not inferable from the site.",
   "employee_count": "Approximate team/company size if the site states or implies it (e.g. '50-200 employees'). Empty string if not inferable.",
-  "country": "Primary country of operation as evidenced by the site (address, phone code, language/market cues). Empty string if not inferable.",
-  "pain_points": "1-3 sentences in Spanish: the problems this company's target customer has, as implied by the site's own messaging (headlines, value proposition, case studies). Empty string if not inferable."
+  "country": "Primary country of operation as evidenced by the site (address, phone code, language/market cues). Empty string if not inferable."
 }
-Hard rules:
-- Identity guardrail: before writing any field, confirm the fact comes from a page actually reachable at this website's own domain — never substitute a same-named but unrelated company's data (e.g. a business-registry filing for a different industry) just because it ranked well in a search.
-- NEVER write a refusal or "not enough data" message in any field (e.g. "insufficient data", "no indexable content", "search engines return no descriptive content"). If the site is a JS-rendered app or otherwise not directly crawlable, you still have the domain name, brand name, page title, meta description, and any search-engine snippets scoped to this domain — use those to make a reasonable, clearly-labeled best guess rather than reporting a failure.
-- If you truly cannot infer a field at all from this specific domain, leave it as an empty string. Do not explain why inside the field.`;
-  let hostname = website;
-  try { hostname = new URL(website).hostname; } catch { /* keep raw string if not a well-formed URL */ }
-  const prompt = `Visit this exact company website (search with a site-scoped query like site:${hostname} if you need to, but every fact must trace back to this domain) and extract solutions, about, industry, employee count, country, and target-customer pain points:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}`;
-  const raw = await callClaude(apiKey, system, prompt);
-  const p = parseJson(raw);
+${IDENTITY_GUARDRAIL}
+- If the site is a JS-rendered app or otherwise not directly crawlable, you still have the domain name, brand name, page title, meta description, and search-engine snippets scoped to this domain — use those for a reasonable best guess rather than reporting a failure.`;
+  const hostname = siteScope(website);
+  const prompt = `Visit this exact company website (search with a site-scoped query like site:${hostname} if you need to, but every fact must trace back to this domain) and extract solutions, about, industry, employee count and country:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}`;
+  const p = parseJson(await callClaude(apiKey, system, prompt, { maxUses: 3, maxTokens: 1024 }));
   return {
-    solutions: typeof p.solutions === "string" ? p.solutions : "",
-    about: typeof p.about === "string" ? p.about : "",
-    industry: typeof p.industry === "string" ? p.industry : "",
-    employee_count: typeof p.employee_count === "string" ? p.employee_count : "",
-    country: typeof p.country === "string" ? p.country : "",
-    pain_points: typeof p.pain_points === "string" ? p.pain_points : "",
+    solutions: str(p.solutions),
+    about: str(p.about),
+    industry: str(p.industry),
+    employee_count: str(p.employee_count),
+    country: str(p.country),
   };
+}
+
+async function researchWebsitePains(apiKey: string, website: string, fallbackAbout: string): Promise<string> {
+  const system = `You are a B2B go-to-market analyst. Your ONLY source is the exact website URL given below — read its own messaging (headlines, value proposition, case studies, solution pages). Do NOT pull in an unrelated company that happens to share the name.
+Respond ONLY with valid JSON, no markdown fences, no explanation:
+{
+  "pain_points": "1-3 sentences in Spanish: the problems this company's target customer has, as implied by the site's own messaging. Empty string if not inferable."
+}
+${IDENTITY_GUARDRAIL}
+- Write the pain points from the target CUSTOMER's point of view (what hurts them today), not as a description of the company's product.`;
+  const hostname = siteScope(website);
+  const prompt = `Visit this exact company website (a site-scoped query like site:${hostname} is fine, but every fact must trace back to this domain) and infer the pain points of the customer it sells to:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}`;
+  const p = parseJson(await callClaude(apiKey, system, prompt, { maxUses: 2, maxTokens: 700 }));
+  return str(p.pain_points);
 }
 
 Deno.serve(async (req: Request) => {
@@ -201,11 +262,23 @@ Deno.serve(async (req: Request) => {
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
-  const setProgress = (progress: number, step: string) =>
-    supa.from("intel_hub_intake").update({
-      company_enrichment_progress: progress,
+  // Every step commits its own fields the moment it resolves. The client is
+  // subscribed to this row via realtime, so each patch lands as a card filling
+  // in on screen while the rest of the run is still in flight.
+  //
+  // The two website steps run concurrently and can therefore land out of
+  // order, so progress is clamped to a monotonic floor — a bar that walks
+  // backwards reads as a bug even when the run is perfectly healthy.
+  let progressFloor = 0;
+  // deno-lint-ignore no-explicit-any
+  const patch = (fields: Record<string, any>, progress: number, step: string) => {
+    progressFloor = Math.max(progressFloor, progress);
+    return supa.from("intel_hub_intake").update({
+      ...fields,
+      company_enrichment_progress: progressFloor,
       company_enrichment_step: step,
     }).eq("user_id", user.id);
+  };
 
   const fail = async (err: unknown) => {
     console.error("[enrich] error:", err);
@@ -213,6 +286,72 @@ Deno.serve(async (req: Request) => {
       company_enrichment_status: "error",
       company_enrichment_step:   "Ocurrió un error durante la investigación",
     }).eq("user_id", user.id);
+  };
+
+  // The brief-derived cards (frase posicional, resultados, resumen) come from
+  // generate-client-brief. Kicking it off here — rather than waiting for the
+  // browser to see status='done' and call it — removes a realtime hop plus a
+  // second cold start from the critical path.
+  const kickOffClientBrief = async () => {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/generate-client-brief`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: "{}",
+      });
+      if (!res.ok) console.warn("[enrich] client-brief kickoff returned", res.status, await res.text());
+    } catch (e) {
+      // Best-effort: the user can still regenerate the brief by hand.
+      console.warn("[enrich] client-brief kickoff failed:", e);
+    }
+  };
+
+  // Runs the two website prompts concurrently, committing each one's fields as
+  // soon as it lands. `fillGapsOnly` is set on the LinkedIn path, where
+  // LinkedIn stays the primary source for industry/size/country and the
+  // website may only fill the gaps it left behind.
+  async function runWebsitePass(
+    website: string,
+    knownAbout: string,
+    opts: { fillGapsOnly: boolean; gaps: { industry: string; employeeCount: string; country: string } },
+  ) {
+    const profileTask = researchWebsiteProfile(ANTHROPIC_KEY!, website, knownAbout)
+      .then(async (site) => {
+        // deno-lint-ignore no-explicit-any
+        const fields: Record<string, any> = {};
+        if (site.solutions) fields.company_solutions = site.solutions;
+        if (site.about) fields.company_about = site.about;
+        if (opts.fillGapsOnly) {
+          if (!opts.gaps.industry && site.industry) fields.company_industry = site.industry;
+          if (!opts.gaps.employeeCount && site.employee_count) fields.company_employee_count = site.employee_count;
+          if (!opts.gaps.country && site.country) fields.company_country = site.country;
+        } else {
+          if (site.industry) fields.company_industry = site.industry;
+          if (site.employee_count) fields.company_employee_count = site.employee_count;
+          if (site.country) fields.company_country = site.country;
+        }
+        await patch(fields, 85, "Soluciones y datos de la empresa listos…");
+      })
+      .catch((e) => { console.warn("[enrich] website profile step failed:", e); });
+
+    const painsTask = researchWebsitePains(ANTHROPIC_KEY!, website, knownAbout)
+      .then(async (pains) => {
+        if (!pains) return;
+        await patch({ icp_pain_points: pains }, 90, "Pain points del cliente ideal listos…");
+      })
+      .catch((e) => { console.warn("[enrich] website pains step failed:", e); });
+
+    await Promise.all([profileTask, painsTask]);
+  }
+
+  const finish = async (websiteFound: boolean) => {
+    await supa.from("intel_hub_intake").update({
+      company_enrichment_status:   "done",
+      company_enrichment_progress: 100,
+      company_enrichment_step:     websiteFound ? "Listo" : "Listo (sin página web pública)",
+      company_enrichment_at:       new Date().toISOString(),
+    }).eq("user_id", user.id);
+    await kickOffClientBrief();
   };
 
   let work: Promise<void>;
@@ -225,7 +364,7 @@ Deno.serve(async (req: Request) => {
       user_id: user.id,
       company_linkedin_url: body.linkedin_url,
       company_enrichment_status: "running",
-      company_enrichment_progress: 5,
+      company_enrichment_progress: 8,
       company_enrichment_step: "Buscando tu empresa en LinkedIn…",
     }, { onConflict: "user_id" });
 
@@ -233,44 +372,26 @@ Deno.serve(async (req: Request) => {
       try {
         const li = await researchLinkedIn(ANTHROPIC_KEY, body.linkedin_url!);
 
-        let solutions = "";
-        let about = li.about;
-        let industry = li.industry;
-        let employeeCount = li.employee_count;
-        let country = li.country;
-        let painPoints = "";
+        // Commit what LinkedIn found right away: industria, tamaño, país,
+        // contexto y web quedan visibles en pantalla mientras sigue el resto.
+        await patch({
+          company_industry:       li.industry,
+          company_employee_count: li.employee_count,
+          company_country:        li.country,
+          company_website:        li.website,
+          company_about:          li.about,
+        }, 45, li.website ? "Datos de LinkedIn listos · revisando tu página web…" : "Datos de LinkedIn listos…");
+
         if (li.website) {
-          await setProgress(55, "Revisando tu página web…");
-          try {
-            const site = await researchWebsite(ANTHROPIC_KEY, li.website, li.about);
-            solutions = site.solutions;
-            if (site.about) about = site.about;
-            // LinkedIn is the primary source for firmographics; the website
-            // only fills gaps LinkedIn itself didn't find.
-            if (!industry && site.industry) industry = site.industry;
-            if (!employeeCount && site.employee_count) employeeCount = site.employee_count;
-            if (!country && site.country) country = site.country;
-            painPoints = site.pain_points;
-          } catch (siteErr) {
-            console.warn("[enrich] website step failed, keeping LinkedIn-only data:", siteErr);
-          }
+          await runWebsitePass(li.website, li.about, {
+            fillGapsOnly: true,
+            gaps: { industry: li.industry, employeeCount: li.employee_count, country: li.country },
+          });
         } else {
-          await setProgress(55, "No encontramos una página web pública en tu LinkedIn…");
+          await patch({}, 90, "No encontramos una página web pública en tu LinkedIn…");
         }
 
-        await supa.from("intel_hub_intake").update({
-          company_industry:            industry,
-          company_employee_count:      employeeCount,
-          company_country:             country,
-          company_website:             li.website,
-          company_about:               about,
-          company_solutions:           solutions,
-          ...(painPoints ? { icp_pain_points: painPoints } : {}),
-          company_enrichment_status:   "done",
-          company_enrichment_progress: 100,
-          company_enrichment_step:     "Listo",
-          company_enrichment_at:       new Date().toISOString(),
-        }).eq("user_id", user.id);
+        await finish(Boolean(li.website));
         console.log(`[enrich] ✓ linkedin ${user.id}`);
       } catch (err) {
         await fail(err);
@@ -294,20 +415,11 @@ Deno.serve(async (req: Request) => {
 
     work = (async () => {
       try {
-        const site = await researchWebsite(ANTHROPIC_KEY, website, existing?.company_about ?? "");
-        await supa.from("intel_hub_intake").update({
-          company_website:             website,
-          company_solutions:           site.solutions,
-          ...(site.about ? { company_about: site.about } : {}),
-          ...(site.industry ? { company_industry: site.industry } : {}),
-          ...(site.employee_count ? { company_employee_count: site.employee_count } : {}),
-          ...(site.country ? { company_country: site.country } : {}),
-          ...(site.pain_points ? { icp_pain_points: site.pain_points } : {}),
-          company_enrichment_status:   "done",
-          company_enrichment_progress: 100,
-          company_enrichment_step:     "Listo",
-          company_enrichment_at:       new Date().toISOString(),
-        }).eq("user_id", user.id);
+        await runWebsitePass(website, existing?.company_about ?? "", {
+          fillGapsOnly: false,
+          gaps: { industry: "", employeeCount: "", country: "" },
+        });
+        await finish(true);
         console.log(`[enrich] ✓ website ${user.id}`);
       } catch (err) {
         await fail(err);
