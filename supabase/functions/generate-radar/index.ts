@@ -21,10 +21,20 @@
  *   POST { }                                    → create a run, return run_id
  *   POST { run_id, stage: "strategy" }           → derive signal hypothesis
  *   POST { run_id, stage: "research", offset }    → find companies + evidence
- *          for ONE search angle (offset = angle index into
- *          signal_strategy.search_angles, tracked via research_offset).
- *          Repeats — one angle per call, same idempotent offset pattern as
- *          decision_makers below — until every angle has run, then moves on.
+ *          for ONE search query (offset = index into the flattened list of
+ *          every query across signal_strategy.search_angles, tracked via
+ *          research_offset / signal_strategy.total_queries). Repeats — one
+ *          query per call, same idempotent offset pattern as decision_makers
+ *          below — until every query has run, then moves on.
+ *
+ *          Why per-query and not per-angle (as an earlier version of this
+ *          function did): Supabase's Edge Runtime hard-kills any single
+ *          invocation at ~150s wall-clock (HTTP 546). Empirically, a Claude
+ *          call given a budget of 3 web searches reliably blew past that —
+ *          every sampled 3-search research call timed out at exactly
+ *          ~150000ms, while a 2-search call finished in ~47s. Capping each
+ *          call to exactly ONE web_search use keeps it comfortably inside
+ *          the ceiling.
  *   POST { run_id, stage: "decision_makers",
  *          offset }                              → Apollo lookup for a batch
  *          of companies starting at offset; finalizes (charges credits,
@@ -146,6 +156,23 @@ function isStale(row: { updated_at: string }): boolean {
   return Date.now() - new Date(row.updated_at).getTime() > STALE_MS;
 }
 
+interface QueryItem { angleName: string; sources: string[]; query: string; }
+
+// Flattens every angle's queries into one ordered list so research can be
+// driven one query — one web_search — per call. Deterministic given the
+// same search_angles input, so both handleStrategy (to record the total)
+// and handleResearch (to resolve an offset) can call it independently.
+// deno-lint-ignore no-explicit-any
+function flattenQueries(angles: any[]): QueryItem[] {
+  const out: QueryItem[] = [];
+  for (const a of angles) {
+    const angleName = asStr(a?.angle);
+    const sources = asStrArr(a?.sources);
+    for (const q of asStrArr(a?.queries)) out.push({ angleName, sources, query: q });
+  }
+  return out;
+}
+
 // ── Prompts ─────────────────────────────────────────────────────────────────
 
 const STRATEGY_SYSTEM = `You are the "Radar" strategist of a B2B sales-intelligence platform. Your job: given a seller's company context, design the SIGNAL this seller should hunt for — the observable, researchable evidence that a company out there needs this seller RIGHT NOW.
@@ -176,10 +203,10 @@ Hard rules:
 - If a custom prompt from the user is provided, it is the ground truth for the signal: refine it into angles/queries, do not replace it with your own idea.
 - signal_hypothesis in Spanish; everything else may be English.`;
 
-// Runs ONCE PER SEARCH ANGLE (see handleResearch) rather than once for the
-// whole strategy — a single call covering all angles routinely ran long
-// enough to hit the Edge Runtime's isolate kill (see file header comment).
-const RESEARCH_SYSTEM = `You are the "Radar" researcher of a B2B sales-intelligence platform. You receive a seller's context and ONE research angle from a broader signal strategy — other angles are covered by separate calls, so focus ONLY on this one. Execute this angle's queries with web_search and find REAL companies currently showing the signal — companies that are ideal targets for this seller to contact now.
+// Runs ONCE PER SEARCH QUERY (see handleResearch) — bounded to exactly one
+// web_search use per call, the only budget that reliably stays under the
+// Edge Runtime's ~150s hard kill (see file header comment).
+const RESEARCH_SYSTEM = `You are the "Radar" researcher of a B2B sales-intelligence platform. You receive a seller's context and ONE search query from a broader signal strategy — other queries/angles are covered by separate calls, so focus ONLY on this one. Run exactly one web_search with this query (or a close variant if it returns nothing useful) and find REAL companies currently showing the signal — companies that are ideal targets for this seller to contact now.
 
 Respond with ONLY valid JSON (no markdown fences, no prose):
 {
@@ -196,13 +223,13 @@ Respond with ONLY valid JSON (no markdown fences, no prose):
       "decision_maker_titles": ["2-5 English job titles to look for at THIS company"]
     }
   ],
-  "coverage_note": "1 sentence in Spanish ONLY if this angle yielded few/no companies — say honestly what limited the search. Empty string otherwise."
+  "coverage_note": "1 sentence in Spanish ONLY if this query yielded few/no companies — say honestly what limited the search. Empty string otherwise."
 }
 
 Hard rules — violating any of these makes the output worthless:
 - EVERY company must be real and every evidence.url must come from an actual web_search result you saw. NEVER invent companies, URLs, or facts. A company you cannot back with at least 1 evidence URL must be dropped, not padded.
-- Up to 4 companies for THIS angle — do not try to cover the whole strategy, another call handles the other angles. If this angle honestly yields fewer, return fewer and explain in coverage_note.
-- Do not re-report a company already listed in "COMPANIES ALREADY FOUND" below, even if this angle's queries surface it again.
+- Up to 3 companies for THIS query — do not try to cover the whole strategy, other calls handle the other queries. If this query honestly yields fewer, return fewer and explain in coverage_note.
+- Do not re-report a company already listed in "COMPANIES ALREADY FOUND" below, even if this query surfaces it again.
 - Respect target_geographies and exclusions from the strategy. Never include the seller's own company or direct competitors (companies selling the same thing the seller sells — they are rivals, not buyers).
 - Companies must be plausible BUYERS with budget: match the seller's ICP sizes when known.
 - Prefer signal recency: evidence from the last 12 months beats older evidence.
@@ -403,11 +430,13 @@ async function handleStrategy(supa: any, run: RunRow, anthropicKey: string, h: R
     const strategy = parseJson(raw);
     const hypothesis = asStr(strategy.signal_hypothesis).trim();
     if (!hypothesis) throw new Error("La IA no pudo definir una señal de compra a partir de tu contexto.");
+    const totalQueries = flattenQueries(Array.isArray(strategy.search_angles) ? strategy.search_angles : []).length;
+    if (!totalQueries) throw new Error("La IA no definió consultas de búsqueda para la investigación.");
 
     await supa.from("radar_runs").update({
       status: "generating",
       signal_hypothesis: hypothesis,
-      signal_strategy: strategy,
+      signal_strategy: { ...strategy, total_queries: totalQueries },
       progress: 25,
       progress_step: "Señal definida — empezando la investigación en la web…",
       progress_log: [{ at: new Date().toISOString(), text: "Señal definida — empezando la investigación en la web…" }],
@@ -424,26 +453,27 @@ async function handleResearch(supa: any, run: RunRow, anthropicKey: string, offs
     const strategy = run.signal_strategy || {};
     // deno-lint-ignore no-explicit-any
     const angles: any[] = Array.isArray(strategy.search_angles) ? strategy.search_angles : [];
-    if (!angles.length) throw new Error("La estrategia de investigación no definió ángulos de búsqueda.");
+    const items = flattenQueries(angles);
+    if (!items.length) throw new Error("La estrategia de investigación no definió consultas de búsqueda.");
 
-    const idx = Math.max(0, Math.min(offset || 0, angles.length - 1));
-    const angle = angles[idx];
+    const idx = Math.max(0, Math.min(offset || 0, items.length - 1));
+    const item = items[idx];
     const existing = (Array.isArray(run.companies) ? run.companies : []).slice(0, MAX_COMPANIES);
 
     const sellerContext = await loadSellerContext(supa, run.user_id);
     const researchPrompt =
-      `${sellerContext}\n\n=== SIGNAL STRATEGY (context only — angle below is your scope) ===\n` +
+      `${sellerContext}\n\n=== SIGNAL STRATEGY (context only — the query below is your scope) ===\n` +
       JSON.stringify({
         target_geographies: strategy.target_geographies,
         exclusions: strategy.exclusions,
       }, null, 2) +
-      `\n\n=== YOUR RESEARCH ANGLE FOR THIS CALL ===\n${JSON.stringify(angle, null, 2)}` +
+      `\n\n=== YOUR SEARCH QUERY FOR THIS CALL ===\n` +
+      JSON.stringify({ angle: item.angleName, query: item.query, trusted_sources: item.sources }, null, 2) +
       (existing.length
         ? `\n\n=== COMPANIES ALREADY FOUND (do not repeat) ===\n${existing.map((c: { name?: string }) => c.name).join(", ")}`
         : "") +
-      `\n\nExecute ONLY this angle now. Search the web following its queries and return the JSON described in your instructions.`;
-    const maxSearches = Math.max(1, Math.min(3, asStrArr(angle?.queries).length || 2));
-    const raw = await callClaude(anthropicKey, RESEARCH_SYSTEM, researchPrompt, { maxTokens: 3200, maxSearches });
+      `\n\nRun exactly one web_search with this query now and return the JSON described in your instructions.`;
+    const raw = await callClaude(anthropicKey, RESEARCH_SYSTEM, researchPrompt, { maxTokens: 2000, maxSearches: 1 });
     const research = parseJson(raw);
 
     // deno-lint-ignore no-explicit-any
@@ -474,13 +504,17 @@ async function handleResearch(supa: any, run: RunRow, anthropicKey: string, offs
     const merged = existing.concat(newCompanies).slice(0, MAX_COMPANIES);
     const coverageNote = asStr(research.coverage_note).trim();
     const nextOffset = idx + 1;
-    const moreAnglesLeft = nextOffset < angles.length && merged.length < MAX_COMPANIES;
+    const moreQueriesLeft = nextOffset < items.length && merged.length < MAX_COMPANIES;
+    // Backfill total_queries for runs whose strategy stage ran before this
+    // field existed — keeps nextStageFor's resume logic accurate for them.
+    const strategyPatch = strategy.total_queries === items.length ? {} : { signal_strategy: { ...strategy, total_queries: items.length } };
 
-    if (moreAnglesLeft) {
+    if (moreQueriesLeft) {
       await supa.from("radar_runs").update({
+        ...strategyPatch,
         companies: merged,
         research_offset: nextOffset,
-        progress: 25 + Math.round((nextOffset / angles.length) * 30),
+        progress: 25 + Math.round((nextOffset / items.length) * 30),
         progress_step: merged.length
           ? `${merged.length} empresa${merged.length === 1 ? "" : "s"} encontrada${merged.length === 1 ? "" : "s"} — ampliando la búsqueda…`
           : "Buscando empresas con la señal…",
@@ -495,7 +529,7 @@ async function handleResearch(supa: any, run: RunRow, anthropicKey: string, offs
 
     await supa.from("radar_runs").update({
       companies: merged,
-      research_offset: angles.length,
+      research_offset: items.length,
       progress: 55,
       progress_step: `${merged.length} empresa${merged.length === 1 ? "" : "s"} con la señal encontrada${merged.length === 1 ? "" : "s"} — buscando decision makers…`,
       error_message: coverageNote || null,
