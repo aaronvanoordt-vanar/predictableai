@@ -54,13 +54,18 @@
       if (!state.user) return;
     }
     await loadLatestRun();
-    render();
-    ensureRealtime();
-    syncPolling();
     // Si aterrizamos sobre un run en curso (redirect del onboarding, refresh
     // de la página, o un run que quedó a medias en una sesión anterior),
     // retomamos desde la etapa que le falte — cada etapa es idempotente.
+    // IMPORTANTE: esto va ANTES del primer render(). maybeResume() marca
+    // state.driving=true de forma síncrona (antes de su primer await), así
+    // que si se llama después de render(), el primer pintado de un run ya
+    // stale (típico al recargar la página) muestra el aviso de "atascado"
+    // un instante, aunque la reanudación automática ya esté arrancando.
     maybeResume();
+    render();
+    ensureRealtime();
+    syncPolling();
   }
 
   async function loadLatestRun() {
@@ -330,12 +335,15 @@
       ? '<div class="rdr-signal card"><div class="rdr-signal-lbl">Señal detectada</div>' +
         '<div class="rdr-signal-txt">' + esc(run.signal_hypothesis) + '</div></div>'
       : '';
-    // Cada etapa es corta (una llamada a Claude o un lote chico de Apollo);
-    // si pasó bastante desde la última actualización y este tab no está
-    // avanzándola, algo se interrumpió (red, tab en background, etc.) —
-    // ofrecemos un botón en vez de dejar la barra congelada sin salida.
+    // Cada llamada a generate-radar tiene su propio deadline de 95s sobre
+    // Anthropic (CLAUDE_TIMEOUT_MS en la edge function) — una sola etapa
+    // puede legítimamente tardar hasta ahí + margen de red/DB. Este umbral
+    // queda por encima de eso (para no dar una falsa alarma mientras el
+    // sistema sigue trabajando normal) y por debajo de los 120s de
+    // maybeAutoResume (para avisar ANTES de que la autocuración entre a
+    // actuar sola).
     const secsStale = run.updated_at ? Math.floor((Date.now() - new Date(run.updated_at).getTime()) / 1000) : 0;
-    const stuck = !state.driving && secsStale > 45;
+    const stuck = !state.driving && secsStale > 110;
     const stuckPanel = stuck
       ? '<div class="rdr-stuck">Esto está tardando más de lo normal.' +
         '<button class="btn btn-ghost btn-sm" data-act="resume-stage" ' + (state.busy ? 'disabled' : '') + '>Reintentar esta etapa</button></div>'
