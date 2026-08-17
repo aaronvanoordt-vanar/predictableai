@@ -148,12 +148,11 @@
   // A partir de lo que ya tiene guardado el run, decide en qué etapa retomar.
   function nextStageFor(run) {
     if (!run.signal_hypothesis) return { stage: 'strategy', offset: 0 };
-    const angles = (run.signal_strategy && Array.isArray(run.signal_strategy.search_angles))
-      ? run.signal_strategy.search_angles : [];
-    const anglesDone = run.research_offset || 0;
-    if (anglesDone < angles.length) return { stage: 'research', offset: anglesDone };
+    const totalQueries = (run.signal_strategy && run.signal_strategy.total_queries) || 0;
+    const queriesDone = run.research_offset || 0;
+    if (queriesDone < totalQueries) return { stage: 'research', offset: queriesDone };
     const companies = Array.isArray(run.companies) ? run.companies : [];
-    if (!companies.length) return { stage: 'research', offset: anglesDone };
+    if (!companies.length) return { stage: 'research', offset: queriesDone };
     const done = companies.filter((c) => c && c.dm_done).length;
     return { stage: 'decision_makers', offset: done };
   }
