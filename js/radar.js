@@ -40,6 +40,7 @@
     busy: false,
     driving: false, // true mientras este tab está avanzando el run etapa por etapa
     showRerun: false,
+    autoResumes: 0, // reintentos automáticos de un run estancado (máx 3 por carga de página)
   };
 
   function shell() { return document.getElementById('radar-shell'); }
@@ -109,10 +110,28 @@
         await loadLatestRun();
         render();
         syncPolling();
+        maybeAutoResume();
       }, 7000);
     } else if (!active && state.pollTimer) {
       clearInterval(state.pollTimer);
       state.pollTimer = null;
+    }
+  }
+
+  // Autocuración: si el run sigue activo pero nadie lo está avanzando (este
+  // tab perdió una llamada por red, o el run quedó huérfano de otra sesión),
+  // lo retomamos solos en vez de esperar un click en "Reintentar". Cada
+  // llamada del servidor dura ≤ ~100s y actualiza updated_at, así que >120s
+  // sin cambios significa que de verdad no hay nadie avanzándolo. Tope de 3
+  // para no reintentar en bucle si el backend está caído.
+  function maybeAutoResume() {
+    const run = state.run;
+    if (!run || state.driving || state.busy) return;
+    if (run.status !== 'generating' && run.status !== 'pending') return;
+    const staleMs = run.updated_at ? Date.now() - new Date(run.updated_at).getTime() : 0;
+    if (staleMs > 120000 && state.autoResumes < 3) {
+      state.autoResumes++;
+      resumeRun(run);
     }
   }
 
@@ -195,6 +214,7 @@
   async function startRun(customPrompt) {
     if (state.busy || state.driving) return;
     state.busy = true;
+    state.autoResumes = 0;
     render();
     try {
       const data = await postRadar(customPrompt ? { custom_prompt: customPrompt } : {});
