@@ -32,9 +32,16 @@
  *          invocation at ~150s wall-clock (HTTP 546). Empirically, a Claude
  *          call given a budget of 3 web searches reliably blew past that —
  *          every sampled 3-search research call timed out at exactly
- *          ~150000ms, while a 2-search call finished in ~47s. Capping each
- *          call to exactly ONE web_search use keeps it comfortably inside
- *          the ceiling.
+ *          ~150000ms, while a 2-search call finished in ~47s.
+ *
+ *          AND the Anthropic call itself carries a hard deadline
+ *          (CLAUDE_TIMEOUT_MS, AbortController): production showed even a
+ *          1-search call can occasionally hang past 150s on upstream
+ *          latency, and when the runtime kills the isolate the row never
+ *          updates and the client's drive loop dies with it. With our own
+ *          deadline the invocation ALWAYS returns: a research query that
+ *          times out is skipped (logged honestly in progress_log) and the
+ *          run advances to the next query instead of freezing at 25%.
  *   POST { run_id, stage: "decision_makers",
  *          offset }                              → Apollo lookup for a batch
  *          of companies starting at offset; finalizes (charges credits,
@@ -81,43 +88,65 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
 
 interface ContentItem { type: string; text?: string; }
 
+// Our own deadline on every Anthropic call, well under the Edge Runtime's
+// ~150s isolate kill. If upstream hangs, WE abort and return a clean
+// response instead of letting the runtime murder the invocation mid-flight
+// (which leaves the radar_runs row frozen and kills the client drive loop).
+const CLAUDE_TIMEOUT_MS = 95_000;
+
+class ClaudeTimeout extends Error {}
+
 async function callClaude(
   apiKey: string,
   system: string,
   user: string,
   opts: { maxTokens: number; maxSearches: number },
 ): Promise<string> {
+  const deadline = Date.now() + CLAUDE_TIMEOUT_MS;
   let lastErr = "";
   for (let attempt = 0; attempt <= 1; attempt++) {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: opts.maxTokens,
-        system,
-        tools: opts.maxSearches > 0
-          ? [{ type: "web_search_20260209", name: "web_search", max_uses: opts.maxSearches }]
-          : [],
-        messages: [{ role: "user", content: user }],
-      }),
-    });
-    if (res.status === 429 && attempt < 1) {
-      lastErr = await res.text();
-      await new Promise((r) => setTimeout(r, 3000));
-      continue;
+    const remaining = deadline - Date.now();
+    if (remaining <= 5_000) break; // no budget left for another attempt
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), remaining);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: opts.maxTokens,
+          system,
+          tools: opts.maxSearches > 0
+            ? [{ type: "web_search_20260209", name: "web_search", max_uses: opts.maxSearches }]
+            : [],
+          messages: [{ role: "user", content: user }],
+        }),
+      });
+      if (res.status === 429 && attempt < 1) {
+        lastErr = await res.text();
+        await new Promise((r) => setTimeout(r, 3000));
+        continue;
+      }
+      if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
+      const msg = await res.json();
+      const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
+      if (!blocks.length) throw new Error("No text in Claude response");
+      return blocks[blocks.length - 1].text ?? "";
+    } catch (e) {
+      if (ctrl.signal.aborted) throw new ClaudeTimeout(`Anthropic call exceeded ${CLAUDE_TIMEOUT_MS}ms`);
+      throw e;
+    } finally {
+      clearTimeout(timer);
     }
-    if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-    const msg = await res.json();
-    const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
-    if (!blocks.length) throw new Error("No text in Claude response");
-    return blocks[blocks.length - 1].text ?? "";
   }
-  throw new Error(`Anthropic 429 after retry: ${lastErr}`);
+  if (lastErr) throw new Error(`Anthropic 429 after retry: ${lastErr}`);
+  throw new ClaudeTimeout(`Anthropic call exceeded ${CLAUDE_TIMEOUT_MS}ms`);
 }
 
 // deno-lint-ignore no-explicit-any
@@ -443,6 +472,9 @@ async function handleStrategy(supa: any, run: RunRow, anthropicKey: string, h: R
     }).eq("id", run.id);
     return json({ status: "ok", run_id: run.id, next_stage: "research" }, 200, h);
   } catch (err) {
+    if (err instanceof ClaudeTimeout) {
+      return await fail(supa, run.id, new Error("La definición de la señal tardó demasiado. Vuelve a intentar la investigación."), h);
+    }
     return await fail(supa, run.id, err, h);
   }
 }
@@ -457,9 +489,21 @@ async function handleResearch(supa: any, run: RunRow, anthropicKey: string, offs
     if (!items.length) throw new Error("La estrategia de investigación no definió consultas de búsqueda.");
 
     const idx = Math.max(0, Math.min(offset || 0, items.length - 1));
-    const item = items[idx];
     const existing = (Array.isArray(run.companies) ? run.companies : []).slice(0, MAX_COMPANIES);
 
+    // Duplicate-driver guard: if another tab already completed this query
+    // (research_offset moved past it), skip the Claude spend and just point
+    // the caller at the real next step.
+    const doneOff = run.research_offset || 0;
+    if (doneOff > idx) {
+      if (doneOff < items.length && existing.length < MAX_COMPANIES) {
+        return json({ status: "ok", run_id: run.id, next_stage: "research", offset: doneOff }, 200, h);
+      }
+      const dmDone = existing.filter((c: { dm_done?: boolean }) => c && c.dm_done).length;
+      return json({ status: "ok", run_id: run.id, next_stage: "decision_makers", offset: dmDone, total: existing.length }, 200, h);
+    }
+
+    const item = items[idx];
     const sellerContext = await loadSellerContext(supa, run.user_id);
     const researchPrompt =
       `${sellerContext}\n\n=== SIGNAL STRATEGY (context only — the query below is your scope) ===\n` +
@@ -473,8 +517,27 @@ async function handleResearch(supa: any, run: RunRow, anthropicKey: string, offs
         ? `\n\n=== COMPANIES ALREADY FOUND (do not repeat) ===\n${existing.map((c: { name?: string }) => c.name).join(", ")}`
         : "") +
       `\n\nRun exactly one web_search with this query now and return the JSON described in your instructions.`;
-    const raw = await callClaude(anthropicKey, RESEARCH_SYSTEM, researchPrompt, { maxTokens: 2000, maxSearches: 1 });
-    const research = parseJson(raw);
+
+    // One query that hangs or returns garbage must never freeze or kill the
+    // whole run — skip it, note it honestly, and keep moving. Real API
+    // errors (auth, 429-exhausted, 5xx) still fail the run via the outer
+    // catch so the user sees the truth instead of an empty result.
+    // deno-lint-ignore no-explicit-any
+    let research: any = { companies: [], coverage_note: "" };
+    let skipNote = "";
+    const t0 = Date.now();
+    try {
+      const raw = await callClaude(anthropicKey, RESEARCH_SYSTEM, researchPrompt, { maxTokens: 2000, maxSearches: 1 });
+      try {
+        research = parseJson(raw);
+      } catch (_pe) {
+        skipNote = "Una búsqueda devolvió una respuesta ilegible y se omitió — continuando…";
+      }
+    } catch (e) {
+      if (!(e instanceof ClaudeTimeout)) throw e;
+      skipNote = "Una búsqueda tardó demasiado y se omitió — continuando…";
+    }
+    console.log(`[radar] research q${idx + 1}/${items.length} run=${run.id} ${Date.now() - t0}ms ${skipNote ? "SKIPPED" : "ok"}`);
 
     // deno-lint-ignore no-explicit-any
     const rawCompanies: any[] = Array.isArray(research.companies) ? research.companies : [];
@@ -509,6 +572,16 @@ async function handleResearch(supa: any, run: RunRow, anthropicKey: string, offs
     // field existed — keeps nextStageFor's resume logic accurate for them.
     const strategyPatch = strategy.total_queries === items.length ? {} : { signal_strategy: { ...strategy, total_queries: items.length } };
 
+    // Narrate every completed query in progress_log so the UI visibly moves.
+    // deno-lint-ignore no-explicit-any
+    const log: any[] = Array.isArray((run as { progress_log?: unknown }).progress_log)
+      // deno-lint-ignore no-explicit-any
+      ? ((run as { progress_log?: unknown }).progress_log as any[])
+      : [];
+    const logLine = (text: string) => log.push({ at: new Date().toISOString(), text });
+    if (skipNote) logLine(skipNote);
+    else logLine(`Búsqueda ${nextOffset}/${items.length} completada — ${newCompanies.length ? newCompanies.length + " empresa" + (newCompanies.length === 1 ? "" : "s") + " nueva" + (newCompanies.length === 1 ? "" : "s") : "sin resultados nuevos"}`);
+
     if (moreQueriesLeft) {
       await supa.from("radar_runs").update({
         ...strategyPatch,
@@ -518,6 +591,7 @@ async function handleResearch(supa: any, run: RunRow, anthropicKey: string, offs
         progress_step: merged.length
           ? `${merged.length} empresa${merged.length === 1 ? "" : "s"} encontrada${merged.length === 1 ? "" : "s"} — ampliando la búsqueda…`
           : "Buscando empresas con la señal…",
+        progress_log: log.slice(-20),
         error_message: coverageNote || null,
       }).eq("id", run.id);
       return json({ status: "ok", run_id: run.id, next_stage: "research", offset: nextOffset }, 200, h);
@@ -527,11 +601,13 @@ async function handleResearch(supa: any, run: RunRow, anthropicKey: string, offs
       throw new Error(coverageNote || "La investigación no encontró empresas con evidencia verificable. Intenta con un prompt de señal más específico.");
     }
 
+    logLine(`${merged.length} empresa${merged.length === 1 ? "" : "s"} con la señal — buscando decision makers…`);
     await supa.from("radar_runs").update({
       companies: merged,
       research_offset: items.length,
       progress: 55,
       progress_step: `${merged.length} empresa${merged.length === 1 ? "" : "s"} con la señal encontrada${merged.length === 1 ? "" : "s"} — buscando decision makers…`,
+      progress_log: log.slice(-20),
       error_message: coverageNote || null,
     }).eq("id", run.id);
     return json({ status: "ok", run_id: run.id, next_stage: "decision_makers", offset: 0, total: merged.length }, 200, h);
