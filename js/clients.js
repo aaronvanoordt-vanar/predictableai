@@ -124,7 +124,7 @@
 
   async function createClient(name) {
     var res = await sb().from('clients')
-      .insert({ name: name, created_by: window.currentUser.id })
+      .insert({ name: name })
       .select().single();
     if (res.error) throw res.error;
     return res.data;
