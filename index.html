@@ -2048,6 +2048,10 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="3.5" opacity=".5"/><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/><path d="M8 8l4.2-4.2"/></svg>
       Radar
     </div>
+    <div class="nav-item" data-page="clients" onclick="nav(this,'clients');if(window.clientsModule)window.clientsModule.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.2"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1.2"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1.2"/><rect x="9" y="9" width="5.5" height="5.5" rx="1.2"/></svg>
+      Clients
+    </div>
 
     <!-- INTELIGENCIA -->
     <div class="sidebar-section">
@@ -2293,6 +2297,10 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 
 <!-- ═══════ PAGE: MI OVERVIEW ═══════ -->
 <!-- RADAR: descubrimiento de empresas target con IA (módulo js/radar.js) -->
+<div class="page fade-in" id="page-clients">
+  <div id="clients-shell"></div>
+</div>
+
 <div class="page fade-in" id="page-radar" style="padding:0;gap:0;">
   <div id="radar-shell"></div>
 </div>
@@ -3403,6 +3411,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/prospecting-data.js"></script>
 <script src="js/prospecting.js"></script>
 <script src="js/radar.js"></script>
+<script src="js/clients.js"></script>
 <script src="js/whatsapp-inbox.js"></script>
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
