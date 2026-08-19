@@ -57,6 +57,27 @@
       // 5. OK — exponer
       window.currentUser = user;
       window.currentProfile = profile;
+
+      // Clients es una herramienta interna del equipo de predictable.ai
+      // (facturación/CRM de vanarsi.com) — el resto de las cuentas (clientes
+      // de la plataforma) no debe verla ni poder entrar a ella.
+      const isVanarsiTeam = /@vanarsi\.com$/i.test(user.email || '');
+      window.isVanarsiTeam = isVanarsiTeam;
+      if (!isVanarsiTeam) {
+        document.querySelectorAll('.nav-item[data-page="clients"]').forEach(function (el) {
+          el.style.display = 'none';
+        });
+        const clientsPage = document.getElementById('page-clients');
+        if (clientsPage && clientsPage.classList.contains('active') && typeof window.nav === 'function') {
+          window.nav(document.querySelector('.nav-item[data-page="dashboard"]'), 'dashboard');
+        }
+        try {
+          if (localStorage.getItem('predictable_last_section') === 'clients') {
+            localStorage.setItem('predictable_last_section', 'dashboard');
+          }
+        } catch (e) {}
+      }
+
       document.documentElement.style.visibility = '';
 
       // 6. Listener de cambios de auth en otros tabs
