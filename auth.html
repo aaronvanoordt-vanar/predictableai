@@ -116,6 +116,39 @@
   .status.err   { background: #FBEDED; color: #B03A3A; border: 1px solid rgba(214,69,69,.30); }
   .status.info  { background: #EEF2FF; color: #1A3FD6; border: 1px solid rgba(31,75,255,.25); }
 
+  /* Divider entre OAuth y email/password */
+  .divider { display: flex; align-items: center; gap: 10px; margin: 18px 0; }
+  .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .divider span { font-size: 11.5px; color: var(--text3); text-transform: uppercase; letter-spacing: .06em; }
+
+  /* Tabs Iniciar sesión / Crear cuenta */
+  .auth-tabs { display: flex; background: var(--surface2); border-radius: 999px; padding: 3px; margin-bottom: 16px; }
+  .auth-tabs button {
+    flex: 1; border: none; background: transparent; border-radius: 999px; padding: 8px 0;
+    font-size: 12.5px; font-weight: 600; color: var(--text3); cursor: pointer; font-family: var(--font);
+    transition: all .15s;
+  }
+  .auth-tabs button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(10,10,15,.10); }
+
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; font-weight: 500; color: var(--text2); margin-bottom: 5px; }
+  .field input {
+    width: 100%; padding: 11px 13px; border: 1px solid rgba(10,10,15,0.14); border-radius: 10px;
+    font-size: 13.5px; font-family: var(--font); color: var(--text); background: var(--surface);
+  }
+  .field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31,75,255,.12); }
+
+  .btn-primary {
+    width: 100%; padding: 12px 14px; background: var(--accent); border: none;
+    border-radius: 11px; color: #fff; font-size: 13.5px; font-weight: 600;
+    font-family: var(--font); cursor: pointer; transition: all .15s; margin-top: 4px;
+  }
+  .btn-primary:hover:not([disabled]) { background: var(--accent-2); }
+  .btn-primary[disabled] { opacity: .6; cursor: not-allowed; }
+
+  .forgot-link { display: block; text-align: center; margin-top: 12px; font-size: 12px; color: var(--text3); text-decoration: none; cursor: pointer; background: none; border: none; font-family: var(--font); }
+  .forgot-link:hover { color: var(--accent); }
+
   /* Spinner */
   .spinner {
     display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor;
@@ -232,6 +265,26 @@
           <svg viewBox="0 0 24 24" fill="#0A66C2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
           Continuar con LinkedIn
         </button>
+
+        <div class="divider"><span>o con tu email</span></div>
+
+        <div class="auth-tabs">
+          <button type="button" id="tab-login" class="on">Iniciar sesión</button>
+          <button type="button" id="tab-signup">Crear cuenta</button>
+        </div>
+
+        <form id="email-form" novalidate>
+          <div class="field">
+            <label for="email-input">Correo</label>
+            <input id="email-input" type="email" required autocomplete="email" placeholder="tu@empresa.com">
+          </div>
+          <div class="field">
+            <label for="password-input">Contraseña</label>
+            <input id="password-input" type="password" required minlength="6" autocomplete="current-password" placeholder="Mínimo 6 caracteres">
+          </div>
+          <button type="submit" class="btn-primary" id="btn-email-submit">Iniciar sesión</button>
+        </form>
+        <button type="button" class="forgot-link" id="forgot-password-link">¿Olvidaste tu contraseña?</button>
 
         <div id="status" class="status"></div>
 
