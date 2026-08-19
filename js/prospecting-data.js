@@ -65,9 +65,11 @@
       // functions (p. ej. la IA de generate-outreach) como "Error de Apollo".
       const msg = fnName === 'apollo-proxy'
         ? apolloErrorMessage(detail, res.status)
-        : res.status === 401
-          ? 'Sesión expirada. Vuelve a iniciar sesión.'
-          : 'No se pudo generar el contenido (' + detail + '). Reintenta.';
+        : fnName === 'gmail-proxy'
+          ? gmailErrorMessage(detail, res.status)
+          : res.status === 401
+            ? 'Sesión expirada. Vuelve a iniciar sesión.'
+            : 'No se pudo generar el contenido (' + detail + '). Reintenta.';
       const err = new Error(msg);
       err.status = res.status;
       err.detail = detail;
@@ -99,6 +101,18 @@
     if (d.includes('endpoint not allowed'))
       return 'El proxy de Apollo no reconoce este endpoint — hay que volver a desplegar apollo-proxy (supabase functions deploy apollo-proxy).';
     return 'Error de Apollo: ' + detail;
+  }
+
+  // Los dos estados de "hay que (re)conectar Gmail" viajan como 428 con un
+  // código estable, para que la UI ofrezca el botón en vez de un error suelto.
+  function gmailErrorMessage(detail, status) {
+    const d = String(detail || '');
+    if (d === 'gmail_not_connected') return 'Conecta tu Gmail para leer y responder los hilos.';
+    if (d === 'gmail_reauth_required') return 'Se perdió el acceso a Gmail. Vuelve a conectarlo.';
+    if (d === 'thread_not_found') return 'Este hilo ya no existe en el buzón conectado.';
+    if (status === 401) return 'Sesión expirada. Vuelve a iniciar sesión.';
+    if (status === 503) return 'Gmail no está configurado en el servidor todavía.';
+    return d || 'No se pudo hablar con Gmail. Reintenta.';
   }
 
   function isMaskedEmail(email) {
@@ -1223,6 +1237,132 @@
     return { enrolled: okMembers.length, failed };
   }
 
+  // ── Bandeja: correos enviados (Apollo) + hilo real (Gmail) ─────────
+  //
+  // Reparto de responsabilidades, y por qué:
+  //   Apollo  → qué se envió, a quién, cuándo, en qué estado, y si contestaron.
+  //   Gmail   → el texto de la conversación y el envío de la respuesta.
+  // Apollo NO expone los correos entrantes: los 100 mensajes de una página son
+  // todos `outreach_automatic_email`, no hay endpoint de hilo, y sus filtros
+  // `contact_ids` / `provider_thread_id` se aceptan y se ignoran en silencio
+  // (comprobado contra la API real). Lo único que da del lado entrante es
+  // `replied` y `reply_class`. El puente es `provider_thread_id`, que para un
+  // buzón de Gmail es el id del hilo de Gmail.
+
+  const MESSAGE_STATS = [
+    { value: '',            label: 'Todos los estados' },
+    { value: 'delivered',   label: 'Entregados' },
+    { value: 'scheduled',   label: 'Programados' },
+    { value: 'opened',      label: 'Abiertos' },
+    { value: 'not_opened',  label: 'Sin abrir' },
+    { value: 'clicked',     label: 'Con clic' },
+    { value: 'replied',     label: 'Respondidos' },
+    { value: 'bounced',     label: 'Rebotados' },
+    { value: 'spam_blocked', label: 'Bloqueados por spam' },
+    { value: 'unsubscribed', label: 'Dados de baja' },
+  ];
+
+  // Clasificación de sentimiento que hace Apollo sobre la respuesta.
+  const REPLY_CLASSES = {
+    willing_to_meet: { label: 'Quiere reunirse', pill: 'green' },
+    follow_up_question: { label: 'Tiene una pregunta', pill: 'blue' },
+    person_referral: { label: 'Refiere a otra persona', pill: 'blue' },
+    out_of_office: { label: 'Fuera de oficina', pill: 'gray' },
+    already_left_company_or_not_right_person: { label: 'No es la persona', pill: 'gray' },
+    not_interested: { label: 'No interesado', pill: 'red' },
+    unsubscribe: { label: 'Pidió baja', pill: 'red' },
+    none_of_the_above: { label: 'Otro', pill: 'gray' },
+  };
+
+  async function fetchOutreachEmails({ sequenceId, stat, page, perPage } = {}) {
+    const body = { page: page || 1, per_page: perPage || 25 };
+    // Solo se mandan los filtros que Apollo respeta de verdad.
+    if (sequenceId) body.emailer_campaign_ids = [sequenceId];
+    if (stat) body.emailer_message_stats = [stat];
+
+    const data = await apolloProxy('/emailer_messages/search', body);
+    const rows = (data?.emailer_messages || []).map((m) => ({
+      id: m.id,
+      status: m.status || null,
+      subject: m.subject || '',
+      // El cuerpo solo viene cuando el correo ya se armó: los `scheduled`
+      // llegan vacíos, y eso se muestra como tal en vez de inventarlo.
+      body: htmlToBody(m.body_html || '') || (m.body_text || ''),
+      toName: m.to_name || '',
+      toEmail: m.to_email || '',
+      fromEmail: m.from_email || '',
+      sequenceId: m.emailer_campaign_id || null,
+      contactId: m.contact_id || null,
+      threadId: m.provider_thread_id || null,
+      dueAt: m.due_at || null,
+      completedAt: m.completed_at || null,
+      replied: m.replied === true,
+      replyClass: m.reply_class || null,
+      bounced: !!m.bounce,
+      spamBlocked: !!m.spam_blocked,
+      notSentReason: m.not_sent_reason || null,
+      failureReason: m.failure_reason || null,
+      delayReason: m.schedule_delayed_reason || null,
+    }));
+    return {
+      rows,
+      page: data?.pagination?.page ?? (page || 1),
+      // Apollo no siempre manda total_entries en este endpoint: si falta, la UI
+      // pagina por "¿vino una página llena?" en vez de mostrar un total falso.
+      total: data?.pagination?.total_entries ?? null,
+      totalPages: data?.pagination?.total_pages ?? null,
+    };
+  }
+
+  // ── Gmail ──────────────────────────────────────────────────────────
+
+  function gmailFetch(action, payload) {
+    return edgeFetch('gmail-proxy', { action, payload: payload || {} });
+  }
+
+  /** Buzón conectado del usuario, o null. Nunca expone el refresh token. */
+  async function fetchGmailAccount() {
+    const userId = await getUserId();
+    const { data, error } = await sb()
+      .from('gmail_accounts')
+      // Columnas explícitas a propósito: el grant de SELECT es por columna y
+      // un select('*') fallaría al tocar refresh_token.
+      .select('id, email, status, last_error, connected_at')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error) throw new Error('No se pudo leer la conexión de Gmail: ' + error.message);
+    return data || null;
+  }
+
+  async function startGmailConnect() {
+    const redirectUri = window.location.origin + window.location.pathname.replace(/[^/]*$/, '') + 'gmail-callback.html';
+    // CSRF: el callback compara este valor con el `state` que devuelva Google.
+    const state = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+      .map((b) => b.toString(16).padStart(2, '0')).join('');
+    sessionStorage.setItem('gmail_oauth_state', state);
+    const res = await gmailFetch('auth_url', { redirect_uri: redirectUri, state });
+    if (!res?.url) throw new Error('No se pudo iniciar la conexión con Google.');
+    window.location.assign(res.url);
+  }
+
+  async function disconnectGmail() {
+    await gmailFetch('disconnect', {});
+  }
+
+  async function fetchGmailThread(threadId) {
+    if (!threadId) throw new Error('Este correo todavía no tiene un hilo en Gmail.');
+    const res = await gmailFetch('thread', { thread_id: threadId });
+    return {
+      mailbox: res?.mailbox || '',
+      messages: (res?.messages || []).sort((a, b) => (a.internal_date || 0) - (b.internal_date || 0)),
+    };
+  }
+
+  async function sendGmailReply({ threadId, to, subject, body }) {
+    if (!String(body || '').trim()) throw new Error('Escribe la respuesta antes de enviarla.');
+    return gmailFetch('send_reply', { thread_id: threadId, to, subject, body });
+  }
+
   // ── Importación de listas legadas (localStorage 'apollo_lists') ────
   // La versión anterior guardaba las listas (incl. enrichment pagado) solo
   // en el navegador. Esto las migra una vez a Supabase.
@@ -1556,6 +1696,14 @@
     matchByLinkedinUrl,
     enrichMembers,
     updateMember,
+    MESSAGE_STATS,
+    REPLY_CLASSES,
+    fetchOutreachEmails,
+    fetchGmailAccount,
+    startGmailConnect,
+    disconnectGmail,
+    fetchGmailThread,
+    sendGmailReply,
     fetchSequences,
     fetchSequenceSteps,
     fetchEmailAccounts,

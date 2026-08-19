@@ -45,6 +45,14 @@ const STATIC_ENDPOINTS = new Map<string, Method[]>([
   ["/emailer_schedules", ["GET"]],
   ["/email_accounts", ["GET"]],
   ["/labels", ["GET"]],
+  // Bandeja: the emails Apollo has sent/scheduled, with their delivery state.
+  // NOTE: this only ever returns OUTBOUND mail. Apollo has no inbound message
+  // type — it reports `replied`/`reply_class` on the message that got answered
+  // but never the prospect's text, which is why the Bandeja reads the actual
+  // conversation from Gmail (see supabase/functions/gmail-proxy).
+  // Also verified the hard way: its `contact_ids` and `provider_thread_id`
+  // filters are accepted and then SILENTLY IGNORED — never filter on those.
+  ["/emailer_messages/search", ["POST"]],
 ]);
 
 // Dynamic entries: per-sequence sub-resources. The id segment is validated by
