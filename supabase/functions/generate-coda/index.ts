@@ -1,8 +1,9 @@
 /**
  * generate-coda — Supabase Edge Function
  *
- * Powers the "CODA AI" section (optional strategic context on top of the
- * mandatory Intelligence Hub + company context). Two actions:
+ * Powers the "Contexto estratégico IA" section (optional strategic context on
+ * top of the mandatory Intelligence Hub + company context; the table/function
+ * are still named coda_analysis / generate-coda internally). Three actions:
  *
  *   action: "pestel"
  *     Researches the seller's market (web_search) grounded in their
@@ -11,6 +12,14 @@
  *     factors, each translated into a concrete SALES impact + suggested action.
  *     Writes coda_analysis.pestel (status generating → ready|error).
  *
+ *   action: "porter"
+ *     Researches the seller's competitive landscape (web_search) and produces
+ *     a Porter's Five Forces analysis: Rivalidad entre competidores / Amenaza
+ *     de nuevos entrantes / Amenaza de sustitutos / Poder de negociación de
+ *     clientes / Poder de negociación de proveedores, each translated into a
+ *     concrete SALES impact + suggested action (same shape as pestel).
+ *     Writes coda_analysis.porter (status generating → ready|error).
+ *
  *   action: "came"  (body: { foda: {fortalezas,oportunidades,debilidades,amenazas} })
  *     Converts the user-filled FODA (SWOT) matrix into a CAME response matrix:
  *     Mantener (strengths) / Explotar (opportunities) / Corregir (weaknesses)
@@ -18,7 +27,7 @@
  *     (pure transformation). Persists the FODA the user sent, then writes
  *     coda_analysis.came (status generating → ready|error).
  *
- * Both blocks are OPTIONAL: nothing else in the app blocks on them.
+ * All three blocks are OPTIONAL: nothing else in the app blocks on them.
  *
  * Auth: Bearer <user JWT>, verified via auth.getUser() (see apollo-proxy /
  *       generate-client-brief notes — verify_jwt alone accepts the public
@@ -162,6 +171,25 @@ Rules:
 - Never invent hard statistics. If you cite a number, it must come from web_search results. Qualitative framing is fine without numbers.
 - All user-facing text in neutral Latin-American Spanish (tuteo).`;
 
+const PORTER_SYSTEM = `You are a market-strategy analyst inside a B2B sales-intelligence platform. Produce a Porter's Five Forces analysis for the SELLER company described below, and — critically — translate every factor into its concrete SALES impact (how it changes deal urgency, pricing power, who to target, what proof points matter). This is for a sales team, not an academic report.
+
+Research the seller's competitive landscape and industry with web_search (max 3 searches) to ground the factors in real, current conditions (actual competitors, actual switching costs, actual market structure). Then respond with ONLY valid JSON (no markdown fences, no prose) with exactly this shape:
+
+{
+  "rivalidad": [{ "factor": "the real competitive-rivalry factor, in Spanish", "impact": "high|medium|low", "sales_impact": "1 sentence in Spanish: what this means for selling — how it changes pricing power, urgency, or differentiation", "action": "1 short sales action in Spanish (a message angle, a differentiator to lead with, a trigger to watch)" }],
+  "nuevos_entrantes": [ ... same shape, about the threat of new entrants ... ],
+  "sustitutos": [ ... about the threat of substitute products/solutions ... ],
+  "poder_clientes": [ ... about buyers' bargaining power ... ],
+  "poder_proveedores": [ ... about suppliers'/partners' bargaining power ... ]
+}
+
+Rules:
+- 2-3 factors per force (the strongest, most sales-relevant ones). Never leave a force empty — if a force is weak for this market, give the single most relevant factor.
+- Every factor MUST be specific to this company's market/geography/ICP/competitors. No generic textbook factors ("there is competition in the market"). Tie each to a real, current condition.
+- "sales_impact" is the point of the whole exercise: always frame it as consequence for THIS seller's pipeline.
+- Never invent hard statistics. If you cite a number, it must come from web_search results. Qualitative framing is fine without numbers.
+- All user-facing text in neutral Latin-American Spanish (tuteo).`;
+
 const CAME_SYSTEM = `You are a sales strategist. You convert a company's FODA (SWOT) matrix into a CAME action matrix, oriented to SALES execution.
 
 The CAME method maps each FODA quadrant to a strategic response:
@@ -252,8 +280,8 @@ Deno.serve(async (req: Request) => {
   let body: { action?: string; foda?: unknown } = {};
   try { body = await req.json(); } catch (_) { /* empty body */ }
   const action = body.action;
-  if (action !== "pestel" && action !== "came") {
-    return json({ error: "action must be 'pestel' or 'came'" }, 400, h);
+  if (action !== "pestel" && action !== "porter" && action !== "came") {
+    return json({ error: "action must be 'pestel', 'porter' or 'came'" }, 400, h);
   }
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
@@ -261,6 +289,8 @@ Deno.serve(async (req: Request) => {
   // Ensure a row exists and flip the relevant status to 'generating'.
   const statusPatch = action === "pestel"
     ? { pestel_status: "generating", pestel_error: null }
+    : action === "porter"
+    ? { porter_status: "generating", porter_error: null }
     : { came_status: "generating", came_error: null };
   await supa.from("coda_analysis").upsert(
     { user_id: user.id, ...statusPatch },
@@ -302,6 +332,38 @@ Deno.serve(async (req: Request) => {
           pestel_generated_at: new Date().toISOString(),
         }).eq("user_id", user.id);
         console.log(`[coda] ✓ pestel ${user.id}`);
+      } else if (action === "porter") {
+        const [{ data: intake }, { data: profile }, { data: brief }] = await Promise.all([
+          supa.from("intel_hub_intake").select(`
+            company_industry, company_country, company_website, company_about, company_solutions,
+            icp_industries, icp_geographies, icp_roles, icp_pain_points, value_proposition
+          `).eq("user_id", user.id).maybeSingle(),
+          supa.from("profiles").select("company_name").eq("id", user.id).maybeSingle(),
+          supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
+        ]);
+        const ctx = buildContextBlock(intake as IntakeRow | null, profile, brief);
+        const raw = await callClaude(
+          ANTHROPIC_KEY,
+          PORTER_SYSTEM,
+          ctx + "\n\nProduce the Porter's Five Forces JSON for this seller now.",
+          3,
+        );
+        const p = parseJson(raw);
+        const dim = (v: unknown) => (Array.isArray(v) ? v : []);
+        const porter = {
+          rivalidad:         dim(p.rivalidad),
+          nuevos_entrantes:  dim(p.nuevos_entrantes),
+          sustitutos:        dim(p.sustitutos),
+          poder_clientes:    dim(p.poder_clientes),
+          poder_proveedores: dim(p.poder_proveedores),
+        };
+        await supa.from("coda_analysis").update({
+          porter,
+          porter_status: "ready",
+          porter_error: null,
+          porter_generated_at: new Date().toISOString(),
+        }).eq("user_id", user.id);
+        console.log(`[coda] ✓ porter ${user.id}`);
       } else {
         // came — persist the FODA the user sent, then derive CAME.
         const foda = (body.foda && typeof body.foda === "object") ? body.foda : {};
@@ -332,6 +394,8 @@ Deno.serve(async (req: Request) => {
       console.error("[coda] error:", err);
       const errPatch = action === "pestel"
         ? { pestel_status: "error", pestel_error: String(err).slice(0, 500) }
+        : action === "porter"
+        ? { porter_status: "error", porter_error: String(err).slice(0, 500) }
         : { came_status: "error", came_error: String(err).slice(0, 500) };
       await supa.from("coda_analysis").update(errPatch).eq("user_id", user.id);
     }
