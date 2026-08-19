@@ -12,6 +12,17 @@
  * (SELECT propio vía RLS; escribe solo la edge function) y narra el progreso
  * en vivo vía Realtime con polling de respaldo.
  *
+ * El resultado se lee en tarjetas compactas (una empresa = una tarjeta
+ * numerada con su titular de señal; la evidencia, el porqué y los decision
+ * makers viven detrás de "Ver detalle") para que un radar de 6 empresas se
+ * escanee de un vistazo en vez de leerse como un muro de texto.
+ *
+ * Antes de investigar, el composer pide dos cosas: un prompt opcional con el
+ * tipo de empresas que buscas (la estrategia de búsqueda se construye sobre
+ * él) y qué listas guardadas / radares anteriores cuentan como "empresas que
+ * ya tienes" — sus nombres viajan a generate-radar como exclusiones para no
+ * gastar búsquedas web ni tokens redescubriendo lo mismo.
+ *
  * Depende de (orden de carga en index.html): js/supabase-client.js,
  * js/ui-helpers.js (escHtml), js/credit-costs.js (badge radar_run),
  * js/prospecting-data.js (createList para "Guardar en lista").
@@ -41,6 +52,22 @@
     driving: false, // true mientras este tab está avanzando el run etapa por etapa
     showRerun: false,
     autoResumes: 0, // reintentos automáticos de un run estancado (máx 3 por carga de página)
+
+    // ── Composer (prompt opcional + exclusiones) ──
+    promptDraft: '',       // texto del box "¿qué empresas buscas?" (sobrevive re-renders)
+    expanded: {},          // índice de empresa → detalle abierto
+    signalOpen: false,     // señal completa vs. recortada a 2 líneas
+    exclusionsOpen: false, // panel de "empresas que ya tienes"
+
+    // Fuentes de exclusión ya cargadas (listas de Prospección + radares previos).
+    // Sirven a la vez de transparencia ("esto ya lo buscamos") y de ahorro:
+    // sus nombres viajan al backend para que la IA no gaste búsquedas ni
+    // tokens redescubriendo empresas que el vendedor ya tiene.
+    sourcesLoaded: false,
+    lists: [],             // [{ id, name, companies: [nombres] }]
+    prevRuns: [],          // [{ id, generated_at, companies: [nombres] }]
+    excludeListIds: null,  // Set de list_id marcados (null = aún sin inicializar)
+    excludePrevRadar: true,
   };
 
   function shell() { return document.getElementById('radar-shell'); }
@@ -66,6 +93,103 @@
     render();
     ensureRealtime();
     syncPolling();
+    // No bloquea el primer pintado: el composer muestra las exclusiones en
+    // cuanto llegan.
+    loadExclusionSources().then(render).catch(() => {});
+  }
+
+  // ── Empresas que ya conoces (exclusiones) ──────────────────────────────────
+  //
+  // Dos fuentes, ambas leídas con RLS de dueño: las listas guardadas de
+  // Prospección (sus empresas ya están trabajadas) y los radares anteriores
+  // ya entregados. El backend vuelve a resolver los nombres por su cuenta
+  // (service role, scoped al dueño) — lo que mandamos desde aquí son solo
+  // los IDs de lista marcados.
+
+  async function loadExclusionSources() {
+    if (!global.supabaseClient) return;
+    const [lists, runs] = await Promise.all([
+      loadListsWithCompanies(),
+      loadPreviousRunCompanies(),
+    ]);
+    state.lists = lists;
+    state.prevRuns = runs;
+    // Por defecto todo excluido: repetir empresas que ya tienes es gasto puro.
+    if (!state.excludeListIds) state.excludeListIds = new Set(lists.map((l) => l.id));
+    state.sourcesLoaded = true;
+  }
+
+  async function loadListsWithCompanies() {
+    try {
+      const { data: lists, error } = await global.supabaseClient
+        .from('prospect_lists')
+        .select('id, name, created_at')
+        .order('created_at', { ascending: false })
+        .limit(40);
+      if (error || !lists || !lists.length) return [];
+      const { data: members } = await global.supabaseClient
+        .from('prospect_list_members')
+        .select('list_id, company')
+        .in('list_id', lists.map((l) => l.id))
+        .limit(5000);
+      const byList = {};
+      (members || []).forEach((m) => {
+        const name = String(m.company || '').trim();
+        if (!name) return;
+        (byList[m.list_id] = byList[m.list_id] || []).push(name);
+      });
+      return lists.map((l) => ({
+        id: l.id,
+        name: l.name,
+        companies: uniqNames(byList[l.id] || []),
+      })).filter((l) => l.companies.length);
+    } catch (e) {
+      console.warn('[radar] listas:', e);
+      return [];
+    }
+  }
+
+  async function loadPreviousRunCompanies() {
+    try {
+      const { data, error } = await global.supabaseClient
+        .from('radar_runs')
+        .select('id, generated_at, companies')
+        .eq('status', 'ready')
+        .order('created_at', { ascending: false })
+        .limit(12);
+      if (error || !data) return [];
+      return data.map((r) => ({
+        id: r.id,
+        generated_at: r.generated_at,
+        companies: uniqNames((Array.isArray(r.companies) ? r.companies : []).map((c) => (c && c.name) || '')),
+      })).filter((r) => r.companies.length);
+    } catch (e) {
+      console.warn('[radar] radares previos:', e);
+      return [];
+    }
+  }
+
+  function uniqNames(arr) {
+    const seen = Object.create(null);
+    const out = [];
+    arr.forEach((n) => {
+      const name = String(n || '').trim();
+      if (!name) return;
+      const k = name.toLowerCase();
+      if (seen[k]) return;
+      seen[k] = 1;
+      out.push(name);
+    });
+    return out;
+  }
+
+  // Empresas distintas cubiertas por las fuentes marcadas ahora mismo.
+  function knownCompanyNames() {
+    const picked = [];
+    if (state.excludePrevRadar) state.prevRuns.forEach((r) => picked.push.apply(picked, r.companies));
+    const ids = state.excludeListIds || new Set();
+    state.lists.forEach((l) => { if (ids.has(l.id)) picked.push.apply(picked, l.companies); });
+    return uniqNames(picked);
   }
 
   async function loadLatestRun() {
@@ -219,14 +343,20 @@
     }
   }
 
-  async function startRun(customPrompt) {
+  async function startRun() {
     if (state.busy || state.driving) return;
     state.busy = true;
     state.autoResumes = 0;
     render();
     try {
-      const data = await postRadar(customPrompt ? { custom_prompt: customPrompt } : {});
+      const prompt = String(state.promptDraft || '').trim().slice(0, 2000);
+      const data = await postRadar({
+        custom_prompt: prompt || undefined,
+        exclude_list_ids: Array.from(state.excludeListIds || []),
+        exclude_previous_radar: !!state.excludePrevRadar,
+      });
       state.showRerun = false;
+      state.expanded = {};
       await loadLatestRun();
       if (!data.conflict) render();
     } catch (e) {
@@ -288,6 +418,9 @@
       const { error } = await global.supabaseClient.from('prospect_list_members').insert(rows);
       if (error) throw new Error('No se pudieron guardar los contactos: ' + error.message);
       const skipped = companies.length - withDms.length;
+      // La lista recién creada pasa a contar como "empresas que ya tienes":
+      // la próxima investigación no volverá a gastar búsquedas en ellas.
+      loadExclusionSources().then(render).catch(() => {});
       alert('Guardado: ' + rows.length + ' decision makers en la lista "' + list.name + '".' +
         (skipped ? ' (' + skipped + ' empresa' + (skipped === 1 ? '' : 's') + ' sin decision makers no se incluyeron.)' : '') +
         ' La encuentras en Prospección → Listas guardadas.');
@@ -321,27 +454,116 @@
       '</div>';
   }
 
+  // El primer run exitoso es gratis (mismo criterio que la edge function:
+  // cuenta los runs ya entregados). Antes de que carguen las fuentes no
+  // sabemos cuántos hay, así que nos guiamos por si existe un run previo.
+  function runIsFree() {
+    return state.sourcesLoaded ? !state.prevRuns.length : !state.run;
+  }
+
+  // ── Composer: prompt opcional + exclusiones ────────────────────────────────
+  //
+  // El prompt describe QUÉ empresas quiere el usuario; la estrategia de
+  // búsqueda se construye sobre eso (vacío = la IA deriva la señal del
+  // contexto de la empresa, como siempre).
+
+  function composer(cta, intro) {
+    return '<div class="card rdr-composer">' +
+      (intro ? '<div class="rdr-comp-intro">' +
+        '<div class="rdr-hero-title">' + esc(intro.title) + '</div>' +
+        '<div class="rdr-hero-sub">' + esc(intro.sub) + '</div></div>' : '') +
+      '<div class="rdr-comp-lbl">¿Qué tipo de empresas buscas? <span class="rdr-opt">opcional</span></div>' +
+      '<textarea id="rdr-prompt" class="rdr-ta" maxlength="2000" rows="3" ' +
+        'placeholder="Ej.: distribuidoras de alimentos en México, de 200 a 1000 empleados, que estén abriendo sucursales o cambiando de ERP">' +
+        esc(state.promptDraft) + '</textarea>' +
+      '<div class="rdr-hint">Si lo dejas vacío, la IA deriva la señal de compra del contexto de tu empresa.</div>' +
+      exclusionsBlock() +
+      '<div class="rdr-comp-foot">' +
+        (runIsFree()
+          ? '<span class="rdr-cost-note">Tu primer Radar es gratis</span>'
+          : '<span class="rdr-cost-note" data-credit-cost="radar_run" data-credit-pos="inside">Costo </span>') +
+        '<button class="btn btn-primary" data-act="start" ' + (state.busy ? 'disabled' : '') + '>' +
+          (state.busy ? 'Iniciando…' : esc(cta)) + '</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // Las listas guardadas y los radares anteriores, con sus empresas: sirven
+  // de memoria ("esto ya lo buscamos") y de ahorro real — sus nombres viajan
+  // al backend como exclusiones para no gastar búsquedas ni tokens
+  // redescubriendo empresas que ya estás trabajando.
+  function exclusionsBlock() {
+    if (!state.sourcesLoaded) {
+      return '<div class="rdr-ex"><div class="rdr-ex-sum">Revisando qué empresas ya tienes…</div></div>';
+    }
+    const sources = state.lists.length + (state.prevRuns.length ? 1 : 0);
+    if (!sources) return '';
+    const known = knownCompanyNames();
+    const sum = known.length
+      ? 'No repetiremos las <strong>' + known.length + '</strong> empresa' + (known.length === 1 ? '' : 's') +
+        ' que ya tienes guardadas.'
+      : 'No estás excluyendo ninguna empresa: la búsqueda puede repetir las que ya tienes.';
+    const rows = [];
+    if (state.prevRuns.length) {
+      const n = uniqNames([].concat.apply([], state.prevRuns.map((r) => r.companies))).length;
+      rows.push(exRow('prev', '', 'Radares anteriores', state.prevRuns.length + ' investigación' +
+        (state.prevRuns.length === 1 ? '' : 'es') + ' · ' + n + ' empresas', state.excludePrevRadar));
+    }
+    const ids = state.excludeListIds || new Set();
+    state.lists.forEach((l) => {
+      rows.push(exRow('list', l.id, l.name, l.companies.length + ' empresa' +
+        (l.companies.length === 1 ? '' : 's'), ids.has(l.id)));
+    });
+    const chips = known.slice(0, 12).map((n) => '<span class="rdr-ex-chip">' + esc(n) + '</span>').join('') +
+      (known.length > 12 ? '<span class="rdr-ex-chip rdr-ex-chip-more">+' + (known.length - 12) + ' más</span>' : '');
+    return '<div class="rdr-ex">' +
+      '<div class="rdr-ex-top">' +
+        '<div class="rdr-ex-sum">' + sum + '</div>' +
+        '<button class="rdr-ex-toggle" data-act="toggle-ex">' +
+          (state.exclusionsOpen ? 'Ocultar' : 'Elegir listas') + '</button>' +
+      '</div>' +
+      (state.exclusionsOpen
+        ? '<div class="rdr-ex-body">' + rows.join('') +
+          (known.length ? '<div class="rdr-ex-chips">' + chips + '</div>' : '') + '</div>'
+        : '') +
+    '</div>';
+  }
+
+  function exRow(kind, id, name, meta, checked) {
+    return '<label class="rdr-ex-row">' +
+      '<input type="checkbox" data-ex="' + kind + '"' + (id ? ' data-id="' + esc(id) + '"' : '') +
+        (checked ? ' checked' : '') + '>' +
+      '<span class="rdr-ex-name">' + esc(name) + '</span>' +
+      '<span class="rdr-ex-meta">' + esc(meta) + '</span>' +
+    '</label>';
+  }
+
+  // ── Vistas ─────────────────────────────────────────────────────────────────
+
   function viewEmpty() {
     return '<div class="rdr-wrap">' +
       header('La IA investiga la web y te trae empresas que necesitan lo que vendes — con evidencia y decision makers.') +
-      '<div class="rdr-hero card">' +
-        '<div class="rdr-hero-title">Tu primer Radar es gratis</div>' +
-        '<div class="rdr-hero-sub">A partir del contexto de tu empresa, la IA define qué señal de compra buscar, investiga fuentes públicas y te entrega un mínimo de 5 empresas target con sus decision makers.</div>' +
-        '<button class="btn btn-primary" data-act="start" ' + (state.busy ? 'disabled' : '') + '>' +
-          (state.busy ? 'Iniciando…' : 'Iniciar investigación') + '</button>' +
-      '</div>' +
+      composer('Iniciar investigación', {
+        title: 'Encuentra tus próximas empresas target',
+        sub: 'A partir del contexto de tu empresa — y de lo que escribas aquí abajo — la IA define qué señal de compra buscar, investiga fuentes públicas y te entrega empresas concretas con sus decision makers.',
+      }) +
     '</div>';
   }
 
   function viewProgress(run) {
     const pct = Math.max(2, Math.min(100, run.progress || 0));
     const log = Array.isArray(run.progress_log) ? run.progress_log : [];
-    const hypothesis = run.signal_hypothesis
+    const excluded = Array.isArray(run.excluded_companies) ? run.excluded_companies : [];
+    const signal = String(run.signal_hypothesis || '');
+    const hypothesis = signal
       ? '<div class="rdr-signal card"><div class="rdr-signal-lbl">Señal detectada</div>' +
-        '<div class="rdr-signal-txt">' + esc(run.signal_hypothesis) + '</div></div>'
+        '<div class="rdr-signal-txt' + (state.signalOpen ? ' is-open' : '') + '">' + esc(signal) + '</div>' +
+        (signal.length > 160 ? '<button class="rdr-link" data-act="toggle-signal">' +
+          (state.signalOpen ? 'Ver menos' : 'Ver la señal completa') + '</button>' : '') +
+        '</div>'
       : '';
     // Cada llamada a generate-radar tiene su propio deadline de 95s sobre
-    // Anthropic (CLAUDE_TIMEOUT_MS en la edge function) — una sola etapa
+    // el motor de IA (LLM_TIMEOUT_MS en la edge function) — una sola etapa
     // puede legítimamente tardar hasta ahí + margen de red/DB. Este umbral
     // queda por encima de eso (para no dar una falsa alarma mientras el
     // sistema sigue trabajando normal) y por debajo de los 120s de
@@ -361,6 +583,9 @@
           '<span class="rdr-prog-step">' + esc(run.progress_step || 'Investigando…') + '</span>' +
           '<span class="rdr-prog-pct">' + pct + '%</span></div>' +
         '<div class="rdr-bar"><div class="rdr-bar-fill" style="width:' + pct + '%"></div></div>' +
+        (excluded.length ? '<div class="rdr-prog-note">Saltando ' + excluded.length +
+          ' empresa' + (excluded.length === 1 ? '' : 's') + ' que ya tienes guardada' +
+          (excluded.length === 1 ? '' : 's') + '.</div>' : '') +
         (log.length ? '<div class="rdr-log">' + log.slice(-8).map((l) =>
           '<div class="rdr-log-line">' + esc(l && l.text ? l.text : '') + '</div>').join('') + '</div>' : '') +
         stuckPanel +
@@ -374,8 +599,8 @@
       '<div class="card rdr-hero">' +
         '<div class="rdr-hero-title">Ocurrió un error</div>' +
         '<div class="rdr-hero-sub">' + esc(run.error_message || 'Error desconocido.') + '</div>' +
-        '<button class="btn btn-primary" data-act="start" ' + (state.busy ? 'disabled' : '') + '>Reintentar</button>' +
       '</div>' +
+      composer('Reintentar') +
     '</div>';
   }
 
@@ -383,51 +608,84 @@
     const companies = Array.isArray(run.companies) ? run.companies : [];
     const totalDms = companies.reduce((n, c) => n + ((c.decision_makers || []).length), 0);
     const when = run.generated_at ? new Date(run.generated_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'long' }) : '';
+    const excluded = Array.isArray(run.excluded_companies) ? run.excluded_companies : [];
+    const signal = String(run.signal_hypothesis || '');
     return '<div class="rdr-wrap">' +
       header(companies.length + ' empresa' + (companies.length === 1 ? '' : 's') + ' con señal de compra · ' +
         totalDms + ' decision makers' + (when ? ' · ' + esc(when) : '')) +
-      '<div class="rdr-signal card"><div class="rdr-signal-lbl">' +
-        (run.source === 'custom' ? 'Tu señal' : 'Señal detectada por la IA') + '</div>' +
-        '<div class="rdr-signal-txt">' + esc(run.signal_hypothesis || '') + '</div>' +
+      '<div class="rdr-signal card">' +
+        '<div class="rdr-signal-lbl">' +
+          (run.source === 'custom' ? 'Tu búsqueda' : 'Señal detectada por la IA') + '</div>' +
+        '<div class="rdr-signal-txt' + (state.signalOpen ? ' is-open' : '') + '">' + esc(signal) + '</div>' +
+        (signal.length > 160
+          ? '<button class="rdr-link" data-act="toggle-signal">' +
+            (state.signalOpen ? 'Ver menos' : 'Ver la señal completa') + '</button>'
+          : '') +
+        (excluded.length ? '<div class="rdr-excluded-note">Se excluyeron ' + excluded.length +
+          ' empresa' + (excluded.length === 1 ? '' : 's') + ' que ya tenías en tus listas o radares anteriores.</div>' : '') +
         '<div class="rdr-actions">' +
           '<button class="btn btn-primary btn-sm" data-act="save-all" ' + (state.busy || !totalDms ? 'disabled' : '') + '>' +
             (state.busy ? 'Guardando…' : 'Guardar todo en una lista') + '</button>' +
-          '<button class="btn btn-ghost btn-sm" data-act="toggle-rerun">Nueva investigación</button>' +
+          '<button class="btn btn-ghost btn-sm" data-act="toggle-rerun">' +
+            (state.showRerun ? 'Cancelar' : 'Nueva investigación') + '</button>' +
         '</div>' +
-        rerunPanel() +
       '</div>' +
-      companies.map((c, i) => companyCard(c, i)).join('') +
+      (state.showRerun ? composer('Investigar') : '') +
+      '<div class="rdr-grid">' + companies.map((c, i) => companyCard(c, i)).join('') + '</div>' +
     '</div>';
   }
 
-  function rerunPanel() {
-    if (!state.showRerun) return '';
-    return '<div class="rdr-rerun">' +
-      '<div class="rdr-rerun-lbl">Describe la señal que quieres cazar (o deja vacío para que la IA la derive de nuevo):</div>' +
-      '<textarea id="rdr-prompt" class="rdr-ta" maxlength="2000" placeholder="Ej.: empresas mexicanas en concurso mercantil publicadas en fuentes oficiales durante los últimos 6 meses"></textarea>' +
-      '<div class="rdr-rerun-foot">' +
-        '<span class="rdr-cost-note" data-credit-cost="radar_run" data-credit-pos="inside">Costo </span>' +
-        '<button class="btn btn-primary btn-sm" data-act="rerun" ' + (state.busy ? 'disabled' : '') + '>Investigar</button>' +
-      '</div>' +
-    '</div>';
+  // Titular de una tarjeta: la línea telegráfica que escribe la IA
+  // (signal_headline). Los runs anteriores a ese campo caen al primer
+  // enunciado del why_fit para no quedarse sin resumen.
+  function headlineOf(c) {
+    const h = String(c.signal_headline || '').trim();
+    if (h) return h;
+    const why = String(c.why_fit || '').trim();
+    if (!why) return '';
+    const cut = why.slice(0, 110);
+    const dot = cut.indexOf('. ');
+    if (dot > 30) return cut.slice(0, dot + 1);
+    return why.length > 110 ? cut.replace(/\s+\S*$/, '') + '…' : why;
   }
 
   function companyCard(c, i) {
     const site = safeUrl(c.website);
     const dms = Array.isArray(c.decision_makers) ? c.decision_makers : [];
     const ev = Array.isArray(c.evidence) ? c.evidence : [];
-    const meta = [c.country, c.industry, c.employee_count].filter(Boolean)
-      .map((m) => '<span class="rdr-chip">' + esc(m) + '</span>').join('');
+    const open = !!state.expanded[i];
     const strength = c.signal_strength === 'alta'
       ? '<span class="rdr-chip rdr-chip-hot">Señal alta</span>'
       : '<span class="rdr-chip rdr-chip-warm">Señal media</span>';
-    return '<div class="card rdr-co">' +
-      '<div class="rdr-co-head">' +
-        '<div class="rdr-co-name">' + esc(c.name) +
-          (site ? ' <a class="rdr-site" href="' + esc(site) + '" target="_blank" rel="noopener noreferrer">' + esc(hostOf(site)) + ' ↗</a>' : '') +
+    const meta = [c.country, c.industry, c.employee_count].filter(Boolean)
+      .map((m) => '<span class="rdr-chip">' + esc(m) + '</span>').join('') +
+      (dms.length ? '<span class="rdr-chip rdr-chip-dm">' + dms.length + ' decision maker' +
+        (dms.length === 1 ? '' : 's') + '</span>' : '');
+    const headline = headlineOf(c);
+    return '<article class="card rdr-co' + (open ? ' is-open' : '') + '">' +
+      '<div class="rdr-co-top">' +
+        '<span class="rdr-co-num">' + (i + 1 < 10 ? '0' : '') + (i + 1) + '</span>' +
+        '<div class="rdr-co-id">' +
+          '<div class="rdr-co-name">' + esc(c.name) + '</div>' +
+          (site ? '<a class="rdr-site" href="' + esc(site) + '" target="_blank" rel="noopener noreferrer">' +
+            esc(hostOf(site)) + ' ↗</a>' : '') +
         '</div>' +
-        '<div class="rdr-co-meta">' + strength + meta + '</div>' +
+        strength +
       '</div>' +
+      (headline ? '<div class="rdr-co-headline">' + esc(headline) + '</div>' : '') +
+      (meta ? '<div class="rdr-co-meta">' + meta + '</div>' : '') +
+      '<div class="rdr-co-foot">' +
+        '<button class="rdr-link" data-act="toggle-detail" data-idx="' + i + '">' +
+          (open ? 'Ocultar detalle' : 'Ver detalle') + '</button>' +
+        '<button class="btn btn-ghost btn-sm" data-act="save-one" data-idx="' + i + '" ' +
+          (state.busy || !dms.length ? 'disabled' : '') + '>Guardar en lista</button>' +
+      '</div>' +
+      (open ? companyDetail(c, ev, dms) : '') +
+    '</article>';
+  }
+
+  function companyDetail(c, ev, dms) {
+    return '<div class="rdr-co-detail">' +
       (c.why_fit ? '<div class="rdr-why">' + esc(c.why_fit) + '</div>' : '') +
       (ev.length ? '<div class="rdr-ev"><div class="rdr-sec-lbl">Evidencia</div>' + ev.map((e) => {
         const u = safeUrl(e.url);
@@ -446,24 +704,48 @@
           '</div>';
         }).join('') : '<div class="rdr-dm-none">Apollo no encontró personas para esta empresa — búscala manualmente en Prospección.</div>') +
       '</div>' +
-      '<div class="rdr-co-foot">' +
-        '<button class="btn btn-ghost btn-sm" data-act="save-one" data-idx="' + i + '" ' +
-          (state.busy || !dms.length ? 'disabled' : '') + '>Guardar en lista</button>' +
-      '</div>' +
     '</div>';
   }
 
   // ── Eventos ────────────────────────────────────────────────────────────────
 
   function bind(el) {
+    const ta = el.querySelector('#rdr-prompt');
+    if (ta) ta.addEventListener('input', () => { state.promptDraft = ta.value; });
+
+    el.querySelectorAll('[data-ex]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        if (cb.getAttribute('data-ex') === 'prev') {
+          state.excludePrevRadar = cb.checked;
+        } else {
+          const id = cb.getAttribute('data-id');
+          if (!state.excludeListIds) state.excludeListIds = new Set();
+          if (cb.checked) state.excludeListIds.add(id); else state.excludeListIds.delete(id);
+        }
+        render();
+      });
+    });
+
     el.querySelectorAll('[data-act]').forEach((b) => {
       b.addEventListener('click', () => {
         const act = b.getAttribute('data-act');
-        if (act === 'start') startRun('');
-        else if (act === 'toggle-rerun') { state.showRerun = !state.showRerun; render(); }
-        else if (act === 'rerun') {
-          const ta = document.getElementById('rdr-prompt');
-          startRun(ta ? ta.value.trim() : '');
+        if (act === 'start') {
+          const t = document.getElementById('rdr-prompt');
+          if (t) state.promptDraft = t.value;
+          startRun();
+        } else if (act === 'toggle-rerun') {
+          state.showRerun = !state.showRerun;
+          render();
+        } else if (act === 'toggle-ex') {
+          state.exclusionsOpen = !state.exclusionsOpen;
+          render();
+        } else if (act === 'toggle-signal') {
+          state.signalOpen = !state.signalOpen;
+          render();
+        } else if (act === 'toggle-detail') {
+          const i = parseInt(b.getAttribute('data-idx'), 10);
+          state.expanded[i] = !state.expanded[i];
+          render();
         } else if (act === 'save-all') {
           const companies = Array.isArray(state.run && state.run.companies) ? state.run.companies : [];
           saveToList(companies);
@@ -485,18 +767,50 @@
     const s = document.createElement('style');
     s.id = 'radar-styles';
     s.textContent = [
-      '.rdr-wrap{display:flex;flex-direction:column;gap:14px;padding:26px;max-width:880px;margin:0 auto;width:100%}',
+      '.rdr-wrap{display:flex;flex-direction:column;gap:14px;padding:26px;max-width:1080px;margin:0 auto;width:100%}',
       '.rdr-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}',
       '.rdr-engine{margin-left:auto}',
       '.rdr-title{font-family:var(--font-display);font-size:22px;font-weight:800;color:var(--ink)}',
       '.rdr-sub{font-size:13px;color:var(--ink-3);margin-top:3px;max-width:640px}',
-      '.rdr-hero{padding:28px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}',
+      '.rdr-hero{padding:24px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}',
       '.rdr-hero-title{font-size:17px;font-weight:700;color:var(--ink)}',
-      '.rdr-hero-sub{font-size:13px;color:var(--ink-3);max-width:560px;line-height:1.5}',
+      '.rdr-hero-sub{font-size:13px;color:var(--ink-3);max-width:620px;line-height:1.5}',
+      '.rdr-link{background:none;border:none;padding:0;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--accent-ink)}',
+      '.rdr-link:hover{text-decoration:underline}',
+      // ── Señal ──
       '.rdr-signal{padding:18px 20px}',
       '.rdr-signal-lbl{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink);margin-bottom:6px}',
-      '.rdr-signal-txt{font-size:14px;color:var(--ink-2);line-height:1.55}',
+      '.rdr-signal-txt{font-size:13.5px;color:var(--ink-2);line-height:1.55;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
+      '.rdr-signal-txt.is-open{display:block;overflow:visible}',
+      '.rdr-excluded-note{font-size:12px;color:var(--ink-4);margin-top:8px}',
       '.rdr-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;align-items:center}',
+      // ── Composer ──
+      '.rdr-composer{padding:18px 20px;display:flex;flex-direction:column;gap:9px}',
+      '.rdr-comp-intro{display:flex;flex-direction:column;gap:6px;padding-bottom:12px;margin-bottom:3px;border-bottom:1px solid var(--hair)}',
+      '.rdr-comp-lbl{font-size:14px;font-weight:700;color:var(--ink)}',
+      '.rdr-opt{font-size:11px;font-weight:600;color:var(--ink-4);text-transform:uppercase;letter-spacing:.06em;margin-left:4px}',
+      '.rdr-ta{width:100%;min-height:74px;resize:vertical;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);color:var(--ink);font-family:var(--font-sans);font-size:13px;padding:10px 12px;line-height:1.5}',
+      '.rdr-ta:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}',
+      '.rdr-hint{font-size:12px;color:var(--ink-4)}',
+      '.rdr-comp-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:2px}',
+      '.rdr-cost-note{font-size:12px;color:var(--text3);display:inline-flex;align-items:center;gap:6px}',
+      // ── Exclusiones ──
+      '.rdr-ex{border:1px solid var(--hair);border-radius:var(--r-sm);background:var(--surface2);padding:10px 12px;display:flex;flex-direction:column;gap:9px}',
+      '.rdr-ex-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}',
+      '.rdr-ex-sum{font-size:12.5px;color:var(--ink-3);line-height:1.45}',
+      '.rdr-ex-sum strong{color:var(--ink-2);font-weight:700}',
+      '.rdr-ex-toggle{background:none;border:none;padding:0;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--accent-ink);white-space:nowrap}',
+      '.rdr-ex-toggle:hover{text-decoration:underline}',
+      '.rdr-ex-body{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--hair);padding-top:8px}',
+      '.rdr-ex-row{display:flex;align-items:center;gap:9px;padding:5px 2px;cursor:pointer;border-radius:var(--r-xs);font-family:var(--font-sans);text-transform:none;letter-spacing:0}',
+      '.rdr-ex-row:hover{background:var(--surface3)}',
+      '.rdr-ex-row input{accent-color:var(--accent);width:14px;height:14px;flex:none;cursor:pointer}',
+      '.rdr-ex-name{font-size:12.5px;font-weight:600;color:var(--ink-2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:none;letter-spacing:0}',
+      '.rdr-ex-meta{font-family:var(--font-mono);font-size:11px;color:var(--ink-4);white-space:nowrap;text-transform:none;letter-spacing:0}',
+      '.rdr-ex-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;padding-top:8px;border-top:1px solid var(--hair)}',
+      '.rdr-ex-chip{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--surface3);color:var(--text3)}',
+      '.rdr-ex-chip-more{color:var(--ink-4);background:transparent}',
+      // ── Progreso ──
       '.rdr-prog{padding:20px}',
       '.rdr-prog-top{display:flex;align-items:center;gap:10px}',
       '.rdr-pulse{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:rdrPulse 1.4s ease-in-out infinite}',
@@ -505,38 +819,44 @@
       '.rdr-prog-pct{font-family:var(--font-mono);font-size:12px;color:var(--ink-4)}',
       '.rdr-bar{height:6px;border-radius:999px;background:var(--surface3);margin-top:12px;overflow:hidden}',
       '.rdr-bar-fill{height:100%;border-radius:999px;background:var(--accent);transition:width .6s ease}',
+      '.rdr-prog-note{font-size:12px;color:var(--ink-4);margin-top:10px}',
       '.rdr-log{margin-top:14px;display:flex;flex-direction:column;gap:5px;border-top:1px solid var(--hair);padding-top:12px}',
       '.rdr-log-line{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-4)}',
       '.rdr-log-line:last-child{color:var(--ink-2)}',
       '.rdr-stuck{margin-top:14px;padding-top:12px;border-top:1px solid var(--hair);display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12.5px;color:var(--ink-3)}',
-      '.rdr-co{padding:18px 20px;display:flex;flex-direction:column;gap:12px}',
-      '.rdr-co-head{display:flex;flex-direction:column;gap:7px}',
-      '.rdr-co-name{font-size:15.5px;font-weight:700;color:var(--ink);display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}',
-      '.rdr-site{font-size:12px;font-weight:500;color:var(--accent-ink);text-decoration:none}',
+      // ── Tarjetas de empresa ──
+      '.rdr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;align-items:start}',
+      '.rdr-co{padding:16px 18px;display:flex;flex-direction:column;gap:11px;position:relative;overflow:hidden}',
+      '.rdr-co::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);opacity:0;transition:opacity .18s ease}',
+      '.rdr-co:hover::before,.rdr-co.is-open::before{opacity:.55}',
+      '.rdr-co-top{display:flex;align-items:flex-start;gap:10px}',
+      '.rdr-co-num{font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--accent-ink);background:var(--accent-soft);border-radius:var(--r-xs);padding:3px 6px;flex:none;line-height:1}',
+      '.rdr-co-id{flex:1;min-width:0}',
+      '.rdr-co-name{font-size:15.5px;font-weight:700;color:var(--ink);line-height:1.25;word-break:break-word}',
+      '.rdr-site{font-size:11.5px;font-weight:500;color:var(--accent-ink);text-decoration:none;display:inline-block;margin-top:2px}',
       '.rdr-site:hover{text-decoration:underline}',
-      '.rdr-co-meta{display:flex;gap:6px;flex-wrap:wrap}',
+      '.rdr-co-headline{font-size:13px;font-weight:600;color:var(--ink-2);line-height:1.45}',
+      '.rdr-co-meta{display:flex;gap:5px;flex-wrap:wrap}',
       '.rdr-chip{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--surface2);color:var(--text2);border:1px solid var(--hair)}',
-      '.rdr-chip-hot{background:var(--green-soft);color:var(--green);border-color:transparent}',
-      '.rdr-chip-warm{background:var(--amber-soft);color:var(--amber);border-color:transparent}',
-      '.rdr-why{font-size:13px;color:var(--ink-2);line-height:1.55}',
+      '.rdr-chip-hot{background:var(--green-soft);color:var(--green);border-color:transparent;flex:none;align-self:flex-start}',
+      '.rdr-chip-warm{background:var(--amber-soft);color:var(--amber);border-color:transparent;flex:none;align-self:flex-start}',
+      '.rdr-chip-dm{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}',
+      '.rdr-co-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:2px}',
+      '.rdr-co-detail{border-top:1px solid var(--hair);padding-top:11px;display:flex;flex-direction:column;gap:12px}',
+      '.rdr-why{font-size:12.5px;color:var(--ink-2);line-height:1.55}',
       '.rdr-sec-lbl{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);margin-bottom:7px}',
-      '.rdr-ev-item{display:flex;gap:10px;align-items:baseline;padding:7px 10px;border-radius:var(--r-sm);text-decoration:none;background:var(--surface2);margin-bottom:5px}',
+      '.rdr-ev-item{display:flex;flex-direction:column;gap:3px;padding:7px 10px;border-radius:var(--r-sm);text-decoration:none;background:var(--surface2);margin-bottom:5px}',
       '.rdr-ev-item:hover{background:var(--surface3)}',
-      '.rdr-ev-host{font-family:var(--font-mono);font-size:11px;color:var(--accent-ink);white-space:nowrap}',
-      '.rdr-ev-sum{font-size:12px;color:var(--text2)}',
+      '.rdr-ev-host{font-family:var(--font-mono);font-size:11px;color:var(--accent-ink)}',
+      '.rdr-ev-sum{font-size:12px;color:var(--text2);line-height:1.45}',
       '.rdr-dm{display:flex;gap:10px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--hair-2);flex-wrap:wrap}',
       '.rdr-dm:last-child{border-bottom:none}',
-      '.rdr-dm-name{font-size:13px;font-weight:600;color:var(--ink)}',
-      '.rdr-dm-title{font-size:12px;color:var(--text2);flex:1}',
+      '.rdr-dm-name{font-size:12.5px;font-weight:600;color:var(--ink)}',
+      '.rdr-dm-title{font-size:11.5px;color:var(--text2);flex:1}',
       '.rdr-dm-li{font-size:11.5px;color:var(--accent-ink);text-decoration:none;white-space:nowrap}',
       '.rdr-dm-li:hover{text-decoration:underline}',
       '.rdr-dm-none{font-size:12.5px;color:var(--text3)}',
-      '.rdr-co-foot{display:flex;justify-content:flex-end}',
-      '.rdr-rerun{margin-top:14px;border-top:1px solid var(--hair);padding-top:14px;display:flex;flex-direction:column;gap:9px}',
-      '.rdr-rerun-lbl{font-size:12.5px;color:var(--ink-3)}',
-      '.rdr-ta{width:100%;min-height:74px;resize:vertical;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);color:var(--ink);font-family:var(--font-sans);font-size:13px;padding:10px 12px}',
-      '.rdr-rerun-foot{display:flex;align-items:center;justify-content:space-between;gap:10px}',
-      '.rdr-cost-note{font-size:12px;color:var(--text3);display:inline-flex;align-items:center;gap:6px}',
+      '@media (max-width:640px){.rdr-wrap{padding:18px}.rdr-grid{grid-template-columns:1fr}}',
     ].join('\n');
     document.head.appendChild(s);
   }
