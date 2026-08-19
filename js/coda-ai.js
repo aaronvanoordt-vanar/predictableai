@@ -1,12 +1,13 @@
 /**
- * coda-ai.js — "CODA AI"
+ * coda-ai.js — "Contexto estratégico IA" (internal names stay coda-ai /
+ * coda_analysis / generate-coda; only the user-facing name changed)
  * ─────────────────────────────────────────────────────────────
  * Optional strategic-context section (below the Intelligence Hub in the
  * "Inteligencia" sidebar group). Unlike the Intelligence Hub and the company
  * context, NOTHING in the app blocks on this being filled — it is pure
  * enrichment.
  *
- * Two blocks:
+ * Three blocks:
  *   1. PESTEL — Political / Economic / Social / Technological / Environmental /
  *      Legal factors of a chosen client's target-country market, each
  *      translated into a concrete SALES impact. The user picks one of their
@@ -15,17 +16,21 @@
  *      country for that client's ICP and writes client_pestel — one row per
  *      (client_id, country), cached so switching the dropdown doesn't force a
  *      re-generation.
- *   2. FODA → CAME — the user fills the FODA (SWOT) matrix; the AI converts it
- *      into a CAME action matrix (generate-coda action: "came"). Still
- *      account-level (coda_analysis), independent of the client/country pick.
+ *   2. 5 fuerzas de Porter — Rivalidad / Nuevos entrantes / Sustitutos / Poder
+ *      de los clientes / Poder de los proveedores, same per-factor shape as
+ *      PESTEL. AI-generated (generate-coda action: "porter").
+ *   3. FODA → CAME — the user fills the FODA (SWOT) matrix; the AI converts it
+ *      into a CAME action matrix (generate-coda action: "came"). Porter and
+ *      CAME stay account-level (coda_analysis), independent of the
+ *      client/country pick that PESTEL uses.
  *
  * Self-mounts into #coda-shell (page-coda-ai) via a MutationObserver, mirrors
- * the intel-hub module: loads the coda_analysis row (FODA/CAME) and the
- * client_pestel row for the selected (client, country), subscribes to
- * realtime on both (status flips generating → ready arrive without a manual
- * refresh), and renders. FODA inputs are never re-rendered from realtime
- * (that would clobber what the user is typing) — only the PESTEL and CAME
- * OUTPUT regions refresh.
+ * the intel-hub module: loads the coda_analysis row (Porter/FODA/CAME) and the
+ * client_pestel row for the selected (client, country), subscribes to realtime
+ * on both (status flips generating → ready arrive without a manual refresh),
+ * and renders. FODA inputs are never re-rendered from realtime (that would
+ * clobber what the user is typing) — only the PESTEL/Porter/CAME OUTPUT
+ * regions refresh.
  *
  * Security: all AI/DB/user text is escaped via escHtml before hitting innerHTML.
  */
@@ -45,6 +50,19 @@
       what: 'Sostenibilidad, presión ambiental y criterios ESG que pesan en la decisión de compra.' },
     { key: 'legal',         letter: 'L', name: 'Legal',         color: '#C77E12', icon: '⚖️',
       what: 'Leyes, cumplimiento, contratos, protección de datos y requisitos que abren o frenan la venta.' },
+  ];
+
+  const PORTER_DIMS = [
+    { key: 'rivalidad',         letter: 'R', name: 'Rivalidad entre competidores',        color: '#D64545', icon: '⚔️',
+      what: 'Qué tan reñido está tu mercado hoy: cuántos compites, cómo compiten en precio o diferenciación.' },
+    { key: 'nuevos_entrantes',  letter: 'N', name: 'Amenaza de nuevos entrantes',         color: '#C77E12', icon: '🚪',
+      what: 'Qué tan fácil es para un nuevo jugador entrar a robarte deals: barreras de entrada, capital, marca.' },
+    { key: 'sustitutos',        letter: 'S', name: 'Amenaza de sustitutos',               color: '#7C5CFC', icon: '🔄',
+      what: 'Otras formas de resolver el mismo problema que compiten contigo sin ser "lo mismo" (in-house, otra categoría).' },
+    { key: 'poder_clientes',    letter: 'C', name: 'Poder de negociación de clientes',    color: '#1F4BFF', icon: '🧑‍💼',
+      what: 'Cuánta presión pueden meter tus compradores: opciones que tienen, sensibilidad a precio, costo de cambiarte.' },
+    { key: 'poder_proveedores', letter: 'P', name: 'Poder de negociación de proveedores', color: '#0891B2', icon: '🏭',
+      what: 'Cuánto dependes de terceros (tecnología, datos, partners) y cuánto eso presiona tus márgenes o tu velocidad.' },
   ];
 
   // FODA quadrant → CAME quadrant mapping (SWOT → CAME method)
@@ -91,6 +109,7 @@
   // (isStaleGenerating): pasado un margen, tratamos el estado como error para
   // desbloquear el botón y permitir reintentar.
   const STALE_PESTEL_MS = 4 * 60 * 1000; // PESTEL corre hasta 6 web_search — más lento
+  const STALE_PORTER_MS = 4 * 60 * 1000; // Porter también investiga con web_search
   const STALE_CAME_MS = 2 * 60 * 1000;   // CAME es transformación pura, sin web_search
   function isStale(dateStr, ms) {
     const t = new Date(dateStr || 0).getTime();
@@ -117,6 +136,7 @@
         filter: `user_id=eq.${STATE.user.id}`,
       }, (payload) => {
         STATE.row = payload.new || STATE.row;
+        renderPorter();
         renderCame();
       })
       .subscribe();
@@ -238,6 +258,20 @@
     }
   }
 
+  async function generatePorter() {
+    if (STATE.row) STATE.row.porter_status = 'generating';
+    renderPorter();
+    try {
+      await invoke('porter');
+      // Result arrives via realtime; also refetch as a fallback after a beat.
+      setTimeout(async () => { await loadRow(); renderPorter(); }, 1500);
+    } catch (e) {
+      if (STATE.row) { STATE.row.porter_status = 'error'; STATE.row.porter_error = e.message; }
+      renderPorter();
+      if (window.uiHelpers) window.uiHelpers.toast('No se pudieron generar las 5 fuerzas de Porter: ' + e.message, 'error');
+    }
+  }
+
   function readFoda() {
     const foda = {};
     FODA_QUADS.forEach(q => {
@@ -282,11 +316,82 @@
     }
   }
 
-  // ─── RENDER: PESTEL ──────────────────────────────────────────
+  // ─── RENDER: PESTEL / PORTER (shared card grid) ───────────────
   function impactBadge(impact) {
     const map = { high: ['Alto', '#D64545'], medium: ['Medio', '#C77E12'], low: ['Bajo', '#0EA968'] };
     const m = map[impact] || map.medium;
     return `<span class="coda-impact" style="--c:${m[1]}">${m[0]}</span>`;
+  }
+
+  // Both PESTEL and Porter's Five Forces are AI-generated "dimension → 2-3
+  // factors, each with impact/sales_impact/action" blocks with the same card
+  // shape, so they share this renderer instead of duplicating it.
+  // opts.row lets PESTEL feed its per-(client,country) client_pestel row while
+  // Porter keeps reading the account-level coda_analysis row; opts.prefixHtml
+  // and opts.afterRender let PESTEL keep its client/country selectors above
+  // the action bar without forking the renderer.
+  function renderDimBlock(opts) {
+    const host = document.getElementById(opts.hostId);
+    if (!host) return;
+    const row = opts.row || STATE.row || {};
+    const prefix = opts.prefixHtml || '';
+    const rawStatus = row[opts.statusKey] || 'idle';
+    const stale = rawStatus === 'generating' && isStale(row.updated_at, opts.staleMs);
+    const status = stale ? 'error' : rawStatus;
+    const data = row[opts.dataKey] || {};
+    const generating = status === 'generating';
+    const hasData = status === 'ready' && Object.values(data).some(a => Array.isArray(a) && a.length);
+
+    const cards = opts.dims.map(d => {
+      const factors = Array.isArray(data[d.key]) ? data[d.key] : [];
+      let body;
+      if (factors.length) {
+        body = '<div class="coda-factors">' + factors.map(f => `
+          <div class="coda-factor">
+            <div class="coda-factor-top">
+              <div class="coda-factor-name">${esc(f.factor)}</div>
+              ${impactBadge(f.impact)}
+            </div>
+            ${f.sales_impact ? `<div class="coda-factor-sales"><span class="coda-factor-lbl">Impacto en ventas</span>${esc(f.sales_impact)}</div>` : ''}
+            ${f.action ? `<div class="coda-factor-action">→ ${esc(f.action)}</div>` : ''}
+          </div>`).join('') + '</div>';
+      } else if (generating) {
+        body = '<div class="coda-dim-empty"><span class="coda-dot-pulse"></span> Analizando…</div>';
+      } else {
+        body = `<div class="coda-dim-what">${esc(d.what)}</div>`;
+      }
+      return `
+        <div class="coda-dim" style="--c:${d.color}">
+          <div class="coda-dim-head">
+            <span class="coda-dim-letter">${d.letter}</span>
+            <div>
+              <div class="coda-dim-name">${d.icon} ${esc(d.name)}</div>
+              <div class="coda-dim-sub">${factors.length ? esc(d.what) : (generating ? 'Factores → impacto en ventas' : 'Sin analizar aún')}</div>
+            </div>
+          </div>
+          ${body}
+        </div>`;
+    }).join('');
+
+    const btnLabel = generating ? opts.btnGenerating : (hasData ? opts.btnRegenerate : opts.btnGenerate);
+    const generatedAt = row[opts.generatedAtKey];
+    const meta = hasData && generatedAt
+      ? `<span class="coda-meta">Actualizado ${fmtRel(new Date(generatedAt))}</span>` : '';
+    const errMsg = stale ? 'la generación anterior tardó demasiado y no terminó' : row[opts.errorKey];
+    const errBox = status === 'error'
+      ? `<div class="coda-err">No se pudo generar el análisis${errMsg ? ': ' + esc(errMsg) : ''}. Vuelve a intentarlo.</div>` : '';
+
+    host.innerHTML = prefix + `
+      <div class="coda-actionbar">
+        <button class="coda-btn coda-btn-primary" id="${opts.btnId}" ${generating ? 'disabled' : ''}>${btnLabel}</button>
+        ${meta}
+        <span class="coda-hint">${opts.hint}</span>
+      </div>
+      ${errBox}
+      <div class="coda-dim-grid">${cards}</div>`;
+    if (typeof opts.afterRender === 'function') opts.afterRender();
+    const btn = document.getElementById(opts.btnId);
+    if (btn) btn.addEventListener('click', opts.onGenerate);
   }
 
   function renderPestelSelectors() {
@@ -324,84 +429,41 @@
     const client = currentClient();
     const countries = client ? (client.target_countries || []) : [];
 
+    // Estados previos a la selección: sin cliente o sin país no hay nada que
+    // analizar, así que la tarjeta se queda en los selectores + el motivo.
+    const stop = (msg) => {
+      host.innerHTML = selectors + `<div class="coda-dim-empty">${msg}</div>`;
+      attachPestelSelectorHandlers();
+    };
     if (!STATE.clients.length) {
-      host.innerHTML = selectors + `<div class="coda-dim-empty">Todavía no tienes clientes. Agrega uno en la sección <strong>Clientes</strong> para generar su PESTEL.</div>`;
-      attachPestelSelectorHandlers();
-      return;
+      return stop('Todavía no tienes clientes. Agrega uno en la sección <strong>Clientes</strong> para generar su PESTEL.');
     }
-    if (!client) {
-      host.innerHTML = selectors + `<div class="coda-dim-empty">Selecciona un cliente para elegir el país a analizar.</div>`;
-      attachPestelSelectorHandlers();
-      return;
-    }
+    if (!client) return stop('Selecciona un cliente para elegir el país a analizar.');
     if (!countries.length) {
-      host.innerHTML = selectors + `<div class="coda-dim-empty">${esc(client.name)} no tiene países objetivo seleccionados. Agrégalos en su ficha, en la sección Clientes.</div>`;
-      attachPestelSelectorHandlers();
-      return;
+      return stop(`${esc(client.name)} no tiene países objetivo seleccionados. Agrégalos en su ficha, en la sección Clientes.`);
     }
     if (!STATE.selectedCountry) {
-      host.innerHTML = selectors + `<div class="coda-dim-empty">Selecciona un país objetivo de ${esc(client.name)} para generar su PESTEL.</div>`;
-      attachPestelSelectorHandlers();
-      return;
+      return stop(`Selecciona un país objetivo de ${esc(client.name)} para generar su PESTEL.`);
     }
 
-    const row = STATE.pestelRow || {};
-    const rawStatus = row.pestel_status || 'idle';
-    const stale = rawStatus === 'generating' && isStale(row.updated_at, STALE_PESTEL_MS);
-    const status = stale ? 'error' : rawStatus;
-    const pestel = row.pestel || {};
-    const generating = status === 'generating';
-    const hasData = status === 'ready' && Object.values(pestel).some(a => Array.isArray(a) && a.length);
+    renderDimBlock({
+      hostId: 'coda-pestel-body', dims: PESTEL_DIMS, row: STATE.pestelRow || {},
+      prefixHtml: selectors, afterRender: attachPestelSelectorHandlers,
+      statusKey: 'pestel_status', dataKey: 'pestel', errorKey: 'pestel_error', generatedAtKey: 'pestel_generated_at',
+      staleMs: STALE_PESTEL_MS, btnId: 'coda-btn-pestel', onGenerate: generatePestel,
+      btnGenerating: '⏳ Analizando el mercado…', btnRegenerate: '↻ Regenerar PESTEL', btnGenerate: '✨ Generar análisis PESTEL con IA',
+      hint: `La IA investiga el mercado de ${esc(STATE.selectedCountry)} para ${esc(client.name)} y traduce cada factor a impacto de ventas.`,
+    });
+  }
 
-    const cards = PESTEL_DIMS.map(d => {
-      const factors = Array.isArray(pestel[d.key]) ? pestel[d.key] : [];
-      let body;
-      if (factors.length) {
-        body = '<div class="coda-factors">' + factors.map(f => `
-          <div class="coda-factor">
-            <div class="coda-factor-top">
-              <div class="coda-factor-name">${esc(f.factor)}</div>
-              ${impactBadge(f.impact)}
-            </div>
-            ${f.sales_impact ? `<div class="coda-factor-sales"><span class="coda-factor-lbl">Impacto en ventas</span>${esc(f.sales_impact)}</div>` : ''}
-            ${f.action ? `<div class="coda-factor-action">→ ${esc(f.action)}</div>` : ''}
-          </div>`).join('') + '</div>';
-      } else if (generating) {
-        body = '<div class="coda-dim-empty"><span class="coda-dot-pulse"></span> Analizando…</div>';
-      } else {
-        body = `<div class="coda-dim-what">${esc(d.what)}</div>`;
-      }
-      return `
-        <div class="coda-dim" style="--c:${d.color}">
-          <div class="coda-dim-head">
-            <span class="coda-dim-letter">${d.letter}</span>
-            <div>
-              <div class="coda-dim-name">${d.icon} ${esc(d.name)}</div>
-              <div class="coda-dim-sub">${factors.length ? esc(d.what) : (generating ? 'Factores → impacto en ventas' : 'Sin analizar aún')}</div>
-            </div>
-          </div>
-          ${body}
-        </div>`;
-    }).join('');
-
-    const btnLabel = generating ? '⏳ Analizando tu mercado…' : (hasData ? '↻ Regenerar PESTEL' : '✨ Generar análisis PESTEL con IA');
-    const meta = hasData && row.pestel_generated_at
-      ? `<span class="coda-meta">Actualizado ${fmtRel(new Date(row.pestel_generated_at))}</span>` : '';
-    const errMsg = stale ? 'la generación anterior tardó demasiado y no terminó' : row.pestel_error;
-    const errBox = status === 'error'
-      ? `<div class="coda-err">No se pudo generar el análisis${errMsg ? ': ' + esc(errMsg) : ''}. Vuelve a intentarlo.</div>` : '';
-
-    host.innerHTML = selectors + `
-      <div class="coda-actionbar">
-        <button class="coda-btn coda-btn-primary" id="coda-btn-pestel" ${generating ? 'disabled' : ''}>${btnLabel}</button>
-        ${meta}
-        <span class="coda-hint">La IA investiga el mercado de ${esc(STATE.selectedCountry)} para ${esc(client.name)} y traduce cada factor a impacto de ventas.</span>
-      </div>
-      ${errBox}
-      <div class="coda-dim-grid">${cards}</div>`;
-    attachPestelSelectorHandlers();
-    const btn = document.getElementById('coda-btn-pestel');
-    if (btn) btn.addEventListener('click', generatePestel);
+  function renderPorter() {
+    renderDimBlock({
+      hostId: 'coda-porter-body', dims: PORTER_DIMS,
+      statusKey: 'porter_status', dataKey: 'porter', errorKey: 'porter_error', generatedAtKey: 'porter_generated_at',
+      staleMs: STALE_PORTER_MS, btnId: 'coda-btn-porter', onGenerate: generatePorter,
+      btnGenerating: '⏳ Analizando tu competencia…', btnRegenerate: '↻ Regenerar 5 fuerzas de Porter', btnGenerate: '✨ Generar 5 fuerzas de Porter con IA',
+      hint: 'La IA investiga tu panorama competitivo y traduce cada fuerza a impacto de ventas.',
+    });
   }
 
   // ─── RENDER: CAME OUTPUT ─────────────────────────────────────
@@ -500,6 +562,14 @@
 
         <section class="coda-section">
           <div class="coda-section-head">
+            <div class="coda-section-title"><span class="coda-kicker" style="--c:#D64545">5 fuerzas de Porter</span> Tu competencia, traducida a ventas</div>
+            <div class="coda-section-desc">Cinco fuerzas del modelo de Porter — rivalidad, nuevos entrantes, sustitutos, poder de clientes y de proveedores — que la IA investiga en tu panorama competitivo real y convierte en impacto sobre tu pipeline.</div>
+          </div>
+          <div id="coda-porter-body"></div>
+        </section>
+
+        <section class="coda-section">
+          <div class="coda-section-head">
             <div class="coda-section-title"><span class="coda-kicker" style="--c:#0EA968">FODA → CAME</span> Tu diagnóstico, convertido en plan de acción</div>
             <div class="coda-section-desc">Llena tu <strong>FODA</strong> (Fortalezas, Oportunidades, Debilidades, Amenazas). Al convertirlo, la IA genera tu <strong>CAME</strong>: qué <strong>M</strong>antener, <strong>E</strong>xplotar, <strong>C</strong>orregir y <strong>A</strong>frontar, como acciones de ventas.</div>
           </div>
@@ -536,6 +606,7 @@
     if (bCame) bCame.addEventListener('click', generateCame);
 
     renderPestel();
+    renderPorter();
     renderCame();
   }
 
@@ -568,6 +639,7 @@
     mountObserver();
     // If the shell was already mounted before data loaded, refresh the outputs.
     renderPestel();
+    renderPorter();
     renderCame();
     const foda = (STATE.row && STATE.row.foda) || {};
     FODA_QUADS.forEach(q => {

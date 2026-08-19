@@ -1,8 +1,9 @@
 /**
  * generate-coda — Supabase Edge Function
  *
- * Powers the "CODA AI" section (optional strategic context on top of the
- * mandatory Intelligence Hub + company context). Two actions:
+ * Powers the "Contexto estratégico IA" section (optional strategic context on
+ * top of the mandatory Intelligence Hub + company context; the table/function
+ * are still named coda_analysis / generate-coda internally). Three actions:
  *
  *   action: "pestel"  (body: { client_id, country })
  *     Researches the given country's market (web_search) for the given

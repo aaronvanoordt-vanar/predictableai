@@ -44,6 +44,16 @@
  *     (como_abrir, que_preguntar[], senales_a_validar[], riesgos[])
  *   - generated_via     : 'managed_agent' | 'fallback_api'
  *
+ * Tendencias de outbound (opcional, recomendado): cuando el usuario tiene una
+ * fila lista y activa en `outreach_playbooks` (investigación web periódica de
+ * generate-outreach-playbook sobre qué está funcionando HOY en frío: foros
+ * tipo r/sales y r/coldemail, reportes de Apollo/Lavender/Gong, operadores),
+ * se inyecta un bloque TENDENCIAS DE OUTBOUND en el contexto y el agente
+ * calibra estructura, asunto, CTA, personalización y canal con eso, y reporta
+ * en `angle.trend_applied` qué aplicó. Es una capa de recomendación: las
+ * reglas duras (apertura obligatoria, ≤70 palabras, nada inventado) siempre
+ * ganan, y `"use_playbook": false` en el body la apaga para una generación.
+ *
  * Auth: Bearer <user JWT>, validated with auth.getUser() — the platform's
  *       verify_jwt alone also accepts the public anon key, which would let
  *       anyone with the (public) anon key burn Anthropic tokens (same
@@ -60,12 +70,14 @@
  *   "member_id": "<prospect_list_members.id>" (optional — when present, the
  *                member's Apollo snapshot enriches the prompt, and the
  *                result is written server-side to that row's `outreach`
- *                column + outreach_status before the response is sent)
+ *                column + outreach_status before the response is sent),
+ *   "use_playbook": true|false (optional, default true — false skips the
+ *                outbound-trends layer for this generation)
  * }
  * Response 200: {
  *   "whatsapp_followup", "linkedin_message", "email_subject", "email_body",
  *   "angle": { "layer", "hypothesis", "objection", "neutralizer",
- *              "social_proof", "person_hook" },
+ *              "social_proof", "person_hook", "trend_applied" },
  *   "coach_prep": { "como_abrir", "que_preguntar"[], "senales_a_validar"[],
  *                   "riesgos"[] },
  *   "generated_via": "managed_agent" | "fallback_api"
@@ -79,7 +91,10 @@
  * Optional secrets: OUTREACH_ALLOW_API_FALLBACK='true' → on Managed Agents
  *                   401/403/404, fall back to a direct /v1/messages call
  *                   (claude-haiku-4-5 + web tools, same prompts).
- * Requires migration: 20260709000002_outreach_agent_config.sql
+ * Requires migrations: 20260709000002_outreach_agent_config.sql,
+ *                      20260819000002_outreach_playbook.sql (optional layer —
+ *                      without it the playbook select fails soft and the
+ *                      messages generate exactly as before)
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -433,6 +448,7 @@ interface Angle {
   neutralizer?: string;
   social_proof?: string;
   person_hook?: string | null;
+  trend_applied?: string | null;
 }
 
 interface CoachPrep {
@@ -564,6 +580,11 @@ MÁXIMO 70 palabras. Sin saludo inicial tipo "Hola". Ligeramente más formal que
 Calibra vocabulario al rol: sales expert → pipeline coverage, ramp, forecast accuracy; CFO/CEO → cuota, cartera, forecast, working capital; marketing → MQL, CAC, ROAS; operaciones → SLA, handoff, throughput; founder → cartera, cierre, equipo.
 Tono observacional, NUNCA acusatorio: escribe sobre el patrón, no sobre la persona ("cuando se construye una vertical nueva post-Series A, la primera fricción suele ser…").
 
+== TENDENCIAS DE OUTBOUND (capa opcional de calibración) ==
+Si el contexto incluye un bloque "TENDENCIAS DE OUTBOUND", trae investigación web reciente sobre qué está funcionando HOY en outreach en frío (foros especializados tipo r/sales y r/coldemail, reportes de Apollo/Lavender/Gong/Belkins, operadores). Úsalo para calibrar el CRAFTING: la estructura del cuerpo, el patrón del asunto, el tipo de CTA, el nivel y el tipo de personalización, y el énfasis por canal. Evita explícitamente los patrones que el bloque marca como quemados. Si hay varios patrones vigentes, rota entre ellos en vez de repetir siempre el mismo: dos mensajes seguidos no deben sonar iguales.
+PRECEDENCIA (no negociable): las tendencias NUNCA sobrescriben las REGLAS DURAS, ni la APERTURA OBLIGATORIA, ni el máximo de 70 palabras, ni la prohibición de inventar datos. Si una tendencia choca con una regla, gana la regla y lo reportas en "trend_applied". Si el bloque no viene en el contexto, trabaja normalmente: es una recomendación, nunca un requisito, y su ausencia jamás degrada el mensaje.
+En "angle.trend_applied" reporta en 1 frase corta qué tendencia aplicaste y dónde (ej: "asunto en minúsculas de 3 palabras, según el reporte de largo de asunto"), o null si no venía el bloque o no aplicaste ninguna.
+
 == COACH_PREP (preparación de reunión para el coach de ventas) ==
 Además de los mensajes, genera "coach_prep": la preparación que el coach usará ANTES de la reunión con este lead. Usa TODO el contexto (brief, matriz, Intelligence Hub, persona, empresa, tu investigación web):
 - "como_abrir": 1 frase para romper el hielo en la reunión, específica a la persona (contexto compartido o de negocio, no un pitch ni un halago).
@@ -596,7 +617,8 @@ Responde SOLO con JSON válido, sin fences de markdown y sin texto adicional:
     "objection": "la objeción refleja más probable",
     "neutralizer": "la micro-frase que la neutraliza",
     "social_proof": "el social proof citado, o 'ninguno' si no había match",
-    "person_hook": "el dato específico de ESTA persona usado como ancla, o null"
+    "person_hook": "el dato específico de ESTA persona usado como ancla, o null",
+    "trend_applied": "la tendencia de outbound que aplicaste y dónde, o null"
   },
   "coach_prep": {
     "como_abrir": "1 frase para romper el hielo en la reunión, específica a la persona",
@@ -851,6 +873,63 @@ function buildPersonaContext(snapshot: Snapshot | null): string {
   return out.join("\n");
 }
 
+// Tendencias de outbound (outreach_playbooks): investigación web periódica
+// sobre qué está funcionando HOY en frío. Es una capa de RECOMENDACIÓN — el
+// agente la usa para variar el crafting, nunca para romper las reglas duras.
+// Se omite entera si el usuario la desactivó o si no hay fila lista.
+function buildPlaybookContext(pb: BriefRow | null): string {
+  if (!pb || pb.status !== "ready") return "";
+  const lines: string[] = [];
+  const arr = (v: unknown, n: number): BriefRow[] =>
+    (Array.isArray(v) ? v : []).filter((x) => x && typeof x === "object").slice(0, n);
+  const txt = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+
+  if (txt(pb.headline)) lines.push(`Titular del ciclo: ${txt(pb.headline)}`);
+  if (txt(pb.summary)) lines.push(`Resumen: ${truncate(txt(pb.summary), 700)}`);
+
+  const principles = arr(pb.principles, 6);
+  if (principles.length) {
+    lines.push("", "Qué está funcionando:");
+    for (const p of principles) {
+      const why = txt(p.why) || txt(p.evidence);
+      lines.push(`- ${txt(p.title)}: ${txt(p.insight)}${why ? ` (${truncate(why, 220)})` : ""}`);
+    }
+  }
+  const openers = arr(pb.openers, 4);
+  if (openers.length) {
+    lines.push("", "Patrones de apertura vigentes (para el bloque de dolor y el qualifier; la apertura obligatoria no se toca):");
+    for (const o of openers) lines.push(`- ${txt(o.pattern)}${txt(o.when) ? ` [${txt(o.when)}]` : ""}`);
+  }
+  const subjects = arr(pb.subject_lines, 4);
+  if (subjects.length) {
+    lines.push("", "Patrones de asunto que están respondiendo:");
+    for (const sj of subjects) lines.push(`- ${txt(sj.pattern)}${txt(sj.example) ? ` (ej: ${truncate(txt(sj.example), 120)})` : ""}`);
+  }
+  const st = (pb.structure && typeof pb.structure === "object" && !Array.isArray(pb.structure)) ? pb.structure : {};
+  const stBits = ["length", "paragraphs", "cta_style", "personalization", "follow_up"]
+    .map((k) => txt(st[k])).filter(Boolean);
+  if (stBits.length) {
+    lines.push("", "Estructura recomendada hoy:");
+    for (const b of stBits) lines.push(`- ${truncate(b, 220)}`);
+  }
+  const channels = arr(pb.channels, 4);
+  if (channels.length) {
+    lines.push("", "Canales:");
+    for (const c of channels) lines.push(`- ${txt(c.channel)}: ${truncate(txt(c.verdict) || txt(c.note), 220)}`);
+  }
+  const avoid = arr(pb.avoid, 6);
+  if (avoid.length) {
+    lines.push("", "Quemado, evítalo:");
+    for (const a of avoid) lines.push(`- ${txt(a.what)}${txt(a.why) ? ` (${truncate(txt(a.why), 160)})` : ""}`);
+  }
+  if (!lines.length) return "";
+
+  const when = txt(pb.generated_at) ? `, ${txt(pb.generated_at).slice(0, 10)}` : "";
+  return `\n\n=== TENDENCIAS DE OUTBOUND (investigación web reciente${when}) ===\n` +
+    "Recomendación, no requisito: calibra el crafting con esto y varía respecto a mensajes anteriores. Ante conflicto, las REGLAS DURAS y la APERTURA OBLIGATORIA ganan siempre.\n" +
+    lines.join("\n");
+}
+
 const CLOSING_INSTRUCTION =
   "\n\nInvestiga este lead siguiendo las 5 capas (mandato persona-primero) y responde SOLO con el JSON válido del esquema definido, sin fences de markdown y sin texto adicional.";
 
@@ -877,12 +956,16 @@ Deno.serve(async (req: Request) => {
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
 
-  let body: { lead?: Lead; sender?: Sender; member_id?: string };
+  let body: { lead?: Lead; sender?: Sender; member_id?: string; use_playbook?: boolean };
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400, h); }
 
   const lead = body.lead;
   const memberId = typeof body.member_id === "string" && body.member_id.trim() ? body.member_id.trim() : null;
   const sender: Sender = (body.sender && typeof body.sender === "object") ? body.sender : {};
+  // Tendencias de outbound: opt-out por request. Por defecto se aplican si el
+  // usuario tiene el playbook activo y listo (la fila manda; esto solo permite
+  // apagarlas para una generación puntual).
+  const usePlaybook = body.use_playbook !== false;
   if (
     !lead || typeof lead !== "object" ||
     typeof lead.name !== "string" || !lead.name.trim() ||
@@ -906,7 +989,7 @@ Deno.serve(async (req: Request) => {
 
   // Seller context: client_brief (preferred) → intake fallback + hub insights,
   // plus the member's Apollo snapshot (persona/empresa) when member_id given.
-  const [{ data: brief }, { data: intake }, { data: hubReports }, memberRes] = await Promise.all([
+  const [{ data: brief }, { data: intake }, { data: hubReports }, memberRes, playbookRes] = await Promise.all([
     supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
     supa.from("intel_hub_intake")
       .select("company_about, company_solutions, value_proposition, value_problem_solved, value_success_cases, company_industry, company_country, icp_industries, icp_company_sizes, icp_roles, icp_geographies, icp_pain_points, what_to_know")
@@ -919,14 +1002,23 @@ Deno.serve(async (req: Request) => {
     memberId
       ? supa.from("prospect_list_members").select("snapshot").eq("id", memberId).eq("user_id", user.id).maybeSingle()
       : Promise.resolve({ data: null }),
+    usePlaybook
+      ? supa.from("outreach_playbooks")
+          .select("status, enabled, headline, summary, principles, openers, subject_lines, structure, channels, avoid, generated_at")
+          .eq("user_id", user.id).eq("enabled", true).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
   const snapshot = (memberRes?.data?.snapshot ?? null) as Snapshot | null;
+  // La tabla puede no existir todavía (migración sin aplicar): el select falla
+  // suave y el playbook simplemente no se aplica — nunca rompe la generación.
+  const playbook = (playbookRes?.data ?? null) as BriefRow | null;
 
   const userPrompt =
     buildBriefContext(brief as BriefRow | null, intake as BriefRow | null, sender) +
     buildHubContext(Array.isArray(hubReports) ? hubReports : []) +
     buildLeadContext(lead) +
     buildPersonaContext(snapshot) +
+    buildPlaybookContext(playbook) +
     CLOSING_INSTRUCTION;
 
   try {
@@ -978,12 +1070,15 @@ Deno.serve(async (req: Request) => {
       generatedVia = "fallback_api";
     }
 
-    console.log(`[outreach] ✓ ${user.id} via ${generatedVia} (brief:${brief?.status ?? "none"}, hub:${hubReports?.length ?? 0}, snapshot:${snapshot ? "yes" : "no"})`);
+    console.log(`[outreach] ✓ ${user.id} via ${generatedVia} (brief:${brief?.status ?? "none"}, hub:${hubReports?.length ?? 0}, snapshot:${snapshot ? "yes" : "no"}, playbook:${playbook?.status === "ready" ? "on" : "off"})`);
 
     const angle: Angle | null = (out.angle && typeof out.angle === "object") ? {
       ...out.angle,
       person_hook: (typeof out.angle.person_hook === "string" && out.angle.person_hook.trim())
         ? out.angle.person_hook.trim()
+        : null,
+      trend_applied: (typeof out.angle.trend_applied === "string" && out.angle.trend_applied.trim())
+        ? stripDashes(out.angle.trend_applied.trim())
         : null,
     } : null;
     const coachPrep: CoachPrep | null =
