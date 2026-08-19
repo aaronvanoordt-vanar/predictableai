@@ -12,6 +12,11 @@
  * "Search People" — the two are the same feature, not separate ones).
  * "Contactos" is the CRM: every member of every list in one table, with the
  * list it belongs to and its pipeline status (contact_status in Supabase).
+ * "Generador de mensajes IA" also hosts the "Tendencias de outbound" card
+ * (outreach_playbooks): an optional, recommended periodic web investigation
+ * into what is working right now in cold outreach (specialized forums,
+ * Apollo/Lavender/Gong reports, operators) that generate-outreach uses to
+ * calibrate the crafting. Toggling it off leaves generation exactly as before.
  *
  * Public API:
  *   window.prospecting.show(tabId)   // 'resumen'|'busqueda'|'listas'|'contactos'|'secuencias'|'outreach'
@@ -73,6 +78,9 @@
       loadingMembers: false, membersError: null,
       generating: false,
       brief: null, briefLoading: false,
+      playbookHost: null, playbook: null,
+      playbookLoading: false, playbookSaving: false, playbookOpen: false,
+      playbookTimer: null, playbookPolls: 0,
     },
     contactos: {
       rootEl: null,
@@ -3307,12 +3315,15 @@
   function buildWaPane() {
     var pane = state.panes.outreach;
     var briefHost = h('div', null);
+    var playbookHost = h('div', null);
     var senderHost = h('div', null);
     var listHost = h('div', null);
     pane.appendChild(briefHost);
+    pane.appendChild(playbookHost);
     pane.appendChild(senderHost);
     pane.appendChild(listHost);
     state.wa.briefHost = briefHost;
+    state.wa.playbookHost = playbookHost;
     state.wa.senderHost = senderHost;
     state.wa.listHost = listHost;
     pane.addEventListener('click', guarded(onWaClick));
@@ -3322,9 +3333,11 @@
   function initWaTab() {
     var st = state.wa;
     renderBriefCard();
+    renderPlaybookCard();
     renderSenderCard();
     renderWaList();
     loadWaBrief();
+    loadPlaybook();
     return loadLists(false)
       .catch(function (e) { toast(errMsg(e), 'error'); })
       .then(function () {
@@ -3386,6 +3399,232 @@
     }
     host.appendChild(h('div', { class: 'chart-card', style: 'margin-bottom:14px' },
       h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap' }, left, btn)));
+  }
+
+  // ── Tendencias de outbound (outreach_playbooks) ──────────────────────────
+  // Investigación web periódica sobre qué está funcionando HOY en outreach en
+  // frío: foros especializados (r/sales, r/coldemail, r/Emailmarketing),
+  // academias y reportes de vendors (Apollo, Lavender, Gong, Belkins) y
+  // publicaciones de operadores. Opcional y recomendada: cuando está activa,
+  // generate-outreach calibra estructura, asunto, CTA, personalización y canal
+  // con estos hallazgos. Apagarla deja la generación exactamente como estaba.
+  var PB_CADENCES = [
+    { value: 'weekly',  label: 'Semanal' },
+    { value: 'monthly', label: 'Mensual' },
+    { value: 'manual',  label: 'Solo manual' },
+  ];
+
+  var PB_POLL_MS = 20000;
+  var PB_MAX_POLLS = 18; // ~6 min: una investigación con 12 búsquedas web
+
+  function stopPlaybookPoll() {
+    if (state.wa.playbookTimer) { clearTimeout(state.wa.playbookTimer); state.wa.playbookTimer = null; }
+    state.wa.playbookPolls = 0;
+  }
+
+  function schedulePlaybookPoll() {
+    var st = state.wa;
+    if (st.playbookTimer) return;
+    if (st.playbookPolls >= PB_MAX_POLLS) return;
+    st.playbookTimer = setTimeout(function () {
+      st.playbookTimer = null;
+      st.playbookPolls++;
+      // Solo seguimos consultando mientras esta pestaña está a la vista.
+      if (state.activeTab !== 'outreach') { stopPlaybookPoll(); return; }
+      loadPlaybook(true);
+    }, PB_POLL_MS);
+  }
+
+  function loadPlaybook(quiet) {
+    var st = state.wa;
+    if (!quiet) { st.playbookLoading = true; renderPlaybookCard(); }
+    return Promise.resolve()
+      .then(function () { return pd().fetchOutreachPlaybook(); })
+      .then(function (pb) { st.playbook = pb; })
+      .catch(function (e) { console.warn('[prospecting] playbook:', e.message); })
+      .then(function () {
+        st.playbookLoading = false;
+        renderPlaybookCard();
+        if (st.playbook && st.playbook.status === 'generating') schedulePlaybookPoll();
+        else stopPlaybookPoll();
+      });
+  }
+
+  function pbList(v) {
+    return Array.isArray(v) ? v.filter(function (x) { return x && typeof x === 'object'; }) : [];
+  }
+
+  function pbSourceLink(url) {
+    if (!url) return null;
+    var href = window.safeUrl ? window.safeUrl(url) : '#';
+    if (href === '#') return null;
+    var host = String(url).replace(/^https?:\/\//i, '').split('/')[0];
+    return h('a', {
+      href: href, target: '_blank', rel: 'noopener noreferrer',
+      style: 'font-size:11px;color:var(--text3);text-decoration:underline',
+      text: host,
+    });
+  }
+
+  // Una sección del detalle: título + lista de líneas, cada una con su fuente.
+  function pbSection(title, items, lineFn) {
+    if (!items.length) return null;
+    var wrap = h('div', { style: 'margin-top:12px' });
+    wrap.appendChild(h('div', { style: 'font-size:11.5px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--text3)', text: title }));
+    var ul = h('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-top:6px' });
+    items.forEach(function (it) {
+      var text = lineFn(it);
+      if (!text) return;
+      var row = h('div', { style: 'font-size:12.5px;line-height:1.6;color:var(--text2)' });
+      row.appendChild(document.createTextNode('· ' + text + ' '));
+      var link = pbSourceLink(it.source_url || it.url);
+      if (link) row.appendChild(link);
+      ul.appendChild(row);
+    });
+    if (!ul.childNodes.length) return null;
+    wrap.appendChild(ul);
+    return wrap;
+  }
+
+  function pbDetailsNode(pb) {
+    var wrap = h('div', { style: 'margin-top:10px;border-top:1px solid var(--hair);padding-top:10px' });
+    var any = false;
+    function add(node) { if (node) { wrap.appendChild(node); any = true; } }
+
+    add(pbSection('Qué está funcionando', pbList(pb.principles), function (x) {
+      var t = [x.title, x.insight].filter(Boolean).join(': ');
+      if (x.why) t += ' (' + x.why + ')';
+      return t;
+    }));
+    add(pbSection('Aperturas', pbList(pb.openers), function (x) {
+      return [x.pattern, x.example ? '“' + x.example + '”' : ''].filter(Boolean).join(' — ').replace(/ — /g, ', ');
+    }));
+    add(pbSection('Asuntos', pbList(pb.subject_lines), function (x) {
+      return [x.pattern, x.example ? '“' + x.example + '”' : ''].filter(Boolean).join(', ');
+    }));
+
+    var st = (pb.structure && typeof pb.structure === 'object' && !Array.isArray(pb.structure)) ? pb.structure : {};
+    var stBits = ['length', 'paragraphs', 'cta_style', 'personalization', 'follow_up']
+      .map(function (k) { return typeof st[k] === 'string' ? st[k].trim() : ''; })
+      .filter(Boolean)
+      .map(function (v) { return { what: v }; });
+    add(pbSection('Estructura recomendada', stBits, function (x) { return x.what; }));
+
+    add(pbSection('Canales', pbList(pb.channels), function (x) {
+      return [x.channel, x.verdict || x.note].filter(Boolean).join(': ');
+    }));
+    add(pbSection('Quemado, evítalo', pbList(pb.avoid), function (x) {
+      return [x.what, x.why].filter(Boolean).join(' — ').replace(/ — /g, ', ');
+    }));
+    add(pbSection('Para probar', pbList(pb.experiments), function (x) {
+      return [x.hypothesis, x.how_to_test].filter(Boolean).join(': ');
+    }));
+    add(pbSection('Fuentes', pbList(pb.sources), function (x) {
+      return [x.title, x.date].filter(Boolean).join(', ');
+    }));
+
+    return any ? wrap : null;
+  }
+
+  function renderPlaybookCard() {
+    var st = state.wa;
+    var host = st.playbookHost;
+    if (!host) return;
+    host.innerHTML = '';
+    var pb = st.playbook;
+    var status = (pb && pb.status) || 'none';
+    var enabled = pb ? pb.enabled !== false : true;
+    var cadence = (pb && pb.cadence) || 'monthly';
+
+    var left = h('div', { style: 'min-width:240px;flex:1' });
+    left.appendChild(h('div', { class: 'chart-title', text: 'Tendencias de outbound' }));
+    left.appendChild(h('div', {
+      style: 'font-size:11.5px;color:var(--text3);margin-top:4px;line-height:1.55',
+      text: 'Investigamos en internet qué le está funcionando hoy a quienes prospectan en frío: foros especializados (r/sales, r/coldemail), academias y reportes de Apollo, Lavender y Gong, y publicaciones de operadores. Los hallazgos calibran cómo se redactan tus mensajes.',
+    }));
+
+    var btn = null;
+    if (st.playbookLoading) {
+      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text3);margin-top:8px', text: 'Cargando…' }));
+    } else if (status === 'generating') {
+      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:8px;line-height:1.55', text: '⏳ Investigando foros, reportes y publicaciones recientes. Toma unos minutos; puedes seguir trabajando.' }));
+      btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'pb-refresh', text: 'Revisar estado' });
+    } else if (status === 'error') {
+      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--red);margin-top:8px;line-height:1.55', text: '⚠ No se pudo completar la investigación: ' + (pb.error_message || 'error desconocido') }));
+      btn = h('button', { type: 'button', class: 'btn btn-ai btn-sm', 'data-action': 'pb-generate', 'data-credit-cost': 'outreach_playbook', 'data-credit-muted': '', html: SVG_SPARK + ' Reintentar' });
+    } else if (status === 'ready') {
+      var line = h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:8px;line-height:1.6' });
+      line.appendChild(h('span', { class: 'pill pill-green', text: 'Listo' }));
+      line.appendChild(document.createTextNode(' ' + (pb.headline || pb.summary || 'Investigación disponible.')));
+      left.appendChild(line);
+      if (pb.headline && pb.summary) {
+        left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:6px;line-height:1.6', text: pb.summary }));
+      }
+      btn = h('button', { type: 'button', class: 'btn btn-ai btn-sm', 'data-action': 'pb-generate', 'data-credit-cost': 'outreach_playbook', 'data-credit-muted': '', html: SVG_SPARK + ' Actualizar investigación' });
+    } else {
+      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:8px;line-height:1.6', text: 'Todavía no has corrido la investigación. Es opcional, pero muy recomendada: sin ella los mensajes se generan solo con tu contexto, sin lo que el mercado está reportando este mes.' }));
+      btn = h('button', { type: 'button', class: 'btn btn-ai btn-sm', 'data-action': 'pb-generate', 'data-credit-cost': 'outreach_playbook', 'data-credit-muted': '', html: SVG_SPARK + ' Investigar tendencias' });
+    }
+
+    var card = h('div', { class: 'chart-card', style: 'margin-bottom:14px' },
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap' }, left, btn));
+
+    // Detalle desplegable de los hallazgos
+    if (status === 'ready') {
+      var details = st.playbookOpen ? pbDetailsNode(pb) : null;
+      var toggle = h('button', {
+        type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'pb-details',
+        style: 'margin-top:10px',
+        text: st.playbookOpen ? 'Ocultar hallazgos' : 'Ver hallazgos',
+      });
+      card.appendChild(toggle);
+      if (details) card.appendChild(details);
+    }
+
+    // Controles: aplicar al redactar + cadencia
+    var controls = h('div', { style: 'display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:12px;border-top:1px solid var(--hair);padding-top:12px' });
+    var chk = h('input', { type: 'checkbox', 'data-action': 'pb-enabled', id: 'pb-enabled-chk' });
+    chk.checked = enabled;
+    chk.disabled = !!st.playbookSaving;
+    controls.appendChild(h('label', { style: 'display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text2);cursor:pointer', for: 'pb-enabled-chk' },
+      chk, h('span', { text: 'Aplicar las tendencias al generar mensajes' })));
+
+    var sel = h('select', { 'data-action': 'pb-cadence' });
+    PB_CADENCES.forEach(function (o) {
+      var opt = h('option', { value: o.value, text: o.label });
+      if (o.value === cadence) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.disabled = !!st.playbookSaving;
+    controls.appendChild(h('div', { style: 'display:flex;align-items:center;gap:8px' },
+      h('span', { class: 'pros-lbl', text: 'Actualizar' }), sel));
+    card.appendChild(controls);
+
+    var meta = [];
+    if (pb && pb.generated_at) meta.push('Última investigación: ' + fmtDate(pb.generated_at));
+    if (pb && pb.next_refresh_at && cadence !== 'manual') meta.push('Próxima: ' + fmtDate(pb.next_refresh_at));
+    meta.push(enabled
+      ? 'Las reglas de tu mensaje mandan: si una tendencia choca con ellas, gana la regla.'
+      : 'Desactivada: los mensajes se generan solo con tu contexto.');
+    if (cadence !== 'manual') meta.push('Las actualizaciones automáticas no consumen créditos.');
+    card.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:8px', text: meta.join(' · ') }));
+
+    host.appendChild(card);
+  }
+
+  function savePlaybookPrefs(patch, okMsg) {
+    var st = state.wa;
+    st.playbookSaving = true;
+    renderPlaybookCard();
+    return Promise.resolve()
+      .then(function () { return pd().saveOutreachPlaybookPrefs(patch); })
+      .then(function (row) {
+        if (row) st.playbook = row;
+        else st.playbook = Object.assign({ status: 'pending' }, st.playbook || {}, patch);
+        if (okMsg) toast(okMsg, 'success');
+      })
+      .catch(function (e) { toast(errMsg(e), 'error'); })
+      .then(function () { st.playbookSaving = false; renderPlaybookCard(); });
   }
 
   function getSenderSafe() {
@@ -3525,6 +3764,7 @@
         '<div><b>Por qué le importa:</b> ' + esc(why) + '</div>' +
         '<div><b>Riesgos / objeción:</b> ' + esc(risks) + '</div>' +
         (angle.social_proof && angle.social_proof !== 'ninguno' ? '<div><b>Social proof usado:</b> ' + esc(angle.social_proof) + '</div>' : '') +
+        (angle.trend_applied ? '<div><b>Tendencia aplicada:</b> ' + esc(angle.trend_applied) + '</div>' : '') +
         (prep && prep.como_abrir ? '<div><b>Cómo abrir:</b> ' + esc(prep.como_abrir) + '</div>' : '') +
         '</div>' +
         '<div class="pros-hint">Este contexto queda guardado con el lead y lo usa el AI coach si se agenda una reunión.</div>' +
@@ -3760,6 +4000,16 @@
         if (on) st.selected.add(String(m.id)); else st.selected.delete(String(m.id));
       });
       renderWaList();
+    } else if (action === 'pb-enabled') {
+      return savePlaybookPrefs({ enabled: t.checked },
+        t.checked
+          ? 'Listo: los próximos mensajes se calibran con las tendencias.'
+          : 'Tendencias desactivadas. Los mensajes se generan solo con tu contexto.');
+    } else if (action === 'pb-cadence') {
+      return savePlaybookPrefs({ cadence: t.value },
+        t.value === 'manual'
+          ? 'La investigación solo correrá cuando la pidas.'
+          : 'Listo: la investigación se actualizará de forma ' + (t.value === 'weekly' ? 'semanal' : 'mensual') + '.');
     }
   }
 
@@ -3822,6 +4072,27 @@
       });
     }
     if (action === 'brief-refresh') return loadWaBrief();
+    if (action === 'pb-details') {
+      st.playbookOpen = !st.playbookOpen;
+      renderPlaybookCard();
+      return;
+    }
+    if (action === 'pb-refresh') return loadPlaybook();
+    if (action === 'pb-generate') {
+      return Promise.resolve(pd().generateOutreachPlaybook()).then(function (res) {
+        if (res && res.status === 'already_running') {
+          toast('La investigación ya está corriendo.', 'info');
+        } else {
+          toast('Investigando qué está funcionando hoy en outreach. Toma unos minutos.', 'info');
+        }
+        st.playbook = Object.assign({ cadence: 'monthly', enabled: true }, st.playbook || {}, { status: 'generating' });
+        st.playbookPolls = 0;
+        renderPlaybookCard();
+        schedulePlaybookPoll();
+      }, function (e) {
+        toast(errMsg(e), 'error');
+      });
+    }
     if (action === 'wa-coach' && m) {
       // Puente Prospección → AI coach: el brief del lead (quién es, dolor
       // probable, objeción + neutralizador) viaja como contexto de la reunión.
@@ -3884,6 +4155,9 @@
     TABS.forEach(function (t) {
       state.panes[t.id].classList.toggle('active', t.id === tabId);
     });
+    // El sondeo de la investigación de tendencias solo tiene sentido con la
+    // pestaña a la vista; al salir se corta para no dejar timers colgados.
+    if (tabId !== 'outreach') stopPlaybookPoll();
     var loader = null;
     if (tabId === 'resumen') loader = initResumenTab;
     else if (tabId === 'listas') loader = initListasTab;

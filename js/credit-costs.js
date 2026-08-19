@@ -40,6 +40,10 @@
 
     // ── Prospección / Outreach ────────────────────────────────────────
     outreach_message:       { credits: 3,  label: 'por mensaje',         variable: false },
+    // Tendencias de outbound: 1 investigación Sonnet con ~12 búsquedas web
+    // (foros, reportes de vendors, operadores). Raw ~US$0.20. Solo se cobra
+    // el run manual; los runs por cadencia (semanal/mensual) van gratis.
+    outreach_playbook:      { credits: 6,  label: 'por investigación',   variable: false },
 
     // ── Enriquecimiento (Apollo passthrough + margen) ─────────────────
     enrich_email:           { credits: 1,  label: 'por email',           variable: false },
