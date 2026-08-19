@@ -39,12 +39,17 @@
  *
  * Response 202: { status: "started" | "dispatched" | "already_running", users: <n> }
  * Errors: 400 invalid body · 401 unauthorized · 402 insufficient_credits
- * Required secrets: ANTHROPIC_API_KEY. Optional: SCHEDULER_SECRET (without it
+ * Engine: user-selectable (Claude / OpenAI / Perplexity) under the "outreach"
+ * feature — this playbook feeds message generation, so it follows the same
+ * preference (see supabase/functions/_shared/llm.ts).
+ * Required secrets: the API key of the chosen engine (ANTHROPIC_API_KEY,
+ * OPENAI_API_KEY or PERPLEXITY_API_KEY). Optional: SCHEDULER_SECRET (without it
  * the scheduled path is disabled; the manual path keeps working).
  * Requires migration: 20260819000002_outreach_playbook.sql
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -75,55 +80,20 @@ function nextRefreshFor(cadence: string): string | null {
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-interface ContentItem { type: string; text?: string; }
-
-class ClaudeTimeout extends Error {}
-
-async function callClaude(apiKey: string, system: string, user: string): Promise<string> {
-  const deadline = Date.now() + CLAUDE_TIMEOUT_MS;
-  let lastErr = "";
-  for (let attempt = 0; attempt <= 1; attempt++) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 5_000) break;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), remaining);
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        signal: ctrl.signal,
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 8192,
-          system,
-          tools: [{ type: "web_search_20260209", name: "web_search", max_uses: MAX_SEARCHES }],
-          messages: [{ role: "user", content: user }],
-        }),
-      });
-      if (res.status === 429 && attempt < 1) {
-        lastErr = await res.text();
-        clearTimeout(timer);
-        await new Promise((r) => setTimeout(r, 8000));
-        continue;
-      }
-      if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-      const msg = await res.json();
-      const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
-      if (!blocks.length) throw new Error("No text in Claude response");
-      return blocks[blocks.length - 1].text ?? "";
-    } catch (e) {
-      if (ctrl.signal.aborted) throw new ClaudeTimeout(`Anthropic call exceeded ${CLAUDE_TIMEOUT_MS}ms`);
-      throw e;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  if (lastErr) throw new Error(`Anthropic 429 after retry: ${lastErr}`);
-  throw new ClaudeTimeout(`Anthropic call exceeded ${CLAUDE_TIMEOUT_MS}ms`);
+async function callAi(engine: Engine, system: string, user: string): Promise<string> {
+  const res = await callLLM({
+    engine,
+    system,
+    user,
+    maxTokens: 8192,
+    webSearch: MAX_SEARCHES,
+    claudeWebSearchTool: "web_search_20260209",
+    timeoutMs: CLAUDE_TIMEOUT_MS,
+    retries: 1,
+    retryDelayMs: 8000,
+    logPrefix: "[playbook]",
+  });
+  return res.text;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -250,7 +220,7 @@ function cleanList(v: unknown, required: string[], max: number): any[] {
 
 async function runForUser(
   supa: SupabaseClient,
-  apiKey: string,
+  engine: Engine,
   userId: string,
   trigger: "manual" | "schedule",
 ): Promise<void> {
@@ -269,8 +239,8 @@ async function runForUser(
   );
 
   try {
-    const raw = await callClaude(
-      apiKey,
+    const raw = await callAi(
+      engine,
       SYSTEM_PROMPT,
       buildUserPrompt(brief as Row | null, intake as Row | null, new Date().toISOString().slice(0, 10)),
     );
@@ -324,14 +294,12 @@ Deno.serve(async (req: Request) => {
   const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
   const ANON_KEY      = Deno.env.get("SUPABASE_ANON_KEY")!;
   const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
   const SCHEDULER_SECRET = Deno.env.get("SCHEDULER_SECRET") ?? "";
-  if (!ANTHROPIC_KEY) return json({ error: "ANTHROPIC_API_KEY not set" }, 500, h);
 
   const provided = req.headers.get("X-Playbook-Secret") ?? "";
   const isScheduler = SCHEDULER_SECRET !== "" && provided === SCHEDULER_SECRET;
 
-  let body: { sweep?: boolean; user_id?: string } = {};
+  let body: { sweep?: boolean; user_id?: string; engine?: string } = {};
   try { body = await req.json(); } catch { /* empty body = manual run */ }
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
@@ -386,7 +354,7 @@ Deno.serve(async (req: Request) => {
     // Una sola investigación pedida por el barrido (o por un operador).
     const uid = typeof body.user_id === "string" ? body.user_id.trim() : "";
     if (!uid) return json({ error: "sweep or user_id required" }, 400, h);
-    const work = runForUser(supa, ANTHROPIC_KEY, uid, "schedule");
+    const work = runForUser(supa, await engineForUser(supa, uid, "outreach"), uid, "schedule");
     // @ts-ignore — Supabase Edge Runtime global
     if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
       // @ts-ignore
@@ -423,7 +391,8 @@ Deno.serve(async (req: Request) => {
     user_id: user.id, delta: -PLAYBOOK_COST, reason: "outreach_playbook",
   });
 
-  const work = runForUser(supa, ANTHROPIC_KEY, user.id, "manual");
+  const engine = await engineForUser(supa, user.id, "outreach", body.engine);
+  const work = runForUser(supa, engine, user.id, "manual");
   // @ts-ignore — Supabase Edge Runtime global
   if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
     // @ts-ignore

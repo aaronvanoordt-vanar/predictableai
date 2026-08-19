@@ -158,7 +158,10 @@
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + session.access_token,
       },
-      body: JSON.stringify(body || {}),
+      body: JSON.stringify(Object.assign(
+        { engine: global.AIEngine && global.AIEngine.get('radar') },
+        body || {},
+      )),
     });
     const data = await res.json().catch(() => ({}));
     if (res.status === 402) {
@@ -306,6 +309,7 @@
     else if (run.status === 'generating' || run.status === 'pending') { el.innerHTML = viewProgress(run); }
     else if (run.status === 'error') { el.innerHTML = viewError(run); }
     else { el.innerHTML = viewResults(run); }
+    if (global.AIEngine) global.AIEngine.autoMount(el);
     bind(el);
   }
 
@@ -313,6 +317,7 @@
     return '<div class="rdr-head">' +
       '<div><div class="rdr-title">Radar</div>' +
       '<div class="rdr-sub">' + subtitle + '</div></div>' +
+      '<div class="rdr-engine" data-ai-engine="radar" data-ai-engine-compact></div>' +
       '</div>';
   }
 
@@ -481,7 +486,8 @@
     s.id = 'radar-styles';
     s.textContent = [
       '.rdr-wrap{display:flex;flex-direction:column;gap:14px;padding:26px;max-width:880px;margin:0 auto;width:100%}',
-      '.rdr-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}',
+      '.rdr-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}',
+      '.rdr-engine{margin-left:auto}',
       '.rdr-title{font-family:var(--font-display);font-size:22px;font-weight:800;color:var(--ink)}',
       '.rdr-sub{font-size:13px;color:var(--ink-3);margin-top:3px;max-width:640px}',
       '.rdr-hero{padding:28px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}',

@@ -28,6 +28,21 @@ There is no package.json, no npm install, no test suite. Verification = `scripts
 - **Clients = `js/clients.js`** (grid of client cards + per-client dashboard: status, links, CRM metrics + Google Sheets embed, PDF materials, target countries), mounted into `#clients-shell` in page `clients`. Data in `clients`/`client_materials`/`client_access` tables + private storage bucket `client-assets` (signed URLs only). Each client row has a `share_token`; **`client.html` + `js/client-portal.js`** is the standalone read-only portal (`client.html?token=…`) where the end client signs up and gets bound via the `claim_client_access` RPC — client.html must NOT load `auth-guard.js`.
 - **`miforms/`** is a separate mini-app (feedback/intake survey). It is **optional**, not a gate — `auth-callback.html` always routes into `index.html` after onboarding. `js/miforms-prompt.js` offers it in-app via a sidebar affordance and a one-time dismissible popup, both promising a credit bonus (`claim_miforms_bonus_credits` RPC) for completing it.
 
+## Motores de IA (Claude / OpenAI / Perplexity)
+
+Cada función con IA puede correr sobre cualquiera de los tres motores. La preferencia vive en `profiles.ai_engines` (JSONB, una clave por función) y se resuelve en dos lugares que **deben mantenerse en sync**:
+
+- `supabase/functions/_shared/llm.ts` — `RECOMMENDED_ENGINE` + `callLLM()`, el único sitio que sabe hablar con cada proveedor (web search, JSON schema, PDFs, reintentos). Toda edge function con IA pasa por aquí; ninguna vuelve a llamar a `api.anthropic.com` directamente.
+- `js/ai-engine.js` — `FEATURES` + el selector (`AIEngine.mount(...)` o `<div data-ai-engine="coda">`).
+
+Recomendados: `intel_hub` y `coda` (Contexto estratégico IA) → **Perplexity**; `outreach`, `onboarding` y `radar` → **Claude**; `coach` → **OpenAI**.
+
+Reglas:
+- El motor del body de la request es solo un atajo: la edge function **siempre** revalida contra su allowlist y cae al recomendado si no reconoce el valor.
+- Si falta la API key del motor elegido (o el motor no puede con esa llamada, p. ej. Perplexity + PDF), `callLLM` cae a Claude y lo loguea — nunca rompe la función.
+- Secrets: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `PERPLEXITY_API_KEY`. Modelos overridables con `OPENAI_MODEL` (default `gpt-5`) y `PERPLEXITY_MODEL` (default `sonar-pro`).
+- Excepción conocida: el coach en vivo del navegador (`js/realtime-coach.js`) usa el worker `/openai` cuando el motor es OpenAI; con Claude/Perplexity resuelve el turno en la acción `coachTurn` de `sales-coach`.
+
 ## Supabase
 
 - Project config in `js/config.js` (URL + anon key — the anon key is public by design; RLS enforces access).

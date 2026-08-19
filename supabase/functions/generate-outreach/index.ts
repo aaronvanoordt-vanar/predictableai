@@ -87,7 +87,13 @@
  *             Managed Agents beta returned 401/403/404 (not enabled for the
  *             org) and OUTREACH_ALLOW_API_FALLBACK !== 'true'
  *         502 { error: "llm_error", detail } — any other generation failure
- * Required secrets: ANTHROPIC_API_KEY
+ * Engine: user-selectable (Claude / OpenAI / Perplexity) under the "outreach"
+ *                   feature — Claude is the recommended default for message
+ *                   writing. The Managed Agent path exists only on Claude; the
+ *                   other engines run the same prompts through a single
+ *                   stateless call (see supabase/functions/_shared/llm.ts).
+ * Required secrets: the API key of the chosen engine (ANTHROPIC_API_KEY,
+ *                   OPENAI_API_KEY or PERPLEXITY_API_KEY)
  * Optional secrets: OUTREACH_ALLOW_API_FALLBACK='true' → on Managed Agents
  *                   401/403/404, fall back to a direct /v1/messages call
  *                   (claude-haiku-4-5 + web tools, same prompts).
@@ -98,6 +104,7 @@
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -394,47 +401,41 @@ function archiveSessionLater(apiKey: string, sessionId: string): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fallback path: direct /v1/messages (only when OUTREACH_ALLOW_API_FALLBACK)
+// Direct (stateless) path — the only path for OpenAI/Perplexity, and Claude's
+// fallback when the Managed Agents beta is unavailable and
+// OUTREACH_ALLOW_API_FALLBACK is on.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function callClaudeFallback(apiKey: string, system: string, user: string): Promise<string> {
-  let lastErr = "";
-  for (let attempt = 0; attempt <= 2; attempt++) {
-    const res = await fetch(`${ANTHROPIC_BASE}/v1/messages`, {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: AGENT_MODEL, // claude-haiku-4-5
-        max_tokens: 4096,
-        system,
-        // Haiku 4.5 supports the basic web tool variants (the _20260209
-        // dynamic-filtering variants are Opus/Sonnet-tier only).
-        tools: [
-          { type: "web_search_20250305", name: "web_search", max_uses: 3 },
-          { type: "web_fetch_20250910", name: "web_fetch", max_uses: 2 },
-        ],
-        messages: [{ role: "user", content: user }],
-      }),
-    });
+async function callDirect(engine: Engine, system: string, user: string): Promise<string> {
+  const res = await callLLM({
+    engine,
+    system,
+    user,
+    maxTokens: 4096,
+    // Haiku 4.5 supports the basic web tool variants (the _20260209
+    // dynamic-filtering variants are Opus/Sonnet-tier only).
+    webSearch: 3,
+    claudeWebSearchTool: "web_search_20250305",
+    claudeWebFetch: 2,
+    claudeModel: AGENT_MODEL,
+    retryDelayMs: 5000,
+    logPrefix: "[outreach]",
+  });
+  return res.text;
+}
 
-    if (res.status === 429 && attempt < 2) {
-      lastErr = await res.text();
-      console.warn(`[outreach] fallback 429, retry ${attempt + 1}/2 in 5s`);
-      await sleep(5000);
-      continue;
-    }
-    if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-
-    const msg = await res.json();
-    const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
-    if (!blocks.length) throw new Error("No text in Claude response");
-    return blocks[blocks.length - 1].text ?? "";
+/** One stateless generation + the same corrective retry the agent path does. */
+async function generateDirect(engine: Engine, userPrompt: string): Promise<Outreach> {
+  let out = parseJson(await callDirect(engine, AGENT_SYSTEM_PROMPT, userPrompt));
+  if (!isValidOutreach(out)) throw new Error("Model returned malformed outreach JSON");
+  const violations = formatViolations(out);
+  if (violations.length) {
+    console.warn(`[outreach] ${engine} format violations, retrying: ${violations.join(" · ")}`);
+    const fixPrompt = userPrompt + "\n\n" + correctionMessage(out, violations);
+    const retry = parseJson(await callDirect(engine, AGENT_SYSTEM_PROMPT, fixPrompt));
+    if (isValidOutreach(retry)) out = retry;
   }
-  throw new Error(`Anthropic 429 after retries: ${lastErr}`);
+  return out;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -937,6 +938,54 @@ const CLOSING_INSTRUCTION =
 // Handler
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Claude-only path: a persisted Managed Agent with one session per request,
+ * falling back to a direct stateless call when the beta is not enabled for
+ * this key (and OUTREACH_ALLOW_API_FALLBACK is on).
+ */
+async function generateViaManagedAgent(
+  supa: SupabaseClient,
+  leadName: string,
+  userPrompt: string,
+  allowFallback: boolean,
+): Promise<{ out: Outreach; via: "managed_agent" | "fallback_api" }> {
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+  try {
+    const cfg = await getOrProvisionAgent(supa, apiKey);
+    const sessionId = await createSession(apiKey, cfg, `outreach ${leadName}`.slice(0, 120));
+    const seen = new Set<string>();
+    await baselineSeen(apiKey, sessionId, seen);
+    await sendUserMessage(apiKey, sessionId, userPrompt);
+    let out = parseJson(await pollForReply(apiKey, sessionId, seen, FIRST_TURN_BUDGET_MS));
+    if (!isValidOutreach(out)) throw new Error("Model returned malformed outreach JSON");
+
+    // One corrective pass if the format rules were violated — a follow-up
+    // user.message in the SAME session (stateful, no context re-send). If
+    // the retry still violates or fails, ship the best we have (a slightly
+    // long message beats a 502).
+    const violations = formatViolations(out);
+    if (violations.length) {
+      console.warn(`[outreach] format violations, retrying in-session: ${violations.join(" · ")}`);
+      try {
+        await sendUserMessage(apiKey, sessionId, correctionMessage(out, violations));
+        const retry = parseJson(await pollForReply(apiKey, sessionId, seen, RETRY_TURN_BUDGET_MS));
+        if (isValidOutreach(retry)) out = retry;
+      } catch (retryErr) {
+        if (retryErr instanceof ManagedAgentsUnavailableError) throw retryErr;
+        console.warn("[outreach] in-session retry failed, shipping first draft:", retryErr);
+      }
+    }
+    archiveSessionLater(apiKey, sessionId);
+    return { out, via: "managed_agent" };
+  } catch (maErr) {
+    if (!(maErr instanceof ManagedAgentsUnavailableError)) throw maErr;
+    if (!allowFallback) throw maErr; // → managed_agents_unavailable below
+    console.warn("[outreach] managed agents unavailable, using API fallback:", maErr.message);
+    return { out: await generateDirect("claude", userPrompt), via: "fallback_api" };
+  }
+}
+
 Deno.serve(async (req: Request) => {
   const h = corsHeaders(req.headers.get("Origin") ?? "*");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: h });
@@ -945,10 +994,7 @@ Deno.serve(async (req: Request) => {
   const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
   const ANON_KEY      = Deno.env.get("SUPABASE_ANON_KEY")!;
   const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
   const ALLOW_FALLBACK = Deno.env.get("OUTREACH_ALLOW_API_FALLBACK") === "true";
-
-  if (!ANTHROPIC_KEY) return json({ error: "ANTHROPIC_API_KEY not set" }, 500, h);
 
   // Auth: user JWT (manual verification — see header)
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
@@ -956,7 +1002,7 @@ Deno.serve(async (req: Request) => {
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
 
-  let body: { lead?: Lead; sender?: Sender; member_id?: string; use_playbook?: boolean };
+  let body: { lead?: Lead; sender?: Sender; member_id?: string; engine?: string; use_playbook?: boolean };
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400, h); }
 
   const lead = body.lead;
@@ -975,6 +1021,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+  const engine = await engineForUser(supa, user.id, "outreach", body.engine);
 
   // Cobro: 3 créditos por mensaje (catálogo js/credit-costs.js). Se verifica el
   // saldo ANTES de gastar en el LLM/agente, pero el descuento atómico se hace
@@ -1025,52 +1072,17 @@ Deno.serve(async (req: Request) => {
     let out: Outreach;
     let generatedVia: "managed_agent" | "fallback_api";
 
-    try {
-      // ── Primary path: persisted Managed Agent, one session per request ──
-      const cfg = await getOrProvisionAgent(supa, ANTHROPIC_KEY);
-      const sessionId = await createSession(ANTHROPIC_KEY, cfg, `outreach ${lead.name}`.slice(0, 120));
-      const seen = new Set<string>();
-      await baselineSeen(ANTHROPIC_KEY, sessionId, seen);
-      await sendUserMessage(ANTHROPIC_KEY, sessionId, userPrompt);
-      out = parseJson(await pollForReply(ANTHROPIC_KEY, sessionId, seen, FIRST_TURN_BUDGET_MS));
-      if (!isValidOutreach(out)) throw new Error("Model returned malformed outreach JSON");
-
-      // One corrective pass if the format rules were violated — a follow-up
-      // user.message in the SAME session (stateful, no context re-send). If
-      // the retry still violates or fails, ship the best we have (a slightly
-      // long message beats a 502).
-      const violations = formatViolations(out);
-      if (violations.length) {
-        console.warn(`[outreach] format violations, retrying in-session: ${violations.join(" · ")}`);
-        try {
-          await sendUserMessage(ANTHROPIC_KEY, sessionId, correctionMessage(out, violations));
-          const retry = parseJson(await pollForReply(ANTHROPIC_KEY, sessionId, seen, RETRY_TURN_BUDGET_MS));
-          if (isValidOutreach(retry)) out = retry;
-        } catch (retryErr) {
-          if (retryErr instanceof ManagedAgentsUnavailableError) throw retryErr;
-          console.warn("[outreach] in-session retry failed, shipping first draft:", retryErr);
-        }
-      }
-      archiveSessionLater(ANTHROPIC_KEY, sessionId);
-      generatedVia = "managed_agent";
-    } catch (maErr) {
-      if (!(maErr instanceof ManagedAgentsUnavailableError)) throw maErr;
-      if (!ALLOW_FALLBACK) throw maErr; // → managed_agents_unavailable below
-      // ── Fallback path: direct /v1/messages (stateless corrective retry) ──
-      console.warn("[outreach] managed agents unavailable, using API fallback:", maErr.message);
-      out = parseJson(await callClaudeFallback(ANTHROPIC_KEY, AGENT_SYSTEM_PROMPT, userPrompt));
-      if (!isValidOutreach(out)) throw new Error("Model returned malformed outreach JSON");
-      const violations = formatViolations(out);
-      if (violations.length) {
-        console.warn(`[outreach] fallback format violations, retrying: ${violations.join(" · ")}`);
-        const fixPrompt = userPrompt + "\n\n" + correctionMessage(out, violations);
-        const retry = parseJson(await callClaudeFallback(ANTHROPIC_KEY, AGENT_SYSTEM_PROMPT, fixPrompt));
-        if (isValidOutreach(retry)) out = retry;
-      }
+    if (engine === "claude") {
+      const r = await generateViaManagedAgent(supa, lead.name, userPrompt, ALLOW_FALLBACK);
+      out = r.out;
+      generatedVia = r.via;
+    } else {
+      // Only Claude has Managed Agents; the rest run the same prompts directly.
+      out = await generateDirect(engine, userPrompt);
       generatedVia = "fallback_api";
     }
 
-    console.log(`[outreach] ✓ ${user.id} via ${generatedVia} (brief:${brief?.status ?? "none"}, hub:${hubReports?.length ?? 0}, snapshot:${snapshot ? "yes" : "no"}, playbook:${playbook?.status === "ready" ? "on" : "off"})`);
+    console.log(`[outreach] ✓ ${user.id} via ${engine}/${generatedVia} (brief:${brief?.status ?? "none"}, hub:${hubReports?.length ?? 0}, snapshot:${snapshot ? "yes" : "no"}, playbook:${playbook?.status === "ready" ? "on" : "off"})`);
 
     const angle: Angle | null = (out.angle && typeof out.angle === "object") ? {
       ...out.angle,

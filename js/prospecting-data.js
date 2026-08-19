@@ -1127,7 +1127,13 @@
     };
     // member_id lets the function persist the result server-side (survives
     // the browser reloading or the tab closing mid-generation).
-    const data = await edgeFetch('generate-outreach', { lead, sender: sender || getSenderInfo(), member_id: member.id });
+    const data = await edgeFetch('generate-outreach', {
+      lead,
+      sender: sender || getSenderInfo(),
+      member_id: member.id,
+      // El backend re-lee la preferencia del perfil; esto solo la adelanta.
+      engine: global.AIEngine && global.AIEngine.get('outreach'),
+    });
     if (!data?.whatsapp_followup || !data?.linkedin_message) {
       throw new Error('La IA no devolvió los mensajes. Reintenta.');
     }

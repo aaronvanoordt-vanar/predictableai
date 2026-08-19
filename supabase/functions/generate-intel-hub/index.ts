@@ -22,11 +22,15 @@
  *   }
  *
  * Required secrets:
- *   ANTHROPIC_API_KEY
+ *   ANTHROPIC_API_KEY / OPENAI_API_KEY / PERPLEXITY_API_KEY
+ *   (only the key of the engine the user picked is required — the engine is
+ *    selectable per user under the "intel_hub" feature, Perplexity by default
+ *    since every section is search-grounded research; see _shared/llm.ts)
  *   SCHEDULER_SECRET
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callLLM, engineForUser, resolveEngine, type Engine } from "../_shared/llm.ts";
 
 // ── Section catalogue ────────────────────────────────────────────────────────
 
@@ -721,49 +725,28 @@ function json(body: unknown, status = 200, extraHeaders: Record<string, string> 
   });
 }
 
-// ── Claude web-search call ───────────────────────────────────────────────────
+// ── Model call (engine-dispatched) ──────────────────────────────────────────
 
-interface ContentItem { type: string; text?: string; }
-
-async function callClaude(
-  apiKey: string,
+async function callAi(
+  engine: Engine,
   model: string,
   systemPrompt: string,
   userPrompt: string,
-  attempt = 0
 ): Promise<string> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-beta": "web-search-2025-03-05",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 8192,
-      system: systemPrompt,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: userPrompt }],
-    }),
+  const res = await callLLM({
+    engine,
+    system: systemPrompt,
+    user: userPrompt,
+    maxTokens: 8192,
+    webSearch: 5,
+    // The section prompts were written against the older tool version and its
+    // unfiltered result set; keep them on it so grounding does not shift.
+    claudeWebSearchTool: "web_search_20250305",
+    claudeModel: model,
+    retryDelayMs: 10000,
+    logPrefix: "[gen]",
   });
-
-  if (res.status === 429 && attempt < 3) {
-    console.warn(`[gen] 429 rate limit — waiting 10s before retry ${attempt + 1}`);
-    await sleep(10000);
-    return callClaude(apiKey, model, systemPrompt, userPrompt, attempt + 1);
-  }
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Anthropic API ${res.status}: ${err}`);
-  }
-
-  const msg = await res.json();
-  const textBlocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
-  if (!textBlocks.length) throw new Error("No text block in Claude response");
-  return textBlocks[textBlocks.length - 1].text ?? "";
+  return res.text;
 }
 
 // ── Generate one section ──────────────────────────────────────────────────────
@@ -774,7 +757,7 @@ async function callClaude(
 type GeneratedContent = Record<string, unknown>;
 
 async function generateSection(
-  apiKey: string,
+  engine: Engine,
   model: string,
   section: SectionDef,
   companyContext: string,
@@ -828,13 +811,13 @@ Search the web now and produce the JSON for this segment, tailored to THIS compa
 
   let parsed: GeneratedContent;
   try {
-    parsed = extractJson(await callClaude(apiKey, model, systemPrompt, userPrompt));
+    parsed = extractJson(await callAi(engine, model, systemPrompt, userPrompt));
   } catch (firstErr) {
     // A model turn that spends its whole token budget on web-search reasoning
     // and gets cut off before ever emitting JSON produces pure prose with no
     // "{" at all — retry once before failing the section outright.
     console.warn(`[gen] ${section.key}: first attempt failed (${firstErr instanceof Error ? firstErr.message : firstErr}), retrying once`);
-    parsed = extractJson(await callClaude(apiKey, model, systemPrompt, userPrompt));
+    parsed = extractJson(await callAi(engine, model, systemPrompt, userPrompt));
   }
   // Generated with the v2 prompts — stamp the envelope version if the model
   // omitted it, so the frontend routes it to the segment renderer.
@@ -848,7 +831,7 @@ const BATCH_SIZE = 3;
 
 async function runGeneration(
   supabase: SupabaseClient,
-  apiKey: string,
+  engine: Engine,
   userId: string,
   sectionKeys: string[],
   triggeredBy: string
@@ -900,7 +883,7 @@ async function runGeneration(
   const generateOne = async (section: SectionDef, extraContext: string): Promise<GeneratedContent | null> => {
     try {
       const content = await generateSection(
-        apiKey, model, section, companyContext + extraContext, today
+        engine, model, section, companyContext + extraContext, today
       );
       await supabase.from("intelligence_hub_reports").upsert(
         {
@@ -1002,10 +985,7 @@ Deno.serve(async (req: Request) => {
   const supabaseUrl     = Deno.env.get("SUPABASE_URL")!;
   const serviceKey      = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const anonKey         = Deno.env.get("SUPABASE_ANON_KEY")!;
-  const apiKey          = Deno.env.get("ANTHROPIC_API_KEY");
   const schedulerSecret = Deno.env.get("SCHEDULER_SECRET") ?? "";
-
-  if (!apiKey) return json({ error: "ANTHROPIC_API_KEY not configured" }, 500, headers);
 
   const hubSecret = req.headers.get("X-Hub-Secret") ?? "";
   const isServiceRole = schedulerSecret !== "" && hubSecret === schedulerSecret;
@@ -1025,6 +1005,7 @@ Deno.serve(async (req: Request) => {
     user_id?: string;
     sections?: string[];
     triggered_by: "onboarding" | "manual" | "schedule";
+    engine?: string;
   };
   try { body = await req.json(); }
   catch { return json({ error: "Invalid JSON body" }, 400, headers); }
@@ -1046,11 +1027,14 @@ Deno.serve(async (req: Request) => {
   if (triggeredBy === "manual") {
     const { data: chargeProfile } = await supabase
       .from("profiles")
-      .select("preferred_claude_model")
+      .select("preferred_claude_model, ai_engines")
       .eq("id", userId)
       .maybeSingle();
+    // The premium tier only exists on Claude — the model picker does not apply
+    // to the other engines, so they always charge the base rate.
+    const chargeEngine = resolveEngine("intel_hub", body.engine, chargeProfile?.ai_engines);
     const chargeModel = resolveModel(chargeProfile?.preferred_claude_model);
-    const perItem = chargeModel === DEFAULT_MODEL ? 2 : 4;
+    const perItem = (chargeEngine === "claude" && chargeModel !== DEFAULT_MODEL) ? 4 : 2;
     const cost = requestedSections.length * perItem;
 
     // Atomic deduction (single guarded UPDATE) — no read-then-write race.
@@ -1077,8 +1061,10 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  const engine = await engineForUser(supabase, userId!, "intel_hub", body.engine);
+
   const generationPromise = runGeneration(
-    supabase, apiKey, userId!, requestedSections, triggeredBy
+    supabase, engine, userId!, requestedSections, triggeredBy
   );
 
   // @ts-ignore — Supabase Edge Runtime global
@@ -1090,7 +1076,7 @@ Deno.serve(async (req: Request) => {
   }
 
   return json(
-    { status: "started", sections: requestedSections, triggered_by: triggeredBy },
+    { status: "started", sections: requestedSections, triggered_by: triggeredBy, engine },
     202, headers
   );
 });

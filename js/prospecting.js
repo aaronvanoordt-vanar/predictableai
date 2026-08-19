@@ -321,6 +321,7 @@
     '#prospecting-shell .pros-msgblock-title { font-family:var(--font-mono); font-size:10px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-4); }',
     '#prospecting-shell .pros-hint { font-size:11.5px; color:var(--text3); line-height:1.5; }',
     '#prospecting-shell .pros-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }',
+    '#prospecting-shell .pros-engine-row { margin:0 0 14px; }',
     // AI-generation buttons: blue gradient so they read as "powered by IA".
     '#prospecting-shell .btn-ai { background:linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%); color:#fff; border-color:transparent; box-shadow:0 1px 2px rgba(31,75,255,.25), 0 8px 20px -10px rgba(90,96,240,.6); }',
     '#prospecting-shell .btn-ai:hover { filter:brightness(1.07); box-shadow:0 1px 2px rgba(31,75,255,.3), 0 12px 28px -10px rgba(90,96,240,.78); }',
@@ -2078,6 +2079,7 @@
       '<div class="pros-actions" style="padding:12px 18px 0">' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="to-sequence"' + (n ? '' : ' disabled') + '>' + SVG_SEQ_TAB + ' Agregar a secuencia</button>' +
       '<button type="button" class="btn btn-ai btn-sm" data-action="to-outreach" data-credit-cost="outreach_message" data-credit-muted' + (n ? '' : ' disabled') + '>' + SVG_SPARK + ' Generar mensajes con IA</button>' +
+      '<span id="pros-engine-listas"></span>' +
       '</div>' +
       // Fila 2 — acciones sobre la lista.
       '<div class="pros-actions" style="padding:10px 18px 14px">' +
@@ -2105,6 +2107,7 @@
     }
     html += '</div>';
     host.innerHTML = html;
+    if (window.AIEngine) window.AIEngine.mount('#pros-engine-listas', 'outreach', { compact: true });
   }
 
   function updateListasToolbar() {
@@ -3316,16 +3319,24 @@
     var pane = state.panes.outreach;
     var briefHost = h('div', null);
     var playbookHost = h('div', null);
+    var engineHost = h('div', { class: 'pros-engine-row' });
     var senderHost = h('div', null);
     var listHost = h('div', null);
     pane.appendChild(briefHost);
     pane.appendChild(playbookHost);
+    pane.appendChild(engineHost);
     pane.appendChild(senderHost);
     pane.appendChild(listHost);
     state.wa.briefHost = briefHost;
     state.wa.playbookHost = playbookHost;
+    state.wa.engineHost = engineHost;
     state.wa.senderHost = senderHost;
     state.wa.listHost = listHost;
+    if (window.AIEngine) {
+      window.AIEngine.mount(engineHost, 'outreach', {
+        labelText: 'Motor de IA para los mensajes',
+      });
+    }
     pane.addEventListener('click', guarded(onWaClick));
     pane.addEventListener('change', guarded(onWaChange));
   }

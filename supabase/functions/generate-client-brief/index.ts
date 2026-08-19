@@ -14,12 +14,17 @@
  * Stores the result in client_brief (status pending → generating → ready|error).
  *
  * Auth: Bearer <user JWT> (verified via auth.getUser — see apollo-proxy notes)
- * POST body: {} (idempotent; regenerates the caller's brief)
+ * POST body: {} | { "engine": "claude"|"openai"|"perplexity" }
+ *            (idempotent; regenerates the caller's brief)
  * Response 202: { status: "started" }
- * Required secrets: ANTHROPIC_API_KEY
+ * Engine: user-selectable (Claude / OpenAI / Perplexity) under the
+ * "onboarding" feature — see supabase/functions/_shared/llm.ts.
+ * Required secrets: the API key of the chosen engine (ANTHROPIC_API_KEY,
+ * OPENAI_API_KEY or PERPLEXITY_API_KEY)
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -36,38 +41,18 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
   });
 }
 
-interface ContentItem { type: string; text?: string; }
-
-async function callClaude(apiKey: string, system: string, user: string): Promise<string> {
-  let lastErr = "";
-  for (let attempt = 0; attempt <= 2; attempt++) {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 4096,
-        system,
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 5 }],
-        messages: [{ role: "user", content: user }],
-      }),
-    });
-    if (res.status === 429 && attempt < 2) {
-      lastErr = await res.text();
-      await new Promise((r) => setTimeout(r, 8000));
-      continue;
-    }
-    if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-    const msg = await res.json();
-    const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
-    if (!blocks.length) throw new Error("No text in Claude response");
-    return blocks[blocks.length - 1].text ?? "";
-  }
-  throw new Error(`Anthropic 429 after retries: ${lastErr}`);
+async function callAi(engine: Engine, system: string, user: string): Promise<string> {
+  const res = await callLLM({
+    engine,
+    system,
+    user,
+    maxTokens: 4096,
+    webSearch: 5,
+    claudeWebSearchTool: "web_search_20260209",
+    retryDelayMs: 8000,
+    logPrefix: "[client-brief]",
+  });
+  return res.text;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -217,15 +202,17 @@ Deno.serve(async (req: Request) => {
   const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
   const ANON_KEY      = Deno.env.get("SUPABASE_ANON_KEY")!;
   const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!ANTHROPIC_KEY) return json({ error: "ANTHROPIC_API_KEY not set" }, 500, h);
-
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
   const { data: { user }, error: authErr } =
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+
+  // Optional per-request override; otherwise the user's saved preference.
+  let requestedEngine: string | undefined;
+  try { requestedEngine = (await req.json())?.engine; } catch { /* body is optional */ }
+  const engine = await engineForUser(supa, user.id, "onboarding", requestedEngine);
 
   const [{ data: intake }, { data: profile }, { data: icp }, { data: docs }, { data: hubReports }] = await Promise.all([
     supa.from("intel_hub_intake").select(`
@@ -254,8 +241,8 @@ Deno.serve(async (req: Request) => {
 
   const work = (async () => {
     try {
-      const raw = await callClaude(
-        ANTHROPIC_KEY,
+      const raw = await callAi(
+        engine,
         SYSTEM_PROMPT,
         buildUserPrompt(intake as IntakeRow | null, profile, icp, documentSummaries) + buildHubIntelBlock(hubReports),
       );

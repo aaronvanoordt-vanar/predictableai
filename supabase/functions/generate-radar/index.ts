@@ -35,7 +35,7 @@
  *          ~150000ms, while a 2-search call finished in ~47s.
  *
  *          AND the Anthropic call itself carries a hard deadline
- *          (CLAUDE_TIMEOUT_MS, AbortController): production showed even a
+ *          (LLM_TIMEOUT_MS, AbortController): production showed even a
  *          1-search call can occasionally hang past 150s on upstream
  *          latency, and when the runtime kills the isolate the row never
  *          updates and the client's drive loop dies with it. With our own
@@ -54,10 +54,19 @@
  * later run costs RADAR_RUN_COST platform credits (keep in sync with
  * js/credit-costs.js → radar_run), charged only once, on final success.
  *
- * Required secrets: ANTHROPIC_API_KEY, APOLLO_API_KEY
+ * Engine: user-selectable (Claude / OpenAI / Perplexity) under the "radar"
+ *          feature — see supabase/functions/_shared/llm.ts.
+ * Required secrets: APOLLO_API_KEY + the API key of the chosen engine
+ *          (ANTHROPIC_API_KEY, OPENAI_API_KEY or PERPLEXITY_API_KEY)
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  callLLM,
+  engineForUser,
+  LlmTimeoutError,
+  type Engine,
+} from "../_shared/llm.ts";
 
 // Keep in sync with js/credit-costs.js (radar_run).
 const RADAR_RUN_COST = 12;
@@ -86,67 +95,26 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
   });
 }
 
-interface ContentItem { type: string; text?: string; }
+const LLM_TIMEOUT_MS = 95_000;
 
-// Our own deadline on every Anthropic call, well under the Edge Runtime's
-// ~150s isolate kill. If upstream hangs, WE abort and return a clean
-// response instead of letting the runtime murder the invocation mid-flight
-// (which leaves the radar_runs row frozen and kills the client drive loop).
-const CLAUDE_TIMEOUT_MS = 95_000;
-
-class ClaudeTimeout extends Error {}
-
-async function callClaude(
-  apiKey: string,
+async function callAi(
+  engine: Engine,
   system: string,
   user: string,
   opts: { maxTokens: number; maxSearches: number },
 ): Promise<string> {
-  const deadline = Date.now() + CLAUDE_TIMEOUT_MS;
-  let lastErr = "";
-  for (let attempt = 0; attempt <= 1; attempt++) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 5_000) break; // no budget left for another attempt
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), remaining);
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        signal: ctrl.signal,
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: opts.maxTokens,
-          system,
-          tools: opts.maxSearches > 0
-            ? [{ type: "web_search_20260209", name: "web_search", max_uses: opts.maxSearches }]
-            : [],
-          messages: [{ role: "user", content: user }],
-        }),
-      });
-      if (res.status === 429 && attempt < 1) {
-        lastErr = await res.text();
-        await new Promise((r) => setTimeout(r, 3000));
-        continue;
-      }
-      if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-      const msg = await res.json();
-      const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
-      if (!blocks.length) throw new Error("No text in Claude response");
-      return blocks[blocks.length - 1].text ?? "";
-    } catch (e) {
-      if (ctrl.signal.aborted) throw new ClaudeTimeout(`Anthropic call exceeded ${CLAUDE_TIMEOUT_MS}ms`);
-      throw e;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  if (lastErr) throw new Error(`Anthropic 429 after retry: ${lastErr}`);
-  throw new ClaudeTimeout(`Anthropic call exceeded ${CLAUDE_TIMEOUT_MS}ms`);
+  const res = await callLLM({
+    engine,
+    system,
+    user,
+    maxTokens: opts.maxTokens,
+    webSearch: opts.maxSearches,
+    claudeWebSearchTool: "web_search_20260209",
+    timeoutMs: LLM_TIMEOUT_MS,
+    retries: 1,
+    logPrefix: "[radar]",
+  });
+  return res.text;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -448,14 +416,14 @@ interface RunRow {
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleStrategy(supa: any, run: RunRow, anthropicKey: string, h: Record<string, string>) {
+async function handleStrategy(supa: any, run: RunRow, engine: Engine, h: Record<string, string>) {
   try {
     const sellerContext = await loadSellerContext(supa, run.user_id);
     const customPrompt = asStr(run.custom_prompt).trim();
     const prompt = customPrompt
       ? `${sellerContext}\n\n=== USER'S CUSTOM SIGNAL PROMPT (ground truth for the signal) ===\n${customPrompt}`
       : sellerContext;
-    const raw = await callClaude(anthropicKey, STRATEGY_SYSTEM, prompt, { maxTokens: 2200, maxSearches: 2 });
+    const raw = await callAi(engine, STRATEGY_SYSTEM, prompt, { maxTokens: 2200, maxSearches: 2 });
     const strategy = parseJson(raw);
     const hypothesis = asStr(strategy.signal_hypothesis).trim();
     if (!hypothesis) throw new Error("La IA no pudo definir una señal de compra a partir de tu contexto.");
@@ -472,7 +440,7 @@ async function handleStrategy(supa: any, run: RunRow, anthropicKey: string, h: R
     }).eq("id", run.id);
     return json({ status: "ok", run_id: run.id, next_stage: "research" }, 200, h);
   } catch (err) {
-    if (err instanceof ClaudeTimeout) {
+    if (err instanceof LlmTimeoutError) {
       return await fail(supa, run.id, new Error("La definición de la señal tardó demasiado. Vuelve a intentar la investigación."), h);
     }
     return await fail(supa, run.id, err, h);
@@ -480,7 +448,7 @@ async function handleStrategy(supa: any, run: RunRow, anthropicKey: string, h: R
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleResearch(supa: any, run: RunRow, anthropicKey: string, offset: number, h: Record<string, string>) {
+async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: number, h: Record<string, string>) {
   try {
     const strategy = run.signal_strategy || {};
     // deno-lint-ignore no-explicit-any
@@ -527,14 +495,14 @@ async function handleResearch(supa: any, run: RunRow, anthropicKey: string, offs
     let skipNote = "";
     const t0 = Date.now();
     try {
-      const raw = await callClaude(anthropicKey, RESEARCH_SYSTEM, researchPrompt, { maxTokens: 2000, maxSearches: 1 });
+      const raw = await callAi(engine, RESEARCH_SYSTEM, researchPrompt, { maxTokens: 2000, maxSearches: 1 });
       try {
         research = parseJson(raw);
       } catch (_pe) {
         skipNote = "Una búsqueda devolvió una respuesta ilegible y se omitió — continuando…";
       }
     } catch (e) {
-      if (!(e instanceof ClaudeTimeout)) throw e;
+      if (!(e instanceof LlmTimeoutError)) throw e;
       skipNote = "Una búsqueda tardó demasiado y se omitió — continuando…";
     }
     console.log(`[radar] research q${idx + 1}/${items.length} run=${run.id} ${Date.now() - t0}ms ${skipNote ? "SKIPPED" : "ok"}`);
@@ -702,10 +670,8 @@ Deno.serve(async (req: Request) => {
   const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
   const ANON_KEY      = Deno.env.get("SUPABASE_ANON_KEY")!;
   const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
   const APOLLO_KEY    = (Deno.env.get("APOLLO_API_KEY") ?? "").trim();
 
-  if (!ANTHROPIC_KEY) return json({ error: "ANTHROPIC_API_KEY not set" }, 500, h);
   if (!APOLLO_KEY) return json({ error: "APOLLO_API_KEY not set" }, 500, h);
 
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
@@ -713,10 +679,11 @@ Deno.serve(async (req: Request) => {
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
 
-  let body: { run_id?: unknown; stage?: unknown; custom_prompt?: unknown; offset?: unknown };
+  let body: { run_id?: unknown; stage?: unknown; custom_prompt?: unknown; offset?: unknown; engine?: unknown };
   try { body = await req.json(); } catch { body = {}; }
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+  const engine = await engineForUser(supa, user.id, "radar", body.engine);
 
   const runId = asStr(body.run_id).trim();
   const stage = asStr(body.stage).trim();
@@ -735,8 +702,8 @@ Deno.serve(async (req: Request) => {
     return json({ status: run.status, run_id: run.id }, 200, h);
   }
 
-  if (stage === "strategy") return await handleStrategy(supa, run, ANTHROPIC_KEY, h);
-  if (stage === "research") return await handleResearch(supa, run, ANTHROPIC_KEY, Number(body.offset) || 0, h);
+  if (stage === "strategy") return await handleStrategy(supa, run, engine, h);
+  if (stage === "research") return await handleResearch(supa, run, engine, Number(body.offset) || 0, h);
   if (stage === "decision_makers") return await handleDecisionMakers(supa, run, APOLLO_KEY, Number(body.offset) || 0, h);
   return json({ error: "stage inválido" }, 400, h);
 });
