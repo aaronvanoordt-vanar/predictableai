@@ -18,6 +18,7 @@
     return window.AIEngine ? window.AIEngine.get('onboarding') : undefined;
   }
   const SVG_SPARK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18 9.5l-4.2 1.8L12 16l-1.8-4.7L6 9.5l4.2-1.8z"/><path d="M18.5 14l.9 2.3 2.1.9-2.1.9-.9 2.3-.9-2.3-2.1-.9 2.1-.9z"/></svg>';
+  const SVG_CHEVRON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
   const CADENCES = [
     { key: 'daily',   label: 'Hoy',         hint: 'Se actualiza a diario' },
     { key: 'weekly',  label: 'Esta semana', hint: 'Se actualiza cada semana' },
@@ -568,6 +569,22 @@
     if (noteEl) noteEl.textContent = `${stepText} — esta página se actualiza sola cuando termine.`;
     syncProgress(intake, running);
   }
+  // Acordeón de las 7 tarjetas: solo una abierta a la vez. Se manipula el DOM
+  // directamente (sin re-render) para no perder ediciones sin guardar en otras
+  // tarjetas.
+  function setOpenSection(key) {
+    STATE.researchOpenSection = key;
+    const shell = document.getElementById('ih-research-shell');
+    if (!shell) return;
+    shell.querySelectorAll('.ihx-context-card').forEach(card => {
+      const isOpen = card.dataset.researchSection === key;
+      card.classList.toggle('is-open', isOpen);
+      const toggle = card.querySelector('.ihx-context-card-toggle');
+      if (toggle) toggle.setAttribute('aria-expanded', String(isOpen));
+      const body = card.querySelector('.ihx-context-card-body');
+      if (body) body.hidden = !isOpen;
+    });
+  }
   // Punto de entrada único para los cambios que llegan por realtime: parchea si
   // la estructura no cambió, re-renderiza solo cuando hace falta.
   function refreshResearchView() {
@@ -604,15 +621,17 @@
       const section = RESEARCH_SECTIONS.find(s => s.key === key);
       const sectionState = researchSectionState(key, intake, brief);
       const status = researchStatusLabel(key, intake, brief, isRunning);
+      const isOpen = STATE.researchOpenSection === key;
       return `
-        <section class="ihx-context-card ${sectionState.complete ? 'is-complete' : 'is-pending'}" data-research-section="${key}">
-          <div class="ihx-context-card-toggle">
+        <section class="ihx-context-card ${sectionState.complete ? 'is-complete' : 'is-pending'} ${isOpen ? 'is-open' : ''}" data-research-section="${key}">
+          <button type="button" class="ihx-context-card-toggle" data-toggle-section="${key}" aria-expanded="${isOpen}" aria-controls="ihx-card-body-${key}">
             <span class="ihx-context-card-num">${section.number}</span>
             <span class="ihx-context-card-title">${escapeHtml(section.title)}</span>
+            <span class="ihx-context-card-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
             <span class="ihx-context-card-status">${sectionState.complete ? '✓ ' : ''}${escapeHtml(status)}</span>
             <span class="ihx-context-card-summary">${escapeHtml(sectionState.summary)}</span>
-          </div>
-          <div class="ihx-context-card-body">`;
+          </button>
+          <div class="ihx-context-card-body" id="ihx-card-body-${key}" ${isOpen ? '' : 'hidden'}>`;
     };
     const sectionCardEnd = (key, canGenerate = true, canSave = true) => `
             <div class="ihx-card-actions">
@@ -832,6 +851,12 @@
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation();
         runContextAI(btn.dataset.generateResearch);
+      });
+    });
+    el.querySelectorAll('[data-toggle-section]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.toggleSection;
+        setOpenSection(STATE.researchOpenSection === key ? null : key);
       });
     });
     const retryBriefBtn = document.getElementById('ihx-retry-brief');
@@ -3129,39 +3154,42 @@ function finBoltSvg() {
 .ihx-context-progress-pct { color: var(--accent, #1F4BFF); font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .ihx-context-progress-track { grid-column: 1 / -1; height: 8px; overflow: hidden; background: rgba(31,75,255,.11); border-radius: 999px; }
 .ihx-context-progress-track > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #1F4BFF, #6E5CF5); transition: width .35s ease; }
-.ihx-context-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: start; }
+.ihx-context-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
 .ihx-context-card {
-  min-width: 0; aspect-ratio: 1 / 1; display: flex; flex-direction: column; overflow: hidden;
+  min-width: 0; display: flex; flex-direction: column; overflow: hidden;
   background: var(--surface, #FFFFFF); border: 1px solid var(--hair, rgba(10,10,15,0.09)); border-radius: 14px;
   box-shadow: 0 8px 28px -24px rgba(18,32,73,.55);
   transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
 }
 .ihx-context-card:hover { transform: translateY(-2px); border-color: rgba(31,75,255,.28); box-shadow: 0 14px 30px -22px rgba(31,75,255,.45); }
 .ihx-context-card.is-complete { border-color: rgba(14,169,104,.28); }
+.ihx-context-card.is-open { grid-column: 1 / -1; border-color: rgba(31,75,255,.35); }
+.ihx-context-card.is-open:hover { transform: none; }
 .ihx-context-card-toggle {
-  position: relative; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto auto;
-  gap: 7px 9px; width: 100%; padding: 16px 17px 12px;
+  position: relative; display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: auto auto auto;
+  align-items: center; gap: 7px 10px; width: 100%; padding: 16px 17px; cursor: pointer;
   border: 0; background: transparent; color: inherit; text-align: left; font: inherit;
 }
+.ihx-context-card-toggle:focus-visible { outline: 2px solid var(--accent, #1F4BFF); outline-offset: -2px; }
 .ihx-context-card-num { color: var(--accent, #1F4BFF); font-size: 11px; font-weight: 800; letter-spacing: .08em; }
 .ihx-context-card-title { color: var(--ink, #16181D); font-size: 14px; font-weight: 750; line-height: 1.25; }
+.ihx-context-card-chevron { grid-row: 1; justify-self: end; color: var(--ink-4, #8A909C); transition: transform .18s ease; }
+.ihx-context-card.is-open .ihx-context-card-chevron { transform: rotate(180deg); }
 .ihx-context-card-status { grid-column: 1 / -1; color: var(--ink-4, #8A909C); font-size: 10px; font-weight: 700; }
 .ihx-context-card.is-complete .ihx-context-card-status { color: var(--green, #0EA968); }
 .ihx-context-card-summary {
   grid-column: 1 / -1; display: -webkit-box; overflow: hidden;
-  color: var(--ink-3, #5A6272); font-size: 10.5px; line-height: 1.4;
+  color: var(--ink-3, #5A6272); font-size: 11px; line-height: 1.4;
   -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
-.ihx-context-card-body { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow-y: auto; padding: 12px 17px 16px; border-top: 1px solid var(--hair, rgba(10,10,15,.07)); scrollbar-width: thin; }
-.ihx-context-card-body .ihx-field { margin-bottom: 11px; }
-.ihx-context-card-body .ihx-field > span { margin-bottom: 5px; font-size: 9px; }
-.ihx-context-card-body .ihx-field-help { margin: 0 0 10px; font-size: 10px; line-height: 1.45; }
-.ihx-context-card-body .ihx-field-row { grid-template-columns: 1fr; gap: 6px; }
-.ihx-context-card-body input, .ihx-context-card-body textarea { padding: 7px 9px; font-size: 11.5px; }
-.ihx-context-card-body textarea { min-height: 56px; max-height: 82px; }
-.ihx-card-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
-.ihx-card-ai { align-self: auto; margin-top: 0; padding: 7px 10px; font-size: 10px; }
-.ihx-card-save { padding: 7px 10px; font-size: 10px; flex-shrink: 0; }
+.ihx-context-card.is-open .ihx-context-card-summary { display: none; }
+.ihx-context-card-body { display: flex; flex-direction: column; padding: 2px 17px 18px; border-top: 1px solid var(--hair, rgba(10,10,15,.07)); }
+.ihx-context-card-body[hidden] { display: none; }
+.ihx-context-card-body .ihx-field { margin-top: 14px; margin-bottom: 0; }
+.ihx-context-card-body .ihx-field-help { margin: 14px 0 10px; }
+.ihx-context-card-body input, .ihx-context-card-body textarea { font-size: 13.5px; }
+.ihx-context-card-body textarea { min-height: 90px; resize: vertical; }
+.ihx-card-actions { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
 .ihx-summary-panel { display: grid; gap: 7px; padding: 12px; background: var(--surface2, #F6F7F9); border-radius: 10px; }
 .ihx-summary-label { color: var(--accent, #1F4BFF); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .ihx-summary-panel strong { color: var(--ink, #16181D); font-size: 12px; }
@@ -3179,7 +3207,6 @@ function finBoltSvg() {
   .ihx-context-progress { grid-template-columns: 1fr; padding: 16px; }
   .ihx-context-progress-action { justify-content: space-between; }
   .ihx-context-progress-track { grid-column: 1; }
-  .ihx-context-card { aspect-ratio: auto; min-height: 420px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .ihx-context-card, .ihx-context-progress-track > span { transition: none; }
