@@ -59,10 +59,14 @@
  * Auth: Bearer <user JWT>
  * POST body: { "linkedin_url": "https://linkedin.com/company/acme" }
  *         or: { "website_url": "https://company.com" }
- * Required secrets: ANTHROPIC_API_KEY
+ * Engine: user-selectable (Claude / OpenAI / Perplexity) under the
+ * "onboarding" feature — see supabase/functions/_shared/llm.ts.
+ * Required secrets: the API key of the chosen engine (ANTHROPIC_API_KEY,
+ * OPENAI_API_KEY or PERPLEXITY_API_KEY).
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -79,8 +83,6 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
   });
 }
 
-interface ContentItem { type: string; text?: string; }
-
 interface CallOpts {
   /** Hard cap on web_search rounds. This is the single biggest latency lever
    *  in this function: without it a step can search a dozen times. */
@@ -89,40 +91,22 @@ interface CallOpts {
   maxTokens: number;
 }
 
-async function callClaude(apiKey: string, system: string, user: string, opts: CallOpts): Promise<string> {
-  let lastErr = "";
-  for (let attempt = 0; attempt <= 2; attempt++) {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: opts.maxTokens,
-        system,
-        // Dynamic filtering (web_search_20260209) trims search results before
-        // they enter the context window — fewer tokens to read back, so the
-        // step finishes sooner without losing grounding. No beta header needed.
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: opts.maxUses }],
-        output_config: { effort: "medium" },
-        messages: [{ role: "user", content: user }],
-      }),
-    });
-    if (res.status === 429 && attempt < 2) {
-      lastErr = await res.text();
-      await new Promise((r) => setTimeout(r, 5000));
-      continue;
-    }
-    if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-    const msg = await res.json();
-    const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
-    if (!blocks.length) throw new Error("No text in Claude response");
-    return blocks[blocks.length - 1].text ?? "";
-  }
-  throw new Error(`Anthropic 429 after retries: ${lastErr}`);
+async function callAi(engine: Engine, system: string, user: string, opts: CallOpts): Promise<string> {
+  const res = await callLLM({
+    engine,
+    system,
+    user,
+    maxTokens: opts.maxTokens,
+    webSearch: opts.maxUses,
+    // Dynamic filtering (web_search_20260209) trims search results before
+    // they enter the context window — fewer tokens to read back, so the
+    // step finishes sooner without losing grounding. No beta header needed.
+    claudeWebSearchTool: "web_search_20260209",
+    claudeEffort: "medium",
+    retryDelayMs: 5000,
+    logPrefix: "[enrich]",
+  });
+  return res.text;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -157,7 +141,7 @@ interface LinkedInFindings {
   about: string;
 }
 
-async function researchLinkedIn(apiKey: string, linkedinUrl: string): Promise<LinkedInFindings> {
+async function researchLinkedIn(engine: Engine, linkedinUrl: string): Promise<LinkedInFindings> {
   const system = `You are a company research agent. Open this EXACT LinkedIn company page URL and read its own content (About section, headline, website link on the page) — do not run a generic search for the company name and grab whatever ranks first.
 Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
@@ -170,7 +154,7 @@ Respond ONLY with valid JSON, no markdown fences, no explanation:
 ${IDENTITY_GUARDRAIL}
 - Your only source is THIS LinkedIn page. If you cannot confirm a fact belongs to this exact page, leave that field empty rather than guessing from a different company.`;
   const prompt = `Open this exact LinkedIn company page and extract industry, employee count, country, website URL, and about section — all must come from this page's own content, not from a different company that happens to share a name:\n${linkedinUrl}`;
-  const p = parseJson(await callClaude(apiKey, system, prompt, { maxUses: 3, maxTokens: 1024 }));
+  const p = parseJson(await callAi(engine, system, prompt, { maxUses: 3, maxTokens: 1024 }));
   return {
     industry: str(p.industry),
     employee_count: str(p.employee_count),
@@ -196,7 +180,7 @@ interface WebsiteProfile {
   country: string;
 }
 
-async function researchWebsiteProfile(apiKey: string, website: string, fallbackAbout: string): Promise<WebsiteProfile> {
+async function researchWebsiteProfile(engine: Engine, website: string, fallbackAbout: string): Promise<WebsiteProfile> {
   const system = `You are a company research agent. Your ONLY source is the exact website URL given below — read that site's own pages (home, about, product/solutions) directly. Do NOT run a generic search for the company's name and pull in whatever ranks first: using an unrelated same-named company's data instead of the actual site's content is the single most common failure mode here.
 Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
@@ -210,7 +194,7 @@ ${IDENTITY_GUARDRAIL}
 - If the site is a JS-rendered app or otherwise not directly crawlable, you still have the domain name, brand name, page title, meta description, and search-engine snippets scoped to this domain — use those for a reasonable best guess rather than reporting a failure.`;
   const hostname = siteScope(website);
   const prompt = `Visit this exact company website (search with a site-scoped query like site:${hostname} if you need to, but every fact must trace back to this domain) and extract solutions, about, industry, employee count and country:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}`;
-  const p = parseJson(await callClaude(apiKey, system, prompt, { maxUses: 3, maxTokens: 1024 }));
+  const p = parseJson(await callAi(engine, system, prompt, { maxUses: 3, maxTokens: 1024 }));
   return {
     solutions: str(p.solutions),
     about: str(p.about),
@@ -220,7 +204,7 @@ ${IDENTITY_GUARDRAIL}
   };
 }
 
-async function researchWebsitePains(apiKey: string, website: string, fallbackAbout: string): Promise<string> {
+async function researchWebsitePains(engine: Engine, website: string, fallbackAbout: string): Promise<string> {
   const system = `You are a B2B go-to-market analyst. Your ONLY source is the exact website URL given below — read its own messaging (headlines, value proposition, case studies, solution pages). Do NOT pull in an unrelated company that happens to share the name.
 Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
@@ -230,7 +214,7 @@ ${IDENTITY_GUARDRAIL}
 - Write the pain points from the target CUSTOMER's point of view (what hurts them today), not as a description of the company's product.`;
   const hostname = siteScope(website);
   const prompt = `Visit this exact company website (a site-scoped query like site:${hostname} is fine, but every fact must trace back to this domain) and infer the pain points of the customer it sells to:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}`;
-  const p = parseJson(await callClaude(apiKey, system, prompt, { maxUses: 2, maxTokens: 700 }));
+  const p = parseJson(await callAi(engine, system, prompt, { maxUses: 2, maxTokens: 700 }));
   return str(p.pain_points);
 }
 
@@ -244,9 +228,6 @@ Deno.serve(async (req: Request) => {
   const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
   const ANON_KEY      = Deno.env.get("SUPABASE_ANON_KEY")!;
   const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-
-  if (!ANTHROPIC_KEY) return json({ error: "ANTHROPIC_API_KEY not set" }, 500, h);
 
   // Auth: user JWT
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
@@ -254,13 +235,14 @@ Deno.serve(async (req: Request) => {
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
 
-  let body: { linkedin_url?: string; website_url?: string };
+  let body: { linkedin_url?: string; website_url?: string; engine?: string };
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400, h); }
   if (!body.linkedin_url && !body.website_url) {
     return json({ error: "linkedin_url or website_url required" }, 400, h);
   }
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+  const engine = await engineForUser(supa, user.id, "onboarding", body.engine);
 
   // Every step commits its own fields the moment it resolves. The client is
   // subscribed to this row via realtime, so each patch lands as a card filling
@@ -315,7 +297,7 @@ Deno.serve(async (req: Request) => {
     knownAbout: string,
     opts: { fillGapsOnly: boolean; gaps: { industry: string; employeeCount: string; country: string } },
   ) {
-    const profileTask = researchWebsiteProfile(ANTHROPIC_KEY!, website, knownAbout)
+    const profileTask = researchWebsiteProfile(engine, website, knownAbout)
       .then(async (site) => {
         // deno-lint-ignore no-explicit-any
         const fields: Record<string, any> = {};
@@ -334,7 +316,7 @@ Deno.serve(async (req: Request) => {
       })
       .catch((e) => { console.warn("[enrich] website profile step failed:", e); });
 
-    const painsTask = researchWebsitePains(ANTHROPIC_KEY!, website, knownAbout)
+    const painsTask = researchWebsitePains(engine, website, knownAbout)
       .then(async (pains) => {
         if (!pains) return;
         await patch({ icp_pain_points: pains }, 90, "Pain points del cliente ideal listos…");
@@ -370,7 +352,7 @@ Deno.serve(async (req: Request) => {
 
     work = (async () => {
       try {
-        const li = await researchLinkedIn(ANTHROPIC_KEY, body.linkedin_url!);
+        const li = await researchLinkedIn(engine, body.linkedin_url!);
 
         // Commit what LinkedIn found right away: industria, tamaño, país,
         // contexto y web quedan visibles en pantalla mientras sigue el resto.

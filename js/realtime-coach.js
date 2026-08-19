@@ -287,13 +287,40 @@
     if (utteranceBuffer.length >= trigger && !coachInFlight) runCoaching();
   }
 
-  // ─── COACHING via WORKER /openai ───────────────────────────
+  // ─── COACHING ──────────────────────────────────────────────
+  //
+  // Motor elegido por el usuario para el AI Sales Coach (OpenAI recomendado).
+  // Con OpenAI seguimos usando el worker, que es la ruta de menor latencia y
+  // ya está desplegada; con Claude o Perplexity el turno se resuelve en el
+  // edge function sales-coach, que sí sabe hablar con los tres motores.
+  function coachEngine() {
+    return (global.AIEngine && global.AIEngine.get('coach')) || 'openai';
+  }
+
   async function runCoaching() {
     if (coachInFlight) return;
     coachInFlight = true;
     showThinking();
 
     const context = recentTranscript.slice(-15).join('\n');
+
+    if (coachEngine() !== 'openai') {
+      try {
+        const parsed = await global.api.coachTurn({
+          meeting_id: currentMeetingId,
+          transcript: context,
+        });
+        hideThinking();
+        renderCoachOutput(parsed || {});
+        enqueueEventForBackend(parsed || {});
+        utteranceBuffer = [];
+      } catch (e) {
+        console.error('Coaching error', e);
+        hideThinking();
+      } finally { coachInFlight = false; }
+      return;
+    }
+
     const systemPrompt = [
       'Eres el coach de ventas de Predictable.ai en vivo durante una llamada B2B.',
       'La conversación tiene 2 hablantes: "Lead" y "SDR".',

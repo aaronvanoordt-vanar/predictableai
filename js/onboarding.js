@@ -279,7 +279,10 @@
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ' + session.access_token,
         },
-        body: JSON.stringify(isLinkedin ? { linkedin_url: url } : { website_url: url }),
+        body: JSON.stringify(Object.assign(
+          isLinkedin ? { linkedin_url: url } : { website_url: url },
+          { engine: window.AIEngine && window.AIEngine.get('onboarding') },
+        )),
       }).catch(e => console.warn('[onboarding] enrich-company:', e));
     } catch (e) {
       console.warn('[onboarding] enrich trigger failed:', e);
@@ -297,7 +300,7 @@
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ' + session.access_token,
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ engine: window.AIEngine && window.AIEngine.get('radar') }),
       });
     } catch (e) {
       console.warn('[onboarding] generate-radar:', e);

@@ -8,12 +8,18 @@
  * research prompt as extra context — it never overwrites intel_hub_intake
  * or client_brief fields directly.
  *
+ * Engine: user-selectable (Claude / OpenAI / Perplexity) under the
+ * "onboarding" feature — see supabase/functions/_shared/llm.ts. Perplexity
+ * cannot read PDFs, so a user who picked it for onboarding gets the document
+ * summarized by Claude instead.
+ *
  * Auth: Bearer <user JWT>
- * POST body: { "document_id": "<uuid>" }
- * Required secrets: ANTHROPIC_API_KEY
+ * POST body: { "document_id": "<uuid>", "engine": "claude"|"openai"|"perplexity" }
+ * Required secrets: ANTHROPIC_API_KEY (plus OPENAI_API_KEY when OpenAI is chosen)
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -30,7 +36,6 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
   });
 }
 
-interface ContentItem { type: string; text?: string; }
 
 function toBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -55,32 +60,23 @@ Hard rules:
 - If a section has nothing in the document, write "No mencionado en el documento" for that section instead of guessing.
 - Keep it to 150-300 words total, plain text (no markdown headers, no JSON).`;
 
-async function summarizeDocument(apiKey: string, base64: string, fileName: string): Promise<string> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1536,
-      system: SYSTEM_PROMPT,
-      messages: [{
-        role: "user",
-        content: [
-          { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
-          { type: "text", text: `Documento: ${fileName}. Resume este documento siguiendo las instrucciones del sistema.` },
-        ],
-      }],
-    }),
+async function summarizeDocument(
+  engine: Engine,
+  base64: string,
+  fileName: string,
+): Promise<{ summary: string; engine: Engine }> {
+  // callLLM falls back to Claude on its own when the chosen engine cannot read
+  // PDFs (Perplexity) or has no key configured, and reports what actually ran.
+  const res = await callLLM({
+    engine,
+    system: SYSTEM_PROMPT,
+    user: `Documento: ${fileName}. Resume este documento siguiendo las instrucciones del sistema.`,
+    maxTokens: 1536,
+    documents: [{ name: fileName, base64 }],
+    retries: 1,
+    logPrefix: "[analyze-doc]",
   });
-  if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-  const msg = await res.json();
-  const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
-  if (!blocks.length) throw new Error("No text in Claude response");
-  return (blocks[blocks.length - 1].text ?? "").trim();
+  return { summary: res.text.trim(), engine: res.engine };
 }
 
 Deno.serve(async (req: Request) => {
@@ -91,19 +87,18 @@ Deno.serve(async (req: Request) => {
   const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
   const ANON_KEY      = Deno.env.get("SUPABASE_ANON_KEY")!;
   const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!ANTHROPIC_KEY) return json({ error: "ANTHROPIC_API_KEY not set" }, 500, h);
 
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
   const { data: { user }, error: authErr } =
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
 
-  let body: { document_id?: string };
+  let body: { document_id?: string; engine?: string };
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400, h); }
   if (!body.document_id) return json({ error: "document_id required" }, 400, h);
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+  const engine = await engineForUser(supa, user.id, "onboarding", body.engine);
 
   const { data: doc, error: docErr } = await supa.from("company_documents")
     .select("id, user_id, file_name, storage_path")
@@ -118,13 +113,13 @@ Deno.serve(async (req: Request) => {
       if (dlErr || !file) throw new Error(dlErr?.message || "download failed");
       const bytes = new Uint8Array(await file.arrayBuffer());
       const base64 = toBase64(bytes);
-      const summary = await summarizeDocument(ANTHROPIC_KEY, base64, doc.file_name);
+      const { summary, engine: engineUsed } = await summarizeDocument(engine, base64, doc.file_name);
       await supa.from("company_documents").update({
         status: "done",
         summary,
         error_message: null,
       }).eq("id", doc.id);
-      console.log(`[analyze-doc] ✓ ${doc.id}`);
+      console.log(`[analyze-doc] ✓ ${doc.id} (${engineUsed})`);
     } catch (err) {
       console.error("[analyze-doc] error:", err);
       await supa.from("company_documents").update({
@@ -142,5 +137,5 @@ Deno.serve(async (req: Request) => {
     await work;
   }
 
-  return json({ status: "started" }, 202, h);
+  return json({ status: "started", engine }, 202, h);
 });

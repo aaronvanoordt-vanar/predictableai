@@ -2903,6 +2903,8 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         </button>
       </div>
 
+      <div data-ai-engine="coach" style="margin:-20px 0 28px"></div>
+
       <!-- Features -->
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
         <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
@@ -3265,6 +3267,68 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       </div>
     </div>
 
+    <!-- ===== MOTORES DE IA (por función) ===== -->
+    <div class="settings-card">
+      <div class="settings-card-header">
+        <div class="icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5">
+            <path d="M8 1.6l1.5 3.4 3.4 1.5-3.4 1.5L8 11.4 6.5 8 3.1 6.5 6.5 5z"/>
+            <path d="M12.6 10.4l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"/>
+          </svg>
+        </div>
+        <div class="settings-card-title">Motores de IA</div>
+      </div>
+      <div class="settings-card-sub">Elige qué motor genera cada cosa. Marcamos el recomendado para cada función: Perplexity donde manda la investigación con fuentes, Claude donde manda la redacción, OpenAI para el coach. Puedes cambiarlo aquí o desde cada sección — es la misma preferencia.</div>
+
+      <div class="settings-row">
+        <div class="settings-row-label">Intelligence Hub</div>
+        <div class="settings-row-value">
+          <div data-ai-engine="intel_hub" data-ai-engine-compact data-ai-engine-nolabel></div>
+          <div class="settings-row-hint">Reportes de inteligencia de mercado, competencia y señales.</div>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-label">CODA AI</div>
+        <div class="settings-row-value">
+          <div data-ai-engine="coda" data-ai-engine-compact data-ai-engine-nolabel></div>
+          <div class="settings-row-hint">Análisis PESTEL y conversión FODA → CAME.</div>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-label">Generación de mensajes</div>
+        <div class="settings-row-value">
+          <div data-ai-engine="outreach" data-ai-engine-compact data-ai-engine-nolabel></div>
+          <div class="settings-row-hint">Mensajes de WhatsApp, LinkedIn y email en Prospección.</div>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-label">AI Sales Coach</div>
+        <div class="settings-row-value">
+          <div data-ai-engine="coach" data-ai-engine-compact data-ai-engine-nolabel></div>
+          <div class="settings-row-hint">Coaching en vivo durante la llamada y el reporte final de la reunión.</div>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-label">Onboarding y contexto</div>
+        <div class="settings-row-value">
+          <div data-ai-engine="onboarding" data-ai-engine-compact data-ai-engine-nolabel></div>
+          <div class="settings-row-hint">Investigación de tu empresa, brief de cliente y lectura de documentos PDF.</div>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-label">Radar de señales</div>
+        <div class="settings-row-value">
+          <div data-ai-engine="radar" data-ai-engine-compact data-ai-engine-nolabel></div>
+          <div class="settings-row-hint">Detección de empresas con señal de compra y sus decision makers.</div>
+        </div>
+      </div>
+    </div>
+
     <!-- ===== INTELIGENCIA (modelo de Claude) ===== -->
     <div class="settings-card">
       <div class="settings-card-header">
@@ -3273,9 +3337,9 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
             <path d="M8 1.5l1.6 3.6 3.9.5-2.9 2.7.8 3.9L8 10.3l-3.4 1.9.8-3.9-2.9-2.7 3.9-.5z"/>
           </svg>
         </div>
-        <div class="settings-card-title">Intelligence Hub</div>
+        <div class="settings-card-title">Modelo de Claude</div>
       </div>
-      <div class="settings-card-sub">Elegí qué modelo de Claude genera tus reportes de inteligencia. Por defecto usamos el modelo más económico para cuidar tus créditos.</div>
+      <div class="settings-card-sub">Si eliges Claude como motor del Intelligence Hub, aquí decides qué modelo de Claude lo genera. Por defecto usamos el modelo más económico para cuidar tus créditos. Con OpenAI o Perplexity esta opción no aplica.</div>
 
       <div class="settings-row">
         <div class="settings-row-label">Modelo de generación</div>
@@ -3287,7 +3351,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
             <option value="claude-sonnet-5">Claude Sonnet 5 — alta calidad</option>
             <option value="claude-opus-4-8">Claude Opus 4.8 — máxima calidad</option>
           </select>
-          <div class="settings-row-hint">Aplica solo a la generación del Intelligence Hub. Modelos más avanzados consumen más créditos.</div>
+          <div class="settings-row-hint">Aplica solo al Intelligence Hub cuando su motor es Claude. Modelos más avanzados consumen más créditos.</div>
         </div>
       </div>
 
@@ -3405,6 +3469,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/auth-guard.js"></script>
 <!-- ═════ Predictable JS modules ═════ -->
 <script src="js/ui-helpers.js"></script>
+<script src="js/ai-engine.js"></script>
 <script src="js/credit-costs.js"></script>
 <script src="js/credits.js"></script>
 <script src="js/skeletons.js"></script>

@@ -98,5 +98,9 @@
     // Objeciones agregadas (el backend decide el alcance según rol:
     // SDR = propias, admin/director = todo el equipo)
     getObjectionsReport: (p) => call("getObjectionsReport", p || {}),
+
+    // Un turno de coaching en vivo resuelto en el backend, para cuando el
+    // motor de IA elegido no es OpenAI (el worker solo habla con OpenAI).
+    coachTurn: (p) => call("coachTurn", p || {}),
   };
 })(window);

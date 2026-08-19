@@ -20,6 +20,10 @@
  * renders. FODA inputs are never re-rendered from realtime (that would clobber
  * what the user is typing) — only the PESTEL and CAME OUTPUT regions refresh.
  *
+ * Motor de IA: seleccionable por el usuario (Claude / OpenAI / Perplexity) bajo
+ * la función "coda" — Perplexity es el recomendado porque el PESTEL se apoya en
+ * investigación web. Ver js/ai-engine.js.
+ *
  * Security: all AI/DB/user text is escaped via escHtml before hitting innerHTML.
  */
 (function () {
@@ -119,7 +123,10 @@
     const res = await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/generate-coda', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-      body: JSON.stringify(Object.assign({ action }, extra || {})),
+      body: JSON.stringify(Object.assign(
+        { action, engine: window.AIEngine && window.AIEngine.get('coda') },
+        extra || {},
+      )),
     });
     if (!res.ok) {
       let detail = res.status + '';
@@ -246,6 +253,7 @@
     host.innerHTML = `
       <div class="coda-actionbar">
         <button class="coda-btn coda-btn-primary" id="coda-btn-pestel" ${generating ? 'disabled' : ''}>${btnLabel}</button>
+        <span id="coda-engine-pestel"></span>
         ${meta}
         <span class="coda-hint">La IA investiga tu mercado real y traduce cada factor a impacto de ventas.</span>
       </div>
@@ -253,6 +261,7 @@
       <div class="coda-dim-grid">${cards}</div>`;
     const btn = document.getElementById('coda-btn-pestel');
     if (btn) btn.addEventListener('click', generatePestel);
+    if (window.AIEngine) window.AIEngine.mount('#coda-engine-pestel', 'coda', { compact: true });
   }
 
   // ─── RENDER: CAME OUTPUT ─────────────────────────────────────
@@ -367,6 +376,7 @@
           <div class="coda-actionbar coda-actionbar-center">
             <button class="coda-btn coda-btn-save" id="coda-btn-savefoda">Guardar FODA</button>
             <button class="coda-btn coda-btn-primary" id="coda-btn-came">🔄 Convertir a CAME con IA</button>
+            <span id="coda-engine-came"></span>
           </div>
 
           <div id="coda-came-body"></div>
@@ -385,6 +395,7 @@
     });
     const bCame = document.getElementById('coda-btn-came');
     if (bCame) bCame.addEventListener('click', generateCame);
+    if (window.AIEngine) window.AIEngine.mount('#coda-engine-came', 'coda', { compact: true });
 
     renderPestel();
     renderCame();

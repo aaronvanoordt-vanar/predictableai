@@ -5,16 +5,17 @@
  * Supabase: Google Sheets → Postgres (coach_meetings, coach_transcript_chunks,
  * coach_events, meeting_objections — see migration 20260709000001_sales_coach.sql).
  *
- * AI engine: Anthropic Claude (v2 — replaced the Apps Script's OpenAI
- * gpt-4o-mini at the user's request, reusing the ANTHROPIC_API_KEY secret the
- * other edge functions already use). Final report → claude-opus-4-8 (runs once
- * per meeting, quality-critical); live bot-mode coaching → claude-haiku-4-5
- * (fires every few seconds of conversation, latency/cost-critical). Both use
- * structured outputs (output_config.format json_schema), so the JSON shape is
- * guaranteed — the schema-enforced equivalent of OpenAI's response_format.
+ * AI engine: user-selectable per user under the "coach" feature — OpenAI is
+ * the recommended default here; Claude and Perplexity are also available
+ * (see supabase/functions/_shared/llm.ts). Both turns ask for structured
+ * outputs against a JSON schema, so the shape is guaranteed on every engine.
+ * On Claude the models are pinned per turn: final report → claude-opus-4-8
+ * (runs once per meeting, quality-critical); live bot-mode coaching →
+ * claude-haiku-4-5 (fires every few seconds, latency/cost-critical). The other
+ * engines use their configured model (OPENAI_MODEL / PERPLEXITY_MODEL).
  * Speech-to-text is unchanged: Deepgram client-side chunks via
- * ingestLocalChunks + Recall.ai realtime webhook for bot mode (Claude does
- * not transcribe audio).
+ * ingestLocalChunks + Recall.ai realtime webhook for bot mode (no LLM
+ * transcribes audio here).
  *
  * ── Contract (preserved from Apps Script so js/api.js keeps working) ────────
  *   POST JSON { action, payload }  →  { ok: true, data } | { ok: false, error }
@@ -83,12 +84,14 @@
  *     "probabilidad_avance": 0-100
  *   }
  *
- * Required secrets: ANTHROPIC_API_KEY (already set — shared with the other
+ * Required secrets: the API key of the chosen engine — OPENAI_API_KEY,
+ *                   ANTHROPIC_API_KEY or PERPLEXITY_API_KEY (already set — shared with the other
  * edge functions). RECALL_API_KEY + RECALL_WEBHOOK_SECRET only for bot mode.
  * (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are injected by the platform.)
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callLLM, engineForUser, parseLlmJson, type Engine } from "../_shared/llm.ts";
 
 const RECALL_BASE = "https://us-west-2.recall.ai/api/v1";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -252,66 +255,34 @@ function insufficientReport() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Claude caller — Anthropic Messages API with structured outputs
-// (output_config.format json_schema ⇒ the first content block is guaranteed
-// to be text containing JSON valid against the schema; no defensive parsing).
-// The report runs on Opus (once per meeting, quality-critical); live bot-mode
-// coaching runs on Haiku (fires every few seconds, latency/cost-critical).
-// No sampling params: Opus 4.8 rejects temperature/top_p/top_k.
+// Model caller — engine-dispatched, always with a JSON schema so the shape is
+// guaranteed and no defensive parsing is needed. Claude pins a model per turn:
+// the report runs on Opus (once per meeting, quality-critical), live coaching
+// on Haiku (fires every few seconds, latency/cost-critical). No sampling
+// params: Opus 4.8 rejects temperature/top_p/top_k.
 // ───────────────────────────────────────────────────────────────────────────
 const REPORT_MODEL = "claude-opus-4-8";
 const LIVE_COACH_MODEL = "claude-haiku-4-5";
 
-// deno-lint-ignore no-explicit-any
-async function callClaude(
-  model: string,
+async function callAi(
+  engine: Engine,
+  claudeModel: string,
   systemPrompt: string,
   userPrompt: string,
   schema: Record<string, unknown>,
   maxTokens: number,
   // deno-lint-ignore no-explicit-any
 ): Promise<any> {
-  const key = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!key) throw new Error("ANTHROPIC_API_KEY no configurada");
-
-  let lastErr = "";
-  for (let attempt = 0; attempt <= 2; attempt++) {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        system: systemPrompt,
-        output_config: { format: { type: "json_schema", schema } },
-        messages: [{ role: "user", content: userPrompt }],
-      }),
-    });
-
-    // Retry transient failures (rate limit / overload); fail fast on 4xx.
-    if ((res.status === 429 || res.status === 529 || res.status >= 500) && attempt < 2) {
-      lastErr = `${res.status}: ${(await res.text()).slice(0, 300)}`;
-      console.warn(`[sales-coach] Anthropic ${lastErr} — retry ${attempt + 1}/2`);
-      await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
-      continue;
-    }
-    const txt = await res.text();
-    if (!res.ok) throw new Error(`Anthropic ${res.status}: ${txt.slice(0, 400)}`);
-
-    const data = JSON.parse(txt);
-    if (data?.stop_reason === "refusal") {
-      throw new Error("Anthropic: la solicitud fue rechazada por los clasificadores de seguridad");
-    }
-    // deno-lint-ignore no-explicit-any
-    const block = (Array.isArray(data?.content) ? data.content : []).find((b: any) => b?.type === "text");
-    if (!block?.text) throw new Error(`Anthropic: respuesta sin contenido (stop_reason: ${data?.stop_reason})`);
-    return JSON.parse(block.text);
-  }
-  throw new Error(`Anthropic no disponible tras reintentos (${lastErr})`);
+  const res = await callLLM({
+    engine,
+    system: systemPrompt,
+    user: userPrompt,
+    maxTokens,
+    jsonSchema: schema,
+    claudeModel,
+    logPrefix: "[sales-coach]",
+  });
+  return parseLlmJson(res.text);
 }
 
 // JSON Schemas for structured outputs. Constraint notes: only supported
@@ -596,10 +567,14 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
 
   const { data: meeting } = await supa
     .from("coach_meetings")
-    .select("id, context, last_state")
+    .select("id, context, last_state, user_id")
     .eq("id", meetingId)
     .maybeSingle();
   if (!meeting) return;
+
+  // Live coaching runs from a webhook, so the engine comes from the meeting
+  // owner's saved preference rather than a request body.
+  const engine = await engineForUser(supa, meeting.user_id, "coach");
 
   const transcriptWindow = buffer
     .map((b: Json) => `[${new Date(b.ts).toISOString().slice(11, 19)}] ${b.speaker}: ${b.text}`)
@@ -620,7 +595,7 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
 
   let llm: Json;
   try {
-    llm = await callClaude(LIVE_COACH_MODEL, SYSTEM_PROMPT_COACH, userPrompt, COACH_SCHEMA, 2048);
+    llm = await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_COACH, userPrompt, COACH_SCHEMA, 2048);
   } catch (e) {
     // Same fallback the Apps Script used on LLM/parse errors.
     console.error("[sales-coach] LLM error:", e);
@@ -820,7 +795,11 @@ async function actionEndMeeting(ctx: Ctx, p: Json): Promise<Json> {
   if (chunks.length === 0 || fullTranscript.trim().length < 20) {
     report = insufficientReport();
   } else {
-    report = await callClaude(
+    const engine = await engineForUser(
+      ctx.supa, meeting.user_id ?? ctx.userId, "coach",
+    );
+    report = await callAi(
+      engine,
       REPORT_MODEL,
       SYSTEM_PROMPT_REPORT,
       buildReportUserPrompt(meeting, fullTranscript),
@@ -1096,6 +1075,71 @@ async function actionSetMeetingOutcome(ctx: Ctx, p: Json): Promise<Json> {
   return { ok: true, top_objection: top };
 }
 
+/**
+ * One live-coaching turn over a transcript window the browser holds locally
+ * (local capture mode — no Recall bot, so no chunks have reached Postgres yet).
+ * Bot mode goes through maybeRunCoachingAnalysis instead.
+ *
+ * The system prompt is fixed server-side on purpose: accepting one from the
+ * client would let any caller spend the platform's API keys on arbitrary work.
+ */
+const LIVE_TURN_SCHEMA = {
+  type: "object",
+  properties: {
+    alerts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["objection", "positive_signal", "risk", "stage_guidance"] },
+          title: { type: "string" },
+          explanation: { type: "string" },
+          suggested_phrase: { type: "string" },
+        },
+        required: ["type", "title", "explanation", "suggested_phrase"],
+        additionalProperties: false,
+      },
+    },
+    stage: { type: "string", enum: ["rapport", "discovery", "reframe", "demo", "negotiation", "close"] },
+    next_step: { type: "string" },
+  },
+  required: ["alerts", "stage", "next_step"],
+  additionalProperties: false,
+};
+
+const SYSTEM_PROMPT_LIVE_TURN = [
+  "Eres el coach de ventas de Predictable.ai en vivo durante una llamada B2B.",
+  'La conversación tiene 2 hablantes: "Lead" y "SDR".',
+  "Devuelve solo alertas accionables sobre lo que acaba de pasar en la conversación.",
+  "Español neutro (tú). NUNCA inventes alertas, datos ni citas: si no hay nada",
+  'accionable en la ventana entregada, devuelve "alerts": [].',
+].join("\n");
+
+async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
+  const transcript = String(payload?.transcript ?? "").slice(0, 12_000).trim();
+  const empty = { alerts: [], stage: "", next_step: "" };
+  if (!transcript) return empty;
+
+  const engine = await engineForUser(ctx.supa, ctx.userId, "coach");
+  const userPrompt = [
+    "Contexto del prospecto:",
+    JSON.stringify(payload?.context ?? {}).slice(0, 4_000),
+    "",
+    "Conversación reciente:",
+    transcript,
+    "",
+    "Devuelve el JSON.",
+  ].join("\n");
+
+  try {
+    return await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_LIVE_TURN, userPrompt, LIVE_TURN_SCHEMA, 1024);
+  } catch (e) {
+    // A dropped coaching turn must never break the live session.
+    console.error("[sales-coach] coachTurn failed:", e);
+    return empty;
+  }
+}
+
 async function actionGetObjectionsReport(ctx: Ctx): Promise<Json> {
   const emails = await scopeEmails(ctx);
   let q = ctx.supa
@@ -1253,6 +1297,7 @@ Deno.serve(async (req: Request) => {
       case "getSDRReport":         data = await actionGetSDRReport(ctx); break;
       case "setMeetingOutcome":    data = await actionSetMeetingOutcome(ctx, payload); break;
       case "getObjectionsReport":  data = await actionGetObjectionsReport(ctx); break;
+      case "coachTurn":            data = await actionCoachTurn(ctx, payload); break;
       default:
         return json({ ok: false, error: `Acción no soportada: ${action}` }, 200, h);
     }

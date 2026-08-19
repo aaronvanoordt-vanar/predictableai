@@ -25,11 +25,16 @@
  *       anon key, which would let anyone burn Anthropic tokens).
  * Response 202: { status: "started" } — result arrives via the client's
  *       realtime subscription to coda_analysis.
- * Required secrets: ANTHROPIC_API_KEY
+ * Engine: user-selectable (Claude / OpenAI / Perplexity) under the "coda"
+ *       feature; Perplexity is the recommended default because both blocks
+ *       are search-grounded market analysis — see
+ *       supabase/functions/_shared/llm.ts.
+ * Required secrets: the API key of the chosen engine (ANTHROPIC_API_KEY,
+ *       OPENAI_API_KEY or PERPLEXITY_API_KEY)
  *
- * Background-task deadline: PESTEL's Anthropic call is capped at 3 web
- * searches and CLAUDE_TIMEOUT_MS (95s), well under the Edge Runtime's ~150s
- * silent isolate kill — see the comment above CLAUDE_TIMEOUT_MS. Without
+ * Background-task deadline: PESTEL's model call is capped at 3 web
+ * searches and LLM_TIMEOUT_MS (95s), well under the Edge Runtime's ~150s
+ * silent isolate kill — see the comment above LLM_TIMEOUT_MS. Without
  * this, a slow/hung call gets killed outside our try/catch and
  * pestel_status/came_status is stuck at 'generating' forever (this shipped
  * to production once; see generate-radar's header comment for the same
@@ -37,6 +42,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -53,9 +59,7 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
   });
 }
 
-interface ContentItem { type: string; text?: string; }
-
-// Our own deadline on every Anthropic call, well under the Edge Runtime's
+// Our own deadline on every model call, well under the Edge Runtime's
 // ~150s isolate kill. That kill happens outside the JS call stack, so a call
 // that hangs past it takes the whole background task down silently — no
 // catch block ever runs, and coda_analysis.{pestel,came}_status is left at
@@ -63,61 +67,26 @@ interface ContentItem { type: string; text?: string; }
 // comments document, and why radar switched to a staged per-call protocol).
 // Aborting the fetch ourselves guarantees OUR try/catch runs and the row
 // always reaches 'ready' or 'error'.
-const CLAUDE_TIMEOUT_MS = 95_000;
+const LLM_TIMEOUT_MS = 95_000;
 
-class ClaudeTimeout extends Error {}
-
-async function callClaude(
-  apiKey: string,
+async function callAi(
+  engine: Engine,
   system: string,
   user: string,
   maxSearches: number,
 ): Promise<string> {
-  const deadline = Date.now() + CLAUDE_TIMEOUT_MS;
-  let lastErr = "";
-  for (let attempt = 0; attempt <= 1; attempt++) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 5_000) break; // no budget left for another attempt
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), remaining);
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        signal: ctrl.signal,
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 4096,
-          system,
-          ...(maxSearches > 0
-            ? { tools: [{ type: "web_search_20260209", name: "web_search", max_uses: maxSearches }] }
-            : {}),
-          messages: [{ role: "user", content: user }],
-        }),
-      });
-      if (res.status === 429 && attempt < 1) {
-        lastErr = await res.text();
-        await new Promise((r) => setTimeout(r, 3000));
-        continue;
-      }
-      if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-      const msg = await res.json();
-      const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
-      if (!blocks.length) throw new Error("No text in Claude response");
-      return blocks[blocks.length - 1].text ?? "";
-    } catch (e) {
-      if (ctrl.signal.aborted) throw new ClaudeTimeout(`Anthropic call exceeded ${CLAUDE_TIMEOUT_MS}ms`);
-      throw e;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  if (lastErr) throw new Error(`Anthropic 429 after retry: ${lastErr}`);
-  throw new ClaudeTimeout(`Anthropic call exceeded ${CLAUDE_TIMEOUT_MS}ms`);
+  const res = await callLLM({
+    engine,
+    system,
+    user,
+    maxTokens: 4096,
+    webSearch: maxSearches,
+    claudeWebSearchTool: "web_search_20260209",
+    timeoutMs: LLM_TIMEOUT_MS,
+    retries: 1,
+    logPrefix: "[coda]",
+  });
+  return res.text;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -234,15 +203,12 @@ Deno.serve(async (req: Request) => {
   const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
   const ANON_KEY      = Deno.env.get("SUPABASE_ANON_KEY")!;
   const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!ANTHROPIC_KEY) return json({ error: "ANTHROPIC_API_KEY not set" }, 500, h);
-
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
   const { data: { user }, error: authErr } =
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
 
-  let body: { action?: string; foda?: unknown } = {};
+  let body: { action?: string; foda?: unknown; engine?: string } = {};
   try { body = await req.json(); } catch (_) { /* empty body */ }
   const action = body.action;
   if (action !== "pestel" && action !== "came") {
@@ -250,6 +216,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+  const engine = await engineForUser(supa, user.id, "coda", body.engine);
 
   // Ensure a row exists and flip the relevant status to 'generating'.
   const statusPatch = action === "pestel"
@@ -272,8 +239,8 @@ Deno.serve(async (req: Request) => {
           supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
         ]);
         const ctx = buildContextBlock(intake as IntakeRow | null, profile, brief);
-        const raw = await callClaude(
-          ANTHROPIC_KEY,
+        const raw = await callAi(
+          engine,
           PESTEL_SYSTEM,
           ctx + "\n\nProduce the PESTEL JSON for this seller now.",
           3,
@@ -299,8 +266,8 @@ Deno.serve(async (req: Request) => {
         // came — persist the FODA the user sent, then derive CAME.
         const foda = (body.foda && typeof body.foda === "object") ? body.foda : {};
         await supa.from("coda_analysis").update({ foda }).eq("user_id", user.id);
-        const raw = await callClaude(
-          ANTHROPIC_KEY,
+        const raw = await callAi(
+          engine,
           CAME_SYSTEM,
           fodaToText(foda) + "\n\nProduce the CAME JSON now.",
           0,

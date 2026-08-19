@@ -10,6 +10,13 @@
  */
 (function () {
   'use strict';
+
+  // Motor de IA elegido para el contexto de empresa (enrich-company,
+  // generate-client-brief, analyze-company-document). El backend vuelve a
+  // leer la preferencia del perfil: esto solo evita una consulta extra.
+  function onboardingEngine() {
+    return window.AIEngine ? window.AIEngine.get('onboarding') : undefined;
+  }
   const SVG_SPARK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18 9.5l-4.2 1.8L12 16l-1.8-4.7L6 9.5l4.2-1.8z"/><path d="M18.5 14l.9 2.3 2.1.9-2.1.9-.9 2.3-.9-2.3-2.1-.9 2.1-.9z"/></svg>';
   const CADENCES = [
     { key: 'daily',   label: 'Hoy',         hint: 'Se actualiza a diario' },
@@ -133,12 +140,14 @@
           <div class="ihx-status-dot" id="ihx-status-dot"></div>
           <span class="ihx-status-text" id="ihx-status-text">Cargando…</span>
         </div>
+        <span class="ihx-engine" id="ih-engine"></span>
         <span class="ihx-toolbar-hint">Cada ítem cuesta 2 créditos al actualizarse · gratis durante la beta</span>
       </div>
       <div class="ihx-progress" id="ih-progress" style="display:none"></div>
       <nav class="ihx-tabs" id="ihx-tabs"></nav>
       <div class="ihx-modules" id="ihx-body"></div>`;
     container.appendChild(wrap);
+    if (window.AIEngine) window.AIEngine.mount('#ih-engine', 'intel_hub', { compact: true });
     wrap.querySelector('#ih-btn-generate').addEventListener('click', () => generateAll({ force: false }));
     wrap.querySelector('#ih-btn-generate-all').addEventListener('click', () => {
       if (confirm('Esto regenera los 9 segmentos (saltea cadence). ¿Continuar?')) {
@@ -265,7 +274,7 @@
       await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/generate-client-brief', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-        body: '{}',
+        body: JSON.stringify({ engine: onboardingEngine() }),
       });
     } catch (e) { console.warn('[research] client-brief refresh error', e); }
   }
@@ -623,6 +632,7 @@
           Esto es lo que la plataforma investigó de tu empresa para personalizar el hub y los mensajes de prospección.
           Corrígelo si algo no es exacto, o vuelve a investigar con IA — tus cambios se usan de inmediato.
         </div>
+        <div class="ihx-research-engine" id="ihx-research-engine"></div>
         ${stale ? `<div class="ihx-research-warn">La búsqueda anterior tardó demasiado y no terminó. Puedes intentarlo de nuevo.</div>` : ''}
         <div class="ihx-research-panel ihx-research-panel-editable">
           <div class="ihx-research-panel-text">
@@ -775,6 +785,11 @@
           <div class="ihx-doc-list" id="ihx-doc-list">${renderDocumentList(STATE.documents || [])}</div>
         </div>
       </div>`;
+    if (window.AIEngine) {
+      window.AIEngine.mount('#ihx-research-engine', 'onboarding', {
+        labelText: 'Motor de IA para investigar',
+      });
+    }
     const form = document.getElementById('ihx-research-form');
     if (form) form.addEventListener('submit', saveResearch);
     const linkedinInput = document.getElementById('ihx-linkedin-input');
@@ -885,7 +900,7 @@
       await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-        body: JSON.stringify({ linkedin_url: linkedinUrl }),
+        body: JSON.stringify({ linkedin_url: linkedinUrl, engine: onboardingEngine() }),
       });
     } catch (e) {
       console.error('[research] retry enrichment from linkedin error', e);
@@ -909,7 +924,7 @@
       await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-        body: JSON.stringify({ website_url: website }),
+        body: JSON.stringify({ website_url: website, engine: onboardingEngine() }),
       });
     } catch (e) {
       console.error('[research] retry enrichment from website error', e);
@@ -943,7 +958,7 @@
       await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/analyze-company-document', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-        body: JSON.stringify({ document_id: row.id }),
+        body: JSON.stringify({ document_id: row.id, engine: onboardingEngine() }),
       });
     } catch (e) {
       console.error('[research] upload document error', e);
@@ -2847,7 +2862,11 @@ function finBoltSvg() {
       const r = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-        body: JSON.stringify({ sections: toRun, triggered_by: 'manual' }),
+        body: JSON.stringify({
+          sections: toRun,
+          triggered_by: 'manual',
+          engine: window.AIEngine && window.AIEngine.get('intel_hub'),
+        }),
       });
       let j = {};
       try { j = await r.json(); } catch (_) { /* respuesta no-JSON */ }
@@ -2859,14 +2878,14 @@ function finBoltSvg() {
         prog.textContent = `❌ Error: ${j.detail || j.error || ('HTTP ' + r.status)}`;
         return;
       }
-      prog.innerHTML = `🚀 <strong>${toRun.length}</strong> agentes corriendo en Anthropic.<br><small>Los reportes van apareciendo en tiempo real a medida que cada agente termina. Tiempo estimado: 1-3 min.</small>`;
+      prog.innerHTML = `🚀 <strong>${toRun.length}</strong> agentes corriendo.<br><small>Los reportes van apareciendo en tiempo real a medida que cada agente termina. Tiempo estimado: 1-3 min.</small>`;
       // Integración con Prospección: la misma corrida del hub refresca el brief
       // del cliente (client_brief / "MI Cliente"), que generate-outreach y la
       // búsqueda recomendada consumen. Best-effort — no bloquea el hub.
       fetch(window.SUPABASE_CONFIG.url + '/functions/v1/generate-client-brief', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-        body: '{}',
+        body: JSON.stringify({ engine: onboardingEngine() }),
       }).catch(e => console.warn('[client-brief]', e));
       await loadReports();
     } catch (e) {
@@ -2958,6 +2977,8 @@ function finBoltSvg() {
 @keyframes ihx-pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
 .ihx-status-text { font-size: 12px; color: var(--ink-3, #5A6272); }
 .ihx-toolbar-hint { font-size: 11px; color: var(--ink-4, #9CA2AE); margin-left: auto; white-space: nowrap; }
+.ihx-engine { display: inline-flex; align-items: center; }
+.ihx-research-engine { margin: 0 0 14px; }
 @media (max-width: 700px) { .ihx-toolbar { flex-wrap: wrap; } .ihx-toolbar-hint { display: none; } }
 /* ── RESEARCH PAGE ── */
 .ihx-research { padding: 24px 28px 48px; max-width: none; }
