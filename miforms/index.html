@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>Predictable.ai — Desbloquea tu Intelligence Hub</title>
+<title>Predictable.ai — Calibra tu Intelligence Hub</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%232F66FF'/></svg>">
 <style>
@@ -185,18 +185,18 @@
   <div id="survey" style="display:none">
 
     <section class="hero">
-      <span class="eyebrow"><span class="ed"></span>Calibración inicial · 60 segundos · obligatorio</span>
-      <h1>Tu Intelligence Hub está listo para encenderse.<br><span class="hl">Dinos qué quieres saber.</span></h1>
-      <p class="lede">Para activar tu Hub, necesitamos calibrar tu agente de IA. Esto es lo que <em>vas a empezar a recibir</em> en cuanto termines este formulario — adaptado a tu ICP, tu mercado y tus competidores. Completa todos los campos para desbloquear.</p>
+      <span class="eyebrow"><span class="ed"></span>Calibración opcional · 60 segundos · +25 créditos de regalo</span>
+      <h1>Tu Intelligence Hub ya está activo.<br><span class="hl">Cuéntanos qué quieres saber y te regalamos créditos.</span></h1>
+      <p class="lede">Esto es completamente opcional. Calibra tu agente de IA con <em>lo que quieres empezar a recibir</em> — adaptado a tu ICP, tu mercado y tus competidores — y te damos 25 créditos de regalo al enviarlo. Completa todos los campos para reclamar el bono.</p>
     </section>
 
     <div class="recv">
       <div class="recv-hd">
         <div class="l">
           <div class="check">→</div>
-          <div class="t">Esto vas a desbloquear<small>11 reportes automáticos · 5 cadencias · refresco continuo</small></div>
+          <div class="t">Esto es lo que ya estás recibiendo<small>11 reportes automáticos · 5 cadencias · refresco continuo</small></div>
         </div>
-        <div class="stat"><b>PENDIENTE</b> · listo para activar</div>
+        <div class="stat"><b>OPCIONAL</b> · +25 créditos al completar</div>
       </div>
       <div class="recv-grid">
         <div class="recv-col">
@@ -241,7 +241,7 @@
     <div class="sec-title">
       <span class="n">01</span>
       <h2>Elige las señales prioritarias en cada cadencia</h2>
-      <span class="req">Obligatorio</span>
+      <span class="req">Para el bono</span>
     </div>
     <p class="sec-sub">Selecciona al menos <b>una señal por cadencia</b>. Estas son las que harán que tu Hub se sienta hecho a tu medida desde el primer reporte.</p>
 
@@ -251,7 +251,7 @@
     <div class="sec-title">
       <span class="n">02</span>
       <h2>Pide una señal <em>única para ti</em></h2>
-      <span class="req">Obligatorio</span>
+      <span class="req">Para el bono</span>
     </div>
     <p class="sec-sub">Una señal específica que ningún reporte estándar captura — algo que solo tú necesitas saber. Agrega al menos <b>un pedido personalizado</b> (puedes agregar más).</p>
 
@@ -274,7 +274,7 @@
     <div class="sec-title">
       <span class="n">03</span>
       <h2>¿Qué tan crítico es esto para tu negocio?</h2>
-      <span class="req">Obligatorio</span>
+      <span class="req">Para el bono</span>
     </div>
     <p class="sec-sub">Esto nos ayuda a entender si tus pedidos son un "nice to have" o una palanca real de revenue. Responde las tres preguntas.</p>
 
@@ -311,18 +311,22 @@
     </div>
 
     <div class="foot">
-      <div class="counter" id="counter">Completa todos los campos para desbloquear.</div>
-      <button class="btn btn-primary" id="btn-submit" disabled>🔓 Desbloquear mi Intelligence Hub →</button>
+      <div class="counter" id="counter">Completa todos los campos para reclamar tus créditos.</div>
+      <div style="display:flex;align-items:center;gap:14px">
+        <a href="/" id="link-skip" style="font-size:12.5px;color:var(--ink-3)">Ahora no, llévame a la app</a>
+        <button class="btn btn-primary" id="btn-submit" disabled>🎁 Enviar y reclamar créditos →</button>
+      </div>
     </div>
 
     <div id="status" class="status"></div>
   </div>
 
   <div id="ty" class="ty">
-    <div class="em">🔓</div>
-    <h2>Hub desbloqueado.</h2>
+    <div class="em">🎁</div>
+    <h2>¡Créditos añadidos!</h2>
     <p>Tu agente está corriendo con la calibración que nos diste. En unos segundos te llevamos al Intelligence Hub con la primera tanda de reportes.</p>
     <div class="summary">
+      <div><div class="sv" id="ty-credits">—</div><div class="sl">Créditos ganados</div></div>
       <div><div class="sv" id="ty-wishes">0</div><div class="sl">Señales activadas</div></div>
       <div><div class="sv" id="ty-custom">0</div><div class="sl">Pedidos personalizados</div></div>
       <div><div class="sv" id="ty-impact">—</div><div class="sl">Impacto declarado</div></div>

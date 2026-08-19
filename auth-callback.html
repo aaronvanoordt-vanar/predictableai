@@ -59,17 +59,10 @@
         return;
       }
 
-      const { data: intake } = await window.supabaseClient
-        .from('intel_hub_intake')
-        .select('what_to_know')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (!intake || !intake.what_to_know) {
-        window.location.replace('./miforms/');
-      } else {
-        window.location.replace(window.APP_URL || './index.html');
-      }
+      // /miforms/ (Hub calibration survey) is optional — it's offered as a
+      // dismissible popup with a credit reward inside the app, not a gate
+      // blocking entry. See js/miforms-prompt.js.
+      window.location.replace(window.APP_URL || './index.html');
     } catch (e) {
       document.getElementById('err').textContent = 'Error: ' + e.message;
     }
