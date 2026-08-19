@@ -3758,7 +3758,7 @@
     host.innerHTML = '';
     var b = st.brief;
     var left = h('div', { style: 'min-width:220px;flex:1' });
-    left.appendChild(h('div', { class: 'chart-title', text: '⭐ {{nombre_empresa}}' }));
+    left.appendChild(h('div', { class: 'chart-title', text: (window.currentProfile?.company_name || 'Contexto de tu empresa') }));
     var btn = null;
     if (st.briefLoading) {
       if (window.Skeleton) {
