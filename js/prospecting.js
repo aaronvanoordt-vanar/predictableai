@@ -31,7 +31,7 @@
     activeTab: null,
     shell: null,
     panes: {},
-    cache: { lists: null, sequences: null, accounts: null, savedSearches: null },
+    cache: { lists: null, sequences: null, accounts: null, savedSearches: null, schedules: null },
     resumen: { host: null },
     search: {
       filters: null,
@@ -352,6 +352,29 @@
     '.pros-manual-row .pros-phone-code { flex:0 0 auto; width:150px; }',
     '.pros-manual-linkedin { display:flex; gap:8px; align-items:flex-start; }',
     '.pros-manual-linkedin input { flex:1; min-width:0; }',
+  ].join('\n');
+
+  // Editor de secuencias: también vive dentro de un modal (fuera del shell).
+  var SEQ_EDITOR_CSS = [
+    '.seq-editor { display:flex; flex-direction:column; gap:14px; max-height:min(62vh,560px); overflow-y:auto; padding-right:4px; }',
+    '.seq-editor-lbl { font-family:var(--font-mono); font-size:10px; font-weight:600; color:var(--text2); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }',
+    '.seq-step { border:1px solid var(--hair); border-radius:var(--r-md); background:var(--surface); padding:12px 14px; display:flex; flex-direction:column; gap:10px; }',
+    '.seq-step-head { display:flex; align-items:center; gap:10px; }',
+    '.seq-step-num { font-family:var(--font-mono); font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-4); }',
+    '.seq-step-wait { display:flex; align-items:center; gap:6px; margin-left:auto; font-size:12px; color:var(--text2); }',
+    '.seq-step-wait input { width:62px; }',
+    '.seq-step-wait select { width:auto; }',
+    // El modal vive fuera de #prospecting-shell, así que los campos no heredan
+    // el ancho ni el estilo de los del shell: se declaran aquí.
+    '.seq-step input[type=text], .seq-step textarea { width:100%; box-sizing:border-box; }',
+    '.seq-step textarea { min-height:120px; resize:vertical; line-height:1.55; font-family:var(--font-body); }',
+    '.seq-step-rm { border:0; background:transparent; cursor:pointer; color:var(--ink-4); padding:4px; border-radius:var(--r-xs); display:inline-flex; }',
+    '.seq-step-rm:hover { color:var(--red); background:var(--red-soft); }',
+    // Misma razón: .pros-check solo existe dentro del shell.
+    '.seq-step .pros-check { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--text2); cursor:pointer; font-family:var(--font-body); font-weight:400; text-transform:none; letter-spacing:0; }',
+    '.seq-step .pros-check input { accent-color:var(--gold); width:13px; height:13px; cursor:pointer; margin:0; flex:0 0 auto; }',
+    '.seq-vars { font-size:11.5px; color:var(--text3); line-height:1.6; }',
+    '.seq-vars code { font-family:var(--font-mono); font-size:11px; background:var(--surface2); border:1px solid var(--hair); border-radius:var(--r-xs); padding:1px 5px; }',
   ].join('\n');
 
   // ── Modal + progress helpers (reuse .logout-overlay/.logout-modal) ─────
@@ -3014,6 +3037,281 @@
     }).join('') + '</select>';
   }
 
+  // ── Biblioteca de secuencias ───────────────────────────────────────────
+  // Las métricas salen tal cual de Apollo (unique_delivered, open_rate…).
+  // Si Apollo no manda una, se muestra «—»: nunca se calcula ni se rellena.
+  function pct(v) {
+    return typeof v === 'number' && isFinite(v) ? (v * 100).toFixed(1).replace(/\.0$/, '') + '%' : '—';
+  }
+
+  function seqStatsLine(q) {
+    var s = q.stats || {};
+    var parts = [];
+    var n = q.num_steps == null ? (q.steps || []).length : q.num_steps;
+    parts.push(fmtNum(n) + (n === 1 ? ' correo' : ' correos'));
+    if (s.delivered != null) parts.push(fmtNum(s.delivered) + ' entregados');
+    if (s.openRate != null) parts.push(pct(s.openRate) + ' apertura');
+    if (s.replied != null) parts.push(fmtNum(s.replied) + (s.replied === 1 ? ' respuesta' : ' respuestas'));
+    if (s.bounced) parts.push(fmtNum(s.bounced) + ' rebotes');
+    return parts.join(' · ');
+  }
+
+  function seqCardHtml(q) {
+    var id = esc(String(q.id));
+    var steps = q.num_steps == null ? (q.steps || []).length : q.num_steps;
+    var pill = q.active
+      ? '<span class="pill pill-green">Activa</span>'
+      : '<span class="pill pill-gray">Pausada</span>';
+    var warn = steps ? '' :
+      '<div class="pros-cellsub" style="color:var(--amber)">Sin correos todavía — agrégalos antes de activarla.</div>';
+    return '<div class="pros-listcard" style="cursor:default;align-items:flex-start">' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+          '<div style="font-weight:600">' + esc(q.name || '—') + '</div>' + pill +
+        '</div>' +
+        '<div class="pros-cellsub">' + esc(seqStatsLine(q)) + '</div>' + warn +
+      '</div>' +
+      '<div class="pros-actions">' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-action="seq-edit" data-id="' + id + '">Editar correos</button>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-action="seq-toggle" data-id="' + id + '"' +
+          (steps ? '' : ' disabled title="Agrega al menos un correo"') + '>' +
+          (q.active ? 'Pausar' : 'Activar') + '</button>' +
+        '<button type="button" class="pros-iconbtn" data-action="seq-archive" data-id="' + id + '" title="Archivar secuencia">' + SVG_TRASH + '</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function seqLibraryHtml(seqs, st) {
+    if (st.loadingSources) {
+      return '<div class="chart-card"><div class="chart-title" style="margin:0 0 12px">Mis secuencias</div>' +
+        '<div style="font-size:12.5px;color:var(--text3)">Cargando secuencias…</div></div>';
+    }
+    if (st.seqError) return '';
+    if (!state.cache.sequences) return '';
+
+    var head = '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
+      '<div class="chart-title" style="margin:0">Mis secuencias</div>' +
+      '<button type="button" class="btn btn-primary btn-sm" data-action="seq-create">+ Nueva secuencia</button>' +
+      '</div>';
+
+    if (!seqs.length) {
+      return '<div class="chart-card">' + head +
+        emptyHtml(SVG_MAIL, 'Aún no tienes secuencias',
+          'Crea una aquí mismo: nombre, correos y tiempos de espera. Apollo los envía por ti.') +
+        '</div>';
+    }
+    return '<div class="chart-card">' + head +
+      '<div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">' +
+      seqs.map(seqCardHtml).join('') + '</div></div>';
+  }
+
+  // ── Editor de correos de una secuencia ─────────────────────────────────
+  var WAIT_MODES = [
+    { value: 'day', label: 'días' },
+    { value: 'hour', label: 'horas' },
+    { value: 'minute', label: 'minutos' },
+  ];
+
+  function blankStep(index) {
+    return {
+      id: null, touchId: null,
+      touchType: index === 0 ? 'new_thread' : 'reply_to_thread',
+      waitTime: index === 0 ? 0 : 3,
+      waitMode: 'day',
+      subject: '', body: '',
+    };
+  }
+
+  function openSequenceEditor(seq) {
+    var editing = !!(seq && seq.id);
+    var model = { name: editing ? (seq.name || '') : '', steps: [], loaded: !editing };
+    var original = [];
+    if (!editing) model.steps = [blankStep(0)];
+
+    var nameIn = h('input', { type: 'text', placeholder: 'Ej. Prospección Q3 — CFOs' });
+    nameIn.value = model.name;
+    nameIn.addEventListener('input', function () { model.name = nameIn.value; });
+
+    var stepsHost = h('div', { style: 'display:flex;flex-direction:column;gap:12px' });
+    var addBtn = h('button', {
+      type: 'button', class: 'btn btn-ghost btn-sm',
+      text: '+ Agregar correo',
+      onclick: function () {
+        model.steps.push(blankStep(model.steps.length));
+        renderSteps();
+      },
+    });
+    var prog = progressLine();
+    // Ventana de envío real de la cuenta (Apollo aplica la que esté por
+    // defecto). Se muestra para que se sepa cuándo saldrán los correos.
+    var schedHint = h('div', { class: 'pros-hint' });
+
+    var bodyN = h('div', { class: 'seq-editor' },
+      h('div', null, h('div', { class: 'seq-editor-lbl', text: 'Nombre de la secuencia' }), nameIn),
+      stepsHost,
+      h('div', { class: 'pros-actions' }, addBtn),
+      h('div', { class: 'seq-vars', html:
+        'Variables de Apollo disponibles en el asunto y el cuerpo: ' +
+        '<code>{{first_name}}</code> <code>{{last_name}}</code> <code>{{company}}</code> <code>{{title}}</code>. ' +
+        'Apollo las reemplaza por los datos de cada contacto al enviar.' }),
+      schedHint,
+      prog.el);
+
+    function stepNode(step, i) {
+      var isReply = step.touchType === 'reply_to_thread';
+
+      var waitIn = h('input', { type: 'number', min: '0', step: '1' });
+      waitIn.value = String(step.waitTime == null ? 0 : step.waitTime);
+      waitIn.addEventListener('input', function () {
+        var v = parseInt(waitIn.value, 10);
+        step.waitTime = isNaN(v) || v < 0 ? 0 : v;
+      });
+
+      var modeSel = h('select');
+      WAIT_MODES.forEach(function (m) {
+        var o = h('option', { value: m.value, text: m.label });
+        if (m.value === step.waitMode) o.selected = true;
+        modeSel.appendChild(o);
+      });
+      modeSel.addEventListener('change', function () { step.waitMode = modeSel.value; });
+
+      var head = h('div', { class: 'seq-step-head' },
+        h('span', { class: 'seq-step-num', text: 'Correo ' + (i + 1) }),
+        h('div', { class: 'seq-step-wait' },
+          h('span', { text: i === 0 ? 'Enviar tras' : 'Esperar' }), waitIn, modeSel),
+        model.steps.length > 1
+          ? h('button', {
+              type: 'button', class: 'seq-step-rm', title: 'Quitar este correo', html: SVG_TRASH,
+              onclick: function () { model.steps.splice(i, 1); renderSteps(); },
+            })
+          : null);
+
+      var subjIn = h('input', { type: 'text', placeholder: 'Asunto — ej. Pregunta sobre {{company}}' });
+      subjIn.value = step.subject || '';
+      subjIn.addEventListener('input', function () { step.subject = subjIn.value; });
+      var subjWrap = h('div', null,
+        h('div', { class: 'seq-editor-lbl', text: 'Asunto' }), subjIn);
+      if (isReply) subjWrap.style.display = 'none';
+
+      var bodyTa = h('textarea', { placeholder: 'Hola {{first_name}}, …' });
+      bodyTa.value = step.body || '';
+      bodyTa.addEventListener('input', function () { step.body = bodyTa.value; });
+
+      var threadWrap = null;
+      if (i > 0) {
+        var chk = h('input', { type: 'checkbox' });
+        chk.checked = isReply;
+        chk.addEventListener('change', function () {
+          step.touchType = chk.checked ? 'reply_to_thread' : 'new_thread';
+          subjWrap.style.display = chk.checked ? 'none' : '';
+        });
+        threadWrap = h('label', { class: 'pros-check' }, chk,
+          h('span', { text: 'Responder dentro del mismo hilo (sin asunto nuevo)' }));
+      }
+
+      return h('div', { class: 'seq-step' },
+        head,
+        threadWrap,
+        subjWrap,
+        h('div', null, h('div', { class: 'seq-editor-lbl', text: 'Cuerpo' }), bodyTa),
+        step.unreadable
+          ? h('div', { class: 'pros-hint', style: 'color:var(--amber)',
+              text: 'No se pudo leer el contenido actual de este correo en Apollo. Si lo guardas así, se reemplazará por lo que escribas aquí.' })
+          : null);
+    }
+
+    function renderSteps() {
+      stepsHost.innerHTML = '';
+      if (!model.loaded) {
+        stepsHost.appendChild(h('div', { class: 'pros-hint', text: 'Cargando los correos de esta secuencia…' }));
+        return;
+      }
+      model.steps.forEach(function (s, i) { stepsHost.appendChild(stepNode(s, i)); });
+      addBtn.disabled = model.steps.length >= 25;
+    }
+    renderSteps();
+
+    var api = openModal({
+      title: editing ? 'Editar secuencia' : 'Nueva secuencia',
+      width: 640,
+      bodyNode: bodyN,
+      actions: [
+        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
+        {
+          label: editing ? 'Guardar cambios' : 'Crear secuencia',
+          className: 'btn btn-primary',
+          onClick: function () {
+            if (!model.loaded) return toast('Espera a que carguen los correos.', 'warn');
+            api.setBusy(true);
+            prog.set('Guardando…');
+            return Promise.resolve(pd().saveSequence({
+              id: editing ? seq.id : null,
+              name: model.name,
+              steps: model.steps,
+              existingSteps: original,
+              onProgress: function (p) {
+                prog.set(p && p.phase === 'steps'
+                  ? 'Guardando correo ' + fmtNum(((p.done || 0) + 1)) + ' de ' + fmtNum(p.total || model.steps.length) + '…'
+                  : 'Guardando la secuencia…');
+              },
+            })).then(function (res) {
+              prog.hide();
+              api.close();
+              toast(res.created
+                ? 'Secuencia «' + (res.name || '') + '» creada con ' + fmtNum(model.steps.length) +
+                  ' correo(s). Actívala cuando quieras que Apollo empiece a enviar.'
+                : 'Secuencia actualizada.', 'success');
+              if (res.id) state.seq.sequenceId = String(res.id);
+              return refreshSequences();
+            }).catch(function (e) {
+              prog.hide();
+              api.setBusy(false);
+              toast(errMsg(e), 'error');
+            });
+          },
+        },
+      ],
+    });
+
+    Promise.resolve(state.cache.schedules || pd().fetchSchedules())
+      .then(function (rows) {
+        state.cache.schedules = Array.isArray(rows) ? rows : [];
+        var def = state.cache.schedules.find(function (s) { return s.default; }) || state.cache.schedules[0];
+        if (!def) return;
+        schedHint.textContent = 'Apollo enviará dentro de tu ventana de envío «' + (def.name || '—') + '»' +
+          (def.timeZone ? ' (' + def.timeZone + ')' : '') + '.';
+      })
+      .catch(function () { /* el horario es informativo: su fallo no bloquea el editor */ });
+
+    if (editing) {
+      Promise.resolve(pd().fetchSequenceSteps(seq.steps || []))
+        .then(function (steps) {
+          original = steps.map(function (s) { return { id: s.id }; });
+          model.steps = steps.length ? steps : [blankStep(0)];
+          model.loaded = true;
+          renderSteps();
+        })
+        .catch(function (e) {
+          model.loaded = true;
+          model.steps = [blankStep(0)];
+          renderSteps();
+          toast(errMsg(e), 'error');
+        });
+    }
+  }
+
+  function refreshSequences() {
+    state.seq.seqError = null;
+    return Promise.resolve(pd().fetchSequences())
+      .then(function (r) { state.cache.sequences = Array.isArray(r) ? r : []; })
+      .catch(function (e) { state.seq.seqError = errMsg(e); })
+      .then(function () { renderSeqPane(); });
+  }
+
+  function findSequence(id) {
+    return (state.cache.sequences || []).find(function (q) { return String(q.id) === String(id); }) || null;
+  }
+
   function seqMemberRowHtml(m) {
     var st = state.seq;
     var id = esc(String(m.id));
@@ -3050,11 +3348,11 @@
       return { value: String(a.id), label: a.email || '—' };
     }));
 
-    var html = '<div class="chart-card">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
+    var html = seqLibraryHtml(seqs, st);
+
+    // El botón de crear vive en «Mis secuencias» (arriba): aquí solo se enrola.
+    html += '<div class="chart-card">' +
       '<div class="chart-title" style="margin:0">Enrolar contactos en una secuencia</div>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="seq-create">+ Nueva secuencia</button>' +
-      '</div>' +
       '<div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-top:12px">' +
       '<div class="form-group"><div class="pros-lbl">Lista</div>' + selectHtml('seq-list', listOpts, st.listId) + '</div>' +
       '<div class="form-group"><div class="pros-lbl">Secuencia de Apollo</div>' + selectHtml('seq-seq', seqOpts, st.sequenceId) + '</div>' +
@@ -3067,17 +3365,6 @@
       if (st.acctError) html += '<div class="pros-note-red">⚠ ' + esc(st.acctError) + '</div>';
     }
     html += '</div>';
-
-    if (!st.loadingSources && !st.seqError && state.cache.sequences && !seqs.length) {
-      html += '<div class="table-card">' +
-        emptyHtml(SVG_MAIL, 'Aún no tienes secuencias',
-          'Crea tu primera secuencia aquí mismo — sin salir de la app.',
-          '<div class="pros-actions" style="justify-content:center;margin-top:6px">' +
-          '<button type="button" class="btn btn-primary btn-sm" data-action="seq-create">+ Crear secuencia</button>' +
-          '<button type="button" class="btn btn-ghost btn-sm" data-action="seq-retry">Reintentar</button>' +
-          '</div>') +
-        '</div>';
-    }
 
     if (!st.listId) {
       html += '<div class="table-card">' +
@@ -3106,10 +3393,15 @@
 
     var n = st.selected.size;
     var canEnroll = n > 0 && st.sequenceId && st.accountId;
+    var enrolled = st.members.filter(function (m) {
+      return st.selected.has(String(m.id)) && m.sequence_status && m.apollo_contact_id;
+    }).length;
     html += '<div class="pros-selbar" data-seqbar' + (n ? '' : ' style="display:none"') + '>' +
       '<span style="font-size:13px"><b data-seqcount>' + esc(fmtNum(n)) + '</b> seleccionados</span>' +
+      '<div class="pros-actions">' +
+      '<button type="button" class="btn btn-ghost" data-action="seq-remove"' + (enrolled ? '' : ' disabled') + '>Sacar de la secuencia</button>' +
       '<button type="button" class="btn btn-primary" data-action="seq-enroll"' + (canEnroll ? '' : ' disabled') + '>Agregar a secuencia</button>' +
-      '</div>';
+      '</div></div>';
 
     root.innerHTML = html;
   }
@@ -3126,6 +3418,12 @@
     if (c) c.textContent = fmtNum(n);
     var btn = bar.querySelector('[data-action="seq-enroll"]');
     if (btn) btn.disabled = !(n > 0 && st.sequenceId && st.accountId);
+    var rm = bar.querySelector('[data-action="seq-remove"]');
+    if (rm) {
+      rm.disabled = !st.members.some(function (m) {
+        return st.selected.has(String(m.id)) && m.sequence_status && m.apollo_contact_id;
+      });
+    }
   }
 
   function reloadSeqMembers() {
@@ -3182,45 +3480,123 @@
       state.cache.accounts = null;
       return initSeqTab();
     }
-    if (action === 'seq-create') return openCreateSeqModal();
+    if (action === 'seq-create') return openSequenceEditor(null);
     if (action === 'seq-enroll') return openEnrollModal();
+    if (action === 'seq-remove') return openRemoveFromSeqModal();
+
+    var seq = btn.getAttribute('data-id') ? findSequence(btn.getAttribute('data-id')) : null;
+    if (action === 'seq-edit') {
+      if (!seq) return toast('No se encontró la secuencia. Reintenta.', 'error');
+      return openSequenceEditor(seq);
+    }
+    if (action === 'seq-toggle') {
+      if (!seq) return toast('No se encontró la secuencia. Reintenta.', 'error');
+      return toggleSequence(seq);
+    }
+    if (action === 'seq-archive') {
+      if (!seq) return toast('No se encontró la secuencia. Reintenta.', 'error');
+      return confirmModal({
+        title: 'Archivar secuencia',
+        message: 'Se archivará «' + (seq.name || '') + '» en Apollo. Deja de enviar y desaparece de esta lista; ' +
+          'el histórico de correos ya enviados se conserva.',
+        confirmLabel: 'Archivar',
+        danger: true,
+        onConfirm: function () {
+          return Promise.resolve(pd().archiveSequence(seq.id)).then(function () {
+            if (String(state.seq.sequenceId) === String(seq.id)) state.seq.sequenceId = '';
+            toast('Secuencia archivada.', 'success');
+            return refreshSequences();
+          });
+        },
+      });
+    }
   }
 
-  // Crear una secuencia (nombre + N correos) directamente en Apollo, para que
-  // el usuario no tenga que salir de la app.
-  function openCreateSeqModal() {
-    var prog = progressLine();
+  // Activar = Apollo empieza a enviar de verdad, así que se confirma siempre.
+  function toggleSequence(seq) {
+    var turningOn = !seq.active;
+    var msg = turningOn
+      ? 'Al activarla, Apollo empezará a enviar los correos de «' + (seq.name || '') +
+        '» a los contactos enrolados, en tu ventana de envío. Son correos reales desde tu buzón.'
+      : 'Se pausará «' + (seq.name || '') + '»: Apollo dejará de enviar los correos pendientes.';
+    return confirmModal({
+      title: turningOn ? 'Activar secuencia' : 'Pausar secuencia',
+      message: msg,
+      confirmLabel: turningOn ? 'Activar' : 'Pausar',
+      onConfirm: function () {
+        return Promise.resolve(pd().setSequenceActive(seq.id, turningOn)).then(function (res) {
+          state.cache.sequences = res.sequences;
+          renderSeqPane();
+          if (res.active === turningOn) {
+            toast(turningOn ? 'Secuencia activada.' : 'Secuencia pausada.', 'success');
+          } else {
+            // Apollo aceptó la llamada pero el estado no cambió (p. ej. una
+            // secuencia sin correos): decirlo en vez de cantar victoria.
+            toast('Apollo no cambió el estado de la secuencia. Revisa que tenga al menos un correo.', 'warn');
+          }
+        });
+      },
+    });
+  }
 
-    var nameIn = h('input', { type: 'text', placeholder: 'Ej. Prospección Q3' });
-    var bodyN = h('div', { style: 'display:flex;flex-direction:column;gap:14px' },
-      h('div', null, h('div', { class: 'pros-lbl', style: 'margin-bottom:6px', text: 'Nombre de la secuencia' }), nameIn),
-      h('div', { class: 'pros-hint', text: 'Esto crea la secuencia vacía en Apollo. Los correos (asunto, cuerpo, tiempos de espera) se agregan dentro de Apollo — su editor de pasos no está disponible vía API.' }),
+  function openRemoveFromSeqModal() {
+    var st = state.seq;
+    var members = st.members.filter(function (m) {
+      return st.selected.has(String(m.id)) && m.sequence_status && m.apollo_contact_id;
+    });
+    if (!members.length) return toast('Selecciona contactos que ya estén en una secuencia.', 'warn');
+
+    // Cada contacto guarda en qué secuencia quedó enrolado: se agrupan para no
+    // sacar a nadie de una secuencia que no es la suya.
+    var bySeq = new Map();
+    members.forEach(function (m) {
+      var sid = String(m.sequence_status.sequence_id || '');
+      if (!sid) return;
+      if (!bySeq.has(sid)) bySeq.set(sid, { name: m.sequence_status.sequence_name || '', rows: [] });
+      bySeq.get(sid).rows.push(m);
+    });
+    if (!bySeq.size) return toast('No se pudo determinar de qué secuencia sacarlos.', 'error');
+
+    var stopChk = h('input', { type: 'checkbox' });
+    stopChk.checked = true;
+    var prog = progressLine();
+    var names = [];
+    bySeq.forEach(function (v) { names.push(v.name || '—'); });
+
+    var bodyN = h('div', null,
+      h('p', { style: 'font-size:13px;color:var(--text2);margin:0 0 10px;line-height:1.55',
+        text: 'Vas a sacar ' + fmtNum(members.length) + ' contacto(s) de: ' + names.join(', ') + '.' }),
+      h('label', { class: 'pros-check', style: 'margin-bottom:8px' }, stopChk,
+        h('span', { text: 'Detener en vez de eliminar (conserva el histórico en Apollo)' })),
       prog.el);
 
     var api = openModal({
-      title: 'Crear secuencia',
-      width: 480,
+      title: 'Sacar de la secuencia',
       bodyNode: bodyN,
       actions: [
         { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
         {
-          label: 'Crear secuencia',
-          className: 'btn btn-primary',
+          label: 'Sacar de la secuencia',
+          className: 'logout-btn logout-btn-confirm',
           onClick: function () {
-            var name = nameIn.value.trim();
-            if (!name) return toast('Escribe un nombre para la secuencia.', 'warn');
             api.setBusy(true);
-            prog.set('Creando secuencia…');
-            return Promise.resolve(pd().createSequence({ name: name })).then(function (res) {
+            prog.set('Sacando contactos…');
+            var mode = stopChk.checked ? 'stop' : 'remove';
+            var jobs = [];
+            bySeq.forEach(function (v, sid) {
+              jobs.push(Promise.resolve(pd().removeFromSequence({
+                sequenceId: sid, members: v.rows, mode: mode,
+                reason: 'Retirado desde Predictable',
+              })));
+            });
+            return Promise.all(jobs).then(function (results) {
               prog.hide();
-              res = res || {};
-              state.cache.sequences = (state.cache.sequences || []).concat([{
-                id: res.id, name: res.name, active: !!res.active, num_steps: res.num_steps,
-              }]);
-              state.seq.sequenceId = String(res.id);
-              renderSeqPane();
-              toast('Secuencia «' + (res.name || name) + '» creada. Agrega los correos dentro de Apollo antes de activarla.', 'success');
               api.close();
+              var total = results.reduce(function (a, r) { return a + ((r && r.removed) || 0); }, 0);
+              var warning = results.map(function (r) { return r && r.warning; }).filter(Boolean)[0];
+              toast(fmtNum(total) + ' contacto(s) ' + (mode === 'stop' ? 'detenidos' : 'eliminados') +
+                ' en Apollo' + (warning ? ' · ' + warning : ''), warning ? 'warn' : 'success');
+              return reloadSeqMembers();
             }).catch(function (e) {
               prog.hide();
               api.setBusy(false);
@@ -3851,7 +4227,7 @@
     state.shell = shell;
     state.search.filters = loadFiltersFromStorage();
     shell.innerHTML = '';
-    shell.appendChild(h('style', { text: SCOPED_CSS + '\n' + MANUAL_FORM_CSS }));
+    shell.appendChild(h('style', { text: SCOPED_CSS + '\n' + MANUAL_FORM_CSS + '\n' + SEQ_EDITOR_CSS }));
     shell.appendChild(h('div', null,
       h('div', { class: 'pros-title', text: 'Prospección' }),
       h('div', { class: 'pros-subtitle', text: 'Encuentra, enriquece y contacta a tus prospectos — todo desde un solo lugar.' })));

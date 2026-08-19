@@ -78,8 +78,13 @@
 
   // Todas las llamadas a Apollo van vía el edge function apollo-proxy
   // (la API key vive en secrets de Supabase, nunca en el cliente).
-  function apolloProxy(endpoint, body) {
-    return edgeFetch('apollo-proxy', { endpoint, body: body || {} });
+  // `method` solo hace falta en los endpoints que aceptan más de un verbo
+  // (PUT/DELETE sobre pasos y touches); el proxy valida el par endpoint+método
+  // contra su allowlist y rechaza cualquier combinación que no esté ahí.
+  function apolloProxy(endpoint, body, method) {
+    const payload = { endpoint, body: body || {} };
+    if (method) payload.method = method;
+    return edgeFetch('apollo-proxy', payload);
   }
 
   function apolloErrorMessage(detail, status) {
@@ -874,8 +879,35 @@
       id: s.id,
       name: s.name,
       active: !!s.active,
+      archived: !!s.archived,
       num_steps: s.num_steps ?? null,
+      // Resumen de pasos que ya devuelve el search (sin asunto ni cuerpo:
+      // esos viven en los touches, ver fetchSequenceSteps).
+      steps: (Array.isArray(s.emailer_steps) ? s.emailer_steps : []).map((st) => ({
+        id: st.id,
+        position: st.position,
+        waitTime: st.wait_time ?? 0,
+        waitMode: st.wait_mode || 'day',
+        type: st.type || 'auto_email',
+      })).sort((a, b) => (a.position || 0) - (b.position || 0)),
+      // Métricas reales de Apollo — nunca inventadas: si Apollo no las manda,
+      // se quedan en null y la UI muestra «—».
+      stats: {
+        scheduled: numOrNull(s.unique_scheduled),
+        delivered: numOrNull(s.unique_delivered),
+        opened: numOrNull(s.unique_opened),
+        replied: numOrNull(s.unique_replied),
+        bounced: numOrNull(s.unique_bounced),
+        unsubscribed: numOrNull(s.unique_unsubscribed),
+        openRate: numOrNull(s.open_rate),
+        replyRate: numOrNull(s.reply_rate),
+        bounceRate: numOrNull(s.bounce_rate),
+      },
     }));
+  }
+
+  function numOrNull(v) {
+    return typeof v === 'number' && isFinite(v) ? v : null;
   }
 
   async function fetchEmailAccounts() {
@@ -887,35 +919,232 @@
     }));
   }
 
-  // ── Crear una secuencia (sin salir de la app) ──────────────
+  // ── Constructor de secuencias (sin salir de la app) ────────
   // Igual que fetchSequences/enroll: requiere master key (Apollo devuelve 403
   // si no lo es — el mensaje se traduce en apolloErrorMessage).
   //
-  // Solo crea el "shell" de la secuencia (name + permisos) vía la API
-  // pública de Apollo: POST /emailer_campaigns.
-  //
-  // Agregar los correos (pasos) NO es posible desde el servidor: Apollo lo
-  // resuelve con un PUT a app.apollo.io/api/v1/sequences/{id} autenticado
-  // con la sesión de navegador del usuario (cookie + CSRF token), no con la
-  // API key — no existe endpoint público para crear pasos. Por eso el
-  // usuario termina de armar los correos dentro de Apollo.
-  async function createSequence({ name }) {
-    const clean = String(name || '').trim();
-    if (!clean) throw new Error('Escribe un nombre para la secuencia.');
+  // Una secuencia en Apollo son tres recursos encadenados:
+  //   emailer_campaign  →  emailer_step (un correo del cadence, con su espera)
+  //                     →  emailer_touch (el asunto y el cuerpo)
+  // POST /emailer_steps crea el paso Y un touch vacío; PUT /emailer_touches/{id}
+  // le escribe el asunto y el cuerpo. Pasar emailer_steps directamente a
+  // POST/PUT /emailer_campaigns NO funciona: responde 200 y los descarta.
 
+  // Cuerpo escrito por el usuario (texto plano, con variables {{first_name}})
+  // → HTML para Apollo. Se escapa: el usuario escribe texto, no marcado.
+  function bodyToHtml(text) {
+    const esc = String(text || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const paras = esc.split(/\n{2,}/).map((p) => p.replace(/\n/g, '<br>'));
+    return paras.filter((p) => p.length).map((p) => '<p>' + p + '</p>').join('') || '<p></p>';
+  }
+
+  // HTML de Apollo → texto plano para el textarea.
+  function htmlToBody(html) {
+    if (!html) return '';
+    return String(html)
+      .replace(/<\s*br\s*\/?>/gi, '\n')
+      .replace(/<\/\s*(p|div)\s*>/gi, '\n\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+      .replace(/&amp;/g, '&')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  // Lee el asunto y el cuerpo de cada paso. El search de secuencias solo trae
+  // el resumen del paso, así que hay que pedir sus touches uno por uno (son
+  // pocos: 3-6 pasos por secuencia).
+  async function fetchSequenceSteps(steps) {
+    const list = Array.isArray(steps) ? steps : [];
+    const loaded = await Promise.all(list.map(async (st) => {
+      let touch = null;
+      try {
+        const res = await apolloProxy('/emailer_touches?emailer_step_id=' + encodeURIComponent(st.id), null, 'GET');
+        const touches = Array.isArray(res?.emailer_touches) ? res.emailer_touches : [];
+        // Varios touches en un paso = variantes A/B. La app edita la primera y
+        // deja intactas las demás (ver saveSequence).
+        touch = touches[0] || null;
+      } catch (_) {
+        // Un paso ilegible no debe tumbar el editor completo.
+      }
+      const tmpl = touch?.emailer_template || {};
+      return {
+        id: st.id,
+        position: st.position,
+        waitTime: st.waitTime ?? 0,
+        waitMode: st.waitMode || 'day',
+        type: st.type || 'auto_email',
+        touchId: touch?.id || null,
+        touchType: touch?.type || (st.position === 1 ? 'new_thread' : 'reply_to_thread'),
+        variants: Math.max(1, touch ? 1 : 0),
+        subject: tmpl.subject || '',
+        body: htmlToBody(tmpl.body_html || tmpl.body_text || ''),
+        unreadable: !touch,
+      };
+    }));
+    return loaded.sort((a, b) => (a.position || 0) - (b.position || 0));
+  }
+
+  async function createSequenceShell(name) {
     const created = await apolloProxy('/emailer_campaigns', {
-      name: clean,
+      name,
       permissions: 'private',
     });
     const campaign = created?.emailer_campaign;
     if (!campaign?.id) throw new Error('Apollo no devolvió la secuencia creada. Reintenta.');
+    return campaign;
+  }
 
-    return {
-      id: campaign.id,
-      name: campaign.name || clean,
-      active: !!campaign.active,
-      num_steps: campaign.num_steps || 0,
-    };
+  async function writeStepContent(touchId, step) {
+    // Apollo rechaza un asunto en un paso que responde en el mismo hilo.
+    const template = { body_html: bodyToHtml(step.body), creation_type: 'manual' };
+    if (step.touchType !== 'reply_to_thread') template.subject = String(step.subject || '').trim();
+    await apolloProxy('/emailer_touches/' + encodeURIComponent(touchId), {
+      id: touchId,
+      status: 'approved',
+      type: step.touchType || 'new_thread',
+      emailer_template: template,
+    }, 'PUT');
+  }
+
+  /**
+   * Crea o actualiza una secuencia completa (nombre + correos).
+   * `steps` es el estado deseado; los pasos que ya no aparecen se borran.
+   * Devuelve { id, name, created } y avisa por onProgress.
+   */
+  async function saveSequence({ id, name, steps, existingSteps, onProgress }) {
+    const clean = String(name || '').trim();
+    if (!clean) throw new Error('Escribe un nombre para la secuencia.');
+    const desired = Array.isArray(steps) ? steps : [];
+    if (!desired.length) throw new Error('Agrega al menos un correo a la secuencia.');
+    for (const [i, s] of desired.entries()) {
+      const isReply = s.touchType === 'reply_to_thread';
+      if (!isReply && !String(s.subject || '').trim()) {
+        throw new Error('El correo ' + (i + 1) + ' necesita un asunto.');
+      }
+      if (!String(s.body || '').trim()) {
+        throw new Error('El correo ' + (i + 1) + ' necesita un cuerpo.');
+      }
+    }
+    const progress = typeof onProgress === 'function' ? onProgress : () => {};
+
+    let sequenceId = id;
+    let created = false;
+    if (!sequenceId) {
+      progress({ phase: 'sequence', done: 0, total: desired.length });
+      const campaign = await createSequenceShell(clean);
+      sequenceId = campaign.id;
+      created = true;
+    } else {
+      progress({ phase: 'sequence', done: 0, total: desired.length });
+      await apolloProxy('/emailer_campaigns/' + encodeURIComponent(sequenceId), {
+        id: sequenceId,
+        name: clean,
+      }, 'PUT');
+    }
+
+    // Borrar los pasos que el usuario quitó del editor.
+    const keepIds = new Set(desired.filter((s) => s.id).map((s) => String(s.id)));
+    const stale = (Array.isArray(existingSteps) ? existingSteps : [])
+      .filter((s) => s.id && !keepIds.has(String(s.id)));
+    for (const s of stale) {
+      await apolloProxy('/emailer_steps/' + encodeURIComponent(s.id), null, 'DELETE');
+    }
+
+    for (const [i, step] of desired.entries()) {
+      progress({ phase: 'steps', done: i, total: desired.length });
+      const position = i + 1;
+      if (step.id) {
+        await apolloProxy('/emailer_steps/' + encodeURIComponent(step.id), {
+          id: step.id,
+          position,
+          wait_time: Number(step.waitTime) || 0,
+          wait_mode: step.waitMode || 'day',
+        }, 'PUT');
+        if (step.touchId) {
+          await writeStepContent(step.touchId, step);
+        }
+      } else {
+        const res = await apolloProxy('/emailer_steps', {
+          emailer_campaign_id: sequenceId,
+          position,
+          type: 'auto_email',
+          wait_time: Number(step.waitTime) || 0,
+          wait_mode: step.waitMode || 'day',
+        });
+        // Apollo crea el paso junto con un touch (y su plantilla) en blanco:
+        // ese touch es el que recibe el asunto y el cuerpo.
+        const touchId = res?.emailer_touch?.id;
+        if (!touchId) {
+          throw new Error('Apollo creó el correo ' + position + ' pero no devolvió dónde escribirlo. Revísalo en Apollo.');
+        }
+        await writeStepContent(touchId, step);
+      }
+    }
+    progress({ phase: 'steps', done: desired.length, total: desired.length });
+
+    return { id: sequenceId, name: clean, created };
+  }
+
+  async function setSequenceActive(sequenceId, active) {
+    if (!sequenceId) throw new Error('Falta la secuencia.');
+    if (active) {
+      await apolloProxy('/emailer_campaigns/' + encodeURIComponent(sequenceId) + '/approve', {});
+    } else {
+      await apolloProxy('/emailer_campaigns/' + encodeURIComponent(sequenceId), {
+        id: sequenceId,
+        active: false,
+      }, 'PUT');
+    }
+    // La respuesta del PUT devuelve el estado anterior, así que el estado real
+    // se relee del search en vez de confiar en ella.
+    const fresh = await fetchSequences();
+    const found = fresh.find((s) => String(s.id) === String(sequenceId));
+    return { sequences: fresh, active: found ? found.active : active };
+  }
+
+  async function archiveSequence(sequenceId) {
+    if (!sequenceId) throw new Error('Falta la secuencia.');
+    await apolloProxy('/emailer_campaigns/' + encodeURIComponent(sequenceId) + '/archive', {});
+  }
+
+  async function fetchSchedules() {
+    const data = await apolloProxy('/emailer_schedules', null, 'GET');
+    return (data?.emailer_schedules || []).map((s) => ({
+      id: s.id,
+      name: s.name,
+      default: !!s.default,
+      timeZone: s.time_zone || null,
+    }));
+  }
+
+  /**
+   * Saca contactos de una secuencia. mode 'stop' detiene los pasos pendientes
+   * conservando el histórico; 'remove' los quita del todo.
+   */
+  async function removeFromSequence({ sequenceId, members, mode, reason }) {
+    if (!sequenceId) throw new Error('Falta la secuencia.');
+    const rows = (Array.isArray(members) ? members : []).filter((m) => m.apollo_contact_id);
+    if (!rows.length) throw new Error('Ninguno de los contactos seleccionados está enrolado en Apollo.');
+
+    await apolloProxy('/emailer_campaigns/remove_or_stop_contact_ids', {
+      emailer_campaign_ids: [sequenceId],
+      contact_ids: rows.map((m) => m.apollo_contact_id),
+      mode: mode === 'stop' ? 'stop' : 'remove',
+      ...(mode === 'stop' && reason ? { stop_reason: reason } : {}),
+    });
+
+    // Limpiar el estado local para que la tabla deje de mostrarlos enrolados.
+    const { error } = await sb().from('prospect_list_members')
+      .update({ sequence_status: null })
+      .in('id', rows.map((m) => m.id));
+    if (error) {
+      return { removed: rows.length, warning: 'Se sacaron de Apollo, pero no se pudo actualizar el estado local: ' + error.message };
+    }
+    return { removed: rows.length };
   }
 
   async function enrollInSequence({ sequence, emailAccountId, members, listName, onProgress }) {
@@ -1284,8 +1513,13 @@
     enrichMembers,
     updateMember,
     fetchSequences,
+    fetchSequenceSteps,
     fetchEmailAccounts,
-    createSequence,
+    fetchSchedules,
+    saveSequence,
+    setSequenceActive,
+    archiveSequence,
+    removeFromSequence,
     enrollInSequence,
     generateOutreach,
     ensureBriefReady,
