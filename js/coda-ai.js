@@ -72,6 +72,20 @@
   const esc = (s) => (window.escHtml ? window.escHtml(s) : String(s == null ? '' : s));
   function log() { try { console.log.apply(console, ['[coda-ai]'].concat([].slice.call(arguments))); } catch (e) {} }
 
+  // Si generate-coda muere a mitad de camino (cold start, timeout, crash del
+  // background task) sin llegar a escribir status ready/error, la fila queda
+  // en 'generating' para siempre: la realtime subscription nunca dispara, y
+  // el botón (deshabilitado mientras generating) queda bloqueado de por vida.
+  // Mismo problema y misma solución que intel-hub-cadence-tabs.js
+  // (isStaleGenerating): pasado un margen, tratamos el estado como error para
+  // desbloquear el botón y permitir reintentar.
+  const STALE_PESTEL_MS = 4 * 60 * 1000; // PESTEL corre hasta 6 web_search — más lento
+  const STALE_CAME_MS = 2 * 60 * 1000;   // CAME es transformación pura, sin web_search
+  function isStale(dateStr, ms) {
+    const t = new Date(dateStr || 0).getTime();
+    return (Date.now() - t) > ms;
+  }
+
   async function waitForSupabase() {
     for (let i = 0; i < 80; i++) { if (window.supabaseClient) return true; await new Promise(r => setTimeout(r, 100)); }
     return false;
@@ -184,7 +198,9 @@
     const host = document.getElementById('coda-pestel-body');
     if (!host) return;
     const row = STATE.row || {};
-    const status = row.pestel_status || 'idle';
+    const rawStatus = row.pestel_status || 'idle';
+    const stale = rawStatus === 'generating' && isStale(row.updated_at, STALE_PESTEL_MS);
+    const status = stale ? 'error' : rawStatus;
     const pestel = row.pestel || {};
     const generating = status === 'generating';
     const hasData = status === 'ready' && Object.values(pestel).some(a => Array.isArray(a) && a.length);
@@ -223,8 +239,9 @@
     const btnLabel = generating ? '⏳ Analizando tu mercado…' : (hasData ? '↻ Regenerar PESTEL' : '✨ Generar análisis PESTEL con IA');
     const meta = hasData && row.pestel_generated_at
       ? `<span class="coda-meta">Actualizado ${fmtRel(new Date(row.pestel_generated_at))}</span>` : '';
+    const errMsg = stale ? 'la generación anterior tardó demasiado y no terminó' : row.pestel_error;
     const errBox = status === 'error'
-      ? `<div class="coda-err">No se pudo generar el análisis${row.pestel_error ? ': ' + esc(row.pestel_error) : ''}. Vuelve a intentarlo.</div>` : '';
+      ? `<div class="coda-err">No se pudo generar el análisis${errMsg ? ': ' + esc(errMsg) : ''}. Vuelve a intentarlo.</div>` : '';
 
     host.innerHTML = `
       <div class="coda-actionbar">
@@ -243,7 +260,9 @@
     const host = document.getElementById('coda-came-body');
     if (!host) return;
     const row = STATE.row || {};
-    const status = row.came_status || 'idle';
+    const rawStatus = row.came_status || 'idle';
+    const stale = rawStatus === 'generating' && isStale(row.updated_at, STALE_CAME_MS);
+    const status = stale ? 'error' : rawStatus;
     const came = row.came || {};
     const generating = status === 'generating';
     const hasData = status === 'ready' && Object.values(came).some(a => Array.isArray(a) && a.length);
@@ -253,7 +272,8 @@
       return;
     }
     if (status === 'error') {
-      host.innerHTML = `<div class="coda-err">No se pudo convertir a CAME${row.came_error ? ': ' + esc(row.came_error) : ''}. Vuelve a intentarlo.</div>`;
+      const errMsg = stale ? 'la generación anterior tardó demasiado y no terminó' : row.came_error;
+      host.innerHTML = `<div class="coda-err">No se pudo convertir a CAME${errMsg ? ': ' + esc(errMsg) : ''}. Vuelve a intentarlo.</div>`;
       return;
     }
     if (!hasData) {
