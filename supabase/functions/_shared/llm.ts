@@ -10,7 +10,7 @@
 //
 // Recommended engine per feature (mirrored in js/ai-engine.js — keep in sync):
 //   intel_hub  → perplexity   (search-grounded research)
-//   coda       → perplexity   (search-grounded market analysis)
+//   coda       → perplexity   (PESTEL / Porter — search-grounded analysis)
 //   outreach   → claude       (message writing)
 //   coach      → openai       (AI Sales Coach)
 //   onboarding → claude       (company enrichment / brief / documents)

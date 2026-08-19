@@ -8,7 +8,7 @@
 // servidor — este módulo solo la escribe y la muestra.
 //
 // El motor recomendado depende de la función:
-//   Intelligence Hub / CODA AI → Perplexity (investigación con búsqueda web)
+//   Intelligence Hub / Contexto estratégico IA → Perplexity (búsqueda web)
 //   Mensajes y onboarding      → Claude
 //   AI Sales Coach             → OpenAI
 //
@@ -34,7 +34,7 @@
   // clave de función → { label, recommended }
   var FEATURES = {
     intel_hub:  { label: 'Intelligence Hub',   recommended: 'perplexity' },
-    coda:       { label: 'CODA AI',            recommended: 'perplexity' },
+    coda:       { label: 'Contexto estratégico IA', recommended: 'perplexity' },
     outreach:   { label: 'Generación de mensajes', recommended: 'claude' },
     coach:      { label: 'AI Sales Coach',     recommended: 'openai' },
     onboarding: { label: 'Onboarding y contexto de empresa', recommended: 'claude' },

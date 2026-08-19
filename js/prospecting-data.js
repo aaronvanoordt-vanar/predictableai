@@ -1164,6 +1164,44 @@
     return edgeFetch('generate-client-brief', {});
   }
 
+  // ── Tendencias de outbound (outreach_playbooks) ─────────────
+  // Investigación web periódica (foros tipo r/sales y r/coldemail, academias y
+  // reportes de Apollo/Lavender/Gong, operadores) sobre qué está funcionando
+  // HOY en frío. La corre generate-outreach-playbook; generate-outreach la
+  // aplica al redactar SOLO si la fila está `enabled` y `ready`. Es una capa
+  // de recomendación: apagarla no degrada la generación, solo la deja como
+  // estaba antes. RLS por dueño.
+
+  async function fetchOutreachPlaybook() {
+    const { data, error } = await sb().from('outreach_playbooks').select('*').maybeSingle();
+    if (error) {
+      // La migración puede no estar aplicada todavía: la pestaña debe seguir
+      // funcionando sin tendencias en vez de romperse entera.
+      if (/does not exist|schema cache/i.test(error.message || '')) return null;
+      throw new Error('No se pudieron leer tus tendencias: ' + error.message);
+    }
+    return data || null;
+  }
+
+  async function generateOutreachPlaybook() {
+    return edgeFetch('generate-outreach-playbook', {});
+  }
+
+  // Guarda solo las preferencias del usuario (cadencia + si se aplican al
+  // redactar). El contenido de la investigación lo escribe la edge function.
+  async function saveOutreachPlaybookPrefs({ cadence, enabled }) {
+    const patch = { user_id: await getUserId() };
+    if (cadence !== undefined) patch.cadence = cadence;
+    if (enabled !== undefined) patch.enabled = !!enabled;
+    const { data, error } = await sb()
+      .from('outreach_playbooks')
+      .upsert(patch, { onConflict: 'user_id' })
+      .select()
+      .maybeSingle();
+    if (error) throw new Error('No se pudo guardar la preferencia: ' + error.message);
+    return data || null;
+  }
+
   // ── Contexto del lead para el AI coach (coach_lead_context) ──
   // Persiste el handoff Prospección → coach en Supabase (una fila por usuario)
   // para que sobreviva recargas y otros dispositivos.
@@ -1297,6 +1335,9 @@
     ensureBriefReady,
     fetchClientBrief,
     generateClientBrief,
+    fetchOutreachPlaybook,
+    generateOutreachPlaybook,
+    saveOutreachPlaybookPrefs,
     buildCoachLeadContext,
     saveCoachContext,
     fetchLatestCoachContext,
