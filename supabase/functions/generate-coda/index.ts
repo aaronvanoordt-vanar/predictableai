@@ -26,6 +26,14 @@
  * Response 202: { status: "started" } — result arrives via the client's
  *       realtime subscription to coda_analysis.
  * Required secrets: ANTHROPIC_API_KEY
+ *
+ * Background-task deadline: PESTEL's Anthropic call is capped at 3 web
+ * searches and CLAUDE_TIMEOUT_MS (95s), well under the Edge Runtime's ~150s
+ * silent isolate kill — see the comment above CLAUDE_TIMEOUT_MS. Without
+ * this, a slow/hung call gets killed outside our try/catch and
+ * pestel_status/came_status is stuck at 'generating' forever (this shipped
+ * to production once; see generate-radar's header comment for the same
+ * failure mode discovered there first).
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -47,43 +55,69 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
 
 interface ContentItem { type: string; text?: string; }
 
+// Our own deadline on every Anthropic call, well under the Edge Runtime's
+// ~150s isolate kill. That kill happens outside the JS call stack, so a call
+// that hangs past it takes the whole background task down silently — no
+// catch block ever runs, and coda_analysis.{pestel,came}_status is left at
+// 'generating' forever (this is exactly what generate-radar's own postmortem
+// comments document, and why radar switched to a staged per-call protocol).
+// Aborting the fetch ourselves guarantees OUR try/catch runs and the row
+// always reaches 'ready' or 'error'.
+const CLAUDE_TIMEOUT_MS = 95_000;
+
+class ClaudeTimeout extends Error {}
+
 async function callClaude(
   apiKey: string,
   system: string,
   user: string,
-  useWebSearch: boolean,
+  maxSearches: number,
 ): Promise<string> {
+  const deadline = Date.now() + CLAUDE_TIMEOUT_MS;
   let lastErr = "";
-  for (let attempt = 0; attempt <= 2; attempt++) {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 4096,
-        system,
-        ...(useWebSearch
-          ? { tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 6 }] }
-          : {}),
-        messages: [{ role: "user", content: user }],
-      }),
-    });
-    if (res.status === 429 && attempt < 2) {
-      lastErr = await res.text();
-      await new Promise((r) => setTimeout(r, 8000));
-      continue;
+  for (let attempt = 0; attempt <= 1; attempt++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 5_000) break; // no budget left for another attempt
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), remaining);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 4096,
+          system,
+          ...(maxSearches > 0
+            ? { tools: [{ type: "web_search_20260209", name: "web_search", max_uses: maxSearches }] }
+            : {}),
+          messages: [{ role: "user", content: user }],
+        }),
+      });
+      if (res.status === 429 && attempt < 1) {
+        lastErr = await res.text();
+        await new Promise((r) => setTimeout(r, 3000));
+        continue;
+      }
+      if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
+      const msg = await res.json();
+      const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
+      if (!blocks.length) throw new Error("No text in Claude response");
+      return blocks[blocks.length - 1].text ?? "";
+    } catch (e) {
+      if (ctrl.signal.aborted) throw new ClaudeTimeout(`Anthropic call exceeded ${CLAUDE_TIMEOUT_MS}ms`);
+      throw e;
+    } finally {
+      clearTimeout(timer);
     }
-    if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-    const msg = await res.json();
-    const blocks = (msg.content as ContentItem[]).filter((b) => b.type === "text");
-    if (!blocks.length) throw new Error("No text in Claude response");
-    return blocks[blocks.length - 1].text ?? "";
   }
-  throw new Error(`Anthropic 429 after retries: ${lastErr}`);
+  if (lastErr) throw new Error(`Anthropic 429 after retry: ${lastErr}`);
+  throw new ClaudeTimeout(`Anthropic call exceeded ${CLAUDE_TIMEOUT_MS}ms`);
 }
 
 // deno-lint-ignore no-explicit-any
@@ -103,7 +137,7 @@ function parseJson(raw: string): any {
 
 const PESTEL_SYSTEM = `You are a market-strategy analyst inside a B2B sales-intelligence platform. Produce a PESTEL analysis for the SELLER company described below, and — critically — translate every factor into its concrete SALES impact (how it changes who to sell to, what message lands, what urgency exists). This is for a sales team, not an academic report.
 
-Research the seller's market and geography with web_search (max 6 searches) to ground the factors in real, current conditions. Then respond with ONLY valid JSON (no markdown fences, no prose) with exactly this shape:
+Research the seller's market and geography with web_search (max 3 searches) to ground the factors in real, current conditions. Then respond with ONLY valid JSON (no markdown fences, no prose) with exactly this shape:
 
 {
   "political": [{ "factor": "the real political/regulatory-policy factor, in Spanish", "impact": "high|medium|low", "sales_impact": "1 sentence in Spanish: what this means for selling — who becomes a hotter/colder buyer, what urgency it creates", "action": "1 short sales action in Spanish (a message angle, a segment to prioritize, a trigger to watch)" }],
@@ -242,7 +276,7 @@ Deno.serve(async (req: Request) => {
           ANTHROPIC_KEY,
           PESTEL_SYSTEM,
           ctx + "\n\nProduce the PESTEL JSON for this seller now.",
-          true,
+          3,
         );
         const p = parseJson(raw);
         const dim = (v: unknown) => (Array.isArray(v) ? v : []);
@@ -269,7 +303,7 @@ Deno.serve(async (req: Request) => {
           ANTHROPIC_KEY,
           CAME_SYSTEM,
           fodaToText(foda) + "\n\nProduce the CAME JSON now.",
-          false,
+          0,
         );
         const c = parseJson(raw);
         const dim = (v: unknown) => (Array.isArray(v) ? v : []);
