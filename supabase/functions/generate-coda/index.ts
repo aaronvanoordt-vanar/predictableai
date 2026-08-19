@@ -4,12 +4,15 @@
  * Powers the "CODA AI" section (optional strategic context on top of the
  * mandatory Intelligence Hub + company context). Two actions:
  *
- *   action: "pestel"
- *     Researches the seller's market (web_search) grounded in their
- *     client_brief + intel_hub_intake context and produces a PESTEL analysis:
- *     Political / Economic / Social / Technological / Environmental / Legal
- *     factors, each translated into a concrete SALES impact + suggested action.
- *     Writes coda_analysis.pestel (status generating → ready|error).
+ *   action: "pestel"  (body: { client_id, country })
+ *     Researches the given country's market (web_search) for the given
+ *     client's ICP/industry (a row in the `clients` table the caller manages)
+ *     and produces a PESTEL analysis: Political / Economic / Social /
+ *     Technological / Environmental / Legal factors, each translated into a
+ *     concrete SALES impact + suggested action. Country must be one of the
+ *     client's target_countries. Writes client_pestel (status
+ *     generating → ready|error), one row per (client_id, country) so
+ *     switching the country dropdown doesn't force a re-generation.
  *
  *   action: "came"  (body: { foda: {fortalezas,oportunidades,debilidades,amenazas} })
  *     Converts the user-filled FODA (SWOT) matrix into a CAME response matrix:
@@ -24,7 +27,7 @@
  *       generate-client-brief notes — verify_jwt alone accepts the public
  *       anon key, which would let anyone burn Anthropic tokens).
  * Response 202: { status: "started" } — result arrives via the client's
- *       realtime subscription to coda_analysis.
+ *       realtime subscription to client_pestel (pestel) or coda_analysis (came).
  * Required secrets: ANTHROPIC_API_KEY
  *
  * Background-task deadline: PESTEL's Anthropic call is capped at 3 web
@@ -135,12 +138,12 @@ function parseJson(raw: string): any {
   return JSON.parse(cleaned.slice(s, e + 1));
 }
 
-const PESTEL_SYSTEM = `You are a market-strategy analyst inside a B2B sales-intelligence platform. Produce a PESTEL analysis for the SELLER company described below, and — critically — translate every factor into its concrete SALES impact (how it changes who to sell to, what message lands, what urgency exists). This is for a sales team, not an academic report.
+const PESTEL_SYSTEM = `You are a market-strategy analyst inside a B2B sales-intelligence platform. The user is an agency running outbound sales/prospecting on behalf of one of their clients. Produce a PESTEL analysis for the SPECIFIC COUNTRY given below, scoped to that client's ICP/industry, and — critically — translate every factor into its concrete SALES/PROSPECTING impact (how it changes who to target in that country, what message lands, what urgency exists). This is for a sales team, not an academic report.
 
-Research the seller's market and geography with web_search (max 3 searches) to ground the factors in real, current conditions. Then respond with ONLY valid JSON (no markdown fences, no prose) with exactly this shape:
+Research that country's market with web_search (max 3 searches) to ground the factors in real, current conditions. Then respond with ONLY valid JSON (no markdown fences, no prose) with exactly this shape:
 
 {
-  "political": [{ "factor": "the real political/regulatory-policy factor, in Spanish", "impact": "high|medium|low", "sales_impact": "1 sentence in Spanish: what this means for selling — who becomes a hotter/colder buyer, what urgency it creates", "action": "1 short sales action in Spanish (a message angle, a segment to prioritize, a trigger to watch)" }],
+  "political": [{ "factor": "the real political/regulatory-policy factor, in Spanish", "impact": "high|medium|low", "sales_impact": "1 sentence in Spanish: what this means for prospecting in this country — who becomes a hotter/colder buyer, what urgency it creates", "action": "1 short sales action in Spanish (a message angle, a segment to prioritize, a trigger to watch)" }],
   "economic": [ ... same shape ... ],
   "social": [ ... ],
   "technological": [ ... ],
@@ -150,8 +153,8 @@ Research the seller's market and geography with web_search (max 3 searches) to g
 
 Rules:
 - 2-3 factors per dimension (the strongest, most sales-relevant ones). Never leave a dimension empty — if a dimension is weak for this market, give the single most relevant factor.
-- Every factor MUST be specific to this company's market/geography/ICP. No generic textbook factors ("technology is advancing"). Tie each to a real, current condition.
-- "sales_impact" is the point of the whole exercise: always frame it as consequence for THIS seller's pipeline.
+- Every factor MUST be specific to the given country and to this client's ICP/industry. No generic textbook factors ("technology is advancing"). Tie each to a real, current condition in that country.
+- "sales_impact" is the point of the whole exercise: always frame it as consequence for prospecting THAT client's target buyers in THAT country.
 - Never invent hard statistics. If you cite a number, it must come from web_search results. Qualitative framing is fine without numbers.
 - All user-facing text in neutral Latin-American Spanish (tuteo).`;
 
@@ -178,36 +181,21 @@ Rules:
 - Every "accion" must be executable by a sales team, concrete, and specific to their inputs. No vague advice ("mejorar la comunicación").
 - All text in neutral Latin-American Spanish (tuteo).`;
 
-interface IntakeRow {
-  company_industry: string | null;
-  company_country: string | null;
-  company_website: string | null;
-  company_about: string | null;
-  company_solutions: string | null;
-  icp_industries: string | null;
-  icp_geographies: string | null;
-  icp_roles: string | null;
-  icp_pain_points: string | null;
-  value_proposition: string | null;
+interface ClientRow {
+  name: string;
+  icp: string | null;
+  industries: string | null;
+  target_countries: string[] | null;
 }
 
-// deno-lint-ignore no-explicit-any
-function buildContextBlock(intake: IntakeRow | null, profile: any, brief: any): string {
-  const lines: string[] = ["=== SELLER COMPANY CONTEXT ==="];
+function buildClientContextBlock(client: ClientRow, country: string): string {
+  const lines: string[] = ["=== COUNTRY TO ANALYZE ===", country, "", "=== CLIENT CONTEXT ==="];
   const push = (label: string, v: string | null | undefined) => { if (v) lines.push(`${label}: ${v}`); };
-  push("Company name", profile?.company_name || brief?.company_name);
-  push("What it does", brief?.what_it_does || intake?.company_about);
-  push("Positioning", brief?.positional_phrase);
-  push("Industry", intake?.company_industry || (brief?.icp?.industries || []).join(", "));
-  push("Country", intake?.company_country);
-  push("Website", intake?.company_website || brief?.enrichment?.website);
-  push("Solutions", intake?.company_solutions);
-  push("Value proposition", intake?.value_proposition || brief?.brand_promise);
-  push("Target industries (ICP)", intake?.icp_industries || (brief?.icp?.industries || []).join(", "));
-  push("Target geographies (ICP)", intake?.icp_geographies || (brief?.icp?.geographies || []).join(", "));
-  push("Target roles (ICP)", intake?.icp_roles || (brief?.icp?.roles || []).join(", "));
-  push("ICP pain points", intake?.icp_pain_points);
-  if (lines.length === 1) lines.push("(sparse — infer the market from any available signal and be explicit about assumptions)");
+  push("Client name", client.name);
+  push("ICP", client.icp);
+  push("Industries", client.industries);
+  push("All target countries", (client.target_countries || []).join(", "));
+  if (lines.length === 4) lines.push("(sparse — infer the market from any available signal and be explicit about assumptions)");
   return lines.join("\n");
 }
 
@@ -242,7 +230,7 @@ Deno.serve(async (req: Request) => {
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
 
-  let body: { action?: string; foda?: unknown } = {};
+  let body: { action?: string; foda?: unknown; client_id?: string; country?: string } = {};
   try { body = await req.json(); } catch (_) { /* empty body */ }
   const action = body.action;
   if (action !== "pestel" && action !== "came") {
@@ -251,31 +239,38 @@ Deno.serve(async (req: Request) => {
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
-  // Ensure a row exists and flip the relevant status to 'generating'.
-  const statusPatch = action === "pestel"
-    ? { pestel_status: "generating", pestel_error: null }
-    : { came_status: "generating", came_error: null };
-  await supa.from("coda_analysis").upsert(
-    { user_id: user.id, ...statusPatch },
-    { onConflict: "user_id" },
-  );
+  if (action === "pestel") {
+    const clientId = typeof body.client_id === "string" ? body.client_id.trim() : "";
+    const country = typeof body.country === "string" ? body.country.trim() : "";
+    if (!clientId || !country) return json({ error: "client_id and country are required" }, 400, h);
 
-  const work = (async () => {
-    try {
-      if (action === "pestel") {
-        const [{ data: intake }, { data: profile }, { data: brief }] = await Promise.all([
-          supa.from("intel_hub_intake").select(`
-            company_industry, company_country, company_website, company_about, company_solutions,
-            icp_industries, icp_geographies, icp_roles, icp_pain_points, value_proposition
-          `).eq("user_id", user.id).maybeSingle(),
-          supa.from("profiles").select("company_name").eq("id", user.id).maybeSingle(),
-          supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
-        ]);
-        const ctx = buildContextBlock(intake as IntakeRow | null, profile, brief);
+    // authed (not service-role) client so RLS/auth.uid() resolve for the RPC below.
+    const authed = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data: canManage } = await authed.rpc("can_manage_client", { p_client_id: clientId });
+    if (!canManage) return json({ error: "Forbidden" }, 403, h);
+
+    const { data: client } = await supa.from("clients")
+      .select("name, icp, industries, target_countries")
+      .eq("id", clientId).maybeSingle();
+    if (!client) return json({ error: "Client not found" }, 404, h);
+    if (!(client.target_countries || []).includes(country)) {
+      return json({ error: "country must be one of the client's target_countries" }, 400, h);
+    }
+
+    await supa.from("client_pestel").upsert(
+      { client_id: clientId, country, pestel_status: "generating", pestel_error: null },
+      { onConflict: "client_id,country" },
+    );
+
+    const work = (async () => {
+      try {
+        const ctx = buildClientContextBlock(client as ClientRow, country);
         const raw = await callClaude(
           ANTHROPIC_KEY,
           PESTEL_SYSTEM,
-          ctx + "\n\nProduce the PESTEL JSON for this seller now.",
+          ctx + "\n\nProduce the PESTEL JSON for this country now.",
           3,
         );
         const p = parseJson(raw);
@@ -288,45 +283,70 @@ Deno.serve(async (req: Request) => {
           environmental: dim(p.environmental),
           legal:         dim(p.legal),
         };
-        await supa.from("coda_analysis").update({
+        await supa.from("client_pestel").update({
           pestel,
           pestel_status: "ready",
           pestel_error: null,
           pestel_generated_at: new Date().toISOString(),
-        }).eq("user_id", user.id);
-        console.log(`[coda] ✓ pestel ${user.id}`);
-      } else {
-        // came — persist the FODA the user sent, then derive CAME.
-        const foda = (body.foda && typeof body.foda === "object") ? body.foda : {};
-        await supa.from("coda_analysis").update({ foda }).eq("user_id", user.id);
-        const raw = await callClaude(
-          ANTHROPIC_KEY,
-          CAME_SYSTEM,
-          fodaToText(foda) + "\n\nProduce the CAME JSON now.",
-          0,
-        );
-        const c = parseJson(raw);
-        const dim = (v: unknown) => (Array.isArray(v) ? v : []);
-        const came = {
-          mantener: dim(c.mantener),
-          explotar: dim(c.explotar),
-          corregir: dim(c.corregir),
-          afrontar: dim(c.afrontar),
-        };
-        await supa.from("coda_analysis").update({
-          came,
-          came_status: "ready",
-          came_error: null,
-          came_generated_at: new Date().toISOString(),
-        }).eq("user_id", user.id);
-        console.log(`[coda] ✓ came ${user.id}`);
+        }).eq("client_id", clientId).eq("country", country);
+        console.log(`[coda] ✓ pestel ${clientId}/${country}`);
+      } catch (err) {
+        console.error("[coda] error:", err);
+        await supa.from("client_pestel").update({
+          pestel_status: "error",
+          pestel_error: String(err).slice(0, 500),
+        }).eq("client_id", clientId).eq("country", country);
       }
+    })();
+
+    // @ts-ignore — Supabase Edge Runtime global
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+      // @ts-ignore
+      EdgeRuntime.waitUntil(work);
+    } else {
+      await work;
+    }
+
+    return json({ status: "started" }, 202, h);
+  }
+
+  // action === "came" — persist the FODA the user sent, then derive CAME.
+  await supa.from("coda_analysis").upsert(
+    { user_id: user.id, came_status: "generating", came_error: null },
+    { onConflict: "user_id" },
+  );
+
+  const work = (async () => {
+    try {
+      const foda = (body.foda && typeof body.foda === "object") ? body.foda : {};
+      await supa.from("coda_analysis").update({ foda }).eq("user_id", user.id);
+      const raw = await callClaude(
+        ANTHROPIC_KEY,
+        CAME_SYSTEM,
+        fodaToText(foda) + "\n\nProduce the CAME JSON now.",
+        0,
+      );
+      const c = parseJson(raw);
+      const dim = (v: unknown) => (Array.isArray(v) ? v : []);
+      const came = {
+        mantener: dim(c.mantener),
+        explotar: dim(c.explotar),
+        corregir: dim(c.corregir),
+        afrontar: dim(c.afrontar),
+      };
+      await supa.from("coda_analysis").update({
+        came,
+        came_status: "ready",
+        came_error: null,
+        came_generated_at: new Date().toISOString(),
+      }).eq("user_id", user.id);
+      console.log(`[coda] ✓ came ${user.id}`);
     } catch (err) {
       console.error("[coda] error:", err);
-      const errPatch = action === "pestel"
-        ? { pestel_status: "error", pestel_error: String(err).slice(0, 500) }
-        : { came_status: "error", came_error: String(err).slice(0, 500) };
-      await supa.from("coda_analysis").update(errPatch).eq("user_id", user.id);
+      await supa.from("coda_analysis").update({
+        came_status: "error",
+        came_error: String(err).slice(0, 500),
+      }).eq("user_id", user.id);
     }
   })();
 
