@@ -19,7 +19,7 @@
  * calibrate the crafting. Toggling it off leaves generation exactly as before.
  *
  * Public API:
- *   window.prospecting.show(tabId)   // 'resumen'|'busqueda'|'listas'|'contactos'|'secuencias'|'outreach'
+ *   window.prospecting.show(tabId)   // 'resumen'|'busqueda'|'listas'|'contactos'|'secuencias'|'bandeja'|'outreach'
  *   window.prospecting.refreshBadge()// updates #nav-listas-badge with list count
  *
  * Data layer: window.prospectingData (built in parallel — referenced lazily
@@ -82,6 +82,13 @@
       playbookLoading: false, playbookSaving: false, playbookOpen: false,
       playbookTimer: null, playbookPolls: 0,
     },
+    bandeja: {
+      rootEl: null,
+      gmail: null, gmailChecked: false, gmailError: null,
+      sequenceId: '', stat: '',
+      rows: [], page: 1, hasMore: false,
+      loading: false, error: null,
+    },
     contactos: {
       rootEl: null,
       rows: [],
@@ -98,6 +105,7 @@
     { id: 'listas',     label: 'Listas' },
     { id: 'contactos',  label: 'Contactos' },
     { id: 'secuencias', label: 'Secuencias' },
+    { id: 'bandeja',    label: 'Bandeja' },
     { id: 'outreach',   label: 'Generador de mensajes IA' },
   ];
 
@@ -384,6 +392,16 @@
     '.seq-step .pros-check input { accent-color:var(--gold); width:13px; height:13px; cursor:pointer; margin:0; flex:0 0 auto; }',
     '.seq-vars { font-size:11.5px; color:var(--text3); line-height:1.6; }',
     '.seq-vars code { font-family:var(--font-mono); font-size:11px; background:var(--surface2); border:1px solid var(--hair); border-radius:var(--r-xs); padding:1px 5px; }',
+    // Hilo de la Bandeja (también en modal, fuera del shell).
+    '.thread-wrap { display:flex; flex-direction:column; gap:14px; }',
+    '.thread-list { display:flex; flex-direction:column; gap:10px; max-height:min(46vh,420px); overflow-y:auto; padding-right:4px; }',
+    '.thread-msg { border:1px solid var(--hair); border-radius:var(--r-md); background:var(--surface); padding:10px 12px; }',
+    '.thread-msg-out { background:var(--accent-soft); border-color:transparent; }',
+    '.thread-msg-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:6px; flex-wrap:wrap; }',
+    '.thread-msg-who { font-size:12px; font-weight:600; color:var(--text); word-break:break-word; }',
+    '.thread-msg-date { font-size:11px; color:var(--text3); white-space:nowrap; }',
+    '.thread-msg-body { font-size:13px; line-height:1.6; color:var(--text2); white-space:pre-wrap; word-break:break-word; }',
+    '.thread-composer textarea { width:100%; box-sizing:border-box; min-height:110px; resize:vertical; line-height:1.55; font-family:var(--font-body); }',
   ].join('\n');
 
   // ── Modal + progress helpers (reuse .logout-overlay/.logout-modal) ─────
@@ -3690,7 +3708,321 @@
     });
   }
 
-  // ══ TAB 4: WHATSAPP & LINKEDIN ═══════════════════════════════════════════
+  // ══ TAB 4: BANDEJA ═══════════════════════════════════════════════════════
+  //
+  // Apollo responde "qué mandamos y qué pasó con ello"; Gmail responde "qué
+  // dijeron y qué contestamos". Apollo no expone correos entrantes (no hay tipo
+  // inbound, ni endpoint de hilo, y sus filtros por contacto/hilo se ignoran en
+  // silencio), así que el hilo real se abre contra Gmail usando el
+  // provider_thread_id que sí devuelve. Si no hay Gmail conectado, la pestaña
+  // lo dice y sigue sirviendo para el lado saliente — nunca finge tener la
+  // conversación.
+  function buildBandejaPane() {
+    var pane = state.panes.bandeja;
+    var root = h('div', { style: 'display:flex;flex-direction:column;gap:16px' });
+    pane.appendChild(root);
+    state.bandeja.rootEl = root;
+    pane.addEventListener('click', guarded(onBandejaClick));
+    pane.addEventListener('change', guarded(onBandejaChange));
+  }
+
+  function initBandejaTab() {
+    var st = state.bandeja;
+    st.loading = true;
+    renderBandejaPane();
+    var jobs = [loadSeqSources(false).catch(function () {})];
+    if (!st.gmailChecked) {
+      jobs.push(Promise.resolve(pd().fetchGmailAccount())
+        .then(function (a) { st.gmail = a; st.gmailError = null; })
+        .catch(function (e) { st.gmail = null; st.gmailError = errMsg(e); })
+        .then(function () { st.gmailChecked = true; }));
+    }
+    return Promise.all(jobs).then(function () { return reloadBandeja(); });
+  }
+
+  function reloadBandeja() {
+    var st = state.bandeja;
+    st.loading = true;
+    st.error = null;
+    renderBandejaPane();
+    return Promise.resolve(pd().fetchOutreachEmails({
+      sequenceId: st.sequenceId, stat: st.stat, page: st.page, perPage: 25,
+    })).then(function (res) {
+      st.rows = res.rows || [];
+      // Apollo no manda total_entries aquí, así que "hay más" se deduce de si
+      // la página vino llena — nunca de un total inventado.
+      st.hasMore = st.rows.length >= 25;
+    }).catch(function (e) {
+      st.rows = [];
+      st.hasMore = false;
+      st.error = errMsg(e);
+    }).then(function () {
+      st.loading = false;
+      renderBandejaPane();
+    });
+  }
+
+  function msgStatusCell(m) {
+    if (m.bounced) return '<span class="pill pill-red">Rebotó</span>';
+    if (m.spamBlocked) return '<span class="pill pill-red">Spam</span>';
+    if (m.status === 'failed') return '<span class="pill pill-red">Falló</span>';
+    if (m.status === 'scheduled') return '<span class="pill pill-gray">Programado</span>';
+    if (m.status === 'drafted') return '<span class="pill pill-gray">Borrador</span>';
+    if (m.status === 'completed') return '<span class="pill pill-green">Enviado</span>';
+    return '<span class="pill pill-gray">' + esc(m.status || '—') + '</span>';
+  }
+
+  function msgReplyCell(m) {
+    if (!m.replied) return '<span style="color:var(--text3)">—</span>';
+    var classes = pd().REPLY_CLASSES || {};
+    var info = m.replyClass ? classes[m.replyClass] : null;
+    if (info) return '<span class="pill pill-' + esc(info.pill) + '">' + esc(info.label) + '</span>';
+    return '<span class="pill pill-teal">Respondió</span>';
+  }
+
+  function bandejaRowHtml(m) {
+    var when = m.completedAt || m.dueAt;
+    return '<tr>' +
+      '<td><div style="font-weight:600">' + esc(m.toName || m.toEmail || '—') + '</div>' +
+        (m.toEmail ? '<div class="pros-cellsub">' + esc(m.toEmail) + '</div>' : '') + '</td>' +
+      '<td><div style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+        esc(m.subject || '(sin asunto)') + '</div></td>' +
+      '<td>' + msgStatusCell(m) + '</td>' +
+      '<td>' + msgReplyCell(m) + '</td>' +
+      '<td>' + esc(fmtDate(when)) + '</td>' +
+      '<td>' + (m.threadId
+        ? '<button type="button" class="btn btn-ghost btn-sm" data-action="bandeja-open" data-id="' + esc(String(m.id)) + '">Ver hilo</button>'
+        : '<span class="pros-cellsub">Sin hilo aún</span>') + '</td>' +
+      '</tr>';
+  }
+
+  function gmailCardHtml(st) {
+    if (!st.gmailChecked) return '';
+    if (st.gmail && st.gmail.status === 'connected') {
+      return '<div class="chart-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
+        '<div><div style="font-weight:600;font-size:13px">Gmail conectado</div>' +
+        '<div class="pros-cellsub">' + esc(st.gmail.email || '') + ' — los hilos y las respuestas salen de este buzón.</div></div>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-action="gmail-disconnect">Desconectar</button>' +
+        '</div>';
+    }
+    var reason = st.gmail && st.gmail.status === 'error'
+      ? 'Se perdió el acceso a Gmail: ' +
+        String(st.gmail.last_error || 'vuelve a conectarlo').replace(/\.\s*$/, '') + '.'
+      : 'Apollo registra lo que envías y si te respondieron, pero no entrega el texto de la respuesta. Conecta Gmail para leer el hilo completo y contestar sin salir de aquí.';
+    return '<div class="chart-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
+      '<div style="flex:1;min-width:240px"><div style="font-weight:600;font-size:13px">Conecta tu Gmail</div>' +
+      '<div class="pros-cellsub">' + esc(reason) + '</div></div>' +
+      '<button type="button" class="btn btn-primary btn-sm" data-action="gmail-connect">Conectar Gmail</button>' +
+      '</div>';
+  }
+
+  function renderBandejaPane() {
+    var st = state.bandeja;
+    var root = st.rootEl;
+    if (!root) return;
+
+    var seqs = state.cache.sequences || [];
+    var seqOpts = [{ value: '', label: 'Todas las secuencias' }].concat(seqs.map(function (q) {
+      return { value: String(q.id), label: q.name || '—' };
+    }));
+    var statOpts = (pd().MESSAGE_STATS || []).map(function (s) {
+      return { value: s.value, label: s.label };
+    });
+
+    var html = gmailCardHtml(st);
+
+    html += '<div class="chart-card">' +
+      '<div class="chart-title" style="margin:0">Correos de tus secuencias</div>' +
+      '<div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:12px">' +
+      '<div class="form-group"><div class="pros-lbl">Secuencia</div>' + selectHtml('bandeja-seq', seqOpts, st.sequenceId) + '</div>' +
+      '<div class="form-group"><div class="pros-lbl">Estado</div>' + selectHtml('bandeja-stat', statOpts, st.stat) + '</div>' +
+      '</div></div>';
+
+    if (st.loading) {
+      html += window.Skeleton
+        ? '<div class="table-card"><div class="pros-scroll-x"><table><tbody>' +
+            window.Skeleton.tableRows(['28%', '34%', '18%', '18%', '18%', '14%'], 8) +
+          '</tbody></table></div></div>'
+        : '<div class="table-card"><div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando correos…</div></div>';
+    } else if (st.error) {
+      html += '<div class="pros-note-red" style="margin-top:0">⚠ ' + esc(st.error) +
+        ' <button type="button" class="btn btn-ghost btn-sm" data-action="bandeja-retry" style="margin-left:8px">Reintentar</button></div>';
+    } else if (!st.rows.length) {
+      html += '<div class="table-card">' +
+        emptyHtml(SVG_MAIL, 'No hay correos con estos filtros',
+          st.page > 1
+            ? 'Vuelve a la primera página o cambia los filtros.'
+            : 'Cuando una secuencia activa empiece a enviar, sus correos aparecerán aquí.') +
+        '</div>';
+    } else {
+      html += '<div class="table-card"><div class="pros-scroll-x"><table><thead><tr>' +
+        '<th>Contacto</th><th>Asunto</th><th>Estado</th><th>Respuesta</th><th>Fecha</th><th></th>' +
+        '</tr></thead><tbody>' + st.rows.map(bandejaRowHtml).join('') + '</tbody></table></div></div>';
+    }
+
+    if (!st.loading && !st.error && (st.page > 1 || st.hasMore)) {
+      html += '<div class="pros-actions" style="justify-content:flex-end">' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-action="bandeja-prev"' + (st.page > 1 ? '' : ' disabled') + '>← Anteriores</button>' +
+        '<span style="font-size:12.5px;color:var(--text3)">Página ' + esc(fmtNum(st.page)) + '</span>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-action="bandeja-next"' + (st.hasMore ? '' : ' disabled') + '>Siguientes →</button>' +
+        '</div>';
+    }
+
+    root.innerHTML = html;
+  }
+
+  function onBandejaChange(e) {
+    var t = e.target;
+    var action = t.getAttribute && t.getAttribute('data-action');
+    var st = state.bandeja;
+    if (action === 'bandeja-seq') { st.sequenceId = t.value; st.page = 1; return reloadBandeja(); }
+    if (action === 'bandeja-stat') { st.stat = t.value; st.page = 1; return reloadBandeja(); }
+  }
+
+  function onBandejaClick(e) {
+    var btn = e.target.closest ? e.target.closest('[data-action]') : null;
+    if (!btn) return;
+    var action = btn.getAttribute('data-action');
+    var st = state.bandeja;
+
+    if (action === 'bandeja-retry') return reloadBandeja();
+    if (action === 'bandeja-prev') { st.page = Math.max(1, st.page - 1); return reloadBandeja(); }
+    if (action === 'bandeja-next') { st.page += 1; return reloadBandeja(); }
+    if (action === 'gmail-connect') {
+      return Promise.resolve(pd().startGmailConnect()).catch(function (err) { toast(errMsg(err), 'error'); });
+    }
+    if (action === 'gmail-disconnect') {
+      return confirmModal({
+        title: 'Desconectar Gmail',
+        message: 'Dejarás de ver los hilos y de poder responder desde la app. Los correos que Apollo envía no se ven afectados.',
+        confirmLabel: 'Desconectar',
+        danger: true,
+        onConfirm: function () {
+          return Promise.resolve(pd().disconnectGmail()).then(function () {
+            st.gmail = null;
+            toast('Gmail desconectado.', 'success');
+            renderBandejaPane();
+          });
+        },
+      });
+    }
+    if (action === 'bandeja-open') {
+      var id = btn.getAttribute('data-id');
+      var msg = st.rows.find(function (m) { return String(m.id) === String(id); });
+      if (msg) return openThreadModal(msg);
+    }
+  }
+
+  // ── Hilo completo + responder ──────────────────────────────────────────
+  function threadMessageNode(m, mailbox) {
+    var who = m.outbound ? (mailbox || 'Tú') : (m.from || 'El contacto');
+    return h('div', {
+      class: 'thread-msg' + (m.outbound ? ' thread-msg-out' : ''),
+    },
+      h('div', { class: 'thread-msg-head' },
+        h('span', { class: 'thread-msg-who', text: (m.outbound ? 'Tú · ' : '') + who }),
+        h('span', { class: 'thread-msg-date', text: m.date || '' })),
+      h('div', { class: 'thread-msg-body', text: m.body || m.snippet || '(sin contenido)' }));
+  }
+
+  function openThreadModal(msg) {
+    var st = state.bandeja;
+    var listHost = h('div', { class: 'thread-list' });
+    var composerHost = h('div', null);
+    var prog = progressLine();
+    var bodyN = h('div', { class: 'thread-wrap' }, listHost, composerHost, prog.el);
+
+    var api = openModal({
+      title: msg.toName || msg.toEmail || 'Hilo',
+      width: 680,
+      bodyNode: bodyN,
+      actions: [{ label: 'Cerrar', className: 'logout-btn logout-btn-cancel' }],
+    });
+
+    if (!st.gmail || st.gmail.status !== 'connected') {
+      // Sin Gmail solo se puede mostrar lo que Apollo envió: se dice tal cual,
+      // en vez de dejar el hilo vacío como si no hubiera conversación.
+      listHost.appendChild(threadMessageNode({
+        outbound: true, from: msg.fromEmail, date: fmtDate(msg.completedAt || msg.dueAt),
+        body: msg.body || '(Apollo no devolvió el cuerpo de este correo todavía.)',
+      }, msg.fromEmail));
+      composerHost.appendChild(h('div', { class: 'pros-note-amber' },
+        h('div', { text: msg.replied
+          ? 'Este contacto respondió, pero Apollo no entrega el texto de la respuesta. Conecta Gmail para leerla y contestar desde aquí.'
+          : 'Conecta Gmail para leer el hilo completo y responder desde aquí.' }),
+        h('div', { class: 'pros-actions', style: 'margin-top:10px' },
+          h('button', {
+            type: 'button', class: 'btn btn-primary btn-sm', text: 'Conectar Gmail',
+            onclick: function () {
+              Promise.resolve(pd().startGmailConnect()).catch(function (e) { toast(errMsg(e), 'error'); });
+            },
+          }))));
+      return;
+    }
+
+    listHost.appendChild(h('div', { class: 'pros-hint', text: 'Cargando el hilo desde Gmail…' }));
+
+    Promise.resolve(pd().fetchGmailThread(msg.threadId)).then(function (res) {
+      listHost.innerHTML = '';
+      var messages = res.messages || [];
+      if (!messages.length) {
+        listHost.appendChild(h('div', { class: 'pros-hint', text: 'Gmail no devolvió mensajes para este hilo.' }));
+        return;
+      }
+      messages.forEach(function (m) { listHost.appendChild(threadMessageNode(m, res.mailbox)); });
+
+      var last = messages[messages.length - 1];
+      var lastInbound = messages.slice().reverse().find(function (m) { return !m.outbound; });
+      // Responder al que escribió, no a nosotros mismos.
+      var replyTo = lastInbound ? (lastInbound.from_email || msg.toEmail) : msg.toEmail;
+
+      var ta = h('textarea', { placeholder: 'Escribe tu respuesta…', rows: '5' });
+      var sendBtn = h('button', {
+        type: 'button', class: 'btn btn-primary',
+        text: 'Enviar respuesta',
+        onclick: function () {
+          var text = ta.value.trim();
+          if (!text) return toast('Escribe la respuesta antes de enviarla.', 'warn');
+          sendBtn.disabled = true;
+          prog.set('Enviando por Gmail…');
+          return Promise.resolve(pd().sendGmailReply({
+            threadId: msg.threadId,
+            to: replyTo,
+            subject: last.subject || msg.subject || '',
+            body: text,
+          })).then(function () {
+            prog.hide();
+            ta.value = '';
+            sendBtn.disabled = false;
+            toast('Respuesta enviada desde ' + (res.mailbox || 'tu Gmail') + '.', 'success');
+            // Volver a pedir el hilo para que la respuesta recién enviada
+            // aparezca de verdad, no como un eco optimista del cliente.
+            return Promise.resolve(pd().fetchGmailThread(msg.threadId)).then(function (fresh) {
+              listHost.innerHTML = '';
+              (fresh.messages || []).forEach(function (m) {
+                listHost.appendChild(threadMessageNode(m, fresh.mailbox));
+              });
+            });
+          }).catch(function (e) {
+            prog.hide();
+            sendBtn.disabled = false;
+            toast(errMsg(e), 'error');
+          });
+        },
+      });
+
+      composerHost.innerHTML = '';
+      composerHost.appendChild(h('div', { class: 'thread-composer' },
+        h('div', { class: 'pros-lbl', style: 'margin-bottom:6px', text: 'Responder a ' + replyTo }),
+        ta,
+        h('div', { class: 'pros-actions', style: 'margin-top:10px;justify-content:flex-end' }, sendBtn)));
+    }).catch(function (e) {
+      listHost.innerHTML = '';
+      listHost.appendChild(h('div', { class: 'pros-note-red', text: errMsg(e) }));
+    });
+  }
+
+  // ══ TAB 5: WHATSAPP & LINKEDIN ═══════════════════════════════════════════
   function buildWaPane() {
     var pane = state.panes.outreach;
     var briefHost = h('div', null);
@@ -4528,6 +4860,7 @@
     buildListasPane();
     buildContactosPane();
     buildSeqPane();
+    buildBandejaPane();
     buildWaPane();
     state.built = true;
   }
@@ -4550,6 +4883,7 @@
     else if (tabId === 'listas') loader = initListasTab;
     else if (tabId === 'contactos') loader = initContactosTab;
     else if (tabId === 'secuencias') loader = initSeqTab;
+    else if (tabId === 'bandeja') loader = initBandejaTab;
     else if (tabId === 'outreach') loader = initWaTab;
     if (loader) {
       loader().catch(function (e) {
