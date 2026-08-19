@@ -49,7 +49,7 @@
       }
 
       // 4. Onboarding gate
-      if (!profile || !profile.onboarded || !profile.linkedin_company_url) {
+      if (!profile || !profile.onboarded || !(profile.linkedin_company_url || profile.company_website)) {
         window.location.replace('./onboarding.html');
         return;
       }

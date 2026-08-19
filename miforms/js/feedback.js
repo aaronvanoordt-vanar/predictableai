@@ -455,13 +455,13 @@
 
   try {
 
-    // 1. Obtener LinkedIn URL del profile
+    // 1. Obtener LinkedIn URL o página web del profile (lo que haya conectado)
 
     const { data: profile } = await window.supabaseClient
 
       .from('profiles')
 
-      .select('linkedin_company_url')
+      .select('linkedin_company_url, company_website')
 
       .eq('id', state.user.id)
 
@@ -469,9 +469,11 @@
 
     const linkedinUrl = profile?.linkedin_company_url;
 
-    if (!linkedinUrl) {
+    const websiteUrl = profile?.company_website;
 
-      console.warn('[unlock] no linkedin URL, skipping enrich');
+    if (!linkedinUrl && !websiteUrl) {
+
+      console.warn('[unlock] no linkedin URL or website, skipping enrich');
 
       return;
 
@@ -505,7 +507,7 @@
 
       },
 
-      body: JSON.stringify({ linkedin_url: linkedinUrl }),
+      body: JSON.stringify(linkedinUrl ? { linkedin_url: linkedinUrl } : { website_url: websiteUrl }),
 
     });
 

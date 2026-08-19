@@ -6,7 +6,7 @@
  *
  * Flow:
  *   - Requires an authenticated user.
- *   - Requires a completed onboarding (profile.onboarded + linkedin_company_url).
+ *   - Requires a completed onboarding (profile.onboarded + linkedin_company_url or company_website).
  *   - If the user already has an intake row, redirects straight to the hub.
  *   - Otherwise shows the form, validates, upserts on submit, redirects to hub.
  */
@@ -33,7 +33,7 @@
     }
 
     const profile = await window.supabaseHelpers.getMyProfile();
-    if (!profile || !profile.onboarded || !profile.linkedin_company_url) {
+    if (!profile || !profile.onboarded || !(profile.linkedin_company_url || profile.company_website)) {
       window.location.replace(ONBOARDING_PATH);
       return;
     }
@@ -44,7 +44,7 @@
       return;
     }
 
-    renderCompanyChip(profile.linkedin_company_url);
+    renderCompanyChip(profile.linkedin_company_url, profile.company_website);
     showForm();
     bindHandlers(user, profile);
   }
@@ -62,11 +62,23 @@
     return data;
   }
 
-  function renderCompanyChip(linkedinUrl) {
-    const slug = extractCompanySlug(linkedinUrl);
+  function renderCompanyChip(linkedinUrl, websiteUrl) {
     const link = $('#company-link');
-    link.href = linkedinUrl;
-    link.textContent = slug ? prettifySlug(slug) : 'Tu empresa';
+    if (linkedinUrl) {
+      const slug = extractCompanySlug(linkedinUrl);
+      link.href = linkedinUrl;
+      link.textContent = slug ? prettifySlug(slug) : 'Tu empresa';
+    } else if (websiteUrl) {
+      link.href = websiteUrl;
+      link.textContent = extractHostname(websiteUrl) || 'Tu empresa';
+    } else {
+      link.removeAttribute('href');
+      link.textContent = 'Tu empresa';
+    }
+  }
+
+  function extractHostname(url) {
+    try { return new URL(url).hostname.replace(/^www\./i, ''); } catch { return null; }
   }
 
   function extractCompanySlug(url) {

@@ -61,7 +61,7 @@
       window.location.href = window.APP_URL || './index.html';
       return;
     }
-    if (!profile.onboarded || !profile.linkedin_company_url) {
+    if (!profile.onboarded || !(profile.linkedin_company_url || profile.company_website)) {
       window.location.href = './onboarding.html';
     } else {
       window.location.href = window.APP_URL || './index.html';

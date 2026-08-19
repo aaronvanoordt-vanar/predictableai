@@ -1,16 +1,18 @@
 /**
  * onboarding.js — one-step onboarding
  *
- * Único paso: LinkedIn de la empresa + teléfono (ambos obligatorios, el
- * teléfono con código de país a la izquierda) → profiles + intel_hub_intake,
- * y directo al dashboard.
+ * Único paso: LinkedIn O página web de la empresa (el usuario elige una de
+ * las dos) + teléfono (ambos obligatorios, el teléfono con código de país a
+ * la izquierda) → profiles + intel_hub_intake, y directo al dashboard.
  *
  * Todo lo demás se deriva solo: al guardar se dispara la edge function
- * enrich-company, que extrae la página web desde el LinkedIn, la investiga
- * (industria, tamaño, país, about, soluciones) y lo almacena en
- * intel_hub_intake — de ahí lo consumen generate-intel-hub y
- * generate-client-brief. El ICP ya no se pregunta aquí: se arma con los
- * filtros que el usuario usa en Prospección → Búsqueda (search people).
+ * enrich-company (con linkedin_url o website_url, según lo que haya elegido
+ * el usuario), que investiga la empresa (industria, tamaño, país, about,
+ * soluciones) y lo almacena en intel_hub_intake — de ahí lo consumen
+ * generate-intel-hub y generate-client-brief. Sea cual sea la fuente
+ * elegida, es la que se usa para todo el resto del flujo (Radar, Hub,
+ * Prospección). El ICP ya no se pregunta aquí: se arma con los filtros que
+ * el usuario usa en Prospección → Búsqueda (search people).
  */
 (function () {
   'use strict';
@@ -43,6 +45,7 @@
   ];
 
   let currentUser = null;
+  let currentSource = 'linkedin'; // 'linkedin' | 'website'
 
   document.addEventListener('DOMContentLoaded', init);
 
@@ -66,27 +69,45 @@
 
     const { data: profile } = await window.supabaseClient
       .from('profiles')
-      .select('onboarded, linkedin_company_url, phone')
+      .select('onboarded, linkedin_company_url, company_website, phone')
       .eq('id', user.id)
       .maybeSingle();
 
-    if (profile?.onboarded && profile?.linkedin_company_url) {
+    if (profile?.onboarded && (profile?.linkedin_company_url || profile?.company_website)) {
       redirectToDashboard();
       return;
     }
 
-    if (profile?.linkedin_company_url) $('inp-linkedin').value = profile.linkedin_company_url;
-    else {
+    let linkedinUrl = profile?.linkedin_company_url || '';
+    let websiteUrl  = profile?.company_website || '';
+    if (!linkedinUrl && !websiteUrl) {
       const { data: intake } = await window.supabaseClient
         .from('intel_hub_intake')
-        .select('company_linkedin_url')
+        .select('company_linkedin_url, company_website')
         .eq('user_id', user.id)
         .maybeSingle();
-      if (intake?.company_linkedin_url) $('inp-linkedin').value = intake.company_linkedin_url;
+      linkedinUrl = intake?.company_linkedin_url || '';
+      websiteUrl  = intake?.company_website || '';
     }
+    if (linkedinUrl) $('inp-linkedin').value = linkedinUrl;
+    if (websiteUrl)  $('inp-website').value  = websiteUrl;
+    // Si solo hay web guardada (sin LinkedIn), abrir directo en esa pestaña.
+    if (websiteUrl && !linkedinUrl) setSource('website');
+
     if (profile?.phone) prefillPhone(profile.phone);
 
     bindForm();
+  }
+
+  function setSource(source) {
+    currentSource = source;
+    $('tab-linkedin').classList.toggle('is-active', source === 'linkedin');
+    $('tab-website').classList.toggle('is-active', source === 'website');
+    $('tab-linkedin').setAttribute('aria-selected', String(source === 'linkedin'));
+    $('tab-website').setAttribute('aria-selected', String(source === 'website'));
+    $('group-linkedin').style.display = source === 'linkedin' ? '' : 'none';
+    $('group-website').style.display  = source === 'website'  ? '' : 'none';
+    hideStatus();
   }
 
   function fillDialCodes() {
@@ -112,8 +133,10 @@
   }
 
   function bindForm() {
-    const lnk = $('inp-linkedin');
+    $('tab-linkedin').addEventListener('click', () => setSource('linkedin'));
+    $('tab-website').addEventListener('click', () => setSource('website'));
 
+    const lnk = $('inp-linkedin');
     lnk.addEventListener('input', () => {
       const v = lnk.value.trim();
       if (!v) { hideStatus(); return; }
@@ -130,27 +153,61 @@
       }
     });
 
+    const web = $('inp-website');
+    web.addEventListener('input', () => {
+      const v = web.value.trim();
+      if (!v) { hideStatus(); return; }
+      const clean = normalizeUrl(v);
+      const hostname = websiteHostname(clean);
+      if (hostname && isValidWebsite(clean)) {
+        showStatus('inf', `Empresa detectada: <strong>${esc(hostname)}</strong>`);
+      } else if (/linkedin\.com/i.test(v)) {
+        showStatus('err', 'Esa es una URL de LinkedIn. Usa la pestaña <strong>LinkedIn</strong> para pegarla ahí.');
+      } else if (v.length > 4) {
+        showStatus('err', 'URL no válida. Debe ser la página web de tu empresa, ej: tuempresa.com');
+      } else {
+        hideStatus();
+      }
+    });
+
     $('btn-s1').addEventListener('click', handleSubmit);
     lnk.addEventListener('keydown', e => { if (e.key === 'Enter') handleSubmit(); });
+    web.addEventListener('keydown', e => { if (e.key === 'Enter') handleSubmit(); });
     $('inp-phone').addEventListener('keydown', e => { if (e.key === 'Enter') handleSubmit(); });
   }
 
   async function handleSubmit() {
-    const raw      = $('inp-linkedin').value.trim();
     const dialCode = $('inp-phone-code').value;
     const phoneRaw = $('inp-phone').value.trim();
     const btn      = $('btn-s1');
 
-    if (!raw) {
-      showStatus('err', 'Ingresa la URL de LinkedIn de tu empresa.');
-      $('inp-linkedin').focus();
-      return;
-    }
-    const url = normalizeUrl(raw);
-    if (!LINKEDIN_RE.test(url)) {
-      showStatus('err', 'URL no válida. Debe ser la página de empresa: <span class="example">linkedin.com/company/…</span>');
-      $('inp-linkedin').focus();
-      return;
+    let url;
+    if (currentSource === 'linkedin') {
+      const raw = $('inp-linkedin').value.trim();
+      if (!raw) {
+        showStatus('err', 'Ingresa la URL de LinkedIn de tu empresa.');
+        $('inp-linkedin').focus();
+        return;
+      }
+      url = normalizeUrl(raw);
+      if (!LINKEDIN_RE.test(url)) {
+        showStatus('err', 'URL no válida. Debe ser la página de empresa: <span class="example">linkedin.com/company/…</span>');
+        $('inp-linkedin').focus();
+        return;
+      }
+    } else {
+      const raw = $('inp-website').value.trim();
+      if (!raw) {
+        showStatus('err', 'Ingresa la página web de tu empresa.');
+        $('inp-website').focus();
+        return;
+      }
+      url = normalizeUrl(raw);
+      if (!isValidWebsite(url)) {
+        showStatus('err', 'URL no válida. Ingresa la página web de tu empresa, ej: <span class="example">tuempresa.com</span>');
+        $('inp-website').focus();
+        return;
+      }
     }
 
     const phoneDigits = phoneRaw.replace(/[\s\-().]/g, '');
@@ -160,6 +217,7 @@
       return;
     }
     const phone = `${dialCode} ${phoneDigits}`;
+    const isLinkedin = currentSource === 'linkedin';
 
     btn.disabled = true;
     showStatus('inf', '<span class="spinner"></span> Guardando…');
@@ -168,7 +226,7 @@
       const { error: profileErr } = await window.supabaseClient.from('profiles').upsert({
         id: currentUser.id,
         email: currentUser.email,
-        linkedin_company_url: url,
+        ...(isLinkedin ? { linkedin_company_url: url } : { company_website: url }),
         phone,
         onboarded: true,
         onboarded_at: new Date().toISOString(),
@@ -179,23 +237,26 @@
         .from('intel_hub_intake')
         .upsert({
           user_id: currentUser.id,
-          company_linkedin_url: url,
+          ...(isLinkedin ? { company_linkedin_url: url } : { company_website: url }),
           phone,
           onboarding_step: 1,
           onboarding_complete: true,
         }, { onConflict: 'user_id' });
       if (intakeErr) throw new Error('intel_hub_intake: ' + intakeErr.message);
 
-      // Extracción web en background: enrich-company investiga la página web
-      // de la empresa (desde el LinkedIn) y guarda el resultado en
-      // intel_hub_intake para que el Intelligence Hub lo consuma.
-      await triggerEnrichment(url);
+      // Extracción en background: enrich-company investiga la empresa a
+      // partir de lo que el usuario eligió (LinkedIn o página web
+      // directamente) y guarda el resultado en intel_hub_intake para que el
+      // Intelligence Hub lo consuma. Esa misma fuente queda como la usada
+      // para todo el resto del flujo (Radar, Hub, Prospección).
+      await triggerEnrichment(url, isLinkedin);
 
-      // Radar (aha moment): generate-radar deriva la señal de compra desde el
-      // LinkedIn y sale a cazar empresas target. Se espera el 202 (rápido: la
-      // función inserta la fila radar_runs antes de investigar en background)
-      // para que al aterrizar en #radar ya exista el run y se vea el progreso
-      // en vivo. Si falla, la página Radar ofrece iniciarlo manualmente.
+      // Radar (aha moment): generate-radar deriva la señal de compra desde
+      // la empresa conectada y sale a cazar empresas target. Se espera el
+      // 202 (rápido: la función inserta la fila radar_runs antes de
+      // investigar en background) para que al aterrizar en #radar ya exista
+      // el run y se vea el progreso en vivo. Si falla, la página Radar
+      // ofrece iniciarlo manualmente.
       showStatus('inf', '<span class="spinner"></span> Iniciando tu Radar: la IA saldrá a buscar tus empresas target…');
       await triggerRadar();
 
@@ -206,7 +267,7 @@
     }
   }
 
-  async function triggerEnrichment(linkedinUrl) {
+  async function triggerEnrichment(url, isLinkedin) {
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
       if (!session) return;
@@ -218,7 +279,7 @@
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ' + session.access_token,
         },
-        body: JSON.stringify({ linkedin_url: linkedinUrl }),
+        body: JSON.stringify(isLinkedin ? { linkedin_url: url } : { website_url: url }),
       }).catch(e => console.warn('[onboarding] enrich-company:', e));
     } catch (e) {
       console.warn('[onboarding] enrich trigger failed:', e);
@@ -256,6 +317,18 @@
     v = v.replace(/\/+$/, '/');
     if (!/\?/.test(v) && !v.endsWith('/')) v = v + '/';
     return v;
+  }
+
+  function websiteHostname(url) {
+    try { return new URL(url).hostname.replace(/^www\./i, ''); } catch { return ''; }
+  }
+
+  function isValidWebsite(url) {
+    let u;
+    try { u = new URL(url); } catch { return false; }
+    if (!/^https?:$/.test(u.protocol)) return false;
+    if (/(^|\.)linkedin\.com$/i.test(u.hostname)) return false;
+    return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(u.hostname);
   }
 
   function showStatus(type, html) {

@@ -346,7 +346,7 @@ async function loadSellerContext(
   userId: string,
 ): Promise<string> {
   const [{ data: profile }, { data: intake }, { data: brief }] = await Promise.all([
-    supa.from("profiles").select("company_name, linkedin_company_url").eq("id", userId).maybeSingle(),
+    supa.from("profiles").select("company_name, linkedin_company_url, company_website").eq("id", userId).maybeSingle(),
     supa.from("intel_hub_intake").select(
       "company_linkedin_url, company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, icp_industries, icp_roles, icp_geographies, icp_company_sizes, icp_pain_points, value_problem_solved, value_proposition",
     ).eq("user_id", userId).maybeSingle(),
@@ -359,7 +359,7 @@ async function loadSellerContext(
   const push = (label: string, v: unknown) => { const s = asStr(v).trim(); if (s) ctxLines.push(`${label}: ${s}`); };
   push("Company name", brief?.company_name || profile?.company_name);
   push("LinkedIn (ground truth for identity)", intake?.company_linkedin_url || profile?.linkedin_company_url);
-  push("Website", intake?.company_website);
+  push("Website", intake?.company_website || profile?.company_website);
   push("Industry", intake?.company_industry);
   push("Size", intake?.company_employee_count);
   push("Country", intake?.company_country);
