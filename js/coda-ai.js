@@ -9,24 +9,30 @@
  *
  * Three blocks:
  *   1. PESTEL — Political / Economic / Social / Technological / Environmental /
- *      Legal factors of a chosen client's target-country market, each
- *      translated into a concrete SALES impact. The user picks one of their
- *      clients (Clientes section) and one of that client's target_countries;
- *      the generate-coda edge function (action: "pestel") researches that
- *      country for that client's ICP and writes client_pestel — one row per
- *      (client_id, country), cached so switching the dropdown doesn't force a
- *      re-generation.
+ *      Legal factors of a target-country market, each translated into a
+ *      concrete SALES impact. The user picks a COUNTRY; the client pick is
+ *      OPTIONAL (Clientes is an internal Vanar tool, so requiring one blocked
+ *      everyone else from even trying the PESTEL):
+ *        · sin cliente (default) → the analysis is scoped to the user's own
+ *          company context and cached in user_pestel, one row per
+ *          (user_id, country); the country comes from COUNTRY_OPTIONS.
+ *        · con cliente → scoped to that client's ICP and cached in
+ *          client_pestel, one row per (client_id, country); the country must
+ *          be one of that client's target_countries.
+ *      Either way generate-coda (action: "pestel") researches that country and
+ *      results stay cached per country, so switching the dropdown doesn't
+ *      force a re-generation.
  *   2. 5 fuerzas de Porter — Rivalidad / Nuevos entrantes / Sustitutos / Poder
  *      de los clientes / Poder de los proveedores, same per-factor shape as
  *      PESTEL. AI-generated (generate-coda action: "porter").
  *   3. FODA → CAME — the user fills the FODA (SWOT) matrix; the AI converts it
  *      into a CAME action matrix (generate-coda action: "came"). Porter and
  *      CAME stay account-level (coda_analysis), independent of the
- *      client/country pick that PESTEL uses.
+ *      scope/country pick that PESTEL uses.
  *
  * Self-mounts into #coda-shell (page-coda-ai) via a MutationObserver, mirrors
  * the intel-hub module: loads the coda_analysis row (Porter/FODA/CAME) and the
- * client_pestel row for the selected (client, country), subscribes to realtime
+ * PESTEL row for the selected (scope, country), subscribes to realtime
  * on both (status flips generating → ready arrive without a manual refresh),
  * and renders. FODA inputs are never re-rendered from realtime (that would
  * clobber what the user is typing) — only the PESTEL/Porter/CAME OUTPUT
@@ -40,6 +46,16 @@
  */
 (function () {
   'use strict';
+
+  // Countries offered when NO client is selected (with a client, the options
+  // are that client's target_countries). Same LATAM list the Clientes section
+  // uses, plus the two non-LATAM markets this audience actually sells into.
+  const COUNTRY_OPTIONS = [
+    'Argentina', 'Bolivia', 'Brasil', 'Chile', 'Colombia', 'Costa Rica', 'Cuba',
+    'Ecuador', 'El Salvador', 'España', 'Estados Unidos', 'Guatemala', 'Honduras',
+    'México', 'Nicaragua', 'Panamá', 'Paraguay', 'Perú', 'Puerto Rico',
+    'República Dominicana', 'Uruguay', 'Venezuela',
+  ];
 
   const PESTEL_DIMS = [
     { key: 'political',     letter: 'P', name: 'Político',      color: '#D64545', icon: '🏛️',
@@ -146,23 +162,42 @@
       .subscribe();
   }
 
-  // ─── PESTEL: client + target-country selection ────────────────
+  // ─── PESTEL: scope (client opcional) + country selection ──────
   async function loadClients() {
-    const { data } = await window.supabaseClient
-      .from('clients').select('id,name,target_countries').order('name');
-    STATE.clients = data || [];
+    // Clientes es una herramienta interna: si el usuario no tiene acceso (o no
+    // tiene clientes), el PESTEL sigue funcionando sobre su propia empresa.
+    try {
+      const { data } = await window.supabaseClient
+        .from('clients').select('id,name,target_countries').order('name');
+      STATE.clients = data || [];
+    } catch (e) { STATE.clients = []; }
   }
 
   function currentClient() {
     return STATE.clients.find(c => c.id === STATE.selectedClientId) || null;
   }
 
+  // Países elegibles para el scope actual: los del cliente si hay uno,
+  // la lista general si el PESTEL corre sobre la empresa del usuario.
+  function scopeCountries() {
+    const client = currentClient();
+    return client ? (client.target_countries || []) : COUNTRY_OPTIONS;
+  }
+
+  // Sin cliente el PESTEL vive en user_pestel (una fila por user+país);
+  // con cliente, en client_pestel (una fila por cliente+país).
+  function pestelTable() {
+    return STATE.selectedClientId ? 'client_pestel' : 'user_pestel';
+  }
+
   async function loadPestelRow() {
-    if (!STATE.selectedClientId || !STATE.selectedCountry) { STATE.pestelRow = null; return; }
-    const { data } = await window.supabaseClient
-      .from('client_pestel').select('*')
-      .eq('client_id', STATE.selectedClientId).eq('country', STATE.selectedCountry)
-      .maybeSingle();
+    STATE.pestelRow = null;
+    if (!STATE.selectedCountry || !STATE.user) return;
+    let q = window.supabaseClient.from(pestelTable()).select('*').eq('country', STATE.selectedCountry);
+    q = STATE.selectedClientId
+      ? q.eq('client_id', STATE.selectedClientId)
+      : q.eq('user_id', STATE.user.id);
+    const { data } = await q.maybeSingle();
     STATE.pestelRow = data || null;
   }
 
@@ -171,12 +206,13 @@
       window.supabaseClient.removeChannel(STATE.pestelChannel);
       STATE.pestelChannel = null;
     }
-    if (!STATE.selectedClientId) return;
+    if (!STATE.user) return;
+    const clientId = STATE.selectedClientId;
     STATE.pestelChannel = window.supabaseClient
-      .channel('client-pestel-' + STATE.selectedClientId)
+      .channel(clientId ? 'client-pestel-' + clientId : 'user-pestel-' + STATE.user.id)
       .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'client_pestel',
-        filter: `client_id=eq.${STATE.selectedClientId}`,
+        event: '*', schema: 'public', table: pestelTable(),
+        filter: clientId ? `client_id=eq.${clientId}` : `user_id=eq.${STATE.user.id}`,
       }, (payload) => {
         const row = payload.new;
         if (!row || row.country !== STATE.selectedCountry) return;
@@ -186,29 +222,33 @@
       .subscribe();
   }
 
+  // localStorage key del país: por cliente, o 'self' cuando corre sobre la
+  // propia empresa (que es el modo por defecto).
+  function countryKey(clientId) {
+    return 'coda_pestel_country_' + (clientId || 'self');
+  }
+
   function restoreSelection() {
     let savedClientId = null;
     try { savedClientId = localStorage.getItem('coda_pestel_client_id'); } catch (e) {}
+    // Default: sin cliente ("Mi empresa"). Solo restauramos un cliente que
+    // siga existiendo y siga siendo visible para este usuario.
     STATE.selectedClientId = (savedClientId && STATE.clients.some(c => c.id === savedClientId))
-      ? savedClientId : (STATE.clients[0] ? STATE.clients[0].id : null);
-    const client = currentClient();
-    const countries = client ? (client.target_countries || []) : [];
+      ? savedClientId : null;
+    const countries = scopeCountries();
     let savedCountry = null;
-    if (STATE.selectedClientId) {
-      try { savedCountry = localStorage.getItem('coda_pestel_country_' + STATE.selectedClientId); } catch (e) {}
-    }
-    STATE.selectedCountry = (savedCountry && countries.includes(savedCountry)) ? savedCountry : (countries[0] || null);
+    try { savedCountry = localStorage.getItem(countryKey(STATE.selectedClientId)); } catch (e) {}
+    STATE.selectedCountry = (savedCountry && countries.includes(savedCountry)) ? savedCountry : null;
   }
 
   async function onClientChange(e) {
     const id = e.target.value || null;
     STATE.selectedClientId = id;
     try { localStorage.setItem('coda_pestel_client_id', id || ''); } catch (err) {}
-    const client = currentClient();
-    const countries = client ? (client.target_countries || []) : [];
+    const countries = scopeCountries();
     let savedCountry = null;
-    try { savedCountry = id ? localStorage.getItem('coda_pestel_country_' + id) : null; } catch (err) {}
-    STATE.selectedCountry = (savedCountry && countries.includes(savedCountry)) ? savedCountry : (countries[0] || null);
+    try { savedCountry = localStorage.getItem(countryKey(id)); } catch (err) {}
+    STATE.selectedCountry = (savedCountry && countries.includes(savedCountry)) ? savedCountry : null;
     await loadPestelRow();
     subscribePestelRealtime();
     renderPestel();
@@ -216,9 +256,7 @@
 
   async function onCountryChange(e) {
     STATE.selectedCountry = e.target.value || null;
-    try {
-      if (STATE.selectedClientId) localStorage.setItem('coda_pestel_country_' + STATE.selectedClientId, STATE.selectedCountry || '');
-    } catch (err) {}
+    try { localStorage.setItem(countryKey(STATE.selectedClientId), STATE.selectedCountry || ''); } catch (err) {}
     await loadPestelRow();
     renderPestel();
   }
@@ -251,11 +289,19 @@
   }
 
   async function generatePestel() {
-    if (!STATE.selectedClientId || !STATE.selectedCountry) return;
-    STATE.pestelRow = Object.assign({}, STATE.pestelRow, { pestel_status: 'generating' });
+    // El cliente es opcional; el país no (el PESTEL es de un país concreto).
+    if (!STATE.selectedCountry) return;
+    // updated_at fresco: sin él, isStale() marcaría este 'generating' optimista
+    // como stale (→ "no se pudo generar") en el mismo render, porque una fila
+    // recién creada — o inexistente — no trae updated_at.
+    STATE.pestelRow = Object.assign({}, STATE.pestelRow, {
+      pestel_status: 'generating', updated_at: new Date().toISOString(),
+    });
     renderPestel();
     try {
-      await invoke('pestel', { client_id: STATE.selectedClientId, country: STATE.selectedCountry });
+      const payload = { country: STATE.selectedCountry };
+      if (STATE.selectedClientId) payload.client_id = STATE.selectedClientId;
+      await invoke('pestel', payload);
       // Result arrives via realtime; also refetch as a fallback after a beat.
       setTimeout(async () => { await loadPestelRow(); renderPestel(); }, 1500);
     } catch (e) {
@@ -266,7 +312,8 @@
   }
 
   async function generatePorter() {
-    if (STATE.row) STATE.row.porter_status = 'generating';
+    // updated_at fresco por el mismo motivo que en generatePestel.
+    if (STATE.row) { STATE.row.porter_status = 'generating'; STATE.row.updated_at = new Date().toISOString(); }
     renderPorter();
     try {
       await invoke('porter');
@@ -312,6 +359,7 @@
     await saveFoda();
     if (!STATE.row) STATE.row = {};
     STATE.row.came_status = 'generating';
+    STATE.row.updated_at = new Date().toISOString();
     renderCame();
     try {
       await invoke('came', { foda });
@@ -404,8 +452,7 @@
   }
 
   function renderPestelSelectors() {
-    const client = currentClient();
-    const countries = client ? (client.target_countries || []) : [];
+    const countries = scopeCountries();
     const clientOptions = STATE.clients.map(c =>
       `<option value="${esc(c.id)}" ${c.id === STATE.selectedClientId ? 'selected' : ''}>${esc(c.name)}</option>`
     ).join('');
@@ -414,18 +461,15 @@
     ).join('');
     return `
       <div class="coda-pestel-selectors">
-        <label class="coda-select-lbl">Cliente
-          <select id="coda-pestel-client" class="coda-select" ${STATE.clients.length ? '' : 'disabled'}>
-            ${STATE.clients.length
-              ? '<option value="">Selecciona un cliente…</option>' + clientOptions
-              : '<option value="">No tienes clientes aún</option>'}
+        <label class="coda-select-lbl">País a analizar
+          <select id="coda-pestel-country" class="coda-select" ${countries.length ? '' : 'disabled'}>
+            <option value="">Selecciona un país…</option>${countryOptions}
           </select>
         </label>
-        <label class="coda-select-lbl">País a analizar
-          <select id="coda-pestel-country" class="coda-select" ${client && countries.length ? '' : 'disabled'}>
-            ${client
-              ? (countries.length ? '<option value="">Selecciona un país…</option>' + countryOptions : '')
-              : ''}
+        <label class="coda-select-lbl">Cliente <span class="coda-select-opt">opcional</span>
+          <select id="coda-pestel-client" class="coda-select">
+            <option value="" ${STATE.selectedClientId ? '' : 'selected'}>Mi empresa (sin cliente)</option>
+            ${clientOptions}
           </select>
         </label>
       </div>`;
@@ -436,24 +480,26 @@
     if (!host) return;
     const selectors = renderPestelSelectors();
     const client = currentClient();
-    const countries = client ? (client.target_countries || []) : [];
+    const countries = scopeCountries();
 
-    // Estados previos a la selección: sin cliente o sin país no hay nada que
-    // analizar, así que la tarjeta se queda en los selectores + el motivo.
+    // Único estado bloqueante: sin país no hay PESTEL que generar (el cliente
+    // es opcional). La tarjeta se queda en los selectores + el motivo.
     const stop = (msg) => {
       host.innerHTML = selectors + `<div class="coda-dim-empty">${msg}</div>`;
       attachPestelSelectorHandlers();
     };
-    if (!STATE.clients.length) {
-      return stop('Todavía no tienes clientes. Agrega uno en la sección <strong>Clientes</strong> para generar su PESTEL.');
-    }
-    if (!client) return stop('Selecciona un cliente para elegir el país a analizar.');
-    if (!countries.length) {
-      return stop(`${esc(client.name)} no tiene países objetivo seleccionados. Agrégalos en su ficha, en la sección Clientes.`);
+    if (client && !countries.length) {
+      return stop(`${esc(client.name)} no tiene países objetivo seleccionados. Agrégalos en su ficha, en la sección Clientes, o cambia el selector a <strong>Mi empresa</strong>.`);
     }
     if (!STATE.selectedCountry) {
-      return stop(`Selecciona un país objetivo de ${esc(client.name)} para generar su PESTEL.`);
+      return stop(client
+        ? `Selecciona un país objetivo de ${esc(client.name)} para generar su PESTEL.`
+        : 'Selecciona el país que quieres analizar para generar tu PESTEL.');
     }
+
+    const scopeHint = client
+      ? `La IA investiga el mercado de ${esc(STATE.selectedCountry)} para ${esc(client.name)} y traduce cada factor a impacto de ventas.`
+      : `La IA investiga el mercado de ${esc(STATE.selectedCountry)} para tu empresa y traduce cada factor a impacto de ventas.`;
 
     renderDimBlock({
       hostId: 'coda-pestel-body', dims: PESTEL_DIMS, row: STATE.pestelRow || {},
@@ -461,7 +507,7 @@
       statusKey: 'pestel_status', dataKey: 'pestel', errorKey: 'pestel_error', generatedAtKey: 'pestel_generated_at',
       staleMs: STALE_PESTEL_MS, btnId: 'coda-btn-pestel', onGenerate: generatePestel,
       btnGenerating: '⏳ Analizando el mercado…', btnRegenerate: '↻ Regenerar PESTEL', btnGenerate: '✨ Generar análisis PESTEL con IA',
-      hint: `La IA investiga el mercado de ${esc(STATE.selectedCountry)} para ${esc(client.name)} y traduce cada factor a impacto de ventas.`,
+      hint: scopeHint,
     });
   }
 
@@ -563,8 +609,8 @@
 
         <section class="coda-section">
           <div class="coda-section-head">
-            <div class="coda-section-title"><span class="coda-kicker" style="--c:#7C5CFC">PESTEL</span> El entorno del país de tu cliente, traducido a ventas</div>
-            <div class="coda-section-desc">Elige un cliente y uno de sus países objetivo. Seis fuerzas externas — <strong>P</strong>olítico · <strong>E</strong>conómico · <strong>S</strong>ocial · <strong>T</strong>ecnológico · <strong>E</strong>cológico · <strong>L</strong>egal — que la IA investiga en ese país real y convierte en impacto sobre el pipeline de ese cliente.</div>
+            <div class="coda-section-title"><span class="coda-kicker" style="--c:#7C5CFC">PESTEL</span> El entorno de un país, traducido a ventas</div>
+            <div class="coda-section-desc">Elige el país que quieres analizar. Seis fuerzas externas — <strong>P</strong>olítico · <strong>E</strong>conómico · <strong>S</strong>ocial · <strong>T</strong>ecnológico · <strong>E</strong>cológico · <strong>L</strong>egal — que la IA investiga en ese país real y convierte en impacto sobre tu pipeline. Si trabajas ese país para un cliente, puedes acotarlo a ese cliente en el selector: es opcional.</div>
           </div>
           <div id="coda-pestel-body"></div>
         </section>
@@ -696,7 +742,7 @@
 .coda-section-desc { margin-top: 7px; font-size: 13px; line-height: 1.6; color: var(--ink-3, var(--text2, #64646f)); }
 .coda-section-desc strong { color: var(--ink, #0A0A0F); }
 
-/* PESTEL client/country selectors */
+/* PESTEL country/client selectors (el cliente es opcional) */
 .coda-pestel-selectors { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
 .coda-select-lbl { display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; font-weight: 700; color: var(--ink-3, #64646f); min-width: 220px; }
 .coda-select {
@@ -705,6 +751,10 @@
   border-radius: 9px; padding: 9px 11px; cursor: pointer;
 }
 .coda-select:disabled { opacity: .55; cursor: default; }
+.coda-select-opt {
+  font-size: 9.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+  color: #7C5CFC; background: rgba(124,92,252,.14); border-radius: 999px; padding: 2px 7px; margin-left: 5px;
+}
 
 /* Action bar */
 .coda-actionbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }

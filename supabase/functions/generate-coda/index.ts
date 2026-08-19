@@ -5,15 +5,24 @@
  * top of the mandatory Intelligence Hub + company context; the table/function
  * are still named coda_analysis / generate-coda internally). Three actions:
  *
- *   action: "pestel"  (body: { client_id, country })
- *     Researches the given country's market (web_search) for the given
- *     client's ICP/industry (a row in the `clients` table the caller manages)
- *     and produces a PESTEL analysis: Political / Economic / Social /
- *     Technological / Environmental / Legal factors, each translated into a
- *     concrete SALES impact + suggested action. Country must be one of the
- *     client's target_countries. Writes client_pestel (status
- *     generating → ready|error), one row per (client_id, country) so
- *     switching the country dropdown doesn't force a re-generation.
+ *   action: "pestel"  (body: { country, client_id? })
+ *     Researches the given country's market (web_search) and produces a
+ *     PESTEL analysis: Political / Economic / Social / Technological /
+ *     Environmental / Legal factors, each translated into a concrete SALES
+ *     impact + suggested action.
+ *
+ *     client_id is OPTIONAL (Clientes is an internal Vanar tool — requiring a
+ *     client blocked everyone else from even trying the PESTEL):
+ *       · with client_id → scoped to that client's ICP/industry (a row in the
+ *         `clients` table the caller manages); country must be one of the
+ *         client's target_countries; writes client_pestel, one row per
+ *         (client_id, country).
+ *       · without client_id → scoped to the CALLER's own company context
+ *         (intel_hub_intake + client_brief + profile, the same context Porter
+ *         uses); any country is accepted; writes user_pestel, one row per
+ *         (user_id, country).
+ *     Either way status goes generating → ready|error and results stay cached
+ *     per country, so switching the dropdown doesn't force a re-generation.
  *
  *   action: "porter"
  *     Researches the seller's competitive landscape (web_search) and produces
@@ -38,7 +47,8 @@
  *       generate-client-brief notes — verify_jwt alone accepts the public
  *       anon key, which would let anyone burn Anthropic tokens).
  * Response 202: { status: "started" } — result arrives via the client's
- *       realtime subscription to client_pestel (pestel) or coda_analysis (porter/came).
+ *       realtime subscription to client_pestel / user_pestel (pestel) or
+ *       coda_analysis (porter/came).
  * Engine: user-selectable (Claude / OpenAI / Perplexity) under the "coda"
  *       feature; Perplexity is the recommended default because every block
  *       here is search-grounded market analysis — see
@@ -125,9 +135,14 @@ function parseJson(raw: string): any {
   return JSON.parse(cleaned.slice(s, e + 1));
 }
 
-const PESTEL_SYSTEM = `You are a market-strategy analyst inside a B2B sales-intelligence platform. The user is an agency running outbound sales/prospecting on behalf of one of their clients. Produce a PESTEL analysis for the SPECIFIC COUNTRY given below, scoped to that client's ICP/industry, and — critically — translate every factor into its concrete SALES/PROSPECTING impact (how it changes who to target in that country, what message lands, what urgency exists). This is for a sales team, not an academic report.
+// Two framings of the same PESTEL task: scoped to a client the user prospects
+// for (client mode) or to the user's own company (client-less mode). Only the
+// opening paragraph differs; PESTEL_RULES below is shared verbatim.
+const PESTEL_INTRO_CLIENT = `You are a market-strategy analyst inside a B2B sales-intelligence platform. The user is an agency running outbound sales/prospecting on behalf of one of their clients. Produce a PESTEL analysis for the SPECIFIC COUNTRY given below, scoped to that client's ICP/industry, and — critically — translate every factor into its concrete SALES/PROSPECTING impact (how it changes who to target in that country, what message lands, what urgency exists). This is for a sales team, not an academic report.`;
 
-Research that country's market with web_search (max 2 searches) to ground the factors in real, current conditions. Then respond with ONLY valid JSON (no markdown fences, no prose) with exactly this shape:
+const PESTEL_INTRO_SELF = `You are a market-strategy analyst inside a B2B sales-intelligence platform. The user is a company selling B2B; the context below describes THEIR OWN company, solution and ICP (no third-party client is involved). Produce a PESTEL analysis for the SPECIFIC COUNTRY given below, scoped to their ICP/industry in that country, and — critically — translate every factor into its concrete SALES/PROSPECTING impact (how it changes who to target in that country, what message lands, what urgency exists). This is for a sales team, not an academic report.`;
+
+const PESTEL_RULES = `Research that country's market with web_search (max 2 searches) to ground the factors in real, current conditions. Then respond with ONLY valid JSON (no markdown fences, no prose) with exactly this shape:
 
 {
   "political": [{ "factor": "the real political/regulatory-policy factor, in Spanish", "impact": "high|medium|low", "sales_impact": "1 sentence in Spanish: what this means for prospecting in this country — who becomes a hotter/colder buyer, what urgency it creates", "action": "1 short sales action in Spanish (a message angle, a segment to prioritize, a trigger to watch)" }],
@@ -140,8 +155,8 @@ Research that country's market with web_search (max 2 searches) to ground the fa
 
 Rules:
 - 2-3 factors per dimension (the strongest, most sales-relevant ones). Never leave a dimension empty — if a dimension is weak for this market, give the single most relevant factor.
-- Every factor MUST be specific to the given country and to this client's ICP/industry. No generic textbook factors ("technology is advancing"). Tie each to a real, current condition in that country.
-- "sales_impact" is the point of the whole exercise: always frame it as consequence for prospecting THAT client's target buyers in THAT country.
+- Every factor MUST be specific to the given country and to the ICP/industry described in the context. No generic textbook factors ("technology is advancing"). Tie each to a real, current condition in that country.
+- "sales_impact" is the point of the whole exercise: always frame it as consequence for prospecting those target buyers in THAT country.
 - Never invent hard statistics. If you cite a number, it must come from web_search results. Qualitative framing is fine without numbers.
 - All user-facing text in neutral Latin-American Spanish (tuteo).`;
 
@@ -280,36 +295,73 @@ Deno.serve(async (req: Request) => {
   const engine = await engineForUser(supa, user.id, "coda", body.engine);
 
   if (action === "pestel") {
+    // client_id is OPTIONAL: with it the PESTEL is scoped to that client and
+    // cached in client_pestel; without it, to the caller's own company and
+    // cached in user_pestel. Only the country is actually required.
     const clientId = typeof body.client_id === "string" ? body.client_id.trim() : "";
     const country = typeof body.country === "string" ? body.country.trim() : "";
-    if (!clientId || !country) return json({ error: "client_id and country are required" }, 400, h);
+    if (!country) return json({ error: "country is required" }, 400, h);
+    if (country.length > 80) return json({ error: "country is too long" }, 400, h);
 
-    // authed (not service-role) client so RLS/auth.uid() resolve for the RPC below.
-    const authed = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-    const { data: canManage } = await authed.rpc("can_manage_client", { p_client_id: clientId });
-    if (!canManage) return json({ error: "Forbidden" }, 403, h);
+    // Where the result lands + how to address that row, per mode.
+    const table = clientId ? "client_pestel" : "user_pestel";
+    const key: Record<string, string> = clientId
+      ? { client_id: clientId, country }
+      : { user_id: user.id, country };
+    const onConflict = clientId ? "client_id,country" : "user_id,country";
+    const scopeLabel = clientId ? `${clientId}/${country}` : `${user.id}/${country}`;
+    // deno-lint-ignore no-explicit-any
+    const whereRow = (q: any) =>
+      Object.entries(key).reduce((acc: any, [col, val]) => acc.eq(col, val), q);
 
-    const { data: client } = await supa.from("clients")
-      .select("name, icp, industries, target_countries")
-      .eq("id", clientId).maybeSingle();
-    if (!client) return json({ error: "Client not found" }, 404, h);
-    if (!(client.target_countries || []).includes(country)) {
-      return json({ error: "country must be one of the client's target_countries" }, 400, h);
+    let client: ClientRow | null = null;
+    if (clientId) {
+      // authed (not service-role) client so RLS/auth.uid() resolve for the RPC below.
+      const authed = createClient(SUPABASE_URL, ANON_KEY, {
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      });
+      const { data: canManage } = await authed.rpc("can_manage_client", { p_client_id: clientId });
+      if (!canManage) return json({ error: "Forbidden" }, 403, h);
+
+      const { data: row } = await supa.from("clients")
+        .select("name, icp, industries, target_countries")
+        .eq("id", clientId).maybeSingle();
+      if (!row) return json({ error: "Client not found" }, 404, h);
+      if (!(row.target_countries || []).includes(country)) {
+        return json({ error: "country must be one of the client's target_countries" }, 400, h);
+      }
+      client = row as ClientRow;
     }
 
-    await supa.from("client_pestel").upsert(
-      { client_id: clientId, country, pestel_status: "generating", pestel_error: null },
-      { onConflict: "client_id,country" },
+    await supa.from(table).upsert(
+      { ...key, pestel_status: "generating", pestel_error: null },
+      { onConflict },
     );
 
     const work = (async () => {
       try {
-        const ctx = buildClientContextBlock(client as ClientRow, country);
+        let ctx: string;
+        let system: string;
+        if (client) {
+          ctx = buildClientContextBlock(client, country);
+          system = `${PESTEL_INTRO_CLIENT}\n\n${PESTEL_RULES}`;
+        } else {
+          // Client-less mode: the seller's own company context (same block Porter runs on).
+          const [{ data: intake }, { data: profile }, { data: brief }] = await Promise.all([
+            supa.from("intel_hub_intake").select(`
+              company_industry, company_country, company_website, company_about, company_solutions,
+              icp_industries, icp_geographies, icp_roles, icp_pain_points, value_proposition
+            `).eq("user_id", user.id).maybeSingle(),
+            supa.from("profiles").select("company_name").eq("id", user.id).maybeSingle(),
+            supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
+          ]);
+          ctx = `=== COUNTRY TO ANALYZE ===\n${country}\n\n` +
+            buildContextBlock(intake as IntakeRow | null, profile, brief);
+          system = `${PESTEL_INTRO_SELF}\n\n${PESTEL_RULES}`;
+        }
         const raw = await callAi(
           engine,
-          PESTEL_SYSTEM,
+          system,
           ctx + "\n\nProduce the PESTEL JSON for this country now.",
           2,
         );
@@ -323,19 +375,19 @@ Deno.serve(async (req: Request) => {
           environmental: dim(p.environmental),
           legal:         dim(p.legal),
         };
-        await supa.from("client_pestel").update({
+        await whereRow(supa.from(table).update({
           pestel,
           pestel_status: "ready",
           pestel_error: null,
           pestel_generated_at: new Date().toISOString(),
-        }).eq("client_id", clientId).eq("country", country);
-        console.log(`[coda] ✓ pestel ${clientId}/${country}`);
+        }));
+        console.log(`[coda] ✓ pestel ${scopeLabel}`);
       } catch (err) {
         console.error("[coda] error:", err);
-        await supa.from("client_pestel").update({
+        await whereRow(supa.from(table).update({
           pestel_status: "error",
           pestel_error: String(err).slice(0, 500),
-        }).eq("client_id", clientId).eq("country", country);
+        }));
       }
     })();
 
