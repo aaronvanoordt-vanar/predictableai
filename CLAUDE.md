@@ -26,7 +26,7 @@ There is no package.json, no npm install, no test suite. Verification = `scripts
 - **Script load order matters** (globals, no modules): `js/config.js` → `js/supabase-client.js` → `js/auth-guard.js` → feature modules. Never reorder the `<script>` tags in `index.html` without checking dependencies.
 - **Intelligence Hub = `js/intel-hub-cadence-tabs.js`**, mounted into `#ih-v2-shell` in `index.html`. Three older generations (`intel-hub.js`, `intel-hub-v2.js`, `intel-hub-real-data.js`) were deleted from the repo — do not resurrect them from git history.
 - **Clients = `js/clients.js`** (grid of client cards + per-client dashboard: status, links, CRM metrics + Google Sheets embed, PDF materials, target countries), mounted into `#clients-shell` in page `clients`. Data in `clients`/`client_materials`/`client_access` tables + private storage bucket `client-assets` (signed URLs only). Each client row has a `share_token`; **`client.html` + `js/client-portal.js`** is the standalone read-only portal (`client.html?token=…`) where the end client signs up and gets bound via the `claim_client_access` RPC — client.html must NOT load `auth-guard.js`.
-- **`miforms/`** is a separate mini-app (feedback/intake survey), used as the Hub unlock gate.
+- **`miforms/`** is a separate mini-app (feedback/intake survey). It is **optional**, not a gate — `auth-callback.html` always routes into `index.html` after onboarding. `js/miforms-prompt.js` offers it in-app via a sidebar affordance and a one-time dismissible popup, both promising a credit bonus (`claim_miforms_bonus_credits` RPC) for completing it.
 
 ## Supabase
 

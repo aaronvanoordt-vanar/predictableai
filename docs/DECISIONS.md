@@ -12,4 +12,4 @@ Registro de decisiones ya tomadas para que futuras sesiones no las reviertan sin
 | Español de la UI | Neutro latinoamericano, tuteo ("dines/selecciona", no voseo) | Limpieza de voseo en #20 |
 | Intelligence Hub | Una sola implementación: `js/intel-hub-cadence-tabs.js` | 3 generaciones anteriores eliminadas del repo (2026-07-02) |
 | Apollo API | Solo vía edge function `apollo-proxy` (key en secrets de Supabase) | La key estuvo hardcodeada en `index.html` y se expuso; movida a backend (2026-07-02) |
-| miforms | Es la puerta de unlock del Hub (encuesta de calibración) | #19/#20 |
+| miforms | **Opcional**, con bono de créditos al completarla — ya no bloquea la entrada a la plataforma | #19/#20 la fijaron como gate obligatorio; revertido 2026-08-19 a petición explícita del usuario |

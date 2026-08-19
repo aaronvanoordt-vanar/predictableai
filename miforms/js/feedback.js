@@ -1,16 +1,19 @@
 /**
- * feedback.js — Intelligence Hub unlock survey
+ * feedback.js — Intelligence Hub calibration survey (optional, credit bonus)
  *
- * Gates access to the Market Intelligence Hub. The user lands here
- * (locked) and must complete every field before hub_unlocked is set:
+ * Reached only voluntarily — from the popup/sidebar affordance in the app
+ * (js/miforms-prompt.js) — never as a mandatory gate. The user must still
+ * complete every field to claim the bonus:
  *   - at least 1 wish per cadence (5 cadences total)
  *   - at least 1 free-form custom request
  *   - impact, frequency and payment-intent picks
  *
  * On submit: upserts intel_hub_intake { hub_unlocked: true,
- * hub_unlock_signals, what_to_know (JSON v1) } and redirects to /.
+ * hub_unlock_signals, what_to_know (JSON v1) }, claims a one-time credit
+ * bonus via the claim_miforms_bonus_credits RPC, and redirects to /.
  *
- * If the user already unlocked, redirects to /.
+ * If the user already completed it, redirects to /. "Ahora no" skips
+ * straight to / without completing anything.
  */
 (function () {
   'use strict';
@@ -323,6 +326,8 @@
   // ── Footer / validation ────────────────────────────────────────────────────
   function bindFooter() {
     $('#btn-submit').addEventListener('click', submit);
+    const skip = $('#link-skip');
+    if (skip) skip.addEventListener('click', (e) => { e.preventDefault(); window.location.replace(HUB_PATH); });
   }
 
   function missingFields() {
@@ -344,9 +349,9 @@
     const cn = state.customReq.length;
     const counter = $('#counter');
     if (miss.length === 0) {
-      counter.innerHTML = `<b>${wn}</b> señales activadas · <b>${cn}</b> pedidos personalizados · listo para desbloquear`;
+      counter.innerHTML = `<b>${wn}</b> señales activadas · <b>${cn}</b> pedidos personalizados · listo para reclamar créditos`;
     } else {
-      counter.innerHTML = `<span class="miss">●</span> Para desbloquear: ${escapeHtml(miss.join(' · '))}`;
+      counter.innerHTML = `<span class="miss">●</span> Para reclamar tus créditos: ${escapeHtml(miss.join(' · '))}`;
     }
     $('#btn-submit').disabled = miss.length > 0;
   }
@@ -356,7 +361,7 @@
 
     const btn = $('#btn-submit');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner" style="border-top-color:#fff"></span>Desbloqueando…';
+    btn.innerHTML = '<span class="spinner" style="border-top-color:#fff"></span>Enviando…';
     showStatus('', '');
 
     const payload = {
@@ -402,11 +407,25 @@
 
   triggerEnrichment().catch(err => console.warn('[unlock] enrich failed:', err));
 
+  // Bono de créditos por completar la calibración (opcional, no bloqueante).
+  let bonusCredits = 0;
+  try {
+    const { data: bonus, error: bonusErr } = await window.supabaseClient.rpc('claim_miforms_bonus_credits');
+    if (bonusErr) throw bonusErr;
+    const row = Array.isArray(bonus) ? bonus[0] : bonus;
+    if (row && row.granted) bonusCredits = 25;
+  } catch (err) {
+    console.warn('[unlock] claim_miforms_bonus_credits failed:', err);
+  }
+
   $('#ty-wishes').textContent = state.selected.size;
 
   $('#ty-custom').textContent = state.customReq.length;
 
   $('#ty-impact').textContent = impactLabel(state.impact);
+
+  const tyCredits = $('#ty-credits');
+  if (tyCredits) tyCredits.textContent = bonusCredits > 0 ? ('+' + bonusCredits) : '—';
 
   $('#survey').style.display = 'none';
 
@@ -422,7 +441,7 @@
  catch (e) {
       console.error('[feedback] submit', e);
       btn.disabled = false;
-      btn.innerHTML = '🔓 Desbloquear mi Intelligence Hub →';
+      btn.innerHTML = '🎁 Enviar y reclamar créditos →';
       showStatus('err', 'No pudimos desbloquear. ' + (e?.message || 'Intenta de nuevo.'));
     }
   }
