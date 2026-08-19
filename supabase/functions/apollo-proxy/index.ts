@@ -53,6 +53,8 @@ const STATIC_ENDPOINTS = new Map<string, Method[]>([
   // Also verified the hard way: its `contact_ids` and `provider_thread_id`
   // filters are accepted and then SILENTLY IGNORED — never filter on those.
   ["/emailer_messages/search", ["POST"]],
+  // Replying from the Bandeja: create a draft, then dispatch it.
+  ["/emailer_messages", ["POST"]],
 ]);
 
 // Dynamic entries: per-sequence sub-resources. The id segment is validated by
@@ -82,6 +84,11 @@ const DYNAMIC_ENDPOINTS: Array<{ re: RegExp; methods: Method[] }> = [
   // Reading a step's copy back. The query string is pinned to this one
   // parameter so the path can never be used to reach anything else.
   { re: new RegExp(`^/emailer_touches\\?emailer_step_id=${ID}$`), methods: ["GET"] },
+  // ⚠️ SENDS A REAL EMAIL, IMMEDIATELY. Not "schedules", not "validates":
+  // probing this with an empty body dispatched a live message to a prospect
+  // one second later. There is no unsend — /cancel, /unschedule and DELETE on
+  // an emailer_message all 404. Every caller must confirm with the user first.
+  { re: new RegExp(`^/emailer_messages/${ID}/send_now$`), methods: ["POST"] },
 ];
 
 function corsHeaders(origin: string) {

@@ -29,10 +29,13 @@
  *  • thread      {thread_id} → {messages:[…]}
  *      The whole conversation, each message flagged inbound/outbound and with
  *      its body decoded to plain text.
- *  • send_reply  {thread_id, to, subject, body} → {id}
- *      Replies INSIDE the Gmail thread (In-Reply-To/References + threadId),
- *      so it lands in the same conversation for the prospect and gets picked
- *      up by Apollo's mailbox sync.
+ *
+ * READ-ONLY BY DESIGN. Sending goes through Apollo (apollo-proxy:
+ * /emailer_messages + /{id}/send_now) so every reply is logged in the CRM and
+ * counts toward Apollo's own metrics. Gmail is here purely because Apollo
+ * cannot hand over the prospect's words. The trade-off, measured against the
+ * live API: Apollo ignores in_response_to_emailer_message_id, so its reply
+ * reaches the prospect as a NEW thread rather than inside the conversation.
  *
  * Required secrets: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
  *   (a Google Cloud OAuth "Web application" client with the Gmail API enabled;
@@ -46,11 +49,11 @@ const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 
-// Read the thread + send the reply. Nothing broader: no mailbox modification,
-// no contacts, no Drive.
+// Read the thread, nothing else: no sending, no mailbox modification, no
+// contacts, no Drive. Sending is Apollo's job, so gmail.send is deliberately
+// NOT requested — one less restricted scope for Google to approve.
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/userinfo.email",
 ];
 
@@ -77,13 +80,6 @@ function b64urlDecode(data: string): string {
   const bin = atob(b64 + pad);
   const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
   return new TextDecoder("utf-8").decode(bytes);
-}
-
-function b64urlEncode(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  let bin = "";
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function stripHtml(html: string): string {
@@ -314,59 +310,6 @@ Deno.serve(async (req) => {
       };
     });
     return json({ thread_id: threadId, mailbox: acct.email, messages }, 200, cors);
-  }
-
-  // ── send_reply ───────────────────────────────────────────────────────────
-  if (action === "send_reply") {
-    const threadId = String(payload.thread_id ?? "");
-    const to = String(payload.to ?? "").trim();
-    const bodyText = String(payload.body ?? "");
-    let subject = String(payload.subject ?? "").trim();
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(threadId)) return json({ error: "Identificador de hilo inválido." }, 400, cors);
-    if (!to || !bodyText.trim()) return json({ error: "Falta el destinatario o el cuerpo." }, 400, cors);
-    // Headers are line-based: a newline in either field would let the caller
-    // inject extra headers (Bcc, etc.) into the outgoing message.
-    if (/[\r\n]/.test(to) || /[\r\n]/.test(subject)) {
-      return json({ error: "Destinatario o asunto inválidos." }, 400, cors);
-    }
-    if (!/^re:/i.test(subject)) subject = "Re: " + subject;
-
-    // Thread the reply properly: without In-Reply-To/References Gmail shows it
-    // as a new conversation on the prospect's side even with threadId set.
-    const tRes = await fetch(`${GMAIL}/threads/${threadId}?format=metadata`, {
-      headers: { Authorization: "Bearer " + accessToken },
-    });
-    const tJson = await tRes.json().catch(() => null);
-    if (!tRes.ok) return json({ error: "No se pudo leer el hilo antes de responder." }, 502, cors);
-    const msgs = tJson?.messages ?? [];
-    const lastHeaders = msgs.length ? (msgs[msgs.length - 1]?.payload?.headers ?? []) : [];
-    const lastMessageId = header(lastHeaders, "Message-ID");
-    const priorRefs = header(lastHeaders, "References");
-
-    const headers = [
-      `To: ${to}`,
-      `Subject: ${subject}`,
-      'Content-Type: text/plain; charset="UTF-8"',
-      "MIME-Version: 1.0",
-    ];
-    if (lastMessageId) {
-      headers.push(`In-Reply-To: ${lastMessageId}`);
-      headers.push(`References: ${(priorRefs ? priorRefs + " " : "") + lastMessageId}`);
-    }
-    const raw = b64urlEncode(headers.join("\r\n") + "\r\n\r\n" + bodyText);
-
-    const sendRes = await fetch(`${GMAIL}/messages/send`, {
-      method: "POST",
-      headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" },
-      body: JSON.stringify({ raw, threadId }),
-    });
-    const sendText = await sendRes.text();
-    if (!sendRes.ok) {
-      console.error(`[gmail-proxy] send ${sendRes.status}: ${sendText.slice(0, 200)}`);
-      return json({ error: "Gmail no pudo enviar la respuesta (" + sendRes.status + ")." }, 502, cors);
-    }
-    const sent = JSON.parse(sendText);
-    return json({ id: sent?.id ?? null, thread_id: sent?.threadId ?? threadId }, 200, cors);
   }
 
   return json({ error: "Acción no reconocida." }, 400, cors);

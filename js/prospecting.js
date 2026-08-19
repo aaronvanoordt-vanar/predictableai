@@ -402,6 +402,8 @@
     '.thread-msg-date { font-size:11px; color:var(--text3); white-space:nowrap; }',
     '.thread-msg-body { font-size:13px; line-height:1.6; color:var(--text2); white-space:pre-wrap; word-break:break-word; }',
     '.thread-composer textarea { width:100%; box-sizing:border-box; min-height:110px; resize:vertical; line-height:1.55; font-family:var(--font-body); }',
+    '.thread-composer-row { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-top:10px; flex-wrap:wrap; }',
+    '.thread-composer-from { display:flex; flex-direction:column; gap:4px; min-width:200px; }',
   ].join('\n');
 
   // ── Modal + progress helpers (reuse .logout-overlay/.logout-modal) ─────
@@ -3801,7 +3803,7 @@
     if (st.gmail && st.gmail.status === 'connected') {
       return '<div class="chart-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
         '<div><div style="font-weight:600;font-size:13px">Gmail conectado</div>' +
-        '<div class="pros-cellsub">' + esc(st.gmail.email || '') + ' — los hilos y las respuestas salen de este buzón.</div></div>' +
+        '<div class="pros-cellsub">' + esc(st.gmail.email || '') + ' — solo lectura, para ver lo que responden. Las respuestas se envían por Apollo.</div></div>' +
         '<button type="button" class="btn btn-ghost btn-sm" data-action="gmail-disconnect">Desconectar</button>' +
         '</div>';
     }
@@ -3894,7 +3896,7 @@
     if (action === 'gmail-disconnect') {
       return confirmModal({
         title: 'Desconectar Gmail',
-        message: 'Dejarás de ver los hilos y de poder responder desde la app. Los correos que Apollo envía no se ven afectados.',
+        message: 'Dejarás de ver el texto de las respuestas. Seguirás pudiendo responder: eso lo envía Apollo, no Gmail.',
         confirmLabel: 'Desconectar',
         danger: true,
         onConfirm: function () {
@@ -3939,6 +3941,10 @@
       actions: [{ label: 'Cerrar', className: 'logout-btn logout-btn-cancel' }],
     });
 
+    // El compositor NO depende de Gmail: se envía por Apollo. Gmail solo hace
+    // falta para leer lo que contestó el prospecto.
+    composerHost.appendChild(buildComposer(msg, api, prog));
+
     if (!st.gmail || st.gmail.status !== 'connected') {
       // Sin Gmail solo se puede mostrar lo que Apollo envió: se dice tal cual,
       // en vez de dejar el hilo vacío como si no hubiera conversación.
@@ -3946,13 +3952,13 @@
         outbound: true, from: msg.fromEmail, date: fmtDate(msg.completedAt || msg.dueAt),
         body: msg.body || '(Apollo no devolvió el cuerpo de este correo todavía.)',
       }, msg.fromEmail));
-      composerHost.appendChild(h('div', { class: 'pros-note-amber' },
+      listHost.appendChild(h('div', { class: 'pros-note-amber' },
         h('div', { text: msg.replied
-          ? 'Este contacto respondió, pero Apollo no entrega el texto de la respuesta. Conecta Gmail para leerla y contestar desde aquí.'
-          : 'Conecta Gmail para leer el hilo completo y responder desde aquí.' }),
+          ? 'Este contacto respondió, pero Apollo no entrega el texto de la respuesta. Conecta Gmail para leerla — igual puedes contestar aquí abajo.'
+          : 'Conecta Gmail para leer el hilo completo cuando responda.' }),
         h('div', { class: 'pros-actions', style: 'margin-top:10px' },
           h('button', {
-            type: 'button', class: 'btn btn-primary btn-sm', text: 'Conectar Gmail',
+            type: 'button', class: 'btn btn-ghost btn-sm', text: 'Conectar Gmail',
             onclick: function () {
               Promise.resolve(pd().startGmailConnect()).catch(function (e) { toast(errMsg(e), 'error'); });
             },
@@ -3970,39 +3976,72 @@
         return;
       }
       messages.forEach(function (m) { listHost.appendChild(threadMessageNode(m, res.mailbox)); });
+    }).catch(function (e) {
+      listHost.innerHTML = '';
+      listHost.appendChild(h('div', { class: 'pros-note-red', text: errMsg(e) }));
+    });
+  }
 
-      var last = messages[messages.length - 1];
-      var lastInbound = messages.slice().reverse().find(function (m) { return !m.outbound; });
-      // Responder al que escribió, no a nosotros mismos.
-      var replyTo = lastInbound ? (lastInbound.from_email || msg.toEmail) : msg.toEmail;
+  // Compositor de respuesta. Envía SIEMPRE por Apollo, para que la respuesta
+  // quede registrada en el CRM y cuente en sus métricas.
+  function buildComposer(msg, api, prog) {
+    var accts = state.cache.accounts || [];
+    if (!msg.contactId) {
+      return h('div', { class: 'pros-note-amber',
+        text: 'Este correo no tiene un contacto de Apollo asociado, así que no se puede responder desde aquí.' });
+    }
+    if (!accts.length) {
+      return h('div', { class: 'pros-note-amber',
+        text: 'No hay buzones conectados en Apollo, así que no hay desde dónde enviar.' });
+    }
 
-      var ta = h('textarea', { placeholder: 'Escribe tu respuesta…', rows: '5' });
-      var sendBtn = h('button', {
-        type: 'button', class: 'btn btn-primary',
-        text: 'Enviar respuesta',
-        onclick: function () {
-          var text = ta.value.trim();
-          if (!text) return toast('Escribe la respuesta antes de enviarla.', 'warn');
+    // Por defecto, el mismo buzón que mandó el correo original; si ya no
+    // existe, el que Apollo marque como predeterminado.
+    var preferred = accts.find(function (a) {
+      return msg.fromEmail && String(a.email).toLowerCase() === String(msg.fromEmail).toLowerCase();
+    }) || accts.find(function (a) { return a.default; }) || accts[0];
+
+    var acctSel = h('select');
+    accts.forEach(function (a) {
+      var o = h('option', { value: String(a.id), text: a.email || '—' });
+      if (String(a.id) === String(preferred.id)) o.selected = true;
+      acctSel.appendChild(o);
+    });
+
+    var ta = h('textarea', { placeholder: 'Escribe tu respuesta…', rows: '5' });
+    var sendBtn = h('button', { type: 'button', class: 'btn btn-primary', text: 'Enviar por Apollo' });
+
+    sendBtn.addEventListener('click', function () {
+      var text = ta.value.trim();
+      if (!text) return toast('Escribe la respuesta antes de enviarla.', 'warn');
+      var acct = accts.find(function (a) { return String(a.id) === String(acctSel.value); });
+      if (!acct) return toast('Selecciona el buzón desde el que quieres responder.', 'warn');
+
+      // Apollo despacha en el acto y no hay forma de deshacerlo, así que el
+      // envío nunca ocurre sin una confirmación explícita.
+      return confirmModal({
+        title: 'Enviar respuesta',
+        message: 'Se enviará un correo real a ' + (msg.toEmail || 'el contacto') + ' desde ' + acct.email +
+          '. Apollo lo despacha de inmediato y no se puede cancelar. Al prospecto le llegará como un hilo nuevo, no dentro de la conversación.',
+        confirmLabel: 'Enviar ahora',
+        onConfirm: function () {
           sendBtn.disabled = true;
-          prog.set('Enviando por Gmail…');
-          return Promise.resolve(pd().sendGmailReply({
-            threadId: msg.threadId,
-            to: replyTo,
-            subject: last.subject || msg.subject || '',
+          prog.set('Enviando por Apollo…');
+          return Promise.resolve(pd().sendApolloReply({
+            contactId: msg.contactId,
+            subject: msg.subject || '',
             body: text,
+            emailAccountId: acct.id,
+            emailAccountAddress: acct.email,
           })).then(function () {
             prog.hide();
             ta.value = '';
             sendBtn.disabled = false;
-            toast('Respuesta enviada desde ' + (res.mailbox || 'tu Gmail') + '.', 'success');
-            // Volver a pedir el hilo para que la respuesta recién enviada
-            // aparezca de verdad, no como un eco optimista del cliente.
-            return Promise.resolve(pd().fetchGmailThread(msg.threadId)).then(function (fresh) {
-              listHost.innerHTML = '';
-              (fresh.messages || []).forEach(function (m) {
-                listHost.appendChild(threadMessageNode(m, fresh.mailbox));
-              });
-            });
+            toast('Respuesta enviada desde ' + acct.email + '.', 'success');
+            if (api) api.close();
+            // La respuesta es un correo más en Apollo: se recarga la lista para
+            // que aparezca de verdad, no como un eco optimista del cliente.
+            return reloadBandeja();
           }).catch(function (e) {
             prog.hide();
             sendBtn.disabled = false;
@@ -4010,16 +4049,15 @@
           });
         },
       });
-
-      composerHost.innerHTML = '';
-      composerHost.appendChild(h('div', { class: 'thread-composer' },
-        h('div', { class: 'pros-lbl', style: 'margin-bottom:6px', text: 'Responder a ' + replyTo }),
-        ta,
-        h('div', { class: 'pros-actions', style: 'margin-top:10px;justify-content:flex-end' }, sendBtn)));
-    }).catch(function (e) {
-      listHost.innerHTML = '';
-      listHost.appendChild(h('div', { class: 'pros-note-red', text: errMsg(e) }));
     });
+
+    return h('div', { class: 'thread-composer' },
+      h('div', { class: 'pros-lbl', style: 'margin-bottom:6px', text: 'Responder a ' + (msg.toEmail || '—') }),
+      ta,
+      h('div', { class: 'thread-composer-row' },
+        h('div', { class: 'thread-composer-from' },
+          h('span', { class: 'pros-lbl', text: 'Enviar desde' }), acctSel),
+        sendBtn));
   }
 
   // ══ TAB 5: WHATSAPP & LINKEDIN ═══════════════════════════════════════════
