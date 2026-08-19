@@ -10,46 +10,71 @@
  *       this an open proxy anyone could use to burn Apollo credits (the same
  *       class of hole PR #25 fixed in decrement_credits).
  *
- * The allowlist pins the upstream HTTP method server-side — the client only
- * names the endpoint, never the method. For phone reveals
+ * The allowlist pins the upstream HTTP (endpoint, method) PAIRS server-side —
+ * the client may only name a pair that appears here, and for the endpoints
+ * that accept a single verb it does not name a method at all. For phone reveals
  * (reveal_phone_number: true on /people/match or /people/bulk_match) this
  * function injects the apollo-webhook callback URL itself; any
  * client-supplied webhook_url is always discarded, so Apollo can never be
  * pointed at an attacker-controlled server.
  *
- * POST body: { "endpoint": "/people/match", "body": { ... } }
+ * POST body: { "endpoint": "/people/match", "method": "POST", "body": { ... } }
+ *            ("method" is only required for the few endpoints that accept
+ *             more than one verb; otherwise it is inferred.)
  * Required secrets: APOLLO_API_KEY
  *                   APOLLO_WEBHOOK_SECRET (only for phone-reveal requests)
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// endpoint → upstream HTTP method, fixed server-side.
-const STATIC_ENDPOINTS = new Map<string, "GET" | "POST">([
-  ["/mixed_people/api_search", "POST"],
-  ["/people/match", "POST"],
-  ["/people/bulk_match", "POST"],
-  ["/contacts", "POST"],
-  ["/contacts/search", "POST"],
-  ["/emailer_campaigns/search", "POST"],
-  ["/emailer_campaigns", "POST"],
-  ["/email_accounts", "GET"],
-  ["/labels", "GET"],
+type Method = "GET" | "POST" | "PUT" | "DELETE";
+
+// endpoint → the upstream verbs it may be called with, fixed server-side.
+// The first entry is the default when the client names no method.
+const STATIC_ENDPOINTS = new Map<string, Method[]>([
+  ["/mixed_people/api_search", ["POST"]],
+  ["/people/match", ["POST"]],
+  ["/people/bulk_match", ["POST"]],
+  ["/contacts", ["POST"]],
+  ["/contacts/search", ["POST"]],
+  ["/emailer_campaigns/search", ["POST"]],
+  ["/emailer_campaigns", ["POST"]],
+  ["/emailer_campaigns/remove_or_stop_contact_ids", ["POST"]],
+  ["/emailer_steps", ["POST"]],
+  ["/emailer_touches", ["POST"]],
+  ["/emailer_schedules", ["GET"]],
+  ["/email_accounts", ["GET"]],
+  ["/labels", ["GET"]],
 ]);
 
 // Dynamic entries: per-sequence sub-resources. The id segment is validated by
 // SHAPE only (URL-safe token, no slashes) — the anti-abuse guarantee is the
 // path pattern, not Apollo's internal id encoding (today 24-hex Mongo-style,
 // but that is Apollo's implementation detail and may change).
-//   • add_contact_ids — enroll contacts into a sequence
 //
-// NOTE: adding email steps to a sequence has no public API — Apollo's own
-// web app does it via a PUT to app.apollo.io/api/v1/sequences/{id}
-// authenticated with the user's browser session (cookie + CSRF token), not
-// an API key. There is no server-side equivalent, so that endpoint is
-// intentionally not allowlisted here — see createSequence() in
-// js/prospecting-data.js.
-const ADD_CONTACT_IDS_RE = /^\/emailer_campaigns\/[A-Za-z0-9_-]{8,64}\/add_contact_ids$/;
+// SEQUENCE STEPS: an earlier note here claimed Apollo had no public API for
+// adding email steps, and that only its web app could (a session-authenticated
+// PUT to app.apollo.io). That is wrong, and the "shell-only" createSequence it
+// justified left users finishing every sequence inside Apollo. Probed against
+// the live API with this function's own key: POST /emailer_steps creates the
+// step AND an empty touch + template, and PUT /emailer_touches/{id} writes the
+// subject and body onto it. What genuinely does NOT work is passing
+// emailer_steps to POST/PUT /emailer_campaigns — it answers 200 and silently
+// drops them (num_steps stays 0), which is probably what produced the old note.
+const ID = "[A-Za-z0-9_-]{8,64}";
+const DYNAMIC_ENDPOINTS: Array<{ re: RegExp; methods: Method[] }> = [
+  // Sequences
+  { re: new RegExp(`^/emailer_campaigns/${ID}$`), methods: ["PUT", "GET"] },
+  { re: new RegExp(`^/emailer_campaigns/${ID}/add_contact_ids$`), methods: ["POST"] },
+  { re: new RegExp(`^/emailer_campaigns/${ID}/approve$`), methods: ["POST"] },
+  { re: new RegExp(`^/emailer_campaigns/${ID}/archive$`), methods: ["POST"] },
+  // Steps (one email of a sequence) and touches (its subject + body)
+  { re: new RegExp(`^/emailer_steps/${ID}$`), methods: ["PUT", "DELETE", "GET"] },
+  { re: new RegExp(`^/emailer_touches/${ID}$`), methods: ["PUT", "GET"] },
+  // Reading a step's copy back. The query string is pinned to this one
+  // parameter so the path can never be used to reach anything else.
+  { re: new RegExp(`^/emailer_touches\\?emailer_step_id=${ID}$`), methods: ["GET"] },
+];
 
 function corsHeaders(origin: string) {
   return {
@@ -83,7 +108,7 @@ Deno.serve(async (req) => {
   ).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, cors);
 
-  let payload: { endpoint?: unknown; body?: unknown };
+  let payload: { endpoint?: unknown; method?: unknown; body?: unknown };
   try {
     payload = await req.json();
   } catch (_) {
@@ -94,9 +119,20 @@ Deno.serve(async (req) => {
   if (typeof endpoint !== "string") {
     return json({ error: "Endpoint not allowed" }, 400, cors);
   }
-  let method = STATIC_ENDPOINTS.get(endpoint);
-  if (!method && ADD_CONTACT_IDS_RE.test(endpoint)) method = "POST";
-  if (!method) return json({ error: "Endpoint not allowed" }, 400, cors);
+  const allowed = STATIC_ENDPOINTS.get(endpoint) ??
+    DYNAMIC_ENDPOINTS.find((d) => d.re.test(endpoint))?.methods;
+  if (!allowed) return json({ error: "Endpoint not allowed" }, 400, cors);
+
+  // The client may only pick from the verbs this endpoint declares; naming no
+  // method keeps the old behavior (the endpoint's single/default verb).
+  let method: Method;
+  if (payload.method === undefined) {
+    method = allowed[0];
+  } else if (typeof payload.method === "string" && (allowed as string[]).includes(payload.method)) {
+    method = payload.method as Method;
+  } else {
+    return json({ error: "Method not allowed for this endpoint" }, 400, cors);
+  }
 
   const body: Record<string, unknown> =
     payload.body && typeof payload.body === "object" && !Array.isArray(payload.body)
@@ -147,16 +183,17 @@ Deno.serve(async (req) => {
     }
   }
 
+  const sendsBody = method === "POST" || method === "PUT";
   const init: RequestInit = {
     method,
     headers: {
       "Cache-Control": "no-cache",
       "X-Api-Key": apiKey,
-      ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
+      ...(sendsBody ? { "Content-Type": "application/json" } : {}),
     },
   };
-  // Apollo's GET endpoints here take no params — forward with no body.
-  if (method === "POST") init.body = JSON.stringify(body);
+  // GET/DELETE carry everything they need in the path — forward with no body.
+  if (sendsBody) init.body = JSON.stringify(body);
 
   const res = await fetch("https://api.apollo.io/api/v1" + endpoint, init);
 
