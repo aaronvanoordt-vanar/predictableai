@@ -14,6 +14,16 @@
  *     generating → ready|error), one row per (client_id, country) so
  *     switching the country dropdown doesn't force a re-generation.
  *
+ *   action: "porter"
+ *     Researches the seller's competitive landscape (web_search) and produces
+ *     a Porter's Five Forces analysis: Rivalidad entre competidores / Amenaza
+ *     de nuevos entrantes / Amenaza de sustitutos / Poder de negociación de
+ *     clientes / Poder de negociación de proveedores, each translated into a
+ *     concrete SALES impact + suggested action (same shape as pestel).
+ *     Writes coda_analysis.porter (status generating → ready|error). Still
+ *     account-level (the seller's own competitive landscape), independent of
+ *     the client/country pick that "pestel" now uses.
+ *
  *   action: "came"  (body: { foda: {fortalezas,oportunidades,debilidades,amenazas} })
  *     Converts the user-filled FODA (SWOT) matrix into a CAME response matrix:
  *     Mantener (strengths) / Explotar (opportunities) / Corregir (weaknesses)
@@ -21,22 +31,26 @@
  *     (pure transformation). Persists the FODA the user sent, then writes
  *     coda_analysis.came (status generating → ready|error).
  *
- * Both blocks are OPTIONAL: nothing else in the app blocks on them.
+ * All three blocks are OPTIONAL: nothing else in the app blocks on them.
  *
  * Auth: Bearer <user JWT>, verified via auth.getUser() (see apollo-proxy /
  *       generate-client-brief notes — verify_jwt alone accepts the public
  *       anon key, which would let anyone burn Anthropic tokens).
  * Response 202: { status: "started" } — result arrives via the client's
- *       realtime subscription to client_pestel (pestel) or coda_analysis (came).
+ *       realtime subscription to client_pestel (pestel) or coda_analysis (porter/came).
  * Required secrets: ANTHROPIC_API_KEY
  *
- * Background-task deadline: PESTEL's Anthropic call is capped at 3 web
- * searches and CLAUDE_TIMEOUT_MS (95s), well under the Edge Runtime's ~150s
+ * Background-task deadline: PESTEL's Anthropic call is capped at 2 web
+ * searches and CLAUDE_TIMEOUT_MS (125s), under the Edge Runtime's ~150s
  * silent isolate kill — see the comment above CLAUDE_TIMEOUT_MS. Without
  * this, a slow/hung call gets killed outside our try/catch and
  * pestel_status/came_status is stuck at 'generating' forever (this shipped
  * to production once; see generate-radar's header comment for the same
- * failure mode discovered there first).
+ * failure mode discovered there first). An earlier version of this fix
+ * capped searches at 3 with a 95s deadline, which still timed out too
+ * often in practice — each sequential web_search round trip inside one
+ * agentic Claude call is slow, so a tighter search budget (not just a
+ * longer deadline) is what actually gets a PESTEL run to finish.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -58,15 +72,18 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
 
 interface ContentItem { type: string; text?: string; }
 
-// Our own deadline on every Anthropic call, well under the Edge Runtime's
-// ~150s isolate kill. That kill happens outside the JS call stack, so a call
-// that hangs past it takes the whole background task down silently — no
-// catch block ever runs, and coda_analysis.{pestel,came}_status is left at
+// Our own deadline on every Anthropic call, under the Edge Runtime's ~150s
+// isolate kill. That kill happens outside the JS call stack, so a call that
+// hangs past it takes the whole background task down silently — no catch
+// block ever runs, and coda_analysis.{pestel,came}_status is left at
 // 'generating' forever (this is exactly what generate-radar's own postmortem
 // comments document, and why radar switched to a staged per-call protocol).
 // Aborting the fetch ourselves guarantees OUR try/catch runs and the row
-// always reaches 'ready' or 'error'.
-const CLAUDE_TIMEOUT_MS = 95_000;
+// always reaches 'ready' or 'error'. 125s leaves ~25s of margin under the
+// platform kill while giving a 2-search call enough room to actually finish
+// (a 95s budget was too tight in practice and was itself the thing timing
+// PESTEL runs out).
+const CLAUDE_TIMEOUT_MS = 125_000;
 
 class ClaudeTimeout extends Error {}
 
@@ -140,7 +157,7 @@ function parseJson(raw: string): any {
 
 const PESTEL_SYSTEM = `You are a market-strategy analyst inside a B2B sales-intelligence platform. The user is an agency running outbound sales/prospecting on behalf of one of their clients. Produce a PESTEL analysis for the SPECIFIC COUNTRY given below, scoped to that client's ICP/industry, and — critically — translate every factor into its concrete SALES/PROSPECTING impact (how it changes who to target in that country, what message lands, what urgency exists). This is for a sales team, not an academic report.
 
-Research that country's market with web_search (max 3 searches) to ground the factors in real, current conditions. Then respond with ONLY valid JSON (no markdown fences, no prose) with exactly this shape:
+Research that country's market with web_search (max 2 searches) to ground the factors in real, current conditions. Then respond with ONLY valid JSON (no markdown fences, no prose) with exactly this shape:
 
 {
   "political": [{ "factor": "the real political/regulatory-policy factor, in Spanish", "impact": "high|medium|low", "sales_impact": "1 sentence in Spanish: what this means for prospecting in this country — who becomes a hotter/colder buyer, what urgency it creates", "action": "1 short sales action in Spanish (a message angle, a segment to prioritize, a trigger to watch)" }],
@@ -155,6 +172,25 @@ Rules:
 - 2-3 factors per dimension (the strongest, most sales-relevant ones). Never leave a dimension empty — if a dimension is weak for this market, give the single most relevant factor.
 - Every factor MUST be specific to the given country and to this client's ICP/industry. No generic textbook factors ("technology is advancing"). Tie each to a real, current condition in that country.
 - "sales_impact" is the point of the whole exercise: always frame it as consequence for prospecting THAT client's target buyers in THAT country.
+- Never invent hard statistics. If you cite a number, it must come from web_search results. Qualitative framing is fine without numbers.
+- All user-facing text in neutral Latin-American Spanish (tuteo).`;
+
+const PORTER_SYSTEM = `You are a market-strategy analyst inside a B2B sales-intelligence platform. Produce a Porter's Five Forces analysis for the SELLER company described below, and — critically — translate every factor into its concrete SALES impact (how it changes deal urgency, pricing power, who to target, what proof points matter). This is for a sales team, not an academic report.
+
+Research the seller's competitive landscape and industry with web_search (max 3 searches) to ground the factors in real, current conditions (actual competitors, actual switching costs, actual market structure). Then respond with ONLY valid JSON (no markdown fences, no prose) with exactly this shape:
+
+{
+  "rivalidad": [{ "factor": "the real competitive-rivalry factor, in Spanish", "impact": "high|medium|low", "sales_impact": "1 sentence in Spanish: what this means for selling — how it changes pricing power, urgency, or differentiation", "action": "1 short sales action in Spanish (a message angle, a differentiator to lead with, a trigger to watch)" }],
+  "nuevos_entrantes": [ ... same shape, about the threat of new entrants ... ],
+  "sustitutos": [ ... about the threat of substitute products/solutions ... ],
+  "poder_clientes": [ ... about buyers' bargaining power ... ],
+  "poder_proveedores": [ ... about suppliers'/partners' bargaining power ... ]
+}
+
+Rules:
+- 2-3 factors per force (the strongest, most sales-relevant ones). Never leave a force empty — if a force is weak for this market, give the single most relevant factor.
+- Every factor MUST be specific to this company's market/geography/ICP/competitors. No generic textbook factors ("there is competition in the market"). Tie each to a real, current condition.
+- "sales_impact" is the point of the whole exercise: always frame it as consequence for THIS seller's pipeline.
 - Never invent hard statistics. If you cite a number, it must come from web_search results. Qualitative framing is fine without numbers.
 - All user-facing text in neutral Latin-American Spanish (tuteo).`;
 
@@ -199,6 +235,41 @@ function buildClientContextBlock(client: ClientRow, country: string): string {
   return lines.join("\n");
 }
 
+// Used by "porter" (the seller's own competitive landscape) — unlike
+// "pestel", which analyzes a specific client's target country instead.
+interface IntakeRow {
+  company_industry: string | null;
+  company_country: string | null;
+  company_website: string | null;
+  company_about: string | null;
+  company_solutions: string | null;
+  icp_industries: string | null;
+  icp_geographies: string | null;
+  icp_roles: string | null;
+  icp_pain_points: string | null;
+  value_proposition: string | null;
+}
+
+// deno-lint-ignore no-explicit-any
+function buildContextBlock(intake: IntakeRow | null, profile: any, brief: any): string {
+  const lines: string[] = ["=== SELLER COMPANY CONTEXT ==="];
+  const push = (label: string, v: string | null | undefined) => { if (v) lines.push(`${label}: ${v}`); };
+  push("Company name", profile?.company_name || brief?.company_name);
+  push("What it does", brief?.what_it_does || intake?.company_about);
+  push("Positioning", brief?.positional_phrase);
+  push("Industry", intake?.company_industry || (brief?.icp?.industries || []).join(", "));
+  push("Country", intake?.company_country);
+  push("Website", intake?.company_website || brief?.enrichment?.website);
+  push("Solutions", intake?.company_solutions);
+  push("Value proposition", intake?.value_proposition || brief?.brand_promise);
+  push("Target industries (ICP)", intake?.icp_industries || (brief?.icp?.industries || []).join(", "));
+  push("Target geographies (ICP)", intake?.icp_geographies || (brief?.icp?.geographies || []).join(", "));
+  push("Target roles (ICP)", intake?.icp_roles || (brief?.icp?.roles || []).join(", "));
+  push("ICP pain points", intake?.icp_pain_points);
+  if (lines.length === 1) lines.push("(sparse — infer the market from any available signal and be explicit about assumptions)");
+  return lines.join("\n");
+}
+
 // deno-lint-ignore no-explicit-any
 function fodaToText(foda: any): string {
   const q = (label: string, key: string) => {
@@ -233,8 +304,8 @@ Deno.serve(async (req: Request) => {
   let body: { action?: string; foda?: unknown; client_id?: string; country?: string } = {};
   try { body = await req.json(); } catch (_) { /* empty body */ }
   const action = body.action;
-  if (action !== "pestel" && action !== "came") {
-    return json({ error: "action must be 'pestel' or 'came'" }, 400, h);
+  if (action !== "pestel" && action !== "porter" && action !== "came") {
+    return json({ error: "action must be 'pestel', 'porter' or 'came'" }, 400, h);
   }
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
@@ -271,7 +342,7 @@ Deno.serve(async (req: Request) => {
           ANTHROPIC_KEY,
           PESTEL_SYSTEM,
           ctx + "\n\nProduce the PESTEL JSON for this country now.",
-          3,
+          2,
         );
         const p = parseJson(raw);
         const dim = (v: unknown) => (Array.isArray(v) ? v : []);
@@ -296,6 +367,65 @@ Deno.serve(async (req: Request) => {
           pestel_status: "error",
           pestel_error: String(err).slice(0, 500),
         }).eq("client_id", clientId).eq("country", country);
+      }
+    })();
+
+    // @ts-ignore — Supabase Edge Runtime global
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+      // @ts-ignore
+      EdgeRuntime.waitUntil(work);
+    } else {
+      await work;
+    }
+
+    return json({ status: "started" }, 202, h);
+  }
+
+  if (action === "porter") {
+    await supa.from("coda_analysis").upsert(
+      { user_id: user.id, porter_status: "generating", porter_error: null },
+      { onConflict: "user_id" },
+    );
+
+    const work = (async () => {
+      try {
+        const [{ data: intake }, { data: profile }, { data: brief }] = await Promise.all([
+          supa.from("intel_hub_intake").select(`
+            company_industry, company_country, company_website, company_about, company_solutions,
+            icp_industries, icp_geographies, icp_roles, icp_pain_points, value_proposition
+          `).eq("user_id", user.id).maybeSingle(),
+          supa.from("profiles").select("company_name").eq("id", user.id).maybeSingle(),
+          supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
+        ]);
+        const ctx = buildContextBlock(intake as IntakeRow | null, profile, brief);
+        const raw = await callClaude(
+          ANTHROPIC_KEY,
+          PORTER_SYSTEM,
+          ctx + "\n\nProduce the Porter's Five Forces JSON for this seller now.",
+          3,
+        );
+        const p = parseJson(raw);
+        const dim = (v: unknown) => (Array.isArray(v) ? v : []);
+        const porter = {
+          rivalidad:         dim(p.rivalidad),
+          nuevos_entrantes:  dim(p.nuevos_entrantes),
+          sustitutos:        dim(p.sustitutos),
+          poder_clientes:    dim(p.poder_clientes),
+          poder_proveedores: dim(p.poder_proveedores),
+        };
+        await supa.from("coda_analysis").update({
+          porter,
+          porter_status: "ready",
+          porter_error: null,
+          porter_generated_at: new Date().toISOString(),
+        }).eq("user_id", user.id);
+        console.log(`[coda] ✓ porter ${user.id}`);
+      } catch (err) {
+        console.error("[coda] error:", err);
+        await supa.from("coda_analysis").update({
+          porter_status: "error",
+          porter_error: String(err).slice(0, 500),
+        }).eq("user_id", user.id);
       }
     })();
 
