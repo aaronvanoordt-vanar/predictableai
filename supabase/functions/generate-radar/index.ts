@@ -18,7 +18,13 @@
  * killed only loses ~one call's worth of work — the client (js/radar.js)
  * can safely re-call the same stage, which is idempotent by design.
  *
- *   POST { }                                    → create a run, return run_id
+ *   POST { custom_prompt?, exclude_list_ids?,
+ *          exclude_previous_radar? }              → create a run, return run_id.
+ *          The exclusion inputs resolve (service role, owner-scoped) to the
+ *          company names the seller ALREADY has — saved Prospección lists +
+ *          previous ready radars — snapshotted into radar_runs.
+ *          excluded_companies so every research call can tell the model not
+ *          to spend a web search rediscovering them.
  *   POST { run_id, stage: "strategy" }           → derive signal hypothesis
  *   POST { run_id, stage: "research", offset }    → find companies + evidence
  *          for ONE search query (offset = index into the flattened list of
@@ -73,6 +79,14 @@ const RADAR_RUN_COST = 12;
 const MAX_COMPANIES = 6;
 const MAX_DECISION_MAKERS = 3;
 const DM_BATCH_SIZE = 3; // companies processed per decision_makers call
+
+// "Empresas que ya conoces": names snapshotted onto the run at creation time
+// and fed to the model as exclusions. Two separate caps — the row keeps more
+// than the prompt shows, so the post-filter stays strict without paying for
+// a huge prompt on every research call.
+const MAX_EXCLUDED = 300;
+const MAX_EXCLUDED_IN_RESEARCH_PROMPT = 120;
+const MAX_EXCLUDED_IN_STRATEGY_PROMPT = 40;
 
 // A run with no progress in this long is presumed dead (crashed/killed
 // isolate) rather than merely slow — every individual stage call is bounded
@@ -197,7 +211,8 @@ Respond with ONLY valid JSON (no markdown fences, no prose):
 Hard rules:
 - Exactly 2-3 search_angles (the research stage has a tight search budget — keep this focused, not exhaustive).
 - The signal must be OBSERVABLE from public web sources — never propose signals that require private data.
-- If a custom prompt from the user is provided, it is the ground truth for the signal: refine it into angles/queries, do not replace it with your own idea.
+- If the user provided a TARGET DESCRIPTION, it is the ground truth: it may describe the KIND of companies they want (industry, size, geography, situation) and/or the signal itself. Refine it into angles/queries — never replace it with your own idea. If it describes only companies and no signal, derive the observable signal that identifies exactly those companies.
+- If a list of companies the seller ALREADY HAS is provided, design angles that surface NEW ones: do not build queries whose obvious answer is a company already on that list.
 - signal_hypothesis in Spanish; everything else may be English.`;
 
 // Runs ONCE PER SEARCH QUERY (see handleResearch) — bounded to exactly one
@@ -214,7 +229,8 @@ Respond with ONLY valid JSON (no markdown fences, no prose):
       "country": "country of the relevant operation, in Spanish (e.g. 'México')",
       "industry": "short industry label in Spanish",
       "employee_count": "approximate size if evidenced, e.g. '200-500 empleados'. Empty string if unknown.",
-      "why_fit": "2-3 sentences in neutral Latin-American Spanish: why THIS company needs the seller now, citing the concrete signal found",
+      "signal_headline": "ONE telegraphic line, MAX 70 characters, neutral Latin-American Spanish: the concrete fact that makes this company a target right now. E.g. 'Publicó 40 vacantes de SDR en 3 meses'. No company name, no filler.",
+      "why_fit": "MAX 2 short sentences (240 characters total) in neutral Latin-American Spanish: why THIS company needs the seller now, citing the concrete signal found",
       "signal_strength": "alta" | "media",
       "evidence": [ { "url": "exact URL from your search results backing the claim", "summary": "1 sentence in Spanish: what this source shows" } ],
       "decision_maker_titles": ["2-5 English job titles to look for at THIS company"]
@@ -227,10 +243,12 @@ Hard rules — violating any of these makes the output worthless:
 - EVERY company must be real and every evidence.url must come from an actual web_search result you saw. NEVER invent companies, URLs, or facts. A company you cannot back with at least 1 evidence URL must be dropped, not padded.
 - Up to 3 companies for THIS query — do not try to cover the whole strategy, other calls handle the other queries. If this query honestly yields fewer, return fewer and explain in coverage_note.
 - Do not re-report a company already listed in "COMPANIES ALREADY FOUND" below, even if this query surfaces it again.
+- NEVER report a company listed in "COMPANIES THE SELLER ALREADY HAS" below — the seller already works those; re-finding them wastes the search. Skip them silently and return the next best NEW company.
+- signal_headline is the only line most users will read: make it a concrete, verifiable fact about THIS company, never a generic category ("empresa en crecimiento") and never a repeat of why_fit.
 - Respect target_geographies and exclusions from the strategy. Never include the seller's own company or direct competitors (companies selling the same thing the seller sells — they are rivals, not buyers).
 - Companies must be plausible BUYERS with budget: match the seller's ICP sizes when known.
 - Prefer signal recency: evidence from the last 12 months beats older evidence.
-- User-facing text (why_fit, evidence.summary, country, industry, coverage_note) in neutral Latin-American Spanish (tuteo). decision_maker_titles in English (Apollo requirement).`;
+- User-facing text (signal_headline, why_fit, evidence.summary, country, industry, coverage_note) in neutral Latin-American Spanish (tuteo). decision_maker_titles in English (Apollo requirement).`;
 
 // ── Apollo: decision makers per company (search only — no reveal) ───────────
 
@@ -350,10 +368,76 @@ async function loadSellerContext(
   return ctxLines.join("\n");
 }
 
+// ── "Empresas que ya conoces" (exclusions) ─────────────────────────────────
+
+// Resolves the company names the seller already works — the members of the
+// Prospección lists they picked, plus every company a previous ready radar
+// already delivered — so research never spends a web search (or tokens)
+// rediscovering them. Owner-scoped on purpose: list ids come from the
+// client, so we only ever read lists that belong to the caller.
+async function resolveKnownCompanies(
+  // deno-lint-ignore no-explicit-any
+  supa: any,
+  userId: string,
+  listIds: string[],
+  includePreviousRadar: boolean,
+): Promise<string[]> {
+  const byKey = new Map<string, string>(); // lowercase name → original casing
+  const add = (raw: unknown) => {
+    const name = asStr(raw).trim();
+    if (!name || name.length > 90) return;
+    const key = name.toLowerCase();
+    if (!byKey.has(key)) byKey.set(key, name);
+  };
+
+  if (includePreviousRadar) {
+    const { data: runs } = await supa.from("radar_runs")
+      .select("companies")
+      .eq("user_id", userId)
+      .eq("status", "ready")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    for (const r of runs ?? []) {
+      for (const c of (Array.isArray(r.companies) ? r.companies : [])) add(c?.name);
+    }
+  }
+
+  const ids = listIds.filter((x) => typeof x === "string" && x.trim()).slice(0, 50);
+  if (ids.length) {
+    const { data: owned } = await supa.from("prospect_lists")
+      .select("id").eq("user_id", userId).in("id", ids);
+    const ownedIds = (owned ?? []).map((l: { id: string }) => l.id);
+    if (ownedIds.length) {
+      const { data: members } = await supa.from("prospect_list_members")
+        .select("company").in("list_id", ownedIds).limit(5000);
+      for (const m of members ?? []) add(m?.company);
+    }
+  }
+
+  return [...byKey.values()].slice(0, MAX_EXCLUDED);
+}
+
+// Prompt block listing those companies. Empty string when there are none so
+// no tokens are spent on an empty section.
+function excludedBlock(excluded: string[], max: number): string {
+  if (!excluded.length) return "";
+  const shown = excluded.slice(0, max);
+  const rest = excluded.length - shown.length;
+  return `\n\n=== COMPANIES THE SELLER ALREADY HAS (never report these) ===\n` +
+    shown.join(", ") + (rest > 0 ? ` (+${rest} more)` : "");
+}
+
 // ── Stage handlers ───────────────────────────────────────────────────────────
 
-// deno-lint-ignore no-explicit-any
-async function handleCreate(supa: any, user: { id: string }, customPrompt: string, h: Record<string, string>) {
+async function handleCreate(
+  // deno-lint-ignore no-explicit-any
+  supa: any,
+  user: { id: string },
+  customPrompt: string,
+  excludeListIds: string[],
+  excludePreviousRadar: boolean,
+  h: Record<string, string>,
+) {
   // One run at a time per user. A run stuck >STALE_MS counts as dead (killed
   // isolate) — mark it as error (so its UI reflects reality) and supersede it.
   const { data: active } = await supa.from("radar_runs")
@@ -388,14 +472,32 @@ async function handleCreate(supa: any, user: { id: string }, customPrompt: strin
     }
   }
 
-  const { data: run, error: insErr } = await supa.from("radar_runs").insert({
+  // Snapshot (not a live join): lists change over time, and every stage of
+  // this run must see the exact same exclusion set the user agreed to.
+  const excludedCompanies = await resolveKnownCompanies(
+    supa, user.id, excludeListIds, excludePreviousRadar,
+  );
+
+  const basePayload = {
     user_id: user.id,
     status: "pending",
     source: customPrompt ? "custom" : "auto",
     custom_prompt: customPrompt || null,
     progress: 2,
     progress_step: "Preparando tu investigación…",
+  };
+  let { data: run, error: insErr } = await supa.from("radar_runs").insert({
+    ...basePayload,
+    exclude_list_ids: excludeListIds.slice(0, 50),
+    excluded_companies: excludedCompanies,
   }).select("id").single();
+  // Deploy-order safety net: if this function ships before its migration is
+  // applied, the two exclusion columns don't exist yet. Losing the exclusion
+  // memory for one run is fine; losing the Radar entirely is not.
+  if (insErr && /exclude_list_ids|excluded_companies/.test(insErr.message ?? "")) {
+    console.warn("[radar] exclusion columns missing — apply 20260819180000_radar_exclusions.sql");
+    ({ data: run, error: insErr } = await supa.from("radar_runs").insert(basePayload).select("id").single());
+  }
   if (insErr || !run) return json({ error: "No se pudo iniciar el Radar: " + (insErr?.message ?? "insert failed") }, 500, h);
 
   return json({ status: "started", run_id: run.id, next_stage: "strategy" }, 202, h);
@@ -406,6 +508,7 @@ interface RunRow {
   user_id: string;
   status: string;
   custom_prompt: string | null;
+  excluded_companies: string[] | null;
   // deno-lint-ignore no-explicit-any
   companies: any[];
   // deno-lint-ignore no-explicit-any
@@ -420,9 +523,10 @@ async function handleStrategy(supa: any, run: RunRow, engine: Engine, h: Record<
   try {
     const sellerContext = await loadSellerContext(supa, run.user_id);
     const customPrompt = asStr(run.custom_prompt).trim();
-    const prompt = customPrompt
-      ? `${sellerContext}\n\n=== USER'S CUSTOM SIGNAL PROMPT (ground truth for the signal) ===\n${customPrompt}`
-      : sellerContext;
+    const excluded = asStrArr(run.excluded_companies);
+    const prompt = (customPrompt
+      ? `${sellerContext}\n\n=== USER'S TARGET DESCRIPTION (ground truth — the companies they want) ===\n${customPrompt}`
+      : sellerContext) + excludedBlock(excluded, MAX_EXCLUDED_IN_STRATEGY_PROMPT);
     const raw = await callAi(engine, STRATEGY_SYSTEM, prompt, { maxTokens: 2200, maxSearches: 2 });
     const strategy = parseJson(raw);
     const hypothesis = asStr(strategy.signal_hypothesis).trim();
@@ -458,6 +562,10 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
 
     const idx = Math.max(0, Math.min(offset || 0, items.length - 1));
     const existing = (Array.isArray(run.companies) ? run.companies : []).slice(0, MAX_COMPANIES);
+    // Companies the seller already has: told to the model AND enforced here,
+    // because the prompt only carries the first MAX_EXCLUDED_IN_RESEARCH_PROMPT.
+    const excluded = asStrArr(run.excluded_companies);
+    const excludedKeys = new Set(excluded.map((n) => n.trim().toLowerCase()));
 
     // Duplicate-driver guard: if another tab already completed this query
     // (research_offset moved past it), skip the Claude spend and just point
@@ -484,6 +592,7 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
       (existing.length
         ? `\n\n=== COMPANIES ALREADY FOUND (do not repeat) ===\n${existing.map((c: { name?: string }) => c.name).join(", ")}`
         : "") +
+      excludedBlock(excluded, MAX_EXCLUDED_IN_RESEARCH_PROMPT) +
       `\n\nRun exactly one web_search with this query now and return the JSON described in your instructions.`;
 
     // One query that hangs or returns garbage must never freeze or kill the
@@ -514,12 +623,14 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
     const newCompanies = rawCompanies
       .filter((c) => asStr(c?.name).trim() && Array.isArray(c?.evidence) && c.evidence.length)
       .filter((c) => !existingNames.has(asStr(c.name).trim().toLowerCase()))
+      .filter((c) => !excludedKeys.has(asStr(c.name).trim().toLowerCase()))
       .map((c) => ({
         name: asStr(c.name).trim(),
         website: asStr(c.website).trim(),
         country: asStr(c.country).trim(),
         industry: asStr(c.industry).trim(),
         employee_count: asStr(c.employee_count).trim(),
+        signal_headline: asStr(c.signal_headline).trim().slice(0, 120),
         why_fit: asStr(c.why_fit).trim(),
         signal_strength: c.signal_strength === "alta" ? "alta" : "media",
         // deno-lint-ignore no-explicit-any
@@ -679,7 +790,10 @@ Deno.serve(async (req: Request) => {
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
 
-  let body: { run_id?: unknown; stage?: unknown; custom_prompt?: unknown; offset?: unknown; engine?: unknown };
+  let body: {
+    run_id?: unknown; stage?: unknown; custom_prompt?: unknown; offset?: unknown;
+    engine?: unknown; exclude_list_ids?: unknown; exclude_previous_radar?: unknown;
+  };
   try { body = await req.json(); } catch { body = {}; }
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
@@ -690,7 +804,11 @@ Deno.serve(async (req: Request) => {
 
   if (!runId) {
     const customPrompt = asStr(body.custom_prompt).trim().slice(0, 2000);
-    return await handleCreate(supa, user, customPrompt, h);
+    const excludeListIds = asStrArr(body.exclude_list_ids);
+    // Default ON: not re-delivering companies a previous radar already found
+    // is the sane default; the UI lets the user turn it off explicitly.
+    const excludePreviousRadar = body.exclude_previous_radar !== false;
+    return await handleCreate(supa, user, customPrompt, excludeListIds, excludePreviousRadar, h);
   }
 
   const { data: run } = await supa.from("radar_runs").select("*").eq("id", runId).maybeSingle();
