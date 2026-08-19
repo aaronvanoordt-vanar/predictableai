@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Predictable.ai — Nueva contraseña</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F7F8FA; --surface: #FFFFFF; --border: rgba(10,10,15,0.08);
+    --text: #0A0A0F; --text2: rgba(10,10,15,0.62); --text3: rgba(10,10,15,0.45);
+    --accent: #1F4BFF; --accent-2: #3B68FF; --red: #D64545; --green: #0EA968;
+    --font: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--bg); color: var(--text); font-family: var(--font); -webkit-font-smoothing: antialiased;
+    padding: 20px;
+  }
+  .card {
+    width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 34px 32px 28px;
+    box-shadow: 0 2px 6px rgba(10,10,15,.05), 0 30px 70px -28px rgba(10,10,15,.22);
+  }
+  h1 { font-size: 22px; font-weight: 700; margin: 0 0 6px; letter-spacing: -.5px; }
+  .sub { color: var(--text3); font-size: 13.5px; margin: 0 0 22px; line-height: 1.5; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; font-weight: 500; color: var(--text2); margin-bottom: 5px; }
+  .field input {
+    width: 100%; padding: 11px 13px; border: 1px solid rgba(10,10,15,0.14); border-radius: 10px;
+    font-size: 13.5px; font-family: var(--font); color: var(--text); background: var(--surface);
+  }
+  .field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31,75,255,.12); }
+  .btn-primary {
+    width: 100%; padding: 12px 14px; background: var(--accent); border: none;
+    border-radius: 11px; color: #fff; font-size: 13.5px; font-weight: 600;
+    font-family: var(--font); cursor: pointer; margin-top: 4px;
+  }
+  .btn-primary:hover:not([disabled]) { background: var(--accent-2); }
+  .btn-primary[disabled] { opacity: .6; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; display: none; }
+  .status.show { display: block; }
+  .status.ok  { background: #E9F7F0; color: #0B7F4F; border: 1px solid rgba(14,169,104,.30); }
+  .status.err { background: #FBEDED; color: #B03A3A; border: 1px solid rgba(214,69,69,.30); }
+  .status.info { background: #EEF2FF; color: #1A3FD6; border: 1px solid rgba(31,75,255,.25); }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor;
+    border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite;
+    vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>Nueva contraseña</h1>
+  <p class="sub" id="sub">Escribe tu nueva contraseña para tu cuenta de Predictable.ai.</p>
+
+  <form id="reset-form">
+    <div class="field">
+      <label for="password-input">Nueva contraseña</label>
+      <input id="password-input" type="password" required minlength="6" autocomplete="new-password" placeholder="Mínimo 6 caracteres">
+    </div>
+    <div class="field">
+      <label for="password-confirm">Confirmar contraseña</label>
+      <input id="password-confirm" type="password" required minlength="6" autocomplete="new-password" placeholder="Repite la contraseña">
+    </div>
+    <button type="submit" class="btn-primary" id="btn-submit">Guardar contraseña</button>
+  </form>
+
+  <div id="status" class="status"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabase-client.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (sel) { return document.querySelector(sel); };
+  var hasRecoverySession = false;
+
+  function showStatus(type, html) {
+    var el = $('#status');
+    el.className = 'status show ' + type;
+    el.innerHTML = html;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (m) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+    });
+  }
+
+  window.supabaseClient.auth.onAuthStateChange(function (event) {
+    if (event === 'PASSWORD_RECOVERY') hasRecoverySession = true;
+  });
+
+  window.addEventListener('DOMContentLoaded', function () {
+    setTimeout(async function () {
+      var session = await window.supabaseHelpers.getSession();
+      if (!session) {
+        $('#sub').textContent = 'Este link de recuperación no es válido o ya expiró.';
+        $('#reset-form').style.display = 'none';
+        showStatus('err', 'Vuelve a <a href="./auth.html">pedir un nuevo link</a> desde la pantalla de acceso.');
+        return;
+      }
+      hasRecoverySession = true;
+    }, 500);
+  });
+
+  $('#reset-form').addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    var pass = $('#password-input').value;
+    var confirm = $('#password-confirm').value;
+
+    if (pass.length < 6) {
+      showStatus('err', 'La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+    if (pass !== confirm) {
+      showStatus('err', 'Las contraseñas no coinciden.');
+      return;
+    }
+    if (!hasRecoverySession) {
+      var session = await window.supabaseHelpers.getSession();
+      if (!session) {
+        showStatus('err', 'Este link de recuperación no es válido o ya expiró. Vuelve a <a href="./auth.html">pedir un nuevo link</a>.');
+        return;
+      }
+    }
+
+    var btn = $('#btn-submit');
+    btn.disabled = true;
+    showStatus('info', '<span class="spinner"></span> Guardando…');
+
+    try {
+      var res = await window.supabaseClient.auth.updateUser({ password: pass });
+      if (res.error) throw res.error;
+      showStatus('ok', 'Contraseña actualizada. Redirigiendo…');
+      setTimeout(function () {
+        window.location.href = window.APP_URL || './index.html';
+      }, 1200);
+    } catch (e) {
+      showStatus('err', 'Error: ' + escapeHtml(e.message));
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>

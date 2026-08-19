@@ -5010,8 +5010,9 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
 
     // Cuenta
     const provider = (user.app_metadata && user.app_metadata.provider) || 'email';
-    $('#set-provider').textContent = provider === 'google' ? 'Google' : 'Email + Password';
-    $('#set-provider').className = 'settings-pill ' + (provider === 'google' ? 'teal' : '');
+    const providerLabels = { google: 'Google', linkedin_oidc: 'LinkedIn', email: 'Email + Password' };
+    $('#set-provider').textContent = providerLabels[provider] || provider;
+    $('#set-provider').className = 'settings-pill ' + (provider !== 'email' ? 'teal' : '');
 
     if (user.email_confirmed_at) {
       $('#set-verified').textContent = 'Verificado';
