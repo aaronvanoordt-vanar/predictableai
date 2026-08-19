@@ -1358,9 +1358,44 @@
     };
   }
 
-  async function sendGmailReply({ threadId, to, subject, body }) {
+  /**
+   * Responde por Apollo, en dos pasos: crear el borrador y despacharlo.
+   *
+   * ⚠️ El segundo paso ENVÍA UN CORREO REAL de inmediato. No programa ni
+   * valida: se comprobó a la mala que `send_now` con el cuerpo vacío despachó
+   * un mensaje a un prospecto un segundo después, y no hay forma de
+   * deshacerlo (/cancel, /unschedule y DELETE sobre un emailer_message dan
+   * 404). Quien llame a esto debe confirmar con el usuario antes.
+   *
+   * Apollo IGNORA in_response_to_emailer_message_id (comprobado: el mensaje
+   * sale con provider_thread_id null), así que al prospecto le llega como hilo
+   * nuevo aunque el asunto lleve "Re:". Por eso no se manda ese parámetro: no
+   * hace nada y sugeriría una garantía que no existe.
+   */
+  async function sendApolloReply({ contactId, subject, body, emailAccountId, emailAccountAddress }) {
+    if (!contactId) throw new Error('Este correo no tiene un contacto de Apollo asociado.');
     if (!String(body || '').trim()) throw new Error('Escribe la respuesta antes de enviarla.');
-    return gmailFetch('send_reply', { thread_id: threadId, to, subject, body });
+    if (!emailAccountId || !emailAccountAddress) throw new Error('Selecciona el buzón desde el que quieres responder.');
+
+    const clean = String(subject || '').trim();
+    const draft = await apolloProxy('/emailer_messages', {
+      contact_id: contactId,
+      subject: /^re:/i.test(clean) ? clean : ('Re: ' + clean),
+      body_html: bodyToHtml(body),
+    });
+    const messageId = draft?.emailer_message?.id;
+    if (!messageId) throw new Error('Apollo no devolvió el borrador. No se envió nada.');
+
+    const sent = await apolloProxy('/emailer_messages/' + encodeURIComponent(messageId) + '/send_now', {
+      id: messageId,
+      send_from: { email_account_id: emailAccountId, email: emailAccountAddress },
+    });
+    const result = sent?.emailer_message || {};
+    // Apollo responde 200 aunque bloquee el envío: el estado real manda.
+    if (result.status === 'failed' || result.not_sent_reason) {
+      throw new Error('Apollo no envió el correo: ' + (result.failure_reason || result.not_sent_reason || 'motivo no informado') + '.');
+    }
+    return { id: messageId, status: result.status || null };
   }
 
   // ── Importación de listas legadas (localStorage 'apollo_lists') ────
@@ -1703,7 +1738,7 @@
     startGmailConnect,
     disconnectGmail,
     fetchGmailThread,
-    sendGmailReply,
+    sendApolloReply,
     fetchSequences,
     fetchSequenceSteps,
     fetchEmailAccounts,
