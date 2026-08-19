@@ -68,6 +68,17 @@
   input::placeholder, textarea::placeholder { color: var(--ink-5); }
   .hint { font-size: 12px; color: var(--ink-4); margin-top: 6px; line-height: 1.5; }
   .example { font-family: monospace; color: var(--ink-3); background: var(--surface3); padding: 2px 6px; border-radius: 4px; font-size: 11px; }
+  .source-toggle {
+    display: flex; gap: 4px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 4px; margin-bottom: 18px;
+  }
+  .source-tab {
+    flex: 1; padding: 9px 10px; border: 0; border-radius: 7px; background: transparent;
+    color: var(--ink-3); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: all .12s;
+  }
+  .source-tab:hover:not(.is-active) { color: var(--ink-2); }
+  .source-tab.is-active { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(10,10,15,.08); }
   .phone-row { display: flex; gap: 8px; }
   .phone-row select { flex: 0 0 128px; width: 128px; }
   .phone-row input { flex: 1; min-width: 0; }
@@ -100,16 +111,27 @@
 <div class="card">
   <span class="user-chip" id="user-chip">Cargando…</span>
 
-  <!-- ═══ ÚNICO PASO: LinkedIn + Teléfono ═══ -->
+  <!-- ═══ ÚNICO PASO: LinkedIn o Página web + Teléfono ═══ -->
   <div id="step-1">
     <div class="step-icon">🔗</div>
     <h1>Conecta tu empresa</h1>
-    <p class="sub">Con el <strong>LinkedIn de tu empresa</strong> extraemos tu página web y analizamos automáticamente tu industria, tamaño, soluciones y competidores — sin que tengas que ingresar nada más.</p>
+    <p class="sub">Con el <strong>LinkedIn</strong> o la <strong>página web</strong> de tu empresa analizamos automáticamente tu industria, tamaño, soluciones y competidores — sin que tengas que ingresar nada más.</p>
 
-    <div class="form-group">
+    <div class="source-toggle" role="tablist">
+      <button type="button" class="source-tab is-active" id="tab-linkedin" data-source="linkedin" role="tab" aria-selected="true">LinkedIn</button>
+      <button type="button" class="source-tab" id="tab-website" data-source="website" role="tab" aria-selected="false">Página web</button>
+    </div>
+
+    <div class="form-group" id="group-linkedin">
       <label>LinkedIn de tu empresa</label>
       <input id="inp-linkedin" type="url" placeholder="https://linkedin.com/company/tu-empresa/">
       <div class="hint">Ejemplo: <span class="example">linkedin.com/company/eleva-co/</span></div>
+    </div>
+
+    <div class="form-group" id="group-website" style="display:none">
+      <label>Página web de tu empresa</label>
+      <input id="inp-website" type="url" placeholder="https://tuempresa.com">
+      <div class="hint">Ejemplo: <span class="example">tuempresa.com</span></div>
     </div>
 
     <div class="form-group">

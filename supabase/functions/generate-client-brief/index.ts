@@ -154,7 +154,7 @@ interface IntakeRow {
 
 function buildUserPrompt(
   intake: IntakeRow | null,
-  profile: { company_name?: string | null; linkedin_company_url?: string | null } | null,
+  profile: { company_name?: string | null; linkedin_company_url?: string | null; company_website?: string | null } | null,
   icp: { company_sizes?: string | null; industries?: string | null; roles?: string | null; geographies?: string | null; pain_points?: string | null } | null,
   documentSummaries: string[],
 ): string {
@@ -162,7 +162,7 @@ function buildUserPrompt(
   const push = (label: string, v: string | null | undefined) => { if (v) lines.push(`${label}: ${v}`); };
   push("Company name", profile?.company_name);
   push("LinkedIn", intake?.company_linkedin_url ?? profile?.linkedin_company_url);
-  push("Website", intake?.company_website);
+  push("Website", intake?.company_website ?? profile?.company_website);
   push("Industry", intake?.company_industry);
   push("Size", intake?.company_employee_count);
   push("Country", intake?.company_country);
@@ -234,7 +234,7 @@ Deno.serve(async (req: Request) => {
       icp_company_sizes, icp_industries, icp_roles, icp_geographies, icp_pain_points,
       value_problem_solved, value_proposition, value_success_cases, what_to_know
     `).eq("user_id", user.id).maybeSingle(),
-    supa.from("profiles").select("company_name, linkedin_company_url").eq("id", user.id).maybeSingle(),
+    supa.from("profiles").select("company_name, linkedin_company_url, company_website").eq("id", user.id).maybeSingle(),
     supa.from("client_icp").select("company_sizes, industries, roles, geographies, pain_points").eq("profile_id", user.id).maybeSingle(),
     supa.from("company_documents").select("summary").eq("user_id", user.id).eq("status", "done").not("summary", "is", null),
     supa.from("intelligence_hub_reports").select("section_key, content")
@@ -243,8 +243,8 @@ Deno.serve(async (req: Request) => {
   ]);
   const documentSummaries = (docs ?? []).map((d) => d.summary as string).filter(Boolean);
 
-  if (!intake && !profile?.linkedin_company_url) {
-    return json({ error: "no_intake", detail: "Completa el onboarding (LinkedIn de tu empresa) antes de generar tu brief." }, 400, h);
+  if (!intake && !profile?.linkedin_company_url && !profile?.company_website) {
+    return json({ error: "no_intake", detail: "Completa el onboarding (LinkedIn o página web de tu empresa) antes de generar tu brief." }, 400, h);
   }
 
   await supa.from("client_brief").upsert(
