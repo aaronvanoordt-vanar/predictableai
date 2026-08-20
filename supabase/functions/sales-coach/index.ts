@@ -87,13 +87,25 @@
  * Required secrets: the API key of the chosen engine — OPENAI_API_KEY,
  *                   ANTHROPIC_API_KEY or PERPLEXITY_API_KEY (already set — shared with the other
  * edge functions). RECALL_API_KEY + RECALL_WEBHOOK_SECRET only for bot mode.
+ * RECALL_REGION optional (defaults to "us-west-2") — must match the region
+ * the RECALL_API_KEY was created in (us-east-1, us-west-2, eu-central-1,
+ * ap-northeast-1), or bot mode fails with "authentication_failed".
  * (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are injected by the platform.)
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, parseLlmJson, type Engine } from "../_shared/llm.ts";
 
-const RECALL_BASE = "https://us-west-2.recall.ai/api/v1";
+// La región es parte de la cuenta de Recall.ai (se elige al crear el API key,
+// visible en su dashboard): us-east-1, us-west-2, eu-central-1 o
+// ap-northeast-1. Un token de la región equivocada falla con
+// "authentication_failed" aunque el token sea válido. Configurable vía
+// secret RECALL_REGION en vez de hardcodeada para no depender de un redeploy
+// si la cuenta cambia de región.
+function recallBase(): string {
+  const region = Deno.env.get("RECALL_REGION") || "us-west-2";
+  return `https://${region}.recall.ai/api/v1`;
+}
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -669,7 +681,7 @@ async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
   const webhookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/sales-coach` +
     `?token=${encodeURIComponent(WEBHOOK_SECRET)}&recall_meeting_id=${meetingId}`;
 
-  const res = await fetch(`${RECALL_BASE}/bot`, {
+  const res = await fetch(`${recallBase()}/bot`, {
     method: "POST",
     headers: {
       "Authorization": `Token ${RECALL_KEY}`,
@@ -769,7 +781,7 @@ async function actionEndMeeting(ctx: Ctx, p: Json): Promise<Json> {
   if (meeting.recall_bot_id) {
     const RECALL_KEY = Deno.env.get("RECALL_API_KEY");
     try {
-      await fetch(`${RECALL_BASE}/bot/${meeting.recall_bot_id}/leave_call`, {
+      await fetch(`${recallBase()}/bot/${meeting.recall_bot_id}/leave_call`, {
         method: "POST",
         headers: { "Authorization": `Token ${RECALL_KEY}` },
       });
