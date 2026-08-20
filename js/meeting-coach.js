@@ -16,6 +16,7 @@
   let elapsedSeconds = 0;
   let lastEventTs = null;     // timestamp del último coaching_event recibido
   let lastChunkTs = null;     // timestamp del último chunk recibido
+  let everSawChunk = false;   // true en cuanto llega el primer chunk — la sesión ya no debe volver a "conectándose"
 
   // ─── INICIO ───────────────────────────────────────────────
   async function start(meetingUrl, prospectContext) {
@@ -45,6 +46,7 @@
       elapsedSeconds = 0;
       lastEventTs = null;
       lastChunkTs = null;
+      everSawChunk = false;
 
       // Limpiar UI de cualquier reunión previa
       clearTranscript();
@@ -78,6 +80,7 @@
       if (data.chunks && data.chunks.length) {
         renderTranscript(data.chunks);
         lastChunkTs = data.chunks[data.chunks.length - 1].ts;
+        everSawChunk = true;
       }
 
       if (data.events && data.events.length) {
@@ -91,8 +94,11 @@
         showThinking();
       }
 
-      const hasChunks = data.chunks && data.chunks.length;
-      setStatus(hasChunks ? 'live' : 'connecting', !hasChunks && data.bot_status && data.bot_status.message);
+      // `data.chunks` es solo lo NUEVO desde el último poll (since_ts) — una
+      // pausa natural en la conversación no debe hacer que el estado "vuelva"
+      // a conectándose. Una vez que llegó el primer chunk, la sesión se
+      // considera en vivo por el resto de la reunión.
+      setStatus(everSawChunk ? 'live' : 'connecting', !everSawChunk && data.bot_status && data.bot_status.message);
     } catch (e) {
       console.warn('Poll error', e);
     }

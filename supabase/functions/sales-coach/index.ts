@@ -807,12 +807,17 @@ async function actionGetMeetingState(ctx: Ctx, p: Json): Promise<Json> {
       .order("ts", { ascending: true }),
   ]);
 
-  // Solo se consulta a Recall mientras el bot está vivo y aún no hay
-  // transcripción — una vez que hay chunks el estado "grabando" ya es obvio
-  // y no vale la pena gastar la llamada a la API en cada poll.
+  // Solo se consulta a Recall mientras el bot está vivo y la reunión JAMÁS
+  // tuvo transcripción — chunkRows arriba está filtrado por since_ts (solo lo
+  // nuevo desde el último poll), así que un silencio de unos segundos en una
+  // reunión que ya viene grabando no debe volver a disparar esta consulta.
   let botStatus: Json = null;
   if (meeting.recall_bot_id && meeting.status === "live" && !(chunkRows && chunkRows.length)) {
-    botStatus = await fetchBotStatus(meeting.recall_bot_id);
+    const { data: everChunk } = await ctx.supa
+      .from("coach_transcript_chunks").select("id").eq("meeting_id", meeting.id).limit(1);
+    if (!everChunk || !everChunk.length) {
+      botStatus = await fetchBotStatus(meeting.recall_bot_id);
+    }
   }
 
   return {
