@@ -82,7 +82,8 @@
         showThinking();
       }
 
-      setStatus(data.chunks && data.chunks.length ? 'live' : 'connecting');
+      const hasChunks = data.chunks && data.chunks.length;
+      setStatus(hasChunks ? 'live' : 'connecting', !hasChunks && data.bot_status && data.bot_status.message);
     } catch (e) {
       console.warn('Poll error', e);
     }
@@ -227,9 +228,10 @@
   }
 
   // ─── STATUS / TIMER ───────────────────────────────────────
-  function setStatus(status) {
+  function setStatus(status, override) {
     const el = document.getElementById('mc-status');
     if (!el) return;
+    if (override) { el.textContent = override; return; }
     el.textContent = ({
       connecting: 'Bot conectándose...',
       live: '● Transcribiendo en vivo',

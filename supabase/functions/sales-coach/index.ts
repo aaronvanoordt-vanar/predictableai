@@ -743,6 +743,46 @@ async function actionIngestLocalEvent(ctx: Ctx, p: Json): Promise<Json> {
   return { ok: true };
 }
 
+// Recall status_changes[].code → mensaje accionable para el SDR. Sin esto el
+// bot podía quedarse "conectándose" para siempre sin decir por qué (p. ej.
+// esperando que alguien lo admita a la sala) — visto en producción con un
+// bot real atascado sin ningún diagnóstico visible.
+const BOT_STATUS_LABEL: Record<string, string> = {
+  joining_call: "El asistente se está uniendo a la reunión…",
+  in_waiting_room: "El asistente está en la sala de espera — admítelo desde la reunión.",
+  in_call_not_recording: "El asistente entró a la reunión, iniciando transcripción…",
+  in_call_recording: "Transcribiendo en vivo",
+  call_ended: "La reunión terminó.",
+  done: "Sesión finalizada.",
+  fatal: "El asistente no pudo unirse a la reunión.",
+  media_expired: "Se perdió la conexión con la reunión.",
+};
+
+/** Best-effort: consulta el estado del bot en Recall.ai (no falla la llamada si Recall no responde). */
+async function fetchBotStatus(recallBotId: string): Promise<Json> {
+  try {
+    const RECALL_KEY = Deno.env.get("RECALL_API_KEY");
+    if (!RECALL_KEY) return null;
+    const res = await fetch(`${recallBase()}/bot/${recallBotId}`, {
+      headers: { "Authorization": `Token ${RECALL_KEY}` },
+    });
+    if (!res.ok) return null;
+    const bot = await res.json();
+    const changes = Array.isArray(bot?.status_changes) ? bot.status_changes : [];
+    const last = changes[changes.length - 1];
+    if (!last) return null;
+    return {
+      code: last.code ?? null,
+      message: BOT_STATUS_LABEL[last.code] || last.message || last.code,
+      sub_code: last.sub_code ?? null,
+      at: last.created_at ?? null,
+    };
+  } catch (e) {
+    console.warn("[sales-coach] fetchBotStatus failed:", e);
+    return null;
+  }
+}
+
 async function actionGetMeetingState(ctx: Ctx, p: Json): Promise<Json> {
   const meeting = await loadAuthorizedMeeting(ctx, p?.meeting_id);
   const since = p?.since_ts ? toIso(p.since_ts) : "1970-01-01T00:00:00.000Z";
@@ -758,6 +798,14 @@ async function actionGetMeetingState(ctx: Ctx, p: Json): Promise<Json> {
       .order("ts", { ascending: true }),
   ]);
 
+  // Solo se consulta a Recall mientras el bot está vivo y aún no hay
+  // transcripción — una vez que hay chunks el estado "grabando" ya es obvio
+  // y no vale la pena gastar la llamada a la API en cada poll.
+  let botStatus: Json = null;
+  if (meeting.recall_bot_id && meeting.status === "live" && !(chunkRows && chunkRows.length)) {
+    botStatus = await fetchBotStatus(meeting.recall_bot_id);
+  }
+
   return {
     chunks: (chunkRows ?? []).map((r: Json) => ({ ts: r.ts, speaker: r.speaker, text: r.text })),
     events: (eventRows ?? []).map((r: Json) => ({
@@ -767,6 +815,7 @@ async function actionGetMeetingState(ctx: Ctx, p: Json): Promise<Json> {
       next_steps: r.next_steps ?? [],
       summary: r.summary ?? "",
     })),
+    bot_status: botStatus,
     server_ts: new Date().toISOString(),
   };
 }
