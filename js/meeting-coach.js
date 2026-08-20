@@ -18,10 +18,13 @@
 
   // ─── INICIO ───────────────────────────────────────────────
   async function start(meetingUrl, prospectContext) {
-    if (!meetingUrl || !meetingUrl.startsWith('http')) {
-      alert('URL inválida');
+    if (!meetingUrl || !/^https?:\/\//i.test(meetingUrl)) {
+      toast('Link de reunión inválido.', 'error');
       return;
     }
+    // Guard de re-entrancy: un segundo start() sin cerrar el anterior filtra
+    // los timers de polling.
+    if (currentMeetingId) { console.warn('[MeetingCoach] Ya hay una sesión activa; ignorando start().'); return; }
     try {
       const res = await global.api.startMeeting({
         meeting_url: meetingUrl,
@@ -44,6 +47,9 @@
       setStatus('connecting');
       pollTimer = setInterval(poll, 4000);
       elapsedTimer = setInterval(updateElapsed, 1000);
+      if (typeof global.coachShowActive === 'function') {
+        global.coachShowActive(prospectContext && prospectContext.name);
+      }
       toast('Bot lanzado a la reunión', 'success');
     } catch (e) {
       toast('Error iniciando reunión: ' + e.message, 'error');
@@ -85,15 +91,24 @@
   // ─── RENDER TRANSCRIPCIÓN ─────────────────────────────────
   function renderTranscript(chunks) {
     const c = document.getElementById('mc-transcript');
-    if (!c) return;
-    chunks.forEach(function (chunk) {
-      const div = document.createElement('div');
-      div.innerHTML =
-        '<span style="color:var(--teal);font-weight:700">' + esc(chunk.speaker) + ':</span> ' +
-        '<span style="color:var(--text2)">' + esc(chunk.text) + '</span>';
-      c.appendChild(div);
-    });
-    c.scrollTop = c.scrollHeight;
+    if (c) {
+      chunks.forEach(function (chunk) {
+        const div = document.createElement('div');
+        div.innerHTML =
+          '<span style="color:var(--teal);font-weight:700">' + esc(chunk.speaker) + ':</span> ' +
+          '<span style="color:var(--text2)">' + esc(chunk.text) + '</span>';
+        c.appendChild(div);
+      });
+      c.scrollTop = c.scrollHeight;
+    }
+    const last = chunks[chunks.length - 1];
+    const heroEl = document.getElementById('mc-last-spoken');
+    if (last && heroEl) {
+      heroEl.innerHTML =
+        '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Lo último que se dijo</div>' +
+        '<div style="font-size:15px;color:var(--text);line-height:1.5">' +
+        '<strong style="color:var(--teal)">' + esc(last.speaker) + ':</strong> ' + esc(last.text) + '</div>';
+    }
   }
 
   function clearTranscript() {
@@ -237,10 +252,15 @@
     clearInterval(pollTimer);
     clearInterval(elapsedTimer);
     hideThinking();
+    const meetId = currentMeetingId;
+    currentMeetingId = null;
+    setStatus('ended');
+    if (typeof global.coachShowIdle === 'function') global.coachShowIdle();
+    const urlInput = document.getElementById('mc-meeting-url');
+    if (urlInput) urlInput.value = '';
     try {
-      const final = await global.api.endMeeting({ meeting_id: currentMeetingId });
+      const final = await global.api.endMeeting({ meeting_id: meetId });
       toast('Reunión finalizada — score: ' + (final.score_total || 0), 'success');
-      setStatus('ended');
       setTimeout(function () {
         if (typeof nav === 'function') {
           nav(document.querySelector('[data-page=ventas-reportes]'), 'ventas-reportes');
@@ -249,7 +269,6 @@
     } catch (e) {
       toast('Error finalizando: ' + e.message, 'error');
     }
-    currentMeetingId = null;
   }
 
   // ─── HELPERS ──────────────────────────────────────────────
@@ -260,5 +279,5 @@
   }
 
   // API pública del módulo
-  global.meetingCoach = { start: start, end: end };
+  global.meetingCoach = { start: start, end: end, isActive: function () { return !!currentMeetingId; } };
 })(window);

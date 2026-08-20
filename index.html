@@ -1081,6 +1081,19 @@ html, body {
 /* ═══════════════════════════════════════════════════════════
    FIX: Meeting Coach ocupa todo el ancho
 ═══════════════════════════════════════════════════════════ */
+.mc-mode-btn {
+  flex: 1 1 0;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 14px; font-size: 12.5px; font-weight: 700;
+  border-radius: 10px; border: 1px solid var(--border);
+  background: var(--surface2); color: var(--text3); cursor: pointer;
+  transition: all .15s;
+}
+.mc-mode-btn:hover { color: var(--text2); }
+.mc-mode-btn.active {
+  border-color: var(--teal); background: rgba(6,182,212,.1); color: var(--teal);
+}
+
 #page-ventas-coach {
   width: 100% !important;
   max-width: 100% !important;
@@ -2866,7 +2879,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
     <div class="topbar-actions">
       <button id="mc-btn-config" class="btn btn-ghost btn-sm" onclick="toggleCoachConfig()">Configuración</button>
-      <button id="mc-btn-end" class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(225,84,84,.28);display:none" onclick="window.realtimeCoach && window.realtimeCoach.end()">■ Finalizar sesión</button>
+      <button id="mc-btn-end" class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(225,84,84,.28);display:none" onclick="endCoachSession()">■ Finalizar sesión</button>
     </div>
   </div>
 
@@ -2896,8 +2909,33 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         </div>
       </div>
 
+      <!-- Modo de conexión: compartir pantalla (local) vs. el asistente se une solo (bot) -->
+      <div id="mc-mode-block" style="max-width:440px;margin-bottom:20px">
+        <label style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Cómo se conecta el coach</label>
+        <div style="display:flex;gap:8px">
+          <button type="button" id="mc-mode-btn-local" class="mc-mode-btn active" onclick="setCoachMode('local')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></svg>
+            Compartir pantalla
+          </button>
+          <button type="button" id="mc-mode-btn-bot" class="mc-mode-btn" onclick="setCoachMode('bot')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M9 2h6M9 14v1M15 14v1"/></svg>
+            El asistente entra solo
+          </button>
+        </div>
+        <div id="mc-mode-local-hint" style="font-size:11.5px;color:var(--text3);line-height:1.6;margin-top:8px">
+          Comparte tu pantalla completa (con audio del sistema) mientras estás en la llamada. El coach escucha desde tu navegador.
+        </div>
+        <div id="mc-mode-bot-hint" style="display:none;margin-top:8px">
+          <label for="mc-meeting-url" style="display:block;font-size:11px;color:var(--text3);margin-bottom:6px">Link de la reunión (Zoom, Google Meet o Microsoft Teams)</label>
+          <input type="url" id="mc-meeting-url" placeholder="https://meet.google.com/xxx-xxxx-xxx" style="width:100%">
+          <div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin-top:6px">
+            El asistente ("Notetaker") entra como invitado a la reunión y transcribe automáticamente — no necesitas compartir tu pantalla.
+          </div>
+        </div>
+      </div>
+
       <div style="display:flex;gap:10px;margin-bottom:32px;align-items:center">
-        <button class="btn btn-jade" style="padding:10px 22px;font-size:14px;gap:8px;display:flex;align-items:center" onclick="iniciarCoachLive()" data-credit-cost="coach_meeting" data-credit-muted>
+        <button id="mc-start-btn" class="btn btn-jade" style="padding:10px 22px;font-size:14px;gap:8px;display:flex;align-items:center" onclick="iniciarCoachLive()" data-credit-cost="coach_meeting" data-credit-muted>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 15c1.66 0 3-1.34 3-3V6c0-1.66-1.34-3-3-3S9 4.34 9 6v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 15.2 14.47 17 12 17s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V21c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
           Iniciar coach
         </button>
@@ -3592,6 +3630,47 @@ function toggleCoachConfig() {
   }
 }
 
+// Modo de conexión elegido en la pantalla de idle: 'local' (compartir pantalla,
+// default) o 'bot' (el asistente entra solo vía Recall.ai). Se usa tanto para
+// decidir qué módulo lanzar en iniciarCoachLive() como para mostrar el badge
+// de costo correcto (coach_meeting vs. coach_bot_block).
+window.__coachMode = window.__coachMode || 'local';
+// Módulo activo durante una sesión en curso ('local' → realtimeCoach,
+// 'bot' → meetingCoach), para que "Finalizar sesión" sepa a quién llamar.
+window.__coachActiveMode = window.__coachActiveMode || null;
+
+function setCoachMode(mode) {
+  window.__coachMode = mode === 'bot' ? 'bot' : 'local';
+  const btnLocal = document.getElementById('mc-mode-btn-local');
+  const btnBot = document.getElementById('mc-mode-btn-bot');
+  const hintLocal = document.getElementById('mc-mode-local-hint');
+  const hintBot = document.getElementById('mc-mode-bot-hint');
+  if (btnLocal) btnLocal.classList.toggle('active', window.__coachMode === 'local');
+  if (btnBot) btnBot.classList.toggle('active', window.__coachMode === 'bot');
+  if (hintLocal) hintLocal.style.display = window.__coachMode === 'local' ? 'block' : 'none';
+  if (hintBot) hintBot.style.display = window.__coachMode === 'bot' ? 'block' : 'none';
+
+  // Redecorar el badge de créditos del botón "Iniciar coach" con el costo
+  // del modo elegido (coach_meeting vs. coach_bot_block).
+  const startBtn = document.getElementById('mc-start-btn');
+  if (startBtn && window.creditCosts) {
+    const key = window.__coachMode === 'bot' ? 'coach_bot_block' : 'coach_meeting';
+    startBtn.setAttribute('data-credit-cost', key);
+    const oldBadge = startBtn.nextElementSibling;
+    if (oldBadge && oldBadge.classList && oldBadge.classList.contains('credit-badge')) oldBadge.remove();
+    startBtn.removeAttribute('data-credit-decorated');
+    window.creditCosts.decorate(startBtn.parentElement);
+  }
+}
+
+function endCoachSession() {
+  if (window.__coachActiveMode === 'bot' && window.meetingCoach) {
+    window.meetingCoach.end();
+  } else if (window.realtimeCoach) {
+    window.realtimeCoach.end();
+  }
+}
+
 function coachShowIdle() {
   const idle = document.getElementById('mc-idle');
   const active = document.getElementById('mc-active');
@@ -3601,6 +3680,7 @@ function coachShowIdle() {
   if (active) active.style.display = 'none';
   if (btnEnd) btnEnd.style.display = 'none';
   if (dot) { dot.style.background = 'var(--green-soft)'; dot.style.boxShadow = 'none'; }
+  window.__coachActiveMode = null;
 }
 
 function coachShowActive(prospectName) {
@@ -3614,6 +3694,21 @@ function coachShowActive(prospectName) {
   if (btnEnd) btnEnd.style.display = '';
   if (dot) { dot.style.background = 'var(--green)'; dot.style.boxShadow = '0 0 10px rgba(43,182,115,.7)'; }
   if (liveProspect && prospectName) liveProspect.textContent = prospectName;
+
+  // El texto de "esperando audio" depende de cómo se conecta el coach: en
+  // modo local se le pide al usuario compartir pantalla; en modo bot el
+  // asistente ya está entrando solo a la reunión.
+  const lastSpoken = document.getElementById('mc-last-spoken');
+  if (lastSpoken) {
+    const isBot = window.__coachActiveMode === 'bot';
+    lastSpoken.innerHTML =
+      '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Esperando audio...</div>' +
+      '<div style="font-size:14px;color:var(--text3);font-style:italic">' +
+      (isBot
+        ? 'El asistente se está uniendo a la reunión. La transcripción aparecerá en cuanto empiece a escuchar.'
+        : 'Comparte tu pantalla completa con "Compartir audio del sistema" activado.') +
+      '</div>';
+  }
 }
 
 // Populate the landing brief with prospect context
@@ -3714,23 +3809,53 @@ function iniciarCoachLive(prospectCtx) {
     return;
   }
 
+  const mode = window.__coachMode === 'bot' ? 'bot' : 'local';
+  const toast = (window.uiHelpers && window.uiHelpers.toast) || function () {};
+
+  // Modo bot: necesitamos el link de la reunión antes de lanzar al asistente.
+  var meetingUrl = '';
+  if (mode === 'bot') {
+    const urlInput = document.getElementById('mc-meeting-url');
+    meetingUrl = urlInput ? urlInput.value.trim() : '';
+    if (!/^https?:\/\//i.test(meetingUrl)) {
+      toast('Pega el link de la reunión (Zoom, Meet o Teams) antes de iniciar.', 'warn');
+      if (urlInput) {
+        urlInput.focus();
+        urlInput.style.outline = '2px solid var(--amber)';
+        urlInput.style.outlineOffset = '2px';
+        setTimeout(function () { urlInput.style.outline = ''; urlInput.style.outlineOffset = ''; }, 2500);
+      }
+      return;
+    }
+  }
+
   loadCoachBrief(ctx);
   setTimeout(function () {
-    if (window.realtimeCoach) {
-      window.realtimeCoach.start({
-        id: ctx.id,
-        name: ctx.name,
-        company: ctx.organization_name || ctx.company,
-        title: ctx.title,
-        deal_value: ctx.deal_value,
-        icp_score: ctx.icp_score,
-        // Preparación de reunión del nuevo generate-outreach (additivo:
-        // el coach en vivo la recibe como contexto extra si existe).
-        coach_prep: ctx.coach_prep || null,
-        person_hook: ctx.person_hook || null
-      });
-    } else if (window.uiHelpers && window.uiHelpers.toast) {
-      window.uiHelpers.toast('El módulo del coach no cargó. Recarga la página e intenta de nuevo.', 'error');
+    const prospectPayload = {
+      id: ctx.id,
+      name: ctx.name,
+      company: ctx.organization_name || ctx.company,
+      title: ctx.title,
+      deal_value: ctx.deal_value,
+      icp_score: ctx.icp_score,
+      // Preparación de reunión del nuevo generate-outreach (additivo:
+      // el coach en vivo la recibe como contexto extra si existe).
+      coach_prep: ctx.coach_prep || null,
+      person_hook: ctx.person_hook || null
+    };
+
+    if (mode === 'bot') {
+      if (window.meetingCoach) {
+        window.__coachActiveMode = 'bot';
+        window.meetingCoach.start(meetingUrl, prospectPayload);
+      } else {
+        toast('El módulo del coach no cargó. Recarga la página e intenta de nuevo.', 'error');
+      }
+    } else if (window.realtimeCoach) {
+      window.__coachActiveMode = 'local';
+      window.realtimeCoach.start(prospectPayload);
+    } else {
+      toast('El módulo del coach no cargó. Recarga la página e intenta de nuevo.', 'error');
     }
   }, 300);
 }
