@@ -760,27 +760,36 @@ const BOT_STATUS_LABEL: Record<string, string> = {
 
 /** Best-effort: consulta el estado del bot en Recall.ai (no falla la llamada si Recall no responde). */
 async function fetchBotStatus(recallBotId: string): Promise<Json> {
-  try {
-    const RECALL_KEY = Deno.env.get("RECALL_API_KEY");
-    if (!RECALL_KEY) return null;
-    const res = await fetch(`${recallBase()}/bot/${recallBotId}`, {
-      headers: { "Authorization": `Token ${RECALL_KEY}` },
-    });
-    if (!res.ok) return null;
-    const bot = await res.json();
-    const changes = Array.isArray(bot?.status_changes) ? bot.status_changes : [];
-    const last = changes[changes.length - 1];
-    if (!last) return null;
-    return {
-      code: last.code ?? null,
-      message: BOT_STATUS_LABEL[last.code] || last.message || last.code,
-      sub_code: last.sub_code ?? null,
-      at: last.created_at ?? null,
-    };
-  } catch (e) {
-    console.warn("[sales-coach] fetchBotStatus failed:", e);
-    return null;
+  const RECALL_KEY = Deno.env.get("RECALL_API_KEY");
+  if (!RECALL_KEY) return null;
+  // Recall's DRF-based API is strict about the trailing slash on detail
+  // routes (GET /bot/{id} without it can 404 even though POST /bot for
+  // creation works fine) — try with slash first, fall back without.
+  for (const url of [`${recallBase()}/bot/${recallBotId}/`, `${recallBase()}/bot/${recallBotId}`]) {
+    try {
+      const res = await fetch(url, { headers: { "Authorization": `Token ${RECALL_KEY}` } });
+      if (!res.ok) {
+        console.warn(`[sales-coach] fetchBotStatus ${url} -> HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+        continue;
+      }
+      const bot = await res.json();
+      const changes = Array.isArray(bot?.status_changes) ? bot.status_changes : [];
+      const last = changes[changes.length - 1];
+      if (!last) {
+        console.warn(`[sales-coach] fetchBotStatus ${url} -> no status_changes in response`);
+        return null;
+      }
+      return {
+        code: last.code ?? null,
+        message: BOT_STATUS_LABEL[last.code] || last.message || last.code,
+        sub_code: last.sub_code ?? null,
+        at: last.created_at ?? null,
+      };
+    } catch (e) {
+      console.warn(`[sales-coach] fetchBotStatus ${url} failed:`, e);
+    }
   }
+  return null;
 }
 
 async function actionGetMeetingState(ctx: Ctx, p: Json): Promise<Json> {

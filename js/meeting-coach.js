@@ -11,6 +11,7 @@
   let pollTimer = null;
   let elapsedTimer = null;
   let currentMeetingId = null;
+  let starting = false;       // guard síncrono contra doble-click (currentMeetingId solo se setea tras el await)
   let lastSeenTs = null;
   let elapsedSeconds = 0;
   let lastEventTs = null;     // timestamp del último coaching_event recibido
@@ -22,9 +23,15 @@
       toast('Link de reunión inválido.', 'error');
       return;
     }
-    // Guard de re-entrancy: un segundo start() sin cerrar el anterior filtra
-    // los timers de polling.
-    if (currentMeetingId) { console.warn('[MeetingCoach] Ya hay una sesión activa; ignorando start().'); return; }
+    // Guard de re-entrancy: currentMeetingId solo se setea DESPUÉS del await a
+    // startMeeting, así que un doble-click antes de que resuelva creaba dos
+    // bots (dos "Notetaker" en la misma reunión). `starting` se marca síncrono
+    // al entrar a la función para cerrar esa ventana.
+    if (starting || currentMeetingId) {
+      console.warn('[MeetingCoach] Ya hay una sesión activa o iniciándose; ignorando start().');
+      return;
+    }
+    starting = true;
     try {
       const res = await global.api.startMeeting({
         meeting_url: meetingUrl,
@@ -53,6 +60,8 @@
       toast('Bot lanzado a la reunión', 'success');
     } catch (e) {
       toast('Error iniciando reunión: ' + e.message, 'error');
+    } finally {
+      starting = false;
     }
   }
 
