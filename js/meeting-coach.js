@@ -11,10 +11,12 @@
   let pollTimer = null;
   let elapsedTimer = null;
   let currentMeetingId = null;
+  let starting = false;       // guard síncrono contra doble-click (currentMeetingId solo se setea tras el await)
   let lastSeenTs = null;
   let elapsedSeconds = 0;
   let lastEventTs = null;     // timestamp del último coaching_event recibido
   let lastChunkTs = null;     // timestamp del último chunk recibido
+  let everSawChunk = false;   // true en cuanto llega el primer chunk — la sesión ya no debe volver a "conectándose"
 
   // ─── INICIO ───────────────────────────────────────────────
   async function start(meetingUrl, prospectContext) {
@@ -22,9 +24,15 @@
       toast('Link de reunión inválido.', 'error');
       return;
     }
-    // Guard de re-entrancy: un segundo start() sin cerrar el anterior filtra
-    // los timers de polling.
-    if (currentMeetingId) { console.warn('[MeetingCoach] Ya hay una sesión activa; ignorando start().'); return; }
+    // Guard de re-entrancy: currentMeetingId solo se setea DESPUÉS del await a
+    // startMeeting, así que un doble-click antes de que resuelva creaba dos
+    // bots (dos "Notetaker" en la misma reunión). `starting` se marca síncrono
+    // al entrar a la función para cerrar esa ventana.
+    if (starting || currentMeetingId) {
+      console.warn('[MeetingCoach] Ya hay una sesión activa o iniciándose; ignorando start().');
+      return;
+    }
+    starting = true;
     try {
       const res = await global.api.startMeeting({
         meeting_url: meetingUrl,
@@ -38,6 +46,7 @@
       elapsedSeconds = 0;
       lastEventTs = null;
       lastChunkTs = null;
+      everSawChunk = false;
 
       // Limpiar UI de cualquier reunión previa
       clearTranscript();
@@ -53,6 +62,8 @@
       toast('Bot lanzado a la reunión', 'success');
     } catch (e) {
       toast('Error iniciando reunión: ' + e.message, 'error');
+    } finally {
+      starting = false;
     }
   }
 
@@ -69,6 +80,7 @@
       if (data.chunks && data.chunks.length) {
         renderTranscript(data.chunks);
         lastChunkTs = data.chunks[data.chunks.length - 1].ts;
+        everSawChunk = true;
       }
 
       if (data.events && data.events.length) {
@@ -82,7 +94,11 @@
         showThinking();
       }
 
-      setStatus(data.chunks && data.chunks.length ? 'live' : 'connecting');
+      // `data.chunks` es solo lo NUEVO desde el último poll (since_ts) — una
+      // pausa natural en la conversación no debe hacer que el estado "vuelva"
+      // a conectándose. Una vez que llegó el primer chunk, la sesión se
+      // considera en vivo por el resto de la reunión.
+      setStatus(everSawChunk ? 'live' : 'connecting', !everSawChunk && data.bot_status && data.bot_status.message);
     } catch (e) {
       console.warn('Poll error', e);
     }
@@ -227,9 +243,10 @@
   }
 
   // ─── STATUS / TIMER ───────────────────────────────────────
-  function setStatus(status) {
+  function setStatus(status, override) {
     const el = document.getElementById('mc-status');
     if (!el) return;
+    if (override) { el.textContent = override; return; }
     el.textContent = ({
       connecting: 'Bot conectándose...',
       live: '● Transcribiendo en vivo',
