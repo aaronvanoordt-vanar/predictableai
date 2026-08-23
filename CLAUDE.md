@@ -37,7 +37,7 @@ Cada función con IA puede correr sobre cualquiera de los tres motores. La prefe
 - `supabase/functions/_shared/llm.ts` — `RECOMMENDED_ENGINE` + `callLLM()`, el único sitio que sabe hablar con cada proveedor (web search, JSON schema, PDFs, reintentos). Toda edge function con IA pasa por aquí; ninguna vuelve a llamar a `api.anthropic.com` directamente.
 - `js/ai-engine.js` — `FEATURES` + el selector (`AIEngine.mount(...)` o `<div data-ai-engine="coda">`).
 
-Recomendados: `intel_hub`, `coda` (Contexto estratégico IA) y `onboarding` (research inicial/Intelligence Hub) → **Perplexity**; `outreach` y `radar` → **Claude**; `coach` → **OpenAI**.
+Recomendados: `intel_hub`, `coda` (Contexto estratégico IA), `onboarding` (research inicial/Intelligence Hub) y `radar` (detección de señales) → **Perplexity**; `outreach` → **Claude**; `coach` → **OpenAI**.
 
 Reglas:
 - El motor del body de la request es solo un atajo: la edge function **siempre** revalida contra su allowlist y cae al recomendado si no reconoce el valor.
