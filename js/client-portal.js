@@ -82,6 +82,20 @@
     { k: 'kickoff_url',           label: 'Kick Off' },
   ];
 
+  // Espejo exacto de js/clients.js — mantener los dos en sync.
+  var THRESHOLDS = [
+    { key: 'open',         label: 'Open rate',         hint: 'leídos / contactados',        type: 'min', target: 50,
+      n: function (m) { return num(m.opened); },            d: function (m) { return num(m.contacted); } },
+    { key: 'reply',        label: 'Reply rate',        hint: 'respondidos / leídos',        type: 'min', target: 30,
+      n: function (m) { return num(m.replied); },           d: function (m) { return num(m.opened); } },
+    { key: 'conversion',   label: 'Conversion rate',   hint: 'agendadas / respondidos',     type: 'min', target: 5,
+      n: function (m) { return num(m.meetings_scheduled); }, d: function (m) { return num(m.replied); } },
+    { key: 'no_show',      label: 'No-show rate',      hint: 'no shows / agendadas',        type: 'max', target: 25,
+      n: function (m) { return num(m.no_shows); },          d: function (m) { return num(m.meetings_scheduled); } },
+    { key: 'disqualified', label: 'Disqualified rate', hint: 'descalificadas / agendadas',  type: 'max', target: 20,
+      n: function (m) { return num(m.disqualified); },      d: function (m) { return num(m.meetings_scheduled); } },
+  ];
+
   var TEXT_SECTIONS = [
     { k: 'icp',              title: 'ICP',              ph: 'Describe a quién le vendes: tamaño de empresa, industria, cargos que deciden…', tall: false },
     { k: 'industries',       title: 'Industrias',       ph: 'Industrias a las que apuntas…', tall: false },
@@ -111,22 +125,36 @@
 
   function num(v) { var n = parseInt(v, 10); return isNaN(n) || n < 0 ? 0 : n; }
 
-  function pct(n, d) {
-    if (!d) return '—';
-    return (Math.round((n / d) * 1000) / 10).toFixed(1).replace(/\.0$/, '') + '%';
+  function rawPct(numr, den) {
+    if (!den) return null;
+    return Math.round((numr / den) * 1000) / 10;
+  }
+
+  function fmtPct(raw) {
+    return raw == null ? '—' : (raw.toFixed(1).replace(/\.0$/, '') + '%');
+  }
+
+  function ratioStatus(raw, type, target) {
+    if (raw == null) return { status: 'na', pct: 0 };
+    var good = type === 'min' ? raw >= target : raw <= target;
+    var dist = target > 0 ? Math.abs((type === 'min' ? raw - target : target - raw)) / target : 0;
+    return { status: good ? 'ok' : 'bad', pct: Math.max(0, Math.min(1, dist)) };
+  }
+
+  function targetLabel(t) {
+    return (t.type === 'min' ? '≥ ' : '≤ ') + t.target + '%';
   }
 
   function computeRatios(m) {
     m = m || {};
-    var contacted = num(m.contacted), opened = num(m.opened), replied = num(m.replied);
-    var sched = num(m.meetings_scheduled), noShows = num(m.no_shows), disq = num(m.disqualified);
-    return [
-      { label: 'Open rate',         hint: 'leídos / contactados',       val: pct(opened, contacted) },
-      { label: 'Reply rate',        hint: 'respondidos / contactados',  val: pct(replied, contacted) },
-      { label: 'Conversion rate',   hint: 'agendadas / contactados',    val: pct(sched, contacted) },
-      { label: 'No-show rate',      hint: 'no shows / agendadas',       val: pct(noShows, sched) },
-      { label: 'Disqualified rate', hint: 'descalificadas / agendadas', val: pct(disq, sched) },
-    ];
+    return THRESHOLDS.map(function (t) {
+      var raw = rawPct(t.n(m), t.d(m));
+      var st = ratioStatus(raw, t.type, t.target);
+      return {
+        key: t.key, label: t.label, hint: t.hint, val: fmtPct(raw), raw: raw,
+        type: t.type, target: t.target, status: st.status, pct: st.pct,
+      };
+    });
   }
 
   function sheetEmbedUrl(url) {
@@ -320,6 +348,27 @@
         '<span class="cp-muted">' + esc(r.hint) + '</span></div>';
     }).join('');
 
+    var strategies = c.metric_strategies || {};
+    var thresholds = computeRatios(m).map(function (r) {
+      var color = r.status === 'ok' ? 'green' : (r.status === 'bad' ? 'red' : null);
+      var boxStyle = color
+        ? 'background:color-mix(in srgb, var(--' + color + ') ' + (14 + Math.round(r.pct * 56)) + '%, var(--surface2));' +
+          'border-color:color-mix(in srgb, var(--' + color + ') 55%, var(--hair))'
+        : 'background:var(--surface2)';
+      var badge = color
+        ? '<span class="cp-thr-badge" style="background:var(--' + color + ')">' + (r.status === 'ok' ? 'OK' : 'BAJO') + '</span>'
+        : '';
+      var strategy = (r.status === 'bad' && strategies[r.key])
+        ? '<div class="cp-thr-strategy"><label>Estrategia de remediación</label><p>' + esc(strategies[r.key]) + '</p></div>'
+        : '';
+      return '<div class="cp-thr" style="' + boxStyle + '">' +
+        '<div class="cp-thr-top"><span class="cp-thr-lbl">' + esc(r.label) + '</span>' + badge + '</div>' +
+        '<span class="cp-thr-val">' + esc(r.val) + '</span>' +
+        '<span class="cp-thr-target">Mínimo aceptable: ' + esc(targetLabel(r)) + '</span>' +
+        strategy +
+        '</div>';
+    }).join('');
+
     var embed = sheetEmbedUrl(c.crm_sheet_url);
 
     var textSections = TEXT_SECTIONS.map(function (s) {
@@ -370,6 +419,7 @@
         '</h2>' +
         '<div class="cp-metrics">' + metrics + '</div>' +
         '<div class="cp-ratios">' + ratios + '</div>' +
+        '<div class="cp-thr-grid">' + thresholds + '</div>' +
         (embed ? '<iframe class="cp-frame" src="' + esc(embed) + '" loading="lazy" referrerpolicy="no-referrer"></iframe>' : '') +
       '</div>' +
 
