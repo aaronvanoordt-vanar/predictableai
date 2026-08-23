@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
 <title>Portal del cliente — predictable.ai</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <style>
@@ -74,14 +75,39 @@ body{background:var(--bg);color:var(--ink);font-family:"Geist",ui-sans-serif,sys
 .cp-link:hover{text-decoration:underline}
 .cp-mats{display:flex;flex-direction:column;gap:8px}
 .cp-mat{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--hair);border-radius:var(--r);background:var(--surface2);font-size:13px}
-.cp-mat .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.cp-mat{flex-wrap:wrap}
+.cp-mat .nm{flex:1 1 120px;min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.cp-mat .cp-muted{flex:none;white-space:nowrap}
 .cp-mat a{color:var(--accent-ink);font-weight:700;font-size:12px;text-decoration:none;flex:none}
 .cp-ctys{display:flex;flex-wrap:wrap;gap:6px}
-.cp-cty{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;border:1px solid var(--hair-3);background:var(--surface2);font-size:12px;font-weight:600}
+.cp-cty{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;border:1px solid var(--hair-3);background:var(--surface2);font-size:12px;font-weight:600;color:var(--ink-2);font-family:inherit;cursor:pointer;transition:border-color .12s,background .12s,color .12s}
+.cp-cty.is-static{cursor:default}
+button.cp-cty:hover{border-color:var(--accent);color:var(--accent-ink)}
+.cp-cty.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)}
 .cp-text{font-size:13.5px;color:var(--ink-2);white-space:pre-wrap}
 .cp-muted{color:var(--ink-4);font-size:13px}
 .cp-spinner{width:28px;height:28px;border:3px solid var(--hair-3);border-top-color:var(--accent);border-radius:50%;animation:cpspin .8s linear infinite}
 @keyframes cpspin{to{transform:rotate(360deg)}}
+/* ── Edición desde el portal ──────────────────────────────────────── */
+.cp-topbar-right{display:flex;align-items:center;gap:10px}
+.cp-save-ind{font-size:12px;font-weight:600;color:var(--ink-4);min-width:1px}
+.cp-save-ind.is-ok{color:var(--green)}
+.cp-save-ind.is-err{color:var(--red)}
+.cp-note{display:flex;gap:8px;background:var(--accent-soft-2);border:1px solid var(--hair);border-radius:var(--r);padding:10px 14px;font-size:12.5px;color:var(--ink-2);margin-bottom:18px;line-height:1.55}
+.cp-photo.is-editable{cursor:pointer}
+.cp-photo-hint{position:absolute;inset:auto 0 0 0;background:rgba(10,10,15,.55);color:#fff;font-size:10px;text-align:center;padding:3px 0;opacity:0;transition:opacity .15s}
+.cp-photo.is-editable{position:relative}
+.cp-photo.is-editable:hover .cp-photo-hint{opacity:1}
+.cp-ta{width:100%;min-height:96px;resize:vertical;background:var(--surface2);border:1px solid var(--hair);border-radius:var(--r-sm);padding:10px 12px;font-size:13.5px;line-height:1.55;color:var(--ink);font-family:inherit}
+.cp-ta.tall{min-height:140px}
+.cp-ta:focus{outline:none;border-color:var(--accent);background:var(--surface)}
+.cp-ta::placeholder{color:var(--ink-4)}
+.cp-sec h2 .cp-ghost{padding:5px 10px;font-size:11.5px}
+.cp-span2{grid-column:1/-1}
+.cp-tag{flex:none;padding:2px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent-ink);font-size:10px;font-weight:700}
+.cp-mat-del{flex:none;border:1px solid var(--hair-3);background:var(--surface);color:var(--ink-3);border-radius:var(--r-sm);padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit}
+.cp-mat-del:hover{border-color:var(--red);color:var(--red)}
+.cp-mat-del:disabled{opacity:.5;cursor:wait}
 @media (max-width:640px){.cp-cols{grid-template-columns:1fr}}
 </style>
 </head>
