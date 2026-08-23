@@ -69,6 +69,12 @@
  * Auth: Bearer <user JWT>
  * POST body: { "linkedin_url": "https://linkedin.com/company/acme" }
  *         or: { "website_url": "https://company.com" }
+ * Optional:   { "custom_prompt": "enfócate solo en la línea de valuación de activos" }
+ *   Acota el alcance de la investigación cuando la empresa tiene varias líneas
+ *   de negocio y el usuario solo vende una. Se guarda en
+ *   intel_hub_intake.company_enrichment_prompt: sobrevive al refresh, la reusa
+ *   la siguiente corrida aunque se dispare desde el otro botón, y
+ *   generate-client-brief redacta el brief con el mismo foco.
  * Engine: user-selectable (Claude / OpenAI / Perplexity) under the
  * "onboarding" feature — see supabase/functions/_shared/llm.ts.
  * Required secrets: the API key of the chosen engine (ANTHROPIC_API_KEY,
@@ -141,6 +147,26 @@ function parseJson(raw: string): any {
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
+// Instrucción opcional del usuario para acotar la investigación ("enfócate solo
+// en la línea de valuación de activos"). Es una instrucción de ALCANCE — qué
+// mirar del sitio — y nunca un permiso para inventar: sin decirlo explícitamente
+// el modelo rellena la línea pedida con datos de otra línea del mismo sitio,
+// que es peor que dejar el campo vacío.
+const FOCUS_MAX_CHARS = 600;
+function focusBlock(focus: string): string {
+  if (!focus) return "";
+  return `
+
+USER FOCUS INSTRUCTION — apply it to every field you return:
+"""
+${focus}
+"""
+How to apply it: it narrows WHAT you look at on this site; it never licenses inventing anything. If this company has several business lines, describe ONLY the one this instruction points to and ignore the rest of the site, even if the rest is bigger or more prominent. If something the instruction asks for is genuinely not on the site, leave that field empty — never fill it with another business line's information.`;
+}
+function focusNote(focus: string): string {
+  return focus ? `\n\nFocus ONLY on this part of their business: ${focus}` : "";
+}
+
 // Shared identity guardrail: repeated verbatim in every prompt because it is
 // the one rule that, when dropped, silently poisons every downstream field.
 const IDENTITY_GUARDRAIL = `Hard rules:
@@ -195,7 +221,7 @@ interface WebsiteProfile {
   country: string;
 }
 
-async function researchWebsiteProfile(engine: Engine, website: string, fallbackAbout: string): Promise<WebsiteProfile> {
+async function researchWebsiteProfile(engine: Engine, website: string, fallbackAbout: string, focus = ""): Promise<WebsiteProfile> {
   const system = `You are a company research agent. Your ONLY source is the exact website URL given below — read that site's own pages (home, about, product/solutions) directly. Do NOT run a generic search for the company's name and pull in whatever ranks first: using an unrelated same-named company's data instead of the actual site's content is the single most common failure mode here.
 Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
@@ -206,9 +232,9 @@ Respond ONLY with valid JSON, no markdown fences, no explanation:
   "country": "Primary country of operation as evidenced by the site (address, phone code, language/market cues). Empty string if not inferable."
 }
 ${IDENTITY_GUARDRAIL}
-- If the site is a JS-rendered app or otherwise not directly crawlable, you still have the domain name, brand name, page title, meta description, and search-engine snippets scoped to this domain — use those for a reasonable best guess rather than reporting a failure.`;
+- If the site is a JS-rendered app or otherwise not directly crawlable, you still have the domain name, brand name, page title, meta description, and search-engine snippets scoped to this domain — use those for a reasonable best guess rather than reporting a failure.${focusBlock(focus)}`;
   const hostname = siteScope(website);
-  const prompt = `Visit this exact company website (search with a site-scoped query like site:${hostname} if you need to, but every fact must trace back to this domain) and extract solutions, about, industry, employee count and country:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}`;
+  const prompt = `Visit this exact company website (search with a site-scoped query like site:${hostname} if you need to, but every fact must trace back to this domain) and extract solutions, about, industry, employee count and country:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}${focusNote(focus)}`;
   const p = parseJson(await callAi(engine, system, prompt, { maxUses: 3, maxTokens: 1024 }));
   return {
     solutions: str(p.solutions),
@@ -219,16 +245,16 @@ ${IDENTITY_GUARDRAIL}
   };
 }
 
-async function researchWebsitePains(engine: Engine, website: string, fallbackAbout: string): Promise<string> {
+async function researchWebsitePains(engine: Engine, website: string, fallbackAbout: string, focus = ""): Promise<string> {
   const system = `You are a B2B go-to-market analyst. Your ONLY source is the exact website URL given below — read its own messaging (headlines, value proposition, case studies, solution pages). Do NOT pull in an unrelated company that happens to share the name.
 Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
   "pain_points": "1-3 sentences in Spanish: the problems this company's target customer has, as implied by the site's own messaging. Empty string if not inferable."
 }
 ${IDENTITY_GUARDRAIL}
-- Write the pain points from the target CUSTOMER's point of view (what hurts them today), not as a description of the company's product.`;
+- Write the pain points from the target CUSTOMER's point of view (what hurts them today), not as a description of the company's product.${focusBlock(focus)}`;
   const hostname = siteScope(website);
-  const prompt = `Visit this exact company website (a site-scoped query like site:${hostname} is fine, but every fact must trace back to this domain) and infer the pain points of the customer it sells to:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}`;
+  const prompt = `Visit this exact company website (a site-scoped query like site:${hostname} is fine, but every fact must trace back to this domain) and infer the pain points of the customer it sells to:\n${website}\n\nWhat's already known about them: ${fallbackAbout || "(nothing yet)"}${focusNote(focus)}`;
   const p = parseJson(await callAi(engine, system, prompt, { maxUses: 2, maxTokens: 700 }));
   return str(p.pain_points);
 }
@@ -259,7 +285,7 @@ interface IcpProposal {
   outreach_language: string;
 }
 
-async function researchIcpProposal(engine: Engine, website: string, knownAbout: string): Promise<IcpProposal> {
+async function researchIcpProposal(engine: Engine, website: string, knownAbout: string, focus = ""): Promise<IcpProposal> {
   const system = `You are a B2B go-to-market analyst. Your ONLY source is the exact website URL given below. From what this company sells, infer WHO THEY SELL TO and how they sell — this is about their CUSTOMERS, not about themselves.
 Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
@@ -290,9 +316,10 @@ ALLOWED VALUES — any value outside these lists is discarded, so pick from them
 
 ${IDENTITY_GUARDRAIL}
 - These are PROPOSALS the user will review and confirm, so a reasoned best guess beats an empty array. Still, never invent a competitor that does not exist or a country with no evidence at all: an empty array is better than a fabricated entry.
-- Aim wide but coherent: 2-6 countries, 2-8 industries, 2-5 employee ranges, 1-4 departments, 2-5 seniorities.`;
+- Aim wide but coherent: 2-6 countries, 2-8 industries, 2-5 employee ranges, 1-4 departments, 2-5 seniorities.${focusBlock(focus)}${focus ? `
+- Because a focus instruction is set, describe the buyer of THAT line specifically: the industries, departments, seniorities and titles that buy it, not the ones that buy the company's other lines.` : ""}`;
   const hostname = siteScope(website);
-  const prompt = `Visit this exact company website (a site-scoped query like site:${hostname} is fine, but every fact must trace back to this domain) and infer who this company sells to and how:\n${website}\n\nWhat's already known about them: ${knownAbout || "(nothing yet)"}`;
+  const prompt = `Visit this exact company website (a site-scoped query like site:${hostname} is fine, but every fact must trace back to this domain) and infer who this company sells to and how:\n${website}\n\nWhat's already known about them: ${knownAbout || "(nothing yet)"}${focusNote(focus)}`;
   const p = parseJson(await callAi(engine, system, prompt, { maxUses: 3, maxTokens: 1400 }));
   const competitors = Array.isArray(p.competitors)
     ? p.competitors
@@ -339,7 +366,7 @@ Deno.serve(async (req: Request) => {
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
 
-  let body: { linkedin_url?: string; website_url?: string; engine?: string };
+  let body: { linkedin_url?: string; website_url?: string; engine?: string; custom_prompt?: string };
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400, h); }
   if (!body.linkedin_url && !body.website_url) {
     return json({ error: "linkedin_url or website_url required" }, 400, h);
@@ -347,6 +374,17 @@ Deno.serve(async (req: Request) => {
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const engine = await engineForUser(supa, user.id, "onboarding", body.engine);
+
+  // Foco de la investigación. Viaja en la request cuando el usuario acaba de
+  // escribirlo; si la request no lo trae (p. ej. la corrida se disparó desde
+  // LinkedIn) se reutiliza el último que guardó, para que las dos entradas
+  // investiguen con el mismo criterio en vez de una con foco y otra sin él.
+  const { data: existing } = await supa.from("intel_hub_intake")
+    .select("company_about, company_enrichment_prompt").eq("user_id", user.id).maybeSingle();
+  const sentPrompt = typeof body.custom_prompt === "string"
+    ? body.custom_prompt.trim().slice(0, FOCUS_MAX_CHARS)
+    : null;
+  const focus = sentPrompt !== null ? sentPrompt : str(existing?.company_enrichment_prompt).trim();
 
   // Every step commits its own fields the moment it resolves. The client is
   // subscribed to this row via realtime, so each patch lands as a card filling
@@ -401,7 +439,7 @@ Deno.serve(async (req: Request) => {
     knownAbout: string,
     opts: { fillGapsOnly: boolean; gaps: { industry: string; employeeCount: string; country: string } },
   ) {
-    const profileTask = researchWebsiteProfile(engine, website, knownAbout)
+    const profileTask = researchWebsiteProfile(engine, website, knownAbout, focus)
       .then(async (site) => {
         // deno-lint-ignore no-explicit-any
         const fields: Record<string, any> = {};
@@ -420,7 +458,7 @@ Deno.serve(async (req: Request) => {
       })
       .catch((e) => { console.warn("[enrich] website profile step failed:", e); });
 
-    const painsTask = researchWebsitePains(engine, website, knownAbout)
+    const painsTask = researchWebsitePains(engine, website, knownAbout, focus)
       .then(async (pains) => {
         if (!pains) return;
         await patch({ icp_pain_points: pains }, 90, "Pain points del cliente ideal listos…");
@@ -432,7 +470,7 @@ Deno.serve(async (req: Request) => {
     // una vez confirmado (context_confirmed_at) solo rellena huecos, porque
     // esos valores ya son una decisión suya y de ellos dependen el radar, la
     // búsqueda y los mensajes.
-    const icpTask = researchIcpProposal(engine, website, knownAbout)
+    const icpTask = researchIcpProposal(engine, website, knownAbout, focus)
       .then(async (icp) => {
         const { data: current } = await supa.from("intel_hub_intake")
           .select("context_confirmed_at, icp_countries, icp_industry_tags, icp_employee_ranges, icp_departments, icp_seniorities, icp_titles, icp_buying_triggers, icp_disqualifiers, competitors, commercial_model, commercial_deal_size, commercial_sales_cycle, commercial_primary_cta, outreach_tone, outreach_channels, outreach_language")
@@ -515,13 +553,17 @@ Deno.serve(async (req: Request) => {
 
         // Commit what LinkedIn found right away: industria, tamaño, país,
         // contexto y web quedan visibles en pantalla mientras sigue el resto.
-        await patch({
-          company_industry:       li.industry,
-          company_employee_count: li.employee_count,
-          company_country:        li.country,
-          company_website:        li.website,
-          company_about:          li.about,
-        }, 45, li.website ? "Datos de LinkedIn listos · revisando tu página web…" : "Datos de LinkedIn listos…");
+        // Solo se escriben los campos que LinkedIn realmente encontró: escribir
+        // el "" de un campo vacío borraba datos buenos que ya estaban en la
+        // fila (así se perdía la web que el usuario había escrito a mano).
+        // deno-lint-ignore no-explicit-any
+        const liFields: Record<string, any> = {};
+        if (li.industry)       liFields.company_industry = li.industry;
+        if (li.employee_count) liFields.company_employee_count = li.employee_count;
+        if (li.country)        liFields.company_country = li.country;
+        if (li.website)        liFields.company_website = li.website;
+        if (li.about)          liFields.company_about = li.about;
+        await patch(liFields, 45, li.website ? "Datos de LinkedIn listos · revisando tu página web…" : "Datos de LinkedIn listos…");
 
         if (li.website) {
           await runWebsitePass(li.website, li.about, {
@@ -543,16 +585,22 @@ Deno.serve(async (req: Request) => {
     // is the source of truth for all of the company-context module fields,
     // not just solutions/about. LinkedIn URL itself is left untouched.
     const website = body.website_url!;
-    const { data: existing } = await supa.from("intel_hub_intake")
-      .select("company_about").eq("user_id", user.id).maybeSingle();
 
-    await supa.from("intel_hub_intake").upsert({
+    // deno-lint-ignore no-explicit-any
+    const startFields: Record<string, any> = {
       user_id: user.id,
       company_website: website,
       company_enrichment_status: "running",
       company_enrichment_progress: 20,
       company_enrichment_step: "Revisando tu página web…",
-    }, { onConflict: "user_id" });
+    };
+    // El foco se guarda junto con la corrida que lo usó: así sobrevive al
+    // refresh, la caja sigue mostrando lo que el usuario escribió, y
+    // generate-client-brief redacta con el mismo foco. Solo se toca cuando la
+    // request lo trae — borrar la caja lo limpia; una corrida desde LinkedIn no.
+    if (sentPrompt !== null) startFields.company_enrichment_prompt = sentPrompt || null;
+
+    await supa.from("intel_hub_intake").upsert(startFields, { onConflict: "user_id" });
 
     work = (async () => {
       try {

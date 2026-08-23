@@ -159,6 +159,10 @@ interface IntakeRow {
   social_proof: { client?: string; industry?: string; result?: string }[] | null;
   common_objections: { objection?: string; neutralizer?: string }[] | null;
   context_confirmed_at: string | null;
+  // Foco declarado por el usuario para la investigación (enrich-company). El
+  // brief se redacta con el mismo foco: si la investigación miró una sola línea
+  // de negocio, el posicionamiento no puede hablar de todas.
+  company_enrichment_prompt: string | null;
 }
 
 function buildUserPrompt(
@@ -167,7 +171,21 @@ function buildUserPrompt(
   icp: { company_sizes?: string | null; industries?: string | null; roles?: string | null; geographies?: string | null; pain_points?: string | null } | null,
   documentSummaries: string[],
 ): string {
-  const lines: string[] = ["=== INTAKE DATA (collected at onboarding — trusted source) ==="];
+  const lines: string[] = [];
+  // El foco va primero y con el encabezado más fuerte del prompt: llega después
+  // de una investigación ya acotada a una línea de negocio, así que el brief
+  // tiene que quedarse en esa misma línea o contradice lo que el usuario ve.
+  const focus = (intake?.company_enrichment_prompt ?? "").trim();
+  if (focus) {
+    lines.push(
+      "=== SCOPE INSTRUCTION FROM THE SELLER (highest priority — overrides breadth, never invents) ===",
+      focus,
+      "Everything you write — positioning, what they do, mechanism, outcomes, recommended filters — must stay inside this scope.",
+      "This company may sell other things; ignore them. If the data below mixes several business lines, keep only what belongs to the scope above. Never invent facts to fill the scope.",
+      "",
+    );
+  }
+  lines.push("=== INTAKE DATA (collected at onboarding — trusted source) ===");
   const push = (label: string, v: string | null | undefined) => { if (v) lines.push(`${label}: ${v}`); };
   const list = (v: string[] | null | undefined) => (Array.isArray(v) && v.length ? v.join(", ") : null);
   push("Company name", profile?.company_name);
@@ -228,7 +246,9 @@ function buildUserPrompt(
     lines.push("", "=== UPLOADED COMPANY DOCUMENTS (summarized from one-pagers/decks the seller uploaded — trusted source) ===");
     documentSummaries.forEach((s, i) => { lines.push(`Document ${i + 1}:`, s, ""); });
   }
-  lines.push("", "Research this company now (website + LinkedIn) and produce the JSON brief.");
+  lines.push("", focus
+    ? `Research this company now (website + LinkedIn) and produce the JSON brief, staying strictly within the scope instruction at the top: ${focus}`
+    : "Research this company now (website + LinkedIn) and produce the JSON brief.");
   return lines.join("\n");
 }
 
@@ -312,7 +332,7 @@ Deno.serve(async (req: Request) => {
       competitors, excluded_companies,
       commercial_deal_size, commercial_sales_cycle, commercial_model, commercial_primary_cta,
       outreach_signature, outreach_tone, outreach_channels, outreach_language,
-      social_proof, common_objections, context_confirmed_at
+      social_proof, common_objections, context_confirmed_at, company_enrichment_prompt
     `).eq("user_id", user.id).maybeSingle(),
     supa.from("profiles").select("company_name, linkedin_company_url, company_website").eq("id", user.id).maybeSingle(),
     supa.from("client_icp").select("company_sizes, industries, roles, geographies, pain_points").eq("profile_id", user.id).maybeSingle(),
