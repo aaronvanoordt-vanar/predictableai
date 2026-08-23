@@ -682,28 +682,6 @@
         </div>
         <div class="ihx-research-engine" id="ihx-research-engine"></div>
         ${stale ? `<div class="ihx-research-warn">La búsqueda anterior tardó demasiado y no terminó. Puedes intentarlo de nuevo.</div>` : ''}
-        <div class="ihx-research-panel ihx-research-panel-editable">
-          <div class="ihx-research-panel-text">
-            <strong>Investigar desde tu LinkedIn</strong>
-            <span>Vuelve a buscar tu página web y el contexto de tu empresa a partir de este LinkedIn. Esto reemplaza los campos de abajo con lo que encuentre. Corrige el link si no es el correcto.</span>
-          </div>
-          <div class="ihx-field-with-btn">
-            <input type="url" id="ihx-linkedin-input" name="company_linkedin_url" value="${escapeHtml(linkedinUrl || '')}" placeholder="https://linkedin.com/company/tuempresa">
-            <button type="button" class="ihx-btn-force ihx-btn-ai-sm" id="ihx-save-linkedin">Guardar</button>
-            <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-linkedin" ${isRunning ? 'disabled' : ''}>
-              ${SVG_SPARK}<span>${runSource === 'linkedin' ? 'Investigando…' : 'Investigar con IA'}</span>
-            </button>
-          </div>
-        </div>
-        ${(runSource === 'linkedin') ? `
-          <div class="ihx-progress-panel">
-            <span class="ihx-progress-label">${escapeHtml(intake.company_enrichment_step || 'Investigando…')}</span>
-            <div class="ihx-progress-row">
-              <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${intake.company_enrichment_progress || 0}%"></div></div>
-              <span class="ihx-progress-pct">${intake.company_enrichment_progress || 0}%</span>
-            </div>
-            <span class="ihx-progress-note">Esta página se actualiza sola cuando termine.</span>
-          </div>` : ''}
         <div class="ihx-research-meta">
           <span class="ihx-research-status ihx-rs-${escapeHtml(briefStale ? 'error' : (brief.status || 'pending'))}">${escapeHtml(statusLabel)}</span>
           ${brief.generated_at ? `<span>${escapeHtml(sourceLabel)} · ${fmtRelative(new Date(brief.generated_at))}</span>` : ''}
@@ -713,13 +691,13 @@
             <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-brief">${SVG_SPARK}<span>Reintentar</span></button>` : ''}
         </div>
         <form id="ihx-research-form">
-          <div class="ihx-field ihx-website-panel">
-            <span>Página web considerada</span>
-            <p class="ihx-field-help">No se buscará desde tu LinkedIn registrado, sino desde la página web que escribas aquí. Al investigarla se actualizará el contexto de <strong>toda tu empresa</strong> (industria, soluciones y demás).</p>
+          <div class="ihx-field ihx-website-panel ihx-website-panel-primary">
+            <span>📄 Página web de tu empresa</span>
+            <p class="ihx-field-help" style="font-weight:600; font-size:13px; color:var(--ink, #0A0A0F)">Esta es tu fuente principal de información. La IA investigará aquí para llenar todo sobre tu empresa.</p>
             <div class="ihx-field-with-btn">
-              <input type="url" id="ihx-website-input" name="company_website" value="${escapeHtml(intake.company_website || '')}" placeholder="https://tuempresa.com">
-              <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-website" ${isRunning ? 'disabled' : ''} title="Investigar a partir de esta página">
-                ${SVG_SPARK}<span>${runSource === 'website' ? 'Investigando…' : 'Investigar con IA'}</span>
+              <input type="url" id="ihx-website-input" name="company_website" value="${escapeHtml(intake.company_website || '')}" placeholder="https://tuempresa.com" style="font-size:14px; padding:12px">
+              <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-website" ${isRunning ? 'disabled' : ''} title="Investigar a partir de esta página" style="padding:11px 16px">
+                ${SVG_SPARK}<span>${runSource === 'website' ? 'Investigando…' : 'Investigar'}</span>
               </button>
             </div>
             ${(runSource === 'website') ? `
@@ -728,6 +706,11 @@
                 <span class="ihx-progress-pct">${intake.company_enrichment_progress || 0}%</span>
               </div>
               <span class="ihx-progress-note">${escapeHtml(intake.company_enrichment_step || 'Investigando…')} — esta página se actualiza sola cuando termine.</span>` : ''}
+            <div class="ihx-field" style="margin-top:14px">
+              <span>Instrucciones personalizadas (opcional)</span>
+              <p class="ihx-field-help">Si hay una sección específica en tu web donde quieres que se concentre la IA, cuéntale aquí. Ej: "Entiende el modelo de negocio en la sección de Pricing"</p>
+              <textarea id="ihx-website-prompt" name="company_enrichment_prompt" rows="2" placeholder="Ej: Enfócate en la sección de soluciones y precios" style="width:100%; box-sizing:border-box; padding:10px; border:1px solid var(--hair-3, rgba(10,10,15,.13)); border-radius:8px; font-size:13px; font-family:inherit; resize:vertical">${escapeHtml(intake.company_enrichment_prompt || '')}</textarea>
+            </div>
           </div>
           <div class="ihx-context-progress">
             <div class="ihx-context-progress-copy">
@@ -745,6 +728,29 @@
           </div>
 
           ${cc.BLOCKS.map(blockHtml).join('')}
+
+          <div class="ihx-research-panel ihx-research-panel-secondary" style="margin-top:28px; background:var(--surface2, #F6F7F9); padding:18px; border-radius:12px; border:1px solid var(--hair, rgba(10,10,15,.07))">
+            <div class="ihx-research-panel-text">
+              <strong style="font-size:13px; color:var(--ink-4, rgba(10,10,15,.40)); text-transform:uppercase; letter-spacing:0.5px">Información adicional (opcional)</strong>
+              <span style="font-size:13px; margin-top:6px; display:block; color:var(--text2, rgba(10,10,15,.62)); line-height:1.5">Si quieres que la IA también consulte tu perfil de LinkedIn para obtener tamaño de empresa y otros datos, puedes proporcionarlo aquí. LinkedIn es secundario; la página web es la fuente principal.</span>
+            </div>
+            <div class="ihx-field-with-btn" style="margin-top:12px">
+              <input type="url" id="ihx-linkedin-input" name="company_linkedin_url" value="${escapeHtml(linkedinUrl || '')}" placeholder="https://linkedin.com/company/tuempresa" style="font-size:13px; color:var(--text2, rgba(10,10,15,.62))">
+              <button type="button" class="ihx-btn-force ihx-btn-ai-sm" id="ihx-save-linkedin" style="font-size:12px">Guardar</button>
+              <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-linkedin" ${isRunning ? 'disabled' : ''} style="font-size:12px">
+                ${SVG_SPARK}<span>${runSource === 'linkedin' ? 'Investigando…' : 'Investigar'}</span>
+              </button>
+            </div>
+            ${(runSource === 'linkedin') ? `
+              <div class="ihx-progress-panel" style="margin-top:12px">
+                <span class="ihx-progress-label">${escapeHtml(intake.company_enrichment_step || 'Investigando…')}</span>
+                <div class="ihx-progress-row">
+                  <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${intake.company_enrichment_progress || 0}%"></div></div>
+                  <span class="ihx-progress-pct">${intake.company_enrichment_progress || 0}%</span>
+                </div>
+                <span class="ihx-progress-note">Esta página se actualiza sola cuando termine.</span>
+              </div>` : ''}
+          </div>
 
           <section class="ihx-context-card is-complete ihx-summary-card">
             <div class="ihx-context-card-body">
@@ -929,10 +935,13 @@
     if (!STATE.user || !website) return;
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
+      const promptEl = document.getElementById('ihx-website-prompt');
+      const customPrompt = promptEl ? promptEl.value.trim() : '';
       STATE.researchSource = 'website';
       STATE.intake = {
         ...STATE.intake,
         company_website: website,
+        company_enrichment_prompt: customPrompt || null,
         company_enrichment_status: 'running',
         company_enrichment_progress: 20,
         company_enrichment_step: 'Revisando tu página web…',
@@ -940,10 +949,12 @@
       };
       resetProgress();
       renderResearch();
+      const payload = { website_url: website, engine: onboardingEngine() };
+      if (customPrompt) payload.custom_prompt = customPrompt;
       await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-        body: JSON.stringify({ website_url: website, engine: onboardingEngine() }),
+        body: JSON.stringify(payload),
       });
     } catch (e) {
       console.error('[research] retry enrichment from website error', e);
@@ -1033,6 +1044,7 @@
     const ccPatch = cc.collect(formEl);
     const intakePatch = {
       company_website: val('company_website') || null,
+      company_enrichment_prompt: val('company_enrichment_prompt') || null,
       company_industry: val('company_industry') || null,
       company_employee_count: val('company_employee_count') || null,
       company_country: val('company_country') || null,

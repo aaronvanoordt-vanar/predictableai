@@ -54,7 +54,7 @@
     'social_proof', 'social_proof_none', 'common_objections', 'objections_none',
     'context_confirmed_at',
     'company_enrichment_status', 'company_enrichment_at', 'company_enrichment_progress',
-    'company_enrichment_step', 'updated_at',
+    'company_enrichment_step', 'company_enrichment_prompt', 'updated_at',
   ].join(', ');
 
   var BRIEF_COLUMNS = [
