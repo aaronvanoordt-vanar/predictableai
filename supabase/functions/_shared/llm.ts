@@ -13,7 +13,7 @@
 //   coda       → perplexity   (Intelligence Hub — PESTEL / Porter, search-grounded analysis)
 //   onboarding → perplexity   (Intelligence Hub — company enrichment / brief / documents)
 //   outreach   → claude       (Prospección — message writing)
-//   radar      → claude       (signal detection + message drafts)
+//   radar      → perplexity   (Intelligence Hub — signal detection, search-grounded)
 //   coach      → openai       (AI Sales Coach)
 //
 // Required secrets (only the ones for engines actually used need to be set):
@@ -40,7 +40,7 @@ export const RECOMMENDED_ENGINE: Record<Feature, Engine> = {
   coda:       "perplexity",
   onboarding: "perplexity",
   outreach:   "claude",
-  radar:      "claude",
+  radar:      "perplexity",
   coach:      "openai",
 };
 
