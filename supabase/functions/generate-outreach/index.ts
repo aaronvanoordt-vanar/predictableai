@@ -730,6 +730,32 @@ function buildBriefContext(brief: BriefRow | null, intake: BriefRow | null, send
     push("ICP geografías (matriz)", fmtList(intake.icp_geographies));
     push("Pain points del ICP (matriz)", fmtList(intake.icp_pain_points));
     push("Qué debes saber (notas del vendedor)", intake.what_to_know);
+    // Contexto de empresa v2: cómo vende y cómo habla. Define el CTA, el largo
+    // y el tono del mensaje — antes el modelo los elegía por su cuenta.
+    lines.push("", "=== CÓMO VENDE Y CÓMO HABLA (declarado por el vendedor — obligatorio respetarlo) ===");
+    push("Modelo de negocio", intake.commercial_model);
+    push("Ticket promedio", intake.commercial_deal_size);
+    push("Ciclo de venta", intake.commercial_sales_cycle);
+    push("CTA que debe cerrar el mensaje", intake.commercial_primary_cta);
+    push("Firma el mensaje", intake.outreach_signature);
+    push("Tono", intake.outreach_tone);
+    push("Canales", fmtList(intake.outreach_channels));
+    push("Idioma del mensaje", intake.outreach_language);
+    push("Señales de compra a mencionar si el lead las muestra", intake.icp_buying_triggers);
+    const declaredProof = Array.isArray(intake.social_proof) ? intake.social_proof : [];
+    if (declaredProof.length) {
+      lines.push("- Prueba social declarada (cita SOLO estos casos, preferentemente el de la industria del lead; nunca inventes uno):");
+      for (const p of declaredProof) {
+        lines.push(`    · ${[p.client, p.industry, p.result].filter(Boolean).join(" | ")}`);
+      }
+    }
+    const declaredObjections = Array.isArray(intake.common_objections) ? intake.common_objections : [];
+    if (declaredObjections.length) {
+      lines.push("- Objeciones reales del vendedor (neutralízalas antes de que aparezcan):");
+      for (const o of declaredObjections) {
+        lines.push(`    · "${o.objection || ""}" → "${o.neutralizer || ""}"`);
+      }
+    }
   }
 
   lines.push("", "=== REMITENTE (quien firma) ===");
@@ -1039,7 +1065,7 @@ Deno.serve(async (req: Request) => {
   const [{ data: brief }, { data: intake }, { data: hubReports }, memberRes, playbookRes] = await Promise.all([
     supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
     supa.from("intel_hub_intake")
-      .select("company_about, company_solutions, value_proposition, value_problem_solved, value_success_cases, company_industry, company_country, icp_industries, icp_company_sizes, icp_roles, icp_geographies, icp_pain_points, what_to_know")
+      .select("company_about, company_solutions, value_proposition, value_problem_solved, value_success_cases, company_industry, company_country, icp_industries, icp_company_sizes, icp_roles, icp_geographies, icp_pain_points, what_to_know, icp_countries, icp_industry_tags, icp_titles, icp_buying_triggers, icp_disqualifiers, commercial_model, commercial_deal_size, commercial_sales_cycle, commercial_primary_cta, outreach_signature, outreach_tone, outreach_channels, outreach_language, social_proof, common_objections")
       .eq("user_id", user.id).maybeSingle(),
     supa.from("intelligence_hub_reports")
       .select("section_key, content")

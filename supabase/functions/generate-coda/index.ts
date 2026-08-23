@@ -233,6 +233,12 @@ interface IntakeRow {
   icp_roles: string | null;
   icp_pain_points: string | null;
   value_proposition: string | null;
+  // Contexto de empresa v2 — valores declarados por el usuario (ver
+  // js/company-context.js). Mandan sobre las columnas de texto de arriba.
+  icp_countries: string[] | null;
+  icp_industry_tags: string[] | null;
+  icp_titles: string[] | null;
+  competitors: { name?: string; domain?: string }[] | null;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -247,10 +253,17 @@ function buildContextBlock(intake: IntakeRow | null, profile: any, brief: any): 
   push("Website", intake?.company_website || brief?.enrichment?.website);
   push("Solutions", intake?.company_solutions);
   push("Value proposition", intake?.value_proposition || brief?.brand_promise);
-  push("Target industries (ICP)", intake?.icp_industries || (brief?.icp?.industries || []).join(", "));
-  push("Target geographies (ICP)", intake?.icp_geographies || (brief?.icp?.geographies || []).join(", "));
-  push("Target roles (ICP)", intake?.icp_roles || (brief?.icp?.roles || []).join(", "));
+  const list = (v: string[] | null | undefined) => (Array.isArray(v) && v.length ? v.join(", ") : "");
+  push("Target industries (ICP)", list(intake?.icp_industry_tags) || intake?.icp_industries || (brief?.icp?.industries || []).join(", "));
+  push("Target geographies (ICP)", list(intake?.icp_countries) || intake?.icp_geographies || (brief?.icp?.geographies || []).join(", "));
+  push("Target roles (ICP)", list(intake?.icp_titles) || intake?.icp_roles || (brief?.icp?.roles || []).join(", "));
   push("ICP pain points", intake?.icp_pain_points);
+  const rawCompetitors = intake?.competitors;
+  const competitors = Array.isArray(rawCompetitors)
+    ? rawCompetitors.map((c) => [c?.name, c?.domain].filter(Boolean).join(" — ")).filter(Boolean)
+    : [];
+  // Porter analiza a estos competidores concretos en vez de inferirlos.
+  if (competitors.length) push("Direct competitors named by the seller", competitors.join("; "));
   if (lines.length === 1) lines.push("(sparse — infer the market from any available signal and be explicit about assumptions)");
   return lines.join("\n");
 }
@@ -350,7 +363,8 @@ Deno.serve(async (req: Request) => {
           const [{ data: intake }, { data: profile }, { data: brief }] = await Promise.all([
             supa.from("intel_hub_intake").select(`
               company_industry, company_country, company_website, company_about, company_solutions,
-              icp_industries, icp_geographies, icp_roles, icp_pain_points, value_proposition
+              icp_industries, icp_geographies, icp_roles, icp_pain_points, value_proposition,
+              icp_countries, icp_industry_tags, icp_titles, competitors
             `).eq("user_id", user.id).maybeSingle(),
             supa.from("profiles").select("company_name").eq("id", user.id).maybeSingle(),
             supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
@@ -413,7 +427,8 @@ Deno.serve(async (req: Request) => {
         const [{ data: intake }, { data: profile }, { data: brief }] = await Promise.all([
           supa.from("intel_hub_intake").select(`
             company_industry, company_country, company_website, company_about, company_solutions,
-            icp_industries, icp_geographies, icp_roles, icp_pain_points, value_proposition
+            icp_industries, icp_geographies, icp_roles, icp_pain_points, value_proposition,
+            icp_countries, icp_industry_tags, icp_titles, competitors
           `).eq("user_id", user.id).maybeSingle(),
           supa.from("profiles").select("company_name").eq("id", user.id).maybeSingle(),
           supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),

@@ -158,9 +158,34 @@
   // lo consuman. Best-effort: nunca lanza ni bloquea la búsqueda.
 
   let lastIcpSignature = null; // evita re-escribir en cada página de resultados
+  let declaredIcp = null;      // ¿el usuario ya declaró su ICP en el contexto?
+
+  // Desde el contexto de empresa v2 el ICP se DECLARA en el primer paso
+  // (js/company-context.js), no se deduce de la búsqueda. Si ya está declarado,
+  // esta sincronización deja de escribir: una búsqueda exploratoria no puede
+  // reescribir en silencio el ICP con el que corren el radar y los mensajes.
+  async function hasDeclaredIcp() {
+    if (declaredIcp !== null) return declaredIcp;
+    try {
+      const userId = await getUserId();
+      const { data } = await sb().from('intel_hub_intake')
+        .select('icp_countries, icp_industry_tags, icp_titles, icp_seniorities, context_confirmed_at')
+        .eq('user_id', userId).maybeSingle();
+      const filled = (a) => Array.isArray(a) && a.length > 0;
+      declaredIcp = !!data && (
+        !!data.context_confirmed_at || filled(data.icp_countries) ||
+        filled(data.icp_industry_tags) || filled(data.icp_titles) || filled(data.icp_seniorities)
+      );
+    } catch (e) {
+      // Ante la duda, no pisar: es más barato no sincronizar que corromper el ICP.
+      declaredIcp = true;
+    }
+    return declaredIcp;
+  }
 
   async function syncIcpFromSearch(filters) {
     try {
+      if (await hasDeclaredIcp()) return;
       const f = filters || {};
       const join = (a) => (Array.isArray(a) ? a.filter(Boolean) : []).join(', ');
       const roles = join(f.person_titles) || join(f.person_seniorities);

@@ -16,8 +16,11 @@
 
   // ── Pasos del tour ──
   var STEPS = [
+    // El contexto va primero porque el resto de la plataforma está bloqueada
+    // hasta completarlo (js/context-gate.js): mandar al usuario al hub como
+    // primer paso lo dejaría chocando contra el overlay.
+    { id: 's2', title: 'Completa el contexto de tu empresa', desc: 'Quién eres y a quién le vendes. Desbloquea el resto de la plataforma.', credits: 30, page: 'mi-research', icon: 'grid' },
     { id: 's1', title: 'Explora tu Intelligence Hub', desc: 'Conoce los informes que tus agentes generan a diario.', credits: 20, page: 'mi-dashboard', icon: 'chart' },
-    { id: 's2', title: 'Completa tu Matriz de Input', desc: 'Dale contexto a la IA: empresa, mercado y competidores.', credits: 30, page: 'mi-matrix', icon: 'grid' },
     { id: 's4', title: 'Corre tu primera búsqueda en Apollo', desc: 'Encuentra contactos que calzan tu ICP en segundos.', credits: 35, page: 'pro-main', icon: 'search' },
     { id: 's5', title: 'Guarda tu primera lista', desc: 'Crea un segmento reutilizable para tus cadencias.', credits: 40, page: 'pro-main', icon: 'bookmark' },
     { id: 's6', title: 'Prueba el Meeting Coach', desc: 'Recibe guía en vivo durante tus llamadas de venta.', credits: 30, page: 'ventas-coach', icon: 'mic' },
