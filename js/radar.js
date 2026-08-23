@@ -446,20 +446,23 @@
   async function saveToList(companies) {
     if (state.busy) return;
     if (!companies.length) return;
+    const now = new Date();
+    const baseName = 'Radar ' + now.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' }) +
+      ' ' + now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+    const typed = global.prompt('Nombre de la lista:', baseName);
+    if (typed === null) return; // el usuario canceló
+    const name = typed.trim() || baseName;
     state.busy = true;
     render();
     try {
       if (!global.prospectingData || typeof global.prospectingData.createList !== 'function') {
         throw new Error('El módulo de Prospección no está cargado.');
       }
-      const now = new Date();
-      const baseName = 'Radar ' + now.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' }) +
-        ' ' + now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
       let list;
       try {
-        list = await global.prospectingData.createList(baseName);
+        list = await global.prospectingData.createList(name);
       } catch (e) {
-        list = await global.prospectingData.createList(baseName + ' (' + now.getSeconds() + 's)');
+        list = await global.prospectingData.createList(name + ' (' + now.getSeconds() + 's)');
       }
       const rows = [];
       let dmCount = 0;
@@ -480,6 +483,9 @@
       // próxima investigación no volverá a entregar estas empresas con la
       // misma señal (sí con una nueva).
       loadExclusionSources().then(render).catch(() => {});
+      // Invalida el caché de listas de Prospección para que la pestaña
+      // Listas la muestre sin necesitar un refresh completo de la página.
+      try { global.document.dispatchEvent(new CustomEvent('prospecting:list-saved')); } catch (e) {}
       alert('Guardado en la lista "' + list.name + '": ' +
         companies.length + ' empresa' + (companies.length === 1 ? '' : 's') +
         ' y ' + dmCount + ' decision maker' + (dmCount === 1 ? '' : 's') + '.' +
