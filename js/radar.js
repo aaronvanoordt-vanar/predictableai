@@ -647,7 +647,7 @@
         '<button class="btn btn-ghost btn-sm" data-act="resume-stage" ' + (state.busy ? 'disabled' : '') + '>Reintentar esta etapa</button></div>'
       : '';
     return '<div class="rdr-wrap">' +
-      header('Tu radar está investigando. Corre todas las búsquedas de la estrategia, así que toma varios minutos — puedes quedarte a mirar o explorar la app; te avisamos aquí.') +
+      header('Tu radar está investigando. Corre todas las búsquedas de la estrategia sin recortar resultados, así que puede tomar bastante tiempo — puedes quedarte a mirar o explorar la app; te avisamos aquí.') +
       hypothesis +
       '<div class="card rdr-prog">' +
         '<div class="rdr-prog-top"><span class="rdr-pulse"></span>' +

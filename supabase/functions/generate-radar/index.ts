@@ -92,18 +92,24 @@ import {
 // Keep in sync with js/credit-costs.js (radar_run).
 const RADAR_RUN_COST = 12;
 
-// A run delivers EVERY company its research honestly found — the research
-// stage no longer stops as soon as it has "enough". MAX_COMPANIES is only a
-// safety ceiling (row size + Apollo calls in the decision_makers stage), not
-// a target: hitting it means the strategy was unusually productive.
-const MAX_COMPANIES = 40;
-// Per research call. The model returns what this one query genuinely
-// supports with evidence — fewer is fine, padding is not.
-const MAX_COMPANIES_PER_QUERY = 6;
-// Every query in the strategy runs (that is what "all the companies it finds"
-// means), so the query count is what bounds a run's wall-clock: each query is
-// one ~50s call. This caps a runaway strategy.
-const MAX_QUERIES = 12;
+// A run delivers EVERY company its research honestly found, with no target
+// number in mind — the same prompt run directly against a search-grounded
+// model returns as many companies as genuinely show the signal (seen: 18 for
+// one Hilco run), and the platform should not return less than that. Every
+// cap below is therefore an absolute safety valve against a degenerate
+// response (a malformed JSON dump, a runaway strategy), never a target —
+// each is set far above what a real run should ever hit.
+const MAX_COMPANIES = 150; // row size + Apollo calls in decision_makers.
+// Per research call — a single web_search-grounded query realistically
+// yields well under this even when it surfaces a lot; it only guards against
+// a model dumping garbage duplicate entries into one response.
+const MAX_COMPANIES_PER_QUERY = 25;
+// Every query in the strategy runs — that is what "all the companies it
+// finds" means, and it is what makes a narrow, chunked search (many focused
+// queries) actually surface as much as one broad prompt does. This only
+// guards against a strategy that hallucinated an unreasonable query count;
+// the strategy prompt itself is not told to stop at any particular number.
+const MAX_QUERIES = 40;
 const MAX_DECISION_MAKERS = 3;
 const DM_BATCH_SIZE = 5; // companies processed per decision_makers call
 
@@ -312,7 +318,7 @@ Respond with ONLY valid JSON (no markdown fences, no prose):
 }
 
 Hard rules:
-- 3-4 search_angles with 2-3 queries each (max 10 queries in total). EVERY query you write will be run — one web search each — and everything they find is delivered, so make each query a genuinely different way into the signal (different source type, different wording, different sub-segment) instead of three rewordings of the same search.
+- No fixed number of search_angles or queries — cover the signal as thoroughly as it genuinely needs, typically 5-8 angles with 2-4 queries each for a well-explored signal. EVERY query you write will be run — one web search each — and everything they find is delivered, so err toward more real coverage rather than stopping early. But make each query a genuinely different way into the signal (different source type, different wording, different sub-segment, different geography/sub-segment) — duplicating the same search under a different label wastes a real call for nothing new.
 - The signal must be OBSERVABLE from public web sources — never propose signals that require private data.
 - If the user provided a TARGET DESCRIPTION, it is the ground truth: it may describe the KIND of companies they want (industry, size, geography, situation) and/or the signal itself. Refine it into angles/queries — never replace it with your own idea. If it describes only companies and no signal, derive the observable signal that identifies exactly those companies.
 - If a list of companies the seller ALREADY HAS is provided, design angles that surface NEW ones: do not build queries whose obvious answer is a company already on that list.
@@ -346,7 +352,7 @@ Respond with ONLY valid JSON (no markdown fences, no prose):
 
 Hard rules — violating any of these makes the output worthless:
 - EVERY company must be real and every evidence.url must come from an actual web_search result you saw. NEVER invent companies, URLs, or facts. A company you cannot back with at least 1 evidence URL must be dropped, not padded.
-- Return EVERY company this query surfaces that you can back with evidence, up to ${MAX_COMPANIES_PER_QUERY}. Do not stop at two or three because it "feels like enough" — the seller wants the full picture of what is out there right now. But never pad: a company you cannot back with at least 1 evidence URL does not exist for this purpose.
+- Return EVERY company this query surfaces that you can back with evidence — there is no cap. Do not stop at two or three because it "feels like enough": if this one search genuinely turns up ten distinct companies with evidence, return all ten. The seller wants the full picture of what is out there right now, not a sample. But never pad: a company you cannot back with at least 1 evidence URL does not exist for this purpose.
 - Do not try to cover the whole strategy — other calls handle the other queries.
 - Do not re-report a company already listed in "COMPANIES ALREADY FOUND" below, even if this query surfaces it again.
 - NEVER report a company listed in "COMPANIES THE SELLER ALREADY HAS" below — the seller already works those; re-finding them wastes the search. Skip them silently and return the next best NEW company.
