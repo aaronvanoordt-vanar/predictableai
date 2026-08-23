@@ -9,12 +9,12 @@
 // each provider, so the feature functions only deal with prompts.
 //
 // Recommended engine per feature (mirrored in js/ai-engine.js — keep in sync):
-//   intel_hub  → perplexity   (search-grounded research)
-//   coda       → perplexity   (PESTEL / Porter — search-grounded analysis)
-//   outreach   → claude       (message writing)
-//   coach      → openai       (AI Sales Coach)
-//   onboarding → claude       (company enrichment / brief / documents)
+//   intel_hub  → perplexity   (Intelligence Hub — search-grounded research)
+//   coda       → perplexity   (Intelligence Hub — PESTEL / Porter, search-grounded analysis)
+//   onboarding → perplexity   (Intelligence Hub — company enrichment / brief / documents)
+//   outreach   → claude       (Prospección — message writing)
 //   radar      → claude       (signal detection + message drafts)
+//   coach      → openai       (AI Sales Coach)
 //
 // Required secrets (only the ones for engines actually used need to be set):
 //   ANTHROPIC_API_KEY, OPENAI_API_KEY, PERPLEXITY_API_KEY
@@ -38,10 +38,10 @@ export type Feature =
 export const RECOMMENDED_ENGINE: Record<Feature, Engine> = {
   intel_hub:  "perplexity",
   coda:       "perplexity",
+  onboarding: "perplexity",
   outreach:   "claude",
-  coach:      "openai",
-  onboarding: "claude",
   radar:      "claude",
+  coach:      "openai",
 };
 
 export function isEngine(v: unknown): v is Engine {
