@@ -1374,9 +1374,18 @@
     await gmailFetch('disconnect', {});
   }
 
-  async function fetchGmailThread(threadId) {
+  // `contactEmail` + `since` dejan que gmail-proxy rellene lo que Gmail no
+  // agrupó en el hilo (comprobado con un caso real: un autorespondedor de
+  // "cambié de correo" llegó sin References/In-Reply-To y con el asunto
+  // reescrito, así que Gmail lo puso en un hilo nuevo). `since` acota esa
+  // búsqueda a partir del envío original, para no traer conversaciones viejas
+  // sin relación.
+  async function fetchGmailThread(threadId, contactEmail, since) {
     if (!threadId) throw new Error('Este correo todavía no tiene un hilo en Gmail.');
-    const res = await gmailFetch('thread', { thread_id: threadId });
+    const payload = { thread_id: threadId };
+    if (contactEmail) payload.contact_email = contactEmail;
+    if (since) payload.since = Math.floor(new Date(since).getTime() / 1000);
+    const res = await gmailFetch('thread', payload);
     return {
       mailbox: res?.mailbox || '',
       messages: (res?.messages || []).sort((a, b) => (a.internal_date || 0) - (b.internal_date || 0)),
