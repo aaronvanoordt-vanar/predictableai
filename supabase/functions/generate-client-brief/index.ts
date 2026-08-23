@@ -25,6 +25,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
+import { parseLlmJson } from "../_shared/llm-json.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -46,7 +47,11 @@ async function callAi(engine: Engine, system: string, user: string): Promise<str
     engine,
     system,
     user,
-    maxTokens: 4096,
+    // El brief es el JSON más grande que pide cualquier función: ~20 campos,
+    // varios de ellos arrays, y todo el texto en español (más tokens por
+    // carácter que en inglés). Con 4096 la respuesta se cortaba a mitad de un
+    // array y se perdía la corrida entera.
+    maxTokens: 8192,
     webSearch: 5,
     claudeWebSearchTool: "web_search_20260209",
     retryDelayMs: 8000,
@@ -55,20 +60,10 @@ async function callAi(engine: Engine, system: string, user: string): Promise<str
   return res.text;
 }
 
+// El parser vive en _shared/llm-json.ts: aguanta llaves dentro de strings y
+// respuestas cortadas a mitad, que es como se perdían briefs enteros.
 // deno-lint-ignore no-explicit-any
-function parseJson(raw: string): any {
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  try { return JSON.parse(cleaned); } catch (_) { /* fall through */ }
-  const s = cleaned.indexOf("{");
-  if (s === -1) throw new Error("No JSON found in response");
-  let depth = 0, e = -1;
-  for (let i = s; i < cleaned.length; i++) {
-    if (cleaned[i] === "{") depth++;
-    else if (cleaned[i] === "}") { depth--; if (!depth) { e = i; break; } }
-  }
-  if (e === -1) throw new Error("Unterminated JSON in response");
-  return JSON.parse(cleaned.slice(s, e + 1));
-}
+const parseJson = (raw: string): any => parseLlmJson(raw);
 
 const SYSTEM_PROMPT = `You are the onboarding engine of a B2B sales-intelligence platform. You build a "client brief": the seller context used to write hyper-personalized outbound messages on behalf of this company.
 
@@ -82,7 +77,7 @@ Research the company (web_search their website and LinkedIn page, max 5 searches
   "authority_signals": "extra credibility signals found (partnerships, certifications, client logos, awards). Empty string if none found.",
   "what_it_does": "1 sentence in Spanish: what the company does",
   "mechanism": "2-3 sentences in Spanish describing HOW the product/service delivers its outcome. Concrete verbs, no buzzwords ('end-to-end', 'powered by AI' prohibited).",
-  "key_outcomes": ["3-5 concrete outcomes the customer gets, in Spanish. Use a real figure ONLY when the intake data or the company's own materials state one — never invent, round or estimate a number. When no figure is published, still return the outcomes qualitatively, phrased as what the customer ends up with (e.g. 'Dictámenes de valor defendibles ante auditores, bancos y autoridades fiscales'). Never return an empty array just because there are no numbers."],
+  "key_outcomes": ["3-5 concrete outcomes the customer gets, in Spanish. FIRST look for figures the company itself publishes — most sites have a stats band on the home or about page (headings like 'Nuestra experiencia en números', 'En cifras', 'Our impact', 'By the numbers') with volumes handled, deals closed, years operating or clients served. When you find those, use them VERBATIM with the label they carry (e.g. '$150B en valuaciones corporativas'). Never invent, round or estimate a figure, and never move a figure to a label it did not have. When the site publishes none, still return the outcomes qualitatively, phrased as what the customer ends up with (e.g. 'Dictámenes de valor defendibles ante auditores, bancos y autoridades fiscales'). Never return an empty array."],
   "icp": {
     "industries": ["from intake + research"],
     "company_sizes": ["e.g. '20-200 empleados'"],
@@ -375,6 +370,24 @@ Deno.serve(async (req: Request) => {
       // y las objeciones que él escuchó valen más que las que el modelo supone.
       const declaredProof = (declaredIntake?.social_proof ?? []).filter((p) => p && (p.client || p.result));
       const declaredObjections = (declaredIntake?.common_objections ?? []).filter((o) => o && o.objection);
+      // Se exigen los dos campos completos. Una respuesta truncada que se
+      // reparó puede traer el último elemento a medias ("client" sin "result"),
+      // y media prueba social no se guarda en ningún lado.
+      const proposedProof = arr(b.social_proof)
+        .filter((p) => p && str(p.client) && str(p.result))
+        .slice(0, 6)
+        .map((p) => ({
+          client: str(p.client).slice(0, 120),
+          industry: str(p.industry).slice(0, 120),
+          result: str(p.result).slice(0, 300),
+        }));
+      const proposedObjections = arr(b.common_objections)
+        .filter((o) => o && str(o.objection) && str(o.neutralizer))
+        .slice(0, 6)
+        .map((o) => ({
+          objection: str(o.objection).slice(0, 300),
+          neutralizer: str(o.neutralizer).slice(0, 300),
+        }));
       const modelIcp = (b.icp && typeof b.icp === "object") ? b.icp : {};
       const declaredIcpBlock = {
         ...modelIcp,
@@ -395,8 +408,8 @@ Deno.serve(async (req: Request) => {
         mechanism:           str(b.mechanism) || null,
         key_outcomes:        arr(b.key_outcomes),
         icp:                 declaredIcpBlock,
-        social_proof:        declaredProof.length ? declaredProof : arr(b.social_proof),
-        common_objections:   declaredObjections.length ? declaredObjections : arr(b.common_objections),
+        social_proof:        declaredProof.length ? declaredProof : proposedProof,
+        common_objections:   declaredObjections.length ? declaredObjections : proposedObjections,
         voice_notes:         str(b.voice_notes) || null,
         // El ICP declarado gana; el del modelo solo se usa si el usuario
         // todavía no declaró el suyo. La ampliación hasta ~1000 personas la
@@ -434,24 +447,9 @@ Deno.serve(async (req: Request) => {
       // llegan como borrador que él revisa antes de confirmar el contexto.
       // deno-lint-ignore no-explicit-any
       const fill: Record<string, any> = { ...healed };
-      const proposedProof = arr(b.social_proof)
-        .filter((p) => p && str(p.client) && str(p.result))
-        .slice(0, 6)
-        .map((p) => ({
-          client: str(p.client).slice(0, 120),
-          industry: str(p.industry).slice(0, 120),
-          result: str(p.result).slice(0, 300),
-        }));
       if (!declaredProof.length && intakeRow?.social_proof_none !== true && proposedProof.length) {
         fill.social_proof = proposedProof;
       }
-      const proposedObjections = arr(b.common_objections)
-        .filter((o) => o && str(o.objection) && str(o.neutralizer))
-        .slice(0, 6)
-        .map((o) => ({
-          objection: str(o.objection).slice(0, 300),
-          neutralizer: str(o.neutralizer).slice(0, 300),
-        }));
       if (!declaredObjections.length && intakeRow?.objections_none !== true && proposedObjections.length) {
         fill.common_objections = proposedObjections;
       }
