@@ -2658,18 +2658,14 @@
     if (!sel.length) return toast('Selecciona al menos un contacto.', 'warn');
     var phoneCb = h('input', { type: 'checkbox' });
     phoneCb.checked = true;
-    var prog = progressLine();
-    var failHost = h('div', null);
     var bodyN = h('div', null,
       h('p', {
         style: 'font-size:13px;color:var(--text2);margin:0 0 12px;line-height:1.55',
         text: 'Se revelará el email personal y (opcional) el teléfono de ' + fmtNum(sel.length) +
           ' contactos vía Apollo. Costo: ≈1 crédito por contacto; los números móviles pueden consumir créditos adicionales. ' +
-          'Los teléfonos llegan de forma asíncrona: usa «Actualizar» en unos minutos.',
+          'El enriquecimiento corre en segundo plano — puedes seguir usando la app; usa «Actualizar» en unos minutos para ver los resultados.',
       }),
-      h('label', { class: 'pros-check', style: 'display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text2);cursor:pointer;font-family:var(--font-body);font-weight:400;text-transform:none;letter-spacing:0' }, phoneCb, 'Incluir teléfonos'),
-      prog.el,
-      failHost);
+      h('label', { class: 'pros-check', style: 'display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text2);cursor:pointer;font-family:var(--font-body);font-weight:400;text-transform:none;letter-spacing:0' }, phoneCb, 'Incluir teléfonos'));
     var api = openModal({
       title: 'Enriquecer contactos',
       bodyNode: bodyN,
@@ -2679,38 +2675,28 @@
           label: 'Enriquecer',
           className: 'btn btn-primary',
           onClick: function () {
-            api.setBusy(true);
-            return Promise.resolve(pd().enrichMembers({
-              members: sel,
-              revealPhones: phoneCb.checked,
-              onProgress: function (p) {
-                prog.set('Enriqueciendo ' + fmtNum((p && p.done) || 0) + ' de ' + fmtNum((p && p.total) || sel.length) + '…');
-              },
-            })).then(function (res) {
-              prog.hide();
-              res = res || {};
-              var failed = res.failed || [];
-              toast(
-                fmtNum(res.updated || 0) + ' contactos actualizados' +
-                (res.phonePending ? ' · ' + fmtNum(res.phonePending) + ' teléfonos pendientes' : '') +
-                (failed.length ? ' · ' + fmtNum(failed.length) + ' fallaron' : ''),
-                failed.length ? 'warn' : 'success'
-              );
-              if (failed.length) {
-                failHost.innerHTML = '';
-                failHost.appendChild(modalFailList(failed));
-                api.setBusy(false);
-                if (api.buttons[1]) api.buttons[1].style.display = 'none';
-                if (api.buttons[0]) { api.buttons[0].textContent = 'Cerrar'; api.buttons[0].disabled = false; api.buttons[0].style.opacity = ''; }
-              } else {
-                api.close();
-              }
-              return reloadMembers();
-            }).catch(function (e) {
-              prog.hide();
-              api.setBusy(false);
-              toast(errMsg(e), 'error');
-            });
+            var members = sel;
+            var revealPhones = phoneCb.checked;
+            var targetListId = state.listas.activeListId;
+            // No bloquea el modal: el enriquecimiento sigue en segundo plano
+            // (mismo espíritu que los teléfonos, que ya llegan async vía
+            // apollo-webhook) — cerrar de inmediato evita que tardar en
+            // enriquecer a todos malogre la experiencia.
+            api.close();
+            toast('Enriqueciendo ' + fmtNum(members.length) + ' contacto' + (members.length === 1 ? '' : 's') + ' en segundo plano…', 'info');
+            Promise.resolve(pd().enrichMembers({ members: members, revealPhones: revealPhones }))
+              .then(function (res) {
+                res = res || {};
+                var failed = res.failed || [];
+                toast(
+                  fmtNum(res.updated || 0) + ' contactos actualizados' +
+                  (res.phonePending ? ' · ' + fmtNum(res.phonePending) + ' teléfonos pendientes' : '') +
+                  (failed.length ? ' · ' + fmtNum(failed.length) + ' fallaron' : ''),
+                  failed.length ? 'warn' : 'success'
+                );
+                if (state.listas.activeListId && state.listas.activeListId === targetListId) reloadMembers();
+              })
+              .catch(function (e) { toast(errMsg(e), 'error'); });
           },
         },
       ],
@@ -4945,6 +4931,18 @@
     refreshBadge: refreshBadge,
     openEditContact: openEditContactModal,
   };
+
+  // Otros módulos (p. ej. Radar) crean listas llamando directo a
+  // prospectingData.createList, sin pasar por este archivo: escuchar el
+  // evento evita que la pestaña Listas se quede con el caché viejo hasta
+  // un refresh completo de la página.
+  document.addEventListener('prospecting:list-saved', function () {
+    state.cache.lists = null;
+    refreshBadge();
+    if (state.activeTab === 'listas') {
+      loadLists(true).then(renderListsLeft).catch(function () {});
+    }
+  });
 
   // Badge de listas al cargar la app (la versión anterior lo poblaba en cada
   // load): esperar a que auth-guard exponga la sesión y refrescar una vez.
