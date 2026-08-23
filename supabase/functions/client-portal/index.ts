@@ -22,8 +22,9 @@
  *   get             → { can_edit, client, photo_url, materials[] }
  *   save            → { ok } — patch de icp / industries / historical_notes /
  *                     target_countries. Nada más es editable desde el portal:
- *                     las métricas del CRM, el status, las fechas y los links
- *                     de trabajo son datos de operación del equipo.
+ *                     las métricas del CRM (y sus umbrales/estrategias de
+ *                     remediación), el status, las fechas y los links de
+ *                     trabajo son datos de operación del equipo.
  *   upload_url      → { path, upload_token } — signed upload URL para foto/PDF
  *   commit_photo    → { photo_url } — fija la foto recién subida
  *   commit_material → { material } — registra el PDF recién subido
@@ -66,8 +67,8 @@ const EDITABLE_TEXT: Record<string, number> = {
 const CLIENT_COLUMNS = [
   "name", "status", "country", "start_date", "meta", "linkedin_status",
   "prospecting_brief_url", "crm_sheet_url", "campaigns_url", "matriz_url",
-  "kickoff_url", "crm_metrics", "target_countries", "icp", "industries",
-  "historical_notes", "portal_updated_at",
+  "kickoff_url", "crm_metrics", "metric_strategies", "target_countries", "icp",
+  "industries", "historical_notes", "portal_updated_at",
 ];
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

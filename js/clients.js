@@ -85,6 +85,23 @@
     { k: 'kickoff_url',           label: 'Kick Off' },
   ];
 
+  // Cada ratio se calcula sobre el dato anterior del embudo (no siempre sobre
+  // "contactados"): reply rate es de los que leyeron, conversion rate es de
+  // los que respondieron. type/target son el umbral mínimo aceptable —
+  // 'min' quiere decir "al menos", 'max' quiere decir "cuando mucho".
+  var THRESHOLDS = [
+    { key: 'open',         label: 'Open rate',         hint: 'leídos / contactados',        type: 'min', target: 50,
+      n: function (m) { return num(m.opened); },            d: function (m) { return num(m.contacted); } },
+    { key: 'reply',        label: 'Reply rate',        hint: 'respondidos / leídos',        type: 'min', target: 30,
+      n: function (m) { return num(m.replied); },           d: function (m) { return num(m.opened); } },
+    { key: 'conversion',   label: 'Conversion rate',   hint: 'agendadas / respondidos',     type: 'min', target: 5,
+      n: function (m) { return num(m.meetings_scheduled); }, d: function (m) { return num(m.replied); } },
+    { key: 'no_show',      label: 'No-show rate',      hint: 'no shows / agendadas',        type: 'max', target: 25,
+      n: function (m) { return num(m.no_shows); },          d: function (m) { return num(m.meetings_scheduled); } },
+    { key: 'disqualified', label: 'Disqualified rate', hint: 'descalificadas / agendadas',  type: 'max', target: 20,
+      n: function (m) { return num(m.disqualified); },      d: function (m) { return num(m.meetings_scheduled); } },
+  ];
+
   // ── Module state ───────────────────────────────────────────────────────
   var state = {
     built: false,
@@ -213,22 +230,38 @@
 
   function num(v) { var n = parseInt(v, 10); return isNaN(n) || n < 0 ? 0 : n; }
 
-  function pct(numr, den) {
-    if (!den) return '—';
-    return (Math.round((numr / den) * 1000) / 10).toFixed(1).replace(/\.0$/, '') + '%';
+  function rawPct(numr, den) {
+    if (!den) return null;
+    return Math.round((numr / den) * 1000) / 10;
+  }
+
+  function fmtPct(raw) {
+    return raw == null ? '—' : (raw.toFixed(1).replace(/\.0$/, '') + '%');
+  }
+
+  // status: 'ok' (cumple el umbral) / 'bad' (por debajo) / 'na' (sin dato).
+  // pct: qué tan lejos está del umbral, 0..1, para el degradado de color.
+  function ratioStatus(raw, type, target) {
+    if (raw == null) return { status: 'na', pct: 0 };
+    var good = type === 'min' ? raw >= target : raw <= target;
+    var dist = target > 0 ? Math.abs((type === 'min' ? raw - target : target - raw)) / target : 0;
+    return { status: good ? 'ok' : 'bad', pct: Math.max(0, Math.min(1, dist)) };
+  }
+
+  function targetLabel(t) {
+    return (t.type === 'min' ? '≥ ' : '≤ ') + t.target + '%';
   }
 
   function computeRatios(m) {
     m = m || {};
-    var contacted = num(m.contacted), opened = num(m.opened), replied = num(m.replied);
-    var sched = num(m.meetings_scheduled), noShows = num(m.no_shows), disq = num(m.disqualified);
-    return [
-      { label: 'Open rate',           hint: 'leídos / contactados',        val: pct(opened, contacted) },
-      { label: 'Reply rate',          hint: 'respondidos / contactados',   val: pct(replied, contacted) },
-      { label: 'Conversion rate',     hint: 'agendadas / contactados',     val: pct(sched, contacted) },
-      { label: 'No-show rate',        hint: 'no shows / agendadas',        val: pct(noShows, sched) },
-      { label: 'Disqualified rate',   hint: 'descalificadas / agendadas',  val: pct(disq, sched) },
-    ];
+    return THRESHOLDS.map(function (t) {
+      var raw = rawPct(t.n(m), t.d(m));
+      var st = ratioStatus(raw, t.type, t.target);
+      return {
+        key: t.key, label: t.label, hint: t.hint, val: fmtPct(raw), raw: raw,
+        type: t.type, target: t.target, status: st.status, pct: st.pct,
+      };
+    });
   }
 
   // Convierte un link de Google Sheets a su URL embebible; null si no aplica.
@@ -333,6 +366,17 @@
       '.cl-ratio{background:var(--accent-soft-2);border:1px solid var(--hair);border-radius:var(--r);padding:8px 12px;display:flex;flex-direction:column;gap:2px;min-width:110px}',
       '.cl-ratio b{font-size:16px;font-weight:800;color:var(--accent-ink)}',
       '.cl-ratio span{font-size:10.5px;color:var(--ink-3);font-weight:600}',
+      '.cl-thr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}',
+      '.cl-thr{border:1px solid var(--hair);border-radius:var(--r);padding:10px 12px;display:flex;flex-direction:column;gap:5px;min-width:0;transition:background .2s,border-color .2s}',
+      '.cl-thr-top{display:flex;align-items:center;justify-content:space-between;gap:8px}',
+      '.cl-thr-lbl{font-size:11.5px;font-weight:700;color:var(--ink-2)}',
+      '.cl-thr-badge{font-size:9.5px;font-weight:800;padding:1px 7px;border-radius:999px;letter-spacing:.03em;color:#fff;flex:none}',
+      '.cl-thr-val{font-size:17px;font-weight:800;color:var(--ink)}',
+      '.cl-thr-target{font-size:10.5px;color:var(--ink-3);font-weight:600}',
+      '.cl-thr-strategy{margin-top:4px;display:flex;flex-direction:column;gap:4px}',
+      '.cl-thr-strategy label{font-size:9.5px;font-weight:800;color:var(--red);text-transform:uppercase;letter-spacing:.04em}',
+      '.cl-thr-strategy textarea{width:100%;min-height:64px;resize:vertical;background:var(--surface);border:1px solid var(--hair-3);border-radius:var(--r-sm);padding:6px 8px;font-size:12px;line-height:1.4;font-family:inherit;color:var(--ink)}',
+      '.cl-thr-strategy textarea:focus{outline:none;border-color:var(--accent)}',
       '.cl-sheet-frame{width:100%;height:380px;border:1px solid var(--hair);border-radius:var(--r);background:var(--surface2)}',
       '.cl-countries{display:flex;flex-wrap:wrap;gap:6px}',
       '.cl-cty{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;border:1px solid var(--hair-3);background:var(--surface);font-size:12px;font-weight:600;cursor:pointer;color:var(--ink-2);font-family:inherit}',
@@ -608,6 +652,8 @@
             '<div class="cl-lbl" style="margin-top:4px">Datos críticos</div>' +
             '<div class="cl-metrics">' + metricCells + '</div>' +
             '<div class="cl-ratios" id="cl-ratios"></div>' +
+            '<div class="cl-lbl" style="margin-top:6px">Umbrales mínimos aceptables</div>' +
+            '<div class="cl-thr-grid" id="cl-thresholds"></div>' +
             '<div id="cl-sheet-embed">' +
               (embed
                 ? '<iframe class="cl-sheet-frame" src="' + esc(embed) + '" loading="lazy" referrerpolicy="no-referrer"></iframe>'
@@ -650,6 +696,7 @@
 
     bindDetail();
     renderRatios();
+    renderThresholds();
     renderMaterials();
   }
 
@@ -712,6 +759,7 @@
         state.current.crm_metrics = metrics;
         queueSave({ crm_metrics: metrics });
         renderRatios();
+        renderThresholds();
       });
     });
 
@@ -828,6 +876,48 @@
       return '<div class="cl-ratio"><b>' + esc(r.val) + '</b><span>' + esc(r.label) + '</span>' +
         '<span style="opacity:.7">' + esc(r.hint) + '</span></div>';
     }).join('');
+  }
+
+  // Umbrales mínimos aceptables por ratio: verde/rojo en degradado según qué
+  // tan lejos está el valor del umbral, y un textarea de estrategia de
+  // remediación cuando el ratio está en rojo (se guarda en metric_strategies,
+  // por eso también la ve el cliente en su portal, en solo lectura).
+  function renderThresholds() {
+    var host = document.getElementById('cl-thresholds');
+    if (!host || !state.current) return;
+    var strategies = state.current.metric_strategies || {};
+
+    host.innerHTML = computeRatios(state.current.crm_metrics).map(function (r) {
+      var color = r.status === 'ok' ? 'green' : (r.status === 'bad' ? 'red' : null);
+      var boxStyle = color
+        ? 'background:color-mix(in srgb, var(--' + color + ') ' + (14 + Math.round(r.pct * 56)) + '%, var(--surface2));' +
+          'border-color:color-mix(in srgb, var(--' + color + ') 55%, var(--hair))'
+        : 'background:var(--surface2)';
+      var badge = color
+        ? '<span class="cl-thr-badge" style="background:var(--' + color + ')">' + (r.status === 'ok' ? 'OK' : 'BAJO') + '</span>'
+        : '';
+      var strategy = r.status === 'bad'
+        ? '<div class="cl-thr-strategy"><label>Estrategia de remediación</label>' +
+          '<textarea data-strategy="' + r.key + '" placeholder="¿Qué harás para mejorar esta métrica?">' + esc(strategies[r.key] || '') + '</textarea></div>'
+        : '';
+      return '<div class="cl-thr" style="' + boxStyle + '">' +
+        '<div class="cl-thr-top"><span class="cl-thr-lbl">' + esc(r.label) + '</span>' + badge + '</div>' +
+        '<span class="cl-thr-val">' + esc(r.val) + '</span>' +
+        '<span class="cl-thr-target">Mínimo aceptable: ' + esc(targetLabel(r)) + '</span>' +
+        strategy +
+        '</div>';
+    }).join('');
+
+    host.querySelectorAll('[data-strategy]').forEach(function (ta) {
+      ta.addEventListener('input', function () {
+        var next = Object.assign({}, state.current.metric_strategies || {});
+        var key = ta.getAttribute('data-strategy');
+        var v = ta.value.trim();
+        if (v) next[key] = v; else delete next[key];
+        state.current.metric_strategies = next;
+        queueSave({ metric_strategies: next });
+      });
+    });
   }
 
   function fmtSize(bytes) {
