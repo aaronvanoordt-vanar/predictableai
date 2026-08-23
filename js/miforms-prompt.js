@@ -109,6 +109,11 @@
 
   function showPopup(userId) {
     if (document.getElementById('miforms-popup-back')) return;
+    // Mientras la plataforma esté bloqueada por falta de contexto, este popup
+    // compite con el único paso que el usuario debe dar. Se pospone: el
+    // afordance del menú lateral sigue disponible, y la marca de "ya lo vio"
+    // no se escribe, así que reaparece cuando el contexto esté confirmado.
+    if (window.ContextGate && window.ContextGate.completeness() && !window.ContextGate.isComplete()) return;
     markPopupSeen(userId);
 
     var back = document.createElement('div');

@@ -26,10 +26,11 @@
  *     so a single step can no longer wander through a dozen search rounds.
  *     `effort: "medium"` keeps these focused extraction calls from
  *     over-deliberating — same fields, less thinking spend.
- *  2. Fan-out instead of one fat call. The website pass is split into two
- *     narrower prompts (profile vs. ICP pain points) that run concurrently,
- *     so the website phase costs max(a, b) instead of a + b, and each prompt
- *     is more focused than the combined one it replaces.
+ *  2. Fan-out instead of one fat call. The website pass is split into three
+ *     narrower prompts (firmographic profile, ICP pain points, and the ICP /
+ *     commercial proposal) that run concurrently, so the website phase costs
+ *     max(a, b, c) instead of a + b + c, and each prompt is more focused than
+ *     a combined one would be.
  *  3. Progressive writes. Every step commits its own fields to
  *     intel_hub_intake the moment it resolves, together with a real progress
  *     checkpoint. The client subscribes via realtime, so the cards on
@@ -51,8 +52,17 @@
  *     evidences them (LinkedIn URL is left untouched either way).
  *
  * Together with generate-client-brief (which derives what_it_does, mechanism,
- * positional_phrase and key_outcomes from this same grounded data), this
- * covers all 7 modules of "Contexto de tu empresa" end to end.
+ * positional_phrase and key_outcomes from this same grounded data), this cubre
+ * las 13 tarjetas de "Contexto de tu empresa" de punta a punta — los dos
+ * bloques, el interno y el externo.
+ *
+ * Sobre el bloque externo (a quién le vende el cliente): se PROPONE aquí con
+ * los valores exactos de la taxonomía de Apollo (ver _shared/icp-taxonomy.ts),
+ * y el usuario lo confirma en la página de contexto. Mientras
+ * intel_hub_intake.context_confirmed_at sea NULL esta función puede
+ * sobrescribir esos campos; después de la confirmación solo rellena huecos,
+ * porque ya son una decisión del usuario y de ellos dependen el radar, la
+ * búsqueda recomendada y los mensajes.
  *
  * Stores enriched data in intel_hub_intake.
  *
@@ -67,6 +77,11 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
+import {
+  ICP_COUNTRIES, ICP_INDUSTRIES, ICP_EMPLOYEE_RANGES, ICP_DEPARTMENTS, ICP_SENIORITIES,
+  BUSINESS_MODELS, DEAL_SIZES, SALES_CYCLES, CTAS, TONES, CHANNELS, LANGUAGES,
+  allowOnly, allowOne, freeList,
+} from "../_shared/icp-taxonomy.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -218,6 +233,95 @@ ${IDENTITY_GUARDRAIL}
   return str(p.pain_points);
 }
 
+// El ICP externo (a quién le vende el cliente) es la mitad del contexto que
+// más se usa después: define en qué países investiga el radar, con qué filtros
+// arranca la búsqueda de prospección y a quién le habla cada mensaje. Hasta
+// ahora nadie lo llenaba — se deducía al revés, de las búsquedas que el usuario
+// hubiera hecho. Aquí se propone a partir de la web del cliente, con los
+// valores EXACTOS de la taxonomía de Apollo para que la búsqueda pueda
+// aplicarlos sin re-adivinarlos.
+interface IcpProposal {
+  icp_countries: string[];
+  icp_industry_tags: string[];
+  icp_employee_ranges: string[];
+  icp_departments: string[];
+  icp_seniorities: string[];
+  icp_titles: string[];
+  icp_buying_triggers: string;
+  icp_disqualifiers: string;
+  competitors: { name: string; domain: string }[];
+  commercial_model: string;
+  commercial_deal_size: string;
+  commercial_sales_cycle: string;
+  commercial_primary_cta: string;
+  outreach_tone: string;
+  outreach_channels: string[];
+  outreach_language: string;
+}
+
+async function researchIcpProposal(engine: Engine, website: string, knownAbout: string): Promise<IcpProposal> {
+  const system = `You are a B2B go-to-market analyst. Your ONLY source is the exact website URL given below. From what this company sells, infer WHO THEY SELL TO and how they sell — this is about their CUSTOMERS, not about themselves.
+Respond ONLY with valid JSON, no markdown fences, no explanation:
+{
+  "icp_countries": ["countries they target, chosen ONLY from the allowed list below"],
+  "icp_industry_tags": ["industries of their CUSTOMERS (not their own), ONLY from the allowed list below"],
+  "icp_employee_ranges": ["company sizes of their customers, ONLY from the allowed list below"],
+  "icp_departments": ["departments where the buyer sits, ONLY from the allowed list below"],
+  "icp_seniorities": ["decision-maker levels, ONLY from the allowed list below"],
+  "icp_titles": ["3-8 concrete job titles of the decision maker, free text, in the language the buyer uses on LinkedIn"],
+  "icp_buying_triggers": "1-2 sentences in Spanish: observable public events that mean a company is ready to buy this (funding, hiring, expansion, tooling change). Empty string if not inferable.",
+  "icp_disqualifiers": "1 sentence in Spanish: who is clearly NOT a fit. Empty string if not inferable.",
+  "competitors": [{"name": "Direct competitor company name", "domain": "competitor.com"}],
+  "commercial_model": "one of: ${BUSINESS_MODELS.join(" | ")}",
+  "commercial_deal_size": "one of: ${DEAL_SIZES.join(" | ")}",
+  "commercial_sales_cycle": "one of: ${SALES_CYCLES.join(" | ")}",
+  "commercial_primary_cta": "one of: ${CTAS.join(" | ")}",
+  "outreach_tone": "one of: ${TONES.join(" | ")}",
+  "outreach_channels": ["subset of: ${CHANNELS.join(", ")}"],
+  "outreach_language": "one of: ${LANGUAGES.join(" | ")}"
+}
+
+ALLOWED VALUES — any value outside these lists is discarded, so pick from them verbatim:
+- icp_countries: ${ICP_COUNTRIES.join(", ")}
+- icp_industry_tags: ${ICP_INDUSTRIES.join(", ")}
+- icp_employee_ranges: ${ICP_EMPLOYEE_RANGES.join(", ")}
+- icp_departments: ${ICP_DEPARTMENTS.join(", ")}
+- icp_seniorities: ${ICP_SENIORITIES.join(", ")}
+
+${IDENTITY_GUARDRAIL}
+- These are PROPOSALS the user will review and confirm, so a reasoned best guess beats an empty array. Still, never invent a competitor that does not exist or a country with no evidence at all: an empty array is better than a fabricated entry.
+- Aim wide but coherent: 2-6 countries, 2-8 industries, 2-5 employee ranges, 1-4 departments, 2-5 seniorities.`;
+  const hostname = siteScope(website);
+  const prompt = `Visit this exact company website (a site-scoped query like site:${hostname} is fine, but every fact must trace back to this domain) and infer who this company sells to and how:\n${website}\n\nWhat's already known about them: ${knownAbout || "(nothing yet)"}`;
+  const p = parseJson(await callAi(engine, system, prompt, { maxUses: 3, maxTokens: 1400 }));
+  const competitors = Array.isArray(p.competitors)
+    ? p.competitors
+        .filter((c: unknown) => c && typeof c === "object")
+        // deno-lint-ignore no-explicit-any
+        .map((c: any) => ({ name: str(c.name).slice(0, 80), domain: str(c.domain).slice(0, 120) }))
+        .filter((c: { name: string }) => c.name)
+        .slice(0, 6)
+    : [];
+  return {
+    icp_countries:       allowOnly(p.icp_countries, ICP_COUNTRIES, 12),
+    icp_industry_tags:   allowOnly(p.icp_industry_tags, ICP_INDUSTRIES, 12),
+    icp_employee_ranges: allowOnly(p.icp_employee_ranges, ICP_EMPLOYEE_RANGES, 8),
+    icp_departments:     allowOnly(p.icp_departments, ICP_DEPARTMENTS, 8),
+    icp_seniorities:     allowOnly(p.icp_seniorities, ICP_SENIORITIES, 8),
+    icp_titles:          freeList(p.icp_titles, 10),
+    icp_buying_triggers: str(p.icp_buying_triggers),
+    icp_disqualifiers:   str(p.icp_disqualifiers),
+    competitors,
+    commercial_model:       allowOne(p.commercial_model, BUSINESS_MODELS),
+    commercial_deal_size:   allowOne(p.commercial_deal_size, DEAL_SIZES),
+    commercial_sales_cycle: allowOne(p.commercial_sales_cycle, SALES_CYCLES),
+    commercial_primary_cta: allowOne(p.commercial_primary_cta, CTAS),
+    outreach_tone:          allowOne(p.outreach_tone, TONES),
+    outreach_channels:      allowOnly(p.outreach_channels, CHANNELS, 4),
+    outreach_language:      allowOne(p.outreach_language, LANGUAGES),
+  };
+}
+
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get("origin") ?? "*";
   const h = corsHeaders(origin);
@@ -323,7 +427,62 @@ Deno.serve(async (req: Request) => {
       })
       .catch((e) => { console.warn("[enrich] website pains step failed:", e); });
 
-    await Promise.all([profileTask, painsTask]);
+    // Propuesta del ICP externo + datos comerciales. Regla de escritura: antes
+    // de que el usuario confirme su contexto la IA puede proponer libremente;
+    // una vez confirmado (context_confirmed_at) solo rellena huecos, porque
+    // esos valores ya son una decisión suya y de ellos dependen el radar, la
+    // búsqueda y los mensajes.
+    const icpTask = researchIcpProposal(engine, website, knownAbout)
+      .then(async (icp) => {
+        const { data: current } = await supa.from("intel_hub_intake")
+          .select("context_confirmed_at, icp_countries, icp_industry_tags, icp_employee_ranges, icp_departments, icp_seniorities, icp_titles, icp_buying_triggers, icp_disqualifiers, competitors, commercial_model, commercial_deal_size, commercial_sales_cycle, commercial_primary_cta, outreach_tone, outreach_channels, outreach_language")
+          .eq("user_id", user.id).maybeSingle();
+        const confirmed = Boolean(current?.context_confirmed_at);
+        // deno-lint-ignore no-explicit-any
+        const isEmpty = (v: any) => v === null || v === undefined || v === "" ||
+          (Array.isArray(v) && v.length === 0);
+        // deno-lint-ignore no-explicit-any
+        const fields: Record<string, any> = {};
+        // deno-lint-ignore no-explicit-any
+        const put = (key: string, value: any) => {
+          if (isEmpty(value)) return;
+          // deno-lint-ignore no-explicit-any
+          if (confirmed && !isEmpty((current as any)?.[key])) return;
+          fields[key] = value;
+        };
+        put("icp_countries", icp.icp_countries);
+        put("icp_industry_tags", icp.icp_industry_tags);
+        put("icp_employee_ranges", icp.icp_employee_ranges);
+        put("icp_departments", icp.icp_departments);
+        put("icp_seniorities", icp.icp_seniorities);
+        put("icp_titles", icp.icp_titles);
+        put("icp_buying_triggers", icp.icp_buying_triggers);
+        put("icp_disqualifiers", icp.icp_disqualifiers);
+        put("competitors", icp.competitors);
+        put("commercial_model", icp.commercial_model);
+        put("commercial_deal_size", icp.commercial_deal_size);
+        put("commercial_sales_cycle", icp.commercial_sales_cycle);
+        put("commercial_primary_cta", icp.commercial_primary_cta);
+        put("outreach_tone", icp.outreach_tone);
+        put("outreach_channels", icp.outreach_channels);
+        put("outreach_language", icp.outreach_language);
+        // Espejo hacia las columnas de texto que ya leen generate-radar,
+        // generate-client-brief y generate-coda (mismo criterio que
+        // CompanyContext.legacyMirror en el cliente).
+        if (fields.icp_countries) fields.icp_geographies = icp.icp_countries.join(", ");
+        if (fields.icp_industry_tags) fields.icp_industries = icp.icp_industry_tags.join(", ");
+        if (fields.icp_employee_ranges) {
+          fields.icp_company_sizes = icp.icp_employee_ranges.map((r) => r.replace(",", "-")).join(", ");
+        }
+        if (fields.icp_titles || fields.icp_seniorities) {
+          fields.icp_roles = icp.icp_titles.concat(icp.icp_seniorities).join(", ");
+        }
+        if (Object.keys(fields).length === 0) return;
+        await patch(fields, 92, "Cliente objetivo propuesto…");
+      })
+      .catch((e) => { console.warn("[enrich] icp proposal step failed:", e); });
+
+    await Promise.all([profileTask, painsTask, icpTask]);
   }
 
   const finish = async (websiteFound: boolean) => {

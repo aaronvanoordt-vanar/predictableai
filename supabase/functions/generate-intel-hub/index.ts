@@ -665,6 +665,19 @@ interface IntakeData {
   value_problem_solved:   string | null;
   value_proposition:      string | null;
   value_success_cases:    string | null;
+  // Contexto de empresa v2 (declarado y confirmado por el usuario). Los arrays
+  // traen valores exactos de la taxonomía de Apollo; las columnas de texto de
+  // arriba son su espejo, y se mantienen por compatibilidad.
+  icp_countries:          string[] | null;
+  icp_industry_tags:      string[] | null;
+  icp_employee_ranges:    string[] | null;
+  icp_titles:             string[] | null;
+  icp_seniorities:        string[] | null;
+  icp_buying_triggers:    string | null;
+  icp_disqualifiers:      string | null;
+  competitors:            { name?: string; domain?: string }[] | null;
+  commercial_model:       string | null;
+  commercial_deal_size:   string | null;
 }
 
 function buildCompanyContext(intake: IntakeData): string {
@@ -679,11 +692,26 @@ function buildCompanyContext(intake: IntakeData): string {
   if (intake.company_solutions)      lines.push(`Products/Solutions: ${intake.company_solutions}`);
 
   lines.push("", "=== IDEAL CUSTOMER PROFILE (ICP) ===");
-  if (intake.icp_company_sizes) lines.push(`Target Company Sizes: ${intake.icp_company_sizes}`);
-  if (intake.icp_industries)    lines.push(`Target Industries: ${intake.icp_industries}`);
-  if (intake.icp_roles)         lines.push(`Decision Maker Roles: ${intake.icp_roles}`);
-  if (intake.icp_geographies)   lines.push(`Target Geographies: ${intake.icp_geographies}`);
+  const list = (v: string[] | null) => (Array.isArray(v) && v.length ? v.join(", ") : "");
+  const sizes = list(intake.icp_employee_ranges) || intake.icp_company_sizes;
+  const industries = list(intake.icp_industry_tags) || intake.icp_industries;
+  const roles = [list(intake.icp_titles), list(intake.icp_seniorities)].filter(Boolean).join(" | ") || intake.icp_roles;
+  const geos = list(intake.icp_countries) || intake.icp_geographies;
+  if (sizes)      lines.push(`Target Company Sizes: ${sizes}`);
+  if (industries) lines.push(`Target Industries: ${industries}`);
+  if (roles)      lines.push(`Decision Maker Roles: ${roles}`);
+  // Los países objetivo acotan TODO el research del hub: sin esto los agentes
+  // analizan un mercado que al vendedor no le sirve.
+  if (geos)       lines.push(`Target Geographies (research and benchmarks MUST focus on these markets): ${geos}`);
   if (intake.icp_pain_points)   lines.push(`ICP Pain Points: ${intake.icp_pain_points}`);
+  if (intake.icp_buying_triggers) lines.push(`Buying Triggers: ${intake.icp_buying_triggers}`);
+  if (intake.icp_disqualifiers)   lines.push(`Not a fit: ${intake.icp_disqualifiers}`);
+  const competitors = Array.isArray(intake.competitors)
+    ? intake.competitors.map((c) => [c?.name, c?.domain].filter(Boolean).join(" — ")).filter(Boolean)
+    : [];
+  if (competitors.length) lines.push(`Direct competitors named by the seller (track these in the competitor sections): ${competitors.join("; ")}`);
+  if (intake.commercial_model)     lines.push(`Business model: ${intake.commercial_model}`);
+  if (intake.commercial_deal_size) lines.push(`Average deal size: ${intake.commercial_deal_size}`);
 
   lines.push("", "=== VALUE PROPOSITION ===");
   if (intake.value_problem_solved) lines.push(`Problem Solved: ${intake.value_problem_solved}`);
@@ -852,7 +880,10 @@ async function runGeneration(
       company_industry, company_employee_count, company_country,
       company_website, company_about, company_solutions,
       icp_company_sizes, icp_industries, icp_roles, icp_geographies, icp_pain_points,
-      value_problem_solved, value_proposition, value_success_cases
+      value_problem_solved, value_proposition, value_success_cases,
+      icp_countries, icp_industry_tags, icp_employee_ranges, icp_titles, icp_seniorities,
+      icp_buying_triggers, icp_disqualifiers, competitors,
+      commercial_model, commercial_deal_size
     `)
     .eq("user_id", userId)
     .maybeSingle();

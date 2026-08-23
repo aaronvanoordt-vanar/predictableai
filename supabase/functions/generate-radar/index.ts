@@ -334,7 +334,7 @@ async function loadSellerContext(
   const [{ data: profile }, { data: intake }, { data: brief }] = await Promise.all([
     supa.from("profiles").select("company_name, linkedin_company_url, company_website").eq("id", userId).maybeSingle(),
     supa.from("intel_hub_intake").select(
-      "company_linkedin_url, company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, icp_industries, icp_roles, icp_geographies, icp_company_sizes, icp_pain_points, value_problem_solved, value_proposition",
+      "company_linkedin_url, company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, icp_industries, icp_roles, icp_geographies, icp_company_sizes, icp_pain_points, value_problem_solved, value_proposition, icp_countries, icp_industry_tags, icp_employee_ranges, icp_departments, icp_seniorities, icp_titles, icp_buying_triggers, icp_disqualifiers, competitors, excluded_companies",
     ).eq("user_id", userId).maybeSingle(),
     supa.from("client_brief").select(
       "company_name, what_it_does, mechanism, positional_phrase, icp, status",
@@ -354,11 +354,22 @@ async function loadSellerContext(
   push("What it does", brief?.what_it_does);
   push("Mechanism", brief?.mechanism);
   push("Positioning", brief?.positional_phrase);
-  push("ICP industries", intake?.icp_industries);
-  push("ICP roles", intake?.icp_roles);
-  push("ICP geographies", intake?.icp_geographies);
-  push("ICP company sizes", intake?.icp_company_sizes);
+  // ICP declarado en el contexto de empresa (valores exactos elegidos por el
+  // usuario). Manda sobre las columnas de texto viejas, que son su espejo.
+  const list = (v: unknown) => (Array.isArray(v) ? v.filter(Boolean).join(", ") : "");
+  push("ICP industries", list(intake?.icp_industry_tags) || intake?.icp_industries);
+  push("ICP roles", [list(intake?.icp_titles), list(intake?.icp_seniorities), list(intake?.icp_departments)].filter(Boolean).join(" | ") || intake?.icp_roles);
+  push("ICP geographies (RESTRICT RESEARCH TO THESE COUNTRIES)", list(intake?.icp_countries) || intake?.icp_geographies);
+  push("ICP company sizes", list(intake?.icp_employee_ranges) || intake?.icp_company_sizes);
   push("Customer pain points", intake?.icp_pain_points);
+  push("Buying triggers the seller declared (the signal to look for unless the user asked for another)", intake?.icp_buying_triggers);
+  push("Disqualifiers — never return companies like these", intake?.icp_disqualifiers);
+  const competitors = Array.isArray(intake?.competitors)
+    // deno-lint-ignore no-explicit-any
+    ? (intake.competitors as any[]).map((c) => asStr(c?.name)).filter(Boolean)
+    : [];
+  push("Direct competitors — NEVER return these or their subsidiaries as prospects", competitors.join(", "));
+  push("Companies the seller excluded by hand — never return them", list(intake?.excluded_companies));
   push("Problem solved", intake?.value_problem_solved);
   push("Value proposition", intake?.value_proposition);
   if (brief?.status === "ready" && brief?.icp) {
