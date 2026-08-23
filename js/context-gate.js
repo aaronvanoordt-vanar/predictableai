@@ -9,7 +9,11 @@
  *
  * Por eso el bloqueo es duro y para todos: mientras CompanyContext.completeness()
  * no diga `complete` (campos obligatorios llenos Y confirmados por el usuario),
- * cada página de módulo queda con overlay, difuminada y sin recibir clicks.
+ * cada página de módulo queda con overlay, difuminada y sin recibir clicks, y
+ * en el sidebar los módulos bloqueados quedan cubiertos por un solo bloque
+ * (no un candado por ítem) que no oculta los nombres — el usuario debe poder
+ * ver desde el primer momento todo lo que la plataforma ofrece — pero sí
+ * bloquea el click hasta que complete su contexto.
  * Quedan libres el dashboard (con banner), el propio contexto, Clientes
  * (herramienta interna) y Ajustes.
  *
@@ -51,8 +55,20 @@
       '.ctxgate-progress small { display: block; margin-top: 7px; font-size: 11.5px; color: var(--text3, rgba(10,10,15,.45)); }',
       '.ctxgate-btn { font: inherit; font-size: 13px; font-weight: 700; padding: 11px 22px; border-radius: 9px; border: 0; cursor: pointer; color: #fff; background: linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%); box-shadow: 0 8px 20px -10px rgba(90,96,240,.6); }',
       '.ctxgate-btn:hover { filter: brightness(1.07); }',
-      '.nav-item.ctxgate-nav-locked { opacity: .55; }',
-      '.nav-item .ctxgate-nav-lock { width: 13px; height: 13px; margin-left: auto; flex-shrink: 0; opacity: .8; }',
+      '.ctxgate-nav-wrap { position: relative; }',
+      // Tint: cubre todo el bloque para bloquear el click, sin volverlo
+      // ilegible (a diferencia del overlay de página, sin blur ni gradiente
+      // que oscurezca hacia abajo) — el usuario debe poder leer cada nombre
+      // de módulo desde que entra a la plataforma.
+      '.ctxgate-nav-tint { position: absolute; inset: 0; z-index: 20; background: rgba(247,248,250,.5); cursor: default; }',
+      '[data-theme="dark"] .ctxgate-nav-tint { background: rgba(10,10,15,.5); }',
+      '.ctxgate-nav-banner { position: relative; z-index: 21; margin: 8px 12px 10px; padding: 12px 12px 11px; border-radius: 12px; background: var(--surface-raised, #fff); border: 1px solid rgba(31,75,255,.22); box-shadow: 0 8px 20px -10px rgba(20,20,40,.25); }',
+      '.ctxgate-nav-banner-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }',
+      '.ctxgate-nav-ic { width: 16px; height: 16px; color: var(--accent, #1F4BFF); flex-shrink: 0; }',
+      '.ctxgate-nav-banner-head strong { font-size: 12px; line-height: 1.3; font-weight: 700; color: var(--ink, #0A0A0F); }',
+      '.ctxgate-nav-banner > span { display: block; font-size: 10.5px; line-height: 1.4; color: var(--text2, rgba(10,10,15,.6)); margin-bottom: 9px; }',
+      '.ctxgate-nav-btn { display: block; width: 100%; font: inherit; font-size: 11px; font-weight: 700; padding: 7px 10px; border-radius: 8px; border: 0; cursor: pointer; color: #fff; background: linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%); }',
+      '.ctxgate-nav-btn:hover { filter: brightness(1.07); }',
       '.ctxgate-banner { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 18px; margin-bottom: 18px; border-radius: 12px; background: var(--accent-soft-2, rgba(31,75,255,.05)); border: 1px solid rgba(31,75,255,.22); }',
       '.ctxgate-banner-ic { width: 20px; height: 20px; color: var(--accent, #1F4BFF); flex-shrink: 0; }',
       '.ctxgate-banner-copy { flex: 1 1 260px; min-width: 0; }',
@@ -105,19 +121,64 @@
     });
   }
 
+  // En vez de un candado por ítem, los módulos bloqueados del sidebar se
+  // agrupan en un único wrapper contiguo (se arma una sola vez moviendo los
+  // nodos existentes, sin tocar el markup de index.html) y ese bloque
+  // completo recibe un solo overlay: los nombres de los módulos se siguen
+  // leyendo, pero el bloque no recibe clicks hasta completar el contexto.
+  var navWrapEl = null;
+
+  function ensureNavWrap() {
+    if (navWrapEl && navWrapEl.isConnected) return navWrapEl;
+    var existing = document.getElementById('ctxgate-nav-wrap');
+    if (existing) { navWrapEl = existing; return navWrapEl; }
+    var items = Array.prototype.slice.call(document.querySelectorAll('.sidebar-nav > .nav-item[data-page]'));
+    var gated = items.filter(function (el) { return GATED_PAGES.indexOf(el.getAttribute('data-page')) !== -1; });
+    if (!gated.length) return null;
+    var first = gated[0];
+    var last = gated[gated.length - 1];
+    var wrap = document.createElement('div');
+    wrap.className = 'ctxgate-nav-wrap';
+    wrap.id = 'ctxgate-nav-wrap';
+    first.parentNode.insertBefore(wrap, first);
+    var node = first;
+    while (node) {
+      var next = node.nextSibling;
+      wrap.appendChild(node);
+      if (node === last) break;
+      node = next;
+    }
+    navWrapEl = wrap;
+    return navWrapEl;
+  }
+
+  function navOverlayHtml() {
+    var c = STATE.completeness || { done: 0, total: 1, percent: 0, fieldsComplete: false };
+    return '<div class="ctxgate-nav-banner">' +
+        '<div class="ctxgate-nav-banner-head">' + LOCK_SVG.replace('<svg ', '<svg class="ctxgate-nav-ic" ') +
+          '<strong>Llena tu contexto para desbloquear todos los módulos</strong></div>' +
+        '<span>Llevas ' + c.done + ' de ' + c.total + ' pasos.</span>' +
+        '<button type="button" class="ctxgate-nav-btn" data-ctxgate-go>' +
+          (c.fieldsComplete ? 'Revisar y confirmar' : 'Completar contexto') + '</button>' +
+      '</div>' +
+      '<div class="ctxgate-nav-tint"></div>';
+  }
+
   function paintNav() {
-    document.querySelectorAll('.nav-item[data-page]').forEach(function (item) {
-      var page = item.getAttribute('data-page');
-      var locked = !STATE.complete && GATED_PAGES.indexOf(page) !== -1;
-      item.classList.toggle('ctxgate-nav-locked', locked);
-      var lock = item.querySelector('.ctxgate-nav-lock');
-      if (locked && !lock) {
-        item.insertAdjacentHTML('beforeend',
-          '<svg class="ctxgate-nav-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>');
-      } else if (!locked && lock) {
-        lock.remove();
-      }
-    });
+    var wrap = ensureNavWrap();
+    if (!wrap) return;
+    var banner = wrap.querySelector(':scope > .ctxgate-nav-banner');
+    var tint = wrap.querySelector(':scope > .ctxgate-nav-tint');
+    if (STATE.complete) {
+      wrap.classList.remove('ctxgate-locked');
+      if (banner) banner.remove();
+      if (tint) tint.remove();
+      return;
+    }
+    wrap.classList.add('ctxgate-locked');
+    if (banner) banner.remove();
+    if (tint) tint.remove();
+    wrap.insertAdjacentHTML('afterbegin', navOverlayHtml());
   }
 
   function paintBanner() {
