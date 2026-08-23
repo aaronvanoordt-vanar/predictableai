@@ -222,9 +222,16 @@
       }, (payload) => {
         const prevStatus = STATE.intake?.company_enrichment_status;
         STATE.intake = payload.new || null;
+        const justFinishedEnriching =
+          STATE.intake?.company_enrichment_status === 'done' && prevStatus === 'running';
         if (['done', 'error'].includes(STATE.intake?.company_enrichment_status)) {
           STATE.researchGeneratingSection = null;
         }
+        // La corrida todavía no terminó para el usuario: faltan las tarjetas que
+        // redacta generate-client-brief. El traspaso se marca ANTES de repintar,
+        // porque si se pinta el estado "terminado" y después se vuelve a marcar
+        // en curso, la barra desaparece y reaparece de un frame para otro.
+        if (justFinishedEnriching) STATE.researchAwaitingBrief = Date.now();
         // enrich-company escribe la fila varias veces por corrida (una por
         // paso terminado), así que aquí NO se re-renderiza todo: se parchean
         // los campos que cambiaron. Así las tarjetas se van llenando en vivo
@@ -238,7 +245,11 @@
         // disparo ahora lo hace enrich-company al terminar (ahorra un salto de
         // realtime + un arranque en frío); esto es solo la red de seguridad por
         // si esa llamada del servidor no prendió.
-        if (STATE.intake?.company_enrichment_status === 'done' && prevStatus === 'running') {
+        if (justFinishedEnriching) {
+          // Red de seguridad: si generate-client-brief nunca llegara a escribir
+          // nada, este repintado saca la pantalla del estado "en curso" en vez
+          // de dejar la barra girando para siempre.
+          setTimeout(refreshResearchView, BRIEF_HANDOFF_MS + 500);
           ensureClientBriefRefresh();
         }
       })
@@ -247,7 +258,11 @@
         filter: `user_id=eq.${STATE.user.id}`,
       }, (payload) => {
         STATE.brief = payload.new || null;
-        if (['ready', 'error'].includes(STATE.brief?.status)) STATE.researchGeneratingSection = null;
+        if (['ready', 'error'].includes(STATE.brief?.status)) {
+          STATE.researchGeneratingSection = null;
+          // El brief cerró: se acabó el traspaso y con él la corrida completa.
+          STATE.researchAwaitingBrief = null;
+        }
         refreshResearchView();
       })
       .on('postgres_changes', {
@@ -361,6 +376,70 @@
     return intake?.company_enrichment_status === 'running' && !isStaleEnriching(intake);
   }
 
+  // ─── ESTADO ÚNICO DE LA INVESTIGACIÓN ─────────────────────
+  // Investigar es UNA sola cosa para el usuario, pero por dentro son dos
+  // funciones encadenadas: enrich-company llena la empresa y el ICP, y al
+  // terminar dispara generate-client-brief, que redacta las 5 tarjetas
+  // derivadas (frase posicional, qué haces, mecanismo, resultados, síntesis).
+  // Mostrarlas como dos estados independientes era el bug de UX: la barra
+  // llegaba al 100% y desaparecía mientras arriba seguía diciendo "Generando…"
+  // y faltaban 5 tarjetas por llenar. Aquí se derivan las dos fases de una sola
+  // función, y la barra cubre el recorrido completo: enrich ocupa 0-80% y el
+  // brief el tramo final.
+  var ENRICH_SHARE = 0.8;
+  // Entre que enrich-company escribe 'done' y que generate-client-brief escribe
+  // 'generating' pasan unos segundos (el arranque en frío de la segunda
+  // función). Sin esta ventana la barra desaparecía y volvía a aparecer, que es
+  // justo el parpadeo que hacía ver la pantalla como colgada.
+  var BRIEF_HANDOFF_MS = 25000;
+  function researchPhase(intake, brief) {
+    var enriching = isEnriching(intake);
+    var handingOff = !!STATE.researchAwaitingBrief
+      && (Date.now() - STATE.researchAwaitingBrief) < BRIEF_HANDOFF_MS;
+    var briefing = (brief && brief.status === 'generating' && !isStaleBrief(brief)) || handingOff;
+    if (enriching) {
+      var raw = Number(intake && intake.company_enrichment_progress) || 0;
+      return {
+        running: true,
+        phase: 'enrich',
+        percent: Math.round(raw * ENRICH_SHARE),
+        step: (intake && intake.company_enrichment_step) || 'Investigando…',
+      };
+    }
+    if (briefing) {
+      return {
+        running: true,
+        phase: 'brief',
+        percent: Math.round(100 * ENRICH_SHARE),
+        step: 'Redactando tu posicionamiento y tus resultados…',
+      };
+    }
+    return { running: false, phase: null, percent: 100, step: '' };
+  }
+  // Junto a qué panel se dibuja la barra. Si la página se recargó a mitad de
+  // corrida ya no sabemos con qué botón arrancó: la web es la fuente principal,
+  // así que ese es el default (antes caía en 'linkedin' y la barra aparecía
+  // junto al panel secundario).
+  function researchRunSource() {
+    return STATE.researchSource || 'website';
+  }
+  // Un solo texto de estado para el badge de arriba. Mientras cualquiera de las
+  // dos fases corra dice "Generando…", así deja de pasar que la barra termine y
+  // el badge siga anunciando otra cosa (o al revés).
+  function researchStatusText(brief, phase) {
+    if (phase && phase.running) return 'Generando…';
+    if (isStaleBrief(brief)) return 'Tardó demasiado';
+    const status = brief && brief.status;
+    return status === 'ready' ? 'Lista'
+      : status === 'generating' ? 'Generando…'
+      : status === 'error' ? 'Error' : 'Sin generar';
+  }
+  function researchStatusClass(brief, phase) {
+    if (phase && phase.running) return 'generating';
+    if (isStaleBrief(brief)) return 'error';
+    return (brief && brief.status) || 'pending';
+  }
+
   // ─── BARRA DE PROGRESO ────────────────────────────────────
   // El servidor manda checkpoints reales (8 → 45 → 85 → 90 → 100), pero entre
   // uno y otro pueden pasar 20-30 segundos: una barra que se queda quieta se
@@ -407,9 +486,11 @@
       paintProgress();
     }, PROGRESS_TICK_MS);
   }
-  function syncProgress(intake, running) {
-    const server = Number(intake?.company_enrichment_progress) || 0;
-    if (!running) {
+  // Recibe la fase ya calculada (researchPhase), no la fila cruda: la barra y el
+  // texto de estado tienen que salir de la misma fuente o vuelven a contradecirse.
+  function syncProgress(phase) {
+    const server = Number(phase && phase.percent) || 0;
+    if (!phase || !phase.running) {
       stopProgressTicker();
       PROGRESS_UI.target = server;
       PROGRESS_UI.shown = server;
@@ -429,10 +510,13 @@
   // (paneles de progreso que aparecen/desaparecen, botones que se habilitan) y
   // el resto se parchea campo por campo.
   function researchLayoutKey(intake, brief) {
-    const running = isEnriching(intake);
+    const phase = researchPhase(intake, brief);
     return [
-      running ? '1' : '0',
-      running ? (STATE.researchSource || 'linkedin') : '-',
+      phase.running ? '1' : '0',
+      // La fase entra en la clave: el paso de enrich → brief cambia el texto y
+      // el tramo de la barra, así que exige re-render y no solo parcheo.
+      phase.phase || '-',
+      phase.running ? researchRunSource() : '-',
       isStaleEnriching(intake) ? '1' : '0',
       isStaleBrief(brief) ? '1' : '0',
       brief?.status === 'error' && brief?.error_message ? '1' : '0',
@@ -479,10 +563,12 @@
     if (!shell || !shell.querySelector('#ihx-research-form')) return;
     const intake = STATE.intake || {};
     const brief = STATE.brief || {};
-    const running = isEnriching(intake);
+    const phase = researchPhase(intake, brief);
+    const running = phase.running;
     const q = (sel) => shell.querySelector(sel);
 
     setLiveValue(q('[name="company_website"]'), intake.company_website || '');
+    setLiveValue(q('[name="company_enrichment_prompt"]'), intake.company_enrichment_prompt || '');
     setLiveValue(q('[name="company_about"]'), intake.company_about || '');
     setLiveValue(q('[name="company_industry"]'), intake.company_industry || '');
     setLiveValue(q('[name="company_employee_count"]'), intake.company_employee_count || '');
@@ -553,13 +639,22 @@
       if (bar) bar.style.width = progress.percent + '%';
     }
 
-    // Paso actual de la investigación + barra animada.
-    const stepText = intake.company_enrichment_step || 'Investigando…';
+    // Paso actual de la investigación + barra animada. El texto sale de la
+    // misma fase que la barra, así que durante el brief dice qué se está
+    // redactando en vez de quedarse en el último paso de enrich-company.
+    const stepText = phase.step || intake.company_enrichment_step || 'Investigando…';
     const labelEl = q('.ihx-progress-label');
     if (labelEl) labelEl.textContent = stepText;
     const noteEl = q('.ihx-website-panel .ihx-progress-note');
     if (noteEl) noteEl.textContent = `${stepText} — esta página se actualiza sola cuando termine.`;
-    syncProgress(intake, running);
+    // El badge de arriba ya no vive su propia vida: mientras haya cualquier fase
+    // en curso dice "Generando…", igual que la barra.
+    const statusEl = q('.ihx-research-status');
+    if (statusEl) {
+      const label = researchStatusText(brief, phase);
+      if (statusEl.textContent !== label) statusEl.textContent = label;
+    }
+    syncProgress(phase);
   }
   // Acordeón de las 7 tarjetas: solo una abierta a la vez. Se manipula el DOM
   // directamente (sin re-render) para no perder ediciones sin guardar en otras
@@ -600,16 +695,17 @@
     const linkedinUrl = intake.company_linkedin_url || STATE.profile?.linkedin_company_url || null;
     const outcomes = Array.isArray(brief.key_outcomes) ? brief.key_outcomes.join('\n') : '';
     const briefStale = isStaleBrief(brief);
-    const statusLabel = briefStale ? 'Tardó demasiado'
-      : brief.status === 'ready' ? 'Lista'
-      : brief.status === 'generating' ? 'Generando…'
-      : brief.status === 'error' ? 'Error' : 'Sin generar';
     const sourceLabel = brief.source === 'edited' ? 'Editado manualmente' : 'Generado automáticamente';
     const stale = isStaleEnriching(intake);
-    const isRunning = intake.company_enrichment_status === 'running' && !stale;
-    // Qué acción disparó la corrida actual — para mostrar UNA sola barra de
-    // progreso (junto al botón que se usó), no las dos a la vez.
-    const runSource = isRunning ? (STATE.researchSource || 'linkedin') : null;
+    // Una sola fase manda sobre todo lo que se pinta abajo: el badge, la barra,
+    // el texto del paso y los botones deshabilitados. La investigación sigue
+    // "en curso" mientras el brief se redacta, que es lo que faltaba: antes la
+    // barra desaparecía al 100% con 5 tarjetas todavía por llenar.
+    const phase = researchPhase(intake, brief);
+    const isRunning = phase.running;
+    const statusLabel = researchStatusText(brief, phase);
+    // Junto a qué botón se dibuja la barra — una sola, no las dos a la vez.
+    const runSource = isRunning ? researchRunSource() : null;
     const solutions = parseSolutions(intake.company_solutions);
     const progress = researchProgress(intake, brief);
     const cc = CC();
@@ -683,7 +779,7 @@
         <div class="ihx-research-engine" id="ihx-research-engine"></div>
         ${stale ? `<div class="ihx-research-warn">La búsqueda anterior tardó demasiado y no terminó. Puedes intentarlo de nuevo.</div>` : ''}
         <div class="ihx-research-meta">
-          <span class="ihx-research-status ihx-rs-${escapeHtml(briefStale ? 'error' : (brief.status || 'pending'))}">${escapeHtml(statusLabel)}</span>
+          <span class="ihx-research-status ihx-rs-${escapeHtml(researchStatusClass(brief, phase))}">${escapeHtml(statusLabel)}</span>
           ${brief.generated_at ? `<span>${escapeHtml(sourceLabel)} · ${fmtRelative(new Date(brief.generated_at))}</span>` : ''}
           ${brief.status === 'error' && brief.error_message ? `<span class="ihx-research-err">${escapeHtml(brief.error_message)}</span>` : ''}
           ${briefStale ? `
@@ -702,10 +798,10 @@
             </div>
             ${(runSource === 'website') ? `
               <div class="ihx-progress-row" style="margin-top:10px">
-                <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${intake.company_enrichment_progress || 0}%"></div></div>
-                <span class="ihx-progress-pct">${intake.company_enrichment_progress || 0}%</span>
+                <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${phase.percent}%"></div></div>
+                <span class="ihx-progress-pct">${phase.percent}%</span>
               </div>
-              <span class="ihx-progress-note">${escapeHtml(intake.company_enrichment_step || 'Investigando…')} — esta página se actualiza sola cuando termine.</span>` : ''}
+              <span class="ihx-progress-note">${escapeHtml(phase.step)} — esta página se actualiza sola cuando termine.</span>` : ''}
             <div class="ihx-field" style="margin-top:14px">
               <span>Instrucciones personalizadas (opcional)</span>
               <p class="ihx-field-help">Si hay una sección específica en tu web donde quieres que se concentre la IA, cuéntale aquí. Ej: "Entiende el modelo de negocio en la sección de Pricing"</p>
@@ -743,10 +839,10 @@
             </div>
             ${(runSource === 'linkedin') ? `
               <div class="ihx-progress-panel" style="margin-top:12px">
-                <span class="ihx-progress-label">${escapeHtml(intake.company_enrichment_step || 'Investigando…')}</span>
+                <span class="ihx-progress-label">${escapeHtml(phase.step)}</span>
                 <div class="ihx-progress-row">
-                  <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${intake.company_enrichment_progress || 0}%"></div></div>
-                  <span class="ihx-progress-pct">${intake.company_enrichment_progress || 0}%</span>
+                  <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${phase.percent}%"></div></div>
+                  <span class="ihx-progress-pct">${phase.percent}%</span>
                 </div>
                 <span class="ihx-progress-note">Esta página se actualiza sola cuando termine.</span>
               </div>` : ''}
@@ -901,7 +997,7 @@
     // lleguen después se puedan parchear en vez de re-renderizar, y arranca (o
     // detiene) la animación de la barra según si hay una corrida en curso.
     STATE.researchLayoutKey = researchLayoutKey(intake, brief);
-    syncProgress(intake, isRunning);
+    syncProgress(phase);
   }
   // Dispara enrich-company a demanda del usuario — misma función que usa el
   // onboarding. Dos entradas posibles según qué botón se use: desde LinkedIn
@@ -913,6 +1009,7 @@
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
       STATE.researchSource = 'linkedin';
+      STATE.researchAwaitingBrief = null;
       STATE.intake = {
         ...STATE.intake,
         company_enrichment_status: 'running',
@@ -938,6 +1035,7 @@
       const promptEl = document.getElementById('ihx-website-prompt');
       const customPrompt = promptEl ? promptEl.value.trim() : '';
       STATE.researchSource = 'website';
+      STATE.researchAwaitingBrief = null;
       STATE.intake = {
         ...STATE.intake,
         company_website: website,
