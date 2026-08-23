@@ -3968,7 +3968,7 @@
 
     listHost.appendChild(h('div', { class: 'pros-hint', text: 'Cargando el hilo desde Gmail…' }));
 
-    Promise.resolve(pd().fetchGmailThread(msg.threadId)).then(function (res) {
+    Promise.resolve(pd().fetchGmailThread(msg.threadId, msg.toEmail, msg.completedAt || msg.dueAt)).then(function (res) {
       listHost.innerHTML = '';
       var messages = res.messages || [];
       if (!messages.length) {

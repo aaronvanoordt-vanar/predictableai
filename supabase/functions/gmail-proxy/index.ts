@@ -26,9 +26,23 @@
  *      and upserts the user's gmail_accounts row (service role — the client
  *      has no INSERT/UPDATE grant on that table).
  *  • disconnect  {}
- *  • thread      {thread_id} → {messages:[…]}
+ *  • thread      {thread_id, contact_email?, since?} → {messages:[…]}
  *      The whole conversation, each message flagged inbound/outbound and with
  *      its body decoded to plain text.
+ *
+ *      threads.get(thread_id) only returns messages GMAIL ITSELF grouped
+ *      under that exact thread — and Gmail's grouping is not reliable for
+ *      cold outreach. Confirmed on a real reply: an auto-forward notice
+ *      ("Cambio de correo Re: <asunto>") came back with no References or
+ *      In-Reply-To header, and its rewritten subject broke Gmail's
+ *      subject-based fallback too, so it landed in a brand new thread with
+ *      no link back to the original. When contact_email is given, this also
+ *      searches Gmail for from:/to: that address (bounded by `since`, a unix
+ *      timestamp — normally the original send time, so it doesn't drag in
+ *      unrelated history) and merges anything threads.get missed, deduped by
+ *      message id and sorted by date. That is genuinely "every message with
+ *      this contact from here on", not strict RFC 5322 threading — the
+ *      trade-off that actually shows a prospect's reply.
  *
  * READ-ONLY BY DESIGN. Sending goes through Apollo (apollo-proxy:
  * /emailer_messages + /{id}/send_now) so every reply is logged in the CRM and
@@ -128,6 +142,30 @@ function extractBody(payload: Record<string, any> | undefined): string {
 function header(headers: Array<Record<string, string>>, name: string): string {
   const h = (headers ?? []).find((x) => String(x?.name ?? "").toLowerCase() === name.toLowerCase());
   return h?.value ?? "";
+}
+
+const EMAIL_RE = /^[^\s<>"]+@[^\s<>"]+\.[^\s<>"]+$/;
+
+/** Shapes one Gmail message (format=full) into what the Bandeja renders. */
+function toMessageRecord(m: Record<string, any>, mine: string) {
+  const hs = m?.payload?.headers ?? [];
+  const from = header(hs, "From");
+  // "Name <addr>" → addr
+  const fromAddr = (from.match(/<([^>]+)>/)?.[1] ?? from).trim().toLowerCase();
+  return {
+    id: m.id,
+    threadId: m.threadId,
+    message_id_header: header(hs, "Message-ID"),
+    from,
+    from_email: fromAddr,
+    to: header(hs, "To"),
+    subject: header(hs, "Subject"),
+    date: header(hs, "Date"),
+    internal_date: m.internalDate ? Number(m.internalDate) : null,
+    outbound: fromAddr === mine,
+    snippet: m.snippet ?? "",
+    body: extractBody(m.payload),
+  };
 }
 
 Deno.serve(async (req) => {
@@ -279,36 +317,48 @@ Deno.serve(async (req) => {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(threadId)) {
       return json({ error: "Identificador de hilo inválido." }, 400, cors);
     }
+    const mine = String(acct.email).toLowerCase();
+    const byId = new Map<string, ReturnType<typeof toMessageRecord>>();
+
     const res = await fetch(`${GMAIL}/threads/${threadId}?format=full`, {
       headers: { Authorization: "Bearer " + accessToken },
     });
     const text = await res.text();
-    if (!res.ok) {
+    if (!res.ok && res.status !== 404) {
       console.error(`[gmail-proxy] thread ${res.status}: ${text.slice(0, 200)}`);
-      if (res.status === 404) return json({ error: "thread_not_found" }, 404, cors);
       return json({ error: "Gmail no devolvió el hilo (" + res.status + ")." }, 502, cors);
     }
-    const thread = JSON.parse(text);
-    const mine = String(acct.email).toLowerCase();
-    const messages = (thread?.messages ?? []).map((m: Record<string, any>) => {
-      const hs = m?.payload?.headers ?? [];
-      const from = header(hs, "From");
-      // "Name <addr>" → addr
-      const fromAddr = (from.match(/<([^>]+)>/)?.[1] ?? from).trim().toLowerCase();
-      return {
-        id: m.id,
-        message_id_header: header(hs, "Message-ID"),
-        from,
-        from_email: fromAddr,
-        to: header(hs, "To"),
-        subject: header(hs, "Subject"),
-        date: header(hs, "Date"),
-        internal_date: m.internalDate ? Number(m.internalDate) : null,
-        outbound: fromAddr === mine,
-        snippet: m.snippet ?? "",
-        body: extractBody(m.payload),
-      };
-    });
+    if (res.ok) {
+      const thread = JSON.parse(text);
+      for (const m of thread?.messages ?? []) byId.set(m.id, toMessageRecord(m, mine));
+    }
+
+    // Fill in what Gmail's own grouping missed (see the doc comment above).
+    const contactEmail = String(payload.contact_email ?? "").trim().toLowerCase();
+    if (EMAIL_RE.test(contactEmail)) {
+      const since = Number(payload.since);
+      let q = `(from:"${contactEmail}" OR to:"${contactEmail}")`;
+      if (Number.isFinite(since) && since > 0) q += ` after:${Math.floor(since)}`;
+      const searchRes = await fetch(`${GMAIL}/messages?q=${encodeURIComponent(q)}&maxResults=25`, {
+        headers: { Authorization: "Bearer " + accessToken },
+      });
+      const searchJson = searchRes.ok ? await searchRes.json().catch(() => null) : null;
+      if (!searchRes.ok) console.error(`[gmail-proxy] contact search ${searchRes.status}`);
+      const misses = (searchJson?.messages ?? []).filter((m: { id: string }) => !byId.has(m.id));
+      // Bounded (maxResults=25) and only for ids threads.get didn't already
+      // give us — a handful of extra fetches per open thread, not a scan.
+      await Promise.all(misses.map(async (m: { id: string }) => {
+        const r = await fetch(`${GMAIL}/messages/${m.id}?format=full`, {
+          headers: { Authorization: "Bearer " + accessToken },
+        });
+        if (!r.ok) return;
+        const full = await r.json().catch(() => null);
+        if (full) byId.set(full.id, toMessageRecord(full, mine));
+      }));
+    }
+
+    if (!byId.size) return json({ error: "thread_not_found" }, 404, cors);
+    const messages = [...byId.values()].sort((a, b) => (a.internal_date ?? 0) - (b.internal_date ?? 0));
     return json({ thread_id: threadId, mailbox: acct.email, messages }, 200, cors);
   }
 
