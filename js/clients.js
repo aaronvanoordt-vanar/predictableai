@@ -11,8 +11,12 @@
  * editar campos (patrón Notion: sin botón "guardar" salvo indicador).
  *
  * Cada cliente tiene un share_token: el botón "Copiar link del portal" genera
- * client.html?token=… — el cliente final crea su cuenta ahí y ve su dashboard
- * en solo-lectura (RLS: client_access vía RPC claim_client_access).
+ * client.html?token=… — ese link abre el portal SIN login y deja que el cliente
+ * final mantenga su propio contexto (ICP, industrias, notas, países, logo y sus
+ * PDFs). Lo que edita entra por la edge function `client-portal`; las métricas
+ * del CRM, el status, las fechas y los links de trabajo siguen siendo de este
+ * lado. El interruptor "Portal editable" (clients.portal_can_edit) lo deja en
+ * solo lectura sin romper el link.
  *
  * Data: Supabase directo (tabla clients / client_materials, bucket privado
  * client-assets con signed URLs). Todo string dinámico pasa por escHtml y
@@ -193,6 +197,7 @@
       file_name: file.name,
       file_path: path,
       file_size: file.size,
+      source: 'team',
     }).select().single();
     if (res.error) throw res.error;
     return res.data;
@@ -259,6 +264,14 @@
 
   function initials(name) {
     return String(name || '?').trim().split(/\s+/).slice(0, 2).map(function (w) { return w[0] || ''; }).join('').toUpperCase();
+  }
+
+  // Marca de tiempo completa (la usa el aviso de "el cliente editó su portal").
+  function fmtDateTime(ts) {
+    if (!ts) return '';
+    try {
+      return new Date(ts).toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    } catch (e) { return String(ts); }
   }
 
   // ── Styles ─────────────────────────────────────────────────────────────
@@ -333,6 +346,9 @@
       '.cl-save-ind{font-size:12px;color:var(--ink-3);font-weight:600;min-width:90px;text-align:right}',
       '.cl-save-ind.ok{color:var(--green)}',
       '.cl-empty{padding:40px;text-align:center;color:var(--ink-3);font-size:13px;border:1.5px dashed var(--hair-3);border-radius:var(--r-lg)}',
+      '.cl-portal-tgl{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-3);cursor:pointer;user-select:none}',
+      '.cl-portal-tgl input{accent-color:var(--accent);cursor:pointer;margin:0}',
+      '.cl-mat-src{flex:none;padding:2px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent-ink);font-size:10px;font-weight:700}',
       '@media (max-width:760px){.cl-sections{grid-template-columns:1fr}.cl-row2{grid-template-columns:1fr}}',
     ].join('\n');
     document.head.appendChild(css);
@@ -534,6 +550,8 @@
           '<button class="btn btn-ghost btn-sm" id="cl-back">← Clients</button>' +
           '<div style="display:flex;align-items:center;gap:10px">' +
             '<span class="cl-save-ind" id="cl-save-ind"></span>' +
+            '<label class="cl-portal-tgl" title="Si lo apagas, el link del portal sigue funcionando pero queda en solo lectura.">' +
+              '<input type="checkbox" id="cl-portal-edit"' + (c.portal_can_edit === false ? '' : ' checked') + '>Portal editable</label>' +
             '<button class="btn btn-ghost btn-sm" id="cl-share">🔗 Copiar link del portal</button>' +
             '<button class="btn btn-ghost btn-sm" id="cl-delete" style="color:var(--red)">Eliminar</button>' +
           '</div>' +
@@ -553,6 +571,9 @@
               statusSel +
               '<span class="cl-chip ' + st.cls + '" id="cl-status-chip">' + esc(st.label) + '</span>' +
               '<span style="font-size:12px;color:var(--ink-4)">Inicio: ' + esc(fmtDate(c.start_date)) + '</span>' +
+              (c.portal_updated_at
+                ? '<span style="font-size:12px;color:var(--ink-4)">El cliente editó su portal el ' + esc(fmtDateTime(c.portal_updated_at)) + '</span>'
+                : '') +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -748,12 +769,25 @@
       matFile.value = '';
     });
 
+    // Portal editable (interruptor)
+    var portalTgl = body.querySelector('#cl-portal-edit');
+    portalTgl.addEventListener('change', function () {
+      state.current.portal_can_edit = portalTgl.checked;
+      queueSave({ portal_can_edit: portalTgl.checked });
+      toast(portalTgl.checked
+        ? 'El cliente puede editar su contexto desde el portal.'
+        : 'El portal queda en solo lectura (el link sigue funcionando).', 'info');
+    });
+
     // Compartir portal
     body.querySelector('#cl-share').addEventListener('click', async function () {
       var link = portalLink(state.current);
+      var msg = state.current.portal_can_edit === false
+        ? 'Link del portal copiado. Tu cliente lo abre sin login y verá este dashboard en solo lectura.'
+        : 'Link del portal copiado. Tu cliente lo abre sin login y podrá mantener su ICP, industrias, notas, países y materiales. Cualquiera con el link puede editar: compártelo solo con quien corresponda.';
       try {
         await navigator.clipboard.writeText(link);
-        toast('Link del portal copiado. Compártelo con tu cliente: creará su cuenta y verá solo este dashboard.', 'success');
+        toast(msg, 'success');
       } catch (e) {
         prompt('Copia el link del portal:', link);
       }
@@ -814,6 +848,7 @@
       var url = urls[mat.file_path];
       return '<div class="cl-mat" data-mid="' + esc(mat.id) + '">' +
         '<span>📄</span><span class="nm" title="' + esc(mat.file_name) + '">' + esc(mat.file_name) + '</span>' +
+        (mat.source === 'portal' ? '<span class="cl-mat-src">Del cliente</span>' : '') +
         '<span class="sz">' + esc(fmtSize(mat.file_size)) + '</span>' +
         (url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener">Ver ↗</a>' : '') +
         '<button type="button" data-del="' + esc(mat.id) + '">Borrar</button>' +
