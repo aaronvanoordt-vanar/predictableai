@@ -2,9 +2,24 @@
  * generate-radar — Supabase Edge Function
  *
  * "Radar": AI target-company discovery. Instead of ending onboarding with a
- * recommended Apollo filter set, this function actively hunts for ≥5 concrete
+ * recommended Apollo filter set, this function actively hunts for concrete
  * companies showing a buying signal derived from the seller's own value
  * proposition, with evidence URLs and 2-3 decision makers each.
+ *
+ * A run delivers EVERY company its research honestly found, not a fixed
+ * handful: every query in the strategy is executed and everything backed by
+ * evidence is kept (MAX_COMPANIES is a safety ceiling, not a target).
+ *
+ * MEMORY — two halves, resolved at creation time and snapshotted on the row:
+ *   excluded_companies  hard: companies the seller already works (members of
+ *                       the Prospección lists they picked) that no radar ever
+ *                       surfaced. Never reported again.
+ *   known_signals       soft: every company a previous ready radar delivered,
+ *                       with the signal reported at the time (headline +
+ *                       evidence URLs). Reported again ONLY when this run
+ *                       finds a genuinely different signal or newer news —
+ *                       enforced deterministically by isNewSignal(), never
+ *                       left to the model's judgement.
  *
  * STAGED PROTOCOL — each HTTP call does exactly ONE bounded unit of work
  * (one Claude call, or one small batch of Apollo lookups) and returns. This
@@ -76,9 +91,21 @@ import {
 
 // Keep in sync with js/credit-costs.js (radar_run).
 const RADAR_RUN_COST = 12;
-const MAX_COMPANIES = 6;
+
+// A run delivers EVERY company its research honestly found — the research
+// stage no longer stops as soon as it has "enough". MAX_COMPANIES is only a
+// safety ceiling (row size + Apollo calls in the decision_makers stage), not
+// a target: hitting it means the strategy was unusually productive.
+const MAX_COMPANIES = 40;
+// Per research call. The model returns what this one query genuinely
+// supports with evidence — fewer is fine, padding is not.
+const MAX_COMPANIES_PER_QUERY = 6;
+// Every query in the strategy runs (that is what "all the companies it finds"
+// means), so the query count is what bounds a run's wall-clock: each query is
+// one ~50s call. This caps a runaway strategy.
+const MAX_QUERIES = 12;
 const MAX_DECISION_MAKERS = 3;
-const DM_BATCH_SIZE = 3; // companies processed per decision_makers call
+const DM_BATCH_SIZE = 5; // companies processed per decision_makers call
 
 // "Empresas que ya conoces": names snapshotted onto the run at creation time
 // and fed to the model as exclusions. Two separate caps — the row keeps more
@@ -87,6 +114,15 @@ const DM_BATCH_SIZE = 3; // companies processed per decision_makers call
 const MAX_EXCLUDED = 300;
 const MAX_EXCLUDED_IN_RESEARCH_PROMPT = 120;
 const MAX_EXCLUDED_IN_STRATEGY_PROMPT = 40;
+
+// Radar memory: companies a PREVIOUS ready radar already delivered, with the
+// signal it reported for each. Unlike the hard exclusions above these are not
+// banned — they may come back if (and only if) this run finds a genuinely
+// different signal or newer news for them (see isNewSignal).
+const MAX_KNOWN_SIGNALS = 250;
+const MAX_KNOWN_SIGNALS_IN_PROMPT = 50;
+const MAX_HEADLINES_PER_KNOWN = 4;
+const MAX_URLS_PER_KNOWN = 8;
 
 // A run with no progress in this long is presumed dead (crashed/killed
 // isolate) rather than merely slow — every individual stage call is bounded
@@ -181,7 +217,74 @@ function flattenQueries(angles: any[]): QueryItem[] {
     const sources = asStrArr(a?.sources);
     for (const q of asStrArr(a?.queries)) out.push({ angleName, sources, query: q });
   }
-  return out;
+  return out.slice(0, MAX_QUERIES);
+}
+
+// ── Signal identity: is this the same news we already told the user about? ──
+//
+// Two independent, deterministic tests — no LLM judgement involved, because
+// "is this signal new?" decides whether a company the seller already saw
+// shows up again, and a model that wants to be helpful will always say yes.
+
+// Same article/filing/posting? Compare the URL without the noise that makes
+// two links to one page look different (protocol, www, tracking params, hash,
+// trailing slash).
+function normUrl(u: string): string {
+  const raw = asStr(u).trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(/^https?:\/\//i.test(raw) ? raw : "https://" + raw);
+    const keep = new URLSearchParams();
+    url.searchParams.forEach((v, k) => {
+      if (!/^(utm_|fbclid|gclid|mc_|ref$|source$)/i.test(k)) keep.append(k, v);
+    });
+    const qs = keep.toString();
+    return url.hostname.replace(/^www\./i, "").toLowerCase() +
+      url.pathname.replace(/\/+$/, "").toLowerCase() + (qs ? "?" + qs : "");
+  } catch {
+    return raw.toLowerCase();
+  }
+}
+
+// Same claim worded slightly differently? Strip accents/punctuation/case so
+// "Publicó 40 vacantes de SDR" and "publico 40 vacantes de sdr." collapse.
+function normHeadline(t: string): string {
+  return asStr(t)
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function nameKey(n: unknown): string { return asStr(n).trim().toLowerCase(); }
+
+interface KnownSignal {
+  name: string;
+  headlines: string[];
+  urls: string[];
+  last_seen: string;
+}
+
+// A company the seller has already seen in a radar may be reported again ONLY
+// if this run backs it with evidence it has never shown before AND states a
+// different signal. Either test alone is too weak: the same article can be
+// re-summarized with new words, and a new article can carry the exact same
+// news.
+function isNewSignal(
+  known: KnownSignal,
+  headline: string,
+  evidence: { url: string }[],
+): boolean {
+  const seenUrls = new Set(known.urls.map(normUrl).filter(Boolean));
+  const hasNewEvidence = evidence.some((e) => {
+    const u = normUrl(e.url);
+    return !!u && !seenUrls.has(u);
+  });
+  if (!hasNewEvidence) return false;
+  const h = normHeadline(headline);
+  if (!h) return false;
+  return !known.headlines.some((prev) => {
+    const p = normHeadline(prev);
+    return !!p && (p === h || p.includes(h) || h.includes(p));
+  });
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
@@ -209,10 +312,11 @@ Respond with ONLY valid JSON (no markdown fences, no prose):
 }
 
 Hard rules:
-- Exactly 2-3 search_angles (the research stage has a tight search budget — keep this focused, not exhaustive).
+- 3-4 search_angles with 2-3 queries each (max 10 queries in total). EVERY query you write will be run — one web search each — and everything they find is delivered, so make each query a genuinely different way into the signal (different source type, different wording, different sub-segment) instead of three rewordings of the same search.
 - The signal must be OBSERVABLE from public web sources — never propose signals that require private data.
 - If the user provided a TARGET DESCRIPTION, it is the ground truth: it may describe the KIND of companies they want (industry, size, geography, situation) and/or the signal itself. Refine it into angles/queries — never replace it with your own idea. If it describes only companies and no signal, derive the observable signal that identifies exactly those companies.
 - If a list of companies the seller ALREADY HAS is provided, design angles that surface NEW ones: do not build queries whose obvious answer is a company already on that list.
+- If a list of companies A PREVIOUS RADAR ALREADY DELIVERED is provided, those are not banned — but re-finding the same news about them is worthless. Prefer angles that either surface new companies or surface a NEWER development about them (a later filing, a new announcement, a fresh round of postings).
 - signal_hypothesis in Spanish; everything else may be English.`;
 
 // Runs ONCE PER SEARCH QUERY (see handleResearch) — bounded to exactly one
@@ -233,7 +337,8 @@ Respond with ONLY valid JSON (no markdown fences, no prose):
       "why_fit": "MAX 2 short sentences (240 characters total) in neutral Latin-American Spanish: why THIS company needs the seller now, citing the concrete signal found",
       "signal_strength": "alta" | "media",
       "evidence": [ { "url": "exact URL from your search results backing the claim", "summary": "1 sentence in Spanish: what this source shows" } ],
-      "decision_maker_titles": ["2-5 English job titles to look for at THIS company"]
+      "decision_maker_titles": ["2-5 English job titles to look for at THIS company"],
+      "repeat_reason": "Fill this ONLY for a company listed under 'ALREADY DELIVERED BY A PREVIOUS RADAR': 1 short sentence in Spanish saying what is NEW since then (new filing, new announcement, newer news). Empty string for every other company."
     }
   ],
   "coverage_note": "1 sentence in Spanish ONLY if this query yielded few/no companies — say honestly what limited the search. Empty string otherwise."
@@ -241,9 +346,11 @@ Respond with ONLY valid JSON (no markdown fences, no prose):
 
 Hard rules — violating any of these makes the output worthless:
 - EVERY company must be real and every evidence.url must come from an actual web_search result you saw. NEVER invent companies, URLs, or facts. A company you cannot back with at least 1 evidence URL must be dropped, not padded.
-- Up to 3 companies for THIS query — do not try to cover the whole strategy, other calls handle the other queries. If this query honestly yields fewer, return fewer and explain in coverage_note.
+- Return EVERY company this query surfaces that you can back with evidence, up to ${MAX_COMPANIES_PER_QUERY}. Do not stop at two or three because it "feels like enough" — the seller wants the full picture of what is out there right now. But never pad: a company you cannot back with at least 1 evidence URL does not exist for this purpose.
+- Do not try to cover the whole strategy — other calls handle the other queries.
 - Do not re-report a company already listed in "COMPANIES ALREADY FOUND" below, even if this query surfaces it again.
 - NEVER report a company listed in "COMPANIES THE SELLER ALREADY HAS" below — the seller already works those; re-finding them wastes the search. Skip them silently and return the next best NEW company.
+- Companies listed under "ALREADY DELIVERED BY A PREVIOUS RADAR" were already shown to this seller, together with the signal reported at the time. Report one again ONLY if this search surfaces a DIFFERENT signal or genuinely NEWER news about it — and then you MUST cite at least one evidence URL that is not among the ones already reported for it, and fill repeat_reason. If all you found is the same news in other words, skip it silently: it will be discarded anyway.
 - signal_headline is the only line most users will read: make it a concrete, verifiable fact about THIS company, never a generic category ("empresa en crecimiento") and never a repeat of why_fit.
 - Respect target_geographies and exclusions from the strategy. Never include the seller's own company or direct competitors (companies selling the same thing the seller sells — they are rivals, not buyers).
 - Companies must be plausible BUYERS with budget: match the seller's ICP sizes when known.
@@ -381,38 +488,65 @@ async function loadSellerContext(
 
 // ── "Empresas que ya conoces" (exclusions) ─────────────────────────────────
 
-// Resolves the company names the seller already works — the members of the
-// Prospección lists they picked, plus every company a previous ready radar
-// already delivered — so research never spends a web search (or tokens)
-// rediscovering them. Owner-scoped on purpose: list ids come from the
-// client, so we only ever read lists that belong to the caller.
+// The seller's memory, resolved with the service role but strictly scoped to
+// the caller (list ids come from the client, so we only ever read lists that
+// belong to them). It has two halves, and the difference is the whole point:
+//
+//   hard    — companies the seller already works (members of the Prospección
+//             lists they picked) that no radar ever surfaced. Nothing is
+//             known about WHY they matter, so re-finding them is pure waste:
+//             never report them.
+//   history — every company a previous ready radar delivered, with the exact
+//             signal reported at the time (headline + evidence URLs). These
+//             are NOT banned: if this run finds a different signal or newer
+//             news for one, the seller wants to hear about it. Enforced in
+//             handleResearch via isNewSignal().
+//
+// A company saved from a radar into a list therefore stays in `history`, not
+// in `hard` — otherwise "guardar todo en una lista" would silently bury it
+// forever, which is exactly the opposite of what saving it meant.
+interface RadarMemory { hard: string[]; history: KnownSignal[] }
+
 async function resolveKnownCompanies(
   // deno-lint-ignore no-explicit-any
   supa: any,
   userId: string,
   listIds: string[],
   includePreviousRadar: boolean,
-): Promise<string[]> {
-  const byKey = new Map<string, string>(); // lowercase name → original casing
-  const add = (raw: unknown) => {
-    const name = asStr(raw).trim();
-    if (!name || name.length > 90) return;
-    const key = name.toLowerCase();
-    if (!byKey.has(key)) byKey.set(key, name);
-  };
+): Promise<RadarMemory> {
+  const history = new Map<string, KnownSignal>();
 
   if (includePreviousRadar) {
     const { data: runs } = await supa.from("radar_runs")
-      .select("companies")
+      .select("companies, generated_at, created_at")
       .eq("user_id", userId)
       .eq("status", "ready")
       .order("created_at", { ascending: false })
       .limit(20);
     for (const r of runs ?? []) {
-      for (const c of (Array.isArray(r.companies) ? r.companies : [])) add(c?.name);
+      const seenAt = asStr(r.generated_at) || asStr(r.created_at);
+      for (const c of (Array.isArray(r.companies) ? r.companies : [])) {
+        const name = asStr(c?.name).trim();
+        if (!name || name.length > 90) continue;
+        const key = name.toLowerCase();
+        const entry = history.get(key) ??
+          { name, headlines: [], urls: [], last_seen: seenAt };
+        const headline = asStr(c?.signal_headline).trim() || asStr(c?.why_fit).trim();
+        if (headline && entry.headlines.length < MAX_HEADLINES_PER_KNOWN) {
+          entry.headlines.push(headline.slice(0, 160));
+        }
+        for (const e of (Array.isArray(c?.evidence) ? c.evidence : [])) {
+          const u = asStr(e?.url).trim();
+          if (u && entry.urls.length < MAX_URLS_PER_KNOWN) entry.urls.push(u);
+        }
+        // Runs come newest first, so the first seen date wins as last_seen.
+        if (!entry.last_seen) entry.last_seen = seenAt;
+        history.set(key, entry);
+      }
     }
   }
 
+  const hard = new Map<string, string>(); // lowercase name → original casing
   const ids = listIds.filter((x) => typeof x === "string" && x.trim()).slice(0, 50);
   if (ids.length) {
     const { data: owned } = await supa.from("prospect_lists")
@@ -421,21 +555,56 @@ async function resolveKnownCompanies(
     if (ownedIds.length) {
       const { data: members } = await supa.from("prospect_list_members")
         .select("company").in("list_id", ownedIds).limit(5000);
-      for (const m of members ?? []) add(m?.company);
+      for (const m of members ?? []) {
+        const name = asStr(m?.company).trim();
+        if (!name || name.length > 90) continue;
+        const key = name.toLowerCase();
+        if (history.has(key)) continue; // radar knows its signal → soft, not banned
+        if (!hard.has(key)) hard.set(key, name);
+      }
     }
   }
 
-  return [...byKey.values()].slice(0, MAX_EXCLUDED);
+  return {
+    hard: [...hard.values()].slice(0, MAX_EXCLUDED),
+    history: [...history.values()].slice(0, MAX_KNOWN_SIGNALS),
+  };
 }
 
-// Prompt block listing those companies. Empty string when there are none so
-// no tokens are spent on an empty section.
+// Prompt block listing the hard exclusions. Empty string when there are none
+// so no tokens are spent on an empty section.
 function excludedBlock(excluded: string[], max: number): string {
   if (!excluded.length) return "";
   const shown = excluded.slice(0, max);
   const rest = excluded.length - shown.length;
   return `\n\n=== COMPANIES THE SELLER ALREADY HAS (never report these) ===\n` +
     shown.join(", ") + (rest > 0 ? ` (+${rest} more)` : "");
+}
+
+// Prompt block for the radar memory: each company with the signal already
+// reported for it, so the model can tell "same news again" (skip) from "a new
+// development" (report, with repeat_reason).
+function knownSignalsBlock(known: KnownSignal[], max: number): string {
+  if (!known.length) return "";
+  const shown = known.slice(0, max);
+  const rest = known.length - shown.length;
+  const lines = shown.map((k) => {
+    const when = k.last_seen ? k.last_seen.slice(0, 10) : "";
+    const headline = k.headlines[0] ? ` — señal ya reportada: "${k.headlines[0]}"` : "";
+    return `- ${k.name}${when ? ` (${when})` : ""}${headline}`;
+  });
+  return `\n\n=== ALREADY DELIVERED BY A PREVIOUS RADAR (report again ONLY with a new signal / newer news, and fill repeat_reason) ===\n` +
+    lines.join("\n") + (rest > 0 ? `\n(+${rest} more)` : "");
+}
+
+// Same block, one line per company, for the strategy stage — it only needs to
+// know which names are already covered, not their evidence.
+function knownNamesBlock(known: KnownSignal[], max: number): string {
+  if (!known.length) return "";
+  const shown = known.slice(0, max);
+  const rest = known.length - shown.length;
+  return `\n\n=== ALREADY DELIVERED BY A PREVIOUS RADAR (only worth revisiting with newer news) ===\n` +
+    shown.map((k) => k.name).join(", ") + (rest > 0 ? ` (+${rest} more)` : "");
 }
 
 // ── Stage handlers ───────────────────────────────────────────────────────────
@@ -484,8 +653,8 @@ async function handleCreate(
   }
 
   // Snapshot (not a live join): lists change over time, and every stage of
-  // this run must see the exact same exclusion set the user agreed to.
-  const excludedCompanies = await resolveKnownCompanies(
+  // this run must see the exact same memory the user agreed to.
+  const memory = await resolveKnownCompanies(
     supa, user.id, excludeListIds, excludePreviousRadar,
   );
 
@@ -497,14 +666,24 @@ async function handleCreate(
     progress: 2,
     progress_step: "Preparando tu investigación…",
   };
+  const exclusionPayload = {
+    exclude_list_ids: excludeListIds.slice(0, 50),
+    excluded_companies: memory.hard,
+  };
   let { data: run, error: insErr } = await supa.from("radar_runs").insert({
     ...basePayload,
-    exclude_list_ids: excludeListIds.slice(0, 50),
-    excluded_companies: excludedCompanies,
+    ...exclusionPayload,
+    known_signals: memory.history,
   }).select("id").single();
   // Deploy-order safety net: if this function ships before its migration is
-  // applied, the two exclusion columns don't exist yet. Losing the exclusion
-  // memory for one run is fine; losing the Radar entirely is not.
+  // applied, known_signals (and, on much older deploys, the two exclusion
+  // columns) don't exist yet. Losing the memory for one run is fine; losing
+  // the Radar entirely is not.
+  if (insErr && /known_signals/.test(insErr.message ?? "")) {
+    console.warn("[radar] known_signals column missing — apply 20260823000003_radar_signal_memory.sql");
+    ({ data: run, error: insErr } = await supa.from("radar_runs")
+      .insert({ ...basePayload, ...exclusionPayload }).select("id").single());
+  }
   if (insErr && /exclude_list_ids|excluded_companies/.test(insErr.message ?? "")) {
     console.warn("[radar] exclusion columns missing — apply 20260819180000_radar_exclusions.sql");
     ({ data: run, error: insErr } = await supa.from("radar_runs").insert(basePayload).select("id").single());
@@ -520,6 +699,7 @@ interface RunRow {
   status: string;
   custom_prompt: string | null;
   excluded_companies: string[] | null;
+  known_signals: KnownSignal[] | null;
   // deno-lint-ignore no-explicit-any
   companies: any[];
   // deno-lint-ignore no-explicit-any
@@ -529,15 +709,35 @@ interface RunRow {
   updated_at: string;
 }
 
+// Reads the run's radar memory defensively: rows created before the
+// known_signals migration (or by the safety-net insert above) simply have no
+// memory, which degrades to the old behaviour instead of throwing.
+function knownSignalsOf(run: RunRow): KnownSignal[] {
+  const raw = (run as { known_signals?: unknown }).known_signals;
+  if (!Array.isArray(raw)) return [];
+  // deno-lint-ignore no-explicit-any
+  return (raw as any[])
+    .filter((k) => k && asStr(k.name).trim())
+    .map((k) => ({
+      name: asStr(k.name).trim(),
+      headlines: asStrArr(k.headlines),
+      urls: asStrArr(k.urls),
+      last_seen: asStr(k.last_seen),
+    }));
+}
+
 // deno-lint-ignore no-explicit-any
 async function handleStrategy(supa: any, run: RunRow, engine: Engine, h: Record<string, string>) {
   try {
     const sellerContext = await loadSellerContext(supa, run.user_id);
     const customPrompt = asStr(run.custom_prompt).trim();
     const excluded = asStrArr(run.excluded_companies);
+    const known = knownSignalsOf(run);
     const prompt = (customPrompt
       ? `${sellerContext}\n\n=== USER'S TARGET DESCRIPTION (ground truth — the companies they want) ===\n${customPrompt}`
-      : sellerContext) + excludedBlock(excluded, MAX_EXCLUDED_IN_STRATEGY_PROMPT);
+      : sellerContext) +
+      excludedBlock(excluded, MAX_EXCLUDED_IN_STRATEGY_PROMPT) +
+      knownNamesBlock(known, MAX_KNOWN_SIGNALS_IN_PROMPT);
     const raw = await callAi(engine, STRATEGY_SYSTEM, prompt, { maxTokens: 2200, maxSearches: 2 });
     const strategy = parseJson(raw);
     const hypothesis = asStr(strategy.signal_hypothesis).trim();
@@ -577,6 +777,11 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
     // because the prompt only carries the first MAX_EXCLUDED_IN_RESEARCH_PROMPT.
     const excluded = asStrArr(run.excluded_companies);
     const excludedKeys = new Set(excluded.map((n) => n.trim().toLowerCase()));
+    // Radar memory: same company, same news → discarded here even if the
+    // model ignored the instruction. Same company, NEW news → kept and
+    // flagged so the UI can say why it is back.
+    const known = knownSignalsOf(run);
+    const knownByName = new Map(known.map((k) => [nameKey(k.name), k]));
 
     // Duplicate-driver guard: if another tab already completed this query
     // (research_offset moved past it), skip the Claude spend and just point
@@ -629,12 +834,11 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
 
     // deno-lint-ignore no-explicit-any
     const rawCompanies: any[] = Array.isArray(research.companies) ? research.companies : [];
-    const existingNames = new Set(existing.map((c: { name?: string }) => asStr(c.name).trim().toLowerCase()));
+    const existingNames = new Set(existing.map((c: { name?: string }) => nameKey(c.name)));
     // deno-lint-ignore no-explicit-any
-    const newCompanies = rawCompanies
+    const shaped = rawCompanies
       .filter((c) => asStr(c?.name).trim() && Array.isArray(c?.evidence) && c.evidence.length)
-      .filter((c) => !existingNames.has(asStr(c.name).trim().toLowerCase()))
-      .filter((c) => !excludedKeys.has(asStr(c.name).trim().toLowerCase()))
+      .slice(0, MAX_COMPANIES_PER_QUERY)
       .map((c) => ({
         name: asStr(c.name).trim(),
         website: asStr(c.website).trim(),
@@ -650,13 +854,45 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
           .slice(0, 4)
           .map((e) => ({ url: asStr(e.url).trim(), summary: asStr(e.summary).trim() })),
         decision_maker_titles: asStrArr(c.decision_maker_titles),
+        // Radar-memory bookkeeping, filled below when this company was
+        // already delivered by a previous radar under a different signal.
+        repeat_reason: asStr(c.repeat_reason).trim().slice(0, 240),
+        seen_before: false,
+        previous_signal: "",
+        previous_seen_at: "",
         decision_makers: [] as Record<string, unknown>[],
         dm_done: false, // internal bookkeeping — stripped before status=ready
       }));
 
-    const merged = existing.concat(newCompanies).slice(0, MAX_COMPANIES);
+    // deno-lint-ignore no-explicit-any
+    const newCompanies: any[] = [];
+    let staleRepeats = 0; // same company, same news as a previous radar
+    for (const c of shaped) {
+      const key = nameKey(c.name);
+      if (existingNames.has(key) || excludedKeys.has(key)) continue;
+      const prev = knownByName.get(key);
+      if (prev) {
+        if (!isNewSignal(prev, c.signal_headline || c.why_fit, c.evidence)) {
+          staleRepeats++;
+          continue;
+        }
+        // Back on the radar on purpose — the card says so instead of looking
+        // like the run forgot it had already delivered this company.
+        c.seen_before = true;
+        c.previous_signal = prev.headlines[0] || "";
+        c.previous_seen_at = prev.last_seen || "";
+      }
+      existingNames.add(key);
+      newCompanies.push(c);
+    }
+
+    const roomLeft = Math.max(0, MAX_COMPANIES - existing.length);
+    const merged = existing.concat(newCompanies.slice(0, roomLeft));
     const coverageNote = asStr(research.coverage_note).trim();
     const nextOffset = idx + 1;
+    // Every query in the strategy runs: the seller asked for everything that
+    // is out there right now, not for the first handful. Only the ceiling
+    // (row size / Apollo cost) can cut the research short.
     const moreQueriesLeft = nextOffset < items.length && merged.length < MAX_COMPANIES;
     // Backfill total_queries for runs whose strategy stage ran before this
     // field existed — keeps nextStageFor's resume logic accurate for them.
@@ -670,7 +906,12 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
       : [];
     const logLine = (text: string) => log.push({ at: new Date().toISOString(), text });
     if (skipNote) logLine(skipNote);
-    else logLine(`Búsqueda ${nextOffset}/${items.length} completada — ${newCompanies.length ? newCompanies.length + " empresa" + (newCompanies.length === 1 ? "" : "s") + " nueva" + (newCompanies.length === 1 ? "" : "s") : "sin resultados nuevos"}`);
+    else {
+      const found = Math.min(newCompanies.length, roomLeft);
+      logLine(`Búsqueda ${nextOffset}/${items.length} completada — ` +
+        (found ? `${found} empresa${found === 1 ? "" : "s"} nueva${found === 1 ? "" : "s"}` : "sin resultados nuevos") +
+        (staleRepeats ? ` · ${staleRepeats} ya entregada${staleRepeats === 1 ? "" : "s"} con la misma señal` : ""));
+    }
 
     if (moreQueriesLeft) {
       await supa.from("radar_runs").update({

@@ -2,11 +2,11 @@
  * radar.js — Radar: descubrimiento de empresas target con IA
  *
  * El "aha moment" del producto: en vez de terminar el onboarding con filtros
- * recomendados, la IA investiga la web (generate-radar) y entrega ≥5 empresas
- * concretas que muestran una señal de compra derivada de la propuesta de
- * valor del vendedor, con evidencia (URLs) y 2-3 decision makers por empresa
- * (solo nombre/cargo/LinkedIn — revelar contacto sigue costando créditos en
- * Prospección).
+ * recomendados, la IA investiga la web (generate-radar) y entrega TODAS las
+ * empresas que encuentra en ese momento con una señal de compra derivada de
+ * la propuesta de valor del vendedor, con evidencia (URLs) y 2-3 decision
+ * makers por empresa (solo nombre/cargo/LinkedIn — revelar contacto sigue
+ * costando créditos en Prospección).
  *
  * Se monta en #radar-shell (página page-radar de index.html). Lee radar_runs
  * (SELECT propio vía RLS; escribe solo la edge function) y narra el progreso
@@ -14,14 +14,21 @@
  *
  * El resultado se lee en tarjetas compactas (una empresa = una tarjeta
  * numerada con su titular de señal; la evidencia, el porqué y los decision
- * makers viven detrás de "Ver detalle") para que un radar de 6 empresas se
- * escanee de un vistazo en vez de leerse como un muro de texto.
+ * makers viven detrás de "Ver detalle") para que un radar largo se escanee
+ * de un vistazo en vez de leerse como un muro de texto. Todo el resultado se
+ * guarda en una lista de Prospección de un click — también las empresas para
+ * las que Apollo no encontró personas, como empresa sin contacto.
  *
  * Antes de investigar, el composer pide dos cosas: un prompt opcional con el
  * tipo de empresas que buscas (la estrategia de búsqueda se construye sobre
- * él) y qué listas guardadas / radares anteriores cuentan como "empresas que
- * ya tienes" — sus nombres viajan a generate-radar como exclusiones para no
- * gastar búsquedas web ni tokens redescubriendo lo mismo.
+ * él) y qué listas guardadas / radares anteriores cuentan como memoria. La
+ * memoria tiene dos mitades y la diferencia importa:
+ *   · Empresas que ya trabajas (miembros de tus listas que ningún Radar
+ *     descubrió) → nunca se vuelven a entregar.
+ *   · Empresas que un Radar anterior ya te entregó → vuelven SOLO si la
+ *     investigación encuentra una señal distinta o una noticia más nueva
+ *     (la tarjeta lo dice: "Señal nueva"). generate-radar lo decide de forma
+ *     determinista comparando titular + URLs de evidencia.
  *
  * Depende de (orden de carga en index.html): js/supabase-client.js,
  * js/ui-helpers.js (escHtml), js/credit-costs.js (badge radar_run),
@@ -59,10 +66,10 @@
     signalOpen: false,     // señal completa vs. recortada a 2 líneas
     exclusionsOpen: false, // panel de "empresas que ya tienes"
 
-    // Fuentes de exclusión ya cargadas (listas de Prospección + radares previos).
+    // Fuentes de memoria ya cargadas (listas de Prospección + radares previos).
     // Sirven a la vez de transparencia ("esto ya lo buscamos") y de ahorro:
-    // sus nombres viajan al backend para que la IA no gaste búsquedas ni
-    // tokens redescubriendo empresas que el vendedor ya tiene.
+    // el backend las resuelve por su cuenta y la IA no gasta búsquedas ni
+    // tokens redescubriendo lo mismo con la misma señal.
     sourcesLoaded: false,
     lists: [],             // [{ id, name, companies: [nombres] }]
     prevRuns: [],          // [{ id, generated_at, companies: [nombres] }]
@@ -183,13 +190,22 @@
     return out;
   }
 
-  // Empresas distintas cubiertas por las fuentes marcadas ahora mismo.
-  function knownCompanyNames() {
-    const picked = [];
-    if (state.excludePrevRadar) state.prevRuns.forEach((r) => picked.push.apply(picked, r.companies));
+  // Empresas distintas cubiertas por las fuentes marcadas ahora mismo, en las
+  // dos mitades que el backend trata distinto:
+  //   soft — ya te las entregó un Radar: vuelven solo con una señal nueva.
+  //   hard — las trabajas pero ningún Radar las descubrió: nunca vuelven.
+  // Una empresa que salió del Radar y guardaste en una lista cuenta como
+  // soft, no como hard: guardarla no debe enterrarla para siempre.
+  function radarMemory() {
+    const softRaw = [];
+    if (state.excludePrevRadar) state.prevRuns.forEach((r) => softRaw.push.apply(softRaw, r.companies));
+    const soft = uniqNames(softRaw);
+    const softKeys = new Set(soft.map((n) => n.toLowerCase()));
+    const hardRaw = [];
     const ids = state.excludeListIds || new Set();
-    state.lists.forEach((l) => { if (ids.has(l.id)) picked.push.apply(picked, l.companies); });
-    return uniqNames(picked);
+    state.lists.forEach((l) => { if (ids.has(l.id)) hardRaw.push.apply(hardRaw, l.companies); });
+    const hard = uniqNames(hardRaw).filter((n) => !softKeys.has(n.toLowerCase()));
+    return { soft: soft, hard: hard };
   }
 
   async function loadLatestRun() {
@@ -371,6 +387,21 @@
 
   // ── Guardar en lista (Prospección → Listas) ────────────────────────────────
 
+  // Lo que el Radar sabe de la empresa viaja con cada fila: es lo que
+  // convierte una lista guardada en memoria del Radar (misma empresa +
+  // misma señal no se vuelve a entregar) y lo que lee el generador de
+  // mensajes.
+  function radarSnapshot(co) {
+    return {
+      radar: {
+        signal_headline: co.signal_headline || '',
+        why_fit: co.why_fit,
+        signal_strength: co.signal_strength,
+        evidence: co.evidence,
+      },
+    };
+  }
+
   function dmRow(userId, listId, co, dm) {
     return {
       list_id: listId,
@@ -385,17 +416,36 @@
       linkedin_url: dm.linkedin_url || null,
       city: dm.city || null,
       country: dm.country || null,
-      snapshot: { radar: { why_fit: co.why_fit, signal_strength: co.signal_strength, evidence: co.evidence } },
+      snapshot: radarSnapshot(co),
+    };
+  }
+
+  // Empresa sin decision makers: Apollo no encontró personas, pero la empresa
+  // sí es un hallazgo real y el vendedor la quiere en su lista (y contando
+  // como "ya la tengo" para el próximo radar). Se guarda como fila de empresa
+  // sin contacto — nada inventado: nombre y cargo van vacíos.
+  function companyRow(userId, listId, co) {
+    const site = safeUrl(co.website);
+    return {
+      list_id: listId,
+      user_id: userId,
+      apollo_person_id: null,
+      first_name: null,
+      last_name: null,
+      name: null,
+      title: null,
+      company: co.name || null,
+      company_domain: site ? hostOf(site) : null,
+      linkedin_url: null,
+      city: null,
+      country: co.country || null,
+      snapshot: radarSnapshot(co),
     };
   }
 
   async function saveToList(companies) {
     if (state.busy) return;
-    const withDms = companies.filter((c) => (c.decision_makers || []).length);
-    if (!withDms.length) {
-      alert('Estas empresas aún no tienen decision makers encontrados; no hay contactos que guardar.');
-      return;
-    }
+    if (!companies.length) return;
     state.busy = true;
     render();
     try {
@@ -412,17 +462,31 @@
         list = await global.prospectingData.createList(baseName + ' (' + now.getSeconds() + 's)');
       }
       const rows = [];
-      withDms.forEach((co) => (co.decision_makers || []).forEach((dm) => {
-        rows.push(dmRow(state.user.id, list.id, co, dm));
-      }));
+      let dmCount = 0;
+      let companiesWithoutDms = 0;
+      companies.forEach((co) => {
+        const dms = co.decision_makers || [];
+        if (dms.length) {
+          dms.forEach((dm) => { rows.push(dmRow(state.user.id, list.id, co, dm)); });
+          dmCount += dms.length;
+        } else {
+          rows.push(companyRow(state.user.id, list.id, co));
+          companiesWithoutDms++;
+        }
+      });
       const { error } = await global.supabaseClient.from('prospect_list_members').insert(rows);
       if (error) throw new Error('No se pudieron guardar los contactos: ' + error.message);
-      const skipped = companies.length - withDms.length;
-      // La lista recién creada pasa a contar como "empresas que ya tienes":
-      // la próxima investigación no volverá a gastar búsquedas en ellas.
+      // La lista recién creada pasa a contar como memoria del Radar: la
+      // próxima investigación no volverá a entregar estas empresas con la
+      // misma señal (sí con una nueva).
       loadExclusionSources().then(render).catch(() => {});
-      alert('Guardado: ' + rows.length + ' decision makers en la lista "' + list.name + '".' +
-        (skipped ? ' (' + skipped + ' empresa' + (skipped === 1 ? '' : 's') + ' sin decision makers no se incluyeron.)' : '') +
+      alert('Guardado en la lista "' + list.name + '": ' +
+        companies.length + ' empresa' + (companies.length === 1 ? '' : 's') +
+        ' y ' + dmCount + ' decision maker' + (dmCount === 1 ? '' : 's') + '.' +
+        (companiesWithoutDms
+          ? ' (' + companiesWithoutDms + ' empresa' + (companiesWithoutDms === 1 ? '' : 's') +
+            ' quedó' + (companiesWithoutDms === 1 ? '' : 'ron') + ' sin contacto: Apollo no encontró personas.)'
+          : '') +
         ' La encuentras en Prospección → Listas guardadas.');
     } catch (e) {
       alert(e.message || 'No se pudo guardar la lista.');
@@ -488,26 +552,34 @@
     '</div>';
   }
 
-  // Las listas guardadas y los radares anteriores, con sus empresas: sirven
-  // de memoria ("esto ya lo buscamos") y de ahorro real — sus nombres viajan
-  // al backend como exclusiones para no gastar búsquedas ni tokens
-  // redescubriendo empresas que ya estás trabajando.
+  // Las listas guardadas y los radares anteriores, con sus empresas: son la
+  // memoria del Radar. Las que ya trabajas no vuelven nunca; las que ya te
+  // entregó un Radar vuelven solo si hay una señal o una noticia nueva.
   function exclusionsBlock() {
     if (!state.sourcesLoaded) {
       return '<div class="rdr-ex"><div class="rdr-ex-sum">Revisando qué empresas ya tienes…</div></div>';
     }
     const sources = state.lists.length + (state.prevRuns.length ? 1 : 0);
     if (!sources) return '';
-    const known = knownCompanyNames();
-    const sum = known.length
-      ? 'No repetiremos las <strong>' + known.length + '</strong> empresa' + (known.length === 1 ? '' : 's') +
-        ' que ya tienes guardadas.'
-      : 'No estás excluyendo ninguna empresa: la búsqueda puede repetir las que ya tienes.';
+    const mem = radarMemory();
+    const known = mem.hard.concat(mem.soft);
+    const parts = [];
+    if (mem.hard.length) {
+      parts.push('No repetiremos las <strong>' + mem.hard.length + '</strong> empresa' +
+        (mem.hard.length === 1 ? '' : 's') + ' que ya trabajas.');
+    }
+    if (mem.soft.length) {
+      parts.push('Las <strong>' + mem.soft.length + '</strong> que ya te entregó el Radar solo vuelven si hay una señal nueva.');
+    }
+    const sum = parts.length
+      ? parts.join(' ')
+      : 'No estás usando la memoria del Radar: la búsqueda puede repetir empresas que ya tienes.';
     const rows = [];
     if (state.prevRuns.length) {
       const n = uniqNames([].concat.apply([], state.prevRuns.map((r) => r.companies))).length;
       rows.push(exRow('prev', '', 'Radares anteriores', state.prevRuns.length + ' investigación' +
-        (state.prevRuns.length === 1 ? '' : 'es') + ' · ' + n + ' empresas', state.excludePrevRadar));
+        (state.prevRuns.length === 1 ? '' : 'es') + ' · ' + n + ' empresas — vuelven solo con señal nueva',
+        state.excludePrevRadar));
     }
     const ids = state.excludeListIds || new Set();
     state.lists.forEach((l) => {
@@ -542,10 +614,10 @@
 
   function viewEmpty() {
     return '<div class="rdr-wrap">' +
-      header('La IA investiga la web y te trae empresas que necesitan lo que vendes — con evidencia y decision makers.') +
+      header('La IA investiga la web y te trae todas las empresas que necesitan lo que vendes — con evidencia y decision makers.') +
       composer('Iniciar investigación', {
         title: 'Encuentra tus próximas empresas target',
-        sub: 'A partir del contexto de tu empresa — y de lo que escribas aquí abajo — la IA define qué señal de compra buscar, investiga fuentes públicas y te entrega empresas concretas con sus decision makers.',
+        sub: 'A partir del contexto de tu empresa — y de lo que escribas aquí abajo — la IA define qué señal de compra buscar, investiga fuentes públicas y te entrega todas las empresas que encuentre con esa señal, con sus decision makers.',
       }) +
     '</div>';
   }
@@ -553,7 +625,6 @@
   function viewProgress(run) {
     const pct = Math.max(2, Math.min(100, run.progress || 0));
     const log = Array.isArray(run.progress_log) ? run.progress_log : [];
-    const excluded = Array.isArray(run.excluded_companies) ? run.excluded_companies : [];
     const signal = String(run.signal_hypothesis || '');
     const hypothesis = signal
       ? '<div class="rdr-signal card"><div class="rdr-signal-lbl">Señal detectada</div>' +
@@ -576,16 +647,14 @@
         '<button class="btn btn-ghost btn-sm" data-act="resume-stage" ' + (state.busy ? 'disabled' : '') + '>Reintentar esta etapa</button></div>'
       : '';
     return '<div class="rdr-wrap">' +
-      header('Tu radar está investigando. Esto toma unos minutos — puedes quedarte a mirar o explorar la app; te avisamos aquí.') +
+      header('Tu radar está investigando. Corre todas las búsquedas de la estrategia, así que toma varios minutos — puedes quedarte a mirar o explorar la app; te avisamos aquí.') +
       hypothesis +
       '<div class="card rdr-prog">' +
         '<div class="rdr-prog-top"><span class="rdr-pulse"></span>' +
           '<span class="rdr-prog-step">' + esc(run.progress_step || 'Investigando…') + '</span>' +
           '<span class="rdr-prog-pct">' + pct + '%</span></div>' +
         '<div class="rdr-bar"><div class="rdr-bar-fill" style="width:' + pct + '%"></div></div>' +
-        (excluded.length ? '<div class="rdr-prog-note">Saltando ' + excluded.length +
-          ' empresa' + (excluded.length === 1 ? '' : 's') + ' que ya tienes guardada' +
-          (excluded.length === 1 ? '' : 's') + '.</div>' : '') +
+        (memoryNoteProgress(run) ? '<div class="rdr-prog-note">' + esc(memoryNoteProgress(run)) + '</div>' : '') +
         (log.length ? '<div class="rdr-log">' + log.slice(-8).map((l) =>
           '<div class="rdr-log-line">' + esc(l && l.text ? l.text : '') + '</div>').join('') + '</div>' : '') +
         stuckPanel +
@@ -608,8 +677,8 @@
     const companies = Array.isArray(run.companies) ? run.companies : [];
     const totalDms = companies.reduce((n, c) => n + ((c.decision_makers || []).length), 0);
     const when = run.generated_at ? new Date(run.generated_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'long' }) : '';
-    const excluded = Array.isArray(run.excluded_companies) ? run.excluded_companies : [];
     const signal = String(run.signal_hypothesis || '');
+    const repeats = companies.filter((c) => c && c.seen_before).length;
     return '<div class="rdr-wrap">' +
       header(companies.length + ' empresa' + (companies.length === 1 ? '' : 's') + ' con señal de compra · ' +
         totalDms + ' decision makers' + (when ? ' · ' + esc(when) : '')) +
@@ -621,11 +690,12 @@
           ? '<button class="rdr-link" data-act="toggle-signal">' +
             (state.signalOpen ? 'Ver menos' : 'Ver la señal completa') + '</button>'
           : '') +
-        (excluded.length ? '<div class="rdr-excluded-note">Se excluyeron ' + excluded.length +
-          ' empresa' + (excluded.length === 1 ? '' : 's') + ' que ya tenías en tus listas o radares anteriores.</div>' : '') +
+        (memoryNoteResults(run, repeats)
+          ? '<div class="rdr-excluded-note">' + esc(memoryNoteResults(run, repeats)) + '</div>'
+          : '') +
         '<div class="rdr-actions">' +
-          '<button class="btn btn-primary btn-sm" data-act="save-all" ' + (state.busy || !totalDms ? 'disabled' : '') + '>' +
-            (state.busy ? 'Guardando…' : 'Guardar todo en una lista') + '</button>' +
+          '<button class="btn btn-primary btn-sm" data-act="save-all" ' + (state.busy || !companies.length ? 'disabled' : '') + '>' +
+            (state.busy ? 'Guardando…' : 'Guardar las ' + companies.length + ' en una lista') + '</button>' +
           '<button class="btn btn-ghost btn-sm" data-act="toggle-rerun">' +
             (state.showRerun ? 'Cancelar' : 'Nueva investigación') + '</button>' +
         '</div>' +
@@ -633,6 +703,41 @@
       (state.showRerun ? composer('Investigar') : '') +
       '<div class="rdr-grid">' + companies.map((c, i) => companyCard(c, i)).join('') + '</div>' +
     '</div>';
+  }
+
+  // Qué memoria usó este run, contada honestamente: las empresas vetadas y
+  // las que solo podían volver con una señal nueva son dos cosas distintas.
+  function memoryCounts(run) {
+    return {
+      hard: Array.isArray(run.excluded_companies) ? run.excluded_companies.length : 0,
+      soft: Array.isArray(run.known_signals) ? run.known_signals.length : 0,
+    };
+  }
+
+  function memoryNoteProgress(run) {
+    const m = memoryCounts(run);
+    const parts = [];
+    if (m.hard) parts.push('Saltando ' + m.hard + ' empresa' + (m.hard === 1 ? '' : 's') + ' que ya trabajas.');
+    if (m.soft) {
+      parts.push(m.soft + ' de radares anteriores solo vuelve' + (m.soft === 1 ? '' : 'n') +
+        ' si aparece una señal nueva.');
+    }
+    return parts.join(' ');
+  }
+
+  // Al final ya sabemos cuántas de las "solo con señal nueva" volvieron de
+  // verdad, así que se cuenta el resultado en vez de la regla.
+  function memoryNoteResults(run, repeats) {
+    const m = memoryCounts(run);
+    const parts = [];
+    if (m.hard) parts.push('Se excluyeron ' + m.hard + ' empresa' + (m.hard === 1 ? '' : 's') + ' que ya trabajas.');
+    if (repeats) {
+      parts.push(repeats + ' empresa' + (repeats === 1 ? '' : 's') + ' de un radar anterior vuelve' +
+        (repeats === 1 ? '' : 'n') + ' aquí con una señal nueva.');
+    } else if (m.soft) {
+      parts.push('Ninguna de las ' + m.soft + ' empresas de radares anteriores traía una señal nueva.');
+    }
+    return parts.join(' ');
   }
 
   // Titular de una tarjeta: la línea telegráfica que escribe la IA
@@ -657,10 +762,17 @@
     const strength = c.signal_strength === 'alta'
       ? '<span class="rdr-chip rdr-chip-hot">Señal alta</span>'
       : '<span class="rdr-chip rdr-chip-warm">Señal media</span>';
-    const meta = [c.country, c.industry, c.employee_count].filter(Boolean)
+    // Empresa que un Radar anterior ya te había entregado y volvió porque la
+    // investigación encontró otra señal: decirlo evita que parezca repetida.
+    // Va en la fila de chips, no junto al nombre: dos chips en la cabecera
+    // le comen el ancho al nombre de la empresa y lo parten a media palabra.
+    const again = c.seen_before ? '<span class="rdr-chip rdr-chip-again">Señal nueva</span>' : '';
+    const meta = again + [c.country, c.industry, c.employee_count].filter(Boolean)
       .map((m) => '<span class="rdr-chip">' + esc(m) + '</span>').join('') +
-      (dms.length ? '<span class="rdr-chip rdr-chip-dm">' + dms.length + ' decision maker' +
-        (dms.length === 1 ? '' : 's') + '</span>' : '');
+      (dms.length
+        ? '<span class="rdr-chip rdr-chip-dm">' + dms.length + ' decision maker' +
+          (dms.length === 1 ? '' : 's') + '</span>'
+        : '<span class="rdr-chip">Sin contacto en Apollo</span>');
     const headline = headlineOf(c);
     return '<article class="card rdr-co' + (open ? ' is-open' : '') + '">' +
       '<div class="rdr-co-top">' +
@@ -678,14 +790,25 @@
         '<button class="rdr-link" data-act="toggle-detail" data-idx="' + i + '">' +
           (open ? 'Ocultar detalle' : 'Ver detalle') + '</button>' +
         '<button class="btn btn-ghost btn-sm" data-act="save-one" data-idx="' + i + '" ' +
-          (state.busy || !dms.length ? 'disabled' : '') + '>Guardar en lista</button>' +
+          (state.busy ? 'disabled' : '') + '>Guardar en lista</button>' +
       '</div>' +
       (open ? companyDetail(c, ev, dms) : '') +
     '</article>';
   }
 
   function companyDetail(c, ev, dms) {
+    const prevSignal = c.seen_before
+      ? '<div class="rdr-again">' +
+        (c.previous_seen_at
+          ? 'Ya te la entregamos el ' +
+            esc(new Date(c.previous_seen_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })) + '. '
+          : 'Ya te la había entregado un Radar anterior. ') +
+        (c.previous_signal ? 'Entonces la señal era: “' + esc(c.previous_signal) + '”. ' : '') +
+        (c.repeat_reason ? '<strong>Novedad:</strong> ' + esc(c.repeat_reason) : 'Vuelve con una señal distinta.') +
+        '</div>'
+      : '';
     return '<div class="rdr-co-detail">' +
+      prevSignal +
       (c.why_fit ? '<div class="rdr-why">' + esc(c.why_fit) + '</div>' : '') +
       (ev.length ? '<div class="rdr-ev"><div class="rdr-sec-lbl">Evidencia</div>' + ev.map((e) => {
         const u = safeUrl(e.url);
@@ -783,6 +906,7 @@
       '.rdr-signal-txt{font-size:13.5px;color:var(--ink-2);line-height:1.55;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
       '.rdr-signal-txt.is-open{display:block;overflow:visible}',
       '.rdr-excluded-note{font-size:12px;color:var(--ink-4);margin-top:8px}',
+      '.rdr-again{font-size:12.5px;color:var(--ink-3);line-height:1.5;border-left:2px solid var(--accent);padding-left:10px;margin-bottom:10px}',
       '.rdr-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;align-items:center}',
       // ── Composer ──
       '.rdr-composer{padding:18px 20px;display:flex;flex-direction:column;gap:9px}',
@@ -841,6 +965,7 @@
       '.rdr-chip-hot{background:var(--green-soft);color:var(--green);border-color:transparent;flex:none;align-self:flex-start}',
       '.rdr-chip-warm{background:var(--amber-soft);color:var(--amber);border-color:transparent;flex:none;align-self:flex-start}',
       '.rdr-chip-dm{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}',
+      '.rdr-chip-again{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent;flex:none;align-self:flex-start}',
       '.rdr-co-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:2px}',
       '.rdr-co-detail{border-top:1px solid var(--hair);padding-top:11px;display:flex;flex-direction:column;gap:12px}',
       '.rdr-why{font-size:12.5px;color:var(--ink-2);line-height:1.55}',

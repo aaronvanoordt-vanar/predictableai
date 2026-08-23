@@ -1,0 +1,36 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Radar: memoria de señales (2026-08-23)
+--
+-- Antes, "empresas que ya tienes" era una lista plana de nombres: una empresa
+-- que un Radar anterior ya había entregado quedaba vetada para siempre. Pero
+-- la razón por la que una empresa es un target puede cambiar — un concurso
+-- mercantil nuevo, otra ronda de vacantes, un anuncio de cierre posterior — y
+-- esa empresa vuelve a ser noticia aunque ya la hayas visto.
+--
+-- Ahora la memoria del Radar tiene dos mitades:
+--
+--   excluded_companies (ya existía)
+--     Empresas que el vendedor ya trabaja (miembros de las listas de
+--     Prospección que marcó) y que ningún Radar descubrió. No se sabe QUÉ
+--     señal tienen, así que volver a buscarlas es gasto puro: nunca se
+--     reportan.
+--
+--   known_signals (esta migración)
+--     Cada empresa que un Radar anterior entregó, con la señal exacta que se
+--     reportó entonces. NO están vetadas: vuelven a aparecer si la
+--     investigación encuentra una señal distinta o una noticia más nueva.
+--     generate-radar lo decide de forma determinista (isNewSignal): exige al
+--     menos una URL de evidencia que no se haya mostrado antes para esa
+--     empresa Y un titular de señal distinto al ya reportado.
+--
+--   [{ name, headlines: [texto], urls: [url], last_seen: timestamptz }]
+--
+-- Por eso una empresa guardada en una lista DESDE el Radar se queda en
+-- known_signals y no pasa a excluded_companies: "Guardar todo en una lista"
+-- no debe enterrar una empresa para siempre.
+--
+-- Idempotente y no destructivo (seguro de re-aplicar).
+-- ═══════════════════════════════════════════════════════════════════════════
+
+ALTER TABLE public.radar_runs
+  ADD COLUMN IF NOT EXISTS known_signals JSONB NOT NULL DEFAULT '[]'::jsonb;
