@@ -82,7 +82,7 @@ Research the company (web_search their website and LinkedIn page, max 5 searches
   "authority_signals": "extra credibility signals found (partnerships, certifications, client logos, awards). Empty string if none found.",
   "what_it_does": "1 sentence in Spanish: what the company does",
   "mechanism": "2-3 sentences in Spanish describing HOW the product/service delivers its outcome. Concrete verbs, no buzzwords ('end-to-end', 'powered by AI' prohibited).",
-  "key_outcomes": ["array of concrete outcomes WITH numbers, in Spanish, ONLY if they appear in the intake data or on the company's own website/materials. If no defensible numbers exist, return []."],
+  "key_outcomes": ["3-5 concrete outcomes the customer gets, in Spanish. Use a real figure ONLY when the intake data or the company's own materials state one — never invent, round or estimate a number. When no figure is published, still return the outcomes qualitatively, phrased as what the customer ends up with (e.g. 'Dictámenes de valor defendibles ante auditores, bancos y autoridades fiscales'). Never return an empty array just because there are no numbers."],
   "icp": {
     "industries": ["from intake + research"],
     "company_sizes": ["e.g. '20-200 empleados'"],
@@ -114,6 +114,7 @@ Research the company (web_search their website and LinkedIn page, max 5 searches
 
 Hard rules:
 - NEVER invent metrics, client names, or facts. Anything not found in the intake data or the company's own public materials must be omitted (empty string / empty array). social_proof comes ONLY from intake success cases or clients named on their website.
+- That rule bans invented FACTS, not qualitative description. key_outcomes and common_objections are drafts the seller reviews and edits before anything is sent, so return them filled: outcomes described without figures when no figure is published, and objections as the reflexes this buyer plausibly has. What you must never do is attach a number, a client name, a date or a certification that nobody stated.
 - All user-facing text in neutral Latin-American Spanish (tuteo). recommended_filters values in English (Apollo requirement).
 - recommended_filters must aim WIDE: the goal is a pool of at least ~1000 people. Prefer more titles/seniorities/countries and fewer keyword restrictions. Include every ICP geography plus close neighbors in the same region when the ICP is regional (e.g. LATAM).
 - If the intake is sparse, still produce the best brief possible from web research alone and note gaps as empty values.`;
@@ -158,6 +159,11 @@ interface IntakeRow {
   outreach_language: string | null;
   social_proof: { client?: string; industry?: string; result?: string }[] | null;
   common_objections: { objection?: string; neutralizer?: string }[] | null;
+  // "No tengo casos de éxito" / "no me ponen objeciones": son declaraciones del
+  // usuario, así que valen tanto como una lista llena — sin leerlas, el relleno
+  // automático de abajo las pisaría con propuestas que él ya descartó.
+  social_proof_none: boolean | null;
+  objections_none: boolean | null;
   context_confirmed_at: string | null;
   // Foco declarado por el usuario para la investigación (enrich-company). El
   // brief se redacta con el mismo foco: si la investigación miró una sola línea
@@ -332,7 +338,8 @@ Deno.serve(async (req: Request) => {
       competitors, excluded_companies,
       commercial_deal_size, commercial_sales_cycle, commercial_model, commercial_primary_cta,
       outreach_signature, outreach_tone, outreach_channels, outreach_language,
-      social_proof, common_objections, context_confirmed_at, company_enrichment_prompt
+      social_proof, common_objections, social_proof_none, objections_none,
+      context_confirmed_at, company_enrichment_prompt
     `).eq("user_id", user.id).maybeSingle(),
     supa.from("profiles").select("company_name, linkedin_company_url, company_website").eq("id", user.id).maybeSingle(),
     supa.from("client_icp").select("company_sizes, industries, roles, geographies, pain_points").eq("profile_id", user.id).maybeSingle(),
@@ -408,16 +415,59 @@ Deno.serve(async (req: Request) => {
       // sin pisar nada que el usuario ya haya corregido a mano.
       const enr = (b.enrichment && typeof b.enrichment === "object") ? b.enrichment : {};
       const intakeRow = intake as IntakeRow | null;
-      const fill: Record<string, string> = {};
-      if (!intakeRow?.company_website && str(enr.website)) fill.company_website = str(enr.website);
-      if (!intakeRow?.company_industry && str(enr.industry)) fill.company_industry = str(enr.industry);
-      if (!intakeRow?.company_employee_count && str(enr.employee_count)) fill.company_employee_count = str(enr.employee_count);
-      if (!intakeRow?.company_country && str(enr.country)) fill.company_country = str(enr.country);
-      if (!intakeRow?.company_about && str(enr.about)) fill.company_about = str(enr.about);
-      if (!intakeRow?.company_solutions && str(enr.solutions)) fill.company_solutions = str(enr.solutions);
+      // deno-lint-ignore no-explicit-any
+      const healed: Record<string, any> = {};
+      if (!intakeRow?.company_website && str(enr.website)) healed.company_website = str(enr.website);
+      if (!intakeRow?.company_industry && str(enr.industry)) healed.company_industry = str(enr.industry);
+      if (!intakeRow?.company_employee_count && str(enr.employee_count)) healed.company_employee_count = str(enr.employee_count);
+      if (!intakeRow?.company_country && str(enr.country)) healed.company_country = str(enr.country);
+      if (!intakeRow?.company_about && str(enr.about)) healed.company_about = str(enr.about);
+      if (!intakeRow?.company_solutions && str(enr.solutions)) healed.company_solutions = str(enr.solutions);
+
+      // Propuestas para las tarjetas que ninguna función llenaba. El modelo ya
+      // devolvía prueba social, objeciones y quién firma, pero solo se
+      // guardaban en client_brief y las tarjetas las leen de intel_hub_intake:
+      // "Resultados y prueba social", "Objeciones frecuentes" y "Voz, canales e
+      // idioma" no había forma de que la IA las completara, por más veces que se
+      // investigara. Se copian solo donde el usuario no declaró nada — ni
+      // valores ni el "no tengo" —, así que nunca pisan una decisión suya, y
+      // llegan como borrador que él revisa antes de confirmar el contexto.
+      // deno-lint-ignore no-explicit-any
+      const fill: Record<string, any> = { ...healed };
+      const proposedProof = arr(b.social_proof)
+        .filter((p) => p && str(p.client) && str(p.result))
+        .slice(0, 6)
+        .map((p) => ({
+          client: str(p.client).slice(0, 120),
+          industry: str(p.industry).slice(0, 120),
+          result: str(p.result).slice(0, 300),
+        }));
+      if (!declaredProof.length && intakeRow?.social_proof_none !== true && proposedProof.length) {
+        fill.social_proof = proposedProof;
+      }
+      const proposedObjections = arr(b.common_objections)
+        .filter((o) => o && str(o.objection) && str(o.neutralizer))
+        .slice(0, 6)
+        .map((o) => ({
+          objection: str(o.objection).slice(0, 300),
+          neutralizer: str(o.neutralizer).slice(0, 300),
+        }));
+      if (!declaredObjections.length && intakeRow?.objections_none !== true && proposedObjections.length) {
+        fill.common_objections = proposedObjections;
+      }
+      if (!str(intakeRow?.outreach_signature) && str(b.founder_voice)) {
+        fill.outreach_signature = str(b.founder_voice).slice(0, 200);
+      }
+
       if (Object.keys(fill).length > 0) {
-        fill.company_enrichment_status = "done";
-        fill.company_enrichment_at = new Date().toISOString();
+        // El sello de "investigación terminada" solo corresponde cuando esta
+        // función tuvo que suplir a enrich-company. Ponerlo por haber rellenado
+        // una propuesta daría por cerrada una corrida que puede seguir viva y
+        // cortaría la barra de progreso antes de tiempo.
+        if (Object.keys(healed).length > 0) {
+          fill.company_enrichment_status = "done";
+          fill.company_enrichment_at = new Date().toISOString();
+        }
         await supa.from("intel_hub_intake").update(fill).eq("user_id", user.id);
       }
       console.log(`[brief] ✓ ${user.id}`);
