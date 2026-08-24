@@ -65,35 +65,11 @@
 
   var LINKEDIN_LABELS = { activo: 'Activo', pausado: 'Pausado', no_incluido: 'No incluido' };
 
-  var METRIC_FIELDS = [
-    { k: 'contacted',          label: 'Contactos contactados' },
-    { k: 'opened',             label: 'Mensajes leídos' },
-    { k: 'replied',            label: 'Mensajes respondidos' },
-    { k: 'meetings_scheduled', label: 'Reuniones agendadas' },
-    { k: 'meetings_held',      label: 'Reuniones tomadas' },
-    { k: 'no_shows',           label: 'No shows' },
-    { k: 'disqualified',       label: 'Descalificadas' },
-  ];
-
   var LINK_FIELDS = [
     { k: 'prospecting_brief_url', label: 'Prospecting Brief' },
     { k: 'campaigns_url',         label: 'Campañas' },
     { k: 'matriz_url',            label: 'Matriz' },
     { k: 'kickoff_url',           label: 'Kick Off' },
-  ];
-
-  // Espejo exacto de js/clients.js — mantener los dos en sync.
-  var THRESHOLDS = [
-    { key: 'open',         label: 'Open rate',         hint: 'leídos / contactados',        type: 'min', target: 50,
-      n: function (m) { return num(m.opened); },            d: function (m) { return num(m.contacted); } },
-    { key: 'reply',        label: 'Reply rate',        hint: 'respondidos / leídos',        type: 'min', target: 30,
-      n: function (m) { return num(m.replied); },           d: function (m) { return num(m.opened); } },
-    { key: 'conversion',   label: 'Conversion rate',   hint: 'agendadas / respondidos',     type: 'min', target: 5,
-      n: function (m) { return num(m.meetings_scheduled); }, d: function (m) { return num(m.replied); } },
-    { key: 'no_show',      label: 'No-show rate',      hint: 'no shows / agendadas',        type: 'max', target: 25,
-      n: function (m) { return num(m.no_shows); },          d: function (m) { return num(m.meetings_scheduled); } },
-    { key: 'disqualified', label: 'Disqualified rate', hint: 'descalificadas / agendadas',  type: 'max', target: 20,
-      n: function (m) { return num(m.disqualified); },      d: function (m) { return num(m.meetings_scheduled); } },
   ];
 
   var TEXT_SECTIONS = [
@@ -123,39 +99,8 @@
 
   // ── Utilidades de formato ──────────────────────────────────────────────
 
-  function num(v) { var n = parseInt(v, 10); return isNaN(n) || n < 0 ? 0 : n; }
-
-  function rawPct(numr, den) {
-    if (!den) return null;
-    return Math.round((numr / den) * 1000) / 10;
-  }
-
-  function fmtPct(raw) {
-    return raw == null ? '—' : (raw.toFixed(1).replace(/\.0$/, '') + '%');
-  }
-
-  function ratioStatus(raw, type, target) {
-    if (raw == null) return { status: 'na', pct: 0 };
-    var good = type === 'min' ? raw >= target : raw <= target;
-    var dist = target > 0 ? Math.abs((type === 'min' ? raw - target : target - raw)) / target : 0;
-    return { status: good ? 'ok' : 'bad', pct: Math.max(0, Math.min(1, dist)) };
-  }
-
-  function targetLabel(t) {
-    return (t.type === 'min' ? '≥ ' : '≤ ') + t.target + '%';
-  }
-
-  function computeRatios(m) {
-    m = m || {};
-    return THRESHOLDS.map(function (t) {
-      var raw = rawPct(t.n(m), t.d(m));
-      var st = ratioStatus(raw, t.type, t.target);
-      return {
-        key: t.key, label: t.label, hint: t.hint, val: fmtPct(raw), raw: raw,
-        type: t.type, target: t.target, status: st.status, pct: st.pct,
-      };
-    });
-  }
+  // Los umbrales y ratios del CRM viven ahora en js/client-review.js, que los
+  // calcula sobre los datos leídos del sheet y filtrados por período.
 
   function sheetEmbedUrl(url) {
     try {
@@ -325,7 +270,6 @@
   function renderDashboard() {
     var c = state.client;
     var st = STATUS_LABELS[c.status] || STATUS_LABELS.onboarding;
-    var m = c.crm_metrics || {};
     var editable = state.canEdit;
 
     var photo = state.photoUrl
@@ -337,37 +281,6 @@
       if (!v) return '';
       return '<a class="cp-link" href="' + esc(su(v)) + '" target="_blank" rel="noopener noreferrer">' + f.label + ' ↗</a>';
     }).join('') || '<span class="cp-muted">Sin links aún.</span>';
-
-    var metrics = METRIC_FIELDS.map(function (f) {
-      var v = m[f.k];
-      return '<div class="cp-metric"><b>' + (v == null ? '—' : esc(v)) + '</b><span>' + f.label + '</span></div>';
-    }).join('');
-
-    var ratios = computeRatios(m).map(function (r) {
-      return '<div class="cp-ratio"><b>' + esc(r.val) + '</b><span>' + esc(r.label) + '</span>' +
-        '<span class="cp-muted">' + esc(r.hint) + '</span></div>';
-    }).join('');
-
-    var strategies = c.metric_strategies || {};
-    var thresholds = computeRatios(m).map(function (r) {
-      var color = r.status === 'ok' ? 'green' : (r.status === 'bad' ? 'red' : null);
-      var boxStyle = color
-        ? 'background:color-mix(in srgb, var(--' + color + ') ' + (14 + Math.round(r.pct * 56)) + '%, var(--surface2));' +
-          'border-color:color-mix(in srgb, var(--' + color + ') 55%, var(--hair))'
-        : 'background:var(--surface2)';
-      var badge = color
-        ? '<span class="cp-thr-badge" style="background:var(--' + color + ')">' + (r.status === 'ok' ? 'OK' : 'BAJO') + '</span>'
-        : '';
-      var strategy = (r.status === 'bad' && strategies[r.key])
-        ? '<div class="cp-thr-strategy"><label>Estrategia de remediación</label><p>' + esc(strategies[r.key]) + '</p></div>'
-        : '';
-      return '<div class="cp-thr" style="' + boxStyle + '">' +
-        '<div class="cp-thr-top"><span class="cp-thr-lbl">' + esc(r.label) + '</span>' + badge + '</div>' +
-        '<span class="cp-thr-val">' + esc(r.val) + '</span>' +
-        '<span class="cp-thr-target">Mínimo aceptable: ' + esc(targetLabel(r)) + '</span>' +
-        strategy +
-        '</div>';
-    }).join('');
 
     var embed = sheetEmbedUrl(c.crm_sheet_url);
 
@@ -413,14 +326,18 @@
         '</div>' +
       '</div>' +
 
+      // La revisión (js/client-review.js) sustituye a las tarjetas de métricas
+      // que antes se tecleaban a mano: los mismos números, leídos del sheet y
+      // filtrables por fecha.
+      '<div id="cr-review"></div>' +
+
       '<div class="cp-sec">' +
-        '<h2>CRM — datos críticos' +
-          (c.crm_sheet_url ? '<a class="cp-link" href="' + esc(su(c.crm_sheet_url)) + '" target="_blank" rel="noopener noreferrer">Abrir base de datos ↗</a>' : '') +
+        '<h2>Base de datos (CRM)' +
+          (c.crm_sheet_url ? '<a class="cp-link" href="' + esc(su(c.crm_sheet_url)) + '" target="_blank" rel="noopener noreferrer">Abrir en Google Sheets ↗</a>' : '') +
         '</h2>' +
-        '<div class="cp-metrics">' + metrics + '</div>' +
-        '<div class="cp-ratios">' + ratios + '</div>' +
-        '<div class="cp-thr-grid">' + thresholds + '</div>' +
-        (embed ? '<iframe class="cp-frame" src="' + esc(embed) + '" loading="lazy" referrerpolicy="no-referrer"></iframe>' : '') +
+        (embed
+          ? '<iframe class="cp-frame" src="' + esc(embed) + '" loading="lazy" referrerpolicy="no-referrer"></iframe>'
+          : '<p class="cp-text cp-muted">Tu equipo todavía no ha enlazado la base de datos.</p>') +
       '</div>' +
 
       '<div class="cp-cols">' +
@@ -472,7 +389,27 @@
     return pre.path;
   }
 
+  /**
+   * Monta la revisión automática. En el flujo viejo (cuenta + solo lectura) no
+   * hay share_token que pasarle a la edge function, así que se omite en vez de
+   * romper la página.
+   */
+  function mountReview() {
+    var host = el('cr-review');
+    if (!host || !window.clientReview || state.legacy || !token) return;
+    window.clientReview.mount({
+      host: host,
+      api: api,
+      token: token,
+      client: state.client,
+      canEdit: state.canEdit,
+      onPatch: queueSave,
+    });
+  }
+
   function bindDashboard() {
+    mountReview();
+
     var logout = el('cp-logout');
     if (logout) {
       logout.addEventListener('click', async function () {

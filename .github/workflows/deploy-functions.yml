@@ -56,7 +56,7 @@ jobs:
           # autentican solas. Redesplegarlas sin esta bandera les cambia la
           # configuración en silencio: apollo-webhook deja de recibir los avisos
           # de Apollo, y enrich-company cambia cómo la alcanza el onboarding.
-          NO_JWT="apollo-webhook enrich-company sales-coach whatsapp-webhook generate-outreach-playbook client-portal"
+          NO_JWT="apollo-webhook enrich-company sales-coach whatsapp-webhook generate-outreach-playbook client-portal sheet-sync"
 
           FAILED=""
           for fn in $FUNCTIONS; do

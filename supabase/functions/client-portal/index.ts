@@ -38,6 +38,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callLLM, parseLlmJson, RECOMMENDED_ENGINE, isEngine, type Engine } from "../_shared/llm.ts";
 
 const BUCKET = "client-assets";
 const MAX_BODY_BYTES = 64 * 1024;
@@ -61,6 +62,9 @@ const EDITABLE_TEXT: Record<string, number> = {
   icp: 8000,
   industries: 8000,
   historical_notes: 20000,
+  // Acuerdos de la reunión: los escribe cualquiera de los dos lados, así que
+  // el portal deja de ser un tablero de solo lectura y pasa a ser la minuta.
+  review_next_steps: 8000,
 };
 
 /** Columnas que viajan al portal. share_token / created_by / id nunca salen. */
@@ -68,8 +72,17 @@ const CLIENT_COLUMNS = [
   "name", "status", "country", "start_date", "meta", "linkedin_status",
   "prospecting_brief_url", "crm_sheet_url", "campaigns_url", "matriz_url",
   "kickoff_url", "crm_metrics", "metric_strategies", "target_countries", "icp",
-  "industries", "historical_notes", "portal_updated_at",
+  "industries", "historical_notes", "portal_updated_at", "review_next_steps",
 ];
+
+/** Acciones que solo leen: siguen funcionando con el portal en solo lectura. */
+const READ_ACTIONS = new Set(["get", "analytics"]);
+
+/** Cuántas filas del CRM viajan al portal como máximo. */
+const MAX_ANALYTICS_ROWS = 20_000;
+
+/** Una revisión con IA por cliente cada 10 minutos. */
+const REVIEW_COOLDOWN_MS = 10 * 60 * 1000;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -107,6 +120,12 @@ function cleanText(value: unknown, max: number): string | null {
   const s = String(value).trim();
   if (!s) return null;
   return s.slice(0, max);
+}
+
+/** yyyy-mm-dd o null. Evita meter basura en las columnas DATE. */
+function cleanIsoDate(value: unknown): string | null {
+  const s = String(value ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 }
 
 function cleanCountries(value: unknown): string[] {
@@ -174,6 +193,156 @@ async function touchPortal(db: Db, clientId: string) {
     .eq("id", clientId);
 }
 
+
+// ── Analítica del sheet ────────────────────────────────────────────────────
+
+/**
+ * Todo lo que el portal necesita para dibujar la revisión: estado del último
+ * sync, filas del CRM ya despersonalizadas, fotos diarias de los totales (para
+ * los deltas por período) y las revisiones generadas.
+ *
+ * Las filas NUNCA llevan nombre, email ni teléfono: esos datos no se copian
+ * del sheet a Postgres, así que aquí simplemente no existen.
+ */
+async function loadAnalytics(db: Db, clientId: string) {
+  const [state, rows, snapshots, reviews] = await Promise.all([
+    db.from("client_sheet_state")
+      .select("synced_at,ok,error,crm_tab,metrics_tab,headline,pipeline,row_count,dated_row_count")
+      .eq("client_id", clientId).maybeSingle(),
+    db.from("client_crm_rows")
+      .select("company,title,country,country_code,channel,status,status_key,event_date,feedback")
+      .eq("client_id", clientId)
+      .order("event_date", { ascending: true, nullsFirst: false })
+      .limit(MAX_ANALYTICS_ROWS),
+    db.from("client_metric_snapshots")
+      .select("snapshot_date,headline")
+      .eq("client_id", clientId)
+      .order("snapshot_date", { ascending: true })
+      .limit(1000),
+    db.from("client_reviews")
+      .select("id,created_at,range_from,range_to,preset,engine,narrative")
+      .eq("client_id", clientId)
+      .order("created_at", { ascending: false })
+      .limit(12),
+  ]);
+
+  return {
+    state: state.data ?? null,
+    rows: rows.data ?? [],
+    snapshots: snapshots.data ?? [],
+    reviews: reviews.data ?? [],
+  };
+}
+
+/** Resumen compacto que se le pasa al modelo. Números, no prosa. */
+// deno-lint-ignore no-explicit-any
+function reviewDigest(payload: any): string {
+  const lines: string[] = [];
+  const m = payload?.metrics ?? {};
+
+  lines.push("PERÍODO ANALIZADO: " + (payload?.range_label ?? "sin filtro"));
+  lines.push("");
+  if (m.headline_basis) { lines.push("BASE DE LOS NÚMEROS: " + m.headline_basis); lines.push(""); }
+  lines.push("VOLUMEN:");
+  for (const [label, key] of [
+    ["Mensajes enviados", "contacted"], ["Mensajes leídos", "opened"],
+    ["Respondidos", "replied"], ["Reuniones agendadas", "meetings_scheduled"],
+    ["Reuniones tomadas", "meetings_held"], ["No shows", "no_shows"],
+    ["Descalificadas", "disqualified"],
+  ]) {
+    if (m.headline?.[key] != null) lines.push("  · " + label + ": " + m.headline[key]);
+  }
+
+  if (Array.isArray(m.ratios) && m.ratios.length) {
+    lines.push("");
+    lines.push("TASAS vs. UMBRAL ACEPTABLE:");
+    // deno-lint-ignore no-explicit-any
+    for (const r of m.ratios as any[]) {
+      lines.push("  · " + r.label + ": " + r.value + " (mínimo aceptable " + r.target + ") → " + r.status);
+    }
+  }
+
+  for (const [title, key] of [
+    ["REUNIONES POR PAÍS", "by_country"],
+    ["REUNIONES POR CANAL", "by_channel"],
+    ["STATUS DE LEADS", "by_status"],
+    ["EMPRESAS CON MÁS ACTIVIDAD", "top_companies"],
+    ["CARGOS ALCANZADOS", "top_titles"],
+    ["ACTIVIDAD POR MES", "by_month"],
+  ]) {
+    const list = m[key];
+    if (Array.isArray(list) && list.length) {
+      lines.push("");
+      lines.push(title + ":");
+      // deno-lint-ignore no-explicit-any
+      for (const item of list.slice(0, 12) as any[]) {
+        lines.push("  · " + item.label + ": " + item.value);
+      }
+    }
+  }
+
+  if (m.pipeline?.goals?.length) {
+    lines.push("");
+    lines.push("PIPELINE — META vs. REAL:");
+    // deno-lint-ignore no-explicit-any
+    m.pipeline.goals.forEach((g: any, i: number) => {
+      const a = m.pipeline.achieved?.[i];
+      lines.push(
+        "  · " + g.period + ": meta " + (g.meetings ?? "—") + " reuniones" +
+        (g.pipeline ? " / " + g.pipeline + " " + (m.pipeline.currency ?? "") : "") +
+        " · real " + (a?.meetings ?? "—") + " reuniones",
+      );
+    });
+  }
+
+  if (Array.isArray(m.deltas) && m.deltas.length) {
+    lines.push("");
+    lines.push("COMPARATIVA CONTRA EL PERÍODO ANTERIOR:");
+    // deno-lint-ignore no-explicit-any
+    for (const d of m.deltas as any[]) {
+      lines.push("  · " + d.label + ": " + d.current + " vs " + d.previous + " (" + d.change + ")");
+    }
+  }
+
+  if (Array.isArray(m.feedback) && m.feedback.length) {
+    lines.push("");
+    lines.push("FEEDBACK TEXTUAL DE LOS LEADS (literal del CRM):");
+    for (const f of (m.feedback as string[]).slice(0, 25)) lines.push("  · " + f);
+  }
+
+  return lines.join("\n");
+}
+
+const REVIEW_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["summary", "business_case", "highlights", "alerts", "hypotheses", "solutions", "next_steps"],
+  properties: {
+    summary:       { type: "string", description: "2-3 frases: cómo va la cuenta en este período." },
+    business_case: { type: "string", description: "Párrafo de contexto: qué está pasando y por qué importa." },
+    highlights:    { type: "array", maxItems: 5, items: { type: "string" } },
+    alerts:        { type: "array", maxItems: 5, items: { type: "string" } },
+    hypotheses:    { type: "array", maxItems: 4, items: { type: "string" } },
+    solutions:     { type: "array", maxItems: 5, items: { type: "string" } },
+    next_steps:    { type: "array", maxItems: 5, items: { type: "string" } },
+  },
+} as const;
+
+const REVIEW_SYSTEM = [
+  "Eres el analista de una agencia de prospección B2B (predictable.ai) preparando",
+  "la revisión periódica de resultados que se presenta AL CLIENTE.",
+  "",
+  "Reglas duras:",
+  "· Escribe en español neutro latinoamericano, tuteando (tú, no vos).",
+  "· NO inventes ningún número. Usa solo los que aparecen en los datos.",
+  "  Si un dato no está, di que no está disponible en vez de estimarlo.",
+  "· Nada de relleno corporativo. Cada frase debe decir algo accionable.",
+  "· Las hipótesis son sobre POR QUÉ los números están como están.",
+  "· Las soluciones son cambios concretos de operación (mensaje, canal,",
+  "  segmento, base de datos, cadencia), no consejos genéricos.",
+  "· Si una tasa está bajo su umbral, tiene que aparecer en alerts.",
+].join("\n");
+
 Deno.serve(async (req) => {
   const origin = req.headers.get("origin") ?? "*";
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(origin) });
@@ -213,7 +382,7 @@ Deno.serve(async (req) => {
   const action = String(body?.action ?? "get");
 
   // Todo lo que no sea leer exige que el portal esté abierto a edición.
-  if (action !== "get" && !canEdit) {
+  if (!READ_ACTIONS.has(action) && !canEdit) {
     return json({ error: "Este portal está en solo lectura.", code: "read_only" }, 403, origin);
   }
 
@@ -245,6 +414,82 @@ Deno.serve(async (req) => {
         return json({ error: "No se pudo guardar" }, 500, origin);
       }
       return json({ ok: true, saved: Object.keys(update).filter((k) => k !== "portal_updated_at") }, 200, origin);
+    }
+
+    if (action === "analytics") {
+      const data = await loadAnalytics(db, clientId);
+      return json(data, 200, origin);
+    }
+
+    if (action === "generate_review") {
+      // El portal se abre sin login, así que esta acción —la única que gasta
+      // tokens de un proveedor externo— va con freno de mano: solo con el
+      // portal editable (ya validado arriba) y una generación cada 10 min.
+      const last = await db.from("client_reviews")
+        .select("created_at").eq("client_id", clientId)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (last.data?.created_at && Date.now() - Date.parse(last.data.created_at) < REVIEW_COOLDOWN_MS) {
+        const wait = Math.ceil((REVIEW_COOLDOWN_MS - (Date.now() - Date.parse(last.data.created_at))) / 60000);
+        return json({
+          error: "Acabas de generar una revisión. Espera " + wait + " min para pedir otra.",
+          code: "cooldown",
+        }, 429, origin);
+      }
+
+      const metrics = body?.metrics ?? {};
+      const engine: Engine = isEngine(body?.engine) ? body.engine : RECOMMENDED_ENGINE.client_review;
+
+      const context = [
+        "CLIENTE: " + String(client.name ?? ""),
+        client.icp ? "ICP DECLARADO: " + String(client.icp).slice(0, 2000) : "",
+        client.industries ? "INDUSTRIAS OBJETIVO: " + String(client.industries).slice(0, 2000) : "",
+        Array.isArray(client.target_countries) && client.target_countries.length
+          ? "PAÍSES OBJETIVO: " + client.target_countries.join(", ") : "",
+        client.meta ? "META ACORDADA: " + String(client.meta) : "",
+        client.historical_notes
+          ? "NOTAS HISTÓRICAS DE LA CUENTA:\n" + String(client.historical_notes).slice(0, 6000) : "",
+        "",
+        reviewDigest({ metrics, range_label: String(body?.range_label ?? "sin filtro") }),
+      ].filter(Boolean).join("\n");
+
+      let narrative;
+      let usedEngine = engine;
+      try {
+        const res = await callLLM({
+          engine,
+          system: REVIEW_SYSTEM,
+          user: context,
+          maxTokens: 2500,
+          jsonSchema: REVIEW_SCHEMA as unknown as Record<string, unknown>,
+          timeoutMs: 90_000,
+          logPrefix: "[client-portal/review]",
+        });
+        usedEngine = res.engine;
+        narrative = parseLlmJson(res.text);
+      } catch (e) {
+        console.error("[client-portal] review", e instanceof Error ? e.message : String(e));
+        return json({ error: "No se pudo generar la revisión. Inténtalo de nuevo." }, 502, origin);
+      }
+
+      const row = {
+        client_id: clientId,
+        range_from: cleanIsoDate(body?.range_from),
+        range_to: cleanIsoDate(body?.range_to),
+        preset: cleanText(body?.preset, 40),
+        engine: usedEngine,
+        metrics,
+        narrative,
+      };
+      const saved = await db.from("client_reviews").insert(row)
+        .select("id,created_at,range_from,range_to,preset,engine,narrative").maybeSingle();
+      if (saved.error) {
+        console.error("[client-portal] review save", saved.error.message);
+        // La revisión ya existe aunque no se haya podido archivar: devuélvela.
+        return json({ review: { ...row, id: null, created_at: new Date().toISOString() } }, 200, origin);
+      }
+
+      await touchPortal(db, clientId);
+      return json({ review: saved.data }, 200, origin);
     }
 
     if (action === "upload_url") {
