@@ -32,7 +32,8 @@ export type Feature =
   | "outreach"
   | "coach"
   | "onboarding"
-  | "radar";
+  | "radar"
+  | "client_review";
 
 /** Default engine per feature when the user has not chosen one. */
 export const RECOMMENDED_ENGINE: Record<Feature, Engine> = {
@@ -42,6 +43,9 @@ export const RECOMMENDED_ENGINE: Record<Feature, Engine> = {
   outreach:   "claude",
   radar:      "perplexity",
   coach:      "openai",
+  // La revisión del portal razona sobre números que ya están en la base:
+  // no necesita web, sí redacción cuidada. Mismo criterio que outreach.
+  client_review: "claude",
 };
 
 export function isEngine(v: unknown): v is Engine {

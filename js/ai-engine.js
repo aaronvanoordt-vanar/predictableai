@@ -55,6 +55,7 @@
     coach:      { label: 'AI Sales Coach',     recommended: 'openai' },
     onboarding: { label: 'Onboarding y contexto de empresa', recommended: 'perplexity' },
     radar:      { label: 'Radar de señales',   recommended: 'perplexity' },
+    client_review: { label: 'Revisión del portal del cliente', recommended: 'claude' },
   };
 
   var LS_KEY = 'px_ai_engines';
