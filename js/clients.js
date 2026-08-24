@@ -2,9 +2,10 @@
  * js/clients.js — Sección "Clients" (workspace estilo Notion)
  * ─────────────────────────────────────────────────────────────────────────────
  * Vista de cuadrícula de clientes (con foto) + dashboard editable por cliente:
- * status, links (brief / campañas / matriz / kick off), CRM (métricas críticas
- * + Google Sheets embebido), material de apoyo (PDFs en Supabase Storage),
- * notas, ICP, industrias y países objetivo (multiselect Latam).
+ * status, links (brief / campañas / matriz / kick off), CRM (métricas críticas,
+ * incl. follow ups pendientes, + Google Sheets embebido), material de apoyo
+ * (PDFs en Supabase Storage), notas, ICP, industrias y países objetivo
+ * (multiselect Latam).
  *
  * Renderiza en #clients-shell (dentro de #page-clients). Lazy: el primer
  * window.clientsModule.show() construye el shell. Autosave con debounce al
@@ -76,6 +77,7 @@
     { k: 'meetings_held',      label: 'Reuniones tomadas' },
     { k: 'no_shows',           label: 'No shows' },
     { k: 'disqualified',       label: 'Descalificadas' },
+    { k: 'follow_ups_pending', label: 'Follow ups pendientes' },
   ];
 
   var LINK_FIELDS = [
@@ -100,6 +102,8 @@
       n: function (m) { return num(m.no_shows); },          d: function (m) { return num(m.meetings_scheduled); } },
     { key: 'disqualified', label: 'Disqualified rate', hint: 'descalificadas / agendadas',  type: 'max', target: 20,
       n: function (m) { return num(m.disqualified); },      d: function (m) { return num(m.meetings_scheduled); } },
+    { key: 'follow_up',    label: 'Follow-up rate',    hint: 'pendientes / tomadas',        type: 'max', target: 20,
+      n: function (m) { return num(m.follow_ups_pending); }, d: function (m) { return num(m.meetings_held); } },
   ];
 
   // ── Module state ───────────────────────────────────────────────────────
