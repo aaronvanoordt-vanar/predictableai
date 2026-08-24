@@ -2,10 +2,10 @@
  * js/clients.js — Sección "Clients" (workspace estilo Notion)
  * ─────────────────────────────────────────────────────────────────────────────
  * Vista de cuadrícula de clientes (con foto) + dashboard editable por cliente:
- * status, links (brief / campañas / matriz / kick off), follow ups (checklist
- * de pendientes), CRM (métricas críticas + Google Sheets embebido), material
- * de apoyo (PDFs en Supabase Storage), notas, ICP, industrias y países
- * objetivo (multiselect Latam).
+ * status, links (brief / campañas / matriz / kick off), CRM (métricas críticas,
+ * incl. follow ups pendientes, + Google Sheets embebido), material de apoyo
+ * (PDFs en Supabase Storage), notas, ICP, industrias y países objetivo
+ * (multiselect Latam).
  *
  * Renderiza en #clients-shell (dentro de #page-clients). Lazy: el primer
  * window.clientsModule.show() construye el shell. Autosave con debounce al
@@ -77,6 +77,7 @@
     { k: 'meetings_held',      label: 'Reuniones tomadas' },
     { k: 'no_shows',           label: 'No shows' },
     { k: 'disqualified',       label: 'Descalificadas' },
+    { k: 'follow_ups_pending', label: 'Follow ups pendientes' },
   ];
 
   var LINK_FIELDS = [
@@ -101,6 +102,8 @@
       n: function (m) { return num(m.no_shows); },          d: function (m) { return num(m.meetings_scheduled); } },
     { key: 'disqualified', label: 'Disqualified rate', hint: 'descalificadas / agendadas',  type: 'max', target: 20,
       n: function (m) { return num(m.disqualified); },      d: function (m) { return num(m.meetings_scheduled); } },
+    { key: 'follow_up',    label: 'Follow-up rate',    hint: 'pendientes / tomadas',        type: 'max', target: 20,
+      n: function (m) { return num(m.follow_ups_pending); }, d: function (m) { return num(m.meetings_held); } },
   ];
 
   // ── Module state ───────────────────────────────────────────────────────
@@ -230,11 +233,6 @@
   // ── Ratios ─────────────────────────────────────────────────────────────
 
   function num(v) { var n = parseInt(v, 10); return isNaN(n) || n < 0 ? 0 : n; }
-
-  function genId() {
-    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
-    return 'fu-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-  }
 
   function rawPct(numr, den) {
     if (!den) return null;
@@ -399,15 +397,6 @@
       '.cl-portal-tgl{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-3);cursor:pointer;user-select:none}',
       '.cl-portal-tgl input{accent-color:var(--accent);cursor:pointer;margin:0}',
       '.cl-mat-src{flex:none;padding:2px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent-ink);font-size:10px;font-weight:700}',
-      '.cl-fu-list{display:flex;flex-direction:column;gap:6px}',
-      '.cl-fu{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--hair);border-radius:var(--r);background:var(--surface2)}',
-      '.cl-fu input[type=checkbox]{accent-color:var(--accent);cursor:pointer;flex:none;width:15px;height:15px}',
-      '.cl-fu-text{flex:1;min-width:0;border:none;background:transparent;font-size:13px;color:var(--ink);font-family:inherit;padding:2px 0}',
-      '.cl-fu-text:focus{outline:none}',
-      '.cl-fu.done .cl-fu-text{color:var(--ink-4);text-decoration:line-through}',
-      '.cl-fu-date{flex:none;width:130px;border:none;background:transparent;font-size:11.5px;color:var(--ink-3);font-family:inherit}',
-      '.cl-fu-date:focus{outline:none}',
-      '.cl-fu-del{flex:none;border:none;background:transparent;color:var(--red);cursor:pointer;font-size:15px;line-height:1;padding:2px 4px;font-family:inherit}',
       '@media (max-width:760px){.cl-sections{grid-template-columns:1fr}.cl-row2{grid-template-columns:1fr}}',
     ].join('\n');
     document.head.appendChild(css);
@@ -658,13 +647,6 @@
             linkRows +
           '</div>' +
 
-          '<div class="cl-sec">' +
-            '<div class="cl-sec-title">Follow ups' +
-              '<button class="btn btn-ghost btn-sm" id="cl-fu-btn">+ Agregar</button>' +
-            '</div>' +
-            '<div class="cl-fu-list" id="cl-fu-list"></div>' +
-          '</div>' +
-
           '<div class="cl-sec cl-span2">' +
             '<div class="cl-sec-title">CRM' +
               '<a class="cl-open-a" id="cl-crm-open" href="' + esc(su(c.crm_sheet_url || '')) + '" target="_blank" rel="noopener"' + (c.crm_sheet_url ? '' : ' style="display:none"') + '>Abrir base de datos ↗</a>' +
@@ -720,7 +702,6 @@
     renderRatios();
     renderThresholds();
     renderMaterials();
-    renderFollowUps();
   }
 
   function bindDetail() {
@@ -838,16 +819,6 @@
       }
       restore();
       matFile.value = '';
-    });
-
-    // Follow ups
-    body.querySelector('#cl-fu-btn').addEventListener('click', function () {
-      var list = (state.current.follow_ups || []).slice();
-      list.push({ id: genId(), text: '', due_date: null, done: false, created_at: new Date().toISOString() });
-      state.current.follow_ups = list;
-      renderFollowUps();
-      var last = body.querySelector('.cl-fu-text[data-fid="' + list[list.length - 1].id + '"]');
-      if (last) last.focus();
     });
 
     // Portal editable (interruptor)
@@ -989,81 +960,6 @@
         } catch (e) {
           toast('No se pudo borrar: ' + (e.message || e), 'error');
         }
-      });
-    });
-  }
-
-  // Follow ups: checklist de pendientes por cuenta. Se guarda en clients.follow_ups
-  // (JSONB array), es data operativa del equipo (no la ve el portal del cliente).
-  function saveFollowUps() {
-    queueSave({ follow_ups: state.current.follow_ups || [] });
-  }
-
-  function renderFollowUps() {
-    var host = document.getElementById('cl-fu-list');
-    if (!host || !state.current) return;
-    var list = state.current.follow_ups || [];
-
-    if (!list.length) {
-      host.innerHTML = '<div class="cl-empty" style="padding:16px">Sin pendientes. Agrega el primero con "+ Agregar".</div>';
-      return;
-    }
-
-    host.innerHTML = list.map(function (f) {
-      return '<div class="cl-fu' + (f.done ? ' done' : '') + '" data-fid="' + esc(f.id) + '">' +
-        '<input type="checkbox" data-fu-done="' + esc(f.id) + '"' + (f.done ? ' checked' : '') + '>' +
-        '<input type="text" class="cl-fu-text" data-fu-text="' + esc(f.id) + '" data-fid="' + esc(f.id) + '" placeholder="¿Qué hay que dar seguimiento?" value="' + esc(f.text || '') + '">' +
-        '<input type="date" class="cl-fu-date" data-fu-date="' + esc(f.id) + '" value="' + esc(f.due_date || '') + '">' +
-        '<button type="button" class="cl-fu-del" data-fu-del="' + esc(f.id) + '" title="Borrar">✕</button>' +
-      '</div>';
-    }).join('');
-
-    function findItem(id) {
-      var arr = state.current.follow_ups || [];
-      for (var i = 0; i < arr.length; i++) if (arr[i].id === id) return arr[i];
-      return null;
-    }
-
-    host.querySelectorAll('[data-fu-done]').forEach(function (el) {
-      el.addEventListener('change', function () {
-        var item = findItem(el.getAttribute('data-fu-done'));
-        if (!item) return;
-        item.done = el.checked;
-        el.closest('.cl-fu').classList.toggle('done', item.done);
-        saveFollowUps();
-      });
-    });
-
-    host.querySelectorAll('[data-fu-text]').forEach(function (el) {
-      el.addEventListener('change', function () {
-        var id = el.getAttribute('data-fu-text');
-        var text = el.value.trim();
-        if (!text) {
-          state.current.follow_ups = (state.current.follow_ups || []).filter(function (x) { return x.id !== id; });
-          saveFollowUps();
-          renderFollowUps();
-          return;
-        }
-        var item = findItem(id);
-        if (item) { item.text = text; saveFollowUps(); }
-      });
-    });
-
-    host.querySelectorAll('[data-fu-date]').forEach(function (el) {
-      el.addEventListener('change', function () {
-        var item = findItem(el.getAttribute('data-fu-date'));
-        if (!item) return;
-        item.due_date = el.value || null;
-        saveFollowUps();
-      });
-    });
-
-    host.querySelectorAll('[data-fu-del]').forEach(function (el) {
-      el.addEventListener('click', function () {
-        var id = el.getAttribute('data-fu-del');
-        state.current.follow_ups = (state.current.follow_ups || []).filter(function (x) { return x.id !== id; });
-        saveFollowUps();
-        renderFollowUps();
       });
     });
   }
