@@ -42,6 +42,7 @@ import {
   parseCrmRows,
   parseHeadline,
   parsePipeline,
+  listTabs,
   resolveTab,
   sheetIdFromUrl,
   SheetFetchError,
@@ -130,8 +131,18 @@ async function syncClient(
   let headline: Headline = {};
   let pipeline: ReturnType<typeof parsePipeline> = { goals: [], achieved: [] };
 
+  // Una sola lectura de /htmlview para las dos pestañas: de ahí salen los gid.
+  let tabs;
   try {
-    const crm = await resolveTab(sheetId, client.crm_sheet_tab, CRM_TAB_CANDIDATES);
+    tabs = await listTabs(sheetId);
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    await saveState(db, clientId, { ok: false, error });
+    return { client_id: clientId, ok: false, error };
+  }
+
+  try {
+    const crm = await resolveTab(sheetId, client.crm_sheet_tab, CRM_TAB_CANDIDATES, tabs);
     crmTab = crm.tab;
 
     const parsed = parseCrmRows(crm.rows);
@@ -152,7 +163,7 @@ async function syncClient(
   // La pestaña de métricas es opcional: sin ella el portal todavía puede
   // graficar todo lo que sale del CRM, solo pierde los totales de volumen.
   try {
-    const met = await resolveTab(sheetId, client.metrics_sheet_tab, METRICS_TAB_CANDIDATES);
+    const met = await resolveTab(sheetId, client.metrics_sheet_tab, METRICS_TAB_CANDIDATES, tabs);
     metricsTab = met.tab;
     headline = parseHeadline(met.rows);
     pipeline = parsePipeline(met.rows);

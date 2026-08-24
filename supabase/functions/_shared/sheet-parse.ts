@@ -463,6 +463,21 @@ function isAchievedBlock(rows: string[][], headerRow: number, col: number): bool
 }
 
 // ── Descarga ───────────────────────────────────────────────────────────────
+//
+// NO se usa el endpoint gviz (`/gviz/tq?tqx=out:csv`). Parece el natural porque
+// acepta el nombre de la pestaña, pero INFIERE UN TIPO POR COLUMNA y descarta
+// en silencio las celdas que no encajan. En la pestaña de métricas real de un
+// cliente, la fila de encabezados perdió "MENSAJES LEÍDOS", "REUNIONES
+// TOMADAS", "REUNIONES DESCALIFICADAS" y "NO SHOW" —sus columnas son
+// mayoritariamente numéricas, así que gviz tiró el texto— y el parser terminó
+// cayendo al embudo, que en ese sheet trae "tomadas" y "agendadas" invertidas
+// entre sí: reuniones tomadas salió 15 en vez de 8. Un dashboard de celdas
+// libres no sobrevive a la inferencia de tipos.
+//
+// `/export?format=csv&gid=N` vuelca las celdas tal cual, sin inferir nada. A
+// cambio exige el gid numérico en vez del nombre, así que primero se pide
+// `/htmlview` —que para un sheet compartido por link trae la lista de pestañas
+// con su gid— y se resuelve el nombre contra ella.
 
 export function sheetIdFromUrl(url: unknown): string | null {
   try {
@@ -484,17 +499,13 @@ export class SheetFetchError extends Error {
   }
 }
 
+const PRIVATE_MESSAGE =
+  "El sheet no es legible sin iniciar sesión. Compártelo como “Cualquier persona con el enlace · Lector”.";
+
 const FETCH_TIMEOUT_MS = 25_000;
-const MAX_CSV_BYTES = 8 * 1024 * 1024;
+const MAX_BYTES = 8 * 1024 * 1024;
 
-/**
- * Descarga una pestaña como CSV. `headers=0` evita que gviz se coma la primera
- * fila tratándola como cabecera: aquí la cabecera la detectamos nosotros.
- */
-export async function fetchTab(sheetId: string, tab: string): Promise<string[][]> {
-  const url = "https://docs.google.com/spreadsheets/d/" + encodeURIComponent(sheetId) +
-    "/gviz/tq?tqx=out:csv&headers=0&sheet=" + encodeURIComponent(tab);
-
+async function getText(url: string): Promise<string> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
 
@@ -507,35 +518,66 @@ export async function fetchTab(sheetId: string, tab: string): Promise<string[][]
     clearTimeout(timer);
   }
 
-  // Un sheet privado redirige al login y devuelve HTML, no CSV.
-  const type = res.headers.get("content-type") || "";
-  if (res.status === 401 || res.status === 403 || type.includes("text/html")) {
-    throw new SheetFetchError(
-      "El sheet no es legible sin iniciar sesión. Compártelo como “Cualquier persona con el enlace · Lector”.",
-      "private",
-    );
-  }
-  if (res.status === 400 || res.status === 404) {
-    throw new SheetFetchError('No existe una pestaña llamada "' + tab + '" en ese sheet.', "missing_tab");
-  }
-  if (!res.ok) {
-    throw new SheetFetchError("Google Sheets respondió " + res.status + ".", "network");
-  }
+  // Un sheet privado redirige al login: 401/403, o un 200 con HTML.
+  if (res.status === 401 || res.status === 403) throw new SheetFetchError(PRIVATE_MESSAGE, "private");
+  if (res.status === 404) throw new SheetFetchError("Ese Google Sheets no existe o fue borrado.", "missing_tab");
+  if (!res.ok) throw new SheetFetchError("Google Sheets respondió " + res.status + ".", "network");
 
   const text = await res.text();
-  if (text.length > MAX_CSV_BYTES) {
+  if (text.length > MAX_BYTES) {
     throw new SheetFetchError("La pestaña es demasiado grande para procesarla.", "network");
   }
-  if (/^\s*</.test(text)) {
+  return text;
+}
+
+export interface SheetTab { name: string; gid: string }
+
+/** Deshace el escapado JS de `/htmlview` (\/ , \" , \\ y \uXXXX). */
+function unescapeJs(s: string): string {
+  return s
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\(["'\/\\])/g, "$1");
+}
+
+/**
+ * Lista las pestañas con su gid. `/htmlview` incluye un bloque JS con
+ * `items.push({name: "CRM", pageUrl: "…gid=1586296748", gid: "1586296748", …})`
+ * por pestaña; de ahí sale el mapa nombre → gid.
+ */
+export async function listTabs(sheetId: string): Promise<SheetTab[]> {
+  const html = await getText(
+    "https://docs.google.com/spreadsheets/d/" + encodeURIComponent(sheetId) + "/htmlview",
+  );
+
+  const tabs: SheetTab[] = [];
+  const re = /\{\s*name:\s*"((?:[^"\\]|\\.)*)"[\s\S]{0,600}?gid:\s*"(\d+)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const name = unescapeJs(m[1]);
+    if (name && !tabs.some((t) => t.gid === m![2])) tabs.push({ name, gid: m[2] });
+  }
+
+  if (!tabs.length) {
+    // Sin pestañas, o es un sheet privado (Google devuelve la página de login)
+    // o Google cambió el formato de htmlview. Se distingue por el contenido.
+    if (/accounts\.google\.com|ServiceLogin|Necesitas acceso|Request access/i.test(html)) {
+      throw new SheetFetchError(PRIVATE_MESSAGE, "private");
+    }
     throw new SheetFetchError(
-      "El sheet no es legible sin iniciar sesión. Compártelo como “Cualquier persona con el enlace · Lector”.",
+      "No se pudieron listar las pestañas del sheet. Comprueba que esté compartido como “Cualquier persona con el enlace · Lector”.",
       "private",
     );
   }
-  if (text.includes("google.visualization.Query.setResponse")) {
-    throw new SheetFetchError('No existe una pestaña llamada "' + tab + '" en ese sheet.', "missing_tab");
-  }
+  return tabs;
+}
 
+/** Descarga una pestaña por gid con el volcado fiel de celdas. */
+export async function fetchTabByGid(sheetId: string, gid: string): Promise<string[][]> {
+  const text = await getText(
+    "https://docs.google.com/spreadsheets/d/" + encodeURIComponent(sheetId) +
+    "/export?format=csv&gid=" + encodeURIComponent(gid),
+  );
+  if (/^\s*</.test(text)) throw new SheetFetchError(PRIVATE_MESSAGE, "private");
   return parseCsv(text);
 }
 
@@ -544,28 +586,44 @@ export const CRM_TAB_CANDIDATES = [
   "CRM", "Base de datos", "Base", "Prospectos", "Leads", "Database", "Contactos",
 ];
 export const METRICS_TAB_CANDIDATES = [
-  "Métricas", "Metricas", "MÉTRICAS", "METRICAS", "Metrics", "Dashboard", "Resumen", "KPIs",
+  "Métricas", "Metricas", "Metrics", "Dashboard", "Resumen", "KPIs", "KPI",
 ];
 
-/** Prueba nombres hasta que uno responda; devuelve el que funcionó. */
+/**
+ * Resuelve el nombre de una pestaña contra las que existen y la descarga.
+ * La comparación ignora mayúsculas y acentos, así que "Metricas" encuentra
+ * "Métricas". Si el nombre fijado por el cliente no existe, se dice cuál es
+ * el problema y qué pestañas sí hay, en vez de caer a otra en silencio.
+ */
 export async function resolveTab(
   sheetId: string,
   preferred: string | null | undefined,
   candidates: string[],
+  tabs: SheetTab[],
 ): Promise<{ tab: string; rows: string[][] }> {
-  const names = preferred ? [preferred, ...candidates.filter((c) => c !== preferred)] : candidates.slice();
+  const find = (name: string) => tabs.find((t) => norm(t.name) === norm(name));
 
-  let lastError: unknown = null;
-  for (const name of names) {
-    try {
-      return { tab: name, rows: await fetchTab(sheetId, name) };
-    } catch (e) {
-      // Un sheet privado falla igual en todas las pestañas: no vale seguir.
-      if (e instanceof SheetFetchError && e.kind === "private") throw e;
-      lastError = e;
+  if (preferred) {
+    const exact = find(preferred);
+    if (!exact) {
+      throw new SheetFetchError(
+        'No existe una pestaña llamada "' + preferred + '". Las que hay son: ' +
+        tabs.map((t) => t.name).join(", ") + ".",
+        "missing_tab",
+      );
     }
+    return { tab: exact.name, rows: await fetchTabByGid(sheetId, exact.gid) };
   }
-  throw lastError instanceof Error
-    ? lastError
-    : new SheetFetchError("No se encontró la pestaña.", "missing_tab");
+
+  for (const name of candidates) {
+    const hit = find(name);
+    if (hit) return { tab: hit.name, rows: await fetchTabByGid(sheetId, hit.gid) };
+  }
+
+  throw new SheetFetchError(
+    "Ninguna pestaña coincide con " + candidates.slice(0, 3).map((c) => '"' + c + '"').join(", ") +
+    "… Las que hay son: " + tabs.map((t) => t.name).join(", ") +
+    ". Fija el nombre exacto en la ficha del cliente.",
+    "missing_tab",
+  );
 }
