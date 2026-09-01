@@ -619,12 +619,14 @@
       (intro ? '<div class="rdr-comp-intro">' +
         '<div class="rdr-hero-title">' + esc(intro.title) + '</div>' +
         '<div class="rdr-hero-sub">' + esc(intro.sub) + '</div></div>' : '') +
-      '<div class="rdr-comp-lbl">¿Qué tipo de empresas buscas? <span class="rdr-opt">opcional</span></div>' +
-      '<textarea id="rdr-prompt" class="rdr-ta" maxlength="2000" rows="3" ' +
-        'placeholder="Ej.: distribuidoras de alimentos en México, de 200 a 1000 empleados, que estén abriendo sucursales o cambiando de ERP">' +
-        esc(state.promptDraft) + '</textarea>' +
-      '<div class="rdr-hint">Si lo dejas vacío, la IA deriva la señal de compra del contexto de tu empresa.</div>' +
       windowBlock() +
+      '<div class="rdr-field">' +
+        '<div class="rdr-comp-lbl">¿Qué tipo de empresas buscas? <span class="rdr-opt">opcional</span></div>' +
+        '<textarea id="rdr-prompt" class="rdr-ta" maxlength="2000" rows="3" ' +
+          'placeholder="Ej.: distribuidoras de alimentos en México, de 200 a 1000 empleados, que estén abriendo sucursales o cambiando de ERP">' +
+          esc(state.promptDraft) + '</textarea>' +
+        '<div class="rdr-hint">Si lo dejas vacío, la IA deriva la señal de compra del contexto de tu empresa.</div>' +
+      '</div>' +
       exclusionsBlock() +
       '<div class="rdr-comp-foot">' +
         (runIsFree()
@@ -640,16 +642,20 @@
   // empresa cuente. No es un filtro cosmético — generate-radar descarta en
   // código toda empresa fuera de la franja (y toda la que no pueda fechar),
   // así que acortarla devuelve menos empresas pero todas accionables.
+  //
+  // Va PRIMERO en el composer y con el mismo peso visual que el prompt: es
+  // una decisión de la búsqueda, no un ajuste del prompt opcional. Colgada
+  // debajo del textarea se leía como una nota al pie de un campo que además
+  // dice "opcional", y el usuario no se enteraba de que podía elegirla.
   function windowBlock() {
     const chips = WINDOWS.map((w) =>
       '<button type="button" class="rdr-win-chip' + (state.windowDays === w.days ? ' is-on' : '') + '" ' +
         'data-win="' + w.days + '" aria-pressed="' + (state.windowDays === w.days ? 'true' : 'false') + '">' +
         esc(w.label) + '</button>').join('');
-    return '<div class="rdr-win">' +
-      '<div class="rdr-win-top">' +
-        '<span class="rdr-win-lbl">Antigüedad máxima de las noticias</span>' +
-        '<div class="rdr-win-chips">' + chips + '</div>' +
-      '</div>' +
+    return '<div class="rdr-field rdr-win">' +
+      '<div class="rdr-comp-lbl">¿Qué tan recientes deben ser las noticias?</div>' +
+      '<div class="rdr-win-chips" role="group" aria-label="Antigüedad máxima de las noticias">' +
+        chips + '</div>' +
       '<div class="rdr-hint">Solo entregamos empresas con evidencia publicada en ' +
         esc(windowLabel(state.windowDays, true)) +
         '. Las que no podamos fechar se descartan.</div>' +
@@ -1086,21 +1092,20 @@
       '.rdr-again{font-size:12.5px;color:var(--ink-3);line-height:1.5;border-left:2px solid var(--accent);padding-left:10px;margin-bottom:10px}',
       '.rdr-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;align-items:center}',
       // ── Composer ──
-      '.rdr-composer{padding:18px 20px;display:flex;flex-direction:column;gap:9px}',
+      '.rdr-composer{padding:18px 20px;display:flex;flex-direction:column;gap:15px}',
       '.rdr-comp-intro{display:flex;flex-direction:column;gap:6px;padding-bottom:12px;margin-bottom:3px;border-bottom:1px solid var(--hair)}',
       '.rdr-comp-lbl{font-size:14px;font-weight:700;color:var(--ink)}',
       '.rdr-opt{font-size:11px;font-weight:600;color:var(--ink-4);text-transform:uppercase;letter-spacing:.06em;margin-left:4px}',
       '.rdr-ta{width:100%;min-height:74px;resize:vertical;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);color:var(--ink);font-family:var(--font-sans);font-size:13px;padding:10px 12px;line-height:1.5}',
       '.rdr-ta:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}',
       '.rdr-hint{font-size:12px;color:var(--ink-4)}',
-      // ── Franja de fechas ──
-      '.rdr-win{border:1px solid var(--hair);border-radius:var(--r-sm);background:var(--surface2);padding:10px 12px;display:flex;flex-direction:column;gap:7px}',
-      '.rdr-win-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}',
-      '.rdr-win-lbl{font-size:12.5px;font-weight:700;color:var(--ink-2)}',
-      '.rdr-win-chips{display:flex;gap:5px;flex-wrap:wrap}',
-      '.rdr-win-chip{font-family:inherit;font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:999px;cursor:pointer;background:var(--surface);color:var(--text2);border:1px solid var(--border)}',
+      // ── Campos del composer (franja de fechas + prompt) ──
+      '.rdr-field{display:flex;flex-direction:column;gap:7px}',
+      '.rdr-win-chips{display:flex;gap:6px;flex-wrap:wrap}',
+      '.rdr-win-chip{font-family:inherit;font-size:12px;font-weight:600;padding:6px 14px;border-radius:999px;cursor:pointer;background:var(--surface);color:var(--text2);border:1px solid var(--border)}',
       '.rdr-win-chip:hover{border-color:var(--accent);color:var(--ink-2)}',
-      '.rdr-win-chip.is-on{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}',
+      '.rdr-win-chip.is-on{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent;box-shadow:inset 0 0 0 1px var(--accent)}',
+      '.rdr-win-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
       '.rdr-comp-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:2px}',
       '.rdr-cost-note{font-size:12px;color:var(--text3);display:inline-flex;align-items:center;gap:6px}',
       // ── Exclusiones ──
