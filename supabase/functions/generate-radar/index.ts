@@ -4,11 +4,30 @@
  * "Radar": AI target-company discovery. Instead of ending onboarding with a
  * recommended Apollo filter set, this function actively hunts for concrete
  * companies showing a buying signal derived from the seller's own value
- * proposition, with evidence URLs and 2-3 decision makers each.
+ * proposition, with dated evidence URLs and every decision maker Apollo has
+ * at each company — with work email and phone when Apollo holds them.
  *
  * A run delivers EVERY company its research honestly found, not a fixed
  * handful: every query in the strategy is executed and everything backed by
  * evidence is kept (MAX_COMPANIES is a safety ceiling, not a target).
+ *
+ * RECENCY — a signal is only worth acting on while it is still news, and the
+ * seller picks how fresh: news_window_days (7 / 30 / 90 / 180 / 365) travels
+ * with the run and is enforced in FOUR places, because none of them alone is
+ * enough:
+ *   1. the search engine's own date filter (searchAfterDate → Perplexity's
+ *      search_after_date_filter; Anthropic's and OpenAI's web-search tools
+ *      take no date parameter at all, which is exactly why 2-4 exist),
+ *   2. the strategy prompt, so the queries themselves are written to hunt
+ *      recent developments instead of evergreen background,
+ *   3. the research prompt, which must date every company (signal_date) and
+ *      every evidence link (published_at),
+ *   4. withinWindow() — deterministic, in code, before anything is saved. A
+ *      company whose newest date falls outside the window, or that carries
+ *      no verifiable date at all, is DROPPED and counted, never delivered.
+ *      Judgement about "is this recent enough?" is never left to the model:
+ *      an earlier version only asked the prompt to "prefer" the last 12
+ *      months and shipped years-old filings as fresh signals.
  *
  * MEMORY — two halves, resolved at creation time and snapshotted on the row:
  *   excluded_companies  hard: companies the seller already works (members of
@@ -34,7 +53,8 @@
  * can safely re-call the same stage, which is idempotent by design.
  *
  *   POST { custom_prompt?, exclude_list_ids?,
- *          exclude_previous_radar? }              → create a run, return run_id.
+ *          exclude_previous_radar?,
+ *          news_window_days? }                    → create a run, return run_id.
  *          The exclusion inputs resolve (service role, owner-scoped) to the
  *          company names the seller ALREADY has — saved Prospección lists +
  *          previous ready radars — snapshotted into radar_runs.
@@ -66,7 +86,10 @@
  *   POST { run_id, stage: "decision_makers",
  *          offset }                              → Apollo lookup for a batch
  *          of companies starting at offset; finalizes (charges credits,
- *          status → ready) once the last batch completes.
+ *          status → ready) once the last batch completes. Per company: every
+ *          decision maker Apollo lists for the relevant titles (not a fixed
+ *          three), ranked by seniority, then enriched via /people/bulk_match
+ *          so each one carries work email / phone / LinkedIn.
  *
  * Auth: every call carries Bearer <user JWT> (verified via auth.getUser).
  * Continuation calls additionally verify the run belongs to the caller.
@@ -110,8 +133,32 @@ const MAX_COMPANIES_PER_QUERY = 25;
 // guards against a strategy that hallucinated an unreasonable query count;
 // the strategy prompt itself is not told to stop at any particular number.
 const MAX_QUERIES = 40;
-const MAX_DECISION_MAKERS = 3;
-const DM_BATCH_SIZE = 5; // companies processed per decision_makers call
+
+// ── Decision makers ────────────────────────────────────────────────────────
+// Every decision maker Apollo has for the relevant titles, not a token three:
+// a 400-person company can genuinely have eight people worth contacting, and
+// picking which three the seller gets to see is not this function's call.
+// The cap only guards row size and Apollo cost on an outlier.
+const MAX_DECISION_MAKERS = 25;   // per company
+const DM_PAGE_SIZE = 25;          // Apollo people-search page size
+const MAX_DM_SEARCH_PAGES = 2;    // per query, per company
+// Contact data comes from /people/bulk_match (10 people per call, Apollo's
+// limit). Every match burns an Apollo email credit, so a run has a ceiling —
+// well above a normal run, low enough that a 150-company run cannot silently
+// drain the account.
+const DM_ENRICH_CHUNK = 10;
+const MAX_DM_ENRICH_PER_RUN = 400;
+// Companies per decision_makers call. Lower than it used to be because each
+// company now costs one-to-three searches plus its enrichment calls, and the
+// Edge Runtime still hard-kills any invocation at ~150s.
+const DM_BATCH_SIZE = 3;
+
+// ── Recency ────────────────────────────────────────────────────────────────
+// Franjas que ofrece la UI (js/radar.js). Anything else the client sends is
+// snapped to the nearest allowed value — the column's CHECK is deliberately
+// wider than this list, so the allowlist lives here, in one place.
+const NEWS_WINDOWS = [7, 30, 90, 180, 365];
+const DEFAULT_NEWS_WINDOW_DAYS = 90;
 
 // "Empresas que ya conoces": names snapshotted onto the run at creation time
 // and fed to the model as exclusions. Two separate caps — the row keeps more
@@ -157,7 +204,7 @@ async function callAi(
   engine: Engine,
   system: string,
   user: string,
-  opts: { maxTokens: number; maxSearches: number },
+  opts: { maxTokens: number; maxSearches: number; searchAfterDate?: string },
 ): Promise<string> {
   const res = await callLLM({
     engine,
@@ -165,6 +212,9 @@ async function callAi(
     user,
     maxTokens: opts.maxTokens,
     webSearch: opts.maxSearches,
+    // Enforced natively by Perplexity (the recommended engine here); on
+    // Claude/OpenAI the prompt states it and withinWindow() verifies it.
+    searchAfterDate: opts.searchAfterDate,
     claudeWebSearchTool: "web_search_20260209",
     timeoutMs: LLM_TIMEOUT_MS,
     retries: 1,
@@ -207,6 +257,147 @@ function toDomain(website: string): string {
 
 function isStale(row: { updated_at: string }): boolean {
   return Date.now() - new Date(row.updated_at).getTime() > STALE_MS;
+}
+
+// ── Franja de fechas: qué tan reciente tiene que ser la noticia ─────────────
+
+/** Snap whatever the client sent to an offered window. */
+function normalizeWindowDays(v: unknown): number {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_NEWS_WINDOW_DAYS;
+  if (NEWS_WINDOWS.includes(n)) return n;
+  return NEWS_WINDOWS.reduce((best, w) =>
+    Math.abs(w - n) < Math.abs(best - n) ? w : best, NEWS_WINDOWS[0]);
+}
+
+function windowDaysOf(run: { news_window_days?: unknown }): number {
+  return normalizeWindowDays(run?.news_window_days ?? DEFAULT_NEWS_WINDOW_DAYS);
+}
+
+/** Oldest date a signal may carry, as "YYYY-MM-DD". */
+function cutoffIso(windowDays: number): string {
+  return new Date(Date.now() - windowDays * 86400_000).toISOString().slice(0, 10);
+}
+
+const WINDOW_LABEL_ES: Record<number, string> = {
+  7: "los últimos 7 días",
+  30: "el último mes",
+  90: "los últimos 3 meses",
+  180: "los últimos 6 meses",
+  365: "el último año",
+};
+
+function windowLabel(days: number): string {
+  return WINDOW_LABEL_ES[days] || `los últimos ${days} días`;
+}
+
+// "de" + la franja, ya contraído: "del último mes", no "de el último mes".
+const WINDOW_LABEL_DE_ES: Record<number, string> = {
+  7: "de los últimos 7 días",
+  30: "del último mes",
+  90: "de los últimos 3 meses",
+  180: "de los últimos 6 meses",
+  365: "del último año",
+};
+
+function windowLabelDe(days: number): string {
+  return WINDOW_LABEL_DE_ES[days] || `de los últimos ${days} días`;
+}
+
+/**
+ * A date the model wrote, as { at, precision } — or null when it wrote
+ * nothing usable.
+ *
+ * Partial dates resolve to the LAST instant of their period ("2026-08" →
+ * Aug 31), clamped to now so the current month/year doesn't come back as a
+ * future date. The precision travels with the value because it decides how
+ * much the date can prove: "agosto de 2026" cannot establish that something
+ * was published in the last 7 days, no matter which day of August you pick.
+ */
+type DatePrecision = "day" | "month" | "year";
+
+function parseSignalDate(v: unknown): { at: number; precision: DatePrecision } | null {
+  const raw = asStr(v).trim();
+  const clamp = (t: number) => Math.min(t, Date.now());
+  let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+  if (m) return { at: Date.UTC(+m[1], +m[2] - 1, +m[3], 23, 59, 59), precision: "day" };
+  m = /^(\d{4})-(\d{2})$/.exec(raw);
+  // Day 0 of the next month = last day of this one.
+  if (m) return { at: clamp(Date.UTC(+m[1], +m[2], 0, 23, 59, 59)), precision: "month" };
+  m = /^(\d{4})$/.exec(raw);
+  if (m) return { at: clamp(Date.UTC(+m[1], 11, 31, 23, 59, 59)), precision: "year" };
+  return null;
+}
+
+/**
+ * A date is only usable if its precision is at least as fine as the window it
+ * has to fit in: a month tells you nothing about a 7-day window, but it is
+ * exactly enough for a 1-month one.
+ */
+const PRECISION_SPAN_DAYS: Record<DatePrecision, number> = { day: 1, month: 30, year: 365 };
+
+/**
+ * The newest date this company is backed by: its own signal_date or any
+ * evidence link's published_at, whichever is later. Dates too coarse to
+ * decide this window are ignored — a company left with none of them counts
+ * as undated, which is exactly what it is.
+ */
+function newestDate(
+  signalDate: unknown,
+  evidence: { published_at?: string }[],
+  windowDays: number,
+): number | null {
+  let best: number | null = null;
+  const consider = (v: unknown) => {
+    const d = parseSignalDate(v);
+    if (!d) return;
+    if (PRECISION_SPAN_DAYS[d.precision] > windowDays) return; // too coarse to prove it
+    if (best === null || d.at > best) best = d.at;
+  };
+  consider(signalDate);
+  for (const e of evidence) consider(e?.published_at);
+  return best;
+}
+
+/**
+ * THE recency guarantee. Everything else (engine filter, prompts) only makes
+ * a recent answer likely; this is what makes an old one impossible. A company
+ * with no verifiable date fails too: "no sé de cuándo es" is not evidence
+ * that a signal is live, and undated results were most of what made the radar
+ * feel stale.
+ */
+function withinWindow(
+  signalDate: unknown,
+  evidence: { published_at?: string }[],
+  windowDays: number,
+): { ok: boolean; reason: "" | "old" | "undated"; at: number | null } {
+  const at = newestDate(signalDate, evidence, windowDays);
+  if (at === null) return { ok: false, reason: "undated", at: null };
+  // A date in the future is invented, not fresh (a day of slack absorbs
+  // timezone skew between the source and this isolate). Only full dates can
+  // land here — partial ones are already clamped to now.
+  if (at > Date.now() + 2 * 86400_000) return { ok: false, reason: "undated", at };
+  const floor = Date.now() - windowDays * 86400_000;
+  return { ok: at >= floor, reason: at >= floor ? "" : "old", at };
+}
+
+/** Prompt block stating the window, shared by strategy and research. */
+function recencyBlock(windowDays: number): string {
+  const today = new Date().toISOString().slice(0, 10);
+  return `\n\n=== DATE WINDOW (HARD REQUIREMENT) ===\n` +
+    `Today is ${today}. The seller only wants signals from ${windowLabel(windowDays)}: ` +
+    `every piece of evidence MUST have been published on or after ${cutoffIso(windowDays)}.\n` +
+    `Anything older is worthless here and will be discarded automatically — ` +
+    `a company you cannot date, or can only date before that day, must not be returned at all. ` +
+    `Do not pad the answer with older news to fill space: returning fewer, genuinely recent ` +
+    `companies is the correct outcome.\n` +
+    (windowDays < 30
+      // A month-only date cannot prove "this week": withinWindow() rejects it,
+      // so asking for one would only produce results the filter then drops.
+      ? `This window is shorter than a month, so an exact day (YYYY-MM-DD) is required: ` +
+        `a source that only says the month is NOT precise enough and its company will be dropped.`
+      : `Give the exact day (YYYY-MM-DD) whenever the source shows one; YYYY-MM is acceptable ` +
+        `only when the source genuinely publishes no day.`);
 }
 
 interface QueryItem { angleName: string; sources: string[]; query: string; }
@@ -309,7 +500,7 @@ Respond with ONLY valid JSON (no markdown fences, no prose):
   "signal_hypothesis": "2-3 sentences in neutral Latin-American Spanish (tuteo), addressed to the seller: what signal you will hunt and why it means a company needs them now. E.g. 'Voy a buscar X porque Y.'",
   "search_angles": [
     { "angle": "short English name of the research angle",
-      "queries": ["1-3 concrete web search queries in the most useful language for the sources (Spanish for LATAM official sources, English otherwise)"],
+      "queries": ["1-3 concrete web search queries in the most useful language for the sources (Spanish for LATAM official sources, English otherwise). Write them to surface RECENT developments inside the date window given below — name the period the way the sources do (month + year, 'este mes', 'últimas semanas'), and prefer sources that publish dated items (press releases, filings, job boards, news) over evergreen pages that carry no date at all"],
       "sources": ["kinds of sources to trust for this angle, e.g. 'official insolvency registries', 'LATAM business press'"] }
   ],
   "target_geographies": ["countries/regions to restrict to, from the seller's ICP; empty if global"],
@@ -320,6 +511,7 @@ Respond with ONLY valid JSON (no markdown fences, no prose):
 Hard rules:
 - No fixed number of search_angles or queries — cover the signal as thoroughly as it genuinely needs, typically 5-8 angles with 2-4 queries each for a well-explored signal. EVERY query you write will be run — one web search each — and everything they find is delivered, so err toward more real coverage rather than stopping early. But make each query a genuinely different way into the signal (different source type, different wording, different sub-segment, different geography/sub-segment) — duplicating the same search under a different label wastes a real call for nothing new.
 - The signal must be OBSERVABLE from public web sources — never propose signals that require private data.
+- The signal must be DATABLE and CURRENT. Every angle has to be answerable with something published inside the date window stated below; an angle whose evidence would be an undated company page, an old case study or a years-old filing is worthless here, because anything outside the window is discarded before the seller ever sees it. Design the angles around what changed recently, not around what a company is.
 - If the user provided a TARGET DESCRIPTION, it is the ground truth: it may describe the KIND of companies they want (industry, size, geography, situation) and/or the signal itself. Refine it into angles/queries — never replace it with your own idea. If it describes only companies and no signal, derive the observable signal that identifies exactly those companies.
 - If a list of companies the seller ALREADY HAS is provided, design angles that surface NEW ones: do not build queries whose obvious answer is a company already on that list.
 - If a list of companies A PREVIOUS RADAR ALREADY DELIVERED is provided, those are not banned — but re-finding the same news about them is worthless. Prefer angles that either surface new companies or surface a NEWER development about them (a later filing, a new announcement, a fresh round of postings).
@@ -342,7 +534,8 @@ Respond with ONLY valid JSON (no markdown fences, no prose):
       "signal_headline": "ONE telegraphic line, MAX 70 characters, neutral Latin-American Spanish: the concrete fact that makes this company a target right now. E.g. 'Publicó 40 vacantes de SDR en 3 meses'. No company name, no filler.",
       "why_fit": "MAX 2 short sentences (240 characters total) in neutral Latin-American Spanish: why THIS company needs the seller now, citing the concrete signal found",
       "signal_strength": "alta" | "media",
-      "evidence": [ { "url": "exact URL from your search results backing the claim", "summary": "1 sentence in Spanish: what this source shows" } ],
+      "signal_date": "YYYY-MM-DD — publication date of the NEWEST evidence below, i.e. how recent this signal is. Use YYYY-MM if the source only gives a month. NEVER guess, never use today's date as a placeholder: if you cannot date it from the source, drop the company instead.",
+      "evidence": [ { "url": "exact URL from your search results backing the claim", "summary": "1 sentence in Spanish: what this source shows", "published_at": "YYYY-MM-DD publication date of THIS source (YYYY-MM if only the month is given, empty string if the source shows none)" } ],
       "decision_maker_titles": ["2-5 English job titles to look for at THIS company"],
       "repeat_reason": "Fill this ONLY for a company listed under 'ALREADY DELIVERED BY A PREVIOUS RADAR': 1 short sentence in Spanish saying what is NEW since then (new filing, new announcement, newer news). Empty string for every other company."
     }
@@ -360,10 +553,18 @@ Hard rules — violating any of these makes the output worthless:
 - signal_headline is the only line most users will read: make it a concrete, verifiable fact about THIS company, never a generic category ("empresa en crecimiento") and never a repeat of why_fit.
 - Respect target_geographies and exclusions from the strategy. Never include the seller's own company or direct competitors (companies selling the same thing the seller sells — they are rivals, not buyers).
 - Companies must be plausible BUYERS with budget: match the seller's ICP sizes when known.
-- Prefer signal recency: evidence from the last 12 months beats older evidence.
+- RECENCY IS A HARD FILTER, NOT A PREFERENCE. Respect the DATE WINDOW block below to the letter: a company whose newest evidence predates the cutoff, or that you cannot date, is DISCARDED automatically before the seller sees it — returning it only wastes the search. Returning two genuinely recent companies is a better answer than ten padded with old news.
+- Every company MUST carry a signal_date taken from the source itself (the article's date line, the filing date, the posting date), never invented and never today's date "because it just came up in the results".
 - User-facing text (signal_headline, why_fit, evidence.summary, country, industry, coverage_note) in neutral Latin-American Spanish (tuteo). decision_maker_titles in English (Apollo requirement).`;
 
-// ── Apollo: decision makers per company (search only — no reveal) ───────────
+// ── Apollo: decision makers per company ─────────────────────────────────────
+//
+// Two steps, because Apollo splits them: /mixed_people/api_search lists the
+// people (free, but every email comes back masked as
+// "email_not_unlocked@…"), and /people/bulk_match reveals the work email and
+// whatever phone Apollo already holds. A name and a job title the seller
+// cannot act on is not a decision maker — so the radar now pays for the
+// second call instead of handing over a list nobody can contact.
 
 interface ApolloPerson {
   id?: string;
@@ -371,16 +572,25 @@ interface ApolloPerson {
   first_name?: string;
   last_name?: string;
   title?: string;
+  seniority?: string;
+  email?: string;
+  email_status?: string;
   linkedin_url?: string;
   city?: string;
   country?: string;
+  // deno-lint-ignore no-explicit-any
+  phone_numbers?: any[];
+  // deno-lint-ignore no-explicit-any
+  organization?: any;
 }
 
-async function apolloPeopleSearch(
+async function apolloPost(
   apolloKey: string,
+  path: string,
   body: Record<string, unknown>,
-): Promise<ApolloPerson[]> {
-  const res = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
+  // deno-lint-ignore no-explicit-any
+): Promise<any> {
+  const res = await fetch(`https://api.apollo.io/api/v1${path}`, {
     method: "POST",
     headers: {
       "Cache-Control": "no-cache",
@@ -393,48 +603,172 @@ async function apolloPeopleSearch(
     const text = await res.text();
     throw new Error(`Apollo ${res.status}: ${text.slice(0, 200)}`);
   }
-  const data = await res.json();
+  return await res.json();
+}
+
+async function apolloPeopleSearch(
+  apolloKey: string,
+  body: Record<string, unknown>,
+): Promise<ApolloPerson[]> {
+  const data = await apolloPost(apolloKey, "/mixed_people/api_search", body);
   return Array.isArray(data?.people) ? data.people : [];
 }
 
+/** Every page Apollo will give us for one filter set, up to the page cap. */
+async function apolloPeopleSearchAll(
+  apolloKey: string,
+  filters: Record<string, unknown>,
+  limit: number,
+): Promise<ApolloPerson[]> {
+  const out: ApolloPerson[] = [];
+  for (let page = 1; page <= MAX_DM_SEARCH_PAGES && out.length < limit; page++) {
+    const people = await apolloPeopleSearch(apolloKey, {
+      ...filters,
+      per_page: DM_PAGE_SIZE,
+      page,
+    });
+    out.push(...people);
+    if (people.length < DM_PAGE_SIZE) break; // last page
+  }
+  return out;
+}
+
+// Who gets shown first. Apollo's own seniority buckets, ordered by how much
+// weight the person carries in a purchase — the seller reads the list top
+// down and should meet the owner before the manager.
+const SENIORITY_RANK: Record<string, number> = {
+  owner: 0, founder: 1, c_suite: 2, partner: 3, vp: 4, head: 5,
+  director: 6, manager: 7, senior: 8, entry: 9, intern: 10,
+};
+const DECISION_SENIORITIES = ["owner", "founder", "c_suite", "partner", "vp", "head", "director"];
+
+function seniorityRank(p: ApolloPerson): number {
+  const r = SENIORITY_RANK[asStr(p.seniority).toLowerCase()];
+  return r === undefined ? 99 : r;
+}
+
+function isMaskedEmail(v: unknown): boolean {
+  const e = asStr(v);
+  return !e || /email_not_unlocked/i.test(e);
+}
+
+function firstPhone(p: ApolloPerson): string {
+  const nums = Array.isArray(p.phone_numbers) ? p.phone_numbers : [];
+  for (const n of nums) {
+    const v = asStr(n?.sanitized_number) || asStr(n?.raw_number);
+    if (v) return v;
+  }
+  // Some plans only expose the company switchboard on the org record.
+  return asStr(p.organization?.phone) || asStr(p.organization?.primary_phone?.number) || "";
+}
+
+function shapePerson(p: ApolloPerson, domain: string): Record<string, unknown> {
+  return {
+    apollo_person_id: asStr(p.id) || null,
+    name: asStr(p.name) || [asStr(p.first_name), asStr(p.last_name)].filter(Boolean).join(" ") || null,
+    first_name: asStr(p.first_name) || null,
+    last_name: asStr(p.last_name) || null,
+    title: asStr(p.title) || null,
+    seniority: asStr(p.seniority) || null,
+    linkedin_url: asStr(p.linkedin_url) || null,
+    company_domain: domain,
+    city: asStr(p.city) || null,
+    country: asStr(p.country) || null,
+    // Filled by enrichDecisionMakers — never a masked placeholder.
+    email: null as string | null,
+    email_status: null as string | null,
+    phone: null as string | null,
+  };
+}
+
+/**
+ * Every decision maker Apollo lists for this company, not a fixed handful:
+ * the titles the research call asked for (plus Apollo's similar-title
+ * expansion), topped up with the company's senior leadership so a company
+ * whose titles don't match the guess still comes back with real people.
+ */
 async function findDecisionMakers(
   apolloKey: string,
   domain: string,
   titles: string[],
 ): Promise<Record<string, unknown>[]> {
   if (!domain) return [];
-  const base = { q_organization_domains_list: [domain], per_page: 5, page: 1 };
-  let people: ApolloPerson[] = [];
+  const base = { q_organization_domains_list: [domain] };
+  const byId = new Map<string, ApolloPerson>();
+  const add = (people: ApolloPerson[]) => {
+    for (const p of people) {
+      const key = asStr(p.id) ||
+        (asStr(p.name) + "|" + asStr(p.title)).toLowerCase();
+      if (key && !byId.has(key)) byId.set(key, p);
+    }
+  };
+
   try {
     if (titles.length) {
-      people = await apolloPeopleSearch(apolloKey, {
+      add(await apolloPeopleSearchAll(apolloKey, {
         ...base,
         person_titles: titles.slice(0, 8),
         include_similar_titles: true,
-      });
+      }, MAX_DECISION_MAKERS));
     }
-    if (!people.length) {
-      // Fallback: no title match at this company — take its senior leadership.
-      people = await apolloPeopleSearch(apolloKey, {
+    if (byId.size < MAX_DECISION_MAKERS) {
+      add(await apolloPeopleSearchAll(apolloKey, {
         ...base,
-        person_seniorities: ["owner", "founder", "c_suite", "vp", "head", "director"],
-      });
+        person_seniorities: DECISION_SENIORITIES,
+      }, MAX_DECISION_MAKERS - byId.size));
     }
   } catch (e) {
     console.warn(`[radar] apollo search failed for ${domain}:`, e);
-    return [];
+    if (!byId.size) return [];
   }
-  return people.slice(0, MAX_DECISION_MAKERS).map((p) => ({
-    apollo_person_id: asStr(p.id) || null,
-    name: asStr(p.name) || [asStr(p.first_name), asStr(p.last_name)].filter(Boolean).join(" ") || null,
-    first_name: asStr(p.first_name) || null,
-    last_name: asStr(p.last_name) || null,
-    title: asStr(p.title) || null,
-    linkedin_url: asStr(p.linkedin_url) || null,
-    company_domain: domain,
-    city: asStr(p.city) || null,
-    country: asStr(p.country) || null,
-  }));
+
+  return [...byId.values()]
+    .sort((a, b) => seniorityRank(a) - seniorityRank(b))
+    .slice(0, MAX_DECISION_MAKERS)
+    .map((p) => shapePerson(p, domain));
+}
+
+/**
+ * Work email + phone for people already found by search, via
+ * /people/bulk_match (10 per call, Apollo's limit). Best-effort by design: a
+ * chunk that fails leaves those people with their name/title/LinkedIn rather
+ * than failing the run — an uncontactable decision maker is still worth
+ * showing, and the seller can enrich them by hand in Prospección.
+ *
+ * reveal_personal_emails / reveal_phone_number stay OFF: personal emails are
+ * a different consent conversation, and phone reveals are async (Apollo
+ * answers through a webhook) — what comes back here is the work email and
+ * any number Apollo already holds.
+ */
+async function enrichDecisionMakers(
+  apolloKey: string,
+  // deno-lint-ignore no-explicit-any
+  people: any[],
+): Promise<void> {
+  const targets = people.filter((p) => p && p.apollo_person_id);
+  for (let i = 0; i < targets.length; i += DM_ENRICH_CHUNK) {
+    const chunk = targets.slice(i, i + DM_ENRICH_CHUNK);
+    try {
+      const data = await apolloPost(apolloKey, "/people/bulk_match", {
+        details: chunk.map((p) => ({ id: p.apollo_person_id })),
+        reveal_personal_emails: false,
+      });
+      const matches: ApolloPerson[] = Array.isArray(data?.matches) ? data.matches : [];
+      chunk.forEach((p, j) => {
+        const m = matches[j];
+        if (!m) return;
+        if (!isMaskedEmail(m.email)) {
+          p.email = asStr(m.email);
+          p.email_status = asStr(m.email_status) || null;
+        }
+        const phone = firstPhone(m);
+        if (phone) p.phone = phone;
+        if (!p.linkedin_url && asStr(m.linkedin_url)) p.linkedin_url = asStr(m.linkedin_url);
+      });
+    } catch (e) {
+      console.warn("[radar] apollo bulk_match failed:", e);
+    }
+  }
 }
 
 // ── Seller context (ground truth block shared by strategy + research) ──────
@@ -622,6 +956,7 @@ async function handleCreate(
   customPrompt: string,
   excludeListIds: string[],
   excludePreviousRadar: boolean,
+  newsWindowDays: number,
   h: Record<string, string>,
 ) {
   // One run at a time per user. A run stuck >STALE_MS counts as dead (killed
@@ -672,6 +1007,10 @@ async function handleCreate(
     progress: 2,
     progress_step: "Preparando tu investigación…",
   };
+  // Snapshotted like the exclusions: every stage of this run must filter
+  // against the window the user actually picked, even if they change it in
+  // the composer while the run is in flight.
+  const windowPayload = { news_window_days: newsWindowDays };
   const exclusionPayload = {
     exclude_list_ids: excludeListIds.slice(0, 50),
     excluded_companies: memory.hard,
@@ -679,8 +1018,20 @@ async function handleCreate(
   let { data: run, error: insErr } = await supa.from("radar_runs").insert({
     ...basePayload,
     ...exclusionPayload,
+    ...windowPayload,
     known_signals: memory.history,
   }).select("id").single();
+  // Same deploy-order safety net as below: without the recency migration the
+  // run still works, it just cannot narrow the window server-side (the
+  // deterministic filter below then runs on the default).
+  if (insErr && /news_window_days/.test(insErr.message ?? "")) {
+    console.warn("[radar] news_window_days column missing — apply 20260901120000_radar_recency_window.sql");
+    ({ data: run, error: insErr } = await supa.from("radar_runs").insert({
+      ...basePayload,
+      ...exclusionPayload,
+      known_signals: memory.history,
+    }).select("id").single());
+  }
   // Deploy-order safety net: if this function ships before its migration is
   // applied, known_signals (and, on much older deploys, the two exclusion
   // columns) don't exist yet. Losing the memory for one run is fine; losing
@@ -688,10 +1039,14 @@ async function handleCreate(
   if (insErr && /known_signals/.test(insErr.message ?? "")) {
     console.warn("[radar] known_signals column missing — apply 20260823000003_radar_signal_memory.sql");
     ({ data: run, error: insErr } = await supa.from("radar_runs")
-      .insert({ ...basePayload, ...exclusionPayload }).select("id").single());
+      .insert({ ...basePayload, ...exclusionPayload, ...windowPayload }).select("id").single());
   }
   if (insErr && /exclude_list_ids|excluded_companies/.test(insErr.message ?? "")) {
     console.warn("[radar] exclusion columns missing — apply 20260819180000_radar_exclusions.sql");
+    ({ data: run, error: insErr } = await supa.from("radar_runs")
+      .insert({ ...basePayload, ...windowPayload }).select("id").single());
+  }
+  if (insErr && /news_window_days/.test(insErr.message ?? "")) {
     ({ data: run, error: insErr } = await supa.from("radar_runs").insert(basePayload).select("id").single());
   }
   if (insErr || !run) return json({ error: "No se pudo iniciar el Radar: " + (insErr?.message ?? "insert failed") }, 500, h);
@@ -711,6 +1066,7 @@ interface RunRow {
   // deno-lint-ignore no-explicit-any
   signal_strategy: any;
   research_offset: number;
+  news_window_days: number | null;
   error_message: string | null;
   updated_at: string;
 }
@@ -739,12 +1095,16 @@ async function handleStrategy(supa: any, run: RunRow, engine: Engine, h: Record<
     const customPrompt = asStr(run.custom_prompt).trim();
     const excluded = asStrArr(run.excluded_companies);
     const known = knownSignalsOf(run);
+    const windowDays = windowDaysOf(run);
     const prompt = (customPrompt
       ? `${sellerContext}\n\n=== USER'S TARGET DESCRIPTION (ground truth — the companies they want) ===\n${customPrompt}`
       : sellerContext) +
+      recencyBlock(windowDays) +
       excludedBlock(excluded, MAX_EXCLUDED_IN_STRATEGY_PROMPT) +
       knownNamesBlock(known, MAX_KNOWN_SIGNALS_IN_PROMPT);
-    const raw = await callAi(engine, STRATEGY_SYSTEM, prompt, { maxTokens: 2200, maxSearches: 2 });
+    const raw = await callAi(engine, STRATEGY_SYSTEM, prompt, {
+      maxTokens: 2200, maxSearches: 2, searchAfterDate: cutoffIso(windowDays),
+    });
     const strategy = parseJson(raw);
     const hypothesis = asStr(strategy.signal_hypothesis).trim();
     if (!hypothesis) throw new Error("La IA no pudo definir una señal de compra a partir de tu contexto.");
@@ -757,7 +1117,10 @@ async function handleStrategy(supa: any, run: RunRow, engine: Engine, h: Record<
       signal_strategy: { ...strategy, total_queries: totalQueries },
       progress: 25,
       progress_step: "Señal definida — empezando la investigación en la web…",
-      progress_log: [{ at: new Date().toISOString(), text: "Señal definida — empezando la investigación en la web…" }],
+      progress_log: [{
+        at: new Date().toISOString(),
+        text: `Señal definida — buscando noticias ${windowLabelDe(windowDays)}…`,
+      }],
     }).eq("id", run.id);
     return json({ status: "ok", run_id: run.id, next_stage: "research" }, 200, h);
   } catch (err) {
@@ -802,6 +1165,7 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
     }
 
     const item = items[idx];
+    const windowDays = windowDaysOf(run);
     const sellerContext = await loadSellerContext(supa, run.user_id);
     const researchPrompt =
       `${sellerContext}\n\n=== SIGNAL STRATEGY (context only — the query below is your scope) ===\n` +
@@ -814,6 +1178,7 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
       (existing.length
         ? `\n\n=== COMPANIES ALREADY FOUND (do not repeat) ===\n${existing.map((c: { name?: string }) => c.name).join(", ")}`
         : "") +
+      recencyBlock(windowDays) +
       excludedBlock(excluded, MAX_EXCLUDED_IN_RESEARCH_PROMPT) +
       `\n\nRun exactly one web_search with this query now and return the JSON described in your instructions.`;
 
@@ -826,7 +1191,9 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
     let skipNote = "";
     const t0 = Date.now();
     try {
-      const raw = await callAi(engine, RESEARCH_SYSTEM, researchPrompt, { maxTokens: 2000, maxSearches: 1 });
+      const raw = await callAi(engine, RESEARCH_SYSTEM, researchPrompt, {
+        maxTokens: 2000, maxSearches: 1, searchAfterDate: cutoffIso(windowDays),
+      });
       try {
         research = parseJson(raw);
       } catch (_pe) {
@@ -858,7 +1225,14 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
         evidence: (c.evidence as any[])
           .filter((e) => asStr(e?.url).trim())
           .slice(0, 4)
-          .map((e) => ({ url: asStr(e.url).trim(), summary: asStr(e.summary).trim() })),
+          .map((e) => ({
+            url: asStr(e.url).trim(),
+            summary: asStr(e.summary).trim(),
+            published_at: asStr(e.published_at).trim().slice(0, 10),
+          })),
+        // Cuándo pasó la noticia. La tarjeta lo muestra y withinWindow() lo
+        // exige: sin fecha verificable la empresa no se entrega.
+        signal_date: asStr(c.signal_date).trim().slice(0, 10),
         decision_maker_titles: asStrArr(c.decision_maker_titles),
         // Radar-memory bookkeeping, filled below when this company was
         // already delivered by a previous radar under a different signal.
@@ -872,10 +1246,23 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
 
     // deno-lint-ignore no-explicit-any
     const newCompanies: any[] = [];
-    let staleRepeats = 0; // same company, same news as a previous radar
+    let staleRepeats = 0;  // same company, same news as a previous radar
+    let outOfWindow = 0;   // news older than the franja the user picked
+    let undated = 0;       // no verifiable date → cannot be called recent
     for (const c of shaped) {
       const key = nameKey(c.name);
       if (existingNames.has(key) || excludedKeys.has(key)) continue;
+      // La garantía de recencia, en código: el prompt y el filtro nativo del
+      // motor hacen probable una respuesta reciente; esto hace imposible una
+      // vieja.
+      const w = withinWindow(c.signal_date, c.evidence, windowDays);
+      if (!w.ok) {
+        if (w.reason === "old") outOfWindow++; else undated++;
+        continue;
+      }
+      // La fecha efectiva (la más nueva entre señal y evidencia) es la que se
+      // muestra: si la evidencia es más reciente que signal_date, esa manda.
+      if (w.at !== null) c.signal_date = new Date(w.at).toISOString().slice(0, 10);
       const prev = knownByName.get(key);
       if (prev) {
         if (!isNewSignal(prev, c.signal_headline || c.why_fit, c.evidence)) {
@@ -900,9 +1287,18 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
     // is out there right now, not for the first handful. Only the ceiling
     // (row size / Apollo cost) can cut the research short.
     const moreQueriesLeft = nextOffset < items.length && merged.length < MAX_COMPANIES;
-    // Backfill total_queries for runs whose strategy stage ran before this
-    // field existed — keeps nextStageFor's resume logic accurate for them.
-    const strategyPatch = strategy.total_queries === items.length ? {} : { signal_strategy: { ...strategy, total_queries: items.length } };
+    // El plan de investigación es también donde se lleva la cuenta de lo
+    // descartado por antigüedad: vive en signal_strategy (JSONB que ya se
+    // reescribe en cada llamada) en vez de en una columna nueva, y es lo que
+    // permite decir al final cuántas empresas quedaron fuera solo por la
+    // franja de fechas — el dato que convierte "no encontramos nada" en
+    // "hay noticias, pero más viejas que la franja que elegiste".
+    // total_queries se rellena aquí también para los runs cuya estrategia
+    // corrió antes de que ese campo existiera (nextStageFor lo necesita).
+    const droppedSoFar = (Number(strategy.dropped_by_date) || 0) + outOfWindow + undated;
+    const strategyPatch = {
+      signal_strategy: { ...strategy, total_queries: items.length, dropped_by_date: droppedSoFar },
+    };
 
     // Narrate every completed query in progress_log so the UI visibly moves.
     // deno-lint-ignore no-explicit-any
@@ -914,8 +1310,10 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
     if (skipNote) logLine(skipNote);
     else {
       const found = Math.min(newCompanies.length, roomLeft);
+      const dropped = outOfWindow + undated;
       logLine(`Búsqueda ${nextOffset}/${items.length} completada — ` +
         (found ? `${found} empresa${found === 1 ? "" : "s"} nueva${found === 1 ? "" : "s"}` : "sin resultados nuevos") +
+        (dropped ? ` · ${dropped} descartada${dropped === 1 ? "" : "s"} por antigüedad` : "") +
         (staleRepeats ? ` · ${staleRepeats} ya entregada${staleRepeats === 1 ? "" : "s"} con la misma señal` : ""));
     }
 
@@ -935,11 +1333,19 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
     }
 
     if (!merged.length) {
-      throw new Error(coverageNote || "La investigación no encontró empresas con evidencia verificable. Intenta con un prompt de señal más específico.");
+      // Distinguir las dos razones importa: "no hay nada" y "sí hay, pero es
+      // más viejo que la franja que elegiste" se arreglan de formas opuestas.
+      throw new Error(droppedSoFar
+        ? `No encontramos empresas con noticias ${windowLabelDe(windowDays)}. ` +
+          `Descartamos ${droppedSoFar} hallazgo${droppedSoFar === 1 ? "" : "s"} por ser más ` +
+          `antiguo${droppedSoFar === 1 ? "" : "s"} que esa franja: amplía la franja de fechas o ` +
+          `describe la señal con más detalle.`
+        : (coverageNote || "La investigación no encontró empresas con evidencia verificable. Intenta con un prompt de señal más específico."));
     }
 
     logLine(`${merged.length} empresa${merged.length === 1 ? "" : "s"} con la señal — buscando decision makers…`);
     await supa.from("radar_runs").update({
+      ...strategyPatch,
       companies: merged,
       research_offset: items.length,
       progress: 55,
@@ -961,14 +1367,44 @@ async function handleDecisionMakers(supa: any, run: RunRow, apolloKey: string, o
 
     const start = Math.max(0, offset || 0);
     const end = Math.min(companies.length, start + DM_BATCH_SIZE);
+
+    // Presupuesto de enriquecimiento del run: cada match de Apollo gasta un
+    // crédito de email de la cuenta, así que hay que contar INTENTOS, no
+    // aciertos — si solo contara a quien devolvió correo, cada intento
+    // fallido "devolvería" presupuesto y el tope real acabaría muy por
+    // encima del declarado. Se cuentan las personas con id de Apollo de las
+    // empresas ya procesadas: sobreestima un poco (alguna quedó fuera por
+    // presupuesto) y errar por ahí es lo correcto para un tope de gasto.
+    // deno-lint-ignore no-explicit-any
+    const attempted = companies.reduce((n: number, c: any) => n +
+      (c && c.dm_done
+        ? (Array.isArray(c.decision_makers) ? c.decision_makers : [])
+          .filter((d: { apollo_person_id?: string }) => d && d.apollo_person_id).length
+        : 0), 0);
+    let budget = Math.max(0, MAX_DM_ENRICH_PER_RUN - attempted);
+
     for (let i = start; i < end; i++) {
       const co = companies[i];
-      co.decision_makers = await findDecisionMakers(apolloKey, toDomain(co.website), co.decision_maker_titles || []);
+      const dms = await findDecisionMakers(apolloKey, toDomain(co.website), co.decision_maker_titles || []);
+      // Contacto para los de arriba primero: findDecisionMakers ya los
+      // devuelve por seniority, así que si el presupuesto no alcanza para
+      // todos, se gasta en los que más deciden.
+      if (budget > 0 && dms.length) {
+        const slice = dms.slice(0, budget);
+        await enrichDecisionMakers(apolloKey, slice);
+        budget -= slice.length;
+      }
+      co.decision_makers = dms;
       co.dm_done = true;
     }
 
     const doneCount = companies.filter((c: { dm_done?: boolean }) => c.dm_done).length;
-    const stepText = `Decision makers: ${doneCount}/${companies.length} empresas listas`;
+    // deno-lint-ignore no-explicit-any
+    const withContact = companies.reduce((n: number, c: any) => n +
+      ((Array.isArray(c.decision_makers) ? c.decision_makers : [])
+        .filter((d: { email?: string; phone?: string }) => d && (d.email || d.phone)).length), 0);
+    const stepText = `Decision makers: ${doneCount}/${companies.length} empresas listas` +
+      (withContact ? ` · ${withContact} con correo o teléfono` : "");
 
     if (end >= companies.length) {
       // ── Last batch: charge credits (only on success) and finalize ──────
@@ -1051,6 +1487,7 @@ Deno.serve(async (req: Request) => {
   let body: {
     run_id?: unknown; stage?: unknown; custom_prompt?: unknown; offset?: unknown;
     engine?: unknown; exclude_list_ids?: unknown; exclude_previous_radar?: unknown;
+    news_window_days?: unknown;
   };
   try { body = await req.json(); } catch { body = {}; }
 
@@ -1066,7 +1503,10 @@ Deno.serve(async (req: Request) => {
     // Default ON: not re-delivering companies a previous radar already found
     // is the sane default; the UI lets the user turn it off explicitly.
     const excludePreviousRadar = body.exclude_previous_radar !== false;
-    return await handleCreate(supa, user, customPrompt, excludeListIds, excludePreviousRadar, h);
+    const newsWindowDays = normalizeWindowDays(body.news_window_days);
+    return await handleCreate(
+      supa, user, customPrompt, excludeListIds, excludePreviousRadar, newsWindowDays, h,
+    );
   }
 
   const { data: run } = await supa.from("radar_runs").select("*").eq("id", runId).maybeSingle();

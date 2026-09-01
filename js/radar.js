@@ -4,9 +4,17 @@
  * El "aha moment" del producto: en vez de terminar el onboarding con filtros
  * recomendados, la IA investiga la web (generate-radar) y entrega TODAS las
  * empresas que encuentra en ese momento con una señal de compra derivada de
- * la propuesta de valor del vendedor, con evidencia (URLs) y 2-3 decision
- * makers por empresa (solo nombre/cargo/LinkedIn — revelar contacto sigue
- * costando créditos en Prospección).
+ * la propuesta de valor del vendedor, con evidencia fechada (URLs) y TODOS
+ * los decision makers que Apollo tenga en cada empresa, con su correo
+ * laboral y teléfono cuando Apollo los tiene.
+ *
+ * Antes de investigar el usuario elige la FRANJA DE FECHAS (últimos 7 días /
+ * mes / 3 meses / 6 meses / año): una señal solo sirve mientras es noticia,
+ * y el Radar entregaba hallazgos de hace años. La franja viaja con el run
+ * (news_window_days) y generate-radar la aplica en el filtro nativo del
+ * buscador, en los prompts y — lo que de verdad la garantiza — descartando
+ * en código toda empresa sin fecha o fuera de la franja. Cada tarjeta muestra
+ * de cuándo es su señal.
  *
  * Se monta en #radar-shell (página page-radar de index.html). Lee radar_runs
  * (SELECT propio vía RLS; escribe solo la edge function) y narra el progreso
@@ -50,6 +58,50 @@
     try { return new URL(u).hostname.replace(/^www\./i, ''); } catch (e) { return u; }
   }
 
+  // Franjas de antigüedad que puede elegir el usuario. Espejo de NEWS_WINDOWS
+  // en supabase/functions/generate-radar/index.ts — si cambias una, cambia la
+  // otra en el mismo PR.
+  const WINDOWS = [
+    { days: 7,   label: '7 días',  full: 'los últimos 7 días',  de: 'de los últimos 7 días' },
+    { days: 30,  label: '1 mes',   full: 'el último mes',       de: 'del último mes' },
+    { days: 90,  label: '3 meses', full: 'los últimos 3 meses', de: 'de los últimos 3 meses' },
+    { days: 180, label: '6 meses', full: 'los últimos 6 meses', de: 'de los últimos 6 meses' },
+    { days: 365, label: '1 año',   full: 'el último año',       de: 'del último año' },
+  ];
+  const DEFAULT_WINDOW_DAYS = 90;
+
+  function windowLabel(days, full) {
+    const w = WINDOWS.filter((x) => x.days === days)[0];
+    if (!w) return full ? 'los últimos ' + days + ' días' : days + ' días';
+    return full ? w.full : w.label;
+  }
+
+  // "de" + la franja, ya contraído: "del último mes", no "de el último mes".
+  function windowLabelDe(days) {
+    const w = WINDOWS.filter((x) => x.days === days)[0];
+    return w ? w.de : 'de los últimos ' + days + ' días';
+  }
+
+  // "2026-08-14" → Date. Se ancla a mediodía UTC para que la fecha que ve el
+  // usuario sea la del dato y no la del huso en el que abrió la app.
+  function parseDay(iso) {
+    const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(String(iso || '').trim());
+    if (!m) return null;
+    return new Date(Date.UTC(+m[1], +m[2] - 1, +(m[3] || 1), 12, 0, 0));
+  }
+
+  // Cuándo pasó la señal, como lo diría una persona: reciente en días,
+  // con fecha exacta cuando ya no lo es.
+  function whenLabel(iso) {
+    const d = parseDay(iso);
+    if (!d) return '';
+    const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+    if (days <= 0) return 'Hoy';
+    if (days === 1) return 'Ayer';
+    if (days < 31) return 'Hace ' + days + ' días';
+    return d.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  }
+
   const state = {
     user: null,
     run: null,
@@ -62,9 +114,11 @@
 
     // ── Composer (prompt opcional + exclusiones) ──
     promptDraft: '',       // texto del box "¿qué empresas buscas?" (sobrevive re-renders)
+    windowDays: DEFAULT_WINDOW_DAYS, // franja de fechas elegida para la próxima investigación
     expanded: {},          // índice de empresa → detalle abierto
     signalOpen: false,     // señal completa vs. recortada a 2 líneas
     exclusionsOpen: false, // panel de "empresas que ya tienes"
+    windowTouched: false,  // el usuario ya eligió franja a mano en esta sesión
 
     // Fuentes de memoria ya cargadas (listas de Prospección + radares previos).
     // Sirven a la vez de transparencia ("esto ya lo buscamos") y de ahorro:
@@ -217,9 +271,20 @@
         .limit(1)
         .maybeSingle();
       if (!error) state.run = data || null;
+      // La franja del último run es el punto de partida del siguiente: quien
+      // acotó a 7 días casi nunca quiere volver a 3 meses sin decirlo.
+      if (state.run && state.run.news_window_days && !state.windowTouched) {
+        state.windowDays = normalizeWindow(state.run.news_window_days);
+      }
     } catch (e) {
       console.warn('[radar] load:', e);
     }
+  }
+
+  function normalizeWindow(v) {
+    const n = Math.round(Number(v));
+    if (!isFinite(n) || n <= 0) return DEFAULT_WINDOW_DAYS;
+    return WINDOWS.filter((w) => w.days === n).length ? n : DEFAULT_WINDOW_DAYS;
   }
 
   // ── Realtime + polling de respaldo ─────────────────────────────────────────
@@ -370,6 +435,7 @@
         custom_prompt: prompt || undefined,
         exclude_list_ids: Array.from(state.excludeListIds || []),
         exclude_previous_radar: !!state.excludePrevRadar,
+        news_window_days: state.windowDays,
       });
       state.showRerun = false;
       state.expanded = {};
@@ -395,6 +461,7 @@
     return {
       radar: {
         signal_headline: co.signal_headline || '',
+        signal_date: co.signal_date || '',
         why_fit: co.why_fit,
         signal_strength: co.signal_strength,
         evidence: co.evidence,
@@ -416,6 +483,13 @@
       linkedin_url: dm.linkedin_url || null,
       city: dm.city || null,
       country: dm.country || null,
+      // El contacto ya lo reveló el Radar (Apollo /people/bulk_match): viaja
+      // a la lista para no volver a pagar el enriquecimiento en Prospección.
+      email: dm.email || null,
+      email_status: dm.email_status || null,
+      phone: dm.phone || null,
+      phone_status: dm.phone ? 'revealed' : 'none',
+      enriched_at: (dm.email || dm.phone) ? new Date().toISOString() : null,
       snapshot: radarSnapshot(co),
     };
   }
@@ -466,12 +540,14 @@
       }
       const rows = [];
       let dmCount = 0;
+      let contactCount = 0;
       let companiesWithoutDms = 0;
       companies.forEach((co) => {
         const dms = co.decision_makers || [];
         if (dms.length) {
           dms.forEach((dm) => { rows.push(dmRow(state.user.id, list.id, co, dm)); });
           dmCount += dms.length;
+          contactCount += dms.filter((dm) => dm && (dm.email || dm.phone)).length;
         } else {
           rows.push(companyRow(state.user.id, list.id, co));
           companiesWithoutDms++;
@@ -488,7 +564,8 @@
       try { global.document.dispatchEvent(new CustomEvent('prospecting:list-saved')); } catch (e) {}
       alert('Guardado en la lista "' + list.name + '": ' +
         companies.length + ' empresa' + (companies.length === 1 ? '' : 's') +
-        ' y ' + dmCount + ' decision maker' + (dmCount === 1 ? '' : 's') + '.' +
+        ' y ' + dmCount + ' decision maker' + (dmCount === 1 ? '' : 's') +
+        (contactCount ? ' (' + contactCount + ' con correo o teléfono ya revelado)' : '') + '.' +
         (companiesWithoutDms
           ? ' (' + companiesWithoutDms + ' empresa' + (companiesWithoutDms === 1 ? '' : 's') +
             ' quedó' + (companiesWithoutDms === 1 ? '' : 'ron') + ' sin contacto: Apollo no encontró personas.)'
@@ -547,6 +624,7 @@
         'placeholder="Ej.: distribuidoras de alimentos en México, de 200 a 1000 empleados, que estén abriendo sucursales o cambiando de ERP">' +
         esc(state.promptDraft) + '</textarea>' +
       '<div class="rdr-hint">Si lo dejas vacío, la IA deriva la señal de compra del contexto de tu empresa.</div>' +
+      windowBlock() +
       exclusionsBlock() +
       '<div class="rdr-comp-foot">' +
         (runIsFree()
@@ -555,6 +633,26 @@
         '<button class="btn btn-primary" data-act="start" ' + (state.busy ? 'disabled' : '') + '>' +
           (state.busy ? 'Iniciando…' : esc(cta)) + '</button>' +
       '</div>' +
+    '</div>';
+  }
+
+  // Franja de fechas: qué tan reciente tiene que ser la noticia para que la
+  // empresa cuente. No es un filtro cosmético — generate-radar descarta en
+  // código toda empresa fuera de la franja (y toda la que no pueda fechar),
+  // así que acortarla devuelve menos empresas pero todas accionables.
+  function windowBlock() {
+    const chips = WINDOWS.map((w) =>
+      '<button type="button" class="rdr-win-chip' + (state.windowDays === w.days ? ' is-on' : '') + '" ' +
+        'data-win="' + w.days + '" aria-pressed="' + (state.windowDays === w.days ? 'true' : 'false') + '">' +
+        esc(w.label) + '</button>').join('');
+    return '<div class="rdr-win">' +
+      '<div class="rdr-win-top">' +
+        '<span class="rdr-win-lbl">Antigüedad máxima de las noticias</span>' +
+        '<div class="rdr-win-chips">' + chips + '</div>' +
+      '</div>' +
+      '<div class="rdr-hint">Solo entregamos empresas con evidencia publicada en ' +
+        esc(windowLabel(state.windowDays, true)) +
+        '. Las que no podamos fechar se descartan.</div>' +
     '</div>';
   }
 
@@ -620,10 +718,10 @@
 
   function viewEmpty() {
     return '<div class="rdr-wrap">' +
-      header('La IA investiga la web y te trae todas las empresas que necesitan lo que vendes — con evidencia y decision makers.') +
+      header('La IA investiga la web y te trae todas las empresas que necesitan lo que vendes — con evidencia reciente y decision makers contactables.') +
       composer('Iniciar investigación', {
         title: 'Encuentra tus próximas empresas target',
-        sub: 'A partir del contexto de tu empresa — y de lo que escribas aquí abajo — la IA define qué señal de compra buscar, investiga fuentes públicas y te entrega todas las empresas que encuentre con esa señal, con sus decision makers.',
+        sub: 'A partir del contexto de tu empresa — y de lo que escribas aquí abajo — la IA define qué señal de compra buscar, investiga fuentes públicas dentro de la franja de fechas que elijas, y te entrega todas las empresas que encuentre con esa señal, con todos sus decision makers y su contacto.',
       }) +
     '</div>';
   }
@@ -653,7 +751,10 @@
         '<button class="btn btn-ghost btn-sm" data-act="resume-stage" ' + (state.busy ? 'disabled' : '') + '>Reintentar esta etapa</button></div>'
       : '';
     return '<div class="rdr-wrap">' +
-      header('Tu radar está investigando. Corre todas las búsquedas de la estrategia sin recortar resultados, así que puede tomar bastante tiempo — puedes quedarte a mirar o explorar la app; te avisamos aquí.') +
+      header('Tu radar está investigando' +
+        (run.news_window_days ? ' noticias ' + esc(windowLabelDe(normalizeWindow(run.news_window_days))) : '') +
+        '. Corre todas las búsquedas de la estrategia sin recortar resultados, así que puede tomar ' +
+        'bastante tiempo — puedes quedarte a mirar o explorar la app; te avisamos aquí.') +
       hypothesis +
       '<div class="card rdr-prog">' +
         '<div class="rdr-prog-top"><span class="rdr-pulse"></span>' +
@@ -685,9 +786,16 @@
     const when = run.generated_at ? new Date(run.generated_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'long' }) : '';
     const signal = String(run.signal_hypothesis || '');
     const repeats = companies.filter((c) => c && c.seen_before).length;
+    const contactables = companies.reduce((n, c) => n +
+      (c.decision_makers || []).filter((d) => d && (d.email || d.phone)).length, 0);
+    // Un run anterior a la franja de fechas no corrió con ninguna: decir que
+    // sus señales son "del último mes" sería inventarle un criterio.
+    const runWindow = run.news_window_days ? normalizeWindow(run.news_window_days) : 0;
     return '<div class="rdr-wrap">' +
-      header(companies.length + ' empresa' + (companies.length === 1 ? '' : 's') + ' con señal de compra · ' +
-        totalDms + ' decision makers' + (when ? ' · ' + esc(when) : '')) +
+      header(companies.length + ' empresa' + (companies.length === 1 ? '' : 's') + ' con señal de compra' +
+        (runWindow ? ' ' + esc(windowLabelDe(runWindow)) : '') + ' · ' + totalDms + ' decision makers' +
+        (contactables ? ' (' + contactables + ' con contacto)' : '') +
+        (when ? ' · ' + esc(when) : '')) +
       '<div class="rdr-signal card">' +
         '<div class="rdr-signal-lbl">' +
           (run.source === 'custom' ? 'Tu búsqueda' : 'Señal detectada por la IA') + '</div>' +
@@ -732,10 +840,20 @@
   }
 
   // Al final ya sabemos cuántas de las "solo con señal nueva" volvieron de
-  // verdad, así que se cuenta el resultado en vez de la regla.
+  // verdad, así que se cuenta el resultado en vez de la regla. La franja de
+  // fechas se cuenta igual de explícita: si descartamos hallazgos por viejos,
+  // el usuario tiene que saberlo — es lo que le dice que ampliando la franja
+  // habría más.
   function memoryNoteResults(run, repeats) {
     const m = memoryCounts(run);
     const parts = [];
+    const dropped = Number(run.signal_strategy && run.signal_strategy.dropped_by_date) || 0;
+    if (dropped && run.news_window_days) {
+      parts.push('Descartamos ' + dropped + ' hallazgo' + (dropped === 1 ? '' : 's') +
+        ' por ser más antiguo' + (dropped === 1 ? '' : 's') + ' que ' +
+        windowLabel(normalizeWindow(run.news_window_days), true) +
+        ' (o por no poder fecharlo' + (dropped === 1 ? '' : 's') + ').');
+    }
     if (m.hard) parts.push('Se excluyeron ' + m.hard + ' empresa' + (m.hard === 1 ? '' : 's') + ' que ya trabajas.');
     if (repeats) {
       parts.push(repeats + ' empresa' + (repeats === 1 ? '' : 's') + ' de un radar anterior vuelve' +
@@ -773,11 +891,17 @@
     // Va en la fila de chips, no junto al nombre: dos chips en la cabecera
     // le comen el ancho al nombre de la empresa y lo parten a media palabra.
     const again = c.seen_before ? '<span class="rdr-chip rdr-chip-again">Señal nueva</span>' : '';
-    const meta = again + [c.country, c.industry, c.employee_count].filter(Boolean)
+    // Cuándo pasó: es lo primero que decide si vale la pena llamar hoy, así
+    // que va en la tarjeta y no escondido en el detalle.
+    const when = whenLabel(c.signal_date);
+    const dateChip = when ? '<span class="rdr-chip rdr-chip-date">' + esc(when) + '</span>' : '';
+    const reachable = dms.filter((d) => d && (d.email || d.phone)).length;
+    const meta = again + dateChip + [c.country, c.industry, c.employee_count].filter(Boolean)
       .map((m) => '<span class="rdr-chip">' + esc(m) + '</span>').join('') +
       (dms.length
         ? '<span class="rdr-chip rdr-chip-dm">' + dms.length + ' decision maker' +
-          (dms.length === 1 ? '' : 's') + '</span>'
+          (dms.length === 1 ? '' : 's') +
+          (reachable ? ' · ' + reachable + ' con contacto' : '') + '</span>'
         : '<span class="rdr-chip">Sin contacto en Apollo</span>');
     const headline = headlineOf(c);
     return '<article class="card rdr-co' + (open ? ' is-open' : '') + '">' +
@@ -819,20 +943,57 @@
       (ev.length ? '<div class="rdr-ev"><div class="rdr-sec-lbl">Evidencia</div>' + ev.map((e) => {
         const u = safeUrl(e.url);
         if (!u) return '';
+        const pub = whenLabel(e.published_at);
         return '<a class="rdr-ev-item" href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' +
-          '<span class="rdr-ev-host">' + esc(hostOf(u)) + '</span>' +
+          '<span class="rdr-ev-head"><span class="rdr-ev-host">' + esc(hostOf(u)) + '</span>' +
+          (pub ? '<span class="rdr-ev-date">' + esc(pub) + '</span>' : '') + '</span>' +
           (e.summary ? '<span class="rdr-ev-sum">' + esc(e.summary) + '</span>' : '') + '</a>';
       }).join('') + '</div>' : '') +
-      '<div class="rdr-dms"><div class="rdr-sec-lbl">Decision makers</div>' +
-        (dms.length ? dms.map((d) => {
-          const li = safeUrl(d.linkedin_url);
-          return '<div class="rdr-dm">' +
-            '<span class="rdr-dm-name">' + esc(d.name || '—') + '</span>' +
-            '<span class="rdr-dm-title">' + esc(d.title || '') + '</span>' +
-            (li ? '<a class="rdr-dm-li" href="' + esc(li) + '" target="_blank" rel="noopener noreferrer">LinkedIn ↗</a>' : '') +
-          '</div>';
-        }).join('') : '<div class="rdr-dm-none">Apollo no encontró personas para esta empresa — búscala manualmente en Prospección.</div>') +
+      dmsBlock(dms) +
+    '</div>';
+  }
+
+  // Un decision maker sin forma de contactarlo no sirve de nada: el Radar
+  // entrega todos los que Apollo tiene en la empresa, con correo laboral y
+  // teléfono cuando existen. Nada inventado: lo que Apollo no dio, no se
+  // muestra.
+  function dmsBlock(dms) {
+    if (!dms.length) {
+      return '<div class="rdr-dms"><div class="rdr-sec-lbl">Decision makers</div>' +
+        '<div class="rdr-dm-none">Apollo no encontró personas para esta empresa — búscala manualmente en Prospección.</div>' +
+      '</div>';
+    }
+    const reachable = dms.filter((d) => d && (d.email || d.phone)).length;
+    return '<div class="rdr-dms">' +
+      '<div class="rdr-sec-lbl">Decision makers · ' + dms.length +
+        (reachable ? ' · ' + reachable + ' con correo o teléfono' : '') + '</div>' +
+      dms.map(dmRowHtml).join('') +
+    '</div>';
+  }
+
+  function dmRowHtml(d) {
+    const li = safeUrl(d.linkedin_url);
+    const email = String(d.email || '').trim();
+    const phone = String(d.phone || '').trim();
+    const links = [];
+    if (email) {
+      links.push('<a class="rdr-dm-contact" href="mailto:' + esc(email) + '">' + esc(email) + '</a>');
+    }
+    if (phone) {
+      links.push('<a class="rdr-dm-contact" href="tel:' + esc(phone.replace(/[^+\d]/g, '')) + '">' +
+        esc(phone) + '</a>');
+    }
+    if (li) {
+      links.push('<a class="rdr-dm-li" href="' + esc(li) + '" target="_blank" rel="noopener noreferrer">LinkedIn ↗</a>');
+    }
+    return '<div class="rdr-dm">' +
+      '<div class="rdr-dm-top">' +
+        '<span class="rdr-dm-name">' + esc(d.name || '—') + '</span>' +
+        '<span class="rdr-dm-title">' + esc(d.title || '') + '</span>' +
       '</div>' +
+      (links.length
+        ? '<div class="rdr-dm-links">' + links.join('') + '</div>'
+        : '<div class="rdr-dm-nocontact">Apollo no tiene su correo ni su teléfono — enriquécelo desde Prospección.</div>') +
     '</div>';
   }
 
@@ -841,6 +1002,16 @@
   function bind(el) {
     const ta = el.querySelector('#rdr-prompt');
     if (ta) ta.addEventListener('input', () => { state.promptDraft = ta.value; });
+
+    el.querySelectorAll('[data-win]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const t = document.getElementById('rdr-prompt');
+        if (t) state.promptDraft = t.value; // no perder lo escrito al re-render
+        state.windowDays = normalizeWindow(b.getAttribute('data-win'));
+        state.windowTouched = true;
+        render();
+      });
+    });
 
     el.querySelectorAll('[data-ex]').forEach((cb) => {
       cb.addEventListener('change', () => {
@@ -922,6 +1093,14 @@
       '.rdr-ta{width:100%;min-height:74px;resize:vertical;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);color:var(--ink);font-family:var(--font-sans);font-size:13px;padding:10px 12px;line-height:1.5}',
       '.rdr-ta:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}',
       '.rdr-hint{font-size:12px;color:var(--ink-4)}',
+      // ── Franja de fechas ──
+      '.rdr-win{border:1px solid var(--hair);border-radius:var(--r-sm);background:var(--surface2);padding:10px 12px;display:flex;flex-direction:column;gap:7px}',
+      '.rdr-win-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}',
+      '.rdr-win-lbl{font-size:12.5px;font-weight:700;color:var(--ink-2)}',
+      '.rdr-win-chips{display:flex;gap:5px;flex-wrap:wrap}',
+      '.rdr-win-chip{font-family:inherit;font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:999px;cursor:pointer;background:var(--surface);color:var(--text2);border:1px solid var(--border)}',
+      '.rdr-win-chip:hover{border-color:var(--accent);color:var(--ink-2)}',
+      '.rdr-win-chip.is-on{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}',
       '.rdr-comp-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:2px}',
       '.rdr-cost-note{font-size:12px;color:var(--text3);display:inline-flex;align-items:center;gap:6px}',
       // ── Exclusiones ──
@@ -971,6 +1150,7 @@
       '.rdr-chip-hot{background:var(--green-soft);color:var(--green);border-color:transparent;flex:none;align-self:flex-start}',
       '.rdr-chip-warm{background:var(--amber-soft);color:var(--amber);border-color:transparent;flex:none;align-self:flex-start}',
       '.rdr-chip-dm{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}',
+      '.rdr-chip-date{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.02em}',
       '.rdr-chip-again{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent;flex:none;align-self:flex-start}',
       '.rdr-co-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:2px}',
       '.rdr-co-detail{border-top:1px solid var(--hair);padding-top:11px;display:flex;flex-direction:column;gap:12px}',
@@ -978,14 +1158,21 @@
       '.rdr-sec-lbl{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);margin-bottom:7px}',
       '.rdr-ev-item{display:flex;flex-direction:column;gap:3px;padding:7px 10px;border-radius:var(--r-sm);text-decoration:none;background:var(--surface2);margin-bottom:5px}',
       '.rdr-ev-item:hover{background:var(--surface3)}',
+      '.rdr-ev-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}',
       '.rdr-ev-host{font-family:var(--font-mono);font-size:11px;color:var(--accent-ink)}',
+      '.rdr-ev-date{font-family:var(--font-mono);font-size:10.5px;color:var(--ink-4);white-space:nowrap}',
       '.rdr-ev-sum{font-size:12px;color:var(--text2);line-height:1.45}',
-      '.rdr-dm{display:flex;gap:10px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--hair-2);flex-wrap:wrap}',
+      '.rdr-dm{display:flex;flex-direction:column;gap:3px;padding:7px 0;border-bottom:1px solid var(--hair-2)}',
       '.rdr-dm:last-child{border-bottom:none}',
+      '.rdr-dm-top{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}',
       '.rdr-dm-name{font-size:12.5px;font-weight:600;color:var(--ink)}',
-      '.rdr-dm-title{font-size:11.5px;color:var(--text2);flex:1}',
+      '.rdr-dm-title{font-size:11.5px;color:var(--text2);flex:1;min-width:0}',
+      '.rdr-dm-links{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline}',
+      '.rdr-dm-contact{font-family:var(--font-mono);font-size:11px;color:var(--ink-2);text-decoration:none;background:var(--surface2);border-radius:var(--r-xs);padding:2px 7px;word-break:break-all}',
+      '.rdr-dm-contact:hover{background:var(--surface3);color:var(--accent-ink)}',
       '.rdr-dm-li{font-size:11.5px;color:var(--accent-ink);text-decoration:none;white-space:nowrap}',
       '.rdr-dm-li:hover{text-decoration:underline}',
+      '.rdr-dm-nocontact{font-size:11.5px;color:var(--ink-4)}',
       '.rdr-dm-none{font-size:12.5px;color:var(--text3)}',
       '@media (max-width:640px){.rdr-wrap{padding:18px}.rdr-grid{grid-template-columns:1fr}}',
     ].join('\n');
