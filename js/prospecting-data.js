@@ -1761,6 +1761,7 @@
     fetchMembers,
     deleteMembers,
     addPeopleToList,
+    createApolloContact,
     addManualMember,
     matchByLinkedinUrl,
     enrichMembers,

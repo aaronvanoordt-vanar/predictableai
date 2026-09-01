@@ -529,7 +529,8 @@
     state.busy = true;
     render();
     try {
-      if (!global.prospectingData || typeof global.prospectingData.createList !== 'function') {
+      if (!global.prospectingData || typeof global.prospectingData.createList !== 'function' ||
+          typeof global.prospectingData.createApolloContact !== 'function') {
         throw new Error('El módulo de Prospección no está cargado.');
       }
       let list;
@@ -542,17 +543,31 @@
       let dmCount = 0;
       let contactCount = 0;
       let companiesWithoutDms = 0;
-      companies.forEach((co) => {
+      let apolloSyncFailures = 0;
+      for (const co of companies) {
         const dms = co.decision_makers || [];
         if (dms.length) {
-          dms.forEach((dm) => { rows.push(dmRow(state.user.id, list.id, co, dm)); });
+          for (const dm of dms) {
+            const row = dmRow(state.user.id, list.id, co, dm);
+            // Mismo contrato que Prospección → Búsqueda (addPeopleToList):
+            // sin crear el contacto en Apollo con label_names=[lista], el
+            // decision maker se queda solo en Predictable y nunca aparece
+            // como lista en Apollo.
+            try {
+              row.apollo_contact_id = await global.prospectingData.createApolloContact(row, list.name);
+            } catch (e) {
+              apolloSyncFailures++;
+              console.warn('[radar] contacto Apollo falló:', e.message);
+            }
+            rows.push(row);
+          }
           dmCount += dms.length;
           contactCount += dms.filter((dm) => dm && (dm.email || dm.phone)).length;
         } else {
           rows.push(companyRow(state.user.id, list.id, co));
           companiesWithoutDms++;
         }
-      });
+      }
       const { error } = await global.supabaseClient.from('prospect_list_members').insert(rows);
       if (error) throw new Error('No se pudieron guardar los contactos: ' + error.message);
       // La lista recién creada pasa a contar como memoria del Radar: la
@@ -569,6 +584,10 @@
         (companiesWithoutDms
           ? ' (' + companiesWithoutDms + ' empresa' + (companiesWithoutDms === 1 ? '' : 's') +
             ' quedó' + (companiesWithoutDms === 1 ? '' : 'ron') + ' sin contacto: Apollo no encontró personas.)'
+          : '') +
+        (apolloSyncFailures
+          ? ' (' + apolloSyncFailures + ' contacto' + (apolloSyncFailures === 1 ? '' : 's') +
+            ' no se pudo' + (apolloSyncFailures === 1 ? '' : 'ieron') + ' sincronizar con Apollo.)'
           : '') +
         ' La encuentras en Prospección → Listas guardadas.');
     } catch (e) {
