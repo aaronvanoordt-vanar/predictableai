@@ -52,6 +52,11 @@ export function normalizeEndpoint(raw: unknown): string {
   }
   // Quitar cualquier cola /api/... que venga pegada de un ejemplo de la doc.
   const path = u.pathname.replace(/\/api\/.*$/i, "").replace(/\/+$/, "");
+  // Sin tenant id la API responde 404 en plantillas y webhooks aunque algún
+  // endpoint conteste: se rechaza aquí para que la conexión no quede a medias.
+  if (!/^\/[A-Za-z0-9_-]+$/.test(path)) {
+    throw new WatiError("Falta el tenant id en la URL: en WATI abre la pestaña \"API Docs\" y copia el API endpoint completo, p. ej. https://live-mt-server.wati.io/123456.", 400);
+  }
   return `${u.origin}${path}`;
 }
 
@@ -61,8 +66,20 @@ export function digits(phone: unknown): string {
   return d;
 }
 
+/**
+ * Forma de las URLs, comprobada contra el tenant real el 2026-09-01:
+ *   • v3  (/api/ext/v3/…)  cuelga del ORIGEN, sin tenant: el token ya lo
+ *     identifica. Con el tenant en el path responde 404.
+ *   • v1 y v2 (/api/v1/…, /api/v2/…) exigen el tenant en el path
+ *     (https://live-mt-server.wati.io/<tenant>/api/v1/…); sin él, 404.
+ */
+function baseFor(creds: WatiCreds, path: string): string {
+  if (/^\/api\/ext\/v3\//i.test(path)) return new URL(creds.endpoint).origin;
+  return creds.endpoint;
+}
+
 async function call(creds: WatiCreds, method: string, path: string, body?: Json): Promise<Json> {
-  const res = await fetch(`${creds.endpoint}${path}`, {
+  const res = await fetch(`${baseFor(creds, path)}${path}`, {
     method,
     headers: {
       "Authorization": `Bearer ${creds.token}`,
@@ -253,7 +270,7 @@ export async function createWebhook(creds: WatiCreds, url: string, channelPhone?
 /** Traducción al español de los errores de WATI/Meta que el usuario verá. */
 export function humanError(err: unknown): string {
   if (err instanceof WatiError) {
-    if (err.status === 401) return "El token de WATI no es válido o expiró. Vuelve a conectarlo.";
+    if (err.status === 401) return "WATI rechazó el token (401). Pega el token vigente: en WATI → API Docs, el campo \"Access Token\" (sin la palabra Bearer), o un token nuevo de Create API Token.";
     if (err.status === 403) return "El token de WATI no tiene permisos para esta operación (revisa los scopes al generarlo).";
     if (err.status === 404) return "WATI no encontró el recurso. Revisa la URL del API endpoint (debe incluir tu tenant id).";
     if (err.status === 429) return "WATI limitó las solicitudes. Reintenta en unos segundos.";
