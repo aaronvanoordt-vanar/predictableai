@@ -500,7 +500,7 @@
       if (cfg.templates && cfg.templates.error) {
         tplBox.appendChild(h('div', { class: 'pros-note-red', text: '⚠ ' + cfg.templates.error }));
       }
-      tplBox.appendChild(h('div', { class: 'pros-hint', text: 'Meta revisa las plantillas en minutos u horas. Las campañas de WhatsApp solo envían con la plantilla APROBADA; los botones "Hola … Qué tal?" y "Darse de baja" van incluidos.' }));
+      tplBox.appendChild(h('div', { class: 'pros-hint', text: 'Meta revisa las plantillas en minutos u horas. Las campañas de WhatsApp solo envían con la plantilla APROBADA; los botones "Darse de baja" y "Hola! Qué tal?" van incluidos.' }));
       card.appendChild(tplBox);
 
       var wh = cfg.webhook || {};
@@ -535,7 +535,7 @@
     var preview = h('div', { class: 'pros-hint', style: 'margin-top:8px' });
     function updPreview() {
       var who = nameI.value.trim() + (roleI.value.trim() ? ', ' + roleI.value.trim() : '') + (compI.value.trim() ? ' de ' + compI.value.trim() : '');
-      preview.textContent = 'Vista previa del saludo 1: "Hola {{nombre}}! Te saluda ' + who + '. Qué tal todo?"  ·  Botones: "Hola ' + (nameI.value.trim().split(/\s+/)[0] || '') + '! Qué tal?" y "Darse de baja".';
+      preview.textContent = 'Vista previa del saludo 1: "Hola {{nombre}}! Te saluda ' + who + '. Qué tal todo?"  ·  Botones: "Darse de baja" y "Hola! Qué tal?".';
     }
     [nameI, roleI, compI].forEach(function (i) { i.addEventListener('input', updPreview); });
     updPreview();
