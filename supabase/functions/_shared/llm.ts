@@ -181,6 +181,18 @@ export interface LlmCall {
   claudeWebSearchTool?: string;
   /** Anthropic web_fetch tool max uses; ignored by the other engines. */
   claudeWebFetch?: number;
+  /**
+   * Only accept web results published on/after this date (ISO "YYYY-MM-DD").
+   *
+   * Perplexity enforces it natively (search_after_date_filter), which is the
+   * only engine-level guarantee any of the three provides today: neither
+   * Anthropic's web_search tool nor OpenAI's takes a date filter. On those
+   * two it is a no-op here, so a caller that genuinely needs recency MUST
+   * also state the cutoff in its prompt AND verify the dates it gets back —
+   * see generate-radar, which drops any company whose signal predates the
+   * window instead of trusting the model.
+   */
+  searchAfterDate?: string;
   /** Anthropic model override (the Intelligence Hub exposes a model picker). */
   claudeModel?: string;
   /** Anthropic output_config.effort, e.g. "medium". */
@@ -447,6 +459,12 @@ async function callOpenAI(
 
 // ── Perplexity (OpenAI-compatible chat completions, always search-grounded) ───
 
+/** "2026-06-01" → "06/01/2026" (Perplexity's date-filter format). "" if unusable. */
+function usDate(iso?: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || "").trim());
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : "";
+}
+
 async function callPerplexity(
   opts: LlmCall,
   apiKey: string,
@@ -468,6 +486,9 @@ async function callPerplexity(
   if (opts.jsonSchema) {
     body.response_format = { type: "json_schema", json_schema: { schema: opts.jsonSchema } };
   }
+  // Native recency filter — Perplexity expects MM/DD/YYYY, not ISO.
+  const after = usDate(opts.searchAfterDate);
+  if (wantsSearch && after) body.search_after_date_filter = after;
 
   const res = await fetch("https://api.perplexity.ai/chat/completions", {
     method: "POST",
