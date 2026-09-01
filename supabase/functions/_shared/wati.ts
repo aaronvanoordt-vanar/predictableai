@@ -52,6 +52,11 @@ export function normalizeEndpoint(raw: unknown): string {
   }
   // Quitar cualquier cola /api/... que venga pegada de un ejemplo de la doc.
   const path = u.pathname.replace(/\/api\/.*$/i, "").replace(/\/+$/, "");
+  // Sin tenant id la API responde 404 en plantillas y webhooks aunque algún
+  // endpoint conteste: se rechaza aquí para que la conexión no quede a medias.
+  if (!/^\/[A-Za-z0-9_-]+$/.test(path)) {
+    throw new WatiError("Falta el tenant id en la URL: en WATI abre la pestaña \"API Docs\" y copia el API endpoint completo, p. ej. https://live-mt-server.wati.io/123456.", 400);
+  }
   return `${u.origin}${path}`;
 }
 
