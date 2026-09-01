@@ -76,7 +76,7 @@
       listId: '',
       members: [], selected: new Set(), expanded: new Set(),
       loadingMembers: false, membersError: null,
-      generating: false,
+      generating: false, cancelRequested: false,
       brief: null, briefLoading: false,
       playbookHost: null, playbook: null,
       playbookLoading: false, playbookSaving: false, playbookOpen: false,
@@ -4569,6 +4569,9 @@
       '<span class="pros-progress-bar"><span class="pros-progress-fill" data-wa-prog-fill></span></span>' +
       '<span data-wa-prog-text></span></span>' +
       '<button type="button" class="btn btn-ai btn-sm" data-action="wa-generate" data-credit-cost="outreach_message" data-credit-muted' + ((n && !st.generating) ? '' : ' disabled') + '>' + SVG_SPARK + ' Generar mensajes con IA</button>' +
+      (st.generating
+        ? '<button type="button" class="btn btn-ghost btn-sm" data-action="wa-generate-stop"' + (st.cancelRequested ? ' disabled' : '') + '>' + (st.cancelRequested ? 'Deteniendo…' : 'Detener') + '</button>'
+        : '') +
       '</div></div>';
     if (!st.listId) {
       html += emptyHtml(SVG_CHAT, 'Selecciona una lista',
@@ -4617,6 +4620,8 @@
     if (!host) return;
     var btn = host.querySelector('[data-action="wa-generate"]');
     if (btn) btn.disabled = !(state.wa.selected.size && !state.wa.generating);
+    var stopBtn = host.querySelector('[data-action="wa-generate-stop"]');
+    if (stopBtn) stopBtn.disabled = state.wa.cancelRequested;
   }
 
   function reloadWaMembers() {
@@ -4642,8 +4647,10 @@
     if (st.generating) return Promise.resolve();
     if (!members.length) { toast('Selecciona al menos un contacto.', 'warn'); return Promise.resolve(); }
     st.generating = true;
+    st.cancelRequested = false;
     renderWaList();
     var ok = 0;
+    var skipped = 0;
     var failed = [];
     var d, sender;
     try {
@@ -4675,6 +4682,7 @@
       });
     members.forEach(function (m, i) {
       chain = chain.then(function () {
+        if (st.cancelRequested) { skipped++; return; }
         setWaProg('Generando ' + fmtNum(i + 1) + ' de ' + fmtNum(members.length) + '…', (i / members.length) * 100);
         // Persist "generating" before the call (not just in-memory) so a
         // reload mid-batch shows this lead as in-progress instead of
@@ -4706,7 +4714,9 @@
       });
     });
     return chain.catch(function () { /* lote abortado: ya se avisó */ }).then(function () {
+      var wasCancelled = st.cancelRequested;
       st.generating = false;
+      st.cancelRequested = false;
       setWaProg(null);
       renderWaList();
       if (ok) toast('Mensajes generados para ' + fmtNum(ok) + ' contactos.', failed.length ? 'warn' : 'success');
@@ -4719,6 +4729,7 @@
         var reason = (failed[0] && failed[0].error) ? failed[0].error : 'Error desconocido';
         toast('No se pudo generar para ' + fmtNum(failed.length) + ' (' + names + '): ' + reason, 'error');
       }
+      if (wasCancelled && skipped) toast('Generación detenida. ' + fmtNum(skipped) + ' contacto(s) sin procesar.', 'warn');
     });
   }
 
@@ -4772,6 +4783,13 @@
     if (action === 'wa-generate') {
       var members = st.members.filter(function (x) { return st.selected.has(String(x.id)); });
       return generateForMembers(members);
+    }
+    if (action === 'wa-generate-stop') {
+      if (!st.generating || st.cancelRequested) return;
+      st.cancelRequested = true;
+      setWaProg('Deteniendo…');
+      renderWaList();
+      return;
     }
     if (action === 'wa-regen' && m) return generateForMembers([m]);
     if (action === 'wa-send-greet' && m) {
