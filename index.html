@@ -2108,6 +2108,10 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 4a1 1 0 011-1h10a1 1 0 011 1v7a1 1 0 01-1 1H5l-3 2V4z"/></svg>
       Generador de mensajes IA
     </div>
+    <div class="nav-item" data-page="pro-main" data-pros-tab="campanas" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('campanas')" style="margin-left:20px;font-size:12px">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>
+      Campañas
+    </div>
     <div class="nav-item" data-page="pro-main" data-pros-tab="secuencias" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('secuencias')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M5 8l2 2 4-4"/></svg>
       Secuencias
@@ -2115,15 +2119,6 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="nav-item" data-page="pro-main" data-pros-tab="bandeja" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('bandeja')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 4.5A1.5 1.5 0 013.5 3h9A1.5 1.5 0 0114 4.5v7A1.5 1.5 0 0112.5 13h-9A1.5 1.5 0 012 11.5v-7z"/><path d="M2.5 5l5.5 3.5L13.5 5"/></svg>
       Bandeja
-    </div>
-    <div class="nav-item" data-page="wa-inbox" onclick="nav(this,'wa-inbox');if(window.waInbox)window.waInbox.show()" style="margin-left:20px;font-size:12px">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M13.5 8A5.5 5.5 0 112.9 6.1L2 13l3.1-.9A5.5 5.5 0 0013.5 8z"/><path d="M6 7h4M6 9.2h2.5"/></svg>
-      Inbox WhatsApp
-      <span id="nav-wa-badge" class="nav-badge teal" style="display:none">0</span>
-    </div>
-    <div class="nav-item" data-page="wa-templates" onclick="nav(this,'wa-templates');if(window.waInbox)window.waInbox.showTemplates()" style="margin-left:20px;font-size:12px">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2.5" y="2" width="11" height="12" rx="1.5"/><path d="M5 5.5h6M5 8h6M5 10.5h3.5"/></svg>
-      Plantillas
     </div>
 
     <!-- APRENDER -->
@@ -2802,15 +2797,6 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   <div id="prospecting-shell" style="display:flex;flex-direction:column;min-width:0;width:100%"></div>
 </div>
 
-<!-- ═══════ PAGE: INBOX WHATSAPP (js/whatsapp-inbox.js) ═══════ -->
-<div class="page fade-in" id="page-wa-inbox" style="padding:0;gap:0;">
-  <div id="wa-inbox-shell"></div>
-</div>
-
-<!-- ═══════ PAGE: PLANTILLAS DE MENSAJES (js/whatsapp-inbox.js → showTemplates) ═══════ -->
-<div class="page fade-in" id="page-wa-templates" style="padding:0;gap:0;">
-  <div id="wa-templates-shell" style="display:flex;flex-direction:column;min-width:0;width:100%"></div>
-</div>
 
 
 <!-- ═══════ PAGE: VENTAS OVERVIEW ═══════ -->
@@ -3521,9 +3507,9 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/company-context.js?v=20260823"></script>
 <script src="js/prospecting-data.js"></script>
 <script src="js/prospecting.js"></script>
+<script src="js/campaigns.js"></script>
 <script src="js/radar.js"></script>
 <script src="js/clients.js?v=20260824-sheets"></script>
-<script src="js/whatsapp-inbox.js"></script>
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
 <script src="js/coach-lead-picker.js"></script>
@@ -4565,13 +4551,6 @@ function nav(el, pageId) {
   if (pageId === 'coda-ai' && typeof window.codaAiInit === 'function') {
     setTimeout(() => { window.codaAiInit(); }, 50);
   }
-  // El inbox mueve el chip de créditos (global, fijo arriba a la derecha)
-  // dentro de su propia barra superior. Al salir de la página hay que
-  // devolverlo a <body>, si no queda atrapado dentro de #page-wa-inbox
-  // (display:none) y desaparece de toda la app.
-  if (_activePageId === 'wa-inbox' && pageId !== 'wa-inbox' && window.waInbox && typeof window.waInbox.releaseCreditsChip === 'function') {
-    window.waInbox.releaseCreditsChip();
-  }
   _activePageId = pageId;
 
   // Prospección lifecycle: si la página se activa por una vía programática
@@ -4599,14 +4578,6 @@ function nav(el, pageId) {
     }, 0);
   }
 
-  // Inbox WhatsApp lifecycle: igual que pro-main, si la página se activa por
-  // deep-link/hash el onclick del sidebar no corre — montamos el módulo aquí.
-  if (pageId === 'wa-inbox' && window.waInbox && typeof window.waInbox.show === 'function') {
-    setTimeout(() => {
-      const shell = document.getElementById('wa-inbox-shell');
-      if (shell && !shell.childElementCount) window.waInbox.show();
-    }, 0);
-  }
 
   // Re-apply role-based tab state when navigating to reports
   if (pageId === 'ventas-reportes' && typeof initReportPageForRole === 'function') {
@@ -4680,8 +4651,6 @@ window.addEventListener('DOMContentLoaded', () => {
     if (proTab && window.prospecting) window.prospecting.show(proTab);
     // Páginas con shell propio: montarlas también al restaurar (el onclick
     // del nav-item no corre en este camino).
-    if (hash === 'wa-inbox' && window.waInbox) window.waInbox.show();
-    if (hash === 'wa-templates' && window.waInbox) window.waInbox.showTemplates();
     if (hash === 'clients' && window.clientsModule) window.clientsModule.show();
   }, 0);
 });

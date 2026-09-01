@@ -16,12 +16,17 @@
   // ── Pipeline CRM (columna contact_status de prospect_list_members) ──
   // Valores = datos en Supabase (no traducir); labels = UI en español.
   const CONTACT_STATUSES = [
-    { value: 'no_contactado',    label: 'No contactado',     pill: 'gray'  },
-    { value: 'saludo_enviado',   label: 'Saludo enviado',    pill: 'blue'  },
-    { value: 'reunion_agendada', label: 'Reunión conseguida', pill: 'green' },
-    { value: 'reunion_tomada',   label: 'Reunión tomada',    pill: 'teal'  },
-    { value: 'no_interesado',    label: 'No interesado',     pill: 'red'   },
-    { value: 'no_show',          label: 'No se presentó',    pill: 'amber' },
+    { value: 'no_contactado',     label: 'No contactado',       pill: 'gray'   },
+    { value: 'en_campana',        label: 'En campaña',          pill: 'purple' },
+    { value: 'saludo_enviado',    label: 'Saludo enviado',      pill: 'blue'   },
+    { value: 'conexion_enviada',  label: 'Conexión enviada',    pill: 'blue'   },
+    { value: 'conexion_aceptada', label: 'Conexión aceptada',   pill: 'teal'   },
+    { value: 'respondio',         label: 'Respondió',           pill: 'teal'   },
+    { value: 'reunion_agendada',  label: 'Reunión conseguida',  pill: 'green'  },
+    { value: 'reunion_tomada',    label: 'Reunión tomada',      pill: 'teal'   },
+    { value: 'no_interesado',     label: 'No interesado',       pill: 'red'    },
+    { value: 'no_show',           label: 'No se presentó',      pill: 'amber'  },
+    { value: 'dado_de_baja',      label: 'Dado de baja',        pill: 'red'    },
   ];
   // Estados que cuentan como "reunión conseguida" en el dashboard.
   const MEETING_STATUSES = ['reunion_agendada', 'reunion_tomada'];

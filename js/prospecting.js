@@ -107,6 +107,7 @@
     { id: 'secuencias', label: 'Secuencias' },
     { id: 'bandeja',    label: 'Bandeja' },
     { id: 'outreach',   label: 'Generador de mensajes IA' },
+    { id: 'campanas',   label: 'Campañas' },
   ];
 
   // 14 valid department keys for organization_department_or_subdepartment_counts
@@ -1487,7 +1488,8 @@
           quickLink('Ver listas', 'listas'),
           quickLink('Contactos (CRM)', 'contactos'),
           quickLink('Secuencias', 'secuencias'),
-          quickLink('Generador de mensajes IA', 'outreach')));
+          quickLink('Generador de mensajes IA', 'outreach'),
+          quickLink('Campañas', 'campanas')));
       host.appendChild(actions);
     }).catch(function (e) {
       host.innerHTML = '';
@@ -2837,9 +2839,6 @@
 
   function contactoRowHtml(m) {
     var name = m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim() || '—';
-    var inboxBtn = (window.waInbox && m.phone)
-      ? '<button type="button" class="btn btn-ghost btn-sm" data-action="ct-inbox" data-id="' + esc(String(m.id)) + '" title="Abrir conversación de WhatsApp">💬</button>'
-      : '';
     var editBtn = '<button type="button" class="pros-iconbtn" data-action="ct-edit" data-id="' + esc(String(m.id)) + '" title="Editar contacto">' + SVG_EDIT + '</button>';
     var deleteBtn = '<button type="button" class="pros-iconbtn" data-action="ct-delete" data-id="' + esc(String(m.id)) + '" title="Eliminar contacto">' + SVG_TRASH + '</button>';
     return '<tr>' +
@@ -2852,7 +2851,7 @@
       '<td>' + memberEmailCell(m) + '</td>' +
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
-      '<td style="white-space:nowrap">' + editBtn + deleteBtn + inboxBtn + '</td>' +
+      '<td style="white-space:nowrap">' + editBtn + deleteBtn + '</td>' +
       '</tr>';
   }
 
@@ -2985,12 +2984,6 @@
       var mDel = findContacto(btn.getAttribute('data-id'));
       if (!mDel) return;
       return openDeleteContactoModal(mDel);
-    }
-    if (action === 'ct-inbox') {
-      var m = findContacto(btn.getAttribute('data-id'));
-      if (!m) return;
-      if (!window.waInbox) return toast('El Inbox de WhatsApp aún no está cargado. Recarga la página.', 'warn');
-      return window.waInbox.openForMember(m.id, '');
     }
   }
 
@@ -4451,7 +4444,6 @@
       '<div class="pros-wa-bubble">' + esc(greet || '—') + '</div>' +
       '<div class="pros-actions">' +
       '<button type="button" class="btn btn-teal btn-sm" data-action="wa-send-greet" data-id="' + id + '"' + (greetLink ? '' : ' disabled') + '>Enviar saludo</button>' +
-      (window.waInbox ? '<button type="button" class="btn btn-ghost btn-sm" data-action="wa-inbox-open" data-id="' + id + '"' + (m.phone ? '' : ' disabled') + ' title="Conversación por la API de WhatsApp, con historial y seguimientos">Abrir en Inbox</button>' : '') +
       '</div>' +
       (greetLink ? '' : noPhoneHint) +
       '</div>';
@@ -4809,11 +4801,6 @@
       if (!f2) return toast('Genera los mensajes con IA para ver el seguimiento.', 'warn');
       return copyText(f2);
     }
-    if (action === 'wa-inbox-open' && m) {
-      if (!m.phone) return toast('Enriquece el teléfono de este lead en la pestaña Listas.', 'warn');
-      if (!window.waInbox) return toast('El Inbox de WhatsApp aún no está cargado. Recarga la página.', 'warn');
-      return window.waInbox.openForMember(m.id, greetingSafe(getSenderSafe()));
-    }
     if (action === 'li-copy' && m) {
       var li = m.outreach && m.outreach.linkedin_message;
       if (!li) return toast('Genera los mensajes con IA para ver el mensaje de LinkedIn.', 'warn');
@@ -4904,6 +4891,8 @@
     buildSeqPane();
     buildBandejaPane();
     buildWaPane();
+    // Campañas vive en su propio módulo (js/campaigns.js) y se monta en el
+    // pane que este shell le reserva, así hereda los estilos .pros-*.
     state.built = true;
   }
 
@@ -4927,12 +4916,23 @@
     else if (tabId === 'secuencias') loader = initSeqTab;
     else if (tabId === 'bandeja') loader = initBandejaTab;
     else if (tabId === 'outreach') loader = initWaTab;
+    else if (tabId === 'campanas') loader = initCampanasTab;
     if (loader) {
       loader().catch(function (e) {
         console.error('[prospecting]', e);
         toast(errMsg(e), 'error');
       });
     }
+  }
+
+  // ── TAB: CAMPAÑAS (js/campaigns.js) ──────────────────────────────────
+  function initCampanasTab() {
+    var pane = state.panes.campanas;
+    if (!window.campaigns || typeof window.campaigns.show !== 'function') {
+      pane.innerHTML = emptyHtml(SVG_CHAT, 'Campañas no está cargado', 'Recarga la página para cargar el módulo de campañas.');
+      return Promise.resolve();
+    }
+    return Promise.resolve(window.campaigns.show(pane));
   }
 
   // ── Public API ─────────────────────────────────────────────────────────
@@ -4948,6 +4948,14 @@
     },
     refreshBadge: refreshBadge,
     openEditContact: openEditContactModal,
+    // Reutilizados por js/campaigns.js para no duplicar el modal ni el DOM helper.
+    confirm: confirmModal,
+    h: h,
+    emptyHtml: emptyHtml,
+    goTab: function (tabId) {
+      var navItem = document.querySelector('.nav-item[data-pros-tab="' + tabId + '"]');
+      if (navItem) navItem.click(); else switchTab(tabId);
+    },
   };
 
   // Otros módulos (p. ej. Radar) crean listas llamando directo a

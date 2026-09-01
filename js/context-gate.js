@@ -25,7 +25,7 @@
 
   var GATED_PAGES = [
     'radar', 'mi-overview', 'mi-matrix', 'mi-dashboard', 'mi-accionables', 'coda-ai',
-    'pro-main', 'wa-inbox', 'wa-templates',
+    'pro-main',
     'ventas-overview', 'ventas-coach', 'ventas-reportes',
   ];
 

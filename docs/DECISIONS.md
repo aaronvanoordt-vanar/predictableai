@@ -13,3 +13,5 @@ Registro de decisiones ya tomadas para que futuras sesiones no las reviertan sin
 | Intelligence Hub | Una sola implementación: `js/intel-hub-cadence-tabs.js` | 3 generaciones anteriores eliminadas del repo (2026-07-02) |
 | Apollo API | Solo vía edge function `apollo-proxy` (key en secrets de Supabase) | La key estuvo hardcodeada en `index.html` y se expuso; movida a backend (2026-07-02) |
 | miforms | **Opcional**, con bono de créditos al completarla — ya no bloquea la entrada a la plataforma | #19/#20 la fijaron como gate obligatorio; revertido 2026-08-19 a petición explícita del usuario |
+| WhatsApp | **Solo vía WATI** (tenant propio de cada usuario). La integración directa con la Cloud API de Meta se eliminó con sus tablas | Meta se integró en 2026-07 (inbox propio); reemplazada por WATI el 2026-09-02 a petición explícita del usuario, que confirmó el borrado de las conversaciones guardadas |
+| Campañas omnicanal | Un solo objeto con pasos (WhatsApp/email/LinkedIn), espera desde el enrolamiento, se detiene al responder por cualquier canal | Diseño en `docs/OMNICANAL.md` (2026-09-01) |
