@@ -104,6 +104,12 @@ function replyButton(sender: Sender): string {
   return short.length <= 25 ? short : "Hola! Qué tal?";
 }
 
+/**
+ * Solo el primer saludo se presenta con nombre y cargo: los recordatorios
+ * llegan en el mismo hilo, donde el lead ya lo ve. Al cambiar el texto de una
+ * plantilla hay que cambiar también su nombre (Meta no permite editar una
+ * aprobada y ensureTemplates reutiliza la que encuentre por nombre).
+ */
 function greetingTemplates(sender: Sender, suffix: string) {
   const who = sender.role
     ? `${sender.name}, ${sender.role} de ${sender.company}`
@@ -116,13 +122,13 @@ function greetingTemplates(sender: Sender, suffix: string) {
       buttons,
     },
     b: {
-      name: `px_hola_2_${suffix}`,
-      body: `Hola {{name}}! No sé si te llegó mi mensaje anterior. Soy ${who}. Tienes un momento?`,
+      name: `px_hola_2v2_${suffix}`,
+      body: `Hola {{name}}! No sé si te llegó mi mensaje anterior. Tienes un momento?`,
       buttons,
     },
     c: {
-      name: `px_hola_3_${suffix}`,
-      body: `Hola {{name}}, último intento por acá. Te llegan mis mensajes? ${who}.`,
+      name: `px_hola_3v2_${suffix}`,
+      body: `Hola {{name}}, último intento por acá. Te llegan mis mensajes?`,
       buttons,
     },
   };
