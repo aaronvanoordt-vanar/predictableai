@@ -238,7 +238,9 @@ Deno.serve(async (req) => {
 
     if (action === "connect_wati") {
       const endpoint = wati.normalizeEndpoint(payload.endpoint);
-      const tokenIn = clean(payload.token, 4000);
+      // WATI muestra el token como "Bearer eyJ…" en su página API Docs: si el
+      // usuario lo pega tal cual, se quita el prefijo para no duplicarlo.
+      const tokenIn = clean(payload.token, 4000).replace(/^bearer\s+/i, "");
       if (!tokenIn) return json({ error: "Pega el token de la API de WATI." }, 400, cors);
       const sender: Sender = {
         name: clean(payload.sender?.name, 80),
