@@ -91,43 +91,31 @@ function publicRow(row: Json | null) {
 
 interface Sender { name: string; role: string; company: string; }
 
-function firstName(full: string): string {
-  return (full.split(/\s+/)[0] || full).trim();
-}
+// Los botones son iguales para todos: "Darse de baja" primero y una
+// respuesta rápida genérica. Un nombre dentro del botón sería el del
+// remitente, no el del lead, y confunde. Cambiar botones o textos obliga a
+// cambiar TEMPLATE_VERSION: Meta no permite editar una plantilla enviada.
+const TEMPLATE_VERSION = "v3";
+const QUICK_REPLIES = ["Darse de baja", "Hola! Qué tal?"];
 
-/** Texto del botón "Hola Aarón! Qué tal?" — Meta limita los botones a 25 caracteres. */
-function replyButton(sender: Sender): string {
-  const f = firstName(sender.name);
-  const full = `Hola ${f}! Qué tal?`;
-  if (full.length <= 25) return full;
-  const short = `Hola ${f}!`;
-  return short.length <= 25 ? short : "Hola! Qué tal?";
-}
-
-/**
- * Solo el primer saludo se presenta con nombre y cargo: los recordatorios
- * llegan en el mismo hilo, donde el lead ya lo ve. Al cambiar el texto de una
- * plantilla hay que cambiar también su nombre (Meta no permite editar una
- * aprobada y ensureTemplates reutiliza la que encuentre por nombre).
- */
 function greetingTemplates(sender: Sender, suffix: string) {
   const who = sender.role
     ? `${sender.name}, ${sender.role} de ${sender.company}`
     : `${sender.name}, de ${sender.company}`;
-  const buttons = [replyButton(sender), "Darse de baja"];
+  const buttons = QUICK_REPLIES;
   return {
     a: {
-      name: `px_hola_1_${suffix}`,
+      name: `px_hola_1_${TEMPLATE_VERSION}_${suffix}`,
       body: `Hola {{name}}! Te saluda ${who}. Qué tal todo?`,
       buttons,
     },
     b: {
-      name: `px_hola_2v2_${suffix}`,
+      name: `px_hola_2_${TEMPLATE_VERSION}_${suffix}`,
       body: `Hola {{name}}! No sé si te llegó mi mensaje anterior. Tienes un momento?`,
       buttons,
     },
     c: {
-      name: `px_hola_3v2_${suffix}`,
+      name: `px_hola_3_${TEMPLATE_VERSION}_${suffix}`,
       body: `Hola {{name}}, último intento por acá. Te llegan mis mensajes?`,
       buttons,
     },
