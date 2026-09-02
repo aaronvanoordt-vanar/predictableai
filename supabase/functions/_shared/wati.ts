@@ -102,11 +102,32 @@ async function call(creds: WatiCreds, method: string, path: string, body?: Json)
 
 export interface WatiChannel { id: string; name: string; channel: string; }
 
-/** Valida el token: lista los canales (números) del tenant. */
+/**
+ * Valida el token: lista los canales del tenant. OJO: en un tenant con un
+ * solo número WATI devuelve un canal llamado "Default" sin id, y ese nombre
+ * NO sirve como parámetro `channel` (responde "Channel not found"). El
+ * identificador utilizable es el número, que da listPhoneNumbers.
+ */
 export async function listChannels(creds: WatiCreds): Promise<WatiChannel[]> {
   const data = await call(creds, "GET", "/api/ext/v3/channels?page_number=1&page_size=50");
   const list = Array.isArray(data?.channels) ? data.channels : [];
   return list.map((c: Json) => ({ id: String(c.id ?? ""), name: String(c.name ?? ""), channel: String(c.channel ?? "") }));
+}
+
+export interface WatiPhoneNumber { phone: string; wabaId: string; channelName: string; enabled: boolean; }
+
+/** GET /api/v2/whatsapp/phoneNumbers — los números reales del tenant (con tenant en el path). */
+export async function listPhoneNumbers(creds: WatiCreds): Promise<WatiPhoneNumber[]> {
+  const data = await call(creds, "GET", "/api/v2/whatsapp/phoneNumbers");
+  const list = Array.isArray(data) ? data : (Array.isArray(data?.result) ? data.result : []);
+  return list
+    .map((p: Json) => ({
+      phone: digits(p.phoneNumber),
+      wabaId: String(p.wabaId ?? ""),
+      channelName: String(p.channelName ?? ""),
+      enabled: p.enabled !== false,
+    }))
+    .filter((p: WatiPhoneNumber) => p.phone.length >= 8);
 }
 
 // ── Plantillas ──────────────────────────────────────────────────────────────
@@ -131,7 +152,7 @@ export async function listTemplates(creds: WatiCreds, channel?: string): Promise
       out.push({
         id: String(t.id ?? ""),
         name: String(t.name ?? ""),
-        status: String(t.status ?? ""),
+        status: String(t.status ?? "").toUpperCase(),
         category: String(t.category ?? ""),
         language: String(t.language_option?.key ?? t.language ?? ""),
         body: String(t.body_original ?? t.body ?? ""),
@@ -177,7 +198,10 @@ export async function createTemplate(creds: WatiCreds, input: CreateTemplateInpu
     throw new WatiError(String(data?.message || data?.error || "WATI rechazó la plantilla").slice(0, 300), 400, data);
   }
   const r = data?.result ?? data ?? {};
-  return { id: String(r.id ?? ""), status: String(r.status ?? "PENDING") };
+  // `status` es un objeto ({newStatus, feedback, …}); el estado legible se
+  // lee después con listTemplates. Recién creada está pendiente de Meta.
+  const status = typeof r.status === "string" ? r.status.toUpperCase() : "PENDING";
+  return { id: String(r.id ?? ""), status };
 }
 
 // ── Envíos ──────────────────────────────────────────────────────────────────
@@ -208,7 +232,7 @@ export async function sendTemplate(creds: WatiCreds, input: SendTemplateInput): 
       custom_params: Object.entries(input.params).map(([name, value]) => ({ name, value })),
     }],
   };
-  if (input.channel) body.channel = input.channel;
+  if (input.channel && digits(input.channel).length >= 8) body.channel = digits(input.channel);
   const data = await call(creds, "POST", "/api/ext/v3/messageTemplates/send", body);
   const rec = Array.isArray(data?.recipients) ? data.recipients[0] : null;
   const errors: string[] = Array.isArray(rec?.errors) ? rec.errors.map(String) : [];
@@ -252,13 +276,15 @@ export const WEBHOOK_EVENTS = [
   "sentMessageREAD",
   "sentMessageREPLIED",
   "templateMessageFailed",
-  "templateReviewed",
+  // "templateReviewed" existe como evento pero la API de creación lo rechaza
+  // ("Invalid event types", comprobado el 2026-09-01): el estado de las
+  // plantillas se refresca leyéndolas, no por webhook.
 ];
 
 /** POST /api/v2/webhookEndpoints — registra nuestra URL para el canal dado. */
 export async function createWebhook(creds: WatiCreds, url: string, channelPhone?: string): Promise<{ id: string | null }> {
   const entry: Json = { status: 1, url, eventTypes: WEBHOOK_EVENTS };
-  if (channelPhone) entry.phoneNumber = channelPhone;
+  if (channelPhone && digits(channelPhone).length >= 8) entry.phoneNumber = digits(channelPhone);
   const data = await call(creds, "POST", "/api/v2/webhookEndpoints", [entry]);
   if (data?.ok === false) {
     throw new WatiError(String(data?.message || data?.error || "WATI no aceptó el webhook").slice(0, 300), 400, data);

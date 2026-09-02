@@ -253,8 +253,13 @@ Deno.serve(async (req) => {
       } catch (e) {
         return json({ error: wati.humanError(e) }, 400, cors);
       }
-      const requested = clean(payload.channel, 80);
-      const channel = requested || channels[0]?.name || "";
+      // El "canal" utilizable en la API es el NÚMERO (51913242679), no el
+      // nombre "Default" que devuelve /channels en tenants de un solo número.
+      let phones: wati.WatiPhoneNumber[] = [];
+      try { phones = await wati.listPhoneNumbers(creds); } catch (e) { console.warn("[channel-connect] phoneNumbers:", wati.humanError(e)); }
+      const requested = wati.digits(clean(payload.channel, 80));
+      const enabled = phones.filter((p) => p.enabled);
+      const channel = (requested && enabled.some((p) => p.phone === requested) ? requested : "") || enabled[0]?.phone || phones[0]?.phone || "";
 
       // 2. Guardar la cuenta (reutiliza el secreto del webhook al reconectar,
       //    así la URL ya registrada en WATI sigue siendo válida).
@@ -263,8 +268,9 @@ Deno.serve(async (req) => {
       const suffix = await shortHash(user.id);
       const webhookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/wati-webhook?key=${webhookSecret}`;
 
-      // 3. Plantillas de saludo.
-      const templates = await ensureTemplates(creds, sender, suffix, channel || undefined);
+      // 3. Plantillas de saludo (sin filtro de canal: el listado por defecto
+      //    ya trae todas las del tenant y el filtro por nombre da 404).
+      const templates = await ensureTemplates(creds, sender, suffix);
 
       // 4. Webhook (mejor esfuerzo).
       let webhook: Json = prev?.config?.webhook ?? null;
@@ -283,6 +289,7 @@ Deno.serve(async (req) => {
         endpoint,
         channel,
         channels: channels.map((c) => ({ id: c.id, name: c.name })),
+        phone_numbers: phones.map((p) => ({ phone: p.phone, waba_id: p.wabaId, enabled: p.enabled })),
         sender,
         templates,
         webhook,
@@ -309,7 +316,7 @@ Deno.serve(async (req) => {
       const acc = await loadAccount("wati");
       if (!acc) return json({ error: "wati_not_connected" }, 428, cors);
       const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
-      const templates = await refreshTemplateStatus(creds, acc.config?.templates, acc.config?.channel || undefined);
+      const templates = await refreshTemplateStatus(creds, acc.config?.templates);
       const config = { ...acc.config, templates };
       const { data: row, error } = await db
         .from("channel_accounts")
