@@ -276,7 +276,9 @@ export const WEBHOOK_EVENTS = [
   "sentMessageREAD",
   "sentMessageREPLIED",
   "templateMessageFailed",
-  "templateReviewed",
+  // "templateReviewed" existe como evento pero la API de creación lo rechaza
+  // ("Invalid event types", comprobado el 2026-09-01): el estado de las
+  // plantillas se refresca leyéndolas, no por webhook.
 ];
 
 /** POST /api/v2/webhookEndpoints — registra nuestra URL para el canal dado. */
