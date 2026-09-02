@@ -329,10 +329,17 @@
 
   async function fetchApolloLists() {
     const data = await apolloProxy('/labels', {});
-    // Apollo devuelve cada lista con su id Mongo como `_id` (no `id`) — sin
-    // este fallback el filtro descartaba TODAS las listas en silencio (200 OK,
-    // "no encontramos listas" aunque la cuenta tuviera decenas).
-    return (data?.labels || []).filter((l) => l && (l.id ?? l._id) != null).map((l) => ({
+    // GET /labels NO envuelve el resultado en {labels: […]}: comprobado contra
+    // la cuenta real, devuelve la colección tal cual. Leer `data.labels` daba
+    // undefined → [] → "no encontramos listas" con un 200 perfectamente limpio,
+    // que es como este bug sobrevivió a dos correcciones. Se aceptan las tres
+    // formas para no volver a depender de adivinar el envoltorio.
+    // Cada fila trae `_id` e `id` con el mismo valor; se toma el que haya.
+    const rows = Array.isArray(data) ? data
+      : Array.isArray(data?.labels) ? data.labels
+        : Array.isArray(data?.data) ? data.data
+          : [];
+    return rows.filter((l) => l && (l.id ?? l._id) != null).map((l) => ({
       id: l.id ?? l._id,
       name: l.name || 'Sin nombre',
       modality: l.modality || 'contacts',
