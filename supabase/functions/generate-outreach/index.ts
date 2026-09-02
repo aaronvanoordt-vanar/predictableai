@@ -961,6 +961,154 @@ const CLOSING_INSTRUCTION =
   "\n\nInvestiga este lead siguiendo las 5 capas (mandato persona-primero) y responde SOLO con el JSON válido del esquema definido, sin fences de markdown y sin texto adicional.";
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Modo paso (campañas v2): un mensaje por paso de la cadencia
+//
+// Lo llama campaign-run (service role + user_id) para cada lead cuando un
+// paso "IA" está por vencer, y el builder (JWT) para la vista previa. Reusa
+// TODO el contexto de 5 capas (brief, hub, lead, persona, playbook) y cambia
+// solo la construcción: un ángulo por paso y los mensajes que el lead ya
+// recibió, para que dos pasos jamás compartan opener.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface StepRequest {
+  lead?: Lead; sender?: Sender; member_id?: string; engine?: string; use_playbook?: boolean;
+  mode?: string; user_id?: string; campaign_id?: string; node_id?: string;
+  channel?: string; angle?: string; instructions?: string;
+  previous?: Array<{ channel?: string; body?: string; sent_at?: string }>;
+}
+
+interface StepSpec {
+  channel: "email" | "whatsapp" | "linkedin";
+  angle: "apertura" | "valor" | "prueba_social" | "objecion" | "ultima_carta" | "libre";
+  instructions: string;
+  previous: Array<{ channel: string; body: string; sent_at: string }>;
+}
+
+const STEP_ANGLES = ["apertura", "valor", "prueba_social", "objecion", "ultima_carta", "libre"] as const;
+
+function normalizeStep(body: StepRequest): StepSpec | null {
+  const chRaw = String(body.channel ?? "");
+  const channel = chRaw.startsWith("linkedin") ? "linkedin" : chRaw;
+  if (!["email", "whatsapp", "linkedin"].includes(channel)) return null;
+  const angle = (STEP_ANGLES as readonly string[]).includes(String(body.angle)) ? String(body.angle) as StepSpec["angle"] : "valor";
+  const previous = (Array.isArray(body.previous) ? body.previous : [])
+    .filter((p) => p && typeof p.body === "string" && p.body.trim())
+    .slice(-5)
+    .map((p) => ({ channel: String(p.channel ?? ""), body: String(p.body).slice(0, 1200), sent_at: String(p.sent_at ?? "").slice(0, 10) }));
+  return {
+    channel: channel as StepSpec["channel"],
+    angle,
+    instructions: typeof body.instructions === "string" ? body.instructions.trim().slice(0, 600) : "",
+    previous,
+  };
+}
+
+/** El lead a partir de la fila de prospect_list_members (mismo mapeo que hace el cliente en prospecting-data.js). */
+function leadFromMember(m: BriefRow): Lead {
+  const snap = (m.snapshot && typeof m.snapshot === "object") ? m.snapshot : {};
+  const org = (snap.organization && typeof snap.organization === "object") ? snap.organization : {};
+  const name = String(m.name || `${m.first_name ?? ""} ${m.last_name ?? ""}`).trim();
+  return {
+    name,
+    first_name: String(m.first_name || name.split(" ")[0] || ""),
+    title: String(m.title ?? ""),
+    company: String(m.company ?? ""),
+    company_domain: String(m.company_domain || org.primary_domain || ""),
+    industry: String(org.industry ?? ""),
+    country: String(m.country ?? ""),
+    city: String(m.city ?? ""),
+    linkedin_url: String(m.linkedin_url ?? ""),
+    headline: String(snap.headline ?? ""),
+    seniority: String(snap.seniority ?? ""),
+    departments: Array.isArray(snap.departments) ? snap.departments : [],
+    company_size: org.estimated_num_employees ? String(org.estimated_num_employees) : "",
+  };
+}
+
+const STEP_ANGLE_RULES: Record<StepSpec["angle"], string> = {
+  apertura: "APERTURA: primer contacto por este canal. En WhatsApp y LinkedIn la primera oración es EXACTAMENTE la apertura obligatoria (\"Te escribo porque acá en [empresa del vendedor] nos dedicamos a [solución al pain point del lead].\"). En email: asunto específico y curioso (≤ 9 palabras, sin clickbait) + cuerpo de máximo 4 oraciones que comprime contexto → dolor → cómo → CTA.",
+  valor: "SEGUIMIENTO DE VALOR: NO te presentes de nuevo ni repitas la apertura. Aporta UNA observación nueva y específica de este lead (una capa distinta a la del mensaje anterior: si antes fue persona, ahora industria o mercado) que le sirva aunque no responda. Cierra con el mismo CTA de invitación, más corto.",
+  prueba_social: "PRUEBA SOCIAL: ancla el mensaje en un caso o autoridad REAL del brief del vendedor (match por industria primero, por rol segundo). Si el brief no trae casos con datos, usa autoridad genérica creíble (\"empresas con las que hemos trabajado en [región/industria]\"). JAMÁS inventes clientes, métricas ni resultados.",
+  objecion: "OBJECIÓN PREVENTIVA: nombra en voz observacional la objeción más probable de este rol (\"cuando cuento esto, lo primero que escucho es…\") y neutralízala en una o dos frases con el cómo real del vendedor. Sin tono defensivo.",
+  ultima_carta: "ÚLTIMA CARTA: di explícitamente que es el último mensaje por este canal y que no vas a insistir. Sin presión ni culpa. Deja una salida fácil (una pregunta de sí/no o una alternativa de bajo esfuerzo) y agradece el tiempo.",
+  libre: "LIBRE: sigue al pie de la letra las INSTRUCCIONES DEL VENDEDOR del bloque PASO DE LA CADENCIA, dentro de las reglas duras.",
+};
+
+const STEP_CHANNEL_RULES: Record<StepSpec["channel"], string> = {
+  email: "Canal EMAIL: devuelve \"subject\" (≤ 9 palabras, específico, sin clickbait; en seguimientos puede referir al hilo sin decir \"seguimiento\") y \"body\" (máximo 4 oraciones en apertura, 5 en seguimientos; gramática completa; sin firma; sin saludo tipo \"Espero que estés bien\").",
+  whatsapp: "Canal WHATSAPP: \"subject\" vacío. Es un mensaje dentro de una conversación YA abierta (el lead escribió antes): sin saludo formal ni presentación repetida. Máximo 70 palabras, 2-3 párrafos cortos, frases de 8-14 palabras, sin \"¿\" de apertura.",
+  linkedin: "Canal LINKEDIN (mensaje directo): \"subject\" vacío. Máximo 70 palabras, 3 párrafos compactos, ligeramente más formal que WhatsApp, sin saludo inicial tipo \"Hola\".",
+};
+
+function buildStepContext(step: StepSpec): string {
+  const lines = ["", "=== PASO DE LA CADENCIA (modo paso) ==="];
+  lines.push(`Canal: ${step.channel}`);
+  lines.push(`Ángulo: ${step.angle}`);
+  lines.push(STEP_ANGLE_RULES[step.angle]);
+  lines.push(STEP_CHANNEL_RULES[step.channel]);
+  if (step.instructions) lines.push(`INSTRUCCIONES DEL VENDEDOR para este paso: ${step.instructions}`);
+  if (step.previous.length) {
+    lines.push("", "MENSAJES QUE ESTE LEAD YA RECIBIÓ (no repitas su opener, su estructura ni su observación central; el nuevo mensaje debe leerse como continuación natural):");
+    step.previous.forEach((p, i) => lines.push(`${i + 1}. [${p.channel}${p.sent_at ? " · " + p.sent_at : ""}] ${p.body.replace(/\s+/g, " ").slice(0, 600)}`));
+  } else {
+    lines.push("", "Este lead aún no ha recibido mensajes de esta cadencia.");
+  }
+  return lines.join("\n");
+}
+
+const STEP_CLOSING =
+  "\n\nInvestiga al lead siguiendo las 5 capas (mandato persona-primero) si aún no tienes señal suficiente, y escribe SOLO el mensaje de este paso. Responde ÚNICAMENTE con JSON válido, sin fences ni texto adicional:\n" +
+  '{ "subject": "asunto (vacío si no es email)", "body": "el mensaje", "angle_note": "1 frase: qué capa/gancho usaste y por qué" }';
+
+// Mismo motor de investigación y mismas reglas duras que el prompt de 5
+// capas, con la construcción reemplazada por las reglas del paso.
+const STEP_SYSTEM_PROMPT = (() => {
+  const research = AGENT_SYSTEM_PROMPT.split("== FASE 3: CONSTRUCCIÓN ==")[0];
+  const voice = "== VOZ DE VENTA" + (AGENT_SYSTEM_PROMPT.split("== VOZ DE VENTA")[1] ?? "").split("== COACH_PREP")[0];
+  const hard = "== REGLAS DURAS (no negociables) ==" + (AGENT_SYSTEM_PROMPT.split("== REGLAS DURAS (no negociables) ==")[1] ?? "").split("== AUTO-EVALUACIÓN")[0];
+  return research +
+    "== FASE 3: CONSTRUCCIÓN (MODO PASO) ==\nEn este modo escribes UN solo mensaje: un paso de una cadencia multicanal. El bloque PASO DE LA CADENCIA del contexto trae el canal, el ángulo, las instrucciones del vendedor y los mensajes que este lead ya recibió. Cada paso tiene un ángulo distinto y jamás repite el opener ni la observación central de un mensaje anterior. La apertura obligatoria aplica SOLO al ángulo \"apertura\" en WhatsApp/LinkedIn; en los demás ángulos está PROHIBIDO volver a presentarse.\n\n" +
+    voice + hard +
+    "\n== AUTO-EVALUACIÓN (silenciosa) ==\n¿Cumple el ángulo y el canal pedidos? ¿Respeta el máximo de palabras/oraciones? ¿Sin dashes ni frases prohibidas? ¿No repite nada de los mensajes anteriores? ¿La personalización sobreviviría si cambiaras nombre, empresa y rol por otros de la misma industria? Si sí, es genérico: reescríbelo.\n";
+})();
+
+interface StepOut { subject: string; body: string; angle_note?: string }
+
+function parseStepJson(raw: string): StepOut | null {
+  let o: Record<string, unknown>;
+  try { o = parseJson(raw) as unknown as Record<string, unknown>; } catch { return null; }
+  if (!o || typeof o !== "object" || typeof o.body !== "string" || !o.body.trim()) return null;
+  return {
+    subject: typeof o.subject === "string" ? stripDashes(o.subject.trim()) : "",
+    body: stripDashes(String(o.body).trim()),
+    angle_note: typeof o.angle_note === "string" ? stripDashes(o.angle_note.trim()) : undefined,
+  };
+}
+
+function stepViolations(step: StepSpec, out: StepOut): string[] {
+  const v: string[] = [];
+  if (step.channel !== "email" && wordCount(out.body) > MAX_WORDS) v.push(`"body" tiene ${wordCount(out.body)} palabras (máximo ${MAX_WORDS})`);
+  if (step.channel !== "email" && step.angle === "apertura" && !out.body.trim().startsWith(REQUIRED_OPENER)) v.push(`"body" no empieza con "${REQUIRED_OPENER} [empresa] nos dedicamos a [solución]."`);
+  if (step.channel === "email" && !out.subject.trim()) v.push('"subject" está vacío (el email necesita asunto)');
+  return v;
+}
+
+async function generateStep(engine: Engine, spec: StepSpec, userPrompt: string): Promise<StepOut> {
+  let out = parseStepJson(await callDirect(engine, STEP_SYSTEM_PROMPT, userPrompt));
+  if (!out) throw new Error("Model returned malformed step JSON");
+  const violations = stepViolations(spec, out);
+  if (violations.length) {
+    console.warn(`[outreach] step format violations, retrying: ${violations.join(" · ")}`);
+    const fixPrompt = userPrompt + "\n\nTu respuesta anterior fue:\n" + JSON.stringify(out) +
+      "\n\nViola estas reglas:\n- " + violations.join("\n- ") +
+      "\n\nReescribe SOLO lo necesario para cumplirlas sin perder la personalización. No vuelvas a buscar en la web. Responde SOLO con el JSON completo.";
+    const retry = parseStepJson(await callDirect(engine, STEP_SYSTEM_PROMPT, fixPrompt));
+    if (retry) out = retry;
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Handler
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1022,17 +1170,38 @@ Deno.serve(async (req: Request) => {
   const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const ALLOW_FALLBACK = Deno.env.get("OUTREACH_ALLOW_API_FALLBACK") === "true";
 
-  // Auth: user JWT (manual verification — see header)
-  const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
-  const { data: { user }, error: authErr } =
-    await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
-  if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
-
-  let body: { lead?: Lead; sender?: Sender; member_id?: string; engine?: string; use_playbook?: boolean };
+  let body: StepRequest;
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400, h); }
 
-  const lead = body.lead;
+  // Auth: user JWT (manual verification — see header). El motor de campañas
+  // (campaign-run) llama con la service-role key y manda user_id en el body:
+  // es la única forma de generar mensajes por paso sin sesión de usuario.
+  const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
+  let user: { id: string } | null = null;
+  if (token && token === SERVICE_KEY) {
+    if (typeof body.user_id !== "string" || !/^[0-9a-f-]{36}$/i.test(body.user_id)) return json({ error: "user_id required" }, 400, h);
+    user = { id: body.user_id };
+  } else {
+    const { data, error: authErr } = await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
+    if (authErr || !data?.user) return json({ error: "Unauthorized" }, 401, h);
+    user = { id: data.user.id };
+  }
+
+  const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+
+  const stepMode = body.mode === "step";
   const memberId = typeof body.member_id === "string" && body.member_id.trim() ? body.member_id.trim() : null;
+  let lead = body.lead;
+  let step: StepSpec | null = null;
+  if (stepMode) {
+    // Modo paso: el lead sale de la fila del miembro (el motor no manda lead).
+    if (!memberId) return json({ error: "member_id required in step mode" }, 400, h);
+    const { data: mrow } = await supa.from("prospect_list_members").select("*").eq("id", memberId).eq("user_id", user.id).maybeSingle();
+    if (!mrow) return json({ error: "member not found" }, 404, h);
+    lead = leadFromMember(mrow);
+    step = normalizeStep(body);
+    if (!step) return json({ error: "step mode requires channel (email|whatsapp|linkedin)" }, 400, h);
+  }
   const sender: Sender = (body.sender && typeof body.sender === "object") ? body.sender : {};
   // Tendencias de outbound: opt-out por request. Por defecto se aplican si el
   // usuario tiene el playbook activo y listo (la fila manda; esto solo permite
@@ -1045,8 +1214,6 @@ Deno.serve(async (req: Request) => {
   ) {
     return json({ error: "lead.name and lead.company (or lead.title) required" }, 400, h);
   }
-
-  const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const engine = await engineForUser(supa, user.id, "outreach", body.engine);
 
   // Cobro: 3 créditos por mensaje (catálogo js/credit-costs.js). Se verifica el
@@ -1086,13 +1253,32 @@ Deno.serve(async (req: Request) => {
   // suave y el playbook simplemente no se aplica — nunca rompe la generación.
   const playbook = (playbookRes?.data ?? null) as BriefRow | null;
 
-  const userPrompt =
+  const contextPrompt =
     buildBriefContext(brief as BriefRow | null, intake as BriefRow | null, sender) +
     buildHubContext(Array.isArray(hubReports) ? hubReports : []) +
     buildLeadContext(lead) +
     buildPersonaContext(snapshot) +
-    buildPlaybookContext(playbook) +
-    CLOSING_INSTRUCTION;
+    buildPlaybookContext(playbook);
+  const userPrompt = contextPrompt + CLOSING_INSTRUCTION;
+
+  // ── Modo paso: UN mensaje para un paso de la cadencia ─────────────────────
+  if (stepMode && step) {
+    try {
+      const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + STEP_CLOSING);
+      console.log(`[outreach] ✓ step ${user.id} ${step.channel}/${step.angle} via ${engine}`);
+      const { data: stSpent, error: stSpendErr } = await supa
+        .rpc("spend_credits", { p_user_id: user.id, p_amount: OUTREACH_COST });
+      if (stSpendErr || stSpent === null || stSpent === undefined) {
+        console.error("[outreach] step charge after success failed (race/insufficient):", stSpendErr);
+      } else {
+        await supa.from("credit_transactions").insert({ user_id: user.id, delta: -OUTREACH_COST, reason: "outreach_message" });
+      }
+      return json({ subject: out.subject, body: out.body, angle_note: out.angle_note ?? null, channel: step.channel, angle: step.angle, generated_via: "fallback_api" }, 200, h);
+    } catch (err) {
+      console.error("[outreach] step error:", err);
+      return json({ error: "llm_error", detail: String(err) }, 502, h);
+    }
+  }
 
   try {
     let out: Outreach;
