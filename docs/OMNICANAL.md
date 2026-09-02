@@ -1,6 +1,6 @@
 # Campañas omnicanal (WhatsApp · email · LinkedIn)
 
-Estado: **PR 1 entregado** (modelo + motor + WATI + email + retiro de Meta). PR 2 = Dripify. PR 3 = bandeja unificada, métricas por SDR y handoff al coach.
+Estado: **PR 1 entregado** (modelo + motor + WATI + email + retiro de Meta). **PR 2 entregado** (LinkedIn vía Dripify). PR 3 = bandeja unificada, métricas por SDR y handoff al coach.
 
 ## Decisiones tomadas (2026-09-01, con el dueño del producto)
 
@@ -37,7 +37,16 @@ Estado: **PR 1 entregado** (modelo + motor + WATI + email + retiro de Meta). PR 
 - Webhooks: por campaña, desde la UI, una condición por webhook; con "After LinkedIn reply is received" entrega la conversación.
 - LinkedIn en sí **no tiene API de mensajería para terceros**: lo que no exponga Dripify no se puede leer.
 
-**Consecuencia para el PR 2:** el paso de LinkedIn enrola al lead en una campaña de Dripify elegida por el usuario (conexión + mensaje con las variables de Dripify), lee el estado por `/leads/{id}/activity` y recibe respuestas por el webhook de Dripify. La personalización de 5 capas para LinkedIn se entrega como **CSV listo para subir** a Dripify (columnas `linkedinUrl`, `first_name`, `personalized_note`, `personalized_message`) hasta que Dripify publique el envío por API.
+**Cómo quedó en el PR 2:** el paso de LinkedIn enrola al lead en una campaña de Dripify elegida por el usuario (conexión + mensaje con las variables de Dripify), lee el estado por `/leads/{id}/activity` y recibe respuestas por el webhook de Dripify. La personalización de 5 capas para LinkedIn se entrega como **CSV listo para subir** a Dripify (columnas `linkedinUrl`, `first_name`, `personalized_note`, `personalized_message`) hasta que Dripify publique el envío por API.
+
+## LinkedIn vía Dripify (PR 2)
+
+- **Paso `linkedin_connect`** = "enrolar en la campaña de Dripify elegida" (`campaign_steps.settings.dripify_campaign_id`). El motor sube la URL canónica del perfil con `POST /campaigns/{id}/leads` (siempre crea una lead list nueva), guarda los ids en `campaign_enrollments.provider_refs`, registra el evento `queued` y pasa el CRM a `conexion_enviada`. Dripify manda la conexión y sus mensajes con sus propias plantillas y ritmo.
+- **Paso `linkedin_message`** queda solo por compatibilidad: se omite con evento explícito (Dripify no envía mensajes por API).
+- **Sincronización**: `campaign-run` lee cada 15 minutos por cuenta los leads de cada campaña de Dripify en uso (`GET /leads?campaignId`), los empareja por slug de LinkedIn y traduce `lastAction.sequenceEventType` por patrón (ACCEPT → conexión aceptada → `linkedin_connected_at`; REPL → respondió → detiene la cadencia). Lo que no encaja no cambia estados. Presupuesto: una request por página de 100 leads.
+- **`dripify-webhook`** (público, `--no-verify-jwt`, `?key=<webhook_secret>` de la cuenta Dripify): Dripify no permite crear webhooks por API, así que el usuario pega la URL en cada campaña de Dripify (Settings → Webhooks) con la condición "After LinkedIn reply is received". El parser es tolerante (busca URL de perfil, texto de respuesta y tipo de evento por nombre de campo) y guarda el payload completo en el evento para ajustar el mapeo con uno real. Una respuesta crea `inbox_messages` (linkedin/dripify/in), detiene la cadencia y sube el CRM.
+- **CSV para Dripify**: en el detalle de la campaña, "Descargar CSV para Dripify" con `linkedinUrl, first_name, last_name, company, title, connection_note (≤300), message` de los leads enrolados, para subirlo en Dripify como lista con Custom Lead Fields y usar esas variables en la campaña. Es el puente para la personalización de 5 capas hasta que Dripify publique el envío por API.
+- El tope diario de LinkedIn cuenta `queued` + `sent`.
 
 ## Arquitectura (PR 1)
 
@@ -48,16 +57,24 @@ Campañas (js/campaigns.js, pestaña de Prospección)
 campaign-run (edge, pg_cron cada minuto, service role)
    ├─ whatsapp → _shared/wati.ts → WATI (plantilla A/B/C o texto en sesión)
    ├─ email    → Apollo emailer_messages + send_now (cuenta remitente de la campaña)
-   └─ linkedin → omitido con evento explícito hasta PR 2
+   └─ linkedin_connect → _shared/dripify.ts → sube el lead a la campaña de Dripify (queued)
+   sincroniza cada 15 min el estado de los leads en Dripify (conexión enviada/aceptada, respondió)
    escribe campaign_events (sent con local_message_id) + inbox_messages (out)
    ▲
 wati-webhook (público, --no-verify-jwt, ?key=<webhook_secret>)
    ├─ recibos → campaign_events delivered/read/replied/failed
    └─ entrante → inbox_messages (in) + enrolamiento replied/unsubscribed + CRM
-channel-connect (edge, JWT): conecta WATI (valida, crea 3 plantillas, registra webhook), Dripify (valida key).
+dripify-webhook (público, ?key=<webhook_secret>): respuestas / aceptaciones que Dripify envía por webhook de campaña
+channel-connect (edge, JWT): conecta WATI (valida, crea 3 plantillas, registra webhook), Dripify (valida key, lee campañas).
 ```
 
 Tablas: `channel_accounts` (secreto oculto por grants de columna), `campaigns`, `campaign_steps`, `campaign_enrollments`, `campaign_events`, `inbox_messages`. Migración `20260902000001_omnichannel_campaigns.sql`.
+
+## Pasos manuales para poner PR 2 en producción
+
+1. Aplicar `20260902000003_dripify_linkedin_steps.sql` (añade `campaign_steps.settings` y `campaign_enrollments.provider_refs`).
+2. Desplegar `channel-connect`, `campaign-run` y `dripify-webhook` **con `--no-verify-jwt`** (el workflow ya lo sabe).
+3. En Dripify: generar la API key (Settings → Integrations), tener al menos una campaña activa con conexión + mensajes, y pegar la URL del webhook en cada campaña.
 
 ## Pasos manuales para poner PR 1 en producción
 

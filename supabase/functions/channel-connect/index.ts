@@ -20,7 +20,11 @@
  *         Si la API no lo acepta, deja la URL en config.webhook para que el
  *         usuario lo agregue a mano en WATI → Webhooks.
  *  • sync_templates    {}  → vuelve a leer el estado de revisión de Meta.
- *  • connect_dripify   {api_key}  → valida contra /v1/open-api/campaigns y guarda.
+ *  • connect_dripify   {api_key}  → valida contra /v1/open-api/campaigns, guarda la
+ *      key y la lista de campañas, y deja en config.webhook la URL de
+ *      dripify-webhook?key=<secreto> que el usuario pega en cada campaña de
+ *      Dripify (Settings → Webhooks, condición "After LinkedIn reply is received").
+ *  • refresh_dripify   {}  → vuelve a leer las campañas de Dripify.
  *  • disconnect        {provider}
  *
  * Secretos requeridos: ninguno además de los SUPABASE_* de la plataforma —
@@ -29,11 +33,10 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as wati from "../_shared/wati.ts";
+import * as dripify from "../_shared/dripify.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
-
-const DRIPIFY_BASE = "https://api.dripify.com";
 
 function corsHeaders(origin: string) {
   return {
@@ -178,27 +181,6 @@ async function refreshTemplateStatus(creds: wati.WatiCreds, templates: Json, cha
   return next;
 }
 
-// ── Dripify ─────────────────────────────────────────────────────────────────
-
-async function dripifyGet(apiKey: string, path: string): Promise<Json> {
-  const res = await fetch(`${DRIPIFY_BASE}${path}`, {
-    headers: { "X-Api-Key": apiKey, "Accept": "application/json" },
-  });
-  const text = await res.text();
-  let data: Json = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text.slice(0, 300) }; }
-  if (!res.ok) {
-    const map: Record<number, string> = {
-      401: "La API key de Dripify no es válida.",
-      403: "Tu plan de Dripify no incluye la Open API.",
-      404: "Dripify respondió 404: la Open API está desactivada para esta cuenta.",
-      429: "Dripify limitó las solicitudes (60 por minuto). Reintenta en un momento.",
-    };
-    throw new Error(map[res.status] || `Dripify respondió ${res.status}`);
-  }
-  return data;
-}
-
 // ── Handler ─────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -328,20 +310,30 @@ Deno.serve(async (req) => {
       return json({ account: publicRow(row) }, 200, cors);
     }
 
-    if (action === "connect_dripify") {
-      const apiKey = clean(payload.api_key, 500);
-      if (!apiKey) return json({ error: "Pega la API key de Dripify (Settings → Integrations → API Key)." }, 400, cors);
-      let campaigns: Json[] = [];
-      try {
-        const data = await dripifyGet(apiKey, "/v1/open-api/campaigns?limit=100");
-        campaigns = Array.isArray(data?.items) ? data.items : [];
-      } catch (e) {
-        return json({ error: (e as Error).message }, 400, cors);
-      }
+    if (action === "connect_dripify" || action === "refresh_dripify") {
       const prev = await loadAccount("dripify");
+      let apiKey = clean(payload.api_key, 500);
+      if (action === "refresh_dripify") {
+        if (!prev) return json({ error: "dripify_not_connected" }, 428, cors);
+        apiKey = prev.secret;
+      }
+      if (!apiKey) return json({ error: "Pega la API key de Dripify (Settings → Integrations → API Key)." }, 400, cors);
+      let campaigns: dripify.DripifyCampaign[] = [];
+      try {
+        campaigns = await dripify.listCampaigns(apiKey);
+      } catch (e) {
+        return json({ error: dripify.humanError(e) }, 400, cors);
+      }
+      const webhookSecret = prev?.webhook_secret || randomSecret();
+      const webhookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/dripify-webhook?key=${webhookSecret}`;
       const config = {
-        campaigns: campaigns.map((c) => ({ id: c.id, name: c.name ?? c.title ?? String(c.id), active: c.active ?? null })),
-        connected_at: new Date().toISOString(),
+        ...(prev?.config ?? {}),
+        campaigns,
+        campaigns_synced_at: new Date().toISOString(),
+        // Dripify no expone crear webhooks por API: el usuario lo pega en la
+        // campaña. Se guarda aquí para mostrarlo en la UI.
+        webhook: { url: webhookUrl, registered: false, manual: true },
+        connected_at: prev?.config?.connected_at ?? new Date().toISOString(),
       };
       const { data: row, error } = await db
         .from("channel_accounts")
@@ -350,7 +342,7 @@ Deno.serve(async (req) => {
           provider: "dripify",
           config,
           secret: apiKey,
-          webhook_secret: prev?.webhook_secret || randomSecret(),
+          webhook_secret: webhookSecret,
           status: "connected",
           last_error: null,
         }, { onConflict: "user_id,provider" })
