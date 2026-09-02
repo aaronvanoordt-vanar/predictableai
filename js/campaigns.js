@@ -43,7 +43,7 @@
 
   var FN_CHANNEL = 'channel-connect';
   var FN_INBOX = 'inbox-send';
-  var CHANNEL_SIGNUP = { wati: 'https://www.wati.io/pricing/', dripify: 'https://dripify.com/pricing/' };
+  var CHANNEL_SIGNUP = { wati: 'https://www.wati.io/pricing/', dripify: 'https://dripify.com/pricing/', apollo: 'https://www.apollo.io/pricing' };
 
   var SVG = {
     email: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="15" height="11" rx="2"/><path d="M3 6.5l7 5 7-5"/></svg>',
@@ -1003,10 +1003,11 @@
       if (st.sub) body.insertAdjacentHTML('beforeend', pill(st.sub, st.subKind));
       if (key === 'linkedin' && !st.webhookOk) body.appendChild(h('span', { class: 'cmp-chip-warn', text: '⚠ Falta el webhook de respuestas' }));
       foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-details', 'data-channel': key, text: 'Detalles' }));
-      if (st.state === 'platform' && state.apolloOauth) foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-connect', 'data-channel': key, text: 'Conectar mi cuenta' }));
+      // Se ofrece siempre: sin app OAuth registrada el camino es pegar la key.
+      if (st.state === 'platform') foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-connect', 'data-channel': key, text: 'Conectar mi cuenta' }));
     } else if (st.state === 'unavailable') {
-      body.appendChild(h('span', { text: 'No disponible todavía' }));
-      foot.appendChild(h('span', { class: 'pros-hint', text: 'La conexión de email con tu propia cuenta se habilita pronto.' }));
+      body.appendChild(h('span', { text: 'Sin conectar' }));
+      foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-connect', 'data-channel': key, text: 'Conectar mi cuenta' }));
     } else {
       if (!big) body.appendChild(h('span', { class: 'pros-hint', text: 'Sin conectar' }));
       foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'ch-connect', 'data-channel': key, text: 'Conectar' }));
@@ -1245,8 +1246,65 @@
     return api;
   }
 
+  // ── Conectar Apollo con la master API key del propio usuario ─────────────
+  // El OAuth de partner depende de que Apollo apruebe la app; mientras tanto
+  // (y como camino permanente para quien no lo tenga) el usuario pega su key,
+  // igual que en WATI y Dripify. Sin esto todo el mundo cae en la cuenta
+  // compartida de la plataforma: sus listas de Apollo no se ven aquí y lo que
+  // crea aquí no llega a su Apollo.
+  function openApolloKeyWizard(startStep) {
+    var api = openModal({ title: 'Conectar Email', width: 560 });
+    function choice() {
+      api.setTitle('Conectar Email');
+      api.body.innerHTML = '';
+      api.body.appendChild(h('p', { text: 'El email de campaña y los datos de prospección salen de tu cuenta de Apollo. Conéctala para trabajar con tus propias listas, contactos y créditos.' }));
+      var opts = h('div', { class: 'cmp-wz-choices' });
+      opts.appendChild(choiceBtn('Ya tengo cuenta de Apollo', 'Tengo mi API key lista.', haveIt));
+      opts.appendChild(choiceBtn('Todavía no tengo', 'Muéstrame cómo crearla.', dontHave));
+      api.body.appendChild(opts);
+      api.setActions([{ label: 'Cancelar' }]);
+    }
+    function dontHave() {
+      api.setTitle('Crear tu cuenta de Apollo');
+      api.body.innerHTML = '';
+      var card = h('div', { class: 'cmp-wz-card' });
+      card.appendChild(h('p', { text: 'Apollo es la base de datos de prospectos y el remitente de los emails. La cuenta la pagas directamente a ellos; el acceso por API viene en sus planes de pago.' }));
+      card.appendChild(h('a', { href: CHANNEL_SIGNUP.apollo, target: '_blank', rel: 'noopener', class: 'btn btn-primary btn-sm', text: 'Crear mi cuenta' }));
+      api.body.appendChild(card);
+      api.setActions([{ label: 'Atrás', onClick: choice }, { label: 'Ya la tengo, continuar', className: 'btn btn-primary', onClick: haveIt }]);
+    }
+    function haveIt() {
+      api.setTitle('Conectar Email');
+      api.body.innerHTML = '';
+      api.body.appendChild(pathBox('En tu cuenta de Apollo:', ['Settings → Integrations → API', 'Create new key (o edita la que ya tengas)', 'Marca la opción de master key', 'Copia la key y pégala aquí']));
+      var keyI = h('input', { type: 'password', placeholder: 'API key', autocomplete: 'off' });
+      api.body.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'API key de Apollo' }), keyI));
+      api.body.appendChild(h('div', { class: 'pros-hint', text: 'Tiene que ser master key: sin eso Apollo no deja leer tus listas y "Importar desde Apollo" seguirá vacío. Los créditos de enriquecimiento pasan a cobrarse en tu cuenta de Apollo, no en la de la plataforma.' }));
+      api.setActions([
+        { label: 'Atrás', onClick: choice },
+        { label: isConn(state.apollo) ? 'Guardar' : 'Conectar Email', className: 'btn btn-primary', onClick: function (m) {
+          if (!keyI.value.trim()) throw new Error('Pega la API key.');
+          m.setBusy(true);
+          return edgeFetch(FN_CHANNEL, { action: 'apollo_connect_key', payload: { api_key: keyI.value.trim() } }).then(function (r) {
+            state.apollo = (r && (r.account || r.apollo)) || state.apollo;
+            m.close();
+            // Una key que no es master key conecta igual (sirve para enviar),
+            // pero el import de listas no va a funcionar: se dice, no se calla.
+            if (r && r.master_key === false) toast(r.warning || 'Conectado, pero la key no es master key: importar listas va a fallar.', 'error');
+            else toast('Apollo conectado con tu cuenta.', 'success');
+            render();
+            openChannelDetails('email');
+          });
+        } },
+      ]);
+    }
+    (startStep === 'have' ? haveIt : choice)();
+    return api;
+  }
+
   function openConnect(key, btn) {
-    if (key === 'email') return connectEmail(btn);
+    // Con la app OAuth registrada se usa el consentimiento; si no, la key.
+    if (key === 'email') return state.apolloOauth ? connectEmail(btn) : openApolloKeyWizard();
     if (key === 'whatsapp') return openWhatsAppWizard();
     if (key === 'linkedin') return openLinkedInWizard();
   }
@@ -1348,9 +1406,14 @@
       if (es.state === 'connected') {
         body.appendChild(h('p', { text: 'Cuenta conectada: ' + (es.detail || '—') + (acfg.name ? ' (' + acfg.name + ')' : '') + (acfg.connected_at ? ' · desde ' + fmtDate(acfg.connected_at) : '') }));
         body.appendChild(h('div', { class: 'pros-hint', text: 'Los emails de campaña salen como mensajes individuales desde tu cuenta; los datos revelados se cobran a los créditos de tu propia cuenta, no a los de la plataforma.' }));
+        // Apollo exige master key para listar listas: si no lo es, el import
+        // falla y conviene decirlo donde se ve la conexión, no solo al conectar.
+        if (acfg.master_key === false) {
+          body.appendChild(h('div', { class: 'cmp-chip-warn', style: 'margin-top:8px', text: '⚠ La API key no es master key: "Importar desde Apollo" va a seguir vacío. En Apollo → Settings → Integrations → API, marca master key y vuelve a pegarla.' }));
+        }
       } else {
         body.appendChild(h('p', { text: 'Conectado con la cuenta de la plataforma (beta)' + (es.detail ? ': ' + es.detail : '') + '.' }));
-        body.appendChild(h('div', { class: 'pros-hint', text: state.apolloOauth ? 'Conecta tu propia cuenta para enviar desde tu dominio.' : 'La conexión con tu propia cuenta de email se habilita pronto.' }));
+        body.appendChild(h('div', { class: 'pros-hint', text: 'Es una cuenta de Apollo compartida, no la tuya: tus listas y contactos de Apollo no se ven aquí, y lo que crees aquí no llega a tu Apollo. Conecta tu cuenta para trabajar con tus datos y tus créditos.' }));
       }
       var accs = state.emailAccounts || [];
       if (accs.length) {
@@ -1359,6 +1422,7 @@
       }
       var acts = [];
       if (state.apolloOauth) acts.push({ label: es.state === 'connected' ? 'Reconectar' : 'Conectar mi cuenta', onClick: function (m, btn) { return connectEmail(btn).then(function () { m.close(); }); } });
+      acts.push({ label: es.state === 'connected' ? 'Cambiar API key' : 'Conectar con mi API key', onClick: function (m) { m.close(); openApolloKeyWizard('have'); } });
       if (es.state === 'connected') acts.push({ label: 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('email', 'apollo', m); } });
       acts.push({ label: 'Cerrar' });
       api.setActions(acts);

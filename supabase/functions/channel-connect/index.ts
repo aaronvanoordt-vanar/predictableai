@@ -356,6 +356,77 @@ Deno.serve(async (req) => {
       return json({ apollo: publicRow(row), account: publicRow(row) }, 200, cors);
     }
 
+    // Master API key propia, el camino que NO depende de que Apollo apruebe la
+    // app de partner (mismo patrón que WATI/Dripify: el usuario pega su token).
+    // Sin esto todo el mundo cae en APOLLO_API_KEY, que es OTRA cuenta de
+    // Apollo: las listas del usuario no se ven y lo que crea aquí no llega allá.
+    if (action === "apollo_connect_key") {
+      const apiKey = clean(payload.api_key, 200);
+      if (!apiKey) return json({ error: "Pega tu API key de Apollo." }, 400, cors);
+      const headers = { "x-api-key": apiKey };
+
+      let profile: { id: string; email: string; name: string };
+      try {
+        profile = await apollo.fetchProfile(headers);
+      } catch (e) {
+        const status = e instanceof apollo.ApolloError ? e.status : 502;
+        return json({
+          error: status === 401 || status === 403
+            ? "Apollo rechazó esa API key. Revisa que la copiaste completa y que sigue activa."
+            : "No se pudo validar la API key: " + apollo.humanError(e),
+        }, status === 401 || status === 403 ? 400 : 502, cors);
+      }
+
+      // ¿Es master key? /labels la exige y devuelve 403 sin ella — es justo el
+      // endpoint del que vive "Importar desde Apollo", así que se comprueba al
+      // conectar en vez de fallar callado después.
+      let masterKey = true;
+      let masterKeyError: string | null = null;
+      try {
+        await apollo.apolloCall(headers, "GET", "/labels");
+      } catch (e) {
+        if (e instanceof apollo.ApolloError && (e.status === 403 || e.status === 401)) {
+          masterKey = false;
+          masterKeyError = "La key funciona, pero no es master key: importar listas desde Apollo va a fallar. En Apollo → Settings → Integrations → API, marca la opción de master key.";
+        } else {
+          console.warn("[channel-connect] apollo /labels probe:", apollo.humanError(e));
+        }
+      }
+
+      let emailAccounts: apollo.ApolloEmailAccount[] = [];
+      try {
+        emailAccounts = await apollo.fetchEmailAccounts(headers);
+      } catch (e) {
+        console.warn("[channel-connect] apollo email_accounts:", apollo.humanError(e));
+      }
+
+      const prev = await loadAccount("apollo");
+      const config = {
+        auth_mode: "api_key",
+        email: profile.email,
+        name: profile.name,
+        apollo_user_id: profile.id,
+        email_accounts: emailAccounts.map((a) => ({ id: a.id, email: a.email, default: a.default, active: a.active !== false })),
+        master_key: masterKey,
+        connected_at: new Date().toISOString(),
+      };
+      const { data: row, error } = await db
+        .from("channel_accounts")
+        .upsert({
+          user_id: user.id,
+          provider: "apollo",
+          config,
+          secret: apiKey,
+          webhook_secret: prev?.webhook_secret || randomSecret(),
+          status: "connected",
+          last_error: masterKeyError,
+        }, { onConflict: "user_id,provider" })
+        .select("*")
+        .single();
+      if (error) throw new Error("No se pudo guardar la cuenta: " + error.message);
+      return json({ apollo: publicRow(row), account: publicRow(row), master_key: masterKey, warning: masterKeyError }, 200, cors);
+    }
+
     if (action === "connect_wati") {
       const endpoint = wati.normalizeEndpoint(payload.endpoint);
       // WATI muestra el token como "Bearer eyJ…" en su página API Docs: si el

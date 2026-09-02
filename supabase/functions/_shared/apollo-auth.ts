@@ -81,10 +81,18 @@ export interface ApolloEmailAccount { id: string; email: string; default: boolea
 
 export interface ApolloAuth {
   headers: Record<string, string>;
-  mode: "oauth" | "platform";
-  /** Email del usuario de Apollo (solo en modo oauth). */
+  /**
+   * De quién es la credencial:
+   *  • oauth    → token del usuario (app de partner de Apollo)
+   *  • user_key → master API key que el usuario pegó (como WATI/Dripify)
+   *  • platform → APOLLO_API_KEY compartida de la beta: OTRA cuenta de Apollo,
+   *               con sus propias listas y contactos. Nada de lo que el usuario
+   *               ve en su Apollo existe aquí.
+   */
+  mode: "oauth" | "user_key" | "platform";
+  /** Email del usuario de Apollo (en modo oauth y user_key). */
   accountEmail?: string;
-  /** Cuentas remitentes conocidas (solo en modo oauth, de channel_accounts.config). */
+  /** Cuentas remitentes conocidas (de channel_accounts.config). */
   emailAccounts?: ApolloEmailAccount[];
 }
 
@@ -208,6 +216,21 @@ export async function resolveApolloAuth(svc: SupabaseClient, userId: string): Pr
     .eq("provider", "apollo")
     .eq("status", "connected")
     .maybeSingle();
+
+  // Master API key pegada por el usuario (channel-connect → apollo_connect_key).
+  // Va antes que el camino OAuth porque su `secret` es la key en crudo, no un
+  // JSON de tokens: parseTokens() daría null y caería a la plataforma.
+  if (row && row.config?.auth_mode === "api_key") {
+    const userKey = typeof row.secret === "string" ? row.secret.trim() : "";
+    if (userKey) {
+      return {
+        headers: { "x-api-key": userKey },
+        mode: "user_key",
+        accountEmail: row.config?.email ? String(row.config.email) : undefined,
+        emailAccounts: emailAccountsFromConfig(row.config),
+      };
+    }
+  }
 
   if (row) {
     let tokens = parseTokens(row.secret);

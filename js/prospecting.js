@@ -2395,14 +2395,18 @@
         // de Apollo del usuario sino la key compartida de la beta, así que
         // afirmar "tu cuenta no tiene listas" sería falso.
         var mode = pd().apolloAuthMode ? pd().apolloAuthMode() : null;
+        var isPlatform = mode === 'platform';
         listHost.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text3);padding:8px 2px;line-height:1.5' },
-          h('div', { text: mode === 'platform'
+          h('div', { text: isPlatform
             ? 'Estamos leyendo la cuenta de Apollo compartida de la beta, no la tuya — por eso no aparecen tus listas.'
             : 'Apollo no devolvió ninguna lista para la cuenta conectada.' }),
-          h('div', { style: 'margin-top:6px', text: mode === 'platform'
-            ? 'Conecta tu propia cuenta de Apollo en Prospección → Campañas → canales para importar tus listas.'
-            : 'Si en Apollo sí las ves, revisa que la cuenta conectada sea la misma y que su API key sea master key.' }),
-          h('div', { style: 'margin-top:6px;opacity:.75', text: 'Cuenta en uso: ' + (mode === 'oauth' ? 'la tuya (OAuth)' : mode === 'platform' ? 'la compartida de la plataforma' : 'desconocida') })));
+          h('div', { style: 'margin-top:6px', text: isPlatform
+            ? 'Conecta tu cuenta de Apollo en Campañas → canales → Email para importar tus listas.'
+            : 'Si en Apollo sí las ves, revisa que sea la misma cuenta y que su API key sea master key (Apollo la exige para listar listas).' }),
+          h('div', { style: 'margin-top:6px;opacity:.75', text: 'Cuenta en uso: ' + (
+            mode === 'oauth' ? 'la tuya (OAuth)'
+              : mode === 'user_key' ? 'la tuya (API key)'
+                : isPlatform ? 'la compartida de la plataforma' : 'desconocida') })));
         return;
       }
       apolloLists.forEach(function (l) {
