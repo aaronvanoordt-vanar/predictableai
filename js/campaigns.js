@@ -31,8 +31,9 @@
   var CHANNELS = [
     { value: 'whatsapp',         label: 'WhatsApp',               short: 'WA' },
     { value: 'email',            label: 'Email',                  short: 'Email' },
-    { value: 'linkedin_connect', label: 'LinkedIn · conexión',    short: 'LI conexión' },
-    { value: 'linkedin_message', label: 'LinkedIn · mensaje',     short: 'LI mensaje' },
+    { value: 'linkedin_connect', label: 'LinkedIn (campaña de Dripify)', short: 'LinkedIn' },
+    // Solo para filas antiguas: la Open API de Dripify no envía mensajes.
+    { value: 'linkedin_message', label: 'LinkedIn · mensaje (sin proveedor)', short: 'LI mensaje', hidden: true },
   ];
   var CONDITIONS = [
     { value: 'if_no_reply',  label: 'Solo si no respondió' },
@@ -67,7 +68,7 @@
     error:        { label: 'Error',         pill: 'red' },
   };
   var EVENT_LABEL = {
-    queued: 'En cola', sent: 'Enviado', delivered: 'Entregado', read: 'Leído', replied: 'Respondió',
+    queued: 'Enrolado en Dripify', sent: 'Enviado', delivered: 'Entregado', read: 'Leído', replied: 'Respondió',
     failed: 'Falló', skipped: 'Omitido', opted_out: 'Se dio de baja', connection_sent: 'Conexión enviada',
     connection_accepted: 'Conexión aceptada', stopped: 'Detenido', completed: 'Cadencia completada',
   };
@@ -83,9 +84,8 @@
     return [
       { channel: 'whatsapp',         offset_hours: 0,   condition: 'always',       content_kind: 'template_a' },
       { channel: 'email',            offset_hours: 0,   condition: 'always',       content_kind: 'ai_personalized' },
-      { channel: 'linkedin_connect', offset_hours: 24,  condition: 'if_no_reply',  content_kind: 'ai_personalized' },
+      { channel: 'linkedin_connect', offset_hours: 24,  condition: 'if_no_reply',  content_kind: 'ai_personalized', settings: {} },
       { channel: 'whatsapp',         offset_hours: 72,  condition: 'if_no_reply',  content_kind: 'template_b' },
-      { channel: 'linkedin_message', offset_hours: 120, condition: 'if_connected', content_kind: 'ai_personalized' },
       { channel: 'whatsapp',         offset_hours: 168, condition: 'if_no_reply',  content_kind: 'template_c' },
     ];
   }
@@ -96,6 +96,8 @@
     uid: null,
     account: undefined,        // undefined = sin cargar · null = sin conectar
     accountError: null,
+    dripify: undefined,        // cuenta de Dripify (misma convención)
+    dripifyForm: false,
     lists: [],
     emailAccounts: null,
     campaigns: [],
@@ -222,9 +224,11 @@
     try {
       var r = await edgeFetch(FN_CHANNEL, { action: 'status', payload: {} });
       state.account = r && r.wati ? r.wati : null;
+      state.dripify = r && r.dripify ? r.dripify : null;
       state.accountError = null;
     } catch (e) {
       state.account = null;
+      state.dripify = null;
       state.accountError = errMsg(e);
     }
   }
@@ -270,6 +274,9 @@
       throw new Error('La cadencia tiene un paso de email: elige la cuenta remitente de Apollo.');
     }
     editor.steps.forEach(function (s, i) {
+      if (s.channel === 'linkedin_connect' && !(s.settings && s.settings.dripify_campaign_id)) {
+        throw new Error('El paso ' + (i + 1) + ' (LinkedIn) necesita una campaña de Dripify. ' + (state.dripify ? 'Elígela en el paso.' : 'Conecta Dripify primero.'));
+      }
       if (s.content_kind === 'custom' && !String(s.body || '').trim()) throw new Error('El paso ' + (i + 1) + ' es "Texto propio" pero está vacío.');
       if (s.content_kind === 'custom' && s.channel === 'email' && !String(s.subject || '').trim()) throw new Error('El paso ' + (i + 1) + ' (email) necesita asunto.');
     });
@@ -316,6 +323,7 @@
           offset_hours: Math.max(0, Number(s.offset_hours) || 0),
           condition: s.condition,
           content_kind: s.content_kind,
+          settings: s.settings && typeof s.settings === 'object' ? s.settings : {},
           subject: s.subject ? String(s.subject).trim() : null,
           body: s.body ? String(s.body).trim() : null,
         };
@@ -423,6 +431,7 @@
     if (!root) return;
     root.innerHTML = '';
     root.appendChild(renderWatiCard());
+    root.appendChild(renderDripifyCard());
     var grid = h('div', { class: 'cmp-grid' });
     grid.appendChild(renderCampaignList());
     grid.appendChild(state.editor ? renderEditor() : (state.activeId ? renderDetail() : renderIntro()));
@@ -565,6 +574,99 @@
     return card;
   }
 
+  // ── Render: tarjeta Dripify ──────────────────────────────────────────────
+  function renderDripifyCard() {
+    var card = h('div', { class: 'chart-card', style: 'margin-bottom:16px' });
+    var acc = state.dripify;
+    if (acc === undefined) {
+      card.appendChild(h('div', { class: 'pros-hint', text: 'Cargando la conexión con Dripify…' }));
+      return card;
+    }
+    if (acc && acc.status === 'connected' && !state.dripifyForm) {
+      var cfg = acc.config || {};
+      var dcs = cfg.campaigns || [];
+      var head = h('div', { style: 'display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start' });
+      var left = h('div', { style: 'flex:1;min-width:240px' });
+      left.appendChild(h('div', { class: 'chart-title', text: 'LinkedIn conectado por Dripify' }));
+      left.appendChild(h('div', { class: 'pros-cellsub', style: 'margin-top:4px', text: dcs.length + ' campañas en Dripify' + (cfg.campaigns_synced_at ? ' · leídas ' + fmtDateTime(cfg.campaigns_synced_at) : '') + '. Estado de los leads sincronizado cada 15 minutos.' }));
+      var actions = h('div', { class: 'pros-actions' });
+      actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'dripify-refresh', text: 'Releer campañas' }));
+      actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'dripify-edit', text: 'Cambiar API key' }));
+      actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'dripify-disconnect', text: 'Desconectar' }));
+      head.appendChild(left); head.appendChild(actions);
+      card.appendChild(head);
+      if (dcs.length) {
+        var list = h('div', { class: 'pros-cellsub', style: 'margin-top:8px' });
+        list.textContent = 'Campañas: ' + dcs.slice(0, 8).map(function (d) { return d.name + (d.active === false ? ' (inactiva)' : ''); }).join(' · ') + (dcs.length > 8 ? ' · …' : '');
+        card.appendChild(list);
+      } else {
+        card.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:8px', text: '⚠ Dripify no devolvió campañas. Crea una en Dripify (conexión + mensajes) y pulsa "Releer campañas".' }));
+      }
+      var wh = cfg.webhook || {};
+      var whBox = h('div', { style: 'margin-top:10px' });
+      whBox.appendChild(h('div', { class: 'pros-lbl', text: 'Webhook para las respuestas de LinkedIn' }));
+      whBox.appendChild(h('div', { class: 'pros-hint', text: 'Dripify no permite crearlo por API. En cada campaña de Dripify → Settings → Webhooks, agrega esta URL con la condición "After LinkedIn reply is received" (y, si quieres, otra con "invite accepted"). Así una respuesta por LinkedIn detiene la cadencia y llega a la bandeja.' }));
+      whBox.appendChild(h('code', { style: 'display:block;margin-top:6px;word-break:break-all;font-size:11px', text: wh.url || '' }));
+      card.appendChild(whBox);
+      return card;
+    }
+    card.appendChild(h('div', { class: 'chart-title', text: acc ? 'Cambiar la API key de Dripify' : 'Conecta tu cuenta de Dripify para LinkedIn' }));
+    card.appendChild(h('div', { class: 'pros-hint', style: 'margin:6px 0 12px', text: 'En Dripify: Settings → Integrations → API Key → Generate. Requiere un plan con Open API. Con la key se leen tus campañas; el paso de LinkedIn de una cadencia enrola al lead en la que elijas.' }));
+    var keyI = h('input', { type: 'password', placeholder: 'API key de Dripify', autocomplete: 'off', style: 'max-width:420px' });
+    card.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'API key' }), keyI));
+    var actions2 = h('div', { class: 'pros-actions', style: 'margin-top:12px' });
+    var btn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: acc ? 'Guardar' : 'Conectar Dripify' });
+    btn.addEventListener('click', guarded(function () {
+      var restore = btnLoading(btn, '⏳ Validando con Dripify…');
+      return edgeFetch(FN_CHANNEL, { action: 'connect_dripify', payload: { api_key: keyI.value } }).then(function (r) {
+        state.dripify = r.account;
+        state.dripifyForm = false;
+        toast('Dripify conectado. ' + (((r.account.config || {}).campaigns || []).length) + ' campañas leídas.', 'success');
+        render();
+      }).then(restore, function (e) { restore(); throw e; });
+    }));
+    actions2.appendChild(btn);
+    if (acc) {
+      var cancel = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Cancelar' });
+      cancel.addEventListener('click', function () { state.dripifyForm = false; render(); });
+      actions2.appendChild(cancel);
+    }
+    card.appendChild(actions2);
+    return card;
+  }
+
+  // ── CSV para Dripify (Custom Lead Fields) ────────────────────────────────
+  function csvCell(v) {
+    var s = String(v == null ? '' : v).replace(/\r?\n/g, ' ').trim();
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  function connectionNote(msg) {
+    var t = String(msg || '').replace(/\s+/g, ' ').trim();
+    if (t.length <= 300) return t;
+    var cut = t.slice(0, 300);
+    var i = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '));
+    return (i > 120 ? cut.slice(0, i + 1) : cut.slice(0, 297) + '…').trim();
+  }
+  function downloadDripifyCsv(c) {
+    var rows = state.enrollments.map(function (e) { return e.member; }).filter(function (m) { return m && m.linkedin_url; });
+    if (!rows.length) return toast('No hay leads enrolados con URL de LinkedIn.', 'warn');
+    var header = ['linkedinUrl', 'first_name', 'last_name', 'company', 'title', 'connection_note', 'message'];
+    var lines = [header.join(',')];
+    var missing = 0;
+    rows.forEach(function (m) {
+      var li = (m.outreach && m.outreach.linkedin_message) || '';
+      if (!li) missing++;
+      lines.push([m.linkedin_url, m.first_name || (m.name || '').split(' ')[0] || '', m.last_name || '', m.company || '', m.title || '', connectionNote(li), li].map(csvCell).join(','));
+    });
+    var blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'dripify-' + String(c.name || 'campana').replace(/[^\w\-]+/g, '_').slice(0, 40) + '.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    toast(rows.length + ' leads en el CSV' + (missing ? ' · ' + missing + ' sin mensaje IA generado' : '') + '.', missing ? 'warn' : 'success');
+  }
+
   // ── Render: lista de campañas ────────────────────────────────────────────
   function renderCampaignList() {
     var col = h('div', { style: 'display:flex;flex-direction:column;gap:10px' });
@@ -595,7 +697,7 @@
     box.innerHTML = (pros().emptyHtml || function (i, t, s) { return '<div class="empty"><div class="empty-title">' + t + '</div><div class="empty-sub">' + s + '</div></div>'; })(
       '<svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 10h3l2-5 3 10 2-5h4"/></svg>',
       'Elige una campaña o crea una nueva',
-      'Una campaña envía WhatsApp (WATI), email (Apollo) y LinkedIn (Dripify, próxima entrega) en una sola cadencia. Se detiene sola cuando el lead responde por cualquier canal.');
+      'Una campaña envía WhatsApp (WATI), email (Apollo) y LinkedIn (Dripify) en una sola cadencia. Se detiene sola cuando el lead responde por cualquier canal.');
     return box;
   }
 
@@ -711,7 +813,7 @@
     stepActions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'step-add', text: '+ Agregar paso' }));
     stepsHead.appendChild(stepActions);
     card.appendChild(stepsHead);
-    card.appendChild(h('div', { class: 'pros-hint', style: 'margin:4px 0 6px', text: 'La espera cuenta desde que el lead entra a la campaña. Dos pasos con la misma espera salen en paralelo. Los pasos de LinkedIn quedan registrados pero se omiten hasta la integración con Dripify.' }));
+    card.appendChild(h('div', { class: 'pros-hint', style: 'margin:4px 0 6px', text: 'La espera cuenta desde que el lead entra a la campaña. Dos pasos con la misma espera salen en paralelo. El paso de LinkedIn enrola al lead en la campaña de Dripify que elijas; la conexión y los mensajes los envía Dripify con su propia cadencia.' }));
     var stepsBox = h('div');
     ed.steps.forEach(function (st, idx) { stepsBox.appendChild(renderStepRow(st, idx)); });
     if (!ed.steps.length) stepsBox.appendChild(h('div', { class: 'pros-hint', text: 'Sin pasos. Agrega uno o usa la cadencia recomendada.' }));
@@ -727,9 +829,13 @@
   function renderStepRow(st, idx) {
     var row = h('div', { class: 'cmp-step' });
     var chSel = h('select');
-    CHANNELS.forEach(function (ch) { var o = h('option', { value: ch.value, text: ch.label }); if (ch.value === st.channel) o.selected = true; chSel.appendChild(o); });
+    CHANNELS.forEach(function (ch) {
+      if (ch.hidden && ch.value !== st.channel) return;
+      var o = h('option', { value: ch.value, text: ch.label }); if (ch.value === st.channel) o.selected = true; chSel.appendChild(o);
+    });
     chSel.addEventListener('change', function () {
       st.channel = chSel.value;
+      if (st.channel === 'linkedin_connect') { st.settings = st.settings || {}; st.content_kind = 'ai_personalized'; }
       var allowed = CONTENT_KINDS.filter(function (k) { return k.channels.indexOf(st.channel) !== -1; });
       if (!allowed.some(function (k) { return k.value === st.content_kind; })) st.content_kind = allowed[0].value;
       render();
@@ -748,6 +854,25 @@
     row.appendChild(h('div', null, h('div', { class: 'pros-lbl', text: 'Paso ' + (idx + 1) }), chSel));
     row.appendChild(h('div', null, h('div', { class: 'pros-lbl', text: 'Espera (días)' }), offI));
     row.appendChild(h('div', null, h('div', { class: 'pros-lbl', text: 'Condición' }), condSel));
+    if (st.channel === 'linkedin_connect') {
+      var dcSel = h('select');
+      var dcs = (state.dripify && state.dripify.config && state.dripify.config.campaigns) || [];
+      st.settings = st.settings || {};
+      dcSel.appendChild(h('option', { value: '', text: dcs.length ? 'Elige la campaña de Dripify…' : (state.dripify ? 'Sin campañas en Dripify' : 'Conecta Dripify primero') }));
+      dcs.forEach(function (dc) {
+        var o = h('option', { value: String(dc.id), text: dc.name + (dc.active === false ? ' (inactiva)' : '') });
+        if (String(dc.id) === String(st.settings.dripify_campaign_id || '')) o.selected = true;
+        dcSel.appendChild(o);
+      });
+      dcSel.addEventListener('change', function () {
+        var dc = dcs.find(function (x) { return String(x.id) === dcSel.value; });
+        st.settings = dc ? { dripify_campaign_id: dc.id, dripify_campaign_name: dc.name } : {};
+      });
+      row.appendChild(h('div', null, h('div', { class: 'pros-lbl', text: 'Campaña de Dripify' }), dcSel));
+      row.appendChild(del);
+      row.appendChild(h('div', { class: 'cmp-step-body' }, h('div', { class: 'pros-hint', text: 'Dripify envía la conexión y los mensajes de esa campaña con sus propias plantillas y ritmo. La campaña debe estar activa en Dripify. Para el mensaje IA de 5 capas usa el CSV para Dripify desde el detalle de la campaña.' })));
+      return row;
+    }
     row.appendChild(h('div', null, h('div', { class: 'pros-lbl', text: 'Contenido' }), kindSel));
     row.appendChild(del);
     if (st.content_kind === 'custom') {
@@ -800,13 +925,26 @@
     var stepsBox = h('div', { class: 'pros-scroll-x' });
     var tbl = '<table><thead><tr><th>#</th><th>Cuándo</th><th>Canal</th><th>Condición</th><th>Contenido</th></tr></thead><tbody>';
     c.steps.forEach(function (s, i) {
-      tbl += '<tr><td>' + (i + 1) + '</td><td>' + esc(fmtOffset(s.offset_hours)) + '</td><td>' + esc(labelOf(CHANNELS, s.channel)) + (s.channel.indexOf('linkedin') === 0 ? ' ' + pill('próxima entrega', 'amber') : '') + '</td><td>' + esc(labelOf(CONDITIONS, s.condition)) + '</td><td>' + esc(labelOf(CONTENT_KINDS, s.content_kind)) + '</td></tr>';
+      var content = s.channel === 'linkedin_connect'
+        ? (s.settings && s.settings.dripify_campaign_name ? 'Campaña de Dripify «' + s.settings.dripify_campaign_name + '»' : 'Sin campaña de Dripify')
+        : s.channel === 'linkedin_message' ? 'Sin proveedor (se omite)' : labelOf(CONTENT_KINDS, s.content_kind);
+      tbl += '<tr><td>' + (i + 1) + '</td><td>' + esc(fmtOffset(s.offset_hours)) + '</td><td>' + esc(labelOf(CHANNELS, s.channel)) + '</td><td>' + esc(labelOf(CONDITIONS, s.condition)) + '</td><td>' + esc(content) + '</td></tr>';
     });
     tbl += '</tbody></table>';
     stepsBox.innerHTML = tbl;
     card.appendChild(stepsBox);
     if (!state.account && c.steps.some(function (s) { return s.channel === 'whatsapp'; })) {
       card.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:10px', text: '⚠ Esta campaña tiene pasos de WhatsApp pero WATI no está conectado: esos pasos se reintentarán cada 6 horas hasta que lo conectes.' }));
+    }
+    var hasLi = c.steps.some(function (s) { return s.channel === 'linkedin_connect'; });
+    if (hasLi && !state.dripify) {
+      card.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:10px', text: '⚠ Esta campaña tiene un paso de LinkedIn pero Dripify no está conectado: ese paso se reintentará cada 6 horas hasta que lo conectes.' }));
+    }
+    if (hasLi) {
+      var csvRow = h('div', { class: 'pros-actions', style: 'margin-top:10px' });
+      csvRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'csv-dripify', text: 'Descargar CSV para Dripify (mensajes IA)' }));
+      csvRow.appendChild(h('span', { class: 'pros-hint', text: 'Dripify no acepta mensajes por API. El CSV trae la URL de LinkedIn, la nota de conexión (≤300 caracteres) y el mensaje IA de cada lead enrolado, para subirlo como lista con Custom Lead Fields y usar esas variables en la campaña de Dripify.' }));
+      card.appendChild(csvRow);
     }
     wrap.appendChild(card);
 
@@ -840,11 +978,12 @@
     }
     var needsWa = c.steps.some(function (s) { return s.channel === 'whatsapp'; });
     var needsEmail = c.steps.some(function (s) { return s.channel === 'email'; });
-    var needsAi = c.steps.some(function (s) { return s.content_kind === 'ai_personalized'; });
+    var needsAi = c.steps.some(function (s) { return s.content_kind === 'ai_personalized' && s.channel !== 'linkedin_connect'; });
+    var needsLi = c.steps.some(function (s) { return s.channel === 'linkedin_connect'; });
     var allChecked = candidates.every(function (m) { return state.selected.has(String(m.id)); });
     var html = '<div class="pros-scroll-x"><table><thead><tr>' +
       '<th style="width:34px"><input type="checkbox" data-action="enroll-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-      '<th>Nombre</th><th>Empresa</th><th>Teléfono</th><th>Email</th><th>Mensajes IA</th></tr></thead><tbody>';
+      '<th>Nombre</th><th>Empresa</th><th>Teléfono</th><th>Email</th><th>LinkedIn</th><th>Mensajes IA</th></tr></thead><tbody>';
     candidates.forEach(function (m) {
       var checked = state.selected.has(String(m.id)) ? ' checked' : '';
       html += '<tr><td><input type="checkbox" data-action="enroll-check" data-id="' + esc(String(m.id)) + '"' + checked + '></td>' +
@@ -852,6 +991,7 @@
         '<td>' + esc(m.company || '—') + '</td>' +
         '<td>' + (hasPhone(m) ? pill('sí', 'green') : (needsWa ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
         '<td>' + (hasEmail(m) ? pill('sí', 'green') : (needsEmail ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
+        '<td>' + (m.linkedin_url ? pill('sí', 'green') : (needsLi ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
         '<td>' + (hasAi(m) ? pill('listos', 'green') : (needsAi ? pill('sin generar', 'amber') : pill('—', 'gray'))) + '</td></tr>';
     });
     html += '</tbody></table></div>';
@@ -859,6 +999,7 @@
     var hints = [];
     if (needsWa) hints.push('WhatsApp necesita teléfono revelado (pestaña Listas → Enriquecer).');
     if (needsEmail) hints.push('Email necesita email revelado.');
+    if (needsLi) hints.push('LinkedIn necesita la URL del perfil del lead.');
     if (needsAi) hints.push('Los pasos "Mensaje IA" usan lo generado en Generador de mensajes IA; sin eso el paso se omite.');
     var foot = h('div', { style: 'padding:10px 14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center' });
     foot.appendChild(h('span', { class: 'pros-hint', style: 'flex:1', text: hints.join(' ') }));
@@ -938,6 +1079,25 @@
           return edgeFetch(FN_CHANNEL, { action: 'disconnect', payload: { provider: 'wati' } }).then(function () { state.account = null; toast('WATI desconectado.', 'success'); render(); });
         },
       });
+    }
+    if (action === 'dripify-edit') { state.dripifyForm = true; return render(); }
+    if (action === 'dripify-refresh') {
+      var r9 = btnLoading(btn, '⏳');
+      return edgeFetch(FN_CHANNEL, { action: 'refresh_dripify', payload: {} }).then(function (r) { state.dripify = r.account; render(); }).then(r9, function (err) { r9(); throw err; });
+    }
+    if (action === 'dripify-disconnect') {
+      return confirmModal({
+        title: 'Desconectar Dripify', danger: true, confirmLabel: 'Desconectar',
+        message: 'Los pasos de LinkedIn dejarán de enrolar leads hasta que vuelvas a conectar una cuenta. Lo ya enrolado en Dripify sigue allá.',
+        onConfirm: function () {
+          return edgeFetch(FN_CHANNEL, { action: 'disconnect', payload: { provider: 'dripify' } }).then(function () { state.dripify = null; toast('Dripify desconectado.', 'success'); render(); });
+        },
+      });
+    }
+    if (action === 'csv-dripify') {
+      var c9 = findCampaign(state.activeId);
+      if (c9) downloadDripifyCsv(c9);
+      return;
     }
     if (action === 'cmp-new') {
       state.editor = newEditor(null);

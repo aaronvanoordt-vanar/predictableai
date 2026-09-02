@@ -24,8 +24,16 @@
  *           email     → Apollo: emailer_messages + send_now desde la cuenta
  *                       remitente de la campaña (mensaje individual, no
  *                       secuencia: así cada lead recibe SU texto de 5 capas).
- *           linkedin_*→ todavía sin proveedor en esta entrega: se salta con
- *                       un evento explícito (Dripify llega en el PR 2).
+ *           linkedin_connect → Dripify: sube el perfil del lead a la campaña
+ *                       de Dripify elegida en el paso (settings.dripify_campaign_id).
+ *                       Dripify manda la conexión y sus mensajes con su propio
+ *                       ritmo; aquí queda `queued` y el estado real llega por
+ *                       la sincronización (abajo) o por dripify-webhook.
+ *           linkedin_message → sin proveedor: la Open API de Dripify no envía
+ *                       mensajes; se omite con evento explícito.
+ *  5. Sincroniza con Dripify (cada 15 min por cuenta): lee los leads de cada
+ *     campaña de Dripify en uso y traduce su lastAction a eventos nuestros
+ *     (conexión enviada / aceptada / respondió → detiene la cadencia).
  *  4. Registra campaign_events (`sent` con nuestro local id, que WATI
  *     devuelve en cada recibo) e inbox_messages (saliente), avanza al paso
  *     siguiente o cierra el enrolamiento (`completed`).
@@ -39,6 +47,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as wati from "../_shared/wati.ts";
+import * as dripify from "../_shared/dripify.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -189,6 +198,7 @@ interface Ctx {
   db: SupabaseClient;
   now: Date;
   watiByUser: Map<string, Json | null>;
+  dripifyByUser: Map<string, Json | null>;
   sentToday: Map<string, number>; // `${user}:${channel}` → envíos en 24 h
 }
 
@@ -196,6 +206,13 @@ async function watiAccount(ctx: Ctx, userId: string): Promise<Json | null> {
   if (ctx.watiByUser.has(userId)) return ctx.watiByUser.get(userId) ?? null;
   const { data } = await ctx.db.from("channel_accounts").select("*").eq("user_id", userId).eq("provider", "wati").maybeSingle();
   ctx.watiByUser.set(userId, data ?? null);
+  return data ?? null;
+}
+
+async function dripifyAccount(ctx: Ctx, userId: string): Promise<Json | null> {
+  if (ctx.dripifyByUser.has(userId)) return ctx.dripifyByUser.get(userId) ?? null;
+  const { data } = await ctx.db.from("channel_accounts").select("*").eq("user_id", userId).eq("provider", "dripify").maybeSingle();
+  ctx.dripifyByUser.set(userId, data ?? null);
   return data ?? null;
 }
 
@@ -208,7 +225,7 @@ async function sentLast24h(ctx: Ctx, userId: string, channel: string): Promise<n
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
     .eq("channel", channel)
-    .eq("type", "sent")
+    .in("type", channel === "linkedin" ? ["sent", "queued"] : ["sent"])
     .gte("created_at", since);
   ctx.sentToday.set(k, count ?? 0);
   return count ?? 0;
@@ -399,8 +416,48 @@ async function runOne(ctx: Ctx, en: Json) {
         await db.from("prospect_list_members").update({ contact_status: "saludo_enviado", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
       }
       await spendCredits(ctx, en.user_id);
+    } else if (step.channel === "linkedin_connect") {
+      const acc = await dripifyAccount(ctx, en.user_id);
+      if (!acc) throw new StepError("Dripify no está conectado.", "hold");
+      const campaignId = Number(step.settings?.dripify_campaign_id);
+      if (!campaignId) throw new StepError("El paso de LinkedIn no tiene campaña de Dripify elegida. Edita la campaña.", "hold");
+      const url = dripify.canonicalLinkedinUrl(member.linkedin_url);
+      if (!url) throw new StepError("El lead no tiene URL de LinkedIn.", "stop");
+      // Ya enrolado en esa campaña de Dripify (p. ej. cadencia editada): no duplicar.
+      if (Number(en.provider_refs?.dripify_campaign_id) === campaignId && en.provider_refs?.dripify_lead_list_id) {
+        throw new StepError("El lead ya está en esa campaña de Dripify.", "skip");
+      }
+      let res: dripify.UploadResult;
+      try {
+        res = await dripify.uploadLeads(acc.secret, campaignId, [url], `px ${String(campaign.name).slice(0, 60)} ${ctx.now.toISOString().slice(0, 10)}`);
+      } catch (e) {
+        const mode = e instanceof dripify.DripifyError && e.status === 429 ? "hold" : "stop";
+        throw new StepError(dripify.humanError(e), mode);
+      }
+      if (!res.accepted && !res.duplicates) throw new StepError("Dripify no aceptó el perfil (URL de LinkedIn inválida o lista en la blacklist).", "stop");
+      const refs = {
+        ...(en.provider_refs ?? {}),
+        dripify_campaign_id: campaignId,
+        dripify_campaign_name: step.settings?.dripify_campaign_name ?? null,
+        dripify_lead_list_id: res.leadListId,
+        dripify_linkedin_url: url,
+        dripify_enrolled_at: ctx.now.toISOString(),
+      };
+      en.provider_refs = refs;
+      await db.from("campaign_enrollments").update({ provider_refs: refs }).eq("id", en.id);
+      await event(ctx, en, "linkedin", "queued", {
+        detail: res.duplicates && !res.accepted
+          ? "El perfil ya estaba en Dripify; sigue la campaña de allá."
+          : `Enrolado en la campaña de Dripify «${step.settings?.dripify_campaign_name ?? campaignId}». Dripify enviará la conexión.`,
+        payload: refs,
+      });
+      ctx.sentToday.set(`${en.user_id}:linkedin`, (await sentLast24h(ctx, en.user_id, "linkedin")) + 1);
+      if (["no_contactado", "en_campana"].includes(member.contact_status)) {
+        await db.from("prospect_list_members").update({ contact_status: "conexion_enviada", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
+      }
+      await spendCredits(ctx, en.user_id);
     } else {
-      throw new StepError("LinkedIn (Dripify) todavía no está disponible en esta versión: paso omitido.", "skip");
+      throw new StepError("Dripify no permite enviar mensajes de LinkedIn por API: paso omitido. El mensaje IA queda en el CSV para Dripify.", "skip");
     }
 
     await advance(ctx, en, steps);
@@ -442,7 +499,7 @@ Deno.serve(async (req) => {
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, { auth: { persistSession: false } });
   const now = new Date();
-  const ctx: Ctx = { db, now, watiByUser: new Map(), sentToday: new Map() };
+  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), sentToday: new Map() };
 
   // 1. Recuperar lo que un run caído dejó a medias.
   await db.from("campaign_enrollments")
@@ -477,5 +534,85 @@ Deno.serve(async (req) => {
       await finish(ctx, en, { status: "error", error_detail: String((e as Error)?.message ?? e).slice(0, 300) });
     }
   }
-  return json({ ok: true, due: due?.length ?? 0, processed });
+  let synced = 0;
+  try { synced = await syncDripify(ctx); } catch (e) { console.error("[campaign-run] dripify sync:", e); }
+  return json({ ok: true, due: due?.length ?? 0, processed, dripify_synced: synced });
 });
+
+// ── Sincronización con Dripify ──────────────────────────────────────────────
+// Dripify no avisa por API cuando manda la conexión o el lead la acepta:
+// solo se puede leer. Cada 15 minutos por cuenta se listan los leads de cada
+// campaña de Dripify en uso y se comparan con nuestros enrolamientos por la
+// URL de LinkedIn. Presupuesto: 1 request por página de 100 leads, muy por
+// debajo de los 5 000/día de la key.
+
+const DRIPIFY_SYNC_MS = 15 * 60 * 1000;
+
+async function syncDripify(ctx: Ctx): Promise<number> {
+  const db = ctx.db;
+  const { data: accounts } = await db.from("channel_accounts").select("*").eq("provider", "dripify").eq("status", "connected");
+  let touched = 0;
+  for (const acc of (accounts ?? []) as Json[]) {
+    const last = acc.config?.dripify_synced_at ? new Date(acc.config.dripify_synced_at).getTime() : 0;
+    if (ctx.now.getTime() - last < DRIPIFY_SYNC_MS) continue;
+    // Enrolamientos de este usuario que Dripify aún puede mover.
+    const { data: ens } = await db
+      .from("campaign_enrollments")
+      .select("id, campaign_id, member_id, user_id, status, next_position, replied_at, linkedin_connected_at, provider_refs")
+      .eq("user_id", acc.user_id)
+      .in("status", ["active", "paused", "processing"])
+      .not("provider_refs->>dripify_campaign_id", "is", null);
+    const list: Json[] = ens ?? [];
+    const byCampaign = new Map<number, Json[]>();
+    for (const en of list) {
+      const cid = Number(en.provider_refs?.dripify_campaign_id);
+      if (!cid) continue;
+      if (!byCampaign.has(cid)) byCampaign.set(cid, []);
+      byCampaign.get(cid)!.push(en);
+    }
+    for (const [cid, group] of byCampaign) {
+      let leads: dripify.DripifyLead[] = [];
+      try { leads = await dripify.listCampaignLeads(acc.secret, cid); } catch (e) { console.warn("[campaign-run] dripify leads", cid, dripify.humanError(e)); continue; }
+      const bySlug = new Map<string, dripify.DripifyLead>();
+      for (const l of leads) { const k = dripify.linkedinSlug(l.linkedinProfileUrl) || l.publicId.toLowerCase(); if (k) bySlug.set(k, l); }
+      for (const en of group) {
+        const slug = dripify.linkedinSlug(en.provider_refs?.dripify_linkedin_url);
+        const lead = slug ? bySlug.get(slug) : undefined;
+        if (!lead) continue;
+        const signal = dripify.classifyEvent(lead.lastAction?.type);
+        const seen = String(en.provider_refs?.dripify_last_action ?? "");
+        const current = `${lead.lastAction?.type ?? ""}@${lead.lastAction?.at ?? ""}`;
+        if (current === seen) continue;
+        const refs = { ...(en.provider_refs ?? {}), dripify_lead_id: lead.id, dripify_last_action: current };
+        const patch: Json = { provider_refs: refs };
+        if (signal === "connection_sent") {
+          await event(ctx, en, "linkedin", "connection_sent", { detail: lead.lastAction?.type, step_position: en.next_position });
+          await db.from("prospect_list_members").update({ contact_status: "conexion_enviada", status_changed_at: ctx.now.toISOString() })
+            .eq("id", en.member_id).in("contact_status", ["no_contactado", "en_campana", "saludo_enviado"]);
+        } else if (signal === "connection_accepted") {
+          if (!en.linkedin_connected_at) patch.linkedin_connected_at = ctx.now.toISOString();
+          await event(ctx, en, "linkedin", "connection_accepted", { detail: lead.lastAction?.type, step_position: en.next_position });
+          await db.from("prospect_list_members").update({ contact_status: "conexion_aceptada", status_changed_at: ctx.now.toISOString() })
+            .eq("id", en.member_id).in("contact_status", ["no_contactado", "en_campana", "saludo_enviado", "conexion_enviada"]);
+        } else if (signal === "message_sent") {
+          await event(ctx, en, "linkedin", "sent", { detail: lead.lastAction?.type, step_position: en.next_position });
+        } else if (signal === "replied") {
+          if (["active", "processing", "paused"].includes(en.status)) {
+            patch.status = "replied";
+            patch.stop_reason = "Respondió por LinkedIn (Dripify).";
+          }
+          if (!en.replied_at) { patch.replied_at = ctx.now.toISOString(); patch.replied_channel = "linkedin"; }
+          await event(ctx, en, "linkedin", "replied", { detail: lead.lastAction?.type, step_position: en.next_position });
+          await db.from("prospect_list_members").update({ contact_status: "respondio", status_changed_at: ctx.now.toISOString() })
+            .eq("id", en.member_id).not("contact_status", "in", "(reunion_agendada,reunion_tomada,dado_de_baja)");
+        } else if (signal === "failed") {
+          await event(ctx, en, "linkedin", "failed", { detail: lead.lastAction?.type, step_position: en.next_position });
+        }
+        await db.from("campaign_enrollments").update(patch).eq("id", en.id);
+        touched++;
+      }
+    }
+    await db.from("channel_accounts").update({ config: { ...(acc.config ?? {}), dripify_synced_at: ctx.now.toISOString() } }).eq("id", acc.id);
+  }
+  return touched;
+}
