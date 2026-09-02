@@ -247,7 +247,7 @@ async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sen
 async function handleTemplateReviewed(db: SupabaseClient, acc: Json) {
   try {
     const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
-    const list = await wati.listTemplates(creds, acc.config?.channel || undefined);
+    const list = await wati.listTemplates(creds);
     const templates = { ...(acc.config?.templates ?? {}), items: { ...(acc.config?.templates?.items ?? {}) } };
     for (const key of Object.keys(templates.items)) {
       const item = templates.items[key];
