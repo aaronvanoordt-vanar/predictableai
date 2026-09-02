@@ -469,10 +469,39 @@
     };
   }
 
-  function dmRow(userId, listId, co, dm) {
+  // Todas las filas de un mismo insert tienen que llevar EXACTAMENTE las
+  // mismas claves: PostgREST arma un solo INSERT con la unión de las claves
+  // de todas las filas y rellena con NULL las que le falten a alguna (no con
+  // el DEFAULT de la columna). Una fila de empresa sin `phone_status` junto a
+  // una de decision maker que sí lo trae reventaba con
+  // «null value in column "phone_status" ... violates not-null constraint».
+  // Por eso ambos constructores parten de esta base.
+  function baseRow(userId, listId) {
     return {
       list_id: listId,
       user_id: userId,
+      apollo_person_id: null,
+      apollo_contact_id: null,
+      first_name: null,
+      last_name: null,
+      name: null,
+      title: null,
+      company: null,
+      company_domain: null,
+      linkedin_url: null,
+      city: null,
+      country: null,
+      email: null,
+      email_status: null,
+      phone: null,
+      phone_status: 'none',
+      enriched_at: null,
+      snapshot: {},
+    };
+  }
+
+  function dmRow(userId, listId, co, dm) {
+    return Object.assign(baseRow(userId, listId), {
       apollo_person_id: dm.apollo_person_id || null,
       first_name: dm.first_name || null,
       last_name: dm.last_name || null,
@@ -491,7 +520,7 @@
       phone_status: dm.phone ? 'revealed' : 'none',
       enriched_at: (dm.email || dm.phone) ? new Date().toISOString() : null,
       snapshot: radarSnapshot(co),
-    };
+    });
   }
 
   // Empresa sin decision makers: Apollo no encontró personas, pero la empresa
@@ -500,21 +529,12 @@
   // sin contacto — nada inventado: nombre y cargo van vacíos.
   function companyRow(userId, listId, co) {
     const site = safeUrl(co.website);
-    return {
-      list_id: listId,
-      user_id: userId,
-      apollo_person_id: null,
-      first_name: null,
-      last_name: null,
-      name: null,
-      title: null,
+    return Object.assign(baseRow(userId, listId), {
       company: co.name || null,
       company_domain: site ? hostOf(site) : null,
-      linkedin_url: null,
-      city: null,
       country: co.country || null,
       snapshot: radarSnapshot(co),
-    };
+    });
   }
 
   async function saveToList(companies) {
