@@ -14,6 +14,12 @@
  * la edge function campaign-run, llamada por pg_cron cada minuto. Los recibos
  * y respuestas de WhatsApp entran por wati-webhook.
  *
+ * Desde campañas v2 la cadencia que ejecuta el motor es el grafo
+ * `campaigns.flow` (js/campaign-flow.js). Este editor sigue escribiendo
+ * campaign_steps y, en el mismo guardado, deriva `flow` con
+ * CampaignFlow.fromLegacySteps (ids de nodo estables entre guardados). El
+ * builder gráfico llega en la Entrega 2 (docs/CAMPAIGN_BUILDER_PLAN.md).
+ *
  * Se monta dentro del shell de Prospección (window.prospecting.show('campanas'))
  * para heredar sus estilos .pros-* y reutilizar su modal de confirmación.
  *
@@ -185,6 +191,14 @@
   function hasPhone(m) { return !!(m && String(m.phone || '').replace(/\D/g, '').length >= 8); }
   function hasEmail(m) { return !!(m && m.email && !/email_not_unlocked/.test(String(m.email))); }
   function hasAi(m) { return !!(m && m.outreach && m.outreach.generated_at); }
+  function flowLib() { return global.CampaignFlow || null; }
+  /** Grafo de la campaña (normalizado) o null si no tiene nodos. */
+  function campaignFlow(c) {
+    var lib = flowLib();
+    if (!lib || !c || !c.flow) return null;
+    var f = lib.normalize(c.flow);
+    return f.nodes.length ? f : null;
+  }
   function browserTz() {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Lima'; } catch (e) { return 'America/Lima'; }
   }
@@ -311,25 +325,39 @@
       if (ins.error) throw new Error('No se pudo crear la campaña: ' + ins.error.message);
       id = ins.data.id;
     }
-    var stepRows = editor.steps
+    var sorted = editor.steps
       .slice()
-      .sort(function (a, b) { return (Number(a.offset_hours) || 0) - (Number(b.offset_hours) || 0); })
-      .map(function (s, i) {
-        return {
-          campaign_id: id,
-          user_id: uid,
-          position: i,
-          channel: s.channel,
-          offset_hours: Math.max(0, Number(s.offset_hours) || 0),
-          condition: s.condition,
-          content_kind: s.content_kind,
-          settings: s.settings && typeof s.settings === 'object' ? s.settings : {},
-          subject: s.subject ? String(s.subject).trim() : null,
-          body: s.body ? String(s.body).trim() : null,
-        };
-      });
+      .sort(function (a, b) { return (Number(a.offset_hours) || 0) - (Number(b.offset_hours) || 0); });
+    var stepRows = sorted.map(function (s, i) {
+      return {
+        campaign_id: id,
+        user_id: uid,
+        position: i,
+        channel: s.channel,
+        offset_hours: Math.max(0, Number(s.offset_hours) || 0),
+        condition: s.condition,
+        content_kind: s.content_kind,
+        settings: s.settings && typeof s.settings === 'object' ? s.settings : {},
+        subject: s.subject ? String(s.subject).trim() : null,
+        body: s.body ? String(s.body).trim() : null,
+      };
+    });
     var st = await sb().from('campaign_steps').insert(stepRows);
     if (st.error) throw new Error('No se pudieron guardar los pasos: ' + st.error.message);
+    // El motor ejecuta el grafo: se deriva de los mismos pasos, con ids de nodo
+    // estables para que los leads en curso sigan en su paso.
+    if (flowLib()) {
+      var flowRows = stepRows.map(function (r, i) {
+        return Object.assign({}, r, { node_id: sorted[i].node_id || null, condition_node_id: sorted[i].condition_node_id || null });
+      });
+      var flow = flowLib().fromLegacySteps(flowRows);
+      sorted.forEach(function (s, i) { var a = flowLib().actions(flow)[i]; if (a) s.node_id = a.id; });
+      var fl = await sb().from('campaigns').update({ flow: flow, origin: c.origin || 'legacy' }).eq('id', id);
+      if (fl.error) {
+        // Columna sin migrar: la campaña sigue corriendo por el camino legado.
+        console.warn('[campaigns] flow no guardado (¿migración 20260903000001 sin aplicar?):', fl.error.message);
+      }
+    }
     // Los enrolamientos activos siguen la nueva cadencia desde su paso actual;
     // si se acortó, el motor los cierra al no encontrar el paso.
     return id;
@@ -379,18 +407,28 @@
     if (!c.steps.length) throw new Error('La campaña no tiene pasos.');
     var first = c.steps[0];
     var now = Date.now();
+    var flow = campaignFlow(c);
+    var firstNode = flow ? flowLib().firstNode(flow) : null;
+    var firstDelay = firstNode ? flowLib().delayMs(firstNode) : (Number(first.offset_hours) || 0) * 3600 * 1000;
     var rows = members.map(function (m) {
-      return {
+      var row = {
         campaign_id: c.id,
         member_id: m.id,
         user_id: uid,
         status: 'active',
         started_at: new Date(now).toISOString(),
         next_position: first.position,
-        next_run_at: new Date(now + (Number(first.offset_hours) || 0) * 3600 * 1000).toISOString(),
+        next_run_at: new Date(now + firstDelay).toISOString(),
       };
+      if (firstNode) row.next_node_id = firstNode.id;
+      return row;
     });
     var res = await sb().from('campaign_enrollments').upsert(rows, { onConflict: 'campaign_id,member_id', ignoreDuplicates: true }).select('member_id');
+    if (res.error && firstNode && /next_node_id/.test(res.error.message)) {
+      // Columna sin migrar: enrolar por posición como antes.
+      rows.forEach(function (r) { delete r.next_node_id; });
+      res = await sb().from('campaign_enrollments').upsert(rows, { onConflict: 'campaign_id,member_id', ignoreDuplicates: true }).select('member_id');
+    }
     if (res.error) throw new Error('No se pudieron enrolar los leads: ' + res.error.message);
     var enrolledIds = (res.data || []).map(function (r) { return r.member_id; });
     var toFlag = members.filter(function (m) { return enrolledIds.indexOf(m.id) !== -1 && (m.contact_status || 'no_contactado') === 'no_contactado'; }).map(function (m) { return m.id; });
@@ -716,7 +754,26 @@
       sender: { name: (acc && acc.name) || sender.name || '', role: (acc && acc.role) || sender.role || '', company: (acc && acc.company) || sender.company || '', email_account_id: '', email: '' },
       recommended: true,
     };
-    return { isNew: !c, campaign: base, steps: c ? c.steps.map(function (s) { return Object.assign({}, s); }) : recommendedSteps() };
+    var steps;
+    if (c) {
+      // Los pasos de campaign_steps se emparejan por orden con las acciones del
+      // grafo para conservar el id de nodo (los leads en curso apuntan a él).
+      var flow = campaignFlow(c);
+      var acts = flow ? flowLib().actions(flow) : [];
+      steps = c.steps.map(function (s, i) {
+        var out = Object.assign({}, s);
+        var a = acts[i];
+        if (a) {
+          out.node_id = a.id;
+          var loc = flowLib().find(flow, a.id);
+          if (loc && loc.parent) out.condition_node_id = loc.parent.id;
+        }
+        return out;
+      });
+    } else {
+      steps = recommendedSteps();
+    }
+    return { isNew: !c, campaign: base, steps: steps };
   }
 
   function renderEditor() {

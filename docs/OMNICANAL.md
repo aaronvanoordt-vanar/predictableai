@@ -1,6 +1,6 @@
 # Campañas omnicanal (WhatsApp · email · LinkedIn)
 
-Estado: **PR 1 entregado** (modelo + motor + WATI + email + retiro de Meta). **PR 2 entregado** (LinkedIn vía Dripify). PR 3 = bandeja unificada, métricas por SDR y handoff al coach.
+Estado: **PR 1 entregado** (modelo + motor + WATI + email + retiro de Meta). **PR 2 entregado** (LinkedIn vía Dripify). **Campañas v2 · Entrega 1** (la cadencia como grafo, motor intérprete, IA por paso, estado de email desde Apollo): ver la sección "Campañas v2" abajo y `docs/CAMPAIGN_BUILDER_PLAN.md`. PR 3 = bandeja unificada, métricas por SDR y handoff al coach.
 
 ## Decisiones tomadas (2026-09-01, con el dueño del producto)
 
@@ -83,3 +83,20 @@ Tablas: `channel_accounts` (secreto oculto por grants de columna), `campaigns`, 
 3. Quitar el job `whatsapp-followups` de pg_cron (la migración lo intenta) y crear `campaign-run` cada minuto (el SQL está comentado al final de la migración).
 4. `APOLLO_API_KEY` ya existe; no hacen falta secretos nuevos (cada usuario aporta su token de WATI).
 5. En WATI, si el registro automático del webhook falla, la pestaña muestra la URL para agregarla a mano (WATI → Webhooks, todos los eventos de mensajes).
+
+## Campañas v2 · Entrega 1 (2026-09-03): la cadencia como grafo
+
+Plan completo y decisiones en `docs/CAMPAIGN_BUILDER_PLAN.md`. Lo que cambió:
+
+- **`campaigns.flow`** es la cadencia que ejecuta el motor: `{v:1, nodes:[…]}` con acciones (canal, espera, contenido) y condiciones con ramas Sí / No que vuelven a juntarse. Esquema, validación y recorrido viven en **dos archivos espejo: `supabase/functions/_shared/campaign-flow.ts` ↔ `js/campaign-flow.js`** (mismo criterio que `icp-taxonomy.ts` ↔ `apollo-enums.js`: se cambian juntos, `deno test supabase/functions/_shared/campaign-flow.test.ts` cubre el TS).
+- **Espera relativa**: `after_prev` cuenta desde la última acción ejecutada por ese lead (o el enrolamiento), `with_prev` sale junto con la acción anterior (paralelo). Una condición puede tener su propia espera ("3 días después, ¿aceptó la conexión?") y se evalúa **una sola vez** cuando el lead llega a ella (`linkedin_connected`, `whatsapp_read`, `email_opened`, `has_phone`, `has_email`, `has_linkedin`). El evento `branched` guarda qué rama tomó; `campaign_enrollments.branch_path` también.
+- **Regla de parada fija**: responde por cualquier canal, se da de baja o se detiene a mano. Por eso `if_no_reply` desapareció del modelo.
+- **Mensaje IA por paso** (`campaign_messages`, una fila por lead y paso): el pase "preparar" de `campaign-run` llama a `generate-outreach` en **modo `step`** (service role + `user_id`, ángulo `apertura | valor | prueba_social | objecion | ultima_carta | libre`, instrucciones del vendedor y los mensajes ya enviados al lead) para los pasos que vencen en < 24 h. El primer paso "apertura" reutiliza el mensaje de 5 capas del lead sin cobrar. Con `campaigns.review_required` el mensaje queda `draft` hasta que el usuario lo apruebe (el cliente solo puede editar `subject`/`body` y pasar a `approved`).
+- **Estado de email desde Apollo**: cada 15 min por email enviado (14 días) el motor consulta `POST /emailer_messages/search` por lotes de ids: `opened` → evento `opened` (alimenta la condición `email_opened`), `replied` → detiene la cadencia como una respuesta de WhatsApp, `bounced` → `failed`. Si el endpoint no está disponible en el plan, se registra en `payload.apollo_error` y no se insiste cada minuto.
+- **Compatibilidad**: la migración `20260903000001_campaign_flow.sql` convierte cada `campaign_steps` existente en `flow` (offset absoluto → espera relativa; mismo offset → `with_prev`; `if_connected` consecutivos → una condición) y apunta los enrolamientos en curso a su nodo. El editor actual sigue escribiendo `campaign_steps` y deriva `flow` en el mismo guardado con ids de nodo estables. `campaign_steps` se borra cuando entre el builder gráfico (Entrega 2). Una campaña sin `flow` sigue corriendo por el camino legado del motor.
+
+### Pasos manuales para poner la Entrega 1 en producción
+
+1. Aplicar `20260903000001_campaign_flow.sql` (probada dos veces seguidas en Postgres 16 local sobre un esquema stub; el backfill da el mismo grafo que `fromLegacySteps`).
+2. Desplegar `campaign-run` **con `--no-verify-jwt`** y `generate-outreach` (el workflow **Actions → Deploy Edge Functions** ya lo sabe).
+3. Verificar con un email real que `emailer_messages/search` responde con la API key (si no, `email_opened` queda inactiva y el motor lo loguea).
