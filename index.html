@@ -2087,38 +2087,26 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="sidebar-section">
       <div class="lbl">Ejecutar</div>
     </div>
-    <div class="nav-item" data-page="pro-main" data-pros-tab="resumen" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('resumen')">
+    <!-- Journey lineal: Buscar → Listas (contactos + CRM) → Campañas (canales + respuestas).
+         El padre abre Buscar; los hijos son las únicas pestañas de js/prospecting.js.
+         Los ids viejos (resumen/contactos/outreach/secuencias/bandeja) siguen
+         resolviendo vía PRO_HASH_ALIASES y prospecting.show(). -->
+    <div class="nav-item" data-page="pro-main" data-pros-tab="busqueda" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('busqueda')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="6" cy="5" r="3"/><path d="M1 14c0-3 2.5-5 5-5M14 11l-3 3-1.5-1.5"/></svg>
       Prospección
     </div>
     <div class="nav-item" data-page="pro-main" data-pros-tab="busqueda" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('busqueda')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5L10.3 10.3"/></svg>
-      Search People
+      Buscar
     </div>
     <div class="nav-item" data-page="pro-main" data-pros-tab="listas" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('listas')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 6h6M5 9h4"/></svg>
-      Listas guardadas
+      Listas
       <span id="nav-listas-badge" class="nav-badge teal" style="display:none">0</span>
-    </div>
-    <div class="nav-item" data-page="pro-main" data-pros-tab="contactos" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('contactos')" style="margin-left:20px;font-size:12px">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="5.5" cy="5.5" r="2.5"/><circle cx="11" cy="6.5" r="2"/><path d="M1.5 13.5c0-2.2 1.8-4 4-4s4 1.8 4 4M10 9.8c1.8.3 3.2 1.6 3.2 3.7"/></svg>
-      Contactos
-    </div>
-    <div class="nav-item" data-page="pro-main" data-pros-tab="outreach" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('outreach')" style="margin-left:20px;font-size:12px">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 4a1 1 0 011-1h10a1 1 0 011 1v7a1 1 0 01-1 1H5l-3 2V4z"/></svg>
-      Generador de mensajes IA
     </div>
     <div class="nav-item" data-page="pro-main" data-pros-tab="campanas" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('campanas')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>
       Campañas
-    </div>
-    <div class="nav-item" data-page="pro-main" data-pros-tab="secuencias" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('secuencias')" style="margin-left:20px;font-size:12px">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M5 8l2 2 4-4"/></svg>
-      Secuencias
-    </div>
-    <div class="nav-item" data-page="pro-main" data-pros-tab="bandeja" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('bandeja')" style="margin-left:20px;font-size:12px">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 4.5A1.5 1.5 0 013.5 3h9A1.5 1.5 0 0114 4.5v7A1.5 1.5 0 0112.5 13h-9A1.5 1.5 0 012 11.5v-7z"/><path d="M2.5 5l5.5 3.5L13.5 5"/></svg>
-      Bandeja
     </div>
 
     <!-- APRENDER -->
@@ -2792,7 +2780,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   </div>
 </div>
 
-<!-- ═══════ PAGE: PROSPECCIÓN (Búsqueda · Listas · Contactos · Secuencias · Generador de mensajes IA) ═══════ -->
+<!-- ═══════ PAGE: PROSPECCIÓN (Buscar · Listas · Campañas — js/prospecting.js + js/campaigns.js) ═══════ -->
 <div class="page fade-in" id="page-pro-main">
   <div id="prospecting-shell" style="display:flex;flex-direction:column;min-width:0;width:100%"></div>
 </div>
@@ -4562,8 +4550,9 @@ function nav(el, pageId) {
     setTimeout(() => {
       const shell = document.getElementById('prospecting-shell');
       if (shell && !shell.childElementCount) {
-        let savedTab = 'resumen';
-        try { savedTab = localStorage.getItem('predictable_pros_tab') || 'resumen'; } catch (e) {}
+        let savedTab = 'busqueda';
+        try { savedTab = localStorage.getItem('predictable_pros_tab') || 'busqueda'; } catch (e) {}
+        // prospecting.show() ya tolera ids viejos (alias → pestaña viva).
         window.prospecting.show(savedTab);
       }
     }, 0);
@@ -4601,11 +4590,22 @@ function nav(el, pageId) {
 
 // Hash-based deep link: e.g. /index.html#mi-dashboard activates that page on load.
 // Used by onboarding to drop the user straight into the Intelligence Hub.
-// Alias de páginas de prospección retiradas → nueva página pro-main + tab.
+// Alias de páginas/pestañas de prospección retiradas → pro-main + tab actual.
+// Pestañas vivas: busqueda · listas · campanas (js/prospecting.js). Las
+// retiradas el 2026-09-03 caen donde vive hoy su función: Contactos → Listas
+// («Todos los contactos»); mensajes IA, secuencias y bandeja → Campañas.
 const PRO_HASH_ALIASES = {
-  'pro-overview': 'busqueda', 'pro-apollo': 'busqueda',
-  'pro-listas': 'listas', 'pro-mensajes': 'outreach',
+  'pro-overview': 'busqueda', 'pro-apollo': 'busqueda', 'resumen': 'busqueda',
+  'pro-listas': 'listas', 'contactos': 'listas',
+  'pro-mensajes': 'campanas', 'outreach': 'campanas', 'secuencias': 'campanas', 'bandeja': 'campanas',
 };
+const PRO_TABS = ['busqueda', 'listas', 'campanas'];
+// Normaliza cualquier id (viejo, nuevo o basura de localStorage) a una pestaña viva.
+function normalizeProTab(tab) {
+  const t = String(tab || '');
+  const mapped = PRO_HASH_ALIASES[t] || t;
+  return PRO_TABS.includes(mapped) ? mapped : 'busqueda';
+}
 window.addEventListener('DOMContentLoaded', () => {
   let hash = (location.hash || '').replace(/^#/, '');
   let proTab = PRO_HASH_ALIASES[hash];
@@ -4632,17 +4632,19 @@ window.addEventListener('DOMContentLoaded', () => {
   if (hash === 'pro-main' && !proTab) {
     try { proTab = localStorage.getItem('predictable_pros_tab') || null; } catch (e) {}
   }
+  // Un valor viejo (p. ej. 'contactos' guardado antes del rediseño) no debe
+  // dejar el sidebar sin resaltar ni el shell sin pestaña.
+  if (hash === 'pro-main') proTab = normalizeProTab(proTab);
 
   if (hash === 'settings' && typeof window.openSettingsPage === 'function') {
     setTimeout(() => window.openSettingsPage(), 0);
     return;
   }
 
-  // Para pro-main hay 6 nav-items con el mismo data-page (uno por sub-tab);
-  // sin esto, querySelector siempre agarra el primero ("Prospección"/resumen)
+  // Para pro-main hay 4 nav-items con el mismo data-page (el padre + uno por
+  // sub-tab); sin esto, querySelector siempre agarra el primero ("Prospección")
   // y el sidebar se queda resaltando ese aunque el contenido restaurado sea
-  // otra pestaña (Búsqueda, Listas, Contactos, Secuencias, Generador de
-  // mensajes IA).
+  // otra pestaña (Listas, Campañas).
   const navEl = (hash === 'pro-main' && proTab)
     ? (document.querySelector(`.nav-item[data-page="pro-main"][data-pros-tab="${proTab}"]`) ||
        document.querySelector(`.nav-item[data-page="${hash}"]`))

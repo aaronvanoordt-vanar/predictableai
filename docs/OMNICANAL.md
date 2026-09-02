@@ -100,3 +100,30 @@ Plan completo y decisiones en `docs/CAMPAIGN_BUILDER_PLAN.md`. Lo que cambió:
 1. Aplicar `20260903000001_campaign_flow.sql` (probada dos veces seguidas en Postgres 16 local sobre un esquema stub; el backfill da el mismo grafo que `fromLegacySteps`).
 2. Desplegar `campaign-run` **con `--no-verify-jwt`** y `generate-outreach` (el workflow **Actions → Deploy Edge Functions** ya lo sabe).
 3. Verificar con un email real que `emailer_messages/search` responde con la API key (si no, `email_opened` queda inactiva y el motor lo loguea).
+
+## Canales dentro de Campañas: Apollo por OAuth (opción B) + respuestas (2026-09-03)
+
+Decisiones del dueño: Apollo sigue siendo el motor de datos y de email, pero **cada cliente conecta SU cuenta de Apollo por OAuth**; la key compartida (`APOLLO_API_KEY`) queda como fallback de la beta. WhatsApp sigue en WATI y LinkedIn en Dripify (token pegado, sin OAuth). En la UI los canales se llaman Email / WhatsApp / LinkedIn y viven dentro de Campañas; la bandeja "Respuestas" permite contestar por WhatsApp (sesión) y email.
+
+### Lo que dice Apollo (leído el 2026-09-03)
+
+- OAuth de partners: [docs.apollo.io/docs/use-oauth-20-authorization-flow…](https://docs.apollo.io/docs/use-oauth-20-authorization-flow-to-access-apollo-user-information-partners). Authorize `https://app.apollo.io/#/oauth/authorize?client_id&redirect_uri&response_type=code&scope&state`; token `POST https://app.apollo.io/api/v1/oauth/token` (form-urlencoded, `grant_type=authorization_code|refresh_token`, `client_id`, `client_secret`). Respuesta `{access_token, token_type:"Bearer", expires_in: 2592000 (30 días), refresh_token, scope, created_at}`. **Refrescar revoca el par anterior** → siempre se persiste el nuevo. El token va como `Authorization: Bearer …`; la key de plataforma como `x-api-key` ([reference/authentication](https://docs.apollo.io/reference/authentication)). El redirect debe ser https y estar registrado en la app (hasta 4).
+- Scopes: uno por endpoint, con el nombre del endpoint (`emailer_messages_create`, `emailer_messages_send_now`, `emailer_messages_search`, `emailer_messages_email_send_status`, `email_accounts_list`, `contacts_create`, `contacts_search`, `people_match`, …); `read_user_profile` viene siempre. La lista está en `APOLLO_SCOPES` (`_shared/apollo-auth.ts`) y **debe coincidir con los scopes marcados al registrar la app**.
+- Respuestas de email: Apollo no manda webhook cuando un lead responde. `/emailer_messages/search` ([search-for-outreach-emails](https://docs.apollo.io/reference/search-for-outreach-emails)) devuelve solo correos salientes con `replied`, `reply_class`, `bounce`, `spam_blocked`, `provider_thread_id` (paginado por `completed_at`, 100 por página); `get_content` tampoco incluye respuestas. **El texto del lead solo se obtiene de Gmail** (`gmail_accounts`, hilo = `provider_thread_id`).
+
+### Cómo quedó
+
+- **`channel-connect`**: `apollo_auth_url {redirect_uri} → {url}` (503 `apollo_oauth_not_configured` si no hay `APOLLO_OAUTH_CLIENT_ID`), `apollo_connect {code, state, redirect_uri} → {apollo}` (verifica el `state` firmado con HMAC, cambia el code, lee `/users/api_profile` y `/email_accounts`, guarda `channel_accounts` provider `apollo` con `secret` = JSON de tokens), `status` devuelve también `apollo` y `apollo_oauth_available`, `disconnect` acepta `apollo`. Callback: `apollo-callback.html` (redirect registrado: `https://predictableai.vanarsi.com/apollo-callback.html`).
+- **`_shared/apollo-auth.ts`**: `resolveApolloAuth(svc, userId)` → `{headers, mode: 'oauth'|'platform', accountEmail, emailAccounts}`; refresca el token si vence en < 5 min y marca la fila `error` (la UI muestra "Reconectar") si el refresh falla, cayendo a la plataforma.
+- **`apollo-proxy`**: usa la credencial del usuario. En modo `oauth` los reveals (`/people/match`) **no cobran créditos de predictable** (los paga el Apollo del cliente). Header de respuesta `X-Apollo-Auth-Mode`.
+- **`campaign-run`**: email con la credencial del usuario (sobre el motor intérprete de la Entrega 1); guarda `provider_refs.apollo_contact_id`, `inbox_messages.campaign_id/enrollment_id`, `payload.subject/provider_thread_id`. **LinkedIn sin tope diario** (se ignora `daily_caps.linkedin`). `syncApolloReplies` cada 15 min (o `{"sync_apollo": true}` en el body): cruza los envíos de los últimos 30 días con `/emailer_messages/search`; `replied` → fila entrante (`provider_message_id = <id>:reply`, cuerpo desde Gmail si está conectado, si no `null` + `reply_class`), enrolamiento `replied`, evento y CRM `respondio`; `bounce`/`spam_blocked` → fila `failed` + evento.
+- **`inbox-send`** (JWT): `{channel:'whatsapp', member_id, body}` (texto de sesión por WATI; fuera de la ventana de 24 h responde 409 `whatsapp_window_closed`), `{channel:'email', member_id, body, subject?}` (borrador + `send_now` por Apollo con la credencial del usuario), `{action:'mark_read', ids}`. 1 crédito por respuesta enviada, sin bloquear.
+- **`wati-webhook` / `dripify-webhook`**: los entrantes llevan `campaign_id` / `enrollment_id` del enrolamiento vivo (o el más reciente).
+- **`gmail-proxy`**: la lectura del hilo y el refresh viven ahora en `_shared/gmail.ts` (mismo comportamiento).
+
+### Pasos manuales para ponerlo en producción
+
+1. Aplicar `20260903000002_channels_apollo_oauth_inbox.sql` (`channel_accounts.provider` acepta `apollo`; `inbox_messages.campaign_id/enrollment_id/read_at` + índices; default de `daily_caps` sin LinkedIn).
+2. Registrar la app OAuth en Apollo (Integrations → API → OAuth/partner app) con redirect `https://predictableai.vanarsi.com/apollo-callback.html` y los scopes de `APOLLO_SCOPES`; cargar en Supabase los secrets `APOLLO_OAUTH_CLIENT_ID` y `APOLLO_OAUTH_CLIENT_SECRET`. Sin ellos todo sigue funcionando en modo plataforma (`APOLLO_API_KEY`).
+3. Desplegar `channel-connect`, `apollo-proxy`, `campaign-run`, `inbox-send`, `gmail-proxy` (con JWT) y `wati-webhook`, `dripify-webhook` (**`--no-verify-jwt`**). Actions → Deploy Edge Functions ya sabe las banderas.
+4. La migración también agrega `inbox_messages` a la publicación `supabase_realtime` (la bandeja se refresca sola).

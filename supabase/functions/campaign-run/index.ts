@@ -46,13 +46,25 @@
  * detención manual cierran el enrolamiento. Las respuestas de WhatsApp y
  * LinkedIn las registran los webhooks; las de email, el pase 6.
  *
- * Secretos requeridos: SUPABASE_* (plataforma) y APOLLO_API_KEY (email).
+ * Credenciales de Apollo (email): la del usuario si conectó su Apollo por
+ * OAuth (channel_accounts.provider = 'apollo', ver _shared/apollo-auth.ts);
+ * si no, la key compartida APOLLO_API_KEY (fallback de la beta).
+ * LinkedIn no tiene tope diario: el ritmo lo decide Dripify (Activity
+ * Control), así que daily_caps.linkedin se ignora aunque exista.
+ * Las filas de inbox_messages llevan campaign_id / enrollment_id para la
+ * bandeja de Respuestas; el texto de una respuesta por email se intenta leer
+ * del hilo de Gmail (gmail_accounts) porque Apollo nunca lo entrega.
+ *
+ * Secretos requeridos: SUPABASE_* (plataforma) y APOLLO_API_KEY (fallback de
+ * email). Opcionales: APOLLO_OAUTH_CLIENT_ID/SECRET, GOOGLE_CLIENT_ID/SECRET.
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as wati from "../_shared/wati.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
+import * as apolloAuth from "../_shared/apollo-auth.ts";
+import * as gmail from "../_shared/gmail.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -154,27 +166,13 @@ function hasEmail(m: Json): boolean {
 
 // ── Apollo (email) ──────────────────────────────────────────────────────────
 
-async function apollo(endpoint: string, body: Json): Promise<Json> {
-  const apiKey = (Deno.env.get("APOLLO_API_KEY") ?? "").trim();
-  if (!apiKey) throw new Error("APOLLO_API_KEY no está configurada en el servidor.");
-  const res = await fetch("https://api.apollo.io/api/v1" + endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apiKey },
-    body: JSON.stringify(body ?? {}),
-  });
-  const text = await res.text();
-  let data: Json = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text.slice(0, 300) }; }
-  if (!res.ok) {
-    const detail = data?.error || data?.message || `HTTP ${res.status}`;
-    throw new Error("Apollo: " + String(detail).slice(0, 300));
-  }
-  return data;
+function apollo(auth: apolloAuth.ApolloAuth, endpoint: string, body: Json): Promise<Json> {
+  return apolloAuth.apolloCall(auth, "POST", endpoint, body);
 }
 
-async function ensureApolloContact(db: SupabaseClient, m: Json): Promise<string> {
+async function ensureApolloContact(db: SupabaseClient, auth: apolloAuth.ApolloAuth, m: Json): Promise<string> {
   if (m.apollo_contact_id) return String(m.apollo_contact_id);
-  const data = await apollo("/contacts", {
+  const data = await apollo(auth, "/contacts", {
     first_name: m.first_name || undefined,
     last_name: m.last_name || undefined,
     title: m.title || undefined,
@@ -189,22 +187,34 @@ async function ensureApolloContact(db: SupabaseClient, m: Json): Promise<string>
   return String(id);
 }
 
-async function sendApolloEmail(db: SupabaseClient, m: Json, sender: Json, subject: string, body: string): Promise<string> {
+interface ApolloSendResult { messageId: string; contactId: string; threadId: string | null; fromEmail: string; }
+
+/**
+ * Borrador + send_now. La cuenta remitente es la de la campaña; si la campaña
+ * no la fijó y el usuario conectó su Apollo, se usa su cuenta por defecto.
+ */
+async function sendApolloEmail(db: SupabaseClient, auth: apolloAuth.ApolloAuth, m: Json, sender: Json, subject: string, body: string): Promise<ApolloSendResult> {
   if (!hasEmail(m)) throw new Error("El lead no tiene email revelado.");
-  if (!sender?.email_account_id || !sender?.email) throw new Error("La campaña no tiene cuenta remitente de Apollo.");
-  const contactId = await ensureApolloContact(db, m);
-  const draft = await apollo("/emailer_messages", { contact_id: contactId, subject, body_html: bodyToHtml(body) });
+  let from = sender?.email_account_id && sender?.email ? { id: String(sender.email_account_id), email: String(sender.email) } : null;
+  if (!from) {
+    const def = apolloAuth.defaultEmailAccount(auth.emailAccounts);
+    if (def) from = { id: def.id, email: def.email };
+  }
+  if (!from) throw new Error("La campaña no tiene cuenta remitente de email.");
+  const contactId = await ensureApolloContact(db, auth, m);
+  const draft = await apollo(auth, "/emailer_messages", { contact_id: contactId, subject, body_html: bodyToHtml(body) });
   const messageId = draft?.emailer_message?.id;
   if (!messageId) throw new Error("Apollo no devolvió el borrador del correo.");
-  const sent = await apollo(`/emailer_messages/${encodeURIComponent(messageId)}/send_now`, {
+  const sent = await apollo(auth, `/emailer_messages/${encodeURIComponent(messageId)}/send_now`, {
     id: messageId,
-    send_from: { email_account_id: sender.email_account_id, email: sender.email },
+    send_from: { email_account_id: from.id, email: from.email },
   });
   const r = sent?.emailer_message || {};
   if (r.status === "failed" || r.not_sent_reason) {
     throw new Error("Apollo no envió el correo: " + (r.failure_reason || r.not_sent_reason || "motivo no informado"));
   }
-  return String(messageId);
+  const threadId = r.provider_thread_id || draft?.emailer_message?.provider_thread_id || null;
+  return { messageId: String(messageId), contactId, threadId: threadId ? String(threadId) : null, fromEmail: from.email };
 }
 
 // ── Motor ───────────────────────────────────────────────────────────────────
@@ -214,6 +224,8 @@ interface Ctx {
   now: Date;
   watiByUser: Map<string, Json | null>;
   dripifyByUser: Map<string, Json | null>;
+  apolloByUser: Map<string, apolloAuth.ApolloAuth | null>;
+  gmailByUser: Map<string, { token: string; email: string } | null>;
   sentToday: Map<string, number>; // `${user}:${channel}` → envíos en 24 h
   campaignCache: Map<string, Json | null>;
 }
@@ -241,6 +253,53 @@ function stepFromNode(flow: flowLib.Flow, node: flowLib.ActionNode): StepLike {
     node_id: node.id,
     angle: node.content.angle ?? null,
   };
+}
+
+/** Credencial de Apollo del usuario (OAuth propio o plataforma); null si no hay ninguna. */
+async function apolloFor(ctx: Ctx, userId: string): Promise<apolloAuth.ApolloAuth | null> {
+  if (ctx.apolloByUser.has(userId)) return ctx.apolloByUser.get(userId) ?? null;
+  let auth: apolloAuth.ApolloAuth | null = null;
+  try { auth = await apolloAuth.resolveApolloAuth(ctx.db, userId); } catch (e) { console.warn("[campaign-run] apollo auth", userId, apolloAuth.humanError(e)); }
+  ctx.apolloByUser.set(userId, auth);
+  return auth;
+}
+
+/** Access token de Gmail del usuario (una vez por run); null si no conectó Gmail o el refresh falla. */
+async function gmailFor(ctx: Ctx, userId: string): Promise<{ token: string; email: string } | null> {
+  if (ctx.gmailByUser.has(userId)) return ctx.gmailByUser.get(userId) ?? null;
+  let out: { token: string; email: string } | null = null;
+  if (gmail.googleCredentials()) {
+    const { data: acct } = await ctx.db.from("gmail_accounts").select("email, refresh_token, status").eq("user_id", userId).maybeSingle();
+    if (acct?.refresh_token && acct.status === "connected") {
+      const token = await gmail.refreshAccessToken(acct.refresh_token);
+      if (token) out = { token, email: String(acct.email) };
+      else console.warn("[campaign-run] gmail refresh failed for", userId);
+    }
+  }
+  ctx.gmailByUser.set(userId, out);
+  return out;
+}
+
+/** Última respuesta del lead en el hilo de Gmail posterior a nuestro envío (Apollo nunca entrega el texto). */
+async function gmailReply(ctx: Ctx, userId: string, threadId: string | null, contactEmail: string | null, sentAt: string | null): Promise<{ body: string; subject: string; at: string | null } | null> {
+  if (!threadId) return null;
+  const g = await gmailFor(ctx, userId);
+  if (!g) return null;
+  try {
+    const sentMs = sentAt ? (Date.parse(sentAt) || 0) : 0;
+    const msgs = await gmail.readThread(g.token, g.email, { threadId, contactEmail: contactEmail ?? undefined, since: sentMs ? Math.floor(sentMs / 1000) - 60 : undefined });
+    const inbound = msgs.filter((m) => !m.outbound && (m.internal_date ?? 0) >= sentMs - 60_000);
+    const last = inbound[inbound.length - 1];
+    if (!last) return null;
+    return {
+      body: (last.body || last.snippet || "").slice(0, 8000),
+      subject: last.subject,
+      at: last.internal_date ? new Date(last.internal_date).toISOString() : null,
+    };
+  } catch (e) {
+    console.warn("[campaign-run] gmail thread", threadId, (e as Error)?.message ?? e);
+    return null;
+  }
 }
 
 async function watiAccount(ctx: Ctx, userId: string): Promise<Json | null> {
@@ -442,6 +501,7 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     await db.from("inbox_messages").insert({
       user_id: en.user_id, member_id: member.id, channel: "whatsapp", provider: "wati", direction: "out",
       contact_ref: phone, body: bodyText, provider_message_id: localId, status: "pending", sent_at: ctx.now.toISOString(),
+      campaign_id: campaign.id, enrollment_id: en.id,
       payload: { campaign_id: campaign.id, step_position: step.position, node_id: step.node_id, content_kind: step.content_kind },
     });
     await event(ctx, en, "whatsapp", "sent", { provider_message_id: localId, detail: bodyText.slice(0, 200), step_position: step.position, node_id: step.node_id });
@@ -462,16 +522,26 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       subject = t.subject; bodyText = t.body; messageRowId = t.messageId;
     }
     if (!subject.trim() || !bodyText.trim()) throw new StepError("No hay email personalizado generado para este lead.", "skip");
-    let messageId: string;
+    const auth = await apolloFor(ctx, en.user_id);
+    if (!auth) throw new StepError("Email no está conectado (ni cuenta propia de Apollo ni key de la plataforma).", "hold");
+    let sent: ApolloSendResult;
     try {
-      messageId = await sendApolloEmail(db, member, sender, subject, bodyText);
+      sent = await sendApolloEmail(db, auth, member, sender, subject, bodyText);
     } catch (e) {
-      throw new StepError((e as Error).message, "stop");
+      // 401/403 con credencial propia = token vencido/revocado: se reintenta cuando el usuario reconecte.
+      const status = (e as apolloAuth.ApolloError)?.status;
+      throw new StepError(apolloAuth.humanError(e), status === 401 || status === 403 ? "hold" : "stop");
     }
+    const messageId = sent.messageId;
+    const refs = { ...(en.provider_refs ?? {}), apollo_contact_id: sent.contactId, apollo_last_message_id: messageId };
+    en.provider_refs = refs;
+    await db.from("campaign_enrollments").update({ provider_refs: refs }).eq("id", en.id);
     await db.from("inbox_messages").insert({
       user_id: en.user_id, member_id: member.id, channel: "email", provider: "apollo", direction: "out",
       contact_ref: member.email, body: `Asunto: ${subject}\n\n${bodyText}`, provider_message_id: messageId, status: "sent", sent_at: ctx.now.toISOString(),
-      payload: { campaign_id: campaign.id, step_position: step.position, node_id: step.node_id, subject },
+      provider_conversation_id: sent.threadId,
+      campaign_id: campaign.id, enrollment_id: en.id,
+      payload: { campaign_id: campaign.id, step_position: step.position, node_id: step.node_id, subject, provider_thread_id: sent.threadId, from_email: sent.fromEmail, apollo_mode: auth.mode },
     });
     await event(ctx, en, "email", "sent", { provider_message_id: messageId, detail: subject.slice(0, 200), step_position: step.position, node_id: step.node_id });
     if (messageRowId) await db.from("campaign_messages").update({ status: "sent", sent_at: ctx.now.toISOString() }).eq("id", messageRowId);
@@ -534,7 +604,9 @@ async function preflight(ctx: Ctx, en: Json, campaign: Json, step: StepLike): Pr
 
   const ch = channelKey(step.channel);
   const caps = campaign.daily_caps ?? {};
-  const cap = Number(caps[ch] ?? 0);
+  // LinkedIn no tiene tope aquí: el ritmo lo decide Dripify (Activity Control);
+  // daily_caps.linkedin se ignora aunque una campaña vieja lo traiga.
+  const cap = ch === "linkedin" ? 0 : Number(caps[ch] ?? 0);
   if (cap > 0) {
     const used = await sentLast24h(ctx, en.user_id, ch);
     if (used >= cap) {
@@ -859,11 +931,21 @@ async function handleEmailReply(ctx: Ctx, ev: Json, msg: Json) {
   if (!en.replied_at) { patch.replied_at = ctx.now.toISOString(); patch.replied_channel = "email"; }
   if (Object.keys(patch).length) await db.from("campaign_enrollments").update(patch).eq("id", en.id);
   await event(ctx, en, "email", "replied", { provider_message_id: ev.provider_message_id, detail: "Respuesta registrada por Apollo.", step_position: ev.step_position, node_id: ev.node_id });
+  // El texto del lead solo existe en el buzón: se intenta leer del hilo de
+  // Gmail (provider_thread_id de Apollo = id del hilo). Sin Gmail, body null y
+  // la bandeja ofrece "Conectar Gmail para leer el hilo completo".
+  const { data: outRow } = await db.from("inbox_messages").select("contact_ref, sent_at, provider_conversation_id")
+    .eq("provider", "apollo").eq("provider_message_id", String(ev.provider_message_id)).eq("direction", "out").maybeSingle();
+  const threadId = msg?.provider_thread_id ? String(msg.provider_thread_id) : (outRow?.provider_conversation_id ?? null);
+  const contactEmail = outRow?.contact_ref ?? null;
+  const fromGmail = await gmailReply(ctx, en.user_id, threadId, contactEmail, outRow?.sent_at ?? null);
   await db.from("inbox_messages").upsert({
     user_id: en.user_id, member_id: en.member_id, channel: "email", provider: "apollo", direction: "in",
-    contact_ref: null, body: "Respondió al email (el texto está en tu bandeja de Apollo).",
-    provider_message_id: `reply:${ev.provider_message_id}`, status: "delivered", sent_at: ctx.now.toISOString(),
-    payload: { emailer_message_id: ev.provider_message_id, apollo_status: msg?.status ?? null },
+    contact_ref: contactEmail, body: fromGmail ? fromGmail.body : null,
+    provider_message_id: `reply:${ev.provider_message_id}`, provider_conversation_id: threadId,
+    status: "delivered", sent_at: fromGmail?.at ?? ctx.now.toISOString(),
+    campaign_id: en.campaign_id, enrollment_id: en.id,
+    payload: { emailer_message_id: ev.provider_message_id, apollo_status: msg?.status ?? null, reply_class: msg?.reply_class ?? null, subject: fromGmail?.subject ?? null, body_source: fromGmail ? "gmail" : null },
   }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true });
   if (en.member_id) {
     await db.from("prospect_list_members").update({ contact_status: "respondio", status_changed_at: ctx.now.toISOString() })
@@ -873,7 +955,6 @@ async function handleEmailReply(ctx: Ctx, ev: Json, msg: Json) {
 
 async function syncApolloEmail(ctx: Ctx): Promise<number> {
   const db = ctx.db;
-  if (!(Deno.env.get("APOLLO_API_KEY") ?? "").trim()) return 0;
   const since = new Date(ctx.now.getTime() - EMAIL_SYNC_WINDOW_MS).toISOString();
   const checkedBefore = new Date(ctx.now.getTime() - EMAIL_SYNC_EVERY_MS).toISOString();
   const { data: evs } = await db
@@ -886,15 +967,24 @@ async function syncApolloEmail(ctx: Ctx): Promise<number> {
     .or(`payload->>apollo_checked_at.is.null,payload->>apollo_checked_at.lt.${checkedBefore}`)
     .order("created_at", { ascending: true })
     .limit(EMAIL_SYNC_BATCH);
-  const list: Json[] = evs ?? [];
-  if (!list.length) return 0;
+  const all: Json[] = evs ?? [];
+  if (!all.length) return 0;
   let touched = 0;
+  // Cada usuario consulta con SU credencial (OAuth propio o plataforma).
+  const byUser = new Map<string, Json[]>();
+  for (const ev of all) { const k = String(ev.user_id); if (!byUser.has(k)) byUser.set(k, []); byUser.get(k)!.push(ev); }
+  for (const [userId, list] of byUser) {
+  const auth = await apolloFor(ctx, userId);
+  if (!auth) {
+    for (const ev of list) await db.from("campaign_events").update({ payload: { ...(ev.payload ?? {}), apollo_checked_at: ctx.now.toISOString(), apollo_error: "sin credencial de Apollo" } }).eq("id", ev.id);
+    continue;
+  }
   for (let i = 0; i < list.length; i += 10) {
     const chunk = list.slice(i, i + 10);
     const ids = chunk.map((e) => String(e.provider_message_id));
     let messages: Json[] = [];
     try {
-      const r = await apollo("/emailer_messages/search", { ids, emailer_message_ids: ids, per_page: 10 });
+      const r = await apollo(auth, "/emailer_messages/search", { ids, emailer_message_ids: ids, per_page: 10 });
       messages = Array.isArray(r?.emailer_messages) ? r.emailer_messages : [];
     } catch (e) {
       console.warn("[campaign-run] apollo email sync:", (e as Error).message);
@@ -943,6 +1033,7 @@ async function syncApolloEmail(ctx: Ctx): Promise<number> {
       await db.from("campaign_events").update({ payload }).eq("id", ev.id);
     }
   }
+  }
   return touched;
 }
 
@@ -960,7 +1051,7 @@ Deno.serve(async (req) => {
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, { auth: { persistSession: false } });
   const now = new Date();
-  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), sentToday: new Map(), campaignCache: new Map() };
+  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), sentToday: new Map(), campaignCache: new Map() };
 
   // 1. Recuperar lo que un run caído dejó a medias.
   await db.from("campaign_enrollments")
