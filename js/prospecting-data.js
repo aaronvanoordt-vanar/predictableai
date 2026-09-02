@@ -318,8 +318,11 @@
 
   async function fetchApolloLists() {
     const data = await apolloProxy('/labels', {});
-    return (data?.labels || []).filter((l) => l && l.id != null).map((l) => ({
-      id: l.id,
+    // Apollo devuelve cada lista con su id Mongo como `_id` (no `id`) — sin
+    // este fallback el filtro descartaba TODAS las listas en silencio (200 OK,
+    // "no encontramos listas" aunque la cuenta tuviera decenas).
+    return (data?.labels || []).filter((l) => l && (l.id ?? l._id) != null).map((l) => ({
+      id: l.id ?? l._id,
       name: l.name || 'Sin nombre',
       modality: l.modality || 'contacts',
       count: l.cached_count ?? l.count ?? l.contacts_count ?? null,
