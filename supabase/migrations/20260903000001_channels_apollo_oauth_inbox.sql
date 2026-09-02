@@ -15,6 +15,8 @@
 -- • campaigns.daily_caps: LinkedIn ya no tiene tope (el ritmo lo decide
 --   Dripify), el default queda en {"whatsapp": 50, "email": 80}. Las filas
 --   existentes con "linkedin" no se tocan: el motor ignora esa clave.
+-- • inbox_messages entra en la publicación supabase_realtime (la bandeja
+--   se refresca sola; RLS sigue filtrando por dueño).
 --
 -- RLS: sin cambios. inbox_messages sigue siendo solo lectura para el
 -- cliente (read_at lo escribe la edge function con service role). Sin
@@ -62,3 +64,13 @@ CREATE INDEX IF NOT EXISTS inbox_messages_campaign_idx
 
 ALTER TABLE public.campaigns
   ALTER COLUMN daily_caps SET DEFAULT '{"whatsapp": 50, "email": 80}';
+
+-- ── 4. Realtime: la bandeja (Campañas → Respuestas) se refresca sola ────────
+-- Solo notifica; RLS sigue filtrando qué filas ve cada usuario.
+
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.inbox_messages;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;

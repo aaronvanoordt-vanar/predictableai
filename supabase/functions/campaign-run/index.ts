@@ -24,6 +24,9 @@
  *           email     → Apollo: emailer_messages + send_now desde la cuenta
  *                       remitente de la campaña (mensaje individual, no
  *                       secuencia: así cada lead recibe SU texto de 5 capas).
+ *                       Credencial por usuario (_shared/apollo-auth.ts): el
+ *                       Apollo que conectó por OAuth o, si no, la key de la
+ *                       plataforma.
  *           linkedin_connect → Dripify: sube el perfil del lead a la campaña
  *                       de Dripify elegida en el paso (settings.dripify_campaign_id).
  *                       Dripify manda la conexión y sus mensajes con su propio
@@ -34,6 +37,15 @@
  *  5. Sincroniza con Dripify (cada 15 min por cuenta): lee los leads de cada
  *     campaña de Dripify en uso y traduce su lastAction a eventos nuestros
  *     (conexión enviada / aceptada / respondió → detiene la cadencia).
+ *  6. Sincroniza respuestas de email con Apollo (cada 15 min): busca en
+ *     /emailer_messages/search los envíos de los últimos 30 días y, si Apollo
+ *     los marca `replied`, crea el mensaje entrante en la bandeja (texto desde
+ *     Gmail si el usuario lo conectó; Apollo nunca entrega las palabras del
+ *     lead), detiene la cadencia y sube el CRM. `bounce`/`spam_blocked` →
+ *     evento failed. Ver syncApolloReplies al final.
+ *
+ *  Tope diario: solo WhatsApp y email. LinkedIn NO tiene tope aquí (el ritmo
+ *  lo decide Dripify): `daily_caps.linkedin` se ignora aunque exista.
  *  4. Registra campaign_events (`sent` con nuestro local id, que WATI
  *     devuelve en cada recibo) e inbox_messages (saliente), avanza al paso
  *     siguiente o cierra el enrolamiento (`completed`).
@@ -42,12 +54,16 @@
  * (wati-webhook, y en PR 2/3 dripify + gmail): cambian el enrolamiento a
  * `replied` y este motor ya no lo toca.
  *
- * Secretos requeridos: SUPABASE_* (plataforma) y APOLLO_API_KEY (email).
+ * Secretos requeridos: SUPABASE_* (plataforma), APOLLO_API_KEY (fallback de
+ * email), APOLLO_OAUTH_CLIENT_ID/SECRET (refrescar tokens de usuarios con su
+ * Apollo conectado), GOOGLE_CLIENT_ID/SECRET (opcional: texto de respuestas).
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as wati from "../_shared/wati.ts";
 import * as dripify from "../_shared/dripify.ts";
+import * as apolloAuth from "../_shared/apollo-auth.ts";
+import * as gmail from "../_shared/gmail.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -139,27 +155,13 @@ function bodyToHtml(text: string): string {
 
 // ── Apollo (email) ──────────────────────────────────────────────────────────
 
-async function apollo(endpoint: string, body: Json): Promise<Json> {
-  const apiKey = (Deno.env.get("APOLLO_API_KEY") ?? "").trim();
-  if (!apiKey) throw new Error("APOLLO_API_KEY no está configurada en el servidor.");
-  const res = await fetch("https://api.apollo.io/api/v1" + endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apiKey },
-    body: JSON.stringify(body ?? {}),
-  });
-  const text = await res.text();
-  let data: Json = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text.slice(0, 300) }; }
-  if (!res.ok) {
-    const detail = data?.error || data?.message || `HTTP ${res.status}`;
-    throw new Error("Apollo: " + String(detail).slice(0, 300));
-  }
-  return data;
+function apollo(auth: apolloAuth.ApolloAuth, endpoint: string, body: Json): Promise<Json> {
+  return apolloAuth.apolloCall(auth, "POST", endpoint, body);
 }
 
-async function ensureApolloContact(db: SupabaseClient, m: Json): Promise<string> {
+async function ensureApolloContact(db: SupabaseClient, auth: apolloAuth.ApolloAuth, m: Json): Promise<string> {
   if (m.apollo_contact_id) return String(m.apollo_contact_id);
-  const data = await apollo("/contacts", {
+  const data = await apollo(auth, "/contacts", {
     first_name: m.first_name || undefined,
     last_name: m.last_name || undefined,
     title: m.title || undefined,
@@ -174,22 +176,34 @@ async function ensureApolloContact(db: SupabaseClient, m: Json): Promise<string>
   return String(id);
 }
 
-async function sendApolloEmail(db: SupabaseClient, m: Json, sender: Json, subject: string, body: string): Promise<string> {
+interface ApolloSendResult { messageId: string; contactId: string; threadId: string | null; fromEmail: string; }
+
+/**
+ * Borrador + send_now. La cuenta remitente es la de la campaña; si la campaña
+ * no la fijó y el usuario conectó su Apollo, se usa su cuenta por defecto.
+ */
+async function sendApolloEmail(db: SupabaseClient, auth: apolloAuth.ApolloAuth, m: Json, sender: Json, subject: string, body: string): Promise<ApolloSendResult> {
   if (!m.email || /email_not_unlocked/.test(String(m.email))) throw new Error("El lead no tiene email revelado.");
-  if (!sender?.email_account_id || !sender?.email) throw new Error("La campaña no tiene cuenta remitente de Apollo.");
-  const contactId = await ensureApolloContact(db, m);
-  const draft = await apollo("/emailer_messages", { contact_id: contactId, subject, body_html: bodyToHtml(body) });
+  let from = sender?.email_account_id && sender?.email ? { id: String(sender.email_account_id), email: String(sender.email) } : null;
+  if (!from) {
+    const def = apolloAuth.defaultEmailAccount(auth.emailAccounts);
+    if (def) from = { id: def.id, email: def.email };
+  }
+  if (!from) throw new Error("La campaña no tiene cuenta remitente de email.");
+  const contactId = await ensureApolloContact(db, auth, m);
+  const draft = await apollo(auth, "/emailer_messages", { contact_id: contactId, subject, body_html: bodyToHtml(body) });
   const messageId = draft?.emailer_message?.id;
   if (!messageId) throw new Error("Apollo no devolvió el borrador del correo.");
-  const sent = await apollo(`/emailer_messages/${encodeURIComponent(messageId)}/send_now`, {
+  const sent = await apollo(auth, `/emailer_messages/${encodeURIComponent(messageId)}/send_now`, {
     id: messageId,
-    send_from: { email_account_id: sender.email_account_id, email: sender.email },
+    send_from: { email_account_id: from.id, email: from.email },
   });
   const r = sent?.emailer_message || {};
   if (r.status === "failed" || r.not_sent_reason) {
     throw new Error("Apollo no envió el correo: " + (r.failure_reason || r.not_sent_reason || "motivo no informado"));
   }
-  return String(messageId);
+  const threadId = r.provider_thread_id || draft?.emailer_message?.provider_thread_id || null;
+  return { messageId: String(messageId), contactId, threadId: threadId ? String(threadId) : null, fromEmail: from.email };
 }
 
 // ── Motor ───────────────────────────────────────────────────────────────────
@@ -199,7 +213,18 @@ interface Ctx {
   now: Date;
   watiByUser: Map<string, Json | null>;
   dripifyByUser: Map<string, Json | null>;
+  apolloByUser: Map<string, apolloAuth.ApolloAuth | null>;
+  gmailByUser: Map<string, { token: string; email: string } | null>;
   sentToday: Map<string, number>; // `${user}:${channel}` → envíos en 24 h
+}
+
+/** Credencial de Apollo del usuario (OAuth propio o plataforma); null si no hay ninguna. */
+async function apolloFor(ctx: Ctx, userId: string): Promise<apolloAuth.ApolloAuth | null> {
+  if (ctx.apolloByUser.has(userId)) return ctx.apolloByUser.get(userId) ?? null;
+  let auth: apolloAuth.ApolloAuth | null = null;
+  try { auth = await apolloAuth.resolveApolloAuth(ctx.db, userId); } catch (e) { console.warn("[campaign-run] apollo auth", userId, apolloAuth.humanError(e)); }
+  ctx.apolloByUser.set(userId, auth);
+  return auth;
 }
 
 async function watiAccount(ctx: Ctx, userId: string): Promise<Json | null> {
@@ -315,10 +340,11 @@ async function runOne(ctx: Ctx, en: Json) {
     return;
   }
 
-  // Tope diario.
+  // Tope diario (solo WhatsApp y email: LinkedIn lo regula Dripify, así que
+  // daily_caps.linkedin se ignora aunque una campaña vieja lo traiga).
   const ch = channelKey(step.channel);
   const caps = campaign.daily_caps ?? {};
-  const cap = Number(caps[ch] ?? 0);
+  const cap = ch === "linkedin" ? 0 : Number(caps[ch] ?? 0);
   if (cap > 0) {
     const used = await sentLast24h(ctx, en.user_id, ch);
     if (used >= cap) {
@@ -381,6 +407,7 @@ async function runOne(ctx: Ctx, en: Json) {
       await db.from("inbox_messages").insert({
         user_id: en.user_id, member_id: member.id, channel: "whatsapp", provider: "wati", direction: "out",
         contact_ref: phone, body: bodyText, provider_message_id: localId, status: "pending", sent_at: ctx.now.toISOString(),
+        campaign_id: campaign.id, enrollment_id: en.id,
         payload: { campaign_id: campaign.id, step_position: step.position, content_kind: step.content_kind },
       });
       await event(ctx, en, "whatsapp", "sent", { provider_message_id: localId, detail: bodyText.slice(0, 200) });
@@ -399,16 +426,30 @@ async function runOne(ctx: Ctx, en: Json) {
         bodyText = String(outreach.email_body ?? "");
       }
       if (!subject.trim() || !bodyText.trim()) throw new StepError("No hay email personalizado generado para este lead.", "skip");
-      let messageId: string;
+      const auth = await apolloFor(ctx, en.user_id);
+      if (!auth) throw new StepError("Email no está conectado (ni hay cuenta de la plataforma).", "hold");
+      let sent: ApolloSendResult;
       try {
-        messageId = await sendApolloEmail(db, member, sender, subject, bodyText);
+        sent = await sendApolloEmail(db, auth, member, sender, subject, bodyText);
       } catch (e) {
-        throw new StepError((e as Error).message, "stop");
+        // 401/403 con el Apollo del usuario = token revocado o sin scope: que
+        // el usuario reconecte; no matar el enrolamiento.
+        const status = e instanceof apolloAuth.ApolloError ? e.status : 0;
+        throw new StepError((e as Error).message, status === 401 || status === 403 ? "hold" : "stop");
       }
+      const messageId = sent.messageId;
+      const refs = { ...(en.provider_refs ?? {}), apollo_contact_id: sent.contactId, apollo_last_message_id: messageId };
+      en.provider_refs = refs;
+      await db.from("campaign_enrollments").update({ provider_refs: refs }).eq("id", en.id);
       await db.from("inbox_messages").insert({
         user_id: en.user_id, member_id: member.id, channel: "email", provider: "apollo", direction: "out",
         contact_ref: member.email, body: `Asunto: ${subject}\n\n${bodyText}`, provider_message_id: messageId, status: "sent", sent_at: ctx.now.toISOString(),
-        payload: { campaign_id: campaign.id, step_position: step.position, subject },
+        provider_conversation_id: sent.threadId,
+        campaign_id: campaign.id, enrollment_id: en.id,
+        payload: {
+          campaign_id: campaign.id, step_position: step.position, subject,
+          provider_thread_id: sent.threadId, from_email: sent.fromEmail, apollo_mode: auth.mode,
+        },
       });
       await event(ctx, en, "email", "sent", { provider_message_id: messageId, detail: subject.slice(0, 200) });
       ctx.sentToday.set(`${en.user_id}:email`, (await sentLast24h(ctx, en.user_id, "email")) + 1);
@@ -499,7 +540,9 @@ Deno.serve(async (req) => {
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, { auth: { persistSession: false } });
   const now = new Date();
-  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), sentToday: new Map() };
+  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), sentToday: new Map() };
+  let opts: Json = {};
+  try { opts = await req.json(); } catch { opts = {}; }
 
   // 1. Recuperar lo que un run caído dejó a medias.
   await db.from("campaign_enrollments")
@@ -536,7 +579,12 @@ Deno.serve(async (req) => {
   }
   let synced = 0;
   try { synced = await syncDripify(ctx); } catch (e) { console.error("[campaign-run] dripify sync:", e); }
-  return json({ ok: true, due: due?.length ?? 0, processed, dripify_synced: synced });
+  let replies = 0;
+  // Cada 15 min (el cron corre por minuto) o a pedido ({"sync_apollo": true}).
+  if (now.getUTCMinutes() % APOLLO_SYNC_EVERY_MIN === 0 || opts?.sync_apollo === true) {
+    try { replies = await syncApolloReplies(ctx); } catch (e) { console.error("[campaign-run] apollo sync:", e); }
+  }
+  return json({ ok: true, due: due?.length ?? 0, processed, dripify_synced: synced, apollo_replies: replies });
 });
 
 // ── Sincronización con Dripify ──────────────────────────────────────────────
@@ -615,4 +663,232 @@ async function syncDripify(ctx: Ctx): Promise<number> {
     await db.from("channel_accounts").update({ config: { ...(acc.config ?? {}), dripify_synced_at: ctx.now.toISOString() } }).eq("id", acc.id);
   }
   return touched;
+}
+
+// ── Sincronización de respuestas de email con Apollo ────────────────────────
+// Apollo no avisa por webhook cuando un lead responde a un emailer_message:
+// hay que preguntar. /emailer_messages/search (scope emailer_messages_search,
+// docs.apollo.io/reference/search-for-outreach-emails) devuelve SOLO correos
+// salientes con `replied`, `reply_class`, `bounce`, `spam_blocked` y
+// `provider_thread_id`; nunca el texto del lead (tampoco get_content: "does
+// not include replies"). Por eso el cuerpo se intenta leer de Gmail con el
+// hilo (provider_thread_id = id del hilo de Gmail) cuando el usuario conectó
+// su buzón (gmail_accounts); si no, la fila entrante queda con body null y
+// la UI ofrece "Conectar Gmail para leer el hilo".
+//
+// Sus filtros contact_ids / provider_thread_id se ignoran en silencio
+// (comprobado en apollo-proxy), así que se pagina por fecha (completed_at,
+// últimos 30 días, 100 por página, máx. APOLLO_SYNC_MAX_PAGES) y se cruzan
+// los ids con nuestras filas salientes. Se usa POST con JSON (la forma que ya
+// funciona en apollo-proxy; la referencia lo documenta como GET con los mismos
+// nombres de parámetro). Cada 15 min; presupuesto ≤ 10 requests por usuario.
+
+const APOLLO_SYNC_EVERY_MIN = 15;
+const APOLLO_SYNC_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const APOLLO_SYNC_MAX_PAGES = 10;
+
+function isoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Access token de Gmail del usuario (una vez por run); null si no conectó Gmail o el refresh falla. */
+async function gmailFor(ctx: Ctx, userId: string): Promise<{ token: string; email: string } | null> {
+  if (ctx.gmailByUser.has(userId)) return ctx.gmailByUser.get(userId) ?? null;
+  let out: { token: string; email: string } | null = null;
+  if (gmail.googleCredentials()) {
+    const { data: acct } = await ctx.db.from("gmail_accounts").select("email, refresh_token, status").eq("user_id", userId).maybeSingle();
+    if (acct?.refresh_token && acct.status === "connected") {
+      const token = await gmail.refreshAccessToken(acct.refresh_token);
+      if (token) out = { token, email: String(acct.email) };
+      else console.warn("[campaign-run] gmail refresh failed for", userId);
+    }
+  }
+  ctx.gmailByUser.set(userId, out);
+  return out;
+}
+
+/** Última respuesta del lead en el hilo de Gmail posterior a nuestro envío. */
+async function gmailReply(ctx: Ctx, userId: string, threadId: string | null, contactEmail: string, sentAt: string): Promise<{ body: string; subject: string; at: string | null } | null> {
+  if (!threadId) return null;
+  const g = await gmailFor(ctx, userId);
+  if (!g) return null;
+  try {
+    const sentMs = Date.parse(sentAt) || 0;
+    const msgs = await gmail.readThread(g.token, g.email, { threadId, contactEmail, since: sentMs ? Math.floor(sentMs / 1000) - 60 : undefined });
+    const inbound = msgs.filter((m) => !m.outbound && (m.internal_date ?? 0) >= sentMs - 60_000);
+    const last = inbound[inbound.length - 1];
+    if (!last) return null;
+    return {
+      body: (last.body || last.snippet || "").slice(0, 8000),
+      subject: last.subject,
+      at: last.internal_date ? new Date(last.internal_date).toISOString() : null,
+    };
+  } catch (e) {
+    console.warn("[campaign-run] gmail thread", threadId, (e as Error)?.message ?? e);
+    return null;
+  }
+}
+
+async function syncApolloReplies(ctx: Ctx): Promise<number> {
+  const db = ctx.db;
+  const since = new Date(ctx.now.getTime() - APOLLO_SYNC_WINDOW_MS);
+  const { data: rowsRaw } = await db
+    .from("inbox_messages")
+    .select("id, user_id, member_id, campaign_id, enrollment_id, contact_ref, provider_message_id, provider_conversation_id, sent_at, payload")
+    .eq("provider", "apollo")
+    .eq("direction", "out")
+    .not("provider_message_id", "is", null)
+    .gte("sent_at", since.toISOString())
+    .order("sent_at", { ascending: false })
+    .limit(3000);
+  // Solo lo que aún puede cambiar: respondido / rebotado quedan marcados como
+  // finales en payload.apollo_final y no se vuelven a consultar.
+  const rows: Json[] = (rowsRaw ?? []).filter((r: Json) => r.payload?.apollo_final !== true);
+  if (!rows.length) return 0;
+
+  // Solo enrolamientos que aún importan (activos, en pausa, o ya completados:
+  // una respuesta tardía al último email sigue siendo una respuesta).
+  const enrollmentIds = [...new Set(rows.map((r: Json) => r.enrollment_id).filter(Boolean))] as string[];
+  const enrollments = new Map<string, Json>();
+  for (let i = 0; i < enrollmentIds.length; i += 200) {
+    const { data } = await db.from("campaign_enrollments")
+      .select("id, campaign_id, member_id, user_id, status, next_position, replied_at, provider_refs")
+      .in("id", enrollmentIds.slice(i, i + 200));
+    for (const en of (data ?? []) as Json[]) enrollments.set(en.id, en);
+  }
+
+  const byUser = new Map<string, Json[]>();
+  for (const r of rows) {
+    if (r.enrollment_id && !enrollments.has(r.enrollment_id)) continue;
+    const en = r.enrollment_id ? enrollments.get(r.enrollment_id) : null;
+    if (en && !["active", "processing", "paused", "completed"].includes(en.status)) continue;
+    if (!byUser.has(r.user_id)) byUser.set(r.user_id, []);
+    byUser.get(r.user_id)!.push(r);
+  }
+
+  let touched = 0;
+  for (const [userId, mine] of byUser) {
+    const auth = await apolloFor(ctx, userId);
+    if (!auth) continue;
+    const pending = new Map<string, Json>(mine.map((r: Json) => [String(r.provider_message_id), r]));
+    const found = new Map<string, Json>();
+    const oldest = mine.reduce((min: number, r: Json) => Math.min(min, Date.parse(r.sent_at) || min), ctx.now.getTime());
+    for (let page = 1; page <= APOLLO_SYNC_MAX_PAGES && pending.size; page++) {
+      let data: Json;
+      try {
+        data = await apolloAuth.apolloCall(auth, "POST", "/emailer_messages/search", {
+          emailer_message_date_range_mode: "completed_at",
+          emailer_message_date_range: { min: isoDate(new Date(oldest - 24 * 60 * 60 * 1000)), max: isoDate(new Date(ctx.now.getTime() + 24 * 60 * 60 * 1000)) },
+          page,
+          per_page: 100,
+        });
+      } catch (e) {
+        console.warn("[campaign-run] apollo search", userId, apolloAuth.humanError(e));
+        break;
+      }
+      const list: Json[] = Array.isArray(data?.emailer_messages) ? data.emailer_messages : [];
+      for (const m of list) {
+        const id = String(m?.id ?? "");
+        if (pending.has(id)) { found.set(id, m); pending.delete(id); }
+      }
+      const totalPages = Number(data?.pagination?.total_pages ?? 0);
+      if (!list.length || (totalPages && page >= totalPages)) break;
+    }
+
+    for (const [id, m] of found) {
+      const row = mine.find((r: Json) => String(r.provider_message_id) === id);
+      if (!row) continue;
+      try {
+        if (await applyApolloStatus(ctx, row, m, enrollments)) touched++;
+      } catch (e) {
+        console.error("[campaign-run] apollo status", id, e);
+      }
+    }
+  }
+  return touched;
+}
+
+/** Traduce el estado de un emailer_message a bandeja / eventos / CRM. Devuelve true si cambió algo. */
+async function applyApolloStatus(ctx: Ctx, row: Json, m: Json, enrollments: Map<string, Json>): Promise<boolean> {
+  const db = ctx.db;
+  const threadId = m?.provider_thread_id ? String(m.provider_thread_id) : (row.provider_conversation_id || row.payload?.provider_thread_id || null);
+  const status = String(m?.status ?? "");
+  const replied = m?.replied === true;
+  const bounced = m?.bounce === true || m?.spam_blocked === true || /bounce|spam|failed/i.test(status);
+  const basePayload = { ...(row.payload ?? {}), provider_thread_id: threadId, apollo_status: status || null, apollo_synced_at: ctx.now.toISOString() };
+
+  if (!replied && !bounced) {
+    // Sin novedad: solo completar el hilo si Apollo ya lo conoce.
+    if (threadId && (row.provider_conversation_id !== threadId || row.payload?.provider_thread_id !== threadId)) {
+      await db.from("inbox_messages").update({ provider_conversation_id: threadId, payload: basePayload }).eq("id", row.id);
+    }
+    return false;
+  }
+
+  const en: Json | null = row.enrollment_id ? enrollments.get(row.enrollment_id) ?? null : null;
+  const { data: member } = row.member_id
+    ? await db.from("prospect_list_members").select("id, email, name, first_name, contact_status").eq("id", row.member_id).maybeSingle()
+    : { data: null };
+  const contactEmail = String(member?.email || row.contact_ref || "");
+
+  if (bounced) {
+    const detail = String(m?.failure_reason || m?.not_sent_reason || (m?.spam_blocked ? "Bloqueado como spam." : "El email rebotó.")).slice(0, 300);
+    await db.from("inbox_messages").update({
+      status: "failed", error_detail: detail, provider_conversation_id: threadId,
+      payload: { ...basePayload, apollo_final: true },
+    }).eq("id", row.id);
+    if (en) {
+      const { data: dup } = await db.from("campaign_events").select("id").eq("provider_message_id", String(row.provider_message_id)).eq("type", "failed").limit(1);
+      if (!dup || !dup.length) {
+        await event(ctx, en, "email", "failed", { provider_message_id: String(row.provider_message_id), detail, step_position: row.payload?.step_position ?? en.next_position, payload: { apollo_status: status } });
+      }
+    }
+    return true;
+  }
+
+  // replied → mensaje entrante (dedupe por provider_message_id "<id>:reply").
+  const fromGmail = contactEmail ? await gmailReply(ctx, row.user_id, threadId, contactEmail, row.sent_at) : null;
+  const at = fromGmail?.at || ctx.now.toISOString();
+  const { data: inserted, error: insErr } = await db.from("inbox_messages").upsert({
+    user_id: row.user_id,
+    member_id: row.member_id ?? null,
+    channel: "email",
+    provider: "apollo",
+    direction: "in",
+    contact_ref: contactEmail || null,
+    body: fromGmail?.body || null,
+    provider_message_id: `${row.provider_message_id}:reply`,
+    provider_conversation_id: threadId,
+    status: "delivered",
+    sent_at: at,
+    campaign_id: row.campaign_id ?? en?.campaign_id ?? null,
+    enrollment_id: row.enrollment_id ?? null,
+    payload: {
+      subject: fromGmail?.subject || row.payload?.subject || null,
+      reply_class: m?.reply_class ?? null,
+      in_reply_to: row.provider_message_id,
+      provider_thread_id: threadId,
+      body_source: fromGmail ? "gmail" : null,
+    },
+  }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true }).select("id");
+  if (insErr) { console.error("[campaign-run] reply insert:", insErr.message); return false; }
+  await db.from("inbox_messages").update({ provider_conversation_id: threadId, payload: { ...basePayload, apollo_final: true, reply_class: m?.reply_class ?? null } }).eq("id", row.id);
+  if (!inserted || !inserted.length) return false; // ya procesada
+
+  if (en) {
+    const patch: Json = {};
+    if (["active", "processing", "paused"].includes(en.status)) { patch.status = "replied"; patch.stop_reason = "Respondió por email."; patch.next_run_at = null; }
+    if (!en.replied_at) { patch.replied_at = at; patch.replied_channel = "email"; }
+    if (Object.keys(patch).length) await db.from("campaign_enrollments").update(patch).eq("id", en.id);
+    await event(ctx, en, "email", "replied", {
+      provider_message_id: String(row.provider_message_id),
+      detail: (fromGmail?.body || (m?.reply_class ? `Respondió (${m.reply_class}).` : "Respondió por email.")).slice(0, 300),
+      step_position: row.payload?.step_position ?? en.next_position,
+      payload: { reply_class: m?.reply_class ?? null, provider_thread_id: threadId },
+    });
+  }
+  if (member && !["reunion_agendada", "reunion_tomada", "dado_de_baja"].includes(member.contact_status)) {
+    await db.from("prospect_list_members").update({ contact_status: "respondio", status_changed_at: at }).eq("id", member.id);
+  }
+  return true;
 }

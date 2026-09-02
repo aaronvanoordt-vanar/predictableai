@@ -10,6 +10,13 @@
 #
 # Se ejecuta sobre la rama que elijas en la UI de Actions, así que sirve para
 # probar una rama antes de mergearla.
+#
+# Campañas omnicanal (2026-09-03, Apollo OAuth + bandeja con respuestas):
+#   channel-connect apollo-proxy campaign-run inbox-send gmail-proxy
+#   wati-webhook dripify-webhook
+# (las dos últimas salen con --no-verify-jwt automáticamente). Los secretos
+# APOLLO_OAUTH_CLIENT_ID / APOLLO_OAUTH_CLIENT_SECRET se cargan en Supabase
+# (Edge Functions → Secrets), no aquí.
 name: Deploy Edge Functions
 
 on:
@@ -56,6 +63,9 @@ jobs:
           # autentican solas. Redesplegarlas sin esta bandera les cambia la
           # configuración en silencio: apollo-webhook deja de recibir los avisos
           # de Apollo, y enrich-company cambia cómo la alcanza el onboarding.
+          #
+          # Con JWT (no listar aquí): channel-connect, apollo-proxy, inbox-send,
+          # gmail-proxy, campaign-run (la llama pg_cron con la service role).
           NO_JWT="apollo-webhook enrich-company sales-coach wati-webhook dripify-webhook generate-outreach-playbook client-portal sheet-sync"
 
           FAILED=""
