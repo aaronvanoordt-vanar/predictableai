@@ -56,6 +56,10 @@
     return token;
   }
 
+  // Última cabecera X-Apollo-Auth-Mode vista (la escribe apollo-proxy).
+  let lastApolloAuthMode = null;
+  function apolloAuthMode() { return lastApolloAuthMode; }
+
   async function edgeFetch(fnName, payload) {
     const token = await getAccessToken();
     const res = await fetch(global.SUPABASE_CONFIG.url + '/functions/v1/' + fnName, {
@@ -66,6 +70,13 @@
       },
       body: JSON.stringify(payload),
     });
+    // De qué cuenta de Apollo salió la respuesta: 'oauth' = la del usuario,
+    // 'platform' = la key compartida de la beta (otra cuenta, con sus propias
+    // listas y contactos). Sin esto la UI no puede distinguir "tu cuenta no
+    // tiene listas" de "estamos mirando una cuenta que no es la tuya".
+    if (fnName === 'apollo-proxy') {
+      lastApolloAuthMode = res.headers.get('X-Apollo-Auth-Mode') || null;
+    }
     let body = null;
     try { body = await res.json(); } catch (_) { /* respuesta no-JSON */ }
     if (!res.ok) {
@@ -697,8 +708,14 @@
         try {
           row.apollo_contact_id = await createApolloContact(row, list.name);
         } catch (e) {
-          // No bloquea el guardado local: el motor de campañas reintenta al enviar.
+          // No bloquea el guardado local (el motor de campañas reintenta al
+          // enviar), pero SÍ se reporta: tragarse esto en silencio dejaba la
+          // lista perfecta en Predictable y ausente en Apollo, sin ningún aviso.
           console.warn('[prospecting-data] contacto Apollo falló:', e.message);
+          warnings.push({
+            name: person.name || person.id,
+            error: 'Guardado aquí, pero no se pudo crear en Apollo — ' + e.message,
+          });
         }
         if (chunkError || (!row.email && !match)) {
           warnings.push({
@@ -1347,6 +1364,7 @@
     syncIcpFromSearch,
     fetchLists,
     fetchApolloLists,
+    apolloAuthMode,
     importApolloList,
     fetchAllContacts,
     setContactStatus,
