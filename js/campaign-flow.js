@@ -29,6 +29,19 @@
   var SEND_CREDITS = 1;
 
   // Copy para la UI (solo en el espejo JS).
+  var CHANNEL_META = {
+    whatsapp:         { label: 'WhatsApp',            short: 'WA',       tone: 'green',  needs: 'wati' },
+    email:            { label: 'Email',               short: 'Email',    tone: 'blue',   needs: 'apollo' },
+    linkedin_connect: { label: 'LinkedIn',            short: 'LinkedIn', tone: 'teal',   needs: 'dripify' },
+    linkedin_message: { label: 'LinkedIn · mensaje (sin proveedor)', short: 'LI', tone: 'gray', needs: null, hidden: true },
+  };
+  var KIND_LABELS = {
+    template_a: 'Saludo 1 (plantilla de WhatsApp)',
+    template_b: 'Recordatorio (plantilla de WhatsApp)',
+    template_c: 'Último intento (plantilla de WhatsApp)',
+    ai: 'IA personalizada',
+    custom: 'Mi texto',
+  };
   var ANGLE_LABELS = {
     apertura: 'Apertura (primer contacto)',
     valor: 'Seguimiento de valor',
@@ -38,9 +51,9 @@
     libre: 'Libre (según tus instrucciones)',
   };
   var CONDITION_LABELS = {
-    linkedin_connected: { label: 'Aceptó la conexión de LinkedIn', hint: 'Lo reporta Dripify. Necesita un paso de LinkedIn antes.', needs: 'dripify' },
-    whatsapp_read: { label: 'Leyó el WhatsApp', hint: 'Doble check azul reportado por WATI.', needs: 'wati' },
-    email_opened: { label: 'Abrió el email', hint: 'Apertura registrada por Apollo.', needs: 'apollo' },
+    linkedin_connected: { label: 'Aceptó la conexión de LinkedIn', hint: 'Lo reporta tu cuenta de LinkedIn. Necesita un paso de LinkedIn antes.', needs: 'dripify' },
+    whatsapp_read: { label: 'Leyó el WhatsApp', hint: 'Doble check azul del WhatsApp.', needs: 'wati' },
+    email_opened: { label: 'Abrió el email', hint: 'Apertura registrada por el proveedor de email.', needs: 'apollo' },
     has_phone: { label: 'Tiene teléfono', hint: 'El lead tiene un número revelado.', needs: null },
     has_email: { label: 'Tiene email', hint: 'El lead tiene un email revelado.', needs: null },
     has_linkedin: { label: 'Tiene LinkedIn', hint: 'El lead tiene URL de perfil.', needs: null },
@@ -283,6 +296,103 @@
     return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + sends * SEND_CREDITS) * n };
   }
 
+  /** Título corto de un nodo para tarjetas y tablas. */
+  function nodeTitle(node) {
+    if (!node) return '';
+    if (node.type === 'condition') {
+      var c = CONDITION_LABELS[node.check];
+      return c ? '¿' + c.label + '?' : node.check;
+    }
+    var ch = CHANNEL_META[node.channel] || { label: node.channel };
+    if (node.channel === 'linkedin_connect') {
+      var dc = node.settings && node.settings.dripify_campaign_name;
+      return ch.label + (dc ? ' · ' + dc : '');
+    }
+    var k = node.content.kind;
+    if (k === 'ai') return ch.label + ' · IA: ' + (ANGLE_LABELS[node.content.angle] || node.content.angle || 'apertura').replace(/\s*\(.*\)$/, '');
+    if (k === 'custom') return ch.label + ' · Mi texto';
+    return ch.label + ' · ' + (KIND_LABELS[k] || k).replace(/\s*\(.*\)$/, '');
+  }
+
+  /** Copia profunda con ids nuevos (clonar una campaña). */
+  function cloneWithNewIds(flow) {
+    var f = normalize(flow);
+    function act(a) { var c = JSON.parse(JSON.stringify(a)); c.id = newId(); return c; }
+    return { v: FLOW_VERSION, nodes: f.nodes.map(function (n) {
+      if (n.type === 'condition') return { id: newId(), type: 'condition', check: n.check, delay: n.delay, yes: n.yes.map(act), no: n.no.map(act) };
+      return act(n);
+    }) };
+  }
+
+  /** Duración aproximada en días: suma de esperas por el camino más largo. */
+  function durationDays(flow) {
+    var f = normalize(flow);
+    var total = 0;
+    function len(list) { var t = 0; list.forEach(function (a) { if (a.delay.mode === 'after_prev') t += a.delay.days + a.delay.hours / 24; }); return t; }
+    f.nodes.forEach(function (n) {
+      if (n.type === 'condition') { total += n.delay.days + n.delay.hours / 24 + Math.max(len(n.yes), len(n.no)); }
+      else if (n.delay.mode === 'after_prev') total += n.delay.days + n.delay.hours / 24;
+    });
+    return Math.round(total * 10) / 10;
+  }
+
+  var A = function (channel, delay, content, extra) {
+    var n = { id: newId(), type: 'action', channel: channel, delay: delay, content: content };
+    if (extra) n.settings = extra;
+    return n;
+  };
+  var D = function (days, hours) { return { mode: 'after_prev', days: days || 0, hours: hours || 0 }; };
+  var W = { mode: 'with_prev', days: 0, hours: 0 };
+  var C = function (check, delay, yes, no) { return { id: newId(), type: 'condition', check: check, delay: delay, yes: yes, no: no }; };
+
+  /**
+   * Cadencias fijas. Los pasos de LinkedIn salen sin campaña de LinkedIn
+   * (Dripify): la validación pide elegirla. Cada llamada genera ids nuevos.
+   */
+  function templates() {
+    return [
+      {
+        key: 'whatsapp_first', label: 'WhatsApp primero', needs: ['wati', 'apollo'],
+        summary: 'Saludo por WhatsApp con el email de refuerzo el mismo día; si lo leyó, recordatorio; si no, un email de valor. Cierra con último intento y última carta.',
+        build: function () { return { v: FLOW_VERSION, nodes: [
+          A('whatsapp', D(0), { kind: 'template_a' }),
+          A('email', W, { kind: 'ai', angle: 'apertura' }),
+          C('whatsapp_read', D(2),
+            [A('whatsapp', D(1), { kind: 'template_b' })],
+            [A('email', D(1), { kind: 'ai', angle: 'valor' })]),
+          A('whatsapp', D(3), { kind: 'template_c' }),
+          A('email', D(3), { kind: 'ai', angle: 'ultima_carta' }),
+        ] }; },
+      },
+      {
+        key: 'email_first', label: 'Email primero', needs: ['apollo'],
+        summary: 'Apertura por email; si lo abrió, seguimiento de valor; si no, WhatsApp. Luego prueba social, objeción preventiva y última carta.',
+        build: function () { return { v: FLOW_VERSION, nodes: [
+          A('email', D(0), { kind: 'ai', angle: 'apertura' }),
+          C('email_opened', D(2),
+            [A('email', D(1), { kind: 'ai', angle: 'valor' })],
+            [A('whatsapp', D(1), { kind: 'template_a' })]),
+          A('email', D(3), { kind: 'ai', angle: 'prueba_social' }),
+          A('email', D(3), { kind: 'ai', angle: 'objecion' }),
+          A('email', D(4), { kind: 'ai', angle: 'ultima_carta' }),
+        ] }; },
+      },
+      {
+        key: 'linkedin_first', label: 'LinkedIn primero', needs: ['dripify', 'apollo'],
+        summary: 'Conexión por LinkedIn; a los 3 días, si aceptó, email de apertura; si no, WhatsApp y email en paralelo. Luego valor, recordatorio y última carta.',
+        build: function () { return { v: FLOW_VERSION, nodes: [
+          A('linkedin_connect', D(0), { kind: 'ai', angle: 'apertura' }, {}),
+          C('linkedin_connected', D(3),
+            [A('email', D(0), { kind: 'ai', angle: 'apertura' })],
+            [A('whatsapp', D(0), { kind: 'template_a' }), A('email', W, { kind: 'ai', angle: 'apertura' })]),
+          A('email', D(3), { kind: 'ai', angle: 'valor' }),
+          A('whatsapp', D(3), { kind: 'template_b' }),
+          A('email', D(4), { kind: 'ai', angle: 'ultima_carta' }),
+        ] }; },
+      },
+    ];
+  }
+
   /** "Día 0", "+2 días", "+6 h", "junto con el anterior" */
   function delayLabel(node, isFirst) {
     if (!node) return '';
@@ -299,7 +409,8 @@
     FLOW_VERSION: FLOW_VERSION,
     CHANNELS: CHANNELS, CONTENT_KINDS: CONTENT_KINDS, ANGLES: ANGLES, CONDITIONS: CONDITIONS, DELAY_MODES: DELAY_MODES,
     AI_MESSAGE_CREDITS: AI_MESSAGE_CREDITS, SEND_CREDITS: SEND_CREDITS,
-    ANGLE_LABELS: ANGLE_LABELS, CONDITION_LABELS: CONDITION_LABELS,
+    ANGLE_LABELS: ANGLE_LABELS, CONDITION_LABELS: CONDITION_LABELS, CHANNEL_META: CHANNEL_META, KIND_LABELS: KIND_LABELS,
+    nodeTitle: nodeTitle, cloneWithNewIds: cloneWithNewIds, durationDays: durationDays, templates: templates,
     newId: newId, emptyFlow: emptyFlow, normalize: normalize, validate: validate,
     actions: actions, ordinal: ordinal, find: find, firstNode: firstNode, nextAfter: nextAfter, enterBranch: enterBranch,
     delayMs: delayMs, legacyKind: legacyKind, fromLegacySteps: fromLegacySteps, estimateCredits: estimateCredits, delayLabel: delayLabel,

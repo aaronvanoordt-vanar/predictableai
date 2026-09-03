@@ -11,8 +11,8 @@
  *     uno a uno con UPDATE … WHERE status = 'active' (atómico: dos runs
  *     solapados nunca envían dos veces el mismo paso).
  *  3. Para cada uno evalúa el nodo pendiente de la cadencia. La cadencia vive
- *     en `campaigns.flow` (grafo: ver _shared/campaign-flow.ts); las campañas
- *     sin grafo siguen el camino legado sobre `campaign_steps`.
+ *     en `campaigns.flow` (grafo: ver _shared/campaign-flow.ts); una campaña
+ *     sin nodos cierra el enrolamiento (campaign_steps ya no existe).
  *       • la campaña sigue activa (si está pausada, se suelta sin ejecutar);
  *       • CONDICIÓN → se evalúa UNA vez (aceptó conexión, leyó WhatsApp,
  *         abrió email, tiene teléfono/email/LinkedIn), se registra `branched`
@@ -230,7 +230,7 @@ interface Ctx {
   campaignCache: Map<string, Json | null>;
 }
 
-/** Lo que el ejecutor necesita de un paso, venga del grafo o de campaign_steps. */
+/** Lo que el ejecutor necesita de un paso del grafo. */
 interface StepLike {
   channel: string;
   content_kind: string;
@@ -748,58 +748,13 @@ async function runFlow(ctx: Ctx, en: Json, campaign: Json, flow: flowLib.Flow) {
   await moveTo(ctx, en, flow, next, ctx.now, scheduled, executed ? { last_action_at: ctx.now.toISOString() } : {});
 }
 
-// ── Camino legado (campaign_steps, sin grafo) ───────────────────────────────
-
-function nextRunFor(en: Json, steps: Json[], position: number, now: Date): Date | null {
-  const step = steps.find((s) => Number(s.position) === position);
-  if (!step) return null;
-  const start = new Date(en.started_at).getTime();
-  const at = start + Number(step.offset_hours ?? 0) * 60 * 60 * 1000;
-  return new Date(Math.max(at, now.getTime()));
-}
-
-async function advanceLegacy(ctx: Ctx, en: Json, steps: Json[]) {
-  const positions = steps.map((s) => Number(s.position)).sort((a, b) => a - b);
-  const next = positions.find((p) => p > Number(en.next_position));
-  if (next === undefined) { await completeEnrollment(ctx, en, "Cadencia terminada sin respuesta."); return; }
-  await finish(ctx, en, { status: "active", next_position: next, next_run_at: nextRunFor(en, steps, next, ctx.now)?.toISOString() ?? null });
-}
-
-async function runLegacy(ctx: Ctx, en: Json, campaign: Json) {
-  const { data: stepsRaw } = await ctx.db.from("campaign_steps").select("*").eq("campaign_id", campaign.id).order("position");
-  const steps: Json[] = stepsRaw ?? [];
-  const row = steps.find((s) => Number(s.position) === Number(en.next_position));
-  if (!row) { await completeEnrollment(ctx, en, "Sin pasos pendientes."); return; }
-  const step: StepLike = { ...row, position: Number(row.position), node_id: null, angle: null };
-
-  if (row.condition === "if_no_reply" && en.replied_at) {
-    await event(ctx, en, channelKey(step.channel), "skipped", { detail: "Se omitió: el lead ya respondió.", node_id: null });
-    await advanceLegacy(ctx, en, steps);
-    return;
-  }
-  if (row.condition === "if_connected" && !en.linkedin_connected_at) {
-    await event(ctx, en, channelKey(step.channel), "skipped", { detail: "Se omitió: la conexión de LinkedIn no fue aceptada.", node_id: null });
-    await advanceLegacy(ctx, en, steps);
-    return;
-  }
-  const member = await preflight(ctx, en, campaign, step);
-  if (!member) return;
-  let advance = true;
-  try {
-    await executeStep(ctx, en, campaign, member, step);
-  } catch (e) {
-    advance = await handleStepError(ctx, en, step, e);
-  }
-  if (advance) await advanceLegacy(ctx, en, steps);
-}
-
 async function runOne(ctx: Ctx, en: Json) {
   const { data: campaign } = await ctx.db.from("campaigns").select("*").eq("id", en.campaign_id).maybeSingle();
   if (!campaign) { await finish(ctx, en, { status: "error", error_detail: "La campaña ya no existe." }); return; }
   if (campaign.status !== "active") { await finish(ctx, en, { status: "active" }); return; }
   const flow = flowLib.normalize(campaign.flow);
-  if (flow.nodes.length) await runFlow(ctx, en, campaign, flow);
-  else await runLegacy(ctx, en, campaign);
+  if (!flow.nodes.length) { await completeEnrollment(ctx, en, "La campaña no tiene pasos."); return; }
+  await runFlow(ctx, en, campaign, flow);
 }
 
 // ── Pase "preparar": mensajes IA por paso ───────────────────────────────────

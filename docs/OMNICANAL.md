@@ -1,6 +1,6 @@
 # Campañas omnicanal (WhatsApp · email · LinkedIn)
 
-Estado: **PR 1 entregado** (modelo + motor + WATI + email + retiro de Meta). **PR 2 entregado** (LinkedIn vía Dripify). **Campañas v2 · Entrega 1** (la cadencia como grafo, motor intérprete, IA por paso, estado de email desde Apollo): ver la sección "Campañas v2" abajo y `docs/CAMPAIGN_BUILDER_PLAN.md`. PR 3 = bandeja unificada, métricas por SDR y handoff al coach.
+Estado: **PR 1 entregado** (modelo + motor + WATI + email + retiro de Meta). **PR 2 entregado** (LinkedIn vía Dripify). **Campañas v2 · Entrega 1** (la cadencia como grafo, motor intérprete, IA por paso, estado de email desde Apollo) y **Entrega 2** (builder gráfico, cadencia recomendada por IA, detalle con contadores y bandeja de revisión): ver las secciones "Campañas v2" abajo y `docs/CAMPAIGN_BUILDER_PLAN.md`. PR 3 = bandeja unificada, métricas por SDR y handoff al coach.
 
 ## Decisiones tomadas (2026-09-01, con el dueño del producto)
 
@@ -73,13 +73,13 @@ Tablas: `channel_accounts` (secreto oculto por grants de columna), `campaigns`, 
 ## Pasos manuales para poner PR 2 en producción
 
 1. Aplicar `20260902000003_dripify_linkedin_steps.sql` (añade `campaign_steps.settings` y `campaign_enrollments.provider_refs`).
-2. Desplegar `channel-connect`, `campaign-run` y `dripify-webhook` **con `--no-verify-jwt`** (el workflow ya lo sabe).
+2. Desplegar `channel-connect` y `campaign-run` (con JWT: pg_cron llama con la service-role key) y `dripify-webhook` **con `--no-verify-jwt`** (el workflow ya lo sabe).
 3. En Dripify: generar la API key (Settings → Integrations), tener al menos una campaña activa con conexión + mensajes, y pegar la URL del webhook en cada campaña.
 
 ## Pasos manuales para poner PR 1 en producción
 
 1. Aplicar la migración (borra las tablas `whatsapp_*` y el bucket `whatsapp-media`).
-2. Desplegar: `channel-connect`, `campaign-run`, y `wati-webhook` **con `--no-verify-jwt`** (o Actions → Deploy Edge Functions, que ya lo sabe). Borrar en Supabase las funciones `whatsapp-send`, `whatsapp-webhook`, `whatsapp-followups`.
+2. Desplegar: `channel-connect` y `campaign-run` (con JWT) y `wati-webhook` **con `--no-verify-jwt`** (o Actions → Deploy Edge Functions, que ya lo sabe). Borrar en Supabase las funciones `whatsapp-send`, `whatsapp-webhook`, `whatsapp-followups`.
 3. Quitar el job `whatsapp-followups` de pg_cron (la migración lo intenta) y crear `campaign-run` cada minuto (el SQL está comentado al final de la migración).
 4. `APOLLO_API_KEY` ya existe; no hacen falta secretos nuevos (cada usuario aporta su token de WATI).
 5. En WATI, si el registro automático del webhook falla, la pestaña muestra la URL para agregarla a mano (WATI → Webhooks, todos los eventos de mensajes).
@@ -93,12 +93,12 @@ Plan completo y decisiones en `docs/CAMPAIGN_BUILDER_PLAN.md`. Lo que cambió:
 - **Regla de parada fija**: responde por cualquier canal, se da de baja o se detiene a mano. Por eso `if_no_reply` desapareció del modelo.
 - **Mensaje IA por paso** (`campaign_messages`, una fila por lead y paso): el pase "preparar" de `campaign-run` llama a `generate-outreach` en **modo `step`** (service role + `user_id`, ángulo `apertura | valor | prueba_social | objecion | ultima_carta | libre`, instrucciones del vendedor y los mensajes ya enviados al lead) para los pasos que vencen en < 24 h. El primer paso "apertura" reutiliza el mensaje de 5 capas del lead sin cobrar. Con `campaigns.review_required` el mensaje queda `draft` hasta que el usuario lo apruebe (el cliente solo puede editar `subject`/`body` y pasar a `approved`).
 - **Estado de email desde Apollo**: cada 15 min por email enviado (14 días) el motor consulta `POST /emailer_messages/search` por lotes de ids: `opened` → evento `opened` (alimenta la condición `email_opened`), `replied` → detiene la cadencia como una respuesta de WhatsApp, `bounced` → `failed`. Si el endpoint no está disponible en el plan, se registra en `payload.apollo_error` y no se insiste cada minuto.
-- **Compatibilidad**: la migración `20260903000001_campaign_flow.sql` convierte cada `campaign_steps` existente en `flow` (offset absoluto → espera relativa; mismo offset → `with_prev`; `if_connected` consecutivos → una condición) y apunta los enrolamientos en curso a su nodo. El editor actual sigue escribiendo `campaign_steps` y deriva `flow` en el mismo guardado con ids de nodo estables. `campaign_steps` se borra cuando entre el builder gráfico (Entrega 2). Una campaña sin `flow` sigue corriendo por el camino legado del motor.
+- **Compatibilidad**: la migración `20260903000001_campaign_flow.sql` convirtió cada `campaign_steps` existente en `flow` (offset absoluto → espera relativa; mismo offset → `with_prev`; `if_connected` consecutivos → una condición) y apuntó los enrolamientos en curso a su nodo. En la Entrega 2 `campaign_steps` se eliminó (`20260910000001_drop_campaign_steps.sql`) y el motor ya no tiene camino legado: una campaña sin nodos cierra el enrolamiento.
 
 ### Pasos manuales para poner la Entrega 1 en producción
 
 1. Aplicar `20260903000001_campaign_flow.sql` (probada dos veces seguidas en Postgres 16 local sobre un esquema stub; el backfill da el mismo grafo que `fromLegacySteps`).
-2. Desplegar `campaign-run` **con `--no-verify-jwt`** y `generate-outreach` (el workflow **Actions → Deploy Edge Functions** ya lo sabe).
+2. Desplegar `campaign-run` y `generate-outreach` (las dos con verificación de JWT: el motor se llama con la service-role key; el workflow **Actions → Deploy Edge Functions** ya lo sabe).
 3. Verificar con un email real que `emailer_messages/search` responde con la API key (si no, `email_opened` queda inactiva y el motor lo loguea).
 
 ## Canales dentro de Campañas: Apollo por OAuth (opción B) + respuestas (2026-09-03)
@@ -136,3 +136,17 @@ Comprobado en producción: sin `APOLLO_OAUTH_CLIENT_ID` cargado, **todos los usu
 2. Registrar la app OAuth en Apollo (Integrations → API → OAuth/partner app) con redirect `https://predictableai.vanarsi.com/apollo-callback.html` y los scopes de `APOLLO_SCOPES`; cargar en Supabase los secrets `APOLLO_OAUTH_CLIENT_ID` y `APOLLO_OAUTH_CLIENT_SECRET`. Sin ellos todo sigue funcionando en modo plataforma (`APOLLO_API_KEY`).
 3. Desplegar `channel-connect`, `apollo-proxy`, `campaign-run`, `inbox-send`, `gmail-proxy` (con JWT) y `wati-webhook`, `dripify-webhook` (**`--no-verify-jwt`**). Actions → Deploy Edge Functions ya sabe las banderas.
 4. La migración también agrega `inbox_messages` a la publicación `supabase_realtime` (la bandeja se refresca sola).
+
+## Campañas v2 · Entrega 2 (2026-09-10): el builder gráfico
+
+- **`js/campaign-builder.js`** (nuevo, cargado entre `campaign-flow.js` y `campaigns.js`): asistente de cuatro pasos montado por `campaigns.js` en lugar del editor viejo. **Base** (nombre, lista con cuántos leads tienen teléfono / email / LinkedIn, punto de partida: IA, plantilla, clonar, desde cero) → **Cadencia** (línea de tiempo vertical sobre el grafo: tarjetas por canal con el chip de espera, "+" entre tarjetas para WhatsApp / Email / LinkedIn / Condición, la condición como rombo con ramas Sí y No que se vuelven a unir, panel lateral por nodo, validación en vivo con `CampaignFlow.validate` más avisos por canal sin conectar o plantilla sin aprobar, tarjeta fija de la regla de parada) → **Mensajes** (por envío: IA personalizada con ángulo e instrucciones, Mi texto con variables, plantilla de WhatsApp con su estado en Meta; vista previa con un lead real de la lista vía `generate-outreach` modo `step` con JWT, 3 créditos; casilla `review_required`) → **Revisar y lanzar** (resumen, datos faltantes por canal, créditos estimados con `estimateCredits`, ajustes avanzados colapsados: remitente, cuenta de Apollo, zona horaria, ventana, días, topes). "Lanzar campaña" guarda, enrola toda la lista y activa; "Guardar borrador" solo guarda. El builder no toca la base: devuelve el borrador por `onSave` y `campaigns.js` escribe `campaigns` (`flow`, `origin`, `review_required`, …) y enrola.
+- **Plantillas fijas** en `js/campaign-flow.js` (`templates()`: WhatsApp primero, Email primero, LinkedIn primero; los pasos de LinkedIn salen sin campaña de Dripify y la validación pide elegirla), `cloneWithNewIds`, `durationDays`, `nodeTitle`, `delayLabel` y el copy de canales / ángulos / condiciones.
+- **`generate-campaign`** (edge function nueva, JWT): lee `intel_hub_intake` + `client_brief` + `channel_accounts` (plantillas de WATI y campañas de Dripify) + los datos de la lista (teléfonos / emails / LinkedIn) y pide al motor de `outreach` un `{name, rationale, flow}`. El `flow` se valida con `campaign-flow.ts` más reglas de negocio (primer WhatsApp = plantilla, LinkedIn solo con Dripify y una campaña real, condiciones con su paso previo, 4–8 envíos, 10–21 días); si no valida, se reintenta una vez con los errores. Cobra 6 créditos (`outreach_playbook`) solo si sale válida.
+- **Detalle de campaña** (`campaigns.js`): la misma línea de tiempo en solo lectura (`CampaignBuilder.renderTimeline`) con contadores por nodo sacados de `campaign_events.node_id` (enviados, entregados, leídos, abiertos, respondieron, omitidos, fallaron; Sí / No en las condiciones) y "en espera" desde `campaign_enrollments.next_node_id`; la tabla de leads muestra el paso actual y la rama tomada (`branch_path`); la **bandeja de revisión** lista los `campaign_messages` en `draft` (editar asunto / cuerpo, aprobar uno o todos, omitir el paso) y los `error` con su motivo, y se refresca por realtime.
+- **Se retiró**: `campaign_steps` (migración `20260910000001_drop_campaign_steps.sql`, la función `campaign_flow_from_steps` y el camino legado de `campaign-run`), el editor de filas (`renderEditor` / `renderStepRow`) y `recommendedSteps`.
+
+### Pasos manuales para poner la Entrega 2 en producción
+
+1. Comprobar que ninguna campaña quedó sin `flow` (consulta en la cabecera de la migración) y aplicar `20260910000001_drop_campaign_steps.sql`.
+2. Desplegar `generate-campaign` (nueva, con JWT) y `campaign-run` (sin camino legado). El workflow **Actions → Deploy Edge Functions** ya lo sabe.
+3. Nada nuevo en secretos: `generate-campaign` usa la API key del motor elegido para `outreach`.

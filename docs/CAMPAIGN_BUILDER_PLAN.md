@@ -1,6 +1,6 @@
 # Plan: creador de campañas v2 (cadencia gráfica con condiciones)
 
-Estado: **plan aprobado el 2026-09-02. Entrega 1 implementada en el PR #173** (modelo + motor + IA por paso + estado de email); la Entrega 2 (builder) sigue pendiente. Complementa a `docs/OMNICANAL.md` (modelo, motor, WATI, Apollo, Dripify), que sigue siendo la referencia de las integraciones.
+Estado: **plan aprobado el 2026-09-02. Entrega 1 implementada en el PR #173** (modelo + motor + IA por paso + estado de email). **Entrega 2 implementada** (builder gráfico `js/campaign-builder.js`, `generate-campaign`, detalle con contadores y bandeja de revisión, `campaign_steps` eliminada); ver la sección "Campañas v2 · Entrega 2" de `docs/OMNICANAL.md`. Complementa a `docs/OMNICANAL.md` (modelo, motor, WATI, Apollo, Dripify), que sigue siendo la referencia de las integraciones.
 
 ## 1. Por qué
 
@@ -130,7 +130,7 @@ Tamaño: motor ~400 líneas nuevas/cambiadas, migración ~150, flow compartido ~
 
 ### Entrega 2 — builder + detalle (rama nueva, después de mergear la 1)
 
-**Archivos**: `js/campaign-builder.js` (nuevo: wizard y línea de tiempo), `js/campaigns.js` (queda con lista, detalle, enrolar, bandeja de revisión; se le quita `renderEditor`/`renderStepRow`), `js/campaign-flow.js` (plantillas fijas y estimación de créditos), edge function nueva `generate-campaign` (cadencia recomendada por IA: lee `intel_hub_intake` + `client_brief` + canales conectados, devuelve un `flow` que se valida con `campaign-flow.ts` antes de devolverlo; motor `outreach` → Claude vía `_shared/llm.ts`; cobra `outreach_playbook` (6)), `<script>` nuevo en `index.html` después de `js/campaigns.js`, migración `20260910000001_drop_campaign_steps.sql`.
+**Archivos**: `js/campaign-builder.js` (nuevo: wizard y línea de tiempo), `js/campaigns.js` (queda con lista, detalle, enrolar, bandeja de revisión; se le quita `renderEditor`/`renderStepRow`), `js/campaign-flow.js` (plantillas fijas y estimación de créditos), edge function nueva `generate-campaign` (cadencia recomendada por IA: lee `intel_hub_intake` + `client_brief` + canales conectados, devuelve un `flow` que se valida con `campaign-flow.ts` antes de devolverlo; motor `outreach` → Claude vía `_shared/llm.ts`; cobra `outreach_playbook` (6)), `<script>` nuevo en `index.html` entre `js/campaign-flow.js` y `js/campaigns.js`, migración `20260910000001_drop_campaign_steps.sql`.
 
 **Paso 1 · Base**. Nombre, lista (con conteo y cuántos tienen teléfono / email / LinkedIn), y cuatro tarjetas de punto de partida: *Recomendada por la IA* (muestra qué contexto va a usar y el costo), *Plantilla* (tres, con miniatura de la cadencia y qué canales necesita), *Clonar*, *Desde cero*.
 
