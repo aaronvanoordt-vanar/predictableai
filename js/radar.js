@@ -108,6 +108,7 @@
     channel: null,
     pollTimer: null,
     busy: false,
+    saveMsg: '',    // progreso del guardado en lista (etiqueta del botón)
     driving: false, // true mientras este tab está avanzando el run etapa por etapa
     showRerun: false,
     autoResumes: 0, // reintentos automáticos de un run estancado (máx 3 por carga de página)
@@ -469,10 +470,39 @@
     };
   }
 
-  function dmRow(userId, listId, co, dm) {
+  // Todas las filas de un mismo insert tienen que llevar EXACTAMENTE las
+  // mismas claves: PostgREST arma un solo INSERT con la unión de las claves
+  // de todas las filas y rellena con NULL las que le falten a alguna (no con
+  // el DEFAULT de la columna). Una fila de empresa sin `phone_status` junto a
+  // una de decision maker que sí lo trae reventaba con
+  // «null value in column "phone_status" ... violates not-null constraint».
+  // Por eso ambos constructores parten de esta base.
+  function baseRow(userId, listId) {
     return {
       list_id: listId,
       user_id: userId,
+      apollo_person_id: null,
+      apollo_contact_id: null,
+      first_name: null,
+      last_name: null,
+      name: null,
+      title: null,
+      company: null,
+      company_domain: null,
+      linkedin_url: null,
+      city: null,
+      country: null,
+      email: null,
+      email_status: null,
+      phone: null,
+      phone_status: 'none',
+      enriched_at: null,
+      snapshot: {},
+    };
+  }
+
+  function dmRow(userId, listId, co, dm) {
+    return Object.assign(baseRow(userId, listId), {
       apollo_person_id: dm.apollo_person_id || null,
       first_name: dm.first_name || null,
       last_name: dm.last_name || null,
@@ -491,7 +521,7 @@
       phone_status: dm.phone ? 'revealed' : 'none',
       enriched_at: (dm.email || dm.phone) ? new Date().toISOString() : null,
       snapshot: radarSnapshot(co),
-    };
+    });
   }
 
   // Empresa sin decision makers: Apollo no encontró personas, pero la empresa
@@ -500,21 +530,44 @@
   // sin contacto — nada inventado: nombre y cargo van vacíos.
   function companyRow(userId, listId, co) {
     const site = safeUrl(co.website);
-    return {
-      list_id: listId,
-      user_id: userId,
-      apollo_person_id: null,
-      first_name: null,
-      last_name: null,
-      name: null,
-      title: null,
+    return Object.assign(baseRow(userId, listId), {
       company: co.name || null,
       company_domain: site ? hostOf(site) : null,
-      linkedin_url: null,
-      city: null,
       country: co.country || null,
       snapshot: radarSnapshot(co),
-    };
+    });
+  }
+
+  // Apollo: una llamada HTTP por decision maker. Un run del Radar puede traer
+  // hasta 25 decision makers por empresa (MAX_DECISION_MAKERS en
+  // generate-radar), asi que 23 empresas son ~575 llamadas. Hacerlas en serie
+  // ANTES del insert dejaba el boton en "Guardando..." varios minutos con la
+  // lista vacia, y una sola request colgada (fetch sin timeout) lo dejaba ahi
+  // para siempre. Ahora Apollo va DESPUES del insert, en paralelo y con tope
+  // de tiempo: la sincronizacion es un extra, no el camino critico.
+  const APOLLO_SYNC_CONCURRENCY = 6;
+  const APOLLO_SYNC_TIMEOUT_MS = 20000;
+
+  function withTimeout(promise, ms, label) {
+    let timer;
+    const limit = new Promise((_, reject) => {
+      timer = global.setTimeout(() => reject(new Error(label)), ms);
+    });
+    return Promise.race([promise, limit]).finally(() => global.clearTimeout(timer));
+  }
+
+  // Corre `task` sobre items en lotes paralelos, reportando avance. Nunca
+  // rechaza: cada fallo se cuenta y el lote sigue.
+  async function inBatches(items, size, task, onProgress) {
+    let done = 0;
+    for (let i = 0; i < items.length; i += size) {
+      const chunk = items.slice(i, i + size);
+      await Promise.all(chunk.map(async (item) => {
+        try { await task(item); } catch (e) { /* lo cuenta el caller */ }
+        done++;
+      }));
+      if (onProgress) onProgress(done, items.length);
+    }
   }
 
   async function saveToList(companies) {
@@ -524,9 +577,10 @@
     const baseName = 'Radar ' + now.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' }) +
       ' ' + now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
     const typed = global.prompt('Nombre de la lista:', baseName);
-    if (typed === null) return; // el usuario canceló
+    if (typed === null) return; // el usuario cancelo
     const name = typed.trim() || baseName;
     state.busy = true;
+    state.saveMsg = 'Guardando…';
     render();
     try {
       if (!global.prospectingData || typeof global.prospectingData.createList !== 'function' ||
@@ -539,27 +593,19 @@
       } catch (e) {
         list = await global.prospectingData.createList(name + ' (' + now.getSeconds() + 's)');
       }
+
+      // 1. Armar las filas (sin tocar Apollo).
       const rows = [];
+      const dmIndexes = []; // posiciones de rows que son decision makers
       let dmCount = 0;
       let contactCount = 0;
       let companiesWithoutDms = 0;
-      let apolloSyncFailures = 0;
       for (const co of companies) {
         const dms = co.decision_makers || [];
         if (dms.length) {
           for (const dm of dms) {
-            const row = dmRow(state.user.id, list.id, co, dm);
-            // Mismo contrato que Prospección → Búsqueda (addPeopleToList):
-            // sin crear el contacto en Apollo con label_names=[lista], el
-            // decision maker se queda solo en Predictable y nunca aparece
-            // como lista en Apollo.
-            try {
-              row.apollo_contact_id = await global.prospectingData.createApolloContact(row, list.name);
-            } catch (e) {
-              apolloSyncFailures++;
-              console.warn('[radar] contacto Apollo falló:', e.message);
-            }
-            rows.push(row);
+            dmIndexes.push(rows.length);
+            rows.push(dmRow(state.user.id, list.id, co, dm));
           }
           dmCount += dms.length;
           contactCount += dms.filter((dm) => dm && (dm.email || dm.phone)).length;
@@ -568,32 +614,89 @@
           companiesWithoutDms++;
         }
       }
-      const { error } = await global.supabaseClient.from('prospect_list_members').insert(rows);
+
+      // 2. Guardar en Supabase PRIMERO: es lo unico que no se puede perder, y
+      //    es lo que hace que la lista deje de estar vacia.
+      state.saveMsg = 'Guardando ' + rows.length + ' contacto' + (rows.length === 1 ? '' : 's') + '…';
+      render();
+      const { data: inserted, error } = await global.supabaseClient
+        .from('prospect_list_members').insert(rows).select('id, apollo_person_id');
       if (error) throw new Error('No se pudieron guardar los contactos: ' + error.message);
-      // La lista recién creada pasa a contar como memoria del Radar: la
-      // próxima investigación no volverá a entregar estas empresas con la
-      // misma señal (sí con una nueva).
+
+      // La lista recien creada pasa a contar como memoria del Radar: la
+      // proxima investigacion no volvera a entregar estas empresas con la
+      // misma senal (si con una nueva).
       loadExclusionSources().then(render).catch(() => {});
-      // Invalida el caché de listas de Prospección para que la pestaña
-      // Listas la muestre sin necesitar un refresh completo de la página.
+      // Invalida el cache de listas de Prospeccion para que la pestana
+      // Listas la muestre sin necesitar un refresh completo de la pagina.
       try { global.document.dispatchEvent(new CustomEvent('prospecting:list-saved')); } catch (e) {}
+
+      // 3. Sincronizar con Apollo (contacto con label = nombre de la lista).
+      //    Best-effort: la lista ya existe aqui pase lo que pase alla.
+      const saved = Array.isArray(inserted) ? inserted : [];
+      const byPersonId = new Map();
+      for (const r of saved) { if (r.apollo_person_id) byPersonId.set(r.apollo_person_id, r.id); }
+      // PostgREST devuelve las filas insertadas en el orden en que se
+      // mandaron; solo confiamos en el indice si los tamanos coinciden, y si
+      // no, caemos al apollo_person_id.
+      const sameOrder = saved.length === rows.length;
+
+      const targets = dmIndexes.map((idx) => ({
+        row: rows[idx],
+        memberId: sameOrder ? saved[idx].id : byPersonId.get(rows[idx].apollo_person_id) || null,
+      }));
+      let apolloSyncFailures = 0;
+      const linkPatches = [];
+      if (targets.length) {
+        state.saveMsg = 'Sincronizando con Apollo 0/' + targets.length + '…';
+        render();
+        await inBatches(targets, APOLLO_SYNC_CONCURRENCY, async (t) => {
+          try {
+            const contactId = await withTimeout(
+              global.prospectingData.createApolloContact(t.row, list.name),
+              APOLLO_SYNC_TIMEOUT_MS,
+              'Apollo tardó demasiado en responder.');
+            if (contactId && t.memberId) linkPatches.push({ id: t.memberId, contactId: contactId });
+          } catch (e) {
+            apolloSyncFailures++;
+            console.warn('[radar] contacto Apollo falló:', e.message);
+            throw e;
+          }
+        }, (done, total) => {
+          state.saveMsg = 'Sincronizando con Apollo ' + done + '/' + total + '…';
+          render();
+        });
+      }
+
+      // 4. Escribir de vuelta los apollo_contact_id conseguidos.
+      if (linkPatches.length) {
+        state.saveMsg = 'Enlazando contactos de Apollo…';
+        render();
+        await inBatches(linkPatches, APOLLO_SYNC_CONCURRENCY, async (p) => {
+          await global.supabaseClient.from('prospect_list_members')
+            .update({ apollo_contact_id: p.contactId }).eq('id', p.id);
+        });
+      }
+
       alert('Guardado en la lista "' + list.name + '": ' +
         companies.length + ' empresa' + (companies.length === 1 ? '' : 's') +
         ' y ' + dmCount + ' decision maker' + (dmCount === 1 ? '' : 's') +
         (contactCount ? ' (' + contactCount + ' con correo o teléfono ya revelado)' : '') + '.' +
         (companiesWithoutDms
           ? ' (' + companiesWithoutDms + ' empresa' + (companiesWithoutDms === 1 ? '' : 's') +
-            ' quedó' + (companiesWithoutDms === 1 ? '' : 'ron') + ' sin contacto: Apollo no encontró personas.)'
+            (companiesWithoutDms === 1 ? ' quedó' : ' quedaron') + ' sin contacto: Apollo no encontró personas.)'
           : '') +
         (apolloSyncFailures
           ? ' (' + apolloSyncFailures + ' contacto' + (apolloSyncFailures === 1 ? '' : 's') +
-            ' no se pudo' + (apolloSyncFailures === 1 ? '' : 'ieron') + ' sincronizar con Apollo.)'
+            (apolloSyncFailures === 1 ? ' no se pudo' : ' no se pudieron') + ' sincronizar con Apollo, ' +
+            'pero sí están guardados aquí.)'
           : '') +
         ' La encuentras en Prospección → Listas guardadas.');
     } catch (e) {
       alert(e.message || 'No se pudo guardar la lista.');
     } finally {
       state.busy = false;
+      state.saveMsg = '';
       render();
     }
   }
@@ -834,7 +937,7 @@
           : '') +
         '<div class="rdr-actions">' +
           '<button class="btn btn-primary btn-sm" data-act="save-all" ' + (state.busy || !companies.length ? 'disabled' : '') + '>' +
-            (state.busy ? 'Guardando…' : 'Guardar las ' + companies.length + ' en una lista') + '</button>' +
+            (state.busy ? esc(state.saveMsg || 'Guardando…') : 'Guardar las ' + companies.length + ' en una lista') + '</button>' +
           '<button class="btn btn-ghost btn-sm" data-act="toggle-rerun">' +
             (state.showRerun ? 'Cancelar' : 'Nueva investigación') + '</button>' +
         '</div>' +

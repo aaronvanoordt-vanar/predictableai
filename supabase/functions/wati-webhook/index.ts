@@ -110,12 +110,29 @@ async function setContactStatus(db: SupabaseClient, member: Json, status: string
     .eq("id", member.id);
 }
 
+/** Enrolamiento al que se atribuye un mensaje: uno vivo si lo hay, si no el más reciente. */
+function primaryEnrollment(list: Json[]): Json | null {
+  return list.find((e) => ["active", "processing", "paused"].includes(e.status)) ?? list[0] ?? null;
+}
+
 async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
   const waId = wati.digits(ev?.waId);
   if (!waId) return;
   const member = await findMember(db, acc.user_id, waId);
   const wamid = ev?.whatsappMessageId ? String(ev.whatsappMessageId) : (ev?.id ? `wati:${ev.id}` : null);
   const at = eventDate(ev);
+
+  // Enrolamientos del lead (antes de guardar: la fila de la bandeja lleva
+  // campaign_id / enrollment_id del enrolamiento vivo, o del más reciente).
+  const { data: enrollments } = member
+    ? await db
+      .from("campaign_enrollments")
+      .select("id, campaign_id, status, next_position, replied_at, created_at")
+      .eq("member_id", member.id)
+      .eq("user_id", acc.user_id)
+      .order("created_at", { ascending: false })
+    : { data: [] as Json[] };
+  const primary = primaryEnrollment(enrollments ?? []);
 
   const { data: inserted, error: insErr } = await db
     .from("inbox_messages")
@@ -131,6 +148,8 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
       provider_conversation_id: ev?.conversationId ? String(ev.conversationId) : null,
       status: "delivered",
       sent_at: at,
+      campaign_id: primary?.campaign_id ?? null,
+      enrollment_id: primary?.id ?? null,
       payload: { type: ev?.type ?? null, senderName: ev?.senderName ?? null, buttonReply: ev?.buttonReply ?? null, sourceType: ev?.sourceType ?? null },
     }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true })
     .select("id");
@@ -141,11 +160,6 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
   if (!member) return; // número sin lead asociado: queda en la bandeja igual
 
   const optOut = isOptOut(ev);
-  const { data: enrollments } = await db
-    .from("campaign_enrollments")
-    .select("id, campaign_id, status, next_position")
-    .eq("member_id", member.id)
-    .eq("user_id", acc.user_id);
 
   for (const en of (enrollments ?? []) as Json[]) {
     const patch: Json = { last_inbound_whatsapp_at: at };
@@ -313,6 +327,12 @@ async function recordOperatorMessage(db: SupabaseClient, acc: Json, ev: Json) {
   if (!waId) return;
   const member = await findMember(db, acc.user_id, waId);
   const wamid = ev?.whatsappMessageId ? String(ev.whatsappMessageId) : (ev?.id ? `wati:${ev.id}` : null);
+  let primary: Json | null = null;
+  if (member) {
+    const { data } = await db.from("campaign_enrollments").select("id, campaign_id, status, created_at")
+      .eq("member_id", member.id).eq("user_id", acc.user_id).order("created_at", { ascending: false });
+    primary = primaryEnrollment(data ?? []);
+  }
   await db.from("inbox_messages").upsert({
     user_id: acc.user_id,
     member_id: member?.id ?? null,
@@ -325,6 +345,8 @@ async function recordOperatorMessage(db: SupabaseClient, acc: Json, ev: Json) {
     provider_conversation_id: ev?.conversationId ? String(ev.conversationId) : null,
     status: "sent",
     sent_at: eventDate(ev),
+    campaign_id: primary?.campaign_id ?? null,
+    enrollment_id: primary?.id ?? null,
     payload: { type: ev?.type ?? null, operator: ev?.operatorEmail ?? null, source: "wati_ui" },
   }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true });
 }

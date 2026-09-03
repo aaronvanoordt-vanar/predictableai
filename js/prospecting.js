@@ -1,26 +1,36 @@
 /**
- * js/prospecting.js — Prospecting workspace UI (Resumen / Búsqueda / Listas /
- * Contactos / Secuencias / Generador de mensajes IA)
+ * js/prospecting.js — Prospecting workspace UI (Buscar / Listas / Campañas)
  * ─────────────────────────────────────────────────────────────────────────────
- * Self-contained view module for the prospecting-architecture redesign.
- * Renders into #prospecting-shell (inside #page-pro-main). Lazy: the first
- * call to window.prospecting.show(tabId) builds the shell (6 panes, no
- * in-page tab bar — navigation between panes is driven entirely by the left
- * sidebar, which calls show(tabId) directly, to avoid duplicating nav UI).
- * "Resumen" is a metrics overview of the whole module; the actual Apollo
- * filter/search UI is the "Búsqueda" pane (surfaced in the sidebar as
- * "Search People" — the two are the same feature, not separate ones).
- * "Contactos" is the CRM: every member of every list in one table, with the
- * list it belongs to and its pipeline status (contact_status in Supabase).
- * "Generador de mensajes IA" also hosts the "Tendencias de outbound" card
- * (outreach_playbooks): an optional, recommended periodic web investigation
- * into what is working right now in cold outreach (specialized forums,
- * Apollo/Lavender/Gong reports, operators) that generate-outreach uses to
- * calibrate the crafting. Toggling it off leaves generation exactly as before.
+ * Self-contained view module. Renders into #prospecting-shell (inside
+ * #page-pro-main). Lazy: the first call to window.prospecting.show(tabId)
+ * builds the shell (3 panes, no in-page tab bar — navigation between panes
+ * is driven entirely by the left sidebar, which calls show(tabId) directly,
+ * to avoid duplicating nav UI).
  *
- * Public API:
- *   window.prospecting.show(tabId)   // 'resumen'|'busqueda'|'listas'|'contactos'|'secuencias'|'bandeja'|'outreach'
- *   window.prospecting.refreshBadge()// updates #nav-listas-badge with list count
+ * El journey es lineal: Buscar → Listas → Campañas.
+ *   "Buscar"   = filtros + resultados de personas (Apollo por apollo-proxy).
+ *   "Listas"   = las listas guardadas Y el CRM: la pseudo-lista «Todos los
+ *                contactos» (id '__all__') muestra a todos los miembros de
+ *                todas las listas con filtros (texto / estado / lista), y
+ *                cada lista real tiene el CTA «Crear campaña con esta lista».
+ *   "Campañas" = js/campaigns.js (canales + campañas + respuestas), montado
+ *                en el pane que este shell le reserva.
+ * Las pestañas Resumen, Contactos, Secuencias, Bandeja y Generador de
+ * mensajes IA se retiraron el 2026-09-03: los mensajes IA se generan al
+ * enrolar en una campaña (generateOutreachFor) y se previsualizan por lead
+ * (outreachPreviewHtml); el hilo de Gmail se abre desde Campañas → Respuestas
+ * (openThread). Los ids viejos siguen resolviendo a la pestaña correcta.
+ *
+ * Public API (window.prospecting):
+ *   show(tabId)                 // 'busqueda'|'listas'|'campanas' (ids viejos → alias)
+ *   goTab(tabId)                // navega vía el sidebar (mantiene el resaltado)
+ *   refreshBadge()              // updates #nav-listas-badge with list count
+ *   openEditContact(member, onSaved)
+ *   confirm(opts) · h(tag, attrs, ...children) · emptyHtml(icon, title, sub)
+ *   openThread({ threadId, contactEmail, since, subject, contactName, contactId?, fromEmail?, body?, replied?, onSent? })
+ *   gmailStatus() → Promise<{connected, email?}> · connectGmail() · disconnectGmail()
+ *   generateOutreachFor(members, { engine, onProgress }) → Promise<{ok, failed, skipped, failures}>
+ *   outreachPreviewHtml(member) → string (escapado)
  *
  * Data layer: window.prospectingData (built in parallel — referenced lazily
  * inside handlers, never at parse time). All user-visible copy is neutral
@@ -36,8 +46,8 @@
     activeTab: null,
     shell: null,
     panes: {},
-    cache: { lists: null, sequences: null, accounts: null, savedSearches: null, schedules: null },
-    resumen: { host: null },
+    cache: { lists: null, accounts: null, savedSearches: null },
+    gmail: null,                 // último gmail_accounts leído (gmailStatus)
     search: {
       filters: null,
       results: null,
@@ -58,57 +68,25 @@
     },
     listas: {
       leftEl: null, rightEl: null,
-      activeListId: null,
+      activeListId: null,      // id de lista, o ALL_LIST_ID (pseudo-lista «Todos los contactos»)
       members: [], selected: new Set(),
       loadingLists: false, listsError: null,
       loadingMembers: false, membersError: null,
-    },
-    seq: {
-      rootEl: null,
-      listId: '', sequenceId: '', accountId: '',
-      members: [], selected: new Set(),
-      loadingMembers: false, membersError: null,
-      seqError: null, acctError: null,
-      loadingSources: false,
-    },
-    wa: {
-      senderHost: null, listHost: null, briefHost: null,
-      listId: '',
-      members: [], selected: new Set(), expanded: new Set(),
-      loadingMembers: false, membersError: null,
-      generating: false, cancelRequested: false,
-      brief: null, briefLoading: false,
-      playbookHost: null, playbook: null,
-      playbookLoading: false, playbookSaving: false, playbookOpen: false,
-      playbookTimer: null, playbookPolls: 0,
-    },
-    bandeja: {
-      rootEl: null,
-      gmail: null, gmailChecked: false, gmailError: null,
-      sequenceId: '', stat: '',
-      rows: [], page: 1, hasMore: false,
-      loading: false, error: null,
-    },
-    contactos: {
-      rootEl: null,
-      rows: [],
-      loading: false, error: null,
+      // Filtros del CRM (solo en «Todos los contactos»)
       q: '', statusFilter: '', listFilter: '',
       channel: null,           // suscripción realtime a prospect_list_members
-      refreshTimer: null,
+      refreshTimer: null, filterTimer: null,
     },
   };
 
   var TABS = [
-    { id: 'resumen',    label: 'Resumen' },
-    { id: 'busqueda',   label: 'Búsqueda' },
+    { id: 'busqueda',   label: 'Buscar' },
     { id: 'listas',     label: 'Listas' },
-    { id: 'contactos',  label: 'Contactos' },
-    { id: 'secuencias', label: 'Secuencias' },
-    { id: 'bandeja',    label: 'Bandeja' },
-    { id: 'outreach',   label: 'Generador de mensajes IA' },
     { id: 'campanas',   label: 'Campañas' },
   ];
+
+  // Pseudo-lista: todos los miembros de todas las listas (el CRM).
+  var ALL_LIST_ID = '__all__';
 
   // 14 valid department keys for organization_department_or_subdepartment_counts
   var DEPT_OPTIONS = [
@@ -244,16 +222,13 @@
   // ── Static SVGs ────────────────────────────────────────────────────────
   var SVG_SEARCH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>';
   var SVG_LIST = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h6"/></svg>';
-  var SVG_MAIL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>';
   var SVG_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z"/></svg>';
   var SVG_LINK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14L21 3"/><path d="M15 3h6v6"/><path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>';
   var SVG_EDIT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
   var SVG_TRASH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>';
   var SVG_USER_PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>';
-  // Icon matching the Secuencias destination-tab sidebar glyph.
-  var SVG_SEQ_TAB = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M5 8l2 2 4-4"/></svg>';
-  // Sparkle — marks buttons that generate content with IA.
-  var SVG_SPARK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18 9.5l-4.2 1.8L12 16l-1.8-4.7L6 9.5l4.2-1.8z"/><path d="M18.5 14l.9 2.3 2.1.9-2.1.9-.9 2.3-.9-2.3-2.1-.9 2.1-.9z"/></svg>';
+  // Icon matching the Campañas sidebar glyph (CTA «Crear campaña con esta lista»).
+  var SVG_CAMPAIGN = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>';
 
   // Códigos de país más usados en LatAm + España/EE.UU. (celular es texto
   // libre — esto solo evita que cada usuario tenga que teclear el «+»).
@@ -349,7 +324,7 @@
     '#prospecting-shell .pros-skeleton-label { height:12px; width:80px; }',
     '#prospecting-shell .pros-skeleton-value { height:28px; width:60%; margin-top:6px; }',
     '#prospecting-shell .pros-skeleton-sub { height:12px; width:40%; margin-top:4px; }',
-    // Contactos (CRM): selector de estado inline en la tabla
+    // Listas / CRM: selector de estado inline en la tabla
     '#prospecting-shell .pros-status-sel { font-size:12px; padding:4px 8px; border-radius:99px; border:1px solid var(--border); background:var(--surface2); cursor:pointer; max-width:170px; }',
     '#prospecting-shell .pros-status-no_contactado { color:var(--text2); }',
     '#prospecting-shell .pros-status-saludo_enviado { color:var(--accent-ink); border-color:var(--accent-soft-2, var(--border)); background:var(--accent-soft); }',
@@ -372,28 +347,9 @@
     '.pros-manual-linkedin input { flex:1; min-width:0; }',
   ].join('\n');
 
-  // Editor de secuencias: también vive dentro de un modal (fuera del shell).
-  var SEQ_EDITOR_CSS = [
-    '.seq-editor { display:flex; flex-direction:column; gap:14px; max-height:min(62vh,560px); overflow-y:auto; padding-right:4px; }',
-    '.seq-editor-lbl { font-family:var(--font-mono); font-size:10px; font-weight:600; color:var(--text2); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }',
-    '.seq-step { border:1px solid var(--hair); border-radius:var(--r-md); background:var(--surface); padding:12px 14px; display:flex; flex-direction:column; gap:10px; }',
-    '.seq-step-head { display:flex; align-items:center; gap:10px; }',
-    '.seq-step-num { font-family:var(--font-mono); font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-4); }',
-    '.seq-step-wait { display:flex; align-items:center; gap:6px; margin-left:auto; font-size:12px; color:var(--text2); }',
-    '.seq-step-wait input { width:62px; }',
-    '.seq-step-wait select { width:auto; }',
-    // El modal vive fuera de #prospecting-shell, así que los campos no heredan
-    // el ancho ni el estilo de los del shell: se declaran aquí.
-    '.seq-step input[type=text], .seq-step textarea { width:100%; box-sizing:border-box; }',
-    '.seq-step textarea { min-height:120px; resize:vertical; line-height:1.55; font-family:var(--font-body); }',
-    '.seq-step-rm { border:0; background:transparent; cursor:pointer; color:var(--ink-4); padding:4px; border-radius:var(--r-xs); display:inline-flex; }',
-    '.seq-step-rm:hover { color:var(--red); background:var(--red-soft); }',
-    // Misma razón: .pros-check solo existe dentro del shell.
-    '.seq-step .pros-check { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--text2); cursor:pointer; font-family:var(--font-body); font-weight:400; text-transform:none; letter-spacing:0; }',
-    '.seq-step .pros-check input { accent-color:var(--gold); width:13px; height:13px; cursor:pointer; margin:0; flex:0 0 auto; }',
-    '.seq-vars { font-size:11.5px; color:var(--text3); line-height:1.6; }',
-    '.seq-vars code { font-family:var(--font-mono); font-size:11px; background:var(--surface2); border:1px solid var(--hair); border-radius:var(--r-xs); padding:1px 5px; }',
-    // Hilo de la Bandeja (también en modal, fuera del shell).
+  // Hilo de Gmail + responder: vive en un modal (fuera del shell), lo abre
+  // Campañas → Respuestas vía window.prospecting.openThread().
+  var THREAD_CSS = [
     '.thread-wrap { display:flex; flex-direction:column; gap:14px; }',
     '.thread-list { display:flex; flex-direction:column; gap:10px; max-height:min(46vh,420px); overflow-y:auto; padding-right:4px; }',
     '.thread-msg { border:1px solid var(--hair); border-radius:var(--r-md); background:var(--surface); padding:10px 12px; }',
@@ -524,13 +480,6 @@
     if (m.phone) return esc(m.phone);
     if (m.phone_status === 'pending') return '<span class="pill pill-amber">Pendiente…</span>';
     if (m.phone_status === 'unavailable') return '<span class="pill pill-gray">No disponible</span>';
-    return '<span style="color:var(--text3)">—</span>';
-  }
-
-  function seqStatusCell(m) {
-    if (m.sequence_status && m.sequence_status.sequence_name) {
-      return '<span class="pill pill-purple">' + esc(m.sequence_status.sequence_name) + '</span>';
-    }
     return '<span style="color:var(--text3)">—</span>';
   }
 
@@ -1372,7 +1321,7 @@
         return waitForBrief(); // status pending/generating
       })
       .then(function (brief) {
-        if (!brief.recommended_filters) throw new Error('Tu brief no incluye filtros recomendados. Regenera tu brief desde la pestaña Generador de mensajes IA.');
+        if (!brief.recommended_filters) throw new Error('Tu brief no incluye filtros recomendados. Revisa el ICP en Contexto de la empresa y vuelve a generar el Intelligence Hub.');
         applyRecommendedFilters(brief.recommended_filters);
         setReco({ msg: 'Buscando con los filtros de tu ICP…' });
         var applied = [];
@@ -1425,88 +1374,6 @@
         setReco({ running: false, msg: '', note: '' });
         toast(errMsg(e), 'error');
       });
-  }
-
-  // ══ TAB 0: RESUMEN — overview of the module's real metrics ═══════════════
-  function buildResumenPane() {
-    var pane = state.panes.resumen;
-    var host = skeletonResumenLoading();
-    pane.appendChild(host);
-    state.resumen.host = host;
-  }
-
-  function statCard(label, value, sub) {
-    return h('div', { class: 'chart-card', style: 'padding:16px' },
-      h('div', { style: 'font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px', text: label }),
-      h('div', { style: 'font-size:26px;font-weight:800;color:var(--text);margin-top:6px', text: value }),
-      sub ? h('div', { style: 'font-size:12px;color:var(--text3);margin-top:4px', text: sub }) : null);
-  }
-
-  function skeletonStatCard() {
-    return h('div', { class: 'chart-card pros-skeleton-card' },
-      h('div', { class: 'pros-skeleton pros-skeleton-label' }),
-      h('div', { class: 'pros-skeleton pros-skeleton-value' }),
-      h('div', { class: 'pros-skeleton pros-skeleton-sub' }));
-  }
-
-  function skeletonResumenLoading() {
-    var grid = h('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px' });
-    for (var i = 0; i < 3; i++) {
-      grid.appendChild(skeletonStatCard());
-    }
-    var card = h('div', { class: 'chart-card pros-skeleton-card', style: 'padding:16px' });
-    for (var j = 0; j < 4; j++) {
-      card.appendChild(h('div', { class: 'pros-skeleton', style: 'height:32px;margin-bottom:10px' }));
-    }
-    var host = h('div', null, grid, card);
-    return host;
-  }
-
-  function initResumenTab() {
-    var host = state.resumen.host;
-    if (!host) return Promise.resolve();
-    return Promise.all([
-      loadLists(false).catch(function () { return []; }),
-      Promise.resolve(pd().fetchSequences()).catch(function () { return []; }),
-      loadSavedSearches(false).catch(function () { return []; }),
-    ]).then(function (r) {
-      var lists = r[0] || [];
-      var sequences = r[1] || [];
-      var searches = r[2] || [];
-      var totalMembers = lists.reduce(function (n, l) { return n + (l.member_count || 0); }, 0);
-      var activeSeqs = sequences.filter(function (s) { return s.active; }).length;
-      host.innerHTML = '';
-      host.appendChild(h('div', { class: 'pros-grid-300', style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px' },
-        statCard('Prospectos guardados', fmtNum(totalMembers), lists.length ? fmtNum(lists.length) + ' lista(s)' : 'Aún no tienes listas'),
-        statCard('Búsquedas guardadas', fmtNum(searches.length), 'En Búsqueda → Guardar búsqueda'),
-        statCard('Secuencias en Apollo', fmtNum(sequences.length), activeSeqs ? fmtNum(activeSeqs) + ' activa(s)' : 'Ninguna activa'),
-      ));
-      var actions = h('div', { class: 'chart-card', style: 'padding:16px;display:flex;flex-direction:column;gap:10px' },
-        h('div', { style: 'font-size:13px;font-weight:700;color:var(--text)', text: '¿Qué quieres hacer?' }),
-        h('div', { style: 'display:flex;flex-wrap:wrap;gap:8px' },
-          quickLink('Buscar personas', 'busqueda'),
-          quickLink('Ver listas', 'listas'),
-          quickLink('Contactos (CRM)', 'contactos'),
-          quickLink('Secuencias', 'secuencias'),
-          quickLink('Generador de mensajes IA', 'outreach'),
-          quickLink('Campañas', 'campanas')));
-      host.appendChild(actions);
-    }).catch(function (e) {
-      host.innerHTML = '';
-      host.appendChild(h('div', { class: 'pros-note-red', text: '⚠ ' + errMsg(e) }));
-    });
-  }
-
-  function quickLink(label, tabId) {
-    var btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: label });
-    btn.addEventListener('click', guarded(function () {
-      // Click the matching sidebar item (not just switchTab) so the sidebar's
-      // active-item highlight stays in sync with the pane actually shown.
-      var navItem = document.querySelector('.nav-item[data-pros-tab="' + tabId + '"]');
-      if (navItem) navItem.click();
-      else switchTab(tabId);
-    }));
-    return btn;
   }
 
   // ══ TAB 1: BÚSQUEDA — search + results ══════════════════════════════════
@@ -2003,26 +1870,30 @@
     state.listas.rightEl = right;
     pane.addEventListener('click', guarded(onListasClick));
     pane.addEventListener('change', guarded(onListasChange));
+    pane.addEventListener('input', onListasInput);
   }
+
+  function isAllList() { return state.listas.activeListId === ALL_LIST_ID; }
 
   function initListasTab() {
     var st = state.listas;
     st.loadingLists = true;
     st.listsError = null;
     renderListsLeft();
+    subscribeMembersRealtime();
     return loadLists(false)
       .catch(function (e) { st.listsError = errMsg(e); })
       .then(function () {
         st.loadingLists = false;
-        if (st.activeListId && !findList(st.activeListId)) {
+        if (st.activeListId && !isAllList() && !findList(st.activeListId)) {
           st.activeListId = null;
           st.members = [];
           st.selected.clear();
         }
         renderListsLeft();
         // Siempre re-consultar a Supabase al entrar: un contacto pudo cambiar
-        // desde Contactos, el Inbox u otro dispositivo (teléfonos async,
-        // estado CRM, outreach) y esta pestaña debe reflejarlo.
+        // desde Campañas, el coach u otro dispositivo (teléfonos async, estado
+        // CRM, mensajes IA) y esta pestaña debe reflejarlo.
         if (st.activeListId) return reloadMembers();
         renderListsRight();
       });
@@ -2063,9 +1934,16 @@
     } else if (!lists.length) {
       html += '<div class="table-card">' +
         emptyHtml(SVG_LIST, 'Aún no tienes listas',
-          'Créalas desde la pestaña Búsqueda seleccionando prospectos y presionando «Agregar a lista», o crea una aquí con el campo de arriba.') +
+          'Créalas desde Buscar seleccionando prospectos y presionando «Agregar a lista», o crea una aquí con el campo de arriba.') +
         '</div>';
     } else {
+      // Pseudo-lista «Todos los contactos»: el CRM (todas las listas en una tabla).
+      var totalMembers = lists.reduce(function (n, l) { return n + (l.member_count || 0); }, 0);
+      html += '<div class="pros-listcard' + (isAllList() ? ' active' : '') + '" data-action="select-list" data-id="' + ALL_LIST_ID + '">' +
+        '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--text)">Todos los contactos</div>' +
+        '<div class="pros-cellsub">' + esc(fmtNum(totalMembers)) + ' contactos · ' + esc(fmtNum(lists.length)) + ' lista' + (lists.length === 1 ? '' : 's') + '</div>' +
+        '</div></div>';
       html += lists.map(function (l) {
         var active = String(st.activeListId) === String(l.id);
         return '<div class="pros-listcard' + (active ? ' active' : '') + '" data-action="select-list" data-id="' + esc(String(l.id)) + '">' +
@@ -2081,6 +1959,22 @@
     host.innerHTML = html;
   }
 
+  // Filtros del CRM (texto / estado / lista). En una lista real solo aplica
+  // el texto si el usuario escribió algo; los selects viven en «Todos».
+  function visibleListMembers() {
+    var st = state.listas;
+    var q = (st.q || '').trim().toLowerCase();
+    var all = isAllList();
+    return st.members.filter(function (m) {
+      if (all && st.statusFilter && (m.contact_status || 'no_contactado') !== st.statusFilter) return false;
+      if (all && st.listFilter && String(m.list_id) !== st.listFilter) return false;
+      if (!q) return true;
+      var hay = [m.name, m.first_name, m.last_name, m.company, m.title, m.email, m.phone, m.list_name, m.country, m.city]
+        .filter(Boolean).join(' ').toLowerCase();
+      return hay.indexOf(q) !== -1;
+    });
+  }
+
   function listMemberRowHtml(m) {
     var st = state.listas;
     var id = esc(String(m.id));
@@ -2092,11 +1986,17 @@
         (m.title ? '<div class="pros-cellsub" style="font-size:12px">' + esc(m.title) + '</div>' : '') + '</td>' +
       '<td>' + esc(m.company || '—') +
         (m.company_domain ? '<div class="pros-cellsub">' + esc(m.company_domain) + '</div>' : '') + '</td>' +
+      '<td>' + esc(m.country || '—') +
+        (m.city ? '<div class="pros-cellsub">' + esc(m.city) + '</div>' : '') + '</td>' +
+      (isAllList() ? '<td><span class="pill pill-purple">' + esc(m.list_name || '—') + '</span></td>' : '') +
+      '<td>' + statusSelectHtml(m) + '</td>' +
       '<td>' + memberEmailCell(m) + '</td>' +
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
-      '<td>' + seqStatusCell(m) + '</td>' +
-      '<td><button type="button" class="pros-iconbtn" data-action="edit-member" data-id="' + id + '" title="Editar contacto">✎</button></td>' +
+      '<td style="white-space:nowrap">' +
+        '<button type="button" class="pros-iconbtn" data-action="edit-member" data-id="' + id + '" title="Editar contacto">' + SVG_EDIT + '</button>' +
+        '<button type="button" class="pros-iconbtn" data-action="delete-member" data-id="' + id + '" title="Eliminar contacto">' + SVG_TRASH + '</button>' +
+      '</td>' +
       '</tr>';
   }
 
@@ -2107,77 +2007,124 @@
     if (!st.activeListId) {
       host.innerHTML = '<div class="table-card">' +
         emptyHtml(SVG_LIST, 'Selecciona una lista',
-          'Elige una lista del panel izquierdo para ver y gestionar sus contactos.') +
+          'Elige una lista del panel izquierdo para ver y gestionar sus contactos, o «Todos los contactos» para ver tu CRM completo.') +
         '</div>';
       return;
     }
-    var list = findList(st.activeListId);
+    var all = isAllList();
+    var list = all ? null : findList(st.activeListId);
     var n = st.selected.size;
-    var html = '<div class="table-card">' +
-      // Header: título + "Enriquecer" en la esquina superior derecha.
+    var rows = visibleListMembers();
+    var html = '';
+
+    if (all) {
+      // KPIs reales del CRM (mismos criterios que el dashboard).
+      var total = st.members.length;
+      var meetings = st.members.filter(function (m) {
+        return m.contact_status === 'reunion_agendada' || m.contact_status === 'reunion_tomada';
+      }).length;
+      var contacted = st.members.filter(function (m) {
+        return m.contact_status && m.contact_status !== 'no_contactado';
+      }).length;
+      html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px">' +
+        '<div class="chart-card" style="padding:14px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Contactos</div><div style="font-size:24px;font-weight:800;margin-top:4px">' + esc(fmtNum(total)) + '</div></div>' +
+        '<div class="chart-card" style="padding:14px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Contactados</div><div style="font-size:24px;font-weight:800;margin-top:4px">' + esc(fmtNum(contacted)) + '</div></div>' +
+        '<div class="chart-card" style="padding:14px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Reuniones conseguidas</div><div style="font-size:24px;font-weight:800;margin-top:4px;color:var(--green)">' + esc(fmtNum(meetings)) + '</div></div>' +
+        '</div>';
+    }
+
+    html += '<div class="table-card">' +
+      // Header: título + acción principal en la esquina superior derecha.
       '<div class="table-head" style="gap:12px;flex-wrap:wrap;align-items:flex-start">' +
-      '<div><div style="font-weight:600;font-size:13.5px">' + esc((list && list.name) || 'Lista') + '</div>' +
-      '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos</div></div>' +
-      '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_email" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer seleccionados</button>' +
-      '</div>' +
-      // Fila 1 — acciones sobre los leads seleccionados (secuencia / IA).
-      '<div class="pros-actions" style="padding:12px 18px 0">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="to-sequence"' + (n ? '' : ' disabled') + '>' + SVG_SEQ_TAB + ' Agregar a secuencia</button>' +
-      '<button type="button" class="btn btn-ai btn-sm" data-action="to-outreach" data-credit-cost="outreach_message" data-credit-muted' + (n ? '' : ' disabled') + '>' + SVG_SPARK + ' Generar mensajes con IA</button>' +
-      '<span id="pros-engine-listas"></span>' +
-      '</div>' +
-      // Fila 2 — acciones sobre la lista.
-      '<div class="pros-actions" style="padding:10px 18px 14px">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>' +
+      '<div><div style="font-weight:600;font-size:13.5px">' + esc(all ? 'Todos los contactos' : ((list && list.name) || 'Lista')) + '</div>' +
+      '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos' + (all ? ' en todas tus listas' : '') + '</div></div>' +
+      (all
+        ? '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_email" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer seleccionados</button>'
+        : '<button type="button" class="btn btn-primary btn-sm" data-action="create-campaign"' + (st.members.length ? '' : ' disabled') + '>' + SVG_CAMPAIGN + ' Crear campaña con esta lista</button>') +
+      '</div>';
+
+    if (all) {
+      var listOpts = {};
+      st.members.forEach(function (m) { if (m.list_id) listOpts[String(m.list_id)] = m.list_name || '—'; });
+      html += '<div class="pros-ct-toolbar" style="padding:12px 18px 0">' +
+        '<input type="search" data-action="ct-search" placeholder="Buscar por nombre, empresa, email…" value="' + esc(st.q) + '">' +
+        '<select data-action="ct-filter-status"><option value="">Todos los estados</option>' +
+        contactStatuses().map(function (s) {
+          return '<option value="' + esc(s.value) + '"' + (st.statusFilter === s.value ? ' selected' : '') + '>' + esc(s.label) + '</option>';
+        }).join('') + '</select>' +
+        '<select data-action="ct-filter-list"><option value="">Todas las listas</option>' +
+        Object.keys(listOpts).map(function (id) {
+          return '<option value="' + esc(id) + '"' + (st.listFilter === id ? ' selected' : '') + '>' + esc(listOpts[id]) + '</option>';
+        }).join('') + '</select>' +
+        '</div>';
+    }
+
+    // Acciones sobre la selección / la lista.
+    html += '<div class="pros-actions" style="padding:10px 18px 14px">' +
+      (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_email" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer seleccionados</button>') +
+      (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>') +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-members">Actualizar</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="export-csv"' + (st.members.length ? '' : ' disabled') + '>Exportar CSV</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="delete-members" style="color:var(--red)"' + (n ? '' : ' disabled') + '>Eliminar</button>' +
       '</div>';
+
+    var cols = all ? ['30%', '35%', '25%', '20%', '30%', '40%', '28%', '18%', '14%'] : ['30%', '40%', '20%', '30%', '45%', '30%', '25%', '14%'];
     if (st.loadingMembers) {
       html += window.Skeleton
-        ? '<div class="pros-scroll-x"><table><tbody>' +
-            window.Skeleton.tableRows(['30%', '40%', '35%', '45%', '30%', '25%', '28%'], 6) +
-          '</tbody></table></div>'
+        ? '<div class="pros-scroll-x"><table><tbody>' + window.Skeleton.tableRows(cols, 6) + '</tbody></table></div>'
         : '<div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando contactos…</div>';
     } else if (st.membersError) {
       html += '<div style="padding:16px"><div class="pros-note-red" style="margin-top:0">⚠ ' + esc(st.membersError) + '</div></div>';
     } else if (!st.members.length) {
-      html += emptyHtml(SVG_LIST, 'Lista vacía', 'Agrega prospectos a esta lista desde la pestaña Búsqueda.');
+      html += all
+        ? emptyHtml(SVG_LIST, 'Aún no tienes contactos', 'Busca personas en Buscar y guárdalas en una lista: todas aparecerán aquí, tu CRM de prospección.')
+        : emptyHtml(SVG_LIST, 'Lista vacía', 'Agrega prospectos a esta lista desde Buscar.');
+    } else if (!rows.length) {
+      html += emptyHtml(SVG_SEARCH, 'Sin resultados', 'Ningún contacto coincide con la búsqueda o los filtros.');
     } else {
-      var allChecked = st.members.every(function (m) { return st.selected.has(String(m.id)); });
+      var allChecked = rows.every(function (m) { return st.selected.has(String(m.id)); });
       html += '<div class="pros-scroll-x"><table><thead><tr>' +
         '<th style="width:34px"><input type="checkbox" data-action="mem-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-        '<th>Nombre</th><th>Empresa</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th><th>Secuencia</th><th></th>' +
-        '</tr></thead><tbody>' + st.members.map(listMemberRowHtml).join('') + '</tbody></table></div>';
+        '<th>Nombre</th><th>Empresa</th><th>País</th>' + (all ? '<th>Lista</th>' : '') + '<th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th><th></th>' +
+        '</tr></thead><tbody>' + rows.map(listMemberRowHtml).join('') + '</tbody></table></div>';
+      if (all) {
+        html += '<div style="padding:10px 18px;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(st.members.length)) + ' contactos · El estado se actualiza al instante en todo el sistema (Campañas, dashboard y este CRM leen la misma base).</div>';
+      }
     }
     html += '</div>';
     host.innerHTML = html;
-    if (window.AIEngine) window.AIEngine.mount('#pros-engine-listas', 'outreach', { compact: true });
   }
 
   function updateListasToolbar() {
     var host = state.listas.rightEl;
     if (!host) return;
     var n = state.listas.selected.size;
-    var enrichBtn = host.querySelector('[data-action="enrich-selected"]');
-    if (enrichBtn) enrichBtn.disabled = !n;
-    var seqBtn = host.querySelector('[data-action="to-sequence"]');
-    if (seqBtn) seqBtn.disabled = !n;
-    var outreachBtn = host.querySelector('[data-action="to-outreach"]');
-    if (outreachBtn) outreachBtn.disabled = !n;
-    var delBtn = host.querySelector('[data-action="delete-members"]');
-    if (delBtn) delBtn.disabled = !n;
+    ['enrich-selected', 'delete-members'].forEach(function (a) {
+      var btn = host.querySelector('[data-action="' + a + '"]');
+      if (btn) btn.disabled = !n;
+    });
   }
 
-  function reloadMembers() {
+  // opts.keepSelection: refrescos por realtime no deben borrar lo marcado.
+  function reloadMembers(opts) {
     var st = state.listas;
-    st.loadingMembers = true;
+    var keep = !!(opts && opts.keepSelection);
+    st.loadingMembers = !keep;
     st.membersError = null;
-    st.selected.clear();
-    renderListsRight();
+    if (!keep) st.selected.clear();
+    if (!keep) renderListsRight();
+    var all = isAllList();
+    var listId = st.activeListId;
     return Promise.resolve()
-      .then(function () { return pd().fetchMembers(st.activeListId); })
-      .then(function (members) { st.members = Array.isArray(members) ? members : []; })
+      .then(function () { return all ? pd().fetchAllContacts() : pd().fetchMembers(listId); })
+      .then(function (members) {
+        if (st.activeListId !== listId) return; // el usuario cambió de lista mientras cargaba
+        st.members = Array.isArray(members) ? members : [];
+        if (keep) {
+          var ids = new Set(st.members.map(function (m) { return String(m.id); }));
+          Array.from(st.selected).forEach(function (id) { if (!ids.has(id)) st.selected.delete(id); });
+        }
+      })
       .catch(function (e) { st.members = []; st.membersError = errMsg(e); })
       .then(function () {
         st.loadingMembers = false;
@@ -2190,33 +2137,43 @@
     return st.members.filter(function (m) { return st.selected.has(String(m.id)); });
   }
 
-  // Carry the current list + selected leads over to the Secuencias or
-  // WhatsApp & LinkedIn tab so the user can finish the action there in a
-  // single click. Nothing is enrolled or generated here — only the list and
-  // the selection move, pre-loaded, so the target tab opens ready to act.
-  function sendSelectionToTab(tabId) {
-    var src = state.listas;
-    if (!src.activeListId) return;
-    var members = selectedListMembers();
-    if (!members.length) return toast('Selecciona al menos un contacto.', 'warn');
-    var ids = members.map(function (m) { return String(m.id); });
-    if (tabId === 'secuencias') {
-      var stq = state.seq;
-      stq.listId = String(src.activeListId);
-      stq.members = src.members.slice();
-      stq.selected = new Set(ids);
-    } else if (tabId === 'outreach') {
-      var stw = state.wa;
-      stw.listId = String(src.activeListId);
-      stw.members = src.members.slice();
-      stw.selected = new Set(ids);
-      stw.expanded = new Set();
+  function findListMember(id) {
+    return state.listas.members.find(function (x) { return String(x.id) === String(id); }) || null;
+  }
+
+  // Listas → Campañas: abre el constructor con esta lista preseleccionada.
+  // campaigns.newFromList guarda el id pendiente y lo aplica al montar, así
+  // que el orden (newFromList → goTab) es seguro aunque Campañas no exista aún.
+  function createCampaignFromList() {
+    var st = state.listas;
+    if (!st.activeListId || isAllList()) return;
+    if (!st.members.length) return toast('Esta lista está vacía: agrega contactos antes de crear la campaña.', 'warn');
+    var listId = String(st.activeListId);
+    if (window.campaigns && typeof window.campaigns.newFromList === 'function') {
+      try { window.campaigns.newFromList(listId); } catch (e) { console.warn('[prospecting] newFromList:', e); }
     }
-    // Click the matching sidebar item (not just switchTab) so the sidebar's
-    // active-item highlight stays in sync with the pane actually shown.
-    var navItem = document.querySelector('.nav-item[data-pros-tab="' + tabId + '"]');
-    if (navItem) navItem.click();
-    else switchTab(tabId);
+    goTab('campanas');
+  }
+
+  function onListasInput(e) {
+    var t = e.target;
+    if (!t.getAttribute || t.getAttribute('data-action') !== 'ct-search') return;
+    var st = state.listas;
+    st.q = t.value || '';
+    clearTimeout(st.filterTimer);
+    st.filterTimer = setTimeout(function () {
+      // Re-render solo la tabla conservando el foco del buscador.
+      var hadFocus = document.activeElement === t;
+      var pos = t.selectionStart;
+      renderListsRight();
+      if (hadFocus) {
+        var again = st.rightEl && st.rightEl.querySelector('[data-action="ct-search"]');
+        if (again) {
+          again.focus();
+          try { again.setSelectionRange(pos, pos); } catch (_) {}
+        }
+      }
+    }, 250);
   }
 
   function onListasChange(e) {
@@ -2229,11 +2186,31 @@
       updateListasToolbar();
     } else if (action === 'mem-check-all') {
       var on = t.checked;
-      st.members.forEach(function (m) {
+      visibleListMembers().forEach(function (m) {
         if (on) st.selected.add(String(m.id)); else st.selected.delete(String(m.id));
       });
       renderListsRight();
-    }
+    } else if (action === 'ct-status') {
+      var mid = t.getAttribute('data-id');
+      var m = findListMember(mid);
+      if (!m) return;
+      var next = t.value;
+      var prev = m.contact_status || 'no_contactado';
+      if (next === prev) return;
+      m.contact_status = next; // optimista; se revierte si falla
+      t.className = 'pros-status-sel pros-status-' + next;
+      return Promise.resolve(pd().setContactStatus(mid, next))
+        .then(function () {
+          toast('Estado actualizado a «' + statusMeta(next).label + '».', 'success');
+          renderListsRight();
+        })
+        .catch(function (err) {
+          m.contact_status = prev;
+          renderListsRight();
+          throw err;
+        });
+    } else if (action === 'ct-filter-status') { st.statusFilter = t.value; renderListsRight(); }
+    else if (action === 'ct-filter-list') { st.listFilter = t.value; renderListsRight(); }
   }
 
   function onListasClick(e) {
@@ -2279,13 +2256,13 @@
     if (action === 'select-list') {
       st.activeListId = btn.getAttribute('data-id');
       st.selected.clear();
+      st.q = ''; st.statusFilter = ''; st.listFilter = '';
       renderListsLeft();
       return reloadMembers();
     }
+    if (action === 'create-campaign') return createCampaignFromList();
     if (action === 'add-manual') return openAddManualModal();
     if (action === 'enrich-selected') return openEnrichModal();
-    if (action === 'to-sequence') return sendSelectionToTab('secuencias');
-    if (action === 'to-outreach') return sendSelectionToTab('outreach');
     if (action === 'refresh-members') {
       // Refetch lists too (member counts) — phones arrive asynchronously.
       return loadLists(true)
@@ -2294,8 +2271,13 @@
     }
     if (action === 'export-csv') return exportListCsv();
     if (action === 'delete-members') return openDeleteMembersModal();
+    if (action === 'delete-member') {
+      var mDel = findListMember(btn.getAttribute('data-id'));
+      if (!mDel) return;
+      return openDeleteContactoModal(mDel);
+    }
     if (action === 'edit-member') {
-      var mem = st.members.find(function (x) { return String(x.id) === String(btn.getAttribute('data-id')); });
+      var mem = findListMember(btn.getAttribute('data-id'));
       if (!mem) return;
       return openEditContactModal(mem, function (patch) {
         Object.assign(mem, patch);
@@ -2411,7 +2393,22 @@
     function renderOptions() {
       listHost.innerHTML = '';
       if (!apolloLists.length) {
-        listHost.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text3);padding:8px 2px', text: 'No encontramos listas guardadas en tu cuenta de Apollo.' }));
+        // Estado vacío honesto: en modo plataforma NO estamos mirando la cuenta
+        // de Apollo del usuario sino la key compartida de la beta, así que
+        // afirmar "tu cuenta no tiene listas" sería falso.
+        var mode = pd().apolloAuthMode ? pd().apolloAuthMode() : null;
+        var isPlatform = mode === 'platform';
+        listHost.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text3);padding:8px 2px;line-height:1.5' },
+          h('div', { text: isPlatform
+            ? 'Estamos leyendo la cuenta de Apollo compartida de la beta, no la tuya — por eso no aparecen tus listas.'
+            : 'Apollo no devolvió ninguna lista para la cuenta conectada.' }),
+          h('div', { style: 'margin-top:6px', text: isPlatform
+            ? 'Conecta tu cuenta de Apollo en Campañas → canales → Email para importar tus listas.'
+            : 'Si en Apollo sí las ves, revisa que sea la misma cuenta y que su API key sea master key (Apollo la exige para listar listas).' }),
+          h('div', { style: 'margin-top:6px;opacity:.75', text: 'Cuenta en uso: ' + (
+            mode === 'oauth' ? 'la tuya (OAuth)'
+              : mode === 'user_key' ? 'la tuya (API key)'
+                : isPlatform ? 'la compartida de la plataforma' : 'desconocida') })));
         return;
       }
       apolloLists.forEach(function (l) {
@@ -2710,7 +2707,7 @@
     if (!sel.length) return toast('Selecciona al menos un contacto.', 'warn');
     confirmModal({
       title: 'Eliminar contactos',
-      message: 'Se eliminarán ' + fmtNum(sel.length) + ' contactos de esta lista. Los contactos ya creados en Apollo no se borran.',
+      message: 'Se eliminarán ' + fmtNum(sel.length) + ' contactos de ' + (isAllList() ? 'sus listas' : 'esta lista') + '. Los contactos ya creados en Apollo no se borran.',
       confirmLabel: 'Eliminar',
       danger: true,
       onConfirm: function () {
@@ -2730,16 +2727,20 @@
   function openDeleteContactoModal(contacto) {
     if (!contacto) return;
     var name = contacto.name || ((contacto.first_name || '') + ' ' + (contacto.last_name || '')).trim() || 'Contacto sin nombre';
+    var list = isAllList() ? null : findList(state.listas.activeListId);
+    var listName = contacto.list_name || (list && list.name) || 'sin lista';
     confirmModal({
       title: 'Eliminar contacto',
-      message: 'Se eliminará el contacto «' + name + '» de «' + (contacto.list_name || 'sin lista') + '». El contacto ya creado en Apollo no se borra.',
+      message: 'Se eliminará el contacto «' + name + '» de «' + listName + '». El contacto ya creado en Apollo no se borra.',
       confirmLabel: 'Eliminar',
       danger: true,
       onConfirm: function () {
         return Promise.resolve(pd().deleteMembers([contacto.id])).then(function () {
           state.cache.lists = null;
-          return reloadContactos().then(function () {
+          return loadLists(false).catch(function () {}).then(function () {
+            renderListsLeft();
             toast('Contacto eliminado.', 'success');
+            return reloadMembers();
           });
         });
       },
@@ -2748,10 +2749,12 @@
 
   function exportListCsv() {
     var st = state.listas;
-    var list = findList(st.activeListId);
-    var rows = st.selected.size ? selectedListMembers() : st.members;
+    var list = isAllList() ? { name: 'todos-los-contactos' } : findList(st.activeListId);
+    var rows = st.selected.size ? selectedListMembers() : visibleListMembers();
     if (!rows.length) return toast('No hay contactos para exportar.', 'warn');
-    var cols = ['name', 'title', 'company', 'email', 'phone', 'linkedin_url'];
+    var cols = isAllList()
+      ? ['name', 'title', 'company', 'list_name', 'contact_status', 'email', 'phone', 'linkedin_url']
+      : ['name', 'title', 'company', 'contact_status', 'email', 'phone', 'linkedin_url'];
     var lines = [cols.join(',')];
     rows.forEach(function (m) {
       lines.push(cols.map(function (c) { return csvCell(m[c]); }).join(','));
@@ -2768,1133 +2771,98 @@
     toast('CSV exportado (' + fmtNum(rows.length) + ' contactos).', 'success');
   }
 
-  // ══ TAB 2.5: CONTACTOS (CRM) ═════════════════════════════════════════════
-  // Todos los contactos de todas las listas en una sola tabla, con la lista a
-  // la que pertenecen y su estado en el pipeline (contact_status). Los datos
-  // SIEMPRE se leen de Supabase al entrar y se refrescan por realtime, así un
-  // cambio hecho en cualquier otra pestaña/dispositivo se ve aquí al instante.
-  function buildContactosPane() {
-    var pane = state.panes.contactos;
-    var root = h('div', { style: 'display:flex;flex-direction:column;gap:14px' });
-    pane.appendChild(root);
-    state.contactos.rootEl = root;
-    pane.addEventListener('click', guarded(onContactosClick));
-    pane.addEventListener('change', guarded(onContactosChange));
-    pane.addEventListener('input', onContactosInput);
-  }
-
-  function initContactosTab() {
-    subscribeContactosRealtime();
-    return reloadContactos();
-  }
-
-  function reloadContactos() {
-    var st = state.contactos;
-    st.loading = true;
-    st.error = null;
-    renderContactos();
-    return Promise.resolve()
-      .then(function () { return pd().fetchAllContacts(); })
-      .then(function (rows) { st.rows = Array.isArray(rows) ? rows : []; })
-      .catch(function (e) { st.rows = []; st.error = errMsg(e); })
-      .then(function () {
-        st.loading = false;
-        renderContactos();
-      });
-  }
-
-  // Realtime: cualquier cambio en prospect_list_members (desde el Inbox, otra
-  // pestaña u otro dispositivo) refresca el CRM sin recargar la página.
-  function subscribeContactosRealtime() {
-    var st = state.contactos;
+  // ── Realtime: prospect_list_members ─────────────────────────────────────
+  // Cualquier cambio (teléfonos que llegan async por apollo-webhook, estado
+  // CRM que mueve el motor de campañas, edición desde otro dispositivo)
+  // refresca la tabla de Listas sin recargar la página y sin perder la
+  // selección del usuario.
+  function subscribeMembersRealtime() {
+    var st = state.listas;
     if (st.channel || !window.supabaseClient || !window.currentUser) return;
     try {
       st.channel = window.supabaseClient
-        .channel('pros-contactos-' + window.currentUser.id)
+        .channel('pros-members-' + window.currentUser.id)
         .on('postgres_changes',
           { event: '*', schema: 'public', table: 'prospect_list_members', filter: 'user_id=eq.' + window.currentUser.id },
           function () {
-            if (state.activeTab !== 'contactos') return;
+            if (state.activeTab !== 'listas' || !st.activeListId) return;
             clearTimeout(st.refreshTimer);
-            st.refreshTimer = setTimeout(function () { reloadContactos(); }, 600);
+            st.refreshTimer = setTimeout(function () {
+              loadLists(true).catch(function () {}).then(function () {
+                renderListsLeft();
+                return reloadMembers({ keepSelection: true });
+              });
+            }, 600);
           })
         .subscribe();
     } catch (e) {
-      console.warn('[prospecting] realtime contactos no disponible:', e);
+      console.warn('[prospecting] realtime de contactos no disponible:', e);
     }
   }
 
-  function visibleContactos() {
-    var st = state.contactos;
-    var q = st.q.trim().toLowerCase();
-    return st.rows.filter(function (m) {
-      if (st.statusFilter && (m.contact_status || 'no_contactado') !== st.statusFilter) return false;
-      if (st.listFilter && String(m.list_id) !== st.listFilter) return false;
-      if (!q) return true;
-      var hay = [m.name, m.first_name, m.last_name, m.company, m.title, m.email, m.phone, m.list_name]
-        .filter(Boolean).join(' ').toLowerCase();
-      return hay.indexOf(q) !== -1;
-    });
+  // ══ HILO DE GMAIL + RESPONDER (helper independiente) ═══════════════════
+  // Lo abre Campañas → Respuestas para leer la conversación completa de un
+  // email. Apollo registra lo enviado y si contestaron, pero no entrega el
+  // texto de la respuesta: para eso hace falta el Gmail del usuario
+  // (gmail-proxy). La respuesta se envía SIEMPRE por Apollo
+  // (pd().sendApolloReply) para que quede en su CRM.
+  function loadEmailAccounts(force) {
+    if (!force && state.cache.accounts) return Promise.resolve(state.cache.accounts);
+    return Promise.resolve().then(function () { return pd().fetchEmailAccounts(); })
+      .then(function (r) { state.cache.accounts = Array.isArray(r) ? r : []; return state.cache.accounts; })
+      .catch(function (e) { state.cache.accounts = null; throw e; });
   }
 
-  function contactoRowHtml(m) {
-    var name = m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim() || '—';
-    var editBtn = '<button type="button" class="pros-iconbtn" data-action="ct-edit" data-id="' + esc(String(m.id)) + '" title="Editar contacto">' + SVG_EDIT + '</button>';
-    var deleteBtn = '<button type="button" class="pros-iconbtn" data-action="ct-delete" data-id="' + esc(String(m.id)) + '" title="Eliminar contacto">' + SVG_TRASH + '</button>';
-    return '<tr>' +
-      '<td><div style="font-weight:600">' + esc(name) + '</div>' +
-        (m.title ? '<div class="pros-cellsub" style="font-size:12px">' + esc(m.title) + '</div>' : '') + '</td>' +
-      '<td>' + esc(m.company || '—') +
-        (m.company_domain ? '<div class="pros-cellsub">' + esc(m.company_domain) + '</div>' : '') + '</td>' +
-      '<td><span class="pill pill-purple">' + esc(m.list_name || '—') + '</span></td>' +
-      '<td>' + statusSelectHtml(m) + '</td>' +
-      '<td>' + memberEmailCell(m) + '</td>' +
-      '<td>' + memberPhoneCell(m) + '</td>' +
-      '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
-      '<td style="white-space:nowrap">' + editBtn + deleteBtn + '</td>' +
-      '</tr>';
-  }
-
-  function renderContactos() {
-    var st = state.contactos;
-    var root = st.rootEl;
-    if (!root) return;
-    var rows = visibleContactos();
-    var total = st.rows.length;
-    var meetings = st.rows.filter(function (m) {
-      return m.contact_status === 'reunion_agendada' || m.contact_status === 'reunion_tomada';
-    }).length;
-    var contacted = st.rows.filter(function (m) {
-      return m.contact_status && m.contact_status !== 'no_contactado';
-    }).length;
-
-    var listOpts = {};
-    st.rows.forEach(function (m) { if (m.list_id) listOpts[String(m.list_id)] = m.list_name || '—'; });
-
-    var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px">' +
-      '<div class="chart-card" style="padding:14px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Contactos</div><div style="font-size:24px;font-weight:800;margin-top:4px">' + esc(fmtNum(total)) + '</div></div>' +
-      '<div class="chart-card" style="padding:14px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Contactados</div><div style="font-size:24px;font-weight:800;margin-top:4px">' + esc(fmtNum(contacted)) + '</div></div>' +
-      '<div class="chart-card" style="padding:14px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Reuniones conseguidas</div><div style="font-size:24px;font-weight:800;margin-top:4px;color:var(--green)">' + esc(fmtNum(meetings)) + '</div></div>' +
-      '</div>';
-
-    html += '<div class="table-card">' +
-      '<div class="pros-ct-toolbar" style="padding:14px 18px;border-bottom:1px solid var(--hair)">' +
-      '<input type="search" data-action="ct-search" placeholder="Buscar por nombre, empresa, email…" value="' + esc(st.q) + '">' +
-      '<select data-action="ct-filter-status"><option value="">Todos los estados</option>' +
-      contactStatuses().map(function (s) {
-        return '<option value="' + esc(s.value) + '"' + (st.statusFilter === s.value ? ' selected' : '') + '>' + esc(s.label) + '</option>';
-      }).join('') + '</select>' +
-      '<select data-action="ct-filter-list"><option value="">Todas las listas</option>' +
-      Object.keys(listOpts).map(function (id) {
-        return '<option value="' + esc(id) + '"' + (st.listFilter === id ? ' selected' : '') + '>' + esc(listOpts[id]) + '</option>';
-      }).join('') + '</select>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="ct-refresh">Actualizar</button>' +
-      '</div>';
-
-    if (st.loading) {
-      html += window.Skeleton
-        ? '<div class="pros-scroll-x"><table><tbody>' +
-            window.Skeleton.tableRows(['30%', '35%', '25%', '30%', '40%', '28%', '18%', '14%'], 7) +
-          '</tbody></table></div>'
-        : '<div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando contactos…</div>';
-    } else if (st.error) {
-      html += '<div style="padding:16px"><div class="pros-note-red" style="margin-top:0">⚠ ' + esc(st.error) + '</div></div>';
-    } else if (!total) {
-      html += emptyHtml(SVG_LIST, 'Aún no tienes contactos',
-        'Busca personas en la pestaña Búsqueda y guárdalas en una lista: todas aparecerán aquí, tu CRM de prospección.');
-    } else if (!rows.length) {
-      html += emptyHtml(SVG_SEARCH, 'Sin resultados', 'Ningún contacto coincide con la búsqueda o los filtros.');
-    } else {
-      html += '<div class="pros-scroll-x"><table><thead><tr>' +
-        '<th>Nombre</th><th>Empresa</th><th>Lista</th><th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th><th></th>' +
-        '</tr></thead><tbody>' + rows.map(contactoRowHtml).join('') + '</tbody></table></div>';
-      html += '<div style="padding:10px 18px;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(total)) + ' contactos · El estado se actualiza al instante en todo el sistema (Inbox, dashboard y este CRM leen la misma base).</div>';
-    }
-    html += '</div>';
-    root.innerHTML = html;
-  }
-
-  function findContacto(id) {
-    return state.contactos.rows.find(function (m) { return String(m.id) === String(id); }) || null;
-  }
-
-  function onContactosInput(e) {
-    var t = e.target;
-    if (!t.getAttribute || t.getAttribute('data-action') !== 'ct-search') return;
-    var st = state.contactos;
-    st.q = t.value || '';
-    clearTimeout(st.refreshTimer);
-    st.refreshTimer = setTimeout(function () {
-      // Re-render solo la tabla conservando el foco del buscador.
-      var hadFocus = document.activeElement === t;
-      var pos = t.selectionStart;
-      renderContactos();
-      if (hadFocus) {
-        var again = st.rootEl && st.rootEl.querySelector('[data-action="ct-search"]');
-        if (again) {
-          again.focus();
-          try { again.setSelectionRange(pos, pos); } catch (_) {}
-        }
-      }
-    }, 250);
-  }
-
-  function onContactosChange(e) {
-    var t = e.target;
-    var action = t.getAttribute && t.getAttribute('data-action');
-    var st = state.contactos;
-    if (action === 'ct-status') {
-      var id = t.getAttribute('data-id');
-      var m = findContacto(id);
-      if (!m) return;
-      var next = t.value;
-      var prev = m.contact_status || 'no_contactado';
-      if (next === prev) return;
-      m.contact_status = next; // optimista; se revierte si falla
-      t.className = 'pros-status-sel pros-status-' + next;
-      return Promise.resolve(pd().setContactStatus(id, next))
-        .then(function () {
-          toast('Estado actualizado a «' + statusMeta(next).label + '».', 'success');
-          renderContactos();
-        })
-        .catch(function (err) {
-          m.contact_status = prev;
-          renderContactos();
-          throw err;
-        });
-    }
-    if (action === 'ct-filter-status') { st.statusFilter = t.value; renderContactos(); return; }
-    if (action === 'ct-filter-list') { st.listFilter = t.value; renderContactos(); return; }
-  }
-
-  function onContactosClick(e) {
-    var btn = e.target.closest ? e.target.closest('[data-action]') : null;
-    if (!btn) return;
-    var action = btn.getAttribute('data-action');
-    if (action === 'ct-refresh') return reloadContactos();
-    if (action === 'ct-edit') {
-      var mEdit = findContacto(btn.getAttribute('data-id'));
-      if (!mEdit) return;
-      return openEditContactModal(mEdit, function (patch) {
-        Object.assign(mEdit, patch);
-        renderContactos();
-      });
-    }
-    if (action === 'ct-delete') {
-      var mDel = findContacto(btn.getAttribute('data-id'));
-      if (!mDel) return;
-      return openDeleteContactoModal(mDel);
-    }
-  }
-
-  // ══ TAB 3: SECUENCIAS ════════════════════════════════════════════════════
-  function buildSeqPane() {
-    var pane = state.panes.secuencias;
-    var root = h('div', { style: 'display:flex;flex-direction:column;gap:16px' });
-    pane.appendChild(root);
-    state.seq.rootEl = root;
-    pane.addEventListener('click', guarded(onSeqClick));
-    pane.addEventListener('change', guarded(onSeqChange));
-  }
-
-  function isMasterKeyError(msg) {
-    return !!msg && /403|master/i.test(String(msg));
-  }
-
-  function loadSeqSources(force) {
-    var st = state.seq;
-    st.seqError = null;
-    st.acctError = null;
-    var pSeq = (force || !state.cache.sequences)
-      ? Promise.resolve().then(function () { return pd().fetchSequences(); })
-          .then(function (r) { state.cache.sequences = Array.isArray(r) ? r : []; })
-          .catch(function (e) { state.cache.sequences = null; st.seqError = errMsg(e); })
-      : Promise.resolve();
-    var pAcct = (force || !state.cache.accounts)
-      ? Promise.resolve().then(function () { return pd().fetchEmailAccounts(); })
-          .then(function (r) { state.cache.accounts = Array.isArray(r) ? r : []; })
-          .catch(function (e) { state.cache.accounts = null; st.acctError = errMsg(e); })
-      : Promise.resolve();
-    return Promise.all([pSeq, pAcct]).then(function () {
-      var accts = state.cache.accounts || [];
-      var stillValid = accts.some(function (a) { return String(a.id) === String(st.accountId); });
-      if (!stillValid) st.accountId = '';
-      if (!st.accountId && accts.length) {
-        var def = accts.find(function (a) { return a.default === true; }) || accts[0];
-        if (def) st.accountId = String(def.id);
-      }
-    });
-  }
-
-  function initSeqTab() {
-    var st = state.seq;
-    st.loadingSources = true;
-    renderSeqPane();
-    return loadLists(false)
-      .catch(function () {})
-      .then(function () { return loadSeqSources(false); })
-      .then(function () {
-        st.loadingSources = false;
-        if (st.listId && !findList(st.listId)) { st.listId = ''; st.members = []; st.selected.clear(); }
-        renderSeqPane();
+  function gmailStatus() {
+    return Promise.resolve().then(function () { return pd().fetchGmailAccount(); })
+      .then(function (a) {
+        state.gmail = a || null;
+        var connected = !!(a && a.status === 'connected');
+        return { connected: connected, email: (a && a.email) || undefined, status: (a && a.status) || null, last_error: (a && a.last_error) || null };
       });
   }
 
-  function selectHtml(action, options, selected) {
-    return '<select data-action="' + action + '">' + options.map(function (o) {
-      return '<option value="' + esc(String(o.value)) + '"' +
-        (String(o.value) === String(selected) ? ' selected' : '') + '>' + esc(o.label) + '</option>';
-    }).join('') + '</select>';
+  function connectGmail() {
+    return Promise.resolve().then(function () { return pd().startGmailConnect(); })
+      .catch(function (e) { toast(errMsg(e), 'error'); throw e; });
   }
 
-  // ── Biblioteca de secuencias ───────────────────────────────────────────
-  // Las métricas salen tal cual de Apollo (unique_delivered, open_rate…).
-  // Si Apollo no manda una, se muestra «—»: nunca se calcula ni se rellena.
-  function pct(v) {
-    return typeof v === 'number' && isFinite(v) ? (v * 100).toFixed(1).replace(/\.0$/, '') + '%' : '—';
-  }
-
-  function seqStatsLine(q) {
-    var s = q.stats || {};
-    var parts = [];
-    var n = q.num_steps == null ? (q.steps || []).length : q.num_steps;
-    parts.push(fmtNum(n) + (n === 1 ? ' correo' : ' correos'));
-    if (s.delivered != null) parts.push(fmtNum(s.delivered) + ' entregados');
-    if (s.openRate != null) parts.push(pct(s.openRate) + ' apertura');
-    if (s.replied != null) parts.push(fmtNum(s.replied) + (s.replied === 1 ? ' respuesta' : ' respuestas'));
-    if (s.bounced) parts.push(fmtNum(s.bounced) + ' rebotes');
-    return parts.join(' · ');
-  }
-
-  function seqCardHtml(q) {
-    var id = esc(String(q.id));
-    var steps = q.num_steps == null ? (q.steps || []).length : q.num_steps;
-    var pill = q.active
-      ? '<span class="pill pill-green">Activa</span>'
-      : '<span class="pill pill-gray">Pausada</span>';
-    var warn = steps ? '' :
-      '<div class="pros-cellsub" style="color:var(--amber)">Sin correos todavía — agrégalos antes de activarla.</div>';
-    return '<div class="pros-listcard" style="cursor:default;align-items:flex-start">' +
-      '<div style="flex:1;min-width:0">' +
-        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-          '<div style="font-weight:600">' + esc(q.name || '—') + '</div>' + pill +
-        '</div>' +
-        '<div class="pros-cellsub">' + esc(seqStatsLine(q)) + '</div>' + warn +
-      '</div>' +
-      '<div class="pros-actions">' +
-        '<button type="button" class="btn btn-ghost btn-sm" data-action="seq-edit" data-id="' + id + '">Editar correos</button>' +
-        '<button type="button" class="btn btn-ghost btn-sm" data-action="seq-toggle" data-id="' + id + '"' +
-          (steps ? '' : ' disabled title="Agrega al menos un correo"') + '>' +
-          (q.active ? 'Pausar' : 'Activar') + '</button>' +
-        '<button type="button" class="pros-iconbtn" data-action="seq-archive" data-id="' + id + '" title="Archivar secuencia">' + SVG_TRASH + '</button>' +
-      '</div>' +
-    '</div>';
-  }
-
-  function seqLibraryHtml(seqs, st) {
-    if (st.loadingSources) {
-      return '<div class="chart-card"><div class="chart-title" style="margin:0 0 12px">Mis secuencias</div>' +
-        '<div style="font-size:12.5px;color:var(--text3)">Cargando secuencias…</div></div>';
-    }
-    if (st.seqError) return '';
-    if (!state.cache.sequences) return '';
-
-    var head = '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
-      '<div class="chart-title" style="margin:0">Mis secuencias</div>' +
-      '<button type="button" class="btn btn-primary btn-sm" data-action="seq-create">+ Nueva secuencia</button>' +
-      '</div>';
-
-    if (!seqs.length) {
-      return '<div class="chart-card">' + head +
-        emptyHtml(SVG_MAIL, 'Aún no tienes secuencias',
-          'Crea una aquí mismo: nombre, correos y tiempos de espera. Apollo los envía por ti.') +
-        '</div>';
-    }
-    return '<div class="chart-card">' + head +
-      '<div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">' +
-      seqs.map(seqCardHtml).join('') + '</div></div>';
-  }
-
-  // ── Editor de correos de una secuencia ─────────────────────────────────
-  var WAIT_MODES = [
-    { value: 'day', label: 'días' },
-    { value: 'hour', label: 'horas' },
-    { value: 'minute', label: 'minutos' },
-  ];
-
-  function blankStep(index) {
-    return {
-      id: null, touchId: null,
-      touchType: index === 0 ? 'new_thread' : 'reply_to_thread',
-      waitTime: index === 0 ? 0 : 3,
-      waitMode: 'day',
-      subject: '', body: '',
-    };
-  }
-
-  function openSequenceEditor(seq) {
-    var editing = !!(seq && seq.id);
-    var model = { name: editing ? (seq.name || '') : '', steps: [], loaded: !editing };
-    var original = [];
-    if (!editing) model.steps = [blankStep(0)];
-
-    var nameIn = h('input', { type: 'text', placeholder: 'Ej. Prospección Q3 — CFOs' });
-    nameIn.value = model.name;
-    nameIn.addEventListener('input', function () { model.name = nameIn.value; });
-
-    var stepsHost = h('div', { style: 'display:flex;flex-direction:column;gap:12px' });
-    var addBtn = h('button', {
-      type: 'button', class: 'btn btn-ghost btn-sm',
-      text: '+ Agregar correo',
-      onclick: function () {
-        model.steps.push(blankStep(model.steps.length));
-        renderSteps();
-      },
-    });
-    var prog = progressLine();
-    // Ventana de envío real de la cuenta (Apollo aplica la que esté por
-    // defecto). Se muestra para que se sepa cuándo saldrán los correos.
-    var schedHint = h('div', { class: 'pros-hint' });
-
-    var bodyN = h('div', { class: 'seq-editor' },
-      h('div', null, h('div', { class: 'seq-editor-lbl', text: 'Nombre de la secuencia' }), nameIn),
-      stepsHost,
-      h('div', { class: 'pros-actions' }, addBtn),
-      h('div', { class: 'seq-vars', html:
-        'Variables de Apollo disponibles en el asunto y el cuerpo: ' +
-        '<code>{{first_name}}</code> <code>{{last_name}}</code> <code>{{company}}</code> <code>{{title}}</code>. ' +
-        'Apollo las reemplaza por los datos de cada contacto al enviar.' }),
-      schedHint,
-      prog.el);
-
-    function stepNode(step, i) {
-      var isReply = step.touchType === 'reply_to_thread';
-
-      var waitIn = h('input', { type: 'number', min: '0', step: '1' });
-      waitIn.value = String(step.waitTime == null ? 0 : step.waitTime);
-      waitIn.addEventListener('input', function () {
-        var v = parseInt(waitIn.value, 10);
-        step.waitTime = isNaN(v) || v < 0 ? 0 : v;
-      });
-
-      var modeSel = h('select');
-      WAIT_MODES.forEach(function (m) {
-        var o = h('option', { value: m.value, text: m.label });
-        if (m.value === step.waitMode) o.selected = true;
-        modeSel.appendChild(o);
-      });
-      modeSel.addEventListener('change', function () { step.waitMode = modeSel.value; });
-
-      var head = h('div', { class: 'seq-step-head' },
-        h('span', { class: 'seq-step-num', text: 'Correo ' + (i + 1) }),
-        h('div', { class: 'seq-step-wait' },
-          h('span', { text: i === 0 ? 'Enviar tras' : 'Esperar' }), waitIn, modeSel),
-        model.steps.length > 1
-          ? h('button', {
-              type: 'button', class: 'seq-step-rm', title: 'Quitar este correo', html: SVG_TRASH,
-              onclick: function () { model.steps.splice(i, 1); renderSteps(); },
-            })
-          : null);
-
-      var subjIn = h('input', { type: 'text', placeholder: 'Asunto — ej. Pregunta sobre {{company}}' });
-      subjIn.value = step.subject || '';
-      subjIn.addEventListener('input', function () { step.subject = subjIn.value; });
-      var subjWrap = h('div', null,
-        h('div', { class: 'seq-editor-lbl', text: 'Asunto' }), subjIn);
-      if (isReply) subjWrap.style.display = 'none';
-
-      var bodyTa = h('textarea', { placeholder: 'Hola {{first_name}}, …' });
-      bodyTa.value = step.body || '';
-      bodyTa.addEventListener('input', function () { step.body = bodyTa.value; });
-
-      var threadWrap = null;
-      if (i > 0) {
-        var chk = h('input', { type: 'checkbox' });
-        chk.checked = isReply;
-        chk.addEventListener('change', function () {
-          step.touchType = chk.checked ? 'reply_to_thread' : 'new_thread';
-          subjWrap.style.display = chk.checked ? 'none' : '';
-        });
-        threadWrap = h('label', { class: 'pros-check' }, chk,
-          h('span', { text: 'Responder dentro del mismo hilo (sin asunto nuevo)' }));
-      }
-
-      return h('div', { class: 'seq-step' },
-        head,
-        threadWrap,
-        subjWrap,
-        h('div', null, h('div', { class: 'seq-editor-lbl', text: 'Cuerpo' }), bodyTa),
-        step.unreadable
-          ? h('div', { class: 'pros-hint', style: 'color:var(--amber)',
-              text: 'No se pudo leer el contenido actual de este correo en Apollo. Si lo guardas así, se reemplazará por lo que escribas aquí.' })
-          : null);
-    }
-
-    function renderSteps() {
-      stepsHost.innerHTML = '';
-      if (!model.loaded) {
-        stepsHost.appendChild(h('div', { class: 'pros-hint', text: 'Cargando los correos de esta secuencia…' }));
-        return;
-      }
-      model.steps.forEach(function (s, i) { stepsHost.appendChild(stepNode(s, i)); });
-      addBtn.disabled = model.steps.length >= 25;
-    }
-    renderSteps();
-
-    var api = openModal({
-      title: editing ? 'Editar secuencia' : 'Nueva secuencia',
-      width: 640,
-      bodyNode: bodyN,
-      actions: [
-        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
-        {
-          label: editing ? 'Guardar cambios' : 'Crear secuencia',
-          className: 'btn btn-primary',
-          onClick: function () {
-            if (!model.loaded) return toast('Espera a que carguen los correos.', 'warn');
-            api.setBusy(true);
-            prog.set('Guardando…');
-            return Promise.resolve(pd().saveSequence({
-              id: editing ? seq.id : null,
-              name: model.name,
-              steps: model.steps,
-              existingSteps: original,
-              onProgress: function (p) {
-                prog.set(p && p.phase === 'steps'
-                  ? 'Guardando correo ' + fmtNum(((p.done || 0) + 1)) + ' de ' + fmtNum(p.total || model.steps.length) + '…'
-                  : 'Guardando la secuencia…');
-              },
-            })).then(function (res) {
-              prog.hide();
-              api.close();
-              toast(res.created
-                ? 'Secuencia «' + (res.name || '') + '» creada con ' + fmtNum(model.steps.length) +
-                  ' correo(s). Actívala cuando quieras que Apollo empiece a enviar.'
-                : 'Secuencia actualizada.', 'success');
-              if (res.id) state.seq.sequenceId = String(res.id);
-              return refreshSequences();
-            }).catch(function (e) {
-              prog.hide();
-              api.setBusy(false);
-              toast(errMsg(e), 'error');
-            });
-          },
-        },
-      ],
-    });
-
-    Promise.resolve(state.cache.schedules || pd().fetchSchedules())
-      .then(function (rows) {
-        state.cache.schedules = Array.isArray(rows) ? rows : [];
-        var def = state.cache.schedules.find(function (s) { return s.default; }) || state.cache.schedules[0];
-        if (!def) return;
-        schedHint.textContent = 'Apollo enviará dentro de tu ventana de envío «' + (def.name || '—') + '»' +
-          (def.timeZone ? ' (' + def.timeZone + ')' : '') + '.';
-      })
-      .catch(function () { /* el horario es informativo: su fallo no bloquea el editor */ });
-
-    if (editing) {
-      Promise.resolve(pd().fetchSequenceSteps(seq.steps || []))
-        .then(function (steps) {
-          original = steps.map(function (s) { return { id: s.id }; });
-          model.steps = steps.length ? steps : [blankStep(0)];
-          model.loaded = true;
-          renderSteps();
-        })
-        .catch(function (e) {
-          model.loaded = true;
-          model.steps = [blankStep(0)];
-          renderSteps();
-          toast(errMsg(e), 'error');
-        });
-    }
-  }
-
-  function refreshSequences() {
-    state.seq.seqError = null;
-    return Promise.resolve(pd().fetchSequences())
-      .then(function (r) { state.cache.sequences = Array.isArray(r) ? r : []; })
-      .catch(function (e) { state.seq.seqError = errMsg(e); })
-      .then(function () { renderSeqPane(); });
-  }
-
-  function findSequence(id) {
-    return (state.cache.sequences || []).find(function (q) { return String(q.id) === String(id); }) || null;
-  }
-
-  function seqMemberRowHtml(m) {
-    var st = state.seq;
-    var id = esc(String(m.id));
-    var checked = st.selected.has(String(m.id)) ? ' checked' : '';
-    var name = m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim() || '—';
-    var emailCell = (m.email && !isMaskedEmail(m.email))
-      ? esc(m.email)
-      : '<span class="pill pill-amber" style="text-transform:none;letter-spacing:0">Sin email — se enriquecerá al enrolar (≈1 crédito)</span>';
-    return '<tr>' +
-      '<td><input type="checkbox" data-action="seq-check" data-id="' + id + '"' + checked + '></td>' +
-      '<td><div style="font-weight:600">' + esc(name) + '</div>' +
-        (m.title ? '<div class="pros-cellsub" style="font-size:12px">' + esc(m.title) + '</div>' : '') + '</td>' +
-      '<td>' + esc(m.company || '—') + '</td>' +
-      '<td>' + emailCell + '</td>' +
-      '<td>' + seqStatusCell(m) + '</td>' +
-      '</tr>';
-  }
-
-  function renderSeqPane() {
-    var st = state.seq;
-    var root = st.rootEl;
-    if (!root) return;
-    var lists = state.cache.lists || [];
-    var seqs = state.cache.sequences || [];
-    var accts = state.cache.accounts || [];
-
-    var listOpts = [{ value: '', label: 'Selecciona una lista' }].concat(lists.map(function (l) {
-      return { value: String(l.id), label: (l.name || '—') + ' (' + fmtNum(l.member_count || 0) + ')' };
-    }));
-    var seqOpts = [{ value: '', label: st.loadingSources ? 'Cargando…' : 'Selecciona una secuencia' }].concat(seqs.map(function (q) {
-      return { value: String(q.id), label: (q.name || '—') + (q.active ? '' : ' (pausada)') };
-    }));
-    var acctOpts = [{ value: '', label: st.loadingSources ? 'Cargando…' : 'Selecciona una cuenta' }].concat(accts.map(function (a) {
-      return { value: String(a.id), label: a.email || '—' };
-    }));
-
-    var html = seqLibraryHtml(seqs, st);
-
-    // El botón de crear vive en «Mis secuencias» (arriba): aquí solo se enrola.
-    html += '<div class="chart-card">' +
-      '<div class="chart-title" style="margin:0">Enrolar contactos en una secuencia</div>' +
-      '<div class="form-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-top:12px">' +
-      '<div class="form-group"><div class="pros-lbl">Lista</div>' + selectHtml('seq-list', listOpts, st.listId) + '</div>' +
-      '<div class="form-group"><div class="pros-lbl">Secuencia de Apollo</div>' + selectHtml('seq-seq', seqOpts, st.sequenceId) + '</div>' +
-      '<div class="form-group"><div class="pros-lbl">Enviar desde</div>' + selectHtml('seq-account', acctOpts, st.accountId) + '</div>' +
-      '</div>';
-    if (isMasterKeyError(st.seqError) || isMasterKeyError(st.acctError)) {
-      html += '<div class="pros-note-amber">Tu API key de Apollo debe ser una master key para usar secuencias y cuentas de correo.</div>';
-    } else {
-      if (st.seqError) html += '<div class="pros-note-red">⚠ ' + esc(st.seqError) + ' <button type="button" class="btn btn-ghost btn-sm" data-action="seq-retry" style="margin-left:8px">Reintentar</button></div>';
-      if (st.acctError) html += '<div class="pros-note-red">⚠ ' + esc(st.acctError) + '</div>';
-    }
-    html += '</div>';
-
-    if (!st.listId) {
-      html += '<div class="table-card">' +
-        emptyHtml(SVG_LIST, 'Selecciona una lista',
-          'Elige la lista cuyos contactos quieres enrolar en la secuencia.') +
-        '</div>';
-    } else if (st.loadingMembers) {
-      html += window.Skeleton
-        ? '<div class="table-card"><div class="pros-scroll-x"><table><tbody>' +
-            window.Skeleton.tableRows(['30%', '40%', '35%', '30%'], 6) +
-          '</tbody></table></div></div>'
-        : '<div class="table-card"><div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando contactos…</div></div>';
-    } else if (st.membersError) {
-      html += '<div class="pros-note-red" style="margin-top:0">⚠ ' + esc(st.membersError) + '</div>';
-    } else if (!st.members.length) {
-      html += '<div class="table-card">' +
-        emptyHtml(SVG_LIST, 'Lista vacía', 'Agrega prospectos a esta lista desde la pestaña Búsqueda.') +
-        '</div>';
-    } else {
-      var allChecked = st.members.every(function (m) { return st.selected.has(String(m.id)); });
-      html += '<div class="table-card"><div class="pros-scroll-x"><table><thead><tr>' +
-        '<th style="width:34px"><input type="checkbox" data-action="seq-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-        '<th>Nombre</th><th>Empresa</th><th>Email</th><th>Estado</th>' +
-        '</tr></thead><tbody>' + st.members.map(seqMemberRowHtml).join('') + '</tbody></table></div></div>';
-    }
-
-    var n = st.selected.size;
-    var canEnroll = n > 0 && st.sequenceId && st.accountId;
-    var enrolled = st.members.filter(function (m) {
-      return st.selected.has(String(m.id)) && m.sequence_status && m.apollo_contact_id;
-    }).length;
-    html += '<div class="pros-selbar" data-seqbar' + (n ? '' : ' style="display:none"') + '>' +
-      '<span style="font-size:13px"><b data-seqcount>' + esc(fmtNum(n)) + '</b> seleccionados</span>' +
-      '<div class="pros-actions">' +
-      '<button type="button" class="btn btn-ghost" data-action="seq-remove"' + (enrolled ? '' : ' disabled') + '>Sacar de la secuencia</button>' +
-      '<button type="button" class="btn btn-primary" data-action="seq-enroll"' + (canEnroll ? '' : ' disabled') + '>Agregar a secuencia</button>' +
-      '</div></div>';
-
-    root.innerHTML = html;
-  }
-
-  function updateSeqBar() {
-    var root = state.seq.rootEl;
-    if (!root) return;
-    var st = state.seq;
-    var bar = root.querySelector('[data-seqbar]');
-    if (!bar) return;
-    var n = st.selected.size;
-    bar.style.display = n ? 'flex' : 'none';
-    var c = bar.querySelector('[data-seqcount]');
-    if (c) c.textContent = fmtNum(n);
-    var btn = bar.querySelector('[data-action="seq-enroll"]');
-    if (btn) btn.disabled = !(n > 0 && st.sequenceId && st.accountId);
-    var rm = bar.querySelector('[data-action="seq-remove"]');
-    if (rm) {
-      rm.disabled = !st.members.some(function (m) {
-        return st.selected.has(String(m.id)) && m.sequence_status && m.apollo_contact_id;
-      });
-    }
-  }
-
-  function reloadSeqMembers() {
-    var st = state.seq;
-    st.loadingMembers = true;
-    st.membersError = null;
-    st.selected.clear();
-    renderSeqPane();
-    return Promise.resolve()
-      .then(function () { return pd().fetchMembers(st.listId); })
-      .then(function (members) { st.members = Array.isArray(members) ? members : []; })
-      .catch(function (e) { st.members = []; st.membersError = errMsg(e); })
-      .then(function () {
-        st.loadingMembers = false;
-        renderSeqPane();
-      });
-  }
-
-  function onSeqChange(e) {
-    var t = e.target;
-    var action = t.getAttribute && t.getAttribute('data-action');
-    var st = state.seq;
-    if (action === 'seq-list') {
-      st.listId = t.value;
-      st.members = [];
-      st.selected.clear();
-      if (st.listId) return reloadSeqMembers();
-      renderSeqPane();
-    } else if (action === 'seq-seq') {
-      st.sequenceId = t.value;
-      updateSeqBar();
-    } else if (action === 'seq-account') {
-      st.accountId = t.value;
-      updateSeqBar();
-    } else if (action === 'seq-check') {
-      var id = t.getAttribute('data-id');
-      if (t.checked) st.selected.add(id); else st.selected.delete(id);
-      updateSeqBar();
-    } else if (action === 'seq-check-all') {
-      var on = t.checked;
-      st.members.forEach(function (m) {
-        if (on) st.selected.add(String(m.id)); else st.selected.delete(String(m.id));
-      });
-      renderSeqPane();
-    }
-  }
-
-  function onSeqClick(e) {
-    var btn = e.target.closest ? e.target.closest('[data-action]') : null;
-    if (!btn) return;
-    var action = btn.getAttribute('data-action');
-    if (action === 'seq-retry') {
-      state.cache.sequences = null;
-      state.cache.accounts = null;
-      return initSeqTab();
-    }
-    if (action === 'seq-create') return openSequenceEditor(null);
-    if (action === 'seq-enroll') return openEnrollModal();
-    if (action === 'seq-remove') return openRemoveFromSeqModal();
-
-    var seq = btn.getAttribute('data-id') ? findSequence(btn.getAttribute('data-id')) : null;
-    if (action === 'seq-edit') {
-      if (!seq) return toast('No se encontró la secuencia. Reintenta.', 'error');
-      return openSequenceEditor(seq);
-    }
-    if (action === 'seq-toggle') {
-      if (!seq) return toast('No se encontró la secuencia. Reintenta.', 'error');
-      return toggleSequence(seq);
-    }
-    if (action === 'seq-archive') {
-      if (!seq) return toast('No se encontró la secuencia. Reintenta.', 'error');
-      return confirmModal({
-        title: 'Archivar secuencia',
-        message: 'Se archivará «' + (seq.name || '') + '» en Apollo. Deja de enviar y desaparece de esta lista; ' +
-          'el histórico de correos ya enviados se conserva.',
-        confirmLabel: 'Archivar',
-        danger: true,
-        onConfirm: function () {
-          return Promise.resolve(pd().archiveSequence(seq.id)).then(function () {
-            if (String(state.seq.sequenceId) === String(seq.id)) state.seq.sequenceId = '';
-            toast('Secuencia archivada.', 'success');
-            return refreshSequences();
-          });
-        },
-      });
-    }
-  }
-
-  // Activar = Apollo empieza a enviar de verdad, así que se confirma siempre.
-  function toggleSequence(seq) {
-    var turningOn = !seq.active;
-    var msg = turningOn
-      ? 'Al activarla, Apollo empezará a enviar los correos de «' + (seq.name || '') +
-        '» a los contactos enrolados, en tu ventana de envío. Son correos reales desde tu buzón.'
-      : 'Se pausará «' + (seq.name || '') + '»: Apollo dejará de enviar los correos pendientes.';
-    return confirmModal({
-      title: turningOn ? 'Activar secuencia' : 'Pausar secuencia',
-      message: msg,
-      confirmLabel: turningOn ? 'Activar' : 'Pausar',
-      onConfirm: function () {
-        return Promise.resolve(pd().setSequenceActive(seq.id, turningOn)).then(function (res) {
-          state.cache.sequences = res.sequences;
-          renderSeqPane();
-          if (res.active === turningOn) {
-            toast(turningOn ? 'Secuencia activada.' : 'Secuencia pausada.', 'success');
-          } else {
-            // Apollo aceptó la llamada pero el estado no cambió (p. ej. una
-            // secuencia sin correos): decirlo en vez de cantar victoria.
-            toast('Apollo no cambió el estado de la secuencia. Revisa que tenga al menos un correo.', 'warn');
-          }
-        });
-      },
-    });
-  }
-
-  function openRemoveFromSeqModal() {
-    var st = state.seq;
-    var members = st.members.filter(function (m) {
-      return st.selected.has(String(m.id)) && m.sequence_status && m.apollo_contact_id;
-    });
-    if (!members.length) return toast('Selecciona contactos que ya estén en una secuencia.', 'warn');
-
-    // Cada contacto guarda en qué secuencia quedó enrolado: se agrupan para no
-    // sacar a nadie de una secuencia que no es la suya.
-    var bySeq = new Map();
-    members.forEach(function (m) {
-      var sid = String(m.sequence_status.sequence_id || '');
-      if (!sid) return;
-      if (!bySeq.has(sid)) bySeq.set(sid, { name: m.sequence_status.sequence_name || '', rows: [] });
-      bySeq.get(sid).rows.push(m);
-    });
-    if (!bySeq.size) return toast('No se pudo determinar de qué secuencia sacarlos.', 'error');
-
-    var stopChk = h('input', { type: 'checkbox' });
-    stopChk.checked = true;
-    var prog = progressLine();
-    var names = [];
-    bySeq.forEach(function (v) { names.push(v.name || '—'); });
-
-    var bodyN = h('div', null,
-      h('p', { style: 'font-size:13px;color:var(--text2);margin:0 0 10px;line-height:1.55',
-        text: 'Vas a sacar ' + fmtNum(members.length) + ' contacto(s) de: ' + names.join(', ') + '.' }),
-      h('label', { class: 'pros-check', style: 'margin-bottom:8px' }, stopChk,
-        h('span', { text: 'Detener en vez de eliminar (conserva el histórico en Apollo)' })),
-      prog.el);
-
-    var api = openModal({
-      title: 'Sacar de la secuencia',
-      bodyNode: bodyN,
-      actions: [
-        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
-        {
-          label: 'Sacar de la secuencia',
-          className: 'logout-btn logout-btn-confirm',
-          onClick: function () {
-            api.setBusy(true);
-            prog.set('Sacando contactos…');
-            var mode = stopChk.checked ? 'stop' : 'remove';
-            var jobs = [];
-            bySeq.forEach(function (v, sid) {
-              jobs.push(Promise.resolve(pd().removeFromSequence({
-                sequenceId: sid, members: v.rows, mode: mode,
-                reason: 'Retirado desde Predictable',
-              })));
-            });
-            return Promise.all(jobs).then(function (results) {
-              prog.hide();
-              api.close();
-              var total = results.reduce(function (a, r) { return a + ((r && r.removed) || 0); }, 0);
-              var warning = results.map(function (r) { return r && r.warning; }).filter(Boolean)[0];
-              toast(fmtNum(total) + ' contacto(s) ' + (mode === 'stop' ? 'detenidos' : 'eliminados') +
-                ' en Apollo' + (warning ? ' · ' + warning : ''), warning ? 'warn' : 'success');
-              return reloadSeqMembers();
-            }).catch(function (e) {
-              prog.hide();
-              api.setBusy(false);
-              toast(errMsg(e), 'error');
-            });
-          },
-        },
-      ],
-    });
-  }
-
-  function openEnrollModal() {
-    var st = state.seq;
-    var members = st.members.filter(function (m) { return st.selected.has(String(m.id)); });
-    var seq = (state.cache.sequences || []).find(function (q) { return String(q.id) === String(st.sequenceId); });
-    var acct = (state.cache.accounts || []).find(function (a) { return String(a.id) === String(st.accountId); });
-    if (!members.length || !seq || !acct) {
-      return toast('Selecciona lista, secuencia, cuenta de envío y al menos un contacto.', 'warn');
-    }
-    var list = findList(st.listId);
-    var prog = progressLine();
-    var failHost = h('div', null);
-    var bodyN = h('div', null,
-      h('p', {
-        style: 'font-size:13px;color:var(--text2);margin:0 0 10px;line-height:1.55',
-        text: 'Vas a agregar ' + fmtNum(members.length) + ' contactos a la secuencia «' + (seq.name || '') +
-          '», enviando desde «' + (acct.email || '') + '». Esto enviará correos reales desde tu cuenta de Apollo.',
-      }),
-      h('p', {
-        style: 'font-size:12px;color:var(--text3);margin:0;line-height:1.55',
-        text: 'Nota: los contactos que se agregaron a la lista ya tienen su email laboral enriquecido; a los que no lo tengan se les enriquecerá ahora (≈1 crédito c/u).',
-      }),
-      prog.el,
-      failHost);
-    var api = openModal({
-      title: 'Agregar a secuencia',
-      bodyNode: bodyN,
-      actions: [
-        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
-        {
-          label: 'Agregar a secuencia',
-          className: 'btn btn-primary',
-          onClick: function () {
-            api.setBusy(true);
-            return Promise.resolve(pd().enrollInSequence({
-              sequence: seq,
-              emailAccountId: acct.id,
-              members: members,
-              listName: (list && list.name) || '',
-              onProgress: function (p) {
-                prog.set('Enrolando ' + fmtNum((p && p.done) || 0) + ' de ' + fmtNum((p && p.total) || members.length) + '…');
-              },
-            })).then(function (res) {
-              prog.hide();
-              res = res || {};
-              var failed = res.failed || [];
-              toast(
-                fmtNum(res.enrolled || 0) + ' contactos agregados a la secuencia' +
-                (failed.length ? ' · ' + fmtNum(failed.length) + ' fallaron' : ''),
-                failed.length ? 'warn' : 'success'
-              );
-              if (failed.length) {
-                failHost.innerHTML = '';
-                failHost.appendChild(modalFailList(failed));
-                api.setBusy(false);
-                if (api.buttons[1]) api.buttons[1].style.display = 'none';
-                if (api.buttons[0]) { api.buttons[0].textContent = 'Cerrar'; api.buttons[0].disabled = false; api.buttons[0].style.opacity = ''; }
-              } else {
-                api.close();
-              }
-              return reloadSeqMembers();
-            }).catch(function (e) {
-              prog.hide();
-              api.setBusy(false);
-              toast(errMsg(e), 'error');
-            });
-          },
-        },
-      ],
-    });
-  }
-
-  // ══ TAB 4: BANDEJA ═══════════════════════════════════════════════════════
-  //
-  // Apollo responde "qué mandamos y qué pasó con ello"; Gmail responde "qué
-  // dijeron y qué contestamos". Apollo no expone correos entrantes (no hay tipo
-  // inbound, ni endpoint de hilo, y sus filtros por contacto/hilo se ignoran en
-  // silencio), así que el hilo real se abre contra Gmail usando el
-  // provider_thread_id que sí devuelve. Si no hay Gmail conectado, la pestaña
-  // lo dice y sigue sirviendo para el lado saliente — nunca finge tener la
-  // conversación.
-  function buildBandejaPane() {
-    var pane = state.panes.bandeja;
-    var root = h('div', { style: 'display:flex;flex-direction:column;gap:16px' });
-    pane.appendChild(root);
-    state.bandeja.rootEl = root;
-    pane.addEventListener('click', guarded(onBandejaClick));
-    pane.addEventListener('change', guarded(onBandejaChange));
-  }
-
-  function initBandejaTab() {
-    var st = state.bandeja;
-    st.loading = true;
-    renderBandejaPane();
-    var jobs = [loadSeqSources(false).catch(function () {})];
-    if (!st.gmailChecked) {
-      jobs.push(Promise.resolve(pd().fetchGmailAccount())
-        .then(function (a) { st.gmail = a; st.gmailError = null; })
-        .catch(function (e) { st.gmail = null; st.gmailError = errMsg(e); })
-        .then(function () { st.gmailChecked = true; }));
-    }
-    return Promise.all(jobs).then(function () { return reloadBandeja(); });
-  }
-
-  function reloadBandeja() {
-    var st = state.bandeja;
-    st.loading = true;
-    st.error = null;
-    renderBandejaPane();
-    return Promise.resolve(pd().fetchOutreachEmails({
-      sequenceId: st.sequenceId, stat: st.stat, page: st.page, perPage: 25,
-    })).then(function (res) {
-      st.rows = res.rows || [];
-      // Apollo no manda total_entries aquí, así que "hay más" se deduce de si
-      // la página vino llena — nunca de un total inventado.
-      st.hasMore = st.rows.length >= 25;
-    }).catch(function (e) {
-      st.rows = [];
-      st.hasMore = false;
-      st.error = errMsg(e);
-    }).then(function () {
-      st.loading = false;
-      renderBandejaPane();
-    });
-  }
-
-  function msgStatusCell(m) {
-    if (m.bounced) return '<span class="pill pill-red">Rebotó</span>';
-    if (m.spamBlocked) return '<span class="pill pill-red">Spam</span>';
-    if (m.status === 'failed') return '<span class="pill pill-red">Falló</span>';
-    if (m.status === 'scheduled') return '<span class="pill pill-gray">Programado</span>';
-    if (m.status === 'drafted') return '<span class="pill pill-gray">Borrador</span>';
-    if (m.status === 'completed') return '<span class="pill pill-green">Enviado</span>';
-    return '<span class="pill pill-gray">' + esc(m.status || '—') + '</span>';
-  }
-
-  function msgReplyCell(m) {
-    if (!m.replied) return '<span style="color:var(--text3)">—</span>';
-    var classes = pd().REPLY_CLASSES || {};
-    var info = m.replyClass ? classes[m.replyClass] : null;
-    if (info) return '<span class="pill pill-' + esc(info.pill) + '">' + esc(info.label) + '</span>';
-    return '<span class="pill pill-teal">Respondió</span>';
-  }
-
-  function bandejaRowHtml(m) {
-    var when = m.completedAt || m.dueAt;
-    return '<tr>' +
-      '<td><div style="font-weight:600">' + esc(m.toName || m.toEmail || '—') + '</div>' +
-        (m.toEmail ? '<div class="pros-cellsub">' + esc(m.toEmail) + '</div>' : '') + '</td>' +
-      '<td><div style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
-        esc(m.subject || '(sin asunto)') + '</div></td>' +
-      '<td>' + msgStatusCell(m) + '</td>' +
-      '<td>' + msgReplyCell(m) + '</td>' +
-      '<td>' + esc(fmtDate(when)) + '</td>' +
-      '<td>' + (m.threadId
-        ? '<button type="button" class="btn btn-ghost btn-sm" data-action="bandeja-open" data-id="' + esc(String(m.id)) + '">Ver hilo</button>'
-        : '<span class="pros-cellsub">Sin hilo aún</span>') + '</td>' +
-      '</tr>';
-  }
-
-  function gmailCardHtml(st) {
-    if (!st.gmailChecked) return '';
-    if (st.gmail && st.gmail.status === 'connected') {
-      return '<div class="chart-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
-        '<div><div style="font-weight:600;font-size:13px">Gmail conectado</div>' +
-        '<div class="pros-cellsub">' + esc(st.gmail.email || '') + ' — solo lectura, para ver lo que responden. Las respuestas se envían por Apollo.</div></div>' +
-        '<button type="button" class="btn btn-ghost btn-sm" data-action="gmail-disconnect">Desconectar</button>' +
-        '</div>';
-    }
-    var reason = st.gmail && st.gmail.status === 'error'
-      ? 'Se perdió el acceso a Gmail: ' +
-        String(st.gmail.last_error || 'vuelve a conectarlo').replace(/\.\s*$/, '') + '.'
-      : 'Apollo registra lo que envías y si te respondieron, pero no entrega el texto de la respuesta. Conecta Gmail para leer el hilo completo y contestar sin salir de aquí.';
-    return '<div class="chart-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
-      '<div style="flex:1;min-width:240px"><div style="font-weight:600;font-size:13px">Conecta tu Gmail</div>' +
-      '<div class="pros-cellsub">' + esc(reason) + '</div></div>' +
-      '<button type="button" class="btn btn-primary btn-sm" data-action="gmail-connect">Conectar Gmail</button>' +
-      '</div>';
-  }
-
-  function renderBandejaPane() {
-    var st = state.bandeja;
-    var root = st.rootEl;
-    if (!root) return;
-
-    var seqs = state.cache.sequences || [];
-    var seqOpts = [{ value: '', label: 'Todas las secuencias' }].concat(seqs.map(function (q) {
-      return { value: String(q.id), label: q.name || '—' };
-    }));
-    var statOpts = (pd().MESSAGE_STATS || []).map(function (s) {
-      return { value: s.value, label: s.label };
-    });
-
-    var html = gmailCardHtml(st);
-
-    html += '<div class="chart-card">' +
-      '<div class="chart-title" style="margin:0">Correos de tus secuencias</div>' +
-      '<div class="form-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:12px">' +
-      '<div class="form-group"><div class="pros-lbl">Secuencia</div>' + selectHtml('bandeja-seq', seqOpts, st.sequenceId) + '</div>' +
-      '<div class="form-group"><div class="pros-lbl">Estado</div>' + selectHtml('bandeja-stat', statOpts, st.stat) + '</div>' +
-      '</div></div>';
-
-    if (st.loading) {
-      html += window.Skeleton
-        ? '<div class="table-card"><div class="pros-scroll-x"><table><tbody>' +
-            window.Skeleton.tableRows(['28%', '34%', '18%', '18%', '18%', '14%'], 8) +
-          '</tbody></table></div></div>'
-        : '<div class="table-card"><div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando correos…</div></div>';
-    } else if (st.error) {
-      html += '<div class="pros-note-red" style="margin-top:0">⚠ ' + esc(st.error) +
-        ' <button type="button" class="btn btn-ghost btn-sm" data-action="bandeja-retry" style="margin-left:8px">Reintentar</button></div>';
-    } else if (!st.rows.length) {
-      html += '<div class="table-card">' +
-        emptyHtml(SVG_MAIL, 'No hay correos con estos filtros',
-          st.page > 1
-            ? 'Vuelve a la primera página o cambia los filtros.'
-            : 'Cuando una secuencia activa empiece a enviar, sus correos aparecerán aquí.') +
-        '</div>';
-    } else {
-      html += '<div class="table-card"><div class="pros-scroll-x"><table><thead><tr>' +
-        '<th>Contacto</th><th>Asunto</th><th>Estado</th><th>Respuesta</th><th>Fecha</th><th></th>' +
-        '</tr></thead><tbody>' + st.rows.map(bandejaRowHtml).join('') + '</tbody></table></div></div>';
-    }
-
-    if (!st.loading && !st.error && (st.page > 1 || st.hasMore)) {
-      html += '<div class="pros-actions" style="justify-content:flex-end">' +
-        '<button type="button" class="btn btn-ghost btn-sm" data-action="bandeja-prev"' + (st.page > 1 ? '' : ' disabled') + '>← Anteriores</button>' +
-        '<span style="font-size:12.5px;color:var(--text3)">Página ' + esc(fmtNum(st.page)) + '</span>' +
-        '<button type="button" class="btn btn-ghost btn-sm" data-action="bandeja-next"' + (st.hasMore ? '' : ' disabled') + '>Siguientes →</button>' +
-        '</div>';
-    }
-
-    root.innerHTML = html;
-  }
-
-  function onBandejaChange(e) {
-    var t = e.target;
-    var action = t.getAttribute && t.getAttribute('data-action');
-    var st = state.bandeja;
-    if (action === 'bandeja-seq') { st.sequenceId = t.value; st.page = 1; return reloadBandeja(); }
-    if (action === 'bandeja-stat') { st.stat = t.value; st.page = 1; return reloadBandeja(); }
-  }
-
-  function onBandejaClick(e) {
-    var btn = e.target.closest ? e.target.closest('[data-action]') : null;
-    if (!btn) return;
-    var action = btn.getAttribute('data-action');
-    var st = state.bandeja;
-
-    if (action === 'bandeja-retry') return reloadBandeja();
-    if (action === 'bandeja-prev') { st.page = Math.max(1, st.page - 1); return reloadBandeja(); }
-    if (action === 'bandeja-next') { st.page += 1; return reloadBandeja(); }
-    if (action === 'gmail-connect') {
-      return Promise.resolve(pd().startGmailConnect()).catch(function (err) { toast(errMsg(err), 'error'); });
-    }
-    if (action === 'gmail-disconnect') {
-      return confirmModal({
+  // Resuelve true si se desconectó, false si el usuario canceló (la promesa
+  // siempre se cierra: quien la espera no se queda colgado).
+  function disconnectGmail() {
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      openModal({
         title: 'Desconectar Gmail',
-        message: 'Dejarás de ver el texto de las respuestas. Seguirás pudiendo responder: eso lo envía Apollo, no Gmail.',
-        confirmLabel: 'Desconectar',
-        danger: true,
-        onConfirm: function () {
-          return Promise.resolve(pd().disconnectGmail()).then(function () {
-            st.gmail = null;
-            toast('Gmail desconectado.', 'success');
-            renderBandejaPane();
-          });
-        },
+        bodyNode: h('p', { text: 'Dejarás de ver el texto de las respuestas por email. Seguirás pudiendo responder: eso lo envía tu cuenta de email, no Gmail.' }),
+        onClose: function () { if (!done) { done = true; resolve(false); } },
+        actions: [
+          { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
+          {
+            label: 'Desconectar',
+            className: 'logout-btn logout-btn-confirm',
+            onClick: function (api) {
+              api.setBusy(true);
+              return Promise.resolve(pd().disconnectGmail()).then(function () {
+                state.gmail = null;
+                done = true;
+                toast('Gmail desconectado.', 'success');
+                api.close();
+                resolve(true);
+              }, function (e) {
+                api.setBusy(false);
+                toast(errMsg(e), 'error');
+                done = true;
+                api.close();
+                reject(e);
+              });
+            },
+          },
+        ],
       });
-    }
-    if (action === 'bandeja-open') {
-      var id = btn.getAttribute('data-id');
-      var msg = st.rows.find(function (m) { return String(m.id) === String(id); });
-      if (msg) return openThreadModal(msg);
-    }
+    });
   }
 
-  // ── Hilo completo + responder ──────────────────────────────────────────
   function threadMessageNode(m, mailbox) {
     var who = m.outbound ? (mailbox || 'Tú') : (m.from || 'El contacto');
     return h('div', {
@@ -3906,15 +2874,19 @@
       h('div', { class: 'thread-msg-body', text: m.body || m.snippet || '(sin contenido)' }));
   }
 
-  function openThreadModal(msg) {
-    var st = state.bandeja;
+  // opts: { threadId, contactEmail, since, subject, contactName, contactId?,
+  //         fromEmail?, body?, replied?, onSent? }
+  // contactId = id del contacto en Apollo: sin él no se puede responder desde
+  // el modal (solo leer el hilo).
+  function openThreadModal(opts) {
+    var msg = opts || {};
     var listHost = h('div', { class: 'thread-list' });
     var composerHost = h('div', null);
     var prog = progressLine();
     var bodyN = h('div', { class: 'thread-wrap' }, listHost, composerHost, prog.el);
 
     var api = openModal({
-      title: msg.toName || msg.toEmail || 'Hilo',
+      title: msg.contactName || msg.contactEmail || msg.subject || 'Hilo',
       width: 680,
       bodyNode: bodyN,
       actions: [{ label: 'Cerrar', className: 'logout-btn logout-btn-cancel' }],
@@ -3922,43 +2894,66 @@
 
     // El compositor NO depende de Gmail: se envía por Apollo. Gmail solo hace
     // falta para leer lo que contestó el prospecto.
-    composerHost.appendChild(buildComposer(msg, api, prog));
+    if (msg.contactId) {
+      composerHost.appendChild(h('div', { class: 'pros-hint', text: 'Cargando buzones…' }));
+      loadEmailAccounts(false).then(function () {
+        composerHost.innerHTML = '';
+        composerHost.appendChild(buildComposer(msg, api, prog));
+      }).catch(function (e) {
+        composerHost.innerHTML = '';
+        composerHost.appendChild(h('div', { class: 'pros-note-amber', text: 'No se pudieron leer los buzones de email: ' + errMsg(e) }));
+      });
+    } else {
+      composerHost.appendChild(buildComposer(msg, api, prog));
+    }
 
-    if (!st.gmail || st.gmail.status !== 'connected') {
-      // Sin Gmail solo se puede mostrar lo que Apollo envió: se dice tal cual,
+    listHost.appendChild(h('div', { class: 'pros-hint', text: 'Revisando la conexión con Gmail…' }));
+
+    function renderWithoutGmail() {
+      listHost.innerHTML = '';
+      // Sin Gmail solo se puede mostrar lo que se envió: se dice tal cual,
       // en vez de dejar el hilo vacío como si no hubiera conversación.
-      listHost.appendChild(threadMessageNode({
-        outbound: true, from: msg.fromEmail, date: fmtDate(msg.completedAt || msg.dueAt),
-        body: msg.body || '(Apollo no devolvió el cuerpo de este correo todavía.)',
-      }, msg.fromEmail));
-      listHost.appendChild(h('div', { class: 'pros-note-amber' },
+      if (msg.body || msg.since) {
+        listHost.appendChild(threadMessageNode({
+          outbound: true, from: msg.fromEmail, date: fmtDate(msg.since),
+          body: msg.body || '(El cuerpo de este correo no está disponible todavía.)',
+        }, msg.fromEmail));
+      }
+      listHost.appendChild(h('div', { class: 'pros-note-amber', style: 'margin-top:0' },
         h('div', { text: msg.replied
-          ? 'Este contacto respondió, pero Apollo no entrega el texto de la respuesta. Conecta Gmail para leerla — igual puedes contestar aquí abajo.'
+          ? 'Este contacto respondió, pero el texto de la respuesta solo se puede leer desde tu Gmail. Conéctalo para verla — igual puedes contestar aquí abajo.'
           : 'Conecta Gmail para leer el hilo completo cuando responda.' }),
         h('div', { class: 'pros-actions', style: 'margin-top:10px' },
           h('button', {
             type: 'button', class: 'btn btn-ghost btn-sm', text: 'Conectar Gmail',
-            onclick: function () {
-              Promise.resolve(pd().startGmailConnect()).catch(function (e) { toast(errMsg(e), 'error'); });
-            },
+            onclick: function () { connectGmail().catch(function () {}); },
           }))));
-      return;
     }
 
-    listHost.appendChild(h('div', { class: 'pros-hint', text: 'Cargando el hilo desde Gmail…' }));
-
-    Promise.resolve(pd().fetchGmailThread(msg.threadId, msg.toEmail, msg.completedAt || msg.dueAt)).then(function (res) {
-      listHost.innerHTML = '';
-      var messages = res.messages || [];
-      if (!messages.length) {
-        listHost.appendChild(h('div', { class: 'pros-hint', text: 'Gmail no devolvió mensajes para este hilo.' }));
+    gmailStatus().catch(function () { return { connected: false }; }).then(function (gs) {
+      if (!gs.connected) return renderWithoutGmail();
+      if (!msg.threadId) {
+        listHost.innerHTML = '';
+        listHost.appendChild(h('div', { class: 'pros-hint', text: 'Este correo todavía no tiene un hilo en Gmail.' }));
         return;
       }
-      messages.forEach(function (m) { listHost.appendChild(threadMessageNode(m, res.mailbox)); });
-    }).catch(function (e) {
       listHost.innerHTML = '';
-      listHost.appendChild(h('div', { class: 'pros-note-red', text: errMsg(e) }));
+      listHost.appendChild(h('div', { class: 'pros-hint', text: 'Cargando el hilo desde Gmail…' }));
+      return Promise.resolve(pd().fetchGmailThread(msg.threadId, msg.contactEmail, msg.since)).then(function (res) {
+        listHost.innerHTML = '';
+        var messages = res.messages || [];
+        if (!messages.length) {
+          listHost.appendChild(h('div', { class: 'pros-hint', text: 'Gmail no devolvió mensajes para este hilo.' }));
+          return;
+        }
+        messages.forEach(function (m) { listHost.appendChild(threadMessageNode(m, res.mailbox)); });
+      }).catch(function (e) {
+        listHost.innerHTML = '';
+        listHost.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:0', text: errMsg(e) }));
+      });
     });
+
+    return api;
   }
 
   // Compositor de respuesta. Envía SIEMPRE por Apollo, para que la respuesta
@@ -3966,16 +2961,16 @@
   function buildComposer(msg, api, prog) {
     var accts = state.cache.accounts || [];
     if (!msg.contactId) {
-      return h('div', { class: 'pros-note-amber',
-        text: 'Este correo no tiene un contacto de Apollo asociado, así que no se puede responder desde aquí.' });
+      return h('div', { class: 'pros-note-amber', style: 'margin-top:0',
+        text: 'Este correo no tiene un contacto asociado en tu cuenta de email, así que no se puede responder desde aquí.' });
     }
     if (!accts.length) {
-      return h('div', { class: 'pros-note-amber',
-        text: 'No hay buzones conectados en Apollo, así que no hay desde dónde enviar.' });
+      return h('div', { class: 'pros-note-amber', style: 'margin-top:0',
+        text: 'No hay buzones conectados en tu cuenta de email, así que no hay desde dónde enviar.' });
     }
 
     // Por defecto, el mismo buzón que mandó el correo original; si ya no
-    // existe, el que Apollo marque como predeterminado.
+    // existe, el que la cuenta marque como predeterminado.
     var preferred = accts.find(function (a) {
       return msg.fromEmail && String(a.email).toLowerCase() === String(msg.fromEmail).toLowerCase();
     }) || accts.find(function (a) { return a.default; }) || accts[0];
@@ -3988,7 +2983,7 @@
     });
 
     var ta = h('textarea', { placeholder: 'Escribe tu respuesta…', rows: '5' });
-    var sendBtn = h('button', { type: 'button', class: 'btn btn-primary', text: 'Enviar por Apollo' });
+    var sendBtn = h('button', { type: 'button', class: 'btn btn-primary', text: 'Enviar por email' });
 
     sendBtn.addEventListener('click', function () {
       var text = ta.value.trim();
@@ -3996,31 +2991,29 @@
       var acct = accts.find(function (a) { return String(a.id) === String(acctSel.value); });
       if (!acct) return toast('Selecciona el buzón desde el que quieres responder.', 'warn');
 
-      // Apollo despacha en el acto y no hay forma de deshacerlo, así que el
-      // envío nunca ocurre sin una confirmación explícita.
+      // El envío es inmediato y no hay forma de deshacerlo, así que nunca
+      // ocurre sin una confirmación explícita.
       return confirmModal({
         title: 'Enviar respuesta',
-        message: 'Se enviará un correo real a ' + (msg.toEmail || 'el contacto') + ' desde ' + acct.email +
-          '. Apollo lo despacha de inmediato y no se puede cancelar. Al prospecto le llegará como un hilo nuevo, no dentro de la conversación.',
+        message: 'Se enviará un correo real a ' + (msg.contactEmail || 'el contacto') + ' desde ' + acct.email +
+          '. Sale de inmediato y no se puede cancelar. Al prospecto le llegará como un hilo nuevo, no dentro de la conversación.',
         confirmLabel: 'Enviar ahora',
         onConfirm: function () {
           sendBtn.disabled = true;
-          prog.set('Enviando por Apollo…');
+          prog.set('Enviando…');
           return Promise.resolve(pd().sendApolloReply({
             contactId: msg.contactId,
             subject: msg.subject || '',
             body: text,
             emailAccountId: acct.id,
             emailAccountAddress: acct.email,
-          })).then(function () {
+          })).then(function (res) {
             prog.hide();
             ta.value = '';
             sendBtn.disabled = false;
             toast('Respuesta enviada desde ' + acct.email + '.', 'success');
             if (api) api.close();
-            // La respuesta es un correo más en Apollo: se recarga la lista para
-            // que aparezca de verdad, no como un eco optimista del cliente.
-            return reloadBandeja();
+            if (typeof msg.onSent === 'function') { try { msg.onSent(res); } catch (_) {} }
           }).catch(function (e) {
             prog.hide();
             sendBtn.disabled = false;
@@ -4031,7 +3024,7 @@
     });
 
     return h('div', { class: 'thread-composer' },
-      h('div', { class: 'pros-lbl', style: 'margin-bottom:6px', text: 'Responder a ' + (msg.toEmail || '—') }),
+      h('div', { class: 'pros-lbl', style: 'margin-bottom:6px', text: 'Responder a ' + (msg.contactEmail || '—') }),
       ta,
       h('div', { class: 'thread-composer-row' },
         h('div', { class: 'thread-composer-from' },
@@ -4039,330 +3032,11 @@
         sendBtn));
   }
 
-  // ══ TAB 5: WHATSAPP & LINKEDIN ═══════════════════════════════════════════
-  function buildWaPane() {
-    var pane = state.panes.outreach;
-    var briefHost = h('div', null);
-    var playbookHost = h('div', null);
-    var engineHost = h('div', { class: 'pros-engine-row' });
-    var senderHost = h('div', null);
-    var listHost = h('div', null);
-    pane.appendChild(briefHost);
-    pane.appendChild(playbookHost);
-    pane.appendChild(engineHost);
-    pane.appendChild(senderHost);
-    pane.appendChild(listHost);
-    state.wa.briefHost = briefHost;
-    state.wa.playbookHost = playbookHost;
-    state.wa.engineHost = engineHost;
-    state.wa.senderHost = senderHost;
-    state.wa.listHost = listHost;
-    if (window.AIEngine) {
-      window.AIEngine.mount(engineHost, 'outreach', {
-        labelText: 'Motor de IA para los mensajes',
-      });
-    }
-    pane.addEventListener('click', guarded(onWaClick));
-    pane.addEventListener('change', guarded(onWaChange));
-  }
-
-  function initWaTab() {
-    var st = state.wa;
-    renderBriefCard();
-    renderPlaybookCard();
-    renderSenderCard();
-    renderWaList();
-    loadWaBrief();
-    loadPlaybook();
-    return loadLists(false)
-      .catch(function (e) { toast(errMsg(e), 'error'); })
-      .then(function () {
-        if (st.listId && !findList(st.listId)) { st.listId = ''; st.members = []; st.selected.clear(); st.expanded.clear(); }
-        renderWaList();
-        // Siempre re-consultar al entrar (salvo cuando Listas acaba de
-        // precargar la selección con sendSelectionToTab): los mensajes IA
-        // pudieron generarse/regenerarse desde el Inbox u otra pestaña.
-        if (st.listId && !st.selected.size) return reloadWaMembers();
-      });
-  }
-
-  // ── Contexto de la empresa (client_brief) ────────────────────────────────
-  // Los mensajes se personalizan con este brief; esta tarjeta muestra su
-  // estado y permite (re)generarlo sin salir de Prospección.
-  function loadWaBrief() {
-    var st = state.wa;
-    st.briefLoading = true;
-    renderBriefCard();
-    return Promise.resolve()
-      .then(function () { return pd().fetchClientBrief(); })
-      .then(function (b) { st.brief = b; })
-      .catch(function (e) { console.warn('[prospecting] brief:', e.message); })
-      .then(function () { st.briefLoading = false; renderBriefCard(); });
-  }
-
-  function renderBriefCard() {
-    var st = state.wa;
-    var host = st.briefHost;
-    if (!host) return;
-    host.innerHTML = '';
-    var b = st.brief;
-    var left = h('div', { style: 'min-width:220px;flex:1' });
-    left.appendChild(h('div', { class: 'chart-title', text: (window.currentProfile?.company_name || 'Contexto de tu empresa') }));
-    var btn = null;
-    if (st.briefLoading) {
-      if (window.Skeleton) {
-        left.appendChild(h('div', { style: 'margin-top:8px;display:flex;flex-direction:column;gap:8px', html:
-          window.Skeleton.line('90%', 11) + window.Skeleton.line('75%', 11) }));
-      } else {
-        left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text3);margin-top:4px', text: 'Cargando…' }));
-      }
-    } else if (b && b.status === 'ready') {
-      var resumen = b.positional_phrase || b.what_it_does || b.company_name || '';
-      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:4px;line-height:1.5' },
-        h('span', { class: 'pill pill-green', text: 'Listo' }), ' ',
-        resumen ? String(resumen) : ''));
-      left.appendChild(h('div', { style: 'font-size:11.5px;color:var(--text3);margin-top:6px;line-height:1.5', text: 'Cada mensaje se personaliza en 5 capas (mercado → industria → empresa → rol → persona) usando este contexto y tu Intelligence Hub.' }));
-      btn = h('button', { type: 'button', class: 'btn btn-ai btn-sm', 'data-action': 'brief-generate', html: SVG_SPARK + ' Actualizar contexto' });
-    } else if (b && b.status === 'generating') {
-      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:4px', text: '⏳ La IA está leyendo tu web y tu LinkedIn para entender qué hace tu empresa…' }));
-      btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'brief-refresh', text: 'Revisar estado' });
-    } else if (b && b.status === 'error') {
-      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--red);margin-top:4px', text: '⚠ No se pudo generar: ' + (b.error_message || 'error desconocido') }));
-      btn = h('button', { type: 'button', class: 'btn btn-ai btn-sm', 'data-action': 'brief-generate', html: SVG_SPARK + ' Reintentar' });
-    } else {
-      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:4px;line-height:1.5', text: 'Genera el contexto de tu empresa para que los mensajes hablen de lo que haces y de cómo ayudas a tu cliente, no de un rol genérico.' }));
-      btn = h('button', { type: 'button', class: 'btn btn-ai btn-sm', 'data-action': 'brief-generate', html: SVG_SPARK + ' Generar contexto' });
-    }
-    host.appendChild(h('div', { class: 'chart-card', style: 'margin-bottom:14px' },
-      h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap' }, left, btn)));
-  }
-
-  // ── Tendencias de outbound (outreach_playbooks) ──────────────────────────
-  // Investigación web periódica sobre qué está funcionando HOY en outreach en
-  // frío: foros especializados (r/sales, r/coldemail, r/Emailmarketing),
-  // academias y reportes de vendors (Apollo, Lavender, Gong, Belkins) y
-  // publicaciones de operadores. Opcional y recomendada: cuando está activa,
-  // generate-outreach calibra estructura, asunto, CTA, personalización y canal
-  // con estos hallazgos. Apagarla deja la generación exactamente como estaba.
-  var PB_CADENCES = [
-    { value: 'weekly',  label: 'Semanal' },
-    { value: 'monthly', label: 'Mensual' },
-    { value: 'manual',  label: 'Solo manual' },
-  ];
-
-  var PB_POLL_MS = 20000;
-  var PB_MAX_POLLS = 18; // ~6 min: una investigación con 12 búsquedas web
-
-  function stopPlaybookPoll() {
-    if (state.wa.playbookTimer) { clearTimeout(state.wa.playbookTimer); state.wa.playbookTimer = null; }
-    state.wa.playbookPolls = 0;
-  }
-
-  function schedulePlaybookPoll() {
-    var st = state.wa;
-    if (st.playbookTimer) return;
-    if (st.playbookPolls >= PB_MAX_POLLS) return;
-    st.playbookTimer = setTimeout(function () {
-      st.playbookTimer = null;
-      st.playbookPolls++;
-      // Solo seguimos consultando mientras esta pestaña está a la vista.
-      if (state.activeTab !== 'outreach') { stopPlaybookPoll(); return; }
-      loadPlaybook(true);
-    }, PB_POLL_MS);
-  }
-
-  function loadPlaybook(quiet) {
-    var st = state.wa;
-    if (!quiet) { st.playbookLoading = true; renderPlaybookCard(); }
-    return Promise.resolve()
-      .then(function () { return pd().fetchOutreachPlaybook(); })
-      .then(function (pb) { st.playbook = pb; })
-      .catch(function (e) { console.warn('[prospecting] playbook:', e.message); })
-      .then(function () {
-        st.playbookLoading = false;
-        renderPlaybookCard();
-        if (st.playbook && st.playbook.status === 'generating') schedulePlaybookPoll();
-        else stopPlaybookPoll();
-      });
-  }
-
-  function pbList(v) {
-    return Array.isArray(v) ? v.filter(function (x) { return x && typeof x === 'object'; }) : [];
-  }
-
-  function pbSourceLink(url) {
-    if (!url) return null;
-    var href = window.safeUrl ? window.safeUrl(url) : '#';
-    if (href === '#') return null;
-    var host = String(url).replace(/^https?:\/\//i, '').split('/')[0];
-    return h('a', {
-      href: href, target: '_blank', rel: 'noopener noreferrer',
-      style: 'font-size:11px;color:var(--text3);text-decoration:underline',
-      text: host,
-    });
-  }
-
-  // Una sección del detalle: título + lista de líneas, cada una con su fuente.
-  function pbSection(title, items, lineFn) {
-    if (!items.length) return null;
-    var wrap = h('div', { style: 'margin-top:12px' });
-    wrap.appendChild(h('div', { style: 'font-size:11.5px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--text3)', text: title }));
-    var ul = h('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-top:6px' });
-    items.forEach(function (it) {
-      var text = lineFn(it);
-      if (!text) return;
-      var row = h('div', { style: 'font-size:12.5px;line-height:1.6;color:var(--text2)' });
-      row.appendChild(document.createTextNode('· ' + text + ' '));
-      var link = pbSourceLink(it.source_url || it.url);
-      if (link) row.appendChild(link);
-      ul.appendChild(row);
-    });
-    if (!ul.childNodes.length) return null;
-    wrap.appendChild(ul);
-    return wrap;
-  }
-
-  function pbDetailsNode(pb) {
-    var wrap = h('div', { style: 'margin-top:10px;border-top:1px solid var(--hair);padding-top:10px' });
-    var any = false;
-    function add(node) { if (node) { wrap.appendChild(node); any = true; } }
-
-    add(pbSection('Qué está funcionando', pbList(pb.principles), function (x) {
-      var t = [x.title, x.insight].filter(Boolean).join(': ');
-      if (x.why) t += ' (' + x.why + ')';
-      return t;
-    }));
-    add(pbSection('Aperturas', pbList(pb.openers), function (x) {
-      return [x.pattern, x.example ? '“' + x.example + '”' : ''].filter(Boolean).join(' — ').replace(/ — /g, ', ');
-    }));
-    add(pbSection('Asuntos', pbList(pb.subject_lines), function (x) {
-      return [x.pattern, x.example ? '“' + x.example + '”' : ''].filter(Boolean).join(', ');
-    }));
-
-    var st = (pb.structure && typeof pb.structure === 'object' && !Array.isArray(pb.structure)) ? pb.structure : {};
-    var stBits = ['length', 'paragraphs', 'cta_style', 'personalization', 'follow_up']
-      .map(function (k) { return typeof st[k] === 'string' ? st[k].trim() : ''; })
-      .filter(Boolean)
-      .map(function (v) { return { what: v }; });
-    add(pbSection('Estructura recomendada', stBits, function (x) { return x.what; }));
-
-    add(pbSection('Canales', pbList(pb.channels), function (x) {
-      return [x.channel, x.verdict || x.note].filter(Boolean).join(': ');
-    }));
-    add(pbSection('Quemado, evítalo', pbList(pb.avoid), function (x) {
-      return [x.what, x.why].filter(Boolean).join(' — ').replace(/ — /g, ', ');
-    }));
-    add(pbSection('Para probar', pbList(pb.experiments), function (x) {
-      return [x.hypothesis, x.how_to_test].filter(Boolean).join(': ');
-    }));
-    add(pbSection('Fuentes', pbList(pb.sources), function (x) {
-      return [x.title, x.date].filter(Boolean).join(', ');
-    }));
-
-    return any ? wrap : null;
-  }
-
-  function renderPlaybookCard() {
-    var st = state.wa;
-    var host = st.playbookHost;
-    if (!host) return;
-    host.innerHTML = '';
-    var pb = st.playbook;
-    var status = (pb && pb.status) || 'none';
-    var enabled = pb ? pb.enabled !== false : true;
-    var cadence = (pb && pb.cadence) || 'monthly';
-
-    var left = h('div', { style: 'min-width:240px;flex:1' });
-    left.appendChild(h('div', { class: 'chart-title', text: 'Tendencias de outbound' }));
-    left.appendChild(h('div', {
-      style: 'font-size:11.5px;color:var(--text3);margin-top:4px;line-height:1.55',
-      text: 'Investigamos en internet qué le está funcionando hoy a quienes prospectan en frío: foros especializados (r/sales, r/coldemail), academias y reportes de Apollo, Lavender y Gong, y publicaciones de operadores. Los hallazgos calibran cómo se redactan tus mensajes.',
-    }));
-
-    var btn = null;
-    if (st.playbookLoading) {
-      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text3);margin-top:8px', text: 'Cargando…' }));
-    } else if (status === 'generating') {
-      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:8px;line-height:1.55', text: '⏳ Investigando foros, reportes y publicaciones recientes. Toma unos minutos; puedes seguir trabajando.' }));
-      btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'pb-refresh', text: 'Revisar estado' });
-    } else if (status === 'error') {
-      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--red);margin-top:8px;line-height:1.55', text: '⚠ No se pudo completar la investigación: ' + (pb.error_message || 'error desconocido') }));
-      btn = h('button', { type: 'button', class: 'btn btn-ai btn-sm', 'data-action': 'pb-generate', 'data-credit-cost': 'outreach_playbook', 'data-credit-muted': '', html: SVG_SPARK + ' Reintentar' });
-    } else if (status === 'ready') {
-      var line = h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:8px;line-height:1.6' });
-      line.appendChild(h('span', { class: 'pill pill-green', text: 'Listo' }));
-      line.appendChild(document.createTextNode(' ' + (pb.headline || pb.summary || 'Investigación disponible.')));
-      left.appendChild(line);
-      if (pb.headline && pb.summary) {
-        left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:6px;line-height:1.6', text: pb.summary }));
-      }
-      btn = h('button', { type: 'button', class: 'btn btn-ai btn-sm', 'data-action': 'pb-generate', 'data-credit-cost': 'outreach_playbook', 'data-credit-muted': '', html: SVG_SPARK + ' Actualizar investigación' });
-    } else {
-      left.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text2);margin-top:8px;line-height:1.6', text: 'Todavía no has corrido la investigación. Es opcional, pero muy recomendada: sin ella los mensajes se generan solo con tu contexto, sin lo que el mercado está reportando este mes.' }));
-      btn = h('button', { type: 'button', class: 'btn btn-ai btn-sm', 'data-action': 'pb-generate', 'data-credit-cost': 'outreach_playbook', 'data-credit-muted': '', html: SVG_SPARK + ' Investigar tendencias' });
-    }
-
-    var card = h('div', { class: 'chart-card', style: 'margin-bottom:14px' },
-      h('div', { style: 'display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap' }, left, btn));
-
-    // Detalle desplegable de los hallazgos
-    if (status === 'ready') {
-      var details = st.playbookOpen ? pbDetailsNode(pb) : null;
-      var toggle = h('button', {
-        type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'pb-details',
-        style: 'margin-top:10px',
-        text: st.playbookOpen ? 'Ocultar hallazgos' : 'Ver hallazgos',
-      });
-      card.appendChild(toggle);
-      if (details) card.appendChild(details);
-    }
-
-    // Controles: aplicar al redactar + cadencia
-    var controls = h('div', { style: 'display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:12px;border-top:1px solid var(--hair);padding-top:12px' });
-    var chk = h('input', { type: 'checkbox', 'data-action': 'pb-enabled', id: 'pb-enabled-chk' });
-    chk.checked = enabled;
-    chk.disabled = !!st.playbookSaving;
-    controls.appendChild(h('label', { style: 'display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text2);cursor:pointer', for: 'pb-enabled-chk' },
-      chk, h('span', { text: 'Aplicar las tendencias al generar mensajes' })));
-
-    var sel = h('select', { 'data-action': 'pb-cadence' });
-    PB_CADENCES.forEach(function (o) {
-      var opt = h('option', { value: o.value, text: o.label });
-      if (o.value === cadence) opt.selected = true;
-      sel.appendChild(opt);
-    });
-    sel.disabled = !!st.playbookSaving;
-    controls.appendChild(h('div', { style: 'display:flex;align-items:center;gap:8px' },
-      h('span', { class: 'pros-lbl', text: 'Actualizar' }), sel));
-    card.appendChild(controls);
-
-    var meta = [];
-    if (pb && pb.generated_at) meta.push('Última investigación: ' + fmtDate(pb.generated_at));
-    if (pb && pb.next_refresh_at && cadence !== 'manual') meta.push('Próxima: ' + fmtDate(pb.next_refresh_at));
-    meta.push(enabled
-      ? 'Las reglas de tu mensaje mandan: si una tendencia choca con ellas, gana la regla.'
-      : 'Desactivada: los mensajes se generan solo con tu contexto.');
-    if (cadence !== 'manual') meta.push('Las actualizaciones automáticas no consumen créditos.');
-    card.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:8px', text: meta.join(' · ') }));
-
-    host.appendChild(card);
-  }
-
-  function savePlaybookPrefs(patch, okMsg) {
-    var st = state.wa;
-    st.playbookSaving = true;
-    renderPlaybookCard();
-    return Promise.resolve()
-      .then(function () { return pd().saveOutreachPlaybookPrefs(patch); })
-      .then(function (row) {
-        if (row) st.playbook = row;
-        else st.playbook = Object.assign({ status: 'pending' }, st.playbook || {}, patch);
-        if (okMsg) toast(okMsg, 'success');
-      })
-      .catch(function (e) { toast(errMsg(e), 'error'); })
-      .then(function () { st.playbookSaving = false; renderPlaybookCard(); });
-  }
-
+  // ══ MENSAJES IA POR LEAD (generación + vista previa) ═══════════════════
+  // Los mensajes se generan al enrolar en una campaña (js/campaigns.js llama
+  // a generateOutreachFor) y se previsualizan por lead con
+  // outreachPreviewHtml. "Quién firma" sigue viviendo en localStorage
+  // (getSenderInfo/saveSenderInfo); Campañas lo lee como valor por defecto.
   function getSenderSafe() {
     var info = { name: '', role: '', company: '' };
     try {
@@ -4388,47 +3062,24 @@
     return null;
   }
 
-  function renderSenderCard() {
-    var host = state.wa.senderHost;
-    if (!host) return;
-    host.innerHTML = '';
-    var info = getSenderSafe();
-    var nameI = h('input', { type: 'text', placeholder: 'Tu nombre' });
-    var roleI = h('input', { type: 'text', placeholder: 'Tu rol' });
-    var compI = h('input', { type: 'text', placeholder: 'Tu empresa' });
-    nameI.value = info.name || '';
-    roleI.value = info.role || '';
-    compI.value = info.company || '';
-    var bubble = h('div', { class: 'pros-wa-bubble' });
-    bubble.textContent = greetingSafe(info);
-    function sync() {
-      var cur = { name: nameI.value.trim(), role: roleI.value.trim(), company: compI.value.trim() };
-      try {
-        var d = window.prospectingData;
-        if (d && typeof d.saveSenderInfo === 'function') d.saveSenderInfo(cur);
-      } catch (_) {}
-      bubble.textContent = greetingSafe(cur);
-    }
-    [nameI, roleI, compI].forEach(function (i) { i.addEventListener('input', sync); });
-    var card = h('div', { class: 'chart-card' },
-      h('div', { class: 'chart-title', text: 'Tu presentación' }),
-      h('div', { class: 'pros-2col', style: 'margin-top:12px' },
-        h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
-          h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Nombre' }), nameI),
-          h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Rol' }), roleI),
-          h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Empresa' }), compI)),
-        h('div', { style: 'display:flex;flex-direction:column;gap:8px' },
-          h('div', { class: 'pros-lbl', text: 'Vista previa — 1er mensaje' }),
-          h('div', { class: 'pros-wa-preview' }, bubble),
-          h('div', { class: 'pros-hint', text: 'El saludo inicial es siempre el mismo. El seguimiento personalizado se envía solo cuando el lead responde.' }))));
-    host.appendChild(card);
+  // Registro de los leads cuya vista previa está en pantalla: el HTML lo
+  // renderiza otro módulo (Campañas), pero los botones de copiar / abrir
+  // WhatsApp / preparar el coach se resuelven aquí con un listener delegado
+  // a nivel documento, así el que pinta la vista no tiene que cablear nada.
+  var previewMembers = new Map();
+
+  function rememberPreviewMember(m) {
+    if (!m || m.id == null) return;
+    if (previewMembers.size > 500) previewMembers.clear();
+    previewMembers.set(String(m.id), m);
   }
 
-  function findWaMember(id) {
-    return state.wa.members.find(function (m) { return String(m.id) === String(id); }) || null;
-  }
-
-  function waExpansionHtml(m) {
+  // Bloques: 1er mensaje WhatsApp (fijo) · seguimiento WhatsApp (IA) ·
+  // LinkedIn (IA) · email frío (IA) · ángulo de personalización (IA).
+  // Todo el contenido pasa por esc(); el regenerar lo pone quien lo muestra.
+  function outreachPreviewHtml(m) {
+    if (!m) return '';
+    rememberPreviewMember(m);
     var sender = getSenderSafe();
     var greet = greetingSafe(sender);
     var follow = (m.outreach && m.outreach.whatsapp_followup) || '';
@@ -4436,58 +3087,63 @@
     var greetLink = waLinkSafe(m.phone, greet);
     var followLink = follow ? waLinkSafe(m.phone, follow) : null;
     var id = esc(String(m.id));
-    var noPhoneHint = '<div class="pros-hint">Enriquece el teléfono de este lead en la pestaña Listas.</div>';
-
-    var html = '<div style="display:grid;gap:10px;padding:4px 2px">';
-    // (a) fixed first message
+    var noPhoneHint = '<div class="pros-hint">Enriquece el teléfono de este lead en Listas.</div>';
+    var pending = m.outreach_status === 'generating'
+      ? '<div class="pros-hint"><span class="saving">⏳</span> Generando los mensajes con IA…</div>'
+      : '';
+    var html = '<div class="pros-preview" style="display:grid;gap:10px;padding:4px 2px">' + pending;
+    // (a) 1er mensaje fijo
     html += '<div class="pros-msgblock"><div class="pros-msgblock-title">1er mensaje — WhatsApp</div>' +
       '<div class="pros-wa-bubble">' + esc(greet || '—') + '</div>' +
       '<div class="pros-actions">' +
-      '<button type="button" class="btn btn-teal btn-sm" data-action="wa-send-greet" data-id="' + id + '"' + (greetLink ? '' : ' disabled') + '>Enviar saludo</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-pros-preview="copy-greet" data-id="' + id + '"' + (greet ? '' : ' disabled') + '>Copiar</button>' +
+      '<button type="button" class="btn btn-teal btn-sm" data-pros-preview="wa-greet" data-id="' + id + '"' + (greetLink ? '' : ' disabled') + '>Abrir en WhatsApp</button>' +
       '</div>' +
       (greetLink ? '' : noPhoneHint) +
       '</div>';
-    // (b) AI follow-up
+    // (b) Seguimiento IA
     html += '<div class="pros-msgblock"><div class="pros-msgblock-title">Seguimiento — WhatsApp</div>' +
       (follow
         ? '<div class="pros-wa-bubble">' + esc(follow) + '</div>'
         : '<div class="pros-hint">Genera los mensajes con IA para ver el seguimiento.</div>') +
       '<div class="pros-actions">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="wa-copy-follow" data-id="' + id + '"' + (follow ? '' : ' disabled') + '>Copiar</button>' +
-      '<button type="button" class="btn btn-teal btn-sm" data-action="wa-send-follow" data-id="' + id + '"' + (followLink ? '' : ' disabled') + '>Enviar</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-pros-preview="copy-follow" data-id="' + id + '"' + (follow ? '' : ' disabled') + '>Copiar</button>' +
+      '<button type="button" class="btn btn-teal btn-sm" data-pros-preview="wa-follow" data-id="' + id + '"' + (followLink ? '' : ' disabled') + '>Abrir en WhatsApp</button>' +
       '</div>' +
       (follow && !followLink ? noPhoneHint : '') +
       '<div class="pros-hint">Envíalo únicamente cuando el lead haya respondido al saludo.</div>' +
       '</div>';
-    // (c) LinkedIn — copy only, no automation
+    // (c) LinkedIn — solo copiar
     html += '<div class="pros-msgblock"><div class="pros-msgblock-title">LinkedIn</div>' +
       (liMsg
         ? '<div style="font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word">' + esc(liMsg) + '</div>'
         : '<div class="pros-hint">Genera los mensajes con IA para ver el mensaje de LinkedIn.</div>') +
       '<div class="pros-actions">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="li-copy" data-id="' + id + '"' + (liMsg ? '' : ' disabled') + '>Copiar mensaje</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-pros-preview="copy-li" data-id="' + id + '"' + (liMsg ? '' : ' disabled') + '>Copiar mensaje</button>' +
       (m.linkedin_url ? '<a href="' + esc(sUrl(m.linkedin_url)) + '" target="_blank" rel="noopener" style="font-size:12.5px;color:var(--accent-ink)">Abrir perfil →</a>' : '') +
       '</div>' +
-      '<div class="pros-hint">Cópialo y pégalo manualmente en el inbox de LinkedIn — así respetas sus políticas de uso.</div>' +
       '</div>';
-    // (d) Email frío (mismo motor de personalización)
+    // (d) Email frío
     var emailS = (m.outreach && m.outreach.email_subject) || '';
     var emailB = (m.outreach && m.outreach.email_body) || '';
-    if (emailS || emailB) {
-      html += '<div class="pros-msgblock"><div class="pros-msgblock-title">Email frío</div>' +
-        (emailS ? '<div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Asunto: ' + esc(emailS) + '</div>' : '') +
-        (emailB ? '<div style="font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word">' + esc(emailB) + '</div>' : '') +
-        '<div class="pros-actions"><button type="button" class="btn btn-ghost btn-sm" data-action="wa-copy-email" data-id="' + id + '">Copiar email</button></div>' +
-        '</div>';
-    }
+    html += '<div class="pros-msgblock"><div class="pros-msgblock-title">Email frío</div>' +
+      ((emailS || emailB)
+        ? (emailS ? '<div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Asunto: ' + esc(emailS) + '</div>' : '') +
+          (emailB ? '<div style="font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word">' + esc(emailB) + '</div>' : '')
+        : '<div class="pros-hint">Genera los mensajes con IA para ver el email.</div>') +
+      '<div class="pros-actions"><button type="button" class="btn btn-ghost btn-sm" data-pros-preview="copy-email" data-id="' + id + '"' + ((emailS || emailB) ? '' : ' disabled') + '>Copiar email</button></div>' +
+      '</div>';
     // (e) Ángulo de personalización (síntesis de las 5 capas — lo consume el coach).
     // Usa el mismo buildCoachLeadContext() que alimenta el AI coach, con sus
     // mismos textos de respaldo, para que ambas superficies muestren la misma info.
     if (m.outreach && m.outreach.generated_at) {
       var angle = (m.outreach.angle && typeof m.outreach.angle === 'object') ? m.outreach.angle : {};
-      var coachCtx = (window.prospectingData && window.prospectingData.buildCoachLeadContext)
-        ? window.prospectingData.buildCoachLeadContext(m)
-        : null;
+      var coachCtx = null;
+      try {
+        coachCtx = (window.prospectingData && window.prospectingData.buildCoachLeadContext)
+          ? window.prospectingData.buildCoachLeadContext(m)
+          : null;
+      } catch (_) { coachCtx = null; }
       var prep = (coachCtx && coachCtx.coach_prep && typeof coachCtx.coach_prep === 'object') ? coachCtx.coach_prep : null;
       var personHook = (coachCtx && coachCtx.person_hook) || angle.person_hook || null;
       var why = (coachCtx && coachCtx.brief_why) || 'Contexto de la reunión disponible al iniciar el coach.';
@@ -4503,194 +3159,131 @@
         (prep && prep.como_abrir ? '<div><b>Cómo abrir:</b> ' + esc(prep.como_abrir) + '</div>' : '') +
         '</div>' +
         '<div class="pros-hint">Este contexto queda guardado con el lead y lo usa el AI coach si se agenda una reunión.</div>' +
+        '<div class="pros-actions"><button type="button" class="btn btn-teal btn-sm" data-pros-preview="coach" data-id="' + id + '">Preparar reunión con el coach</button></div>' +
         '</div>';
     }
-    html += '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-      '<button type="button" class="btn btn-ai btn-sm" data-action="wa-regen" data-id="' + id + '">' + SVG_SPARK + ' Regenerar</button>' +
-      ((m.outreach && m.outreach.generated_at)
-        ? '<button type="button" class="btn btn-teal btn-sm" data-action="wa-coach" data-id="' + id + '">Preparar reunión con el coach</button>'
-        : '') +
-      '</div>';
     html += '</div>';
     return html;
   }
 
-  function waMemberRowHtml(m) {
-    var st = state.wa;
-    var id = esc(String(m.id));
-    var checked = st.selected.has(String(m.id)) ? ' checked' : '';
-    var expanded = st.expanded.has(String(m.id));
-    var name = m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim() || '—';
-    var msgs = m.outreach_status === 'generating'
-      ? '<span class="pill pill-amber"><span class="saving">⏳</span> Generando…</span>'
-      : (m.outreach && m.outreach.generated_at)
-        ? '<span class="pill pill-green">Generados</span>'
-        : (m.outreach_status === 'error')
-          ? '<span class="pill pill-red">Error</span>'
-          : '<span style="color:var(--text3)">—</span>';
-    var html = '<tr>' +
-      '<td><input type="checkbox" data-action="wa-check" data-id="' + id + '"' + checked + '></td>' +
-      '<td><div style="font-weight:600">' + esc(name) + '</div>' +
-        (m.title ? '<div class="pros-cellsub" style="font-size:12px">' + esc(m.title) + '</div>' : '') + '</td>' +
-      '<td>' + esc(m.company || '—') + '</td>' +
-      '<td>' + memberPhoneCell(m) + '</td>' +
-      '<td>' + msgs + '</td>' +
-      '<td style="width:36px;text-align:right"><button type="button" class="pros-chev' + (expanded ? ' open' : '') + '" data-action="wa-expand" data-id="' + id + '" aria-label="Ver mensajes">›</button></td>' +
-      '</tr>';
-    if (expanded) {
-      html += '<tr class="pros-expand"><td colspan="6">' + waExpansionHtml(m) + '</td></tr>';
-    }
-    return html;
-  }
-
-  function renderWaList() {
-    var st = state.wa;
-    var host = st.listHost;
-    if (!host) return;
-    var lists = state.cache.lists || [];
-    var listOpts = [{ value: '', label: 'Selecciona una lista' }].concat(lists.map(function (l) {
-      return { value: String(l.id), label: (l.name || '—') + ' (' + fmtNum(l.member_count || 0) + ')' };
-    }));
-    var n = st.selected.size;
-    var html = '<div class="table-card">' +
-      '<div class="table-head" style="gap:12px;flex-wrap:wrap">' +
-      '<div style="display:flex;align-items:center;gap:10px"><span class="pros-lbl">Lista</span>' +
-      selectHtml('wa-list', listOpts, st.listId) + '</div>' +
-      '<div style="display:flex;align-items:center;gap:10px">' +
-      '<span class="pros-progress" data-wa-prog>' +
-      '<span class="pros-progress-bar"><span class="pros-progress-fill" data-wa-prog-fill></span></span>' +
-      '<span data-wa-prog-text></span></span>' +
-      '<button type="button" class="btn btn-ai btn-sm" data-action="wa-generate" data-credit-cost="outreach_message" data-credit-muted' + ((n && !st.generating) ? '' : ' disabled') + '>' + SVG_SPARK + ' Generar mensajes con IA</button>' +
-      (st.generating
-        ? '<button type="button" class="btn btn-ghost btn-sm" data-action="wa-generate-stop"' + (st.cancelRequested ? ' disabled' : '') + '>' + (st.cancelRequested ? 'Deteniendo…' : 'Detener') + '</button>'
-        : '') +
-      '</div></div>';
-    if (!st.listId) {
-      html += emptyHtml(SVG_CHAT, 'Selecciona una lista',
-        'Elige la lista de contactos a los que quieres escribir por WhatsApp o LinkedIn.');
-    } else if (st.loadingMembers) {
-      html += window.Skeleton
-        ? '<div class="pros-scroll-x"><table><tbody>' +
-            window.Skeleton.tableRows(['30%', '38%', '32%', '45%'], 6) +
-          '</tbody></table></div>'
-        : '<div style="padding:24px;text-align:center;font-size:12.5px;color:var(--text3)">Cargando contactos…</div>';
-    } else if (st.membersError) {
-      html += '<div style="padding:16px"><div class="pros-note-red" style="margin-top:0">⚠ ' + esc(st.membersError) + '</div></div>';
-    } else if (!st.members.length) {
-      html += emptyHtml(SVG_CHAT, 'Lista vacía', 'Agrega prospectos a esta lista desde la pestaña Búsqueda.');
-    } else {
-      var allChecked = st.members.every(function (m) { return st.selected.has(String(m.id)); });
-      html += '<div class="pros-scroll-x"><table><thead><tr>' +
-        '<th style="width:34px"><input type="checkbox" data-action="wa-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-        '<th>Nombre</th><th>Empresa</th><th>Teléfono</th><th>Mensajes</th><th></th>' +
-        '</tr></thead><tbody>' + st.members.map(waMemberRowHtml).join('') + '</tbody></table></div>';
-    }
-    html += '</div>';
-    host.innerHTML = html;
-  }
-
-  function setWaProg(text, pct) {
-    var host = state.wa.listHost;
-    if (!host) return;
-    var wrap = host.querySelector('[data-wa-prog]');
-    var span = host.querySelector('[data-wa-prog-text]');
-    var fill = host.querySelector('[data-wa-prog-fill]');
-    if (!wrap || !span) return;
-    if (text) {
-      wrap.classList.add('on');
-      span.textContent = text;
-      if (fill) fill.style.width = (typeof pct === 'number' ? Math.max(0, Math.min(100, pct)) : 0) + '%';
-    } else {
-      wrap.classList.remove('on');
-      span.textContent = '';
-      if (fill) fill.style.width = '0%';
-    }
-  }
-
-  function updateWaToolbar() {
-    var host = state.wa.listHost;
-    if (!host) return;
-    var btn = host.querySelector('[data-action="wa-generate"]');
-    if (btn) btn.disabled = !(state.wa.selected.size && !state.wa.generating);
-    var stopBtn = host.querySelector('[data-action="wa-generate-stop"]');
-    if (stopBtn) stopBtn.disabled = state.wa.cancelRequested;
-  }
-
-  function reloadWaMembers() {
-    var st = state.wa;
-    st.loadingMembers = true;
-    st.membersError = null;
-    st.selected.clear();
-    st.expanded.clear();
-    renderWaList();
-    return Promise.resolve()
-      .then(function () { return pd().fetchMembers(st.listId); })
-      .then(function (members) { st.members = Array.isArray(members) ? members : []; })
-      .catch(function (e) { st.members = []; st.membersError = errMsg(e); })
-      .then(function () {
-        st.loadingMembers = false;
-        renderWaList();
+  // Puente Prospección → AI coach: el brief del lead (quién es, dolor
+  // probable, objeción + neutralizador) viaja como contexto de la reunión.
+  function coachHandoff(m) {
+    var ctx = pd().buildCoachLeadContext(m);
+    window.predictable = window.predictable || {};
+    window.predictable.currentProspect = ctx;
+    // Persistir el handoff en Supabase (coach_lead_context): el coach lo
+    // restaura tras un reload o desde otro dispositivo. No bloquea la navegación.
+    try {
+      Promise.resolve(pd().saveCoachContext(m.id, ctx)).catch(function (e) {
+        console.warn('[prospecting] no se pudo persistir el contexto del coach:', e.message);
       });
+    } catch (e) { console.warn('[prospecting] coach context:', e.message); }
+    var navEl = document.querySelector('[data-page="ventas-coach"]');
+    if (navEl && typeof window.nav === 'function') window.nav(navEl, 'ventas-coach');
+    if (typeof window.loadCoachBrief === 'function') window.loadCoachBrief(ctx);
+    toast('Contexto del lead cargado en el coach.', 'success');
   }
 
-  // Sequential AI generation with per-member failure tolerance.
-  function generateForMembers(members) {
-    var st = state.wa;
-    if (st.generating) return Promise.resolve();
-    if (!members.length) { toast('Selecciona al menos un contacto.', 'warn'); return Promise.resolve(); }
-    st.generating = true;
-    st.cancelRequested = false;
-    renderWaList();
+  function onPreviewClick(e) {
+    var btn = e.target.closest ? e.target.closest('[data-pros-preview]') : null;
+    if (!btn || btn.disabled) return;
+    var action = btn.getAttribute('data-pros-preview');
+    var m = previewMembers.get(String(btn.getAttribute('data-id') || ''));
+    if (!m) return toast('Vuelve a abrir la vista previa de este lead.', 'warn');
+    try {
+      if (action === 'copy-greet') return copyText(greetingSafe(getSenderSafe()));
+      if (action === 'wa-greet') {
+        var url = waLinkSafe(m.phone, greetingSafe(getSenderSafe()));
+        if (!url) return toast('Enriquece el teléfono de este lead en Listas.', 'warn');
+        return waOpen(url);
+      }
+      if (action === 'wa-follow') {
+        var follow = m.outreach && m.outreach.whatsapp_followup;
+        if (!follow) return toast('Genera los mensajes con IA para ver el seguimiento.', 'warn');
+        var url2 = waLinkSafe(m.phone, follow);
+        if (!url2) return toast('Enriquece el teléfono de este lead en Listas.', 'warn');
+        return waOpen(url2);
+      }
+      if (action === 'copy-follow') {
+        var f2 = m.outreach && m.outreach.whatsapp_followup;
+        if (!f2) return toast('Genera los mensajes con IA para ver el seguimiento.', 'warn');
+        return copyText(f2);
+      }
+      if (action === 'copy-li') {
+        var li = m.outreach && m.outreach.linkedin_message;
+        if (!li) return toast('Genera los mensajes con IA para ver el mensaje de LinkedIn.', 'warn');
+        return copyText(li);
+      }
+      if (action === 'copy-email') {
+        var es = (m.outreach && m.outreach.email_subject) || '';
+        var eb = (m.outreach && m.outreach.email_body) || '';
+        if (!es && !eb) return toast('Genera los mensajes con IA para ver el email.', 'warn');
+        return copyText((es ? 'Asunto: ' + es + '\n\n' : '') + eb);
+      }
+      if (action === 'coach') return coachHandoff(m);
+    } catch (err) {
+      toast(errMsg(err), 'error');
+    }
+  }
+  document.addEventListener('click', onPreviewClick);
+
+  // Generación secuencial con tolerancia a fallos por lead.
+  //   members    → leads a (re)generar; el que llama decide cuáles (p. ej.
+  //                solo los que aún no tienen `outreach`, o uno para regenerar).
+  //   opts.engine     → motor de IA (opcional; si falta, el del perfil).
+  //   opts.onProgress → fn({ phase:'brief'|'generating'|'done', done, total,
+  //                          index, member, text })
+  // Persiste outreach_status / outreach en prospect_list_members igual que la
+  // antigua pestaña de mensajes IA. Devuelve { ok, failed, skipped, failures }.
+  var outreachRun = { active: false };
+
+  function generateOutreachFor(members, opts) {
+    opts = opts || {};
+    var onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : function () {};
+    var list = (Array.isArray(members) ? members : []).filter(function (m) { return m && m.id != null; });
     var ok = 0;
-    var skipped = 0;
     var failed = [];
+    if (!list.length) return Promise.resolve({ ok: 0, failed: 0, skipped: 0, failures: [] });
+    if (outreachRun.active) return Promise.reject(new Error('Ya hay una generación de mensajes en curso. Espera a que termine.'));
     var d, sender;
     try {
       d = pd();
       sender = d.getSenderInfo();
     } catch (e) {
-      st.generating = false;
-      renderWaList();
-      toast(errMsg(e), 'error');
-      return Promise.resolve();
+      return Promise.reject(e);
     }
-    // La matriz + brief del vendedor son inputs de la personalización:
-    // antes del lote se asegura que el brief exista (si no, se genera y se
-    // espera). Si aun así no queda listo, se avisa y se genera con la matriz
-    // cruda; si no hay matriz, ensureBriefReady lanza y el lote se aborta.
+    outreachRun.active = true;
+    function report(patch) {
+      try { onProgress(Object.assign({ total: list.length, done: ok + failed.length }, patch)); } catch (_) {}
+    }
+    // El brief del vendedor es input de la personalización: antes del lote se
+    // asegura que exista (si no, se genera y se espera). Si aun así no queda
+    // listo, se sigue con la matriz cruda; si no hay matriz, ensureBriefReady
+    // lanza y el lote se aborta.
     var chain = Promise.resolve()
-      .then(function () { return d.ensureBriefReady(setWaProg); })
+      .then(function () {
+        return d.ensureBriefReady(function (text) { report({ phase: 'brief', text: text }); });
+      })
       .then(function (status) {
         if (status !== 'ready') {
-          toast('Tu brief no está listo (' + status + '): se personalizará solo con la matriz de tu empresa.', 'warn');
+          toast('Tu contexto de empresa no está listo (' + status + '): se personalizará solo con la matriz de tu empresa.', 'warn');
         }
-        loadWaBrief();
-      }, function (e) {
-        st.generating = false;
-        setWaProg(null);
-        renderWaList();
-        toast(errMsg(e), 'error');
-        throw e; // corta el lote — el catch final lo absorbe
       });
-    members.forEach(function (m, i) {
+    list.forEach(function (m, i) {
       chain = chain.then(function () {
-        if (st.cancelRequested) { skipped++; return; }
-        setWaProg('Generando ' + fmtNum(i + 1) + ' de ' + fmtNum(members.length) + '…', (i / members.length) * 100);
-        // Persist "generating" before the call (not just in-memory) so a
-        // reload mid-batch shows this lead as in-progress instead of
-        // looking untouched — the edge function overwrites this with the
-        // final status regardless of whether this tab is still around to
-        // see it.
+        report({ phase: 'generating', index: i, member: m, text: 'Generando mensajes IA ' + fmtNum(i + 1) + '/' + fmtNum(list.length) + '…' });
+        // Persistir "generating" antes de la llamada (no solo en memoria):
+        // un reload a mitad del lote muestra al lead en progreso y la edge
+        // function sobreescribe con el estado final aunque esta pestaña ya no
+        // esté para verlo.
         m.outreach_status = 'generating';
-        renderWaList();
         return Promise.resolve(d.updateMember(m.id, { outreach_status: 'generating' })).catch(function () {})
-          .then(function () { return d.generateOutreach({ member: m, sender: sender }); })
+          .then(function () { return d.generateOutreach({ member: m, sender: sender, engine: opts.engine }); })
           .then(function (res) {
             var outreach = Object.assign({}, res, { generated_at: new Date().toISOString() });
-            // The generated message is the critical, already-paid-for write —
-            // it must not be lost even if outreach_status fails for any reason
-            // (e.g. a schema drift), so it goes in its own call, not bundled
-            // with the best-effort status flag.
+            // El mensaje generado es la escritura crítica (ya pagada): va en
+            // su propia llamada para no perderlo si falla el flag de estado.
             return Promise.resolve(d.updateMember(m.id, { outreach: outreach })).then(function () {
               m.outreach = outreach;
               m.outreach_status = 'ready';
@@ -4701,168 +3294,40 @@
           .catch(function (e) {
             m.outreach_status = 'error';
             Promise.resolve(d.updateMember(m.id, { outreach_status: 'error' })).catch(function () {});
-            failed.push({ name: m.name || '—', error: errMsg(e) });
+            failed.push({ name: m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim() || '—', error: errMsg(e) });
           });
       });
     });
-    return chain.catch(function () { /* lote abortado: ya se avisó */ }).then(function () {
-      var wasCancelled = st.cancelRequested;
-      st.generating = false;
-      st.cancelRequested = false;
-      setWaProg(null);
-      renderWaList();
-      if (ok) toast('Mensajes generados para ' + fmtNum(ok) + ' contactos.', failed.length ? 'warn' : 'success');
-      if (failed.length) {
-        // Surface the real reason (all failures usually share one cause, e.g. the
-        // Anthropic call failing) instead of only listing names — otherwise the
-        // user sees "Fallaron 1: <name>" with no clue what to fix.
-        console.error('[prospecting] outreach generation failures:', failed);
-        var names = failed.map(function (x) { return x.name; }).join(', ');
-        var reason = (failed[0] && failed[0].error) ? failed[0].error : 'Error desconocido';
-        toast('No se pudo generar para ' + fmtNum(failed.length) + ' (' + names + '): ' + reason, 'error');
-      }
-      if (wasCancelled && skipped) toast('Generación detenida. ' + fmtNum(skipped) + ' contacto(s) sin procesar.', 'warn');
+    return chain.then(function () {
+      outreachRun.active = false;
+      if (failed.length) console.error('[prospecting] outreach generation failures:', failed);
+      report({ phase: 'done', text: '' });
+      return { ok: ok, failed: failed.length, skipped: 0, failures: failed };
+    }, function (e) {
+      outreachRun.active = false;
+      report({ phase: 'done', text: '' });
+      throw e;
     });
   }
 
-  function onWaChange(e) {
-    var t = e.target;
-    var action = t.getAttribute && t.getAttribute('data-action');
-    var st = state.wa;
-    if (action === 'wa-list') {
-      st.listId = t.value;
-      st.members = [];
-      st.selected.clear();
-      st.expanded.clear();
-      if (st.listId) return reloadWaMembers();
-      renderWaList();
-    } else if (action === 'wa-check') {
-      var id = t.getAttribute('data-id');
-      if (t.checked) st.selected.add(id); else st.selected.delete(id);
-      updateWaToolbar();
-    } else if (action === 'wa-check-all') {
-      var on = t.checked;
-      st.members.forEach(function (m) {
-        if (on) st.selected.add(String(m.id)); else st.selected.delete(String(m.id));
-      });
-      renderWaList();
-    } else if (action === 'pb-enabled') {
-      return savePlaybookPrefs({ enabled: t.checked },
-        t.checked
-          ? 'Listo: los próximos mensajes se calibran con las tendencias.'
-          : 'Tendencias desactivadas. Los mensajes se generan solo con tu contexto.');
-    } else if (action === 'pb-cadence') {
-      return savePlaybookPrefs({ cadence: t.value },
-        t.value === 'manual'
-          ? 'La investigación solo correrá cuando la pidas.'
-          : 'Listo: la investigación se actualizará de forma ' + (t.value === 'weekly' ? 'semanal' : 'mensual') + '.');
-    }
-  }
-
-  function onWaClick(e) {
-    var btn = e.target.closest ? e.target.closest('[data-action]') : null;
-    if (!btn) return;
-    var action = btn.getAttribute('data-action');
-    var st = state.wa;
-    var id = btn.getAttribute('data-id');
-    var m = id ? findWaMember(id) : null;
-    if (action === 'wa-expand' && m) {
-      var key = String(m.id);
-      if (st.expanded.has(key)) st.expanded.delete(key); else st.expanded.add(key);
-      renderWaList();
-      return;
-    }
-    if (action === 'wa-generate') {
-      var members = st.members.filter(function (x) { return st.selected.has(String(x.id)); });
-      return generateForMembers(members);
-    }
-    if (action === 'wa-generate-stop') {
-      if (!st.generating || st.cancelRequested) return;
-      st.cancelRequested = true;
-      setWaProg('Deteniendo…');
-      renderWaList();
-      return;
-    }
-    if (action === 'wa-regen' && m) return generateForMembers([m]);
-    if (action === 'wa-send-greet' && m) {
-      var url = waLinkSafe(m.phone, greetingSafe(getSenderSafe()));
-      if (!url) return toast('Enriquece el teléfono de este lead en la pestaña Listas.', 'warn');
-      return waOpen(url);
-    }
-    if (action === 'wa-send-follow' && m) {
-      var follow = m.outreach && m.outreach.whatsapp_followup;
-      if (!follow) return toast('Genera los mensajes con IA para ver el seguimiento.', 'warn');
-      var url2 = waLinkSafe(m.phone, follow);
-      if (!url2) return toast('Enriquece el teléfono de este lead en la pestaña Listas.', 'warn');
-      return waOpen(url2);
-    }
-    if (action === 'wa-copy-follow' && m) {
-      var f2 = m.outreach && m.outreach.whatsapp_followup;
-      if (!f2) return toast('Genera los mensajes con IA para ver el seguimiento.', 'warn');
-      return copyText(f2);
-    }
-    if (action === 'li-copy' && m) {
-      var li = m.outreach && m.outreach.linkedin_message;
-      if (!li) return toast('Genera los mensajes con IA para ver el mensaje de LinkedIn.', 'warn');
-      return copyText(li);
-    }
-    if (action === 'wa-copy-email' && m) {
-      var es = (m.outreach && m.outreach.email_subject) || '';
-      var eb = (m.outreach && m.outreach.email_body) || '';
-      if (!es && !eb) return toast('Genera los mensajes con IA para ver el email.', 'warn');
-      return copyText((es ? 'Asunto: ' + es + '\n\n' : '') + eb);
-    }
-    if (action === 'brief-generate') {
-      return Promise.resolve(pd().generateClientBrief()).then(function () {
-        st.brief = Object.assign({}, st.brief || {}, { status: 'generating' });
-        renderBriefCard();
-        toast('Generando el contexto de tu empresa. Toma alrededor de un minuto.', 'info');
-      });
-    }
-    if (action === 'brief-refresh') return loadWaBrief();
-    if (action === 'pb-details') {
-      st.playbookOpen = !st.playbookOpen;
-      renderPlaybookCard();
-      return;
-    }
-    if (action === 'pb-refresh') return loadPlaybook();
-    if (action === 'pb-generate') {
-      return Promise.resolve(pd().generateOutreachPlaybook()).then(function (res) {
-        if (res && res.status === 'already_running') {
-          toast('La investigación ya está corriendo.', 'info');
-        } else {
-          toast('Investigando qué está funcionando hoy en outreach. Toma unos minutos.', 'info');
-        }
-        st.playbook = Object.assign({ cadence: 'monthly', enabled: true }, st.playbook || {}, { status: 'generating' });
-        st.playbookPolls = 0;
-        renderPlaybookCard();
-        schedulePlaybookPoll();
-      }, function (e) {
-        toast(errMsg(e), 'error');
-      });
-    }
-    if (action === 'wa-coach' && m) {
-      // Puente Prospección → AI coach: el brief del lead (quién es, dolor
-      // probable, objeción + neutralizador) viaja como contexto de la reunión.
-      var ctx = pd().buildCoachLeadContext(m);
-      window.predictable = window.predictable || {};
-      window.predictable.currentProspect = ctx;
-      // Persistir el handoff en Supabase (coach_lead_context): el coach lo
-      // restaura tras un reload o desde otro dispositivo. No bloquea la navegación.
-      try {
-        Promise.resolve(pd().saveCoachContext(m.id, ctx)).catch(function (e) {
-          console.warn('[prospecting] no se pudo persistir el contexto del coach:', e.message);
-        });
-      } catch (e) { console.warn('[prospecting] coach context:', e.message); }
-      var navEl = document.querySelector('[data-page="ventas-coach"]');
-      if (navEl && typeof window.nav === 'function') window.nav(navEl, 'ventas-coach');
-      if (typeof window.loadCoachBrief === 'function') window.loadCoachBrief(ctx);
-      toast('Contexto del lead cargado en el coach.', 'success');
-      return;
-    }
-  }
-
   // ══ SHELL + TAB SWITCHING ════════════════════════════════════════════════
+  // Pestañas retiradas (2026-09-03) → dónde vive hoy cada cosa. También cubre
+  // valores viejos guardados en localStorage['predictable_pros_tab'].
+  var LEGACY_TABS = {
+    resumen: 'busqueda',
+    contactos: 'listas',
+    secuencias: 'campanas',
+    bandeja: 'campanas',
+    outreach: 'campanas',
+    'pro-mensajes': 'campanas',
+  };
+
+  function normalizeTab(tabId) {
+    var id = String(tabId || '');
+    if (LEGACY_TABS[id]) id = LEGACY_TABS[id];
+    return TABS.some(function (t) { return t.id === id; }) ? id : 'busqueda';
+  }
+
   function ensureBuilt() {
     if (state.built) return;
     var shell = document.getElementById('prospecting-shell');
@@ -4870,34 +3335,29 @@
     state.shell = shell;
     state.search.filters = loadFiltersFromStorage();
     shell.innerHTML = '';
-    shell.appendChild(h('style', { text: SCOPED_CSS + '\n' + MANUAL_FORM_CSS + '\n' + SEQ_EDITOR_CSS }));
+    shell.appendChild(h('style', { text: SCOPED_CSS + '\n' + MANUAL_FORM_CSS + '\n' + THREAD_CSS }));
     shell.appendChild(h('div', null,
       h('div', { class: 'pros-title', text: 'Prospección' }),
-      h('div', { class: 'pros-subtitle', text: 'Encuentra, enriquece y contacta a tus prospectos — todo desde un solo lugar.' })));
-    // No in-page tab bar here on purpose — the left sidebar (Prospección /
-    // Search People / Listas guardadas / Secuencias / WhatsApp & LinkedIn)
-    // is the only navigation between these panes; a second, duplicate set
-    // of tabs at the top of the page confused users about which nav to use.
+      h('div', { class: 'pros-subtitle', text: 'Busca, arma tus listas y lanza campañas — todo desde un solo lugar.' })));
+    // No in-page tab bar here on purpose — the left sidebar (Prospección →
+    // Buscar / Listas / Campañas) is the only navigation between these panes;
+    // a second, duplicate set of tabs at the top of the page confused users
+    // about which nav to use.
     state.panes = {};
     TABS.forEach(function (t) {
       var p = h('div', { class: 'pros-pane', id: 'pros-pane-' + t.id });
       state.panes[t.id] = p;
       shell.appendChild(p);
     });
-    buildResumenPane();
     buildSearchPane();
     buildListasPane();
-    buildContactosPane();
-    buildSeqPane();
-    buildBandejaPane();
-    buildWaPane();
     // Campañas vive en su propio módulo (js/campaigns.js) y se monta en el
     // pane que este shell le reserva, así hereda los estilos .pros-*.
     state.built = true;
   }
 
   function switchTab(tabId) {
-    if (!state.panes[tabId]) tabId = 'resumen';
+    tabId = normalizeTab(tabId);
     state.activeTab = tabId;
     try { localStorage.setItem('predictable_pros_tab', tabId); } catch (e) {}
     // Respaldo en el hash de la URL: sobrevive un refresh aunque localStorage
@@ -4906,16 +3366,8 @@
     TABS.forEach(function (t) {
       state.panes[t.id].classList.toggle('active', t.id === tabId);
     });
-    // El sondeo de la investigación de tendencias solo tiene sentido con la
-    // pestaña a la vista; al salir se corta para no dejar timers colgados.
-    if (tabId !== 'outreach') stopPlaybookPoll();
     var loader = null;
-    if (tabId === 'resumen') loader = initResumenTab;
-    else if (tabId === 'listas') loader = initListasTab;
-    else if (tabId === 'contactos') loader = initContactosTab;
-    else if (tabId === 'secuencias') loader = initSeqTab;
-    else if (tabId === 'bandeja') loader = initBandejaTab;
-    else if (tabId === 'outreach') loader = initWaTab;
+    if (tabId === 'listas') loader = initListasTab;
     else if (tabId === 'campanas') loader = initCampanasTab;
     if (loader) {
       loader().catch(function (e) {
@@ -4923,6 +3375,14 @@
         toast(errMsg(e), 'error');
       });
     }
+  }
+
+  function goTab(tabId) {
+    tabId = normalizeTab(tabId);
+    // Click the matching sidebar item (not just switchTab) so the sidebar's
+    // active-item highlight stays in sync with the pane actually shown.
+    var navItem = document.querySelector('.nav-item[data-pros-tab="' + tabId + '"]');
+    if (navItem) navItem.click(); else switchTab(tabId);
   }
 
   // ── TAB: CAMPAÑAS (js/campaigns.js) ──────────────────────────────────
@@ -4940,22 +3400,27 @@
     show: function (tabId) {
       try {
         ensureBuilt();
-        switchTab(tabId || state.activeTab || 'resumen');
+        switchTab(tabId || state.activeTab || 'busqueda');
       } catch (e) {
         console.error('[prospecting]', e);
         toast(errMsg(e), 'error');
       }
     },
+    goTab: goTab,
     refreshBadge: refreshBadge,
     openEditContact: openEditContactModal,
     // Reutilizados por js/campaigns.js para no duplicar el modal ni el DOM helper.
     confirm: confirmModal,
     h: h,
     emptyHtml: emptyHtml,
-    goTab: function (tabId) {
-      var navItem = document.querySelector('.nav-item[data-pros-tab="' + tabId + '"]');
-      if (navItem) navItem.click(); else switchTab(tabId);
-    },
+    // Hilo de Gmail + responder por email (Campañas → Respuestas).
+    openThread: openThreadModal,
+    gmailStatus: gmailStatus,
+    connectGmail: connectGmail,
+    disconnectGmail: disconnectGmail,
+    // Mensajes IA: generación al enrolar + vista previa por lead.
+    generateOutreachFor: generateOutreachFor,
+    outreachPreviewHtml: outreachPreviewHtml,
   };
 
   // Otros módulos (p. ej. Radar) crean listas llamando directo a

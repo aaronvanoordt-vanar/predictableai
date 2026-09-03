@@ -32,7 +32,7 @@
   var CHANNEL_META = {
     whatsapp:         { label: 'WhatsApp',            short: 'WA',       tone: 'green',  needs: 'wati' },
     email:            { label: 'Email',               short: 'Email',    tone: 'blue',   needs: 'apollo' },
-    linkedin_connect: { label: 'LinkedIn vía Dripify', short: 'LinkedIn', tone: 'teal',   needs: 'dripify' },
+    linkedin_connect: { label: 'LinkedIn',            short: 'LinkedIn', tone: 'teal',   needs: 'dripify' },
     linkedin_message: { label: 'LinkedIn · mensaje (sin proveedor)', short: 'LI', tone: 'gray', needs: null, hidden: true },
   };
   var KIND_LABELS = {
@@ -51,9 +51,9 @@
     libre: 'Libre (según tus instrucciones)',
   };
   var CONDITION_LABELS = {
-    linkedin_connected: { label: 'Aceptó la conexión de LinkedIn', hint: 'Lo reporta Dripify. Necesita un paso de LinkedIn antes.', needs: 'dripify' },
-    whatsapp_read: { label: 'Leyó el WhatsApp', hint: 'Doble check azul reportado por WATI.', needs: 'wati' },
-    email_opened: { label: 'Abrió el email', hint: 'Apertura registrada por Apollo.', needs: 'apollo' },
+    linkedin_connected: { label: 'Aceptó la conexión de LinkedIn', hint: 'Lo reporta tu cuenta de LinkedIn. Necesita un paso de LinkedIn antes.', needs: 'dripify' },
+    whatsapp_read: { label: 'Leyó el WhatsApp', hint: 'Doble check azul del WhatsApp.', needs: 'wati' },
+    email_opened: { label: 'Abrió el email', hint: 'Apertura registrada por el proveedor de email.', needs: 'apollo' },
     has_phone: { label: 'Tiene teléfono', hint: 'El lead tiene un número revelado.', needs: null },
     has_email: { label: 'Tiene email', hint: 'El lead tiene un email revelado.', needs: null },
     has_linkedin: { label: 'Tiene LinkedIn', hint: 'El lead tiene URL de perfil.', needs: null },
@@ -346,8 +346,8 @@
   var C = function (check, delay, yes, no) { return { id: newId(), type: 'condition', check: check, delay: delay, yes: yes, no: no }; };
 
   /**
-   * Cadencias fijas. Los pasos de LinkedIn salen sin campaña de Dripify: la
-   * validación pide elegirla. Cada llamada genera ids nuevos.
+   * Cadencias fijas. Los pasos de LinkedIn salen sin campaña de LinkedIn
+   * (Dripify): la validación pide elegirla. Cada llamada genera ids nuevos.
    */
   function templates() {
     return [
@@ -379,7 +379,7 @@
       },
       {
         key: 'linkedin_first', label: 'LinkedIn primero', needs: ['dripify', 'apollo'],
-        summary: 'Conexión por Dripify; a los 3 días, si aceptó, email de apertura; si no, WhatsApp y email en paralelo. Luego valor, recordatorio y última carta.',
+        summary: 'Conexión por LinkedIn; a los 3 días, si aceptó, email de apertura; si no, WhatsApp y email en paralelo. Luego valor, recordatorio y última carta.',
         build: function () { return { v: FLOW_VERSION, nodes: [
           A('linkedin_connect', D(0), { kind: 'ai', angle: 'apertura' }, {}),
           C('linkedin_connected', D(3),

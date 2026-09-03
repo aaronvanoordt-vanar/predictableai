@@ -54,6 +54,7 @@
   ];
   var TEMPLATE_NAMES = { template_a: 'Saludo 1', template_b: 'Recordatorio', template_c: 'Último intento' };
   var TEMPLATE_KEY = { template_a: 'a', template_b: 'b', template_c: 'c' };
+  var NEED_KEY = { wati: 'whatsapp', dripify: 'linkedin', apollo: 'email' };  // necesidad del nodo → canal de la UI
   var ICONS = {
     whatsapp: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 16.5l1-3.2A6.5 6.5 0 1 1 7 15.6z"/><path d="M7.8 7.8c0 2.4 2 4.4 4.4 4.4l.9-1.2-1.6-.8-.7.6a3.3 3.3 0 0 1-1.6-1.6l.6-.7-.8-1.6z"/></svg>',
     email: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="15" height="11" rx="2"/><path d="M3 6l7 5 7-5"/></svg>',
@@ -396,7 +397,7 @@
     var draft = existing ? clone(existing) : {
       id: null,
       name: '',
-      list_id: (o.lists && o.lists[0] && o.lists[0].id) || null,
+      list_id: o.listId || (o.lists && o.lists[0] && o.lists[0].id) || null,
       flow: L.emptyFlow(),
       origin: null,
       review_required: false,
@@ -404,17 +405,18 @@
       send_start_hour: 9,
       send_end_hour: 18,
       send_days: [1, 2, 3, 4, 5],
-      daily_caps: { whatsapp: 50, email: 80, linkedin: 25 },
+      daily_caps: { whatsapp: 50, email: 80 },
       sender: {
         name: (watiSender && watiSender.name) || senderInfo.name || '',
         role: (watiSender && watiSender.role) || senderInfo.role || '',
         company: (watiSender && watiSender.company) || senderInfo.company || '',
-        email_account_id: '', email: '',
+        email_account_id: (o.defaultEmailAccount && o.defaultEmailAccount.id) || '', email: (o.defaultEmailAccount && o.defaultEmailAccount.email) || '',
       },
     };
     draft.flow = L.normalize(draft.flow);
     draft.sender = draft.sender || {};
-    draft.daily_caps = draft.daily_caps || { whatsapp: 50, email: 80, linkedin: 25 };
+    if (!draft.sender.email_account_id && o.defaultEmailAccount) { draft.sender.email_account_id = o.defaultEmailAccount.id; draft.sender.email = o.defaultEmailAccount.email || ''; }
+    draft.daily_caps = Object.assign({ whatsapp: 50, email: 80 }, draft.daily_caps || {});
     draft.send_days = (draft.send_days || [1, 2, 3, 4, 5]).map(Number);
     delete draft.steps; delete draft.counts;
 
@@ -445,7 +447,15 @@
     root.addEventListener('click', onClick);
 
     if (st.emailAccounts === null && o.loadEmailAccounts) {
-      o.loadEmailAccounts().then(function (list) { st.emailAccounts = list || []; if (st.step >= 2) render(); }).catch(function () { st.emailAccounts = []; });
+      o.loadEmailAccounts().then(function (list) {
+        st.emailAccounts = list || [];
+        var s = st.draft.sender;
+        if (!s.email_account_id && st.emailAccounts.length) {
+          var def = st.emailAccounts.find(function (a) { return a.default || a.is_default; }) || st.emailAccounts[0];
+          s.email_account_id = def.id; s.email = def.email || '';
+        }
+        if (st.step >= 2) render();
+      }).catch(function () { st.emailAccounts = []; });
     }
     loadMembers();
     render();
@@ -466,19 +476,26 @@
     }
 
     // ── disponibilidad de canales ──
-    function watiOk() { return !!(o.wati && o.wati.status === 'connected'); }
-    function dripifyOk() { return !!(o.dripify && o.dripify.status === 'connected'); }
+    function watiOk() { return o.channelConnected ? !!o.channelConnected('whatsapp') : !!(o.wati && o.wati.status === 'connected'); }
+    function dripifyOk() { return o.channelConnected ? !!o.channelConnected('linkedin') : !!(o.dripify && o.dripify.status === 'connected'); }
     function dripifyCampaigns() { return (o.dripify && o.dripify.config && o.dripify.config.campaigns) || []; }
     function watiTemplates() { return (o.wati && o.wati.config && o.wati.config.templates && o.wati.config.templates.items) || {}; }
-    function apolloOk() { return st.emailAccounts === null ? true : st.emailAccounts.length > 0; }
+    function apolloOk() {
+      if (o.channelConnected) return !!o.channelConnected('email');
+      return st.emailAccounts === null ? true : st.emailAccounts.length > 0;
+    }
     function needOk(need) {
+      if (!need) return true;
+      if (o.channelConnected) return !!o.channelConnected(NEED_KEY[need] || need);
       if (need === 'wati') return watiOk();
       if (need === 'dripify') return dripifyOk();
       if (need === 'apollo') return apolloOk();
       return true;
     }
     function needLabel(need) {
-      return need === 'wati' ? 'WATI (WhatsApp)' : need === 'dripify' ? 'Dripify (LinkedIn)' : need === 'apollo' ? 'una cuenta de email en Apollo' : need;
+      var k = NEED_KEY[need] || need;
+      if (o.channelLabel) return o.channelLabel(k);
+      return k === 'whatsapp' ? 'WhatsApp' : k === 'linkedin' ? 'LinkedIn' : k === 'email' ? 'Email' : need;
     }
 
     // ── validación ──
@@ -494,15 +511,15 @@
       L.actions(st.draft.flow).forEach(function (a) {
         var list = [];
         if (a.channel === 'whatsapp') {
-          if (!watiOk()) list.push('WATI sin conectar');
+          if (!watiOk()) list.push('WhatsApp sin conectar');
           else if (a.content.kind.indexOf('template_') === 0) {
             var t = tpls[TEMPLATE_KEY[a.content.kind]];
             if (!t) list.push('plantilla sin crear');
             else if (!/approved/i.test(String(t.status || ''))) list.push('plantilla ' + String(t.status || 'pendiente').toLowerCase());
           } else list.push('solo con sesión de 24 h abierta');
         }
-        if (a.channel === 'linkedin_connect' && !dripifyOk()) list.push('Dripify sin conectar');
-        if (a.channel === 'email' && st.emailAccounts && !st.emailAccounts.length) list.push('sin cuenta de Apollo');
+        if (a.channel === 'linkedin_connect' && !dripifyOk()) list.push('LinkedIn sin conectar');
+        if (a.channel === 'email' && !apolloOk()) list.push('Email sin conectar');
         if (list.length) w[a.id] = list;
       });
       st.draft.flow.nodes.forEach(function (n) {
@@ -535,7 +552,7 @@
       if (step === 4) {
         var s = st.draft.sender || {};
         var hasEmailStep = L.actions(st.draft.flow).some(function (a) { return a.channel === 'email'; });
-        if (hasEmailStep && !s.email_account_id) msgs.push('La cadencia tiene emails: elige la cuenta remitente de Apollo en Ajustes avanzados.');
+        if (hasEmailStep && !s.email_account_id && !(st.emailAccounts && st.emailAccounts.length)) msgs.push('La cadencia tiene emails: conecta el canal Email (o elige la cuenta remitente en Ajustes avanzados).');
         if (Number(st.draft.send_end_hour) <= Number(st.draft.send_start_hour)) msgs.push('La hora de fin debe ser mayor que la de inicio.');
         if (!(st.draft.send_days || []).length) msgs.push('Elige al menos un día de envío.');
       }
@@ -933,7 +950,7 @@
     function contentFields(node, fopts) {
       var box = h('div', { style: 'display:flex;flex-direction:column;gap:10px' });
       if (node.channel === 'linkedin_connect') {
-        box.appendChild(h('div', { class: 'cb-lbl', text: 'Campaña de Dripify' }));
+        box.appendChild(h('div', { class: 'cb-lbl', text: 'Campaña de LinkedIn' }));
         var dcs = dripifyCampaigns();
         var sel = h('select', { onchange: function () {
           var dc = dcs.find(function (x) { return String(x.id) === sel.value; });
@@ -941,10 +958,10 @@
           markCustom();
           render();
         } });
-        sel.appendChild(h('option', { value: '', text: dcs.length ? 'Elige la campaña de Dripify…' : (dripifyOk() ? 'Sin campañas en Dripify' : 'Conecta Dripify primero') }));
+        sel.appendChild(h('option', { value: '', text: dcs.length ? 'Elige la campaña de LinkedIn…' : (dripifyOk() ? 'Sin campañas de LinkedIn' : 'Conecta LinkedIn primero') }));
         dcs.forEach(function (dc) { sel.appendChild(h('option', { value: String(dc.id), text: dc.name + (dc.active === false ? ' (inactiva)' : ''), selected: String(dc.id) === String(node.settings && node.settings.dripify_campaign_id || '') })); });
         box.appendChild(sel);
-        box.appendChild(h('div', { class: 'cb-hint', text: 'Dripify envía la conexión y los mensajes de esa campaña con sus propias plantillas y ritmo. El mensaje IA de 5 capas se entrega como CSV (Custom Lead Fields) desde el detalle de la campaña.' }));
+        box.appendChild(h('div', { class: 'cb-hint', text: 'La conexión y los mensajes de esa campaña salen desde tu cuenta de LinkedIn con su propio ritmo. El mensaje IA de 5 capas se entrega como CSV (campos personalizados) desde el detalle de la campaña.' }));
         return box;
       }
       box.appendChild(h('div', { class: 'cb-lbl', text: 'Contenido' }));
@@ -991,8 +1008,8 @@
         ['template_a', 'template_b', 'template_c'].forEach(function (k) { tsel.appendChild(h('option', { value: k, text: L.KIND_LABELS[k], selected: kind === k })); });
         box.appendChild(tsel);
         var t = tpls[TEMPLATE_KEY[kind]];
-        if (!watiOk()) box.appendChild(h('div', { class: 'cb-warn', text: 'Conecta WATI para crear las plantillas y enviarlas a revisión de Meta.' }));
-        else if (!t) box.appendChild(h('div', { class: 'cb-warn', text: 'Esta plantilla no existe en tu WATI. Reconecta WATI para crearla.' }));
+        if (!watiOk()) box.appendChild(h('div', { class: 'cb-warn', text: 'Conecta WhatsApp para crear las plantillas y enviarlas a revisión de Meta.' }));
+        else if (!t) box.appendChild(h('div', { class: 'cb-warn', text: 'Esta plantilla no existe en tu cuenta de WhatsApp. Reconecta el canal para crearla.' }));
         else {
           var status = String(t.status || 'PENDING');
           box.appendChild(h('div', { class: 'cb-row' }, pill(status, /approved/i.test(status) ? 'green' : /reject|error|paused|disabled/i.test(status) ? 'red' : 'amber'), h('span', { class: 'cb-hint', text: 'Estado en Meta. Solo se envía con la plantilla aprobada.' })));
@@ -1043,6 +1060,7 @@
       var rv = h('input', { type: 'checkbox', checked: !!st.draft.review_required, onchange: function () { st.draft.review_required = rv.checked; } });
       wrap.appendChild(h('label', { class: 'cb-radio', style: 'align-items:center' }, rv, h('span', {}, 'Revisar cada mensaje IA antes de enviarlo', h('small', { text: 'Los mensajes quedan en borrador en la bandeja de revisión de la campaña hasta que los apruebes. Sin esta casilla salen solos.' }))));
       if (!st.members.length) wrap.appendChild(h('div', { class: 'cb-note', text: st.draft.list_id ? 'La lista no tiene leads: la vista previa necesita un lead real para escribir el mensaje.' : 'Sin lista no hay vista previa: elige una lista en el paso Base para generar un mensaje de muestra con un lead real.' }));
+      if (o.aiSettingsNode) wrap.appendChild(o.aiSettingsNode);
       var acts = L.actions(st.draft.flow);
       acts.forEach(function (a, i) {
         var loc = locate(a.id);
@@ -1063,13 +1081,13 @@
 
     function renderLinkedinInfo(a) {
       var box = h('div', { class: 'cb-preview' });
-      box.appendChild(h('div', { class: 'cb-lbl', text: 'Qué hace Dripify' }));
+      box.appendChild(h('div', { class: 'cb-lbl', text: 'Qué pasa en LinkedIn' }));
       var sub = h('div', { class: 'cb-substeps' });
-      sub.appendChild(h('div', { text: '1. Visita el perfil y envía la solicitud de conexión con la nota de la campaña de Dripify' + (a.settings && a.settings.dripify_campaign_name ? ' «' + a.settings.dripify_campaign_name + '»' : '') + '.' }));
+      sub.appendChild(h('div', { text: '1. Tu cuenta de LinkedIn visita el perfil y envía la solicitud de conexión con la nota de la campaña' + (a.settings && a.settings.dripify_campaign_name ? ' «' + a.settings.dripify_campaign_name + '»' : '') + '.' }));
       sub.appendChild(h('div', { text: '2. Si acepta, envía los mensajes de esa campaña con su propio ritmo.' }));
       sub.appendChild(h('div', { text: '3. Reporta la conexión aceptada y las respuestas (sincronización cada 15 min + webhook).' }));
       box.appendChild(sub);
-      box.appendChild(h('div', { class: 'cb-hint', text: 'Para que Dripify use el mensaje IA de 5 capas de cada lead, descarga el CSV para Dripify desde el detalle de la campaña y súbelo como Custom Lead Fields.' }));
+      box.appendChild(h('div', { class: 'cb-hint', text: 'Para que LinkedIn use el mensaje IA de 5 capas de cada lead, descarga el CSV desde el detalle de la campaña y súbelo como campos personalizados.' }));
       return box;
     }
 
@@ -1179,9 +1197,9 @@
       right.appendChild(cr);
 
       var warns = [];
-      if (needs.whatsapp && !watiOk()) warns.push('WATI no está conectado: los pasos de WhatsApp se reintentan cada 6 h hasta que lo conectes.');
-      if (needs.linkedin && !dripifyOk()) warns.push('Dripify no está conectado: el paso de LinkedIn se reintenta cada 6 h hasta que lo conectes.');
-      if (needs.email && !(st.draft.sender && st.draft.sender.email_account_id)) warns.push('Elige la cuenta de Apollo que firma los emails en Ajustes avanzados.');
+      if (needs.whatsapp && !watiOk()) warns.push('WhatsApp no está conectado: esos pasos se reintentan cada 6 h hasta que lo conectes.');
+      if (needs.linkedin && !dripifyOk()) warns.push('LinkedIn no está conectado: ese paso se reintenta cada 6 h hasta que lo conectes.');
+      if (needs.email && !(st.draft.sender && st.draft.sender.email_account_id)) warns.push('Elige la cuenta de email que firma en Ajustes avanzados.');
       warns.forEach(function (w) { right.appendChild(h('div', { class: 'cb-note amber', text: '⚠ ' + w })); });
       grid.appendChild(right);
       wrap.appendChild(grid);
@@ -1192,7 +1210,7 @@
     function renderAdvanced() {
       var d = st.draft;
       var box = h('div', { class: 'cb-adv' });
-      box.appendChild(h('button', { type: 'button', class: 'cb-adv-head', 'data-action': 'cb-adv-toggle' }, 'Ajustes avanzados', h('span', { class: 'cb-hint', text: st.advanced ? 'ocultar' : 'remitente · cuenta de Apollo · ventana horaria · topes' })));
+      box.appendChild(h('button', { type: 'button', class: 'cb-adv-head', 'data-action': 'cb-adv-toggle' }, 'Ajustes avanzados', h('span', { class: 'cb-hint', text: st.advanced ? 'ocultar' : 'remitente · cuenta de email · ventana horaria · topes' })));
       if (!st.advanced) return box;
       var s = d.sender || (d.sender = {});
       var body = h('div', { class: 'cb-adv-body' });
@@ -1206,9 +1224,9 @@
         s.email = a ? a.email : '';
         refresh();
       } });
-      emailSel.appendChild(h('option', { value: '', text: st.emailAccounts ? (st.emailAccounts.length ? 'Elige la cuenta de Apollo…' : 'Sin cuentas de email en Apollo') : 'Cargando cuentas de Apollo…' }));
+      emailSel.appendChild(h('option', { value: '', text: st.emailAccounts ? (st.emailAccounts.length ? 'Elige la cuenta de email…' : 'Sin cuentas de email conectadas') : 'Cargando cuentas de email…' }));
       (st.emailAccounts || []).forEach(function (a) { emailSel.appendChild(h('option', { value: a.id, text: a.email || a.id, selected: String(a.id) === String(s.email_account_id) })); });
-      body.appendChild(field('Cuenta de email (Apollo)', emailSel));
+      body.appendChild(field('Cuenta de email', emailSel));
       var tzSel = h('select', { onchange: function () { d.timezone = tzSel.value; } });
       var tzs = TIMEZONES.slice();
       if (d.timezone && tzs.indexOf(d.timezone) === -1) tzs.unshift(d.timezone);
@@ -1230,9 +1248,8 @@
       var caps = d.daily_caps;
       body.appendChild(field('Máx. WhatsApp / día', h('input', { type: 'number', min: '0', value: String(caps.whatsapp), 'data-key': 'cap-wa', oninput: function (e) { caps.whatsapp = Number(e.target.value) || 0; } })));
       body.appendChild(field('Máx. emails / día', h('input', { type: 'number', min: '0', value: String(caps.email), 'data-key': 'cap-em', oninput: function (e) { caps.email = Number(e.target.value) || 0; } })));
-      body.appendChild(field('Máx. LinkedIn / día', h('input', { type: 'number', min: '0', value: String(caps.linkedin), 'data-key': 'cap-li', oninput: function (e) { caps.linkedin = Number(e.target.value) || 0; } })));
       box.appendChild(body);
-      box.appendChild(h('div', { class: 'cb-hint', style: 'padding:0 12px 12px', text: 'Los WhatsApp salen del número conectado en WATI; los emails, de la cuenta de Apollo elegida. La ventana horaria y los días se aplican en la zona horaria indicada.' }));
+      box.appendChild(h('div', { class: 'cb-hint', style: 'padding:0 12px 12px', text: 'Los WhatsApp salen del número conectado; los emails, de la cuenta elegida. LinkedIn no lleva tope: el ritmo lo decide tu cuenta de LinkedIn. La ventana horaria y los días se aplican en la zona horaria indicada.' }));
       return box;
     }
 

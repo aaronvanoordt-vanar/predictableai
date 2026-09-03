@@ -124,16 +124,21 @@ Deno.serve(async (req) => {
   try {
     const member = url ? await findMember(db, acc.user_id, url) : null;
     const { data: ens } = member
-      ? await db.from("campaign_enrollments").select("id, campaign_id, status, next_position, replied_at, linkedin_connected_at, provider_refs")
-        .eq("member_id", member.id).eq("user_id", acc.user_id)
-      : { data: [] };
+      ? await db.from("campaign_enrollments").select("id, campaign_id, status, next_position, replied_at, linkedin_connected_at, provider_refs, created_at")
+        .eq("member_id", member.id).eq("user_id", acc.user_id).order("created_at", { ascending: false })
+      : { data: [] as Json[] };
     const at = new Date().toISOString();
+    // La fila de la bandeja se atribuye al enrolamiento vivo (o al más reciente).
+    const list: Json[] = ens ?? [];
+    const primary: Json | null = list.find((e) => ["active", "processing", "paused"].includes(e.status)) ?? list[0] ?? null;
 
     if (signal === "replied" && member) {
       await db.from("inbox_messages").insert({
         user_id: acc.user_id, member_id: member.id, channel: "linkedin", provider: "dripify", direction: "in",
         contact_ref: url, body: replyText || "Respondió por LinkedIn (texto no incluido por Dripify).",
-        provider_message_id: null, status: "delivered", sent_at: at, payload: { event: eventRaw || null, raw: payload },
+        provider_message_id: null, status: "delivered", sent_at: at,
+        campaign_id: primary?.campaign_id ?? null, enrollment_id: primary?.id ?? null,
+        payload: { event: eventRaw || null, raw: payload },
       });
     }
 
