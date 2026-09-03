@@ -1969,7 +1969,7 @@
       if (all && st.statusFilter && (m.contact_status || 'no_contactado') !== st.statusFilter) return false;
       if (all && st.listFilter && String(m.list_id) !== st.listFilter) return false;
       if (!q) return true;
-      var hay = [m.name, m.first_name, m.last_name, m.company, m.title, m.email, m.phone, m.list_name]
+      var hay = [m.name, m.first_name, m.last_name, m.company, m.title, m.email, m.phone, m.list_name, m.country, m.city]
         .filter(Boolean).join(' ').toLowerCase();
       return hay.indexOf(q) !== -1;
     });
@@ -1986,6 +1986,8 @@
         (m.title ? '<div class="pros-cellsub" style="font-size:12px">' + esc(m.title) + '</div>' : '') + '</td>' +
       '<td>' + esc(m.company || '—') +
         (m.company_domain ? '<div class="pros-cellsub">' + esc(m.company_domain) + '</div>' : '') + '</td>' +
+      '<td>' + esc(m.country || '—') +
+        (m.city ? '<div class="pros-cellsub">' + esc(m.city) + '</div>' : '') + '</td>' +
       (isAllList() ? '<td><span class="pill pill-purple">' + esc(m.list_name || '—') + '</span></td>' : '') +
       '<td>' + statusSelectHtml(m) + '</td>' +
       '<td>' + memberEmailCell(m) + '</td>' +
@@ -2066,7 +2068,7 @@
       '<button type="button" class="btn btn-ghost btn-sm" data-action="delete-members" style="color:var(--red)"' + (n ? '' : ' disabled') + '>Eliminar</button>' +
       '</div>';
 
-    var cols = all ? ['30%', '35%', '25%', '30%', '40%', '28%', '18%', '14%'] : ['30%', '40%', '30%', '45%', '30%', '25%', '14%'];
+    var cols = all ? ['30%', '35%', '25%', '20%', '30%', '40%', '28%', '18%', '14%'] : ['30%', '40%', '20%', '30%', '45%', '30%', '25%', '14%'];
     if (st.loadingMembers) {
       html += window.Skeleton
         ? '<div class="pros-scroll-x"><table><tbody>' + window.Skeleton.tableRows(cols, 6) + '</tbody></table></div>'
@@ -2083,7 +2085,7 @@
       var allChecked = rows.every(function (m) { return st.selected.has(String(m.id)); });
       html += '<div class="pros-scroll-x"><table><thead><tr>' +
         '<th style="width:34px"><input type="checkbox" data-action="mem-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-        '<th>Nombre</th><th>Empresa</th>' + (all ? '<th>Lista</th>' : '') + '<th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th><th></th>' +
+        '<th>Nombre</th><th>Empresa</th><th>País</th>' + (all ? '<th>Lista</th>' : '') + '<th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th><th></th>' +
         '</tr></thead><tbody>' + rows.map(listMemberRowHtml).join('') + '</tbody></table></div>';
       if (all) {
         html += '<div style="padding:10px 18px;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(st.members.length)) + ' contactos · El estado se actualiza al instante en todo el sistema (Campañas, dashboard y este CRM leen la misma base).</div>';
