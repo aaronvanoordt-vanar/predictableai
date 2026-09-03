@@ -1,24 +1,25 @@
 /**
  * js/campaigns.js — Campañas omnicanal (pestaña "Campañas" de Prospección)
  * ─────────────────────────────────────────────────────────────────────────────
- * Una campaña = una cadencia de pasos sobre una lista de leads. Cada paso
- * tiene canal (WhatsApp por WATI, email por Apollo, LinkedIn por Dripify),
- * espera desde el inicio, condición (siempre / si no respondió / si aceptó la
- * conexión) y contenido (plantilla de saludo A/B/C, mensaje IA de 5 capas o
- * texto propio). Dos pasos con la misma espera en canales distintos corren en
- * paralelo: así el email refuerza al WhatsApp en vez de esperarlo.
+ * Una campaña = una cadencia sobre una lista de leads. La cadencia es el grafo
+ * `campaigns.flow` (js/campaign-flow.js): acciones por canal (WhatsApp por
+ * WATI, email por Apollo, LinkedIn por Dripify) con espera relativa al paso
+ * anterior, y condiciones con ramas Sí / No que se vuelven a unir. Se detiene
+ * sola cuando el lead responde por cualquier canal, se da de baja o la
+ * detienes tú.
  *
- * Backend: tablas campaigns / campaign_steps / campaign_enrollments (escribe
- * el cliente, RLS por dueño), campaign_events + inbox_messages (solo escribe
- * el servidor), channel_accounts (edge function channel-connect). El motor es
- * la edge function campaign-run, llamada por pg_cron cada minuto. Los recibos
- * y respuestas de WhatsApp entran por wati-webhook.
+ * Este módulo tiene la lista de campañas, la conexión de canales (WATI y
+ * Dripify), el detalle (línea de tiempo en solo lectura con contadores por
+ * paso, leads enrolados, bandeja de revisión de mensajes IA) y el enrolado.
+ * Crear y editar la cadencia es trabajo de js/campaign-builder.js (asistente
+ * de cuatro pasos), que devuelve el borrador por `onSave` y aquí se guarda.
  *
- * Desde campañas v2 la cadencia que ejecuta el motor es el grafo
- * `campaigns.flow` (js/campaign-flow.js). Este editor sigue escribiendo
- * campaign_steps y, en el mismo guardado, deriva `flow` con
- * CampaignFlow.fromLegacySteps (ids de nodo estables entre guardados). El
- * builder gráfico llega en la Entrega 2 (docs/CAMPAIGN_BUILDER_PLAN.md).
+ * Backend: tablas campaigns / campaign_enrollments (escribe el cliente, RLS
+ * por dueño), campaign_events + inbox_messages (solo escribe el servidor),
+ * campaign_messages (el motor inserta; el cliente edita texto y aprueba),
+ * channel_accounts (edge function channel-connect). El motor es la edge
+ * function campaign-run (pg_cron cada minuto); la cadencia recomendada por la
+ * IA sale de generate-campaign.
  *
  * Se monta dentro del shell de Prospección (window.prospecting.show('campanas'))
  * para heredar sus estilos .pros-* y reutilizar su modal de confirmación.
@@ -34,36 +35,8 @@
 
   var FN_CHANNEL = 'channel-connect';
 
-  var CHANNELS = [
-    { value: 'whatsapp',         label: 'WhatsApp',               short: 'WA' },
-    { value: 'email',            label: 'Email',                  short: 'Email' },
-    { value: 'linkedin_connect', label: 'LinkedIn (campaña de Dripify)', short: 'LinkedIn' },
-    // Solo para filas antiguas: la Open API de Dripify no envía mensajes.
-    { value: 'linkedin_message', label: 'LinkedIn · mensaje (sin proveedor)', short: 'LI mensaje', hidden: true },
-  ];
-  var CONDITIONS = [
-    { value: 'if_no_reply',  label: 'Solo si no respondió' },
-    { value: 'always',       label: 'Siempre' },
-    { value: 'if_connected', label: 'Solo si aceptó la conexión' },
-  ];
-  var CONTENT_KINDS = [
-    { value: 'template_a',      label: 'Saludo 1 (plantilla WhatsApp)',   channels: ['whatsapp'] },
-    { value: 'template_b',      label: 'Recordatorio (plantilla WhatsApp)', channels: ['whatsapp'] },
-    { value: 'template_c',      label: 'Último intento (plantilla WhatsApp)', channels: ['whatsapp'] },
-    { value: 'ai_personalized', label: 'Mensaje IA personalizado (5 capas)', channels: ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message'] },
-    { value: 'custom',          label: 'Texto propio',                    channels: ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message'] },
-  ];
-  var TIMEZONES = [
-    'America/Lima', 'America/Bogota', 'America/Mexico_City', 'America/Santiago',
-    'America/Argentina/Buenos_Aires', 'America/Sao_Paulo', 'America/Guayaquil', 'America/La_Paz',
-    'America/Caracas', 'America/Panama', 'America/Costa_Rica', 'America/Guatemala',
-    'America/Montevideo', 'America/Asuncion', 'America/Santo_Domingo', 'America/New_York',
-    'America/Los_Angeles', 'Europe/Madrid',
-  ];
-  var DAYS = [
-    { value: 1, label: 'Lu' }, { value: 2, label: 'Ma' }, { value: 3, label: 'Mi' }, { value: 4, label: 'Ju' },
-    { value: 5, label: 'Vi' }, { value: 6, label: 'Sá' }, { value: 7, label: 'Do' },
-  ];
+  var DAY_LABELS = { 1: 'Lu', 2: 'Ma', 3: 'Mi', 4: 'Ju', 5: 'Vi', 6: 'Sá', 7: 'Do' };
+  var CHANNEL_LABEL = { whatsapp: 'WhatsApp', email: 'Email', linkedin: 'LinkedIn', linkedin_connect: 'LinkedIn', linkedin_message: 'LinkedIn', system: 'Cadencia' };
   var ENROLL_STATUS = {
     active:       { label: 'Activo',        pill: 'blue' },
     processing:   { label: 'Enviando…',     pill: 'blue' },
@@ -74,9 +47,10 @@
     error:        { label: 'Error',         pill: 'red' },
   };
   var EVENT_LABEL = {
-    queued: 'Enrolado en Dripify', sent: 'Enviado', delivered: 'Entregado', read: 'Leído', replied: 'Respondió',
+    queued: 'Enrolado en Dripify', sent: 'Enviado', delivered: 'Entregado', read: 'Leído', opened: 'Abierto', replied: 'Respondió',
     failed: 'Falló', skipped: 'Omitido', opted_out: 'Se dio de baja', connection_sent: 'Conexión enviada',
     connection_accepted: 'Conexión aceptada', stopped: 'Detenido', completed: 'Cadencia completada',
+    generated: 'Mensaje IA listo', branched: 'Condición evaluada',
   };
   var CAMPAIGN_STATUS = {
     draft:     { label: 'Borrador',   pill: 'gray' },
@@ -84,17 +58,6 @@
     paused:    { label: 'Pausada',    pill: 'amber' },
     completed: { label: 'Terminada',  pill: 'gray' },
   };
-
-  /** Cadencia recomendada: WhatsApp + email en paralelo, LinkedIn de refuerzo. */
-  function recommendedSteps() {
-    return [
-      { channel: 'whatsapp',         offset_hours: 0,   condition: 'always',       content_kind: 'template_a' },
-      { channel: 'email',            offset_hours: 0,   condition: 'always',       content_kind: 'ai_personalized' },
-      { channel: 'linkedin_connect', offset_hours: 24,  condition: 'if_no_reply',  content_kind: 'ai_personalized', settings: {} },
-      { channel: 'whatsapp',         offset_hours: 72,  condition: 'if_no_reply',  content_kind: 'template_b' },
-      { channel: 'whatsapp',         offset_hours: 168, condition: 'if_no_reply',  content_kind: 'template_c' },
-    ];
-  }
 
   var state = {
     pane: null,
@@ -109,9 +72,11 @@
     campaigns: [],
     loading: false,
     activeId: null,            // campaña seleccionada
-    editor: null,              // {campaign, steps, isNew}
+    builder: null,             // api del builder montado (crear / editar)
+    builderHost: null,
     enrollments: [],
     events: [],
+    messages: [],              // borradores de campaign_messages de la campaña activa
     members: [],               // miembros de la lista de la campaña activa
     membersLoading: false,
     selected: new Set(),
@@ -174,31 +139,25 @@
     if (isNaN(d.getTime())) return '—';
     return d.toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   }
-  function fmtOffset(hours) {
-    var n = Number(hours) || 0;
-    if (n === 0) return 'Día 0';
-    if (n % 24 === 0) return 'Día ' + (n / 24);
-    return n + ' h';
-  }
   function pill(label, kind) { return '<span class="pill pill-' + esc(kind || 'gray') + '">' + esc(label) + '</span>'; }
-  function labelOf(list, value) {
-    for (var i = 0; i < list.length; i++) if (String(list[i].value) === String(value)) return list[i].label;
-    return String(value || '—');
-  }
+  function channelLabel(ch) { return CHANNEL_LABEL[ch] || String(ch || '—'); }
   function memberName(m) {
     return (m && (m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim())) || '—';
   }
   function hasPhone(m) { return !!(m && String(m.phone || '').replace(/\D/g, '').length >= 8); }
   function hasEmail(m) { return !!(m && m.email && !/email_not_unlocked/.test(String(m.email))); }
   function hasAi(m) { return !!(m && m.outreach && m.outreach.generated_at); }
-  function flowLib() { return global.CampaignFlow || null; }
-  /** Grafo de la campaña (normalizado) o null si no tiene nodos. */
-  function campaignFlow(c) {
-    var lib = flowLib();
-    if (!lib || !c || !c.flow) return null;
-    var f = lib.normalize(c.flow);
-    return f.nodes.length ? f : null;
+  function flowLib() {
+    if (!global.CampaignFlow) throw new Error('js/campaign-flow.js no está cargado. Recarga la página.');
+    return global.CampaignFlow;
   }
+  function builderLib() {
+    if (!global.CampaignBuilder) throw new Error('js/campaign-builder.js no está cargado. Recarga la página.');
+    return global.CampaignBuilder;
+  }
+  /** Grafo de la campaña (normalizado). */
+  function campaignFlow(c) { return flowLib().normalize(c && c.flow); }
+  function flowActions(c) { return flowLib().actions(campaignFlow(c)); }
   function browserTz() {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Lima'; } catch (e) { return 'America/Lima'; }
   }
@@ -226,8 +185,10 @@
       var detail = (body && (body.error || body.detail || body.message)) || ('HTTP ' + res.status);
       if (res.status === 401) detail = 'Sesión expirada. Vuelve a iniciar sesión.';
       if (res.status === 404) detail = 'La función ' + fnName + ' no está desplegada todavía (supabase functions deploy ' + fnName + ').';
+      if (body && body.error === 'insufficient_credits') detail = 'No tienes créditos suficientes' + (body.cost ? ' (necesitas ' + body.cost + ')' : '') + '.';
       var err = new Error(detail);
       err.status = res.status;
+      err.body = body;
       throw err;
     }
     return body;
@@ -260,15 +221,14 @@
   async function loadCampaigns() {
     var res = await sb()
       .from('campaigns')
-      .select('*, campaign_steps(*), campaign_enrollments(status)')
+      .select('*, campaign_enrollments(status)')
       .order('created_at', { ascending: false });
     if (res.error) throw new Error('No se pudieron cargar las campañas: ' + res.error.message);
     state.campaigns = (res.data || []).map(function (c) {
-      var steps = (c.campaign_steps || []).slice().sort(function (a, b) { return a.position - b.position; });
       var counts = {};
       (c.campaign_enrollments || []).forEach(function (e) { counts[e.status] = (counts[e.status] || 0) + 1; });
-      var out = Object.assign({}, c, { steps: steps, counts: counts, total: (c.campaign_enrollments || []).length });
-      delete out.campaign_steps; delete out.campaign_enrollments;
+      var out = Object.assign({}, c, { flow: flowLib().normalize(c.flow), counts: counts, total: (c.campaign_enrollments || []).length });
+      delete out.campaign_enrollments;
       return out;
     });
   }
@@ -277,90 +237,49 @@
     return state.campaigns.find(function (c) { return String(c.id) === String(id); }) || null;
   }
 
-  async function saveCampaign(editor) {
+  /** Guarda el borrador que devuelve el builder. Devuelve el id de la campaña. */
+  async function saveCampaign(draft) {
     var uid = await getUid();
-    var c = editor.campaign;
-    var name = String(c.name || '').trim();
+    var L = flowLib();
+    var name = String(draft.name || '').trim();
     if (!name) throw new Error('Escribe un nombre para la campaña.');
-    if (!editor.steps.length) throw new Error('Agrega al menos un paso a la cadencia.');
-    var hasEmailStep = editor.steps.some(function (s) { return s.channel === 'email'; });
-    if (hasEmailStep && !(c.sender && c.sender.email_account_id)) {
-      throw new Error('La cadencia tiene un paso de email: elige la cuenta remitente de Apollo.');
+    var v = L.validate(draft.flow);
+    if (!v.ok) throw new Error(v.errors[0].message);
+    var flow = L.normalize(draft.flow);
+    var s = draft.sender || {};
+    if (L.actions(flow).some(function (a) { return a.channel === 'email'; }) && !s.email_account_id) {
+      throw new Error('La cadencia tiene emails: elige la cuenta remitente de Apollo en Ajustes avanzados.');
     }
-    editor.steps.forEach(function (s, i) {
-      if (s.channel === 'linkedin_connect' && !(s.settings && s.settings.dripify_campaign_id)) {
-        throw new Error('El paso ' + (i + 1) + ' (LinkedIn) necesita una campaña de Dripify. ' + (state.dripify ? 'Elígela en el paso.' : 'Conecta Dripify primero.'));
-      }
-      if (s.content_kind === 'custom' && !String(s.body || '').trim()) throw new Error('El paso ' + (i + 1) + ' es "Texto propio" pero está vacío.');
-      if (s.content_kind === 'custom' && s.channel === 'email' && !String(s.subject || '').trim()) throw new Error('El paso ' + (i + 1) + ' (email) necesita asunto.');
-    });
     var row = {
       user_id: uid,
-      name: name,
-      list_id: c.list_id || null,
-      timezone: c.timezone || browserTz(),
-      send_start_hour: Number(c.send_start_hour),
-      send_end_hour: Number(c.send_end_hour),
-      send_days: (c.send_days || []).map(Number),
+      name: name.slice(0, 120),
+      list_id: draft.list_id || null,
+      timezone: draft.timezone || browserTz(),
+      send_start_hour: Number(draft.send_start_hour),
+      send_end_hour: Number(draft.send_end_hour),
+      send_days: (draft.send_days || []).map(Number),
       daily_caps: {
-        whatsapp: Math.max(0, Number(c.daily_caps && c.daily_caps.whatsapp) || 0),
-        email: Math.max(0, Number(c.daily_caps && c.daily_caps.email) || 0),
-        linkedin: Math.max(0, Number(c.daily_caps && c.daily_caps.linkedin) || 0),
+        whatsapp: Math.max(0, Number(draft.daily_caps && draft.daily_caps.whatsapp) || 0),
+        email: Math.max(0, Number(draft.daily_caps && draft.daily_caps.email) || 0),
+        linkedin: Math.max(0, Number(draft.daily_caps && draft.daily_caps.linkedin) || 0),
       },
-      sender: c.sender || {},
-      recommended: !!c.recommended,
+      sender: { name: s.name || '', role: s.role || '', company: s.company || '', email_account_id: s.email_account_id || '', email: s.email || '' },
+      flow: flow,
+      origin: draft.origin || 'custom',
+      review_required: !!draft.review_required,
+      recommended: draft.origin === 'ai',
     };
-    if (row.send_end_hour <= row.send_start_hour) throw new Error('La hora de fin debe ser mayor que la de inicio.');
+    if (!(row.send_end_hour > row.send_start_hour)) throw new Error('La hora de fin debe ser mayor que la de inicio.');
     if (!row.send_days.length) throw new Error('Elige al menos un día de envío.');
-
-    var id = c.id;
-    if (id) {
-      var up = await sb().from('campaigns').update(row).eq('id', id).select('id').single();
+    if (draft.id) {
+      var up = await sb().from('campaigns').update(row).eq('id', draft.id).select('id').single();
       if (up.error) throw new Error('No se pudo guardar la campaña: ' + up.error.message);
-      var del = await sb().from('campaign_steps').delete().eq('campaign_id', id);
-      if (del.error) throw new Error('No se pudieron actualizar los pasos: ' + del.error.message);
-    } else {
-      row.status = 'draft';
-      var ins = await sb().from('campaigns').insert(row).select('id').single();
-      if (ins.error) throw new Error('No se pudo crear la campaña: ' + ins.error.message);
-      id = ins.data.id;
+      return draft.id;
     }
-    var sorted = editor.steps
-      .slice()
-      .sort(function (a, b) { return (Number(a.offset_hours) || 0) - (Number(b.offset_hours) || 0); });
-    var stepRows = sorted.map(function (s, i) {
-      return {
-        campaign_id: id,
-        user_id: uid,
-        position: i,
-        channel: s.channel,
-        offset_hours: Math.max(0, Number(s.offset_hours) || 0),
-        condition: s.condition,
-        content_kind: s.content_kind,
-        settings: s.settings && typeof s.settings === 'object' ? s.settings : {},
-        subject: s.subject ? String(s.subject).trim() : null,
-        body: s.body ? String(s.body).trim() : null,
-      };
-    });
-    var st = await sb().from('campaign_steps').insert(stepRows);
-    if (st.error) throw new Error('No se pudieron guardar los pasos: ' + st.error.message);
-    // El motor ejecuta el grafo: se deriva de los mismos pasos, con ids de nodo
-    // estables para que los leads en curso sigan en su paso.
-    if (flowLib()) {
-      var flowRows = stepRows.map(function (r, i) {
-        return Object.assign({}, r, { node_id: sorted[i].node_id || null, condition_node_id: sorted[i].condition_node_id || null });
-      });
-      var flow = flowLib().fromLegacySteps(flowRows);
-      sorted.forEach(function (s, i) { var a = flowLib().actions(flow)[i]; if (a) s.node_id = a.id; });
-      var fl = await sb().from('campaigns').update({ flow: flow, origin: c.origin || 'legacy' }).eq('id', id);
-      if (fl.error) {
-        // Columna sin migrar: la campaña sigue corriendo por el camino legado.
-        console.warn('[campaigns] flow no guardado (¿migración 20260903000001 sin aplicar?):', fl.error.message);
-      }
-    }
-    // Los enrolamientos activos siguen la nueva cadencia desde su paso actual;
-    // si se acortó, el motor los cierra al no encontrar el paso.
-    return id;
+    row.status = 'draft';
+    var ins = await sb().from('campaigns').insert(row).select('id').single();
+    if (ins.error) throw new Error('No se pudo crear la campaña: ' + ins.error.message);
+    return ins.data.id;
   }
 
   async function setCampaignStatus(id, status) {
@@ -387,11 +306,23 @@
     });
     var ev = await sb()
       .from('campaign_events')
-      .select('id, enrollment_id, channel, type, step_position, detail, created_at')
+      .select('id, enrollment_id, channel, type, node_id, detail, payload, created_at')
       .eq('campaign_id', campaignId)
       .order('created_at', { ascending: false })
-      .limit(1000);
+      .limit(2000);
     state.events = ev.error ? [] : (ev.data || []);
+    var ms = await sb()
+      .from('campaign_messages')
+      .select('id, enrollment_id, member_id, node_id, channel, angle, subject, body, status, error_detail, generated_at, prospect_list_members(name, first_name, last_name, company, title)')
+      .eq('campaign_id', campaignId)
+      .in('status', ['draft', 'error'])
+      .order('generated_at', { ascending: true })
+      .limit(200);
+    state.messages = ms.error ? [] : (ms.data || []).map(function (m) {
+      var out = Object.assign({}, m, { member: m.prospect_list_members || null });
+      delete out.prospect_list_members;
+      return out;
+    });
   }
 
   async function loadMembersForCampaign(c) {
@@ -404,31 +335,24 @@
 
   async function enrollMembers(c, members) {
     var uid = await getUid();
-    if (!c.steps.length) throw new Error('La campaña no tiene pasos.');
-    var first = c.steps[0];
-    var now = Date.now();
+    var L = flowLib();
     var flow = campaignFlow(c);
-    var firstNode = flow ? flowLib().firstNode(flow) : null;
-    var firstDelay = firstNode ? flowLib().delayMs(firstNode) : (Number(first.offset_hours) || 0) * 3600 * 1000;
+    var first = L.firstNode(flow);
+    if (!first) throw new Error('La campaña no tiene pasos.');
+    var now = Date.now();
     var rows = members.map(function (m) {
-      var row = {
+      return {
         campaign_id: c.id,
         member_id: m.id,
         user_id: uid,
         status: 'active',
         started_at: new Date(now).toISOString(),
-        next_position: first.position,
-        next_run_at: new Date(now + firstDelay).toISOString(),
+        next_position: 0,
+        next_node_id: first.id,
+        next_run_at: new Date(now + L.delayMs(first)).toISOString(),
       };
-      if (firstNode) row.next_node_id = firstNode.id;
-      return row;
     });
     var res = await sb().from('campaign_enrollments').upsert(rows, { onConflict: 'campaign_id,member_id', ignoreDuplicates: true }).select('member_id');
-    if (res.error && firstNode && /next_node_id/.test(res.error.message)) {
-      // Columna sin migrar: enrolar por posición como antes.
-      rows.forEach(function (r) { delete r.next_node_id; });
-      res = await sb().from('campaign_enrollments').upsert(rows, { onConflict: 'campaign_id,member_id', ignoreDuplicates: true }).select('member_id');
-    }
     if (res.error) throw new Error('No se pudieron enrolar los leads: ' + res.error.message);
     var enrolledIds = (res.data || []).map(function (r) { return r.member_id; });
     var toFlag = members.filter(function (m) { return enrolledIds.indexOf(m.id) !== -1 && (m.contact_status || 'no_contactado') === 'no_contactado'; }).map(function (m) { return m.id; });
@@ -443,6 +367,11 @@
     if (res.error) throw new Error('No se pudo actualizar el lead: ' + res.error.message);
   }
 
+  async function updateMessage(id, patch) {
+    var res = await sb().from('campaign_messages').update(patch).eq('id', id);
+    if (res.error) throw new Error('No se pudo actualizar el mensaje: ' + res.error.message);
+  }
+
   // ── Realtime ─────────────────────────────────────────────────────────────
   function subscribeRealtime() {
     if (state.realtime || !global.supabaseClient || !state.uid) return;
@@ -451,14 +380,16 @@
         .channel('campaigns-' + state.uid)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_events', filter: 'user_id=eq.' + state.uid }, onRealtime)
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'campaign_enrollments', filter: 'user_id=eq.' + state.uid }, onRealtime)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_messages', filter: 'user_id=eq.' + state.uid }, onRealtime)
         .subscribe();
     } catch (e) { console.warn('[campaigns] realtime:', e.message); }
   }
   var realtimeTimer = null;
   function onRealtime() {
-    if (!state.activeId || state.editor) return;
+    if (!state.activeId || state.builder) return;
     clearTimeout(realtimeTimer);
     realtimeTimer = setTimeout(function () {
+      if (state.root && state.root.querySelector('.cmp-msg-editing')) return; // no pisar una edición en curso
       Promise.all([loadCampaigns(), loadEnrollments(state.activeId)]).then(render).catch(function (e) { console.warn('[campaigns] refresh:', e.message); });
     }, 800);
   }
@@ -472,7 +403,8 @@
     root.appendChild(renderDripifyCard());
     var grid = h('div', { class: 'cmp-grid' });
     grid.appendChild(renderCampaignList());
-    grid.appendChild(state.editor ? renderEditor() : (state.activeId ? renderDetail() : renderIntro()));
+    // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
+    grid.appendChild(state.builder ? state.builderHost : (state.activeId ? renderDetail() : renderIntro()));
     root.appendChild(grid);
   }
 
@@ -480,19 +412,13 @@
     if (document.getElementById('campaigns-styles')) return;
     var css = [
       '#prospecting-shell .cmp-grid { display:grid; grid-template-columns:280px minmax(0,1fr); gap:18px; align-items:start; }',
+      '#prospecting-shell .cmp-grid.wide { grid-template-columns:minmax(0,1fr); }',
       '@media (max-width:1000px) { #prospecting-shell .cmp-grid { grid-template-columns:1fr; } }',
       '#prospecting-shell .cmp-item { padding:10px 12px; border-radius:var(--r-md); border:1px solid var(--hair); cursor:pointer; display:flex; flex-direction:column; gap:4px; background:var(--surface); }',
       '#prospecting-shell .cmp-item:hover { border-color:var(--accent-2); }',
       '#prospecting-shell .cmp-item.active { border-color:var(--accent-2); background:var(--accent-soft); }',
       '#prospecting-shell .cmp-item-name { font-weight:600; font-size:13px; }',
       '#prospecting-shell .cmp-item-sub { font-size:11.5px; color:var(--text3); display:flex; gap:8px; flex-wrap:wrap; align-items:center; }',
-      '#prospecting-shell .cmp-step { display:grid; grid-template-columns:110px 1fr 1fr 1fr auto; gap:8px; align-items:center; padding:8px 0; border-bottom:1px solid var(--hair); }',
-      '#prospecting-shell .cmp-step select, #prospecting-shell .cmp-step input { width:100%; min-width:0; }',
-      '#prospecting-shell .cmp-step-body { grid-column:1 / -1; display:grid; gap:6px; }',
-      '#prospecting-shell .cmp-step-body textarea { width:100%; min-height:70px; }',
-      '@media (max-width:1000px) { #prospecting-shell .cmp-step { grid-template-columns:1fr 1fr; } }',
-      '#prospecting-shell .cmp-days { display:flex; gap:6px; flex-wrap:wrap; }',
-      '#prospecting-shell .cmp-days label { display:inline-flex; align-items:center; gap:4px; font-size:12px; padding:4px 8px; border:1px solid var(--hair); border-radius:999px; cursor:pointer; }',
       '#prospecting-shell .cmp-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin:12px 0; }',
       '#prospecting-shell .cmp-kpi { background:var(--surface); border:1px solid var(--hair); border-radius:var(--r-md); padding:10px 12px; }',
       '#prospecting-shell .cmp-kpi b { display:block; font-size:20px; font-weight:700; }',
@@ -503,7 +429,13 @@
       '#prospecting-shell .cmp-tpl { display:grid; gap:6px; font-size:12.5px; }',
       '#prospecting-shell .cmp-tpl div { display:flex; gap:8px; align-items:flex-start; }',
       '#prospecting-shell .cmp-sender-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }',
-      '#prospecting-shell .cmp-window { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; }',
+      '#prospecting-shell .cmp-msg { display:grid; grid-template-columns:200px minmax(0,1fr); gap:12px; padding:12px 14px; border-top:1px solid var(--hair); align-items:start; }',
+      '@media (max-width:800px) { #prospecting-shell .cmp-msg { grid-template-columns:1fr; } }',
+      '#prospecting-shell .cmp-msg-lead { font-size:12.5px; display:flex; flex-direction:column; gap:4px; }',
+      '#prospecting-shell .cmp-msg-lead b { font-size:13px; }',
+      '#prospecting-shell .cmp-msg-edit { display:flex; flex-direction:column; gap:6px; }',
+      '#prospecting-shell .cmp-msg-edit input, #prospecting-shell .cmp-msg-edit textarea { width:100%; }',
+      '#prospecting-shell .cmp-msg-edit textarea { min-height:110px; resize:vertical; }',
     ].join('\n');
     var s = document.createElement('style');
     s.id = 'campaigns-styles';
@@ -705,6 +637,7 @@
     toast(rows.length + ' leads en el CSV' + (missing ? ' · ' + missing + ' sin mensaje IA generado' : '') + '.', missing ? 'warn' : 'success');
   }
 
+
   // ── Render: lista de campañas ────────────────────────────────────────────
   function renderCampaignList() {
     var col = h('div', { style: 'display:flex;flex-direction:column;gap:10px' });
@@ -715,15 +648,16 @@
       return col;
     }
     if (!state.campaigns.length) {
-      col.appendChild(h('div', { class: 'pros-hint', text: 'Aún no tienes campañas. Crea la primera con la cadencia recomendada y enrola una lista.' }));
+      col.appendChild(h('div', { class: 'pros-hint', text: 'Aún no tienes campañas. Crea la primera: la IA te propone la cadencia o eliges una plantilla, y la lanzas sobre una lista.' }));
       return col;
     }
     state.campaigns.forEach(function (c) {
-      var item = h('div', { class: 'cmp-item' + (String(c.id) === String(state.activeId) && !state.editor ? ' active' : ''), 'data-action': 'cmp-open', 'data-id': c.id });
+      var item = h('div', { class: 'cmp-item' + (String(c.id) === String(state.activeId) && !state.builder ? ' active' : ''), 'data-action': 'cmp-open', 'data-id': c.id });
       item.appendChild(h('div', { class: 'cmp-item-name', text: c.name }));
       var st = CAMPAIGN_STATUS[c.status] || CAMPAIGN_STATUS.draft;
       var sub = h('div', { class: 'cmp-item-sub' });
-      sub.innerHTML = pill(st.label, st.pill) + '<span>' + esc(String(c.total || 0)) + ' leads · ' + esc(String(c.steps.length)) + ' pasos</span>';
+      var n = flowActions(c).length;
+      sub.innerHTML = pill(st.label, st.pill) + '<span>' + esc(String(c.total || 0)) + ' leads · ' + esc(String(n)) + (n === 1 ? ' envío' : ' envíos') + '</span>';
       item.appendChild(sub);
       col.appendChild(item);
     });
@@ -735,227 +669,86 @@
     box.innerHTML = (pros().emptyHtml || function (i, t, s) { return '<div class="empty"><div class="empty-title">' + t + '</div><div class="empty-sub">' + s + '</div></div>'; })(
       '<svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 10h3l2-5 3 10 2-5h4"/></svg>',
       'Elige una campaña o crea una nueva',
-      'Una campaña envía WhatsApp (WATI), email (Apollo) y LinkedIn (Dripify) en una sola cadencia. Se detiene sola cuando el lead responde por cualquier canal.');
+      'Una campaña envía WhatsApp (WATI), email (Apollo) y LinkedIn (Dripify) en una sola cadencia con condiciones Sí / No. Se detiene sola cuando el lead responde por cualquier canal.');
     return box;
   }
 
-  // ── Render: editor ───────────────────────────────────────────────────────
-  function newEditor(c) {
-    var sender = pd().getSenderInfo ? pd().getSenderInfo() : { name: '', role: '', company: '' };
-    var acc = state.account && state.account.config && state.account.config.sender;
-    var base = c ? Object.assign({}, c) : {
-      name: '',
-      list_id: (state.lists[0] && state.lists[0].id) || null,
-      timezone: browserTz(),
-      send_start_hour: 9,
-      send_end_hour: 18,
-      send_days: [1, 2, 3, 4, 5],
-      daily_caps: { whatsapp: 50, email: 80, linkedin: 25 },
-      sender: { name: (acc && acc.name) || sender.name || '', role: (acc && acc.role) || sender.role || '', company: (acc && acc.company) || sender.company || '', email_account_id: '', email: '' },
-      recommended: true,
-    };
-    var steps;
-    if (c) {
-      // Los pasos de campaign_steps se emparejan por orden con las acciones del
-      // grafo para conservar el id de nodo (los leads en curso apuntan a él).
-      var flow = campaignFlow(c);
-      var acts = flow ? flowLib().actions(flow) : [];
-      steps = c.steps.map(function (s, i) {
-        var out = Object.assign({}, s);
-        var a = acts[i];
-        if (a) {
-          out.node_id = a.id;
-          var loc = flowLib().find(flow, a.id);
-          if (loc && loc.parent) out.condition_node_id = loc.parent.id;
-        }
-        return out;
-      });
-    } else {
-      steps = recommendedSteps();
-    }
-    return { isNew: !c, campaign: base, steps: steps };
+  // ── Builder (crear / editar) ─────────────────────────────────────────────
+  function openBuilder(campaign) {
+    closeBuilder();
+    var host = h('div', { class: 'chart-card' });
+    state.builderHost = host;
+    state.builder = builderLib().mount(host, {
+      campaign: campaign,
+      lists: state.lists,
+      campaigns: state.campaigns,
+      wati: state.account || null,
+      dripify: state.dripify || null,
+      emailAccounts: state.emailAccounts,
+      loadEmailAccounts: loadEmailAccounts,
+      senderInfo: pd().getSenderInfo ? pd().getSenderInfo() : { name: '', role: '', company: '' },
+      fetchMembers: function (listId) { return pd().fetchMembers(listId); },
+      edgeFetch: edgeFetch,
+      confirm: confirmModal,
+      toast: toast,
+      onCancel: function () { closeBuilder(); render(); },
+      onSave: function (draft, info) { return onBuilderSave(draft, info); },
+    });
+    render();
   }
-
-  function renderEditor() {
-    var ed = state.editor;
-    var c = ed.campaign;
-    var card = h('div', { class: 'chart-card' });
-    card.appendChild(h('div', { class: 'chart-title', text: ed.isNew ? 'Nueva campaña' : 'Editar campaña' }));
-
-    var nameI = h('input', { type: 'text', placeholder: 'Nombre de la campaña', value: c.name || '' });
-    nameI.addEventListener('input', function () { c.name = nameI.value; });
-    var listSel = h('select');
-    listSel.appendChild(h('option', { value: '', text: 'Sin lista (enrolas después)' }));
-    state.lists.forEach(function (l) {
-      var o = h('option', { value: l.id, text: l.name + ' (' + (l.member_count || 0) + ')' });
-      if (String(l.id) === String(c.list_id)) o.selected = true;
-      listSel.appendChild(o);
-    });
-    listSel.addEventListener('change', function () { c.list_id = listSel.value || null; });
-    card.appendChild(h('div', { class: 'cmp-sender-grid', style: 'margin-top:12px' },
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Nombre' }), nameI),
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Lista de leads' }), listSel)));
-
-    // Remitente
-    var s = c.sender || (c.sender = {});
-    var sName = h('input', { type: 'text', placeholder: 'Nombre', value: s.name || '' });
-    var sRole = h('input', { type: 'text', placeholder: 'Cargo', value: s.role || '' });
-    var sComp = h('input', { type: 'text', placeholder: 'Empresa', value: s.company || '' });
-    sName.addEventListener('input', function () { s.name = sName.value; });
-    sRole.addEventListener('input', function () { s.role = sRole.value; });
-    sComp.addEventListener('input', function () { s.company = sComp.value; });
-    var emailSel = h('select');
-    emailSel.appendChild(h('option', { value: '', text: state.emailAccounts ? 'Elige la cuenta de Apollo…' : 'Cargando cuentas de Apollo…' }));
-    (state.emailAccounts || []).forEach(function (a) {
-      var o = h('option', { value: a.id, text: a.email || a.id });
-      if (String(a.id) === String(s.email_account_id)) o.selected = true;
-      emailSel.appendChild(o);
-    });
-    emailSel.addEventListener('change', function () {
-      s.email_account_id = emailSel.value || '';
-      var a = (state.emailAccounts || []).find(function (x) { return String(x.id) === String(emailSel.value); });
-      s.email = a ? a.email : '';
-    });
-    card.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:16px', text: 'Quién firma' }));
-    card.appendChild(h('div', { class: 'cmp-sender-grid', style: 'margin-top:6px' },
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Nombre' }), sName),
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Cargo' }), sRole),
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Empresa' }), sComp),
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Cuenta de email (Apollo)' }), emailSel)));
-    card.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:4px', text: 'Los WhatsApp salen del número conectado en WATI; los emails, de la cuenta de Apollo elegida.' }));
-
-    // Ventana
-    var tzSel = h('select');
-    var tzs = TIMEZONES.slice();
-    if (tzs.indexOf(c.timezone) === -1 && c.timezone) tzs.unshift(c.timezone);
-    tzs.forEach(function (tz) { var o = h('option', { value: tz, text: tz.replace(/_/g, ' ') }); if (tz === c.timezone) o.selected = true; tzSel.appendChild(o); });
-    tzSel.addEventListener('change', function () { c.timezone = tzSel.value; });
-    var startI = h('input', { type: 'number', min: 0, max: 23, value: c.send_start_hour });
-    var endI = h('input', { type: 'number', min: 1, max: 24, value: c.send_end_hour });
-    startI.addEventListener('input', function () { c.send_start_hour = startI.value; });
-    endI.addEventListener('input', function () { c.send_end_hour = endI.value; });
-    var days = h('div', { class: 'cmp-days' });
-    DAYS.forEach(function (d) {
-      var cb = h('input', { type: 'checkbox' });
-      cb.checked = (c.send_days || []).map(Number).indexOf(d.value) !== -1;
-      cb.addEventListener('change', function () {
-        var set = new Set((c.send_days || []).map(Number));
-        if (cb.checked) set.add(d.value); else set.delete(d.value);
-        c.send_days = Array.from(set).sort();
-      });
-      days.appendChild(h('label', null, cb, d.label));
-    });
-    var caps = c.daily_caps || (c.daily_caps = { whatsapp: 50, email: 80, linkedin: 25 });
-    var capW = h('input', { type: 'number', min: 0, value: caps.whatsapp });
-    var capE = h('input', { type: 'number', min: 0, value: caps.email });
-    var capL = h('input', { type: 'number', min: 0, value: caps.linkedin });
-    capW.addEventListener('input', function () { caps.whatsapp = capW.value; });
-    capE.addEventListener('input', function () { caps.email = capE.value; });
-    capL.addEventListener('input', function () { caps.linkedin = capL.value; });
-    card.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:16px', text: 'Ventana de envío y topes diarios' }));
-    card.appendChild(h('div', { class: 'cmp-window', style: 'margin-top:6px' },
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Zona horaria del lead' }), tzSel),
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Desde (hora)' }), startI),
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Hasta (hora)' }), endI),
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Días' }), days),
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Máx. WhatsApp / día' }), capW),
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Máx. emails / día' }), capE),
-      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Máx. LinkedIn / día' }), capL)));
-
-    // Pasos
-    var stepsHead = h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px' });
-    stepsHead.appendChild(h('div', { class: 'pros-lbl', text: 'Cadencia (' + ed.steps.length + ' pasos)' }));
-    var stepActions = h('div', { class: 'pros-actions' });
-    stepActions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'step-recommended', text: 'Usar cadencia recomendada' }));
-    stepActions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'step-add', text: '+ Agregar paso' }));
-    stepsHead.appendChild(stepActions);
-    card.appendChild(stepsHead);
-    card.appendChild(h('div', { class: 'pros-hint', style: 'margin:4px 0 6px', text: 'La espera cuenta desde que el lead entra a la campaña. Dos pasos con la misma espera salen en paralelo. El paso de LinkedIn enrola al lead en la campaña de Dripify que elijas; la conexión y los mensajes los envía Dripify con su propia cadencia.' }));
-    var stepsBox = h('div');
-    ed.steps.forEach(function (st, idx) { stepsBox.appendChild(renderStepRow(st, idx)); });
-    if (!ed.steps.length) stepsBox.appendChild(h('div', { class: 'pros-hint', text: 'Sin pasos. Agrega uno o usa la cadencia recomendada.' }));
-    card.appendChild(stepsBox);
-
-    var foot = h('div', { class: 'pros-actions', style: 'margin-top:16px' });
-    foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'cmp-save', text: ed.isNew ? 'Crear campaña' : 'Guardar cambios' }));
-    foot.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-cancel', text: 'Cancelar' }));
-    card.appendChild(foot);
-    return card;
+  function closeBuilder() {
+    if (state.builder) { try { state.builder.destroy(); } catch (e) { /* no-op */ } }
+    state.builder = null;
+    state.builderHost = null;
   }
-
-  function renderStepRow(st, idx) {
-    var row = h('div', { class: 'cmp-step' });
-    var chSel = h('select');
-    CHANNELS.forEach(function (ch) {
-      if (ch.hidden && ch.value !== st.channel) return;
-      var o = h('option', { value: ch.value, text: ch.label }); if (ch.value === st.channel) o.selected = true; chSel.appendChild(o);
-    });
-    chSel.addEventListener('change', function () {
-      st.channel = chSel.value;
-      if (st.channel === 'linkedin_connect') { st.settings = st.settings || {}; st.content_kind = 'ai_personalized'; }
-      var allowed = CONTENT_KINDS.filter(function (k) { return k.channels.indexOf(st.channel) !== -1; });
-      if (!allowed.some(function (k) { return k.value === st.content_kind; })) st.content_kind = allowed[0].value;
-      render();
-    });
-    var offI = h('input', { type: 'number', min: 0, step: 1, value: Math.round((Number(st.offset_hours) || 0) / 24 * 10) / 10, title: 'Días desde el inicio' });
-    offI.addEventListener('input', function () { st.offset_hours = Math.round(Math.max(0, Number(offI.value) || 0) * 24); });
-    var condSel = h('select');
-    CONDITIONS.forEach(function (cd) { var o = h('option', { value: cd.value, text: cd.label }); if (cd.value === st.condition) o.selected = true; condSel.appendChild(o); });
-    condSel.addEventListener('change', function () { st.condition = condSel.value; });
-    var kindSel = h('select');
-    CONTENT_KINDS.filter(function (k) { return k.channels.indexOf(st.channel) !== -1; }).forEach(function (k) {
-      var o = h('option', { value: k.value, text: k.label }); if (k.value === st.content_kind) o.selected = true; kindSel.appendChild(o);
-    });
-    kindSel.addEventListener('change', function () { st.content_kind = kindSel.value; render(); });
-    var del = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'step-del', 'data-idx': idx, title: 'Quitar paso', text: '✕' });
-    row.appendChild(h('div', null, h('div', { class: 'pros-lbl', text: 'Paso ' + (idx + 1) }), chSel));
-    row.appendChild(h('div', null, h('div', { class: 'pros-lbl', text: 'Espera (días)' }), offI));
-    row.appendChild(h('div', null, h('div', { class: 'pros-lbl', text: 'Condición' }), condSel));
-    if (st.channel === 'linkedin_connect') {
-      var dcSel = h('select');
-      var dcs = (state.dripify && state.dripify.config && state.dripify.config.campaigns) || [];
-      st.settings = st.settings || {};
-      dcSel.appendChild(h('option', { value: '', text: dcs.length ? 'Elige la campaña de Dripify…' : (state.dripify ? 'Sin campañas en Dripify' : 'Conecta Dripify primero') }));
-      dcs.forEach(function (dc) {
-        var o = h('option', { value: String(dc.id), text: dc.name + (dc.active === false ? ' (inactiva)' : '') });
-        if (String(dc.id) === String(st.settings.dripify_campaign_id || '')) o.selected = true;
-        dcSel.appendChild(o);
-      });
-      dcSel.addEventListener('change', function () {
-        var dc = dcs.find(function (x) { return String(x.id) === dcSel.value; });
-        st.settings = dc ? { dripify_campaign_id: dc.id, dripify_campaign_name: dc.name } : {};
-      });
-      row.appendChild(h('div', null, h('div', { class: 'pros-lbl', text: 'Campaña de Dripify' }), dcSel));
-      row.appendChild(del);
-      row.appendChild(h('div', { class: 'cmp-step-body' }, h('div', { class: 'pros-hint', text: 'Dripify envía la conexión y los mensajes de esa campaña con sus propias plantillas y ritmo. La campaña debe estar activa en Dripify. Para el mensaje IA de 5 capas usa el CSV para Dripify desde el detalle de la campaña.' })));
-      return row;
+  async function onBuilderSave(draft, info) {
+    var id = await saveCampaign(draft);
+    var isNew = !draft.id;
+    await loadCampaigns();
+    var c = findCampaign(id);
+    var msg = isNew ? 'Campaña guardada como borrador.' : 'Campaña guardada.';
+    if (info && info.launch && c) {
+      var members = info.members || [];
+      var enrolled = await sb().from('campaign_enrollments').select('member_id').eq('campaign_id', id);
+      var already = new Set(((enrolled && enrolled.data) || []).map(function (r) { return String(r.member_id); }));
+      var fresh = members.filter(function (m) { return !already.has(String(m.id)); });
+      var res = fresh.length ? await enrollMembers(c, fresh) : { enrolled: 0, skipped: 0 };
+      await setCampaignStatus(id, 'active');
+      await loadCampaigns();
+      msg = 'Campaña lanzada: ' + res.enrolled + ' leads enrolados' + (already.size ? ' (' + already.size + ' ya estaban)' : '') + '. El motor envía cada minuto dentro de la ventana horaria.';
     }
-    row.appendChild(h('div', null, h('div', { class: 'pros-lbl', text: 'Contenido' }), kindSel));
-    row.appendChild(del);
-    if (st.content_kind === 'custom') {
-      var body = h('div', { class: 'cmp-step-body' });
-      if (st.channel === 'email') {
-        var subjI = h('input', { type: 'text', placeholder: 'Asunto', value: st.subject || '' });
-        subjI.addEventListener('input', function () { st.subject = subjI.value; });
-        body.appendChild(subjI);
-      }
-      var ta = h('textarea', { placeholder: 'Texto del mensaje. Variables: {{nombre}}, {{empresa}}, {{cargo}}, {{remitente}}, {{mi_empresa}}' });
-      ta.value = st.body || '';
-      ta.addEventListener('input', function () { st.body = ta.value; });
-      body.appendChild(ta);
-      if (st.channel === 'whatsapp') body.appendChild(h('div', { class: 'pros-hint', text: 'WhatsApp solo permite texto libre dentro de las 24 h siguientes a un mensaje del lead. Si no hay sesión abierta, el paso se omite; para abrir conversación usa una plantilla de saludo.' }));
-      row.appendChild(body);
-    } else if (st.channel === 'whatsapp' && st.content_kind === 'ai_personalized') {
-      row.appendChild(h('div', { class: 'cmp-step-body' }, h('div', { class: 'pros-hint', text: 'Se envía el seguimiento IA del lead (Generador de mensajes) solo si el lead escribió en las últimas 24 h; si no, se omite.' })));
-    }
-    return row;
+    closeBuilder();
+    toast(msg, 'success');
+    await openCampaign(id);
   }
 
   // ── Render: detalle de campaña ───────────────────────────────────────────
+  /** Contadores por nodo a partir de campaign_events y de los enrolamientos en curso. */
+  function nodeCounters(c) {
+    var counters = {};
+    function bump(nodeId, key) { if (!nodeId) return; var o = counters[nodeId] = counters[nodeId] || {}; o[key] = (o[key] || 0) + 1; }
+    state.events.forEach(function (ev) {
+      if (!ev.node_id) return;
+      if (ev.type === 'branched') { bump(ev.node_id, ev.payload && ev.payload.branch === 'yes' ? 'yes' : 'no'); return; }
+      if (['sent', 'delivered', 'read', 'opened', 'replied', 'skipped', 'failed', 'queued', 'connection_accepted'].indexOf(ev.type) !== -1) bump(ev.node_id, ev.type);
+    });
+    state.enrollments.forEach(function (e) { if (e.status === 'active' || e.status === 'processing') bump(e.next_node_id, 'waiting'); });
+    // Todo nodo del grafo aparece aunque no tenga actividad.
+    flowLib().normalize(c.flow).nodes.forEach(function (n) {
+      counters[n.id] = counters[n.id] || {};
+      if (n.type === 'condition') n.yes.concat(n.no).forEach(function (a) { counters[a.id] = counters[a.id] || {}; });
+    });
+    return counters;
+  }
+
   function renderDetail() {
     var c = findCampaign(state.activeId);
     if (!c) return renderIntro();
+    var L = flowLib();
     var wrap = h('div', { style: 'display:flex;flex-direction:column;gap:16px' });
+    var acts = flowActions(c);
+    var needsWa = acts.some(function (a) { return a.channel === 'whatsapp'; });
+    var hasLi = acts.some(function (a) { return a.channel === 'linkedin_connect'; });
 
     var card = h('div', { class: 'chart-card' });
     var head = h('div', { style: 'display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start' });
@@ -963,7 +756,7 @@
     var st = CAMPAIGN_STATUS[c.status] || CAMPAIGN_STATUS.draft;
     left.appendChild(h('div', { class: 'chart-title', html: esc(c.name) + ' ' + pill(st.label, st.pill) }));
     var list = state.lists.find(function (l) { return String(l.id) === String(c.list_id); });
-    left.appendChild(h('div', { class: 'pros-cellsub', style: 'margin-top:4px', text: (list ? 'Lista: ' + list.name + ' · ' : '') + c.timezone + ' · ' + c.send_start_hour + ':00–' + c.send_end_hour + ':00 · ' + (c.send_days || []).map(function (d) { return labelOf(DAYS, d); }).join(' ') }));
+    left.appendChild(h('div', { class: 'pros-cellsub', style: 'margin-top:4px', text: (list ? 'Lista: ' + list.name + ' · ' : '') + c.timezone + ' · ' + c.send_start_hour + ':00–' + c.send_end_hour + ':00 · ' + (c.send_days || []).map(function (d) { return DAY_LABELS[d] || d; }).join(' ') + (c.review_required ? ' · revisas cada mensaje IA' : '') }));
     var actions = h('div', { class: 'pros-actions' });
     if (c.status === 'active') actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-status', 'data-status': 'paused', text: 'Pausar' }));
     else actions.appendChild(h('button', { type: 'button', class: 'btn btn-teal btn-sm', 'data-action': 'cmp-status', 'data-status': 'active', text: c.status === 'draft' ? 'Activar campaña' : 'Reanudar' }));
@@ -979,21 +772,25 @@
     });
     card.appendChild(kpis);
 
-    var stepsBox = h('div', { class: 'pros-scroll-x' });
-    var tbl = '<table><thead><tr><th>#</th><th>Cuándo</th><th>Canal</th><th>Condición</th><th>Contenido</th></tr></thead><tbody>';
-    c.steps.forEach(function (s, i) {
-      var content = s.channel === 'linkedin_connect'
-        ? (s.settings && s.settings.dripify_campaign_name ? 'Campaña de Dripify «' + s.settings.dripify_campaign_name + '»' : 'Sin campaña de Dripify')
-        : s.channel === 'linkedin_message' ? 'Sin proveedor (se omite)' : labelOf(CONTENT_KINDS, s.content_kind);
-      tbl += '<tr><td>' + (i + 1) + '</td><td>' + esc(fmtOffset(s.offset_hours)) + '</td><td>' + esc(labelOf(CHANNELS, s.channel)) + '</td><td>' + esc(labelOf(CONDITIONS, s.condition)) + '</td><td>' + esc(content) + '</td></tr>';
-    });
-    tbl += '</tbody></table>';
-    stepsBox.innerHTML = tbl;
-    card.appendChild(stepsBox);
-    if (!state.account && c.steps.some(function (s) { return s.channel === 'whatsapp'; })) {
+    if (!acts.length) {
+      card.appendChild(h('div', { class: 'pros-note-red', text: '⚠ Esta campaña no tiene pasos. Edítala para armar la cadencia.' }));
+    } else {
+      card.appendChild(h('div', { class: 'pros-lbl', style: 'margin:4px 0 8px', text: 'Cadencia · ' + acts.length + (acts.length === 1 ? ' envío' : ' envíos') + ' · ' + L.durationDays(c.flow) + ' días' }));
+      var warnings = {};
+      var tpls = (state.account && state.account.config && state.account.config.templates && state.account.config.templates.items) || {};
+      acts.forEach(function (a) {
+        if (a.channel === 'whatsapp' && state.account === null) warnings[a.id] = ['WATI sin conectar'];
+        else if (a.channel === 'whatsapp' && a.content.kind.indexOf('template_') === 0) {
+          var t = tpls[{ template_a: 'a', template_b: 'b', template_c: 'c' }[a.content.kind]];
+          if (t && !/approved/i.test(String(t.status || ''))) warnings[a.id] = ['plantilla ' + String(t.status || 'pendiente').toLowerCase()];
+        }
+        if (a.channel === 'linkedin_connect' && state.dripify === null) warnings[a.id] = ['Dripify sin conectar'];
+      });
+      card.appendChild(builderLib().renderTimeline(c.flow, { readOnly: true, counters: nodeCounters(c), warnings: warnings }));
+    }
+    if (!state.account && needsWa) {
       card.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:10px', text: '⚠ Esta campaña tiene pasos de WhatsApp pero WATI no está conectado: esos pasos se reintentarán cada 6 horas hasta que lo conectes.' }));
     }
-    var hasLi = c.steps.some(function (s) { return s.channel === 'linkedin_connect'; });
     if (hasLi && !state.dripify) {
       card.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:10px', text: '⚠ Esta campaña tiene un paso de LinkedIn pero Dripify no está conectado: ese paso se reintentará cada 6 horas hasta que lo conectes.' }));
     }
@@ -1005,9 +802,61 @@
     }
     wrap.appendChild(card);
 
+    if (c.review_required || state.messages.length) wrap.appendChild(renderReviewInbox(c));
     wrap.appendChild(renderEnrollCard(c));
     wrap.appendChild(renderEnrollmentsTable(c));
     return wrap;
+  }
+
+  // ── Render: bandeja de revisión de mensajes IA ───────────────────────────
+  function renderReviewInbox(c) {
+    var L = flowLib();
+    var flow = campaignFlow(c);
+    var card = h('div', { class: 'table-card' });
+    var drafts = state.messages.filter(function (m) { return m.status === 'draft'; });
+    var errors = state.messages.filter(function (m) { return m.status === 'error'; });
+    var head = h('div', { class: 'table-head', style: 'gap:12px;flex-wrap:wrap' });
+    head.appendChild(h('span', { style: 'font-size:14px;font-weight:700', text: 'Mensajes IA por revisar (' + drafts.length + ')' }));
+    if (drafts.length) head.appendChild(h('button', { type: 'button', class: 'btn btn-teal btn-sm', 'data-action': 'msg-approve-all', text: 'Aprobar los ' + drafts.length }));
+    card.appendChild(head);
+    if (!drafts.length && !errors.length) {
+      card.appendChild(h('div', { class: 'pros-hint', style: 'padding:14px', text: c.review_required ? 'Nada pendiente. El motor escribe cada mensaje IA 24 h antes de su envío y lo deja aquí hasta que lo apruebes.' : 'Nada pendiente.' }));
+      return card;
+    }
+    drafts.forEach(function (m) {
+      var loc = L.find(flow, m.node_id);
+      var row = h('div', { class: 'cmp-msg', 'data-msg': m.id });
+      var lead = h('div', { class: 'cmp-msg-lead' });
+      lead.appendChild(h('b', { text: memberName(m.member) }));
+      if (m.member && (m.member.title || m.member.company)) lead.appendChild(h('span', { class: 'pros-cellsub', text: [m.member.title, m.member.company].filter(Boolean).join(' · ') }));
+      lead.appendChild(h('span', { html: pill(channelLabel(m.channel), m.channel === 'whatsapp' ? 'green' : m.channel === 'email' ? 'blue' : 'teal') + ' ' + pill(loc ? L.nodeTitle(loc.node) : 'Paso eliminado', 'gray') }));
+      lead.appendChild(h('span', { class: 'pros-cellsub', text: 'Generado ' + fmtDateTime(m.generated_at) }));
+      row.appendChild(lead);
+      var edit = h('div', { class: 'cmp-msg-edit' });
+      if (m.channel === 'email') {
+        var subj = h('input', { type: 'text', placeholder: 'Asunto', 'data-field': 'subject' });
+        subj.value = m.subject || '';
+        subj.addEventListener('input', function () { row.classList.add('cmp-msg-editing'); });
+        edit.appendChild(subj);
+      }
+      var ta = h('textarea', { 'data-field': 'body' });
+      ta.value = m.body || '';
+      ta.addEventListener('input', function () { row.classList.add('cmp-msg-editing'); });
+      edit.appendChild(ta);
+      var acts = h('div', { class: 'pros-actions' });
+      acts.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'msg-approve', 'data-id': m.id, text: 'Aprobar' }));
+      acts.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'msg-skip', 'data-id': m.id, text: 'Omitir este paso' }));
+      edit.appendChild(acts);
+      row.appendChild(edit);
+      card.appendChild(row);
+    });
+    if (errors.length) {
+      var eb = h('div', { class: 'pros-note-red', style: 'margin:10px 14px' });
+      eb.appendChild(h('div', { text: '⚠ ' + errors.length + (errors.length === 1 ? ' mensaje no se pudo generar' : ' mensajes no se pudieron generar') + ': el paso se omite con ese motivo.' }));
+      errors.slice(0, 5).forEach(function (m) { eb.appendChild(h('div', { class: 'pros-cellsub', text: memberName(m.member) + ' · ' + (m.error_detail || 'Error') })); });
+      card.appendChild(eb);
+    }
+    return card;
   }
 
   function renderEnrollCard(c) {
@@ -1033,14 +882,15 @@
       card.appendChild(h('div', { class: 'pros-hint', style: 'padding:14px', text: state.members.length ? 'Todos los leads de la lista ya están en esta campaña.' : 'La lista está vacía. Agrega leads desde Búsqueda.' }));
       return card;
     }
-    var needsWa = c.steps.some(function (s) { return s.channel === 'whatsapp'; });
-    var needsEmail = c.steps.some(function (s) { return s.channel === 'email'; });
-    var needsAi = c.steps.some(function (s) { return s.content_kind === 'ai_personalized' && s.channel !== 'linkedin_connect'; });
-    var needsLi = c.steps.some(function (s) { return s.channel === 'linkedin_connect'; });
+    var acts = flowActions(c);
+    var needsWa = acts.some(function (a) { return a.channel === 'whatsapp'; });
+    var needsEmail = acts.some(function (a) { return a.channel === 'email'; });
+    var needsLi = acts.some(function (a) { return a.channel === 'linkedin_connect'; });
+    var needsAi = acts.some(function (a) { return a.content.kind === 'ai' && a.channel !== 'linkedin_connect'; });
     var allChecked = candidates.every(function (m) { return state.selected.has(String(m.id)); });
     var html = '<div class="pros-scroll-x"><table><thead><tr>' +
       '<th style="width:34px"><input type="checkbox" data-action="enroll-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-      '<th>Nombre</th><th>Empresa</th><th>Teléfono</th><th>Email</th><th>LinkedIn</th><th>Mensajes IA</th></tr></thead><tbody>';
+      '<th>Nombre</th><th>Empresa</th><th>Teléfono</th><th>Email</th><th>LinkedIn</th><th>Mensaje de 5 capas</th></tr></thead><tbody>';
     candidates.forEach(function (m) {
       var checked = state.selected.has(String(m.id)) ? ' checked' : '';
       html += '<tr><td><input type="checkbox" data-action="enroll-check" data-id="' + esc(String(m.id)) + '"' + checked + '></td>' +
@@ -1049,7 +899,7 @@
         '<td>' + (hasPhone(m) ? pill('sí', 'green') : (needsWa ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
         '<td>' + (hasEmail(m) ? pill('sí', 'green') : (needsEmail ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
         '<td>' + (m.linkedin_url ? pill('sí', 'green') : (needsLi ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
-        '<td>' + (hasAi(m) ? pill('listos', 'green') : (needsAi ? pill('sin generar', 'amber') : pill('—', 'gray'))) + '</td></tr>';
+        '<td>' + (hasAi(m) ? pill('listo', 'green') : (needsAi ? pill('lo escribe el motor', 'gray') : pill('—', 'gray'))) + '</td></tr>';
     });
     html += '</tbody></table></div>';
     card.insertAdjacentHTML('beforeend', html);
@@ -1057,7 +907,7 @@
     if (needsWa) hints.push('WhatsApp necesita teléfono revelado (pestaña Listas → Enriquecer).');
     if (needsEmail) hints.push('Email necesita email revelado.');
     if (needsLi) hints.push('LinkedIn necesita la URL del perfil del lead.');
-    if (needsAi) hints.push('Los pasos "Mensaje IA" usan lo generado en Generador de mensajes IA; sin eso el paso se omite.');
+    if (needsAi) hints.push('Los pasos IA se escriben 24 h antes del envío; la apertura reutiliza el mensaje de 5 capas si ya existe.');
     var foot = h('div', { style: 'padding:10px 14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center' });
     foot.appendChild(h('span', { class: 'pros-hint', style: 'flex:1', text: hints.join(' ') }));
     if (needsAi) {
@@ -1070,6 +920,8 @@
   }
 
   function renderEnrollmentsTable(c) {
+    var L = flowLib();
+    var flow = campaignFlow(c);
     var card = h('div', { class: 'table-card' });
     var head = h('div', { class: 'table-head' });
     head.appendChild(h('span', { style: 'font-size:14px;font-weight:700', text: 'Leads en la campaña (' + state.enrollments.length + ')' }));
@@ -1081,22 +933,25 @@
     }
     var byEnroll = {};
     state.events.forEach(function (ev) { (byEnroll[ev.enrollment_id] = byEnroll[ev.enrollment_id] || []).push(ev); });
-    var html = '<div class="pros-scroll-x"><table><thead><tr><th>Lead</th><th>Estado</th><th>Próximo paso</th><th>Último evento</th><th></th></tr></thead><tbody>';
+    var html = '<div class="pros-scroll-x"><table><thead><tr><th>Lead</th><th>Estado</th><th>Paso actual</th><th>Último evento</th><th></th></tr></thead><tbody>';
     state.enrollments.forEach(function (e) {
       var m = e.member || {};
       var s = ENROLL_STATUS[e.status] || ENROLL_STATUS.active;
-      var step = c.steps.find(function (x) { return Number(x.position) === Number(e.next_position); });
+      var loc = L.find(flow, e.next_node_id);
       var evs = byEnroll[e.id] || [];
       var last = evs[0];
-      var next = (e.status === 'active' && step)
-        ? esc(labelOf(CHANNELS, step.channel)) + ' · ' + esc(fmtDateTime(e.next_run_at))
+      var path = Array.isArray(e.branch_path) ? e.branch_path : [];
+      var pathTxt = path.length ? path.map(function (p) { var cl = L.CONDITION_LABELS[p.check]; return (cl ? cl.label : p.check) + ': ' + (p.branch === 'yes' ? 'Sí' : 'No'); }).join(' · ') : '';
+      var next = (e.status === 'active' || e.status === 'processing' || e.status === 'paused') && loc
+        ? esc(L.nodeTitle(loc.node)) + (e.next_run_at && e.status !== 'paused' ? '<div class="pros-cellsub">' + esc(fmtDateTime(e.next_run_at)) + '</div>' : '')
         : (e.stop_reason ? esc(e.stop_reason) : '—');
+      if (pathTxt) next += '<div class="pros-cellsub">' + esc(pathTxt) + '</div>';
       var open = state.expanded.has(String(e.id));
       html += '<tr>' +
         '<td><div style="font-weight:600">' + esc(memberName(m)) + '</div><div class="pros-cellsub">' + esc(m.company || '') + '</div></td>' +
         '<td>' + pill(s.label, s.pill) + (e.error_detail ? '<div class="pros-cellsub" style="color:var(--red)">' + esc(e.error_detail) + '</div>' : '') + '</td>' +
         '<td style="font-size:12px">' + next + '</td>' +
-        '<td style="font-size:12px">' + (last ? esc(EVENT_LABEL[last.type] || last.type) + ' · ' + esc(labelOf(CHANNELS, last.channel) === last.channel ? last.channel : labelOf(CHANNELS, last.channel)) + '<div class="pros-cellsub">' + esc(fmtDateTime(last.created_at)) + '</div>' : '—') + '</td>' +
+        '<td style="font-size:12px">' + (last ? esc(EVENT_LABEL[last.type] || last.type) + ' · ' + esc(channelLabel(last.channel)) + '<div class="pros-cellsub">' + esc(fmtDateTime(last.created_at)) + '</div>' : '—') + '</td>' +
         '<td style="white-space:nowrap;text-align:right">' +
           (e.status === 'active' ? '<button type="button" class="btn btn-ghost btn-sm" data-action="en-pause" data-id="' + esc(String(e.id)) + '">Pausar</button>' : '') +
           (e.status === 'paused' || e.status === 'error' ? '<button type="button" class="btn btn-ghost btn-sm" data-action="en-resume" data-id="' + esc(String(e.id)) + '">Reanudar</button>' : '') +
@@ -1106,7 +961,8 @@
       if (open) {
         html += '<tr><td colspan="5"><div class="cmp-timeline">' +
           (evs.length ? evs.map(function (ev) {
-            return '<div><time>' + esc(fmtDateTime(ev.created_at)) + '</time>' + esc(labelOf(CHANNELS, ev.channel) === ev.channel ? ev.channel : labelOf(CHANNELS, ev.channel)) + ' · ' + esc(EVENT_LABEL[ev.type] || ev.type) + (ev.detail ? ' — ' + esc(ev.detail) : '') + '</div>';
+            var nloc = L.find(flow, ev.node_id);
+            return '<div><time>' + esc(fmtDateTime(ev.created_at)) + '</time>' + esc(channelLabel(ev.channel)) + ' · ' + esc(EVENT_LABEL[ev.type] || ev.type) + (nloc ? ' · ' + esc(L.nodeTitle(nloc.node)) : '') + (ev.detail ? ' — ' + esc(ev.detail) : '') + '</div>';
           }).join('') : '<div>Sin eventos todavía.</div>') +
           '</div></td></tr>';
       }
@@ -1120,6 +976,7 @@
   function onClick(e) {
     var btn = e.target.closest ? e.target.closest('[data-action]') : null;
     if (!btn || btn.tagName === 'INPUT') return;
+    if (state.builderHost && state.builderHost.contains(btn)) return; // lo maneja el builder
     var action = btn.getAttribute('data-action');
     var id = btn.getAttribute('data-id');
 
@@ -1156,45 +1013,19 @@
       if (c9) downloadDripifyCsv(c9);
       return;
     }
-    if (action === 'cmp-new') {
-      state.editor = newEditor(null);
-      render();
-      return loadEmailAccounts().then(function () { if (state.editor) render(); });
-    }
+    if (action === 'cmp-new') return openBuilder(null);
     if (action === 'cmp-open') return openCampaign(id);
-    if (action === 'cmp-cancel') { state.editor = null; return render(); }
     if (action === 'cmp-edit') {
       var c0 = findCampaign(state.activeId);
       if (!c0) return;
-      state.editor = newEditor(c0);
-      render();
-      return loadEmailAccounts().then(function () { if (state.editor) render(); });
-    }
-    if (action === 'step-add') {
-      state.editor.steps.push({ channel: 'whatsapp', offset_hours: 0, condition: 'if_no_reply', content_kind: 'template_a' });
-      state.editor.campaign.recommended = false;
-      return render();
-    }
-    if (action === 'step-recommended') { state.editor.steps = recommendedSteps(); state.editor.campaign.recommended = true; return render(); }
-    if (action === 'step-del') {
-      state.editor.steps.splice(Number(btn.getAttribute('data-idx')), 1);
-      state.editor.campaign.recommended = false;
-      return render();
-    }
-    if (action === 'cmp-save') {
-      var restore = btnLoading(btn, '⏳ Guardando…');
-      var ed = state.editor;
-      return saveCampaign(ed).then(function (newId) {
-        state.editor = null;
-        toast(ed.isNew ? 'Campaña creada. Actívala y enrola leads para empezar.' : 'Campaña guardada.', 'success');
-        return loadCampaigns().then(function () { return openCampaign(newId); });
-      }).then(restore, function (err) { restore(); throw err; });
+      return openBuilder(c0);
     }
     if (action === 'cmp-status') {
       var status = btn.getAttribute('data-status');
       var c1 = findCampaign(state.activeId);
       if (!c1) return;
-      if (status === 'active' && !state.account && c1.steps.some(function (s) { return s.channel === 'whatsapp'; })) {
+      if (status === 'active' && !flowActions(c1).length) return toast('La campaña no tiene pasos: edítala antes de activarla.', 'warn');
+      if (status === 'active' && !state.account && flowActions(c1).some(function (a) { return a.channel === 'whatsapp'; })) {
         toast('Conecta WATI antes de activar una campaña con WhatsApp.', 'warn');
       }
       var r1 = btnLoading(btn, '⏳');
@@ -1234,10 +1065,41 @@
       if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
       return render();
     }
+    if (action === 'msg-approve' && id) {
+      var row = btn.closest('[data-msg]');
+      var subjI = row && row.querySelector('[data-field="subject"]');
+      var bodyI = row && row.querySelector('[data-field="body"]');
+      var body = bodyI ? bodyI.value.trim() : '';
+      if (!body) return toast('El mensaje está vacío.', 'warn');
+      var patch = { status: 'approved', approved_at: new Date().toISOString(), body: body };
+      if (subjI) patch.subject = subjI.value.trim();
+      var r3 = btnLoading(btn, '⏳');
+      return updateMessage(id, patch).then(function () { toast('Mensaje aprobado: sale en su turno.', 'success'); return loadEnrollments(state.activeId).then(render); }).then(r3, function (err) { r3(); throw err; });
+    }
+    if (action === 'msg-skip' && id) {
+      return updateMessage(id, { status: 'skipped' }).then(function () { toast('Paso omitido para ese lead.', 'success'); return loadEnrollments(state.activeId).then(render); });
+    }
+    if (action === 'msg-approve-all') {
+      var drafts = state.messages.filter(function (m) { return m.status === 'draft' && String(m.body || '').trim(); });
+      if (!drafts.length) return;
+      return confirmModal({
+        title: 'Aprobar todos', confirmLabel: 'Aprobar',
+        message: 'Se aprueban ' + drafts.length + ' mensajes tal como están y salen en su turno.',
+        onConfirm: function () {
+          var now = new Date().toISOString();
+          return sb().from('campaign_messages').update({ status: 'approved', approved_at: now }).in('id', drafts.map(function (m) { return m.id; })).then(function (res) {
+            if (res.error) throw new Error(res.error.message);
+            toast(drafts.length + ' mensajes aprobados.', 'success');
+            return loadEnrollments(state.activeId).then(render);
+          });
+        },
+      });
+    }
   }
 
   function onChange(e) {
     var t = e.target;
+    if (state.builderHost && state.builderHost.contains(t)) return;
     var action = t.getAttribute && t.getAttribute('data-action');
     if (action === 'enroll-check') {
       var id = t.getAttribute('data-id');
@@ -1255,7 +1117,7 @@
   }
 
   async function openCampaign(id) {
-    state.editor = null;
+    closeBuilder();
     state.activeId = id;
     state.selected.clear();
     render();
@@ -1279,6 +1141,7 @@
       built = true;
     }
     if (!built) return;
+    if (state.builder) { render(); return; } // no perder un borrador a medio armar
     state.loading = true;
     render();
     try {
