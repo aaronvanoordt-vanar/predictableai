@@ -692,7 +692,13 @@ async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
       bot_name: "Notetaker",
       recording_config: {
         transcript: {
-          provider: { recallai_streaming: { language_code: "es" } },
+          // mode explícito: SIN esto Recall usa "prioritize_accuracy" por default,
+          // que corre modelos async (no realtime) y puede demorar 3-10 MINUTOS en
+          // entregar transcript.data — visto en producción como un solo bloque de
+          // texto llegando de golpe tras ~90s en vez de ir llegando en vivo.
+          // "prioritize_low_latency" da actualizaciones cada 1-3s, como corresponde
+          // a un coach EN VIVO.
+          provider: { recallai_streaming: { language_code: "es", mode: "prioritize_low_latency" } },
         },
         realtime_endpoints: [{
           type: "webhook",
