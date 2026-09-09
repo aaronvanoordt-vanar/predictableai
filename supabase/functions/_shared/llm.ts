@@ -181,6 +181,14 @@ export interface LlmCall {
   claudeModel?: string;
   /** Anthropic output_config.effort, e.g. "medium". */
   claudeEffort?: string;
+  /**
+   * OpenAI reasoning.effort ("minimal" | "low" | "medium" | "high"). GPT-5's
+   * reasoning tokens count against max_output_tokens: with the default
+   * (medium) a 2k budget can be eaten before the JSON answer, which then
+   * arrives truncated ("Unterminated JSON"). Latency-critical callers set
+   * "low"/"minimal".
+   */
+  openaiReasoningEffort?: string;
   /** When set, the engine is asked for JSON matching this schema. */
   jsonSchema?: Record<string, unknown>;
   /** PDF attachments. Claude and OpenAI only. */
@@ -417,6 +425,7 @@ async function callOpenAI(
     input: [{ role: "user", content }],
     max_output_tokens: opts.maxTokens,
   };
+  if (opts.openaiReasoningEffort) body.reasoning = { effort: opts.openaiReasoningEffort };
   if (opts.webSearch && opts.webSearch > 0) body.tools = [{ type: "web_search" }];
   if (opts.jsonSchema) {
     body.text = {
@@ -510,6 +519,12 @@ function extract(engine: Engine, raw: string): string {
     if (!texts.length) {
       const reason = data?.incomplete_details?.reason || data?.status || "sin contenido";
       throw new Error(`OpenAI devolvió una respuesta sin texto (${reason})`);
+    }
+    // A truncated answer is worse than none: the caller would try to parse
+    // half a JSON object. Surface the real cause (max_output_tokens) instead.
+    if (data?.status === "incomplete") {
+      const reason = data?.incomplete_details?.reason || "incomplete";
+      throw new Error(`OpenAI devolvió una respuesta incompleta (${reason}) — sube maxTokens o baja reasoning effort`);
     }
     return texts.join("\n").trim();
   }

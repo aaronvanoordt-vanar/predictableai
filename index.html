@@ -3525,6 +3525,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/whatsapp-inbox.js"></script>
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
+<script src="js/meeting-report.js"></script>
 <script src="js/coach-lead-picker.js"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js"></script>
@@ -3918,263 +3919,17 @@ function initDealsCharts() { /* la vista de deals muestra empty state hasta tene
 // fallback a reportes históricos con el schema viejo (verdict, scores,
 // highlights, missed, next_steps como strings): pinta lo que exista.
 // El backend ya persiste el reporte en sales_reports — aquí solo se lee.
+// Render + carga viven en js/meeting-report.js (MeetingReport). Estos
+// wrappers se conservan porque switchReportTab y js/realtime-coach.js los
+// llaman por nombre.
 function renderLastMeetingReport(data) {
-  const e = window.escHtml || (s => String(s == null ? '' : s));
-  const r = data.report || {};
-  const scoreTotal = Math.round(Number(data.score_total != null ? data.score_total : r.score_total) || 0);
-  const scoreColor = scoreTotal >= 80 ? 'var(--green)' : scoreTotal >= 60 ? 'var(--amber)' : 'var(--red)';
-  const sdrName = data.sdr_name || data.sdr_email || 'SDR';
-  const dateStr = data.started_at ? new Date(data.started_at).toLocaleDateString('es-MX', { day:'numeric', month:'long', year:'numeric' }) : '';
-  const durationMin = data.duration_seconds ? Math.round(data.duration_seconds / 60) + ' min' : '';
-  const meta = [dateStr, durationMin, sdrName, data.prospect_company].filter(Boolean).join(' · ');
-
-  const TEMP = {
-    frio:     { label: 'Lead frío',     color: 'var(--teal)',  soft: 'var(--cyan-soft)' },
-    tibio:    { label: 'Lead tibio',    color: 'var(--amber)', soft: 'var(--amber-soft)' },
-    caliente: { label: 'Lead caliente', color: 'var(--green)', soft: 'var(--green-soft)' }
-  };
-  const tempKey = String(r.temperatura_lead || '').toLowerCase().replace('í', 'i');
-  const temp = TEMP[tempKey] || null;
-
-  const prob = (r.probabilidad_avance != null && !isNaN(Number(r.probabilidad_avance)))
-    ? Math.max(0, Math.min(100, Math.round(Number(r.probabilidad_avance)))) : null;
-  const probColor = prob == null ? 'var(--text3)' : prob >= 70 ? 'var(--green)' : prob >= 40 ? 'var(--amber)' : 'var(--red)';
-
-  let html = '';
-
-  // ── Header: prospecto + fecha + score + temperatura + probabilidad ──
-  html += '<div style="background:linear-gradient(135deg,rgba(47,102,255,.07),rgba(6,182,212,.04));border:1px solid rgba(47,102,255,.18);border-radius:14px;padding:24px 28px;margin-bottom:16px">';
-  html +=   '<div style="display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap">';
-  html +=     '<div style="display:flex;align-items:center;gap:16px;min-width:0">';
-  html +=       '<div style="width:48px;height:48px;border-radius:12px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">👤</div>';
-  html +=       '<div style="min-width:0">';
-  html +=         '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:4px">ÚLTIMA REUNIÓN</div>';
-  html +=         '<div style="font-size:18px;font-weight:800;color:var(--text)">' + e(data.prospect_name || 'Prospecto') + (data.meeting_type ? ' <span style="font-weight:600;color:var(--text3)">— ' + e(data.meeting_type) + '</span>' : '') + '</div>';
-  html +=         '<div style="font-size:12px;color:var(--text3);margin-top:2px">' + e(meta || '—') + '</div>';
-  html +=       '</div>';
-  html +=     '</div>';
-  html +=     '<div style="display:flex;align-items:center;gap:18px">';
-  if (temp) {
-    html +=     '<span style="font-size:11px;font-weight:700;padding:5px 12px;border-radius:20px;background:' + temp.soft + ';color:' + temp.color + ';border:1px solid ' + temp.color + ';white-space:nowrap">' + temp.label + '</span>';
-  }
-  html +=       '<div style="text-align:right">';
-  html +=         '<div style="font-size:11px;color:var(--text3);margin-bottom:4px">Score total</div>';
-  html +=         '<div style="font-size:36px;font-weight:900;font-family:var(--font-mono);line-height:1;color:' + scoreColor + '">' + scoreTotal + '</div>';
-  html +=         '<div style="font-size:11px;color:var(--text3)">/100</div>';
-  html +=       '</div>';
-  html +=     '</div>';
-  html +=   '</div>';
-  if (prob != null) {
-    html += '<div style="margin-top:18px">';
-    html +=   '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
-    html +=     '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">Probabilidad de avance</span>';
-    html +=     '<span style="font-size:13px;font-weight:800;font-family:var(--font-mono);color:' + probColor + '">' + prob + '%</span>';
-    html +=   '</div>';
-    html +=   '<div style="height:8px;border-radius:4px;background:var(--surface2);border:1px solid var(--border);overflow:hidden">';
-    html +=     '<div style="height:100%;width:' + prob + '%;border-radius:4px;background:' + probColor + '"></div>';
-    html +=   '</div>';
-    html += '</div>';
-  }
-  html += '</div>';
-
-  // ── Resumen (schema nuevo) ──
-  if (r.resumen) {
-    html += '<div class="chart-card" style="margin-bottom:16px">';
-    html +=   '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:10px">Resumen</div>';
-    html +=   '<div style="font-size:13.5px;color:var(--text2);line-height:1.7">' + e(r.resumen) + '</div>';
-    html += '</div>';
-  }
-
-  // ── Skill scores (ambos schemas) ──
-  const scores = r.scores || {};
-  const scoreItems = [
-    ['Escucha activa', scores.active_listening, 'var(--green)'],
-    ['Profundización del dolor', scores.pain_deepening, 'var(--teal)'],
-    ['Control del ritmo', scores.pace_control, 'var(--amber)'],
-    ['Manejo de objeciones', scores.objection_handling, 'var(--accent-ink)']
-  ];
-  if (scoreItems.some(it => it[1] != null)) {
-    html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">';
-    scoreItems.forEach(function (it) {
-      html += '<div style="text-align:center;padding:14px 12px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">';
-      html +=   '<div style="font-size:24px;font-weight:900;font-family:var(--font-mono);color:' + it[2] + '">' + (it[1] != null ? e(Math.round(Number(it[1]) || 0)) : '—') + '</div>';
-      html +=   '<div style="font-size:11px;color:var(--text3);margin-top:4px">' + it[0] + '</div>';
-      html += '</div>';
-    });
-    html += '</div>';
-  }
-
-  // ── Insights clave (schema nuevo) ──
-  const INSIGHT_TIPOS = {
-    oportunidad:  { label: 'Oportunidad',     color: 'var(--green)',      soft: 'var(--green-soft)' },
-    riesgo:       { label: 'Riesgo',          color: 'var(--red)',        soft: 'var(--red-soft)' },
-    senal_compra: { label: 'Señal de compra', color: 'var(--teal)',       soft: 'var(--cyan-soft)' },
-    dato_clave:   { label: 'Dato clave',      color: 'var(--accent-ink)', soft: 'var(--accent-soft)' }
-  };
-  const insights = Array.isArray(r.insights) ? r.insights.filter(function (i) { return i && (i.titulo || i.detalle); }) : [];
-  if (insights.length) {
-    html += '<div style="margin-bottom:16px">';
-    html +=   '<div style="font-size:13px;font-weight:800;margin-bottom:10px">Insights clave</div>';
-    html +=   '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">';
-    insights.forEach(function (ins) {
-      const t = INSIGHT_TIPOS[String(ins.tipo || '').toLowerCase()] || { label: ins.tipo || 'Insight', color: 'var(--text3)', soft: 'var(--surface2)' };
-      html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px">';
-      html +=   '<span style="display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:3px 9px;border-radius:20px;background:' + t.soft + ';color:' + t.color + ';margin-bottom:8px">' + e(t.label) + '</span>';
-      if (ins.titulo) html += '<div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">' + e(ins.titulo) + '</div>';
-      if (ins.detalle) html += '<div style="font-size:12.5px;color:var(--text2);line-height:1.6">' + e(ins.detalle) + '</div>';
-      html += '</div>';
-    });
-    html +=   '</div>';
-    html += '</div>';
-  }
-
-  // ── Objeciones reales de la reunión (schema nuevo: array de objetos) ──
-  const RESULT = {
-    superada:    { label: 'Superada',    color: 'var(--green)', soft: 'var(--green-soft)' },
-    parcial:     { label: 'Parcial',     color: 'var(--amber)', soft: 'var(--amber-soft)' },
-    no_resuelta: { label: 'No resuelta', color: 'var(--red)',   soft: 'var(--red-soft)' }
-  };
-  const objections = (Array.isArray(r.objections) ? r.objections : []).filter(function (o) { return o && typeof o === 'object' && (o.objection || o.quote); });
-  if (objections.length) {
-    html += '<div style="margin-bottom:16px">';
-    html +=   '<div style="font-size:13px;font-weight:800;margin-bottom:10px">Objeciones reales de la reunión</div>';
-    html +=   '<div style="display:flex;flex-direction:column;gap:10px">';
-    objections.forEach(function (o) {
-      const res = RESULT[String(o.result || '').toLowerCase()] || null;
-      html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px">';
-      html +=   '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">';
-      html +=     '<span style="font-size:13px;font-weight:700;color:var(--text)">' + e(o.objection || 'Objeción') + '</span>';
-      if (o.categoria) html += '<span class="pill pill-gray" style="font-size:10px;text-transform:capitalize">' + e(o.categoria) + '</span>';
-      if (res) html +=   '<span style="font-size:10px;font-weight:700;padding:3px 9px;border-radius:20px;background:' + res.soft + ';color:' + res.color + ';margin-left:auto">' + res.label + '</span>';
-      html +=   '</div>';
-      if (o.quote) {
-        html += '<div style="border-left:3px solid var(--border);padding:6px 12px;margin-bottom:10px;font-size:12.5px;color:var(--text2);font-style:italic;line-height:1.6">“' + e(o.quote) + '”</div>';
-      }
-      if (o.how_handled) {
-        html += '<div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:8px"><strong style="color:var(--text)">Cómo se manejó:</strong> ' + e(o.how_handled) + '</div>';
-      }
-      if (o.suggested_response) {
-        html += '<div style="background:var(--green-soft);border:1px solid rgba(14,169,104,.25);border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.6;color:var(--text2)"><strong style="color:var(--green)">Respuesta sugerida:</strong> ' + e(o.suggested_response) + '</div>';
-      }
-      html += '</div>';
-    });
-    html +=   '</div>';
-    html += '</div>';
-  }
-
-  // ── Lo que hizo bien / oportunidades perdidas (ambos schemas) ──
-  const highlights = Array.isArray(r.highlights) ? r.highlights.filter(Boolean) : [];
-  const missed = Array.isArray(r.missed) ? r.missed.filter(Boolean) : [];
-  if (highlights.length || missed.length) {
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">';
-    html +=   '<div class="chart-card">';
-    html +=     '<div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--green)">✓ Lo que hizo bien</div>';
-    html +=     '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.9;color:var(--text2)">' + (highlights.map(function (h) { return '<li>' + e(h) + '</li>'; }).join('') || '<li style="color:var(--text3)">—</li>') + '</ul>';
-    html +=   '</div>';
-    html +=   '<div class="chart-card">';
-    html +=     '<div style="font-size:12px;font-weight:800;margin-bottom:10px;color:var(--amber)">⚠ Oportunidades perdidas</div>';
-    html +=     '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.9;color:var(--text2)">' + (missed.map(function (m) { return '<li>' + e(m) + '</li>'; }).join('') || '<li style="color:var(--text3)">—</li>') + '</ul>';
-    html +=   '</div>';
-    html += '</div>';
-  }
-
-  // ── Feedback del coach (schema nuevo) ──
-  const fb = (r.feedback && typeof r.feedback === 'object') ? r.feedback : null;
-  const fort = fb && Array.isArray(fb.fortalezas) ? fb.fortalezas.filter(Boolean) : [];
-  const mejoras = fb && Array.isArray(fb.areas_mejora) ? fb.areas_mejora.filter(Boolean) : [];
-  if (fb && (fort.length || mejoras.length || fb.consejo_principal)) {
-    html += '<div class="chart-card" style="margin-bottom:16px">';
-    html +=   '<div style="font-size:13px;font-weight:800;margin-bottom:12px">Feedback del coach</div>';
-    if (fort.length || mejoras.length) {
-      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:' + (fb.consejo_principal ? '14px' : '0') + '">';
-      html +=   '<div>';
-      html +=     '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--green);margin-bottom:8px">Fortalezas</div>';
-      html +=     '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.8;color:var(--text2)">' + (fort.map(function (f) { return '<li>' + e(f) + '</li>'; }).join('') || '<li style="color:var(--text3)">—</li>') + '</ul>';
-      html +=   '</div>';
-      html +=   '<div>';
-      html +=     '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--amber);margin-bottom:8px">Áreas de mejora</div>';
-      html +=     '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.8;color:var(--text2)">' + (mejoras.map(function (m) { return '<li>' + e(m) + '</li>'; }).join('') || '<li style="color:var(--text3)">—</li>') + '</ul>';
-      html +=   '</div>';
-      html += '</div>';
-    }
-    if (fb.consejo_principal) {
-      html += '<div style="background:var(--accent-soft);border:1px solid rgba(47,102,255,.22);border-radius:10px;padding:14px 16px">';
-      html +=   '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--accent-ink);margin-bottom:6px">Consejo principal</div>';
-      html +=   '<div style="font-size:13.5px;font-weight:600;color:var(--text);line-height:1.6">' + e(fb.consejo_principal) + '</div>';
-      html += '</div>';
-    }
-    html += '</div>';
-  }
-
-  // ── Próximos pasos (nuevo: objetos {accion,detalle,cuando} · viejo: strings) ──
-  const nextSteps = Array.isArray(r.next_steps) ? r.next_steps.filter(Boolean) : [];
-  if (nextSteps.length) {
-    html += '<div class="chart-card" style="margin-bottom:16px">';
-    html +=   '<div style="font-size:13px;font-weight:800;margin-bottom:12px">Próximos pasos</div>';
-    html +=   '<div style="display:flex;flex-direction:column;gap:10px">';
-    nextSteps.forEach(function (n) {
-      const isObj = n && typeof n === 'object';
-      const accion = isObj ? (n.accion || '') : String(n);
-      const detalle = isObj ? (n.detalle || '') : '';
-      const cuando = isObj ? (n.cuando || '') : '';
-      if (!accion && !detalle) return;
-      html += '<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px">';
-      html +=   '<div style="width:18px;height:18px;border-radius:5px;border:2px solid var(--teal);flex-shrink:0;margin-top:1px"></div>';
-      html +=   '<div style="min-width:0;flex:1">';
-      html +=     '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
-      html +=       '<span style="font-size:13px;font-weight:700;color:var(--text)">' + e(accion || detalle) + '</span>';
-      if (cuando) html += '<span class="pill pill-teal" style="font-size:10px">' + e(cuando) + '</span>';
-      html +=     '</div>';
-      if (accion && detalle) html += '<div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-top:3px">' + e(detalle) + '</div>';
-      html +=   '</div>';
-      html += '</div>';
-    });
-    html +=   '</div>';
-    html += '</div>';
-  }
-
-  // ── Veredicto (ambos schemas) ──
-  if (r.verdict) {
-    html += '<div class="chart-card">';
-    html +=   '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">Veredicto</div>';
-    html +=   '<div style="font-size:15px;font-weight:700;color:var(--text);line-height:1.6">' + e(r.verdict) + '</div>';
-    html += '</div>';
-  }
-
-  return html;
+  return window.MeetingReport ? window.MeetingReport.render(data, false) : '';
 }
 
 async function loadLastMeeting() {
-  const loading = document.getElementById('last-meeting-loading');
-  const content = document.getElementById('last-meeting-content');
+  if (window.MeetingReport) return window.MeetingReport.loadLast();
   const empty = document.getElementById('last-meeting-empty');
-  if (window.Skeleton) {
-    const S = window.Skeleton;
-    loading.style.cssText = 'text-align:left';
-    loading.innerHTML =
-      '<div class="sk-card" style="flex-direction:row;align-items:center;justify-content:space-between;margin-bottom:16px">' +
-        '<div class="sk-row">' + S.circle(48) +
-          '<div style="display:flex;flex-direction:column;gap:8px">' + S.line(90, 10) + S.line(150, 16) + S.line(120, 10) + '</div>' +
-        '</div>' + S.line(56, 34) +
-      '</div>' +
-      S.statCards(4, { min: 130 }) +
-      '<div class="sk-card" style="margin-top:16px">' + S.line('40%', 13) + S.paragraph(3) + '</div>';
-  }
-  loading.style.display = 'block';
-  content.style.display = 'none';
-  empty.style.display = 'none';
-  try {
-    const data = await window.api.getLastMeetingReport({});
-    loading.style.display = 'none';
-    if (!data) { empty.style.display = 'block'; return; }
-    content.innerHTML = renderLastMeetingReport(data);
-    content.style.display = 'block';
-    content.classList.add('sk-reveal');
-  } catch (e) {
-    loading.style.display = 'none';
-    empty.style.display = 'block';
-    console.warn('loadLastMeeting error:', e);
-  }
+  if (empty) empty.style.display = 'block';
 }
 
 // ── OBJECIONES (datos reales, vía sales-coach/getObjectionsReport) ──
@@ -4371,7 +4126,11 @@ async function loadMyPerformance() {
         const dur  = r.duration_seconds ? Math.round(r.duration_seconds/60)+' min' : '—';
         const sc   = r.score_total || 0;
         const e = window.escHtml || (s => s);
-        return '<tr>' +
+        // sales_reports.meeting_id apunta a coach_meetings: abre el reporte completo.
+        const openAttr = r.meeting_id
+          ? ' data-meeting-id="'+e(r.meeting_id)+'" style="cursor:pointer" title="Ver reporte completo" onclick="MeetingReport.open(this.dataset.meetingId)"'
+          : '';
+        return '<tr'+openAttr+'>' +
           '<td><strong>'+e(r.prospect_name||'—')+'</strong></td>' +
           '<td>'+e(r.prospect_company||'—')+'</td>' +
           '<td>'+date+'</td>' +

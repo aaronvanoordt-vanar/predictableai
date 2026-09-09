@@ -277,10 +277,18 @@
     if (urlInput) urlInput.value = '';
     try {
       const final = await global.api.endMeeting({ meeting_id: meetId });
-      toast('Reunión finalizada — score: ' + (final.score_total || 0), 'success');
+      // Modo bot: la transcripción de Recall puede llegar minutos después;
+      // el backend devuelve pending y la pestaña "Última reunión" hace polling.
+      if (final && final.pending) {
+        toast('Reunión finalizada · Generando el reporte, puede tardar unos minutos', 'success');
+      } else {
+        toast('Reunión finalizada — score: ' + ((final && final.score_total) || 0), 'success');
+      }
       setTimeout(function () {
         if (typeof nav === 'function') {
           nav(document.querySelector('[data-page=ventas-reportes]'), 'ventas-reportes');
+          const lastMeetingTab = document.querySelector('#page-ventas-reportes .tab[onclick*="rep-meeting"]');
+          if (lastMeetingTab && typeof switchReportTab === 'function') switchReportTab(lastMeetingTab, 'rep-meeting');
         }
       }, 800);
     } catch (e) {
