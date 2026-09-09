@@ -2,17 +2,22 @@
  * js/clients.js — Sección "Clients" (workspace estilo Notion)
  * ─────────────────────────────────────────────────────────────────────────────
  * Vista de cuadrícula de clientes (con foto) + dashboard editable por cliente:
- * status, links (brief / campañas / matriz / kick off), CRM (métricas críticas
- * + Google Sheets embebido), material de apoyo (PDFs en Supabase Storage),
- * notas, ICP, industrias y países objetivo (multiselect Latam).
+ * status, links (brief / campañas / matriz / kick off), CRM (métricas críticas,
+ * incl. follow ups pendientes, + Google Sheets embebido), material de apoyo
+ * (PDFs en Supabase Storage), notas, ICP, industrias y países objetivo
+ * (multiselect Latam).
  *
  * Renderiza en #clients-shell (dentro de #page-clients). Lazy: el primer
  * window.clientsModule.show() construye el shell. Autosave con debounce al
  * editar campos (patrón Notion: sin botón "guardar" salvo indicador).
  *
  * Cada cliente tiene un share_token: el botón "Copiar link del portal" genera
- * client.html?token=… — el cliente final crea su cuenta ahí y ve su dashboard
- * en solo-lectura (RLS: client_access vía RPC claim_client_access).
+ * client.html?token=… — ese link abre el portal SIN login y deja que el cliente
+ * final mantenga su propio contexto (ICP, industrias, notas, países, logo y sus
+ * PDFs). Lo que edita entra por la edge function `client-portal`; las métricas
+ * del CRM, el status, las fechas y los links de trabajo siguen siendo de este
+ * lado. El interruptor "Portal editable" (clients.portal_can_edit) lo deja en
+ * solo lectura sin romper el link.
  *
  * Data: Supabase directo (tabla clients / client_materials, bucket privado
  * client-assets con signed URLs). Todo string dinámico pasa por escHtml y
@@ -72,6 +77,7 @@
     { k: 'meetings_held',      label: 'Reuniones tomadas' },
     { k: 'no_shows',           label: 'No shows' },
     { k: 'disqualified',       label: 'Descalificadas' },
+    { k: 'follow_ups_pending', label: 'Follow ups pendientes' },
   ];
 
   var LINK_FIELDS = [
@@ -79,6 +85,25 @@
     { k: 'campaigns_url',         label: 'Campañas' },
     { k: 'matriz_url',            label: 'Matriz' },
     { k: 'kickoff_url',           label: 'Kick Off' },
+  ];
+
+  // Cada ratio se calcula sobre el dato anterior del embudo (no siempre sobre
+  // "contactados"): reply rate es de los que leyeron, conversion rate es de
+  // los que respondieron. type/target son el umbral mínimo aceptable —
+  // 'min' quiere decir "al menos", 'max' quiere decir "cuando mucho".
+  var THRESHOLDS = [
+    { key: 'open',         label: 'Open rate',         hint: 'leídos / contactados',        type: 'min', target: 50,
+      n: function (m) { return num(m.opened); },            d: function (m) { return num(m.contacted); } },
+    { key: 'reply',        label: 'Reply rate',        hint: 'respondidos / leídos',        type: 'min', target: 30,
+      n: function (m) { return num(m.replied); },           d: function (m) { return num(m.opened); } },
+    { key: 'conversion',   label: 'Conversion rate',   hint: 'agendadas / respondidos',     type: 'min', target: 5,
+      n: function (m) { return num(m.meetings_scheduled); }, d: function (m) { return num(m.replied); } },
+    { key: 'no_show',      label: 'No-show rate',      hint: 'no shows / agendadas',        type: 'max', target: 25,
+      n: function (m) { return num(m.no_shows); },          d: function (m) { return num(m.meetings_scheduled); } },
+    { key: 'disqualified', label: 'Disqualified rate', hint: 'descalificadas / agendadas',  type: 'max', target: 20,
+      n: function (m) { return num(m.disqualified); },      d: function (m) { return num(m.meetings_scheduled); } },
+    { key: 'follow_up',    label: 'Follow-up rate',    hint: 'pendientes / tomadas',        type: 'max', target: 20,
+      n: function (m) { return num(m.follow_ups_pending); }, d: function (m) { return num(m.meetings_held); } },
   ];
 
   // ── Module state ───────────────────────────────────────────────────────
@@ -91,6 +116,7 @@
     loading: false,
     error: null,
     current: null,          // client row being viewed
+    sheetState: null,       // último sync del Google Sheets (client_sheet_state)
     materials: [],
     photoUrl: null,         // signed url of current client photo
     gridPhotoUrls: {},      // path -> signed url
@@ -120,6 +146,41 @@
     var res = await sb().from('clients').select('*').eq('id', id).maybeSingle();
     if (res.error) throw res.error;
     return res.data;
+  }
+
+  async function fetchSheetState(id) {
+    var res = await sb().from('client_sheet_state')
+      .select('synced_at,ok,error,crm_tab,metrics_tab,row_count,dated_row_count')
+      .eq('client_id', id).maybeSingle();
+    if (res.error) return null;   // tabla aún no migrada: no rompe el dashboard
+    return res.data;
+  }
+
+  /**
+   * Pide a la edge function `sheet-sync` que relea el Google Sheets. La
+   * autorización la decide RLS: la función consulta clients con el JWT de quien
+   * llama, así que solo sincroniza clientes que ya puede ver.
+   */
+  async function syncSheet(id) {
+    var cfg = window.SUPABASE_CONFIG || {};
+    var session = await sb().auth.getSession();
+    var jwt = session && session.data && session.data.session ? session.data.session.access_token : null;
+    if (!jwt) throw new Error('Sesión expirada, vuelve a entrar.');
+
+    var res = await fetch(cfg.url + '/functions/v1/sheet-sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': cfg.anonKey,
+        'Authorization': 'Bearer ' + jwt,
+      },
+      body: JSON.stringify({ action: 'sync', client_id: id, force: true }),
+    });
+    var body = null;
+    try { body = await res.json(); } catch (e) { /* sin JSON */ }
+    if (!res.ok && res.status !== 422) throw new Error((body && body.error) || ('Error ' + res.status));
+    if (body && body.ok === false) throw new Error(body.error || 'No se pudo leer el sheet.');
+    return body;
   }
 
   async function createClient(name) {
@@ -193,6 +254,7 @@
       file_name: file.name,
       file_path: path,
       file_size: file.size,
+      source: 'team',
     }).select().single();
     if (res.error) throw res.error;
     return res.data;
@@ -208,22 +270,38 @@
 
   function num(v) { var n = parseInt(v, 10); return isNaN(n) || n < 0 ? 0 : n; }
 
-  function pct(numr, den) {
-    if (!den) return '—';
-    return (Math.round((numr / den) * 1000) / 10).toFixed(1).replace(/\.0$/, '') + '%';
+  function rawPct(numr, den) {
+    if (!den) return null;
+    return Math.round((numr / den) * 1000) / 10;
+  }
+
+  function fmtPct(raw) {
+    return raw == null ? '—' : (raw.toFixed(1).replace(/\.0$/, '') + '%');
+  }
+
+  // status: 'ok' (cumple el umbral) / 'bad' (por debajo) / 'na' (sin dato).
+  // pct: qué tan lejos está del umbral, 0..1, para el degradado de color.
+  function ratioStatus(raw, type, target) {
+    if (raw == null) return { status: 'na', pct: 0 };
+    var good = type === 'min' ? raw >= target : raw <= target;
+    var dist = target > 0 ? Math.abs((type === 'min' ? raw - target : target - raw)) / target : 0;
+    return { status: good ? 'ok' : 'bad', pct: Math.max(0, Math.min(1, dist)) };
+  }
+
+  function targetLabel(t) {
+    return (t.type === 'min' ? '≥ ' : '≤ ') + t.target + '%';
   }
 
   function computeRatios(m) {
     m = m || {};
-    var contacted = num(m.contacted), opened = num(m.opened), replied = num(m.replied);
-    var sched = num(m.meetings_scheduled), noShows = num(m.no_shows), disq = num(m.disqualified);
-    return [
-      { label: 'Open rate',           hint: 'leídos / contactados',        val: pct(opened, contacted) },
-      { label: 'Reply rate',          hint: 'respondidos / contactados',   val: pct(replied, contacted) },
-      { label: 'Conversion rate',     hint: 'agendadas / contactados',     val: pct(sched, contacted) },
-      { label: 'No-show rate',        hint: 'no shows / agendadas',        val: pct(noShows, sched) },
-      { label: 'Disqualified rate',   hint: 'descalificadas / agendadas',  val: pct(disq, sched) },
-    ];
+    return THRESHOLDS.map(function (t) {
+      var raw = rawPct(t.n(m), t.d(m));
+      var st = ratioStatus(raw, t.type, t.target);
+      return {
+        key: t.key, label: t.label, hint: t.hint, val: fmtPct(raw), raw: raw,
+        type: t.type, target: t.target, status: st.status, pct: st.pct,
+      };
+    });
   }
 
   // Convierte un link de Google Sheets a su URL embebible; null si no aplica.
@@ -259,6 +337,14 @@
 
   function initials(name) {
     return String(name || '?').trim().split(/\s+/).slice(0, 2).map(function (w) { return w[0] || ''; }).join('').toUpperCase();
+  }
+
+  // Marca de tiempo completa (la usa el aviso de "el cliente editó su portal").
+  function fmtDateTime(ts) {
+    if (!ts) return '';
+    try {
+      return new Date(ts).toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    } catch (e) { return String(ts); }
   }
 
   // ── Styles ─────────────────────────────────────────────────────────────
@@ -312,6 +398,13 @@
       '.cl-open-a{flex:none;font-size:12px;font-weight:700;color:var(--accent-ink);text-decoration:none;padding:7px 10px;border:1px solid var(--hair-3);border-radius:var(--r-sm);background:var(--surface)}',
       '.cl-open-a:hover{background:var(--accent-soft-2)}',
       '.cl-metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}',
+      '.cl-sheet-cfg{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:8px}',
+      '.cl-sheet-cfg .cl-field{margin:0}',
+      '.cl-sync-note{font-size:11.5px;color:var(--ink-3);line-height:1.5;margin-top:8px;padding:7px 10px;background:var(--surface2);border:1px solid var(--hair);border-radius:var(--r-sm)}',
+      '.cl-sync-note.is-ok{color:var(--ink-3)}',
+      '.cl-sync-note.is-err{background:var(--red-soft);border-color:transparent;color:var(--red)}',
+      '.cl-auto{font-weight:600;text-transform:none;letter-spacing:0;color:var(--ink-4)}',
+      '@media (max-width:720px){.cl-sheet-cfg{grid-template-columns:1fr}}',
       '.cl-metric{background:var(--surface2);border:1px solid var(--hair);border-radius:var(--r);padding:10px 12px;display:flex;flex-direction:column;gap:4px}',
       '.cl-metric input{border:none;background:transparent;font-size:20px;font-weight:800;color:var(--ink);width:100%;padding:0;font-family:inherit}',
       '.cl-metric input:focus{outline:none}',
@@ -320,6 +413,17 @@
       '.cl-ratio{background:var(--accent-soft-2);border:1px solid var(--hair);border-radius:var(--r);padding:8px 12px;display:flex;flex-direction:column;gap:2px;min-width:110px}',
       '.cl-ratio b{font-size:16px;font-weight:800;color:var(--accent-ink)}',
       '.cl-ratio span{font-size:10.5px;color:var(--ink-3);font-weight:600}',
+      '.cl-thr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}',
+      '.cl-thr{border:1px solid var(--hair);border-radius:var(--r);padding:10px 12px;display:flex;flex-direction:column;gap:5px;min-width:0;transition:background .2s,border-color .2s}',
+      '.cl-thr-top{display:flex;align-items:center;justify-content:space-between;gap:8px}',
+      '.cl-thr-lbl{font-size:11.5px;font-weight:700;color:var(--ink-2)}',
+      '.cl-thr-badge{font-size:9.5px;font-weight:800;padding:1px 7px;border-radius:999px;letter-spacing:.03em;color:#fff;flex:none}',
+      '.cl-thr-val{font-size:17px;font-weight:800;color:var(--ink)}',
+      '.cl-thr-target{font-size:10.5px;color:var(--ink-3);font-weight:600}',
+      '.cl-thr-strategy{margin-top:4px;display:flex;flex-direction:column;gap:4px}',
+      '.cl-thr-strategy label{font-size:9.5px;font-weight:800;color:var(--red);text-transform:uppercase;letter-spacing:.04em}',
+      '.cl-thr-strategy textarea{width:100%;min-height:64px;resize:vertical;background:var(--surface);border:1px solid var(--hair-3);border-radius:var(--r-sm);padding:6px 8px;font-size:12px;line-height:1.4;font-family:inherit;color:var(--ink)}',
+      '.cl-thr-strategy textarea:focus{outline:none;border-color:var(--accent)}',
       '.cl-sheet-frame{width:100%;height:380px;border:1px solid var(--hair);border-radius:var(--r);background:var(--surface2)}',
       '.cl-countries{display:flex;flex-wrap:wrap;gap:6px}',
       '.cl-cty{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;border:1px solid var(--hair-3);background:var(--surface);font-size:12px;font-weight:600;cursor:pointer;color:var(--ink-2);font-family:inherit}',
@@ -333,6 +437,9 @@
       '.cl-save-ind{font-size:12px;color:var(--ink-3);font-weight:600;min-width:90px;text-align:right}',
       '.cl-save-ind.ok{color:var(--green)}',
       '.cl-empty{padding:40px;text-align:center;color:var(--ink-3);font-size:13px;border:1.5px dashed var(--hair-3);border-radius:var(--r-lg)}',
+      '.cl-portal-tgl{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-3);cursor:pointer;user-select:none}',
+      '.cl-portal-tgl input{accent-color:var(--accent);cursor:pointer;margin:0}',
+      '.cl-mat-src{flex:none;padding:2px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent-ink);font-size:10px;font-weight:700}',
       '@media (max-width:760px){.cl-sections{grid-template-columns:1fr}.cl-row2{grid-template-columns:1fr}}',
     ].join('\n');
     document.head.appendChild(css);
@@ -431,9 +538,10 @@
     state.view = 'detail';
     state.body.innerHTML = '<div class="cl-head"><div class="cl-title">Cargando dashboard…</div></div>';
     try {
-      var rows = await Promise.all([fetchClient(id), fetchMaterials(id)]);
+      var rows = await Promise.all([fetchClient(id), fetchMaterials(id), fetchSheetState(id)]);
       state.current = rows[0];
       state.materials = rows[1];
+      state.sheetState = rows[2];
       if (!state.current) throw new Error('Cliente no encontrado');
       state.photoUrl = state.current.photo_path ? await signPath(state.current.photo_path) : null;
       renderDetail();
@@ -534,6 +642,8 @@
           '<button class="btn btn-ghost btn-sm" id="cl-back">← Clients</button>' +
           '<div style="display:flex;align-items:center;gap:10px">' +
             '<span class="cl-save-ind" id="cl-save-ind"></span>' +
+            '<label class="cl-portal-tgl" title="Si lo apagas, el link del portal sigue funcionando pero queda en solo lectura.">' +
+              '<input type="checkbox" id="cl-portal-edit"' + (c.portal_can_edit === false ? '' : ' checked') + '>Portal editable</label>' +
             '<button class="btn btn-ghost btn-sm" id="cl-share">🔗 Copiar link del portal</button>' +
             '<button class="btn btn-ghost btn-sm" id="cl-delete" style="color:var(--red)">Eliminar</button>' +
           '</div>' +
@@ -553,6 +663,9 @@
               statusSel +
               '<span class="cl-chip ' + st.cls + '" id="cl-status-chip">' + esc(st.label) + '</span>' +
               '<span style="font-size:12px;color:var(--ink-4)">Inicio: ' + esc(fmtDate(c.start_date)) + '</span>' +
+              (c.portal_updated_at
+                ? '<span style="font-size:12px;color:var(--ink-4)">El cliente editó su portal el ' + esc(fmtDateTime(c.portal_updated_at)) + '</span>'
+                : '') +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -584,9 +697,20 @@
             '</div>' +
             '<div class="cl-field"><span class="cl-lbl">Google Sheets (base de datos)</span>' +
               '<input class="cl-inp" data-field="crm_sheet_url" type="url" placeholder="https://docs.google.com/spreadsheets/…" value="' + esc(c.crm_sheet_url || '') + '"></div>' +
-            '<div class="cl-lbl" style="margin-top:4px">Datos críticos</div>' +
+            '<div class="cl-sheet-cfg">' +
+              '<div class="cl-field"><span class="cl-lbl">Pestaña del CRM</span>' +
+                '<input class="cl-inp" data-field="crm_sheet_tab" type="text" placeholder="CRM (se autodetecta)" value="' + esc(c.crm_sheet_tab || '') + '"></div>' +
+              '<div class="cl-field"><span class="cl-lbl">Pestaña de métricas</span>' +
+                '<input class="cl-inp" data-field="metrics_sheet_tab" type="text" placeholder="Métricas (se autodetecta)" value="' + esc(c.metrics_sheet_tab || '') + '"></div>' +
+              '<button class="btn btn-ghost btn-sm" id="cl-sync">↻ Leer el sheet ahora</button>' +
+            '</div>' +
+            '<div class="cl-sync-note" id="cl-sync-note"></div>' +
+            '<div class="cl-lbl" style="margin-top:4px">Datos críticos ' +
+              '<span class="cl-auto">se rellenan solos desde la pestaña de métricas</span></div>' +
             '<div class="cl-metrics">' + metricCells + '</div>' +
             '<div class="cl-ratios" id="cl-ratios"></div>' +
+            '<div class="cl-lbl" style="margin-top:6px">Umbrales mínimos aceptables</div>' +
+            '<div class="cl-thr-grid" id="cl-thresholds"></div>' +
             '<div id="cl-sheet-embed">' +
               (embed
                 ? '<iframe class="cl-sheet-frame" src="' + esc(embed) + '" loading="lazy" referrerpolicy="no-referrer"></iframe>'
@@ -629,6 +753,7 @@
 
     bindDetail();
     renderRatios();
+    renderThresholds();
     renderMaterials();
   }
 
@@ -681,6 +806,39 @@
       });
     });
 
+    renderSyncNote();
+
+    var syncBtn = body.querySelector('#cl-sync');
+    if (syncBtn) {
+      syncBtn.addEventListener('click', async function () {
+        var c = state.current;
+        if (!c) return;
+        // Un cambio de link o de pestaña sin guardar haría releer el sheet viejo.
+        await flushSave();
+        var label = syncBtn.textContent;
+        syncBtn.disabled = true;
+        syncBtn.textContent = 'Leyendo el sheet…';
+        try {
+          await syncSheet(c.id);
+          state.sheetState = await fetchSheetState(c.id);
+          var fresh = await fetchClient(c.id);
+          if (fresh && state.current && state.current.id === fresh.id) {
+            Object.assign(state.current, fresh);
+            refreshMetricInputs();
+            renderRatios();
+            renderThresholds();
+          }
+          toast('Sheet leído correctamente.', 'success');
+        } catch (e) {
+          state.sheetState = await fetchSheetState(c.id);
+          toast('No se pudo leer el sheet: ' + (e.message || e), 'error');
+        }
+        syncBtn.disabled = false;
+        syncBtn.textContent = label;
+        renderSyncNote();
+      });
+    }
+
     // Métricas CRM
     body.querySelectorAll('[data-metric]').forEach(function (el) {
       el.addEventListener('input', function () {
@@ -691,6 +849,7 @@
         state.current.crm_metrics = metrics;
         queueSave({ crm_metrics: metrics });
         renderRatios();
+        renderThresholds();
       });
     });
 
@@ -748,12 +907,25 @@
       matFile.value = '';
     });
 
+    // Portal editable (interruptor)
+    var portalTgl = body.querySelector('#cl-portal-edit');
+    portalTgl.addEventListener('change', function () {
+      state.current.portal_can_edit = portalTgl.checked;
+      queueSave({ portal_can_edit: portalTgl.checked });
+      toast(portalTgl.checked
+        ? 'El cliente puede editar su contexto desde el portal.'
+        : 'El portal queda en solo lectura (el link sigue funcionando).', 'info');
+    });
+
     // Compartir portal
     body.querySelector('#cl-share').addEventListener('click', async function () {
       var link = portalLink(state.current);
+      var msg = state.current.portal_can_edit === false
+        ? 'Link del portal copiado. Tu cliente lo abre sin login y verá este dashboard en solo lectura.'
+        : 'Link del portal copiado. Tu cliente lo abre sin login y podrá mantener su ICP, industrias, notas, países y materiales. Cualquiera con el link puede editar: compártelo solo con quien corresponda.';
       try {
         await navigator.clipboard.writeText(link);
-        toast('Link del portal copiado. Compártelo con tu cliente: creará su cuenta y verá solo este dashboard.', 'success');
+        toast(msg, 'success');
       } catch (e) {
         prompt('Copia el link del portal:', link);
       }
@@ -787,6 +959,45 @@
     }
   }
 
+  /** Estado del último sync del sheet, bajo los campos de configuración. */
+  function renderSyncNote() {
+    var host = state.body ? state.body.querySelector('#cl-sync-note') : null;
+    if (!host) return;
+    var st = state.sheetState;
+
+    if (!st || !st.synced_at) {
+      host.className = 'cl-sync-note';
+      host.textContent = state.current && state.current.crm_sheet_url
+        ? 'Este sheet todavía no se ha leído. Pulsa "Leer el sheet ahora".'
+        : 'Pega el link del Google Sheets para poder leerlo automáticamente.';
+      return;
+    }
+
+    if (!st.ok) {
+      host.className = 'cl-sync-note is-err';
+      host.textContent = 'No se pudo leer el sheet: ' + (st.error || 'error desconocido');
+      return;
+    }
+
+    var undated = (st.row_count || 0) - (st.dated_row_count || 0);
+    host.className = 'cl-sync-note is-ok';
+    host.textContent = 'Leído el ' + new Date(st.synced_at).toLocaleString('es-MX') +
+      ' · pestañas "' + (st.crm_tab || '—') + '"' +
+      (st.metrics_tab ? ' y "' + st.metrics_tab + '"' : ' (sin pestaña de métricas)') +
+      ' · ' + (st.row_count || 0) + ' filas, ' + (st.dated_row_count || 0) + ' con fecha' +
+      (undated > 0 ? ' (' + undated + ' sin fecha no entran en los filtros por período)' : '') + '.';
+  }
+
+  /** Refresca los inputs de métricas tras un sync que pisó crm_metrics. */
+  function refreshMetricInputs() {
+    if (!state.body || !state.current) return;
+    var m = state.current.crm_metrics || {};
+    state.body.querySelectorAll('[data-metric]').forEach(function (el) {
+      var v = m[el.getAttribute('data-metric')];
+      el.value = v == null ? '' : v;
+    });
+  }
+
   function renderRatios() {
     var host = document.getElementById('cl-ratios');
     if (!host || !state.current) return;
@@ -794,6 +1005,48 @@
       return '<div class="cl-ratio"><b>' + esc(r.val) + '</b><span>' + esc(r.label) + '</span>' +
         '<span style="opacity:.7">' + esc(r.hint) + '</span></div>';
     }).join('');
+  }
+
+  // Umbrales mínimos aceptables por ratio: verde/rojo en degradado según qué
+  // tan lejos está el valor del umbral, y un textarea de estrategia de
+  // remediación cuando el ratio está en rojo (se guarda en metric_strategies,
+  // por eso también la ve el cliente en su portal, en solo lectura).
+  function renderThresholds() {
+    var host = document.getElementById('cl-thresholds');
+    if (!host || !state.current) return;
+    var strategies = state.current.metric_strategies || {};
+
+    host.innerHTML = computeRatios(state.current.crm_metrics).map(function (r) {
+      var color = r.status === 'ok' ? 'green' : (r.status === 'bad' ? 'red' : null);
+      var boxStyle = color
+        ? 'background:color-mix(in srgb, var(--' + color + ') ' + (14 + Math.round(r.pct * 56)) + '%, var(--surface2));' +
+          'border-color:color-mix(in srgb, var(--' + color + ') 55%, var(--hair))'
+        : 'background:var(--surface2)';
+      var badge = color
+        ? '<span class="cl-thr-badge" style="background:var(--' + color + ')">' + (r.status === 'ok' ? 'OK' : 'BAJO') + '</span>'
+        : '';
+      var strategy = r.status === 'bad'
+        ? '<div class="cl-thr-strategy"><label>Estrategia de remediación</label>' +
+          '<textarea data-strategy="' + r.key + '" placeholder="¿Qué harás para mejorar esta métrica?">' + esc(strategies[r.key] || '') + '</textarea></div>'
+        : '';
+      return '<div class="cl-thr" style="' + boxStyle + '">' +
+        '<div class="cl-thr-top"><span class="cl-thr-lbl">' + esc(r.label) + '</span>' + badge + '</div>' +
+        '<span class="cl-thr-val">' + esc(r.val) + '</span>' +
+        '<span class="cl-thr-target">Mínimo aceptable: ' + esc(targetLabel(r)) + '</span>' +
+        strategy +
+        '</div>';
+    }).join('');
+
+    host.querySelectorAll('[data-strategy]').forEach(function (ta) {
+      ta.addEventListener('input', function () {
+        var next = Object.assign({}, state.current.metric_strategies || {});
+        var key = ta.getAttribute('data-strategy');
+        var v = ta.value.trim();
+        if (v) next[key] = v; else delete next[key];
+        state.current.metric_strategies = next;
+        queueSave({ metric_strategies: next });
+      });
+    });
   }
 
   function fmtSize(bytes) {
@@ -814,6 +1067,7 @@
       var url = urls[mat.file_path];
       return '<div class="cl-mat" data-mid="' + esc(mat.id) + '">' +
         '<span>📄</span><span class="nm" title="' + esc(mat.file_name) + '">' + esc(mat.file_name) + '</span>' +
+        (mat.source === 'portal' ? '<span class="cl-mat-src">Del cliente</span>' : '') +
         '<span class="sz">' + esc(fmtSize(mat.file_size)) + '</span>' +
         (url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener">Ver ↗</a>' : '') +
         '<button type="button" data-del="' + esc(mat.id) + '">Borrar</button>' +

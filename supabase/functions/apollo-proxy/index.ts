@@ -1,9 +1,16 @@
 /**
  * apollo-proxy — Supabase Edge Function
  *
- * Forwards allowlisted Apollo.io API calls using the server-side key, so the
- * key never ships to the browser (it used to be hardcoded in index.html and
+ * Forwards allowlisted Apollo.io API calls with a server-side credential, so
+ * no key ever ships to the browser (it used to be hardcoded in index.html and
  * exposed via GitHub Pages).
+ *
+ * WHICH CREDENTIAL (opción B, 2026-09-03 — see _shared/apollo-auth.ts): if the
+ * user connected their own Apollo via OAuth (channel_accounts provider=apollo)
+ * the call goes out with THEIR bearer token and Apollo bills THEIR account; if
+ * not, the platform's shared APOLLO_API_KEY is used (beta fallback). In oauth
+ * mode /people/match reveals do NOT charge predictable credits — the customer
+ * already pays Apollo for them.
  *
  * Auth: Bearer <user JWT>, validated with auth.getUser() — the platform's
  *       verify_jwt alone also accepts the public anon key, which would make
@@ -21,11 +28,15 @@
  * POST body: { "endpoint": "/people/match", "method": "POST", "body": { ... } }
  *            ("method" is only required for the few endpoints that accept
  *             more than one verb; otherwise it is inferred.)
- * Required secrets: APOLLO_API_KEY
+ * Required secrets: APOLLO_API_KEY (platform fallback)
+ *                   APOLLO_OAUTH_CLIENT_ID / APOLLO_OAUTH_CLIENT_SECRET (to
+ *                     refresh a connected user's token)
  *                   APOLLO_WEBHOOK_SECRET (only for phone-reveal requests)
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { ApolloError, resolveApolloAuth } from "../_shared/apollo-auth.ts";
+import type { ApolloAuth } from "../_shared/apollo-auth.ts";
 
 type Method = "GET" | "POST" | "PUT" | "DELETE";
 
@@ -44,6 +55,10 @@ const STATIC_ENDPOINTS = new Map<string, Method[]>([
   ["/emailer_touches", ["POST"]],
   ["/emailer_schedules", ["GET"]],
   ["/email_accounts", ["GET"]],
+  // Who is the credential acting as (the user's own Apollo in oauth mode, the
+  // workspace admin in platform mode). Cheap, 0 credits.
+  ["/users/api_profile", ["GET"]],
+  ["/emailer_messages/email_send_status", ["POST"]],
   ["/labels", ["GET"]],
   // Bandeja: the emails Apollo has sent/scheduled, with their delivery state.
   // NOTE: this only ever returns OUTBOUND mail. Apollo has no inbound message
@@ -96,6 +111,7 @@ function corsHeaders(origin: string) {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Expose-Headers": "X-Apollo-Auth-Mode",
   };
 }
 
@@ -110,11 +126,6 @@ Deno.serve(async (req) => {
   const cors = corsHeaders(req.headers.get("Origin") ?? "*");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (req.method !== "POST") return json({ error: "POST only" }, 405, cors);
-
-  // Trim to tolerate a stray newline/space in the stored secret (a trailing
-  // newline in APOLLO_API_KEY once made Apollo reject every call).
-  const apiKey = (Deno.env.get("APOLLO_API_KEY") ?? "").trim();
-  if (!apiKey) return json({ error: "APOLLO_API_KEY secret not configured" }, 503, cors);
 
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
   const { data: { user }, error: authErr } = await createClient(
@@ -172,13 +183,27 @@ Deno.serve(async (req) => {
     }
   }
 
+  // ── Credencial de Apollo: la del usuario (OAuth) o la de la plataforma ──
+  const svc = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
+  let auth: ApolloAuth;
+  try {
+    auth = await resolveApolloAuth(svc, user.id);
+  } catch (e) {
+    const status = e instanceof ApolloError ? e.status : 500;
+    return json({ error: (e as Error).message }, status, cors);
+  }
+
   // ── Cobro de créditos por enriquecimiento (catálogo js/credit-costs.js) ──
   // 1 crédito por email, 6 por teléfono, por persona. Solo match/bulk_match
   // (revelar datos de contacto) cobran; búsqueda y CRUD son gratis. Se verifica
   // el saldo ANTES de quemar créditos de Apollo, y se descuenta tras el éxito.
+  //
+  // En modo `oauth` NO se cobran créditos de predictable: el reveal sale de
+  // los créditos del Apollo del propio cliente (él ya se lo paga a Apollo).
+  // Los créditos de la plataforma solo cubren la key compartida de la beta.
   let creditCost = 0;
   let creditReason = "enrich_email";
-  if (endpoint === "/people/match" || endpoint === "/people/bulk_match") {
+  if (auth.mode === "platform" && (endpoint === "/people/match" || endpoint === "/people/bulk_match")) {
     const people = endpoint === "/people/bulk_match"
       ? (Array.isArray(body.details) ? body.details.length : 1)
       : 1;
@@ -203,7 +228,7 @@ Deno.serve(async (req) => {
     method,
     headers: {
       "Cache-Control": "no-cache",
-      "X-Api-Key": apiKey,
+      ...auth.headers,
       ...(sendsBody ? { "Content-Type": "application/json" } : {}),
     },
   };
@@ -229,6 +254,7 @@ Deno.serve(async (req) => {
 
   return new Response(text, {
     status: res.status,
-    headers: { "Content-Type": "application/json", ...cors },
+    // Para que la UI sepa de quién es la cuenta que respondió.
+    headers: { "Content-Type": "application/json", "X-Apollo-Auth-Mode": auth.mode, ...cors },
   });
 });

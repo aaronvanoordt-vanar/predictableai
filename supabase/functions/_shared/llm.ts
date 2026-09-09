@@ -9,12 +9,12 @@
 // each provider, so the feature functions only deal with prompts.
 //
 // Recommended engine per feature (mirrored in js/ai-engine.js — keep in sync):
-//   intel_hub  → perplexity   (search-grounded research)
-//   coda       → perplexity   (PESTEL / Porter — search-grounded analysis)
-//   outreach   → claude       (message writing)
+//   intel_hub  → perplexity   (Intelligence Hub — search-grounded research)
+//   coda       → perplexity   (Intelligence Hub — PESTEL / Porter, search-grounded analysis)
+//   onboarding → perplexity   (Intelligence Hub — company enrichment / brief / documents)
+//   outreach   → claude       (Prospección — message writing)
+//   radar      → perplexity   (Intelligence Hub — signal detection, search-grounded)
 //   coach      → openai       (AI Sales Coach)
-//   onboarding → claude       (company enrichment / brief / documents)
-//   radar      → claude       (signal detection + message drafts)
 //
 // Required secrets (only the ones for engines actually used need to be set):
 //   ANTHROPIC_API_KEY, OPENAI_API_KEY, PERPLEXITY_API_KEY
@@ -32,16 +32,20 @@ export type Feature =
   | "outreach"
   | "coach"
   | "onboarding"
-  | "radar";
+  | "radar"
+  | "client_review";
 
 /** Default engine per feature when the user has not chosen one. */
 export const RECOMMENDED_ENGINE: Record<Feature, Engine> = {
   intel_hub:  "perplexity",
   coda:       "perplexity",
+  onboarding: "perplexity",
   outreach:   "claude",
+  radar:      "perplexity",
   coach:      "openai",
-  onboarding: "claude",
-  radar:      "claude",
+  // La revisión del portal razona sobre números que ya están en la base:
+  // no necesita web, sí redacción cuidada. Mismo criterio que outreach.
+  client_review: "claude",
 };
 
 export function isEngine(v: unknown): v is Engine {
@@ -177,6 +181,18 @@ export interface LlmCall {
   claudeWebSearchTool?: string;
   /** Anthropic web_fetch tool max uses; ignored by the other engines. */
   claudeWebFetch?: number;
+  /**
+   * Only accept web results published on/after this date (ISO "YYYY-MM-DD").
+   *
+   * Perplexity enforces it natively (search_after_date_filter), which is the
+   * only engine-level guarantee any of the three provides today: neither
+   * Anthropic's web_search tool nor OpenAI's takes a date filter. On those
+   * two it is a no-op here, so a caller that genuinely needs recency MUST
+   * also state the cutoff in its prompt AND verify the dates it gets back —
+   * see generate-radar, which drops any company whose signal predates the
+   * window instead of trusting the model.
+   */
+  searchAfterDate?: string;
   /** Anthropic model override (the Intelligence Hub exposes a model picker). */
   claudeModel?: string;
   /** Anthropic output_config.effort, e.g. "medium". */
@@ -452,6 +468,12 @@ async function callOpenAI(
 
 // ── Perplexity (OpenAI-compatible chat completions, always search-grounded) ───
 
+/** "2026-06-01" → "06/01/2026" (Perplexity's date-filter format). "" if unusable. */
+function usDate(iso?: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || "").trim());
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : "";
+}
+
 async function callPerplexity(
   opts: LlmCall,
   apiKey: string,
@@ -473,6 +495,9 @@ async function callPerplexity(
   if (opts.jsonSchema) {
     body.response_format = { type: "json_schema", json_schema: { schema: opts.jsonSchema } };
   }
+  // Native recency filter — Perplexity expects MM/DD/YYYY, not ISO.
+  const after = usDate(opts.searchAfterDate);
+  if (wantsSearch && after) body.search_after_date_filter = after;
 
   const res = await fetch("https://api.perplexity.ai/chat/completions", {
     method: "POST",

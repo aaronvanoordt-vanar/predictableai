@@ -26,9 +26,23 @@
  *      and upserts the user's gmail_accounts row (service role — the client
  *      has no INSERT/UPDATE grant on that table).
  *  • disconnect  {}
- *  • thread      {thread_id} → {messages:[…]}
+ *  • thread      {thread_id, contact_email?, since?} → {messages:[…]}
  *      The whole conversation, each message flagged inbound/outbound and with
  *      its body decoded to plain text.
+ *
+ *      threads.get(thread_id) only returns messages GMAIL ITSELF grouped
+ *      under that exact thread — and Gmail's grouping is not reliable for
+ *      cold outreach. Confirmed on a real reply: an auto-forward notice
+ *      ("Cambio de correo Re: <asunto>") came back with no References or
+ *      In-Reply-To header, and its rewritten subject broke Gmail's
+ *      subject-based fallback too, so it landed in a brand new thread with
+ *      no link back to the original. When contact_email is given, this also
+ *      searches Gmail for from:/to: that address (bounded by `since`, a unix
+ *      timestamp — normally the original send time, so it doesn't drag in
+ *      unrelated history) and merges anything threads.get missed, deduped by
+ *      message id and sorted by date. That is genuinely "every message with
+ *      this contact from here on", not strict RFC 5322 threading — the
+ *      trade-off that actually shows a prospect's reply.
  *
  * READ-ONLY BY DESIGN. Sending goes through Apollo (apollo-proxy:
  * /emailer_messages + /{id}/send_now) so every reply is logged in the CRM and
@@ -41,21 +55,15 @@
  *   (a Google Cloud OAuth "Web application" client with the Gmail API enabled;
  *    for a Workspace domain make it an Internal app so the restricted Gmail
  *    scopes need no verification.)
+ *
+ * The token refresh and the thread reader live in _shared/gmail.ts so that
+ * campaign-run can reuse them (syncApolloReplies fills the reply body of an
+ * Apollo `replied` message from the Gmail thread). This function keeps the
+ * OAuth connect/disconnect flow and the HTTP surface.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
-const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
-const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
-
-// Read the thread, nothing else: no sending, no mailbox modification, no
-// contacts, no Drive. Sending is Apollo's job, so gmail.send is deliberately
-// NOT requested — one less restricted scope for Google to approve.
-const SCOPES = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/userinfo.email",
-];
+import { GMAIL, GMAIL_SCOPES as SCOPES, GOOGLE_AUTH, GOOGLE_TOKEN, GmailError, readThread, refreshAccessToken } from "../_shared/gmail.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -70,64 +78,6 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
     status,
     headers: { "Content-Type": "application/json", ...extra },
   });
-}
-
-// ── base64url helpers (Gmail speaks base64url everywhere) ──────────────────
-
-function b64urlDecode(data: string): string {
-  const b64 = data.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
-  const bin = atob(b64 + pad);
-  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-  return new TextDecoder("utf-8").decode(bytes);
-}
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<\s*br\s*\/?>/gi, "\n")
-    .replace(/<\/\s*(p|div|tr)\s*>/gi, "\n")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-/** Walks a Gmail payload tree and returns the best plain-text body. */
-function extractBody(payload: Record<string, any> | undefined): string {
-  if (!payload) return "";
-  const plain: string[] = [];
-  const html: string[] = [];
-
-  function walk(node: Record<string, any>) {
-    const mime = String(node?.mimeType ?? "");
-    const data = node?.body?.data;
-    if (data && mime === "text/plain") plain.push(b64urlDecode(data));
-    else if (data && mime === "text/html") html.push(b64urlDecode(data));
-    for (const part of node?.parts ?? []) walk(part);
-  }
-  walk(payload);
-
-  const body = plain.length ? plain.join("\n") : (html.length ? stripHtml(html.join("\n")) : "");
-  // Trim the quoted history: each message is shown separately, so the ">" pile
-  // at the bottom is noise (and on a long thread, most of the payload). Cut at
-  // the attribution line the mail clients insert above the quote.
-  const lines = body.split(/\r?\n/);
-  const cut = lines.findIndex((l) => /^\s*(On .+ wrote:|El .+ escribió:)\s*$/.test(l));
-  return (cut === -1 ? lines : lines.slice(0, cut))
-    .filter((l) => !/^\s*>/.test(l))
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function header(headers: Array<Record<string, string>>, name: string): string {
-  const h = (headers ?? []).find((x) => String(x?.name ?? "").toLowerCase() === name.toLowerCase());
-  return h?.value ?? "";
 }
 
 Deno.serve(async (req) => {
@@ -252,18 +202,8 @@ Deno.serve(async (req) => {
     return json({ error: "gmail_not_connected" }, 428, cors);
   }
 
-  const refreshed = await fetch(GOOGLE_TOKEN, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: acct.refresh_token,
-      grant_type: "refresh_token",
-    }),
-  });
-  const fresh = await refreshed.json().catch(() => null);
-  if (!refreshed.ok || !fresh?.access_token) {
+  const accessToken = await refreshAccessToken(acct.refresh_token);
+  if (!accessToken) {
     // A revoked grant is permanent until the user reconnects: record it so the
     // UI can say so instead of failing the same way forever.
     await admin.from("gmail_accounts")
@@ -271,7 +211,6 @@ Deno.serve(async (req) => {
       .eq("user_id", user.id);
     return json({ error: "gmail_reauth_required" }, 428, cors);
   }
-  const accessToken = fresh.access_token as string;
 
   // ── thread ───────────────────────────────────────────────────────────────
   if (action === "thread") {
@@ -279,37 +218,18 @@ Deno.serve(async (req) => {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(threadId)) {
       return json({ error: "Identificador de hilo inválido." }, 400, cors);
     }
-    const res = await fetch(`${GMAIL}/threads/${threadId}?format=full`, {
-      headers: { Authorization: "Bearer " + accessToken },
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      console.error(`[gmail-proxy] thread ${res.status}: ${text.slice(0, 200)}`);
-      if (res.status === 404) return json({ error: "thread_not_found" }, 404, cors);
-      return json({ error: "Gmail no devolvió el hilo (" + res.status + ")." }, 502, cors);
+    try {
+      const messages = await readThread(accessToken, String(acct.email), {
+        threadId,
+        contactEmail: payload.contact_email ? String(payload.contact_email) : undefined,
+        since: payload.since !== undefined ? Number(payload.since) : undefined,
+      });
+      if (!messages.length) return json({ error: "thread_not_found" }, 404, cors);
+      return json({ thread_id: threadId, mailbox: acct.email, messages }, 200, cors);
+    } catch (e) {
+      if (e instanceof GmailError) return json({ error: e.message }, e.status, cors);
+      throw e;
     }
-    const thread = JSON.parse(text);
-    const mine = String(acct.email).toLowerCase();
-    const messages = (thread?.messages ?? []).map((m: Record<string, any>) => {
-      const hs = m?.payload?.headers ?? [];
-      const from = header(hs, "From");
-      // "Name <addr>" → addr
-      const fromAddr = (from.match(/<([^>]+)>/)?.[1] ?? from).trim().toLowerCase();
-      return {
-        id: m.id,
-        message_id_header: header(hs, "Message-ID"),
-        from,
-        from_email: fromAddr,
-        to: header(hs, "To"),
-        subject: header(hs, "Subject"),
-        date: header(hs, "Date"),
-        internal_date: m.internalDate ? Number(m.internalDate) : null,
-        outbound: fromAddr === mine,
-        snippet: m.snippet ?? "",
-        body: extractBody(m.payload),
-      };
-    });
-    return json({ thread_id: threadId, mailbox: acct.email, messages }, 200, cors);
   }
 
   return json({ error: "Acción no reconocida." }, 400, cors);

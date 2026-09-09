@@ -45,6 +45,12 @@
     // el run manual; los runs por cadencia (semanal/mensual) van gratis.
     outreach_playbook:      { credits: 6,  label: 'por investigación',   variable: false },
 
+    // ── Campañas omnicanal (motor campaign-run) ──────────────────────
+    // Cada envío que ejecuta la plataforma (plantilla de WhatsApp por WATI,
+    // email por Apollo, acción de LinkedIn por Dripify). WATI/Dripify los
+    // paga el usuario con su propia suscripción; esto cubre orquestación.
+    campaign_send:          { credits: 1,  label: 'por envío',           variable: true },
+
     // ── Enriquecimiento (Apollo passthrough + margen) ─────────────────
     enrich_email:           { credits: 1,  label: 'por email',           variable: false },
     enrich_phone:           { credits: 6,  label: 'por teléfono',        variable: false },

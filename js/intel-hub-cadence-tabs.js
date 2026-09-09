@@ -193,10 +193,10 @@
     if (!STATE.user) return;
     const [{ data: intake }, { data: brief }, { data: profile }, { data: docs }] = await Promise.all([
       window.supabaseClient.from('intel_hub_intake')
-        .select('company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, icp_pain_points, company_enrichment_status, company_enrichment_at, company_enrichment_progress, company_enrichment_step, company_linkedin_url, updated_at')
+        .select(window.CompanyContext.INTAKE_COLUMNS)
         .eq('user_id', STATE.user.id).maybeSingle(),
       window.supabaseClient.from('client_brief')
-        .select('what_it_does, mechanism, key_outcomes, positional_phrase, brand_promise, status, source, generated_at, error_message, updated_at')
+        .select(window.CompanyContext.BRIEF_COLUMNS)
         .eq('user_id', STATE.user.id).maybeSingle(),
       window.supabaseClient.from('profiles').select('linkedin_company_url').eq('id', STATE.user.id).maybeSingle(),
       window.supabaseClient.from('company_documents')
@@ -222,9 +222,16 @@
       }, (payload) => {
         const prevStatus = STATE.intake?.company_enrichment_status;
         STATE.intake = payload.new || null;
+        const justFinishedEnriching =
+          STATE.intake?.company_enrichment_status === 'done' && prevStatus === 'running';
         if (['done', 'error'].includes(STATE.intake?.company_enrichment_status)) {
           STATE.researchGeneratingSection = null;
         }
+        // La corrida todavía no terminó para el usuario: faltan las tarjetas que
+        // redacta generate-client-brief. El traspaso se marca ANTES de repintar,
+        // porque si se pinta el estado "terminado" y después se vuelve a marcar
+        // en curso, la barra desaparece y reaparece de un frame para otro.
+        if (justFinishedEnriching) STATE.researchAwaitingBrief = Date.now();
         // enrich-company escribe la fila varias veces por corrida (una por
         // paso terminado), así que aquí NO se re-renderiza todo: se parchean
         // los campos que cambiaron. Así las tarjetas se van llenando en vivo
@@ -238,7 +245,11 @@
         // disparo ahora lo hace enrich-company al terminar (ahorra un salto de
         // realtime + un arranque en frío); esto es solo la red de seguridad por
         // si esa llamada del servidor no prendió.
-        if (STATE.intake?.company_enrichment_status === 'done' && prevStatus === 'running') {
+        if (justFinishedEnriching) {
+          // Red de seguridad: si generate-client-brief nunca llegara a escribir
+          // nada, este repintado saca la pantalla del estado "en curso" en vez
+          // de dejar la barra girando para siempre.
+          setTimeout(refreshResearchView, BRIEF_HANDOFF_MS + 500);
           ensureClientBriefRefresh();
         }
       })
@@ -247,7 +258,11 @@
         filter: `user_id=eq.${STATE.user.id}`,
       }, (payload) => {
         STATE.brief = payload.new || null;
-        if (['ready', 'error'].includes(STATE.brief?.status)) STATE.researchGeneratingSection = null;
+        if (['ready', 'error'].includes(STATE.brief?.status)) {
+          STATE.researchGeneratingSection = null;
+          // El brief cerró: se acabó el traspaso y con él la corrida completa.
+          STATE.researchAwaitingBrief = null;
+        }
         refreshResearchView();
       })
       .on('postgres_changes', {
@@ -338,53 +353,91 @@
         ${d.status === 'error' && d.error_message ? `<p class="ihx-doc-error">${escapeHtml(d.error_message)}</p>` : ''}
       </div>`).join('');
   }
-  const RESEARCH_SECTIONS = [
-    { key: 'company', title: 'Contexto de la empresa', number: '01' },
-    { key: 'firmographics', title: 'Industria, tamaño y país', number: '02' },
-    { key: 'pains', title: 'Pain points del ICP', number: '03' },
-    { key: 'solutions', title: 'Soluciones', number: '04' },
-    { key: 'positioning', title: 'Frase posicional', number: '05' },
-    { key: 'outcomes', title: 'Resultados cualitativos', number: '06' },
-    { key: 'summary', title: 'Resumen estratégico', number: '07' },
-  ];
-  function hasText(value) {
-    return Array.isArray(value) ? value.some(hasText) : String(value || '').trim().length > 0;
+  // Las tarjetas del contexto (definición, obligatoriedad y resúmenes) viven en
+  // js/company-context.js: las comparte el gate que bloquea el resto de la
+  // plataforma, así que no puede haber dos listas de campos.
+  function CC() { return window.CompanyContext; }
+  function cardsOfBlock(blockKey) {
+    return CC().CARDS.filter(c => c.block === blockKey);
   }
   function researchSectionState(key, intake = {}, brief = {}) {
-    const solutions = parseSolutions(intake.company_solutions).filter(hasText);
-    const completeMap = {
-      company: [intake.company_about, brief.what_it_does, brief.mechanism].every(hasText),
-      firmographics: [intake.company_industry, intake.company_employee_count, intake.company_country].every(hasText),
-      pains: hasText(intake.icp_pain_points),
-      solutions: solutions.length > 0,
-      positioning: hasText(brief.positional_phrase),
-      outcomes: hasText(brief.key_outcomes),
-    };
-    completeMap.summary = Object.values(completeMap).every(Boolean);
-    const summaries = {
-      company: brief.what_it_does || intake.company_about || 'Describe qué hace tu empresa.',
-      firmographics: [intake.company_industry, intake.company_employee_count, intake.company_country].filter(hasText).join(' · ') || 'Añade industria, tamaño y país.',
-      pains: intake.icp_pain_points || 'Identifica los problemas de tu cliente ideal.',
-      solutions: solutions.join(' · ') || 'Explica cómo resuelves esos problemas.',
-      positioning: brief.positional_phrase || 'Define una frase clara de posicionamiento.',
-      outcomes: Array.isArray(brief.key_outcomes) ? brief.key_outcomes.join(' · ') : (brief.key_outcomes || 'Añade resultados y casos de éxito.'),
-      summary: completeMap.summary
-        ? `${brief.positional_phrase}. ${brief.what_it_does}`
-        : 'Se construirá automáticamente al completar los pasos anteriores.',
-    };
-    return { complete: Boolean(completeMap[key]), summary: summaries[key] || '' };
+    return CC().cardState(key, intake, brief);
   }
   function researchProgress(intake = {}, brief = {}) {
-    const complete = RESEARCH_SECTIONS.filter(s => researchSectionState(s.key, intake, brief).complete).length;
-    return { complete, percent: Math.round((complete / RESEARCH_SECTIONS.length) * 100) };
+    const c = CC().completeness(intake, brief);
+    return { complete: c.done, total: c.total, percent: c.percent };
   }
   function researchStatusLabel(key, intake, brief, isRunning) {
-    if (STATE.researchGeneratingSection === key && isRunning) return 'Generando…';
+    if (STATE.researchGeneratingSection && isRunning) return 'Generando…';
     if (!researchSectionState(key, intake, brief).complete) return 'Pendiente';
-    return brief.source === 'edited' ? 'Revisado' : 'Generado por IA';
+    return intake && intake.context_confirmed_at ? 'Confirmado' : 'Listo — revísalo';
   }
   function isEnriching(intake) {
     return intake?.company_enrichment_status === 'running' && !isStaleEnriching(intake);
+  }
+
+  // ─── ESTADO ÚNICO DE LA INVESTIGACIÓN ─────────────────────
+  // Investigar es UNA sola cosa para el usuario, pero por dentro son dos
+  // funciones encadenadas: enrich-company llena la empresa y el ICP, y al
+  // terminar dispara generate-client-brief, que redacta las 5 tarjetas
+  // derivadas (frase posicional, qué haces, mecanismo, resultados, síntesis).
+  // Mostrarlas como dos estados independientes era el bug de UX: la barra
+  // llegaba al 100% y desaparecía mientras arriba seguía diciendo "Generando…"
+  // y faltaban 5 tarjetas por llenar. Aquí se derivan las dos fases de una sola
+  // función, y la barra cubre el recorrido completo: enrich ocupa 0-80% y el
+  // brief el tramo final.
+  var ENRICH_SHARE = 0.8;
+  // Entre que enrich-company escribe 'done' y que generate-client-brief escribe
+  // 'generating' pasan unos segundos (el arranque en frío de la segunda
+  // función). Sin esta ventana la barra desaparecía y volvía a aparecer, que es
+  // justo el parpadeo que hacía ver la pantalla como colgada.
+  var BRIEF_HANDOFF_MS = 25000;
+  function researchPhase(intake, brief) {
+    var enriching = isEnriching(intake);
+    var handingOff = !!STATE.researchAwaitingBrief
+      && (Date.now() - STATE.researchAwaitingBrief) < BRIEF_HANDOFF_MS;
+    var briefing = (brief && brief.status === 'generating' && !isStaleBrief(brief)) || handingOff;
+    if (enriching) {
+      var raw = Number(intake && intake.company_enrichment_progress) || 0;
+      return {
+        running: true,
+        phase: 'enrich',
+        percent: Math.round(raw * ENRICH_SHARE),
+        step: (intake && intake.company_enrichment_step) || 'Investigando…',
+      };
+    }
+    if (briefing) {
+      return {
+        running: true,
+        phase: 'brief',
+        percent: Math.round(100 * ENRICH_SHARE),
+        step: 'Redactando tu posicionamiento y tus resultados…',
+      };
+    }
+    return { running: false, phase: null, percent: 100, step: '' };
+  }
+  // Junto a qué panel se dibuja la barra. Si la página se recargó a mitad de
+  // corrida ya no sabemos con qué botón arrancó: la web es la fuente principal,
+  // así que ese es el default (antes caía en 'linkedin' y la barra aparecía
+  // junto al panel secundario).
+  function researchRunSource() {
+    return STATE.researchSource || 'website';
+  }
+  // Un solo texto de estado para el badge de arriba. Mientras cualquiera de las
+  // dos fases corra dice "Generando…", así deja de pasar que la barra termine y
+  // el badge siga anunciando otra cosa (o al revés).
+  function researchStatusText(brief, phase) {
+    if (phase && phase.running) return 'Generando…';
+    if (isStaleBrief(brief)) return 'Tardó demasiado';
+    const status = brief && brief.status;
+    return status === 'ready' ? 'Lista'
+      : status === 'generating' ? 'Generando…'
+      : status === 'error' ? 'Error' : 'Sin generar';
+  }
+  function researchStatusClass(brief, phase) {
+    if (phase && phase.running) return 'generating';
+    if (isStaleBrief(brief)) return 'error';
+    return (brief && brief.status) || 'pending';
   }
 
   // ─── BARRA DE PROGRESO ────────────────────────────────────
@@ -433,9 +486,11 @@
       paintProgress();
     }, PROGRESS_TICK_MS);
   }
-  function syncProgress(intake, running) {
-    const server = Number(intake?.company_enrichment_progress) || 0;
-    if (!running) {
+  // Recibe la fase ya calculada (researchPhase), no la fila cruda: la barra y el
+  // texto de estado tienen que salir de la misma fuente o vuelven a contradecirse.
+  function syncProgress(phase) {
+    const server = Number(phase && phase.percent) || 0;
+    if (!phase || !phase.running) {
       stopProgressTicker();
       PROGRESS_UI.target = server;
       PROGRESS_UI.shown = server;
@@ -455,14 +510,22 @@
   // (paneles de progreso que aparecen/desaparecen, botones que se habilitan) y
   // el resto se parchea campo por campo.
   function researchLayoutKey(intake, brief) {
-    const running = isEnriching(intake);
+    const phase = researchPhase(intake, brief);
     return [
-      running ? '1' : '0',
-      running ? (STATE.researchSource || 'linkedin') : '-',
+      phase.running ? '1' : '0',
+      // La fase entra en la clave: el paso de enrich → brief cambia el texto y
+      // el tramo de la barra, así que exige re-render y no solo parcheo.
+      phase.phase || '-',
+      phase.running ? researchRunSource() : '-',
       isStaleEnriching(intake) ? '1' : '0',
       isStaleBrief(brief) ? '1' : '0',
       brief?.status === 'error' && brief?.error_message ? '1' : '0',
       brief?.generated_at ? '1' : '0',
+      // El panel de confirmación cambia de estructura (botón ↔ pill, lista de
+      // pendientes) según la completitud: un cambio ahí exige re-render, no
+      // parcheo.
+      CC().completeness(intake, brief).fieldsComplete ? '1' : '0',
+      intake?.context_confirmed_at ? '1' : '0',
     ].join('|');
   }
   function flashFilled(el) {
@@ -500,10 +563,12 @@
     if (!shell || !shell.querySelector('#ihx-research-form')) return;
     const intake = STATE.intake || {};
     const brief = STATE.brief || {};
-    const running = isEnriching(intake);
+    const phase = researchPhase(intake, brief);
+    const running = phase.running;
     const q = (sel) => shell.querySelector(sel);
 
     setLiveValue(q('[name="company_website"]'), intake.company_website || '');
+    setLiveValue(q('[name="company_enrichment_prompt"]'), intake.company_enrichment_prompt || '');
     setLiveValue(q('[name="company_about"]'), intake.company_about || '');
     setLiveValue(q('[name="company_industry"]'), intake.company_industry || '');
     setLiveValue(q('[name="company_employee_count"]'), intake.company_employee_count || '');
@@ -515,8 +580,11 @@
     setLiveValue(q('[name="key_outcomes"]'),
       Array.isArray(brief.key_outcomes) ? brief.key_outcomes.join('\n') : (brief.key_outcomes || ''));
     patchSolutionsList(shell, intake.company_solutions);
+    // Multi-selects, chips y filas: solo se rellenan si están vacíos, nunca
+    // pisan una selección del usuario (ver CompanyContext.patchLive).
+    CC().patchLive(shell, intake);
 
-    // Tarjeta 07: la síntesis es texto de solo lectura, se reescribe entera.
+    // La síntesis es texto de solo lectura: se reescribe entera.
     const panel = q('.ihx-summary-panel');
     if (panel) {
       const strong = panel.querySelector('strong');
@@ -527,8 +595,8 @@
       if (paras[1]) paras[1].textContent = brief.mechanism || '';
     }
 
-    // Estado de cada tarjeta (Pendiente / Generando… / ✓ Generado por IA).
-    RESEARCH_SECTIONS.forEach(section => {
+    // Estado de cada tarjeta (Pendiente / Generando… / ✓ Listo / ✓ Confirmado).
+    CC().CARDS.forEach(section => {
       const card = shell.querySelector(`[data-research-section="${section.key}"]`);
       if (!card) return;
       const state = researchSectionState(section.key, intake, brief);
@@ -548,10 +616,20 @@
       if (summaryEl && summaryEl.textContent !== state.summary) summaryEl.textContent = state.summary;
     });
 
-    // Cabecera "N de 7 pasos completados".
+    // Cabecera "N de N pasos completados" + el marcador de cada bloque.
     const progress = researchProgress(intake, brief);
     const stepsEl = q('.ihx-context-progress-copy strong');
-    if (stepsEl) stepsEl.textContent = `${progress.complete} de 7 pasos completados`;
+    if (stepsEl) stepsEl.textContent = `${progress.complete} de ${progress.total} pasos completados`;
+    const completeness = CC().completeness(intake, brief);
+    CC().BLOCKS.forEach(bl => {
+      const scoreEl = shell.querySelector(`.ccx-block-${bl.key} .ccx-block-score`);
+      if (!scoreEl) return;
+      const sc = completeness.blocks[bl.key];
+      const done = sc.done === sc.total;
+      scoreEl.classList.toggle('is-done', done);
+      const label = `${done ? '✓ ' : ''}${sc.done}/${sc.total}`;
+      if (scoreEl.textContent !== label) scoreEl.textContent = label;
+    });
     const pctEl = q('.ihx-context-progress-pct');
     if (pctEl) pctEl.textContent = `${progress.percent}%`;
     const track = q('.ihx-context-progress-track');
@@ -561,13 +639,22 @@
       if (bar) bar.style.width = progress.percent + '%';
     }
 
-    // Paso actual de la investigación + barra animada.
-    const stepText = intake.company_enrichment_step || 'Investigando…';
+    // Paso actual de la investigación + barra animada. El texto sale de la
+    // misma fase que la barra, así que durante el brief dice qué se está
+    // redactando en vez de quedarse en el último paso de enrich-company.
+    const stepText = phase.step || intake.company_enrichment_step || 'Investigando…';
     const labelEl = q('.ihx-progress-label');
     if (labelEl) labelEl.textContent = stepText;
     const noteEl = q('.ihx-website-panel .ihx-progress-note');
     if (noteEl) noteEl.textContent = `${stepText} — esta página se actualiza sola cuando termine.`;
-    syncProgress(intake, running);
+    // El badge de arriba ya no vive su propia vida: mientras haya cualquier fase
+    // en curso dice "Generando…", igual que la barra.
+    const statusEl = q('.ihx-research-status');
+    if (statusEl) {
+      const label = researchStatusText(brief, phase);
+      if (statusEl.textContent !== label) statusEl.textContent = label;
+    }
+    syncProgress(phase);
   }
   // Acordeón de las 7 tarjetas: solo una abierta a la vez. Se manipula el DOM
   // directamente (sin re-render) para no perder ediciones sin guardar en otras
@@ -576,7 +663,10 @@
     STATE.researchOpenSection = key;
     const shell = document.getElementById('ih-research-shell');
     if (!shell) return;
-    shell.querySelectorAll('.ihx-context-card').forEach(card => {
+    // Solo las tarjetas del acordeón: la de síntesis también es .ihx-context-card
+    // pero no tiene data-research-section, y sin este filtro se ocultaba sola al
+    // abrir cualquier otra.
+    shell.querySelectorAll('.ihx-context-card[data-research-section]').forEach(card => {
       const isOpen = card.dataset.researchSection === key;
       card.classList.toggle('is-open', isOpen);
       const toggle = card.querySelector('.ihx-context-card-toggle');
@@ -605,41 +695,75 @@
     const linkedinUrl = intake.company_linkedin_url || STATE.profile?.linkedin_company_url || null;
     const outcomes = Array.isArray(brief.key_outcomes) ? brief.key_outcomes.join('\n') : '';
     const briefStale = isStaleBrief(brief);
-    const statusLabel = briefStale ? 'Tardó demasiado'
-      : brief.status === 'ready' ? 'Lista'
-      : brief.status === 'generating' ? 'Generando…'
-      : brief.status === 'error' ? 'Error' : 'Sin generar';
     const sourceLabel = brief.source === 'edited' ? 'Editado manualmente' : 'Generado automáticamente';
     const stale = isStaleEnriching(intake);
-    const isRunning = intake.company_enrichment_status === 'running' && !stale;
-    // Qué acción disparó la corrida actual — para mostrar UNA sola barra de
-    // progreso (junto al botón que se usó), no las dos a la vez.
-    const runSource = isRunning ? (STATE.researchSource || 'linkedin') : null;
+    // Una sola fase manda sobre todo lo que se pinta abajo: el badge, la barra,
+    // el texto del paso y los botones deshabilitados. La investigación sigue
+    // "en curso" mientras el brief se redacta, que es lo que faltaba: antes la
+    // barra desaparecía al 100% con 5 tarjetas todavía por llenar.
+    const phase = researchPhase(intake, brief);
+    const isRunning = phase.running;
+    const statusLabel = researchStatusText(brief, phase);
+    // Junto a qué botón se dibuja la barra — una sola, no las dos a la vez.
+    const runSource = isRunning ? researchRunSource() : null;
     const solutions = parseSolutions(intake.company_solutions);
     const progress = researchProgress(intake, brief);
-    const sectionCardStart = (key) => {
-      const section = RESEARCH_SECTIONS.find(s => s.key === key);
-      const sectionState = researchSectionState(key, intake, brief);
+    const cc = CC();
+    const completeness = cc.completeness(intake, brief);
+    const confirmed = completeness.confirmed;
+    // El botón "Guardar cambios" y el de investigar viven fuera de las
+    // tarjetas: antes cada tarjeta tenía su propio "Generar con IA", pero las
+    // seis disparaban exactamente la misma corrida completa de enrich-company.
+    const cardHtml = (key, index) => {
+      const def = cc.CARDS.find(c => c.key === key);
+      const state = researchSectionState(key, intake, brief);
       const status = researchStatusLabel(key, intake, brief, isRunning);
       const isOpen = STATE.researchOpenSection === key;
+      const body = key === 'solutions' ? solutionsCardBody() : (cc.cardBody(key, intake, brief) || '');
       return `
-        <section class="ihx-context-card ${sectionState.complete ? 'is-complete' : 'is-pending'} ${isOpen ? 'is-open' : ''}" data-research-section="${key}">
+        <section class="ihx-context-card ${state.complete ? 'is-complete' : 'is-pending'} ${isOpen ? 'is-open' : ''}" data-research-section="${key}">
           <button type="button" class="ihx-context-card-toggle" data-toggle-section="${key}" aria-expanded="${isOpen}" aria-controls="ihx-card-body-${key}">
-            <span class="ihx-context-card-num">${section.number}</span>
-            <span class="ihx-context-card-title">${escapeHtml(section.title)}</span>
+            <span class="ihx-context-card-num">${String(index + 1).padStart(2, '0')}</span>
+            <span class="ihx-context-card-title">${escapeHtml(def.title)}</span>
             <span class="ihx-context-card-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
-            <span class="ihx-context-card-status">${sectionState.complete ? '✓ ' : ''}${escapeHtml(status)}</span>
-            <span class="ihx-context-card-summary">${escapeHtml(sectionState.summary)}</span>
+            <span class="ihx-context-card-status">${state.complete ? '✓ ' : ''}${escapeHtml(status)}</span>
+            <span class="ihx-context-card-summary">${escapeHtml(state.summary)}</span>
           </button>
-          <div class="ihx-context-card-body" id="ihx-card-body-${key}" ${isOpen ? '' : 'hidden'}>`;
-    };
-    const sectionCardEnd = (key, canGenerate = true, canSave = true) => `
+          <div class="ihx-context-card-body" id="ihx-card-body-${key}" ${isOpen ? '' : 'hidden'}>
+            ${body}
             <div class="ihx-card-actions">
-              ${canSave ? `<button type="submit" class="ihx-btn-force ihx-card-save">Guardar cambios</button>` : ''}
-              ${canGenerate ? `<button type="button" class="ihx-btn-ai ihx-btn-ai-sm ihx-card-ai" data-generate-research="${key}" ${isRunning ? 'disabled' : ''}>${SVG_SPARK}<span>${STATE.researchGeneratingSection === key && isRunning ? 'Generando…' : 'Generar / mejorar con IA'}</span></button>` : ''}
+              <button type="submit" class="ihx-btn-force ihx-card-save">Guardar cambios</button>
             </div>
           </div>
         </section>`;
+    };
+    const solutionsCardBody = () => `
+      <div class="ihx-field">
+        <span>Qué ofreces para resolverlos</span>
+        <div class="ihx-chip-list" id="ihx-solutions-list">${solutions.map(solutionRow).join('')}</div>
+        <button type="button" class="ihx-chip-add" id="ihx-solutions-add">+ Agregar solución</button>
+      </div>`;
+    const blockHtml = (blockDef) => {
+      const score = completeness.blocks[blockDef.key];
+      const done = score.done === score.total;
+      return `
+        <section class="ccx-block ccx-block-${blockDef.key}">
+          <header class="ccx-block-head">
+            <span class="ccx-block-mark">${blockDef.key === 'internal' ? 'A' : 'B'}</span>
+            <div class="ccx-block-copy">
+              <span class="ccx-block-eyebrow">${escapeHtml(blockDef.eyebrow)}</span>
+              <span class="ccx-block-title">${escapeHtml(blockDef.title)}</span>
+              <p class="ccx-block-hint">${escapeHtml(blockDef.hint)}</p>
+            </div>
+            <span class="ccx-block-score ${done ? 'is-done' : ''}">${done ? '✓ ' : ''}${score.done}/${score.total}</span>
+          </header>
+          <div class="ihx-context-gallery">
+            ${cardsOfBlock(blockDef.key).map((c, i) => cardHtml(c.key, i)).join('')}
+          </div>
+        </section>`;
+    };
+    const missingHtml = completeness.missing.slice(0, 6).map(m =>
+      `<button type="button" data-goto-card="${m.key}">${escapeHtml(m.title)}</button>`).join('');
     const solutionRow = (val) => `
       <div class="ihx-chip-row">
         <input type="text" class="ihx-solution-input" value="${escapeHtml(val)}" placeholder="Ej: Prospección con IA">
@@ -648,35 +772,14 @@
     el.innerHTML = `
       <div class="ihx-research">
         <div class="ihx-research-hint">
-          Esto es lo que la plataforma investigó de tu empresa para personalizar el hub y los mensajes de prospección.
-          Corrígelo si algo no es exacto, o vuelve a investigar con IA — tus cambios se usan de inmediato.
+          Este es el primer paso: sin contexto no hay research. Todo lo que viene después — el radar, el Intelligence Hub,
+          la búsqueda de prospección, los mensajes y el coach — se ejecuta con lo que declares aquí.
+          Divide en dos: lo que eres <strong>tú</strong>, y a <strong>quién le vendes</strong>.
         </div>
         <div class="ihx-research-engine" id="ihx-research-engine"></div>
         ${stale ? `<div class="ihx-research-warn">La búsqueda anterior tardó demasiado y no terminó. Puedes intentarlo de nuevo.</div>` : ''}
-        <div class="ihx-research-panel ihx-research-panel-editable">
-          <div class="ihx-research-panel-text">
-            <strong>Investigar desde tu LinkedIn</strong>
-            <span>Vuelve a buscar tu página web y el contexto de tu empresa a partir de este LinkedIn. Esto reemplaza los campos de abajo con lo que encuentre. Corrige el link si no es el correcto.</span>
-          </div>
-          <div class="ihx-field-with-btn">
-            <input type="url" id="ihx-linkedin-input" name="company_linkedin_url" value="${escapeHtml(linkedinUrl || '')}" placeholder="https://linkedin.com/company/tuempresa">
-            <button type="button" class="ihx-btn-force ihx-btn-ai-sm" id="ihx-save-linkedin">Guardar</button>
-            <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-linkedin" ${isRunning ? 'disabled' : ''}>
-              ${SVG_SPARK}<span>${runSource === 'linkedin' ? 'Investigando…' : 'Investigar con IA'}</span>
-            </button>
-          </div>
-        </div>
-        ${(runSource === 'linkedin') ? `
-          <div class="ihx-progress-panel">
-            <span class="ihx-progress-label">${escapeHtml(intake.company_enrichment_step || 'Investigando…')}</span>
-            <div class="ihx-progress-row">
-              <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${intake.company_enrichment_progress || 0}%"></div></div>
-              <span class="ihx-progress-pct">${intake.company_enrichment_progress || 0}%</span>
-            </div>
-            <span class="ihx-progress-note">Esta página se actualiza sola cuando termine.</span>
-          </div>` : ''}
         <div class="ihx-research-meta">
-          <span class="ihx-research-status ihx-rs-${escapeHtml(briefStale ? 'error' : (brief.status || 'pending'))}">${escapeHtml(statusLabel)}</span>
+          <span class="ihx-research-status ihx-rs-${escapeHtml(researchStatusClass(brief, phase))}">${escapeHtml(statusLabel)}</span>
           ${brief.generated_at ? `<span>${escapeHtml(sourceLabel)} · ${fmtRelative(new Date(brief.generated_at))}</span>` : ''}
           ${brief.status === 'error' && brief.error_message ? `<span class="ihx-research-err">${escapeHtml(brief.error_message)}</span>` : ''}
           ${briefStale ? `
@@ -684,27 +787,32 @@
             <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-brief">${SVG_SPARK}<span>Reintentar</span></button>` : ''}
         </div>
         <form id="ihx-research-form">
-          <div class="ihx-field ihx-website-panel">
-            <span>Página web considerada</span>
-            <p class="ihx-field-help">No se buscará desde tu LinkedIn registrado, sino desde la página web que escribas aquí. Al investigarla se actualizará el contexto de <strong>toda tu empresa</strong> (industria, soluciones y demás).</p>
+          <div class="ihx-field ihx-website-panel ihx-website-panel-primary">
+            <span>📄 Página web de tu empresa</span>
+            <p class="ihx-field-help" style="font-weight:600; font-size:13px; color:var(--ink, #0A0A0F)">Esta es tu fuente principal de información. La IA investigará aquí para llenar todo sobre tu empresa.</p>
             <div class="ihx-field-with-btn">
-              <input type="url" id="ihx-website-input" name="company_website" value="${escapeHtml(intake.company_website || '')}" placeholder="https://tuempresa.com">
-              <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-website" ${isRunning ? 'disabled' : ''} title="Investigar a partir de esta página">
-                ${SVG_SPARK}<span>${runSource === 'website' ? 'Investigando…' : 'Investigar con IA'}</span>
+              <input type="url" id="ihx-website-input" name="company_website" value="${escapeHtml(intake.company_website || '')}" placeholder="https://tuempresa.com" style="font-size:14px; padding:12px">
+              <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-website" ${isRunning ? 'disabled' : ''} title="Investigar a partir de esta página" style="padding:11px 16px">
+                ${SVG_SPARK}<span>${runSource === 'website' ? 'Investigando…' : 'Investigar'}</span>
               </button>
             </div>
             ${(runSource === 'website') ? `
               <div class="ihx-progress-row" style="margin-top:10px">
-                <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${intake.company_enrichment_progress || 0}%"></div></div>
-                <span class="ihx-progress-pct">${intake.company_enrichment_progress || 0}%</span>
+                <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${phase.percent}%"></div></div>
+                <span class="ihx-progress-pct">${phase.percent}%</span>
               </div>
-              <span class="ihx-progress-note">${escapeHtml(intake.company_enrichment_step || 'Investigando…')} — esta página se actualiza sola cuando termine.</span>` : ''}
+              <span class="ihx-progress-note">${escapeHtml(phase.step)} — esta página se actualiza sola cuando termine.</span>` : ''}
+            <div class="ihx-field" style="margin-top:14px">
+              <span>Instrucciones personalizadas (opcional)</span>
+              <p class="ihx-field-help">Si hay una sección específica en tu web donde quieres que se concentre la IA, cuéntale aquí. Ej: "Entiende el modelo de negocio en la sección de Pricing"</p>
+              <textarea id="ihx-website-prompt" name="company_enrichment_prompt" rows="2" placeholder="Ej: Enfócate en la sección de soluciones y precios" style="width:100%; box-sizing:border-box; padding:10px; border:1px solid var(--hair-3, rgba(10,10,15,.13)); border-radius:8px; font-size:13px; font-family:inherit; resize:vertical">${escapeHtml(intake.company_enrichment_prompt || '')}</textarea>
+            </div>
           </div>
           <div class="ihx-context-progress">
             <div class="ihx-context-progress-copy">
               <span class="ihx-context-progress-eyebrow">Tu contexto de empresa</span>
-              <strong>${progress.complete} de 7 pasos completados</strong>
-              <span>La IA puede completar todo y tú puedes revisar cada tarjeta.</span>
+              <strong>${progress.complete} de ${progress.total} pasos completados</strong>
+              <span>La IA puede proponer casi todo a partir de tu web; tú confirmas cada tarjeta.</span>
             </div>
             <div class="ihx-context-progress-action">
               <span class="ihx-context-progress-pct">${progress.percent}%</span>
@@ -714,82 +822,62 @@
               <span style="width:${progress.percent}%"></span>
             </div>
           </div>
-          <div class="ihx-context-gallery">
-          ${sectionCardStart('company')}
-            <label class="ihx-field">
-              <span>Qué es y a qué se dedica</span>
-              <textarea name="company_about" rows="3" placeholder="Qué entendió sobre tu empresa">${escapeHtml(intake.company_about || '')}</textarea>
-            </label>
-            <label class="ihx-field">
-              <span>Qué hace, en una frase</span>
-              <input type="text" name="what_it_does" value="${escapeHtml(brief.what_it_does || '')}">
-            </label>
-            <label class="ihx-field">
-              <span>Cómo lo hace (mecanismo)</span>
-              <textarea name="mechanism" rows="3">${escapeHtml(brief.mechanism || '')}</textarea>
-            </label>
-          ${sectionCardEnd('company')}
 
-          ${sectionCardStart('firmographics')}
-            <p class="ihx-field-help">Estos tres datos se completan investigando tu LinkedIn registrado o tu página web guardada. Corrígelos a mano si hace falta, o usa cualquiera de los botones "Investigar con IA" arriba para volver a buscarlos.</p>
-            <div class="ihx-field-row">
-              <label class="ihx-field">
-                <span>Industria</span>
-                <input type="text" name="company_industry" value="${escapeHtml(intake.company_industry || '')}">
-              </label>
-              <label class="ihx-field">
-                <span>Tamaño</span>
-                <input type="text" name="company_employee_count" value="${escapeHtml(intake.company_employee_count || '')}">
-              </label>
-              <label class="ihx-field">
-                <span>País</span>
-                <input type="text" name="company_country" value="${escapeHtml(intake.company_country || '')}">
-              </label>
+          ${cc.BLOCKS.map(blockHtml).join('')}
+
+          <div class="ihx-research-panel ihx-research-panel-secondary" style="margin-top:28px; background:var(--surface2, #F6F7F9); padding:18px; border-radius:12px; border:1px solid var(--hair, rgba(10,10,15,.07))">
+            <div class="ihx-research-panel-text">
+              <strong style="font-size:13px; color:var(--ink-4, rgba(10,10,15,.40)); text-transform:uppercase; letter-spacing:0.5px">Información adicional (opcional)</strong>
+              <span style="font-size:13px; margin-top:6px; display:block; color:var(--text2, rgba(10,10,15,.62)); line-height:1.5">Si quieres que la IA también consulte tu perfil de LinkedIn para obtener tamaño de empresa y otros datos, puedes proporcionarlo aquí. LinkedIn es secundario; la página web es la fuente principal.</span>
             </div>
-          ${sectionCardEnd('firmographics')}
-
-          ${sectionCardStart('pains')}
-            <label class="ihx-field">
-              <span>Qué problemas tiene tu cliente objetivo</span>
-              <textarea name="icp_pain_points" rows="3" placeholder="Ej: Pierden visibilidad de su pipeline y no saben priorizar leads">${escapeHtml(intake.icp_pain_points || '')}</textarea>
-            </label>
-          ${sectionCardEnd('pains')}
-
-          ${sectionCardStart('solutions')}
-            <label class="ihx-field">
-              <span>Qué ofreces para resolverlos</span>
-              <div class="ihx-chip-list" id="ihx-solutions-list">${solutions.map(solutionRow).join('')}</div>
-              <button type="button" class="ihx-chip-add" id="ihx-solutions-add">+ Agregar solución</button>
-            </label>
-          ${sectionCardEnd('solutions')}
-
-          ${sectionCardStart('positioning')}
-            <label class="ihx-field">
-              <span>Cómo lo resume</span>
-              <input type="text" name="positional_phrase" value="${escapeHtml(brief.positional_phrase || '')}">
-            </label>
-          ${sectionCardEnd('positioning')}
-
-          ${sectionCardStart('outcomes')}
-            <label class="ihx-field">
-              <span>Logros o casos de éxito (uno por línea, con o sin números)</span>
-              <textarea name="key_outcomes" rows="3" placeholder="Ej: Ayudamos a equipos comerciales a priorizar sus leads más calientes">${escapeHtml(outcomes)}</textarea>
-            </label>
-          ${sectionCardEnd('outcomes')}
-
-          ${sectionCardStart('summary')}
-            <div class="ihx-summary-panel">
-              <span class="ihx-summary-label">Síntesis generada por IA</span>
-              <strong>${escapeHtml(brief.positional_phrase || 'Tu posicionamiento aparecerá aquí.')}</strong>
-              <p>${escapeHtml(brief.what_it_does || intake.company_about || 'Completa los pasos anteriores para construir el resumen estratégico.')}</p>
-              ${brief.mechanism ? `<p>${escapeHtml(brief.mechanism)}</p>` : ''}
+            <div class="ihx-field-with-btn" style="margin-top:12px">
+              <input type="url" id="ihx-linkedin-input" name="company_linkedin_url" value="${escapeHtml(linkedinUrl || '')}" placeholder="https://linkedin.com/company/tuempresa" style="font-size:13px; color:var(--text2, rgba(10,10,15,.62))">
+              <button type="button" class="ihx-btn-force ihx-btn-ai-sm" id="ihx-save-linkedin" style="font-size:12px">Guardar</button>
+              <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-linkedin" ${isRunning ? 'disabled' : ''} style="font-size:12px">
+                ${SVG_SPARK}<span>${runSource === 'linkedin' ? 'Investigando…' : 'Investigar'}</span>
+              </button>
             </div>
-          ${sectionCardEnd('summary', true, false)}
+            ${(runSource === 'linkedin') ? `
+              <div class="ihx-progress-panel" style="margin-top:12px">
+                <span class="ihx-progress-label">${escapeHtml(phase.step)}</span>
+                <div class="ihx-progress-row">
+                  <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${phase.percent}%"></div></div>
+                  <span class="ihx-progress-pct">${phase.percent}%</span>
+                </div>
+                <span class="ihx-progress-note">Esta página se actualiza sola cuando termine.</span>
+              </div>` : ''}
+          </div>
+
+          <section class="ihx-context-card is-complete ihx-summary-card">
+            <div class="ihx-context-card-body">
+              <div class="ihx-summary-panel">
+                <span class="ihx-summary-label">Síntesis generada por IA</span>
+                <strong>${escapeHtml(brief.positional_phrase || 'Tu posicionamiento aparecerá aquí.')}</strong>
+                <p>${escapeHtml(brief.what_it_does || intake.company_about || 'Completa las tarjetas de arriba para construir el resumen estratégico.')}</p>
+                ${brief.mechanism ? `<p>${escapeHtml(brief.mechanism)}</p>` : ''}
+              </div>
+              <div class="ihx-card-actions">
+                <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-regen-summary" ${isRunning ? 'disabled' : ''}>${SVG_SPARK}<span>Regenerar síntesis</span></button>
+              </div>
+            </div>
+          </section>
+
+          <div class="ccx-confirm ${completeness.fieldsComplete ? 'is-ready' : ''}" id="ihx-confirm-panel">
+            <div class="ccx-confirm-copy">
+              <strong>${confirmed ? 'Contexto confirmado' : 'Confirma tu contexto para desbloquear la plataforma'}</strong>
+              <p>${confirmed
+                ? 'El radar, el Intelligence Hub, la prospección y el coach ya corren con este contexto. Si cambias algo, guarda y vuelve a confirmar.'
+                : 'Radar, Intelligence Hub, prospección, mensajes y coach están bloqueados hasta que revises y confirmes esta información. Es lo que usan para investigar.'}</p>
+              ${!completeness.fieldsComplete ? `<div class="ccx-confirm-missing">${missingHtml}${completeness.missing.length > 6 ? `<button type="button" disabled>+${completeness.missing.length - 6} más</button>` : ''}</div>` : ''}
+            </div>
+            ${confirmed && completeness.fieldsComplete
+              ? '<span class="ccx-confirmed-pill">✓ Plataforma desbloqueada</span>'
+              : `<button type="button" class="ccx-confirm-btn" id="ihx-confirm-context" ${completeness.fieldsComplete ? '' : 'disabled'}>Confirmar y desbloquear</button>`}
+          </div>
 
           <div class="ihx-research-actions">
             <button type="submit" class="ihx-btn-generate" id="ihx-research-save">Guardar cambios</button>
             <span class="ihx-research-saved" id="ihx-research-saved-msg"></span>
-          </div>
           </div>
         </form>
 
@@ -804,6 +892,8 @@
           <div class="ihx-doc-list" id="ihx-doc-list">${renderDocumentList(STATE.documents || [])}</div>
         </div>
       </div>`;
+    cc.injectStyles();
+    cc.bind(el);
     if (window.AIEngine) {
       window.AIEngine.mount('#ihx-research-engine', 'onboarding', {
         labelText: 'Motor de IA para investigar',
@@ -827,15 +917,11 @@
       if (!website) { websiteInput?.focus(); return; }
       retryEnrichmentFromWebsite(website);
     });
-    const runContextAI = (sectionKey = 'all') => {
-      STATE.researchGeneratingSection = sectionKey;
-      if (sectionKey !== 'all') STATE.researchOpenSection = sectionKey;
-      if (sectionKey === 'summary') {
-        STATE.brief = { ...STATE.brief, status: 'generating', updated_at: new Date().toISOString(), error_message: null };
-        renderResearch();
-        triggerClientBriefRefresh();
-        return;
-      }
+    // Una sola corrida: enrich-company investiga la empresa entera y propone
+    // también el ICP externo. No hay "generar solo esta tarjeta" porque nunca
+    // lo hubo — los botones por tarjeta disparaban esta misma corrida completa.
+    const runContextAI = () => {
+      STATE.researchGeneratingSection = 'all';
       const sourceLinkedin = (linkedinInput?.value || intake.company_linkedin_url || '').trim();
       const sourceWebsite = (websiteInput?.value || intake.company_website || '').trim();
       if (sourceLinkedin) retryEnrichmentFromLinkedin(sourceLinkedin);
@@ -846,11 +932,21 @@
       }
     };
     const generateAllContextBtn = document.getElementById('ihx-generate-all-context');
-    if (generateAllContextBtn) generateAllContextBtn.addEventListener('click', () => runContextAI('all'));
-    el.querySelectorAll('[data-generate-research]').forEach(btn => {
-      btn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        runContextAI(btn.dataset.generateResearch);
+    if (generateAllContextBtn) generateAllContextBtn.addEventListener('click', runContextAI);
+    const regenSummaryBtn = document.getElementById('ihx-regen-summary');
+    if (regenSummaryBtn) regenSummaryBtn.addEventListener('click', () => {
+      STATE.brief = { ...STATE.brief, status: 'generating', updated_at: new Date().toISOString(), error_message: null };
+      renderResearch();
+      triggerClientBriefRefresh();
+    });
+    const confirmBtn = document.getElementById('ihx-confirm-context');
+    if (confirmBtn) confirmBtn.addEventListener('click', () => confirmContext(confirmBtn));
+    el.querySelectorAll('[data-goto-card]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.gotoCard;
+        setOpenSection(key);
+        const card = el.querySelector(`[data-research-section="${key}"]`);
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
       });
     });
     el.querySelectorAll('[data-toggle-section]').forEach(btn => {
@@ -901,7 +997,7 @@
     // lleguen después se puedan parchear en vez de re-renderizar, y arranca (o
     // detiene) la animación de la barra según si hay una corrida en curso.
     STATE.researchLayoutKey = researchLayoutKey(intake, brief);
-    syncProgress(intake, isRunning);
+    syncProgress(phase);
   }
   // Dispara enrich-company a demanda del usuario — misma función que usa el
   // onboarding. Dos entradas posibles según qué botón se use: desde LinkedIn
@@ -913,6 +1009,7 @@
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
       STATE.researchSource = 'linkedin';
+      STATE.researchAwaitingBrief = null;
       STATE.intake = {
         ...STATE.intake,
         company_enrichment_status: 'running',
@@ -935,10 +1032,14 @@
     if (!STATE.user || !website) return;
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
+      const promptEl = document.getElementById('ihx-website-prompt');
+      const customPrompt = promptEl ? promptEl.value.trim() : '';
       STATE.researchSource = 'website';
+      STATE.researchAwaitingBrief = null;
       STATE.intake = {
         ...STATE.intake,
         company_website: website,
+        company_enrichment_prompt: customPrompt || null,
         company_enrichment_status: 'running',
         company_enrichment_progress: 20,
         company_enrichment_step: 'Revisando tu página web…',
@@ -946,10 +1047,12 @@
       };
       resetProgress();
       renderResearch();
+      const payload = { website_url: website, engine: onboardingEngine() };
+      if (customPrompt) payload.custom_prompt = customPrompt;
       await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-        body: JSON.stringify({ website_url: website, engine: onboardingEngine() }),
+        body: JSON.stringify(payload),
       });
     } catch (e) {
       console.error('[research] retry enrichment from website error', e);
@@ -1027,6 +1130,54 @@
       setTimeout(() => { if (btn) { btn.textContent = original; btn.disabled = false; } }, 1500);
     }
   }
+  // Un solo formulario para las dos tarjetas-bloque: los campos "clásicos" se
+  // leen por name (FormData) y los componentes propios (multi-select, chips,
+  // filas repetibles) los lee js/company-context.js desde el DOM.
+  function collectPatches(formEl) {
+    const cc = CC();
+    const fd = new FormData(formEl);
+    const val = (k) => (fd.get(k) || '').toString().trim();
+    const solutions = Array.from(formEl.querySelectorAll('.ihx-solution-input'))
+      .map(inp => inp.value.trim()).filter(Boolean);
+    const ccPatch = cc.collect(formEl);
+    const intakePatch = {
+      company_website: val('company_website') || null,
+      company_enrichment_prompt: val('company_enrichment_prompt') || null,
+      company_industry: val('company_industry') || null,
+      company_employee_count: val('company_employee_count') || null,
+      company_country: val('company_country') || null,
+      company_about: val('company_about') || null,
+      company_solutions: solutions.length ? solutions.join(', ') : null,
+      icp_pain_points: val('icp_pain_points') || null,
+      ...ccPatch,
+      // Espejo hacia las columnas de texto que ya leen generate-radar,
+      // generate-client-brief y generate-coda.
+      ...cc.legacyMirror(ccPatch),
+    };
+    const outcomes = val('key_outcomes').split('\n').map(s2 => s2.trim()).filter(Boolean);
+    const briefPatch = {
+      positional_phrase: val('positional_phrase') || null,
+      what_it_does: val('what_it_does') || null,
+      mechanism: val('mechanism') || null,
+      key_outcomes: outcomes,
+      source: 'edited',
+    };
+    return { intakePatch, briefPatch };
+  }
+  async function persistResearch(intakePatch, briefPatch) {
+    const [r1, r2] = await Promise.all([
+      window.supabaseClient.from('intel_hub_intake')
+        .upsert({ user_id: STATE.user.id, ...intakePatch }, { onConflict: 'user_id' }),
+      window.supabaseClient.from('client_brief').update(briefPatch).eq('user_id', STATE.user.id),
+    ]);
+    if (r1.error || r2.error) throw (r1.error || r2.error);
+    STATE.intake = { ...STATE.intake, ...intakePatch };
+    STATE.brief = { ...STATE.brief, ...briefPatch };
+    // El gate (js/context-gate.js) recalcula el bloqueo con esto, sin recargar.
+    window.dispatchEvent(new CustomEvent('company-context-saved', {
+      detail: { intake: STATE.intake, brief: STATE.brief },
+    }));
+  }
   async function saveResearch(ev) {
     ev.preventDefault();
     if (STATE.researchSaving || !STATE.user) return;
@@ -1035,43 +1186,56 @@
     const msg = document.getElementById('ihx-research-saved-msg');
     if (btn) btn.disabled = true;
     if (msg) msg.textContent = 'Guardando…';
-    const fd = new FormData(ev.target);
-    const val = (k) => (fd.get(k) || '').toString().trim();
-    const solutions = Array.from(ev.target.querySelectorAll('.ihx-solution-input'))
-      .map(inp => inp.value.trim()).filter(Boolean);
-    const intakePatch = {
-      company_website: val('company_website') || null,
-      company_industry: val('company_industry') || null,
-      company_employee_count: val('company_employee_count') || null,
-      company_country: val('company_country') || null,
-      company_about: val('company_about') || null,
-      company_solutions: solutions.length ? solutions.join(', ') : null,
-      icp_pain_points: val('icp_pain_points') || null,
-    };
-    const outcomes = val('key_outcomes').split('\n').map(s => s.trim()).filter(Boolean);
-    const briefPatch = {
-      positional_phrase: val('positional_phrase') || null,
-      what_it_does: val('what_it_does') || null,
-      mechanism: val('mechanism') || null,
-      key_outcomes: outcomes,
-      source: 'edited',
-    };
     try {
-      const [r1, r2] = await Promise.all([
-        window.supabaseClient.from('intel_hub_intake').update(intakePatch).eq('user_id', STATE.user.id),
-        window.supabaseClient.from('client_brief').update(briefPatch).eq('user_id', STATE.user.id),
-      ]);
-      if (r1.error || r2.error) throw (r1.error || r2.error);
-      STATE.intake = { ...STATE.intake, ...intakePatch };
-      STATE.brief = { ...STATE.brief, ...briefPatch };
+      const { intakePatch, briefPatch } = collectPatches(ev.target);
+      await persistResearch(intakePatch, briefPatch);
       if (msg) msg.textContent = '✓ Guardado';
+      renderResearch();
     } catch (e) {
       console.error('[research] save error', e);
-      if (msg) msg.textContent = '❌ No se pudo guardar';
+      const m = document.getElementById('ihx-research-saved-msg');
+      if (m) m.textContent = '❌ No se pudo guardar';
     } finally {
       STATE.researchSaving = false;
-      if (btn) btn.disabled = false;
+      const b = document.getElementById('ihx-research-save');
+      if (b) b.disabled = false;
       setTimeout(() => { const m = document.getElementById('ihx-research-saved-msg'); if (m) m.textContent = ''; }, 4000);
+    }
+  }
+  // Confirmar = guardar lo que está en pantalla y marcar el contexto como
+  // revisado por el usuario. Es lo que abre el resto de la plataforma: que la
+  // IA haya llenado los campos no equivale a que él los haya validado.
+  async function confirmContext(btn) {
+    if (!STATE.user || STATE.researchSaving) return;
+    const form = document.getElementById('ihx-research-form');
+    if (!form) return;
+    STATE.researchSaving = true;
+    const original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Confirmando…'; }
+    try {
+      const { intakePatch, briefPatch } = collectPatches(form);
+      const merged = { ...STATE.intake, ...intakePatch };
+      const mergedBrief = { ...STATE.brief, ...briefPatch };
+      const check = CC().completeness(merged, mergedBrief);
+      if (!check.fieldsComplete) {
+        if (btn) { btn.textContent = 'Faltan campos'; }
+        await persistResearch(intakePatch, briefPatch);
+        STATE.researchSaving = false;
+        renderResearch();
+        return;
+      }
+      intakePatch.context_confirmed_at = new Date().toISOString();
+      await persistResearch(intakePatch, briefPatch);
+      STATE.researchSaving = false;
+      renderResearch();
+      // El contexto declarado cambia los filtros recomendados y el brief: se
+      // regenera para que el resto de la plataforma arranque ya alineada.
+      triggerClientBriefRefresh();
+    } catch (e) {
+      console.error('[research] confirm error', e);
+      STATE.researchSaving = false;
+      if (btn) { btn.textContent = '❌ No se pudo confirmar'; btn.disabled = false; }
+      setTimeout(() => { const b = document.getElementById('ihx-confirm-context'); if (b) b.textContent = original; }, 2500);
     }
   }
   // Secciones que quedaron en 'generating' por una corrida previa que nunca

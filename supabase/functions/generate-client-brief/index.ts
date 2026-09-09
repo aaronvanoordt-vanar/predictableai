@@ -25,6 +25,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
+import { parseLlmJson } from "../_shared/llm-json.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -46,7 +47,11 @@ async function callAi(engine: Engine, system: string, user: string): Promise<str
     engine,
     system,
     user,
-    maxTokens: 4096,
+    // El brief es el JSON más grande que pide cualquier función: ~20 campos,
+    // varios de ellos arrays, y todo el texto en español (más tokens por
+    // carácter que en inglés). Con 4096 la respuesta se cortaba a mitad de un
+    // array y se perdía la corrida entera.
+    maxTokens: 8192,
     webSearch: 5,
     claudeWebSearchTool: "web_search_20260209",
     retryDelayMs: 8000,
@@ -55,20 +60,10 @@ async function callAi(engine: Engine, system: string, user: string): Promise<str
   return res.text;
 }
 
+// El parser vive en _shared/llm-json.ts: aguanta llaves dentro de strings y
+// respuestas cortadas a mitad, que es como se perdían briefs enteros.
 // deno-lint-ignore no-explicit-any
-function parseJson(raw: string): any {
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  try { return JSON.parse(cleaned); } catch (_) { /* fall through */ }
-  const s = cleaned.indexOf("{");
-  if (s === -1) throw new Error("No JSON found in response");
-  let depth = 0, e = -1;
-  for (let i = s; i < cleaned.length; i++) {
-    if (cleaned[i] === "{") depth++;
-    else if (cleaned[i] === "}") { depth--; if (!depth) { e = i; break; } }
-  }
-  if (e === -1) throw new Error("Unterminated JSON in response");
-  return JSON.parse(cleaned.slice(s, e + 1));
-}
+const parseJson = (raw: string): any => parseLlmJson(raw);
 
 const SYSTEM_PROMPT = `You are the onboarding engine of a B2B sales-intelligence platform. You build a "client brief": the seller context used to write hyper-personalized outbound messages on behalf of this company.
 
@@ -82,7 +77,7 @@ Research the company (web_search their website and LinkedIn page, max 5 searches
   "authority_signals": "extra credibility signals found (partnerships, certifications, client logos, awards). Empty string if none found.",
   "what_it_does": "1 sentence in Spanish: what the company does",
   "mechanism": "2-3 sentences in Spanish describing HOW the product/service delivers its outcome. Concrete verbs, no buzzwords ('end-to-end', 'powered by AI' prohibited).",
-  "key_outcomes": ["array of concrete outcomes WITH numbers, in Spanish, ONLY if they appear in the intake data or on the company's own website/materials. If no defensible numbers exist, return []."],
+  "key_outcomes": ["3-5 concrete outcomes the customer gets, in Spanish. FIRST look for figures the company itself publishes — most sites have a stats band on the home or about page (headings like 'Nuestra experiencia en números', 'En cifras', 'Our impact', 'By the numbers') with volumes handled, deals closed, years operating or clients served. When you find those, use them VERBATIM with the label they carry (e.g. '$150B en valuaciones corporativas'). Never invent, round or estimate a figure, and never move a figure to a label it did not have. When the site publishes none, still return the outcomes qualitatively, phrased as what the customer ends up with (e.g. 'Dictámenes de valor defendibles ante auditores, bancos y autoridades fiscales'). Never return an empty array."],
   "icp": {
     "industries": ["from intake + research"],
     "company_sizes": ["e.g. '20-200 empleados'"],
@@ -114,6 +109,7 @@ Research the company (web_search their website and LinkedIn page, max 5 searches
 
 Hard rules:
 - NEVER invent metrics, client names, or facts. Anything not found in the intake data or the company's own public materials must be omitted (empty string / empty array). social_proof comes ONLY from intake success cases or clients named on their website.
+- That rule bans invented FACTS, not qualitative description. key_outcomes and common_objections are drafts the seller reviews and edits before anything is sent, so return them filled: outcomes described without figures when no figure is published, and objections as the reflexes this buyer plausibly has. What you must never do is attach a number, a client name, a date or a certification that nobody stated.
 - All user-facing text in neutral Latin-American Spanish (tuteo). recommended_filters values in English (Apollo requirement).
 - recommended_filters must aim WIDE: the goal is a pool of at least ~1000 people. Prefer more titles/seniorities/countries and fewer keyword restrictions. Include every ICP geography plus close neighbors in the same region when the ICP is regional (e.g. LATAM).
 - If the intake is sparse, still produce the best brief possible from web research alone and note gaps as empty values.`;
@@ -135,6 +131,39 @@ interface IntakeRow {
   value_proposition: string | null;
   value_success_cases: string | null;
   what_to_know: string | null;
+  // Contexto de empresa v2 — declarado y confirmado por el usuario en el primer
+  // paso del journey. Es fuente de verdad, no una sugerencia: los arrays traen
+  // valores exactos de la taxonomía de Apollo.
+  icp_countries: string[] | null;
+  icp_industry_tags: string[] | null;
+  icp_employee_ranges: string[] | null;
+  icp_departments: string[] | null;
+  icp_seniorities: string[] | null;
+  icp_titles: string[] | null;
+  icp_buying_triggers: string | null;
+  icp_disqualifiers: string | null;
+  competitors: { name?: string; domain?: string }[] | null;
+  excluded_companies: string[] | null;
+  commercial_deal_size: string | null;
+  commercial_sales_cycle: string | null;
+  commercial_model: string | null;
+  commercial_primary_cta: string | null;
+  outreach_signature: string | null;
+  outreach_tone: string | null;
+  outreach_channels: string[] | null;
+  outreach_language: string | null;
+  social_proof: { client?: string; industry?: string; result?: string }[] | null;
+  common_objections: { objection?: string; neutralizer?: string }[] | null;
+  // "No tengo casos de éxito" / "no me ponen objeciones": son declaraciones del
+  // usuario, así que valen tanto como una lista llena — sin leerlas, el relleno
+  // automático de abajo las pisaría con propuestas que él ya descartó.
+  social_proof_none: boolean | null;
+  objections_none: boolean | null;
+  context_confirmed_at: string | null;
+  // Foco declarado por el usuario para la investigación (enrich-company). El
+  // brief se redacta con el mismo foco: si la investigación miró una sola línea
+  // de negocio, el posicionamiento no puede hablar de todas.
+  company_enrichment_prompt: string | null;
 }
 
 function buildUserPrompt(
@@ -143,8 +172,23 @@ function buildUserPrompt(
   icp: { company_sizes?: string | null; industries?: string | null; roles?: string | null; geographies?: string | null; pain_points?: string | null } | null,
   documentSummaries: string[],
 ): string {
-  const lines: string[] = ["=== INTAKE DATA (collected at onboarding — trusted source) ==="];
+  const lines: string[] = [];
+  // El foco va primero y con el encabezado más fuerte del prompt: llega después
+  // de una investigación ya acotada a una línea de negocio, así que el brief
+  // tiene que quedarse en esa misma línea o contradice lo que el usuario ve.
+  const focus = (intake?.company_enrichment_prompt ?? "").trim();
+  if (focus) {
+    lines.push(
+      "=== SCOPE INSTRUCTION FROM THE SELLER (highest priority — overrides breadth, never invents) ===",
+      focus,
+      "Everything you write — positioning, what they do, mechanism, outcomes, recommended filters — must stay inside this scope.",
+      "This company may sell other things; ignore them. If the data below mixes several business lines, keep only what belongs to the scope above. Never invent facts to fill the scope.",
+      "",
+    );
+  }
+  lines.push("=== INTAKE DATA (collected at onboarding — trusted source) ===");
   const push = (label: string, v: string | null | undefined) => { if (v) lines.push(`${label}: ${v}`); };
+  const list = (v: string[] | null | undefined) => (Array.isArray(v) && v.length ? v.join(", ") : null);
   push("Company name", profile?.company_name);
   push("LinkedIn", intake?.company_linkedin_url ?? profile?.linkedin_company_url);
   push("Website", intake?.company_website ?? profile?.company_website);
@@ -156,18 +200,56 @@ function buildUserPrompt(
   push("Value proposition", intake?.value_proposition);
   push("Problem solved", intake?.value_problem_solved);
   push("Success cases", intake?.value_success_cases);
-  lines.push("", "=== ICP (stated by the seller) ===");
-  push("Target industries", intake?.icp_industries ?? icp?.industries);
-  push("Target company sizes", intake?.icp_company_sizes ?? icp?.company_sizes);
-  push("Target roles", intake?.icp_roles ?? icp?.roles);
-  push("Target geographies", intake?.icp_geographies ?? icp?.geographies);
+  // Bloque interno v2: cómo vende y cómo habla. Sin esto el modelo inventa un
+  // remitente, un CTA y un tono genéricos.
+  push("Business model", intake?.commercial_model);
+  push("Average deal size", intake?.commercial_deal_size);
+  push("Sales cycle length", intake?.commercial_sales_cycle);
+  push("Preferred CTA", intake?.commercial_primary_cta);
+  push("Who signs the outreach", intake?.outreach_signature);
+  push("Tone", intake?.outreach_tone);
+  push("Channels", list(intake?.outreach_channels));
+  push("Outreach language", intake?.outreach_language);
+  const proof = (intake?.social_proof ?? []).filter((p) => p && (p.client || p.result));
+  if (proof.length) {
+    lines.push("Social proof declared by the seller (use ONLY these — never invent a client or a result):");
+    proof.forEach((p) => lines.push(`  - ${[p.client, p.industry, p.result].filter(Boolean).join(" | ")}`));
+  }
+  const objections = (intake?.common_objections ?? []).filter((o) => o && o.objection);
+  if (objections.length) {
+    lines.push("Objections the seller actually hears:");
+    objections.forEach((o) => lines.push(`  - ${o.objection} → ${o.neutralizer ?? ""}`));
+  }
+  const competitors = (intake?.competitors ?? []).filter((c) => c && c.name);
+  if (competitors.length) {
+    lines.push("Direct competitors (NEVER treat these as prospects — they are rivals):");
+    competitors.forEach((c) => lines.push(`  - ${[c.name, c.domain].filter(Boolean).join(" — ")}`));
+  }
+
+  // El ICP declarado y confirmado por el usuario manda sobre cualquier
+  // inferencia: los arrays traen los valores exactos de la taxonomía de Apollo.
+  const declared = (intake?.icp_countries ?? []).length > 0 || (intake?.icp_industry_tags ?? []).length > 0;
+  lines.push("", declared
+    ? "=== ICP (DECLARED AND CONFIRMED BY THE SELLER — this is ground truth, never replace it with your own guess) ==="
+    : "=== ICP (stated by the seller) ===");
+  push("Target countries", list(intake?.icp_countries) ?? intake?.icp_geographies ?? icp?.geographies);
+  push("Target industries", list(intake?.icp_industry_tags) ?? intake?.icp_industries ?? icp?.industries);
+  push("Target company sizes", list(intake?.icp_employee_ranges) ?? intake?.icp_company_sizes ?? icp?.company_sizes);
+  push("Target departments", list(intake?.icp_departments));
+  push("Target seniorities", list(intake?.icp_seniorities));
+  push("Target job titles", list(intake?.icp_titles) ?? intake?.icp_roles ?? icp?.roles);
   push("ICP pain points", intake?.icp_pain_points ?? icp?.pain_points);
+  push("Buying triggers", intake?.icp_buying_triggers);
+  push("Disqualifiers (who is NOT a fit)", intake?.icp_disqualifiers);
+  push("Companies never to prospect", list(intake?.excluded_companies));
   push("What they want to know about their market", intake?.what_to_know);
   if (documentSummaries.length) {
     lines.push("", "=== UPLOADED COMPANY DOCUMENTS (summarized from one-pagers/decks the seller uploaded — trusted source) ===");
     documentSummaries.forEach((s, i) => { lines.push(`Document ${i + 1}:`, s, ""); });
   }
-  lines.push("", "Research this company now (website + LinkedIn) and produce the JSON brief.");
+  lines.push("", focus
+    ? `Research this company now (website + LinkedIn) and produce the JSON brief, staying strictly within the scope instruction at the top: ${focus}`
+    : "Research this company now (website + LinkedIn) and produce the JSON brief.");
   return lines.join("\n");
 }
 
@@ -192,6 +274,32 @@ function buildHubIntelBlock(reports: Array<{ section_key: string; content: any }
     }
   }
   return lines.length > 2 ? lines.join("\n") : "";
+}
+
+// Filtros de Apollo derivados del ICP declarado, sin pasar por el modelo.
+// Antes esto lo adivinaba el LLM a partir de texto libre ("LATAM, fintech,
+// gerentes"); ahora el usuario elige valores exactos de la taxonomía en el
+// contexto de empresa, así que la búsqueda recomendada usa esos y no una
+// reinterpretación. Espejo de CompanyContext.recommendedFilters en el cliente
+// (js/company-context.js) — si cambias uno, cambia el otro.
+// deno-lint-ignore no-explicit-any
+function filtersFromDeclaredIcp(intake: IntakeRow | null): Record<string, any> | null {
+  if (!intake) return null;
+  const a = (v: string[] | null | undefined) => (Array.isArray(v) ? v.filter(Boolean) : []);
+  const countries = a(intake.icp_countries);
+  const titles = a(intake.icp_titles);
+  const seniorities = a(intake.icp_seniorities);
+  const ranges = a(intake.icp_employee_ranges);
+  const industries = a(intake.icp_industry_tags);
+  if (!countries.length && !titles.length && !seniorities.length) return null;
+  // deno-lint-ignore no-explicit-any
+  const payload: Record<string, any> = {};
+  if (titles.length) { payload.person_titles = titles.slice(0, 15); payload.include_similar_titles = true; }
+  if (seniorities.length) payload.person_seniorities = seniorities;
+  if (countries.length) payload.person_locations = countries.slice(0, 20);
+  if (ranges.length) payload.organization_num_employees_ranges = ranges;
+  if (industries.length) payload.q_organization_keyword_tags = industries.slice(0, 6);
+  return payload;
 }
 
 Deno.serve(async (req: Request) => {
@@ -219,7 +327,14 @@ Deno.serve(async (req: Request) => {
       company_linkedin_url, company_industry, company_employee_count, company_country,
       company_website, company_about, company_solutions,
       icp_company_sizes, icp_industries, icp_roles, icp_geographies, icp_pain_points,
-      value_problem_solved, value_proposition, value_success_cases, what_to_know
+      value_problem_solved, value_proposition, value_success_cases, what_to_know,
+      icp_countries, icp_industry_tags, icp_employee_ranges, icp_departments,
+      icp_seniorities, icp_titles, icp_buying_triggers, icp_disqualifiers,
+      competitors, excluded_companies,
+      commercial_deal_size, commercial_sales_cycle, commercial_model, commercial_primary_cta,
+      outreach_signature, outreach_tone, outreach_channels, outreach_language,
+      social_proof, common_objections, social_proof_none, objections_none,
+      context_confirmed_at, company_enrichment_prompt
     `).eq("user_id", user.id).maybeSingle(),
     supa.from("profiles").select("company_name, linkedin_company_url, company_website").eq("id", user.id).maybeSingle(),
     supa.from("client_icp").select("company_sizes, industries, roles, geographies, pain_points").eq("profile_id", user.id).maybeSingle(),
@@ -249,20 +364,58 @@ Deno.serve(async (req: Request) => {
       const b = parseJson(raw);
       const arr = (v: unknown) => (Array.isArray(v) ? v : []);
       const str = (v: unknown) => (typeof v === "string" ? v : "");
+      const declaredIntake = intake as IntakeRow | null;
+      // Lo que el usuario declaró NO se re-genera: prueba social inventada por
+      // un modelo es exactamente el tipo de dato falso que el producto prohíbe,
+      // y las objeciones que él escuchó valen más que las que el modelo supone.
+      const declaredProof = (declaredIntake?.social_proof ?? []).filter((p) => p && (p.client || p.result));
+      const declaredObjections = (declaredIntake?.common_objections ?? []).filter((o) => o && o.objection);
+      // Se exigen los dos campos completos. Una respuesta truncada que se
+      // reparó puede traer el último elemento a medias ("client" sin "result"),
+      // y media prueba social no se guarda en ningún lado.
+      const proposedProof = arr(b.social_proof)
+        .filter((p) => p && str(p.client) && str(p.result))
+        .slice(0, 6)
+        .map((p) => ({
+          client: str(p.client).slice(0, 120),
+          industry: str(p.industry).slice(0, 120),
+          result: str(p.result).slice(0, 300),
+        }));
+      const proposedObjections = arr(b.common_objections)
+        .filter((o) => o && str(o.objection) && str(o.neutralizer))
+        .slice(0, 6)
+        .map((o) => ({
+          objection: str(o.objection).slice(0, 300),
+          neutralizer: str(o.neutralizer).slice(0, 300),
+        }));
+      const modelIcp = (b.icp && typeof b.icp === "object") ? b.icp : {};
+      const declaredIcpBlock = {
+        ...modelIcp,
+        ...((declaredIntake?.icp_industry_tags ?? []).length ? { industries: declaredIntake!.icp_industry_tags } : {}),
+        ...((declaredIntake?.icp_employee_ranges ?? []).length ? { company_sizes: declaredIntake!.icp_employee_ranges } : {}),
+        ...((declaredIntake?.icp_countries ?? []).length ? { geographies: declaredIntake!.icp_countries } : {}),
+        ...((declaredIntake?.icp_titles ?? []).length ? { roles: declaredIntake!.icp_titles } : {}),
+        ...(declaredIntake?.icp_buying_triggers ? { buying_triggers: [declaredIntake.icp_buying_triggers] } : {}),
+        ...(declaredIntake?.icp_disqualifiers ? { disqualifiers: [declaredIntake.icp_disqualifiers] } : {}),
+      };
       await supa.from("client_brief").update({
         company_name:        str(b.company_name) || profile?.company_name || null,
         positional_phrase:   str(b.positional_phrase) || null,
         brand_promise:       str(b.brand_promise) || null,
-        founder_voice:       str(b.founder_voice) || null,
+        founder_voice:       declaredIntake?.outreach_signature || str(b.founder_voice) || null,
         authority_signals:   str(b.authority_signals) || null,
         what_it_does:        str(b.what_it_does) || null,
         mechanism:           str(b.mechanism) || null,
         key_outcomes:        arr(b.key_outcomes),
-        icp:                 (b.icp && typeof b.icp === "object") ? b.icp : {},
-        social_proof:        arr(b.social_proof),
-        common_objections:   arr(b.common_objections),
+        icp:                 declaredIcpBlock,
+        social_proof:        declaredProof.length ? declaredProof : proposedProof,
+        common_objections:   declaredObjections.length ? declaredObjections : proposedObjections,
         voice_notes:         str(b.voice_notes) || null,
-        recommended_filters: (b.recommended_filters && typeof b.recommended_filters === "object") ? b.recommended_filters : null,
+        // El ICP declarado gana; el del modelo solo se usa si el usuario
+        // todavía no declaró el suyo. La ampliación hasta ~1000 personas la
+        // sigue haciendo la búsqueda (broadenOnce en js/prospecting.js).
+        recommended_filters: filtersFromDeclaredIcp(intake as IntakeRow | null)
+          ?? ((b.recommended_filters && typeof b.recommended_filters === "object") ? b.recommended_filters : null),
         status:              "ready",
         error_message:       null,
         source:              "auto",
@@ -275,16 +428,44 @@ Deno.serve(async (req: Request) => {
       // sin pisar nada que el usuario ya haya corregido a mano.
       const enr = (b.enrichment && typeof b.enrichment === "object") ? b.enrichment : {};
       const intakeRow = intake as IntakeRow | null;
-      const fill: Record<string, string> = {};
-      if (!intakeRow?.company_website && str(enr.website)) fill.company_website = str(enr.website);
-      if (!intakeRow?.company_industry && str(enr.industry)) fill.company_industry = str(enr.industry);
-      if (!intakeRow?.company_employee_count && str(enr.employee_count)) fill.company_employee_count = str(enr.employee_count);
-      if (!intakeRow?.company_country && str(enr.country)) fill.company_country = str(enr.country);
-      if (!intakeRow?.company_about && str(enr.about)) fill.company_about = str(enr.about);
-      if (!intakeRow?.company_solutions && str(enr.solutions)) fill.company_solutions = str(enr.solutions);
+      // deno-lint-ignore no-explicit-any
+      const healed: Record<string, any> = {};
+      if (!intakeRow?.company_website && str(enr.website)) healed.company_website = str(enr.website);
+      if (!intakeRow?.company_industry && str(enr.industry)) healed.company_industry = str(enr.industry);
+      if (!intakeRow?.company_employee_count && str(enr.employee_count)) healed.company_employee_count = str(enr.employee_count);
+      if (!intakeRow?.company_country && str(enr.country)) healed.company_country = str(enr.country);
+      if (!intakeRow?.company_about && str(enr.about)) healed.company_about = str(enr.about);
+      if (!intakeRow?.company_solutions && str(enr.solutions)) healed.company_solutions = str(enr.solutions);
+
+      // Propuestas para las tarjetas que ninguna función llenaba. El modelo ya
+      // devolvía prueba social, objeciones y quién firma, pero solo se
+      // guardaban en client_brief y las tarjetas las leen de intel_hub_intake:
+      // "Resultados y prueba social", "Objeciones frecuentes" y "Voz, canales e
+      // idioma" no había forma de que la IA las completara, por más veces que se
+      // investigara. Se copian solo donde el usuario no declaró nada — ni
+      // valores ni el "no tengo" —, así que nunca pisan una decisión suya, y
+      // llegan como borrador que él revisa antes de confirmar el contexto.
+      // deno-lint-ignore no-explicit-any
+      const fill: Record<string, any> = { ...healed };
+      if (!declaredProof.length && intakeRow?.social_proof_none !== true && proposedProof.length) {
+        fill.social_proof = proposedProof;
+      }
+      if (!declaredObjections.length && intakeRow?.objections_none !== true && proposedObjections.length) {
+        fill.common_objections = proposedObjections;
+      }
+      if (!str(intakeRow?.outreach_signature) && str(b.founder_voice)) {
+        fill.outreach_signature = str(b.founder_voice).slice(0, 200);
+      }
+
       if (Object.keys(fill).length > 0) {
-        fill.company_enrichment_status = "done";
-        fill.company_enrichment_at = new Date().toISOString();
+        // El sello de "investigación terminada" solo corresponde cuando esta
+        // función tuvo que suplir a enrich-company. Ponerlo por haber rellenado
+        // una propuesta daría por cerrada una corrida que puede seguir viva y
+        // cortaría la barra de progreso antes de tiempo.
+        if (Object.keys(healed).length > 0) {
+          fill.company_enrichment_status = "done";
+          fill.company_enrichment_at = new Date().toISOString();
+        }
         await supa.from("intel_hub_intake").update(fill).eq("user_id", user.id);
       }
       console.log(`[brief] ✓ ${user.id}`);

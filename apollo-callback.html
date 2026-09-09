@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Predictable.ai — Conectando tu email…</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #F7F8FA; color: #0A0A0F; font-family: 'Geist', ui-sans-serif, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  .box { text-align: center; max-width: 420px; padding: 0 20px; }
+  .spinner { width: 40px; height: 40px; border: 3px solid rgba(10,10,15,0.10); border-top-color: #1F4BFF; border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto 20px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .msg { color: rgba(10,10,15,0.55); font-size: 14px; line-height: 1.55; }
+  .err { color: #D64545; margin-top: 12px; font-size: 13px; line-height: 1.55; }
+  .ok { color: #1B8A5A; margin-top: 12px; font-size: 13px; }
+  a { color: #1F4BFF; }
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="spinner" id="spinner"></div>
+  <div class="msg" id="msg">Conectando tu cuenta de email…</div>
+  <div class="err" id="err"></div>
+  <div class="ok" id="ok"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabase-client.js"></script>
+<script>
+  // Landing page for Apollo's OAuth redirect (the "Conectar" button of the
+  // Email channel in Campañas opens it as a popup). Deliberately does NOT
+  // load auth-guard.js: it must render its own error instead of bouncing to
+  // the login page when something goes wrong mid-flow. The popup shares
+  // localStorage with the opener, so the Supabase session is already there.
+  (async function () {
+    var msg = document.getElementById('msg');
+    var err = document.getElementById('err');
+    var ok = document.getElementById('ok');
+    var spinner = document.getElementById('spinner');
+
+    function fail(text, withLink) {
+      spinner.style.display = 'none';
+      msg.textContent = 'No se pudo conectar el email.';
+      err.textContent = text;
+      if (withLink) {
+        var a = document.createElement('a');
+        a.href = './index.html#pro-main:campanas';
+        a.textContent = 'Volver a la app';
+        err.appendChild(document.createTextNode(' '));
+        err.appendChild(a);
+        err.appendChild(document.createTextNode('.'));
+      }
+    }
+
+    function notifyOpener() {
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage({ type: 'predictable:channel-connected', provider: 'apollo' }, window.location.origin);
+        }
+      } catch (e) { /* opener de otro origen: se ignora */ }
+    }
+
+    var params = new URLSearchParams(window.location.search);
+    var code = params.get('code');
+    var state = params.get('state');
+    var oauthError = params.get('error') || params.get('error_message');
+    var statusCode = params.get('status_code');
+
+    if (oauthError || (statusCode && statusCode !== '200')) {
+      var text = oauthError === 'access_denied'
+        ? 'Cancelaste el permiso en Apollo.'
+        : 'Apollo respondió: ' + (oauthError || ('código ' + statusCode)) + '. Solo un administrador de tu cuenta de Apollo (o alguien con permiso para autorizar integraciones) puede conectarla.';
+      return fail(text, true);
+    }
+    if (!code) return fail('Apollo no devolvió un código de autorización.', true);
+    if (!state) return fail('Falta la verificación de seguridad (state). Inicia la conexión de nuevo desde la app.', true);
+
+    try {
+      var session = await window.supabaseHelpers.getSession();
+      if (!session) return fail('Tu sesión expiró. Inicia sesión y vuelve a conectar el email.', true);
+
+      var res = await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/channel-connect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + session.access_token
+        },
+        body: JSON.stringify({
+          action: 'apollo_connect',
+          payload: {
+            code: code,
+            state: state,
+            // Must byte-match the redirect_uri used to get the code.
+            redirect_uri: window.location.origin + window.location.pathname
+          }
+        })
+      });
+      var data = null;
+      try { data = await res.json(); } catch (e) { data = null; }
+      if (!res.ok) {
+        return fail((data && (data.message || data.error)) || ('Error ' + res.status + ' al guardar la conexión.'), true);
+      }
+
+      spinner.style.display = 'none';
+      var email = data && data.apollo && data.apollo.config && data.apollo.config.email;
+      msg.textContent = 'Email conectado' + (email ? ': ' + email : '') + '.';
+      ok.textContent = 'Ya puedes cerrar esta ventana.';
+      notifyOpener();
+      setTimeout(function () { try { window.close(); } catch (e) { /* no abierta como popup */ } }, 800);
+    } catch (e) {
+      fail((e && e.message) || 'Error inesperado.', true);
+    }
+  })();
+</script>
+</body>
+</html>

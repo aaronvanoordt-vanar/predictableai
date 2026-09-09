@@ -8,9 +8,9 @@
 // servidor — este módulo solo la escribe y la muestra.
 //
 // El motor recomendado depende de la función:
-//   Intelligence Hub / Contexto estratégico IA → Perplexity (búsqueda web)
-//   Mensajes y onboarding      → Claude
-//   AI Sales Coach             → OpenAI
+//   Inteligencia (Intelligence Hub, Contexto estratégico IA, Onboarding/research, Radar) → Perplexity
+//   Prospección (mensajes)                                                               → Claude
+//   AI Sales Coach                                                                       → OpenAI
 //
 // Mantener RECOMMENDED en sync con RECOMMENDED_ENGINE de
 // supabase/functions/_shared/llm.ts.
@@ -53,8 +53,9 @@
     coda:       { label: 'Global context', recommended: 'perplexity' },
     outreach:   { label: 'Generación de mensajes', recommended: 'claude' },
     coach:      { label: 'AI Sales Coach',     recommended: 'openai' },
-    onboarding: { label: 'Onboarding y contexto de empresa', recommended: 'claude' },
-    radar:      { label: 'Radar de señales',   recommended: 'claude' },
+    onboarding: { label: 'Onboarding y contexto de empresa', recommended: 'perplexity' },
+    radar:      { label: 'Radar de señales',   recommended: 'perplexity' },
+    client_review: { label: 'Revisión del portal del cliente', recommended: 'claude' },
   };
 
   var LS_KEY = 'px_ai_engines';

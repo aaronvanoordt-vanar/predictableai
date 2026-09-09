@@ -1,0 +1,57 @@
+# Lectura diaria de los Google Sheets de los clientes.
+#
+# Cada corrida guarda una FOTO de los totales (client_metric_snapshots). Esa
+# foto es lo que después permite responder "¿cuántos mensajes se enviaron ESTE
+# MES?": el volumen de un período es la diferencia entre dos fotos. Si el cron
+# no corre, el portal sigue funcionando —al abrirlo se puede sincronizar a
+# mano— pero pierde la capacidad de segmentar volúmenes por fecha.
+#
+# Requiere dos secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_FUNCTIONS_URL  p. ej. https://<ref>.supabase.co
+#   SHEET_SYNC_SECRET       el mismo valor que el secret homónimo de la edge
+#                           function (supabase secrets set SHEET_SYNC_SECRET=…)
+name: Sync client sheets
+
+on:
+  schedule:
+    # 07:00 UTC ≈ 01:00 en Ciudad de México / 02:00 en Bogotá y Lima.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger sheet-sync
+        env:
+          FUNCTIONS_URL: ${{ secrets.SUPABASE_FUNCTIONS_URL }}
+          SHEET_SYNC_SECRET: ${{ secrets.SHEET_SYNC_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${FUNCTIONS_URL:-}" ] || [ -z "${SHEET_SYNC_SECRET:-}" ]; then
+            echo "::error::Faltan los secrets SUPABASE_FUNCTIONS_URL y/o SHEET_SYNC_SECRET."
+            exit 1
+          fi
+
+          # El secret viaja en el cuerpo, nunca en la URL ni en la línea de
+          # comandos: los argv de un runner quedan en los logs del proceso.
+          printf '{"action":"sync_all","secret":"%s"}' "$SHEET_SYNC_SECRET" > /tmp/body.json
+
+          STATUS=$(curl -sS -o /tmp/out.json -w '%{http_code}' \
+            -X POST "$FUNCTIONS_URL/functions/v1/sheet-sync" \
+            -H 'Content-Type: application/json' \
+            --data @/tmp/body.json)
+
+          rm -f /tmp/body.json
+
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::sheet-sync respondió $STATUS"
+            # La respuesta de error no lleva secretos, solo el motivo.
+            cat /tmp/out.json || true
+            exit 1
+          fi
+
+          # jq viene preinstalado en los runners de GitHub.
+          echo "Clientes procesados: $(jq -r '.synced // 0' /tmp/out.json) · correctos: $(jq -r '.ok // 0' /tmp/out.json)"
+          jq -r '.results[]? | select(.ok != true) | "::warning::\(.client_id): \(.error)"' /tmp/out.json
