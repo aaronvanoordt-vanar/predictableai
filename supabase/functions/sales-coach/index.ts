@@ -696,9 +696,22 @@ async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
           // que corre modelos async (no realtime) y puede demorar 3-10 MINUTOS en
           // entregar transcript.data — visto en producción como un solo bloque de
           // texto llegando de golpe tras ~90s en vez de ir llegando en vivo.
-          // "prioritize_low_latency" da actualizaciones cada 1-3s, como corresponde
-          // a un coach EN VIVO.
-          provider: { recallai_streaming: { language_code: "es", mode: "prioritize_low_latency" } },
+          //
+          // "prioritize_low_latency" arregla eso (1-3s) pero SOLO soporta inglés —
+          // con language_code:"es" Recall responde 400 (non_field_errors: "language_code
+          // other than english is not supported in low latency mode"), rompiendo el
+          // modo bot por completo para un producto en español. NO usar ese mode acá.
+          //
+          // TODO real-time en español: mover el provider a `deepgram_streaming`
+          // (Recall soporta Deepgram como transcriptor en tiempo real vía BYO API key
+          // — Deepgram nova-2/nova-3 con language:"multi" ya da baja latencia en
+          // español, es lo mismo que usa el modo local en js/realtime-coach.js).
+          // Requiere: 1) crear un API key en Deepgram con rol Member/Admin/Owner
+          // (NO Default), 2) pegarlo en el dashboard de Recall.ai para la región
+          // configurada en RECALL_REGION (las regiones de Recall son independientes,
+          // el key hay que agregarlo en esa región específica). Sin ese paso manual
+          // en el dashboard, cambiar el provider acá solo cambiaría el error.
+          provider: { recallai_streaming: { language_code: "es" } },
         },
         realtime_endpoints: [{
           type: "webhook",
