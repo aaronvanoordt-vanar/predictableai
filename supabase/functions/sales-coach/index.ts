@@ -49,7 +49,16 @@
  *   endMeeting           { meeting_id }                    → full final report JSON (schema below);
  *                          stops the Recall bot, stores final_report + score_total,
  *                          extracts meeting_objections rows, mirrors a copy into
- *                          sales_reports (so historic dashboards keep working)
+ *                          sales_reports (so historic dashboards keep working).
+ *                          Bot mode: if Recall has not delivered the full transcript
+ *                          yet, marks the meeting `processing` and returns
+ *                          { pending: true, meeting_id } instead.
+ *   finalizeReport       { meeting_id }                    → { pending, report?, waited_seconds? }
+ *                          polled by the Reportes page for `processing` meetings;
+ *                          builds the report once Recall's transcript is available
+ *                          (or after 20 min with the chunks that did arrive).
+ *   getMeetingReport     { meeting_id, include_transcript? } → same payload as
+ *                          getLastMeetingReport for one specific meeting (owner or manager).
  *   getLastMeetingReport { sdr_email? (admin/director only) }
  *                                                          → { meeting_id, meeting_url, prospect_name,
  *                                                              sdr_email, started_at, score_total, report } | null
@@ -90,6 +99,9 @@
  * RECALL_REGION optional (defaults to "us-west-2") — must match the region
  * the RECALL_API_KEY was created in (us-east-1, us-west-2, eu-central-1,
  * ap-northeast-1), or bot mode fails with "authentication_failed".
+ * RECALL_TRANSCRIPT_PROVIDER optional: "recallai" (default, async in Spanish)
+ * or "deepgram" (real-time in Spanish; needs the Deepgram key added in the
+ * Recall.ai dashboard for that region) — see recallTranscriptProvider().
  * (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are injected by the platform.)
  */
 
@@ -105,6 +117,104 @@ import { callLLM, engineForUser, parseLlmJson, type Engine } from "../_shared/ll
 function recallBase(): string {
   const region = Deno.env.get("RECALL_REGION") || "us-west-2";
   return `https://${region}.recall.ai/api/v1`;
+}
+
+/**
+ * Transcript provider for the Recall bot (recording_config.transcript.provider).
+ *
+ *   RECALL_TRANSCRIPT_PROVIDER=recallai (default)
+ *     Recall's own transcription. Supports Spanish, but its only real-time
+ *     mode ("prioritize_low_latency") is English-only; in Spanish it runs
+ *     async ("prioritize_accuracy") and transcript.data can land 3-10 MINUTES
+ *     late — the report is finalized later via finalizeReport for that.
+ *
+ *   RECALL_TRANSCRIPT_PROVIDER=deepgram
+ *     Deepgram streaming through Recall: genuinely real-time in Spanish
+ *     (same engine js/realtime-coach.js uses for local capture). Requires a
+ *     Deepgram API key (Member/Admin/Owner role, NOT Default) added in the
+ *     Recall.ai dashboard for the RECALL_REGION region — without that the bot
+ *     creation fails. Model/language overridable with RECALL_DEEPGRAM_MODEL
+ *     (default nova-3) and RECALL_DEEPGRAM_LANGUAGE (default "multi", i.e.
+ *     code-switching es/en).
+ */
+function recallTranscriptProvider(): Json {
+  const provider = (Deno.env.get("RECALL_TRANSCRIPT_PROVIDER") || "recallai").toLowerCase();
+  if (provider === "deepgram") {
+    return {
+      deepgram_streaming: {
+        model: Deno.env.get("RECALL_DEEPGRAM_MODEL") || "nova-3",
+        language: Deno.env.get("RECALL_DEEPGRAM_LANGUAGE") || "multi",
+        smart_format: true,
+      },
+    };
+  }
+  return { recallai_streaming: { language_code: "es" } };
+}
+
+/**
+ * Full post-call transcript from Recall.ai (available once the bot leaves the
+ * call and the async transcription finishes). Tolerates both response shapes
+ * Recall has used: legacy `GET /bot/{id}/transcript` (speaker + words[]) and
+ * the recordings media_shortcuts transcript JSON (participant + words[]).
+ * Returns null while it is not ready yet.
+ */
+async function fetchRecallTranscript(recallBotId: string): Promise<Array<{ speaker: string; text: string; ts: string | null }> | null> {
+  const RECALL_KEY = Deno.env.get("RECALL_API_KEY");
+  if (!RECALL_KEY) return null;
+  const headers = { "Authorization": `Token ${RECALL_KEY}` };
+
+  const parse = (raw: Json): Array<{ speaker: string; text: string; ts: string | null }> => {
+    const items: Json[] = Array.isArray(raw) ? raw : (Array.isArray(raw?.results) ? raw.results : []);
+    const out: Array<{ speaker: string; text: string; ts: string | null }> = [];
+    for (const it of items) {
+      const words: Json[] = Array.isArray(it?.words) ? it.words : [];
+      const text = words.length
+        ? words.map((w) => String(w?.text ?? "")).join(" ").replace(/\s+/g, " ").trim()
+        : String(it?.text ?? "").trim();
+      if (!text) continue;
+      const speaker = strOrNull(it?.participant?.name) ?? strOrNull(it?.speaker) ?? "unknown";
+      const first = words[0]?.start_timestamp;
+      const abs = (first && typeof first === "object") ? first.absolute : null;
+      out.push({ speaker, text, ts: typeof abs === "string" ? abs : null });
+    }
+    return out;
+  };
+
+  // 1) Legacy transcript endpoint (with/without trailing slash, like fetchBotStatus).
+  for (const url of [`${recallBase()}/bot/${recallBotId}/transcript/`, `${recallBase()}/bot/${recallBotId}/transcript`]) {
+    try {
+      const res = await fetch(url, { headers });
+      if (res.ok) {
+        const parsed = parse(await res.json());
+        if (parsed.length) return parsed;
+      } else if (res.status !== 404) {
+        console.warn(`[sales-coach] fetchRecallTranscript ${url} -> HTTP ${res.status}`);
+      }
+    } catch (e) {
+      console.warn(`[sales-coach] fetchRecallTranscript ${url} failed:`, e);
+    }
+  }
+
+  // 2) Recordings media shortcut (newer API surface).
+  try {
+    const res = await fetch(`${recallBase()}/bot/${recallBotId}/`, { headers });
+    if (!res.ok) return null;
+    const bot = await res.json();
+    const recs: Json[] = Array.isArray(bot?.recordings) ? bot.recordings : [];
+    for (const rec of recs) {
+      const t = rec?.media_shortcuts?.transcript;
+      const url = t?.data?.download_url;
+      const status = t?.status?.code;
+      if (!url || (status && status !== "done")) continue;
+      const tr = await fetch(url);
+      if (!tr.ok) continue;
+      const parsed = parse(await tr.json());
+      if (parsed.length) return parsed;
+    }
+  } catch (e) {
+    console.warn("[sales-coach] fetchRecallTranscript (recordings) failed:", e);
+  }
+  return null;
 }
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -283,6 +393,9 @@ async function callAi(
   userPrompt: string,
   schema: Record<string, unknown>,
   maxTokens: number,
+  // OpenAI only: GPT-5 reasoning tokens share max_output_tokens with the
+  // answer. Live turns use "low" so the JSON never comes back truncated.
+  openaiReasoningEffort?: string,
   // deno-lint-ignore no-explicit-any
 ): Promise<any> {
   const res = await callLLM({
@@ -292,6 +405,7 @@ async function callAi(
     maxTokens,
     jsonSchema: schema,
     claudeModel,
+    openaiReasoningEffort,
     logPrefix: "[sales-coach]",
   });
   return parseLlmJson(res.text);
@@ -607,7 +721,7 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
 
   let llm: Json;
   try {
-    llm = await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_COACH, userPrompt, COACH_SCHEMA, 2048);
+    llm = await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_COACH, userPrompt, COACH_SCHEMA, 4096, "low");
   } catch (e) {
     // Same fallback the Apps Script used on LLM/parse errors.
     console.error("[sales-coach] LLM error:", e);
@@ -691,15 +805,10 @@ async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
       meeting_url: p.meeting_url,
       bot_name: "Notetaker",
       recording_config: {
-        transcript: {
-          // mode explícito: SIN esto Recall usa "prioritize_accuracy" por default,
-          // que corre modelos async (no realtime) y puede demorar 3-10 MINUTOS en
-          // entregar transcript.data — visto en producción como un solo bloque de
-          // texto llegando de golpe tras ~90s en vez de ir llegando en vivo.
-          // "prioritize_low_latency" da actualizaciones cada 1-3s, como corresponde
-          // a un coach EN VIVO.
-          provider: { recallai_streaming: { language_code: "es", mode: "prioritize_low_latency" } },
-        },
+        // Provider chosen by RECALL_TRANSCRIPT_PROVIDER — see recallTranscriptProvider().
+        // NOTE: never add mode:"prioritize_low_latency" to recallai_streaming here:
+        // it is English-only and Recall rejects it with language_code "es".
+        transcript: { provider: recallTranscriptProvider() },
         realtime_endpoints: [{
           type: "webhook",
           url: webhookUrl,
@@ -714,7 +823,10 @@ async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
     throw new Error(`Recall.ai falló: ${JSON.stringify(recall).slice(0, 400)}`);
   }
 
-  await ctx.supa.from("coach_meetings").update({ recall_bot_id: recall.id }).eq("id", meetingId);
+  await ctx.supa.from("coach_meetings").update({
+    recall_bot_id: recall.id,
+    transcript_source: "webhook",
+  }).eq("id", meetingId);
   return { meeting_id: meetingId, recall_bot_id: recall.id };
 }
 
@@ -840,11 +952,43 @@ async function actionGetMeetingState(ctx: Ctx, p: Json): Promise<Json> {
   };
 }
 
+// Bot-mode transcripts (Recall async provider) can land minutes after the SDR
+// ends the session. Past this window finalizeReport stops waiting for Recall
+// and builds the report with whatever chunks exist, so no meeting stays
+// "processing" forever.
+const PENDING_TRANSCRIPT_MAX_MS = 20 * 60 * 1000;
+
+/** Replaces the meeting's chunks with the full Recall transcript (source of truth once available). */
+async function replaceChunksWithRecallTranscript(
+  supa: SupabaseClient,
+  meetingId: string,
+  rows: Array<{ speaker: string; text: string; ts: string | null }>,
+  fallbackStart: string | null,
+) {
+  await supa.from("coach_transcript_chunks").delete().eq("meeting_id", meetingId);
+  const base = fallbackStart ? new Date(fallbackStart).getTime() : Date.now();
+  const inserts = rows.map((r, i) => ({
+    meeting_id: meetingId,
+    ts: r.ts ?? new Date(base + i * 1000).toISOString(),
+    speaker: r.speaker,
+    text: r.text,
+    analyzed: true,
+  }));
+  for (let i = 0; i < inserts.length; i += 200) {
+    const { error } = await supa.from("coach_transcript_chunks").insert(inserts.slice(i, i + 200));
+    if (error) throw new Error(error.message);
+  }
+}
+
 async function actionEndMeeting(ctx: Ctx, p: Json): Promise<Json> {
   const meeting = await loadAuthorizedMeeting(ctx, p?.meeting_id);
 
   // Idempotency: double "end" must not stop the bot twice nor re-spend tokens.
   if (meeting.status === "closed" && meeting.final_report) return meeting.final_report;
+  if (meeting.status === "processing") return actionFinalizeReport(ctx, { meeting_id: meeting.id });
+
+  const endedAt = meeting.ended_at ?? new Date().toISOString();
+  await ctx.supa.from("coach_meetings").update({ ended_at: endedAt }).eq("id", meeting.id);
 
   // Stop the Recall bot, if any (best-effort, like the Apps Script).
   if (meeting.recall_bot_id) {
@@ -857,8 +1001,63 @@ async function actionEndMeeting(ctx: Ctx, p: Json): Promise<Json> {
     } catch (e) {
       console.warn("[sales-coach] could not stop bot:", e);
     }
+
+    // Bot mode: the webhook chunks may be incomplete (async transcription lag).
+    // If Recall already has the full transcript, use it; otherwise leave the
+    // meeting in `processing` and let finalizeReport pick it up when ready.
+    const full = await fetchRecallTranscript(meeting.recall_bot_id);
+    if (full && full.length) {
+      await replaceChunksWithRecallTranscript(ctx.supa, meeting.id, full, meeting.started_at);
+      await ctx.supa.from("coach_meetings").update({ transcript_source: "recall_api" }).eq("id", meeting.id);
+      return finalizeMeeting(ctx, { ...meeting, ended_at: endedAt, transcript_source: "recall_api" }, endedAt);
+    }
+    await ctx.supa.from("coach_meetings").update({ status: "processing" }).eq("id", meeting.id);
+    return { pending: true, meeting_id: meeting.id, ended_at: endedAt };
   }
 
+  return finalizeMeeting(ctx, { ...meeting, ended_at: endedAt, transcript_source: "local" }, endedAt);
+}
+
+/**
+ * Bot mode only: called by the Reportes page while a meeting is `processing`.
+ * Pulls the full transcript from Recall once it exists and builds the report;
+ * after PENDING_TRANSCRIPT_MAX_MS it gives up waiting and reports on the
+ * webhook chunks that did arrive.
+ */
+async function actionFinalizeReport(ctx: Ctx, p: Json): Promise<Json> {
+  const meeting = await loadAuthorizedMeeting(ctx, p?.meeting_id);
+  if (meeting.status === "closed" && meeting.final_report) {
+    return { pending: false, report: meeting.final_report, meeting_id: meeting.id };
+  }
+  if (meeting.status !== "processing") throw new Error("La reunión no está pendiente de reporte");
+
+  const endedAt = meeting.ended_at ?? new Date().toISOString();
+  const waitedMs = Date.now() - new Date(endedAt).getTime();
+
+  if (meeting.recall_bot_id) {
+    const full = await fetchRecallTranscript(meeting.recall_bot_id);
+    if (full && full.length) {
+      await replaceChunksWithRecallTranscript(ctx.supa, meeting.id, full, meeting.started_at);
+      await ctx.supa.from("coach_meetings").update({ transcript_source: "recall_api" }).eq("id", meeting.id);
+      const report = await finalizeMeeting(ctx, { ...meeting, transcript_source: "recall_api" }, endedAt);
+      return { pending: false, report, meeting_id: meeting.id };
+    }
+  }
+
+  if (waitedMs < PENDING_TRANSCRIPT_MAX_MS) {
+    return { pending: true, meeting_id: meeting.id, waited_seconds: Math.round(waitedMs / 1000) };
+  }
+  // Recall never delivered a full transcript: report on what we have.
+  const report = await finalizeMeeting(ctx, meeting, endedAt);
+  return { pending: false, report, meeting_id: meeting.id };
+}
+
+/**
+ * Builds and stores the final report from the meeting's transcript chunks,
+ * charges the credits, extracts objections and mirrors into sales_reports.
+ * Runs exactly once per meeting (callers guard on status/final_report).
+ */
+async function finalizeMeeting(ctx: Ctx, meeting: Json, endedAt: string): Promise<Json> {
   // Full transcript from Postgres (was: transcript_chunks sheet).
   const { data: chunkRows } = await ctx.supa
     .from("coach_transcript_chunks")
@@ -869,6 +1068,15 @@ async function actionEndMeeting(ctx: Ctx, p: Json): Promise<Json> {
   const fullTranscript = chunks
     .map((r: Json) => `${r.speaker}: ${r.text}`)
     .join("\n");
+
+  // Who the SDR is, so the analyst can tell the seller apart from the lead
+  // when speakers carry real names (bot mode) instead of "SDR"/"Lead".
+  let sdrName: string | null = ctx.fullName;
+  if (meeting.user_id && meeting.user_id !== ctx.userId) {
+    const { data: prof } = await ctx.supa
+      .from("profiles").select("full_name").eq("id", meeting.user_id).maybeSingle();
+    sdrName = prof?.full_name ?? null;
+  }
 
   // Generate the final report — or short-circuit honestly when there is
   // nothing to analyze (no invented data, no wasted tokens).
@@ -883,16 +1091,16 @@ async function actionEndMeeting(ctx: Ctx, p: Json): Promise<Json> {
       engine,
       REPORT_MODEL,
       SYSTEM_PROMPT_REPORT,
-      buildReportUserPrompt(meeting, fullTranscript),
+      buildReportUserPrompt(meeting, fullTranscript, sdrName),
       REPORT_SCHEMA,
       8192,
     );
   }
   const scoreTotal = numOrNull(report?.score_total) ?? 0;
 
-  const endedAt = new Date().toISOString();
   const { error: updErr } = await ctx.supa.from("coach_meetings").update({
     status: "closed",
+    ended_at: endedAt,
     final_report: report,
     score_total: scoreTotal,
   }).eq("id", meeting.id);
@@ -954,7 +1162,7 @@ async function actionEndMeeting(ctx: Ctx, p: Json): Promise<Json> {
   return report;
 }
 
-function buildReportUserPrompt(meeting: Json, transcript: string): string {
+function buildReportUserPrompt(meeting: Json, transcript: string, sdrName?: string | null): string {
   const ctx = (meeting.context && typeof meeting.context === "object") ? meeting.context : {};
   const lines = [
     "=== CONTEXTO DE LA REUNIÓN ===",
@@ -963,7 +1171,12 @@ function buildReportUserPrompt(meeting: Json, transcript: string): string {
   if (typeof ctx.company === "string" && ctx.company) {
     lines.push(`Empresa del prospecto: ${ctx.company}`);
   }
-  lines.push(`SDR: ${meeting.sdr_email}`);
+  lines.push(`SDR (vendedor): ${sdrName ? `${sdrName} <${meeting.sdr_email}>` : meeting.sdr_email}`);
+  lines.push(
+    'Los hablantes del transcript pueden aparecer como "SDR"/"Lead" o con su nombre real ' +
+    "(reunión con bot). Trata al SDR indicado arriba como el vendedor y a cualquier otro " +
+    "hablante como parte del prospecto.",
+  );
   if (meeting.started_at) lines.push(`Inicio de la reunión: ${meeting.started_at}`);
   lines.push(
     "Contexto del lead (JSON):",
@@ -1031,29 +1244,84 @@ async function upsertSalesReport(
   }
 }
 
+const MEETING_REPORT_COLUMNS =
+  "id, meeting_url, prospect_name, sdr_email, user_id, started_at, ended_at, status, " +
+  "score_total, final_report, recall_bot_id, transcript_source, outcome, outcome_note, " +
+  "deal_value, next_meeting_date, context";
+
+/** Shape the Reportes UI renders (js/meeting-report.js). */
+async function meetingReportPayload(ctx: Ctx, m: Json, includeTranscript: boolean): Promise<Json> {
+  const context = (m.context && typeof m.context === "object") ? m.context : {};
+  const started = m.started_at ? new Date(m.started_at).getTime() : null;
+  const ended = m.ended_at ? new Date(m.ended_at).getTime() : null;
+  const payload: Json = {
+    meeting_id: m.id,
+    meeting_url: m.meeting_url,
+    meeting_type: m.recall_bot_id ? "bot" : "live",
+    prospect_name: m.prospect_name || "(sin nombre)",
+    prospect_company: strOrNull(context.company),
+    sdr_email: m.sdr_email || "",
+    started_at: m.started_at,
+    ended_at: m.ended_at ?? null,
+    duration_seconds: (started && ended) ? Math.max(0, Math.round((ended - started) / 1000)) : null,
+    status: m.status,
+    pending: m.status === "processing",
+    score_total: m.score_total || 0,
+    report: m.final_report ?? null,
+    transcript_source: m.transcript_source ?? null,
+    outcome: m.outcome ?? null,
+    outcome_note: m.outcome_note ?? null,
+    deal_value: m.deal_value ?? null,
+    next_meeting_date: m.next_meeting_date ?? null,
+  };
+  if (m.user_id) {
+    const { data: prof } = await ctx.supa
+      .from("profiles").select("full_name").eq("id", m.user_id).maybeSingle();
+    payload.sdr_name = prof?.full_name ?? null;
+  }
+  if (includeTranscript) {
+    const { data: rows } = await ctx.supa
+      .from("coach_transcript_chunks")
+      .select("ts, speaker, text")
+      .eq("meeting_id", m.id)
+      .order("ts", { ascending: true })
+      .limit(600);
+    payload.transcript = (rows ?? []).map((r: Json) => ({ ts: r.ts, speaker: r.speaker, text: r.text }));
+  }
+  return payload;
+}
+
+/** One meeting's report by id (owner or manager). `processing` meetings come back as pending. */
+async function actionGetMeetingReport(ctx: Ctx, p: Json): Promise<Json> {
+  const { data: m, error } = await ctx.supa
+    .from("coach_meetings").select(MEETING_REPORT_COLUMNS)
+    .eq("id", String(p?.meeting_id ?? "")).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!m) throw new Error("Meeting no encontrada");
+  const own = (m.user_id && m.user_id === ctx.userId) ||
+    (m.sdr_email && String(m.sdr_email).toLowerCase() === ctx.sdrEmail);
+  if (!own && !ctx.isManager) throw new Error("No autorizado");
+  return meetingReportPayload(ctx, m, p?.include_transcript !== false);
+}
+
 async function actionGetLastMeetingReport(ctx: Ctx, p: Json): Promise<Json> {
   // THE FIX for "shows irrelevant data": always scoped to one sdr_email —
   // the caller's own, unless an admin/director asks for a teammate's.
   const target = await resolveTargetEmail(ctx, p);
 
+  // Newest finished-or-finishing meeting: a `processing` one (bot transcript
+  // still on its way) is returned as pending so the UI can poll finalizeReport
+  // instead of silently showing an older report.
   const { data: m } = await ctx.supa
     .from("coach_meetings")
-    .select("id, meeting_url, prospect_name, sdr_email, started_at, score_total, final_report")
+    .select(MEETING_REPORT_COLUMNS)
     .eq("sdr_email", target)
-    .not("final_report", "is", null)
+    .in("status", ["closed", "processing"])
     .order("started_at", { ascending: false, nullsFirst: false })
     .limit(1)
     .maybeSingle();
-  if (m) {
-    return {
-      meeting_id: m.id,
-      meeting_url: m.meeting_url,
-      prospect_name: m.prospect_name || "(sin nombre)",
-      sdr_email: m.sdr_email || "",
-      started_at: m.started_at,
-      score_total: m.score_total || 0,
-      report: m.final_report,
-    };
+  if (m && (m.final_report || m.status === "processing")) {
+    return meetingReportPayload(ctx, m, p?.include_transcript !== false);
   }
 
   // Fallback: newest historic sales_reports row for that user.
@@ -1213,7 +1481,7 @@ async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
   ].join("\n");
 
   try {
-    return await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_LIVE_TURN, userPrompt, LIVE_TURN_SCHEMA, 1024);
+    return await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_LIVE_TURN, userPrompt, LIVE_TURN_SCHEMA, 2048, "low");
   } catch (e) {
     // A dropped coaching turn must never break the live session.
     console.error("[sales-coach] coachTurn failed:", e);
@@ -1374,6 +1642,8 @@ Deno.serve(async (req: Request) => {
       case "ingestLocalEvent":     data = await actionIngestLocalEvent(ctx, payload); break;
       case "getMeetingState":      data = await actionGetMeetingState(ctx, payload); break;
       case "endMeeting":           data = await actionEndMeeting(ctx, payload); break;
+      case "finalizeReport":       data = await actionFinalizeReport(ctx, payload); break;
+      case "getMeetingReport":     data = await actionGetMeetingReport(ctx, payload); break;
       case "getLastMeetingReport": data = await actionGetLastMeetingReport(ctx, payload); break;
       case "getSDRReport":         data = await actionGetSDRReport(ctx); break;
       case "setMeetingOutcome":    data = await actionSetMeetingOutcome(ctx, payload); break;

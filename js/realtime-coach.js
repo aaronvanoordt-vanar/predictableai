@@ -453,8 +453,11 @@
     if (meetId) {
       try {
         const final = await global.api.endMeeting({ meeting_id: meetId });
-        const score = final.score_total || 0;
-        toast('Sesión finalizada · Score: ' + score + ' · Reporte guardado', 'success');
+        if (final && final.pending) {
+          toast('Sesión finalizada · Generando el reporte…', 'success');
+        } else {
+          toast('Sesión finalizada · Score: ' + ((final && final.score_total) || 0) + ' · Reporte guardado', 'success');
+        }
         // Navigate to reports → last meeting tab
         setTimeout(function () {
           if (typeof nav === 'function') {

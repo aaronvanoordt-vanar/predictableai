@@ -91,6 +91,11 @@
     ingestLocalEvent:  (p) => call("ingestLocalEvent", p),
 
     getLastMeetingReport: (p) => call("getLastMeetingReport", p || {}),
+    // Reporte de una reunión específica (propia, o del equipo si eres admin/director)
+    getMeetingReport: (p) => call("getMeetingReport", p),
+    // Modo bot: la transcripción de Recall puede llegar minutos después de
+    // cerrar; el reporte queda "pending" y se termina con esta acción.
+    finalizeReport: (p) => call("finalizeReport", p),
 
     // Resultado de la reunión (ganado/perdido/seguimiento/sin_respuesta)
     setMeetingOutcome: (p) => call("setMeetingOutcome", p),
