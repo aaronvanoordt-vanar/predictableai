@@ -2,15 +2,17 @@
  * radar.js — Radar: descubrimiento de empresas target con IA
  *
  * El "aha moment" del producto: en vez de terminar el onboarding con filtros
- * recomendados, la IA investiga la web (generate-radar) y entrega TODAS las
- * empresas que encuentra en ese momento con una señal de compra derivada de
- * la propuesta de valor del vendedor, con evidencia fechada (URLs) y TODOS
- * los decision makers que Apollo tenga en cada empresa — nombre, cargo y
- * LinkedIn (gratis, público). El correo laboral NO se revela aquí: eso cuesta
- * un crédito de Apollo por persona, y mostrar decision makers no es pedir
- * contactarlos todavía. Se revela recién al guardar en una lista
- * (saveToList → bulkMatchByPersonId), el mismo momento en que el resto de la
- * plataforma ya lo hace (js/prospecting-data.js → addPeopleToList).
+ * recomendados, la IA investiga la web (generate-radar) y entrega hasta 20
+ * empresas por investigación (MAX_COMPANIES en generate-radar, tope fijado
+ * el 2026-09-13 para que el costo en créditos de Apollo de una investigación
+ * sea predecible) con una señal de compra derivada de la propuesta de valor
+ * del vendedor, con evidencia fechada (URLs) y TODOS los decision makers que
+ * Apollo tenga en cada empresa — nombre, cargo y LinkedIn (gratis, público).
+ * El correo laboral NO se revela aquí: eso cuesta un crédito de Apollo por
+ * persona, y mostrar decision makers no es pedir contactarlos todavía. Se
+ * revela recién al guardar en una lista (saveToList → bulkMatchByPersonId),
+ * el mismo momento en que el resto de la plataforma ya lo hace
+ * (js/prospecting-data.js → addPeopleToList).
  *
  * Antes de investigar el usuario elige la FRANJA DE FECHAS (últimos 7 días /
  * mes / 3 meses / 6 meses / año): una señal solo sirve mientras es noticia,
@@ -39,10 +41,14 @@
  * memoria tiene dos mitades y la diferencia importa:
  *   · Empresas que ya trabajas (miembros de tus listas que ningún Radar
  *     descubrió) → nunca se vuelven a entregar.
- *   · Empresas que un Radar anterior ya te entregó → vuelven SOLO si la
- *     investigación encuentra una señal distinta o una noticia más nueva
- *     (la tarjeta lo dice: "Señal nueva"). generate-radar lo decide de forma
- *     determinista comparando titular + URLs de evidencia.
+ *   · Empresas que un Radar anterior ya te entregó Y que además guardaste en
+ *     una lista → vuelven SOLO si la investigación encuentra una señal
+ *     distinta o una noticia más nueva (la tarjeta lo dice: "Señal nueva").
+ *     generate-radar lo decide de forma determinista comparando titular +
+ *     URLs de evidencia. Una empresa que el Radar entregó pero que nunca
+ *     guardaste en ninguna lista no tiene memoria: vuelve a estar dentro del
+ *     scope de la búsqueda, sin exigir señal nueva — guardarla es lo que la
+ *     vuelve digna de recordar.
  *
  * Depende de (orden de carga en index.html): js/supabase-client.js,
  * js/ui-helpers.js (escHtml), js/credit-costs.js (badge radar_run),
@@ -251,15 +257,28 @@
     return out;
   }
 
+  // Nombres guardados en CUALQUIER lista (no solo las marcadas): "¿la
+  // guardaste?" es un hecho, no un toggle de esta corrida.
+  function savedCompanyKeys() {
+    const keys = new Set();
+    state.lists.forEach((l) => l.companies.forEach((n) => keys.add(n.toLowerCase())));
+    return keys;
+  }
+
   // Empresas distintas cubiertas por las fuentes marcadas ahora mismo, en las
   // dos mitades que el backend trata distinto:
-  //   soft — ya te las entregó un Radar: vuelven solo con una señal nueva.
+  //   soft — ya te las entregó un Radar Y las guardaste en una lista: vuelven
+  //          solo con una señal nueva. Las que el Radar entregó pero nunca
+  //          guardaste no tienen memoria — quedan libres, no cuentan aquí.
   //   hard — las trabajas pero ningún Radar las descubrió: nunca vuelven.
   // Una empresa que salió del Radar y guardaste en una lista cuenta como
   // soft, no como hard: guardarla no debe enterrarla para siempre.
   function radarMemory() {
+    const saved = savedCompanyKeys();
     const softRaw = [];
-    if (state.excludePrevRadar) state.prevRuns.forEach((r) => softRaw.push.apply(softRaw, r.companies));
+    if (state.excludePrevRadar) {
+      state.prevRuns.forEach((r) => softRaw.push.apply(softRaw, r.companies.filter((n) => saved.has(n.toLowerCase()))));
+    }
     const soft = uniqNames(softRaw);
     const softKeys = new Set(soft.map((n) => n.toLowerCase()));
     const hardRaw = [];
@@ -817,7 +836,8 @@
 
   // Las listas guardadas y los radares anteriores, con sus empresas: son la
   // memoria del Radar. Las que ya trabajas no vuelven nunca; las que ya te
-  // entregó un Radar vuelven solo si hay una señal o una noticia nueva.
+  // entregó un Radar Y guardaste en una lista vuelven solo si hay una señal
+  // o una noticia nueva — las que nunca guardaste no tienen memoria.
   function exclusionsBlock() {
     if (!state.sourcesLoaded) {
       return '<div class="rdr-ex"><div class="rdr-ex-sum">Revisando qué empresas ya tienes…</div></div>';
@@ -832,16 +852,19 @@
         (mem.hard.length === 1 ? '' : 's') + ' que ya trabajas.');
     }
     if (mem.soft.length) {
-      parts.push('Las <strong>' + mem.soft.length + '</strong> que ya te entregó el Radar solo vuelven si hay una señal nueva.');
+      parts.push('Las <strong>' + mem.soft.length + '</strong> que ya te entregó el Radar y guardaste en una lista solo vuelven si hay una señal nueva.');
     }
     const sum = parts.length
       ? parts.join(' ')
       : 'No estás usando la memoria del Radar: la búsqueda puede repetir empresas que ya tienes.';
     const rows = [];
     if (state.prevRuns.length) {
-      const n = uniqNames([].concat.apply([], state.prevRuns.map((r) => r.companies))).length;
+      const saved = savedCompanyKeys();
+      const total = uniqNames([].concat.apply([], state.prevRuns.map((r) => r.companies)));
+      const withMemory = total.filter((n) => saved.has(n.toLowerCase())).length;
       rows.push(exRow('prev', '', 'Radares anteriores', state.prevRuns.length + ' investigación' +
-        (state.prevRuns.length === 1 ? '' : 'es') + ' · ' + n + ' empresas — vuelven solo con señal nueva',
+        (state.prevRuns.length === 1 ? '' : 'es') + ' · ' + total.length + ' empresas, ' + withMemory +
+        ' guardadas en una lista — solo esas vuelven con señal nueva',
         state.excludePrevRadar));
     }
     const ids = state.excludeListIds || new Set();
@@ -877,10 +900,10 @@
 
   function viewEmpty() {
     return '<div class="rdr-wrap">' +
-      header('La IA investiga la web y te trae todas las empresas que necesitan lo que vendes — con evidencia reciente y decision makers contactables.') +
+      header('La IA investiga la web y te trae hasta 20 empresas que necesitan lo que vendes — con evidencia reciente y decision makers contactables.') +
       composer('Iniciar investigación', {
         title: 'Encuentra tus próximas empresas target',
-        sub: 'A partir del contexto de tu empresa — y de lo que escribas aquí abajo — la IA define qué señal de compra buscar, investiga fuentes públicas dentro de la franja de fechas que elijas, y te entrega todas las empresas que encuentre con esa señal, con todos sus decision makers y su contacto.',
+        sub: 'A partir del contexto de tu empresa — y de lo que escribas aquí abajo — la IA define qué señal de compra buscar, investiga fuentes públicas dentro de la franja de fechas que elijas, y te entrega hasta 20 empresas con esa señal, con todos sus decision makers y su contacto.',
       }) +
     '</div>';
   }
@@ -912,7 +935,7 @@
     return '<div class="rdr-wrap">' +
       header('Tu radar está investigando' +
         (run.news_window_days ? ' noticias ' + esc(windowLabelDe(normalizeWindow(run.news_window_days))) : '') +
-        '. Corre todas las búsquedas de la estrategia sin recortar resultados, así que puede tomar ' +
+        '. Busca hasta encontrar 20 empresas con la señal o agotar la estrategia, así que puede tomar ' +
         'bastante tiempo — puedes quedarte a mirar o explorar la app; te avisamos aquí.') +
       hypothesis +
       '<div class="card rdr-prog">' +

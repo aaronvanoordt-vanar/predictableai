@@ -12,9 +12,11 @@
  * enriches — and only the people the seller actually keeps — at the moment
  * they're saved into a Prospección list.
  *
- * A run delivers EVERY company its research honestly found, not a fixed
- * handful: every query in the strategy is executed and everything backed by
- * evidence is kept (MAX_COMPANIES is a safety ceiling, not a target).
+ * A run stops as soon as it has delivered MAX_COMPANIES companies (20):
+ * capped on purpose, 2026-09-13, so a seller can predict what a research
+ * costs in Apollo decision-maker lookups instead of a single run silently
+ * pulling in dozens of companies (and their decision makers) at once. Queries
+ * still run one at a time until the cap is hit or the strategy runs out.
  *
  * RECENCY — a signal is only worth acting on while it is still news, and the
  * seller picks how fresh: news_window_days (7 / 30 / 90 / 180 / 365) travels
@@ -38,12 +40,18 @@
  *   excluded_companies  hard: companies the seller already works (members of
  *                       the Prospección lists they picked) that no radar ever
  *                       surfaced. Never reported again.
- *   known_signals       soft: every company a previous ready radar delivered,
- *                       with the signal reported at the time (headline +
- *                       evidence URLs). Reported again ONLY when this run
- *                       finds a genuinely different signal or newer news —
- *                       enforced deterministically by isNewSignal(), never
- *                       left to the model's judgement.
+ *   known_signals       soft: companies a previous ready radar delivered AND
+ *                       the seller went on to save into a list — proof the
+ *                       signal mattered enough to keep, with the signal
+ *                       reported at the time (headline + evidence URLs).
+ *                       Reported again ONLY when this run finds a genuinely
+ *                       different signal or newer news — enforced
+ *                       deterministically by isNewSignal(), never left to the
+ *                       model's judgement. A company a previous radar
+ *                       delivered but that was never saved into any list
+ *                       carries no memory at all: it's fully back in scope,
+ *                       no new-signal gate — only a saved company is worth
+ *                       remembering.
  *
  * STAGED PROTOCOL — each HTTP call does exactly ONE bounded unit of work
  * (one Claude call, or one small batch of Apollo lookups) and returns. This
@@ -121,14 +129,13 @@ import {
 // Keep in sync with js/credit-costs.js (radar_run).
 const RADAR_RUN_COST = 12;
 
-// A run delivers EVERY company its research honestly found, with no target
-// number in mind — the same prompt run directly against a search-grounded
-// model returns as many companies as genuinely show the signal (seen: 18 for
-// one Hilco run), and the platform should not return less than that. Every
-// cap below is therefore an absolute safety valve against a degenerate
-// response (a malformed JSON dump, a runaway strategy), never a target —
-// each is set far above what a real run should ever hit.
-const MAX_COMPANIES = 150; // row size + Apollo calls in decision_makers.
+// Hard ceiling on companies delivered per run — a real cap, not just a
+// safety valve: past runs returned as many as 65 companies in one go, which
+// meant an equally unpredictable number of Apollo decision-maker lookups
+// (and their cost) landing at once. 20 keeps that cost predictable per
+// research. Research stops (moreQueriesLeft below) the moment this is hit,
+// so a capped run also does not keep burning search queries past it.
+const MAX_COMPANIES = 20; // also bounds row size + Apollo calls in decision_makers.
 // Per research call — a single web_search-grounded query realistically
 // yields well under this even when it surfaces a lot; it only guards against
 // a model dumping garbage duplicate entries into one response.
@@ -773,11 +780,14 @@ async function loadSellerContext(
 //             lists they picked) that no radar ever surfaced. Nothing is
 //             known about WHY they matter, so re-finding them is pure waste:
 //             never report them.
-//   history — every company a previous ready radar delivered, with the exact
-//             signal reported at the time (headline + evidence URLs). These
-//             are NOT banned: if this run finds a different signal or newer
-//             news for one, the seller wants to hear about it. Enforced in
-//             handleResearch via isNewSignal().
+//   history — companies a previous ready radar delivered AND the seller went
+//             on to save into a list, with the exact signal reported at the
+//             time (headline + evidence URLs). These are NOT banned: if this
+//             run finds a different signal or newer news for one, the seller
+//             wants to hear about it. Enforced in handleResearch via
+//             isNewSignal(). A radar-delivered company that was never saved
+//             into any list carries no memory at all — it's fully back in
+//             scope for this run, same as one the radar never met.
 //
 // A company saved from a radar into a list therefore stays in `history`, not
 // in `hard` — otherwise "guardar todo en una lista" would silently bury it
@@ -791,7 +801,7 @@ async function resolveKnownCompanies(
   listIds: string[],
   includePreviousRadar: boolean,
 ): Promise<RadarMemory> {
-  const history = new Map<string, KnownSignal>();
+  const rawHistory = new Map<string, KnownSignal>();
 
   if (includePreviousRadar) {
     const { data: runs } = await supa.from("radar_runs")
@@ -806,7 +816,7 @@ async function resolveKnownCompanies(
         const name = asStr(c?.name).trim();
         if (!name || name.length > 90) continue;
         const key = name.toLowerCase();
-        const entry = history.get(key) ??
+        const entry = rawHistory.get(key) ??
           { name, headlines: [], urls: [], last_seen: seenAt };
         const headline = asStr(c?.signal_headline).trim() || asStr(c?.why_fit).trim();
         if (headline && entry.headlines.length < MAX_HEADLINES_PER_KNOWN) {
@@ -818,9 +828,32 @@ async function resolveKnownCompanies(
         }
         // Runs come newest first, so the first seen date wins as last_seen.
         if (!entry.last_seen) entry.last_seen = seenAt;
-        history.set(key, entry);
+        rawHistory.set(key, entry);
       }
     }
+  }
+
+  // Only a company the seller actually saved into a list keeps its radar
+  // memory — saving nothing means remembering nothing. Checked against ALL
+  // of the seller's lists, not just the ones picked as exclusion sources for
+  // this run: "was it saved" is a fact, not a per-run toggle.
+  const savedNames = new Set<string>();
+  if (rawHistory.size) {
+    const { data: ownedLists } = await supa.from("prospect_lists")
+      .select("id").eq("user_id", userId);
+    const ownedListIds = (ownedLists ?? []).map((l: { id: string }) => l.id);
+    if (ownedListIds.length) {
+      const { data: allMembers } = await supa.from("prospect_list_members")
+        .select("company").in("list_id", ownedListIds).limit(20000);
+      for (const m of allMembers ?? []) {
+        const name = asStr(m?.company).trim();
+        if (name) savedNames.add(name.toLowerCase());
+      }
+    }
+  }
+  const history = new Map<string, KnownSignal>();
+  for (const [key, entry] of rawHistory) {
+    if (savedNames.has(key)) history.set(key, entry);
   }
 
   const hard = new Map<string, string>(); // lowercase name → original casing
@@ -1220,9 +1253,9 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
     const merged = existing.concat(newCompanies.slice(0, roomLeft));
     const coverageNote = asStr(research.coverage_note).trim();
     const nextOffset = idx + 1;
-    // Every query in the strategy runs: the seller asked for everything that
-    // is out there right now, not for the first handful. Only the ceiling
-    // (row size / Apollo cost) can cut the research short.
+    // Queries keep running until either the strategy is exhausted or
+    // MAX_COMPANIES (20) is reached — whichever comes first, so a run never
+    // burns more searches than it needs to fill the cap.
     const moreQueriesLeft = nextOffset < items.length && merged.length < MAX_COMPANIES;
     // El plan de investigación es también donde se lleva la cuenta de lo
     // descartado por antigüedad: vive en signal_strategy (JSONB que ya se
