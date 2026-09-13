@@ -7,9 +7,11 @@
  * proposition, with dated evidence URLs and every decision maker Apollo has
  * at each company — with work email and phone when Apollo holds them.
  *
- * A run delivers EVERY company its research honestly found, not a fixed
- * handful: every query in the strategy is executed and everything backed by
- * evidence is kept (MAX_COMPANIES is a safety ceiling, not a target).
+ * A run stops as soon as it has delivered MAX_COMPANIES companies (20):
+ * capped on purpose, 2026-09-13, so a seller can predict what a research
+ * costs in Apollo decision-maker lookups instead of a single run silently
+ * pulling in dozens of companies (and their decision makers) at once. Queries
+ * still run one at a time until the cap is hit or the strategy runs out.
  *
  * RECENCY — a signal is only worth acting on while it is still news, and the
  * seller picks how fresh: news_window_days (7 / 30 / 90 / 180 / 365) travels
@@ -115,14 +117,13 @@ import {
 // Keep in sync with js/credit-costs.js (radar_run).
 const RADAR_RUN_COST = 12;
 
-// A run delivers EVERY company its research honestly found, with no target
-// number in mind — the same prompt run directly against a search-grounded
-// model returns as many companies as genuinely show the signal (seen: 18 for
-// one Hilco run), and the platform should not return less than that. Every
-// cap below is therefore an absolute safety valve against a degenerate
-// response (a malformed JSON dump, a runaway strategy), never a target —
-// each is set far above what a real run should ever hit.
-const MAX_COMPANIES = 150; // row size + Apollo calls in decision_makers.
+// Hard ceiling on companies delivered per run — a real cap, not just a
+// safety valve: past runs returned as many as 65 companies in one go, which
+// meant an equally unpredictable number of Apollo decision-maker lookups
+// (and their cost) landing at once. 20 keeps that cost predictable per
+// research. Research stops (moreQueriesLeft below) the moment this is hit,
+// so a capped run also does not keep burning search queries past it.
+const MAX_COMPANIES = 20; // also bounds row size + Apollo calls in decision_makers.
 // Per research call — a single web_search-grounded query realistically
 // yields well under this even when it surfaces a lot; it only guards against
 // a model dumping garbage duplicate entries into one response.
@@ -144,8 +145,9 @@ const DM_PAGE_SIZE = 25;          // Apollo people-search page size
 const MAX_DM_SEARCH_PAGES = 2;    // per query, per company
 // Contact data comes from /people/bulk_match (10 people per call, Apollo's
 // limit). Every match burns an Apollo email credit, so a run has a ceiling —
-// well above a normal run, low enough that a 150-company run cannot silently
-// drain the account.
+// well above a normal run, low enough that even a full 20-company run at
+// MAX_DECISION_MAKERS each (500 potential matches) cannot silently drain the
+// account.
 const DM_ENRICH_CHUNK = 10;
 const MAX_DM_ENRICH_PER_RUN = 400;
 // Companies per decision_makers call. Lower than it used to be because each
@@ -1283,9 +1285,9 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
     const merged = existing.concat(newCompanies.slice(0, roomLeft));
     const coverageNote = asStr(research.coverage_note).trim();
     const nextOffset = idx + 1;
-    // Every query in the strategy runs: the seller asked for everything that
-    // is out there right now, not for the first handful. Only the ceiling
-    // (row size / Apollo cost) can cut the research short.
+    // Queries keep running until either the strategy is exhausted or
+    // MAX_COMPANIES (20) is reached — whichever comes first, so a run never
+    // burns more searches than it needs to fill the cap.
     const moreQueriesLeft = nextOffset < items.length && merged.length < MAX_COMPANIES;
     // El plan de investigación es también donde se lleva la cuenta de lo
     // descartado por antigüedad: vive en signal_strategy (JSONB que ya se

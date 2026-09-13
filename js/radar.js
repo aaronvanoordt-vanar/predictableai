@@ -2,11 +2,13 @@
  * radar.js — Radar: descubrimiento de empresas target con IA
  *
  * El "aha moment" del producto: en vez de terminar el onboarding con filtros
- * recomendados, la IA investiga la web (generate-radar) y entrega TODAS las
- * empresas que encuentra en ese momento con una señal de compra derivada de
- * la propuesta de valor del vendedor, con evidencia fechada (URLs) y TODOS
- * los decision makers que Apollo tenga en cada empresa, con su correo
- * laboral y teléfono cuando Apollo los tiene.
+ * recomendados, la IA investiga la web (generate-radar) y entrega hasta 20
+ * empresas por investigación (MAX_COMPANIES en generate-radar, tope fijado
+ * el 2026-09-13 para que el costo en créditos de Apollo de una investigación
+ * sea predecible) con una señal de compra derivada de la propuesta de valor
+ * del vendedor, con evidencia fechada (URLs) y TODOS los decision makers que
+ * Apollo tenga en cada empresa, con su correo laboral y teléfono cuando
+ * Apollo los tiene.
  *
  * Antes de investigar el usuario elige la FRANJA DE FECHAS (últimos 7 días /
  * mes / 3 meses / 6 meses / año): una señal solo sirve mientras es noticia,
@@ -846,10 +848,10 @@
 
   function viewEmpty() {
     return '<div class="rdr-wrap">' +
-      header('La IA investiga la web y te trae todas las empresas que necesitan lo que vendes — con evidencia reciente y decision makers contactables.') +
+      header('La IA investiga la web y te trae hasta 20 empresas que necesitan lo que vendes — con evidencia reciente y decision makers contactables.') +
       composer('Iniciar investigación', {
         title: 'Encuentra tus próximas empresas target',
-        sub: 'A partir del contexto de tu empresa — y de lo que escribas aquí abajo — la IA define qué señal de compra buscar, investiga fuentes públicas dentro de la franja de fechas que elijas, y te entrega todas las empresas que encuentre con esa señal, con todos sus decision makers y su contacto.',
+        sub: 'A partir del contexto de tu empresa — y de lo que escribas aquí abajo — la IA define qué señal de compra buscar, investiga fuentes públicas dentro de la franja de fechas que elijas, y te entrega hasta 20 empresas con esa señal, con todos sus decision makers y su contacto.',
       }) +
     '</div>';
   }
@@ -881,7 +883,7 @@
     return '<div class="rdr-wrap">' +
       header('Tu radar está investigando' +
         (run.news_window_days ? ' noticias ' + esc(windowLabelDe(normalizeWindow(run.news_window_days))) : '') +
-        '. Corre todas las búsquedas de la estrategia sin recortar resultados, así que puede tomar ' +
+        '. Busca hasta encontrar 20 empresas con la señal o agotar la estrategia, así que puede tomar ' +
         'bastante tiempo — puedes quedarte a mirar o explorar la app; te avisamos aquí.') +
       hypothesis +
       '<div class="card rdr-prog">' +
