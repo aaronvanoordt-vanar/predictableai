@@ -846,7 +846,8 @@
         f().exclude_list_ids = f().exclude_list_ids.filter(function (id) { return validIds.has(id); });
         chipsHost.appendChild(chipGroup({
           options: lists.map(function (l) { return { label: l.name + ' (' + fmtNum(l.member_count || 0) + ')', value: String(l.id) }; }),
-          get: function () { return f().exclude_list_ids; }, onChange: changed,
+          get: function () { return f().exclude_list_ids; },
+          onChange: function () { changed(); reapplyExclusions(); },
         }));
       }
       state.search.refreshExcludeLists = function () {
@@ -1428,6 +1429,18 @@
     });
   }
 
+  // Re-filtra la página ya cargada al (des)marcar una lista a excluir, sin
+  // esperar a que el usuario presione «Buscar» de nuevo — antes el checkbox
+  // solo se marcaba y los resultados en pantalla no cambiaban.
+  function reapplyExclusions() {
+    var s = state.search;
+    if (!s.rawResults) return;
+    applyListExclusions(s.rawResults).then(function (res) {
+      s.results = res || {};
+      renderResults();
+    });
+  }
+
   function runSearch(page, fromButton) {
     var s = state.search;
     if (s.loading) return Promise.resolve();
@@ -1450,7 +1463,7 @@
     }
     return Promise.resolve()
       .then(function () { return pd().searchPeople(payload); })
-      .then(function (res) { return applyListExclusions(res); })
+      .then(function (res) { s.rawResults = res; return applyListExclusions(res); })
       .then(function (res) {
         s.results = res || {};
         s.page = (res && res.pagination && res.pagination.page) || page;
