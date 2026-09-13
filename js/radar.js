@@ -35,10 +35,14 @@
  * memoria tiene dos mitades y la diferencia importa:
  *   · Empresas que ya trabajas (miembros de tus listas que ningún Radar
  *     descubrió) → nunca se vuelven a entregar.
- *   · Empresas que un Radar anterior ya te entregó → vuelven SOLO si la
- *     investigación encuentra una señal distinta o una noticia más nueva
- *     (la tarjeta lo dice: "Señal nueva"). generate-radar lo decide de forma
- *     determinista comparando titular + URLs de evidencia.
+ *   · Empresas que un Radar anterior ya te entregó Y que además guardaste en
+ *     una lista → vuelven SOLO si la investigación encuentra una señal
+ *     distinta o una noticia más nueva (la tarjeta lo dice: "Señal nueva").
+ *     generate-radar lo decide de forma determinista comparando titular +
+ *     URLs de evidencia. Una empresa que el Radar entregó pero que nunca
+ *     guardaste en ninguna lista no tiene memoria: vuelve a estar dentro del
+ *     scope de la búsqueda, sin exigir señal nueva — guardarla es lo que la
+ *     vuelve digna de recordar.
  *
  * Depende de (orden de carga en index.html): js/supabase-client.js,
  * js/ui-helpers.js (escHtml), js/credit-costs.js (badge radar_run),
@@ -247,15 +251,28 @@
     return out;
   }
 
+  // Nombres guardados en CUALQUIER lista (no solo las marcadas): "¿la
+  // guardaste?" es un hecho, no un toggle de esta corrida.
+  function savedCompanyKeys() {
+    const keys = new Set();
+    state.lists.forEach((l) => l.companies.forEach((n) => keys.add(n.toLowerCase())));
+    return keys;
+  }
+
   // Empresas distintas cubiertas por las fuentes marcadas ahora mismo, en las
   // dos mitades que el backend trata distinto:
-  //   soft — ya te las entregó un Radar: vuelven solo con una señal nueva.
+  //   soft — ya te las entregó un Radar Y las guardaste en una lista: vuelven
+  //          solo con una señal nueva. Las que el Radar entregó pero nunca
+  //          guardaste no tienen memoria — quedan libres, no cuentan aquí.
   //   hard — las trabajas pero ningún Radar las descubrió: nunca vuelven.
   // Una empresa que salió del Radar y guardaste en una lista cuenta como
   // soft, no como hard: guardarla no debe enterrarla para siempre.
   function radarMemory() {
+    const saved = savedCompanyKeys();
     const softRaw = [];
-    if (state.excludePrevRadar) state.prevRuns.forEach((r) => softRaw.push.apply(softRaw, r.companies));
+    if (state.excludePrevRadar) {
+      state.prevRuns.forEach((r) => softRaw.push.apply(softRaw, r.companies.filter((n) => saved.has(n.toLowerCase()))));
+    }
     const soft = uniqNames(softRaw);
     const softKeys = new Set(soft.map((n) => n.toLowerCase()));
     const hardRaw = [];
@@ -788,7 +805,8 @@
 
   // Las listas guardadas y los radares anteriores, con sus empresas: son la
   // memoria del Radar. Las que ya trabajas no vuelven nunca; las que ya te
-  // entregó un Radar vuelven solo si hay una señal o una noticia nueva.
+  // entregó un Radar Y guardaste en una lista vuelven solo si hay una señal
+  // o una noticia nueva — las que nunca guardaste no tienen memoria.
   function exclusionsBlock() {
     if (!state.sourcesLoaded) {
       return '<div class="rdr-ex"><div class="rdr-ex-sum">Revisando qué empresas ya tienes…</div></div>';
@@ -803,16 +821,19 @@
         (mem.hard.length === 1 ? '' : 's') + ' que ya trabajas.');
     }
     if (mem.soft.length) {
-      parts.push('Las <strong>' + mem.soft.length + '</strong> que ya te entregó el Radar solo vuelven si hay una señal nueva.');
+      parts.push('Las <strong>' + mem.soft.length + '</strong> que ya te entregó el Radar y guardaste en una lista solo vuelven si hay una señal nueva.');
     }
     const sum = parts.length
       ? parts.join(' ')
       : 'No estás usando la memoria del Radar: la búsqueda puede repetir empresas que ya tienes.';
     const rows = [];
     if (state.prevRuns.length) {
-      const n = uniqNames([].concat.apply([], state.prevRuns.map((r) => r.companies))).length;
+      const saved = savedCompanyKeys();
+      const total = uniqNames([].concat.apply([], state.prevRuns.map((r) => r.companies)));
+      const withMemory = total.filter((n) => saved.has(n.toLowerCase())).length;
       rows.push(exRow('prev', '', 'Radares anteriores', state.prevRuns.length + ' investigación' +
-        (state.prevRuns.length === 1 ? '' : 'es') + ' · ' + n + ' empresas — vuelven solo con señal nueva',
+        (state.prevRuns.length === 1 ? '' : 'es') + ' · ' + total.length + ' empresas, ' + withMemory +
+        ' guardadas en una lista — solo esas vuelven con señal nueva',
         state.excludePrevRadar));
     }
     const ids = state.excludeListIds || new Set();
