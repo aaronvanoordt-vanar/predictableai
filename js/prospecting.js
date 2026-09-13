@@ -1139,7 +1139,6 @@
     var clearBtn = h('button', { type: 'button', class: 'btn btn-ghost', style: 'width:100%;justify-content:center', text: 'Limpiar filtros' });
     clearBtn.addEventListener('click', guarded(function () { clearFilters(); }));
     panel.appendChild(h('div', { style: 'padding:14px;display:flex;flex-direction:column;gap:10px' },
-      h('div', { style: 'font-size:11.5px;color:var(--text3);line-height:1.5', text: 'Intent, lookalikes y filtros de educación no están disponibles vía el API de Apollo.' }),
       searchBtn, clearBtn));
     state.search.searchBtn = searchBtn;
     return panel;
