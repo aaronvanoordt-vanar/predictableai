@@ -675,11 +675,7 @@
     const fresh = people.filter((p) => !p?._saved && p?.id && !existingIds.has(p.id));
     const alreadyInList = people.length - fresh.length - savedContacts.length;
 
-    let creditsUsed = 0;
-    const failed = [];
-    const warnings = []; // guardados pero sin email enriquecido
     const rows = [];
-
     for (const c of savedContacts) {
       const row = personToRow(c, null, userId, list.id, c.id);
       row.apollo_person_id = c.person_id || null; // solo si Apollo lo expone
@@ -687,11 +683,53 @@
       row.enriched_at = row.email ? new Date().toISOString() : null;
       rows.push(row);
     }
+    // Filas "placeholder" para las personas nuevas: se insertan de inmediato,
+    // SIN email (email_status = 'pending'), para que aparezcan en la lista al
+    // instante en vez de trabar al usuario esperando a que Apollo revele cada
+    // email. El reveal (bulk_match + crear contacto) sigue en segundo plano
+    // en enrichFreshRows() y actualiza cada fila cuando termina.
+    for (const p of fresh) {
+      const row = personToRow(p, null, userId, list.id, null);
+      row.email = null;
+      row.email_status = 'pending';
+      row.enriched_at = null;
+      rows.push(row);
+    }
 
-    // 1. Enriquecer email vía bulk_match en lotes de 10
+    // Persistir en Supabase (added = filas realmente insertadas)
+    let added = 0;
+    if (rows.length) {
+      progress({ phase: 'saving' });
+      const { data: inserted, error } = await sb().from('prospect_list_members')
+        .upsert(rows, { onConflict: 'list_id,apollo_person_id', ignoreDuplicates: true })
+        .select('id');
+      if (error) throw new Error('No se pudieron guardar los contactos: ' + error.message);
+      added = inserted ? inserted.length : rows.length;
+    }
+
+    // El reveal de email es lo lento (≈1 crédito y una llamada a Apollo por
+    // persona): arranca aquí pero NO se espera — el llamador ya tiene sus
+    // filas guardadas y puede cerrar el modal. `enrichment` es la promesa en
+    // curso, para que quien la necesite muestre un aviso cuando termine.
+    const enrichment = fresh.length
+      ? enrichFreshRows(list, fresh, userId, progress)
+      : Promise.resolve({ updated: 0, failed: [] });
+    enrichment.catch((e) => console.warn('[prospecting-data] enriquecimiento en segundo plano falló:', e.message));
+
+    return { added, alreadyInList, enriching: fresh.length, enrichment };
+  }
+
+  // Reveal de email en segundo plano para filas ya insertadas como
+  // "pending": bulk_match en lotes de 10 + crear contacto en Apollo (label =
+  // nombre de la lista), y UPDATE de cada fila por (list_id, apollo_person_id).
+  async function enrichFreshRows(list, fresh, userId, onProgress) {
+    const progress = typeof onProgress === 'function' ? onProgress : () => {};
+    let updated = 0;
+    const failed = [];
+
     for (let i = 0; i < fresh.length; i += BULK_MATCH_CHUNK) {
       const chunk = fresh.slice(i, i + BULK_MATCH_CHUNK);
-      progress({ done: Math.min(i, fresh.length), total: fresh.length, phase: 'enriching' });
+      progress({ done: i, total: fresh.length, phase: 'enriching' });
       let matches = new Array(chunk.length).fill(null);
       let chunkError = null;
       try {
@@ -700,52 +738,51 @@
           reveal_personal_emails: false,
         });
         matches = res?.matches || matches;
-        creditsUsed += res?.credits_consumed ?? matches.filter(Boolean).length;
       } catch (e) {
-        // El lote falló completo: se guardan igual (con snapshot de búsqueda),
-        // pero sin email — se reporta como advertencia, no como fallo.
+        // El lote falló completo: las filas se quedan guardadas (sin email),
+        // se reporta como advertencia, no se reintenta.
         chunkError = e.message;
       }
 
-      // 2. Crear contacto en Apollo (label = nombre de la lista) y armar fila
       for (let j = 0; j < chunk.length; j++) {
         const person = chunk[j];
         const match = matches[j] || null;
-        const row = personToRow(person, match, userId, list.id, null);
+        const email = match && !isMaskedEmail(match.email) ? match.email : null;
+        const patch = {
+          email,
+          email_status: email ? (match.email_status || null) : 'unavailable',
+          enriched_at: new Date().toISOString(),
+          snapshot: match || person || {},
+        };
         try {
-          row.apollo_contact_id = await createApolloContact(row, list.name);
+          patch.apollo_contact_id = await createApolloContact(
+            Object.assign(personToRow(person, match, userId, list.id, null), patch), list.name);
         } catch (e) {
           // No bloquea el guardado local (el motor de campañas reintenta al
           // enviar), pero SÍ se reporta: tragarse esto en silencio dejaba la
           // lista perfecta en Predictable y ausente en Apollo, sin ningún aviso.
           console.warn('[prospecting-data] contacto Apollo falló:', e.message);
-          warnings.push({
+          failed.push({
             name: person.name || person.id,
             error: 'Guardado aquí, pero no se pudo crear en Apollo — ' + e.message,
           });
         }
-        if (chunkError || (!row.email && !match)) {
-          warnings.push({
-            name: person.name || person.id,
-            error: 'Guardado sin email' + (chunkError ? ' — ' + chunkError : ' (Apollo no encontró match)'),
-          });
+        const { error: updErr } = await sb().from('prospect_list_members')
+          .update(patch)
+          .eq('list_id', list.id)
+          .eq('apollo_person_id', person.id);
+        if (updErr) {
+          console.warn('[prospecting-data] no se pudo guardar el enriquecimiento:', updErr.message);
+          failed.push({ name: person.name || person.id, error: 'No se pudo guardar el email — ' + updErr.message });
+        } else if (email) {
+          updated++;
+        } else if (chunkError) {
+          failed.push({ name: person.name || person.id, error: 'Guardado sin email — ' + chunkError });
         }
-        rows.push(row);
       }
     }
-
-    // 3. Persistir en Supabase (added = filas realmente insertadas)
-    let added = 0;
-    if (rows.length) {
-      progress({ done: fresh.length, total: fresh.length, phase: 'saving' });
-      const { data: inserted, error } = await sb().from('prospect_list_members')
-        .upsert(rows, { onConflict: 'list_id,apollo_person_id', ignoreDuplicates: true })
-        .select('id');
-      if (error) throw new Error('No se pudieron guardar los contactos: ' + error.message);
-      added = inserted ? inserted.length : rows.length;
-    }
-
-    return { added, alreadyInList, failed, warnings, creditsUsed };
+    progress({ done: fresh.length, total: fresh.length, phase: 'enriching' });
+    return { updated, failed };
   }
 
   // ── Agregar contacto manualmente ────────────────────────────

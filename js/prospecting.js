@@ -438,15 +438,6 @@
     };
   }
 
-  function modalFailList(failed) {
-    // Renders a failures list (escaped) inside a modal body.
-    var wrap = h('div', { style: 'margin-top:10px;max-height:140px;overflow-y:auto;font-size:12px;color:var(--red);line-height:1.6' });
-    (failed || []).forEach(function (f) {
-      wrap.appendChild(h('div', { text: ((f && f.name) || '—') + ': ' + ((f && f.error) || 'error') }));
-    });
-    return wrap;
-  }
-
   function emptyHtml(icon, title, sub, extraHtml) {
     // title/sub must be static strings or pre-escaped by the caller.
     return '<div class="empty"><div class="empty-ic">' + icon + '</div>' +
@@ -469,6 +460,7 @@
   }
 
   function memberEmailCell(m) {
+    if (m.email_status === 'pending') return '<span class="pill pill-amber">Enriqueciendo…</span>';
     if (m.email && !isMaskedEmail(m.email)) {
       return '<div>' + esc(m.email) + '</div>' +
         (m.email_status ? '<div style="margin-top:3px">' + emailPillHtml(m.email_status) + '</div>' : '');
@@ -1684,7 +1676,6 @@
     }
     var nameInput = h('input', { type: 'text', placeholder: 'Nombre de la nueva lista', style: 'width:100%' });
     var prog = progressLine();
-    var failHost = h('div', null);
     var mLbl = 'display:block;font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px';
 
     var bodyN = h('div', null,
@@ -1693,9 +1684,8 @@
       listBox,
       h('div', { style: mLbl, text: 'Nueva lista' }),
       nameInput,
-      h('p', { style: 'font-size:12px;color:var(--amber);background:var(--amber-soft);border:1px solid rgba(199,126,18,.30);border-radius:var(--r-sm);padding:9px 11px;margin:12px 0 0;line-height:1.5', text: 'Al agregar a una lista, Apollo revela el email laboral de cada persona (≈1 crédito por persona).' }),
-      prog.el,
-      failHost);
+      h('p', { style: 'font-size:12px;color:var(--amber);background:var(--amber-soft);border:1px solid rgba(199,126,18,.30);border-radius:var(--r-sm);padding:9px 11px;margin:12px 0 0;line-height:1.5', text: 'Apollo revela el email laboral de cada persona (≈1 crédito por persona). El reveal corre en segundo plano — la lista se guarda de inmediato y los contactos aparecen como «Enriqueciendo…» hasta que Apollo responda.' }),
+      prog.el);
 
     var api = openModal({
       title: 'Agregar a lista',
@@ -1746,17 +1736,14 @@
         })
         .then(function (list) {
           if (!list) throw new Error('No se encontró la lista seleccionada.');
-          return pd().addPeopleToList({
-            list: list,
-            people: people,
-            onProgress: function (p) {
-              prog.set(p && p.phase === 'saving'
-                ? 'Guardando…'
-                : 'Enriqueciendo ' + fmtNum((p && p.done) || 0) + ' de ' + fmtNum((p && p.total) || people.length) + '…');
-            },
+          prog.set('Guardando…');
+          return pd().addPeopleToList({ list: list, people: people }).then(function (res) {
+            return { list: list, res: res || {} };
           });
         })
-        .then(function (res) {
+        .then(function (r) {
+          var list = r.list;
+          var res = r.res;
           prog.hide();
           state.cache.lists = null;
           refreshBadge();
@@ -1765,27 +1752,35 @@
           // chips de listas del panel de filtros.
           state.search._excludeCache = null;
           if (state.search.refreshExcludeLists) state.search.refreshExcludeLists();
-          res = res || {};
-          var failed = res.failed || [];
-          var warnings = res.warnings || []; // guardados, pero sin email
           toast(
             fmtNum(res.added || 0) + ' agregados · ' + fmtNum(res.alreadyInList || 0) + ' ya estaban en la lista' +
-            (warnings.length ? ' · ' + fmtNum(warnings.length) + ' sin email' : '') +
-            (failed.length ? ' · ' + fmtNum(failed.length) + ' fallaron' : ''),
-            (failed.length || warnings.length) ? 'warn' : 'success'
+            (res.enriching ? ' · enriqueciendo ' + fmtNum(res.enriching) + ' email' + (res.enriching === 1 ? '' : 's') + ' en segundo plano…' : ''),
+            'success'
           );
           state.search.selectedRows.clear();
           renderResults();
           // Señal para el tour de onboarding (paso "primera lista")
           if (res.added) { try { document.dispatchEvent(new CustomEvent('prospecting:list-saved')); } catch (_) {} }
-          if (failed.length || warnings.length) {
-            failHost.innerHTML = '';
-            failHost.appendChild(modalFailList(failed.concat(warnings)));
-            api.setBusy(false);
-            if (api.buttons[1]) api.buttons[1].style.display = 'none';
-            if (api.buttons[0]) { api.buttons[0].textContent = 'Cerrar'; api.buttons[0].disabled = false; api.buttons[0].style.opacity = ''; }
-          } else {
-            api.close();
+          api.close();
+
+          // El reveal de emails NO bloquea el modal ni la app: sigue en
+          // segundo plano (res.enrichment) y, si el usuario está viendo esta
+          // lista en Listas, se refresca sola cuando termina.
+          if (res.enrichment) {
+            Promise.resolve(res.enrichment).then(function (er) {
+              er = er || {};
+              var failedN = (er.failed || []).length;
+              if (res.enriching) {
+                toast(
+                  fmtNum(er.updated || 0) + ' emails enriquecidos en «' + (list.name || 'la lista') + '»' +
+                  (failedN ? ' · ' + fmtNum(failedN) + ' fallaron' : ''),
+                  failedN ? 'warn' : 'success'
+                );
+              }
+              if (state.listas.activeListId && (isAllList() || String(state.listas.activeListId) === String(list.id))) {
+                reloadMembers({ keepSelection: true });
+              }
+            }).catch(function (e) { console.warn('[prospecting] enriquecimiento en segundo plano falló:', e); });
           }
         })
         .catch(function (e) {
@@ -1838,14 +1833,28 @@
           if (!alsoApollo.checked || !rows.length) return null;
           prog.set('Guardando en Apollo…');
           return Promise.resolve(pd().createList(name)).then(function (list) {
-            return pd().addPeopleToList({
-              list: list,
-              people: rows,
-              onProgress: function (p) {
-                prog.set('Enriqueciendo ' + fmtNum((p && p.done) || 0) + ' de ' + fmtNum((p && p.total) || rows.length) + '…');
-              },
+            return pd().addPeopleToList({ list: list, people: rows }).then(function (res) {
+              state.cache.lists = null;
+              refreshBadge();
+              res = res || {};
+              // El reveal de emails no bloquea: sigue en segundo plano (mismo
+              // mecanismo que "Agregar a lista" en Buscar).
+              if (res.enrichment && res.enriching) {
+                Promise.resolve(res.enrichment).then(function (er) {
+                  er = er || {};
+                  var failedN = (er.failed || []).length;
+                  toast(
+                    fmtNum(er.updated || 0) + ' emails enriquecidos en «' + name + '»' +
+                    (failedN ? ' · ' + fmtNum(failedN) + ' fallaron' : ''),
+                    failedN ? 'warn' : 'success'
+                  );
+                  if (state.listas.activeListId && (isAllList() || String(state.listas.activeListId) === String(list.id))) {
+                    reloadMembers({ keepSelection: true });
+                  }
+                }).catch(function (e) { console.warn('[prospecting] enriquecimiento en segundo plano falló:', e); });
+              }
             });
-          }).then(function () { state.cache.lists = null; refreshBadge(); });
+          });
         })
         .then(function () {
           prog.hide();
