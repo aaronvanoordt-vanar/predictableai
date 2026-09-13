@@ -140,6 +140,10 @@
 
   function apolloErrorMessage(detail, status) {
     const d = String(detail || '').toLowerCase();
+    // El proxy bloquea los endpoints de correo cuando la credencial es la key
+    // compartida de la beta: ese buzón es de otra cuenta, no del usuario.
+    if (d === 'apollo_account_required')
+      return 'Conecta tu cuenta de Apollo para usar el canal de Email (Campañas → Email → Conectar): la cuenta compartida de la plataforma no envía correo a tu nombre.';
     if (status === 401) return 'Sesión expirada. Vuelve a iniciar sesión.';
     if (status === 403 || d.includes('master key') || d.includes('api key is not a master'))
       return 'Tu API key de Apollo debe ser una master key para esta operación (403).';

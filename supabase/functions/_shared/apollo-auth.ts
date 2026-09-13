@@ -5,7 +5,8 @@
  * (channel-connect → apollo_auth_url / apollo_connect) y la fila queda en
  * channel_accounts (provider='apollo', secret = JSON de tokens como texto).
  * Si no la conectó, se usa la key compartida de la plataforma (APOLLO_API_KEY),
- * que sigue siendo el fallback de la beta.
+ * que sigue siendo el fallback de la beta PARA BUSCAR Y ENRIQUECER. Nunca para
+ * el canal de Email: ese buzón es de otra cuenta (ver el modo `platform`).
  *
  * Fuentes (leídas el 2026-09-03):
  *  • https://docs.apollo.io/docs/use-oauth-20-authorization-flow-to-access-apollo-user-information-partners
@@ -87,7 +88,10 @@ export interface ApolloAuth {
    *  • user_key → master API key que el usuario pegó (como WATI/Dripify)
    *  • platform → APOLLO_API_KEY compartida de la beta: OTRA cuenta de Apollo,
    *               con sus propias listas y contactos. Nada de lo que el usuario
-   *               ve en su Apollo existe aquí.
+   *               ve en su Apollo existe aquí. Solo vale para buscar y
+   *               enriquecer: apollo-proxy rechaza los endpoints de correo y
+   *               ni campaign-run ni inbox-send envían con ella (sería mandar
+   *               el email desde el buzón de otra persona).
    */
   mode: "oauth" | "user_key" | "platform";
   /** Email del usuario de Apollo (en modo oauth y user_key). */

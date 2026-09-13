@@ -5,9 +5,11 @@
  *
  *   1. Barra de canales (Email · WhatsApp · LinkedIn). Es el gate: sin ningún
  *      canal conectado y sin campañas se muestra el asistente de conexión.
- *      Email = OAuth del propio usuario con Apollo (o la cuenta de la
- *      plataforma en beta); WhatsApp = WATI; LinkedIn = Dripify. Los nombres
- *      de proveedor solo aparecen dentro de los asistentes de conexión.
+ *      Email = la cuenta de Apollo del propio usuario (OAuth o master key);
+ *      WhatsApp = WATI; LinkedIn = Dripify. Los nombres de proveedor solo
+ *      aparecen dentro de los asistentes de conexión. La key compartida de la
+ *      plataforma (APOLLO_API_KEY) NO conecta el canal: solo respalda la
+ *      búsqueda y el enriquecimiento de la beta.
  *   2. Campañas: una cadencia (el grafo `campaigns.flow`, js/campaign-flow.js)
  *      sobre una lista de leads: acciones por canal con espera relativa y
  *      condiciones con ramas Sí / No. Crear y editar la cadencia es trabajo
@@ -356,7 +358,16 @@
     var accs = state.emailAccounts || [];
     return accs.find(function (a) { return a.default || a.is_default; }) || accs[0] || null;
   }
-  /** Email: connected (OAuth propio) · platform (cuenta de la plataforma, beta) · disconnected · unavailable · loading */
+  /**
+   * Email: connected (la cuenta de Apollo del propio usuario) · disconnected · loading.
+   *
+   * NO existe un estado "cuenta de la plataforma": la key compartida de la
+   * beta (APOLLO_API_KEY) sirve para buscar y enriquecer, pero nunca es el
+   * canal de email de nadie. Presentarla como conectada le mostraba a cada
+   * cliente nuevo el buzón de OTRA cuenta (el de la plataforma) como si fuera
+   * suyo. El canal se conecta igual que WhatsApp y LinkedIn: el usuario
+   * conecta su propio Apollo (OAuth o master key).
+   */
   function emailState() {
     if (state.status === undefined) return { state: 'loading' };
     if (isConn(state.apollo)) {
@@ -364,10 +375,7 @@
       var first = cfg.email_accounts && cfg.email_accounts[0];
       return { state: 'connected', detail: cfg.email || (first && first.email) || 'Cuenta conectada' };
     }
-    if (state.apolloOauth === true) return { state: 'disconnected' };
-    var def = defaultEmailAccount();
-    if (def) return { state: 'platform', detail: def.email || '' };
-    return { state: 'unavailable' };
+    return { state: 'disconnected' };
   }
   function templateSummary(cfg) {
     var items = (cfg.templates && cfg.templates.items) || {};
@@ -398,8 +406,7 @@
   }
   function channelState(key) { return key === 'email' ? emailState() : key === 'whatsapp' ? waState() : liState(); }
   function channelConnected(key) {
-    var s = channelState(key).state;
-    return s === 'connected' || s === 'platform';
+    return channelState(key).state === 'connected';
   }
   function anyConnected() { return CH_ORDER.some(channelConnected); }
   function dripifyCampaigns() { return (state.dripify && state.dripify.config && state.dripify.config.campaigns) || []; }
@@ -426,12 +433,16 @@
     try { state.lists = await pd().fetchLists(); } catch (e) { state.lists = []; console.warn('[campaigns] lists:', e.message); }
   }
 
+  // Cuentas remitentes: SOLO las del Apollo que conectó el usuario. Sin
+  // conexión propia no se le pregunta al proxy — en modo plataforma devolvería
+  // los buzones de la cuenta compartida, que son de otra persona.
   async function loadEmailAccounts() {
     if (state.emailAccounts) return state.emailAccounts;
+    if (!isConn(state.apollo)) { state.emailAccounts = []; return state.emailAccounts; }
     var accs = [];
     try { accs = (pdSafe().fetchEmailAccounts ? await pdSafe().fetchEmailAccounts() : []) || []; }
     catch (e) { console.warn('[campaigns] email accounts:', e.message); }
-    if (!accs.length && state.apollo && state.apollo.config && Array.isArray(state.apollo.config.email_accounts)) {
+    if (!accs.length && state.apollo.config && Array.isArray(state.apollo.config.email_accounts)) {
       accs = state.apollo.config.email_accounts.map(function (a) { return { id: a.id, email: a.email, default: !!a.default }; });
     }
     state.emailAccounts = accs;
@@ -928,7 +939,7 @@
   function renderChannelCard(key, big) {
     var meta = CH[key];
     var st = channelState(key);
-    var on = st.state === 'connected' || st.state === 'platform';
+    var on = st.state === 'connected';
     var card = h('div', { class: 'cmp-ch' + (big ? ' big' : '') + (on ? ' on' : ''), 'data-channel': key });
     card.appendChild(h('div', { class: 'cmp-ch-head', html: chanIcon(key) + '<span>' + esc(meta.label) + '</span>' }));
     if (big) card.appendChild(h('div', { class: 'cmp-ch-desc', text: meta.desc }));
@@ -938,15 +949,9 @@
       body.appendChild(h('span', { class: 'pros-hint', text: 'Cargando…' }));
     } else if (on) {
       body.innerHTML = '<span class="cmp-dot"></span><span class="cmp-ch-detail">' + esc(st.detail || '') + '</span>';
-      if (st.state === 'platform') body.appendChild(h('span', { class: 'pros-hint', text: 'Conectado · cuenta de la plataforma (beta)' }));
       if (st.sub) body.insertAdjacentHTML('beforeend', pill(st.sub, st.subKind));
       if (key === 'linkedin' && !st.webhookOk) body.appendChild(h('span', { class: 'cmp-chip-warn', text: '⚠ Falta el webhook de respuestas' }));
       foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-details', 'data-channel': key, text: 'Detalles' }));
-      // Se ofrece siempre: sin app OAuth registrada el camino es pegar la key.
-      if (st.state === 'platform') foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-connect', 'data-channel': key, text: 'Conectar mi cuenta' }));
-    } else if (st.state === 'unavailable') {
-      body.appendChild(h('span', { text: 'Sin conectar' }));
-      foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-connect', 'data-channel': key, text: 'Conectar mi cuenta' }));
     } else {
       if (!big) body.appendChild(h('span', { class: 'pros-hint', text: 'Sin conectar' }));
       foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'ch-connect', 'data-channel': key, text: 'Conectar' }));
@@ -1253,7 +1258,7 @@
     var labels = {
       whatsapp: 'Las campañas con pasos de WhatsApp dejarán de enviar hasta que vuelvas a conectar el canal. Las plantillas creadas en tu cuenta no se borran.',
       linkedin: 'Los pasos de LinkedIn dejarán de enrolar leads hasta que vuelvas a conectar el canal. Lo ya enrolado en tu cuenta de automatización sigue allá.',
-      email: 'Los pasos de email volverán a usar la cuenta de la plataforma (beta) o esperarán hasta que vuelvas a conectar tu cuenta.',
+      email: 'Los pasos de email dejarán de enviar hasta que vuelvas a conectar tu cuenta de Apollo.',
     };
     if (api) api.close();
     return confirmModal({
@@ -1351,8 +1356,8 @@
           body.appendChild(h('div', { class: 'cmp-chip-warn', style: 'margin-top:8px', text: '⚠ La API key no es master key: "Importar desde Apollo" va a seguir vacío. En Apollo → Settings → Integrations → API, marca master key y vuelve a pegarla.' }));
         }
       } else {
-        body.appendChild(h('p', { text: 'Conectado con la cuenta de la plataforma (beta)' + (es.detail ? ': ' + es.detail : '') + '.' }));
-        body.appendChild(h('div', { class: 'pros-hint', text: 'Es una cuenta de Apollo compartida, no la tuya: tus listas y contactos de Apollo no se ven aquí, y lo que crees aquí no llega a tu Apollo. Conecta tu cuenta para trabajar con tus datos y tus créditos.' }));
+        body.appendChild(h('p', { text: 'Sin conectar.' }));
+        body.appendChild(h('div', { class: 'pros-hint', text: 'Conecta tu cuenta de Apollo para que las campañas envíen email desde tu buzón, con tus listas, tus contactos y tus créditos de Apollo.' }));
       }
       var accs = state.emailAccounts || [];
       if (accs.length) {
