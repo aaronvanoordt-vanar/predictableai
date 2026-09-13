@@ -205,6 +205,11 @@ export interface LlmCall {
    * "low"/"minimal".
    */
   openaiReasoningEffort?: string;
+  /**
+   * OpenAI model override for this call (e.g. a fast non-reasoning model for
+   * live coaching turns). Falls back to OPENAI_MODEL.
+   */
+  openaiModel?: string;
   /** When set, the engine is asked for JSON matching this schema. */
   jsonSchema?: Record<string, unknown>;
   /** PDF attachments. Claude and OpenAI only. */
@@ -421,7 +426,7 @@ async function callOpenAI(
   signal: AbortSignal,
   modelOverride?: string,
 ): Promise<DispatchResponse> {
-  const model = modelOverride || openaiModel();
+  const model = modelOverride || opts.openaiModel || openaiModel();
 
   // deno-lint-ignore no-explicit-any
   const content: any[] = [];
@@ -441,7 +446,11 @@ async function callOpenAI(
     input: [{ role: "user", content }],
     max_output_tokens: opts.maxTokens,
   };
-  if (opts.openaiReasoningEffort) body.reasoning = { effort: opts.openaiReasoningEffort };
+  // `reasoning` is only accepted by reasoning models (gpt-5*, o*); gpt-4o-mini
+  // and friends reject the parameter with a 400.
+  if (opts.openaiReasoningEffort && /^(gpt-5|o\d)/i.test(model)) {
+    body.reasoning = { effort: opts.openaiReasoningEffort };
+  }
   if (opts.webSearch && opts.webSearch > 0) body.tools = [{ type: "web_search" }];
   if (opts.jsonSchema) {
     body.text = {

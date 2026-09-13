@@ -54,12 +54,17 @@
       hideThinking();
 
       setStatus('connecting');
-      pollTimer = setInterval(poll, 4000);
+      // 2 s: con transcripción en tiempo real el coach responde en ~5 s y el
+      // poll no debe ser el cuello de botella (getMeetingState es barato).
+      pollTimer = setInterval(poll, 2000);
       elapsedTimer = setInterval(updateElapsed, 1000);
       if (typeof global.coachShowActive === 'function') {
         global.coachShowActive(prospectContext && prospectContext.name);
       }
       toast('Bot lanzado a la reunión', 'success');
+      if (res.transcript_provider === 'recallai') {
+        toast('Transcripción en modo diferido: las alertas pueden tardar minutos. Activa Deepgram (RECALL_TRANSCRIPT_PROVIDER) para tiempo real.', 'warn');
+      }
     } catch (e) {
       toast('Error iniciando reunión: ' + e.message, 'error');
     } finally {

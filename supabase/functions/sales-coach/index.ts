@@ -396,6 +396,8 @@ async function callAi(
   // OpenAI only: GPT-5 reasoning tokens share max_output_tokens with the
   // answer. Live turns use "low" so the JSON never comes back truncated.
   openaiReasoningEffort?: string,
+  // OpenAI only: model override (live turns run on a fast model, see LIVE_OPENAI_MODEL).
+  openaiModel?: string,
   // deno-lint-ignore no-explicit-any
 ): Promise<any> {
   const res = await callLLM({
@@ -406,10 +408,22 @@ async function callAi(
     jsonSchema: schema,
     claudeModel,
     openaiReasoningEffort,
+    openaiModel,
     logPrefix: "[sales-coach]",
   });
   return parseLlmJson(res.text);
 }
+
+// Live coaching must answer in a few seconds: GPT-5 (the report model) took
+// 20-28 s per turn in production, which makes "en vivo" meaningless. Same
+// model the browser's local-capture coach already uses via the worker.
+function liveOpenAiModel(): string {
+  return Deno.env.get("OPENAI_LIVE_MODEL") || "gpt-4o-mini";
+}
+
+// Minimum gap between two live analyses of the same meeting. Deepgram delivers
+// a chunk every 1-3 s; without this every webhook would fire its own LLM call.
+const LIVE_ANALYSIS_MIN_GAP_MS = 6_000;
 
 // JSON Schemas for structured outputs. Constraint notes: only supported
 // keywords (type/properties/required/additionalProperties:false/enum/items/
@@ -698,6 +712,25 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
     .maybeSingle();
   if (!meeting) return;
 
+  // Throttle: with real-time transcription several webhooks land per second.
+  // If an analysis just ran, leave the buffer for the next webhook to pick up.
+  const { data: lastEv } = await supa
+    .from("coach_events").select("ts").eq("meeting_id", meetingId)
+    .order("ts", { ascending: false }).limit(1).maybeSingle();
+  if (lastEv?.ts && Date.now() - new Date(lastEv.ts).getTime() < LIVE_ANALYSIS_MIN_GAP_MS) return;
+
+  // Claim the buffer BEFORE the LLM call so two concurrent webhooks never
+  // analyze (and bill) the same chunks twice. The final report reads every
+  // chunk regardless of this flag, so a failed turn loses nothing.
+  const ids = buffer.map((b: Json) => b.id);
+  const { data: claimed } = await supa
+    .from("coach_transcript_chunks")
+    .update({ analyzed: true })
+    .in("id", ids)
+    .eq("analyzed", false)
+    .select("id");
+  if (!claimed || claimed.length !== ids.length) return;
+
   // Live coaching runs from a webhook, so the engine comes from the meeting
   // owner's saved preference rather than a request body.
   const engine = await engineForUser(supa, meeting.user_id, "coach");
@@ -721,17 +754,12 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
 
   let llm: Json;
   try {
-    llm = await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_COACH, userPrompt, COACH_SCHEMA, 4096, "low");
+    llm = await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_COACH, userPrompt, COACH_SCHEMA, 4096, "low", liveOpenAiModel());
   } catch (e) {
     // Same fallback the Apps Script used on LLM/parse errors.
     console.error("[sales-coach] LLM error:", e);
     llm = { state: {}, alerts: [], next_steps: [], summary_so_far: "" };
   }
-
-  await supa
-    .from("coach_transcript_chunks")
-    .update({ analyzed: true })
-    .in("id", buffer.map((b: Json) => b.id));
 
   await supa.from("coach_events").insert({
     meeting_id: meetingId,
@@ -823,11 +851,16 @@ async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
     throw new Error(`Recall.ai falló: ${JSON.stringify(recall).slice(0, 400)}`);
   }
 
+  // Which provider the bot was created with is otherwise invisible from the
+  // outside (it lives in a secret) — surface it so a "slow transcription"
+  // report can be diagnosed from the DB and the UI can warn about it.
+  const provider = recallTranscriptProvider().deepgram_streaming ? "deepgram" : "recallai";
+  console.log(`[sales-coach] bot ${recall.id} created for meeting ${meetingId} (transcript provider: ${provider})`);
   await ctx.supa.from("coach_meetings").update({
     recall_bot_id: recall.id,
-    transcript_source: "webhook",
+    transcript_source: `webhook:${provider}`,
   }).eq("id", meetingId);
-  return { meeting_id: meetingId, recall_bot_id: recall.id };
+  return { meeting_id: meetingId, recall_bot_id: recall.id, transcript_provider: provider };
 }
 
 async function actionIngestLocalChunks(ctx: Ctx, p: Json): Promise<Json> {
@@ -1481,7 +1514,7 @@ async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
   ].join("\n");
 
   try {
-    return await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_LIVE_TURN, userPrompt, LIVE_TURN_SCHEMA, 2048, "low");
+    return await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_LIVE_TURN, userPrompt, LIVE_TURN_SCHEMA, 2048, "low", liveOpenAiModel());
   } catch (e) {
     // A dropped coaching turn must never break the live session.
     console.error("[sales-coach] coachTurn failed:", e);
