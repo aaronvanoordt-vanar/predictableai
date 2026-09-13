@@ -35,12 +35,18 @@
  *   excluded_companies  hard: companies the seller already works (members of
  *                       the Prospección lists they picked) that no radar ever
  *                       surfaced. Never reported again.
- *   known_signals       soft: every company a previous ready radar delivered,
- *                       with the signal reported at the time (headline +
- *                       evidence URLs). Reported again ONLY when this run
- *                       finds a genuinely different signal or newer news —
- *                       enforced deterministically by isNewSignal(), never
- *                       left to the model's judgement.
+ *   known_signals       soft: companies a previous ready radar delivered AND
+ *                       the seller went on to save into a list — proof the
+ *                       signal mattered enough to keep, with the signal
+ *                       reported at the time (headline + evidence URLs).
+ *                       Reported again ONLY when this run finds a genuinely
+ *                       different signal or newer news — enforced
+ *                       deterministically by isNewSignal(), never left to the
+ *                       model's judgement. A company a previous radar
+ *                       delivered but that was never saved into any list
+ *                       carries no memory at all: it's fully back in scope,
+ *                       no new-signal gate — only a saved company is worth
+ *                       remembering.
  *
  * STAGED PROTOCOL — each HTTP call does exactly ONE bounded unit of work
  * (one Claude call, or one small batch of Apollo lookups) and returns. This
@@ -838,11 +844,14 @@ async function loadSellerContext(
 //             lists they picked) that no radar ever surfaced. Nothing is
 //             known about WHY they matter, so re-finding them is pure waste:
 //             never report them.
-//   history — every company a previous ready radar delivered, with the exact
-//             signal reported at the time (headline + evidence URLs). These
-//             are NOT banned: if this run finds a different signal or newer
-//             news for one, the seller wants to hear about it. Enforced in
-//             handleResearch via isNewSignal().
+//   history — companies a previous ready radar delivered AND the seller went
+//             on to save into a list, with the exact signal reported at the
+//             time (headline + evidence URLs). These are NOT banned: if this
+//             run finds a different signal or newer news for one, the seller
+//             wants to hear about it. Enforced in handleResearch via
+//             isNewSignal(). A radar-delivered company that was never saved
+//             into any list carries no memory at all — it's fully back in
+//             scope for this run, same as one the radar never met.
 //
 // A company saved from a radar into a list therefore stays in `history`, not
 // in `hard` — otherwise "guardar todo en una lista" would silently bury it
@@ -856,7 +865,7 @@ async function resolveKnownCompanies(
   listIds: string[],
   includePreviousRadar: boolean,
 ): Promise<RadarMemory> {
-  const history = new Map<string, KnownSignal>();
+  const rawHistory = new Map<string, KnownSignal>();
 
   if (includePreviousRadar) {
     const { data: runs } = await supa.from("radar_runs")
@@ -871,7 +880,7 @@ async function resolveKnownCompanies(
         const name = asStr(c?.name).trim();
         if (!name || name.length > 90) continue;
         const key = name.toLowerCase();
-        const entry = history.get(key) ??
+        const entry = rawHistory.get(key) ??
           { name, headlines: [], urls: [], last_seen: seenAt };
         const headline = asStr(c?.signal_headline).trim() || asStr(c?.why_fit).trim();
         if (headline && entry.headlines.length < MAX_HEADLINES_PER_KNOWN) {
@@ -883,9 +892,32 @@ async function resolveKnownCompanies(
         }
         // Runs come newest first, so the first seen date wins as last_seen.
         if (!entry.last_seen) entry.last_seen = seenAt;
-        history.set(key, entry);
+        rawHistory.set(key, entry);
       }
     }
+  }
+
+  // Only a company the seller actually saved into a list keeps its radar
+  // memory — saving nothing means remembering nothing. Checked against ALL
+  // of the seller's lists, not just the ones picked as exclusion sources for
+  // this run: "was it saved" is a fact, not a per-run toggle.
+  const savedNames = new Set<string>();
+  if (rawHistory.size) {
+    const { data: ownedLists } = await supa.from("prospect_lists")
+      .select("id").eq("user_id", userId);
+    const ownedListIds = (ownedLists ?? []).map((l: { id: string }) => l.id);
+    if (ownedListIds.length) {
+      const { data: allMembers } = await supa.from("prospect_list_members")
+        .select("company").in("list_id", ownedListIds).limit(20000);
+      for (const m of allMembers ?? []) {
+        const name = asStr(m?.company).trim();
+        if (name) savedNames.add(name.toLowerCase());
+      }
+    }
+  }
+  const history = new Map<string, KnownSignal>();
+  for (const [key, entry] of rawHistory) {
+    if (savedNames.has(key)) history.set(key, entry);
   }
 
   const hard = new Map<string, string>(); // lowercase name → original casing
