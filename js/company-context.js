@@ -1023,6 +1023,18 @@
       el.value = next;
       flash(el);
     });
+    // "Todavía no tengo un caso / objeciones": la IA las marca cuando cierra
+    // el contexto sin encontrar nada citable. Solo se marca, nunca se desmarca
+    // (desmarcar es una decisión del usuario), y solo si la lista está vacía.
+    [['social_proof_none', 'social_proof'], ['objections_none', 'common_objections']].forEach(function (pair) {
+      var box = root.querySelector('input[name="' + pair[0] + '"]');
+      if (!box || box.checked || intake[pair[0]] !== true) return;
+      var host = root.querySelector('[data-ccx-rows="' + pair[1] + '"]');
+      var filled = host && Array.prototype.some.call(host.querySelectorAll('input'), function (i) { return i.value.trim(); });
+      if (filled) return;
+      box.checked = true;
+      flash(box.closest('.ccx-check') || box);
+    });
   }
 
   function injectStyles() {

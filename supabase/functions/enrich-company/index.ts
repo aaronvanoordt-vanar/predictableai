@@ -66,6 +66,17 @@
  *
  * Stores enriched data in intel_hub_intake.
  *
+ * ── Cierre al 100 % (regla de producto, 2026-09-13) ──────────────────────
+ * La corrida SIEMPRE termina con las 13 tarjetas de "Contexto de tu empresa"
+ * completas. Tras los pasos de investigación, `completeContextGaps` relee la
+ * fila, detecta qué campos exigidos siguen vacíos y los cierra en dos capas:
+ * una llamada al modelo con todo lo ya conocido que propone SOLO esos campos
+ * (borradores razonados, nunca cifras ni clientes inventados) y, para lo que
+ * aún quede, los defaults deterministas de _shared/context-defaults.ts. El
+ * usuario después edita lo que quiera; lo que no puede pasar es que tenga
+ * que llenar media página a mano. Solo se rellenan huecos, así que nunca
+ * pisa un valor suyo, confirmado o no.
+ *
  * Auth: Bearer <user JWT>
  * POST body: { "linkedin_url": "https://linkedin.com/company/acme" }
  *         or: { "website_url": "https://company.com" }
@@ -89,6 +100,10 @@ import {
   BUSINESS_MODELS, DEAL_SIZES, SALES_CYCLES, CTAS, TONES, CHANNELS, LANGUAGES,
   allowOnly, allowOne, freeList,
 } from "../_shared/icp-taxonomy.ts";
+import {
+  REQUIRED_INTAKE_FIELDS, missingFields, isFilled, deterministicDefaults, legacyMirror as mirrorLegacy,
+  hostnameOf, type RequiredField, type ContextRow,
+} from "../_shared/context-defaults.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -163,7 +178,8 @@ function focusNote(focus: string): string {
 // the one rule that, when dropped, silently poisons every downstream field.
 const IDENTITY_GUARDRAIL = `Hard rules:
 - Identity guardrail: many company names collide with unrelated businesses (holding companies, franchises, business-registry entries, or completely different industries). Before using any fact, confirm it comes from the exact source given below — never substitute a business-registry entry, directory listing, or a same-named company you found via a broader search just because it ranked well.
-- NEVER write a refusal or "not enough data" message in any field (e.g. "insufficient data", "no información disponible", "no indexable content"). Work with whatever you find — even just the company name, a page title, or an industry keyword is enough for a short, plausible best guess. Only leave a field as an empty string if you found absolutely nothing usable for it; never explain the absence inside the field itself.
+- NEVER write a refusal or "not enough data" message in any field (e.g. "insufficient data", "no información disponible", "no indexable content"). Work with whatever you find — even just the company name, a page title, or an industry keyword is enough for a short, plausible best guess.
+- NEVER leave a field empty. Every field is a draft the user reviews and edits before anything is sent, so a reasoned inference from the domain, brand, market cues and industry norms is always better than an empty value. The only things you must never fabricate are numeric figures, client names, certifications and dates — inference about positioning, audience and commercial model is expected. Never explain uncertainty inside the field itself.
 - Be efficient: a couple of well-targeted searches is enough. Do not keep searching once you can fill the fields.`;
 
 interface LinkedInFindings {
@@ -219,9 +235,9 @@ Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
   "solutions": "Comma-separated main products/services actually described on this site, best-effort even from limited signal (e.g. 'Revenue forecasting, Pipeline analytics, AI sales coaching')",
   "about": "2-3 sentences: what they do, mission, years of experience, market presence — as described on THIS site. Only fill this in if you found something more specific than what's already known, otherwise return an empty string.",
-  "industry": "Main industry/sector as evidenced by this site's own content (e.g. 'B2B SaaS - Sales Technology'). Empty string if not inferable from the site.",
-  "employee_count": "Approximate team/company size if the site states or implies it (e.g. '50-200 employees'). Empty string if not inferable.",
-  "country": "Primary country of operation as evidenced by the site (address, phone code, language/market cues). Empty string if not inferable."
+  "industry": "Main industry/sector as evidenced by this site's own content (e.g. 'B2B SaaS - Sales Technology'). If the site does not say it, infer it from what they sell.",
+  "employee_count": "Approximate team/company size (e.g. '50-200 employees'). If the site does not state it, estimate from cues (team page, offices, scope of services, ccTLD) and keep the range wide.",
+  "country": "Primary country of operation as evidenced by the site (address, phone code, currency, ccTLD, language/market cues). Always give your best guess."
 }
 ${IDENTITY_GUARDRAIL}
 - If the site is a JS-rendered app or otherwise not directly crawlable, you still have the domain name, brand name, page title, meta description, and search-engine snippets scoped to this domain — use those for a reasonable best guess rather than reporting a failure.${focusBlock(focus)}`;
@@ -241,7 +257,7 @@ async function researchWebsitePains(engine: Engine, website: string, fallbackAbo
   const system = `You are a B2B go-to-market analyst. Your ONLY source is the exact website URL given below — read its own messaging (headlines, value proposition, case studies, solution pages). Do NOT pull in an unrelated company that happens to share the name.
 Respond ONLY with valid JSON, no markdown fences, no explanation:
 {
-  "pain_points": "1-3 sentences in Spanish: the problems this company's target customer has, as implied by the site's own messaging. Empty string if not inferable."
+  "pain_points": "1-3 sentences in Spanish: the problems this company's target customer has, as implied by the site's own messaging. Always infer them from what the company sells, even with little signal."
 }
 ${IDENTITY_GUARDRAIL}
 - Write the pain points from the target CUSTOMER's point of view (what hurts them today), not as a description of the company's product.${focusBlock(focus)}`;
@@ -287,8 +303,8 @@ Respond ONLY with valid JSON, no markdown fences, no explanation:
   "icp_departments": ["departments where the buyer sits, ONLY from the allowed list below"],
   "icp_seniorities": ["decision-maker levels, ONLY from the allowed list below"],
   "icp_titles": ["3-8 concrete job titles of the decision maker, free text, in the language the buyer uses on LinkedIn"],
-  "icp_buying_triggers": "1-2 sentences in Spanish: observable public events that mean a company is ready to buy this (funding, hiring, expansion, tooling change). Empty string if not inferable.",
-  "icp_disqualifiers": "1 sentence in Spanish: who is clearly NOT a fit. Empty string if not inferable.",
+  "icp_buying_triggers": "1-2 sentences in Spanish: observable public events that mean a company is ready to buy this (funding, hiring, expansion, tooling change). Always infer from what they sell.",
+  "icp_disqualifiers": "1 sentence in Spanish: who is clearly NOT a fit. Always infer from what they sell.",
   "competitors": [{"name": "Direct competitor company name", "domain": "competitor.com"}],
   "commercial_model": "one of: ${BUSINESS_MODELS.join(" | ")}",
   "commercial_deal_size": "one of: ${DEAL_SIZES.join(" | ")}",
@@ -307,7 +323,7 @@ ALLOWED VALUES — any value outside these lists is discarded, so pick from them
 - icp_seniorities: ${ICP_SENIORITIES.join(", ")}
 
 ${IDENTITY_GUARDRAIL}
-- These are PROPOSALS the user will review and confirm, so a reasoned best guess beats an empty array. Still, never invent a competitor that does not exist or a country with no evidence at all: an empty array is better than a fabricated entry.
+- These are PROPOSALS the user will review and confirm, so a reasoned best guess is REQUIRED for every field — never return an empty array or empty string. For countries, read the market cues (language, currency, ccTLD, phone codes, offices) and always name at least one. Never invent a competitor company that does not exist: if you cannot name a real one, use the category-level alternative the buyer actually considers (e.g. 'Hacerlo internamente', 'Consultoras locales de X').
 - Aim wide but coherent: 2-6 countries, 2-8 industries, 2-5 employee ranges, 1-4 departments, 2-5 seniorities.${focusBlock(focus)}${focus ? `
 - Because a focus instruction is set, describe the buyer of THAT line specifically: the industries, departments, seniorities and titles that buy it, not the ones that buy the company's other lines.` : ""}`;
   const hostname = siteScope(website);
@@ -339,6 +355,119 @@ ${IDENTITY_GUARDRAIL}
     outreach_channels:      allowOnly(p.outreach_channels, CHANNELS, 4),
     outreach_language:      allowOne(p.outreach_language, LANGUAGES),
   };
+}
+
+
+// ── Cierre al 100 % ──────────────────────────────────────────────────────
+//
+// Qué se le pide al modelo por cada campo que quedó vacío. Mismas allowlists
+// que el paso del ICP; la validación de abajo descarta lo que no encaje.
+const FIELD_SPECS: Record<RequiredField, string> = {
+  company_about: `"2-3 sentences in Spanish: what they do, mission, market presence"`,
+  company_industry: `"Main industry/sector (e.g. 'B2B SaaS - Sales Technology')"`,
+  company_employee_count: `"Approximate company size as a wide range (e.g. '11-50 employees')"`,
+  company_country: `"Primary country of operation (e.g. 'México')"`,
+  company_solutions: `"Comma-separated main products/services (e.g. 'Revenue forecasting, Pipeline analytics')"`,
+  commercial_model: `"one of: ${BUSINESS_MODELS.join(" | ")}"`,
+  commercial_deal_size: `"one of: ${DEAL_SIZES.join(" | ")}"`,
+  commercial_sales_cycle: `"one of: ${SALES_CYCLES.join(" | ")}"`,
+  commercial_primary_cta: `"one of: ${CTAS.join(" | ")}"`,
+  outreach_signature: `"who signs outbound, as it would appear in a signature. Use a person's name ONLY if the site itself names that person (founder/CEO page, team page); otherwise 'Equipo comercial de <brand>'. Never invent a person."`,
+  outreach_tone: `"one of: ${TONES.join(" | ")}"`,
+  outreach_channels: `["subset of: ${CHANNELS.join(", ")}"]`,
+  outreach_language: `"one of: ${LANGUAGES.join(" | ")}"`,
+  competitors: `[{"name": "real direct competitor or the category-level alternative the buyer considers", "domain": "competitor.com or empty"}]`,
+  icp_countries: `["countries they target, ONLY from the allowed list"]`,
+  icp_industry_tags: `["industries of their CUSTOMERS, ONLY from the allowed list"]`,
+  icp_employee_ranges: `["company sizes of their customers, ONLY from the allowed list"]`,
+  icp_departments: `["departments where the buyer sits, ONLY from the allowed list"]`,
+  icp_seniorities: `["decision-maker levels, ONLY from the allowed list"]`,
+  icp_titles: `["3-8 concrete job titles of the decision maker, in the language the buyer uses on LinkedIn"]`,
+  icp_pain_points: `"1-3 sentences in Spanish, from the target CUSTOMER's point of view: what hurts them today"`,
+  icp_buying_triggers: `"1-2 sentences in Spanish: observable public events that mean a company is ready to buy this"`,
+  common_objections: `[{"objection": "likely reflex objection of this buyer, in Spanish", "neutralizer": "micro-phrase in Spanish that preempts it without sounding defensive"}] — 2 to 4 items`,
+};
+
+// Columnas que necesita el cierre: las exigidas por las tarjetas más las
+// banderas "no tengo" del usuario, que cuentan como campo lleno.
+const CONTEXT_COLUMNS = [
+  "company_website", "company_linkedin_url", "icp_disqualifiers", "social_proof_none", "objections_none",
+  "context_confirmed_at", ...REQUIRED_INTAKE_FIELDS,
+].join(", ");
+
+// deno-lint-ignore no-explicit-any
+function sanitizeProposal(p: any, missing: RequiredField[]): ContextRow {
+  const out: ContextRow = {};
+  for (const f of missing) {
+    const v = p?.[f];
+    switch (f) {
+      case "commercial_model": out[f] = allowOne(v, BUSINESS_MODELS); break;
+      case "commercial_deal_size": out[f] = allowOne(v, DEAL_SIZES); break;
+      case "commercial_sales_cycle": out[f] = allowOne(v, SALES_CYCLES); break;
+      case "commercial_primary_cta": out[f] = allowOne(v, CTAS); break;
+      case "outreach_tone": out[f] = allowOne(v, TONES); break;
+      case "outreach_language": out[f] = allowOne(v, LANGUAGES); break;
+      case "outreach_channels": out[f] = allowOnly(v, CHANNELS, 4); break;
+      case "icp_countries": out[f] = allowOnly(v, ICP_COUNTRIES, 12); break;
+      case "icp_industry_tags": out[f] = allowOnly(v, ICP_INDUSTRIES, 12); break;
+      case "icp_employee_ranges": out[f] = allowOnly(v, ICP_EMPLOYEE_RANGES, 8); break;
+      case "icp_departments": out[f] = allowOnly(v, ICP_DEPARTMENTS, 8); break;
+      case "icp_seniorities": out[f] = allowOnly(v, ICP_SENIORITIES, 8); break;
+      case "icp_titles": out[f] = freeList(v, 10); break;
+      case "competitors":
+        out[f] = Array.isArray(v)
+          // deno-lint-ignore no-explicit-any
+          ? v.filter((c: any) => c && typeof c === "object")
+            // deno-lint-ignore no-explicit-any
+            .map((c: any) => ({ name: str(c.name).slice(0, 80), domain: str(c.domain).slice(0, 120) }))
+            .filter((c: { name: string }) => c.name).slice(0, 6)
+          : [];
+        break;
+      case "common_objections":
+        out[f] = Array.isArray(v)
+          // deno-lint-ignore no-explicit-any
+          ? v.filter((o: any) => o && typeof o === "object")
+            // deno-lint-ignore no-explicit-any
+            .map((o: any) => ({ objection: str(o.objection).slice(0, 300), neutralizer: str(o.neutralizer).slice(0, 300) }))
+            .filter((o: { objection: string; neutralizer: string }) => o.objection && o.neutralizer).slice(0, 6)
+          : [];
+        break;
+      default: out[f] = str(v).slice(0, 2000);
+    }
+  }
+  return out;
+}
+
+// Una sola llamada: con todo lo que ya se sabe de la empresa, propone SOLO los
+// campos que siguen vacíos. Una búsqueda acotada al dominio por si le sirve.
+async function proposeMissingFields(
+  engine: Engine, known: ContextRow, missing: RequiredField[], source: string, focus: string,
+): Promise<ContextRow> {
+  const schema = missing.map((f) => `  "${f}": ${FIELD_SPECS[f]}`).join(",\n");
+  const hostname = hostnameOf(str(known.company_website));
+  const knownLines = Object.entries(known)
+    .filter(([k, v]) => !k.startsWith("context_") && !k.endsWith("_none") &&
+      v !== null && v !== "" && !(Array.isArray(v) && v.length === 0))
+    .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+    .join("\n");
+  const system = `You are a B2B go-to-market analyst finishing a company context after the web research already ran. The fields listed below are the ONLY ones still empty. Fill EVERY one of them from the known context (and, if useful, one search scoped to ${hostname || "the company's own site"}).
+These are drafts the user reviews and edits before anything is sent, so a reasoned inference is REQUIRED: never return an empty string or an empty array, and never write "unknown" or a refusal inside a field. User-facing text in neutral Latin-American Spanish (tú).
+Respond ONLY with valid JSON, no markdown fences, no explanation, with exactly these keys:
+{
+${schema}
+}
+
+ALLOWED VALUES — any value outside these lists is discarded, so pick from them verbatim:
+- icp_countries: ${ICP_COUNTRIES.join(", ")}
+- icp_industry_tags: ${ICP_INDUSTRIES.join(", ")}
+- icp_employee_ranges: ${ICP_EMPLOYEE_RANGES.join(", ")}
+- icp_departments: ${ICP_DEPARTMENTS.join(", ")}
+- icp_seniorities: ${ICP_SENIORITIES.join(", ")}
+
+What you must never fabricate: numeric figures, client names, certifications, dates, or a competitor company that does not exist — if you cannot name a real competitor, use the category-level alternative the buyer actually considers (e.g. 'Hacerlo internamente', 'Consultoras locales de X').${focusBlock(focus)}`;
+  const user = `Company source: ${source}\n\nKnown context (already researched — build on it, do not contradict it):\n${knownLines || "(only the URL above)"}\n\nReturn ONLY the missing fields listed in the schema.`;
+  const p = parseJson(await callAi(engine, system, user, { maxUses: 1, maxTokens: 1600 }));
+  return sanitizeProposal(p, missing);
 }
 
 Deno.serve(async (req: Request) => {
@@ -515,6 +644,36 @@ Deno.serve(async (req: Request) => {
     await Promise.all([profileTask, painsTask, icpTask]);
   }
 
+  // Cierre al 100 %: relee la fila, detecta lo que sigue vacío y lo completa
+  // (modelo → defaults deterministas). Solo huecos: nunca pisa un valor del
+  // usuario. Best-effort — si el modelo falla, los defaults igual cierran.
+  const completeContextGaps = async (source: string) => {
+    try {
+      const [{ data: row }, { data: prof }] = await Promise.all([
+        supa.from("intel_hub_intake").select(CONTEXT_COLUMNS).eq("user_id", user.id).maybeSingle(),
+        supa.from("profiles").select("full_name, company_name").eq("id", user.id).maybeSingle(),
+      ]);
+      const known: ContextRow = row ?? {};
+      const missing = missingFields(known);
+      if (!missing.length) return;
+      await patch({}, 94, "Completando lo que faltó…");
+      const fields: ContextRow = {};
+      try {
+        const proposal = await proposeMissingFields(engine, known, missing, source, focus);
+        for (const f of missing) if (isFilled(proposal, f)) fields[f] = proposal[f];
+      } catch (e) {
+        console.warn("[enrich] gap proposal step failed:", e);
+      }
+      Object.assign(fields, deterministicDefaults({ ...known, ...fields }, prof ?? null));
+      if (!Object.keys(fields).length) return;
+      Object.assign(fields, mirrorLegacy(fields));
+      await patch(fields, 96, "Contexto completo · redactando tu resumen…");
+      console.log(`[enrich] gaps closed for ${user.id}: ${Object.keys(fields).join(", ")}`);
+    } catch (e) {
+      console.warn("[enrich] gap completion failed:", e);
+    }
+  };
+
   const finish = async (websiteFound: boolean) => {
     await supa.from("intel_hub_intake").update({
       company_enrichment_status:   "done",
@@ -565,6 +724,7 @@ Deno.serve(async (req: Request) => {
         } else {
           await patch({}, 90, "No encontramos una página web pública en tu LinkedIn…");
         }
+        await completeContextGaps(li.website || body.linkedin_url!);
 
         await finish(Boolean(li.website));
         console.log(`[enrich] ✓ linkedin ${user.id}`);
@@ -600,6 +760,7 @@ Deno.serve(async (req: Request) => {
           fillGapsOnly: false,
           gaps: { industry: "", employeeCount: "", country: "" },
         });
+        await completeContextGaps(website);
         await finish(true);
         console.log(`[enrich] ✓ website ${user.id}`);
       } catch (err) {

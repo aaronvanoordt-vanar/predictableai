@@ -812,7 +812,7 @@
             <div class="ihx-context-progress-copy">
               <span class="ihx-context-progress-eyebrow">Tu contexto de empresa</span>
               <strong>${progress.complete} de ${progress.total} pasos completados</strong>
-              <span>La IA puede proponer casi todo a partir de tu web; tú confirmas cada tarjeta.</span>
+              <span>La IA completa las 13 tarjetas a partir de tu web: lo que no encuentra lo propone como borrador. Tú revisas, editas y confirmas.</span>
             </div>
             <div class="ihx-context-progress-action">
               <span class="ihx-context-progress-pct">${progress.percent}%</span>
