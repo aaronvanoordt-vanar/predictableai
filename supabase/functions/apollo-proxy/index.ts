@@ -111,7 +111,7 @@ function corsHeaders(origin: string) {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Expose-Headers": "X-Apollo-Auth-Mode",
+    "Access-Control-Expose-Headers": "X-Apollo-Auth-Mode, X-Apollo-Account-Email",
   };
 }
 
@@ -254,7 +254,15 @@ Deno.serve(async (req) => {
 
   return new Response(text, {
     status: res.status,
-    // Para que la UI sepa de quién es la cuenta que respondió.
-    headers: { "Content-Type": "application/json", "X-Apollo-Auth-Mode": auth.mode, ...cors },
+    // Para que la UI sepa de quién es la cuenta que respondió (y pueda
+    // nombrarla en errores de créditos en vez de decir "tu cuenta de Apollo"
+    // a ciegas — headers, no body, porque este Response reenvía el texto
+    // crudo de Apollo tal cual).
+    headers: {
+      "Content-Type": "application/json",
+      "X-Apollo-Auth-Mode": auth.mode,
+      "X-Apollo-Account-Email": auth.accountEmail ?? "",
+      ...cors,
+    },
   });
 });

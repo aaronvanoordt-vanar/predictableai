@@ -56,9 +56,23 @@
     return token;
   }
 
-  // Última cabecera X-Apollo-Auth-Mode vista (la escribe apollo-proxy).
+  // Última cabecera X-Apollo-Auth-Mode / X-Apollo-Account-Email vista (las
+  // escribe apollo-proxy).
   let lastApolloAuthMode = null;
+  let lastApolloAccountEmail = null;
   function apolloAuthMode() { return lastApolloAuthMode; }
+  function apolloAccountEmail() { return lastApolloAccountEmail; }
+
+  // Cómo nombrar, en un mensaje de error, la cuenta de Apollo con la que
+  // acabamos de hablar — para no decir "tu cuenta de Apollo" a ciegas cuando
+  // en realidad puede ser la key compartida de la plataforma.
+  function apolloAccountLabel() {
+    if (lastApolloAuthMode === 'oauth' || lastApolloAuthMode === 'user_key') {
+      return lastApolloAccountEmail ? ' (' + lastApolloAccountEmail + ')' : ' (tu cuenta conectada)';
+    }
+    if (lastApolloAuthMode === 'platform') return ' (la cuenta compartida de la plataforma, no la tuya)';
+    return '';
+  }
 
   async function edgeFetch(fnName, payload) {
     const token = await getAccessToken();
@@ -70,12 +84,14 @@
       },
       body: JSON.stringify(payload),
     });
-    // De qué cuenta de Apollo salió la respuesta: 'oauth' = la del usuario,
-    // 'platform' = la key compartida de la beta (otra cuenta, con sus propias
-    // listas y contactos). Sin esto la UI no puede distinguir "tu cuenta no
-    // tiene listas" de "estamos mirando una cuenta que no es la tuya".
+    // De qué cuenta de Apollo salió la respuesta: 'oauth'/'user_key' = la del
+    // usuario, 'platform' = la key compartida de la beta (otra cuenta, con
+    // sus propias listas, contactos y créditos). Sin esto la UI no puede
+    // distinguir "tu cuenta no tiene listas/créditos" de "estamos mirando una
+    // cuenta que no es la tuya".
     if (fnName === 'apollo-proxy') {
       lastApolloAuthMode = res.headers.get('X-Apollo-Auth-Mode') || null;
+      lastApolloAccountEmail = res.headers.get('X-Apollo-Account-Email') || null;
     }
     let body = null;
     try { body = await res.json(); } catch (_) { /* respuesta no-JSON */ }
@@ -83,13 +99,26 @@
       const detail = body?.detail || body?.error || body?.message || ('HTTP ' + res.status);
       // Solo el proxy habla con Apollo: no etiquetar errores de otras
       // functions (p. ej. la IA de generate-outreach) como "Error de Apollo".
-      const msg = fnName === 'apollo-proxy'
-        ? apolloErrorMessage(detail, res.status)
-        : fnName === 'gmail-proxy'
-          ? gmailErrorMessage(detail, res.status)
-          : res.status === 401
-            ? 'Sesión expirada. Vuelve a iniciar sesión.'
-            : 'No se pudo generar el contenido (' + detail + '). Reintenta.';
+      let msg;
+      if (fnName === 'apollo-proxy' && body?.error === 'insufficient_credits') {
+        // Este 402 lo pone predictable.ai, no Apollo: solo se cobra en modo
+        // 'platform' (sin cuenta de Apollo propia conectada), contra el saldo
+        // de créditos de predictable, no contra los créditos del Apollo del
+        // usuario — mezclarlo con el error de abajo fue justo lo que confundió
+        // a un cliente nuevo (sin Apollo conectado, 0 créditos de predictable)
+        // con "no tengo créditos en Apollo" cuando su Apollo sí tenía.
+        msg = 'Se agotaron tus créditos de predictable.ai para usar la cuenta de Apollo compartida de la plataforma' +
+          (body.cost != null && body.balance != null ? ' (necesitas ' + body.cost + ', tienes ' + body.balance + ')' : '') +
+          '. Esto no tiene relación con tu cuenta de Apollo — conecta la tuya en Campañas → canales → Email para dejar de depender de este saldo, o recarga créditos de predictable.ai.';
+      } else {
+        msg = fnName === 'apollo-proxy'
+          ? apolloErrorMessage(detail, res.status)
+          : fnName === 'gmail-proxy'
+            ? gmailErrorMessage(detail, res.status)
+            : res.status === 401
+              ? 'Sesión expirada. Vuelve a iniciar sesión.'
+              : 'No se pudo generar el contenido (' + detail + '). Reintenta.';
+      }
       const err = new Error(msg);
       err.status = res.status;
       err.detail = detail;
@@ -116,8 +145,11 @@
       return 'Tu API key de Apollo debe ser una master key para esta operación (403).';
     if (status === 429 || d.includes('rate limit'))
       return 'Apollo limitó las solicitudes (429). Espera un minuto y reintenta.';
+    // Este 402 viene de Apollo mismo (no de predictable.ai — ese caso se
+    // maneja aparte en edgeFetch): son los créditos de la cuenta de Apollo
+    // que respondió la llamada, así que hay que decir cuál es.
     if (status === 402 || d.includes('insufficient') || d.includes('credit'))
-      return 'No hay créditos suficientes en tu cuenta de Apollo.';
+      return 'No hay créditos suficientes en la cuenta de Apollo conectada' + apolloAccountLabel() + '.';
     if (d.includes('endpoint not allowed'))
       return 'El proxy de Apollo no reconoce este endpoint — hay que volver a desplegar apollo-proxy (supabase functions deploy apollo-proxy).';
     return 'Error de Apollo: ' + detail;
@@ -1372,6 +1404,7 @@
     fetchLists,
     fetchApolloLists,
     apolloAuthMode,
+    apolloAccountEmail,
     importApolloList,
     fetchAllContacts,
     setContactStatus,
