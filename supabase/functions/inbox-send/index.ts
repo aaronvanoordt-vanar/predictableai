@@ -175,6 +175,11 @@ async function sendEmail(db: SupabaseClient, userId: string, member: Json, text:
   } catch (e) {
     throw new HttpError("Email no está conectado.", e instanceof apolloAuth.ApolloError ? e.status : 503, "email_not_connected");
   }
+  // Nunca contestar con la key compartida de la beta: es el buzón de otra
+  // cuenta de Apollo (la de la plataforma), no el del usuario.
+  if (auth.mode === "platform") {
+    throw new HttpError("Conecta tu cuenta de Apollo para responder por email desde tu buzón.", 403, "email_not_connected");
+  }
   const en = await latestEnrollment(db, userId, member.id);
 
   // Último email nuestro al lead: para el asunto por defecto y el in_response_to.

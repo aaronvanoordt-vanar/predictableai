@@ -523,7 +523,11 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     }
     if (!subject.trim() || !bodyText.trim()) throw new StepError("No hay email personalizado generado para este lead.", "skip");
     const auth = await apolloFor(ctx, en.user_id);
-    if (!auth) throw new StepError("Email no está conectado (ni cuenta propia de Apollo ni key de la plataforma).", "hold");
+    if (!auth) throw new StepError("Email no está conectado: conecta tu cuenta de Apollo.", "hold");
+    // La key compartida de la beta es OTRA cuenta de Apollo: enviar con ella
+    // mandaría el correo desde el buzón del dueño de la plataforma, a nombre
+    // de otra persona. El paso espera a que el usuario conecte su Apollo.
+    if (auth.mode === "platform") throw new StepError("Email no está conectado: conecta tu cuenta de Apollo para enviar desde tu buzón.", "hold");
     let sent: ApolloSendResult;
     try {
       sent = await sendApolloEmail(db, auth, member, sender, subject, bodyText);

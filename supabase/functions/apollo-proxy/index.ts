@@ -12,6 +12,13 @@
  * mode /people/match reveals do NOT charge predictable credits — the customer
  * already pays Apollo for them.
  *
+ * The shared key backs SEARCH AND ENRICHMENT ONLY. Every mail endpoint
+ * (/email_accounts and /emailer_*) is refused in platform mode with 403
+ * apollo_account_required: those read or move the mailboxes of one concrete
+ * Apollo account, and in platform mode that account belongs to someone else —
+ * a new customer was shown the platform owner's inbox as if it were their own
+ * connected Email channel. Email is connected per user, like WhatsApp/LinkedIn.
+ *
  * Auth: Bearer <user JWT>, validated with auth.getUser() — the platform's
  *       verify_jwt alone also accepts the public anon key, which would make
  *       this an open proxy anyone could use to burn Apollo credits (the same
@@ -106,6 +113,18 @@ const DYNAMIC_ENDPOINTS: Array<{ re: RegExp; methods: Method[] }> = [
   { re: new RegExp(`^/emailer_messages/${ID}/send_now$`), methods: ["POST"] },
 ];
 
+// Endpoints de correo: leen o mueven buzones y mensajes de una cuenta de
+// Apollo concreta. En modo `platform` esa cuenta es la compartida de la beta
+// (otra persona), así que se bloquean: listarlos le enseñaba al cliente nuevo
+// el buzón del dueño de la plataforma como si fuera suyo, y enviar habría
+// mandado el correo desde ese buzón. Buscar y enriquecer sí siguen cayendo a
+// la key compartida — ahí no hay identidad de nadie de por medio.
+const OWN_ACCOUNT_ONLY = /^\/(email_accounts|emailer_)/;
+
+function requiresOwnApollo(endpoint: string): boolean {
+  return OWN_ACCOUNT_ONLY.test(endpoint);
+}
+
 function corsHeaders(origin: string) {
   return {
     "Access-Control-Allow-Origin": origin,
@@ -191,6 +210,13 @@ Deno.serve(async (req) => {
   } catch (e) {
     const status = e instanceof ApolloError ? e.status : 500;
     return json({ error: (e as Error).message }, status, cors);
+  }
+
+  if (auth.mode === "platform" && requiresOwnApollo(endpoint)) {
+    return json({
+      error: "apollo_account_required",
+      message: "Conecta tu cuenta de Apollo para usar el canal de Email: la cuenta compartida de la beta no envía correo a tu nombre.",
+    }, 403, cors);
   }
 
   // ── Cobro de créditos por enriquecimiento (catálogo js/credit-costs.js) ──
