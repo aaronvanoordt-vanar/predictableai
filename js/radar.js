@@ -7,8 +7,12 @@
  * el 2026-09-13 para que el costo en créditos de Apollo de una investigación
  * sea predecible) con una señal de compra derivada de la propuesta de valor
  * del vendedor, con evidencia fechada (URLs) y TODOS los decision makers que
- * Apollo tenga en cada empresa, con su correo laboral y teléfono cuando
- * Apollo los tiene.
+ * Apollo tenga en cada empresa — nombre, cargo y LinkedIn (gratis, público).
+ * El correo laboral NO se revela aquí: eso cuesta un crédito de Apollo por
+ * persona, y mostrar decision makers no es pedir contactarlos todavía. Se
+ * revela recién al guardar en una lista (saveToList → bulkMatchByPersonId),
+ * el mismo momento en que el resto de la plataforma ya lo hace
+ * (js/prospecting-data.js → addPeopleToList).
  *
  * Antes de investigar el usuario elige la FRANJA DE FECHAS (últimos 7 días /
  * mes / 3 meses / 6 meses / año): una señal solo sirve mientras es noticia,
@@ -24,9 +28,11 @@
  *
  * El resultado se lee en tarjetas compactas (una empresa = una tarjeta
  * numerada con su titular de señal; la evidencia, el porqué y los decision
- * makers viven detrás de "Ver detalle") para que un radar largo se escanee
- * de un vistazo en vez de leerse como un muro de texto. Todo el resultado se
- * guarda en una lista de Prospección de un click — también las empresas para
+ * makers viven detrás de "Ver contactos" — el botón principal de la tarjeta,
+ * porque encontrar a esas personas es el hallazgo real) para que un radar
+ * largo se escanee de un vistazo en vez de leerse como un muro de texto.
+ * Todo el resultado se guarda en una lista de Prospección de un click —
+ * también las empresas para
  * las que Apollo no encontró personas, como empresa sin contacto.
  *
  * Antes de investigar, el composer pide dos cosas: un prompt opcional con el
@@ -520,7 +526,7 @@
     };
   }
 
-  function dmRow(userId, listId, co, dm) {
+  function dmRow(userId, listId, co, dm, match) {
     return Object.assign(baseRow(userId, listId), {
       apollo_person_id: dm.apollo_person_id || null,
       first_name: dm.first_name || null,
@@ -532,13 +538,16 @@
       linkedin_url: dm.linkedin_url || null,
       city: dm.city || null,
       country: dm.country || null,
-      // El contacto ya lo reveló el Radar (Apollo /people/bulk_match): viaja
-      // a la lista para no volver a pagar el enriquecimiento en Prospección.
-      email: dm.email || null,
-      email_status: dm.email_status || null,
-      phone: dm.phone || null,
-      phone_status: dm.phone ? 'revealed' : 'none',
-      enriched_at: (dm.email || dm.phone) ? new Date().toISOString() : null,
+      // El email se revela justo en este momento — guardar en la lista es
+      // la única acción del Radar que debe gastar el crédito de Apollo
+      // (bulkMatchByPersonId, llamado en saveToList antes de armar la fila).
+      // El teléfono no se revela aquí: sigue el mismo camino que el resto
+      // de la plataforma (Prospección → Listas → "Revelar teléfono").
+      email: match ? match.email : null,
+      email_status: match ? match.email_status : null,
+      phone: null,
+      phone_status: 'none',
+      enriched_at: match ? new Date().toISOString() : null,
       snapshot: radarSnapshot(co),
     });
   }
@@ -603,7 +612,8 @@
     render();
     try {
       if (!global.prospectingData || typeof global.prospectingData.createList !== 'function' ||
-          typeof global.prospectingData.createApolloContact !== 'function') {
+          typeof global.prospectingData.createApolloContact !== 'function' ||
+          typeof global.prospectingData.bulkMatchByPersonId !== 'function') {
         throw new Error('El módulo de Prospección no está cargado.');
       }
       let list;
@@ -613,7 +623,27 @@
         list = await global.prospectingData.createList(name + ' (' + now.getSeconds() + 's)');
       }
 
-      // 1. Armar las filas (sin tocar Apollo).
+      // 0. Revelar el email laboral de los decision makers que se van a
+      //    guardar (Apollo /people/bulk_match, 1 crédito por persona) — este
+      //    es el único momento en que el Radar gasta ese crédito: mientras
+      //    solo se estaban mostrando, nadie los había pedido todavía.
+      const dmPersonIds = [];
+      for (const co of companies) {
+        for (const dm of (co.decision_makers || [])) {
+          if (dm && dm.apollo_person_id) dmPersonIds.push(dm.apollo_person_id);
+        }
+      }
+      let emailByPersonId = new Map();
+      if (dmPersonIds.length) {
+        state.saveMsg = 'Revelando contactos 0/' + dmPersonIds.length + '…';
+        render();
+        emailByPersonId = await global.prospectingData.bulkMatchByPersonId(dmPersonIds, (p) => {
+          state.saveMsg = 'Revelando contactos ' + p.done + '/' + p.total + '…';
+          render();
+        });
+      }
+
+      // 1. Armar las filas.
       const rows = [];
       const dmIndexes = []; // posiciones de rows que son decision makers
       let dmCount = 0;
@@ -623,11 +653,12 @@
         const dms = co.decision_makers || [];
         if (dms.length) {
           for (const dm of dms) {
+            const match = dm.apollo_person_id ? emailByPersonId.get(dm.apollo_person_id) : null;
             dmIndexes.push(rows.length);
-            rows.push(dmRow(state.user.id, list.id, co, dm));
+            rows.push(dmRow(state.user.id, list.id, co, dm, match));
           }
           dmCount += dms.length;
-          contactCount += dms.filter((dm) => dm && (dm.email || dm.phone)).length;
+          contactCount += dms.filter((dm) => dm && dm.apollo_person_id && emailByPersonId.get(dm.apollo_person_id)).length;
         } else {
           rows.push(companyRow(state.user.id, list.id, co));
           companiesWithoutDms++;
@@ -700,7 +731,7 @@
       alert('Guardado en la lista "' + list.name + '": ' +
         companies.length + ' empresa' + (companies.length === 1 ? '' : 's') +
         ' y ' + dmCount + ' decision maker' + (dmCount === 1 ? '' : 's') +
-        (contactCount ? ' (' + contactCount + ' con correo o teléfono ya revelado)' : '') + '.' +
+        (contactCount ? ' (' + contactCount + ' con correo ya revelado)' : '') + '.' +
         (companiesWithoutDms
           ? ' (' + companiesWithoutDms + ' empresa' + (companiesWithoutDms === 1 ? '' : 's') +
             (companiesWithoutDms === 1 ? ' quedó' : ' quedaron') + ' sin contacto: Apollo no encontró personas.)'
@@ -1046,13 +1077,11 @@
     // que va en la tarjeta y no escondido en el detalle.
     const when = whenLabel(c.signal_date);
     const dateChip = when ? '<span class="rdr-chip rdr-chip-date">' + esc(when) + '</span>' : '';
-    const reachable = dms.filter((d) => d && (d.email || d.phone)).length;
     const meta = again + dateChip + [c.country, c.industry, c.employee_count].filter(Boolean)
       .map((m) => '<span class="rdr-chip">' + esc(m) + '</span>').join('') +
       (dms.length
         ? '<span class="rdr-chip rdr-chip-dm">' + dms.length + ' decision maker' +
-          (dms.length === 1 ? '' : 's') +
-          (reachable ? ' · ' + reachable + ' con contacto' : '') + '</span>'
+          (dms.length === 1 ? '' : 's') + '</span>'
         : '<span class="rdr-chip">Sin contacto en Apollo</span>');
     const headline = headlineOf(c);
     return '<article class="card rdr-co' + (open ? ' is-open' : '') + '">' +
@@ -1068,10 +1097,10 @@
       (headline ? '<div class="rdr-co-headline">' + esc(headline) + '</div>' : '') +
       (meta ? '<div class="rdr-co-meta">' + meta + '</div>' : '') +
       '<div class="rdr-co-foot">' +
-        '<button class="rdr-link" data-act="toggle-detail" data-idx="' + i + '">' +
-          (open ? 'Ocultar detalle' : 'Ver detalle') + '</button>' +
         '<button class="btn btn-ghost btn-sm" data-act="save-one" data-idx="' + i + '" ' +
           (state.busy ? 'disabled' : '') + '>Guardar en lista</button>' +
+        '<button class="btn btn-primary btn-sm" data-act="toggle-detail" data-idx="' + i + '">' +
+          (open ? 'Ocultar contactos' : 'Ver contactos' + (dms.length ? ' (' + dms.length + ')' : '')) + '</button>' +
       '</div>' +
       (open ? companyDetail(c, ev, dms) : '') +
     '</article>';
@@ -1104,21 +1133,22 @@
     '</div>';
   }
 
-  // Un decision maker sin forma de contactarlo no sirve de nada: el Radar
-  // entrega todos los que Apollo tiene en la empresa, con correo laboral y
-  // teléfono cuando existen. Nada inventado: lo que Apollo no dio, no se
-  // muestra.
+  // El Radar entrega todos los decision makers que Apollo tiene en la
+  // empresa — nombre, cargo y LinkedIn, gratis. El correo laboral NO se
+  // revela aquí (ese es el crédito de Apollo): se revela al guardar en una
+  // lista, no antes. Nada inventado: lo que Apollo no dio, no se muestra.
   function dmsBlock(dms) {
     if (!dms.length) {
       return '<div class="rdr-dms"><div class="rdr-sec-lbl">Decision makers</div>' +
         '<div class="rdr-dm-none">Apollo no encontró personas para esta empresa — búscala manualmente en Prospección.</div>' +
       '</div>';
     }
-    const reachable = dms.filter((d) => d && (d.email || d.phone)).length;
+    const revealed = dms.filter((d) => d && (d.email || d.phone)).length;
     return '<div class="rdr-dms">' +
       '<div class="rdr-sec-lbl">Decision makers · ' + dms.length +
-        (reachable ? ' · ' + reachable + ' con correo o teléfono' : '') + '</div>' +
+        (revealed ? ' · ' + revealed + ' con correo o teléfono ya revelado' : '') + '</div>' +
       dms.map(dmRowHtml).join('') +
+      '<div class="rdr-dm-hint">El correo se revela al guardar en una lista (1 crédito de Apollo por persona).</div>' +
     '</div>';
   }
 
@@ -1144,7 +1174,7 @@
       '</div>' +
       (links.length
         ? '<div class="rdr-dm-links">' + links.join('') + '</div>'
-        : '<div class="rdr-dm-nocontact">Apollo no tiene su correo ni su teléfono — enriquécelo desde Prospección.</div>') +
+        : '<div class="rdr-dm-nocontact">Apollo no tiene LinkedIn para esta persona.</div>') +
     '</div>';
   }
 
@@ -1324,6 +1354,7 @@
       '.rdr-dm-li:hover{text-decoration:underline}',
       '.rdr-dm-nocontact{font-size:11.5px;color:var(--ink-4)}',
       '.rdr-dm-none{font-size:12.5px;color:var(--text3)}',
+      '.rdr-dm-hint{font-size:11.5px;color:var(--ink-4);margin-top:6px;padding-top:8px;border-top:1px solid var(--hair-2)}',
       '@media (max-width:640px){.rdr-wrap{padding:18px}.rdr-grid{grid-template-columns:1fr}}',
     ].join('\n');
     document.head.appendChild(s);

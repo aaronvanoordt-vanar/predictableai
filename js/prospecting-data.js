@@ -748,6 +748,41 @@
     return { added, alreadyInList, failed, warnings, creditsUsed };
   }
 
+  // ── Revelar email por lote, sin guardar nada ────────────────
+  // Envoltorio delgado sobre /people/bulk_match (10 personas por llamada,
+  // límite de Apollo; 1 crédito por match) para quien ya tiene el
+  // apollo_person_id de una búsqueda gratuita (/mixed_people/api_search) y
+  // solo necesita el email en el momento de guardar — hoy lo usa el Radar
+  // (js/radar.js → saveToList) para no revelar nada hasta que el usuario
+  // decide guardar el contacto en una lista. No toca Supabase ni crea
+  // contactos en Apollo: eso lo hace quien llama, con el resultado.
+  async function bulkMatchByPersonId(personIds, onProgress) {
+    const progress = typeof onProgress === 'function' ? onProgress : () => {};
+    const ids = (personIds || []).filter(Boolean);
+    const byId = new Map(); // apollo_person_id -> { email, email_status } | null
+    for (let i = 0; i < ids.length; i += BULK_MATCH_CHUNK) {
+      const chunk = ids.slice(i, i + BULK_MATCH_CHUNK);
+      progress({ done: i, total: ids.length });
+      try {
+        const res = await apolloProxy('/people/bulk_match', {
+          details: chunk.map((id) => ({ id })),
+          reveal_personal_emails: false,
+        });
+        const matches = res?.matches || [];
+        chunk.forEach((id, j) => {
+          const m = matches[j];
+          byId.set(id, m && !isMaskedEmail(m.email)
+            ? { email: m.email, email_status: m.email_status || null }
+            : null);
+        });
+      } catch (e) {
+        chunk.forEach((id) => byId.set(id, null));
+      }
+    }
+    progress({ done: ids.length, total: ids.length });
+    return byId;
+  }
+
   // ── Agregar contacto manualmente ────────────────────────────
   // Inserta directo en Supabase (sin pasar por Apollo /contacts): estos
   // contactos no tienen apollo_person_id, así que nunca chocan con el
@@ -1392,6 +1427,7 @@
     fetchMembers,
     deleteMembers,
     addPeopleToList,
+    bulkMatchByPersonId,
     createApolloContact,
     addManualMember,
     matchByLinkedinUrl,

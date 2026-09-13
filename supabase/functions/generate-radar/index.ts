@@ -5,7 +5,12 @@
  * recommended Apollo filter set, this function actively hunts for concrete
  * companies showing a buying signal derived from the seller's own value
  * proposition, with dated evidence URLs and every decision maker Apollo has
- * at each company — with work email and phone when Apollo holds them.
+ * at each company — name, title and LinkedIn only. No /people/bulk_match
+ * here: that reveal costs an Apollo email credit per person, and paying it
+ * for every decision maker a run turns up (most of which the seller will
+ * never contact) is spend nobody asked for. The client (js/radar.js) only
+ * enriches — and only the people the seller actually keeps — at the moment
+ * they're saved into a Prospección list.
  *
  * A run stops as soon as it has delivered MAX_COMPANIES companies (20):
  * capped on purpose, 2026-09-13, so a seller can predict what a research
@@ -96,8 +101,9 @@
  *          of companies starting at offset; finalizes (charges credits,
  *          status → ready) once the last batch completes. Per company: every
  *          decision maker Apollo lists for the relevant titles (not a fixed
- *          three), ranked by seniority, then enriched via /people/bulk_match
- *          so each one carries work email / phone / LinkedIn.
+ *          three), ranked by seniority — name, title, LinkedIn only, via the
+ *          free /mixed_people/api_search (no credit spend; see the module
+ *          comment above for why no bulk_match happens here).
  *
  * Auth: every call carries Bearer <user JWT> (verified via auth.getUser).
  * Continuation calls additionally verify the run belongs to the caller.
@@ -149,16 +155,8 @@ const MAX_QUERIES = 40;
 const MAX_DECISION_MAKERS = 25;   // per company
 const DM_PAGE_SIZE = 25;          // Apollo people-search page size
 const MAX_DM_SEARCH_PAGES = 2;    // per query, per company
-// Contact data comes from /people/bulk_match (10 people per call, Apollo's
-// limit). Every match burns an Apollo email credit, so a run has a ceiling —
-// well above a normal run, low enough that even a full 20-company run at
-// MAX_DECISION_MAKERS each (500 potential matches) cannot silently drain the
-// account.
-const DM_ENRICH_CHUNK = 10;
-const MAX_DM_ENRICH_PER_RUN = 400;
-// Companies per decision_makers call. Lower than it used to be because each
-// company now costs one-to-three searches plus its enrichment calls, and the
-// Edge Runtime still hard-kills any invocation at ~150s.
+// Companies per decision_makers call. Each company costs one-to-three
+// searches, and the Edge Runtime still hard-kills any invocation at ~150s.
 const DM_BATCH_SIZE = 3;
 
 // ── Recency ────────────────────────────────────────────────────────────────
@@ -567,12 +565,13 @@ Hard rules — violating any of these makes the output worthless:
 
 // ── Apollo: decision makers per company ─────────────────────────────────────
 //
-// Two steps, because Apollo splits them: /mixed_people/api_search lists the
-// people (free, but every email comes back masked as
-// "email_not_unlocked@…"), and /people/bulk_match reveals the work email and
-// whatever phone Apollo already holds. A name and a job title the seller
-// cannot act on is not a decision maker — so the radar now pays for the
-// second call instead of handing over a list nobody can contact.
+// Only /mixed_people/api_search — free, no credit spend, no reveal. It
+// returns name/title/seniority/LinkedIn with every email masked as
+// "email_not_unlocked@…". Revealing the real work email costs an Apollo
+// credit per person (/people/bulk_match), so that call never runs here: it
+// happens client-side, once, only for the people the seller actually saves
+// to a Prospección list (js/radar.js → saveToList, same pattern
+// addPeopleToList already uses in js/prospecting-data.js).
 
 interface ApolloPerson {
   id?: string;
@@ -581,15 +580,9 @@ interface ApolloPerson {
   last_name?: string;
   title?: string;
   seniority?: string;
-  email?: string;
-  email_status?: string;
   linkedin_url?: string;
   city?: string;
   country?: string;
-  // deno-lint-ignore no-explicit-any
-  phone_numbers?: any[];
-  // deno-lint-ignore no-explicit-any
-  organization?: any;
 }
 
 async function apolloPost(
@@ -655,21 +648,6 @@ function seniorityRank(p: ApolloPerson): number {
   return r === undefined ? 99 : r;
 }
 
-function isMaskedEmail(v: unknown): boolean {
-  const e = asStr(v);
-  return !e || /email_not_unlocked/i.test(e);
-}
-
-function firstPhone(p: ApolloPerson): string {
-  const nums = Array.isArray(p.phone_numbers) ? p.phone_numbers : [];
-  for (const n of nums) {
-    const v = asStr(n?.sanitized_number) || asStr(n?.raw_number);
-    if (v) return v;
-  }
-  // Some plans only expose the company switchboard on the org record.
-  return asStr(p.organization?.phone) || asStr(p.organization?.primary_phone?.number) || "";
-}
-
 function shapePerson(p: ApolloPerson, domain: string): Record<string, unknown> {
   return {
     apollo_person_id: asStr(p.id) || null,
@@ -682,7 +660,8 @@ function shapePerson(p: ApolloPerson, domain: string): Record<string, unknown> {
     company_domain: domain,
     city: asStr(p.city) || null,
     country: asStr(p.country) || null,
-    // Filled by enrichDecisionMakers — never a masked placeholder.
+    // Revealed later, client-side, only if this person is saved to a list —
+    // never filled here (see the module comment above).
     email: null as string | null,
     email_status: null as string | null,
     phone: null as string | null,
@@ -734,49 +713,6 @@ async function findDecisionMakers(
     .sort((a, b) => seniorityRank(a) - seniorityRank(b))
     .slice(0, MAX_DECISION_MAKERS)
     .map((p) => shapePerson(p, domain));
-}
-
-/**
- * Work email + phone for people already found by search, via
- * /people/bulk_match (10 per call, Apollo's limit). Best-effort by design: a
- * chunk that fails leaves those people with their name/title/LinkedIn rather
- * than failing the run — an uncontactable decision maker is still worth
- * showing, and the seller can enrich them by hand in Prospección.
- *
- * reveal_personal_emails / reveal_phone_number stay OFF: personal emails are
- * a different consent conversation, and phone reveals are async (Apollo
- * answers through a webhook) — what comes back here is the work email and
- * any number Apollo already holds.
- */
-async function enrichDecisionMakers(
-  apolloKey: string,
-  // deno-lint-ignore no-explicit-any
-  people: any[],
-): Promise<void> {
-  const targets = people.filter((p) => p && p.apollo_person_id);
-  for (let i = 0; i < targets.length; i += DM_ENRICH_CHUNK) {
-    const chunk = targets.slice(i, i + DM_ENRICH_CHUNK);
-    try {
-      const data = await apolloPost(apolloKey, "/people/bulk_match", {
-        details: chunk.map((p) => ({ id: p.apollo_person_id })),
-        reveal_personal_emails: false,
-      });
-      const matches: ApolloPerson[] = Array.isArray(data?.matches) ? data.matches : [];
-      chunk.forEach((p, j) => {
-        const m = matches[j];
-        if (!m) return;
-        if (!isMaskedEmail(m.email)) {
-          p.email = asStr(m.email);
-          p.email_status = asStr(m.email_status) || null;
-        }
-        const phone = firstPhone(m);
-        if (phone) p.phone = phone;
-        if (!p.linkedin_url && asStr(m.linkedin_url)) p.linkedin_url = asStr(m.linkedin_url);
-      });
-    } catch (e) {
-      console.warn("[radar] apollo bulk_match failed:", e);
-    }
-  }
 }
 
 // ── Seller context (ground truth block shared by strategy + research) ──────
@@ -1402,43 +1338,19 @@ async function handleDecisionMakers(supa: any, run: RunRow, apolloKey: string, o
     const start = Math.max(0, offset || 0);
     const end = Math.min(companies.length, start + DM_BATCH_SIZE);
 
-    // Presupuesto de enriquecimiento del run: cada match de Apollo gasta un
-    // crédito de email de la cuenta, así que hay que contar INTENTOS, no
-    // aciertos — si solo contara a quien devolvió correo, cada intento
-    // fallido "devolvería" presupuesto y el tope real acabaría muy por
-    // encima del declarado. Se cuentan las personas con id de Apollo de las
-    // empresas ya procesadas: sobreestima un poco (alguna quedó fuera por
-    // presupuesto) y errar por ahí es lo correcto para un tope de gasto.
-    // deno-lint-ignore no-explicit-any
-    const attempted = companies.reduce((n: number, c: any) => n +
-      (c && c.dm_done
-        ? (Array.isArray(c.decision_makers) ? c.decision_makers : [])
-          .filter((d: { apollo_person_id?: string }) => d && d.apollo_person_id).length
-        : 0), 0);
-    let budget = Math.max(0, MAX_DM_ENRICH_PER_RUN - attempted);
-
     for (let i = start; i < end; i++) {
       const co = companies[i];
       const dms = await findDecisionMakers(apolloKey, toDomain(co.website), co.decision_maker_titles || []);
-      // Contacto para los de arriba primero: findDecisionMakers ya los
-      // devuelve por seniority, así que si el presupuesto no alcanza para
-      // todos, se gasta en los que más deciden.
-      if (budget > 0 && dms.length) {
-        const slice = dms.slice(0, budget);
-        await enrichDecisionMakers(apolloKey, slice);
-        budget -= slice.length;
-      }
       co.decision_makers = dms;
       co.dm_done = true;
     }
 
     const doneCount = companies.filter((c: { dm_done?: boolean }) => c.dm_done).length;
     // deno-lint-ignore no-explicit-any
-    const withContact = companies.reduce((n: number, c: any) => n +
-      ((Array.isArray(c.decision_makers) ? c.decision_makers : [])
-        .filter((d: { email?: string; phone?: string }) => d && (d.email || d.phone)).length), 0);
+    const dmCount = companies.reduce((n: number, c: any) => n +
+      (Array.isArray(c.decision_makers) ? c.decision_makers.length : 0), 0);
     const stepText = `Decision makers: ${doneCount}/${companies.length} empresas listas` +
-      (withContact ? ` · ${withContact} con correo o teléfono` : "");
+      (dmCount ? ` · ${dmCount} encontrados` : "");
 
     if (end >= companies.length) {
       // ── Last batch: charge credits (only on success) and finalize ──────
