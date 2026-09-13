@@ -251,15 +251,10 @@
       // para todo el resto del flujo (Radar, Hub, Prospección).
       await triggerEnrichment(url, isLinkedin);
 
-      // Radar (aha moment): generate-radar deriva la señal de compra desde
-      // la empresa conectada y sale a cazar empresas target. Se espera el
-      // 202 (rápido: la función inserta la fila radar_runs antes de
-      // investigar en background) para que al aterrizar en #radar ya exista
-      // el run y se vea el progreso en vivo. Si falla, la página Radar
-      // ofrece iniciarlo manualmente.
-      showStatus('inf', '<span class="spinner"></span> Iniciando tu Radar: la IA saldrá a buscar tus empresas target…');
-      await triggerRadar();
-
+      // El Radar YA NO se dispara solo: sin eso el usuario nunca ve el
+      // composer (prompt de señal + franja de fechas) antes de que corra la
+      // primera investigación, así que no puede personalizarla. Aterriza en
+      // #radar con el composer listo para que la arranque él mismo.
       window.location.replace('./index.html#radar');
     } catch (err) {
       btn.disabled = false;
@@ -286,24 +281,6 @@
       }).catch(e => console.warn('[onboarding] enrich-company:', e));
     } catch (e) {
       console.warn('[onboarding] enrich trigger failed:', e);
-    }
-  }
-
-  async function triggerRadar() {
-    try {
-      const session = (await window.supabaseClient.auth.getSession()).data.session;
-      if (!session) return;
-      await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/generate-radar', {
-        method: 'POST',
-        keepalive: true,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + session.access_token,
-        },
-        body: JSON.stringify({ engine: window.AIEngine && window.AIEngine.get('radar') }),
-      });
-    } catch (e) {
-      console.warn('[onboarding] generate-radar:', e);
     }
   }
 
