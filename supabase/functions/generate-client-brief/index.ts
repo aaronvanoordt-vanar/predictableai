@@ -26,6 +26,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
+import {
+  defaultObjections, defaultSignature, firstSentence, solutionList, brandFromWebsite,
+} from "../_shared/context-defaults.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -112,7 +115,7 @@ Hard rules:
 - That rule bans invented FACTS, not qualitative description. key_outcomes and common_objections are drafts the seller reviews and edits before anything is sent, so return them filled: outcomes described without figures when no figure is published, and objections as the reflexes this buyer plausibly has. What you must never do is attach a number, a client name, a date or a certification that nobody stated.
 - All user-facing text in neutral Latin-American Spanish (tuteo). recommended_filters values in English (Apollo requirement).
 - recommended_filters must aim WIDE: the goal is a pool of at least ~1000 people. Prefer more titles/seniorities/countries and fewer keyword restrictions. Include every ICP geography plus close neighbors in the same region when the ICP is regional (e.g. LATAM).
-- If the intake is sparse, still produce the best brief possible from web research alone and note gaps as empty values.`;
+- If the intake is sparse, still produce the best brief possible from web research alone. positional_phrase, brand_promise, what_it_does, mechanism, key_outcomes and common_objections must NEVER be empty: they are drafts the seller edits, so a reasoned inference from what the company sells is required. Only facts (figures, client names, certifications) may be left out.`;
 
 interface IntakeRow {
   company_linkedin_url: string | null;
@@ -336,7 +339,7 @@ Deno.serve(async (req: Request) => {
       social_proof, common_objections, social_proof_none, objections_none,
       context_confirmed_at, company_enrichment_prompt
     `).eq("user_id", user.id).maybeSingle(),
-    supa.from("profiles").select("company_name, linkedin_company_url, company_website").eq("id", user.id).maybeSingle(),
+    supa.from("profiles").select("company_name, linkedin_company_url, company_website, full_name").eq("id", user.id).maybeSingle(),
     supa.from("client_icp").select("company_sizes, industries, roles, geographies, pain_points").eq("profile_id", user.id).maybeSingle(),
     supa.from("company_documents").select("summary").eq("user_id", user.id).eq("status", "done").not("summary", "is", null),
     supa.from("intelligence_hub_reports").select("section_key, content")
@@ -398,15 +401,35 @@ Deno.serve(async (req: Request) => {
         ...(declaredIntake?.icp_buying_triggers ? { buying_triggers: [declaredIntake.icp_buying_triggers] } : {}),
         ...(declaredIntake?.icp_disqualifiers ? { disqualifiers: [declaredIntake.icp_disqualifiers] } : {}),
       };
+      // Cierre al 100 % (misma regla que enrich-company): las tarjetas
+      // Identidad, Frase posicional y Resultados leen estos campos, así que
+      // nunca se guardan vacíos. Si el modelo no los trajo, se redacta un
+      // borrador determinista a partir del intake (sin cifras ni clientes),
+      // que el usuario edita en la tarjeta.
+      const companyLabel = str(b.company_name) || str(profile?.company_name) ||
+        brandFromWebsite(str(declaredIntake?.company_website)) || "La empresa";
+      const solutions = solutionList(declaredIntake?.company_solutions);
+      const draftWhatItDoes = firstSentence(str(declaredIntake?.company_about)) ||
+        `${companyLabel} ofrece ${solutions.length ? solutions.slice(0, 3).join(", ") : "sus soluciones"} a empresas${declaredIntake?.company_country ? ` en ${declaredIntake.company_country}` : ""}.`;
+      const draftMechanism = solutions.length
+        ? `Combina ${solutions.slice(0, 3).join(", ")} para resolver el problema de sus clientes sin cargar al equipo interno. Borrador propuesto por la IA: describe aquí cómo lo hacen en la práctica.`
+        : "Resuelve el problema de sus clientes con un servicio especializado que se integra a su operación. Borrador propuesto por la IA: describe aquí cómo lo hacen en la práctica.";
+      const draftPositional = `${companyLabel}, ${str(declaredIntake?.company_industry) ? `especialistas en ${str(declaredIntake?.company_industry).toLowerCase()}` : (solutions[0] ? `especialistas en ${solutions[0].toLowerCase()}` : "especialistas en su sector")}${declaredIntake?.company_country ? ` en ${declaredIntake.company_country}` : ""}`;
+      const draftOutcomes = [
+        solutions[0] ? `${solutions[0]} resuelto por un equipo especializado, sin distraer al equipo interno` : "El problema resuelto por un equipo especializado, sin distraer al equipo interno",
+        "Menos tiempo y errores en un proceso que no es su negocio principal",
+        "Un responsable claro del resultado, con seguimiento continuo",
+      ];
+      const modelOutcomes = arr(b.key_outcomes).filter((o) => str(o));
       await supa.from("client_brief").update({
         company_name:        str(b.company_name) || profile?.company_name || null,
-        positional_phrase:   str(b.positional_phrase) || null,
+        positional_phrase:   str(b.positional_phrase) || draftPositional,
         brand_promise:       str(b.brand_promise) || null,
         founder_voice:       declaredIntake?.outreach_signature || str(b.founder_voice) || null,
         authority_signals:   str(b.authority_signals) || null,
-        what_it_does:        str(b.what_it_does) || null,
-        mechanism:           str(b.mechanism) || null,
-        key_outcomes:        arr(b.key_outcomes),
+        what_it_does:        str(b.what_it_does) || draftWhatItDoes,
+        mechanism:           str(b.mechanism) || draftMechanism,
+        key_outcomes:        modelOutcomes.length ? modelOutcomes : draftOutcomes,
         icp:                 declaredIcpBlock,
         social_proof:        declaredProof.length ? declaredProof : proposedProof,
         common_objections:   declaredObjections.length ? declaredObjections : proposedObjections,
@@ -447,14 +470,20 @@ Deno.serve(async (req: Request) => {
       // llegan como borrador que él revisa antes de confirmar el contexto.
       // deno-lint-ignore no-explicit-any
       const fill: Record<string, any> = { ...healed };
-      if (!declaredProof.length && intakeRow?.social_proof_none !== true && proposedProof.length) {
-        fill.social_proof = proposedProof;
+      if (!declaredProof.length && intakeRow?.social_proof_none !== true) {
+        // Sin un cliente citable ni declarado ni encontrado en la web, la
+        // tarjeta se cierra con la declaración honesta "todavía no tengo un
+        // caso que pueda citar" — nunca con un caso inventado. El usuario la
+        // desmarca y agrega el suyo cuando lo tenga.
+        if (proposedProof.length) fill.social_proof = proposedProof;
+        else fill.social_proof_none = true;
       }
-      if (!declaredObjections.length && intakeRow?.objections_none !== true && proposedObjections.length) {
-        fill.common_objections = proposedObjections;
+      if (!declaredObjections.length && intakeRow?.objections_none !== true) {
+        fill.common_objections = proposedObjections.length ? proposedObjections : defaultObjections();
       }
-      if (!str(intakeRow?.outreach_signature) && str(b.founder_voice)) {
-        fill.outreach_signature = str(b.founder_voice).slice(0, 200);
+      if (!str(intakeRow?.outreach_signature)) {
+        fill.outreach_signature = (str(b.founder_voice) ||
+          defaultSignature(profile ?? null, companyLabel)).slice(0, 200);
       }
 
       if (Object.keys(fill).length > 0) {
