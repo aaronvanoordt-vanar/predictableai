@@ -2085,26 +2085,22 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 
     <!-- EJECUTAR -->
     <div class="sidebar-section">
-      <div class="lbl">Ejecutar</div>
+      <div class="lbl">Prospecting</div>
     </div>
     <!-- Journey lineal: Buscar → Listas (contactos + CRM) → Campañas (canales + respuestas).
-         El padre abre Buscar; los hijos son las únicas pestañas de js/prospecting.js.
-         Los ids viejos (resumen/contactos/outreach/secuencias/bandeja) siguen
-         resolviendo vía PRO_HASH_ALIASES y prospecting.show(). -->
+         Estas son las únicas pestañas de js/prospecting.js (no hay un padre "Prospección":
+         llevaba al mismo lugar que Buscar). Los ids viejos (resumen/contactos/outreach/
+         secuencias/bandeja) siguen resolviendo vía PRO_HASH_ALIASES y prospecting.show(). -->
     <div class="nav-item" data-page="pro-main" data-pros-tab="busqueda" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('busqueda')">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="6" cy="5" r="3"/><path d="M1 14c0-3 2.5-5 5-5M14 11l-3 3-1.5-1.5"/></svg>
-      Prospección
-    </div>
-    <div class="nav-item" data-page="pro-main" data-pros-tab="busqueda" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('busqueda')" style="margin-left:20px;font-size:12px">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5L10.3 10.3"/></svg>
       Buscar
     </div>
-    <div class="nav-item" data-page="pro-main" data-pros-tab="listas" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('listas')" style="margin-left:20px;font-size:12px">
+    <div class="nav-item" data-page="pro-main" data-pros-tab="listas" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('listas')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 6h6M5 9h4"/></svg>
       Listas
       <span id="nav-listas-badge" class="nav-badge teal" style="display:none">0</span>
     </div>
-    <div class="nav-item" data-page="pro-main" data-pros-tab="campanas" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('campanas')" style="margin-left:20px;font-size:12px">
+    <div class="nav-item" data-page="pro-main" data-pros-tab="campanas" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('campanas')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>
       Campañas
     </div>
@@ -4401,9 +4397,9 @@ window.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
-  // Para pro-main hay 4 nav-items con el mismo data-page (el padre + uno por
-  // sub-tab); sin esto, querySelector siempre agarra el primero ("Prospección")
-  // y el sidebar se queda resaltando ese aunque el contenido restaurado sea
+  // Para pro-main hay 3 nav-items con el mismo data-page (uno por sub-tab);
+  // sin filtrar por data-pros-tab, querySelector agarra el primero y el
+  // sidebar se queda resaltando ese aunque el contenido restaurado sea
   // otra pestaña (Listas, Campañas).
   const navEl = (hash === 'pro-main' && proTab)
     ? (document.querySelector(`.nav-item[data-page="pro-main"][data-pros-tab="${proTab}"]`) ||
