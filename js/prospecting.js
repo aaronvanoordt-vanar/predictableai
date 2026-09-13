@@ -2405,6 +2405,7 @@
         // de Apollo del usuario sino la key compartida de la beta, así que
         // afirmar "tu cuenta no tiene listas" sería falso.
         var mode = pd().apolloAuthMode ? pd().apolloAuthMode() : null;
+        var email = pd().apolloAccountEmail ? pd().apolloAccountEmail() : null;
         var isPlatform = mode === 'platform';
         listHost.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text3);padding:8px 2px;line-height:1.5' },
           h('div', { text: isPlatform
@@ -2414,8 +2415,8 @@
             ? 'Conecta tu cuenta de Apollo en Campañas → canales → Email para importar tus listas.'
             : 'Si en Apollo sí las ves, revisa que sea la misma cuenta y que su API key sea master key (Apollo la exige para listar listas).' }),
           h('div', { style: 'margin-top:6px;opacity:.75', text: 'Cuenta en uso: ' + (
-            mode === 'oauth' ? 'la tuya (OAuth)'
-              : mode === 'user_key' ? 'la tuya (API key)'
+            mode === 'oauth' ? 'la tuya' + (email ? ' — ' + email + ' (OAuth)' : ' (OAuth)')
+              : mode === 'user_key' ? 'la tuya' + (email ? ' — ' + email + ' (API key)' : ' (API key)')
                 : isPlatform ? 'la compartida de la plataforma' : 'desconocida') })));
         return;
       }
