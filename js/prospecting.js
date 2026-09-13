@@ -1551,6 +1551,13 @@
 
     var pg = res.pagination || {};
     var pageNum = pg.page || s.page || 1;
+    // Cuánto trajo Apollo en crudo antes de ocultar por listas excluidas —
+    // "¿la página vino llena?" se decide con esto, nunca con `rows.length`
+    // (ya filtrado): si Apollo llenó la página pero la exclusión tapó casi
+    // todo, `rows.length` puede caer muy por debajo de perPage y apagaba
+    // "Siguiente" aunque sí hubiera más resultados.
+    var rawRes = s.rawResults || res;
+    var rawCount = (rawRes.contacts || []).length + (rawRes.people || []).length;
     // Apollo's mixed_people/api_search sometimes reports total_entries: 0 (and
     // total_pages accordingly) even when it returns a full page of people —
     // trusting that literally used to show "0 personas encontradas" and trap
@@ -1564,7 +1571,7 @@
     // derive it from the count and the current page size.
     var totalPages = pg.total_pages ||
       (totalKnown ? Math.max(1, Math.ceil(total / (s.perPage || 25))) : 1);
-    var fullPage = rows.length >= s.perPage;
+    var fullPage = rawCount >= s.perPage;
     var hasNextPage = fullPage ? true : pageNum < totalPages;
     var partial = !!res.partial_results_only;
     // Siempre mostramos "Página N de X". Con total conocido, X = total de
