@@ -2105,19 +2105,15 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       Campañas
     </div>
 
-    <!-- APRENDER -->
+    <!-- AI SALES COACH -->
     <div class="sidebar-section">
-      <div class="lbl">Aprender</div>
+      <div class="lbl">AI Sales Coach</div>
     </div>
-    <div class="nav-item" data-page="ventas-overview" onclick="nav(this,'ventas-overview')">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="1.5"/><path d="M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1"/><path d="M8 9v-2M7 8h2"/></svg>
-      Ventas AI
-    </div>
-    <div class="nav-item" data-page="ventas-coach" onclick="nav(this,'ventas-coach')" style="margin-left:20px;font-size:12px">
+    <div class="nav-item" data-page="ventas-coach" onclick="nav(this,'ventas-coach')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 13v2M11 13v2M3 15h10"/></svg>
       Meeting Coach
     </div>
-    <div class="nav-item" data-page="ventas-reportes" onclick="nav(this,'ventas-reportes')" style="margin-left:20px;font-size:12px">
+    <div class="nav-item" data-page="ventas-reportes" onclick="nav(this,'ventas-reportes')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M3 14V6l4-4h6v12H3z"/><path d="M7 2v4H3"/><path d="M6 9h4M6 11h3"/></svg>
       <span id="nav-reportes-label">Reportes</span>
     </div>
@@ -2271,14 +2267,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <div class="area-meta">Configurar prospección →</div>
     </div>
 
-    <div class="card area-card" onclick="nav(document.querySelector('[data-page=ventas-overview]'),'ventas-overview')">
+    <div class="card area-card" onclick="nav(document.querySelector('[data-page=ventas-coach]'),'ventas-coach')">
       <div class="area-top">
         <div class="area-icon" style="color:var(--green);background:var(--green-soft)">
           <svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><rect x="2" y="4.5" width="16" height="11" rx="2"/><path d="M6.5 18.5h7M7 9.5l2 2 4-4"/></svg>
         </div>
         <span class="area-go">→</span>
       </div>
-      <div class="area-name">Ventas AI</div>
+      <div class="area-name">AI Sales Coach</div>
       <div class="area-desc">Coach en vivo durante tus llamadas y reportes por SDR al terminar.</div>
       <div class="area-meta">Iniciar una sesión →</div>
     </div>
@@ -2783,58 +2779,6 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 
 
 
-<!-- ═══════ PAGE: VENTAS OVERVIEW ═══════ -->
-<div class="page fade-in" id="page-ventas-overview">
-  <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
-    <div><div class="topbar-title">Ventas AI</div><div class="topbar-sub">Meeting coach en vivo y visibilidad total sobre tu equipo</div></div>
-    <div class="topbar-actions">
-      <button class="btn btn-ghost btn-sm" onclick="nav(document.querySelector('[data-page=ventas-reportes]'),'ventas-reportes')">Ver reportes</button>
-      <button class="btn btn-jade btn-sm" onclick="iniciarCoachLive()">Iniciar coach en vivo</button>
-    </div>
-  </div>
-
-  <div class="page-hero">
-    <span class="ph-eyebrow">Ventas AI</span>
-    <div class="ph-title">Un copiloto en cada <em>llamada</em>.</div>
-    <div class="ph-sub">Entrenado en las mejores técnicas de ventas B2B, entra a tu Meet, Teams o Zoom y guía al vendedor en tiempo real: objeciones, siguiente paso y contexto del prospecto. Al terminar, el director recibe el reporte de cada SDR.</div>
-  </div>
-
-  <div class="stat-grid">
-    <div class="stat-card">
-      <div class="stat-label">Reuniones analizadas</div>
-      <div class="stat-val">—</div>
-      <div class="stat-sub">Inicia tu primera sesión con el coach</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Score promedio del equipo</div>
-      <div class="stat-val">—</div>
-      <div class="stat-sub">Se calcula por reunión analizada</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Objeción más frecuente</div>
-      <div class="stat-val">—</div>
-      <div class="stat-sub">Detectada automáticamente por la IA</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Tasa de avance a propuesta</div>
-      <div class="stat-val">—</div>
-      <div class="stat-sub">Disponible con historial de reuniones</div>
-    </div>
-  </div>
-
-  <!-- Today's meetings -->
-  <div class="chart-card">
-    <div class="chart-header"><span class="chart-title">Reuniones de hoy</span></div>
-    <div class="empty"><div class="empty-ic"><svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><rect x="3" y="4" width="14" height="13" rx="2"/><path d="M3 8h14M7 2v3M13 2v3"/></svg></div><div class="empty-title">No hay reuniones agendadas hoy</div><div class="empty-sub">Cuando tus prospectos agenden desde tus cadencias, aparecerán aquí con su contexto listo para el coach.</div><button class="btn btn-jade btn-sm" onclick="iniciarCoachLive()">Probar el coach ahora</button></div>
-  </div>
-
-  <!-- SDR team quick view -->
-  <div class="table-card">
-    <div class="table-head"><span style="font-size:14px;font-weight:700">Resumen del equipo</span><button class="btn btn-ghost btn-sm" onclick="nav(document.querySelector('[data-page=ventas-reportes]'),'ventas-reportes')">Ver reporte completo →</button></div>
-    <div class="empty"><div class="empty-ic"><svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><circle cx="7" cy="6.5" r="3"/><path d="M1.5 17c0-3 2.5-4.8 5.5-4.8S12.5 14 12.5 17M13.5 10a3 3 0 100-6M18.5 17c0-2.6-1.8-4.2-4-4.7"/></svg></div><div class="empty-title">Tu equipo aparecerá aquí</div><div class="empty-sub">Cada sesión completada con el Meeting Coach genera el score y las áreas de mejora de cada SDR.</div></div>
-  </div>
-</div>
-
 <!-- ═══════ PAGE: VENTAS COACH ═══════ -->
 <div class="page fade-in" id="page-ventas-coach">
 
@@ -3079,7 +3023,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   </div>
 
   <div class="tabs" style="margin-bottom:16px">
-    <div class="tab" id="tab-rep-my-perf" data-sdr-tab="true" onclick="switchReportTab(this,'rep-my-perf')">Mi rendimiento</div>
+    <div class="tab" id="tab-rep-my-perf" data-sdr-tab="true" onclick="switchReportTab(this,'rep-my-perf')">Performance</div>
     <div class="tab" id="tab-rep-equipo" data-admin-tab="true" onclick="switchReportTab(this,'rep-equipo')">Equipo</div>
     <div class="tab" id="tab-rep-deals" data-admin-tab="true" onclick="switchReportTab(this,'rep-deals')">Deals perdidos</div>
     <div class="tab" onclick="switchReportTab(this,'rep-objeciones')">Objeciones</div>
@@ -3872,9 +3816,9 @@ function initReportPageForRole() {
     const equipoTab = document.getElementById('tab-rep-equipo');
     if (equipoTab) switchReportTab(equipoTab, 'rep-equipo');
   } else {
-    if (titleEl) titleEl.textContent = 'Mi rendimiento';
+    if (titleEl) titleEl.textContent = 'Performance';
     if (subEl) subEl.textContent = 'Tu historial de performance en reuniones de venta';
-    if (navLabel) navLabel.textContent = 'Mi rendimiento';
+    if (navLabel) navLabel.textContent = 'Performance';
     // Activate personal tab by default for SDR
     const myPerfTab = document.getElementById('tab-rep-my-perf');
     if (myPerfTab) switchReportTab(myPerfTab, 'rep-my-perf');
