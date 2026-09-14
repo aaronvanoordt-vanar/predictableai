@@ -19,9 +19,11 @@
  *      la bandeja de revisión de los mensajes IA por paso (campaign_messages).
  *      Los mensajes IA de 5 capas se generan al enrolar
  *      (window.prospecting.generateOutreachFor): la apertura los reutiliza.
- *   3. Respuestas: bandeja unificada sobre inbox_messages (todas las
- *      respuestas de todos los canales), con respuesta por WhatsApp y email
- *      vía la edge function inbox-send. LinkedIn se contesta en LinkedIn.
+ *   3. Respuestas: bandeja unificada sobre inbox_messages (el hilo completo
+ *      de los tres canales, incluido lo que salió de la cuenta del usuario),
+ *      con respuesta por WhatsApp y email vía la edge function inbox-send.
+ *      LinkedIn se redacta aquí pero se pega en LinkedIn: ni Dripify ni
+ *      LinkedIn exponen envío de mensajes por API.
  *
  * Backend: campaigns / campaign_enrollments (escribe el cliente),
  * campaign_events + inbox_messages (solo escribe el servidor),
@@ -1867,7 +1869,7 @@
   }
   function renderThreadEmpty() {
     var box = h('div', { class: 'chart-card' });
-    box.innerHTML = emptyHtml(SVG.inbox, 'Elige una conversación', 'Aquí ves el hilo completo del lead en todos los canales y respondes por WhatsApp o email.');
+    box.innerHTML = emptyHtml(SVG.inbox, 'Elige una conversación', 'Aquí ves el hilo completo del lead en todos los canales y le respondes por email, WhatsApp o LinkedIn.');
     return box;
   }
   function renderThread(conv) {
@@ -1912,14 +1914,17 @@
   }
   function renderReplyBox(conv) {
     var box = h('div', { class: 'cmp-reply' });
-    var available = ['whatsapp', 'email'].filter(function (k) { return conv.channels[k]; });
-    var liOnly = !available.length && conv.channels.linkedin;
     var m = conv.member;
     var liUrl = m && safeUrl(m.linkedin_url);
-    if (liOnly || !conv.member_id || !available.length) {
+    var available = ['whatsapp', 'email'].filter(function (k) { return conv.channels[k]; });
+    // LinkedIn no tiene envío por API (la Open API de Dripify es de solo
+    // lectura y LinkedIn no abre su mensajería a terceros), así que la
+    // respuesta se redacta aquí y se copia para pegarla en el chat.
+    if (conv.channels.linkedin && liUrl) available.push('linkedin');
+    if (!conv.member_id || !available.length) {
       var row = h('div', { class: 'cmp-reply-row' });
-      row.appendChild(h('span', { class: 'pros-hint', text: liOnly ? 'Las respuestas de LinkedIn se contestan desde LinkedIn.' : (!conv.member_id ? 'Este contacto no está en tus listas; no se puede responder desde aquí.' : 'Este hilo no tiene un canal desde el que responder.') }));
-      if (liUrl) row.appendChild(h('a', { href: liUrl, target: '_blank', rel: 'noopener', class: 'btn btn-ghost btn-sm', text: 'Responder en LinkedIn' }));
+      row.appendChild(h('span', { class: 'pros-hint', text: !conv.member_id ? 'Este contacto no está en tus listas; no se puede responder desde aquí.' : (conv.channels.linkedin ? 'Este lead no tiene guardada su URL de LinkedIn, así que no podemos abrir el chat.' : 'Este hilo no tiene un canal desde el que responder.') }));
+      if (liUrl) row.appendChild(h('a', { href: liUrl, target: '_blank', rel: 'noopener', class: 'btn btn-ghost btn-sm', text: 'Abrir LinkedIn' }));
       box.appendChild(row);
       return box;
     }
@@ -1935,8 +1940,17 @@
       tabs.appendChild(h('button', { type: 'button', class: k === chosen ? 'active' : '', 'data-action': 'reply-channel', 'data-key': conv.key, 'data-channel': k, html: chanIcon(k) + ' ' + esc(CH[k].label) }));
     });
     top.appendChild(tabs);
-    if (conv.channels.linkedin && liUrl) top.appendChild(h('a', { href: liUrl, target: '_blank', rel: 'noopener', class: 'cmp-link', text: 'Responder en LinkedIn' }));
     box.appendChild(top);
+    if (chosen === 'linkedin') {
+      var lta = h('textarea', { placeholder: 'Escribe tu respuesta para LinkedIn…', 'data-action': 'reply-draft', 'data-key': conv.key });
+      lta.value = state.replyDraft[conv.key] || '';
+      box.appendChild(lta);
+      var lfoot = h('div', { class: 'cmp-reply-row' });
+      lfoot.appendChild(h('span', { class: 'pros-hint', text: 'LinkedIn no deja enviar mensajes desde fuera: copiamos tu respuesta y abrimos el perfil para que la pegues en el chat.' }));
+      lfoot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-linkedin', 'data-key': conv.key, text: 'Copiar y abrir LinkedIn' }));
+      box.appendChild(lfoot);
+      return box;
+    }
     if (chosen === 'whatsapp' && state.waClosed[conv.key]) {
       box.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:0', text: 'La ventana de 24 h de WhatsApp está cerrada. Solo se puede enviar una plantilla; usa un paso de campaña o espera a que te escriba.' }));
       return box;
@@ -2087,6 +2101,16 @@
       return;
     }
     if (action === 'reply-channel' && key) { state.replyChannel[key] = channel; return render(); }
+    if (action === 'reply-linkedin' && key) {
+      var convL = findConv(key);
+      var taL = state.root.querySelector('textarea[data-action="reply-draft"][data-key="' + key + '"]');
+      var textL = taL ? taL.value.trim() : '';
+      var urlL = convL && convL.member && safeUrl(convL.member.linkedin_url);
+      if (!urlL) return toast('Este lead no tiene guardada su URL de LinkedIn.', 'warn');
+      if (textL) copyText(textL);
+      window.open(urlL, '_blank', 'noopener');
+      return;
+    }
     if (action === 'reply-send' && key) {
       var conv2 = findConv(key);
       if (!conv2) return;
