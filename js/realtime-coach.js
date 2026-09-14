@@ -14,13 +14,20 @@
   let audioCtx = null;
   let audioProcessor = null;
   let dgSocket = null;
-  let utteranceBuffer = [];
   let coachInFlight = false;
+  let coachPending = false;     // el silencio venció mientras el coach respondía
+  let coachTimer = null;        // debounce de silencio antes de llamar al coach
   let chunkQueue = [];
   let elapsedTimer = null;
   let elapsedSeconds = 0;
   let currentMeetingId = null;
-  let recentTranscript = [];
+  let recentTranscript = [];    // últimos turnos {speaker, text, ts, el}
+  let pendingTurn = null;       // turno abierto: sigue recibiendo chunks del mismo hablante
+  let totalTurns = 0;
+  let totalWords = 0;
+  let turnsAtLastCoach = 0;
+  let wordsAtLastCoach = 0;
+  let shownAlerts = [];         // {key, phrase, ts} de alertas ya mostradas
   let active = false;
 
   function workerUrl(path) {
@@ -273,18 +280,63 @@
     const isFinal = msg.is_final;
     showInterim(speaker, text, isFinal);
 
+    // Alguien sigue hablando: el coach espera a que termine el mensaje.
+    cancelScheduledCoaching();
     if (isFinal) {
-      utteranceBuffer.push({ speaker: speaker, text: text, ts: new Date() });
-      recentTranscript.push(speaker + ': ' + text);
-      if (recentTranscript.length > 25) recentTranscript.shift();
-      appendFinalToTranscript(speaker, text);
-      enqueueChunkForBackend({ speaker: speaker, text: text, ts: new Date().toISOString() });
+      appendToTurn(speaker, text);
+      if (msg.speech_final) scheduleCoaching();
     }
   }
 
-  function handleUtteranceEnd() {
-    const trigger = cfg.COACH_TRIGGER_UTTERANCES || 2;
-    if (utteranceBuffer.length >= trigger && !coachInFlight) runCoaching();
+  // Deepgram parte un mismo mensaje en varios resultados "finales" (uno por
+  // cada pausa de `endpointing` ms y cada pocos segundos de habla continua).
+  // Antes cada chunk era una línea y el coach corría con 2 chunks, así que un
+  // mensaje largo disparaba 3 respuestas iguales. Ahora los chunks se pegan en
+  // un solo turno por hablante; el turno se cierra al cambiar de hablante,
+  // cuando el coach lo analiza o al terminar la sesión.
+  function appendToTurn(speaker, text) {
+    if (pendingTurn && pendingTurn.speaker === speaker) {
+      pendingTurn.text += ' ' + text;
+    } else {
+      closeTurn();
+      pendingTurn = { speaker: speaker, text: text, ts: new Date().toISOString(), el: null };
+      recentTranscript.push(pendingTurn);
+      if (recentTranscript.length > 25) recentTranscript.shift();
+      totalTurns++;
+    }
+    totalWords += text.split(/\s+/).filter(Boolean).length;
+    renderTurn(pendingTurn);
+  }
+
+  function closeTurn() {
+    if (!pendingTurn) return;
+    enqueueChunkForBackend({ speaker: pendingTurn.speaker, text: pendingTurn.text, ts: pendingTurn.ts });
+    pendingTurn = null;
+  }
+
+  // UtteranceEnd llega `utterance_end_ms` después de la última palabra (y por
+  // canal, así que puede llegar dos veces). Encima esperamos COACH_SILENCE_MS
+  // más: si el hablante retoma, cualquier resultado nuevo cancela el timer.
+  function handleUtteranceEnd() { scheduleCoaching(); }
+
+  function scheduleCoaching() {
+    cancelScheduledCoaching();
+    coachTimer = setTimeout(function () {
+      coachTimer = null;
+      maybeRunCoaching();
+    }, cfg.COACH_SILENCE_MS || 1200);
+  }
+  function cancelScheduledCoaching() {
+    if (coachTimer) { clearTimeout(coachTimer); coachTimer = null; }
+  }
+
+  function maybeRunCoaching() {
+    if (!active) return;
+    if (coachInFlight) { coachPending = true; return; }
+    // Sin contenido nuevo suficiente ("ok", "sí") no hay nada que analizar.
+    const minWords = cfg.COACH_MIN_NEW_WORDS || 6;
+    if (totalWords - wordsAtLastCoach < minWords) return;
+    runCoaching();
   }
 
   // ─── COACHING ──────────────────────────────────────────────
@@ -297,41 +349,75 @@
     return (global.AIEngine && global.AIEngine.get('coach')) || 'openai';
   }
 
+  function formatTurn(t) { return t.speaker + ': ' + t.text; }
+
   async function runCoaching() {
     if (coachInFlight) return;
     coachInFlight = true;
+    coachPending = false;
+    cancelScheduledCoaching();
+    closeTurn();
     showThinking();
 
-    const context = recentTranscript.slice(-15).join('\n');
+    // Ventana de contexto = últimos 15 turnos, separando lo que el coach ya
+    // vio de lo nuevo: las alertas deben salir SOLO de lo nuevo. Los
+    // contadores se mueven antes de la llamada para que lo que llegue
+    // mientras el modelo responde cuente como nuevo en el siguiente turno.
+    const windowTurns = recentTranscript.slice(-15);
+    const newCount = Math.min(windowTurns.length, totalTurns - turnsAtLastCoach);
+    const prior = windowTurns.slice(0, windowTurns.length - newCount).map(formatTurn).join('\n');
+    const fresh = windowTurns.slice(windowTurns.length - newCount).map(formatTurn).join('\n');
+    const context = windowTurns.map(formatTurn).join('\n');
+    const prevTurns = turnsAtLastCoach, prevWords = wordsAtLastCoach;
+    turnsAtLastCoach = totalTurns;
+    wordsAtLastCoach = totalWords;
+
+    function onFailure(e) {
+      console.error('Coaching error', e);
+      hideThinking();
+      // Que lo nuevo se reintente en el siguiente silencio.
+      turnsAtLastCoach = prevTurns; wordsAtLastCoach = prevWords;
+    }
+    function onSuccess(parsed) {
+      hideThinking();
+      const shown = renderCoachOutput(parsed || {});
+      enqueueEventForBackend(shown);
+    }
+    function done() {
+      coachInFlight = false;
+      if (coachPending && active) scheduleCoaching();
+    }
 
     if (coachEngine() !== 'openai') {
       try {
         const parsed = await global.api.coachTurn({
           meeting_id: currentMeetingId,
           transcript: context,
+          prior_transcript: prior,
+          new_transcript: fresh,
         });
-        hideThinking();
-        renderCoachOutput(parsed || {});
-        enqueueEventForBackend(parsed || {});
-        utteranceBuffer = [];
+        onSuccess(parsed);
       } catch (e) {
-        console.error('Coaching error', e);
-        hideThinking();
-      } finally { coachInFlight = false; }
+        onFailure(e);
+      } finally { done(); }
       return;
     }
 
     const systemPrompt = [
       'Eres el coach de ventas de Predictable.ai en vivo durante una llamada B2B.',
       'La conversación tiene 2 hablantes: "Lead" y "SDR".',
+      'Recibes la parte de la conversación que ya analizaste (solo contexto) y lo NUEVO.',
+      'Genera alertas SOLO sobre lo nuevo; no repitas alertas de la parte anterior.',
       'OUTPUT: SOLO JSON con schema:',
       '{',
       '  "alerts": [{ "type":"objection|positive_signal|risk|stage_guidance", "title":"", "explanation":"", "suggested_phrase":"" }],',
       '  "stage": "rapport|discovery|reframe|demo|negotiation|close",',
       '  "next_step": ""',
       '}',
-      'Español neutro. NO inventes alertas.'
+      'Español neutro. NO inventes alertas: si no hay nada accionable, "alerts": [].'
     ].join('\n');
+    const userContent = (prior ? 'Conversación anterior (ya analizada, solo contexto):\n' + prior + '\n\n' : '') +
+      'Lo nuevo (analiza solo esto):\n' + fresh;
 
     try {
       const resp = await fetch(workerUrl('/openai'), {
@@ -343,23 +429,18 @@
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: 'Conversación reciente:\n' + context }
+            { role: 'user', content: userContent }
           ]
         })
       });
-      if (!resp.ok) { console.error('OpenAI ' + resp.status + ': ' + await resp.text()); hideThinking(); coachInFlight = false; return; }
+      if (!resp.ok) throw new Error('OpenAI ' + resp.status + ': ' + await resp.text());
       const data = await resp.json();
       const content = data.choices && data.choices[0] && data.choices[0].message.content;
       if (!content) throw new Error('vacío');
-      const parsed = JSON.parse(content);
-      hideThinking();
-      renderCoachOutput(parsed);
-      enqueueEventForBackend(parsed);
-      utteranceBuffer = [];
+      onSuccess(JSON.parse(content));
     } catch (e) {
-      console.error('Coaching error', e);
-      hideThinking();
-    } finally { coachInFlight = false; }
+      onFailure(e);
+    } finally { done(); }
   }
 
   // ─── Persistencia, UI, end(), cleanup() ────────────────────
@@ -376,6 +457,10 @@
   }
 
   function clearUI() {
+    cancelScheduledCoaching();
+    pendingTurn = null; recentTranscript = []; shownAlerts = [];
+    totalTurns = 0; totalWords = 0; turnsAtLastCoach = 0; wordsAtLastCoach = 0;
+    coachPending = false;
     const t = document.getElementById('mc-transcript'); if (t) t.innerHTML = '';
     const e = document.getElementById('mc-events');
     if (e) Array.from(e.querySelectorAll('.ai-alert-dynamic')).forEach(function (el) { el.remove(); });
@@ -391,18 +476,50 @@
       ';line-height:1.5;font-style:' + (isFinal ? 'normal' : 'italic') + '">' +
       '<strong style="color:' + color + '">' + esc(speaker) + ':</strong> ' + esc(text) + '</div>';
   }
-  function appendFinalToTranscript(speaker, text) {
+  // Una línea por turno: mientras el hablante sigue, la misma línea crece.
+  function renderTurn(turn) {
     const c = document.getElementById('mc-transcript'); if (!c) return;
-    const color = speaker === 'SDR' ? 'var(--green)' : 'var(--teal)';
-    const div = document.createElement('div');
-    div.innerHTML = '<span style="color:' + color + ';font-weight:700">' + esc(speaker) + ':</span> <span style="color:var(--text2)">' + esc(text) + '</span>';
-    c.appendChild(div); c.scrollTop = c.scrollHeight;
+    if (!turn.el) {
+      const color = turn.speaker === 'SDR' ? 'var(--green)' : 'var(--teal)';
+      const div = document.createElement('div');
+      const who = document.createElement('span');
+      who.style.cssText = 'color:' + color + ';font-weight:700';
+      who.textContent = turn.speaker + ':';
+      const what = document.createElement('span');
+      what.style.color = 'var(--text2)';
+      div.appendChild(who); div.appendChild(document.createTextNode(' ')); div.appendChild(what);
+      c.appendChild(div);
+      turn.el = what;
+    }
+    turn.el.textContent = turn.text;
+    c.scrollTop = c.scrollHeight;
+  }
+  function alertKey(a) {
+    return String(a.type || '') + '|' + String(a.title || '').toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+  }
+  // El modelo tiende a repetir la misma alerta mientras el tema sigue en la
+  // ventana: una alerta con el mismo título/tipo o la misma frase sugerida
+  // que otra reciente no se vuelve a mostrar ni a guardar.
+  function isDuplicateAlert(a) {
+    const now = Date.now();
+    const ttl = cfg.COACH_ALERT_DEDUP_MS || 240000;
+    shownAlerts = shownAlerts.filter(function (s) { return now - s.ts < ttl; });
+    const key = alertKey(a);
+    const phrase = String(a.suggested_phrase || '').trim().toLowerCase();
+    return shownAlerts.some(function (s) { return s.key === key || (phrase && s.phrase === phrase); });
   }
   function renderCoachOutput(out) {
-    const events = document.getElementById('mc-events'); if (!events) return;
-    (out.alerts || []).forEach(function (a) { events.prepend(buildAlertCard(a)); });
+    const alerts = (out.alerts || []).filter(function (a) {
+      if (!a || typeof a !== 'object' || isDuplicateAlert(a)) return false;
+      shownAlerts.push({ key: alertKey(a), phrase: String(a.suggested_phrase || '').trim().toLowerCase(), ts: Date.now() });
+      return true;
+    });
+    const events = document.getElementById('mc-events');
+    if (events) alerts.forEach(function (a) { events.prepend(buildAlertCard(a)); });
     if (out.stage) { const stEl = document.getElementById('mc-stage'); if (stEl) stEl.textContent = out.stage.charAt(0).toUpperCase() + out.stage.slice(1); }
     if (out.next_step) { const ns = document.getElementById('mc-next-steps'); if (ns) ns.innerHTML = '<div style="font-size:12px;padding:6px 8px;background:var(--surface2);border-radius:6px">' + esc(out.next_step) + '</div>'; }
+    return { alerts: alerts, stage: out.stage || '', next_step: out.next_step || '' };
   }
   function buildAlertCard(alert) {
     const card = document.createElement('div');
@@ -440,6 +557,8 @@
     if (el) el.textContent = pad(Math.floor(elapsedSeconds/3600)) + ':' + pad(Math.floor((elapsedSeconds%3600)/60)) + ':' + pad(elapsedSeconds%60);
   }
   async function end() {
+    cancelScheduledCoaching();
+    closeTurn();
     await flushChunks();
     cleanup();
     setStatus('ended');
@@ -479,7 +598,8 @@
     if (micStream) { micStream.getTracks().forEach(function(t){t.stop();}); micStream = null; }
     if (dgSocket) { try { dgSocket.close(); } catch(e){} dgSocket = null; }
     if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
-    utteranceBuffer = [];
+    cancelScheduledCoaching();
+    coachPending = false;
     // Liberar el guard de re-entrancy para permitir reiniciar tras un fallo.
     active = false;
   }

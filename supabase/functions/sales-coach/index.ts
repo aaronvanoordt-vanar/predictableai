@@ -1555,6 +1555,8 @@ const SYSTEM_PROMPT_LIVE_TURN = [
   "Eres el coach de ventas de Predictable.ai en vivo durante una llamada B2B.",
   'La conversación tiene 2 hablantes: "Lead" y "SDR".',
   "Devuelve solo alertas accionables sobre lo que acaba de pasar en la conversación.",
+  "Si recibes una parte ya analizada y una parte nueva, las alertas salen SOLO de",
+  "la parte nueva: no repitas alertas que ya correspondían a la parte anterior.",
   "Español neutro (tú). NUNCA inventes alertas, datos ni citas: si no hay nada",
   'accionable en la ventana entregada, devuelve "alerts": [].',
 ].join("\n");
@@ -1564,13 +1566,25 @@ async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
   const empty = { alerts: [], stage: "", next_step: "" };
   if (!transcript) return empty;
 
+  // El navegador pega los chunks de Deepgram en turnos y separa lo que el
+  // coach ya vio (`prior_transcript`) de lo nuevo (`new_transcript`) para no
+  // volver a alertar sobre lo mismo. Clientes viejos mandan solo `transcript`.
+  const fresh = String(payload?.new_transcript ?? "").slice(0, 12_000).trim();
+  const prior = String(payload?.prior_transcript ?? "").slice(0, 12_000).trim();
+  const conversation = fresh
+    ? [
+      ...(prior ? ["Conversación anterior (ya analizada, solo contexto):", prior, ""] : []),
+      "Lo nuevo (genera alertas solo sobre esto):",
+      fresh,
+    ]
+    : ["Conversación reciente:", transcript];
+
   const engine = await engineForUser(ctx.supa, ctx.userId, "coach");
   const userPrompt = [
     "Contexto del prospecto:",
     JSON.stringify(payload?.context ?? {}).slice(0, 4_000),
     "",
-    "Conversación reciente:",
-    transcript,
+    ...conversation,
     "",
     "Devuelve el JSON.",
   ].join("\n");

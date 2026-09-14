@@ -11,7 +11,14 @@ window.PREDICTABLE_CONFIG = {
   // URL de tu Cloudflare Worker (reemplaza TU-USUARIO)
   WORKER_URL: "https://predictable-coach-proxy.aaron-78b.workers.dev/",
   LLM_MODEL: "gpt-4o-mini",
-  COACH_TRIGGER_UTTERANCES: 2,
+  // Deepgram parte cada mensaje en varios chunks; el coach los pega por
+  // hablante y responde una sola vez: cuando pasan COACH_SILENCE_MS de
+  // silencio tras el fin del mensaje y hay al menos COACH_MIN_NEW_WORDS
+  // palabras nuevas. Una alerta repetida (mismo título o misma frase) dentro
+  // de COACH_ALERT_DEDUP_MS no se vuelve a mostrar.
+  COACH_SILENCE_MS: 1200,
+  COACH_MIN_NEW_WORDS: 6,
+  COACH_ALERT_DEDUP_MS: 240000,
 };
 /**
  * config.js — Credenciales públicas de Supabase para Predictable.ai
