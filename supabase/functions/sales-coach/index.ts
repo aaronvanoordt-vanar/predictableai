@@ -99,6 +99,9 @@
  * RECALL_REGION optional (defaults to "us-west-2") — must match the region
  * the RECALL_API_KEY was created in (us-east-1, us-west-2, eu-central-1,
  * ap-northeast-1), or bot mode fails with "authentication_failed".
+ * COACH_BOT_IMAGE_URL optional: public JPEG (16:9, ≤1280×720) shown as the
+ * bot's camera in the meeting — defaults to the "P" of the logo served from
+ * the site (assets/predictable-p-camera.jpg). See coachBotImageB64().
  * RECALL_TRANSCRIPT_PROVIDER optional: "recallai" (default, async in Spanish)
  * or "deepgram" (real-time in Spanish; needs the Deepgram key added in the
  * Recall.ai dashboard for that region) — see recallTranscriptProvider().
@@ -149,6 +152,57 @@ function recallTranscriptProvider(): Json {
     };
   }
   return { recallai_streaming: { language_code: "es" } };
+}
+
+/**
+ * How the bot shows up in the meeting.
+ *
+ * Name: "Predictable AI" — bot_name is the guest name the bot joins with. A
+ * signed-in bot (Zoom ZAK token / Google account) would show that account's
+ * name and picture instead; we don't use signed-in bots.
+ *
+ * Picture: Recall bots join anonymously and anonymous participants cannot have
+ * a profile picture on any platform, so there is no `bot_image` field. What
+ * every platform DOES show is the bot's camera, and Recall lets us put a
+ * static JPEG there (`automatic_video_output`, 16:9, ≤1280×720, ≤1.3 MB,
+ * base64). We use the "P" of the Predictable.ai logo on the brand's dark
+ * background, served from the public site so designers can swap the asset
+ * without a redeploy. Override the URL with COACH_BOT_IMAGE_URL.
+ *
+ * The image is fetched once per isolate and cached. Any failure (site down,
+ * bad content type, oversized file) just logs and the bot joins without a
+ * camera picture — appearance must never block a meeting from starting.
+ */
+const COACH_BOT_NAME = "Predictable AI";
+const COACH_BOT_IMAGE_DEFAULT_URL = "https://predictableai.vanarsi.com/assets/predictable-p-camera.jpg";
+const COACH_BOT_IMAGE_MAX_BYTES = 1_300_000;
+let coachBotImageCache: Promise<string | null> | null = null;
+
+function coachBotImageB64(): Promise<string | null> {
+  if (!coachBotImageCache) {
+    coachBotImageCache = (async () => {
+      const url = Deno.env.get("COACH_BOT_IMAGE_URL") || COACH_BOT_IMAGE_DEFAULT_URL;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const type = (res.headers.get("content-type") || "").toLowerCase();
+        if (!type.includes("jpeg") && !type.includes("jpg")) throw new Error(`content-type ${type || "?"} (Recall only accepts JPEG)`);
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        if (!bytes.length || bytes.length > COACH_BOT_IMAGE_MAX_BYTES) throw new Error(`${bytes.length} bytes (limit ${COACH_BOT_IMAGE_MAX_BYTES})`);
+        let bin = "";
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        }
+        return btoa(bin);
+      } catch (e) {
+        console.warn(`[sales-coach] bot camera image unavailable (${url}):`, e);
+        return null;
+      }
+    })();
+    // Don't pin a failure for the whole life of the isolate: retry next time.
+    coachBotImageCache.then((b64) => { if (!b64) coachBotImageCache = null; });
+  }
+  return coachBotImageCache;
 }
 
 /**
@@ -823,6 +877,7 @@ async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
   const webhookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/sales-coach` +
     `?token=${encodeURIComponent(WEBHOOK_SECRET)}&recall_meeting_id=${meetingId}`;
 
+  const botImage = await coachBotImageB64();
   const res = await fetch(`${recallBase()}/bot`, {
     method: "POST",
     headers: {
@@ -831,7 +886,14 @@ async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
     },
     body: JSON.stringify({
       meeting_url: p.meeting_url,
-      bot_name: "Notetaker",
+      bot_name: COACH_BOT_NAME,
+      // The "P" of the logo as the bot's camera feed — see coachBotImageB64().
+      ...(botImage ? {
+        automatic_video_output: {
+          in_call_recording: { kind: "jpeg", b64_data: botImage },
+          in_call_not_recording: { kind: "jpeg", b64_data: botImage },
+        },
+      } : {}),
       recording_config: {
         // Provider chosen by RECALL_TRANSCRIPT_PROVIDER — see recallTranscriptProvider().
         // NOTE: never add mode:"prioritize_low_latency" to recallai_streaming here:

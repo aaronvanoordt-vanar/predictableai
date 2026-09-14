@@ -26,7 +26,7 @@
     }
     // Guard de re-entrancy: currentMeetingId solo se setea DESPUÉS del await a
     // startMeeting, así que un doble-click antes de que resuelva creaba dos
-    // bots (dos "Notetaker" en la misma reunión). `starting` se marca síncrono
+    // bots (dos "Predictable AI" en la misma reunión). `starting` se marca síncrono
     // al entrar a la función para cerrar esa ventana.
     if (starting || currentMeetingId) {
       console.warn('[MeetingCoach] Ya hay una sesión activa o iniciándose; ignorando start().');
