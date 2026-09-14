@@ -26,8 +26,15 @@
  *  • sentMessageDELIVERED / READ / REPLIED (_v2) → recibos.
  *  • templateMessageFailed → el envío falló (número sin WhatsApp, plantilla
  *      pausada…): evento failed + enrolamiento en error con el detalle.
- *  • templateReviewed → Meta revisó una plantilla: se resincroniza el estado
- *      de las plantillas de saludo de la cuenta.
+ *  • templateReviewed → Meta revisó una plantilla: se resincroniza el catálogo
+ *      completo de plantillas de la cuenta (no solo las tres de saludo).
+ *
+ * Además, CUALQUIER callback con la key correcta sella
+ * `config.webhook.last_received_at`. Es la única prueba de que el webhook está
+ * bien puesto: la API de WATI solo permite CREAR webhooks —listarlos, editarlos
+ * o borrarlos responde 405 (comprobado el 2026-09-14)— y el tenant tiene un
+ * tope ("Number of Webhooks exceed limitation"), así que cuando está lleno no
+ * se puede preguntar si nuestra URL es una de las que ocupan el cupo.
  *
  * Siempre responde 200.
  */
@@ -258,6 +265,12 @@ async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sen
   }
 }
 
+/**
+ * Meta revisó una plantilla. Se relee el catálogo entero (así la pestaña de
+ * WhatsApp muestra el estado de TODAS las plantillas del usuario, no solo el
+ * de las tres de saludo) y se reconcilian las ranuras contra él: una que el
+ * usuario borró en WATI queda en DELETED en vez de "aprobada" para siempre.
+ */
 async function handleTemplateReviewed(db: SupabaseClient, acc: Json) {
   try {
     const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
@@ -265,14 +278,55 @@ async function handleTemplateReviewed(db: SupabaseClient, acc: Json) {
     const templates = { ...(acc.config?.templates ?? {}), items: { ...(acc.config?.templates?.items ?? {}) } };
     for (const key of Object.keys(templates.items)) {
       const item = templates.items[key];
-      const found = list.find((t) => t.name === item?.name);
-      if (found) templates.items[key] = { ...item, status: found.status || item.status, id: found.id || item.id };
+      if (!item?.name) continue;
+      const found = list.find((t) => t.name === item.name);
+      if (found) templates.items[key] = { ...item, status: found.status || item.status, id: found.id || item.id, error: null };
+      else if (item.status !== "ERROR") templates.items[key] = { ...item, status: item.id ? "DELETED" : "MISSING", error: null };
     }
+    templates.all = list.map((t) => ({
+      id: t.id,
+      name: t.name,
+      status: t.status || "PENDING",
+      category: t.category,
+      language: t.language,
+      body: String(t.body ?? "").slice(0, 1024),
+      footer: t.footer,
+      quality: t.quality,
+      buttons: t.buttons.slice(0, 5),
+      last_modified: t.last_modified,
+    }));
     templates.synced_at = new Date().toISOString();
+    templates.error = null;
     await db.from("channel_accounts").update({ config: { ...acc.config, templates } }).eq("id", acc.id);
   } catch (e) {
     console.error("[wati-webhook] template sync:", (e as Error).message);
   }
+}
+
+// Cada cuánto se vuelve a sellar la recepción del webhook. Es solo la prueba
+// de que WATI nos llama (la UI la usa para no mostrar la alarma roja), no un
+// contador: escribir la fila en cada mensaje no aporta nada.
+const WEBHOOK_STAMP_MS = 5 * 60 * 1000;
+
+/**
+ * Sella `config.webhook.last_received_at`. Es la ÚNICA prueba de que el
+ * webhook está bien puesto: la API de WATI no permite listar webhooks (solo
+ * crearlos), así que cuando el tenant llega a su tope no hay forma de
+ * preguntarle si la URL de Predictable está ahí. Que nos llame sí lo demuestra.
+ */
+async function stampWebhookSeen(db: SupabaseClient, acc: Json, eventType: string) {
+  const wh: Json = acc.config?.webhook ?? {};
+  const last = wh.last_received_at ? new Date(wh.last_received_at).getTime() : 0;
+  if (Date.now() - last < WEBHOOK_STAMP_MS) return;
+  const config = {
+    ...acc.config,
+    // No se marca `registered`: eso significa "lo registramos nosotros por API".
+    // Lo que prueba esto es que la URL está puesta y entrega, sea quien sea
+    // que la haya puesto; channel-connect deriva el estado de aquí.
+    webhook: { ...wh, last_received_at: new Date().toISOString(), last_event: eventType || null, error: null, limit: false },
+  };
+  await db.from("channel_accounts").update({ config }).eq("id", acc.id);
+  acc.config = config;
 }
 
 Deno.serve(async (req) => {
@@ -293,6 +347,11 @@ Deno.serve(async (req) => {
   let ev: Json;
   try { ev = await req.json(); } catch { return json({ ignored: true, reason: "bad json" }); }
   const type = String(ev?.eventType ?? "");
+
+  // La key es correcta: WATI está llamando a nuestra URL. Se deja constancia
+  // antes de procesar nada — es lo que apaga la alarma de "webhook sin
+  // registrar" en la pestaña de WhatsApp.
+  try { await stampWebhookSeen(db, acc, type); } catch (e) { console.error("[wati-webhook] stamp:", (e as Error).message); }
 
   try {
     if (type === "message" || type === "newContactMessageReceived") {

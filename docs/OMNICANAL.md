@@ -24,7 +24,17 @@ Estado: **PR 1 entregado** (modelo + motor + WATI + email + retiro de Meta). **P
 
 - Auth `Authorization: Bearer <token>`; base `https://live-mt-server.wati.io/<tenant_id>`. Token con scopes por recurso (contactos, plantillas, mensajes).
 - v3 (`/api/ext/v3/…`): `messageTemplates/send` (hasta 10 000 destinatarios, `custom_params` con nombre, `local_message_id` que vuelve en cada webhook), `conversations/messages/text` (solo sesión abierta), `conversations/{target}/messages`, `channels`, `contacts`.
-- v1 sigue siendo la única con **crear plantilla** (`POST /api/v1/whatsApp/templates`) y **crear webhooks** (`POST /api/v2/webhookEndpoints`).
+- v1 sigue siendo la única con **crear plantilla** (`POST /api/v1/whatsApp/templates`), **borrar plantilla** (`DELETE /api/v1/whatsApp/templates/{wabaId}/{name}[/{language}]`) y **crear webhooks** (`POST /api/v2/webhookEndpoints`).
+- **Superficie real, comprobada contra `live-mt-server.wati.io` el 2026-09-14** (sin token, un 405 prueba que la ruta existe pero el método no está permitido, y un 401 que sí lo está):
+
+  | Ruta | POST | GET | PUT | DELETE |
+  |---|---|---|---|---|
+  | `/api/v2/webhookEndpoints` | 401 (existe) | **405** | **405** | **405** |
+  | `/api/v1/whatsApp/templates` | 401 (existe) | — | — | — |
+  | `/api/v1/whatsApp/templates/{wabaId}/{name}[/{language}]` | — | — | — | 401 (existe) |
+
+  O sea: **los webhooks solo se pueden CREAR**. No hay forma de listarlos, editarlos ni borrarlos por API, y el tenant tiene un tope (`"Number of Webhooks exceed limitation"`). Con el cupo lleno el POST siempre falla, aunque la URL correcta ya esté puesta a mano en WATI → Webhooks, y no hay manera de preguntarle a WATI si está. La única prueba es que WATI nos llame: `wati-webhook` sella `config.webhook.last_received_at` en cada callback con la key correcta y de ahí sale el estado que muestra la UI.
+- **El catálogo de plantillas se lee entero** con `GET /api/ext/v3/messageTemplates` (paginado, `status` = `APPROVED` / `PENDING` / `REJECTED` / `DELETED` / `PAUSED`, más `category`, `language_option.value`, `body_original`, `buttons`, `quality`). Una plantilla borrada **sigue apareciendo en el listado con `status: DELETED`**, y Meta **no libera su nombre**: recrearla exige un nombre distinto (por eso las de saludo llevan revisión `_rN`).
 - Un 200 al enviar = aceptado, no entregado. Estado real por webhooks: `templateMessageSent`, `sentMessageDELIVERED/READ/REPLIED`, `templateMessageFailed`, `message` (entrante, con `buttonReply`), `templateReviewed`. WATI no firma los callbacks: autenticamos con un secreto por cuenta en la URL. Reintenta hasta 144 veces si no recibe 200.
 - Límites plan Growth: `sendTemplateMessages` 30 / 10 s.
 
@@ -189,3 +199,23 @@ Comprobado en producción: sin `APOLLO_OAUTH_CLIENT_ID` cargado, **todos los usu
 1. Aplicar `20260914000001_linkedin_campaigns.sql` (tabla nueva + RLS; idempotente).
 2. Desplegar `campaign-run`, `inbox-send` (con JWT) y `dripify-webhook` (**`--no-verify-jwt`**): Actions → Deploy Edge Functions con `campaign-run inbox-send dripify-webhook`.
 3. En Dripify, además del webhook "After LinkedIn reply is received", agregar uno con "After message sent" en cada campaña para que el texto de lo enviado por LinkedIn llegue a la bandeja.
+
+## Plantillas de WhatsApp: sincronización bilateral, crear y borrar (2026-09-14)
+
+**El problema:** la pestaña de WhatsApp solo conocía las tres plantillas de saludo que Predictable crea al conectar (`config.templates.items`). Las plantillas que el usuario tenía o creaba en su propio panel eran invisibles, y no había forma de crear ni borrar una desde aquí. (Lo otro que salía de la misma raíz —el motor esperando "hold" para siempre una plantilla borrada— se arregló en el PR #209 con `isTemplateDead` y la recreación por revisión.)
+
+**Cómo quedó:**
+
+- `channel-connect sync_templates` es ahora una sincronización bilateral de verdad: guarda el **catálogo completo** del tenant en `config.templates.all` (nombre, estado de Meta, categoría, idioma, cuerpo, pie, botones, calidad, última modificación), refresca los números (de ahí sale el `waba_id` que exige el borrado), reconcilia contra ese catálogo las tres ranuras de saludo (`config.templates.items` — una que ya no está queda en `DELETED`/`MISSING`, no "aprobada" para siempre) y revisa el webhook. Lo mismo hace `wati-webhook` cuando llega `templateReviewed`.
+- **Crear** (`create_template`) y **borrar** (`delete_template`) desde la plataforma. La validación del borrador vive en `_shared/wati.ts#validateTemplateDraft` (pura, cubierta por `wati.test.ts`): normaliza el nombre como lo quiere Meta, exige cuerpo de 10–1024 caracteres, corta en 5 variables, rechaza tres saltos de línea seguidos y las llaves mal escritas, y limita los botones a 3 de 25 caracteres. Rebotar aquí es gratis; rebotar en Meta cuesta una revisión y quema el nombre.
+- **Recrear las ranuras muertas** lo hace el propio `sync_templates` (llegó en el PR #209): `ensureTemplates` busca en el tenant todas las revisiones de la ranura, reutiliza la mejor viva y, si todas están muertas, crea la siguiente (`px_hola_1_v3_<hash>_r2`) porque Meta no reutiliza el nombre de una borrada en 30 días. El botón "Volver a crear" de la pestaña de WhatsApp es esa misma llamada. Borrar desde la plataforma una plantilla que es ranura de saludo dispara la misma reparación.
+- La **bandeja** (`inbox-send`) usa la misma clasificación terminal que el motor (`wati.isTemplateDead`): una plantilla muerta se rechaza nombrando su estado en vez de decir "aún no está aprobada".
+- La **bandeja** puede reabrir la ventana de 24 h con cualquier plantilla **aprobada** del catálogo, no solo con las tres de saludo (`inbox-send` acepta el nombre además de `"a"|"b"|"c"`; las variables se rellenan con los campos del lead y, si falta alguno, se rechaza con el nombre de la variable en vez de dejar que Meta rebote el envío).
+
+### Webhook de WhatsApp: por qué el error no se iba
+
+`connect_wati` reintentaba el `POST /api/v2/webhookEndpoints` cada vez que la fila no decía `registered: true`. En un tenant con el cupo lleno eso falla siempre —aunque el webhook correcto esté puesto— y `sync_templates` ni siquiera lo miraba, así que el aviso rojo era permanente. Ahora:
+
+1. `wati-webhook` sella `config.webhook.last_received_at` en cada callback válido (como mucho una escritura cada 5 min).
+2. `ensureWebhook` deriva el estado en orden: ya nos llamó → funciona; lo registramos nosotros → registrado (y **no se reintenta**: un POST de más solo choca contra el tope y dejaría la fila en "sin registrar", encendiendo una alarma falsa); si no, intenta el POST y, si WATI responde el tope, lo marca `limit` y se lo explica al usuario en español.
+3. La UI ofrece **Reintentar registro** y **Ya lo agregué en WhatsApp** (`verify_webhook {confirmed:true}`), que anota la confirmación del usuario y queda en verde cuando llegue el primer mensaje.
