@@ -31,7 +31,21 @@
  *      4. Registra el webhook de WATI apuntando a wati-webhook?key=<secreto>.
  *         Si la API no lo acepta, deja la URL en config.webhook para que el
  *         usuario lo agregue a mano en WATI → Webhooks.
- *  • sync_templates    {}  → vuelve a leer el estado de revisión de Meta.
+ *  • sync_templates    {}  → sincronización bilateral con WATI: guarda el
+ *      CATÁLOGO COMPLETO del tenant en config.templates.all (cada plantilla
+ *      con su estado de revisión de Meta: APPROVED / PENDING / REJECTED /
+ *      DELETED), reconcilia contra él las tres ranuras de saludo que usan las
+ *      campañas (config.templates.items), refresca los números (de ahí sale el
+ *      WABA id) y revisa el webhook.
+ *  • create_template   {name, body, category?, language?, quick_replies?,
+ *      footer?, examples?} → valida el borrador, comprueba que el nombre esté
+ *      libre y lo manda a revisión de Meta. Devuelve la cuenta ya sincronizada.
+ *  • delete_template   {name, language?} → DELETE en WATI (necesita el WABA id).
+ *      Meta NO libera el nombre: una borrada no se puede recrear igual.
+ *  • recreate_greetings {keys?, sender?} → vuelve a crear las plantillas de
+ *      saludo rotas (borradas / rechazadas) con una revisión nueva del nombre.
+ *  • verify_webhook    {confirmed?} → reintenta el registro y devuelve el
+ *      estado. Con `confirmed: true` marca "lo pegué a mano en WATI".
  *  • connect_dripify   {api_key}  → valida contra /v1/open-api/campaigns, guarda la
  *      key y la lista de campañas, y deja en config.webhook la URL de
  *      dripify-webhook?key=<secreto> que el usuario pega en cada campaña de
@@ -167,85 +181,266 @@ interface Sender { name: string; role: string; company: string; }
 // cambiar TEMPLATE_VERSION: Meta no permite editar una plantilla enviada.
 const TEMPLATE_VERSION = "v3";
 const QUICK_REPLIES = ["Darse de baja", "Hola! Qué tal?"];
+const GREETING_KEYS = ["a", "b", "c"] as const;
+type GreetingKey = typeof GREETING_KEYS[number];
 
-function greetingTemplates(sender: Sender, suffix: string) {
+/**
+ * Estado de una plantilla que NO se puede usar para enviar y que además no se
+ * va a arreglar sola: hay que crear una nueva (con otro nombre — Meta no
+ * libera el de una borrada).
+ */
+function isTemplateBroken(status: unknown): boolean {
+  return /reject|error|paused|disabled|deleted|missing/i.test(String(status ?? ""));
+}
+
+/**
+ * Nombre de una plantilla de saludo. `rev` sube cada vez que hay que
+ * recrearla: Meta rechaza reutilizar el nombre de una plantilla borrada, así
+ * que la revisión 0 conserva el nombre histórico y de ahí en adelante se le
+ * pega "_rN".
+ */
+function greetingName(key: GreetingKey, suffix: string, rev: number): string {
+  const n = { a: 1, b: 2, c: 3 }[key];
+  const base = `px_hola_${n}_${TEMPLATE_VERSION}_${suffix}`;
+  return rev > 0 ? `${base}_r${rev}` : base;
+}
+
+function greetingBody(key: GreetingKey, sender: Sender): string {
   const who = sender.role
     ? `${sender.name}, ${sender.role} de ${sender.company}`
     : `${sender.name}, de ${sender.company}`;
-  const buttons = QUICK_REPLIES;
+  if (key === "a") return `Hola {{name}}! Te saluda ${who}. Qué tal todo?`;
+  if (key === "b") return "Hola {{name}}! No sé si te llegó mi mensaje anterior. Tienes un momento?";
+  return "Hola {{name}}, último intento por acá. Te llegan mis mensajes?";
+}
+
+/** Fila del catálogo tal como se guarda en config (sin campos que no usamos). */
+function trimTemplate(t: wati.WatiTemplate) {
   return {
-    a: {
-      name: `px_hola_1_${TEMPLATE_VERSION}_${suffix}`,
-      body: `Hola {{name}}! Te saluda ${who}. Qué tal todo?`,
-      buttons,
-    },
-    b: {
-      name: `px_hola_2_${TEMPLATE_VERSION}_${suffix}`,
-      body: `Hola {{name}}! No sé si te llegó mi mensaje anterior. Tienes un momento?`,
-      buttons,
-    },
-    c: {
-      name: `px_hola_3_${TEMPLATE_VERSION}_${suffix}`,
-      body: `Hola {{name}}, último intento por acá. Te llegan mis mensajes?`,
-      buttons,
-    },
+    id: t.id,
+    name: t.name,
+    status: t.status || "PENDING",
+    category: t.category,
+    language: t.language,
+    body: String(t.body ?? "").slice(0, 1024),
+    footer: t.footer,
+    quality: t.quality,
+    buttons: t.buttons.slice(0, 5),
+    last_modified: t.last_modified,
   };
 }
 
 /**
- * Asegura las tres plantillas en WATI y devuelve su estado. Nunca lanza: si
- * WATI rechaza la creación (p. ej. token sin scope messagetemplate:write),
- * el error queda en `error` y la cuenta se conecta igual.
+ * Asegura las plantillas de saludo que falten y devuelve sus filas. Nunca
+ * lanza: si WATI rechaza la creación (p. ej. token sin scope
+ * messagetemplate:write), el error queda en el propio item y la cuenta se
+ * conecta igual.
+ *
+ * `keys` acota a qué ranuras tocar (recrear solo las rotas en vez de las tres).
  */
-async function ensureTemplates(creds: wati.WatiCreds, sender: Sender, suffix: string, channel?: string) {
-  const wanted = greetingTemplates(sender, suffix);
-  const out: Json = { language: "es", items: {}, error: null };
-  let existing: wati.WatiTemplate[] = [];
-  try {
-    existing = await wati.listTemplates(creds, channel);
-  } catch (e) {
-    out.error = "No se pudieron leer las plantillas: " + wati.humanError(e);
+async function ensureGreetings(
+  creds: wati.WatiCreds,
+  sender: Sender,
+  suffix: string,
+  prevItems: Json,
+  keys: readonly GreetingKey[] = GREETING_KEYS,
+  catalogue?: wati.WatiTemplate[],
+): Promise<{ items: Json; error: string | null }> {
+  const items: Json = { ...(prevItems ?? {}) };
+  let error: string | null = null;
+  let existing = catalogue;
+  if (!existing) {
+    try {
+      existing = await wati.listTemplates(creds);
+    } catch (e) {
+      existing = [];
+      error = "No se pudieron leer las plantillas: " + wati.humanError(e);
+    }
   }
-  for (const key of ["a", "b", "c"] as const) {
-    const spec = wanted[key];
-    const found = existing.find((t) => t.name === spec.name);
-    if (found) {
-      out.items[key] = { name: spec.name, body: spec.body, status: found.status || "PENDING", id: found.id };
+
+  for (const key of keys) {
+    const prev = items[key] ?? null;
+    // Revisión nueva solo si la anterior existe y está rota; si nunca se creó
+    // se reusa su revisión (el nombre sigue libre).
+    const rev = prev && isTemplateBroken(prev.status) ? Number(prev.rev ?? 0) + 1 : Number(prev?.rev ?? 0);
+    const name = prev && !isTemplateBroken(prev.status) && prev.name ? String(prev.name) : greetingName(key, suffix, rev);
+    const body = greetingBody(key, sender);
+
+    const found = existing.find((t) => t.name === name);
+    if (found && !isTemplateBroken(found.status)) {
+      items[key] = { name, body: found.body || body, status: found.status || "PENDING", id: found.id, rev };
       continue;
     }
     try {
       const created = await wati.createTemplate(creds, {
-        name: spec.name,
+        name,
         language: "es",
-        body: spec.body,
+        body,
         exampleParams: { name: "Carlos" },
-        quickReplies: spec.buttons,
+        quickReplies: QUICK_REPLIES,
         category: "MARKETING",
       });
-      out.items[key] = { name: spec.name, body: spec.body, status: created.status || "PENDING", id: created.id };
+      items[key] = { name, body, status: created.status || "PENDING", id: created.id, rev };
     } catch (e) {
-      out.items[key] = { name: spec.name, body: spec.body, status: "ERROR", id: null, error: wati.humanError(e) };
-      if (!out.error) out.error = "WATI no aceptó una plantilla: " + wati.humanError(e);
+      items[key] = { name, body, status: "ERROR", id: null, rev, error: wati.humanError(e) };
+      if (!error) error = "WATI no aceptó una plantilla: " + wati.humanError(e);
     }
   }
-  return out;
+  return { items, error };
 }
 
-async function refreshTemplateStatus(creds: wati.WatiCreds, templates: Json, channel?: string): Promise<Json> {
-  const next = { ...(templates ?? {}), items: { ...(templates?.items ?? {}) } };
-  try {
-    const list = await wati.listTemplates(creds, channel);
-    for (const key of Object.keys(next.items)) {
-      const item = next.items[key];
-      const found = list.find((t) => t.name === item?.name);
-      if (found) next.items[key] = { ...item, status: found.status || item.status, id: found.id || item.id, error: undefined };
-    }
-    next.error = null;
-    next.synced_at = new Date().toISOString();
-  } catch (e) {
-    next.error = "No se pudieron leer las plantillas: " + wati.humanError(e);
+// ── Webhook ─────────────────────────────────────────────────────────────────
+
+/**
+ * La API de WATI SOLO permite crear webhooks: no hay GET para listarlos ni
+ * DELETE para reemplazarlos (405, comprobado el 2026-09-14), y el tenant tiene
+ * un tope. Por eso el estado se resuelve así, en orden:
+ *
+ *   1. WATI ya nos llamó con esta URL (`last_received_at`, que sella
+ *      wati-webhook) → funciona, no se toca nada.
+ *   2. Lo registramos nosotros y sigue siendo la misma URL → registrado.
+ *   3. Si no, se intenta el POST. Si WATI contesta que llegó al tope, se marca
+ *      `limit` y la UI le pide al usuario que la pegue en WATI → Webhooks:
+ *      no hay forma programática de saber qué URL ocupa el cupo ni de liberarlo.
+ */
+async function ensureWebhook(
+  creds: wati.WatiCreds,
+  prevWebhook: Json,
+  url: string,
+  channel?: string,
+): Promise<Json> {
+  const prev = prevWebhook && prevWebhook.url === url ? prevWebhook : null;
+  if (prev?.last_received_at) {
+    return { ...prev, url, registered: true, verified_by: "callback", error: null, limit: false };
   }
-  return next;
+  // Si ya lo registramos alguna vez, no se reintenta: la API no permite
+  // comprobarlo y un POST de más solo choca contra el tope del tenant, que
+  // dejaría la fila en "sin registrar" y encendería una alarma falsa.
+  if (prev?.registered) return { ...prev, url };
+  try {
+    const r = await wati.createWebhook(creds, url, channel || undefined);
+    return { url, registered: true, id: r.id, registered_at: new Date().toISOString(), error: null, limit: false };
+  } catch (e) {
+    const limit = wati.isWebhookLimitError(e);
+    return {
+      ...(prev ?? {}),
+      url,
+      registered: false,
+      manual: true,
+      limit,
+      error: wati.humanError(e),
+      checked_at: new Date().toISOString(),
+    };
+  }
+}
+
+function webhookUrlFor(secret: string): string {
+  return `${Deno.env.get("SUPABASE_URL")}/functions/v1/wati-webhook?key=${secret}`;
+}
+
+// ── Sincronización bilateral con WATI ───────────────────────────────────────
+
+/**
+ * Relee de WATI TODO lo que la UI muestra —el catálogo completo de plantillas
+ * con su estado de revisión en Meta, los números (de ahí sale el WABA id que
+ * exige el borrado) y el estado del webhook— y lo guarda en la fila. Manda
+ * WATI: lo guardado se corrige, nunca al revés.
+ *
+ * Las ranuras de saludo (a/b/c) que usan las campañas se reconcilian contra
+ * ese catálogo: una plantilla que el usuario borró en WATI queda en DELETED,
+ * no en "aprobada" para siempre.
+ */
+async function syncWatiAccount(db: SupabaseClient, acc: Json): Promise<Json> {
+  const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
+  const cfg: Json = { ...(acc.config ?? {}) };
+  let error: string | null = null;
+
+  let all: wati.WatiTemplate[] = [];
+  let listed = false;
+  try {
+    all = await wati.listTemplates(creds);
+    listed = true;
+  } catch (e) {
+    error = "No se pudieron leer las plantillas: " + wati.humanError(e);
+  }
+
+  // Los números traen el wabaId, sin el cual no se puede borrar una plantilla.
+  try {
+    const phones = await wati.listPhoneNumbers(creds);
+    if (phones.length) {
+      cfg.phone_numbers = phones.map((p) => ({ phone: p.phone, waba_id: p.wabaId, enabled: p.enabled }));
+    }
+  } catch (e) {
+    console.warn("[channel-connect] phoneNumbers:", wati.humanError(e));
+  }
+
+  const prevT: Json = cfg.templates ?? {};
+  const items: Json = { ...(prevT.items ?? {}) };
+  if (listed) {
+    for (const key of Object.keys(items)) {
+      const item = items[key];
+      if (!item?.name) continue;
+      const found = all.find((t) => t.name === item.name);
+      if (found) {
+        items[key] = { ...item, status: found.status || item.status, id: found.id || item.id, body: found.body || item.body, error: null };
+      } else if (item.status !== "ERROR") {
+        // Estaba en WATI y ya no está: el usuario la borró desde su panel.
+        items[key] = { ...item, status: item.id ? "DELETED" : "MISSING", error: null };
+      }
+    }
+  }
+
+  cfg.templates = {
+    language: prevT.language ?? "es",
+    items,
+    all: listed ? all.map(trimTemplate) : (prevT.all ?? []),
+    synced_at: new Date().toISOString(),
+    error,
+  };
+  cfg.webhook = await ensureWebhook(creds, cfg.webhook, webhookUrlFor(acc.webhook_secret), cfg.channel);
+
+  const { data: row, error: upErr } = await db
+    .from("channel_accounts")
+    .update({ config: cfg, status: error ? acc.status : "connected", last_error: error })
+    .eq("id", acc.id)
+    .select("*")
+    .single();
+  if (upErr) throw new Error(upErr.message);
+  return row;
+}
+
+/** WABA id del número conectado: lo exige el borrado de plantillas. */
+async function wabaIdFor(db: SupabaseClient, acc: Json): Promise<string> {
+  const fromCfg = (acc.config?.phone_numbers ?? []).map((p: Json) => String(p.waba_id ?? "")).find(Boolean);
+  if (fromCfg) return fromCfg;
+  const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
+  const phones = await wati.listPhoneNumbers(creds);
+  const waba = phones.map((p) => p.wabaId).find(Boolean) ?? "";
+  if (waba) {
+    const cfg = { ...acc.config, phone_numbers: phones.map((p) => ({ phone: p.phone, waba_id: p.wabaId, enabled: p.enabled })) };
+    await db.from("channel_accounts").update({ config: cfg }).eq("id", acc.id);
+    acc.config = cfg;
+  }
+  return waba;
+}
+
+/** Valor de ejemplo que Meta pide por variable para poder revisar la plantilla. */
+const EXAMPLE_DEFAULTS: Record<string, string> = {
+  name: "Carlos",
+  first_name: "Carlos",
+  nombre: "Carlos",
+  company: "Acme",
+  empresa: "Acme",
+  title: "Director de Operaciones",
+  cargo: "Director de Operaciones",
+};
+
+function exampleParamsFor(variables: string[], given: Json): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const v of variables) {
+    out[v] = clean(given?.[v], 60) || EXAMPLE_DEFAULTS[v.toLowerCase()] || "ejemplo";
+  }
+  return out;
 }
 
 // ── Handler ─────────────────────────────────────────────────────────────────
@@ -465,22 +660,28 @@ Deno.serve(async (req) => {
       const suffix = await shortHash(user.id);
       const webhookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/wati-webhook?key=${webhookSecret}`;
 
-      // 3. Plantillas de saludo (sin filtro de canal: el listado por defecto
-      //    ya trae todas las del tenant y el filtro por nombre da 404).
-      const templates = await ensureTemplates(creds, sender, suffix);
+      // 3. Catálogo completo de plantillas del tenant (sin filtro de canal: el
+      //    listado por defecto ya trae todas y el filtro por nombre da 404).
+      let catalogue: wati.WatiTemplate[] = [];
+      let listError: string | null = null;
+      try { catalogue = await wati.listTemplates(creds); }
+      catch (e) { listError = "No se pudieron leer las plantillas: " + wati.humanError(e); }
 
-      // 4. Webhook (mejor esfuerzo).
-      let webhook: Json = prev?.config?.webhook ?? null;
-      if (!webhook?.registered) {
-        try {
-          const r = await wati.createWebhook(creds, webhookUrl, channel || undefined);
-          webhook = { url: webhookUrl, registered: true, id: r.id, registered_at: new Date().toISOString() };
-        } catch (e) {
-          webhook = { url: webhookUrl, registered: false, error: wati.humanError(e) };
-        }
-      } else {
-        webhook = { ...webhook, url: webhookUrl };
-      }
+      // 4. Plantillas de saludo: se crean solo las que falten o estén rotas.
+      const prevTemplates: Json = prev?.config?.templates ?? {};
+      const greetings = await ensureGreetings(
+        creds, sender, suffix, prevTemplates.items, GREETING_KEYS, listError ? undefined : catalogue,
+      );
+      const templates = {
+        language: prevTemplates.language ?? "es",
+        items: greetings.items,
+        all: listError ? (prevTemplates.all ?? []) : catalogue.map(trimTemplate),
+        synced_at: new Date().toISOString(),
+        error: listError ?? greetings.error,
+      };
+
+      // 5. Webhook (mejor esfuerzo: la API de WATI solo permite crearlos).
+      const webhook = await ensureWebhook(creds, prev?.config?.webhook, webhookUrl, channel);
 
       const config = {
         endpoint,
@@ -509,18 +710,127 @@ Deno.serve(async (req) => {
       return json({ account: publicRow(row) }, 200, cors);
     }
 
+    // Sincronización bilateral: el catálogo entero de WATI con su estado de
+    // revisión en Meta, más el estado real del webhook.
     if (action === "sync_templates") {
       const acc = await loadAccount("wati");
       if (!acc) return json({ error: "wati_not_connected" }, 428, cors);
+      const row = await syncWatiAccount(db, acc);
+      return json({ account: publicRow(row) }, 200, cors);
+    }
+
+    // Crear una plantilla propia desde Predictable y mandarla a revisión de Meta.
+    if (action === "create_template") {
+      const acc = await loadAccount("wati");
+      if (!acc) return json({ error: "wati_not_connected" }, 428, cors);
+      let draft: wati.TemplateDraft;
+      try { draft = wati.validateTemplateDraft(payload); }
+      catch (e) { return json({ error: wati.humanError(e) }, 400, cors); }
+
       const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
-      const templates = await refreshTemplateStatus(creds, acc.config?.templates);
-      const config = { ...acc.config, templates };
+      // Meta no permite dos plantillas con el mismo nombre e idioma, ni
+      // reutilizar el nombre de una borrada: se avisa antes de quemarlo.
+      let existing: wati.WatiTemplate[] = [];
+      try { existing = await wati.listTemplates(creds); }
+      catch (e) { return json({ error: wati.humanError(e) }, 400, cors); }
+      const clash = existing.find((t) => t.name === draft.name);
+      if (clash) {
+        return json({
+          error: /deleted/i.test(clash.status)
+            ? `Ya tuviste una plantilla llamada "${draft.name}" y la borraste. Meta no libera ese nombre: elige uno distinto.`
+            : `Ya tienes una plantilla llamada "${draft.name}" (${clash.status}). Elige otro nombre.`,
+        }, 400, cors);
+      }
+
+      try {
+        await wati.createTemplate(creds, {
+          name: draft.name,
+          language: draft.language,
+          body: draft.body,
+          exampleParams: exampleParamsFor(draft.variables, payload.examples),
+          quickReplies: draft.quickReplies,
+          category: draft.category,
+          footer: draft.footer,
+        });
+      } catch (e) {
+        return json({ error: "Meta no aceptó la plantilla: " + wati.humanError(e) }, 400, cors);
+      }
+      const row = await syncWatiAccount(db, acc);
+      return json({ account: publicRow(row), name: draft.name }, 200, cors);
+    }
+
+    // Borrar una plantilla en WATI (y en Meta) desde Predictable.
+    if (action === "delete_template") {
+      const acc = await loadAccount("wati");
+      if (!acc) return json({ error: "wati_not_connected" }, 428, cors);
+      const name = clean(payload.name, 200);
+      if (!name) return json({ error: "Falta el nombre de la plantilla." }, 400, cors);
+      const language = /^[a-z]{2}(_[A-Za-z]{2})?$/.test(String(payload.language ?? "")) ? String(payload.language) : undefined;
+
+      let waba = "";
+      try { waba = await wabaIdFor(db, acc); }
+      catch (e) { return json({ error: wati.humanError(e) }, 400, cors); }
+      if (!waba) {
+        return json({ error: "No pudimos leer el WABA id de tu número de WhatsApp, que es lo que WATI exige para borrar. Pulsa \"Actualizar\" y vuelve a intentarlo." }, 400, cors);
+      }
+
+      const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
+      try { await wati.deleteTemplate(creds, waba, name, language); }
+      catch (e) { return json({ error: "WATI no pudo borrarla: " + wati.humanError(e) }, 400, cors); }
+      const row = await syncWatiAccount(db, acc);
+      return json({ account: publicRow(row) }, 200, cors);
+    }
+
+    // Volver a crear las plantillas de saludo rotas (borradas o rechazadas).
+    // Meta no libera el nombre de una borrada, así que salen con revisión nueva.
+    if (action === "recreate_greetings") {
+      const acc = await loadAccount("wati");
+      if (!acc) return json({ error: "wati_not_connected" }, 428, cors);
+      const cfgSender: Json = acc.config?.sender ?? {};
+      const sender: Sender = {
+        name: clean(payload.sender?.name, 80) || clean(cfgSender.name, 80),
+        role: clean(payload.sender?.role, 80) || clean(cfgSender.role, 80),
+        company: clean(payload.sender?.company, 80) || clean(cfgSender.company, 80),
+      };
+      if (!sender.name || !sender.company) {
+        return json({ error: "Faltan tu nombre y tu empresa (van dentro de las plantillas). Pulsa \"Reconectar\" para completarlos." }, 400, cors);
+      }
+      const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
+      const prevItems: Json = acc.config?.templates?.items ?? {};
+      const asked: GreetingKey[] = (Array.isArray(payload.keys) ? payload.keys : [])
+        .map((k: unknown) => String(k)).filter((k: string): k is GreetingKey => (GREETING_KEYS as readonly string[]).includes(k));
+      // Sin `keys` explícitas: solo las que están rotas o no existen.
+      const keys = asked.length
+        ? asked
+        : GREETING_KEYS.filter((k) => !prevItems[k] || isTemplateBroken(prevItems[k]?.status));
+      if (!keys.length) return json({ error: "Tus tres plantillas de saludo están bien: no hay nada que recrear." }, 400, cors);
+
+      const greetings = await ensureGreetings(creds, sender, await shortHash(user.id), prevItems, keys);
+      const cfg = {
+        ...acc.config,
+        sender,
+        templates: { ...(acc.config?.templates ?? {}), items: greetings.items },
+      };
+      await db.from("channel_accounts").update({ config: cfg }).eq("id", acc.id);
+      const row = await syncWatiAccount(db, { ...acc, config: cfg });
+      return json({ account: publicRow(row), error_detail: greetings.error }, 200, cors);
+    }
+
+    // Estado del webhook. `confirmed: true` = "ya lo pegué en WATI": se cree al
+    // usuario (la API no deja listarlos) y se marca verificado de verdad
+    // cuando llegue el primer callback.
+    if (action === "verify_webhook") {
+      const acc = await loadAccount("wati");
+      if (!acc) return json({ error: "wati_not_connected" }, 428, cors);
+      const url = webhookUrlFor(acc.webhook_secret);
+      const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
+      let webhook: Json = await ensureWebhook(creds, acc.config?.webhook, url, acc.config?.channel);
+      if (payload.confirmed === true && !webhook.registered) {
+        webhook = { ...webhook, manual_confirmed_at: new Date().toISOString() };
+      }
+      const cfg = { ...acc.config, webhook };
       const { data: row, error } = await db
-        .from("channel_accounts")
-        .update({ config, status: templates.error ? acc.status : "connected", last_error: templates.error || null })
-        .eq("id", acc.id)
-        .select("*")
-        .single();
+        .from("channel_accounts").update({ config: cfg }).eq("id", acc.id).select("*").single();
       if (error) throw new Error(error.message);
       return json({ account: publicRow(row) }, 200, cors);
     }

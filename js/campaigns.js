@@ -389,20 +389,73 @@
     }
     return { state: 'disconnected' };
   }
+  // ── Plantillas de WhatsApp ───────────────────────────────────────────────
+  // El estado lo pone Meta y lo relee channel-connect (sync_templates): aquí
+  // solo se traduce. BORRADA / FALTA no se arreglan solas — hay que crear una
+  // plantilla nueva, porque Meta no libera el nombre de una borrada.
+  var TPL_BROKEN = /deleted|missing|reject|error|paused|disabled/i;
+  function tplIsBroken(status) { return TPL_BROKEN.test(String(status || '')); }
+  function tplIsApproved(status) { return /approved/i.test(String(status || '')); }
+  function tplStatusLabel(status) {
+    var s = String(status || 'PENDING').toUpperCase();
+    var map = {
+      APPROVED: 'Aprobada', PENDING: 'En revisión', SUBMITTED: 'En revisión', IN_APPEAL: 'En apelación',
+      REJECTED: 'Rechazada', DELETED: 'Borrada', MISSING: 'No existe', ERROR: 'Error al crearla',
+      PAUSED: 'Pausada por Meta', DISABLED: 'Deshabilitada por Meta', PENDING_DELETION: 'Borrándose',
+      LIMIT_EXCEEDED: 'Límite de Meta',
+    };
+    return map[s] || s;
+  }
+  function tplStatusKind(status) {
+    if (tplIsApproved(status)) return 'green';
+    if (tplIsBroken(status)) return 'red';
+    return 'amber';
+  }
+  /** Las tres plantillas de saludo que usan las campañas, en orden. */
+  var GREETINGS = [['a', 'Saludo 1'], ['b', 'Recordatorio'], ['c', 'Último intento']];
+  function watiCfg() { return (state.wati && state.wati.config) || {}; }
+  function greetingItems() { var t = watiCfg().templates; return (t && t.items) || {}; }
+  function templateCatalogue() { var t = watiCfg().templates; return (t && t.all) || []; }
+  function brokenGreetings() {
+    var items = greetingItems();
+    return GREETINGS.filter(function (g) { return !items[g[0]] || tplIsBroken(items[g[0]].status); });
+  }
   function templateSummary(cfg) {
     var items = (cfg.templates && cfg.templates.items) || {};
     var statuses = ['a', 'b', 'c'].map(function (k) { return items[k] ? String(items[k].status || 'PENDING') : 'MISSING'; });
-    if (statuses.some(function (s) { return /reject|error|paused|disabled/i.test(s); })) return { label: 'Plantilla rechazada', kind: 'red' };
-    var pending = statuses.filter(function (s) { return !/approved/i.test(s); }).length;
+    var broken = statuses.filter(tplIsBroken).length;
+    if (broken) return { label: broken === 1 ? 'Falta una plantilla de saludo' : 'Faltan ' + broken + ' plantillas de saludo', kind: 'red' };
+    var pending = statuses.filter(function (s) { return !tplIsApproved(s); }).length;
     if (!pending) return { label: 'Plantillas aprobadas', kind: 'green' };
     return { label: 'Plantillas en revisión de Meta (' + pending + ')', kind: 'amber' };
+  }
+  /**
+   * ¿El webhook de WhatsApp está entregando? La API de WATI solo permite CREAR
+   * webhooks (listarlos o borrarlos responde 405) y el tenant tiene un tope,
+   * así que con el cupo lleno el registro automático siempre falla aunque la
+   * URL correcta ya esté puesta a mano. La prueba real es que WATI nos llame:
+   * wati-webhook sella last_received_at.
+   */
+  function waWebhookState(cfg) {
+    var wh = (cfg || {}).webhook || {};
+    if (wh.last_received_at) return { ok: true, label: 'Recibiendo eventos', detail: 'Último evento de WhatsApp: ' + fmtDateTime(wh.last_received_at) + '.' };
+    if (wh.registered) return { ok: true, label: 'Registrado', detail: 'Lo registramos en tu cuenta de WhatsApp. Se confirma solo cuando llegue el primer mensaje.' };
+    if (state.inbox.some(function (m) { return m.provider === 'wati'; })) return { ok: true, label: 'Recibiendo eventos', detail: 'Ya llegaron mensajes de WhatsApp a tu bandeja.' };
+    if (wh.manual_confirmed_at) return { ok: true, pendingProof: true, label: 'Pegado a mano', detail: 'Lo marcaste como puesto el ' + fmtDateTime(wh.manual_confirmed_at) + '. Queda confirmado cuando llegue el primer mensaje.' };
+    return { ok: false, limit: !!wh.limit, error: wh.error || '', url: wh.url || '' };
   }
   function waState() {
     if (state.status === undefined) return { state: 'loading' };
     if (!isConn(state.wati)) return { state: 'disconnected' };
     var cfg = state.wati.config || {};
     var tpl = templateSummary(cfg);
-    return { state: 'connected', detail: cfg.phone || cfg.phone_number || cfg.channel || 'Número conectado', sub: tpl.label, subKind: tpl.kind };
+    var wh = waWebhookState(cfg);
+    return {
+      state: 'connected',
+      detail: cfg.phone || cfg.phone_number || cfg.channel || 'Número conectado',
+      sub: tpl.label, subKind: tpl.kind,
+      webhookOk: wh.ok,
+    };
   }
   function liWebhookOk(cfg) {
     var wh = cfg.webhook || {};
@@ -1071,6 +1124,18 @@
       '.cmp-modal-body .cmp-check { display:grid; gap:8px; margin-top:8px; }',
       '.cmp-modal-body .cmp-check div { display:flex; gap:8px; align-items:flex-start; font-size:12.5px; }',
       '.cmp-modal-body .cmp-check b.ok { color:var(--green); }',
+      // Catálogo de plantillas de WhatsApp (estado real de Meta, crear/borrar).
+      '.cmp-modal-body .cmp-tpl-head { display:flex; gap:10px; align-items:center; justify-content:space-between; margin-top:14px; }',
+      '.cmp-modal-body .cmp-tpl-list { display:grid; gap:8px; margin-top:8px; max-height:280px; overflow-y:auto; padding-right:2px; }',
+      '.cmp-modal-body .cmp-tpl-item { border:1px solid var(--hair); border-radius:var(--r-md); padding:9px 11px; background:var(--surface); }',
+      '.cmp-modal-body .cmp-tpl-item-top { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }',
+      '.cmp-modal-body .cmp-tpl-item-top b { font-size:12.5px; word-break:break-all; }',
+      '.cmp-modal-body .cmp-tpl-meta { font-size:11px; color:var(--text3); }',
+      '.cmp-modal-body .cmp-tpl-own { color:var(--accent-2); font-weight:600; }',
+      '.cmp-modal-body .cmp-tpl-del { margin-left:auto; }',
+      '.cmp-modal-body .cmp-tpl-body { font-size:12px; color:var(--text2); margin-top:5px; white-space:pre-wrap; }',
+      '.cmp-modal-body textarea { width:100%; font:inherit; font-size:12.5px; padding:8px 10px; border-radius:var(--r-md); border:1px solid var(--hair); background:var(--surface); color:inherit; resize:vertical; }',
+      '.cmp-modal-body label { display:grid; gap:4px; }',
     ].join('\n');
     var s = document.createElement('style');
     s.id = 'campaigns-styles';
@@ -1093,7 +1158,7 @@
     } else if (on) {
       body.innerHTML = '<span class="cmp-dot"></span><span class="cmp-ch-detail">' + esc(st.detail || '') + '</span>';
       if (st.sub) body.insertAdjacentHTML('beforeend', pill(st.sub, st.subKind));
-      if (key === 'linkedin' && !st.webhookOk) body.appendChild(h('span', { class: 'cmp-chip-warn', text: '⚠ Falta el webhook de respuestas' }));
+      if ((key === 'linkedin' || key === 'whatsapp') && st.state === 'connected' && !st.webhookOk) body.appendChild(h('span', { class: 'cmp-chip-warn', text: '⚠ Falta el webhook de respuestas' }));
       foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-details', 'data-channel': key, text: 'Detalles' }));
     } else {
       if (!big) body.appendChild(h('span', { class: 'pros-hint', text: 'Sin conectar' }));
@@ -1423,43 +1488,285 @@
     b.addEventListener('click', function () { copyText(text); });
     return b;
   }
+  // ── WhatsApp: plantillas y webhook ───────────────────────────────────────
+
+  /** Llama a channel-connect y deja en state.wati la cuenta ya sincronizada. */
+  function watiAction(action, payload, btn) {
+    var r0 = btnLoading(btn, '⏳');
+    return edgeFetch(FN_CHANNEL, { action: action, payload: payload || {} }).then(function (r) {
+      state.wati = (r && (r.account || r.wati)) || state.wati;
+      r0();
+      render();
+      return r;
+    }, function (e) { r0(); throw e; });
+  }
+
+  /** Mismo criterio que wati.ts#normalizeTemplateName: solo para la vista previa. */
+  function normalizeTplName(raw) {
+    return String(raw || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
+  }
+  function tplVariables(bodyText) {
+    var out = [], re = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, m;
+    while ((m = re.exec(String(bodyText || ''))) !== null) if (out.indexOf(m[1]) === -1) out.push(m[1]);
+    return out;
+  }
+
+  /**
+   * Pestaña de WhatsApp. Tres bloques: las plantillas de saludo que usan las
+   * campañas, el catálogo completo del tenant (el estado lo pone Meta y lo
+   * relee channel-connect; desde aquí se crean y se borran) y el webhook de
+   * respuestas.
+   */
+  function renderWhatsAppDetails(api) {
+    var body = api.body;
+    body.innerHTML = '';
+    var cfg = watiCfg();
+    var ws = waState();
+    var sender = cfg.sender || {};
+    var tpls = cfg.templates || {};
+
+    body.appendChild(h('p', {
+      text: 'Número: ' + (ws.detail || '—') + ' · Firma: ' + (sender.name || '—')
+        + (sender.role ? ', ' + sender.role : '') + (sender.company ? ' de ' + sender.company : ''),
+    }));
+
+    // ── 1. Plantillas de saludo (las que envían las campañas) ──────────────
+    body.appendChild(h('div', { class: 'pros-lbl', text: 'Plantillas de saludo (las que usan tus campañas)' }));
+    var items = greetingItems();
+    var tplBox = h('div', { class: 'cmp-tpl' });
+    GREETINGS.forEach(function (g) {
+      var t = items[g[0]];
+      var status = t ? String(t.status || 'PENDING') : 'MISSING';
+      tplBox.appendChild(h('div', {
+        html: pill(g[1], 'gray') + pill(tplStatusLabel(status), tplStatusKind(status))
+          + '<span style="flex:1;color:var(--text2)">' + esc(t ? t.body : '—')
+          + (t && t.error ? ' <span style="color:var(--red)">' + esc(t.error) + '</span>' : '') + '</span>',
+      }));
+    });
+    body.appendChild(tplBox);
+
+    var broken = brokenGreetings();
+    if (broken.length) {
+      var fix = h('div', { class: 'pros-note-red', style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' });
+      fix.appendChild(h('span', {
+        style: 'flex:1',
+        text: '⚠ ' + (broken.length === 1 ? 'Una plantilla de saludo ya no sirve' : broken.length + ' plantillas de saludo ya no sirven')
+          + ' (' + broken.map(function (g) { return g[1].toLowerCase(); }).join(', ') + '). Los pasos de WhatsApp que las usen se omiten. '
+          + 'Meta no permite reutilizar el nombre de una plantilla borrada o rechazada, así que las nuevas salen con un nombre distinto y vuelven a revisión.',
+      }));
+      var fixBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: 'Volver a crear' });
+      fixBtn.addEventListener('click', guarded(function () {
+        return watiAction('recreate_greetings', {}, fixBtn).then(function (r) {
+          if (r && r.error_detail) toast(r.error_detail, 'error');
+          else toast('Plantillas enviadas a revisión de Meta.', 'success');
+          renderWhatsAppDetails(api);
+        });
+      }));
+      fix.appendChild(fixBtn);
+      body.appendChild(fix);
+    }
+    body.appendChild(h('div', {
+      class: 'pros-hint', style: 'margin-top:8px',
+      text: 'Meta revisa las plantillas en minutos u horas. Las campañas de WhatsApp solo envían con la plantilla APROBADA; los botones "Darse de baja" y "Hola! Qué tal?" van incluidos.',
+    }));
+
+    // ── 2. Catálogo completo del tenant ────────────────────────────────────
+    var all = templateCatalogue().slice();
+    var rank = function (t) { return tplIsApproved(t.status) ? 0 : tplIsBroken(t.status) ? 2 : 1; };
+    all.sort(function (a, b) { return rank(a) - rank(b) || String(a.name).localeCompare(String(b.name)); });
+    var greetingNames = GREETINGS.map(function (g) { return items[g[0]] && items[g[0]].name; }).filter(Boolean);
+
+    var head = h('div', { class: 'cmp-tpl-head' });
+    head.appendChild(h('div', { class: 'pros-lbl', style: 'margin:0', text: 'Todas tus plantillas en WhatsApp' + (all.length ? ' (' + all.length + ')' : '') }));
+    var newBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: '+ Nueva plantilla' });
+    newBtn.addEventListener('click', function () { openTemplateForm(function () { renderWhatsAppDetails(api); }); });
+    head.appendChild(newBtn);
+    body.appendChild(head);
+
+    if (tpls.error) body.appendChild(h('div', { class: 'pros-note-red', text: '⚠ ' + tpls.error }));
+    if (!all.length) {
+      body.appendChild(h('div', {
+        class: 'pros-hint',
+        text: tpls.error
+          ? 'No pudimos leer tu catálogo de plantillas. Pulsa "Actualizar" para reintentar.'
+          : 'Todavía no leímos tus plantillas. Pulsa "Actualizar" para traerlas desde WhatsApp.',
+      }));
+    } else {
+      var list = h('div', { class: 'cmp-tpl-list' });
+      all.forEach(function (t) {
+        var row = h('div', { class: 'cmp-tpl-item' });
+        var top = h('div', { class: 'cmp-tpl-item-top' });
+        top.appendChild(h('b', { text: t.name }));
+        top.appendChild(h('span', { html: pill(tplStatusLabel(t.status), tplStatusKind(t.status)) }));
+        if (t.category) top.appendChild(h('span', { class: 'cmp-tpl-meta', text: t.category }));
+        if (t.language) top.appendChild(h('span', { class: 'cmp-tpl-meta', text: t.language }));
+        if (greetingNames.indexOf(t.name) !== -1) top.appendChild(h('span', { class: 'cmp-tpl-meta cmp-tpl-own', text: 'usada por tus campañas' }));
+        var del = h('button', { type: 'button', class: 'btn btn-ghost btn-sm cmp-tpl-del', title: 'Borrar en WhatsApp', text: 'Borrar' });
+        del.addEventListener('click', function () { confirmDeleteTemplate(t, greetingNames.indexOf(t.name) !== -1, api); });
+        top.appendChild(del);
+        row.appendChild(top);
+        if (t.body) row.appendChild(h('div', { class: 'cmp-tpl-body', text: t.body }));
+        if (t.buttons && t.buttons.length) {
+          row.appendChild(h('div', { class: 'cmp-tpl-meta', text: 'Botones: ' + t.buttons.map(function (b) { return b.text; }).join(' · ') }));
+        }
+        list.appendChild(row);
+      });
+      body.appendChild(list);
+    }
+    if (tpls.synced_at) body.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:6px', text: 'Leído de WhatsApp el ' + fmtDateTime(tpls.synced_at) + '.' }));
+
+    // ── 3. Webhook de respuestas ───────────────────────────────────────────
+    var wh = waWebhookState(cfg);
+    body.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:12px', text: 'Webhook de respuestas' }));
+    if (wh.ok) {
+      body.appendChild(h('div', { class: 'cmp-tpl' }, h('div', { html: pill(wh.label, wh.pendingProof ? 'amber' : 'green') + '<span style="flex:1;color:var(--text2)">' + esc(wh.detail) + '</span>' })));
+    } else {
+      var whBox = h('div', { class: 'pros-note-red' });
+      whBox.appendChild(h('div', {
+        text: wh.limit
+          ? '⚠ Tu cuenta de WhatsApp ya llegó a su máximo de webhooks, y su API solo permite crearlos: no podemos listarlos ni borrarlos, así que tampoco podemos comprobar desde aquí si la URL de abajo ya está puesta. Si la ves en tu panel (WATI → Webhooks) con todos los eventos de mensajes, está bien: márcalo abajo y quedará confirmado solo cuando llegue el primer mensaje.'
+          : '⚠ No se pudo registrar el webhook automáticamente' + (wh.error ? ' (' + wh.error + ')' : '') + '. Agrégalo a mano en tu panel de WhatsApp API (WATI → Webhooks) con todos los eventos de mensajes:',
+      }));
+      whBox.appendChild(h('code', { text: wh.url || '' }));
+      var whRow = h('div', { class: 'cmp-row' });
+      if (wh.url) whRow.appendChild(copyBtn(wh.url));
+      var retryBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Reintentar registro' });
+      retryBtn.addEventListener('click', guarded(function () {
+        return watiAction('verify_webhook', {}, retryBtn).then(function () {
+          var st = waWebhookState(watiCfg());
+          toast(st.ok ? 'Webhook registrado.' : 'WhatsApp sigue sin aceptarlo: pégalo a mano en su panel.', st.ok ? 'success' : 'error');
+          renderWhatsAppDetails(api);
+        });
+      }));
+      whRow.appendChild(retryBtn);
+      var okBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: 'Ya lo agregué en WhatsApp' });
+      okBtn.addEventListener('click', guarded(function () {
+        return watiAction('verify_webhook', { confirmed: true }, okBtn).then(function () {
+          toast('Anotado. Se confirma solo cuando llegue el primer mensaje.', 'success');
+          renderWhatsAppDetails(api);
+        });
+      }));
+      whRow.appendChild(okBtn);
+      whBox.appendChild(whRow);
+      body.appendChild(whBox);
+    }
+
+    api.setActions([
+      { label: 'Actualizar', onClick: function (m, btn) {
+        return watiAction('sync_templates', {}, btn).then(function () {
+          toast('Plantillas y webhook releídos desde WhatsApp.', 'success');
+          renderWhatsAppDetails(api);
+        });
+      } },
+      { label: 'Reconectar', onClick: function (m) { m.close(); openWhatsAppWizard('have'); } },
+      { label: 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('whatsapp', 'wati', m); } },
+      { label: 'Cerrar' },
+    ]);
+  }
+
+  /** Borrar una plantilla en WhatsApp. Meta no libera el nombre: se avisa. */
+  function confirmDeleteTemplate(t, isGreeting, api) {
+    var extra = isGreeting
+      ? ' Tus campañas la usan como plantilla de saludo: los pasos que la envíen se van a omitir hasta que pulses "Volver a crear".'
+      : '';
+    return confirmModal({
+      title: 'Borrar plantilla', danger: true, confirmLabel: 'Borrar',
+      message: 'Se borra «' + t.name + '» de tu cuenta de WhatsApp. Meta no libera el nombre: no vas a poder crear otra plantilla que se llame igual.' + extra,
+      onConfirm: function () {
+        return watiAction('delete_template', { name: t.name, language: t.language || undefined }).then(function () {
+          toast('Plantilla borrada.', 'success');
+          if (api) renderWhatsAppDetails(api);
+        });
+      },
+    });
+  }
+
+  /**
+   * Crear una plantilla propia y mandarla a revisión de Meta. La validación
+   * de verdad vive en el servidor (_shared/wati.ts#validateTemplateDraft);
+   * aquí solo se avisa antes de gastar una revisión.
+   */
+  function openTemplateForm(onDone) {
+    var m = openModal({ title: 'Nueva plantilla de WhatsApp', width: 620 });
+    var b = m.body;
+    b.appendChild(h('p', { text: 'Meta revisa cada plantilla antes de permitir enviarla (minutos u horas). Escribe el texto como si fuera un primer mensaje: promesas exageradas, precios o lenguaje de spam se rechazan.' }));
+
+    var grid = h('div', { class: 'cmp-sender-grid' });
+    var nameI = h('input', { type: 'text', placeholder: 'seguimiento_propuesta', maxlength: '60' });
+    var catS = h('select');
+    [['MARKETING', 'Marketing (prospección)'], ['UTILITY', 'Utilidad (seguimiento de algo ya acordado)']].forEach(function (o) {
+      catS.appendChild(h('option', { value: o[0], text: o[1] }));
+    });
+    var langS = h('select');
+    [['es', 'Español'], ['es_MX', 'Español (México)'], ['es_AR', 'Español (Argentina)'], ['es_ES', 'Español (España)'], ['en', 'Inglés'], ['en_US', 'Inglés (EE. UU.)'], ['pt_BR', 'Portugués (Brasil)']].forEach(function (o) {
+      langS.appendChild(h('option', { value: o[0], text: o[1] }));
+    });
+    grid.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Nombre' }), nameI));
+    grid.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Categoría' }), catS));
+    grid.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Idioma' }), langS));
+    b.appendChild(grid);
+    var nameHint = h('div', { class: 'pros-hint', text: 'Solo minúsculas, números y guiones bajos. Lo normalizamos por ti.' });
+    b.appendChild(nameHint);
+
+    b.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Texto del mensaje' }));
+    var bodyI = h('textarea', { rows: '5', placeholder: 'Hola {{name}}! Te escribo desde Acme porque…' });
+    b.appendChild(bodyI);
+    var varHint = h('div', { class: 'pros-hint', text: 'Escribe {{name}} donde quieras el nombre del lead. Puedes usar hasta 5 variables.' });
+    b.appendChild(varHint);
+
+    b.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Botones de respuesta rápida (opcional, hasta 3)' }));
+    var btnRow = h('div', { class: 'cmp-sender-grid' });
+    var btnInputs = [0, 1, 2].map(function (i) {
+      var inp = h('input', { type: 'text', maxlength: '25', placeholder: i === 0 ? 'Darse de baja' : 'Cuéntame más' });
+      btnRow.appendChild(inp);
+      return inp;
+    });
+    b.appendChild(btnRow);
+    b.appendChild(h('div', { class: 'pros-hint', text: 'Meta no admite variables dentro de los botones. Incluye siempre una salida tipo "Darse de baja".' }));
+
+    var footI = h('input', { type: 'text', maxlength: '60', placeholder: 'Enviado por Acme' });
+    b.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Pie de página (opcional)' }));
+    b.appendChild(footI);
+
+    var live = h('div', { class: 'pros-hint', style: 'margin-top:10px' });
+    b.appendChild(live);
+    function refreshLive() {
+      var n = normalizeTplName(nameI.value);
+      var vars = tplVariables(bodyI.value);
+      live.textContent = 'Se creará como «' + (n || '—') + '»'
+        + (vars.length ? ' · variables: ' + vars.map(function (v) { return '{{' + v + '}}'; }).join(', ') : ' · sin variables')
+        + ' · ' + String(bodyI.value || '').trim().length + '/1024 caracteres.';
+    }
+    nameI.addEventListener('input', refreshLive);
+    bodyI.addEventListener('input', refreshLive);
+    refreshLive();
+
+    m.setActions([
+      { label: 'Cancelar' },
+      { label: 'Enviar a revisión', className: 'btn btn-primary', onClick: function (modal, btn) {
+        return watiAction('create_template', {
+          name: nameI.value,
+          body: bodyI.value,
+          category: catS.value,
+          language: langS.value,
+          quick_replies: btnInputs.map(function (i) { return i.value; }),
+          footer: footI.value,
+        }, btn).then(function () {
+          toast('Plantilla enviada a revisión de Meta.', 'success');
+          modal.close();
+          if (onDone) onDone();
+        });
+      } },
+    ]);
+  }
+
   function openChannelDetails(key) {
-    var api = openModal({ title: CH[key].label, width: 600 });
+    var api = openModal({ title: CH[key].label, width: key === 'whatsapp' ? 680 : 600 });
     var body = api.body;
     body.innerHTML = '';
     if (key === 'whatsapp') {
-      var cfg = (state.wati && state.wati.config) || {};
-      var ws = waState();
-      body.appendChild(h('p', { text: 'Número: ' + (ws.detail || '—') + ' · Firma: ' + ((cfg.sender && cfg.sender.name) || '—') + ((cfg.sender && cfg.sender.role) ? ', ' + cfg.sender.role : '') + ((cfg.sender && cfg.sender.company) ? ' de ' + cfg.sender.company : '') }));
-      var tpls = (cfg.templates && cfg.templates.items) || {};
-      body.appendChild(h('div', { class: 'pros-lbl', text: 'Plantillas de saludo (revisión de Meta)' }));
-      var tplBox = h('div', { class: 'cmp-tpl' });
-      ['a', 'b', 'c'].forEach(function (k, i) {
-        var t = tpls[k];
-        var status = t ? String(t.status || 'PENDING') : 'SIN CREAR';
-        var kind = /approved/i.test(status) ? 'green' : /reject|error|paused|disabled/i.test(status) ? 'red' : 'amber';
-        tplBox.appendChild(h('div', { html: pill(['Saludo 1', 'Recordatorio', 'Último intento'][i], 'gray') + pill(status, kind) + '<span style="flex:1;color:var(--text2)">' + esc(t ? t.body : '—') + (t && t.error ? ' <span style="color:var(--red)">' + esc(t.error) + '</span>' : '') + '</span>' }));
-      });
-      body.appendChild(tplBox);
-      if (cfg.templates && cfg.templates.error) body.appendChild(h('div', { class: 'pros-note-red', text: '⚠ ' + cfg.templates.error }));
-      body.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:8px', text: 'Meta revisa las plantillas en minutos u horas. Las campañas de WhatsApp solo envían con la plantilla APROBADA; los botones "Darse de baja" y "Hola! Qué tal?" van incluidos.' }));
-      var wh = cfg.webhook || {};
-      if (!wh.registered) {
-        var whBox = h('div', { class: 'pros-note-red' });
-        whBox.appendChild(h('div', { text: '⚠ No se pudo registrar el webhook automáticamente' + (wh.error ? ' (' + wh.error + ')' : '') + '. Agrégalo a mano en tu panel de WhatsApp API (WATI → Webhooks) con todos los eventos de mensajes:' }));
-        whBox.appendChild(h('code', { text: wh.url || '' }));
-        if (wh.url) whBox.appendChild(h('div', { class: 'cmp-row' }, copyBtn(wh.url)));
-        body.appendChild(whBox);
-      }
-      api.setActions([
-        { label: 'Actualizar estado', onClick: function (m, btn) {
-          var r0 = btnLoading(btn, '⏳');
-          return edgeFetch(FN_CHANNEL, { action: 'sync_templates', payload: {} }).then(function (r) { state.wati = (r && (r.account || r.wati)) || state.wati; r0(); m.close(); render(); openChannelDetails('whatsapp'); }, function (e) { r0(); throw e; });
-        } },
-        { label: 'Reconectar', onClick: function (m) { m.close(); openWhatsAppWizard('have'); } },
-        { label: 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('whatsapp', 'wati', m); } },
-        { label: 'Cerrar' },
-      ]);
+      renderWhatsAppDetails(api);
     } else if (key === 'linkedin') {
       var dcfg = (state.dripify && state.dripify.config) || {};
       var dcs = dcfg.campaigns || [];
@@ -2058,7 +2365,7 @@
       var loc = flowLib().find(campaignFlow(c), pl.node_id);
       if (loc) parts.push(flowLib().nodeTitle(loc.node));
     }
-    if (pl.source === 'inbox_reply') parts.push('respuesta desde la bandeja');
+    if (pl.source === 'inbox_reply') parts.push('respuesta desde la bandeja' + (pl.template_name ? ' · plantilla ' + pl.template_name : ''));
     else if (pl.source === 'wati_ui') parts.push('desde WATI');
     else if (pl.content_kind && String(pl.content_kind).indexOf('template_') === 0) parts.push('plantilla de saludo');
     return parts.join(' · ');
@@ -2165,16 +2472,25 @@
     }
     if (chosen === 'whatsapp' && (state.waClosed[conv.key] || !sessionOpen(conv))) {
       box.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:0', text: 'La ventana de 24 h de WhatsApp está cerrada (el lead no escribió en las últimas 24 h). Meta solo acepta una plantilla aprobada para reabrirla; cuando conteste, podrás escribirle texto libre.' }));
-      var tpls = (state.wati && state.wati.config && state.wati.config.templates && state.wati.config.templates.items) || {};
+      // Las tres de saludo primero (las que arma Predictable) y después
+      // cualquier plantilla aprobada del catálogo del usuario: sirven igual
+      // para reabrir la ventana, y ahora también se crean desde aquí.
+      var tpls = greetingItems();
       var trow = h('div', { class: 'cmp-tpl-row' });
       trow.appendChild(h('span', { class: 'pros-hint', text: 'Enviar plantilla:' }));
       var any = false;
-      [['a', 'Saludo 1'], ['b', 'Recordatorio'], ['c', 'Último intento']].forEach(function (x) {
+      GREETINGS.forEach(function (x) {
         var t = tpls[x[0]];
         if (!t) return;
         any = true;
-        var ok = /approved/i.test(String(t.status || ''));
-        trow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-template', 'data-key': conv.key, 'data-template': x[0], disabled: ok ? null : 'disabled', title: ok ? (t.body || '') : 'Plantilla ' + String(t.status || 'pendiente').toLowerCase() + ' en Meta', text: x[1] }));
+        var ok = tplIsApproved(t.status);
+        trow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-template', 'data-key': conv.key, 'data-template': x[0], disabled: ok ? null : 'disabled', title: ok ? (t.body || '') : 'Plantilla ' + tplStatusLabel(t.status).toLowerCase() + ' en Meta', text: x[1] }));
+      });
+      var ownNames = GREETINGS.map(function (x) { return tpls[x[0]] && tpls[x[0]].name; }).filter(Boolean);
+      templateCatalogue().forEach(function (t) {
+        if (!tplIsApproved(t.status) || ownNames.indexOf(t.name) !== -1) return;
+        any = true;
+        trow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-template', 'data-key': conv.key, 'data-template': t.name, title: t.body || '', text: t.name }));
       });
       if (!any) trow.appendChild(h('span', { class: 'pros-hint', text: 'Conecta WhatsApp para crear las plantillas de saludo.' }));
       box.appendChild(trow);

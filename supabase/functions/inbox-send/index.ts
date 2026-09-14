@@ -129,6 +129,43 @@ function firstName(m: Json): string {
 }
 
 /**
+ * Plantilla pedida desde la bandeja: una de las tres ranuras de saludo
+ * ("a"|"b"|"c", las que arma Predictable) o el NOMBRE de cualquier plantilla
+ * del catálogo del usuario (config.templates.all, que sincroniza
+ * channel-connect). Así una plantilla creada a mano también sirve para
+ * reabrir la ventana de 24 h.
+ */
+function resolveTemplate(acc: Json, template: string): { name: string; body: string; status: string } {
+  const raw = String(template ?? "").trim();
+  if (/^(template_)?[abc]$/i.test(raw)) {
+    const tpl = acc.config?.templates?.items?.[raw.slice(-1).toLowerCase()];
+    if (!tpl?.name) throw new HttpError("Esa plantilla de saludo no existe en tu cuenta de WhatsApp. Reconecta el canal para crearla.", 400, "whatsapp_template_missing");
+    return { name: String(tpl.name), body: String(tpl.body ?? ""), status: String(tpl.status ?? "PENDING") };
+  }
+  const found = (acc.config?.templates?.all ?? []).find((t: Json) => String(t?.name) === raw);
+  if (!found) {
+    throw new HttpError(`No encontramos la plantilla "${raw}" en tu cuenta de WhatsApp. Abre Campañas → WhatsApp y pulsa "Actualizar".`, 400, "whatsapp_template_missing");
+  }
+  return { name: String(found.name), body: String(found.body ?? ""), status: String(found.status ?? "PENDING") };
+}
+
+/** Valor de una variable de plantilla para este lead ("" si no lo sabemos). */
+function memberField(variable: string, m: Json | null): string {
+  const k = variable.toLowerCase();
+  if (/^(name|nombre|first_name|1)$/.test(k)) return firstName(m);
+  if (/^(full_name|nombre_completo|fullname)$/.test(k)) return String(m?.name ?? "").trim();
+  if (/^(company|empresa|compania)$/.test(k)) return String(m?.company ?? "").trim();
+  if (/^(title|cargo|puesto|rol)$/.test(k)) return String(m?.title ?? "").trim();
+  return "";
+}
+
+function templateParams(body: string, m: Json | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const v of wati.templateVariables(body)) out[v] = memberField(v, m);
+  return out;
+}
+
+/**
  * WhatsApp por WATI. `member` puede ser null cuando se contesta a un número
  * que escribió sin estar en ninguna lista (`contactRef` = dígitos). Con
  * `template` ("a"|"b"|"c") sale la plantilla de saludo aprobada en vez de
@@ -143,12 +180,23 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
   const en = member ? await latestEnrollment(db, userId, member.id) : null;
 
   if (template) {
-    const key = String(template).slice(-1).toLowerCase();
-    const tpl = acc.config?.templates?.items?.[key];
-    if (!tpl?.name) throw new HttpError("Esa plantilla de saludo no existe en tu cuenta de WhatsApp. Reconecta el canal para crearla.", 400, "whatsapp_template_missing");
-    if (!/approved/i.test(String(tpl.status ?? ""))) throw new HttpError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tpl.status || "PENDING"}).`, 409, "whatsapp_template_not_approved");
-    const name = firstName(member) || "";
-    const bodyText = String(tpl.body ?? "").replace(/\{\{\s*(name|nombre|1)\s*\}\}/gi, name);
+    const tpl = resolveTemplate(acc, template);
+    if (/deleted|missing|reject|paused|disabled|error/i.test(tpl.status)) {
+      throw new HttpError(`La plantilla "${tpl.name}" ya no sirve para enviar (${tpl.status}). En Campañas → WhatsApp pulsa "Volver a crear" para generar una nueva.`, 409, "whatsapp_template_unusable");
+    }
+    if (!/approved/i.test(tpl.status)) throw new HttpError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tpl.status}).`, 409, "whatsapp_template_not_approved");
+    const params = templateParams(tpl.body, member);
+    const missing = Object.keys(params).filter((k) => !params[k]);
+    if (missing.length) {
+      throw new HttpError(
+        `La plantilla "${tpl.name}" necesita ${missing.map((k) => `{{${k}}}`).join(", ")} y no lo tenemos guardado de este contacto.`,
+        400, "whatsapp_template_missing_params",
+      );
+    }
+    let bodyText = String(tpl.body ?? "");
+    for (const [k, v] of Object.entries(params)) {
+      bodyText = bodyText.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, "gi"), v);
+    }
     const localId = crypto.randomUUID();
     let sent: wati.SendResult;
     try {
@@ -157,7 +205,7 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
         broadcastName: `px_inbox_${localId.slice(0, 8)}`,
         phone,
         localMessageId: localId,
-        params: { name },
+        params,
         channel: acc.config?.channel || undefined,
       });
     } catch (e) {
@@ -169,7 +217,7 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
       user_id: userId, member_id: member?.id ?? null, channel: "whatsapp", provider: "wati", direction: "out",
       contact_ref: phone, body: bodyText, provider_message_id: localId, status: "pending", sent_at: new Date().toISOString(),
       campaign_id: en?.campaign_id ?? null, enrollment_id: en?.id ?? null,
-      payload: { source: "inbox_reply", content_kind: "template_" + key, template_name: tpl.name },
+      payload: { source: "inbox_reply", content_kind: "template", template_name: tpl.name },
     }).select("*").single();
     if (error) throw new HttpError("La plantilla salió pero no se pudo guardar en la bandeja: " + error.message, 500);
     await spendCredits(db, userId);

@@ -20,6 +20,21 @@
  *    templateMessageFailed), enlazado por `local_message_id`.
  *  • Límites (plan Growth): sendTemplateMessages 30 / 10 s; getMessages
  *    10 / 10 s (WATI recomienda webhooks en vez de polling).
+ *
+ * Superficie real de la API, comprobada contra live-mt-server.wati.io el
+ * 2026-09-14 (un 405 sin token prueba que la ruta existe pero el método no):
+ *  • Webhooks: `/api/v2/webhookEndpoints` SOLO acepta POST. GET, PUT y DELETE
+ *    responden 405. O sea: **no se pueden listar, editar ni borrar webhooks
+ *    por API**, solo crearlos, y el tenant tiene un tope ("Number of Webhooks
+ *    exceed limitation"). Con el tope lleno, reintentar el POST siempre falla
+ *    aunque el webhook correcto ya esté puesto a mano. La única prueba de que
+ *    funciona es que WATI nos llame: wati-webhook sella
+ *    `config.webhook.last_received_at`.
+ *  • Plantillas: crear con POST /api/v1/whatsApp/templates y borrar con
+ *    DELETE /api/v1/whatsApp/templates/{wabaId}/{name}[/{language}]. El
+ *    catálogo completo (con el estado de revisión de Meta) sale de
+ *    GET /api/ext/v3/messageTemplates. Meta NO permite reutilizar el nombre
+ *    de una plantilla borrada: recrear exige un nombre nuevo.
  */
 
 // deno-lint-ignore no-explicit-any
@@ -132,13 +147,20 @@ export async function listPhoneNumbers(creds: WatiCreds): Promise<WatiPhoneNumbe
 
 // ── Plantillas ──────────────────────────────────────────────────────────────
 
+export interface WatiTemplateButton { type: string; text: string; }
+
 export interface WatiTemplate {
   id: string;
   name: string;
   status: string;
   category: string;
+  sub_category: string;
   language: string;
   body: string;
+  footer: string;
+  quality: string;
+  last_modified: string | null;
+  buttons: WatiTemplateButton[];
   custom_params: { name: string; value: string }[];
 }
 
@@ -154,8 +176,20 @@ export async function listTemplates(creds: WatiCreds, channel?: string): Promise
         name: String(t.name ?? ""),
         status: String(t.status ?? "").toUpperCase(),
         category: String(t.category ?? ""),
-        language: String(t.language_option?.key ?? t.language ?? ""),
+        sub_category: String(t.sub_category ?? ""),
+        // `language_option.value` es el código real ("es", "en_US");
+        // `.key` es la etiqueta legible. El borrado exige el código.
+        language: String(t.language_option?.value ?? t.language ?? t.language_option?.key ?? ""),
         body: String(t.body_original ?? t.body ?? ""),
+        footer: String(t.footer ?? ""),
+        quality: String(t.quality ?? ""),
+        last_modified: t.last_modified ? String(t.last_modified) : null,
+        buttons: Array.isArray(t.buttons)
+          ? t.buttons.map((b: Json) => ({
+            type: String(b?.type ?? b?.parameter?.urlType ?? "quick_reply"),
+            text: String(b?.text ?? b?.parameter?.text ?? ""),
+          })).filter((b: WatiTemplateButton) => b.text)
+          : [],
         custom_params: Array.isArray(t.custom_params) ? t.custom_params : [],
       });
     }
@@ -172,6 +206,7 @@ export interface CreateTemplateInput {
   exampleParams: Record<string, string>;
   quickReplies: string[]; // ≤ 3 botones de respuesta rápida
   category?: "MARKETING" | "UTILITY";
+  footer?: string;
 }
 
 /** POST /api/v1/whatsApp/templates — la envía a revisión de Meta. */
@@ -180,12 +215,12 @@ export async function createTemplate(creds: WatiCreds, input: CreateTemplateInpu
     type: "template",
     category: input.category ?? "MARKETING",
     subCategory: "STANDARD",
-    buttonsType: input.quickReplies.length ? "quick_reply" : "none",
+    buttonsType: input.quickReplies.length ? "quick_reply" : "NONE",
     buttons: input.quickReplies.map((text) => ({
       type: "quick_reply",
       parameter: { text, urlType: "none" },
     })),
-    footer: "",
+    footer: input.footer ?? "",
     elementName: input.name,
     language: input.language,
     header: { type: "none", link: "", mediaFromPC: "", mediaHeaderId: "" },
@@ -202,6 +237,108 @@ export async function createTemplate(creds: WatiCreds, input: CreateTemplateInpu
   // lee después con listTemplates. Recién creada está pendiente de Meta.
   const status = typeof r.status === "string" ? r.status.toUpperCase() : "PENDING";
   return { id: String(r.id ?? ""), status };
+}
+
+/**
+ * DELETE /api/v1/whatsApp/templates/{wabaId}/{name}[/{language}]
+ *
+ * Sin `language` borra la plantilla en TODOS los idiomas. Meta no libera el
+ * nombre: una plantilla borrada no se puede volver a crear con el mismo
+ * nombre, por eso las de saludo se recrean con un sufijo de revisión.
+ */
+export async function deleteTemplate(creds: WatiCreds, wabaId: string, name: string, language?: string): Promise<void> {
+  const waba = String(wabaId ?? "").trim();
+  if (!waba) throw new WatiError("Falta el WABA id de tu número de WhatsApp: pulsa \"Actualizar estado\" y vuelve a intentarlo.", 400);
+  const path = `/api/v1/whatsApp/templates/${encodeURIComponent(waba)}/${encodeURIComponent(name)}` +
+    (language ? `/${encodeURIComponent(language)}` : "");
+  const data = await call(creds, "DELETE", path);
+  // WATI también avisa del fallo con 200 + {ok:false}.
+  if (data?.ok === false) {
+    throw new WatiError(String(data?.result || data?.message || "WATI no pudo borrar la plantilla").slice(0, 300), 400, data);
+  }
+}
+
+// ── Validación de plantillas nuevas (pura: cubierta por wati.test.ts) ────────
+
+/** Meta acepta nombres en minúsculas con números y guiones bajos, hasta 512. */
+export function normalizeTemplateName(raw: unknown): string {
+  return String(raw ?? "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")  // quita tildes: Meta no las admite
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 60);
+}
+
+/** Variables del cuerpo, en orden y sin repetir: {{name}} → ["name"]. */
+export function templateVariables(body: unknown): string[] {
+  const out: string[] = [];
+  const re = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(String(body ?? ""))) !== null) {
+    if (!out.includes(m[1])) out.push(m[1]);
+  }
+  return out;
+}
+
+export interface TemplateDraft {
+  name: string;
+  body: string;
+  language: string;
+  category: "MARKETING" | "UTILITY";
+  quickReplies: string[];
+  footer: string;
+  variables: string[];
+}
+
+/**
+ * Normaliza y valida lo que el usuario escribe en Predictable antes de
+ * mandarlo a Meta. Lanza WatiError 400 con el motivo en español: rebotar aquí
+ * es gratis, rebotar en Meta cuesta una revisión y un nombre quemado.
+ */
+export function validateTemplateDraft(input: Json): TemplateDraft {
+  const name = normalizeTemplateName(input?.name);
+  if (name.length < 3) {
+    throw new WatiError("El nombre de la plantilla necesita al menos 3 letras (solo minúsculas, números y guiones bajos).", 400);
+  }
+  const body = String(input?.body ?? "").replace(/\r\n/g, "\n").trim();
+  if (body.length < 10) throw new WatiError("Escribe el texto de la plantilla (al menos 10 caracteres).", 400);
+  if (body.length > 1024) throw new WatiError("Meta limita el cuerpo de una plantilla a 1024 caracteres.", 400);
+  if (/\n{3,}/.test(body)) throw new WatiError("Meta rechaza las plantillas con tres o más saltos de línea seguidos.", 400);
+
+  const variables = templateVariables(body);
+  if (variables.length > 5) throw new WatiError("Usa como máximo 5 variables en una plantilla.", 400);
+  const openBraces = (body.match(/\{\{/g) ?? []).length;
+  if (openBraces !== variables.length) {
+    throw new WatiError("Hay una variable mal escrita. Usa exactamente {{nombre_de_variable}}, sin espacios raros ni tildes.", 400);
+  }
+
+  const quickReplies = (Array.isArray(input?.quick_replies) ? input.quick_replies : [])
+    .map((t: unknown) => String(t ?? "").replace(/\s+/g, " ").trim().slice(0, 25))
+    .filter((t: string) => t.length > 0)
+    .slice(0, 3);
+
+  const category = String(input?.category ?? "MARKETING").toUpperCase() === "UTILITY" ? "UTILITY" : "MARKETING";
+  const language = /^[a-z]{2}(_[A-Za-z]{2})?$/.test(String(input?.language ?? "")) ? String(input.language) : "es";
+  const footer = String(input?.footer ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+
+  return { name, body, language, category: category as "MARKETING" | "UTILITY", quickReplies, footer, variables };
+}
+
+// ── Webhooks: qué se puede y qué no ─────────────────────────────────────────
+
+/**
+ * true si WATI rechazó el POST porque el tenant ya llegó a su tope de
+ * webhooks ("Number of Webhooks exceed limitation"). No es un error de
+ * credenciales ni de URL: es "ya hay uno puesto". Como la API no deja
+ * listarlos ni borrarlos, reintentar nunca lo arregla.
+ */
+export function isWebhookLimitError(err: unknown): boolean {
+  const txt = err instanceof WatiError
+    ? `${err.message} ${JSON.stringify(err.body ?? "")}`
+    : String((err as Error)?.message ?? err ?? "");
+  return /exceed.*limit|limit.*exceed|maximum number of webhook|webhook.*limitation/i.test(txt);
 }
 
 // ── Envíos ──────────────────────────────────────────────────────────────────
@@ -281,7 +418,15 @@ export const WEBHOOK_EVENTS = [
   // plantillas se refresca leyéndolas, no por webhook.
 ];
 
-/** POST /api/v2/webhookEndpoints — registra nuestra URL para el canal dado. */
+/**
+ * POST /api/v2/webhookEndpoints — registra nuestra URL para el canal dado.
+ *
+ * Es lo ÚNICO que la API de webhooks permite: no hay GET para listarlos ni
+ * DELETE para reemplazarlos (405, comprobado el 2026-09-14). Si el tenant ya
+ * llegó a su tope responde "Number of Webhooks exceed limitation" y no hay
+ * forma programática de saber qué URL ocupa el cupo: se le pide al usuario
+ * que la pegue a mano y se confirma cuando WATI nos llama.
+ */
 export async function createWebhook(creds: WatiCreds, url: string, channelPhone?: string): Promise<{ id: string | null }> {
   const entry: Json = { status: 1, url, eventTypes: WEBHOOK_EVENTS };
   if (channelPhone && digits(channelPhone).length >= 8) entry.phoneNumber = digits(channelPhone);
@@ -300,6 +445,9 @@ export function humanError(err: unknown): string {
     if (err.status === 403) return "El token de WATI no tiene permisos para esta operación (revisa los scopes al generarlo).";
     if (err.status === 404) return "WATI no encontró el recurso. Revisa la URL del API endpoint (debe incluir tu tenant id).";
     if (err.status === 429) return "WATI limitó las solicitudes. Reintenta en unos segundos.";
+    if (isWebhookLimitError(err)) {
+      return "Tu cuenta de WATI ya llegó al máximo de webhooks y su API no permite listarlos ni borrarlos. Revisa la lista en WATI → Webhooks y deja puesta la URL de Predictable.";
+    }
     return err.message;
   }
   return (err as Error)?.message || String(err);
