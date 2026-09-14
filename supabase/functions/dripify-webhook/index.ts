@@ -30,6 +30,14 @@
  * por nombre de campo sigue como último recurso si algún día no viene el
  * hilo. El payload completo se guarda en el `campaign_event`. El lead se
  * enlaza por la URL de LinkedIn contra prospect_list_members del usuario.
+ *
+ * Si el perfil NO está en ninguna lista (lead que entró a la campaña de
+ * Dripify directamente, no desde Predictable), el hilo se guarda IGUAL en
+ * inbox_messages con member_id null, contact_ref = URL del perfil y los
+ * datos del lead que manda Dripify en `payload.lead` (nombre, empresa,
+ * cargo, email, teléfono, campaña): la bandeja omnicanal muestra TODAS las
+ * conversaciones de LinkedIn, no solo las de leads de Predictable, y desde
+ * ahí se puede guardar el contacto en una lista (inbox-send link_member).
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -87,14 +95,37 @@ function firstLinkedinUrl(flat: Record<string, unknown>): string {
 /** Claves del payload que pertenecen al hilo, no al evento del webhook. */
 const THREAD_KEY_RE = /conversa|messages|thread|chat|history|dialog/i;
 
+/** Datos del lead tal como los manda Dripify (fuera del hilo), para hilos sin lead en listas. */
+function leadFromPayload(flat: Record<string, unknown>, url: string): Json {
+  const get = (re: RegExp) => pick(flat, re);
+  const first = get(/(^|\.)(firstName|first_name)$/i);
+  const last = get(/(^|\.)(lastName|last_name)$/i);
+  const full = get(/(^|\.)(fullName|full_name|name|leadName)$/i);
+  return {
+    name: [first, last].filter(Boolean).join(" ") || full || null,
+    first_name: first || null,
+    last_name: last || null,
+    company: get(/(^|\.)(company|companyName|organization)$/i) || null,
+    title: get(/(^|\.)(position|title|jobTitle|headline)$/i) || null,
+    email: get(/(^|\.)(corporateEmail|linkedInEmail|email|manualEmail)$/i) || null,
+    phone: get(/(^|\.)(phone|phoneNumber|mobile)$/i) || null,
+    linkedin_url: url || null,
+    dripify_campaign: get(/(^|\.)(campaignName|campaign_name)$/i) || null,
+    location: get(/(^|\.)(location|city|country)$/i) || null,
+  };
+}
+
 /**
  * Guarda en la bandeja los mensajes del hilo que todavía no estaban.
  * Devuelve cuántos se insertaron (0 = el webhook repetía lo ya conocido).
+ * `member` puede ser null (perfil que no está en ninguna lista): entonces la
+ * fila lleva `lead` con los datos que mandó Dripify.
  */
 async function ingestThread(
   db: SupabaseClient,
   userId: string,
-  member: Json,
+  member: Json | null,
+  lead: Json | null,
   url: string,
   entries: dripify.ConversationEntry[],
   primary: Json | null,
@@ -118,7 +149,7 @@ async function ingestThread(
 
   const toInsert = rows.filter((r) => !already.has(r.pid)).map((r) => ({
     user_id: userId,
-    member_id: member.id,
+    member_id: member?.id ?? null,
     channel: "linkedin",
     provider: "dripify",
     direction: r.e.direction,
@@ -131,7 +162,7 @@ async function ingestThread(
     campaign_id: primary?.campaign_id ?? null,
     enrollment_id: primary?.id ?? null,
     // El payload crudo se guarda una sola vez, en el campaign_event.
-    payload: { source: "dripify_webhook", event: eventRaw || null, entry_type: r.e.type || null, user_name: r.e.userName || null },
+    payload: { source: "dripify_webhook", event: eventRaw || null, entry_type: r.e.type || null, user_name: r.e.userName || null, ...(lead ? { lead } : {}) },
   }));
   if (!toInsert.length) return 0;
 
@@ -185,7 +216,8 @@ Deno.serve(async (req) => {
 
   try {
     const member = url ? await findMember(db, acc.user_id, url) : null;
-    const leadName = member ? [member.name, member.first_name].filter(Boolean).join(" ") : "";
+    const lead = url ? leadFromPayload(outside, url) : null;
+    const leadName = member ? [member.name, member.first_name].filter(Boolean).join(" ") : String(lead?.name ?? "");
     const entries = dripify.parseConversation(payload, leadName);
     // Último recurso para payloads sin hilo (otras condiciones de webhook).
     const replyText = entries.length
@@ -219,15 +251,15 @@ Deno.serve(async (req) => {
     // Dripify reenvía la conversación entera en cada webhook, así que solo se
     // insertan los mensajes cuyo id estable todavía no está guardado.
     let added = 0;
-    if (member && entries.length) {
-      added = await ingestThread(db, acc.user_id, member, url, entries, primary, eventRaw, payload);
-    } else if (signal === "replied" && member) {
+    if (url && entries.length) {
+      added = await ingestThread(db, acc.user_id, member, member ? null : lead, url, entries, primary, eventRaw, payload);
+    } else if (signal === "replied" && url) {
       const { error } = await db.from("inbox_messages").insert({
-        user_id: acc.user_id, member_id: member.id, channel: "linkedin", provider: "dripify", direction: "in",
+        user_id: acc.user_id, member_id: member?.id ?? null, channel: "linkedin", provider: "dripify", direction: "in",
         contact_ref: url, body: replyText || "Respondió por LinkedIn (texto no incluido por Dripify).",
         provider_message_id: null, status: "delivered", sent_at: at,
         campaign_id: primary?.campaign_id ?? null, enrollment_id: primary?.id ?? null,
-        payload: { event: eventRaw || null, raw: payload },
+        payload: { event: eventRaw || null, raw: payload, ...(member ? {} : { lead }) },
       });
       if (!error) added = 1;
     }
@@ -264,8 +296,10 @@ Deno.serve(async (req) => {
       if (crm && crm !== member.contact_status && !["reunion_agendada", "reunion_tomada", "dado_de_baja"].includes(member.contact_status)) {
         await db.from("prospect_list_members").update({ contact_status: crm, status_changed_at: at }).eq("id", member.id);
       }
-    } else {
-      // Sin lead enlazado: se deja rastro para depurar el mapeo del payload.
+    } else if (!url || (!entries.length && signal !== "replied")) {
+      // Ni perfil ni hilo: se deja rastro para depurar el mapeo del payload.
+      // (Con perfil, el hilo ya quedó en la bandeja aunque el lead no esté en
+      // ninguna lista.)
       await db.from("campaign_events").insert({
         user_id: acc.user_id, channel: "linkedin", type: "skipped",
         detail: `Webhook de Dripify sin lead reconocido (${signal}; url: ${url || "—"})`, payload: { event: eventRaw || null, raw: payload },

@@ -19,11 +19,18 @@
  *      la bandeja de revisión de los mensajes IA por paso (campaign_messages).
  *      Los mensajes IA de 5 capas se generan al enrolar
  *      (window.prospecting.generateOutreachFor): la apertura los reutiliza.
- *   3. Respuestas: bandeja unificada sobre inbox_messages (el hilo completo
- *      de los tres canales, incluido lo que salió de la cuenta del usuario),
- *      con respuesta por WhatsApp y email vía la edge function inbox-send.
- *      LinkedIn se redacta aquí pero se pega en LinkedIn: ni Dripify ni
- *      LinkedIn exponen envío de mensajes por API.
+ *   3. Bandeja omnicanal sobre inbox_messages: TODO lo enviado y recibido
+ *      por los tres canales (lo que mandó el motor, lo que salió de la cuenta
+ *      de LinkedIn o de la UI de WATI y cada respuesta), agrupado por lead —
+ *      también los contactos que no están en ninguna lista (un número que
+ *      escribió, un perfil de LinkedIn que respondió en Dripify), con la
+ *      opción de guardarlos en una lista. Se responde desde aquí por
+ *      WhatsApp (WATI: texto en la ventana de 24 h o plantilla de saludo si
+ *      se cerró) y email (Apollo) vía la edge function inbox-send. LinkedIn
+ *      se redacta aquí pero se pega en LinkedIn: ni Dripify ni LinkedIn
+ *      exponen envío de mensajes por API (comprobado el 2026-09-14).
+ *   4. Campañas de LinkedIn diseñadas en Predictable (js/linkedin-campaigns.js):
+ *      se vinculan por nombre a la campaña que el usuario crea en Dripify.
  *
  * Backend: campaigns / campaign_enrollments (escribe el cliente),
  * campaign_events + inbox_messages (solo escribe el servidor),
@@ -39,6 +46,7 @@
  *   window.campaigns.show(paneEl)       // monta / refresca la pestaña
  *   window.campaigns.newFromList(id)    // abre el builder con esa lista
  *   window.campaigns.refresh()          // recarga canales, campañas y bandeja
+ *   window.campaigns.setView('inbox')   // abre la bandeja (o 'campaigns')
  *
  * Convenciones: todo string dinámico pasa por esc(); copy en español neutro
  * LatAm; sin datos de demo — los estados vacíos dicen qué falta.
@@ -127,13 +135,15 @@
     inboxHasReadAt: false,
     inboxError: null,
     convKey: null,
-    inboxFilter: { campaign: '', channel: '', unanswered: false },
+    inboxFilter: { campaign: '', channel: '', status: '', q: '' },
     replyDraft: {},
     replyChannel: {},
     waClosed: {},
     gmail: undefined,
     realtime: null,
     pendingListId: null,
+    pendingView: null,
+    linkedinCampaigns: [],     // campañas de LinkedIn diseñadas en Predictable
   };
 
   // ── Helpers base ─────────────────────────────────────────────────────────
@@ -451,6 +461,40 @@
     return accs;
   }
 
+  async function loadLinkedinCampaigns() {
+    if (!global.LinkedinCampaigns) { state.linkedinCampaigns = []; return; }
+    try { state.linkedinCampaigns = await global.LinkedinCampaigns.fetchAll(); }
+    catch (e) { state.linkedinCampaigns = []; console.warn('[campaigns] linkedin campaigns:', e.message); }
+  }
+  function ownLinkedinCampaigns() { return state.linkedinCampaigns || []; }
+  /** Abre el diseñador de campañas de LinkedIn con los datos de la cuenta. */
+  function openLinkedinDesigner(opts) {
+    if (!global.LinkedinCampaigns) return toast('El diseñador de campañas de LinkedIn no está cargado. Recarga la página.', 'error');
+    var o = opts || {};
+    var cfg = (state.dripify && state.dripify.config) || {};
+    return global.LinkedinCampaigns.open({
+      campaign: o.campaign || null,
+      defaultName: o.defaultName || '',
+      dripifyCampaigns: dripifyCampaigns(),
+      webhookUrl: cfg.webhook && cfg.webhook.url,
+      sampleMemberId: o.sampleMemberId || null,
+      edgeFetch: edgeFetch,
+      senderInfo: senderDefaults(),
+      refreshDripify: function () {
+        return edgeFetch(FN_CHANNEL, { action: 'refresh_dripify', payload: {} }).then(function (r) {
+          state.dripify = (r && (r.account || r.dripify)) || state.dripify;
+          return dripifyCampaigns();
+        });
+      },
+      onSaved: function (row) {
+        return loadLinkedinCampaigns().then(function () { if (o.onSaved) o.onSaved(row); if (!state.builder) render(); });
+      },
+      onDeleted: function (id) {
+        return loadLinkedinCampaigns().then(function () { if (o.onDeleted) o.onDeleted(id); if (!state.builder) render(); });
+      },
+    });
+  }
+
   async function loadAiSettings() {
     try { state.brief = pdSafe().fetchClientBrief ? await pdSafe().fetchClientBrief() : null; }
     catch (e) { state.brief = null; console.warn('[campaigns] brief:', e.message); }
@@ -669,18 +713,29 @@
       state.inbox = [];
     }
   }
-  function convKeyOf(m) { return m.member_id ? 'm:' + m.member_id : 'r:' + (m.contact_ref || m.id); }
+  function convKeyOf(m) { return m.member_id ? 'm:' + m.member_id : 'r:' + chanKey(m.channel) + ':' + (m.contact_ref || m.id); }
+  /** Datos del contacto cuando no está en ninguna lista: lo que mandó el proveedor. */
+  function leadFromMessages(msgs) {
+    var lead = null;
+    msgs.forEach(function (m) {
+      var pl = m.payload || {};
+      if (pl.lead && (pl.lead.name || pl.lead.first_name)) lead = lead || pl.lead;
+      else if (pl.senderName && m.direction === 'in') lead = lead || { name: String(pl.senderName) };
+    });
+    return lead;
+  }
   function buildConversations() {
     var map = {}, order = [];
     state.inbox.forEach(function (m) {
       var key = convKeyOf(m);
       var conv = map[key];
       if (!conv) {
-        conv = map[key] = { key: key, member_id: m.member_id || null, contact_ref: m.contact_ref || '', member: m.member_id ? (state.inboxMembers[m.member_id] || null) : null, messages: [], channels: {}, unread: 0, unreadIds: [], campaigns: {} };
+        conv = map[key] = { key: key, member_id: m.member_id || null, contact_ref: m.contact_ref || '', channel: chanKey(m.channel), member: m.member_id ? (state.inboxMembers[m.member_id] || null) : null, messages: [], channels: {}, unread: 0, unreadIds: [], campaigns: {}, inCount: 0, outCount: 0 };
         order.push(key);
       }
       conv.messages.push(m);
       conv.channels[chanKey(m.channel)] = true;
+      if (m.direction === 'in') conv.inCount++; else conv.outCount++;
       if (m.direction === 'in' && state.inboxHasReadAt && !m.read_at) { conv.unread++; conv.unreadIds.push(m.id); }
       if (m.campaign_id) conv.campaigns[m.campaign_id] = true;
     });
@@ -688,16 +743,26 @@
       var c = map[k];
       c.messages.sort(function (a, b) { return new Date(a.sent_at || 0) - new Date(b.sent_at || 0); });
       c.last = c.messages[c.messages.length - 1];
+      c.lastIn = c.messages.slice().reverse().find(function (m) { return m.direction === 'in'; }) || null;
+      if (!c.member) c.lead = leadFromMessages(c.messages);
       return c;
     });
   }
   function findConv(key) { return buildConversations().find(function (x) { return x.key === key; }) || null; }
   function filteredConversations(convs) {
     var f = state.inboxFilter;
+    var q = String(f.q || '').trim().toLowerCase();
     return convs.filter(function (c) {
       if (f.campaign && !c.campaigns[f.campaign]) return false;
       if (f.channel && !c.channels[f.channel]) return false;
-      if (f.unanswered && !(c.last && c.last.direction === 'in')) return false;
+      if (f.status === 'unanswered' && !(c.last && c.last.direction === 'in')) return false;
+      if (f.status === 'replied' && !c.inCount) return false;
+      if (f.status === 'sent_only' && c.inCount) return false;
+      if (f.status === 'unread' && !c.unread) return false;
+      if (q) {
+        var hay = [convName(c), c.member && c.member.company, c.member && c.member.title, c.lead && c.lead.company, c.contact_ref].filter(Boolean).join(' ').toLowerCase();
+        if (hay.indexOf(q) === -1) return false;
+      }
       return true;
     });
   }
@@ -707,7 +772,16 @@
   }
   function convName(conv) {
     if (conv.member) return memberName(conv.member);
-    return conv.contact_ref || 'Contacto sin identificar';
+    if (conv.lead && (conv.lead.name || conv.lead.first_name)) return conv.lead.name || ((conv.lead.first_name || '') + ' ' + (conv.lead.last_name || '')).trim();
+    var ref = String(conv.contact_ref || '');
+    if (/linkedin\.com/i.test(ref)) return ref.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//i, '').replace(/\/$/, '') || 'Perfil de LinkedIn';
+    if (/^\d{7,}$/.test(ref)) return '+' + ref;
+    return ref || 'Contacto sin identificar';
+  }
+  function convSub(conv) {
+    if (conv.member) return [conv.member.title, conv.member.company].filter(Boolean).join(' · ');
+    if (conv.lead) return [conv.lead.title, conv.lead.company].filter(Boolean).join(' · ') || (conv.lead.dripify_campaign ? 'Campaña de LinkedIn: ' + conv.lead.dripify_campaign : '');
+    return '';
   }
   async function markRead(conv) {
     var ids = (conv.unreadIds || []).slice();
@@ -717,16 +791,70 @@
     try { await edgeFetch(FN_INBOX, { action: 'mark_read', ids: ids }); }
     catch (e) { console.warn('[campaigns] mark_read:', e.message); }
   }
-  async function sendReply(conv, channel, body, subject) {
-    if (!conv.member_id) throw new Error('Este contacto no está en tus listas; no se puede responder desde aquí.');
+  async function sendReply(conv, channel, body, subject, template) {
+    if (!conv.member_id && !(channel === 'whatsapp' && conv.contact_ref)) throw new Error('Este contacto no está en tus listas; guárdalo en una lista para responderle.');
     var text = String(body || '').trim();
-    if (!text) throw new Error('Escribe el mensaje antes de enviar.');
-    var payload = { channel: channel, member_id: conv.member_id, body: text };
+    if (!text && !template) throw new Error('Escribe el mensaje antes de enviar.');
+    var payload = { channel: channel, body: text };
+    if (conv.member_id) payload.member_id = conv.member_id; else payload.contact_ref = conv.contact_ref;
+    if (template) payload.template = template;
     if (channel === 'email') payload.subject = String(subject || '').trim() || 'Re:';
     var r = await edgeFetch(FN_INBOX, payload);
     if (r && r.message && r.message.id) state.inbox.unshift(r.message);
-    state.replyDraft[conv.key] = '';
+    if (!template) state.replyDraft[conv.key] = '';
     await loadInbox();
+  }
+  /** Guarda un contacto de la bandeja (sin lead) en una lista y enlaza sus mensajes. */
+  function saveContactToList(conv) {
+    var lead = conv.lead || {};
+    var lists = state.lists || [];
+    if (!pdSafe().addManualMember) return toast('No se puede crear el contacto desde esta sesión.', 'warn');
+    var api = openModal({ title: 'Guardar contacto en una lista', width: 520 });
+    var sel = h('select');
+    lists.forEach(function (l) { sel.appendChild(h('option', { value: l.id, text: l.name })); });
+    var nameParts = String(lead.name || '').split(' ');
+    var firstI = h('input', { type: 'text', placeholder: 'Nombre', value: lead.first_name || nameParts[0] || '' });
+    var lastI = h('input', { type: 'text', placeholder: 'Apellido', value: lead.last_name || nameParts.slice(1).join(' ') || '' });
+    var compI = h('input', { type: 'text', placeholder: 'Empresa', value: lead.company || '' });
+    var titleI = h('input', { type: 'text', placeholder: 'Cargo', value: lead.title || '' });
+    var emailI = h('input', { type: 'text', placeholder: 'Email', value: lead.email || (conv.channel === 'email' ? conv.contact_ref : '') });
+    var phoneI = h('input', { type: 'text', placeholder: 'Teléfono', value: lead.phone || (conv.channel === 'whatsapp' ? '+' + conv.contact_ref : '') });
+    var liI = h('input', { type: 'text', placeholder: 'URL de LinkedIn', value: lead.linkedin_url || (conv.channel === 'linkedin' ? conv.contact_ref : '') });
+    api.body.appendChild(h('p', { text: 'El contacto respondió pero no está en ninguna lista. Guárdalo para verlo en Listas, enriquecerlo, enrolarlo en campañas y responderle por cualquier canal.' }));
+    if (!lists.length) api.body.appendChild(h('div', { class: 'pros-note-red', text: 'Aún no tienes listas. Crea una en Listas y vuelve.' }));
+    else api.body.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Lista' }), sel));
+    api.body.appendChild(h('div', { class: 'cmp-sender-grid' },
+      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Nombre' }), firstI),
+      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Apellido' }), lastI),
+      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Empresa' }), compI),
+      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Cargo' }), titleI),
+      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Email' }), emailI),
+      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Teléfono' }), phoneI)));
+    api.body.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'LinkedIn' }), liI));
+    api.setActions([
+      { label: 'Cancelar' },
+      { label: 'Guardar', className: 'btn btn-primary', onClick: function (m) {
+        var list = lists.find(function (l) { return String(l.id) === sel.value; });
+        if (!list) throw new Error('Elige una lista.');
+        m.setBusy(true);
+        return Promise.resolve(pdSafe().addManualMember({ list: list, contact: {
+          first_name: firstI.value.trim(), last_name: lastI.value.trim(), company: compI.value.trim(), title: titleI.value.trim(),
+          email: emailI.value.trim(), phone: phoneI.value.trim(), linkedin_url: liI.value.trim(),
+        } })).then(function (created) {
+          var member = created && (created.member || created);
+          var memberId = member && member.id;
+          if (!memberId) throw new Error('No se pudo crear el contacto.');
+          return edgeFetch(FN_INBOX, { action: 'link_member', member_id: memberId, channel: conv.channel, contact_ref: conv.contact_ref }).then(function () {
+            m.close();
+            toast('Contacto guardado en «' + list.name + '».', 'success');
+            state.convKey = 'm:' + memberId;
+            state.inboxMembers = {};
+            return loadInbox().then(render);
+          });
+        });
+      } },
+    ]);
+    return api;
   }
   function ensureGmailStatus() {
     if (state.gmail !== undefined || !pros().gmailStatus) return;
@@ -874,6 +1002,17 @@
       '#prospecting-shell .cmp-inbox-filters { display:grid; gap:8px; padding:12px; border-bottom:1px solid var(--hair); }',
       '#prospecting-shell .cmp-inbox-filters select { width:100%; }',
       '#prospecting-shell .cmp-inbox-filters label { display:flex; align-items:center; gap:6px; font-size:12px; }',
+      '#prospecting-shell .cmp-inbox-filters input[type=search] { width:100%; }',
+      '#prospecting-shell .cmp-inbox-filters .cmp-filter-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }',
+      '#prospecting-shell .cmp-inbox-count { padding:6px 12px; font-size:11px; color:var(--text3); border-bottom:1px solid var(--hair); }',
+      '#prospecting-shell .cmp-conv-tag { font-size:10px; padding:1px 6px; border-radius:999px; background:var(--surface3); color:var(--text3); white-space:nowrap; }',
+      '#prospecting-shell .cmp-bubble.system { align-self:center; max-width:90%; background:transparent; border-style:dashed; font-size:12px; color:var(--text3); text-align:center; }',
+      '#prospecting-shell .cmp-bubble-ctx { font-size:10.5px; color:var(--text3); margin-bottom:3px; }',
+      '#prospecting-shell .cmp-tpl-row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }',
+      '#prospecting-shell .cmp-thread-links .btn { padding:3px 9px; }',
+      '#prospecting-shell .cmp-li-list { display:grid; gap:8px; margin-top:8px; }',
+      '#prospecting-shell .cmp-li-item, .cmp-modal-body .cmp-li-item { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px 10px; border:1px solid var(--hair); border-radius:var(--r-md); background:var(--surface); font-size:12.5px; }',
+      '.cmp-modal-body .cmp-li-item b { flex:1; min-width:120px; }',
       '#prospecting-shell .cmp-conv-list { max-height:70vh; overflow-y:auto; }',
       '#prospecting-shell .cmp-conv { padding:10px 12px; border-bottom:1px solid var(--hair); cursor:pointer; display:grid; grid-template-columns:1fr auto; gap:2px 8px; }',
       '#prospecting-shell .cmp-conv:hover { background:var(--accent-soft-2); }',
@@ -990,7 +1129,7 @@
     var n = unreadCount();
     var badge = h('span', { class: 'cmp-badge', 'data-role': 'inbox-badge', text: n ? String(n) : '' });
     badge.hidden = !n;
-    tabs.appendChild(h('button', { type: 'button', class: state.view === 'inbox' ? 'active' : '', 'data-action': 'view', 'data-view': 'inbox' }, 'Respuestas', badge));
+    tabs.appendChild(h('button', { type: 'button', class: state.view === 'inbox' ? 'active' : '', 'data-action': 'view', 'data-view': 'inbox' }, 'Bandeja', badge));
     bar.appendChild(tabs);
     bar.appendChild(h('div', { class: 'cmp-spacer' }));
     var newBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'cmp-new', text: '+ Nueva campaña' });
@@ -1328,11 +1467,27 @@
       } else {
         body.appendChild(h('div', { class: 'pros-note-red', text: '⚠ Tu cuenta no devolvió campañas. Crea una campaña de LinkedIn (conexión + mensajes) en tu cuenta de automatización y pulsa "Releer".' }));
       }
+      // Campañas de LinkedIn diseñadas en Predictable (vinculadas por nombre).
+      var own = ownLinkedinCampaigns();
+      body.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Campañas de LinkedIn creadas en Predictable' }));
+      if (!own.length) body.appendChild(h('div', { class: 'pros-hint', text: 'Ninguna todavía. Diseña la secuencia aquí (nota de conexión y mensajes con esperas), créala en Dripify con el mismo nombre y queda vinculada: los leads de tus cadencias se enrolan solos.' }));
+      var ownBox = h('div', { class: 'cmp-li-list' });
+      own.forEach(function (lc) {
+        var stl = global.LinkedinCampaigns ? global.LinkedinCampaigns.statusLabel(lc) : { label: lc.status, kind: 'gray' };
+        var it = h('div', { class: 'cmp-li-item' });
+        it.appendChild(h('b', { text: lc.name }));
+        it.insertAdjacentHTML('beforeend', pill(stl.label, stl.kind));
+        it.appendChild(h('span', { class: 'pros-hint', text: (lc.steps || []).length + ' pasos' + (lc.dripify_campaign_name ? ' · «' + lc.dripify_campaign_name + '»' : '') }));
+        it.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: lc.dripify_campaign_id ? 'Editar' : 'Ver pasos / vincular', onclick: function () { api.close(); openLinkedinDesigner({ campaign: lc, onSaved: function () { openChannelDetails('linkedin'); }, onDeleted: function () { openChannelDetails('linkedin'); } }); } }));
+        ownBox.appendChild(it);
+      });
+      body.appendChild(ownBox);
+      body.appendChild(h('div', { class: 'cmp-row' }, h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: '+ Crear campaña de LinkedIn', onclick: function () { api.close(); openLinkedinDesigner({ onSaved: function () { openChannelDetails('linkedin'); } }); } })));
       var dwh = dcfg.webhook || {};
       var ok = liWebhookOk(dcfg);
       var check = h('div', { class: 'cmp-check' });
       check.appendChild(h('div', null, h('b', { class: 'ok', text: '✓' }), h('span', { text: 'Paso 1: API key conectada.' })));
-      check.appendChild(h('div', null, h('b', { class: ok ? 'ok' : '', text: ok ? '✓' : '2' }), h('span', { text: 'Paso 2: pega esta URL en cada campaña de LinkedIn → Settings → Webhooks, condición "After LinkedIn reply is received" (y, si quieres, otra con "invite accepted"). Así una respuesta por LinkedIn detiene la cadencia y llega a Respuestas.' })));
+      check.appendChild(h('div', null, h('b', { class: ok ? 'ok' : '', text: ok ? '✓' : '2' }), h('span', { text: 'Paso 2: pega esta URL en cada campaña de LinkedIn → Settings → Webhooks, condición "After LinkedIn reply is received" (y otra con "After message sent" para ver en la bandeja lo que sale de tu cuenta). Así una respuesta por LinkedIn detiene la cadencia y llega a la bandeja, aunque el lead no esté en tus listas.' })));
       body.appendChild(check);
       body.appendChild(h('code', { text: dwh.url || 'URL no disponible: reconecta el canal.' }));
       if (dwh.url) body.appendChild(h('div', { class: 'cmp-row' }, copyBtn(dwh.url)));
@@ -1459,6 +1614,8 @@
       defaultEmailAccount: def ? { id: def.id, email: def.email || '' } : null,
       channelConnected: channelConnected,
       channelLabel: function (k) { return CH[k] ? CH[k].label : k; },
+      linkedinCampaigns: ownLinkedinCampaigns,
+      openLinkedinDesigner: openLinkedinDesigner,
       senderInfo: sender,
       fetchMembers: function (id) { return pd().fetchMembers(id); },
       edgeFetch: edgeFetch,
@@ -1823,7 +1980,7 @@
     return card;
   }
 
-  // ── Render: Respuestas (bandeja unificada) ───────────────────────────────
+  // ── Render: Bandeja omnicanal ────────────────────────────────────────────
   function renderInbox() {
     ensureGmailStatus();
     var wrap = h('div', { class: 'cmp-inbox' });
@@ -1832,20 +1989,26 @@
 
     var left = h('div', { class: 'table-card' });
     var filters = h('div', { class: 'cmp-inbox-filters' });
+    var search = h('input', { type: 'search', placeholder: 'Buscar por nombre, empresa o cargo…', 'data-action': 'inbox-filter-q', value: state.inboxFilter.q || '' });
+    filters.appendChild(search);
+    var stSel = h('select', { 'data-action': 'inbox-filter-status' });
+    [['', 'Todas las conversaciones'], ['unanswered', 'Sin responder (última palabra del lead)'], ['unread', 'Sin leer'], ['replied', 'Respondieron'], ['sent_only', 'Solo enviados (sin respuesta)']].forEach(function (x) { var o = h('option', { value: x[0], text: x[1] }); if (x[0] === state.inboxFilter.status) o.selected = true; stSel.appendChild(o); });
+    filters.appendChild(stSel);
+    var row1 = h('div', { class: 'cmp-filter-row' });
+    var chSel = h('select', { 'data-action': 'inbox-filter-channel' });
+    [['', 'Todos los canales'], ['email', 'Email'], ['whatsapp', 'WhatsApp'], ['linkedin', 'LinkedIn']].forEach(function (x) { var o = h('option', { value: x[0], text: x[1] }); if (x[0] === state.inboxFilter.channel) o.selected = true; chSel.appendChild(o); });
     var campSel = h('select', { 'data-action': 'inbox-filter-campaign' });
     campSel.appendChild(h('option', { value: '', text: 'Todas las campañas' }));
     state.campaigns.forEach(function (c) { var o = h('option', { value: c.id, text: c.name }); if (String(c.id) === String(state.inboxFilter.campaign)) o.selected = true; campSel.appendChild(o); });
-    var chSel = h('select', { 'data-action': 'inbox-filter-channel' });
-    [['', 'Todos los canales'], ['email', 'Email'], ['whatsapp', 'WhatsApp'], ['linkedin', 'LinkedIn']].forEach(function (x) { var o = h('option', { value: x[0], text: x[1] }); if (x[0] === state.inboxFilter.channel) o.selected = true; chSel.appendChild(o); });
-    var cb = h('input', { type: 'checkbox', 'data-action': 'inbox-filter-unanswered' });
-    cb.checked = !!state.inboxFilter.unanswered;
-    filters.appendChild(campSel);
-    filters.appendChild(chSel);
-    filters.appendChild(h('label', null, cb, 'Solo sin responder'));
+    row1.appendChild(chSel); row1.appendChild(campSel);
+    filters.appendChild(row1);
     left.appendChild(filters);
+    var totIn = 0, totOut = 0;
+    state.inbox.forEach(function (m) { if (m.direction === 'in') totIn++; else totOut++; });
+    left.appendChild(h('div', { class: 'cmp-inbox-count', text: convs.length + (convs.length === 1 ? ' conversación' : ' conversaciones') + ' · ' + totOut + ' enviados · ' + totIn + ' recibidos' + (unreadCount() ? ' · ' + unreadCount() + ' sin leer' : '') }));
     var list = h('div', { class: 'cmp-conv-list' });
     if (state.inboxError) list.appendChild(h('div', { class: 'pros-note-red', style: 'margin:12px', text: '⚠ ' + state.inboxError }));
-    else if (!convs.length) list.appendChild(h('div', { class: 'pros-hint', style: 'padding:14px', text: 'Todavía no hay respuestas. Cuando un lead conteste por cualquier canal, la conversación aparece aquí.' }));
+    else if (!convs.length) list.appendChild(h('div', { class: 'pros-hint', style: 'padding:14px', text: 'La bandeja está vacía. Aquí aparece todo lo que sale de tus campañas por email, WhatsApp y LinkedIn, y cada respuesta que llega por cualquiera de los tres canales.' }));
     else if (!shown.length) list.appendChild(h('div', { class: 'pros-hint', style: 'padding:14px', text: 'Ninguna conversación coincide con los filtros.' }));
     shown.forEach(function (conv) {
       var item = h('div', { class: 'cmp-conv' + (conv.key === state.convKey ? ' active' : ''), 'data-action': 'conv-open', 'data-key': conv.key });
@@ -1853,10 +2016,11 @@
       if (conv.unread) name.appendChild(h('span', { class: 'cmp-unread' }));
       name.appendChild(h('span', { class: 'nm', text: convName(conv) }));
       name.insertAdjacentHTML('beforeend', chanIconsHtml(CH_ORDER.filter(function (k) { return conv.channels[k]; })));
+      if (!conv.member) name.appendChild(h('span', { class: 'cmp-conv-tag', title: 'No está en ninguna lista', text: 'sin lista' }));
       item.appendChild(name);
       item.appendChild(h('div', { class: 'cmp-conv-time', text: fmtRel(conv.last && conv.last.sent_at) }));
-      item.appendChild(h('div', { class: 'cmp-conv-sub', text: conv.member ? [conv.member.company, conv.member.title].filter(Boolean).join(' · ') : '' }));
-      var snippet = conv.last ? ((conv.last.direction === 'out' ? 'Tú: ' : '') + (conv.last.body || (conv.last.payload && conv.last.payload.subject) || '(sin texto)')) : '';
+      item.appendChild(h('div', { class: 'cmp-conv-sub', text: convSub(conv) }));
+      var snippet = conv.last ? ((conv.last.direction === 'out' ? 'Tú: ' : '') + bubbleText(conv.last)) : '';
       item.appendChild(h('div', { class: 'cmp-conv-snip', text: snippet }));
       list.appendChild(item);
     });
@@ -1869,8 +2033,37 @@
   }
   function renderThreadEmpty() {
     var box = h('div', { class: 'chart-card' });
-    box.innerHTML = emptyHtml(SVG.inbox, 'Elige una conversación', 'Aquí ves el hilo completo del lead en todos los canales y le respondes por email, WhatsApp o LinkedIn.');
+    box.innerHTML = emptyHtml(SVG.inbox, 'Elige una conversación', 'Aquí ves el hilo completo del lead en todos los canales — lo enviado y lo recibido — y le respondes por email, WhatsApp o LinkedIn.');
     return box;
+  }
+  /** Texto visible de un mensaje (los envíos de LinkedIn que sincroniza Dripify no traen texto). */
+  function bubbleText(msg) {
+    var pl = msg.payload || {};
+    if (msg.body) return msg.body;
+    if (chanKey(msg.channel) === 'linkedin' && msg.direction === 'out') {
+      if (pl.kind === 'connection_sent') return 'Solicitud de conexión enviada desde tu LinkedIn' + (pl.dripify_campaign_name ? ' (campaña «' + pl.dripify_campaign_name + '»)' : '') + '.';
+      return 'Mensaje enviado desde tu campaña de LinkedIn' + (pl.dripify_campaign_name ? ' «' + pl.dripify_campaign_name + '»' : '') + ' (Dripify no entrega el texto por API).';
+    }
+    if (pl.subject && msg.direction === 'out') return pl.subject;
+    return msg.direction === 'in' ? 'Respuesta recibida (el texto no está disponible aquí).' : 'Mensaje enviado (texto no guardado).';
+  }
+  function stepContext(msg) {
+    var pl = msg.payload || {};
+    var parts = [];
+    var c = msg.campaign_id ? findCampaign(msg.campaign_id) : null;
+    if (c) parts.push('Campaña ' + c.name);
+    if (c && pl.node_id) {
+      var loc = flowLib().find(campaignFlow(c), pl.node_id);
+      if (loc) parts.push(flowLib().nodeTitle(loc.node));
+    }
+    if (pl.source === 'inbox_reply') parts.push('respuesta desde la bandeja');
+    else if (pl.source === 'wati_ui') parts.push('desde WATI');
+    else if (pl.content_kind && String(pl.content_kind).indexOf('template_') === 0) parts.push('plantilla de saludo');
+    return parts.join(' · ');
+  }
+  function convLinkedinUrl(conv) {
+    var m = conv.member;
+    return safeUrl(m ? m.linkedin_url : ((conv.lead && conv.lead.linkedin_url) || (conv.channel === 'linkedin' ? conv.contact_ref : '')));
   }
   function renderThread(conv) {
     var card = h('div', { class: 'table-card' });
@@ -1878,10 +2071,12 @@
     var head = h('div', { class: 'cmp-thread-head' });
     var left = h('div', { style: 'min-width:0' });
     left.appendChild(h('div', { style: 'font-weight:700;font-size:14px', text: convName(conv) }));
-    left.appendChild(h('div', { class: 'pros-cellsub', text: m ? [m.title, m.company].filter(Boolean).join(' · ') : (conv.contact_ref || '') }));
+    left.appendChild(h('div', { class: 'pros-cellsub', text: convSub(conv) || (conv.contact_ref || '') }));
     var links = h('div', { class: 'cmp-thread-links' });
-    var liUrl = m && safeUrl(m.linkedin_url);
+    var liUrl = convLinkedinUrl(conv);
     if (liUrl) links.appendChild(h('a', { href: liUrl, target: '_blank', rel: 'noopener', text: 'Perfil de LinkedIn' }));
+    if (m && hasEmail(m)) links.appendChild(h('span', { class: 'pros-hint', text: m.email }));
+    if (m && hasPhone(m)) links.appendChild(h('span', { class: 'pros-hint', text: m.phone }));
     if (conv.channels.email && m && m.email) {
       if (state.gmail && state.gmail.connected && pros().openThread) links.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'thread-gmail', 'data-key': conv.key, text: 'Ver hilo completo en Gmail' }));
       else if (state.gmail && !state.gmail.connected && pros().connectGmail) links.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'gmail-connect', text: 'Conectar Gmail para leer el hilo completo' }));
@@ -1891,6 +2086,7 @@
       var names = campIds.map(function (id) { var c = findCampaign(id); return c ? c.name : null; }).filter(Boolean);
       if (names.length) links.appendChild(h('span', { class: 'pros-hint', text: 'Campaña: ' + names.join(', ') }));
     }
+    if (!m) links.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'conv-save', 'data-key': conv.key, text: 'Guardar en una lista' }));
     head.appendChild(left);
     head.appendChild(links);
     card.appendChild(head);
@@ -1898,13 +2094,21 @@
     var thread = h('div', { class: 'cmp-thread' });
     conv.messages.forEach(function (msg) {
       var pl = msg.payload || {};
-      var b = h('div', { class: 'cmp-bubble ' + (msg.direction === 'in' ? 'in' : 'out') + (msg.body ? '' : ' empty-body') });
-      var inner = '';
-      if (chanKey(msg.channel) === 'email' && pl.subject) inner += '<div class="cmp-bubble-subj">' + esc(pl.subject) + '</div>';
-      inner += msg.body ? esc(msg.body).replace(/\n/g, '<br>') : (msg.direction === 'in' ? 'Respuesta recibida (el texto no está disponible aquí).' : 'Mensaje enviado (texto no guardado).');
+      var isSystem = chanKey(msg.channel) === 'linkedin' && msg.direction === 'out' && !msg.body;
+      var b = h('div', { class: 'cmp-bubble ' + (isSystem ? 'system' : (msg.direction === 'in' ? 'in' : 'out')) + (msg.body ? '' : ' empty-body') });
+      var ctx = msg.direction === 'out' ? stepContext(msg) : '';
+      if (ctx) b.appendChild(h('div', { class: 'cmp-bubble-ctx', text: ctx }));
+      if (chanKey(msg.channel) === 'email' && pl.subject) b.appendChild(h('div', { class: 'cmp-bubble-subj', text: pl.subject }));
+      var raw = bubbleText(msg);
+      // Los emails salientes guardan "Asunto: …" al inicio del cuerpo: el asunto ya va arriba.
+      if (chanKey(msg.channel) === 'email' && pl.subject && raw.indexOf('Asunto: ') === 0) raw = raw.replace(/^Asunto: [^\n]*\n+/, '');
+      b.appendChild(h('div', { style: 'white-space:pre-wrap', text: raw }));
       var status = msg.direction === 'out' ? (MSG_STATUS[msg.status] || msg.status || '') : (pl.reply_class ? String(pl.reply_class).replace(/_/g, ' ') : '');
-      inner += '<div class="cmp-bubble-meta">' + chanIcon(msg.channel) + (status ? '<span>' + esc(status) + '</span><span>·</span>' : '') + '<span>' + esc(fmtDateTime(msg.sent_at)) + '</span></div>';
-      b.innerHTML = inner;
+      if (msg.status === 'failed' && msg.error_detail) status += ' · ' + msg.error_detail;
+      var meta = h('div', { class: 'cmp-bubble-meta', html: chanIcon(msg.channel) });
+      if (status) { meta.appendChild(h('span', { text: status })); meta.appendChild(h('span', { text: '·' })); }
+      meta.appendChild(h('span', { text: fmtDateTime(msg.sent_at) }));
+      b.appendChild(meta);
       thread.appendChild(b);
     });
     card.appendChild(thread);
@@ -1915,16 +2119,21 @@
   function renderReplyBox(conv) {
     var box = h('div', { class: 'cmp-reply' });
     var m = conv.member;
-    var liUrl = m && safeUrl(m.linkedin_url);
-    var available = ['whatsapp', 'email'].filter(function (k) { return conv.channels[k]; });
+    var liUrl = convLinkedinUrl(conv);
+    // Canales por los que se puede contestar: los que tienen dato del lead
+    // (no solo el canal por el que escribió: a una respuesta de LinkedIn se
+    // le puede contestar por email si el lead tiene email).
+    var available = [];
+    if ((m && hasPhone(m)) || (!m && conv.channel === 'whatsapp' && conv.contact_ref)) available.push('whatsapp');
+    if (m && hasEmail(m)) available.push('email');
     // LinkedIn no tiene envío por API (la Open API de Dripify es de solo
     // lectura y LinkedIn no abre su mensajería a terceros), así que la
     // respuesta se redacta aquí y se copia para pegarla en el chat.
-    if (conv.channels.linkedin && liUrl) available.push('linkedin');
-    if (!conv.member_id || !available.length) {
+    if (liUrl) available.push('linkedin');
+    if (!available.length) {
       var row = h('div', { class: 'cmp-reply-row' });
-      row.appendChild(h('span', { class: 'pros-hint', text: !conv.member_id ? 'Este contacto no está en tus listas; no se puede responder desde aquí.' : (conv.channels.linkedin ? 'Este lead no tiene guardada su URL de LinkedIn, así que no podemos abrir el chat.' : 'Este hilo no tiene un canal desde el que responder.') }));
-      if (liUrl) row.appendChild(h('a', { href: liUrl, target: '_blank', rel: 'noopener', class: 'btn btn-ghost btn-sm', text: 'Abrir LinkedIn' }));
+      row.appendChild(h('span', { class: 'pros-hint', text: !m ? 'Este contacto no está en tus listas: guárdalo en una lista para responderle por email o WhatsApp.' : 'Este lead no tiene teléfono, email ni URL de LinkedIn guardados: revélalos desde Listas → Enriquecer para responderle.' }));
+      if (!m) row.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'conv-save', 'data-key': conv.key, text: 'Guardar en una lista' }));
       box.appendChild(row);
       return box;
     }
@@ -1940,19 +2149,33 @@
       tabs.appendChild(h('button', { type: 'button', class: k === chosen ? 'active' : '', 'data-action': 'reply-channel', 'data-key': conv.key, 'data-channel': k, html: chanIcon(k) + ' ' + esc(CH[k].label) }));
     });
     top.appendChild(tabs);
+    if (!m) top.appendChild(h('span', { class: 'pros-hint', text: 'Contacto sin lista: guárdalo para responderle también por email.' }));
     box.appendChild(top);
     if (chosen === 'linkedin') {
       var lta = h('textarea', { placeholder: 'Escribe tu respuesta para LinkedIn…', 'data-action': 'reply-draft', 'data-key': conv.key });
       lta.value = state.replyDraft[conv.key] || '';
       box.appendChild(lta);
       var lfoot = h('div', { class: 'cmp-reply-row' });
-      lfoot.appendChild(h('span', { class: 'pros-hint', text: 'LinkedIn no deja enviar mensajes desde fuera: copiamos tu respuesta y abrimos el perfil para que la pegues en el chat.' }));
+      lfoot.appendChild(h('span', { class: 'pros-hint', text: 'Ni Dripify ni LinkedIn permiten enviar mensajes por API: copiamos tu respuesta y abrimos el perfil para que la pegues en el chat.' }));
       lfoot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-linkedin', 'data-key': conv.key, text: 'Copiar y abrir LinkedIn' }));
       box.appendChild(lfoot);
       return box;
     }
-    if (chosen === 'whatsapp' && state.waClosed[conv.key]) {
-      box.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:0', text: 'La ventana de 24 h de WhatsApp está cerrada. Solo se puede enviar una plantilla; usa un paso de campaña o espera a que te escriba.' }));
+    if (chosen === 'whatsapp' && (state.waClosed[conv.key] || !sessionOpen(conv))) {
+      box.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:0', text: 'La ventana de 24 h de WhatsApp está cerrada (el lead no escribió en las últimas 24 h). Meta solo acepta una plantilla aprobada para reabrirla; cuando conteste, podrás escribirle texto libre.' }));
+      var tpls = (state.wati && state.wati.config && state.wati.config.templates && state.wati.config.templates.items) || {};
+      var trow = h('div', { class: 'cmp-tpl-row' });
+      trow.appendChild(h('span', { class: 'pros-hint', text: 'Enviar plantilla:' }));
+      var any = false;
+      [['a', 'Saludo 1'], ['b', 'Recordatorio'], ['c', 'Último intento']].forEach(function (x) {
+        var t = tpls[x[0]];
+        if (!t) return;
+        any = true;
+        var ok = /approved/i.test(String(t.status || ''));
+        trow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-template', 'data-key': conv.key, 'data-template': x[0], disabled: ok ? null : 'disabled', title: ok ? (t.body || '') : 'Plantilla ' + String(t.status || 'pendiente').toLowerCase() + ' en Meta', text: x[1] }));
+      });
+      if (!any) trow.appendChild(h('span', { class: 'pros-hint', text: 'Conecta WhatsApp para crear las plantillas de saludo.' }));
+      box.appendChild(trow);
       return box;
     }
     if (chosen === 'email') {
@@ -1966,10 +2189,16 @@
     ta.value = state.replyDraft[conv.key] || '';
     box.appendChild(ta);
     var foot = h('div', { class: 'cmp-reply-row' });
-    foot.appendChild(h('span', { class: 'pros-hint', text: chosen === 'whatsapp' ? 'Texto libre dentro de las 24 h desde el último mensaje del lead.' : 'Sale como respuesta individual desde tu cuenta de email.' }));
+    foot.appendChild(h('span', { class: 'pros-hint', text: chosen === 'whatsapp' ? 'Texto libre dentro de las 24 h desde el último mensaje del lead. Sale desde tu número de WhatsApp.' : 'Sale como respuesta individual desde tu cuenta de email.' }));
     foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-send', 'data-key': conv.key, 'data-channel': chosen, 'data-credit-cost': 'campaign_send', 'data-credit-muted': '', text: 'Enviar por ' + CH[chosen].label }));
     box.appendChild(foot);
     return box;
+  }
+  /** ¿Hay sesión de WhatsApp abierta (entrante hace < 24 h)? */
+  function sessionOpen(conv) {
+    var last = 0;
+    conv.messages.forEach(function (x) { if (chanKey(x.channel) === 'whatsapp' && x.direction === 'in') last = Math.max(last, new Date(x.sent_at || 0).getTime()); });
+    return !!last && Date.now() - last < 24 * 60 * 60 * 1000;
   }
 
   // ── Eventos ──────────────────────────────────────────────────────────────
@@ -2101,11 +2330,24 @@
       return;
     }
     if (action === 'reply-channel' && key) { state.replyChannel[key] = channel; return render(); }
+    if (action === 'conv-save' && key) { var convS = findConv(key); if (convS) saveContactToList(convS); return; }
+    if (action === 'reply-template' && key) {
+      var convT = findConv(key);
+      if (!convT) return;
+      var tplKey = btn.getAttribute('data-template');
+      var rT = btnLoading(btn, '⏳');
+      return sendReply(convT, 'whatsapp', '', '', tplKey).then(function () {
+        delete state.waClosed[key];
+        toast('Plantilla enviada por WhatsApp.', 'success');
+        rT();
+        render();
+      }, function (err) { rT(); throw err; });
+    }
     if (action === 'reply-linkedin' && key) {
       var convL = findConv(key);
       var taL = state.root.querySelector('textarea[data-action="reply-draft"][data-key="' + key + '"]');
       var textL = taL ? taL.value.trim() : '';
-      var urlL = convL && convL.member && safeUrl(convL.member.linkedin_url);
+      var urlL = convL && convLinkedinUrl(convL);
       if (!urlL) return toast('Este lead no tiene guardada su URL de LinkedIn.', 'warn');
       if (textL) copyText(textL);
       window.open(urlL, '_blank', 'noopener');
@@ -2206,7 +2448,7 @@
       render();
     } else if (action === 'inbox-filter-campaign') { state.inboxFilter.campaign = t.value; render(); }
     else if (action === 'inbox-filter-channel') { state.inboxFilter.channel = t.value; render(); }
-    else if (action === 'inbox-filter-unanswered') { state.inboxFilter.unanswered = !!t.checked; render(); }
+    else if (action === 'inbox-filter-status') { state.inboxFilter.status = t.value; render(); }
     else if (action === 'playbook-toggle') {
       if (!pdSafe().saveOutreachPlaybookPrefs) return;
       var enabled = !!t.checked;
@@ -2225,6 +2467,15 @@
     var key = t.getAttribute && t.getAttribute('data-key');
     if (action === 'reply-draft' && key) state.replyDraft[key] = t.value;
     else if (action === 'reply-subject' && key) state.replyDraft[key + ':subject'] = t.value;
+    else if (action === 'inbox-filter-q') {
+      state.inboxFilter.q = t.value;
+      // Solo se repinta la lista de conversaciones: el campo de búsqueda conserva el foco.
+      var list = state.root && state.root.querySelector('.cmp-conv-list');
+      if (list) {
+        var fresh = renderInbox().querySelector('.cmp-conv-list');
+        if (fresh) list.replaceWith(fresh);
+      }
+    }
   }
 
   async function openCampaign(id) {
@@ -2267,7 +2518,7 @@
     render();
     try {
       await getUid();
-      await Promise.all([loadStatus(), loadLists(), loadCampaigns(), loadInbox()]);
+      await Promise.all([loadStatus(), loadLists(), loadCampaigns(), loadInbox(), loadLinkedinCampaigns()]);
       state.emailAccounts = null;
       await loadEmailAccounts();
     } finally {
@@ -2275,6 +2526,7 @@
     }
     subscribeRealtime();
     if (applyPendingList()) return;
+    if (state.pendingView) { state.view = state.pendingView; state.pendingView = null; }
     render();
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
@@ -2284,16 +2536,24 @@
     if (built && !state.loading && state.status !== undefined) applyPendingList();
   }
 
+  /** Cambia de vista ('campaigns' | 'inbox'); si la pestaña aún no cargó, se aplica al montar. */
+  function setView(view) {
+    var v = view === 'inbox' ? 'inbox' : 'campaigns';
+    if (!built || state.loading || state.status === undefined) { state.pendingView = v; return; }
+    state.view = v;
+    render();
+  }
+
   async function refresh() {
     if (!built) return;
     state.inboxMembers = {};
-    await Promise.all([loadStatus(), loadLists(), loadCampaigns(), loadInbox()]);
+    await Promise.all([loadStatus(), loadLists(), loadCampaigns(), loadInbox(), loadLinkedinCampaigns()]);
     state.emailAccounts = null;
     await loadEmailAccounts();
     render();
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
 
-  global.campaigns = { show: show, newFromList: newFromList, refresh: refresh };
+  global.campaigns = { show: show, newFromList: newFromList, refresh: refresh, setView: setView, openLinkedinDesigner: openLinkedinDesigner };
   console.log('[campaigns] module loaded');
 })(window);

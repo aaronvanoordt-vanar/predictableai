@@ -26,8 +26,10 @@
  *
  * Reglas: ≥1 acción; las condiciones no se anidan; una rama solo tiene
  * acciones; with_prev necesita una acción justo antes en la misma lista;
- * linkedin_connect exige dripify_campaign_id; custom exige body (y subject
- * en email); template_* solo en WhatsApp; ids únicos.
+ * linkedin_connect exige una campaña de LinkedIn (settings.dripify_campaign_id
+ * de Dripify o settings.linkedin_campaign_id diseñada en Predictable y
+ * vinculada a Dripify por nombre); custom exige body (y subject en email);
+ * template_* solo en WhatsApp; ids únicos.
  *
  * La regla de parada NO vive aquí: una respuesta por cualquier canal, la baja
  * o la detención manual cierran el enrolamiento en el motor.
@@ -184,8 +186,8 @@ export function validate(raw: unknown): { ok: boolean; errors: FlowError[] } {
     if (a.delay.mode === "with_prev" && !(idx > 0 && list[idx - 1].type === "action")) {
       errors.push({ nodeId: a.id, message: `${label}: "junto con el anterior" necesita otro envío justo antes.` });
     }
-    if (a.channel === "linkedin_connect" && !a.settings?.dripify_campaign_id) {
-      errors.push({ nodeId: a.id, message: `${label}: el paso de LinkedIn necesita una campaña de Dripify.` });
+    if (a.channel === "linkedin_connect" && !a.settings?.dripify_campaign_id && !a.settings?.linkedin_campaign_id) {
+      errors.push({ nodeId: a.id, message: `${label}: el paso de LinkedIn necesita una campaña de LinkedIn (elige una de Dripify o crea la tuya).` });
     }
     if (a.content.kind.startsWith("template_") && a.channel !== "whatsapp") {
       errors.push({ nodeId: a.id, message: `${label}: las plantillas de saludo son solo de WhatsApp.` });
