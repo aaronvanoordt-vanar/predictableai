@@ -286,6 +286,7 @@
    *         warnings:{nodeId:[msg]}, counters:{nodeId:{...}}, subtitle(node), onCard(nodeId) }
    */
   function renderTimeline(flow, opts) {
+    injectStyles();
     var L = lib();
     var o = opts || {};
     var f = L.normalize(flow);
