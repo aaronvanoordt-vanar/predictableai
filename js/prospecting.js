@@ -50,11 +50,23 @@
     gmail: null,                 // último gmail_accounts leído (gmailStatus)
     search: {
       filters: null,
-      results: null,
       searchError: null,
       loading: false,
+      hasSearched: false,
       page: 1,
       perPage: 25,
+      // Buffer de filas crudas de Apollo (sin filtrar) + cursor de su paginación.
+      // La UI corta páginas de `perPage` filas VISIBLES sobre este buffer.
+      buf: [],
+      payload: null,
+      payloadSig: null,
+      apolloPage: 0,
+      apolloDone: false,
+      apolloTotal: 0,
+      apolloPartial: false,
+      hitFetchCap: false,
+      crumbs: [],
+      excluded: null,
       pageRows: [],
       rowsByKey: new Map(),
       selectedRows: new Map(),
@@ -1266,19 +1278,14 @@
   // `exact:false` cuando no lo reporta y `value` es solo un piso (las filas de
   // esta página).
   function recoTotal() {
-    var res = state.search.results;
-    var pg = (res && res.pagination) || {};
-    var rows = (state.search.pageRows || []).length;
+    var s = state.search;
     // Same Apollo quirk as renderResults(): total_entries can report 0 even
     // when people/contacts came back. Trusting it literally here made the
-    // recommended-search widget think it found only one page (the 25 filas de
-    // paginación) and report "25 personas — es lo máximo con tu ICP" aunque
-    // Apollo tenga miles más. Un total positivo es exacto; si no, `rows` es un
-    // piso ("≥ rows"), no el total.
-    if (pg.total_entries != null && pg.total_entries > 0) {
-      return { value: pg.total_entries, exact: true };
-    }
-    return { value: rows, exact: false };
+    // recommended-search widget think it found only one page and report
+    // "25 personas — es lo máximo con tu ICP" aunque Apollo tenga miles más.
+    // Un total positivo es exacto; si no, lo traído es un piso, no el total.
+    if (s.apolloTotal > 0) return { value: s.apolloTotal, exact: true };
+    return { value: visibleRows().length, exact: false };
   }
 
   function waitForBrief() {
@@ -1390,94 +1397,207 @@
     renderResults();
   }
 
+  // ── Paginación con buffer ───────────────────────────────────────────────
+  // Apollo pagina sobre resultados SIN filtrar, pero la vista oculta a quien ya
+  // esté en una lista excluida. Cuando una página de la UI era una página de
+  // Apollo, una con 24 de 25 ocultos se veía casi vacía y había que ir a
+  // «siguiente» a mano. En vez de eso se acumulan las filas crudas en un buffer
+  // y la UI corta páginas de `perPage` filas VISIBLES, pidiendo más páginas a
+  // Apollo hasta llenarla. El buffer también hace gratis volver atrás y
+  // cambiar el tamaño de página (las filas no dependen de él).
+  var APOLLO_PAGE_SIZE = 100;     // máximo de Apollo: menos viajes por página
+  var APOLLO_MAX_ROWS = 50000;    // tope duro de resultados visibles de Apollo
+  var MAX_FETCHES_PER_PAGE = 10;  // tope por acción (hasta 1.000 filas crudas)
+
+  function searchRowsFrom(res, offset) {
+    var rows = [];
+    (res.contacts || []).forEach(function (c, i) {
+      var r = Object.assign({}, c);
+      r._saved = true;
+      r._key = 'c:' + String(c.id != null ? c.id : (c.apollo_contact_id != null ? c.apollo_contact_id : 'i' + (offset + i)));
+      rows.push(r);
+    });
+    (res.people || []).forEach(function (p, i) {
+      var r = Object.assign({}, p);
+      r._saved = false;
+      r._key = 'p:' + String(p.id != null ? p.id : 'i' + (offset + i));
+      rows.push(r);
+    });
+    return rows;
+  }
+
+  function isExcludedRow(row) {
+    var ex = state.search.excluded;
+    if (!ex || !row) return false;
+    if (row._saved) {
+      return !!((row.id && ex.contactIds.has(row.id)) || (row.person_id && ex.personIds.has(row.person_id)));
+    }
+    return !!(row.id && ex.personIds.has(row.id));
+  }
+
+  function visibleRows() {
+    var buf = state.search.buf || [];
+    if (!state.search.excluded) return buf;
+    return buf.filter(function (r) { return !isExcludedRow(r); });
+  }
+
   // Person/contact IDs ya guardados en las listas marcadas para excluir.
-  // Cacheado por firma de IDs seleccionados: cambiar de página no debe
-  // re-consultar Supabase en cada llamada a runSearch().
-  function getExcludedIds() {
+  // Cacheado por firma de IDs seleccionados: paginar no debe re-consultar
+  // Supabase. Best-effort: si falla, se muestra sin filtrar en vez de romper.
+  function refreshExcludedIds() {
     var s = state.search;
     var ids = (s.filters.exclude_list_ids || []).slice();
-    if (!ids.length) return Promise.resolve(null);
+    if (!ids.length) { s.excluded = null; return Promise.resolve(null); }
     var sig = ids.slice().sort().join(',');
-    if (s._excludeCache && s._excludeCache.sig === sig) return Promise.resolve(s._excludeCache.data);
+    if (s._excludeCache && s._excludeCache.sig === sig) {
+      s.excluded = s._excludeCache.data;
+      return Promise.resolve(s.excluded);
+    }
     return Promise.resolve(pd().fetchListMemberIds(ids)).then(function (data) {
       s._excludeCache = { sig: sig, data: data };
+      s.excluded = data;
       return data;
-    });
-  }
-
-  // Quita del resultado a quienes ya están guardados en las listas excluidas
-  // (best-effort: si la consulta de exclusión falla, se muestran los
-  // resultados sin filtrar en vez de bloquear la búsqueda).
-  function applyListExclusions(res) {
-    return getExcludedIds().then(function (excluded) {
-      if (!excluded || (!excluded.personIds.size && !excluded.contactIds.size)) return res;
-      var removed = 0;
-      var people = (res.people || []).filter(function (p) {
-        var hit = !!(p && p.id && excluded.personIds.has(p.id));
-        if (hit) removed++;
-        return !hit;
-      });
-      var contacts = (res.contacts || []).filter(function (c) {
-        var hit = !!(c && ((c.id && excluded.contactIds.has(c.id)) || (c.person_id && excluded.personIds.has(c.person_id))));
-        if (hit) removed++;
-        return !hit;
-      });
-      return Object.assign({}, res, { people: people, contacts: contacts, _excludedCount: removed });
     }).catch(function (e) {
       console.warn('[prospecting] exclude-lists filter falló:', e);
-      return res;
+      s.excluded = null;
+      return null;
     });
   }
 
-  // Re-filtra la página ya cargada al (des)marcar una lista a excluir, sin
-  // esperar a que el usuario presione «Buscar» de nuevo — antes el checkbox
-  // solo se marcaba y los resultados en pantalla no cambiaban.
+  // Trae la siguiente página de Apollo al buffer.
+  function fetchMoreRows() {
+    var s = state.search;
+    var payload = Object.assign({}, s.payload || {});
+    payload.page = s.apolloPage + 1;
+    payload.per_page = APOLLO_PAGE_SIZE;
+    return Promise.resolve(pd().searchPeople(payload)).then(function (res) {
+      s.apolloPage = payload.page;
+      var rows = searchRowsFrom(res, s.buf.length);
+      s.buf = s.buf.concat(rows);
+      var pg = res.pagination || {};
+      if (pg.total_entries > 0) s.apolloTotal = pg.total_entries;
+      s.apolloPartial = !!res.partial_results_only;
+      if (!s.crumbs.length) s.crumbs = res.breadcrumbs || [];
+      s.apolloDone = rows.length < APOLLO_PAGE_SIZE ||
+        (s.apolloTotal > 0 && s.buf.length >= s.apolloTotal) ||
+        s.buf.length >= APOLLO_MAX_ROWS;
+    });
+  }
+
+  // Asegura que haya filas visibles suficientes para pintar la página `page`.
+  function ensurePage(page) {
+    var s = state.search;
+    var need = page * (s.perPage || 25);
+    var fetches = 0;
+    s.hitFetchCap = false;
+    function step() {
+      if (visibleRows().length >= need || s.apolloDone) return Promise.resolve();
+      if (fetches >= MAX_FETCHES_PER_PAGE) { s.hitFetchCap = true; return Promise.resolve(); }
+      fetches++;
+      return fetchMoreRows().then(step);
+    }
+    return step();
+  }
+
+  function searchSkeleton() {
+    var s = state.search;
+    if (!s.resultsEl || !window.Skeleton) return;
+    var skRows = Math.min(10, Math.max(5, s.perPage || 6));
+    s.resultsEl.innerHTML =
+      '<div class="pros-results-head">' + window.Skeleton.line(210, 13) +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+          window.Skeleton.line(110, 28) + window.Skeleton.line(120, 28) +
+        '</div></div>' +
+      window.Skeleton.tableCard({ cols: 6, rows: skRows, title: false });
+  }
+
+  // Navega dentro de los resultados ya buscados (sin rearmar el buffer).
+  function goToPage(page) {
+    var s = state.search;
+    if (s.loading || !s.hasSearched) return Promise.resolve();
+    var target = Math.max(1, page);
+    s.loading = true;
+    var restore = btnLoading(s.searchBtn, '⏳ Buscando…');
+    return ensurePage(target)
+      .then(function () {
+        var vis = visibleRows();
+        // Si Apollo se quedó sin resultados antes de llegar, no dejes la vista
+        // en una página vacía.
+        if (target > 1 && (target - 1) * s.perPage >= vis.length) {
+          target = Math.max(1, Math.ceil(vis.length / s.perPage));
+        }
+        s.page = target;
+        s.searchError = null;
+        renderResults();
+      })
+      .catch(function (e) {
+        s.searchError = errMsg(e);
+        renderResults();
+        toast(errMsg(e), 'error');
+      })
+      .then(function () { s.loading = false; restore(); });
+  }
+
+  // Rellena/restaura la página al (des)marcar una lista a excluir, sin
+  // esperar a que el usuario presione «Buscar» de nuevo.
   function reapplyExclusions() {
     var s = state.search;
-    if (!s.rawResults) return;
-    applyListExclusions(s.rawResults).then(function (res) {
-      s.results = res || {};
-      renderResults();
-    });
+    if (!s.hasSearched || s.loading) return Promise.resolve();
+    s.loading = true;
+    var restore = btnLoading(s.searchBtn, '⏳ Buscando…');
+    return refreshExcludedIds()
+      .then(function () { return ensurePage(s.page || 1); })
+      .then(function () {
+        var vis = visibleRows();
+        if ((s.page || 1) > 1 && ((s.page || 1) - 1) * s.perPage >= vis.length) {
+          s.page = Math.max(1, Math.ceil(vis.length / s.perPage));
+        }
+        renderResults();
+      })
+      .catch(function (e) { console.warn('[prospecting] exclude-lists refill falló:', e); })
+      .then(function () { s.loading = false; restore(); });
   }
 
   function runSearch(page, fromButton) {
     var s = state.search;
     if (s.loading) return Promise.resolve();
+    var payload = buildSearchFilters(s.filters);
+    // Los filtros (sin página) son la identidad del buffer: si cambian —o el
+    // usuario vuelve a pulsar «Buscar»— se empieza de cero; paginar no.
+    var sig = JSON.stringify(payload);
+    var fresh = !!fromButton || sig !== s.payloadSig || !s.hasSearched;
+    if (fresh) {
+      s.payload = payload;
+      s.payloadSig = sig;
+      s.buf = [];
+      s.apolloPage = 0;
+      s.apolloDone = false;
+      s.apolloTotal = 0;
+      s.apolloPartial = false;
+      s.crumbs = [];
+      page = 1;
+    }
     s.loading = true;
     var restore = btnLoading(s.searchBtn, '⏳ Buscando…');
-    var payload;
-    try {
-      payload = buildSearchFilters(s.filters);
-    } catch (e) { s.loading = false; restore(); throw e; }
-    payload.page = page;
-    payload.per_page = s.perPage;
-    if (s.resultsEl && window.Skeleton) {
-      var skRows = Math.min(10, Math.max(5, s.perPage || 6));
-      s.resultsEl.innerHTML =
-        '<div class="pros-results-head">' + window.Skeleton.line(210, 13) +
-          '<div style="display:flex;align-items:center;gap:8px">' +
-            window.Skeleton.line(110, 28) + window.Skeleton.line(120, 28) +
-          '</div></div>' +
-        window.Skeleton.tableCard({ cols: 6, rows: skRows, title: false });
-    }
+    searchSkeleton();
     return Promise.resolve()
-      .then(function () { return pd().searchPeople(payload); })
-      .then(function (res) { s.rawResults = res; return applyListExclusions(res); })
-      .then(function (res) {
-        s.results = res || {};
-        s.page = (res && res.pagination && res.pagination.page) || page;
+      .then(function () { return refreshExcludedIds(); })
+      .then(function () { return ensurePage(page); })
+      .then(function () {
+        s.hasSearched = true;
+        s.page = page;
         s.searchError = null;
         if (fromButton) s.selectedRows.clear();
         renderResults();
         // El ICP se arma aquí (ya no en el onboarding): los filtros de esta
         // búsqueda se persisten en Supabase (client_icp + intel_hub_intake)
         // para que el Intelligence Hub y el brief del cliente los consuman.
-        pd().syncIcpFromSearch(payload);
+        pd().syncIcpFromSearch(s.payload);
         // Señal para el tour de onboarding (paso "primera búsqueda")
         try { document.dispatchEvent(new CustomEvent('prospecting:search-run')); } catch (_) {}
       })
       .catch(function (e) {
+        s.hasSearched = true;
         s.searchError = errMsg(e);
         renderResults();
         toast(errMsg(e), 'error');
@@ -1525,62 +1645,33 @@
     var noteHtml = s.searchError
       ? '<div class="pros-note-red">⚠ ' + esc(s.searchError) + '</div>'
       : '';
-    if (!s.results) {
+    if (!s.hasSearched) {
       root.innerHTML = '<div class="table-card">' +
         emptyHtml(SVG_SEARCH, 'Aún no hay resultados',
           'Define tus filtros en el panel izquierdo y presiona «Buscar» para encontrar prospectos en la base de datos de Apollo.') +
         '</div>' + noteHtml;
       return;
     }
-    var res = s.results;
-    var rows = [];
-    (res.contacts || []).forEach(function (c, i) {
-      var r = Object.assign({}, c);
-      r._saved = true;
-      r._key = 'c:' + String(c.id != null ? c.id : (c.apollo_contact_id != null ? c.apollo_contact_id : 'i' + i));
-      rows.push(r);
-    });
-    (res.people || []).forEach(function (p, i) {
-      var r = Object.assign({}, p);
-      r._saved = false;
-      r._key = 'p:' + String(p.id != null ? p.id : 'i' + i);
-      rows.push(r);
-    });
+    var perPage = s.perPage || 25;
+    var vis = visibleRows();
+    var hidden = (s.buf || []).length - vis.length;
+    var pageNum = s.page || 1;
+    var rows = vis.slice((pageNum - 1) * perPage, pageNum * perPage);
     s.pageRows = rows;
     s.rowsByKey = new Map(rows.map(function (r) { return [r._key, r]; }));
 
-    var pg = res.pagination || {};
-    var pageNum = pg.page || s.page || 1;
-    // Cuánto trajo Apollo en crudo antes de ocultar por listas excluidas —
-    // "¿la página vino llena?" se decide con esto, nunca con `rows.length`
-    // (ya filtrado): si Apollo llenó la página pero la exclusión tapó casi
-    // todo, `rows.length` puede caer muy por debajo de perPage y apagaba
-    // "Siguiente" aunque sí hubiera más resultados.
-    var rawRes = s.rawResults || res;
-    var rawCount = (rawRes.contacts || []).length + (rawRes.people || []).length;
-    // Apollo's mixed_people/api_search sometimes reports total_entries: 0 (and
-    // total_pages accordingly) even when it returns a full page of people —
-    // trusting that literally used to show "0 personas encontradas" and trap
-    // the user on page 1. Treat a reported total of 0 as "unknown" whenever
-    // rows actually came back, and never let a stale totalPages block paging
-    // past a page that came back full (there may still be more).
-    var reportedTotal = pg.total_entries;
-    var totalKnown = reportedTotal != null && reportedTotal > 0;
-    var total = totalKnown ? reportedTotal : rows.length;
-    // Prefer Apollo's total_pages; if it's missing but the total is known,
-    // derive it from the count and the current page size.
-    var totalPages = pg.total_pages ||
-      (totalKnown ? Math.max(1, Math.ceil(total / (s.perPage || 25))) : 1);
-    var fullPage = rawCount >= s.perPage;
-    var hasNextPage = fullPage ? true : pageNum < totalPages;
-    var partial = !!res.partial_results_only;
-    // Siempre mostramos "Página N de X". Con total conocido, X = total de
-    // páginas. Cuando Apollo no reporta el total, X es un piso honesto: si hay
-    // página siguiente, "N+" (al menos N páginas, hay más); si esta es la
-    // última página, X = N (ya sabemos el total real: la página actual).
-    var totalPagesLabel = totalKnown
-      ? fmtNum(totalPages)
-      : (hasNextPage ? fmtNum(pageNum) + '+' : fmtNum(pageNum));
+    // Apollo cuenta SIN exclusiones: le restamos las que ya sabemos ocultas
+    // (nunca por debajo de lo que ya tenemos en mano). Si no reporta total,
+    // lo visible es un piso honesto, no el total.
+    var totalKnown = s.apolloTotal > 0;
+    var total = totalKnown ? Math.max(vis.length, s.apolloTotal - hidden) : vis.length;
+    // El total de páginas es exacto cuando Apollo reporta el total o cuando ya
+    // trajimos todo; si no, es un piso y se marca con "+".
+    var pagesKnown = totalKnown || s.apolloDone;
+    var totalPages = Math.max(1, pageNum, Math.ceil(total / perPage));
+    var totalPagesLabel = pagesKnown ? fmtNum(totalPages) : fmtNum(totalPages) + '+';
+    var hasNextPage = vis.length > pageNum * perPage || !s.apolloDone;
+    var partial = s.apolloPartial;
 
     var html = '<div class="pros-results-head">' +
       '<div style="font-size:13px;color:var(--text2)"><b style="color:var(--text)">' +
@@ -1600,12 +1691,18 @@
       '<button type="button" class="btn btn-ghost btn-sm" data-action="page-next"' + (hasNextPage ? '' : ' disabled') + '>›</button>' +
       '</div></div>';
 
-    if (res._excludedCount) {
+    if (hidden > 0) {
       html += '<div style="font-size:12px;color:var(--text3);margin-top:6px">' +
-        '🚫 ' + esc(fmtNum(res._excludedCount)) + ' persona(s) ocultadas de esta página por ya estar en las listas excluidas.</div>';
+        '🚫 ' + esc(fmtNum(hidden)) + ' persona(s) ocultadas por ya estar en las listas excluidas.</div>';
     }
 
-    var crumbs = res.breadcrumbs || [];
+    if (s.hitFetchCap && rows.length < perPage) {
+      html += '<div style="font-size:12px;color:var(--text3);margin-top:6px">' +
+        'Casi todas las personas encontradas hasta aquí ya están en las listas excluidas. ' +
+        'Usa «›» para seguir buscando más.</div>';
+    }
+
+    var crumbs = s.crumbs || [];
     if (crumbs.length) {
       html += '<div class="pros-crumbs">' + crumbs.map(function (b) {
         var label = (b && (b.label || b.signal_field_name)) || '';
@@ -1668,8 +1765,10 @@
       });
       renderResults();
     } else if (action === 'per-page') {
+      // Las filas del buffer no dependen del tamaño de página: se recorta de
+      // nuevo desde el principio, sin volver a pedirle nada a Apollo.
       state.search.perPage = parseInt(t.value, 10) || 25;
-      return runSearch(1, false);
+      return goToPage(1);
     }
   }
 
@@ -1677,8 +1776,8 @@
     var btn = e.target.closest ? e.target.closest('[data-action]') : null;
     if (!btn) return;
     var action = btn.getAttribute('data-action');
-    if (action === 'page-prev') return runSearch(Math.max(1, (state.search.page || 1) - 1), false);
-    if (action === 'page-next') return runSearch((state.search.page || 1) + 1, false);
+    if (action === 'page-prev') return goToPage((state.search.page || 1) - 1);
+    if (action === 'page-next') return goToPage((state.search.page || 1) + 1);
     if (action === 'add-to-list') return openAddToListModal();
   }
 
@@ -1777,7 +1876,11 @@
             'success'
           );
           state.search.selectedRows.clear();
-          renderResults();
+          // Si la lista recién alimentada está entre las excluidas, esa gente
+          // debe desaparecer de los resultados ya visibles (y la página
+          // rellenarse) sin tener que volver a buscar.
+          if ((state.search.filters.exclude_list_ids || []).length) reapplyExclusions();
+          else renderResults();
           // Señal para el tour de onboarding (paso "primera lista")
           if (res.added) { try { document.dispatchEvent(new CustomEvent('prospecting:list-saved')); } catch (_) {} }
           api.close();
