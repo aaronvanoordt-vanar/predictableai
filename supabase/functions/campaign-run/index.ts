@@ -526,8 +526,16 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       const key = step.content_kind.slice(-1);
       const tpl = acc.config?.templates?.items?.[key];
       if (!tpl?.name) throw new StepError("La plantilla de saludo no existe en WATI. Reconecta WATI.", "hold");
-      if (!/approved/i.test(String(tpl.status ?? ""))) {
-        throw new StepError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tpl.status || "PENDING"}).`, "hold");
+      const tplStatus = String(tpl.status ?? "PENDING");
+      // Rechazada / pausada / deshabilitada: Meta no la va a aprobar sola, así
+      // que el paso se omite y el lead sigue con los otros canales (en vez de
+      // quedarse esperando 6 h tras 6 h y bloquear el email que viene después).
+      // En revisión (PENDING): se espera, la aprobación suele llegar en horas.
+      if (/reject|error|paused|disabled/i.test(tplStatus)) {
+        throw new StepError(`La plantilla "${tpl.name}" fue rechazada por Meta (${tplStatus}): se omite el WhatsApp. Reconecta WhatsApp para crear plantillas nuevas.`, "skip");
+      }
+      if (!/approved/i.test(tplStatus)) {
+        throw new StepError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tplStatus}).`, "hold");
       }
       bodyText = String(tpl.body ?? "").replace(/\{\{\s*name\s*\}\}/gi, firstName(member));
       const r = await wati.sendTemplate(creds, {
@@ -828,7 +836,11 @@ async function runFlow(ctx: Ctx, en: Json, campaign: Json, flow: flowLib.Flow) {
 }
 
 async function runOne(ctx: Ctx, en: Json) {
-  const { data: campaign } = await ctx.db.from("campaigns").select("*").eq("id", en.campaign_id).maybeSingle();
+  const { data: campaign, error: campErr } = await ctx.db.from("campaigns").select("*").eq("id", en.campaign_id).maybeSingle();
+  // Un fallo transitorio de la consulta no es "la campaña no existe": se
+  // suelta el enrolamiento y se reintenta en la próxima corrida (9 leads
+  // quedaron en error por esto el 2026-09-02).
+  if (campErr) { console.warn("[campaign-run] campaign fetch", en.campaign_id, campErr.message); await finish(ctx, en, { status: "active" }); return; }
   if (!campaign) { await finish(ctx, en, { status: "error", error_detail: "La campaña ya no existe." }); return; }
   if (campaign.status !== "active") { await finish(ctx, en, { status: "active" }); return; }
   const flow = flowLib.normalize(campaign.flow);
