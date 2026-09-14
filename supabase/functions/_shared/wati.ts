@@ -164,6 +164,37 @@ export interface WatiTemplate {
   custom_params: { name: string; value: string }[];
 }
 
+/**
+ * Estados de plantilla de los que Meta no vuelve: DELETED / PENDING_DELETION
+ * (el usuario la borró en WATI), REJECTED, PAUSED, DISABLED, ARCHIVED, ERROR.
+ * No sirve esperarlos —el motor omite el paso y el lead sigue con los otros
+ * canales— y tampoco se puede reusar el nombre: Meta lo bloquea 30 días tras
+ * borrar una plantilla, así que la ranura pasa a la revisión siguiente.
+ * LIMIT_EXCEEDED no entra: esa sí se rehabilita sola, se espera.
+ * Espejo de la misma regex en js/campaigns.js y js/campaign-builder.js.
+ */
+export const TEMPLATE_DEAD = /reject|error|paused|disabled|delet|archiv/i;
+
+export function isTemplateDead(status: string | null | undefined): boolean {
+  return TEMPLATE_DEAD.test(String(status ?? ""));
+}
+
+export function isTemplateApproved(status: string | null | undefined): boolean {
+  return /approved/i.test(String(status ?? ""));
+}
+
+/** Nombre de una ranura en su revisión N: la 1 es el nombre base. */
+export function revisionName(base: string, rev: number): string {
+  return rev <= 1 ? base : `${base}_r${rev}`;
+}
+
+/** Revisión a la que corresponde `name` dentro de la ranura `base`, o null. */
+export function revisionOf(base: string, name: string): number | null {
+  if (name === base) return 1;
+  const m = /^(.*)_r(\d+)$/.exec(name);
+  return m && m[1] === base ? Number(m[2]) : null;
+}
+
 export async function listTemplates(creds: WatiCreds, channel?: string): Promise<WatiTemplate[]> {
   const out: WatiTemplate[] = [];
   for (let page = 1; page <= 10; page++) {

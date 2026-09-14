@@ -65,6 +65,10 @@
     campaign: '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 10h3l2-5 3 10 2-5h4"/></svg>',
     inbox: '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 4h14v9H8l-4 3v-3H3z"/></svg>',
   };
+  // Estados de plantilla de WhatsApp de los que Meta no vuelve: el motor omite
+  // el paso en vez de esperarla. Espejo de TEMPLATE_DEAD en
+  // supabase/functions/_shared/wati.ts y js/campaign-builder.js.
+  var TEMPLATE_DEAD = /reject|error|paused|disabled|delet|archiv/i;
   var CH = {
     email:    { key: 'email',    label: 'Email',    icon: SVG.email,    desc: 'Mensajes individuales desde tu propia cuenta de email, redactados por IA con 5 capas de personalización.' },
     whatsapp: { key: 'whatsapp', label: 'WhatsApp', icon: SVG.whatsapp, desc: 'Plantillas aprobadas por Meta para abrir conversación y seguimientos dentro de la ventana de 24 h.' },
@@ -391,10 +395,10 @@
   }
   // ── Plantillas de WhatsApp ───────────────────────────────────────────────
   // El estado lo pone Meta y lo relee channel-connect (sync_templates): aquí
-  // solo se traduce. BORRADA / FALTA no se arreglan solas — hay que crear una
-  // plantilla nueva, porque Meta no libera el nombre de una borrada.
-  var TPL_BROKEN = /deleted|missing|reject|error|paused|disabled/i;
-  function tplIsBroken(status) { return TPL_BROKEN.test(String(status || '')); }
+  // solo se traduce. Los estados de TEMPLATE_DEAD no se arreglan solos — hay
+  // que crear una plantilla nueva, porque Meta no libera el nombre de una
+  // borrada en 30 días.
+  function tplIsDead(status) { return TEMPLATE_DEAD.test(String(status || '')); }
   function tplIsApproved(status) { return /approved/i.test(String(status || '')); }
   function tplStatusLabel(status) {
     var s = String(status || 'PENDING').toUpperCase();
@@ -402,29 +406,25 @@
       APPROVED: 'Aprobada', PENDING: 'En revisión', SUBMITTED: 'En revisión', IN_APPEAL: 'En apelación',
       REJECTED: 'Rechazada', DELETED: 'Borrada', MISSING: 'No existe', ERROR: 'Error al crearla',
       PAUSED: 'Pausada por Meta', DISABLED: 'Deshabilitada por Meta', PENDING_DELETION: 'Borrándose',
-      LIMIT_EXCEEDED: 'Límite de Meta',
+      ARCHIVED: 'Archivada', LIMIT_EXCEEDED: 'Límite de Meta',
     };
     return map[s] || s;
   }
-  function tplStatusKind(status) {
-    if (tplIsApproved(status)) return 'green';
-    if (tplIsBroken(status)) return 'red';
-    return 'amber';
-  }
+  function tplStatusKind(status) { return tplIsApproved(status) ? 'green' : tplIsDead(status) ? 'red' : 'amber'; }
   /** Las tres plantillas de saludo que usan las campañas, en orden. */
   var GREETINGS = [['a', 'Saludo 1'], ['b', 'Recordatorio'], ['c', 'Último intento']];
   function watiCfg() { return (state.wati && state.wati.config) || {}; }
   function greetingItems() { var t = watiCfg().templates; return (t && t.items) || {}; }
   function templateCatalogue() { var t = watiCfg().templates; return (t && t.all) || []; }
-  function brokenGreetings() {
+  function deadGreetings() {
     var items = greetingItems();
-    return GREETINGS.filter(function (g) { return !items[g[0]] || tplIsBroken(items[g[0]].status); });
+    return GREETINGS.filter(function (g) { return !items[g[0]] || tplIsDead(items[g[0]].status); });
   }
   function templateSummary(cfg) {
     var items = (cfg.templates && cfg.templates.items) || {};
     var statuses = ['a', 'b', 'c'].map(function (k) { return items[k] ? String(items[k].status || 'PENDING') : 'MISSING'; });
-    var broken = statuses.filter(tplIsBroken).length;
-    if (broken) return { label: broken === 1 ? 'Falta una plantilla de saludo' : 'Faltan ' + broken + ' plantillas de saludo', kind: 'red' };
+    var dead = statuses.filter(tplIsDead).length;
+    if (dead) return { label: dead === 1 ? 'Falta una plantilla de saludo' : 'Faltan ' + dead + ' plantillas de saludo', kind: 'red' };
     var pending = statuses.filter(function (s) { return !tplIsApproved(s); }).length;
     if (!pending) return { label: 'Plantillas aprobadas', kind: 'green' };
     return { label: 'Plantillas en revisión de Meta (' + pending + ')', kind: 'amber' };
@@ -449,12 +449,11 @@
     if (!isConn(state.wati)) return { state: 'disconnected' };
     var cfg = state.wati.config || {};
     var tpl = templateSummary(cfg);
-    var wh = waWebhookState(cfg);
     return {
       state: 'connected',
       detail: cfg.phone || cfg.phone_number || cfg.channel || 'Número conectado',
       sub: tpl.label, subKind: tpl.kind,
-      webhookOk: wh.ok,
+      webhookOk: waWebhookState(cfg).ok,
     };
   }
   function liWebhookOk(cfg) {
@@ -711,6 +710,20 @@
   async function updateEnrollment(id, patch) {
     var res = await sb().from('campaign_enrollments').update(patch).eq('id', id);
     if (res.error) throw new Error('No se pudo actualizar el lead: ' + res.error.message);
+  }
+
+  /**
+   * Adelanta a ahora el reintento de varios enrolamientos retenidos: limpia el
+   * motivo y vence next_run_at. No cambia el estado (siguen activos) ni salta
+   * el paso: el motor lo vuelve a evaluar con la cadencia y las plantillas de
+   * hoy, así que un paso que ya no se puede enviar se omite y sigue adelante.
+   */
+  async function retryEnrollments(ids) {
+    if (!ids || !ids.length) return;
+    var res = await sb().from('campaign_enrollments')
+      .update({ status: 'active', error_detail: null, next_run_at: new Date().toISOString() })
+      .in('id', ids);
+    if (res.error) throw new Error('No se pudieron reintentar los leads: ' + res.error.message);
   }
 
   async function updateMessage(id, patch) {
@@ -1546,20 +1559,23 @@
     });
     body.appendChild(tplBox);
 
-    var broken = brokenGreetings();
-    if (broken.length) {
+    // "Actualizar" es lo que las repara: sync_templates recrea con el nombre de
+    // la revisión siguiente la ranura que quedó muerta (Meta no revive una
+    // plantilla borrada ni deja reusar su nombre en 30 días).
+    var dead = deadGreetings();
+    if (dead.length) {
       var fix = h('div', { class: 'pros-note-red', style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' });
       fix.appendChild(h('span', {
         style: 'flex:1',
-        text: '⚠ ' + (broken.length === 1 ? 'Una plantilla de saludo ya no sirve' : broken.length + ' plantillas de saludo ya no sirven')
-          + ' (' + broken.map(function (g) { return g[1].toLowerCase(); }).join(', ') + '). Los pasos de WhatsApp que las usen se omiten. '
-          + 'Meta no permite reutilizar el nombre de una plantilla borrada o rechazada, así que las nuevas salen con un nombre distinto y vuelven a revisión.',
+        text: '⚠ ' + (dead.length === 1 ? 'Una plantilla de saludo ya no sirve' : dead.length + ' plantillas de saludo ya no sirven')
+          + ' (' + dead.map(function (g) { return g[1].toLowerCase(); }).join(', ') + '). Los pasos de WhatsApp que las usen se omiten y el lead sigue con el canal siguiente. '
+          + 'Meta no deja reutilizar el nombre de una plantilla borrada o rechazada, así que las nuevas salen con un nombre distinto y vuelven a revisión.',
       }));
       var fixBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: 'Volver a crear' });
       fixBtn.addEventListener('click', guarded(function () {
-        return watiAction('recreate_greetings', {}, fixBtn).then(function (r) {
-          if (r && r.error_detail) toast(r.error_detail, 'error');
-          else toast('Plantillas enviadas a revisión de Meta.', 'success');
+        return watiAction('sync_templates', {}, fixBtn).then(function () {
+          var left = deadGreetings().length;
+          toast(left ? 'WhatsApp no aceptó todas las plantillas: revisa el detalle.' : 'Plantillas enviadas a revisión de Meta.', left ? 'error' : 'success');
           renderWhatsAppDetails(api);
         });
       }));
@@ -1573,7 +1589,7 @@
 
     // ── 2. Catálogo completo del tenant ────────────────────────────────────
     var all = templateCatalogue().slice();
-    var rank = function (t) { return tplIsApproved(t.status) ? 0 : tplIsBroken(t.status) ? 2 : 1; };
+    var rank = function (t) { return tplIsApproved(t.status) ? 0 : tplIsDead(t.status) ? 2 : 1; };
     all.sort(function (a, b) { return rank(a) - rank(b) || String(a.name).localeCompare(String(b.name)); });
     var greetingNames = GREETINGS.map(function (g) { return items[g[0]] && items[g[0]].name; }).filter(Boolean);
 
@@ -1589,8 +1605,8 @@
       body.appendChild(h('div', {
         class: 'pros-hint',
         text: tpls.error
-          ? 'No pudimos leer tu catálogo de plantillas. Pulsa "Actualizar" para reintentar.'
-          : 'Todavía no leímos tus plantillas. Pulsa "Actualizar" para traerlas desde WhatsApp.',
+          ? 'No pudimos leer tu catálogo de plantillas. Pulsa "Actualizar estado" para reintentar.'
+          : 'Todavía no leímos tus plantillas. Pulsa "Actualizar estado" para traerlas desde WhatsApp.',
       }));
     } else {
       var list = h('div', { class: 'cmp-tpl-list' });
@@ -1601,9 +1617,10 @@
         top.appendChild(h('span', { html: pill(tplStatusLabel(t.status), tplStatusKind(t.status)) }));
         if (t.category) top.appendChild(h('span', { class: 'cmp-tpl-meta', text: t.category }));
         if (t.language) top.appendChild(h('span', { class: 'cmp-tpl-meta', text: t.language }));
-        if (greetingNames.indexOf(t.name) !== -1) top.appendChild(h('span', { class: 'cmp-tpl-meta cmp-tpl-own', text: 'usada por tus campañas' }));
+        var isGreeting = greetingNames.indexOf(t.name) !== -1;
+        if (isGreeting) top.appendChild(h('span', { class: 'cmp-tpl-meta cmp-tpl-own', text: 'usada por tus campañas' }));
         var del = h('button', { type: 'button', class: 'btn btn-ghost btn-sm cmp-tpl-del', title: 'Borrar en WhatsApp', text: 'Borrar' });
-        del.addEventListener('click', function () { confirmDeleteTemplate(t, greetingNames.indexOf(t.name) !== -1, api); });
+        del.addEventListener('click', function () { confirmDeleteTemplate(t, isGreeting, api); });
         top.appendChild(del);
         row.appendChild(top);
         if (t.body) row.appendChild(h('div', { class: 'cmp-tpl-body', text: t.body }));
@@ -1653,7 +1670,7 @@
     }
 
     api.setActions([
-      { label: 'Actualizar', onClick: function (m, btn) {
+      { label: 'Actualizar estado', onClick: function (m, btn) {
         return watiAction('sync_templates', {}, btn).then(function () {
           toast('Plantillas y webhook releídos desde WhatsApp.', 'success');
           renderWhatsAppDetails(api);
@@ -1668,11 +1685,11 @@
   /** Borrar una plantilla en WhatsApp. Meta no libera el nombre: se avisa. */
   function confirmDeleteTemplate(t, isGreeting, api) {
     var extra = isGreeting
-      ? ' Tus campañas la usan como plantilla de saludo: los pasos que la envíen se van a omitir hasta que pulses "Volver a crear".'
+      ? ' Tus campañas la usan como plantilla de saludo: se va a crear una nueva con el nombre de la revisión siguiente, que vuelve a pasar por revisión de Meta.'
       : '';
     return confirmModal({
       title: 'Borrar plantilla', danger: true, confirmLabel: 'Borrar',
-      message: 'Se borra «' + t.name + '» de tu cuenta de WhatsApp. Meta no libera el nombre: no vas a poder crear otra plantilla que se llame igual.' + extra,
+      message: 'Se borra «' + t.name + '» de tu cuenta de WhatsApp. Meta no libera el nombre en 30 días: no vas a poder crear otra que se llame igual.' + extra,
       onConfirm: function () {
         return watiAction('delete_template', { name: t.name, language: t.language || undefined }).then(function () {
           toast('Plantilla borrada.', 'success');
@@ -1706,14 +1723,12 @@
     grid.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Categoría' }), catS));
     grid.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Idioma' }), langS));
     b.appendChild(grid);
-    var nameHint = h('div', { class: 'pros-hint', text: 'Solo minúsculas, números y guiones bajos. Lo normalizamos por ti.' });
-    b.appendChild(nameHint);
+    b.appendChild(h('div', { class: 'pros-hint', text: 'Solo minúsculas, números y guiones bajos. Lo normalizamos por ti.' }));
 
     b.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Texto del mensaje' }));
     var bodyI = h('textarea', { rows: '5', placeholder: 'Hola {{name}}! Te escribo desde Acme porque…' });
     b.appendChild(bodyI);
-    var varHint = h('div', { class: 'pros-hint', text: 'Escribe {{name}} donde quieras el nombre del lead. Puedes usar hasta 5 variables.' });
-    b.appendChild(varHint);
+    b.appendChild(h('div', { class: 'pros-hint', text: 'Escribe {{name}} donde quieras el nombre del lead. Puedes usar hasta 5 variables.' }));
 
     b.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Botones de respuesta rápida (opcional, hasta 3)' }));
     var btnRow = h('div', { class: 'cmp-sender-grid' });
@@ -2086,7 +2101,10 @@
         if (CH[k] && !channelConnected(k)) { warnings[a.id] = [CH[k].label + ' sin conectar']; return; }
         if (a.channel === 'whatsapp' && a.content.kind.indexOf('template_') === 0) {
           var t = tpls[{ template_a: 'a', template_b: 'b', template_c: 'c' }[a.content.kind]];
-          if (t && !/approved/i.test(String(t.status || ''))) warnings[a.id] = ['plantilla ' + String(t.status || 'pendiente').toLowerCase()];
+          if (t && !/approved/i.test(String(t.status || ''))) {
+            var tst = String(t.status || 'pendiente');
+            warnings[a.id] = [TEMPLATE_DEAD.test(tst) ? 'plantilla ' + tst.toLowerCase() + ': el paso se omite' : 'plantilla ' + tst.toLowerCase()];
+          }
         }
       });
       card.appendChild(builderLib().renderTimeline(c.flow, { readOnly: true, counters: nodeCounters(c), warnings: warnings }));
@@ -2232,10 +2250,28 @@
     return out || '<div class="pros-hint">Mensajes generados ' + esc(fmtDateTime(o.generated_at)) + '.</div>';
   }
 
+  /** Activos que el motor dejó esperando con un motivo (error_detail). */
+  function heldEnrollments() {
+    return state.enrollments.filter(function (e) {
+      return e.status === 'active' && String(e.error_detail || '').trim();
+    });
+  }
+
   function renderEnrollmentsTable(c) {
     var card = h('div', { class: 'table-card' });
     var head = h('div', { class: 'table-head' });
     head.appendChild(h('span', { style: 'font-size:14px;font-weight:700', text: 'Leads en la campaña (' + state.enrollments.length + ')' }));
+    // Retenidos: activos con un motivo pendiente (plantilla sin aprobar, canal
+    // sin conectar, mensaje IA sin aprobar). El motor los reintenta cada 6 h;
+    // esto los adelanta a ahora en bloque, sin ir de a uno con Pausar/Reanudar.
+    var held = heldEnrollments();
+    if (held.length) {
+      head.appendChild(h('button', {
+        type: 'button', class: 'btn btn-teal btn-sm', 'data-action': 'en-retry-held',
+        title: 'Vuelve a intentar el paso pendiente de estos leads ahora, sin esperar el reintento del motor.',
+        text: 'Reintentar ' + held.length + (held.length === 1 ? ' retenido' : ' retenidos'),
+      }));
+    }
     head.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-refresh', text: 'Actualizar' }));
     card.appendChild(head);
     if (!state.enrollments.length) {
@@ -2622,6 +2658,16 @@
     if (action === 'enroll') return doEnroll(btn);
     if (action === 'en-pause' && id) return updateEnrollment(id, { status: 'paused' }).then(function () { return openCampaign(state.activeId); });
     if (action === 'en-resume' && id) return updateEnrollment(id, { status: 'active', error_detail: null, next_run_at: new Date().toISOString() }).then(function () { return openCampaign(state.activeId); });
+    if (action === 'en-retry-held') {
+      var heldIds = heldEnrollments().map(function (e) { return e.id; });
+      if (!heldIds.length) return toast('No hay leads retenidos.', 'warn');
+      var r4 = btnLoading(btn, '⏳ Reintentando…');
+      return retryEnrollments(heldIds).then(function () {
+        r4();
+        toast(heldIds.length + (heldIds.length === 1 ? ' lead vuelve' : ' leads vuelven') + ' a la cola. El motor los toma en el próximo minuto dentro de la ventana horaria.', 'success');
+        return openCampaign(state.activeId);
+      }, function (err) { r4(); throw err; });
+    }
     if (action === 'en-stop' && id) return updateEnrollment(id, { status: 'completed', next_run_at: null, stop_reason: 'Detenido a mano.' }).then(function () { return openCampaign(state.activeId); });
     if (action === 'en-expand' && id) {
       if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
