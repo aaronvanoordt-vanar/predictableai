@@ -198,10 +198,24 @@
     if (!body.page) body.page = 1;
     if (!body.per_page) body.per_page = 25;
     const data = await apolloProxy('/mixed_people/api_search', body);
+    // El total llega anidado en `pagination` o plano en la raíz según la
+    // respuesta de Apollo. Leyendo solo la primera forma, `total_entries`
+    // caía al 0 del fallback y la UI daba "Apollo no reporta el total exacto"
+    // (y "Página 1 de 1+") aunque Apollo sí hubiera devuelto el total.
+    const num = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const pg = data?.pagination || {};
     return {
       people: data?.people || [],
       contacts: data?.contacts || [],
-      pagination: data?.pagination || { page: body.page, per_page: body.per_page, total_entries: 0, total_pages: 0 },
+      pagination: {
+        page: num(pg.page) || body.page,
+        per_page: num(pg.per_page) || body.per_page,
+        total_entries: num(pg.total_entries) || num(data?.total_entries),
+        total_pages: num(pg.total_pages) || num(data?.total_pages),
+      },
       breadcrumbs: data?.breadcrumbs || [],
       partial_results_only: !!data?.partial_results_only,
     };

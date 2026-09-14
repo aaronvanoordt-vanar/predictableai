@@ -51,11 +51,11 @@
   var CHANNEL_SIGNUP = { wati: 'https://www.wati.io/pricing/', dripify: 'https://dripify.com/pricing/', apollo: 'https://www.apollo.io/pricing' };
 
   var SVG = {
-    email: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="15" height="11" rx="2"/><path d="M3 6.5l7 5 7-5"/></svg>',
-    whatsapp: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 16.5l1-3.4A6.8 6.8 0 1 1 7 15.6z"/><path d="M7.6 7.8c.2 1.9 2.7 4.4 4.6 4.6l1-1-1.6-.9-.7.6c-.7-.3-1.7-1.3-2-2l.6-.7-.9-1.6z"/></svg>',
-    linkedin: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M7 9v5M7 6.4v.1M10.5 14v-3a2 2 0 0 1 4 0v3M10.5 9v5"/></svg>',
-    campaign: '<svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 10h3l2-5 3 10 2-5h4"/></svg>',
-    inbox: '<svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 4h14v9H8l-4 3v-3H3z"/></svg>',
+    email: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="15" height="11" rx="2"/><path d="M3 6.5l7 5 7-5"/></svg>',
+    whatsapp: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 16.5l1-3.4A6.8 6.8 0 1 1 7 15.6z"/><path d="M7.6 7.8c.2 1.9 2.7 4.4 4.6 4.6l1-1-1.6-.9-.7.6c-.7-.3-1.7-1.3-2-2l.6-.7-.9-1.6z"/></svg>',
+    linkedin: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M7 9v5M7 6.4v.1M10.5 14v-3a2 2 0 0 1 4 0v3M10.5 9v5"/></svg>',
+    campaign: '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 10h3l2-5 3 10 2-5h4"/></svg>',
+    inbox: '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 4h14v9H8l-4 3v-3H3z"/></svg>',
   };
   var CH = {
     email:    { key: 'email',    label: 'Email',    icon: SVG.email,    desc: 'Mensajes individuales desde tu propia cuenta de email, redactados por IA con 5 capas de personalización.' },

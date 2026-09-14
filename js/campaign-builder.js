@@ -56,14 +56,14 @@
   var TEMPLATE_KEY = { template_a: 'a', template_b: 'b', template_c: 'c' };
   var NEED_KEY = { wati: 'whatsapp', dripify: 'linkedin', apollo: 'email' };  // necesidad del nodo → canal de la UI
   var ICONS = {
-    whatsapp: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 16.5l1-3.2A6.5 6.5 0 1 1 7 15.6z"/><path d="M7.8 7.8c0 2.4 2 4.4 4.4 4.4l.9-1.2-1.6-.8-.7.6a3.3 3.3 0 0 1-1.6-1.6l.6-.7-.8-1.6z"/></svg>',
-    email: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="15" height="11" rx="2"/><path d="M3 6l7 5 7-5"/></svg>',
-    linkedin_connect: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M7 9v5M7 6.5v.1M10.5 14v-3a2 2 0 0 1 4 0v3M10.5 9v5"/></svg>',
-    linkedin_message: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="14" height="14" rx="2"/></svg>',
-    condition: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v4M10 7l-4 4M10 7l4 4M6 11v3M14 11v3"/></svg>',
-    stop: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><rect x="7.5" y="7.5" width="5" height="5" rx="1"/></svg>',
-    ai: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3l1.6 3.9L15.5 8.5l-3.9 1.6L10 14l-1.6-3.9L4.5 8.5l3.9-1.6z"/><path d="M15.5 13.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"/></svg>',
-    plus: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg>',
+    whatsapp: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 16.5l1-3.2A6.5 6.5 0 1 1 7 15.6z"/><path d="M7.8 7.8c0 2.4 2 4.4 4.4 4.4l.9-1.2-1.6-.8-.7.6a3.3 3.3 0 0 1-1.6-1.6l.6-.7-.8-1.6z"/></svg>',
+    email: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="15" height="11" rx="2"/><path d="M3 6l7 5 7-5"/></svg>',
+    linkedin_connect: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M7 9v5M7 6.5v.1M10.5 14v-3a2 2 0 0 1 4 0v3M10.5 9v5"/></svg>',
+    linkedin_message: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="14" height="14" rx="2"/></svg>',
+    condition: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v4M10 7l-4 4M10 7l4 4M6 11v3M14 11v3"/></svg>',
+    stop: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><rect x="7.5" y="7.5" width="5" height="5" rx="1"/></svg>',
+    ai: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3l1.6 3.9L15.5 8.5l-3.9 1.6L10 14l-1.6-3.9L4.5 8.5l3.9-1.6z"/><path d="M15.5 13.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"/></svg>',
+    plus: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg>',
   };
 
   // ── Helpers ──────────────────────────────────────────────────────────────
