@@ -65,6 +65,10 @@
     campaign: '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 10h3l2-5 3 10 2-5h4"/></svg>',
     inbox: '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 4h14v9H8l-4 3v-3H3z"/></svg>',
   };
+  // Estados de plantilla de WhatsApp de los que Meta no vuelve: el motor omite
+  // el paso en vez de esperarla. Espejo de TEMPLATE_DEAD en
+  // supabase/functions/_shared/wati.ts y js/campaign-builder.js.
+  var TEMPLATE_DEAD = /reject|error|paused|disabled|delet|archiv/i;
   var CH = {
     email:    { key: 'email',    label: 'Email',    icon: SVG.email,    desc: 'Mensajes individuales desde tu propia cuenta de email, redactados por IA con 5 capas de personalización.' },
     whatsapp: { key: 'whatsapp', label: 'WhatsApp', icon: SVG.whatsapp, desc: 'Plantillas aprobadas por Meta para abrir conversación y seguimientos dentro de la ventana de 24 h.' },
@@ -658,6 +662,20 @@
   async function updateEnrollment(id, patch) {
     var res = await sb().from('campaign_enrollments').update(patch).eq('id', id);
     if (res.error) throw new Error('No se pudo actualizar el lead: ' + res.error.message);
+  }
+
+  /**
+   * Adelanta a ahora el reintento de varios enrolamientos retenidos: limpia el
+   * motivo y vence next_run_at. No cambia el estado (siguen activos) ni salta
+   * el paso: el motor lo vuelve a evaluar con la cadencia y las plantillas de
+   * hoy, así que un paso que ya no se puede enviar se omite y sigue adelante.
+   */
+  async function retryEnrollments(ids) {
+    if (!ids || !ids.length) return;
+    var res = await sb().from('campaign_enrollments')
+      .update({ status: 'active', error_detail: null, next_run_at: new Date().toISOString() })
+      .in('id', ids);
+    if (res.error) throw new Error('No se pudieron reintentar los leads: ' + res.error.message);
   }
 
   async function updateMessage(id, patch) {
@@ -1437,7 +1455,7 @@
       ['a', 'b', 'c'].forEach(function (k, i) {
         var t = tpls[k];
         var status = t ? String(t.status || 'PENDING') : 'SIN CREAR';
-        var kind = /approved/i.test(status) ? 'green' : /reject|error|paused|disabled/i.test(status) ? 'red' : 'amber';
+        var kind = /approved/i.test(status) ? 'green' : TEMPLATE_DEAD.test(status) ? 'red' : 'amber';
         tplBox.appendChild(h('div', { html: pill(['Saludo 1', 'Recordatorio', 'Último intento'][i], 'gray') + pill(status, kind) + '<span style="flex:1;color:var(--text2)">' + esc(t ? t.body : '—') + (t && t.error ? ' <span style="color:var(--red)">' + esc(t.error) + '</span>' : '') + '</span>' }));
       });
       body.appendChild(tplBox);
@@ -1779,7 +1797,10 @@
         if (CH[k] && !channelConnected(k)) { warnings[a.id] = [CH[k].label + ' sin conectar']; return; }
         if (a.channel === 'whatsapp' && a.content.kind.indexOf('template_') === 0) {
           var t = tpls[{ template_a: 'a', template_b: 'b', template_c: 'c' }[a.content.kind]];
-          if (t && !/approved/i.test(String(t.status || ''))) warnings[a.id] = ['plantilla ' + String(t.status || 'pendiente').toLowerCase()];
+          if (t && !/approved/i.test(String(t.status || ''))) {
+            var tst = String(t.status || 'pendiente');
+            warnings[a.id] = [TEMPLATE_DEAD.test(tst) ? 'plantilla ' + tst.toLowerCase() + ': el paso se omite' : 'plantilla ' + tst.toLowerCase()];
+          }
         }
       });
       card.appendChild(builderLib().renderTimeline(c.flow, { readOnly: true, counters: nodeCounters(c), warnings: warnings }));
@@ -1925,10 +1946,28 @@
     return out || '<div class="pros-hint">Mensajes generados ' + esc(fmtDateTime(o.generated_at)) + '.</div>';
   }
 
+  /** Activos que el motor dejó esperando con un motivo (error_detail). */
+  function heldEnrollments() {
+    return state.enrollments.filter(function (e) {
+      return e.status === 'active' && String(e.error_detail || '').trim();
+    });
+  }
+
   function renderEnrollmentsTable(c) {
     var card = h('div', { class: 'table-card' });
     var head = h('div', { class: 'table-head' });
     head.appendChild(h('span', { style: 'font-size:14px;font-weight:700', text: 'Leads en la campaña (' + state.enrollments.length + ')' }));
+    // Retenidos: activos con un motivo pendiente (plantilla sin aprobar, canal
+    // sin conectar, mensaje IA sin aprobar). El motor los reintenta cada 6 h;
+    // esto los adelanta a ahora en bloque, sin ir de a uno con Pausar/Reanudar.
+    var held = heldEnrollments();
+    if (held.length) {
+      head.appendChild(h('button', {
+        type: 'button', class: 'btn btn-teal btn-sm', 'data-action': 'en-retry-held',
+        title: 'Vuelve a intentar el paso pendiente de estos leads ahora, sin esperar el reintento del motor.',
+        text: 'Reintentar ' + held.length + (held.length === 1 ? ' retenido' : ' retenidos'),
+      }));
+    }
     head.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-refresh', text: 'Actualizar' }));
     card.appendChild(head);
     if (!state.enrollments.length) {
@@ -2306,6 +2345,16 @@
     if (action === 'enroll') return doEnroll(btn);
     if (action === 'en-pause' && id) return updateEnrollment(id, { status: 'paused' }).then(function () { return openCampaign(state.activeId); });
     if (action === 'en-resume' && id) return updateEnrollment(id, { status: 'active', error_detail: null, next_run_at: new Date().toISOString() }).then(function () { return openCampaign(state.activeId); });
+    if (action === 'en-retry-held') {
+      var heldIds = heldEnrollments().map(function (e) { return e.id; });
+      if (!heldIds.length) return toast('No hay leads retenidos.', 'warn');
+      var r4 = btnLoading(btn, '⏳ Reintentando…');
+      return retryEnrollments(heldIds).then(function () {
+        r4();
+        toast(heldIds.length + (heldIds.length === 1 ? ' lead vuelve' : ' leads vuelven') + ' a la cola. El motor los toma en el próximo minuto dentro de la ventana horaria.', 'success');
+        return openCampaign(state.activeId);
+      }, function (err) { r4(); throw err; });
+    }
     if (action === 'en-stop' && id) return updateEnrollment(id, { status: 'completed', next_run_at: null, stop_reason: 'Detenido a mano.' }).then(function () { return openCampaign(state.activeId); });
     if (action === 'en-expand' && id) {
       if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);

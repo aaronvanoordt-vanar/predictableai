@@ -31,7 +31,10 @@
  *      4. Registra el webhook de WATI apuntando a wati-webhook?key=<secreto>.
  *         Si la API no lo acepta, deja la URL en config.webhook para que el
  *         usuario lo agregue a mano en WATI → Webhooks.
- *  • sync_templates    {}  → vuelve a leer el estado de revisión de Meta.
+ *  • sync_templates    {}  → vuelve a leer el estado de revisión de Meta y
+ *                            recrea con nombre nuevo la plantilla que quedó
+ *                            borrada o rechazada (Meta no la revive ni deja
+ *                            reusar su nombre en 30 días).
  *  • connect_dripify   {api_key}  → valida contra /v1/open-api/campaigns, guarda la
  *      key y la lista de campañas, y deja en config.webhook la URL de
  *      dripify-webhook?key=<secreto> que el usuario pega en cada campaña de
@@ -208,23 +211,34 @@ async function ensureTemplates(creds: wati.WatiCreds, sender: Sender, suffix: st
   }
   for (const key of ["a", "b", "c"] as const) {
     const spec = wanted[key];
-    const found = existing.find((t) => t.name === spec.name);
-    if (found) {
-      out.items[key] = { name: spec.name, body: spec.body, status: found.status || "PENDING", id: found.id };
+    // Todas las revisiones que esta ranura ya usó en el tenant, de la más
+    // nueva a la más vieja.
+    const mine = existing
+      .map((t) => ({ t, rev: wati.revisionOf(spec.name, t.name) }))
+      .filter((x): x is { t: wati.WatiTemplate; rev: number } => x.rev !== null)
+      .sort((a, b) => b.rev - a.rev);
+    // Se reutiliza la mejor viva (aprobada antes que en revisión). Si todas
+    // están muertas —el usuario la borró en WATI, Meta la rechazó— se crea la
+    // revisión siguiente: el mismo texto con un nombre nuevo, porque Meta no
+    // deja reusar el de una plantilla borrada en 30 días.
+    const live = mine.find((x) => wati.isTemplateApproved(x.t.status)) ?? mine.find((x) => !wati.isTemplateDead(x.t.status));
+    if (live) {
+      out.items[key] = { name: live.t.name, body: spec.body, status: live.t.status || "PENDING", id: live.t.id };
       continue;
     }
+    const name = wati.revisionName(spec.name, (mine[0]?.rev ?? 0) + 1);
     try {
       const created = await wati.createTemplate(creds, {
-        name: spec.name,
+        name,
         language: "es",
         body: spec.body,
         exampleParams: { name: "Carlos" },
         quickReplies: spec.buttons,
         category: "MARKETING",
       });
-      out.items[key] = { name: spec.name, body: spec.body, status: created.status || "PENDING", id: created.id };
+      out.items[key] = { name, body: spec.body, status: created.status || "PENDING", id: created.id };
     } catch (e) {
-      out.items[key] = { name: spec.name, body: spec.body, status: "ERROR", id: null, error: wati.humanError(e) };
+      out.items[key] = { name, body: spec.body, status: "ERROR", id: null, error: wati.humanError(e) };
       if (!out.error) out.error = "WATI no aceptó una plantilla: " + wati.humanError(e);
     }
   }
@@ -239,6 +253,11 @@ async function refreshTemplateStatus(creds: wati.WatiCreds, templates: Json, cha
       const item = next.items[key];
       const found = list.find((t) => t.name === item?.name);
       if (found) next.items[key] = { ...item, status: found.status || item.status, id: found.id || item.id, error: undefined };
+      // Ya no está en el tenant: el usuario la borró y WATI dejó de listarla.
+      // Se marca DELETED para que deje de figurar como aprobada (el motor la
+      // omite y ensureTemplates crea la revisión siguiente). Solo con una
+      // lista no vacía: una respuesta vacía rara no debe matar las tres.
+      else if (item?.name && list.length) next.items[key] = { ...item, status: "DELETED", error: undefined };
     }
     next.error = null;
     next.synced_at = new Date().toISOString();
@@ -513,7 +532,21 @@ Deno.serve(async (req) => {
       const acc = await loadAccount("wati");
       if (!acc) return json({ error: "wati_not_connected" }, 428, cors);
       const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
-      const templates = await refreshTemplateStatus(creds, acc.config?.templates);
+      let templates = await refreshTemplateStatus(creds, acc.config?.templates);
+      // Una plantilla borrada o rechazada no revive esperando: ensureTemplates
+      // crea la revisión siguiente (mismo texto, nombre nuevo) para que las
+      // campañas en curso vuelvan a tener con qué abrir la conversación. Sin
+      // esto, reconectar el canal tampoco la recreaba: el nombre es
+      // determinista y la fila muerta se daba por buena.
+      const items = (templates?.items ?? {}) as Json;
+      const needsRebuild = (["a", "b", "c"] as const).some((k) => {
+        const it = items[k];
+        return !it?.name || wati.isTemplateDead(it.status);
+      });
+      const sender = acc.config?.sender as Sender | undefined;
+      if (needsRebuild && !templates?.error && sender?.name && sender?.company) {
+        templates = await ensureTemplates(creds, sender, await shortHash(user.id));
+      }
       const config = { ...acc.config, templates };
       const { data: row, error } = await db
         .from("channel_accounts")
