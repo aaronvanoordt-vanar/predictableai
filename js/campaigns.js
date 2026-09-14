@@ -957,6 +957,8 @@
       '#prospecting-shell .cmp-tabs button { border:0; background:transparent; padding:6px 14px; border-radius:999px; font-size:12.5px; font-weight:600; color:var(--text2); cursor:pointer; display:inline-flex; align-items:center; gap:6px; font-family:inherit; }',
       '#prospecting-shell .cmp-tabs button.active { background:var(--accent-soft); color:var(--accent-2); }',
       '#prospecting-shell .cmp-badge { min-width:18px; height:18px; padding:0 5px; border-radius:999px; background:var(--accent-2); color:#fff; font-size:10.5px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; }',
+      // display:inline-flex le ganaba al [hidden] del navegador: con cero sin leer quedaba un círculo azul vacío.
+      '#prospecting-shell .cmp-badge[hidden] { display:none; }',
       '#prospecting-shell .cmp-subnav .cmp-spacer { flex:1; }',
       '#prospecting-shell .cmp-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; }',
       '#prospecting-shell .cmp-card { background:var(--surface); border:1px solid var(--hair); border-radius:var(--r-md); padding:14px; cursor:pointer; display:flex; flex-direction:column; gap:10px; }',
