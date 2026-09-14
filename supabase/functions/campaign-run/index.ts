@@ -527,14 +527,20 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       const tpl = acc.config?.templates?.items?.[key];
       if (!tpl?.name) throw new StepError("La plantilla de saludo no existe en WATI. Reconecta WATI.", "hold");
       const tplStatus = String(tpl.status ?? "PENDING");
-      // Rechazada / pausada / deshabilitada: Meta no la va a aprobar sola, así
-      // que el paso se omite y el lead sigue con los otros canales (en vez de
-      // quedarse esperando 6 h tras 6 h y bloquear el email que viene después).
-      // En revisión (PENDING): se espera, la aprobación suele llegar en horas.
-      if (/reject|error|paused|disabled/i.test(tplStatus)) {
-        throw new StepError(`La plantilla "${tpl.name}" fue rechazada por Meta (${tplStatus}): se omite el WhatsApp. Reconecta WhatsApp para crear plantillas nuevas.`, "skip");
+      // Borrada / rechazada / pausada / deshabilitada: Meta no la va a aprobar
+      // sola, así que el paso se omite y el lead sigue con los otros canales
+      // (en vez de quedarse esperando 6 h tras 6 h y bloquear el email que
+      // viene después). En revisión (PENDING): se espera, la aprobación suele
+      // llegar en horas.
+      if (wati.isTemplateDead(tplStatus)) {
+        const why = /delet/i.test(tplStatus)
+          ? "ya no existe en tu cuenta de WhatsApp"
+          : /reject/i.test(tplStatus)
+            ? "fue rechazada por Meta"
+            : `quedó ${tplStatus} en Meta`;
+        throw new StepError(`La plantilla "${tpl.name}" ${why}: se omite el WhatsApp. Ve a Campañas → WhatsApp → Actualizar estado para crear una plantilla nueva.`, "skip");
       }
-      if (!/approved/i.test(tplStatus)) {
+      if (!wati.isTemplateApproved(tplStatus)) {
         throw new StepError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tplStatus}).`, "hold");
       }
       bodyText = String(tpl.body ?? "").replace(/\{\{\s*name\s*\}\}/gi, firstName(member));

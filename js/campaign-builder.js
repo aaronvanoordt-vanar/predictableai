@@ -54,6 +54,9 @@
   ];
   var TEMPLATE_NAMES = { template_a: 'Saludo 1', template_b: 'Recordatorio', template_c: 'Último intento' };
   var TEMPLATE_KEY = { template_a: 'a', template_b: 'b', template_c: 'c' };
+  // Estados de los que Meta no vuelve. Espejo de TEMPLATE_DEAD en
+  // supabase/functions/_shared/wati.ts y js/campaigns.js.
+  var TEMPLATE_DEAD = /reject|error|paused|disabled|delet|archiv/i;
   var NEED_KEY = { wati: 'whatsapp', dripify: 'linkedin', apollo: 'email' };  // necesidad del nodo → canal de la UI
   var ICONS = {
     whatsapp: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 16.5l1-3.2A6.5 6.5 0 1 1 7 15.6z"/><path d="M7.8 7.8c0 2.4 2 4.4 4.4 4.4l.9-1.2-1.6-.8-.7.6a3.3 3.3 0 0 1-1.6-1.6l.6-.7-.8-1.6z"/></svg>',
@@ -570,7 +573,10 @@
           else if (a.content.kind.indexOf('template_') === 0) {
             var t = tpls[TEMPLATE_KEY[a.content.kind]];
             if (!t) list.push('plantilla sin crear');
-            else if (!/approved/i.test(String(t.status || ''))) list.push('plantilla ' + String(t.status || 'pendiente').toLowerCase());
+            else if (!/approved/i.test(String(t.status || ''))) {
+              var tst = String(t.status || 'pendiente').toLowerCase();
+              list.push(TEMPLATE_DEAD.test(tst) ? 'plantilla ' + tst + ': el paso se omite' : 'plantilla ' + tst);
+            }
           } else list.push('solo con sesión de 24 h abierta');
         }
         if (a.channel === 'linkedin_connect' && !dripifyOk()) list.push('LinkedIn sin conectar');
@@ -1114,7 +1120,8 @@
         else if (!t) box.appendChild(h('div', { class: 'cb-warn', text: 'Esta plantilla no existe en tu cuenta de WhatsApp. Reconecta el canal para crearla.' }));
         else {
           var status = String(t.status || 'PENDING');
-          box.appendChild(h('div', { class: 'cb-row' }, pill(status, /approved/i.test(status) ? 'green' : /reject|error|paused|disabled/i.test(status) ? 'red' : 'amber'), h('span', { class: 'cb-hint', text: 'Estado en Meta. Solo se envía con la plantilla aprobada.' })));
+          var dead = TEMPLATE_DEAD.test(status);
+          box.appendChild(h('div', { class: 'cb-row' }, pill(status, /approved/i.test(status) ? 'green' : dead ? 'red' : 'amber'), h('span', { class: 'cb-hint', text: dead ? 'Meta no va a aprobar esta plantilla: el paso se omite y el lead sigue con el canal siguiente. Ve a Campañas → WhatsApp → Actualizar estado para crear una nueva, o elige otra plantilla aquí.' : 'Estado en Meta. Solo se envía con la plantilla aprobada.' })));
           box.appendChild(h('div', { class: 'cb-note', text: t.body || '' }));
         }
       }
