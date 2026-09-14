@@ -14,12 +14,22 @@
  * Auth: `key` = channel_accounts.webhook_secret de la cuenta Dripify del
  * usuario. Key desconocida → 200 {ignored:true}.
  *
- * Dripify documenta "22 data points" pero no el esquema exacto, y varía por
- * condición. El parser es tolerante: busca la URL del perfil, el texto de la
- * respuesta y el tipo de evento por nombre de campo (insensible a mayúsculas
- * y a la anidación), y guarda el payload completo en el evento para poder
- * ajustar el mapeo cuando se vea uno real. El lead se enlaza por la URL de
- * LinkedIn contra prospect_list_members del usuario.
+ * Dripify documenta "22 data points" pero no el esquema exacto. Con payloads
+ * reales (2026-09-13) se confirmó que manda el HILO COMPLETO en
+ * `conversation`: `{ text, type: "Linkedin message sent" | "Linkedin message
+ * replied", userName, timestamp }` por mensaje. De ahí sale la bandeja: cada
+ * mensaje del hilo es una fila de `inbox_messages` con su dirección, su texto
+ * y su hora, así que en Campañas → Respuestas se lee la conversación entera
+ * (lo que escribió el lead y lo que salió de la cuenta del usuario), no solo
+ * "respondió". Dripify reenvía el hilo entero en cada webhook: la
+ * deduplicación va por `provider_message_id` estable
+ * (`dripify.conversationMessageId`).
+ *
+ * `_shared/dripify.ts#parseConversation` es tolerante con la forma del
+ * payload (busca el array del hilo por nombre y por forma) y el parser viejo
+ * por nombre de campo sigue como último recurso si algún día no viene el
+ * hilo. El payload completo se guarda en el `campaign_event`. El lead se
+ * enlaza por la URL de LinkedIn contra prospect_list_members del usuario.
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -74,6 +84,65 @@ function firstLinkedinUrl(flat: Record<string, unknown>): string {
   return "";
 }
 
+/** Claves del payload que pertenecen al hilo, no al evento del webhook. */
+const THREAD_KEY_RE = /conversa|messages|thread|chat|history|dialog/i;
+
+/**
+ * Guarda en la bandeja los mensajes del hilo que todavía no estaban.
+ * Devuelve cuántos se insertaron (0 = el webhook repetía lo ya conocido).
+ */
+async function ingestThread(
+  db: SupabaseClient,
+  userId: string,
+  member: Json,
+  url: string,
+  entries: dripify.ConversationEntry[],
+  primary: Json | null,
+  eventRaw: string,
+  payload: Json,
+): Promise<number> {
+  const slug = dripify.linkedinSlug(url);
+  const now = new Date().toISOString();
+  const seen = new Set<string>();
+  const rows = entries.map((e, i) => ({ e, pid: dripify.conversationMessageId(userId, slug, e, i) }))
+    .filter(({ pid }) => (seen.has(pid) ? false : (seen.add(pid), true)));
+
+  const { data: known, error: readErr } = await db
+    .from("inbox_messages")
+    .select("provider_message_id")
+    .eq("user_id", userId)
+    .eq("provider", "dripify")
+    .in("provider_message_id", rows.map((r) => r.pid));
+  if (readErr) { console.warn("[dripify-webhook] leer bandeja:", readErr.message); return 0; }
+  const already = new Set((known ?? []).map((r: Json) => String(r.provider_message_id)));
+
+  const toInsert = rows.filter((r) => !already.has(r.pid)).map((r) => ({
+    user_id: userId,
+    member_id: member.id,
+    channel: "linkedin",
+    provider: "dripify",
+    direction: r.e.direction,
+    contact_ref: url,
+    body: r.e.text,
+    provider_message_id: r.pid,
+    provider_conversation_id: slug || null,
+    status: r.e.direction === "in" ? "delivered" : "sent",
+    sent_at: r.e.at ?? now,
+    campaign_id: primary?.campaign_id ?? null,
+    enrollment_id: primary?.id ?? null,
+    // El payload crudo se guarda una sola vez, en el campaign_event.
+    payload: { source: "dripify_webhook", event: eventRaw || null, entry_type: r.e.type || null, user_name: r.e.userName || null },
+  }));
+  if (!toInsert.length) return 0;
+
+  const { error } = await db.from("inbox_messages").insert(toInsert);
+  if (error) {
+    console.warn("[dripify-webhook] insertar hilo:", error.message, JSON.stringify(payload).slice(0, 300));
+    return 0;
+  }
+  return toInsert.length;
+}
+
 async function findMember(db: SupabaseClient, userId: string, url: string): Promise<Json | null> {
   const slug = dripify.linkedinSlug(url);
   if (!slug) return null;
@@ -106,23 +175,37 @@ Deno.serve(async (req) => {
   try { payload = await req.json(); } catch { return json({ ignored: true, reason: "bad json" }); }
   const flat = flatten(payload);
   const url = firstLinkedinUrl(flat);
-  const eventRaw = pick(flat, /(^|\.)(event|event_type|eventType|trigger|condition|action|status|type)$/i);
-  const replyText = pick(flat, /(reply|response|answer|message_text|last_message|conversation|text|body)/i, (v) => v.length > 1 && !/^https?:/i.test(v));
+  // El tipo del evento se busca FUERA del hilo: dentro, cada mensaje trae su
+  // propio `type` ("Linkedin message sent") y se colaba como si fuera el
+  // evento del webhook.
+  const outside: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(flat)) if (!THREAD_KEY_RE.test(k)) outside[k] = v;
+  const eventRaw = pick(outside, /(^|\.)(event|event_type|eventType|trigger|condition|action|status|type)$/i);
   const hint = `${eventRaw} ${Object.keys(flat).join(" ")}`.toLowerCase();
-
-  // Clasificación: la condición del webhook la elige el usuario en Dripify,
-  // así que el tipo suele venir implícito; el texto de respuesta es la señal
-  // más fiable de "respondió".
-  let signal: dripify.LeadSignal = dripify.classifyEvent(eventRaw);
-  if (signal === "other") {
-    if (replyText && /repl|respon|answer|conversation|message/.test(hint)) signal = "replied";
-    else if (/accept/.test(hint)) signal = "connection_accepted";
-    else if (/invite|connect/.test(hint) && /sent/.test(hint)) signal = "connection_sent";
-    else if (/message/.test(hint) && /sent/.test(hint)) signal = "message_sent";
-  }
 
   try {
     const member = url ? await findMember(db, acc.user_id, url) : null;
+    const leadName = member ? [member.name, member.first_name].filter(Boolean).join(" ") : "";
+    const entries = dripify.parseConversation(payload, leadName);
+    // Último recurso para payloads sin hilo (otras condiciones de webhook).
+    const replyText = entries.length
+      ? (entries.filter((e) => e.direction === "in").pop()?.text ?? "")
+      : pick(flat, /(reply|response|answer|message_text|last_message|text|body)/i, (v) => v.length > 1 && !/^https?:/i.test(v));
+
+    // Clasificación: la condición del webhook la elige el usuario en Dripify,
+    // así que el tipo suele venir implícito. Con hilo, un mensaje entrante es
+    // la señal definitiva de "respondió".
+    let signal: dripify.LeadSignal = dripify.classifyEvent(eventRaw);
+    if (entries.length) {
+      if (entries.some((e) => e.direction === "in")) signal = "replied";
+      else if (signal === "other") signal = "message_sent";
+    } else if (signal === "other") {
+      if (replyText && /repl|respon|answer|conversation|message/.test(hint)) signal = "replied";
+      else if (/accept/.test(hint)) signal = "connection_accepted";
+      else if (/invite|connect/.test(hint) && /sent/.test(hint)) signal = "connection_sent";
+      else if (/message/.test(hint) && /sent/.test(hint)) signal = "message_sent";
+    }
+
     const { data: ens } = member
       ? await db.from("campaign_enrollments").select("id, campaign_id, status, next_position, replied_at, linkedin_connected_at, provider_refs, created_at")
         .eq("member_id", member.id).eq("user_id", acc.user_id).order("created_at", { ascending: false })
@@ -132,15 +215,25 @@ Deno.serve(async (req) => {
     const list: Json[] = ens ?? [];
     const primary: Json | null = list.find((e) => ["active", "processing", "paused"].includes(e.status)) ?? list[0] ?? null;
 
-    if (signal === "replied" && member) {
-      await db.from("inbox_messages").insert({
+    // ── Bandeja: el hilo completo, sin duplicar ──────────────────────────────
+    // Dripify reenvía la conversación entera en cada webhook, así que solo se
+    // insertan los mensajes cuyo id estable todavía no está guardado.
+    let added = 0;
+    if (member && entries.length) {
+      added = await ingestThread(db, acc.user_id, member, url, entries, primary, eventRaw, payload);
+    } else if (signal === "replied" && member) {
+      const { error } = await db.from("inbox_messages").insert({
         user_id: acc.user_id, member_id: member.id, channel: "linkedin", provider: "dripify", direction: "in",
         contact_ref: url, body: replyText || "Respondió por LinkedIn (texto no incluido por Dripify).",
         provider_message_id: null, status: "delivered", sent_at: at,
         campaign_id: primary?.campaign_id ?? null, enrollment_id: primary?.id ?? null,
         payload: { event: eventRaw || null, raw: payload },
       });
+      if (!error) added = 1;
     }
+    // Sin hilo no hay forma de saber si el webhook repite algo ya visto, así
+    // que se sigue registrando el evento como antes.
+    const somethingNew = !entries.length || added > 0;
 
     for (const en of (ens ?? []) as Json[]) {
       const patch: Json = {};
@@ -156,17 +249,19 @@ Deno.serve(async (req) => {
       else if (signal === "message_sent") type = "sent";
       else if (signal === "failed") type = "failed";
       if (!type) continue;
-      await db.from("campaign_events").insert({
-        enrollment_id: en.id, campaign_id: en.campaign_id, member_id: member?.id ?? null, user_id: acc.user_id,
-        channel: "linkedin", type, step_position: en.next_position,
-        detail: (replyText || eventRaw || "").slice(0, 300) || null, payload: { event: eventRaw || null, raw: payload },
-      });
+      if (somethingNew) {
+        await db.from("campaign_events").insert({
+          enrollment_id: en.id, campaign_id: en.campaign_id, member_id: member?.id ?? null, user_id: acc.user_id,
+          channel: "linkedin", type, step_position: en.next_position,
+          detail: (replyText || eventRaw || "").slice(0, 300) || null, payload: { event: eventRaw || null, raw: payload },
+        });
+      }
       if (Object.keys(patch).length) await db.from("campaign_enrollments").update(patch).eq("id", en.id);
     }
 
     if (member) {
       const crm = signal === "replied" ? "respondio" : signal === "connection_accepted" ? "conexion_aceptada" : signal === "connection_sent" ? "conexion_enviada" : null;
-      if (crm && !["reunion_agendada", "reunion_tomada", "dado_de_baja"].includes(member.contact_status)) {
+      if (crm && crm !== member.contact_status && !["reunion_agendada", "reunion_tomada", "dado_de_baja"].includes(member.contact_status)) {
         await db.from("prospect_list_members").update({ contact_status: crm, status_changed_at: at }).eq("id", member.id);
       }
     } else {

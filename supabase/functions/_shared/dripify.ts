@@ -189,6 +189,140 @@ export function classifyEvent(type: unknown): LeadSignal {
   return "other";
 }
 
+// ── Conversación del webhook de campaña ─────────────────────────────────────
+
+/**
+ * Un mensaje del hilo de LinkedIn tal como lo manda el webhook de Dripify.
+ * `direction` es "in" cuando lo escribió el lead y "out" cuando salió de la
+ * cuenta del usuario.
+ */
+export interface ConversationEntry {
+  text: string;
+  direction: "in" | "out";
+  at: string | null; // ISO 8601 (mismo formato que Date#toISOString)
+  userName: string;
+  type: string;
+}
+
+/** Lee una clave del objeto sin importar mayúsculas ni guiones bajos. */
+function field(obj: Json, names: string[]): string {
+  if (!obj || typeof obj !== "object") return "";
+  const norm = (s: string) => s.toLowerCase().replace(/[_\s-]/g, "");
+  const wanted = names.map(norm);
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === null || typeof v === "object") continue;
+    if (wanted.includes(norm(k))) {
+      const s = String(v).trim();
+      if (s) return s;
+    }
+  }
+  return "";
+}
+
+/** "2026-09-12T16:59:10.409Z" | "12/09/2026" → ISO, o null si no se entiende. */
+function toIso(raw: string): string | null {
+  if (!raw) return null;
+  let ms = Date.parse(raw);
+  if (Number.isNaN(ms)) {
+    const m = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/); // DD/MM/YYYY
+    if (m) ms = Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  }
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+}
+
+/** Compara nombres ignorando acentos: "Jorge Alejandro Muñoz" ≈ "Jorge Munoz". */
+function namesMatch(a: string, b: string): boolean {
+  const toks = (s: string) =>
+    s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+      .split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+  const A = toks(a), B = toks(b);
+  if (!A.length || !B.length) return false;
+  return A.some((t) => B.includes(t));
+}
+
+/**
+ * Dirección de un mensaje del hilo. El `type` de Dripify es la señal fiable
+ * ("Linkedin message sent" vs "Linkedin message replied"); si no se reconoce,
+ * decide el nombre de quien escribió.
+ */
+function entryDirection(type: string, userName: string, leadName: string): "in" | "out" {
+  const t = type.toLowerCase();
+  if (/repl|respon|answer|receiv|recib|incoming|inbound/.test(t)) return "in";
+  if (/sent|send|enviad|outgoing|outbound|deliver/.test(t)) return "out";
+  if (leadName && userName) return namesMatch(userName, leadName) ? "in" : "out";
+  return "out";
+}
+
+/** ¿Este array parece el hilo de la conversación? */
+function looksLikeThread(arr: Json): boolean {
+  return Array.isArray(arr) && arr.length > 0 &&
+    arr.every((it) => it && typeof it === "object" && !Array.isArray(it)) &&
+    arr.some((it) => field(it, ["text", "message", "body", "content", "messageText"]));
+}
+
+/** Busca el array del hilo: primero por nombre de clave, luego por forma. */
+function findThread(payload: Json, depth = 0): Json[] | null {
+  if (depth > 4 || !payload || typeof payload !== "object") return null;
+  const entries = Array.isArray(payload)
+    ? payload.map((v, i) => [String(i), v] as [string, Json])
+    : Object.entries(payload) as [string, Json][];
+  const named = entries.filter(([k]) => /conversa|messages|thread|chat|history|dialog/i.test(k));
+  for (const [, v] of named) if (looksLikeThread(v)) return v as Json[];
+  for (const [, v] of entries) if (looksLikeThread(v)) return v as Json[];
+  for (const [, v] of entries) {
+    if (v && typeof v === "object") {
+      const found = findThread(v, depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * Extrae el hilo completo del payload del webhook de campaña de Dripify.
+ *
+ * Comprobado el 2026-09-13 con payloads reales: el webhook manda TODO el hilo
+ * en `conversation`, con `{ text, type, userName, timestamp }` por mensaje —
+ * o sea que el texto de la respuesta del lead y el de lo que salió de la
+ * cuenta del usuario están ahí, no hay que adivinarlos. `leadName` solo se usa
+ * cuando el `type` no dice si el mensaje entró o salió.
+ *
+ * Devuelve los mensajes del más antiguo al más nuevo, sin los vacíos.
+ */
+export function parseConversation(payload: Json, leadName = ""): ConversationEntry[] {
+  const thread = findThread(payload);
+  if (!thread) return [];
+  const out: ConversationEntry[] = [];
+  for (const it of thread) {
+    const text = field(it, ["text", "message", "body", "content", "messageText", "comment"]);
+    if (!text) continue;
+    const type = field(it, ["type", "event", "eventType", "action", "direction", "status"]);
+    const userName = field(it, ["userName", "username", "author", "sender", "senderName", "from", "name"]);
+    out.push({
+      text,
+      type,
+      userName,
+      at: toIso(field(it, ["timestamp", "createdAt", "date", "datetime", "time", "sentAt", "at"])),
+      direction: entryDirection(type, userName, leadName),
+    });
+  }
+  out.sort((a, b) => (a.at ? Date.parse(a.at) : 0) - (b.at ? Date.parse(b.at) : 0));
+  return out;
+}
+
+/**
+ * Id estable de un mensaje del hilo, para que los webhooks repetidos (Dripify
+ * reenvía la conversación entera cada vez) no dupliquen filas en la bandeja.
+ * Único por cuenta + perfil + instante; `inbox_messages` lo protege con el
+ * índice único (provider, provider_message_id).
+ *
+ * La migración 20260913000001 replica este formato para rellenar los hilos
+ * que ya estaban guardados: si cambia aquí, deja de casar con lo guardado.
+ */
+export function conversationMessageId(accountId: string, slug: string, e: ConversationEntry, index: number): string {
+  return `conv:${accountId}:${slug}:${e.at ?? "i" + index}`;
+}
+
 export function humanError(err: unknown): string {
   if (err instanceof DripifyError) return err.message;
   return (err as Error)?.message || String(err);
