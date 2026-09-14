@@ -155,8 +155,8 @@
       if (a.delay.mode === 'with_prev' && !(idx > 0 && list[idx - 1].type === 'action')) {
         errors.push({ nodeId: a.id, message: label + ': "junto con el anterior" necesita otro envío justo antes.' });
       }
-      if (a.channel === 'linkedin_connect' && !(a.settings && a.settings.dripify_campaign_id)) {
-        errors.push({ nodeId: a.id, message: label + ': el paso de LinkedIn necesita una campaña de Dripify.' });
+      if (a.channel === 'linkedin_connect' && !(a.settings && (a.settings.dripify_campaign_id || a.settings.linkedin_campaign_id))) {
+        errors.push({ nodeId: a.id, message: label + ': el paso de LinkedIn necesita una campaña de LinkedIn (elige una de Dripify o crea la tuya).' });
       }
       if (a.content.kind.indexOf('template_') === 0 && a.channel !== 'whatsapp') {
         errors.push({ nodeId: a.id, message: label + ': las plantillas de saludo son solo de WhatsApp.' });
@@ -305,7 +305,7 @@
     }
     var ch = CHANNEL_META[node.channel] || { label: node.channel };
     if (node.channel === 'linkedin_connect') {
-      var dc = node.settings && node.settings.dripify_campaign_name;
+      var dc = node.settings && (node.settings.dripify_campaign_name || node.settings.linkedin_campaign_name);
       return ch.label + (dc ? ' · ' + dc : '');
     }
     var k = node.content.kind;
@@ -346,8 +346,9 @@
   var C = function (check, delay, yes, no) { return { id: newId(), type: 'condition', check: check, delay: delay, yes: yes, no: no }; };
 
   /**
-   * Cadencias fijas. Los pasos de LinkedIn salen sin campaña de LinkedIn
-   * (Dripify): la validación pide elegirla. Cada llamada genera ids nuevos.
+   * Cadencias fijas. Los pasos de LinkedIn salen sin campaña de LinkedIn:
+   * la validación pide elegir una de Dripify o crear la propia. Cada llamada
+   * genera ids nuevos.
    */
   function templates() {
     return [

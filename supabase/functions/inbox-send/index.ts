@@ -6,14 +6,27 @@
  * patrón que channel-connect (el verify_jwt de la plataforma también
  * aceptaría la anon key pública).
  *
- * POST body (una de tres formas):
- *  • { channel: "whatsapp", member_id, body }
+ * POST body (una de estas formas):
+ *  • { channel: "whatsapp", member_id | contact_ref, body }
  *      Texto de sesión por WATI (POST /api/ext/v3/conversations/messages/text).
  *      Solo dentro de la ventana de 24 h: último WhatsApp ENTRANTE del lead en
  *      inbox_messages (o campaign_enrollments.last_inbound_whatsapp_at) hace
- *      menos de 24 h; si no → 409 {error:"whatsapp_window_closed"} (fuera de
- *      la ventana Meta solo acepta plantillas: eso lo hace un paso de campaña).
- *      → { message: <fila de inbox_messages> }
+ *      menos de 24 h; si no → 409 {error:"whatsapp_window_closed"}. Fuera de
+ *      la ventana Meta solo acepta plantillas: por eso existe
+ *      { channel: "whatsapp", member_id | contact_ref, template: "a"|"b"|"c" },
+ *      que manda una de las tres plantillas de saludo APROBADAS de la cuenta
+ *      (mismo camino que un paso de campaña). `contact_ref` (dígitos del
+ *      número) sirve para contestar a un número que escribió y no está en
+ *      ninguna lista. → { message: <fila de inbox_messages> }
+ *  • { channel: "linkedin", … } → 501 {error:"linkedin_send_unavailable"}:
+ *      ni Dripify ni LinkedIn exponen envío de mensajes por API (comprobado
+ *      el 2026-09-14 en api.dripify.com); la bandeja copia el texto y abre
+ *      el perfil para pegarlo.
+ *  • { action: "link_member", member_id, channel, contact_ref }
+ *      Enlaza a un lead de mis listas las filas de la bandeja de ese contacto
+ *      (URL de LinkedIn, dígitos del teléfono o email) que estaban sin lead:
+ *      UPDATE inbox_messages SET member_id WHERE user_id = uid AND channel AND
+ *      contact_ref AND member_id IS NULL → { updated: n }
  *  • { channel: "email", member_id, body, subject? }
  *      Email individual por Apollo con la credencial del usuario
  *      (_shared/apollo-auth.ts: su OAuth o la key de la plataforma):
@@ -109,32 +122,78 @@ async function latestEnrollment(db: SupabaseClient, userId: string, memberId: st
 
 // ── WhatsApp (sesión) ───────────────────────────────────────────────────────
 
-async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json, text: string): Promise<Json> {
-  const phone = wati.digits(member.phone);
+function firstName(m: Json): string {
+  const f = String(m?.first_name ?? "").trim();
+  if (f) return f;
+  return String(m?.name ?? "").trim().split(/\s+/)[0] || "";
+}
+
+/**
+ * WhatsApp por WATI. `member` puede ser null cuando se contesta a un número
+ * que escribió sin estar en ninguna lista (`contactRef` = dígitos). Con
+ * `template` ("a"|"b"|"c") sale la plantilla de saludo aprobada en vez de
+ * texto libre: es lo único que Meta acepta fuera de la ventana de 24 h.
+ */
+async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | null, contactRef: string, text: string, template: string): Promise<Json> {
+  const phone = wati.digits(member?.phone || contactRef);
   if (!phone) throw new HttpError("El lead no tiene teléfono.", 400, "member_without_phone");
   const { data: acc } = await db.from("channel_accounts").select("*").eq("user_id", userId).eq("provider", "wati").maybeSingle();
   if (!acc || acc.status !== "connected") throw new HttpError("WhatsApp no está conectado.", 428, "whatsapp_not_connected");
+  const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
+  const en = member ? await latestEnrollment(db, userId, member.id) : null;
 
-  // Ventana de 24 h: último entrante del lead por WhatsApp.
+  if (template) {
+    const key = String(template).slice(-1).toLowerCase();
+    const tpl = acc.config?.templates?.items?.[key];
+    if (!tpl?.name) throw new HttpError("Esa plantilla de saludo no existe en tu cuenta de WhatsApp. Reconecta el canal para crearla.", 400, "whatsapp_template_missing");
+    if (!/approved/i.test(String(tpl.status ?? ""))) throw new HttpError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tpl.status || "PENDING"}).`, 409, "whatsapp_template_not_approved");
+    const name = firstName(member) || "";
+    const bodyText = String(tpl.body ?? "").replace(/\{\{\s*(name|nombre|1)\s*\}\}/gi, name);
+    const localId = crypto.randomUUID();
+    let sent: wati.SendResult;
+    try {
+      sent = await wati.sendTemplate(creds, {
+        templateName: tpl.name,
+        broadcastName: `px_inbox_${localId.slice(0, 8)}`,
+        phone,
+        localMessageId: localId,
+        params: { name },
+        channel: acc.config?.channel || undefined,
+      });
+    } catch (e) {
+      const status = e instanceof wati.WatiError && e.status >= 400 && e.status < 500 ? 400 : 502;
+      throw new HttpError("WhatsApp no aceptó la plantilla: " + wati.humanError(e), status, "whatsapp_send_failed");
+    }
+    if (!sent.accepted) throw new HttpError("WhatsApp rechazó la plantilla: " + (sent.errors.join("; ") || "sin detalle"), 400, "whatsapp_send_failed");
+    const { data: row, error } = await db.from("inbox_messages").insert({
+      user_id: userId, member_id: member?.id ?? null, channel: "whatsapp", provider: "wati", direction: "out",
+      contact_ref: phone, body: bodyText, provider_message_id: localId, status: "pending", sent_at: new Date().toISOString(),
+      campaign_id: en?.campaign_id ?? null, enrollment_id: en?.id ?? null,
+      payload: { source: "inbox_reply", content_kind: "template_" + key, template_name: tpl.name },
+    }).select("*").single();
+    if (error) throw new HttpError("La plantilla salió pero no se pudo guardar en la bandeja: " + error.message, 500);
+    await spendCredits(db, userId);
+    return row;
+  }
+
+  // Ventana de 24 h: último entrante de ese número por WhatsApp.
   const now = Date.now();
-  const { data: lastIn } = await db
+  let q = db
     .from("inbox_messages")
     .select("sent_at")
     .eq("user_id", userId)
-    .eq("member_id", member.id)
     .eq("channel", "whatsapp")
     .eq("direction", "in")
     .order("sent_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const en = await latestEnrollment(db, userId, member.id);
+    .limit(1);
+  q = member ? q.or(`member_id.eq.${member.id},contact_ref.eq.${phone}`) : q.eq("contact_ref", phone);
+  const { data: lastIn } = await q.maybeSingle();
   const candidates = [lastIn?.sent_at, en?.last_inbound_whatsapp_at].map((v) => (v ? Date.parse(v) : 0)).filter((n) => n > 0);
   const lastInbound = candidates.length ? Math.max(...candidates) : 0;
   if (!lastInbound || now - lastInbound > WHATSAPP_SESSION_MS) {
     throw new HttpError("La ventana de 24 h de WhatsApp está cerrada.", 409, "whatsapp_window_closed");
   }
 
-  const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
   let r: { id: string | null; conversationId: string | null };
   try {
     r = await wati.sendText(creds, phone, text);
@@ -145,7 +204,7 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json, te
   const localId = r.id || crypto.randomUUID();
   const { data: row, error } = await db.from("inbox_messages").insert({
     user_id: userId,
-    member_id: member.id,
+    member_id: member?.id ?? null,
     channel: "whatsapp",
     provider: "wati",
     direction: "out",
@@ -315,23 +374,56 @@ Deno.serve(async (req) => {
       return json({ updated: data?.length ?? 0 }, 200, cors);
     }
 
-    const channel = String(body?.channel ?? "");
-    if (channel !== "whatsapp" && channel !== "email") return json({ error: "channel debe ser whatsapp o email" }, 400, cors);
-    const memberId = String(body?.member_id ?? "");
-    if (!UUID_RE.test(memberId)) return json({ error: "member_id inválido" }, 400, cors);
-    const text = String(body?.body ?? "").replace(/\r\n/g, "\n").trim().slice(0, MAX_BODY);
-    if (!text) return json({ error: "Escribe un mensaje." }, 400, cors);
+    if (body?.action === "link_member") {
+      const memberId = String(body.member_id ?? "");
+      const channel = String(body.channel ?? "");
+      const ref = String(body.contact_ref ?? "").trim().slice(0, 500);
+      if (!UUID_RE.test(memberId)) return json({ error: "member_id inválido" }, 400, cors);
+      if (!["whatsapp", "email", "linkedin"].includes(channel) || !ref) return json({ error: "channel y contact_ref son obligatorios" }, 400, cors);
+      const { data: member } = await db.from("prospect_list_members").select("id").eq("id", memberId).eq("user_id", user.id).maybeSingle();
+      if (!member) return json({ error: "El lead no existe o no es tuyo." }, 404, cors);
+      const { data, error } = await db
+        .from("inbox_messages")
+        .update({ member_id: memberId })
+        .eq("user_id", user.id)
+        .eq("channel", channel)
+        .eq("contact_ref", ref)
+        .is("member_id", null)
+        .select("id");
+      if (error) throw new HttpError(error.message, 500);
+      return json({ updated: data?.length ?? 0 }, 200, cors);
+    }
 
-    const { data: member } = await db
-      .from("prospect_list_members")
-      .select("id, user_id, name, first_name, last_name, title, company, company_domain, email, phone, apollo_contact_id, contact_status")
-      .eq("id", memberId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (!member) return json({ error: "El lead no existe o no es tuyo." }, 404, cors);
+    const channel = String(body?.channel ?? "");
+    if (channel === "linkedin") {
+      return json({
+        error: "linkedin_send_unavailable",
+        message: "Ni Dripify ni LinkedIn permiten enviar mensajes por API: copia la respuesta y pégala en el chat de LinkedIn.",
+      }, 501, cors);
+    }
+    if (channel !== "whatsapp" && channel !== "email") return json({ error: "channel debe ser whatsapp, email o linkedin" }, 400, cors);
+    const memberId = String(body?.member_id ?? "");
+    const contactRef = String(body?.contact_ref ?? "").trim().slice(0, 200);
+    const template = String(body?.template ?? "").trim().slice(0, 12);
+    if (memberId && !UUID_RE.test(memberId)) return json({ error: "member_id inválido" }, 400, cors);
+    if (!memberId && !(channel === "whatsapp" && wati.digits(contactRef))) return json({ error: "member_id inválido" }, 400, cors);
+    const text = String(body?.body ?? "").replace(/\r\n/g, "\n").trim().slice(0, MAX_BODY);
+    if (!text && !template) return json({ error: "Escribe un mensaje." }, 400, cors);
+
+    let member: Json | null = null;
+    if (memberId) {
+      const { data } = await db
+        .from("prospect_list_members")
+        .select("id, user_id, name, first_name, last_name, title, company, company_domain, email, phone, apollo_contact_id, contact_status")
+        .eq("id", memberId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!data) return json({ error: "El lead no existe o no es tuyo." }, 404, cors);
+      member = data;
+    }
 
     const row = channel === "whatsapp"
-      ? await sendWhatsApp(db, user.id, member, text)
+      ? await sendWhatsApp(db, user.id, member, contactRef, text, template)
       : await sendEmail(db, user.id, member, text, String(body?.subject ?? ""));
     return json({ message: row }, 200, cors);
   } catch (err) {

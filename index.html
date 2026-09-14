@@ -2100,9 +2100,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       Listas
       <span id="nav-listas-badge" class="nav-badge teal" style="display:none">0</span>
     </div>
-    <div class="nav-item" data-page="pro-main" data-pros-tab="campanas" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('campanas')">
+    <div class="nav-item" data-page="pro-main" data-pros-tab="campanas" onclick="nav(this,'pro-main');if(window.campaigns)window.campaigns.setView('campaigns');if(window.prospecting)window.prospecting.show('campanas')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>
       Campañas
+    </div>
+    <!-- Bandeja omnicanal: vive dentro de Campañas (js/campaigns.js, vista 'inbox'). -->
+    <div class="nav-item" data-page="pro-main" data-pros-tab="campanas" data-pros-view="inbox" onclick="nav(this,'pro-main');if(window.campaigns)window.campaigns.setView('inbox');if(window.prospecting)window.prospecting.show('campanas')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 3h12v7H7l-3 2.5V10H2z"/></svg>
+      Bandeja
     </div>
 
     <!-- AI SALES COACH -->
@@ -3435,9 +3440,10 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/company-context.js?v=20260823"></script>
 <script src="js/prospecting-data.js?v=20260902d"></script>
 <script src="js/prospecting.js?v=20260902c"></script>
-<script src="js/campaign-flow.js?v=20260903"></script>
-<script src="js/campaign-builder.js?v=20260903"></script>
-<script src="js/campaigns.js?v=20260903"></script>
+<script src="js/campaign-flow.js?v=20260914"></script>
+<script src="js/linkedin-campaigns.js?v=20260914"></script>
+<script src="js/campaign-builder.js?v=20260914"></script>
+<script src="js/campaigns.js?v=20260914"></script>
 <script src="js/radar.js?v=20260902-savefast"></script>
 <script src="js/clients.js?v=20260824-sheets"></script>
 <script src="js/meeting-coach.js"></script>

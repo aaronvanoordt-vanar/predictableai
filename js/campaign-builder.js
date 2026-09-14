@@ -105,6 +105,38 @@
   function browserTz() { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Lima'; } catch (e) { return 'America/Lima'; } }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function dayLabel(v) { for (var i = 0; i < DAYS.length; i++) if (DAYS[i].value === Number(v)) return DAYS[i].label; return String(v); }
+  // Variables de "Mi texto" (las resuelve el motor: campaign-run fill()).
+  var TEXT_VARS = [
+    { key: '{{nombre}}', label: 'Nombre del lead' },
+    { key: '{{empresa}}', label: 'Empresa del lead' },
+    { key: '{{cargo}}', label: 'Cargo del lead' },
+    { key: '{{remitente}}', label: 'Tu nombre (firma)' },
+    { key: '{{mi_empresa}}', label: 'Tu empresa' },
+  ];
+  function insertAtCursor(input, text) {
+    if (!input) return;
+    var start = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
+    var end = typeof input.selectionEnd === 'number' ? input.selectionEnd : start;
+    var before = input.value.slice(0, start);
+    var after = input.value.slice(end);
+    var pad = before && !/\s$/.test(before) ? ' ' : '';
+    input.value = before + pad + text + after;
+    var pos = (before + pad + text).length;
+    try { input.setSelectionRange(pos, pos); } catch (e) { /* no-op */ }
+    input.focus();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  /** Fila de botones con las variables: inserta en el último campo enfocado de `fields` (por defecto el último). */
+  function varChips(fields) {
+    var target = fields[fields.length - 1];
+    fields.forEach(function (f) { f.addEventListener('focus', function () { target = f; }); });
+    var row = h('div', { class: 'cb-vars' });
+    row.appendChild(h('span', { class: 'cb-hint', text: 'Variables:' }));
+    TEXT_VARS.forEach(function (v) {
+      row.appendChild(h('button', { type: 'button', class: 'cb-var', title: v.label, text: v.key, onmousedown: function (e) { e.preventDefault(); }, onclick: function () { insertAtCursor(target, v.key); } }));
+    });
+    return row;
+  }
 
   // ── Estilos ──────────────────────────────────────────────────────────────
   function injectStyles() {
@@ -128,6 +160,12 @@
       '.cb-start:hover { border-color:var(--accent-2); }',
       '.cb-start.on { border-color:var(--accent-2); background:var(--accent-soft); }',
       '.cb-start:disabled { opacity:.55; cursor:not-allowed; }',
+      '.cb-start > .credit-badge { align-self:flex-start; margin-top:2px; }',
+      '.cb-vars { display:flex; gap:5px; flex-wrap:wrap; align-items:center; }',
+      '.cb-var { font:inherit; font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--hair); background:var(--surface2); color:var(--text2); cursor:pointer; font-family:var(--font-mono); }',
+      '.cb-var:hover { border-color:var(--accent-2); color:var(--text); }',
+      '.cb-li-row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }',
+      '.cb-li-row select { flex:1; min-width:180px; width:auto; }',
       '.cb-start-title { font-weight:700; font-size:13.5px; display:flex; align-items:center; gap:8px; }',
       '.cb-start-sub { font-size:12px; color:var(--text2); line-height:1.4; }',
       '.cb-mini { display:flex; gap:4px; flex-wrap:wrap; margin-top:4px; }',
@@ -479,6 +517,22 @@
     function watiOk() { return o.channelConnected ? !!o.channelConnected('whatsapp') : !!(o.wati && o.wati.status === 'connected'); }
     function dripifyOk() { return o.channelConnected ? !!o.channelConnected('linkedin') : !!(o.dripify && o.dripify.status === 'connected'); }
     function dripifyCampaigns() { return (o.dripify && o.dripify.config && o.dripify.config.campaigns) || []; }
+    function ownLinkedinCampaigns() { return (typeof o.linkedinCampaigns === 'function' ? o.linkedinCampaigns() : o.linkedinCampaigns) || []; }
+    function linkedinSettings(row) {
+      if (global.LinkedinCampaigns) return global.LinkedinCampaigns.settingsFor(row);
+      var sst = { linkedin_campaign_id: row.id, linkedin_campaign_name: row.name };
+      if (row.dripify_campaign_id) { sst.dripify_campaign_id = row.dripify_campaign_id; sst.dripify_campaign_name = row.dripify_campaign_name || row.name; }
+      return sst;
+    }
+    /** Un paso que apunta a una campaña de Predictable ya vinculada recibe el id de Dripify (por si se vinculó después). */
+    function syncLinkedinSettings() {
+      var own = ownLinkedinCampaigns();
+      L.actions(st.draft.flow).forEach(function (a) {
+        if (a.channel !== 'linkedin_connect' || !(a.settings && a.settings.linkedin_campaign_id)) return;
+        var lc = own.find(function (x) { return String(x.id) === String(a.settings.linkedin_campaign_id); });
+        if (lc) a.settings = linkedinSettings(lc);
+      });
+    }
     function watiTemplates() { return (o.wati && o.wati.config && o.wati.config.templates && o.wati.config.templates.items) || {}; }
     function apolloOk() {
       if (o.channelConnected) return !!o.channelConnected('email');
@@ -519,6 +573,7 @@
           } else list.push('solo con sesión de 24 h abierta');
         }
         if (a.channel === 'linkedin_connect' && !dripifyOk()) list.push('LinkedIn sin conectar');
+        else if (a.channel === 'linkedin_connect' && a.settings && a.settings.linkedin_campaign_id && !a.settings.dripify_campaign_id) list.push('campaña sin crear en Dripify');
         if (a.channel === 'email' && !apolloOk()) list.push('Email sin conectar');
         if (list.length) w[a.id] = list;
       });
@@ -651,6 +706,7 @@
 
     // ── render ──
     function render() {
+      syncLinkedinSettings();
       var focus = document.activeElement;
       var focusKey = focus && root.contains(focus) && focus.getAttribute('data-key');
       var selStart = focusKey && typeof focus.selectionStart === 'number' ? focus.selectionStart : null;
@@ -742,7 +798,10 @@
         cards.appendChild(cur);
       }
       // IA
-      var ai = h('button', { type: 'button', class: 'cb-start' + (st.startKind === 'ai' ? ' on' : ''), 'data-action': 'cb-start', 'data-kind': 'ai', disabled: st.aiLoading, 'data-credit-cost': 'outreach_playbook' });
+      // data-credit-pos="inside": credit-costs.js coloca el badge DENTRO de la
+      // tarjeta. Como hermano caía en el grid de tarjetas y se estiraba en un
+      // círculo azul gigante (border-radius:999px sobre una celda de 200 px).
+      var ai = h('button', { type: 'button', class: 'cb-start' + (st.startKind === 'ai' ? ' on' : ''), 'data-action': 'cb-start', 'data-kind': 'ai', disabled: st.aiLoading, 'data-credit-cost': 'outreach_playbook', 'data-credit-pos': 'inside' });
       ai.appendChild(h('div', { class: 'cb-start-title' }, icon('ai', 'purple'), st.aiLoading ? 'Armando la cadencia…' : 'Recomendada por la IA'));
       ai.appendChild(h('div', { class: 'cb-start-sub', text: 'Arma la cadencia con tu contexto de empresa, el ICP y el brief, y con los canales que tienes conectados: ' + channelSummary() + '. Después la ajustas paso a paso.' }));
       cards.appendChild(ai);
@@ -952,16 +1011,51 @@
       if (node.channel === 'linkedin_connect') {
         box.appendChild(h('div', { class: 'cb-lbl', text: 'Campaña de LinkedIn' }));
         var dcs = dripifyCampaigns();
+        var own = ownLinkedinCampaigns();
+        var settings = node.settings || {};
+        var current = settings.linkedin_campaign_id ? 'own:' + settings.linkedin_campaign_id : (settings.dripify_campaign_id ? 'dr:' + settings.dripify_campaign_id : '');
         var sel = h('select', { onchange: function () {
-          var dc = dcs.find(function (x) { return String(x.id) === sel.value; });
-          node.settings = dc ? { dripify_campaign_id: dc.id, dripify_campaign_name: dc.name } : {};
+          var v = sel.value;
+          if (v.indexOf('own:') === 0) {
+            var lc = own.find(function (x) { return String(x.id) === v.slice(4); });
+            node.settings = lc ? linkedinSettings(lc) : {};
+          } else if (v.indexOf('dr:') === 0) {
+            var dc = dcs.find(function (x) { return String(x.id) === v.slice(3); });
+            node.settings = dc ? { dripify_campaign_id: dc.id, dripify_campaign_name: dc.name } : {};
+          } else node.settings = {};
           markCustom();
           render();
         } });
-        sel.appendChild(h('option', { value: '', text: dcs.length ? 'Elige la campaña de LinkedIn…' : (dripifyOk() ? 'Sin campañas de LinkedIn' : 'Conecta LinkedIn primero') }));
-        dcs.forEach(function (dc) { sel.appendChild(h('option', { value: String(dc.id), text: dc.name + (dc.active === false ? ' (inactiva)' : ''), selected: String(dc.id) === String(node.settings && node.settings.dripify_campaign_id || '') })); });
-        box.appendChild(sel);
-        box.appendChild(h('div', { class: 'cb-hint', text: 'La conexión y los mensajes de esa campaña salen desde tu cuenta de LinkedIn con su propio ritmo. El mensaje IA de 5 capas se entrega como CSV (campos personalizados) desde el detalle de la campaña.' }));
+        sel.appendChild(h('option', { value: '', text: (own.length || dcs.length) ? 'Elige la campaña de LinkedIn…' : (dripifyOk() ? 'Sin campañas de LinkedIn: crea una' : 'Conecta LinkedIn primero') }));
+        if (own.length) {
+          var g1 = h('optgroup', { label: 'Creadas en Predictable' });
+          own.forEach(function (lc) { g1.appendChild(h('option', { value: 'own:' + lc.id, text: lc.name + (lc.dripify_campaign_id ? '' : ' (sin vincular en Dripify)'), selected: current === 'own:' + lc.id })); });
+          sel.appendChild(g1);
+        }
+        if (dcs.length) {
+          var g2 = h('optgroup', { label: 'Ya existentes en Dripify' });
+          dcs.forEach(function (dc) { g2.appendChild(h('option', { value: 'dr:' + dc.id, text: dc.name + (dc.active === false ? ' (inactiva)' : ''), selected: current === 'dr:' + dc.id })); });
+          sel.appendChild(g2);
+        }
+        var liRow = h('div', { class: 'cb-li-row' });
+        liRow.appendChild(sel);
+        if (o.openLinkedinDesigner) {
+          var ownSel = settings.linkedin_campaign_id ? own.find(function (x) { return String(x.id) === String(settings.linkedin_campaign_id); }) : null;
+          liRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: ownSel ? (ownSel.dripify_campaign_id ? 'Editar' : 'Editar / vincular') : '+ Crear campaña', onclick: function () {
+            o.openLinkedinDesigner({
+              campaign: ownSel || null,
+              defaultName: st.draft.name ? st.draft.name + ' · LinkedIn' : '',
+              sampleMemberId: st.members.length ? (sampleMember() || st.members[0]).id : null,
+              onSaved: function (row) { node.settings = linkedinSettings(row); markCustom(); render(); },
+              onDeleted: function () { node.settings = {}; render(); },
+            });
+          } }));
+        }
+        box.appendChild(liRow);
+        if (settings.linkedin_campaign_id && !settings.dripify_campaign_id) {
+          box.appendChild(h('div', { class: 'cb-note amber', text: 'Esta campaña todavía no existe en Dripify. Créala allá con el mismo nombre (Editar / vincular te da cada texto para copiar): el paso espera y se vincula solo en cuanto exista.' }));
+        }
+        box.appendChild(h('div', { class: 'cb-hint', text: 'La conexión y los mensajes de esa campaña salen desde tu cuenta de LinkedIn con su propio ritmo. Dripify no permite crear campañas ni enviar mensajes por API: por eso se crea allá con los textos que diseñas aquí, y los leads se enrolan solos.' }));
         return box;
       }
       box.appendChild(h('div', { class: 'cb-lbl', text: 'Contenido' }));
@@ -994,13 +1088,20 @@
         if (node.channel === 'whatsapp') box.appendChild(h('div', { class: 'cb-note amber', text: 'WhatsApp solo permite texto libre dentro de las 24 h siguientes a un mensaje del lead. Si no hay conversación abierta, este paso se omite; para abrir conversación usa una plantilla de WhatsApp.' }));
         else box.appendChild(h('div', { class: 'cb-hint', text: 'La IA escribe el mensaje de cada lead 24 h antes del envío con tu contexto de empresa, el brief y lo ya enviado. Cuesta 3 créditos por mensaje; la apertura reutiliza el mensaje de 5 capas del lead si ya existe.' }));
       } else if (kind === 'custom') {
+        var fields = [];
+        var subj = null;
         if (node.channel === 'email') {
-          var subj = h('input', { type: 'text', placeholder: 'Asunto', value: node.content.subject || '', 'data-key': 'subj-' + node.id, maxlength: '200', oninput: function () { node.content.subject = subj.value; refresh(); } });
-          box.appendChild(subj);
+          subj = h('input', { type: 'text', placeholder: 'Asunto', value: node.content.subject || '', 'data-key': 'subj-' + node.id, maxlength: '200', oninput: function () { node.content.subject = subj.value; refresh(); } });
+          fields.push(subj);
         }
-        var ta = h('textarea', { placeholder: 'Texto del mensaje. Variables: {{nombre}}, {{empresa}}, {{cargo}}, {{remitente}}, {{mi_empresa}}', 'data-key': 'body-' + node.id, maxlength: '4000', style: fopts && fopts.compact ? '' : 'min-height:140px', oninput: function () { node.content.body = ta.value; refresh(); } });
+        var ta = h('textarea', { placeholder: node.channel === 'email' ? 'Hola {{nombre}}, vi que lideras {{cargo}} en {{empresa}}…' : 'Texto del mensaje', 'data-key': 'body-' + node.id, maxlength: '4000', style: fopts && fopts.compact ? '' : 'min-height:140px', oninput: function () { node.content.body = ta.value; refresh(); } });
         ta.value = node.content.body || '';
+        fields.push(ta);
+        // Los botones de variables insertan en el asunto o en el cuerpo, según cuál se enfocó último.
+        box.appendChild(varChips(fields));
+        if (subj) box.appendChild(subj);
         box.appendChild(ta);
+        box.appendChild(h('div', { class: 'cb-hint', text: 'El mismo texto para todos los leads; las variables se reemplazan con los datos de cada uno al enviar.' }));
         if (node.channel === 'whatsapp') box.appendChild(h('div', { class: 'cb-note amber', text: 'WhatsApp solo permite texto libre dentro de las 24 h siguientes a un mensaje del lead. Si no hay conversación abierta, este paso se omite.' }));
       } else {
         var tpls = watiTemplates();
@@ -1083,7 +1184,8 @@
       var box = h('div', { class: 'cb-preview' });
       box.appendChild(h('div', { class: 'cb-lbl', text: 'Qué pasa en LinkedIn' }));
       var sub = h('div', { class: 'cb-substeps' });
-      sub.appendChild(h('div', { text: '1. Tu cuenta de LinkedIn visita el perfil y envía la solicitud de conexión con la nota de la campaña' + (a.settings && a.settings.dripify_campaign_name ? ' «' + a.settings.dripify_campaign_name + '»' : '') + '.' }));
+      var liName = a.settings && (a.settings.dripify_campaign_name || a.settings.linkedin_campaign_name);
+      sub.appendChild(h('div', { text: '1. Tu cuenta de LinkedIn visita el perfil y envía la solicitud de conexión con la nota de la campaña' + (liName ? ' «' + liName + '»' : '') + '.' }));
       sub.appendChild(h('div', { text: '2. Si acepta, envía los mensajes de esa campaña con su propio ritmo.' }));
       sub.appendChild(h('div', { text: '3. Reporta la conexión aceptada y las respuestas (sincronización cada 15 min + webhook).' }));
       box.appendChild(sub);
@@ -1199,6 +1301,8 @@
       var warns = [];
       if (needs.whatsapp && !watiOk()) warns.push('WhatsApp no está conectado: esos pasos se reintentan cada 6 h hasta que lo conectes.');
       if (needs.linkedin && !dripifyOk()) warns.push('LinkedIn no está conectado: ese paso se reintenta cada 6 h hasta que lo conectes.');
+      var unlinked = acts.filter(function (a) { return a.channel === 'linkedin_connect' && a.settings && a.settings.linkedin_campaign_id && !a.settings.dripify_campaign_id; });
+      if (unlinked.length) warns.push('La campaña de LinkedIn «' + (unlinked[0].settings.linkedin_campaign_name || '') + '» aún no existe en Dripify: el paso espera (reintento cada hora) y se vincula solo cuando la crees allá con ese nombre.');
       if (needs.email && !(st.draft.sender && st.draft.sender.email_account_id)) warns.push('Elige la cuenta de email que firma en Ajustes avanzados.');
       warns.forEach(function (w) { right.appendChild(h('div', { class: 'cb-note amber', text: '⚠ ' + w })); });
       grid.appendChild(right);

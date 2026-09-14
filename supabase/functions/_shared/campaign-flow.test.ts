@@ -24,7 +24,7 @@ Deno.test("validate: errores típicos", () => {
   assert(/junto con el anterior/.test(msgs), msgs);
   assert(/texto propio está vacío/.test(msgs), msgs);
   assert(/necesita asunto/.test(msgs), msgs);
-  assert(/campaña de Dripify/.test(msgs), msgs);
+  assert(/campaña de LinkedIn/.test(msgs), msgs);
   assert(/mismo id/.test(msgs), msgs);
   assert(/solo de WhatsApp/.test(msgs), msgs);
 });
@@ -107,4 +107,15 @@ Deno.test("delayMs y legacyKind", () => {
   assertEquals((norm.nodes[0] as cf.ConditionNode).delay, { mode: "after_prev", days: 3, hours: 0 });
   assertEquals(cf.legacyKind(email("e")), "ai_personalized");
   assertEquals(cf.legacyKind(wa("w")), "template_a");
+});
+
+Deno.test("validate: el paso de LinkedIn acepta una campaña diseñada en Predictable", () => {
+  const withOwn = cf.validate({ v: 1, nodes: [
+    { id: "li", type: "action", channel: "linkedin_connect", delay: {}, content: { kind: "ai" }, settings: { linkedin_campaign_id: "b9d1e3c0-0000-4000-8000-000000000001", linkedin_campaign_name: "CFOs retail" } },
+  ] });
+  assertEquals(withOwn.errors, []);
+  const withDripify = cf.validate({ v: 1, nodes: [
+    { id: "li", type: "action", channel: "linkedin_connect", delay: {}, content: { kind: "ai" }, settings: { dripify_campaign_id: 2017014 } },
+  ] });
+  assertEquals(withDripify.errors, []);
 });

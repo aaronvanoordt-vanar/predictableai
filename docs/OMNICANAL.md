@@ -1,6 +1,6 @@
 # Campañas omnicanal (WhatsApp · email · LinkedIn)
 
-Estado: **PR 1 entregado** (modelo + motor + WATI + email + retiro de Meta). **PR 2 entregado** (LinkedIn vía Dripify). **Campañas v2 · Entrega 1** (la cadencia como grafo, motor intérprete, IA por paso, estado de email desde Apollo) y **Entrega 2** (builder gráfico, cadencia recomendada por IA, detalle con contadores y bandeja de revisión): ver las secciones "Campañas v2" abajo y `docs/CAMPAIGN_BUILDER_PLAN.md`. PR 3 = bandeja unificada, métricas por SDR y handoff al coach.
+Estado: **PR 1 entregado** (modelo + motor + WATI + email + retiro de Meta). **PR 2 entregado** (LinkedIn vía Dripify). **Campañas v2 · Entrega 1** (la cadencia como grafo, motor intérprete, IA por paso, estado de email desde Apollo) y **Entrega 2** (builder gráfico, cadencia recomendada por IA, detalle con contadores y bandeja de revisión): ver las secciones "Campañas v2" abajo y `docs/CAMPAIGN_BUILDER_PLAN.md`. **Bandeja omnicanal + campañas de LinkedIn diseñadas en Predictable (2026-09-14)**: ver la última sección. Pendiente: métricas por SDR y handoff al coach.
 
 ## Decisiones tomadas (2026-09-01, con el dueño del producto)
 
@@ -150,3 +150,42 @@ Comprobado en producción: sin `APOLLO_OAUTH_CLIENT_ID` cargado, **todos los usu
 1. Comprobar que ninguna campaña quedó sin `flow` (consulta en la cabecera de la migración) y aplicar `20260910000001_drop_campaign_steps.sql`.
 2. Desplegar `generate-campaign` (nueva, con JWT) y `campaign-run` (sin camino legado). El workflow **Actions → Deploy Edge Functions** ya lo sabe.
 3. Nada nuevo en secretos: `generate-campaign` usa la API key del motor elegido para `outreach`.
+
+
+## Bandeja omnicanal + campañas de LinkedIn desde Predictable (2026-09-14)
+
+### Lo que se comprobó en las APIs
+
+- **Dripify** (api.dripify.com, releído el 2026-09-14): los únicos endpoints son `GET /leads`, `GET /leads/{id}`, `GET /leads/{id}/activity`, `POST /leads/search`, `GET /campaigns`, `GET /campaigns/{id}/lead-lists`, `GET /campaigns/{id}/statistics`, `POST /campaigns/{id}/leads`, `GET /teams`, `GET /teams/{id}/members`. **No existe crear campaña, crear secuencia, enviar mensaje ni fijar campos personalizados.** Por eso "crear campañas de LinkedIn desde Predictable y que se suban solas" se resuelve así: la campaña se diseña aquí y se vincula por nombre a la que el usuario crea en Dripify; a partir de ahí el enrolamiento de leads sí es automático. Responder por LinkedIn desde la app sigue siendo copiar el texto y abrir el chat (`inbox-send` responde 501 `linkedin_send_unavailable` si alguien lo intenta por API).
+- **WATI**: fuera de la ventana de 24 h solo acepta plantillas; la bandeja ofrece las tres de saludo aprobadas (`inbox-send` `{channel:'whatsapp', template:'a'|'b'|'c'}`).
+
+### Campañas de LinkedIn (`js/linkedin-campaigns.js` + tabla `linkedin_campaigns`)
+
+- Diseñador (modal): nombre, secuencia de pasos (visitar perfil / solicitud de conexión con nota ≤ 300 / mensaje / seguir) con esperas en días, variables de Dripify (`{{first_name}}`, `{{company}}`, …) y "Sugerir con IA" (`generate-outreach` modo `step`, canal `linkedin`, 3 créditos, con un lead de muestra de la lista).
+- "Guardar y publicar en Dripify" → checklist con cada texto listo para copiar (nombre exacto, cada paso, URL del webhook) y el botón "Ya la creé en Dripify: vincular" (`channel-connect refresh_dripify` + match por nombre normalizado). Estados: `draft` → `pending_dripify` → `linked` (`dripify_campaign_id`).
+- El nodo `linkedin_connect` acepta `settings.linkedin_campaign_id` (propia) o `settings.dripify_campaign_id` (existente); la validación (`campaign-flow.ts` ↔ `campaign-flow.js`) exige uno de los dos. El motor (`resolveLinkedinCampaign` en `campaign-run`) resuelve la propia: si aún no está vinculada relee la lista de campañas de Dripify (una vez por usuario y corrida), vincula por nombre y persiste; si no existe, el paso queda en `hold_short` (reintento cada hora) con el mensaje "créala en Dripify con ese nombre". Se accede desde el panel del paso de LinkedIn en el builder y desde Campañas → LinkedIn → Detalles.
+
+### Motor: un lead sin el dato del canal NO detiene la cadencia
+
+- `campaign-run`: sin teléfono → WhatsApp `skipped` y sigue; sin email → email `skipped`; sin URL de LinkedIn → paso `skipped`. Antes eran `stop` y el enrolamiento quedaba en `error` sin probar los otros canales.
+- Nuevo modo `fail`: un rechazo del proveedor en un envío concreto (WATI rechazó, Apollo no envió, Dripify no aceptó el perfil) registra `failed` y el lead sigue con el siguiente paso. `stop` queda solo para fallos estructurales (el lead ya no existe). `hold` (canal sin conectar, plantilla sin aprobar) registra el evento una sola vez por motivo.
+- El pase "preparar" no genera (ni cobra) el mensaje IA de un paso que se va a omitir por falta de email/teléfono.
+- `syncDripify` guarda en `inbox_messages` (dirección `out`, sin texto) la conexión enviada y cada mensaje que Dripify manda desde la campaña, para que la bandeja muestre lo enviado por LinkedIn aunque el webhook "After message sent" no esté configurado.
+
+### Bandeja (`js/campaigns.js`, vista `inbox`, entrada "Bandeja" en la barra lateral)
+
+- Muestra TODO `inbox_messages`: lo enviado por el motor (con la campaña y el paso), lo que salió de la UI de WATI o de la cuenta de LinkedIn, y cada respuesta. Filtros: estado (sin responder / sin leer / respondieron / solo enviados), canal, campaña y búsqueda.
+- Contactos que no están en ninguna lista (número que escribió, perfil que respondió en Dripify) aparecen con el nombre que mandó el proveedor (`payload.lead` / `payload.senderName`), etiqueta "sin lista" y el botón "Guardar en una lista" (`prospectingData.addManualMember` + `inbox-send link_member`, que enlaza las filas por `contact_ref`). `dripify-webhook` ya no descarta esos hilos.
+- Se responde por el canal que tenga dato (teléfono → WhatsApp, email → Email, URL → LinkedIn), no solo por el que escribió el lead. WhatsApp: texto en la ventana de 24 h o plantilla de saludo aprobada si se cerró; un número sin lista se contesta con `contact_ref`.
+- El badge de "sin leer" y el realtime siguen igual (`inbox_messages` en `supabase_realtime`).
+
+### Builder
+
+- El "círculo azul" del paso Base era el badge de créditos de `credit-costs.js`: se insertaba como hermano del botón "Recomendada por la IA" y caía en el grid de tarjetas (se estiraba a 200 px con `border-radius:999px`). Ahora va dentro de la tarjeta (`data-credit-pos="inside"`).
+- "Mi texto" (email y WhatsApp) tiene botones para insertar `{{nombre}}`, `{{empresa}}`, `{{cargo}}`, `{{remitente}}`, `{{mi_empresa}}` en el asunto o en el cuerpo (el último campo enfocado).
+
+### Pasos manuales para ponerlo en producción
+
+1. Aplicar `20260914000001_linkedin_campaigns.sql` (tabla nueva + RLS; idempotente).
+2. Desplegar `campaign-run`, `inbox-send` (con JWT) y `dripify-webhook` (**`--no-verify-jwt`**): Actions → Deploy Edge Functions con `campaign-run inbox-send dripify-webhook`.
+3. En Dripify, además del webhook "After LinkedIn reply is received", agregar uno con "After message sent" en cada campaña para que el texto de lo enviado por LinkedIn llegue a la bandeja.
