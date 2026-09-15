@@ -2831,6 +2831,18 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
           Aún no tienes leads guardados. Busca prospectos y guárdalos en una lista desde Prospección; aquí podrás elegirlos para la reunión.
           <div style="margin-top:10px"><button class="btn btn-ghost btn-sm" onclick="nav(document.querySelector('[data-page=pro-main]'),'pro-main')">Ir a Prospección →</button></div>
         </div>
+        <!-- Preparación del lead con IA (js/coach-lead-picker.js): investiga al
+             lead en 5 capas y guarda el ángulo, la objeción probable y la
+             preparación de la reunión en prospect_list_members.outreach, que es
+             lo que lee el brief del coach. Antes esto se generaba al enrolar en
+             una campaña; desde el 2026-09-15 los mensajes de campaña son de la
+             campaña (campaign_messages) y esta es su única entrada. -->
+        <div id="mc-lead-prep" style="display:none;margin-top:10px">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="mc-lead-prep-btn" class="btn btn-ghost btn-sm" type="button" data-credit-cost="outreach_message" data-credit-muted="">Preparar con IA</button>
+            <span id="mc-lead-prep-note" style="font-size:12px;color:var(--text3);line-height:1.5"></span>
+          </div>
+        </div>
       </div>
 
       <!-- Modo de conexión: compartir pantalla (local) vs. el asistente se une solo (bot) -->
@@ -3454,7 +3466,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
 <script src="js/meeting-report.js"></script>
-<script src="js/coach-lead-picker.js"></script>
+<script src="js/coach-lead-picker.js?v=20260915"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js?v=20260823"></script>
 <!-- Contexto estratégico IA: PESTEL + 5 fuerzas de Porter + FODA→CAME (contexto opcional, debajo del Intelligence Hub) -->
