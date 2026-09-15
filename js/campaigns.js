@@ -1,7 +1,12 @@
 /**
  * js/campaigns.js — Campañas omnicanal (pestaña "Campañas" de Prospección)
  * ─────────────────────────────────────────────────────────────────────────────
- * Tres piezas en una sola pestaña:
+ * Un solo módulo con dos vistas (state.view): 'campaigns' y 'inbox'. La
+ * bandeja NO tiene pestaña propia dentro de Campañas: se abre desde el ítem
+ * "Bandeja" de la barra lateral (setView('inbox')) y esa es su única entrada
+ * — la pestaña duplicada se eliminó el 2026-09-15, no la resucites.
+ *
+ * Las piezas:
  *
  *   1. Barra de canales (Email · WhatsApp · LinkedIn). Es el gate: sin ningún
  *      canal conectado y sin campañas se muestra el asistente de conexión.
@@ -22,7 +27,8 @@
  *      con el ángulo y las instrucciones de ese paso. Enrolar no genera nada.
  *      La única generación fuera de una campaña es "Redactar con IA" en la
  *      Bandeja, cuando el lead ya respondió y la cadencia se detuvo.
- *   3. Bandeja omnicanal sobre inbox_messages: TODO lo enviado y recibido
+ *   3. Bandeja omnicanal (vista 'inbox', entrada en la barra lateral) sobre
+ *      inbox_messages: TODO lo enviado y recibido
  *      por los tres canales (lo que mandó el motor, lo que salió de la cuenta
  *      de LinkedIn o de la UI de WATI y cada respuesta), agrupado por lead —
  *      también los contactos que no están en ninguna lista (un número que
@@ -49,7 +55,8 @@
  *   window.campaigns.show(paneEl)       // monta / refresca la pestaña
  *   window.campaigns.newFromList(id)    // abre el builder con esa lista
  *   window.campaigns.refresh()          // recarga canales, campañas y bandeja
- *   window.campaigns.setView('inbox')   // abre la bandeja (o 'campaigns')
+ *   window.campaigns.setView('inbox')   // abre la bandeja (o 'campaigns');
+ *                                       // lo llama el ítem "Bandeja" del sidebar
  *
  * Convenciones: todo string dinámico pasa por esc(); copy en español neutro
  * LatAm; sin datos de demo — los estados vacíos dicen qué falta.
@@ -984,12 +991,15 @@
       });
     }, 800);
   }
+  // Sin la pestaña "Bandeja" el único aviso de mensajes sin leer es el ítem de
+  // la barra lateral, así que el contador se pinta ahí además de en el título
+  // de la vista (que solo existe cuando la bandeja está abierta).
   function updateBadge() {
-    var b = state.root && state.root.querySelector('[data-role="inbox-badge"]');
-    if (!b) return;
     var n = unreadCount();
-    b.textContent = n ? String(n) : '';
-    b.hidden = !n;
+    var b = state.root && state.root.querySelector('[data-role="inbox-badge"]');
+    if (b) { b.textContent = n ? String(n) : ''; b.hidden = !n; }
+    var nav = document.getElementById('nav-bandeja-badge');
+    if (nav) { nav.textContent = String(n); nav.style.display = n > 0 ? '' : 'none'; }
   }
 
   // ── Render: layout ───────────────────────────────────────────────────────
@@ -1007,6 +1017,7 @@
     }
     root.appendChild(renderChannelBar(false));
     root.appendChild(renderSubnav());
+    updateBadge();
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
     if (state.view === 'inbox') root.appendChild(renderInbox());
     else if (state.builder) root.appendChild(state.builderHost);
@@ -1040,6 +1051,9 @@
       '#prospecting-shell .cmp-link { background:none; border:0; padding:0; color:var(--accent-2); font-size:12px; cursor:pointer; text-decoration:underline; text-underline-offset:2px; font-family:inherit; }',
       '#prospecting-shell .cmp-chip-warn { display:inline-flex; align-items:center; gap:4px; font-size:11px; padding:2px 8px; border-radius:999px; background:var(--amber-soft); color:var(--amber); border:1px solid rgba(224,166,71,.32); }',
       '#prospecting-shell .cmp-subnav { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:4px 0 14px; }',
+      '#prospecting-shell .cmp-secname { display:inline-flex; align-items:center; gap:8px; font-size:14px; font-weight:600; letter-spacing:-.01em; }',
+      // .cmp-tabs ya no arma la subnav (la bandeja vive en la barra lateral),
+      // pero sigue siendo el selector de canal para responder en la bandeja.
       '#prospecting-shell .cmp-tabs { display:flex; gap:4px; background:var(--surface); border:1px solid var(--hair); border-radius:999px; padding:3px; }',
       '#prospecting-shell .cmp-tabs button { border:0; background:transparent; padding:6px 14px; border-radius:999px; font-size:12.5px; font-weight:600; color:var(--text2); cursor:pointer; display:inline-flex; align-items:center; gap:6px; font-family:inherit; }',
       '#prospecting-shell .cmp-tabs button.active { background:var(--accent-soft); color:var(--accent-2); }',
@@ -1223,15 +1237,19 @@
     return box;
   }
 
+  // La bandeja NO es una pestaña de Campañas: se entra por el ítem "Bandeja"
+  // de la barra lateral (setView('inbox')). Duplicar la entrada aquí dejaba dos
+  // caminos al mismo panel; el 2026-09-15 se dejó solo el de la izquierda.
   function renderSubnav() {
     var bar = h('div', { class: 'cmp-subnav' });
-    var tabs = h('div', { class: 'cmp-tabs' });
-    tabs.appendChild(h('button', { type: 'button', class: state.view === 'campaigns' ? 'active' : '', 'data-action': 'view', 'data-view': 'campaigns', text: 'Campañas' }));
-    var n = unreadCount();
-    var badge = h('span', { class: 'cmp-badge', 'data-role': 'inbox-badge', text: n ? String(n) : '' });
-    badge.hidden = !n;
-    tabs.appendChild(h('button', { type: 'button', class: state.view === 'inbox' ? 'active' : '', 'data-action': 'view', 'data-view': 'inbox' }, 'Bandeja', badge));
-    bar.appendChild(tabs);
+    if (state.view === 'inbox') {
+      var n = unreadCount();
+      var badge = h('span', { class: 'cmp-badge', 'data-role': 'inbox-badge', text: n ? String(n) : '' });
+      badge.hidden = !n;
+      bar.appendChild(h('div', { class: 'cmp-secname' }, 'Bandeja', badge));
+      return bar;
+    }
+    bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas'));
     bar.appendChild(h('div', { class: 'cmp-spacer' }));
     var newBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'cmp-new', text: '+ Nueva campaña' });
     if (!anyConnected()) { newBtn.disabled = true; newBtn.title = 'Conecta al menos un canal'; }
@@ -1572,11 +1590,15 @@
     GREETINGS.forEach(function (g) {
       var t = items[g[0]];
       var status = t ? String(t.status || 'PENDING') : 'MISSING';
-      tplBox.appendChild(h('div', {
+      var row = h('div', {
         html: pill(g[1], 'gray') + pill(tplStatusLabel(status), tplStatusKind(status))
           + '<span style="flex:1;color:var(--text2)">' + esc(t ? t.body : '—')
           + (t && t.error ? ' <span style="color:var(--red)">' + esc(t.error) + '</span>' : '') + '</span>',
-      }));
+      });
+      var pickBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'margin-left:auto;flex:none', text: 'Usar otra plantilla' });
+      pickBtn.addEventListener('click', function () { openAssignTemplateModal(g[0], g[1], api); });
+      row.appendChild(pickBtn);
+      tplBox.appendChild(row);
     });
     body.appendChild(tplBox);
 
@@ -1701,6 +1723,54 @@
       { label: 'Reconectar', onClick: function (m) { m.close(); openWhatsAppWizard('have'); } },
       { label: 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('whatsapp', 'wati', m); } },
       { label: 'Cerrar' },
+    ]);
+  }
+
+  /**
+   * Apunta una ranura de saludo a una plantilla YA aprobada del catálogo, en
+   * vez de dejar que sync_templates le genere una px_ nueva. Para el usuario
+   * que ya tiene sus propias plantillas (creadas a mano en WATI, con su
+   * propio texto y botones) y no quiere duplicados que Meta tiene que
+   * revisar de cero.
+   */
+  function openAssignTemplateModal(slot, label, api) {
+    var current = greetingItems()[slot];
+    var approved = templateCatalogue().filter(function (t) { return tplIsApproved(t.status); });
+    var m = openModal({ title: 'Elegir plantilla para «' + label + '»', width: 560 });
+    var b = m.body;
+    if (!approved.length) {
+      b.appendChild(h('div', {
+        class: 'pros-note-red',
+        text: '⚠ No tienes ninguna plantilla aprobada todavía. Espera a que Meta apruebe alguna o crea una nueva desde "+ Nueva plantilla".',
+      }));
+      m.setActions([{ label: 'Cerrar' }]);
+      return;
+    }
+    b.appendChild(h('p', { text: 'Las campañas de WhatsApp envían esta plantilla en el paso «' + label + '». Elige cualquiera de tus plantillas ya aprobadas por Meta; no hace falta crear una nueva.' }));
+    var sel = h('select');
+    approved.forEach(function (t) {
+      sel.appendChild(h('option', { value: t.name, text: t.name + (t.name === (current && current.name) ? ' (actual)' : '') }));
+    });
+    if (current && current.name) sel.value = current.name;
+    b.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Plantilla' }), sel));
+    var preview = h('div', { class: 'cmp-tpl-body', style: 'margin-top:8px' });
+    function refreshPreview() {
+      var t = approved.filter(function (x) { return x.name === sel.value; })[0];
+      preview.textContent = t ? t.body : '';
+    }
+    sel.addEventListener('change', refreshPreview);
+    refreshPreview();
+    b.appendChild(preview);
+
+    m.setActions([
+      { label: 'Cancelar' },
+      { label: 'Usar esta plantilla', className: 'btn btn-primary', onClick: function (modal, btn) {
+        return watiAction('assign_template', { slot: slot, name: sel.value }, btn).then(function () {
+          toast('«' + label + '» ahora usa "' + sel.value + '".', 'success');
+          modal.close();
+          renderWhatsAppDetails(api);
+        });
+      } },
     ]);
   }
 
@@ -2645,7 +2715,6 @@
     // Canales / navegación
     if (action === 'ch-connect') return openConnect(channel, btn);
     if (action === 'ch-details') return openChannelDetails(channel);
-    if (action === 'view') { state.view = btn.getAttribute('data-view'); return render(); }
 
     // Campañas
     if (action === 'csv-linkedin') { var c9 = findCampaign(state.activeId); if (c9) downloadLinkedinCsv(c9); return; }

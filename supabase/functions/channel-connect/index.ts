@@ -39,6 +39,9 @@
  *                            nombre nuevo la plantilla que quedó borrada o
  *                            rechazada (Meta no la revive ni deja reusar su
  *                            nombre en 30 días).
+ *  • assign_template   {slot: 'a'|'b'|'c', name} → apunta esa ranura de
+ *      saludo a una plantilla YA aprobada del tenant (creada a mano en WATI o
+ *      por Predictable), en vez de que ensureTemplates genere una px_ nueva.
  *  • create_template   {name, body, category?, language?, quick_replies?,
  *      footer?, examples?} → valida el borrador, comprueba que el nombre esté
  *      libre y lo manda a revisión de Meta. Devuelve la cuenta sincronizada.
@@ -710,6 +713,45 @@ Deno.serve(async (req) => {
       // La otra mitad de la sincronización: el catálogo COMPLETO del tenant,
       // los números (WABA id) y el estado real del webhook (saveWatiSync lo
       // trae y guarda el error si WATI no lo dejó leer).
+      const row = await saveWatiSync(db, acc, templates);
+      return json({ account: publicRow(row) }, 200, cors);
+    }
+
+    // Apunta una ranura de saludo (a/b/c) a una plantilla YA aprobada del
+    // tenant, en vez de que ensureTemplates cree una px_ nueva. Resuelve el
+    // caso del usuario que ya tiene sus propias plantillas (creadas a mano en
+    // WATI, con su propio nombre y texto) y no quiere que Predictable le
+    // genere duplicados que Meta tiene que revisar de cero.
+    if (action === "assign_template") {
+      const acc = await loadAccount("wati");
+      if (!acc) return json({ error: "wati_not_connected" }, 428, cors);
+      const slot = String(payload.slot ?? "");
+      if (!["a", "b", "c"].includes(slot)) return json({ error: "Ranura inválida." }, 400, cors);
+      const name = clean(payload.name, 200);
+      if (!name) return json({ error: "Falta el nombre de la plantilla." }, 400, cors);
+
+      const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
+      let catalogue: wati.WatiTemplate[] = [];
+      try { catalogue = await wati.listTemplates(creds); }
+      catch (e) { return json({ error: wati.humanError(e) }, 400, cors); }
+      const found = catalogue.find((t) => t.name === name);
+      if (!found) return json({ error: `No encontramos "${name}" en tu WhatsApp. Pulsa "Actualizar estado" y vuelve a intentarlo.` }, 400, cors);
+      // Solo aprobadas: una pendiente o rechazada volvería a disparar
+      // needsRebuild en el próximo sync_templates y ensureTemplates la
+      // reemplazaría igual por una px_ nueva, deshaciendo la asignación.
+      if (!wati.isTemplateApproved(found.status)) {
+        return json({ error: `"${name}" todavía no está aprobada por Meta (${found.status}). Elige una ya aprobada.` }, 400, cors);
+      }
+
+      const prevT: Json = acc.config?.templates ?? {};
+      const templates = {
+        ...prevT,
+        items: {
+          ...(prevT.items ?? {}),
+          [slot]: { name: found.name, body: found.body, status: found.status, id: found.id, error: undefined },
+        },
+        error: null,
+      };
       const row = await saveWatiSync(db, acc, templates);
       return json({ account: publicRow(row) }, 200, cors);
     }
