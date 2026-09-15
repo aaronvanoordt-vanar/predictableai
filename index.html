@@ -2104,10 +2104,15 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>
       Campañas
     </div>
-    <!-- Bandeja omnicanal: vive dentro de Campañas (js/campaigns.js, vista 'inbox'). -->
+    <!-- Bandeja omnicanal: la pinta js/campaigns.js (vista 'inbox') dentro del
+         shell de Prospección, pero esta es su ÚNICA entrada. La pestaña
+         "Bandeja" que vivía dentro de Campañas se eliminó el 2026-09-15 (era
+         el mismo panel por dos caminos) — no la resucites. El contador de
+         mensajes sin leer lo actualiza updateBadge() en js/campaigns.js. -->
     <div class="nav-item" data-page="pro-main" data-pros-tab="campanas" data-pros-view="inbox" onclick="nav(this,'pro-main');if(window.campaigns)window.campaigns.setView('inbox');if(window.prospecting)window.prospecting.show('campanas')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 3h12v7H7l-3 2.5V10H2z"/></svg>
       Bandeja
+      <span id="nav-bandeja-badge" class="nav-badge" style="display:none">0</span>
     </div>
 
     <!-- AI SALES COACH -->

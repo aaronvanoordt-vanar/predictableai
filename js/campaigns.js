@@ -1,7 +1,12 @@
 /**
  * js/campaigns.js — Campañas omnicanal (pestaña "Campañas" de Prospección)
  * ─────────────────────────────────────────────────────────────────────────────
- * Tres piezas en una sola pestaña:
+ * Un solo módulo con dos vistas (state.view): 'campaigns' y 'inbox'. La
+ * bandeja NO tiene pestaña propia dentro de Campañas: se abre desde el ítem
+ * "Bandeja" de la barra lateral (setView('inbox')) y esa es su única entrada
+ * — la pestaña duplicada se eliminó el 2026-09-15, no la resucites.
+ *
+ * Las piezas:
  *
  *   1. Barra de canales (Email · WhatsApp · LinkedIn). Es el gate: sin ningún
  *      canal conectado y sin campañas se muestra el asistente de conexión.
@@ -19,7 +24,8 @@
  *      la bandeja de revisión de los mensajes IA por paso (campaign_messages).
  *      Los mensajes IA de 5 capas se generan al enrolar
  *      (window.prospecting.generateOutreachFor): la apertura los reutiliza.
- *   3. Bandeja omnicanal sobre inbox_messages: TODO lo enviado y recibido
+ *   3. Bandeja omnicanal (vista 'inbox', entrada en la barra lateral) sobre
+ *      inbox_messages: TODO lo enviado y recibido
  *      por los tres canales (lo que mandó el motor, lo que salió de la cuenta
  *      de LinkedIn o de la UI de WATI y cada respuesta), agrupado por lead —
  *      también los contactos que no están en ninguna lista (un número que
@@ -46,7 +52,8 @@
  *   window.campaigns.show(paneEl)       // monta / refresca la pestaña
  *   window.campaigns.newFromList(id)    // abre el builder con esa lista
  *   window.campaigns.refresh()          // recarga canales, campañas y bandeja
- *   window.campaigns.setView('inbox')   // abre la bandeja (o 'campaigns')
+ *   window.campaigns.setView('inbox')   // abre la bandeja (o 'campaigns');
+ *                                       // lo llama el ítem "Bandeja" del sidebar
  *
  * Convenciones: todo string dinámico pasa por esc(); copy en español neutro
  * LatAm; sin datos de demo — los estados vacíos dicen qué falta.
@@ -963,12 +970,15 @@
       });
     }, 800);
   }
+  // Sin la pestaña "Bandeja" el único aviso de mensajes sin leer es el ítem de
+  // la barra lateral, así que el contador se pinta ahí además de en el título
+  // de la vista (que solo existe cuando la bandeja está abierta).
   function updateBadge() {
-    var b = state.root && state.root.querySelector('[data-role="inbox-badge"]');
-    if (!b) return;
     var n = unreadCount();
-    b.textContent = n ? String(n) : '';
-    b.hidden = !n;
+    var b = state.root && state.root.querySelector('[data-role="inbox-badge"]');
+    if (b) { b.textContent = n ? String(n) : ''; b.hidden = !n; }
+    var nav = document.getElementById('nav-bandeja-badge');
+    if (nav) { nav.textContent = String(n); nav.style.display = n > 0 ? '' : 'none'; }
   }
 
   // ── Render: layout ───────────────────────────────────────────────────────
@@ -986,6 +996,7 @@
     }
     root.appendChild(renderChannelBar(false));
     root.appendChild(renderSubnav());
+    updateBadge();
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
     if (state.view === 'inbox') root.appendChild(renderInbox());
     else if (state.builder) root.appendChild(state.builderHost);
@@ -1019,6 +1030,9 @@
       '#prospecting-shell .cmp-link { background:none; border:0; padding:0; color:var(--accent-2); font-size:12px; cursor:pointer; text-decoration:underline; text-underline-offset:2px; font-family:inherit; }',
       '#prospecting-shell .cmp-chip-warn { display:inline-flex; align-items:center; gap:4px; font-size:11px; padding:2px 8px; border-radius:999px; background:var(--amber-soft); color:var(--amber); border:1px solid rgba(224,166,71,.32); }',
       '#prospecting-shell .cmp-subnav { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:4px 0 14px; }',
+      '#prospecting-shell .cmp-secname { display:inline-flex; align-items:center; gap:8px; font-size:14px; font-weight:600; letter-spacing:-.01em; }',
+      // .cmp-tabs ya no arma la subnav (la bandeja vive en la barra lateral),
+      // pero sigue siendo el selector de canal para responder en la bandeja.
       '#prospecting-shell .cmp-tabs { display:flex; gap:4px; background:var(--surface); border:1px solid var(--hair); border-radius:999px; padding:3px; }',
       '#prospecting-shell .cmp-tabs button { border:0; background:transparent; padding:6px 14px; border-radius:999px; font-size:12.5px; font-weight:600; color:var(--text2); cursor:pointer; display:inline-flex; align-items:center; gap:6px; font-family:inherit; }',
       '#prospecting-shell .cmp-tabs button.active { background:var(--accent-soft); color:var(--accent-2); }',
@@ -1202,15 +1216,19 @@
     return box;
   }
 
+  // La bandeja NO es una pestaña de Campañas: se entra por el ítem "Bandeja"
+  // de la barra lateral (setView('inbox')). Duplicar la entrada aquí dejaba dos
+  // caminos al mismo panel; el 2026-09-15 se dejó solo el de la izquierda.
   function renderSubnav() {
     var bar = h('div', { class: 'cmp-subnav' });
-    var tabs = h('div', { class: 'cmp-tabs' });
-    tabs.appendChild(h('button', { type: 'button', class: state.view === 'campaigns' ? 'active' : '', 'data-action': 'view', 'data-view': 'campaigns', text: 'Campañas' }));
-    var n = unreadCount();
-    var badge = h('span', { class: 'cmp-badge', 'data-role': 'inbox-badge', text: n ? String(n) : '' });
-    badge.hidden = !n;
-    tabs.appendChild(h('button', { type: 'button', class: state.view === 'inbox' ? 'active' : '', 'data-action': 'view', 'data-view': 'inbox' }, 'Bandeja', badge));
-    bar.appendChild(tabs);
+    if (state.view === 'inbox') {
+      var n = unreadCount();
+      var badge = h('span', { class: 'cmp-badge', 'data-role': 'inbox-badge', text: n ? String(n) : '' });
+      badge.hidden = !n;
+      bar.appendChild(h('div', { class: 'cmp-secname' }, 'Bandeja', badge));
+      return bar;
+    }
+    bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas'));
     bar.appendChild(h('div', { class: 'cmp-spacer' }));
     var newBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'cmp-new', text: '+ Nueva campaña' });
     if (!anyConnected()) { newBtn.disabled = true; newBtn.title = 'Conecta al menos un canal'; }
@@ -2629,7 +2647,6 @@
     // Canales / navegación
     if (action === 'ch-connect') return openConnect(channel, btn);
     if (action === 'ch-details') return openChannelDetails(channel);
-    if (action === 'view') { state.view = btn.getAttribute('data-view'); return render(); }
 
     // Campañas
     if (action === 'csv-linkedin') { var c9 = findCampaign(state.activeId); if (c9) downloadLinkedinCsv(c9); return; }
