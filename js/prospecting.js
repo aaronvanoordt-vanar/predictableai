@@ -16,10 +16,12 @@
  *   "Campañas" = js/campaigns.js (canales + campañas + respuestas), montado
  *                en el pane que este shell le reserva.
  * Las pestañas Resumen, Contactos, Secuencias, Bandeja y Generador de
- * mensajes IA se retiraron el 2026-09-03: los mensajes IA se generan al
- * enrolar en una campaña (generateOutreachFor) y se previsualizan por lead
- * (outreachPreviewHtml); el hilo de Gmail se abre desde Campañas → Respuestas
- * (openThread). Los ids viejos siguen resolviendo a la pestaña correcta.
+ * mensajes IA se retiraron el 2026-09-03; el hilo de Gmail se abre desde
+ * Campañas → Respuestas (openThread). Los ids viejos siguen resolviendo a la
+ * pestaña correcta.
+ * Desde el 2026-09-15 aquí NO se generan mensajes IA: un mensaje pertenece a
+ * una campaña y a un paso (campaign_messages), no a un lead de una lista. Ver
+ * js/campaigns.js.
  *
  * Public API (window.prospecting):
  *   show(tabId)                 // 'busqueda'|'listas'|'campanas' (ids viejos → alias)
@@ -29,8 +31,6 @@
  *   confirm(opts) · h(tag, attrs, ...children) · emptyHtml(icon, title, sub)
  *   openThread({ threadId, contactEmail, since, subject, contactName, contactId?, fromEmail?, body?, replied?, onSent? })
  *   gmailStatus() → Promise<{connected, email?}> · connectGmail() · disconnectGmail()
- *   generateOutreachFor(members, { engine, onProgress }) → Promise<{ok, failed, skipped, failures}>
- *   outreachPreviewHtml(member) → string (escapado)
  *
  * Data layer: window.prospectingData (built in parallel — referenced lazily
  * inside handlers, never at parse time). All user-visible copy is neutral
@@ -3164,283 +3164,15 @@
         sendBtn));
   }
 
-  // ══ MENSAJES IA POR LEAD (generación + vista previa) ═══════════════════
-  // Los mensajes se generan al enrolar en una campaña (js/campaigns.js llama
-  // a generateOutreachFor) y se previsualizan por lead con
-  // outreachPreviewHtml. "Quién firma" sigue viviendo en localStorage
-  // (getSenderInfo/saveSenderInfo); Campañas lo lee como valor por defecto.
-  function getSenderSafe() {
-    var info = { name: '', role: '', company: '' };
-    try {
-      var d = window.prospectingData;
-      if (d && typeof d.getSenderInfo === 'function') info = d.getSenderInfo() || info;
-    } catch (_) {}
-    return info;
-  }
-
-  function greetingSafe(info) {
-    try {
-      var d = window.prospectingData;
-      if (d && typeof d.firstWhatsAppMessage === 'function') return d.firstWhatsAppMessage(info) || '';
-    } catch (_) {}
-    return '';
-  }
-
-  function waLinkSafe(phone, text) {
-    try {
-      var d = window.prospectingData;
-      if (d && typeof d.waLink === 'function' && phone && text) return d.waLink(phone, text);
-    } catch (_) {}
-    return null;
-  }
-
-  // Registro de los leads cuya vista previa está en pantalla: el HTML lo
-  // renderiza otro módulo (Campañas), pero los botones de copiar / abrir
-  // WhatsApp / preparar el coach se resuelven aquí con un listener delegado
-  // a nivel documento, así el que pinta la vista no tiene que cablear nada.
-  var previewMembers = new Map();
-
-  function rememberPreviewMember(m) {
-    if (!m || m.id == null) return;
-    if (previewMembers.size > 500) previewMembers.clear();
-    previewMembers.set(String(m.id), m);
-  }
-
-  // Bloques: 1er mensaje WhatsApp (fijo) · seguimiento WhatsApp (IA) ·
-  // LinkedIn (IA) · email frío (IA) · ángulo de personalización (IA).
-  // Todo el contenido pasa por esc(); el regenerar lo pone quien lo muestra.
-  function outreachPreviewHtml(m) {
-    if (!m) return '';
-    rememberPreviewMember(m);
-    var sender = getSenderSafe();
-    var greet = greetingSafe(sender);
-    var follow = (m.outreach && m.outreach.whatsapp_followup) || '';
-    var liMsg = (m.outreach && m.outreach.linkedin_message) || '';
-    var greetLink = waLinkSafe(m.phone, greet);
-    var followLink = follow ? waLinkSafe(m.phone, follow) : null;
-    var id = esc(String(m.id));
-    var noPhoneHint = '<div class="pros-hint">Enriquece el teléfono de este lead en Listas.</div>';
-    var pending = m.outreach_status === 'generating'
-      ? '<div class="pros-hint"><span class="saving">⏳</span> Generando los mensajes con IA…</div>'
-      : '';
-    var html = '<div class="pros-preview" style="display:grid;gap:10px;padding:4px 2px">' + pending;
-    // (a) 1er mensaje fijo
-    html += '<div class="pros-msgblock"><div class="pros-msgblock-title">1er mensaje — WhatsApp</div>' +
-      '<div class="pros-wa-bubble">' + esc(greet || '—') + '</div>' +
-      '<div class="pros-actions">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-pros-preview="copy-greet" data-id="' + id + '"' + (greet ? '' : ' disabled') + '>Copiar</button>' +
-      '<button type="button" class="btn btn-teal btn-sm" data-pros-preview="wa-greet" data-id="' + id + '"' + (greetLink ? '' : ' disabled') + '>Abrir en WhatsApp</button>' +
-      '</div>' +
-      (greetLink ? '' : noPhoneHint) +
-      '</div>';
-    // (b) Seguimiento IA
-    html += '<div class="pros-msgblock"><div class="pros-msgblock-title">Seguimiento — WhatsApp</div>' +
-      (follow
-        ? '<div class="pros-wa-bubble">' + esc(follow) + '</div>'
-        : '<div class="pros-hint">Genera los mensajes con IA para ver el seguimiento.</div>') +
-      '<div class="pros-actions">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-pros-preview="copy-follow" data-id="' + id + '"' + (follow ? '' : ' disabled') + '>Copiar</button>' +
-      '<button type="button" class="btn btn-teal btn-sm" data-pros-preview="wa-follow" data-id="' + id + '"' + (followLink ? '' : ' disabled') + '>Abrir en WhatsApp</button>' +
-      '</div>' +
-      (follow && !followLink ? noPhoneHint : '') +
-      '<div class="pros-hint">Envíalo únicamente cuando el lead haya respondido al saludo.</div>' +
-      '</div>';
-    // (c) LinkedIn — solo copiar
-    html += '<div class="pros-msgblock"><div class="pros-msgblock-title">LinkedIn</div>' +
-      (liMsg
-        ? '<div style="font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word">' + esc(liMsg) + '</div>'
-        : '<div class="pros-hint">Genera los mensajes con IA para ver el mensaje de LinkedIn.</div>') +
-      '<div class="pros-actions">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-pros-preview="copy-li" data-id="' + id + '"' + (liMsg ? '' : ' disabled') + '>Copiar mensaje</button>' +
-      (m.linkedin_url ? '<a href="' + esc(sUrl(m.linkedin_url)) + '" target="_blank" rel="noopener" style="font-size:12.5px;color:var(--accent-ink)">Abrir perfil →</a>' : '') +
-      '</div>' +
-      '</div>';
-    // (d) Email frío
-    var emailS = (m.outreach && m.outreach.email_subject) || '';
-    var emailB = (m.outreach && m.outreach.email_body) || '';
-    html += '<div class="pros-msgblock"><div class="pros-msgblock-title">Email frío</div>' +
-      ((emailS || emailB)
-        ? (emailS ? '<div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Asunto: ' + esc(emailS) + '</div>' : '') +
-          (emailB ? '<div style="font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word">' + esc(emailB) + '</div>' : '')
-        : '<div class="pros-hint">Genera los mensajes con IA para ver el email.</div>') +
-      '<div class="pros-actions"><button type="button" class="btn btn-ghost btn-sm" data-pros-preview="copy-email" data-id="' + id + '"' + ((emailS || emailB) ? '' : ' disabled') + '>Copiar email</button></div>' +
-      '</div>';
-    // (e) Ángulo de personalización (síntesis de las 5 capas — lo consume el coach).
-    // Usa el mismo buildCoachLeadContext() que alimenta el AI coach, con sus
-    // mismos textos de respaldo, para que ambas superficies muestren la misma info.
-    if (m.outreach && m.outreach.generated_at) {
-      var angle = (m.outreach.angle && typeof m.outreach.angle === 'object') ? m.outreach.angle : {};
-      var coachCtx = null;
-      try {
-        coachCtx = (window.prospectingData && window.prospectingData.buildCoachLeadContext)
-          ? window.prospectingData.buildCoachLeadContext(m)
-          : null;
-      } catch (_) { coachCtx = null; }
-      var prep = (coachCtx && coachCtx.coach_prep && typeof coachCtx.coach_prep === 'object') ? coachCtx.coach_prep : null;
-      var personHook = (coachCtx && coachCtx.person_hook) || angle.person_hook || null;
-      var why = (coachCtx && coachCtx.brief_why) || 'Contexto de la reunión disponible al iniciar el coach.';
-      var risks = (coachCtx && coachCtx.brief_risks) || 'Sin alertas previas.';
-      html += '<div class="pros-msgblock"><div class="pros-msgblock-title">Ángulo de personalización</div>' +
-        '<div style="font-size:12.5px;line-height:1.7;color:var(--text2)">' +
-        (angle.layer ? '<div><b>Capa del ángulo:</b> ' + esc(angle.layer) + '</div>' : '') +
-        (personHook ? '<div><b>Gancho personal:</b> ' + esc(personHook) + '</div>' : '') +
-        '<div><b>Por qué le importa:</b> ' + esc(why) + '</div>' +
-        '<div><b>Riesgos / objeción:</b> ' + esc(risks) + '</div>' +
-        (angle.social_proof && angle.social_proof !== 'ninguno' ? '<div><b>Social proof usado:</b> ' + esc(angle.social_proof) + '</div>' : '') +
-        (angle.trend_applied ? '<div><b>Tendencia aplicada:</b> ' + esc(angle.trend_applied) + '</div>' : '') +
-        (prep && prep.como_abrir ? '<div><b>Cómo abrir:</b> ' + esc(prep.como_abrir) + '</div>' : '') +
-        '</div>' +
-        '<div class="pros-hint">Este contexto queda guardado con el lead y lo usa el AI coach si se agenda una reunión.</div>' +
-        '<div class="pros-actions"><button type="button" class="btn btn-teal btn-sm" data-pros-preview="coach" data-id="' + id + '">Preparar reunión con el coach</button></div>' +
-        '</div>';
-    }
-    html += '</div>';
-    return html;
-  }
-
-  // Puente Prospección → AI coach: el brief del lead (quién es, dolor
-  // probable, objeción + neutralizador) viaja como contexto de la reunión.
-  function coachHandoff(m) {
-    var ctx = pd().buildCoachLeadContext(m);
-    window.predictable = window.predictable || {};
-    window.predictable.currentProspect = ctx;
-    // Persistir el handoff en Supabase (coach_lead_context): el coach lo
-    // restaura tras un reload o desde otro dispositivo. No bloquea la navegación.
-    try {
-      Promise.resolve(pd().saveCoachContext(m.id, ctx)).catch(function (e) {
-        console.warn('[prospecting] no se pudo persistir el contexto del coach:', e.message);
-      });
-    } catch (e) { console.warn('[prospecting] coach context:', e.message); }
-    var navEl = document.querySelector('[data-page="ventas-coach"]');
-    if (navEl && typeof window.nav === 'function') window.nav(navEl, 'ventas-coach');
-    if (typeof window.loadCoachBrief === 'function') window.loadCoachBrief(ctx);
-    toast('Contexto del lead cargado en el coach.', 'success');
-  }
-
-  function onPreviewClick(e) {
-    var btn = e.target.closest ? e.target.closest('[data-pros-preview]') : null;
-    if (!btn || btn.disabled) return;
-    var action = btn.getAttribute('data-pros-preview');
-    var m = previewMembers.get(String(btn.getAttribute('data-id') || ''));
-    if (!m) return toast('Vuelve a abrir la vista previa de este lead.', 'warn');
-    try {
-      if (action === 'copy-greet') return copyText(greetingSafe(getSenderSafe()));
-      if (action === 'wa-greet') {
-        var url = waLinkSafe(m.phone, greetingSafe(getSenderSafe()));
-        if (!url) return toast('Enriquece el teléfono de este lead en Listas.', 'warn');
-        return waOpen(url);
-      }
-      if (action === 'wa-follow') {
-        var follow = m.outreach && m.outreach.whatsapp_followup;
-        if (!follow) return toast('Genera los mensajes con IA para ver el seguimiento.', 'warn');
-        var url2 = waLinkSafe(m.phone, follow);
-        if (!url2) return toast('Enriquece el teléfono de este lead en Listas.', 'warn');
-        return waOpen(url2);
-      }
-      if (action === 'copy-follow') {
-        var f2 = m.outreach && m.outreach.whatsapp_followup;
-        if (!f2) return toast('Genera los mensajes con IA para ver el seguimiento.', 'warn');
-        return copyText(f2);
-      }
-      if (action === 'copy-li') {
-        var li = m.outreach && m.outreach.linkedin_message;
-        if (!li) return toast('Genera los mensajes con IA para ver el mensaje de LinkedIn.', 'warn');
-        return copyText(li);
-      }
-      if (action === 'copy-email') {
-        var es = (m.outreach && m.outreach.email_subject) || '';
-        var eb = (m.outreach && m.outreach.email_body) || '';
-        if (!es && !eb) return toast('Genera los mensajes con IA para ver el email.', 'warn');
-        return copyText((es ? 'Asunto: ' + es + '\n\n' : '') + eb);
-      }
-      if (action === 'coach') return coachHandoff(m);
-    } catch (err) {
-      toast(errMsg(err), 'error');
-    }
-  }
-  document.addEventListener('click', onPreviewClick);
-
-  // Generación secuencial con tolerancia a fallos por lead.
-  //   members    → leads a (re)generar; el que llama decide cuáles (p. ej.
-  //                solo los que aún no tienen `outreach`, o uno para regenerar).
-  //   opts.engine     → motor de IA (opcional; si falta, el del perfil).
-  //   opts.onProgress → fn({ phase:'brief'|'generating'|'done', done, total,
-  //                          index, member, text })
-  // Persiste outreach_status / outreach en prospect_list_members igual que la
-  // antigua pestaña de mensajes IA. Devuelve { ok, failed, skipped, failures }.
-  var outreachRun = { active: false };
-
-  function generateOutreachFor(members, opts) {
-    opts = opts || {};
-    var onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : function () {};
-    var list = (Array.isArray(members) ? members : []).filter(function (m) { return m && m.id != null; });
-    var ok = 0;
-    var failed = [];
-    if (!list.length) return Promise.resolve({ ok: 0, failed: 0, skipped: 0, failures: [] });
-    if (outreachRun.active) return Promise.reject(new Error('Ya hay una generación de mensajes en curso. Espera a que termine.'));
-    var d, sender;
-    try {
-      d = pd();
-      sender = d.getSenderInfo();
-    } catch (e) {
-      return Promise.reject(e);
-    }
-    outreachRun.active = true;
-    function report(patch) {
-      try { onProgress(Object.assign({ total: list.length, done: ok + failed.length }, patch)); } catch (_) {}
-    }
-    // El brief del vendedor es input de la personalización: antes del lote se
-    // asegura que exista (si no, se genera y se espera). Si aun así no queda
-    // listo, se sigue con la matriz cruda; si no hay matriz, ensureBriefReady
-    // lanza y el lote se aborta.
-    var chain = Promise.resolve()
-      .then(function () {
-        return d.ensureBriefReady(function (text) { report({ phase: 'brief', text: text }); });
-      })
-      .then(function (status) {
-        if (status !== 'ready') {
-          toast('Tu contexto de empresa no está listo (' + status + '): se personalizará solo con la matriz de tu empresa.', 'warn');
-        }
-      });
-    list.forEach(function (m, i) {
-      chain = chain.then(function () {
-        report({ phase: 'generating', index: i, member: m, text: 'Generando mensajes IA ' + fmtNum(i + 1) + '/' + fmtNum(list.length) + '…' });
-        // Persistir "generating" antes de la llamada (no solo en memoria):
-        // un reload a mitad del lote muestra al lead en progreso y la edge
-        // function sobreescribe con el estado final aunque esta pestaña ya no
-        // esté para verlo.
-        m.outreach_status = 'generating';
-        return Promise.resolve(d.updateMember(m.id, { outreach_status: 'generating' })).catch(function () {})
-          .then(function () { return d.generateOutreach({ member: m, sender: sender, engine: opts.engine }); })
-          .then(function (res) {
-            var outreach = Object.assign({}, res, { generated_at: new Date().toISOString() });
-            // El mensaje generado es la escritura crítica (ya pagada): va en
-            // su propia llamada para no perderlo si falla el flag de estado.
-            return Promise.resolve(d.updateMember(m.id, { outreach: outreach })).then(function () {
-              m.outreach = outreach;
-              m.outreach_status = 'ready';
-              ok++;
-              return Promise.resolve(d.updateMember(m.id, { outreach_status: 'ready' })).catch(function () {});
-            });
-          })
-          .catch(function (e) {
-            m.outreach_status = 'error';
-            Promise.resolve(d.updateMember(m.id, { outreach_status: 'error' })).catch(function () {});
-            failed.push({ name: m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim() || '—', error: errMsg(e) });
-          });
-      });
-    });
-    return chain.then(function () {
-      outreachRun.active = false;
-      if (failed.length) console.error('[prospecting] outreach generation failures:', failed);
-      report({ phase: 'done', text: '' });
-      return { ok: ok, failed: failed.length, skipped: 0, failures: failed };
-    }, function (e) {
-      outreachRun.active = false;
-      report({ phase: 'done', text: '' });
-      throw e;
-    });
-  }
+  // ══ MENSAJES IA ═══════════════════════════════════════════════════════════
+  // Ya no viven aquí (2026-09-15). Un mensaje IA pertenece a una CAMPAÑA, no a
+  // una lista: el motor escribe el de cada paso (campaign_messages) 24 h antes
+  // de su envío, con el ángulo y las instrucciones de ese paso, y se revisa en
+  // Campañas. La única generación fuera de una campaña es "Redactar con IA" en
+  // la Bandeja, cuando el lead ya respondió. Generarlos desde la lista producía
+  // un único texto por lead que se reusaba como apertura de toda campaña,
+  // ignorando su cadencia. El lead se lleva al coach desde el propio coach
+  // (js/coach-lead-picker.js), que lista todos los contactos de tus listas.
 
   // ══ SHELL + TAB SWITCHING ════════════════════════════════════════════════
   // Pestañas retiradas (2026-09-03) → dónde vive hoy cada cosa. También cubre
@@ -3550,9 +3282,6 @@
     gmailStatus: gmailStatus,
     connectGmail: connectGmail,
     disconnectGmail: disconnectGmail,
-    // Mensajes IA: generación al enrolar + vista previa por lead.
-    generateOutreachFor: generateOutreachFor,
-    outreachPreviewHtml: outreachPreviewHtml,
   };
 
   // Otros módulos (p. ej. Radar) crean listas llamando directo a

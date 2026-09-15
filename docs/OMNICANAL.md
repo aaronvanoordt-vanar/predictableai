@@ -219,3 +219,109 @@ Comprobado en producción: sin `APOLLO_OAUTH_CLIENT_ID` cargado, **todos los usu
 1. `wati-webhook` sella `config.webhook.last_received_at` en cada callback válido (como mucho una escritura cada 5 min).
 2. `ensureWebhook` deriva el estado en orden: ya nos llamó → funciona; lo registramos nosotros → registrado (y **no se reintenta**: un POST de más solo choca contra el tope y dejaría la fila en "sin registrar", encendiendo una alarma falsa); si no, intenta el POST y, si WATI responde el tope, lo marca `limit` y se lo explica al usuario en español.
 3. La UI ofrece **Reintentar registro** y **Ya lo agregué en WhatsApp** (`verify_webhook {confirmed:true}`), que anota la confirmación del usuario y queda en verde cuando llegue el primer mensaje.
+
+---
+
+## Multi-touchpoint real: la conexión de LinkedIn separada del mensaje + más señales (2026-09-15)
+
+### El problema
+
+Un paso `linkedin_connect` subía el lead a una campaña de Dripify que traía su
+**propia secuencia completa** (invitación → espera → mensaje 1 → mensaje 2 …).
+Esa secuencia la ejecuta Dripify, no nosotros: seguía escribiendo aunque el
+lead ya hubiera contestado por WhatsApp o por email. La regla de parada de
+Predictable (una respuesta por cualquier canal cierra el enrolamiento) no
+alcanza a lo que corre allá.
+
+### El arreglo: una campaña de Dripify = un envío
+
+La Open API de Dripify solo sabe **subir leads a una campaña que ya existe**
+(no crea campañas, no manda mensajes, no fija campos por lead). Así que cada
+campaña de Dripify hace UNA sola cosa y quien decide cuándo entra el lead a
+cada una es Predictable:
+
+| Paso del grafo | Campaña de Dripify | Qué manda |
+|---|---|---|
+| `linkedin_connect` | `purpose = 'connect'` | solo la solicitud de conexión |
+| `linkedin_message` | `purpose = 'message'` | solo un mensaje (lead ya conectado) |
+
+* `linkedin_campaigns.purpose` (migración `20260915000001`) guarda el propósito
+  de las campañas diseñadas en Predictable; el diseñador solo deja UN envío por
+  campaña y el checklist de publicación lo repite ("en Dripify esta campaña
+  termina después de la solicitud").
+* `campaign-run` valida el propósito antes de subir el lead (`hold` con motivo
+  si el paso apunta a una campaña del otro tipo) y **omite** el mensaje si el
+  lead todavía no aceptó la conexión (`en.linkedin_connected_at`).
+* Un lead pasa por varias campañas de Dripify, así que `provider_refs` lleva
+  `dripify_uploads = { "<campaignId>": { purpose, lead_list_id, node_id, at } }`
+  (deduplicación por campaña) y `dripify_last_action_by` (un cursor de "última
+  acción vista" por campaña; con uno solo, la campaña de mensajes y la de
+  conexión se pisaban los eventos). Las claves viejas
+  (`dripify_campaign_id` / `dripify_lead_list_id`) se siguen escribiendo con el
+  último upload para no romper filas anteriores.
+* El texto del mensaje de LinkedIn vive en la campaña de Dripify: su API no
+  acepta texto por lead. Para personalizar, sus variables (`{{first_name}}`,
+  `{{company}}`…) + el CSV de leads que se descarga del detalle de la campaña.
+
+### Señales (condiciones del grafo)
+
+A las tres que había se sumaron cinco, todas apoyadas en eventos que ya
+existen (`campaign_events`), ninguna inventada:
+
+| check | De dónde sale |
+|---|---|
+| `linkedin_connection_sent` | evento `connection_sent` de Dripify (o ya aceptada) |
+| `linkedin_connected` | `campaign_enrollments.linkedin_connected_at` |
+| `whatsapp_delivered` | recibo `delivered` de WATI (o leído/respondido) |
+| `whatsapp_read` | recibo `read` de WATI |
+| `email_delivered` | `sent` de email y ningún `failed` |
+| `email_opened` | apertura que reporta Apollo |
+| `email_bounced` | `failed` de email (rebote, bloqueo por spam o rechazo del envío) |
+| `engaged_any` | cualquier `opened` / `read` / `replied` / `connection_accepted` |
+
+**No hay condición "¿respondió?" a propósito.** Una respuesta por cualquier
+canal cierra el enrolamiento y la conversación pasa a la Bandeja: una rama
+"¿respondió? → Sí" nunca se recorrería. Lo que sigue después de una respuesta
+lo escribe una persona (con o sin ayuda de la IA), no la cadencia.
+
+Tampoco hay "¿hizo clic?": Apollo no reporta clics en un `emailer_message`
+individual, así que una condición de clic siempre daría "No".
+
+El builder avisa cuando una condición pregunta por un canal que no salió antes
+("no hay un paso de WhatsApp antes: siempre dará No").
+
+### Los mensajes IA son de la campaña, no de la lista
+
+Antes, enrolar generaba el outreach de 5 capas del lead
+(`prospect_list_members.outreach`) y la apertura de CUALQUIER campaña reusaba
+ese texto, ignorando el ángulo y las instrucciones del paso. Ahora:
+
+* Enrolar no genera ni cobra nada.
+* El motor escribe el mensaje de cada paso 24 h antes de su envío
+  (`campaign_messages`, modo `step` de `generate-outreach`) con el ángulo y las
+  instrucciones de ESE paso. Si el lead responde antes, los que faltaban no se
+  escriben ni se cobran.
+* La ficha de cada lead en la campaña muestra sus mensajes paso a paso, con
+  "Regenerar" en los que todavía no salieron (actualiza `subject`/`body` de la
+  fila existente: por RLS el cliente nunca inserta en `campaign_messages`).
+* La generación desde Listas se eliminó (`js/prospecting.js`).
+
+### Responder a mano, con ayuda de la IA
+
+Cuando el lead contesta, la cadencia se detiene y la conversación aparece en la
+Bandeja. Ahí el botón **"Redactar con IA"** (3 créditos, `mode: "reply"` de
+`generate-outreach`) escribe un borrador con el hilo real y el contexto de la
+empresa, y lo deja en el cuadro de texto para editarlo. Nunca se envía solo.
+Ese modo no busca en la web y tiene reglas propias: responder lo que preguntó
+el lead, sin volver a presentarse ni soltar el pitch.
+
+### Pasos manuales para ponerlo en producción
+
+1. Aplicar `supabase/migrations/20260915000001_linkedin_campaign_purpose.sql`.
+2. `supabase functions deploy campaign-run`
+3. `supabase functions deploy generate-outreach`
+4. En Dripify: las campañas con secuencia completa que hoy usa algún paso
+   `linkedin_connect` siguen funcionando, pero seguirán mandando sus mensajes
+   por su cuenta. Para que la cadencia la controle Predictable hay que partirlas
+   en campañas de un solo envío (una de conexión + una por mensaje) y apuntar
+   los pasos a ellas.

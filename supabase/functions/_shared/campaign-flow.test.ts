@@ -24,7 +24,7 @@ Deno.test("validate: errores típicos", () => {
   assert(/junto con el anterior/.test(msgs), msgs);
   assert(/texto propio está vacío/.test(msgs), msgs);
   assert(/necesita asunto/.test(msgs), msgs);
-  assert(/campaña de LinkedIn/.test(msgs), msgs);
+  assert(/campaña de Dripify de solo conexión/.test(msgs), msgs);
   assert(/mismo id/.test(msgs), msgs);
   assert(/solo de WhatsApp/.test(msgs), msgs);
 });
@@ -118,4 +118,48 @@ Deno.test("validate: el paso de LinkedIn acepta una campaña diseñada en Predic
     { id: "li", type: "action", channel: "linkedin_connect", delay: {}, content: { kind: "ai" }, settings: { dripify_campaign_id: 2017014 } },
   ] });
   assertEquals(withDripify.errors, []);
+});
+
+Deno.test("validate: el paso de mensaje de LinkedIn también necesita su campaña", () => {
+  const sin = cf.validate({ v: 1, nodes: [
+    { id: "li", type: "action", channel: "linkedin_message", delay: {}, content: { kind: "ai" } },
+  ] });
+  assert(!sin.ok);
+  assert(/de solo mensaje/.test(sin.errors.map((e) => e.message).join(" ")), JSON.stringify(sin.errors));
+  const con = cf.validate({ v: 1, nodes: [
+    { id: "li", type: "action", channel: "linkedin_message", delay: {}, content: { kind: "ai" }, settings: { dripify_campaign_id: 42 } },
+  ] });
+  assertEquals(con.errors, []);
+});
+
+Deno.test("normalize: el contenido de un paso de LinkedIn siempre es ai (el texto vive en Dripify)", () => {
+  const f = cf.normalize({ nodes: [
+    { id: "a", type: "action", channel: "linkedin_connect", content: { kind: "custom", body: "hola" } },
+    { id: "b", type: "action", channel: "linkedin_message", content: { kind: "template_a" } },
+  ] });
+  assertEquals(f.nodes.map((n) => (n as cf.ActionNode).content.kind), ["ai", "ai"]);
+  assert(cf.isLinkedin("linkedin_connect") && cf.isLinkedin("linkedin_message"));
+  assert(!cf.isLinkedin("email") && !cf.isLinkedin("whatsapp"));
+});
+
+Deno.test("estimateCredits: LinkedIn cuenta como envío pero no como mensaje IA", () => {
+  const flow: cf.Flow = { v: 1, nodes: [
+    { id: "li", type: "action", channel: "linkedin_connect", delay: { mode: "after_prev", days: 0, hours: 0 }, content: { kind: "ai", angle: "apertura" }, settings: { dripify_campaign_id: 1 } },
+    { id: "lm", type: "action", channel: "linkedin_message", delay: { mode: "after_prev", days: 2, hours: 0 }, content: { kind: "ai", angle: "valor" }, settings: { dripify_campaign_id: 2 } },
+    email("e", 3),
+  ] };
+  assertEquals(cf.validate(flow).errors, []);
+  // 3 envíos (1 crédito cada uno) + 1 mensaje IA (3 créditos) por lead.
+  assertEquals(cf.estimateCredits(flow, 5), { aiMessages: 5, sends: 15, credits: 30 });
+});
+
+Deno.test("condiciones: las señales nuevas sobreviven a normalize", () => {
+  const checks: cf.ConditionCheck[] = ["linkedin_connection_sent", "whatsapp_delivered", "email_delivered", "email_bounced", "engaged_any"];
+  checks.forEach((check) => {
+    const f = cf.normalize({ nodes: [{ id: "c", type: "condition", check, yes: [{ id: "a", type: "action", channel: "email" }], no: [] }] });
+    assertEquals((f.nodes[0] as cf.ConditionNode).check, check);
+  });
+  // Una señal que no existe cae en la de siempre, nunca rompe el grafo.
+  const bad = cf.normalize({ nodes: [{ id: "c", type: "condition", check: "respondio", yes: [], no: [] }] });
+  assertEquals((bad.nodes[0] as cf.ConditionNode).check, "linkedin_connected");
 });

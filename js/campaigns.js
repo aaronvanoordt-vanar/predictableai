@@ -22,8 +22,11 @@
  *      borrador por `onSave` y aquí se guarda. El detalle muestra la misma
  *      línea de tiempo en solo lectura con contadores por paso, los leads y
  *      la bandeja de revisión de los mensajes IA por paso (campaign_messages).
- *      Los mensajes IA de 5 capas se generan al enrolar
- *      (window.prospecting.generateOutreachFor): la apertura los reutiliza.
+ *      Los mensajes IA son de la CAMPAÑA, no de la lista: el motor escribe
+ *      uno por lead y por paso (campaign_messages) 24 h antes de cada envío,
+ *      con el ángulo y las instrucciones de ese paso. Enrolar no genera nada.
+ *      La única generación fuera de una campaña es "Redactar con IA" en la
+ *      Bandeja, cuando el lead ya respondió y la cadencia se detuvo.
  *   3. Bandeja omnicanal (vista 'inbox', entrada en la barra lateral) sobre
  *      inbox_messages: TODO lo enviado y recibido
  *      por los tres canales (lo que mandó el motor, lo que salió de la cuenta
@@ -245,7 +248,22 @@
   }
   function hasPhone(m) { return !!(m && String(m.phone || '').replace(/\D/g, '').length >= 8); }
   function hasEmail(m) { return !!(m && m.email && !/email_not_unlocked/.test(String(m.email))); }
-  function hasAi(m) { return !!(m && m.outreach && m.outreach.generated_at); }
+  /**
+   * Mensajes IA de un lead EN ESTA campaña (campaign_messages), en el orden
+   * de la cadencia. Hasta el 2026-09-15 la ficha mostraba el outreach de 5
+   * capas guardado en la lista: eso era del lead, no de la campaña, y no
+   * reflejaba lo que iba a salir en cada paso.
+   */
+  function messagesFor(enrollmentId, c) {
+    var list = (state.messages || []).filter(function (m) { return String(m.enrollment_id) === String(enrollmentId); });
+    if (!c) return list;
+    var L = flowLib();
+    var flow = campaignFlow(c);
+    return list.slice().sort(function (a, b) { return L.ordinal(flow, a.node_id) - L.ordinal(flow, b.node_id); });
+  }
+  function reviewMessages() {
+    return (state.messages || []).filter(function (m) { return m.status === 'draft' || m.status === 'error'; });
+  }
   function flowLib() {
     if (!global.CampaignFlow) throw new Error('js/campaign-flow.js no está cargado. Recarga la página.');
     return global.CampaignFlow;
@@ -533,6 +551,7 @@
     var cfg = (state.dripify && state.dripify.config) || {};
     return global.LinkedinCampaigns.open({
       campaign: o.campaign || null,
+      purpose: o.purpose || 'connect',
       defaultName: o.defaultName || '',
       dripifyCampaigns: dripifyCampaigns(),
       webhookUrl: cfg.webhook && cfg.webhook.url,
@@ -663,13 +682,15 @@
       .order('created_at', { ascending: false })
       .limit(2000);
     state.events = ev.error ? [] : (ev.data || []);
+    // Todos los mensajes de la campaña: la bandeja de revisión filtra los que
+    // esperan aprobación y la ficha de cada lead muestra los suyos (el mensaje
+    // pertenece a la campaña y al paso, no a la lista).
     var ms = await sb()
       .from('campaign_messages')
-      .select('id, enrollment_id, member_id, node_id, channel, angle, subject, body, status, error_detail, generated_at, prospect_list_members(name, first_name, last_name, company, title)')
+      .select('id, enrollment_id, member_id, node_id, channel, angle, subject, body, status, error_detail, generated_at, sent_at, prospect_list_members(name, first_name, last_name, company, title)')
       .eq('campaign_id', campaignId)
-      .in('status', ['draft', 'error'])
       .order('generated_at', { ascending: true })
-      .limit(200);
+      .limit(1000);
     state.messages = ms.error ? [] : (ms.data || []).map(function (m) {
       var out = Object.assign({}, m, { member: m.prospect_list_members || null });
       delete out.prospect_list_members;
@@ -739,29 +760,29 @@
   }
 
   /**
-   * Genera mensajes IA (delegado a window.prospecting.generateOutreachFor, que
-   * regenera a TODOS los miembros que recibe: filtra antes los que ya tienen).
-   * onProgress recibe {phase, done, total, index, member, text}.
+   * Reescribe el mensaje IA de UN paso para UN lead (3 créditos).
+   * Solo se puede sobre una fila que ya existe: campaign_messages lo inserta
+   * el motor (el cliente solo puede editar texto y aprobar, por RLS). Por eso
+   * "Regenerar" aparece cuando el mensaje ya está escrito y todavía no salió.
    */
-  function generateFor(members, onProgress) {
-    var fn = pros().generateOutreachFor;
-    if (!fn) return Promise.resolve({ ok: 0, failed: members.length, unavailable: true });
-    var counter = 0;
-    var engine = global.AIEngine && global.AIEngine.get ? global.AIEngine.get('outreach') : undefined;
-    return Promise.resolve(fn(members, {
-      engine: engine,
-      onProgress: function (a, b) {
-        var done = null, total = null, text = '';
-        if (a && typeof a === 'object') {
-          done = a.done != null ? a.done : (a.index != null ? a.index + 1 : null);
-          total = a.total;
-          if (a.phase === 'brief') text = a.text || 'Preparando el contexto de tu empresa…';
-        } else if (typeof a === 'number') { done = a; total = typeof b === 'number' ? b : null; }
-        if (done == null) done = ++counter;
-        if (!total) total = members.length;
-        if (onProgress) onProgress(Math.min(done, total), total, text);
-      },
-    })).then(function (r) { return r || { ok: members.length, failed: 0 }; });
+  function regenerateMessage(msg, c) {
+    var L = flowLib();
+    var loc = L.find(campaignFlow(c), msg.node_id);
+    if (!loc || loc.node.type !== 'action') return Promise.reject(new Error('Ese paso ya no existe en la cadencia.'));
+    var node = loc.node;
+    return pd().generateStepMessage({
+      member_id: msg.member_id,
+      campaign_id: c.id,
+      node_id: node.id,
+      channel: node.channel,
+      angle: node.content.angle || 'valor',
+      instructions: node.content.instructions || '',
+      sender: c.sender || senderDefaults(),
+    }).then(function (out) {
+      var patch = { body: out.body };
+      if (node.channel === 'email') patch.subject = out.subject || msg.subject || '';
+      return updateMessage(msg.id, patch);
+    });
   }
 
   // ── Bandeja (inbox_messages) ─────────────────────────────────────────────
@@ -1860,24 +1881,28 @@
       if (dcs.length) {
         body.appendChild(h('div', { class: 'pros-hint', text: 'Campañas: ' + dcs.slice(0, 8).map(function (d) { return d.name + (d.active === false ? ' (inactiva)' : ''); }).join(' · ') + (dcs.length > 8 ? ' · …' : '') }));
       } else {
-        body.appendChild(h('div', { class: 'pros-note-red', text: '⚠ Tu cuenta no devolvió campañas. Crea una campaña de LinkedIn (conexión + mensajes) en tu cuenta de automatización y pulsa "Releer".' }));
+        body.appendChild(h('div', { class: 'pros-note-red', text: '⚠ Tu cuenta no devolvió campañas. Crea en tu cuenta de automatización una campaña que SOLO mande la solicitud de conexión y pulsa "Releer".' }));
       }
       // Campañas de LinkedIn diseñadas en Predictable (vinculadas por nombre).
       var own = ownLinkedinCampaigns();
       body.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Campañas de LinkedIn creadas en Predictable' }));
-      if (!own.length) body.appendChild(h('div', { class: 'pros-hint', text: 'Ninguna todavía. Diseña la secuencia aquí (nota de conexión y mensajes con esperas), créala en Dripify con el mismo nombre y queda vinculada: los leads de tus cadencias se enrolan solos.' }));
+      body.appendChild(h('div', { class: 'pros-hint', text: 'Cada campaña manda UNA sola cosa: la solicitud de conexión, o un mensaje. Así la cadencia (a quién, cuándo y si todavía toca) la decide Predictable y se detiene en cuanto el lead responde por cualquier canal — una campaña con su propia secuencia seguiría escribiendo sola.' }));
+      if (!own.length) body.appendChild(h('div', { class: 'pros-hint', text: 'Ninguna todavía. Diseña el texto aquí, créala en tu cuenta con el mismo nombre y queda vinculada: los leads de tus cadencias se enrolan solos.' }));
       var ownBox = h('div', { class: 'cmp-li-list' });
       own.forEach(function (lc) {
         var stl = global.LinkedinCampaigns ? global.LinkedinCampaigns.statusLabel(lc) : { label: lc.status, kind: 'gray' };
         var it = h('div', { class: 'cmp-li-item' });
         it.appendChild(h('b', { text: lc.name }));
         it.insertAdjacentHTML('beforeend', pill(stl.label, stl.kind));
+        it.insertAdjacentHTML('beforeend', pill(lc.purpose === 'message' ? 'solo mensaje' : 'solo conexión', 'teal'));
         it.appendChild(h('span', { class: 'pros-hint', text: (lc.steps || []).length + ' pasos' + (lc.dripify_campaign_name ? ' · «' + lc.dripify_campaign_name + '»' : '') }));
         it.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: lc.dripify_campaign_id ? 'Editar' : 'Ver pasos / vincular', onclick: function () { api.close(); openLinkedinDesigner({ campaign: lc, onSaved: function () { openChannelDetails('linkedin'); }, onDeleted: function () { openChannelDetails('linkedin'); } }); } }));
         ownBox.appendChild(it);
       });
       body.appendChild(ownBox);
-      body.appendChild(h('div', { class: 'cmp-row' }, h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: '+ Crear campaña de LinkedIn', onclick: function () { api.close(); openLinkedinDesigner({ onSaved: function () { openChannelDetails('linkedin'); } }); } })));
+      body.appendChild(h('div', { class: 'cmp-row' },
+        h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: '+ Campaña de conexión', onclick: function () { api.close(); openLinkedinDesigner({ purpose: 'connect', onSaved: function () { openChannelDetails('linkedin'); } }); } }),
+        h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '+ Campaña de mensaje', onclick: function () { api.close(); openLinkedinDesigner({ purpose: 'message', onSaved: function () { openChannelDetails('linkedin'); } }); } })));
       var dwh = dcfg.webhook || {};
       var ok = liWebhookOk(dcfg);
       var check = h('div', { class: 'cmp-check' });
@@ -1926,28 +1951,22 @@
     return api;
   }
 
-  // ── CSV para LinkedIn (Custom Lead Fields) ───────────────────────────────
+  // ── CSV de leads para LinkedIn (Custom Lead Fields) ──────────────────────
+  // Respaldo manual: los pasos de LinkedIn ya suben los leads por API. Trae
+  // los datos del lead para las variables de Dripify ({{company}},
+  // {{position}}…). El texto del mensaje NO va aquí: vive en la campaña de
+  // Dripify, porque su API no acepta texto por lead.
   function csvCell(v) {
     var s = String(v == null ? '' : v).replace(/\r?\n/g, ' ').trim();
     return '"' + s.replace(/"/g, '""') + '"';
   }
-  function connectionNote(msg) {
-    var t = String(msg || '').replace(/\s+/g, ' ').trim();
-    if (t.length <= 300) return t;
-    var cut = t.slice(0, 300);
-    var i = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '));
-    return (i > 120 ? cut.slice(0, i + 1) : cut.slice(0, 297) + '…').trim();
-  }
   function downloadLinkedinCsv(c) {
     var rows = state.enrollments.map(function (e) { return e.member; }).filter(function (m) { return m && m.linkedin_url; });
     if (!rows.length) return toast('No hay leads enrolados con URL de LinkedIn.', 'warn');
-    var header = ['linkedinUrl', 'first_name', 'last_name', 'company', 'title', 'connection_note', 'message'];
+    var header = ['linkedinUrl', 'first_name', 'last_name', 'company', 'title', 'country'];
     var lines = [header.join(',')];
-    var missing = 0;
     rows.forEach(function (m) {
-      var li = (m.outreach && m.outreach.linkedin_message) || '';
-      if (!li) missing++;
-      lines.push([m.linkedin_url, m.first_name || (m.name || '').split(' ')[0] || '', m.last_name || '', m.company || '', m.title || '', connectionNote(li), li].map(csvCell).join(','));
+      lines.push([m.linkedin_url, m.first_name || (m.name || '').split(' ')[0] || '', m.last_name || '', m.company || '', m.title || '', m.country || ''].map(csvCell).join(','));
     });
     var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
     var a = document.createElement('a');
@@ -1955,7 +1974,7 @@
     a.download = 'linkedin-' + String(c.name || 'campana').replace(/[^\w\-]+/g, '_').slice(0, 40) + '.csv';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
-    toast(rows.length + ' leads en el CSV' + (missing ? ' · ' + missing + ' sin mensaje IA generado' : '') + '.', missing ? 'warn' : 'success');
+    toast(rows.length + ' leads en el CSV.', 'success');
   }
 
   // ── Render: lista de campañas (tarjetas) ─────────────────────────────────
@@ -2187,14 +2206,14 @@
       warn.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'ch-connect', 'data-channel': k, text: 'Conectar' }));
       card.appendChild(warn);
     });
-    if (acts.some(function (a) { return a.channel === 'linkedin_connect'; })) {
+    if (acts.some(function (a) { return flowLib().isLinkedin(a.channel); })) {
       var csvRow = h('div', { class: 'pros-actions', style: 'margin-top:10px' });
-      csvRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'csv-linkedin', text: 'Descargar CSV para LinkedIn (mensajes IA)' }));
-      csvRow.appendChild(h('span', { class: 'pros-hint', text: 'LinkedIn no acepta mensajes por API. El CSV trae la URL de LinkedIn, la nota de conexión (≤300 caracteres) y el mensaje IA de cada lead enrolado, para subirlo como lista con campos personalizados y usar esas variables en tu campaña de LinkedIn.' }));
+      csvRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'csv-linkedin', text: 'Descargar CSV de leads para LinkedIn' }));
+      csvRow.appendChild(h('span', { class: 'pros-hint', text: 'Respaldo manual: los pasos de LinkedIn ya suben los leads solos. El CSV trae la URL del perfil y los datos de cada lead enrolado para los campos personalizados de tu cuenta ({{company}}, {{position}}…). El texto del mensaje va en la campaña de LinkedIn: su API no acepta texto por lead.' }));
       card.appendChild(csvRow);
     }
     wrap.appendChild(card);
-    if (c.review_required || state.messages.length) wrap.appendChild(renderReviewInbox(c));
+    if (c.review_required || reviewMessages().length) wrap.appendChild(renderReviewInbox(c));
     wrap.appendChild(renderEnrollCard(c));
     wrap.appendChild(renderEnrollmentsTable(c));
     return wrap;
@@ -2277,12 +2296,13 @@
     var acts = flowActions(c);
     var needsWa = acts.some(function (a) { return a.channel === 'whatsapp'; });
     var needsEmail = acts.some(function (a) { return a.channel === 'email'; });
-    var needsAi = acts.some(function (a) { return a.content.kind === 'ai'; });
-    var needsLi = acts.some(function (a) { return a.channel === 'linkedin_connect'; });
+    var needsAi = acts.some(function (a) { return a.content.kind === 'ai' && !flowLib().isLinkedin(a.channel); });
+    var needsLi = acts.some(function (a) { return flowLib().isLinkedin(a.channel); });
+    var aiSteps = acts.filter(function (a) { return a.content.kind === 'ai' && !flowLib().isLinkedin(a.channel); }).length;
     var allChecked = candidates.every(function (m) { return state.selected.has(String(m.id)); });
     var html = '<div class="pros-scroll-x"><table><thead><tr>' +
       '<th style="width:34px"><input type="checkbox" data-action="enroll-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-      '<th>Nombre</th><th>Empresa</th><th>Teléfono</th><th>Email</th><th>LinkedIn</th><th>Mensajes IA</th></tr></thead><tbody>';
+      '<th>Nombre</th><th>Empresa</th><th>Teléfono</th><th>Email</th><th>LinkedIn</th></tr></thead><tbody>';
     candidates.forEach(function (m) {
       var checked = state.selected.has(String(m.id)) ? ' checked' : '';
       html += '<tr><td><input type="checkbox" data-action="enroll-check" data-id="' + esc(String(m.id)) + '"' + checked + '></td>' +
@@ -2290,8 +2310,7 @@
         '<td>' + esc(m.company || '—') + '</td>' +
         '<td>' + (hasPhone(m) ? pill('sí', 'green') : (needsWa ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
         '<td>' + (hasEmail(m) ? pill('sí', 'green') : (needsEmail ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
-        '<td>' + (m.linkedin_url ? pill('sí', 'green') : (needsLi ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
-        '<td>' + (hasAi(m) ? pill('listos', 'green') : (needsAi ? pill('se generan al enrolar', 'amber') : pill('—', 'gray'))) + '</td></tr>';
+        '<td>' + (m.linkedin_url ? pill('sí', 'green') : (needsLi ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td></tr>';
     });
     html += '</tbody></table></div>';
     card.insertAdjacentHTML('beforeend', html);
@@ -2299,7 +2318,7 @@
     if (needsWa) hints.push('WhatsApp necesita teléfono revelado (Listas → Enriquecer).');
     if (needsEmail) hints.push('Email necesita email revelado.');
     if (needsLi) hints.push('LinkedIn necesita la URL del perfil del lead.');
-    if (needsAi) hints.push('Los mensajes IA de 5 capas se generan al enrolar para los leads que no los tengan; el motor escribe cada seguimiento 24 h antes de enviarlo.');
+    if (needsAi) hints.push('Los ' + aiSteps + (aiSteps === 1 ? ' mensaje IA de esta cadencia se escribe' : ' mensajes IA de esta cadencia se escriben') + ' por lead y por paso, 24 h antes de cada envío, con el ángulo y las instrucciones que pusiste en la campaña (3 créditos cada uno). No se generan al enrolar: si el lead responde antes, los que faltaban no se escriben ni se cobran.');
     card.appendChild(h('div', { style: 'padding:10px 14px' }, h('span', { class: 'pros-hint', text: hints.join(' ') })));
     var prog = h('div', { class: 'cmp-progress', 'data-role': 'enroll-progress' });
     prog.hidden = true;
@@ -2307,18 +2326,44 @@
     return card;
   }
 
-  function aiPreviewHtml(m) {
-    if (!hasAi(m)) return '<div class="pros-hint">Este lead todavía no tiene mensajes IA generados.</div>';
-    if (pros().outreachPreviewHtml) {
-      try { return pros().outreachPreviewHtml(m); } catch (e) { console.warn('[campaigns] preview:', e.message); }
-    }
-    var o = m.outreach || {};
+  var MSG_STATUS = {
+    draft: { label: 'por revisar', pill: 'amber' },
+    approved: { label: 'listo', pill: 'green' },
+    sent: { label: 'enviado', pill: 'green' },
+    skipped: { label: 'omitido', pill: 'gray' },
+    error: { label: 'falló', pill: 'red' },
+  };
+
+  /**
+   * Los mensajes IA de un lead en ESTA campaña, paso por paso. Cada paso con
+   * contenido IA aparece aunque todavía no esté escrito: el motor lo escribe
+   * 24 h antes de su envío, así que un paso lejano sale como "aún no escrito"
+   * (y si el lead responde antes, no se escribe nunca).
+   */
+  function aiPreviewHtml(e, c) {
+    var L = flowLib();
+    var flow = campaignFlow(c);
+    var byNode = {};
+    messagesFor(e.id, c).forEach(function (m) { byNode[m.node_id] = m; });
+    var steps = L.actions(flow).filter(function (a) { return a.content.kind === 'ai' && !L.isLinkedin(a.channel); });
+    if (!steps.length) return '<div class="pros-hint">Esta cadencia no tiene pasos con mensaje IA.</div>';
     var out = '';
-    Object.keys(o).forEach(function (k) {
-      if (typeof o[k] !== 'string' || !o[k].trim() || k === 'generated_at') return;
-      out += '<div><div class="pros-lbl">' + esc(k.replace(/_/g, ' ')) + '</div><div class="cmp-ai-block">' + esc(o[k]) + '</div></div>';
+    steps.forEach(function (a) {
+      var m = byNode[a.id];
+      var st = m ? (MSG_STATUS[m.status] || MSG_STATUS.draft) : null;
+      out += '<div><div class="pros-lbl">' + esc(L.nodeTitle(a)) + ' ' + (st ? pill(st.label, st.pill) : pill('aún no escrito', 'gray')) + '</div>';
+      if (m && m.status === 'error') out += '<div class="pros-note-red" style="margin:0">' + esc(m.error_detail || 'No se pudo generar.') + '</div>';
+      else if (m && String(m.body || '').trim()) {
+        out += '<div class="cmp-ai-block">' + (m.subject ? '<b>' + esc(m.subject) + '</b><br>' : '') + esc(m.body) + '</div>';
+        if (m.status === 'draft' || m.status === 'approved') {
+          out += '<div class="pros-actions"><button type="button" class="btn btn-ghost btn-sm" data-action="msg-regen" data-id="' + esc(String(m.id)) + '" data-credit-cost="outreach_message" data-credit-muted="">Regenerar</button></div>';
+        }
+      } else {
+        out += '<div class="pros-hint">El motor lo escribe 24 h antes de este envío, con el ángulo y las instrucciones del paso.</div>';
+      }
+      out += '</div>';
     });
-    return out || '<div class="pros-hint">Mensajes generados ' + esc(fmtDateTime(o.generated_at)) + '.</div>';
+    return out;
   }
 
   /** Activos que el motor dejó esperando con un motivo (error_detail). */
@@ -2354,6 +2399,7 @@
     var L = flowLib();
     var flow = campaignFlow(c);
     var html = '<div class="pros-scroll-x"><table><thead><tr><th>Lead</th><th>Estado</th><th>Paso actual</th><th>Último evento</th><th>Mensajes IA</th><th></th></tr></thead><tbody>';
+    var aiSteps = L.actions(flow).filter(function (a) { return a.content.kind === 'ai' && !L.isLinkedin(a.channel); }).length;
     state.enrollments.forEach(function (e) {
       var m = e.member || {};
       var s = ENROLL_STATUS[e.status] || ENROLL_STATUS.active;
@@ -2367,12 +2413,13 @@
         : (e.stop_reason ? esc(e.stop_reason) : '—');
       if (pathTxt) next += '<div class="pros-cellsub">' + esc(pathTxt) + '</div>';
       var open = state.expanded.has(String(e.id));
+      var msgs = messagesFor(e.id, c);
       html += '<tr>' +
         '<td><div style="font-weight:600">' + esc(memberName(m)) + '</div><div class="pros-cellsub">' + esc(m.company || '') + '</div></td>' +
         '<td>' + pill(s.label, s.pill) + (e.error_detail ? '<div class="pros-cellsub" style="color:var(--red)">' + esc(e.error_detail) + '</div>' : '') + '</td>' +
         '<td style="font-size:12px">' + next + '</td>' +
         '<td style="font-size:12px">' + (last ? esc(EVENT_LABEL[last.type] || last.type) + ' · ' + esc(chanLabel(last.channel)) + '<div class="pros-cellsub">' + esc(fmtDateTime(last.created_at)) + '</div>' : '—') + '</td>' +
-        '<td>' + (hasAi(m) ? pill('listos', 'green') : pill('sin generar', 'amber')) + '</td>' +
+        '<td>' + (aiSteps ? esc(msgs.filter(function (x) { return x.status === 'sent'; }).length + '/' + aiSteps) + ' escritos' + (msgs.some(function (x) { return x.status === 'draft'; }) ? ' ' + pill('por revisar', 'amber') : '') : pill('—', 'gray')) + '</td>' +
         '<td style="white-space:nowrap;text-align:right">' +
           (e.status === 'active' ? '<button type="button" class="btn btn-ghost btn-sm" data-action="en-pause" data-id="' + esc(String(e.id)) + '">Pausar</button>' : '') +
           (e.status === 'paused' || e.status === 'error' ? '<button type="button" class="btn btn-ghost btn-sm" data-action="en-resume" data-id="' + esc(String(e.id)) + '">Reanudar</button>' : '') +
@@ -2386,9 +2433,8 @@
             return '<div><time>' + esc(fmtDateTime(ev.created_at)) + '</time>' + esc(chanLabel(ev.channel)) + ' · ' + esc(EVENT_LABEL[ev.type] || ev.type) + (nloc ? ' · ' + esc(L.nodeTitle(nloc.node)) : '') + (ev.detail ? ' — ' + esc(ev.detail) : '') + '</div>';
           }).join('') : '<div>Sin eventos todavía.</div>') +
           '</div>' +
-          '<div class="cmp-ai"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><div class="pros-lbl">Mensajes IA</div>' +
-          '<button type="button" class="btn btn-ghost btn-sm" data-action="en-regen" data-id="' + esc(String(e.id)) + '" data-credit-cost="outreach" data-credit-muted="">' + (hasAi(m) ? 'Regenerar' : 'Generar') + '</button></div>' +
-          aiPreviewHtml(m) + '</div></td></tr>';
+          '<div class="cmp-ai"><div class="pros-lbl">Mensajes IA de esta campaña</div>' +
+          aiPreviewHtml(e, c) + '</div></td></tr>';
       }
     });
     html += '</tbody></table></div>';
@@ -2573,6 +2619,7 @@
       box.appendChild(lta);
       var lfoot = h('div', { class: 'cmp-reply-row' });
       lfoot.appendChild(h('span', { class: 'pros-hint', text: 'Ni Dripify ni LinkedIn permiten enviar mensajes por API: copiamos tu respuesta y abrimos el perfil para que la pegues en el chat.' }));
+      lfoot.appendChild(aiDraftBtn(conv, 'linkedin'));
       lfoot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-linkedin', 'data-key': conv.key, text: 'Copiar y abrir LinkedIn' }));
       box.appendChild(lfoot);
       return box;
@@ -2615,9 +2662,30 @@
     box.appendChild(ta);
     var foot = h('div', { class: 'cmp-reply-row' });
     foot.appendChild(h('span', { class: 'pros-hint', text: chosen === 'whatsapp' ? 'Texto libre dentro de las 24 h desde el último mensaje del lead. Sale desde tu número de WhatsApp.' : 'Sale como respuesta individual desde tu cuenta de email.' }));
+    foot.appendChild(aiDraftBtn(conv, chosen));
     foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-send', 'data-key': conv.key, 'data-channel': chosen, 'data-credit-cost': 'campaign_send', 'data-credit-muted': '', text: 'Enviar por ' + CH[chosen].label }));
     box.appendChild(foot);
     return box;
+  }
+
+  /**
+   * "Redactar con IA": escribe un borrador de respuesta con el hilo real y el
+   * contexto de tu empresa (3 créditos). Siempre cae en el cuadro de texto
+   * para que lo edites — nunca se envía solo. Es el ÚNICO sitio donde se
+   * genera un mensaje fuera de una campaña: aquí el lead ya contestó y la
+   * cadencia se detuvo.
+   */
+  function aiDraftBtn(conv, channel) {
+    var can = !!(conv.member && conv.member.id) && conv.messages.some(function (m) { return m.direction === 'in'; });
+    return h('button', {
+      type: 'button', class: 'btn btn-ghost btn-sm',
+      'data-action': 'reply-ai', 'data-key': conv.key, 'data-channel': channel,
+      'data-credit-cost': 'outreach_message', 'data-credit-muted': '',
+      disabled: can ? null : 'disabled',
+      title: can ? 'Escribe un borrador con lo que te dijo el lead y tu contexto de empresa. Lo puedes editar antes de enviar.'
+        : (conv.member ? 'Todavía no hay ningún mensaje del lead que responder.' : 'Guarda el contacto en una lista para redactar con IA.'),
+      text: 'Redactar con IA',
+    });
   }
   /** ¿Hay sesión de WhatsApp abierta (entrante hace < 24 h)? */
   function sessionOpen(conv) {
@@ -2743,14 +2811,13 @@
       if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
       return render();
     }
-    if (action === 'en-regen' && id) {
-      var en = state.enrollments.find(function (x) { return String(x.id) === String(id); });
-      if (!en || !en.member) return toast('No se encontró el lead.', 'warn');
-      if (!pros().generateOutreachFor) return toast('El generador de mensajes IA no está disponible en esta sesión.', 'warn');
-      var r5 = btnLoading(btn, '⏳ Generando…');
-      return generateFor([en.member]).then(function (res) {
-        if (res.failed) toast('No se pudieron generar los mensajes IA de este lead' + (res.failures && res.failures[0] && res.failures[0].error ? ': ' + res.failures[0].error : '.'), 'error');
-        else toast('Mensajes IA generados.', 'success');
+    if (action === 'msg-regen' && id) {
+      var msgRow = (state.messages || []).find(function (x) { return String(x.id) === String(id); });
+      var cRegen = findCampaign(state.activeId);
+      if (!msgRow || !cRegen) return toast('No se encontró el mensaje.', 'warn');
+      var r5 = btnLoading(btn, '⏳ Reescribiendo…');
+      return regenerateMessage(msgRow, cRegen).then(function () {
+        toast('Mensaje reescrito.', 'success');
         return loadEnrollments(state.activeId).then(render);
       }).then(r5, function (err) { r5(); throw err; });
     }
@@ -2776,6 +2843,23 @@
         rT();
         render();
       }, function (err) { rT(); throw err; });
+    }
+    if (action === 'reply-ai' && key) {
+      var convA = findConv(key);
+      if (!convA || !convA.member) return toast('Guarda el contacto en una lista para redactar con IA.', 'warn');
+      var rA = btnLoading(btn, '⏳ Redactando…');
+      return pd().generateReply({
+        member_id: convA.member.id,
+        channel: channel,
+        conversation: convA.messages.map(function (x) { return { direction: x.direction, channel: chanKey(x.channel), body: x.body, sent_at: x.sent_at }; }),
+        sender: senderDefaults(),
+      }).then(function (out) {
+        state.replyDraft[key] = out.body;
+        if (channel === 'email' && out.subject) state.replyDraft[key + ':subject'] = out.subject;
+        rA();
+        render();
+        toast('Borrador listo: revísalo y edítalo antes de enviarlo.', 'success');
+      }, function (err) { rA(); throw err; });
     }
     if (action === 'reply-linkedin' && key) {
       var convL = findConv(key);
@@ -2832,36 +2916,26 @@
     }
   }
 
+  /**
+   * Enrolar ya no genera mensajes: el motor escribe el de cada paso 24 h antes
+   * de su envío, con el ángulo y las instrucciones de ESE paso. Así un lead
+   * que responde al primer contacto nunca paga los mensajes que no salieron,
+   * y el texto es de la campaña, no de la lista.
+   */
   function doEnroll(btn) {
     var c3 = findCampaign(state.activeId);
     if (!c3) return;
     var chosen = state.members.filter(function (m) { return state.selected.has(String(m.id)); });
     if (!chosen.length) return toast('Selecciona al menos un lead.', 'warn');
-    var needsAi = flowActions(c3).some(function (a) { return a.content.kind === 'ai'; });
-    // generateOutreachFor regenera todo lo que recibe: solo los que no tienen.
-    var missing = needsAi ? chosen.filter(function (m) { return !hasAi(m); }) : [];
-    var r2 = btnLoading(btn, missing.length ? '⏳ Generando mensajes IA…' : '⏳ Enrolando…');
-    var gen = Promise.resolve({ ok: 0, failed: 0 });
-    if (missing.length) {
-      setProgress('Generando mensajes IA 0/' + missing.length + '…');
-      gen = generateFor(missing, function (done, total, text) { setProgress(text || ('Generando mensajes IA ' + done + '/' + total + '…')); })
-        .catch(function (err) { console.warn('[campaigns] outreach:', err); return { ok: 0, failed: missing.length, error: errMsg(err) }; });
-    }
-    return gen.then(function (g) {
-      setProgress('Enrolando ' + chosen.length + ' leads…');
-      return enrollMembers(c3, chosen).then(function (res) {
-        state.selected.clear();
-        setProgress('');
-        var parts = [res.enrolled + ' leads enrolados'];
-        if (res.skipped) parts.push(res.skipped + ' ya estaban');
-        if (missing.length) {
-          if (g.unavailable) parts.push('mensajes IA no generados (generador no disponible)');
-          else if (g.failed) parts.push(g.failed + ' sin mensajes IA (' + (g.error || (g.failures && g.failures[0] && g.failures[0].error) || 'falló la generación') + ')');
-          else parts.push(missing.length + ' con mensajes IA generados');
-        }
-        toast(parts.join(' · ') + (c3.status !== 'active' ? '. Activa la campaña para que empiecen los envíos.' : '.'), g.failed ? 'warn' : 'success');
-        return Promise.all([loadCampaigns(), loadEnrollments(c3.id), loadMembersForCampaign(c3)]).then(render);
-      });
+    var r2 = btnLoading(btn, '⏳ Enrolando…');
+    setProgress('Enrolando ' + chosen.length + ' leads…');
+    return enrollMembers(c3, chosen).then(function (res) {
+      state.selected.clear();
+      setProgress('');
+      var parts = [res.enrolled + ' leads enrolados'];
+      if (res.skipped) parts.push(res.skipped + ' ya estaban');
+      toast(parts.join(' · ') + (c3.status !== 'active' ? '. Activa la campaña para que empiecen los envíos.' : '.'), 'success');
+      return Promise.all([loadCampaigns(), loadEnrollments(c3.id), loadMembersForCampaign(c3)]).then(render);
     }).then(r2, function (err) { r2(); setProgress(''); throw err; });
   }
 

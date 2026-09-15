@@ -62,7 +62,7 @@
     whatsapp: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 16.5l1-3.2A6.5 6.5 0 1 1 7 15.6z"/><path d="M7.8 7.8c0 2.4 2 4.4 4.4 4.4l.9-1.2-1.6-.8-.7.6a3.3 3.3 0 0 1-1.6-1.6l.6-.7-.8-1.6z"/></svg>',
     email: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="15" height="11" rx="2"/><path d="M3 6l7 5 7-5"/></svg>',
     linkedin_connect: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M7 9v5M7 6.5v.1M10.5 14v-3a2 2 0 0 1 4 0v3M10.5 9v5"/></svg>',
-    linkedin_message: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="14" height="14" rx="2"/></svg>',
+    linkedin_message: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5A2 2 0 0 1 5 3.5h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-4 3z"/><path d="M7 7v3M7 5.6v.1M10 10.5V9a1.6 1.6 0 0 1 3.2 0v1.5"/></svg>',
     condition: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v4M10 7l-4 4M10 7l4 4M6 11v3M14 11v3"/></svg>',
     stop: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><rect x="7.5" y="7.5" width="5" height="5" rx="1"/></svg>',
     ai: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3l1.6 3.9L15.5 8.5l-3.9 1.6L10 14l-1.6-3.9L4.5 8.5l3.9-1.6z"/><path d="M15.5 13.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"/></svg>',
@@ -381,7 +381,7 @@
   function renderPicker(allowCondition, disabled) {
     var L = lib();
     var p = h('div', { class: 'cb-picker' });
-    ['whatsapp', 'email', 'linkedin_connect'].forEach(function (ch) {
+    ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message'].forEach(function (ch) {
       var m = L.CHANNEL_META[ch];
       p.appendChild(h('button', { type: 'button', class: 'cb-pick', 'data-action': 'cb-pick', 'data-kind': ch, title: disabled[ch] || '' }, icon(ch, m.tone), m.short === 'WA' ? 'WhatsApp' : m.short));
     });
@@ -398,7 +398,13 @@
       return c ? c.hint : '';
     }
     var k = node.content.kind;
-    if (node.channel === 'linkedin_connect') return node.settings && node.settings.dripify_campaign_name ? 'Enrola al lead en esa campaña de Dripify; Dripify envía la conexión y sus mensajes.' : 'Elige la campaña de Dripify en la que se enrola al lead.';
+    if (L.isLinkedin(node.channel)) {
+      var chosen = node.settings && (node.settings.dripify_campaign_name || node.settings.linkedin_campaign_name);
+      if (!chosen) return node.channel === 'linkedin_message' ? 'Elige la campaña de LinkedIn de solo mensaje.' : 'Elige la campaña de LinkedIn de solo conexión.';
+      return node.channel === 'linkedin_message'
+        ? 'Sube al lead a esa campaña, que manda ese único mensaje. Solo si ya aceptó tu conexión.'
+        : 'Sube al lead a esa campaña, que manda solo la solicitud de conexión.';
+    }
     if (k === 'ai') return (node.content.instructions ? 'Instrucciones: ' + excerpt(node.content.instructions, 90) : 'Mensaje escrito por la IA para cada lead con tu contexto de empresa.');
     if (k === 'custom') return node.content.body ? excerpt((node.content.subject ? node.content.subject + ' · ' : '') + node.content.body, 110) : 'Sin texto todavía.';
     return L.KIND_LABELS[k] || k;
@@ -528,11 +534,22 @@
       if (row.dripify_campaign_id) { sst.dripify_campaign_id = row.dripify_campaign_id; sst.dripify_campaign_name = row.dripify_campaign_name || row.name; }
       return sst;
     }
+    /**
+     * Campaña por defecto de un paso de LinkedIn: solo se elige sola si el
+     * usuario tiene UNA campaña propia de ese propósito. Las campañas que ya
+     * existen en Dripify no se pueden clasificar por API (la Open API no
+     * expone la secuencia), así que esas siempre las elige el usuario.
+     */
+    function defaultLinkedinSettings(channel) {
+      var want = channel === 'linkedin_message' ? 'message' : 'connect';
+      var own = ownLinkedinCampaigns().filter(function (x) { return (x.purpose || 'connect') === want; });
+      return own.length === 1 ? linkedinSettings(own[0]) : {};
+    }
     /** Un paso que apunta a una campaña de Predictable ya vinculada recibe el id de Dripify (por si se vinculó después). */
     function syncLinkedinSettings() {
       var own = ownLinkedinCampaigns();
       L.actions(st.draft.flow).forEach(function (a) {
-        if (a.channel !== 'linkedin_connect' || !(a.settings && a.settings.linkedin_campaign_id)) return;
+        if (!L.isLinkedin(a.channel) || !(a.settings && a.settings.linkedin_campaign_id)) return;
         var lc = own.find(function (x) { return String(x.id) === String(a.settings.linkedin_campaign_id); });
         if (lc) a.settings = linkedinSettings(lc);
       });
@@ -579,8 +596,13 @@
             }
           } else list.push('solo con sesión de 24 h abierta');
         }
-        if (a.channel === 'linkedin_connect' && !dripifyOk()) list.push('LinkedIn sin conectar');
-        else if (a.channel === 'linkedin_connect' && a.settings && a.settings.linkedin_campaign_id && !a.settings.dripify_campaign_id) list.push('campaña sin crear en Dripify');
+        if (L.isLinkedin(a.channel)) {
+          if (!dripifyOk()) list.push('LinkedIn sin conectar');
+          else if (a.settings && a.settings.linkedin_campaign_id && !a.settings.dripify_campaign_id) list.push('campaña sin crear en Dripify');
+          // Un mensaje de LinkedIn solo sale si el lead aceptó la conexión:
+          // si no hay un paso de conexión antes, el motor lo omite siempre.
+          if (a.channel === 'linkedin_message' && !hasChannelBefore(a.id, 'linkedin_connect')) list.push('no hay una conexión de LinkedIn antes: se omitiría');
+        }
         if (a.channel === 'email' && !apolloOk()) list.push('Email sin conectar');
         if (list.length) w[a.id] = list;
       });
@@ -588,18 +610,42 @@
         if (n.type !== 'condition') return;
         var c = L.CONDITION_LABELS[n.check];
         if (c && c.needs && !needOk(c.needs)) w[n.id] = ['necesita ' + needLabel(c.needs)];
-        if (n.check === 'linkedin_connected') {
-          var before = false;
-          for (var i = 0; i < st.draft.flow.nodes.length; i++) {
-            var x = st.draft.flow.nodes[i];
-            if (x.id === n.id) break;
-            if (x.type === 'action' && x.channel === 'linkedin_connect') before = true;
-            if (x.type === 'condition' && x.yes.concat(x.no).some(function (a) { return a.channel === 'linkedin_connect'; })) before = true;
-          }
-          if (!before) (w[n.id] = w[n.id] || []).push('no hay un paso de LinkedIn antes');
+        // Preguntar "¿leyó el WhatsApp?" sin haber mandado ninguno responde
+        // siempre que no: la rama Sí quedaría muerta.
+        if (c && c.after && !hasChannelBefore(n.id, c.after)) {
+          (w[n.id] = w[n.id] || []).push('no hay un paso de ' + needLabel(c.after) + ' antes: siempre dará "No"');
         }
       });
       return w;
+    }
+    /**
+     * ¿Hay un paso de ese canal ANTES de este nodo en el camino principal?
+     * `want` puede ser un canal del grafo (linkedin_connect) o el canal de la
+     * UI (linkedin / whatsapp / email), que cubre los dos pasos de LinkedIn.
+     */
+    function hasChannelBefore(nodeId, want) {
+      var match = function (a) {
+        if (want === 'linkedin') return L.isLinkedin(a.channel);
+        return a.channel === want;
+      };
+      var found = false;
+      var nodes = st.draft.flow.nodes;
+      for (var i = 0; i < nodes.length; i++) {
+        var x = nodes[i];
+        if (x.id === nodeId) return found;
+        if (x.type === 'action') { if (match(x)) found = true; continue; }
+        // Dentro de una condición: el nodo puede estar en una de sus ramas.
+        // Solo cuenta lo que hay ANTES en esa misma rama (lo de la otra rama
+        // no lo recorre este lead).
+        for (var b = 0; b < 2; b++) {
+          var branch = x[b === 0 ? 'yes' : 'no'];
+          for (var j = 0; j < branch.length; j++) {
+            if (branch[j].id === nodeId) return found;
+            if (match(branch[j])) found = true;
+          }
+        }
+      }
+      return found;
     }
     function stepBlockers(step) {
       var msgs = [];
@@ -650,10 +696,9 @@
       var node = { id: L.newId(), type: 'action', channel: channel, delay: { mode: 'after_prev', days: first ? 0 : 2, hours: 0 }, content: { kind: 'ai', angle: 'apertura' } };
       if (channel === 'whatsapp') { var k = nextTemplateKind(); node.content = k === 'ai' ? { kind: 'ai', angle: nextAngle('whatsapp') } : { kind: k }; }
       else if (channel === 'email') node.content = { kind: 'ai', angle: nextAngle('email') };
-      else if (channel === 'linkedin_connect') {
+      else if (L.isLinkedin(channel)) {
         node.content = { kind: 'ai', angle: 'apertura' };
-        var dcs = dripifyCampaigns().filter(function (d) { return d.active !== false; });
-        node.settings = dcs.length === 1 ? { dripify_campaign_id: dcs[0].id, dripify_campaign_name: dcs[0].name } : {};
+        node.settings = defaultLinkedinSettings(channel);
       }
       return node;
     }
@@ -992,14 +1037,16 @@
       var chBox = h('div', { class: 'form-group' });
       chBox.appendChild(h('div', { class: 'cb-lbl', text: 'Canal' }));
       var seg = h('div', { class: 'cb-seg' });
-      ['whatsapp', 'email', 'linkedin_connect'].forEach(function (ch) {
+      ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message'].forEach(function (ch) {
         var m = L.CHANNEL_META[ch];
         var b = h('button', { type: 'button', class: node.channel === ch ? 'on' : '', onclick: function () {
           if (node.channel === ch) return;
           node.channel = ch;
           if (ch === 'whatsapp') { var k = nextTemplateKind(); node.content = k === 'ai' ? { kind: 'ai', angle: nextAngle('whatsapp') } : { kind: k }; delete node.settings; }
           else if (ch === 'email') { node.content = { kind: node.content.kind === 'custom' ? 'custom' : 'ai', angle: nextAngle('email'), subject: node.content.subject, body: node.content.body }; delete node.settings; }
-          else { node.content = { kind: 'ai', angle: 'apertura' }; var dcs = dripifyCampaigns().filter(function (d) { return d.active !== false; }); node.settings = dcs.length === 1 ? { dripify_campaign_id: dcs[0].id, dripify_campaign_name: dcs[0].name } : {}; }
+          // Conexión y mensaje son campañas DISTINTAS en Dripify: al cambiar
+          // de una a otra la campaña elegida deja de servir.
+          else node.settings = defaultLinkedinSettings(ch);
           st.draft.flow = L.normalize(st.draft.flow);
           markCustom();
           render();
@@ -1015,10 +1062,14 @@
 
     function contentFields(node, fopts) {
       var box = h('div', { style: 'display:flex;flex-direction:column;gap:10px' });
-      if (node.channel === 'linkedin_connect') {
-        box.appendChild(h('div', { class: 'cb-lbl', text: 'Campaña de LinkedIn' }));
+      if (L.isLinkedin(node.channel)) {
+        var isMsg = node.channel === 'linkedin_message';
+        var want = isMsg ? 'message' : 'connect';
+        box.appendChild(h('div', { class: 'cb-lbl', text: isMsg ? 'Campaña de LinkedIn (solo mensaje)' : 'Campaña de LinkedIn (solo conexión)' }));
         var dcs = dripifyCampaigns();
-        var own = ownLinkedinCampaigns();
+        // Solo las del propósito del paso: mezclarlas es justo lo que hace que
+        // Dripify siga mandando mensajes por su cuenta.
+        var own = ownLinkedinCampaigns().filter(function (x) { return (x.purpose || 'connect') === want; });
         var settings = node.settings || {};
         var current = settings.linkedin_campaign_id ? 'own:' + settings.linkedin_campaign_id : (settings.dripify_campaign_id ? 'dr:' + settings.dripify_campaign_id : '');
         var sel = h('select', { onchange: function () {
@@ -1034,6 +1085,10 @@
           render();
         } });
         sel.appendChild(h('option', { value: '', text: (own.length || dcs.length) ? 'Elige la campaña de LinkedIn…' : (dripifyOk() ? 'Sin campañas de LinkedIn: crea una' : 'Conecta LinkedIn primero') }));
+        if (settings.linkedin_campaign_id && !own.some(function (x) { return String(x.id) === String(settings.linkedin_campaign_id); })) {
+          // La campaña elegida cambió de propósito (o el paso cambió de canal).
+          sel.appendChild(h('option', { value: current, text: (settings.linkedin_campaign_name || 'Campaña elegida') + ' (no es ' + (isMsg ? 'de mensaje' : 'de conexión') + ')', selected: true }));
+        }
         if (own.length) {
           var g1 = h('optgroup', { label: 'Creadas en Predictable' });
           own.forEach(function (lc) { g1.appendChild(h('option', { value: 'own:' + lc.id, text: lc.name + (lc.dripify_campaign_id ? '' : ' (sin vincular en Dripify)'), selected: current === 'own:' + lc.id })); });
@@ -1051,7 +1106,8 @@
           liRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: ownSel ? (ownSel.dripify_campaign_id ? 'Editar' : 'Editar / vincular') : '+ Crear campaña', onclick: function () {
             o.openLinkedinDesigner({
               campaign: ownSel || null,
-              defaultName: st.draft.name ? st.draft.name + ' · LinkedIn' : '',
+              purpose: want,
+              defaultName: st.draft.name ? st.draft.name + ' · ' + (isMsg ? 'mensaje de LinkedIn' : 'conexión de LinkedIn') : '',
               sampleMemberId: st.members.length ? (sampleMember() || st.members[0]).id : null,
               onSaved: function (row) { node.settings = linkedinSettings(row); markCustom(); render(); },
               onDeleted: function () { node.settings = {}; render(); },
@@ -1062,7 +1118,10 @@
         if (settings.linkedin_campaign_id && !settings.dripify_campaign_id) {
           box.appendChild(h('div', { class: 'cb-note amber', text: 'Esta campaña todavía no existe en Dripify. Créala allá con el mismo nombre (Editar / vincular te da cada texto para copiar): el paso espera y se vincula solo en cuanto exista.' }));
         }
-        box.appendChild(h('div', { class: 'cb-hint', text: 'La conexión y los mensajes de esa campaña salen desde tu cuenta de LinkedIn con su propio ritmo. Dripify no permite crear campañas ni enviar mensajes por API: por eso se crea allá con los textos que diseñas aquí, y los leads se enrolan solos.' }));
+        box.appendChild(h('div', { class: 'cb-hint', text: isMsg
+          ? 'Este paso sube al lead a una campaña de Dripify que SOLO manda un mensaje, y solo si ya aceptó tu conexión. El texto se escribe en Dripify (su API no acepta texto por lead). Sale desde tu cuenta de LinkedIn al ritmo que decide Dripify.'
+          : 'Este paso sube al lead a una campaña de Dripify que SOLO manda la solicitud de conexión. Sale desde tu cuenta de LinkedIn al ritmo que decide Dripify.' }));
+        box.appendChild(h('div', { class: 'cb-note', text: 'Importante: la campaña que elijas en Dripify tiene que tener un único paso. Si trae su propia secuencia de mensajes, Dripify la sigue por su cuenta y seguirá escribiendo aunque el lead ya te haya respondido por WhatsApp o por email — Predictable no puede detener lo que corre allá. Por eso la conexión y cada mensaje son pasos separados aquí.' }));
         return box;
       }
       box.appendChild(h('div', { class: 'cb-lbl', text: 'Contenido' }));
@@ -1093,7 +1152,7 @@
         ins.value = node.content.instructions || '';
         box.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'cb-hint', style: 'margin-bottom:4px', text: 'Instrucciones' }), ins));
         if (node.channel === 'whatsapp') box.appendChild(h('div', { class: 'cb-note amber', text: 'WhatsApp solo permite texto libre dentro de las 24 h siguientes a un mensaje del lead. Si no hay conversación abierta, este paso se omite; para abrir conversación usa una plantilla de WhatsApp.' }));
-        else box.appendChild(h('div', { class: 'cb-hint', text: 'La IA escribe el mensaje de cada lead 24 h antes del envío con tu contexto de empresa, el brief y lo ya enviado. Cuesta 3 créditos por mensaje; la apertura reutiliza el mensaje de 5 capas del lead si ya existe.' }));
+        else box.appendChild(h('div', { class: 'cb-hint', text: 'La IA escribe el mensaje de cada lead 24 h antes del envío, con el ángulo y las instrucciones de ESTE paso, tu contexto de empresa, el brief y lo que ya se le envió. Cuesta 3 créditos por mensaje.' }));
       } else if (kind === 'custom') {
         var fields = [];
         var subj = null;
@@ -1181,7 +1240,7 @@
         card.appendChild(head);
         var body = h('div', { class: 'cb-msg-body' });
         body.appendChild(contentFields(a, { compact: false }));
-        body.appendChild(a.channel === 'linkedin_connect' ? renderLinkedinInfo(a) : renderPreview(a));
+        body.appendChild(L.isLinkedin(a.channel) ? renderLinkedinInfo(a) : renderPreview(a));
         card.appendChild(body);
         wrap.appendChild(card);
       });
@@ -1189,15 +1248,22 @@
     }
 
     function renderLinkedinInfo(a) {
+      var isMsg = a.channel === 'linkedin_message';
       var box = h('div', { class: 'cb-preview' });
       box.appendChild(h('div', { class: 'cb-lbl', text: 'Qué pasa en LinkedIn' }));
       var sub = h('div', { class: 'cb-substeps' });
       var liName = a.settings && (a.settings.dripify_campaign_name || a.settings.linkedin_campaign_name);
-      sub.appendChild(h('div', { text: '1. Tu cuenta de LinkedIn visita el perfil y envía la solicitud de conexión con la nota de la campaña' + (liName ? ' «' + liName + '»' : '') + '.' }));
-      sub.appendChild(h('div', { text: '2. Si acepta, envía los mensajes de esa campaña con su propio ritmo.' }));
-      sub.appendChild(h('div', { text: '3. Reporta la conexión aceptada y las respuestas (sincronización cada 15 min + webhook).' }));
+      var where = liName ? ' «' + liName + '»' : '';
+      if (isMsg) {
+        sub.appendChild(h('div', { text: '1. Solo si el lead ya aceptó tu conexión, se sube su perfil a la campaña de mensaje' + where + '.' }));
+        sub.appendChild(h('div', { text: '2. Tu cuenta de LinkedIn envía ESE mensaje (el que escribiste en esa campaña) con su propio ritmo.' }));
+      } else {
+        sub.appendChild(h('div', { text: '1. Se sube el perfil del lead a la campaña de conexión' + where + '.' }));
+        sub.appendChild(h('div', { text: '2. Tu cuenta de LinkedIn visita el perfil y envía la solicitud con la nota de esa campaña. Nada más: los mensajes son pasos aparte de esta cadencia.' }));
+      }
+      sub.appendChild(h('div', { text: '3. Reporta lo que pasa (solicitud enviada, aceptada, respuesta) por sincronización cada 15 min y por webhook. Una respuesta detiene la cadencia y la conversación pasa a tu Bandeja.' }));
       box.appendChild(sub);
-      box.appendChild(h('div', { class: 'cb-hint', text: 'Para que LinkedIn use el mensaje IA de 5 capas de cada lead, descarga el CSV desde el detalle de la campaña y súbelo como campos personalizados.' }));
+      box.appendChild(h('div', { class: 'cb-hint', text: 'El texto de LinkedIn se escribe en la campaña de tu cuenta, no aquí: su API no acepta texto por lead. Para personalizar por lead, usa sus variables ({{first_name}}, {{company}}…) y sube el CSV de leads desde el detalle de la campaña como campos personalizados.' }));
       return box;
     }
 
