@@ -1291,8 +1291,15 @@
     return brief?.status || 'missing';
   }
 
-  // `engine` (opcional) adelanta el motor de IA elegido por quien llama
-  // (p. ej. el selector de Campañas); si falta, el del selector de outreach.
+  // Personalización completa de 5 capas para un lead (mode por defecto de
+  // generate-outreach): los 4 mensajes + el ángulo + coach_prep, guardados en
+  // prospect_list_members.outreach. Desde el 2026-09-15 NINGUNA pantalla la
+  // dispara: los mensajes de una campaña se escriben por paso
+  // (generateStepMessage) y los de la Bandeja con generateReply. Se conserva
+  // porque buildCoachLeadContext lee ese `outreach` cuando el lead ya lo
+  // tiene, y porque es el binding del modo completo de la edge function.
+  // `engine` (opcional) adelanta el motor de IA elegido por quien llama;
+  // si falta, el del selector de outreach.
   async function generateOutreach({ member, sender, engine }) {
     if (!member) throw new Error('Falta el contacto.');
     if (!member.name && !member.first_name) throw new Error('Este lead no tiene nombre — no se puede personalizar.');
@@ -1338,6 +1345,53 @@
       coach_prep: (data.coach_prep && typeof data.coach_prep === 'object') ? data.coach_prep : null,
       generated_via: data.generated_via || null,
     };
+  }
+
+  // ── Mensaje de UN paso de campaña / UNA respuesta (modo step/reply) ──
+  // Mismo generate-outreach, distinto modo: aquí el mensaje pertenece a la
+  // CAMPAÑA (paso + ángulo + instrucciones) o a la conversación, no al lead
+  // guardado en la lista. Cuesta 3 créditos (outreach_message) y los cobra la
+  // edge function.
+
+  async function generateStepMessage({ member_id, campaign_id, node_id, channel, angle, instructions, sender, previous, engine }) {
+    if (!member_id) throw new Error('Falta el lead.');
+    const data = await edgeFetch('generate-outreach', {
+      mode: 'step',
+      member_id,
+      campaign_id: campaign_id || undefined,
+      node_id: node_id || undefined,
+      channel,
+      angle: angle || 'valor',
+      instructions: instructions || '',
+      sender: sender || getSenderInfo(),
+      previous: Array.isArray(previous) ? previous : [],
+      engine: engine || (global.AIEngine && global.AIEngine.get('outreach')),
+    });
+    if (!data?.body) throw new Error('La IA no devolvió el mensaje. Reintenta.');
+    return { subject: data.subject || '', body: data.body, angle_note: data.angle_note || null };
+  }
+
+  /**
+   * Borrador de respuesta a un lead que ya contestó (Bandeja).
+   * `conversation` va en orden cronológico: [{ direction: 'in'|'out', channel,
+   * body, sent_at }]. Necesita al menos un mensaje entrante — sin lo que
+   * escribió el lead no hay nada que responder.
+   */
+  async function generateReply({ member_id, channel, conversation, instructions, sender, engine }) {
+    if (!member_id) throw new Error('Este contacto no está en tus listas: guárdalo en una lista para redactar con IA.');
+    const thread = (Array.isArray(conversation) ? conversation : []).filter((m) => m && String(m.body || '').trim());
+    if (!thread.some((m) => m.direction === 'in')) throw new Error('Todavía no hay ningún mensaje del lead que responder.');
+    const data = await edgeFetch('generate-outreach', {
+      mode: 'reply',
+      member_id,
+      channel,
+      conversation: thread.slice(-12).map((m) => ({ direction: m.direction, channel: m.channel, body: String(m.body).slice(0, 2000), sent_at: m.sent_at })),
+      instructions: instructions || '',
+      sender: sender || getSenderInfo(),
+      engine: engine || (global.AIEngine && global.AIEngine.get('outreach')),
+    });
+    if (!data?.body) throw new Error('La IA no devolvió la respuesta. Reintenta.');
+    return { subject: data.subject || '', body: data.body };
   }
 
   // ── Brief del cliente ("MI Cliente") ────────────────────────
@@ -1528,6 +1582,8 @@
     sendApolloReply,
     fetchEmailAccounts,
     generateOutreach,
+    generateStepMessage,
+    generateReply,
     ensureBriefReady,
     fetchClientBrief,
     generateClientBrief,

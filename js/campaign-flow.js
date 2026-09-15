@@ -12,6 +12,12 @@
  *   delay     = { mode: 'after_prev' | 'with_prev', days, hours }
  *   content   = { kind: template_a|template_b|template_c|ai|custom, angle?, instructions?, subject?, body? }
  *
+ * Los dos canales de LinkedIn (linkedin_connect / linkedin_message) suben el
+ * lead a una campaña de Dripify de UN SOLO paso: la conexión y el mensaje son
+ * pasos distintos a propósito, para que la cadencia la decida Predictable y
+ * una respuesta por otro canal la detenga de verdad. No hay condición
+ * "¿respondió?": una respuesta cierra el enrolamiento y pasa a la Bandeja.
+ *
  * Public API (global `CampaignFlow`): constantes, newId, emptyFlow, normalize,
  * validate, actions, ordinal, find, firstNode, nextAfter, enterBranch, delayMs,
  * legacyKind, fromLegacySteps, estimateCredits, labels para la UI.
@@ -23,7 +29,13 @@
   var CHANNELS = ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message'];
   var CONTENT_KINDS = ['template_a', 'template_b', 'template_c', 'ai', 'custom'];
   var ANGLES = ['apertura', 'valor', 'prueba_social', 'objecion', 'ultima_carta', 'libre'];
-  var CONDITIONS = ['linkedin_connected', 'whatsapp_read', 'email_opened', 'has_phone', 'has_email', 'has_linkedin'];
+  var CONDITIONS = [
+    'linkedin_connection_sent', 'linkedin_connected',
+    'whatsapp_delivered', 'whatsapp_read',
+    'email_delivered', 'email_opened', 'email_bounced',
+    'engaged_any',
+    'has_phone', 'has_email', 'has_linkedin',
+  ];
   var DELAY_MODES = ['after_prev', 'with_prev'];
   var AI_MESSAGE_CREDITS = 3;
   var SEND_CREDITS = 1;
@@ -32,8 +44,8 @@
   var CHANNEL_META = {
     whatsapp:         { label: 'WhatsApp',            short: 'WA',       tone: 'green',  needs: 'wati' },
     email:            { label: 'Email',               short: 'Email',    tone: 'blue',   needs: 'apollo' },
-    linkedin_connect: { label: 'LinkedIn',            short: 'LinkedIn', tone: 'teal',   needs: 'dripify' },
-    linkedin_message: { label: 'LinkedIn · mensaje (sin proveedor)', short: 'LI', tone: 'gray', needs: null, hidden: true },
+    linkedin_connect: { label: 'LinkedIn · conexión', short: 'Conexión', tone: 'teal',   needs: 'dripify' },
+    linkedin_message: { label: 'LinkedIn · mensaje',  short: 'Mensaje LI', tone: 'teal',  needs: 'dripify' },
   };
   var KIND_LABELS = {
     template_a: 'Saludo 1 (plantilla de WhatsApp)',
@@ -50,14 +62,25 @@
     ultima_carta: 'Última carta',
     libre: 'Libre (según tus instrucciones)',
   };
+  // `needs` = canal que hay que tener conectado para que la señal llegue.
+  // `after` = canal que tiene que haber salido antes para que la pregunta
+  // tenga sentido (el builder avisa si no hay un paso de ese canal arriba).
   var CONDITION_LABELS = {
-    linkedin_connected: { label: 'Aceptó la conexión de LinkedIn', hint: 'Lo reporta tu cuenta de LinkedIn. Necesita un paso de LinkedIn antes.', needs: 'dripify' },
-    whatsapp_read: { label: 'Leyó el WhatsApp', hint: 'Doble check azul del WhatsApp.', needs: 'wati' },
-    email_opened: { label: 'Abrió el email', hint: 'Apertura registrada por el proveedor de email.', needs: 'apollo' },
+    linkedin_connection_sent: { label: 'LinkedIn ya envió la solicitud', hint: 'Dripify confirmó que la invitación salió de tu cuenta. Útil para esperar a que salga antes de contar los días.', needs: 'dripify', after: 'linkedin' },
+    linkedin_connected: { label: 'Aceptó la conexión de LinkedIn', hint: 'Lo reporta tu cuenta de LinkedIn vía Dripify. Necesita un paso de conexión antes.', needs: 'dripify', after: 'linkedin' },
+    whatsapp_delivered: { label: 'Le llegó el WhatsApp', hint: 'Doble check gris: WhatsApp entregó el mensaje. Si no llegó, ese número no tiene WhatsApp.', needs: 'wati', after: 'whatsapp' },
+    whatsapp_read: { label: 'Leyó el WhatsApp', hint: 'Doble check azul del WhatsApp.', needs: 'wati', after: 'whatsapp' },
+    email_delivered: { label: 'El email salió y no rebotó', hint: 'Se envió y el proveedor no reportó rebote ni bloqueo. (Nadie confirma la entrega real de un correo: solo el rebote.)', needs: 'apollo', after: 'email' },
+    email_opened: { label: 'Abrió el email', hint: 'Apertura registrada por el proveedor de email. Ojo: los filtros corporativos pueden abrirlo solos o bloquear el píxel.', needs: 'apollo', after: 'email' },
+    email_bounced: { label: 'El email rebotó', hint: 'Rebote duro, rebote o bloqueo por spam. Sirve para saltar al teléfono en cuanto el correo muere.', needs: 'apollo', after: 'email' },
+    engaged_any: { label: 'Dio alguna señal (abrió, leyó o aceptó)', hint: 'Cualquier señal de interés en cualquier canal: abrió un email, leyó un WhatsApp o aceptó la conexión.', needs: null },
     has_phone: { label: 'Tiene teléfono', hint: 'El lead tiene un número revelado.', needs: null },
     has_email: { label: 'Tiene email', hint: 'El lead tiene un email revelado.', needs: null },
     has_linkedin: { label: 'Tiene LinkedIn', hint: 'El lead tiene URL de perfil.', needs: null },
   };
+
+  /** Los dos pasos que suben el lead a una campaña de Dripify. */
+  function isLinkedin(channel) { return channel === 'linkedin_connect' || channel === 'linkedin_message'; }
 
   function isObj(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
   function clampInt(v, min, max) {
@@ -86,6 +109,10 @@
     var kind = String(c.kind == null ? '' : c.kind);
     if (kind === 'ai_personalized') kind = 'ai';
     if (CONTENT_KINDS.indexOf(kind) === -1) kind = channel === 'whatsapp' ? 'template_a' : 'ai';
+    // El texto de un paso de LinkedIn vive en la campaña de Dripify (su API no
+    // acepta texto por lead): el ángulo solo alimenta el CSV de Custom Lead
+    // Fields, así que nunca es "mi texto" ni plantilla de WhatsApp.
+    if (isLinkedin(channel) && kind !== 'ai') kind = 'ai';
     var out = { kind: kind };
     if (kind === 'ai') {
       var angle = String(c.angle == null ? '' : c.angle);
@@ -155,8 +182,9 @@
       if (a.delay.mode === 'with_prev' && !(idx > 0 && list[idx - 1].type === 'action')) {
         errors.push({ nodeId: a.id, message: label + ': "junto con el anterior" necesita otro envío justo antes.' });
       }
-      if (a.channel === 'linkedin_connect' && !(a.settings && (a.settings.dripify_campaign_id || a.settings.linkedin_campaign_id))) {
-        errors.push({ nodeId: a.id, message: label + ': el paso de LinkedIn necesita una campaña de LinkedIn (elige una de Dripify o crea la tuya).' });
+      if (isLinkedin(a.channel) && !(a.settings && (a.settings.dripify_campaign_id || a.settings.linkedin_campaign_id))) {
+        var what = a.channel === 'linkedin_connect' ? 'de solo conexión' : 'de solo mensaje';
+        errors.push({ nodeId: a.id, message: label + ': el paso de LinkedIn necesita una campaña de Dripify ' + what + ' (elige una o crea la tuya).' });
       }
       if (a.content.kind.indexOf('template_') === 0 && a.channel !== 'whatsapp') {
         errors.push({ nodeId: a.id, message: label + ': las plantillas de saludo son solo de WhatsApp.' });
@@ -289,9 +317,9 @@
     var n = Math.max(0, Number(leads) || 0);
     var ai = 0, sends = 0;
     actions(flow).forEach(function (a) {
-      if (a.channel === 'linkedin_message') return;
       sends++;
-      if (a.content.kind === 'ai' && a.channel !== 'linkedin_connect') ai++;
+      // LinkedIn: el mensaje lo escribe el usuario en Dripify, no la IA.
+      if (a.content.kind === 'ai' && !isLinkedin(a.channel)) ai++;
     });
     return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + sends * SEND_CREDITS) * n };
   }
@@ -304,7 +332,7 @@
       return c ? '¿' + c.label + '?' : node.check;
     }
     var ch = CHANNEL_META[node.channel] || { label: node.channel };
-    if (node.channel === 'linkedin_connect') {
+    if (isLinkedin(node.channel)) {
       var dc = node.settings && (node.settings.dripify_campaign_name || node.settings.linkedin_campaign_name);
       return ch.label + (dc ? ' · ' + dc : '');
     }
@@ -352,6 +380,24 @@
    */
   function templates() {
     return [
+      {
+        key: 'omnicanal', label: 'Omnicanal completo', needs: ['dripify', 'wati', 'apollo'],
+        summary: 'Conexión por LinkedIn; si la acepta, mensaje por LinkedIn; si no, WhatsApp. Según lea o no el WhatsApp, recordatorio o email de apertura; después valor, y según abra o no, prueba social o último WhatsApp. Cierra con la última carta. En cuanto responda por cualquier canal, la cadencia se detiene y la conversación pasa a tu Bandeja.',
+        build: function () { return { v: FLOW_VERSION, nodes: [
+          A('linkedin_connect', D(0), { kind: 'ai', angle: 'apertura' }, {}),
+          C('linkedin_connected', D(3),
+            [A('linkedin_message', D(0), { kind: 'ai', angle: 'apertura' }, {})],
+            [A('whatsapp', D(0), { kind: 'template_a' })]),
+          C('whatsapp_read', D(2),
+            [A('whatsapp', D(1), { kind: 'template_b' })],
+            [A('email', D(0), { kind: 'ai', angle: 'apertura' })]),
+          A('email', D(3), { kind: 'ai', angle: 'valor' }),
+          C('email_opened', D(2),
+            [A('email', D(1), { kind: 'ai', angle: 'prueba_social' })],
+            [A('whatsapp', D(0), { kind: 'template_c' })]),
+          A('email', D(3), { kind: 'ai', angle: 'ultima_carta' }),
+        ] }; },
+      },
       {
         key: 'whatsapp_first', label: 'WhatsApp primero', needs: ['wati', 'apollo'],
         summary: 'Saludo por WhatsApp con el email de refuerzo el mismo día; si lo leyó, recordatorio; si no, un email de valor. Cierra con último intento y última carta.',
@@ -411,7 +457,7 @@
     CHANNELS: CHANNELS, CONTENT_KINDS: CONTENT_KINDS, ANGLES: ANGLES, CONDITIONS: CONDITIONS, DELAY_MODES: DELAY_MODES,
     AI_MESSAGE_CREDITS: AI_MESSAGE_CREDITS, SEND_CREDITS: SEND_CREDITS,
     ANGLE_LABELS: ANGLE_LABELS, CONDITION_LABELS: CONDITION_LABELS, CHANNEL_META: CHANNEL_META, KIND_LABELS: KIND_LABELS,
-    nodeTitle: nodeTitle, cloneWithNewIds: cloneWithNewIds, durationDays: durationDays, templates: templates,
+    nodeTitle: nodeTitle, cloneWithNewIds: cloneWithNewIds, durationDays: durationDays, templates: templates, isLinkedin: isLinkedin,
     newId: newId, emptyFlow: emptyFlow, normalize: normalize, validate: validate,
     actions: actions, ordinal: ordinal, find: find, firstNode: firstNode, nextAfter: nextAfter, enterBranch: enterBranch,
     delayMs: delayMs, legacyKind: legacyKind, fromLegacySteps: fromLegacySteps, estimateCredits: estimateCredits, delayLabel: delayLabel,

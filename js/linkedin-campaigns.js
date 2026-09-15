@@ -122,16 +122,37 @@
     input.dispatchEvent(new Event('input', { bubbles: true }));
   }
   function stepMeta(type) { return STEP_TYPES.find(function (t) { return t.value === type; }) || STEP_TYPES[2]; }
-  function defaultSteps() {
-    return [
-      { type: 'visit', delay_days: 0, text: '' },
-      { type: 'connect', delay_days: 0, text: '' },
-      { type: 'message', delay_days: 1, text: '' },
-      { type: 'message', delay_days: 3, text: '' },
-      { type: 'message', delay_days: 7, text: '' },
-    ];
+
+  // ── Propósito: una campaña de Dripify hace UNA cosa ───────────────────────
+  // Una campaña de Dripify con su propia secuencia (invitación + mensajes)
+  // la ejecuta Dripify solo: sigue escribiendo aunque el lead ya haya
+  // respondido por WhatsApp o email, porque la regla de parada de Predictable
+  // no alcanza a lo que corre allá. Por eso cada campaña manda una sola cosa
+  // y la cadencia (a quién, cuándo y si todavía toca) la decide Predictable.
+  var PURPOSES = {
+    connect: {
+      value: 'connect', label: 'Solo conexión', send: 'connect',
+      title: 'Campaña de conexión',
+      hint: 'Esta campaña SOLO manda la solicitud de conexión. Los mensajes van en campañas aparte, para que Predictable pueda parar la secuencia en cuanto el lead responda por cualquier canal.',
+      allow: ['visit', 'connect', 'follow'],
+    },
+    message: {
+      value: 'message', label: 'Solo mensaje', send: 'message',
+      title: 'Campaña de mensaje',
+      hint: 'Esta campaña SOLO manda un mensaje a un lead que ya aceptó tu conexión. Un mensaje por campaña: así cada envío lo decide Predictable y la cadencia se detiene si el lead contesta por otro canal.',
+      allow: ['visit', 'message', 'follow'],
+    },
+  };
+  function purposeOf(row) { return (row && row.purpose) === 'message' ? 'message' : 'connect'; }
+  function purposeMeta(p) { return PURPOSES[p === 'message' ? 'message' : 'connect']; }
+
+  function defaultSteps(purpose) {
+    return purposeOf({ purpose: purpose }) === 'message'
+      ? [{ type: 'message', delay_days: 0, text: '' }]
+      : [{ type: 'visit', delay_days: 0, text: '' }, { type: 'connect', delay_days: 0, text: '' }];
   }
-  function normalizeSteps(raw) {
+  function normalizeSteps(raw, purpose) {
+    var allow = purpose ? purposeMeta(purpose).allow : null;
     return (Array.isArray(raw) ? raw : []).map(function (s) {
       var meta = stepMeta(s && s.type);
       return {
@@ -139,7 +160,15 @@
         delay_days: Math.max(0, Math.min(90, Math.round(Number(s && s.delay_days) || 0))),
         text: meta.hasText ? String(s && s.text || '').slice(0, meta.max) : '',
       };
-    });
+    }).filter(function (s) { return !allow || allow.indexOf(s.type) !== -1; });
+  }
+  /** Qué falta para que la campaña mande exactamente una cosa. '' si está bien. */
+  function purposeError(purpose, steps) {
+    var meta = purposeMeta(purpose);
+    var sends = steps.filter(function (s) { return s.type === meta.send; }).length;
+    if (sends === 0) return meta.value === 'message' ? 'Agrega el paso "Enviar mensaje": es lo único que manda esta campaña.' : 'Agrega el paso "Enviar solicitud de conexión": es lo único que manda esta campaña.';
+    if (sends > 1) return meta.value === 'message' ? 'Deja un solo "Enviar mensaje". Cada mensaje va en su propia campaña para que Predictable decida si todavía toca mandarlo.' : 'Deja una sola solicitud de conexión.';
+    return '';
   }
   function isLinked(row) { return !!(row && row.dripify_campaign_id); }
   function statusLabel(row) {
@@ -168,10 +197,14 @@
   async function save(row) {
     var name = String(row.name || '').trim().slice(0, 120);
     if (!name) throw new Error('Escribe el nombre de la campaña de LinkedIn.');
-    var steps = normalizeSteps(row.steps);
+    var purpose = purposeOf(row);
+    var steps = normalizeSteps(row.steps, purpose);
     if (!steps.length) throw new Error('Agrega al menos un paso a la campaña de LinkedIn.');
+    var perr = purposeError(purpose, steps);
+    if (perr) throw new Error(perr);
     var patch = {
       name: name,
+      purpose: purpose,
       connection_note: String(row.connection_note || '').slice(0, NOTE_MAX),
       steps: steps,
       status: row.dripify_campaign_id ? 'linked' : (row.status === 'pending_dripify' ? 'pending_dripify' : 'draft'),
@@ -180,9 +213,22 @@
       linked_at: row.dripify_campaign_id ? (row.linked_at || new Date().toISOString()) : null,
       updated_at: new Date().toISOString(),
     };
-    var res;
-    if (row.id) res = await sb().from(TABLE).update(patch).eq('id', row.id).select('*').single();
-    else { patch.user_id = await uid(); res = await sb().from(TABLE).insert(patch).select('*').single(); }
+    if (!row.id) patch.user_id = await uid();
+    async function write(body) {
+      return row.id
+        ? await sb().from(TABLE).update(body).eq('id', row.id).select('*').single()
+        : await sb().from(TABLE).insert(body).select('*').single();
+    }
+    var res = await write(patch);
+    // Migración 20260915000001 sin aplicar todavía: se guarda el resto y el
+    // propósito queda implícito (la columna tiene default 'connect').
+    if (res.error && /purpose/i.test(res.error.message) && /column|schema cache/i.test(res.error.message)) {
+      console.warn('[linkedin-campaigns] columna purpose no disponible:', res.error.message);
+      var fallback = Object.assign({}, patch);
+      delete fallback.purpose;
+      res = await write(fallback);
+      if (!res.error && res.data) res.data.purpose = purpose;
+    }
     if (res.error) throw new Error('No se pudo guardar la campaña de LinkedIn: ' + res.error.message);
     return res.data;
   }
@@ -202,7 +248,7 @@
     return save(Object.assign({}, row, { dripify_campaign_id: dc.id, dripify_campaign_name: dc.name, status: 'linked' }));
   }
   function settingsFor(row) {
-    var s = { linkedin_campaign_id: row.id, linkedin_campaign_name: row.name };
+    var s = { linkedin_campaign_id: row.id, linkedin_campaign_name: row.name, linkedin_campaign_purpose: purposeOf(row) };
     if (row.dripify_campaign_id) { s.dripify_campaign_id = row.dripify_campaign_id; s.dripify_campaign_name = row.dripify_campaign_name || row.name; }
     return s;
   }
@@ -278,10 +324,13 @@
   function open(opts) {
     injectStyles();
     var o = opts || {};
-    var api = openModal(o.campaign ? 'Campaña de LinkedIn' : 'Nueva campaña de LinkedIn');
-    var row = o.campaign ? clone(o.campaign) : { id: null, name: o.defaultName || '', connection_note: '', steps: defaultSteps(), status: 'draft', dripify_campaign_id: null, dripify_campaign_name: null };
-    row.steps = normalizeSteps(row.steps);
-    if (!row.steps.length) row.steps = defaultSteps();
+    var purpose = o.campaign ? purposeOf(o.campaign) : (o.purpose === 'message' ? 'message' : 'connect');
+    var pmeta = purposeMeta(purpose);
+    var api = openModal(o.campaign ? pmeta.title : 'Nueva ' + pmeta.title.toLowerCase());
+    var row = o.campaign ? clone(o.campaign) : { id: null, name: o.defaultName || '', purpose: purpose, connection_note: '', steps: defaultSteps(purpose), status: 'draft', dripify_campaign_id: null, dripify_campaign_name: null };
+    row.purpose = purpose;
+    row.steps = normalizeSteps(row.steps, purpose);
+    if (!row.steps.length) row.steps = defaultSteps(purpose);
     var dripifyList = (o.dripifyCampaigns || []).slice();
     var st = { view: 'design', saving: false, ai: {}, linking: false };
 
@@ -295,18 +344,24 @@
     function renderDesign() {
       var body = api.body;
       body.appendChild(h('div', { class: 'lic-note', text: 'Tu cuenta de LinkedIn no permite crear campañas desde fuera: aquí la diseñas y, al publicarla, te damos cada texto listo para pegarlo en Dripify con el mismo nombre. Desde ese momento los leads de tus cadencias se enrolan solos.' }));
+      body.appendChild(h('div', { class: 'lic-note amber' }, h('b', { text: pmeta.label + '. ' }), pmeta.hint));
       var nameI = h('input', { type: 'text', placeholder: 'Ej. CFOs retail Perú · LinkedIn', value: row.name, maxlength: '120', oninput: function () { row.name = nameI.value; } });
       body.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'lic-lbl', text: 'Nombre (el mismo que pondrás en Dripify)' }), nameI));
 
       body.appendChild(h('div', { class: 'lic-lbl', style: 'margin-bottom:0', text: 'Secuencia' }));
-      body.appendChild(h('div', { class: 'lic-hint', text: 'Cada paso sale desde tu cuenta de LinkedIn con el ritmo que decide Dripify. La espera cuenta desde el paso anterior (en los mensajes, desde que aceptó la conexión).' }));
+      body.appendChild(h('div', { class: 'lic-hint', text: purpose === 'message'
+        ? 'Un solo envío: el mensaje. Visitar o seguir el perfil son acciones sin mensaje, puedes dejarlas si quieres calentar el perfil antes.'
+        : 'Un solo envío: la solicitud de conexión. Visitar o seguir el perfil son acciones sin mensaje, puedes dejarlas si quieres calentar el perfil antes.' }));
       var list = h('div', { style: 'display:flex;flex-direction:column;gap:8px' });
       row.steps.forEach(function (step, i) { list.appendChild(renderStep(step, i)); });
       body.appendChild(list);
+      var perr = purposeError(purpose, row.steps);
+      if (perr) body.appendChild(h('div', { class: 'lic-note amber', text: perr }));
       var addRow = h('div', { class: 'lic-row' });
-      STEP_TYPES.forEach(function (t) {
-        addRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', onclick: function () {
-          row.steps.push({ type: t.value, delay_days: t.value === 'message' ? 2 : 0, text: '' });
+      STEP_TYPES.filter(function (t) { return pmeta.allow.indexOf(t.value) !== -1; }).forEach(function (t) {
+        var isSend = t.value === pmeta.send;
+        addRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', disabled: isSend && !perr, title: isSend && !perr ? 'Esta campaña ya tiene su único envío. El siguiente mensaje va en otra campaña.' : '', onclick: function () {
+          row.steps.push({ type: t.value, delay_days: t.value === 'message' ? 0 : 0, text: '' });
           render();
         } }, '+ ' + t.label));
       });
@@ -336,7 +391,8 @@
       var head = h('div', { class: 'lic-step-head' });
       head.appendChild(h('span', { class: 'lic-n', text: String(i + 1) }));
       var sel = h('select', { onchange: function () { step.type = sel.value; if (!stepMeta(step.type).hasText) step.text = ''; render(); } });
-      STEP_TYPES.forEach(function (t) { sel.appendChild(h('option', { value: t.value, text: t.label, selected: t.value === step.type })); });
+      STEP_TYPES.filter(function (t) { return pmeta.allow.indexOf(t.value) !== -1 || t.value === step.type; })
+        .forEach(function (t) { sel.appendChild(h('option', { value: t.value, text: t.label + (pmeta.allow.indexOf(t.value) === -1 ? ' (no va en esta campaña)' : ''), selected: t.value === step.type })); });
       head.appendChild(sel);
       if (i > 0) {
         var dI = h('input', { type: 'number', min: '0', max: '90', value: String(step.delay_days), oninput: function () { step.delay_days = Math.max(0, Math.min(90, Math.round(Number(dI.value) || 0))); } });
@@ -417,6 +473,9 @@
     function renderPublish() {
       var body = api.body;
       body.appendChild(h('div', { class: 'lic-note amber', text: 'Dripify no deja crear campañas por API. Crea esta campaña en Dripify con los textos de abajo (copiar → pegar) y actívala; al volver, "Vincular" la enlaza. Si no lo haces ahora, el motor la vincula solo cuando exista con el mismo nombre.' }));
+      body.appendChild(h('div', { class: 'lic-note', text: purpose === 'message'
+        ? 'En Dripify, esta campaña termina después del mensaje: no le agregues más mensajes ni esperas. El siguiente contacto lo decide Predictable según lo que pase en todos los canales.'
+        : 'En Dripify, esta campaña termina después de la solicitud: no le agregues mensajes de seguimiento. Los mensajes van en campañas de "solo mensaje" que Predictable dispara cuando corresponde.' }));
       var check = h('div', { class: 'lic-check' });
       function item(n, title, code, ok) {
         var it = h('div', { class: 'lic-check-item' });

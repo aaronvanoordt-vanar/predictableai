@@ -975,31 +975,48 @@ interface StepRequest {
   mode?: string; user_id?: string; campaign_id?: string; node_id?: string;
   channel?: string; angle?: string; instructions?: string;
   previous?: Array<{ channel?: string; body?: string; sent_at?: string }>;
+  conversation?: Array<{ direction?: string; channel?: string; body?: string; sent_at?: string }>;
 }
 
 interface StepSpec {
   channel: "email" | "whatsapp" | "linkedin";
-  angle: "apertura" | "valor" | "prueba_social" | "objecion" | "ultima_carta" | "libre";
+  angle: "apertura" | "valor" | "prueba_social" | "objecion" | "ultima_carta" | "libre" | "respuesta";
   instructions: string;
   previous: Array<{ channel: string; body: string; sent_at: string }>;
+  // Solo en modo respuesta: el hilo real, en orden, con quién escribió cada
+  // mensaje. Sin esto la IA no puede contestar lo que el lead preguntó.
+  conversation: Array<{ who: "lead" | "yo"; channel: string; body: string; sent_at: string }>;
 }
 
 const STEP_ANGLES = ["apertura", "valor", "prueba_social", "objecion", "ultima_carta", "libre"] as const;
 
-function normalizeStep(body: StepRequest): StepSpec | null {
+function normalizeStep(body: StepRequest, replyMode = false): StepSpec | null {
   const chRaw = String(body.channel ?? "");
   const channel = chRaw.startsWith("linkedin") ? "linkedin" : chRaw;
   if (!["email", "whatsapp", "linkedin"].includes(channel)) return null;
-  const angle = (STEP_ANGLES as readonly string[]).includes(String(body.angle)) ? String(body.angle) as StepSpec["angle"] : "valor";
+  const angle: StepSpec["angle"] = replyMode
+    ? "respuesta"
+    : ((STEP_ANGLES as readonly string[]).includes(String(body.angle)) ? String(body.angle) as StepSpec["angle"] : "valor");
   const previous = (Array.isArray(body.previous) ? body.previous : [])
     .filter((p) => p && typeof p.body === "string" && p.body.trim())
     .slice(-5)
     .map((p) => ({ channel: String(p.channel ?? ""), body: String(p.body).slice(0, 1200), sent_at: String(p.sent_at ?? "").slice(0, 10) }));
+  const conversation = (Array.isArray(body.conversation) ? body.conversation : [])
+    .filter((p) => p && typeof p.body === "string" && p.body.trim())
+    .slice(-12)
+    .map((p) => ({
+      who: (String(p.direction ?? "") === "in" ? "lead" : "yo") as "lead" | "yo",
+      channel: String(p.channel ?? ""),
+      body: String(p.body).slice(0, 2000),
+      sent_at: String(p.sent_at ?? "").slice(0, 16),
+    }));
+  if (replyMode && !conversation.some((c) => c.who === "lead")) return null;
   return {
     channel: channel as StepSpec["channel"],
     angle,
     instructions: typeof body.instructions === "string" ? body.instructions.trim().slice(0, 600) : "",
     previous,
+    conversation,
   };
 }
 
@@ -1032,6 +1049,7 @@ const STEP_ANGLE_RULES: Record<StepSpec["angle"], string> = {
   objecion: "OBJECIÓN PREVENTIVA: nombra en voz observacional la objeción más probable de este rol (\"cuando cuento esto, lo primero que escucho es…\") y neutralízala en una o dos frases con el cómo real del vendedor. Sin tono defensivo.",
   ultima_carta: "ÚLTIMA CARTA: di explícitamente que es el último mensaje por este canal y que no vas a insistir. Sin presión ni culpa. Deja una salida fácil (una pregunta de sí/no o una alternativa de bajo esfuerzo) y agradece el tiempo.",
   libre: "LIBRE: sigue al pie de la letra las INSTRUCCIONES DEL VENDEDOR del bloque PASO DE LA CADENCIA, dentro de las reglas duras.",
+  respuesta: "RESPUESTA A UN LEAD QUE YA CONTESTÓ: esto NO es prospección. El lead escribió: lo primero es responder lo que preguntó o reconocer lo que dijo, con su mismo nivel de formalidad y en su idioma. Prohibido volver a presentarte, repetir la apertura o soltar el pitch completo. Si pidió información, dásela concreta; si objetó, responde la objeción sin pelear; si mostró interés, propone el siguiente paso con una hora concreta; si dijo que no, agradece y cierra sin insistir. Como máximo UNA pregunta al final. Nunca inventes datos, precios, casos ni disponibilidad que no estén en el contexto del vendedor: si falta un dato, dilo y ofrece confirmarlo.",
 };
 
 const STEP_CHANNEL_RULES: Record<StepSpec["channel"], string> = {
@@ -1041,12 +1059,18 @@ const STEP_CHANNEL_RULES: Record<StepSpec["channel"], string> = {
 };
 
 function buildStepContext(step: StepSpec): string {
-  const lines = ["", "=== PASO DE LA CADENCIA (modo paso) ==="];
+  const reply = step.angle === "respuesta";
+  const lines = ["", reply ? "=== RESPUESTA EN LA BANDEJA (modo respuesta) ===" : "=== PASO DE LA CADENCIA (modo paso) ==="];
   lines.push(`Canal: ${step.channel}`);
   lines.push(`Ángulo: ${step.angle}`);
   lines.push(STEP_ANGLE_RULES[step.angle]);
   lines.push(STEP_CHANNEL_RULES[step.channel]);
-  if (step.instructions) lines.push(`INSTRUCCIONES DEL VENDEDOR para este paso: ${step.instructions}`);
+  if (step.instructions) lines.push(`INSTRUCCIONES DEL VENDEDOR para esta respuesta: ${step.instructions}`);
+  if (reply) {
+    lines.push("", "CONVERSACIÓN HASTA AHORA (en orden; \"lead\" es lo que escribió él, \"yo\" lo que salió de tu lado). Contesta el ÚLTIMO mensaje del lead:");
+    step.conversation.forEach((c) => lines.push(`[${c.who}${c.channel ? " · " + c.channel : ""}${c.sent_at ? " · " + c.sent_at : ""}] ${c.body.replace(/\s+/g, " ")}`));
+    return lines.join("\n");
+  }
   if (step.previous.length) {
     lines.push("", "MENSAJES QUE ESTE LEAD YA RECIBIÓ (no repitas su opener, su estructura ni su observación central; el nuevo mensaje debe leerse como continuación natural):");
     step.previous.forEach((p, i) => lines.push(`${i + 1}. [${p.channel}${p.sent_at ? " · " + p.sent_at : ""}] ${p.body.replace(/\s+/g, " ").slice(0, 600)}`));
@@ -1059,6 +1083,12 @@ function buildStepContext(step: StepSpec): string {
 const STEP_CLOSING =
   "\n\nInvestiga al lead siguiendo las 5 capas (mandato persona-primero) si aún no tienes señal suficiente, y escribe SOLO el mensaje de este paso. Responde ÚNICAMENTE con JSON válido, sin fences ni texto adicional:\n" +
   '{ "subject": "asunto (vacío si no es email)", "body": "el mensaje", "angle_note": "1 frase: qué capa/gancho usaste y por qué" }';
+
+// En una respuesta el lead ya habló: investigar de nuevo solo retrasa y
+// tienta al modelo a meter datos nuevos. Manda el hilo.
+const REPLY_CLOSING =
+  "\n\nNO busques en la web: responde con lo que ya tienes en el contexto y, sobre todo, con lo que el lead escribió. Escribe SOLO la respuesta al último mensaje del lead. Responde ÚNICAMENTE con JSON válido, sin fences ni texto adicional:\n" +
+  '{ "subject": "asunto (vacío si no es email)", "body": "la respuesta", "angle_note": "1 frase: qué contestaste y qué asumiste" }';
 
 // Mismo motor de investigación y mismas reglas duras que el prompt de 5
 // capas, con la construcción reemplazada por las reglas del paso.
@@ -1087,6 +1117,12 @@ function parseStepJson(raw: string): StepOut | null {
 
 function stepViolations(step: StepSpec, out: StepOut): string[] {
   const v: string[] = [];
+  // En una respuesta manda la conversación: el máximo de palabras de
+  // prospección no aplica (puede tener que explicar algo que preguntaron).
+  if (step.angle === "respuesta") {
+    if (step.channel === "email" && !out.subject.trim()) v.push('"subject" está vacío (el email necesita asunto)');
+    return v;
+  }
   if (step.channel !== "email" && wordCount(out.body) > MAX_WORDS) v.push(`"body" tiene ${wordCount(out.body)} palabras (máximo ${MAX_WORDS})`);
   if (step.channel !== "email" && step.angle === "apertura" && !out.body.trim().startsWith(REQUIRED_OPENER)) v.push(`"body" no empieza con "${REQUIRED_OPENER} [empresa] nos dedicamos a [solución]."`);
   if (step.channel === "email" && !out.subject.trim()) v.push('"subject" está vacío (el email necesita asunto)');
@@ -1189,7 +1225,11 @@ Deno.serve(async (req: Request) => {
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
-  const stepMode = body.mode === "step";
+  // "step"  → un paso de la cadencia (lo pide campaign-run o la vista previa).
+  // "reply"  → una respuesta a un lead que ya contestó, desde la Bandeja.
+  //            Misma maquinaria: cambia el ángulo y el contexto (el hilo).
+  const replyMode = body.mode === "reply";
+  const stepMode = body.mode === "step" || replyMode;
   const memberId = typeof body.member_id === "string" && body.member_id.trim() ? body.member_id.trim() : null;
   let lead = body.lead;
   let step: StepSpec | null = null;
@@ -1199,8 +1239,12 @@ Deno.serve(async (req: Request) => {
     const { data: mrow } = await supa.from("prospect_list_members").select("*").eq("id", memberId).eq("user_id", user.id).maybeSingle();
     if (!mrow) return json({ error: "member not found" }, 404, h);
     lead = leadFromMember(mrow);
-    step = normalizeStep(body);
-    if (!step) return json({ error: "step mode requires channel (email|whatsapp|linkedin)" }, 400, h);
+    step = normalizeStep(body, replyMode);
+    if (!step) {
+      return json({ error: replyMode
+        ? "reply mode requires channel (email|whatsapp|linkedin) and a conversation with at least one inbound message"
+        : "step mode requires channel (email|whatsapp|linkedin)" }, 400, h);
+    }
   }
   const sender: Sender = (body.sender && typeof body.sender === "object") ? body.sender : {};
   // Tendencias de outbound: opt-out por request. Por defecto se aplican si el
@@ -1264,8 +1308,9 @@ Deno.serve(async (req: Request) => {
   // ── Modo paso: UN mensaje para un paso de la cadencia ─────────────────────
   if (stepMode && step) {
     try {
-      const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + STEP_CLOSING);
-      console.log(`[outreach] ✓ step ${user.id} ${step.channel}/${step.angle} via ${engine}`);
+      const closing = replyMode ? REPLY_CLOSING : STEP_CLOSING;
+      const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + closing);
+      console.log(`[outreach] ✓ ${replyMode ? "reply" : "step"} ${user.id} ${step.channel}/${step.angle} via ${engine}`);
       const { data: stSpent, error: stSpendErr } = await supa
         .rpc("spend_credits", { p_user_id: user.id, p_amount: OUTREACH_COST });
       if (stSpendErr || stSpent === null || stSpent === undefined) {

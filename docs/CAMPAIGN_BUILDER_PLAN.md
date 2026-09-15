@@ -165,3 +165,28 @@ A/B por paso (variantes en `content.variants[]`, reparto en el motor y lectura p
 - **Meta.** Las reglas de plantillas no cambian; el builder no promete IA en la apertura de WhatsApp.
 - **Dripify.** Sigue sin envío por API; el paso de LinkedIn sigue siendo "enrolar en campaña de Dripify".
 - **Migración en producción.** El backfill convierte todas las campañas existentes; los enrolamientos activos siguen en el nodo equivalente a su paso. Se prueba primero contra una copia de las filas actuales con `execute_sql` en modo lectura antes de aplicar.
+
+## 7. Entrega 3 (2026-09-15) — multi-touchpoint real
+
+Lo que entró (detalle completo en `docs/OMNICANAL.md`, sección del 2026-09-15):
+
+- **Dos pasos de LinkedIn en vez de uno.** `linkedin_connect` sube el lead a una
+  campaña de Dripify que solo manda la solicitud; `linkedin_message`, a una que
+  solo manda un mensaje (y solo si ya aceptó la conexión). El selector del "+"
+  y el conmutador de canal del panel lateral ofrecen los cuatro canales, y cada
+  paso solo lista campañas del propósito que le toca.
+- **Once condiciones en vez de seis**: se suman `linkedin_connection_sent`,
+  `whatsapp_delivered`, `email_delivered`, `email_bounced` y `engaged_any`.
+  El panel de la condición explica qué proveedor reporta cada señal y la línea
+  de tiempo avisa cuando se pregunta por un canal que no salió antes.
+  Sigue sin existir "¿respondió?" (la respuesta detiene la cadencia) ni
+  "¿hizo clic?" (Apollo no lo reporta por mensaje individual).
+- **Los mensajes IA son de la campaña.** Enrolar ya no genera el outreach de 5
+  capas del lead; cada paso IA se escribe 24 h antes de su envío con SU ángulo
+  y SUS instrucciones. La ficha del lead en el detalle muestra los mensajes
+  paso a paso con "Regenerar" en los que aún no salieron.
+- **Responder es manual, con ayuda opcional.** "Redactar con IA" en la Bandeja
+  (modo `reply` de `generate-outreach`).
+
+Pendiente de la Entrega 3 original: A/B por paso, plantillas propias
+(`campaign_templates`), reordenar arrastrando.

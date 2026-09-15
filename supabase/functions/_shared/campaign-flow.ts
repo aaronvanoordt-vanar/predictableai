@@ -11,25 +11,38 @@
  *   Action    = { id, type: "action", channel, delay, content, settings? }
  *   Condition = { id, type: "condition", check, delay?, yes: Action[], no: Action[] }
  *
- *   channel  whatsapp | email | linkedin_connect | linkedin_message (solo filas viejas)
+ *   channel  whatsapp | email | linkedin_connect | linkedin_message
+ *            Los dos canales de LinkedIn suben el lead a una campaña de
+ *            Dripify (lo único que la Open API permite). Son pasos DISTINTOS
+ *            a propósito: la campaña de `linkedin_connect` solo manda la
+ *            invitación y la de `linkedin_message` solo manda un mensaje, así
+ *            la cadencia la decide Predictable paso a paso y una respuesta por
+ *            otro canal la detiene de verdad (una campaña de Dripify con su
+ *            propia secuencia seguiría sola). Ver docs/OMNICANAL.md.
  *   delay    { mode: "after_prev" | "with_prev", days, hours }
  *            after_prev → espera desde la ÚLTIMA acción ejecutada por ese lead
  *            (o desde el enrolamiento para la primera). with_prev → sale junto
  *            con la acción anterior de la misma lista (envío en paralelo).
  *   content  { kind: template_a|template_b|template_c|ai|custom,
  *              angle?, instructions?, subject?, body? }
- *   check    linkedin_connected | whatsapp_read | email_opened |
- *            has_phone | has_email | has_linkedin
+ *   check    linkedin_connection_sent | linkedin_connected |
+ *            whatsapp_delivered | whatsapp_read |
+ *            email_delivered | email_opened | email_bounced |
+ *            engaged_any | has_phone | has_email | has_linkedin
  *            La condición puede esperar (delay, siempre after_prev) antes de
  *            evaluarse: "3 días después, ¿aceptó la conexión?". Se evalúa UNA
  *            vez, cuando el lead llega a ella.
+ *            NO existe una condición "¿respondió?": una respuesta por
+ *            cualquier canal cierra el enrolamiento y la conversación pasa a
+ *            la Bandeja, donde se contesta a mano (con o sin ayuda de la IA).
+ *            Una rama "¿respondió? → Sí" nunca se recorrería.
  *
  * Reglas: ≥1 acción; las condiciones no se anidan; una rama solo tiene
  * acciones; with_prev necesita una acción justo antes en la misma lista;
- * linkedin_connect exige una campaña de LinkedIn (settings.dripify_campaign_id
- * de Dripify o settings.linkedin_campaign_id diseñada en Predictable y
- * vinculada a Dripify por nombre); custom exige body (y subject en email);
- * template_* solo en WhatsApp; ids únicos.
+ * los pasos de LinkedIn exigen una campaña de LinkedIn
+ * (settings.dripify_campaign_id de Dripify o settings.linkedin_campaign_id
+ * diseñada en Predictable y vinculada a Dripify por nombre); custom exige
+ * body (y subject en email); template_* solo en WhatsApp; ids únicos.
  *
  * La regla de parada NO vive aquí: una respuesta por cualquier canal, la baja
  * o la detención manual cierran el enrolamiento en el motor.
@@ -40,7 +53,13 @@ export const FLOW_VERSION = 1;
 export const CHANNELS = ["whatsapp", "email", "linkedin_connect", "linkedin_message"] as const;
 export const CONTENT_KINDS = ["template_a", "template_b", "template_c", "ai", "custom"] as const;
 export const ANGLES = ["apertura", "valor", "prueba_social", "objecion", "ultima_carta", "libre"] as const;
-export const CONDITIONS = ["linkedin_connected", "whatsapp_read", "email_opened", "has_phone", "has_email", "has_linkedin"] as const;
+export const CONDITIONS = [
+  "linkedin_connection_sent", "linkedin_connected",
+  "whatsapp_delivered", "whatsapp_read",
+  "email_delivered", "email_opened", "email_bounced",
+  "engaged_any",
+  "has_phone", "has_email", "has_linkedin",
+] as const;
 export const DELAY_MODES = ["after_prev", "with_prev"] as const;
 
 export type Channel = typeof CHANNELS[number];
@@ -86,6 +105,11 @@ export const SEND_CREDITS = 1;
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
+/** Los dos pasos que suben el lead a una campaña de Dripify. */
+export function isLinkedin(channel: string): boolean {
+  return channel === "linkedin_connect" || channel === "linkedin_message";
+}
+
 const isObj = (v: unknown): v is Record<string, Json> => !!v && typeof v === "object" && !Array.isArray(v);
 const clampInt = (v: unknown, min: number, max: number): number => {
   const n = Math.round(Number(v));
@@ -115,6 +139,10 @@ function normalizeContent(raw: unknown, channel: Channel): Content {
   let kind = String(c.kind ?? "");
   if (kind === "ai_personalized") kind = "ai";
   if (!(CONTENT_KINDS as readonly string[]).includes(kind)) kind = channel === "whatsapp" ? "template_a" : "ai";
+  // El texto de un paso de LinkedIn vive en la campaña de Dripify (su API no
+  // acepta texto por lead): aquí el ángulo solo alimenta el CSV de Custom
+  // Lead Fields, así que nunca es "mi texto" ni plantilla de WhatsApp.
+  if (isLinkedin(channel) && kind !== "ai") kind = "ai";
   const out: Content = { kind: kind as ContentKind };
   if (out.kind === "ai") {
     const angle = String(c.angle ?? "");
@@ -186,8 +214,9 @@ export function validate(raw: unknown): { ok: boolean; errors: FlowError[] } {
     if (a.delay.mode === "with_prev" && !(idx > 0 && list[idx - 1].type === "action")) {
       errors.push({ nodeId: a.id, message: `${label}: "junto con el anterior" necesita otro envío justo antes.` });
     }
-    if (a.channel === "linkedin_connect" && !a.settings?.dripify_campaign_id && !a.settings?.linkedin_campaign_id) {
-      errors.push({ nodeId: a.id, message: `${label}: el paso de LinkedIn necesita una campaña de LinkedIn (elige una de Dripify o crea la tuya).` });
+    if (isLinkedin(a.channel) && !a.settings?.dripify_campaign_id && !a.settings?.linkedin_campaign_id) {
+      const what = a.channel === "linkedin_connect" ? "de solo conexión" : "de solo mensaje";
+      errors.push({ nodeId: a.id, message: `${label}: el paso de LinkedIn necesita una campaña de Dripify ${what} (elige una o crea la tuya).` });
     }
     if (a.content.kind.startsWith("template_") && a.channel !== "whatsapp") {
       errors.push({ nodeId: a.id, message: `${label}: las plantillas de saludo son solo de WhatsApp.` });
@@ -334,9 +363,9 @@ export function estimateCredits(flow: Flow, leads: number): { aiMessages: number
   const n = Math.max(0, Number(leads) || 0);
   let ai = 0, sends = 0;
   for (const a of actions(flow)) {
-    if (a.channel === "linkedin_message") continue;
     sends++;
-    if (a.content.kind === "ai" && a.channel !== "linkedin_connect") ai++;
+    // LinkedIn: el mensaje lo escribe el usuario en Dripify, no la IA.
+    if (a.content.kind === "ai" && !isLinkedin(a.channel)) ai++;
   }
   return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + sends * SEND_CREDITS) * n };
 }

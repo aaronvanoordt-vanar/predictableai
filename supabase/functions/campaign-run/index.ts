@@ -27,21 +27,30 @@
  *           email     → Apollo: emailer_messages + send_now desde la cuenta
  *                       remitente de la campaña (mensaje individual, no
  *                       secuencia: así cada lead recibe SU texto).
- *           linkedin_connect → Dripify: sube el perfil del lead a la campaña
- *                       de Dripify elegida en el paso (settings.dripify_campaign_id)
- *                       o a la campaña diseñada en Predictable
- *                       (settings.linkedin_campaign_id → linkedin_campaigns):
- *                       si aún no está vinculada, se relee la lista de campañas
- *                       de Dripify y se vincula sola por nombre.
- *           linkedin_message → sin proveedor: se omite con evento explícito.
+ *           linkedin_connect / linkedin_message → Dripify: sube el perfil del
+ *                       lead a la campaña de Dripify elegida en el paso
+ *                       (settings.dripify_campaign_id) o a la diseñada en
+ *                       Predictable (settings.linkedin_campaign_id →
+ *                       linkedin_campaigns); si aún no está vinculada, se
+ *                       relee la lista de campañas de Dripify y se vincula
+ *                       sola por nombre. Cada campaña de Dripify hace UNA
+ *                       cosa: la de `linkedin_connect` solo manda la
+ *                       invitación y la de `linkedin_message` solo manda un
+ *                       mensaje (que sale únicamente si el lead ya aceptó la
+ *                       conexión). Así la cadencia la decide este motor y una
+ *                       respuesta por otro canal la detiene de verdad: una
+ *                       campaña de Dripify con su secuencia completa seguiría
+ *                       sola. El lead puede estar en varias campañas de
+ *                       Dripify a la vez → provider_refs.dripify_uploads.
  *         Un lead SIN el dato del canal (teléfono, email o URL de LinkedIn)
  *         no detiene la cadencia: el paso se omite con evento `skipped` y el
  *         lead sigue con el siguiente paso. Un rechazo del proveedor en un
  *         envío concreto (número sin WhatsApp, Apollo no envió, Dripify no
  *         aceptó el perfil) tampoco: evento `failed` y se sigue.
  *         El contenido "IA" de un paso sale de `campaign_messages` (un
- *         mensaje por lead y por paso, generado por el pase "preparar"); si
- *         la campaña pide revisión, espera a que esté `approved`.
+ *         mensaje por lead y por paso de ESTA campaña, generado por el pase
+ *         "preparar" con el ángulo y las instrucciones del paso); si la
+ *         campaña pide revisión, espera a que esté `approved`.
  *       • la espera del siguiente nodo se cuenta desde la acción que acaba de
  *         terminar (after_prev) o sale junto con ella (with_prev).
  *  4. Pase "preparar": genera con generate-outreach (modo step) los mensajes
@@ -409,27 +418,16 @@ async function completeEnrollment(ctx: Ctx, en: Json, detail: string) {
 interface AiText { subject: string; body: string; messageId: string | null }
 
 /**
- * Texto IA de un paso. En el grafo sale de campaign_messages (uno por lead y
- * paso). Sin fila: el primer email "apertura" reutiliza el mensaje de 5 capas
- * del lead si existe; si no, se pide al pase "preparar" (2 min) y se
- * reintenta. En el camino legado sale del outreach del lead.
+ * Texto IA de un paso. Sale SIEMPRE de campaign_messages (una fila por lead y
+ * por paso de ESTA campaña): el mensaje pertenece a la campaña, no al lead.
+ * Sin fila todavía, lo escribe el pase "preparar" de esta misma corrida y el
+ * paso se reintenta en 2 min. Antes la apertura reutilizaba el outreach de 5
+ * capas guardado en la lista; eso se quitó el 2026-09-15 porque hacía que el
+ * primer mensaje de toda campaña fuera el mismo texto de la lista, ignorando
+ * el ángulo y las instrucciones del paso.
  */
-async function aiText(ctx: Ctx, en: Json, step: StepLike, member: Json, campaign: Json): Promise<AiText> {
-  const outreach = member.outreach ?? {};
-  const fromOutreach = (): AiText | null => {
-    if (step.channel === "email" && String(outreach.email_subject ?? "").trim() && String(outreach.email_body ?? "").trim()) {
-      return { subject: String(outreach.email_subject), body: String(outreach.email_body), messageId: null };
-    }
-    if (step.channel === "whatsapp" && String(outreach.whatsapp_followup ?? "").trim()) {
-      return { subject: "", body: String(outreach.whatsapp_followup), messageId: null };
-    }
-    return null;
-  };
-  if (!step.node_id) {
-    const t = fromOutreach();
-    if (!t) throw new StepError("No hay mensaje personalizado generado para este lead.", "skip");
-    return t;
-  }
+async function aiText(ctx: Ctx, en: Json, step: StepLike): Promise<AiText> {
+  if (!step.node_id) throw new StepError("El paso no tiene id de nodo: edita la cadencia de la campaña.", "skip");
   const { data: row } = await ctx.db
     .from("campaign_messages")
     .select("id, status, subject, body, error_detail")
@@ -442,21 +440,6 @@ async function aiText(ctx: Ctx, en: Json, step: StepLike, member: Json, campaign
     if (row.status === "error") throw new StepError("No se pudo generar el mensaje IA: " + (row.error_detail || "sin detalle"), "skip");
     if (row.status === "sent") throw new StepError("El mensaje de este paso ya se envió.", "skip");
     throw new StepError("El mensaje de este paso quedó omitido.", "skip");
-  }
-  // Sin fila todavía: el primer paso "apertura" reutiliza el mensaje de 5
-  // capas ya generado para el lead (sin volver a cobrar).
-  if ((step.angle ?? "apertura") === "apertura" && ["email", "whatsapp"].includes(step.channel)) {
-    const t = fromOutreach();
-    if (t) {
-      const { data: ins } = await ctx.db.from("campaign_messages").insert({
-        enrollment_id: en.id, campaign_id: campaign.id, member_id: member.id, user_id: en.user_id,
-        node_id: step.node_id, channel: step.channel, angle: "apertura", subject: t.subject, body: t.body,
-        status: campaign.review_required ? "draft" : "approved",
-        approved_at: campaign.review_required ? null : ctx.now.toISOString(),
-      }).select("id, status").maybeSingle();
-      if (ins?.status === "draft") throw new StepError("El mensaje IA de este paso espera tu aprobación en la campaña.", "wait");
-      return { ...t, messageId: ins?.id ?? null };
-    }
   }
   if (!["email", "whatsapp"].includes(step.channel)) throw new StepError("No hay mensaje IA para este canal.", "skip");
   // Lo genera el pase "preparar" de esta misma corrida; se reintenta en 2 min.
@@ -494,8 +477,17 @@ async function resolveLinkedinCampaign(ctx: Ctx, userId: string, acc: Json, step
   if (direct) return { id: direct, name: step.settings?.dripify_campaign_name ?? null };
   const ownId = String(step.settings?.linkedin_campaign_id ?? "");
   if (!ownId) throw new StepError("El paso de LinkedIn no tiene campaña elegida. Edita la campaña.", "hold");
-  const { data: lc } = await ctx.db.from("linkedin_campaigns").select("id, name, status, dripify_campaign_id, dripify_campaign_name").eq("id", ownId).eq("user_id", userId).maybeSingle();
+  const { data: lc } = await ctx.db.from("linkedin_campaigns").select("id, name, status, purpose, dripify_campaign_id, dripify_campaign_name").eq("id", ownId).eq("user_id", userId).maybeSingle();
   if (!lc) throw new StepError("La campaña de LinkedIn diseñada en Predictable ya no existe. Edita el paso.", "hold");
+  // Conexión y mensaje son campañas distintas en Dripify a propósito: si el
+  // paso apunta a la del otro tipo, el lead entraría a la secuencia
+  // equivocada (y Dripify la seguiría solo aunque responda por otro canal).
+  const want = step.channel === "linkedin_message" ? "message" : "connect";
+  const has = String(lc.purpose ?? "connect");
+  if (has !== want) {
+    const label = want === "message" ? "de solo mensaje" : "de solo conexión";
+    throw new StepError(`El paso necesita una campaña de LinkedIn ${label} y «${lc.name}» es ${has === "message" ? "de mensaje" : "de conexión"}. Edita el paso.`, "hold");
+  }
   if (lc.dripify_campaign_id) return { id: Number(lc.dripify_campaign_id), name: lc.dripify_campaign_name ?? lc.name };
   const list = await dripifyCampaignsFor(ctx, userId, acc);
   const found = (list ?? []).find((c) => sameName(c.name, lc.name));
@@ -563,7 +555,7 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       if (step.content_kind === "custom") {
         bodyText = fill(step.body ?? "", member, sender);
       } else {
-        const t = await aiText(ctx, en, step, member, campaign);
+        const t = await aiText(ctx, en, step);
         bodyText = t.body;
         messageId = t.messageId;
       }
@@ -594,7 +586,7 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       subject = fill(step.subject ?? "", member, sender);
       bodyText = fill(step.body ?? "", member, sender);
     } else {
-      const t = await aiText(ctx, en, step, member, campaign);
+      const t = await aiText(ctx, en, step);
       subject = t.subject; bodyText = t.body; messageRowId = t.messageId;
     }
     if (!subject.trim() || !bodyText.trim()) throw new StepError("No hay email personalizado generado para este lead.", "skip");
@@ -631,7 +623,14 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       await db.from("prospect_list_members").update({ contact_status: "saludo_enviado", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
     }
     await spendCredits(ctx, en.user_id);
-  } else if (step.channel === "linkedin_connect") {
+  } else if (flowLib.isLinkedin(step.channel)) {
+    // Los dos pasos de LinkedIn hacen lo mismo con Dripify (subir el perfil a
+    // una campaña), pero a campañas DISTINTAS: la de conexión solo manda la
+    // invitación y la de mensaje solo manda un mensaje. Así la cadencia la
+    // decide este motor paso a paso y una respuesta por cualquier canal la
+    // detiene de verdad; una campaña de Dripify con su secuencia completa
+    // seguiría sola aunque el lead ya hubiera contestado por WhatsApp.
+    const isMsg = step.channel === "linkedin_message";
     const acc = await dripifyAccount(ctx, en.user_id);
     if (!acc) throw new StepError("LinkedIn no está conectado.", "hold");
     const url = dripify.canonicalLinkedinUrl(member.linkedin_url);
@@ -639,8 +638,20 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     const target = await resolveLinkedinCampaign(ctx, en.user_id, acc, step);
     const campaignId = target.id;
     if (target.name && step.settings) step.settings = { ...step.settings, dripify_campaign_name: target.name };
-    // Ya enrolado en esa campaña de Dripify (p. ej. cadencia editada): no duplicar.
-    if (Number(en.provider_refs?.dripify_campaign_id) === campaignId && en.provider_refs?.dripify_lead_list_id) {
+    // Un mensaje de LinkedIn solo sale si el lead aceptó la conexión: Dripify
+    // lo dejaría esperando para siempre dentro de su campaña.
+    if (isMsg && !en.linkedin_connected_at) {
+      throw new StepError("El lead todavía no aceptó la conexión de LinkedIn: se omite el mensaje y sigue con el siguiente paso.", "skip");
+    }
+    // Ya subido a ESA campaña de Dripify (p. ej. cadencia editada): no duplicar.
+    // Se lleva una entrada por campaña porque un lead pasa por varias
+    // (la de conexión y luego la de cada mensaje).
+    const uploads: Json = { ...(en.provider_refs?.dripify_uploads ?? {}) };
+    // Enrolamientos anteriores a dripify_uploads solo guardaban el último.
+    if (!uploads[String(campaignId)] && Number(en.provider_refs?.dripify_campaign_id) === campaignId && en.provider_refs?.dripify_lead_list_id) {
+      uploads[String(campaignId)] = { purpose: "connect", name: en.provider_refs?.dripify_campaign_name ?? null, lead_list_id: en.provider_refs.dripify_lead_list_id, at: en.provider_refs?.dripify_enrolled_at ?? null };
+    }
+    if (uploads[String(campaignId)]) {
       throw new StepError("El lead ya está en esa campaña de Dripify.", "skip");
     }
     let res: dripify.UploadResult;
@@ -654,8 +665,16 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       throw new StepError(dripify.humanError(e), mode);
     }
     if (!res.accepted && !res.duplicates) throw new StepError("Dripify no aceptó el perfil (URL de LinkedIn inválida o lista en la blacklist).", "fail");
+    uploads[String(campaignId)] = {
+      purpose: isMsg ? "message" : "connect",
+      name: step.settings?.dripify_campaign_name ?? null,
+      lead_list_id: res.leadListId,
+      node_id: step.node_id,
+      at: ctx.now.toISOString(),
+    };
     const refs = {
       ...(en.provider_refs ?? {}),
+      dripify_uploads: uploads,
       dripify_campaign_id: campaignId,
       dripify_campaign_name: step.settings?.dripify_campaign_name ?? null,
       dripify_lead_list_id: res.leadListId,
@@ -667,18 +686,18 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     await event(ctx, en, "linkedin", "queued", {
       detail: res.duplicates && !res.accepted
         ? "El perfil ya estaba en Dripify; sigue la campaña de allá."
-        : `Enrolado en la campaña de Dripify «${step.settings?.dripify_campaign_name ?? campaignId}». Dripify enviará la conexión.`,
-      payload: refs,
+        : `Enrolado en la campaña de Dripify «${step.settings?.dripify_campaign_name ?? campaignId}». Dripify ${isMsg ? "enviará el mensaje" : "enviará la conexión"}.`,
+      payload: uploads[String(campaignId)],
       step_position: step.position,
       node_id: step.node_id,
     });
     ctx.sentToday.set(`${en.user_id}:linkedin`, (await sentLast24h(ctx, en.user_id, "linkedin")) + 1);
     if (["no_contactado", "en_campana"].includes(member.contact_status)) {
-      await db.from("prospect_list_members").update({ contact_status: "conexion_enviada", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
+      await db.from("prospect_list_members").update({ contact_status: isMsg ? "saludo_enviado" : "conexion_enviada", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
     }
     await spendCredits(ctx, en.user_id);
   } else {
-    throw new StepError("Dripify no permite enviar mensajes de LinkedIn por API: paso omitido. El mensaje IA queda en el CSV para Dripify.", "skip");
+    throw new StepError(`Canal desconocido en la cadencia: ${step.channel}.`, "skip");
   }
 }
 
@@ -758,9 +777,20 @@ async function evalCondition(ctx: Ctx, en: Json, check: flowLib.ConditionCheck):
     return (count ?? 0) > 0;
   };
   switch (check) {
+    // LinkedIn: lo reporta Dripify (webhook o el pase de sincronización).
+    case "linkedin_connection_sent": return !!en.linkedin_connected_at || await hasEvent(["connection_sent"], "linkedin");
     case "linkedin_connected": return !!en.linkedin_connected_at;
+    // WhatsApp: recibos de WATI. Leído o respondido implica entregado.
+    case "whatsapp_delivered": return await hasEvent(["delivered", "read", "replied"], "whatsapp");
     case "whatsapp_read": return await hasEvent(["read", "replied"], "whatsapp");
+    // Email: nadie confirma la entrega real de un correo, solo el rebote, así
+    // que "entregado" = salió y el proveedor no lo marcó fallido.
+    case "email_delivered": return await hasEvent(["sent"], "email") && !(await hasEvent(["failed"], "email"));
     case "email_opened": return await hasEvent(["opened"], "email");
+    case "email_bounced": return await hasEvent(["failed"], "email");
+    // Cualquier señal de interés, del canal que sea.
+    case "engaged_any":
+      return !!en.linkedin_connected_at || await hasEvent(["opened", "read", "replied", "connection_accepted"]);
     case "has_phone":
     case "has_email":
     case "has_linkedin": {
@@ -931,23 +961,6 @@ async function preparePending(ctx: Ctx): Promise<number> {
     if ((count ?? 0) > 0) continue;
 
     const base = { enrollment_id: en.id, campaign_id: campaign.id, member_id: en.member_id, user_id: en.user_id, node_id: node.id, channel: node.channel, angle: node.content.angle ?? null };
-    // Apertura: reutiliza el mensaje de 5 capas ya generado (sin cobrar).
-    if ((node.content.angle ?? "apertura") === "apertura") {
-      const { data: m } = await db.from("prospect_list_members").select("outreach").eq("id", en.member_id).maybeSingle();
-      const o = m?.outreach ?? {};
-      const reuse = node.channel === "email"
-        ? (String(o.email_subject ?? "").trim() && String(o.email_body ?? "").trim() ? { subject: String(o.email_subject), body: String(o.email_body) } : null)
-        : (String(o.whatsapp_followup ?? "").trim() ? { subject: "", body: String(o.whatsapp_followup) } : null);
-      if (reuse) {
-        await db.from("campaign_messages").upsert({
-          ...base, subject: reuse.subject, body: reuse.body,
-          status: campaign.review_required ? "draft" : "approved",
-          approved_at: campaign.review_required ? null : ctx.now.toISOString(),
-        }, { onConflict: "enrollment_id,node_id", ignoreDuplicates: true });
-        await event(ctx, en, node.channel, "generated", { detail: "Reutilizado el mensaje de 5 capas del lead.", node_id: node.id, step_position: en.next_position });
-        continue;
-      }
-    }
     generated++;
     try {
       const out = await generateStepMessage(ctx, en, campaign, node);
@@ -1176,12 +1189,19 @@ async function syncDripify(ctx: Ctx): Promise<number> {
       .in("status", ["active", "paused", "processing"])
       .not("provider_refs->>dripify_campaign_id", "is", null);
     const list: Json[] = ens ?? [];
+    // Un lead pasa por VARIAS campañas de Dripify (la de conexión y la de
+    // cada mensaje): se consultan todas aquellas a las que se subió.
     const byCampaign = new Map<number, Json[]>();
     for (const en of list) {
-      const cid = Number(en.provider_refs?.dripify_campaign_id);
-      if (!cid) continue;
-      if (!byCampaign.has(cid)) byCampaign.set(cid, []);
-      byCampaign.get(cid)!.push(en);
+      const ids = Object.keys(en.provider_refs?.dripify_uploads ?? {}).map(Number).filter(Boolean);
+      if (!ids.length) {
+        const cid = Number(en.provider_refs?.dripify_campaign_id);
+        if (cid) ids.push(cid);
+      }
+      for (const cid of ids) {
+        if (!byCampaign.has(cid)) byCampaign.set(cid, []);
+        byCampaign.get(cid)!.push(en);
+      }
     }
     for (const [cid, group] of byCampaign) {
       let leads: dripify.DripifyLead[] = [];
@@ -1193,10 +1213,14 @@ async function syncDripify(ctx: Ctx): Promise<number> {
         const lead = slug ? bySlug.get(slug) : undefined;
         if (!lead) continue;
         const signal = dripify.classifyEvent(lead.lastAction?.type);
-        const seen = String(en.provider_refs?.dripify_last_action ?? "");
+        // El cursor es por campaña: con uno solo, la campaña de mensajes y la
+        // de conexión se pisarían la última acción y se perderían eventos.
+        const seenBy: Json = { ...(en.provider_refs?.dripify_last_action_by ?? {}) };
+        const seen = String(seenBy[String(cid)] ?? (Number(en.provider_refs?.dripify_campaign_id) === cid ? en.provider_refs?.dripify_last_action ?? "" : ""));
         const current = `${lead.lastAction?.type ?? ""}@${lead.lastAction?.at ?? ""}`;
         if (current === seen) continue;
-        const refs = { ...(en.provider_refs ?? {}), dripify_lead_id: lead.id, dripify_last_action: current };
+        seenBy[String(cid)] = current;
+        const refs = { ...(en.provider_refs ?? {}), dripify_lead_id: lead.id, dripify_last_action: current, dripify_last_action_by: seenBy };
         const patch: Json = { provider_refs: refs };
         // Lo que salió de la cuenta de LinkedIn también se ve en la bandeja
         // (Dripify no entrega el texto por API: la fila lleva qué salió y cuándo;
@@ -1236,6 +1260,9 @@ async function syncDripify(ctx: Ctx): Promise<number> {
           await event(ctx, en, "linkedin", "failed", { detail: lead.lastAction?.type, step_position: en.next_position });
         }
         await db.from("campaign_enrollments").update(patch).eq("id", en.id);
+        // El mismo enrolamiento puede aparecer en otra campaña de Dripify en
+        // este mismo pase: que vea lo que se acaba de escribir.
+        Object.assign(en, patch);
         touched++;
       }
     }
