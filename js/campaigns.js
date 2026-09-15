@@ -1601,11 +1601,12 @@
     body.appendChild(head);
 
     if (tpls.error) body.appendChild(h('div', { class: 'pros-note-red', text: '⚠ ' + tpls.error }));
+    if (tpls.catalogue_error) body.appendChild(h('div', { class: 'pros-note-red', text: '⚠ ' + tpls.catalogue_error }));
     if (!all.length) {
       body.appendChild(h('div', {
         class: 'pros-hint',
-        text: tpls.error
-          ? 'No pudimos leer tu catálogo de plantillas. Pulsa "Actualizar estado" para reintentar.'
+        text: tpls.catalogue_error || tpls.error
+          ? 'No pudimos leer tu catálogo de plantillas: revisa el error de arriba (puede ser el token o sus permisos en WATI) y pulsa "Actualizar estado" para reintentar.'
           : 'Todavía no leímos tus plantillas. Pulsa "Actualizar estado" para traerlas desde WhatsApp.',
       }));
     } else {

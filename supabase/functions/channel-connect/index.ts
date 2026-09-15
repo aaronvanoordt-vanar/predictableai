@@ -348,7 +348,7 @@ function webhookUrlFor(secret: string): string {
  * en las tres ranuras de saludo. `templates` ya viene reconciliado por
  * refreshTemplateStatus / ensureTemplates.
  */
-async function saveWatiSync(db: SupabaseClient, acc: Json, templates: Json, catalogue: wati.WatiTemplate[] | null): Promise<Json> {
+async function saveWatiSync(db: SupabaseClient, acc: Json, templates: Json): Promise<Json> {
   const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
   const cfg: Json = { ...(acc.config ?? {}) };
   const prevT: Json = acc.config?.templates ?? {};
@@ -363,9 +363,19 @@ async function saveWatiSync(db: SupabaseClient, acc: Json, templates: Json, cata
     console.warn("[channel-connect] phoneNumbers:", wati.humanError(e));
   }
 
+  // Catálogo completo del tenant. Antes este fetch se hacía por separado en
+  // cada acción y, si fallaba, el error se tragaba con un console.warn: la UI
+  // se quedaba en "Todavía no leímos tus plantillas" para siempre sin decir
+  // por qué. Se hace aquí, una sola vez, y el error queda visible.
+  let catalogue: wati.WatiTemplate[] | null = null;
+  let catalogueError: string | null = null;
+  try { catalogue = await wati.listTemplates(creds); }
+  catch (e) { catalogueError = wati.humanError(e); console.warn("[channel-connect] catálogo:", catalogueError); }
+
   cfg.templates = {
     ...(templates ?? {}),
     all: catalogue ? catalogue.map(trimTemplate) : (prevT.all ?? []),
+    catalogue_error: catalogueError,
     synced_at: new Date().toISOString(),
   };
   cfg.webhook = await ensureWebhook(creds, cfg.webhook, webhookUrlFor(acc.webhook_secret), cfg.channel);
@@ -638,13 +648,15 @@ Deno.serve(async (req) => {
 
       // 3b. Catálogo completo del tenant: la pestaña de WhatsApp muestra el
       //     estado de TODAS las plantillas del usuario, no solo las de saludo.
-      let catalogue: wati.WatiTemplate[] = [];
+      //     Si WATI no deja leerlo, el error queda guardado (antes se tragaba
+      //     con un console.warn y la UI se quedaba sin explicación).
+      let catalogue: wati.WatiTemplate[] | null = null;
+      let catalogueError: string | null = null;
       try { catalogue = await wati.listTemplates(creds); }
-      catch (e) { console.warn("[channel-connect] catálogo:", wati.humanError(e)); }
-      if (catalogue.length) {
-        (templates as Json).all = catalogue.map(trimTemplate);
-        (templates as Json).synced_at = new Date().toISOString();
-      }
+      catch (e) { catalogueError = wati.humanError(e); console.warn("[channel-connect] catálogo:", catalogueError); }
+      (templates as Json).all = catalogue ? catalogue.map(trimTemplate) : (prev?.config?.templates?.all ?? []);
+      (templates as Json).catalogue_error = catalogueError;
+      (templates as Json).synced_at = new Date().toISOString();
 
       // 4. Webhook (mejor esfuerzo: la API de WATI solo permite crearlos).
       const webhook = await ensureWebhook(creds, prev?.config?.webhook, webhookUrl, channel);
@@ -696,11 +708,9 @@ Deno.serve(async (req) => {
         templates = await ensureTemplates(creds, sender, await shortHash(user.id));
       }
       // La otra mitad de la sincronización: el catálogo COMPLETO del tenant,
-      // los números (WABA id) y el estado real del webhook.
-      let catalogue: wati.WatiTemplate[] | null = null;
-      try { catalogue = await wati.listTemplates(creds); }
-      catch (e) { console.warn("[channel-connect] catálogo:", wati.humanError(e)); }
-      const row = await saveWatiSync(db, acc, templates, catalogue);
+      // los números (WABA id) y el estado real del webhook (saveWatiSync lo
+      // trae y guarda el error si WATI no lo dejó leer).
+      const row = await saveWatiSync(db, acc, templates);
       return json({ account: publicRow(row) }, 200, cors);
     }
 
@@ -740,8 +750,7 @@ Deno.serve(async (req) => {
       } catch (e) {
         return json({ error: "Meta no aceptó la plantilla: " + wati.humanError(e) }, 400, cors);
       }
-      const fresh = await wati.listTemplates(creds).catch(() => null);
-      const row = await saveWatiSync(db, acc, await refreshTemplateStatus(creds, acc.config?.templates), fresh);
+      const row = await saveWatiSync(db, acc, await refreshTemplateStatus(creds, acc.config?.templates));
       return json({ account: publicRow(row), name: draft.name }, 200, cors);
     }
 
@@ -773,8 +782,7 @@ Deno.serve(async (req) => {
       if (broken && !templates?.error && sender?.name && sender?.company) {
         templates = await ensureTemplates(creds, sender, await shortHash(user.id));
       }
-      const fresh = await wati.listTemplates(creds).catch(() => null);
-      const row = await saveWatiSync(db, acc, templates, fresh);
+      const row = await saveWatiSync(db, acc, templates);
       return json({ account: publicRow(row) }, 200, cors);
     }
 
