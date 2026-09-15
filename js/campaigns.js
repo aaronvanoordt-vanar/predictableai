@@ -1551,11 +1551,15 @@
     GREETINGS.forEach(function (g) {
       var t = items[g[0]];
       var status = t ? String(t.status || 'PENDING') : 'MISSING';
-      tplBox.appendChild(h('div', {
+      var row = h('div', {
         html: pill(g[1], 'gray') + pill(tplStatusLabel(status), tplStatusKind(status))
           + '<span style="flex:1;color:var(--text2)">' + esc(t ? t.body : '—')
           + (t && t.error ? ' <span style="color:var(--red)">' + esc(t.error) + '</span>' : '') + '</span>',
-      }));
+      });
+      var pickBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'margin-left:auto;flex:none', text: 'Usar otra plantilla' });
+      pickBtn.addEventListener('click', function () { openAssignTemplateModal(g[0], g[1], api); });
+      row.appendChild(pickBtn);
+      tplBox.appendChild(row);
     });
     body.appendChild(tplBox);
 
@@ -1680,6 +1684,54 @@
       { label: 'Reconectar', onClick: function (m) { m.close(); openWhatsAppWizard('have'); } },
       { label: 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('whatsapp', 'wati', m); } },
       { label: 'Cerrar' },
+    ]);
+  }
+
+  /**
+   * Apunta una ranura de saludo a una plantilla YA aprobada del catálogo, en
+   * vez de dejar que sync_templates le genere una px_ nueva. Para el usuario
+   * que ya tiene sus propias plantillas (creadas a mano en WATI, con su
+   * propio texto y botones) y no quiere duplicados que Meta tiene que
+   * revisar de cero.
+   */
+  function openAssignTemplateModal(slot, label, api) {
+    var current = greetingItems()[slot];
+    var approved = templateCatalogue().filter(function (t) { return tplIsApproved(t.status); });
+    var m = openModal({ title: 'Elegir plantilla para «' + label + '»', width: 560 });
+    var b = m.body;
+    if (!approved.length) {
+      b.appendChild(h('div', {
+        class: 'pros-note-red',
+        text: '⚠ No tienes ninguna plantilla aprobada todavía. Espera a que Meta apruebe alguna o crea una nueva desde "+ Nueva plantilla".',
+      }));
+      m.setActions([{ label: 'Cerrar' }]);
+      return;
+    }
+    b.appendChild(h('p', { text: 'Las campañas de WhatsApp envían esta plantilla en el paso «' + label + '». Elige cualquiera de tus plantillas ya aprobadas por Meta; no hace falta crear una nueva.' }));
+    var sel = h('select');
+    approved.forEach(function (t) {
+      sel.appendChild(h('option', { value: t.name, text: t.name + (t.name === (current && current.name) ? ' (actual)' : '') }));
+    });
+    if (current && current.name) sel.value = current.name;
+    b.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Plantilla' }), sel));
+    var preview = h('div', { class: 'cmp-tpl-body', style: 'margin-top:8px' });
+    function refreshPreview() {
+      var t = approved.filter(function (x) { return x.name === sel.value; })[0];
+      preview.textContent = t ? t.body : '';
+    }
+    sel.addEventListener('change', refreshPreview);
+    refreshPreview();
+    b.appendChild(preview);
+
+    m.setActions([
+      { label: 'Cancelar' },
+      { label: 'Usar esta plantilla', className: 'btn btn-primary', onClick: function (modal, btn) {
+        return watiAction('assign_template', { slot: slot, name: sel.value }, btn).then(function () {
+          toast('«' + label + '» ahora usa "' + sel.value + '".', 'success');
+          modal.close();
+          renderWhatsAppDetails(api);
+        });
+      } },
     ]);
   }
 
