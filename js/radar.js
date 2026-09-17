@@ -14,6 +14,14 @@
  * el mismo momento en que el resto de la plataforma ya lo hace
  * (js/prospecting-data.js → addPeopleToList).
  *
+ * El composer ofrece dos tamaños (2026-09-17): la investigación completa
+ * (20 empresas) y una DEMO RÁPIDA de 5. Es el mismo pipeline — misma señal,
+ * mismas fuentes, mismos decision makers — pero se detiene mucho antes, que
+ * es lo único que hace largo a un radar: cada consulta de la estrategia es
+ * una búsqueda web y una llamada al modelo. El tope elegido viaja con el run
+ * (max_companies, igual que la franja) y es también lo que fija el precio:
+ * radar_run_demo vs. radar_run en js/credit-costs.js.
+ *
  * Antes de investigar el usuario elige la FRANJA DE FECHAS (últimos 7 días /
  * mes / 3 meses / 6 meses / año): una señal solo sirve mientras es noticia,
  * y el Radar entregaba hallazgos de hace años. La franja viaja con el run
@@ -82,6 +90,23 @@
   ];
   const DEFAULT_WINDOW_DAYS = 90;
 
+  // Cuántas empresas entrega una investigación. Espejo de MAX_COMPANIES /
+  // MAX_COMPANIES_DEMO en supabase/functions/generate-radar/index.ts — si
+  // cambias uno, cambia el otro en el mismo PR.
+  //
+  // La demo existe porque una investigación completa es legítimamente lenta
+  // (una búsqueda web por consulta, una llamada por búsqueda): para VER qué
+  // hace el Radar, 5 empresas en pocos minutos valen más que 20 en media
+  // hora. Es el mismo pipeline, solo que para antes.
+  const FULL_COMPANIES = 20;
+  const DEMO_COMPANIES = 5;
+
+  // Tope con el que se creó un run (columna max_companies). Un run anterior a
+  // la demo no la trae: es una investigación completa.
+  function maxCompaniesOf(run) {
+    return Number(run && run.max_companies) === DEMO_COMPANIES ? DEMO_COMPANIES : FULL_COMPANIES;
+  }
+
   function windowLabel(days, full) {
     const w = WINDOWS.filter((x) => x.days === days)[0];
     if (!w) return full ? 'los últimos ' + days + ' días' : days + ' días';
@@ -120,6 +145,7 @@
     channel: null,
     pollTimer: null,
     busy: false,
+    starting: '',   // '' | 'full' | 'demo' — qué botón del composer está arrancando
     saveMsg: '',    // progreso del guardado en lista (etiqueta del botón)
     driving: false, // true mientras este tab está avanzando el run etapa por etapa
     showRerun: false,
@@ -450,9 +476,12 @@
     }
   }
 
-  async function startRun() {
+  // mode: 'full' (20 empresas) o 'demo' (5, rápida). El tope viaja al backend
+  // y se guarda en el run: todas sus etapas leen ese número, no el composer.
+  async function startRun(mode) {
     if (state.busy || state.driving) return;
     state.busy = true;
+    state.starting = mode === 'demo' ? 'demo' : 'full';
     state.autoResumes = 0;
     render();
     try {
@@ -462,6 +491,7 @@
         exclude_list_ids: Array.from(state.excludeListIds || []),
         exclude_previous_radar: !!state.excludePrevRadar,
         news_window_days: state.windowDays,
+        max_companies: state.starting === 'demo' ? DEMO_COMPANIES : FULL_COMPANIES,
       });
       state.showRerun = false;
       state.expanded = {};
@@ -471,6 +501,7 @@
       alert(e.message || 'No se pudo iniciar la investigación.');
     } finally {
       state.busy = false;
+      state.starting = '';
       render();
       syncPolling();
       maybeResume();
@@ -803,10 +834,20 @@
       '<div class="rdr-comp-foot">' +
         (runIsFree()
           ? '<span class="rdr-cost-note">Tu primer Radar es gratis</span>'
-          : '<span class="rdr-cost-note" data-credit-cost="radar_run" data-credit-pos="inside">Costo </span>') +
-        '<button class="btn btn-primary" data-act="start" ' + (state.busy ? 'disabled' : '') + '>' +
-          (state.busy ? 'Iniciando…' : esc(cta)) + '</button>' +
+          : '<span class="rdr-cost-note">Demo ' +
+            '<span data-credit-cost="radar_run_demo" data-credit-pos="inside" data-credit-muted></span>' +
+            ' · Completa ' +
+            '<span data-credit-cost="radar_run" data-credit-pos="inside" data-credit-muted></span></span>') +
+        '<div class="rdr-comp-btns">' +
+          '<button class="btn btn-ghost" data-act="start-demo" ' + (state.busy ? 'disabled' : '') + '>' +
+            (state.starting === 'demo' ? 'Iniciando…' : 'Demo rápida · ' + DEMO_COMPANIES + ' empresas') + '</button>' +
+          '<button class="btn btn-primary" data-act="start" ' + (state.busy ? 'disabled' : '') + '>' +
+            (state.starting === 'full' ? 'Iniciando…' : esc(cta)) + '</button>' +
+        '</div>' +
       '</div>' +
+      '<div class="rdr-hint">La demo corre exactamente la misma investigación, pero se detiene en ' +
+        DEMO_COMPANIES + ' empresas: sirve para ver cómo funciona el Radar en pocos minutos. ' +
+        'La investigación completa entrega hasta ' + FULL_COMPANIES + '.</div>' +
     '</div>';
   }
 
@@ -900,15 +941,17 @@
 
   function viewEmpty() {
     return '<div class="rdr-wrap">' +
-      header('La IA investiga la web y te trae hasta 20 empresas que necesitan lo que vendes — con evidencia reciente y decision makers contactables.') +
+      header('La IA investiga la web y te trae hasta ' + FULL_COMPANIES + ' empresas que necesitan lo que vendes — con evidencia reciente y decision makers contactables.') +
       composer('Iniciar investigación', {
         title: 'Encuentra tus próximas empresas target',
-        sub: 'A partir del contexto de tu empresa — y de lo que escribas aquí abajo — la IA define qué señal de compra buscar, investiga fuentes públicas dentro de la franja de fechas que elijas, y te entrega hasta 20 empresas con esa señal, con todos sus decision makers y su contacto.',
+        sub: 'A partir del contexto de tu empresa — y de lo que escribas aquí abajo — la IA define qué señal de compra buscar, investiga fuentes públicas dentro de la franja de fechas que elijas, y te entrega hasta ' + FULL_COMPANIES + ' empresas con esa señal, con todos sus decision makers y su contacto. ¿Solo quieres verlo funcionar? La demo rápida hace lo mismo con ' + DEMO_COMPANIES + '.',
       }) +
     '</div>';
   }
 
   function viewProgress(run) {
+    const cap = maxCompaniesOf(run);
+    const isDemoRun = cap === DEMO_COMPANIES;
     const pct = Math.max(2, Math.min(100, run.progress || 0));
     const log = Array.isArray(run.progress_log) ? run.progress_log : [];
     const signal = String(run.signal_hypothesis || '');
@@ -933,10 +976,12 @@
         '<button class="btn btn-ghost btn-sm" data-act="resume-stage" ' + (state.busy ? 'disabled' : '') + '>Reintentar esta etapa</button></div>'
       : '';
     return '<div class="rdr-wrap">' +
-      header('Tu radar está investigando' +
+      header((isDemoRun ? 'Demo del Radar: está investigando' : 'Tu radar está investigando') +
         (run.news_window_days ? ' noticias ' + esc(windowLabelDe(normalizeWindow(run.news_window_days))) : '') +
-        '. Busca hasta encontrar 20 empresas con la señal o agotar la estrategia, así que puede tomar ' +
-        'bastante tiempo — puedes quedarte a mirar o explorar la app; te avisamos aquí.') +
+        '. Busca hasta encontrar ' + cap + ' empresa' + (cap === 1 ? '' : 's') + ' con la señal o agotar la estrategia' +
+        (isDemoRun
+          ? ' — son pocas a propósito, así que debería tardar solo unos minutos.'
+          : ', así que puede tomar bastante tiempo — puedes quedarte a mirar o explorar la app; te avisamos aquí.')) +
       hypothesis +
       '<div class="card rdr-prog">' +
         '<div class="rdr-prog-top"><span class="rdr-pulse"></span>' +
@@ -1210,10 +1255,10 @@
     el.querySelectorAll('[data-act]').forEach((b) => {
       b.addEventListener('click', () => {
         const act = b.getAttribute('data-act');
-        if (act === 'start') {
+        if (act === 'start' || act === 'start-demo') {
           const t = document.getElementById('rdr-prompt');
           if (t) state.promptDraft = t.value;
-          startRun();
+          startRun(act === 'start-demo' ? 'demo' : 'full');
         } else if (act === 'toggle-rerun') {
           state.showRerun = !state.showRerun;
           render();
@@ -1282,7 +1327,8 @@
       '.rdr-win-chip.is-on{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent;box-shadow:inset 0 0 0 1px var(--accent)}',
       '.rdr-win-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
       '.rdr-comp-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:2px}',
-      '.rdr-cost-note{font-size:12px;color:var(--text3);display:inline-flex;align-items:center;gap:6px}',
+      '.rdr-cost-note{font-size:12px;color:var(--text3);display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}',
+      '.rdr-comp-btns{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
       // ── Exclusiones ──
       '.rdr-ex{border:1px solid var(--hair);border-radius:var(--r-sm);background:var(--surface2);padding:10px 12px;display:flex;flex-direction:column;gap:9px}',
       '.rdr-ex-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}',

@@ -37,6 +37,10 @@
     // Raw ~US$0.40. El PRIMER run es gratis (hook del onboarding); este
     // precio aplica a re-runs y prompts propios. Cobro real: generate-radar.
     radar_run:              { credits: 12, label: 'por investigación',   variable: false },
+    // Demo rápida: el mismo pipeline pero con el tope en 5 empresas (una
+    // cuarta parte), así que una fracción de las búsquedas web y de las
+    // llamadas a Apollo. Cobro real: generate-radar (RADAR_DEMO_COST).
+    radar_run_demo:         { credits: 3,  label: 'por demo (5 empresas)', variable: false },
 
     // ── Prospección / Outreach ────────────────────────────────────────
     outreach_message:       { credits: 3,  label: 'por mensaje',         variable: false },
