@@ -18,6 +18,14 @@
  * pulling in dozens of companies (and their decision makers) at once. Queries
  * still run one at a time until the cap is hit or the strategy runs out.
  *
+ * DEMO MODE (2026-09-17) — the same pipeline with the cap at
+ * MAX_COMPANIES_DEMO (5) and the query budget at MAX_QUERIES_DEMO: a full
+ * radar legitimately takes many minutes (one web search per query, one call
+ * each), which is too long for someone who just wants to SEE what the Radar
+ * does. The cap travels on the row (radar_runs.max_companies) exactly like
+ * the date window does, so every stage of the run reads the same number the
+ * user picked, and it is what decides the price (RADAR_DEMO_COST).
+ *
  * RECENCY — a signal is only worth acting on while it is still news, and the
  * seller picks how fresh: news_window_days (7 / 30 / 90 / 180 / 365) travels
  * with the run and is enforced in FOUR places, because none of them alone is
@@ -67,7 +75,9 @@
  *
  *   POST { custom_prompt?, exclude_list_ids?,
  *          exclude_previous_radar?,
- *          news_window_days? }                    → create a run, return run_id.
+ *          news_window_days?, max_companies? }    → create a run, return run_id.
+ *          max_companies is the demo switch: 5 (demo) or 20 (full run);
+ *          anything else snaps to 20.
  *          The exclusion inputs resolve (service role, owner-scoped) to the
  *          company names the seller ALREADY has — saved Prospección lists +
  *          previous ready radars — snapshotted into radar_runs.
@@ -126,8 +136,12 @@ import {
   type Engine,
 } from "../_shared/llm.ts";
 
-// Keep in sync with js/credit-costs.js (radar_run).
+// Keep in sync with js/credit-costs.js (radar_run / radar_run_demo).
 const RADAR_RUN_COST = 12;
+// Una demo entrega 5 empresas en vez de 20 y gasta una fracción de las
+// búsquedas web y de las llamadas a Apollo, así que cuesta proporcionalmente
+// menos: cobrar la investigación completa por una muestra sería mentir.
+const RADAR_DEMO_COST = 3;
 
 // Hard ceiling on companies delivered per run — a real cap, not just a
 // safety valve: past runs returned as many as 65 companies in one go, which
@@ -136,6 +150,10 @@ const RADAR_RUN_COST = 12;
 // research. Research stops (moreQueriesLeft below) the moment this is hit,
 // so a capped run also does not keep burning search queries past it.
 const MAX_COMPANIES = 20; // also bounds row size + Apollo calls in decision_makers.
+// Demo: la misma investigación, con el tope en 5 empresas. No es un modo
+// aparte ni un atajo de mentira — corre el mismo pipeline, solo que para de
+// buscar mucho antes, que es lo único que hace lento un radar completo.
+const MAX_COMPANIES_DEMO = 5;
 // Per research call — a single web_search-grounded query realistically
 // yields well under this even when it surfaces a lot; it only guards against
 // a model dumping garbage duplicate entries into one response.
@@ -146,6 +164,23 @@ const MAX_COMPANIES_PER_QUERY = 25;
 // guards against a strategy that hallucinated an unreasonable query count;
 // the strategy prompt itself is not told to stop at any particular number.
 const MAX_QUERIES = 40;
+// En demo el presupuesto de consultas también baja: la investigación para al
+// llegar a las 5 empresas, pero si las primeras búsquedas no devuelven nada
+// sin este tope seguiría encadenando llamadas de ~40s cada una y la demo
+// dejaría de ser rápida.
+const MAX_QUERIES_DEMO = 4;
+
+/** Tope de empresas que pidió el cliente: 5 (demo) o 20 (completa). */
+function normalizeMaxCompanies(v: unknown): number {
+  return Math.round(Number(v)) === MAX_COMPANIES_DEMO ? MAX_COMPANIES_DEMO : MAX_COMPANIES;
+}
+function isDemoCap(cap: number): boolean { return cap <= MAX_COMPANIES_DEMO; }
+function queryCapFor(cap: number): number {
+  return isDemoCap(cap) ? MAX_QUERIES_DEMO : MAX_QUERIES;
+}
+function costFor(cap: number): number {
+  return isDemoCap(cap) ? RADAR_DEMO_COST : RADAR_RUN_COST;
+}
 
 // ── Decision makers ────────────────────────────────────────────────────────
 // Every decision maker Apollo has for the relevant titles, not a token three:
@@ -413,14 +448,14 @@ interface QueryItem { angleName: string; sources: string[]; query: string; }
 // same search_angles input, so both handleStrategy (to record the total)
 // and handleResearch (to resolve an offset) can call it independently.
 // deno-lint-ignore no-explicit-any
-function flattenQueries(angles: any[]): QueryItem[] {
+function flattenQueries(angles: any[], maxQueries: number = MAX_QUERIES): QueryItem[] {
   const out: QueryItem[] = [];
   for (const a of angles) {
     const angleName = asStr(a?.angle);
     const sources = asStrArr(a?.sources);
     for (const q of asStrArr(a?.queries)) out.push({ angleName, sources, query: q });
   }
-  return out.slice(0, MAX_QUERIES);
+  return out.slice(0, maxQueries);
 }
 
 // ── Signal identity: is this the same news we already told the user about? ──
@@ -927,6 +962,7 @@ async function handleCreate(
   excludeListIds: string[],
   excludePreviousRadar: boolean,
   newsWindowDays: number,
+  maxCompanies: number,
   h: Record<string, string>,
 ) {
   // One run at a time per user. A run stuck >STALE_MS counts as dead (killed
@@ -954,7 +990,7 @@ async function handleCreate(
     .select("id", { count: "exact", head: true })
     .eq("user_id", user.id)
     .eq("status", "ready");
-  const cost = (readyCount ?? 0) > 0 ? RADAR_RUN_COST : 0;
+  const cost = (readyCount ?? 0) > 0 ? costFor(maxCompanies) : 0;
 
   if (cost > 0) {
     const { data: c } = await supa.from("user_credits").select("balance").eq("user_id", user.id).maybeSingle();
@@ -981,6 +1017,11 @@ async function handleCreate(
   // against the window the user actually picked, even if they change it in
   // the composer while the run is in flight.
   const windowPayload = { news_window_days: newsWindowDays };
+  // El tope viaja en la fila por la misma razón que la franja: cada etapa del
+  // run tiene que ver el número que eligió el usuario al arrancarlo, no el
+  // que tenga el composer cuando la etapa corre. `let` porque el safety-net
+  // de abajo lo vacía si la columna todavía no existe en esta base.
+  let demoPayload: Record<string, number> = { max_companies: maxCompanies };
   const exclusionPayload = {
     exclude_list_ids: excludeListIds.slice(0, 50),
     excluded_companies: memory.hard,
@@ -989,8 +1030,22 @@ async function handleCreate(
     ...basePayload,
     ...exclusionPayload,
     ...windowPayload,
+    ...demoPayload,
     known_signals: memory.history,
   }).select("id").single();
+  // Mismo safety-net de orden de despliegue que los de abajo: sin la
+  // migración el run corre igual, solo que con el tope completo (20) — una
+  // demo lenta es mejor que un Radar caído.
+  if (insErr && /max_companies/.test(insErr.message ?? "")) {
+    console.warn("[radar] max_companies column missing — apply 20260917000001_radar_demo_runs.sql");
+    demoPayload = {};
+    ({ data: run, error: insErr } = await supa.from("radar_runs").insert({
+      ...basePayload,
+      ...exclusionPayload,
+      ...windowPayload,
+      known_signals: memory.history,
+    }).select("id").single());
+  }
   // Same deploy-order safety net as below: without the recency migration the
   // run still works, it just cannot narrow the window server-side (the
   // deterministic filter below then runs on the default).
@@ -999,6 +1054,7 @@ async function handleCreate(
     ({ data: run, error: insErr } = await supa.from("radar_runs").insert({
       ...basePayload,
       ...exclusionPayload,
+      ...demoPayload,
       known_signals: memory.history,
     }).select("id").single());
   }
@@ -1009,15 +1065,16 @@ async function handleCreate(
   if (insErr && /known_signals/.test(insErr.message ?? "")) {
     console.warn("[radar] known_signals column missing — apply 20260823000003_radar_signal_memory.sql");
     ({ data: run, error: insErr } = await supa.from("radar_runs")
-      .insert({ ...basePayload, ...exclusionPayload, ...windowPayload }).select("id").single());
+      .insert({ ...basePayload, ...exclusionPayload, ...windowPayload, ...demoPayload }).select("id").single());
   }
   if (insErr && /exclude_list_ids|excluded_companies/.test(insErr.message ?? "")) {
     console.warn("[radar] exclusion columns missing — apply 20260819180000_radar_exclusions.sql");
     ({ data: run, error: insErr } = await supa.from("radar_runs")
-      .insert({ ...basePayload, ...windowPayload }).select("id").single());
+      .insert({ ...basePayload, ...windowPayload, ...demoPayload }).select("id").single());
   }
   if (insErr && /news_window_days/.test(insErr.message ?? "")) {
-    ({ data: run, error: insErr } = await supa.from("radar_runs").insert(basePayload).select("id").single());
+    ({ data: run, error: insErr } = await supa.from("radar_runs")
+      .insert({ ...basePayload, ...demoPayload }).select("id").single());
   }
   if (insErr || !run) return json({ error: "No se pudo iniciar el Radar: " + (insErr?.message ?? "insert failed") }, 500, h);
 
@@ -1037,8 +1094,17 @@ interface RunRow {
   signal_strategy: any;
   research_offset: number;
   news_window_days: number | null;
+  max_companies: number | null;
   error_message: string | null;
   updated_at: string;
+}
+
+// Tope de empresas de ESTE run. Defensivo igual que knownSignalsOf: una fila
+// creada antes de la migración (o por el safety-net del insert) no lo trae y
+// se comporta como una investigación completa.
+function maxCompaniesOf(run: RunRow): number {
+  const raw = (run as { max_companies?: unknown }).max_companies;
+  return Number(raw) === MAX_COMPANIES_DEMO ? MAX_COMPANIES_DEMO : MAX_COMPANIES;
 }
 
 // Reads the run's radar memory defensively: rows created before the
@@ -1066,19 +1132,33 @@ async function handleStrategy(supa: any, run: RunRow, engine: Engine, h: Record<
     const excluded = asStrArr(run.excluded_companies);
     const known = knownSignalsOf(run);
     const windowDays = windowDaysOf(run);
+    const cap = maxCompaniesOf(run);
+    const demo = isDemoCap(cap);
     const prompt = (customPrompt
       ? `${sellerContext}\n\n=== USER'S TARGET DESCRIPTION (ground truth — the companies they want) ===\n${customPrompt}`
       : sellerContext) +
       recencyBlock(windowDays) +
       excludedBlock(excluded, MAX_EXCLUDED_IN_STRATEGY_PROMPT) +
-      knownNamesBlock(known, MAX_KNOWN_SIGNALS_IN_PROMPT);
+      knownNamesBlock(known, MAX_KNOWN_SIGNALS_IN_PROMPT) +
+      // Un plan de 8 ángulos para una demo de 5 empresas solo sirve para
+      // escribir consultas que nunca se van a correr: el tope de queries las
+      // corta igual, pero el modelo tarda más en redactarlas.
+      (demo
+        ? `\n\n=== QUICK DEMO RUN ===\nThis is a fast demo: only ${cap} companies will be delivered and at most ` +
+          `${MAX_QUERIES_DEMO} queries will actually run. Return at most 2 search_angles with 1-2 queries each — ` +
+          `your very best, broadest-yield ones. Ignore the "typically 5-8 angles" guidance for this run.`
+        : "");
     const raw = await callAi(engine, STRATEGY_SYSTEM, prompt, {
-      maxTokens: 2200, maxSearches: 2, searchAfterDate: cutoffIso(windowDays),
+      // La demo tampoco gasta dos búsquedas web en entenderse a sí misma.
+      maxTokens: demo ? 1200 : 2200, maxSearches: demo ? 1 : 2,
+      searchAfterDate: cutoffIso(windowDays),
     });
     const strategy = parseJson(raw);
     const hypothesis = asStr(strategy.signal_hypothesis).trim();
     if (!hypothesis) throw new Error("La IA no pudo definir una señal de compra a partir de tu contexto.");
-    const totalQueries = flattenQueries(Array.isArray(strategy.search_angles) ? strategy.search_angles : []).length;
+    const totalQueries = flattenQueries(
+      Array.isArray(strategy.search_angles) ? strategy.search_angles : [], queryCapFor(cap),
+    ).length;
     if (!totalQueries) throw new Error("La IA no definió consultas de búsqueda para la investigación.");
 
     await supa.from("radar_runs").update({
@@ -1107,11 +1187,15 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
     const strategy = run.signal_strategy || {};
     // deno-lint-ignore no-explicit-any
     const angles: any[] = Array.isArray(strategy.search_angles) ? strategy.search_angles : [];
-    const items = flattenQueries(angles);
+    // El tope del run manda sobre cuántas consultas existen y cuántas
+    // empresas caben: el mismo número que vio handleStrategy, porque sale de
+    // la fila y no del cliente.
+    const cap = maxCompaniesOf(run);
+    const items = flattenQueries(angles, queryCapFor(cap));
     if (!items.length) throw new Error("La estrategia de investigación no definió consultas de búsqueda.");
 
     const idx = Math.max(0, Math.min(offset || 0, items.length - 1));
-    const existing = (Array.isArray(run.companies) ? run.companies : []).slice(0, MAX_COMPANIES);
+    const existing = (Array.isArray(run.companies) ? run.companies : []).slice(0, cap);
     // Companies the seller already has: told to the model AND enforced here,
     // because the prompt only carries the first MAX_EXCLUDED_IN_RESEARCH_PROMPT.
     const excluded = asStrArr(run.excluded_companies);
@@ -1127,7 +1211,7 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
     // the caller at the real next step.
     const doneOff = run.research_offset || 0;
     if (doneOff > idx) {
-      if (doneOff < items.length && existing.length < MAX_COMPANIES) {
+      if (doneOff < items.length && existing.length < cap) {
         return json({ status: "ok", run_id: run.id, next_stage: "research", offset: doneOff }, 200, h);
       }
       const dmDone = existing.filter((c: { dm_done?: boolean }) => c && c.dm_done).length;
@@ -1249,14 +1333,14 @@ async function handleResearch(supa: any, run: RunRow, engine: Engine, offset: nu
       newCompanies.push(c);
     }
 
-    const roomLeft = Math.max(0, MAX_COMPANIES - existing.length);
+    const roomLeft = Math.max(0, cap - existing.length);
     const merged = existing.concat(newCompanies.slice(0, roomLeft));
     const coverageNote = asStr(research.coverage_note).trim();
     const nextOffset = idx + 1;
-    // Queries keep running until either the strategy is exhausted or
-    // MAX_COMPANIES (20) is reached — whichever comes first, so a run never
-    // burns more searches than it needs to fill the cap.
-    const moreQueriesLeft = nextOffset < items.length && merged.length < MAX_COMPANIES;
+    // Queries keep running until either the strategy is exhausted or the
+    // run's cap (20, or 5 in a demo) is reached — whichever comes first, so a
+    // run never burns more searches than it needs to fill the cap.
+    const moreQueriesLeft = nextOffset < items.length && merged.length < cap;
     // El plan de investigación es también donde se lleva la cuenta de lo
     // descartado por antigüedad: vive en signal_strategy (JSONB que ya se
     // reescribe en cada llamada) en vez de en una columna nueva, y es lo que
@@ -1336,7 +1420,12 @@ async function handleDecisionMakers(supa: any, run: RunRow, apolloKey: string, o
     if (!companies.length) throw new Error("Este run no tiene empresas investigadas todavía.");
 
     const start = Math.max(0, offset || 0);
-    const end = Math.min(companies.length, start + DM_BATCH_SIZE);
+    const cap = maxCompaniesOf(run);
+    // Una demo cabe entera en un lote: son 5 empresas de búsquedas de Apollo
+    // (rápidas, sin LLM), muy por debajo del kill de ~150s, y así la demo no
+    // paga dos idas y vueltas más de red.
+    const batchSize = isDemoCap(cap) ? MAX_COMPANIES_DEMO : DM_BATCH_SIZE;
+    const end = Math.min(companies.length, start + batchSize);
 
     for (let i = start; i < end; i++) {
       const co = companies[i];
@@ -1358,7 +1447,7 @@ async function handleDecisionMakers(supa: any, run: RunRow, apolloKey: string, o
         .select("id", { count: "exact", head: true })
         .eq("user_id", run.user_id)
         .eq("status", "ready");
-      const cost = (readyCount ?? 0) > 0 ? RADAR_RUN_COST : 0;
+      const cost = (readyCount ?? 0) > 0 ? costFor(cap) : 0;
 
       let charged = 0;
       if (cost > 0) {
@@ -1433,7 +1522,7 @@ Deno.serve(async (req: Request) => {
   let body: {
     run_id?: unknown; stage?: unknown; custom_prompt?: unknown; offset?: unknown;
     engine?: unknown; exclude_list_ids?: unknown; exclude_previous_radar?: unknown;
-    news_window_days?: unknown;
+    news_window_days?: unknown; max_companies?: unknown;
   };
   try { body = await req.json(); } catch { body = {}; }
 
@@ -1450,8 +1539,10 @@ Deno.serve(async (req: Request) => {
     // is the sane default; the UI lets the user turn it off explicitly.
     const excludePreviousRadar = body.exclude_previous_radar !== false;
     const newsWindowDays = normalizeWindowDays(body.news_window_days);
+    const maxCompanies = normalizeMaxCompanies(body.max_companies);
     return await handleCreate(
-      supa, user, customPrompt, excludeListIds, excludePreviousRadar, newsWindowDays, h,
+      supa, user, customPrompt, excludeListIds, excludePreviousRadar,
+      newsWindowDays, maxCompanies, h,
     );
   }
 
