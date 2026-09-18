@@ -134,8 +134,10 @@ Deno.test("normalizeDetector descarta kinds desconocidos y configs sin lo mínim
   assertEquals(d!.cadence_hours, 1);
   assertEquals(d!.config.min_jobs, 3);
   assertEquals(d!.config.posted_within_days, 180);
-  const t = normalizeDetector({ kind: "technographics", config: { using_any: ["Google Analytics", "WordPress.org"] } });
+  const t = normalizeDetector({ kind: "technographics", config: { using_any: ["Google Analytics", "WordPress.org"], not_using_any: ["mailchimp"] } });
   assertEquals(t!.config.using_any, ["google_analytics", "wordpress_org"]);
+  assertEquals("not_using_any" in t!.config, false); // la búsqueda de empresas no filtra "no usa X"
+  assertEquals(normalizeDetector({ kind: "technographics", config: { not_using_any: ["mailchimp"] } }), null);
   const f = normalizeDetector({ kind: "funding", config: {} });
   assertEquals(f!.config.window_days, 90);
   const w = normalizeDetector({ kind: "website_visitors", config: { days: 45, intent: ["HIGH", "bogus"] } });

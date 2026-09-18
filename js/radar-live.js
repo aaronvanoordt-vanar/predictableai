@@ -44,12 +44,12 @@
   const DETECTOR_KINDS = {
     news:             { label: 'Noticias y anuncios',          icon: '📰', requires: ['IA con búsqueda web'],        desc: 'Prensa, comunicados, registros oficiales y job boards, con fecha verificada.' },
     tenders:          { label: 'Licitaciones y compras públicas', icon: '🏛️', requires: ['IA con búsqueda web'],     desc: 'Convocatorias y adjudicaciones en los portales de compras de tus países.' },
-    hiring:           { label: 'Contrataciones',               icon: '🧑‍💼', requires: ['Apollo'],                  desc: 'Empresas con vacantes activas para los cargos que delatan la necesidad.' },
-    technographics:   { label: 'Tecnologías en uso',           icon: '🧩', requires: ['Apollo'],                     desc: 'Empresas que usan (o no usan) ciertas herramientas, según Apollo.' },
-    site_probe:       { label: 'Sondeo del sitio web',         icon: '🔍', requires: ['Apollo', 'Sondeo web'],       desc: 'Leemos la portada pública del sitio: píxel de Meta, botón de WhatsApp sin proceso, chat, tienda online…' },
+    hiring:           { label: 'Contrataciones',               icon: '🧑‍💼', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Empresas con vacantes activas para los cargos que delatan la necesidad.' },
+    technographics:   { label: 'Tecnologías en uso',           icon: '🧩', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Empresas que usan ciertas herramientas, según Apollo. Para "no usa X" está el sondeo del sitio.' },
+    site_probe:       { label: 'Sondeo del sitio web',         icon: '🔍', requires: ['Apollo (1 crédito de Apollo por página)', 'Sondeo web'], desc: 'Leemos la portada pública del sitio: píxel de Meta, botón de WhatsApp sin proceso, chat, tienda online…' },
     funding:          { label: 'Financiamiento',               icon: '💸', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Rondas de inversión recientes dentro de tu ICP.' },
     leadership:       { label: 'Cambios de liderazgo',         icon: '🪑', requires: ['Apollo'],                     desc: 'Decision makers nuevos en el cargo: sus primeros 90 días son cuando compran.' },
-    growth:           { label: 'Crecimiento de plantilla',     icon: '📈', requires: ['Apollo'],                     desc: 'Empresas del ICP cuya plantilla creció más de X % en 6-24 meses.' },
+    growth:           { label: 'Crecimiento de plantilla',     icon: '📈', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Empresas del ICP cuya plantilla creció más de X % en 6-24 meses.' },
     presence:         { label: 'Presencia digital local',      icon: '📍', requires: ['Google Places'],              desc: 'Negocios en Google Maps sin sitio web, con pocas reseñas o mala calificación.' },
     website_visitors: { label: 'Visitantes de tu sitio',       icon: '👀', requires: ['Tu cuenta de Apollo con Website Visitors'], desc: 'Empresas que visitaron tu web (lo más caliente que existe).' },
   };
@@ -578,7 +578,8 @@
       case 'news': return (Array.isArray(cfg.queries) ? cfg.queries.length : 0) + ' consultas · últimos ' + (cfg.window_days || 30) + ' días' + (cfg.sources && cfg.sources.length ? ' · fuentes: ' + j(cfg.sources, 3) : '');
       case 'tenders': return (Array.isArray(cfg.queries) ? cfg.queries.length : 0) + ' consultas · ' + (cfg.portals && cfg.portals.length ? j(cfg.portals, 4) : 'portales de compras públicas');
       case 'hiring': return 'Vacantes de ' + j(cfg.job_titles) + ' · mín. ' + (cfg.min_jobs || 1) + ' · publicadas en ' + (cfg.posted_within_days || 30) + ' días';
-      case 'technographics': return (cfg.using_any && cfg.using_any.length ? 'usa ' + j(cfg.using_any) : '') + (cfg.not_using_any && cfg.not_using_any.length ? (cfg.using_any && cfg.using_any.length ? ' · ' : '') + 'no usa ' + j(cfg.not_using_any) : '');
+      // Solo "usa X": Apollo no filtra "no usa X" en la búsqueda de empresas (para eso está el sondeo del sitio).
+      case 'technographics': return cfg.using_any && cfg.using_any.length ? 'usa ' + j(cfg.using_any) : 'sin tecnologías en uso configuradas';
       case 'site_probe': return (cfg.must_have && cfg.must_have.length ? 'con ' + j(cfg.must_have) : '') + (cfg.must_not_have && cfg.must_not_have.length ? (cfg.must_have && cfg.must_have.length ? ' · ' : '') + 'sin ' + j(cfg.must_not_have) : '');
       case 'funding': return 'Rondas en los últimos ' + (cfg.window_days || 90) + ' días' + (cfg.min_amount ? ' · desde US$' + Number(cfg.min_amount).toLocaleString('es-MX') : '') + (cfg.stages && cfg.stages.length ? ' · ' + j(cfg.stages) : '');
       case 'leadership': return j(cfg.titles) + ' · menos de ' + (cfg.max_days_in_role || 90) + ' días en el cargo';

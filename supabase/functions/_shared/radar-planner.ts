@@ -44,7 +44,7 @@ Think like the best outbound strategist alive. A buying signal is any observable
 - Sells WhatsApp AI automation → site_probe { must_have: ["whatsapp_click_to_chat"], must_not_have: ["any_whatsapp_tool","chatbot_ai"] } (a bare wa.me button = no automated process), plus hiring for "customer service agent" / "community manager", plus presence for local businesses with many reviews but no website.
 - Sells sales-predictability SaaS → hiring for SDR/AE titles, leadership (new VP Sales / CRO, ≤ 90 days), technographics using_any ["hubspot","pipedrive","salesforce"], news about missed-quota / restructured sales teams.
 - Sells asset liquidation in Mexico → news on concurso mercantil filings, tenders for auction services, leadership (new CFO / restructuring officer).
-- Sells cybersecurity → news on breaches/regulatory fines in the target countries, hiring for CISO / security analyst, technographics not_using_any ["cloudflare","okta"].
+- Sells cybersecurity → news on breaches/regulatory fines in the target countries, hiring for CISO / security analyst, technographics using_any ["wordpress_org","woocommerce"] (self-hosted stacks that get breached).
 
 Rules:
 - 5 to 10 detectors, each a DIFFERENT methodology or a different sub-segment; never two detectors that would return the same companies.
