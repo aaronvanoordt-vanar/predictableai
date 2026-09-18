@@ -41,6 +41,18 @@
     // cuarta parte), así que una fracción de las búsquedas web y de las
     // llamadas a Apollo. Cobro real: generate-radar (RADAR_DEMO_COST).
     radar_run_demo:         { credits: 3,  label: 'por demo (5 empresas)', variable: false },
+    // Motor siempre encendido (2026-09-18). El plan de señales lo diseña la
+    // IA a partir del contexto + el Hub (el primero es gratis; regenerarlo
+    // cuesta esto). Cobro real: radar-plan (RADAR_PLAN_COST).
+    radar_plan:             { credits: 6,  label: 'por plan',            variable: false },
+    // Cada detector activo corre solo (pg_cron) y se cobra por período de 30
+    // días, en el primer tick del período. Cobro real: radar-monitor
+    // (RADAR_DETECTOR_MONTH). Los decision makers salen de la búsqueda
+    // gratuita de Apollo; el correo se revela recién al guardar en lista.
+    radar_detector_month:   { credits: 15, label: 'por detector cada 30 días', variable: true },
+    // Detector escrito por el usuario en lenguaje natural: una llamada al
+    // modelo lo traduce a la config del tipo elegido. Cobro real: radar-plan.
+    radar_detector_custom:  { credits: 3,  label: 'por detector propio', variable: false },
 
     // ── Prospección / Outreach ────────────────────────────────────────
     outreach_message:       { credits: 3,  label: 'por mensaje',         variable: false },

@@ -48,7 +48,7 @@
     'company_country', 'company_about', 'company_solutions', 'icp_pain_points',
     'icp_countries', 'icp_industry_tags', 'icp_employee_ranges', 'icp_departments',
     'icp_seniorities', 'icp_titles', 'icp_buying_triggers', 'icp_disqualifiers',
-    'competitors', 'excluded_companies',
+    'competitors', 'excluded_companies', 'radar_suggested_triggers',
     'commercial_deal_size', 'commercial_sales_cycle', 'commercial_model', 'commercial_primary_cta',
     'outreach_signature', 'outreach_tone', 'outreach_channels', 'outreach_language',
     'social_proof', 'social_proof_none', 'common_objections', 'objections_none',
@@ -619,6 +619,24 @@
   var esc = CC.esc, arr = CC.arr, objArr = CC.objArr;
   var O = CC.OPTION_SETS;
 
+  // Señales que el plan del Radar decidió cazar (radar-plan → sync_context).
+  // Se ofrecen con un clic; nunca se escriben solas sobre lo que el usuario
+  // ya puso (solo se rellena el hueco si el campo estaba vacío).
+  function radarSuggestions(i) {
+    var list = Array.isArray(i.radar_suggested_triggers)
+      ? i.radar_suggested_triggers.filter(function (x) { return typeof x === 'string' && x.trim(); })
+      : [];
+    if (!list.length) return '';
+    var current = String(i.icp_buying_triggers == null ? '' : i.icp_buying_triggers).trim();
+    var items = list.filter(function (s) { return current.indexOf(s.trim()) === -1; }).slice(0, 8);
+    if (!items.length) return '';
+    return '<div class="ccx-radar-sugg">' +
+      '<div class="ccx-radar-sugg-h">El Radar detecta hoy estas señales · agrégalas a tu contexto</div>' +
+      items.map(function (s) {
+        return '<button type="button" class="ccx-radar-sugg-item" data-ccx-add-trigger="' + esc(s) + '">+ ' + esc(s) + '</button>';
+      }).join('') + '</div>';
+  }
+
   function field(label, help, control) {
     return '<label class="ihx-field">' +
       '<span>' + esc(label) + '</span>' +
@@ -748,7 +766,8 @@
         '<textarea name="icp_pain_points" rows="3" placeholder="Ej: Pierden visibilidad de su pipeline y no saben priorizar leads">' + esc(i.icp_pain_points || '') + '</textarea>') +
         field('Qué señales indican que está listo para comprar',
           'El radar sale a buscar exactamente esto. Ej: acaban de levantar inversión, abrieron vacantes de ventas, cambiaron de CRM.',
-          '<textarea name="icp_buying_triggers" rows="3" placeholder="Ej: Contrataron un nuevo VP de Ventas en los últimos 3 meses">' + esc(i.icp_buying_triggers || '') + '</textarea>') +
+          '<textarea name="icp_buying_triggers" rows="3" placeholder="Ej: Contrataron un nuevo VP de Ventas en los últimos 3 meses">' + esc(i.icp_buying_triggers || '') + '</textarea>' +
+          radarSuggestions(i)) +
         field('Quién NO es tu cliente',
           'Se usa para descartar resultados del radar y de la búsqueda antes de que te lleguen.',
           '<textarea name="icp_disqualifiers" rows="2" placeholder="Ej: Empresas sin equipo comercial propio, o de menos de 5 empleados">' + esc(i.icp_disqualifiers || '') + '</textarea>');
@@ -826,6 +845,19 @@
 
     root.addEventListener('click', function (ev) {
       var t = ev.target;
+
+      var addTrigger = t.closest('[data-ccx-add-trigger]');
+      if (addTrigger) {
+        var ta = root.querySelector('textarea[name="icp_buying_triggers"]');
+        if (ta) {
+          var line = addTrigger.getAttribute('data-ccx-add-trigger') || '';
+          ta.value = (ta.value.trim() ? ta.value.replace(/\s+$/, '') + '\n' : '') + '• ' + line;
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          ta.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        addTrigger.remove();
+        return;
+      }
 
       var toggle = t.closest('[data-ccx-ms-toggle]');
       if (toggle) {
@@ -1042,6 +1074,11 @@
     var s = document.createElement('style');
     s.id = 'company-context-styles';
     s.textContent = [
+      /* ── Sugerencias del Radar (señales que el plan ya caza) ── */
+      '.ccx-radar-sugg { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }',
+      '.ccx-radar-sugg-h { font-size: 11.5px; font-weight: 600; color: var(--ink-4, rgba(10,10,15,.40)); }',
+      '.ccx-radar-sugg-item { font-family: inherit; font-size: 12px; text-align: left; line-height: 1.4; padding: 5px 9px; border-radius: 8px; border: 1px dashed var(--hair-2, rgba(0,0,0,.15)); background: var(--surface2, rgba(0,0,0,.02)); color: var(--ink-2); cursor: pointer; }',
+      '.ccx-radar-sugg-item:hover { border-color: var(--accent, #1F4BFF); color: var(--accent-ink, #1F4BFF); }',
       /* ── Bloques (interno / externo) ── */
       '.ccx-block { margin: 26px 0 0; }',
       '.ccx-block-head { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; padding: 0 2px 12px; }',

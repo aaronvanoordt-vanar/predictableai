@@ -2070,13 +2070,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="3" cy="3" r="1.5"/><circle cx="13" cy="3" r="1.5"/><circle cx="3" cy="13" r="1.5"/><circle cx="13" cy="13" r="1.5"/><path d="M5 8h6M8 5v6"/></svg>
       <span id="nav-company-name">Contexto de tu empresa</span>
     </div>
-    <div class="nav-item" data-page="radar" onclick="nav(this,'radar');if(window.radar)window.radar.show()">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="3.5" opacity=".5"/><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/><path d="M8 8l4.2-4.2"/></svg>
-      Radar
-    </div>
+    <!-- Flujo de inteligencia (2026-09-18): Contexto → Intelligence Hub → Radar. El Hub alimenta el plan de señales del Radar, así que va antes. -->
     <div class="nav-item" data-page="mi-dashboard" onclick="nav(this,'mi-dashboard')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 12l4-4 3 3 5-6"/></svg>
       Intelligence Hub
+    </div>
+    <div class="nav-item" data-page="radar" onclick="nav(this,'radar');if(window.radarLive)window.radarLive.show();else if(window.radar)window.radar.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="3.5" opacity=".5"/><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/><path d="M8 8l4.2-4.2"/></svg>
+      Radar
     </div>
     <div class="nav-item" data-page="coda-ai" onclick="nav(this,'coda-ai')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M8 1v14M2 8h12"/></svg>
@@ -3461,7 +3462,8 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/linkedin-campaigns.js?v=20260915"></script>
 <script src="js/campaign-builder.js?v=20260915"></script>
 <script src="js/campaigns.js?v=20260915"></script>
-<script src="js/radar.js?v=20260917-demo"></script>
+<script src="js/radar.js?v=20260918"></script>
+<script src="js/radar-live.js?v=20260918"></script>
 <script src="js/clients.js?v=20260824-sheets"></script>
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
@@ -4284,10 +4286,12 @@ function nav(el, pageId) {
   // Radar lifecycle: el onboarding redirige a #radar (deep-link), camino en el
   // que el onclick del sidebar no corre — montamos el módulo aquí. El guard de
   // childElementCount evita re-montar sobre lo que el onclick ya montó.
-  if (pageId === 'radar' && window.radar && typeof window.radar.show === 'function') {
+  if (pageId === 'radar' && ((window.radarLive && typeof window.radarLive.show === 'function') || (window.radar && typeof window.radar.show === 'function'))) {
     setTimeout(() => {
       const shellEl = document.getElementById('radar-shell');
-      if (shellEl && !shellEl.childElementCount) window.radar.show();
+      if (shellEl && !shellEl.childElementCount) {
+        if (window.radarLive) window.radarLive.show(); else window.radar.show();
+      }
     }, 0);
   }
 

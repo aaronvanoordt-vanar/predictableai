@@ -1,0 +1,106 @@
+# Radar de señales de compra
+
+Diseño vigente desde el 2026-09-18. El Radar dejó de ser una investigación puntual por noticias y pasó a ser un **motor siempre encendido** que detecta señales de compra con varias metodologías, puntúa cada empresa y la deja lista para Listas → Campañas → Coach.
+
+## Flujo de inteligencia
+
+```
+Contexto de tu empresa  →  Intelligence Hub  →  Radar  →  Listas  →  Campañas  →  Meeting Coach
+(qué vendes, a quién,       (qué hace el         (qué empresas   (decision      (omnicanal)     (brief con la
+ en qué países)              mercado hoy)         te necesitan    makers con                     señal)
+                                                  AHORA)          correo)
+```
+
+- El **contexto** es la única fuente de qué vende el cliente, a quién y en qué países. El Radar solo busca en `icp_countries`, salvo que el prompt del plan nombre otros países (`radar_plans.countries`).
+- El **Hub** alimenta el plan: sus "Recomendaciones de prospección", "Oportunidades de revenue", digest e insights se inyectan al generar el plan, y cuando el Hub publica un reporte más nuevo que `radar_plans.hub_synced_at`, `radar-monitor` pide a la IA 0-3 detectores adicionales (origen `hub`).
+- El Radar **devuelve al contexto**: al activar el plan, las señales que caza se escriben en `intel_hub_intake.radar_suggested_triggers` (la tarjeta "Dolores y señales de compra" las ofrece con un clic) y, si `icp_buying_triggers` estaba vacío, lo rellena. Nunca pisa lo que el usuario escribió.
+- El sidebar sigue ese orden: Contexto → Intelligence Hub → Radar.
+
+## Piezas
+
+| Pieza | Archivo | Qué hace |
+|---|---|---|
+| Plan de señales | `supabase/functions/radar-plan/` | `generate` (IA diseña 5-10 detectores desde contexto + Hub + prompt), `activate`, `pause`, `run_now`, `add_detector` (lenguaje natural → config), `sync_context`, `refresh_from_hub` |
+| Motor | `supabase/functions/radar-monitor/` | pg_cron cada 2 min (service role) o "Buscar ahora" (JWT del usuario). Unidades acotadas: lotes de decision makers, ticks de detectores, avisos WhatsApp, plan ← Hub |
+| Catálogo y validación | `_shared/radar-plan.ts` | `KIND_META`, `normalizeDetector/normalizePlan`, `signalFingerprint`, `PLAN_JSON_SPEC`. **Espejo de `DETECTOR_KINDS` en `js/radar-live.js`** |
+| Detectores | `_shared/radar-detectors.ts` | Un `tick()` por metodología (ver tabla) |
+| Puntaje | `_shared/radar-score.ts` | fit ICP (país/industria/tamaño) 35 % · fuerza 35 % · recencia 15 % · alcanzabilidad 15 %, × peso del detector. `adjustWeight` aprende del 👍/👎 |
+| Países | `_shared/radar-geo.ts` | 'México' / 'MX' / 'mexicana' → 'Mexico'. `countryFit` decide `in / out / unknown` |
+| Sondeo web | `_shared/site-probe.ts` | Huellas en el HTML de la portada (píxel de Meta, wa.me, widgets de WhatsApp, chats, ecommerce, CRM, agenda, CMS) + reglas `must_have / must_not_have` |
+| Apollo | `_shared/radar-apollo.ts` | people search (0 créditos) agrupada por empresa; org search (1 crédito/página) para financiamiento; `findDecisionMakers` |
+| Prompts | `_shared/radar-planner.ts`, `_shared/radar-research.ts` | Plan, detector desde texto, detectores desde el Hub; investigador de noticias (compartido con `generate-radar`) |
+| Contexto | `_shared/radar-context.ts` | Bloque de texto del vendedor + targets + filtros base de Apollo + digest del Hub |
+| Avisos | `_shared/radar-notify.ts` | WhatsApp por el tenant de WATI de la plataforma (plantilla aprobada) |
+| UI | `js/radar-live.js` | Pestañas Señales / Plan de señales / Investigación puntual (`js/radar.js`) / Avisos |
+| Tablas | `supabase/migrations/20260918000001_radar_signal_engine.sql` | `radar_plans`, `radar_detectors`, `radar_signals` + columnas en `profiles` e `intel_hub_intake` |
+
+## Detectores (metodologías)
+
+| kind | Fuente | Costo externo | Qué encuentra |
+|---|---|---|---|
+| `news` | LLM con búsqueda web (motor "radar", Perplexity recomendado) | tokens | Prensa, comunicados, registros, job boards. Recencia garantizada en código (`withinWindow`) |
+| `tenders` | LLM con búsqueda web sobre portales de compras públicas (SECOP II, CompraNet, Mercado Público, SEACE, COMPR.AR, PLACE, SAM.gov) | tokens | Entidades que licitan lo que el cliente vende |
+| `hiring` | Apollo people search: `q_organization_job_titles`, `organization_num_jobs_range`, `organization_job_posted_at_range` | 0 créditos Apollo | Empresas con vacantes activas para los cargos que delatan la necesidad |
+| `technographics` | Apollo people search: `currently_using_any_of_technology_uids` / `currently_not_using_any_of_technology_uids` | 0 | Empresas que usan / no usan ciertas herramientas |
+| `site_probe` | Apollo (población del ICP) + GET de la portada pública | 0 | Ej. "botón wa.me sin ninguna herramienta de WhatsApp ni chatbot": WhatsApp atendido a mano |
+| `leadership` | Apollo people search: `person_days_in_current_title_range` | 0 | Decision makers nuevos en el cargo (≤ N días) |
+| `growth` | Apollo people search: `organization_headcount_growth_*` | 0 | Plantilla +X % en 6/12/24 meses |
+| `website_visitors` | Apollo people search: `website_visitors_people_*` (solo con la cuenta propia del cliente y la función Website Visitors) | 0 | Empresas que visitaron el sitio del cliente |
+| `funding` | Apollo organization search: `latest_funding_date_range` | **1 crédito de Apollo por página** (máx. 3 páginas por ciclo) | Rondas recientes dentro del ICP |
+| `presence` | Google Places Text Search (API New) | SKU Enterprise de Google por request | Negocios locales sin sitio web / sin teléfono / con rating bajo / con muchas o pocas reseñas |
+
+Reglas comunes que aplica el motor a TODO candidato: fuera de los países del plan → se descarta; propia empresa, competidores y exclusiones → se descartan; `fingerprint` único por usuario (por empresa+detector en los kinds por API, por empresa+titular en noticias/licitaciones); una señal descartada no resucita; los decision makers que la propia búsqueda de Apollo trajo se guardan gratis, el resto se busca en lotes de 3 (`dm_status = pending`). El correo se revela solo al guardar en una lista (igual que siempre).
+
+## Integraciones necesarias (checklist para producción)
+
+Secrets en Supabase (Project → Edge Functions → Secrets):
+
+| Secret | Para qué | Estado |
+|---|---|---|
+| `APOLLO_API_KEY` | hiring, technographics, site_probe (población), leadership, growth, funding, decision makers | ya existe |
+| `PERPLEXITY_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | news, tenders, generación del plan (motor "radar") | ya existen |
+| `GOOGLE_PLACES_API_KEY` | detector `presence`. Google Cloud → habilitar **Places API (New)** → crear API key restringida a esa API. Se factura por request (SKU Enterprise porque pedimos `websiteUri`, `rating`, `userRatingCount`, teléfono). Máx. 60 fichas por consulta | **nuevo, opcional**: sin ella el detector queda `unavailable` y lo dice |
+| `RADAR_WATI_API_URL`, `RADAR_WATI_TOKEN`, `RADAR_WATI_TEMPLATE` (+ `RADAR_WATI_CHANNEL`, `APP_URL` opcionales) | avisos por WhatsApp. Es un tenant de WATI de la **plataforma** (no el del cliente). Hay que crear en WATI una plantilla y que Meta la apruebe, con variables `{{name}}`, `{{count}}`, `{{top}}`, `{{link}}`; texto sugerido en `_shared/radar-notify.ts` | **nuevo**: sin ellos no se envía nada (el log lo dice) |
+| OAuth de Apollo (`APOLLO_OAUTH_CLIENT_ID/SECRET`, ya existente) | detector `website_visitors` exige la cuenta propia del cliente con la función Website Visitors y su tracker instalado | ya existe; el detector se marca `unavailable` si el cliente usa la key compartida |
+
+Pasos manuales:
+
+1. Aplicar `supabase/migrations/20260918000001_radar_signal_engine.sql`.
+2. `supabase functions deploy radar-plan radar-monitor generate-radar` (el workflow *Deploy Edge Functions* ya los incluye por defecto).
+3. Programar el cron (SQL editor), con la URL del proyecto y la service role:
+   ```sql
+   SELECT cron.schedule('radar-monitor', '*/2 * * * *', $cron$
+     SELECT net.http_post(
+       url := 'https://<project-ref>.supabase.co/functions/v1/radar-monitor',
+       headers := jsonb_build_object('Content-Type','application/json','Authorization','Bearer <SUPABASE_SERVICE_ROLE_KEY>'),
+       body := '{"mode":"cron"}'::jsonb,
+       timeout_milliseconds := 150000);
+   $cron$);
+   ```
+4. Secrets nuevos de arriba (Places y WATI de plataforma).
+
+## Lo que NO se integró y por qué
+
+- **Meta Ad Library API**: fuera de la Unión Europea solo devuelve anuncios políticos o de temas sociales, así que no sirve para saber si una empresa latinoamericana pauta. "¿Hace anuncios?" se responde con el sondeo del sitio (píxel de Meta, etiqueta de Google Ads, píxel de TikTok, Insight Tag de LinkedIn).
+- **Meta Business Manager**: no hay API pública para saber si una empresa lo tiene. La señal equivalente y observable es el sondeo del sitio: botón `wa.me` sin ninguna herramienta de WhatsApp Business ni chatbot detrás.
+- **Portales de licitaciones por API**: solo SECOP II (Colombia) tiene API abierta limpia; el resto se cubre por búsqueda web con el modo `tenders`, que exige la URL del aviso como evidencia.
+- **Intent data (Bombora) de Apollo**: no está expuesta en la API de búsqueda; queda fuera.
+
+## Economía
+
+| Acción | Créditos | Dónde se cobra |
+|---|---|---|
+| Generar el plan (primero gratis) | 6 | `radar-plan` |
+| Detector activo, por período de 30 días | 15 | `radar-monitor` (primer tick del período; sin saldo → `no_credits`) |
+| Detector propio en lenguaje natural | 3 | `radar-plan` |
+| Investigación puntual / demo | 12 / 3 | `generate-radar` (sin cambios) |
+
+Los precios viven en `js/credit-costs.js` y en las constantes de cada función; se cambian juntos.
+
+## Decisiones
+
+- El plan lo propone la IA y lo aprueba el usuario; regenerarlo reemplaza los detectores de origen `ai` y `hub`, nunca los de origen `user`.
+- Los países son exclusivamente los del contexto, salvo que el prompt del plan nombre otros (2026-09-17, decisión del usuario).
+- El puntaje es determinista y explicable; el peso del detector aprende del feedback (👍 +3, 👎 −6, acotado a [10, 100]).
+- "Buscar ahora" no salta el cobro ni la cadencia: adelanta `next_run_at` y el cliente empuja ticks mientras mira; lo que quede lo termina el cron.
+- Cada invocación del motor hace pocas unidades acotadas (≤ 115 s) por el tope de ~150 s del Edge Runtime; un detector reclamado en `running` más de 6 min se considera muerto y se retoma.

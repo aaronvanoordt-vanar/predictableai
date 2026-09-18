@@ -170,7 +170,18 @@
     excludePrevRadar: true,
   };
 
-  function shell() { return document.getElementById('radar-shell'); }
+  // Desde 2026-09-18 la página del Radar la pinta js/radar-live.js (feed de
+  // señales + plan); la investigación puntual vive en su pestaña, dentro de
+  // #radar-puntual-shell. Si ese contenedor no existe (radar-live no cargó),
+  // se monta como antes en #radar-shell.
+  function shell() {
+    const own = document.getElementById('radar-puntual-shell');
+    if (own) return own;
+    // Con radar-live cargado, #radar-shell es SUYO: pintar aquí (p. ej. desde
+    // saveToList llamado por el feed) pisaría el feed entero. Sin contenedor,
+    // render() no hace nada y el estado se pinta cuando exista.
+    return global.radarLive ? null : document.getElementById('radar-shell');
+  }
 
   async function show() {
     const el = shell();
@@ -629,17 +640,32 @@
     }
   }
 
-  async function saveToList(companies) {
-    if (state.busy) return;
-    if (!companies.length) return;
+  // opts (2026-09-18, lo usa js/radar-live.js para el feed de señales):
+  //   name      nombre de la lista ya decidido (no se pregunta)
+  //   silent    no mostrar el alert final (el llamador informa a su manera)
+  //   onStatus  callback con el progreso ("Revelando contactos 3/12…")
+  // Devuelve la lista creada ({ id, name }) o null si el usuario canceló.
+  async function saveToList(companies, opts) {
+    opts = opts || {};
+    if (state.busy) return null;
+    if (!companies.length) return null;
+    if (!state.user) {
+      try { state.user = await global.supabaseHelpers.getUser(); } catch (e) { /* auth-guard redirige */ }
+      if (!state.user) return null;
+    }
     const now = new Date();
     const baseName = 'Radar ' + now.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' }) +
       ' ' + now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
-    const typed = global.prompt('Nombre de la lista:', baseName);
-    if (typed === null) return; // el usuario cancelo
-    const name = typed.trim() || baseName;
+    let name = String(opts.name || '').trim();
+    if (!name) {
+      const typed = global.prompt('Nombre de la lista:', baseName);
+      if (typed === null) return null; // el usuario cancelo
+      name = typed.trim() || baseName;
+    }
+    let createdList = null;
+    const notify = (msg) => { state.saveMsg = msg; if (typeof opts.onStatus === 'function') opts.onStatus(msg); };
     state.busy = true;
-    state.saveMsg = 'Guardando…';
+    notify('Guardando…');
     render();
     try {
       if (!global.prospectingData || typeof global.prospectingData.createList !== 'function' ||
@@ -653,6 +679,7 @@
       } catch (e) {
         list = await global.prospectingData.createList(name + ' (' + now.getSeconds() + 's)');
       }
+      createdList = list;
 
       // 0. Revelar el email laboral de los decision makers que se van a
       //    guardar (Apollo /people/bulk_match, 1 crédito por persona) — este
@@ -666,10 +693,10 @@
       }
       let emailByPersonId = new Map();
       if (dmPersonIds.length) {
-        state.saveMsg = 'Revelando contactos 0/' + dmPersonIds.length + '…';
+        notify('Revelando contactos 0/' + dmPersonIds.length + '…');
         render();
         emailByPersonId = await global.prospectingData.bulkMatchByPersonId(dmPersonIds, (p) => {
-          state.saveMsg = 'Revelando contactos ' + p.done + '/' + p.total + '…';
+          notify('Revelando contactos ' + p.done + '/' + p.total + '…');
           render();
         });
       }
@@ -698,7 +725,7 @@
 
       // 2. Guardar en Supabase PRIMERO: es lo unico que no se puede perder, y
       //    es lo que hace que la lista deje de estar vacia.
-      state.saveMsg = 'Guardando ' + rows.length + ' contacto' + (rows.length === 1 ? '' : 's') + '…';
+      notify('Guardando ' + rows.length + ' contacto' + (rows.length === 1 ? '' : 's') + '…');
       render();
       const { data: inserted, error } = await global.supabaseClient
         .from('prospect_list_members').insert(rows).select('id, apollo_person_id');
@@ -729,7 +756,7 @@
       let apolloSyncFailures = 0;
       const linkPatches = [];
       if (targets.length) {
-        state.saveMsg = 'Sincronizando con Apollo 0/' + targets.length + '…';
+        notify('Sincronizando con Apollo 0/' + targets.length + '…');
         render();
         await inBatches(targets, APOLLO_SYNC_CONCURRENCY, async (t) => {
           try {
@@ -744,14 +771,14 @@
             throw e;
           }
         }, (done, total) => {
-          state.saveMsg = 'Sincronizando con Apollo ' + done + '/' + total + '…';
+          notify('Sincronizando con Apollo ' + done + '/' + total + '…');
           render();
         });
       }
 
       // 4. Escribir de vuelta los apollo_contact_id conseguidos.
       if (linkPatches.length) {
-        state.saveMsg = 'Enlazando contactos de Apollo…';
+        notify('Enlazando contactos de Apollo…');
         render();
         await inBatches(linkPatches, APOLLO_SYNC_CONCURRENCY, async (p) => {
           await global.supabaseClient.from('prospect_list_members')
@@ -759,7 +786,7 @@
         });
       }
 
-      alert('Guardado en la lista "' + list.name + '": ' +
+      if (!opts.silent) alert('Guardado en la lista "' + list.name + '": ' +
         companies.length + ' empresa' + (companies.length === 1 ? '' : 's') +
         ' y ' + dmCount + ' decision maker' + (dmCount === 1 ? '' : 's') +
         (contactCount ? ' (' + contactCount + ' con correo ya revelado)' : '') + '.' +
@@ -777,7 +804,7 @@
       alert(e.message || 'No se pudo guardar la lista.');
     } finally {
       state.busy = false;
-      state.saveMsg = '';
+      notify('');
       render();
     }
   }
@@ -1406,5 +1433,5 @@
     document.head.appendChild(s);
   }
 
-  global.radar = { show };
+  global.radar = { show, saveToList };
 })(window);
