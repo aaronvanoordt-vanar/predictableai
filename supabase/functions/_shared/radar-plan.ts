@@ -51,17 +51,17 @@ export const KIND_META: Record<DetectorKind, KindMeta> = {
   },
   hiring: {
     label: "Contrataciones",
-    description: "Empresas con vacantes activas para los cargos que delatan la necesidad (Apollo).",
+    description: "Empresas con vacantes activas para los cargos que delatan la necesidad (Apollo, 1 crédito de Apollo por página).",
     requires: ["apollo"], defaultCadenceHours: 24, identity: "company",
   },
   technographics: {
     label: "Tecnologías en uso",
-    description: "Empresas que usan (o no usan) ciertas herramientas, según Apollo.",
+    description: "Empresas que usan ciertas herramientas, según Apollo (1 crédito de Apollo por página). Para 'no usa X' está el sondeo del sitio.",
     requires: ["apollo"], defaultCadenceHours: 72, identity: "company",
   },
   site_probe: {
     label: "Sondeo del sitio web",
-    description: "Se lee la portada pública del sitio: píxel de Meta, botón de WhatsApp sin proceso, chat, tienda online…",
+    description: "Se lee la portada pública del sitio: píxel de Meta, botón de WhatsApp sin proceso, chat, tienda online… (población: Apollo, 1 crédito de Apollo por página)",
     requires: ["apollo", "probe"], defaultCadenceHours: 72, identity: "company",
   },
   funding: {
@@ -76,7 +76,7 @@ export const KIND_META: Record<DetectorKind, KindMeta> = {
   },
   growth: {
     label: "Crecimiento de plantilla",
-    description: "Empresas del ICP cuya plantilla creció más de X % en 6-24 meses (Apollo).",
+    description: "Empresas del ICP cuya plantilla creció más de X % en 6-24 meses (Apollo, 1 crédito de Apollo por página).",
     requires: ["apollo"], defaultCadenceHours: 72, identity: "company",
   },
   presence: {
@@ -169,10 +169,12 @@ export function normalizeConfig(kind: DetectorKind, raw: unknown): Record<string
       };
     }
     case "technographics": {
+      // Solo "usa X": la búsqueda de empresas de Apollo (la única que devuelve
+      // dominios) no filtra "no usa X". La ausencia de una herramienta se caza
+      // con site_probe.must_not_have.
       const using_any = strList(c.using_any, 15, 60).map(techUid).filter(Boolean);
-      const not_using_any = strList(c.not_using_any, 15, 60).map(techUid).filter(Boolean);
-      if (!using_any.length && !not_using_any.length) return null;
-      return { using_any, not_using_any, keywords: strList(c.keywords, 6, 60) };
+      if (!using_any.length) return null;
+      return { using_any, keywords: strList(c.keywords, 6, 60) };
     }
     case "site_probe": {
       const must_have = strList(c.must_have, 8, 40).filter(isTechKey);
@@ -315,7 +317,7 @@ CONFIG BY KIND (every field shown is required unless marked optional):
 - news:            { "queries": ["3-10 concrete web-search queries, in the language of the sources (Spanish for LATAM), each a DIFFERENT way into the signal, written to surface dated recent items (press, filings, job boards, announcements)"], "sources": ["kinds of sources to trust"], "window_days": 7|30|90|180|365 }
 - tenders:         { "queries": ["3-8 queries against public-procurement portals of the target countries (SECOP II Colombia, CompraNet México, Mercado Público Chile, SEACE Perú, COMPR.AR Argentina, PLACE España, SAM.gov USA…) for the goods/services the seller sells"], "portals": ["portal names"], "window_days": 30|90 }
 - hiring:          { "job_titles": ["2-8 job titles whose active postings reveal the need, in English (Apollo)"], "min_jobs": 1, "posted_within_days": 30, "job_locations": ["optional cities/countries"] }
-- technographics:  { "using_any": ["Apollo technology uids the target uses, e.g. 'salesforce', 'hubspot', 'shopify', 'wordpress_org', 'zendesk', 'intercom'"], "not_using_any": ["uids the target LACKS"] } — at least one list non-empty. Combine with the seller's ICP automatically.
+- technographics:  { "using_any": ["Apollo technology uids the target USES, e.g. 'salesforce', 'hubspot', 'shopify', 'wordpress_org', 'zendesk', 'intercom'"] } — non-empty. There is NO "not using" filter: to hunt for the ABSENCE of a tool use site_probe with must_not_have. Combine with the seller's ICP automatically.
 - site_probe:      { "must_have": ["keys"], "must_not_have": ["keys"] } — keys: meta_pixel, google_ads_tag, tiktok_pixel, linkedin_insight, gtm, ga4, hotjar, clarity, whatsapp_click_to_chat, whatsapp_widget, wati, manychat, respond_io, kommo, cliengo, intercom, drift, hubspot_chat, zendesk, tidio, crisp, freshchat, tawk, livechat, chatbot_ai, shopify, woocommerce, vtex, magento, tiendanube, mercadopago, stripe, calendly, hubspot_meetings, pipedrive, salesforce, zoho, wordpress, wix, squarespace, webflow, or the groups any_chat, any_whatsapp_tool, any_ads_pixel, any_ecommerce, any_crm, any_booking, any_analytics. Example "sells WhatsApp AI automation": { "must_have": ["whatsapp_click_to_chat"], "must_not_have": ["any_whatsapp_tool", "chatbot_ai"] }.
 - funding:         { "window_days": 90, "min_amount": 0 (USD, optional), "stages": ["optional: seed, series_a, series_b…"] }
 - leadership:      { "titles": ["2-8 buyer titles in English"], "max_days_in_role": 90 }

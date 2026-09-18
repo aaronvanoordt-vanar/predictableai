@@ -11,14 +11,25 @@
  * el único que filtra por país, deduplica por fingerprint, puntúa y guarda.
  *
  *   news / tenders     LLM + web_search (una consulta por tick)     0 créditos Apollo
- *   hiring             Apollo people search + filtros de vacantes   0
- *   technographics     Apollo people search + tecnologías           0
- *   site_probe         Apollo people search (población) + GET portada 0
+ *   hiring             Apollo ORGANIZATION search + filtros de vacantes   1 crédito Apollo / página
+ *   technographics     Apollo ORGANIZATION search + tecnologías en uso    1 crédito Apollo / página
+ *   site_probe         Apollo ORGANIZATION search (población) + GET portada 1 crédito Apollo / página
+ *   growth             Apollo ORGANIZATION search + crecimiento plantilla 1 crédito Apollo / página
+ *   funding            Apollo ORGANIZATION search + rondas            1 crédito Apollo / página
  *   leadership         Apollo people search + días en el cargo      0
- *   growth             Apollo people search + crecimiento plantilla 0
  *   website_visitors   Apollo people search + visitantes (cuenta propia) 0
- *   funding            Apollo ORGANIZATION search                   1 crédito Apollo / página
  *   presence           Google Places Text Search                    SKU Enterprise de Google
+ *
+ * Por qué los detectores de EMPRESA usan la búsqueda de organizaciones y no
+ * la de personas (2026-09-18): /mixed_people/api_search devuelve la
+ * organización de cada persona solo con `name` y banderas `has_*` — sin
+ * `primary_domain`, `website_url`, `id` ni `country`. Con eso el sondeo del
+ * sitio no tenía nada que leer ("0 sitios sondeados"), el filtro por país no
+ * podía descartar nada y los decision makers no se podían buscar por dominio.
+ * /mixed_companies/search sí trae id + dominio + sitio (1 crédito por página
+ * de 100, como ya hacía funding). Leadership y website_visitors filtran por
+ * la PERSONA (días en el cargo, visitas) y no tienen equivalente de empresa:
+ * siguen en people search y sus señales pueden venir sin dominio.
  */
 
 import { callLLM, LlmTimeoutError, parseLlmJson, type Engine } from "./llm.ts";
@@ -95,8 +106,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n: number) => new Date(Date.now() - n * 86400_000).toISOString().slice(0, 10);
 const asStr = (v: unknown) => (typeof v === "string" ? v : "");
 const PAGE_SIZE = 100;
-const MAX_PAGES_PER_CYCLE = 5;          // 500 personas por ciclo y detector
-const MAX_ORG_PAGES_PER_CYCLE = 3;      // funding: 3 créditos de Apollo por ciclo
+const MAX_PAGES_PER_CYCLE = 5;          // 500 personas por ciclo y detector (people search)
+const MAX_ORG_PAGES_PER_CYCLE = 3;      // 300 empresas = 3 créditos de Apollo por ciclo (organization search)
 const PROBE_BATCH = 12;                 // dominios sondeados en paralelo por tick
 const PROBE_TIMEOUT_MS = 8000;
 const PROBE_MEMORY = 600;               // dominios recordados (no re-sondear en 30 días)
@@ -216,11 +227,45 @@ async function peoplePage(t: TickContext, extra: Record<string, unknown>, page: 
   return { groups: groupByOrganization(r.people), totalPages: r.totalPages, people: r.people };
 }
 
+/**
+ * Una página de EMPRESAS del ICP (/mixed_companies/search, 1 crédito de Apollo
+ * por página con resultados). Es la única búsqueda que devuelve id, dominio y
+ * sitio web; el país, la industria y la plantilla NO vienen (Apollo los
+ * recortó de la respuesta), pero el filtro por país ya lo aplicó Apollo en
+ * el servidor con `organization_locations`.
+ */
+async function orgPage(t: TickContext, extra: Record<string, unknown>, page: number): Promise<{ orgs: ApolloOrg[]; totalPages: number }> {
+  const auth = needApollo(t);
+  const body: Record<string, unknown> = {
+    ...apolloBaseFilters(t.ctx),
+    ...extra,
+    page,
+    per_page: PAGE_SIZE,
+  };
+  if (t.countries.length) body.organization_locations = t.countries.slice(0, 20);
+  const r = await organizationSearch(auth, body);
+  const own = t.ctx.ownDomain;
+  const orgs = r.organizations.filter((o) => asStr(o?.name).trim() && (!own || orgDomain(o) !== own));
+  // Apollo ya filtró por `organization_locations` pero no devuelve el país:
+  // con un solo país en el plan el dato es cierto y sirve para puntuar.
+  if (t.countries.length === 1) for (const o of orgs) if (!asStr(o.country)) o.country = t.countries[0];
+  return { orgs, totalPages: r.totalPages };
+}
+
 function pagedCursor(t: TickContext): number { return Math.max(1, Number(t.detector.cursor?.page) || 1); }
 
-function pagedNext(page: number, totalPages: number): { cursor: Json; done: boolean } {
-  const last = page >= Math.min(totalPages, MAX_PAGES_PER_CYCLE);
+function pagedNext(page: number, totalPages: number, maxPages = MAX_PAGES_PER_CYCLE): { cursor: Json; done: boolean } {
+  const last = page >= Math.min(totalPages, maxPages);
   return { cursor: last ? {} : { page: page + 1 }, done: last };
+}
+
+function orgPagedNext(page: number, totalPages: number): { cursor: Json; done: boolean } {
+  return pagedNext(page, totalPages, MAX_ORG_PAGES_PER_CYCLE);
+}
+
+function orgNote(orgs: ApolloOrg[], page: number, candidates: number): string {
+  if (!orgs.length) return page === 1 ? "Apollo no devolvió empresas para estos filtros en tus países" : `sin más empresas en la página ${page}`;
+  return `${orgs.length} empresas en la página ${page}` + (candidates !== orgs.length ? `, ${candidates} con la señal` : "");
 }
 
 async function tickHiring(t: TickContext): Promise<TickResult> {
@@ -234,43 +279,43 @@ async function tickHiring(t: TickContext): Promise<TickResult> {
     organization_job_posted_at_range: { min: daysAgo(within), max: today() },
   };
   if (Array.isArray(cfg.job_locations) && cfg.job_locations.length) extra.organization_job_locations = cfg.job_locations;
-  const { groups, totalPages } = await peoplePage(t, extra, page, t.ctx.targets.titles);
-  const candidates = groups.map((g) => {
-    const c = baseCandidate(g.org, g);
+  const { orgs, totalPages } = await orgPage(t, extra, page);
+  const candidates = orgs.map((org) => {
+    const c = baseCandidate(org);
     c.headline = `Vacantes activas: ${titles.slice(0, 3).join(", ")}`.slice(0, 70);
     c.why_fit = `Apollo reporta vacantes de ${titles.join(", ")} publicadas en los últimos ${within} días: el equipo que sufre el problema está creciendo.`;
     c.strength = (Number(cfg.min_jobs) || 1) >= 3 ? "alta" : "media";
     c.facts = { job_titles: titles, posted_within_days: within };
-    const jobs = linkedinJobsUrl(g.org);
+    const jobs = linkedinJobsUrl(org);
     c.evidence = jobs ? [{ url: jobs, summary: "Vacantes de la empresa en LinkedIn (según Apollo)", published_at: today() }] : [];
     return c;
   });
-  return { candidates, ...pagedNext(page, totalPages) };
+  return { candidates, ...orgPagedNext(page, totalPages), note: orgNote(orgs, page, candidates.length) };
 }
 
 async function tickTechnographics(t: TickContext): Promise<TickResult> {
   const cfg = t.detector.config || {};
-  const using: string[] = Array.isArray(cfg.using_any) ? cfg.using_any : [];
-  const notUsing: string[] = Array.isArray(cfg.not_using_any) ? cfg.not_using_any : [];
+  const using: string[] = Array.isArray(cfg.using_any) ? cfg.using_any.filter(Boolean) : [];
+  // La búsqueda de empresas de Apollo solo filtra "usa X"; "no usa X" existe
+  // únicamente en la de personas, que no devuelve dominios. Para cazar la
+  // AUSENCIA de una herramienta está el sondeo del sitio (must_not_have).
+  if (!using.length) {
+    throw new Error("Este detector no está configurado con tecnologías en uso (using_any): Apollo no filtra 'no usa X' en la búsqueda de empresas. Para buscar empresas SIN una herramienta usa el sondeo del sitio web.");
+  }
   const page = pagedCursor(t);
-  const extra: Record<string, unknown> = {};
-  if (using.length) extra.currently_using_any_of_technology_uids = using;
-  if (notUsing.length) extra.currently_not_using_any_of_technology_uids = notUsing;
+  const extra: Record<string, unknown> = { currently_using_any_of_technology_uids: using };
   if (Array.isArray(cfg.keywords) && cfg.keywords.length) extra.q_organization_keyword_tags = cfg.keywords;
-  const { groups, totalPages } = await peoplePage(t, extra, page, t.ctx.targets.titles);
-  const candidates = groups.map((g) => {
-    const c = baseCandidate(g.org, g);
-    const parts = [];
-    if (using.length) parts.push("usa " + using.slice(0, 2).join("/"));
-    if (notUsing.length) parts.push("sin " + notUsing.slice(0, 2).join("/"));
-    c.headline = (parts.join(" · ") || "Tecnografía coincide").slice(0, 70);
-    c.headline = c.headline.charAt(0).toUpperCase() + c.headline.slice(1);
-    c.why_fit = `Según la tecnografía de Apollo, ${parts.join(" y ")}: exactamente el hueco que cubre tu oferta.`;
-    c.facts = { using_any: using, not_using_any: notUsing };
+  const { orgs, totalPages } = await orgPage(t, extra, page);
+  const candidates = orgs.map((org) => {
+    const c = baseCandidate(org);
+    const what = using.slice(0, 2).join("/");
+    c.headline = `Usa ${what}`.slice(0, 70);
+    c.why_fit = `Según la tecnografía de Apollo usa ${using.join(", ")}: exactamente el hueco que cubre tu oferta.`;
+    c.facts = { using_any: using };
     c.evidence = c.website ? [{ url: c.website, summary: "Sitio de la empresa (tecnologías según Apollo)", published_at: today() }] : [];
     return c;
   });
-  return { candidates, ...pagedNext(page, totalPages) };
+  return { candidates, ...orgPagedNext(page, totalPages), note: orgNote(orgs, page, candidates.length) };
 }
 
 async function tickLeadership(t: TickContext): Promise<TickResult> {
@@ -314,19 +359,19 @@ async function tickGrowth(t: TickContext): Promise<TickResult> {
     organization_headcount_growth_range: { min },
   };
   if (Array.isArray(cfg.keywords) && cfg.keywords.length) extra.q_organization_keyword_tags = cfg.keywords;
-  const { groups, totalPages } = await peoplePage(t, extra, page, t.ctx.targets.titles);
-  const candidates = groups.map((g) => {
-    const c = baseCandidate(g.org, g);
-    const pct = growthPct(g.org, months);
+  const { orgs, totalPages } = await orgPage(t, extra, page);
+  const candidates = orgs.map((org) => {
+    const c = baseCandidate(org);
+    const pct = growthPct(org, months);
     c.headline = (pct !== null ? `Plantilla +${pct} % en ${months} meses` : `Plantilla creció >${min} % en ${months} meses`).slice(0, 70);
     c.why_fit = `Crecer rápido rompe procesos: es el momento en que se compra lo que los ordena.`;
     c.strength = pct !== null && pct >= min * 2 ? "alta" : "media";
     c.facts = { growth_pct: pct, months };
-    const li = asStr(g.org?.linkedin_url);
+    const li = asStr(org.linkedin_url);
     c.evidence = li ? [{ url: li, summary: "Página de la empresa en LinkedIn (crecimiento según Apollo)", published_at: today() }] : [];
     return c;
   });
-  return { candidates, ...pagedNext(page, totalPages) };
+  return { candidates, ...orgPagedNext(page, totalPages), note: orgNote(orgs, page, candidates.length) };
 }
 
 async function tickWebsiteVisitors(t: TickContext): Promise<TickResult> {
@@ -362,7 +407,7 @@ async function tickWebsiteVisitors(t: TickContext): Promise<TickResult> {
 
 // ── site_probe ──────────────────────────────────────────────────────────────
 
-interface ProbeCursor { page?: number; queue?: string[]; seen?: Record<string, string>; orgs?: Record<string, Json>; exhausted?: boolean }
+interface ProbeCursor { page?: number; queue?: string[]; seen?: Record<string, string>; orgs?: Record<string, Json>; exhausted?: boolean; fetched?: number }
 
 async function tickSiteProbe(t: TickContext): Promise<TickResult> {
   const cfg = t.detector.config || {};
@@ -373,24 +418,30 @@ async function tickSiteProbe(t: TickContext): Promise<TickResult> {
   let queue: string[] = Array.isArray(cur.queue) ? cur.queue : [];
   let page = Math.max(1, Number(cur.page) || 1);
   let exhausted = !!cur.exhausted;
+  let fetched = Number(cur.fetched) || 0;   // empresas que Apollo devolvió en este ciclo
   const cutoff = Date.now() - 30 * 86400_000;
 
-  // 1. Si la cola está vacía, traer una página más de población del ICP.
+  // 1. Si la cola está vacía, traer una página más de población del ICP
+  //    (búsqueda de EMPRESAS: es la única que trae el dominio a sondear).
+  let pageNote = "";
   if (!queue.length && !exhausted) {
     const extra: Record<string, unknown> = {};
     if (Array.isArray(cfg.keywords) && cfg.keywords.length) extra.q_organization_keyword_tags = cfg.keywords;
-    const { groups, totalPages } = await peoplePage(t, extra, page, t.ctx.targets.titles);
-    for (const g of groups) {
-      const d = g.domain;
-      if (!d || d === t.ctx.ownDomain) continue;
+    const { orgs: found, totalPages } = await orgPage(t, extra, page);
+    fetched += found.length;
+    for (const org of found) {
+      const d = orgDomain(org);
+      if (!d) continue;
       const last = seen[d] ? Date.parse(seen[d]) : 0;
       if (last && last > cutoff) continue;
       if (!queue.includes(d)) {
         queue.push(d);
-        orgs[d] = { org: g.org, dms: peopleAsDecisionMakers(g) };
+        orgs[d] = { org };
       }
     }
-    exhausted = page >= Math.min(totalPages, MAX_PAGES_PER_CYCLE);
+    if (!found.length && page === 1) pageNote = "Apollo no devolvió empresas para estos filtros en tus países";
+    else if (found.length && !queue.length) pageNote = `${found.length} empresas sin dominio o ya sondeadas hace menos de 30 días`;
+    exhausted = page >= Math.min(totalPages, MAX_ORG_PAGES_PER_CYCLE);
     page += 1;
   }
 
@@ -413,7 +464,6 @@ async function tickSiteProbe(t: TickContext): Promise<TickResult> {
     const c = baseCandidate(info.org);
     c.domain = r.domain;
     c.website = r.url;
-    c.decision_makers = Array.isArray(info.dms) ? info.dms : undefined;
     c.headline = probeHeadline(r.found, rules) || "Sitio coincide con la señal";
     c.why_fit = `Leímos la portada de ${r.domain}: ${probeHeadline(r.found, rules).toLowerCase()}. Es el hueco exacto que cubre tu oferta.`;
     c.strength = "alta";
@@ -429,8 +479,10 @@ async function tickSiteProbe(t: TickContext): Promise<TickResult> {
     for (const k of keys.slice(0, keys.length - PROBE_MEMORY)) delete seen[k];
   }
   const done = exhausted && !queue.length;
-  const cursor: ProbeCursor = done ? { seen } : { page, queue, seen, orgs, exhausted };
-  const note = `${batch.length} sitios sondeados, ${candidates.length} coinciden` + (unreachable ? `, ${unreachable} sin respuesta` : "");
+  const cursor: ProbeCursor = done ? { seen } : { page, queue, seen, orgs, exhausted, fetched };
+  const note = batch.length
+    ? `${batch.length} sitios sondeados, ${candidates.length} coinciden` + (unreachable ? `, ${unreachable} sin respuesta` : "") + (queue.length ? `, ${queue.length} en cola` : "")
+    : (pageNote || (done && !fetched ? "Apollo no devolvió empresas para estos filtros en tus países" : "0 sitios sondeados"));
   return { candidates, cursor, done, note };
 }
 
@@ -454,6 +506,7 @@ async function tickFunding(t: TickContext): Promise<TickResult> {
   const stages: string[] = Array.isArray(cfg.stages) ? cfg.stages : [];
   const candidates: Candidate[] = [];
   for (const org of r.organizations) {
+    if (t.ctx.ownDomain && orgDomain(org) === t.ctx.ownDomain) continue;
     const stage = asStr(org.latest_funding_stage);
     if (stages.length && stage && !stages.some((s) => stage.toLowerCase().includes(s.toLowerCase()))) continue;
     const c = baseCandidate(org);

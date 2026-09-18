@@ -40,14 +40,16 @@ Contexto de tu empresa  →  Intelligence Hub  →  Radar  →  Listas  →  Cam
 |---|---|---|---|
 | `news` | LLM con búsqueda web (motor "radar", Perplexity recomendado) | tokens | Prensa, comunicados, registros, job boards. Recencia garantizada en código (`withinWindow`) |
 | `tenders` | LLM con búsqueda web sobre portales de compras públicas (SECOP II, CompraNet, Mercado Público, SEACE, COMPR.AR, PLACE, SAM.gov) | tokens | Entidades que licitan lo que el cliente vende |
-| `hiring` | Apollo people search: `q_organization_job_titles`, `organization_num_jobs_range`, `organization_job_posted_at_range` | 0 créditos Apollo | Empresas con vacantes activas para los cargos que delatan la necesidad |
-| `technographics` | Apollo people search: `currently_using_any_of_technology_uids` / `currently_not_using_any_of_technology_uids` | 0 | Empresas que usan / no usan ciertas herramientas |
-| `site_probe` | Apollo (población del ICP) + GET de la portada pública | 0 | Ej. "botón wa.me sin ninguna herramienta de WhatsApp ni chatbot": WhatsApp atendido a mano |
-| `leadership` | Apollo people search: `person_days_in_current_title_range` | 0 | Decision makers nuevos en el cargo (≤ N días) |
-| `growth` | Apollo people search: `organization_headcount_growth_*` | 0 | Plantilla +X % en 6/12/24 meses |
+| `hiring` | Apollo organization search: `q_organization_job_titles`, `organization_num_jobs_range`, `organization_job_posted_at_range` | **1 crédito de Apollo por página** (máx. 3 páginas por ciclo) | Empresas con vacantes activas para los cargos que delatan la necesidad |
+| `technographics` | Apollo organization search: `currently_using_any_of_technology_uids` (solo "usa X": la búsqueda de empresas no tiene "no usa X"; la ausencia de una herramienta se caza con `site_probe.must_not_have`) | **1 crédito de Apollo por página** (máx. 3) | Empresas que usan ciertas herramientas |
+| `site_probe` | Apollo organization search (población del ICP: 300 empresas por ciclo) + GET de la portada pública | **1 crédito de Apollo por página** (máx. 3) | Ej. "botón wa.me sin ninguna herramienta de WhatsApp ni chatbot": WhatsApp atendido a mano |
+| `leadership` | Apollo people search: `person_days_in_current_title_range` | 0 | Decision makers nuevos en el cargo (≤ N días). La señal es la persona: la empresa puede venir sin dominio ni país (ver abajo) |
+| `growth` | Apollo organization search: `organization_headcount_growth_*` | **1 crédito de Apollo por página** (máx. 3) | Plantilla +X % en 6/12/24 meses |
 | `website_visitors` | Apollo people search: `website_visitors_people_*` (solo con la cuenta propia del cliente y la función Website Visitors) | 0 | Empresas que visitaron el sitio del cliente |
 | `funding` | Apollo organization search: `latest_funding_date_range` | **1 crédito de Apollo por página** (máx. 3 páginas por ciclo) | Rondas recientes dentro del ICP |
 | `presence` | Google Places Text Search (API New) | SKU Enterprise de Google por request | Negocios locales sin sitio web / sin teléfono / con rating bajo / con muchas o pocas reseñas |
+
+**Por qué los detectores de empresa usan la búsqueda de organizaciones (2026-09-18).** `/mixed_people/api_search` devuelve la organización de cada persona solo con `name` y banderas `has_*`: sin `id`, `primary_domain`, `website_url` ni `country`. Con esa población el sondeo del sitio terminaba cada ciclo con "0 sitios sondeados" (no había dominio que leer), el filtro por país no podía descartar nada (país vacío pasa como "desconocido") y los decision makers no se podían buscar por dominio. `/mixed_companies/search` sí trae `id` + dominio + sitio (país, industria y plantilla tampoco vienen, pero el país ya lo filtró Apollo con `organization_locations`), a 1 crédito de Apollo por página de 100. `leadership` y `website_visitors` filtran por la persona y no tienen equivalente de empresa: siguen en people search.
 
 Reglas comunes que aplica el motor a TODO candidato: fuera de los países del plan → se descarta; propia empresa, competidores y exclusiones → se descartan; `fingerprint` único por usuario (por empresa+detector en los kinds por API, por empresa+titular en noticias/licitaciones); una señal descartada no resucita; los decision makers que la propia búsqueda de Apollo trajo se guardan gratis, el resto se busca en lotes de 3 (`dm_status = pending`). El correo se revela solo al guardar en una lista (igual que siempre).
 
@@ -57,7 +59,7 @@ Secrets en Supabase (Project → Edge Functions → Secrets):
 
 | Secret | Para qué | Estado |
 |---|---|---|
-| `APOLLO_API_KEY` | hiring, technographics, site_probe (población), leadership, growth, funding, decision makers | ya existe |
+| `APOLLO_API_KEY` | hiring, technographics, site_probe (población), growth, funding (búsqueda de empresas, 1 crédito por página), leadership, website_visitors, decision makers (búsqueda de personas, 0 créditos) | ya existe |
 | `PERPLEXITY_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | news, tenders, generación del plan (motor "radar") | ya existen |
 | `GOOGLE_PLACES_API_KEY` | detector `presence`. Google Cloud → habilitar **Places API (New)** → crear API key restringida a esa API. Se factura por request (SKU Enterprise porque pedimos `websiteUri`, `rating`, `userRatingCount`, teléfono). Máx. 60 fichas por consulta | **nuevo, opcional**: sin ella el detector queda `unavailable` y lo dice |
 | `RADAR_WATI_API_URL`, `RADAR_WATI_TOKEN`, `RADAR_WATI_TEMPLATE` (+ `RADAR_WATI_CHANNEL`, `APP_URL` opcionales) | avisos por WhatsApp. Es un tenant de WATI de la **plataforma** (no el del cliente). Hay que crear en WATI una plantilla y que Meta la apruebe, con variables `{{name}}`, `{{count}}`, `{{top}}`, `{{link}}`; texto sugerido en `_shared/radar-notify.ts` | **nuevo**: sin ellos no se envía nada (el log lo dice) |
