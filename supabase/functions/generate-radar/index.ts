@@ -135,6 +135,17 @@ import {
   LlmTimeoutError,
   type Engine,
 } from "../_shared/llm.ts";
+import {
+  DEFAULT_NEWS_WINDOW_DAYS,
+  cutoffIso,
+  normalizeWindowDays,
+  recencyBlock,
+  windowLabelDe,
+  withinWindow,
+} from "../_shared/radar-recency.ts";
+import { RESEARCH_SYSTEM } from "../_shared/radar-research.ts";
+import { findDecisionMakers, toDomain } from "../_shared/radar-apollo.ts";
+import { loadSellerContext as loadSellerContextShared } from "../_shared/radar-context.ts";
 
 // Keep in sync with js/credit-costs.js (radar_run / radar_run_demo).
 const RADAR_RUN_COST = 12;
@@ -187,19 +198,12 @@ function costFor(cap: number): number {
 // a 400-person company can genuinely have eight people worth contacting, and
 // picking which three the seller gets to see is not this function's call.
 // The cap only guards row size and Apollo cost on an outlier.
-const MAX_DECISION_MAKERS = 25;   // per company
-const DM_PAGE_SIZE = 25;          // Apollo people-search page size
-const MAX_DM_SEARCH_PAGES = 2;    // per query, per company
+// MAX_DECISION_MAKERS / DM_PAGE_SIZE / MAX_DM_SEARCH_PAGES viven en
+// _shared/radar-apollo.ts (findDecisionMakers), compartidos con radar-monitor.
 // Companies per decision_makers call. Each company costs one-to-three
 // searches, and the Edge Runtime still hard-kills any invocation at ~150s.
 const DM_BATCH_SIZE = 3;
 
-// ── Recency ────────────────────────────────────────────────────────────────
-// Franjas que ofrece la UI (js/radar.js). Anything else the client sends is
-// snapped to the nearest allowed value — the column's CHECK is deliberately
-// wider than this list, so the allowlist lives here, in one place.
-const NEWS_WINDOWS = [7, 30, 90, 180, 365];
-const DEFAULT_NEWS_WINDOW_DAYS = 90;
 
 // "Empresas que ya conoces": names snapshotted onto the run at creation time
 // and fed to the model as exclusions. Two separate caps — the row keeps more
@@ -284,161 +288,12 @@ function asStrArr(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
 }
 
-// "https://www.acme.com.mx/about" → "acme.com.mx" (Apollo filters by bare domain).
-function toDomain(website: string): string {
-  const w = String(website || "").trim();
-  if (!w) return "";
-  try {
-    const u = new URL(/^https?:\/\//i.test(w) ? w : "https://" + w);
-    return u.hostname.replace(/^www\./i, "").toLowerCase();
-  } catch {
-    return "";
-  }
-}
-
 function isStale(row: { updated_at: string }): boolean {
   return Date.now() - new Date(row.updated_at).getTime() > STALE_MS;
 }
 
-// ── Franja de fechas: qué tan reciente tiene que ser la noticia ─────────────
-
-/** Snap whatever the client sent to an offered window. */
-function normalizeWindowDays(v: unknown): number {
-  const n = Math.round(Number(v));
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_NEWS_WINDOW_DAYS;
-  if (NEWS_WINDOWS.includes(n)) return n;
-  return NEWS_WINDOWS.reduce((best, w) =>
-    Math.abs(w - n) < Math.abs(best - n) ? w : best, NEWS_WINDOWS[0]);
-}
-
 function windowDaysOf(run: { news_window_days?: unknown }): number {
   return normalizeWindowDays(run?.news_window_days ?? DEFAULT_NEWS_WINDOW_DAYS);
-}
-
-/** Oldest date a signal may carry, as "YYYY-MM-DD". */
-function cutoffIso(windowDays: number): string {
-  return new Date(Date.now() - windowDays * 86400_000).toISOString().slice(0, 10);
-}
-
-const WINDOW_LABEL_ES: Record<number, string> = {
-  7: "los últimos 7 días",
-  30: "el último mes",
-  90: "los últimos 3 meses",
-  180: "los últimos 6 meses",
-  365: "el último año",
-};
-
-function windowLabel(days: number): string {
-  return WINDOW_LABEL_ES[days] || `los últimos ${days} días`;
-}
-
-// "de" + la franja, ya contraído: "del último mes", no "de el último mes".
-const WINDOW_LABEL_DE_ES: Record<number, string> = {
-  7: "de los últimos 7 días",
-  30: "del último mes",
-  90: "de los últimos 3 meses",
-  180: "de los últimos 6 meses",
-  365: "del último año",
-};
-
-function windowLabelDe(days: number): string {
-  return WINDOW_LABEL_DE_ES[days] || `de los últimos ${days} días`;
-}
-
-/**
- * A date the model wrote, as { at, precision } — or null when it wrote
- * nothing usable.
- *
- * Partial dates resolve to the LAST instant of their period ("2026-08" →
- * Aug 31), clamped to now so the current month/year doesn't come back as a
- * future date. The precision travels with the value because it decides how
- * much the date can prove: "agosto de 2026" cannot establish that something
- * was published in the last 7 days, no matter which day of August you pick.
- */
-type DatePrecision = "day" | "month" | "year";
-
-function parseSignalDate(v: unknown): { at: number; precision: DatePrecision } | null {
-  const raw = asStr(v).trim();
-  const clamp = (t: number) => Math.min(t, Date.now());
-  let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
-  if (m) return { at: Date.UTC(+m[1], +m[2] - 1, +m[3], 23, 59, 59), precision: "day" };
-  m = /^(\d{4})-(\d{2})$/.exec(raw);
-  // Day 0 of the next month = last day of this one.
-  if (m) return { at: clamp(Date.UTC(+m[1], +m[2], 0, 23, 59, 59)), precision: "month" };
-  m = /^(\d{4})$/.exec(raw);
-  if (m) return { at: clamp(Date.UTC(+m[1], 11, 31, 23, 59, 59)), precision: "year" };
-  return null;
-}
-
-/**
- * A date is only usable if its precision is at least as fine as the window it
- * has to fit in: a month tells you nothing about a 7-day window, but it is
- * exactly enough for a 1-month one.
- */
-const PRECISION_SPAN_DAYS: Record<DatePrecision, number> = { day: 1, month: 30, year: 365 };
-
-/**
- * The newest date this company is backed by: its own signal_date or any
- * evidence link's published_at, whichever is later. Dates too coarse to
- * decide this window are ignored — a company left with none of them counts
- * as undated, which is exactly what it is.
- */
-function newestDate(
-  signalDate: unknown,
-  evidence: { published_at?: string }[],
-  windowDays: number,
-): number | null {
-  let best: number | null = null;
-  const consider = (v: unknown) => {
-    const d = parseSignalDate(v);
-    if (!d) return;
-    if (PRECISION_SPAN_DAYS[d.precision] > windowDays) return; // too coarse to prove it
-    if (best === null || d.at > best) best = d.at;
-  };
-  consider(signalDate);
-  for (const e of evidence) consider(e?.published_at);
-  return best;
-}
-
-/**
- * THE recency guarantee. Everything else (engine filter, prompts) only makes
- * a recent answer likely; this is what makes an old one impossible. A company
- * with no verifiable date fails too: "no sé de cuándo es" is not evidence
- * that a signal is live, and undated results were most of what made the radar
- * feel stale.
- */
-function withinWindow(
-  signalDate: unknown,
-  evidence: { published_at?: string }[],
-  windowDays: number,
-): { ok: boolean; reason: "" | "old" | "undated"; at: number | null } {
-  const at = newestDate(signalDate, evidence, windowDays);
-  if (at === null) return { ok: false, reason: "undated", at: null };
-  // A date in the future is invented, not fresh (a day of slack absorbs
-  // timezone skew between the source and this isolate). Only full dates can
-  // land here — partial ones are already clamped to now.
-  if (at > Date.now() + 2 * 86400_000) return { ok: false, reason: "undated", at };
-  const floor = Date.now() - windowDays * 86400_000;
-  return { ok: at >= floor, reason: at >= floor ? "" : "old", at };
-}
-
-/** Prompt block stating the window, shared by strategy and research. */
-function recencyBlock(windowDays: number): string {
-  const today = new Date().toISOString().slice(0, 10);
-  return `\n\n=== DATE WINDOW (HARD REQUIREMENT) ===\n` +
-    `Today is ${today}. The seller only wants signals from ${windowLabel(windowDays)}: ` +
-    `every piece of evidence MUST have been published on or after ${cutoffIso(windowDays)}.\n` +
-    `Anything older is worthless here and will be discarded automatically — ` +
-    `a company you cannot date, or can only date before that day, must not be returned at all. ` +
-    `Do not pad the answer with older news to fill space: returning fewer, genuinely recent ` +
-    `companies is the correct outcome.\n` +
-    (windowDays < 30
-      // A month-only date cannot prove "this week": withinWindow() rejects it,
-      // so asking for one would only produce results the filter then drops.
-      ? `This window is shorter than a month, so an exact day (YYYY-MM-DD) is required: ` +
-        `a source that only says the month is NOT precise enough and its company will be dropped.`
-      : `Give the exact day (YYYY-MM-DD) whenever the source shows one; YYYY-MM is acceptable ` +
-        `only when the source genuinely publishes no day.`);
 }
 
 interface QueryItem { angleName: string; sources: string[]; query: string; }
@@ -561,248 +416,13 @@ Hard rules:
 // Runs ONCE PER SEARCH QUERY (see handleResearch) — bounded to exactly one
 // web_search use per call, the only budget that reliably stays under the
 // Edge Runtime's ~150s hard kill (see file header comment).
-const RESEARCH_SYSTEM = `You are the "Radar" researcher of a B2B sales-intelligence platform. You receive a seller's context and ONE search query from a broader signal strategy — other queries/angles are covered by separate calls, so focus ONLY on this one. Run exactly one web_search with this query (or a close variant if it returns nothing useful) and find REAL companies currently showing the signal — companies that are ideal targets for this seller to contact now.
-
-Respond with ONLY valid JSON (no markdown fences, no prose):
-{
-  "companies": [
-    {
-      "name": "official company name",
-      "website": "https://… company website. Empty string ONLY if truly not findable.",
-      "country": "country of the relevant operation, in Spanish (e.g. 'México')",
-      "industry": "short industry label in Spanish",
-      "employee_count": "approximate size if evidenced, e.g. '200-500 empleados'. Empty string if unknown.",
-      "signal_headline": "ONE telegraphic line, MAX 70 characters, neutral Latin-American Spanish: the concrete fact that makes this company a target right now. E.g. 'Publicó 40 vacantes de SDR en 3 meses'. No company name, no filler.",
-      "why_fit": "MAX 2 short sentences (240 characters total) in neutral Latin-American Spanish: why THIS company needs the seller now, citing the concrete signal found",
-      "signal_strength": "alta" | "media",
-      "signal_date": "YYYY-MM-DD — publication date of the NEWEST evidence below, i.e. how recent this signal is. Use YYYY-MM if the source only gives a month. NEVER guess, never use today's date as a placeholder: if you cannot date it from the source, drop the company instead.",
-      "evidence": [ { "url": "exact URL from your search results backing the claim", "summary": "1 sentence in Spanish: what this source shows", "published_at": "YYYY-MM-DD publication date of THIS source (YYYY-MM if only the month is given, empty string if the source shows none)" } ],
-      "decision_maker_titles": ["2-5 English job titles to look for at THIS company"],
-      "repeat_reason": "Fill this ONLY for a company listed under 'ALREADY DELIVERED BY A PREVIOUS RADAR': 1 short sentence in Spanish saying what is NEW since then (new filing, new announcement, newer news). Empty string for every other company."
-    }
-  ],
-  "coverage_note": "1 sentence in Spanish ONLY if this query yielded few/no companies — say honestly what limited the search. Empty string otherwise."
-}
-
-Hard rules — violating any of these makes the output worthless:
-- EVERY company must be real and every evidence.url must come from an actual web_search result you saw. NEVER invent companies, URLs, or facts. A company you cannot back with at least 1 evidence URL must be dropped, not padded.
-- Return EVERY company this query surfaces that you can back with evidence — there is no cap. Do not stop at two or three because it "feels like enough": if this one search genuinely turns up ten distinct companies with evidence, return all ten. The seller wants the full picture of what is out there right now, not a sample. But never pad: a company you cannot back with at least 1 evidence URL does not exist for this purpose.
-- Do not try to cover the whole strategy — other calls handle the other queries.
-- Do not re-report a company already listed in "COMPANIES ALREADY FOUND" below, even if this query surfaces it again.
-- NEVER report a company listed in "COMPANIES THE SELLER ALREADY HAS" below — the seller already works those; re-finding them wastes the search. Skip them silently and return the next best NEW company.
-- Companies listed under "ALREADY DELIVERED BY A PREVIOUS RADAR" were already shown to this seller, together with the signal reported at the time. Report one again ONLY if this search surfaces a DIFFERENT signal or genuinely NEWER news about it — and then you MUST cite at least one evidence URL that is not among the ones already reported for it, and fill repeat_reason. If all you found is the same news in other words, skip it silently: it will be discarded anyway.
-- signal_headline is the only line most users will read: make it a concrete, verifiable fact about THIS company, never a generic category ("empresa en crecimiento") and never a repeat of why_fit.
-- Respect target_geographies and exclusions from the strategy. Never include the seller's own company or direct competitors (companies selling the same thing the seller sells — they are rivals, not buyers).
-- Companies must be plausible BUYERS with budget: match the seller's ICP sizes when known.
-- RECENCY IS A HARD FILTER, NOT A PREFERENCE. Respect the DATE WINDOW block below to the letter: a company whose newest evidence predates the cutoff, or that you cannot date, is DISCARDED automatically before the seller sees it — returning it only wastes the search. Returning two genuinely recent companies is a better answer than ten padded with old news.
-- Every company MUST carry a signal_date taken from the source itself (the article's date line, the filing date, the posting date), never invented and never today's date "because it just came up in the results".
-- User-facing text (signal_headline, why_fit, evidence.summary, country, industry, coverage_note) in neutral Latin-American Spanish (tuteo). decision_maker_titles in English (Apollo requirement).`;
-
-// ── Apollo: decision makers per company ─────────────────────────────────────
-//
-// Only /mixed_people/api_search — free, no credit spend, no reveal. It
-// returns name/title/seniority/LinkedIn with every email masked as
-// "email_not_unlocked@…". Revealing the real work email costs an Apollo
-// credit per person (/people/bulk_match), so that call never runs here: it
-// happens client-side, once, only for the people the seller actually saves
-// to a Prospección list (js/radar.js → saveToList, same pattern
-// addPeopleToList already uses in js/prospecting-data.js).
-
-interface ApolloPerson {
-  id?: string;
-  name?: string;
-  first_name?: string;
-  last_name?: string;
-  title?: string;
-  seniority?: string;
-  linkedin_url?: string;
-  city?: string;
-  country?: string;
-}
-
-async function apolloPost(
-  apolloKey: string,
-  path: string,
-  body: Record<string, unknown>,
-  // deno-lint-ignore no-explicit-any
-): Promise<any> {
-  const res = await fetch(`https://api.apollo.io/api/v1${path}`, {
-    method: "POST",
-    headers: {
-      "Cache-Control": "no-cache",
-      "Content-Type": "application/json",
-      "X-Api-Key": apolloKey,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Apollo ${res.status}: ${text.slice(0, 200)}`);
-  }
-  return await res.json();
-}
-
-async function apolloPeopleSearch(
-  apolloKey: string,
-  body: Record<string, unknown>,
-): Promise<ApolloPerson[]> {
-  const data = await apolloPost(apolloKey, "/mixed_people/api_search", body);
-  return Array.isArray(data?.people) ? data.people : [];
-}
-
-/** Every page Apollo will give us for one filter set, up to the page cap. */
-async function apolloPeopleSearchAll(
-  apolloKey: string,
-  filters: Record<string, unknown>,
-  limit: number,
-): Promise<ApolloPerson[]> {
-  const out: ApolloPerson[] = [];
-  for (let page = 1; page <= MAX_DM_SEARCH_PAGES && out.length < limit; page++) {
-    const people = await apolloPeopleSearch(apolloKey, {
-      ...filters,
-      per_page: DM_PAGE_SIZE,
-      page,
-    });
-    out.push(...people);
-    if (people.length < DM_PAGE_SIZE) break; // last page
-  }
-  return out;
-}
-
-// Who gets shown first. Apollo's own seniority buckets, ordered by how much
-// weight the person carries in a purchase — the seller reads the list top
-// down and should meet the owner before the manager.
-const SENIORITY_RANK: Record<string, number> = {
-  owner: 0, founder: 1, c_suite: 2, partner: 3, vp: 4, head: 5,
-  director: 6, manager: 7, senior: 8, entry: 9, intern: 10,
-};
-const DECISION_SENIORITIES = ["owner", "founder", "c_suite", "partner", "vp", "head", "director"];
-
-function seniorityRank(p: ApolloPerson): number {
-  const r = SENIORITY_RANK[asStr(p.seniority).toLowerCase()];
-  return r === undefined ? 99 : r;
-}
-
-function shapePerson(p: ApolloPerson, domain: string): Record<string, unknown> {
-  return {
-    apollo_person_id: asStr(p.id) || null,
-    name: asStr(p.name) || [asStr(p.first_name), asStr(p.last_name)].filter(Boolean).join(" ") || null,
-    first_name: asStr(p.first_name) || null,
-    last_name: asStr(p.last_name) || null,
-    title: asStr(p.title) || null,
-    seniority: asStr(p.seniority) || null,
-    linkedin_url: asStr(p.linkedin_url) || null,
-    company_domain: domain,
-    city: asStr(p.city) || null,
-    country: asStr(p.country) || null,
-    // Revealed later, client-side, only if this person is saved to a list —
-    // never filled here (see the module comment above).
-    email: null as string | null,
-    email_status: null as string | null,
-    phone: null as string | null,
-  };
-}
-
-/**
- * Every decision maker Apollo lists for this company, not a fixed handful:
- * the titles the research call asked for (plus Apollo's similar-title
- * expansion), topped up with the company's senior leadership so a company
- * whose titles don't match the guess still comes back with real people.
- */
-async function findDecisionMakers(
-  apolloKey: string,
-  domain: string,
-  titles: string[],
-): Promise<Record<string, unknown>[]> {
-  if (!domain) return [];
-  const base = { q_organization_domains_list: [domain] };
-  const byId = new Map<string, ApolloPerson>();
-  const add = (people: ApolloPerson[]) => {
-    for (const p of people) {
-      const key = asStr(p.id) ||
-        (asStr(p.name) + "|" + asStr(p.title)).toLowerCase();
-      if (key && !byId.has(key)) byId.set(key, p);
-    }
-  };
-
-  try {
-    if (titles.length) {
-      add(await apolloPeopleSearchAll(apolloKey, {
-        ...base,
-        person_titles: titles.slice(0, 8),
-        include_similar_titles: true,
-      }, MAX_DECISION_MAKERS));
-    }
-    if (byId.size < MAX_DECISION_MAKERS) {
-      add(await apolloPeopleSearchAll(apolloKey, {
-        ...base,
-        person_seniorities: DECISION_SENIORITIES,
-      }, MAX_DECISION_MAKERS - byId.size));
-    }
-  } catch (e) {
-    console.warn(`[radar] apollo search failed for ${domain}:`, e);
-    if (!byId.size) return [];
-  }
-
-  return [...byId.values()]
-    .sort((a, b) => seniorityRank(a) - seniorityRank(b))
-    .slice(0, MAX_DECISION_MAKERS)
-    .map((p) => shapePerson(p, domain));
-}
-
 // ── Seller context (ground truth block shared by strategy + research) ──────
+// Vive en _shared/radar-context.ts desde 2026-09-18 (lo comparten radar-plan y
+// radar-monitor); aquí solo se necesita el bloque de texto.
 
-async function loadSellerContext(
-  // deno-lint-ignore no-explicit-any
-  supa: any,
-  userId: string,
-): Promise<string> {
-  const [{ data: profile }, { data: intake }, { data: brief }] = await Promise.all([
-    supa.from("profiles").select("company_name, linkedin_company_url, company_website").eq("id", userId).maybeSingle(),
-    supa.from("intel_hub_intake").select(
-      "company_linkedin_url, company_website, company_industry, company_employee_count, company_country, company_about, company_solutions, icp_industries, icp_roles, icp_geographies, icp_company_sizes, icp_pain_points, value_problem_solved, value_proposition, icp_countries, icp_industry_tags, icp_employee_ranges, icp_departments, icp_seniorities, icp_titles, icp_buying_triggers, icp_disqualifiers, competitors, excluded_companies",
-    ).eq("user_id", userId).maybeSingle(),
-    supa.from("client_brief").select(
-      "company_name, what_it_does, mechanism, positional_phrase, icp, status",
-    ).eq("user_id", userId).maybeSingle(),
-  ]);
-
-  const ctxLines: string[] = ["=== SELLER CONTEXT (ground truth — trust this over generic search results) ==="];
-  const push = (label: string, v: unknown) => { const s = asStr(v).trim(); if (s) ctxLines.push(`${label}: ${s}`); };
-  push("Company name", brief?.company_name || profile?.company_name);
-  push("LinkedIn (ground truth for identity)", intake?.company_linkedin_url || profile?.linkedin_company_url);
-  push("Website", intake?.company_website || profile?.company_website);
-  push("Industry", intake?.company_industry);
-  push("Size", intake?.company_employee_count);
-  push("Country", intake?.company_country);
-  push("About", intake?.company_about);
-  push("Solutions", intake?.company_solutions);
-  push("What it does", brief?.what_it_does);
-  push("Mechanism", brief?.mechanism);
-  push("Positioning", brief?.positional_phrase);
-  // ICP declarado en el contexto de empresa (valores exactos elegidos por el
-  // usuario). Manda sobre las columnas de texto viejas, que son su espejo.
-  const list = (v: unknown) => (Array.isArray(v) ? v.filter(Boolean).join(", ") : "");
-  push("ICP industries", list(intake?.icp_industry_tags) || intake?.icp_industries);
-  push("ICP roles", [list(intake?.icp_titles), list(intake?.icp_seniorities), list(intake?.icp_departments)].filter(Boolean).join(" | ") || intake?.icp_roles);
-  push("ICP geographies (RESTRICT RESEARCH TO THESE COUNTRIES)", list(intake?.icp_countries) || intake?.icp_geographies);
-  push("ICP company sizes", list(intake?.icp_employee_ranges) || intake?.icp_company_sizes);
-  push("Customer pain points", intake?.icp_pain_points);
-  push("Buying triggers the seller declared (the signal to look for unless the user asked for another)", intake?.icp_buying_triggers);
-  push("Disqualifiers — never return companies like these", intake?.icp_disqualifiers);
-  const competitors = Array.isArray(intake?.competitors)
-    // deno-lint-ignore no-explicit-any
-    ? (intake.competitors as any[]).map((c) => asStr(c?.name)).filter(Boolean)
-    : [];
-  push("Direct competitors — NEVER return these or their subsidiaries as prospects", competitors.join(", "));
-  push("Companies the seller excluded by hand — never return them", list(intake?.excluded_companies));
-  push("Problem solved", intake?.value_problem_solved);
-  push("Value proposition", intake?.value_proposition);
-  if (brief?.status === "ready" && brief?.icp) {
-    ctxLines.push("ICP (from client brief): " + JSON.stringify(brief.icp));
-  }
-  if (ctxLines.length === 1) ctxLines.push("(context still sparse — research the LinkedIn/website above yourself)");
-  return ctxLines.join("\n");
+// deno-lint-ignore no-explicit-any
+async function loadSellerContext(supa: any, userId: string): Promise<string> {
+  return (await loadSellerContextShared(supa, userId)).text;
 }
 
 // ── "Empresas que ya conoces" (exclusions) ─────────────────────────────────
@@ -1429,7 +1049,7 @@ async function handleDecisionMakers(supa: any, run: RunRow, apolloKey: string, o
 
     for (let i = start; i < end; i++) {
       const co = companies[i];
-      const dms = await findDecisionMakers(apolloKey, toDomain(co.website), co.decision_maker_titles || []);
+      const dms = await findDecisionMakers({ "x-api-key": apolloKey }, toDomain(co.website), co.decision_maker_titles || []);
       co.decision_makers = dms;
       co.dm_done = true;
     }
