@@ -82,6 +82,19 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...extra } });
 }
 const nowIso = () => new Date().toISOString();
+
+// pg_cron manda el Bearer con el que se programó el job, que en este proyecto
+// no es byte a byte igual a SUPABASE_SERVICE_ROLE_KEY (campaign-run pasó por
+// lo mismo): se acepta también cualquier JWT cuyo claim role sea service_role.
+function jwtRole(token: string): string | null {
+  try {
+    const payload = token.split(".")[1] ?? "";
+    const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof decoded?.role === "string" ? decoded.role : null;
+  } catch (_) {
+    return null;
+  }
+}
 const asStr = (v: unknown) => (typeof v === "string" ? v : "");
 const fold = (s: unknown) => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
@@ -380,7 +393,7 @@ Deno.serve(async (req: Request) => {
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
   let userFilter: string | null = null;
-  const isCron = !!token && token === SERVICE_KEY;
+  const isCron = !!token && (token === SERVICE_KEY || jwtRole(token) === "service_role");
   if (!isCron) {
     const { data: { user }, error } = await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
     if (error || !user) return json({ error: "Unauthorized" }, 401, h);
