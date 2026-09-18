@@ -21,3 +21,9 @@ Registro de decisiones ya tomadas para que futuras sesiones no las reviertan sin
 | Tope diario de LinkedIn | **No existe**: lo decide Dripify | 2026-09-03 |
 | Pricing público | Starter 97 USD / Growth 197 USD / Scale a medida, **los 3 canales siempre incluidos** (WhatsApp nunca es add-on: es el canal que más convierte). Se vende en "leads contactados al mes". Stripe pendiente | 2026-09-03; reemplaza 497/1,497/3,497 |
 | Radar | **Motor siempre encendido** con plan de detectores (10 metodologías) que la IA propone y el usuario aprueba; la investigación puntual sigue como pestaña. Países = solo los del contexto salvo que el prompt diga otros. Avisos por WhatsApp. Cobro por detector cada 30 días | 2026-09-18 a petición del usuario ("reinventar la rueda"); diseño en `docs/RADAR.md` |
+| Bucle de aprendizaje | **Existe y actúa solo**: apaga detectores que fallan, pausa pasos de campaña sin respuestas, alimenta a la IA de mensajes y al coach con lo que funcionó. Siempre reversible desde la UI, nunca borra, nunca pisa el ICP declarado | 2026-09-19 a petición del usuario ("si no funciona, eliminarlo; si funciona, repetirlo"); diseño en `docs/REVENUE_OS_REVIEW.md` |
+| Meeting Coach | Doctrina de **neuroventas** (escuela de Jürgen Klarić) en los tres modos; reporte corto con UN siguiente paso arriba. Reemplaza a SPIN/MEDDIC/Challenger como doctrina principal | 2026-09-19 a petición del usuario |
+| Alcance del Radar | Lo elige el usuario por detector y por plan (`config.max_companies`, 300 por defecto) | 2026-09-19 |
+| OAuth en canales | Solo Email/Apollo tiene OAuth (construido, pendiente de aprobación de partner). WhatsApp y LinkedIn siguen con token pegado porque WATI y Dripify no tienen OAuth; el pedido de "OAuth embedded signup" en los tres canales exigiría cambiar de proveedor (decisión del 2026-09-03 vigente) | Señalado el 2026-09-19 |
+| Shell | Un nombre por concepto en español; páginas huérfanas con datos simulados eliminadas | 2026-09-19 |
+

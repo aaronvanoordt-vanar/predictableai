@@ -3197,7 +3197,7 @@ function finBoltSvg() {
    (Generar mensajes con IA, etc.) para que se lean como acciones de IA. */
 .ihx-btn-ai {
   display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0;
-  background: linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%);
+  background: var(--grad-ai, linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%));
   color: #fff; border: 0; border-radius: 8px; padding: 9px 16px;
   font: inherit; font-weight: 600; font-size: 12.5px; cursor: pointer;
   box-shadow: 0 1px 2px rgba(31,75,255,.25), 0 8px 20px -10px rgba(90,96,240,.6);
@@ -3223,7 +3223,7 @@ function finBoltSvg() {
 }
 .ihx-progress-bar-fill {
   position: relative; height: 100%; border-radius: 3px; overflow: hidden;
-  background: linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%);
+  background: var(--grad-ai, linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%));
   /* El ticker de JS actualiza el ancho cada ~120ms: con easing la barra se ve
      entrecortada, así que la transición es lineal y del largo del tick. */
   transition: width .14s linear;

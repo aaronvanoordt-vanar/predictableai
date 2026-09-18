@@ -282,9 +282,15 @@ Deno.serve(async (req) => {
       else if (signal === "failed") type = "failed";
       if (!type) continue;
       if (somethingNew) {
+        // Se atribuye al paso de LinkedIn que enroló al lead en Dripify, no al
+        // paso que el lead está esperando ahora (contadores por paso + aprendizaje).
+        const { data: origin } = await db.from("campaign_events")
+          .select("node_id, step_position")
+          .eq("enrollment_id", en.id).eq("channel", "linkedin").in("type", ["queued", "connection_sent", "sent"]).not("node_id", "is", null)
+          .order("created_at", { ascending: false }).limit(1).maybeSingle();
         await db.from("campaign_events").insert({
           enrollment_id: en.id, campaign_id: en.campaign_id, member_id: member?.id ?? null, user_id: acc.user_id,
-          channel: "linkedin", type, step_position: en.next_position,
+          channel: "linkedin", type, step_position: origin?.step_position ?? en.next_position, node_id: origin?.node_id ?? null,
           detail: (replyText || eventRaw || "").slice(0, 300) || null, payload: { event: eventRaw || null, raw: payload },
         });
       }

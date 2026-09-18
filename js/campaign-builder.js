@@ -216,6 +216,9 @@
       '.cb-stats { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }',
       '.cb-stat { font-family:var(--font-mono); font-size:10.5px; padding:2px 7px; border-radius:6px; background:var(--surface3); color:var(--text2); }',
       '.cb-stat b { color:var(--text); }',
+      '.cb-stat-paused { background:var(--amber-soft); color:var(--amber); }',
+      '.cb-stat-works { background:var(--green-soft); color:var(--green); }',
+      '.cb-stat-fails { background:var(--red-soft); color:var(--red); }',
       '.cb-plus-wrap { display:grid; grid-template-columns:96px 1fr; gap:10px; }',
       '.cb-plus-line { position:relative; min-height:26px; display:flex; align-items:center; }',
       '.cb-plus-line:before { content:""; position:absolute; left:20px; top:0; bottom:0; width:2px; background:var(--hair); }',
@@ -418,6 +421,14 @@
   function renderStats(node, st) {
     var box = h('div', { class: 'cb-stats' });
     var any = false;
+    var L = node.settings && node.settings.learning;
+    if (L && L.paused) {
+      any = true;
+      box.appendChild(h('span', { class: 'cb-stat cb-stat-paused', title: L.reason || '', text: '⏸ pausado por aprendizaje' }));
+    } else if (L && (L.verdict === 'works' || L.verdict === 'fails')) {
+      any = true;
+      box.appendChild(h('span', { class: 'cb-stat ' + (L.verdict === 'works' ? 'cb-stat-works' : 'cb-stat-fails'), title: (L.replies || 0) + ' respuestas en ' + (L.sent || 0) + ' envíos', text: L.verdict === 'works' ? '✓ funciona' : '✗ sin respuestas' }));
+    }
     STAT_LABELS.forEach(function (p) {
       var v = st[p[0]];
       if (!v) return;

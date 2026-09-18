@@ -931,7 +931,7 @@
         var list = lists.find(function (l) { return String(l.id) === sel.value; });
         if (!list) throw new Error('Elige una lista.');
         m.setBusy(true);
-        return Promise.resolve(pdSafe().addManualMember({ list: list, contact: {
+        return Promise.resolve(pdSafe().addManualMember({ list: list, source: { kind: 'inbox', channel: conv.channel || null }, contact: {
           first_name: firstI.value.trim(), last_name: lastI.value.trim(), company: compI.value.trim(), title: titleI.value.trim(),
           email: emailI.value.trim(), phone: phoneI.value.trim(), linkedin_url: liI.value.trim(),
         } })).then(function (created) {
@@ -2198,6 +2198,15 @@
         }
       });
       card.appendChild(builderLib().renderTimeline(c.flow, { readOnly: true, counters: nodeCounters(c), warnings: warnings }));
+      // Pasos que el bucle de aprendizaje pausó (0 respuestas mientras el resto
+      // de la campaña sí respondía): el motor los omite hasta que los reactives.
+      var pausedNodes = acts.filter(function (a) { return a.settings && a.settings.learning && a.settings.learning.paused; });
+      pausedNodes.forEach(function (a) {
+        var row = h('div', { class: 'pros-note-red', style: 'margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--amber-soft);color:var(--text)' });
+        row.appendChild(h('span', { style: 'flex:1', text: '⏸ ' + (CH[chanKey(a.channel)] ? CH[chanKey(a.channel)].label : a.channel) + ' · paso ' + (acts.indexOf(a) + 1) + ' pausado por aprendizaje: ' + (a.settings.learning.reason || 'no obtuvo respuestas.') }));
+        row.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'node-reactivate', 'data-node': a.id, text: 'Reactivar paso' }));
+        card.appendChild(row);
+      });
     }
     campaignChannels(c).forEach(function (k) {
       if (channelConnected(k)) return;
@@ -2326,7 +2335,10 @@
     return card;
   }
 
-  var MSG_STATUS = {
+  // Estados de campaign_messages (los de inbox_messages son MSG_STATUS, arriba):
+  // con el mismo nombre la segunda declaración pisaba a la primera y la bandeja
+  // mostraba "[object Object]" como estado de cada mensaje enviado.
+  var AI_MSG_STATUS = {
     draft: { label: 'por revisar', pill: 'amber' },
     approved: { label: 'listo', pill: 'green' },
     sent: { label: 'enviado', pill: 'green' },
@@ -2350,7 +2362,7 @@
     var out = '';
     steps.forEach(function (a) {
       var m = byNode[a.id];
-      var st = m ? (MSG_STATUS[m.status] || MSG_STATUS.draft) : null;
+      var st = m ? (AI_MSG_STATUS[m.status] || AI_MSG_STATUS.draft) : null;
       out += '<div><div class="pros-lbl">' + esc(L.nodeTitle(a)) + ' ' + (st ? pill(st.label, st.pill) : pill('aún no escrito', 'gray')) + '</div>';
       if (m && m.status === 'error') out += '<div class="pros-note-red" style="margin:0">' + esc(m.error_detail || 'No se pudo generar.') + '</div>';
       else if (m && String(m.body || '').trim()) {
@@ -2549,6 +2561,22 @@
       if (names.length) links.appendChild(h('span', { class: 'pros-hint', text: 'Campaña: ' + names.join(', ') }));
     }
     if (!m) links.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'conv-save', 'data-key': conv.key, text: 'Guardar en una lista' }));
+    if (m) {
+      // Estado del lead en el CRM, editable desde la conversación: es aquí
+      // donde se sabe si hubo reunión, y ese estado es lo que alimenta el
+      // dashboard y el bucle de aprendizaje.
+      var listM = (state.lists || []).find(function (l) { return String(l.id) === String(m.list_id); });
+      if (listM) links.appendChild(h('span', { class: 'pros-hint', text: 'Lista: ' + listM.name }));
+      var statuses = (pdSafe().CONTACT_STATUSES || []);
+      if (statuses.length) {
+        var selS = h('select', { class: 'pros-status-sel', 'data-action': 'conv-status', 'data-member': m.id, title: 'Estado del lead en el CRM' });
+        statuses.forEach(function (st) { selS.appendChild(h('option', { value: st.value, text: st.label, selected: m.contact_status === st.value ? 'selected' : null })); });
+        links.appendChild(selS);
+        if (['reunion_agendada', 'reunion_tomada'].indexOf(m.contact_status) === -1) {
+          links.appendChild(h('button', { type: 'button', class: 'btn btn-teal btn-sm', 'data-action': 'conv-meeting', 'data-member': m.id, text: 'Reunión conseguida' }));
+        }
+      }
+    }
     head.appendChild(left);
     head.appendChild(links);
     card.appendChild(head);
@@ -2767,6 +2795,27 @@
         return loadAiSettings().then(function () { if (state.builder) aiSettingsNode(); });
       }).then(r8, function (err) { r8(); throw err; });
     }
+    if (action === 'node-reactivate') {
+      var cR = findCampaign(state.activeId);
+      var nodeId = btn.getAttribute('data-node');
+      if (!cR || !nodeId) return;
+      var flowR = JSON.parse(JSON.stringify(cR.flow || {}));
+      var hit = null;
+      (flowR.nodes || []).forEach(function (n) {
+        if (n.id === nodeId) hit = n;
+        (n.yes || []).concat(n.no || []).forEach(function (a) { if (a.id === nodeId) hit = a; });
+      });
+      if (!hit) return;
+      hit.settings = Object.assign({}, hit.settings || {}, { learning: Object.assign({}, (hit.settings || {}).learning || {}, { paused: false, reactivated_at: new Date().toISOString() }) });
+      var rR = btnLoading(btn, '⏳');
+      return sb().from('campaigns').update({ flow: flowR }).eq('id', cR.id).then(function (res) {
+        rR();
+        if (res.error) return toast('No se pudo reactivar el paso: ' + res.error.message, 'error');
+        cR.flow = flowR;
+        toast('Paso reactivado. El bucle de aprendizaje no volverá a pausarlo solo.', 'success');
+        render();
+      });
+    }
     if (action === 'cmp-status') {
       var status = btn.getAttribute('data-status');
       var c1 = findCampaign(state.activeId);
@@ -2832,6 +2881,17 @@
     }
     if (action === 'reply-channel' && key) { state.replyChannel[key] = channel; return render(); }
     if (action === 'conv-save' && key) { var convS = findConv(key); if (convS) saveContactToList(convS); return; }
+    if (action === 'conv-meeting') {
+      var memM = btn.getAttribute('data-member');
+      if (!memM || !pdSafe().setContactStatus) return;
+      var rM = btnLoading(btn, '⏳');
+      return Promise.resolve(pdSafe().setContactStatus(memM, 'reunion_agendada')).then(function () {
+        rM();
+        if (state.inboxMembers[memM]) state.inboxMembers[memM].contact_status = 'reunion_agendada';
+        toast('Reunión conseguida registrada. Prepárala desde el Meeting Coach.', 'success');
+        render();
+      }, function (err) { rM(); toast('No se pudo actualizar el estado: ' + err.message, 'error'); });
+    }
     if (action === 'reply-template' && key) {
       var convT = findConv(key);
       if (!convT) return;
@@ -2957,6 +3017,16 @@
     } else if (action === 'inbox-filter-campaign') { state.inboxFilter.campaign = t.value; render(); }
     else if (action === 'inbox-filter-channel') { state.inboxFilter.channel = t.value; render(); }
     else if (action === 'inbox-filter-status') { state.inboxFilter.status = t.value; render(); }
+    else if (action === 'conv-status') {
+      var memS = t.getAttribute('data-member');
+      if (!memS || !pdSafe().setContactStatus) return;
+      t.disabled = true;
+      return Promise.resolve(pdSafe().setContactStatus(memS, t.value)).then(function () {
+        if (state.inboxMembers[memS]) state.inboxMembers[memS].contact_status = t.value;
+        toast('Estado actualizado.', 'success');
+        render();
+      }, function (err) { t.disabled = false; toast('No se pudo actualizar el estado: ' + err.message, 'error'); });
+    }
     else if (action === 'playbook-toggle') {
       if (!pdSafe().saveOutreachPlaybookPrefs) return;
       var enabled = !!t.checked;

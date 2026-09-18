@@ -1058,6 +1058,34 @@ const STEP_CHANNEL_RULES: Record<StepSpec["channel"], string> = {
   linkedin: "Canal LINKEDIN (mensaje directo): \"subject\" vacío. Máximo 70 palabras, 3 párrafos compactos, ligeramente más formal que WhatsApp, sin saludo inicial tipo \"Hola\".",
 };
 
+/**
+ * Lo que aprendió el bucle (learning-loop): mensajes de ESTE vendedor que sí
+ * obtuvieron respuesta en el mismo canal (se imitan ángulo y estructura, no
+ * el texto) y los ángulos que funcionan o fallan. Sin datos, bloque vacío.
+ */
+// deno-lint-ignore no-explicit-any
+async function buildLearningContext(supa: any, userId: string, channel: string): Promise<string> {
+  try {
+    const { data } = await supa.from("learning_insights")
+      .select("scope, key, label, verdict, metrics")
+      .eq("user_id", userId).in("scope", ["winning_message", "angle"]).limit(20);
+    const rows: Array<{ scope: string; key: string; label: string; verdict: string; metrics: Record<string, unknown> }> = data ?? [];
+    const lines: string[] = [];
+    const win = rows.find((r) => r.scope === "winning_message" && r.key === channel);
+    const examples = Array.isArray(win?.metrics?.examples) ? (win!.metrics.examples as Array<Record<string, unknown>>) : [];
+    if (examples.length) {
+      lines.push("", `=== MENSAJES DE ESTE VENDEDOR QUE SÍ OBTUVIERON RESPUESTA (${channel}) ===`, "Imita su ángulo, largo y estructura. NO copies frases: el lead es otro.");
+      examples.slice(0, 3).forEach((e, i) => lines.push(`${i + 1}. ${e.angle ? "[" + e.angle + "] " : ""}${String(e.body ?? "").replace(/\s+/g, " ").slice(0, 500)}`));
+    }
+    const angles = rows.filter((r) => r.scope === "angle" && (r.verdict === "works" || r.verdict === "fails"));
+    if (angles.length) {
+      lines.push("", "=== ÁNGULOS SEGÚN RESULTADOS REALES ===");
+      for (const a of angles) lines.push(`- ${a.key}: ${a.verdict === "works" ? "FUNCIONA" : "NO responde"} (${a.metrics?.replies ?? 0} respuestas en ${a.metrics?.sent ?? 0} envíos)`);
+    }
+    return lines.join("\n");
+  } catch (_) { return ""; }
+}
+
 function buildStepContext(step: StepSpec): string {
   const reply = step.angle === "respuesta";
   const lines = ["", reply ? "=== RESPUESTA EN LA BANDEJA (modo respuesta) ===" : "=== PASO DE LA CADENCIA (modo paso) ==="];
@@ -1309,7 +1337,8 @@ Deno.serve(async (req: Request) => {
   if (stepMode && step) {
     try {
       const closing = replyMode ? REPLY_CLOSING : STEP_CLOSING;
-      const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + closing);
+      const learned = replyMode ? "" : await buildLearningContext(supa, user.id, step.channel);
+      const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + learned + closing);
       console.log(`[outreach] ✓ ${replyMode ? "reply" : "step"} ${user.id} ${step.channel}/${step.angle} via ${engine}`);
       const { data: stSpent, error: stSpendErr } = await supa
         .rpc("spend_credits", { p_user_id: user.id, p_amount: OUTREACH_COST });

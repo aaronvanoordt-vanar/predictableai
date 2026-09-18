@@ -854,6 +854,18 @@ async function runFlow(ctx: Ctx, en: Json, campaign: Json, flow: flowLib.Flow) {
     return;
   }
 
+  // Paso pausado por el bucle de aprendizaje (learning-loop: 0 respuestas en
+  // N envíos mientras el resto de la campaña sí respondía): se omite con
+  // evento y el lead sigue con el siguiente. El usuario lo reactiva desde el
+  // detalle de la campaña (settings.learning.paused = false).
+  const learning = (node.settings && typeof node.settings === "object") ? (node.settings as Json).learning : null;
+  if (learning && learning.paused) {
+    await event(ctx, en, channelKey(node.channel), "skipped", { detail: "Paso pausado por aprendizaje: " + (learning.reason || "no obtuvo respuestas."), node_id: node.id, step_position: flowLib.ordinal(flow, node.id) });
+    const nextNode = flowLib.nextAfter(flow, node.id);
+    await moveTo(ctx, en, flow, nextNode, ctx.now, en.next_run_at ? new Date(en.next_run_at) : ctx.now, {});
+    return;
+  }
+
   const step = stepFromNode(flow, node);
   const member = await preflight(ctx, en, campaign, step);
   if (!member) return;
@@ -1225,6 +1237,14 @@ async function syncDripify(ctx: Ctx): Promise<number> {
         // Lo que salió de la cuenta de LinkedIn también se ve en la bandeja
         // (Dripify no entrega el texto por API: la fila lleva qué salió y cuándo;
         // el texto llega con el webhook de campaña si está configurado).
+        // Los eventos de Dripify se atribuyen al paso de LinkedIn que subió al
+        // lead (no a en.next_node_id, que es el paso siguiente): sin esto los
+        // contadores por paso de LinkedIn quedaban siempre en cero.
+        const { data: liOrigin } = await db.from("campaign_events")
+          .select("node_id, step_position")
+          .eq("enrollment_id", en.id).eq("channel", "linkedin").in("type", ["queued", "connection_sent", "sent"]).not("node_id", "is", null)
+          .order("created_at", { ascending: false }).limit(1).maybeSingle();
+        const liNode = { node_id: liOrigin?.node_id ?? en.next_node_id ?? null, step_position: liOrigin?.step_position ?? en.next_position };
         if (signal === "connection_sent" || signal === "message_sent") {
           const at = lead.lastAction?.at && !Number.isNaN(Date.parse(lead.lastAction.at)) ? new Date(lead.lastAction.at).toISOString() : ctx.now.toISOString();
           await db.from("inbox_messages").upsert({
@@ -1237,27 +1257,27 @@ async function syncDripify(ctx: Ctx): Promise<number> {
           }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true });
         }
         if (signal === "connection_sent") {
-          await event(ctx, en, "linkedin", "connection_sent", { detail: lead.lastAction?.type, step_position: en.next_position });
+          await event(ctx, en, "linkedin", "connection_sent", { detail: lead.lastAction?.type, ...liNode });
           await db.from("prospect_list_members").update({ contact_status: "conexion_enviada", status_changed_at: ctx.now.toISOString() })
             .eq("id", en.member_id).in("contact_status", ["no_contactado", "en_campana", "saludo_enviado"]);
         } else if (signal === "connection_accepted") {
           if (!en.linkedin_connected_at) patch.linkedin_connected_at = ctx.now.toISOString();
-          await event(ctx, en, "linkedin", "connection_accepted", { detail: lead.lastAction?.type, step_position: en.next_position });
+          await event(ctx, en, "linkedin", "connection_accepted", { detail: lead.lastAction?.type, ...liNode });
           await db.from("prospect_list_members").update({ contact_status: "conexion_aceptada", status_changed_at: ctx.now.toISOString() })
             .eq("id", en.member_id).in("contact_status", ["no_contactado", "en_campana", "saludo_enviado", "conexion_enviada"]);
         } else if (signal === "message_sent") {
-          await event(ctx, en, "linkedin", "sent", { detail: lead.lastAction?.type, step_position: en.next_position });
+          await event(ctx, en, "linkedin", "sent", { detail: lead.lastAction?.type, ...liNode });
         } else if (signal === "replied") {
           if (["active", "processing", "paused"].includes(en.status)) {
             patch.status = "replied";
             patch.stop_reason = "Respondió por LinkedIn (Dripify).";
           }
           if (!en.replied_at) { patch.replied_at = ctx.now.toISOString(); patch.replied_channel = "linkedin"; }
-          await event(ctx, en, "linkedin", "replied", { detail: lead.lastAction?.type, step_position: en.next_position });
+          await event(ctx, en, "linkedin", "replied", { detail: lead.lastAction?.type, ...liNode });
           await db.from("prospect_list_members").update({ contact_status: "respondio", status_changed_at: ctx.now.toISOString() })
             .eq("id", en.member_id).not("contact_status", "in", "(reunion_agendada,reunion_tomada,dado_de_baja)");
         } else if (signal === "failed") {
-          await event(ctx, en, "linkedin", "failed", { detail: lead.lastAction?.type, step_position: en.next_position });
+          await event(ctx, en, "linkedin", "failed", { detail: lead.lastAction?.type, ...liNode });
         }
         await db.from("campaign_enrollments").update(patch).eq("id", en.id);
         // El mismo enrolamiento puede aparecer en otra campaña de Dripify en

@@ -88,6 +88,11 @@ Pasos manuales:
 - **Portales de licitaciones por API**: solo SECOP II (Colombia) tiene API abierta limpia; el resto se cubre por búsqueda web con el modo `tenders`, que exige la URL del aviso como evidencia.
 - **Intent data (Bombora) de Apollo**: no está expuesta en la API de búsqueda; queda fuera.
 
+## Alcance y aprendizaje (2026-09-19)
+
+- **Cuántas empresas por corrida** lo decide el usuario: `config.max_companies` (25–1.000, 300 por defecto) por detector, con un selector global "Alcance" en el plan que lo aplica a todos y muestra el costo estimado en créditos de Apollo. El motor deriva de ahí las páginas de 100 que lee (`pagesFor` en `radar-detectors.ts`); noticias y licitaciones acotan el prompt al mismo número. `MAX_NEW_PER_TICK` subió de 40 a 120 para no tirar el 60 % de cada página pagada, y `funding` pasó a páginas de 100 como los demás.
+- **El bucle de aprendizaje (`learning-loop`) gobierna el peso y el encendido**: con ≥ 8 señales juzgadas (guardada/útil vs. descartada/no útil) escribe `weight = 20 + 80 × tasa de acierto (+ bonos por respuestas y reuniones de los leads con `source.detector_id`)` y, si < 20 % útiles sin respuestas, apaga el detector (`enabled = false`, `stats.auto_paused`) dejando el motivo en la tarjeta. El interruptor lo vuelve a encender y no se apaga dos veces. El 👍/👎 inmediato del navegador se mantiene como respuesta instantánea; `adjustWeight` de `radar-score.ts` queda como espejo documental de esa regla.
+
 ## Economía
 
 | Acción | Créditos | Dónde se cobra |

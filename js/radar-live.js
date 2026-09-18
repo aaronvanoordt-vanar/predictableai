@@ -54,6 +54,15 @@
     website_visitors: { label: 'Visitantes de tu sitio',       icon: '👀', requires: ['Tu cuenta de Apollo con Website Visitors'], desc: 'Empresas que visitaron tu web (lo más caliente que existe).' },
   };
   const KIND_ORDER = Object.keys(DETECTOR_KINDS);
+  // Espejo de MAX_COMPANIES_OPTIONS / DEFAULT_MAX_COMPANIES en _shared/radar-plan.ts.
+  const MAX_COMPANIES_OPTIONS = [25, 50, 100, 200, 300, 500, 1000];
+  const DEFAULT_MAX_COMPANIES = 300;
+  function maxCompaniesOf(d) { const n = Number(d && d.config && d.config.max_companies); return n >= 25 && n <= 1000 ? Math.round(n) : DEFAULT_MAX_COMPANIES; }
+  function maxCompaniesSelect(act, id, value, extraClass) {
+    return '<select class="rl-select rl-select-sm' + (extraClass ? ' ' + extraClass : '') + '" data-act="' + act + '"' + (id ? ' data-id="' + esc(id) + '"' : '') + ' title="Cuántas empresas revisa cada corrida. En los detectores de Apollo, cada 100 empresas es 1 crédito de Apollo.">' +
+      (value === '' ? '<option value="" selected>Empresas por corrida: mixto</option>' : '') +
+      MAX_COMPANIES_OPTIONS.map((n) => '<option value="' + n + '"' + (Number(value) === n ? ' selected' : '') + '>' + n.toLocaleString('es-MX') + ' empresas por corrida</option>').join('') + '</select>';
+  }
   const CADENCES = [[6, 'cada 6 h'], [12, 'cada 12 h'], [24, 'cada día'], [48, 'cada 2 días'], [72, 'cada 3 días'], [168, 'cada semana']];
   const STATUS_LABEL = { idle: 'listo', running: 'corriendo', error: 'con error', no_credits: 'sin créditos', unavailable: 'no disponible' };
 
@@ -276,6 +285,8 @@
 
   function signalToCompany(s) {
     return {
+      signal_id: s.id,
+      detector_id: s.detector_id,
       name: s.company_name,
       website: s.website || (s.company_domain ? 'https://' + s.company_domain : ''),
       country: s.country || '',
@@ -621,6 +632,7 @@
       (p.hub_synced_at ? '<span>Hub sincronizado ' + esc(relTime(p.hub_synced_at)) + '</span>' : '<span>Sin datos del Hub todavía</span>') +
       '<span class="rl-cost">Monitoreo: <span data-credit-cost="radar_detector_month" data-credit-pos="inside"></span></span>' +
       '</div>' +
+      planMaxCompaniesHtml() +
       (state.showPlanPrompt ? '<div class="rl-regen">' + promptBoxHtml() + '<div class="rl-hero-btns"><button class="btn btn-primary btn-sm" data-act="generate"' + (state.busy ? ' disabled' : '') + '>Regenerar plan con IA</button><span class="rl-cost"><span data-credit-cost="radar_plan" data-credit-pos="inside"></span></span><span class="rl-muted rl-xs">Reemplaza los detectores propuestos por la IA y el Hub; los que agregaste tú se conservan.</span></div></div>' : '') +
       '</div>';
     const sorted = state.detectors.slice().sort((a, b) => (b.enabled - a.enabled) || (b.weight - a.weight));
@@ -629,10 +641,39 @@
     return h;
   }
 
+  // Selector global "cuántas empresas debe buscar el radar" (2026-09-18): aplica a
+  // todos los detectores; cada tarjeta puede afinar el suyo.
+  function planMaxCompaniesHtml() {
+    const values = state.detectors.map(maxCompaniesOf);
+    const same = values.length && values.every((v) => v === values[0]) ? values[0] : '';
+    const apolloKinds = state.detectors.filter((d) => d.enabled && ['hiring', 'technographics', 'site_probe', 'growth', 'funding'].includes(d.kind)).length;
+    const perRun = same ? Math.ceil(same / 100) * apolloKinds : null;
+    return '<div class="rl-plan-max">' +
+      '<span class="rl-lbl">Alcance</span>' +
+      maxCompaniesSelect('plan-max-companies', '', same, '') +
+      '<span class="rl-muted rl-xs">' + (perRun != null && apolloKinds ? '≈ ' + perRun + ' crédito' + (perRun === 1 ? '' : 's') + ' de Apollo por corrida en los ' + apolloKinds + ' detectores de empresa activos.' : 'Cada detector puede tener su propio alcance en su tarjeta.') + '</span>' +
+      '</div>';
+  }
+
   function promptBoxHtml() {
     return '<div class="rl-field"><label class="rl-lbl">¿Quieres orientar la búsqueda? <span class="rl-opt">Opcional</span></label>' +
       '<textarea class="rl-ta" data-act="plan-prompt" placeholder="Ej: Quiero clínicas y consultorios en Monterrey y Guadalajara que atiendan por WhatsApp sin automatización. O: Solo empresas de logística en Perú y Chile.">' + esc(state.planPrompt) + '</textarea>' +
       '<div class="rl-hint">Los países salen del contexto de tu empresa; si aquí nombras otros, se usan esos.</div></div>';
+  }
+
+  // Veredicto del bucle de aprendizaje (learning-loop escribe stats.learning y,
+  // si apagó el detector, stats.auto_paused). El usuario lo vuelve a encender
+  // con el mismo interruptor: el bucle no lo apaga dos veces.
+  function learningPill(d) {
+    const st = d.stats || {};
+    const L = st.learning || null;
+    const ap = st.auto_paused || null;
+    if (ap && !d.enabled) return '<span class="pill pill-red" style="font-size:10.5px" title="' + esc(ap.reason || '') + '">Apagado por aprendizaje</span>';
+    if (!L || !global.learning) return '';
+    const label = L.verdict === 'works' ? 'Funciona' : L.verdict === 'fails' ? 'No funciona' : L.verdict === 'neutral' ? 'Neutro' : '';
+    if (!label) return '';
+    const tip = (L.judged || 0) + ' señales juzgadas · ' + (L.positive || 0) + ' útiles/guardadas · ' + (L.replies || 0) + ' respuestas · ' + (L.meetings || 0) + ' reuniones';
+    return '<span class="pill pill-' + (L.verdict === 'works' ? 'green' : L.verdict === 'fails' ? 'red' : 'gray') + '" style="font-size:10.5px" title="' + esc(tip) + '">' + label + '</span>';
   }
 
   function detectorCardHtml(d) {
@@ -649,6 +690,7 @@
     return '<div class="card rl-det' + (!d.enabled ? ' is-off' : '') + (st === 'unavailable' ? ' is-unavail' : '') + '">' +
       '<div class="rl-det-top"><span class="rl-det-kind">' + kind.icon + ' ' + esc(kind.label) + '</span>' +
       '<span class="rl-origin">' + (d.origin === 'user' ? 'tuyo' : d.origin === 'hub' ? 'del Hub' : 'de la IA') + '</span>' +
+      learningPill(d) +
       '<label class="rl-switch" title="' + (d.enabled ? 'Apagar' : 'Encender') + '"><input type="checkbox" data-act="det-enabled" data-id="' + esc(d.id) + '"' + (d.enabled ? ' checked' : '') + (st === 'unavailable' ? ' disabled' : '') + '><span></span></label></div>' +
       '<div class="rl-det-name">' + esc(d.name) + '</div>' +
       (d.rationale ? '<div class="rl-det-why">' + esc(d.rationale) + '</div>' : '') +
@@ -657,6 +699,7 @@
       '<div class="rl-det-ctl">' +
       '<label class="rl-range"><span>Peso <b>' + esc(d.weight) + '</b></span><input type="range" min="0" max="100" step="5" value="' + esc(d.weight) + '" data-act="det-weight" data-id="' + esc(d.id) + '"></label>' +
       '<select class="rl-select rl-select-sm" data-act="det-cadence" data-id="' + esc(d.id) + '">' + CADENCES.map((c) => '<option value="' + c[0] + '"' + (Number(d.cadence_hours) === c[0] ? ' selected' : '') + '>' + c[1] + '</option>').join('') + (CADENCES.some((c) => c[0] === Number(d.cadence_hours)) ? '' : '<option value="' + esc(d.cadence_hours) + '" selected>cada ' + esc(d.cadence_hours) + ' h</option>') + '</select>' +
+      maxCompaniesSelect('det-max-companies', d.id, maxCompaniesOf(d), '') +
       '</div>' +
       '<div class="rl-det-foot">' + statusLine +
       '<span class="rl-muted rl-xs">' + total + ' señal' + (total === 1 ? '' : 'es') + ' en total' + (stats.last_note ? ' · ' + esc(stats.last_note) : '') + '</span>' +
@@ -769,6 +812,8 @@
       else if (act === 'det-enabled') { patchDetector(id, { enabled: t.checked }).then(render); }
       else if (act === 'det-weight') { patchDetector(id, { weight: Number(t.value) || 0 }).then(render); }
       else if (act === 'det-cadence') { patchDetector(id, { cadence_hours: Number(t.value) || 24 }).then(render); }
+      else if (act === 'det-max-companies') { const d = state.detectors.find((x) => x.id === id); if (d) patchDetector(id, { config: Object.assign({}, d.config || {}, { max_companies: Number(t.value) || DEFAULT_MAX_COMPANIES }) }).then(render); }
+      else if (act === 'plan-max-companies') { const n = Number(t.value); if (n) Promise.all(state.detectors.map((d) => patchDetector(d.id, { config: Object.assign({}, d.config || {}, { max_companies: n }) }))).then(render); }
       else if (act === 'add-kind') { state.addForm.kind = t.value; render(); }
       else if (act === 'set-every') { state.settings.every = Number(t.value) || 24; }
     });
@@ -874,6 +919,7 @@
       '.rl-plan-btns{display:flex;gap:8px;flex-wrap:wrap}',
       '.rl-hyp{font-size:13.5px;color:var(--ink-2);line-height:1.6;white-space:pre-line}',
       '.rl-plan-meta{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink-4)}',
+      '.rl-plan-max{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}',
       '.rl-regen{border-top:1px solid var(--hair);padding-top:12px;display:flex;flex-direction:column;gap:10px}',
       '.rl-dets{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}',
       '.rl-det{padding:14px 16px;display:flex;flex-direction:column;gap:7px}.rl-det.is-off{opacity:.62}.rl-det.is-unavail{border-style:dashed}',

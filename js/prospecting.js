@@ -319,7 +319,7 @@
     '#prospecting-shell .pros-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }',
     '#prospecting-shell .pros-engine-row { margin:0 0 14px; }',
     // AI-generation buttons: blue gradient so they read as "powered by IA".
-    '#prospecting-shell .btn-ai { background:linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%); color:#fff; border-color:transparent; box-shadow:0 1px 2px rgba(31,75,255,.25), 0 8px 20px -10px rgba(90,96,240,.6); }',
+    '#prospecting-shell .btn-ai { background:var(--grad-ai, linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%)); color:#fff; border-color:transparent; box-shadow:0 1px 2px rgba(31,75,255,.25), 0 8px 20px -10px rgba(90,96,240,.6); }',
     '#prospecting-shell .btn-ai:hover { filter:brightness(1.07); box-shadow:0 1px 2px rgba(31,75,255,.3), 0 12px 28px -10px rgba(90,96,240,.78); }',
     '#prospecting-shell .btn-ai svg { color:#fff; }',
     '#prospecting-shell .btn-ai[disabled] { opacity:.5; cursor:not-allowed; filter:none; box-shadow:none; }',
@@ -1660,11 +1660,13 @@
     s.pageRows = rows;
     s.rowsByKey = new Map(rows.map(function (r) { return [r._key, r]; }));
 
-    // Apollo cuenta SIN exclusiones: le restamos las que ya sabemos ocultas
-    // (nunca por debajo de lo que ya tenemos en mano). Si no reporta total,
-    // lo visible es un piso honesto, no el total.
+    // El total es el que reporta Apollo para la búsqueda (pagination.total_entries).
+    // Antes se le restaban las exclusiones detectadas en el buffer local (≤ 1.000
+    // filas) a un total global de hasta 50.000: un número sin sentido. Las
+    // ocultas se informan aparte, debajo. Si Apollo no reporta total, lo visible
+    // es un piso honesto, no el total.
     var totalKnown = s.apolloTotal > 0;
-    var total = totalKnown ? Math.max(vis.length, s.apolloTotal - hidden) : vis.length;
+    var total = totalKnown ? Math.max(vis.length, s.apolloTotal) : vis.length;
     // El total de páginas es exacto cuando Apollo reporta el total o cuando ya
     // trajimos todo; si no, es un piso y se marca con "+".
     var pagesKnown = totalKnown || s.apolloDone;
@@ -1676,7 +1678,7 @@
     var html = '<div class="pros-results-head">' +
       '<div style="font-size:13px;color:var(--text2)"><b style="color:var(--text)">' +
       (!totalKnown && rows.length ? '≥' : '') + esc(fmtNum(total)) +
-      '</b> personas encontradas' +
+      '</b> personas encontradas' + (totalKnown ? ' <span style="color:var(--text3)">· total de Apollo para estos filtros</span>' : '') +
       (partial ? ' <span style="color:var(--text3)">· resultados parciales, máx. 50.000 visibles</span>' : '') +
       (!totalKnown && rows.length ? ' <span style="color:var(--text3)">· Apollo no reporta el total exacto para esta búsqueda; usa «›» para ver más</span>' : '') +
       '</div>' +

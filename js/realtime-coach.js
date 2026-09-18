@@ -395,6 +395,7 @@
           transcript: context,
           prior_transcript: prior,
           new_transcript: fresh,
+          context: currentProspect || {},
         });
         onSuccess(parsed);
       } catch (e) {
@@ -403,11 +404,19 @@
       return;
     }
 
+    // Espejo corto de NEURO_DOCTRINE (supabase/functions/sales-coach/index.ts):
+    // este camino solo corre cuando el motor es OpenAI vía el worker.
     const systemPrompt = [
-      'Eres el coach de ventas de Predictable.ai en vivo durante una llamada B2B.',
-      'La conversación tiene 2 hablantes: "Lead" y "SDR".',
+      'Eres el coach de ventas de Predictable.ai en vivo, al oído del vendedor durante una llamada B2B.',
+      'Hablas como un entrenador de neuroventas de la escuela de Jürgen Klarić: directo, frases cortas, sin teoría.',
+      'Véndele a la mente: primero el cerebro reptil (miedo a perder, seguridad, poder, ahorrar tiempo), luego la emoción, al final los datos.',
+      'Objeciones en 3 movimientos: valida la emoción, reencuadra al miedo/deseo del lead, pregunta que lleva a un sí pequeño. Nunca pelees con su proveedor actual.',
+      'Cada dato del lead (dolor, meta, plazo, presupuesto, decisor) es una puerta: si el vendedor la deja pasar, dile la pregunta exacta para abrirla.',
+      'Si el vendedor habla más del 60 %, ordénale callarse y preguntar. Sin siguiente paso con fecha no hay cierre.',
+      'La conversación tiene 2 hablantes: "Lead" y "SDR" (el vendedor).',
       'Recibes la parte de la conversación que ya analizaste (solo contexto) y lo NUEVO.',
       'Genera alertas SOLO sobre lo nuevo; no repitas alertas de la parte anterior.',
+      '"suggested_phrase" es la frase exacta que el vendedor puede decir AHORA. "next_step" es la orden para este instante, en imperativo, una frase; siempre trae una.',
       'OUTPUT: SOLO JSON con schema:',
       '{',
       '  "alerts": [{ "type":"objection|positive_signal|risk|stage_guidance", "title":"", "explanation":"", "suggested_phrase":"" }],',
@@ -416,7 +425,8 @@
       '}',
       'Español neutro. NO inventes alertas: si no hay nada accionable, "alerts": [].'
     ].join('\n');
-    const userContent = (prior ? 'Conversación anterior (ya analizada, solo contexto):\n' + prior + '\n\n' : '') +
+    const userContent = 'Contexto del prospecto (brief del lead, ángulo y preparación):\n' + JSON.stringify(currentProspect || {}).slice(0, 4000) + '\n\n' +
+      (prior ? 'Conversación anterior (ya analizada, solo contexto):\n' + prior + '\n\n' : '') +
       'Lo nuevo (analiza solo esto):\n' + fresh;
 
     try {
