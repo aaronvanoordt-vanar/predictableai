@@ -3,10 +3,12 @@
    Sonido: Web Audio API generado en el momento (sin archivos de audio),
    silencioso hasta el primer gesto del usuario (política de autoplay de
    los navegadores) y con botón de silencio persistido en localStorage.
-   Además del "encendido" y los efectos de interfaz hay un lecho ambiental
-   continuo (drone + pad con filtro respirando + shimmer con paneo lento)
-   que sigue sonando en loop mientras la pestaña esté abierta — no es un
-   solo golpe de sonido al cargar. */
+   Estética deliberada: sala de máquinas / consola, NO pad de meditación —
+   un zumbido sub-grave estable (sin LFO de "respiración" lenta que es lo
+   que lee como spa), un pulso rítmico tipo latido/reloj y blips digitales
+   dispersos (ruido filtrado + tonos cortos en onda cuadrada). Todo sigue
+   sonando en loop mientras la pestaña esté abierta — no es un solo golpe
+   de sonido al cargar. */
 (function () {
   'use strict';
 
@@ -55,10 +57,12 @@
 
   function now() { return ctx.currentTime; }
 
-  // Construye el lecho ambiental UNA vez: drone grave + pad de 3 voces con
-  // filtro modulado por un LFO lento ("respiración") + shimmer agudo con
-  // paneo lento. Todos los osciladores arrancan y quedan sonando; el
-  // volumen del bus (ambienceBus) es lo único que sube/baja después.
+  // Construye el lecho ambiental UNA vez: zumbido sub-grave fijo (sala de
+  // máquinas, sin LFO de "respiración" — eso es lo que suena a meditación)
+  // + los programadores del pulso/blips/ticks. Los osciladores del zumbido
+  // arrancan y quedan sonando; el volumen del bus (ambienceBus) es lo único
+  // que sube/baja después. Pulso/blips/ticks van directo al bus master (ver
+  // tone()/noiseSweep()) y se silencian solos con el flag `enabled`.
   function buildAmbience() {
     if (ambienceBuilt) return;
     ambienceBuilt = true;
@@ -67,53 +71,44 @@
     ambienceBus.gain.value = 0.0001;
     ambienceBus.connect(master);
 
-    // Drone grave, el lecho sobre el que respira todo lo demás.
-    var drone = ctx.createOscillator();
-    drone.type = 'sine'; drone.frequency.value = 55;
-    var droneFilter = ctx.createBiquadFilter();
-    droneFilter.type = 'lowpass'; droneFilter.frequency.value = 220;
-    var droneGain = ctx.createGain(); droneGain.gain.value = 0.85;
-    drone.connect(droneFilter).connect(droneGain).connect(ambienceBus);
-    drone.start();
-
-    // Pad de tres voces (dos ligeramente desafinadas para "chorus" suave)
-    // sobre un filtro compartido cuyo corte modula un LFO muy lento.
-    var padFilter = ctx.createBiquadFilter();
-    padFilter.type = 'lowpass'; padFilter.frequency.value = 900; padFilter.Q.value = 0.6;
-    var padGain = ctx.createGain(); padGain.gain.value = 0.55;
-    padFilter.connect(padGain).connect(ambienceBus);
-    [220, 220.6, 329.63].forEach(function (freq, i) {
+    var humFilter = ctx.createBiquadFilter();
+    humFilter.type = 'lowpass'; humFilter.frequency.value = 130;
+    var humGain = ctx.createGain(); humGain.gain.value = 0.55;
+    humFilter.connect(humGain).connect(ambienceBus);
+    [45, 45.3].forEach(function (freq) {
       var o = ctx.createOscillator();
-      o.type = i === 2 ? 'sine' : 'triangle';
-      o.frequency.value = freq;
-      o.connect(padFilter);
+      o.type = 'sine'; o.frequency.value = freq;
+      o.connect(humFilter);
       o.start();
     });
 
-    var breathe = ctx.createOscillator();
-    breathe.type = 'sine'; breathe.frequency.value = 0.045;
-    var breatheGain = ctx.createGain(); breatheGain.gain.value = 500;
-    breathe.connect(breatheGain).connect(padFilter.frequency);
-    breathe.start();
+    schedulePulse();
+    scheduleDataBlip();
+    scheduleTick();
+  }
 
-    // Textura aguda con paneo lento — el brillo "tecnológico".
-    var shimmer = ctx.createOscillator();
-    shimmer.type = 'sine'; shimmer.frequency.value = 1760;
-    var shimmerFilter = ctx.createBiquadFilter();
-    shimmerFilter.type = 'highpass'; shimmerFilter.frequency.value = 1200;
-    var shimmerGain = ctx.createGain(); shimmerGain.gain.value = 0.16;
-    if (ctx.createStereoPanner) {
-      var panner = ctx.createStereoPanner();
-      var pan = ctx.createOscillator();
-      pan.type = 'sine'; pan.frequency.value = 0.06;
-      var panGain = ctx.createGain(); panGain.gain.value = 0.9;
-      pan.connect(panGain).connect(panner.pan);
-      pan.start();
-      shimmer.connect(shimmerFilter).connect(shimmerGain).connect(panner).connect(ambienceBus);
-    } else {
-      shimmer.connect(shimmerFilter).connect(shimmerGain).connect(ambienceBus);
+  // Pulso rítmico grave (late/reloj) — con jitter para que no suene a
+  // metrónomo. Se reprograma indefinidamente; si el sonido está silenciado
+  // tone() no emite nada, pero el reloj sigue vivo para retomar al instante.
+  function schedulePulse() {
+    tone(72, { type: 'sine', dur: 0.3, gain: 0.05, sweepTo: 52, filterFreq: 260 });
+    setTimeout(schedulePulse, 1700 + Math.random() * 500);
+  }
+
+  // Blip de "transferencia de datos" — ruido filtrado corto y disperso.
+  function scheduleDataBlip() {
+    noiseSweep({ dur: 0.22, freqFrom: 2200, freqTo: 5200, gain: 0.03, q: 3 });
+    setTimeout(scheduleDataBlip, 2600 + Math.random() * 2800);
+  }
+
+  var TICK_NOTES = [880, 1046.5, 1318.5];
+  // Tick digital agudo, disperso y no siempre — actividad de sistema, no melodía.
+  function scheduleTick() {
+    if (Math.random() < 0.7) {
+      var freq = TICK_NOTES[Math.floor(Math.random() * TICK_NOTES.length)];
+      tone(freq, { type: 'square', dur: 0.05, gain: 0.012, filterFreq: 6000 });
     }
-    shimmer.start();
+    setTimeout(scheduleTick, 3400 + Math.random() * 3200);
   }
 
   function setAmbienceGain(target, rampSec) {
@@ -184,13 +179,13 @@
     src.stop(t0 + dur + 0.05);
   }
 
-  // El "ignition swell" que abre la experiencia — un acorde ascendente sutil
-  // sobre un lecho de ruido filtrado, ~1.4s, una sola vez por sesión.
+  // El "power-on" que abre la experiencia: un chirrido corto y ascendente
+  // (~0.5s) más un blip de confirmación — no un acorde que se sostiene,
+  // eso es lo que suena a pad ambiental. Una sola vez por sesión.
   function playIgnition() {
-    noiseSweep({ dur: 1.5, freqFrom: 140, freqTo: 1800, gain: 0.045 });
-    tone(196, { type: 'sine', dur: 1.3, gain: 0.05, sweepTo: 233, filterFreq: 1200 });
-    tone(392, { type: 'sine', dur: 1.1, gain: 0.03, delay: 0.18, filterFreq: 2400 });
-    tone(587.33, { type: 'triangle', dur: 0.9, gain: 0.02, delay: 0.4, filterFreq: 3000 });
+    noiseSweep({ dur: 0.55, freqFrom: 300, freqTo: 3400, gain: 0.05, q: 1.1 });
+    tone(110, { type: 'sine', dur: 0.4, gain: 0.05, sweepTo: 440, filterFreq: 2400 });
+    tone(880, { type: 'square', dur: 0.14, gain: 0.018, delay: 0.42, filterFreq: 5000 });
   }
 
   function playHoverTick() {
@@ -220,7 +215,7 @@
     started = true;
     playIgnition();
     buildAmbience();
-    setAmbienceGain(AMBIENCE_LEVEL, 2.4); // el lecho ambiental entra mientras se apaga el encendido, y se queda sonando
+    setAmbienceGain(AMBIENCE_LEVEL, 1.1); // el zumbido entra justo detrás del chirrido y se queda sonando
   }
 
   /* ── Botón de silencio ──────────────────────────────────────────────── */
