@@ -845,16 +845,16 @@
     const s = document.createElement('style');
     s.id = 'radar-live-styles';
     s.textContent = [
-      '.rl-wrap{display:flex;flex-direction:column;gap:14px;padding:26px;max-width:1080px;margin:0 auto;width:100%}',
-      '.rl-top{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}',
-      '.rl-top-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;padding-bottom:6px}',
-      '.rl-title{font-family:var(--font-display);font-size:22px;font-weight:800;color:var(--ink)}',
-      '.rl-sub{font-size:13px;color:var(--ink-3);margin-top:3px;max-width:680px;line-height:1.5}',
+      '.rl-wrap{display:flex;flex-direction:column;gap:8px;padding:0;max-width:1080px;margin:0 auto;width:100%}',
+      '.rl-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}',
+      '.rl-top-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;padding-bottom:0}',
+      '.rl-title{font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink)}',
+      '.rl-sub{font-size:12.5px;color:var(--ink-3);margin-top:2px;max-width:600px;line-height:1.4}',
       '.rl-pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:5px 11px;border-radius:999px;background:var(--surface3);color:var(--ink-3)}',
       '.rl-pill-on{background:var(--green-soft,rgba(16,185,129,.12));color:var(--green,#059669)}',
       '.rl-dot{width:7px;height:7px;border-radius:50%;background:currentColor;animation:rlPulse 1.4s ease-in-out infinite}',
       '@keyframes rlPulse{0%,100%{opacity:.35}50%{opacity:1}}',
-      '.rl-tabs{display:flex;gap:4px;border-bottom:1px solid var(--hair);margin-top:12px;flex-wrap:wrap;align-items:center}',
+      '.rl-tabs{display:flex;gap:2px;border-bottom:1px solid var(--hair);margin-top:8px;flex-wrap:wrap;align-items:center}',
       '.rl-tabs-right{margin-left:auto;display:flex;align-items:center;padding-bottom:6px}',
       '.rl-tab{font-family:inherit;font-size:13px;font-weight:600;color:var(--ink-3);background:none;border:none;border-bottom:2px solid transparent;padding:9px 12px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}',
       '.rl-tab:hover{color:var(--ink)}',
