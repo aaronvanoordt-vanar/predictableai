@@ -13,9 +13,9 @@
   // Packs de recarga (overage sobre los créditos incluidos en el plan).
   // 1 crédito ≈ US$0.10 de valor; descuento por volumen en los packs grandes.
   const PACKAGES = [
-    { key: 'starter', credits: 250,  price: '$99.900 COP',  label: 'Starter' },
-    { key: 'pro',      credits: 600,  price: '$214.900 COP', label: 'Pro', highlight: true },
-    { key: 'scale',    credits: 1500, price: '$479.900 COP', label: 'Scale' },
+    { key: 'starter', credits: 250,  price: '$25.00 USD',  label: 'Starter' },
+    { key: 'pro',      credits: 600,  price: '$50.00 USD', label: 'Pro', highlight: true },
+    { key: 'scale',    credits: 1500, price: '$120.00 USD', label: 'Scale' },
   ];
 
   let selectedPackage = PACKAGES[1].key;
