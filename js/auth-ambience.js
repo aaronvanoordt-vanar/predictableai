@@ -2,7 +2,11 @@
    para auth.html. No toca ningún id que use js/auth.js; solo escucha.
    Sonido: Web Audio API generado en el momento (sin archivos de audio),
    silencioso hasta el primer gesto del usuario (política de autoplay de
-   los navegadores) y con botón de silencio persistido en localStorage. */
+   los navegadores) y con botón de silencio persistido en localStorage.
+   Además del "encendido" y los efectos de interfaz hay un lecho ambiental
+   continuo (drone + pad con filtro respirando + shimmer con paneo lento)
+   que sigue sonando en loop mientras la pestaña esté abierta — no es un
+   solo golpe de sonido al cargar. */
 (function () {
   'use strict';
 
@@ -31,9 +35,12 @@
   /* ── Motor de sonido ────────────────────────────────────────────────── */
   var ctx = null;
   var master = null;
+  var ambienceBus = null;
+  var ambienceBuilt = false;
   var enabled = localStorage.getItem(SOUND_KEY) !== 'off';
   var started = false;
   var lastTick = 0;
+  var AMBIENCE_LEVEL = 0.075;
 
   function ensureCtx() {
     if (ctx) return ctx;
@@ -47,6 +54,76 @@
   }
 
   function now() { return ctx.currentTime; }
+
+  // Construye el lecho ambiental UNA vez: drone grave + pad de 3 voces con
+  // filtro modulado por un LFO lento ("respiración") + shimmer agudo con
+  // paneo lento. Todos los osciladores arrancan y quedan sonando; el
+  // volumen del bus (ambienceBus) es lo único que sube/baja después.
+  function buildAmbience() {
+    if (ambienceBuilt) return;
+    ambienceBuilt = true;
+
+    ambienceBus = ctx.createGain();
+    ambienceBus.gain.value = 0.0001;
+    ambienceBus.connect(master);
+
+    // Drone grave, el lecho sobre el que respira todo lo demás.
+    var drone = ctx.createOscillator();
+    drone.type = 'sine'; drone.frequency.value = 55;
+    var droneFilter = ctx.createBiquadFilter();
+    droneFilter.type = 'lowpass'; droneFilter.frequency.value = 220;
+    var droneGain = ctx.createGain(); droneGain.gain.value = 0.85;
+    drone.connect(droneFilter).connect(droneGain).connect(ambienceBus);
+    drone.start();
+
+    // Pad de tres voces (dos ligeramente desafinadas para "chorus" suave)
+    // sobre un filtro compartido cuyo corte modula un LFO muy lento.
+    var padFilter = ctx.createBiquadFilter();
+    padFilter.type = 'lowpass'; padFilter.frequency.value = 900; padFilter.Q.value = 0.6;
+    var padGain = ctx.createGain(); padGain.gain.value = 0.55;
+    padFilter.connect(padGain).connect(ambienceBus);
+    [220, 220.6, 329.63].forEach(function (freq, i) {
+      var o = ctx.createOscillator();
+      o.type = i === 2 ? 'sine' : 'triangle';
+      o.frequency.value = freq;
+      o.connect(padFilter);
+      o.start();
+    });
+
+    var breathe = ctx.createOscillator();
+    breathe.type = 'sine'; breathe.frequency.value = 0.045;
+    var breatheGain = ctx.createGain(); breatheGain.gain.value = 500;
+    breathe.connect(breatheGain).connect(padFilter.frequency);
+    breathe.start();
+
+    // Textura aguda con paneo lento — el brillo "tecnológico".
+    var shimmer = ctx.createOscillator();
+    shimmer.type = 'sine'; shimmer.frequency.value = 1760;
+    var shimmerFilter = ctx.createBiquadFilter();
+    shimmerFilter.type = 'highpass'; shimmerFilter.frequency.value = 1200;
+    var shimmerGain = ctx.createGain(); shimmerGain.gain.value = 0.16;
+    if (ctx.createStereoPanner) {
+      var panner = ctx.createStereoPanner();
+      var pan = ctx.createOscillator();
+      pan.type = 'sine'; pan.frequency.value = 0.06;
+      var panGain = ctx.createGain(); panGain.gain.value = 0.9;
+      pan.connect(panGain).connect(panner.pan);
+      pan.start();
+      shimmer.connect(shimmerFilter).connect(shimmerGain).connect(panner).connect(ambienceBus);
+    } else {
+      shimmer.connect(shimmerFilter).connect(shimmerGain).connect(ambienceBus);
+    }
+    shimmer.start();
+  }
+
+  function setAmbienceGain(target, rampSec) {
+    if (!ambienceBus) return;
+    var t = now();
+    var current = Math.max(ambienceBus.gain.value, 0.0001);
+    ambienceBus.gain.cancelScheduledValues(t);
+    ambienceBus.gain.setValueAtTime(current, t);
+    ambienceBus.gain.exponentialRampToValueAtTime(Math.max(target, 0.0001), t + (rampSec || 1.2));
+  }
 
   // Tono simple con envolvente ADR corta — el bloque base de todos los efectos.
   function tone(freq, opts) {
@@ -142,6 +219,8 @@
     if (ctx.state === 'suspended') ctx.resume();
     started = true;
     playIgnition();
+    buildAmbience();
+    setAmbienceGain(AMBIENCE_LEVEL, 2.4); // el lecho ambiental entra mientras se apaga el encendido, y se queda sonando
   }
 
   /* ── Botón de silencio ──────────────────────────────────────────────── */
@@ -161,7 +240,12 @@
       reflectState();
       if (enabled) {
         if (!started) start();
-        else tone(880, { type: 'sine', dur: 0.12, gain: 0.03, filterFreq: 4000 });
+        else {
+          tone(880, { type: 'sine', dur: 0.12, gain: 0.03, filterFreq: 4000 });
+          setAmbienceGain(AMBIENCE_LEVEL, 0.8);
+        }
+      } else if (started) {
+        setAmbienceGain(0.0001, 0.5);
       }
     });
   }
