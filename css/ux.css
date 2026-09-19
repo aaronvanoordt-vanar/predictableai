@@ -1,0 +1,491 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   ux.css — capa experiencial del shell (2026-09-19)
+
+   Se carga DESPUÉS del <style> en línea de index.html y encima de los
+   tokens que ya existen (no redefine colores: solo movimiento, jerarquía,
+   responsive y los componentes nuevos del shell). Su pareja es js/ux.js
+   (barra colapsable, cajón móvil, paleta ⌘K, barra de progreso).
+
+   Reglas:
+   - Todo respeta prefers-reduced-motion (la regla global de index.html
+     pone animation/transition a .01ms; aquí no se anula).
+   - Nada de colores nuevos: solo var(--…) del tema claro/oscuro.
+   - Los módulos inyectan su CSS en <style> DESPUÉS de este archivo, así
+     que las reglas responsive que los tocan llevan !important a propósito.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --ease-out:    cubic-bezier(.16, 1, .3, 1);
+  --ease-spring: cubic-bezier(.34, 1.4, .64, 1);
+  --dur-1: .16s;
+  --dur-2: .28s;
+  --dur-3: .5s;
+  --rail-w: 64px;
+  --mobilebar-h: 52px;
+  --chip-w: 214px;          /* ancho del chip fijo de créditos (js/credits.js) */
+  --drawer-w: 284px;
+}
+
+/* ── Fondo ambiental: dos halos muy tenues detrás de todo ─────────────── */
+body::after {
+  content: '';
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(720px 420px at 12% -10%, var(--accent-soft-2), transparent 70%),
+    radial-gradient(640px 380px at 100% 110%, var(--cyan-soft), transparent 70%);
+  opacity: .9;
+}
+html[data-theme="dark"] body::after { opacity: .55; }
+
+::selection { background: var(--accent-soft); color: inherit; }
+
+/* ── Sidebar: colapsable, con indicador animado ───────────────────────── */
+.sidebar {
+  transition: width var(--dur-2) var(--ease-out), min-width var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out);
+}
+.main { transition: margin-left var(--dur-2) var(--ease-out); }
+
+.sidebar-logo { position: relative; gap: 8px; }
+.sidebar-logo .logo-mark { transition: transform var(--dur-2) var(--ease-spring), box-shadow var(--dur-2); }
+.sidebar-logo:hover .logo-mark { transform: rotate(-6deg) scale(1.04); box-shadow: 0 0 0 1px var(--hair-3), 0 8px 18px -6px rgba(31,75,255,.55); }
+.sidebar-logo .logo-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; }
+
+.sb-iconbtn {
+  width: 26px; height: 26px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  background: transparent; color: var(--ink-4); cursor: pointer;
+  transition: background var(--dur-1), color var(--dur-1), border-color var(--dur-1), transform var(--dur-2) var(--ease-out);
+}
+.sb-iconbtn:hover { background: var(--surface2); color: var(--ink); border-color: var(--hair); }
+.sb-iconbtn svg { width: 14px; height: 14px; }
+html[data-rail="1"] .sb-collapse svg { transform: rotate(180deg); }
+
+/* Disparador de la paleta de comandos */
+.sb-search {
+  display: flex; align-items: center; gap: 8px;
+  margin: 10px 12px 2px; padding: 7px 10px;
+  border: 1px solid var(--hair); border-radius: var(--r-md);
+  background: var(--surface2); color: var(--ink-3);
+  font-family: var(--font-sans); font-size: 12px; text-align: left; cursor: pointer;
+  transition: border-color var(--dur-1), background var(--dur-1), color var(--dur-1), box-shadow var(--dur-2);
+}
+.sb-search:hover { border-color: var(--hair-3); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-1); }
+.sb-search svg { width: 13px; height: 13px; flex-shrink: 0; opacity: .7; }
+.sb-search .sb-search-lbl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ux-kbd {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .04em;
+  padding: 2px 5px; border-radius: 4px;
+  border: 1px solid var(--hair-3); background: var(--surface); color: var(--ink-4);
+  line-height: 1; white-space: nowrap;
+}
+
+.nav-item {
+  transition: background var(--dur-1), color var(--dur-1), transform var(--dur-2) var(--ease-out);
+  overflow: hidden;
+}
+.nav-item:hover { transform: translateX(2px); }
+.nav-item:active { transform: translateX(2px) scale(.985); }
+.nav-item::before {
+  content: ""; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 2px;
+  background: var(--accent); border-radius: 0 2px 2px 0;
+  transform: scaleY(0); opacity: 0;
+  transition: transform var(--dur-2) var(--ease-out), opacity var(--dur-1);
+}
+.nav-item.active::before { transform: scaleY(1); opacity: 1; }
+.nav-icon { transition: color var(--dur-1), opacity var(--dur-1), transform var(--dur-2) var(--ease-spring); }
+.nav-item:hover .nav-icon { transform: scale(1.12); }
+.nav-badge { transition: transform var(--dur-2) var(--ease-spring); }
+.nav-badge.bump { animation: uxBump .45s var(--ease-spring); }
+@keyframes uxBump { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+
+/* Píldora deslizante detrás del ítem activo (js/ux.js la mueve; el fondo
+   estático del ítem se apaga solo cuando la píldora existe). */
+.sidebar-nav { position: relative; }
+.nav-glider {
+  position: absolute; left: 12px; right: 12px; top: 0; height: 0;
+  border-radius: var(--r-sm); background: var(--surface2);
+  opacity: 0; pointer-events: none; z-index: 0;
+  transition: transform var(--dur-3) var(--ease-out), height var(--dur-3) var(--ease-out), background var(--dur-2), opacity var(--dur-2);
+  will-change: transform;
+}
+.nav-glider.on { opacity: 1; }
+.nav-glider.m2 { background: rgba(6,182,212,0.08); }
+.nav-glider.m3 { background: rgba(43,182,115,0.08); }
+html[data-glider="1"] .nav-item.active { background: transparent; }
+html[data-glider="1"][data-rail="1"] .nav-glider { left: 10px; right: 10px; }
+
+/* Modo riel (solo iconos). Lo activa js/ux.js con html[data-rail="1"]. */
+html[data-rail="1"] { --sidebar-w: var(--rail-w); }
+html[data-rail="1"] .sidebar-logo { flex-direction: column; height: auto; padding: 10px 0 8px; gap: 8px; }
+html[data-rail="1"] .sidebar-logo .logo-name,
+html[data-rail="1"] .sb-search .sb-search-lbl,
+html[data-rail="1"] .sb-search .ux-kbd,
+html[data-rail="1"] .sidebar-section .lbl,
+html[data-rail="1"] #lang-toggle,
+html[data-rail="1"] #tour-launcher,
+html[data-rail="1"] #miforms-launcher,
+html[data-rail="1"] .user-pill-info,
+html[data-rail="1"] .user-pill-caret,
+html[data-rail="1"] .side-foot-status { display: none; }
+html[data-rail="1"] .sb-search { margin: 8px 10px 0; padding: 8px 0; justify-content: center; }
+html[data-rail="1"] .sidebar-section { padding: 10px 12px 2px; }
+html[data-rail="1"] .sidebar-section + .nav-item { border-top: 1px solid var(--hair-2); margin-top: 2px; padding-top: 9px; border-radius: 0 0 var(--r-sm) var(--r-sm); }
+html[data-rail="1"] .nav-item { justify-content: center; padding: 9px 0; margin: 2px 10px; font-size: 0; gap: 0; }
+html[data-rail="1"] .nav-item:hover { transform: none; }
+html[data-rail="1"] .nav-item .nav-icon { width: 16px; height: 16px; }
+html[data-rail="1"] .nav-badge { position: absolute; top: 4px; right: 6px; font-size: 8.5px; padding: 0 4px; }
+html[data-rail="1"] .nav-item::before { left: -10px; }
+html[data-rail="1"] .theme-toggle { flex-direction: column; margin: 8px 12px 6px; border-radius: 12px; }
+html[data-rail="1"] .tt-opt { font-size: 0; gap: 0; padding: 7px 0; }
+html[data-rail="1"] .user-pill { justify-content: center; padding: 8px 0; margin: 4px 10px 12px; }
+html[data-rail="1"] .user-dropdown { left: calc(var(--rail-w) - 6px); right: auto; width: 220px; bottom: 12px; position: fixed; }
+
+/* Tooltip de los ítems en modo riel (data-tip lo pone js/ux.js) */
+html[data-rail="1"] .nav-item[data-tip]::after,
+html[data-rail="1"] .sb-search[data-tip]::after {
+  content: attr(data-tip);
+  position: fixed; left: calc(var(--rail-w) + 8px);
+  transform: translateY(-50%) translateX(-4px);
+  margin-top: 0;
+  padding: 5px 9px; border-radius: 6px;
+  background: var(--ink); color: var(--bg);
+  font-size: 11.5px; font-weight: 500; white-space: nowrap; letter-spacing: 0;
+  opacity: 0; pointer-events: none; z-index: 400;
+  transition: opacity var(--dur-1), transform var(--dur-2) var(--ease-out);
+  box-shadow: var(--shadow-2);
+}
+html[data-rail="1"] .nav-item[data-tip]:hover::after,
+html[data-rail="1"] .sb-search[data-tip]:hover::after { opacity: 1; transform: translateY(-50%) translateX(0); }
+html[data-rail="1"] .nav-item { overflow: visible; }
+
+/* ── Cabecera de página: una sola escala ──────────────────────────────── */
+.topbar { gap: 14px; }
+.topbar-title { font-size: 17px; font-weight: 600; letter-spacing: -.02em; }
+.topbar-sub { margin-top: 3px; }
+/* Deja sitio al chip fijo de créditos (antes se pisaba con el botón primario). */
+.topbar-actions { margin-right: calc(var(--chip-w) + 12px); }
+#prospecting-shell .pros-title,
+#radar-shell .rl-title,
+#clients-shell .cl-title,
+.coda-section-title {
+  font-size: 20px !important; font-weight: 700 !important; letter-spacing: -.02em !important; line-height: 1.2;
+}
+
+/* Chip de créditos: cristal, misma altura que la cabecera */
+#credits-chip {
+  background: var(--frost) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(1.3); backdrop-filter: blur(12px) saturate(1.3);
+  transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2), background var(--dur-1) !important;
+}
+#credits-chip:hover { transform: translateY(-1px); box-shadow: var(--shadow-2) !important; }
+#credits-chip:active { transform: translateY(0) scale(.98); }
+
+/* ── Botones: un solo sistema de movimiento ───────────────────────────── */
+.btn,
+.settings-btn, .ctxgate-btn, .ctxgate-nav-btn, .coda-btn, .ihx-btn-ai, .ihx-btn-generate,
+.hub-unlock-btn, .miforms-popup-cta, .ccx-confirm-btn, .logout-btn, .ih-refresh-btn, .mc-mode-btn, .tt-opt, .role-opt {
+  transition:
+    transform var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out),
+    background var(--dur-1), background-color var(--dur-1),
+    border-color var(--dur-1), color var(--dur-1), filter var(--dur-1), opacity var(--dur-1);
+}
+.btn:hover:not([disabled]), .settings-btn:hover:not([disabled]), .ctxgate-btn:hover, .coda-btn:hover, .ihx-btn-ai:hover, .ihx-btn-generate:hover,
+.hub-unlock-btn:hover, .miforms-popup-cta:hover, .ccx-confirm-btn:hover, .ih-refresh-btn:hover { transform: translateY(-1px); }
+.btn:active:not([disabled]), .settings-btn:active:not([disabled]), .ctxgate-btn:active, .coda-btn:active, .ihx-btn-ai:active, .ihx-btn-generate:active,
+.hub-unlock-btn:active, .miforms-popup-cta:active, .ccx-confirm-btn:active, .ih-refresh-btn:active { transform: translateY(0) scale(.98); }
+.btn[disabled], .btn.is-loading { cursor: not-allowed; opacity: .72; transform: none !important; }
+
+.btn-primary {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,0) 60%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 1px 2px rgba(31,75,255,.25), 0 8px 18px -10px rgba(31,75,255,.45);
+}
+/* Destello diagonal al pasar el cursor (una sola pasada, sin bucle) */
+.btn-primary { position: relative; overflow: hidden; }
+.btn-primary::after {
+  content: ''; position: absolute; top: -40%; bottom: -40%; left: -60%; width: 40%;
+  background: linear-gradient(105deg, transparent, rgba(255,255,255,.28), transparent);
+  transform: skewX(-18deg) translateX(0);
+  opacity: 0; pointer-events: none;
+}
+.btn-primary:hover::after { animation: uxShine .7s var(--ease-out) 1; }
+@keyframes uxShine { 0% { opacity: 0; transform: skewX(-18deg) translateX(0); } 15% { opacity: 1; } 100% { opacity: 0; transform: skewX(-18deg) translateX(520%); } }
+.btn-primary:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 2px 4px rgba(31,75,255,.22), 0 12px 26px -10px rgba(31,75,255,.6); }
+.btn-ghost:hover { border-color: var(--hair-3); box-shadow: var(--shadow-1); }
+
+/* Estado de carga uniforme (uiHelpers.setButtonLoading, envuelto por js/ux.js) */
+.btn.is-loading::before, .settings-btn.is-loading::before {
+  content: ''; width: 12px; height: 12px; flex-shrink: 0;
+  border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+  animation: uxSpin .7s linear infinite;
+}
+@keyframes uxSpin { to { transform: rotate(360deg); } }
+
+/* ── Tarjetas: elevación y foco de luz que sigue al cursor ────────────── */
+.card, .stat-card, .chart-card, .table-card, .settings-card, .ih-card, .insight-card {
+  transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), border-color var(--dur-2);
+}
+.area-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-3); }
+.area-icon { transition: transform var(--dur-2) var(--ease-spring); }
+.area-card:hover .area-icon { transform: translateY(-2px) scale(1.06); }
+.area-go { transition: transform var(--dur-2) var(--ease-out), color var(--dur-1); }
+
+.ux-spot { position: relative; }
+.ux-spot::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 50%), var(--accent-soft-2), transparent 42%);
+  opacity: 0; transition: opacity var(--dur-3) var(--ease-out);
+  z-index: 0;
+}
+.ux-spot:hover::after { opacity: 1; }
+
+.stat-card::before {
+  background: linear-gradient(90deg, transparent, var(--accent-2), var(--cyan), transparent);
+  background-size: 200% 100%; opacity: .35;
+  transition: opacity var(--dur-2);
+}
+.stat-card:hover::before { opacity: .9; animation: uxSweepBar 1.4s var(--ease-out) infinite; }
+@keyframes uxSweepBar { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.stat-val { font-variant-numeric: tabular-nums; transition: color var(--dur-2); }
+
+/* ── Entrada de página: escalonada, corta, con easing de salida ───────── */
+@keyframes uxRise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page.active > * { animation: uxRise .48s var(--ease-out) both; }
+.page.active > :nth-child(1) { animation-delay: 0s; }
+.page.active > :nth-child(2) { animation-delay: .04s; }
+.page.active > :nth-child(3) { animation-delay: .08s; }
+.page.active > :nth-child(4) { animation-delay: .12s; }
+.page.active > :nth-child(5) { animation-delay: .16s; }
+.page.active > :nth-child(6) { animation-delay: .2s; }
+.page.active > :nth-child(n+7) { animation-delay: .24s; }
+/* La cabecera pegajosa no debe moverse: solo aparece. */
+.page.active > .topbar { animation: uxFade .3s ease both; }
+@keyframes uxFade { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── Estados vacíos: honestos, pero con vida ──────────────────────────── */
+.empty-ic {
+  width: 52px; height: 52px; border-radius: 14px;
+  background: linear-gradient(145deg, var(--surface), var(--surface2));
+  box-shadow: 0 0 0 6px var(--accent-soft-2), var(--shadow-1);
+  animation: uxFloat 5s ease-in-out infinite;
+}
+.empty-ic svg { width: 22px; height: 22px; }
+@keyframes uxFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+.empty { gap: 8px; }
+.empty-title { font-size: 14.5px; }
+
+/* ── Formularios: foco visible y consistente ─────────────────────────── */
+.page input:not([type=checkbox]):not([type=radio]):not([type=range]),
+.page select, .page textarea {
+  transition: border-color var(--dur-1), box-shadow var(--dur-2) var(--ease-out), background var(--dur-1);
+}
+.page input:not([type=checkbox]):not([type=radio]):not([type=range]):focus-visible,
+.page select:focus-visible, .page textarea:focus-visible {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* ── Pestañas y píldoras ─────────────────────────────────────────────── */
+.tab { transition: color var(--dur-1), background var(--dur-1), box-shadow var(--dur-2); }
+.pill { transition: background var(--dur-1), color var(--dur-1), border-color var(--dur-1), transform var(--dur-1); }
+.toggle { transition: background var(--dur-2); }
+.toggle::after { transition: left var(--dur-2) var(--ease-spring); }
+
+/* ── Toasts (ui-helpers.js pinta estilos en línea; aquí solo el movimiento) */
+#px-toasts > div {
+  animation: uxToastIn .38s var(--ease-out) both !important;
+  border-radius: 12px !important;
+  box-shadow: var(--shadow-3) !important;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+@keyframes uxToastIn { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+
+/* ── Barra de progreso global (js/ux.js: navegación y llamadas a IA) ── */
+.ux-progress {
+  position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 1000;
+  pointer-events: none; opacity: 0; transition: opacity var(--dur-2);
+  overflow: hidden;
+}
+.ux-progress > i {
+  display: block; height: 100%; width: 34%;
+  background: var(--grad-ai); border-radius: 2px;
+  transform: translateX(-120%);
+}
+.ux-progress.on { opacity: 1; }
+.ux-progress.on > i { animation: uxSweep 1.1s var(--ease-out) infinite; }
+@keyframes uxSweep { from { transform: translateX(-120%); } to { transform: translateX(320%); } }
+
+/* ── Paleta de comandos (⌘K) ─────────────────────────────────────────── */
+.ux-cmdk {
+  position: fixed; inset: 0; z-index: 900;
+  display: none; align-items: flex-start; justify-content: center;
+  padding: 12vh 16px 16px;
+  background: rgba(10,10,15,.28);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
+html[data-theme="dark"] .ux-cmdk { background: rgba(0,0,0,.5); }
+.ux-cmdk.open { display: flex; animation: uxFade .18s ease both; }
+.ux-cmdk-panel {
+  width: min(600px, 100%);
+  background: var(--surface); border: 1px solid var(--hair-3); border-radius: 16px;
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  animation: uxPop .24s var(--ease-out) both;
+}
+@keyframes uxPop { from { opacity: 0; transform: translateY(-8px) scale(.98); } to { opacity: 1; transform: none; } }
+.ux-cmdk-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--hair); }
+.ux-cmdk-head svg { width: 16px; height: 16px; color: var(--ink-4); flex-shrink: 0; }
+.ux-cmdk-input {
+  flex: 1; min-width: 0; border: 0; background: transparent; outline: none;
+  font-family: var(--font-sans); font-size: 15px; color: var(--ink);
+}
+.ux-cmdk-input::placeholder { color: var(--ink-4); }
+.ux-cmdk-list { max-height: min(56vh, 460px); overflow-y: auto; padding: 6px; }
+.ux-cmdk-group {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-4); padding: 10px 10px 4px;
+}
+.ux-cmdk-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: 8px; cursor: pointer;
+  font-size: 13px; color: var(--ink-2);
+  transition: background var(--dur-1), color var(--dur-1);
+}
+.ux-cmdk-item svg { width: 15px; height: 15px; color: var(--ink-4); flex-shrink: 0; }
+.ux-cmdk-item[aria-selected="true"] { background: var(--accent-soft-2); color: var(--ink); }
+.ux-cmdk-item[aria-selected="true"] svg { color: var(--accent-2); }
+.ux-cmdk-item .ux-cmdk-hint { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--ink-4); letter-spacing: .04em; }
+.ux-cmdk-empty { padding: 26px 12px; text-align: center; color: var(--ink-4); font-size: 12.5px; }
+.ux-cmdk-foot {
+  display: flex; gap: 14px; align-items: center; padding: 8px 14px;
+  border-top: 1px solid var(--hair); background: var(--surface2);
+  font-size: 11px; color: var(--ink-4);
+}
+.ux-cmdk-foot span { display: inline-flex; align-items: center; gap: 5px; }
+
+/* ── Barra superior móvil + cajón lateral ─────────────────────────────── */
+.ux-mobilebar {
+  display: none;
+  position: fixed; top: 0; left: 0; right: 0; height: var(--mobilebar-h); z-index: 250;
+  align-items: center; gap: 10px; padding: 0 12px;
+  background: var(--frost); border-bottom: 1px solid var(--hair);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4);
+}
+.ux-mobilebar .sb-iconbtn { width: 34px; height: 34px; color: var(--ink-2); }
+.ux-mobilebar .sb-iconbtn svg { width: 18px; height: 18px; }
+.ux-mobilebar-brand {
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: .06em; font-weight: 600;
+  color: var(--ink); white-space: nowrap;
+}
+.ux-mobilebar-brand .logo-dot { color: var(--accent-2); }
+.ux-mobilebar-title {
+  flex: 1; min-width: 0; font-size: 13px; font-weight: 500; color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ux-scrim {
+  position: fixed; inset: 0; z-index: 99; background: rgba(10,10,15,.36);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-2);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+}
+html[data-drawer="1"] .ux-scrim { opacity: 1; pointer-events: auto; }
+
+/* ── Transición de tema (js/ux.js añade html.ux-theming 400 ms) ──────── */
+html.ux-theming, html.ux-theming *, html.ux-theming *::before, html.ux-theming *::after {
+  transition: background-color .35s ease, color .35s ease, border-color .35s ease, fill .35s ease, box-shadow .35s ease !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ≤1180 px → el riel se activa solo (js/ux.js) salvo preferencia guardada
+   ≤1100 px → KPIs a 2 columnas
+   ≤840 px  → sidebar = cajón, barra superior móvil, todo a una columna
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (max-width: 1100px) {
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .row { flex-wrap: wrap; }
+  .row > .card, .row > .chart-card { flex: 1 1 300px; min-width: 0; }
+  .meeting-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 840px) {
+  /* :root gana a html por especificidad (0,1,0 vs 0,0,1): se declara igual */
+  :root, html[data-rail="1"] { --sidebar-w: 0px; }
+  .sidebar {
+    width: var(--drawer-w) !important; min-width: var(--drawer-w) !important;
+    transform: translateX(-104%);
+    box-shadow: none;
+  }
+  html[data-drawer="1"] .sidebar { transform: none; box-shadow: var(--shadow-3); }
+  /* En el cajón siempre se ve completo, nunca en riel */
+  html[data-rail="1"] .sidebar-logo { flex-direction: row; height: var(--topbar-h); padding: 0 18px; }
+  html[data-rail="1"] .sidebar-logo .logo-name, html[data-rail="1"] .sidebar-section .lbl, html[data-rail="1"] #lang-toggle,
+  html[data-rail="1"] #tour-launcher, html[data-rail="1"] #miforms-launcher, html[data-rail="1"] .user-pill-info,
+  html[data-rail="1"] .user-pill-caret, html[data-rail="1"] .sb-search .sb-search-lbl { display: initial; }
+  html[data-rail="1"] .user-pill-info { display: flex; }
+  html[data-rail="1"] .nav-item { font-size: 13px; justify-content: flex-start; padding: 9px 10px; margin: 1px 12px; gap: 10px; }
+  html[data-rail="1"] .nav-badge { position: static; font-size: 9.5px; padding: 1px 6px; }
+  html[data-rail="1"] .theme-toggle { flex-direction: row; }
+  html[data-rail="1"] .tt-opt { font-size: 11px; gap: 6px; padding: 5px 8px; }
+  html[data-rail="1"] .user-pill { justify-content: flex-start; padding: 8px 12px; margin: 4px 12px 12px; }
+  html[data-rail="1"] .nav-item[data-tip]::after { display: none; }
+  .sb-collapse { display: none; }
+  .sidebar-logo .sb-close { display: inline-flex; }
+
+  .main { margin-left: 0 !important; padding-top: var(--mobilebar-h); }
+  .ux-mobilebar { display: flex; padding-right: 200px; } /* deja sitio al chip fijo de créditos */
+  /* El rectángulo sticky ya queda dentro del padding-top de .main: top 0 = justo bajo la barra móvil */
+  .topbar { top: 0; height: auto; min-height: 52px; padding: 10px 16px; flex-wrap: wrap; row-gap: 8px; }
+  .topbar-actions { margin-left: 0; margin-right: 0; width: 100%; flex-wrap: wrap; }
+  .page { padding: 16px; gap: 14px; }
+  .page > .topbar { margin: -16px -16px 14px !important; }
+  #page-ventas-coach.page { padding: 16px !important; }
+  #page-ventas-coach .mc-grid { grid-template-columns: 1fr !important; }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .stat-card { padding: 14px 14px; }
+  .stat-val { font-size: 24px; }
+  .row { flex-direction: column; }
+  .row > * { flex: 1 1 auto !important; min-width: 0; }
+  .form-grid, .insight-grid { grid-template-columns: 1fr; }
+  .settings-row { flex-direction: column; align-items: stretch; gap: 8px; }
+  .settings-row-label { flex: 0 0 auto; }
+  .settings-container { padding-left: 0; padding-right: 0; }
+  .table-card, .chart-card { overflow-x: auto; }
+
+  /* Chip de créditos: dentro de la barra móvil */
+  #credits-chip { top: 10px !important; right: 12px !important; padding: 6px 10px !important; font-size: 11px !important; }
+
+  /* Módulos: rejillas a una columna (sus estilos se inyectan después de este archivo) */
+  #prospecting-shell .pros-grid, #prospecting-shell .pros-grid.pros-grid-300, #prospecting-shell .pros-2col,
+  .cmp-inbox, .cmp-msg, .cmp-ch-grid, .cmp-conv, .cb-cad, .cb-msg-body, .cb-review,
+  .coda-foda-grid, .coda-came-grid, .ihx-context-gallery, .ihx-field-row, .sax-cols-2, .sax-cols-3, .mks-tiles,
+  .cl-sheet-cfg, .cl-sections, .cl-row2, .lrn-grid, .rl-grid, .rl-cols, .rdr-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .cmp-card-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+  #radar-shell .rl-wrap, #radar-shell .rl-head, .ccx-wrap, .ihx-wrap { padding-left: 16px !important; padding-right: 16px !important; }
+  .ux-cmdk { padding: 8vh 12px 12px; }
+}
+
+@media (max-width: 560px) {
+  .stat-grid { grid-template-columns: 1fr; }
+  .ux-mobilebar-brand { display: none; }
+  .cmp-card-kpis { grid-template-columns: 1fr !important; }
+  .topbar-actions .btn { flex: 1 1 auto; justify-content: center; }
+}
+
+/* Botón de cerrar el cajón (solo móvil) */
+.sb-close { display: none; margin-left: auto; }
+
+/* ── Reduced motion: además de la regla global, quita los efectos decorativos */
+@media (prefers-reduced-motion: reduce) {
+  .empty-ic { animation: none; }
+  .ux-spot::after { display: none; }
+  .btn-primary:hover::after { animation: none; }
+  .nav-glider { transition: none; }
+  .stat-card:hover::before { animation: none; }
+  .nav-item:hover, .btn:hover:not([disabled]), .area-card:hover { transform: none; }
+}
