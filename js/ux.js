@@ -434,6 +434,88 @@
     return { init: init, move: move };
   })();
 
+  // ── Grupos del sidebar colapsables (Linear/Gong) ─────────────────────
+  var LS_GROUPS = 'predictable_ux_groups';
+  var groups = (function () {
+    function loadState() { try { return JSON.parse(localStorage.getItem(LS_GROUPS) || '{}') || {}; } catch (e) { return {}; } }
+    function saveState(st) { try { localStorage.setItem(LS_GROUPS, JSON.stringify(st)); } catch (e) { /* noop */ } }
+    // Los ítems de un grupo son los hermanos entre este .sidebar-section y el siguiente
+    // (context-gate puede envolverlos en .ctxgate-nav-wrap; se ocultan igual).
+    function itemsOf(section) {
+      var out = [], el = section.nextElementSibling;
+      while (el && !el.classList.contains('sidebar-section')) { out.push(el); el = el.nextElementSibling; }
+      return out;
+    }
+    function apply(section, collapsed) {
+      section.setAttribute('data-collapsed', collapsed ? '1' : '0');
+      itemsOf(section).forEach(function (el) { el.style.display = collapsed ? 'none' : ''; });
+      var lbl = section.querySelector('.lbl');
+      if (lbl) lbl.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      glider.move();
+    }
+    function init() {
+      var st = loadState();
+      doc.querySelectorAll('.sidebar .sidebar-section').forEach(function (section) {
+        var lbl = section.querySelector('.lbl');
+        if (!lbl || lbl.__ux) return;
+        lbl.__ux = true;
+        var key = text(lbl).toLowerCase();
+        section.setAttribute('data-group', key);
+        lbl.setAttribute('role', 'button');
+        lbl.setAttribute('tabindex', '0');
+        lbl.insertAdjacentHTML('beforeend', '<svg class="lbl-chev" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>');
+        function toggle() {
+          if (isRail()) return; // en riel no hay etiquetas: nada que colapsar
+          var collapsed = section.getAttribute('data-collapsed') !== '1';
+          // Nunca se colapsa el grupo de la página activa: perdería el ítem activo
+          if (collapsed && section.nextElementSibling && itemsOf(section).some(function (el) { return el.querySelector && (el.classList.contains('active') || el.querySelector('.nav-item.active')); })) collapsed = false;
+          apply(section, collapsed);
+          st[key] = collapsed ? 1 : 0; saveState(st);
+        }
+        lbl.addEventListener('click', toggle);
+        lbl.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+        if (st[key]) apply(section, true);
+      });
+      // Si la navegación cae en un grupo colapsado, se abre solo
+      if (global.MutationObserver) {
+        var nav = doc.querySelector('.sidebar-nav');
+        if (nav) new MutationObserver(function () {
+          var active = nav.querySelector('.nav-item.active');
+          if (!active) return;
+          var el = active;
+          while (el && el !== nav && !(el.classList && el.classList.contains('sidebar-section'))) {
+            var prev = el.previousElementSibling;
+            if (prev) el = prev; else el = el.parentElement;
+          }
+          if (el && el !== nav && el.getAttribute('data-collapsed') === '1') { apply(el, false); st[el.getAttribute('data-group')] = 0; saveState(st); }
+        }).observe(nav, { attributes: true, attributeFilter: ['class'], subtree: true });
+      }
+    }
+    return { init: init };
+  })();
+
+  // ── Créditos integrados en el pie del sidebar ────────────────────────
+  // js/credits.js crea #credits-chip como botón fijo en el body; aquí se
+  // muda a #sb-credits-slot en cuanto aparece (el CSS lo deja estático).
+  function adoptCreditsChip() {
+    var slot = doc.getElementById('sb-credits-slot');
+    if (!slot) return true;
+    var chip = doc.getElementById('credits-chip');
+    if (!chip) return false;
+    if (chip.parentElement !== slot) {
+      slot.appendChild(chip);
+      chip.setAttribute('data-tip', 'Créditos');
+    }
+    return true;
+  }
+  function watchCreditsChip() {
+    if (adoptCreditsChip()) return;
+    if (!global.MutationObserver) { setTimeout(adoptCreditsChip, 1500); return; }
+    var mo = new MutationObserver(function () { if (adoptCreditsChip()) mo.disconnect(); });
+    mo.observe(doc.body, { childList: true });
+    setTimeout(function () { adoptCreditsChip(); mo.disconnect(); }, 15000);
+  }
+
   // ── Badge del sidebar: pequeño rebote cuando cambia el número ────────
   function watchBadges() {
     if (!global.MutationObserver) return;
@@ -471,6 +553,8 @@
     initSpotlight();
     watchBadges();
     glider.init();
+    groups.init();
+    watchCreditsChip();
   }
 
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init);
