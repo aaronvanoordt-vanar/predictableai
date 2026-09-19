@@ -22,6 +22,45 @@
 //   OPENAI_MODEL (default gpt-5), PERPLEXITY_MODEL (default sonar-pro)
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
+// ── Idioma de salida por petición ────────────────────────────────────────────
+// El usuario elige el idioma de la interfaz (profiles.ui_language, lo escribe
+// js/i18n.js). Los resultados de la IA deben salir en ese idioma aunque los
+// prompts históricos digan "en español". Como callLLM() no conoce al usuario,
+// cada función envuelve su handler con withLlmContext(): eso crea un almacén
+// por petición (AsyncLocalStorage, aislado entre peticiones concurrentes) y
+// engineForUser() —que todas llaman con el usuario— deja allí el idioma.
+// Una función sin envolver simplemente no recibe directiva y responde en
+// español, como siempre.
+export type OutputLanguage = "es" | "en";
+export const OUTPUT_LANGUAGES: readonly OutputLanguage[] = ["es", "en"] as const;
+export function isOutputLanguage(v: unknown): v is OutputLanguage {
+  return typeof v === "string" && (OUTPUT_LANGUAGES as readonly string[]).includes(v);
+}
+interface LlmRequestContext { language: OutputLanguage }
+const requestContext = new AsyncLocalStorage<LlmRequestContext>();
+
+/** Envuelve el handler de Deno.serve para que el idioma del usuario llegue a callLLM. */
+export function withLlmContext(
+  handler: (req: Request) => Response | Promise<Response>,
+): (req: Request) => Promise<Response> {
+  return (req: Request) => requestContext.run({ language: "es" }, () => Promise.resolve(handler(req)));
+}
+/** Fija el idioma de salida de la petición en curso (no hace nada fuera de withLlmContext). */
+export function setRequestLanguage(lang: unknown): void {
+  const store = requestContext.getStore();
+  if (store && isOutputLanguage(lang)) store.language = lang;
+}
+export function requestLanguage(): OutputLanguage {
+  return requestContext.getStore()?.language ?? "es";
+}
+const LANGUAGE_NAME: Record<OutputLanguage, string> = { es: "Spanish (neutral Latin American, tú)", en: "English" };
+function languageDirective(lang: OutputLanguage): string {
+  if (lang === "es") return "";
+  return `\n\n=== OUTPUT LANGUAGE (overrides everything above) ===\nThe user reads the product in ${LANGUAGE_NAME[lang]}. Every human-readable string in your answer — titles, summaries, bullet points, messages, objections, actions, JSON string values meant for a person — MUST be written in ${LANGUAGE_NAME[lang]}, even where an instruction above says "en español" / "in Spanish". Keep JSON keys, enum values, ids, URLs, company names and proper nouns exactly as specified.`;
+}
+
 export type Engine = "claude" | "openai" | "perplexity";
 
 export const ENGINES: readonly Engine[] = ["claude", "openai", "perplexity"] as const;
@@ -81,17 +120,27 @@ export async function engineForUser(
   feature: Feature,
   requested?: unknown,
 ): Promise<Engine> {
-  if (isEngine(requested)) return requested;
   try {
     const { data } = await supa
       .from("profiles")
-      .select("ai_engines")
+      .select("ai_engines, ui_language")
       .eq("id", userId)
       .maybeSingle();
+    setRequestLanguage(data?.ui_language);
+    if (isEngine(requested)) return requested;
     return resolveEngine(feature, undefined, data?.ai_engines);
   } catch (_) {
-    return RECOMMENDED_ENGINE[feature];
+    return isEngine(requested) ? requested : RECOMMENDED_ENGINE[feature];
   }
+}
+
+/** Lee profiles.ui_language y lo fija como idioma de la petición. Devuelve el idioma. */
+export async function languageForUser(supa: AnySupabase, userId: string): Promise<OutputLanguage> {
+  try {
+    const { data } = await supa.from("profiles").select("ui_language").eq("id", userId).maybeSingle();
+    setRequestLanguage(data?.ui_language);
+  } catch (_) { /* sin perfil: español */ }
+  return requestLanguage();
 }
 
 // ── Errors ───────────────────────────────────────────────────────────────────
@@ -222,6 +271,8 @@ export interface LlmCall {
   retryDelayMs?: number;
   /** Prefix for console warnings, e.g. "[intel-hub]". */
   logPrefix?: string;
+  /** Idioma de salida. Si falta, se toma el de la petición (withLlmContext + engineForUser). */
+  language?: OutputLanguage;
 }
 
 export interface LlmResult {
@@ -250,7 +301,8 @@ export async function callLLM(opts: LlmCall): Promise<LlmResult> {
   const prefix = opts.logPrefix ?? "[llm]";
   const deadline = opts.timeoutMs ? Date.now() + opts.timeoutMs : null;
 
-  opts = { ...opts, engine: resolveUsableEngine(opts, prefix) };
+  const lang = opts.language ?? requestLanguage();
+  opts = { ...opts, engine: resolveUsableEngine(opts, prefix), system: opts.system + languageDirective(lang) };
   const apiKey = apiKeyFor(opts.engine);
   let lastErr = "";
 

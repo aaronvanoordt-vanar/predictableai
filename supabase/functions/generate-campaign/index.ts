@@ -43,7 +43,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
+import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 
@@ -254,7 +254,7 @@ async function askModel(engine: Engine, user: string): Promise<Json> {
   return parsed;
 }
 
-Deno.serve(async (req) => {
+Deno.serve(withLlmContext(async (req) => {
   const origin = req.headers.get("origin") ?? "*";
   const h = corsHeaders(origin);
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: h });
@@ -312,4 +312,4 @@ Deno.serve(async (req) => {
   const rationale = String(out?.rationale ?? "").trim().replace(/[—–]/g, ",").slice(0, 900);
   console.log(`[generate-campaign] ✓ ${user.id} via ${engine}: ${flowLib.actions(flow).length} envíos`);
   return json({ name, rationale, flow, engine }, 200, h);
-});
+}));

@@ -112,7 +112,7 @@
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callLLM, engineForUser, parseLlmJson, type Engine } from "../_shared/llm.ts";
+import { callLLM, engineForUser, parseLlmJson, type Engine, withLlmContext } from "../_shared/llm.ts";
 
 // La región es parte de la cuenta de Recall.ai (se elige al crear el API key,
 // visible en su dashboard): us-east-1, us-west-2, eu-central-1 o
@@ -1790,7 +1790,7 @@ async function actionGetObjectionsReport(ctx: Ctx): Promise<Json> {
 // ───────────────────────────────────────────────────────────────────────────
 // Entry point
 // ───────────────────────────────────────────────────────────────────────────
-Deno.serve(async (req: Request) => {
+Deno.serve(withLlmContext(async (req: Request) => {
   const h = corsHeaders(req.headers.get("Origin") ?? "*");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: h });
   if (req.method !== "POST") return json({ ok: false, error: "POST only" }, 405, h);
@@ -1885,4 +1885,4 @@ Deno.serve(async (req: Request) => {
     // HTTP 200 with ok:false — the Apps Script contract js/api.js expects.
     return json({ ok: false, error: msg }, 200, h);
   }
-});
+}));

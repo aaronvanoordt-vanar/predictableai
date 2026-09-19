@@ -30,7 +30,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { engineForUser } from "../_shared/llm.ts";
+import { engineForUser, withLlmContext } from "../_shared/llm.ts";
 import { oauthAvailable, platformKey, resolveApolloAuth } from "../_shared/apollo-auth.ts";
 import { loadHubDigest, loadSellerContext } from "../_shared/radar-context.ts";
 import { KIND_META, isDetectorKind, type DetectorKind } from "../_shared/radar-plan.ts";
@@ -153,7 +153,7 @@ async function chargeOrFail(supa: Json, userId: string, cost: number, h: Record<
   return null;
 }
 
-Deno.serve(async (req: Request) => {
+Deno.serve(withLlmContext(async (req: Request) => {
   const h = corsHeaders(req.headers.get("Origin") ?? "*");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: h });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405, h);
@@ -290,4 +290,4 @@ Deno.serve(async (req: Request) => {
     console.error("[radar-plan]", action, msg);
     return json({ error: msg }, 500, h);
   }
-});
+}));

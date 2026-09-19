@@ -30,7 +30,7 @@
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callLLM, engineForUser, resolveEngine, type Engine } from "../_shared/llm.ts";
+import { callLLM, engineForUser, resolveEngine, type Engine, withLlmContext } from "../_shared/llm.ts";
 
 // ── Section catalogue ────────────────────────────────────────────────────────
 
@@ -1006,7 +1006,7 @@ function buildDigestContext(content: any): string {
 
 // ── HTTP handler ──────────────────────────────────────────────────────────────
 
-Deno.serve(async (req: Request) => {
+Deno.serve(withLlmContext(async (req: Request) => {
   const origin = req.headers.get("origin") ?? "*";
   const headers = corsHeaders(origin);
 
@@ -1110,4 +1110,4 @@ Deno.serve(async (req: Request) => {
     { status: "started", sections: requestedSections, triggered_by: triggeredBy, engine },
     202, headers
   );
-});
+}));

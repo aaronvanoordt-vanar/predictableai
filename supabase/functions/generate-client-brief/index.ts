@@ -24,7 +24,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
+import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
 import {
   defaultObjections, defaultSignature, firstSentence, solutionList, brandFromWebsite,
@@ -305,7 +305,7 @@ function filtersFromDeclaredIcp(intake: IntakeRow | null): Record<string, any> |
   return payload;
 }
 
-Deno.serve(async (req: Request) => {
+Deno.serve(withLlmContext(async (req: Request) => {
   const h = corsHeaders(req.headers.get("Origin") ?? "*");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: h });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405, h);
@@ -516,4 +516,4 @@ Deno.serve(async (req: Request) => {
   }
 
   return json({ status: "started" }, 202, h);
-});
+}));

@@ -45,7 +45,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { engineForUser, type Engine } from "../_shared/llm.ts";
+import { engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { resolveApolloAuth, type ApolloAuth } from "../_shared/apollo-auth.ts";
 import { findDecisionMakers } from "../_shared/radar-apollo.ts";
 import { loadHubDigest, loadSellerContext, type SellerContext } from "../_shared/radar-context.ts";
@@ -383,7 +383,7 @@ async function hubRefreshUnit(supa: Json): Promise<number> {
 
 // ── main ────────────────────────────────────────────────────────────────────
 
-Deno.serve(async (req: Request) => {
+Deno.serve(withLlmContext(async (req: Request) => {
   const h = corsHeaders(req.headers.get("Origin") ?? "*");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: h });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405, h);
@@ -457,7 +457,7 @@ Deno.serve(async (req: Request) => {
     console.error("[radar-monitor]", msg);
     return json({ error: msg, ...summary }, 500, h);
   }
-});
+}));
 
 function det_status_before(det: Json): string {
   return det.status === "running" ? "idle" : (det.status || "idle");

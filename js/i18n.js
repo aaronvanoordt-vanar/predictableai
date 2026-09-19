@@ -309,6 +309,48 @@
     'El módulo del coach no cargó. Recarga la página e intenta de nuevo.': 'The coach module didn\'t load. Reload the page and try again.',
   };
 
+  // ── Shell nuevo (2026-09-20): paleta, flujo del dashboard, aprendizaje,
+  //    contexto, Hub, Radar, contexto global ──
+  Object.assign(ES_EN, {
+    'Buscar o ir a…': 'Search or go to…',
+    'Ir a una página o ejecutar una acción…': 'Go to a page or run an action…',
+    'Ir a': 'Go to', 'Acciones': 'Actions', 'Interfaz': 'Interface', 'Cuenta': 'Account',
+    'Nueva campaña': 'New campaign', 'Buscar contactos': 'Search contacts', 'Iniciar Meeting Coach': 'Start Meeting Coach',
+    'Ver la bandeja': 'Open inbox', 'Comprar créditos': 'Buy credits', 'Tema claro': 'Light theme', 'Tema oscuro': 'Dark theme',
+    'Contraer barra lateral': 'Collapse sidebar', 'Expandir barra lateral': 'Expand sidebar', 'Cerrar sesión': 'Sign out',
+    'navegar': 'navigate', 'abrir': 'open', 'abrir / cerrar': 'open / close',
+    'Tu operación,': 'Your operation,', 'de punta a punta': 'end to end', 'Siguiente paso': 'Next step', 'Todo en marcha': 'All running',
+    'Contexto': 'Context', 'Listas': 'Lists', 'Campañas': 'Campaigns', 'Bandeja': 'Inbox', 'Reuniones': 'Meetings',
+    'Confirmado por ti': 'Confirmed by you', 'Falta confirmarlo': 'Pending your confirmation', 'Tarjetas por completar': 'Cards to complete',
+    'Reportes listos': 'Reports ready', 'Sin reportes aún': 'No reports yet', 'Sin plan de señales': 'No signal plan',
+    'Señales nuevas por revisar': 'New signals to review', 'Buscando, sin señales nuevas': 'Scanning, no new signals', 'Plan en pausa': 'Plan paused', 'Plan sin activar': 'Plan not activated',
+    'Sin contactos guardados': 'No saved contacts', 'Cadencias corriendo': 'Cadences running', 'Ninguna activa todavía': 'None active yet', 'Sin campañas': 'No campaigns',
+    'Respuestas sin leer': 'Unread replies', 'Al día': 'Up to date', 'Sin respuestas aún': 'No replies yet', 'Marcadas en el CRM': 'Marked in the CRM', 'Ninguna aún': 'None yet',
+    'No disponible ahora': 'Not available now', 'Evaluando el contexto…': 'Evaluating context…',
+    'Completar el contexto': 'Complete the context', 'Generar el hub': 'Generate the hub', 'Diseñar el plan de señales': 'Design the signal plan',
+    'Crear la primera campaña': 'Create the first campaign', 'Abrir la bandeja': 'Open the inbox', 'Preparar una reunión': 'Prepare a meeting',
+    'tarjetas': 'cards', 'reportes': 'reports', 'reporte': 'report', 'señales': 'signals', 'nuevas': 'new', 'contactos': 'contacts', 'activa': 'active', 'activas': 'active',
+    'en borrador o pausa': 'draft or paused', 'campañas': 'campaigns', 'sin leer': 'unread', 'recibidas': 'received', 'conseguidas': 'booked',
+    'Bucle de aprendizaje': 'Learning loop', 'Qué está funcionando': 'What is working', 'Recalcular ahora': 'Recompute now', 'Calculando…': 'Computing…',
+    'Repetir': 'Repeat', 'Dejar de hacer': 'Stop doing', 'Acciones que aplicó solo': 'Actions it applied on its own',
+    'Nada destaca todavía: hace falta más volumen.': 'Nothing stands out yet: more volume is needed.', 'Nada falla con datos suficientes.': 'Nothing fails with enough data.',
+    'Tu fuente de verdad': 'Your source of truth', 'Investigar': 'Research', 'Investigando…': 'Researching…', 'Afinar la investigación': 'Refine the research',
+    'opcional: instrucciones para la IA y LinkedIn': 'optional: AI instructions and LinkedIn', 'Instrucciones para la IA': 'Instructions for the AI',
+    'LinkedIn de la empresa': 'Company LinkedIn', 'Investigar desde LinkedIn': 'Research from LinkedIn', 'Guardar': 'Save',
+    'Completar todo con IA': 'Complete everything with AI', 'Completando…': 'Completing…', 'Guardar cambios': 'Save changes',
+    'Confirmar y desbloquear': 'Confirm and unlock', 'Contexto confirmado': 'Context confirmed', '✓ Plataforma desbloqueada': '✓ Platform unlocked',
+    'Todo listo: confirma para desbloquear la plataforma': 'All set: confirm to unlock the platform',
+    'Completa las tarjetas pendientes para desbloquear la plataforma': 'Complete the pending cards to unlock the platform',
+    'Fuentes adicionales para la IA': 'Additional sources for the AI', 'Subir y analizar': 'Upload and analyze', 'Ver lo que la IA extrajo': 'See what the AI extracted',
+    'Síntesis generada por IA': 'AI-generated synthesis', 'Regenerar síntesis': 'Regenerate synthesis',
+    'Vigilar en el Radar': 'Watch in Radar', 'Señal de compra': 'Buying signal', 'Objeción para el coach': 'Objection for the coach',
+    'Añadir competidor': 'Add competitor', 'Campaña con este ángulo': 'Campaign with this angle',
+    'Radar de señales de compra': 'Buying-signal Radar', 'Señales': 'Signals', 'Plan de señales': 'Signal plan', 'Investigación puntual': 'One-off research', 'Avisos': 'Alerts',
+    'Monitoreo activo': 'Monitoring active', 'Monitoreo en pausa': 'Monitoring paused', 'Buscar ahora': 'Scan now', 'Activar monitoreo': 'Activate monitoring', 'Diseñar mi plan': 'Design my plan',
+    'Pausar': 'Pause', 'Sincronizar con el Hub': 'Sync with the Hub', 'Rediseñar plan…': 'Redesign plan…',
+    'Contexto global': 'Global context', 'Opcional': 'Optional', 'Guardar FODA': 'Save SWOT', 'Convertir a CAME con IA': 'Convert to CAME with AI',
+    'Bienvenido': 'Welcome', 'Continuar con Google': 'Continue with Google', 'Continuar con LinkedIn': 'Continue with LinkedIn', 'Iniciar sesión': 'Sign in', 'Crear cuenta': 'Create account',
+  });
   var EN_ES = {};
   Object.keys(ES_EN).forEach(function (k) { EN_ES[ES_EN[k]] = k; });
 
@@ -346,10 +388,41 @@
     paintToggle();
   }
 
-  function setLang(lang) {
+  // El idioma también se guarda en profiles.ui_language: las edge functions
+  // con IA lo leen (engineForUser en _shared/llm.ts) y piden al modelo que
+  // responda en ese idioma, así los reportes, señales, mensajes y el coach
+  // salen en el idioma elegido, no solo la interfaz. Si la columna aún no
+  // existe (migración pendiente) se ignora el error.
+  function persistToProfile(clean) {
+    var sb = window.supabaseClient;
+    if (!sb) return;
+    sb.auth.getUser().then(function (r) {
+      var user = r && r.data ? r.data.user : null;
+      if (!user) return;
+      return sb.from('profiles').update({ ui_language: clean }).eq('id', user.id);
+    }).then(function (res) {
+      if (res && res.error) console.warn('[i18n] no se pudo guardar el idioma en el perfil', res.error.message);
+      else if (window.currentProfile) window.currentProfile.ui_language = clean;
+    }).catch(function () { /* sin sesión */ });
+  }
+  function setLang(lang, opts) {
     var clean = lang === 'en' ? 'en' : 'es';
+    var prev = currentLang();
     try { localStorage.setItem(LS_KEY, clean); } catch (e) { /* modo privado */ }
+    if (!(opts && opts.silent)) persistToProfile(clean);
+    // No hay diccionario EN→ES: al volver a español se recarga la página para
+    // recuperar los textos originales (los módulos pintan en español).
+    if (prev === 'en' && clean === 'es' && !(opts && opts.noReload)) { setTimeout(function () { location.reload(); }, 60); return; }
     apply();
+  }
+  // Al entrar, si el perfil ya trae un idioma y localStorage no, se adopta.
+  function adoptProfileLanguage() {
+    var p = window.currentProfile;
+    if (!p || !p.ui_language) return;
+    var stored = null;
+    try { stored = localStorage.getItem(LS_KEY); } catch (e) { /* noop */ }
+    if (stored) return;
+    if (p.ui_language === 'en' || p.ui_language === 'es') setLang(p.ui_language, { silent: true, noReload: true });
   }
 
   function paintToggle() {
@@ -397,6 +470,8 @@
     wireToggle();
     startObserver();
     if (currentLang() === 'en') apply();
+    document.addEventListener('predictable:profile-ready', adoptProfileLanguage);
+    adoptProfileLanguage();
   }
 
   window.i18n = { get: currentLang, set: setLang, apply: apply };

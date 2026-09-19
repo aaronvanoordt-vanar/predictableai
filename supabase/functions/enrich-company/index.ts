@@ -93,7 +93,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callLLM, engineForUser, type Engine } from "../_shared/llm.ts";
+import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
 import {
   ICP_COUNTRIES, ICP_INDUSTRIES, ICP_EMPLOYEE_RANGES, ICP_DEPARTMENTS, ICP_SENIORITIES,
@@ -470,7 +470,7 @@ What you must never fabricate: numeric figures, client names, certifications, da
   return sanitizeProposal(p, missing);
 }
 
-Deno.serve(async (req: Request) => {
+Deno.serve(withLlmContext(async (req: Request) => {
   const origin = req.headers.get("origin") ?? "*";
   const h = corsHeaders(origin);
 
@@ -778,4 +778,4 @@ Deno.serve(async (req: Request) => {
   }
 
   return json({ status: "enrichment_started" }, 202, h);
-});
+}));

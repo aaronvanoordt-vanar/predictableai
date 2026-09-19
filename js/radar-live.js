@@ -421,15 +421,24 @@
     // El selector de motor va en la fila de pestañas (la esquina superior
     // derecha la ocupa el saldo de créditos de index.html). En la pestaña de
     // investigación puntual lo pinta js/radar.js, así que aquí se omite.
+    // Cabecera limpia (2026-09-20): título + estado del monitoreo y, en la fila
+    // de pestañas, solo las pestañas. El motor de IA se muestra únicamente en
+    // "Plan de señales" (donde se genera) y en "Avisos" no aparece nada más.
+    const primary = planStatus === 'active'
+      ? '<button class="btn btn-primary btn-sm" data-act="drive"' + (state.driving || state.busy ? ' disabled' : '') + ' title="Corre todos los detectores ahora">Buscar ahora</button>'
+      : planStatus === 'draft' || planStatus === 'paused'
+        ? '<button class="btn btn-primary btn-sm" data-act="activate"' + (state.busy ? ' disabled' : '') + '>Activar monitoreo</button>'
+        : '<button class="btn btn-primary btn-sm" data-act="tab" data-tab="plan">Diseñar mi plan</button>';
     return '<div class="rl-top">' +
       '<div><div class="rl-title">Radar de señales de compra</div>' +
-      '<div class="rl-sub">Detecta, todos los días y con varias metodologías, qué empresas de tus países objetivo necesitan lo que vendes ahora mismo. Nace del contexto de tu empresa, se alimenta del Intelligence Hub y termina en Listas y Campañas.</div></div></div>' +
+      '<div class="rl-sub">Qué empresas de tus países objetivo necesitan lo que vendes ahora mismo. Nace de tu contexto, se alimenta del Intelligence Hub y termina en Listas y Campañas.</div></div>' +
+      '<div class="rl-top-right">' + pill + primary + '</div></div>' +
       '<div class="rl-tabs">' +
       tab('signals', 'Señales', c.new || '') +
       tab('plan', 'Plan de señales', state.detectors.filter((d) => d.enabled).length || '') +
       tab('puntual', 'Investigación puntual', '') +
       tab('alerts', 'Avisos', state.profile && state.profile.radar_whatsapp_phone ? '✓' : '') +
-      '<div class="rl-top-right">' + pill + (global.AIEngine && state.tab !== 'puntual' ? '<div data-ai-engine="radar" data-ai-engine-compact="1"></div>' : '') + '</div>' +
+      (global.AIEngine && state.tab === 'plan' ? '<div class="rl-tabs-right"><div data-ai-engine="radar" data-ai-engine-compact="1"></div></div>' : '') +
       '</div>';
   }
 
@@ -619,11 +628,9 @@
     h += '<div class="card rl-planbox">' +
       '<div class="rl-plan-top"><div class="rl-plan-t">Hipótesis del plan</div>' +
       '<div class="rl-plan-btns">' +
-      (p.status === 'active'
-        ? '<button class="btn btn-primary btn-sm" data-act="drive"' + (state.driving || state.busy ? ' disabled' : '') + '>Buscar ahora</button><button class="btn btn-ghost btn-sm" data-act="pause"' + (state.busy ? ' disabled' : '') + '>Pausar</button>'
-        : '<button class="btn btn-primary btn-sm" data-act="activate"' + (state.busy ? ' disabled' : '') + '>Activar monitoreo</button>') +
-      '<button class="btn btn-ghost btn-sm" data-act="hub"' + (state.busy ? ' disabled' : '') + '>Actualizar desde el Hub</button>' +
-      '<button class="btn btn-ghost btn-sm" data-act="toggle-prompt">Regenerar plan…</button>' +
+      (p.status === 'active' ? '<button class="btn btn-ghost btn-sm" data-act="pause"' + (state.busy ? ' disabled' : '') + ' title="Detiene el monitoreo; los detectores no corren hasta reactivarlo">Pausar</button>' : '') +
+      '<button class="btn btn-ghost btn-sm" data-act="hub"' + (state.busy ? ' disabled' : '') + ' title="Vuelve a leer el Intelligence Hub y ajusta los detectores">Sincronizar con el Hub</button>' +
+      '<button class="btn btn-ghost btn-sm" data-act="toggle-prompt" title="Vuelve a diseñar el plan desde cero con la IA">Rediseñar plan…</button>' +
       '</div></div>' +
       '<div class="rl-hyp">' + esc(p.hypothesis || 'Sin hipótesis todavía.') + '</div>' +
       '<div class="rl-plan-meta">' +
@@ -848,6 +855,7 @@
       '.rl-dot{width:7px;height:7px;border-radius:50%;background:currentColor;animation:rlPulse 1.4s ease-in-out infinite}',
       '@keyframes rlPulse{0%,100%{opacity:.35}50%{opacity:1}}',
       '.rl-tabs{display:flex;gap:4px;border-bottom:1px solid var(--hair);margin-top:12px;flex-wrap:wrap;align-items:center}',
+      '.rl-tabs-right{margin-left:auto;display:flex;align-items:center;padding-bottom:6px}',
       '.rl-tab{font-family:inherit;font-size:13px;font-weight:600;color:var(--ink-3);background:none;border:none;border-bottom:2px solid transparent;padding:9px 12px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}',
       '.rl-tab:hover{color:var(--ink)}',
       '.rl-tab.is-on{color:var(--accent-ink);border-bottom-color:var(--accent)}',

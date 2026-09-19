@@ -133,8 +133,7 @@ import {
   callLLM,
   engineForUser,
   LlmTimeoutError,
-  type Engine,
-} from "../_shared/llm.ts";
+  type Engine, withLlmContext } from "../_shared/llm.ts";
 import {
   DEFAULT_NEWS_WINDOW_DAYS,
   cutoffIso,
@@ -1120,7 +1119,7 @@ async function fail(supa: any, runId: string, err: unknown, h: Record<string, st
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
-Deno.serve(async (req: Request) => {
+Deno.serve(withLlmContext(async (req: Request) => {
   const origin = req.headers.get("origin") ?? "*";
   const h = corsHeaders(origin);
 
@@ -1179,4 +1178,4 @@ Deno.serve(async (req: Request) => {
   if (stage === "research") return await handleResearch(supa, run, engine, Number(body.offset) || 0, h);
   if (stage === "decision_makers") return await handleDecisionMakers(supa, run, APOLLO_KEY, Number(body.offset) || 0, h);
   return json({ error: "stage inválido" }, 400, h);
-});
+}));

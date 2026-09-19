@@ -439,11 +439,29 @@
   var groups = (function () {
     function loadState() { try { return JSON.parse(localStorage.getItem(LS_GROUPS) || '{}') || {}; } catch (e) { return {}; } }
     function saveState(st) { try { localStorage.setItem(LS_GROUPS, JSON.stringify(st)); } catch (e) { /* noop */ } }
-    // Los ítems de un grupo son los hermanos entre este .sidebar-section y el siguiente
-    // (context-gate puede envolverlos en .ctxgate-nav-wrap; se ocultan igual).
+    // Los ítems de un grupo son los nodos entre este .sidebar-section y el
+    // siguiente. context-gate envuelve varios grupos en un solo
+    // .ctxgate-nav-wrap (con su banner y su tinte dentro): se recorre la
+    // secuencia APLANADA de la barra, entrando en ese wrapper, para que colapsar
+    // "Inteligencia" no esconda también Prospección y Ventas (bug 2026-09-19).
+    function flatNodes() {
+      var nav = doc.querySelector('.sidebar-nav'), out = [];
+      if (!nav) return out;
+      Array.prototype.forEach.call(nav.children, function (el) {
+        if (el.classList.contains('ctxgate-nav-wrap')) Array.prototype.push.apply(out, Array.prototype.slice.call(el.children));
+        else out.push(el);
+      });
+      return out;
+    }
     function itemsOf(section) {
-      var out = [], el = section.nextElementSibling;
-      while (el && !el.classList.contains('sidebar-section')) { out.push(el); el = el.nextElementSibling; }
+      var seq = flatNodes(), i = seq.indexOf(section), out = [];
+      if (i < 0) return out;
+      for (var j = i + 1; j < seq.length; j++) {
+        var el = seq[j];
+        if (el.classList.contains('sidebar-section')) break;
+        if (el.classList.contains('ctxgate-nav-banner') || el.classList.contains('ctxgate-nav-tint')) continue;
+        out.push(el);
+      }
       return out;
     }
     function apply(section, collapsed) {
@@ -455,11 +473,12 @@
     }
     function init() {
       var st = loadState();
-      doc.querySelectorAll('.sidebar .sidebar-section').forEach(function (section) {
+      doc.querySelectorAll('.sidebar .sidebar-section').forEach(function (section, idx) {
         var lbl = section.querySelector('.lbl');
         if (!lbl || lbl.__ux) return;
         lbl.__ux = true;
-        var key = text(lbl).toLowerCase();
+        // Clave estable por posición: la etiqueta cambia con el idioma (i18n)
+        var key = 'g' + idx;
         section.setAttribute('data-group', key);
         lbl.setAttribute('role', 'button');
         lbl.setAttribute('tabindex', '0');
@@ -482,12 +501,11 @@
         if (nav) new MutationObserver(function () {
           var active = nav.querySelector('.nav-item.active');
           if (!active) return;
-          var el = active;
-          while (el && el !== nav && !(el.classList && el.classList.contains('sidebar-section'))) {
-            var prev = el.previousElementSibling;
-            if (prev) el = prev; else el = el.parentElement;
-          }
-          if (el && el !== nav && el.getAttribute('data-collapsed') === '1') { apply(el, false); st[el.getAttribute('data-group')] = 0; saveState(st); }
+          var seq = flatNodes(), host = active;
+          while (host && seq.indexOf(host) < 0) host = host.parentElement;
+          var el = null;
+          for (var k = seq.indexOf(host); k >= 0; k--) { if (seq[k].classList.contains('sidebar-section')) { el = seq[k]; break; } }
+          if (el && el.getAttribute('data-collapsed') === '1') { apply(el, false); st[el.getAttribute('data-group')] = 0; saveState(st); }
         }).observe(nav, { attributes: true, attributeFilter: ['class'], subtree: true });
       }
     }

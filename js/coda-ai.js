@@ -420,7 +420,7 @@
           <div class="coda-dim-head">
             <span class="coda-dim-letter">${d.letter}</span>
             <div>
-              <div class="coda-dim-name">${d.icon} ${esc(d.name)}</div>
+              <div class="coda-dim-name">${esc(d.name)}</div>
               <div class="coda-dim-sub">${factors.length ? esc(d.what) : (generating ? 'Factores → impacto en ventas' : 'Sin analizar aún')}</div>
             </div>
           </div>
@@ -506,7 +506,7 @@
       prefixHtml: selectors, afterRender: attachPestelSelectorHandlers,
       statusKey: 'pestel_status', dataKey: 'pestel', errorKey: 'pestel_error', generatedAtKey: 'pestel_generated_at',
       staleMs: STALE_PESTEL_MS, btnId: 'coda-btn-pestel', onGenerate: generatePestel,
-      btnGenerating: '⏳ Analizando el mercado…', btnRegenerate: '↻ Regenerar PESTEL', btnGenerate: '✨ Generar análisis PESTEL con IA',
+      btnGenerating: 'Analizando el mercado…', btnRegenerate: 'Regenerar PESTEL', btnGenerate: 'Generar análisis PESTEL con IA',
       hint: scopeHint,
     });
   }
@@ -516,7 +516,7 @@
       hostId: 'coda-porter-body', dims: PORTER_DIMS,
       statusKey: 'porter_status', dataKey: 'porter', errorKey: 'porter_error', generatedAtKey: 'porter_generated_at',
       staleMs: STALE_PORTER_MS, btnId: 'coda-btn-porter', onGenerate: generatePorter,
-      btnGenerating: '⏳ Analizando tu competencia…', btnRegenerate: '↻ Regenerar 5 fuerzas de Porter', btnGenerate: '✨ Generar 5 fuerzas de Porter con IA',
+      btnGenerating: 'Analizando tu competencia…', btnRegenerate: 'Regenerar 5 fuerzas de Porter', btnGenerate: 'Generar 5 fuerzas de Porter con IA',
       hint: 'La IA investiga tu panorama competitivo y traduce cada fuerza a impacto de ventas.',
     });
   }
@@ -561,7 +561,7 @@
       return `
         <div class="coda-came-quad" style="--c:${q.color}">
           <div class="coda-came-quad-head">
-            <span class="coda-came-badge">${q.icon}</span>
+            <span class="coda-came-badge">${esc(String(q.name || "").charAt(0))}</span>
             <div>
               <div class="coda-came-quad-name">${esc(q.name)}</div>
               <div class="coda-dim-sub">Desde tus ${esc(q.from)}</div>
@@ -585,7 +585,7 @@
           <div class="coda-foda-head">
             <span class="coda-foda-letter">${q.letter}</span>
             <div class="coda-foda-titles">
-              <div class="coda-foda-name">${q.icon} ${esc(q.name)}</div>
+              <div class="coda-foda-name">${esc(q.name)}</div>
               <div class="coda-foda-origin">${esc(q.origin)}</div>
             </div>
           </div>
@@ -603,7 +603,7 @@
     shell.innerHTML = `
       <div class="coda-wrap">
         <div class="coda-intro">
-          <div class="coda-intro-badge">Opcional</div>
+          <span class="coda-intro-badge">Opcional</span>
           <p>Este análisis es <strong>contexto adicional, no obligatorio</strong>. A diferencia del Intelligence Hub y del contexto de tu empresa, aquí nada te bloquea: llénalo cuando quieras darle más profundidad a tu estrategia de ventas.</p>
         </div>
 
@@ -640,7 +640,7 @@
 
           <div class="coda-actionbar coda-actionbar-center">
             <button class="coda-btn coda-btn-save" id="coda-btn-savefoda">Guardar FODA</button>
-            <button class="coda-btn coda-btn-primary" id="coda-btn-came">🔄 Convertir a CAME con IA</button>
+            <button class="coda-btn coda-btn-primary" id="coda-btn-came">Convertir a CAME con IA</button>
             <span id="coda-engine-came"></span>
           </div>
 
