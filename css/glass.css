@@ -217,13 +217,11 @@ html[data-rail="1"] .user-dropdown { left: calc(var(--rail-w) + 6px); right: aut
 .page > .topbar > div:first-child { border-left: 3px solid var(--module-accent); padding-left: 12px; min-width: 0; }
 .topbar-title { font-size: 20px; font-weight: 700; letter-spacing: -.03em; line-height: 1.15; }
 .topbar-sub { font-family: var(--font-sans); font-size: 12.5px; letter-spacing: 0; color: var(--ink-3); margin-top: 2px; text-transform: none; }
-/* Cabeceras de los módulos: misma tipografía y acento */
-#prospecting-shell .pros-title, #radar-shell .rl-title, #clients-shell .cl-title, .coda-section-title, .ihx-mod-title, .ccx-block-title {
+/* Títulos de sección DENTRO de un módulo (no la cabecera de página, que ya
+   es el <div class="topbar"> compartido — Radar, Prospección y Clientes
+   también lo usan desde 2026-09-20, ver index.html). */
+.coda-section-title, .ihx-mod-title, .ccx-block-title {
   font-size: 24px !important; font-weight: 700 !important; letter-spacing: -.035em !important; line-height: 1.1 !important;
-}
-#prospecting-shell .pros-subtitle, #radar-shell .rl-sub { font-size: 13px; color: var(--ink-3); }
-#prospecting-shell > div:first-of-type:not([class]), #radar-shell #rl-head, #clients-shell .cl-head {
-  border-left: 3px solid var(--module-accent); padding-left: 14px; margin-bottom: 16px;
 }
 /* Densidad: tablas y filas de contactos más compactas */
 .table-card table th, .table-card table td, #prospecting-shell table th, #prospecting-shell table td,

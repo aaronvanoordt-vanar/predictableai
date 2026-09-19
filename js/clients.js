@@ -354,11 +354,10 @@
     var css = document.createElement('style');
     css.id = 'clients-css';
     css.textContent = [
-      '#clients-shell{display:flex;flex-direction:column;gap:20px;min-width:0}',
-      // margin-top despeja el chip de créditos global (fijo arriba a la derecha)
-      '.cl-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:26px}',
-      '.cl-title{font-size:20px;font-weight:800;letter-spacing:-.02em}',
-      '.cl-sub{font-size:13px;color:var(--ink-3);margin-top:2px}',
+      '#clients-shell{display:flex;flex-direction:column;gap:20px;min-width:0;padding:0 24px 32px}',
+      // Toolbar de la vista de detalle (← Clients, guardar, portal, borrar).
+      // El título "Clientes" vive ahora en el topbar estático de index.html.
+      '.cl-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}',
       '.cl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}',
       '.cl-card{background:var(--surface);border:1px solid var(--hair-3);border-radius:var(--r-lg);overflow:hidden;cursor:pointer;transition:box-shadow .15s,transform .15s;box-shadow:var(--shadow-1)}',
       '.cl-card:hover{box-shadow:var(--shadow-2);transform:translateY(-2px)}',
@@ -458,6 +457,20 @@
     state.built = true;
   }
 
+  // Título vive en el <div class="topbar"> estático de index.html (cabecera
+  // única, igual que Intelligence Hub y Contexto); solo el subtítulo y las
+  // acciones cambian según la vista (grid vs. dashboard de un cliente).
+  var DEFAULT_SUB = 'Gestiona tus clientes: status, materiales y métricas de CRM.';
+  function setTopbarSub(text) {
+    var el = document.getElementById('clients-topbar-sub');
+    if (el) el.textContent = text || DEFAULT_SUB;
+  }
+  function setTopbarActions(html) {
+    var el = document.getElementById('clients-topbar-actions');
+    if (el) el.innerHTML = html || '';
+    return el;
+  }
+
   // ── Grid view ──────────────────────────────────────────────────────────
 
   async function showGrid() {
@@ -475,9 +488,9 @@
   }
 
   function renderGridSkeleton() {
-    state.body.innerHTML =
-      '<div class="cl-head"><div><div class="cl-title">Clients</div>' +
-      '<div class="cl-sub">Cargando clientes…</div></div></div>';
+    setTopbarSub('Cargando clientes…');
+    setTopbarActions('');
+    state.body.innerHTML = '';
   }
 
   function renderGrid() {
@@ -498,12 +511,10 @@
         '</div></div>';
     }).join('');
 
+    setTopbarSub(state.clients.length + ' cliente' + (state.clients.length === 1 ? '' : 's') + ' · haz click en una tarjeta para abrir su dashboard');
+    var actionsEl = setTopbarActions('<button class="btn btn-primary btn-sm" id="cl-new-btn">+ Nuevo cliente</button>');
+
     state.body.innerHTML =
-      '<div class="cl-head">' +
-        '<div><div class="cl-title">Clients</div>' +
-        '<div class="cl-sub">' + state.clients.length + ' cliente' + (state.clients.length === 1 ? '' : 's') + ' · haz click en una tarjeta para abrir su dashboard</div></div>' +
-        '<button class="btn btn-primary" id="cl-new-btn">+ Nuevo cliente</button>' +
-      '</div>' +
       '<div class="cl-grid" id="cl-grid">' + cards +
         '<button class="cl-new-card" id="cl-new-card">' +
           '<span style="font-size:22px">＋</span>Agregar cliente</button>' +
@@ -515,7 +526,7 @@
     state.body.querySelectorAll('.cl-card').forEach(function (el) {
       el.addEventListener('click', function () { openClient(el.getAttribute('data-id')); });
     });
-    [state.body.querySelector('#cl-new-btn'), state.body.querySelector('#cl-new-card')].forEach(function (btn) {
+    [actionsEl && actionsEl.querySelector('#cl-new-btn'), state.body.querySelector('#cl-new-card')].forEach(function (btn) {
       if (btn) btn.addEventListener('click', onNewClient);
     });
   }
@@ -536,7 +547,9 @@
 
   async function openClient(id) {
     state.view = 'detail';
-    state.body.innerHTML = '<div class="cl-head"><div class="cl-title">Cargando dashboard…</div></div>';
+    setTopbarSub('Cargando dashboard…');
+    setTopbarActions('');
+    state.body.innerHTML = '';
     try {
       var rows = await Promise.all([fetchClient(id), fetchMaterials(id), fetchSheetState(id)]);
       state.current = rows[0];
@@ -589,6 +602,7 @@
     var c = state.current;
     var m = c.crm_metrics || {};
     var st = statusMeta(c.status);
+    setTopbarSub(DEFAULT_SUB);
 
     var statusSel = '<select class="cl-sel" id="cl-status" style="width:auto;font-weight:700">' +
       STATUS_OPTS.map(function (o) {

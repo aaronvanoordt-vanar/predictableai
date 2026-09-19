@@ -268,9 +268,7 @@
 
   // ── Scoped CSS (every selector prefixed with #prospecting-shell) ───────
   var SCOPED_CSS = [
-    '#prospecting-shell { display:flex; flex-direction:column; gap:18px; }',
-    '#prospecting-shell .pros-title { font-family:var(--font-display); font-size:20px; font-weight:700; letter-spacing:-0.02em; color:var(--text); }',
-    '#prospecting-shell .pros-subtitle { font-size:13px; color:var(--text2); margin-top:4px; }',
+    '#prospecting-shell { display:flex; flex-direction:column; gap:18px; padding:0 24px 32px; }',
     '#prospecting-shell .pros-pane { display:none; }',
     '#prospecting-shell .pros-pane.active { display:flex; flex-direction:column; gap:16px; }',
     '#prospecting-shell .pros-grid { display:grid; grid-template-columns:320px minmax(0,1fr); gap:18px; align-items:start; }',
@@ -3202,9 +3200,8 @@
     state.search.filters = loadFiltersFromStorage();
     shell.innerHTML = '';
     shell.appendChild(h('style', { text: SCOPED_CSS + '\n' + MANUAL_FORM_CSS + '\n' + THREAD_CSS }));
-    shell.appendChild(h('div', null,
-      h('div', { class: 'pros-title', text: 'Prospección' }),
-      h('div', { class: 'pros-subtitle', text: 'Busca, arma tus listas y lanza campañas — todo desde un solo lugar.' })));
+    // Título y subtítulo viven en el <div class="topbar"> estático de
+    // index.html (cabecera única, igual que Intelligence Hub y Contexto).
     // No in-page tab bar here on purpose — the left sidebar (Prospección →
     // Buscar / Listas / Campañas) is the only navigation between these panes;
     // a second, duplicate set of tabs at the top of the page confused users

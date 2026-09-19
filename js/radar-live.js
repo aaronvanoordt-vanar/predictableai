@@ -105,7 +105,9 @@
       try { state.user = await global.supabaseHelpers.getUser(); } catch (e) { /* auth-guard redirige */ }
       if (!state.user) return;
     }
-    bind(el);
+    // El pill + botón principal viven en #radar-topbar-actions, fuera del shell
+    // (topbar estático de index.html) — se delega desde la página completa.
+    bind(document.getElementById('page-radar') || el);
     if (!state.loaded) { render(); await load(); }
     render();
     ensureRealtime();
@@ -388,7 +390,9 @@
       el.innerHTML = '<div class="rl-wrap"><div id="rl-head"></div><div id="rl-body"></div></div>';
       head = el.querySelector('#rl-head'); body = el.querySelector('#rl-body');
     }
-    head.innerHTML = headHtml();
+    const actions = document.getElementById('radar-topbar-actions');
+    if (actions) actions.innerHTML = topbarActionsHtml();
+    head.innerHTML = tabsHtml();
     if (global.AIEngine && typeof global.AIEngine.autoMount === 'function') global.AIEngine.autoMount(head);
     if (state.tab === 'puntual') {
       if (!body.querySelector('#radar-puntual-shell')) {
@@ -407,33 +411,34 @@
     return c;
   }
 
-  function headHtml() {
-    const c = counts();
+  // Título y subtítulo viven en el <div class="topbar"> estático de index.html
+  // (cabecera única, igual que Intelligence Hub y Contexto). Aquí solo se pinta
+  // lo dinámico: el estado del monitoreo + su acción principal (topbar-actions,
+  // mismo patrón que Meeting Coach) y, dentro del shell, la fila de pestañas.
+  function topbarActionsHtml() {
     const planStatus = state.plan ? state.plan.status : 'none';
     const pill = planStatus === 'active'
       ? '<span class="rl-pill rl-pill-on"><span class="rl-dot"></span>Monitoreo activo</span>'
       : planStatus === 'paused' ? '<span class="rl-pill">Monitoreo en pausa</span>'
       : planStatus === 'draft' ? '<span class="rl-pill">Plan sin activar</span>'
       : '<span class="rl-pill">Sin plan de señales</span>';
+    const primary = planStatus === 'active'
+      ? '<button class="btn btn-primary btn-sm" data-act="drive"' + (state.driving || state.busy ? ' disabled' : '') + ' title="Corre todos los detectores ahora">Buscar ahora</button>'
+      : planStatus === 'draft' || planStatus === 'paused'
+        ? '<button class="btn btn-primary btn-sm" data-act="activate"' + (state.busy ? ' disabled' : '') + '>Activar monitoreo</button>'
+        : '<button class="btn btn-primary btn-sm" data-act="tab" data-tab="plan">Diseñar mi plan</button>';
+    return pill + primary;
+  }
+
+  function tabsHtml() {
+    const c = counts();
     const tab = (id, label, badge) =>
       '<button class="rl-tab' + (state.tab === id ? ' is-on' : '') + '" data-act="tab" data-tab="' + id + '">' + label +
       (badge ? '<span class="rl-tab-badge">' + badge + '</span>' : '') + '</button>';
     // El selector de motor va en la fila de pestañas (la esquina superior
     // derecha la ocupa el saldo de créditos de index.html). En la pestaña de
     // investigación puntual lo pinta js/radar.js, así que aquí se omite.
-    // Cabecera limpia (2026-09-20): título + estado del monitoreo y, en la fila
-    // de pestañas, solo las pestañas. El motor de IA se muestra únicamente en
-    // "Plan de señales" (donde se genera) y en "Avisos" no aparece nada más.
-    const primary = planStatus === 'active'
-      ? '<button class="btn btn-primary btn-sm" data-act="drive"' + (state.driving || state.busy ? ' disabled' : '') + ' title="Corre todos los detectores ahora">Buscar ahora</button>'
-      : planStatus === 'draft' || planStatus === 'paused'
-        ? '<button class="btn btn-primary btn-sm" data-act="activate"' + (state.busy ? ' disabled' : '') + '>Activar monitoreo</button>'
-        : '<button class="btn btn-primary btn-sm" data-act="tab" data-tab="plan">Diseñar mi plan</button>';
-    return '<div class="rl-top">' +
-      '<div><div class="rl-title">Radar de señales de compra</div>' +
-      '<div class="rl-sub">Qué empresas de tus países objetivo necesitan lo que vendes ahora mismo. Nace de tu contexto, se alimenta del Intelligence Hub y termina en Listas y Campañas.</div></div>' +
-      '<div class="rl-top-right">' + pill + primary + '</div></div>' +
-      '<div class="rl-tabs">' +
+    return '<div class="rl-tabs">' +
       tab('signals', 'Señales', c.new || '') +
       tab('plan', 'Plan de señales', state.detectors.filter((d) => d.enabled).length || '') +
       tab('puntual', 'Investigación puntual', '') +
@@ -845,16 +850,12 @@
     const s = document.createElement('style');
     s.id = 'radar-live-styles';
     s.textContent = [
-      '.rl-wrap{display:flex;flex-direction:column;gap:8px;padding:12px 0 0 0;max-width:1080px;margin:0 auto;width:100%}',
-      '.rl-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}',
-      '.rl-top-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;padding-bottom:0}',
-      '.rl-title{font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink)}',
-      '.rl-sub{font-size:12.5px;color:var(--ink-3);margin-top:2px;max-width:600px;line-height:1.4}',
+      '.rl-wrap{display:flex;flex-direction:column;gap:8px;padding:0 26px 26px;max-width:1080px;margin:0 auto;width:100%}',
       '.rl-pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:5px 11px;border-radius:999px;background:var(--surface3);color:var(--ink-3)}',
       '.rl-pill-on{background:var(--green-soft,rgba(16,185,129,.12));color:var(--green,#059669)}',
       '.rl-dot{width:7px;height:7px;border-radius:50%;background:currentColor;animation:rlPulse 1.4s ease-in-out infinite}',
       '@keyframes rlPulse{0%,100%{opacity:.35}50%{opacity:1}}',
-      '.rl-tabs{display:flex;gap:2px;border-bottom:1px solid var(--hair);margin-top:8px;flex-wrap:wrap;align-items:center}',
+      '.rl-tabs{display:flex;gap:2px;border-bottom:1px solid var(--hair);margin-top:0;flex-wrap:wrap;align-items:center}',
       '.rl-tabs-right{margin-left:auto;display:flex;align-items:center;padding-bottom:6px}',
       '.rl-tab{font-family:inherit;font-size:13px;font-weight:600;color:var(--ink-3);background:none;border:none;border-bottom:2px solid transparent;padding:9px 12px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}',
       '.rl-tab:hover{color:var(--ink)}',

@@ -2331,11 +2331,25 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 
 <!-- ═══════ PAGE: MI OVERVIEW ═══════ -->
 <!-- RADAR: descubrimiento de empresas target con IA (módulo js/radar.js) -->
-<div class="page fade-in" id="page-clients">
+<div class="page fade-in" id="page-clients" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Clientes</div>
+      <div class="topbar-sub" id="clients-topbar-sub">Gestiona tus clientes: status, materiales y métricas de CRM.</div>
+    </div>
+    <div class="topbar-actions" id="clients-topbar-actions"></div>
+  </div>
   <div id="clients-shell"></div>
 </div>
 
 <div class="page fade-in" id="page-radar" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Radar de señales de compra</div>
+      <div class="topbar-sub">Qué empresas de tus países objetivo necesitan lo que vendes ahora mismo. Nace de tu contexto, se alimenta del Intelligence Hub y termina en Listas y Campañas.</div>
+    </div>
+    <div class="topbar-actions" id="radar-topbar-actions"></div>
+  </div>
   <div id="radar-shell"></div>
 </div>
 
@@ -2394,7 +2408,13 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 </div>
 
 <!-- ═══════ PAGE: PROSPECCIÓN (Buscar · Listas · Campañas — js/prospecting.js + js/campaigns.js) ═══════ -->
-<div class="page fade-in" id="page-pro-main">
+<div class="page fade-in" id="page-pro-main" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Prospección</div>
+      <div class="topbar-sub">Busca, arma tus listas y lanza campañas — todo desde un solo lugar.</div>
+    </div>
+  </div>
   <div id="prospecting-shell" style="display:flex;flex-direction:column;min-width:0;width:100%"></div>
 </div>
 
