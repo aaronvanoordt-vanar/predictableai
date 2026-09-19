@@ -10,12 +10,16 @@
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 /* ═══════════════════════════════════════════════════════════════════════
-   auth.html — entrada inmersiva (2026-09-20)
+   auth.html — entrada inmersiva (2026-09-20, +movimiento/sonido 2026-09-19)
    Lienzo oscuro con auroras de marca en movimiento lento, grano sutil y
    una tarjeta de Liquid Glass. js/auth.js depende SOLO de los ids
    (#btn-google, #btn-linkedin, #tab-login, #tab-signup, #email-form,
    #email-input, #password-input, #btn-email-submit, #forgot-password-link,
    #status con .show/.ok/.err/.info, .spinner, .on): no se tocan.
+   js/auth-ambience.js añade paralaje de puntero + un haz de luz que barre
+   el lienzo, y sonido ambiental sintetizado (Web Audio, sin assets) con
+   botón de silencio (#btn-sound) — todo opt-in tras el primer gesto del
+   usuario, respeta prefers-reduced-motion y localStorage.
    ═══════════════════════════════════════════════════════════════════════ */
 :root {
   --bg: #05060B;
@@ -56,6 +60,26 @@ body {
 @keyframes drift1 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(9vmax, 6vmax, 0) scale(1.12); } }
 @keyframes drift2 { from { transform: translate3d(0,0,0) scale(1.05); } to { transform: translate3d(-8vmax, 9vmax, 0) scale(.95); } }
 @keyframes drift3 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(-10vmax, -7vmax, 0) scale(1.1); } }
+
+/* Capa de paralaje: la mueve auth-ambience.js con --px/--py según el puntero;
+   los blobs siguen su propio drift dentro, sin pisar sus keyframes. */
+.sky .parallax { position: absolute; inset: -6vmax; transition: transform .5s var(--ease-out); transform: translate3d(calc(var(--px, 0) * 1px), calc(var(--py, 0) * 1px), 0); }
+
+/* Haz de luz que barre el lienzo cada ~9s — la señal de "algo vivo" que
+   distingue el fondo de un aurora estático. */
+.sky .beam {
+  position: absolute; top: -20%; left: -30%; width: 46vmax; height: 160%;
+  background: linear-gradient(100deg, transparent, rgba(92,130,255,.16) 45%, rgba(44,184,212,.22) 50%, rgba(92,130,255,.16) 55%, transparent);
+  filter: blur(18px); transform: translate3d(-10vmax, 0, 0) rotate(8deg);
+  animation: sweep 9s ease-in-out infinite;
+  animation-delay: 1.2s;
+}
+@keyframes sweep {
+  0%, 8% { transform: translate3d(-30vmax, -4vmax, 0) rotate(8deg); opacity: 0; }
+  18% { opacity: 1; }
+  46% { transform: translate3d(60vmax, 6vmax, 0) rotate(8deg); opacity: .9; }
+  58%, 100% { transform: translate3d(60vmax, 6vmax, 0) rotate(8deg); opacity: 0; }
+}
 .sky .grid {
   position: absolute; inset: 0;
   background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px);
@@ -190,19 +214,52 @@ h1.title { font-size: 26px; font-weight: 700; letter-spacing: -.035em; margin-bo
   .mobile-brand { display: flex; }
   .card { padding: 26px 22px 22px; border-radius: 24px; }
 }
+/* ── Botón de sonido ──────────────────────────────────────────────────── */
+.sound-toggle {
+  position: fixed; top: 20px; right: 20px; z-index: 2;
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--glass-edge); color: var(--ink-2);
+  font-family: var(--font); font-size: 12px; font-weight: 600; cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  transition: background .16s, color .16s, transform .16s var(--ease-out);
+  animation: rise .9s .2s var(--ease-out) both;
+}
+.sound-toggle:hover { background: var(--glass-2); color: var(--ink); transform: translateY(-1px); }
+.sound-toggle svg { width: 15px; height: 15px; flex-shrink: 0; }
+.sound-toggle .bars { display: flex; align-items: flex-end; gap: 2px; height: 11px; }
+.sound-toggle .bars i { width: 2px; border-radius: 1px; background: currentColor; opacity: .55; }
+.sound-toggle.on .bars i { animation: eq .9s ease-in-out infinite; opacity: 1; }
+.sound-toggle .bars i:nth-child(1) { height: 4px; animation-delay: -.6s; }
+.sound-toggle .bars i:nth-child(2) { height: 11px; animation-delay: -.3s; }
+.sound-toggle .bars i:nth-child(3) { height: 7px; animation-delay: 0s; }
+@keyframes eq { 0%, 100% { transform: scaleY(.4); } 50% { transform: scaleY(1); } }
+
+@media (max-width: 900px) {
+  .sound-toggle { top: 14px; right: 14px; padding: 7px 12px; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .sky .blob, .sky .grain, .panel-mid h1 .accent, .eyebrow i { animation: none; }
-  .brand-panel, .card { animation: none; }
+  .sky .blob, .sky .grain, .sky .beam, .panel-mid h1 .accent, .eyebrow i, .sound-toggle.on .bars i { animation: none; }
+  .brand-panel, .card, .sound-toggle { animation: none; }
+  .sky .parallax { transform: none !important; }
 }
 </style>
 </head>
 <body>
 
 <div class="sky" aria-hidden="true">
-  <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div>
+  <div class="parallax">
+    <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div>
+    <div class="beam"></div>
+  </div>
   <div class="grid"></div>
   <div class="grain"></div>
 </div>
+
+<button type="button" class="sound-toggle" id="btn-sound" aria-pressed="false" aria-label="Activar sonido ambiental">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M16 8a5 5 0 0 1 0 8" id="sound-wave"/></svg>
+  <span class="bars"><i></i><i></i><i></i></span>
+</button>
 
 <!-- Marca compartida (los dos usos referencian estas defs) -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -303,6 +360,7 @@ h1.title { font-size: 26px; font-weight: 700; letter-spacing: -.035em; margin-bo
 <script src="js/config.js"></script>
 <script src="js/supabase-client.js"></script>
 <script src="js/auth.js"></script>
+<script src="js/auth-ambience.js"></script>
 
 </body>
 </html>
