@@ -120,6 +120,13 @@ html[data-theme="dark"] .card:hover, html[data-theme="dark"] .stat-card:hover, h
   background: var(--surface-raised);
 }
 .logout-overlay, .ux-cmdk, .ctxgate-overlay { -webkit-backdrop-filter: blur(10px) saturate(1.2); backdrop-filter: blur(10px) saturate(1.2); }
+/* Mismo problema fuera del sistema logout-modal: drawer de "Primeros pasos",
+   menú del selector de motor IA y dropdown de selección múltiple del
+   contexto son translúcidos (heredan --surface) pero definen su propio
+   fondo/borde — no pisamos esos, solo el desenfoque real que les faltaba. */
+.tour-panel, .px-engine-menu, .ccx-ms-panel {
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+}
 
 /* ── Barra lateral flotante ───────────────────────────────────────────── */
 .sidebar {

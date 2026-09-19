@@ -113,21 +113,16 @@
 
     const back = document.createElement('div');
     back.id = 'credits-modal-back';
-    back.style.cssText = `
-      position:fixed; inset:0; z-index:500;
-      background:rgba(10,10,15,.45); backdrop-filter:blur(2px);
-      display:flex; align-items:center; justify-content:center; padding:20px;
-    `;
+    // Mismas clases que el resto de modales del shell (logout-overlay/logout-modal):
+    // reciben el desenfoque real de css/glass.css. Un panel translúcido sin
+    // backdrop-filter deja el contenido de atrás sangrando a través del texto.
+    back.className = 'logout-overlay open';
     back.addEventListener('click', (e) => { if (e.target === back) closeModal(); });
 
     back.innerHTML = `
-      <div style="
-        width:100%; max-width:420px; max-height:90vh; overflow-y:auto;
-        background:var(--surface,#fff); border:1px solid var(--hair,rgba(10,10,15,.07));
-        border-radius:var(--r-lg,14px); box-shadow:var(--shadow-3,0 20px 48px -20px rgba(10,10,15,.18));
-        padding:22px;">
+      <div class="logout-modal" style="width:420px;max-width:92vw;max-height:90vh;overflow-y:auto;text-align:left">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-          <h3 style="margin:0;font-size:16px;font-weight:600;color:var(--ink,#0A0A0F)">Comprar créditos</h3>
+          <h3 style="margin:0 0 6px">Comprar créditos</h3>
           <button id="credits-modal-close" aria-label="Cerrar" style="
             border:none;background:none;cursor:pointer;color:var(--text3,rgba(10,10,15,.45));
             font-size:18px;line-height:1;padding:4px">×</button>
