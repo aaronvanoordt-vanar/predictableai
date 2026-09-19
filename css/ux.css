@@ -163,11 +163,6 @@ html[data-rail="1"] .nav-item { overflow: visible; }
 .topbar { gap: 14px; }
 .topbar-title { font-size: 17px; font-weight: 600; letter-spacing: -.02em; }
 .topbar-sub { margin-top: 3px; }
-/* Deja sitio al chip fijo de créditos (antes se pisaba con el botón primario). */
-.topbar-actions { margin-right: calc(var(--chip-w) + 12px); }
-#prospecting-shell .pros-title,
-#radar-shell .rl-title,
-#clients-shell .cl-title,
 .coda-section-title {
   font-size: 20px !important; font-weight: 700 !important; letter-spacing: -.02em !important; line-height: 1.2;
 }
