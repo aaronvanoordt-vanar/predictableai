@@ -16,10 +16,15 @@
    (#btn-google, #btn-linkedin, #tab-login, #tab-signup, #email-form,
    #email-input, #password-input, #btn-email-submit, #forgot-password-link,
    #status con .show/.ok/.err/.info, .spinner, .on): no se tocan.
-   js/auth-ambience.js añade paralaje de puntero + un haz de luz que barre
-   el lienzo, y sonido ambiental sintetizado (Web Audio, sin assets) con
-   botón de silencio (#btn-sound) — todo opt-in tras el primer gesto del
-   usuario, respeta prefers-reduced-motion y localStorage.
+   Las auroras (.b1..b4) tienen su propio desplazamiento (@keyframes drift*,
+   15-24s) marcado en su posición — no agregar luces nuevas, si hace falta
+   más movimiento se ajustan esas keyframes. js/auth-ambience.js añade
+   paralaje de puntero sobre esa misma capa y un lecho de sonido ambiental
+   continuo sintetizado (Web Audio, sin assets ni archivos) con botón de
+   silencio (#btn-sound) — arranca tras el primer gesto del usuario (lo
+   exige la política de autoplay del navegador) y sigue sonando en loop
+   mientras la pestaña esté abierta. Respeta prefers-reduced-motion y
+   localStorage.
    ═══════════════════════════════════════════════════════════════════════ */
 :root {
   --bg: #05060B;
@@ -53,33 +58,17 @@ body {
   position: absolute; border-radius: 50%; filter: blur(70px); opacity: .55;
   will-change: transform; mix-blend-mode: screen;
 }
-.sky .b1 { width: 62vmax; height: 62vmax; left: -18vmax; top: -22vmax; background: radial-gradient(circle, rgba(59,104,255,.9), rgba(59,104,255,0) 62%); animation: drift1 26s ease-in-out infinite alternate; }
-.sky .b2 { width: 50vmax; height: 50vmax; right: -14vmax; top: 6vmax; background: radial-gradient(circle, rgba(44,184,212,.7), rgba(44,184,212,0) 62%); animation: drift2 32s ease-in-out infinite alternate; }
-.sky .b3 { width: 56vmax; height: 56vmax; left: 22vmax; bottom: -30vmax; background: radial-gradient(circle, rgba(161,139,255,.75), rgba(161,139,255,0) 62%); animation: drift3 38s ease-in-out infinite alternate; }
-.sky .b4 { width: 34vmax; height: 34vmax; right: 18vmax; bottom: -6vmax; background: radial-gradient(circle, rgba(51,194,132,.45), rgba(51,194,132,0) 62%); animation: drift1 44s ease-in-out infinite alternate-reverse; }
-@keyframes drift1 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(9vmax, 6vmax, 0) scale(1.12); } }
-@keyframes drift2 { from { transform: translate3d(0,0,0) scale(1.05); } to { transform: translate3d(-8vmax, 9vmax, 0) scale(.95); } }
-@keyframes drift3 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(-10vmax, -7vmax, 0) scale(1.1); } }
+.sky .b1 { width: 62vmax; height: 62vmax; left: -18vmax; top: -22vmax; background: radial-gradient(circle, rgba(59,104,255,.9), rgba(59,104,255,0) 62%); animation: drift1 15s ease-in-out infinite alternate; }
+.sky .b2 { width: 50vmax; height: 50vmax; right: -14vmax; top: 6vmax; background: radial-gradient(circle, rgba(44,184,212,.7), rgba(44,184,212,0) 62%); animation: drift2 19s ease-in-out infinite alternate; }
+.sky .b3 { width: 56vmax; height: 56vmax; left: 22vmax; bottom: -30vmax; background: radial-gradient(circle, rgba(161,139,255,.75), rgba(161,139,255,0) 62%); animation: drift3 17s ease-in-out infinite alternate; }
+.sky .b4 { width: 34vmax; height: 34vmax; right: 18vmax; bottom: -6vmax; background: radial-gradient(circle, rgba(51,194,132,.45), rgba(51,194,132,0) 62%); animation: drift1 24s ease-in-out infinite alternate-reverse; }
+@keyframes drift1 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(24vmax, 16vmax, 0) scale(1.2); } }
+@keyframes drift2 { from { transform: translate3d(0,0,0) scale(1.05); } to { transform: translate3d(-22vmax, 20vmax, 0) scale(.92); } }
+@keyframes drift3 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(-26vmax, -18vmax, 0) scale(1.18); } }
 
 /* Capa de paralaje: la mueve auth-ambience.js con --px/--py según el puntero;
    los blobs siguen su propio drift dentro, sin pisar sus keyframes. */
 .sky .parallax { position: absolute; inset: -6vmax; transition: transform .5s var(--ease-out); transform: translate3d(calc(var(--px, 0) * 1px), calc(var(--py, 0) * 1px), 0); }
-
-/* Haz de luz que barre el lienzo cada ~9s — la señal de "algo vivo" que
-   distingue el fondo de un aurora estático. */
-.sky .beam {
-  position: absolute; top: -20%; left: -30%; width: 46vmax; height: 160%;
-  background: linear-gradient(100deg, transparent, rgba(92,130,255,.16) 45%, rgba(44,184,212,.22) 50%, rgba(92,130,255,.16) 55%, transparent);
-  filter: blur(18px); transform: translate3d(-10vmax, 0, 0) rotate(8deg);
-  animation: sweep 9s ease-in-out infinite;
-  animation-delay: 1.2s;
-}
-@keyframes sweep {
-  0%, 8% { transform: translate3d(-30vmax, -4vmax, 0) rotate(8deg); opacity: 0; }
-  18% { opacity: 1; }
-  46% { transform: translate3d(60vmax, 6vmax, 0) rotate(8deg); opacity: .9; }
-  58%, 100% { transform: translate3d(60vmax, 6vmax, 0) rotate(8deg); opacity: 0; }
-}
 .sky .grid {
   position: absolute; inset: 0;
   background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px);
@@ -239,7 +228,7 @@ h1.title { font-size: 26px; font-weight: 700; letter-spacing: -.035em; margin-bo
   .sound-toggle { top: 14px; right: 14px; padding: 7px 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sky .blob, .sky .grain, .sky .beam, .panel-mid h1 .accent, .eyebrow i, .sound-toggle.on .bars i { animation: none; }
+  .sky .blob, .sky .grain, .panel-mid h1 .accent, .eyebrow i, .sound-toggle.on .bars i { animation: none; }
   .brand-panel, .card, .sound-toggle { animation: none; }
   .sky .parallax { transform: none !important; }
 }
@@ -250,7 +239,6 @@ h1.title { font-size: 26px; font-weight: 700; letter-spacing: -.035em; margin-bo
 <div class="sky" aria-hidden="true">
   <div class="parallax">
     <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div>
-    <div class="beam"></div>
   </div>
   <div class="grid"></div>
   <div class="grain"></div>
