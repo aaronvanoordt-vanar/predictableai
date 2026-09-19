@@ -251,11 +251,21 @@
     }
   });
 
-  // La página de contexto avisa cuando el usuario guarda o confirma: el
-  // bloqueo se levanta sin recargar.
+  // La página de contexto avisa cuando el usuario guarda o confirma (y cuando
+  // la investigación termina de llenarlo): el bloqueo se levanta sin recargar.
+  //
+  // El detalle del evento solo se usa cuando trae la fila entera. Algunos
+  // avisos mandan un parche de una sola columna (agregar una objeción o un
+  // competidor desde el Intelligence Hub): recalcular con eso daba 0 de 13
+  // pasos y bloqueaba toda la plataforma hasta recargar. En cualquier caso se
+  // relee la fila de Postgres, que es la única fuente que no miente.
   global.addEventListener('company-context-saved', function (ev) {
     var d = ev.detail || {};
-    recompute(d.intake || {}, d.brief || {});
+    var intake = d.intake;
+    var isFullRow = intake && typeof intake === 'object'
+      && Object.prototype.hasOwnProperty.call(intake, 'context_confirmed_at');
+    if (isFullRow) recompute(intake, d.brief || {});
+    load();
   });
 
   function init() {

@@ -53,6 +53,7 @@
     cadence: null,
     intake: null, brief: null, profile: null, documents: [], researchLoaded: false, researchSaving: false,
     researchOpenSection: 'company', researchGeneratingSection: null, researchLayoutKey: null,
+    researchKickoffAt: 0, researchGateSig: null,
   };
   function log(...a) { console.log('[intel-hub-v5]', ...a); }
   async function waitForSupabase() {
@@ -179,6 +180,7 @@
       if (shell.dataset.mounted) return true;
       shell.dataset.mounted = '1';
       injectStyles();
+      bindResearchWakeSync();
       loadResearch().then(() => { renderResearch(); subscribeResearchRealtime(); });
       return true;
     };
@@ -211,6 +213,138 @@
     STATE.documents = docs || [];
     STATE.researchLoaded = true;
   }
+
+  // ─── LA VERDAD SE LEE DE POSTGRES, NO DEL PAYLOAD ─────────
+  // Una fila de intel_hub_intake pesa varios KB, así que Postgres guarda sus
+  // textos largos fuera de línea (TOAST). La replicación lógica NO reenvía un
+  // valor TOAST que el UPDATE no tocó, y Supabase Realtime lo entrega como
+  // null. Por eso el último evento de la corrida — "terminé": status, progreso
+  // y paso — llegaba con company_about, icp_pain_points, company_solutions,
+  // social_proof y common_objections en null, y `STATE.intake = payload.new`
+  // borraba del estado del cliente justo lo que la investigación acababa de
+  // escribir: la pantalla anunciaba "Lista" con media docena de tarjetas en
+  // "Pendiente" hasta que el usuario recargaba con Cmd+R y todo aparecía lleno.
+  //
+  // Desde aquí el payload de realtime es una PISTA (sirve para mover la barra
+  // en el mismo instante en que el servidor escribe) y la fila se relee de
+  // Postgres, que es lo único autoritativo. Encima de eso hay tres redes más:
+  // un ticker mientras la corrida está viva, una relectura al volver a la
+  // pestaña y otra al (re)conectar el canal — así la pantalla termina llena
+  // incluso si el realtime no entrega un solo evento.
+  function mergeRealtimeRow(current, incoming) {
+    if (!incoming) return current;
+    const merged = Object.assign({}, current || {});
+    Object.keys(incoming).forEach((k) => {
+      // Un null puede ser "el usuario lo borró" o "es un TOAST que no cambió",
+      // y el payload no distingue. Se ignora: lo resuelve la relectura.
+      if (incoming[k] !== null && incoming[k] !== undefined) merged[k] = incoming[k];
+    });
+    return merged;
+  }
+  const SYNC_POLL_MS = 5000;     // relectura mientras la corrida sigue viva
+  const SYNC_MIN_GAP_MS = 1500;  // no releer dos veces seguidas por nada
+  const RESEARCH_SYNC = { timer: null, poll: null, inFlight: false, last: 0 };
+  async function fetchContextRows() {
+    const [{ data: intake }, { data: brief }] = await Promise.all([
+      window.supabaseClient.from('intel_hub_intake')
+        .select(window.CompanyContext.INTAKE_COLUMNS)
+        .eq('user_id', STATE.user.id).maybeSingle(),
+      window.supabaseClient.from('client_brief')
+        .select(window.CompanyContext.BRIEF_COLUMNS)
+        .eq('user_id', STATE.user.id).maybeSingle(),
+    ]);
+    return { intake, brief };
+  }
+  // Una corrida lanzada desde esta pestaña se pinta 'running' antes de que la
+  // edge function escriba la fila. Durante esa ventana la relectura no debe
+  // devolver la pantalla al estado anterior (la barra desaparecería y volvería).
+  const KICKOFF_GRACE_MS = 20000;
+  function adoptIntake(row) {
+    if (!row) return;
+    const local = STATE.intake;
+    const justKickedOff = STATE.researchKickoffAt
+      && (Date.now() - STATE.researchKickoffAt) < KICKOFF_GRACE_MS;
+    if (justKickedOff && local && local.company_enrichment_status === 'running'
+      && row.company_enrichment_status !== 'running') {
+      STATE.intake = Object.assign({}, row, {
+        company_enrichment_status:   'running',
+        company_enrichment_progress: local.company_enrichment_progress,
+        company_enrichment_step:     local.company_enrichment_step,
+      });
+      return;
+    }
+    STATE.intake = row;
+  }
+  async function syncResearchRows() {
+    if (!STATE.user || !window.supabaseClient || RESEARCH_SYNC.inFlight) return;
+    RESEARCH_SYNC.inFlight = true;
+    try {
+      const rows = await fetchContextRows();
+      adoptIntake(rows.intake);
+      if (rows.brief) STATE.brief = rows.brief;
+      RESEARCH_SYNC.last = Date.now();
+      refreshResearchView();
+      notifyContextChanged();
+    } catch (e) {
+      console.warn('[research] sync error', e);
+    } finally {
+      RESEARCH_SYNC.inFlight = false;
+    }
+  }
+  // Debounce para la ráfaga de eventos de una corrida (enrich-company escribe
+  // la fila una vez por paso): una sola relectura para todos.
+  function scheduleResearchSync(delay) {
+    clearTimeout(RESEARCH_SYNC.timer);
+    RESEARCH_SYNC.timer = setTimeout(syncResearchRows, Math.max(0, delay == null ? 700 : delay));
+  }
+  function stopResearchPolling() {
+    if (RESEARCH_SYNC.poll) { clearInterval(RESEARCH_SYNC.poll); RESEARCH_SYNC.poll = null; }
+  }
+  function ensureResearchPolling() {
+    if (!STATE.user) return;
+    if (!researchPhase(STATE.intake || {}, STATE.brief || {}).running) return stopResearchPolling();
+    if (RESEARCH_SYNC.poll) return;
+    RESEARCH_SYNC.poll = setInterval(() => {
+      if (!document.getElementById('ih-research-shell')) return stopResearchPolling();
+      // La corrida terminó: una última relectura autoritativa y se apaga.
+      if (!researchPhase(STATE.intake || {}, STATE.brief || {}).running) {
+        stopResearchPolling();
+        syncResearchRows();
+        return;
+      }
+      syncResearchRows();
+    }, SYNC_POLL_MS);
+  }
+  // Volver a la pestaña después de un rato es el caso clásico en que el socket
+  // se durmió y los eventos de la corrida se perdieron.
+  function bindResearchWakeSync() {
+    if (STATE._researchWakeBound) return;
+    STATE._researchWakeBound = true;
+    const wake = () => {
+      if (document.hidden || !STATE.user) return;
+      if (!document.getElementById('ih-research-shell')) return;
+      if (Date.now() - RESEARCH_SYNC.last < SYNC_MIN_GAP_MS) return;
+      syncResearchRows();
+    };
+    document.addEventListener('visibilitychange', wake);
+    window.addEventListener('focus', wake);
+  }
+  // El gate (js/context-gate.js) y el banner del dashboard recalculan el
+  // bloqueo con este evento: cuando la investigación termina de llenar el
+  // contexto, la plataforma se desbloquea sin recargar. Solo se avisa cuando
+  // la completitud cambió de verdad, para no repintar overlays cada 5 s.
+  function notifyContextChanged() {
+    if (!STATE.intake || !window.CompanyContext) return;
+    const c = window.CompanyContext.completeness(STATE.intake, STATE.brief || {});
+    const sig = c.done + '/' + c.total + '|' + (c.confirmed ? '1' : '0');
+    if (sig === STATE.researchGateSig) return;
+    STATE.researchGateSig = sig;
+    try {
+      window.dispatchEvent(new CustomEvent('company-context-saved', {
+        detail: { intake: STATE.intake, brief: STATE.brief || {} },
+      }));
+    } catch (e) { /* noop */ }
+  }
   // Se suscribe una sola vez por sesión de página: cualquier cambio en la fila
   // (la corrida de enrich-company terminando, o el usuario editando desde otra
   // pestaña) se refleja al instante, sin que el usuario tenga que refrescar.
@@ -223,7 +357,11 @@
         filter: `user_id=eq.${STATE.user.id}`,
       }, (payload) => {
         const prevStatus = STATE.intake?.company_enrichment_status;
-        STATE.intake = payload.new || null;
+        // El payload mueve la barra en el acto, pero no se adopta tal cual:
+        // los textos largos que Postgres no reenvía (TOAST) llegan en null y
+        // borrarían del estado lo que la corrida acaba de escribir. Ver
+        // mergeRealtimeRow(): la fila real se relee unas líneas más abajo.
+        STATE.intake = mergeRealtimeRow(STATE.intake, payload.new);
         const justFinishedEnriching =
           STATE.intake?.company_enrichment_status === 'done' && prevStatus === 'running';
         if (['done', 'error'].includes(STATE.intake?.company_enrichment_status)) {
@@ -240,6 +378,8 @@
         // sin perder el foco de lo que el usuario esté escribiendo ni cortar
         // la animación de la barra de progreso.
         refreshResearchView();
+        // …y la fila autoritativa, que es la que llena las tarjetas.
+        scheduleResearchSync();
         // Cuando la investigación (LinkedIn o web) termina, el contexto de la
         // empresa cambió: client_brief se regenera para que ese contexto fluya
         // al resto de la plataforma (búsqueda recomendada por recommended_filters,
@@ -252,6 +392,12 @@
           // nada, este repintado saca la pantalla del estado "en curso" en vez
           // de dejar la barra girando para siempre.
           setTimeout(refreshResearchView, BRIEF_HANDOFF_MS + 500);
+          // El cierre de la corrida es justo el momento en que el payload
+          // viene más vacío (solo status/progreso/paso) y en que
+          // generate-client-brief sigue escribiendo sobre intel_hub_intake
+          // (prueba social, objeciones, firma). Relecturas escalonadas para
+          // que la pantalla quede llena sin que nadie recargue.
+          [2000, 8000, 20000].forEach(ms => setTimeout(syncResearchRows, ms));
           ensureClientBriefRefresh();
         }
       })
@@ -259,13 +405,21 @@
         event: '*', schema: 'public', table: 'client_brief',
         filter: `user_id=eq.${STATE.user.id}`,
       }, (payload) => {
-        STATE.brief = payload.new || null;
-        if (['ready', 'error'].includes(STATE.brief?.status)) {
+        // Mismo criterio que con el intake: client_brief también guarda
+        // textos largos fuera de línea (what_it_does, mechanism, key_outcomes).
+        STATE.brief = mergeRealtimeRow(STATE.brief, payload.new);
+        const briefClosed = ['ready', 'error'].includes(STATE.brief?.status);
+        if (briefClosed) {
           STATE.researchGeneratingSection = null;
           // El brief cerró: se acabó el traspaso y con él la corrida completa.
           STATE.researchAwaitingBrief = null;
         }
         refreshResearchView();
+        scheduleResearchSync();
+        // El brief termina escribiendo también sobre intel_hub_intake: se
+        // relee un par de veces más para no anunciar "Lista" con tarjetas
+        // que en la base ya están llenas.
+        if (briefClosed) [2000, 8000].forEach(ms => setTimeout(syncResearchRows, ms));
       })
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'company_documents',
@@ -280,7 +434,12 @@
         else docs.unshift(row);
         renderResearch();
       })
-      .subscribe();
+      .subscribe((status) => {
+        // Entre el SELECT inicial y el join del canal — y en cada reconexión
+        // tras un corte — hay un hueco en el que los eventos se pierden. Al
+        // quedar suscrito se relee la fila para arrancar desde la verdad.
+        if (status === 'SUBSCRIBED') syncResearchRows();
+      });
   }
   // Regenera client_brief a partir del intel_hub_intake ya actualizado. Best-effort:
   // si falla no rompe la pantalla de investigación. El resultado llega solo por
@@ -657,6 +816,7 @@
       if (statusEl.textContent !== label) statusEl.textContent = label;
     }
     syncProgress(phase);
+    ensureResearchPolling();
   }
   // Acordeón de las 7 tarjetas: solo una abierta a la vez. Se manipula el DOM
   // directamente (sin re-render) para no perder ediciones sin guardar en otras
@@ -1005,18 +1165,21 @@
     // detiene) la animación de la barra según si hay una corrida en curso.
     STATE.researchLayoutKey = researchLayoutKey(intake, brief);
     syncProgress(phase);
+    ensureResearchPolling();
   }
   // Dispara enrich-company a demanda del usuario — misma función que usa el
   // onboarding. Dos entradas posibles según qué botón se use: desde LinkedIn
   // (reemplaza todo: industria/tamaño/país/web) o desde una web puesta a mano
-  // (solo refina soluciones/contexto). El resultado llega solo vía
-  // subscribeResearchRealtime() — no hay que hacer polling ni refrescar.
+  // (solo refina soluciones/contexto). El resultado llega por
+  // subscribeResearchRealtime() y se confirma releyendo la fila
+  // (syncResearchRows): el realtime avisa, Postgres manda.
   async function retryEnrichmentFromLinkedin(linkedinUrl) {
     if (!STATE.user || !linkedinUrl) return;
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
       STATE.researchSource = 'linkedin';
       STATE.researchAwaitingBrief = null;
+      STATE.researchKickoffAt = Date.now();
       STATE.intake = {
         ...STATE.intake,
         company_enrichment_status: 'running',
@@ -1043,6 +1206,7 @@
       const customPrompt = promptEl ? promptEl.value.trim() : '';
       STATE.researchSource = 'website';
       STATE.researchAwaitingBrief = null;
+      STATE.researchKickoffAt = Date.now();
       STATE.intake = {
         ...STATE.intake,
         company_website: website,

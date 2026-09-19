@@ -421,30 +421,10 @@ Deno.serve(withLlmContext(async (req: Request) => {
         "Un responsable claro del resultado, con seguimiento continuo",
       ];
       const modelOutcomes = arr(b.key_outcomes).filter((o) => str(o));
-      await supa.from("client_brief").update({
-        company_name:        str(b.company_name) || profile?.company_name || null,
-        positional_phrase:   str(b.positional_phrase) || draftPositional,
-        brand_promise:       str(b.brand_promise) || null,
-        founder_voice:       declaredIntake?.outreach_signature || str(b.founder_voice) || null,
-        authority_signals:   str(b.authority_signals) || null,
-        what_it_does:        str(b.what_it_does) || draftWhatItDoes,
-        mechanism:           str(b.mechanism) || draftMechanism,
-        key_outcomes:        modelOutcomes.length ? modelOutcomes : draftOutcomes,
-        icp:                 declaredIcpBlock,
-        social_proof:        declaredProof.length ? declaredProof : proposedProof,
-        common_objections:   declaredObjections.length ? declaredObjections : proposedObjections,
-        voice_notes:         str(b.voice_notes) || null,
-        // El ICP declarado gana; el del modelo solo se usa si el usuario
-        // todavía no declaró el suyo. La ampliación hasta ~1000 personas la
-        // sigue haciendo la búsqueda (broadenOnce en js/prospecting.js).
-        recommended_filters: filtersFromDeclaredIcp(intake as IntakeRow | null)
-          ?? ((b.recommended_filters && typeof b.recommended_filters === "object") ? b.recommended_filters : null),
-        status:              "ready",
-        error_message:       null,
-        source:              "auto",
-        generated_at:        new Date().toISOString(),
-      }).eq("user_id", user.id);
-
+      // El intake se escribe ANTES de marcar el brief como 'ready': ese
+      // 'ready' es la señal de "terminó" que apaga la barra en la pantalla de
+      // Contexto, y anunciarlo con las tarjetas de prueba social, objeciones y
+      // firma todavía sin escribir dejaba media pantalla en "Pendiente".
       // Self-heal intel_hub_intake: si enrich-company nunca corrió o falló
       // (company_website etc. quedaron null), esta misma investigación ya
       // encontró esos datos — los usamos para rellenar solo lo que faltaba,
@@ -497,6 +477,30 @@ Deno.serve(withLlmContext(async (req: Request) => {
         }
         await supa.from("intel_hub_intake").update(fill).eq("user_id", user.id);
       }
+
+      await supa.from("client_brief").update({
+        company_name:        str(b.company_name) || profile?.company_name || null,
+        positional_phrase:   str(b.positional_phrase) || draftPositional,
+        brand_promise:       str(b.brand_promise) || null,
+        founder_voice:       declaredIntake?.outreach_signature || str(b.founder_voice) || null,
+        authority_signals:   str(b.authority_signals) || null,
+        what_it_does:        str(b.what_it_does) || draftWhatItDoes,
+        mechanism:           str(b.mechanism) || draftMechanism,
+        key_outcomes:        modelOutcomes.length ? modelOutcomes : draftOutcomes,
+        icp:                 declaredIcpBlock,
+        social_proof:        declaredProof.length ? declaredProof : proposedProof,
+        common_objections:   declaredObjections.length ? declaredObjections : proposedObjections,
+        voice_notes:         str(b.voice_notes) || null,
+        // El ICP declarado gana; el del modelo solo se usa si el usuario
+        // todavía no declaró el suyo. La ampliación hasta ~1000 personas la
+        // sigue haciendo la búsqueda (broadenOnce en js/prospecting.js).
+        recommended_filters: filtersFromDeclaredIcp(intake as IntakeRow | null)
+          ?? ((b.recommended_filters && typeof b.recommended_filters === "object") ? b.recommended_filters : null),
+        status:              "ready",
+        error_message:       null,
+        source:              "auto",
+        generated_at:        new Date().toISOString(),
+      }).eq("user_id", user.id);
       console.log(`[brief] ✓ ${user.id}`);
     } catch (err) {
       console.error("[brief] error:", err);
