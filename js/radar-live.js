@@ -10,6 +10,9 @@
  *                  guardar en una lista de Prospección (revela correos igual
  *                  que el Radar de siempre), guardar y enrolar en una campaña,
  *                  útil / no útil (ajusta el peso del detector) y descartar.
+ *                  Se filtra con paneles propios (detector, país, industria)
+ *                  de tres estados: incluir, excluir o nada — nunca con un
+ *                  <select> nativo de un solo valor.
  *   Plan de señales la IA diseña, a partir del contexto de la empresa y del
  *                  Intelligence Hub, un plan con varios DETECTORES (cada uno
  *                  una metodología distinta: noticias, vacantes, tecnografía,
@@ -79,7 +82,11 @@
     signals: [],
     profile: null,
     availability: null,    // lo devuelve radar-plan/generate
-    filters: { detector: '', status: 'new', minScore: 0, q: '' },
+    // Filtros del feed. det/country/industry son multivalor de tres estados
+    // (neutral / 'in' / 'out'): ver la sección "Filtros multivalor".
+    filters: { status: 'new', minScore: 0, q: '', det: {}, country: {}, industry: {} },
+    openFilter: '',        // panel de filtros abierto: 'det' | 'country' | 'industry'
+    filterQ: '',           // buscador dentro del panel abierto
     expanded: {},          // signal id → detalle abierto
     selected: {},          // signal id → true
     planPrompt: '',
@@ -397,8 +404,42 @@
       }
       return;
     }
+    const focus = captureFocus(body);
     body.innerHTML = noticeHtml() + (state.tab === 'plan' ? planHtml() : state.tab === 'alerts' ? alertsHtml() : signalsHtml());
+    restoreFocus(body, focus);
     if (global.creditCosts && typeof global.creditCosts.decorate === 'function') global.creditCosts.decorate(body);
+  }
+
+  // Cada render reescribe el body entero, así que el cuadro de texto que el
+  // usuario estaba escribiendo (buscar empresa, buscar detector) perdía el foco
+  // y el cursor a mitad de la palabra, y el panel de filtros volvía al principio
+  // de la lista al marcar una opción. Se recuperan por data-act.
+  function captureFocus(body) {
+    const opts = body.querySelector('.rl-fopts');
+    const f = { scroll: opts ? opts.scrollTop : 0 };
+    const a = document.activeElement;
+    if (!a || !body.contains(a)) return f;
+    const act = a.getAttribute && a.getAttribute('data-act');
+    if (!act) return f;
+    if (a.tagName === 'INPUT' && ['search', 'text', 'tel'].indexOf(a.type) !== -1) {
+      f.sel = 'input[data-act="' + act + '"]';
+      try { f.pos = a.selectionStart; } catch (e) { /* algunos tipos no lo exponen */ }
+    } else if (a.tagName === 'BUTTON' && a.getAttribute('data-k') != null) {
+      const k = a.getAttribute('data-k');
+      f.sel = 'button[data-act="' + act + '"][data-k="' + (global.CSS && CSS.escape ? CSS.escape(k) : String(k).replace(/["\\]/g, '\\$&')) + '"]';
+    }
+    return f;
+  }
+  function restoreFocus(body, f) {
+    if (!f) return;
+    const opts = body.querySelector('.rl-fopts');
+    if (opts && f.scroll) opts.scrollTop = f.scroll;
+    if (!f.sel) return;
+    let n = null;
+    try { n = body.querySelector(f.sel); } catch (e) { /* selector imposible */ }
+    if (!n) return;
+    n.focus();
+    if (f.pos != null && n.setSelectionRange) { try { n.setSelectionRange(f.pos, f.pos); } catch (e) { /* idem */ } }
   }
 
   function counts() {
@@ -458,16 +499,186 @@
 
   // ── Señales ──
 
-  function visibleSignals() {
+  // ── Filtros multivalor ──
+  //
+  // El feed se filtra por detector, país e industria con el mismo modelo de
+  // tres estados. Hasta 2026-09-19 el detector era un <select> nativo de un
+  // solo valor (el menú gris del sistema operativo): o veías TODAS las señales
+  // o las de UN detector, y no había forma de decir "estas tres sí, esta no".
+  // Ahora cada opción vale:
+  //
+  //   neutral  la opcion no dice nada
+  //   'in'     la quiero ver
+  //   'out'    no la quiero ver
+  //
+  // Sin ninguna 'in' se ven todas menos las 'out'; con al menos una 'in' se ven
+  // solo esas, menos las 'out' (excluir manda sobre incluir).
+  const FACETS = {
+    det:      { label: 'Detectores', ph: 'Buscar detector…' },
+    country:  { label: 'Países',     ph: 'Buscar país…' },
+    industry: { label: 'Industrias', ph: 'Buscar industria…' },
+  };
+  const FACET_ORDER = ['det', 'country', 'industry'];
+
+  function selOf(map) {
+    const inc = [], exc = [];
+    Object.keys(map || {}).forEach((k) => { if (map[k] === 'in') inc.push(k); else if (map[k] === 'out') exc.push(k); });
+    return { inc, exc };
+  }
+  // Un detector aporta dos claves (su id y su metodología), así el panel puede
+  // ofrecer "todos los de vacantes" sin marcar uno por uno.
+  function signalKeys(s, facet) {
+    if (facet === 'det') return [s.detector_id, s.detector_kind];
+    if (facet === 'country') return [s.country || '—'];
+    return [s.industry || '—'];
+  }
+  function passesSel(map, keys) {
+    const { inc, exc } = selOf(map);
+    if (!inc.length && !exc.length) return true;
+    const ks = keys.filter(Boolean).map(String);
+    if (exc.some((k) => ks.includes(k))) return false;
+    if (inc.length && !inc.some((k) => ks.includes(k))) return false;
+    return true;
+  }
+  function setSel(facet, key, val) {
+    const map = state.filters[facet];
+    if (map[key] === val) delete map[key]; else map[key] = val;
+  }
+  function anyFilter() {
+    const f = state.filters;
+    return !!(f.minScore || f.q.trim() || FACET_ORDER.some((k) => Object.keys(f[k]).length));
+  }
+  function clearFilters() {
+    const f = state.filters;
+    f.minScore = 0; f.q = '';
+    FACET_ORDER.forEach((k) => { f[k] = {}; });
+  }
+
+  // skipFacet = cuenta el feed como si ese filtro no estuviera puesto, para
+  // poder mostrar en su panel cuántas señales traería cada opción.
+  function visibleSignals(skipFacet) {
     const f = state.filters;
     const q = f.q.trim().toLowerCase();
     return state.signals.filter((s) => {
       if (f.status && s.status !== f.status) return false;
-      if (f.detector && s.detector_id !== f.detector && s.detector_kind !== f.detector) return false;
+      if (FACET_ORDER.some((facet) => facet !== skipFacet && !passesSel(f[facet], signalKeys(s, facet)))) return false;
       if (f.minScore && Number(s.score) < f.minScore) return false;
       if (q && !((s.company_name || '') + ' ' + (s.headline || '') + ' ' + (s.industry || '') + ' ' + (s.country || '')).toLowerCase().includes(q)) return false;
       return true;
     });
+  }
+
+  // Opciones de cada panel. Los detectores van agrupados por metodología (el
+  // encabezado del grupo es a su vez seleccionable); país e industria salen de
+  // las señales que existen, ordenados por volumen.
+  function facetGroups(facet) {
+    const base = visibleSignals(facet);
+    const count = (key) => base.filter((s) => signalKeys(s, facet).map(String).indexOf(String(key)) !== -1).length;
+    if (facet === 'det') {
+      const byKind = {};
+      state.detectors.forEach((d) => { (byKind[d.kind] = byKind[d.kind] || []).push(d); });
+      const kinds = KIND_ORDER.filter((k) => byKind[k]).concat(Object.keys(byKind).filter((k) => KIND_ORDER.indexOf(k) === -1));
+      return kinds.map((k) => {
+        const meta = DETECTOR_KINDS[k] || { label: k, icon: '•' };
+        return {
+          key: k,
+          label: meta.icon + ' ' + meta.label,
+          count: count(k),
+          items: byKind[k].slice()
+            .sort((a, b) => (b.enabled - a.enabled) || String(a.name || '').localeCompare(String(b.name || '')))
+            .map((d) => ({ key: d.id, label: d.name || '(sin nombre)', hint: d.enabled ? '' : 'apagado', count: count(d.id) })),
+        };
+      });
+    }
+    const seen = {};
+    state.signals.forEach((s) => { seen[String(signalKeys(s, facet)[0])] = true; });
+    const items = Object.keys(seen)
+      .sort((a, b) => count(b) - count(a) || a.localeCompare(b))
+      .map((k) => ({ key: k, label: k === '—' ? 'Sin dato' : k, count: count(k) }));
+    return [{ key: '', label: '', count: 0, items: items }];
+  }
+
+  function facetKeyLabel(facet, key) {
+    if (facet !== 'det') return key === '—' ? 'Sin dato' : key;
+    const d = state.detectors.find((x) => x.id === key);
+    if (d) return d.name || '(sin nombre)';
+    const m = DETECTOR_KINDS[key];
+    return m ? m.label : key;
+  }
+
+  // Botón + panel de un filtro. El panel vive dentro del botón (no es un menú
+  // del sistema): se puede marcar varias opciones sin cerrarlo.
+  function facetDropHtml(facet) {
+    const groups = facetGroups(facet);
+    const total = groups.reduce((n, g) => n + g.items.length, 0);
+    if (!total) return '';
+    const { inc, exc } = selOf(state.filters[facet]);
+    const on = inc.length || exc.length;
+    const summary = !on
+      ? 'todos'
+      : [inc.length ? inc.length + ' sí' : '', exc.length ? exc.length + ' no' : ''].filter(Boolean).join(' · ');
+    const open = state.openFilter === facet;
+    return '<div class="rl-fdrop' + (open ? ' is-open' : '') + '">' +
+      '<button class="rl-fbtn' + (on ? ' is-on' : '') + '" data-act="fopen" data-f="' + facet + '" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+      esc(FACETS[facet].label) + ' <b>' + esc(summary) + '</b><span class="rl-fcar">▾</span></button>' +
+      (open ? facetPanelHtml(facet, groups, total) : '') + '</div>';
+  }
+
+  function facetPanelHtml(facet, groups, total) {
+    const map = state.filters[facet];
+    const q = state.filterQ.trim().toLowerCase();
+    const match = (s) => !q || String(s || '').toLowerCase().indexOf(q) !== -1;
+    const optHtml = (o, isGroup) =>
+      '<div class="rl-fopt' + (isGroup ? ' is-group' : '') + ' is-' + (map[o.key] || 'off') + '">' +
+      '<button class="rl-fopt-b" data-act="fsel" data-f="' + facet + '" data-k="' + esc(o.key) + '" title="Ver solo esto (otro clic lo quita)">' +
+      '<span class="rl-fmark">' + (map[o.key] === 'out' ? '⊘' : '✓') + '</span>' +
+      '<span class="rl-fopt-l">' + esc(o.label) + (o.hint ? ' <i class="rl-fopt-h">' + esc(o.hint) + '</i>' : '') + '</span>' +
+      '<span class="rl-fopt-n">' + o.count + '</span></button>' +
+      '<button class="rl-fno" data-act="fsel-out" data-f="' + facet + '" data-k="' + esc(o.key) + '" title="No quiero ver esto">⊘</button>' +
+      '</div>';
+    let body = '';
+    groups.forEach((g) => {
+      const groupHit = !!g.label && match(g.label);
+      const items = g.items.filter((o) => groupHit || match(o.label));
+      if (!items.length && !groupHit) return;
+      body += '<div class="rl-fgroup">' +
+        (g.label ? optHtml({ key: g.key, label: g.label, count: g.count }, true) : '') +
+        items.map((o) => optHtml(o, false)).join('') + '</div>';
+    });
+    if (!body) body = '<div class="rl-fnone">Nada coincide con «' + esc(state.filterQ) + '».</div>';
+    const { inc, exc } = selOf(map);
+    return '<div class="rl-fpanel">' +
+      '<div class="rl-fpanel-top">' +
+      (total > 7 ? '<input class="rl-fsearch" type="search" data-act="fq" placeholder="' + esc(FACETS[facet].ph) + '" value="' + esc(state.filterQ) + '">' : '') +
+      '<div class="rl-fhint">Marca lo que <b>sí</b> quieres ver. El ⊘ de la derecha lo descarta. Sin nada marcado se ven todas.</div>' +
+      '</div>' +
+      '<div class="rl-fopts">' + body + '</div>' +
+      '<div class="rl-fpanel-foot">' +
+      '<button class="rl-link" data-act="fsel-invert" data-f="' + facet + '"' + (inc.length + exc.length ? '' : ' disabled') + ' title="Lo marcado pasa a descartado y al revés">Invertir</button>' +
+      '<button class="rl-link" data-act="fsel-clear" data-f="' + facet + '"' + (inc.length + exc.length ? '' : ' disabled') + '>Limpiar</button>' +
+      '<button class="rl-link rl-right" data-act="fclose">Listo</button>' +
+      '</div></div>';
+  }
+
+  function activeFiltersHtml() {
+    const f = state.filters;
+    const chips = [];
+    FACET_ORDER.forEach((facet) => {
+      const map = f[facet];
+      Object.keys(map).forEach((k) => {
+        const label = (map[k] === 'out' ? '⊘ ' : '') + facetKeyLabel(facet, k);
+        chips.push('<span class="rl-fchip is-' + map[k] + '" title="' + esc(FACETS[facet].label + ': ' + label) + '">' +
+          '<span class="rl-fchip-l">' + esc(label) + '</span>' +
+          '<button data-act="fsel-off" data-f="' + facet + '" data-k="' + esc(k) + '" title="Quitar este filtro">✕</button></span>');
+      });
+    });
+    if (f.minScore) chips.push('<span class="rl-fchip"><span class="rl-fchip-l">Puntaje ≥ ' + f.minScore + '</span>' +
+      '<button data-act="fscore-off" title="Quitar este filtro">✕</button></span>');
+    if (f.q.trim()) chips.push('<span class="rl-fchip"><span class="rl-fchip-l">«' + esc(f.q.trim()) + '»</span>' +
+      '<button data-act="fq-off" title="Quitar este filtro">✕</button></span>');
+    if (!chips.length) return '';
+    return '<div class="rl-fchips">' + chips.join('') +
+      '<button class="rl-link" data-act="fclear-all">Limpiar filtros</button></div>';
   }
 
   function signalsHtml() {
@@ -482,17 +693,16 @@
     const list = visibleSignals();
     const c = counts();
     const selectedIds = Object.keys(state.selected).filter((id) => state.selected[id] && list.some((s) => s.id === id));
-    const detOpts = state.detectors.map((d) => '<option value="' + esc(d.id) + '"' + (state.filters.detector === d.id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('');
     let h = '<div class="rl-toolbar">' +
       '<div class="rl-seg">' +
       ['new', 'Nuevas', c.new, 'saved', 'Guardadas', c.saved, 'dismissed', 'Descartadas', c.dismissed].reduce((acc, _, i, a) => {
         if (i % 3) return acc;
         return acc + '<button class="rl-seg-b' + (state.filters.status === a[i] ? ' is-on' : '') + '" data-act="filter-status" data-v="' + a[i] + '">' + a[i + 1] + ' <span>' + (a[i + 2] || 0) + '</span></button>';
       }, '') + '</div>' +
-      '<select class="rl-select" data-act="filter-detector"><option value="">Todos los detectores</option>' + detOpts + '</select>' +
+      FACET_ORDER.map(facetDropHtml).join('') +
       '<label class="rl-range"><span>Puntaje ≥ <b>' + state.filters.minScore + '</b></span><input type="range" min="0" max="100" step="5" value="' + state.filters.minScore + '" data-act="filter-score"></label>' +
       '<input class="rl-search" type="search" placeholder="Buscar empresa…" value="' + esc(state.filters.q) + '" data-act="filter-q">' +
-      '</div>';
+      '</div>' + activeFiltersHtml();
     if (state.plan.status !== 'active') {
       h += '<div class="rl-alert rl-alert-warn">El monitoreo no está activo: el feed no recibe señales nuevas. <button class="rl-link" data-act="tab" data-tab="plan">Ir al plan</button></div>';
     }
@@ -507,7 +717,7 @@
     if (!list.length) {
       const anyPending = state.detectors.some((d) => d.enabled && d.status === 'running');
       h += '<div class="rl-empty">' + (state.signals.length
-        ? 'Ninguna señal coincide con estos filtros.'
+        ? 'Ninguna señal coincide con estos filtros.' + (anyFilter() ? ' <button class="rl-link" data-act="fclear-all">Limpiar filtros</button>' : '')
         : (state.plan.status === 'active'
           ? (anyPending ? 'Los detectores están corriendo. Las señales aparecen aquí en cuanto se confirman.' : 'Todavía no hay señales. Pulsa "Buscar ahora" en el plan para no esperar al próximo ciclo.')
           : 'Activa el monitoreo en la pestaña Plan de señales.')) + '</div>';
@@ -771,6 +981,7 @@
   // ── Eventos ──────────────────────────────────────────────────────────────
 
   function bind(el) {
+    bindDocument();
     if (el.__rlBound) return;
     el.__rlBound = true;
     el.addEventListener('click', (ev) => {
@@ -803,6 +1014,25 @@
         case 'dismiss': setStatus(id, 'dismissed'); break;
         case 'restore': setStatus(id, 'new'); break;
         case 'filter-status': state.filters.status = t.getAttribute('data-v'); state.selected = {}; render(); break;
+        case 'fopen': {
+          const f = t.getAttribute('data-f');
+          state.openFilter = state.openFilter === f ? '' : f;
+          state.filterQ = '';
+          render(); break;
+        }
+        case 'fclose': state.openFilter = ''; render(); break;
+        case 'fsel': setSel(t.getAttribute('data-f'), t.getAttribute('data-k'), 'in'); render(); break;
+        case 'fsel-out': setSel(t.getAttribute('data-f'), t.getAttribute('data-k'), 'out'); render(); break;
+        case 'fsel-off': delete state.filters[t.getAttribute('data-f')][t.getAttribute('data-k')]; render(); break;
+        case 'fsel-clear': state.filters[t.getAttribute('data-f')] = {}; render(); break;
+        case 'fsel-invert': {
+          const map = state.filters[t.getAttribute('data-f')];
+          Object.keys(map).forEach((k) => { map[k] = map[k] === 'in' ? 'out' : 'in'; });
+          render(); break;
+        }
+        case 'fscore-off': state.filters.minScore = 0; render(); break;
+        case 'fq-off': state.filters.q = ''; render(); break;
+        case 'fclear-all': clearFilters(); render(); break;
         case 'go-lists': { const n = document.querySelector('.nav-item[data-page="pro-main"][data-pros-tab="listas"]'); if (n) n.click(); break; }
         case 'use-profile-phone': state.settings.phone = (state.profile && state.profile.phone) || ''; render(); break;
         case 'save-settings': saveSettings(); break;
@@ -813,8 +1043,7 @@
       if (!t) return;
       const act = t.getAttribute('data-act');
       const id = t.getAttribute('data-id');
-      if (act === 'filter-detector') { state.filters.detector = t.value; render(); }
-      else if (act === 'filter-score') { state.filters.minScore = Number(t.value) || 0; render(); }
+      if (act === 'filter-score') { state.filters.minScore = Number(t.value) || 0; render(); }
       else if (act === 'select') { state.selected[id] = t.checked; render(); }
       else if (act === 'det-enabled') { patchDetector(id, { enabled: t.checked }).then(render); }
       else if (act === 'det-weight') { patchDetector(id, { weight: Number(t.value) || 0 }).then(render); }
@@ -831,10 +1060,29 @@
       if (act === 'plan-prompt') state.planPrompt = t.value;
       else if (act === 'add-desc') state.addForm.description = t.value;
       else if (act === 'filter-q') { state.filters.q = t.value; scheduleRender(); }
+      else if (act === 'fq') { state.filterQ = t.value; scheduleRender(); }
       else if (act === 'filter-score') { const b = t.closest('.rl-range') && t.closest('.rl-range').querySelector('b'); if (b) b.textContent = t.value; }
       else if (act === 'det-weight') { const b = t.closest('.rl-range') && t.closest('.rl-range').querySelector('b'); if (b) b.textContent = t.value; }
       else if (act === 'set-phone') state.settings.phone = t.value;
       else if (act === 'set-min') { state.settings.minScore = Number(t.value) || 0; const b = t.closest('.rl-field') && t.closest('.rl-field').querySelector('b'); if (b) b.textContent = t.value; }
+    });
+  }
+
+  // El panel de filtros es nuestro, no un menú del sistema: hay que cerrarlo a
+  // mano cuando el usuario hace clic fuera o pulsa Escape.
+  let docBound = false;
+  function bindDocument() {
+    if (docBound) return;
+    docBound = true;
+    document.addEventListener('click', (ev) => {
+      if (!state.openFilter) return;
+      const t = ev.target;
+      if (t && t.closest && t.closest('.rl-fdrop')) return;
+      state.openFilter = ''; render();
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape' || !state.openFilter) return;
+      state.openFilter = ''; render();
     });
   }
 
@@ -891,6 +1139,43 @@
       '.rl-select,.rl-search{font-family:inherit;font-size:12.5px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);color:var(--ink)}',
       '.rl-select-sm{padding:4px 8px;font-size:12px}',
       '.rl-search{min-width:180px}',
+      // Filtros multivalor del feed (panel propio, no un <select> del sistema).
+      '.rl-fdrop{position:relative;display:inline-flex}',
+      '.rl-fbtn{font-family:inherit;font-size:12.5px;font-weight:600;color:var(--ink-3);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}',
+      '.rl-fbtn b{font-weight:700;color:var(--ink-2)}',
+      '.rl-fbtn:hover{border-color:var(--accent)}',
+      '.rl-fbtn.is-on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}.rl-fbtn.is-on b{color:var(--accent-ink)}',
+      '.rl-fdrop.is-open .rl-fbtn{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}',
+      '.rl-fcar{font-size:9px;color:var(--ink-4)}',
+      '.rl-fpanel{position:absolute;z-index:60;top:calc(100% + 6px);left:0;width:308px;max-width:84vw;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);box-shadow:0 14px 34px rgba(10,10,15,.18);display:flex;flex-direction:column;overflow:hidden}',
+      '.rl-fpanel-top{display:flex;flex-direction:column;gap:7px;padding:10px 10px 9px;border-bottom:1px solid var(--hair)}',
+      '.rl-fsearch{font-family:inherit;font-size:12.5px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--ink)}',
+      '.rl-fsearch:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}',
+      '.rl-fhint{font-size:11.5px;color:var(--ink-4);line-height:1.4}.rl-fhint b{color:var(--ink-3)}',
+      '.rl-fopts{max-height:292px;overflow:auto;padding:6px}',
+      '.rl-fgroup{display:flex;flex-direction:column}.rl-fgroup+.rl-fgroup{margin-top:4px;padding-top:4px;border-top:1px solid var(--hair)}',
+      '.rl-fopt{display:flex;align-items:center;gap:2px;border-radius:8px}.rl-fopt:hover{background:var(--surface2)}',
+      '.rl-fopt-b{flex:1;min-width:0;display:flex;align-items:center;gap:8px;font-family:inherit;font-size:12.5px;color:var(--ink-2);background:none;border:none;padding:6px;cursor:pointer;text-align:left}',
+      '.rl-fopt.is-group .rl-fopt-b{font-weight:700;color:var(--ink)}',
+      '.rl-fopt:not(.is-group) .rl-fopt-b{padding-left:18px}',
+      '.rl-fmark{width:16px;height:16px;flex:none;border:1px solid var(--border);border-radius:5px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:transparent}',
+      '.rl-fopt.is-in .rl-fmark{background:var(--accent);border-color:var(--accent);color:#fff}',
+      '.rl-fopt.is-out .rl-fmark{border-color:rgba(220,38,38,.45);color:#b91c1c}',
+      '.rl-fopt.is-out .rl-fopt-l{text-decoration:line-through;color:var(--ink-4)}',
+      '.rl-fopt-l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.rl-fopt-h{font-style:normal;font-size:11px;color:var(--ink-4)}',
+      '.rl-fopt-n{font-family:var(--font-mono);font-size:11px;color:var(--ink-4)}',
+      '.rl-fno{font-family:inherit;font-size:12px;line-height:1;color:var(--ink-4);background:none;border:none;border-radius:6px;padding:5px 7px;cursor:pointer;opacity:.45}',
+      '.rl-fno:hover{opacity:1;color:#b91c1c;background:rgba(220,38,38,.08)}',
+      '.rl-fopt.is-out .rl-fno{opacity:1;color:#b91c1c}',
+      '.rl-fnone{padding:16px;font-size:12.5px;color:var(--ink-4);text-align:center}',
+      '.rl-fpanel-foot{display:flex;align-items:center;gap:12px;padding:8px 12px;border-top:1px solid var(--hair);background:var(--surface2)}',
+      '.rl-fpanel-foot .rl-link[disabled]{opacity:.4;cursor:default}.rl-fpanel-foot .rl-link[disabled]:hover{text-decoration:none}',
+      '.rl-fchips{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
+      '.rl-fchip{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;padding:3px 5px 3px 10px;border-radius:999px;background:var(--accent-soft);color:var(--accent-ink)}',
+      '.rl-fchip-l{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.rl-fchip.is-out{background:rgba(220,38,38,.1);color:#b91c1c}',
+      '.rl-fchip button{font-family:inherit;font-size:11px;line-height:1;background:none;border:none;color:inherit;cursor:pointer;opacity:.65;padding:3px}.rl-fchip button:hover{opacity:1}',
       '.rl-range{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3)}.rl-range b{color:var(--ink);font-family:var(--font-mono)}.rl-range input{accent-color:var(--accent);width:110px}',
       '.rl-bulk{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--ink-2);padding:8px 12px;border:1px solid var(--accent-soft);background:var(--accent-soft);border-radius:var(--r-sm)}',
       '.rl-bulk-soft{background:transparent;border-color:transparent;padding:0 2px}',
@@ -946,7 +1231,11 @@
       '.rl-add-cta{display:flex;align-items:center;gap:10px}',
       '.rl-add{padding:18px 20px;display:flex;flex-direction:column;gap:12px}',
       '.rl-add-grid{display:flex;gap:16px;flex-wrap:wrap}',
-      '@media (max-width:720px){.rl-wrap{padding:16px}.rl-sig-row{flex-wrap:wrap}.rl-right{margin-left:0}}',
+      '@media (max-width:720px){.rl-wrap{padding:16px}.rl-sig-row{flex-wrap:wrap}.rl-right{margin-left:0}',
+      '.rl-toolbar{position:relative}.rl-fdrop{position:static;flex:1 1 140px}.rl-fbtn{width:100%;justify-content:space-between}',
+      '.rl-fpanel{left:0;right:0;width:auto;max-width:none}.rl-fchip-l{max-width:150px}',
+      // En móvil la fila de filtros no cabe en una línea: cada control ocupa el ancho.
+      '.rl-range,.rl-search{flex:1 1 100%}.rl-range input{flex:1}.rl-search{min-width:0}}',
     ].join('\n');
     document.head.appendChild(s);
   }

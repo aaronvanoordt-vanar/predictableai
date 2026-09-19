@@ -647,6 +647,15 @@ html[data-theme="dark"] { --field: rgba(255,255,255,.06); --field-edge: rgba(255
 #radar-shell .rl-select, #radar-shell .rl-search, #radar-shell .rl-input { border-radius: 12px; background: var(--field); border: 1px solid var(--field-edge); }
 #radar-shell .rl-seg { border-radius: 999px; background: var(--field); }
 #radar-shell .rl-seg-b { border-radius: 999px; }
+/* Filtros multivalor del feed: el botón es cápsula y el panel, vidrio. */
+#radar-shell .rl-fbtn { border-radius: 999px; background: var(--field); border-color: var(--field-edge); }
+#radar-shell .rl-fpanel {
+  border-radius: 16px; background: var(--surface-raised); border-color: var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 18px 40px rgba(10,10,15,.20);
+  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+}
+#radar-shell .rl-fsearch { border-radius: 10px; background: var(--field); border-color: var(--field-edge); }
+#radar-shell .rl-fpanel-foot { background: transparent; }
 @media (max-width: 840px) { #radar-shell .rl-wrap { padding: 4px 14px 40px; } }
 
 /* ── Contexto global (#coda-shell): sobrio, tipográfico ──────────────── */
