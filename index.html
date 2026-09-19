@@ -2014,6 +2014,8 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 }
 
 </style>
+<!-- Capa experiencial del shell (movimiento, riel, cajón móvil, paleta ⌘K): css/ux.css + js/ux.js -->
+<link rel="stylesheet" href="css/ux.css?v=20260919">
 </head>
 <body>
 
@@ -2046,7 +2048,17 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       </svg>
     </div>
     <span class="logo-name">predictable<span class="logo-dot">.ai</span></span>
+    <button type="button" class="sb-iconbtn sb-collapse" id="sb-collapse" aria-label="Contraer barra lateral" aria-expanded="true">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M6 2.5v11M11.5 6.5L10 8l1.5 1.5"/></svg>
+    </button>
   </div>
+
+  <!-- Paleta de comandos (js/ux.js): ir a cualquier página o acción con ⌘K -->
+  <button type="button" class="sb-search" id="sb-search" aria-label="Buscar o ir a una página (⌘K)">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5L10.3 10.3"/></svg>
+    <span class="sb-search-lbl">Buscar o ir a…</span>
+    <span class="ux-kbd">⌘K</span>
+  </button>
 
   <div class="sidebar-nav">
 
@@ -3064,6 +3076,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/context-gate.js"></script>
 <script src="js/onboarding-tour.js"></script>
 <script src="js/miforms-prompt.js"></script>
+<script src="js/ux.js?v=20260919"></script>
 <script>
 // ─── ROL PROPIO (SDR / Director / Admin) ───────────────────────────
 (function () {

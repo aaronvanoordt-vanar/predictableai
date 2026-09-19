@@ -97,13 +97,24 @@ Hecho, en los tres caminos (bot, captura local con Claude/Perplexity, captura lo
 - **Coach**: panel "Qué hacer ahora", reporte con "En 30 segundos" arriba.
 - **Dashboard**: tarjeta "Qué está funcionando" con "Recalcular ahora".
 
+### Capa experiencial (PR siguiente, 2026-09-19)
+Pedido del dueño: "sigue exactamente igual; quiero UX de Apollo/Clay/Gong/Instantly/ZoomInfo/Octolane, plataforma experiencial, animaciones minimalistas, responsive". Se resolvió como una capa aparte (`css/ux.css` + `js/ux.js`, un `<link>`, un `<script>` y dos botones nuevos en `index.html`) para no tocar las 2.000 líneas de CSS en línea:
+
+- **Responsive de verdad**: la app no tenía ni una media query para el shell (en un móvil el sidebar de 244 px tapaba dos tercios de la pantalla y el contenido salía en columnas de 140 px). Ahora: riel de iconos con tooltips bajo 1180 px (y a voluntad con el botón de la cabecera del sidebar o desde la paleta), cajón lateral con barra superior y scrim bajo 840 px, KPIs a 2/1 columnas, todas las rejillas de los módulos a una columna, ajustes apilados.
+- **Paleta de comandos ⌘K / Ctrl K** (Linear/Clay/Apollo): ir a cualquier página, acciones frecuentes (nueva campaña, buscar contactos, iniciar coach, bandeja, ajustes, créditos), tema, colapsar barra, cerrar sesión. Búsqueda sin tildes y por subsecuencia.
+- **Feedback siempre presente**: barra de progreso superior en cada navegación y en cada llamada a una edge function o al worker (las esperas de IA de 5-20 s ya no son silencio); estado de carga uniforme en botones (spinner en vez de ⏳); título del documento por página.
+- **Movimiento minimalista**: entrada escalonada de cada página con easing de salida, píldora deslizante detrás del ítem activo del sidebar, foco de luz que sigue al cursor en tarjetas (solo puntero fino), destello único en el botón primario, flotación lenta del icono de los estados vacíos, cross-fade al cambiar de tema, rebote del badge de la Bandeja cuando cambia el número. Todo se apaga con `prefers-reduced-motion`.
+- **Coherencia**: una sola escala de título de página (17 px en la cabecera, 20/700 en los módulos), un solo sistema de movimiento para los 14 botones "primarios", el chip de créditos ya no pisa el botón de la cabecera (`--chip-w`), halos ambientales tenues detrás del lienzo (claro y oscuro).
+
+Queda igual que antes (a propósito): los colores y tokens, el HTML de las páginas, los módulos. Nada de datos inventados: la paleta y la barra móvil se arman desde el DOM real.
+
 ### Deuda de coherencia que queda (decidida, no hecha aquí)
 Cada una toca muchas líneas de `index.html` (dos caídas de producción vinieron de ahí) y merece su propio PR corto con preflight en navegador:
 
 1. **Cabecera de página única**: hoy conviven `.topbar-title` (15 px/500), `.pros-title` (20/700), `.rl-title` (22/800) y `.cl-title` (20/800). Propuesta: `.topbar` global en `<main>` con título/subtítulo/acciones que cada módulo rellena (`window.setPageHeader({title, sub, actions})`), y quitar los 10 topbars duplicados.
 2. **Un solo sistema de botones**: 14 tratamientos de "primario" → `.btn-primary` (accent), `.btn-ai` (`--grad-ai`), `.btn-danger`, `.btn-ghost`, con `--r-sm` fijo. Migrar `.settings-btn-*`, `.logout-btn-*`, `.ihx-btn-*`, `.ctxgate-btn`, `.coda-btn-*`, `.hub-unlock-*`, `.miforms-popup-cta`, `.ccx-confirm-btn`.
 3. **Estados vacíos**: los tres con emoji y estilos en línea de Reportes → componente `.empty` con SVG como el resto.
-4. **Chip de créditos**: es un `position:fixed` con `margin-right:200px` de hack en cada topbar; debe vivir en la cabecera única.
+4. **Chip de créditos**: es un `position:fixed` con `margin-right:200px` de hack en cada topbar; debe vivir en la cabecera única. (La colisión con el botón primario se corrigió en `ux.css` con `--chip-w`; en móvil vive dentro de la barra superior.)
 5. **`index.html` sigue con ~1.900 líneas de JS en línea** (coach/reportes, ajustes, equipo, nav monkey-patched dos veces). Extraer a `js/coach-page.js`, `js/settings-page.js`, `js/nav.js` en PRs separados, sin cambiar comportamiento.
 6. Listas: "Enriquecer seleccionados" aparece en dos lugares con dos estilos; "Actualizar" junto a un realtime que ya refresca; borrar una búsqueda guardada no pide confirmación mientras borrar una lista sí; "Aplicar búsqueda recomendada" pisa los filtros sin avisar. Cuatro arreglos pequeños en `js/prospecting.js`.
 
