@@ -17,13 +17,15 @@
    #email-input, #password-input, #btn-email-submit, #forgot-password-link,
    #status con .show/.ok/.err/.info, .spinner, .on): no se tocan.
    Las auroras (.b1..b4) tienen su propio desplazamiento (@keyframes drift*,
-   15-24s) marcado en su posición — no agregar luces nuevas, si hace falta
-   más movimiento se ajustan esas keyframes. js/auth-ambience.js añade
-   paralaje de puntero sobre esa misma capa y un lecho de sonido ambiental
-   continuo sintetizado (Web Audio, sin assets ni archivos) con botón de
-   silencio (#btn-sound) — arranca tras el primer gesto del usuario (lo
-   exige la política de autoplay del navegador) y sigue sonando en loop
-   mientras la pestaña esté abierta. Respeta prefers-reduced-motion y
+   17-25s, recorrido cerrado 0%=100% con "linear" para que no frene al
+   llegar a un extremo) marcado en su posición — no agregar luces nuevas,
+   si hace falta más movimiento se ajustan esas keyframes. js/auth-ambience.js
+   añade paralaje de puntero sobre esa misma capa y un lecho de sonido
+   ambiental continuo sintetizado (Web Audio, sin assets ni archivos, sonido
+   de sala de máquinas — zumbido + pulso + blips —, no un pad de meditación)
+   con botón de silencio (#btn-sound) — arranca tras el primer gesto del
+   usuario (lo exige la política de autoplay del navegador) y sigue sonando
+   en loop mientras la pestaña esté abierta. Respeta prefers-reduced-motion y
    localStorage.
    ═══════════════════════════════════════════════════════════════════════ */
 :root {
@@ -58,13 +60,34 @@ body {
   position: absolute; border-radius: 50%; filter: blur(70px); opacity: .55;
   will-change: transform; mix-blend-mode: screen;
 }
-.sky .b1 { width: 62vmax; height: 62vmax; left: -18vmax; top: -22vmax; background: radial-gradient(circle, rgba(59,104,255,.9), rgba(59,104,255,0) 62%); animation: drift1 15s ease-in-out infinite alternate; }
-.sky .b2 { width: 50vmax; height: 50vmax; right: -14vmax; top: 6vmax; background: radial-gradient(circle, rgba(44,184,212,.7), rgba(44,184,212,0) 62%); animation: drift2 19s ease-in-out infinite alternate; }
-.sky .b3 { width: 56vmax; height: 56vmax; left: 22vmax; bottom: -30vmax; background: radial-gradient(circle, rgba(161,139,255,.75), rgba(161,139,255,0) 62%); animation: drift3 17s ease-in-out infinite alternate; }
-.sky .b4 { width: 34vmax; height: 34vmax; right: 18vmax; bottom: -6vmax; background: radial-gradient(circle, rgba(51,194,132,.45), rgba(51,194,132,0) 62%); animation: drift1 24s ease-in-out infinite alternate-reverse; }
-@keyframes drift1 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(24vmax, 16vmax, 0) scale(1.2); } }
-@keyframes drift2 { from { transform: translate3d(0,0,0) scale(1.05); } to { transform: translate3d(-22vmax, 20vmax, 0) scale(.92); } }
-@keyframes drift3 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(-26vmax, -18vmax, 0) scale(1.18); } }
+.sky .b1 { width: 62vmax; height: 62vmax; left: -18vmax; top: -22vmax; background: radial-gradient(circle, rgba(59,104,255,.9), rgba(59,104,255,0) 62%); animation: drift1 17s linear infinite; }
+.sky .b2 { width: 50vmax; height: 50vmax; right: -14vmax; top: 6vmax; background: radial-gradient(circle, rgba(44,184,212,.7), rgba(44,184,212,0) 62%); animation: drift2 21s linear infinite; }
+.sky .b3 { width: 56vmax; height: 56vmax; left: 22vmax; bottom: -30vmax; background: radial-gradient(circle, rgba(161,139,255,.75), rgba(161,139,255,0) 62%); animation: drift3 19s linear infinite; }
+.sky .b4 { width: 34vmax; height: 34vmax; right: 18vmax; bottom: -6vmax; background: radial-gradient(circle, rgba(51,194,132,.45), rgba(51,194,132,0) 62%); animation: drift2 25s linear infinite reverse; }
+/* Recorridos cerrados (0%=100%) para que el loop no se note: sin "alternate"
+   no hay freno-y-vuelta en los extremos, así que el movimiento se lee
+   continuo en vez de una respiración lenta. */
+@keyframes drift1 {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  25%  { transform: translate3d(26vmax, 16vmax, 0) scale(1.22); }
+  50%  { transform: translate3d(10vmax, 34vmax, 0) scale(1.05); }
+  75%  { transform: translate3d(-18vmax, 14vmax, 0) scale(1.14); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes drift2 {
+  0%   { transform: translate3d(0, 0, 0) scale(1.05); }
+  25%  { transform: translate3d(-24vmax, 20vmax, 0) scale(.92); }
+  50%  { transform: translate3d(-38vmax, -4vmax, 0) scale(1.1); }
+  75%  { transform: translate3d(-14vmax, -22vmax, 0) scale(.98); }
+  100% { transform: translate3d(0, 0, 0) scale(1.05); }
+}
+@keyframes drift3 {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  25%  { transform: translate3d(-30vmax, -18vmax, 0) scale(1.2); }
+  50%  { transform: translate3d(-12vmax, -36vmax, 0) scale(1.02); }
+  75%  { transform: translate3d(20vmax, -14vmax, 0) scale(1.12); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
 
 /* Capa de paralaje: la mueve auth-ambience.js con --px/--py según el puntero;
    los blobs siguen su propio drift dentro, sin pisar sus keyframes. */
