@@ -506,6 +506,48 @@
     });
   }
 
+  // ── Sliders de vidrio: el relleno del carril ─────────────────────────
+  // Ningún navegador expone el progreso de un input[type=range] en CSS, así
+  // que css/glass.css lo pinta con --px-range-pct y aquí lo mantenemos al día.
+  var sliders = (function () {
+    function paint(el) {
+      var min = Number(el.min === '' ? 0 : el.min);
+      var max = Number(el.max === '' ? 100 : el.max);
+      var val = Number(el.value);
+      var pct = 0;
+      if (isFinite(min) && isFinite(max) && isFinite(val) && max > min) {
+        pct = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+      }
+      el.style.setProperty('--px-range-pct', pct.toFixed(2) + '%');
+    }
+    function sync() {
+      var list = doc.querySelectorAll('input[type=range]');
+      for (var i = 0; i < list.length; i++) paint(list[i]);
+    }
+    var queued = false;
+    function schedule() {
+      if (queued) return;
+      queued = true;
+      var run = function () { queued = false; sync(); };
+      if (global.requestAnimationFrame) global.requestAnimationFrame(run); else setTimeout(run, 16);
+    }
+    function onEvent(ev) {
+      var t = ev.target;
+      if (t && t.tagName === 'INPUT' && t.type === 'range') paint(t);
+    }
+    function init() {
+      doc.addEventListener('input', onEvent, true);
+      doc.addEventListener('change', onEvent, true);
+      sync();
+      // Los módulos repintan su HTML entero: los sliders nuevos nacen sin el
+      // porcentaje, así que volvemos a sincronizar tras cada render.
+      if (!global.MutationObserver) return;
+      var main = doc.querySelector('main.main');
+      if (main) new MutationObserver(schedule).observe(main, { childList: true, subtree: true });
+    }
+    return { init: init, sync: sync };
+  })();
+
   // ── Arranque ─────────────────────────────────────────────────────────
   function init() {
     ensureShellChrome();
@@ -531,6 +573,7 @@
     glider.init();
     groups.init();
     watchCreditsChip();
+    sliders.init();
   }
 
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init);
@@ -540,5 +583,6 @@
     openPalette: palette.open, closePalette: palette.close,
     toggleRail: toggleRail, openDrawer: openDrawer, closeDrawer: closeDrawer,
     progress: { start: progress.start, done: progress.done },
+    syncSliders: sliders.sync,
   };
 })(window);
