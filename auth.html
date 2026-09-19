@@ -20,13 +20,15 @@
    17-25s, recorrido cerrado 0%=100% con "linear" para que no frene al
    llegar a un extremo) marcado en su posición — no agregar luces nuevas,
    si hace falta más movimiento se ajustan esas keyframes. js/auth-ambience.js
-   añade paralaje de puntero sobre esa misma capa y un lecho de sonido
-   ambiental continuo sintetizado (Web Audio, sin assets ni archivos, sonido
-   de sala de máquinas — zumbido + pulso + blips —, no un pad de meditación)
-   con botón de silencio (#btn-sound) — arranca tras el primer gesto del
-   usuario (lo exige la política de autoplay del navegador) y sigue sonando
-   en loop mientras la pestaña esté abierta. Respeta prefers-reduced-motion y
-   localStorage.
+   añade paralaje de puntero sobre esa misma capa y la firma sonora continua
+   sintetizada (Web Audio, sin assets ni archivos): textura, no melodía ni
+   ritmo — sub + núcleo armónico + aire filtrado + destellos, todo con reverb
+   y limitador. Ni ondas cuadradas con notas de una escala (suena a consola
+   de 8 bits) ni pulso a tempo fijo ni pad de meditación: el detalle de por
+   qué está en la cabecera de ese archivo. Botón de silencio (#btn-sound) —
+   arranca tras el primer gesto del usuario (lo exige la política de autoplay
+   del navegador) y sigue sonando en loop mientras la pestaña esté abierta.
+   Respeta prefers-reduced-motion y localStorage.
    ═══════════════════════════════════════════════════════════════════════ */
 :root {
   --bg: #05060B;
