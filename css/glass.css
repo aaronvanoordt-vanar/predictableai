@@ -275,6 +275,106 @@ html[data-rail="1"] .user-dropdown { left: calc(var(--rail-w) + 6px); right: aut
   background: var(--surface-raised);
 }
 
+/* ── Slider de vidrio (Apple) ─────────────────────────────────────────────
+   Todo input[type=range] de la app: carril fino translúcido con relleno de
+   acento y una cuenta de vidrio con reflejo especular que crece al arrastrar.
+   Ningún navegador expone el progreso del range en CSS, así que el relleno se
+   pinta con --px-range-pct, que mantiene al día js/ux.js (si ese JS no corre,
+   el carril simplemente sale vacío: nada se rompe). */
+input[type=range] {
+  -webkit-appearance: none; appearance: none;
+  --px-track: 7px;
+  --px-knob: 22px;
+  height: var(--px-knob);
+  margin: 0; padding: 0; border: 0;
+  background: transparent;
+  color: var(--module-accent);
+  cursor: pointer;
+  vertical-align: middle;
+  touch-action: pan-y;
+}
+input[type=range]:focus { outline: none; }
+input[type=range]:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Carril: vidrio esmerilado + relleno de acento hasta --px-range-pct */
+input[type=range]::-webkit-slider-runnable-track {
+  height: var(--px-track); border-radius: 999px;
+  background-color: var(--surface3);
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,.38), rgba(255,255,255,.05) 62%, rgba(255,255,255,0)),
+    linear-gradient(90deg, var(--module-accent) var(--px-range-pct, 0%), rgba(255,255,255,0) var(--px-range-pct, 0%));
+  box-shadow: inset 0 1px 2px rgba(10,10,15,.12), inset 0 0 0 .5px var(--glass-edge);
+}
+input[type=range]::-moz-range-track {
+  height: var(--px-track); border-radius: 999px; border: 0;
+  background-color: var(--surface3);
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,.38), rgba(255,255,255,.05) 62%, rgba(255,255,255,0)),
+    linear-gradient(90deg, var(--module-accent) var(--px-range-pct, 0%), rgba(255,255,255,0) var(--px-range-pct, 0%));
+  box-shadow: inset 0 1px 2px rgba(10,10,15,.12), inset 0 0 0 .5px var(--glass-edge);
+}
+
+/* Cuenta de vidrio */
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: var(--px-knob); height: var(--px-knob); border-radius: 50%;
+  margin-top: calc((var(--px-track) - var(--px-knob)) / 2);
+  border: .5px solid var(--glass-edge);
+  background:
+    radial-gradient(130% 130% at 32% 20%, rgba(255,255,255,.98), rgba(255,255,255,.74) 46%, rgba(255,255,255,.46)),
+    var(--surface-raised);
+  -webkit-backdrop-filter: blur(10px) saturate(1.7);
+  backdrop-filter: blur(10px) saturate(1.7);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.95), inset 0 -2px 3px rgba(10,10,15,.07),
+    0 1px 2px rgba(10,10,15,.18), 0 8px 18px -8px rgba(20,30,80,.55);
+  transition: transform var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
+}
+input[type=range]::-moz-range-thumb {
+  width: var(--px-knob); height: var(--px-knob); border-radius: 50%;
+  border: .5px solid var(--glass-edge);
+  background:
+    radial-gradient(130% 130% at 32% 20%, rgba(255,255,255,.98), rgba(255,255,255,.74) 46%, rgba(255,255,255,.46)),
+    var(--surface-raised);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.95), inset 0 -2px 3px rgba(10,10,15,.07),
+    0 1px 2px rgba(10,10,15,.18), 0 8px 18px -8px rgba(20,30,80,.55);
+  transition: transform var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
+}
+
+input[type=range]:hover:not(:disabled)::-webkit-slider-thumb { transform: scale(1.06); }
+input[type=range]:hover:not(:disabled)::-moz-range-thumb { transform: scale(1.06); }
+input[type=range]:active:not(:disabled)::-webkit-slider-thumb {
+  transform: scale(1.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.95), inset 0 -2px 3px rgba(10,10,15,.07),
+    0 2px 4px rgba(10,10,15,.2), 0 14px 26px -10px rgba(20,30,80,.6);
+}
+input[type=range]:active:not(:disabled)::-moz-range-thumb {
+  transform: scale(1.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.95), inset 0 -2px 3px rgba(10,10,15,.07),
+    0 2px 4px rgba(10,10,15,.2), 0 14px 26px -10px rgba(20,30,80,.6);
+}
+input[type=range]:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.95), 0 1px 2px rgba(10,10,15,.18),
+    0 8px 18px -8px rgba(20,30,80,.55), 0 0 0 4px var(--accent-soft);
+}
+input[type=range]:focus-visible::-moz-range-thumb {
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.95), 0 1px 2px rgba(10,10,15,.18),
+    0 8px 18px -8px rgba(20,30,80,.55), 0 0 0 4px var(--accent-soft);
+}
+@media (prefers-reduced-motion: reduce) {
+  input[type=range]::-webkit-slider-thumb { transition: none; }
+  input[type=range]::-moz-range-thumb { transition: none; }
+  input[type=range]:hover:not(:disabled)::-webkit-slider-thumb,
+  input[type=range]:active:not(:disabled)::-webkit-slider-thumb { transform: none; }
+  input[type=range]:hover:not(:disabled)::-moz-range-thumb,
+  input[type=range]:active:not(:disabled)::-moz-range-thumb { transform: none; }
+}
+
 /* KPIs y tarjetas de área */
 .stat-card { padding: 20px 22px; }
 .stat-card::before { height: 3px; background: linear-gradient(90deg, var(--module-accent), transparent); opacity: .7; }
@@ -647,6 +747,9 @@ html[data-theme="dark"] { --field: rgba(255,255,255,.06); --field-edge: rgba(255
 #radar-shell .rl-select, #radar-shell .rl-search, #radar-shell .rl-input { border-radius: 12px; background: var(--field); border: 1px solid var(--field-edge); }
 #radar-shell .rl-seg { border-radius: 999px; background: var(--field); }
 #radar-shell .rl-seg-b { border-radius: 999px; }
+#radar-shell .rl-range { gap: 10px; }
+#radar-shell .rl-range input[type=range] { width: 132px; }
+#radar-shell .rl-field > input[type=range] { width: 100%; }
 @media (max-width: 840px) { #radar-shell .rl-wrap { padding: 4px 14px 40px; } }
 
 /* ── Contexto global (#coda-shell): sobrio, tipográfico ──────────────── */
