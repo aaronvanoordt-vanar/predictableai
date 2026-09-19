@@ -2016,6 +2016,8 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 </style>
 <!-- Capa experiencial del shell (movimiento, riel, cajón móvil, paleta ⌘K): css/ux.css + js/ux.js -->
 <link rel="stylesheet" href="css/ux.css?v=20260919">
+<!-- Liquid Glass + identidad visual + flujo del dashboard (2026-09-19): css/glass.css + js/dashboard-flow.js -->
+<link rel="stylesheet" href="css/glass.css?v=20260919">
 </head>
 <body>
 
@@ -2091,6 +2093,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="nav-item" data-page="radar" onclick="nav(this,'radar');if(window.radarLive)window.radarLive.show();else if(window.radar)window.radar.show()">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="3.5" opacity=".5"/><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/><path d="M8 8l4.2-4.2"/></svg>
       Radar
+      <span id="nav-radar-badge" class="nav-badge accent" style="display:none">0</span>
     </div>
     <div class="nav-item" data-page="coda-ai" onclick="nav(this,'coda-ai')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M8 1v14M2 8h12"/></svg>
@@ -2117,6 +2120,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="nav-item" data-page="pro-main" data-pros-tab="campanas" onclick="nav(this,'pro-main');if(window.campaigns)window.campaigns.setView('campaigns');if(window.prospecting)window.prospecting.show('campanas')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>
       Campañas
+      <span id="nav-campanas-badge" class="nav-badge teal" style="display:none">0</span>
     </div>
     <!-- Bandeja omnicanal: la pinta js/campaigns.js (vista 'inbox') dentro del
          shell de Prospección, pero esta es su ÚNICA entrada. La pestaña
@@ -2170,6 +2174,9 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <button type="button" class="tt-opt on" data-lang="es" aria-label="Español">ES · Español</button>
       <button type="button" class="tt-opt" data-lang="en" aria-label="English">EN · English</button>
     </div>
+
+    <!-- Créditos: js/ux.js mueve aquí el chip global de js/credits.js -->
+    <div id="sb-credits-slot"></div>
 
     <!-- Dropdown que abre HACIA ARRIBA cuando el pill recibe click -->
     <div class="user-dropdown" id="user-dropdown">
@@ -2226,6 +2233,9 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <button class="btn btn-primary btn-sm" onclick="nav(document.querySelector('[data-pros-tab=campanas]'),'pro-main');if(window.prospecting)window.prospecting.show('campanas')">+ Nueva campaña</button>
     </div>
   </div>
+
+  <!-- FLUJO DEL REVENUE OS (js/dashboard-flow.js): los 7 pasos con su estado real y el siguiente paso -->
+  <div id="dashboard-flow-shell"></div>
 
   <!-- KPI ROW -->
   <div class="stat-grid">
@@ -3076,7 +3086,8 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/context-gate.js"></script>
 <script src="js/onboarding-tour.js"></script>
 <script src="js/miforms-prompt.js"></script>
-<script src="js/ux.js?v=20260919"></script>
+<script src="js/ux.js?v=20260919b"></script>
+<script src="js/dashboard-flow.js?v=20260919"></script>
 <script>
 // ─── ROL PROPIO (SDR / Director / Admin) ───────────────────────────
 (function () {

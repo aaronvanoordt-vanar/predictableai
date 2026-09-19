@@ -108,6 +108,15 @@ Pedido del dueño: "sigue exactamente igual; quiero UX de Apollo/Clay/Gong/Insta
 
 Queda igual que antes (a propósito): los colores y tokens, el HTML de las páginas, los módulos. Nada de datos inventados: la paleta y la barra móvil se arman desde el DOM real.
 
+### Rediseño visual: Liquid Glass + las cuatro direcciones (PR siguiente, 2026-09-19)
+Tras ver el antes/después del PR #220 el dueño pidió que se **viera** distinta, no solo que se sintiera: "las cuatro direcciones, y Liquid Glass de Apple en todo el ecosistema". Se hizo en `css/glass.css` + `js/dashboard-flow.js`, anulando a propósito la regla "no reestilizar" de `CLAUDE.md` (decisión registrada allí).
+
+1. **Cabecera única y densidad**: cabecera flotante de vidrio en todas las páginas con la misma escala (título 20/700 en la cabecera del shell, 24/700 en los módulos), barra de acento por módulo, tablas y filas más compactas.
+2. **Dashboard con contenido real**: el flujo Contexto → Hub → Radar → Listas → Campañas → Bandeja → Reuniones abre la primera pantalla con el estado real de cada paso (conteos de Supabase) y el siguiente paso sugerido con su CTA. Nada inventado: si una consulta falla, "No disponible".
+3. **Identidad**: CTA primario en `--grad-ai`, botones cápsula, iconos de área de 46 px, títulos más contundentes, `--module-accent` en KPIs y cabeceras.
+4. **Sidebar tipo Linear/Gong**: panel flotante, grupos colapsables con memoria, contadores por módulo (Radar: señales nuevas; Campañas: activas; Listas y Bandeja ya existían), créditos y usuario integrados abajo.
+5. **Liquid Glass**: se redefinen los tokens de superficie (translúcidos) y los radios, así que cada módulo hereda el vidrio sin tocar su CSS; desenfoque real solo donde hay contenido detrás (sidebar, cabecera, modales, paleta); malla de fondo con halos de marca en claro y oscuro.
+
 ### Deuda de coherencia que queda (decidida, no hecha aquí)
 Cada una toca muchas líneas de `index.html` (dos caídas de producción vinieron de ahí) y merece su propio PR corto con preflight en navegador:
 
