@@ -109,40 +109,40 @@
     if (!el) return;
     var summary = find('summary', 'all');
     var m = (summary && summary.metrics) || {};
-    var html = '<div class="chart-card"><div class="chart-header" style="align-items:flex-start;gap:12px">' +
-      '<div style="flex:1;min-width:0"><span class="chart-title">Qué está funcionando</span>' +
-      '<div class="pros-hint" style="margin-top:2px">El bucle de aprendizaje mide resultados reales (respuestas, reuniones, señales útiles) y repite lo que funciona; lo que no, lo apaga y te avisa.' + (state.lastRun ? ' Última corrida ' + esc(relTime(state.lastRun)) + '.' : '') + '</div></div>' +
+    var html = '<section class="lrn card"><div class="lrn-head">' +
+      '<div class="lrn-head-copy"><span class="lrn-eyebrow">Bucle de aprendizaje</span><h3 class="lrn-title">Qué está funcionando</h3>' +
+      '<p class="lrn-sub">Mide resultados reales (respuestas, reuniones, señales útiles), repite lo que funciona y apaga lo que no.' + (state.lastRun ? ' Última corrida ' + esc(relTime(state.lastRun)) + '.' : '') + '</p></div>' +
       '<button class="btn btn-ghost btn-sm" data-learning-act="recompute"' + (state.busy ? ' disabled' : '') + '>' + (state.busy ? 'Calculando…' : 'Recalcular ahora') + '</button></div>';
-    if (!state.loaded) html += '<div class="pros-hint" style="padding:12px 0">Cargando…</div>';
-    else if (state.error === 'pending_migration') html += '<div class="pros-hint" style="padding:12px 0">El bucle de aprendizaje se activa cuando se aplique la migración <code>20260919000001_learning_loop.sql</code> y se despliegue <code>learning-loop</code>.</div>';
-    else if (state.error) html += '<div class="pros-note-red">' + esc(state.error) + '</div>';
+    if (!state.loaded) html += '<div class="lrn-note">Cargando…</div>';
+    else if (state.error === 'pending_migration') html += '<div class="lrn-note">El bucle de aprendizaje se activa cuando se aplique la migración <code>20260919000001_learning_loop.sql</code> y se despliegue <code>learning-loop</code>.</div>';
+    else if (state.error) html += '<div class="lrn-note lrn-note-err">' + esc(state.error) + '</div>';
     else if (!state.rows.length) html += '<div class="empty" style="padding:24px 0"><div class="empty-title">Todavía no hay resultados que aprender</div><div class="empty-sub">Cuando tus campañas envíen, el Radar entregue señales y el coach cierre reuniones, aquí verás qué funciona y qué se apagó solo. Puedes forzar el cálculo con «Recalcular ahora».</div></div>';
     else {
       var heads = Array.isArray(m.headlines) ? m.headlines : [];
-      if (heads.length) html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">' + heads.map(function (t) { return '<span class="pill pill-gray" style="font-size:11.5px">' + esc(t) + '</span>'; }).join('') + '</div>';
+      if (heads.length) html += '<div class="lrn-stats">' + heads.map(function (t) { return '<span class="lrn-stat">' + esc(t) + '</span>'; }).join('') + '</div>';
       var works = state.rows.filter(function (r) { return r.verdict === 'works' && r.scope !== 'summary' && r.scope !== 'winning_message'; }).slice(0, 6);
       var fails = state.rows.filter(function (r) { return r.verdict === 'fails' && r.scope !== 'summary'; }).slice(0, 6);
       var acts = state.rows.filter(function (r) { return r.action; }).slice(0, 6);
-      html += '<div class="mr-grid-2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">';
-      html += block('Repetir', works, 'Nada destaca todavía: hace falta más volumen.');
-      html += block('Dejar de hacer', fails, 'Nada falla con datos suficientes.');
+      html += '<div class="lrn-cols">';
+      html += block('Repetir', 'works', works, 'Nada destaca todavía: hace falta más volumen.');
+      html += block('Dejar de hacer', 'fails', fails, 'Nada falla con datos suficientes.');
       html += '</div>';
       if (acts.length) {
-        html += '<div style="margin-top:12px"><div class="pros-lbl">Acciones que aplicó solo</div><ul style="margin:6px 0 0;padding-left:18px;font-size:12.5px;line-height:1.6">' +
-          acts.map(function (r) { return '<li><b>' + esc(SCOPE_LABEL[r.scope] || r.scope) + ':</b> ' + esc(r.label) + ' — ' + esc(r.action) + (r.action_at ? ' <span class="pros-hint">(' + esc(relTime(r.action_at)) + ')</span>' : '') + '</li>'; }).join('') + '</ul></div>';
+        html += '<div class="lrn-acts"><div class="lrn-col-t">Acciones que aplicó solo</div><ul>' +
+          acts.map(function (r) { return '<li><b>' + esc(SCOPE_LABEL[r.scope] || r.scope) + ':</b> ' + esc(r.label) + ' — ' + esc(r.action) + (r.action_at ? ' <span class="lrn-muted">(' + esc(relTime(r.action_at)) + ')</span>' : '') + '</li>'; }).join('') + '</ul></div>';
       }
       var insufficient = state.rows.filter(function (r) { return r.verdict === 'insufficient' && r.scope !== 'summary'; }).length;
-      if (insufficient) html += '<div class="pros-hint" style="margin-top:10px">' + insufficient + ' elemento(s) todavía sin volumen suficiente para opinar: el bucle no toca nada hasta tener datos.</div>';
+      if (insufficient) html += '<div class="lrn-foot">' + insufficient + ' elemento(s) todavía sin volumen suficiente para opinar: el bucle no toca nada hasta tener datos.</div>';
     }
-    html += '</div>';
+    html += '</section>';
     el.innerHTML = html;
   }
 
-  function block(title, rows, emptyText) {
-    var h = '<div><div class="pros-lbl">' + esc(title) + '</div>';
-    if (!rows.length) h += '<div class="pros-hint" style="margin-top:4px">' + esc(emptyText) + '</div>';
-    else h += '<ul style="margin:6px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px">' + rows.map(function (r) {
-      return '<li style="font-size:12.5px;line-height:1.5"><span class="pros-hint">' + esc(SCOPE_LABEL[r.scope] || r.scope) + '</span><br><b>' + esc(r.label) + '</b><br><span class="pros-hint">' + esc(metricLine(r)) + '</span></li>';
+  function block(title, kind, rows, emptyText) {
+    var h = '<div class="lrn-col lrn-col-' + kind + '"><div class="lrn-col-t"><i></i>' + esc(title) + '</div>';
+    if (!rows.length) h += '<div class="lrn-empty">' + esc(emptyText) + '</div>';
+    else h += '<ul class="lrn-list">' + rows.map(function (r) {
+      return '<li class="lrn-item"><span class="lrn-scope">' + esc(SCOPE_LABEL[r.scope] || r.scope) + '</span><b class="lrn-label">' + esc(r.label) + '</b><span class="lrn-metric">' + esc(metricLine(r)) + '</span></li>';
     }).join('') + '</ul>';
     return h + '</div>';
   }

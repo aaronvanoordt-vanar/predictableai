@@ -158,6 +158,8 @@
     wrap.addEventListener('click', async (ev) => {
       const fb = ev.target.closest('[data-fb]');
       if (fb) { ev.preventDefault(); await submitFeedback(fb); return; }
+      const act = ev.target.closest('[data-hubact]');
+      if (act) { ev.preventDefault(); await runHubAction(act); return; }
       const refresh = ev.target.closest('[data-refresh-section]');
       if (refresh) { ev.preventDefault(); generateAll({ only: [refresh.dataset.refreshSection] }); return; }
       const tab = ev.target.closest('[data-cadence]');
@@ -349,7 +351,7 @@
           <span class="ihx-doc-status ihx-doc-status-${escapeHtml(d.status)}">${docStatusLabel(d.status)}</span>
           <button type="button" class="ihx-doc-remove" data-remove-doc title="Eliminar">×</button>
         </div>
-        ${d.status === 'done' && d.summary ? `<p class="ihx-doc-summary">${escapeHtml(d.summary)}</p>` : ''}
+        ${d.status === 'done' && d.summary ? `<details class="ihx-doc-more"><summary>Ver lo que la IA extrajo</summary><p class="ihx-doc-summary">${escapeHtml(d.summary)}</p></details>` : ''}
         ${d.status === 'error' && d.error_message ? `<p class="ihx-doc-error">${escapeHtml(d.error_message)}</p>` : ''}
       </div>`).join('');
   }
@@ -772,11 +774,9 @@
     el.innerHTML = `
       <div class="ihx-research">
         <div class="ihx-research-hint">
-          Este es el primer paso: sin contexto no hay research. Todo lo que viene después — el radar, el Intelligence Hub,
-          la búsqueda de prospección, los mensajes y el coach — se ejecuta con lo que declares aquí.
-          Divide en dos: lo que eres <strong>tú</strong>, y a <strong>quién le vendes</strong>.
+          Sin contexto no hay research: el Radar, el Intelligence Hub, la prospección, los mensajes y el coach
+          se ejecutan con lo que declares aquí. Dos bloques: quién eres <strong>tú</strong> y a <strong>quién le vendes</strong>.
         </div>
-        <div class="ihx-research-engine" id="ihx-research-engine"></div>
         ${stale ? `<div class="ihx-research-warn">La búsqueda anterior tardó demasiado y no terminó. Puedes intentarlo de nuevo.</div>` : ''}
         <div class="ihx-research-meta">
           <span class="ihx-research-status ihx-rs-${escapeHtml(researchStatusClass(brief, phase))}">${escapeHtml(statusLabel)}</span>
@@ -787,27 +787,52 @@
             <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-brief">${SVG_SPARK}<span>Reintentar</span></button>` : ''}
         </div>
         <form id="ihx-research-form">
-          <div class="ihx-field ihx-website-panel ihx-website-panel-primary">
-            <span>📄 Página web de tu empresa</span>
-            <p class="ihx-field-help" style="font-weight:600; font-size:13px; color:var(--ink, #0A0A0F)">Esta es tu fuente principal de información. La IA investigará aquí para llenar todo sobre tu empresa.</p>
-            <div class="ihx-field-with-btn">
-              <input type="url" id="ihx-website-input" name="company_website" value="${escapeHtml(intake.company_website || '')}" placeholder="https://tuempresa.com" style="font-size:14px; padding:12px">
-              <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-website" ${isRunning ? 'disabled' : ''} title="Investigar a partir de esta página" style="padding:11px 16px">
+          <section class="ihx-source-card ihx-website-panel">
+            <div class="ihx-source-head">
+              <span class="ihx-source-icon" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><path d="M1.5 8h13M8 1.5c2 2 2 11 0 13M8 1.5c-2 2-2 11 0 13"/></svg></span>
+              <div class="ihx-source-copy">
+                <div class="ihx-source-title">Tu fuente de verdad</div>
+                <p class="ihx-field-help">La IA investiga tu página web y completa las 13 tarjetas. Tú revisas, editas y confirmas.</p>
+              </div>
+              <div class="ihx-research-engine" id="ihx-research-engine"></div>
+            </div>
+            <div class="ihx-source-row">
+              <input type="url" id="ihx-website-input" name="company_website" value="${escapeHtml(intake.company_website || '')}" placeholder="https://tuempresa.com" aria-label="Página web de tu empresa">
+              <button type="button" class="ihx-btn-ai" id="ihx-retry-enrich-website" ${isRunning ? 'disabled' : ''} title="Investigar a partir de esta página">
                 ${SVG_SPARK}<span>${runSource === 'website' ? 'Investigando…' : 'Investigar'}</span>
               </button>
             </div>
             ${(runSource === 'website') ? `
-              <div class="ihx-progress-row" style="margin-top:10px">
+              <div class="ihx-progress-row" style="margin-top:12px">
                 <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${phase.percent}%"></div></div>
                 <span class="ihx-progress-pct">${phase.percent}%</span>
               </div>
               <span class="ihx-progress-note">${escapeHtml(phase.step)} — esta página se actualiza sola cuando termine.</span>` : ''}
-            <div class="ihx-field" style="margin-top:14px">
-              <span>Instrucciones personalizadas (opcional)</span>
-              <p class="ihx-field-help">Si hay una sección específica en tu web donde quieres que se concentre la IA, cuéntale aquí. Ej: "Entiende el modelo de negocio en la sección de Pricing"</p>
-              <textarea id="ihx-website-prompt" name="company_enrichment_prompt" rows="2" placeholder="Ej: Enfócate en la sección de soluciones y precios" style="width:100%; box-sizing:border-box; padding:10px; border:1px solid var(--hair-3, rgba(10,10,15,.13)); border-radius:8px; font-size:13px; font-family:inherit; resize:vertical">${escapeHtml(intake.company_enrichment_prompt || '')}</textarea>
-            </div>
-          </div>
+            <details class="ihx-source-more" ${(intake.company_enrichment_prompt || linkedinUrl || runSource === 'linkedin') ? 'open' : ''}>
+              <summary><span>Afinar la investigación</span><em>opcional: instrucciones para la IA y LinkedIn</em></summary>
+              <div class="ihx-source-more-body">
+                <label class="ihx-source-lbl" for="ihx-website-prompt">Instrucciones para la IA</label>
+                <textarea id="ihx-website-prompt" name="company_enrichment_prompt" rows="2" placeholder="Ej: concéntrate en la sección de soluciones y precios">${escapeHtml(intake.company_enrichment_prompt || '')}</textarea>
+                <label class="ihx-source-lbl" for="ihx-linkedin-input">LinkedIn de la empresa <span>fuente secundaria: tamaño y otros datos</span></label>
+                <div class="ihx-source-row ihx-source-row-sm">
+                  <input type="url" id="ihx-linkedin-input" name="company_linkedin_url" value="${escapeHtml(linkedinUrl || '')}" placeholder="https://linkedin.com/company/tuempresa">
+                  <button type="button" class="ihx-btn-force ihx-btn-ai-sm" id="ihx-save-linkedin">Guardar</button>
+                  <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-linkedin" ${isRunning ? 'disabled' : ''}>
+                    ${SVG_SPARK}<span>${runSource === 'linkedin' ? 'Investigando…' : 'Investigar desde LinkedIn'}</span>
+                  </button>
+                </div>
+                ${(runSource === 'linkedin') ? `
+                  <div class="ihx-progress-panel" style="margin-top:12px">
+                    <span class="ihx-progress-label">${escapeHtml(phase.step)}</span>
+                    <div class="ihx-progress-row">
+                      <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${phase.percent}%"></div></div>
+                      <span class="ihx-progress-pct">${phase.percent}%</span>
+                    </div>
+                    <span class="ihx-progress-note">Esta página se actualiza sola cuando termine.</span>
+                  </div>` : ''}
+              </div>
+            </details>
+          </section>
           <div class="ihx-context-progress">
             <div class="ihx-context-progress-copy">
               <span class="ihx-context-progress-eyebrow">Tu contexto de empresa</span>
@@ -825,29 +850,6 @@
 
           ${cc.BLOCKS.map(blockHtml).join('')}
 
-          <div class="ihx-research-panel ihx-research-panel-secondary" style="margin-top:28px; background:var(--surface2, #F6F7F9); padding:18px; border-radius:12px; border:1px solid var(--hair, rgba(10,10,15,.07))">
-            <div class="ihx-research-panel-text">
-              <strong style="font-size:13px; color:var(--ink-4, rgba(10,10,15,.40)); text-transform:uppercase; letter-spacing:0.5px">Información adicional (opcional)</strong>
-              <span style="font-size:13px; margin-top:6px; display:block; color:var(--text2, rgba(10,10,15,.62)); line-height:1.5">Si quieres que la IA también consulte tu perfil de LinkedIn para obtener tamaño de empresa y otros datos, puedes proporcionarlo aquí. LinkedIn es secundario; la página web es la fuente principal.</span>
-            </div>
-            <div class="ihx-field-with-btn" style="margin-top:12px">
-              <input type="url" id="ihx-linkedin-input" name="company_linkedin_url" value="${escapeHtml(linkedinUrl || '')}" placeholder="https://linkedin.com/company/tuempresa" style="font-size:13px; color:var(--text2, rgba(10,10,15,.62))">
-              <button type="button" class="ihx-btn-force ihx-btn-ai-sm" id="ihx-save-linkedin" style="font-size:12px">Guardar</button>
-              <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-retry-enrich-linkedin" ${isRunning ? 'disabled' : ''} style="font-size:12px">
-                ${SVG_SPARK}<span>${runSource === 'linkedin' ? 'Investigando…' : 'Investigar'}</span>
-              </button>
-            </div>
-            ${(runSource === 'linkedin') ? `
-              <div class="ihx-progress-panel" style="margin-top:12px">
-                <span class="ihx-progress-label">${escapeHtml(phase.step)}</span>
-                <div class="ihx-progress-row">
-                  <div class="ihx-progress-bar"><div class="ihx-progress-bar-fill" style="width:${phase.percent}%"></div></div>
-                  <span class="ihx-progress-pct">${phase.percent}%</span>
-                </div>
-                <span class="ihx-progress-note">Esta página se actualiza sola cuando termine.</span>
-              </div>` : ''}
-          </div>
-
           <section class="ihx-context-card is-complete ihx-summary-card">
             <div class="ihx-context-card-body">
               <div class="ihx-summary-panel">
@@ -862,22 +864,21 @@
             </div>
           </section>
 
-          <div class="ccx-confirm ${completeness.fieldsComplete ? 'is-ready' : ''}" id="ihx-confirm-panel">
+          <div class="ccx-confirm ihx-actionbar ${completeness.fieldsComplete ? 'is-ready' : ''} ${confirmed ? 'is-confirmed' : ''}" id="ihx-confirm-panel">
             <div class="ccx-confirm-copy">
-              <strong>${confirmed ? 'Contexto confirmado' : 'Confirma tu contexto para desbloquear la plataforma'}</strong>
+              <strong>${confirmed ? 'Contexto confirmado' : (completeness.fieldsComplete ? 'Todo listo: confirma para desbloquear la plataforma' : 'Completa las tarjetas pendientes para desbloquear la plataforma')}</strong>
               <p>${confirmed
-                ? 'El radar, el Intelligence Hub, la prospección y el coach ya corren con este contexto. Si cambias algo, guarda y vuelve a confirmar.'
-                : 'Radar, Intelligence Hub, prospección, mensajes y coach están bloqueados hasta que revises y confirmes esta información. Es lo que usan para investigar.'}</p>
+                ? 'Radar, Intelligence Hub, prospección y coach corren con este contexto. Si cambias algo, guarda y vuelve a confirmar.'
+                : 'Radar, Intelligence Hub, prospección, mensajes y coach usan exactamente esta información para investigar.'}</p>
               ${!completeness.fieldsComplete ? `<div class="ccx-confirm-missing">${missingHtml}${completeness.missing.length > 6 ? `<button type="button" disabled>+${completeness.missing.length - 6} más</button>` : ''}</div>` : ''}
             </div>
-            ${confirmed && completeness.fieldsComplete
-              ? '<span class="ccx-confirmed-pill">✓ Plataforma desbloqueada</span>'
-              : `<button type="button" class="ccx-confirm-btn" id="ihx-confirm-context" ${completeness.fieldsComplete ? '' : 'disabled'}>Confirmar y desbloquear</button>`}
-          </div>
-
-          <div class="ihx-research-actions">
-            <button type="submit" class="ihx-btn-generate" id="ihx-research-save">Guardar cambios</button>
-            <span class="ihx-research-saved" id="ihx-research-saved-msg"></span>
+            <div class="ihx-actionbar-btns">
+              <span class="ihx-research-saved" id="ihx-research-saved-msg"></span>
+              <button type="submit" class="ihx-btn-force" id="ihx-research-save">Guardar cambios</button>
+              ${confirmed && completeness.fieldsComplete
+                ? '<span class="ccx-confirmed-pill">✓ Plataforma desbloqueada</span>'
+                : `<button type="button" class="ccx-confirm-btn" id="ihx-confirm-context" ${completeness.fieldsComplete ? '' : 'disabled'}>Confirmar y desbloquear</button>`}
+            </div>
           </div>
         </form>
 
@@ -885,7 +886,12 @@
           <div class="ihx-context-card-h">Fuentes adicionales para la IA</div>
           <p class="ihx-field-help">One-pagers, presentaciones ejecutivas, etc. La IA los lee y usa lo que encuentre la próxima vez que actualice el contexto de tu empresa.</p>
           <div class="ihx-doc-upload">
-            <input type="file" id="ihx-doc-input" accept="application/pdf">
+            <label class="ihx-doc-drop" for="ihx-doc-input">
+              <span class="ihx-doc-drop-ic" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 11V3M4.5 6.5L8 3l3.5 3.5M2.5 11.5v1a1 1 0 001 1h9a1 1 0 001-1v-1"/></svg></span>
+              <span class="ihx-doc-drop-t">Arrastra un PDF o <u>elige un archivo</u></span>
+              <span class="ihx-doc-drop-s" id="ihx-doc-drop-name">One-pagers, presentaciones, casos de éxito · hasta 20 MB</span>
+              <input type="file" id="ihx-doc-input" accept="application/pdf">
+            </label>
             <button type="button" class="ihx-btn-ai ihx-btn-ai-sm" id="ihx-doc-upload-btn">${SVG_SPARK}<span>Subir y analizar</span></button>
           </div>
           <span class="ihx-doc-upload-msg" id="ihx-doc-upload-msg"></span>
@@ -896,6 +902,7 @@
     cc.bind(el);
     if (window.AIEngine) {
       window.AIEngine.mount('#ihx-research-engine', 'onboarding', {
+        compact: true,
         labelText: 'Motor de IA para investigar',
       });
     }
@@ -1429,12 +1436,143 @@
     }).filter(Boolean).join('');
     return chips ? `<div class="ihx-src-chips">${chips}</div>` : '';
   }
+  // ─── ACCIONES DIRECTAS POR HALLAZGO ───────────────────────
+  // Cada hallazgo del Hub tiene repercusión directa en el resto del Revenue OS:
+  // se convierte en detector del Radar, en señal de compra del contexto, en
+  // objeción para el coach, en una búsqueda de Prospección o en una campaña con
+  // ese ángulo. Nada se inventa: cada acción escribe en la tabla o abre el
+  // módulo real con el texto del hallazgo.
+  const HUB_ACTIONS = {
+    industry_insight_digest:      ['radar', 'trigger', 'campaign'],
+    competitor_threat_radar:      ['competitor', 'radar', 'campaign'],
+    prospecting_recommendations:  ['search', 'campaign'],
+    benchmark:                    ['competitor', 'radar'],
+    revenue_opportunities:        ['search', 'radar', 'campaign'],
+    strategic_actions:            ['campaign', 'trigger'],
+    consumer_behavioral_analysis: ['objection', 'campaign', 'trigger'],
+    market_snapshot:              ['radar', 'trigger'],
+    future_innovations:           ['radar', 'campaign'],
+  };
+  const HUB_ACTION_META = {
+    radar:      { label: 'Vigilar en el Radar',        hint: 'Crea un detector con esta señal (1 crédito)', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.5"/><path d="M8 8l4-4"/></svg>' },
+    trigger:    { label: 'Señal de compra',            hint: 'La guarda en «Dolores y señales de compra» de tu contexto', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6" stroke-linecap="round"><path d="M9 2L3 9h5l-1 5 6-7H8l1-5z"/></svg>' },
+    objection:  { label: 'Objeción para el coach',     hint: 'La añade a tus objeciones; el Meeting Coach la usa en vivo', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><path d="M2 3h12v7H7l-3 2.5V10H2z"/></svg>' },
+    competitor: { label: 'Añadir competidor',          hint: 'Lo suma a «Competencia y exclusiones» de tu contexto', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><circle cx="5.5" cy="6" r="2.5"/><circle cx="11" cy="6" r="2.5"/><path d="M1.5 13c0-2.2 1.8-4 4-4s4 1.8 4 4M7 13c0-2.2 1.8-4 4-4s4 1.8 4 4"/></svg>' },
+    search:     { label: 'Buscar contactos',           hint: 'Abre Buscar con estas palabras clave', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5L10.3 10.3"/></svg>' },
+    campaign:   { label: 'Campaña con este ángulo',    hint: 'Abre el asistente con este hallazgo como instrucción del primer mensaje', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>' },
+  };
+  function actionsHtml(sectionKey, i, safeTitle) {
+    const acts = HUB_ACTIONS[sectionKey] || [];
+    if (!acts.length) return '';
+    return `<div class="ihx-acts">${acts.map(a => {
+      const m = HUB_ACTION_META[a];
+      return `<button type="button" class="ihx-act ihx-act-${a}" data-hubact="${a}" data-section="${sectionKey}" data-idx="${i}" data-title="${safeTitle}" title="${escapeHtml(m.hint)}">${m.icon}<span>${escapeHtml(m.label)}</span></button>`;
+    }).join('')}</div>`;
+  }
+  // Recupera el hallazgo (objeto) que pintó el renderer para ese índice.
+  function itemAt(sectionKey, idx) {
+    const rep = STATE.reports[sectionKey];
+    const c = (rep && rep.content) || {};
+    const i = Number(idx) || 0;
+    const pick = (arr) => (Array.isArray(arr) ? arr[i] : null);
+    switch (sectionKey) {
+      case 'industry_insight_digest': return pick(c.insights);
+      case 'competitor_threat_radar': return pick(c.alerts);
+      case 'prospecting_recommendations': return pick(c.recommendations);
+      case 'revenue_opportunities': return pick((c.opportunities || []).slice().sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)));
+      case 'strategic_actions': return pick([].concat((c.do_items || []).slice(0, 3), (c.avoid_items || []).slice(0, 2), (c.test_items || []).slice(0, 2)));
+      case 'consumer_behavioral_analysis': return pick(c.shifts);
+      case 'future_innovations': return pick(c.horizons);
+      case 'benchmark': return pick(c.threats) || null;
+      case 'market_snapshot': return { title: c.headline, trending: c.trending };
+      default: return null;
+    }
+  }
+  // Texto útil del hallazgo para cada acción (nunca inventado: solo campos del reporte).
+  function itemText(sectionKey, it, title) {
+    const t = (v) => cleanText(String(v || '')).trim();
+    it = it || {};
+    const parts = [];
+    switch (sectionKey) {
+      case 'industry_insight_digest': parts.push(t(it.title) || t(title), t(it.so_what)); break;
+      case 'competitor_threat_radar': parts.push(t(it.actor) ? `${t(it.actor)}: ${t(it.move)}` : t(title), t(it.counter_action)); break;
+      case 'prospecting_recommendations': parts.push(t(it.title) || t(title), t(it.search_adjustment), t(it.messaging_adjustment)); break;
+      case 'revenue_opportunities': parts.push(t(it.name) || t(title), t(it.why_now)); break;
+      case 'strategic_actions': parts.push(t(it.title) || t(title), t(it.detail)); break;
+      case 'consumer_behavioral_analysis': parts.push(t(it.pain) || t(title), t(it.your_move)); break;
+      case 'future_innovations': parts.push(t(it.innovation) || t(title), t(it.prepare)); break;
+      default: parts.push(t(title));
+    }
+    return parts.filter(Boolean).join('. ').slice(0, 900);
+  }
+  function hubToast(msg, type) { if (window.uiHelpers && window.uiHelpers.toast) window.uiHelpers.toast(msg, type || 'success'); }
+  async function intakeAppend(column, value, isJson) {
+    const sb = window.supabaseClient;
+    const { data: row } = await sb.from('intel_hub_intake').select(column).eq('user_id', STATE.user.id).maybeSingle();
+    const cur = Array.isArray(row && row[column]) ? row[column] : [];
+    const exists = cur.some(x => (isJson ? JSON.stringify(x) === JSON.stringify(value) : String(x).trim().toLowerCase() === String(value).trim().toLowerCase()));
+    if (exists) return false;
+    const next = cur.concat([value]).slice(-60);
+    const patch = { user_id: STATE.user.id }; patch[column] = next;
+    if (column === 'common_objections') patch.objections_none = false;
+    const { error } = await sb.from('intel_hub_intake').upsert(patch, { onConflict: 'user_id' });
+    if (error) throw error;
+    try { window.dispatchEvent(new CustomEvent('company-context-saved', { detail: { intake: patch } })); } catch (e) { /* noop */ }
+    return true;
+  }
+  async function runHubAction(btn) {
+    const act = btn.dataset.hubact, section = btn.dataset.section, idx = btn.dataset.idx, title = btn.dataset.title || '';
+    const it = itemAt(section, idx);
+    const text = itemText(section, it, title);
+    const t = (v) => cleanText(String(v || '')).trim();
+    const nav = (sel) => { const el = document.querySelector(sel); if (el) el.click(); };
+    btn.disabled = true; btn.classList.add('is-busy');
+    try {
+      if (act === 'radar') {
+        const { data: { session } } = await window.supabaseClient.auth.getSession();
+        const kind = section === 'competitor_threat_radar' ? 'news' : section === 'future_innovations' ? 'technographics' : 'news';
+        const res = await fetch(`${window.SUPABASE_CONFIG.url}/functions/v1/radar-plan`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ action: 'add_detector', kind, description: text, name: t(title).slice(0, 90) }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (res.status === 402) throw new Error('Sin créditos suficientes para crear el detector.');
+        if (!res.ok) throw new Error(body.error || 'No se pudo crear el detector. Diseña primero tu plan de señales en el Radar.');
+        hubToast('Detector creado en el Radar. Corre en el próximo ciclo.');
+        if (window.radarLive && window.radarLive.refresh) window.radarLive.refresh();
+      } else if (act === 'trigger') {
+        const added = await intakeAppend('radar_suggested_triggers', text, false);
+        hubToast(added ? 'Guardado en «Dolores y señales de compra» de tu contexto.' : 'Esa señal ya estaba en tu contexto.', added ? 'success' : 'info');
+      } else if (act === 'objection') {
+        const obj = t(it && it.objection) || t(it && it.pain) || t(title);
+        const neutralizer = t(it && it.response) || t(it && it.your_move) || '';
+        const added = await intakeAppend('common_objections', { objection: obj, neutralizer }, true);
+        hubToast(added ? 'Objeción añadida: el Meeting Coach la tendrá en vivo.' : 'Esa objeción ya estaba en tu contexto.', added ? 'success' : 'info');
+      } else if (act === 'competitor') {
+        const name = t(it && it.actor) || t(it && it.name) || t(title);
+        if (!name) throw new Error('Este hallazgo no nombra a un competidor.');
+        const added = await intakeAppend('competitors', { name, domain: '' }, true);
+        hubToast(added ? `«${name}» añadido a tu competencia.` : `«${name}» ya estaba en tu competencia.`, added ? 'success' : 'info');
+      } else if (act === 'search') {
+        const kw = [t(it && it.name), t(it && it.title), t(title)].filter(Boolean).slice(0, 1);
+        nav('.nav-item[data-pros-tab="busqueda"]');
+        if (window.prospecting && window.prospecting.searchFor) window.prospecting.searchFor({ keywords: kw, note: t(it && it.search_adjustment) });
+      } else if (act === 'campaign') {
+        nav('.nav-item[data-pros-tab="campanas"]:not([data-pros-view])');
+        if (window.campaigns && window.campaigns.newFromHub) window.campaigns.newFromHub({ name: t(title).slice(0, 80), instructions: text.slice(0, 600) });
+        else hubToast('Abre Campañas y crea una nueva con este ángulo.', 'info');
+      }
+    } catch (e) {
+      hubToast(e.message || 'No se pudo completar la acción.', 'error');
+    } finally { btn.disabled = false; btn.classList.remove('is-busy'); }
+  }
+
   function foot(sectionKey, i, title) {
     const cur = STATE.feedback[`${sectionKey}_${i}`];
     const safeTitle = escapeHtml(cleanText(title || ''));
     return `
       <div class="ihx-foot">
-        <span></span>
+        ${actionsHtml(sectionKey, i, safeTitle)}
         <div class="ihx-fb">
           <button class="ihx-fb-btn ${cur === 'up' ? 'is-up' : ''}" data-fb="up" data-section="${sectionKey}" data-idx="${i}" data-title="${safeTitle}" title="Útil">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H7a2 2 0 0 1-2-2V12a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L15 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>

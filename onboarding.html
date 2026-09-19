@@ -2,158 +2,216 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>Predictable.ai — Configura tu Hub</title>
+<title>Conecta tu empresa — predictable.ai</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+  /* ═══════════════════════════════════════════════════════════════════
+     onboarding.html — mismo lienzo inmersivo que auth.html (2026-09-20)
+     Texto legible: etiquetas y pistas a ≥ 70 % sobre vidrio oscuro.
+     js/onboarding.js depende solo de ids (#user-chip, #link-logout,
+     #inp-linkedin, #inp-website, #tab-linkedin, #tab-website,
+     #group-linkedin, #group-website, #inp-phone-code, #inp-phone, #btn-s1,
+     #status con .show/.ok/.err/.inf) y de la clase .is-active: intactos.
+     ═══════════════════════════════════════════════════════════════════ */
   :root {
-    --bg: #F7F8FA; --surface: #FFFFFF; --surface2: #F6F7F9; --surface3: #ECEEF3;
-    --border: rgba(10,10,15,0.08); --border2: rgba(10,10,15,0.12);
-    --ink: #0A0A0F; --ink-2: rgba(10,10,15,0.78); --ink-3: rgba(10,10,15,0.55);
-    --ink-4: rgba(10,10,15,0.40); --ink-5: rgba(10,10,15,0.24);
-    --accent: #1F4BFF; --accent-2: #3B68FF;
-    --accent-soft: rgba(31,75,255,0.10); --accent-soft-2: rgba(31,75,255,0.05);
-    --accent-ink: #1A3FD6;
-    --green: #0EA968; --green-soft: rgba(14,169,104,0.11);
-    --red: #D64545; --red-soft: rgba(214,69,69,0.10);
+    --bg: #05060B;
+    --surface: rgba(255,255,255,.06); --surface2: rgba(0,0,0,.28); --surface3: rgba(255,255,255,.1);
+    --border: rgba(255,255,255,.12); --border2: rgba(255,255,255,.18);
+    --ink: #F5F6F8; --ink-2: rgba(245,246,248,.82); --ink-3: rgba(245,246,248,.7);
+    --ink-4: rgba(245,246,248,.58); --ink-5: rgba(245,246,248,.42);
+    /* tokens que espera js/ai-engine.js */
+    --text: #F5F6F8; --text2: rgba(245,246,248,.82); --text3: rgba(245,246,248,.62);
+    --r: 12px; --shadow-3: 0 20px 60px -20px rgba(0,0,0,.8);
+    --accent: #3B68FF; --accent-2: #5C82FF; --accent-ink: #B7C6FF;
+    --accent-soft: rgba(92,130,255,.22); --accent-soft-2: rgba(92,130,255,.1);
+    --green: #33C284; --green-soft: rgba(51,194,132,.16);
+    --red: #E66A6A; --red-soft: rgba(230,106,106,.16);
+    --glass-edge: rgba(255,255,255,.12); --glass-hi: rgba(255,255,255,.26);
+    --grad-ai: linear-gradient(120deg, #3B68FF, #5C82FF, #8B7CFF);
     --font: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-mono: 'Geist Mono', ui-monospace, monospace;
+    --ease-out: cubic-bezier(.16, 1, .3, 1);
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
+  html, body { min-height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font);
     min-height: 100vh; display: flex; align-items: flex-start; justify-content: center;
-    padding: 32px 20px;
-    -webkit-font-smoothing: antialiased;
-    background-image: radial-gradient(circle at 80% 10%, rgba(31,75,255,.06), transparent 50%),
-                      radial-gradient(circle at 10% 90%, rgba(14,169,104,.05), transparent 50%);
+    padding: 40px 20px 48px; -webkit-font-smoothing: antialiased; letter-spacing: -.005em;
+    position: relative; overflow-x: hidden;
   }
+  .sky { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+  .sky .blob { position: absolute; border-radius: 50%; filter: blur(70px); opacity: .5; will-change: transform; mix-blend-mode: screen; }
+  .sky .b1 { width: 60vmax; height: 60vmax; left: -18vmax; top: -24vmax; background: radial-gradient(circle, rgba(59,104,255,.9), rgba(59,104,255,0) 62%); animation: drift1 28s ease-in-out infinite alternate; }
+  .sky .b2 { width: 48vmax; height: 48vmax; right: -14vmax; top: 4vmax; background: radial-gradient(circle, rgba(44,184,212,.7), rgba(44,184,212,0) 62%); animation: drift2 34s ease-in-out infinite alternate; }
+  .sky .b3 { width: 54vmax; height: 54vmax; left: 20vmax; bottom: -30vmax; background: radial-gradient(circle, rgba(161,139,255,.75), rgba(161,139,255,0) 62%); animation: drift3 40s ease-in-out infinite alternate; }
+  @keyframes drift1 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(9vmax, 6vmax, 0) scale(1.12); } }
+  @keyframes drift2 { from { transform: translate3d(0,0,0) scale(1.05); } to { transform: translate3d(-8vmax, 9vmax, 0) scale(.95); } }
+  @keyframes drift3 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(-10vmax, -7vmax, 0) scale(1.1); } }
+  .sky .grid {
+    position: absolute; inset: 0;
+    background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 20%, transparent 100%);
+            mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 20%, transparent 100%);
+  }
+
+  .wrap { position: relative; z-index: 1; width: 100%; max-width: 600px; animation: rise .9s var(--ease-out) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  .brand { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+  .brand-l { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; letter-spacing: -.02em; }
+  .brand-l .dot { color: var(--accent-2); }
+  .mark { width: 34px; height: 34px; border-radius: 10px; background: rgba(255,255,255,.06); border: 1px solid var(--glass-edge); padding: 5px; box-shadow: inset 0 1px 0 var(--glass-hi); }
+  .steps { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-4); }
+  .steps i { width: 22px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.14); }
+  .steps i.on { background: var(--grad-ai); }
+
   .card {
-    width: 100%; max-width: 560px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 20px; padding: 36px 40px 32px;
-    box-shadow: 0 2px 6px rgba(10,10,15,.05), 0 24px 64px -24px rgba(10,10,15,.18);
-    margin-bottom: 32px;
+    position: relative; width: 100%;
+    background: linear-gradient(160deg, rgba(255,255,255,.09), rgba(255,255,255,.04));
+    border: 1px solid var(--glass-edge); border-radius: 28px; padding: 34px 36px 30px;
+    -webkit-backdrop-filter: blur(30px) saturate(1.6); backdrop-filter: blur(30px) saturate(1.6);
+    box-shadow: inset 0 1px 0 var(--glass-hi), 0 30px 90px -30px rgba(0,0,0,.8);
   }
+  .card::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: radial-gradient(460px 220px at 15% 0%, rgba(92,130,255,.18), transparent 60%); }
+  .card > * { position: relative; }
   .user-chip {
     display: inline-flex; align-items: center; gap: 8px;
-    background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 20px; padding: 5px 12px; font-size: 12px; color: var(--ink-3);
-    margin-bottom: 22px;
+    background: rgba(0,0,0,.28); border: 1px solid var(--border);
+    border-radius: 999px; padding: 6px 12px; font-size: 12.5px; color: var(--ink-2); margin-bottom: 20px;
   }
-  .step-icon { font-size: 28px; margin-bottom: 14px; }
-  h1 { font-size: 22px; margin: 0 0 10px; letter-spacing: -.5px; font-weight: 700; }
-  .sub { color: var(--ink-3); font-size: 13.5px; margin: 0 0 26px; line-height: 1.6; }
-  .sub strong { color: var(--ink-2); }
+  .user-chip::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(51,194,132,.2); }
+  .step-icon { width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: var(--grad-ai); color: #fff; margin-bottom: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 12px 28px -10px rgba(59,104,255,.8); }
+  .step-icon svg { width: 20px; height: 20px; }
+  h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: -.035em; font-weight: 700; }
+  .sub { color: var(--ink-3); font-size: 14px; margin: 0 0 24px; line-height: 1.6; }
+  .sub strong { color: var(--ink); font-weight: 600; }
   .form-group { margin-bottom: 18px; }
-  label {
-    display: block; font-size: 11px; font-weight: 700; letter-spacing: .5px;
-    color: var(--ink-4); text-transform: uppercase; margin-bottom: 7px;
-  }
+  label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin-bottom: 7px; }
   input, select, textarea {
-    width: 100%; padding: 12px 14px; background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 10px; color: var(--ink); font-family: inherit; font-size: 14px;
-    transition: border-color .12s; -webkit-appearance: none; appearance: none;
+    width: 100%; padding: 12px 14px; background: rgba(0,0,0,.28); border: 1px solid rgba(255,255,255,.12);
+    border-radius: 14px; color: var(--ink); font-family: inherit; font-size: 14px;
+    transition: border-color .16s, box-shadow .2s, background .16s; -webkit-appearance: none; appearance: none;
   }
   select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='rgba(10,10,15,0.40)' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-    background-repeat: no-repeat; background-position: right 14px center;
-    padding-right: 36px; cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='rgba(245,246,248,0.6)' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px; cursor: pointer;
   }
-  select option { background: #FFFFFF; color: #0A0A0F; }
+  select option { background: #12141C; color: #F5F6F8; }
   textarea { resize: vertical; min-height: 90px; line-height: 1.6; }
-  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent-2); box-shadow: 0 0 0 4px rgba(92,130,255,.22); background: rgba(0,0,0,.36); }
   input::placeholder, textarea::placeholder { color: var(--ink-5); }
-  .hint { font-size: 12px; color: var(--ink-4); margin-top: 6px; line-height: 1.5; }
-  .example { font-family: monospace; color: var(--ink-3); background: var(--surface3); padding: 2px 6px; border-radius: 4px; font-size: 11px; }
-  .source-toggle {
-    display: flex; gap: 4px; background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 10px; padding: 4px; margin-bottom: 18px;
-  }
-  .source-tab {
-    flex: 1; padding: 9px 10px; border: 0; border-radius: 7px; background: transparent;
-    color: var(--ink-3); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
-    transition: all .12s;
-  }
-  .source-tab:hover:not(.is-active) { color: var(--ink-2); }
-  .source-tab.is-active { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(10,10,15,.08); }
+  .hint { font-size: 12.5px; color: var(--ink-4); margin-top: 7px; line-height: 1.5; }
+  .example { font-family: var(--font-mono); color: var(--ink-2); background: rgba(255,255,255,.08); padding: 2px 7px; border-radius: 6px; font-size: 11.5px; }
+  .source-toggle { display: flex; gap: 4px; background: rgba(0,0,0,.28); border: 1px solid rgba(255,255,255,.06); border-radius: 999px; padding: 4px; margin-bottom: 18px; }
+  .source-tab { flex: 1; padding: 9px 10px; border: 0; border-radius: 999px; background: transparent; color: var(--ink-3); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .16s, color .16s; }
+  .source-tab:hover:not(.is-active) { color: var(--ink); }
+  .source-tab.is-active { background: rgba(255,255,255,.12); color: var(--ink); box-shadow: inset 0 1px 0 var(--glass-hi); }
   .phone-row { display: flex; gap: 8px; }
-  .phone-row select { flex: 0 0 128px; width: 128px; }
+  .phone-row select { flex: 0 0 132px; width: 132px; }
   .phone-row input { flex: 1; min-width: 0; }
   .btn-primary {
-    width: 100%; padding: 14px 16px; background: var(--accent); border: 0; border-radius: 10px;
-    color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: all .12s;
-    font-family: inherit; letter-spacing: -.2px;
-    box-shadow: 0 1px 2px rgba(31,75,255,0.25), 0 8px 18px -10px rgba(31,75,255,0.45);
+    width: 100%; padding: 14px 16px; margin-top: 4px; background: var(--grad-ai); border: 0; border-radius: 999px;
+    color: #fff; font-size: 14.5px; font-weight: 700; cursor: pointer; font-family: inherit; letter-spacing: -.005em;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 12px 30px -10px rgba(59,104,255,.8);
+    transition: transform .16s var(--ease-out), filter .16s, box-shadow .2s;
   }
-  .btn-primary:hover:not([disabled]) { background: var(--accent-2); transform: translateY(-1px); }
-  .btn-primary[disabled] { opacity: .4; cursor: not-allowed; }
-  .status { margin-top: 14px; padding: 10px 13px; border-radius: 9px; font-size: 13px; display: none; line-height: 1.5; }
+  .btn-primary:hover:not([disabled]) { transform: translateY(-1px); filter: brightness(1.06); }
+  .btn-primary[disabled] { opacity: .5; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 11px 13px; border-radius: 14px; font-size: 13px; display: none; line-height: 1.5; border: 1px solid transparent; }
   .status.show { display: block; }
-  .status.ok  { background: var(--green-soft); color: #0B7F4F; border: 1px solid rgba(14,169,104,.3); }
-  .status.err { background: var(--red-soft);   color: #B03A3A; border: 1px solid rgba(214,69,69,.3); }
-  .status.inf { background: var(--accent-soft); color: var(--accent-ink); border: 1px solid rgba(31,75,255,.25); }
+  .status.ok  { background: rgba(51,194,132,.14); color: #8DE5BD; border-color: rgba(51,194,132,.3); }
+  .status.err { background: rgba(230,106,106,.14); color: #F3A8A8; border-color: rgba(230,106,106,.3); }
+  .status.inf { background: rgba(92,130,255,.14); color: #B7C6FF; border-color: rgba(92,130,255,.3); }
   .spinner { display:inline-block;width:13px;height:13px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .logout-link { display: block; text-align: center; margin-top: 20px; font-size: 12px; color: var(--ink-4); text-decoration: none; }
-  .logout-link:hover { color: var(--ink-3); }
+  .logout-link { display: block; text-align: center; margin-top: 20px; font-size: 12.5px; color: var(--ink-4); text-decoration: none; }
+  .logout-link:hover { color: var(--ink); text-decoration: underline; }
+  /* selector de motor (js/ai-engine.js) en vidrio */
+  .px-engine-trigger { background: rgba(0,0,0,.28) !important; border-color: rgba(255,255,255,.12) !important; border-radius: 14px !important; color: var(--ink) !important; }
   @media (max-width: 520px) {
-    .card { padding: 26px 22px 22px; border-radius: 16px; }
-    h1 { font-size: 20px; }
-    body { padding: 20px 12px; }
+    body { padding: 20px 12px 32px; }
+    .card { padding: 26px 22px 22px; border-radius: 22px; }
+    h1 { font-size: 22px; }
   }
+  @media (prefers-reduced-motion: reduce) { .sky .blob, .wrap { animation: none; } }
 </style>
 </head>
 <body>
 
-<div class="card">
-  <span class="user-chip" id="user-chip">Cargando…</span>
+<div class="sky" aria-hidden="true">
+  <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+  <div class="grid"></div>
+</div>
 
-  <!-- ═══ ÚNICO PASO: LinkedIn o Página web + Teléfono ═══ -->
-  <div id="step-1">
-    <div class="step-icon">🔗</div>
-    <h1>Conecta tu empresa</h1>
-    <p class="sub">Con el <strong>LinkedIn</strong> o la <strong>página web</strong> de tu empresa analizamos automáticamente tu industria, tamaño, soluciones y competidores — sin que tengas que ingresar nada más.</p>
-
-    <div class="source-toggle" role="tablist">
-      <button type="button" class="source-tab is-active" id="tab-linkedin" data-source="linkedin" role="tab" aria-selected="true">LinkedIn</button>
-      <button type="button" class="source-tab" id="tab-website" data-source="website" role="tab" aria-selected="false">Página web</button>
+<div class="wrap">
+  <div class="brand">
+    <div class="brand-l">
+      <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
+        <defs><linearGradient id="ag1" x1="0" y1="1" x2="1" y2="0"><stop offset="0%" stop-color="#5C82FF"/><stop offset="100%" stop-color="#2CB8D4"/></linearGradient></defs>
+        <path d="M18 86 L18 14 Q18 9 23 9 L52 9 Q80 9 80 31 Q80 54 52 54 L18 54" stroke="white" stroke-width="13" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="30" y1="77" x2="56" y2="33" stroke="url(#ag1)" stroke-width="8" stroke-linecap="round"/>
+        <polyline points="46,27 57,32 52,44" stroke="url(#ag1)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <circle cx="22" cy="83" r="13" fill="#3B68FF"/>
+        <text x="22" y="88" text-anchor="middle" font-size="15" font-weight="900" fill="white" font-family="Arial, sans-serif">$</text>
+      </svg>
+      predictable<span class="dot">.ai</span>
     </div>
-
-    <div class="form-group" id="group-linkedin">
-      <label>LinkedIn de tu empresa</label>
-      <input id="inp-linkedin" type="url" placeholder="https://linkedin.com/company/tu-empresa/">
-      <div class="hint">Ejemplo: <span class="example">linkedin.com/company/eleva-co/</span></div>
-    </div>
-
-    <div class="form-group" id="group-website" style="display:none">
-      <label>Página web de tu empresa</label>
-      <input id="inp-website" type="url" placeholder="https://tuempresa.com">
-      <div class="hint">Ejemplo: <span class="example">tuempresa.com</span></div>
-    </div>
-
-    <div class="form-group">
-      <label>Teléfono de contacto</label>
-      <div class="phone-row">
-        <select id="inp-phone-code" aria-label="Código de país"></select>
-        <input id="inp-phone" type="tel" inputmode="tel" placeholder="987 654 321">
-      </div>
-      <div class="hint">Para alertas urgentes de mercado (WhatsApp).</div>
-    </div>
-
-    <div class="form-group">
-      <label>Motor de IA</label>
-      <div data-ai-engine="onboarding" data-ai-engine-compact data-ai-engine-label="Investigar mi empresa con"></div>
-      <div class="hint">Con qué motor investigamos tu empresa. Puedes cambiarlo después en Ajustes, por cada función.</div>
-    </div>
-
-    <button class="btn-primary" id="btn-s1">Entrar a mi dashboard →</button>
+    <div class="steps" aria-label="Paso 1 de 2"><i class="on"></i><i></i> Paso 1 de 2</div>
   </div>
 
-  <div id="status" class="status"></div>
-  <a href="#" class="logout-link" id="link-logout">Salir y volver a iniciar sesión</a>
+  <div class="card">
+    <span class="user-chip" id="user-chip">Cargando…</span>
+
+    <!-- ═══ ÚNICO PASO: LinkedIn o Página web + Teléfono ═══ -->
+    <div id="step-1">
+      <div class="step-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5a3 3 0 004.2 0l2-2a3 3 0 00-4.2-4.2l-1 1"/><path d="M9.5 6.5a3 3 0 00-4.2 0l-2 2a3 3 0 004.2 4.2l1-1"/></svg></div>
+      <h1>Conecta tu empresa</h1>
+      <p class="sub">Con el <strong>LinkedIn</strong> o la <strong>página web</strong> de tu empresa investigamos tu industria, tamaño, soluciones y competidores. Después revisas y confirmas cada dato.</p>
+
+      <div class="source-toggle" role="tablist">
+        <button type="button" class="source-tab is-active" id="tab-linkedin" data-source="linkedin" role="tab" aria-selected="true">LinkedIn</button>
+        <button type="button" class="source-tab" id="tab-website" data-source="website" role="tab" aria-selected="false">Página web</button>
+      </div>
+
+      <div class="form-group" id="group-linkedin">
+        <label for="inp-linkedin">LinkedIn de tu empresa</label>
+        <input id="inp-linkedin" type="url" placeholder="https://linkedin.com/company/tu-empresa/">
+        <div class="hint">Ejemplo: <span class="example">linkedin.com/company/eleva-co/</span></div>
+      </div>
+
+      <div class="form-group" id="group-website" style="display:none">
+        <label for="inp-website">Página web de tu empresa</label>
+        <input id="inp-website" type="url" placeholder="https://tuempresa.com">
+        <div class="hint">Ejemplo: <span class="example">tuempresa.com</span></div>
+      </div>
+
+      <div class="form-group">
+        <label for="inp-phone">Teléfono de contacto</label>
+        <div class="phone-row">
+          <select id="inp-phone-code" aria-label="Código de país"></select>
+          <input id="inp-phone" type="tel" inputmode="tel" placeholder="987 654 321">
+        </div>
+        <div class="hint">Para avisos urgentes del Radar por WhatsApp.</div>
+      </div>
+
+      <div class="form-group">
+        <label>Motor de IA</label>
+        <div data-ai-engine="onboarding" data-ai-engine-compact data-ai-engine-label="Investigar mi empresa con"></div>
+        <div class="hint">Con qué motor investigamos tu empresa. Se cambia después en Ajustes, por cada función.</div>
+      </div>
+
+      <button class="btn-primary" id="btn-s1">Entrar a mi dashboard →</button>
+    </div>
+
+    <div id="status" class="status"></div>
+    <a href="#" class="logout-link" id="link-logout">Salir y volver a iniciar sesión</a>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>

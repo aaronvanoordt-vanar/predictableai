@@ -156,6 +156,7 @@
     gmail: undefined,
     realtime: null,
     pendingListId: null,
+    pendingHub: null,
     pendingView: null,
     linkedinCampaigns: [],     // campañas de LinkedIn diseñadas en Predictable
   };
@@ -3070,7 +3071,23 @@
 
   // ── Montaje ──────────────────────────────────────────────────────────────
   var built = false;
+  // Acción directa del Intelligence Hub: un borrador nuevo cuyo primer paso de
+  // email (IA) lleva el hallazgo como instrucción. El usuario lo ajusta en el
+  // asistente; no se guarda nada hasta que él pulse Guardar.
+  function applyPendingHub() {
+    if (!state.pendingHub) return false;
+    var b = state.pendingHub; state.pendingHub = null;
+    var L = global.CampaignFlow;
+    if (!L) return false;
+    var flow = L.emptyFlow();
+    flow.nodes.push({ id: L.newId(), type: 'action', channel: 'email', delay: { mode: 'after_prev', days: 0, hours: 0 }, content: { kind: 'ai', angle: 'apertura', instructions: String(b.instructions || '').slice(0, 600) } });
+    state.activeId = null;
+    openBuilder({ name: String(b.name || 'Campaña desde el Hub').slice(0, 120), status: 'draft', flow: flow }, null);
+    toast('Borrador creado con el hallazgo como instrucción del primer mensaje. Ajusta la cadencia y guarda.', 'info');
+    return true;
+  }
   function applyPendingList() {
+    if (applyPendingHub()) return true;
     if (!state.pendingListId) return false;
     var listId = state.pendingListId;
     state.pendingListId = null;
@@ -3091,7 +3108,7 @@
       built = true;
     }
     if (!built) return;
-    if (state.builder && !state.pendingListId) { render(); return; } // no perder un borrador a medio armar
+    if (state.builder && !state.pendingListId && !state.pendingHub) { render(); return; } // no perder un borrador a medio armar
     state.loading = true;
     render();
     try {
@@ -3109,6 +3126,10 @@
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
 
+  function newFromHub(brief) {
+    state.pendingHub = brief || null;
+    if (built && !state.loading && state.status !== undefined) applyPendingHub();
+  }
   function newFromList(listId) {
     state.pendingListId = listId || null;
     if (built && !state.loading && state.status !== undefined) applyPendingList();
@@ -3132,6 +3153,6 @@
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
 
-  global.campaigns = { show: show, newFromList: newFromList, refresh: refresh, setView: setView, openLinkedinDesigner: openLinkedinDesigner };
+  global.campaigns = { show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openLinkedinDesigner: openLinkedinDesigner };
   console.log('[campaigns] module loaded');
 })(window);

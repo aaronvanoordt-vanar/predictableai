@@ -1,258 +1,260 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="utf-8">
-<title>Predictable.ai — Acceso</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Entrar — predictable.ai</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #F7F8FA; --surface: #FFFFFF; --surface2: #F6F7F9; --border: rgba(10,10,15,0.08);
-    --text: #0A0A0F; --text2: rgba(10,10,15,0.62); --text3: rgba(10,10,15,0.45);
-    --accent: #1F4BFF; --accent-2: #3B68FF;
-    --teal: #0891B2; --jade: #0EA968; --red: #D64545; --green: #0EA968; --amber: #B87514;
-    --font: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
-    --font-mono: 'Geist Mono', ui-monospace, monospace;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: var(--font); min-height: 100vh;
-    -webkit-font-smoothing: antialiased;
-  }
+/* ═══════════════════════════════════════════════════════════════════════
+   auth.html — entrada inmersiva (2026-09-20)
+   Lienzo oscuro con auroras de marca en movimiento lento, grano sutil y
+   una tarjeta de Liquid Glass. js/auth.js depende SOLO de los ids
+   (#btn-google, #btn-linkedin, #tab-login, #tab-signup, #email-form,
+   #email-input, #password-input, #btn-email-submit, #forgot-password-link,
+   #status con .show/.ok/.err/.info, .spinner, .on): no se tocan.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  --bg: #05060B;
+  --ink: #F5F6F8;
+  --ink-2: rgba(245,246,248,.78);
+  --ink-3: rgba(245,246,248,.56);
+  --ink-4: rgba(245,246,248,.4);
+  --accent: #3B68FF; --accent-2: #5C82FF; --cyan: #2CB8D4; --violet: #A18BFF;
+  --green: #33C284; --red: #E66A6A; --amber: #DFA24E;
+  --glass: rgba(255,255,255,.055);
+  --glass-2: rgba(255,255,255,.09);
+  --glass-edge: rgba(255,255,255,.12);
+  --glass-hi: rgba(255,255,255,.26);
+  --grad-ai: linear-gradient(120deg, #3B68FF, #5C82FF, #8B7CFF);
+  --font: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font); background: var(--bg); color: var(--ink);
+  -webkit-font-smoothing: antialiased; letter-spacing: -.005em;
+  overflow-x: hidden; min-height: 100vh; position: relative;
+}
 
-  .auth-shell { display: flex; min-height: 100vh; }
+/* ── Lienzo: auroras, rejilla y grano ─────────────────────────────────── */
+.sky { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.sky .blob {
+  position: absolute; border-radius: 50%; filter: blur(70px); opacity: .55;
+  will-change: transform; mix-blend-mode: screen;
+}
+.sky .b1 { width: 62vmax; height: 62vmax; left: -18vmax; top: -22vmax; background: radial-gradient(circle, rgba(59,104,255,.9), rgba(59,104,255,0) 62%); animation: drift1 26s ease-in-out infinite alternate; }
+.sky .b2 { width: 50vmax; height: 50vmax; right: -14vmax; top: 6vmax; background: radial-gradient(circle, rgba(44,184,212,.7), rgba(44,184,212,0) 62%); animation: drift2 32s ease-in-out infinite alternate; }
+.sky .b3 { width: 56vmax; height: 56vmax; left: 22vmax; bottom: -30vmax; background: radial-gradient(circle, rgba(161,139,255,.75), rgba(161,139,255,0) 62%); animation: drift3 38s ease-in-out infinite alternate; }
+.sky .b4 { width: 34vmax; height: 34vmax; right: 18vmax; bottom: -6vmax; background: radial-gradient(circle, rgba(51,194,132,.45), rgba(51,194,132,0) 62%); animation: drift1 44s ease-in-out infinite alternate-reverse; }
+@keyframes drift1 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(9vmax, 6vmax, 0) scale(1.12); } }
+@keyframes drift2 { from { transform: translate3d(0,0,0) scale(1.05); } to { transform: translate3d(-8vmax, 9vmax, 0) scale(.95); } }
+@keyframes drift3 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(-10vmax, -7vmax, 0) scale(1.1); } }
+.sky .grid {
+  position: absolute; inset: 0;
+  background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 20%, transparent 100%);
+          mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 20%, transparent 100%);
+}
+.sky .grain {
+  position: absolute; inset: -50%; opacity: .07;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .6 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size: 160px 160px;
+  animation: grain 1.4s steps(4) infinite;
+}
+@keyframes grain { 0% { transform: translate(0,0); } 25% { transform: translate(-2%,1%); } 50% { transform: translate(1%,-2%); } 75% { transform: translate(-1%,-1%); } 100% { transform: translate(2%,2%); } }
 
-  /* ───────────────────────── Brand panel ───────────────────────── */
-  .brand-panel {
-    position: relative; overflow: hidden; flex: 1 1 44%;
-    display: flex; flex-direction: column; justify-content: space-between;
-    padding: 48px; color: #fff;
-    background:
-      radial-gradient(circle at 15% 12%, rgba(59,104,255,.55), transparent 55%),
-      radial-gradient(circle at 85% 88%, rgba(8,145,178,.45), transparent 50%),
-      linear-gradient(160deg, #0A0A0F 0%, #0C1230 45%, #101B45 100%);
-  }
-  .brand-panel::before {
-    content: ''; position: absolute; inset: 0; pointer-events: none;
-    background-image:
-      linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px);
-    background-size: 44px 44px;
-    -webkit-mask-image: radial-gradient(circle at 30% 20%, black, transparent 70%);
-            mask-image: radial-gradient(circle at 30% 20%, black, transparent 70%);
-  }
-  .brand-panel::after {
-    content: ''; position: absolute; width: 520px; height: 520px; right: -180px; bottom: -220px;
-    border-radius: 50%; background: radial-gradient(circle, rgba(14,169,104,.28), transparent 70%);
-    pointer-events: none;
-  }
-  .panel-top, .panel-mid, .panel-bottom { position: relative; z-index: 1; }
+/* ── Layout ───────────────────────────────────────────────────────────── */
+.auth-shell {
+  position: relative; z-index: 1;
+  min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  align-items: center; gap: 40px;
+  padding: 40px clamp(20px, 6vw, 96px);
+}
+.brand-panel { display: flex; flex-direction: column; gap: 34px; max-width: 620px; animation: rise .9s var(--ease-out) both; }
+.panel-top { display: flex; align-items: center; gap: 12px; }
+.mark { width: 40px; height: 40px; border-radius: 12px; background: rgba(255,255,255,.06); border: 1px solid var(--glass-edge); padding: 6px; box-shadow: inset 0 1px 0 var(--glass-hi), 0 10px 30px -12px rgba(59,104,255,.7); }
+.word { font-weight: 700; font-size: 16px; letter-spacing: -.02em; }
+.word .dot { color: var(--accent-2); }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+.eyebrow i { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(51,194,132,.18); animation: pulse 2.4s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(.8); opacity: .7; } }
+.panel-mid h1 {
+  font-size: clamp(38px, 5.2vw, 68px); line-height: .98; letter-spacing: -.045em; font-weight: 700; margin: 14px 0 18px;
+}
+.panel-mid h1 .accent {
+  background: linear-gradient(110deg, #8FA8FF, #5C82FF 30%, #2CB8D4 60%, #A18BFF 90%);
+  background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: shine 9s ease-in-out infinite alternate;
+}
+@keyframes shine { from { background-position: 0% 50%; } to { background-position: 100% 50%; } }
+.panel-mid p { font-size: 16px; line-height: 1.6; color: var(--ink-2); max-width: 520px; }
+.panel-bottom { display: flex; flex-wrap: wrap; gap: 10px; }
+.panel-bottom span {
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--glass-edge); box-shadow: inset 0 1px 0 var(--glass-hi);
+  font-size: 12.5px; color: var(--ink-2);
+}
+.panel-bottom b { color: var(--ink); font-weight: 600; }
+.panel-bottom svg { width: 13px; height: 13px; color: var(--accent-2); }
 
-  .panel-top { display: flex; align-items: center; gap: 12px; }
-  .panel-top .mark { width: 34px; height: 34px; flex-shrink: 0; }
-  .panel-top .word { font-weight: 600; font-size: 16px; letter-spacing: -.2px; }
-  .panel-top .word .dot { color: var(--accent-2); }
+.auth-main { display: flex; justify-content: center; }
+.mobile-brand { display: none; align-items: center; gap: 10px; margin-bottom: 18px; }
 
-  .panel-mid { max-width: 420px; }
-  .panel-mid .mark-lg { width: 68px; height: 68px; margin-bottom: 28px; filter: drop-shadow(0 8px 30px rgba(31,75,255,.45)); }
-  .panel-mid h1 {
-    font-size: clamp(28px, 3.4vw, 38px); line-height: 1.12; font-weight: 700;
-    letter-spacing: -1px; margin: 0 0 16px;
-  }
-  .panel-mid h1 .accent { background: linear-gradient(90deg, #7FA1FF, #6FE3D9); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .panel-mid p { font-size: 14.5px; line-height: 1.6; color: rgba(255,255,255,.62); margin: 0; }
+/* ── Tarjeta de vidrio ────────────────────────────────────────────────── */
+.card {
+  width: min(430px, 100%); position: relative;
+  padding: 34px 32px 26px; border-radius: 28px;
+  background: linear-gradient(160deg, rgba(255,255,255,.09), rgba(255,255,255,.04));
+  border: 1px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(30px) saturate(1.6); backdrop-filter: blur(30px) saturate(1.6);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 30px 90px -30px rgba(0,0,0,.8), 0 0 0 1px rgba(0,0,0,.2);
+  animation: rise .9s .12s var(--ease-out) both;
+}
+.card::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: radial-gradient(420px 220px at 20% 0%, rgba(92,130,255,.18), transparent 60%);
+}
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+h1.title { font-size: 26px; font-weight: 700; letter-spacing: -.035em; margin-bottom: 6px; }
+.sub { font-size: 13.5px; color: var(--ink-3); margin-bottom: 22px; }
 
-  .panel-bottom { display: flex; gap: 28px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: rgba(255,255,255,.4); }
-  .panel-bottom b { color: rgba(255,255,255,.78); font-weight: 600; }
+.btn-oauth {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 12px 14px; margin-bottom: 10px; border-radius: 999px;
+  background: var(--glass-2); border: 1px solid var(--glass-edge); color: var(--ink);
+  font-family: var(--font); font-size: 14px; font-weight: 600; cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+  transition: background .16s, transform .16s var(--ease-out), border-color .16s;
+}
+.btn-oauth:hover { background: rgba(255,255,255,.14); border-color: rgba(255,255,255,.2); transform: translateY(-1px); }
+.btn-oauth:active { transform: translateY(0) scale(.99); }
+.btn-oauth[disabled] { opacity: .6; cursor: wait; }
+.btn-oauth svg { width: 18px; height: 18px; flex-shrink: 0; }
+.btn-oauth:focus-visible, .btn-primary:focus-visible, .auth-tabs button:focus-visible, .forgot-link:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 
-  /* ───────────────────────── Auth form side ───────────────────────── */
-  .auth-main {
-    flex: 1 1 56%; display: flex; align-items: center; justify-content: center;
-    padding: 32px 20px; position: relative;
-    background-image: radial-gradient(circle at 80% 15%, rgba(31,75,255,.06), transparent 50%);
-  }
+.divider { display: flex; align-items: center; gap: 12px; margin: 16px 0 14px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-4); }
+.divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--glass-edge); }
 
-  .mobile-brand { display: none; align-items: center; justify-content: center; gap: 10px; margin-bottom: 22px; }
-  .mobile-brand .mark { width: 24px; height: 24px; }
-  .mobile-brand .word { font-weight: 600; font-size: 15px; letter-spacing: -.2px; }
-  .mobile-brand .word .dot { color: var(--accent); }
+.auth-tabs { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: rgba(0,0,0,.28); border: 1px solid rgba(255,255,255,.06); margin-bottom: 16px; }
+.auth-tabs button {
+  flex: 1; padding: 9px 10px; border: 0; border-radius: 999px; background: transparent; color: var(--ink-3);
+  font-family: var(--font); font-size: 13px; font-weight: 600; cursor: pointer; transition: background .16s, color .16s;
+}
+.auth-tabs button.on { background: rgba(255,255,255,.12); color: var(--ink); box-shadow: inset 0 1px 0 var(--glass-hi); }
 
-  .card {
-    width: 100%; max-width: 400px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 20px; padding: 34px 32px 28px;
-    box-shadow: 0 2px 6px rgba(10,10,15,.05), 0 30px 70px -28px rgba(10,10,15,.22);
-  }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-2); margin-bottom: 6px; }
+.field input {
+  width: 100%; padding: 12px 14px; border-radius: 14px;
+  background: rgba(0,0,0,.28); border: 1px solid rgba(255,255,255,.1); color: var(--ink);
+  font-family: var(--font); font-size: 14px; outline: none;
+  transition: border-color .16s, box-shadow .2s, background .16s;
+}
+.field input::placeholder { color: var(--ink-4); }
+.field input:focus { border-color: var(--accent-2); box-shadow: 0 0 0 4px rgba(92,130,255,.22); background: rgba(0,0,0,.36); }
 
-  h1.title { font-size: 25px; font-weight: 700; margin: 0 0 6px; letter-spacing: -.6px; }
-  .sub { color: var(--text3); font-size: 13.5px; margin-bottom: 26px; }
+.btn-primary {
+  width: 100%; padding: 13px 16px; margin-top: 6px; border: 0; border-radius: 999px;
+  background: var(--grad-ai); color: #fff; font-family: var(--font); font-size: 14.5px; font-weight: 700; cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 12px 30px -10px rgba(59,104,255,.8);
+  transition: transform .16s var(--ease-out), box-shadow .2s, filter .16s;
+}
+.btn-primary:hover { transform: translateY(-1px); filter: brightness(1.06); box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 16px 36px -10px rgba(59,104,255,.9); }
+.btn-primary:active { transform: translateY(0) scale(.99); }
+.btn-primary[disabled] { opacity: .6; cursor: wait; transform: none; }
 
-  /* Botones OAuth */
-  .btn-oauth {
-    width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
-    padding: 12px 14px; background: var(--surface); border: 1px solid rgba(10,10,15,0.13);
-    border-radius: 11px; color: var(--text); font-size: 13.5px; font-weight: 500;
-    font-family: var(--font);
-    cursor: pointer; transition: all .15s; margin-bottom: 10px;
-    box-shadow: 0 1px 2px rgba(10,10,15,.04);
-  }
-  .btn-oauth:hover:not([disabled]) { background: var(--surface2); border-color: rgba(10,10,15,0.22); transform: translateY(-1px); box-shadow: 0 6px 16px -6px rgba(10,10,15,.16); }
-  .btn-oauth:active:not([disabled]) { transform: translateY(0); }
-  .btn-oauth[disabled] { opacity: .5; cursor: not-allowed; }
-  .btn-oauth svg { width: 18px; height: 18px; flex-shrink: 0; }
-  .btn-oauth:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.forgot-link { display: block; margin: 12px auto 0; border: 0; background: transparent; color: var(--ink-3); font-family: var(--font); font-size: 12.5px; cursor: pointer; }
+.forgot-link:hover { color: var(--ink); text-decoration: underline; }
 
-  .status {
-    margin-top: 14px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px;
-    display: none;
-  }
-  .status.show { display: block; }
-  .status.ok    { background: #E9F7F0; color: #0B7F4F; border: 1px solid rgba(14,169,104,.30); }
-  .status.err   { background: #FBEDED; color: #B03A3A; border: 1px solid rgba(214,69,69,.30); }
-  .status.info  { background: #EEF2FF; color: #1A3FD6; border: 1px solid rgba(31,75,255,.25); }
+.status { display: none; margin-top: 14px; padding: 11px 13px; border-radius: 14px; font-size: 13px; line-height: 1.5; border: 1px solid transparent; }
+.status.show { display: flex; align-items: center; gap: 8px; }
+.status.ok   { background: rgba(51,194,132,.14); border-color: rgba(51,194,132,.3); color: #8DE5BD; }
+.status.err  { background: rgba(230,106,106,.14); border-color: rgba(230,106,106,.3); color: #F3A8A8; }
+.status.info { background: rgba(92,130,255,.14); border-color: rgba(92,130,255,.3); color: #B7C6FF; }
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .7s linear infinite; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Divider entre OAuth y email/password */
-  .divider { display: flex; align-items: center; gap: 10px; margin: 18px 0; }
-  .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-  .divider span { font-size: 11.5px; color: var(--text3); text-transform: uppercase; letter-spacing: .06em; }
+.legal { margin-top: 18px; font-size: 11.5px; line-height: 1.5; color: var(--ink-4); text-align: center; }
 
-  /* Tabs Iniciar sesión / Crear cuenta */
-  .auth-tabs { display: flex; background: var(--surface2); border-radius: 999px; padding: 3px; margin-bottom: 16px; }
-  .auth-tabs button {
-    flex: 1; border: none; background: transparent; border-radius: 999px; padding: 8px 0;
-    font-size: 12.5px; font-weight: 600; color: var(--text3); cursor: pointer; font-family: var(--font);
-    transition: all .15s;
-  }
-  .auth-tabs button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(10,10,15,.10); }
-
-  .field { margin-bottom: 12px; }
-  .field label { display: block; font-size: 12px; font-weight: 500; color: var(--text2); margin-bottom: 5px; }
-  .field input {
-    width: 100%; padding: 11px 13px; border: 1px solid rgba(10,10,15,0.14); border-radius: 10px;
-    font-size: 13.5px; font-family: var(--font); color: var(--text); background: var(--surface);
-  }
-  .field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31,75,255,.12); }
-
-  .btn-primary {
-    width: 100%; padding: 12px 14px; background: var(--accent); border: none;
-    border-radius: 11px; color: #fff; font-size: 13.5px; font-weight: 600;
-    font-family: var(--font); cursor: pointer; transition: all .15s; margin-top: 4px;
-  }
-  .btn-primary:hover:not([disabled]) { background: var(--accent-2); }
-  .btn-primary[disabled] { opacity: .6; cursor: not-allowed; }
-
-  .forgot-link { display: block; text-align: center; margin-top: 12px; font-size: 12px; color: var(--text3); text-decoration: none; cursor: pointer; background: none; border: none; font-family: var(--font); }
-  .forgot-link:hover { color: var(--accent); }
-
-  /* Spinner */
-  .spinner {
-    display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor;
-    border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite;
-    vertical-align: middle; margin-right: 6px;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
-  }
-
-  .legal { font-size: 11px; color: var(--text3); text-align: center; margin-top: 20px; line-height: 1.55; }
-  .legal a { color: var(--text2); }
-
-  @media (max-width: 880px) {
-    .brand-panel { display: none; }
-    .mobile-brand { display: flex; }
-    .auth-main { padding: 40px 20px; }
-  }
+@media (max-width: 900px) {
+  .auth-shell { grid-template-columns: 1fr; gap: 12px; padding: 28px 18px 40px; align-content: start; }
+  .brand-panel { display: none; }
+  .mobile-brand { display: flex; }
+  .card { padding: 26px 22px 22px; border-radius: 24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sky .blob, .sky .grain, .panel-mid h1 .accent, .eyebrow i { animation: none; }
+  .brand-panel, .card { animation: none; }
+}
 </style>
 </head>
 <body>
 
+<div class="sky" aria-hidden="true">
+  <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div>
+  <div class="grid"></div>
+  <div class="grain"></div>
+</div>
+
+<!-- Marca compartida (los dos usos referencian estas defs) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="ag1" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#5C82FF"/>
+      <stop offset="100%" stop-color="#2CB8D4"/>
+    </linearGradient>
+    <g id="p-mark-shared">
+      <path d="M18 86 L18 14 Q18 9 23 9 L52 9 Q80 9 80 31 Q80 54 52 54 L18 54"
+            stroke="white" stroke-width="13" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <line x1="30" y1="77" x2="56" y2="33" stroke="url(#ag1)" stroke-width="8" stroke-linecap="round"/>
+      <polyline points="46,27 57,32 52,44" stroke="url(#ag1)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <circle cx="22" cy="83" r="13" fill="#3B68FF"/>
+      <text x="22" y="88" text-anchor="middle" font-size="15" font-weight="900" fill="white" font-family="Arial, sans-serif">$</text>
+    </g>
+  </defs>
+</svg>
+
 <div class="auth-shell">
 
-  <!-- ───────────────────────── Brand panel (desktop) ───────────────────────── -->
+  <!-- ───────────────────────── Marca (escritorio) ───────────────────────── -->
   <aside class="brand-panel">
     <div class="panel-top">
-      <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
-        <defs>
-          <linearGradient id="ag1" x1="0" y1="1" x2="1" y2="0">
-            <stop offset="0%" stop-color="#2563eb"/>
-            <stop offset="100%" stop-color="#06b6d4"/>
-          </linearGradient>
-        </defs>
-        <path d="M18 86 L18 14 Q18 9 23 9 L52 9 Q80 9 80 31 Q80 54 52 54 L18 54"
-              stroke="white" stroke-width="13" fill="none"
-              stroke-linecap="round" stroke-linejoin="round"/>
-        <line x1="30" y1="77" x2="56" y2="33" stroke="url(#ag1)" stroke-width="8" stroke-linecap="round"/>
-        <polyline points="46,27 57,32 52,44" stroke="url(#ag1)" stroke-width="8"
-                  stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <circle cx="22" cy="83" r="13" fill="#2563eb"/>
-        <text x="22" y="88" text-anchor="middle" font-size="15" font-weight="900" fill="white" font-family="Arial, sans-serif">$</text>
-      </svg>
-      <span class="word">Predictable<span class="dot">.</span>ai</span>
+      <svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><use href="#p-mark-shared"/></svg>
+      <span class="word">predictable<span class="dot">.ai</span></span>
     </div>
 
     <div class="panel-mid">
-      <svg class="mark-lg" viewBox="0 0 100 100" aria-hidden="true">
-        <use href="#p-mark-shared"/>
-      </svg>
-      <h1>El <span class="accent">Revenue OS</span> de LATAM.</h1>
-      <p>Prospección, inteligencia de cuentas y outreach personalizado — todo en un solo lugar, hecho para equipos comerciales de LATAM.</p>
+      <span class="eyebrow"><i></i> Revenue OS · LATAM</span>
+      <h1>Tu operación de ventas, <span class="accent">predecible</span>.</h1>
+      <p>Contexto, señales de compra, prospección, campañas omnicanal y un coach de neuroventas en vivo. Un solo sistema que aprende de cada respuesta y cada reunión.</p>
     </div>
 
     <div class="panel-bottom">
-      <span><b>Gratis</b> para empezar</span>
-      <span><b>Sin</b> tarjeta</span>
-      <span><b>5 min</b> de setup</span>
+      <span><svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.8" stroke-linecap="round"><path d="M3 8.5l3 3 7-7"/></svg><b>Gratis</b> para empezar</span>
+      <span><svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.8" stroke-linecap="round"><path d="M3 8.5l3 3 7-7"/></svg><b>Sin</b> tarjeta</span>
+      <span><svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.8" stroke-linecap="round"><path d="M3 8.5l3 3 7-7"/></svg><b>5 min</b> de setup</span>
     </div>
   </aside>
 
-  <!-- shared defs so the large mark above doesn't duplicate gradient ids -->
-  <svg width="0" height="0" style="position:absolute">
-    <defs>
-      <g id="p-mark-shared">
-        <path d="M18 86 L18 14 Q18 9 23 9 L52 9 Q80 9 80 31 Q80 54 52 54 L18 54"
-              stroke="white" stroke-width="13" fill="none"
-              stroke-linecap="round" stroke-linejoin="round"/>
-        <line x1="30" y1="77" x2="56" y2="33" stroke="url(#ag1)" stroke-width="8" stroke-linecap="round"/>
-        <polyline points="46,27 57,32 52,44" stroke="url(#ag1)" stroke-width="8"
-                  stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <circle cx="22" cy="83" r="13" fill="#2563eb"/>
-        <text x="22" y="88" text-anchor="middle" font-size="15" font-weight="900" fill="white" font-family="Arial, sans-serif">$</text>
-      </g>
-    </defs>
-  </svg>
-
-  <!-- ───────────────────────── Form side ───────────────────────── -->
+  <!-- ───────────────────────── Formulario ───────────────────────── -->
   <main class="auth-main">
-    <div>
+    <div style="width:100%;max-width:430px">
       <div class="mobile-brand">
-        <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
-          <defs>
-            <linearGradient id="ag2" x1="0" y1="1" x2="1" y2="0">
-              <stop offset="0%" stop-color="#2563eb"/>
-              <stop offset="100%" stop-color="#06b6d4"/>
-            </linearGradient>
-          </defs>
-          <path d="M18 86 L18 14 Q18 9 23 9 L52 9 Q80 9 80 31 Q80 54 52 54 L18 54"
-                stroke="#0A0A0F" stroke-width="13" fill="none"
-                stroke-linecap="round" stroke-linejoin="round"/>
-          <line x1="30" y1="77" x2="56" y2="33" stroke="url(#ag2)" stroke-width="8" stroke-linecap="round"/>
-          <polyline points="46,27 57,32 52,44" stroke="url(#ag2)" stroke-width="8"
-                    stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-          <circle cx="22" cy="83" r="13" fill="#2563eb"/>
-          <text x="22" y="88" text-anchor="middle" font-size="15" font-weight="900" fill="white" font-family="Arial, sans-serif">$</text>
-        </svg>
-        <span class="word">Predictable<span class="dot">.</span>ai</span>
+        <svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><use href="#p-mark-shared"/></svg>
+        <span class="word">predictable<span class="dot">.ai</span></span>
       </div>
 
       <div class="card">
         <h1 class="title">Bienvenido</h1>
-        <p class="sub">Accede a tu cuenta o regístrate para empezar.</p>
+        <p class="sub">Entra a tu cuenta o crea una para empezar.</p>
 
         <!-- Google -->
         <button class="btn-oauth" id="btn-google">
@@ -262,7 +264,7 @@
 
         <!-- LinkedIn -->
         <button class="btn-oauth" id="btn-linkedin">
-          <svg viewBox="0 0 24 24" fill="#0A66C2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+          <svg viewBox="0 0 24 24" fill="#5EA8F0"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
           Continuar con LinkedIn
         </button>
 
@@ -289,7 +291,7 @@
         <div id="status" class="status"></div>
 
         <div class="legal">
-          Al continuar aceptas los Términos de servicio y la Política de privacidad de Predictable.ai.
+          Al continuar aceptas los Términos de servicio y la Política de privacidad de predictable.ai.
         </div>
       </div>
     </div>

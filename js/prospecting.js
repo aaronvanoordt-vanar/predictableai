@@ -3263,6 +3263,28 @@
 
   // ── Public API ─────────────────────────────────────────────────────────
   window.prospecting = {
+    // Acción directa del Intelligence Hub: abre Buscar con palabras clave de
+    // empresa (q_organization_keyword_tags) y lanza la búsqueda.
+    searchFor: function (opts) {
+      try {
+        ensureBuilt();
+        switchTab('busqueda');
+        var kw = (opts && Array.isArray(opts.keywords) ? opts.keywords : []).map(function (k) { return String(k || '').trim(); }).filter(Boolean);
+        if (kw.length) {
+          var f = state.search.filters || defaultFilters();
+          f.q_organization_keyword_tags = Array.from(new Set((f.q_organization_keyword_tags || []).concat(kw))).slice(0, 6);
+          state.search.filters = f;
+          persistFilters();
+          if (state.search.panelHost) { state.search.panelHost.innerHTML = ''; state.search.panelHost.appendChild(buildFilterPanel()); }
+          updateFilterBadges();
+          toast('Buscando empresas con «' + kw.join(', ') + '»' + (opts && opts.note ? '. Sugerencia del Hub: ' + opts.note : ''), 'info');
+          return runSearch(1, true);
+        }
+      } catch (e) {
+        console.error('[prospecting]', e);
+        toast(errMsg(e), 'error');
+      }
+    },
     show: function (tabId) {
       try {
         ensureBuilt();

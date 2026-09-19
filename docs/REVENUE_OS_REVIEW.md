@@ -117,6 +117,19 @@ Tras ver el antes/después del PR #220 el dueño pidió que se **viera** distint
 4. **Sidebar tipo Linear/Gong**: panel flotante, grupos colapsables con memoria, contadores por módulo (Radar: señales nuevas; Campañas: activas; Listas y Bandeja ya existían), créditos y usuario integrados abajo.
 5. **Liquid Glass**: se redefinen los tokens de superficie (translúcidos) y los radios, así que cada módulo hereda el vidrio sin tocar su CSS; desenfoque real solo donde hay contenido detrás (sidebar, cabecera, modales, paleta); malla de fondo con halos de marca en claro y oscuro.
 
+### Interiores en vidrio, Hub accionable, login inmersivo e idioma (PR siguiente, 2026-09-20)
+Doce puntos del dueño tras el PR #221 («falta que dentro de cada sección se vea Liquid Glass»):
+1. «Qué está funcionando» rehecha (`.lrn-*`): cabecera, chips de resumen, dos columnas Repetir / Dejar de hacer con tarjetas, acciones aplicadas.
+2. Interior de Clientes en vidrio (cabecera, paneles, campos, métricas, chips).
+3–6. Contexto: una sola tarjeta de fuente (web + Investigar, motor a la derecha; instrucciones y LinkedIn bajo un desplegable), 13 tarjetas en vidrio con tipografía sans y estado en píldora, **una sola barra de acción pegajosa** (Guardar + Confirmar y desbloquear), zona de arrastre para PDFs y resumen plegable.
+7. Hub: tarjetas coherentes (acento por módulo como borde izquierdo, icono neutro) y **acciones directas por hallazgo**: Radar, señal de compra, objeción para el coach, competidor, buscar contactos, campaña con este ángulo.
+8. Radar: cabecera con pestañas + estado + una acción primaria; Pausar / Sincronizar con el Hub / Rediseñar plan bajan a la pestaña Plan.
+9. Contexto global: sin emojis, letras en mono sobre vidrio, acento de 2 px por dimensión.
+10. Login al estilo ElevenLabs/Octolane: lienzo oscuro con auroras, rejilla, grano y tarjeta de vidrio; mismos ids.
+11. Idioma: `profiles.ui_language` + directiva de idioma en `callLLM` (resultados de IA en el idioma elegido) + ~120 cadenas nuevas del shell en el diccionario. Pendiente decidido: extraer las cadenas de los módulos hondos a un diccionario (Prospección, Campañas, Clientes siguen en español en EN).
+12. Onboarding legible: mismo lienzo que el login, etiquetas al 82 %.
+Bug: colapsar «Inteligencia» escondía Prospección y Ventas porque `context-gate` envuelve tres grupos en un `.ctxgate-nav-wrap`; `ux.js` ahora recorre la barra aplanada y usa claves por posición (`g0..g3`), estables entre idiomas.
+
 ### Deuda de coherencia que queda (decidida, no hecha aquí)
 Cada una toca muchas líneas de `index.html` (dos caídas de producción vinieron de ahí) y merece su propio PR corto con preflight en navegador:
 
