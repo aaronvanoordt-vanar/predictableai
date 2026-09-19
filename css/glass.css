@@ -197,9 +197,9 @@ html[data-rail="1"] .nav-item[data-tip]::after, html[data-rail="1"] .sb-search[d
 html[data-rail="1"] .user-dropdown { left: calc(var(--rail-w) + 6px); right: auto; width: 220px; bottom: calc(100% + 6px); position: absolute; }
 
 /* ── 2. Cabecera única (flotante, misma escala en todas las páginas) ──── */
-.page { padding: 12px 24px 32px !important; gap: 18px; }
+.page { padding: 12px 24px 32px !important; gap: 24px; }
 .page > .topbar {
-  margin: 0 0 6px !important;
+  margin: 0 0 16px !important;
   position: sticky; top: 12px;
   border-radius: 18px !important;
   border: 1px solid var(--glass-edge);
@@ -216,7 +216,7 @@ html[data-rail="1"] .user-dropdown { left: calc(var(--rail-w) + 6px); right: aut
 }
 #prospecting-shell .pros-subtitle, #radar-shell .rl-sub { font-size: 13px; color: var(--ink-3); }
 #prospecting-shell > div:first-of-type:not([class]), #radar-shell #rl-head, #clients-shell .cl-head {
-  border-left: 3px solid var(--module-accent); padding-left: 14px;
+  border-left: 3px solid var(--module-accent); padding-left: 14px; margin-bottom: 16px;
 }
 /* Densidad: tablas y filas de contactos más compactas */
 .table-card table th, .table-card table td, #prospecting-shell table th, #prospecting-shell table td,
