@@ -102,52 +102,10 @@
     if (kbd) kbd.textContent = isMac ? '⌘K' : 'Ctrl K';
   }
 
-  // ── Barra de progreso ────────────────────────────────────────────────
-  var progress = (function () {
-    var el = null, pending = 0, showTimer = null, navTimer = null;
-    function ensure() {
-      if (el) return el;
-      el = doc.createElement('div');
-      el.className = 'ux-progress';
-      el.setAttribute('aria-hidden', 'true');
-      el.innerHTML = '<i></i>';
-      doc.body.appendChild(el);
-      return el;
-    }
-    function paint() {
-      var e = ensure();
-      var on = pending > 0;
-      if (on && !showTimer && !e.classList.contains('on')) {
-        showTimer = setTimeout(function () { showTimer = null; if (pending > 0) e.classList.add('on'); }, 160);
-      }
-      if (!on) { if (showTimer) { clearTimeout(showTimer); showTimer = null; } e.classList.remove('on'); }
-    }
-    function start() { pending++; paint(); }
-    function done() { pending = Math.max(0, pending - 1); paint(); }
-    function pulse(ms) {
-      start();
-      if (navTimer) clearTimeout(navTimer);
-      navTimer = setTimeout(function () { navTimer = null; done(); }, ms || 420);
-    }
-    return { start: start, done: done, pulse: pulse };
-  })();
-
-  // fetch de larga duración (edge functions de IA, worker de Apollo) → barra visible
-  if (typeof global.fetch === 'function' && !global.fetch.__uxWrapped) {
-    var origFetch = global.fetch;
-    var slow = /\/functions\/v1\/|workers\.dev|\/proxy\/apollo\//;
-    var wrapped = function (input, init) {
-      var url = '';
-      try { url = typeof input === 'string' ? input : (input && input.url) || ''; } catch (e) { url = ''; }
-      if (!slow.test(url)) return origFetch.apply(this, arguments);
-      progress.start();
-      var p;
-      try { p = origFetch.apply(this, arguments); } catch (e) { progress.done(); throw e; }
-      return p.then(function (r) { progress.done(); return r; }, function (e) { progress.done(); throw e; });
-    };
-    wrapped.__uxWrapped = true;
-    global.fetch = wrapped;
-  }
+  // ── Barra de progreso (desactivada a petición del usuario) ────────────
+  // La barra azul que salía todo el tiempo arriba se ha desactivado.
+  var progress = { start: function () {}, done: function () {}, pulse: function () {} };
+  // if (typeof global.fetch === 'function' && !global.fetch.__uxWrapped) { ... }
 
   // ── Título del documento y barra móvil por página ────────────────────
   var BASE_TITLE = 'predictable.ai';
