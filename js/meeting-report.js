@@ -52,6 +52,11 @@
       '.mr-bar{height:8px;border-radius:4px;background:var(--surface2);border:1px solid var(--border);overflow:hidden}',
       '.mr-bar > div{height:100%;border-radius:4px;transition:width .6s ease}',
       '.mr-verdict{margin-top:14px;font-size:14px;font-weight:600;color:var(--text);line-height:1.55}',
+      '.mr-30s{margin-top:14px;padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:var(--surface2)}',
+      '.mr-30s ol{margin:6px 0 0;padding-left:18px;font-size:13.5px;line-height:1.6;color:var(--text)}',
+      '.mr-30s .mr-next{margin-top:12px;padding:12px 14px;border-radius:10px;background:var(--accent-soft, var(--surface));border:1px solid var(--accent, var(--border))}',
+      '.mr-30s .mr-next-action{font-size:14px;font-weight:700;color:var(--text);line-height:1.45}',
+      '.mr-30s .mr-next-meta{font-size:12px;color:var(--text3);margin-top:4px;line-height:1.5}',
       '.mr-h{font-size:13px;font-weight:800;color:var(--text);margin-bottom:10px;display:flex;align-items:center;gap:8px}',
       '.mr-h .pill{font-size:10px}',
       '.mr-p{font-size:13.5px;color:var(--text2);line-height:1.7}',
@@ -334,6 +339,22 @@
         '<div class="mr-p">' + (data.meeting_type === 'bot'
           ? 'El asistente estuvo en la reunión pero no recibimos una conversación analizable (solo saludos, silencio o pruebas de audio). Si la reunión sí tuvo contenido, revisa que el asistente haya sido admitido con audio y que la llamada no haya sido en un idioma distinto al español.'
           : 'No se captó una conversación analizable. Verifica que compartiste la pantalla completa con "Compartir audio del sistema" y que el micrófono tenía permiso.') + '</div></div>';
+    }
+
+    // En 30 segundos: 3 frases + UN siguiente paso (neuroventas, 2026-09-18).
+    // Reportes viejos no traen estos campos: el bloque simplemente no aparece.
+    var corto = (Array.isArray(r.resumen_corto) ? r.resumen_corto : []).filter(function (x) { return x && String(x).trim(); });
+    var sp = (r.siguiente_paso && typeof r.siguiente_paso === 'object') ? r.siguiente_paso : null;
+    if (!insufficient && (corto.length || (sp && sp.accion))) {
+      html += '<div class="mr-30s"><div class="mr-eyebrow" style="margin:0">En 30 segundos</div>';
+      if (corto.length) html += '<ol>' + corto.slice(0, 3).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ol>';
+      if (r.codigo_reptil) html += '<div class="mr-next-meta" style="margin-top:8px"><strong>Qué lo mueve:</strong> ' + esc(r.codigo_reptil) + '</div>';
+      if (sp && sp.accion) {
+        html += '<div class="mr-next"><div class="mr-eyebrow" style="margin:0 0 4px;color:var(--accent-ink)">Siguiente paso</div>' +
+          '<div class="mr-next-action">' + esc(sp.accion) + '</div>' +
+          '<div class="mr-next-meta">' + [sp.cuando ? 'Cuándo: ' + esc(sp.cuando) : '', sp.por_que ? esc(sp.por_que) : ''].filter(Boolean).join(' · ') + '</div></div>';
+      }
+      html += '</div>';
     }
 
     // Resultado del deal (feeds the objections lost-rate report)

@@ -43,7 +43,7 @@ import { COUNTRY_CODE, canonicalCountry, countryLabelEs } from "./radar-geo.ts";
 import { cutoffIso, recencyBlock } from "./radar-recency.ts";
 import { RESEARCH_SYSTEM, filterByWindow, shapeResearchCompanies } from "./radar-research.ts";
 import { detectTech, evaluateProbeRules, fetchHomepage, probeHeadline, type ProbeRules } from "./site-probe.ts";
-import type { DetectorKind } from "./radar-plan.ts";
+import { maxCompaniesOf, type DetectorKind } from "./radar-plan.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -106,8 +106,14 @@ const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n: number) => new Date(Date.now() - n * 86400_000).toISOString().slice(0, 10);
 const asStr = (v: unknown) => (typeof v === "string" ? v : "");
 const PAGE_SIZE = 100;
-const MAX_PAGES_PER_CYCLE = 5;          // 500 personas por ciclo y detector (people search)
-const MAX_ORG_PAGES_PER_CYCLE = 3;      // 300 empresas = 3 créditos de Apollo por ciclo (organization search)
+// Cuántas páginas de Apollo lee un detector por ciclo. Sale de
+// `config.max_companies` (el usuario lo elige por detector o para todo el
+// plan; 300 por defecto): en la búsqueda de empresas cada página de 100 es un
+// crédito de Apollo, en la de personas es gratis pero agrupa por empresa, así
+// que el mismo número sirve de tope.
+function pagesFor(t: TickContext): number {
+  return Math.max(1, Math.min(10, Math.ceil(maxCompaniesOf(t.detector.config) / PAGE_SIZE)));
+}
 const PROBE_BATCH = 12;                 // dominios sondeados en paralelo por tick
 const PROBE_TIMEOUT_MS = 8000;
 const PROBE_MEMORY = 600;               // dominios recordados (no re-sondear en 30 días)
@@ -179,7 +185,8 @@ async function tickNews(t: TickContext): Promise<TickResult> {
     });
     let parsed: Json = { companies: [] };
     try { parsed = parseLlmJson(res.text); } catch { note = "respuesta ilegible, consulta omitida"; }
-    const shaped = shapeResearchCompanies(parsed, 25);
+    // El tope por consulta respeta el de empresas del detector (config.max_companies).
+    const shaped = shapeResearchCompanies(parsed, Math.min(25, maxCompaniesOf(t.detector.config)));
     const { kept, droppedOld, droppedUndated } = filterByWindow(shaped, windowDays);
     if (droppedOld || droppedUndated) note = `${droppedOld} fuera de fecha, ${droppedUndated} sin fecha`;
     candidates = kept.map((c) => ({
@@ -254,14 +261,12 @@ async function orgPage(t: TickContext, extra: Record<string, unknown>, page: num
 
 function pagedCursor(t: TickContext): number { return Math.max(1, Number(t.detector.cursor?.page) || 1); }
 
-function pagedNext(page: number, totalPages: number, maxPages = MAX_PAGES_PER_CYCLE): { cursor: Json; done: boolean } {
-  const last = page >= Math.min(totalPages, maxPages);
+function pagedNext(t: TickContext, page: number, totalPages: number): { cursor: Json; done: boolean } {
+  const last = page >= Math.min(totalPages, pagesFor(t));
   return { cursor: last ? {} : { page: page + 1 }, done: last };
 }
 
-function orgPagedNext(page: number, totalPages: number): { cursor: Json; done: boolean } {
-  return pagedNext(page, totalPages, MAX_ORG_PAGES_PER_CYCLE);
-}
+const orgPagedNext = pagedNext;
 
 function orgNote(orgs: ApolloOrg[], page: number, candidates: number): string {
   if (!orgs.length) return page === 1 ? "Apollo no devolvió empresas para estos filtros en tus países" : `sin más empresas en la página ${page}`;
@@ -290,7 +295,7 @@ async function tickHiring(t: TickContext): Promise<TickResult> {
     c.evidence = jobs ? [{ url: jobs, summary: "Vacantes de la empresa en LinkedIn (según Apollo)", published_at: today() }] : [];
     return c;
   });
-  return { candidates, ...orgPagedNext(page, totalPages), note: orgNote(orgs, page, candidates.length) };
+  return { candidates, ...orgPagedNext(t, page, totalPages), note: orgNote(orgs, page, candidates.length) };
 }
 
 async function tickTechnographics(t: TickContext): Promise<TickResult> {
@@ -315,7 +320,7 @@ async function tickTechnographics(t: TickContext): Promise<TickResult> {
     c.evidence = c.website ? [{ url: c.website, summary: "Sitio de la empresa (tecnologías según Apollo)", published_at: today() }] : [];
     return c;
   });
-  return { candidates, ...orgPagedNext(page, totalPages), note: orgNote(orgs, page, candidates.length) };
+  return { candidates, ...orgPagedNext(t, page, totalPages), note: orgNote(orgs, page, candidates.length) };
 }
 
 async function tickLeadership(t: TickContext): Promise<TickResult> {
@@ -337,7 +342,7 @@ async function tickLeadership(t: TickContext): Promise<TickResult> {
     c.evidence = li ? [{ url: li, summary: `Perfil de ${who} (cargo reciente, según Apollo)`, published_at: today() }] : [];
     return c;
   });
-  return { candidates, ...pagedNext(page, totalPages) };
+  return { candidates, ...pagedNext(t, page, totalPages) };
 }
 
 function growthPct(org: ApolloOrg | null | undefined, months: number): number | null {
@@ -371,7 +376,7 @@ async function tickGrowth(t: TickContext): Promise<TickResult> {
     c.evidence = li ? [{ url: li, summary: "Página de la empresa en LinkedIn (crecimiento según Apollo)", published_at: today() }] : [];
     return c;
   });
-  return { candidates, ...orgPagedNext(page, totalPages), note: orgNote(orgs, page, candidates.length) };
+  return { candidates, ...orgPagedNext(t, page, totalPages), note: orgNote(orgs, page, candidates.length) };
 }
 
 async function tickWebsiteVisitors(t: TickContext): Promise<TickResult> {
@@ -402,7 +407,7 @@ async function tickWebsiteVisitors(t: TickContext): Promise<TickResult> {
     c.evidence = [];
     return c;
   });
-  return { candidates, ...pagedNext(page, totalPages) };
+  return { candidates, ...pagedNext(t, page, totalPages) };
 }
 
 // ── site_probe ──────────────────────────────────────────────────────────────
@@ -441,7 +446,7 @@ async function tickSiteProbe(t: TickContext): Promise<TickResult> {
     }
     if (!found.length && page === 1) pageNote = "Apollo no devolvió empresas para estos filtros en tus países";
     else if (found.length && !queue.length) pageNote = `${found.length} empresas sin dominio o ya sondeadas hace menos de 30 días`;
-    exhausted = page >= Math.min(totalPages, MAX_ORG_PAGES_PER_CYCLE);
+    exhausted = page >= Math.min(totalPages, pagesFor(t));
     page += 1;
   }
 
@@ -497,7 +502,7 @@ async function tickFunding(t: TickContext): Promise<TickResult> {
     ...apolloBaseFilters(t.ctx),
     latest_funding_date_range: { min: daysAgo(windowDays), max: today() },
     page,
-    per_page: 50,
+    per_page: PAGE_SIZE,
   };
   if (t.countries.length) body.organization_locations = t.countries.slice(0, 20);
   if (Number(cfg.min_amount) > 0) body.latest_funding_amount_range = { min: Number(cfg.min_amount) };
@@ -523,7 +528,7 @@ async function tickFunding(t: TickContext): Promise<TickResult> {
       .filter(Boolean) as Candidate["evidence"];
     candidates.push(c);
   }
-  const last = page >= Math.min(r.totalPages, MAX_ORG_PAGES_PER_CYCLE);
+  const last = page >= Math.min(r.totalPages, pagesFor(t));
   return { candidates, cursor: last ? {} : { page: page + 1 }, done: last, note: `${r.organizations.length} empresas en la página ${page}` };
 }
 

@@ -568,8 +568,14 @@
     };
   }
 
+  // Procedencia (learning-loop atribuye respuestas y reuniones al detector):
+  // la señal del motor trae signal_id/detector_id; la investigación puntual, no.
+  function sourceOf(co) {
+    return co && co.detector_id ? { kind: 'radar', detector_id: co.detector_id, signal_id: co.signal_id || null } : { kind: 'radar' };
+  }
   function dmRow(userId, listId, co, dm, match) {
     return Object.assign(baseRow(userId, listId), {
+      source: sourceOf(co),
       apollo_person_id: dm.apollo_person_id || null,
       first_name: dm.first_name || null,
       last_name: dm.last_name || null,
@@ -601,6 +607,7 @@
   function companyRow(userId, listId, co) {
     const site = safeUrl(co.website);
     return Object.assign(baseRow(userId, listId), {
+      source: sourceOf(co),
       company: co.name || null,
       company_domain: site ? hostOf(site) : null,
       country: co.country || null,
@@ -727,8 +734,13 @@
       //    es lo que hace que la lista deje de estar vacia.
       notify('Guardando ' + rows.length + ' contacto' + (rows.length === 1 ? '' : 's') + '…');
       render();
-      const { data: inserted, error } = await global.supabaseClient
+      let { data: inserted, error } = await global.supabaseClient
         .from('prospect_list_members').insert(rows).select('id, apollo_person_id');
+      if (error && /source/i.test(error.message)) {
+        // Migración 20260919000001 (columna source) todavía sin aplicar: se guarda sin procedencia.
+        rows.forEach((r) => { delete r.source; });
+        ({ data: inserted, error } = await global.supabaseClient.from('prospect_list_members').insert(rows).select('id, apollo_person_id'));
+      }
       if (error) throw new Error('No se pudieron guardar los contactos: ' + error.message);
 
       // La lista recien creada pasa a contar como memoria del Radar: la

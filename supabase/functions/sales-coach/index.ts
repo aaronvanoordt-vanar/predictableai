@@ -78,6 +78,9 @@
  *     "score_total": 0-100,
  *     "scores": { "active_listening": 0-100, "pain_deepening": 0-100,
  *                 "pace_control": 0-100, "objection_handling": 0-100 },
+ *     "resumen_corto": ["qué pasó", "qué mueve al lead", "qué falta"],   (3 frases, 2026-09-18)
+ *     "siguiente_paso": { "accion", "cuando", "por_que" },                (UNA acción concreta)
+ *     "codigo_reptil": "qué mueve de verdad al lead (neuroventas)",
  *     "resumen": "2-3 frases de qué pasó",
  *     "insights": [ { "titulo", "detalle", "tipo": "oportunidad|riesgo|senal_compra|dato_clave" } ],
  *     "objections": [ { "objection", "quote",
@@ -291,29 +294,62 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// PROMPTS — Sales Doctrine
-// SYSTEM_PROMPT_COACH is copied VERBATIM from the Apps Script (VentasAI.gs):
-// same doctrine, same live-coaching JSON schema.
+// PROMPTS — Doctrina de neuroventas (2026-09-18)
+// El coach habla como un entrenador de neuroventas de la escuela de Jürgen
+// Klarić ("Véndele a la mente, no a la gente"): le vende primero al cerebro
+// reptil (miedo, seguridad, poder, ahorro de energía), luego al límbico
+// (emoción, historia) y al final al córtex (datos). Un solo bloque compartido
+// por el coach en vivo, el turno local y el reporte para que los tres hablen
+// igual. El SDR no necesita teoría: necesita saber QUÉ HACER AHORA.
 // ───────────────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT_COACH = [
-  "Eres el coach de ventas de Predictable.ai, ayudando a un SDR EN VIVO durante",
-  "una llamada B2B. Tu trabajo NO es hablar bonito. Es darle al SDR la siguiente",
-  "mejor acción para cerrar la venta.",
+const NEURO_DOCTRINE = [
+  "IDENTIDAD: eres un entrenador de neuroventas formado en la escuela de Jürgen Klarić.",
+  "Hablas directo, con energía, sin rodeos, como un coach al oído del vendedor. Frases cortas.",
+  "Tu trabajo NO es explicar teoría: es decirle al vendedor QUÉ HACER en este instante.",
   "",
-  "DOCTRINA (en este orden de prioridad):",
-  "1. SPIN Selling para discovery (Situación → Problema → Implicación → Need-Payoff)",
-  "2. Gap Selling para amplificar dolor",
-  "3. Challenger Sale para reencuadre de objeciones",
-  "4. MEDDIC para calificación enterprise",
-  "5. Never Split the Difference para negociación",
-  "6. Straight Line (Belfort) para control emocional y micro-compromisos",
+  "PRINCIPIOS DE NEUROVENTAS (en este orden):",
+  "1. Véndele a la mente, no a la gente: el 85 % de la decisión es inconsciente. Habla primero al cerebro",
+  "   reptil (miedo a perder, seguridad, poder, ahorrar energía/tiempo), luego al límbico (emoción,",
+  "   historia, pertenencia) y al final al córtex (datos, precio, comparativas).",
+  "2. Reduce el miedo antes de vender: el cerebro compra para evitar dolor y reducir incertidumbre.",
+  "   Nombra el miedo del lead, valídalo y muéstrale que contigo pierde menos.",
+  "3. Menos es más: el cerebro se cansa. Una idea por frase, tres beneficios máximo, cero jerga.",
+  "4. Hazlo tangible: ejemplos concretos, cifras del propio lead, historias de clientes parecidos.",
+  "   Nunca inventes casos: si no hay una historia real en el contexto, usa la del propio lead.",
+  "5. Usa la palabra 'tú' y el nombre del lead. Verbos de acción, presente, positivo.",
+  "6. Descubre el código reptil del lead (¿qué lo mueve: control, reconocimiento, seguridad,",
+  "   crecimiento, ahorro?) y vende en ese código, no en las características del producto.",
+  "7. Pregunta más de lo que afirmas: quien pregunta controla. El lead debe hablar más que el vendedor.",
+  "8. El cierre es un permiso, no una presión: micro-síes, siguiente paso concreto con fecha.",
+  "",
+  "MANEJO DE OBJECIONES (siempre en 3 movimientos):",
+  "a) Valida la emoción sin discutir ('tiene sentido que te preocupe X').",
+  "b) Reencuadra hacia el miedo o el deseo dominante del lead (¿qué pierde si no cambia?).",
+  "c) Cierra con una pregunta que lo lleve a un sí pequeño.",
+  "Nunca pelees con la herramienta o el proveedor actual: reencuadra el costo de quedarse igual.",
+  "",
+  "OPORTUNIDADES: cada dato del lead (dolor, meta, plazo, presupuesto, quién decide) es una puerta.",
+  "Si el vendedor la deja pasar, dile exactamente qué preguntar para abrirla.",
   "",
   "REGLAS DURAS:",
-  "- Nunca recomiendes pitchear antes de que pain_clarity >= 60.",
-  "- Nunca pelees con la herramienta actual del lead. Reencuadra.",
-  "- Si el SDR habla >65% del tiempo, dile que pregunte.",
-  "- Si detectas señal de dolor sin profundizar, fuerza la pregunta de implicación.",
-  "- Cierre solo cuando next_step_secured y al menos 3 micro-síes.",
+  "- Nunca recomiendes pitchear antes de tener el dolor claro y en palabras del propio lead.",
+  "- Si el vendedor habla más del 60 % del tiempo, ordénale callarse y preguntar.",
+  "- Sin siguiente paso acordado con fecha no hay cierre: fuérzalo antes de despedirse.",
+  "- Español neutro latinoamericano (tú). Sin emojis en las frases sugeridas. Sin jerga en inglés.",
+  "- NUNCA inventes datos, cifras, nombres ni citas. Todo sale del transcript o del contexto entregado.",
+].join("\n");
+
+// Coach en vivo (modo bot: Recall.ai manda los chunks y el servidor analiza).
+// Misma doctrina y mismo schema de estado que siempre; cambió la voz.
+const SYSTEM_PROMPT_COACH = [
+  "Eres el coach de ventas de Predictable.ai, al oído de un vendedor EN VIVO durante",
+  "una llamada B2B. Tu trabajo NO es hablar bonito: es darle la siguiente mejor acción.",
+  "",
+  NEURO_DOCTRINE,
+  "",
+  "Estructura de la llamada que vigilas: rapport → discovery (dolor en palabras del lead)",
+  "→ reencuadre (miedo/deseo) → demo (solo lo que resuelve SU dolor) → negociación → cierre.",
+  "Cierre solo cuando next_step_secured y al menos 3 micro-síes.",
   "",
   "OUTPUT: SOLO un objeto JSON válido. Sin texto antes ni después. Schema:",
   "{",
@@ -348,8 +384,10 @@ const SYSTEM_PROMPT_COACH = [
   '  "summary_so_far": "1-2 líneas"',
   "}",
   "",
-  "Si no hay nada relevante para alertar, devuelve alerts: []. Habla en español",
-  "neutro. NO uses jerga de ventas en inglés. NO uses emojis en suggested_phrase.",
+  '"suggested_phrase" es la frase EXACTA que el vendedor puede decir ahora, en su voz, en',
+  "segunda persona hacia el lead. \"next_steps\" son órdenes en imperativo (\"Pregúntale cuánto",
+  'le cuesta cada mes sin resolverlo"), no consejos genéricos.',
+  "Si no hay nada relevante para alertar, devuelve alerts: [].",
 ].join("\n");
 
 // Redesigned final-report prompt. The old Apps Script prompt had two bugs we
@@ -358,10 +396,17 @@ const SYSTEM_PROMPT_COACH = [
 // meeting context, so the analysis was generic. This one gets the prospect,
 // the lead-context JSON and hard anti-invention rules.
 const SYSTEM_PROMPT_REPORT = [
-  "Eres analista senior de ventas B2B de Predictable.ai. Recibes el transcript completo",
+  "Eres el entrenador de neuroventas de Predictable.ai. Recibes el transcript completo",
   "de una reunión de ventas junto con el contexto del deal (nombre del prospecto, su",
-  "empresa y el contexto del lead en JSON). Evalúas la ejecución del SDR y extraes",
+  "empresa y el contexto del lead en JSON). Evalúas la ejecución del vendedor y extraes",
   "inteligencia accionable para ESE deal específico — nada de consejos genéricos.",
+  "",
+  NEURO_DOCTRINE,
+  "",
+  "EL REPORTE ES CORTO, DIRECTO Y RELEVANTE. Lo primero que lee el vendedor es",
+  '"resumen_corto" (3 frases máximo: qué pasó, qué mueve al lead, qué falta) y',
+  '"siguiente_paso" (UNA sola acción concreta con fecha o plazo y el porqué en una frase).',
+  "Todo lo demás es detalle de apoyo. Prioriza calidad sobre cantidad en cada lista.",
   "",
   "Devuelve EXCLUSIVAMENTE un objeto JSON válido, sin texto antes ni después, con",
   "exactamente este schema:",
@@ -374,6 +419,9 @@ const SYSTEM_PROMPT_REPORT = [
   '    "pace_control": <0-100>,',
   '    "objection_handling": <0-100>',
   "  },",
+  '  "resumen_corto": ["<qué pasó, 1 frase>", "<qué mueve al lead (código reptil / miedo / deseo), 1 frase>", "<qué falta para avanzar, 1 frase>"],',
+  '  "siguiente_paso": { "accion": "<UNA acción concreta en imperativo>", "cuando": "<fecha o plazo>", "por_que": "<1 frase>" },',
+  '  "codigo_reptil": "<qué mueve de verdad al lead: control|seguridad|reconocimiento|crecimiento|ahorro|placer|otro, en una frase>",',
   '  "resumen": "<2-3 frases de qué pasó en la reunión>",',
   '  "insights": [',
   '    { "titulo": "<título corto>", "detalle": "<1-2 frases>", "tipo": "oportunidad|riesgo|senal_compra|dato_clave" }',
@@ -409,6 +457,8 @@ const SYSTEM_PROMPT_REPORT = [
   "- Usa el contexto del lead (su empresa, su dolor, el ángulo de outreach) para que el análisis sea relevante a ese deal en particular.",
   '- Una reunión corta NO es lo mismo que una reunión vacía: si el transcript, aunque tenga pocas intervenciones, contiene contenido real (una objeción, un dato del prospecto, una señal de avance o retroceso), repórtalo con normalidad — no lo descartes ni pongas los arrays en vacío solo por ser corto.',
   '- Reserva "temperatura_lead": "frio", "probabilidad_avance": 0, scores en 0 y "verdict": "Transcript insuficiente para analizar — la reunión fue muy corta o el audio no se capturó" únicamente para transcripts sin contenido analizable (solo saludos, silencio, audio no capturado, o texto sin preguntas ni respuestas sustantivas).',
+  '- "siguiente_paso" es UNO solo y concreto (a quién, qué, cuándo). "next_steps" puede listar el resto en orden.',
+  '- "resumen_corto" son exactamente 3 frases cortas; si el transcript es insuficiente, devuelve [] y "siguiente_paso" vacío.',
   "- Español neutro latinoamericano (tú). Sé directo y específico.",
 ].join("\n");
 
@@ -417,6 +467,9 @@ function insufficientReport() {
   return {
     score_total: 0,
     scores: { active_listening: 0, pain_deepening: 0, pace_control: 0, objection_handling: 0 },
+    resumen_corto: [],
+    siguiente_paso: { accion: "", cuando: "", por_que: "" },
+    codigo_reptil: "",
     resumen: "",
     insights: [],
     objections: [],
@@ -500,6 +553,18 @@ const REPORT_SCHEMA = {
   properties: {
     score_total: { type: "integer", description: "0-100" },
     scores: SCORES_SCHEMA,
+    resumen_corto: { type: "array", items: { type: "string" }, description: "3 frases: qué pasó, qué mueve al lead, qué falta" },
+    siguiente_paso: {
+      type: "object",
+      properties: {
+        accion: { type: "string" },
+        cuando: { type: "string" },
+        por_que: { type: "string" },
+      },
+      required: ["accion", "cuando", "por_que"],
+      additionalProperties: false,
+    },
+    codigo_reptil: { type: "string" },
     resumen: { type: "string" },
     insights: {
       type: "array",
@@ -563,7 +628,8 @@ const REPORT_SCHEMA = {
     probabilidad_avance: { type: "integer", description: "0-100" },
   },
   required: [
-    "score_total", "scores", "resumen", "insights", "objections", "highlights",
+    "score_total", "scores", "resumen_corto", "siguiente_paso", "codigo_reptil", "resumen",
+    "insights", "objections", "highlights",
     "missed", "feedback", "next_steps", "verdict", "temperatura_lead", "probabilidad_avance",
   ],
   additionalProperties: false,
@@ -1186,12 +1252,23 @@ async function finalizeMeeting(ctx: Ctx, meeting: Json, endedAt: string): Promis
       engine,
       REPORT_MODEL,
       SYSTEM_PROMPT_REPORT,
-      buildReportUserPrompt(meeting, fullTranscript, sdrName),
+      buildReportUserPrompt(meeting, fullTranscript, sdrName, await learnedObjectionsBlock(ctx.supa, meeting.user_id ?? ctx.userId)),
       REPORT_SCHEMA,
       8192,
     );
   }
   const scoreTotal = numOrNull(report?.score_total) ?? 0;
+
+  // Cierra el ciclo con el CRM: si la reunión se preparó desde un lead de
+  // Listas (prospect_id = prospect_list_members.id), ese lead pasa a
+  // "Reunión tomada" sin que nadie lo marque a mano. Solo avanza estados
+  // anteriores; nunca pisa una baja ni una reunión ya marcada como tomada.
+  if (meeting.prospect_id && /^[0-9a-f-]{36}$/i.test(String(meeting.prospect_id)) && report?.resumen) {
+    await ctx.supa.from("prospect_list_members")
+      .update({ contact_status: "reunion_tomada", status_changed_at: endedAt })
+      .eq("id", meeting.prospect_id)
+      .in("contact_status", ["no_contactado", "en_campana", "saludo_enviado", "conexion_enviada", "conexion_aceptada", "respondio", "reunion_agendada", "no_show"]);
+  }
 
   const { error: updErr } = await ctx.supa.from("coach_meetings").update({
     status: "closed",
@@ -1257,7 +1334,32 @@ async function finalizeMeeting(ctx: Ctx, meeting: Json, endedAt: string): Promis
   return report;
 }
 
-function buildReportUserPrompt(meeting: Json, transcript: string, sdrName?: string | null): string {
+/**
+ * Playbook de objeciones aprendido (learning-loop, scope "objection"): las
+ * objeciones reales que este vendedor ya escuchó y la respuesta que mejor
+ * funcionó (reuniones ganadas primero). Se inyecta al coach en vivo y al
+ * reporte; si la tabla no existe todavía o está vacía, no cambia nada.
+ */
+async function learnedObjectionsBlock(supa: SupabaseClient, userId: string): Promise<string> {
+  try {
+    const { data } = await supa.from("learning_insights")
+      .select("label, verdict, metrics")
+      .eq("user_id", userId).eq("scope", "objection")
+      .order("computed_at", { ascending: false }).limit(8);
+    const rows = (data ?? []).filter((r: Json) => r?.label);
+    if (!rows.length) return "";
+    const lines = ["", "=== PLAYBOOK DE OBJECIONES APRENDIDO DE TUS REUNIONES (datos reales) ==="];
+    for (const r of rows) {
+      const m = r.metrics ?? {};
+      const tag = r.verdict === "fails" ? "PIERDE reuniones" : r.verdict === "works" ? "se supera" : "frecuente";
+      lines.push(`- [${m.categoria ?? "otro"} · ${m.count ?? 0} veces · ${tag}] "${r.label}"` + (m.best_response ? ` → respuesta que funcionó: ${String(m.best_response).slice(0, 220)}` : ""));
+    }
+    lines.push("Si el lead plantea una de estas, usa la respuesta que funcionó (adaptada a sus palabras).");
+    return lines.join("\n");
+  } catch (_) { return ""; }
+}
+
+function buildReportUserPrompt(meeting: Json, transcript: string, sdrName?: string | null, learned = ""): string {
   const ctx = (meeting.context && typeof meeting.context === "object") ? meeting.context : {};
   const lines = [
     "=== CONTEXTO DE LA REUNIÓN ===",
@@ -1282,6 +1384,7 @@ function buildReportUserPrompt(meeting: Json, transcript: string, sdrName?: stri
     "",
     "Genera el reporte final en JSON.",
   );
+  if (learned) lines.push(learned);
   return lines.join("\n");
 }
 
@@ -1552,13 +1655,25 @@ const LIVE_TURN_SCHEMA = {
 };
 
 const SYSTEM_PROMPT_LIVE_TURN = [
-  "Eres el coach de ventas de Predictable.ai en vivo durante una llamada B2B.",
-  'La conversación tiene 2 hablantes: "Lead" y "SDR".',
-  "Devuelve solo alertas accionables sobre lo que acaba de pasar en la conversación.",
+  "Eres el coach de ventas de Predictable.ai en vivo, al oído del vendedor durante una llamada B2B.",
+  'La conversación tiene 2 hablantes: "Lead" y "SDR" (el vendedor).',
+  "",
+  NEURO_DOCTRINE,
+  "",
+  "Devuelve solo alertas accionables sobre lo que acaba de pasar en la conversación:",
+  '- "objection": el lead objetó → "suggested_phrase" es la respuesta exacta en 3 movimientos',
+  "  (valida, reencuadra al miedo/deseo, pregunta que lleva a un sí), en una o dos frases.",
+  '- "positive_signal": el lead abrió una puerta (dolor, meta, plazo, presupuesto, decisor) →',
+  '  "suggested_phrase" es la pregunta exacta para explorarla ahora mismo.',
+  '- "risk": el vendedor habla de más, pitchea antes de tiempo, discute o pierde el control →',
+  '  "suggested_phrase" es lo que debe decir para recuperar el control.',
+  '- "stage_guidance": toca cambiar de etapa → qué decir para pasar a la siguiente.',
+  '"next_step" es la orden para este instante, en imperativo y en una frase',
+  '("Cállate y pregúntale cuánto pierde al mes con esto"). Siempre trae una.',
   "Si recibes una parte ya analizada y una parte nueva, las alertas salen SOLO de",
   "la parte nueva: no repitas alertas que ya correspondían a la parte anterior.",
-  "Español neutro (tú). NUNCA inventes alertas, datos ni citas: si no hay nada",
-  'accionable en la ventana entregada, devuelve "alerts": [].',
+  "NUNCA inventes alertas, datos ni citas: si no hay nada accionable en la ventana",
+  'entregada, devuelve "alerts": [] (pero igual devuelve "next_step").',
 ].join("\n");
 
 async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
@@ -1580,9 +1695,11 @@ async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
     : ["Conversación reciente:", transcript];
 
   const engine = await engineForUser(ctx.supa, ctx.userId, "coach");
+  const learned = await learnedObjectionsBlock(ctx.supa, ctx.userId);
   const userPrompt = [
     "Contexto del prospecto:",
     JSON.stringify(payload?.context ?? {}).slice(0, 4_000),
+    ...(learned ? [learned] : []),
     "",
     ...conversation,
     "",

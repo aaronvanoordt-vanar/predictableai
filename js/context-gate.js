@@ -24,7 +24,7 @@
   'use strict';
 
   var GATED_PAGES = [
-    'radar', 'mi-overview', 'mi-matrix', 'mi-dashboard', 'mi-accionables', 'coda-ai',
+    'radar', 'mi-dashboard', 'coda-ai',
     'pro-main',
     'ventas-coach', 'ventas-reportes',
   ];
@@ -53,7 +53,7 @@
       '.ctxgate-track { height: 6px; border-radius: 3px; background: var(--surface3, #ECEEF3); overflow: hidden; }',
       '.ctxgate-track span { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #1F4BFF, #6E5CF5); transition: width .4s ease; }',
       '.ctxgate-progress small { display: block; margin-top: 7px; font-size: 11.5px; color: var(--text3, rgba(10,10,15,.45)); }',
-      '.ctxgate-btn { font: inherit; font-size: 13px; font-weight: 700; padding: 11px 22px; border-radius: 9px; border: 0; cursor: pointer; color: #fff; background: linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%); box-shadow: 0 8px 20px -10px rgba(90,96,240,.6); }',
+      '.ctxgate-btn { font: inherit; font-size: 13px; font-weight: 700; padding: 11px 22px; border-radius: 9px; border: 0; cursor: pointer; color: #fff; background: var(--grad-ai, linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%)); box-shadow: 0 8px 20px -10px rgba(90,96,240,.6); }',
       '.ctxgate-btn:hover { filter: brightness(1.07); }',
       '.ctxgate-nav-wrap { position: relative; }',
       // Tint: cubre todo el bloque para bloquear el click, sin volverlo
@@ -67,7 +67,7 @@
       '.ctxgate-nav-ic { width: 16px; height: 16px; color: var(--accent, #1F4BFF); flex-shrink: 0; }',
       '.ctxgate-nav-banner-head strong { font-size: 12px; line-height: 1.3; font-weight: 700; color: var(--ink, #0A0A0F); }',
       '.ctxgate-nav-banner > span { display: block; font-size: 10.5px; line-height: 1.4; color: var(--text2, rgba(10,10,15,.6)); margin-bottom: 9px; }',
-      '.ctxgate-nav-btn { display: block; width: 100%; font: inherit; font-size: 11px; font-weight: 700; padding: 7px 10px; border-radius: 8px; border: 0; cursor: pointer; color: #fff; background: linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%); }',
+      '.ctxgate-nav-btn { display: block; width: 100%; font: inherit; font-size: 11px; font-weight: 700; padding: 7px 10px; border-radius: 8px; border: 0; cursor: pointer; color: #fff; background: var(--grad-ai, linear-gradient(120deg, #1F4BFF 0%, #4364FF 48%, #6E5CF5 100%)); }',
       '.ctxgate-nav-btn:hover { filter: brightness(1.07); }',
       '.ctxgate-banner { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 18px; margin-bottom: 18px; border-radius: 12px; background: var(--accent-soft-2, rgba(31,75,255,.05)); border: 1px solid rgba(31,75,255,.22); }',
       '.ctxgate-banner-ic { width: 20px; height: 20px; color: var(--accent, #1F4BFF); flex-shrink: 0; }',

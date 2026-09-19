@@ -187,6 +187,13 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
     }
     await db.from("campaign_enrollments").update(patch).eq("id", en.id);
     if (optOut || stops) {
+      // La respuesta se atribuye al último paso que este lead recibió (no al
+      // que estaba esperando): así los contadores por paso y el aprendizaje
+      // saben qué mensaje la provocó.
+      const { data: lastSent } = await db.from("campaign_events")
+        .select("node_id, step_position")
+        .eq("enrollment_id", en.id).eq("type", "sent").not("node_id", "is", null)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
       await db.from("campaign_events").insert({
         enrollment_id: en.id,
         campaign_id: en.campaign_id,
@@ -194,7 +201,8 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
         user_id: acc.user_id,
         channel: "whatsapp",
         type: optOut ? "opted_out" : "replied",
-        step_position: en.next_position,
+        step_position: lastSent?.step_position ?? en.next_position,
+        node_id: lastSent?.node_id ?? null,
         provider_message_id: wamid,
         detail: inboundText(ev).slice(0, 300),
       });
@@ -226,7 +234,7 @@ async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sen
   // Evento de campaña original (type=sent, provider_message_id=local).
   const { data: origin } = await db
     .from("campaign_events")
-    .select("id, enrollment_id, campaign_id, member_id, step_position")
+    .select("id, enrollment_id, campaign_id, member_id, step_position, node_id")
     .eq("user_id", acc.user_id)
     .eq("provider_message_id", local)
     .eq("type", "sent")
@@ -252,6 +260,7 @@ async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sen
     channel: "whatsapp",
     type: kind,
     step_position: origin.step_position,
+    node_id: origin.node_id ?? null,
     provider_message_id: local,
     detail: kind === "failed" ? inboxPatch.error_detail : null,
     payload: { wamid, at },

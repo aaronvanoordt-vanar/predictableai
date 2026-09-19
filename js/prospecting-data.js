@@ -455,6 +455,7 @@
     progress({ phase: 'saving', done: 0, total: fresh.length });
     const rows = fresh.map((c) => {
       const row = personToRow(c, null, userId, list.id, c.id);
+      row.source = { kind: 'import', apollo_list_id: apolloListId || null };
       row.apollo_person_id = c.person_id || null;
       row.email = isMaskedEmail(c.email) ? null : c.email;
       row.phone = (c.phone_numbers || []).map((n) => n?.sanitized_number || n?.raw_number).find(Boolean) || null;
@@ -464,9 +465,7 @@
     });
     let added = 0;
     if (rows.length) {
-      const { data: inserted, error } = await sb().from('prospect_list_members')
-        .upsert(rows, { onConflict: 'list_id,apollo_person_id', ignoreDuplicates: true })
-        .select('id');
+      const { data: inserted, error } = await insertMembers(rows, { select: 'id' });
       if (error) throw new Error('No se pudieron guardar los contactos importados: ' + error.message);
       added = inserted ? inserted.length : rows.length;
     }
@@ -702,7 +701,25 @@
     return data?.contact?.id || null;
   }
 
-  async function addPeopleToList({ list, people, onProgress }) {
+  // Inserta filas de prospect_list_members con `source` (procedencia del lead,
+  // migración 20260919000001). Si la columna aún no existe en producción, se
+  // reintenta sin ella: guardar contactos nunca depende del bucle de aprendizaje.
+  async function insertMembers(rows, opts) {
+    const sel = (opts && opts.select) || 'id';
+    const single = !!(opts && opts.single);
+    const run = () => {
+      const q = sb().from('prospect_list_members');
+      return single ? q.insert(rows[0]).select(sel).single() : q.upsert(rows, { onConflict: 'list_id,apollo_person_id', ignoreDuplicates: true }).select(sel);
+    };
+    let res = await run();
+    if (res.error && /source/i.test(res.error.message || '')) {
+      rows.forEach((r) => { delete r.source; });
+      res = await run();
+    }
+    return res;
+  }
+
+  async function addPeopleToList({ list, people, onProgress, source }) {
     if (!list?.id || !list?.name) throw new Error('Selecciona una lista válida.');
     if (!people?.length) throw new Error('Selecciona al menos una persona.');
     const userId = await getUserId();
@@ -726,8 +743,10 @@
     const alreadyInList = people.length - fresh.length - savedContacts.length;
 
     const rows = [];
+    const src = (source && typeof source === 'object') ? source : { kind: 'search' };
     for (const c of savedContacts) {
       const row = personToRow(c, null, userId, list.id, c.id);
+      row.source = src;
       row.apollo_person_id = c.person_id || null; // solo si Apollo lo expone
       row.email = isMaskedEmail(c.email) ? null : c.email;
       row.enriched_at = row.email ? new Date().toISOString() : null;
@@ -740,6 +759,7 @@
     // en enrichFreshRows() y actualiza cada fila cuando termina.
     for (const p of fresh) {
       const row = personToRow(p, null, userId, list.id, null);
+      row.source = src;
       row.email = null;
       row.email_status = 'pending';
       row.enriched_at = null;
@@ -750,9 +770,7 @@
     let added = 0;
     if (rows.length) {
       progress({ phase: 'saving' });
-      const { data: inserted, error } = await sb().from('prospect_list_members')
-        .upsert(rows, { onConflict: 'list_id,apollo_person_id', ignoreDuplicates: true })
-        .select('id');
+      const { data: inserted, error } = await insertMembers(rows, { select: 'id' });
       if (error) throw new Error('No se pudieron guardar los contactos: ' + error.message);
       added = inserted ? inserted.length : rows.length;
     }
@@ -875,7 +893,7 @@
   // contactos no tienen apollo_person_id, así que nunca chocan con el
   // UNIQUE(list_id, apollo_person_id) (NULL nunca colisiona en Postgres).
 
-  async function addManualMember({ list, contact }) {
+  async function addManualMember({ list, contact, source }) {
     if (!list?.id) throw new Error('Selecciona una lista válida.');
     const c = contact || {};
     const firstName = String(c.first_name || '').trim();
@@ -943,7 +961,8 @@
       snapshot: snapshot,
       enriched_at: (email || phone) ? new Date().toISOString() : null,
     };
-    const { data, error } = await sb().from('prospect_list_members').insert(row).select().single();
+    row.source = (source && typeof source === 'object') ? source : { kind: 'manual' };
+    const { data, error } = await insertMembers([row], { select: '*', single: true });
     if (error) throw new Error('No se pudo agregar el contacto: ' + error.message);
     return data;
   }

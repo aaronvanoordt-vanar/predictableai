@@ -3,7 +3,7 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import { canonicalCountry, canonicalCountries, countryFit } from "./radar-geo.ts";
 import { adjustWeight, inEmployeeRanges, industryMatches, parseEmployeeCount, scoreSignal } from "./radar-score.ts";
 import { detectTech, evaluateProbeRules, probeHeadline } from "./site-probe.ts";
-import { normalizeDetector, normalizePlan, signalFingerprint } from "./radar-plan.ts";
+import { DEFAULT_MAX_COMPANIES, maxCompaniesOf, normalizeDetector, normalizePlan, signalFingerprint } from "./radar-plan.ts";
 import { parseSignalDate, withinWindow } from "./radar-recency.ts";
 import { filterByWindow, shapeResearchCompanies } from "./radar-research.ts";
 import { cheapHash } from "./radar-context.ts";
@@ -200,4 +200,18 @@ Deno.test("shapeResearchCompanies + filterByWindow", () => {
 Deno.test("cheapHash es estable", () => {
   assertEquals(cheapHash("abc"), cheapHash("abc"));
   assert(cheapHash("abc") !== cheapHash("abd"));
+});
+
+Deno.test("max_companies: el usuario elige cuántas empresas revisa cada corrida (acotado y con default)", () => {
+  assertEquals(maxCompaniesOf(undefined), DEFAULT_MAX_COMPANIES);
+  assertEquals(maxCompaniesOf({ max_companies: "50" }), 50);
+  assertEquals(maxCompaniesOf({ max_companies: 5 }), 25);
+  assertEquals(maxCompaniesOf({ max_companies: 99999 }), 1000);
+  const d = normalizeDetector({ kind: "growth", config: { months: 12, min_growth_pct: 30, max_companies: 100 } });
+  assert(d);
+  assertEquals(d!.config.max_companies, 100);
+  // sin el campo, no se inventa: el motor aplica el default al leerlo
+  const e = normalizeDetector({ kind: "growth", config: { months: 12 } });
+  assertEquals(e!.config.max_companies, undefined);
+  assertEquals(maxCompaniesOf(e!.config), DEFAULT_MAX_COMPANIES);
 });

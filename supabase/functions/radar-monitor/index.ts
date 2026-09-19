@@ -66,7 +66,9 @@ const STALE_MS = 6 * 60 * 1000;
 const DM_BATCH = 3;
 const DM_ESTIMATE_MS = 25_000;
 const MAX_UNITS = 8;
-const MAX_NEW_PER_TICK = 40;
+// Una página de Apollo trae hasta 100 empresas ya pagadas: guardarlas todas.
+// (Antes 40: se tiraba el 60 % de cada página con crédito cobrado.)
+const MAX_NEW_PER_TICK = 120;
 
 // deno-lint-ignore no-explicit-any
 type Json = any;

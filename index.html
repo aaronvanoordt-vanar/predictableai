@@ -89,6 +89,7 @@
   --topbar-h: 56px;
 
   /* Gradients - legacy compat */
+  --grad-ai: linear-gradient(120deg, #1F4BFF, #4364FF, #6E5CF5); /* único degradado "IA" de la app (2026-09-19) */
   --grad-gold:      linear-gradient(135deg,#2F66FF,#1A3FCC);
   --gradient-gold:  linear-gradient(135deg,#2F66FF,#1A3FCC);
   --grad-teal:  linear-gradient(135deg,#06B6D4,#0284A0);
@@ -1337,8 +1338,8 @@ html, body {
   display: inline-flex; align-items: center; gap: 6px;
 }
 .settings-btn-primary {
-  background: var(--teal); color: #fff;
-  border-color: var(--teal);
+  background: var(--accent); color: #fff;
+  border-color: var(--accent);
 }
 .settings-btn-primary:hover:not([disabled]) { filter: brightness(1.08); }
 .settings-btn-secondary {
@@ -2059,7 +2060,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
     <div class="nav-item" data-page="clients" onclick="nav(this,'clients');if(window.clientsModule)window.clientsModule.show()">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.2"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1.2"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1.2"/><rect x="9" y="9" width="5.5" height="5.5" rx="1.2"/></svg>
-      Clients
+      Clientes
     </div>
 
     <!-- INTELIGENCIA -->
@@ -2081,12 +2082,12 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
     <div class="nav-item" data-page="coda-ai" onclick="nav(this,'coda-ai')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M8 1v14M2 8h12"/></svg>
-      Global context
+      Contexto global
     </div>
 
     <!-- EJECUTAR -->
     <div class="sidebar-section">
-      <div class="lbl">Prospecting</div>
+      <div class="lbl">Prospección</div>
     </div>
     <!-- Journey lineal: Buscar → Listas (contactos + CRM) → Campañas (canales + respuestas).
          Estas son las únicas pestañas de js/prospecting.js (no hay un padre "Prospección":
@@ -2118,7 +2119,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 
     <!-- AI SALES COACH -->
     <div class="sidebar-section">
-      <div class="lbl">AI Sales Coach</div>
+      <div class="lbl">Ventas</div>
     </div>
     <div class="nav-item" data-page="ventas-coach" onclick="nav(this,'ventas-coach')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 13v2M11 13v2M3 15h10"/></svg>
@@ -2210,7 +2211,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <div class="topbar-sub" id="dash-sub">Tu operación de revenue, en un vistazo</div>
     </div>
     <div class="topbar-actions">
-      <button class="btn btn-primary btn-sm" onclick="nav(document.querySelector('[data-pros-tab=busqueda]'),'pro-main');if(window.prospecting)window.prospecting.show('busqueda')">+ Nueva campaña</button>
+      <button class="btn btn-primary btn-sm" onclick="nav(document.querySelector('[data-pros-tab=campanas]'),'pro-main');if(window.prospecting)window.prospecting.show('campanas')">+ Nueva campaña</button>
     </div>
   </div>
 
@@ -2219,7 +2220,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="stat-card">
       <div class="stat-label">Reuniones generadas</div>
       <div class="stat-val" id="stat-reuniones">—</div>
-      <div class="stat-sub">Marcadas con «Reunión conseguida» en el Inbox o el CRM</div>
+      <div class="stat-sub">Marcadas con «Reunión conseguida» en la Bandeja o en Listas</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Contactos en secuencia</div>
@@ -2251,6 +2252,9 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <div class="empty"><div class="empty-ic"><svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M17.5 2.5l-8 8M17.5 2.5L12 17.5l-2.5-7-7-2.5z"/></svg></div><div class="empty-title">Sin canales activos</div><div class="empty-sub">Activa tu primera cadencia para ver la distribución por canal.</div></div>
     </div>
   </div>
+
+  <!-- BUCLE DE APRENDIZAJE (js/learning.js) -->
+  <div id="learning-shell"></div>
 
   <!-- ÁREAS DEL PRODUCTO -->
   <div class="row">
@@ -2285,7 +2289,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         </div>
         <span class="area-go">→</span>
       </div>
-      <div class="area-name">AI Sales Coach</div>
+      <div class="area-name">Meeting Coach</div>
       <div class="area-desc">Coach en vivo durante tus llamadas y reportes por SDR al terminar.</div>
       <div class="area-meta">Iniciar una sesión →</div>
     </div>
@@ -2311,406 +2315,9 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   <div id="radar-shell"></div>
 </div>
 
-<div class="page fade-in" id="page-mi-overview">
-  <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
-    <div>
-      <div class="topbar-title">Market Intelligence</div>
-      <div class="topbar-sub">Transforma datos de mercado en ventaja competitiva</div>
-    </div>
-    <div class="topbar-actions">
-      <button class="btn btn-ghost btn-sm">Actualizar</button>
-      <button class="btn btn-primary btn-sm" onclick="nav(document.querySelector('[data-page=mi-matrix]'),'mi-matrix')">+ Completar Matriz</button>
-    </div>
-  </div>
-
-  <div class="page-hero">
-    <span class="ph-eyebrow">Market Intelligence</span>
-    <div class="ph-title">Inteligencia que se vuelve <em>acción</em>.</div>
-    <div class="ph-sub">No es un resumen de newsletters: es inteligencia accionable sobre tu go-to-market, tu producto, tu consumidor y las ventajas competitivas que puedes explotar en tu próxima prospección.</div>
-  </div>
-
-  <div class="stat-grid">
-    <div class="stat-card">
-      <div class="stat-label">Competidores monitoreados</div>
-      <div class="stat-val">—</div>
-      <div class="stat-sub">Agrégalos en tu Matriz de Input</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Señales de mercado</div>
-      <div class="stat-val">—</div>
-      <div class="stat-sub">Se detectan con el Hub activo</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Insights accionables</div>
-      <div class="stat-val">—</div>
-      <div class="stat-sub">Generados por tus agentes</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Matriz completada</div>
-      <div class="stat-val">—</div>
-      <div class="stat-sub">Complétala para activar la IA</div>
-    </div>
-  </div>
-
-  <div class="row">
-    <button class="btn btn-primary" style="flex:1;justify-content:center;padding:14px" onclick="nav(document.querySelector('[data-page=mi-matrix]'),'mi-matrix')">
-      Completar / Revisar Matriz de Input
-    </button>
-    <button class="btn btn-ghost" style="flex:1;justify-content:center;padding:14px" onclick="nav(document.querySelector('[data-page=mi-dashboard]'),'mi-dashboard')">
-      Ver Intelligence Hub
-    </button>
-    <button class="btn btn-ghost" style="flex:1;justify-content:center;padding:14px" onclick="nav(document.querySelector('[data-page=mi-accionables]'),'mi-accionables')">
-      Ver Accionables GTM
-    </button>
-  </div>
-
-  <!-- Competitor table -->
-  <div class="table-card">
-    <div class="table-head">
-      <span style="font-size:14px;font-weight:700">Monitor de Competidores</span>
-    </div>
-    <div class="empty"><div class="empty-ic"><svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><circle cx="10" cy="10" r="7.5"/><circle cx="10" cy="10" r="4"/><path d="M10 10l5-5"/></svg></div><div class="empty-title">Sin competidores monitoreados</div><div class="empty-sub">Agrega tus competidores en la Matriz de Input y tus agentes empezarán a vigilar sus movimientos.</div><button class="btn btn-primary btn-sm" onclick="nav(document.querySelector('[data-page=mi-dashboard]'),'mi-dashboard')">Ir al Intelligence Hub</button></div>
-  </div>
-</div>
-
-<!-- ═══════ PAGE: MI MATRIX ═══════ -->
-<div class="page fade-in" id="page-mi-matrix">
-  <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
-    <div>
-      <div class="topbar-title">Matriz de Input</div>
-      <div class="topbar-sub">Define el contexto para que la IA genere inteligencia relevante</div>
-    </div>
-    <div class="topbar-actions">
-      <button class="btn btn-primary btn-sm" onclick="runAnalysis()">Analizar con IA</button>
-    </div>
-  </div>
-
-  <div class="steps" id="matrix-steps">
-    <div class="step active" onclick="showStep(1)"><div class="step-num">1</div> Tu empresa</div>
-    <div class="step" onclick="showStep(2)"><div class="step-num">2</div> Competidores</div>
-    <div class="step" onclick="showStep(3)"><div class="step-num">3</div> Mercado</div>
-    <div class="step" onclick="showStep(4)"><div class="step-num">4</div> Consumidor</div>
-    <div class="step" onclick="showStep(5)"><div class="step-num">5</div> Distribución</div>
-  </div>
-
-  <!-- Step 1: Tu Empresa -->
-  <div id="matrix-step-1" class="chart-card">
-    <div style="font-size:15px;font-weight:800;margin-bottom:18px">Paso 1: Tu Empresa</div>
-    <div class="form-grid">
-      <div class="form-group">
-        <label>Nombre de la empresa</label>
-        <input type="text" placeholder="Nombre de tu empresa" style="width:100%;background:var(--surface3);border:1px solid var(--border2);color:var(--text);padding:8px 12px;border-radius:var(--r-sm);font-family:var(--font-body)">
-      </div>
-      <div class="form-group">
-        <label>Sitio web</label>
-        <input type="text" placeholder="tuempresa.com" style="width:100%;background:var(--surface3);border:1px solid var(--border2);color:var(--text);padding:8px 12px;border-radius:var(--r-sm);font-family:var(--font-body)">
-      </div>
-      <div class="form-group">
-        <label>Industria / categoría</label>
-        <select>
-          <option selected>SaaS / Revenue Operations</option>
-          <option>SaaS / Sales Enablement</option>
-          <option>SaaS / Marketing Tech</option>
-          <option>Consultoría</option>
-          <option>Agencia</option>
-          <option>Otro</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Tamaño del equipo</label>
-        <select>
-          <option>1-10 personas</option>
-          <option selected>11-50 personas</option>
-          <option>51-200 personas</option>
-          <option>200+ personas</option>
-        </select>
-      </div>
-      <div class="form-group full">
-        <label>Propuesta de valor (en una oración)</label>
-        <textarea style="height:72px" placeholder="¿Qué hace tu producto y para quién?"></textarea>
-      </div>
-      <div class="form-group full">
-        <label>¿Qué diferencia a tu empresa de la competencia?</label>
-        <textarea style="height:72px" placeholder="Tu ventaja competitiva real..."></textarea>
-      </div>
-    </div>
-    <div style="display:flex;justify-content:flex-end;margin-top:20px">
-      <button class="btn btn-primary" onclick="showStep(2)">Siguiente → Competidores</button>
-    </div>
-  </div>
-
-  <!-- Step 2: Competidores -->
-  <div id="matrix-step-2" class="chart-card" style="display:none">
-    <div style="font-size:15px;font-weight:800;margin-bottom:18px">Paso 2: Competidores</div>
-    <div style="font-size:12px;color:var(--text2);margin-bottom:16px">Agrega los competidores directos e indirectos que quieres que la IA tenga en cuenta al analizar tu posicionamiento.</div>
-    <div style="overflow-x:auto;margin-bottom:16px">
-      <table style="width:100%;border-collapse:collapse;font-size:13px" id="competitors-table">
-        <thead>
-          <tr style="border-bottom:1px solid var(--border2);color:var(--text2)">
-            <th style="text-align:left;padding:8px 10px;font-weight:600">Empresa</th>
-            <th style="text-align:left;padding:8px 10px;font-weight:600">Tipo</th>
-            <th style="text-align:left;padding:8px 10px;font-weight:600">Sitio web</th>
-            <th style="padding:8px 10px"></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr id="competitors-empty-row"><td colspan="4" style="padding:16px 10px;color:var(--ink-4);font-size:12.5px">Aún no agregas competidores. Añádelos abajo para que la IA los monitoree.</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div style="display:flex;gap:8px;margin-bottom:20px">
-      <input type="text" id="new-competitor-name" placeholder="Nombre del competidor" style="flex:1;background:var(--surface3);border:1px solid var(--border2);color:var(--text);padding:7px 12px;border-radius:var(--r-sm);font-family:var(--font-body);font-size:13px">
-      <select id="new-competitor-type" style="background:var(--surface3);border:1px solid var(--border2);color:var(--text);padding:7px 12px;border-radius:var(--r-sm);font-family:var(--font-body);font-size:13px">
-        <option>Directo</option>
-        <option>Indirecto</option>
-      </select>
-      <input type="text" id="new-competitor-url" placeholder="sitio.com" style="flex:1;background:var(--surface3);border:1px solid var(--border2);color:var(--text);padding:7px 12px;border-radius:var(--r-sm);font-family:var(--font-body);font-size:13px">
-      <button class="btn btn-primary btn-sm" onclick="addCompetitor()">+ Agregar</button>
-    </div>
-    <div style="display:flex;justify-content:space-between;margin-top:4px">
-      <button class="btn btn-ghost" onclick="showStep(1)">← Anterior</button>
-      <button class="btn btn-primary" onclick="showStep(3)">Siguiente → Mercado</button>
-    </div>
-  </div>
-
-  <!-- Step 3: Mercado -->
-  <div id="matrix-step-3" class="chart-card" style="display:none">
-    <div style="font-size:15px;font-weight:800;margin-bottom:18px">Paso 3: Tu Mercado</div>
-    <div class="form-grid">
-      <div class="form-group full">
-        <label>Países de prospección</label>
-        <div style="background:var(--surface3);border:1px solid var(--border2);border-radius:var(--r);padding:14px">
-          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-todo-latam" onclick="toggleLatam()" style="font-size:11px;font-weight:700">Todo LATAM</button>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="clearCountries()" style="font-size:11px">Limpiar todo</button>
-          </div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px" id="country-checkboxes">
-            <label class="country-check"><input type="checkbox" value="México"> México</label>
-            <label class="country-check"><input type="checkbox" value="Colombia"> Colombia</label>
-            <label class="country-check"><input type="checkbox" value="Perú"> Perú</label>
-            <label class="country-check"><input type="checkbox" value="Chile"> Chile</label>
-            <label class="country-check"><input type="checkbox" value="Argentina"> Argentina</label>
-            <label class="country-check"><input type="checkbox" value="Brasil"> Brasil</label>
-            <label class="country-check"><input type="checkbox" value="Ecuador"> Ecuador</label>
-            <label class="country-check"><input type="checkbox" value="Bolivia"> Bolivia</label>
-            <label class="country-check"><input type="checkbox" value="Paraguay"> Paraguay</label>
-            <label class="country-check"><input type="checkbox" value="Uruguay"> Uruguay</label>
-            <label class="country-check"><input type="checkbox" value="Venezuela"> Venezuela</label>
-            <label class="country-check"><input type="checkbox" value="Panamá"> Panamá</label>
-            <label class="country-check"><input type="checkbox" value="Costa Rica"> Costa Rica</label>
-            <label class="country-check"><input type="checkbox" value="Guatemala"> Guatemala</label>
-            <label class="country-check"><input type="checkbox" value="Honduras"> Honduras</label>
-            <label class="country-check"><input type="checkbox" value="El Salvador"> El Salvador</label>
-            <label class="country-check"><input type="checkbox" value="Nicaragua"> Nicaragua</label>
-            <label class="country-check"><input type="checkbox" value="Rep. Dominicana"> Rep. Dominicana</label>
-            <label class="country-check" style="border-top:1px solid var(--border);padding-top:6px;margin-top:2px"><input type="checkbox" value="España"> España</label>
-            <label class="country-check" style="border-top:1px solid var(--border);padding-top:6px;margin-top:2px"><input type="checkbox" value="USA (Hispanohablante)"> USA (Hispanohablante)</label>
-          </div>
-          <div id="latam-exclusion-section" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-            <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.6px">Excluir de LATAM</div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap" id="latam-exclusion-chips"></div>
-          </div>
-        </div>
-      </div>
-      <div class="form-group full">
-        <label>Industrias objetivo <span style="font-size:10px;color:var(--text2);font-weight:400;margin-left:4px">— mismas categorías que Apollo</span></label>
-        <div style="background:var(--surface3);border:1px solid var(--border2);border-radius:var(--r);padding:14px">
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:5px" id="industry-checkboxes">
-            <label class="country-check"><input type="checkbox" value="Computer Software"> Computer Software</label>
-            <label class="country-check"><input type="checkbox" value="Information Technology and Services"> Information Technology and Services</label>
-            <label class="country-check"><input type="checkbox" value="Internet"> Internet</label>
-            <label class="country-check"><input type="checkbox" value="Financial Services"> Financial Services</label>
-            <label class="country-check"><input type="checkbox" value="Marketing and Advertising"> Marketing and Advertising</label>
-            <label class="country-check"><input type="checkbox" value="Management Consulting"> Management Consulting</label>
-            <label class="country-check"><input type="checkbox" value="Real Estate"> Real Estate</label>
-            <label class="country-check"><input type="checkbox" value="Healthcare"> Healthcare</label>
-            <label class="country-check"><input type="checkbox" value="Education Management"> Education Management</label>
-            <label class="country-check"><input type="checkbox" value="Retail"> Retail</label>
-            <label class="country-check"><input type="checkbox" value="E-Learning"> E-Learning</label>
-            <label class="country-check"><input type="checkbox" value="Human Resources"> Human Resources</label>
-            <label class="country-check"><input type="checkbox" value="Staffing and Recruiting"> Staffing and Recruiting</label>
-            <label class="country-check"><input type="checkbox" value="Accounting"> Accounting</label>
-            <label class="country-check"><input type="checkbox" value="Insurance"> Insurance</label>
-            <label class="country-check"><input type="checkbox" value="Legal Services"> Legal Services</label>
-            <label class="country-check"><input type="checkbox" value="Construction"> Construction</label>
-            <label class="country-check"><input type="checkbox" value="Manufacturing"> Manufacturing</label>
-            <label class="country-check"><input type="checkbox" value="Wholesale"> Wholesale</label>
-            <label class="country-check"><input type="checkbox" value="Telecommunications"> Telecommunications</label>
-            <label class="country-check"><input type="checkbox" value="Media Production"> Media Production</label>
-            <label class="country-check"><input type="checkbox" value="Food & Beverages"> Food &amp; Beverages</label>
-            <label class="country-check"><input type="checkbox" value="Logistics and Supply Chain"> Logistics and Supply Chain</label>
-            <label class="country-check"><input type="checkbox" value="Oil & Energy"> Oil &amp; Energy</label>
-          </div>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Ticket promedio</label>
-        <select>
-          <option>Bajo &lt;$500/mo</option>
-          <option selected>Medio $500-$3k/mo</option>
-          <option>Alto $3k-$10k/mo</option>
-          <option>Enterprise $10k+/mo</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Ciclo de ventas típico</label>
-        <select>
-          <option>Rápido 1-3 días</option>
-          <option>Medio 1-3 semanas</option>
-          <option selected>Largo 1+ mes</option>
-          <option>Enterprise 3+ meses</option>
-        </select>
-      </div>
-      <div class="form-group full">
-        <label>¿Cuál es el problema principal que resuelves para tus clientes?</label>
-        <textarea placeholder="Sé específico: ¿qué pasa si no tienen tu solución?"></textarea>
-      </div>
-    </div>
-    <div style="display:flex;justify-content:space-between;margin-top:20px">
-      <button class="btn btn-ghost" onclick="showStep(2)">← Anterior</button>
-      <button class="btn btn-primary" onclick="showStep(4)">Siguiente → Consumidor</button>
-    </div>
-  </div>
-
-  <!-- Step 4: Consumidor -->
-  <div id="matrix-step-4" class="chart-card" style="display:none">
-    <div style="font-size:15px;font-weight:800;margin-bottom:18px">Paso 4: Tu Consumidor</div>
-    <div class="form-grid">
-
-      <!-- Management Level -->
-      <div class="form-group">
-        <label>Management Level <span style="font-size:10px;color:var(--text2);font-weight:400">— Apollo</span></label>
-        <div style="background:var(--surface3);border:1px solid var(--border2);border-radius:var(--r);padding:12px;display:flex;flex-direction:column;gap:7px">
-          <label class="country-check"><input type="checkbox" id="ml-owner" value="Owner"> <span>Owner</span> <span style="color:var(--text3);font-size:10px;margin-left:auto">2.6M</span></label>
-          <label class="country-check"><input type="checkbox" id="ml-founder" value="Founder"> <span>Founder</span> <span style="color:var(--text3);font-size:10px;margin-left:auto">2.0M</span></label>
-          <label class="country-check"><input type="checkbox" id="ml-csuite" value="C suite"> <span>C suite</span> <span style="color:var(--text3);font-size:10px;margin-left:auto">2.6M</span></label>
-          <label class="country-check"><input type="checkbox" id="ml-partner" value="Partner"> <span>Partner</span> <span style="color:var(--text3);font-size:10px;margin-left:auto">1.8M</span></label>
-          <label class="country-check"><input type="checkbox" id="ml-vp" value="Vp"> <span>Vp</span> <span style="color:var(--text3);font-size:10px;margin-left:auto">3.2M</span></label>
-          <label class="country-check"><input type="checkbox" id="ml-head" value="Head"> <span>Head</span> <span style="color:var(--text3);font-size:10px;margin-left:auto">3.3M</span></label>
-          <label class="country-check"><input type="checkbox" id="ml-director" value="Director"> <span>Director</span> <span style="color:var(--text3);font-size:10px;margin-left:auto">9.9M</span></label>
-          <label class="country-check"><input type="checkbox" id="ml-manager" value="Manager"> <span>Manager</span> <span style="color:var(--text3);font-size:10px;margin-left:auto">43.5M</span></label>
-          <label class="country-check"><input type="checkbox" id="ml-senior" value="Senior"> <span>Senior</span> <span style="color:var(--text3);font-size:10px;margin-left:auto">11.4M</span></label>
-          <label class="country-check"><input type="checkbox" id="ml-entry" value="Entry"> <span>Entry</span> <span style="color:var(--text3);font-size:10px;margin-left:auto">156.6M</span></label>
-          <label class="country-check"><input type="checkbox" id="ml-intern" value="Intern"> <span>Intern</span> <span style="color:var(--text3);font-size:10px;margin-left:auto">1.9M</span></label>
-        </div>
-      </div>
-
-      <!-- Departments & Job Function -->
-      <div class="form-group">
-        <label>Departments &amp; Job Function <span style="font-size:10px;color:var(--text2);font-weight:400">— Apollo</span></label>
-        <div style="background:var(--surface3);border:1px solid var(--border2);border-radius:var(--r);padding:12px;display:flex;flex-direction:column;gap:7px">
-          <label class="country-check"><input type="checkbox" id="dept-csuite" value="C-Suite"> C-Suite</label>
-          <label class="country-check"><input type="checkbox" id="dept-product" value="Product"> Product</label>
-          <label class="country-check"><input type="checkbox" id="dept-engineering" value="Engineering & Technical"> Engineering &amp; Technical</label>
-          <label class="country-check"><input type="checkbox" id="dept-design" value="Design"> Design</label>
-          <label class="country-check"><input type="checkbox" id="dept-education" value="Education"> Education</label>
-          <label class="country-check"><input type="checkbox" id="dept-finance" value="Finance"> Finance</label>
-          <label class="country-check"><input type="checkbox" id="dept-hr" value="Human Resources"> Human Resources</label>
-          <label class="country-check"><input type="checkbox" id="dept-it" value="Information Technology"> Information Technology</label>
-          <label class="country-check"><input type="checkbox" id="dept-legal" value="Legal"> Legal</label>
-          <label class="country-check"><input type="checkbox" id="dept-marketing" value="Marketing"> Marketing</label>
-          <label class="country-check"><input type="checkbox" id="dept-medical" value="Medical & Health"> Medical &amp; Health</label>
-          <label class="country-check"><input type="checkbox" id="dept-operations" value="Operations"> Operations</label>
-          <label class="country-check"><input type="checkbox" id="dept-sales" value="Sales"> Sales</label>
-          <label class="country-check"><input type="checkbox" id="dept-consulting" value="Consulting"> Consulting</label>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label>Tamaño de empresa objetivo (# empleados)</label>
-        <div id="emp-size-checkboxes" style="background:var(--surface3);border:1px solid var(--border2);border-radius:var(--r);padding:12px;display:flex;flex-direction:column;gap:7px">
-          <label class="country-check"><input type="checkbox" value="1-10"> 1 – 10</label>
-          <label class="country-check"><input type="checkbox" value="11-50"> 11 – 50</label>
-          <label class="country-check"><input type="checkbox" value="51-200"> 51 – 200</label>
-          <label class="country-check"><input type="checkbox" value="201-500"> 201 – 500</label>
-          <label class="country-check"><input type="checkbox" value="501-1000"> 501 – 1,000</label>
-          <label class="country-check"><input type="checkbox" value="1001-5000"> 1,001 – 5,000</label>
-          <label class="country-check"><input type="checkbox" value="5001+"> 5,001+</label>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label>Trigger de compra</label>
-        <textarea style="height:100px" placeholder="¿Qué los hace buscar una solución ahora?"></textarea>
-      </div>
-
-      <div class="form-group full">
-        <label>Principales pain points del buyer</label>
-        <textarea style="height:68px" placeholder="¿Qué le quita el sueño a tu cliente ideal?"></textarea>
-      </div>
-    </div>
-    <div style="display:flex;justify-content:space-between;margin-top:20px">
-      <button class="btn btn-ghost" onclick="showStep(3)">← Anterior</button>
-      <button class="btn btn-primary" onclick="showStep(5)">Siguiente → Distribución</button>
-    </div>
-  </div>
-
-  <!-- Step 5: Distribución -->
-  <div id="matrix-step-5" class="chart-card" style="display:none">
-    <div style="font-size:15px;font-weight:800;margin-bottom:18px">Paso 5: Distribución</div>
-    <div class="form-grid">
-      <div class="form-group">
-        <label>Canal principal de ventas</label>
-        <select>
-          <option selected>Outbound (prospección activa)</option>
-          <option>Inbound (leads calificados)</option>
-          <option>Mixto inbound + outbound</option>
-          <option>PLG (product-led growth)</option>
-          <option>Canal / Partners</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Tamaño del equipo de ventas</label>
-        <select>
-          <option>Solo founder</option>
-          <option selected>2-5 AEs / SDRs</option>
-          <option>6-15 personas</option>
-          <option>15+ personas</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>CRM actual</label>
-        <select>
-          <option>Sin CRM</option>
-          <option>HubSpot</option>
-          <option selected>Pipedrive</option>
-          <option>Salesforce</option>
-          <option>Otro</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Herramienta de secuencias / outreach</label>
-        <select>
-          <option>Ninguna</option>
-          <option selected>Apollo.io</option>
-          <option>Outreach</option>
-          <option>Salesloft</option>
-          <option>Lemlist</option>
-          <option>Otra</option>
-        </select>
-      </div>
-      <div class="form-group full">
-        <label>¿Qué canales de prospección están activos hoy?</label>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox"> Email frío</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox"> LinkedIn</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox"> WhatsApp</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox"> Llamada en frío</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox"> Referidos</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox"> Eventos</label>
-        </div>
-      </div>
-      <div class="form-group full">
-        <label>¿Qué quieres optimizar con esta prospección?</label>
-        <textarea style="height:64px" placeholder="Ej: Aumentar cantidad de meetings agendados, mejorar tasa de respuesta, entrar a un nuevo mercado..."></textarea>
-      </div>
-    </div>
-    <div style="display:flex;justify-content:space-between;margin-top:20px">
-      <button class="btn btn-ghost" onclick="showStep(4)">← Anterior</button>
-      <button class="btn btn-primary" onclick="runAnalysis()">Analizar con IA</button>
-    </div>
-  </div>
-</div>
+<!-- Las páginas "Market Intelligence", "Matriz de Input" (asistente simulado) y
+     "Accionables GTM" (insight inventado) se eliminaron el 2026-09-19: no estaban
+     en el sidebar y contradecían la regla "sin datos demo". -->
 
 <!-- ═══════ PAGE: CONTEXTO DE TU EMPRESA ═══════ -->
 <div class="page fade-in" id="page-mi-research" style="padding:0;gap:0;">
@@ -2755,32 +2362,11 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <div class="page fade-in" id="page-coda-ai" style="padding:0;gap:0;">
   <div class="topbar">
     <div>
-      <div class="topbar-title">Global context</div>
+      <div class="topbar-title">Contexto global</div>
       <div class="topbar-sub">PESTEL de tu mercado + 5 fuerzas de Porter de tu competencia + tu FODA convertido en un plan CAME — contexto opcional, todo con IA</div>
     </div>
   </div>
   <div id="coda-shell"></div>
-</div>
-
-<!-- ═══════ PAGE: MI ACCIONABLES ═══════ -->
-<div class="page fade-in" id="page-mi-accionables">
-  <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
-    <div>
-      <div class="topbar-title">Accionables GTM</div>
-      <div class="topbar-sub">Qué hacer esta semana para mover el mercado</div>
-    </div>
-  </div>
-
-  <div style="background:linear-gradient(135deg,rgba(79,142,247,.08),rgba(124,92,252,.08));border:1px solid var(--border);border-radius:var(--radius);padding:18px;display:flex;gap:12px;align-items:center">
-    <span style="font-size:24px">🧠</span>
-    <div><div style="font-size:14px;font-weight:700;margin-bottom:3px">Insight principal para tu próxima prospección</div>
-    <div style="font-size:13px;color:var(--text2);line-height:1.6">El 92% de tus ICPs más calientes <strong>prioriza time-to-value sobre precio</strong>. Tu mensaje debe posicionar "resultados en 30 días" como promesa central, no el precio ni las features. Esto conecta directamente con el libro <em>$100M Leads</em> de Hormozi: la oferta debe eliminar el riesgo percibido.</div>
-    </div>
-  </div>
-
-  <div class="card" style="padding:0">
-    <div class="empty"><div class="empty-ic"><svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M10 2l1.8 4.6L16.5 8l-4.7 1.4L10 14l-1.8-4.6L3.5 8l4.7-1.4z"/><path d="M16 13l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></svg></div><div class="empty-title">Tus accionables se generan desde el Intelligence Hub</div><div class="empty-sub">Cuando tus agentes publiquen los primeros informes, aquí verás recomendaciones de go-to-market, producto y prospección listas para aplicar.</div><button class="btn btn-primary btn-sm" onclick="nav(document.querySelector('[data-page=mi-dashboard]'),'mi-dashboard')">Ir al Intelligence Hub</button></div>
-  </div>
 </div>
 
 <!-- ═══════ PAGE: PROSPECCIÓN (Buscar · Listas · Campañas — js/prospecting.js + js/campaigns.js) ═══════ -->
@@ -2798,7 +2384,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div style="display:flex;align-items:center;gap:14px">
       <div id="mc-dot" style="width:10px;height:10px;border-radius:50%;background:var(--green-soft);border:2px solid var(--green);transition:all .4s"></div>
       <div>
-        <div class="topbar-title">Coach en vivo</div>
+        <div class="topbar-title">Meeting Coach</div>
         <div class="topbar-sub" style="color:var(--text3)">El asistente que escucha tu llamada y te dice qué decir, en vivo.</div>
       </div>
     </div>
@@ -2999,7 +2585,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         <div style="background:linear-gradient(135deg,rgba(47,102,255,.06),rgba(47,102,255,.02));border:1px solid rgba(47,102,255,.18);border-radius:12px;padding:16px">
           <div style="font-size:10px;font-weight:700;color:var(--accent-ink);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Etapa actual</div>
           <div id="mc-stage" style="font-size:20px;font-weight:800;color:var(--accent-ink);margin-bottom:12px">—</div>
-          <div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Próximo paso</div>
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Qué hacer ahora</div>
           <div id="mc-next-steps" style="display:flex;flex-direction:column;gap:6px">
             <div style="font-size:12px;color:var(--text3);font-style:italic">Analizando...</div>
           </div>
@@ -3061,8 +2647,8 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div id="my-perf-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--text3)">
       <div style="font-size:32px;margin-bottom:12px">📊</div>
       <div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:8px">Sin reuniones registradas todavía</div>
-      <div style="font-size:13px">Cuando completes sesiones con el AI Coach, tu historial de performance aparecerá aquí.</div>
-      <button class="btn btn-jade" style="margin-top:20px" onclick="nav(document.querySelector('[data-page=ventas-coach]'),'ventas-coach')">Iniciar sesión →</button>
+      <div style="font-size:13px">Cuando completes sesiones con el Meeting Coach, tu historial de rendimiento aparecerá aquí.</div>
+      <button class="btn btn-jade" style="margin-top:20px" onclick="nav(document.querySelector('[data-page=ventas-coach]'),'ventas-coach')">Iniciar una sesión</button>
     </div>
     <div id="my-perf-content" style="display:none">
       <!-- Score summary cards -->
@@ -3134,7 +2720,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <div style="font-size:32px;margin-bottom:12px">🛡</div>
       <div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:8px">Aún no hay objeciones detectadas</div>
       <div id="obj-empty-sub" style="font-size:13px;max-width:460px;margin:0 auto;line-height:1.6">Esta vista se llena conforme el coach analiza reuniones: cada objeción real queda registrada con su frecuencia, cómo se manejó y la mejor respuesta sugerida.</div>
-      <button class="btn btn-jade" style="margin-top:20px" onclick="iniciarCoachLive()">Iniciar una sesión →</button>
+      <button class="btn btn-jade" style="margin-top:20px" onclick="iniciarCoachLive()">Iniciar una sesión</button>
     </div>
   </div>
 
@@ -3150,8 +2736,8 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   <div id="last-meeting-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--text3)">
     <div style="font-size:32px;margin-bottom:12px">🎙</div>
     <div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:8px">Sin reuniones grabadas todavía</div>
-    <div style="font-size:13px">Cuando termines tu primera sesión con el AI Coach, el reporte completo de la reunión aparecerá aquí.</div>
-    <button class="btn btn-jade" style="margin-top:20px" onclick="iniciarCoachLive()">Iniciar primera sesión →</button>
+    <div style="font-size:13px">Cuando termines tu primera sesión con el Meeting Coach, el reporte completo de la reunión aparecerá aquí.</div>
+    <button class="btn btn-jade" style="margin-top:20px" onclick="iniciarCoachLive()">Iniciar una sesión</button>
   </div>
 </div>
 </div><!-- /page-ventas-reportes -->
@@ -3160,7 +2746,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
     <div>
       <div class="topbar-title">Ajustes</div>
-      <div class="topbar-sub">Tu informacion personal y de cuenta</div>
+      <div class="topbar-sub">Tu información personal y de cuenta</div>
     </div>
   </div>
 
@@ -3177,13 +2763,13 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         </div>
         <div class="settings-card-title">Perfil</div>
       </div>
-      <div class="settings-card-sub">Tu informacion personal visible en la plataforma.</div>
+      <div class="settings-card-sub">Tu información personal visible en la plataforma.</div>
 
       <div class="settings-row">
         <div class="settings-row-label">Nombre completo</div>
         <div class="settings-row-value">
           <input class="settings-input" id="set-full-name" type="text" placeholder="Tu nombre">
-          <div class="settings-row-hint">Como queres que te llamen en reportes y emails.</div>
+          <div class="settings-row-hint">Cómo quieres que te llamen en reportes y emails.</div>
         </div>
       </div>
 
@@ -3268,7 +2854,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       </div>
 
       <div class="settings-row">
-        <div class="settings-row-label">Global context</div>
+        <div class="settings-row-label">Contexto global</div>
         <div class="settings-row-value">
           <div data-ai-engine="coda" data-ai-engine-compact data-ai-engine-nolabel></div>
           <div class="settings-row-hint">PESTEL, 5 fuerzas de Porter y conversión FODA → CAME.</div>
@@ -3284,7 +2870,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       </div>
 
       <div class="settings-row">
-        <div class="settings-row-label">AI Sales Coach</div>
+        <div class="settings-row-label">Meeting Coach</div>
         <div class="settings-row-value">
           <div data-ai-engine="coach" data-ai-engine-compact data-ai-engine-nolabel></div>
           <div class="settings-row-hint">Coaching en vivo durante la llamada y el reporte final de la reunión.</div>
@@ -3353,7 +2939,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <div class="settings-card-sub">Informacion de tu cuenta y como te autenticas.</div>
 
       <div class="settings-row">
-        <div class="settings-row-label">Metodo de acceso</div>
+        <div class="settings-row-label">Método de acceso</div>
         <div class="settings-row-value">
           <span class="settings-pill" id="set-provider">—</span>
         </div>
@@ -3374,7 +2960,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       </div>
 
       <div class="settings-row" id="set-row-password" style="display:none">
-        <div class="settings-row-label">Contrasena</div>
+        <div class="settings-row-label">Contraseña</div>
         <div class="settings-row-value">
           <button class="settings-btn settings-btn-secondary" id="set-reset-password">
             Enviar email para cambiarla
@@ -3468,6 +3054,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
 <script src="js/meeting-report.js"></script>
+<script src="js/learning.js?v=20260919"></script>
 <script src="js/coach-lead-picker.js?v=20260915"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js?v=20260823"></script>
@@ -3785,7 +3372,13 @@ function iniciarCoachLive(prospectCtx) {
       // Preparación de reunión del nuevo generate-outreach (additivo:
       // el coach en vivo la recibe como contexto extra si existe).
       coach_prep: ctx.coach_prep || null,
-      person_hook: ctx.person_hook || null
+      person_hook: ctx.person_hook || null,
+      // Brief completo del lead (quién / por qué / riesgos) y el ángulo de
+      // outreach: antes se quedaban en el navegador y el coach no los veía.
+      brief_who: ctx.brief_who || null,
+      brief_why: ctx.brief_why || null,
+      brief_risks: ctx.brief_risks || null,
+      angle: (ctx.outreach && ctx.outreach.angle) || null
     };
 
     if (mode === 'bot') {
@@ -4386,124 +3979,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 
-// ── MATRIX WIZARD ──
-const LATAM_COUNTRIES = ['México','Colombia','Perú','Chile','Argentina','Brasil','Ecuador','Bolivia','Paraguay','Uruguay','Venezuela','Panamá','Costa Rica','Guatemala','Honduras','El Salvador','Nicaragua','Rep. Dominicana'];
-let latamMode = false;
-let latamExcluded = new Set();
-
-function showStep(n) {
-  const stepEls = document.querySelectorAll('#matrix-steps .step');
-  stepEls.forEach((el, i) => {
-    el.classList.remove('active','done');
-    const num = el.querySelector('.step-num');
-    if (i + 1 < n) {
-      el.classList.add('done');
-      num.textContent = '✓';
-    } else if (i + 1 === n) {
-      el.classList.add('active');
-      num.textContent = String(i + 1);
-    } else {
-      num.textContent = String(i + 1);
-    }
-  });
-  for (let i = 1; i <= 5; i++) {
-    const panel = document.getElementById('matrix-step-' + i);
-    if (panel) panel.style.display = i === n ? 'block' : 'none';
-  }
-  const legacy = document.getElementById('matrix-step');
-  if (legacy) legacy.style.display = 'none';
-}
-
-function toggleLatam() {
-  latamMode = !latamMode;
-  const btn = document.getElementById('btn-todo-latam');
-  const exclusionSection = document.getElementById('latam-exclusion-section');
-  const checkboxes = document.querySelectorAll('#country-checkboxes input[type=checkbox]');
-  if (latamMode) {
-    btn.style.background = 'var(--gold-dim)';
-    btn.style.borderColor = 'var(--gold)';
-    btn.style.color = 'var(--gold)';
-    checkboxes.forEach(cb => {
-      if (LATAM_COUNTRIES.includes(cb.value)) cb.checked = true;
-    });
-    exclusionSection.style.display = 'block';
-    latamExcluded.clear();
-    renderExclusionChips();
-  } else {
-    btn.style.background = '';
-    btn.style.borderColor = '';
-    btn.style.color = '';
-    exclusionSection.style.display = 'none';
-    latamExcluded.clear();
-  }
-}
-
-function renderExclusionChips() {
-  const container = document.getElementById('latam-exclusion-chips');
-  if (!container) return;
-  container.innerHTML = '';
-  LATAM_COUNTRIES.forEach(country => {
-    const chip = document.createElement('span');
-    chip.className = 'exclusion-chip';
-    chip.textContent = (latamExcluded.has(country) ? '✗ ' : '') + country;
-    chip.style.opacity = latamExcluded.has(country) ? '1' : '0.45';
-    chip.style.background = latamExcluded.has(country) ? 'rgba(232,64,64,.18)' : 'var(--surface3)';
-    chip.style.color = latamExcluded.has(country) ? '#E84040' : 'var(--text2)';
-    chip.style.border = latamExcluded.has(country) ? '1px solid rgba(232,64,64,.35)' : '1px solid var(--border2)';
-    chip.onclick = () => {
-      if (latamExcluded.has(country)) {
-        latamExcluded.delete(country);
-        document.querySelector(`#country-checkboxes input[value="${country}"]`).checked = true;
-      } else {
-        latamExcluded.add(country);
-        document.querySelector(`#country-checkboxes input[value="${country}"]`).checked = false;
-      }
-      renderExclusionChips();
-    };
-    container.appendChild(chip);
-  });
-}
-
-function clearCountries() {
-  document.querySelectorAll('#country-checkboxes input[type=checkbox]').forEach(cb => cb.checked = false);
-  latamMode = false;
-  latamExcluded.clear();
-  const btn = document.getElementById('btn-todo-latam');
-  if (btn) { btn.style.background=''; btn.style.borderColor=''; btn.style.color=''; }
-  const sec = document.getElementById('latam-exclusion-section');
-  if (sec) sec.style.display = 'none';
-}
-
-function addCompetitor() {
-  const name = document.getElementById('new-competitor-name').value.trim();
-  const type = document.getElementById('new-competitor-type').value;
-  const url  = document.getElementById('new-competitor-url').value.trim();
-  if (!name) return;
-  const emptyRow = document.getElementById('competitors-empty-row');
-  if (emptyRow) emptyRow.remove();
-  const tbody = document.querySelector('#competitors-table tbody');
-  const pillClass = type === 'Directo' ? 'pill-red' : 'pill-blue';
-  const tr = document.createElement('tr');
-  tr.style.borderBottom = '1px solid var(--border)';
-  tr.innerHTML = `<td style="padding:8px 10px">${name}</td><td style="padding:8px 10px"><span class="pill ${pillClass}" style="font-size:10px">${type}</span></td><td style="padding:8px 10px;color:var(--text2)">${url || '—'}</td><td style="padding:8px 10px"><button class="btn btn-ghost btn-sm" onclick="removeCompetitor(this)" style="padding:2px 8px;font-size:11px">×</button></td>`;
-  tbody.appendChild(tr);
-  document.getElementById('new-competitor-name').value = '';
-  document.getElementById('new-competitor-url').value = '';
-}
-
-function removeCompetitor(btn) {
-  btn.closest('tr').remove();
-}
-
-// ── ANALYSIS ──
-function runAnalysis() {
-  const btn = document.querySelector('[onclick="runAnalysis()"]');
-  if(btn) { btn.textContent = '⏳ Analizando...'; btn.disabled = true; }
-  setTimeout(() => {
-    if(btn) { btn.textContent = '✓ Análisis listo'; btn.style.background = 'var(--grad-jade)'; }
-    nav(document.querySelector('[data-page=mi-dashboard]'), 'mi-dashboard');
-  }, 2000);
-}
+// (El asistente "Matriz de Input" y su análisis simulado se eliminaron el 2026-09-19.)
 </script>
 
 <script>
@@ -4597,6 +4073,7 @@ function clearDashboardStatsLoading() {
   });
 }
 function refreshDashboard() {
+  if (window.learning && typeof window.learning.mount === 'function') window.learning.mount('learning-shell');
   setDashboardStatsLoading();
   loadDashboardStats().then(() => {
     clearDashboardStatsLoading();

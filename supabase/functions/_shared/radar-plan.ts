@@ -136,7 +136,34 @@ export interface NormalizedDetector {
  * Devuelve la config válida para el kind, o null si no tiene lo mínimo
  * para correr (y entonces el detector se descarta).
  */
+/**
+ * Cuántas empresas revisa un detector en cada corrida (2026-09-18, a petición
+ * del usuario: "que pueda escoger cuántas empresas debe buscar el radar").
+ * Vive en `config.max_companies` (columna que el usuario sí puede editar) y
+ * aplica a todos los kinds: en los de Apollo decide cuántas páginas de 100 se
+ * leen (= créditos de Apollo en la búsqueda de empresas), en noticias y
+ * licitaciones acota cuántas empresas pide el prompt, en Places cuántas fichas.
+ */
+export const MAX_COMPANIES_OPTIONS = [25, 50, 100, 200, 300, 500, 1000] as const;
+export const DEFAULT_MAX_COMPANIES = 300;
+export function maxCompaniesOf(config: unknown): number {
+  // deno-lint-ignore no-explicit-any
+  const c: any = config && typeof config === "object" ? config : {};
+  return intIn(c.max_companies, 25, 1000, DEFAULT_MAX_COMPANIES);
+}
+
 export function normalizeConfig(kind: DetectorKind, raw: unknown): Record<string, unknown> | null {
+  const cfg = normalizeKindConfig(kind, raw);
+  if (!cfg) return null;
+  // deno-lint-ignore no-explicit-any
+  const c: any = raw && typeof raw === "object" ? raw : {};
+  if (c.max_companies !== undefined && c.max_companies !== null && c.max_companies !== "") {
+    cfg.max_companies = maxCompaniesOf(c);
+  }
+  return cfg;
+}
+
+function normalizeKindConfig(kind: DetectorKind, raw: unknown): Record<string, unknown> | null {
   // deno-lint-ignore no-explicit-any
   const c: any = raw && typeof raw === "object" ? raw : {};
   switch (kind) {
