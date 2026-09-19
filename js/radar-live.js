@@ -845,7 +845,7 @@
     const s = document.createElement('style');
     s.id = 'radar-live-styles';
     s.textContent = [
-      '.rl-wrap{display:flex;flex-direction:column;gap:8px;padding:0;max-width:1080px;margin:0 auto;width:100%}',
+      '.rl-wrap{display:flex;flex-direction:column;gap:8px;padding:12px 0 0 0;max-width:1080px;margin:0 auto;width:100%}',
       '.rl-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}',
       '.rl-top-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;padding-bottom:0}',
       '.rl-title{font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--ink)}',
