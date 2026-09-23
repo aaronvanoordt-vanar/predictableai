@@ -31,6 +31,11 @@
     // Refresh completo (11 secciones). Se muestra como "por ítem" porque el
     // total depende de cuántas secciones estén vencidas por cadence.
     intel_hub_refresh:      { credits: 2,  label: 'por ítem que se actualice', variable: true },
+    // Análisis de mercado fundacional (2026-09-23): un reporte ancho (~8
+    // búsquedas web, salida larga) del que sale el plan del Radar. El primero
+    // es gratis; regenerarlo cuesta esto (el doble con un modelo premium de
+    // Claude). Cobro real: generate-intel-hub (MARKET_ANALYSIS_COST).
+    market_analysis:        { credits: 8,  label: 'por análisis',        variable: false },
 
     // ── Radar (descubrimiento de empresas target con IA) ──────────────
     // Investigación profunda: Sonnet con ~15 búsquedas web + Apollo search.

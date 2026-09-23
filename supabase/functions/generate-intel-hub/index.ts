@@ -38,7 +38,7 @@ import { loadIntelligence } from "../_shared/intelligence.ts";
 interface SectionDef {
   key: string;
   title: string;
-  cadence: "daily" | "weekly" | "monthly";
+  cadence: "daily" | "weekly" | "monthly" | "quarterly";
   researchPrompt: string;
   outputSpec: string;
 }
@@ -46,7 +46,7 @@ interface SectionDef {
 const SECTIONS: SectionDef[] = [
   {
     key: "industry_insight_digest",
-    title: "Industry Insight Digest",
+    title: "Señales del mercado",
     cadence: "daily",
     researchPrompt: `ROLE
 You are the daily research agent behind "Industry Insight Digest", the flagship daily segment of this client's Intelligence Hub. Your job is NOT to pick 3 news articles. It is to read MANY recent industry signals and compress them into AT MOST 3 market insights that change how this client should sell TODAY. The company-context block you received (industry, ICP, value proposition, geography) is your only lens: an insight that could appear unchanged in a generic industry newsletter is a failure.
@@ -101,7 +101,7 @@ Hard rules:
   },
   {
     key: "competitor_threat_radar",
-    title: "Competitor Threat Radar",
+    title: "Movimientos de la competencia",
     cadence: "daily",
     researchPrompt: `COMPETITOR THREAT RADAR — daily research task
 
@@ -168,7 +168,7 @@ Constraints:
   },
   {
     key: "prospecting_recommendations",
-    title: "Prospecting Recommendations",
+    title: "Ajustes de prospección",
     cadence: "daily",
     researchPrompt: `TASK: Daily prospecting recommendations ("Recomendaciones de prospección") for the company described in the context block above.
 
@@ -224,7 +224,7 @@ Rules:
   },
   {
     key: "benchmark",
-    title: "Benchmark",
+    title: "Tu posición frente a la competencia",
     cadence: "weekly",
     researchPrompt: `TASK: Weekly competitive benchmark for the client company described in the context block above.
 
@@ -310,7 +310,7 @@ All user-facing string values in neutral Latin-American Spanish. Length caps are
   },
   {
     key: "revenue_opportunities",
-    title: "Revenue Opportunities",
+    title: "Oportunidades de ingreso",
     cadence: "weekly",
     researchPrompt: `TASK — REVENUE OPPORTUNITIES (WEEKLY)
 
@@ -366,7 +366,7 @@ FIELD RULES:
   },
   {
     key: "strategic_actions",
-    title: "Strategic Actions",
+    title: "Acciones de la semana",
     cadence: "weekly",
     researchPrompt: `RESEARCH TASK — Strategic Actions (weekly cadence)
 
@@ -434,197 +434,80 @@ RULES
 - All user-facing string values in neutral Latin-American Spanish (tú). Respect every length cap.`,
   },
   {
-    key: "consumer_behavioral_analysis",
-    title: "Consumer Behavioral Analysis",
-    cadence: "monthly",
-    researchPrompt: `TASK: Monthly consumer behavioral analysis for the company described in the context block above.
-
-You are a buyer-psychology analyst. Your job is to detect how the pains, priorities, objections and decision drivers of THIS company's target buyers (its ICP, as described above) are shifting — and turn each shift into one concrete move the company's salespeople can use in their next conversations. Everything you output must be specific to this company's industry, ICP and value proposition; discard anything generic that could apply to any business.
-
-RECENCY WINDOW (monthly cadence): prioritize sources published in the last 90 days, with extra weight on the last 30 days. A survey or benchmark up to 12 months old is acceptable only if it is still the most current data available and you state its date. Ignore anything older.
-
-WHAT TO SEARCH (run 6-10 targeted web_search queries, adapted to the ICP's industry, geography and language — search in Spanish AND English when the market warrants it):
-1. Recent surveys / industry reports on the ICP's top priorities, budgets and buying criteria this year.
-2. What these buyers complain about in public: Reddit threads, LinkedIn posts, forums, G2/Capterra/TrustRadius reviews of the tools they currently use.
-3. The status quo: which tools, vendors, agencies, spreadsheets or manual workarounds this ICP uses TODAY to handle the pains the company solves — and recent complaints, pricing changes or churn signals around them.
-4. Macro pressure on the ICP: regulation, layoffs/hiring, budget cuts, AI adoption, currency/economic shifts in their market that change what they prioritize.
-5. Common sales objections reported in this category (pricing pushback, "we already have a tool", security/compliance concerns, ROI skepticism).
-
-SYNTHESIZE — MAXIMUM 4 SHIFTS (3 sharp ones beat 4 diluted ones; never pad). Each shift must pass ALL of these filters:
-- pain: a pain the ICP actually voices, grounded in evidence you found (a stat, a quoted complaint, a report finding). Not a guess.
-- current_fix: how these buyers solve it TODAY — name the actual tool, vendor category or workaround (e.g. "planillas + un VA", "HubSpot básico", "agencias de prospección"). Never leave it abstract.
-- your_move: the play for the sales conversation — one specific thing the rep should say, ask or show, tied to THIS company's value proposition. Imperative, tú-form ("Pregunta...", "Muestra...", "Abre con..."). Actionable in the next call, not strategy fluff.
-- direction: judged from the evidence. "rising" = mentions/urgency growing in the window; "stable" = persistent, unchanged; "fading" = losing steam or being solved by the market.
-- objection + response (include whenever the evidence supports them): the pushback this shift creates against this company's offer, and the strongest honest counter a rep can give.
-
-SPECIFICITY IS MANDATORY: names, numbers, dates. Write "el 62% de los directores comerciales (encuesta X, mayo 2026)" not "muchos directores". Name tools and competitors. Vague output is a failure.
-
-SOURCES: every "url" must be a REAL URL copied verbatim from your web_search results. NEVER construct, guess, complete or invent a URL. If you cannot back a shift with at least one real source, drop the shift or omit its sources array. Max 2 sources per shift; pick the most authoritative.
-
-LANGUAGE & TONE: all user-facing string values in neutral Latin-American Spanish (tú, never vos: "pregunta", "muestra"). Enum values in English lowercase. Short, punchy, within every length cap — this feeds a minimal UI ("un vaso de agua, no un océano"). No filler, no repeated pains.
-
-ORDER: list "rising" shifts first, then "stable", then "fading".
-
-OUTPUT: return ONLY the JSON object defined in the output specification. No prose before or after.`,
-    outputSpec: `Return ONLY a single JSON object with EXACTLY this structure (no markdown fences, no prose):
-
-{
-  "v": 2,
-  "headline": "string, <=110 chars — el cambio más importante del mes en la conducta de tus compradores, en español",
-  "summary": "string, 1-2 frases cortas en español",
-  "key_points": ["2-4 puntos muy cortos en español, <=90 chars cada uno"],
-  "shifts": [
-    {
-      "pain": "string, <=100 chars — el dolor que el comprador target está sintiendo, en español",
-      "current_fix": "string, <=110 chars — cómo lo resuelve HOY (herramienta/workaround/competidor con nombre), en español",
-      "your_move": "string, <=130 chars — tu jugada en la conversación de venta, imperativo en tú ('Pregunta...', 'Muestra...'), en español",
-      "direction": "one of: \\"rising\\" | \\"stable\\" | \\"fading\\" (English lowercase, exactly one of these three)",
-      "objection": "string, <=110 chars — la objeción que este cambio genera contra tu oferta, en español (OPTIONAL: omit the key if no evidence)",
-      "response": "string, <=130 chars — cómo responder esa objeción en la llamada, en español (OPTIONAL: omit the key if no evidence)",
-      "sources": [
-        { "url": "real URL copied verbatim from web_search results — NEVER constructed or invented", "title": "string, <=60 chars" }
-      ]
-    }
-  ]
-}
-
-HARD RULES:
-- "shifts": max 4 items (3 sharp ones are better than 4 diluted ones). Order: "rising" first, then "stable", then "fading". If you found nothing solid, return fewer items — never pad with generic content.
-- "sources": max 2 per shift. Omit the array entirely for a shift rather than inventing a URL.
-- Field names, nesting and enum spellings must match this spec EXACTLY — the renderer maps them 1:1.
-- Every user-facing string value in neutral Latin-American Spanish (tú, not vos). Enum values in English lowercase.
-- Respect every length cap. No emojis, no markdown inside string values.`,
-  },
-  {
-    key: "market_snapshot",
-    title: "Market Snapshot",
-    cadence: "monthly",
-    researchPrompt: `TASK: Monthly "Market Snapshot" — an at-a-glance read of the market category this company sells into: how fast it grows, where demand is heading, how crowded it is, how mature it is, and which terms are trending right now. The reader is a sales leader who will look at this for 10 seconds. Numbers first, words second.
-
-Use the company-context block above (industry, ICP, value proposition, region) to define THE market: the specific category and geography where this company's ICP buys. A generic "AI is growing" finding is useless; "software de prospección B2B en LatAm creció 14% en 2025" is what we want. Search in both English and Spanish when the company's market is Latin American.
-
-WHAT TO SEARCH (web_search; prefer sources from the last 60 days; market-size/growth figures may come from reports up to 12 months old if nothing fresher exists):
-
-1. MARKET GROWTH — the category's growth rate (annual % or CAGR) for the company's specific category and region. Queries like "[category] market growth rate 2026", "[category] market size CAGR [region]", "mercado de [categoría] crecimiento [región]". Prefer named, citable sources (analyst firms, industry reports, credible trade press). Capture the exact figure, the period it covers, and who published it.
-
-2. DEMAND TREND — is buyer demand accelerating, stable, or declining RIGHT NOW? Look for signals from the last 1-2 months: search-interest commentary, funding rounds in the category, adoption or spending surveys, hiring for related roles, analyst notes. Base the direction on at least one concrete, dated signal.
-
-3. COMPETITIVE INTENSITY — how crowded is the space? Count of notable active players, recent entrants, price pressure, feature commoditization, M&A/consolidation news. Convert your read into a 0-100 score (0 = no real competition, 50 = healthy competitive field, 100 = saturated/commoditized) and justify it in one short note naming the evidence.
-
-4. MATURITY STAGE — classify the category as emerging (new, few players, category still being defined), growth (fast expansion, new entrants, rising budgets), mature (established, slow growth, stable players), or consolidating (M&A wave, players merging/exiting). Infer from what you actually found in 1-3 and say why in the note.
-
-5. TRENDING TERMS ("qué está de moda") — the 5-8 terms, topics, technologies, or buzzwords with visible momentum in this market right now: what buyers search for, what vendors suddenly all talk about, what shows up in recent category articles and reports. For each, judge its momentum: up (rising), flat (steady presence), down (fading). Every term must be grounded in something you actually found this session — a report, article, or repeated recent mention — not your prior knowledge alone. Keep each term short (a name, not a sentence) and relevant to what THIS company sells or its ICP cares about.
-
-SYNTHESIS RULES:
-- Be specific: names, numbers, dates. Each metric note (≤90 chars) should carry its evidence, e.g. "CAGR 2024-2029 según Statista, mar 2026" or "3 entrantes nuevos y 2 adquisiciones en 6 meses".
-- The four metrics are the headline act; write notes telegraphically, not as chained sentences.
-- If you cannot find defensible data for one of the four metrics, OMIT that metric object entirely. Never invent or extrapolate a number you did not find.
-- The headline is the month's market read in one line (a number plus a direction beats an adjective).
-- SOURCES: every "url" must be a REAL URL copied verbatim from your web_search results — never constructed, guessed, or "cleaned up". Max 4; pick those that back the growth figure and the intensity/maturity reads.
-- All user-facing string values in neutral Latin-American Spanish (tú, not vos). Enum values exactly as specified, English lowercase.
-- Anti-ocean: fewer, sharper items. Respect every cap in the output spec.`,
-    outputSpec: `Return ONLY a single JSON object with EXACTLY this structure — no markdown fences, no commentary before or after:
-
-{
-  "v": 2,
-  "headline": "string, Spanish, ≤110 chars — the month's market read in one line, ideally with the key number",
-  "summary": "string, Spanish, 1-2 frases, ≤220 chars",
-  "key_points": ["2-4 puntos muy cortos, Spanish, ≤80 chars each"],
-  "metrics": {
-    "growth": {
-      "value": "string ≤20 chars — short figure, e.g. '+14% anual' or '12.4% CAGR'",
-      "note": "string, Spanish, ≤90 chars — where the figure comes from (source + date) or its scope"
-    },
-    "demand": {
-      "direction": "accelerating" | "stable" | "declining",
-      "note": "string, Spanish, ≤90 chars — the concrete dated signal behind the call"
-    },
-    "intensity": {
-      "score": integer 0-100 (0 = no real competition, 50 = healthy field, 100 = saturated),
-      "note": "string, Spanish, ≤90 chars — players/entrants/pressure justifying the score"
-    },
-    "maturity": {
-      "stage": "emerging" | "growth" | "mature" | "consolidating",
-      "note": "string, Spanish, ≤90 chars — why this stage"
-    }
-  },
-  "trending": [
-    { "term": "string ≤30 chars — término o tema de moda", "momentum": "up" | "flat" | "down" }
-  ],
-  "sources": [
-    { "url": "real URL copied verbatim from web_search results — never constructed", "title": "string ≤60 chars" }
-  ]
-}
-
-HARD RULES:
-- "trending": max 8 items (5-8 ideal). "sources": max 4 items.
-- If you found no defensible data for growth, demand, intensity, or maturity, OMIT that metric object entirely (do not output empty strings, nulls, or guessed values). Include "metrics" only with the sub-objects you can back.
-- Enum values EXACTLY as written above, English lowercase: direction ∈ accelerating|stable|declining; stage ∈ emerging|growth|mature|consolidating; momentum ∈ up|flat|down.
-- "score" is a bare integer (no quotes). All length caps are hard limits.
-- All user-facing string values in neutral Latin-American Spanish; no English mixed in except established product/tech terms.`,
-  },
-  {
-    key: "future_innovations",
-    title: "Future Innovations",
-    cadence: "monthly",
+    // El análisis de mercado FUNDACIONAL (2026-09-23): no es una noticia ni un
+    // segmento más del pulso. Se genera al confirmar el contexto, el usuario lo
+    // revisa y lo confirma, y de él sale el plan de señales del Radar (un
+    // detector por señal). Lectura de dos minutos, todo accionable.
+    key: "market_analysis",
+    title: "Análisis de mercado para vender",
+    cadence: "quarterly",
     researchPrompt: `ROLE
-You are a technology-foresight analyst writing the monthly "Future Innovations" section of an intelligence hub for the company described in the context block above. Your job is NOT to report news. It is to project which emerging innovations will disrupt or reshape THIS company's value proposition within the next 6-18 months, so the company can start preparing today instead of reacting when it is already late.
+You are the head of go-to-market strategy of this seller, writing the ONE market analysis their team will act on this quarter. It is not a report to "know more about the market": every line must change who they target, what signal they hunt, or what they say. The seller reads it in two minutes, confirms it, and the platform turns it into a plan of buying-signal detectors (the "Radar") and into campaigns. Anything that cannot become an action is noise — leave it out.
 
-WHAT TO SEARCH (use web_search extensively; run several distinct searches, in English and in Spanish where useful)
-- Recency window (monthly cadence): anchor every projection in concrete developments published within the LAST 90 DAYS — announcements, funding rounds, product launches or betas, research papers, patents, pilot deployments, regulatory calendars. Older sources may only serve as supporting background.
-- Search along these vectors, always filtered through the company's industry, ICP, and value proposition from the context block:
-  1. Emerging technologies or product categories that could replace, commoditize, or supercharge what this company sells.
-  2. What well-funded startups, big-tech platforms, and adjacent players are building toward this company's space (funding rounds, public roadmaps, betas, hiring signals).
-  3. Regulatory or standards changes with announced future effective dates that will change what this company's ICP buys or must comply with.
-  4. Shifts in how the ICP operates (new tools, buying behavior, cost structures) that would change what they expect from a vendor like this company.
-- Prefer primary sources: official announcements, regulator sites, funding databases, reputable trade press. Avoid SEO listicles and generic trend roundups.
+INPUT
+The company-context block above is ground truth: what they sell and to whom (each offering says its segment), their current customers, competitors and why they win, the buying committee, the technographics of the ideal customer, the pains, the buying signals they already declared (with where each one is visible), what the customer does today without them, and who is NOT a fit. Research only inside the target countries of the context.
 
-WHAT TO SYNTHESIZE
-- Select 2-4 horizon items (NEVER pad to 4 — fewer, sharper items beat volume). Each must pass this bar: a specific, nameable development — a named company, product, technology, or regulation — with at least one number or date (funding amount, launch date, effective date, benchmark, adoption figure).
-- For each item decide:
-  - window: "6-12" or "12-18" months until it materially affects this company. Base it on announced dates, funding stage, or deployment maturity — not intuition.
-  - likelihood: "high" = already shipping or regulated with a set date, or multiple independent signals; "medium" = strong momentum and real bets but uncertain timing; "low" = early but potentially decisive (include at most ONE low item, and only if ignoring it would be costly).
-  - impact: how it specifically threatens or reshapes THIS company's value proposition — name the affected offering or ICP segment, not the world in general.
-  - prepare: ONE concrete action the company can start THIS MONTH — a capability to build, a pilot to run, a partnership to open, a dataset to collect, a certification to begin. It must be startable now, before the wave arrives.
-- Reject generic trends ("AI keeps advancing", "digitalization is growing"). Every item must be specific enough that the reader could search its name and find your sources.
+WHAT TO SEARCH (several distinct web_search queries, Spanish and English)
+1. Size and shape of the demand in the target countries × target industries: number of companies, growth, regulation or budget cycles that open or close the window. Only figures you actually find, with their source.
+2. Which sub-segments are buying NOW and why (a regulation with a deadline, a wave of funding, a technology migration, a crisis that makes the pain urgent).
+3. Public, observable events that precede a purchase of THIS offering: job postings, leadership changes, funding, tenders, website/technology changes, expansions. These become the Radar's detectors, so each must be visible from outside and tied to a source where it can be seen.
+4. The competitors named in the context (and the status quo): where they win, where they are weak right now, what their customers complain about.
+5. Real companies in the target countries that look like the seller's best current customers (same industry, size, model) — never a current customer, never a competitor, never an excluded company.
 
-SOURCES (hard rule)
-- Every source URL must be a REAL URL copied verbatim from your web_search results. NEVER construct, guess, shorten, or invent a URL. Attach 1-2 sources per item, choosing the most authoritative or primary ones.
-
-OUTPUT
-- Return ONLY the JSON object defined in the output specification. All user-facing string values in neutral Latin-American Spanish (tú form); enum values exactly as specified, in English lowercase. Respect every length cap. Do not use emojis or markdown inside strings.`,
-    outputSpec: `Return EXACTLY this JSON structure — no markdown fences, no commentary, no extra keys:
-
+HOW TO WRITE
+- One general analysis across all the offerings — do NOT write a section per segment. If offerings target different segments, the prioritization below is where that shows.
+- Prioritize ruthlessly: at most 3 segments, 4-8 signals, 3-5 actions. Fewer and sharper beats complete.
+- Every figure, company and event must come from your searches or from the context. When there is no public figure, say "Sin dato público" instead of estimating.
+- The signals are the most important output: each one must be concrete (a fact that happens to a company), observable (you can say where it shows up), and mapped to the detector method that can find it.`,
+    outputSpec: `Return ONLY a single JSON object with EXACTLY this structure — no markdown fences, no commentary:
 {
   "v": 2,
-  "headline": "Spanish string, max 110 chars. La señal de futuro más importante del mes, concreta (nombre propio + fecha o cifra).",
-  "summary": "Spanish string, 1-2 frases, max 220 chars. Panorama del mes en innovación relevante para la empresa.",
-  "key_points": ["Spanish strings, 2-4 items, max 80 chars each. Puntos muy cortos."],
-  "horizons": [
+  "headline": "≤ 120 chars, Spanish: the one market read that should change how this seller sells this quarter",
+  "summary": "2-3 sentences, Spanish, ≤ 360 chars: where the demand is, why now, and what to do first",
+  "segments": [
     {
-      "innovation": "Spanish string, max 80 chars. Nombre concreto de la innovación, tecnología o cambio; incluye el nombre propio (empresa, producto o regulación).",
-      "window": "one of exactly: \\"6-12\\" | \\"12-18\\" — months until it materially affects the company",
-      "impact": "Spanish string, max 120 chars. Cómo afecta la propuesta de valor de ESTA empresa; menciona la oferta o segmento ICP afectado.",
-      "prepare": "Spanish string, max 130 chars. Qué empezar a construir o probar HOY: una sola acción concreta, iniciable este mes.",
-      "likelihood": "one of exactly: \\"high\\" | \\"medium\\" | \\"low\\"",
-      "sources": [
-        { "url": "REAL http(s) URL copied verbatim from web_search results — never constructed or invented", "title": "Spanish or original-language string, max 60 chars. Nombre de la fuente." }
-      ]
+      "name": "≤ 70 chars, Spanish: the sub-segment (industry + size + country when relevant)",
+      "priority": 1,
+      "why_now": "≤ 170 chars, Spanish: the concrete reason this segment buys now (with the fact behind it)",
+      "size_hint": "≤ 90 chars, Spanish: how many companies / how big, WITH its source name, or 'Sin dato público'",
+      "pain": "≤ 120 chars, Spanish: the pain that opens the conversation in this segment",
+      "angle": "≤ 150 chars, Spanish: the opening angle for campaigns",
+      "countries": ["canonical English country names from the context"],
+      "offering": "which of the seller's offerings fits this segment (name as in the context)"
     }
-  ]
+  ],
+  "signals": [
+    {
+      "signal": "≤ 80 chars, Spanish: an observable fact that happens to a company (e.g. 'Abrió vacantes de ejecutivos de ventas')",
+      "evidence": "≤ 90 chars, Spanish: where it is visible (LinkedIn Jobs, prensa, portal de compras públicas, su sitio web, Google Maps…)",
+      "why": "≤ 150 chars, Spanish: why this fact means they need the seller now",
+      "detector_kind": "news | tenders | hiring | technographics | site_probe | funding | leadership | growth | presence | website_visitors",
+      "segment": "the segment name above it applies to, or 'Todos'",
+      "priority": "high | medium"
+    }
+  ],
+  "lookalikes": {
+    "traits": ["3-5 short Spanish phrases: what the best-fit companies have in common (≤ 90 chars each)"],
+    "examples": [
+      { "name": "real company found in search", "domain": "company.com or empty", "country": "canonical English name", "why": "≤ 120 chars, Spanish: why it fits" }
+    ]
+  },
+  "competition": [
+    { "competitor": "name as in the context, or 'Status quo'", "where_they_win": "≤ 120 chars", "where_you_win": "≤ 120 chars", "attack_angle": "≤ 150 chars, Spanish: how to win deals against them now" }
+  ],
+  "actions": [
+    { "action": "≤ 110 chars, Spanish, imperative verb first", "why": "≤ 150 chars", "module": "radar | campaign | search | context", "impact": "alto | medio" }
+  ],
+  "sources": [ { "url": "real URL from web_search", "title": "≤ 60 chars" } ]
 }
-
-Hard rules:
-- "horizons": 2 to 4 items MAXIMUM. Never pad to 4 — fewer, sharper items.
-- "sources": 1-2 per horizon item.
-- Order "horizons" by "window" ("6-12" first, then "12-18"), and within each window by likelihood (high before medium before low).
-- Enum values must be EXACTLY "6-12", "12-18", "high", "medium", "low" — English lowercase, they map to CSS classes.
-- All other user-facing string values in neutral Latin-American Spanish (tú). No emojis. No markdown inside strings.
-- Omit a weak item entirely rather than inventing data to fill a field.`,
+Caps: segments ≤ 3 (priority 1 = attack first), signals 4-8, lookalikes.examples ≤ 6, competition ≤ 4, actions 3-5, sources ≤ 8.`,
   },
 ];
 
 const SECTION_MAP = new Map(SECTIONS.map((s) => [s.key, s]));
+
+// Keep in sync with js/credit-costs.js (market_analysis).
+const MARKET_ANALYSIS_COST = 8;
 
 // ── Claude model selection ───────────────────────────────────────────────────
 //
@@ -679,6 +562,19 @@ interface IntakeData {
   competitors:            { name?: string; domain?: string }[] | null;
   commercial_model:       string | null;
   commercial_deal_size:   string | null;
+  // Contexto v3 (2026-09-23)
+  commercial_sales_cycle:   string | null;
+  company_offerings:        { name?: string; for_whom?: string; problem?: string; price?: string }[] | null;
+  current_customers:        { name?: string; domain?: string; industry?: string }[] | null;
+  icp_revenue_ranges:       string[] | null;
+  buying_committee:         Record<string, { titles?: string; cares?: string }> | null;
+  icp_tech_uses:            string[] | null;
+  icp_tech_gaps:            string[] | null;
+  icp_pains:                { pain?: string; persona?: string; evidence?: string }[] | null;
+  icp_signals:              { signal?: string; evidence?: string }[] | null;
+  icp_current_alternatives: string | null;
+  icp_excluded_industries:  string[] | null;
+  excluded_companies:       string[] | null;
 }
 
 function buildCompanyContext(intake: IntakeData): string {
@@ -691,6 +587,18 @@ function buildCompanyContext(intake: IntakeData): string {
   if (intake.company_website)        lines.push(`Website: ${intake.company_website}`);
   if (intake.company_about)          lines.push(`About: ${intake.company_about}`);
   if (intake.company_solutions)      lines.push(`Products/Solutions: ${intake.company_solutions}`);
+  const rowsOf = <T,>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v.filter((x) => x && typeof x === "object") : []);
+  const offerings = rowsOf(intake.company_offerings).filter((o) => o.name);
+  if (offerings.length) {
+    lines.push("Offerings (each with the segment it is for):");
+    for (const o of offerings.slice(0, 8)) {
+      lines.push(`- ${o.name}${o.for_whom ? ` → for: ${o.for_whom}` : ""}${o.problem ? ` | solves: ${o.problem}` : ""}${o.price ? ` | price: ${o.price}` : ""}`);
+    }
+  }
+  const customers = rowsOf(intake.current_customers).filter((c) => c.name);
+  if (customers.length) {
+    lines.push(`Current customers (best first — find companies LIKE these; never propose them as prospects): ${customers.slice(0, 12).map((c) => [c.name, c.domain, c.industry].filter(Boolean).join(" · ")).join("; ")}`);
+  }
 
   lines.push("", "=== IDEAL CUSTOMER PROFILE (ICP) ===");
   const list = (v: string[] | null) => (Array.isArray(v) && v.length ? v.join(", ") : "");
@@ -704,15 +612,37 @@ function buildCompanyContext(intake: IntakeData): string {
   // Los países objetivo acotan TODO el research del hub: sin esto los agentes
   // analizan un mercado que al vendedor no le sirve.
   if (geos)       lines.push(`Target Geographies (research and benchmarks MUST focus on these markets): ${geos}`);
-  if (intake.icp_pain_points)   lines.push(`ICP Pain Points: ${intake.icp_pain_points}`);
-  if (intake.icp_buying_triggers) lines.push(`Buying Triggers: ${intake.icp_buying_triggers}`);
+  if (list(intake.icp_revenue_ranges)) lines.push(`Target annual revenue (USD): ${list(intake.icp_revenue_ranges)}`);
+  const committee = intake.buying_committee && typeof intake.buying_committee === "object" ? intake.buying_committee : {};
+  const roleLabel: Record<string, string> = { decision_maker: "Decides and signs", user: "Uses it daily", blocker: "Can stall the purchase" };
+  for (const [role, label] of Object.entries(roleLabel)) {
+    const r = committee[role];
+    if (r && (r.titles || r.cares)) lines.push(`Buying committee — ${label}: ${[r.titles, r.cares].filter(Boolean).join(" — ")}`);
+  }
+  if (list(intake.icp_tech_uses)) lines.push(`Technology the ideal customer USES: ${list(intake.icp_tech_uses)}`);
+  if (list(intake.icp_tech_gaps)) lines.push(`Technology the ideal customer LACKS (opportunity): ${list(intake.icp_tech_gaps)}`);
+  const pains = rowsOf(intake.icp_pains).filter((p) => p.pain);
+  if (pains.length) {
+    lines.push("ICP Pain Points:");
+    for (const p of pains.slice(0, 6)) lines.push(`- ${p.pain}${p.persona ? ` (felt by ${p.persona})` : ""}${p.evidence ? ` | visible as: ${p.evidence}` : ""}`);
+  } else if (intake.icp_pain_points) lines.push(`ICP Pain Points: ${intake.icp_pain_points}`);
+  if (intake.icp_current_alternatives) lines.push(`How the customer solves it today without the seller (the real status quo competitor): ${intake.icp_current_alternatives}`);
+  const signals = rowsOf(intake.icp_signals).filter((x) => x.signal);
+  if (signals.length) {
+    lines.push("Buying signals declared by the seller (observable fact → where it is visible):");
+    for (const x of signals.slice(0, 8)) lines.push(`- ${x.signal}${x.evidence ? ` → ${x.evidence}` : ""}`);
+  } else if (intake.icp_buying_triggers) lines.push(`Buying Triggers: ${intake.icp_buying_triggers}`);
   if (intake.icp_disqualifiers)   lines.push(`Not a fit: ${intake.icp_disqualifiers}`);
+  if (list(intake.icp_excluded_industries)) lines.push(`Industries to never prospect: ${list(intake.icp_excluded_industries)}`);
+  if (list(intake.excluded_companies)) lines.push(`Companies to never propose: ${list(intake.excluded_companies)}`);
   const competitors = Array.isArray(intake.competitors)
-    ? intake.competitors.map((c) => [c?.name, c?.domain].filter(Boolean).join(" — ")).filter(Boolean)
+    ? (intake.competitors as { name?: string; domain?: string; differentiator?: string }[])
+      .map((c) => [c?.name, c?.domain, c?.differentiator ? `why the seller wins: ${c.differentiator}` : ""].filter(Boolean).join(" — ")).filter(Boolean)
     : [];
   if (competitors.length) lines.push(`Direct competitors named by the seller (track these in the competitor sections): ${competitors.join("; ")}`);
   if (intake.commercial_model)     lines.push(`Business model: ${intake.commercial_model}`);
   if (intake.commercial_deal_size) lines.push(`Average deal size: ${intake.commercial_deal_size}`);
+  if (intake.commercial_sales_cycle) lines.push(`Sales cycle: ${intake.commercial_sales_cycle}`);
 
   lines.push("", "=== VALUE PROPOSITION ===");
   if (intake.value_problem_solved) lines.push(`Problem Solved: ${intake.value_problem_solved}`);
@@ -735,7 +665,7 @@ function sleep(ms: number) {
 
 function nextRefreshAt(cadence: string): Date {
   const now = new Date();
-  const OFFSETS: Record<string, number> = { daily: 1, weekly: 7, monthly: 30 };
+  const OFFSETS: Record<string, number> = { daily: 1, weekly: 7, monthly: 30, quarterly: 90 };
   return new Date(now.getTime() + (OFFSETS[cadence] ?? 1) * 24 * 60 * 60 * 1000);
 }
 
@@ -761,13 +691,14 @@ async function callAi(
   model: string,
   systemPrompt: string,
   userPrompt: string,
+  budget: { maxTokens: number; webSearch: number } = { maxTokens: 8192, webSearch: 5 },
 ): Promise<string> {
   const res = await callLLM({
     engine,
     system: systemPrompt,
     user: userPrompt,
-    maxTokens: 8192,
-    webSearch: 5,
+    maxTokens: budget.maxTokens,
+    webSearch: budget.webSearch,
     // The section prompts were written against the older tool version and its
     // unfiltered result set; keep them on it so grounding does not shift.
     claudeWebSearchTool: "web_search_20250305",
@@ -838,15 +769,20 @@ Search the web now and produce the JSON for this segment, tailored to THIS compa
     return parsed;
   }
 
+  // El análisis de mercado es el reporte más ancho: más búsquedas y más
+  // salida que un segmento del pulso.
+  const budget = section.key === "market_analysis"
+    ? { maxTokens: 12000, webSearch: 8 }
+    : { maxTokens: 8192, webSearch: 5 };
   let parsed: GeneratedContent;
   try {
-    parsed = extractJson(await callAi(engine, model, systemPrompt, userPrompt));
+    parsed = extractJson(await callAi(engine, model, systemPrompt, userPrompt, budget));
   } catch (firstErr) {
     // A model turn that spends its whole token budget on web-search reasoning
     // and gets cut off before ever emitting JSON produces pure prose with no
     // "{" at all — retry once before failing the section outright.
     console.warn(`[gen] ${section.key}: first attempt failed (${firstErr instanceof Error ? firstErr.message : firstErr}), retrying once`);
-    parsed = extractJson(await callAi(engine, model, systemPrompt, userPrompt));
+    parsed = extractJson(await callAi(engine, model, systemPrompt, userPrompt, budget));
   }
   // Generated with the v2 prompts — stamp the envelope version if the model
   // omitted it, so the frontend routes it to the segment renderer.
@@ -884,7 +820,10 @@ async function runGeneration(
       value_problem_solved, value_proposition, value_success_cases,
       icp_countries, icp_industry_tags, icp_employee_ranges, icp_titles, icp_seniorities,
       icp_buying_triggers, icp_disqualifiers, competitors,
-      commercial_model, commercial_deal_size
+      commercial_model, commercial_deal_size, commercial_sales_cycle,
+      company_offerings, current_customers, icp_revenue_ranges, buying_committee,
+      icp_tech_uses, icp_tech_gaps, icp_pains, icp_signals, icp_current_alternatives,
+      icp_excluded_industries, excluded_companies
     `)
     .eq("user_id", userId)
     .maybeSingle();
@@ -894,7 +833,16 @@ async function runGeneration(
     return;
   }
 
-  const companyContext = buildCompanyContext(intake as IntakeData);
+  // El análisis de mercado confirmado es el foco del pulso: los segmentos
+  // diarios y semanales investigan dentro de lo que ahí se priorizó.
+  const { data: analysisRow } = await supabase
+    .from("intelligence_hub_reports")
+    .select("content, status")
+    .eq("user_id", userId)
+    .eq("section_key", "market_analysis")
+    .maybeSingle();
+  const companyContext = buildCompanyContext(intake as IntakeData) +
+    (sectionKeys.includes("market_analysis") ? "" : buildAnalysisContext(analysisRow?.status === "ready" ? analysisRow.content : null));
 
   const sections = sectionKeys
     .map((k) => SECTION_MAP.get(k))
@@ -989,6 +937,23 @@ async function runGeneration(
   }
 }
 
+// El análisis de mercado, compacto, como foco de los segmentos del pulso.
+// deno-lint-ignore no-explicit-any
+function buildAnalysisContext(content: any): string {
+  if (!content || typeof content !== "object") return "";
+  const lines: string[] = ["", "=== MARKET ANALYSIS CONFIRMED FOR THIS QUARTER (focus your research on these priorities) ==="];
+  if (typeof content.headline === "string" && content.headline) lines.push(`Read: ${content.headline}`);
+  // deno-lint-ignore no-explicit-any
+  for (const sg of (Array.isArray(content.segments) ? content.segments : []).slice(0, 3) as any[]) {
+    if (sg && sg.name) lines.push(`- Priority segment: ${sg.name}${sg.why_now ? ` — ${sg.why_now}` : ""}`);
+  }
+  // deno-lint-ignore no-explicit-any
+  for (const x of (Array.isArray(content.signals) ? content.signals : []).slice(0, 6) as any[]) {
+    if (x && x.signal) lines.push(`- Buying signal: ${x.signal}${x.evidence ? ` (${x.evidence})` : ""}`);
+  }
+  return lines.length > 2 ? lines.join("\n") : "";
+}
+
 // Resumen compacto del Industry Insight Digest que se anexa al contexto del
 // agente de Prospecting Recommendations (sus recomendaciones deben salir de
 // los insights del día, no de una búsqueda independiente).
@@ -1049,17 +1014,25 @@ Deno.serve(withLlmContext(async (req: Request) => {
   if (!userId) return json({ error: "user_id required" }, 400, headers);
 
   const triggeredBy = body.triggered_by ?? "manual";
+  // El análisis de mercado nunca entra en una corrida "todo": solo se genera
+  // cuando se pide por su nombre (al confirmar el contexto o con su botón).
+  const pulseKeys = SECTIONS.filter((s) => s.key !== "market_analysis").map((s) => s.key);
   const defaultSections = triggeredBy === "onboarding"
     ? SECTIONS.filter((s) => s.cadence === "daily").map((s) => s.key)
-    : SECTIONS.map((s) => s.key);
-  const requestedSections = body.sections ?? defaultSections;
+    : pulseKeys;
+  // Solo claves conocidas: un cliente viejo en caché aún pide los segmentos
+  // mensuales que se borraron el 2026-09-23, y no hay que cobrarlos.
+  const requestedSections = (body.sections ?? defaultSections).filter((k) => SECTION_MAP.has(k));
+  if (!requestedSections.length) return json({ error: "No hay segmentos válidos que generar." }, 400, headers);
 
   const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
   // Cobro por ítem (catálogo js/credit-costs.js): 2 créditos por sección con
   // el modelo por defecto (Haiku), 4 con un modelo premium (Opus/Sonnet). Solo
   // el trigger 'manual' cobra; onboarding/schedule son del sistema y van gratis.
-  if (triggeredBy === "manual") {
+  const wantsAnalysis = requestedSections.includes("market_analysis");
+  const pulseRequested = requestedSections.filter((k) => k !== "market_analysis");
+  if (triggeredBy === "manual" || (wantsAnalysis && !isServiceRole)) {
     const { data: chargeProfile } = await supabase
       .from("profiles")
       .select("preferred_claude_model, ai_engines")
@@ -1069,13 +1042,25 @@ Deno.serve(withLlmContext(async (req: Request) => {
     // to the other engines, so they always charge the base rate.
     const chargeEngine = resolveEngine("intel_hub", body.engine, chargeProfile?.ai_engines);
     const chargeModel = resolveModel(chargeProfile?.preferred_claude_model);
-    const perItem = (chargeEngine === "claude" && chargeModel !== DEFAULT_MODEL) ? 4 : 2;
-    const cost = requestedSections.length * perItem;
+    const premium = chargeEngine === "claude" && chargeModel !== DEFAULT_MODEL;
+    const perItem = premium ? 4 : 2;
+    // El análisis de mercado: el primero es gratis (es parte del arranque,
+    // como el primer plan del Radar); cada regeneración cuesta
+    // MARKET_ANALYSIS_COST (el doble con un modelo premium de Claude).
+    let analysisCost = 0;
+    if (wantsAnalysis) {
+      const { data: prev } = await supabase.from("intelligence_hub_reports")
+        .select("generated_at").eq("user_id", userId).eq("section_key", "market_analysis").maybeSingle();
+      analysisCost = prev?.generated_at ? MARKET_ANALYSIS_COST * (premium ? 2 : 1) : 0;
+    }
+    const pulseCost = triggeredBy === "manual" ? pulseRequested.length * perItem : 0;
+    const cost = pulseCost + analysisCost;
 
     // Atomic deduction (single guarded UPDATE) — no read-then-write race.
     // Returns the new balance, or null when the balance was insufficient.
-    const { data: newBalance, error: spendErr } = await supabase
-      .rpc("spend_credits", { p_user_id: userId, p_amount: cost });
+    const { data: newBalance, error: spendErr } = cost > 0
+      ? await supabase.rpc("spend_credits", { p_user_id: userId, p_amount: cost })
+      : { data: 0, error: null };
 
     if (spendErr || newBalance === null || newBalance === undefined) {
       const { data: credits } = await supabase
@@ -1089,11 +1074,11 @@ Deno.serve(withLlmContext(async (req: Request) => {
       );
     }
 
-    await supabase.from("credit_transactions").insert(
-      requestedSections.map((sk) => ({
-        user_id: userId, delta: -perItem, reason: "intel_hub_item", section_key: sk,
-      }))
-    );
+    const txs = (triggeredBy === "manual" ? pulseRequested : []).map((sk) => ({
+      user_id: userId, delta: -perItem, reason: "intel_hub_item", section_key: sk,
+    }));
+    if (analysisCost) txs.push({ user_id: userId, delta: -analysisCost, reason: "market_analysis", section_key: "market_analysis" });
+    if (txs.length) await supabase.from("credit_transactions").insert(txs);
   }
 
   const engine = await engineForUser(supabase, userId!, "intel_hub", body.engine);
