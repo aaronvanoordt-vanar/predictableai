@@ -4,32 +4,38 @@
    silencioso hasta el primer gesto del usuario (política de autoplay de
    los navegadores) y con botón de silencio persistido en localStorage.
 
-   Estética (reescrita el 2026-09-19): moderna, minimalista, AI native —
-   TEXTURA, no melodía ni ritmo. Tres decisiones que no hay que deshacer:
+   Estética (reescrita el 2026-09-23, a pedido del dueño: "parece el sonido
+   del mar, tiene que ser tecnológico, moderno"). Lo que sonaba a mar era la
+   capa de "aire": ruido rosado con un pasabanda barriendo lento, ganancia
+   que subía y bajaba y paneo de lado a lado — eso ES el sonido de una ola.
+   Reglas para no volver ahí ni a lo de antes:
 
-   1. NADA de ondas cuadradas ni de notas de una escala mayor. La versión
-      anterior disparaba tonos `square` en 880/1046.5/1318.5 Hz (La/Do/Mi):
-      eso es un arpegio, y un arpegio en onda cuadrada suena a consola de
-      8 bits. Los destellos de ahora son senoidales, cortos, mayormente
-      mojados en reverb y sobre parciales altos del mismo fundamental, así
-      que leen como brillo lejano y no como una melodía.
-   2. NADA de pulso a tempo fijo. El "latido" cada 1.7 s era un metrónomo.
-      El movimiento ahora es espectral: filtros y ganancias que derivan en
-      ventanas de 18-45 s, independientes entre sí, para que el lecho nunca
-      cierre un ciclo audible (tampoco es el LFO de "respiración" al
-      unísono de un pad de meditación, que fue lo que se quitó antes).
-   3. El cuerpo vive en 110-2000 Hz, no en 45 Hz. El zumbido sub-grave
-      anterior era inaudible en parlantes de laptop y casi inaudible en
-      audífonos — por eso "no se escuchaba" aunque el volumen estuviera
-      arriba. El sub sigue estando (piso cálido), pero encima hay un núcleo
-      armónico y una capa de aire filtrado en el rango donde el oído sí es
-      sensible. Además todo pasa por un limitador (DynamicsCompressor), que
-      es lo que permite subir el nivel sin que la suma de capas sature.
+   1. NADA de ruido continuo con barridos lentos (= olas) ni de reverb larga
+      y oscura como protagonista (= caverna/mar). El espacio lo da un eco
+      estéreo tipo ping-pong, corto y filtrado: suena a electrónica, no a
+      naturaleza. El ruido solo aparece en ráfagas de milisegundos (clics
+      digitales) o en barridos puntuales de la interfaz.
+   2. El cuerpo es un sintetizador: sierras desafinadas por un pasabajos
+      resonante que se abre y se cierra, con una leve compresión rítmica
+      ("sidechain") a 100 BPM. Es el pulso de la electrónica moderna, no un
+      metrónomo: no hay golpe ni clic en el tiempo fuerte.
+   3. NADA de ondas cuadradas ni arpegios (suenan a consola de 8 bits). Los
+      "datos" son blips senoidales de milisegundos con una caída de tono
+      (FM corta), dispersos con probabilidad sobre la rejilla de semicorcheas
+      y repetidos por el eco.
+   4. Todo pasa por un pasabajos maestro y un limitador. El pasabajos es lo
+      que permite el "apagado" al iniciar sesión (fadeOut): el sonido se
+      cierra y baja en ~1 s en vez de cortarse de golpe al cambiar de página.
 
-   Capas: sub (55 Hz) · núcleo armónico (octavas y quintas, sin terceras)
-   · aire (ruido filtrado con barrido lento y paneo estéreo) · destellos
-   dispersos. Todo con envío a una reverb de impulso generado. */
+   Capas: sub (55 Hz) · pad de sierras con filtro resonante y pulso · blips
+   de datos con eco ping-pong · clics digitales. API: window.AuthAmbience. */
 (function () {
+  'use strict';
+
+  var SOUND_KEY = 'pai_auth_sound';
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var coarsePointer = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+
   'use strict';
 
   var SOUND_KEY = 'pai_auth_sound';
@@ -55,21 +61,26 @@
   })();
 
   /* ── Cadena de audio ─────────────────────────────────────────────────
-     fuentes → (seco + envío a reverb) → master → limitador → salida.
-     El limitador es lo que deja subir el nivel general sin distorsión
-     cuando varias capas coinciden en fase. */
+     fuentes → (seco + envío al eco) → master → pasabajos maestro →
+     limitador → salida. */
   var ctx = null;
-  var master = null;       // volumen general
-  var reverb = null;       // convolver con impulso generado
+  var master = null;       // volumen general (lo baja fadeOut)
+  var masterLP = null;     // pasabajos maestro (lo cierra fadeOut)
+  var analyser = null;     // lo lee la señal viva de la IA (#ai-pulse)
+  var echo = null;         // entrada del eco ping-pong
   var ambienceBus = null;  // solo el lecho continuo (lo que sube/baja el botón)
   var ambienceBuilt = false;
   var enabled = localStorage.getItem(SOUND_KEY) !== 'off';
   var started = false;
+  var leaving = false;
   var lastTick = 0;
 
-  // Nivel del lecho. El valor viejo (0.075 sobre un master de 0.5) dejaba
-  // el zumbido en torno a -28 dBFS: literalmente inaudible con audífonos.
-  var AMBIENCE_LEVEL = 0.6;
+  var AMBIENCE_LEVEL = 0.55;
+  var BPM = 100;
+  var STEP = 60 / BPM / 4;         // semicorchea
+  // La menor pentatónica en registro alto: los blips nunca forman una
+  // melodía reconocible porque salen dispersos y al azar.
+  var DATA_NOTES = [880, 1046.5, 1174.66, 1318.51, 1567.98, 1760];
 
   function now() { return ctx.currentTime; }
 
@@ -80,84 +91,79 @@
     ctx = new AC();
 
     var limiter = ctx.createDynamicsCompressor();
-    limiter.threshold.value = -14;
-    limiter.knee.value = 12;
+    limiter.threshold.value = -12;
+    limiter.knee.value = 10;
     limiter.ratio.value = 8;
-    limiter.attack.value = 0.004;
-    limiter.release.value = 0.25;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.2;
     limiter.connect(ctx.destination);
+
+    masterLP = ctx.createBiquadFilter();
+    masterLP.type = 'lowpass';
+    masterLP.frequency.value = 18000;
+    masterLP.Q.value = 0.7;
+    masterLP.connect(limiter);
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    masterLP.connect(analyser);
 
     master = ctx.createGain();
     master.gain.value = 1;
-    master.connect(limiter);
+    master.connect(masterLP);
 
-    reverb = ctx.createConvolver();
-    reverb.buffer = buildImpulse(3.2, 2.6);
-    var reverbOut = ctx.createGain();
-    reverbOut.gain.value = 0.9;
-    reverb.connect(reverbOut).connect(master);
-
+    echo = buildPingPong(STEP * 3, 0.38); // corchea con puntillo
     return ctx;
   }
 
-  // Impulso sintético: ruido estéreo decreciendo en exponencial y oscurecido
-  // con un filtro de un polo. Es lo que da la cola espaciosa; sin ella todo
-  // suena seco y pequeño (parte de por qué la versión anterior sonaba a juego).
-  function buildImpulse(seconds, decay) {
-    var rate = ctx.sampleRate;
-    var len = Math.max(1, Math.floor(rate * seconds));
-    var buf = ctx.createBuffer(2, len, rate);
-    for (var ch = 0; ch < 2; ch++) {
-      var data = buf.getChannelData(ch);
-      var prev = 0;
-      for (var i = 0; i < len; i++) {
-        var white = Math.random() * 2 - 1;
-        prev = prev * 0.72 + white * 0.28;           // oscurece la cola
-        data[i] = prev * Math.pow(1 - i / len, decay);
-      }
-    }
-    return buf;
+  // Eco estéreo: izquierda y derecha se alimentan cruzadas, así cada
+  // repetición salta de lado. El filtro dentro del lazo oscurece cada vuelta.
+  function buildPingPong(time, feedback) {
+    var input = ctx.createGain();
+    var out = ctx.createGain(); out.gain.value = 0.7;
+    var dl = ctx.createDelay(2), dr = ctx.createDelay(2);
+    dl.delayTime.value = time; dr.delayTime.value = time;
+    var fb = ctx.createGain(); fb.gain.value = feedback;
+    var tone = ctx.createBiquadFilter();
+    tone.type = 'lowpass'; tone.frequency.value = 3800;
+    var hp = ctx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 300;
+    var merger = ctx.createChannelMerger(2);
+
+    input.connect(hp).connect(dl);
+    dl.connect(dr);
+    dr.connect(tone).connect(fb).connect(dl);
+    dl.connect(merger, 0, 0);
+    dr.connect(merger, 0, 1);
+    merger.connect(out).connect(master);
+    return input;
   }
 
-  // Ruido rosado aproximado (Voss simplificado): más grave y menos sibilante
-  // que el ruido blanco, que es lo que hace que la capa de aire lea como
-  // "sala de servidores" y no como estática de radio.
   function buildNoiseBuffer(seconds) {
     var rate = ctx.sampleRate;
     var len = Math.max(1, Math.floor(rate * seconds));
-    var buf = ctx.createBuffer(2, len, rate);
-    for (var ch = 0; ch < 2; ch++) {
-      var data = buf.getChannelData(ch);
-      var b0 = 0, b1 = 0, b2 = 0;
-      for (var i = 0; i < len; i++) {
-        var w = Math.random() * 2 - 1;
-        b0 = 0.99765 * b0 + w * 0.0990460;
-        b1 = 0.96300 * b1 + w * 0.2965164;
-        b2 = 0.57000 * b2 + w * 1.0526913;
-        data[i] = (b0 + b1 + b2 + w * 0.1848) * 0.22;
-      }
-    }
+    var buf = ctx.createBuffer(1, len, rate);
+    var data = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
     return buf;
   }
 
-  /* ── Utilidades de enrutado ─────────────────────────────────────────── */
-  // Conecta una fuente al destino con una proporción seco/reverb.
+  // Conecta una fuente al destino con una proporción seco/eco.
   function route(node, destination, wet) {
     var dry = ctx.createGain();
-    dry.gain.value = 1 - wet;
+    dry.gain.value = 1 - wet * 0.5;
     node.connect(dry).connect(destination);
     if (wet > 0) {
       var send = ctx.createGain();
       send.gain.value = wet;
-      node.connect(send).connect(reverb);
+      node.connect(send).connect(echo);
     }
   }
 
-  // Deriva continua de un AudioParam entre dos valores, con tramos de
-  // duración aleatoria: nunca repite el mismo ciclo, así que el lecho no
-  // "loopea" al oído aunque lleve minutos sonando.
+  // Deriva continua de un AudioParam entre dos valores con tramos de
+  // duración aleatoria: el timbre del pad cambia sin cerrar un ciclo audible.
   function drift(param, min, max, minSec, maxSec) {
     (function step() {
+      if (leaving) return;
       var target = min + Math.random() * (max - min);
       var dur = minSec + Math.random() * (maxSec - minSec);
       param.cancelScheduledValues(now());
@@ -168,100 +174,85 @@
   }
 
   /* ── El lecho continuo ──────────────────────────────────────────────── */
+  var pumpGain = null;
+
   function buildAmbience() {
     if (ambienceBuilt) return;
     ambienceBuilt = true;
 
     ambienceBus = ctx.createGain();
     ambienceBus.gain.value = 0.0001;
+    ambienceBus.connect(master);
+    // Envío post-fader al eco: al silenciar, también se apaga la cola.
+    var send = ctx.createGain(); send.gain.value = 0.18;
+    ambienceBus.connect(send).connect(echo);
 
-    // El bus se reparte DESPUÉS del fader: seco al master y envío a la reverb.
-    // Es importante que sea así y no que cada capa mande su propio envío por
-    // fuera del bus — con envíos pre-fader, silenciar solo bajaba la parte
-    // seca y la cola de la reverb seguía sonando indefinidamente.
-    var ambDry = ctx.createGain(); ambDry.gain.value = 0.78;
-    ambienceBus.connect(ambDry).connect(master);
-    // El envío va filtrado en agudos: reverberar el sub solo embarra la cola.
-    var ambSendHP = ctx.createBiquadFilter();
-    ambSendHP.type = 'highpass'; ambSendHP.frequency.value = 180;
-    var ambSend = ctx.createGain(); ambSend.gain.value = 0.5;
-    ambienceBus.connect(ambSendHP).connect(ambSend).connect(reverb);
+    // 1. Sub: piso discreto (los parlantes de laptop no lo reproducen).
+    var sub = ctx.createOscillator();
+    sub.type = 'sine'; sub.frequency.value = 55;
+    var subGain = ctx.createGain(); subGain.gain.value = 0.16;
+    sub.connect(subGain).connect(ambienceBus);
+    sub.start();
 
-    // 1. Sub: piso cálido, deliberadamente discreto. Subirlo no hace que la
-    //    página "suene más fuerte": los parlantes de laptop cortan por debajo
-    //    de ~150 Hz, así que esa energía no se oye y sí se come el margen del
-    //    limitador. El volumen percibido lo cargan el núcleo y el aire.
-    //    Dos senoidales muy cercanas para que batan.
-    var subFilter = ctx.createBiquadFilter();
-    subFilter.type = 'lowpass'; subFilter.frequency.value = 110;
-    var subGain = ctx.createGain(); subGain.gain.value = 0.13;
-    subFilter.connect(subGain).connect(ambienceBus);
-    [55, 55.13].forEach(function (f) {
+    // 2. Pad de sierras: La + Mi (quinta, sin tercera) en dos octavas,
+    //    desafinadas en pares para que el sonido sea ancho y "de sinte".
+    pumpGain = ctx.createGain(); pumpGain.gain.value = 1;
+    var padFilter = ctx.createBiquadFilter();
+    padFilter.type = 'lowpass'; padFilter.frequency.value = 600; padFilter.Q.value = 6;
+    var padGain = ctx.createGain(); padGain.gain.value = 0.085;
+    padFilter.connect(padGain).connect(pumpGain).connect(ambienceBus);
+    drift(padFilter.frequency, 320, 1600, 8, 18);
+    drift(padFilter.Q, 3, 9, 10, 22);
+    [[110, -9], [110, 9], [164.81, -6], [164.81, 6], [220, 0]].forEach(function (v, i) {
       var o = ctx.createOscillator();
-      o.type = 'sine'; o.frequency.value = f;
-      // 0.5 por oscilador: el par bate hasta sumar 1.0 y no más. Si cada uno
-      // sale a amplitud plena, el pico del sub dispara el limitador y hace
-      // "bombear" a todas las demás capas al ritmo del batido.
-      var g = ctx.createGain(); g.gain.value = 0.5;
-      o.connect(g).connect(subFilter); o.start();
-    });
-
-    // 2. Núcleo armónico: octavas y quintas sobre el mismo fundamental
-    //    (sin terceras → ni alegre ni triste, solo presencia). Cada parcial
-    //    deriva por su cuenta, así que el conjunto nunca "respira" al unísono.
-    var coreFilter = ctx.createBiquadFilter();
-    coreFilter.type = 'lowpass'; coreFilter.frequency.value = 900; coreFilter.Q.value = 0.6;
-    var coreGain = ctx.createGain(); coreGain.gain.value = 0.62;
-    coreFilter.connect(coreGain).connect(ambienceBus);
-    drift(coreFilter.frequency, 520, 1500, 14, 30);
-    [110, 164.81, 220, 329.63].forEach(function (f, i) {
-      var o = ctx.createOscillator();
-      o.type = 'sine'; o.frequency.value = f;
-      o.detune.value = (i % 2 ? 4 : -4);
-      var g = ctx.createGain();
-      g.gain.value = 0.22 / (1 + i * 0.5);
-      o.connect(g).connect(coreFilter);
+      o.type = 'sawtooth'; o.frequency.value = v[0]; o.detune.value = v[1];
+      var g = ctx.createGain(); g.gain.value = i === 4 ? 0.5 : 1;
+      var p = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+      if (p) { p.pan.value = v[1] < 0 ? -0.5 : v[1] > 0 ? 0.5 : 0; o.connect(g).connect(p).connect(padFilter); }
+      else o.connect(g).connect(padFilter);
       o.start();
-      drift(g.gain, 0.04, 0.24 / (1 + i * 0.5), 18, 42);
     });
 
-    // 3. Aire: ruido rosado en bucle, barrido de banda lento y paneo estéreo.
-    //    Es la capa que da el carácter "sistema encendido".
-    var noise = ctx.createBufferSource();
-    noise.buffer = buildNoiseBuffer(6);
-    noise.loop = true;
-    var airBand = ctx.createBiquadFilter();
-    airBand.type = 'bandpass'; airBand.frequency.value = 760; airBand.Q.value = 0.85;
-    var airTop = ctx.createBiquadFilter();
-    airTop.type = 'lowpass'; airTop.frequency.value = 3200;
-    var airGain = ctx.createGain(); airGain.gain.value = 0.62;
-    var airPan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
-    var airTail = airPan ? airGain.connect(airPan) : airGain;
-    noise.connect(airBand).connect(airTop).connect(airGain);
-    airTail.connect(ambienceBus);
-    noise.start();
-    drift(airBand.frequency, 380, 1900, 16, 38);
-    drift(airGain.gain, 0.36, 0.9, 11, 25);
-    if (airPan) drift(airPan.pan, -0.7, 0.7, 13, 29);
-
-    scheduleShimmer();
+    scheduleSequencer();
   }
 
-  // Destellos: granos senoidales cortísimos sobre parciales altos del mismo
-  // fundamental (no una escala), casi todo reverb. Suenan a brillo lejano,
-  // nunca a nota. Dispersos e irregulares a propósito.
-  var SHIMMER = [659.25, 880, 987.77, 1318.5, 1760, 2637];
-  function scheduleShimmer() {
-    if (Math.random() < 0.78) {
-      var f = SHIMMER[Math.floor(Math.random() * SHIMMER.length)];
-      grain(f, {
-        dur: 0.05 + Math.random() * 0.09,
-        gain: 0.09 + Math.random() * 0.06,
-        wet: 0.88,
-        pan: (Math.random() * 2 - 1) * 0.8
-      });
+  /* ── Secuenciador: pulso + blips de datos + clics ──────────────────────
+     Programa con anticipación (lookahead) sobre el reloj de audio, no con
+     setTimeout directo: así el ritmo no se tambalea si la pestaña se ocupa. */
+  var nextStepTime = 0;
+  var stepIndex = 0;
+  function scheduleSequencer() {
+    nextStepTime = now() + 0.1;
+    (function tick() {
+      if (leaving) return;
+      while (nextStepTime < now() + 0.25) {
+        playStep(stepIndex, nextStepTime);
+        nextStepTime += STEP;
+        stepIndex = (stepIndex + 1) % 64;
+      }
+      setTimeout(tick, 60);
+    })();
+  }
+
+  function playStep(i, t) {
+    // Pulso tipo sidechain: el pad baja un poco en cada negra y se recupera.
+    if (i % 4 === 0 && pumpGain) {
+      pumpGain.gain.cancelScheduledValues(t);
+      pumpGain.gain.setValueAtTime(0.55, t);
+      pumpGain.gain.setTargetAtTime(1, t + 0.02, STEP * 1.1);
     }
-    setTimeout(scheduleShimmer, 1500 + Math.random() * 3200);
+    if (!enabled) return;
+    // Blips de datos: más probables a contratiempo, nunca en todos los pasos.
+    var p = (i % 2 === 1) ? 0.16 : 0.07;
+    if (Math.random() < p) {
+      var f = DATA_NOTES[Math.floor(Math.random() * DATA_NOTES.length)];
+      blip(f, { at: t, gain: 0.05 + Math.random() * 0.04, pan: (Math.random() * 2 - 1) * 0.7, wet: 0.7 });
+    }
+    // Clics digitales: ruido de milisegundos, agudo, a los lados.
+    if (Math.random() < 0.09) {
+      click({ at: t + (Math.random() < 0.5 ? 0 : STEP / 2), gain: 0.05 + Math.random() * 0.05,
+              pan: (Math.random() * 2 - 1) * 0.9 });
+    }
   }
 
   function setAmbienceGain(target, rampSec) {
@@ -274,102 +265,130 @@
   }
 
   /* ── Bloques de los efectos puntuales ───────────────────────────────── */
-  // Grano senoidal con envolvente suave. Siempre `sine`: cualquier onda con
-  // armónicos duros (square/saw) devuelve el sonido a territorio chiptune.
-  function grain(freq, opts) {
-    if (!enabled || !ctx) return;
-    opts = opts || {};
-    var dur = opts.dur || 0.18;
-    var peak = opts.gain != null ? opts.gain : 0.08;
-    var t0 = now() + (opts.delay || 0);
-
-    var osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(freq, t0);
-    if (opts.sweepTo) osc.frequency.exponentialRampToValueAtTime(opts.sweepTo, t0 + dur);
-
-    var filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = opts.filterFreq || 5200;
-
-    var g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(peak, t0 + Math.min(0.02, dur * 0.35));
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-
-    var tail = g;
-    if (opts.pan != null && ctx.createStereoPanner) {
-      var p = ctx.createStereoPanner();
-      p.pan.value = opts.pan;
-      tail = g.connect(p);
-    }
-    osc.connect(filter).connect(g);
-    route(tail, master, opts.wet != null ? opts.wet : 0.5);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.1);
+  function panned(node, pan) {
+    if (pan == null || !ctx.createStereoPanner) return node;
+    var p = ctx.createStereoPanner();
+    p.pan.value = pan;
+    return node.connect(p);
   }
 
-  // Barrido de ruido rosado: los "whoosh" y el encendido.
-  function sweep(opts) {
+  // Blip: senoidal con una caída de tono rapidísima (el "tik" de un dato).
+  function blip(freq, opts) {
     if (!enabled || !ctx) return;
     opts = opts || {};
-    var dur = opts.dur || 0.8;
-    var t0 = now() + (opts.delay || 0);
-
-    var src = ctx.createBufferSource();
-    src.buffer = buildNoiseBuffer(dur + 0.1);
-
-    var filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.Q.value = opts.q || 0.7;
-    filter.frequency.setValueAtTime(opts.freqFrom || 240, t0);
-    filter.frequency.exponentialRampToValueAtTime(opts.freqTo || 2400, t0 + dur);
-
+    var dur = opts.dur || 0.09;
+    var t0 = opts.at != null ? opts.at : now() + (opts.delay || 0);
+    var osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq * (opts.bend || 1.5), t0);
+    osc.frequency.exponentialRampToValueAtTime(freq, t0 + 0.012);
+    if (opts.sweepTo) osc.frequency.exponentialRampToValueAtTime(opts.sweepTo, t0 + dur);
     var g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(opts.gain || 0.16, t0 + dur * 0.4);
+    g.gain.exponentialRampToValueAtTime(opts.gain || 0.08, t0 + 0.004);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g);
+    route(panned(g, opts.pan), master, opts.wet != null ? opts.wet : 0.4);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.05);
+  }
 
-    src.connect(filter).connect(g);
-    route(g, master, opts.wet != null ? opts.wet : 0.55);
+  // Clic: 6 ms de ruido por un pasaaltos.
+  var clickBuffer = null;
+  function click(opts) {
+    if (!enabled || !ctx) return;
+    if (!clickBuffer) clickBuffer = buildNoiseBuffer(0.02);
+    var t0 = opts.at != null ? opts.at : now();
+    var src = ctx.createBufferSource();
+    src.buffer = clickBuffer;
+    var hp = ctx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 5000 + Math.random() * 3000;
+    var g = ctx.createGain();
+    g.gain.setValueAtTime(opts.gain || 0.06, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.006);
+    src.connect(hp).connect(g);
+    route(panned(g, opts.pan), master, 0.25);
     src.start(t0);
-    src.stop(t0 + dur + 0.1);
+    src.stop(t0 + 0.03);
+  }
+
+  // Sinte puntual: sierra por un pasabajos que se abre (o se cierra).
+  function synthSweep(opts) {
+    if (!enabled || !ctx) return;
+    var dur = opts.dur || 1;
+    var t0 = now() + (opts.delay || 0);
+    var osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(opts.freq, t0);
+    if (opts.freqTo) osc.frequency.exponentialRampToValueAtTime(opts.freqTo, t0 + dur);
+    var f = ctx.createBiquadFilter();
+    f.type = 'lowpass'; f.Q.value = opts.q || 8;
+    f.frequency.setValueAtTime(opts.cutFrom, t0);
+    f.frequency.exponentialRampToValueAtTime(opts.cutTo, t0 + dur);
+    var g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(opts.gain || 0.1, t0 + Math.min(0.05, dur * 0.2));
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(f).connect(g);
+    route(panned(g, opts.pan), master, opts.wet != null ? opts.wet : 0.3);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.05);
   }
 
   /* ── Efectos ────────────────────────────────────────────────────────── */
-  // Encendido: un barrido ascendente amplio + una caída de sub + el núcleo
-  // floreciendo en la reverb. Lee como un sistema que arranca, no como una
-  // fanfarria ni como un acorde sostenido de pad.
+  // Encendido: el filtro de un sinte se abre de golpe (power-up) y una
+  // cascada ascendente de blips lo remata a través del eco.
   function playIgnition() {
-    sweep({ dur: 1, freqFrom: 180, freqTo: 4200, gain: 0.2, q: 0.6, wet: 0.6 });
-    grain(220, { dur: 0.9, gain: 0.22, sweepTo: 55, filterFreq: 1200, wet: 0.35 });
-    grain(880, { dur: 0.5, gain: 0.09, delay: 0.34, wet: 0.8, pan: -0.4 });
-    grain(1318.5, { dur: 0.7, gain: 0.07, delay: 0.5, wet: 0.9, pan: 0.45 });
+    synthSweep({ freq: 55, dur: 1.2, cutFrom: 120, cutTo: 5200, q: 10, gain: 0.12 });
+    synthSweep({ freq: 110, freqTo: 111, dur: 1.2, cutFrom: 160, cutTo: 3800, q: 6, gain: 0.06, pan: 0.4 });
+    [880, 1318.51, 1760, 2637].forEach(function (f, i) {
+      blip(f, { delay: 0.5 + i * STEP / 2, gain: 0.07, wet: 0.6, pan: i % 2 ? 0.5 : -0.5 });
+    });
   }
 
   function playHoverTick() {
     var t = Date.now();
     if (t - lastTick < 110) return; // evita ráfagas al pasar el cursor rápido
     lastTick = t;
-    grain(1760, { dur: 0.06, gain: 0.05, wet: 0.75 });
+    blip(2637, { dur: 0.04, gain: 0.035, wet: 0.2 });
   }
 
+  // Cambio de pestaña: un "zip" de sinte, no un soplido.
   function playTabWhoosh() {
-    sweep({ dur: 0.45, freqFrom: 700, freqTo: 3600, gain: 0.12, q: 1.1, wet: 0.65 });
+    synthSweep({ freq: 220, freqTo: 440, dur: 0.22, cutFrom: 400, cutTo: 6000, q: 12, gain: 0.06, wet: 0.4 });
   }
 
-  // Confirmación: quinta ascendente, mojada. Dos notas, no una melodía.
+  // Confirmación: dos blips en quinta ascendente.
   function playSuccessChime() {
-    grain(440, { dur: 0.5, gain: 0.13, wet: 0.7 });
-    grain(659.25, { dur: 0.9, gain: 0.11, delay: 0.11, wet: 0.85 });
+    blip(1318.51, { dur: 0.16, gain: 0.08, wet: 0.5 });
+    blip(1975.53, { dur: 0.3, gain: 0.07, delay: STEP, wet: 0.6 });
   }
 
   function playErrorTone() {
-    grain(196, { dur: 0.45, gain: 0.14, sweepTo: 110, filterFreq: 900, wet: 0.5 });
+    synthSweep({ freq: 110, freqTo: 82.41, dur: 0.35, cutFrom: 900, cutTo: 200, q: 4, gain: 0.08, wet: 0.2 });
+  }
+
+  // Apagado al salir de la página: el pasabajos maestro se cierra y el
+  // volumen baja a cero juntos. Devuelve una promesa que resuelve al final.
+  function fadeOut(seconds) {
+    var s = Math.max(0.05, seconds || 1);
+    if (!ctx || !started || leaving) {
+      leaving = true;
+      return Promise.resolve();
+    }
+    leaving = true;
+    var t = now();
+    master.gain.cancelScheduledValues(t);
+    master.gain.setValueAtTime(master.gain.value, t);
+    master.gain.linearRampToValueAtTime(0, t + s);
+    masterLP.frequency.cancelScheduledValues(t);
+    masterLP.frequency.setValueAtTime(masterLP.frequency.value, t);
+    masterLP.frequency.exponentialRampToValueAtTime(180, t + s);
+    return new Promise(function (resolve) { setTimeout(resolve, s * 1000); });
   }
 
   function start() {
-    if (started || !enabled) return;
+    if (started || !enabled || leaving) return;
     if (!ensureCtx()) return;
     if (ctx.state === 'suspended') ctx.resume();
     started = true;
@@ -377,6 +396,100 @@
     buildAmbience();
     setAmbienceGain(AMBIENCE_LEVEL, 1.6); // el lecho entra detrás del encendido y se queda
   }
+
+  window.AuthAmbience = { fadeOut: fadeOut };
+
+  /* ── Señal viva de la IA (#ai-pulse) ────────────────────────────────────
+     Un trazo de osciloscopio que late a 100 BPM (el tempo del sonido): un
+     pico agudo con un rebote amortiguado en cada negra, más fuerte cada
+     cuatro, sobre un piso de ruido de datos. Con el sonido encendido el
+     ruido y los picos crecen con el nivel real del audio, así la señal y lo
+     que se oye son la misma cosa. Sin punto que parpadee. */
+  (function initPulse() {
+    var cv = document.getElementById('ai-pulse');
+    if (!cv || !cv.getContext) return;
+    var g = cv.getContext('2d');
+    var W = 0, H = 0;
+    var RATE = 60;                    // muestras por segundo (independiente de los fps)
+    var N = 110;                      // muestras visibles (~1.8 s)
+    var hist = [];
+    var beatSec = 60 / BPM;
+    var clock = 0, beat = 0;
+    var timeBuf = null;
+
+    function size() {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = cv.clientWidth || 168; H = cv.clientHeight || 34;
+      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function audioLevel() {
+      if (!analyser || !started || !enabled) return 0;
+      if (!timeBuf) timeBuf = new Float32Array(analyser.fftSize);
+      analyser.getFloatTimeDomainData(timeBuf);
+      var sum = 0;
+      for (var i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
+      return Math.min(1, Math.sqrt(sum / timeBuf.length) * 5);
+    }
+
+    function nextSample(level) {
+      clock += 1 / RATE;
+      if (clock >= beatSec) { clock -= beatSec; beat = (beat + 1) % 4; }
+      var ph = clock;
+      var amp = (beat === 0 ? 1 : 0.62) * (0.75 + level * 0.5);
+      // Pico agudo + rebote amortiguado: late, pero como un circuito.
+      var spike = ph < 0.035 ? ph / 0.035 : Math.exp(-(ph - 0.035) * 14) * Math.cos((ph - 0.035) * 46);
+      var noise = (Math.random() - 0.5) * (0.07 + level * 0.35);
+      return Math.max(-1, Math.min(1, spike * amp + noise));
+    }
+
+    function draw() {
+      g.clearRect(0, 0, W, H);
+      var mid = H / 2;
+      // Piso: marcas finas de una rejilla de medición.
+      g.fillStyle = 'rgba(245,246,248,.14)';
+      for (var x = 0; x < W; x += 6) g.fillRect(x, mid, 1.5, 1);
+
+      var grad = g.createLinearGradient(0, 0, W, 0);
+      grad.addColorStop(0, 'rgba(92,130,255,0)');
+      grad.addColorStop(0.35, 'rgba(92,130,255,.75)');
+      grad.addColorStop(1, 'rgba(44,184,212,1)');
+      g.beginPath();
+      for (var i = 0; i < hist.length; i++) {
+        var px = (i / (N - 1)) * W;
+        var py = mid - hist[i] * (H * 0.44);
+        if (i) g.lineTo(px, py); else g.moveTo(px, py);
+      }
+      g.lineJoin = 'round';
+      g.lineWidth = 1.8;
+      g.strokeStyle = grad;
+      g.shadowColor = 'rgba(44,184,212,.8)';
+      g.shadowBlur = 6;
+      g.stroke();
+      g.shadowBlur = 0;
+    }
+
+    size();
+    window.addEventListener('resize', size);
+    for (var i = 0; i < N; i++) hist.push(nextSample(0));
+
+    if (reduceMotion) { draw(); return; }
+
+    var last = performance.now(), acc = 0;
+    (function frame(t) {
+      acc += Math.min(0.25, (t - last) / 1000);
+      last = t;
+      var level = audioLevel();
+      while (acc >= 1 / RATE) {
+        acc -= 1 / RATE;
+        hist.push(nextSample(level));
+        if (hist.length > N) hist.shift();
+      }
+      draw();
+      requestAnimationFrame(frame);
+    })(last);
+  })();
 
   /* ── Botón de silencio ──────────────────────────────────────────────── */
   var btn = document.getElementById('btn-sound');
@@ -396,7 +509,7 @@
       if (enabled) {
         if (!started) start();
         else {
-          grain(880, { dur: 0.2, gain: 0.08, wet: 0.7 });
+          blip(1318.51, { dur: 0.12, gain: 0.06, wet: 0.4 });
           setAmbienceGain(AMBIENCE_LEVEL, 1);
         }
       } else if (started) {

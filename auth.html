@@ -21,11 +21,13 @@
    llegar a un extremo) marcado en su posición — no agregar luces nuevas,
    si hace falta más movimiento se ajustan esas keyframes. js/auth-ambience.js
    añade paralaje de puntero sobre esa misma capa y la firma sonora continua
-   sintetizada (Web Audio, sin assets ni archivos): textura, no melodía ni
-   ritmo — sub + núcleo armónico + aire filtrado + destellos, todo con reverb
-   y limitador. Ni ondas cuadradas con notas de una escala (suena a consola
-   de 8 bits) ni pulso a tempo fijo ni pad de meditación: el detalle de por
-   qué está en la cabecera de ese archivo. Botón de silencio (#btn-sound) —
+   sintetizada (Web Audio, sin assets ni archivos): electrónica, no naturaleza
+   — sub + pad de sierras con filtro resonante y pulso suave + blips de datos
+   con eco ping-pong + clics digitales. Nada de ruido con barridos lentos (el
+   2026-09-23 sonaba "al mar") ni ondas cuadradas/arpegios (8 bits): el
+   detalle está en la cabecera de ese archivo. Al iniciar sesión la página y
+   el sonido hacen fade antes de navegar (html.leaving + AuthAmbience.fadeOut).
+   Botón de silencio (#btn-sound) —
    arranca tras el primer gesto del usuario (lo exige la política de autoplay
    del navegador) y sigue sonando en loop mientras la pestaña esté abierta.
    Respeta prefers-reduced-motion y localStorage.
@@ -50,6 +52,7 @@
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
+html { background: var(--bg); }
 body {
   font-family: var(--font); background: var(--bg); color: var(--ink);
   -webkit-font-smoothing: antialiased; letter-spacing: -.005em;
@@ -122,8 +125,11 @@ body {
 .word { font-weight: 700; font-size: 16px; letter-spacing: -.02em; }
 .word .dot { color: var(--accent-2); }
 .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
-.eyebrow i { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(51,194,132,.18); animation: pulse 2.4s ease-in-out infinite; }
-@keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(.8); opacity: .7; } }
+.eyebrow { gap: 12px; }
+/* Señal viva de la IA: la dibuja js/auth-ambience.js en un canvas (latido a
+   100 BPM, el mismo tempo del sonido; con el sonido encendido además reacciona
+   al audio). Reemplaza al punto verde que parpadeaba (2026-09-23). */
+.ai-pulse { display: block; width: 168px; height: 34px; flex: none; }
 .panel-mid h1 {
   font-size: clamp(38px, 5.2vw, 68px); line-height: .98; letter-spacing: -.045em; font-weight: 700; margin: 14px 0 18px;
 }
@@ -252,8 +258,16 @@ h1.title { font-size: 26px; font-weight: 700; letter-spacing: -.035em; margin-bo
 @media (max-width: 900px) {
   .sound-toggle { top: 14px; right: 14px; padding: 7px 12px; }
 }
+/* Salida tras iniciar sesión (js/auth.js leaveTo): la página se funde a
+   negro mientras el sonido se apaga, en vez de cortar de golpe. */
+html.leaving body {
+  opacity: 0; transform: scale(.985); filter: blur(6px);
+  transition: opacity 1s var(--ease-out), transform 1s var(--ease-out), filter 1s var(--ease-out);
+  pointer-events: none;
+}
 @media (prefers-reduced-motion: reduce) {
-  .sky .blob, .sky .grain, .panel-mid h1 .accent, .eyebrow i, .sound-toggle.on .bars i { animation: none; }
+  html.leaving body { transform: none; filter: none; transition: opacity .25s linear; }
+  .sky .blob, .sky .grain, .panel-mid h1 .accent, .sound-toggle.on .bars i { animation: none; }
   .brand-panel, .card, .sound-toggle { animation: none; }
   .sky .parallax { transform: none !important; }
 }
@@ -302,7 +316,7 @@ h1.title { font-size: 26px; font-weight: 700; letter-spacing: -.035em; margin-bo
     </div>
 
     <div class="panel-mid">
-      <span class="eyebrow"><i></i> Revenue OS · LATAM</span>
+      <span class="eyebrow"><canvas class="ai-pulse" id="ai-pulse" aria-hidden="true"></canvas> Revenue OS · LATAM</span>
       <h1>Tu operación de ventas, <span class="accent">predecible</span>.</h1>
       <p>Contexto, señales de compra, prospección, campañas omnicanal y un coach de neuroventas en vivo. Un solo sistema que aprende de cada respuesta y cada reunión.</p>
     </div>
