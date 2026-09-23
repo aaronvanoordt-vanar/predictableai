@@ -768,19 +768,31 @@
 
     // Persistir en Supabase (added = filas realmente insertadas)
     let added = 0;
+    let insertedRows = [];
     if (rows.length) {
       progress({ phase: 'saving' });
-      const { data: inserted, error } = await insertMembers(rows, { select: 'id' });
+      const { data: inserted, error } = await insertMembers(rows, { select: 'id, apollo_person_id' });
       if (error) throw new Error('No se pudieron guardar los contactos: ' + error.message);
+      insertedRows = inserted || [];
       added = inserted ? inserted.length : rows.length;
     }
 
     // El reveal de email es lo lento (≈1 crédito y una llamada a Apollo por
     // persona): arranca aquí pero NO se espera — el llamador ya tiene sus
-    // filas guardadas y puede cerrar el modal. `enrichment` es la promesa en
-    // curso, para que quien la necesite muestre un aviso cuando termine.
+    // filas guardadas y puede cerrar el modal. Corre en el servidor
+    // (enrich-list) para que siga aunque se cierre la pestaña; si la función
+    // o la migración aún no están desplegadas, cae al reveal en el navegador.
+    // `enrichment` es la promesa en curso ({ server: true } en el servidor).
+    const freshIds = new Set(fresh.map((p) => p.id));
+    const freshMemberIds = insertedRows.filter((r) => freshIds.has(r.apollo_person_id)).map((r) => r.id);
     const enrichment = fresh.length
-      ? enrichFreshRows(list, fresh, userId, progress)
+      ? runEnrichment({
+          memberIds: freshMemberIds,
+          mode: 'email',
+          revealPhones: false,
+          inBrowser: () => enrichFreshRows(list, fresh, userId, progress),
+          onQueued: () => progress({ phase: 'queued', listId: list.id }),
+        })
       : Promise.resolve({ updated: 0, failed: [] });
     enrichment.catch((e) => console.warn('[prospecting-data] enriquecimiento en segundo plano falló:', e.message));
 
@@ -1008,6 +1020,125 @@
 
   async function enrichMembers({ members, revealPhones, onProgress }) {
     if (!members?.length) throw new Error('Selecciona al menos un contacto.');
+    const enrichable = members.filter((m) => m.apollo_person_id || m.email || m.linkedin_url || m.name);
+    const failed = members.filter((m) => !enrichable.includes(m)).map((m) =>
+      ({ name: m.name || m.email || 'contacto', error: 'No hay datos suficientes (nombre, email o LinkedIn) para buscarlo en Apollo.' }));
+    if (!enrichable.length) return { updated: 0, phonePending: 0, failed };
+    const res = await runEnrichment({
+      memberIds: enrichable.map((m) => m.id),
+      mode: 'full',
+      revealPhones: !!revealPhones,
+      inBrowser: () => enrichMembersInBrowser({ members, revealPhones, onProgress }),
+      onQueued: () => { if (typeof onProgress === 'function') onProgress({ phase: 'queued' }); },
+    });
+    if (res && res.server) res.failed = failed.concat(res.failed || []);
+    return res;
+  }
+
+  // ── Enriquecimiento en el servidor (edge function enrich-list) ─────
+  // La cola vive en la fila (migración 20260923000001): encolar = marcar
+  // enrich_requested_at. La procesa enrich-list — la dispara este navegador
+  // al encolar (para empezar ya) y pg_cron cada minuto (para seguir si se
+  // cierra la pestaña). La UI la lee de la base: una fila en cola se ve
+  // «Pendiente» y cada una que termina aparece con su resultado por realtime.
+  async function queueEnrichment(memberIds, mode, revealPhones) {
+    const patch = {
+      enrich_requested_at: new Date().toISOString(),
+      enrich_mode: mode,
+      enrich_reveal_phones: !!revealPhones,
+      enrich_claimed_at: null,
+      enrich_attempts: 0,
+      enrich_error: null,
+    };
+    for (let i = 0; i < memberIds.length; i += 200) {
+      const { error } = await sb().from('prospect_list_members').update(patch).in('id', memberIds.slice(i, i + 200));
+      if (error) {
+        // Migración aún no aplicada: el llamador cae al flujo del navegador.
+        if (/enrich_/i.test(error.message || '')) return false;
+        throw new Error('No se pudo encolar el enriquecimiento: ' + error.message);
+      }
+    }
+    return true;
+  }
+
+  async function unqueueEnrichment(memberIds) {
+    for (let i = 0; i < memberIds.length; i += 200) {
+      await sb().from('prospect_list_members')
+        .update({ enrich_requested_at: null, enrich_mode: null, enrich_claimed_at: null })
+        .in('id', memberIds.slice(i, i + 200));
+    }
+  }
+
+  // Una cadena de invocaciones por pestaña: cada invocación procesa ~2 min
+  // y responde cuánto queda; se vuelve a llamar mientras avance. Si la
+  // pestaña se cierra, el cron sigue desde donde quedó.
+  let kickChain = null;
+  function kickEnrichment() {
+    if (kickChain) return kickChain;
+    kickChain = (async () => {
+      let last = null;
+      for (let i = 0; i < 30; i++) {
+        try {
+          last = await edgeFetch('enrich-list', {});
+        } catch (e) {
+          // Solo el PRIMER fallo dice algo sobre si la función existe; uno
+          // posterior (red, timeout) no: la cola sigue y la toma el cron.
+          if (i === 0) { e.firstCall = true; throw e; }
+          console.warn('[prospecting-data] enrich-list:', e.message);
+          break;
+        }
+        if (!(last && last.batches > 0 && last.remaining > 0)) break;
+      }
+      return last;
+    })();
+    kickChain.then(() => { kickChain = null; }, () => { kickChain = null; });
+    return kickChain;
+  }
+
+  // Servidor primero; `inBrowser` es el respaldo mientras enrich-list o su
+  // migración no estén desplegadas (el frente se despliega al mergear, el
+  // backend no).
+  async function runEnrichment({ memberIds, mode, revealPhones, inBrowser, onQueued }) {
+    let queued = false;
+    if (memberIds.length) {
+      try { queued = await queueEnrichment(memberIds, mode, revealPhones); } catch (e) {
+        console.warn('[prospecting-data] cola de enriquecimiento no disponible:', e.message);
+      }
+    }
+    if (!queued) return inBrowser();
+    if (typeof onQueued === 'function') { try { onQueued(); } catch (_) {} }
+    try {
+      const r = await kickEnrichment();
+      return Object.assign({ server: true, updated: 0, failed: [] }, r ? { remaining: r.remaining } : {});
+    } catch (e) {
+      // No desplegada: 404, o un fallo de red/CORS del gateway sin status.
+      // Solo en la primera invocación (nada se procesó todavía): así el
+      // respaldo nunca vuelve a cobrar filas que el servidor ya enriqueció.
+      if (e && e.firstCall && (e.status === 404 || !e.status)) {
+        await unqueueEnrichment(memberIds);
+        return inBrowser();
+      }
+      // Cualquier otro error: las filas siguen en cola y el cron las toma.
+      console.warn('[prospecting-data] enrich-list:', e && e.message);
+      return { server: true, updated: 0, failed: [], error: e && e.message };
+    }
+  }
+
+  // {list_id: n} de filas del usuario en cola, o null si la migración aún no
+  // existe (entonces no hay cola que mostrar).
+  async function fetchEnrichmentQueue() {
+    const { data, error } = await sb().from('prospect_list_members')
+      .select('list_id')
+      .not('enrich_requested_at', 'is', null)
+      .limit(5000);
+    if (error) return null;
+    const out = {};
+    (data || []).forEach((r) => { out[r.list_id] = (out[r.list_id] || 0) + 1; });
+    return out;
+  }
+
+  // Respaldo: el enriquecimiento tal como corría antes, en el navegador.
+  async function enrichMembersInBrowser({ members, revealPhones, onProgress }) {
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
     let updated = 0;
     let phonePending = 0;
@@ -1600,6 +1731,8 @@
     addManualMember,
     matchByLinkedinUrl,
     enrichMembers,
+    fetchEnrichmentQueue,
+    kickEnrichment,
     updateMember,
     fetchGmailAccount,
     startGmailConnect,

@@ -89,9 +89,12 @@
       channel: null,           // suscripción realtime a prospect_list_members
       refreshTimer: null, filterTimer: null,
       refreshing: false, refreshQueued: false, refreshLists: false,
-      // Enriquecimientos en curso en ESTA pestaña: [{ lists: {listId: {done,total}} }]
-      // y los ids de contactos que «Enriquecer seleccionados» aún no termina.
+      // Enriquecimiento en el navegador (respaldo si enrich-list no está
+      // desplegada): [{ lists: {listId: {done,total}} }] + ids en curso.
       enrichJobs: [], enrichingIds: new Set(),
+      // Cola del servidor leída de la base: {listId: n en cola}; el máximo
+      // visto por lista (para la barra) y un timer de sondeo de respaldo.
+      enrichQueue: {}, enrichBaseline: {}, enrichQueueSeen: {}, enrichPollTimer: null,
     },
   };
 
@@ -478,12 +481,14 @@
   }
 
   function memberEmailCell(m) {
-    if (m.email_status === 'pending' || state.listas.enrichingIds.has(String(m.id))) return '<span class="pill pill-amber">Enriqueciendo…</span>';
+    if (m.email_status === 'pending' || m.enrich_requested_at || state.listas.enrichingIds.has(String(m.id))) {
+      return '<span class="pill pill-amber">Enriqueciendo…</span>';
+    }
     if (m.email && !isMaskedEmail(m.email)) {
       return '<div>' + esc(m.email) + '</div>' +
         (m.email_status ? '<div style="margin-top:3px">' + emailPillHtml(m.email_status) + '</div>' : '');
     }
-    return '<span class="pill pill-gray">Sin email</span>';
+    return '<span class="pill pill-gray"' + (m.enrich_error ? ' title="' + esc(m.enrich_error) + '"' : '') + '>Sin email</span>';
   }
 
   function memberPhoneCell(m) {
@@ -1910,7 +1915,7 @@
             Promise.resolve(res.enrichment).then(function (er) {
               er = er || {};
               var failedN = (er.failed || []).length;
-              if (res.enriching) {
+              if (res.enriching && !er.server) {
                 toast(
                   fmtNum(er.updated || 0) + ' emails enriquecidos en «' + (list.name || 'la lista') + '»' +
                   (failedN ? ' · ' + fmtNum(failedN) + ' fallaron' : ''),
@@ -1991,6 +1996,7 @@
               if (res.enrichment && res.enriching) {
                 Promise.resolve(res.enrichment).then(function (er) {
                   er = er || {};
+                  if (er.server) return; // el aviso de fin lo da la cola
                   var failedN = (er.failed || []).length;
                   toast(
                     fmtNum(er.updated || 0) + ' emails enriquecidos en «' + name + '»' +
@@ -2049,6 +2055,11 @@
           st.selected.clear();
         }
         renderListsLeft();
+        // Cola del servidor: si quedó algo pendiente (p. ej. la pestaña se
+        // cerró), mostrarlo y darle un empujón sin esperar al cron.
+        refreshEnrichQueue().then(function (n) {
+          if (n && pd().kickEnrichment) pd().kickEnrichment().catch(function () {});
+        });
         // Siempre re-consultar a Supabase al entrar: un contacto pudo cambiar
         // desde Campañas, el coach u otro dispositivo (teléfonos async, estado
         // CRM, mensajes IA) y esta pestaña debe reflejarlo.
@@ -2852,7 +2863,11 @@
               state.listas.enrichingIds.add(String(m.id));
             });
             var job = enrichJobCreate(counts);
+            job.ids = members.map(function (m) { return m.id; });
             if (state.listas.rightEl) renderListsRight();
+            // La cola del servidor se escribe al empezar: leerla para que la
+            // barra arranque aunque el realtime tarde.
+            setTimeout(function () { refreshEnrichQueue(); }, 1500);
             Promise.resolve()
               .then(function () {
                 return pd().enrichMembers({
@@ -2863,6 +2878,11 @@
               .then(function (res) {
                 res = res || {};
                 var failed = res.failed || [];
+                // En el servidor el aviso de fin lo da la cola (settleEnrichBaselines).
+                if (res.server) {
+                  if (failed.length) toast(fmtNum(failed.length) + ' contacto' + (failed.length === 1 ? '' : 's') + ' sin datos suficientes para buscar en Apollo.', 'warn');
+                  return;
+                }
                 toast(
                   fmtNum(res.updated || 0) + ' contactos actualizados' +
                   (res.phonePending ? ' · ' + fmtNum(res.phonePending) + ' teléfonos pendientes' : '') +
@@ -2969,6 +2989,14 @@
   // Un avance del data layer: {listId, total, personId|memberId}. Los avances
   // sin id (inicio de cada lote) solo abren la entrada de la lista.
   function enrichJobProgress(job, p) {
+    if (p && p.phase === 'queued') {
+      // Lo tomó la cola del servidor: el conteo local sobra (la barra la
+      // lleva la cola en la base) y las filas se pintan desde enrich_requested_at.
+      (job.ids || []).forEach(function (id) { state.listas.enrichingIds.delete(String(id)); });
+      state.listas.enrichJobs = state.listas.enrichJobs.filter(function (j) { return j !== job; });
+      refreshEnrichQueue();
+      return;
+    }
     if (!p || p.phase !== 'enriching' || p.listId == null) return;
     var key = String(p.listId);
     var e = job.lists[key];
@@ -2987,17 +3015,85 @@
     scheduleMembersRefresh({ lists: true });
   }
 
-  // {done,total} agregado de una lista (o de todas con ALL_LIST_ID), o null.
-  function enrichStatus(listId) {
+  // Pendientes de una lista (o de todas con ALL_LIST_ID): en el navegador
+  // (respaldo) + en la cola del servidor.
+  function enrichPending(listId) {
+    var st = state.listas;
     var key = String(listId);
-    var done = 0, total = 0;
-    state.listas.enrichJobs.forEach(function (j) {
+    var local = 0, server = 0;
+    st.enrichJobs.forEach(function (j) {
       Object.keys(j.lists).forEach(function (k) {
         if (key !== ALL_LIST_ID && k !== key) return;
-        done += j.lists[k].done; total += j.lists[k].total;
+        local += Math.max(0, j.lists[k].total - j.lists[k].done);
       });
     });
-    return total ? { done: done, total: total } : null;
+    Object.keys(st.enrichQueue).forEach(function (k) {
+      if (key !== ALL_LIST_ID && k !== key) return;
+      server += st.enrichQueue[k] || 0;
+    });
+    return { local: local, server: server, total: local + server };
+  }
+
+  // {done,total,server} para la barra, o null si no hay nada pendiente. El
+  // total es el máximo de pendientes visto desde que empezó (también tras
+  // recargar la página: la cola vive en la base).
+  function enrichStatus(listId) {
+    var st = state.listas;
+    var key = String(listId);
+    var p = enrichPending(key);
+    if (!p.total) return null;
+    var base = Math.max(st.enrichBaseline[key] || 0, p.total);
+    st.enrichBaseline[key] = base;
+    return { done: base - p.total, total: base, server: p.server > 0 };
+  }
+
+  // Cierra las barras que llegaron a cero y avisa de las listas cuya cola del
+  // servidor terminó (el respaldo del navegador ya avisa con su propio toast).
+  function settleEnrichBaselines() {
+    var st = state.listas;
+    Object.keys(st.enrichBaseline).forEach(function (key) {
+      if (enrichPending(key).total) return;
+      delete st.enrichBaseline[key];
+      if (st.enrichQueueSeen[key] && key !== ALL_LIST_ID) {
+        var l = findList(key);
+        toast('Enriquecimiento de «' + ((l && l.name) || 'la lista') + '» terminado.', 'success');
+      }
+      delete st.enrichQueueSeen[key];
+    });
+  }
+
+  // Relee la cola del servidor. Mientras quede algo, se vuelve a leer cada
+  // 8 s (respaldo por si el realtime no entrega un UPDATE).
+  function refreshEnrichQueue() {
+    var st = state.listas;
+    return Promise.resolve()
+      .then(function () { return pd().fetchEnrichmentQueue ? pd().fetchEnrichmentQueue() : null; })
+      .catch(function () { return null; })
+      .then(function (q) {
+        var before = pendingServerTotal();
+        st.enrichQueue = q || {};
+        Object.keys(st.enrichQueue).forEach(function (k) {
+          if (st.enrichQueue[k]) { st.enrichQueueSeen[k] = true; st.enrichQueueSeen[ALL_LIST_ID] = true; }
+        });
+        var after = pendingServerTotal();
+        paintEnrich();
+        clearTimeout(st.enrichPollTimer);
+        if (after) {
+          st.enrichPollTimer = setTimeout(function () {
+            if (state.activeTab === 'listas') scheduleMembersRefresh({ lists: true });
+            else refreshEnrichQueue();
+          }, 8000);
+        } else if (before) {
+          // La cola se vació desde la última lectura: última pasada a la tabla.
+          scheduleMembersRefresh({ lists: true });
+        }
+        return after;
+      });
+  }
+
+  function pendingServerTotal() {
+    var q = state.listas.enrichQueue;
+    return Object.keys(q).reduce(function (n, k) { return n + (q[k] || 0); }, 0);
   }
 
   function enrichPillHtml(listId) {
@@ -3016,12 +3112,15 @@
       return '<div class="pros-enrich-banner">' +
         '<div class="pros-enrich-row"><span class="pill pill-amber">Pendiente</span>' +
         '<span>Enriqueciendo contactos: <b>' + esc(fmtNum(s.done)) + ' de ' + esc(fmtNum(s.total)) + '</b> listos. ' +
-        'Los resultados aparecen aquí a medida que llegan; puedes seguir usando la app, pero no cierres esta pestaña.</span></div>' +
+        'Los resultados aparecen aquí a medida que llegan' +
+        (s.server
+          ? '; corre en el servidor, así que puedes cerrar la pestaña y seguirá.'
+          : '; puedes seguir usando la app, pero no cierres esta pestaña.') + '</span></div>' +
         '<div class="pros-enrich-bar"><i style="width:' + pct + '%"></i></div></div>';
     }
     // Sin trabajo en esta pestaña: filas que siguen en 'pending' (otra
     // pestaña enriqueciendo, o una corrida que se cortó al cerrar la app).
-    var pending = st.members.filter(function (m) { return m.email_status === 'pending'; }).length;
+    var pending = st.members.filter(function (m) { return m.email_status === 'pending' && !m.enrich_requested_at; }).length;
     if (!pending) return '';
     return '<div class="pros-enrich-banner"><div class="pros-enrich-row"><span class="pill pill-amber">Pendiente</span>' +
       '<span>' + esc(fmtNum(pending)) + ' contacto' + (pending === 1 ? '' : 's') + ' pendiente' + (pending === 1 ? '' : 's') +
@@ -3032,6 +3131,7 @@
   // perder lo que el usuario esté escribiendo).
   function paintEnrich() {
     var st = state.listas;
+    settleEnrichBaselines();
     if (st.leftEl) {
       Array.prototype.forEach.call(st.leftEl.querySelectorAll('[data-enrich-slot]'), function (el) {
         el.innerHTML = enrichPillHtml(el.getAttribute('data-enrich-slot'));
@@ -3068,6 +3168,7 @@
     st.refreshLists = false;
     (withLists ? loadLists(true).catch(function () {}).then(renderListsLeft) : Promise.resolve())
       .then(function () { return reloadMembers({ keepSelection: true }); })
+      .then(function () { return refreshEnrichQueue(); })
       .catch(function () {})
       .then(function () {
         st.refreshing = false;
