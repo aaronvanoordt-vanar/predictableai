@@ -39,6 +39,8 @@
     'Plantillas': 'Templates',
     'Meeting Coach': 'Meeting Coach',
     'Reportes': 'Reports',
+    'Conectar': 'Connect',
+    'Integraciones': 'Integrations',
     // Sidebar — footer
     'Primeros pasos': 'Getting started',
     'Claro': 'Light',
