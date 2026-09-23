@@ -21,11 +21,13 @@
    llegar a un extremo) marcado en su posición — no agregar luces nuevas,
    si hace falta más movimiento se ajustan esas keyframes. js/auth-ambience.js
    añade paralaje de puntero sobre esa misma capa y la firma sonora continua
-   sintetizada (Web Audio, sin assets ni archivos): textura, no melodía ni
-   ritmo — sub + núcleo armónico + aire filtrado + destellos, todo con reverb
-   y limitador. Ni ondas cuadradas con notas de una escala (suena a consola
-   de 8 bits) ni pulso a tempo fijo ni pad de meditación: el detalle de por
-   qué está en la cabecera de ese archivo. Botón de silencio (#btn-sound) —
+   sintetizada (Web Audio, sin assets ni archivos): electrónica, no naturaleza
+   — sub + pad de sierras con filtro resonante y pulso suave + blips de datos
+   con eco ping-pong + clics digitales. Nada de ruido con barridos lentos (el
+   2026-09-23 sonaba "al mar") ni ondas cuadradas/arpegios (8 bits): el
+   detalle está en la cabecera de ese archivo. Al iniciar sesión la página y
+   el sonido hacen fade antes de navegar (html.leaving + AuthAmbience.fadeOut).
+   Botón de silencio (#btn-sound) —
    arranca tras el primer gesto del usuario (lo exige la política de autoplay
    del navegador) y sigue sonando en loop mientras la pestaña esté abierta.
    Respeta prefers-reduced-motion y localStorage.
@@ -50,6 +52,7 @@
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
+html { background: var(--bg); }
 body {
   font-family: var(--font); background: var(--bg); color: var(--ink);
   -webkit-font-smoothing: antialiased; letter-spacing: -.005em;
@@ -252,7 +255,15 @@ h1.title { font-size: 26px; font-weight: 700; letter-spacing: -.035em; margin-bo
 @media (max-width: 900px) {
   .sound-toggle { top: 14px; right: 14px; padding: 7px 12px; }
 }
+/* Salida tras iniciar sesión (js/auth.js leaveTo): la página se funde a
+   negro mientras el sonido se apaga, en vez de cortar de golpe. */
+html.leaving body {
+  opacity: 0; transform: scale(.985); filter: blur(6px);
+  transition: opacity 1s var(--ease-out), transform 1s var(--ease-out), filter 1s var(--ease-out);
+  pointer-events: none;
+}
 @media (prefers-reduced-motion: reduce) {
+  html.leaving body { transform: none; filter: none; transition: opacity .25s linear; }
   .sky .blob, .sky .grain, .panel-mid h1 .accent, .eyebrow i, .sound-toggle.on .bars i { animation: none; }
   .brand-panel, .card, .sound-toggle { animation: none; }
   .sky .parallax { transform: none !important; }

@@ -12,15 +12,23 @@
 
   const $ = (sel) => document.querySelector(sel);
   let emailMode = 'login'; // 'login' | 'signup'
+  let leaving = false;
+  const LEAVE_MS = 1000;
 
   document.addEventListener('DOMContentLoaded', init);
 
   async function init() {
     const session = await window.supabaseHelpers.getSession();
     if (session && session.user) {
-      await routeAfterAuth();
+      await routeAfterAuth({ instant: true });
       return;
     }
+
+    // Si el navegador restaura esta página desde su caché (botón Atrás), no
+    // debe volver a verse fundida en negro.
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted) { leaving = false; document.documentElement.classList.remove('leaving'); }
+    });
 
     $('#btn-google').addEventListener('click', () => handleOAuth('google'));
     $('#btn-linkedin').addEventListener('click', () => handleOAuth('linkedin_oidc'));
@@ -126,31 +134,51 @@
     showStatus('info', `<span class="spinner"></span> Redirigiendo a ${label}…`);
     $(btnId).disabled = true;
 
-    const { error } = await window.supabaseClient.auth.signInWithOAuth({
+    // skipBrowserRedirect: Supabase devuelve la URL en vez de saltar de
+    // inmediato, así la salida también hace fade (pantalla y sonido).
+    const { data, error } = await window.supabaseClient.auth.signInWithOAuth({
       provider,
-      options: { redirectTo: window.AUTH_REDIRECT_URL }
+      options: { redirectTo: window.AUTH_REDIRECT_URL, skipBrowserRedirect: true }
     });
 
+    if (!error && data && data.url) {
+      leaveTo(data.url);
+      return;
+    }
     if (error) {
       showStatus('err', `Error con ${label}: ` + escapeHtml(error.message));
       $(btnId).disabled = false;
     }
   }
 
-  async function routeAfterAuth() {
+  async function routeAfterAuth(opts) {
+    const go = (url) => (opts && opts.instant) ? window.location.replace(url) : leaveTo(url);
     const profile = await window.supabaseHelpers.getMyProfile();
     if (!profile) {
       await new Promise(r => setTimeout(r, 600));
       const p2 = await window.supabaseHelpers.getMyProfile();
-      if (!p2 || !p2.onboarded) { window.location.href = './onboarding.html'; return; }
-      window.location.href = window.APP_URL || './index.html';
+      if (!p2 || !p2.onboarded) { go('./onboarding.html'); return; }
+      go(window.APP_URL || './index.html');
       return;
     }
     if (!profile.onboarded || !(profile.linkedin_company_url || profile.company_website)) {
-      window.location.href = './onboarding.html';
+      go('./onboarding.html');
     } else {
-      window.location.href = window.APP_URL || './index.html';
+      go(window.APP_URL || './index.html');
     }
+  }
+
+  // Salida con fade: la pantalla se funde a negro y el sonido se apaga
+  // (auth-ambience.js cierra el filtro y baja el volumen) antes de navegar,
+  // en vez de cortar de golpe.
+  function leaveTo(url) {
+    if (leaving) return;
+    leaving = true;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const ms = reduce ? 250 : LEAVE_MS;
+    if (window.AuthAmbience) window.AuthAmbience.fadeOut(ms / 1000);
+    document.documentElement.classList.add('leaving');
+    setTimeout(() => { window.location.href = url; }, ms);
   }
 
   function showStatus(type, html) {
