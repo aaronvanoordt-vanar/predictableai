@@ -13,6 +13,12 @@
  * elegida, es la que se usa para todo el resto del flujo (Radar, Hub,
  * Prospección). El ICP ya no se pregunta aquí: se arma con los filtros que
  * el usuario usa en Prospección → Búsqueda (search people).
+ *
+ * Paso 2 (2026-09-23, opcional): "Hazlo tuyo" — logo, nombre de la empresa,
+ * tu nombre y color de marca (js/branding.js). Completarlo regala 25 créditos
+ * (claim_branding_bonus_credits, validado en el servidor). Se puede saltar:
+ * el perfil ya quedó onboarded en el paso 1 y la app lo vuelve a ofrecer
+ * desde el menú del usuario.
  */
 (function () {
   'use strict';
@@ -251,11 +257,7 @@
       // para todo el resto del flujo (Radar, Hub, Prospección).
       await triggerEnrichment(url, isLinkedin);
 
-      // El Radar YA NO se dispara solo: sin eso el usuario nunca ve el
-      // composer (prompt de señal + franja de fechas) antes de que corra la
-      // primera investigación, así que no puede personalizarla. Aterriza en
-      // #radar con el composer listo para que la arranque él mismo.
-      window.location.replace('./index.html#radar');
+      await showBrandStep(url, isLinkedin);
     } catch (err) {
       btn.disabled = false;
       showStatus('err', 'Error al guardar: ' + esc(err.message));
@@ -282,6 +284,48 @@
     } catch (e) {
       console.warn('[onboarding] enrich trigger failed:', e);
     }
+  }
+
+  // El Radar YA NO se dispara solo: sin eso el usuario nunca ve el composer
+  // (prompt de señal + franja de fechas) antes de que corra la primera
+  // investigación, así que no puede personalizarla. Aterriza en #radar con el
+  // composer listo para que la arranque él mismo.
+  function goToApp() {
+    window.location.replace('./index.html#radar');
+  }
+
+  // Paso 2: tu marca. Si branding.js no cargó, se sigue directo a la app.
+  async function showBrandStep(url, isLinkedin) {
+    if (!window.Branding) { goToApp(); return; }
+    hideStatus();
+    const { data: profile } = await window.supabaseClient
+      .from('profiles').select('*').eq('id', currentUser.id).maybeSingle();
+    $('step-1').style.display = 'none';
+    $('step-2').style.display = '';
+    $('ob-steps').setAttribute('aria-label', 'Paso 2 de 2');
+    $('ob-steps').querySelectorAll('i').forEach(i => i.classList.add('on'));
+    $('ob-steps-label').textContent = 'Paso 2 de 2';
+    await window.Branding.mountForm($('brand-form'), {
+      user: currentUser,
+      profile: profile || { id: currentUser.id },
+      suggestName: suggestCompanyName(url, isLinkedin),
+      skipLabel: 'Saltar por ahora',
+      onSkip: goToApp,
+      onDone: res => setTimeout(goToApp, res.granted ? 1600 : 700),
+    });
+  }
+
+  // Nombre sugerido a partir de la fuente que acaba de pegar (el usuario lo
+  // corrige): linkedin.com/company/eleva-co → "Eleva Co"; eleva.com → "Eleva".
+  function suggestCompanyName(url, isLinkedin) {
+    let raw = '';
+    if (isLinkedin) {
+      const m = url.match(LINKEDIN_RE);
+      raw = m ? m[2] : '';
+    } else {
+      raw = websiteHostname(url).split('.')[0] || '';
+    }
+    return raw.replace(/[-_.]+/g, ' ').trim().replace(/\b\w/g, c => c.toUpperCase());
   }
 
   function redirectToDashboard() {
