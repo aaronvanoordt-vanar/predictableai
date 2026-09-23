@@ -29,7 +29,13 @@
     'ventas-coach', 'ventas-reportes',
   ];
 
-  var STATE = { loaded: false, complete: false, completeness: null, user: null };
+  // Segundo candado, solo para el Radar (2026-09-23): con el contexto listo,
+  // el Radar sigue bloqueado hasta que el análisis de mercado del Intelligence
+  // Hub exista y el usuario lo confirme — el plan de señales sale de ahí.
+  // radar-plan lo revalida en el servidor (409 market_analysis_required).
+  var ANALYSIS_GATED_PAGES = ['radar'];
+
+  var STATE = { loaded: false, complete: false, completeness: null, user: null, analysis: null, intake: null };
 
   function CC() { return global.CompanyContext; }
 
@@ -78,6 +84,41 @@
     document.head.appendChild(s);
   }
 
+  function goToHub() {
+    var target = document.querySelector('.nav-item[data-page="mi-dashboard"]');
+    if (typeof global.nav === 'function') global.nav(target, 'mi-dashboard');
+    else global.location.hash = 'mi-dashboard';
+  }
+
+  // ¿Hay un análisis de mercado confirmado y vigente? Confirmado = la fecha de
+  // confirmación es posterior a la generación (regenerarlo pide reconfirmar).
+  function analysisState() {
+    var a = STATE.analysis;
+    var at = STATE.intake && STATE.intake.market_analysis_confirmed_at;
+    if (!a || a.status !== 'ready' || !a.generated_at) {
+      return { ok: false, exists: false, generating: !!(a && a.status === 'generating') };
+    }
+    var ok = !!at && new Date(at).getTime() >= new Date(a.generated_at).getTime();
+    return { ok: ok, exists: true, generating: false };
+  }
+
+  function analysisOverlayHtml() {
+    var st = analysisState();
+    var body = st.exists
+      ? 'Tu análisis de mercado está listo. Revísalo y confírmalo en el Intelligence Hub: el Radar crea un detector por cada señal de compra que confirmes.'
+      : (st.generating
+        ? 'Estamos preparando tu análisis de mercado en el Intelligence Hub. Cuando esté listo, revísalo y confírmalo: el Radar diseña su plan sobre él.'
+        : 'El Radar diseña su plan de señales sobre tu análisis de mercado. Genéralo en el Intelligence Hub y confírmalo.');
+    return '<div class="ctxgate-overlay"><div class="ctxgate-box">' +
+      '<div class="ctxgate-ic">' + LOCK_SVG + '</div>' +
+      '<span class="ctxgate-pill">Paso 2 · Análisis de mercado</span>' +
+      '<h3>' + (st.exists ? 'Confirma tu análisis de mercado' : 'Primero, tu análisis de mercado') + '</h3>' +
+      '<p>' + body + '</p>' +
+      '<button type="button" class="ctxgate-btn" data-ctxgate-hub>' +
+        (st.exists ? 'Revisar y confirmar' : 'Ir al Intelligence Hub') + '</button>' +
+    '</div></div>';
+  }
+
   function goToContext() {
     var target = document.querySelector('.nav-item[data-page="mi-research"]');
     if (typeof global.nav === 'function') global.nav(target, 'mi-research');
@@ -106,13 +147,20 @@
   }
 
   function paintOverlays() {
+    var analysisOk = analysisState().ok;
     GATED_PAGES.forEach(function (id) {
       var page = document.getElementById('page-' + id);
       if (!page) return;
       var existing = page.querySelector(':scope > .ctxgate-overlay');
-      if (STATE.complete) {
+      if (STATE.complete && (analysisOk || ANALYSIS_GATED_PAGES.indexOf(id) === -1)) {
         if (existing) existing.remove();
         page.classList.remove('ctxgate-locked');
+        return;
+      }
+      if (STATE.complete) {
+        page.classList.add('ctxgate-locked');
+        if (existing) existing.remove();
+        page.insertAdjacentHTML('beforeend', analysisOverlayHtml());
         return;
       }
       page.classList.add('ctxgate-locked');
@@ -209,6 +257,7 @@
   }
 
   function recompute(intake, brief) {
+    STATE.intake = intake || {};
     STATE.completeness = CC().completeness(intake, brief);
     STATE.complete = STATE.completeness.complete;
     STATE.loaded = true;
@@ -227,7 +276,10 @@
           .eq('user_id', user.id).maybeSingle(),
         global.supabaseClient.from('client_brief').select(CC().BRIEF_COLUMNS)
           .eq('user_id', user.id).maybeSingle(),
+        global.supabaseClient.from('intelligence_hub_reports').select('status, generated_at')
+          .eq('user_id', user.id).eq('section_key', 'market_analysis').maybeSingle(),
       ]);
+      STATE.analysis = res[2].data || null;
       recompute(res[0].data || {}, res[1].data || {});
     } catch (e) {
       // Si no se puede leer el contexto no se bloquea nada: un error de red no
@@ -249,7 +301,16 @@
       ev.preventDefault();
       goToContext();
     }
+    if (ev.target.closest && ev.target.closest('[data-ctxgate-hub]')) {
+      ev.preventDefault();
+      goToHub();
+    }
+    // Al abrir el Radar se relee el estado del análisis: pudo terminar de
+    // generarse o confirmarse en otra pestaña.
+    if (ev.target.closest && ev.target.closest('.nav-item[data-page="radar"]') && STATE.complete && !analysisState().ok) load();
   });
+
+  global.addEventListener('market-analysis-confirmed', function () { load(); });
 
   // La página de contexto avisa cuando el usuario guarda o confirma (y cuando
   // la investigación termina de llenarlo): el bloqueo se levanta sin recargar.
@@ -276,6 +337,7 @@
 
   global.ContextGate = {
     isComplete: function () { return STATE.complete; },
+    isAnalysisConfirmed: function () { return analysisState().ok; },
     completeness: function () { return STATE.completeness; },
     refresh: load,
     GATED_PAGES: GATED_PAGES,
