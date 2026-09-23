@@ -84,6 +84,21 @@ async function send(url: string, secret: string, eventType: string, deliveryId: 
   }
 }
 
+// pg_cron manda el Bearer con el que se programó el job, que no siempre es
+// byte a byte SUPABASE_SERVICE_ROLE_KEY (mismo caso que campaign-run y
+// enrich-list): se acepta cualquier JWT cuyo claim role sea service_role. Es
+// seguro porque la función se despliega CON verificación de JWT: el gateway
+// ya validó la firma antes de llegar aquí.
+function jwtRole(token: string): string | null {
+  try {
+    const payload = token.split(".")[1] ?? "";
+    const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof decoded?.role === "string" ? decoded.role : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function eventPayload(ev: Json) {
   return { id: ev.id, type: ev.type, created_at: ev.created_at, api_version: API_VERSION, data: ev.data };
 }
@@ -174,7 +189,7 @@ Deno.serve(async (req) => {
   let body: Json = {};
   try { body = await req.json(); } catch { /* vacío */ }
 
-  if (token === SERVICE) {
+  if (token === SERVICE || jwtRole(token) === "service_role") {
     if (body.action && body.action !== "dispatch") return json({ error: "unknown_action" }, 400, origin);
     return json(await dispatch(svc), 200, origin);
   }

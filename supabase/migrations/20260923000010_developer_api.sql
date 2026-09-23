@@ -321,6 +321,7 @@ CREATE OR REPLACE FUNCTION public.api_contact_json(m public.prospect_list_member
 RETURNS JSONB
 LANGUAGE sql
 IMMUTABLE
+SET search_path = public
 AS $$
   SELECT jsonb_build_object(
     'id', m.id, 'list_id', m.list_id,
