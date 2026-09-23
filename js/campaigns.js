@@ -2599,9 +2599,22 @@
     row1.appendChild(chSel); row1.appendChild(campSel);
     filters.appendChild(row1);
     left.appendChild(filters);
-    var totIn = 0, totOut = 0;
-    state.inbox.forEach(function (m) { if (m.direction === 'in') totIn++; else totOut++; });
-    var countRow = h('div', { class: 'cmp-inbox-count', text: convs.length + (convs.length === 1 ? ' conversación' : ' conversaciones') + ' · ' + totOut + ' enviados · ' + totIn + ' recibidos' + (unreadCount() ? ' · ' + unreadCount() + ' sin leer' : '') });
+    // El contador describe lo que se ve: las conversaciones filtradas y, de
+    // ellas, solo los mensajes de la campaña/canal elegidos. Antes sumaba la
+    // bandeja entera (203 enviados con una campaña de 100 leads filtrada) y
+    // contaba como "enviados" los que el proveedor rechazó.
+    var f0 = state.inboxFilter;
+    var totIn = 0, totOut = 0, totFailed = 0;
+    shown.forEach(function (conv) {
+      conv.messages.forEach(function (m) {
+        if (f0.campaign && String(m.campaign_id || '') !== String(f0.campaign)) return;
+        if (f0.channel && chanKey(m.channel) !== f0.channel) return;
+        if (m.direction === 'in') totIn++;
+        else if (m.status === 'failed') totFailed++;
+        else totOut++;
+      });
+    });
+    var countRow = h('div', { class: 'cmp-inbox-count', text: shown.length + (shown.length === 1 ? ' conversación' : ' conversaciones') + ' · ' + totOut + ' enviados' + (totFailed ? ' · ' + totFailed + ' fallidos' : '') + ' · ' + totIn + ' recibidos' + (unreadCount() ? ' · ' + unreadCount() + ' sin leer' : '') });
     // Las respuestas de LinkedIn se suelen leer en LinkedIn mismo y Dripify no
     // avisa cuándo: este botón es la forma de dejar la bandeja al día.
     if (shown.some(function (c) { return c.unread; })) {
