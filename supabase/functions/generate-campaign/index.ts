@@ -46,6 +46,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
+import { buildTrainingBlock, loadTraining } from "../_shared/sales-training.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -275,15 +276,18 @@ Deno.serve(withLlmContext(async (req) => {
   const { data: credits } = await supa.from("user_credits").select("balance").eq("user_id", user.id).maybeSingle();
   if ((credits?.balance ?? 0) < COST) return json({ error: "insufficient_credits", balance: credits?.balance ?? 0, cost: COST }, 402, h);
 
-  const [engine, { data: intake }, { data: brief }, channels, stats] = await Promise.all([
+  const [engine, { data: intake }, { data: brief }, channels, stats, training] = await Promise.all([
     engineForUser(supa, user.id, "outreach", body.engine),
     supa.from("intel_hub_intake").select("*").eq("user_id", user.id).maybeSingle(),
     supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
     loadChannels(supa, user.id),
     listStats(supa, user.id, listId),
+    loadTraining(supa, user.id),
   ]);
 
-  const prompt = userPrompt(intake, brief, channels, stats, hint);
+  // Entrenamiento IA: las metodologías de prospección, el estilo y las reglas
+  // del equipo orientan canales, orden y ángulos (vacío si no entrenó nada).
+  const prompt = userPrompt(intake, brief, channels, stats, hint) + buildTrainingBlock(training, "cadence");
   let out: Json = null;
   let flow: flowLib.Flow | null = null;
   let lastErrors: string[] = [];

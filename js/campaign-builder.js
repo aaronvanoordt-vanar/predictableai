@@ -851,6 +851,9 @@
       }
       box.appendChild(h('div', { class: 'cb-grid2' }, h('div', { class: 'form-group' }, h('div', { class: 'cb-lbl', text: 'Nombre de la campaña' }), nameI), listBox));
 
+      // Con qué se entrenaron los mensajes y la cadencia IA de esta cuenta
+      // (js/ai-training.js lo pinta; sin ese módulo queda vacío).
+      box.appendChild(h('div', { 'data-ai-training-badge': 'campaigns' }));
       box.appendChild(h('div', { class: 'cb-lbl', style: 'margin-bottom:0', text: st.startKind === 'current' ? 'Cadencia' : 'Punto de partida' }));
       var cards = h('div', { class: 'cb-cards' });
       if (st.startKind === 'current') {
