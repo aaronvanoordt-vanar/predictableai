@@ -584,6 +584,9 @@
     };
   }
 
+  // Sin Apollo propio (key compartida), apollo-proxy NO lo crea y responde
+  // { contact: null }: esa cuenta es la misma para todos los clientes y el
+  // lead se vería desde otro. Devolver null no es un error.
   async function createApolloContact(row, listName) {
     const body = {
       first_name: row.first_name || undefined,

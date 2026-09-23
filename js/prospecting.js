@@ -1930,8 +1930,8 @@
       h('label', { style: 'display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text2);margin-top:14px;cursor:' + (rows.length ? 'pointer' : 'not-allowed') },
         alsoApollo,
         h('span', { text: rows.length
-          ? 'También guardar los ' + fmtNum(rows.length) + ' resultados de esta página como lista en Apollo (≈1 crédito por persona).'
-          : 'Ejecuta una búsqueda con resultados para poder guardarlos también en Apollo.' })),
+          ? 'También guardar los ' + fmtNum(rows.length) + ' resultados de esta página en una lista (≈1 crédito por persona).'
+          : 'Ejecuta una búsqueda con resultados para poder guardarlos también en una lista.' })),
       prog.el);
     var api = openModal({
       title: 'Guardar búsqueda',
@@ -1953,7 +1953,7 @@
             state.search.refreshSavedSearches().catch(function () { /* silent: panel refresh is best-effort */ });
           }
           if (!alsoApollo.checked || !rows.length) return null;
-          prog.set('Guardando en Apollo…');
+          prog.set('Guardando la lista…');
           return Promise.resolve(pd().createList(name)).then(function (list) {
             return pd().addPeopleToList({ list: list, people: rows }).then(function (res) {
               state.cache.lists = null;

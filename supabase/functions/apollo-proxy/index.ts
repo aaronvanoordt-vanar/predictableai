@@ -44,6 +44,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ApolloError, resolveApolloAuth } from "../_shared/apollo-auth.ts";
 import type { ApolloAuth } from "../_shared/apollo-auth.ts";
+import { blockedInPlatformMode, PLATFORM_SKIPPED_CONTACT, sanitizePlatformSearch } from "../_shared/apollo-platform.ts";
 
 type Method = "GET" | "POST" | "PUT" | "DELETE";
 
@@ -217,6 +218,13 @@ Deno.serve(async (req) => {
     }, 403, cors);
   }
 
+  // La cuenta compartida es la misma para todos los clientes: lo que uno
+  // guarda ahí lo ve el siguiente (ver _shared/apollo-platform.ts). El lead
+  // se queda solo en Predictable, con su RLS por dueño.
+  if (auth.mode === "platform" && blockedInPlatformMode(endpoint)) {
+    return json(PLATFORM_SKIPPED_CONTACT, 200, { ...cors, "X-Apollo-Auth-Mode": auth.mode, "X-Apollo-Account-Email": "" });
+  }
+
   // ── Cobro de créditos por enriquecimiento (catálogo js/credit-costs.js) ──
   // 1 crédito por email, 6 por teléfono, por persona. Solo match/bulk_match
   // (revelar datos de contacto) cobran; búsqueda y CRUD son gratis. Se verifica
@@ -261,7 +269,15 @@ Deno.serve(async (req) => {
 
   const res = await fetch("https://api.apollo.io/api/v1" + endpoint, init);
 
-  const text = await res.text();
+  let text = await res.text();
+  if (res.ok && auth.mode === "platform" && endpoint === "/mixed_people/api_search") {
+    try {
+      text = JSON.stringify(sanitizePlatformSearch(JSON.parse(text)));
+    } catch (_) {
+      // Si no se puede limpiar, no se entrega: podría traer contactos ajenos.
+      return json({ error: "Respuesta de Apollo no válida" }, 502, cors);
+    }
+  }
   if (!res.ok) {
     console.error(`[apollo-proxy] upstream ${res.status} for ${endpoint}: ${text.slice(0, 300)}`);
   }
