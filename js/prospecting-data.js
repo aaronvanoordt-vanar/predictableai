@@ -553,6 +553,34 @@
   // Pipeline: people/bulk_match (1 crédito por match) → POST /contacts
   // (0 créditos, label_names = nombre de la lista) → insert en Supabase.
 
+  // Columnas que se completan con la persona que devuelve Apollo al
+  // enriquecer: la búsqueda ya no trae LinkedIn, país ni ciudad, así que
+  // solo llegan aquí (antes quedaban únicamente en `snapshot`). Solo rellena
+  // huecos, nunca pisa lo que ya tiene la fila. Espejo de
+  // supabase/functions/_shared/person-fill.ts; se cambian juntos.
+  function profileFillPatch(row, person) {
+    const patch = {};
+    if (!person || typeof person !== 'object') return patch;
+    const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+    const org = person.organization || person.account || {};
+    const fromPerson = {
+      linkedin_url: str(person.linkedin_url),
+      title: str(person.title),
+      first_name: str(person.first_name),
+      last_name: str(person.last_name),
+      name: str(person.name) || str([person.first_name, person.last_name].filter(Boolean).join(' ')),
+      country: str(person.country),
+      city: str(person.city),
+      state: str(person.state),
+      company: str(org.name) || str(person.organization_name),
+      company_domain: str(org.primary_domain) || str(org.domain),
+    };
+    for (const k of Object.keys(fromPerson)) {
+      if (fromPerson[k] && !str(row?.[k])) patch[k] = fromPerson[k];
+    }
+    return patch;
+  }
+
   function personToRow(person, match, userId, listId, contactId) {
     const p = match || person || {};
     // Apollo's Person schema nests the employer under `organization`, but its
@@ -728,12 +756,14 @@
         const person = chunk[j];
         const match = matches[j] || null;
         const email = match && !isMaskedEmail(match.email) ? match.email : null;
-        const patch = {
-          email,
-          email_status: email ? (match.email_status || null) : 'unavailable',
-          enriched_at: new Date().toISOString(),
-          snapshot: match || person || {},
-        };
+        const patch = Object.assign(
+          profileFillPatch(personToRow(person, null, userId, list.id, null), match),
+          {
+            email,
+            email_status: email ? (match.email_status || null) : 'unavailable',
+            enriched_at: new Date().toISOString(),
+            snapshot: match || person || {},
+          });
         try {
           patch.apollo_contact_id = await createApolloContact(
             Object.assign(personToRow(person, match, userId, list.id, null), patch), list.name);
@@ -1086,6 +1116,7 @@
         matched = true;
         if (person) {
           if (!m.apollo_person_id && person.id) patch.apollo_person_id = person.id;
+          Object.assign(patch, profileFillPatch(m, person));
           const work = isMaskedEmail(person.email) ? null : person.email;
           const personal = (person.personal_emails || []).find((e) => !isMaskedEmail(e)) || null;
           if (work || personal) patch.email = m.email || work || personal;
