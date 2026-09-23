@@ -55,7 +55,7 @@
     'company_offerings', 'current_customers', 'customers_none', 'icp_revenue_ranges',
     'buying_committee', 'icp_tech_uses', 'icp_tech_gaps', 'icp_pains', 'icp_signals',
     'icp_current_alternatives', 'icp_excluded_industries',
-    'context_confirmed_at',
+    'context_confirmed_at', 'market_analysis_confirmed_at',
     'company_enrichment_status', 'company_enrichment_at', 'company_enrichment_progress',
     'company_enrichment_step', 'company_enrichment_prompt', 'updated_at',
   ].join(', ');

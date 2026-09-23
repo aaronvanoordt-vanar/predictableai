@@ -779,6 +779,16 @@ function buildHubContext(reports: Array<Record<string, any>>): string {
     const bits = [c.headline, c.summary].filter(Boolean).join(" · ");
     if (bits) lines.push(`- [${r.section_key}] ${bits}`);
     // v2 envelope: key_points reemplaza a items como digest uniforme por sección.
+    // Análisis de mercado: los ángulos por segmento y contra cada competidor
+    // son exactamente la capa Mercado/Industria de un mensaje.
+    if (r.section_key === "market_analysis") {
+      for (const sg of (Array.isArray(c.segments) ? c.segments : []).slice(0, 3)) {
+        if (sg && sg.name) lines.push(`    · Segmento ${sg.name}: ${truncate([sg.pain, sg.angle].filter(Boolean).join(" — Ángulo: "), 400)}`);
+      }
+      for (const cp of (Array.isArray(c.competition) ? c.competition : []).slice(0, 3)) {
+        if (cp && cp.competitor && cp.attack_angle) lines.push(`    · Frente a ${cp.competitor}: ${truncate(cp.attack_angle, 300)}`);
+      }
+    }
     const points = Array.isArray(c.key_points) ? c.key_points.slice(0, 4) : [];
     for (const p of points) {
       if (typeof p === "string" && p.trim()) lines.push(`    · ${truncate(p, 450)}`);
@@ -1310,7 +1320,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     supa.from("intelligence_hub_reports")
       .select("section_key, content")
       .eq("user_id", user.id).eq("status", "ready")
-      .in("section_key", ["prospecting_recommendations", "market_snapshot", "industry_insight_digest", "competitor_threat_radar"])
+      .in("section_key", ["market_analysis", "prospecting_recommendations", "industry_insight_digest", "competitor_threat_radar"])
       .order("generated_at", { ascending: false }).limit(4),
     memberId
       ? supa.from("prospect_list_members").select("snapshot").eq("id", memberId).eq("user_id", user.id).maybeSingle()

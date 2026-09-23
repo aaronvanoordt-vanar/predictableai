@@ -20,7 +20,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const CADENCE_SECTIONS: Record<string, string[]> = {
   daily:   ["industry_insight_digest", "competitor_threat_radar", "prospecting_recommendations"],
   weekly:  ["benchmark", "revenue_opportunities", "strategic_actions"],
-  monthly: ["consumer_behavioral_analysis", "market_snapshot", "future_innovations"],
+  // Los tres segmentos mensuales (comportamiento del consumidor, foto del
+  // mercado, innovaciones) se eliminaron el 2026-09-23: los reemplaza el
+  // análisis de mercado (market_analysis), que NO se programa — se genera al
+  // confirmar el contexto o a pedido, porque el usuario debe revisarlo antes
+  // de que el Radar lo use.
 };
 
 const ALL_CADENCES = Object.keys(CADENCE_SECTIONS) as Array<keyof typeof CADENCE_SECTIONS>;
