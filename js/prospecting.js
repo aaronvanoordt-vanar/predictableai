@@ -2040,12 +2040,6 @@
       '<input id="pros-newlist-name" type="text" placeholder="Nombre de la lista" style="flex:1;min-width:0">' +
       '<button type="button" class="btn btn-primary" data-action="create-list">Crear</button>' +
       '</div></div>';
-    html += '<div class="chart-card">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">' +
-      '<div><div class="chart-title" style="margin:0">Importar desde Apollo</div>' +
-      '<div class="pros-hint" style="margin-top:2px">Trae una lista que ya tienes guardada en tu cuenta de Apollo.io</div></div>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="import-apollo">Importar</button>' +
-      '</div></div>';
     // Listas de la versión anterior (localStorage) pendientes de importar
     var legacyCount = 0;
     try { legacyCount = pd().hasLegacyListsPendingImport ? pd().hasLegacyListsPendingImport() : 0; } catch (_) {}
@@ -2381,7 +2375,6 @@
         })
         .then(function () { restoreImp(); }, function (e) { restoreImp(); throw e; });
     }
-    if (action === 'import-apollo') return openImportApolloModal();
     if (action === 'rename-list') return openRenameListModal(btn.getAttribute('data-id'));
     if (action === 'delete-list') return openDeleteListModal(btn.getAttribute('data-id'));
     if (action === 'select-list') {
@@ -2476,126 +2469,6 @@
           refreshBadge();
           renderListsLeft();
           toast('Lista renombrada a «' + newName + '».', 'success');
-          api.close();
-        })
-        .catch(function (e) {
-          api.setBusy(false);
-          toast(errMsg(e), 'error');
-        });
-    }
-  }
-
-  // ── "Importar desde Apollo" modal ───────────────────────────────────────
-  // Trae las listas (labels) ya guardadas en la cuenta de Apollo del usuario
-  // y copia los contactos de la elegida a una lista nueva en Predictable.
-  function openImportApolloModal() {
-    var listHost = h('div', { style: 'max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px' },
-      h('div', { style: 'font-size:12.5px;color:var(--text3);padding:8px 2px', text: 'Cargando listas de Apollo…' }));
-    var prog = progressLine();
-    var selected = null; // { id, name }
-    var apolloLists = [];
-
-    var bodyN = h('div', null,
-      h('div', { class: 'pros-hint', style: 'margin-bottom:10px', text: 'Elige una lista de tu cuenta de Apollo. Se crea una lista nueva en Predictable con sus contactos.' }),
-      listHost,
-      prog.el);
-
-    var api = openModal({
-      title: 'Importar desde Apollo',
-      width: 440,
-      bodyNode: bodyN,
-      actions: [
-        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
-        { label: 'Importar', className: 'btn btn-primary', onClick: onImport },
-      ],
-    });
-    api.buttons[1].disabled = true;
-
-    Promise.resolve(pd().fetchApolloLists())
-      .then(function (lists) {
-        apolloLists = Array.isArray(lists) ? lists : [];
-        renderOptions();
-      })
-      .catch(function (e) {
-        listHost.innerHTML = '';
-        listHost.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:0', text: '⚠ ' + errMsg(e) }));
-      });
-
-    function renderOptions() {
-      listHost.innerHTML = '';
-      if (!apolloLists.length) {
-        // Estado vacío honesto: en modo plataforma NO estamos mirando la cuenta
-        // de Apollo del usuario sino la key compartida de la beta, así que
-        // afirmar "tu cuenta no tiene listas" sería falso.
-        var mode = pd().apolloAuthMode ? pd().apolloAuthMode() : null;
-        var email = pd().apolloAccountEmail ? pd().apolloAccountEmail() : null;
-        var isPlatform = mode === 'platform';
-        listHost.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text3);padding:8px 2px;line-height:1.5' },
-          h('div', { text: isPlatform
-            ? 'Estamos leyendo la cuenta de Apollo compartida de la beta, no la tuya — por eso no aparecen tus listas.'
-            : 'Apollo no devolvió ninguna lista para la cuenta conectada.' }),
-          h('div', { style: 'margin-top:6px', text: isPlatform
-            ? 'Conecta tu cuenta de Apollo en Campañas → canales → Email para importar tus listas.'
-            : 'Si en Apollo sí las ves, revisa que sea la misma cuenta y que su API key sea master key (Apollo la exige para listar listas).' }),
-          h('div', { style: 'margin-top:6px;opacity:.75', text: 'Cuenta en uso: ' + (
-            mode === 'oauth' ? 'la tuya' + (email ? ' — ' + email + ' (OAuth)' : ' (OAuth)')
-              : mode === 'user_key' ? 'la tuya' + (email ? ' — ' + email + ' (API key)' : ' (API key)')
-                : isPlatform ? 'la compartida de la plataforma' : 'desconocida') })));
-        return;
-      }
-      apolloLists.forEach(function (l) {
-        var isAccounts = l.modality === 'accounts';
-        var row = h('label', {
-          style: 'display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;' +
-            (isAccounts ? 'cursor:not-allowed;opacity:.5' : 'cursor:pointer'),
-        });
-        var radio = h('input', { type: 'radio', name: 'apollo-list-pick' });
-        if (isAccounts) {
-          radio.disabled = true;
-        } else {
-          radio.addEventListener('change', function () {
-            selected = { id: l.id, name: l.name };
-            api.buttons[1].disabled = false;
-          });
-        }
-        row.appendChild(radio);
-        row.appendChild(h('div', { style: 'flex:1;min-width:0' },
-          h('div', { style: 'font-size:13px;font-weight:600;color:var(--text)', text: l.name || 'Sin nombre' }),
-          h('div', { class: 'pros-cellsub', text: isAccounts
-            ? 'Lista de empresas — aún no se puede importar'
-            : (l.count != null ? fmtNum(l.count) + ' contactos' : 'Lista de contactos') })));
-        listHost.appendChild(row);
-      });
-    }
-
-    function onImport() {
-      if (!selected) return;
-      api.setBusy(true);
-      var res = null;
-      return Promise.resolve(pd().importApolloList({
-        apolloListId: selected.id,
-        apolloListName: selected.name,
-        onProgress: function (p) {
-          if (p.phase === 'fetching') prog.set('Trayendo contactos de Apollo… (' + fmtNum(p.done || 0) + (p.total ? '/' + fmtNum(p.total) : '') + ')');
-          else if (p.phase === 'saving') prog.set('Guardando en Predictable…');
-        },
-      }))
-        .then(function (r) {
-          res = r;
-          state.cache.lists = null;
-          return loadLists(false);
-        })
-        .then(function () {
-          state.listas.activeListId = (res.list && res.list.id != null) ? String(res.list.id) : null;
-          refreshBadge();
-          renderListsLeft();
-          return state.listas.activeListId ? reloadMembers() : Promise.resolve(renderListsRight());
-        })
-        .then(function () {
-          var msg = fmtNum(res.added || 0) + ' contactos importados a «' + ((res.list && res.list.name) || selected.name) + '».';
-          if (res.alreadyInList) msg += ' ' + fmtNum(res.alreadyInList) + ' ya estaban.';
-          if (res.truncated) msg += ' Apollo tiene más de ' + fmtNum(res.total) + ' — se importaron los primeros.';
-          toast(msg, 'success');
           api.close();
         })
         .catch(function (e) {

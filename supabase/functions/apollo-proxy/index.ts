@@ -54,7 +54,6 @@ const STATIC_ENDPOINTS = new Map<string, Method[]>([
   ["/people/match", ["POST"]],
   ["/people/bulk_match", ["POST"]],
   ["/contacts", ["POST"]],
-  ["/contacts/search", ["POST"]],
   ["/emailer_campaigns/search", ["POST"]],
   ["/emailer_campaigns", ["POST"]],
   ["/emailer_campaigns/remove_or_stop_contact_ids", ["POST"]],
@@ -66,7 +65,6 @@ const STATIC_ENDPOINTS = new Map<string, Method[]>([
   // workspace admin in platform mode). Cheap, 0 credits.
   ["/users/api_profile", ["GET"]],
   ["/emailer_messages/email_send_status", ["POST"]],
-  ["/labels", ["GET"]],
   // Bandeja: the emails Apollo has sent/scheduled, with their delivery state.
   // NOTE: this only ever returns OUTBOUND mail. Apollo has no inbound message
   // type — it reports `replied`/`reply_class` on the message that got answered
