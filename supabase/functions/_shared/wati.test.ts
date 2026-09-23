@@ -17,6 +17,10 @@
 
 import { assert, assertEquals, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
+  ACCOUNT_BLOCK_RETRY_MS,
+  accountBlockCode,
+  accountBlockMessage,
+  activeAccountBlock,
   isTemplateApproved,
   isTemplateDead,
   isWebhookLimitError,
@@ -149,4 +153,39 @@ Deno.test("isWebhookLimitError distingue el tope de cualquier otro fallo", () =>
   assert(!isWebhookLimitError(new WatiError("Invalid event types", 400)));
   assert(!isWebhookLimitError(new WatiError("Unauthorized", 401)));
   assert(!isWebhookLimitError(null));
+});
+
+Deno.test("accountBlockCode: el nombre visible sin aprobar es un bloqueo de la cuenta", () => {
+  // Texto real que WATI devolvió el 2026-09-23 en failedCode + failedDetail.
+  assertEquals(accountBlockCode("131037 OAuthException! (#131037) WhatsApp provided number needs display name approval before message can be sent."), "131037");
+  assertEquals(accountBlockCode("(#131037)"), "131037");
+});
+
+Deno.test("accountBlockCode: las fallas de un lead concreto no bloquean la cuenta", () => {
+  for (const d of [
+    "131049 Message undeliverable as Meta has restricted it for higher quality messaging - retry again in a few days",
+    "131026 Meta has restricted marketing messages to US recipients, other templates can still be sent",
+    "130497 Business account is restricted from messaging users in this country.",
+    "1310370 otro código",
+    "",
+    null,
+    undefined,
+  ]) {
+    assertEquals(accountBlockCode(d), null, String(d));
+  }
+});
+
+Deno.test("accountBlockMessage: le dice al usuario dónde se arregla", () => {
+  assert(accountBlockMessage("131037").includes("nombre visible"));
+  assert(accountBlockMessage("999").includes("999"));
+});
+
+Deno.test("activeAccountBlock: vigente solo durante el plazo de reintento", () => {
+  const at = new Date("2026-09-23T22:00:00Z");
+  const cfg = { send_block: { code: "131037", at: at.toISOString() } };
+  assertEquals(activeAccountBlock(cfg, new Date(at.getTime() + 60_000))?.code, "131037");
+  assertEquals(activeAccountBlock(cfg, new Date(at.getTime() + ACCOUNT_BLOCK_RETRY_MS)), null);
+  assertEquals(activeAccountBlock({}, at), null);
+  assertEquals(activeAccountBlock(null, at), null);
+  assertEquals(activeAccountBlock({ send_block: { code: "131037", at: "no es fecha" } }, at), null);
 });
