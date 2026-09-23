@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" data-brand-dark="1">
 <head>
 <meta charset="utf-8">
 <title>Conecta tu empresa — predictable.ai</title>
@@ -162,7 +162,7 @@
       </svg>
       predictable<span class="dot">.ai</span>
     </div>
-    <div class="steps" aria-label="Paso 1 de 2"><i class="on"></i><i></i> Paso 1 de 2</div>
+    <div class="steps" id="ob-steps" aria-label="Paso 1 de 2"><i class="on"></i><i></i> <span id="ob-steps-label">Paso 1 de 2</span></div>
   </div>
 
   <div class="card">
@@ -209,6 +209,14 @@
       <button class="btn-primary" id="btn-s1">Entrar a mi dashboard →</button>
     </div>
 
+    <!-- ═══ PASO 2 (opcional, con bono): tu marca — js/branding.js ═══ -->
+    <div id="step-2" style="display:none">
+      <div class="step-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M3.4 3.4l2 2M10.6 10.6l2 2M3.4 12.6l2-2M10.6 5.4l2-2"/></svg></div>
+      <h1>Hazlo tuyo</h1>
+      <p class="sub">Este Predictable es <strong>solo de tu empresa</strong>. Ponle tu logo, tu nombre y tu color, y toda la plataforma se viste con tu marca. Mientras tanto ya estamos investigando tu empresa. Completa los cuatro datos y te regalamos <strong>25 créditos</strong>.</p>
+      <div id="brand-form"></div>
+    </div>
+
     <div id="status" class="status"></div>
     <a href="#" class="logout-link" id="link-logout">Salir y volver a iniciar sesión</a>
   </div>
@@ -218,6 +226,7 @@
 <script src="js/config.js"></script>
 <script src="js/supabase-client.js"></script>
 <script src="js/ai-engine.js"></script>
+<script src="js/branding.js?v=20260923"></script>
 <script src="js/onboarding.js"></script>
 </body>
 </html>
