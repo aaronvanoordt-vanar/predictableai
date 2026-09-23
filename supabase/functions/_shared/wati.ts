@@ -183,6 +183,44 @@ export function isTemplateApproved(status: string | null | undefined): boolean {
   return /approved/i.test(String(status ?? ""));
 }
 
+/**
+ * Errores de entrega que no son del lead sino de la CUENTA: Meta rechaza todo
+ * envío hasta que el usuario arregle algo allá. Hoy: 131037, el nombre visible
+ * del número sin aprobar (pasa con los números que entrega WATI mientras Meta
+ * revisa el nombre). Dar el paso por fallido quemaba el saludo de cada lead
+ * (2026-09-23: 40 de 100 leads de una campaña); se retiene y se reintenta.
+ */
+export const ACCOUNT_BLOCK_CODES = ["131037"] as const;
+/** Cada cuánto se vuelve a probar un envío retenido por un bloqueo de cuenta. */
+export const ACCOUNT_BLOCK_RETRY_MS = 6 * 60 * 60 * 1000;
+
+/** Código de bloqueo de cuenta presente en el detalle de una falla, o null. */
+export function accountBlockCode(detail: unknown): string | null {
+  const text = String(detail ?? "");
+  return ACCOUNT_BLOCK_CODES.find((c) => new RegExp(`(^|\\D)${c}(\\D|$)`).test(text)) ?? null;
+}
+
+/** Motivo en lenguaje del usuario para un bloqueo de cuenta. */
+export function accountBlockMessage(code: string): string {
+  if (code === "131037") {
+    return "Meta aún no aprueba el nombre visible de tu número de WhatsApp (131037): WhatsApp Manager → Números de teléfono. El saludo sale solo cuando lo aprueben.";
+  }
+  return `Meta está bloqueando los envíos de tu número de WhatsApp (${code}).`;
+}
+
+/**
+ * Bloqueo vigente guardado en `channel_accounts.config.send_block` (lo sella
+ * wati-webhook al recibir la falla). Vigente = de hace menos de
+ * ACCOUNT_BLOCK_RETRY_MS: pasado ese plazo se vuelve a probar un envío.
+ */
+export function activeAccountBlock(config: Json, now: Date): { code: string; at: string } | null {
+  const b = config?.send_block;
+  if (!b?.code || !b?.at) return null;
+  const at = new Date(b.at).getTime();
+  if (!Number.isFinite(at) || now.getTime() - at >= ACCOUNT_BLOCK_RETRY_MS) return null;
+  return { code: String(b.code), at: String(b.at) };
+}
+
 /** Nombre de una ranura en su revisión N: la 1 es el nombre base. */
 export function revisionName(base: string, rev: number): string {
   return rev <= 1 ? base : `${base}_r${rev}`;

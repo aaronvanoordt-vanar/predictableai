@@ -212,6 +212,7 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
 }
 
 async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sent" | "delivered" | "read" | "replied" | "failed") {
+  if (kind === "delivered" || kind === "read" || kind === "replied") await clearAccountBlock(db, acc);
   const local = ev?.localMessageId ? String(ev.localMessageId) : null;
   if (!local) return;
   const at = eventDate(ev);
@@ -234,7 +235,7 @@ async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sen
   // Evento de campaña original (type=sent, provider_message_id=local).
   const { data: origin } = await db
     .from("campaign_events")
-    .select("id, enrollment_id, campaign_id, member_id, step_position, node_id")
+    .select("id, enrollment_id, campaign_id, member_id, step_position, node_id, created_at")
     .eq("user_id", acc.user_id)
     .eq("provider_message_id", local)
     .eq("type", "sent")
@@ -265,13 +266,62 @@ async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sen
     detail: kind === "failed" ? inboxPatch.error_detail : null,
     payload: { wamid, at },
   });
+  // Una falla de entrega es de ESE envío: queda el evento `failed` y el lead
+  // sigue con su cadencia, igual que un rechazo al enviar en campaign-run.
+  // Antes el enrolamiento pasaba a `error` y el lead no llegaba nunca a
+  // LinkedIn ni al email (2026-09-23: 48 de 100 leads de una campaña). La
+  // excepción es un bloqueo de la CUENTA (nombre visible sin aprobar): ahí el
+  // paso se retiene y se reintenta, porque no es culpa del lead.
   if (kind === "failed" && origin.enrollment_id) {
-    const detail = inboxPatch.error_detail || "WhatsApp no pudo entregar el mensaje.";
-    await db.from("campaign_enrollments")
-      .update({ status: "error", error_detail: detail, stop_reason: "Fallo de entrega en WhatsApp." })
-      .eq("id", origin.enrollment_id)
-      .in("status", ["active", "processing"]);
+    const code = wati.accountBlockCode(inboxPatch.error_detail);
+    if (code) await holdForAccountBlock(db, acc, origin, code, String(inboxPatch.error_detail));
   }
+}
+
+/** Tipos de evento que no son un paso del motor: recibos que llegan después del envío. */
+const RECEIPT_TYPES = ["delivered", "read", "failed", "replied", "opted_out"];
+
+/**
+ * Meta bloqueó la cuenta entera (hoy: 131037, nombre visible sin aprobar).
+ * 1) Sella `config.send_block`: campaign-run retiene los WhatsApp siguientes
+ *    sin gastar un envío que Meta va a rechazar.
+ * 2) Devuelve el enrolamiento al paso que falló, retenido 6 h, para que el
+ *    saludo salga cuando Meta apruebe. Solo si el lead no hizo nada más desde
+ *    ese envío (el motor ya lo había pasado al siguiente nodo, que espera su
+ *    demora): si ya avanzó, se deja como está.
+ */
+async function holdForAccountBlock(db: SupabaseClient, acc: Json, origin: Json, code: string, detail: string) {
+  const now = new Date();
+  const config = { ...(acc.config ?? {}), send_block: { code, detail: detail.slice(0, 300), at: now.toISOString() } };
+  await db.from("channel_accounts").update({ config }).eq("id", acc.id);
+  acc.config = config;
+
+  if (!origin.node_id || !origin.created_at) return;
+  const { count } = await db
+    .from("campaign_events")
+    .select("id", { count: "exact", head: true })
+    .eq("enrollment_id", origin.enrollment_id)
+    .gt("created_at", origin.created_at)
+    .not("type", "in", `(${RECEIPT_TYPES.join(",")})`);
+  if (count) return;
+  await db.from("campaign_enrollments")
+    .update({
+      next_node_id: origin.node_id,
+      next_position: origin.step_position,
+      next_run_at: new Date(now.getTime() + wati.ACCOUNT_BLOCK_RETRY_MS).toISOString(),
+      error_detail: wati.accountBlockMessage(code),
+    })
+    .eq("id", origin.enrollment_id)
+    .eq("status", "active");
+}
+
+/** Un recibo de entrega prueba que Meta ya acepta los envíos: se levanta el bloqueo. */
+async function clearAccountBlock(db: SupabaseClient, acc: Json) {
+  if (!acc.config?.send_block) return;
+  const config = { ...acc.config };
+  delete config.send_block;
+  await db.from("channel_accounts").update({ config }).eq("id", acc.id);
+  acc.config = config;
 }
 
 /**
