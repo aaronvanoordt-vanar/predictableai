@@ -66,6 +66,7 @@ import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-
 import * as wati from "../_shared/wati.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as apollo from "../_shared/apollo-auth.ts";
+import { contactIdsFromOtherAccount } from "../_shared/apollo-platform.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -91,6 +92,37 @@ function svc(): SupabaseClient {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     { auth: { persistSession: false } },
   );
+}
+
+// Los `apollo_contact_id` guardados solo existen en la cuenta de Apollo que
+// los creó. Al conectar una cuenta distinta (la primera vez, los creó la
+// compartida de la plataforma) se olvidan, y el motor y la Bandeja crean el
+// contacto de nuevo en la cuenta nueva la próxima vez que envían. No bloquea
+// la conexión: si falla se loguea y el envío fallará como antes.
+async function forgetApolloContacts(db: SupabaseClient, userId: string): Promise<void> {
+  try {
+    const { error: mErr } = await db.from("prospect_list_members")
+      .update({ apollo_contact_id: null })
+      .eq("user_id", userId)
+      .not("apollo_contact_id", "is", null);
+    if (mErr) throw mErr;
+    // provider_refs guarda el contacto y el último mensaje de la cuenta vieja.
+    for (let guard = 0; guard < 50; guard++) {
+      const { data, error } = await db.from("campaign_enrollments")
+        .select("id, provider_refs")
+        .eq("user_id", userId)
+        .not("provider_refs->>apollo_contact_id", "is", null)
+        .limit(500);
+      if (error) throw error;
+      if (!data?.length) break;
+      await Promise.all(data.map((en: Json) => {
+        const { apollo_contact_id: _c, apollo_last_message_id: _m, ...rest } = en.provider_refs ?? {};
+        return db.from("campaign_enrollments").update({ provider_refs: rest }).eq("id", en.id);
+      }));
+    }
+  } catch (e) {
+    console.error("[channel-connect] no se pudieron olvidar los contactos de Apollo anteriores:", (e as Error)?.message ?? e);
+  }
 }
 
 function randomSecret(bytes = 24): string {
@@ -533,6 +565,7 @@ Deno.serve(async (req) => {
         .select("*")
         .single();
       if (error) throw new Error("No se pudo guardar la cuenta: " + error.message);
+      if (contactIdsFromOtherAccount(prev?.config, profile.id)) await forgetApolloContacts(db, user.id);
       return json({ apollo: publicRow(row), account: publicRow(row) }, 200, cors);
     }
 
@@ -604,6 +637,7 @@ Deno.serve(async (req) => {
         .select("*")
         .single();
       if (error) throw new Error("No se pudo guardar la cuenta: " + error.message);
+      if (contactIdsFromOtherAccount(prev?.config, profile.id)) await forgetApolloContacts(db, user.id);
       return json({ apollo: publicRow(row), account: publicRow(row), master_key: masterKey, warning: masterKeyError }, 200, cors);
     }
 
