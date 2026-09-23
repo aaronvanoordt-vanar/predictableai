@@ -578,6 +578,7 @@
       dripifyCampaigns: dripifyCampaigns(),
       webhookUrl: cfg.webhook && cfg.webhook.url,
       sampleMemberId: o.sampleMemberId || null,
+      lockPurpose: !!o.lockPurpose,
       edgeFetch: edgeFetch,
       senderInfo: senderDefaults(),
       refreshDripify: function () {

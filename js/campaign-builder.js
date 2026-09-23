@@ -1122,6 +1122,7 @@
             o.openLinkedinDesigner({
               campaign: ownSel || null,
               purpose: want,
+              lockPurpose: true, // el paso fija el tipo: una de mensaje no sirve a un paso de conexión
               defaultName: st.draft.name ? st.draft.name + ' · ' + (isMsg ? 'mensaje de LinkedIn' : 'conexión de LinkedIn') : '',
               sampleMemberId: st.members.length ? (sampleMember() || st.members[0]).id : null,
               onSaved: function (row) { node.settings = linkedinSettings(row); markCustom(); render(); },
