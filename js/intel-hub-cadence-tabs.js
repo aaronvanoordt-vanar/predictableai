@@ -490,12 +490,6 @@
     const started = new Date(brief.updated_at || 0).getTime();
     return (Date.now() - started) > STALE_BRIEF_MS;
   }
-  // company_solutions se guarda como texto separado por comas; en la UI se
-  // edita como una lista de cajas individuales, una por solución.
-  function parseSolutions(raw) {
-    const list = (raw || '').split(',').map(s => s.trim()).filter(Boolean);
-    return list.length ? list : [''];
-  }
   function docStatusLabel(status) {
     return status === 'done' ? 'Analizado'
       : status === 'analyzing' ? 'Analizando…'
@@ -531,7 +525,7 @@
   function researchStatusLabel(key, intake, brief, isRunning) {
     if (STATE.researchGeneratingSection && isRunning) return 'Generando…';
     if (!researchSectionState(key, intake, brief).complete) return 'Pendiente';
-    return intake && intake.context_confirmed_at ? 'Confirmado' : 'Listo — revísalo';
+    return CC().isConfirmedCurrent(intake || {}) ? 'Confirmado' : 'Listo — revísalo';
   }
   function isEnriching(intake) {
     return intake?.company_enrichment_status === 'running' && !isStaleEnriching(intake);
@@ -686,7 +680,7 @@
       // pendientes) según la completitud: un cambio ahí exige re-render, no
       // parcheo.
       CC().completeness(intake, brief).fieldsComplete ? '1' : '0',
-      intake?.context_confirmed_at ? '1' : '0',
+      CC().completeness(intake, brief).confirmed ? '1' : '0',
     ].join('|');
   }
   function flashFilled(el) {
@@ -704,21 +698,6 @@
     el.value = next;
     if (next.trim() && wasEmpty) flashFilled(el);
   }
-  function patchSolutionsList(shell, raw) {
-    const list = shell.querySelector('#ihx-solutions-list');
-    if (!list || list.contains(document.activeElement)) return;
-    const inputs = Array.from(list.querySelectorAll('.ihx-solution-input'));
-    const current = inputs.map(i => i.value.trim()).filter(Boolean).join(', ');
-    const next = parseSolutions(raw).filter(Boolean);
-    if (current === next.join(', ')) return;
-    const wasEmpty = !current;
-    list.innerHTML = (next.length ? next : ['']).map(val => `
-      <div class="ihx-chip-row">
-        <input type="text" class="ihx-solution-input" value="${escapeHtml(val)}" placeholder="Ej: Prospección con IA">
-        <button type="button" class="ihx-chip-remove" data-remove-solution title="Quitar">×</button>
-      </div>`).join('');
-    if (next.length && wasEmpty) flashFilled(list);
-  }
   function patchResearchLive() {
     const shell = document.getElementById('ih-research-shell');
     if (!shell || !shell.querySelector('#ihx-research-form')) return;
@@ -734,13 +713,11 @@
     setLiveValue(q('[name="company_industry"]'), intake.company_industry || '');
     setLiveValue(q('[name="company_employee_count"]'), intake.company_employee_count || '');
     setLiveValue(q('[name="company_country"]'), intake.company_country || '');
-    setLiveValue(q('[name="icp_pain_points"]'), intake.icp_pain_points || '');
     setLiveValue(q('[name="what_it_does"]'), brief.what_it_does || '');
     setLiveValue(q('[name="mechanism"]'), brief.mechanism || '');
     setLiveValue(q('[name="positional_phrase"]'), brief.positional_phrase || '');
     setLiveValue(q('[name="key_outcomes"]'),
       Array.isArray(brief.key_outcomes) ? brief.key_outcomes.join('\n') : (brief.key_outcomes || ''));
-    patchSolutionsList(shell, intake.company_solutions);
     // Multi-selects, chips y filas: solo se rellenan si están vacíos, nunca
     // pisan una selección del usuario (ver CompanyContext.patchLive).
     CC().patchLive(shell, intake);
@@ -868,7 +845,6 @@
     const statusLabel = researchStatusText(brief, phase);
     // Junto a qué botón se dibuja la barra — una sola, no las dos a la vez.
     const runSource = isRunning ? researchRunSource() : null;
-    const solutions = parseSolutions(intake.company_solutions);
     const progress = researchProgress(intake, brief);
     const cc = CC();
     const completeness = cc.completeness(intake, brief);
@@ -881,7 +857,7 @@
       const state = researchSectionState(key, intake, brief);
       const status = researchStatusLabel(key, intake, brief, isRunning);
       const isOpen = STATE.researchOpenSection === key;
-      const body = key === 'solutions' ? solutionsCardBody() : (cc.cardBody(key, intake, brief) || '');
+      const body = cc.cardBody(key, intake, brief) || '';
       return `
         <section class="ihx-context-card ${state.complete ? 'is-complete' : 'is-pending'} ${isOpen ? 'is-open' : ''}" data-research-section="${key}">
           <button type="button" class="ihx-context-card-toggle" data-toggle-section="${key}" aria-expanded="${isOpen}" aria-controls="ihx-card-body-${key}">
@@ -899,12 +875,6 @@
           </div>
         </section>`;
     };
-    const solutionsCardBody = () => `
-      <div class="ihx-field">
-        <span>Qué ofreces para resolverlos</span>
-        <div class="ihx-chip-list" id="ihx-solutions-list">${solutions.map(solutionRow).join('')}</div>
-        <button type="button" class="ihx-chip-add" id="ihx-solutions-add">+ Agregar solución</button>
-      </div>`;
     const blockHtml = (blockDef) => {
       const score = completeness.blocks[blockDef.key];
       const done = score.done === score.total;
@@ -926,11 +896,6 @@
     };
     const missingHtml = completeness.missing.slice(0, 6).map(m =>
       `<button type="button" data-goto-card="${m.key}">${escapeHtml(m.title)}</button>`).join('');
-    const solutionRow = (val) => `
-      <div class="ihx-chip-row">
-        <input type="text" class="ihx-solution-input" value="${escapeHtml(val)}" placeholder="Ej: Prospección con IA">
-        <button type="button" class="ihx-chip-remove" data-remove-solution title="Quitar">×</button>
-      </div>`;
     el.innerHTML = `
       <div class="ihx-research">
         <div class="ihx-research-hint">
@@ -952,7 +917,7 @@
               <span class="ihx-source-icon" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><path d="M1.5 8h13M8 1.5c2 2 2 11 0 13M8 1.5c-2 2-2 11 0 13"/></svg></span>
               <div class="ihx-source-copy">
                 <div class="ihx-source-title">Tu fuente de verdad</div>
-                <p class="ihx-field-help">La IA investiga tu página web y completa las 13 tarjetas. Tú revisas, editas y confirmas.</p>
+                <p class="ihx-field-help">La IA investiga tu página web y completa las ${cc.CARDS.length} tarjetas. Tú revisas, editas y confirmas.</p>
               </div>
               <div class="ihx-research-engine" id="ihx-research-engine"></div>
             </div>
@@ -997,7 +962,7 @@
             <div class="ihx-context-progress-copy">
               <span class="ihx-context-progress-eyebrow">Tu contexto de empresa</span>
               <strong>${progress.complete} de ${progress.total} pasos completados</strong>
-              <span>La IA completa las 13 tarjetas a partir de tu web: lo que no encuentra lo propone como borrador. Tú revisas, editas y confirmas.</span>
+              <span>La IA completa las ${cc.CARDS.length} tarjetas a partir de tu web: lo que no encuentra lo propone como borrador. Tú revisas, editas y confirmas.</span>
             </div>
             <div class="ihx-context-progress-action">
               <span class="ihx-context-progress-pct">${progress.percent}%</span>
@@ -1026,10 +991,14 @@
 
           <div class="ccx-confirm ihx-actionbar ${completeness.fieldsComplete ? 'is-ready' : ''} ${confirmed ? 'is-confirmed' : ''}" id="ihx-confirm-panel">
             <div class="ccx-confirm-copy">
-              <strong>${confirmed ? 'Contexto confirmado' : (completeness.fieldsComplete ? 'Todo listo: confirma para desbloquear la plataforma' : 'Completa las tarjetas pendientes para desbloquear la plataforma')}</strong>
+              <strong>${confirmed ? 'Contexto confirmado' : (completeness.needsReconfirm
+                ? 'Actualizamos el contexto: revisa las tarjetas nuevas y vuelve a confirmar'
+                : (completeness.fieldsComplete ? 'Todo listo: confirma para desbloquear la plataforma' : 'Completa las tarjetas pendientes para desbloquear la plataforma'))}</strong>
               <p>${confirmed
                 ? 'Radar, Intelligence Hub, prospección y coach corren con este contexto. Si cambias algo, guarda y vuelve a confirmar.'
-                : 'Radar, Intelligence Hub, prospección, mensajes y coach usan exactamente esta información para investigar.'}</p>
+                : (completeness.needsReconfirm
+                  ? 'Ahora el contexto incluye tus clientes actuales, el comité de compra, la tecnografía de tu cliente, sus señales con evidencia y a quién no le vendes. Usa «Completar todo con IA» para llenar solo lo que falta: no toca lo que ya escribiste.'
+                  : 'Radar, Intelligence Hub, prospección, mensajes y coach usan exactamente esta información para investigar.')}</p>
               ${!completeness.fieldsComplete ? `<div class="ccx-confirm-missing">${missingHtml}${completeness.missing.length > 6 ? `<button type="button" disabled>+${completeness.missing.length - 6} más</button>` : ''}</div>` : ''}
             </div>
             <div class="ihx-actionbar-btns">
@@ -1127,18 +1096,6 @@
       STATE.brief = { ...STATE.brief, status: 'generating', updated_at: new Date().toISOString(), error_message: null };
       renderResearch();
       triggerClientBriefRefresh();
-    });
-    const solutionsList = document.getElementById('ihx-solutions-list');
-    const addBtn = document.getElementById('ihx-solutions-add');
-    if (addBtn) addBtn.addEventListener('click', () => {
-      solutionsList.insertAdjacentHTML('beforeend', solutionRow(''));
-    });
-    if (solutionsList) solutionsList.addEventListener('click', (ev) => {
-      const rm = ev.target.closest('[data-remove-solution]');
-      if (!rm) return;
-      const rows = solutionsList.querySelectorAll('.ihx-chip-row');
-      if (rows.length > 1) rm.closest('.ihx-chip-row').remove();
-      else rm.closest('.ihx-chip-row').querySelector('.ihx-solution-input').value = '';
     });
     const docInput = document.getElementById('ihx-doc-input');
     const docUploadBtn = document.getElementById('ihx-doc-upload-btn');
@@ -1308,8 +1265,6 @@
     const cc = CC();
     const fd = new FormData(formEl);
     const val = (k) => (fd.get(k) || '').toString().trim();
-    const solutions = Array.from(formEl.querySelectorAll('.ihx-solution-input'))
-      .map(inp => inp.value.trim()).filter(Boolean);
     const ccPatch = cc.collect(formEl);
     const intakePatch = {
       company_website: val('company_website') || null,
@@ -1318,9 +1273,10 @@
       company_employee_count: val('company_employee_count') || null,
       company_country: val('company_country') || null,
       company_about: val('company_about') || null,
-      company_solutions: solutions.length ? solutions.join(', ') : null,
-      icp_pain_points: val('icp_pain_points') || null,
       ...ccPatch,
+      // Espejo de las filas (soluciones, dolores, señales) hacia las columnas
+      // de texto que leen outreach, coach, learning-loop y CODA.
+      ...cc.structuredMirror(ccPatch),
       // Espejo hacia las columnas de texto que ya leen generate-radar,
       // generate-client-brief y generate-coda.
       ...cc.legacyMirror(ccPatch),

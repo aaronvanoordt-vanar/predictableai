@@ -52,6 +52,9 @@
     'commercial_deal_size', 'commercial_sales_cycle', 'commercial_model', 'commercial_primary_cta',
     'outreach_signature', 'outreach_tone', 'outreach_channels', 'outreach_language',
     'social_proof', 'social_proof_none', 'common_objections', 'objections_none',
+    'company_offerings', 'current_customers', 'customers_none', 'icp_revenue_ranges',
+    'buying_committee', 'icp_tech_uses', 'icp_tech_gaps', 'icp_pains', 'icp_signals',
+    'icp_current_alternatives', 'icp_excluded_industries',
     'context_confirmed_at',
     'company_enrichment_status', 'company_enrichment_at', 'company_enrichment_progress',
     'company_enrichment_step', 'company_enrichment_prompt', 'updated_at',
@@ -123,16 +126,43 @@
     { value: 'es_en', label: 'Español e inglés (según el país del lead)' },
   ];
 
+  // Facturación anual del cliente objetivo (USD). Apollo no la tiene para
+  // todas las empresas, así que no se usa como filtro duro: la leen el análisis
+  // de mercado y el Radar como criterio de encaje.
+  var REVENUE_RANGES = [
+    { value: '<1M', label: 'Menos de US$1 M' },
+    { value: '1M-10M', label: 'US$1 M – 10 M' },
+    { value: '10M-50M', label: 'US$10 M – 50 M' },
+    { value: '50M-250M', label: 'US$50 M – 250 M' },
+    { value: '250M-1B', label: 'US$250 M – 1.000 M' },
+    { value: '1B+', label: 'Más de US$1.000 M' },
+  ];
+
   var OPTION_SETS = {
     business_models: BUSINESS_MODELS, deal_sizes: DEAL_SIZES, sales_cycles: SALES_CYCLES,
-    ctas: CTAS, tones: TONES, channels: CHANNELS, languages: LANGUAGES,
+    ctas: CTAS, tones: TONES, channels: CHANNELS, languages: LANGUAGES, revenue_ranges: REVENUE_RANGES,
   };
+
+  // Versión del esquema del contexto. Un contexto confirmado ANTES de esta
+  // fecha se confirmó con otras tarjetas: hay que revisarlo y reconfirmarlo
+  // (decisión del dueño, 2026-09-23). Espejo en _shared/context-defaults.ts.
+  var CONTEXT_VERSION_AT = '2026-09-23T00:00:00Z';
+
+  // Los tres roles del comité de compra. El decisor es obligatorio; usuario y
+  // bloqueador son opcionales pero cambian el mensaje y el coach.
+  var COMMITTEE_ROLES = [
+    { key: 'decision_maker', label: 'Quién decide y firma', cares: 'Qué le importa para decir que sí' },
+    { key: 'user', label: 'Quién lo usa en el día a día', cares: 'Qué gana o qué teme' },
+    { key: 'blocker', label: 'Quién puede frenar la compra', cares: 'Por qué la frenaría' },
+  ];
 
   function optionsFor(key) {
     var e = enums();
     switch (key) {
       case 'icp_countries':       return e.countries || [];
       case 'icp_industry_tags':   return e.industries || [];
+      case 'icp_excluded_industries': return e.industries || [];
+      case 'icp_revenue_ranges':  return REVENUE_RANGES;
       case 'icp_employee_ranges': return e.employee_ranges || [];
       case 'icp_departments':     return e.departments || [];
       case 'icp_seniorities':     return e.seniorities || [];
@@ -304,19 +334,38 @@
     function put(k, v) { if (v !== null && v !== undefined) patch[k] = v; }
 
     ['icp_countries', 'icp_industry_tags', 'icp_employee_ranges', 'icp_departments',
-      'icp_seniorities', 'outreach_channels'].forEach(function (k) {
+      'icp_seniorities', 'outreach_channels', 'icp_revenue_ranges', 'icp_excluded_industries'].forEach(function (k) {
       put(k, readMulti(root, k));
     });
-    ['icp_titles', 'excluded_companies'].forEach(function (k) { put(k, readChips(root, k)); });
+    ['icp_titles', 'excluded_companies', 'icp_tech_uses', 'icp_tech_gaps'].forEach(function (k) {
+      put(k, readChips(root, k));
+    });
 
-    var competitors = readRows(root, 'competitors', ['name', 'domain']);
+    var competitors = readRows(root, 'competitors', ['name', 'domain', 'differentiator']);
     if (competitors) patch.competitors = competitors;
+    var offerings = readRows(root, 'company_offerings', ['name', 'for_whom', 'problem', 'price']);
+    if (offerings) patch.company_offerings = offerings;
+    var customers = readRows(root, 'current_customers', ['name', 'domain', 'industry']);
+    if (customers) patch.current_customers = customers;
+    var pains = readRows(root, 'icp_pains', ['pain', 'persona', 'evidence']);
+    if (pains) patch.icp_pains = pains;
+    var signals = readRows(root, 'icp_signals', ['signal', 'evidence']);
+    if (signals) patch.icp_signals = signals;
+    if (root.querySelector('[name="bc_decision_maker_cares"]')) {
+      var committee = {};
+      COMMITTEE_ROLES.forEach(function (r) {
+        var titles = readValue(root, 'bc_' + r.key + '_titles') || '';
+        var cares = readValue(root, 'bc_' + r.key + '_cares') || '';
+        if (titles || cares) committee[r.key] = { titles: titles, cares: cares };
+      });
+      patch.buying_committee = committee;
+    }
     var proof = readRows(root, 'social_proof', ['client', 'industry', 'result']);
     if (proof) patch.social_proof = proof;
     var objections = readRows(root, 'common_objections', ['objection', 'neutralizer']);
     if (objections) patch.common_objections = objections;
 
-    ['icp_buying_triggers', 'icp_disqualifiers', 'commercial_deal_size', 'commercial_sales_cycle',
+    ['icp_current_alternatives', 'icp_disqualifiers', 'commercial_deal_size', 'commercial_sales_cycle',
       'commercial_model', 'commercial_primary_cta', 'outreach_signature', 'outreach_tone',
       'outreach_language'].forEach(function (k) {
       var v = readValue(root, k);
@@ -326,7 +375,68 @@
     if (pn !== null) patch.social_proof_none = pn;
     var on = readChecked(root, 'objections_none');
     if (on !== null) patch.objections_none = on;
+    var cn = readChecked(root, 'customers_none');
+    if (cn !== null) patch.customers_none = cn;
     return patch;
+  }
+
+  // Espejo de las filas estructuradas hacia las columnas de texto que ya leen
+  // generate-outreach, sales-coach, learning-loop y CODA (company_solutions,
+  // icp_pain_points, icp_buying_triggers). Mismo criterio que
+  // structuredMirror() en _shared/context-defaults.ts.
+  function structuredMirror(patch) {
+    var out = {};
+    if (patch.company_offerings) {
+      var names = objArr(patch.company_offerings).map(function (o) { return txt(o.name); }).filter(Boolean);
+      out.company_solutions = names.join(', ') || null;
+    }
+    if (patch.icp_pains) {
+      out.icp_pain_points = objArr(patch.icp_pains).filter(function (p) { return has(p.pain); }).map(function (p) {
+        return '• ' + txt(p.pain) + (has(p.persona) ? ' (' + txt(p.persona) + ')' : '');
+      }).join('\n') || null;
+    }
+    if (patch.icp_signals) {
+      out.icp_buying_triggers = objArr(patch.icp_signals).filter(function (x) { return has(x.signal); }).map(function (x) {
+        return '• ' + txt(x.signal) + (has(x.evidence) ? ' — se ve en: ' + txt(x.evidence) : '');
+      }).join('\n') || null;
+    }
+    return out;
+  }
+
+  // Texto libre viejo → filas. Para quien confirmó antes de que los dolores y
+  // las señales fueran estructurados: la tarjeta abre con sus propias frases
+  // como filas, en vez de vacía.
+  function linesOf(text) {
+    return txt(text).split(/\n+|(?:^|\s)•\s*/).map(function (l) {
+      return l.replace(/^[-*•\s]+/, '').trim();
+    }).filter(function (l) { return l.length > 2; });
+  }
+  function offeringsOf(i) {
+    var rows = objArr(i && i.company_offerings).filter(function (o) { return has(o.name); });
+    if (rows.length) return rows;
+    return solutionList(i).map(function (n) { return { name: n }; });
+  }
+  function painsOf(i) {
+    var rows = objArr(i && i.icp_pains).filter(function (p) { return has(p.pain); });
+    if (rows.length) return rows;
+    // "Dolor (Cargo)" → { pain, persona }: así lo escribe structuredMirror.
+    return linesOf(i && i.icp_pain_points).map(function (l) {
+      var m = l.match(/^(.*\S)\s+\(([^()]{2,80})\)$/);
+      return m ? { pain: m[1], persona: m[2] } : { pain: l };
+    });
+  }
+  function signalsOf(i) {
+    var rows = objArr(i && i.icp_signals).filter(function (x) { return has(x.signal); });
+    if (rows.length) return rows;
+    return linesOf(i && i.icp_buying_triggers).map(function (l) {
+      var parts = l.split(/\s+—\s+se ve en:\s+/);
+      return { signal: parts[0], evidence: parts[1] || '' };
+    });
+  }
+  function committeeOf(i) {
+    var c = i && i.buying_committee;
+    if (typeof c === 'string') { try { c = JSON.parse(c); } catch (e) { c = null; } }
+    return c && typeof c === 'object' && !Array.isArray(c) ? c : {};
   }
 
   // Espejo hacia las columnas de texto viejas (icp_industries / icp_roles /
@@ -399,9 +509,11 @@
   var CARDS = [
     // ── A. Tu empresa ──
     {
-      key: 'company', block: 'internal', title: 'Identidad',
-      required: function (i, b) { return has(i.company_about) && has(b.what_it_does) && has(b.mechanism); },
-      summary: function (i, b) { return b.what_it_does || i.company_about || 'Describe qué hace tu empresa.'; },
+      key: 'company', block: 'internal', title: 'Identidad y posicionamiento',
+      required: function (i, b) {
+        return has(i.company_about) && has(b.what_it_does) && has(b.mechanism) && has(b.positional_phrase);
+      },
+      summary: function (i, b) { return b.positional_phrase || b.what_it_does || i.company_about || 'Qué hace tu empresa y cómo lo resumes.'; },
     },
     {
       key: 'firmographics', block: 'internal', title: 'Industria, tamaño y país',
@@ -412,9 +524,15 @@
       },
     },
     {
-      key: 'solutions', block: 'internal', title: 'Qué ofreces',
-      required: function (i) { return solutionList(i).length > 0; },
-      summary: function (i) { return solutionList(i).join(' · ') || 'Explica cómo resuelves esos problemas.'; },
+      key: 'solutions', block: 'internal', title: 'Qué ofreces y a quién',
+      required: function (i) {
+        return offeringsOf(i).some(function (o) { return has(o.name) && has(o.for_whom); });
+      },
+      summary: function (i) {
+        var o = offeringsOf(i);
+        if (!o.length) return 'Cada solución, para quién es, qué resuelve y cuánto cuesta.';
+        return o.slice(0, 4).map(function (x) { return txt(x.name) + (has(x.for_whom) ? ' → ' + txt(x.for_whom) : ''); }).join(' · ');
+      },
     },
     {
       key: 'commercial', block: 'internal', title: 'Cómo vendes',
@@ -431,9 +549,15 @@
       },
     },
     {
-      key: 'positioning', block: 'internal', title: 'Frase posicional',
-      required: function (i, b) { return has(b.positional_phrase); },
-      summary: function (i, b) { return b.positional_phrase || 'Define una frase clara de posicionamiento.'; },
+      key: 'customers', block: 'internal', title: 'Tus clientes actuales',
+      required: function (i) {
+        return objArr(i.current_customers).some(function (c) { return has(c.name); }) || i.customers_none === true;
+      },
+      summary: function (i) {
+        var names = objArr(i.current_customers).map(function (c) { return txt(c.name); }).filter(Boolean);
+        if (!names.length) return i.customers_none ? 'Prefieres no nombrarlos por ahora.' : 'A quién ya le vendes: el Radar busca empresas parecidas y nunca te los devuelve.';
+        return names.slice(0, 5).join(' · ') + (names.length > 5 ? ' +' + (names.length - 5) : '');
+      },
     },
     {
       key: 'outcomes', block: 'internal', title: 'Resultados y prueba social',
@@ -450,6 +574,17 @@
       },
     },
     {
+      key: 'competitors', block: 'internal', title: 'Competencia y diferenciadores',
+      required: function (i) {
+        return objArr(i.competitors).filter(function (c) { return has(c.name); }).length > 0;
+      },
+      summary: function (i) {
+        var names = objArr(i.competitors).map(function (c) { return txt(c.name); }).filter(Boolean);
+        if (!names.length) return 'Con quién compites y por qué te eligen a ti.';
+        return names.slice(0, 4).join(' · ');
+      },
+    },
+    {
       key: 'voice', block: 'internal', title: 'Voz, canales e idioma',
       required: function (i) {
         return has(i.outreach_signature) && has(i.outreach_tone) &&
@@ -459,18 +594,6 @@
         var parts = [i.outreach_signature, pick(TONES, i.outreach_tone),
           arr(i.outreach_channels).map(function (c) { return pick(CHANNELS, c); }).join(' + ')].filter(Boolean);
         return parts.join(' · ') || 'Quién firma, con qué tono y por qué canales.';
-      },
-    },
-    {
-      key: 'competitors', block: 'internal', title: 'Competencia y exclusiones',
-      required: function (i) {
-        return objArr(i.competitors).filter(function (c) { return has(c.name); }).length > 0;
-      },
-      summary: function (i) {
-        var names = objArr(i.competitors).map(function (c) { return txt(c.name); }).filter(Boolean);
-        var excl = arr(i.excluded_companies).length;
-        if (!names.length) return 'Con quién compites y a quién no hay que prospectar.';
-        return names.slice(0, 4).join(' · ') + (excl ? ' · ' + excl + ' excluida(s)' : '');
       },
     },
     // ── B. A quién le vendes ──
@@ -489,7 +612,7 @@
       required: function (i) { return arr(i.icp_industry_tags).length > 0 && arr(i.icp_employee_ranges).length > 0; },
       summary: function (i) {
         var ind = arr(i.icp_industry_tags), sz = arr(i.icp_employee_ranges);
-        if (!ind.length && !sz.length) return 'A qué industrias y de qué tamaño le vendes.';
+        if (!ind.length && !sz.length) return 'A qué industrias, de qué tamaño y con cuánta facturación.';
         return [
           ind.slice(0, 4).map(function (v) { return labelOf('icp_industry_tags', v); }).join(' · ') +
             (ind.length > 4 ? ' +' + (ind.length - 4) : ''),
@@ -498,23 +621,50 @@
       },
     },
     {
-      key: 'target_people', block: 'external', title: 'Personas objetivo',
+      key: 'target_people', block: 'external', title: 'Comité de compra',
       required: function (i) {
-        return arr(i.icp_departments).length > 0 && arr(i.icp_seniorities).length > 0 && arr(i.icp_titles).length > 0;
+        var dm = committeeOf(i).decision_maker || {};
+        return arr(i.icp_departments).length > 0 && arr(i.icp_seniorities).length > 0 &&
+          arr(i.icp_titles).length > 0 && has(dm.cares);
       },
       summary: function (i) {
         var t = arr(i.icp_titles), s = arr(i.icp_seniorities);
-        if (!t.length && !s.length) return 'Qué cargos toman la decisión de compra.';
+        if (!t.length && !s.length) return 'Quién decide, quién lo usa y quién puede frenar la compra.';
         return (t.slice(0, 4).join(' · ') || s.map(function (v) { return labelOf('icp_seniorities', v); }).join(' · ')) +
           (t.length > 4 ? ' +' + (t.length - 4) : '');
       },
     },
     {
-      key: 'pains', block: 'external', title: 'Dolores y señales de compra',
-      required: function (i) { return has(i.icp_pain_points) && has(i.icp_buying_triggers); },
+      key: 'tech', block: 'external', title: 'Tecnografía de tu cliente',
+      required: function (i) { return arr(i.icp_tech_uses).length > 0 || arr(i.icp_tech_gaps).length > 0; },
       summary: function (i) {
-        if (!has(i.icp_pain_points)) return 'Identifica los problemas de tu cliente ideal.';
-        return txt(i.icp_pain_points).slice(0, 120) + (txt(i.icp_pain_points).length > 120 ? '…' : '');
+        var u = arr(i.icp_tech_uses), g = arr(i.icp_tech_gaps);
+        if (!u.length && !g.length) return 'Qué herramientas usa y cuáles le faltan: el Radar lo lee en su sitio web.';
+        return [u.length ? 'Usa: ' + u.slice(0, 3).join(', ') : '', g.length ? 'Le falta: ' + g.slice(0, 3).join(', ') : '']
+          .filter(Boolean).join(' · ');
+      },
+    },
+    {
+      key: 'pains', block: 'external', title: 'Dolores y señales de compra',
+      required: function (i) {
+        return painsOf(i).length > 0 &&
+          signalsOf(i).some(function (x) { return has(x.signal) && has(x.evidence); }) &&
+          has(i.icp_current_alternatives);
+      },
+      summary: function (i) {
+        var p = painsOf(i), sg = signalsOf(i);
+        if (!p.length) return 'Qué le duele, cómo lo resuelve hoy y qué señal dice que va a comprar.';
+        return p.length + ' dolor(es) · ' + sg.length + ' señal(es) · ' + txt(p[0].pain).slice(0, 80);
+      },
+    },
+    {
+      key: 'negative', block: 'external', title: 'A quién NO le vendes',
+      required: function (i) { return has(i.icp_disqualifiers); },
+      summary: function (i) {
+        var ex = arr(i.excluded_companies).length, ind = arr(i.icp_excluded_industries).length;
+        if (!has(i.icp_disqualifiers)) return 'Quién no es tu cliente: el Radar y la búsqueda lo descartan antes de mostrártelo.';
+        return txt(i.icp_disqualifiers).slice(0, 90) +
+          (ind ? ' · ' + ind + ' industria(s) fuera' : '') + (ex ? ' · ' + ex + ' empresa(s) excluida(s)' : '');
       },
     },
     {
@@ -550,6 +700,11 @@
     return { complete: complete, summary: summary };
   }
 
+  function isConfirmedCurrent(i) {
+    var at = i && i.context_confirmed_at ? Date.parse(i.context_confirmed_at) : NaN;
+    return Number.isFinite(at) && at >= Date.parse(CONTEXT_VERSION_AT);
+  }
+
   function completeness(intake, brief) {
     var i = intake || {}, b = brief || {};
     var missing = [];
@@ -569,10 +724,12 @@
       missing: missing,
       blocks: byBlock,
       fieldsComplete: missing.length === 0,
-      confirmed: !!(i.context_confirmed_at),
+      confirmed: isConfirmedCurrent(i),
+      // Confirmó con el esquema anterior (13 tarjetas): hay que reconfirmar.
+      needsReconfirm: !!(i.context_confirmed_at) && !isConfirmedCurrent(i),
       // El gate exige las dos cosas: que los campos estén y que el usuario haya
       // confirmado. Que la IA haya llenado todo no significa que él lo revisó.
-      complete: missing.length === 0 && !!(i.context_confirmed_at),
+      complete: missing.length === 0 && isConfirmedCurrent(i),
     };
   }
 
@@ -591,6 +748,14 @@
     select: select,
     collect: collect,
     legacyMirror: legacyMirror,
+    structuredMirror: structuredMirror,
+    offeringsOf: offeringsOf,
+    painsOf: painsOf,
+    signalsOf: signalsOf,
+    committeeOf: committeeOf,
+    COMMITTEE_ROLES: COMMITTEE_ROLES,
+    CONTEXT_VERSION_AT: CONTEXT_VERSION_AT,
+    isConfirmedCurrent: isConfirmedCurrent,
     recommendedFilters: recommendedFilters,
     cardState: cardState,
     completeness: completeness,
@@ -627,11 +792,14 @@
       ? i.radar_suggested_triggers.filter(function (x) { return typeof x === 'string' && x.trim(); })
       : [];
     if (!list.length) return '';
-    var current = String(i.icp_buying_triggers == null ? '' : i.icp_buying_triggers).trim();
-    var items = list.filter(function (s) { return current.indexOf(s.trim()) === -1; }).slice(0, 8);
+    var current = CC.signalsOf(i).map(function (x) { return String(x.signal || '').trim().toLowerCase(); });
+    var items = list.filter(function (s) {
+      var head = s.split(':')[0].trim().toLowerCase();
+      return current.indexOf(head) === -1 && current.indexOf(s.trim().toLowerCase()) === -1;
+    }).slice(0, 8);
     if (!items.length) return '';
     return '<div class="ccx-radar-sugg">' +
-      '<div class="ccx-radar-sugg-h">El Radar detecta hoy estas señales · agrégalas a tu contexto</div>' +
+      '<div class="ccx-radar-sugg-h">Señales propuestas por el Radar y el Intelligence Hub · agrégalas a tu contexto</div>' +
       items.map(function (s) {
         return '<button type="button" class="ccx-radar-sugg-item" data-ccx-add-trigger="' + esc(s) + '">+ ' + esc(s) + '</button>';
       }).join('') + '</div>';
@@ -660,7 +828,9 @@
     company: function (i, b) {
       return field('Qué es y a qué se dedica', '', '<textarea name="company_about" rows="3" placeholder="Qué entendió sobre tu empresa">' + esc(i.company_about || '') + '</textarea>') +
         field('Qué hace, en una frase', '', '<input type="text" name="what_it_does" value="' + esc(b.what_it_does || '') + '">') +
-        field('Cómo lo hace (mecanismo)', '', '<textarea name="mechanism" rows="3">' + esc(b.mechanism || '') + '</textarea>');
+        field('Cómo lo hace (mecanismo)', '', '<textarea name="mechanism" rows="3">' + esc(b.mechanism || '') + '</textarea>') +
+        field('Frase posicional', 'Cómo lo resumes en una línea: la usan los mensajes y el coach.',
+          '<input type="text" name="positional_phrase" value="' + esc(b.positional_phrase || '') + '">');
     },
     firmographics: function (i) {
       return '<p class="ihx-field-help">Estos tres datos se completan investigando tu LinkedIn o tu página web. Son sobre <strong>tu</strong> empresa, no sobre tus clientes.</p>' +
@@ -670,8 +840,21 @@
         field('País', '', '<input type="text" name="company_country" value="' + esc(i.company_country || '') + '">') +
         '</div>';
     },
+    solutions: function (i) {
+      return block('Tus soluciones, una por fila',
+        'Si vendes a varios segmentos, aquí se nota: cada solución dice para quién es. El análisis de mercado los lee todos juntos, sin investigar segmento por segmento.',
+        CC.rowList({
+          name: 'company_offerings', rows: CC.offeringsOf(i),
+          fields: [
+            { key: 'name', placeholder: 'Solución' },
+            { key: 'for_whom', placeholder: 'Para quién (segmento)' },
+            { key: 'problem', placeholder: 'Qué problema resuelve', wide: true },
+            { key: 'price', placeholder: 'Precio o plan (ej: desde US$500/mes)' },
+          ],
+        }));
+    },
     commercial: function (i) {
-      return '<p class="ihx-field-help">Define qué tan larga y consultiva puede ser la conversación: el generador de mensajes y el AI Sales Coach calibran el tono y el cierre con esto.</p>' +
+      return '<p class="ihx-field-help">Define qué tan larga y consultiva puede ser la conversación, y cuántas empresas le conviene revisar al Radar: con un ticket alto, menos cuentas y mejor elegidas.</p>' +
         '<div class="ihx-field-row">' +
         block('Modelo de negocio', '', CC.select('commercial_model', O.business_models, i.commercial_model)) +
         block('Ticket promedio', '', CC.select('commercial_deal_size', O.deal_sizes, i.commercial_deal_size)) +
@@ -681,8 +864,18 @@
         block('CTA principal de tus mensajes', '', CC.select('commercial_primary_cta', O.ctas, i.commercial_primary_cta)) +
         '</div>';
     },
-    positioning: function (i, b) {
-      return field('Cómo lo resume', '', '<input type="text" name="positional_phrase" value="' + esc(b.positional_phrase || '') + '">');
+    customers: function (i) {
+      return block('Empresas que hoy te compran',
+        'El análisis de mercado busca empresas parecidas a estas y el Radar nunca te las devuelve como prospecto. Si tienes varias, pon primero las mejores.',
+        CC.rowList({
+          name: 'current_customers', rows: objArr(i.current_customers),
+          fields: [
+            { key: 'name', placeholder: 'Cliente' },
+            { key: 'domain', placeholder: 'dominio.com' },
+            { key: 'industry', placeholder: 'Industria', wide: true },
+          ],
+        }) +
+        checkbox('customers_none', 'Prefiero no nombrarlos por ahora', i.customers_none === true));
     },
     outcomes: function (i, b) {
       var outcomes = Array.isArray(b.key_outcomes) ? b.key_outcomes.join('\n') : (b.key_outcomes || '');
@@ -715,22 +908,20 @@
         }));
     },
     competitors: function (i) {
-      return block('Competidores directos',
-        'Quién vende lo mismo que tú. El Intelligence Hub los vigila, y ni el radar ni la búsqueda te los devuelven como prospectos.',
+      return block('Competidores directos y por qué te eligen a ti',
+        'Quién vende lo mismo que tú. El Intelligence Hub los vigila, el análisis de mercado arma el ángulo para ganarles, y ni el Radar ni la búsqueda te los devuelven como prospectos.',
         CC.rowList({
           name: 'competitors', rows: objArr(i.competitors),
           fields: [
-            { key: 'name', placeholder: 'Nombre del competidor' },
-            { key: 'domain', placeholder: 'dominio.com', wide: true },
+            { key: 'name', placeholder: 'Competidor' },
+            { key: 'domain', placeholder: 'dominio.com' },
+            { key: 'differentiator', placeholder: 'Por qué te eligen a ti y no a él', wide: true },
           ],
-        })) +
-        block('Empresas que nunca hay que prospectar',
-          'Clientes actuales, socios, cuentas de otro vendedor. Se excluyen de las búsquedas y del radar.',
-          CC.chipList({ name: 'excluded_companies', values: arr(i.excluded_companies), placeholder: 'Empresa o dominio' }));
+        }));
     },
     geography: function (i) {
       return block('¿En qué países quieres vender?',
-        'Define dónde investiga el radar, qué ubicaciones trae la búsqueda recomendada y qué mercados analiza el Intelligence Hub.',
+        'Define dónde investiga el Radar, qué ubicaciones trae la búsqueda recomendada y qué mercados analiza el Intelligence Hub.',
         CC.multiSelect({
           name: 'icp_countries', options: CC.optionsFor('icp_countries'),
           selected: arr(i.icp_countries), presets: CC.COUNTRY_PRESETS,
@@ -746,9 +937,25 @@
         block('Tamaño de esas empresas', '', CC.multiSelect({
           name: 'icp_employee_ranges', options: CC.optionsFor('icp_employee_ranges'),
           selected: arr(i.icp_employee_ranges), placeholder: 'Selecciona rangos…',
-        }));
+        })) +
+        block('Facturación anual (opcional)',
+          'No todas las empresas publican su facturación, así que no filtra la búsqueda: el análisis y el Radar la usan para priorizar.',
+          CC.multiSelect({
+            name: 'icp_revenue_ranges', options: CC.optionsFor('icp_revenue_ranges'),
+            selected: arr(i.icp_revenue_ranges), placeholder: 'Selecciona rangos…',
+          }));
     },
     target_people: function (i) {
+      var committee = CC.committeeOf(i);
+      var roles = CC.COMMITTEE_ROLES.map(function (r) {
+        var v = committee[r.key] || {};
+        var optional = r.key === 'decision_maker' ? '' : ' <em>(opcional)</em>';
+        return '<div class="ccx-committee-row">' +
+          '<span class="ccx-committee-role">' + esc(r.label) + optional + '</span>' +
+          '<input type="text" name="bc_' + r.key + '_titles" placeholder="Cargo(s)" value="' + esc(v.titles || '') + '">' +
+          '<input type="text" name="bc_' + r.key + '_cares" placeholder="' + esc(r.cares) + '" value="' + esc(v.cares || '') + '">' +
+        '</div>';
+      }).join('');
       return block('Áreas', '', CC.multiSelect({
         name: 'icp_departments', options: CC.optionsFor('icp_departments'),
         selected: arr(i.icp_departments), placeholder: 'Selecciona áreas…',
@@ -757,20 +964,55 @@
           name: 'icp_seniorities', options: CC.optionsFor('icp_seniorities'),
           selected: arr(i.icp_seniorities), placeholder: 'Selecciona niveles…',
         })) +
-        block('Cargos concretos',
+        block('Cargos a contactar',
           'Escríbelos como aparecen en LinkedIn. Apollo busca los títulos en inglés, así que agrega también la versión en inglés si vendes fuera de LATAM.',
-          CC.chipList({ name: 'icp_titles', values: arr(i.icp_titles), placeholder: 'Ej: Director Comercial' }));
+          CC.chipList({ name: 'icp_titles', values: arr(i.icp_titles), placeholder: 'Ej: Director Comercial' })) +
+        '<div class="ihx-field"><span>Quién pesa en la compra</span>' +
+          '<p class="ihx-field-help">Los mensajes le hablan a cada uno de lo que le importa, y el coach te prepara para el que puede frenarla.</p>' +
+          '<div class="ccx-committee">' + roles + '</div></div>';
+    },
+    tech: function (i) {
+      return '<p class="ihx-field-help">El Radar lee la portada del sitio de cada empresa y la tecnografía de Apollo: con esto sabe qué buscar y qué ausencia es una oportunidad.</p>' +
+        block('Herramientas que suele usar tu cliente ideal',
+          'Ej: HubSpot, Shopify, WhatsApp Business, SAP.',
+          CC.chipList({ name: 'icp_tech_uses', values: arr(i.icp_tech_uses), placeholder: 'Herramienta' })) +
+        block('Herramientas que le faltan (y eso te abre la puerta)',
+          'Ej: sin CRM, sin chat en su web, sin automatización de WhatsApp.',
+          CC.chipList({ name: 'icp_tech_gaps', values: arr(i.icp_tech_gaps), placeholder: 'Ej: Sin CRM' }));
     },
     pains: function (i) {
-      return field('Qué problemas tiene tu cliente objetivo', '',
-        '<textarea name="icp_pain_points" rows="3" placeholder="Ej: Pierden visibilidad de su pipeline y no saben priorizar leads">' + esc(i.icp_pain_points || '') + '</textarea>') +
-        field('Qué señales indican que está listo para comprar',
-          'El radar sale a buscar exactamente esto. Ej: acaban de levantar inversión, abrieron vacantes de ventas, cambiaron de CRM.',
-          '<textarea name="icp_buying_triggers" rows="3" placeholder="Ej: Contrataron un nuevo VP de Ventas en los últimos 3 meses">' + esc(i.icp_buying_triggers || '') + '</textarea>' +
-          radarSuggestions(i)) +
-        field('Quién NO es tu cliente',
-          'Se usa para descartar resultados del radar y de la búsqueda antes de que te lleguen.',
-          '<textarea name="icp_disqualifiers" rows="2" placeholder="Ej: Empresas sin equipo comercial propio, o de menos de 5 empleados">' + esc(i.icp_disqualifiers || '') + '</textarea>');
+      return block('Qué le duele a tu cliente, uno por fila', 'Cada dolor con quién lo siente y cómo se nota desde afuera.',
+        CC.rowList({
+          name: 'icp_pains', rows: CC.painsOf(i),
+          fields: [
+            { key: 'pain', placeholder: 'Dolor', wide: true },
+            { key: 'persona', placeholder: 'Quién lo siente' },
+            { key: 'evidence', placeholder: 'Cómo se nota (opcional)' },
+          ],
+        })) +
+        field('Cómo lo resuelven hoy', 'Tu verdadero competidor: Excel, un proveedor local, un empleado, nada.',
+          '<textarea name="icp_current_alternatives" rows="2" placeholder="Ej: Con hojas de cálculo y un analista que arma el reporte a mano cada mes">' + esc(i.icp_current_alternatives || '') + '</textarea>') +
+        block('Señales de que está listo para comprar',
+          'Un hecho observable por fila y dónde se ve. El Radar crea un detector por cada señal: si no se puede ver desde afuera, no se puede detectar.',
+          CC.rowList({
+            name: 'icp_signals', rows: CC.signalsOf(i),
+            fields: [
+              { key: 'signal', placeholder: 'Ej: Abrió vacantes de vendedores', wide: true },
+              { key: 'evidence', placeholder: 'Dónde se ve (ej: LinkedIn Jobs)', wide: true },
+            ],
+          }) + radarSuggestions(i));
+    },
+    negative: function (i) {
+      return field('Quién NO es tu cliente',
+        'Se usa para descartar resultados del Radar y de la búsqueda antes de que te lleguen.',
+        '<textarea name="icp_disqualifiers" rows="2" placeholder="Ej: Empresas sin equipo comercial propio, o de menos de 5 empleados">' + esc(i.icp_disqualifiers || '') + '</textarea>') +
+        block('Industrias que nunca hay que prospectar (opcional)', '', CC.multiSelect({
+          name: 'icp_excluded_industries', options: CC.optionsFor('icp_excluded_industries'),
+          selected: arr(i.icp_excluded_industries), placeholder: 'Selecciona industrias…',
+        })) +
+        block('Empresas que nunca hay que prospectar (opcional)',
+          'Socios, cuentas de otro vendedor, empresas con las que no quieres trabajar. Tus clientes actuales ya se excluyen solos.',
+          CC.chipList({ name: 'excluded_companies', values: arr(i.excluded_companies), placeholder: 'Empresa o dominio' }));
     },
     objections: function (i) {
       return block('Objeciones que ya escuchaste, y cómo las respondes',
@@ -848,12 +1090,25 @@
 
       var addTrigger = t.closest('[data-ccx-add-trigger]');
       if (addTrigger) {
-        var ta = root.querySelector('textarea[name="icp_buying_triggers"]');
-        if (ta) {
+        // La sugerencia viene como "Nombre: por qué". Se agrega como fila de
+        // señal: el nombre es la señal y el porqué queda de evidencia para
+        // que el usuario la ajuste a dónde se ve.
+        var sHost = root.querySelector('[data-ccx-rows="icp_signals"]');
+        if (sHost) {
           var line = addTrigger.getAttribute('data-ccx-add-trigger') || '';
-          ta.value = (ta.value.trim() ? ta.value.replace(/\s+$/, '') + '\n' : '') + '• ' + line;
-          ta.dispatchEvent(new Event('input', { bubbles: true }));
-          ta.dispatchEvent(new Event('change', { bubbles: true }));
+          var cut = line.indexOf(':');
+          var sig = cut > 0 ? line.slice(0, cut).trim() : line.trim();
+          var ev2 = cut > 0 ? line.slice(cut + 1).trim() : '';
+          var sBox = sHost.querySelector('[data-ccx-rows-box]');
+          var empty = Array.prototype.filter.call(sBox.querySelectorAll('[data-ccx-row]'), function (r) {
+            return !Array.prototype.some.call(r.querySelectorAll('input'), function (x) { return x.value.trim(); });
+          })[0];
+          if (!empty) {
+            sBox.insertAdjacentHTML('beforeend', sHost.querySelector('[data-ccx-rows-tpl]').innerHTML);
+            empty = sBox.lastElementChild;
+          }
+          empty.querySelector('[data-ccx-key="signal"]').value = sig;
+          empty.querySelector('[data-ccx-key="evidence"]').value = ev2;
         }
         addTrigger.remove();
         return;
@@ -996,7 +1251,7 @@
       setTimeout(function () { host.classList.remove('ihx-just-filled'); }, 1600);
     }
     ['icp_countries', 'icp_industry_tags', 'icp_employee_ranges', 'icp_departments',
-      'icp_seniorities', 'outreach_channels'].forEach(function (name) {
+      'icp_seniorities', 'outreach_channels', 'icp_revenue_ranges', 'icp_excluded_industries'].forEach(function (name) {
       var host = root.querySelector('[data-ccx-ms="' + name + '"]');
       if (!host || host.classList.contains('is-open')) return;
       var boxes = host.querySelectorAll('.ccx-ms-options input[type="checkbox"]');
@@ -1009,7 +1264,7 @@
       msChips(host);
       flash(host);
     });
-    ['icp_titles', 'excluded_companies'].forEach(function (name) {
+    ['icp_titles', 'excluded_companies', 'icp_tech_uses', 'icp_tech_gaps'].forEach(function (name) {
       var host = root.querySelector('[data-ccx-chips="' + name + '"]');
       if (!host || host.contains(document.activeElement)) return;
       var box = host.querySelector('[data-ccx-chips-box]');
@@ -1019,13 +1274,20 @@
       next.forEach(function (v) { addChip(host, v); });
       flash(host);
     });
-    [['competitors', ['name', 'domain']], ['social_proof', ['client', 'industry', 'result']],
-      ['common_objections', ['objection', 'neutralizer']]].forEach(function (pair) {
+    [['competitors', ['name', 'domain', 'differentiator']], ['social_proof', ['client', 'industry', 'result']],
+      ['common_objections', ['objection', 'neutralizer']],
+      ['company_offerings', ['name', 'for_whom', 'problem', 'price']],
+      ['current_customers', ['name', 'domain', 'industry']],
+      ['icp_pains', ['pain', 'persona', 'evidence']],
+      ['icp_signals', ['signal', 'evidence']]].forEach(function (pair) {
       var host = root.querySelector('[data-ccx-rows="' + pair[0] + '"]');
       if (!host || host.contains(document.activeElement)) return;
       var filled = Array.prototype.some.call(host.querySelectorAll('input'), function (i) { return i.value.trim(); });
       if (filled) return;
-      var rows = objArr(intake[pair[0]]);
+      var rows = pair[0] === 'icp_pains' ? CC.painsOf(intake)
+        : pair[0] === 'icp_signals' ? CC.signalsOf(intake)
+        : pair[0] === 'company_offerings' ? CC.offeringsOf(intake)
+        : objArr(intake[pair[0]]);
       if (!rows.length) return;
       var tpl = host.querySelector('[data-ccx-rows-tpl]').innerHTML;
       var box = host.querySelector('[data-ccx-rows-box]');
@@ -1047,7 +1309,7 @@
       el.value = next;
       if (el.value) flash(el);
     });
-    ['outreach_signature', 'icp_buying_triggers', 'icp_disqualifiers'].forEach(function (name) {
+    ['outreach_signature', 'icp_current_alternatives', 'icp_disqualifiers'].forEach(function (name) {
       var el = root.querySelector('[name="' + name + '"]');
       if (!el || el === document.activeElement || el.value.trim()) return;
       var next = String(intake[name] || '');
@@ -1055,10 +1317,22 @@
       el.value = next;
       flash(el);
     });
+    var committee = CC.committeeOf(intake);
+    CC.COMMITTEE_ROLES.forEach(function (r) {
+      ['titles', 'cares'].forEach(function (f) {
+        var el = root.querySelector('[name="bc_' + r.key + '_' + f + '"]');
+        if (!el || el === document.activeElement || el.value.trim()) return;
+        var next = String((committee[r.key] || {})[f] || '');
+        if (!next) return;
+        el.value = next;
+        flash(el);
+      });
+    });
     // "Todavía no tengo un caso / objeciones": la IA las marca cuando cierra
     // el contexto sin encontrar nada citable. Solo se marca, nunca se desmarca
     // (desmarcar es una decisión del usuario), y solo si la lista está vacía.
-    [['social_proof_none', 'social_proof'], ['objections_none', 'common_objections']].forEach(function (pair) {
+    [['social_proof_none', 'social_proof'], ['objections_none', 'common_objections'],
+      ['customers_none', 'current_customers']].forEach(function (pair) {
       var box = root.querySelector('input[name="' + pair[0] + '"]');
       if (!box || box.checked || intake[pair[0]] !== true) return;
       var host = root.querySelector('[data-ccx-rows="' + pair[1] + '"]');
@@ -1141,13 +1415,19 @@
 
       /* ── Filas repetibles ── */
       '.ccx-rows-box { display: flex; flex-direction: column; gap: 7px; }',
-      '.ccx-row { display: flex; gap: 7px; align-items: center; }',
+      '.ccx-row { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }',
       '.ccx-row input { flex: 1 1 120px; min-width: 0; }',
       '.ccx-row input.ccx-row-wide { flex: 2 1 200px; }',
       '.ccx-row-x { background: none; border: 0; color: var(--ink-4, rgba(10,10,15,.40)); font-size: 17px; line-height: 1; cursor: pointer; padding: 0 4px; flex-shrink: 0; }',
       '.ccx-row-x:hover { color: var(--red, #D64545); }',
       '.ccx-rows-add { margin-top: 8px; font: inherit; font-size: 12px; font-weight: 600; background: none; border: 0; color: var(--accent, #1F4BFF); cursor: pointer; padding: 2px 0; }',
       '.ccx-rows-add:hover { text-decoration: underline; }',
+      '.ccx-committee { display: flex; flex-direction: column; gap: 8px; }',
+      '.ccx-committee-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, 1.2fr) minmax(0, 1.6fr); gap: 7px; align-items: center; }',
+      '.ccx-committee-role { font-size: 12px; font-weight: 600; color: var(--ink-2, rgba(10,10,15,.8)); }',
+      '.ccx-committee-role em { font-style: normal; font-weight: 400; color: var(--ink-4, rgba(10,10,15,.45)); }',
+      '.ccx-committee-row input { min-width: 0; }',
+      '@media (max-width: 720px) { .ccx-committee-row { grid-template-columns: 1fr; } }',
 
       /* ── Selects y checkboxes ── */
       '.ccx-select { width: 100%; box-sizing: border-box; background: var(--surface, #fff); border: 1px solid var(--hair-3, rgba(10,10,15,.13)); border-radius: 9px; padding: 9px 12px; font: inherit; font-size: 13px; color: var(--ink, #0A0A0F); cursor: pointer; }',
