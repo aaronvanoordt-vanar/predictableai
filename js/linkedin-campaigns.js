@@ -319,7 +319,7 @@
 
   /**
    * opts: { campaign?, defaultName?, dripifyCampaigns?: [], refreshDripify?: fn→Promise<[]>,
-   *         webhookUrl?, sampleMemberId?, edgeFetch?, senderInfo?, onSaved(row), onDeleted?(id) }
+   *         webhookUrl?, sampleMemberId?, purpose?, lockPurpose? (sin atajo al otro tipo), edgeFetch?, senderInfo?, onSaved(row), onDeleted?(id) }
    */
   function open(opts) {
     injectStyles();
@@ -366,6 +366,17 @@
         } }, '+ ' + t.label));
       });
       body.appendChild(addRow);
+      // El otro tipo de envío no cabe en esta campaña: se ofrece crearlo aparte
+      // desde aquí, para no tener que salir al modal del canal a buscarlo.
+      var other = purpose === 'message' ? 'connect' : 'message';
+      if (!o.lockPurpose) body.appendChild(h('div', { class: 'lic-row', style: 'align-items:center' },
+        h('span', { class: 'lic-hint grow', text: other === 'message'
+          ? '¿Quieres mandar solo un mensaje (a quien ya aceptó tu conexión)? Va en una campaña de mensaje aparte.'
+          : '¿Quieres mandar la solicitud de conexión? Va en una campaña de conexión aparte.' }),
+        h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: other === 'message' ? '+ Nueva campaña de mensaje' : '+ Nueva campaña de conexión', onclick: function () {
+          api.close();
+          open(Object.assign({}, o, { campaign: null, purpose: other, defaultName: '' }));
+        } })));
 
       var status = statusLabel(row);
       var stBox = h('div', { class: 'lic-status' });
