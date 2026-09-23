@@ -1815,7 +1815,7 @@
       listBox,
       h('div', { style: mLbl, text: 'Nueva lista' }),
       nameInput,
-      h('p', { style: 'font-size:12px;color:var(--amber);background:var(--amber-soft);border:1px solid rgba(199,126,18,.30);border-radius:var(--r-sm);padding:9px 11px;margin:12px 0 0;line-height:1.5', text: 'Apollo revela el email laboral de cada persona (≈1 crédito por persona). El reveal corre en segundo plano — la lista se guarda de inmediato y los contactos aparecen como «Enriqueciendo…» hasta que Apollo responda.' }),
+      h('p', { style: 'font-size:12px;color:var(--amber);background:var(--amber-soft);border:1px solid rgba(199,126,18,.30);border-radius:var(--r-sm);padding:9px 11px;margin:12px 0 0;line-height:1.5', text: 'Apollo revela el email laboral de cada persona (2 créditos por email encontrado; gratis con tu propia cuenta de Apollo). El reveal corre en segundo plano — la lista se guarda de inmediato y los contactos aparecen como «Enriqueciendo…» hasta que Apollo responda.' }),
       prog.el);
 
     var api = openModal({
@@ -1953,7 +1953,7 @@
       h('label', { style: 'display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text2);margin-top:14px;cursor:' + (rows.length ? 'pointer' : 'not-allowed') },
         alsoApollo,
         h('span', { text: rows.length
-          ? 'También guardar los ' + fmtNum(rows.length) + ' resultados de esta página en una lista (≈1 crédito por persona).'
+          ? 'También guardar los ' + fmtNum(rows.length) + ' resultados de esta página en una lista (2 créditos por email encontrado).'
           : 'Ejecuta una búsqueda con resultados para poder guardarlos también en una lista.' })),
       prog.el);
     var api = openModal({
@@ -2707,7 +2707,7 @@
       h('p', {
         style: 'font-size:13px;color:var(--text2);margin:0 0 12px;line-height:1.55',
         text: 'Se revelará el email personal y (opcional) el teléfono de ' + fmtNum(sel.length) +
-          ' contactos vía Apollo. Costo: ≈1 crédito por contacto; los números móviles pueden consumir créditos adicionales. ' +
+          ' contactos vía Apollo. Costo: 2 créditos por email y 8 por teléfono, solo cuando Apollo encuentra el dato (con tu propia cuenta de Apollo conectada no gastas créditos de predictable.ai). ' +
           'El enriquecimiento corre en segundo plano — puedes seguir usando la app; usa «Actualizar» en unos minutos para ver los resultados.',
       }),
       h('label', { class: 'pros-check', style: 'display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text2);cursor:pointer;font-family:var(--font-body);font-weight:400;text-transform:none;letter-spacing:0' }, phoneCb, 'Incluir teléfonos'));

@@ -37,10 +37,11 @@ import { KIND_META, isDetectorKind, reachForDealSize, type DetectorKind } from "
 import {
   detectorFromText, detectorsFromHub, generatePlan, kindAvailable, type Availability,
 } from "../_shared/radar-planner.ts";
+import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 
 // Keep in sync with js/credit-costs.js (radar_plan / radar_detector_custom).
-const RADAR_PLAN_COST = 6;
-const RADAR_DETECTOR_COST = 3;
+const RADAR_PLAN_COST = CREDIT_COSTS.radar_plan;            // _shared/credit-costs.ts
+const RADAR_DETECTOR_COST = CREDIT_COSTS.radar_detector_custom;
 
 // deno-lint-ignore no-explicit-any
 type Json = any;

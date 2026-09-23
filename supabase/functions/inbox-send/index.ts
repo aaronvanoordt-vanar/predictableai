@@ -41,13 +41,15 @@
  *      UPDATE inbox_messages SET read_at = now() WHERE id = ANY(ids) AND
  *      user_id = uid AND direction = 'in' AND read_at IS NULL → { updated: n }
  *
- * Créditos: 1 por respuesta enviada (`campaign_send`, spend_credits) — sin
- * bloquear: si no hay saldo se loguea y el mensaje sale igual (ya se envió).
+ * Créditos: responder a mano no cuesta (`inbox_reply` = 0 en
+ * _shared/credit-costs.ts, docs/PRICING.md). Si algún día vuelve a costar, se
+ * cobra sin bloquear: si no hay saldo se loguea y el mensaje sale igual.
  *
  * Secretos: SUPABASE_*, APOLLO_API_KEY (fallback), APOLLO_OAUTH_CLIENT_ID/SECRET.
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import * as wati from "../_shared/wati.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 
@@ -55,7 +57,7 @@ import * as apolloAuth from "../_shared/apollo-auth.ts";
 type Json = any;
 
 const WHATSAPP_SESSION_MS = 24 * 60 * 60 * 1000;
-const REPLY_COST = 1; // créditos por respuesta (js/credit-costs.js → campaign_send)
+const REPLY_COST: number = CREDIT_COSTS.inbox_reply; // _shared/credit-costs.ts ↔ js/credit-costs.js
 const MAX_BODY = 4000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -99,6 +101,7 @@ class HttpError extends Error {
 }
 
 async function spendCredits(db: SupabaseClient, userId: string) {
+  if (REPLY_COST <= 0) return;
   const { data, error } = await db.rpc("spend_credits", { p_user_id: userId, p_amount: REPLY_COST });
   if (error || data === null || data === undefined) {
     console.warn("[inbox-send] spend_credits:", error?.message ?? "sin saldo");

@@ -34,10 +34,13 @@
  *     (radar-score.ts) y dm_status pending si hay dominio;
  *   · los decision makers que la propia búsqueda ya trajo se guardan gratis.
  *
- * COBRO: RADAR_DETECTOR_MONTH créditos por detector cada 30 días, cobrados
- * en el primer tick del período (billed_until). Sin saldo → status
- * 'no_credits', se reintenta al día siguiente. Mantener en sync con
- * js/credit-costs.js (radar_detector_month).
+ * COBRO: por detector cada 30 días, según lo que cuesta correrlo
+ * (radarDetectorMonthCost en _shared/credit-costs.ts ↔ js/credit-costs.js:
+ * personas 10, datos 30 + 10 por cada 100 empresas sobre 300, web 40,
+ * presencia 50), cobrado en el primer tick del período (billed_until). Sin
+ * saldo, o con el tope de detectores activos del plan lleno
+ * (PLAN_LIMITS.radar_active_detectors), → status 'no_credits' con el motivo
+ * en last_error.
  *
  * Auth: Bearer <service role> (cron) o <user JWT>. Requiere APOLLO_API_KEY
  * (o Apollo del usuario), la key del motor de IA elegido y, opcionalmente,
@@ -50,15 +53,15 @@ import { resolveApolloAuth, type ApolloAuth } from "../_shared/apollo-auth.ts";
 import { findDecisionMakers } from "../_shared/radar-apollo.ts";
 import { loadHubDigest, loadSellerContext, type SellerContext } from "../_shared/radar-context.ts";
 import { canonicalCountry, countryFit } from "../_shared/radar-geo.ts";
-import { KIND_META, signalFingerprint, type DetectorKind } from "../_shared/radar-plan.ts";
+import { KIND_META, maxCompaniesOf, signalFingerprint, type DetectorKind } from "../_shared/radar-plan.ts";
 import { scoreSignal } from "../_shared/radar-score.ts";
 import { TICK_ESTIMATE_MS, runTick, type Candidate, type DetectorRow } from "../_shared/radar-detectors.ts";
 import { notifyUserIfDue } from "../_shared/radar-notify.ts";
 import { detectorsFromHub, type Availability } from "../_shared/radar-planner.ts";
 import { platformKey } from "../_shared/apollo-auth.ts";
+import { minCadenceHours, radarDetectorMonthCost } from "../_shared/credit-costs.ts";
+import { PLAN_LIMITS, planForUser } from "../_shared/billing-plans.ts";
 
-// Keep in sync with js/credit-costs.js (radar_detector_month).
-const RADAR_DETECTOR_MONTH = 15;
 const BILLING_PERIOD_MS = 30 * 86400_000;
 
 const INVOCATION_BUDGET_MS = 115_000;   // holgura bajo el tope de ~150 s
@@ -281,15 +284,35 @@ async function claimDetector(supa: Json, userFilter: string | null): Promise<{ d
 async function billDetector(supa: Json, det: Json): Promise<boolean> {
   const until = det.billed_until ? Date.parse(det.billed_until) : 0;
   if (until && until > Date.now()) return true;
-  const { data: spent, error } = await supa.rpc("spend_credits", { p_user_id: det.user_id, p_amount: RADAR_DETECTOR_MONTH });
-  if (error || spent === null || spent === undefined) {
+
+  // Tope de detectores pagados a la vez según el plan (los que corren solos
+  // nos cuestan aunque nadie entre). Los ya pagados en su período siguen.
+  const plan = await planForUser(supa, det.user_id);
+  const limit = PLAN_LIMITS[plan].radar_active_detectors;
+  const { count } = await supa.from("radar_detectors")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", det.user_id).eq("enabled", true).neq("id", det.id)
+    .gt("billed_until", new Date().toISOString());
+  if ((count ?? 0) >= limit) {
     await supa.from("radar_detectors").update({
       status: "no_credits",
-      last_error: `Sin créditos: el monitoreo cuesta ${RADAR_DETECTOR_MONTH} créditos por detector cada 30 días. Recarga y vuelve a activarlo.`,
+      last_error: `Tu plan permite ${limit} detectores activos a la vez. Pausa otro detector${plan === "free" ? " o activa el plan Starter" : ""} y vuelve a activarlo.`,
       next_run_at: new Date(Date.now() + 86400_000).toISOString(),
     }).eq("id", det.id);
     return false;
   }
+
+  const cost = radarDetectorMonthCost(String(det.kind), maxCompaniesOf(det.config));
+  const { data: spent, error } = await supa.rpc("spend_credits", { p_user_id: det.user_id, p_amount: cost });
+  if (error || spent === null || spent === undefined) {
+    await supa.from("radar_detectors").update({
+      status: "no_credits",
+      last_error: `Sin créditos: este detector cuesta ${cost} créditos cada 30 días. Recarga y vuelve a activarlo.`,
+      next_run_at: new Date(Date.now() + 86400_000).toISOString(),
+    }).eq("id", det.id);
+    return false;
+  }
+  await supa.from("credit_transactions").insert({ user_id: det.user_id, delta: -cost, reason: "radar_detector_month", section_key: String(det.id) });
   await supa.from("radar_detectors").update({ billed_until: new Date(Date.now() + BILLING_PERIOD_MS).toISOString() }).eq("id", det.id);
   return true;
 }
@@ -326,7 +349,7 @@ async function detectorUnit(supa: Json, claimed: { det: Json; plan: Json }): Pro
       stats.cycle_new = cycleSoFar;
     }
     const next = result.done
-      ? new Date(Date.now() + Math.max(1, Number(det.cadence_hours) || 24) * 3600_000).toISOString()
+      ? new Date(Date.now() + Math.max(minCadenceHours(kind), Number(det.cadence_hours) || 24) * 3600_000).toISOString()
       : nowIso();
     await supa.from("radar_detectors").update({
       status: "idle", cursor: result.cursor || {}, next_run_at: next, last_success_at: nowIso(), last_error: null, stats,
@@ -356,6 +379,9 @@ async function hubRefreshUnit(supa: Json): Promise<number> {
     if (!hub.text || !hub.newestAt) continue;
     const since = plan.hub_synced_at ? Date.parse(plan.hub_synced_at) : 0;
     if (since && Date.parse(hub.newestAt) <= since) continue;
+    // La re-planificación automática desde el Hub es del plan pago
+    // (PLAN_LIMITS.radar_hub_replan); en el gratis se hace a mano.
+    if (!PLAN_LIMITS[await planForUser(supa, plan.user_id)].radar_hub_replan) continue;
     // Marcar primero: si el modelo falla, no se reintenta en cada invocación.
     await supa.from("radar_plans").update({ hub_synced_at: nowIso(), hub_report_keys: hub.keys }).eq("id", plan.id);
     try {

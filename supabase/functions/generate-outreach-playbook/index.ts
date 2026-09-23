@@ -50,6 +50,8 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import { PLAN_LIMITS, plansForUsers } from "../_shared/billing-plans.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -66,11 +68,13 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
   });
 }
 
-const PLAYBOOK_COST = 6;             // créditos, solo en runs manuales
+const PLAYBOOK_COST = CREDIT_COSTS.outreach_playbook; // solo en runs manuales (_shared/credit-costs.ts)
 const MAX_SWEEP_USERS = 50;          // techo de usuarios despachados por barrido
 const STALE_GENERATING_MS = 15 * 60 * 1000;
 const CLAUDE_TIMEOUT_MS = 240_000;
-const MAX_SEARCHES = 12;
+// 6 (antes 12): cada búsqueda relee sus resultados en cada vuelta del modelo;
+// con 12 una investigación costaba 0.30–0.60 USD (docs/PRICING.md).
+const MAX_SEARCHES = 6;
 
 const REFRESH_DAYS: Record<string, number> = { weekly: 7, monthly: 30 };
 
@@ -328,6 +332,9 @@ Deno.serve(withLlmContext(async (req: Request) => {
         .filter((r: Row) => !(r.status === "generating" &&
           Date.now() - new Date(r.updated_at ?? 0).getTime() < STALE_GENERATING_MS))
         .map((r: Row) => r.user_id as string);
+      // El refresco automático es del plan pago (PLAN_LIMITS.playbook_sweep).
+      const plans = await plansForUsers(supa, userIds);
+      userIds = userIds.filter((uid) => PLAN_LIMITS[plans.get(uid) ?? "free"].playbook_sweep);
 
       const selfUrl = `${SUPABASE_URL}/functions/v1/generate-outreach-playbook`;
       const dispatch = (async () => {

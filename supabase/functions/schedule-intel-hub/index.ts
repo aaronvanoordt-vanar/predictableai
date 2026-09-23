@@ -13,9 +13,13 @@
  *   Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>
  *
  * This function fans out to generate-intel-hub for each user that needs refresh.
+ * Only users whose plan includes the cadence are refreshed (PLAN_LIMITS in
+ * _shared/billing-plans.ts): free = none, Starter = weekly + monthly,
+ * Growth = daily + weekly + monthly.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { PLAN_LIMITS, plansForUsers } from "../_shared/billing-plans.ts";
 
 const CADENCE_SECTIONS: Record<string, string[]> = {
   daily:   ["industry_insight_digest", "competitor_threat_radar", "prospecting_recommendations"],
@@ -98,7 +102,18 @@ Deno.serve(async (req: Request) => {
       continue;
     }
 
-    const userIds = intakeUsers.map((r: { user_id: string }) => r.user_id);
+    // Cada cadencia automática cuesta tokens aunque el usuario no entre, así
+    // que solo corre para los planes que la incluyen (docs/PRICING.md):
+    // Starter semanal + mensual, Growth también diario, gratis ninguna.
+    const allIds = intakeUsers.map((r: { user_id: string }) => r.user_id);
+    const plans = await plansForUsers(supabase, allIds);
+    const userIds = allIds.filter((id: string) =>
+      PLAN_LIMITS[plans.get(id) ?? "free"].hub_cadences.includes(cadence)
+    );
+    if (!userIds.length) {
+      results[cadence] = { skipped: true, reason: "no users on a plan with this cadence" };
+      continue;
+    }
 
     // For each section in this cadence, find users who are due
     const { data: existingReports } = await supabase

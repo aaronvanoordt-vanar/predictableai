@@ -1407,7 +1407,7 @@
   // ── Mensaje de UN paso de campaña / UNA respuesta (modo step/reply) ──
   // Mismo generate-outreach, distinto modo: aquí el mensaje pertenece a la
   // CAMPAÑA (paso + ángulo + instrucciones) o a la conversación, no al lead
-  // guardado en la lista. Cuesta 3 créditos (outreach_message) y los cobra la
+  // guardado en la lista. Cuesta 2 créditos (outreach_step) y los cobra la
   // edge function.
 
   async function generateStepMessage({ member_id, campaign_id, node_id, channel, angle, instructions, sender, previous, engine }) {

@@ -1,5 +1,5 @@
 /**
- * credit-costs.js — Fuente única de verdad del pricing de créditos.
+ * credit-costs.js — Catálogo visible del tarifario de créditos.
  *
  * Define cuánto cuesta (en créditos) cada acción que consume recursos, y
  * expone un sistema de badges que muestra "N créditos" ANTES de ejecutar la
@@ -7,16 +7,14 @@
  * automáticamente un badge (incluso si se inyecta dinámicamente por innerHTML,
  * gracias a un MutationObserver).
  *
- * ── Modelo económico (ver docs/pricing-model si existe) ─────────────────────
- * 1 crédito ≈ US$0.10 de valor de venta. Los precios de abajo son ~3× el costo
- * bruto real (API de Anthropic + créditos de Apollo + Recall.ai), redondeado a
- * enteros limpios. Esto da margen razonable y a la vez frena el abuso de las
- * acciones caras (coach en modo bot, refresh del Hub con modelo premium).
+ * ── Modelo económico: docs/PRICING.md ──────────────────────────────────────
+ * 1 crédito ≈ 0.065 USD dentro del plan Starter (97 USD = 1,500 créditos) y
+ * 0.07–0.09 USD en recargas. Cada precio deja el costo real (tokens, búsquedas
+ * web, créditos de Apollo, minutos de Recall/Deepgram) en ≤ ~40 % del valor.
  *
- * ⚠ Este archivo es SOLO la capa de visualización + catálogo de precios. El
- * cobro real lo hacen las edge functions vía spend_credits (hoy desactivado por
- * UNLIMITED_CREDITS durante la beta). Mantener ambos en sync: si cambias un
- * precio aquí, cámbialo también en la edge function correspondiente.
+ * ⚠ ESPEJO de supabase/functions/_shared/credit-costs.ts, que es lo que cobran
+ * las edge functions: si cambias un número aquí, cámbialo allá en el mismo PR
+ * (lo comprueba credit-costs.test.ts).
  */
 (function (global) {
   'use strict';
@@ -24,66 +22,53 @@
   // Costo en créditos por acción. Clave estable = contrato con el resto de la app.
   const COSTS = {
     // ── Intelligence Hub ──────────────────────────────────────────────
-    // 1 ítem = 1 sección = 1 llamada Haiku + búsqueda web. Raw ~US$0.05.
-    intel_hub_item:         { credits: 2,  label: 'por ítem',            variable: false },
-    // Ítem con modelo premium (Opus/Sonnet) que el usuario puede elegir. Raw ~US$0.12.
-    intel_hub_item_premium: { credits: 4,  label: 'por ítem (premium)',  variable: false },
-    // Refresh completo (11 secciones). Se muestra como "por ítem" porque el
-    // total depende de cuántas secciones estén vencidas por cadence.
-    intel_hub_refresh:      { credits: 2,  label: 'por ítem que se actualice', variable: true },
-    // Análisis de mercado fundacional (2026-09-23): un reporte ancho (~8
-    // búsquedas web, salida larga) del que sale el plan del Radar. El primero
-    // es gratis; regenerarlo cuesta esto (el doble con un modelo premium de
-    // Claude). Cobro real: generate-intel-hub (MARKET_ANALYSIS_COST).
+    // 1 ítem = 1 sección con búsqueda web. Costo real ~0.05 USD.
+    intel_hub_item:         { credits: 3,  label: 'por ítem',            variable: false },
+    // Ítem con un modelo premium de Claude. Costo real ~0.19–0.28 USD.
+    intel_hub_item_premium: { credits: 8,  label: 'por ítem (premium)',  variable: false },
+    // Actualización manual: el total depende de cuántas secciones se regeneren.
+    intel_hub_refresh:      { credits: 3,  label: 'por ítem que se actualice', variable: true },
+    // Análisis de mercado fundacional: un reporte ancho (~8 búsquedas web,
+    // salida larga) del que sale el plan del Radar. El primero es gratis;
+    // regenerarlo cuesta esto (el doble con un modelo premium de Claude).
     market_analysis:        { credits: 8,  label: 'por análisis',        variable: false },
 
-    // ── Radar (descubrimiento de empresas target con IA) ──────────────
-    // Investigación profunda: Sonnet con ~15 búsquedas web + Apollo search.
-    // Raw ~US$0.40. El PRIMER run es gratis (hook del onboarding); este
-    // precio aplica a re-runs y prompts propios. Cobro real: generate-radar.
-    radar_run:              { credits: 12, label: 'por investigación',   variable: false },
-    // Demo rápida: el mismo pipeline pero con el tope en 5 empresas (una
-    // cuarta parte), así que una fracción de las búsquedas web y de las
-    // llamadas a Apollo. Cobro real: generate-radar (RADAR_DEMO_COST).
-    radar_run_demo:         { credits: 3,  label: 'por demo (5 empresas)', variable: false },
-    // Motor siempre encendido (2026-09-18). El plan de señales lo diseña la
-    // IA a partir del contexto + el Hub (el primero es gratis; regenerarlo
-    // cuesta esto). Cobro real: radar-plan (RADAR_PLAN_COST).
+    // ── Radar ─────────────────────────────────────────────────────────
+    // Investigación puntual (hasta 20 empresas). El PRIMER run es gratis.
+    radar_run:              { credits: 20, label: 'por investigación',   variable: false },
+    radar_run_demo:         { credits: 5,  label: 'por demo (5 empresas)', variable: false },
+    // Regenerar el plan de señales (el primero es gratis).
     radar_plan:             { credits: 6,  label: 'por plan',            variable: false },
-    // Cada detector activo corre solo (pg_cron) y se cobra por período de 30
-    // días, en el primer tick del período. Cobro real: radar-monitor
-    // (RADAR_DETECTOR_MONTH). Los decision makers salen de la búsqueda
-    // gratuita de Apollo; el correo se revela recién al guardar en lista.
-    radar_detector_month:   { credits: 15, label: 'por detector cada 30 días', variable: true },
-    // Detector escrito por el usuario en lenguaje natural: una llamada al
-    // modelo lo traduce a la config del tipo elegido. Cobro real: radar-plan.
+    // Cada detector activo se cobra por período de 30 días según su tipo:
+    // personas 10 · datos de Apollo 30 (+10 por cada 100 empresas sobre 300)
+    // · búsqueda web 40 · Google Maps 60 (radarDetectorMonthCost).
+    radar_detector_month:   { credits: 30, label: 'por detector cada 30 días (10–60 según el tipo)', variable: true },
     radar_detector_custom:  { credits: 3,  label: 'por detector propio', variable: false },
 
-    // ── Prospección / Outreach ────────────────────────────────────────
-    outreach_message:       { credits: 3,  label: 'por mensaje',         variable: false },
-    // Tendencias de outbound: 1 investigación Sonnet con ~12 búsquedas web
-    // (foros, reportes de vendors, operadores). Raw ~US$0.20. Solo se cobra
-    // el run manual; los runs por cadencia (semanal/mensual) van gratis.
-    outreach_playbook:      { credits: 6,  label: 'por investigación',   variable: false },
+    // ── Mensajes IA ───────────────────────────────────────────────────
+    // Un paso de campaña, una muestra del builder o un borrador de la Bandeja.
+    outreach_message:       { credits: 2,  label: 'por mensaje',         variable: false },
+    // "Preparar con IA": personalización de 5 capas + preparación del coach.
+    outreach_full:          { credits: 4,  label: 'por lead',            variable: false },
+    campaign_recommendation:{ credits: 6,  label: 'por cadencia',        variable: false },
+    // Tendencias de outbound (investigación manual).
+    outreach_playbook:      { credits: 10, label: 'por investigación',   variable: false },
 
-    // ── Campañas omnicanal (motor campaign-run) ──────────────────────
-    // Cada envío que ejecuta la plataforma (plantilla de WhatsApp por WATI,
-    // email por Apollo, acción de LinkedIn por Dripify). WATI/Dripify los
-    // paga el usuario con su propia suscripción; esto cubre orquestación.
-    campaign_send:          { credits: 1,  label: 'por envío',           variable: true },
+    // ── Campañas omnicanal ────────────────────────────────────────────
+    // 1 crédito por lead que entra a una campaña: cubre TODOS sus envíos
+    // (salen por tu WATI, Apollo o Dripify). Responder a mano no cuesta.
+    campaign_send:          { credits: 1,  label: 'por lead en campaña', variable: true },
 
-    // ── Enriquecimiento (Apollo passthrough + margen) ─────────────────
-    enrich_email:           { credits: 1,  label: 'por email',           variable: false },
-    enrich_phone:           { credits: 6,  label: 'por teléfono',        variable: false },
-    // Bundle email+LinkedIn+teléfono: pequeño descuento vs. 1+6=7.
-    enrich_full:            { credits: 6,  label: 'por lead completo',   variable: false },
-    enrich_company:         { credits: 2,  label: 'por empresa',         variable: false },
+    // ── Enriquecimiento (Apollo de la plataforma; con tu Apollo, 0) ───
+    // Solo se cobra si Apollo encuentra el dato.
+    enrich_email:           { credits: 2,  label: 'por email',           variable: false },
+    enrich_phone:           { credits: 8,  label: 'por teléfono',        variable: false },
 
-    // ── AI Sales Coach (variable por duración) ────────────────────────
-    // Modo local: 1 reporte Opus al cerrar. Raw ~US$0.25.
-    coach_meeting:          { credits: 8,  label: 'por reunión',         variable: false },
-    // Modo bot (Recall.ai + coaching en vivo): escala fuerte con la duración.
-    coach_bot_block:        { credits: 30, label: 'por cada 10 min en modo bot', variable: true },
+    // ── Meeting Coach (por duración) ──────────────────────────────────
+    // Captura local: 5 por cada 10 min + 5 del reporte final.
+    coach_meeting:          { credits: 5,  label: 'por cada 10 min (+5 del reporte)', variable: true },
+    // Modo bot (Recall.ai): 8 por cada 10 min + 5 del reporte final.
+    coach_bot_block:        { credits: 8,  label: 'por cada 10 min en modo bot (+5 del reporte)', variable: true },
   };
 
   function get(key) {

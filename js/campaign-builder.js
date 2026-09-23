@@ -14,7 +14,7 @@
  *                 panel lateral por nodo y validación en vivo.
  *   3. Mensajes — por cada envío: IA personalizada (ángulo + instrucciones),
  *                 texto propio o plantilla de WhatsApp; vista previa con un
- *                 lead real (generate-outreach en modo step, 3 créditos) y la
+ *                 lead real (generate-outreach en modo step, 2 créditos) y la
  *                 casilla "revisar cada mensaje IA antes de enviarlo".
  *   4. Revisar y lanzar — resumen, datos faltantes por canal, créditos
  *                 estimados, ajustes avanzados y "Lanzar campaña" (guarda,
@@ -1167,7 +1167,7 @@
         ins.value = node.content.instructions || '';
         box.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'cb-hint', style: 'margin-bottom:4px', text: 'Instrucciones' }), ins));
         if (node.channel === 'whatsapp') box.appendChild(h('div', { class: 'cb-note amber', text: 'WhatsApp solo permite texto libre dentro de las 24 h siguientes a un mensaje del lead. Si no hay conversación abierta, este paso se omite; para abrir conversación usa una plantilla de WhatsApp.' }));
-        else box.appendChild(h('div', { class: 'cb-hint', text: 'La IA escribe el mensaje de cada lead 24 h antes del envío, con el ángulo y las instrucciones de ESTE paso, tu contexto de empresa, el brief y lo que ya se le envió. Cuesta 3 créditos por mensaje.' }));
+        else box.appendChild(h('div', { class: 'cb-hint', text: 'La IA escribe el mensaje de cada lead 24 h antes del envío, con el ángulo y las instrucciones de ESTE paso, tu contexto de empresa, el brief y lo que ya se le envió. Cuesta 2 créditos por mensaje.' }));
       } else if (kind === 'custom') {
         var fields = [];
         var subj = null;
@@ -1317,7 +1317,7 @@
           ? 'Basado en tu base de entrenamiento: ' + pv.result.knowledge.map(function (r) { return r.title; }).join(' · ')
           : 'No usó tu base de entrenamiento (vacía o sin nada relevante para este paso). Agrégala en Campañas → Entrenar la IA.' }));
         box.appendChild(h('div', { class: 'cb-hint', text: 'Es una muestra: en la campaña cada lead recibe su propio mensaje, escrito 24 h antes del envío.' }));
-      } else if (!pv.loading) box.appendChild(h('div', { class: 'cb-hint', text: 'Genera un mensaje real para el lead elegido y ajusta el ángulo o las instrucciones si no te convence. Cuesta 3 créditos.' }));
+      } else if (!pv.loading) box.appendChild(h('div', { class: 'cb-hint', text: 'Genera un mensaje real para el lead elegido y ajusta el ángulo o las instrucciones si no te convence. Cuesta 2 créditos.' }));
       return box;
     }
     function sampleMember() { return st.members.find(function (m) { return String(m.id) === String(st.sampleId); }) || st.members[0] || null; }
@@ -1349,7 +1349,7 @@
         st.previews[nodeId] = { memberId: m.id, result: { subject: r.subject || '', body: r.body || '', angle_note: r.angle_note || '', knowledge: Array.isArray(r.knowledge) ? r.knowledge : [] } };
       }).catch(function (e) {
         var msg = e && e.message ? e.message : String(e);
-        if (e && e.status === 402) msg = 'No tienes créditos suficientes (3 por muestra).';
+        if (e && e.status === 402) msg = 'No tienes créditos suficientes (2 por muestra).';
         st.previews[nodeId] = { memberId: m.id, error: msg };
       }).then(render);
     }
@@ -1386,7 +1386,7 @@
       var est = L.estimateCredits(st.draft.flow, n || 0);
       var cr = h('div', { class: 'chart-card' });
       cr.appendChild(h('div', { class: 'cb-lbl', text: 'Créditos estimados' }));
-      cr.appendChild(h('div', { class: 'cb-kv' }, h('dt', { text: 'Mensajes IA' }), h('dd', { text: est.aiMessages + ' × ' + L.AI_MESSAGE_CREDITS }), h('dt', { text: 'Envíos' }), h('dd', { text: est.sends + ' × ' + L.SEND_CREDITS }), h('dt', { text: 'Máximo' }), h('dd', { text: est.credits + ' créditos' })));
+      cr.appendChild(h('div', { class: 'cb-kv' }, h('dt', { text: 'Mensajes IA' }), h('dd', { text: est.aiMessages + ' × ' + L.AI_MESSAGE_CREDITS }), h('dt', { text: 'Leads en campaña' }), h('dd', { text: (n || 0) + ' × ' + L.LEAD_CREDITS }), h('dt', { text: 'Máximo' }), h('dd', { text: est.credits + ' créditos' })));
       cr.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: n ? 'Es el tope si todos los leads recorren toda la cadencia; se cobra paso a paso y se detiene con la primera respuesta. Las aperturas reutilizan el mensaje de 5 capas ya generado sin cobrar.' : 'Se calcula con los leads de la lista: sin lista, el costo depende de cuántos enroles.' }));
       right.appendChild(cr);
 

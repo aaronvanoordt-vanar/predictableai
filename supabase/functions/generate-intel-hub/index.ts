@@ -31,6 +31,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, resolveEngine, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { loadIntelligence } from "../_shared/intelligence.ts";
 
 // ── Section catalogue ────────────────────────────────────────────────────────
@@ -507,7 +508,7 @@ Caps: segments ≤ 3 (priority 1 = attack first), signals 4-8, lookalikes.exampl
 const SECTION_MAP = new Map(SECTIONS.map((s) => [s.key, s]));
 
 // Keep in sync with js/credit-costs.js (market_analysis).
-const MARKET_ANALYSIS_COST = 8;
+const MARKET_ANALYSIS_COST = CREDIT_COSTS.market_analysis; // _shared/credit-costs.ts
 
 // ── Claude model selection ───────────────────────────────────────────────────
 //
@@ -1027,9 +1028,10 @@ Deno.serve(withLlmContext(async (req: Request) => {
 
   const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
-  // Cobro por ítem (catálogo js/credit-costs.js): 2 créditos por sección con
-  // el modelo por defecto (Haiku), 4 con un modelo premium (Opus/Sonnet). Solo
-  // el trigger 'manual' cobra; onboarding/schedule son del sistema y van gratis.
+  // Cobro por ítem (_shared/credit-costs.ts ↔ js/credit-costs.js): 3 créditos
+  // por sección con el modelo por defecto, 8 con un modelo premium de Claude.
+  // Solo el trigger 'manual' cobra; onboarding/schedule van incluidos en el
+  // plan (la cadencia automática la limita schedule-intel-hub según el plan).
   const wantsAnalysis = requestedSections.includes("market_analysis");
   const pulseRequested = requestedSections.filter((k) => k !== "market_analysis");
   if (triggeredBy === "manual" || (wantsAnalysis && !isServiceRole)) {
@@ -1043,7 +1045,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     const chargeEngine = resolveEngine("intel_hub", body.engine, chargeProfile?.ai_engines);
     const chargeModel = resolveModel(chargeProfile?.preferred_claude_model);
     const premium = chargeEngine === "claude" && chargeModel !== DEFAULT_MODEL;
-    const perItem = premium ? 4 : 2;
+    const perItem = premium ? CREDIT_COSTS.intel_hub_item_premium : CREDIT_COSTS.intel_hub_item;
     // El análisis de mercado: el primero es gratis (es parte del arranque,
     // como el primer plan del Radar); cada regeneración cuesta
     // MARKET_ANALYSIS_COST (el doble con un modelo premium de Claude).

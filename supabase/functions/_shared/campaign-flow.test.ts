@@ -97,7 +97,7 @@ Deno.test("fromLegacySteps: offsets → esperas relativas, paralelo y condición
   // Ángulos: el primer IA por canal es apertura, el siguiente valor.
   assertEquals(b.content.angle, "apertura");
   assertEquals(cond.yes[1].content.angle, "valor");
-  assertEquals(cf.estimateCredits(flow, 10), { aiMessages: 20, sends: 60, credits: 120 });
+  assertEquals(cf.estimateCredits(flow, 10), { aiMessages: 20, sends: 60, credits: 50 });
 });
 
 Deno.test("delayMs y legacyKind", () => {
@@ -150,7 +150,7 @@ Deno.test("estimateCredits: LinkedIn cuenta como envío pero no como mensaje IA"
   ] };
   assertEquals(cf.validate(flow).errors, []);
   // 3 envíos (1 crédito cada uno) + 1 mensaje IA (3 créditos) por lead.
-  assertEquals(cf.estimateCredits(flow, 5), { aiMessages: 5, sends: 15, credits: 30 });
+  assertEquals(cf.estimateCredits(flow, 5), { aiMessages: 5, sends: 15, credits: 15 });
 });
 
 Deno.test("condiciones: las señales nuevas sobreviven a normalize", () => {

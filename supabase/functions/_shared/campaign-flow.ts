@@ -98,9 +98,11 @@ export interface Located {
   branch: "yes" | "no" | null;
 }
 
-// Cuánto cuesta cada cosa (espejo de js/credit-costs.js).
-export const AI_MESSAGE_CREDITS = 3;
-export const SEND_CREDITS = 1;
+// Cuánto cuesta cada cosa (espejo de _shared/credit-costs.ts y
+// js/credit-costs.js): 2 por mensaje IA y 1 por lead que entra a la campaña
+// (cubre todos sus envíos).
+export const AI_MESSAGE_CREDITS = 2;
+export const LEAD_CREDITS = 1;
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -358,7 +360,7 @@ export function fromLegacySteps(rows: Json[]): Flow {
   return flow;
 }
 
-/** Créditos estimados para `leads` leads: mensajes IA (3) + envíos de la plataforma (1). */
+/** Créditos estimados para `leads` leads: mensajes IA (2 c/u) + 1 por lead (cubre sus envíos). */
 export function estimateCredits(flow: Flow, leads: number): { aiMessages: number; sends: number; credits: number } {
   const n = Math.max(0, Number(leads) || 0);
   let ai = 0, sends = 0;
@@ -367,5 +369,5 @@ export function estimateCredits(flow: Flow, leads: number): { aiMessages: number
     // LinkedIn: el mensaje lo escribe el usuario en Dripify, no la IA.
     if (a.content.kind === "ai" && !isLinkedin(a.channel)) ai++;
   }
-  return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + sends * SEND_CREDITS) * n };
+  return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + (sends ? LEAD_CREDITS : 0)) * n };
 }

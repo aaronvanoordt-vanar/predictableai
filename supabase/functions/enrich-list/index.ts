@@ -40,6 +40,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ApolloError, apolloCall, resolveApolloAuth } from "../_shared/apollo-auth.ts";
 import type { ApolloAuth } from "../_shared/apollo-auth.ts";
 import { blockedInPlatformMode } from "../_shared/apollo-platform.ts";
+import { apolloBillableCount, CREDIT_COSTS } from "../_shared/credit-costs.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -154,7 +155,9 @@ async function createApolloContact(auth: ApolloAuth, row: Json, match: Json, ema
 // ── modo 'email': bulk_match + contacto en Apollo ──────────────────────────
 
 async function processEmailRows(svc: SupabaseClient, auth: ApolloAuth, userId: string, rows: Json[], listNames: Map<string, string>, stats: Stats) {
-  const cost = auth.mode === "platform" ? rows.length : 0;
+  // Tarifario en _shared/credit-costs.ts: se verifica el peor caso y se
+  // cobra solo por los emails que Apollo sí trajo (como apollo-proxy).
+  const cost = auth.mode === "platform" ? rows.length * CREDIT_COSTS.enrich_email : 0;
   if (!(await hasCredits(svc, userId, cost))) {
     for (const r of rows) { await finishRow(svc, r.id, failPatch(r, NO_CREDITS)); stats.failed++; }
     return;
@@ -174,7 +177,10 @@ async function processEmailRows(svc: SupabaseClient, auth: ApolloAuth, userId: s
     }
     return;
   }
-  await spendCredits(svc, userId, cost, "enrich_email");
+  if (cost > 0) {
+    const found = apolloBillableCount("/people/bulk_match", { matches }, false);
+    await spendCredits(svc, userId, found * CREDIT_COSTS.enrich_email, "enrich_email");
+  }
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -218,7 +224,9 @@ async function processFullRow(svc: SupabaseClient, auth: ApolloAuth, userId: str
     console.warn("[enrich-list] APOLLO_WEBHOOK_SECRET no configurado: se enriquece sin teléfono");
     revealPhones = false;
   }
-  const cost = auth.mode === "platform" ? (revealPhones ? 6 : 1) : 0;
+  const cost = auth.mode === "platform"
+    ? (revealPhones ? CREDIT_COSTS.enrich_phone : CREDIT_COSTS.enrich_email)
+    : 0;
   if (!(await hasCredits(svc, userId, cost))) {
     await finishRow(svc, r.id, failPatch(r, NO_CREDITS));
     stats.failed++;
@@ -264,7 +272,12 @@ async function processFullRow(svc: SupabaseClient, auth: ApolloAuth, userId: str
     }
     return;
   }
-  await spendCredits(svc, userId, cost, revealPhones ? "enrich_phone" : "enrich_email");
+  // Solo se cobra si Apollo encontró a la persona (teléfono) o trajo un email.
+  const gotEmail = !!person && (!isMaskedEmail(person.email) ||
+    (person.personal_emails || []).some((e: string) => !isMaskedEmail(e)));
+  if (person && (revealPhones || gotEmail)) {
+    await spendCredits(svc, userId, cost, revealPhones ? "enrich_phone" : "enrich_email");
+  }
 
   const patch: Record<string, unknown> = { enriched_at: nowIso(), enrich_error: null };
   if (person) {

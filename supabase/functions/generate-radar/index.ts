@@ -143,15 +143,17 @@ import {
   withinWindow,
 } from "../_shared/radar-recency.ts";
 import { RESEARCH_SYSTEM } from "../_shared/radar-research.ts";
+import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { findDecisionMakers, toDomain } from "../_shared/radar-apollo.ts";
 import { loadSellerContext as loadSellerContextShared } from "../_shared/radar-context.ts";
 
-// Keep in sync with js/credit-costs.js (radar_run / radar_run_demo).
-const RADAR_RUN_COST = 12;
+// Tarifario en _shared/credit-costs.ts ↔ js/credit-costs.js (radar_run /
+// radar_run_demo).
+const RADAR_RUN_COST = CREDIT_COSTS.radar_run;
 // Una demo entrega 5 empresas en vez de 20 y gasta una fracción de las
 // búsquedas web y de las llamadas a Apollo, así que cuesta proporcionalmente
 // menos: cobrar la investigación completa por una muestra sería mentir.
-const RADAR_DEMO_COST = 3;
+const RADAR_DEMO_COST = CREDIT_COSTS.radar_run_demo;
 
 // Hard ceiling on companies delivered per run — a real cap, not just a
 // safety valve: past runs returned as many as 65 companies in one go, which
@@ -173,7 +175,10 @@ const MAX_COMPANIES_PER_QUERY = 25;
 // queries) actually surface as much as one broad prompt does. This only
 // guards against a strategy that hallucinated an unreasonable query count;
 // the strategy prompt itself is not told to stop at any particular number.
-const MAX_QUERIES = 40;
+// 16 (antes 40): cada consulta es una llamada con búsqueda web (~0.045 USD en
+// sonar-pro) y la investigación ya para al llegar a 20 empresas; con 40 una
+// estrategia larga costaba más que lo que se cobra (docs/PRICING.md).
+const MAX_QUERIES = 16;
 // En demo el presupuesto de consultas también baja: la investigación para al
 // llegar a las 5 empresas, pero si las primeras búsquedas no devuelven nada
 // sin este tope seguiría encadenando llamadas de ~40s cada una y la demo

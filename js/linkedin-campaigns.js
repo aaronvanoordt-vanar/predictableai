@@ -418,7 +418,7 @@
           ANGLES.forEach(function (a) { angSel.appendChild(h('option', { value: a.value, text: a.label, selected: (ai.angle || (i <= 2 ? 'apertura' : 'valor')) === a.value })); });
           vars.appendChild(h('span', { style: 'flex:1' }));
           vars.appendChild(angSel);
-          vars.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-credit-cost': 'outreach_message', 'data-credit-muted': '', disabled: !o.sampleMemberId || ai.loading, title: o.sampleMemberId ? 'Escribe el mensaje con tu contexto de empresa y un lead de muestra (3 créditos). Después cámbiale los datos por variables.' : 'Elige una lista con leads en la cadencia para generar una muestra.', text: ai.loading ? '⏳ Escribiendo…' : 'Sugerir con IA', onclick: function () { suggest(i, ta, angSel.value); } }));
+          vars.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-credit-cost': 'outreach_message', 'data-credit-muted': '', disabled: !o.sampleMemberId || ai.loading, title: o.sampleMemberId ? 'Escribe el mensaje con tu contexto de empresa y un lead de muestra (2 créditos). Después cámbiale los datos por variables.' : 'Elige una lista con leads en la cadencia para generar una muestra.', text: ai.loading ? '⏳ Escribiendo…' : 'Sugerir con IA', onclick: function () { suggest(i, ta, angSel.value); } }));
         }
         box.appendChild(vars);
         box.appendChild(ta);
