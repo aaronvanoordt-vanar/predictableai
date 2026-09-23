@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Predictable AI — Documentación para desarrolladores</title>
+<meta name="description" content="API REST, webhooks y servidor MCP de Predictable AI: conecta tu CRM, tus automatizaciones y tus agentes de IA.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<!--
+  Documentación pública de la API (2026-09-23). La abre el equipo técnico del
+  cliente SIN login: no carga auth-guard.js ni Supabase. La pinta
+  js/dev-docs.js desde openapi.json (la misma que la pestaña Referencia de
+  Desarrolladores dentro de la app).
+-->
+<style>
+:root {
+  --bg: #F7F8FA; --surface: #FFFFFF; --surface2: #F6F7F9;
+  --hair: rgba(10,10,15,0.08); --hair-2: rgba(10,10,15,0.05); --hair-3: rgba(10,10,15,0.13);
+  --ink: #0A0A0F; --ink-2: rgba(10,10,15,0.78); --ink-3: rgba(10,10,15,0.55); --ink-4: rgba(10,10,15,0.40);
+  --accent: #1F4BFF; --accent-soft: rgba(31,75,255,0.10);
+  --green: #0EA968; --green-soft: rgba(14,169,104,0.11);
+  --red: #D64545; --red-soft: rgba(214,69,69,0.10);
+  --amber: #B87514; --amber-soft: rgba(184,117,20,0.11);
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
+  --grad-ai: linear-gradient(120deg, #1F4BFF, #4364FF, #6E5CF5);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0B0C10; --surface: #13141A; --surface2: #1A1B23;
+    --hair: rgba(255,255,255,0.08); --hair-2: rgba(255,255,255,0.05); --hair-3: rgba(255,255,255,0.15);
+    --ink: #F5F6F8; --ink-2: rgba(245,246,248,0.80); --ink-3: rgba(245,246,248,0.56); --ink-4: rgba(245,246,248,0.40);
+    --accent: #5C82FF; --accent-soft: rgba(92,130,255,0.16);
+    --green: #33C284; --green-soft: rgba(51,194,132,0.14);
+    --red: #E66A6A; --red-soft: rgba(230,106,106,0.13);
+    --amber: #DFA24E; --amber-soft: rgba(223,162,78,0.13);
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+.top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 24px; background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--hair); }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-weight: 700; font-size: 15px; }
+.brand img { width: 26px; height: 26px; }
+.brand small { font-weight: 500; color: var(--ink-3); font-size: 13px; }
+.top a.cta { font-size: 13px; font-weight: 600; color: #fff; background: var(--grad-ai); padding: 8px 14px; border-radius: 999px; text-decoration: none; white-space: nowrap; }
+.hero { max-width: 1180px; margin: 0 auto; padding: 40px 24px 8px; }
+.hero h1 { font-size: 30px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -0.4px; }
+.hero p { font-size: 15px; line-height: 1.6; color: var(--ink-3); max-width: 760px; margin: 0; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.chip { font-size: 12px; font-weight: 600; color: var(--ink-2); border: 1px solid var(--hair-3); border-radius: 999px; padding: 5px 12px; background: var(--surface); }
+#docs { max-width: 1180px; margin: 0 auto; padding: 28px 24px 80px; }
+.state { font-size: 14px; color: var(--ink-3); }
+footer { max-width: 1180px; margin: 0 auto; padding: 0 24px 40px; font-size: 12px; color: var(--ink-4); }
+@media (max-width: 640px) { .top { padding: 10px 16px; } .brand small { display: none; } .hero { padding: 28px 16px 4px; } .hero h1 { font-size: 24px; } #docs { padding: 20px 16px 60px; } footer { padding: 0 16px 32px; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="landing.html"><img src="assets/predictable-favicon.png" alt="">Predictable AI <small>· Desarrolladores</small></a>
+  <a class="cta" href="index.html">Ir a la app</a>
+</header>
+<section class="hero">
+  <h1>Conecta tu CRM a Predictable</h1>
+  <p>API REST, webhooks firmados y servidor MCP. Carga leads sin duplicar, ponlos en campañas omnicanal y entérate al instante de cada respuesta, reunión y señal de compra.</p>
+  <div class="chips"><span class="chip">REST + JSON</span><span class="chip">OpenAPI 3.1</span><span class="chip">Webhooks con HMAC</span><span class="chip">MCP para agentes de IA</span></div>
+</section>
+<main id="docs"><p class="state">Cargando documentación…</p></main>
+<footer>¿Necesitas una clave? El dueño de la cuenta la crea en Predictable → Desarrolladores → Claves de API.</footer>
+<script src="js/dev-docs.js?v=20260923"></script>
+<script>
+(function () {
+  var box = document.getElementById('docs');
+  if (!window.DevDocs) { box.innerHTML = '<p class="state">No se pudo cargar el visor de documentación.</p>'; return; }
+  window.DevDocs.load().then(function (spec) {
+    window.DevDocs.render(box, spec, {});
+    if (location.hash) {
+      var el = document.getElementById(location.hash.slice(1));
+      if (el) el.scrollIntoView();
+    }
+  }).catch(function (e) {
+    box.textContent = 'No se pudo cargar la documentación: ' + e.message;
+  });
+})();
+</script>
+</body>
+</html>

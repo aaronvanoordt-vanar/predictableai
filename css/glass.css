@@ -233,7 +233,7 @@ html[data-rail="1"] .user-dropdown { left: calc(var(--rail-w) + 6px); right: aut
 #page-pro-main { --module-accent: var(--cyan); }
 #page-ventas-coach, #page-ventas-reportes { --module-accent: var(--green); }
 #page-clients { --module-accent: var(--purple); }
-#page-radar, #page-mi-dashboard, #page-mi-research, #page-coda-ai, #page-ai-training { --module-accent: var(--accent-2); }
+#page-radar, #page-mi-dashboard, #page-mi-research, #page-coda-ai, #page-ai-training, #page-developers { --module-accent: var(--accent-2); }
 #page-settings { --module-accent: var(--ink-4); }
 .settings-container { margin-left: auto; margin-right: auto; }
 

@@ -1,0 +1,3478 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Predictable AI API",
+    "version": "2026-09-23",
+    "summary": "Conecta tu CRM, tus automatizaciones o tus agentes de IA a Predictable.",
+    "description": "API REST de Predictable AI. Lee y escribe listas, contactos, campañas omnicanal, mensajes de la Bandeja, señales del Radar y reuniones del Meeting Coach.\n\n**Autenticación:** crea una clave en Predictable → Desarrolladores y envíala en cada request como `Authorization: Bearer <tu clave>`. Las claves `read` solo leen; las `write` además escriben.\n\n**Límite:** 120 requests por minuto por clave (cabeceras `X-RateLimit-*`).\n\n**Paginación:** las listas devuelven `{ data, has_more, next_cursor }`; pide la página siguiente con `?cursor=<next_cursor>`.\n\n**Errores:** `{ error: { code, message, request_id } }` con el código HTTP correspondiente.\n\n**Webhooks:** registra una URL https y recibe eventos firmados (`Predictable-Signature: t=<unix>,v1=<HMAC-SHA256(secret, \"<t>.<body>\")>`).\n\n**MCP:** el mismo catálogo está disponible como servidor MCP en `/functions/v1/mcp`.",
+    "contact": {
+      "name": "Predictable AI",
+      "url": "https://predictableai.vanarsi.com/developers.html"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://yskaojvuhaqfmimwmvbi.supabase.co/functions/v1/public-api",
+      "description": "Producción"
+    }
+  ],
+  "security": [
+    {
+      "ApiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Cuenta",
+      "description": "Tu cuenta, tu clave y el contexto de tu empresa."
+    },
+    {
+      "name": "Listas",
+      "description": "Listas de prospectos."
+    },
+    {
+      "name": "Contactos",
+      "description": "Los leads de tus listas: crear, actualizar (sin duplicar), buscar, enriquecer."
+    },
+    {
+      "name": "Campañas",
+      "description": "Cadencias omnicanal (WhatsApp, email, LinkedIn) y los leads enrolados."
+    },
+    {
+      "name": "Bandeja",
+      "description": "Mensajes enviados y respuestas recibidas por los tres canales."
+    },
+    {
+      "name": "Radar",
+      "description": "Señales de compra detectadas por el Radar."
+    },
+    {
+      "name": "Reuniones",
+      "description": "Reuniones analizadas por el Meeting Coach."
+    },
+    {
+      "name": "Eventos y webhooks",
+      "description": "Qué pasó en tu cuenta, por polling o empujado a tu URL."
+    }
+  ],
+  "paths": {
+    "/v1/me": {
+      "get": {
+        "tags": [
+          "Cuenta"
+        ],
+        "operationId": "getAccount",
+        "summary": "Cuenta y clave",
+        "description": "Datos de la cuenta dueña de la clave, alcance de la clave y saldo de créditos. Úsalo para probar la conexión.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Account"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/context": {
+      "get": {
+        "tags": [
+          "Cuenta"
+        ],
+        "operationId": "getContext",
+        "summary": "Contexto de la empresa",
+        "description": "El contexto y el ICP declarados en Predictable (a quién le vende, dolores, señales, competencia). Útil para que tu sistema o tu agente de IA sepa a quién apunta la empresa.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/lists": {
+      "get": {
+        "tags": [
+          "Listas"
+        ],
+        "operationId": "listLists",
+        "summary": "Listar listas",
+        "description": "Tus listas de prospectos con la cantidad de contactos de cada una.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Cuántos resultados por página."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "El `next_cursor` de la página anterior."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/List"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Listas"
+        ],
+        "operationId": "createList",
+        "summary": "Crear lista",
+        "description": "Crea una lista. Si ya existe una con ese nombre, la devuelve (`created: false`).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 120
+                  }
+                }
+              },
+              "example": {
+                "name": "Leads del CRM"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ya existía",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/List"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Creada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/List"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/lists/{list_id}": {
+      "get": {
+        "tags": [
+          "Listas"
+        ],
+        "operationId": "getList",
+        "summary": "Ver lista",
+        "description": "",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id de la lista."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/List"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Listas"
+        ],
+        "operationId": "updateList",
+        "summary": "Renombrar lista",
+        "description": "",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id de la lista."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/List"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/contacts": {
+      "get": {
+        "tags": [
+          "Contactos"
+        ],
+        "operationId": "listContacts",
+        "summary": "Buscar contactos",
+        "description": "Busca en todos tus contactos. Para sincronizar tu CRM de forma incremental usa `updated_after` con la fecha de tu última sincronización.",
+        "parameters": [
+          {
+            "name": "list_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Solo los de esta lista."
+          },
+          {
+            "name": "email",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Email exacto."
+          },
+          {
+            "name": "external_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Id del registro en tu CRM."
+          },
+          {
+            "name": "contact_status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "no_contactado",
+                "en_campana",
+                "saludo_enviado",
+                "conexion_enviada",
+                "conexion_aceptada",
+                "respondio",
+                "reunion_agendada",
+                "reunion_tomada",
+                "no_interesado",
+                "no_show",
+                "dado_de_baja"
+              ]
+            },
+            "description": "Estado en el CRM."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Texto en nombre, empresa, cargo o email."
+          },
+          {
+            "name": "updated_after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Solo los modificados después de esta fecha."
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Solo los creados después de esta fecha (ISO 8601)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Cuántos resultados por página."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "El `next_cursor` de la página anterior."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Contact"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Contactos"
+        ],
+        "operationId": "upsertContact",
+        "summary": "Crear o actualizar contacto",
+        "description": "Crea un contacto en la lista indicada. Si en esa lista ya hay uno con el mismo `external_id`, email o LinkedIn, lo actualiza (`created: false`). Indica `list_id`, o `list_name` para crear la lista si no existe.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "first_name": {
+                        "type": "string"
+                      },
+                      "last_name": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "Nombre completo (si no mandas first_name/last_name)."
+                      },
+                      "title": {
+                        "type": "string",
+                        "description": "Cargo."
+                      },
+                      "company": {
+                        "type": "string"
+                      },
+                      "company_domain": {
+                        "type": "string",
+                        "example": "acme.com"
+                      },
+                      "email": {
+                        "type": "string",
+                        "format": "email"
+                      },
+                      "phone": {
+                        "type": "string",
+                        "example": "+51999888777"
+                      },
+                      "linkedin_url": {
+                        "type": "string"
+                      },
+                      "city": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "type": "string"
+                      },
+                      "country": {
+                        "type": "string"
+                      },
+                      "external_id": {
+                        "type": "string",
+                        "description": "Id del registro en tu CRM. Con él se actualiza en vez de duplicar."
+                      },
+                      "external_source": {
+                        "type": "string",
+                        "example": "crm-interno"
+                      },
+                      "contact_status": {
+                        "type": "string",
+                        "enum": [
+                          "no_contactado",
+                          "en_campana",
+                          "saludo_enviado",
+                          "conexion_enviada",
+                          "conexion_aceptada",
+                          "respondio",
+                          "reunion_agendada",
+                          "reunion_tomada",
+                          "no_interesado",
+                          "no_show",
+                          "dado_de_baja"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "list_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "list_name": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              },
+              "example": {
+                "list_name": "Leads del CRM",
+                "external_id": "crm-10293",
+                "first_name": "Ana",
+                "last_name": "Torres",
+                "title": "Gerente Comercial",
+                "company": "Acme SAC",
+                "email": "ana.torres@acme.com",
+                "country": "Peru"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Actualizado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Contact"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Creado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Contact"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/contacts/bulk": {
+      "post": {
+        "tags": [
+          "Contactos"
+        ],
+        "operationId": "bulkUpsertContacts",
+        "summary": "Crear o actualizar en lote",
+        "description": "Hasta 500 contactos por llamada, con la misma regla de no duplicar. La respuesta dice, por posición, cuál se creó, cuál se actualizó y cuál falló.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contacts"
+                ],
+                "properties": {
+                  "list_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "list_name": {
+                    "type": "string"
+                  },
+                  "contacts": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "first_name": {
+                          "type": "string"
+                        },
+                        "last_name": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Nombre completo (si no mandas first_name/last_name)."
+                        },
+                        "title": {
+                          "type": "string",
+                          "description": "Cargo."
+                        },
+                        "company": {
+                          "type": "string"
+                        },
+                        "company_domain": {
+                          "type": "string",
+                          "example": "acme.com"
+                        },
+                        "email": {
+                          "type": "string",
+                          "format": "email"
+                        },
+                        "phone": {
+                          "type": "string",
+                          "example": "+51999888777"
+                        },
+                        "linkedin_url": {
+                          "type": "string"
+                        },
+                        "city": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "type": "string"
+                        },
+                        "country": {
+                          "type": "string"
+                        },
+                        "external_id": {
+                          "type": "string",
+                          "description": "Id del registro en tu CRM. Con él se actualiza en vez de duplicar."
+                        },
+                        "external_source": {
+                          "type": "string",
+                          "example": "crm-interno"
+                        },
+                        "contact_status": {
+                          "type": "string",
+                          "enum": [
+                            "no_contactado",
+                            "en_campana",
+                            "saludo_enviado",
+                            "conexion_enviada",
+                            "conexion_aceptada",
+                            "respondio",
+                            "reunion_agendada",
+                            "reunion_tomada",
+                            "no_interesado",
+                            "no_show",
+                            "dado_de_baja"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "example": {
+                "list_name": "Leads del CRM",
+                "contacts": [
+                  {
+                    "external_id": "crm-1",
+                    "name": "Ana Torres",
+                    "email": "ana@acme.com"
+                  },
+                  {
+                    "external_id": "crm-2",
+                    "name": "Luis Rojas",
+                    "company": "Beta SA"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "list_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "created": {
+                          "type": "integer"
+                        },
+                        "updated": {
+                          "type": "integer"
+                        },
+                        "failed": {
+                          "type": "integer"
+                        },
+                        "results": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "index": {
+                                "type": "integer"
+                              },
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "created": {
+                                "type": "boolean"
+                              },
+                              "error": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/contacts/enrich": {
+      "post": {
+        "tags": [
+          "Contactos"
+        ],
+        "operationId": "enrichContacts",
+        "summary": "Enriquecer contactos",
+        "description": "Encola el enriquecimiento (email verificado y, si pides, teléfono). Corre en segundo plano y cobra créditos igual que en la app. Cada contacto listo dispara `contact.enriched`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contact_ids"
+                ],
+                "properties": {
+                  "contact_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "maxItems": 100
+                  },
+                  "reveal_phone": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Encolado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "queued": {
+                          "type": "integer"
+                        },
+                        "not_found": {
+                          "type": "integer"
+                        },
+                        "note": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/contacts/{contact_id}": {
+      "get": {
+        "tags": [
+          "Contactos"
+        ],
+        "operationId": "getContact",
+        "summary": "Ver contacto",
+        "description": "El contacto con sus últimos 50 mensajes y las campañas en las que está.",
+        "parameters": [
+          {
+            "name": "contact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id del contacto."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ContactDetail"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Contactos"
+        ],
+        "operationId": "updateContact",
+        "summary": "Actualizar contacto",
+        "description": "Cambia campos o el estado del contacto. Ejemplo: cuando tu CRM agenda una reunión, manda `contact_status: \"reunion_agendada\"`.",
+        "parameters": [
+          {
+            "name": "contact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id del contacto."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "first_name": {
+                    "type": "string"
+                  },
+                  "last_name": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Nombre completo (si no mandas first_name/last_name)."
+                  },
+                  "title": {
+                    "type": "string",
+                    "description": "Cargo."
+                  },
+                  "company": {
+                    "type": "string"
+                  },
+                  "company_domain": {
+                    "type": "string",
+                    "example": "acme.com"
+                  },
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "phone": {
+                    "type": "string",
+                    "example": "+51999888777"
+                  },
+                  "linkedin_url": {
+                    "type": "string"
+                  },
+                  "city": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "country": {
+                    "type": "string"
+                  },
+                  "external_id": {
+                    "type": "string",
+                    "description": "Id del registro en tu CRM. Con él se actualiza en vez de duplicar."
+                  },
+                  "external_source": {
+                    "type": "string",
+                    "example": "crm-interno"
+                  },
+                  "contact_status": {
+                    "type": "string",
+                    "enum": [
+                      "no_contactado",
+                      "en_campana",
+                      "saludo_enviado",
+                      "conexion_enviada",
+                      "conexion_aceptada",
+                      "respondio",
+                      "reunion_agendada",
+                      "reunion_tomada",
+                      "no_interesado",
+                      "no_show",
+                      "dado_de_baja"
+                    ]
+                  }
+                }
+              },
+              "example": {
+                "contact_status": "reunion_agendada"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Contact"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Contactos"
+        ],
+        "operationId": "deleteContact",
+        "summary": "Borrar contacto",
+        "description": "Lo borra de su lista y de sus campañas.",
+        "parameters": [
+          {
+            "name": "contact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id del contacto."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/campaigns": {
+      "get": {
+        "tags": [
+          "Campañas"
+        ],
+        "operationId": "listCampaigns",
+        "summary": "Listar campañas",
+        "description": "",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "active",
+                "paused",
+                "completed"
+              ]
+            },
+            "description": "Filtra por estado."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Cuántos resultados por página."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "El `next_cursor` de la página anterior."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Campaign"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/campaigns/{campaign_id}": {
+      "get": {
+        "tags": [
+          "Campañas"
+        ],
+        "operationId": "getCampaign",
+        "summary": "Ver campaña",
+        "description": "La campaña, sus pasos y cuántos leads hay en cada estado.",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id de la campaña."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/CampaignDetail"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/campaigns/{campaign_id}/enrollments": {
+      "get": {
+        "tags": [
+          "Campañas"
+        ],
+        "operationId": "listEnrollments",
+        "summary": "Leads de una campaña",
+        "description": "",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id de la campaña."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "replied",
+                "unsubscribed",
+                "completed",
+                "paused",
+                "error"
+              ]
+            },
+            "description": "Filtra por estado."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Cuántos resultados por página."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "El `next_cursor` de la página anterior."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Enrollment"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Campañas"
+        ],
+        "operationId": "enrollContacts",
+        "summary": "Enrolar contactos",
+        "description": "Pone contactos en la cadencia de la campaña (hasta 500). Los que ya estaban se omiten. Si la campaña no está activa, esperan hasta que la actives.",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id de la campaña."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contact_ids"
+                ],
+                "properties": {
+                  "contact_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "maxItems": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "enrolled": {
+                          "type": "integer"
+                        },
+                        "already_enrolled": {
+                          "type": "integer"
+                        },
+                        "not_found": {
+                          "type": "integer"
+                        },
+                        "campaign_status": {
+                          "type": "string"
+                        },
+                        "note": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/enrollments/{enrollment_id}": {
+      "patch": {
+        "tags": [
+          "Campañas"
+        ],
+        "operationId": "updateEnrollment",
+        "summary": "Pausar, reanudar o detener un lead",
+        "description": "",
+        "parameters": [
+          {
+            "name": "enrollment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id del enrolamiento."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "action"
+                ],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "pause",
+                      "resume",
+                      "stop"
+                    ]
+                  }
+                }
+              },
+              "example": {
+                "action": "stop"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Enrollment"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/messages": {
+      "get": {
+        "tags": [
+          "Bandeja"
+        ],
+        "operationId": "listMessages",
+        "summary": "Listar mensajes",
+        "description": "Todo lo enviado y recibido por WhatsApp, email y LinkedIn. `direction=in` = respuestas de los leads.",
+        "parameters": [
+          {
+            "name": "contact_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Solo los de este contacto."
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "whatsapp",
+                "email",
+                "linkedin"
+              ]
+            },
+            "description": "Canal."
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "in",
+                "out"
+              ]
+            },
+            "description": "in = recibido, out = enviado."
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Solo los creados después de esta fecha (ISO 8601)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Cuántos resultados por página."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "El `next_cursor` de la página anterior."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Message"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/signals": {
+      "get": {
+        "tags": [
+          "Radar"
+        ],
+        "operationId": "listSignals",
+        "summary": "Listar señales",
+        "description": "Empresas con un motivo para comprar hoy, con evidencia y puntaje.",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "new",
+                "saved",
+                "dismissed"
+              ]
+            },
+            "description": "Estado."
+          },
+          {
+            "name": "min_score",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "description": "Puntaje mínimo."
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Solo los creados después de esta fecha (ISO 8601)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Cuántos resultados por página."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "El `next_cursor` de la página anterior."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Signal"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/signals/{signal_id}": {
+      "patch": {
+        "tags": [
+          "Radar"
+        ],
+        "operationId": "updateSignal",
+        "summary": "Marcar señal",
+        "description": "Guarda o descarta una señal y da feedback (el Radar aprende de él).",
+        "parameters": [
+          {
+            "name": "signal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id de la señal."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "new",
+                      "saved",
+                      "dismissed"
+                    ]
+                  },
+                  "feedback": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "useful",
+                      "not_useful",
+                      null
+                    ]
+                  }
+                }
+              },
+              "example": {
+                "status": "saved",
+                "feedback": "useful"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Signal"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/meetings": {
+      "get": {
+        "tags": [
+          "Reuniones"
+        ],
+        "operationId": "listMeetings",
+        "summary": "Listar reuniones",
+        "description": "Reuniones analizadas por el Meeting Coach, con resumen, puntaje, resultado y siguiente paso.",
+        "parameters": [
+          {
+            "name": "created_after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Solo los creados después de esta fecha (ISO 8601)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Cuántos resultados por página."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "El `next_cursor` de la página anterior."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Meeting"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/meetings/{meeting_id}": {
+      "get": {
+        "tags": [
+          "Reuniones"
+        ],
+        "operationId": "getMeeting",
+        "summary": "Ver reunión",
+        "description": "Incluye el reporte completo del Meeting Coach en `report`.",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id de la reunión."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Meeting"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/events": {
+      "get": {
+        "tags": [
+          "Eventos y webhooks"
+        ],
+        "operationId": "listEvents",
+        "summary": "Listar eventos",
+        "description": "Los eventos de los últimos 30 días. Es la alternativa a los webhooks si tu sistema prefiere consultar cada tanto. Se registran solo mientras tengas una clave o un webhook activo.",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "contact.created",
+                "contact.status_changed",
+                "contact.enriched",
+                "message.received",
+                "message.sent",
+                "signal.created",
+                "enrollment.status_changed",
+                "meeting.completed"
+              ]
+            },
+            "description": "Tipo de evento."
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Solo los creados después de esta fecha (ISO 8601)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Cuántos resultados por página."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "El `next_cursor` de la página anterior."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Event"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/webhooks": {
+      "get": {
+        "tags": [
+          "Eventos y webhooks"
+        ],
+        "operationId": "listWebhooks",
+        "summary": "Listar webhooks",
+        "description": "",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Webhook"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Eventos y webhooks"
+        ],
+        "operationId": "createWebhook",
+        "summary": "Registrar webhook",
+        "description": "Registra una URL https que recibirá los eventos elegidos, firmados. La respuesta incluye el `secret` para verificar la firma. Pensado también para Zapier / Make / n8n (REST hooks).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "*",
+                        "contact.created",
+                        "contact.status_changed",
+                        "contact.enriched",
+                        "message.received",
+                        "message.sent",
+                        "signal.created",
+                        "enrollment.status_changed",
+                        "meeting.completed"
+                      ]
+                    },
+                    "default": [
+                      "*"
+                    ]
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {
+                "url": "https://crm.miempresa.com/hooks/predictable",
+                "events": [
+                  "message.received",
+                  "contact.status_changed"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Creado (incluye secret)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Webhook"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{webhook_id}": {
+      "delete": {
+        "tags": [
+          "Eventos y webhooks"
+        ],
+        "operationId": "deleteWebhook",
+        "summary": "Eliminar webhook",
+        "description": "",
+        "parameters": [
+          {
+            "name": "webhook_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id del webhook."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "contact.created": {
+      "post": {
+        "summary": "contact.created",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
+    },
+    "contact.status_changed": {
+      "post": {
+        "summary": "contact.status_changed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
+    },
+    "contact.enriched": {
+      "post": {
+        "summary": "contact.enriched",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
+    },
+    "message.received": {
+      "post": {
+        "summary": "message.received",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
+    },
+    "message.sent": {
+      "post": {
+        "summary": "message.sent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
+    },
+    "signal.created": {
+      "post": {
+        "summary": "signal.created",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
+    },
+    "enrollment.status_changed": {
+      "post": {
+        "summary": "enrollment.status_changed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
+    },
+    "meeting.completed": {
+      "post": {
+        "summary": "meeting.completed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "pai_live_…",
+        "description": "Clave creada en Predictable → Desarrolladores → Claves de API."
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Parámetros inválidos.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Falta la clave o no es válida.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "La clave es de solo lectura.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "No existe o no es tuyo.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Conflicto con el estado actual.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Más de 120 requests por minuto con esta clave.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "invalid_request"
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {},
+              "request_id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "email": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "full_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "brand_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "key": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "type": "string"
+              },
+              "scopes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "read",
+                    "write"
+                  ]
+                }
+              }
+            }
+          },
+          "credits": {
+            "type": "object",
+            "properties": {
+              "balance": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          },
+          "api_version": {
+            "type": "string"
+          },
+          "rate_limit_per_minute": {
+            "type": "integer"
+          }
+        }
+      },
+      "List": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "contact_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Contact": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "list_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "external_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "first_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "company": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "company_domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_status": {
+            "type": "string",
+            "enum": [
+              "none",
+              "pending",
+              "revealed",
+              "unavailable"
+            ]
+          },
+          "linkedin_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "city": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contact_status": {
+            "type": "string",
+            "enum": [
+              "no_contactado",
+              "en_campana",
+              "saludo_enviado",
+              "conexion_enviada",
+              "conexion_aceptada",
+              "respondio",
+              "reunion_agendada",
+              "reunion_tomada",
+              "no_interesado",
+              "no_show",
+              "dado_de_baja"
+            ]
+          },
+          "status_changed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "enriched_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ContactDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Contact"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "recent_messages": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              },
+              "enrollments": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Enrollment"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Campaign": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "active",
+              "paused",
+              "completed"
+            ]
+          },
+          "list_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "whatsapp",
+                "email",
+                "linkedin"
+              ]
+            }
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CampaignDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Campaign"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "send_window": {
+                "type": "object"
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "position": {
+                      "type": "integer"
+                    },
+                    "channel": {
+                      "type": "string"
+                    },
+                    "angle": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "content": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "delay_days": {
+                      "type": "integer"
+                    },
+                    "delay_hours": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              "enrollment_counts": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Enrollment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "campaign_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "contact_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "replied",
+              "unsubscribed",
+              "completed",
+              "paused",
+              "error"
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "next_run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "replied_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "replied_channel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stop_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Message": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "contact_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "whatsapp",
+              "email",
+              "linkedin"
+            ]
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "in",
+              "out"
+            ]
+          },
+          "contact_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "sent",
+              "delivered",
+              "read",
+              "failed"
+            ]
+          },
+          "sent_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Signal": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "company_name": {
+            "type": "string"
+          },
+          "company_domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "website": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "industry": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "employee_count": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "headline": {
+            "type": "string"
+          },
+          "why_fit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "strength": {
+            "type": "string",
+            "enum": [
+              "alta",
+              "media",
+              "baja"
+            ]
+          },
+          "score": {
+            "type": "integer"
+          },
+          "signal_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "published_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "decision_makers": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "detector_kind": {
+            "type": "string"
+          },
+          "detector_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "new",
+              "saved",
+              "dismissed"
+            ]
+          },
+          "feedback": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Meeting": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "contact_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prospect_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "live",
+              "processing",
+              "closed",
+              "error"
+            ]
+          },
+          "score": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome_note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deal_value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "next_meeting_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_step": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "report": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Solo en GET /v1/meetings/{id}."
+          }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "contact.created",
+              "contact.status_changed",
+              "contact.enriched",
+              "message.received",
+              "message.sent",
+              "signal.created",
+              "enrollment.status_changed",
+              "meeting.completed"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "api_version": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "description": "contact.* → { contact }; message.* → { message }; signal.created → { signal }; enrollment.status_changed → { enrollment }; meeting.completed → { meeting }."
+          }
+        }
+      },
+      "Webhook": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "url": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "secret": {
+            "type": "string",
+            "description": "Solo al crearlo por la API."
+          },
+          "last_delivery_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "failure_count": {
+            "type": "integer"
+          },
+          "disabled_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}
