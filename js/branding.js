@@ -2,7 +2,7 @@
  * branding.js — "Tu Predictable": cada cliente ve la plataforma con SU marca.
  *
  * La marca vive en profiles.brand_name / brand_logo_path / brand_color (+ el
- * full_name de siempre para saludar) — migración 20260923000001. Este módulo:
+ * full_name de siempre para saludar) — migración 20260923000002. Este módulo:
  *
  *   1. La aplica al shell de index.html: logo y nombre en la barra lateral y
  *      en la barra móvil, título de la pestaña, favicon y color de acento
