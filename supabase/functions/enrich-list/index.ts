@@ -41,6 +41,7 @@ import { ApolloError, apolloCall, resolveApolloAuth } from "../_shared/apollo-au
 import type { ApolloAuth } from "../_shared/apollo-auth.ts";
 import { blockedInPlatformMode } from "../_shared/apollo-platform.ts";
 import { apolloBillableCount, CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import { profileFillPatch } from "../_shared/person-fill.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -192,7 +193,10 @@ async function processEmailRows(svc: SupabaseClient, auth: ApolloAuth, userId: s
       enriched_at: nowIso(),
       enrich_error: null,
     };
-    if (match) patch.snapshot = match;
+    if (match) {
+      Object.assign(patch, profileFillPatch(r, match));
+      patch.snapshot = match;
+    }
     // Con la key compartida NO se crea el contacto en Apollo: esa cuenta es
     // la misma para todos los clientes y el lead se vería desde otro (misma
     // regla que apollo-proxy, _shared/apollo-platform.ts).
@@ -282,6 +286,7 @@ async function processFullRow(svc: SupabaseClient, auth: ApolloAuth, userId: str
   const patch: Record<string, unknown> = { enriched_at: nowIso(), enrich_error: null };
   if (person) {
     if (!r.apollo_person_id && person.id) patch.apollo_person_id = person.id;
+    Object.assign(patch, profileFillPatch(r, person));
     const work = isMaskedEmail(person.email) ? null : person.email;
     const personal = (person.personal_emails || []).find((e: string) => !isMaskedEmail(e)) || null;
     if (work || personal) patch.email = r.email || work || personal;
