@@ -157,7 +157,7 @@ Cada una toca muchas líneas de `index.html` (dos caídas de producción viniero
 
 ## 6. Pendientes decididos (no incluidos en este PR)
 
-- **Intelligence Hub ↔ feedback**: `intel_hub_feedback` se escribe y no se lee; `intel_hub_learning.distilled_rules` no tiene escritor ni migración `CREATE TABLE`. Propuesta: que `learning-loop` destile reglas de los 👎 con nota (ámbito `hub_rule`) y `generate-intel-hub` las inyecte; migración que cree ambas tablas en el repo.
+- ~~**Intelligence Hub ↔ feedback**~~ **Hecho el 2026-09-23 (inteligencia universal)**: `learning-loop` destila el 👍/👎 y las acciones directas de cada hallazgo en `intel_hub_learning.distilled_rules`; `generate-intel-hub` las recibe junto con lo que respondió en campañas, Radar y reuniones (`_shared/intelligence.ts`), y el Radar, `generate-campaign` y `generate-outreach` leen la misma memoria. Migración `20260923000001_hub_learning_tables.sql` declara ambas tablas en el repo.
 - **Estado terminal de campaña "reunión"**: `campaign_enrollments.status` termina en `replied`; la reunión vive en `prospect_list_members.contact_status`. Con la bandeja marcándola ya se cierra el dato; un estado propio en la campaña es cosmético.
 - **Provenance retroactiva**: los leads guardados antes de esta migración no tienen `source`; el bucle los cuenta por estado, no por origen.
 - **OAuth en WhatsApp/LinkedIn**: decisión de proveedor (§2).

@@ -2,7 +2,7 @@
  * enrich-list — Supabase Edge Function
  *
  * Procesa la cola de enriquecimiento de prospect_list_members (migración
- * 20260923000001). Antes el reveal corría en el navegador y cerrar la pestaña
+ * 20260923000002). Antes el reveal corría en el navegador y cerrar la pestaña
  * lo cortaba a medias; ahora sigue aquí aunque el usuario se vaya.
  *
  * Quién la llama:
@@ -16,7 +16,8 @@
  * Dos modos por fila (enrich_mode), los mismos que hacía el navegador:
  *   · 'email' — recién guardado desde Buscar: /people/bulk_match (lotes de
  *     10, sin revelar email personal) + crear el contacto en Apollo con la
- *     etiqueta = nombre de la lista.
+ *     etiqueta = nombre de la lista (solo con el Apollo propio del cliente:
+ *     con la key compartida el lead se queda solo en Predictable).
  *   · 'full'  — «Enriquecer seleccionados»: /people/match con email personal
  *     y, si enrich_reveal_phones, teléfono (llega async a apollo-webhook).
  *
@@ -38,6 +39,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ApolloError, apolloCall, resolveApolloAuth } from "../_shared/apollo-auth.ts";
 import type { ApolloAuth } from "../_shared/apollo-auth.ts";
+import { blockedInPlatformMode } from "../_shared/apollo-platform.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -185,7 +187,10 @@ async function processEmailRows(svc: SupabaseClient, auth: ApolloAuth, userId: s
       enrich_error: null,
     };
     if (match) patch.snapshot = match;
-    if (!r.apollo_contact_id) {
+    // Con la key compartida NO se crea el contacto en Apollo: esa cuenta es
+    // la misma para todos los clientes y el lead se vería desde otro (misma
+    // regla que apollo-proxy, _shared/apollo-platform.ts).
+    if (!r.apollo_contact_id && !(auth.mode === "platform" && blockedInPlatformMode("/contacts"))) {
       try {
         patch.apollo_contact_id = await createApolloContact(auth, r, match, email, listNames.get(r.list_id) || "");
       } catch (e) {

@@ -31,6 +31,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, resolveEngine, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { loadIntelligence } from "../_shared/intelligence.ts";
 
 // ── Section catalogue ────────────────────────────────────────────────────────
 
@@ -913,8 +914,11 @@ async function runGeneration(
 
   const generateOne = async (section: SectionDef, extraContext: string): Promise<GeneratedContent | null> => {
     try {
+      // Inteligencia universal: lo que el vendedor usó / descartó del Hub y lo
+      // que respondió en campañas, Radar y reuniones orienta cada segmento.
+      const learned = await loadIntelligence(supabase, userId, "hub", { section: section.key });
       const content = await generateSection(
-        engine, model, section, companyContext + extraContext, today
+        engine, model, section, companyContext + extraContext + learned, today
       );
       await supabase.from("intelligence_hub_reports").upsert(
         {
