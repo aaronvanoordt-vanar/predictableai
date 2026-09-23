@@ -1544,7 +1544,7 @@
         <div class="ihx-mod-body">${inner}</div>
         ${rules.length > 0 ? `
           <div class="ihx-learn-panel">
-            <div class="ihx-learn-title">Reglas aprendidas del feedback</div>
+            <div class="ihx-learn-title">Reglas aprendidas de tu feedback y de lo que usaste</div>
             <ul>${rules.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>
           </div>` : ''}
       </article>`;
@@ -1691,6 +1691,7 @@
     const t = (v) => cleanText(String(v || '')).trim();
     const nav = (sel) => { const el = document.querySelector(sel); if (el) el.click(); };
     btn.disabled = true; btn.classList.add('is-busy');
+    let used = false;
     try {
       if (act === 'radar') {
         const { data: { session } } = await window.supabaseClient.auth.getSession();
@@ -1726,9 +1727,11 @@
         if (window.campaigns && window.campaigns.newFromHub) window.campaigns.newFromHub({ name: t(title).slice(0, 80), instructions: text.slice(0, 600) });
         else hubToast('Abre Campañas y crea una nueva con este ángulo.', 'info');
       }
+      used = true;
     } catch (e) {
       hubToast(e.message || 'No se pudo completar la acción.', 'error');
     } finally { btn.disabled = false; btn.classList.remove('is-busy'); }
+    if (used) recordHubUse(section, parseInt(idx, 10) || 0, t(title) || t(text).slice(0, 140), act);
   }
 
   function foot(sectionKey, i, title) {
@@ -3291,6 +3294,42 @@ function finBoltSvg() {
       item_index: itemIndex, item_title: itemTitle, rating, note,
     });
     if (error) { console.warn('[feedback]', error); delete STATE.feedback[fbKey]; renderDashboard(); return; }
+    scheduleHubLearning();
+  }
+  // Inteligencia universal: usar un hallazgo (convertirlo en detector, señal,
+  // objeción, competidor, búsqueda o campaña) es la señal más fuerte de que
+  // sirvió. Se registra como 👍 con nota `accion:<tipo>`; learning-loop lo
+  // destila en las reglas del segmento y el Hub, el Radar, las campañas y los
+  // mensajes lo leen en su próxima corrida (_shared/intelligence.ts).
+  async function recordHubUse(sectionKey, itemIndex, itemTitle, act) {
+    if (!STATE.user || !itemTitle) return;
+    STATE.feedback[`${sectionKey}_${itemIndex}`] = 'up';
+    renderDashboard();
+    const { error } = await window.supabaseClient.from('intel_hub_feedback').insert({
+      user_id: STATE.user.id, section_key: sectionKey, report_id: STATE.reports[sectionKey]?.id || null,
+      item_index: itemIndex, item_title: itemTitle, rating: 'up', note: 'accion:' + act,
+    });
+    if (error) { console.warn('[hub-use]', error); return; }
+    scheduleHubLearning();
+  }
+  // Recalcula solo las reglas del Hub (gratis, determinista) unos segundos
+  // después del último 👍/👎 o acción, y refresca «Reglas aprendidas».
+  let hubLearningTimer = null;
+  function scheduleHubLearning() {
+    clearTimeout(hubLearningTimer);
+    hubLearningTimer = setTimeout(async () => {
+      try {
+        const { data: { session } } = await window.supabaseClient.auth.getSession();
+        if (!session) return;
+        const res = await fetch(`${window.SUPABASE_CONFIG.url}/functions/v1/learning-loop`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ action: 'recompute_hub' }),
+        });
+        if (!res.ok) return;
+        await loadLearning();
+        renderDashboard();
+      } catch (e) { log('hub learning', e); }
+    }, 4000);
   }
   // Una sección se considera "vencida" (elegible para --force=false) si:
   //  - nunca se generó, o
