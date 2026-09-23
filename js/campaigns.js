@@ -545,6 +545,27 @@
     catch (e) { state.linkedinCampaigns = []; console.warn('[campaigns] linkedin campaigns:', e.message); }
   }
   function ownLinkedinCampaigns() { return state.linkedinCampaigns || []; }
+  /**
+   * Vincula por nombre las campañas diseñadas en Predictable que ya existen en
+   * Dripify. Antes solo se vinculaban con "Ya la creé: vincular" o cuando el
+   * motor ejecutaba un paso que las usaba: la lista leída de Dripify mostraba
+   * la campaña y aun así seguía «Falta crearla en Dripify». Devuelve cuántas vinculó.
+   */
+  async function autoLinkLinkedinCampaigns() {
+    var LC = global.LinkedinCampaigns;
+    var dcs = dripifyCampaigns();
+    if (!LC || !dcs.length) return 0;
+    var linked = 0;
+    for (var i = 0; i < ownLinkedinCampaigns().length; i++) {
+      var lc = state.linkedinCampaigns[i];
+      if (lc.dripify_campaign_id || !LC.findByName(lc.name, dcs)) continue;
+      try {
+        var saved = await LC.linkByName(lc, dcs);
+        if (saved) { state.linkedinCampaigns[i] = saved; linked++; }
+      } catch (e) { console.warn('[campaigns] vincular campaña de LinkedIn:', lc.name, e.message); }
+    }
+    return linked;
+  }
   /** Abre el diseñador de campañas de LinkedIn con los datos de la cuenta. */
   function openLinkedinDesigner(opts) {
     if (!global.LinkedinCampaigns) return toast('El diseñador de campañas de LinkedIn no está cargado. Recarga la página.', 'error');
@@ -1488,8 +1509,7 @@
             state.dripify = (r && (r.account || r.dripify)) || state.dripify;
             m.close();
             toast('LinkedIn conectado. ' + dripifyCampaigns().length + ' campañas leídas.', 'success');
-            render();
-            openChannelDetails('linkedin');
+            return autoLinkLinkedinCampaigns().then(function () { render(); openChannelDetails('linkedin'); });
           });
         } },
       ]);
@@ -1963,7 +1983,13 @@
       api.setActions([
         { label: 'Releer', onClick: function (m, btn) {
           var r9 = btnLoading(btn, '⏳');
-          return edgeFetch(FN_CHANNEL, { action: 'refresh_dripify', payload: {} }).then(function (r) { state.dripify = (r && (r.account || r.dripify)) || state.dripify; r9(); m.close(); render(); openChannelDetails('linkedin'); }, function (e) { r9(); throw e; });
+          return edgeFetch(FN_CHANNEL, { action: 'refresh_dripify', payload: {} }).then(function (r) {
+            state.dripify = (r && (r.account || r.dripify)) || state.dripify;
+            return autoLinkLinkedinCampaigns().then(function (n) {
+              r9(); m.close(); render(); openChannelDetails('linkedin');
+              if (n) toast(n === 1 ? '1 campaña de LinkedIn quedó vinculada a Dripify.' : n + ' campañas de LinkedIn quedaron vinculadas a Dripify.', 'success');
+            });
+          }, function (e) { r9(); throw e; });
         } },
         { label: 'Cambiar API key', onClick: function (m) { m.close(); openLinkedInWizard('have'); } },
         { label: 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('linkedin', 'dripify', m); } },
@@ -3218,6 +3244,7 @@
     try {
       await getUid();
       await Promise.all([loadStatus(), loadLists(), loadCampaigns(), loadInbox(), loadLinkedinCampaigns(), loadKnowledgeSummary()]);
+      await autoLinkLinkedinCampaigns();
       state.emailAccounts = null;
       await loadEmailAccounts();
     } finally {
@@ -3252,6 +3279,7 @@
     if (!built) return;
     state.inboxMembers = {};
     await Promise.all([loadStatus(), loadLists(), loadCampaigns(), loadInbox(), loadLinkedinCampaigns()]);
+    await autoLinkLinkedinCampaigns();
     state.emailAccounts = null;
     await loadEmailAccounts();
     render();
