@@ -105,6 +105,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { loadIntelligence } from "../_shared/intelligence.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -1347,7 +1348,13 @@ Deno.serve(withLlmContext(async (req: Request) => {
   if (stepMode && step) {
     try {
       const closing = replyMode ? REPLY_CLOSING : STEP_CLOSING;
-      const learned = replyMode ? "" : await buildLearningContext(supa, user.id, step.channel);
+      // Mensajes ganadores y ángulos (solo en modo paso) + la inteligencia
+      // universal (perfiles que responden, objeciones reales) en ambos modos.
+      const [stepLearned, universal] = await Promise.all([
+        replyMode ? Promise.resolve("") : buildLearningContext(supa, user.id, step.channel),
+        loadIntelligence(supa, user.id, "outreach"),
+      ]);
+      const learned = stepLearned + universal;
       const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + learned + closing);
       console.log(`[outreach] ✓ ${replyMode ? "reply" : "step"} ${user.id} ${step.channel}/${step.angle} via ${engine}`);
       const { data: stSpent, error: stSpendErr } = await supa
