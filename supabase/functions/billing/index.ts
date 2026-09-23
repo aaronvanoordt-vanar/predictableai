@@ -16,14 +16,15 @@
  *   { action: "portal" }
  *       → { url }  Portal de Stripe: tarjeta, facturas, cancelar.
  *
- * Secrets: STRIPE_SECRET_KEY. Opcionales: APP_URL (por defecto
- * https://predictableai.vanarsi.com), STRIPE_PRICE_STARTER_MONTHLY /
- * STRIPE_PRICE_STARTER_YEARLY (price_… creados en el dashboard; si faltan, el
- * precio va en línea desde billing-plans.ts).
+ * Secrets: STRIPE_SECRET_KEY (clave restringida: Customers, Checkout
+ * Sessions y Customer portal en escritura; Subscriptions y Prices en
+ * lectura). Opcionales: APP_URL (por defecto https://predictableai.vanarsi.com)
+ * y STRIPE_PRICE_STARTER_MONTHLY / _YEARLY para cambiar los precios de
+ * STRIPE_IDS (_shared/billing-plans.ts).
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { STARTER, TOPUP_PACKS, planForUser, type Interval } from "../_shared/billing-plans.ts";
+import { STRIPE_IDS, TOPUP_PACKS, planForUser, type Interval } from "../_shared/billing-plans.ts";
 import { StripeError, stripeRequest } from "../_shared/stripe.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -56,7 +57,7 @@ async function ensureCustomer(supa: Json, userId: string, email: string | undefi
 
   const customer = await stripeRequest<{ id: string }>("POST", "/customers", {
     email,
-    metadata: { user_id: userId },
+    metadata: { app: "predictable.ai", user_id: userId },
   }, { idempotencyKey: `customer-${userId}` });
 
   const { error } = await supa.from("billing_customers")
@@ -72,17 +73,8 @@ async function ensureCustomer(supa: Json, userId: string, email: string | undefi
 }
 
 function starterLineItem(interval: Interval): Json {
-  const priceId = Deno.env.get(interval === "year" ? "STRIPE_PRICE_STARTER_YEARLY" : "STRIPE_PRICE_STARTER_MONTHLY");
-  if (priceId) return { price: priceId, quantity: 1 };
-  return {
-    quantity: 1,
-    price_data: {
-      currency: "usd",
-      unit_amount: STARTER.price_cents[interval],
-      recurring: { interval },
-      product_data: { name: STARTER.name },
-    },
-  };
+  const override = Deno.env.get(interval === "year" ? "STRIPE_PRICE_STARTER_YEARLY" : "STRIPE_PRICE_STARTER_MONTHLY");
+  return { price: override || STRIPE_IDS.starter_price[interval], quantity: 1 };
 }
 
 Deno.serve(async (req: Request) => {
@@ -115,8 +107,8 @@ Deno.serve(async (req: Request) => {
         customer,
         client_reference_id: user.id,
         line_items: [starterLineItem(interval)],
-        metadata: { user_id: user.id, kind: "subscription", interval },
-        subscription_data: { metadata: { user_id: user.id, plan: "starter" } },
+        metadata: { app: "predictable.ai", user_id: user.id, kind: "subscription", interval },
+        subscription_data: { metadata: { app: "predictable.ai", user_id: user.id, plan: "starter" } },
         allow_promotion_codes: true,
         billing_address_collection: "auto",
         tax_id_collection: { enabled: true },
@@ -137,21 +129,13 @@ Deno.serve(async (req: Request) => {
         return json({ error: "plan_required", message: "Las recargas son para cuentas con un plan activo. Activa Starter para seguir." }, 403, h);
       }
       const customer = await ensureCustomer(supa, user.id, user.email);
-      const credits = pack.credits.toLocaleString("es-419");
       const session = await stripeRequest<{ url: string }>("POST", "/checkout/sessions", {
         mode: "payment",
         customer,
         client_reference_id: user.id,
-        line_items: [{
-          quantity: 1,
-          price_data: {
-            currency: "usd",
-            unit_amount: pack.price_cents,
-            product_data: { name: `Recarga de ${credits} créditos — predictable.ai` },
-          },
-        }],
-        metadata: { user_id: user.id, kind: "topup", pack: packKey },
-        payment_intent_data: { metadata: { user_id: user.id, kind: "topup", pack: packKey } },
+        line_items: [{ price: pack.price_id, quantity: 1 }],
+        metadata: { app: "predictable.ai", user_id: user.id, kind: "topup", pack: packKey },
+        payment_intent_data: { metadata: { app: "predictable.ai", user_id: user.id, kind: "topup", pack: packKey } },
         customer_update: { name: "auto", address: "auto" },
         locale: "es-419",
         success_url: `${base}/index.html?billing=topup`,
@@ -166,6 +150,7 @@ Deno.serve(async (req: Request) => {
       if (!row?.stripe_customer_id) return json({ error: "no_customer" }, 404, h);
       const session = await stripeRequest<{ url: string }>("POST", "/billing_portal/sessions", {
         customer: row.stripe_customer_id,
+        configuration: STRIPE_IDS.portal_configuration,
         return_url: `${base}/index.html`,
       });
       return json({ url: session.url }, 200, h);

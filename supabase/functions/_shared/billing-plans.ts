@@ -12,6 +12,17 @@
 export type Plan = "free" | "starter" | "growth";
 export type Interval = "month" | "year";
 
+// Objetos creados en la cuenta de Stripe de Vanar LLC (live, 2026-09-23).
+// Los IDs no son secretos; los precios del plan se pueden sobrescribir con
+// STRIPE_PRICE_STARTER_MONTHLY / _YEARLY. La cuenta también vende otros
+// productos de Vanar: stripe-webhook ignora lo que no sea de predictable.ai.
+export const STRIPE_IDS = {
+  starter_product: "prod_VJX7PvkswZmaAy",
+  starter_price: { month: "price_1UIu3908udt2Or8ylLCbEh1R", year: "price_1UIu3F08udt2Or8yCkVs8Ut3" } as Record<Interval, string>,
+  topup_product: "prod_VJX7Sop1tyZuUy",
+  portal_configuration: "bpc_1UIu5Z08udt2Or8yPrz8NH5C",
+} as const;
+
 export const STARTER = {
   name: "predictable.ai Starter",
   monthly_credits: 1500,
@@ -20,10 +31,10 @@ export const STARTER = {
 
 export const FREE_TRIAL_CREDITS = 100;
 
-export const TOPUP_PACKS: Record<string, { credits: number; price_cents: number }> = {
-  topup_500: { credits: 500, price_cents: 4500 },
-  topup_1500: { credits: 1500, price_cents: 12000 },
-  topup_5000: { credits: 5000, price_cents: 35000 },
+export const TOPUP_PACKS: Record<string, { credits: number; price_cents: number; price_id: string }> = {
+  topup_500: { credits: 500, price_cents: 4500, price_id: "price_1UIu4L08udt2Or8yvzmT3DHz" },
+  topup_1500: { credits: 1500, price_cents: 12000, price_id: "price_1UIu4N08udt2Or8y5d5flXzV" },
+  topup_5000: { credits: 5000, price_cents: 35000, price_id: "price_1UIu4P08udt2Or8ypXrl9Dpx" },
 };
 
 /** Límites por plan de lo que corre solo (y nos cuesta aunque nadie entre). */

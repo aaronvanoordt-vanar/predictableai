@@ -50,10 +50,9 @@ async function userForCustomer(supa: Json, customerId: unknown): Promise<string 
 /** Copia el estado de una suscripción de Stripe a `subscriptions`. */
 async function syncSubscription(supa: Json, sub: Json): Promise<string | null> {
   const userId = (sub.metadata?.user_id as string) || await userForCustomer(supa, sub.customer);
-  if (!userId) {
-    console.error("[stripe-webhook] suscripción sin usuario:", sub.id);
-    return null;
-  }
+  // La cuenta de Stripe (Vanar LLC) también vende otros productos: una
+  // suscripción sin usuario de predictable.ai es de otra línea de negocio.
+  if (!userId) return null;
   const { data: existing } = await supa.from("subscriptions")
     .select("provider, status, stripe_subscription_id").eq("user_id", userId).maybeSingle();
   if (existing?.provider === "manual" && existing.status === "active") {
@@ -99,6 +98,8 @@ async function handleInvoicePaid(supa: Json, invoice: Json) {
   if (reason !== "subscription_create" && reason !== "subscription_cycle") return "ignored";
   const subId = invoice.subscription ?? invoice.parent?.subscription_details?.subscription;
   if (typeof subId !== "string" || !subId) return "no_subscription";
+  // Facturas de otras líneas de negocio de la cuenta: ni se consultan.
+  if (!(await userForCustomer(supa, invoice.customer))) return "not_ours";
   // Sincronizar primero: la factura puede llegar antes que customer.subscription.*.
   const sub = await stripeRequest("GET", `/subscriptions/${subId}`);
   const userId = await syncSubscription(supa, sub);
