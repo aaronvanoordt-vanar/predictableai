@@ -1310,7 +1310,7 @@
       engine: engine || (global.AIEngine && global.AIEngine.get('outreach')),
     });
     if (!data?.body) throw new Error('La IA no devolvió la respuesta. Reintenta.');
-    return { subject: data.subject || '', body: data.body };
+    return { subject: data.subject || '', body: data.body, knowledge: Array.isArray(data.knowledge) ? data.knowledge : [] };
   }
 
   // ── Brief del cliente ("MI Cliente") ────────────────────────

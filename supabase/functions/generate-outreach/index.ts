@@ -107,6 +107,7 @@ import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { buildTrainingBlock, loadTraining } from "../_shared/sales-training.ts";
 import { loadIntelligence } from "../_shared/intelligence.ts";
+import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -1345,13 +1346,29 @@ Deno.serve(withLlmContext(async (req: Request) => {
       const closing = replyMode ? REPLY_CLOSING : STEP_CLOSING;
       // Mensajes ganadores y ángulos (solo en modo paso) + la inteligencia
       // universal (perfiles que responden, objeciones reales) en ambos modos.
-      const [stepLearned, universal] = await Promise.all([
+      const [stepLearned, universal, knowledgeDocs] = await Promise.all([
         replyMode ? Promise.resolve("") : buildLearningContext(supa, user.id, step.channel),
         loadIntelligence(supa, user.id, "outreach"),
+        loadKnowledge(supa, user.id),
       ]);
       const learned = stepLearned + universal;
-      const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + learned + closing);
-      console.log(`[outreach] ✓ ${replyMode ? "reply" : "step"} ${user.id} ${step.channel}/${step.angle} via ${engine}`);
+      // Base de entrenamiento (sales_knowledge_docs): solo los fragmentos que
+      // tienen que ver con ESTE paso y ESTE lead. Va antes de lo aprendido y
+      // de las tendencias en peso (lo dice el propio bloque).
+      const lastLead = [...step.conversation].reverse().find((c) => c.who === "lead")?.body ?? "";
+      const knowledgeHits = retrieve(knowledgeDocs, {
+        channel: step.channel,
+        angle: step.angle,
+        text: [
+          step.angle.replace("_", " "), step.instructions, lastLead.slice(0, 1200),
+          lead.title, lead.headline, lead.industry, lead.company, lead.seniority,
+          Array.isArray(lead.departments) ? lead.departments.join(" ") : lead.departments,
+          typeof intake?.icp_pain_points === "string" ? intake.icp_pain_points.slice(0, 600) : "",
+        ].filter(Boolean).join(" "),
+      });
+      const knowledge = buildKnowledgePrompt(knowledgeHits, "message");
+      const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + knowledge + learned + closing);
+      console.log(`[outreach] ✓ ${replyMode ? "reply" : "step"} ${user.id} ${step.channel}/${step.angle} via ${engine} (knowledge: ${knowledgeHits.length} fragmentos de ${knowledgeDocs.length} docs)`);
       const { data: stSpent, error: stSpendErr } = await supa
         .rpc("spend_credits", { p_user_id: user.id, p_amount: OUTREACH_COST });
       if (stSpendErr || stSpent === null || stSpent === undefined) {
@@ -1359,7 +1376,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
       } else {
         await supa.from("credit_transactions").insert({ user_id: user.id, delta: -OUTREACH_COST, reason: "outreach_message" });
       }
-      return json({ subject: out.subject, body: out.body, angle_note: out.angle_note ?? null, channel: step.channel, angle: step.angle, generated_via: "fallback_api" }, 200, h);
+      return json({ subject: out.subject, body: out.body, angle_note: out.angle_note ?? null, channel: step.channel, angle: step.angle, knowledge: knowledgeRefs(knowledgeHits), generated_via: "fallback_api" }, 200, h);
     } catch (err) {
       console.error("[outreach] step error:", err);
       return json({ error: "llm_error", detail: String(err) }, 502, h);
