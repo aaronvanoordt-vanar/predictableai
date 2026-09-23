@@ -50,8 +50,52 @@ Deno.test("deterministicDefaults: no toca lo que ya está lleno", () => {
     competitors: [{ name: "Acme" }], icp_countries: ["Chile"], icp_industry_tags: ["banking"],
     icp_employee_ranges: ["1,10"], icp_departments: ["finance"], icp_seniorities: ["vp"], icp_titles: ["CFO"],
     icp_pain_points: "p", icp_buying_triggers: "t", common_objections: [{ objection: "o", neutralizer: "n" }],
+    company_offerings: [{ name: "Pagos", for_whom: "Bancos" }], current_customers: [{ name: "Banco Uno" }],
+    buying_committee: { decision_maker: { titles: "CFO", cares: "Costo" } }, icp_tech_uses: ["SAP"],
+    icp_pains: [{ pain: "Conciliación manual" }], icp_signals: [{ signal: "Nuevo CFO", evidence: "LinkedIn" }],
+    icp_current_alternatives: "Excel", icp_disqualifiers: "Sin área de finanzas",
   };
   assertEquals(cd.deterministicDefaults(row, null), {});
+});
+
+Deno.test("contexto v3: el texto viejo se convierte en filas y nunca se inventa un cliente", () => {
+  const row = {
+    company_solutions: "Pagos, Cobros", icp_industry_tags: ["banking"], icp_titles: ["CFO", "Tesorero"],
+    icp_pain_points: "• Conciliación manual (CFO)\n• Cobranza lenta",
+    icp_buying_triggers: "• Nuevo CFO — se ve en: LinkedIn\n• Expansión regional",
+    icp_signals: [],
+  };
+  const d = cd.deterministicDefaults(row, null);
+  assertEquals(d.company_offerings.map((o: { name: string }) => o.name), ["Pagos", "Cobros"]);
+  assert(d.company_offerings.every((o: { for_whom: string; price: string }) => o.for_whom && o.price === ""));
+  assertEquals(d.icp_pains.length, 2);
+  assertEquals(d.icp_pains[0], { pain: "Conciliación manual", persona: "CFO", evidence: "" });
+  assertEquals(d.icp_signals[0], { signal: "Nuevo CFO", evidence: "LinkedIn" });
+  assert(d.icp_signals[1].evidence.length > 0);
+  assertEquals(d.customers_none, true);
+  assertEquals(d.current_customers, undefined);
+  assertEquals(d.buying_committee.decision_maker.titles, "CFO, Tesorero");
+  const merged = { ...row, ...d };
+  for (const f of ["company_offerings", "current_customers", "icp_pains", "icp_signals", "buying_committee", "icp_tech_uses"] as const) {
+    assert(cd.isFilled(merged, f), f);
+  }
+});
+
+Deno.test("contexto v3: una señal sin evidencia no cuenta; la tecnografía acepta solo lo que falta", () => {
+  assert(!cd.isFilled({ icp_signals: [{ signal: "x", evidence: "" }] }, "icp_signals"));
+  assert(cd.isFilled({ icp_tech_uses: [], icp_tech_gaps: ["Sin CRM"] }, "icp_tech_uses"));
+  assert(!cd.isFilled({ buying_committee: { decision_maker: { titles: "CEO" } } }, "buying_committee"));
+});
+
+Deno.test("structuredMirror: filas → columnas de texto viejas", () => {
+  const m = cd.structuredMirror({
+    company_offerings: [{ name: "A" }, { name: "B" }],
+    icp_pains: [{ pain: "Duele", persona: "CFO" }],
+    icp_signals: [{ signal: "Vacantes", evidence: "LinkedIn" }],
+  });
+  assertEquals(m.company_solutions, "A, B");
+  assertEquals(m.icp_pain_points, "• Duele (CFO)");
+  assertEquals(m.icp_buying_triggers, "• Vacantes — se ve en: LinkedIn");
 });
 
 Deno.test("deterministicDefaults: idioma e industrias se derivan de lo conocido", () => {
