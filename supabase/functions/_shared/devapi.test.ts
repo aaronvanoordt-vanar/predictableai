@@ -3,7 +3,7 @@
 // Mantiene alineados los cuatro lugares que describen la API para
 // desarrolladores: las operaciones (devapi.ts), el contrato público
 // (/openapi.json), los triggers que emiten eventos (migración
-// 20260923000009) y el espejo de la UI (js/developers.js).
+// 20260923000010) y el espejo de la UI (js/developers.js).
 
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
@@ -36,7 +36,7 @@ Deno.test("cada ruta apunta a una operación existente", () => {
 Deno.test("tipos de evento: devapi.ts = openapi.json = migración = js/developers.js", () => {
   const spec = JSON.parse(read("openapi.json"));
   assertEquals([...spec.components.schemas.Event.properties.type.enum].sort(), [...EVENT_TYPES].sort());
-  const sql = read("supabase/migrations/20260923000009_developer_api.sql");
+  const sql = read("supabase/migrations/20260923000010_developer_api.sql");
   const emitted = new Set([...sql.matchAll(/'((?:contact|message|signal|enrollment|meeting)\.[a-z_]+)'/g)].map((m) => m[1]));
   assertEquals([...emitted].sort(), [...EVENT_TYPES].sort());
   const js = read("js/developers.js");

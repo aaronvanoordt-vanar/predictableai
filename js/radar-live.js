@@ -98,7 +98,56 @@
     channel: null,
     renderTimer: null,
     settings: null,        // borrador de la pestaña Avisos
+    // Lote diario: Nuevas muestra solo lo entregado (surfaced_at), hasta
+    // DAILY_BATCH por día; el resto queda en reserva hasta que el usuario
+    // pide otras. batch = respuesta de radar_surface_signals; null = la
+    // migración no está aplicada y el tope se aplica solo en el navegador.
+    batch: null,
+    fallbackCap: 25,
   };
+
+  const DAILY_BATCH = 25;
+  function userTz() { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (e) { return 'UTC'; } }
+
+  // Entrega el lote de hoy (y `extra` más). Devuelve false si la RPC no existe.
+  async function surface(extra) {
+    try {
+      const { data, error } = await global.supabaseClient.rpc('radar_surface_signals', { p_extra: extra || 0, p_tz: userTz() });
+      if (error || !data) { state.batch = null; return false; }
+      state.batch = data;
+      return true;
+    } catch (e) { state.batch = null; return false; }
+  }
+
+  // ¿Esta señal nueva está en el lote visible?
+  function inBatch(s) {
+    if (s.status !== 'new') return true;
+    if (state.batch) return !!s.surfaced_at;
+    return !!fallbackIds()[s.id];
+  }
+  function fallbackIds() {
+    const out = {};
+    state.signals.filter((s) => s.status === 'new')
+      .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
+      .slice(0, state.fallbackCap).forEach((s) => { out[s.id] = true; });
+    return out;
+  }
+  function reserveCount() {
+    if (state.batch) return Number(state.batch.reserve) || 0;
+    return Math.max(0, state.signals.filter((s) => s.status === 'new').length - state.fallbackCap);
+  }
+
+  async function moreSignals() {
+    if (state.batch) {
+      await run('Trayendo otras ' + DAILY_BATCH + '…', async () => {
+        await surface(DAILY_BATCH);
+        await load(true);
+      });
+    } else {
+      state.fallbackCap += DAILY_BATCH;
+      render();
+    }
+  }
 
   function shell() { return document.getElementById('radar-shell'); }
 
@@ -120,14 +169,18 @@
     ensureRealtime();
   }
 
-  async function load() {
+  async function load(skipSurface) {
     state.loading = true;
     try {
       const sb = global.supabaseClient;
+      const batched = skipSurface && state.batch ? true : await surface(0);
+      // Con el lote activo no se traen las de reserva (pueden ser cientos).
+      let sigQ = sb.from('radar_signals').select('*').eq('user_id', state.user.id);
+      if (batched) sigQ = sigQ.or('status.neq.new,surfaced_at.not.is.null');
       const [plan, dets, sigs, prof] = await Promise.all([
         sb.from('radar_plans').select('*').eq('user_id', state.user.id).maybeSingle(),
         sb.from('radar_detectors').select('*').eq('user_id', state.user.id).order('weight', { ascending: false }),
-        sb.from('radar_signals').select('*').eq('user_id', state.user.id).order('score', { ascending: false }).order('last_seen_at', { ascending: false }).limit(400),
+        sigQ.order('score', { ascending: false }).order('last_seen_at', { ascending: false }).limit(400),
         sb.from('profiles').select('radar_whatsapp_phone, radar_notify_min_score, radar_notify_every_hours, radar_notified_at, phone').eq('id', state.user.id).maybeSingle(),
       ]);
       state.plan = plan.data || null;
@@ -160,6 +213,13 @@
           if (p.eventType === 'DELETE') { state.signals = state.signals.filter((s) => s.id !== (p.old && p.old.id)); scheduleRender(); return; }
           if (!row || !row.id) return;
           const i = state.signals.findIndex((s) => s.id === row.id);
+          // Con el lote activo, lo que entra sin entregar va a la reserva.
+          if (state.batch && row.status === 'new' && !row.surfaced_at) {
+            if (i === -1 && p.eventType === 'INSERT') state.batch.reserve = (Number(state.batch.reserve) || 0) + 1;
+            if (i !== -1) state.signals.splice(i, 1);
+            scheduleRender();
+            return;
+          }
           if (i === -1) state.signals.unshift(row); else state.signals[i] = row;
           scheduleRender();
         })
@@ -252,7 +312,7 @@
       while (!state.driveStop && guard++ < 60) {
         const t = await post('radar-monitor', { mode: 'tick' });
         (t.notes || []).forEach((n) => state.driveLog.push(n));
-        if (t.inserted) state.driveLog.push('+' + t.inserted + ' señal' + (t.inserted === 1 ? '' : 'es') + ' nueva' + (t.inserted === 1 ? '' : 's'));
+        if (t.inserted) state.driveLog.push('+' + t.inserted + ' señal' + (t.inserted === 1 ? '' : 'es') + ' nueva' + (t.inserted === 1 ? '' : 's') + (state.batch ? ' (entran a tu reserva; ves ' + DAILY_BATCH + ' por día, las de mayor puntaje)' : ''));
         await load();
         render();
         if (!t.pending) break;
@@ -316,6 +376,11 @@
     };
   }
 
+  function companyKey(s) {
+    const d = String(s.company_domain || '').toLowerCase().replace(/^www\./, '').trim();
+    return d || String(s.company_name || '').toLowerCase().trim();
+  }
+
   async function saveSignals(ids, enroll) {
     const sigs = ids.map((id) => state.signals.find((s) => s.id === id)).filter(Boolean);
     if (!sigs.length) return;
@@ -332,8 +397,16 @@
         name, silent: true, onStatus: (m) => { state.busy = m; render(); },
       });
       if (!list) return;
-      await global.supabaseClient.from('radar_signals').update({ status: 'saved', list_id: list.id }).in('id', ids);
-      sigs.forEach((s) => { s.status = 'saved'; s.list_id = list.id; delete state.selected[s.id]; });
+      // La misma empresa suele tener varias señales (una por corrida): se
+      // guardan todas las nuevas de esa empresa, o seguiría apareciendo en
+      // Nuevas aunque ya esté en la lista.
+      const keys = {};
+      sigs.forEach((s) => { const k = companyKey(s); if (k) keys[k] = true; });
+      const all = state.signals.filter((s) => ids.indexOf(s.id) !== -1 || (s.status === 'new' && keys[companyKey(s)]));
+      const { error } = await global.supabaseClient.from('radar_signals')
+        .update({ status: 'saved', list_id: list.id }).in('id', all.map((s) => s.id));
+      if (error) throw new Error('La lista se creó, pero no se pudo marcar la señal como guardada: ' + error.message);
+      all.forEach((s) => { s.status = 'saved'; s.list_id = list.id; delete state.selected[s.id]; });
       state.notice = 'Guardado en la lista "' + list.name + '" (' + sigs.length + ' empresa' + (sigs.length === 1 ? '' : 's') + ').';
       if (enroll) {
         if (global.campaigns && typeof global.campaigns.newFromList === 'function') {
@@ -367,8 +440,11 @@
   async function setStatus(id, status) {
     const s = state.signals.find((x) => x.id === id);
     if (!s) return;
-    const { error } = await global.supabaseClient.from('radar_signals').update({ status }).eq('id', id);
-    if (error) { state.error = error.message; } else { s.status = status; delete state.selected[id]; }
+    const patch = { status };
+    // Restaurar una que nunca se entregó la devuelve a Nuevas, no a la reserva.
+    if (status === 'new' && state.batch && !s.surfaced_at) patch.surfaced_at = new Date().toISOString();
+    const { error } = await global.supabaseClient.from('radar_signals').update(patch).eq('id', id);
+    if (error) { state.error = error.message; } else { Object.assign(s, patch); delete state.selected[id]; }
     render();
   }
 
@@ -452,7 +528,7 @@
 
   function counts() {
     const c = { new: 0, saved: 0, dismissed: 0 };
-    state.signals.forEach((s) => { c[s.status] = (c[s.status] || 0) + 1; });
+    state.signals.forEach((s) => { if (inBatch(s)) c[s.status] = (c[s.status] || 0) + 1; });
     return c;
   }
 
@@ -570,6 +646,7 @@
     const q = f.q.trim().toLowerCase();
     return state.signals.filter((s) => {
       if (f.status && s.status !== f.status) return false;
+      if (!inBatch(s)) return false;
       if (FACET_ORDER.some((facet) => facet !== skipFacet && !passesSel(f[facet], signalKeys(s, facet)))) return false;
       if (f.minScore && Number(s.score) < f.minScore) return false;
       if (q && !((s.company_name || '') + ' ' + (s.headline || '') + ' ' + (s.industry || '') + ' ' + (s.country || '')).toLowerCase().includes(q)) return false;
@@ -715,6 +792,18 @@
     if (state.plan.status !== 'active') {
       h += '<div class="rl-alert rl-alert-warn">El monitoreo no está activo: el feed no recibe señales nuevas. <button class="rl-link" data-act="tab" data-tab="plan">Ir al plan</button></div>';
     }
+    const reserve = reserveCount();
+    if (state.filters.status === 'new' && (c.new || reserve)) {
+      h += '<div class="rl-daily"><div><strong>' + (c.new
+        ? 'Tus ' + c.new + ' señal' + (c.new === 1 ? '' : 'es') + ' para revisar'
+        : 'Listo por hoy') + '</strong>' +
+        '<span>' + (c.new
+          ? 'Las de mayor puntaje, hasta ' + DAILY_BATCH + ' por día. Guarda las que valgan la pena y descarta el resto.'
+          : 'Revisaste todo tu lote. Mañana llegan otras ' + DAILY_BATCH + '.') +
+        (reserve ? ' ' + reserve + ' más en reserva.' : '') + '</span></div>' +
+        (reserve ? '<button class="btn btn-ghost btn-sm" data-act="more"' + (state.busy ? ' disabled' : '') + '>Ver otras ' + Math.min(DAILY_BATCH, reserve) + '</button>' : '') +
+        '</div>';
+    }
     if (selectedIds.length) {
       h += '<div class="rl-bulk"><strong>' + selectedIds.length + ' seleccionada' + (selectedIds.length === 1 ? '' : 's') + '</strong>' +
         '<button class="btn btn-primary btn-sm" data-act="save-selected">Guardar en una lista</button>' +
@@ -725,7 +814,9 @@
     }
     if (!list.length) {
       const anyPending = state.detectors.some((d) => d.enabled && d.status === 'running');
-      h += '<div class="rl-empty">' + (state.signals.length
+      h += '<div class="rl-empty">' + (state.filters.status === 'new' && !c.new && reserve && !anyFilter()
+        ? 'No te queda nada pendiente en el lote de hoy.'
+        : state.signals.length
         ? 'Ninguna señal coincide con estos filtros.' + (anyFilter() ? ' <button class="rl-link" data-act="fclear-all">Limpiar filtros</button>' : '')
         : (state.plan.status === 'active'
           ? (anyPending ? 'Los detectores están corriendo. Las señales aparecen aquí en cuanto se confirman.' : 'Todavía no hay señales. Pulsa "Buscar ahora" en el plan para no esperar al próximo ciclo.')
@@ -1019,6 +1110,7 @@
         case 'save-selected-enroll': saveSignals(Object.keys(state.selected).filter((k) => state.selected[k]), true); break;
         case 'select-all': visibleSignals().forEach((s) => { if (s.status === 'new') state.selected[s.id] = true; }); render(); break;
         case 'select-none': state.selected = {}; render(); break;
+        case 'more': moreSignals(); break;
         case 'fb': feedback(id, t.getAttribute('data-v')); break;
         case 'dismiss': setStatus(id, 'dismissed'); break;
         case 'restore': setStatus(id, 'new'); break;
@@ -1185,6 +1277,10 @@
       '.rl-bulk{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--ink-2);padding:8px 12px;border:1px solid var(--accent-soft);background:var(--accent-soft);border-radius:var(--r-sm)}',
       '.rl-bulk-soft{background:transparent;border-color:transparent;padding:0 2px}',
       '.rl-link{background:none;border:none;padding:0;cursor:pointer;font-family:inherit;font-size:inherit;font-weight:600;color:var(--accent-ink)}.rl-link:hover{text-decoration:underline}',
+      '.rl-daily{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 12px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface2)}',
+      '.rl-daily>div{display:flex;flex-direction:column;gap:2px;min-width:0}',
+      '.rl-daily strong{font-size:13.5px;color:var(--ink)}',
+      '.rl-daily span{font-size:12.5px;color:var(--ink-3)}',
       '.rl-empty{padding:34px;text-align:center;font-size:13.5px;color:var(--ink-4);display:flex;justify-content:center;gap:8px;align-items:center}',
       '.rl-list{display:flex;flex-direction:column;gap:10px}',
       '.rl-sig{padding:14px 16px}.rl-sig.is-saved{opacity:.85}.rl-sig.is-dismissed{opacity:.6}',

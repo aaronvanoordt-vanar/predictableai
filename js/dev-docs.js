@@ -222,7 +222,7 @@
     'contact.enriched': 'Terminó el enriquecimiento del contacto (email y/o teléfono).',
     'message.received': 'Un lead respondió por WhatsApp, email o LinkedIn.',
     'message.sent': 'Salió un mensaje (de una campaña o respondido desde la Bandeja).',
-    'signal.created': 'El Radar detectó una señal de compra nueva.',
+    'signal.created': 'El Radar te entregó una señal de compra nueva (las del lote diario; la reserva no se envía).',
     'enrollment.status_changed': 'Un lead de una campaña respondió, se dio de baja, terminó la cadencia, se pausó o falló.',
     'meeting.completed': 'El Meeting Coach terminó el reporte de una reunión.',
   };

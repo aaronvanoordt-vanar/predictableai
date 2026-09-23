@@ -2,8 +2,9 @@
  * js/developers.js — «Desarrolladores»: conectar Predictable con el CRM
  * interno del cliente, sus automatizaciones y sus agentes de IA (2026-09-23).
  *
- * Página `developers` (shell `#developers-shell`), en la sección
- * «Integraciones» del sidebar. Pestañas:
+ * Página `developers` (shell `#developers-shell`), en la sección «Conectar»
+ * del sidebar, junto a Integraciones (conectores nativos: js/integrations.js).
+ * Pestañas:
  *   · Inicio      — qué es esto en palabras simples, estado de la conexión y
  *                   el mensaje listo para pasarle al equipo técnico.
  *   · Claves de API — crear (se muestra UNA vez), ver uso y revocar
@@ -17,7 +18,7 @@
  *                   desde /openapi.json (la misma de developers.html).
  *   · Registro    — últimas requests y eventos de la cuenta.
  *
- * Backend: migración 20260923000009 + edge functions public-api, mcp y
+ * Backend: migración 20260923000010 + edge functions public-api, mcp y
  * api-webhooks (_shared/devapi.ts). EVENT_TYPES y MCP_TOOLS son espejo de
  * _shared/devapi.ts (lo verifica devapi.test.ts).
  * Depende de js/supabase-client.js, js/ui-helpers.js y js/dev-docs.js.
@@ -264,7 +265,7 @@
   }
 
   function pendingMigration() {
-    return '<div class="dv-card"><div class="dv-h">Falta activar las integraciones</div><p class="dv-p">Para usar la API hay que aplicar la migración <code>20260923000009_developer_api.sql</code> y desplegar las funciones <code>public-api</code>, <code>mcp</code> y <code>api-webhooks</code>. Mientras tanto puedes leer la documentación en la pestaña Referencia.</p></div>';
+    return '<div class="dv-card"><div class="dv-h">Falta activar las integraciones</div><p class="dv-p">Para usar la API hay que aplicar la migración <code>20260923000010_developer_api.sql</code> y desplegar las funciones <code>public-api</code>, <code>mcp</code> y <code>api-webhooks</code>. Mientras tanto puedes leer la documentación en la pestaña Referencia.</p></div>';
   }
 
   function renderHome() {
@@ -285,7 +286,7 @@
     ].join('\n');
     return '' +
       '<div class="dv-card dv-hero">' +
-        '<div class="dv-kicker">Integraciones</div>' +
+        '<div class="dv-kicker">Conectar</div>' +
         '<div class="dv-title">Conecta tu CRM, tus automatizaciones y tu IA a Predictable</div>' +
         '<p class="dv-p">Igual que una app se conecta a HubSpot, tu CRM interno (o Zapier, Make, n8n, o un agente de IA) puede leer y escribir en Predictable: subir leads a tus listas, ponerlos en campañas, y enterarse al instante cuando alguien responde, agenda una reunión o aparece una señal de compra. Tu equipo técnico hace la conexión; tú solo creas la clave y les pasas el mensaje de abajo.</p>' +
         '<div class="dv-status">' + online +
@@ -293,6 +294,7 @@
           '<span>' + activeHooks.length + ' webhook' + (activeHooks.length === 1 ? '' : 's') + '</span>' +
           '<span>' + (state.requests24h == null ? '—' : state.requests24h) + ' requests en 24 h</span>' +
           '<span>Último uso: ' + esc(fmtDate(lastUse)) + '</span></div>' +
+        (document.querySelector('.nav-item[data-page="integrations"]') ? '<p class="dv-note">¿Usas HubSpot, Salesforce, Amplemarket, Google Sheets, Notion o ClickUp? Esos se conectan sin programar en <button type="button" class="dv-link" style="padding:0" data-dv-act="go-integrations">Integraciones</button>. Esta sección es para el CRM propio de tu empresa o lo que tu equipo técnico construya.</p>' : '') +
       '</div>' +
       '<div class="dv-grid3">' +
         way('API REST', 'Tu sistema le habla a Predictable', 'Crea y actualiza contactos sin duplicar (con el id de tu CRM), búscalos, enriquécelos, enrólalos en campañas y consulta mensajes, señales y reuniones.', 'claves', 'Crear una clave') +
@@ -490,6 +492,11 @@
       case 'delete-hook': deleteHook(id); break;
       case 'redeliver': redeliver(id); break;
       case 'refresh': load(true).then(render); break;
+      case 'go-integrations': {
+        var item = document.querySelector('.nav-item[data-page="integrations"]');
+        if (item) item.click();
+        break;
+      }
     }
   }
 

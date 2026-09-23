@@ -2,7 +2,7 @@
  * api-webhooks — Supabase Edge Function (2026-09-23)
  *
  * Envía los eventos de Predictable a los endpoints que el cliente registró
- * (Desarrolladores → Webhooks). Los triggers de la migración 20260923000009
+ * (Desarrolladores → Webhooks). Los triggers de la migración 20260923000010
  * dejan una fila por (evento × webhook) en `api_webhook_deliveries`; esta
  * función las reclama (claim_webhook_deliveries, FOR UPDATE SKIP LOCKED) y
  * hace el POST firmado.

@@ -251,6 +251,7 @@ interface Ctx {
   apolloByUser: Map<string, apolloAuth.ApolloAuth | null>;
   gmailByUser: Map<string, { token: string; email: string } | null>;
   sentToday: Map<string, number>; // `${user}:${channel}` → envíos en 24 h
+  watiProbed: Set<string>; // usuarios con bloqueo de cuenta vencido que ya mandaron su envío de prueba en esta corrida
   campaignCache: Map<string, Json | null>;
 }
 
@@ -358,8 +359,20 @@ async function sentLast24h(ctx: Ctx, userId: string, channel: string): Promise<n
     .eq("channel", channel)
     .in("type", channel === "linkedin" ? ["sent", "queued"] : ["sent"])
     .gte("created_at", since);
-  ctx.sentToday.set(k, count ?? 0);
-  return count ?? 0;
+  // Un envío que el proveedor después no pudo entregar (recibo `failed` con el
+  // id del mensaje, de wati-webhook) no cuenta para el tope: 50 saludos que
+  // Meta rechazó dejaban a los otros 50 leads esperando al día siguiente.
+  const { count: undelivered } = await ctx.db
+    .from("campaign_events")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("channel", channel)
+    .eq("type", "failed")
+    .not("provider_message_id", "is", null)
+    .gte("created_at", since);
+  const used = Math.max(0, (count ?? 0) - (undelivered ?? 0));
+  ctx.sentToday.set(k, used);
+  return used;
 }
 
 async function event(ctx: Ctx, en: Json, channel: string, type: string, extra: Json = {}) {
@@ -522,6 +535,17 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     if (!acc) throw new StepError("WATI no está conectado.", "hold");
     const phone = wati.digits(member.phone);
     if (!phone) throw new StepError("El lead no tiene teléfono revelado: se omite el WhatsApp y sigue con el siguiente paso.", "skip");
+    // Meta está rechazando todo envío de la cuenta (nombre visible sin
+    // aprobar, lo sella wati-webhook): se retiene sin gastar un envío que va a
+    // fallar. Vencido el plazo, UN solo lead por corrida prueba de nuevo; si
+    // entrega, el webhook levanta el bloqueo y el resto sale en las corridas
+    // siguientes; si vuelve a fallar, el bloqueo se renueva.
+    const block = wati.activeAccountBlock(acc.config, ctx.now);
+    if (block) throw new StepError(wati.accountBlockMessage(block.code), "hold");
+    if (acc.config?.send_block?.code) {
+      if (ctx.watiProbed.has(en.user_id)) throw new StepError(wati.accountBlockMessage(String(acc.config.send_block.code)), "hold_short");
+      ctx.watiProbed.add(en.user_id);
+    }
     const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
     const localId = crypto.randomUUID();
     let bodyText = "";
@@ -1146,7 +1170,7 @@ Deno.serve(async (req) => {
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, { auth: { persistSession: false } });
   const now = new Date();
-  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), dripifyCampaignsByUser: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), sentToday: new Map(), campaignCache: new Map() };
+  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), dripifyCampaignsByUser: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), sentToday: new Map(), watiProbed: new Set(), campaignCache: new Map() };
 
   // 1. Recuperar lo que un run caído dejó a medias.
   await db.from("campaign_enrollments")

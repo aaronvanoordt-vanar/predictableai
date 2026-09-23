@@ -26,7 +26,7 @@ Para que el CRM interno de un cliente, sus automatizaciones (Zapier / Make / n8n
 
 ## Eventos
 
-Los triggers de la migración `20260923000009` llaman a `emit_api_event()` y **nunca rompen la escritura original** (un error se degrada a WARNING). Solo registran eventos si el usuario tiene una clave activa o un webhook activo.
+Los triggers de la migración `20260923000010` llaman a `emit_api_event()` y **nunca rompen la escritura original** (un error se degrada a WARNING). Solo registran eventos si el usuario tiene una clave activa o un webhook activo.
 
 | Evento | Origen |
 |---|---|
@@ -42,7 +42,7 @@ Los triggers de la migración `20260923000009` llaman a `emit_api_event()` y **n
 
 ## Despliegue
 
-1. Aplicar `supabase/migrations/20260923000009_developer_api.sql`.
+1. Aplicar `supabase/migrations/20260923000010_developer_api.sql`.
 2. Desplegar `public-api` y `mcp` con `--no-verify-jwt`, y `api-webhooks` con JWT (el workflow **Deploy Edge Functions** ya aplica la bandera correcta).
 3. Programar el cron de `api-webhooks` (SQL comentado al final de la migración, con la URL del proyecto y la service role).
 

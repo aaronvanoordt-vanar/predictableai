@@ -812,8 +812,13 @@
             'pero sí están guardados aquí.)'
           : '') +
         ' La encuentras en Prospección → Listas guardadas.');
+      // El feed del Radar (radar-live.js) usa la lista devuelta para marcar
+      // las señales como guardadas y abrir el enrolamiento: sin esto quedaban
+      // en Nuevas aunque la lista existiera.
+      return list;
     } catch (e) {
       alert(e.message || 'No se pudo guardar la lista.');
+      return null;
     } finally {
       state.busy = false;
       notify('');

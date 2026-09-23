@@ -1797,7 +1797,7 @@
         ],
         "operationId": "listSignals",
         "summary": "Listar señales",
-        "description": "Empresas con un motivo para comprar hoy, con evidencia y puntaje.",
+        "description": "Empresas con un motivo para comprar hoy, con evidencia y puntaje. Devuelve lo mismo que ve el usuario: el Radar entrega hasta 25 señales por día (las de mayor puntaje) y guarda el resto en reserva; pide `include_reserve=true` para verlas todas.",
         "parameters": [
           {
             "name": "status",
@@ -1811,6 +1811,15 @@
               ]
             },
             "description": "Estado."
+          },
+          {
+            "name": "include_reserve",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "Incluir la reserva que aún no se entregó."
           },
           {
             "name": "min_score",
@@ -3285,6 +3294,14 @@
               "string",
               "null"
             ]
+          },
+          "surfaced_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Cuándo el Radar la entregó (null = en reserva)."
           },
           "created_at": {
             "type": "string",

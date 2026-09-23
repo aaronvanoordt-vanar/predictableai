@@ -14,7 +14,7 @@
  * otros clientes: revisa eso antes que cualquier otra cosa.
  *
  * Autenticación: `Authorization: Bearer pai_live_…` (o `X-API-Key`). Se
- * guarda solo el SHA-256 de la clave (migración 20260923000009). Alcance
+ * guarda solo el SHA-256 de la clave (migración 20260923000010). Alcance
  * `read` o `write` (write incluye read). Límite: RATE_LIMIT_PER_MIN por clave.
  *
  * EVENT_TYPES es espejo de EVENT_TYPES en js/developers.js y de los triggers
@@ -451,7 +451,7 @@ function meetingOut(m: Json, full = false) {
   return out;
 }
 
-const SIGNAL_COLUMNS = "id, company_name, company_domain, website, country, industry, employee_count, headline, why_fit, strength, score, signal_date, evidence, decision_makers, detector_kind, detector_name, status, feedback, list_id, first_seen_at, last_seen_at, created_at, updated_at";
+const SIGNAL_COLUMNS = "id, company_name, company_domain, website, country, industry, employee_count, headline, why_fit, strength, score, signal_date, evidence, decision_makers, detector_kind, detector_name, status, feedback, list_id, surfaced_at, first_seen_at, last_seen_at, created_at, updated_at";
 
 const CONTEXT_EXTRA = new Set([
   "competitors", "current_customers", "customers_none", "buying_committee",
@@ -965,9 +965,10 @@ export const OPERATIONS: Record<string, Operation> = {
   // ── Radar ─────────────────────────────────────────────────────────────────
   "signals.list": {
     scope: "read",
-    summary: "Señales de compra detectadas por el Radar (empresas con un motivo para comprar hoy).",
+    summary: "Señales de compra entregadas por el Radar (empresas con un motivo para comprar hoy).",
     params: obj({
       status: { type: "string", enum: ["new", "saved", "dismissed"] },
+      include_reserve: S.bool("Incluir las señales en reserva que el Radar aún no entregó en el lote diario."),
       min_score: S.int("Puntaje mínimo (0-100).", 0, 100),
       created_after: S.date("Solo las detectadas después de esta fecha."),
       ...PAGE_PARAMS,
@@ -980,7 +981,9 @@ export const OPERATIONS: Record<string, Operation> = {
       if (input.min_score != null && input.min_score !== "") q = q.gte("score", int(input.min_score, "min_score", 0, 100, 0));
       const ca = isoDate(input.created_after, "created_after");
       if (ca) q = q.gt("created_at", ca);
-      const { data, error } = await paged(q, p);
+      // Lo mismo que ve el usuario: la reserva (nueva y sin entregar) no sale salvo que se pida.
+      const groups = bool(input.include_reserve) ? [] : ["status.neq.new,surfaced_at.not.is.null"];
+      const { data, error } = await paged(q, p, "created_at", groups);
       if (error) dbFail(error, "leer las señales");
       return pageResult(data, p);
     },

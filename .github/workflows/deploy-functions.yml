@@ -13,8 +13,11 @@
 #
 # Desarrolladores (2026-09-23): public-api y mcp (nuevas, con --no-verify-jwt:
 #   se autentican con la clave de API) + api-webhooks (nueva, CON JWT; la llama
-#   pg_cron cada minuto con la service role). Migración 20260923000009 y el
+#   pg_cron cada minuto con la service role). Migración 20260923000010 y el
 #   cron de api-webhooks (SQL al final de la migración). Ver docs/API.md.
+# Integraciones (2026-09-23): integrations (nueva, CON JWT). Secrets opcionales
+#   HUBSPOT_/SALESFORCE_/NOTION_/CLICKUP_CLIENT_ID + _CLIENT_SECRET (Google usa
+#   los de Gmail). Ver docs/INTEGRACIONES.md.
 # Billing con Stripe (2026-09-23): billing + stripe-webhook (nuevas; la
 #   segunda sale con --no-verify-jwt: Stripe la llama sin JWT y se autentica
 #   por firma) + las que cambiaron de tarifario: apollo-proxy campaign-run
@@ -83,7 +86,7 @@ jobs:
           # de Apollo, y enrich-company cambia cómo la alcanza el onboarding.
           #
           # Con JWT (no listar aquí): channel-connect, apollo-proxy, inbox-send,
-          # gmail-proxy, billing, campaign-run (la llama pg_cron con la service role),
+          # gmail-proxy, billing, integrations, campaign-run (la llama pg_cron con la service role),
           # api-webhooks (idem).
           NO_JWT="apollo-webhook enrich-company sales-coach wati-webhook dripify-webhook generate-outreach-playbook client-portal sheet-sync stripe-webhook public-api mcp"
 

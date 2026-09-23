@@ -12,6 +12,7 @@
 --     CLIENT-WRITABLE por dueño (URL https, eventos, activo). El secreto de
 --     firma lo genera la base y el dueño puede verlo (lo necesita para
 --     verificar la firma, igual que en Stripe).
+--   Requiere 20260923000009_radar_daily_batch (radar_signals.surfaced_at).
 --   • api_events             — el registro de eventos del usuario. Lo
 --     escriben SOLO los triggers de abajo, y solo si el usuario tiene una
 --     clave activa o un webhook activo (quien no integra nada no paga el
@@ -434,7 +435,10 @@ CREATE TRIGGER api_events_message_ins
   AFTER INSERT ON public.inbox_messages
   FOR EACH ROW EXECUTE FUNCTION public.api_events_on_message();
 
--- Señales del Radar.
+-- Señales del Radar: cuando el Radar las ENTREGA (lote diario, migración
+-- 20260923000009_radar_daily_batch: surfaced_at pasa a tener fecha), no cuando
+-- el motor las guarda en reserva. Así el CRM recibe lo mismo que el usuario ve
+-- en «Nuevas» y no cientos de señales de una corrida.
 CREATE OR REPLACE FUNCTION public.api_events_on_signal()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -442,13 +446,17 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  PERFORM public.emit_api_event(NEW.user_id, 'signal.created', jsonb_build_object('signal', jsonb_build_object(
-    'id', NEW.id, 'company_name', NEW.company_name, 'company_domain', NEW.company_domain,
-    'website', NEW.website, 'country', NEW.country, 'industry', NEW.industry,
-    'employee_count', NEW.employee_count, 'headline', NEW.headline, 'why_fit', NEW.why_fit,
-    'strength', NEW.strength, 'score', NEW.score, 'signal_date', NEW.signal_date,
-    'detector_kind', NEW.detector_kind, 'detector_name', NEW.detector_name,
-    'evidence', NEW.evidence, 'status', NEW.status, 'created_at', NEW.created_at)));
+  IF NEW.surfaced_at IS NOT NULL
+     AND (TG_OP = 'INSERT' OR OLD.surfaced_at IS NULL) THEN
+    PERFORM public.emit_api_event(NEW.user_id, 'signal.created', jsonb_build_object('signal', jsonb_build_object(
+      'id', NEW.id, 'company_name', NEW.company_name, 'company_domain', NEW.company_domain,
+      'website', NEW.website, 'country', NEW.country, 'industry', NEW.industry,
+      'employee_count', NEW.employee_count, 'headline', NEW.headline, 'why_fit', NEW.why_fit,
+      'strength', NEW.strength, 'score', NEW.score, 'signal_date', NEW.signal_date,
+      'detector_kind', NEW.detector_kind, 'detector_name', NEW.detector_name,
+      'evidence', NEW.evidence, 'status', NEW.status, 'surfaced_at', NEW.surfaced_at,
+      'created_at', NEW.created_at)));
+  END IF;
   RETURN NULL;
 EXCEPTION WHEN OTHERS THEN
   RAISE WARNING 'api_events_on_signal: %', SQLERRM;
@@ -459,6 +467,11 @@ $$;
 DROP TRIGGER IF EXISTS api_events_signal_ins ON public.radar_signals;
 CREATE TRIGGER api_events_signal_ins
   AFTER INSERT ON public.radar_signals
+  FOR EACH ROW EXECUTE FUNCTION public.api_events_on_signal();
+
+DROP TRIGGER IF EXISTS api_events_signal_surfaced ON public.radar_signals;
+CREATE TRIGGER api_events_signal_surfaced
+  AFTER UPDATE OF surfaced_at ON public.radar_signals
   FOR EACH ROW EXECUTE FUNCTION public.api_events_on_signal();
 
 -- Enrolamientos: solo los cambios que significan algo para un CRM. El motor
