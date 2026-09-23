@@ -88,6 +88,13 @@
       q: '', statusFilter: '', listFilter: '',
       channel: null,           // suscripción realtime a prospect_list_members
       refreshTimer: null, filterTimer: null,
+      refreshing: false, refreshQueued: false, refreshLists: false,
+      // Enriquecimiento en el navegador (respaldo si enrich-list no está
+      // desplegada): [{ lists: {listId: {done,total}} }] + ids en curso.
+      enrichJobs: [], enrichingIds: new Set(),
+      // Cola del servidor leída de la base: {listId: n en cola}; el máximo
+      // visto por lista (para la barra) y un timer de sondeo de respaldo.
+      enrichQueue: {}, enrichBaseline: {}, enrichQueueSeen: {}, enrichPollTimer: null,
     },
   };
 
@@ -304,6 +311,10 @@
     '#prospecting-shell .pros-listcard { display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--surface); border:1px solid var(--hair); border-radius:var(--r-md); cursor:pointer; transition:border-color .15s, box-shadow .15s; }',
     '#prospecting-shell .pros-listcard:hover { border-color:var(--hair-3); }',
     '#prospecting-shell .pros-listcard.active { border-color:var(--accent-2); box-shadow:0 0 0 3px var(--accent-soft); }',
+    '#prospecting-shell .pros-enrich-banner { margin:0 18px 4px; padding:10px 12px; border:1px solid var(--hair); border-radius:var(--r-md); background:var(--surface2); font-size:12.5px; color:var(--text2); }',
+    '#prospecting-shell .pros-enrich-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }',
+    '#prospecting-shell .pros-enrich-bar { height:4px; margin-top:8px; border-radius:99px; background:var(--hair); overflow:hidden; }',
+    '#prospecting-shell .pros-enrich-bar > i { display:block; height:100%; background:var(--accent-2); border-radius:inherit; transition:width .4s; }',
     '#prospecting-shell .pros-iconbtn { border:0; background:transparent; cursor:pointer; color:var(--ink-4); padding:4px; border-radius:var(--r-xs); display:inline-flex; }',
     '#prospecting-shell .pros-iconbtn:hover { color:var(--red); background:var(--red-soft); }',
     '#prospecting-shell .pros-wa-preview { background:var(--wa-bg); border-radius:var(--r-md); padding:16px; }',
@@ -470,12 +481,14 @@
   }
 
   function memberEmailCell(m) {
-    if (m.email_status === 'pending') return '<span class="pill pill-amber">Enriqueciendo…</span>';
+    if (m.email_status === 'pending' || m.enrich_requested_at || state.listas.enrichingIds.has(String(m.id))) {
+      return '<span class="pill pill-amber">Enriqueciendo…</span>';
+    }
     if (m.email && !isMaskedEmail(m.email)) {
       return '<div>' + esc(m.email) + '</div>' +
         (m.email_status ? '<div style="margin-top:3px">' + emailPillHtml(m.email_status) + '</div>' : '');
     }
-    return '<span class="pill pill-gray">Sin email</span>';
+    return '<span class="pill pill-gray"' + (m.enrich_error ? ' title="' + esc(m.enrich_error) + '"' : '') + '>Sin email</span>';
   }
 
   function memberPhoneCell(m) {
@@ -1802,7 +1815,7 @@
       listBox,
       h('div', { style: mLbl, text: 'Nueva lista' }),
       nameInput,
-      h('p', { style: 'font-size:12px;color:var(--amber);background:var(--amber-soft);border:1px solid rgba(199,126,18,.30);border-radius:var(--r-sm);padding:9px 11px;margin:12px 0 0;line-height:1.5', text: 'Apollo revela el email laboral de cada persona (≈1 crédito por persona). El reveal corre en segundo plano — la lista se guarda de inmediato y los contactos aparecen como «Enriqueciendo…» hasta que Apollo responda.' }),
+      h('p', { style: 'font-size:12px;color:var(--amber);background:var(--amber-soft);border:1px solid rgba(199,126,18,.30);border-radius:var(--r-sm);padding:9px 11px;margin:12px 0 0;line-height:1.5', text: 'Apollo revela el email laboral de cada persona (2 créditos por email encontrado; gratis con tu propia cuenta de Apollo). El reveal corre en segundo plano — la lista se guarda de inmediato y los contactos aparecen como «Enriqueciendo…» hasta que Apollo responda.' }),
       prog.el);
 
     var api = openModal({
@@ -1855,9 +1868,19 @@
         .then(function (list) {
           if (!list) throw new Error('No se encontró la lista seleccionada.');
           prog.set('Guardando…');
-          return pd().addPeopleToList({ list: list, people: people }).then(function (res) {
-            return { list: list, res: res || {} };
-          });
+          var job = enrichJobCreate({});
+          return pd().addPeopleToList({
+            list: list, people: people,
+            onProgress: function (p) { enrichJobProgress(job, p); },
+          }).then(function (res) {
+            res = res || {};
+            if (res.enrichment) {
+              Promise.resolve(res.enrichment).catch(function () {}).then(function () { enrichJobFinish(job); });
+            } else {
+              enrichJobFinish(job);
+            }
+            return { list: list, res: res };
+          }, function (e) { enrichJobFinish(job); throw e; });
         })
         .then(function (r) {
           var list = r.list;
@@ -1892,7 +1915,7 @@
             Promise.resolve(res.enrichment).then(function (er) {
               er = er || {};
               var failedN = (er.failed || []).length;
-              if (res.enriching) {
+              if (res.enriching && !er.server) {
                 toast(
                   fmtNum(er.updated || 0) + ' emails enriquecidos en «' + (list.name || 'la lista') + '»' +
                   (failedN ? ' · ' + fmtNum(failedN) + ' fallaron' : ''),
@@ -1930,8 +1953,8 @@
       h('label', { style: 'display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text2);margin-top:14px;cursor:' + (rows.length ? 'pointer' : 'not-allowed') },
         alsoApollo,
         h('span', { text: rows.length
-          ? 'También guardar los ' + fmtNum(rows.length) + ' resultados de esta página como lista en Apollo (≈1 crédito por persona).'
-          : 'Ejecuta una búsqueda con resultados para poder guardarlos también en Apollo.' })),
+          ? 'También guardar los ' + fmtNum(rows.length) + ' resultados de esta página en una lista (2 créditos por email encontrado).'
+          : 'Ejecuta una búsqueda con resultados para poder guardarlos también en una lista.' })),
       prog.el);
     var api = openModal({
       title: 'Guardar búsqueda',
@@ -1953,9 +1976,18 @@
             state.search.refreshSavedSearches().catch(function () { /* silent: panel refresh is best-effort */ });
           }
           if (!alsoApollo.checked || !rows.length) return null;
-          prog.set('Guardando en Apollo…');
+          prog.set('Guardando la lista…');
           return Promise.resolve(pd().createList(name)).then(function (list) {
-            return pd().addPeopleToList({ list: list, people: rows }).then(function (res) {
+            var job = enrichJobCreate({});
+            return pd().addPeopleToList({
+              list: list, people: rows,
+              onProgress: function (p) { enrichJobProgress(job, p); },
+            }).then(function (res) {
+              if (res && res.enrichment) {
+                Promise.resolve(res.enrichment).catch(function () {}).then(function () { enrichJobFinish(job); });
+              } else {
+                enrichJobFinish(job);
+              }
               state.cache.lists = null;
               refreshBadge();
               res = res || {};
@@ -1964,6 +1996,7 @@
               if (res.enrichment && res.enriching) {
                 Promise.resolve(res.enrichment).then(function (er) {
                   er = er || {};
+                  if (er.server) return; // el aviso de fin lo da la cola
                   var failedN = (er.failed || []).length;
                   toast(
                     fmtNum(er.updated || 0) + ' emails enriquecidos en «' + name + '»' +
@@ -2022,6 +2055,11 @@
           st.selected.clear();
         }
         renderListsLeft();
+        // Cola del servidor: si quedó algo pendiente (p. ej. la pestaña se
+        // cerró), mostrarlo y darle un empujón sin esperar al cron.
+        refreshEnrichQueue().then(function (n) {
+          if (n && pd().kickEnrichment) pd().kickEnrichment().catch(function () {});
+        });
         // Siempre re-consultar a Supabase al entrar: un contacto pudo cambiar
         // desde Campañas, el coach u otro dispositivo (teléfonos async, estado
         // CRM, mensajes IA) y esta pestaña debe reflejarlo.
@@ -2039,12 +2077,6 @@
       '<div style="display:flex;gap:8px;margin-top:12px">' +
       '<input id="pros-newlist-name" type="text" placeholder="Nombre de la lista" style="flex:1;min-width:0">' +
       '<button type="button" class="btn btn-primary" data-action="create-list">Crear</button>' +
-      '</div></div>';
-    html += '<div class="chart-card">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">' +
-      '<div><div class="chart-title" style="margin:0">Importar desde Apollo</div>' +
-      '<div class="pros-hint" style="margin-top:2px">Trae una lista que ya tienes guardada en tu cuenta de Apollo.io</div></div>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-action="import-apollo">Importar</button>' +
       '</div></div>';
     // Listas de la versión anterior (localStorage) pendientes de importar
     var legacyCount = 0;
@@ -2074,6 +2106,7 @@
         '<div style="flex:1;min-width:0">' +
         '<div style="font-size:13px;font-weight:600;color:var(--text)">Todos los contactos</div>' +
         '<div class="pros-cellsub">' + esc(fmtNum(totalMembers)) + ' contactos · ' + esc(fmtNum(lists.length)) + ' lista' + (lists.length === 1 ? '' : 's') + '</div>' +
+        '<span data-enrich-slot="' + ALL_LIST_ID + '">' + enrichPillHtml(ALL_LIST_ID) + '</span>' +
         '</div></div>';
       html += lists.map(function (l) {
         var active = String(st.activeListId) === String(l.id);
@@ -2081,6 +2114,7 @@
           '<div style="flex:1;min-width:0">' +
           '<div style="font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(l.name || '—') + '</div>' +
           '<div class="pros-cellsub">' + esc(fmtNum(l.member_count || 0)) + ' contactos · ' + esc(fmtDate(l.created_at)) + '</div>' +
+          '<span data-enrich-slot="' + esc(String(l.id)) + '">' + enrichPillHtml(l.id) + '</span>' +
           '</div>' +
           '<button type="button" class="pros-iconbtn" data-action="rename-list" data-id="' + esc(String(l.id)) + '" title="Renombrar lista" style="font-size:14px">✎</button>' +
           '<button type="button" class="pros-iconbtn" data-action="delete-list" data-id="' + esc(String(l.id)) + '" title="Eliminar lista">' + SVG_TRASH + '</button>' +
@@ -2172,7 +2206,8 @@
       (all
         ? '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_email" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer seleccionados</button>'
         : '<button type="button" class="btn btn-primary btn-sm" data-action="create-campaign"' + (st.members.length ? '' : ' disabled') + '>' + SVG_CAMPAIGN + ' Crear campaña con esta lista</button>') +
-      '</div>';
+      '</div>' +
+      '<div data-enrich-banner>' + enrichBannerHtml() + '</div>';
 
     if (all) {
       var listOpts = {};
@@ -2381,7 +2416,6 @@
         })
         .then(function () { restoreImp(); }, function (e) { restoreImp(); throw e; });
     }
-    if (action === 'import-apollo') return openImportApolloModal();
     if (action === 'rename-list') return openRenameListModal(btn.getAttribute('data-id'));
     if (action === 'delete-list') return openDeleteListModal(btn.getAttribute('data-id'));
     if (action === 'select-list') {
@@ -2476,126 +2510,6 @@
           refreshBadge();
           renderListsLeft();
           toast('Lista renombrada a «' + newName + '».', 'success');
-          api.close();
-        })
-        .catch(function (e) {
-          api.setBusy(false);
-          toast(errMsg(e), 'error');
-        });
-    }
-  }
-
-  // ── "Importar desde Apollo" modal ───────────────────────────────────────
-  // Trae las listas (labels) ya guardadas en la cuenta de Apollo del usuario
-  // y copia los contactos de la elegida a una lista nueva en Predictable.
-  function openImportApolloModal() {
-    var listHost = h('div', { style: 'max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px' },
-      h('div', { style: 'font-size:12.5px;color:var(--text3);padding:8px 2px', text: 'Cargando listas de Apollo…' }));
-    var prog = progressLine();
-    var selected = null; // { id, name }
-    var apolloLists = [];
-
-    var bodyN = h('div', null,
-      h('div', { class: 'pros-hint', style: 'margin-bottom:10px', text: 'Elige una lista de tu cuenta de Apollo. Se crea una lista nueva en Predictable con sus contactos.' }),
-      listHost,
-      prog.el);
-
-    var api = openModal({
-      title: 'Importar desde Apollo',
-      width: 440,
-      bodyNode: bodyN,
-      actions: [
-        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
-        { label: 'Importar', className: 'btn btn-primary', onClick: onImport },
-      ],
-    });
-    api.buttons[1].disabled = true;
-
-    Promise.resolve(pd().fetchApolloLists())
-      .then(function (lists) {
-        apolloLists = Array.isArray(lists) ? lists : [];
-        renderOptions();
-      })
-      .catch(function (e) {
-        listHost.innerHTML = '';
-        listHost.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:0', text: '⚠ ' + errMsg(e) }));
-      });
-
-    function renderOptions() {
-      listHost.innerHTML = '';
-      if (!apolloLists.length) {
-        // Estado vacío honesto: en modo plataforma NO estamos mirando la cuenta
-        // de Apollo del usuario sino la key compartida de la beta, así que
-        // afirmar "tu cuenta no tiene listas" sería falso.
-        var mode = pd().apolloAuthMode ? pd().apolloAuthMode() : null;
-        var email = pd().apolloAccountEmail ? pd().apolloAccountEmail() : null;
-        var isPlatform = mode === 'platform';
-        listHost.appendChild(h('div', { style: 'font-size:12.5px;color:var(--text3);padding:8px 2px;line-height:1.5' },
-          h('div', { text: isPlatform
-            ? 'Estamos leyendo la cuenta de Apollo compartida de la beta, no la tuya — por eso no aparecen tus listas.'
-            : 'Apollo no devolvió ninguna lista para la cuenta conectada.' }),
-          h('div', { style: 'margin-top:6px', text: isPlatform
-            ? 'Conecta tu cuenta de Apollo en Campañas → canales → Email para importar tus listas.'
-            : 'Si en Apollo sí las ves, revisa que sea la misma cuenta y que su API key sea master key (Apollo la exige para listar listas).' }),
-          h('div', { style: 'margin-top:6px;opacity:.75', text: 'Cuenta en uso: ' + (
-            mode === 'oauth' ? 'la tuya' + (email ? ' — ' + email + ' (OAuth)' : ' (OAuth)')
-              : mode === 'user_key' ? 'la tuya' + (email ? ' — ' + email + ' (API key)' : ' (API key)')
-                : isPlatform ? 'la compartida de la plataforma' : 'desconocida') })));
-        return;
-      }
-      apolloLists.forEach(function (l) {
-        var isAccounts = l.modality === 'accounts';
-        var row = h('label', {
-          style: 'display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;' +
-            (isAccounts ? 'cursor:not-allowed;opacity:.5' : 'cursor:pointer'),
-        });
-        var radio = h('input', { type: 'radio', name: 'apollo-list-pick' });
-        if (isAccounts) {
-          radio.disabled = true;
-        } else {
-          radio.addEventListener('change', function () {
-            selected = { id: l.id, name: l.name };
-            api.buttons[1].disabled = false;
-          });
-        }
-        row.appendChild(radio);
-        row.appendChild(h('div', { style: 'flex:1;min-width:0' },
-          h('div', { style: 'font-size:13px;font-weight:600;color:var(--text)', text: l.name || 'Sin nombre' }),
-          h('div', { class: 'pros-cellsub', text: isAccounts
-            ? 'Lista de empresas — aún no se puede importar'
-            : (l.count != null ? fmtNum(l.count) + ' contactos' : 'Lista de contactos') })));
-        listHost.appendChild(row);
-      });
-    }
-
-    function onImport() {
-      if (!selected) return;
-      api.setBusy(true);
-      var res = null;
-      return Promise.resolve(pd().importApolloList({
-        apolloListId: selected.id,
-        apolloListName: selected.name,
-        onProgress: function (p) {
-          if (p.phase === 'fetching') prog.set('Trayendo contactos de Apollo… (' + fmtNum(p.done || 0) + (p.total ? '/' + fmtNum(p.total) : '') + ')');
-          else if (p.phase === 'saving') prog.set('Guardando en Predictable…');
-        },
-      }))
-        .then(function (r) {
-          res = r;
-          state.cache.lists = null;
-          return loadLists(false);
-        })
-        .then(function () {
-          state.listas.activeListId = (res.list && res.list.id != null) ? String(res.list.id) : null;
-          refreshBadge();
-          renderListsLeft();
-          return state.listas.activeListId ? reloadMembers() : Promise.resolve(renderListsRight());
-        })
-        .then(function () {
-          var msg = fmtNum(res.added || 0) + ' contactos importados a «' + ((res.list && res.list.name) || selected.name) + '».';
-          if (res.alreadyInList) msg += ' ' + fmtNum(res.alreadyInList) + ' ya estaban.';
-          if (res.truncated) msg += ' Apollo tiene más de ' + fmtNum(res.total) + ' — se importaron los primeros.';
-          toast(msg, 'success');
           api.close();
         })
         .catch(function (e) {
@@ -2815,10 +2729,33 @@
             // enriquecer a todos malogre la experiencia.
             api.close();
             toast('Enriqueciendo ' + fmtNum(members.length) + ' contacto' + (members.length === 1 ? '' : 's') + ' en segundo plano…', 'info');
-            Promise.resolve(pd().enrichMembers({ members: members, revealPhones: revealPhones }))
+            var counts = {};
+            members.forEach(function (m) {
+              var k = String(m.list_id);
+              counts[k] = (counts[k] || 0) + 1;
+              state.listas.enrichingIds.add(String(m.id));
+            });
+            var job = enrichJobCreate(counts);
+            job.ids = members.map(function (m) { return m.id; });
+            if (state.listas.rightEl) renderListsRight();
+            // La cola del servidor se escribe al empezar: leerla para que la
+            // barra arranque aunque el realtime tarde.
+            setTimeout(function () { refreshEnrichQueue(); }, 1500);
+            Promise.resolve()
+              .then(function () {
+                return pd().enrichMembers({
+                  members: members, revealPhones: revealPhones,
+                  onProgress: function (p) { enrichJobProgress(job, p); },
+                });
+              })
               .then(function (res) {
                 res = res || {};
                 var failed = res.failed || [];
+                // En el servidor el aviso de fin lo da la cola (settleEnrichBaselines).
+                if (res.server) {
+                  if (failed.length) toast(fmtNum(failed.length) + ' contacto' + (failed.length === 1 ? '' : 's') + ' sin datos suficientes para buscar en Apollo.', 'warn');
+                  return;
+                }
                 toast(
                   fmtNum(res.updated || 0) + ' contactos actualizados' +
                   (res.phonePending ? ' · ' + fmtNum(res.phonePending) + ' teléfonos pendientes' : '') +
@@ -2827,7 +2764,12 @@
                 );
                 if (state.listas.activeListId && state.listas.activeListId === targetListId) reloadMembers();
               })
-              .catch(function (e) { toast(errMsg(e), 'error'); });
+              .catch(function (e) { toast(errMsg(e), 'error'); })
+              .then(function () {
+                // Incluye a los que el data layer descartó sin llamar a Apollo.
+                members.forEach(function (m) { state.listas.enrichingIds.delete(String(m.id)); });
+                enrichJobFinish(job);
+              });
           },
         },
       ],
@@ -2903,6 +2845,218 @@
     toast('CSV exportado (' + fmtNum(rows.length) + ' contactos).', 'success');
   }
 
+  // ── Enriquecimiento en curso ────────────────────────────────────────────
+  // Mientras una lista se enriquece, el frente la marca como pendiente
+  // (píldora en su tarjeta + banner con barra en la tabla), pero cada
+  // contacto que ya terminó aparece con su resultado en el momento: el
+  // enriquecimiento escribe fila por fila y la tabla se refresca con cada
+  // avance (onProgress) y con cada UPDATE que llega por realtime.
+  function enrichJobCreate(counts) {
+    var job = { lists: {} };
+    Object.keys(counts || {}).forEach(function (k) { job.lists[k] = { done: 0, total: counts[k] }; });
+    state.listas.enrichJobs.push(job);
+    paintEnrich();
+    return job;
+  }
+
+  // Un avance del data layer: {listId, total, personId|memberId}. Los avances
+  // sin id (inicio de cada lote) solo abren la entrada de la lista.
+  function enrichJobProgress(job, p) {
+    if (p && p.phase === 'queued') {
+      // Lo tomó la cola del servidor: el conteo local sobra (la barra la
+      // lleva la cola en la base) y las filas se pintan desde enrich_requested_at.
+      (job.ids || []).forEach(function (id) { state.listas.enrichingIds.delete(String(id)); });
+      state.listas.enrichJobs = state.listas.enrichJobs.filter(function (j) { return j !== job; });
+      refreshEnrichQueue();
+      return;
+    }
+    if (!p || p.phase !== 'enriching' || p.listId == null) return;
+    var key = String(p.listId);
+    var e = job.lists[key];
+    if (!e) e = job.lists[key] = { done: 0, total: p.total || 0 };
+    if (p.memberId != null) state.listas.enrichingIds.delete(String(p.memberId));
+    if (p.personId == null && p.memberId == null) { paintEnrich(); return; }
+    if (e.done < e.total) e.done++;
+    paintEnrich();
+    scheduleMembersRefresh({ listId: key });
+  }
+
+  function enrichJobFinish(job) {
+    var st = state.listas;
+    st.enrichJobs = st.enrichJobs.filter(function (j) { return j !== job; });
+    paintEnrich();
+    scheduleMembersRefresh({ lists: true });
+  }
+
+  // Pendientes de una lista (o de todas con ALL_LIST_ID): en el navegador
+  // (respaldo) + en la cola del servidor.
+  function enrichPending(listId) {
+    var st = state.listas;
+    var key = String(listId);
+    var local = 0, server = 0;
+    st.enrichJobs.forEach(function (j) {
+      Object.keys(j.lists).forEach(function (k) {
+        if (key !== ALL_LIST_ID && k !== key) return;
+        local += Math.max(0, j.lists[k].total - j.lists[k].done);
+      });
+    });
+    Object.keys(st.enrichQueue).forEach(function (k) {
+      if (key !== ALL_LIST_ID && k !== key) return;
+      server += st.enrichQueue[k] || 0;
+    });
+    return { local: local, server: server, total: local + server };
+  }
+
+  // {done,total,server} para la barra, o null si no hay nada pendiente. El
+  // total es el máximo de pendientes visto desde que empezó (también tras
+  // recargar la página: la cola vive en la base).
+  function enrichStatus(listId) {
+    var st = state.listas;
+    var key = String(listId);
+    var p = enrichPending(key);
+    if (!p.total) return null;
+    var base = Math.max(st.enrichBaseline[key] || 0, p.total);
+    st.enrichBaseline[key] = base;
+    return { done: base - p.total, total: base, server: p.server > 0 };
+  }
+
+  // Cierra las barras que llegaron a cero y avisa de las listas cuya cola del
+  // servidor terminó (el respaldo del navegador ya avisa con su propio toast).
+  function settleEnrichBaselines() {
+    var st = state.listas;
+    Object.keys(st.enrichBaseline).forEach(function (key) {
+      if (enrichPending(key).total) return;
+      delete st.enrichBaseline[key];
+      if (st.enrichQueueSeen[key] && key !== ALL_LIST_ID) {
+        var l = findList(key);
+        toast('Enriquecimiento de «' + ((l && l.name) || 'la lista') + '» terminado.', 'success');
+      }
+      delete st.enrichQueueSeen[key];
+    });
+  }
+
+  // Relee la cola del servidor. Mientras quede algo, se vuelve a leer cada
+  // 8 s (respaldo por si el realtime no entrega un UPDATE).
+  function refreshEnrichQueue() {
+    var st = state.listas;
+    return Promise.resolve()
+      .then(function () { return pd().fetchEnrichmentQueue ? pd().fetchEnrichmentQueue() : null; })
+      .catch(function () { return null; })
+      .then(function (q) {
+        var before = pendingServerTotal();
+        st.enrichQueue = q || {};
+        Object.keys(st.enrichQueue).forEach(function (k) {
+          if (st.enrichQueue[k]) { st.enrichQueueSeen[k] = true; st.enrichQueueSeen[ALL_LIST_ID] = true; }
+        });
+        var after = pendingServerTotal();
+        paintEnrich();
+        clearTimeout(st.enrichPollTimer);
+        if (after) {
+          st.enrichPollTimer = setTimeout(function () {
+            if (state.activeTab === 'listas') scheduleMembersRefresh({ lists: true });
+            else refreshEnrichQueue();
+          }, 8000);
+        } else if (before) {
+          // La cola se vació desde la última lectura: última pasada a la tabla.
+          scheduleMembersRefresh({ lists: true });
+        }
+        return after;
+      });
+  }
+
+  function pendingServerTotal() {
+    var q = state.listas.enrichQueue;
+    return Object.keys(q).reduce(function (n, k) { return n + (q[k] || 0); }, 0);
+  }
+
+  function enrichPillHtml(listId) {
+    var s = enrichStatus(listId);
+    if (!s) return '';
+    return '<span class="pill pill-amber" style="margin-top:6px;display:inline-flex">Enriqueciendo… ' +
+      esc(fmtNum(s.done)) + '/' + esc(fmtNum(s.total)) + '</span>';
+  }
+
+  function enrichBannerHtml() {
+    var st = state.listas;
+    if (!st.activeListId) return '';
+    var s = enrichStatus(isAllList() ? ALL_LIST_ID : st.activeListId);
+    if (s) {
+      var pct = Math.max(2, Math.round((s.done / s.total) * 100));
+      return '<div class="pros-enrich-banner">' +
+        '<div class="pros-enrich-row"><span class="pill pill-amber">Pendiente</span>' +
+        '<span>Enriqueciendo contactos: <b>' + esc(fmtNum(s.done)) + ' de ' + esc(fmtNum(s.total)) + '</b> listos. ' +
+        'Los resultados aparecen aquí a medida que llegan' +
+        (s.server
+          ? '; corre en el servidor, así que puedes cerrar la pestaña y seguirá.'
+          : '; puedes seguir usando la app, pero no cierres esta pestaña.') + '</span></div>' +
+        '<div class="pros-enrich-bar"><i style="width:' + pct + '%"></i></div></div>';
+    }
+    // Sin trabajo en esta pestaña: filas que siguen en 'pending' (otra
+    // pestaña enriqueciendo, o una corrida que se cortó al cerrar la app).
+    var pending = st.members.filter(function (m) { return m.email_status === 'pending' && !m.enrich_requested_at; }).length;
+    if (!pending) return '';
+    return '<div class="pros-enrich-banner"><div class="pros-enrich-row"><span class="pill pill-amber">Pendiente</span>' +
+      '<span>' + esc(fmtNum(pending)) + ' contacto' + (pending === 1 ? '' : 's') + ' pendiente' + (pending === 1 ? '' : 's') +
+      ' de enriquecer.</span></div></div>';
+  }
+
+  // Repinta solo las píldoras y el banner (sin re-renderizar la tabla ni
+  // perder lo que el usuario esté escribiendo).
+  function paintEnrich() {
+    var st = state.listas;
+    settleEnrichBaselines();
+    if (st.leftEl) {
+      Array.prototype.forEach.call(st.leftEl.querySelectorAll('[data-enrich-slot]'), function (el) {
+        el.innerHTML = enrichPillHtml(el.getAttribute('data-enrich-slot'));
+      });
+    }
+    if (st.rightEl) {
+      var b = st.rightEl.querySelector('[data-enrich-banner]');
+      if (b) b.innerHTML = enrichBannerHtml();
+    }
+  }
+
+  // Refresco de la tabla de Listas. Throttle, no debounce: con cambios
+  // seguidos (un enriquecimiento escribe una fila cada pocos cientos de ms)
+  // un debounce se reiniciaba sin parar y la tabla no mostraba nada hasta
+  // el final. opts.listId: solo si esa lista (o «Todos») está a la vista.
+  function scheduleMembersRefresh(opts) {
+    var st = state.listas;
+    opts = opts || {};
+    if (opts.listId != null && st.activeListId && !isAllList() && String(st.activeListId) !== String(opts.listId)) return;
+    if (opts.lists) st.refreshLists = true;
+    if (st.refreshTimer) return;
+    st.refreshTimer = setTimeout(function () {
+      st.refreshTimer = null;
+      runMembersRefresh();
+    }, 400);
+  }
+
+  function runMembersRefresh() {
+    var st = state.listas;
+    if (state.activeTab !== 'listas' || !st.activeListId) return;
+    if (st.refreshing) { st.refreshQueued = true; return; }
+    st.refreshing = true;
+    var withLists = st.refreshLists;
+    st.refreshLists = false;
+    (withLists ? loadLists(true).catch(function () {}).then(renderListsLeft) : Promise.resolve())
+      .then(function () { return reloadMembers({ keepSelection: true }); })
+      .then(function () { return refreshEnrichQueue(); })
+      .catch(function () {})
+      .then(function () {
+        st.refreshing = false;
+        if (st.refreshQueued) { st.refreshQueued = false; scheduleMembersRefresh(); }
+      });
+  }
+
+  // Cerrar la pestaña corta el enriquecimiento (corre en el navegador):
+  // el navegador pide confirmación mientras haya uno en curso.
+  window.addEventListener('beforeunload', function (e) {
+    if (!state.listas.enrichJobs.length) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+
   // ── Realtime: prospect_list_members ─────────────────────────────────────
   // Cualquier cambio (teléfonos que llegan async por apollo-webhook, estado
   // CRM que mueve el motor de campañas, edición desde otro dispositivo)
@@ -2916,16 +3070,7 @@
         .channel('pros-members-' + window.currentUser.id)
         .on('postgres_changes',
           { event: '*', schema: 'public', table: 'prospect_list_members', filter: 'user_id=eq.' + window.currentUser.id },
-          function () {
-            if (state.activeTab !== 'listas' || !st.activeListId) return;
-            clearTimeout(st.refreshTimer);
-            st.refreshTimer = setTimeout(function () {
-              loadLists(true).catch(function () {}).then(function () {
-                renderListsLeft();
-                return reloadMembers({ keepSelection: true });
-              });
-            }, 600);
-          })
+          function () { scheduleMembersRefresh({ lists: true }); })
         .subscribe();
     } catch (e) {
       console.warn('[prospecting] realtime de contactos no disponible:', e);

@@ -29,6 +29,15 @@
  *                    vs. el promedio (sugerencia para el Contexto; no pisa el ICP).
  *   summary          titulares para el dashboard.
  *
+ * Intelligence Hub (2026-09-23): el 👍/👎 de cada hallazgo y las acciones
+ * directas (detector, señal, objeción, competidor, búsqueda, campaña — el Hub
+ * las registra como 👍 con nota `accion:<tipo>`) se destilan en reglas por
+ * segmento en `intel_hub_learning.distilled_rules` (panel «Reglas aprendidas»).
+ * `generate-intel-hub`, el Radar, `generate-campaign` y `generate-outreach`
+ * leen toda esta memoria con `_shared/intelligence.ts`: una sola inteligencia
+ * que cada acción refuerza. `recompute_hub` recalcula solo el Hub (lo llama el
+ * navegador tras un 👍/👎 o una acción, para que el panel se actualice ya).
+ *
  * Auth: JWT de usuario → recalcula solo a ese usuario (acción `recompute`,
  * gratis: analiza sus propios datos). Service role (pg_cron diario) →
  * `recompute_all` recorre a todos los usuarios con actividad.
@@ -38,6 +47,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { distillHubRules } from "../_shared/intelligence.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -391,6 +401,30 @@ async function learnIcp(supa: Json, userId: string, out: Insight[]) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Intelligence Hub: 👍/👎 + acciones → reglas por segmento
+// ─────────────────────────────────────────────────────────────────────────────
+async function learnHub(supa: Json, userId: string) {
+  const since = new Date(Date.now() - 180 * 86400_000).toISOString();
+  const { data, error } = await supa.from("intel_hub_feedback")
+    .select("section_key, item_title, rating, note, created_at")
+    .eq("user_id", userId).gte("created_at", since)
+    .order("created_at", { ascending: false }).limit(2000);
+  if (error) { console.warn("[learning-loop] intel_hub_feedback:", error.message); return { judged: 0, used: 0, sections: 0 }; }
+  const distilled = distillHubRules(Array.isArray(data) ? data : []);
+  const now = nowIso();
+  const rows = [...distilled.entries()].map(([section_key, d]) => ({
+    user_id: userId, section_key, distilled_rules: d.rules, feedback_count: d.count, last_distilled: now, updated_at: now,
+  }));
+  if (rows.length) {
+    const { error: upErr } = await supa.from("intel_hub_learning").upsert(rows, { onConflict: "user_id,section_key" });
+    if (upErr) console.warn("[learning-loop] intel_hub_learning:", upErr.message);
+  }
+  let judged = 0, used = 0;
+  for (const d of distilled.values()) { judged += d.count; used += d.actions; }
+  return { judged, used, sections: rows.length };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 async function recomputeUser(supa: Json, userId: string) {
   const out: Insight[] = [];
   const actions: string[] = [];
@@ -398,6 +432,7 @@ async function recomputeUser(supa: Json, userId: string) {
   const radar = await learnRadar(supa, userId, out, actions);
   const coach = await learnObjections(supa, userId, out);
   const icp = await learnIcp(supa, userId, out);
+  const hub = await learnHub(supa, userId);
 
   const count = (scope: string, v: Verdict) => out.filter((i) => i.scope === scope && i.verdict === v).length;
   const headlines: string[] = [];
@@ -406,7 +441,8 @@ async function recomputeUser(supa: Json, userId: string) {
   if (camp.sent) headlines.push(`${camp.replies} respuestas y ${camp.meetings} reuniones sobre ${camp.sent} envíos.`);
   if (radar.detectors) headlines.push(`${count("radar_detector", "works")} detectores funcionan, ${count("radar_detector", "fails")} se apagaron.`);
   if (coach.meetings) headlines.push(`${coach.meetings} reuniones analizadas, ${coach.objections} objeciones reales.`);
-  out.push({ scope: "summary", key: "all", label: "Resumen", verdict: out.some((i) => i.verdict !== "insufficient") ? "neutral" : "insufficient", metrics: { headlines, works, fails, actions, campaigns: camp, radar, coach, icp, computed_at: nowIso() } });
+  if (hub.judged) headlines.push(`${hub.judged} hallazgos del Hub juzgados, ${hub.used} convertidos en acción.`);
+  out.push({ scope: "summary", key: "all", label: "Resumen", verdict: out.some((i) => i.verdict !== "insufficient") ? "neutral" : "insufficient", metrics: { headlines, works, fails, actions, campaigns: camp, radar, coach, icp, hub, computed_at: nowIso() } });
 
   // Reemplazo atómico por usuario: borra lo que ya no existe y upsert del resto.
   const keys = out.map((i) => `${i.scope}|${i.key}`);
@@ -435,6 +471,7 @@ async function activeUsers(supa: Json): Promise<string[]> {
     ["radar_signals", "last_seen_at"],
     ["coach_meetings", "created_at"],
     ["prospect_list_members", "status_changed_at"],
+    ["intel_hub_feedback", "created_at"],
   ];
   for (const [t, col] of tables) {
     const { data } = await supa.from(t).select("user_id").gte(col, since).limit(5000);
@@ -480,6 +517,10 @@ Deno.serve(async (req: Request) => {
       userId = user.id;
     }
 
+    if (action === "recompute_hub") {
+      const r = await learnHub(supa, userId!);
+      return json({ ok: true, hub: r }, 200, h);
+    }
     if (action === "recompute") {
       const r = await recomputeUser(supa, userId!);
       return json({ ok: true, ...r }, 200, h);

@@ -14,7 +14,7 @@
  *       alta o renovación del plan → billing_grant_plan_credits (vence lo que
  *       sobró del mes y entra la bolsa nueva). En el plan anual la factura es
  *       una vez al año: los meses siguientes los entrega el cron
- *       billing-monthly-grants (migración 20260923000001).
+ *       billing-monthly-grants (migración 20260923000007).
  *
  * Idempotencia: cada evt_… se registra en `billing_events`; un reintento de
  * Stripe con el mismo id responde 200 sin volver a aplicarse.

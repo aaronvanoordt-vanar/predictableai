@@ -28,6 +28,10 @@
     intel_hub_item_premium: { credits: 8,  label: 'por ítem (premium)',  variable: false },
     // Actualización manual: el total depende de cuántas secciones se regeneren.
     intel_hub_refresh:      { credits: 3,  label: 'por ítem que se actualice', variable: true },
+    // Análisis de mercado fundacional: un reporte ancho (~8 búsquedas web,
+    // salida larga) del que sale el plan del Radar. El primero es gratis;
+    // regenerarlo cuesta esto (el doble con un modelo premium de Claude).
+    market_analysis:        { credits: 8,  label: 'por análisis',        variable: false },
 
     // ── Radar ─────────────────────────────────────────────────────────
     // Investigación puntual (hasta 20 empresas). El PRIMER run es gratis.

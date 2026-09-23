@@ -132,6 +132,8 @@ function isOwnOrExcluded(c: Candidate, ctx: SellerContext): boolean {
   const name = fold(c.name);
   if (!name) return true;
   if (c.domain && c.domain === ctx.ownDomain) return true;
+  // Clientes actuales, competidores y excluidas por dominio (2026-09-23).
+  if (c.domain && (ctx.excludedDomains || []).includes(String(c.domain).toLowerCase().replace(/^www\./, ""))) return true;
   if (ctx.companyName && name === fold(ctx.companyName)) return true;
   for (const n of [...ctx.competitorNames, ...ctx.excludedNames]) {
     const f = fold(n);

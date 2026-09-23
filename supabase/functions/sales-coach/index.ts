@@ -114,6 +114,7 @@
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, parseLlmJson, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { coachMeetingCost } from "../_shared/credit-costs.ts";
+import { buildTrainingBlock, coachDoctrine, loadTraining, type Training, type TrainingTarget } from "../_shared/sales-training.ts";
 
 // La región es parte de la cuenta de Recall.ai (se elige al crear el API key,
 // visible en su dashboard): us-east-1, us-west-2, eu-central-1 o
@@ -303,50 +304,42 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
 // por el coach en vivo, el turno local y el reporte para que los tres hablen
 // igual. El SDR no necesita teoría: necesita saber QUÉ HACER AHORA.
 // ───────────────────────────────────────────────────────────────────────────
-const NEURO_DOCTRINE = [
-  "IDENTIDAD: eres un entrenador de neuroventas formado en la escuela de Jürgen Klarić.",
-  "Hablas directo, con energía, sin rodeos, como un coach al oído del vendedor. Frases cortas.",
-  "Tu trabajo NO es explicar teoría: es decirle al vendedor QUÉ HACER en este instante.",
-  "",
-  "PRINCIPIOS DE NEUROVENTAS (en este orden):",
-  "1. Véndele a la mente, no a la gente: el 85 % de la decisión es inconsciente. Habla primero al cerebro",
-  "   reptil (miedo a perder, seguridad, poder, ahorrar energía/tiempo), luego al límbico (emoción,",
-  "   historia, pertenencia) y al final al córtex (datos, precio, comparativas).",
-  "2. Reduce el miedo antes de vender: el cerebro compra para evitar dolor y reducir incertidumbre.",
-  "   Nombra el miedo del lead, valídalo y muéstrale que contigo pierde menos.",
-  "3. Menos es más: el cerebro se cansa. Una idea por frase, tres beneficios máximo, cero jerga.",
-  "4. Hazlo tangible: ejemplos concretos, cifras del propio lead, historias de clientes parecidos.",
-  "   Nunca inventes casos: si no hay una historia real en el contexto, usa la del propio lead.",
-  "5. Usa la palabra 'tú' y el nombre del lead. Verbos de acción, presente, positivo.",
-  "6. Descubre el código reptil del lead (¿qué lo mueve: control, reconocimiento, seguridad,",
-  "   crecimiento, ahorro?) y vende en ese código, no en las características del producto.",
-  "7. Pregunta más de lo que afirmas: quien pregunta controla. El lead debe hablar más que el vendedor.",
-  "8. El cierre es un permiso, no una presión: micro-síes, siguiente paso concreto con fecha.",
-  "",
-  "MANEJO DE OBJECIONES (siempre en 3 movimientos):",
-  "a) Valida la emoción sin discutir ('tiene sentido que te preocupe X').",
-  "b) Reencuadra hacia el miedo o el deseo dominante del lead (¿qué pierde si no cambia?).",
-  "c) Cierra con una pregunta que lo lleve a un sí pequeño.",
-  "Nunca pelees con la herramienta o el proveedor actual: reencuadra el costo de quedarse igual.",
-  "",
-  "OPORTUNIDADES: cada dato del lead (dolor, meta, plazo, presupuesto, quién decide) es una puerta.",
-  "Si el vendedor la deja pasar, dile exactamente qué preguntar para abrirla.",
-  "",
-  "REGLAS DURAS:",
-  "- Nunca recomiendes pitchear antes de tener el dolor claro y en palabras del propio lead.",
-  "- Si el vendedor habla más del 60 % del tiempo, ordénale callarse y preguntar.",
-  "- Sin siguiente paso acordado con fecha no hay cierre: fuérzalo antes de despedirse.",
-  "- Español neutro latinoamericano (tú). Sin emojis en las frases sugeridas. Sin jerga en inglés.",
-  "- NUNCA inventes datos, cifras, nombres ni citas. Todo sale del transcript o del contexto entregado.",
-].join("\n");
+// La doctrina vive en _shared/sales-training.ts (NEURO_DOCTRINE sigue siendo
+// el default). Desde el 2026-09-23 cada equipo la reemplaza o la combina con
+// las metodologías que elige en «Entrenamiento IA» (coachDoctrine), y suma su
+// estilo, sus reglas, lo que vende y su base de conocimiento
+// (buildTrainingBlock). Los tres prompts son funciones de esa doctrina.
+
+// El coach en modo bot analiza cada pocos segundos: el entrenamiento se cachea
+// 60 s por usuario en el isolate para no releer tres tablas en cada turno.
+const TRAINING_TTL_MS = 60_000;
+const trainingCache = new Map<string, { at: number; t: Training }>();
+
+async function trainedSystemPrompt(
+  supa: SupabaseClient,
+  userId: string | null | undefined,
+  prompt: (doctrine: string) => string,
+  target: TrainingTarget,
+): Promise<string> {
+  let t: Training = { row: null, docs: [], company: null };
+  if (userId) {
+    const hit = trainingCache.get(userId);
+    if (hit && Date.now() - hit.at < TRAINING_TTL_MS) t = hit.t;
+    else {
+      t = await loadTraining(supa, userId, { company: true });
+      trainingCache.set(userId, { at: Date.now(), t });
+    }
+  }
+  return prompt(coachDoctrine(t.row?.coach_methods)) + buildTrainingBlock(t, target);
+}
 
 // Coach en vivo (modo bot: Recall.ai manda los chunks y el servidor analiza).
 // Misma doctrina y mismo schema de estado que siempre; cambió la voz.
-const SYSTEM_PROMPT_COACH = [
+const SYSTEM_PROMPT_COACH = (doctrine: string): string => [
   "Eres el coach de ventas de Predictable.ai, al oído de un vendedor EN VIVO durante",
   "una llamada B2B. Tu trabajo NO es hablar bonito: es darle la siguiente mejor acción.",
   "",
-  NEURO_DOCTRINE,
+  doctrine,
   "",
   "Estructura de la llamada que vigilas: rapport → discovery (dolor en palabras del lead)",
   "→ reencuadre (miedo/deseo) → demo (solo lo que resuelve SU dolor) → negociación → cierre.",
@@ -396,13 +389,13 @@ const SYSTEM_PROMPT_COACH = [
 // (the model saw backslash-n instead of newlines) and it never received the
 // meeting context, so the analysis was generic. This one gets the prospect,
 // the lead-context JSON and hard anti-invention rules.
-const SYSTEM_PROMPT_REPORT = [
+const SYSTEM_PROMPT_REPORT = (doctrine: string): string => [
   "Eres el entrenador de neuroventas de Predictable.ai. Recibes el transcript completo",
   "de una reunión de ventas junto con el contexto del deal (nombre del prospecto, su",
   "empresa y el contexto del lead en JSON). Evalúas la ejecución del vendedor y extraes",
   "inteligencia accionable para ESE deal específico — nada de consejos genéricos.",
   "",
-  NEURO_DOCTRINE,
+  doctrine,
   "",
   "EL REPORTE ES CORTO, DIRECTO Y RELEVANTE. Lo primero que lee el vendedor es",
   '"resumen_corto" (3 frases máximo: qué pasó, qué mueve al lead, qué falta) y',
@@ -875,7 +868,8 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
 
   let llm: Json;
   try {
-    llm = await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_COACH, userPrompt, COACH_SCHEMA, 4096, "low", liveOpenAiModel());
+    const system = await trainedSystemPrompt(supa, meeting.user_id, SYSTEM_PROMPT_COACH, "coach_live");
+    llm = await callAi(engine, LIVE_COACH_MODEL, system, userPrompt, COACH_SCHEMA, 4096, "low", liveOpenAiModel());
   } catch (e) {
     // Same fallback the Apps Script used on LLM/parse errors.
     console.error("[sales-coach] LLM error:", e);
@@ -1254,7 +1248,7 @@ async function finalizeMeeting(ctx: Ctx, meeting: Json, endedAt: string): Promis
     report = await callAi(
       engine,
       REPORT_MODEL,
-      SYSTEM_PROMPT_REPORT,
+      await trainedSystemPrompt(ctx.supa, meeting.user_id ?? ctx.userId, SYSTEM_PROMPT_REPORT, "coach"),
       buildReportUserPrompt(meeting, fullTranscript, sdrName, await learnedObjectionsBlock(ctx.supa, meeting.user_id ?? ctx.userId)),
       REPORT_SCHEMA,
       8192,
@@ -1666,11 +1660,11 @@ const LIVE_TURN_SCHEMA = {
   additionalProperties: false,
 };
 
-const SYSTEM_PROMPT_LIVE_TURN = [
+const SYSTEM_PROMPT_LIVE_TURN = (doctrine: string): string => [
   "Eres el coach de ventas de Predictable.ai en vivo, al oído del vendedor durante una llamada B2B.",
   'La conversación tiene 2 hablantes: "Lead" y "SDR" (el vendedor).',
   "",
-  NEURO_DOCTRINE,
+  doctrine,
   "",
   "Devuelve solo alertas accionables sobre lo que acaba de pasar en la conversación:",
   '- "objection": el lead objetó → "suggested_phrase" es la respuesta exacta en 3 movimientos',
@@ -1719,7 +1713,8 @@ async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
   ].join("\n");
 
   try {
-    return await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_LIVE_TURN, userPrompt, LIVE_TURN_SCHEMA, 2048, "low", liveOpenAiModel());
+    const system = await trainedSystemPrompt(ctx.supa, ctx.userId, SYSTEM_PROMPT_LIVE_TURN, "coach_live");
+    return await callAi(engine, LIVE_COACH_MODEL, system, userPrompt, LIVE_TURN_SCHEMA, 2048, "low", liveOpenAiModel());
   } catch (e) {
     // A dropped coaching turn must never break the live session.
     console.error("[sales-coach] coachTurn failed:", e);

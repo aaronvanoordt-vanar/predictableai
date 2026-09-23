@@ -1,6 +1,6 @@
 # Economía de créditos y pricing self-serve (2026-09-23)
 
-> **Estado: decidido e implementado en el PR de billing.** El tarifario que cobran las edge functions está en `supabase/functions/_shared/credit-costs.ts`, espejado en `js/credit-costs.js` (un test en Deno comprueba que coincidan). Los planes y las recargas están en `_shared/billing-plans.ts`, espejados en `js/credits.js` y `landing.html`. El cobro corre por Stripe (edge functions `billing` y `stripe-webhook`, migración `20260923000001_billing_stripe.sql`).
+> **Estado: decidido e implementado en el PR de billing.** El tarifario que cobran las edge functions está en `supabase/functions/_shared/credit-costs.ts`, espejado en `js/credit-costs.js` (un test en Deno comprueba que coincidan). Los planes y las recargas están en `_shared/billing-plans.ts`, espejados en `js/credits.js` y `landing.html`. El cobro corre por Stripe (edge functions `billing` y `stripe-webhook`, migración `20260923000007_billing_stripe.sql`).
 
 ## 1. Decisiones del dueño (2026-09-23)
 

@@ -63,17 +63,26 @@
     chip.innerHTML = `
       <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
       <span id="credits-chip-balance">—</span>
-      <span style="opacity:.5">·</span>
-      <span style="color:var(--accent-ink, #1A3FD6); font-weight:600">Plan</span>
+      <span id="credits-chip-buy-sep" style="opacity:.5">·</span>
+      <span id="credits-chip-buy" style="color:var(--accent-ink, #1A3FD6); font-weight:600">Plan</span>
     `;
-    chip.addEventListener('click', openModal);
+    chip.addEventListener('click', () => { if (!unlimited) openModal(); });
     document.body.appendChild(chip);
     return chip;
   }
 
+  // Cuentas del equipo (@vanarsi.com confirmado): user_credits.unlimited.
+  // Su saldo lleva un colchón técnico (ver migración 20260923000006) que no
+  // tiene sentido mostrar, así que el chip dice "ilimitados" y no ofrece compra.
+  let unlimited = false;
+
   function setChipBalance(balance) {
     const el = document.getElementById('credits-chip-balance');
-    if (el) el.textContent = balance == null ? '—' : `${balance} créditos`;
+    if (el) el.textContent = unlimited ? 'Créditos ilimitados' : (balance == null ? '—' : `${balance} créditos`);
+    ['credits-chip-buy', 'credits-chip-buy-sep'].forEach((id) => {
+      const n = document.getElementById(id);
+      if (n) n.style.display = unlimited ? 'none' : '';
+    });
   }
 
   async function refreshBalance() {
@@ -82,12 +91,21 @@
     const { data: userData } = await client.auth.getUser();
     const user = userData && userData.user;
     if (!user) return;
-    const { data, error } = await client
+    let { data, error } = await client
       .from('user_credits')
-      .select('balance')
+      .select('balance, unlimited')
       .eq('user_id', user.id)
       .maybeSingle();
+    if (error) {
+      // Sin la migración de la columna `unlimited`: saldo de siempre.
+      ({ data, error } = await client
+        .from('user_credits')
+        .select('balance')
+        .eq('user_id', user.id)
+        .maybeSingle());
+    }
     if (error) { console.warn('[credits] refreshBalance', error); return; }
+    unlimited = !!(data && data.unlimited);
     setChipBalance(data ? data.balance : 0);
     return data ? data.balance : 0;
   }
@@ -362,7 +380,9 @@
       .on('postgres_changes', {
         event: 'UPDATE', schema: 'public', table: 'user_credits', filter: `user_id=eq.${user.id}`,
       }, (payload) => {
-        if (payload.new) setChipBalance(payload.new.balance);
+        if (!payload.new) return;
+        if ('unlimited' in payload.new) unlimited = !!payload.new.unlimited;
+        setChipBalance(payload.new.balance);
       })
       .subscribe();
   }
@@ -374,6 +394,7 @@
     open: openModal,
     close: closeModal,
     refresh: refreshBalance,
+    isUnlimited: () => unlimited,
     prompt: function (info) {
       const cost = info && info.cost;
       const bal = info && info.balance;

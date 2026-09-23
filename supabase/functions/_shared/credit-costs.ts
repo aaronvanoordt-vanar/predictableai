@@ -29,6 +29,9 @@ export const CREDIT_COSTS = {
   // Intelligence Hub (manual; el automático va incluido según el plan).
   intel_hub_item: 3,
   intel_hub_item_premium: 8,
+  // Análisis de mercado fundacional (~8 búsquedas, salida larga; el primero
+  // es gratis, el doble con un modelo premium de Claude).
+  market_analysis: 8,
 
   // Radar.
   radar_run: 20,

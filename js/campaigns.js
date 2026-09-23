@@ -130,7 +130,7 @@
     emailAccounts: null,
     campaigns: [],
     loading: false,
-    view: 'campaigns',         // 'campaigns' | 'inbox'
+    view: 'campaigns',         // 'campaigns' | 'inbox' | 'knowledge' (Entrenar la IA)
     activeId: null,
     builder: null,             // api del builder montado (crear / editar)
     builderHost: null,
@@ -1046,7 +1046,7 @@
       root.appendChild(h('div', { class: 'pros-hint', text: 'Cargando canales y campañas…' }));
       return;
     }
-    if (!anyConnected() && !state.campaigns.length && !state.builder) {
+    if (!anyConnected() && !state.campaigns.length && !state.builder && state.view !== 'knowledge') {
       root.appendChild(renderSetupHero());
       return;
     }
@@ -1055,6 +1055,7 @@
     updateBadge();
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
     if (state.view === 'inbox') { root.appendChild(renderInbox()); markOpenConvRead(); }
+    else if (state.view === 'knowledge') root.appendChild(knowledgeNode());
     else if (state.builder) root.appendChild(state.builderHost);
     else if (state.activeId && findCampaign(state.activeId)) root.appendChild(renderDetail());
     else root.appendChild(renderCampaignCards());
@@ -1271,6 +1272,8 @@
     var btn = h('button', { type: 'button', class: 'btn btn-primary', 'data-action': 'cmp-new', text: '+ Nueva campaña' });
     btn.disabled = true;
     box.appendChild(h('div', { style: 'display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:8px' }, btn, h('span', { class: 'pros-hint', text: 'Conecta al menos un canal' })));
+    // Entrenar la IA no depende de los canales: se puede preparar antes.
+    box.appendChild(h('div', { style: 'margin-top:14px' }, h('button', { type: 'button', class: 'cmp-link', 'data-action': 'cmp-knowledge', text: 'Mientras tanto, entrena la IA con tu metodología y tus scripts ganadores' })));
     return box;
   }
 
@@ -1286,8 +1289,16 @@
       bar.appendChild(h('div', { class: 'cmp-secname' }, 'Bandeja', badge));
       return bar;
     }
+    if (state.view === 'knowledge') {
+      bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Entrenar la IA'));
+      return bar;
+    }
     bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas'));
     bar.appendChild(h('div', { class: 'cmp-spacer' }));
+    var ks = state.knowledge;
+    bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-knowledge',
+      title: 'Tu metodología, tus scripts ganadores y tu material: la IA los consulta antes de escribir cada mensaje.',
+      text: 'Entrenar la IA' + (ks && ks.active ? ' · ' + ks.active : '') }));
     var newBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'cmp-new', text: '+ Nueva campaña' });
     if (!anyConnected()) { newBtn.disabled = true; newBtn.title = 'Conecta al menos un canal'; }
     bar.appendChild(newBtn);
@@ -2106,6 +2117,41 @@
     toast(msg, 'success');
     await openCampaign(id);
   }
+  /**
+   * "Entrenar la IA" (js/campaign-knowledge.js): host persistente, se monta
+   * una vez y se vuelve a colgar en cada render para no perder un documento
+   * a medio escribir.
+   */
+  function knowledgeNode() {
+    if (!state.knowledgeHost) {
+      state.knowledgeHost = h('div');
+      if (global.campaignKnowledge && global.campaignKnowledge.mount) {
+        global.campaignKnowledge.mount(state.knowledgeHost, {
+          h: h, toast: toast, confirm: confirmModal,
+          onBack: function () {
+            state.view = 'campaigns';
+            loadKnowledgeSummary().then(function () { if (state.view === 'campaigns') render(); });
+            render();
+          },
+        });
+      } else {
+        state.knowledgeHost.appendChild(h('div', { class: 'pros-hint', text: 'El módulo de entrenamiento no cargó. Recarga la página.' }));
+      }
+    }
+    return state.knowledgeHost;
+  }
+  function openKnowledge() {
+    state.view = 'knowledge';
+    // Siempre relee la base al entrar (pudo cambiar en otra pestaña).
+    state.knowledgeHost = null;
+    render();
+  }
+  async function loadKnowledgeSummary() {
+    if (!global.campaignKnowledge || !global.campaignKnowledge.summary) return;
+    state.knowledge = await global.campaignKnowledge.summary(true);
+    if (state.aiHost) aiSettingsNode();
+  }
+
   /** Bloque "Mensajes IA" con host persistente: el builder lo muestra en su paso 3 y aquí se refresca. */
   function aiSettingsNode() {
     if (!state.aiHost) state.aiHost = h('div');
@@ -2133,6 +2179,18 @@
       briefRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'brief-generate', 'data-credit-cost': 'client_brief', 'data-credit-muted': '', text: b && b.status === 'ready' ? 'Regenerar contexto' : 'Generar contexto' }));
     }
     box.appendChild(briefRow);
+
+    // Base de entrenamiento (sales_knowledge_docs, js/campaign-knowledge.js)
+    var ks = state.knowledge;
+    var kbRow = h('div', { class: 'cmp-aiset-row' });
+    var kbTxt = h('span', { class: 'grow' });
+    if (ks === undefined) kbTxt.textContent = 'Base de entrenamiento: cargando…';
+    else if (ks.error) kbTxt.textContent = 'Base de entrenamiento: no disponible todavía.';
+    else if (!ks.active) kbTxt.textContent = 'Base de entrenamiento vacía: la IA escribe solo con tu contexto y las tendencias generales. Súbele tu metodología y tus scripts ganadores.';
+    else kbTxt.textContent = 'Base de entrenamiento: ' + ks.active + (ks.active === 1 ? ' documento activo' : ' documentos activos') + '. La IA usa lo relevante en cada mensaje.';
+    kbRow.appendChild(kbTxt);
+    kbRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-knowledge', text: ks && ks.active ? 'Gestionar' : 'Entrenar la IA' }));
+    box.appendChild(kbRow);
 
     // Motor de IA para outreach
     var engRow = h('div', { class: 'cmp-aiset-row' });
@@ -2791,6 +2849,7 @@
     // Campañas
     if (action === 'csv-linkedin') { var c9 = findCampaign(state.activeId); if (c9) downloadLinkedinCsv(c9); return; }
     if (action === 'cmp-new') { if (btn.disabled) return; return openBuilder(null); }
+    if (action === 'cmp-knowledge') return openKnowledge();
     if (action === 'cmp-open') return openCampaign(id);
     if (action === 'cmp-back') { state.activeId = null; closeBuilder(); return render(); }
     if (action === 'cmp-edit') { var c0 = findCampaign(state.activeId); if (c0) return openBuilder(c0); return; }
@@ -2963,7 +3022,8 @@
         if (channel === 'email' && out.subject) state.replyDraft[key + ':subject'] = out.subject;
         rA();
         render();
-        toast('Borrador listo: revísalo y edítalo antes de enviarlo.', 'success');
+        var kRefs = (out.knowledge || []).map(function (r) { return r.title; });
+        toast('Borrador listo: revísalo y edítalo antes de enviarlo.' + (kRefs.length ? ' Basado en: ' + kRefs.slice(0, 3).join(', ') + '.' : ''), 'success');
       }, function (err) { rA(); throw err; });
     }
     if (action === 'reply-linkedin' && key) {
@@ -3157,7 +3217,7 @@
     render();
     try {
       await getUid();
-      await Promise.all([loadStatus(), loadLists(), loadCampaigns(), loadInbox(), loadLinkedinCampaigns()]);
+      await Promise.all([loadStatus(), loadLists(), loadCampaigns(), loadInbox(), loadLinkedinCampaigns(), loadKnowledgeSummary()]);
       state.emailAccounts = null;
       await loadEmailAccounts();
     } finally {
@@ -3179,9 +3239,10 @@
     if (built && !state.loading && state.status !== undefined) applyPendingList();
   }
 
-  /** Cambia de vista ('campaigns' | 'inbox'); si la pestaña aún no cargó, se aplica al montar. */
+  /** Cambia de vista ('campaigns' | 'inbox' | 'knowledge'); si la pestaña aún no cargó, se aplica al montar. */
   function setView(view) {
-    var v = view === 'inbox' ? 'inbox' : 'campaigns';
+    var v = view === 'inbox' || view === 'knowledge' ? view : 'campaigns';
+    if (v === 'knowledge') state.knowledgeHost = null;
     if (!built || state.loading || state.status === undefined) { state.pendingView = v; return; }
     state.view = v;
     render();

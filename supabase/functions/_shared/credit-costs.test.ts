@@ -13,6 +13,7 @@ Deno.test("js/credit-costs.js es espejo del tarifario que cobran las edge functi
     intel_hub_item: CREDIT_COSTS.intel_hub_item,
     intel_hub_item_premium: CREDIT_COSTS.intel_hub_item_premium,
     intel_hub_refresh: CREDIT_COSTS.intel_hub_item,
+    market_analysis: CREDIT_COSTS.market_analysis,
     radar_run: CREDIT_COSTS.radar_run,
     radar_run_demo: CREDIT_COSTS.radar_run_demo,
     radar_plan: CREDIT_COSTS.radar_plan,

@@ -851,6 +851,9 @@
       }
       box.appendChild(h('div', { class: 'cb-grid2' }, h('div', { class: 'form-group' }, h('div', { class: 'cb-lbl', text: 'Nombre de la campaña' }), nameI), listBox));
 
+      // Con qué se entrenaron los mensajes y la cadencia IA de esta cuenta
+      // (js/ai-training.js lo pinta; sin ese módulo queda vacío).
+      box.appendChild(h('div', { 'data-ai-training-badge': 'campaigns' }));
       box.appendChild(h('div', { class: 'cb-lbl', style: 'margin-bottom:0', text: st.startKind === 'current' ? 'Cadencia' : 'Punto de partida' }));
       var cards = h('div', { class: 'cb-cards' });
       if (st.startKind === 'current') {
@@ -958,6 +961,7 @@
         setFlow(r.flow, 'ai');
         if (!st.draft.name && r.name) st.draft.name = String(r.name).slice(0, 120);
         st.rationale = r.rationale ? String(r.rationale) : null;
+        if (st.rationale && Array.isArray(r.knowledge) && r.knowledge.length) st.rationale += ' (Basada en tu base de entrenamiento: ' + r.knowledge.map(function (k) { return k.title; }).join(' · ') + '.)';
         st.startKind = 'ai';
         st.step = 2;
         toast('Cadencia recomendada lista. Revísala paso a paso.', 'success');
@@ -1309,6 +1313,9 @@
       if (pv.result) {
         box.appendChild(h('div', { class: 'cb-preview-text' }, pv.result.subject ? h('b', { text: pv.result.subject }) : null, pv.result.body));
         if (pv.result.angle_note) box.appendChild(h('div', { class: 'cb-hint', text: 'Ángulo: ' + pv.result.angle_note }));
+        box.appendChild(h('div', { class: 'cb-hint', text: pv.result.knowledge && pv.result.knowledge.length
+          ? 'Basado en tu base de entrenamiento: ' + pv.result.knowledge.map(function (r) { return r.title; }).join(' · ')
+          : 'No usó tu base de entrenamiento (vacía o sin nada relevante para este paso). Agrégala en Campañas → Entrenar la IA.' }));
         box.appendChild(h('div', { class: 'cb-hint', text: 'Es una muestra: en la campaña cada lead recibe su propio mensaje, escrito 24 h antes del envío.' }));
       } else if (!pv.loading) box.appendChild(h('div', { class: 'cb-hint', text: 'Genera un mensaje real para el lead elegido y ajusta el ángulo o las instrucciones si no te convence. Cuesta 2 créditos.' }));
       return box;
@@ -1339,7 +1346,7 @@
         angle: a.content.angle || 'apertura', instructions: a.content.instructions || '',
         sender: st.draft.sender || {},
       }).then(function (r) {
-        st.previews[nodeId] = { memberId: m.id, result: { subject: r.subject || '', body: r.body || '', angle_note: r.angle_note || '' } };
+        st.previews[nodeId] = { memberId: m.id, result: { subject: r.subject || '', body: r.body || '', angle_note: r.angle_note || '', knowledge: Array.isArray(r.knowledge) ? r.knowledge : [] } };
       }).catch(function (e) {
         var msg = e && e.message ? e.message : String(e);
         if (e && e.status === 402) msg = 'No tienes créditos suficientes (2 por muestra).';

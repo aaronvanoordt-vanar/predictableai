@@ -2,7 +2,7 @@
  * context-defaults.ts — cierre al 100 % del "Contexto de tu empresa".
  *
  * Regla de producto (2026-09-13): la investigación automática SIEMPRE deja las
- * 13 tarjetas completas. Lo que la IA no encuentra en la web lo propone como
+ * tarjetas completas (15 desde el contexto v3 del 2026-09-23). Lo que la IA no encuentra en la web lo propone como
  * borrador razonado; lo que ni así llega, se rellena con un valor por defecto
  * determinista. El usuario revisa y edita lo que quiera antes de confirmar —
  * lo que no puede pasar es que la corrida termine con tarjetas vacías y él
@@ -53,13 +53,30 @@ export const rows = (v: unknown): any[] => {
  */
 export const REQUIRED_INTAKE_FIELDS = [
   "company_about", "company_industry", "company_employee_count", "company_country", "company_solutions",
+  "company_offerings", "current_customers",
   "commercial_model", "commercial_deal_size", "commercial_sales_cycle", "commercial_primary_cta",
   "outreach_signature", "outreach_tone", "outreach_channels", "outreach_language",
   "competitors",
   "icp_countries", "icp_industry_tags", "icp_employee_ranges", "icp_departments", "icp_seniorities", "icp_titles",
-  "icp_pain_points", "icp_buying_triggers",
+  "buying_committee", "icp_tech_uses",
+  "icp_pains", "icp_signals", "icp_current_alternatives", "icp_disqualifiers",
   "common_objections",
 ] as const;
+
+/**
+ * Versión del esquema del contexto: una confirmación anterior se hizo con
+ * otras tarjetas y el usuario debe reconfirmar. Espejo de CONTEXT_VERSION_AT
+ * en js/company-context.js.
+ */
+export const CONTEXT_VERSION_AT = "2026-09-23T00:00:00Z";
+
+// deno-lint-ignore no-explicit-any
+export function committeeOf(v: unknown): Record<string, any> {
+  let c = v;
+  if (typeof c === "string") { try { c = JSON.parse(c); } catch { c = null; } }
+  // deno-lint-ignore no-explicit-any
+  return c && typeof c === "object" && !Array.isArray(c) ? c as Record<string, any> : {};
+}
 export type RequiredField = typeof REQUIRED_INTAKE_FIELDS[number];
 
 /** ¿El campo cuenta como lleno para su tarjeta? Mismo criterio que la UI. */
@@ -68,6 +85,18 @@ export function isFilled(row: ContextRow, field: RequiredField): boolean {
   switch (field) {
     case "competitors":
       return rows(v).some((c) => str(c.name));
+    case "company_offerings":
+      return rows(v).some((o) => str(o.name) && str(o.for_whom));
+    case "current_customers":
+      return row?.customers_none === true || rows(v).some((c) => str(c.name));
+    case "buying_committee":
+      return str(committeeOf(v).decision_maker?.cares).length > 0;
+    case "icp_tech_uses":
+      return list(v).length > 0 || list(row?.icp_tech_gaps).length > 0;
+    case "icp_pains":
+      return rows(v).some((p) => str(p.pain));
+    case "icp_signals":
+      return rows(v).some((x) => str(x.signal) && str(x.evidence));
     case "common_objections":
       return row?.objections_none === true ||
         rows(v).some((o) => str(o.objection) && str(o.neutralizer));
@@ -250,6 +279,31 @@ export function defaultSignature(profile: ProfileHints | null | undefined, brand
   return company ? `Equipo comercial de ${company}` : "Equipo comercial";
 }
 
+/** Texto libre viejo ("• a\n• b") → líneas. Mismo criterio que linesOf() en el cliente. */
+export function linesOf(text: unknown): string[] {
+  return str(text).split(/\n+|(?:^|\s)•\s*/).map((l) => l.replace(/^[-*•\s]+/, "").trim()).filter((l) => l.length > 2);
+}
+
+/**
+ * Filas estructuradas → columnas de texto que ya leen outreach, coach,
+ * learning-loop y CODA. Espejo de CompanyContext.structuredMirror.
+ */
+export function structuredMirror(patch: ContextRow): ContextRow {
+  const out: ContextRow = {};
+  if (patch.company_offerings) {
+    out.company_solutions = rows(patch.company_offerings).map((o) => str(o.name)).filter(Boolean).join(", ") || null;
+  }
+  if (patch.icp_pains) {
+    out.icp_pain_points = rows(patch.icp_pains).filter((p) => str(p.pain))
+      .map((p) => `• ${str(p.pain)}${str(p.persona) ? ` (${str(p.persona)})` : ""}`).join("\n") || null;
+  }
+  if (patch.icp_signals) {
+    out.icp_buying_triggers = rows(patch.icp_signals).filter((x) => str(x.signal))
+      .map((x) => `• ${str(x.signal)}${str(x.evidence) ? ` — se ve en: ${str(x.evidence)}` : ""}`).join("\n") || null;
+  }
+  return out;
+}
+
 // ── Defaults deterministas ───────────────────────────────────────────────
 
 /**
@@ -279,6 +333,26 @@ export function deterministicDefaults(row: ContextRow, profile?: ProfileHints | 
   if (missing.has("company_solutions")) {
     const about = firstSentence(get("company_about"));
     out.company_solutions = about ? about.replace(/[.…]$/, "") : (brand ? `Soluciones de ${brand}` : "Soluciones B2B");
+  }
+  if (missing.has("company_offerings")) {
+    // Las soluciones que ya se conocen, con su segmento. Nunca se inventa un precio.
+    const names = solutionList(get("company_solutions"));
+    const current = rows(get("company_offerings")).filter((o) => str(o.name));
+    const industries = list(get("icp_industry_tags")).slice(0, 2).join(" y ");
+    const forWhom = industries ? `Empresas de ${industries}` : "Tu cliente ideal (ajústalo)";
+    out.company_offerings = (current.length ? current : (names.length ? names : [str(get("company_solutions")) || "Solución principal"])
+      .map((name) => ({ name })))
+      .slice(0, 8)
+      .map((o) => ({ name: str(o.name), for_whom: str(o.for_whom) || forWhom, problem: str(o.problem), price: str(o.price) }));
+  }
+  if (missing.has("current_customers")) {
+    // Nunca un cliente inventado. Si la prueba social ya cita clientes reales
+    // (los encontró generate-client-brief en su propia web), esos son; si no,
+    // "prefiero no nombrarlos" hasta que el usuario diga lo contrario.
+    const cited = rows(get("social_proof")).filter((p) => str(p.client))
+      .map((p) => ({ name: str(p.client), domain: "", industry: str(p.industry) }));
+    if (cited.length) out.current_customers = cited.slice(0, 10);
+    else out.customers_none = true;
   }
   if (missing.has("company_about")) {
     const sol = solutionList(get("company_solutions"));
@@ -313,14 +387,59 @@ export function deterministicDefaults(row: ContextRow, profile?: ProfileHints | 
   if (missing.has("icp_departments")) out.icp_departments = ["entrepreneurship", "operations", "sales"];
   if (missing.has("icp_seniorities")) out.icp_seniorities = ["owner", "founder", "c_suite", "director"];
   if (missing.has("icp_titles")) out.icp_titles = ["CEO", "Director General", "Gerente General", "Director Comercial"];
-  if (missing.has("icp_pain_points")) {
+  if (missing.has("icp_pains")) {
+    // Primero lo que el usuario (o la investigación) ya escribió como texto.
+    // "Dolor (Cargo)" → { pain, persona }: así lo escribe structuredMirror.
+    const fromText = linesOf(get("icp_pain_points")).slice(0, 5).map((l) => {
+      const m = l.match(/^(.*\S)\s+\(([^()]{2,80})\)$/);
+      return { pain: m ? m[1] : l, persona: m ? m[2] : "", evidence: "" };
+    });
     const sol = solutionList(get("company_solutions"));
-    out.icp_pain_points = sol.length
-      ? `Sus clientes necesitan ${sol[0].charAt(0).toLowerCase() + sol[0].slice(1)} sin distraer al equipo interno ni depender de proveedores que no entienden su operación. Borrador propuesto por la IA: describe aquí el problema real que les resuelves.`
-      : "Sus clientes pierden tiempo y dinero resolviendo a mano un proceso que no es su negocio principal. Borrador propuesto por la IA: describe aquí el problema real que les resuelves.";
+    out.icp_pains = fromText.length ? fromText : [{
+      pain: sol.length
+        ? `Necesitan ${sol[0].charAt(0).toLowerCase() + sol[0].slice(1)} sin distraer al equipo interno ni depender de proveedores que no entienden su operación (borrador: ajústalo)`
+        : "Pierden tiempo y dinero resolviendo a mano un proceso que no es su negocio principal (borrador: ajústalo)",
+      persona: list(get("icp_titles"))[0] || "",
+      evidence: "",
+    }];
   }
-  if (missing.has("icp_buying_triggers")) {
-    out.icp_buying_triggers = "Expansión a nuevos mercados o países, contratación de equipo comercial u operativo, ronda de inversión reciente, o cambio de proveedor o de herramienta.";
+  if (missing.has("icp_signals")) {
+    const DEFAULT_EVIDENCE = "Noticias, LinkedIn o el sitio web de la empresa";
+    const fromText = linesOf(get("icp_buying_triggers")).slice(0, 6).map((l) => {
+      const [signal, evidence] = l.split(/\s+—\s+se ve en:\s+/);
+      return { signal: signal.trim(), evidence: str(evidence) || DEFAULT_EVIDENCE };
+    });
+    // Filas a medias (señal sin evidencia) se completan en vez de descartarse.
+    const partial = rows(get("icp_signals")).filter((x) => str(x.signal))
+      .map((x) => ({ signal: str(x.signal), evidence: str(x.evidence) || DEFAULT_EVIDENCE }));
+    out.icp_signals = partial.length ? partial : fromText.length ? fromText : [
+      { signal: "Abrió vacantes para el área que se encarga del problema", evidence: "LinkedIn Jobs y portales de empleo" },
+      { signal: "Llegó un nuevo director del área en los últimos 90 días", evidence: "LinkedIn (cambio de cargo)" },
+      { signal: "Anunció expansión a un nuevo país, sede o línea de negocio", evidence: "Prensa y el blog de la empresa" },
+      { signal: "Levantó inversión o crédito recientemente", evidence: "Noticias de financiamiento" },
+    ];
+  }
+  if (missing.has("icp_current_alternatives")) {
+    out.icp_current_alternatives = "Lo resuelven por dentro, con hojas de cálculo y trabajo manual, o con un proveedor local. Borrador propuesto por la IA: ajústalo a lo que ves en tus ventas.";
+  }
+  if (missing.has("icp_disqualifiers")) {
+    out.icp_disqualifiers = "Empresas fuera de tus países e industrias objetivo, o demasiado pequeñas para pagar tu ticket promedio. Borrador propuesto por la IA: ajústalo.";
+  }
+  if (missing.has("buying_committee")) {
+    const current = committeeOf(get("buying_committee"));
+    const dm = current.decision_maker || {};
+    out.buying_committee = {
+      ...current,
+      decision_maker: {
+        titles: str(dm.titles) || list(get("icp_titles")).slice(0, 3).join(", "),
+        cares: str(dm.cares) || "Que la inversión se pague con resultados medibles en pocos meses y sin distraer a su equipo (borrador: ajústalo)",
+      },
+    };
+  }
+  if (missing.has("icp_tech_uses")) {
+    // Lo único que se puede afirmar de casi cualquier empresa B2B. El usuario
+    // (o el análisis de mercado) lo afina; nunca se inventa una marca.
+    out.icp_tech_uses = ["Sitio web propio", "Correo corporativo"];
   }
   if (missing.has("common_objections")) out.common_objections = defaultObjections();
 

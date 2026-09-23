@@ -370,109 +370,6 @@
     };
   }
 
-  // ── Importar listas desde Apollo ────────────────────────────
-  // Apollo no expone una API pública para "saved searches" (solo para
-  // Lists/Labels) — ver fetchSavedSearches más abajo. Esto trae las listas
-  // (labels) que ya existen en la cuenta de Apollo del usuario y copia sus
-  // contactos a una lista nueva de Predictable (prospect_lists), fusionando
-  // con el flujo existente en vez de crear una vista aparte.
-
-  async function fetchApolloLists() {
-    const data = await apolloProxy('/labels', {});
-    // GET /labels NO envuelve el resultado en {labels: […]}: comprobado contra
-    // la cuenta real, devuelve la colección tal cual. Leer `data.labels` daba
-    // undefined → [] → "no encontramos listas" con un 200 perfectamente limpio,
-    // que es como este bug sobrevivió a dos correcciones. Se aceptan las tres
-    // formas para no volver a depender de adivinar el envoltorio.
-    // Cada fila trae `_id` e `id` con el mismo valor; se toma el que haya.
-    const rows = Array.isArray(data) ? data
-      : Array.isArray(data?.labels) ? data.labels
-        : Array.isArray(data?.data) ? data.data
-          : [];
-    return rows.filter((l) => l && (l.id ?? l._id) != null).map((l) => ({
-      id: l.id ?? l._id,
-      name: l.name || 'Sin nombre',
-      modality: l.modality || 'contacts',
-      count: l.cached_count ?? l.count ?? l.contacts_count ?? null,
-    }));
-  }
-
-  const APOLLO_LIST_IMPORT_MAX_PAGES = 50; // 50 × 100 = 5,000 contactos por importación
-
-  async function fetchApolloListContacts(labelId, onProgress) {
-    const progress = typeof onProgress === 'function' ? onProgress : () => {};
-    const perPage = 100;
-    const contacts = [];
-    let page = 1;
-    let totalPages = 1;
-    do {
-      const data = await apolloProxy('/contacts/search', {
-        contact_label_ids: [labelId],
-        page,
-        per_page: perPage,
-      });
-      contacts.push(...(data?.contacts || []));
-      totalPages = data?.pagination?.total_pages || 1;
-      progress({ done: page, total: Math.min(totalPages, APOLLO_LIST_IMPORT_MAX_PAGES) });
-      page++;
-    } while (page <= totalPages && page <= APOLLO_LIST_IMPORT_MAX_PAGES);
-    return { contacts, truncated: totalPages > APOLLO_LIST_IMPORT_MAX_PAGES };
-  }
-
-  async function importApolloList({ apolloListId, apolloListName, onProgress }) {
-    if (apolloListId == null) throw new Error('Selecciona una lista de Apollo.');
-    const userId = await getUserId();
-    const progress = typeof onProgress === 'function' ? onProgress : () => {};
-
-    // 1. Crear (o reutilizar, con sufijo si el nombre ya existe) la lista local.
-    const baseName = String(apolloListName || 'Lista de Apollo').trim() || 'Lista de Apollo';
-    let list;
-    try {
-      list = await createList(baseName);
-    } catch (e) {
-      if (!/ese nombre/.test(e.message)) throw e;
-      list = await createList(baseName + ' (Apollo)');
-    }
-
-    // 2. Traer los contactos de esa lista en Apollo (paginado).
-    const { contacts, truncated } = await fetchApolloListContacts(
-      apolloListId,
-      (p) => progress(Object.assign({ phase: 'fetching' }, p))
-    );
-
-    // 3. Deduplicar contra miembros ya guardados en la lista (por contact id
-    // de Apollo — mismo criterio que las filas "Guardado" en addPeopleToList).
-    const { data: existing, error: exErr } = await sb()
-      .from('prospect_list_members')
-      .select('apollo_contact_id')
-      .eq('list_id', list.id);
-    if (exErr) throw new Error('No se pudo leer la lista: ' + exErr.message);
-    const existingContactIds = new Set((existing || []).map((r) => r.apollo_contact_id).filter(Boolean));
-    const fresh = contacts.filter((c) => c?.id && !existingContactIds.has(c.id));
-    const alreadyInList = contacts.length - fresh.length;
-
-    // 4. Insertar en Supabase.
-    progress({ phase: 'saving', done: 0, total: fresh.length });
-    const rows = fresh.map((c) => {
-      const row = personToRow(c, null, userId, list.id, c.id);
-      row.source = { kind: 'import', apollo_list_id: apolloListId || null };
-      row.apollo_person_id = c.person_id || null;
-      row.email = isMaskedEmail(c.email) ? null : c.email;
-      row.phone = (c.phone_numbers || []).map((n) => n?.sanitized_number || n?.raw_number).find(Boolean) || null;
-      row.phone_status = row.phone ? 'revealed' : 'none';
-      row.enriched_at = (row.email || row.phone) ? new Date().toISOString() : null;
-      return row;
-    });
-    let added = 0;
-    if (rows.length) {
-      const { data: inserted, error } = await insertMembers(rows, { select: 'id' });
-      if (error) throw new Error('No se pudieron guardar los contactos importados: ' + error.message);
-      added = inserted ? inserted.length : rows.length;
-    }
-
-    return { list, added, alreadyInList, truncated, total: contacts.length };
-  }
-
   // ── Búsquedas guardadas (Supabase, RLS por dueño) ──────────
   // Apollo no expone una API pública para "saved searches" — solo persiste
   // los criterios de filtro en Predictable. Guardar también en Apollo se
@@ -687,6 +584,9 @@
     };
   }
 
+  // Sin Apollo propio (key compartida), apollo-proxy NO lo crea y responde
+  // { contact: null }: esa cuenta es la misma para todos los clientes y el
+  // lead se vería desde otro. Devolver null no es un error.
   async function createApolloContact(row, listName) {
     const body = {
       first_name: row.first_name || undefined,
@@ -768,19 +668,31 @@
 
     // Persistir en Supabase (added = filas realmente insertadas)
     let added = 0;
+    let insertedRows = [];
     if (rows.length) {
       progress({ phase: 'saving' });
-      const { data: inserted, error } = await insertMembers(rows, { select: 'id' });
+      const { data: inserted, error } = await insertMembers(rows, { select: 'id, apollo_person_id' });
       if (error) throw new Error('No se pudieron guardar los contactos: ' + error.message);
+      insertedRows = inserted || [];
       added = inserted ? inserted.length : rows.length;
     }
 
     // El reveal de email es lo lento (≈1 crédito y una llamada a Apollo por
     // persona): arranca aquí pero NO se espera — el llamador ya tiene sus
-    // filas guardadas y puede cerrar el modal. `enrichment` es la promesa en
-    // curso, para que quien la necesite muestre un aviso cuando termine.
+    // filas guardadas y puede cerrar el modal. Corre en el servidor
+    // (enrich-list) para que siga aunque se cierre la pestaña; si la función
+    // o la migración aún no están desplegadas, cae al reveal en el navegador.
+    // `enrichment` es la promesa en curso ({ server: true } en el servidor).
+    const freshIds = new Set(fresh.map((p) => p.id));
+    const freshMemberIds = insertedRows.filter((r) => freshIds.has(r.apollo_person_id)).map((r) => r.id);
     const enrichment = fresh.length
-      ? enrichFreshRows(list, fresh, userId, progress)
+      ? runEnrichment({
+          memberIds: freshMemberIds,
+          mode: 'email',
+          revealPhones: false,
+          inBrowser: () => enrichFreshRows(list, fresh, userId, progress),
+          onQueued: () => progress({ phase: 'queued', listId: list.id }),
+        })
       : Promise.resolve({ updated: 0, failed: [] });
     enrichment.catch((e) => console.warn('[prospecting-data] enriquecimiento en segundo plano falló:', e.message));
 
@@ -847,6 +759,9 @@
         } else if (chunkError) {
           failed.push({ name: person.name || person.id, error: 'Guardado sin email — ' + chunkError });
         }
+        // Una fila menos pendiente: la UI la muestra ya con su resultado,
+        // sin esperar al resto de la lista.
+        progress({ done: i + j + 1, total: fresh.length, phase: 'enriching', listId: list.id, personId: person.id });
       }
     }
     progress({ done: fresh.length, total: fresh.length, phase: 'enriching' });
@@ -1005,6 +920,125 @@
 
   async function enrichMembers({ members, revealPhones, onProgress }) {
     if (!members?.length) throw new Error('Selecciona al menos un contacto.');
+    const enrichable = members.filter((m) => m.apollo_person_id || m.email || m.linkedin_url || m.name);
+    const failed = members.filter((m) => !enrichable.includes(m)).map((m) =>
+      ({ name: m.name || m.email || 'contacto', error: 'No hay datos suficientes (nombre, email o LinkedIn) para buscarlo en Apollo.' }));
+    if (!enrichable.length) return { updated: 0, phonePending: 0, failed };
+    const res = await runEnrichment({
+      memberIds: enrichable.map((m) => m.id),
+      mode: 'full',
+      revealPhones: !!revealPhones,
+      inBrowser: () => enrichMembersInBrowser({ members, revealPhones, onProgress }),
+      onQueued: () => { if (typeof onProgress === 'function') onProgress({ phase: 'queued' }); },
+    });
+    if (res && res.server) res.failed = failed.concat(res.failed || []);
+    return res;
+  }
+
+  // ── Enriquecimiento en el servidor (edge function enrich-list) ─────
+  // La cola vive en la fila (migración 20260923000003): encolar = marcar
+  // enrich_requested_at. La procesa enrich-list — la dispara este navegador
+  // al encolar (para empezar ya) y pg_cron cada minuto (para seguir si se
+  // cierra la pestaña). La UI la lee de la base: una fila en cola se ve
+  // «Pendiente» y cada una que termina aparece con su resultado por realtime.
+  async function queueEnrichment(memberIds, mode, revealPhones) {
+    const patch = {
+      enrich_requested_at: new Date().toISOString(),
+      enrich_mode: mode,
+      enrich_reveal_phones: !!revealPhones,
+      enrich_claimed_at: null,
+      enrich_attempts: 0,
+      enrich_error: null,
+    };
+    for (let i = 0; i < memberIds.length; i += 200) {
+      const { error } = await sb().from('prospect_list_members').update(patch).in('id', memberIds.slice(i, i + 200));
+      if (error) {
+        // Migración aún no aplicada: el llamador cae al flujo del navegador.
+        if (/enrich_/i.test(error.message || '')) return false;
+        throw new Error('No se pudo encolar el enriquecimiento: ' + error.message);
+      }
+    }
+    return true;
+  }
+
+  async function unqueueEnrichment(memberIds) {
+    for (let i = 0; i < memberIds.length; i += 200) {
+      await sb().from('prospect_list_members')
+        .update({ enrich_requested_at: null, enrich_mode: null, enrich_claimed_at: null })
+        .in('id', memberIds.slice(i, i + 200));
+    }
+  }
+
+  // Una cadena de invocaciones por pestaña: cada invocación procesa ~2 min
+  // y responde cuánto queda; se vuelve a llamar mientras avance. Si la
+  // pestaña se cierra, el cron sigue desde donde quedó.
+  let kickChain = null;
+  function kickEnrichment() {
+    if (kickChain) return kickChain;
+    kickChain = (async () => {
+      let last = null;
+      for (let i = 0; i < 30; i++) {
+        try {
+          last = await edgeFetch('enrich-list', {});
+        } catch (e) {
+          // Solo el PRIMER fallo dice algo sobre si la función existe; uno
+          // posterior (red, timeout) no: la cola sigue y la toma el cron.
+          if (i === 0) { e.firstCall = true; throw e; }
+          console.warn('[prospecting-data] enrich-list:', e.message);
+          break;
+        }
+        if (!(last && last.batches > 0 && last.remaining > 0)) break;
+      }
+      return last;
+    })();
+    kickChain.then(() => { kickChain = null; }, () => { kickChain = null; });
+    return kickChain;
+  }
+
+  // Servidor primero; `inBrowser` es el respaldo mientras enrich-list o su
+  // migración no estén desplegadas (el frente se despliega al mergear, el
+  // backend no).
+  async function runEnrichment({ memberIds, mode, revealPhones, inBrowser, onQueued }) {
+    let queued = false;
+    if (memberIds.length) {
+      try { queued = await queueEnrichment(memberIds, mode, revealPhones); } catch (e) {
+        console.warn('[prospecting-data] cola de enriquecimiento no disponible:', e.message);
+      }
+    }
+    if (!queued) return inBrowser();
+    if (typeof onQueued === 'function') { try { onQueued(); } catch (_) {} }
+    try {
+      const r = await kickEnrichment();
+      return Object.assign({ server: true, updated: 0, failed: [] }, r ? { remaining: r.remaining } : {});
+    } catch (e) {
+      // No desplegada: 404, o un fallo de red/CORS del gateway sin status.
+      // Solo en la primera invocación (nada se procesó todavía): así el
+      // respaldo nunca vuelve a cobrar filas que el servidor ya enriqueció.
+      if (e && e.firstCall && (e.status === 404 || !e.status)) {
+        await unqueueEnrichment(memberIds);
+        return inBrowser();
+      }
+      // Cualquier otro error: las filas siguen en cola y el cron las toma.
+      console.warn('[prospecting-data] enrich-list:', e && e.message);
+      return { server: true, updated: 0, failed: [], error: e && e.message };
+    }
+  }
+
+  // {list_id: n} de filas del usuario en cola, o null si la migración aún no
+  // existe (entonces no hay cola que mostrar).
+  async function fetchEnrichmentQueue() {
+    const { data, error } = await sb().from('prospect_list_members')
+      .select('list_id')
+      .not('enrich_requested_at', 'is', null)
+      .limit(5000);
+    if (error) return null;
+    const out = {};
+    (data || []).forEach((r) => { out[r.list_id] = (out[r.list_id] || 0) + 1; });
+    return out;
+  }
+
+  // Respaldo: el enriquecimiento tal como corría antes, en el navegador.
+  async function enrichMembersInBrowser({ members, revealPhones, onProgress }) {
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
     let updated = 0;
     let phonePending = 0;
@@ -1025,10 +1059,14 @@
       if (error) throw new Error('No se pudo preparar el enriquecimiento: ' + error.message);
     }
 
-    const patches = []; // {id, patch} — se aplican en paralelo al final
+    // Cada contacto se guarda EN CUANTO Apollo responde (no en lote al
+    // final): así la tabla —vía realtime y onProgress— va mostrando los
+    // resultados uno a uno mientras el resto sigue enriqueciéndose.
     for (let i = 0; i < enrichable.length; i++) {
       const m = enrichable[i];
       progress({ done: i, total: enrichable.length, phase: 'enriching' });
+      let patch = null;
+      let matched = false;
       try {
         const query = m.apollo_person_id
           ? { id: m.apollo_person_id }
@@ -1044,7 +1082,8 @@
           reveal_phone_number: !!revealPhones,
         }));
         const person = res?.person || null;
-        const patch = { enriched_at: new Date().toISOString() };
+        patch = { enriched_at: new Date().toISOString() };
+        matched = true;
         if (person) {
           if (!m.apollo_person_id && person.id) patch.apollo_person_id = person.id;
           const work = isMaskedEmail(person.email) ? null : person.email;
@@ -1065,25 +1104,24 @@
         } else if (revealPhones) {
           phonePending++;
         }
-        patches.push({ id: m.id, patch });
-        updated++;
       } catch (e) {
         failed.push({ name: m.name || m.email || 'contacto', error: e.message });
         // Revertir el 'pending' adelantado al valor original (nunca pisar 'revealed')
-        if (revealPhones && (m.phone_status === 'none' || m.phone_status === 'unavailable')) {
-          patches.push({ id: m.id, patch: { phone_status: m.phone_status } });
+        patch = (revealPhones && (m.phone_status === 'none' || m.phone_status === 'unavailable'))
+          ? { phone_status: m.phone_status }
+          : null;
+      }
+      if (patch) {
+        try {
+          await updateMember(m.id, patch);
+          if (matched) updated++;
+        } catch (e) {
+          failed.push({ name: m.name || 'contacto', error: 'No se pudo guardar: ' + e.message });
         }
       }
+      progress({ done: i + 1, total: enrichable.length, phase: 'enriching', listId: m.list_id, memberId: m.id });
     }
 
-    progress({ done: enrichable.length, total: enrichable.length, phase: 'saving' });
-    const results = await Promise.allSettled(patches.map((p) => updateMember(p.id, p.patch)));
-    results.forEach((r, i) => {
-      if (r.status === 'rejected') {
-        const m = enrichable.find((x) => x.id === patches[i].id);
-        failed.push({ name: m?.name || 'contacto', error: 'No se pudo guardar: ' + r.reason?.message });
-      }
-    });
     return { updated, phonePending, failed };
   }
 
@@ -1410,7 +1448,7 @@
       engine: engine || (global.AIEngine && global.AIEngine.get('outreach')),
     });
     if (!data?.body) throw new Error('La IA no devolvió la respuesta. Reintenta.');
-    return { subject: data.subject || '', body: data.body };
+    return { subject: data.subject || '', body: data.body, knowledge: Array.isArray(data.knowledge) ? data.knowledge : [] };
   }
 
   // ── Brief del cliente ("MI Cliente") ────────────────────────
@@ -1565,10 +1603,8 @@
     searchPeople,
     syncIcpFromSearch,
     fetchLists,
-    fetchApolloLists,
     apolloAuthMode,
     apolloAccountEmail,
-    importApolloList,
     fetchAllContacts,
     setContactStatus,
     countMeetings,
@@ -1593,6 +1629,8 @@
     addManualMember,
     matchByLinkedinUrl,
     enrichMembers,
+    fetchEnrichmentQueue,
+    kickEnrichment,
     updateMember,
     fetchGmailAccount,
     startGmailConnect,

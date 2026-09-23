@@ -14,8 +14,8 @@
 import { callLLM, parseLlmJson, type Engine } from "./llm.ts";
 import { canonicalCountries } from "./radar-geo.ts";
 import {
-  DETECTOR_KINDS, KIND_META, PLAN_JSON_SPEC, normalizeDetector, normalizePlan,
-  type DetectorKind, type NormalizedDetector, type NormalizedPlan, type Requirement,
+  DETECTOR_KINDS, KIND_META, PLAN_JSON_SPEC, coverSignals, normalizeDetector, normalizePlan,
+  type AnalysisSignal, type DetectorKind, type NormalizedDetector, type NormalizedPlan, type Requirement,
 } from "./radar-plan.ts";
 import type { SellerContext } from "./radar-context.ts";
 
@@ -59,17 +59,34 @@ Rules:
 Respond with ONLY valid JSON (no markdown fences, no prose) with this exact shape:
 ${PLAN_JSON_SPEC}`;
 
+// El análisis de mercado confirmado trae el catálogo de señales: el plan deja
+// de ser "5-10 ideas de la IA" y pasa a ser un detector por señal confirmada
+// (decisión del dueño, 2026-09-23). Lo que el modelo no cubra lo cubre
+// coverSignals() en código.
+function signalsRule(signals: AnalysisSignal[]): string {
+  if (!signals.length) return "";
+  return `\n\n=== MANDATORY: ONE DETECTOR PER CONFIRMED SIGNAL ===
+The seller confirmed a market analysis with ${signals.length} buying signals (numbered in the MARKET ANALYSIS block, 1-based there; use 0-based signal_index here).
+- Create EXACTLY one detector per signal, in the same order, each with "signal_index" set to that signal's 0-based index. This overrides the "5 to 10 detectors" rule.
+- Name each detector after its signal (≤ 60 chars, Spanish). The rationale explains why this observable fact predicts a purchase.
+- Pick the best AVAILABLE method for each signal; the "suggested method" is only a hint. If two signals would return the same companies with the same method, still keep both but make their configs hunt different facts.
+- You may add at most 2 extra detectors WITHOUT signal_index only if they find companies like the "model companies" that no signal covers.`;
+}
+
 export async function generatePlan(opts: {
   engine: Engine;
   ctx: SellerContext;
   hubText: string;
   customPrompt: string;
   availability: Availability;
+  signals?: AnalysisSignal[];
   logPrefix?: string;
-}): Promise<{ plan: NormalizedPlan; countries: string[] }> {
+}): Promise<{ plan: NormalizedPlan; countries: string[]; filledSignals: number[] }> {
+  const signals = opts.signals || [];
   const user =
     opts.ctx.text +
     (opts.hubText ? "\n\n" + opts.hubText : "") +
+    signalsRule(signals) +
     (opts.customPrompt ? `\n\n=== TARGET DESCRIPTION (from the seller — ground truth) ===\n${opts.customPrompt}` : "") +
     availabilityBlock(opts.availability) +
     `\n\nTarget countries from the context: ${opts.ctx.targets.countries.join(", ") || "(none declared — infer from the seller's country)"}.` +
@@ -86,13 +103,26 @@ export async function generatePlan(opts: {
     logPrefix: opts.logPrefix || "[radar-plan]",
   });
   const plan = normalizePlan(parseLlmJson(res.text));
-  if (!plan.detectors.length) throw new Error("El modelo no devolvió ningún detector válido.");
+  if (!plan.detectors.length && !signals.length) throw new Error("El modelo no devolvió ningún detector válido.");
   // Solo se aceptan los kinds disponibles: el prompt lo pide, el código lo garantiza.
   plan.detectors = plan.detectors.filter((d) => kindAvailable(d.kind, opts.availability));
-  if (!plan.detectors.length) throw new Error("Ningún detector propuesto puede correr con las integraciones disponibles.");
   const override = canonicalCountries(plan.countries_override);
   const countries = opts.customPrompt && override.length ? override : opts.ctx.targets.countries;
-  return { plan, countries };
+  // Un detector por señal confirmada: si el modelo dejó alguna sin cubrir (o
+  // la cubrió con un método no disponible), la cubre una búsqueda de noticias.
+  // Un índice repetido cuenta una sola vez; un detector por señal, no dos.
+  const seen = new Set<number>();
+  plan.detectors = plan.detectors.filter((d) => {
+    if (typeof d.signal_index !== "number") return true;
+    if (d.signal_index >= signals.length || seen.has(d.signal_index)) { delete d.signal_index; return true; }
+    seen.add(d.signal_index);
+    return true;
+  });
+  const covered = coverSignals(plan.detectors, signals, countries);
+  plan.detectors = covered.detectors;
+  if (!plan.detectors.length) throw new Error("Ningún detector propuesto puede correr con las integraciones disponibles.");
+  if (covered.filled.length) console.warn(`${opts.logPrefix || "[radar-plan]"} señales cubiertas en código: ${covered.filled.join(", ")}`);
+  return { plan, countries, filledSignals: covered.filled };
 }
 
 const DETECTOR_SYSTEM = `You translate a seller's plain-language description of a buying signal into ONE detector config for a B2B signal engine. Respond with ONLY valid JSON: { "kind": "<kind>", "name": "...", "rationale": "...", "weight": 0-100, "cadence_hours": n, "decision_maker_titles": [...], "config": { ... } } following CONFIG BY KIND exactly for the requested kind. name and rationale in neutral Latin-American Spanish; titles in English. If the description cannot be expressed with that kind, still return the closest valid config for it.

@@ -130,6 +130,8 @@ export interface NormalizedDetector {
   cadence_hours: number;
   decision_maker_titles: string[];
   config: Record<string, unknown>;
+  /** Índice (0-based) de la señal del análisis de mercado que cubre este detector, si aplica. */
+  signal_index?: number;
 }
 
 /**
@@ -258,7 +260,9 @@ export function normalizeDetector(raw: unknown): NormalizedDetector | null {
   if (!config) return null;
   const meta = KIND_META[kind];
   const name = asStr(d.name, 90) || meta.label;
+  const si = Number(d.signal_index);
   return {
+    ...(Number.isInteger(si) && si >= 0 && si < 20 ? { signal_index: si } : {}),
     kind,
     name,
     rationale: asStr(d.rationale, 400),
@@ -299,6 +303,66 @@ export function normalizePlan(raw: unknown): NormalizedPlan {
   };
 }
 
+// ── plan desde el análisis de mercado (2026-09-23) ──────────────────────────
+
+/**
+ * Alcance por defecto de cada detector según el ticket promedio: con un
+ * ticket alto conviene revisar menos cuentas y mejor elegidas; con uno bajo,
+ * volumen. El usuario lo cambia después con el selector "Alcance".
+ */
+export function reachForDealSize(dealSize: unknown): number {
+  switch (String(dealSize || "")) {
+    case "<1k": return 1000;
+    case "1k-5k": return 500;
+    case "5k-20k": return 300;
+    case "20k-50k": return 200;
+    case "50k-100k": return 100;
+    case "100k+": return 50;
+    default: return DEFAULT_MAX_COMPANIES;
+  }
+}
+
+export interface AnalysisSignal { signal: string; evidence: string; why: string; detector_kind: string; priority?: string }
+
+/**
+ * Red de seguridad del "un detector por señal": si el modelo dejó una señal
+ * del análisis sin detector, se cubre con una búsqueda de noticias fechada
+ * armada con el texto de la señal y los países del plan. Nunca se inventa
+ * otra señal: solo se usa lo que el usuario confirmó.
+ */
+export function fallbackDetectorForSignal(sig: AnalysisSignal, index: number, countries: string[]): NormalizedDetector {
+  const where = countries.slice(0, 3);
+  const queries = [sig.signal, ...where.map((c) => `${sig.signal} ${c}`)];
+  if (sig.evidence) queries.push(`${sig.signal} ${sig.evidence}`);
+  const det = normalizeDetector({
+    kind: "news",
+    name: sig.signal.slice(0, 60),
+    rationale: sig.why || `Señal confirmada en tu análisis de mercado. Se ve en: ${sig.evidence || "noticias"}.`,
+    weight: sig.priority === "high" ? 75 : 60,
+    cadence_hours: KIND_META.news.defaultCadenceHours,
+    decision_maker_titles: [],
+    config: { queries: queries.slice(0, 6), sources: sig.evidence ? [sig.evidence] : [], window_days: 30 },
+    signal_index: index,
+  });
+  // news con queries no vacías nunca da null; el ! documenta esa garantía.
+  return det!;
+}
+
+/** Devuelve los detectores + uno de respaldo por cada señal que quedó sin cubrir. */
+export function coverSignals(detectors: NormalizedDetector[], signals: AnalysisSignal[], countries: string[]): {
+  detectors: NormalizedDetector[]; filled: number[];
+} {
+  const covered = new Set(detectors.map((d) => d.signal_index).filter((i): i is number => typeof i === "number"));
+  const filled: number[] = [];
+  const out = detectors.slice();
+  signals.forEach((sig, i) => {
+    if (covered.has(i)) return;
+    out.push(fallbackDetectorForSignal(sig, i, countries));
+    filled.push(i);
+  });
+  return { detectors: out.slice(0, MAX_DETECTORS), filled };
+}
+
 // ── identidad de una señal ──────────────────────────────────────────────────
 
 export function normHeadline(t: unknown): string {
@@ -335,7 +399,8 @@ export const PLAN_JSON_SPEC = `{
       "weight": 0-100 (how strongly this signal predicts a purchase; spread the values, do not cluster),
       "cadence_hours": how often to re-run (news/tenders 48, leadership 48, hiring/funding/technographics/site_probe/growth 72, presence 168, website_visitors 6; lower values are raised to these floors),
       "decision_maker_titles": ["3-6 English job titles of who buys this at the target company"],
-      "config": { see CONFIG BY KIND }
+      "config": { see CONFIG BY KIND },
+      "signal_index": "0-based index of the MARKET ANALYSIS signal this detector covers (omit if it covers none)"
     }
   ]
 }

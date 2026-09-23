@@ -25,7 +25,9 @@
 --
 -- ⚠ Al aplicarla se REINICIAN los saldos de todas las cuentas existentes a
 -- los 100 créditos de la prueba (decisión del dueño, 2026-09-23: los saldos
--- de la beta eran casi todos compras simuladas).
+-- de la beta eran casi todos compras simuladas). Las cuentas del equipo
+-- (user_credits.unlimited, migración 20260923000006) no se tocan: siguen
+-- ilimitadas, spend_credits no les descuenta y cuentan como plan Growth.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- ── 1. Saldo: bolsa del plan ──────────────────────────────────────────────
@@ -84,7 +86,8 @@ CREATE INDEX IF NOT EXISTS ct_campaign_lead_idx
 
 -- ── 3. Plan vigente ───────────────────────────────────────────────────────
 -- 'free' | 'starter' | 'growth'. past_due sigue activo mientras Stripe
--- reintenta el cobro (Smart Retries); canceled/unpaid/incomplete no.
+-- reintenta el cobro (Smart Retries); canceled/unpaid/incomplete no. Las
+-- cuentas ilimitadas del equipo cuentan como 'growth' (todo lo automático).
 CREATE OR REPLACE FUNCTION public.current_plan(p_user_id UUID)
 RETURNS TEXT
 LANGUAGE sql
@@ -93,6 +96,8 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
   SELECT COALESCE(
+    (SELECT 'growth' FROM public.user_credits c
+      WHERE c.user_id = p_user_id AND c.unlimited),
     (SELECT s.plan FROM public.subscriptions s
       WHERE s.user_id = p_user_id
         AND s.status IN ('active', 'trialing', 'past_due')),
@@ -101,6 +106,7 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.current_plan(UUID) FROM PUBLIC, anon, authenticated;
 
 -- ── 4. Gasto: primero la bolsa del plan ───────────────────────────────────
+-- Conserva la salida temprana de las cuentas ilimitadas (20260923000006).
 CREATE OR REPLACE FUNCTION public.spend_credits(p_user_id uuid, p_amount integer)
 RETURNS integer
 LANGUAGE plpgsql
@@ -109,9 +115,12 @@ SET search_path = public
 AS $$
 DECLARE
   new_balance integer;
+  is_unlimited boolean;
 BEGIN
-  IF p_amount IS NULL OR p_amount <= 0 THEN
-    SELECT balance INTO new_balance FROM public.user_credits WHERE user_id = p_user_id;
+  SELECT balance, unlimited INTO new_balance, is_unlimited
+    FROM public.user_credits WHERE user_id = p_user_id;
+
+  IF is_unlimited OR p_amount IS NULL OR p_amount <= 0 THEN
     RETURN new_balance;
   END IF;
 
@@ -322,6 +331,6 @@ DROP FUNCTION IF EXISTS public.mock_purchase_credits(TEXT);
 INSERT INTO public.credit_transactions (user_id, delta, reason)
 SELECT uc.user_id, 100 - uc.balance, 'launch_reset'
   FROM public.user_credits uc
- WHERE uc.balance <> 100;
+ WHERE uc.balance <> 100 AND NOT uc.unlimited;
 
-UPDATE public.user_credits SET balance = 100, plan_balance = 0;
+UPDATE public.user_credits SET balance = 100, plan_balance = 0 WHERE NOT unlimited;
