@@ -847,6 +847,9 @@
         } else if (chunkError) {
           failed.push({ name: person.name || person.id, error: 'Guardado sin email — ' + chunkError });
         }
+        // Una fila menos pendiente: la UI la muestra ya con su resultado,
+        // sin esperar al resto de la lista.
+        progress({ done: i + j + 1, total: fresh.length, phase: 'enriching', listId: list.id, personId: person.id });
       }
     }
     progress({ done: fresh.length, total: fresh.length, phase: 'enriching' });
@@ -1025,10 +1028,14 @@
       if (error) throw new Error('No se pudo preparar el enriquecimiento: ' + error.message);
     }
 
-    const patches = []; // {id, patch} — se aplican en paralelo al final
+    // Cada contacto se guarda EN CUANTO Apollo responde (no en lote al
+    // final): así la tabla —vía realtime y onProgress— va mostrando los
+    // resultados uno a uno mientras el resto sigue enriqueciéndose.
     for (let i = 0; i < enrichable.length; i++) {
       const m = enrichable[i];
       progress({ done: i, total: enrichable.length, phase: 'enriching' });
+      let patch = null;
+      let matched = false;
       try {
         const query = m.apollo_person_id
           ? { id: m.apollo_person_id }
@@ -1044,7 +1051,8 @@
           reveal_phone_number: !!revealPhones,
         }));
         const person = res?.person || null;
-        const patch = { enriched_at: new Date().toISOString() };
+        patch = { enriched_at: new Date().toISOString() };
+        matched = true;
         if (person) {
           if (!m.apollo_person_id && person.id) patch.apollo_person_id = person.id;
           const work = isMaskedEmail(person.email) ? null : person.email;
@@ -1065,25 +1073,24 @@
         } else if (revealPhones) {
           phonePending++;
         }
-        patches.push({ id: m.id, patch });
-        updated++;
       } catch (e) {
         failed.push({ name: m.name || m.email || 'contacto', error: e.message });
         // Revertir el 'pending' adelantado al valor original (nunca pisar 'revealed')
-        if (revealPhones && (m.phone_status === 'none' || m.phone_status === 'unavailable')) {
-          patches.push({ id: m.id, patch: { phone_status: m.phone_status } });
+        patch = (revealPhones && (m.phone_status === 'none' || m.phone_status === 'unavailable'))
+          ? { phone_status: m.phone_status }
+          : null;
+      }
+      if (patch) {
+        try {
+          await updateMember(m.id, patch);
+          if (matched) updated++;
+        } catch (e) {
+          failed.push({ name: m.name || 'contacto', error: 'No se pudo guardar: ' + e.message });
         }
       }
+      progress({ done: i + 1, total: enrichable.length, phase: 'enriching', listId: m.list_id, memberId: m.id });
     }
 
-    progress({ done: enrichable.length, total: enrichable.length, phase: 'saving' });
-    const results = await Promise.allSettled(patches.map((p) => updateMember(p.id, p.patch)));
-    results.forEach((r, i) => {
-      if (r.status === 'rejected') {
-        const m = enrichable.find((x) => x.id === patches[i].id);
-        failed.push({ name: m?.name || 'contacto', error: 'No se pudo guardar: ' + r.reason?.message });
-      }
-    });
     return { updated, phonePending, failed };
   }
 

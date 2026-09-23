@@ -88,6 +88,10 @@
       q: '', statusFilter: '', listFilter: '',
       channel: null,           // suscripción realtime a prospect_list_members
       refreshTimer: null, filterTimer: null,
+      refreshing: false, refreshQueued: false, refreshLists: false,
+      // Enriquecimientos en curso en ESTA pestaña: [{ lists: {listId: {done,total}} }]
+      // y los ids de contactos que «Enriquecer seleccionados» aún no termina.
+      enrichJobs: [], enrichingIds: new Set(),
     },
   };
 
@@ -304,6 +308,10 @@
     '#prospecting-shell .pros-listcard { display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--surface); border:1px solid var(--hair); border-radius:var(--r-md); cursor:pointer; transition:border-color .15s, box-shadow .15s; }',
     '#prospecting-shell .pros-listcard:hover { border-color:var(--hair-3); }',
     '#prospecting-shell .pros-listcard.active { border-color:var(--accent-2); box-shadow:0 0 0 3px var(--accent-soft); }',
+    '#prospecting-shell .pros-enrich-banner { margin:0 18px 4px; padding:10px 12px; border:1px solid var(--hair); border-radius:var(--r-md); background:var(--surface2); font-size:12.5px; color:var(--text2); }',
+    '#prospecting-shell .pros-enrich-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }',
+    '#prospecting-shell .pros-enrich-bar { height:4px; margin-top:8px; border-radius:99px; background:var(--hair); overflow:hidden; }',
+    '#prospecting-shell .pros-enrich-bar > i { display:block; height:100%; background:var(--accent-2); border-radius:inherit; transition:width .4s; }',
     '#prospecting-shell .pros-iconbtn { border:0; background:transparent; cursor:pointer; color:var(--ink-4); padding:4px; border-radius:var(--r-xs); display:inline-flex; }',
     '#prospecting-shell .pros-iconbtn:hover { color:var(--red); background:var(--red-soft); }',
     '#prospecting-shell .pros-wa-preview { background:var(--wa-bg); border-radius:var(--r-md); padding:16px; }',
@@ -470,7 +478,7 @@
   }
 
   function memberEmailCell(m) {
-    if (m.email_status === 'pending') return '<span class="pill pill-amber">Enriqueciendo…</span>';
+    if (m.email_status === 'pending' || state.listas.enrichingIds.has(String(m.id))) return '<span class="pill pill-amber">Enriqueciendo…</span>';
     if (m.email && !isMaskedEmail(m.email)) {
       return '<div>' + esc(m.email) + '</div>' +
         (m.email_status ? '<div style="margin-top:3px">' + emailPillHtml(m.email_status) + '</div>' : '');
@@ -1855,9 +1863,19 @@
         .then(function (list) {
           if (!list) throw new Error('No se encontró la lista seleccionada.');
           prog.set('Guardando…');
-          return pd().addPeopleToList({ list: list, people: people }).then(function (res) {
-            return { list: list, res: res || {} };
-          });
+          var job = enrichJobCreate({});
+          return pd().addPeopleToList({
+            list: list, people: people,
+            onProgress: function (p) { enrichJobProgress(job, p); },
+          }).then(function (res) {
+            res = res || {};
+            if (res.enrichment) {
+              Promise.resolve(res.enrichment).catch(function () {}).then(function () { enrichJobFinish(job); });
+            } else {
+              enrichJobFinish(job);
+            }
+            return { list: list, res: res };
+          }, function (e) { enrichJobFinish(job); throw e; });
         })
         .then(function (r) {
           var list = r.list;
@@ -1955,7 +1973,16 @@
           if (!alsoApollo.checked || !rows.length) return null;
           prog.set('Guardando en Apollo…');
           return Promise.resolve(pd().createList(name)).then(function (list) {
-            return pd().addPeopleToList({ list: list, people: rows }).then(function (res) {
+            var job = enrichJobCreate({});
+            return pd().addPeopleToList({
+              list: list, people: rows,
+              onProgress: function (p) { enrichJobProgress(job, p); },
+            }).then(function (res) {
+              if (res && res.enrichment) {
+                Promise.resolve(res.enrichment).catch(function () {}).then(function () { enrichJobFinish(job); });
+              } else {
+                enrichJobFinish(job);
+              }
               state.cache.lists = null;
               refreshBadge();
               res = res || {};
@@ -2074,6 +2101,7 @@
         '<div style="flex:1;min-width:0">' +
         '<div style="font-size:13px;font-weight:600;color:var(--text)">Todos los contactos</div>' +
         '<div class="pros-cellsub">' + esc(fmtNum(totalMembers)) + ' contactos · ' + esc(fmtNum(lists.length)) + ' lista' + (lists.length === 1 ? '' : 's') + '</div>' +
+        '<span data-enrich-slot="' + ALL_LIST_ID + '">' + enrichPillHtml(ALL_LIST_ID) + '</span>' +
         '</div></div>';
       html += lists.map(function (l) {
         var active = String(st.activeListId) === String(l.id);
@@ -2081,6 +2109,7 @@
           '<div style="flex:1;min-width:0">' +
           '<div style="font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(l.name || '—') + '</div>' +
           '<div class="pros-cellsub">' + esc(fmtNum(l.member_count || 0)) + ' contactos · ' + esc(fmtDate(l.created_at)) + '</div>' +
+          '<span data-enrich-slot="' + esc(String(l.id)) + '">' + enrichPillHtml(l.id) + '</span>' +
           '</div>' +
           '<button type="button" class="pros-iconbtn" data-action="rename-list" data-id="' + esc(String(l.id)) + '" title="Renombrar lista" style="font-size:14px">✎</button>' +
           '<button type="button" class="pros-iconbtn" data-action="delete-list" data-id="' + esc(String(l.id)) + '" title="Eliminar lista">' + SVG_TRASH + '</button>' +
@@ -2172,7 +2201,8 @@
       (all
         ? '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_email" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer seleccionados</button>'
         : '<button type="button" class="btn btn-primary btn-sm" data-action="create-campaign"' + (st.members.length ? '' : ' disabled') + '>' + SVG_CAMPAIGN + ' Crear campaña con esta lista</button>') +
-      '</div>';
+      '</div>' +
+      '<div data-enrich-banner>' + enrichBannerHtml() + '</div>';
 
     if (all) {
       var listOpts = {};
@@ -2815,7 +2845,21 @@
             // enriquecer a todos malogre la experiencia.
             api.close();
             toast('Enriqueciendo ' + fmtNum(members.length) + ' contacto' + (members.length === 1 ? '' : 's') + ' en segundo plano…', 'info');
-            Promise.resolve(pd().enrichMembers({ members: members, revealPhones: revealPhones }))
+            var counts = {};
+            members.forEach(function (m) {
+              var k = String(m.list_id);
+              counts[k] = (counts[k] || 0) + 1;
+              state.listas.enrichingIds.add(String(m.id));
+            });
+            var job = enrichJobCreate(counts);
+            if (state.listas.rightEl) renderListsRight();
+            Promise.resolve()
+              .then(function () {
+                return pd().enrichMembers({
+                  members: members, revealPhones: revealPhones,
+                  onProgress: function (p) { enrichJobProgress(job, p); },
+                });
+              })
               .then(function (res) {
                 res = res || {};
                 var failed = res.failed || [];
@@ -2827,7 +2871,12 @@
                 );
                 if (state.listas.activeListId && state.listas.activeListId === targetListId) reloadMembers();
               })
-              .catch(function (e) { toast(errMsg(e), 'error'); });
+              .catch(function (e) { toast(errMsg(e), 'error'); })
+              .then(function () {
+                // Incluye a los que el data layer descartó sin llamar a Apollo.
+                members.forEach(function (m) { state.listas.enrichingIds.delete(String(m.id)); });
+                enrichJobFinish(job);
+              });
           },
         },
       ],
@@ -2903,6 +2952,137 @@
     toast('CSV exportado (' + fmtNum(rows.length) + ' contactos).', 'success');
   }
 
+  // ── Enriquecimiento en curso ────────────────────────────────────────────
+  // Mientras una lista se enriquece, el frente la marca como pendiente
+  // (píldora en su tarjeta + banner con barra en la tabla), pero cada
+  // contacto que ya terminó aparece con su resultado en el momento: el
+  // enriquecimiento escribe fila por fila y la tabla se refresca con cada
+  // avance (onProgress) y con cada UPDATE que llega por realtime.
+  function enrichJobCreate(counts) {
+    var job = { lists: {} };
+    Object.keys(counts || {}).forEach(function (k) { job.lists[k] = { done: 0, total: counts[k] }; });
+    state.listas.enrichJobs.push(job);
+    paintEnrich();
+    return job;
+  }
+
+  // Un avance del data layer: {listId, total, personId|memberId}. Los avances
+  // sin id (inicio de cada lote) solo abren la entrada de la lista.
+  function enrichJobProgress(job, p) {
+    if (!p || p.phase !== 'enriching' || p.listId == null) return;
+    var key = String(p.listId);
+    var e = job.lists[key];
+    if (!e) e = job.lists[key] = { done: 0, total: p.total || 0 };
+    if (p.memberId != null) state.listas.enrichingIds.delete(String(p.memberId));
+    if (p.personId == null && p.memberId == null) { paintEnrich(); return; }
+    if (e.done < e.total) e.done++;
+    paintEnrich();
+    scheduleMembersRefresh({ listId: key });
+  }
+
+  function enrichJobFinish(job) {
+    var st = state.listas;
+    st.enrichJobs = st.enrichJobs.filter(function (j) { return j !== job; });
+    paintEnrich();
+    scheduleMembersRefresh({ lists: true });
+  }
+
+  // {done,total} agregado de una lista (o de todas con ALL_LIST_ID), o null.
+  function enrichStatus(listId) {
+    var key = String(listId);
+    var done = 0, total = 0;
+    state.listas.enrichJobs.forEach(function (j) {
+      Object.keys(j.lists).forEach(function (k) {
+        if (key !== ALL_LIST_ID && k !== key) return;
+        done += j.lists[k].done; total += j.lists[k].total;
+      });
+    });
+    return total ? { done: done, total: total } : null;
+  }
+
+  function enrichPillHtml(listId) {
+    var s = enrichStatus(listId);
+    if (!s) return '';
+    return '<span class="pill pill-amber" style="margin-top:6px;display:inline-flex">Enriqueciendo… ' +
+      esc(fmtNum(s.done)) + '/' + esc(fmtNum(s.total)) + '</span>';
+  }
+
+  function enrichBannerHtml() {
+    var st = state.listas;
+    if (!st.activeListId) return '';
+    var s = enrichStatus(isAllList() ? ALL_LIST_ID : st.activeListId);
+    if (s) {
+      var pct = Math.max(2, Math.round((s.done / s.total) * 100));
+      return '<div class="pros-enrich-banner">' +
+        '<div class="pros-enrich-row"><span class="pill pill-amber">Pendiente</span>' +
+        '<span>Enriqueciendo contactos: <b>' + esc(fmtNum(s.done)) + ' de ' + esc(fmtNum(s.total)) + '</b> listos. ' +
+        'Los resultados aparecen aquí a medida que llegan; puedes seguir usando la app, pero no cierres esta pestaña.</span></div>' +
+        '<div class="pros-enrich-bar"><i style="width:' + pct + '%"></i></div></div>';
+    }
+    // Sin trabajo en esta pestaña: filas que siguen en 'pending' (otra
+    // pestaña enriqueciendo, o una corrida que se cortó al cerrar la app).
+    var pending = st.members.filter(function (m) { return m.email_status === 'pending'; }).length;
+    if (!pending) return '';
+    return '<div class="pros-enrich-banner"><div class="pros-enrich-row"><span class="pill pill-amber">Pendiente</span>' +
+      '<span>' + esc(fmtNum(pending)) + ' contacto' + (pending === 1 ? '' : 's') + ' pendiente' + (pending === 1 ? '' : 's') +
+      ' de enriquecer.</span></div></div>';
+  }
+
+  // Repinta solo las píldoras y el banner (sin re-renderizar la tabla ni
+  // perder lo que el usuario esté escribiendo).
+  function paintEnrich() {
+    var st = state.listas;
+    if (st.leftEl) {
+      Array.prototype.forEach.call(st.leftEl.querySelectorAll('[data-enrich-slot]'), function (el) {
+        el.innerHTML = enrichPillHtml(el.getAttribute('data-enrich-slot'));
+      });
+    }
+    if (st.rightEl) {
+      var b = st.rightEl.querySelector('[data-enrich-banner]');
+      if (b) b.innerHTML = enrichBannerHtml();
+    }
+  }
+
+  // Refresco de la tabla de Listas. Throttle, no debounce: con cambios
+  // seguidos (un enriquecimiento escribe una fila cada pocos cientos de ms)
+  // un debounce se reiniciaba sin parar y la tabla no mostraba nada hasta
+  // el final. opts.listId: solo si esa lista (o «Todos») está a la vista.
+  function scheduleMembersRefresh(opts) {
+    var st = state.listas;
+    opts = opts || {};
+    if (opts.listId != null && st.activeListId && !isAllList() && String(st.activeListId) !== String(opts.listId)) return;
+    if (opts.lists) st.refreshLists = true;
+    if (st.refreshTimer) return;
+    st.refreshTimer = setTimeout(function () {
+      st.refreshTimer = null;
+      runMembersRefresh();
+    }, 400);
+  }
+
+  function runMembersRefresh() {
+    var st = state.listas;
+    if (state.activeTab !== 'listas' || !st.activeListId) return;
+    if (st.refreshing) { st.refreshQueued = true; return; }
+    st.refreshing = true;
+    var withLists = st.refreshLists;
+    st.refreshLists = false;
+    (withLists ? loadLists(true).catch(function () {}).then(renderListsLeft) : Promise.resolve())
+      .then(function () { return reloadMembers({ keepSelection: true }); })
+      .catch(function () {})
+      .then(function () {
+        st.refreshing = false;
+        if (st.refreshQueued) { st.refreshQueued = false; scheduleMembersRefresh(); }
+      });
+  }
+
+  // Cerrar la pestaña corta el enriquecimiento (corre en el navegador):
+  // el navegador pide confirmación mientras haya uno en curso.
+  window.addEventListener('beforeunload', function (e) {
+    if (!state.listas.enrichJobs.length) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+
   // ── Realtime: prospect_list_members ─────────────────────────────────────
   // Cualquier cambio (teléfonos que llegan async por apollo-webhook, estado
   // CRM que mueve el motor de campañas, edición desde otro dispositivo)
@@ -2916,16 +3096,7 @@
         .channel('pros-members-' + window.currentUser.id)
         .on('postgres_changes',
           { event: '*', schema: 'public', table: 'prospect_list_members', filter: 'user_id=eq.' + window.currentUser.id },
-          function () {
-            if (state.activeTab !== 'listas' || !st.activeListId) return;
-            clearTimeout(st.refreshTimer);
-            st.refreshTimer = setTimeout(function () {
-              loadLists(true).catch(function () {}).then(function () {
-                renderListsLeft();
-                return reloadMembers({ keepSelection: true });
-              });
-            }, 600);
-          })
+          function () { scheduleMembersRefresh({ lists: true }); })
         .subscribe();
     } catch (e) {
       console.warn('[prospecting] realtime de contactos no disponible:', e);
