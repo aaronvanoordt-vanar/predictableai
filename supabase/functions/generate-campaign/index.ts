@@ -15,6 +15,10 @@
  *     el builder avisa si falta la cuenta remitente.
  *   • prospect_list_members (si viene list_id) — cuántos leads tienen
  *     teléfono / email / LinkedIn, para no proponer un canal sin datos.
+ *   • sales_knowledge_docs — la base de entrenamiento del vendedor
+ *     (frameworks, scripts ganadores, objeciones): los fragmentos relevantes
+ *     guían el orden de ángulos y las "instructions" de cada toque
+ *     (_shared/sales-knowledge.ts).
  *
  * Qué devuelve: { name, rationale, flow } con `flow` ya validado por
  * _shared/campaign-flow.ts (misma validación que hace el cliente). Si la
@@ -37,7 +41,7 @@
  * _shared/llm.ts.
  *
  * Request:  POST { list_id?: uuid, name?: string, engine?: string }
- * Response: 200 { name, rationale, flow, engine }
+ * Response: 200 { name, rationale, flow, engine, knowledge: [{id,title,kind}] }
  *           400 invalid body · 401 unauthorized · 402 insufficient_credits
  *           502 llm_error (con detail)
  */
@@ -46,6 +50,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
+import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -165,7 +170,7 @@ Las ramas se vuelven a unir: después de la condición la cadencia sigue con los
 
 Responde SOLO con el JSON, sin fences ni texto adicional.`;
 
-function userPrompt(intake: Json, brief: Json, ch: Channels, stats: Json, hint: string): string {
+function userPrompt(intake: Json, brief: Json, ch: Channels, stats: Json, hint: string, knowledge = ""): string {
   const lines: string[] = [];
   lines.push("== CONTEXTO DE EMPRESA E ICP ==");
   lines.push(intakeSummary(intake));
@@ -190,6 +195,7 @@ function userPrompt(intake: Json, brief: Json, ch: Channels, stats: Json, hint: 
   if (stats) lines.push(`${stats.total} leads · ${stats.phone} con teléfono · ${stats.email} con email · ${stats.linkedin} con LinkedIn`);
   else lines.push("(sin lista todavía: asume que los leads tendrán email y, en menor medida, teléfono y LinkedIn)");
   if (hint) { lines.push(""); lines.push(`== NOMBRE SUGERIDO POR EL VENDEDOR ==\n${hint}`); }
+  if (knowledge) lines.push(knowledge);
   return lines.join("\n");
 }
 
@@ -275,15 +281,24 @@ Deno.serve(withLlmContext(async (req) => {
   const { data: credits } = await supa.from("user_credits").select("balance").eq("user_id", user.id).maybeSingle();
   if ((credits?.balance ?? 0) < COST) return json({ error: "insufficient_credits", balance: credits?.balance ?? 0, cost: COST }, 402, h);
 
-  const [engine, { data: intake }, { data: brief }, channels, stats] = await Promise.all([
+  const [engine, { data: intake }, { data: brief }, channels, stats, knowledgeDocs] = await Promise.all([
     engineForUser(supa, user.id, "outreach", body.engine),
     supa.from("intel_hub_intake").select("*").eq("user_id", user.id).maybeSingle(),
     supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
     loadChannels(supa, user.id),
     listStats(supa, user.id, listId),
+    loadKnowledge(supa, user.id),
   ]);
 
-  const prompt = userPrompt(intake, brief, channels, stats, hint);
+  // Base de entrenamiento: para diseñar la cadencia mandan la metodología y
+  // las secuencias que ya funcionaron, no el material de producto.
+  const knowledgeHits = retrieve(knowledgeDocs, {
+    channel: null,
+    text: ["cadencia secuencia seguimiento toques etapas", hint, intake?.icp_pain_points, (intake?.icp_titles ?? []).join?.(" "), (intake?.icp_industry_tags ?? []).join?.(" ")]
+      .filter((x) => typeof x === "string" && x).join(" "),
+    preferKinds: ["framework", "script", "guideline"],
+  }, { budget: 5000, maxChunks: 6 });
+  const prompt = userPrompt(intake, brief, channels, stats, hint, buildKnowledgePrompt(knowledgeHits, "cadence"));
   let out: Json = null;
   let flow: flowLib.Flow | null = null;
   let lastErrors: string[] = [];
@@ -311,5 +326,5 @@ Deno.serve(withLlmContext(async (req) => {
   const name = String(out?.name ?? "").trim().replace(/[—–]/g, "-").slice(0, 60) || hint || "Campaña recomendada";
   const rationale = String(out?.rationale ?? "").trim().replace(/[—–]/g, ",").slice(0, 900);
   console.log(`[generate-campaign] ✓ ${user.id} via ${engine}: ${flowLib.actions(flow).length} envíos`);
-  return json({ name, rationale, flow, engine }, 200, h);
+  return json({ name, rationale, flow, engine, knowledge: knowledgeRefs(knowledgeHits) }, 200, h);
 }));
