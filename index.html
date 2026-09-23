@@ -2087,6 +2087,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="3" cy="3" r="1.5"/><circle cx="13" cy="3" r="1.5"/><circle cx="3" cy="13" r="1.5"/><circle cx="13" cy="13" r="1.5"/><path d="M5 8h6M8 5v6"/></svg>
       <span id="nav-company-name">Contexto de tu empresa</span>
     </div>
+    <!-- Entrenamiento IA (2026-09-23, js/ai-training.js): metodologías de venta,
+         estilo, reglas y base de conocimiento propias de esta empresa para el
+         Meeting Coach y las campañas. Va junto al Contexto: los dos definen
+         "quién eres"; este define además "cómo vendes". -->
+    <div class="nav-item" data-page="ai-training" onclick="nav(this,'ai-training');if(window.AITraining)window.AITraining.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 3.5h4.5a1.5 1.5 0 011.5 1.5v8.5a1 1 0 00-1-1H2z"/><path d="M14 3.5H9.5A1.5 1.5 0 008 5v8.5a1 1 0 011-1h5z"/></svg>
+      Entrenamiento IA
+    </div>
     <!-- Flujo de inteligencia (2026-09-18): Contexto → Intelligence Hub → Radar. El Hub alimenta el plan de señales del Radar, así que va antes. -->
     <div class="nav-item" data-page="mi-dashboard" onclick="nav(this,'mi-dashboard')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 12l4-4 3 3 5-6"/></svg>
@@ -2368,6 +2376,17 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   <div id="ih-research-shell" class="ih-v2-shell"></div>
 </div>
 
+<!-- ═══════ PAGE: ENTRENAMIENTO IA (js/ai-training.js) ═══════ -->
+<div class="page fade-in" id="page-ai-training" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Entrenamiento IA</div>
+      <div class="topbar-sub">Tu forma de vender: metodologías, estilo, reglas y conocimiento propio para el Meeting Coach y tus campañas</div>
+    </div>
+  </div>
+  <div id="ai-training-shell"></div>
+</div>
+
 <!-- ═══════ PAGE: MI DASHBOARD ═══════ -->
 <div class="page fade-in" id="page-mi-dashboard" style="padding:0;gap:0;">
   <!-- Sticky topbar -->
@@ -2451,6 +2470,10 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       </div>
 
       <div id="mc-prospect-meta" style="font-size:13px;color:var(--text3);margin-bottom:22px">Elige con quién es la reunión para cargar su brief — el coach no inicia sin un lead.</div>
+
+      <!-- Resumen del entrenamiento del coach (js/ai-training.js): con qué
+           metodologías, estilo, reglas y documentos habla este coach. -->
+      <div data-ai-training-badge="coach" style="max-width:560px;margin:-8px 0 20px"></div>
 
       <!-- Selector de lead (obligatorio): se llena desde las Listas guardadas de Prospección -->
       <div id="mc-lead-block" style="max-width:440px;margin-bottom:24px">
@@ -3087,12 +3110,13 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/api.js"></script>
 <script src="js/apollo-enums.js"></script>
 <script src="js/company-context.js?v=20260823"></script>
-<script src="js/prospecting-data.js?v=20260915"></script>
+<script src="js/prospecting-data.js?v=20260923"></script>
 <script src="js/prospecting.js?v=20260915"></script>
 <script src="js/campaign-flow.js?v=20260915"></script>
 <script src="js/linkedin-campaigns.js?v=20260915"></script>
-<script src="js/campaign-builder.js?v=20260915"></script>
-<script src="js/campaigns.js?v=20260915"></script>
+<script src="js/campaign-builder.js?v=20260923"></script>
+<script src="js/campaign-knowledge.js?v=20260923"></script>
+<script src="js/campaigns.js?v=20260923"></script>
 <script src="js/radar.js?v=20260918"></script>
 <script src="js/radar-live.js?v=20260918"></script>
 <script src="js/clients.js?v=20260824-sheets"></script>
@@ -3100,6 +3124,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/realtime-coach.js"></script>
 <script src="js/meeting-report.js"></script>
 <script src="js/learning.js?v=20260919"></script>
+<script src="js/ai-training.js?v=20260923"></script>
 <script src="js/coach-lead-picker.js?v=20260915"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js?v=20260823"></script>

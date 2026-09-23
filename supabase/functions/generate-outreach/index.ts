@@ -105,7 +105,9 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { buildTrainingBlock, loadTraining } from "../_shared/sales-training.ts";
 import { loadIntelligence } from "../_shared/intelligence.ts";
+import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -1302,7 +1304,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
 
   // Seller context: client_brief (preferred) → intake fallback + hub insights,
   // plus the member's Apollo snapshot (persona/empresa) when member_id given.
-  const [{ data: brief }, { data: intake }, { data: hubReports }, memberRes, playbookRes] = await Promise.all([
+  const [{ data: brief }, { data: intake }, { data: hubReports }, memberRes, playbookRes, training] = await Promise.all([
     supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
     supa.from("intel_hub_intake")
       .select("company_about, company_solutions, value_proposition, value_problem_solved, value_success_cases, company_industry, company_country, icp_industries, icp_company_sizes, icp_roles, icp_geographies, icp_pain_points, what_to_know, icp_countries, icp_industry_tags, icp_titles, icp_buying_triggers, icp_disqualifiers, commercial_model, commercial_deal_size, commercial_sales_cycle, commercial_primary_cta, outreach_signature, outreach_tone, outreach_channels, outreach_language, social_proof, common_objections")
@@ -1320,6 +1322,9 @@ Deno.serve(withLlmContext(async (req: Request) => {
           .select("status, enabled, headline, summary, principles, openers, subject_lines, structure, channels, avoid, generated_at")
           .eq("user_id", user.id).eq("enabled", true).maybeSingle()
       : Promise.resolve({ data: null }),
+    // Entrenamiento IA del equipo (metodologías de campaña, estilo, reglas y
+    // base de conocimiento). Tolerante: sin tabla o sin fila → bloque vacío.
+    loadTraining(supa, user.id),
   ]);
   const snapshot = (memberRes?.data?.snapshot ?? null) as Snapshot | null;
   // La tabla puede no existir todavía (migración sin aplicar): el select falla
@@ -1331,7 +1336,8 @@ Deno.serve(withLlmContext(async (req: Request) => {
     buildHubContext(Array.isArray(hubReports) ? hubReports : []) +
     buildLeadContext(lead) +
     buildPersonaContext(snapshot) +
-    buildPlaybookContext(playbook);
+    buildPlaybookContext(playbook) +
+    buildTrainingBlock(training, "outreach");
   const userPrompt = contextPrompt + CLOSING_INSTRUCTION;
 
   // ── Modo paso: UN mensaje para un paso de la cadencia ─────────────────────
@@ -1340,13 +1346,29 @@ Deno.serve(withLlmContext(async (req: Request) => {
       const closing = replyMode ? REPLY_CLOSING : STEP_CLOSING;
       // Mensajes ganadores y ángulos (solo en modo paso) + la inteligencia
       // universal (perfiles que responden, objeciones reales) en ambos modos.
-      const [stepLearned, universal] = await Promise.all([
+      const [stepLearned, universal, knowledgeDocs] = await Promise.all([
         replyMode ? Promise.resolve("") : buildLearningContext(supa, user.id, step.channel),
         loadIntelligence(supa, user.id, "outreach"),
+        loadKnowledge(supa, user.id),
       ]);
       const learned = stepLearned + universal;
-      const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + learned + closing);
-      console.log(`[outreach] ✓ ${replyMode ? "reply" : "step"} ${user.id} ${step.channel}/${step.angle} via ${engine}`);
+      // Base de entrenamiento (sales_knowledge_docs): solo los fragmentos que
+      // tienen que ver con ESTE paso y ESTE lead. Va antes de lo aprendido y
+      // de las tendencias en peso (lo dice el propio bloque).
+      const lastLead = [...step.conversation].reverse().find((c) => c.who === "lead")?.body ?? "";
+      const knowledgeHits = retrieve(knowledgeDocs, {
+        channel: step.channel,
+        angle: step.angle,
+        text: [
+          step.angle.replace("_", " "), step.instructions, lastLead.slice(0, 1200),
+          lead.title, lead.headline, lead.industry, lead.company, lead.seniority,
+          Array.isArray(lead.departments) ? lead.departments.join(" ") : lead.departments,
+          typeof intake?.icp_pain_points === "string" ? intake.icp_pain_points.slice(0, 600) : "",
+        ].filter(Boolean).join(" "),
+      });
+      const knowledge = buildKnowledgePrompt(knowledgeHits, "message");
+      const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + knowledge + learned + closing);
+      console.log(`[outreach] ✓ ${replyMode ? "reply" : "step"} ${user.id} ${step.channel}/${step.angle} via ${engine} (knowledge: ${knowledgeHits.length} fragmentos de ${knowledgeDocs.length} docs)`);
       const { data: stSpent, error: stSpendErr } = await supa
         .rpc("spend_credits", { p_user_id: user.id, p_amount: OUTREACH_COST });
       if (stSpendErr || stSpent === null || stSpent === undefined) {
@@ -1354,7 +1376,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
       } else {
         await supa.from("credit_transactions").insert({ user_id: user.id, delta: -OUTREACH_COST, reason: "outreach_message" });
       }
-      return json({ subject: out.subject, body: out.body, angle_note: out.angle_note ?? null, channel: step.channel, angle: step.angle, generated_via: "fallback_api" }, 200, h);
+      return json({ subject: out.subject, body: out.body, angle_note: out.angle_note ?? null, channel: step.channel, angle: step.angle, knowledge: knowledgeRefs(knowledgeHits), generated_via: "fallback_api" }, 200, h);
     } catch (err) {
       console.error("[outreach] step error:", err);
       return json({ error: "llm_error", detail: String(err) }, 502, h);

@@ -25,6 +25,7 @@
     'Campañas': 'Campaigns',
     'Clientes': 'Clients',
     'Contexto global': 'Global context',
+    'Entrenamiento IA': 'AI training',
     // Sidebar — items
     'Dashboard': 'Dashboard',
     'Radar': 'Radar',
