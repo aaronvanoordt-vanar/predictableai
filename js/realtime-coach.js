@@ -29,6 +29,7 @@
   let wordsAtLastCoach = 0;
   let shownAlerts = [];         // {key, phrase, ts} de alertas ya mostradas
   let active = false;
+  let trainedPrompt = null;     // {doctrine, block} de «Entrenamiento IA» (solo camino OpenAI/worker)
 
   function workerUrl(path) {
     const base = (cfg.WORKER_URL || '').replace(/\/$/, '');
@@ -65,6 +66,12 @@
     // el timer, el WebSocket y los tracks de mic/pantalla.
     if (active) { console.warn('[Coach] Ya hay una sesión activa; ignorando start().'); return; }
     active = true;
+    // El camino OpenAI arma su prompt en el navegador: trae en paralelo el
+    // entrenamiento del equipo. Si no llega, el coach usa su prompt de siempre.
+    trainedPrompt = null;
+    if (coachEngine() === 'openai' && global.AITraining) {
+      global.AITraining.coachLivePrompt().then(function (p) { trainedPrompt = p; });
+    }
     try {
       console.log('[Coach] 1/4 Pidiendo token a Deepgram via Worker...');
       const dgToken = await getDeepgramToken();
@@ -404,15 +411,20 @@
       return;
     }
 
-    // Espejo corto de NEURO_DOCTRINE (supabase/functions/sales-coach/index.ts):
-    // este camino solo corre cuando el motor es OpenAI vía el worker.
-    const systemPrompt = [
-      'Eres el coach de ventas de Predictable.ai en vivo, al oído del vendedor durante una llamada B2B.',
+    // Espejo corto de NEURO_DOCTRINE (supabase/functions/_shared/sales-training.ts):
+    // este camino solo corre cuando el motor es OpenAI vía el worker. Si el
+    // equipo entrenó su IA («Entrenamiento IA»), la doctrina corta se cambia
+    // por la misma doctrina y el mismo bloque que usa sales-coach.
+    const doctrine = (trainedPrompt && trainedPrompt.doctrine) ? [trainedPrompt.doctrine] : [
       'Hablas como un entrenador de neuroventas de la escuela de Jürgen Klarić: directo, frases cortas, sin teoría.',
       'Véndele a la mente: primero el cerebro reptil (miedo a perder, seguridad, poder, ahorrar tiempo), luego la emoción, al final los datos.',
       'Objeciones en 3 movimientos: valida la emoción, reencuadra al miedo/deseo del lead, pregunta que lleva a un sí pequeño. Nunca pelees con su proveedor actual.',
       'Cada dato del lead (dolor, meta, plazo, presupuesto, decisor) es una puerta: si el vendedor la deja pasar, dile la pregunta exacta para abrirla.',
       'Si el vendedor habla más del 60 %, ordénale callarse y preguntar. Sin siguiente paso con fecha no hay cierre.',
+    ];
+    const systemPrompt = [
+      'Eres el coach de ventas de Predictable.ai en vivo, al oído del vendedor durante una llamada B2B.',
+    ].concat(doctrine, [
       'La conversación tiene 2 hablantes: "Lead" y "SDR" (el vendedor).',
       'Recibes la parte de la conversación que ya analizaste (solo contexto) y lo NUEVO.',
       'Genera alertas SOLO sobre lo nuevo; no repitas alertas de la parte anterior.',
@@ -424,7 +436,7 @@
       '  "next_step": ""',
       '}',
       'Español neutro. NO inventes alertas: si no hay nada accionable, "alerts": [].'
-    ].join('\n');
+    ]).join('\n') + ((trainedPrompt && trainedPrompt.block) ? '\n' + trainedPrompt.block : '');
     const userContent = 'Contexto del prospecto (brief del lead, ángulo y preparación):\n' + JSON.stringify(currentProspect || {}).slice(0, 4000) + '\n\n' +
       (prior ? 'Conversación anterior (ya analizada, solo contexto):\n' + prior + '\n\n' : '') +
       'Lo nuevo (analiza solo esto):\n' + fresh;
