@@ -936,7 +936,7 @@
   }
 
   // ── Enriquecimiento en el servidor (edge function enrich-list) ─────
-  // La cola vive en la fila (migración 20260923000002): encolar = marcar
+  // La cola vive en la fila (migración 20260923000003): encolar = marcar
   // enrich_requested_at. La procesa enrich-list — la dispara este navegador
   // al encolar (para empezar ya) y pg_cron cada minuto (para seguir si se
   // cierra la pestaña). La UI la lee de la base: una fila en cola se ve
@@ -1448,7 +1448,7 @@
       engine: engine || (global.AIEngine && global.AIEngine.get('outreach')),
     });
     if (!data?.body) throw new Error('La IA no devolvió la respuesta. Reintenta.');
-    return { subject: data.subject || '', body: data.body };
+    return { subject: data.subject || '', body: data.body, knowledge: Array.isArray(data.knowledge) ? data.knowledge : [] };
   }
 
   // ── Brief del cliente ("MI Cliente") ────────────────────────

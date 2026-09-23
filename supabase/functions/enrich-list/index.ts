@@ -2,7 +2,7 @@
  * enrich-list — Supabase Edge Function
  *
  * Procesa la cola de enriquecimiento de prospect_list_members (migración
- * 20260923000002). Antes el reveal corría en el navegador y cerrar la pestaña
+ * 20260923000003). Antes el reveal corría en el navegador y cerrar la pestaña
  * lo cortaba a medias; ahora sigue aquí aunque el usuario se vaya.
  *
  * Quién la llama:
