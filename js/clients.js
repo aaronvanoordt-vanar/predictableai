@@ -439,6 +439,19 @@
       '.cl-portal-tgl{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-3);cursor:pointer;user-select:none}',
       '.cl-portal-tgl input{accent-color:var(--accent);cursor:pointer;margin:0}',
       '.cl-mat-src{flex:none;padding:2px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent-ink);font-size:10px;font-weight:700}',
+      '.cl-accounts{display:flex;flex-direction:column;gap:12px;margin-top:8px}',
+      '.cl-acc-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}',
+      '.cl-acc-title{font-size:15px;font-weight:700;color:var(--ink)}',
+      '.cl-acc-sub{font-size:12px;color:var(--ink-3);margin-top:2px}',
+      '.cl-acc-search{min-width:240px;padding:8px 11px;border-radius:var(--r-sm);border:1px solid var(--hair-3);background:var(--surface);color:var(--ink);font-size:13px}',
+      '.cl-acc-wrap{overflow-x:auto;background:var(--surface);border:1px solid var(--hair-3);border-radius:var(--r-lg)}',
+      '.cl-acc-table{width:100%;border-collapse:collapse;font-size:12.5px}',
+      '.cl-acc-table th{text-align:left;font-weight:600;color:var(--ink-3);padding:10px 12px;border-bottom:1px solid var(--hair-3);white-space:nowrap}',
+      '.cl-acc-table td{padding:9px 12px;border-bottom:1px solid var(--hair-3);color:var(--ink-2);white-space:nowrap}',
+      '.cl-acc-table tr:last-child td{border-bottom:none}',
+      '.cl-acc-email{color:var(--ink)!important;font-weight:600}',
+      '.cl-acc-num{font-family:var(--font-mono);text-align:right}',
+      '.cl-acc-none{text-align:center;color:var(--ink-3)!important;padding:18px!important}',
       '@media (max-width:760px){.cl-sections{grid-template-columns:1fr}.cl-row2{grid-template-columns:1fr}}',
     ].join('\n');
     document.head.appendChild(css);
@@ -485,6 +498,74 @@
     } catch (e) {
       state.body.innerHTML = '<div class="cl-empty">⚠ No se pudieron cargar los clientes: ' + esc(e.message || e) + '</div>';
     }
+    loadAccounts();
+  }
+
+  // ── Cuentas registradas (solo equipo @vanarsi.com) ─────────────────────
+  // El RPC platform_list_accounts (migración 20260923000006) valida en el
+  // servidor que quien llama sea del equipo; a cualquier otro le responde
+  // 42501 y esta sección simplemente no aparece. Las contraseñas no existen en
+  // texto plano (Supabase Auth guarda solo el hash bcrypt), así que no hay
+  // columna de contraseña.
+
+  var PROVIDER_LABEL = { email: 'Correo y contraseña', google: 'Google' };
+
+  async function loadAccounts() {
+    if (state.view !== 'grid' || !state.body) return;
+    var res;
+    try { res = await sb().rpc('platform_list_accounts'); } catch (e) { return; }
+    if (res.error || !Array.isArray(res.data) || state.view !== 'grid') return;
+    state.accounts = res.data;
+    state.accountsQuery = '';
+    var host = document.getElementById('cl-accounts');
+    if (!host) {
+      host = document.createElement('section');
+      host.id = 'cl-accounts';
+      host.className = 'cl-accounts';
+      state.body.appendChild(host);
+    }
+    host.innerHTML =
+      '<div class="cl-acc-head">' +
+        '<div><div class="cl-acc-title">Cuentas registradas</div>' +
+        '<div class="cl-acc-sub">' + res.data.length + ' cuenta' + (res.data.length === 1 ? '' : 's') +
+          ' en Predictable · solo visible para el equipo @vanarsi.com</div></div>' +
+        '<input class="cl-acc-search" id="cl-acc-search" type="search" placeholder="Buscar por correo, nombre o empresa">' +
+      '</div>' +
+      '<div class="cl-acc-wrap"><table class="cl-acc-table"><thead><tr>' +
+        '<th>Correo</th><th>Nombre</th><th>Empresa</th><th>Acceso</th><th>Registro</th><th>Último acceso</th><th>Créditos</th>' +
+      '</tr></thead><tbody id="cl-acc-rows"></tbody></table></div>';
+    renderAccountRows();
+    host.querySelector('#cl-acc-search').addEventListener('input', function (e) {
+      state.accountsQuery = String(e.target.value || '').trim().toLowerCase();
+      renderAccountRows();
+    });
+  }
+
+  function renderAccountRows() {
+    var tbody = document.getElementById('cl-acc-rows');
+    if (!tbody) return;
+    var q = state.accountsQuery;
+    var rows = (state.accounts || []).filter(function (a) {
+      if (!q) return true;
+      return [a.email, a.full_name, a.company].some(function (v) { return v && String(v).toLowerCase().indexOf(q) !== -1; });
+    });
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="cl-acc-none">Ninguna cuenta coincide con la búsqueda.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (a) {
+      var provider = PROVIDER_LABEL[a.provider] || a.provider || '—';
+      return '<tr>' +
+        '<td class="cl-acc-email">' + esc(a.email || '—') +
+          (a.email_confirmed ? '' : ' <span class="cl-chip cl-st-amber">Sin confirmar</span>') + '</td>' +
+        '<td>' + esc(a.full_name || '—') + '</td>' +
+        '<td>' + esc(a.company || '—') + '</td>' +
+        '<td>' + esc(provider) + '</td>' +
+        '<td>' + esc(a.created_at ? new Date(a.created_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' }) : '—') + '</td>' +
+        '<td>' + esc(a.last_sign_in_at ? fmtDateTime(a.last_sign_in_at) : 'Nunca') + '</td>' +
+        '<td class="cl-acc-num">' + (a.unlimited ? 'Ilimitados' : esc(a.balance == null ? '—' : a.balance)) + '</td>' +
+      '</tr>';
+    }).join('');
   }
 
   function renderGridSkeleton() {
