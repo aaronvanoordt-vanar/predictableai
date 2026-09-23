@@ -6,7 +6,7 @@
  */
 
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { blockedInPlatformMode, contactAsPerson, sanitizePlatformSearch } from "./apollo-platform.ts";
+import { blockedInPlatformMode, contactAsPerson, contactIdsFromOtherAccount, sanitizePlatformSearch } from "./apollo-platform.ts";
 
 Deno.test("POST /contacts no llega a la cuenta compartida", () => {
   assert(blockedInPlatformMode("/contacts"));
@@ -61,4 +61,13 @@ Deno.test("la búsqueda no devuelve contacts y no duplica personas", () => {
 Deno.test("respuestas raras pasan tal cual", () => {
   assertEquals(sanitizePlatformSearch(null), null);
   assertEquals(sanitizePlatformSearch([1]), [1]);
+});
+
+Deno.test("los contactos se olvidan al pasar a otra cuenta de Apollo, no al reconectar la misma", () => {
+  assert(contactIdsFromOtherAccount(null, "u1"), "primera conexión: venían de la cuenta compartida");
+  assert(contactIdsFromOtherAccount({}, "u1"));
+  assert(contactIdsFromOtherAccount({ apollo_user_id: "u1" }, "u2"), "cambió de cuenta");
+  assert(!contactIdsFromOtherAccount({ apollo_user_id: "u1" }, "u1"), "reconectó la misma");
+  assert(!contactIdsFromOtherAccount({ apollo_user_id: 7 }, "7"));
+  assert(contactIdsFromOtherAccount({ apollo_user_id: "u1" }, null), "sin id nuevo no se puede probar que sea la misma");
 });

@@ -61,3 +61,17 @@ export function sanitizePlatformSearch(data: unknown): unknown {
   }
   return { ...d, contacts: [], people: [...fromContacts, ...people] };
 }
+
+/**
+ * ¿Los `apollo_contact_id` ya guardados del usuario son de OTRA cuenta de
+ * Apollo? Pasa al conectar su Apollo por primera vez (los creó la cuenta
+ * compartida) o al cambiar a una cuenta distinta. Un id de contacto solo
+ * existe en la cuenta que lo creó: usarlo con la nueva hace fallar el email
+ * de campaña y la respuesta desde la Bandeja. Reconectar la MISMA cuenta
+ * (mismo `apollo_user_id`) los conserva.
+ */
+export function contactIdsFromOtherAccount(prevConfig: unknown, newApolloUserId: unknown): boolean {
+  const prevId = (prevConfig as Json | null | undefined)?.apollo_user_id;
+  if (prevId == null || prevId === "" || newApolloUserId == null || newApolloUserId === "") return true;
+  return String(prevId) !== String(newApolloUserId);
+}
