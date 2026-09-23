@@ -53,7 +53,7 @@
  *
  * Together with generate-client-brief (which derives what_it_does, mechanism,
  * positional_phrase and key_outcomes from this same grounded data), this cubre
- * las 13 tarjetas de "Contexto de tu empresa" de punta a punta — los dos
+ * las tarjetas de "Contexto de tu empresa" (15 desde el contexto v3) de punta a punta — los dos
  * bloques, el interno y el externo.
  *
  * Sobre el bloque externo (a quién le vende el cliente): se PROPONE aquí con
@@ -67,7 +67,7 @@
  * Stores enriched data in intel_hub_intake.
  *
  * ── Cierre al 100 % (regla de producto, 2026-09-13) ──────────────────────
- * La corrida SIEMPRE termina con las 13 tarjetas de "Contexto de tu empresa"
+ * La corrida SIEMPRE termina con todas las tarjetas de "Contexto de tu empresa"
  * completas. Tras los pasos de investigación, `completeContextGaps` relee la
  * fila, detecta qué campos exigidos siguen vacíos y los cierra en dos capas:
  * una llamada al modelo con todo lo ya conocido que propone SOLO esos campos
@@ -102,6 +102,7 @@ import {
 } from "../_shared/icp-taxonomy.ts";
 import {
   REQUIRED_INTAKE_FIELDS, missingFields, isFilled, deterministicDefaults, legacyMirror as mirrorLegacy,
+  structuredMirror as mirrorStructured,
   hostnameOf, type RequiredField, type ContextRow,
 } from "../_shared/context-defaults.ts";
 
@@ -383,17 +384,33 @@ const FIELD_SPECS: Record<RequiredField, string> = {
   icp_departments: `["departments where the buyer sits, ONLY from the allowed list"]`,
   icp_seniorities: `["decision-maker levels, ONLY from the allowed list"]`,
   icp_titles: `["3-8 concrete job titles of the decision maker, in the language the buyer uses on LinkedIn"]`,
-  icp_pain_points: `"1-3 sentences in Spanish, from the target CUSTOMER's point of view: what hurts them today"`,
-  icp_buying_triggers: `"1-2 sentences in Spanish: observable public events that mean a company is ready to buy this"`,
+  company_offerings: `[{"name": "product/service as the site names it", "for_whom": "the customer segment it is for, in Spanish (e.g. 'Clínicas privadas de 20-200 empleados')", "problem": "the problem it solves, 1 sentence in Spanish", "price": "ONLY a price or plan that the site itself publishes (e.g. 'desde US$99/mes'); otherwise empty"}] — one per solution already known, max 8`,
+  current_customers: `[{"name": "a client company the seller's OWN site or LinkedIn names (logos, case studies, testimonials)", "domain": "client.com or empty", "industry": "its industry"}] — ONLY clients publicly cited by the seller; if none are cited return []`,
+  buying_committee: `{"decision_maker": {"titles": "who decides and signs, comma-separated", "cares": "what makes them say yes, 1 sentence in Spanish"}, "user": {"titles": "who uses it day to day", "cares": "what they gain or fear"}, "blocker": {"titles": "who can stall the purchase (IT, legal, procurement, finance)", "cares": "why they would stall it"}}`,
+  icp_tech_uses: `["3-8 tools/platforms the target customer typically USES and that matter for this sale (CRM, ecommerce platform, ERP, chat, ads pixels…), by product name"]`,
+  icp_pains: `[{"pain": "what hurts the target customer today, in Spanish, from their point of view", "persona": "who feels it (job title)", "evidence": "how it shows from the outside, or empty"}] — 2 to 5 items`,
+  icp_signals: `[{"signal": "an OBSERVABLE public fact that means a company is ready to buy this now, in Spanish", "evidence": "where it can be seen from the outside (LinkedIn Jobs, press, public tenders, the company's website, Google Maps, funding news…)"}] — 3 to 6 items; never a signal that cannot be seen from outside`,
+  icp_current_alternatives: `"1-2 sentences in Spanish: how the target customer solves the problem TODAY without the seller (spreadsheets, an in-house employee, a local provider, nothing)"`,
+  icp_disqualifiers: `"1 sentence in Spanish: who is clearly NOT a fit (too small, wrong model, wrong region…)"`,
   common_objections: `[{"objection": "likely reflex objection of this buyer, in Spanish", "neutralizer": "micro-phrase in Spanish that preempts it without sounding defensive"}] — 2 to 4 items`,
 };
 
 // Columnas que necesita el cierre: las exigidas por las tarjetas más las
 // banderas "no tengo" del usuario, que cuentan como campo lleno.
 const CONTEXT_COLUMNS = [
-  "company_website", "company_linkedin_url", "icp_disqualifiers", "social_proof_none", "objections_none",
+  "company_website", "company_linkedin_url", "social_proof_none", "objections_none", "customers_none",
+  "social_proof", "icp_tech_gaps", "icp_pain_points", "icp_buying_triggers",
   "context_confirmed_at", ...REQUIRED_INTAKE_FIELDS,
 ].join(", ");
+
+// deno-lint-ignore no-explicit-any
+function textRows(v: any, keys: string[], max: number, maxLen = 300): Record<string, string>[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((o) => o && typeof o === "object")
+    .map((o) => Object.fromEntries(keys.map((k) => [k, str(o[k]).slice(0, maxLen)])))
+    .filter((o) => str(o[keys[0]]))
+    .slice(0, max);
+}
 
 // deno-lint-ignore no-explicit-any
 function sanitizeProposal(p: any, missing: RequiredField[]): ContextRow {
@@ -423,6 +440,22 @@ function sanitizeProposal(p: any, missing: RequiredField[]): ContextRow {
             .filter((c: { name: string }) => c.name).slice(0, 6)
           : [];
         break;
+      case "company_offerings": out[f] = textRows(v, ["name", "for_whom", "problem", "price"], 8); break;
+      case "current_customers": out[f] = textRows(v, ["name", "domain", "industry"], 10, 120); break;
+      case "icp_pains": out[f] = textRows(v, ["pain", "persona", "evidence"], 6); break;
+      case "icp_signals": out[f] = textRows(v, ["signal", "evidence"], 8).filter((x) => x.evidence); break;
+      case "icp_tech_uses": out[f] = freeList(v, 10); break;
+      case "buying_committee": {
+        const c = v && typeof v === "object" && !Array.isArray(v) ? v : {};
+        const committee: Record<string, { titles: string; cares: string }> = {};
+        for (const role of ["decision_maker", "user", "blocker"]) {
+          const r = c[role] && typeof c[role] === "object" ? c[role] : {};
+          const titles = str(r.titles).slice(0, 200), cares = str(r.cares).slice(0, 300);
+          if (titles || cares) committee[role] = { titles, cares };
+        }
+        out[f] = committee;
+        break;
+      }
       case "common_objections":
         out[f] = Array.isArray(v)
           // deno-lint-ignore no-explicit-any
@@ -464,9 +497,9 @@ ALLOWED VALUES — any value outside these lists is discarded, so pick from them
 - icp_departments: ${ICP_DEPARTMENTS.join(", ")}
 - icp_seniorities: ${ICP_SENIORITIES.join(", ")}
 
-What you must never fabricate: numeric figures, client names, certifications, dates, or a competitor company that does not exist — if you cannot name a real competitor, use the category-level alternative the buyer actually considers (e.g. 'Hacerlo internamente', 'Consultoras locales de X').${focusBlock(focus)}`;
+What you must never fabricate: numeric figures, prices the site does not publish, client names the seller does not cite publicly (current_customers is the ONE field that may legitimately be []), certifications, dates, or a competitor company that does not exist — if you cannot name a real competitor, use the category-level alternative the buyer actually considers (e.g. 'Hacerlo internamente', 'Consultoras locales de X').${focusBlock(focus)}`;
   const user = `Company source: ${source}\n\nKnown context (already researched — build on it, do not contradict it):\n${knownLines || "(only the URL above)"}\n\nReturn ONLY the missing fields listed in the schema.`;
-  const p = parseJson(await callAi(engine, system, user, { maxUses: 1, maxTokens: 1600 }));
+  const p = parseJson(await callAi(engine, system, user, { maxUses: 1, maxTokens: 3500 }));
   return sanitizeProposal(p, missing);
 }
 
@@ -666,7 +699,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
       }
       Object.assign(fields, deterministicDefaults({ ...known, ...fields }, prof ?? null));
       if (!Object.keys(fields).length) return;
-      Object.assign(fields, mirrorLegacy(fields));
+      Object.assign(fields, mirrorLegacy(fields), mirrorStructured(fields));
       await patch(fields, 96, "Contexto completo · redactando tu resumen…");
       console.log(`[enrich] gaps closed for ${user.id}: ${Object.keys(fields).join(", ")}`);
     } catch (e) {

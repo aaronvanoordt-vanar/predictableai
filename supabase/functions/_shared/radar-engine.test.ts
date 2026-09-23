@@ -3,7 +3,7 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import { canonicalCountry, canonicalCountries, countryFit } from "./radar-geo.ts";
 import { adjustWeight, inEmployeeRanges, industryMatches, parseEmployeeCount, scoreSignal } from "./radar-score.ts";
 import { detectTech, evaluateProbeRules, probeHeadline } from "./site-probe.ts";
-import { DEFAULT_MAX_COMPANIES, maxCompaniesOf, normalizeDetector, normalizePlan, signalFingerprint } from "./radar-plan.ts";
+import { DEFAULT_MAX_COMPANIES, coverSignals, maxCompaniesOf, normalizeDetector, normalizePlan, reachForDealSize, signalFingerprint } from "./radar-plan.ts";
 import { parseSignalDate, withinWindow } from "./radar-recency.ts";
 import { filterByWindow, shapeResearchCompanies } from "./radar-research.ts";
 import { cheapHash } from "./radar-context.ts";
@@ -214,4 +214,36 @@ Deno.test("max_companies: el usuario elige cuántas empresas revisa cada corrida
   const e = normalizeDetector({ kind: "growth", config: { months: 12 } });
   assertEquals(e!.config.max_companies, undefined);
   assertEquals(maxCompaniesOf(e!.config), DEFAULT_MAX_COMPANIES);
+});
+
+// ── plan desde el análisis de mercado (2026-09-23) ──────────────────────────
+
+Deno.test("reachForDealSize: ticket alto → menos cuentas; desconocido → default", () => {
+  assertEquals(reachForDealSize("<1k"), 1000);
+  assertEquals(reachForDealSize("5k-20k"), 300);
+  assertEquals(reachForDealSize("100k+"), 50);
+  assertEquals(reachForDealSize(undefined), DEFAULT_MAX_COMPANIES);
+});
+
+Deno.test("coverSignals: un detector por señal; lo que falta se cubre con noticias", () => {
+  const signals = [
+    { signal: "Abrió vacantes de vendedores", evidence: "LinkedIn Jobs", why: "Crece el equipo", detector_kind: "hiring", priority: "high" },
+    { signal: "Nuevo director comercial", evidence: "LinkedIn", why: "Primeros 90 días", detector_kind: "leadership" },
+  ];
+  const hiring = normalizeDetector({ kind: "hiring", name: "Vacantes", config: { job_titles: ["Sales Executive"] }, signal_index: 0 })!;
+  assertEquals(hiring.signal_index, 0);
+  const out = coverSignals([hiring], signals, ["Mexico", "Colombia"]);
+  assertEquals(out.filled, [1]);
+  assertEquals(out.detectors.length, 2);
+  const fb = out.detectors[1];
+  assertEquals(fb.kind, "news");
+  assertEquals(fb.signal_index, 1);
+  assertEquals(fb.name, "Nuevo director comercial");
+  assert((fb.config.queries as string[]).some((q) => q.includes("Mexico")));
+});
+
+Deno.test("coverSignals: sin señales no agrega nada", () => {
+  const d = normalizeDetector({ kind: "news", name: "X", config: { queries: ["x"] } })!;
+  assertEquals(d.signal_index, undefined);
+  assertEquals(coverSignals([d], [], ["Mexico"]).detectors.length, 1);
 });

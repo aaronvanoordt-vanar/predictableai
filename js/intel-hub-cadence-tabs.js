@@ -1,8 +1,10 @@
 /**
  * intel-hub-cadence-tabs.js (v5 — un vaso de agua, no un océano)
  *
- * Rediseño completo del Intelligence Hub: 9 segmentos agrupados en tabs por
- * cadencia (Hoy / Esta semana / Este mes), cada uno con su propia identidad
+ * Intelligence Hub en dos capas: arriba el ANÁLISIS DE MERCADO fundacional
+ * (market_analysis — se confirma y alimenta el plan del Radar) y abajo el
+ * PULSO: 6 segmentos agrupados en tabs por
+ * cadencia (Hoy / Esta semana), cada uno con su propia identidad
  * visual y su propio renderer. Los reportes viven en intelligence_hub_reports
  * (Supabase) y llegan por realtime; el contenido nuevo usa el envelope
  * { v: 2, headline, summary, key_points, ...payload } — los reportes con el
@@ -19,21 +21,25 @@
   }
   const SVG_SPARK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18 9.5l-4.2 1.8L12 16l-1.8-4.7L6 9.5l4.2-1.8z"/><path d="M18.5 14l.9 2.3 2.1.9-2.1.9-.9 2.3-.9-2.3-2.1-.9 2.1-.9z"/></svg>';
   const SVG_CHEVRON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+  // El Hub tiene dos capas (2026-09-23):
+  //   1. El ANÁLISIS DE MERCADO (market_analysis): fundacional, se genera al
+  //      confirmar el contexto, el usuario lo confirma y el Radar diseña su
+  //      plan sobre él. Vive arriba, fuera de las pestañas.
+  //   2. El PULSO: seis segmentos que se refrescan solos (Hoy / Esta semana).
+  //      Los tres mensuales (comportamiento del consumidor, foto del mercado,
+  //      innovaciones) se eliminaron: el análisis cubre lo que servía para
+  //      vender y el resto no llevaba a ninguna acción.
   const CADENCES = [
     { key: 'daily',   label: 'Hoy',         hint: 'Se actualiza a diario' },
     { key: 'weekly',  label: 'Esta semana', hint: 'Se actualiza cada semana' },
-    { key: 'monthly', label: 'Este mes',    hint: 'Se actualiza cada mes' },
   ];
   const SECTIONS = [
-    { key: 'industry_insight_digest',      title: 'Industry Insight Digest',      cadence: 'daily',   order: 1, icon: '📡', color: '#1F4BFF' },
-    { key: 'competitor_threat_radar',      title: 'Competitor Threat Radar',      cadence: 'daily',   order: 2, icon: '⚡', color: '#D64545' },
-    { key: 'prospecting_recommendations',  title: 'Prospecting Recommendations',  cadence: 'daily',   order: 3, icon: '🎯', color: '#C77E12' },
-    { key: 'benchmark',                    title: 'Benchmark',                    cadence: 'weekly',  order: 4, icon: '📊', color: '#7C5CFC' },
-    { key: 'revenue_opportunities',        title: 'Revenue Opportunities',        cadence: 'weekly',  order: 5, icon: '💰', color: '#0EA968' },
-    { key: 'strategic_actions',            title: 'Strategic Actions',            cadence: 'weekly',  order: 6, icon: '🎬', color: '#C77E12' },
-    { key: 'consumer_behavioral_analysis', title: 'Consumer Behavioral Analysis', cadence: 'monthly', order: 7, icon: '🧠', color: '#0891B2' },
-    { key: 'market_snapshot',              title: 'Market Snapshot',              cadence: 'monthly', order: 8, icon: '🗺️', color: '#4F46E5' },
-    { key: 'future_innovations',           title: 'Future Innovations',           cadence: 'monthly', order: 9, icon: '🔮', color: '#9333EA' },
+    { key: 'industry_insight_digest',      title: 'Señales del mercado',               cadence: 'daily',   order: 1, icon: '📡', color: '#1F4BFF' },
+    { key: 'competitor_threat_radar',      title: 'Movimientos de la competencia',     cadence: 'daily',   order: 2, icon: '⚡', color: '#D64545' },
+    { key: 'prospecting_recommendations',  title: 'Ajustes de prospección',            cadence: 'daily',   order: 3, icon: '🎯', color: '#C77E12' },
+    { key: 'benchmark',                    title: 'Tu posición frente a la competencia', cadence: 'weekly', order: 4, icon: '📊', color: '#7C5CFC' },
+    { key: 'revenue_opportunities',        title: 'Oportunidades de ingreso',          cadence: 'weekly',  order: 5, icon: '💰', color: '#0EA968' },
+    { key: 'strategic_actions',            title: 'Acciones de la semana',             cadence: 'weekly',  order: 6, icon: '🎬', color: '#C77E12' },
   ];
   const SUBTITLES = {
     "industry_insight_digest": "3 lecturas del mercado, traducidas a tu venta de hoy",
@@ -41,11 +47,9 @@
     "prospecting_recommendations": "Ajustes de hoy para tu búsqueda y tus mensajes",
     "benchmark": "Tu posición frente a competidores en los 2 ejes clave de la semana",
     "revenue_opportunities": "Segmentos, industrias y geografías con mayor potencial esta semana",
-    "strategic_actions": "Qué hacer, qué evitar y qué probar esta semana",
-    "consumer_behavioral_analysis": "Cómo cambian los dolores y decisiones de tus compradores",
-    "market_snapshot": "Crecimiento, demanda y lo que está de moda en tu mercado",
-    "future_innovations": "Lo que viene en 6–18 meses y qué empezar a preparar hoy"
+    "strategic_actions": "Qué hacer, qué evitar y qué probar esta semana"
   };
+  const MARKET_KEY = 'market_analysis';
   const STATE = {
     user: null,
     reports: {}, feedback: {}, learning: {},
@@ -54,6 +58,8 @@
     intake: null, brief: null, profile: null, documents: [], researchLoaded: false, researchSaving: false,
     researchOpenSection: 'company', researchGeneratingSection: null, researchLayoutKey: null,
     researchKickoffAt: 0, researchGateSig: null,
+    // Análisis de mercado: cuándo lo confirmó el usuario (intel_hub_intake).
+    analysisConfirmedAt: null, analysisRequesting: false,
   };
   function log(...a) { console.log('[intel-hub-v5]', ...a); }
   async function waitForSupabase() {
@@ -71,7 +77,7 @@
     const { data: { user } } = await window.supabaseClient.auth.getUser();
     if (!user) { mountObserver(); return log('no user'); }
     STATE.user = user;
-    await Promise.all([loadReports(), loadFeedback(), loadLearning()]);
+    await Promise.all([loadReports(), loadFeedback(), loadLearning(), loadMarketState()]);
     subscribeRealtime();
     mountObserver();
   }
@@ -81,6 +87,11 @@
     (data || []).forEach(r => { STATE.reports[r.section_key] = r; });
     log(`loaded ${data?.length || 0} reports`);
     renderIfMounted();
+  }
+  async function loadMarketState() {
+    const { data } = await window.supabaseClient.from('intel_hub_intake')
+      .select('market_analysis_confirmed_at').eq('user_id', STATE.user.id).maybeSingle();
+    STATE.analysisConfirmedAt = (data && data.market_analysis_confirmed_at) || null;
   }
   async function loadFeedback() {
     const { data } = await window.supabaseClient.from('intel_hub_feedback').select('section_key, item_index, rating').eq('user_id', STATE.user.id);
@@ -129,12 +140,17 @@
     const wrap = document.createElement('div');
     wrap.className = 'ihx-wrap';
     wrap.innerHTML = `
+      <section class="mka" id="ihx-market" aria-label="Análisis de mercado"></section>
+      <div class="ihx-pulse-head">
+        <h3>Pulso del mercado</h3>
+        <span>Lo que cambió hoy y esta semana dentro de las prioridades de tu análisis.</span>
+      </div>
       <div class="ihx-toolbar">
         <button class="ihx-btn-generate" id="ih-btn-generate" data-credit-cost="intel_hub_refresh" data-credit-muted>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
           <span>Actualizar inteligencia</span>
         </button>
-        <button class="ihx-btn-force" id="ih-btn-generate-all" title="Regenera los 9 segmentos (saltea cadence).">
+        <button class="ihx-btn-force" id="ih-btn-generate-all" title="Regenera los ${SECTIONS.length} segmentos del pulso (saltea cadence).">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v5h5"/></svg>
           <span>Regenerar todo</span>
         </button>
@@ -152,11 +168,13 @@
     if (window.AIEngine) window.AIEngine.mount('#ih-engine', 'intel_hub', { compact: true });
     wrap.querySelector('#ih-btn-generate').addEventListener('click', () => generateAll({ force: false }));
     wrap.querySelector('#ih-btn-generate-all').addEventListener('click', () => {
-      if (confirm('Esto regenera los 9 segmentos (saltea cadence). ¿Continuar?')) {
+      if (confirm(`Esto regenera los ${SECTIONS.length} segmentos del pulso (saltea cadence). ¿Continuar?`)) {
         generateAll({ force: true });
       }
     });
     wrap.addEventListener('click', async (ev) => {
+      const mka = ev.target.closest('[data-mka]');
+      if (mka) { ev.preventDefault(); await runMarketAction(mka); return; }
       const fb = ev.target.closest('[data-fb]');
       if (fb) { ev.preventDefault(); await submitFeedback(fb); return; }
       const act = ev.target.closest('[data-hubact]');
@@ -490,12 +508,6 @@
     const started = new Date(brief.updated_at || 0).getTime();
     return (Date.now() - started) > STALE_BRIEF_MS;
   }
-  // company_solutions se guarda como texto separado por comas; en la UI se
-  // edita como una lista de cajas individuales, una por solución.
-  function parseSolutions(raw) {
-    const list = (raw || '').split(',').map(s => s.trim()).filter(Boolean);
-    return list.length ? list : [''];
-  }
   function docStatusLabel(status) {
     return status === 'done' ? 'Analizado'
       : status === 'analyzing' ? 'Analizando…'
@@ -531,7 +543,7 @@
   function researchStatusLabel(key, intake, brief, isRunning) {
     if (STATE.researchGeneratingSection && isRunning) return 'Generando…';
     if (!researchSectionState(key, intake, brief).complete) return 'Pendiente';
-    return intake && intake.context_confirmed_at ? 'Confirmado' : 'Listo — revísalo';
+    return CC().isConfirmedCurrent(intake || {}) ? 'Confirmado' : 'Listo — revísalo';
   }
   function isEnriching(intake) {
     return intake?.company_enrichment_status === 'running' && !isStaleEnriching(intake);
@@ -686,7 +698,7 @@
       // pendientes) según la completitud: un cambio ahí exige re-render, no
       // parcheo.
       CC().completeness(intake, brief).fieldsComplete ? '1' : '0',
-      intake?.context_confirmed_at ? '1' : '0',
+      CC().completeness(intake, brief).confirmed ? '1' : '0',
     ].join('|');
   }
   function flashFilled(el) {
@@ -704,21 +716,6 @@
     el.value = next;
     if (next.trim() && wasEmpty) flashFilled(el);
   }
-  function patchSolutionsList(shell, raw) {
-    const list = shell.querySelector('#ihx-solutions-list');
-    if (!list || list.contains(document.activeElement)) return;
-    const inputs = Array.from(list.querySelectorAll('.ihx-solution-input'));
-    const current = inputs.map(i => i.value.trim()).filter(Boolean).join(', ');
-    const next = parseSolutions(raw).filter(Boolean);
-    if (current === next.join(', ')) return;
-    const wasEmpty = !current;
-    list.innerHTML = (next.length ? next : ['']).map(val => `
-      <div class="ihx-chip-row">
-        <input type="text" class="ihx-solution-input" value="${escapeHtml(val)}" placeholder="Ej: Prospección con IA">
-        <button type="button" class="ihx-chip-remove" data-remove-solution title="Quitar">×</button>
-      </div>`).join('');
-    if (next.length && wasEmpty) flashFilled(list);
-  }
   function patchResearchLive() {
     const shell = document.getElementById('ih-research-shell');
     if (!shell || !shell.querySelector('#ihx-research-form')) return;
@@ -734,13 +731,11 @@
     setLiveValue(q('[name="company_industry"]'), intake.company_industry || '');
     setLiveValue(q('[name="company_employee_count"]'), intake.company_employee_count || '');
     setLiveValue(q('[name="company_country"]'), intake.company_country || '');
-    setLiveValue(q('[name="icp_pain_points"]'), intake.icp_pain_points || '');
     setLiveValue(q('[name="what_it_does"]'), brief.what_it_does || '');
     setLiveValue(q('[name="mechanism"]'), brief.mechanism || '');
     setLiveValue(q('[name="positional_phrase"]'), brief.positional_phrase || '');
     setLiveValue(q('[name="key_outcomes"]'),
       Array.isArray(brief.key_outcomes) ? brief.key_outcomes.join('\n') : (brief.key_outcomes || ''));
-    patchSolutionsList(shell, intake.company_solutions);
     // Multi-selects, chips y filas: solo se rellenan si están vacíos, nunca
     // pisan una selección del usuario (ver CompanyContext.patchLive).
     CC().patchLive(shell, intake);
@@ -868,7 +863,6 @@
     const statusLabel = researchStatusText(brief, phase);
     // Junto a qué botón se dibuja la barra — una sola, no las dos a la vez.
     const runSource = isRunning ? researchRunSource() : null;
-    const solutions = parseSolutions(intake.company_solutions);
     const progress = researchProgress(intake, brief);
     const cc = CC();
     const completeness = cc.completeness(intake, brief);
@@ -881,7 +875,7 @@
       const state = researchSectionState(key, intake, brief);
       const status = researchStatusLabel(key, intake, brief, isRunning);
       const isOpen = STATE.researchOpenSection === key;
-      const body = key === 'solutions' ? solutionsCardBody() : (cc.cardBody(key, intake, brief) || '');
+      const body = cc.cardBody(key, intake, brief) || '';
       return `
         <section class="ihx-context-card ${state.complete ? 'is-complete' : 'is-pending'} ${isOpen ? 'is-open' : ''}" data-research-section="${key}">
           <button type="button" class="ihx-context-card-toggle" data-toggle-section="${key}" aria-expanded="${isOpen}" aria-controls="ihx-card-body-${key}">
@@ -899,12 +893,6 @@
           </div>
         </section>`;
     };
-    const solutionsCardBody = () => `
-      <div class="ihx-field">
-        <span>Qué ofreces para resolverlos</span>
-        <div class="ihx-chip-list" id="ihx-solutions-list">${solutions.map(solutionRow).join('')}</div>
-        <button type="button" class="ihx-chip-add" id="ihx-solutions-add">+ Agregar solución</button>
-      </div>`;
     const blockHtml = (blockDef) => {
       const score = completeness.blocks[blockDef.key];
       const done = score.done === score.total;
@@ -926,11 +914,6 @@
     };
     const missingHtml = completeness.missing.slice(0, 6).map(m =>
       `<button type="button" data-goto-card="${m.key}">${escapeHtml(m.title)}</button>`).join('');
-    const solutionRow = (val) => `
-      <div class="ihx-chip-row">
-        <input type="text" class="ihx-solution-input" value="${escapeHtml(val)}" placeholder="Ej: Prospección con IA">
-        <button type="button" class="ihx-chip-remove" data-remove-solution title="Quitar">×</button>
-      </div>`;
     el.innerHTML = `
       <div class="ihx-research">
         <div class="ihx-research-hint">
@@ -952,7 +935,7 @@
               <span class="ihx-source-icon" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><path d="M1.5 8h13M8 1.5c2 2 2 11 0 13M8 1.5c-2 2-2 11 0 13"/></svg></span>
               <div class="ihx-source-copy">
                 <div class="ihx-source-title">Tu fuente de verdad</div>
-                <p class="ihx-field-help">La IA investiga tu página web y completa las 13 tarjetas. Tú revisas, editas y confirmas.</p>
+                <p class="ihx-field-help">La IA investiga tu página web y completa las ${cc.CARDS.length} tarjetas. Tú revisas, editas y confirmas.</p>
               </div>
               <div class="ihx-research-engine" id="ihx-research-engine"></div>
             </div>
@@ -997,7 +980,7 @@
             <div class="ihx-context-progress-copy">
               <span class="ihx-context-progress-eyebrow">Tu contexto de empresa</span>
               <strong>${progress.complete} de ${progress.total} pasos completados</strong>
-              <span>La IA completa las 13 tarjetas a partir de tu web: lo que no encuentra lo propone como borrador. Tú revisas, editas y confirmas.</span>
+              <span>La IA completa las ${cc.CARDS.length} tarjetas a partir de tu web: lo que no encuentra lo propone como borrador. Tú revisas, editas y confirmas.</span>
             </div>
             <div class="ihx-context-progress-action">
               <span class="ihx-context-progress-pct">${progress.percent}%</span>
@@ -1026,10 +1009,14 @@
 
           <div class="ccx-confirm ihx-actionbar ${completeness.fieldsComplete ? 'is-ready' : ''} ${confirmed ? 'is-confirmed' : ''}" id="ihx-confirm-panel">
             <div class="ccx-confirm-copy">
-              <strong>${confirmed ? 'Contexto confirmado' : (completeness.fieldsComplete ? 'Todo listo: confirma para desbloquear la plataforma' : 'Completa las tarjetas pendientes para desbloquear la plataforma')}</strong>
+              <strong>${confirmed ? 'Contexto confirmado' : (completeness.needsReconfirm
+                ? 'Actualizamos el contexto: revisa las tarjetas nuevas y vuelve a confirmar'
+                : (completeness.fieldsComplete ? 'Todo listo: confirma para desbloquear la plataforma' : 'Completa las tarjetas pendientes para desbloquear la plataforma'))}</strong>
               <p>${confirmed
                 ? 'Radar, Intelligence Hub, prospección y coach corren con este contexto. Si cambias algo, guarda y vuelve a confirmar.'
-                : 'Radar, Intelligence Hub, prospección, mensajes y coach usan exactamente esta información para investigar.'}</p>
+                : (completeness.needsReconfirm
+                  ? 'Ahora el contexto incluye tus clientes actuales, el comité de compra, la tecnografía de tu cliente, sus señales con evidencia y a quién no le vendes. Usa «Completar todo con IA» para llenar solo lo que falta: no toca lo que ya escribiste.'
+                  : 'Radar, Intelligence Hub, prospección, mensajes y coach usan exactamente esta información para investigar.')}</p>
               ${!completeness.fieldsComplete ? `<div class="ccx-confirm-missing">${missingHtml}${completeness.missing.length > 6 ? `<button type="button" disabled>+${completeness.missing.length - 6} más</button>` : ''}</div>` : ''}
             </div>
             <div class="ihx-actionbar-btns">
@@ -1127,18 +1114,6 @@
       STATE.brief = { ...STATE.brief, status: 'generating', updated_at: new Date().toISOString(), error_message: null };
       renderResearch();
       triggerClientBriefRefresh();
-    });
-    const solutionsList = document.getElementById('ihx-solutions-list');
-    const addBtn = document.getElementById('ihx-solutions-add');
-    if (addBtn) addBtn.addEventListener('click', () => {
-      solutionsList.insertAdjacentHTML('beforeend', solutionRow(''));
-    });
-    if (solutionsList) solutionsList.addEventListener('click', (ev) => {
-      const rm = ev.target.closest('[data-remove-solution]');
-      if (!rm) return;
-      const rows = solutionsList.querySelectorAll('.ihx-chip-row');
-      if (rows.length > 1) rm.closest('.ihx-chip-row').remove();
-      else rm.closest('.ihx-chip-row').querySelector('.ihx-solution-input').value = '';
     });
     const docInput = document.getElementById('ihx-doc-input');
     const docUploadBtn = document.getElementById('ihx-doc-upload-btn');
@@ -1308,8 +1283,6 @@
     const cc = CC();
     const fd = new FormData(formEl);
     const val = (k) => (fd.get(k) || '').toString().trim();
-    const solutions = Array.from(formEl.querySelectorAll('.ihx-solution-input'))
-      .map(inp => inp.value.trim()).filter(Boolean);
     const ccPatch = cc.collect(formEl);
     const intakePatch = {
       company_website: val('company_website') || null,
@@ -1318,9 +1291,10 @@
       company_employee_count: val('company_employee_count') || null,
       company_country: val('company_country') || null,
       company_about: val('company_about') || null,
-      company_solutions: solutions.length ? solutions.join(', ') : null,
-      icp_pain_points: val('icp_pain_points') || null,
       ...ccPatch,
+      // Espejo de las filas (soluciones, dolores, señales) hacia las columnas
+      // de texto que leen outreach, coach, learning-loop y CODA.
+      ...cc.structuredMirror(ccPatch),
       // Espejo hacia las columnas de texto que ya leen generate-radar,
       // generate-client-brief y generate-coda.
       ...cc.legacyMirror(ccPatch),
@@ -1402,6 +1376,10 @@
       // El contexto declarado cambia los filtros recomendados y el brief: se
       // regenera para que el resto de la plataforma arranque ya alineada.
       triggerClientBriefRefresh();
+      // Y el análisis de mercado del Intelligence Hub: es el siguiente paso
+      // del journey y se rehace cada vez que el contexto se confirma, porque
+      // el Radar diseña su plan sobre él.
+      requestMarketAnalysis({ reason: 'context_confirmed' });
     } catch (e) {
       console.error('[research] confirm error', e);
       STATE.researchSaving = false;
@@ -1456,6 +1434,7 @@
   }
   // ─── DASHBOARD ───────────────────────────────────────────
   function renderDashboard() {
+    renderMarket();
     updateStatus();
     renderTabs();
     renderModules();
@@ -1613,9 +1592,6 @@
     benchmark:                    ['competitor', 'radar'],
     revenue_opportunities:        ['search', 'radar', 'campaign'],
     strategic_actions:            ['campaign', 'trigger'],
-    consumer_behavioral_analysis: ['objection', 'campaign', 'trigger'],
-    market_snapshot:              ['radar', 'trigger'],
-    future_innovations:           ['radar', 'campaign'],
   };
   const HUB_ACTION_META = {
     radar:      { label: 'Vigilar en el Radar',        hint: 'Crea un detector con esta señal (1 crédito)', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.5"/><path d="M8 8l4-4"/></svg>' },
@@ -1645,10 +1621,7 @@
       case 'prospecting_recommendations': return pick(c.recommendations);
       case 'revenue_opportunities': return pick((c.opportunities || []).slice().sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)));
       case 'strategic_actions': return pick([].concat((c.do_items || []).slice(0, 3), (c.avoid_items || []).slice(0, 2), (c.test_items || []).slice(0, 2)));
-      case 'consumer_behavioral_analysis': return pick(c.shifts);
-      case 'future_innovations': return pick(c.horizons);
       case 'benchmark': return pick(c.threats) || null;
-      case 'market_snapshot': return { title: c.headline, trending: c.trending };
       default: return null;
     }
   }
@@ -1663,8 +1636,6 @@
       case 'prospecting_recommendations': parts.push(t(it.title) || t(title), t(it.search_adjustment), t(it.messaging_adjustment)); break;
       case 'revenue_opportunities': parts.push(t(it.name) || t(title), t(it.why_now)); break;
       case 'strategic_actions': parts.push(t(it.title) || t(title), t(it.detail)); break;
-      case 'consumer_behavioral_analysis': parts.push(t(it.pain) || t(title), t(it.your_move)); break;
-      case 'future_innovations': parts.push(t(it.innovation) || t(title), t(it.prepare)); break;
       default: parts.push(t(title));
     }
     return parts.filter(Boolean).join('. ').slice(0, 900);
@@ -1694,7 +1665,7 @@
     try {
       if (act === 'radar') {
         const { data: { session } } = await window.supabaseClient.auth.getSession();
-        const kind = section === 'competitor_threat_radar' ? 'news' : section === 'future_innovations' ? 'technographics' : 'news';
+        const kind = 'news';
         const res = await fetch(`${window.SUPABASE_CONFIG.url}/functions/v1/radar-plan`, {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
           body: JSON.stringify({ action: 'add_detector', kind, description: text, name: t(title).slice(0, 90) }),
@@ -2797,483 +2768,244 @@ function saxIcon(kind) {
 }
   return renderSegment;
   })();
-  // ── consumer_behavioral_analysis ──
-  RENDERERS['consumer_behavioral_analysis'] = (function () {
-// Consumer Behavioral Analysis (Monthly #1) — segment renderer.
-// Returns the ready-state body HTML for the shared shell. Never throws.
-// Every dynamic string passes through cbaText() (clean -> trim -> esc).
-
-const CBA_DIRECTIONS = {
-  rising: { cls: 'rising', glyph: '↗', label: 'Creciendo' },
-  stable: { cls: 'stable', glyph: '→', label: 'Estable' },
-  fading: { cls: 'fading', glyph: '↘', label: 'Bajando' }
-};
-
-function renderSegment(c, ctx) {
-  if (!c || typeof c !== 'object') return '';
-  var raw = Array.isArray(c.shifts) ? c.shifts : [];
-  var cards = [];
-  for (var i = 0; i < raw.length && cards.length < 4; i++) {
-    var card = cbaCard(raw[i], cards.length, ctx);
-    if (card) cards.push(card);
+  // ─── ANÁLISIS DE MERCADO (fundacional) ──────────────────
+  // Una lectura de dos minutos, con foco en ventas: dónde atacar primero, qué
+  // señales vigilar (el Radar crea un detector por cada una), empresas modelo,
+  // cómo ganarle a la competencia y qué hacer esta semana. El usuario lo
+  // confirma; el Radar no diseña su plan hasta entonces (js/context-gate.js
+  // lo bloquea y radar-plan lo revalida en el servidor).
+  const MKA_KIND_LABEL = {
+    news: 'Noticias', tenders: 'Licitaciones', hiring: 'Contrataciones', technographics: 'Tecnologías en uso',
+    site_probe: 'Sondeo del sitio', funding: 'Financiamiento', leadership: 'Cambio de liderazgo',
+    growth: 'Crecimiento de plantilla', presence: 'Presencia local', website_visitors: 'Visitas a tu web',
+  };
+  const MKA_MODULE_LABEL = { radar: 'Radar', campaign: 'Campañas', search: 'Buscar', context: 'Contexto' };
+  function marketReport() { return STATE.reports[MARKET_KEY] || null; }
+  function isAnalysisConfirmed(rep) {
+    if (!rep || rep.status !== 'ready' || !rep.generated_at || !STATE.analysisConfirmedAt) return false;
+    return new Date(STATE.analysisConfirmedAt).getTime() >= new Date(rep.generated_at).getTime();
   }
-  if (!cards.length) return '';
-
-  var out = '';
-  var lead = cbaText(c.headline, ctx);
-  if (lead) out += '<p class="cba-lead">' + lead + '</p>';
-  out += '<div class="cba-cards">' + cards.join('') + '</div>';
-  return out;
-}
-
-// --- private helpers ---
-
-function cbaCard(s, idx, ctx) {
-  if (!s || typeof s !== 'object') return '';
-  var pain = cbaText(s.pain, ctx);
-  var fix = cbaText(s.current_fix, ctx);
-  var move = cbaText(s.your_move, ctx);
-  if (!pain && !move) return '';
-
-  var steps = [];
-  if (pain) steps.push(cbaStep('pain', 'Dolor', pain));
-  if (fix) steps.push(cbaStep('fix', 'Hoy lo resuelven', fix));
-  if (move) steps.push(cbaStep('move', 'Tu jugada', move));
-
-  var out = '<article class="cba-card">';
-  out += '<header class="cba-top">';
-  out += '<span class="cba-num">' + cbaNum(idx + 1) + '</span>';
-  out += cbaDirTag(s.direction);
-  out += '</header>';
-  out += '<div class="cba-flow">' + steps.join('<span class="cba-arrow" aria-hidden="true"></span>') + '</div>';
-
-  var obj = cbaText(s.objection, ctx);
-  var resp = cbaText(s.response, ctx);
-  if (obj || resp) {
-    out += '<details class="cba-obj">';
-    out += '<summary class="cba-obj-sum">Objeción frecuente<span class="cba-obj-chev" aria-hidden="true">▾</span></summary>';
-    out += '<div class="cba-obj-body">';
-    if (obj) out += '<p class="cba-obj-q">“' + obj + '”</p>';
-    if (resp) out += '<p class="cba-obj-r"><span class="cba-obj-r-tag">Respóndela así</span>' + resp + '</p>';
-    out += '</div></details>';
+  function mkaList(v, max) { return (Array.isArray(v) ? v : []).filter(x => x && typeof x === 'object').slice(0, max); }
+  function mkaTxt(v, max) {
+    const t = cleanText(String(v == null ? '' : v));
+    return escapeHtml(max && t.length > max ? t.slice(0, max - 1) + '…' : t);
   }
-
-  if (Array.isArray(s.sources) && s.sources.length && ctx && typeof ctx.srcChips === 'function') {
-    var chips = '';
-    try { chips = ctx.srcChips(s.sources) || ''; } catch (e) { chips = ''; }
-    if (chips) out += '<div class="cba-src">' + chips + '</div>';
-  }
-
-  if (ctx && typeof ctx.foot === 'function') {
-    var footTitle = (typeof s.pain === 'string' && s.pain) ? s.pain
-      : (typeof s.your_move === 'string' ? s.your_move : '');
-    try { out += ctx.foot(idx, footTitle) || ''; } catch (e2) {}
-  }
-
-  out += '</article>';
-  return out;
-}
-
-function cbaStep(kind, label, body) {
-  return '<div class="cba-step cba-step-' + kind + '">' +
-    '<span class="cba-step-tag">' + label + '</span>' +
-    '<p class="cba-step-txt">' + body + '</p>' +
-    '</div>';
-}
-
-function cbaDirTag(direction) {
-  if (typeof direction !== 'string') return '';
-  var d = CBA_DIRECTIONS[direction.trim().toLowerCase()];
-  if (!d) return '';
-  return '<span class="cba-dir cba-dir-' + d.cls + '">' +
-    '<span class="cba-dir-glyph" aria-hidden="true">' + d.glyph + '</span>' +
-    d.label + '</span>';
-}
-
-function cbaNum(n) {
-  return (n < 10 ? '0' : '') + n;
-}
-
-// clean -> trim -> escape. Returns '' for anything that is not a usable string.
-function cbaText(v, ctx) {
-  if (typeof v !== 'string') return '';
-  var s = v;
-  if (ctx && typeof ctx.clean === 'function') {
-    try { s = ctx.clean(s); } catch (e) { s = v; }
-  }
-  if (typeof s !== 'string') s = v;
-  s = s.trim();
-  if (!s) return '';
-  return cbaEsc(ctx, s);
-}
-
-// Always escapes: prefers ctx.esc, falls back to a manual escaper so raw
-// model text can never reach the DOM unescaped.
-function cbaEsc(ctx, s) {
-  if (ctx && typeof ctx.esc === 'function') {
-    try { return ctx.esc(s); } catch (e) {}
-  }
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-  return renderSegment;
-  })();
-  // ── market_snapshot ──
-  RENDERERS['market_snapshot'] = (function () {
-// Market Snapshot (Monthly #2) — Intelligence Hub segment renderer.
-// Body only; the shared shell renders header + empty state. Prefix: mks-.
-// Payload: metrics { growth, demand, intensity, maturity } + trending[] + sources[].
-
-const MKS_DEMAND = {
-  accelerating: { glyph: '↗', word: 'Acelerando' },
-  stable:       { glyph: '→', word: 'Estable' },
-  declining:    { glyph: '↘', word: 'Desacelerando' }
-};
-
-const MKS_STAGES = ['emerging', 'growth', 'mature', 'consolidating'];
-
-const MKS_STAGE_WORD = {
-  emerging:      'Emergente',
-  growth:        'Crecimiento',
-  mature:        'Madura',
-  consolidating: 'Consolidación'
-};
-
-const MKS_ARROW = { up: '↑', flat: '→', down: '↓' };
-
-const MKS_MOM_WORD = { up: 'En alza', flat: 'Estable', down: 'A la baja' };
-
-function renderSegment(c, ctx) {
-  if (!c || typeof c !== 'object' || !ctx) return '';
-
-  var m = mksObj(c.metrics);
-  var tiles = [];
-
-  // Tile 0 · Crecimiento — hero figure
-  var g = mksObj(m.growth);
-  var gVal = mksTxt(ctx, g.value, 24);
-  var gNote = mksTxt(ctx, g.note, 110);
-  if (gVal || gNote) {
-    var heroCls = 'mks-hero' + (gVal.length > 12 ? ' mks-hero-sm' : '') + (gVal ? '' : ' mks-hero-dim');
-    tiles.push(mksTile(
-      'Crecimiento',
-      '<div class="' + heroCls + '">' + (gVal || '—') + '</div>',
-      gNote,
-      mksFoot(ctx, 0, 'Crecimiento de mercado')
-    ));
-  }
-
-  // Tile 1 · Demanda — arrow glyph + word (never color alone)
-  var d = mksObj(m.demand);
-  var dKey = mksEnum(d.direction, MKS_DEMAND);
-  if (dKey) {
-    tiles.push(mksTile(
-      'Demanda',
-      '<div class="mks-dir">' +
-        '<span class="mks-dir-glyph mks-dir-' + dKey + '" aria-hidden="true">' + MKS_DEMAND[dKey].glyph + '</span>' +
-        '<span class="mks-dir-word">' + MKS_DEMAND[dKey].word + '</span>' +
-      '</div>',
-      mksTxt(ctx, d.note, 110),
-      mksFoot(ctx, 1, 'Tendencia de demanda')
-    ));
-  }
-
-  // Tile 2 · Intensidad competitiva — direct score + thin single-hue meter
-  var it = mksObj(m.intensity);
-  var score = mksScore(it.score);
-  if (score !== null) {
-    tiles.push(mksTile(
-      'Intensidad competitiva',
-      '<div class="mks-score"><span class="mks-score-n">' + score + '</span><span class="mks-score-of">/100</span></div>' +
-      '<div class="mks-meter"><span class="mks-meter-fill" style="width:' + score + '%"></span></div>',
-      mksTxt(ctx, it.note, 110),
-      mksFoot(ctx, 2, 'Intensidad competitiva')
-    ));
-  }
-
-  // Tile 3 · Madurez — stage pill + 4-step track
-  var mt = mksObj(m.maturity);
-  var stKey = mksEnum(mt.stage, MKS_STAGE_WORD);
-  if (stKey) {
-    tiles.push(mksTile(
-      'Madurez',
-      '<div class="mks-stage"><span class="mks-pill">' + MKS_STAGE_WORD[stKey] + '</span></div>' + mksTrack(stKey),
-      mksTxt(ctx, mt.note, 110),
-      mksFoot(ctx, 3, 'Madurez del mercado')
-    ));
-  }
-
-  var chips = mksChips(c.trending, ctx);
-
-  if (!tiles.length && !chips) return '';
-
-  var html = '<div class="mks-wrap">';
-
-  var lead = mksTxt(ctx, c.headline, 120);
-  if (lead) html += '<p class="mks-lead">' + lead + '</p>';
-
-  if (tiles.length) html += '<div class="mks-tiles">' + tiles.join('') + '</div>';
-
-  html += chips;
-
-  if (Array.isArray(c.sources) && c.sources.length && typeof ctx.srcChips === 'function') {
-    var src = ctx.srcChips(c.sources);
-    if (typeof src === 'string' && src) html += '<div class="mks-sources">' + src + '</div>';
-  }
-
-  html += '</div>';
-  return html;
-}
-
-// ── private helpers ──────────────────────────────────────────────
-
-function mksObj(v) {
-  return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
-}
-
-// clean → collapse whitespace → truncate → escape. Returns '' for anything unusable.
-function mksTxt(ctx, v, max) {
-  if (typeof v === 'number' && isFinite(v)) v = String(v);
-  if (typeof v !== 'string') return '';
-  var s = (ctx && typeof ctx.clean === 'function') ? ctx.clean(v) : v;
-  if (typeof s !== 'string') s = v;
-  s = s.replace(/\s+/g, ' ').trim();
-  if (!s) return '';
-  if (max && s.length > max) s = s.slice(0, max - 1).replace(/\s+$/, '') + '…';
-  return (ctx && typeof ctx.esc === 'function') ? ctx.esc(s) : '';
-}
-
-// Whitelisted enum key or '' — safe for use inside class names.
-function mksEnum(v, map) {
-  if (typeof v !== 'string') return '';
-  var k = v.toLowerCase().trim();
-  return Object.prototype.hasOwnProperty.call(map, k) ? k : '';
-}
-
-// Integer 0-100 or null.
-function mksScore(v) {
-  var n = (typeof v === 'number') ? v : (typeof v === 'string' ? parseFloat(v) : NaN);
-  if (!isFinite(n)) return null;
-  n = Math.round(n);
-  if (n < 0) n = 0;
-  if (n > 100) n = 100;
-  return n;
-}
-
-function mksFoot(ctx, i, title) {
-  if (!ctx || typeof ctx.foot !== 'function') return '';
-  var f = ctx.foot(i, title);
-  return (typeof f === 'string') ? f : '';
-}
-
-function mksTile(label, bodyHtml, noteHtml, footHtml) {
-  var h = '<div class="mks-tile"><div class="mks-tile-label">' + label + '</div>' + bodyHtml;
-  if (noteHtml) h += '<div class="mks-note">' + noteHtml + '</div>';
-  if (footHtml) h += '<div class="mks-tile-foot">' + footHtml + '</div>';
-  h += '</div>';
-  return h;
-}
-
-function mksTrack(stKey) {
-  var idx = MKS_STAGES.indexOf(stKey);
-  if (idx < 0) return '';
-  var h = '<div class="mks-track" aria-hidden="true">';
-  for (var i = 0; i < MKS_STAGES.length; i++) {
-    h += '<span class="mks-track-seg' + (i <= idx ? ' mks-track-on' : '') + '"></span>';
-  }
-  return h + '</div>';
-}
-
-function mksChips(list, ctx) {
-  if (!Array.isArray(list) || !list.length) return '';
-  var out = [];
-  for (var i = 0; i < list.length && out.length < 8; i++) {
-    var item = list[i];
-    if (!item || typeof item !== 'object') continue;
-    var term = mksTxt(ctx, item.term, 34);
-    if (!term) continue;
-    var mo = mksEnum(item.momentum, MKS_ARROW);
-    var arrow = mo ? '<span class="mks-chip-arrow">' + MKS_ARROW[mo] + '</span>' : '';
-    var titleAttr = mo ? ' title="' + MKS_MOM_WORD[mo] + '"' : '';
-    out.push('<span class="mks-chip' + (mo ? ' mks-chip-' + mo : '') + '"' + titleAttr + '>' + term + arrow + '</span>');
-  }
-  if (!out.length) return '';
-  return '<div class="mks-mode">' +
-    '<div class="mks-mode-title">Qué está de moda</div>' +
-    '<div class="mks-chips">' + out.join('') + '</div>' +
-  '</div>';
-}
-  return renderSegment;
-  })();
-  // ── future_innovations ──
-  RENDERERS['future_innovations'] = (function () {
-// Future Innovations (Monthly #3) — "fin-" horizon timeline.
-// Renders a time rail with two bands (6-12 / 12-18 meses); each horizon item
-// shows innovation, likelihood signal, impact and the "Empieza hoy" prepare action.
-
-function renderSegment(c, ctx) {
-  if (!c || typeof c !== 'object') return '';
-  if (!ctx || typeof ctx.esc !== 'function' || typeof ctx.clean !== 'function') return '';
-
-  var items = finItems(c);
-  if (!items.length) return '';
-
-  var html = '<div class="fin-wrap">';
-
-  var lead = finStr(c.headline, 120);
-  if (lead) {
-    html += '<p class="fin-lead">' + finPulseSvg() +
-      '<span class="fin-lead-text">' + ctx.esc(ctx.clean(lead)) + '</span></p>';
-  }
-
-  html += '<div class="fin-timeline">';
-  html += '<div class="fin-now"><span class="fin-now-label">Hoy</span></div>';
-
-  var bands = [
-    { key: '6-12', label: '6–12 meses' },
-    { key: '12-18', label: '12–18 meses' }
-  ];
-
-  for (var b = 0; b < bands.length; b++) {
-    var list = [];
-    for (var i = 0; i < items.length; i++) {
-      if (items[i].window === bands[b].key) list.push(items[i]);
+  function renderMarket() {
+    const el = document.getElementById('ihx-market');
+    if (!el) return;
+    const rep = marketReport();
+    const costLabel = (window.creditCosts && window.creditCosts.format('market_analysis')) || '8 créditos';
+    const head = (right) => `
+      <header class="mka-h">
+        <div>
+          <span class="mka-eyebrow">Paso 2 del Revenue OS · después de tu contexto, antes del Radar</span>
+          <h3>Análisis de mercado para vender</h3>
+          <p>Dónde atacar primero, qué señales de compra vigilar y qué hacer esta semana. Al confirmarlo, el Radar diseña su plan con un detector por cada señal.</p>
+        </div>
+        ${right || ''}
+      </header>`;
+    if (!rep) {
+      el.innerHTML = head() + `
+        <div class="mka-empty">
+          <span>Todavía no hay análisis. Se genera solo al confirmar tu contexto, o ahora mismo con este botón (el primero es gratis).</span>
+          <button type="button" class="ihx-btn-generate" data-mka="generate" ${STATE.analysisRequesting ? 'disabled' : ''}>${SVG_SPARK}<span>Generar mi análisis de mercado</span></button>
+        </div>`;
+      return;
     }
-    if (!list.length) continue;
-    html += '<section class="fin-band">';
-    html += '<div class="fin-band-head"><span class="fin-band-label">' + bands[b].label + '</span></div>';
-    html += '<div class="fin-band-items">';
-    for (var j = 0; j < list.length; j++) {
-      html += finCard(list[j], ctx);
+    if (rep.status === 'generating' && !isStaleGenerating(rep)) {
+      el.innerHTML = head() + `
+        <div class="ihx-state-gen"><div class="ihx-spin"></div><span>Investigando tu mercado: demanda, segmentos, señales de compra y competencia. Tarda 2 a 4 minutos y aparece aquí solo.</span></div>`;
+      return;
     }
-    html += '</div></section>';
+    if (rep.status === 'error' || rep.status === 'generating') {
+      el.innerHTML = head() + `
+        <div class="mka-empty">
+          <span class="mka-err">${rep.status === 'error' ? 'No se pudo generar el análisis' : 'La generación anterior se interrumpió'}${rep.error_message ? ': ' + mkaTxt(rep.error_message, 200) : '.'}</span>
+          <button type="button" class="ihx-btn-generate" data-mka="generate" ${STATE.analysisRequesting ? 'disabled' : ''}>${SVG_SPARK}<span>Reintentar</span></button>
+        </div>`;
+      return;
+    }
+    const c = rep.content || {};
+    const confirmed = isAnalysisConfirmed(rep);
+    const segments = mkaList(c.segments, 3).slice().sort((a, b) => (Number(a.priority) || 9) - (Number(b.priority) || 9));
+    const signals = mkaList(c.signals, 8);
+    const look = c.lookalikes && typeof c.lookalikes === 'object' ? c.lookalikes : {};
+    const traits = (Array.isArray(look.traits) ? look.traits : []).filter(t => typeof t === 'string' && t.trim()).slice(0, 5);
+    const examples = mkaList(look.examples, 6).filter(x => x.name);
+    const competition = mkaList(c.competition, 4).filter(x => x.competitor);
+    const actions = mkaList(c.actions, 5).filter(x => x.action);
+    const status = confirmed
+      ? `<div class="mka-status is-ok"><span>✓ Confirmado ${rep.generated_at ? '· generado ' + fmtRelative(new Date(rep.generated_at)) : ''}</span>
+           <button type="button" class="ihx-btn-generate" data-mka="radar">Diseñar mi plan en el Radar</button>
+           <button type="button" class="ihx-btn-force" data-mka="generate" title="Regenerar · ${escapeHtml(costLabel)}" ${STATE.analysisRequesting ? 'disabled' : ''}>Regenerar</button></div>`
+      : `<div class="mka-status"><span>Revísalo: el Radar lo usará tal cual.</span>
+           <button type="button" class="ihx-btn-force" data-mka="generate" title="Regenerar · ${escapeHtml(costLabel)}" ${STATE.analysisRequesting ? 'disabled' : ''}>Regenerar</button>
+           <button type="button" class="mka-confirm" data-mka="confirm">Confirmar y usar en el Radar</button></div>`;
+    const segHtml = segments.map((sg, i) => `
+      <article class="mka-seg">
+        <span class="mka-seg-n">${i + 1}</span>
+        <div class="mka-seg-body">
+          <h4>${mkaTxt(sg.name, 90)}</h4>
+          ${sg.why_now ? `<p><strong>Por qué ahora:</strong> ${mkaTxt(sg.why_now, 200)}</p>` : ''}
+          ${sg.pain ? `<p><strong>Dolor que abre la conversación:</strong> ${mkaTxt(sg.pain, 150)}</p>` : ''}
+          ${sg.angle ? `<p><strong>Ángulo:</strong> ${mkaTxt(sg.angle, 180)}</p>` : ''}
+          <div class="mka-meta">${sg.size_hint ? `<span>${mkaTxt(sg.size_hint, 100)}</span>` : ''}${sg.offering ? `<span>Solución: ${mkaTxt(sg.offering, 60)}</span>` : ''}</div>
+          <div class="ihx-acts">
+            <button type="button" class="ihx-act" data-mka="search" data-idx="${i}">Buscar contactos</button>
+            <button type="button" class="ihx-act" data-mka="campaign" data-idx="${i}">Campaña con este ángulo</button>
+          </div>
+        </div>
+      </article>`).join('');
+    const sigHtml = signals.map((x, i) => `
+      <li class="mka-sig">
+        <div class="mka-sig-main">
+          <strong>${mkaTxt(x.signal, 100)}</strong>
+          <span>${mkaTxt(x.why, 170)}</span>
+        </div>
+        <div class="mka-sig-side">
+          ${x.priority === 'high' ? '<span class="mka-chip is-hot">Prioridad alta</span>' : ''}
+          <span class="mka-chip">${escapeHtml(MKA_KIND_LABEL[x.detector_kind] || 'Noticias')}</span>
+          ${x.evidence ? `<small>Se ve en: ${mkaTxt(x.evidence, 100)}</small>` : ''}
+          <button type="button" class="ihx-act" data-mka="signal" data-idx="${i}" title="La guarda en «Dolores y señales de compra» de tu contexto">Agregar a mi contexto</button>
+        </div>
+      </li>`).join('');
+    const lookHtml = (traits.length || examples.length) ? `
+      <section class="mka-block">
+        <h5>Empresas modelo</h5>
+        ${traits.length ? `<div class="mka-traits">${traits.map(t => `<span>${mkaTxt(t, 90)}</span>`).join('')}</div>` : ''}
+        ${examples.length ? `<ul class="mka-looks">${examples.map((x, i) => `
+          <li><strong>${mkaTxt(x.name, 60)}</strong>${x.country ? ` <em>${mkaTxt(x.country, 30)}</em>` : ''}
+            ${x.why ? `<span>${mkaTxt(x.why, 130)}</span>` : ''}
+            <button type="button" class="ihx-act" data-mka="lookalike" data-idx="${i}">Buscar contactos</button></li>`).join('')}</ul>` : ''}
+      </section>` : '';
+    const compHtml = competition.length ? `
+      <section class="mka-block">
+        <h5>Cómo ganarle a la competencia</h5>
+        <div class="mka-comp">${competition.map(x => `
+          <div class="mka-comp-row">
+            <strong>${mkaTxt(x.competitor, 50)}</strong>
+            ${x.where_they_win ? `<span><em>Gana cuando:</em> ${mkaTxt(x.where_they_win, 130)}</span>` : ''}
+            ${x.where_you_win ? `<span><em>Tú ganas cuando:</em> ${mkaTxt(x.where_you_win, 130)}</span>` : ''}
+            ${x.attack_angle ? `<span class="mka-comp-angle">${mkaTxt(x.attack_angle, 160)}</span>` : ''}
+          </div>`).join('')}</div>
+      </section>` : '';
+    const actHtml = actions.length ? `
+      <section class="mka-block">
+        <h5>Qué hacer esta semana</h5>
+        <ol class="mka-actions">${actions.map((x, i) => `
+          <li><div><strong>${mkaTxt(x.action, 120)}</strong>${x.why ? `<span>${mkaTxt(x.why, 160)}</span>` : ''}</div>
+            <div class="mka-act-side">${x.impact === 'alto' ? '<span class="mka-chip is-hot">Impacto alto</span>' : ''}
+            ${MKA_MODULE_LABEL[x.module] ? `<button type="button" class="ihx-act" data-mka="module" data-idx="${i}">Ir a ${escapeHtml(MKA_MODULE_LABEL[x.module])}</button>` : ''}</div></li>`).join('')}</ol>
+      </section>` : '';
+    el.innerHTML = head() + status + `
+      <div class="mka-read">
+        ${c.headline ? `<p class="mka-headline">${mkaTxt(c.headline, 160)}</p>` : ''}
+        ${c.summary ? `<p class="mka-summary">${mkaTxt(c.summary, 420)}</p>` : ''}
+      </div>
+      ${segHtml ? `<section class="mka-block"><h5>Dónde atacar primero</h5><div class="mka-segs">${segHtml}</div></section>` : ''}
+      ${sigHtml ? `<section class="mka-block"><h5>Señales de compra que vigilará el Radar <small>un detector por señal</small></h5><ul class="mka-sigs">${sigHtml}</ul></section>` : ''}
+      ${actHtml}
+      <div class="mka-two">${lookHtml}${compHtml}</div>
+      ${srcChips(c.sources)}`;
   }
-
-  html += '<div class="fin-tail" aria-hidden="true"></div>';
-  html += '</div>'; // .fin-timeline
-  html += '</div>'; // .fin-wrap
-  return html;
-}
-
-// ---- private helpers -------------------------------------------------------
-
-function finItems(c) {
-  var raw = Array.isArray(c.horizons) ? c.horizons : [];
-  var items = [];
-  for (var i = 0; i < raw.length && items.length < 4; i++) {
-    var it = raw[i];
-    if (!it || typeof it !== 'object') continue;
-    var title = finStr(it.innovation, 90);
-    if (!title) continue;
-    items.push({
-      idx: items.length,
-      title: title,
-      window: finWindow(it.window),
-      impact: finStr(it.impact, 140),
-      prepare: finStr(it.prepare, 150),
-      lk: finLikelihood(it.likelihood),
-      sources: finSources(it.sources)
-    });
+  // Pide el análisis a generate-intel-hub. Lo usa el botón del Hub y la
+  // confirmación del contexto (confirmContext). Nunca inventa un estado: si
+  // la llamada falla, se muestra el error real.
+  async function requestMarketAnalysis({ reason = 'manual' } = {}) {
+    if (STATE.analysisRequesting || !window.supabaseClient) return;
+    const cur = marketReport();
+    if (cur && cur.status === 'generating' && !isStaleGenerating(cur)) return;
+    STATE.analysisRequesting = true;
+    renderIfMounted();
+    try {
+      const session = (await window.supabaseClient.auth.getSession()).data.session;
+      if (!session) return;
+      const r = await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/generate-intel-hub', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+        body: JSON.stringify({
+          sections: [MARKET_KEY], triggered_by: 'manual',
+          engine: window.AIEngine && window.AIEngine.get('intel_hub'),
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 402) { hubToast(`Sin créditos suficientes para regenerar el análisis (balance: ${j.balance || 0}).`, 'error'); return; }
+      if (!r.ok || j.error) { hubToast('No se pudo iniciar el análisis de mercado: ' + (j.error || ('HTTP ' + r.status)), 'error'); return; }
+      STATE.reports[MARKET_KEY] = { ...(cur || {}), section_key: MARKET_KEY, status: 'generating', updated_at: new Date().toISOString(), content: null };
+      if (reason === 'context_confirmed') hubToast('Contexto confirmado. Estamos preparando tu análisis de mercado en el Intelligence Hub.');
+    } catch (e) {
+      hubToast('No se pudo iniciar el análisis de mercado: ' + (e.message || e), 'error');
+    } finally {
+      STATE.analysisRequesting = false;
+      renderIfMounted();
+    }
   }
-  return items;
-}
-
-function finCard(item, ctx) {
-  var h = '<article class="fin-card">';
-
-  h += '<div class="fin-card-head">';
-  h += '<h4 class="fin-card-title">' + ctx.esc(ctx.clean(item.title)) + '</h4>';
-  if (item.lk) h += finLkChip(item.lk);
-  h += '</div>';
-
-  if (item.impact) {
-    h += '<p class="fin-impact"><span class="fin-impact-tag">Impacto</span> ' +
-      '<span class="fin-impact-text">' + ctx.esc(ctx.clean(item.impact)) + '</span></p>';
+  async function confirmMarketAnalysis(btn) {
+    const rep = marketReport();
+    if (!rep || rep.status !== 'ready') return;
+    btn.disabled = true;
+    const at = new Date().toISOString();
+    const { error } = await window.supabaseClient.from('intel_hub_intake')
+      .upsert({ user_id: STATE.user.id, market_analysis_confirmed_at: at }, { onConflict: 'user_id' });
+    if (error) { btn.disabled = false; hubToast('No se pudo confirmar: ' + error.message, 'error'); return; }
+    STATE.analysisConfirmedAt = at;
+    hubToast('Análisis confirmado. El Radar ya puede diseñar tu plan de señales.');
+    window.dispatchEvent(new CustomEvent('market-analysis-confirmed', { detail: { at } }));
+    renderDashboard();
   }
-
-  if (item.prepare) {
-    h += '<div class="fin-prepare">' +
-      '<span class="fin-prepare-tag">' + finBoltSvg() + 'Empieza hoy</span>' +
-      '<p class="fin-prepare-text">' + ctx.esc(ctx.clean(item.prepare)) + '</p>' +
-      '</div>';
+  async function runMarketAction(btn) {
+    const act = btn.dataset.mka;
+    const c = (marketReport() && marketReport().content) || {};
+    const idx = Number(btn.dataset.idx) || 0;
+    const t = (v) => cleanText(String(v || '')).trim();
+    const nav = (sel) => { const el = document.querySelector(sel); if (el) el.click(); };
+    if (act === 'generate') return requestMarketAnalysis({ reason: 'manual' });
+    if (act === 'confirm') return confirmMarketAnalysis(btn);
+    if (act === 'radar') { nav('.nav-item[data-page="radar"]'); return; }
+    const segments = mkaList(c.segments, 3).slice().sort((a, b) => (Number(a.priority) || 9) - (Number(b.priority) || 9));
+    if (act === 'search' || act === 'campaign') {
+      const sg = segments[idx] || {};
+      if (act === 'search') {
+        nav('.nav-item[data-pros-tab="busqueda"]');
+        if (window.prospecting && window.prospecting.searchFor) window.prospecting.searchFor({ keywords: [t(sg.name)].filter(Boolean), note: t(sg.angle) });
+      } else {
+        nav('.nav-item[data-pros-tab="campanas"]:not([data-pros-view])');
+        const text = [t(sg.name), t(sg.pain), t(sg.angle)].filter(Boolean).join('. ').slice(0, 600);
+        if (window.campaigns && window.campaigns.newFromHub) window.campaigns.newFromHub({ name: t(sg.name).slice(0, 80), instructions: text });
+        else hubToast('Abre Campañas y crea una nueva con este ángulo.', 'info');
+      }
+      return;
+    }
+    if (act === 'lookalike') {
+      const look = (c.lookalikes && Array.isArray(c.lookalikes.examples)) ? c.lookalikes.examples.filter(x => x && x.name) : [];
+      const x = look[idx] || {};
+      nav('.nav-item[data-pros-tab="busqueda"]');
+      if (window.prospecting && window.prospecting.searchFor) window.prospecting.searchFor({ keywords: [t(x.name)].filter(Boolean), note: t(x.why) });
+      return;
+    }
+    if (act === 'signal') {
+      const x = mkaList(c.signals, 8)[idx] || {};
+      btn.disabled = true;
+      try {
+        const line = t(x.signal) + (t(x.evidence) ? ': ' + t(x.evidence) : '');
+        const added = await intakeAppend('radar_suggested_triggers', line, false);
+        hubToast(added ? 'Queda sugerida en «Dolores y señales de compra» de tu contexto.' : 'Esa señal ya estaba sugerida.', added ? 'success' : 'info');
+      } catch (e) { hubToast(e.message || 'No se pudo guardar.', 'error'); } finally { btn.disabled = false; }
+      return;
+    }
+    if (act === 'module') {
+      const x = mkaList(c.actions, 5).filter(a => a.action)[idx] || {};
+      if (x.module === 'radar') nav('.nav-item[data-page="radar"]');
+      else if (x.module === 'search') {
+        nav('.nav-item[data-pros-tab="busqueda"]');
+        if (window.prospecting && window.prospecting.searchFor) window.prospecting.searchFor({ keywords: [], note: t(x.action) });
+      } else if (x.module === 'campaign') {
+        nav('.nav-item[data-pros-tab="campanas"]:not([data-pros-view])');
+        if (window.campaigns && window.campaigns.newFromHub) window.campaigns.newFromHub({ name: t(x.action).slice(0, 80), instructions: [t(x.action), t(x.why)].filter(Boolean).join('. ') });
+      } else if (x.module === 'context') nav('.nav-item[data-page="mi-research"]');
+    }
   }
-
-  if (item.sources.length && typeof ctx.srcChips === 'function') {
-    h += '<div class="fin-sources">' + (ctx.srcChips(item.sources) || '') + '</div>';
-  }
-
-  if (typeof ctx.foot === 'function') {
-    h += ctx.foot(item.idx, ctx.clean(item.title)) || '';
-  }
-
-  h += '</article>';
-  return h;
-}
-
-// Likelihood chip: one-hue signal bars (fill count) + explicit word — color is
-// never the only carrier of meaning. lk.* values come from the fixed map below.
-function finLkChip(lk) {
-  return '<span class="fin-lk fin-lk-' + lk.key + '" title="Probabilidad ' + lk.title + '">' +
-    '<span class="fin-lk-bars" aria-hidden="true">' +
-    '<span class="fin-lk-b"></span><span class="fin-lk-b"></span><span class="fin-lk-b"></span>' +
-    '</span>' +
-    '<span class="fin-lk-word">' + lk.label + '</span>' +
-    '</span>';
-}
-
-function finLikelihood(v) {
-  var k = typeof v === 'string' ? v.trim().toLowerCase() : '';
-  if (k === 'high' || k === 'alta') return { key: 'high', label: 'Alta', title: 'alta' };
-  if (k === 'medium' || k === 'media' || k === 'med') return { key: 'medium', label: 'Media', title: 'media' };
-  if (k === 'low' || k === 'baja') return { key: 'low', label: 'Baja', title: 'baja' };
-  return null;
-}
-
-function finWindow(v) {
-  var k = typeof v === 'string' ? v.trim() : '';
-  if (k === '12-18' || k === '12–18' || k === '12-18 meses') return '12-18';
-  return '6-12';
-}
-
-function finSources(v) {
-  if (!Array.isArray(v)) return [];
-  var out = [];
-  for (var i = 0; i < v.length && out.length < 2; i++) {
-    var s = v[i];
-    if (s && typeof s === 'object' && typeof s.url === 'string' && s.url.trim()) out.push(s);
-  }
-  return out;
-}
-
-function finStr(v, max) {
-  if (typeof v !== 'string') return '';
-  var s = v.trim();
-  if (!s) return '';
-  if (max && s.length > max) {
-    s = s.slice(0, max - 1).replace(/\s+\S*$/, '') + '…';
-  }
-  return s;
-}
-
-// Static inline SVG icons (no dynamic content).
-function finPulseSvg() {
-  return '<svg class="fin-ico fin-ico-pulse" viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">' +
-    '<circle cx="6" cy="6" r="2" fill="currentColor"></circle>' +
-    '<circle cx="6" cy="6" r="4.7" fill="none" stroke="currentColor" stroke-width="1.1" opacity="0.35"></circle>' +
-    '</svg>';
-}
-
-function finBoltSvg() {
-  return '<svg class="fin-ico fin-ico-bolt" viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">' +
-    '<path d="M7 1 2.8 6.6h2.6L4.8 11l4.4-5.6H6.6L7 1z" fill="currentColor"></path>' +
-    '</svg>';
-}
-  return renderSegment;
-  })();
+  window.requestMarketAnalysis = (opts) => requestMarketAnalysis(opts || {});
   // ─── FEEDBACK & GENERATE ─────────────────────────────────
   async function submitFeedback(btn) {
     const sectionKey = btn.dataset.section;
@@ -3428,6 +3160,72 @@ function finBoltSvg() {
     s.textContent = `
 /* ── WRAP ── */
 .ihx-wrap { margin: 0; font-family: inherit; }
+/* ── ANÁLISIS DE MERCADO (mka-) ── */
+.mka {
+  background: var(--surface, #FFFFFF);
+  border: 1px solid var(--hair, rgba(10,10,15,0.08));
+  border-radius: 16px; padding: 20px 22px; margin-bottom: 22px;
+  box-shadow: var(--shadow-1, 0 1px 2px rgba(10,10,15,0.04));
+}
+.mka-h { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.mka-eyebrow { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--accent, #1F4BFF); margin-bottom: 4px; }
+.mka-h h3 { margin: 0 0 4px; font-size: 20px; font-weight: 700; color: var(--ink, #0A0A0F); }
+.mka-h p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text2, rgba(10,10,15,.62)); max-width: 760px; }
+.mka-empty { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; font-size: 13px; color: var(--text2, rgba(10,10,15,.62)); }
+.mka-err { color: var(--red, #D64545); }
+.mka-status { margin: 16px 0 4px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 12px; background: var(--surface2, rgba(10,10,15,.03)); font-size: 12.5px; color: var(--text2, rgba(10,10,15,.62)); }
+.mka-status > span { flex: 1 1 200px; }
+.mka-status.is-ok > span { color: var(--green, #0EA968); font-weight: 600; }
+.mka-confirm { font: inherit; font-size: 13px; font-weight: 700; padding: 9px 18px; border-radius: 999px; border: 0; cursor: pointer; background: var(--green, #0EA968); color: #fff; white-space: nowrap; }
+.mka-confirm:disabled { opacity: .6; cursor: wait; }
+.mka-read { margin: 14px 0 6px; }
+.mka-headline { margin: 0 0 6px; font-size: 16px; font-weight: 700; line-height: 1.4; color: var(--ink, #0A0A0F); }
+.mka-summary { margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--text2, rgba(10,10,15,.7)); }
+.mka-block { margin-top: 18px; }
+.mka-block h5 { margin: 0 0 10px; font-size: 12px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--text3, rgba(10,10,15,.5)); }
+.mka-block h5 small { text-transform: none; letter-spacing: 0; font-weight: 500; margin-left: 6px; }
+.mka-segs { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.mka-seg { display: flex; gap: 12px; padding: 14px; border-radius: 12px; border: 1px solid var(--hair, rgba(10,10,15,0.08)); background: var(--surface2, rgba(10,10,15,.02)); }
+.mka-seg-n { flex: 0 0 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff; background: var(--grad-ai, #1F4BFF); }
+.mka-seg-body { min-width: 0; }
+.mka-seg h4 { margin: 2px 0 8px; font-size: 14px; font-weight: 700; color: var(--ink, #0A0A0F); }
+.mka-seg p { margin: 0 0 6px; font-size: 12.5px; line-height: 1.5; color: var(--text2, rgba(10,10,15,.7)); }
+.mka-seg p strong { color: var(--ink, #0A0A0F); font-weight: 600; }
+.mka-meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.mka-meta span, .mka-traits span { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; background: var(--surface3, rgba(10,10,15,.05)); color: var(--text2, rgba(10,10,15,.65)); }
+.mka-sigs, .mka-looks, .mka-actions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mka-sig { display: flex; gap: 14px; justify-content: space-between; align-items: flex-start; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--hair, rgba(10,10,15,0.08)); }
+.mka-sig-main { min-width: 0; flex: 1 1 auto; }
+.mka-sig-main strong { display: block; font-size: 13.5px; color: var(--ink, #0A0A0F); margin-bottom: 3px; }
+.mka-sig-main span { font-size: 12.5px; line-height: 1.5; color: var(--text2, rgba(10,10,15,.65)); }
+.mka-sig-side { flex: 0 0 230px; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; align-items: center; }
+.mka-sig-side small { width: 100%; text-align: right; font-size: 11.5px; color: var(--text3, rgba(10,10,15,.5)); }
+.mka-chip { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--accent-soft-2, rgba(31,75,255,.07)); color: var(--accent-ink, #1A3FD6); }
+.mka-chip.is-hot { background: rgba(214,69,69,.10); color: var(--red, #D64545); }
+.mka-actions li { display: flex; gap: 14px; justify-content: space-between; align-items: center; padding: 10px 14px; border-radius: 12px; background: var(--surface2, rgba(10,10,15,.03)); counter-increment: mka; }
+.mka-actions li strong { display: block; font-size: 13.5px; color: var(--ink, #0A0A0F); }
+.mka-actions li span { font-size: 12.5px; color: var(--text2, rgba(10,10,15,.65)); }
+.mka-act-side { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.mka-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 18px; }
+.mka-traits { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.mka-looks li { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--hair, rgba(10,10,15,0.06)); font-size: 12.5px; }
+.mka-looks li strong { color: var(--ink, #0A0A0F); }
+.mka-looks li em { font-style: normal; color: var(--text3, rgba(10,10,15,.5)); }
+.mka-looks li span { flex-basis: 100%; color: var(--text2, rgba(10,10,15,.65)); }
+.mka-comp { display: flex; flex-direction: column; gap: 8px; }
+.mka-comp-row { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--hair, rgba(10,10,15,0.08)); font-size: 12.5px; color: var(--text2, rgba(10,10,15,.65)); }
+.mka-comp-row strong { color: var(--ink, #0A0A0F); font-size: 13.5px; }
+.mka-comp-row em { font-style: normal; font-weight: 600; color: var(--text3, rgba(10,10,15,.55)); }
+.mka-comp-angle { color: var(--ink, #0A0A0F); }
+.ihx-pulse-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 4px 0 12px; }
+.ihx-pulse-head h3 { margin: 0; font-size: 16px; font-weight: 700; color: var(--ink, #0A0A0F); }
+.ihx-pulse-head span { font-size: 12.5px; color: var(--text3, rgba(10,10,15,.5)); }
+@media (max-width: 720px) {
+  .mka { padding: 16px; }
+  .mka-sig, .mka-actions li { flex-direction: column; align-items: stretch; }
+  .mka-sig-side { flex-basis: auto; justify-content: flex-start; }
+  .mka-sig-side small { text-align: left; }
+}
 /* ── TOOLBAR ── */
 .ihx-toolbar {
   display: flex; align-items: center; gap: 12px;
@@ -5040,737 +4838,6 @@ function finBoltSvg() {
 @media (max-width: 700px) {
   .sax-cols-2,
   .sax-cols-3 { grid-template-columns: 1fr; }
-}
-/* ── SEGMENT: consumer_behavioral_analysis ── */
-/* Consumer Behavioral Analysis (cba-) — cyan #0891B2 */
-
-.cba-lead {
-  margin: 0 0 14px;
-  padding-left: 10px;
-  border-left: 3px solid var(--cyan, #0891B2);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.45;
-  color: var(--ink-2, rgba(10, 10, 15, 0.78));
-}
-
-.cba-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.cba-card {
-  padding: 14px 16px 12px;
-  border: 1px solid var(--hair-3, rgba(10, 10, 15, 0.13));
-  border-radius: 14px;
-  background: var(--surface, #FFFFFF);
-  transition: border-color 0.15s ease;
-}
-
-.cba-card:hover {
-  border-color: rgba(8, 145, 178, 0.35);
-}
-
-/* top row: number + direction tag */
-.cba-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.cba-num {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-5, rgba(10, 10, 15, 0.24));
-}
-
-.cba-dir {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-}
-
-.cba-dir-glyph {
-  font-size: 11px;
-  line-height: 1;
-}
-
-.cba-dir-rising {
-  background: rgba(8, 145, 178, 0.10);
-  border: 1px solid rgba(8, 145, 178, 0.22);
-  color: var(--cyan, #0891B2);
-}
-
-.cba-dir-stable {
-  background: var(--surface3, #ECEEF3);
-  border: 1px solid var(--hair, rgba(10, 10, 15, 0.07));
-  color: var(--ink-3, rgba(10, 10, 15, 0.55));
-}
-
-.cba-dir-fading {
-  background: var(--surface2, #F6F7F9);
-  border: 1px solid var(--hair, rgba(10, 10, 15, 0.07));
-  color: var(--ink-4, rgba(10, 10, 15, 0.40));
-}
-
-/* 3-step flow: DOLOR -> HOY LO RESUELVEN -> TU JUGADA */
-.cba-flow {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
-}
-
-.cba-step {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--hair, rgba(10, 10, 15, 0.07));
-  border-radius: 10px;
-  background: var(--surface2, #F6F7F9);
-}
-
-.cba-step-tag {
-  display: block;
-  margin-bottom: 5px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ink-4, rgba(10, 10, 15, 0.40));
-}
-
-.cba-step-txt {
-  margin: 0;
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--ink-2, rgba(10, 10, 15, 0.78));
-}
-
-/* the payoff step */
-.cba-step-move {
-  flex-grow: 1.15;
-  background: rgba(8, 145, 178, 0.07);
-  border-color: rgba(8, 145, 178, 0.25);
-}
-
-.cba-step-move .cba-step-tag {
-  color: var(--cyan, #0891B2);
-}
-
-.cba-step-move .cba-step-txt {
-  font-weight: 500;
-  color: var(--ink, #0A0A0F);
-}
-
-.cba-arrow {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  color: var(--ink-4, rgba(10, 10, 15, 0.40));
-}
-
-.cba-arrow::before {
-  content: '\\2192';
-  font-size: 13px;
-}
-
-/* objection + response */
-.cba-obj {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid var(--hair, rgba(10, 10, 15, 0.07));
-}
-
-.cba-obj-sum {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  list-style: none;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ink-3, rgba(10, 10, 15, 0.55));
-  transition: color 0.15s ease;
-}
-
-.cba-obj-sum:hover {
-  color: var(--ink, #0A0A0F);
-}
-
-.cba-obj-sum::-webkit-details-marker {
-  display: none;
-}
-
-.cba-obj-chev {
-  font-size: 10px;
-  color: var(--ink-4, rgba(10, 10, 15, 0.40));
-  transition: transform 0.15s ease;
-}
-
-.cba-obj[open] .cba-obj-chev {
-  transform: rotate(180deg);
-}
-
-.cba-obj-body {
-  padding: 8px 2px 2px;
-}
-
-.cba-obj-q {
-  margin: 0 0 8px;
-  padding-left: 10px;
-  border-left: 2px solid var(--amber, #C77E12);
-  font-size: 12.5px;
-  font-style: italic;
-  line-height: 1.45;
-  color: var(--ink-2, rgba(10, 10, 15, 0.78));
-}
-
-.cba-obj-r {
-  margin: 0;
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--ink-2, rgba(10, 10, 15, 0.78));
-}
-
-.cba-obj-r-tag {
-  display: inline-block;
-  margin-right: 6px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: rgba(8, 145, 178, 0.10);
-  font-size: 10px;
-  font-weight: 700;
-  font-style: normal;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--cyan, #0891B2);
-}
-
-.cba-src {
-  margin-top: 10px;
-}
-
-@media (max-width: 700px) {
-  .cba-flow {
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .cba-arrow {
-    justify-content: center;
-  }
-
-  .cba-arrow::before {
-    content: '\\2193';
-  }
-}
-/* ── SEGMENT: market_snapshot ── */
-/* Market Snapshot — "mks-" segment (Monthly #2, accent indigo #4F46E5).
-   Light theme only. All selectors prefixed with .mks-. */
-
-.mks-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-/* Headline lead-in — one line, indigo tick */
-.mks-lead {
-  margin: 0;
-  padding-left: 10px;
-  border-left: 3px solid #4F46E5;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.4;
-  letter-spacing: -0.01em;
-  color: var(--ink, #0A0A0F);
-}
-
-/* ── 4-tile stat row ─────────────────────────────────────────── */
-.mks-tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
-  gap: 10px;
-}
-
-.mks-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  min-width: 0;
-  padding: 13px 14px;
-  background: var(--surface2, #F6F7F9);
-  border: 1px solid var(--hair, rgba(10, 10, 15, 0.07));
-  border-radius: 12px;
-  transition: border-color 0.15s ease;
-}
-.mks-tile:hover {
-  border-color: var(--hair-3, rgba(10, 10, 15, 0.13));
-}
-
-.mks-tile-label {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--ink-4, rgba(10, 10, 15, 0.40));
-}
-
-.mks-note {
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--ink-3, rgba(10, 10, 15, 0.55));
-}
-
-.mks-tile-foot {
-  margin-top: auto;
-  padding-top: 2px;
-}
-
-/* Tile · Crecimiento — hero figure */
-.mks-hero {
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-  color: var(--ink, #0A0A0F);
-  overflow-wrap: anywhere;
-}
-.mks-hero-sm { font-size: 17px; }
-.mks-hero-dim { color: var(--ink-5, rgba(10, 10, 15, 0.24)); }
-
-/* Tile · Demanda — glyph disc + word */
-.mks-dir {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 27px;
-}
-.mks-dir-glyph {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  font-size: 13px;
-  font-weight: 700;
-  background: var(--surface3, #ECEEF3);
-  color: var(--ink-3, rgba(10, 10, 15, 0.55));
-}
-.mks-dir-accelerating {
-  background: rgba(14, 169, 104, 0.12);
-  color: var(--green, #0EA968);
-}
-.mks-dir-declining {
-  background: rgba(214, 69, 69, 0.10);
-  color: var(--red, #D64545);
-}
-.mks-dir-word {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--ink, #0A0A0F);
-  overflow-wrap: anywhere;
-}
-
-/* Tile · Intensidad — direct score + thin single-hue meter */
-.mks-score {
-  display: flex;
-  align-items: baseline;
-  gap: 3px;
-}
-.mks-score-n {
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-  color: var(--ink, #0A0A0F);
-}
-.mks-score-of {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ink-4, rgba(10, 10, 15, 0.40));
-}
-.mks-meter {
-  height: 6px;
-  border-radius: 4px;
-  background: var(--surface3, #ECEEF3);
-  overflow: hidden;
-}
-.mks-meter-fill {
-  display: block;
-  height: 100%;
-  border-radius: 0 4px 4px 0;
-  background: #4F46E5;
-}
-
-/* Tile · Madurez — stage pill + 4-step track */
-.mks-stage {
-  display: flex;
-  align-items: center;
-  min-height: 27px;
-}
-.mks-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(79, 70, 229, 0.10);
-  border: 1px solid rgba(79, 70, 229, 0.22);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--ink-2, rgba(10, 10, 15, 0.78));
-}
-.mks-pill::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #4F46E5;
-}
-.mks-track {
-  display: flex;
-  gap: 2px;
-}
-.mks-track-seg {
-  flex: 1;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--surface3, #ECEEF3);
-}
-.mks-track-on { background: #4F46E5; }
-
-/* ── Qué está de moda — trending chips ───────────────────────── */
-.mks-mode {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.mks-mode-title {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--ink-4, rgba(10, 10, 15, 0.40));
-}
-.mks-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.mks-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  padding: 5px 11px;
-  border-radius: 999px;
-  border: 1px solid var(--hair-3, rgba(10, 10, 15, 0.13));
-  background: var(--surface, #FFFFFF);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ink-2, rgba(10, 10, 15, 0.78));
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-.mks-chip:hover {
-  border-color: var(--ink-5, rgba(10, 10, 15, 0.24));
-}
-.mks-chip-arrow {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--ink-4, rgba(10, 10, 15, 0.40));
-}
-.mks-chip-up {
-  background: rgba(79, 70, 229, 0.07);
-  border-color: rgba(79, 70, 229, 0.25);
-}
-.mks-chip-up:hover { border-color: rgba(79, 70, 229, 0.45); }
-.mks-chip-up .mks-chip-arrow { color: #4F46E5; }
-.mks-chip-down { color: var(--ink-3, rgba(10, 10, 15, 0.55)); }
-
-/* ── Fuentes ─────────────────────────────────────────────────── */
-.mks-sources {
-  padding-top: 12px;
-  border-top: 1px solid var(--hair, rgba(10, 10, 15, 0.07));
-}
-
-/* ── Responsive ──────────────────────────────────────────────── */
-@media (max-width: 700px) {
-  .mks-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .mks-hero { font-size: 21px; }
-  .mks-score-n { font-size: 21px; }
-}
-@media (max-width: 400px) {
-  .mks-tiles { grid-template-columns: minmax(0, 1fr); }
-}
-/* ── SEGMENT: future_innovations ── */
-/* Future Innovations (fin-) — horizon timeline. Accent: violet #9333EA. */
-
-.fin-wrap {
-  --fin-accent: #9333EA;
-  --fin-accent-ink: #7222C2;
-  --fin-accent-soft: rgba(147, 51, 234, 0.08);
-  --fin-accent-line: rgba(147, 51, 234, 0.38);
-  font-size: 13px;
-  color: var(--ink-2, rgba(10, 10, 15, 0.78));
-}
-
-/* Lead-in (headline) */
-.fin-lead {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 0 0 16px;
-  font-size: 13px;
-  font-weight: 550;
-  line-height: 1.45;
-  color: var(--ink, #0A0A0F);
-}
-.fin-lead .fin-ico-pulse {
-  flex: none;
-  margin-top: 3px;
-  color: var(--fin-accent);
-}
-
-/* Time rail */
-.fin-timeline {
-  position: relative;
-  padding-left: 30px;
-}
-.fin-timeline::before {
-  content: '';
-  position: absolute;
-  left: 9px;
-  top: 6px;
-  bottom: 0;
-  width: 2px;
-  border-radius: 1px;
-  background: linear-gradient(
-    to bottom,
-    var(--fin-accent-line),
-    rgba(147, 51, 234, 0.16) 60%,
-    rgba(147, 51, 234, 0)
-  );
-}
-
-/* "Hoy" beacon — solid dot: the present */
-.fin-now {
-  position: relative;
-  margin-bottom: 16px;
-}
-.fin-now::before {
-  content: '';
-  position: absolute;
-  left: -24px;
-  top: 3px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--fin-accent);
-  box-shadow: 0 0 0 3px var(--fin-accent-soft);
-}
-.fin-now-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-3, rgba(10, 10, 15, 0.55));
-}
-
-/* Bands */
-.fin-band {
-  position: relative;
-  margin-bottom: 20px;
-}
-.fin-band:last-of-type {
-  margin-bottom: 0;
-}
-.fin-band-head {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-.fin-band-head::before {
-  content: '';
-  position: absolute;
-  left: -25px;
-  top: 3px;
-  width: 10px;
-  height: 10px;
-  box-sizing: border-box;
-  border-radius: 50%;
-  background: var(--surface, #FFFFFF);
-  border: 2px solid var(--fin-accent);
-}
-.fin-band-head::after {
-  content: '';
-  height: 1px;
-  flex: 1;
-  background: var(--hair, rgba(10, 10, 15, 0.07));
-}
-.fin-band-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-2, rgba(10, 10, 15, 0.78));
-}
-
-.fin-band-items {
-  display: grid;
-  gap: 10px;
-}
-
-/* Horizon card */
-.fin-card {
-  background: var(--surface, #FFFFFF);
-  border: 1px solid var(--hair-3, rgba(10, 10, 15, 0.13));
-  border-radius: 12px;
-  padding: 14px 16px 10px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.fin-card:hover {
-  border-color: var(--fin-accent-line);
-  box-shadow: 0 2px 10px rgba(147, 51, 234, 0.08);
-}
-.fin-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 6px;
-}
-.fin-card-title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 650;
-  line-height: 1.35;
-  color: var(--ink, #0A0A0F);
-}
-
-/* Likelihood chip: signal bars (one hue, fill count) + word */
-.fin-lk {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex: none;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: var(--surface2, #F6F7F9);
-}
-.fin-lk-bars {
-  display: inline-flex;
-  align-items: flex-end;
-  gap: 2px;
-}
-.fin-lk-b {
-  width: 3px;
-  border-radius: 1px;
-  background: var(--ink-5, rgba(10, 10, 15, 0.24));
-}
-.fin-lk-b:nth-child(1) { height: 4px; }
-.fin-lk-b:nth-child(2) { height: 7px; }
-.fin-lk-b:nth-child(3) { height: 10px; }
-.fin-lk-high .fin-lk-b { background: var(--fin-accent); }
-.fin-lk-medium .fin-lk-b:nth-child(-n+2) { background: var(--fin-accent); }
-.fin-lk-low .fin-lk-b:nth-child(1) { background: var(--fin-accent); }
-.fin-lk-word {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ink-2, rgba(10, 10, 15, 0.78));
-}
-
-/* Impact line */
-.fin-impact {
-  margin: 0 0 10px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--ink-2, rgba(10, 10, 15, 0.78));
-}
-.fin-impact-tag {
-  display: inline-block;
-  margin-right: 4px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-4, rgba(10, 10, 15, 0.40));
-}
-
-/* Prepare — the actionable payoff */
-.fin-prepare {
-  border-radius: 10px;
-  background: var(--fin-accent-soft);
-  padding: 9px 12px 10px;
-  margin-bottom: 10px;
-}
-.fin-prepare-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 3px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--fin-accent-ink);
-}
-.fin-prepare-tag .fin-ico-bolt {
-  flex: none;
-}
-.fin-prepare-text {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.5;
-  color: var(--ink, #0A0A0F);
-}
-
-.fin-sources {
-  margin: 8px 0 6px;
-}
-
-/* Dashed tail — the future beyond 18 months */
-.fin-tail {
-  position: relative;
-  height: 18px;
-}
-.fin-tail::before {
-  content: '';
-  position: absolute;
-  left: -21px;
-  top: 0;
-  height: 100%;
-  width: 0;
-  border-left: 2px dashed rgba(147, 51, 234, 0.22);
-}
-
-@media (max-width: 700px) {
-  .fin-timeline {
-    padding-left: 28px;
-  }
-  .fin-card {
-    padding: 12px 13px 8px;
-  }
-  .fin-card-head {
-    flex-wrap: wrap;
-  }
 }
     `;
     document.head.appendChild(s);

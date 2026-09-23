@@ -187,7 +187,9 @@
     });
     const data = await res.json().catch(() => ({}));
     if (res.status === 402) throw new Error('No tienes créditos suficientes: esto cuesta ' + (data.cost || '?') + ' créditos y tienes ' + (data.balance || 0) + '.');
-    if (!res.ok) throw new Error(data.error || ('Error ' + res.status));
+    // 409 market_analysis_required: el plan se diseña sobre el análisis de
+    // mercado confirmado en el Intelligence Hub; el mensaje dice qué falta.
+    if (!res.ok) throw new Error(data.message || data.error || ('Error ' + res.status));
     return data;
   }
 
@@ -209,7 +211,9 @@
       state.showPlanPrompt = false;
       await load();
       state.tab = 'plan';
-      state.notice = 'Plan listo: ' + (r.detectors || []).length + ' detectores. Revísalos y activa el monitoreo.' + (r.credits_charged ? '' : ' (El primer plan es gratis.)');
+      state.notice = 'Plan listo: ' + (r.detectors || []).length + ' detectores, uno por cada señal de tu análisis de mercado' +
+        (r.reach ? ', ' + r.reach + ' empresas por corrida según tu ticket promedio' : '') +
+        '. Revísalos y activa el monitoreo.' + (r.credits_charged ? '' : ' (El primer plan es gratis.)');
     });
   }
 
