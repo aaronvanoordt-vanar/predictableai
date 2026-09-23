@@ -32,8 +32,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { engineForUser, withLlmContext } from "../_shared/llm.ts";
 import { oauthAvailable, platformKey, resolveApolloAuth } from "../_shared/apollo-auth.ts";
-import { loadHubDigest, loadSellerContext } from "../_shared/radar-context.ts";
-import { KIND_META, isDetectorKind, type DetectorKind } from "../_shared/radar-plan.ts";
+import { analysisSignals, loadHubDigest, loadMarketAnalysis, loadSellerContext } from "../_shared/radar-context.ts";
+import { KIND_META, isDetectorKind, reachForDealSize, type DetectorKind } from "../_shared/radar-plan.ts";
 import {
   detectorFromText, detectorsFromHub, generatePlan, kindAvailable, type Availability,
 } from "../_shared/radar-planner.ts";
@@ -174,6 +174,18 @@ Deno.serve(withLlmContext(async (req: Request) => {
     const plan = await ensurePlan(supa, user.id);
 
     if (action === "generate") {
+      // El plan se diseña SOBRE el análisis de mercado confirmado (2026-09-23):
+      // sin él, el Radar no tiene de dónde sacar las señales. js/context-gate.js
+      // ya bloquea la página; esto lo garantiza en el servidor.
+      const analysis = await loadMarketAnalysis(supa, user.id);
+      if (!analysis.confirmed) {
+        return json({
+          error: "market_analysis_required",
+          message: analysis.content
+            ? "Confirma tu análisis de mercado en el Intelligence Hub antes de diseñar el plan."
+            : "Primero genera y confirma tu análisis de mercado en el Intelligence Hub.",
+        }, 409, h);
+      }
       const customPrompt = String(body.custom_prompt || "").trim().slice(0, 2000);
       const { count } = await supa.from("radar_detectors").select("id", { count: "exact", head: true }).eq("user_id", user.id);
       const firstTime = !plan.generated_at && !(count || 0);
@@ -188,9 +200,15 @@ Deno.serve(withLlmContext(async (req: Request) => {
         loadHubDigest(supa, user.id),
         availabilityFor(supa, user.id),
       ]);
-      const { plan: generated, countries } = await generatePlan({
-        engine, ctx, hubText: hub.text, customPrompt, availability: av, logPrefix: "[radar-plan]",
+      const { plan: generated, countries, filledSignals } = await generatePlan({
+        engine, ctx, hubText: hub.text, customPrompt, availability: av,
+        signals: analysisSignals(analysis.content), logPrefix: "[radar-plan]",
       });
+      // Alcance por defecto según el ticket (el usuario lo cambia con "Alcance").
+      const reach = reachForDealSize(ctx.intake?.commercial_deal_size);
+      for (const d of generated.detectors) {
+        if (d.config.max_companies === undefined) d.config.max_companies = reach;
+      }
       // Reemplaza lo que propuso la IA / el Hub; lo del usuario se queda.
       await supa.from("radar_detectors").delete().eq("plan_id", plan.id).in("origin", ["ai", "hub"]);
       const detectors = await insertDetectors(supa, user.id, plan.id, generated.detectors, "ai", av);
@@ -208,7 +226,10 @@ Deno.serve(withLlmContext(async (req: Request) => {
       if (upErr) throw new Error(upErr.message);
       const charge = await chargeOrFail(supa, user.id, cost, h);
       if (charge) return charge;
-      return json({ status: "ok", plan: saved, detectors, credits_charged: cost, availability: av }, 200, h);
+      return json({
+        status: "ok", plan: saved, detectors, credits_charged: cost, availability: av,
+        reach, signals_covered_in_code: filledSignals,
+      }, 200, h);
     }
 
     if (action === "activate") {

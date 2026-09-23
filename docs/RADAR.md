@@ -12,7 +12,8 @@ Contexto de tu empresa  →  Intelligence Hub  →  Radar  →  Listas  →  Cam
 ```
 
 - El **contexto** es la única fuente de qué vende el cliente, a quién y en qué países. El Radar solo busca en `icp_countries`, salvo que el prompt del plan nombre otros países (`radar_plans.countries`).
-- El **Hub** alimenta el plan: sus "Recomendaciones de prospección", "Oportunidades de revenue", digest e insights se inyectan al generar el plan, y cuando el Hub publica un reporte más nuevo que `radar_plans.hub_synced_at`, `radar-monitor` pide a la IA 0-3 detectores adicionales (origen `hub`).
+- **El plan se diseña sobre el análisis de mercado confirmado (2026-09-23).** El Intelligence Hub genera un análisis de mercado fundacional (`intelligence_hub_reports.section_key = 'market_analysis'`) al confirmar el contexto; el usuario lo revisa y lo confirma (`intel_hub_intake.market_analysis_confirmed_at ≥ generated_at`). Hasta entonces el Radar está bloqueado (`js/context-gate.js`) y `radar-plan generate` responde 409 `market_analysis_required`. El análisis entra entero al prompt (sin el recorte de 6.000 caracteres, que ahora aplica solo al pulso) y el plan crea **un detector por cada señal** confirmada (`signal_index`); si el modelo deja alguna sin cubrir o la cubre con un método no disponible, `coverSignals()` la cubre en código con una búsqueda de noticias armada con el texto de la señal. El alcance por detector sale del ticket promedio (`reachForDealSize`: de 1.000 empresas con ticket < US$1k a 50 con ticket > US$100k) y el usuario lo cambia con "Alcance".
+- El **pulso del Hub** también alimenta el plan: sus "Ajustes de prospección", "Oportunidades de ingreso", digest e insights se inyectan al generar el plan, y cuando el Hub publica un reporte más nuevo que `radar_plans.hub_synced_at`, `radar-monitor` pide a la IA 0-3 detectores adicionales (origen `hub`).
 - El Radar **devuelve al contexto**: al activar el plan, las señales que caza se escriben en `intel_hub_intake.radar_suggested_triggers` (la tarjeta "Dolores y señales de compra" las ofrece con un clic) y, si `icp_buying_triggers` estaba vacío, lo rellena. Nunca pisa lo que el usuario escribió.
 - El sidebar sigue ese orden: Contexto → Intelligence Hub → Radar.
 
@@ -106,6 +107,7 @@ Los precios viven en `js/credit-costs.js` y en las constantes de cada función; 
 
 ## Decisiones
 
+- El plan sale del análisis de mercado confirmado: un detector por señal (2026-09-23, decisión del dueño). Clientes actuales, competidores y empresas excluidas se descartan por nombre y por dominio.
 - El plan lo propone la IA y lo aprueba el usuario; regenerarlo reemplaza los detectores de origen `ai` y `hub`, nunca los de origen `user`.
 - Los países son exclusivamente los del contexto, salvo que el prompt del plan nombre otros (2026-09-17, decisión del usuario).
 - El puntaje es determinista y explicable; el peso del detector aprende del feedback (👍 +3, 👎 −6, acotado a [10, 100]).
