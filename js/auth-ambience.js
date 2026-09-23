@@ -66,6 +66,7 @@
   var ctx = null;
   var master = null;       // volumen general (lo baja fadeOut)
   var masterLP = null;     // pasabajos maestro (lo cierra fadeOut)
+  var analyser = null;     // lo lee la señal viva de la IA (#ai-pulse)
   var echo = null;         // entrada del eco ping-pong
   var ambienceBus = null;  // solo el lecho continuo (lo que sube/baja el botón)
   var ambienceBuilt = false;
@@ -102,6 +103,9 @@
     masterLP.frequency.value = 18000;
     masterLP.Q.value = 0.7;
     masterLP.connect(limiter);
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    masterLP.connect(analyser);
 
     master = ctx.createGain();
     master.gain.value = 1;
@@ -394,6 +398,98 @@
   }
 
   window.AuthAmbience = { fadeOut: fadeOut };
+
+  /* ── Señal viva de la IA (#ai-pulse) ────────────────────────────────────
+     Un trazo de osciloscopio que late a 100 BPM (el tempo del sonido): un
+     pico agudo con un rebote amortiguado en cada negra, más fuerte cada
+     cuatro, sobre un piso de ruido de datos. Con el sonido encendido el
+     ruido y los picos crecen con el nivel real del audio, así la señal y lo
+     que se oye son la misma cosa. Sin punto que parpadee. */
+  (function initPulse() {
+    var cv = document.getElementById('ai-pulse');
+    if (!cv || !cv.getContext) return;
+    var g = cv.getContext('2d');
+    var W = 0, H = 0;
+    var RATE = 60;                    // muestras por segundo (independiente de los fps)
+    var N = 110;                      // muestras visibles (~1.8 s)
+    var hist = [];
+    var beatSec = 60 / BPM;
+    var clock = 0, beat = 0;
+    var timeBuf = null;
+
+    function size() {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = cv.clientWidth || 168; H = cv.clientHeight || 34;
+      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function audioLevel() {
+      if (!analyser || !started || !enabled) return 0;
+      if (!timeBuf) timeBuf = new Float32Array(analyser.fftSize);
+      analyser.getFloatTimeDomainData(timeBuf);
+      var sum = 0;
+      for (var i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
+      return Math.min(1, Math.sqrt(sum / timeBuf.length) * 5);
+    }
+
+    function nextSample(level) {
+      clock += 1 / RATE;
+      if (clock >= beatSec) { clock -= beatSec; beat = (beat + 1) % 4; }
+      var ph = clock;
+      var amp = (beat === 0 ? 1 : 0.62) * (0.75 + level * 0.5);
+      // Pico agudo + rebote amortiguado: late, pero como un circuito.
+      var spike = ph < 0.035 ? ph / 0.035 : Math.exp(-(ph - 0.035) * 14) * Math.cos((ph - 0.035) * 46);
+      var noise = (Math.random() - 0.5) * (0.07 + level * 0.35);
+      return Math.max(-1, Math.min(1, spike * amp + noise));
+    }
+
+    function draw() {
+      g.clearRect(0, 0, W, H);
+      var mid = H / 2;
+      // Piso: marcas finas de una rejilla de medición.
+      g.fillStyle = 'rgba(245,246,248,.14)';
+      for (var x = 0; x < W; x += 6) g.fillRect(x, mid, 1.5, 1);
+
+      var grad = g.createLinearGradient(0, 0, W, 0);
+      grad.addColorStop(0, 'rgba(92,130,255,0)');
+      grad.addColorStop(0.35, 'rgba(92,130,255,.75)');
+      grad.addColorStop(1, 'rgba(44,184,212,1)');
+      g.beginPath();
+      for (var i = 0; i < hist.length; i++) {
+        var px = (i / (N - 1)) * W;
+        var py = mid - hist[i] * (H * 0.44);
+        if (i) g.lineTo(px, py); else g.moveTo(px, py);
+      }
+      g.lineJoin = 'round';
+      g.lineWidth = 1.8;
+      g.strokeStyle = grad;
+      g.shadowColor = 'rgba(44,184,212,.8)';
+      g.shadowBlur = 6;
+      g.stroke();
+      g.shadowBlur = 0;
+    }
+
+    size();
+    window.addEventListener('resize', size);
+    for (var i = 0; i < N; i++) hist.push(nextSample(0));
+
+    if (reduceMotion) { draw(); return; }
+
+    var last = performance.now(), acc = 0;
+    (function frame(t) {
+      acc += Math.min(0.25, (t - last) / 1000);
+      last = t;
+      var level = audioLevel();
+      while (acc >= 1 / RATE) {
+        acc -= 1 / RATE;
+        hist.push(nextSample(level));
+        if (hist.length > N) hist.shift();
+      }
+      draw();
+      requestAnimationFrame(frame);
+    })(last);
+  })();
 
   /* ── Botón de silencio ──────────────────────────────────────────────── */
   var btn = document.getElementById('btn-sound');
