@@ -761,7 +761,7 @@
   }
 
   /**
-   * Reescribe el mensaje IA de UN paso para UN lead (3 créditos).
+   * Reescribe el mensaje IA de UN paso para UN lead (2 créditos).
    * Solo se puede sobre una fila que ya existe: campaign_messages lo inserta
    * el motor (el cliente solo puede editar texto y aprobar, por RLS). Por eso
    * "Regenerar" aparece cuando el mensaje ya está escrito y todavía no salió.
@@ -2364,7 +2364,7 @@
     if (needsWa) hints.push('WhatsApp necesita teléfono revelado (Listas → Enriquecer).');
     if (needsEmail) hints.push('Email necesita email revelado.');
     if (needsLi) hints.push('LinkedIn necesita la URL del perfil del lead.');
-    if (needsAi) hints.push('Los ' + aiSteps + (aiSteps === 1 ? ' mensaje IA de esta cadencia se escribe' : ' mensajes IA de esta cadencia se escriben') + ' por lead y por paso, 24 h antes de cada envío, con el ángulo y las instrucciones que pusiste en la campaña (3 créditos cada uno). No se generan al enrolar: si el lead responde antes, los que faltaban no se escriben ni se cobran.');
+    if (needsAi) hints.push('Los ' + aiSteps + (aiSteps === 1 ? ' mensaje IA de esta cadencia se escribe' : ' mensajes IA de esta cadencia se escriben') + ' por lead y por paso, 24 h antes de cada envío, con el ángulo y las instrucciones que pusiste en la campaña (2 créditos cada uno). No se generan al enrolar: si el lead responde antes, los que faltaban no se escriben ni se cobran.');
     card.appendChild(h('div', { style: 'padding:10px 14px' }, h('span', { class: 'pros-hint', text: hints.join(' ') })));
     var prog = h('div', { class: 'cmp-progress', 'data-role': 'enroll-progress' });
     prog.hidden = true;
@@ -2735,14 +2735,14 @@
     var foot = h('div', { class: 'cmp-reply-row' });
     foot.appendChild(h('span', { class: 'pros-hint', text: chosen === 'whatsapp' ? 'Texto libre dentro de las 24 h desde el último mensaje del lead. Sale desde tu número de WhatsApp.' : 'Sale como respuesta individual desde tu cuenta de email.' }));
     foot.appendChild(aiDraftBtn(conv, chosen));
-    foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-send', 'data-key': conv.key, 'data-channel': chosen, 'data-credit-cost': 'campaign_send', 'data-credit-muted': '', text: 'Enviar por ' + CH[chosen].label }));
+    foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-send', 'data-key': conv.key, 'data-channel': chosen, text: 'Enviar por ' + CH[chosen].label }));
     box.appendChild(foot);
     return box;
   }
 
   /**
    * "Redactar con IA": escribe un borrador de respuesta con el hilo real y el
-   * contexto de tu empresa (3 créditos). Siempre cae en el cuadro de texto
+   * contexto de tu empresa (2 créditos). Siempre cae en el cuadro de texto
    * para que lo edites — nunca se envía solo. Es el ÚNICO sitio donde se
    * genera un mensaje fuera de una campaña: aquí el lead ya contestó y la
    * cadencia se detuvo.

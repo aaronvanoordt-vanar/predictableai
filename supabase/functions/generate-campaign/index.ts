@@ -46,6 +46,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
+import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -61,7 +62,7 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...extra } });
 }
 
-const COST = 6;
+const COST = CREDIT_COSTS.campaign_recommendation; // _shared/credit-costs.ts
 const TIMEOUT_MS = 90_000;
 const MAX_TEXT = 700;
 

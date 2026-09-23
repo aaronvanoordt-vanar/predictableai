@@ -83,6 +83,7 @@ import * as dripify from "../_shared/dripify.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 import * as gmail from "../_shared/gmail.ts";
+import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -90,7 +91,11 @@ type Json = any;
 const BATCH = 60;
 const STALE_PROCESSING_MS = 10 * 60 * 1000;
 const WHATSAPP_SESSION_MS = 24 * 60 * 60 * 1000;
-const CAMPAIGN_SEND_COST = 1; // créditos por envío (js/credit-costs.js → campaign_send)
+// 1 crédito por LEAD que entra a una campaña, cobrado en su primer envío
+// real y una sola vez por enrolamiento: cubre todos sus envíos (el envío sale
+// por el WATI, Apollo o Dripify del cliente y no nos cuesta). Tarifario en
+// _shared/credit-costs.ts (campaign_lead) ↔ js/credit-costs.js.
+const CAMPAIGN_LEAD_COST = CREDIT_COSTS.campaign_lead;
 const PREPARE_AHEAD_MS = 24 * 60 * 60 * 1000; // generar mensajes IA con este adelanto
 const PREPARE_BATCH = 12;                      // generaciones por corrida (cada una tarda ~10-30 s)
 const PREPARE_BUDGET_MS = 90 * 1000;           // tiempo máximo del pase por corrida
@@ -379,13 +384,21 @@ async function finish(ctx: Ctx, en: Json, patch: Json) {
   if (error) console.error("[campaign-run] enrollment update:", error.message);
 }
 
-async function spendCredits(ctx: Ctx, userId: string) {
-  const { data, error } = await ctx.db.rpc("spend_credits", { p_user_id: userId, p_amount: CAMPAIGN_SEND_COST });
+async function spendCredits(ctx: Ctx, en: Json) {
+  const userId = en.user_id as string;
+  const { count, error: countErr } = await ctx.db
+    .from("credit_transactions")
+    .select("id", { count: "exact", head: true })
+    .eq("reason", "campaign_lead")
+    .eq("section_key", String(en.id));
+  if (countErr) console.warn("[campaign-run] campaign_lead lookup:", countErr.message);
+  if ((count ?? 0) > 0) return; // este lead ya pagó su entrada a la campaña
+  const { data, error } = await ctx.db.rpc("spend_credits", { p_user_id: userId, p_amount: CAMPAIGN_LEAD_COST });
   if (error || data === null || data === undefined) {
     console.warn("[campaign-run] spend_credits:", error?.message ?? "sin saldo");
     return;
   }
-  await ctx.db.from("credit_transactions").insert({ user_id: userId, delta: -CAMPAIGN_SEND_COST, reason: "campaign_send" });
+  await ctx.db.from("credit_transactions").insert({ user_id: userId, delta: -CAMPAIGN_LEAD_COST, reason: "campaign_lead", section_key: String(en.id) });
 }
 
 function channelKey(stepChannel: string): string {
@@ -578,7 +591,7 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     if (["no_contactado", "en_campana"].includes(member.contact_status)) {
       await db.from("prospect_list_members").update({ contact_status: "saludo_enviado", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
     }
-    await spendCredits(ctx, en.user_id);
+    await spendCredits(ctx, en);
   } else if (step.channel === "email") {
     let subject = "", bodyText = "";
     let messageRowId: string | null = null;
@@ -622,7 +635,7 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     if (["no_contactado", "en_campana"].includes(member.contact_status)) {
       await db.from("prospect_list_members").update({ contact_status: "saludo_enviado", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
     }
-    await spendCredits(ctx, en.user_id);
+    await spendCredits(ctx, en);
   } else if (flowLib.isLinkedin(step.channel)) {
     // Los dos pasos de LinkedIn hacen lo mismo con Dripify (subir el perfil a
     // una campaña), pero a campañas DISTINTAS: la de conexión solo manda la
@@ -695,7 +708,7 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     if (["no_contactado", "en_campana"].includes(member.contact_status)) {
       await db.from("prospect_list_members").update({ contact_status: isMsg ? "saludo_enviado" : "conexion_enviada", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
     }
-    await spendCredits(ctx, en.user_id);
+    await spendCredits(ctx, en);
   } else {
     throw new StepError(`Canal desconocido en la cadencia: ${step.channel}.`, "skip");
   }

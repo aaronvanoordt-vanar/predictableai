@@ -236,7 +236,7 @@
         { label: 'Iniciar Meeting Coach', hint: 'Ventas', run: navTo('.nav-item[data-page="ventas-coach"]'), keys: 'coach reunión meeting iniciar' },
         { label: 'Ver la bandeja', hint: 'Respuestas', run: navTo('.nav-item[data-pros-view="inbox"]'), keys: 'bandeja inbox respuestas mensajes' },
         { label: 'Ajustes', hint: 'Cuenta', run: function () { if (typeof global.openSettingsPage === 'function') global.openSettingsPage(); }, keys: 'ajustes configuración perfil cuenta equipo' },
-        { label: 'Comprar créditos', hint: 'Créditos', run: function () { var c = doc.getElementById('credits-chip'); if (c) c.click(); }, keys: 'créditos comprar saldo' },
+        { label: 'Plan y créditos', hint: 'Créditos', run: function () { var c = doc.getElementById('credits-chip'); if (c) c.click(); }, keys: 'créditos comprar saldo plan recargar suscripción facturación' },
       ];
       actions.forEach(function (a) { if (a.run) items.push({ group: 'Acciones', label: a.label, hint: a.hint, icon: ICON_ACTION, run: a.run, keys: a.keys }); });
       var dark = html.getAttribute('data-theme') === 'dark';

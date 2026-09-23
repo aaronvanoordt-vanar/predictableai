@@ -42,17 +42,17 @@ export const KIND_META: Record<DetectorKind, KindMeta> = {
   news: {
     label: "Noticias y anuncios",
     description: "Búsqueda web fechada: prensa, comunicados, registros oficiales, job boards.",
-    requires: ["llm_web"], defaultCadenceHours: 24, identity: "headline",
+    requires: ["llm_web"], defaultCadenceHours: 48, identity: "headline",
   },
   tenders: {
     label: "Licitaciones y compras públicas",
     description: "Convocatorias y adjudicaciones en los portales de compras de cada país objetivo.",
-    requires: ["llm_web"], defaultCadenceHours: 24, identity: "headline",
+    requires: ["llm_web"], defaultCadenceHours: 48, identity: "headline",
   },
   hiring: {
     label: "Contrataciones",
     description: "Empresas con vacantes activas para los cargos que delatan la necesidad (Apollo, 1 crédito de Apollo por página).",
-    requires: ["apollo"], defaultCadenceHours: 24, identity: "company",
+    requires: ["apollo"], defaultCadenceHours: 72, identity: "company",
   },
   technographics: {
     label: "Tecnologías en uso",
@@ -67,7 +67,7 @@ export const KIND_META: Record<DetectorKind, KindMeta> = {
   funding: {
     label: "Financiamiento",
     description: "Rondas de inversión recientes en el ICP (Apollo, 1 crédito de Apollo por página).",
-    requires: ["apollo"], defaultCadenceHours: 48, identity: "company",
+    requires: ["apollo"], defaultCadenceHours: 72, identity: "company",
   },
   leadership: {
     label: "Cambios de liderazgo",
@@ -82,7 +82,7 @@ export const KIND_META: Record<DetectorKind, KindMeta> = {
   presence: {
     label: "Presencia digital local",
     description: "Negocios en Google Maps sin sitio web, con pocas reseñas o mala calificación (Google Places).",
-    requires: ["places"], defaultCadenceHours: 72, identity: "company",
+    requires: ["places"], defaultCadenceHours: 168, identity: "company",
   },
   website_visitors: {
     label: "Visitantes de tu sitio",
@@ -333,7 +333,7 @@ export const PLAN_JSON_SPEC = `{
       "name": "≤ 60 chars, Spanish, what this detector hunts (e.g. 'Vacantes de SDR abiertas', 'Sin automatización de WhatsApp')",
       "rationale": "1-2 sentences, Spanish: why this observable fact means the company needs the seller now",
       "weight": 0-100 (how strongly this signal predicts a purchase; spread the values, do not cluster),
-      "cadence_hours": how often to re-run (news 24, hiring 24, leadership 48, technographics/site_probe/growth/presence 72, funding 48, website_visitors 6),
+      "cadence_hours": how often to re-run (news/tenders 48, leadership 48, hiring/funding/technographics/site_probe/growth 72, presence 168, website_visitors 6; lower values are raised to these floors),
       "decision_maker_titles": ["3-6 English job titles of who buys this at the target company"],
       "config": { see CONFIG BY KIND }
     }
@@ -341,13 +341,13 @@ export const PLAN_JSON_SPEC = `{
 }
 
 CONFIG BY KIND (every field shown is required unless marked optional):
-- news:            { "queries": ["3-10 concrete web-search queries, in the language of the sources (Spanish for LATAM), each a DIFFERENT way into the signal, written to surface dated recent items (press, filings, job boards, announcements)"], "sources": ["kinds of sources to trust"], "window_days": 7|30|90|180|365 }
-- tenders:         { "queries": ["3-8 queries against public-procurement portals of the target countries (SECOP II Colombia, CompraNet México, Mercado Público Chile, SEACE Perú, COMPR.AR Argentina, PLACE España, SAM.gov USA…) for the goods/services the seller sells"], "portals": ["portal names"], "window_days": 30|90 }
+- news:            { "queries": ["3-5 concrete web-search queries, in the language of the sources (Spanish for LATAM), each a DIFFERENT way into the signal, written to surface dated recent items (press, filings, job boards, announcements)"], "sources": ["kinds of sources to trust"], "window_days": 7|30|90|180|365 }
+- tenders:         { "queries": ["3-5 queries against public-procurement portals of the target countries (SECOP II Colombia, CompraNet México, Mercado Público Chile, SEACE Perú, COMPR.AR Argentina, PLACE España, SAM.gov USA…) for the goods/services the seller sells"], "portals": ["portal names"], "window_days": 30|90 }
 - hiring:          { "job_titles": ["2-8 job titles whose active postings reveal the need, in English (Apollo)"], "min_jobs": 1, "posted_within_days": 30, "job_locations": ["optional cities/countries"] }
 - technographics:  { "using_any": ["Apollo technology uids the target USES, e.g. 'salesforce', 'hubspot', 'shopify', 'wordpress_org', 'zendesk', 'intercom'"] } — non-empty. There is NO "not using" filter: to hunt for the ABSENCE of a tool use site_probe with must_not_have. Combine with the seller's ICP automatically.
 - site_probe:      { "must_have": ["keys"], "must_not_have": ["keys"] } — keys: meta_pixel, google_ads_tag, tiktok_pixel, linkedin_insight, gtm, ga4, hotjar, clarity, whatsapp_click_to_chat, whatsapp_widget, wati, manychat, respond_io, kommo, cliengo, intercom, drift, hubspot_chat, zendesk, tidio, crisp, freshchat, tawk, livechat, chatbot_ai, shopify, woocommerce, vtex, magento, tiendanube, mercadopago, stripe, calendly, hubspot_meetings, pipedrive, salesforce, zoho, wordpress, wix, squarespace, webflow, or the groups any_chat, any_whatsapp_tool, any_ads_pixel, any_ecommerce, any_crm, any_booking, any_analytics. Example "sells WhatsApp AI automation": { "must_have": ["whatsapp_click_to_chat"], "must_not_have": ["any_whatsapp_tool", "chatbot_ai"] }.
 - funding:         { "window_days": 90, "min_amount": 0 (USD, optional), "stages": ["optional: seed, series_a, series_b…"] }
 - leadership:      { "titles": ["2-8 buyer titles in English"], "max_days_in_role": 90 }
 - growth:          { "months": 6|12|24, "min_growth_pct": 20 }
-- presence:        { "queries": ["2-6 business-type phrases in the local language, e.g. 'clínica dental', 'restaurante'"], "cities": ["3-12 cities in the target countries"], "rules": { "no_website": true|false, "no_phone": true|false, "max_rating": 4.0 (optional), "max_reviews": 20 (optional), "min_reviews": 50 (optional) } } — at least one rule.
+- presence:        { "queries": ["1-3 business-type phrases in the local language, e.g. 'clínica dental', 'restaurante'"], "cities": ["3-5 cities in the target countries"], "rules": { "no_website": true|false, "no_phone": true|false, "max_rating": 4.0 (optional), "max_reviews": 20 (optional), "min_reviews": 50 (optional) } } — at least one rule.
 - website_visitors:{ "days": 30, "intent": ["high","medium"], "pages": ["optional path fragments, e.g. '/precios'"] }`;

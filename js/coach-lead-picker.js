@@ -9,7 +9,7 @@
 // "Preparar con IA" (#mc-lead-prep): investiga al lead en 5 capas con
 // generate-outreach y guarda el resultado en prospect_list_members.outreach
 // (lo persiste la propia edge function). De ahí salen el ángulo, la objeción
-// probable y el coach_prep que lee buildCoachLeadContext. Cuesta 3 créditos.
+// probable y el coach_prep que lee buildCoachLeadContext. Cuesta 4 créditos.
 // Es la ÚNICA entrada a esa generación desde el 2026-09-15: los mensajes de
 // una campaña son de la campaña (campaign_messages, uno por paso), no del
 // lead de la lista. No la vuelvas a colgar de Listas ni del enrolamiento.

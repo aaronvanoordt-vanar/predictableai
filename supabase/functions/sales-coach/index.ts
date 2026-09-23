@@ -113,6 +113,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, parseLlmJson, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { coachMeetingCost } from "../_shared/credit-costs.ts";
 
 // La región es parte de la cuenta de Recall.ai (se elige al crear el API key,
 // visible en su dashboard): us-east-1, us-west-2, eu-central-1 o
@@ -898,13 +899,15 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
 // Actions
 // ───────────────────────────────────────────────────────────────────────────
 async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
-  // Guardia: se necesita al menos el costo base de una reunión (8 créditos) para
-  // iniciar. El costo real (base + bloques de bot) se cobra al cerrar (endMeeting).
+  // Guardia: se necesita al menos una reunión corta (reporte + un bloque de 10
+  // min, _shared/credit-costs.ts) para iniciar. El costo real, según la
+  // duración, se cobra al cerrar (endMeeting).
   if (ctx.userId) {
+    const minCost = coachMeetingCost(p?.mode === "live" ? "local" : "bot", 0);
     const { data: c } = await ctx.supa
       .from("user_credits").select("balance").eq("user_id", ctx.userId).maybeSingle();
-    if ((c?.balance ?? 0) < 8) {
-      return { error: "insufficient_credits", balance: c?.balance ?? 0, cost: 8 };
+    if ((c?.balance ?? 0) < minCost) {
+      return { error: "insufficient_credits", balance: c?.balance ?? 0, cost: minCost };
     }
   }
 
@@ -1278,20 +1281,29 @@ async function finalizeMeeting(ctx: Ctx, meeting: Json, endedAt: string): Promis
   }).eq("id", meeting.id);
   if (updErr) throw new Error(updErr.message);
 
-  // ── Cobro de la reunión (catálogo js/credit-costs.js) ──────────────────
-  // 8 créditos base (modo local) + 30 por cada 10 min en modo bot (Recall.ai).
-  // Se cobra una sola vez: la guardia de idempotencia de arriba (status closed)
-  // impide un doble cobro si endMeeting se llama otra vez.
+  // ── Cobro de la reunión (_shared/credit-costs.ts ↔ js/credit-costs.js) ──
+  // Reporte (5) + por cada 10 min: 8 en modo bot (Recall.ai), 5 en captura
+  // local (Deepgram). Se cobra una sola vez: la guardia de idempotencia de
+  // arriba (status closed) impide un doble cobro si endMeeting se llama otra
+  // vez. Si el saldo no alcanza para toda la reunión, se cobra lo que queda.
   if (meeting.user_id) {
     const durSec = meeting.started_at
       ? Math.max(0, Math.round((new Date(endedAt).getTime() - new Date(meeting.started_at).getTime()) / 1000))
       : 0;
     const isBot = !!meeting.recall_bot_id;
-    const botBlocks = isBot ? Math.ceil(durSec / 600) : 0; // 600 s = bloque de 10 min
-    const coachCost = 8 + botBlocks * 30;
-    const { data: spent, error: spendErr } = await ctx.supa
+    let coachCost = coachMeetingCost(isBot ? "bot" : "local", durSec);
+    let { data: spent, error: spendErr } = await ctx.supa
       .rpc("spend_credits", { p_user_id: meeting.user_id, p_amount: coachCost });
-    if (spendErr || spent === null || spent === undefined) {
+    if (!spendErr && (spent === null || spent === undefined)) {
+      const { data: c } = await ctx.supa
+        .from("user_credits").select("balance").eq("user_id", meeting.user_id).maybeSingle();
+      coachCost = Math.min(coachCost, Number(c?.balance) || 0);
+      if (coachCost > 0) {
+        ({ data: spent, error: spendErr } = await ctx.supa
+          .rpc("spend_credits", { p_user_id: meeting.user_id, p_amount: coachCost }));
+      }
+    }
+    if (coachCost <= 0 || spendErr || spent === null || spent === undefined) {
       console.error("[sales-coach] coach charge failed (insufficient/race):", spendErr);
     } else {
       await ctx.supa.from("credit_transactions").insert({

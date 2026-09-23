@@ -37,8 +37,8 @@
     'has_phone', 'has_email', 'has_linkedin',
   ];
   var DELAY_MODES = ['after_prev', 'with_prev'];
-  var AI_MESSAGE_CREDITS = 3;
-  var SEND_CREDITS = 1;
+  var AI_MESSAGE_CREDITS = 2; // espejo de _shared/campaign-flow.ts y js/credit-costs.js
+  var LEAD_CREDITS = 1;       // por lead que entra a la campaña (cubre todos sus envíos)
 
   // Copy para la UI (solo en el espejo JS).
   var CHANNEL_META = {
@@ -321,7 +321,7 @@
       // LinkedIn: el mensaje lo escribe el usuario en Dripify, no la IA.
       if (a.content.kind === 'ai' && !isLinkedin(a.channel)) ai++;
     });
-    return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + sends * SEND_CREDITS) * n };
+    return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + (sends ? LEAD_CREDITS : 0)) * n };
   }
 
   /** Título corto de un nodo para tarjetas y tablas. */
@@ -455,7 +455,7 @@
   global.CampaignFlow = {
     FLOW_VERSION: FLOW_VERSION,
     CHANNELS: CHANNELS, CONTENT_KINDS: CONTENT_KINDS, ANGLES: ANGLES, CONDITIONS: CONDITIONS, DELAY_MODES: DELAY_MODES,
-    AI_MESSAGE_CREDITS: AI_MESSAGE_CREDITS, SEND_CREDITS: SEND_CREDITS,
+    AI_MESSAGE_CREDITS: AI_MESSAGE_CREDITS, LEAD_CREDITS: LEAD_CREDITS,
     ANGLE_LABELS: ANGLE_LABELS, CONDITION_LABELS: CONDITION_LABELS, CHANNEL_META: CHANNEL_META, KIND_LABELS: KIND_LABELS,
     nodeTitle: nodeTitle, cloneWithNewIds: cloneWithNewIds, durationDays: durationDays, templates: templates, isLinkedin: isLinkedin,
     newId: newId, emptyFlow: emptyFlow, normalize: normalize, validate: validate,

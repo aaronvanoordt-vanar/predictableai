@@ -44,6 +44,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ApolloError, resolveApolloAuth } from "../_shared/apollo-auth.ts";
 import type { ApolloAuth } from "../_shared/apollo-auth.ts";
+import { apolloBillableCount, CREDIT_COSTS } from "../_shared/credit-costs.ts";
 
 type Method = "GET" | "POST" | "PUT" | "DELETE";
 
@@ -219,23 +220,27 @@ Deno.serve(async (req) => {
     }, 403, cors);
   }
 
-  // ── Cobro de créditos por enriquecimiento (catálogo js/credit-costs.js) ──
-  // 1 crédito por email, 6 por teléfono, por persona. Solo match/bulk_match
-  // (revelar datos de contacto) cobran; búsqueda y CRUD son gratis. Se verifica
-  // el saldo ANTES de quemar créditos de Apollo, y se descuenta tras el éxito.
+  // ── Cobro de créditos por enriquecimiento (_shared/credit-costs.ts) ─────
+  // 2 créditos por email, 8 por teléfono, por persona ENCONTRADA. Solo
+  // match/bulk_match (revelar datos de contacto) cobran; búsqueda y CRUD son
+  // gratis. Se verifica el saldo para el peor caso (todas encontradas) ANTES
+  // de quemar créditos de Apollo, y tras la respuesta se cobra solo lo que
+  // trajo dato — igual que Apollo, que no cobra un email que no encontró.
   //
   // En modo `oauth` NO se cobran créditos de predictable: el reveal sale de
   // los créditos del Apollo del propio cliente (él ya se lo paga a Apollo).
-  // Los créditos de la plataforma solo cubren la key compartida de la beta.
+  // Los créditos de la plataforma solo cubren la key compartida.
   let creditCost = 0;
+  let perPerson = 0;
   let creditReason = "enrich_email";
+  const wantsPhone = body.reveal_phone_number === true;
   if (auth.mode === "platform" && (endpoint === "/people/match" || endpoint === "/people/bulk_match")) {
     const people = endpoint === "/people/bulk_match"
       ? (Array.isArray(body.details) ? body.details.length : 1)
       : 1;
-    const perPerson = body.reveal_phone_number === true ? 6 : 1;
+    perPerson = wantsPhone ? CREDIT_COSTS.enrich_phone : CREDIT_COSTS.enrich_email;
     creditCost = people * perPerson;
-    creditReason = body.reveal_phone_number === true ? "enrich_phone" : "enrich_email";
+    creditReason = wantsPhone ? "enrich_phone" : "enrich_email";
   }
 
   const admin = creditCost > 0
@@ -268,13 +273,21 @@ Deno.serve(async (req) => {
     console.error(`[apollo-proxy] upstream ${res.status} for ${endpoint}: ${text.slice(0, 300)}`);
   }
 
-  // Cobrar solo si Apollo respondió OK (no cobramos por un enriquecimiento fallido).
+  // Cobrar solo si Apollo respondió OK y solo por las personas con dato.
+  let charge = 0;
   if (admin && res.ok) {
-    const { data: spent, error: spendErr } = await admin.rpc("spend_credits", { p_user_id: user.id, p_amount: creditCost });
+    try {
+      charge = apolloBillableCount(endpoint, JSON.parse(text), wantsPhone) * perPerson;
+    } catch {
+      charge = creditCost; // respuesta ilegible: se cobra lo pedido, como antes
+    }
+  }
+  if (admin && charge > 0) {
+    const { data: spent, error: spendErr } = await admin.rpc("spend_credits", { p_user_id: user.id, p_amount: charge });
     if (spendErr || spent === null || spent === undefined) {
       console.error("[apollo-proxy] credit charge failed (race/insufficient):", spendErr);
     } else {
-      await admin.from("credit_transactions").insert({ user_id: user.id, delta: -creditCost, reason: creditReason });
+      await admin.from("credit_transactions").insert({ user_id: user.id, delta: -charge, reason: creditReason });
     }
   }
 

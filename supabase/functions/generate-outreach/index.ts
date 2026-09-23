@@ -59,8 +59,9 @@
  *       anyone with the (public) anon key burn Anthropic tokens (same
  *       open-proxy bug class documented in apollo-proxy).
  *
- * NOTE: this function does NOT charge app credits — deliberate MVP decision;
- *       revisit if outreach generation gets real volume.
+ * Credits (_shared/credit-costs.ts, docs/PRICING.md): outreach_full (4) for
+ *       the 5-layer message, outreach_step (2) for a campaign step or an
+ *       inbox reply draft — charged only after a successful generation.
  *
  * POST body: {
  *   "lead":      { "name", "first_name", "title", "company", "industry",
@@ -105,6 +106,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -406,7 +408,21 @@ function archiveSessionLater(apiKey: string, sessionId: string): void {
 // OUTREACH_ALLOW_API_FALLBACK is on.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function callDirect(engine: Engine, system: string, user: string): Promise<string> {
+/**
+ * Presupuesto de herramientas web por llamada. El bucle de búsqueda es lo que
+ * encarece un mensaje: cada resultado se relee en cada vuelta (40–80k tokens
+ * de entrada con 3 búsquedas + 2 fetch). El mensaje completo de 5 capas
+ * conserva ese presupuesto; un paso de campaña o un borrador de la Bandeja ya
+ * trae el brief, el Hub y el snapshot del lead, así que con UNA búsqueda y sin
+ * fetch alcanza (docs/PRICING.md, ~0.02–0.03 USD por mensaje). La corrección
+ * de formato no vuelve a buscar.
+ */
+type WebBudget = { search: number; fetch: number };
+const FULL_WEB: WebBudget = { search: 3, fetch: 2 };
+const STEP_WEB: WebBudget = { search: 1, fetch: 0 };
+const NO_WEB: WebBudget = { search: 0, fetch: 0 };
+
+async function callDirect(engine: Engine, system: string, user: string, web: WebBudget = FULL_WEB): Promise<string> {
   const res = await callLLM({
     engine,
     system,
@@ -414,9 +430,9 @@ async function callDirect(engine: Engine, system: string, user: string): Promise
     maxTokens: 4096,
     // Haiku 4.5 supports the basic web tool variants (the _20260209
     // dynamic-filtering variants are Opus/Sonnet-tier only).
-    webSearch: 3,
+    webSearch: web.search,
     claudeWebSearchTool: "web_search_20250305",
-    claudeWebFetch: 2,
+    claudeWebFetch: web.fetch,
     claudeModel: AGENT_MODEL,
     retryDelayMs: 5000,
     logPrefix: "[outreach]",
@@ -432,7 +448,7 @@ async function generateDirect(engine: Engine, userPrompt: string): Promise<Outre
   if (violations.length) {
     console.warn(`[outreach] ${engine} format violations, retrying: ${violations.join(" · ")}`);
     const fixPrompt = userPrompt + "\n\n" + correctionMessage(out, violations);
-    const retry = parseJson(await callDirect(engine, AGENT_SYSTEM_PROMPT, fixPrompt));
+    const retry = parseJson(await callDirect(engine, AGENT_SYSTEM_PROMPT, fixPrompt, NO_WEB));
     if (isValidOutreach(retry)) out = retry;
   }
   return out;
@@ -1158,7 +1174,7 @@ function stepViolations(step: StepSpec, out: StepOut): string[] {
 }
 
 async function generateStep(engine: Engine, spec: StepSpec, userPrompt: string): Promise<StepOut> {
-  let out = parseStepJson(await callDirect(engine, STEP_SYSTEM_PROMPT, userPrompt));
+  let out = parseStepJson(await callDirect(engine, STEP_SYSTEM_PROMPT, userPrompt, STEP_WEB));
   if (!out) throw new Error("Model returned malformed step JSON");
   const violations = stepViolations(spec, out);
   if (violations.length) {
@@ -1166,7 +1182,7 @@ async function generateStep(engine: Engine, spec: StepSpec, userPrompt: string):
     const fixPrompt = userPrompt + "\n\nTu respuesta anterior fue:\n" + JSON.stringify(out) +
       "\n\nViola estas reglas:\n- " + violations.join("\n- ") +
       "\n\nReescribe SOLO lo necesario para cumplirlas sin perder la personalización. No vuelvas a buscar en la web. Responde SOLO con el JSON completo.";
-    const retry = parseStepJson(await callDirect(engine, STEP_SYSTEM_PROMPT, fixPrompt));
+    const retry = parseStepJson(await callDirect(engine, STEP_SYSTEM_PROMPT, fixPrompt, NO_WEB));
     if (retry) out = retry;
   }
   return out;
@@ -1288,11 +1304,12 @@ Deno.serve(withLlmContext(async (req: Request) => {
   }
   const engine = await engineForUser(supa, user.id, "outreach", body.engine);
 
-  // Cobro: 3 créditos por mensaje (catálogo js/credit-costs.js). Se verifica el
+  // Cobro (_shared/credit-costs.ts): 4 créditos el mensaje completo de 5
+  // capas, 2 un paso de campaña o un borrador de la Bandeja. Se verifica el
   // saldo ANTES de gastar en el LLM/agente, pero el descuento atómico se hace
   // solo si la generación tiene éxito (ver antes del return 200), para no
   // cobrar por un mensaje fallido.
-  const OUTREACH_COST = 3;
+  const OUTREACH_COST = (stepMode && step) ? CREDIT_COSTS.outreach_step : CREDIT_COSTS.outreach_full;
   const { data: obCredits } = await supa
     .from("user_credits").select("balance").eq("user_id", user.id).maybeSingle();
   if ((obCredits?.balance ?? 0) < OUTREACH_COST) {
@@ -1412,7 +1429,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
 
     // Cobro solo tras éxito. Descuento atómico; si otro request agotó el saldo
     // en paralelo, se registra y se entrega el mensaje igual (no rehacemos el
-    // trabajo ya pagado en cómputo por un caso de carrera de 3 créditos).
+    // trabajo ya pagado en cómputo por un caso de carrera de pocos créditos).
     const { data: obSpent, error: obSpendErr } = await supa
       .rpc("spend_credits", { p_user_id: user.id, p_amount: OUTREACH_COST });
     if (obSpendErr || obSpent === null || obSpent === undefined) {

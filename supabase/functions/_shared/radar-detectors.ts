@@ -148,9 +148,18 @@ function linkedinJobsUrl(org: ApolloOrg | null | undefined): string {
 
 const TENDERS_BLOCK = `\n\n=== TENDERS MODE ===\nThis query targets PUBLIC PROCUREMENT: the "companies" to return are the buyers that published a tender, call for bids, RFP or award for what the seller sells (public entities, state companies, municipalities, hospitals, universities count as companies here). signal_headline = what they are buying and the deadline/date; evidence.url = the tender's page on the portal or the official notice. Never return the bidders/winners as if they were buyers.`;
 
+const NEWS_MAX_QUERIES = 5;
+// Google Places cobra ~35 USD por cada 1,000 búsquedas con estos campos: por
+// ciclo, como mucho 3 consultas × 5 ciudades y solo la primera página (20
+// fichas) de cada una.
+const PRESENCE_MAX_QUERIES = 3;
+const PRESENCE_MAX_CITIES = 5;
+
 async function tickNews(t: TickContext): Promise<TickResult> {
   const cfg = t.detector.config || {};
-  const queries: string[] = Array.isArray(cfg.queries) ? cfg.queries : [];
+  // Tope de costo (docs/PRICING.md): máximo NEWS_MAX_QUERIES consultas por
+  // ciclo, cada una con `sonar` (una búsqueda puntual no necesita sonar-pro).
+  const queries: string[] = (Array.isArray(cfg.queries) ? cfg.queries : []).slice(0, NEWS_MAX_QUERIES);
   const i = Math.max(0, Number(t.detector.cursor?.i) || 0);
   if (!queries.length || i >= queries.length) return { candidates: [], cursor: {}, done: true };
   const windowDays = Number(cfg.window_days) || 30;
@@ -181,6 +190,7 @@ async function tickNews(t: TickContext): Promise<TickResult> {
     const res = await callLLM({
       engine: t.engine, system: RESEARCH_SYSTEM, user: prompt, maxTokens: 2500,
       webSearch: 1, searchAfterDate: cutoffIso(windowDays), claudeWebSearchTool: "web_search_20260209",
+      perplexityModel: "sonar",
       timeoutMs: 95_000, retries: 1, logPrefix: "[radar-monitor]",
     });
     let parsed: Json = { companies: [] };
@@ -542,8 +552,8 @@ async function tickPresence(t: TickContext): Promise<TickResult> {
   const key = Deno.env.get("GOOGLE_PLACES_API_KEY");
   if (!key) throw new Error("GOOGLE_PLACES_API_KEY no está configurada.");
   const cfg = t.detector.config || {};
-  const queries: string[] = Array.isArray(cfg.queries) ? cfg.queries : [];
-  const cities: string[] = Array.isArray(cfg.cities) ? cfg.cities : [];
+  const queries: string[] = (Array.isArray(cfg.queries) ? cfg.queries : []).slice(0, PRESENCE_MAX_QUERIES);
+  const cities: string[] = (Array.isArray(cfg.cities) ? cfg.cities : []).slice(0, PRESENCE_MAX_CITIES);
   const rules = cfg.rules || {};
   const cur: PlacesCursor = t.detector.cursor || {};
   let qi = Math.max(0, Number(cur.qi) || 0), ci = Math.max(0, Number(cur.ci) || 0);
@@ -597,11 +607,11 @@ async function tickPresence(t: TickContext): Promise<TickResult> {
     c.decision_makers = website ? undefined : [];
     candidates.push(c);
   }
-  // Avanzar: página siguiente de la misma consulta, luego siguiente ciudad, luego siguiente consulta.
-  const token = asStr(data.nextPageToken);
+  // Avanzar: siguiente ciudad, luego siguiente consulta.
+  // Sin paginar: la segunda página cuesta lo mismo y trae los negocios menos
+  // relevantes para la consulta.
   let cursor: PlacesCursor;
-  if (token) cursor = { qi, ci, token };
-  else if (ci + 1 < cities.length) cursor = { qi, ci: ci + 1 };
+  if (ci + 1 < cities.length) cursor = { qi, ci: ci + 1 };
   else if (qi + 1 < queries.length) cursor = { qi: qi + 1, ci: 0 };
   else cursor = {};
   const done = !Object.keys(cursor).length;

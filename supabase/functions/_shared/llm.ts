@@ -259,6 +259,9 @@ export interface LlmCall {
    * live coaching turns). Falls back to OPENAI_MODEL.
    */
   openaiModel?: string;
+  /** Perplexity model for this call (e.g. "sonar" for a cheap single-search
+   *  lookup). Default: sonar-pro when searching, sonar when not. */
+  perplexityModel?: string;
   /** When set, the engine is asked for JSON matching this schema. */
   jsonSchema?: Record<string, unknown>;
   /** PDF attachments. Claude and OpenAI only. */
@@ -542,7 +545,7 @@ async function callPerplexity(
   modelOverride?: string,
 ): Promise<DispatchResponse> {
   const wantsSearch = !!(opts.webSearch && opts.webSearch > 0);
-  const model = modelOverride || perplexityModel(wantsSearch);
+  const model = modelOverride || opts.perplexityModel || perplexityModel(wantsSearch);
 
   // deno-lint-ignore no-explicit-any
   const body: any = {

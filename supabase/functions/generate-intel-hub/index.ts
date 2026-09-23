@@ -31,6 +31,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, resolveEngine, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 
 // ── Section catalogue ────────────────────────────────────────────────────────
 
@@ -1052,9 +1053,10 @@ Deno.serve(withLlmContext(async (req: Request) => {
 
   const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
-  // Cobro por ítem (catálogo js/credit-costs.js): 2 créditos por sección con
-  // el modelo por defecto (Haiku), 4 con un modelo premium (Opus/Sonnet). Solo
-  // el trigger 'manual' cobra; onboarding/schedule son del sistema y van gratis.
+  // Cobro por ítem (_shared/credit-costs.ts ↔ js/credit-costs.js): 3 créditos
+  // por sección con el modelo por defecto, 8 con un modelo premium de Claude.
+  // Solo el trigger 'manual' cobra; onboarding/schedule van incluidos en el
+  // plan (la cadencia automática la limita schedule-intel-hub según el plan).
   if (triggeredBy === "manual") {
     const { data: chargeProfile } = await supabase
       .from("profiles")
@@ -1065,7 +1067,9 @@ Deno.serve(withLlmContext(async (req: Request) => {
     // to the other engines, so they always charge the base rate.
     const chargeEngine = resolveEngine("intel_hub", body.engine, chargeProfile?.ai_engines);
     const chargeModel = resolveModel(chargeProfile?.preferred_claude_model);
-    const perItem = (chargeEngine === "claude" && chargeModel !== DEFAULT_MODEL) ? 4 : 2;
+    const perItem = (chargeEngine === "claude" && chargeModel !== DEFAULT_MODEL)
+      ? CREDIT_COSTS.intel_hub_item_premium
+      : CREDIT_COSTS.intel_hub_item;
     const cost = requestedSections.length * perItem;
 
     // Atomic deduction (single guarded UPDATE) — no read-then-write race.
