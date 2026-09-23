@@ -376,6 +376,11 @@
     };
   }
 
+  function companyKey(s) {
+    const d = String(s.company_domain || '').toLowerCase().replace(/^www\./, '').trim();
+    return d || String(s.company_name || '').toLowerCase().trim();
+  }
+
   async function saveSignals(ids, enroll) {
     const sigs = ids.map((id) => state.signals.find((s) => s.id === id)).filter(Boolean);
     if (!sigs.length) return;
@@ -392,8 +397,16 @@
         name, silent: true, onStatus: (m) => { state.busy = m; render(); },
       });
       if (!list) return;
-      await global.supabaseClient.from('radar_signals').update({ status: 'saved', list_id: list.id }).in('id', ids);
-      sigs.forEach((s) => { s.status = 'saved'; s.list_id = list.id; delete state.selected[s.id]; });
+      // La misma empresa suele tener varias señales (una por corrida): se
+      // guardan todas las nuevas de esa empresa, o seguiría apareciendo en
+      // Nuevas aunque ya esté en la lista.
+      const keys = {};
+      sigs.forEach((s) => { const k = companyKey(s); if (k) keys[k] = true; });
+      const all = state.signals.filter((s) => ids.indexOf(s.id) !== -1 || (s.status === 'new' && keys[companyKey(s)]));
+      const { error } = await global.supabaseClient.from('radar_signals')
+        .update({ status: 'saved', list_id: list.id }).in('id', all.map((s) => s.id));
+      if (error) throw new Error('La lista se creó, pero no se pudo marcar la señal como guardada: ' + error.message);
+      all.forEach((s) => { s.status = 'saved'; s.list_id = list.id; delete state.selected[s.id]; });
       state.notice = 'Guardado en la lista "' + list.name + '" (' + sigs.length + ' empresa' + (sigs.length === 1 ? '' : 's') + ').';
       if (enroll) {
         if (global.campaigns && typeof global.campaigns.newFromList === 'function') {
