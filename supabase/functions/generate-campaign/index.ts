@@ -48,6 +48,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { loadIntelligence } from "../_shared/intelligence.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
@@ -281,12 +282,13 @@ Deno.serve(withLlmContext(async (req) => {
   const { data: credits } = await supa.from("user_credits").select("balance").eq("user_id", user.id).maybeSingle();
   if ((credits?.balance ?? 0) < COST) return json({ error: "insufficient_credits", balance: credits?.balance ?? 0, cost: COST }, 402, h);
 
-  const [engine, { data: intake }, { data: brief }, channels, stats, knowledgeDocs] = await Promise.all([
+  const [engine, { data: intake }, { data: brief }, channels, stats, learned, knowledgeDocs] = await Promise.all([
     engineForUser(supa, user.id, "outreach", body.engine),
     supa.from("intel_hub_intake").select("*").eq("user_id", user.id).maybeSingle(),
     supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
     loadChannels(supa, user.id),
     listStats(supa, user.id, listId),
+    loadIntelligence(supa, user.id, "campaign"),
     loadKnowledge(supa, user.id),
   ]);
 
@@ -298,7 +300,9 @@ Deno.serve(withLlmContext(async (req) => {
       .filter((x) => typeof x === "string" && x).join(" "),
     preferKinds: ["framework", "script", "guideline"],
   }, { budget: 5000, maxChunks: 6 });
-  const prompt = userPrompt(intake, brief, channels, stats, hint, buildKnowledgePrompt(knowledgeHits, "cadence"));
+  // Canales, ángulos, perfiles y objeciones con resultados reales: la cadencia
+  // recomendada se apoya en lo que ya funcionó para este vendedor.
+  const prompt = userPrompt(intake, brief, channels, stats, hint, buildKnowledgePrompt(knowledgeHits, "cadence")) + learned;
   let out: Json = null;
   let flow: flowLib.Flow | null = null;
   let lastErrors: string[] = [];

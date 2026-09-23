@@ -3076,6 +3076,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/config.js"></script>
 <script src="js/supabase-client.js"></script>
 <script src="js/auth-guard.js"></script>
+<script src="js/branding.js?v=20260923"></script>
 <!-- ═════ Predictable JS modules ═════ -->
 <script src="js/ui-helpers.js"></script>
 <script src="js/ai-engine.js"></script>
@@ -4161,7 +4162,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
     if (!u) return false;
     const name  = (p && p.full_name) || u.email.split('@')[0];
     const email = u.email;
-    const company = (p && (p.company_name || extractCompanySlug(p.linkedin_company_url))) || '';
+    const company = (p && (p.brand_name || p.company_name || extractCompanySlug(p.linkedin_company_url))) || '';
     const role  = (p && p.role) ? capitalize(p.role) : 'User';
     $('#user-pill-avatar').textContent = getInitials(name, email);
     $('#user-pill-name').textContent   = capitalize(name);
@@ -4694,7 +4695,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
     const p = window.currentProfile;
     if (!u) return;
     const name = (p && p.full_name) || u.email.split('@')[0];
-    const company = (p && p.company_name) || '';
+    const company = (p && (p.brand_name || p.company_name)) || '';
     function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
     function initials(n, e) {
       const src = (n || e || '?').trim();

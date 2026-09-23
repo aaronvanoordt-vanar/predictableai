@@ -105,6 +105,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { loadIntelligence } from "../_shared/intelligence.ts";
 import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
 
 function corsHeaders(origin: string) {
@@ -1338,13 +1339,16 @@ Deno.serve(withLlmContext(async (req: Request) => {
   if (stepMode && step) {
     try {
       const closing = replyMode ? REPLY_CLOSING : STEP_CLOSING;
-      const [learned, knowledgeDocs] = await Promise.all([
+      // Mensajes ganadores y ángulos (solo en modo paso) + la inteligencia
+      // universal (perfiles que responden, objeciones reales) en ambos modos
+      // + la base de entrenamiento (sales_knowledge_docs): solo los fragmentos
+      // que tienen que ver con ESTE paso y ESTE lead.
+      const [stepLearned, universal, knowledgeDocs] = await Promise.all([
         replyMode ? Promise.resolve("") : buildLearningContext(supa, user.id, step.channel),
+        loadIntelligence(supa, user.id, "outreach"),
         loadKnowledge(supa, user.id),
       ]);
-      // Base de entrenamiento (sales_knowledge_docs): solo los fragmentos que
-      // tienen que ver con ESTE paso y ESTE lead. Va antes de lo aprendido y
-      // de las tendencias en peso (lo dice el propio bloque).
+      const learned = stepLearned + universal;
       const lastLead = [...step.conversation].reverse().find((c) => c.who === "lead")?.body ?? "";
       const knowledgeHits = retrieve(knowledgeDocs, {
         channel: step.channel,

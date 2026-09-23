@@ -878,13 +878,35 @@
     if (conv.lead) return [conv.lead.title, conv.lead.company].filter(Boolean).join(' · ') || (conv.lead.dripify_campaign ? 'Campaña de LinkedIn: ' + conv.lead.dripify_campaign : '');
     return '';
   }
-  async function markRead(conv) {
-    var ids = (conv.unreadIds || []).slice();
+  // Marca como leídos los entrantes indicados: primero en local (el contador
+  // baja al instante) y luego en la base, en tandas de 500 (el tope de
+  // inbox-send). Si la base falla se revierte y se avisa: antes el error solo
+  // iba a la consola y el contador volvía a subir al recargar sin explicación.
+  async function markIdsRead(ids) {
+    ids = (ids || []).filter(Boolean);
     if (!ids.length) return;
+    var set = {};
+    ids.forEach(function (id) { set[id] = true; });
     var now = new Date().toISOString();
-    state.inbox.forEach(function (m) { if (ids.indexOf(m.id) !== -1) m.read_at = now; });
-    try { await edgeFetch(FN_INBOX, { action: 'mark_read', ids: ids }); }
-    catch (e) { console.warn('[campaigns] mark_read:', e.message); }
+    state.inbox.forEach(function (m) { if (set[m.id]) m.read_at = now; });
+    updateBadge();
+    try {
+      for (var i = 0; i < ids.length; i += 500) await edgeFetch(FN_INBOX, { action: 'mark_read', ids: ids.slice(i, i + 500) });
+    } catch (e) {
+      state.inbox.forEach(function (m) { if (set[m.id] && m.read_at === now) m.read_at = null; });
+      updateBadge();
+      toast('No se pudieron marcar como leídos: ' + errMsg(e), 'warn');
+      throw e;
+    }
+  }
+  function markRead(conv) {
+    return markIdsRead((conv.unreadIds || []).slice()).catch(function () { /* ya avisado */ });
+  }
+  /** Todo lo que se ve en la lista (respeta los filtros) pasa a leído. */
+  function markAllRead() {
+    var ids = [];
+    filteredConversations(buildConversations()).forEach(function (c) { ids = ids.concat(c.unreadIds || []); });
+    return markIdsRead(ids);
   }
   async function sendReply(conv, channel, body, subject, template) {
     if (!conv.member_id && !(channel === 'whatsapp' && conv.contact_ref)) throw new Error('Este contacto no está en tus listas; guárdalo en una lista para responderle.');
@@ -992,6 +1014,18 @@
       });
     }, 800);
   }
+  // La conversación abierta está a la vista: lo que llegue a ella (realtime,
+  // recarga, volver a la bandeja) queda leído sin exigir otro clic. Antes solo
+  // el clic en la lista marcaba, así que una respuesta que entraba al hilo ya
+  // abierto seguía contando como "sin leer" para siempre.
+  function markOpenConvRead() {
+    if (state.view !== 'inbox' || !state.convKey) return;
+    if (document.visibilityState && document.visibilityState !== 'visible') return;
+    if (!state.root || !state.root.isConnected || !state.root.getClientRects().length) return; // otra página del shell
+    var conv = findConv(state.convKey);
+    if (conv && conv.unread) markRead(conv).then(function () { if (state.view === 'inbox') render(); });
+  }
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') markOpenConvRead(); });
   // Sin la pestaña "Bandeja" el único aviso de mensajes sin leer es el ítem de
   // la barra lateral, así que el contador se pinta ahí además de en el título
   // de la vista (que solo existe cuando la bandeja está abierta).
@@ -1020,7 +1054,7 @@
     root.appendChild(renderSubnav());
     updateBadge();
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
-    if (state.view === 'inbox') root.appendChild(renderInbox());
+    if (state.view === 'inbox') { root.appendChild(renderInbox()); markOpenConvRead(); }
     else if (state.view === 'knowledge') root.appendChild(knowledgeNode());
     else if (state.builder) root.appendChild(state.builderHost);
     else if (state.activeId && findCampaign(state.activeId)) root.appendChild(renderDetail());
@@ -1110,6 +1144,8 @@
       '#prospecting-shell .cmp-inbox-filters input[type=search] { width:100%; }',
       '#prospecting-shell .cmp-inbox-filters .cmp-filter-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }',
       '#prospecting-shell .cmp-inbox-count { padding:6px 12px; font-size:11px; color:var(--text3); border-bottom:1px solid var(--hair); }',
+      '#prospecting-shell .cmp-link-btn { background:none; border:0; padding:0; font:inherit; color:var(--accent-2); cursor:pointer; text-decoration:underline; }',
+      '#prospecting-shell .cmp-link-btn:disabled { opacity:.6; cursor:default; }',
       '#prospecting-shell .cmp-conv-tag { font-size:10px; padding:1px 6px; border-radius:999px; background:var(--surface3); color:var(--text3); white-space:nowrap; }',
       '#prospecting-shell .cmp-bubble.system { align-self:center; max-width:90%; background:transparent; border-style:dashed; font-size:12px; color:var(--text3); text-align:center; }',
       '#prospecting-shell .cmp-bubble-ctx { font-size:10.5px; color:var(--text3); margin-bottom:3px; }',
@@ -2538,7 +2574,14 @@
     left.appendChild(filters);
     var totIn = 0, totOut = 0;
     state.inbox.forEach(function (m) { if (m.direction === 'in') totIn++; else totOut++; });
-    left.appendChild(h('div', { class: 'cmp-inbox-count', text: convs.length + (convs.length === 1 ? ' conversación' : ' conversaciones') + ' · ' + totOut + ' enviados · ' + totIn + ' recibidos' + (unreadCount() ? ' · ' + unreadCount() + ' sin leer' : '') }));
+    var countRow = h('div', { class: 'cmp-inbox-count', text: convs.length + (convs.length === 1 ? ' conversación' : ' conversaciones') + ' · ' + totOut + ' enviados · ' + totIn + ' recibidos' + (unreadCount() ? ' · ' + unreadCount() + ' sin leer' : '') });
+    // Las respuestas de LinkedIn se suelen leer en LinkedIn mismo y Dripify no
+    // avisa cuándo: este botón es la forma de dejar la bandeja al día.
+    if (shown.some(function (c) { return c.unread; })) {
+      countRow.appendChild(document.createTextNode(' · '));
+      countRow.appendChild(h('button', { type: 'button', class: 'cmp-link-btn', 'data-action': 'inbox-mark-all', text: 'Marcar todo como leído' }));
+    }
+    left.appendChild(countRow);
     var list = h('div', { class: 'cmp-conv-list' });
     if (state.inboxError) list.appendChild(h('div', { class: 'pros-note-red', style: 'margin:12px', text: '⚠ ' + state.inboxError }));
     else if (!convs.length) list.appendChild(h('div', { class: 'pros-hint', style: 'padding:14px', text: 'La bandeja está vacía. Aquí aparece todo lo que sale de tus campañas por email, WhatsApp y LinkedIn, y cada respuesta que llega por cualquiera de los tres canales.' }));
@@ -2934,10 +2977,11 @@
     // Respuestas
     if (action === 'conv-open' && key) {
       state.convKey = key;
-      var conv = findConv(key);
-      render();
-      if (conv && conv.unread) return markRead(conv).then(function () { render(); });
-      return;
+      return render(); // render() marca leída la conversación abierta
+    }
+    if (action === 'inbox-mark-all') {
+      var rA = btnLoading(btn, '⏳');
+      return markAllRead().then(function () { rA(); render(); toast('Bandeja al día.', 'success'); }, function () { rA(); render(); });
     }
     if (action === 'reply-channel' && key) { state.replyChannel[key] = channel; return render(); }
     if (action === 'conv-save' && key) { var convS = findConv(key); if (convS) saveContactToList(convS); return; }

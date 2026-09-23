@@ -15,6 +15,7 @@
  */
 
 import { canonicalCountries } from "./radar-geo.ts";
+import { loadIntelligence } from "./intelligence.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -109,8 +110,13 @@ export async function loadSellerContext(supa: Json, userId: string): Promise<Sel
     intake?.icp_buying_triggers, intake?.icp_pain_points, intake?.value_proposition, brief?.what_it_does, brief?.mechanism,
   ]);
 
+  // Inteligencia universal (fuera del hash: lo aprendido cambia a diario y
+  // no debe marcar el plan como desactualizado). Qué detectores ya trajeron
+  // oportunidades, qué perfiles responden y qué hallazgos del Hub usó.
+  const learned = await loadIntelligence(supa, userId, "radar");
+
   return {
-    text: ctxLines.join("\n"),
+    text: ctxLines.join("\n") + learned,
     intake: intake || null,
     brief: brief || null,
     profile: profile || null,
