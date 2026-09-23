@@ -72,6 +72,20 @@
     } catch (e) { return null; }
   }
 
+  // Señales por revisar = el lote del día del Radar (25 por día, las de mayor
+  // puntaje; el resto queda en reserva). La RPC entrega el lote si aún no se
+  // entregó hoy. Sin la migración, el mismo tope se aplica sobre el conteo.
+  async function radarPending(uid) {
+    try {
+      var tz = 'UTC';
+      try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (e) { /* default */ }
+      var r = await sb().rpc('radar_surface_signals', { p_extra: 0, p_tz: tz });
+      if (!r.error && r.data && typeof r.data.pending === 'number') return r.data.pending;
+    } catch (e) { /* cae al conteo */ }
+    var n = await count('radar_signals', function (q) { return q.eq('user_id', uid).eq('status', 'new'); });
+    return n == null ? null : Math.min(n, 25);
+  }
+
   async function fetchState() {
     var auth = await sb().auth.getUser();
     var user = auth && auth.data ? auth.data.user : null;
@@ -82,7 +96,7 @@
     var res = await Promise.all([
       count('intelligence_hub_reports', function (q) { return byUser(q).eq('status', 'ready'); }),
       one('radar_plans', 'status', byUser),
-      count('radar_signals', function (q) { return byUser(q).eq('status', 'new'); }),
+      radarPending(uid),
       count('prospect_lists', byUser),
       count('prospect_list_members', byUser),
       count('campaigns', function (q) { return byUser(q).eq('status', 'active'); }),
