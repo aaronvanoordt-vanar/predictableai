@@ -400,6 +400,19 @@
     return data;
   }
 
+  // Sobrescribe los criterios de una búsqueda ya guardada (p. ej. para que
+  // recuerde las listas excluidas y no haya que marcarlas otra vez).
+  async function updateSavedSearch(id, filters) {
+    const { data, error } = await sb()
+      .from('prospect_saved_searches')
+      .update({ filters: filters || {} })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw new Error('No se pudo actualizar la búsqueda: ' + error.message);
+    return data;
+  }
+
   async function deleteSavedSearch(id) {
     const { error } = await sb().from('prospect_saved_searches').delete().eq('id', id);
     if (error) throw new Error('No se pudo eliminar la búsqueda guardada: ' + error.message);
@@ -1651,6 +1664,7 @@
     fetchListMemberIds,
     fetchSavedSearches,
     createSavedSearch,
+    updateSavedSearch,
     deleteSavedSearch,
     fetchMembers,
     deleteMembers,
