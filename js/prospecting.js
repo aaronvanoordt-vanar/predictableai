@@ -584,6 +584,25 @@
     };
   }
 
+  // Búsqueda guardada que el usuario cargó por última vez: "Guardar búsqueda"
+  // ofrece actualizarla (con las listas excluidas de ahora) en vez de crear
+  // otra con otro nombre.
+  var ACTIVE_SAVED_KEY = 'prospecting_active_saved_v1';
+  function getActiveSavedId() {
+    try { return localStorage.getItem(ACTIVE_SAVED_KEY) || null; } catch (_) { return null; }
+  }
+  function setActiveSavedId(id) {
+    try {
+      if (id) localStorage.setItem(ACTIVE_SAVED_KEY, String(id));
+      else localStorage.removeItem(ACTIVE_SAVED_KEY);
+    } catch (_) {}
+  }
+  function activeSavedSearch() {
+    var id = getActiveSavedId();
+    if (!id) return null;
+    return (state.cache.savedSearches || []).find(function (r) { return String(r.id) === id; }) || null;
+  }
+
   function persistFilters() {
     try { localStorage.setItem('prospecting_filters_v1', JSON.stringify(state.search.filters)); } catch (_) {}
   }
@@ -816,9 +835,17 @@
           return;
         }
         rows.forEach(function (row) {
-          var loadBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'flex:1;justify-content:flex-start', text: row.name });
+          var isActive = String(row.id) === getActiveSavedId();
+          var nEx = ((row.filters && row.filters.exclude_list_ids) || []).length;
+          var loadBtn = h('button', {
+            type: 'button', class: 'btn btn-ghost btn-sm',
+            style: 'flex:1;justify-content:flex-start' + (isActive ? ';font-weight:700;color:var(--accent)' : ''),
+            text: row.name + (nEx ? ' · excluye ' + nEx + (nEx === 1 ? ' lista' : ' listas') : ''),
+            title: isActive ? 'Búsqueda cargada' : 'Cargar esta búsqueda',
+          });
           loadBtn.addEventListener('click', guarded(function () {
             state.search.filters = Object.assign(defaultFilters(), row.filters || {});
+            setActiveSavedId(row.id);
             persistFilters();
             state.search.panelHost.innerHTML = '';
             state.search.panelHost.appendChild(buildFilterPanel());
@@ -829,6 +856,7 @@
           var delBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '🗑', title: 'Eliminar' });
           delBtn.addEventListener('click', guarded(function () {
             return Promise.resolve(pd().deleteSavedSearch(row.id)).then(function () {
+              if (String(row.id) === getActiveSavedId()) setActiveSavedId(null);
               state.cache.savedSearches = null;
               return loadSavedSearches(true);
             }).then(function (rows2) { renderList(rows2); updateFilterBadges(); toast('Búsqueda eliminada.', 'info'); });
@@ -1172,6 +1200,7 @@
 
   function clearFilters() {
     state.search.filters = defaultFilters();
+    setActiveSavedId(null);
     persistFilters();
     if (state.search.panelHost) {
       state.search.panelHost.innerHTML = '';
@@ -1231,6 +1260,7 @@
     f.organization_num_employees_ranges = allowed(E.employee_ranges, arr(p.organization_num_employees_ranges));
     f.q_organization_keyword_tags = arr(p.q_organization_keyword_tags).slice(0, 6);
     state.search.filters = f;
+    setActiveSavedId(null);
     persistFilters();
     if (state.search.panelHost) {
       state.search.panelHost.innerHTML = '';
@@ -1947,9 +1977,38 @@
     var alsoApollo = h('input', { type: 'checkbox', disabled: !rows.length });
     var prog = progressLine();
     var mLbl = 'display:block;font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px';
+    // Si hay una búsqueda guardada cargada, se ofrece actualizarla: así
+    // las listas excluidas quedan guardadas en ella y no hay que volver a
+    // marcarlas la próxima vez.
+    var active = activeSavedSearch();
+    var nEx = (state.search.filters.exclude_list_ids || []).length;
+    var exNote = nEx
+      ? 'Se guarda con ' + nEx + (nEx === 1 ? ' lista excluida' : ' listas excluidas') + ': al cargarla, esas personas ya no aparecen.'
+      : '';
+    var modeUpdate = h('input', { type: 'radio', name: 'pros-save-mode', value: 'update' });
+    var modeNew = h('input', { type: 'radio', name: 'pros-save-mode', value: 'new' });
+    var nameWrap = h('div', null, h('div', { style: mLbl, text: 'Nombre de la búsqueda' }), nameInput);
+    var modeBox = null;
+    if (active) {
+      modeUpdate.checked = true;
+      nameWrap.style.display = 'none';
+      var rowStyle = 'display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer';
+      modeBox = h('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-bottom:12px' },
+        h('label', { style: rowStyle }, modeUpdate, h('span', { text: 'Actualizar «' + active.name + '» con los filtros actuales' })),
+        h('label', { style: rowStyle }, modeNew, h('span', { text: 'Guardar como una búsqueda nueva' })));
+      [modeUpdate, modeNew].forEach(function (r) {
+        r.addEventListener('change', function () {
+          nameWrap.style.display = modeNew.checked ? '' : 'none';
+          if (modeNew.checked) nameInput.focus();
+        });
+      });
+    } else {
+      modeNew.checked = true;
+    }
     var bodyN = h('div', null,
-      h('div', { style: mLbl, text: 'Nombre de la búsqueda' }),
-      nameInput,
+      modeBox,
+      nameWrap,
+      exNote ? h('div', { style: 'font-size:12px;color:var(--text3);margin-top:8px;line-height:1.4', text: exNote }) : null,
       h('label', { style: 'display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text2);margin-top:14px;cursor:' + (rows.length ? 'pointer' : 'not-allowed') },
         alsoApollo,
         h('span', { text: rows.length
@@ -1966,11 +2025,17 @@
     });
 
     function onConfirm() {
-      var name = nameInput.value.trim();
+      var updating = !!(active && modeUpdate.checked);
+      var name = updating ? active.name : nameInput.value.trim();
       if (!name) { toast('Escribe un nombre para la búsqueda.', 'warn'); return; }
       api.setBusy(true);
-      return Promise.resolve(pd().createSavedSearch(name, state.search.filters))
-        .then(function () {
+      var filtersCopy = JSON.parse(JSON.stringify(state.search.filters));
+      var save = updating
+        ? pd().updateSavedSearch(active.id, filtersCopy)
+        : pd().createSavedSearch(name, filtersCopy);
+      return Promise.resolve(save)
+        .then(function (row) {
+          if (row && row.id) setActiveSavedId(row.id);
           state.cache.savedSearches = null;
           if (state.search.refreshSavedSearches) {
             state.search.refreshSavedSearches().catch(function () { /* silent: panel refresh is best-effort */ });
@@ -2013,7 +2078,7 @@
         })
         .then(function () {
           prog.hide();
-          toast('Búsqueda «' + name + '» guardada.', 'success');
+          toast('Búsqueda «' + name + '» ' + (updating ? 'actualizada' : 'guardada') + '.', 'success');
           api.close();
         })
         .catch(function (e) {
