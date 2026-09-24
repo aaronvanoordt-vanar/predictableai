@@ -2167,6 +2167,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M6 2v3M10 2v3"/><path d="M4 5h8v2.5a4 4 0 01-8 0z"/><path d="M8 11.5V14"/></svg>
       Integraciones
     </div>
+    <!-- Desarrolladores (2026-09-23, js/developers.js): API REST, webhooks y
+         servidor MCP para que el CRM PROPIO del cliente, sus automatizaciones o
+         sus agentes de IA se conecten a Predictable. Integraciones = conectores
+         nativos a plataformas conocidas; esto = lo que el cliente construye. -->
+    <div class="nav-item" data-page="developers" onclick="nav(this,'developers');if(window.Developers)window.Developers.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5M9 3l-2 10"/></svg>
+      Desarrolladores
+    </div>
 
     <div class="nav-item" data-page="settings" onclick="if(typeof window.openSettingsPage==='function')window.openSettingsPage()" style="display:none"></div>
 
@@ -2408,6 +2416,17 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
   <div id="integrations-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: DESARROLLADORES (js/developers.js + js/dev-docs.js) ═══════ -->
+<div class="page fade-in" id="page-developers" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Desarrolladores</div>
+      <div class="topbar-sub">API, webhooks y MCP para el CRM propio de tu empresa, tus automatizaciones y tus agentes de IA</div>
+    </div>
+  </div>
+  <div id="developers-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: MI DASHBOARD ═══════ -->
@@ -3149,6 +3168,8 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/learning.js?v=20260919"></script>
 <script src="js/ai-training.js?v=20260923"></script>
 <script src="js/integrations.js?v=20260923"></script>
+<script src="js/dev-docs.js?v=20260923"></script>
+<script src="js/developers.js?v=20260923"></script>
 <script src="js/coach-lead-picker.js?v=20260915"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js?v=20260823"></script>
