@@ -34,7 +34,7 @@ Los triggers de la migración `20260923000010` llaman a `emit_api_event()` y **n
 | `contact.status_changed` | cambio de `contact_status` |
 | `contact.enriched` | `enriched_at` nuevo o teléfono revelado |
 | `message.received` / `message.sent` | INSERT en `inbox_messages` |
-| `signal.created` | INSERT en `radar_signals` |
+| `signal.created` | el Radar entrega la señal en el lote diario (`radar_signals.surfaced_at` pasa a tener fecha); la reserva no emite |
 | `enrollment.status_changed` | enrolamiento pasa a replied / unsubscribed / completed / paused / error (NO el vaivén active ↔ processing del motor) |
 | `meeting.completed` | `coach_meetings.status` pasa a `closed` |
 
@@ -44,6 +44,6 @@ Los triggers de la migración `20260923000010` llaman a `emit_api_event()` y **n
 
 1. Aplicar `supabase/migrations/20260923000010_developer_api.sql`.
 2. Desplegar `public-api` y `mcp` con `--no-verify-jwt`, y `api-webhooks` con JWT (el workflow **Deploy Edge Functions** ya aplica la bandera correcta).
-3. Programar el cron de `api-webhooks` (SQL comentado al final de la migración, con la URL del proyecto y la service role).
+3. Programar el cron de `api-webhooks` (SQL comentado al final de la migración, con la URL del proyecto y la service role). En producción ya está programado (2026-09-23).
 
 No hacen falta secrets nuevos.
