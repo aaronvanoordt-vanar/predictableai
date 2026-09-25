@@ -21,7 +21,7 @@
  *   supabase functions deploy mcp --no-verify-jwt
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import {
   API_VERSION, ApiError, OPERATIONS, authenticate, extractKey, logRequest, rateLimit, runOperation, toolName,
 } from "../_shared/devapi.ts";

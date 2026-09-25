@@ -59,7 +59,7 @@
     const user = await window.supabaseHelpers.getUser();
     if (!user) {
       await window.supabaseClient.auth.signOut().catch(() => {});
-      localStorage.clear();
+      if (window.supabaseHelpers && window.supabaseHelpers.clearLocalSession) window.supabaseHelpers.clearLocalSession();
       window.location.replace('./auth.html');
       return;
     }

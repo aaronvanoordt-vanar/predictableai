@@ -35,6 +35,7 @@ export class DripifyError extends Error {
 async function call(apiKey: string, method: string, path: string, body?: Json): Promise<Json> {
   const res = await fetch(`${DRIPIFY_BASE}${path}`, {
     method,
+    signal: AbortSignal.timeout(30_000),
     headers: {
       "X-Api-Key": apiKey,
       "Accept": "application/json",
@@ -132,12 +133,6 @@ export async function listCampaignLeads(apiKey: string, campaignId: number, maxP
     if (!cursor || !items.length) break;
   }
   return out;
-}
-
-/** POST /v1/open-api/leads/search — por URL de LinkedIn (o email). */
-export async function searchLeads(apiKey: string, q: { linkedinUrl?: string; email?: string }): Promise<DripifyLead[]> {
-  const data = await call(apiKey, "POST", "/v1/open-api/leads/search", q);
-  return (Array.isArray(data) ? data : []).map(toLead);
 }
 
 export interface DripifyActivity { type: string; at: string; campaignId: number | null; error: string | null; }

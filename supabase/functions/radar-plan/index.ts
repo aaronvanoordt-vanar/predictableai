@@ -29,7 +29,7 @@
  * Auth: Bearer <user JWT>. Engine: preferencia "radar" (llm.ts).
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { engineForUser, withLlmContext } from "../_shared/llm.ts";
 import { oauthAvailable, platformKey, resolveApolloAuth } from "../_shared/apollo-auth.ts";
 import { analysisSignals, loadHubDigest, loadMarketAnalysis, loadSellerContext } from "../_shared/radar-context.ts";
@@ -37,7 +37,8 @@ import { KIND_META, isDetectorKind, reachForDealSize, type DetectorKind } from "
 import {
   detectorFromText, detectorsFromHub, generatePlan, kindAvailable, type Availability,
 } from "../_shared/radar-planner.ts";
-import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import { CREDIT_COSTS, minCadenceHours } from "../_shared/credit-costs.ts";
+import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
 
 // Keep in sync with js/credit-costs.js (radar_plan / radar_detector_custom).
 const RADAR_PLAN_COST = CREDIT_COSTS.radar_plan;            // _shared/credit-costs.ts
@@ -143,16 +144,6 @@ async function insertDetectors(supa: Json, userId: string, planId: string, list:
   return data || [];
 }
 
-async function chargeOrFail(supa: Json, userId: string, cost: number, h: Record<string, string>): Promise<Response | null> {
-  if (cost <= 0) return null;
-  const { data: spent, error } = await supa.rpc("spend_credits", { p_user_id: userId, p_amount: cost });
-  if (error) return json({ error: "No se pudieron cobrar los créditos: " + error.message }, 500, h);
-  if (spent === null || spent === undefined) {
-    const { data: c } = await supa.from("user_credits").select("balance").eq("user_id", userId).maybeSingle();
-    return json({ error: "insufficient_credits", balance: c?.balance ?? 0, cost }, 402, h);
-  }
-  return null;
-}
 
 Deno.serve(withLlmContext(async (req: Request) => {
   const h = corsHeaders(req.headers.get("Origin") ?? "*");
@@ -191,9 +182,13 @@ Deno.serve(withLlmContext(async (req: Request) => {
       const { count } = await supa.from("radar_detectors").select("id", { count: "exact", head: true }).eq("user_id", user.id);
       const firstTime = !plan.generated_at && !(count || 0);
       const cost = firstTime ? 0 : RADAR_PLAN_COST;
-      if (cost) {
+      // Reserva atómica ANTES del trabajo. Antes se cobraba al final: si el
+      // saldo cambió mientras tanto, el plan ya estaba reemplazado y el
+      // usuario veía un 402 con el producto entregado. Si la IA falla, se
+      // devuelve (_shared/credits.ts).
+      if (cost && !(await reserveCredits(supa, user.id, cost))) {
         const { data: c } = await supa.from("user_credits").select("balance").eq("user_id", user.id).maybeSingle();
-        if ((c?.balance ?? 0) < cost) return json({ error: "insufficient_credits", balance: c?.balance ?? 0, cost }, 402, h);
+        return json({ error: "insufficient_credits", balance: c?.balance ?? 0, cost }, 402, h);
       }
       const engine = await engineForUser(supa, user.id, "radar", body.engine);
       const [ctx, hub, av] = await Promise.all([
@@ -201,10 +196,16 @@ Deno.serve(withLlmContext(async (req: Request) => {
         loadHubDigest(supa, user.id),
         availabilityFor(supa, user.id),
       ]);
-      const { plan: generated, countries, filledSignals } = await generatePlan({
-        engine, ctx, hubText: hub.text, customPrompt, availability: av,
-        signals: analysisSignals(analysis.content), logPrefix: "[radar-plan]",
-      });
+      let generated: Awaited<ReturnType<typeof generatePlan>>["plan"], countries: string[], filledSignals: number[];
+      try {
+        ({ plan: generated, countries, filledSignals } = await generatePlan({
+          engine, ctx, hubText: hub.text, customPrompt, availability: av,
+          signals: analysisSignals(analysis.content), logPrefix: "[radar-plan]",
+        }));
+      } catch (e) {
+        if (cost) await refundCredits(supa, user.id, cost, "radar_plan_refund");
+        throw e;
+      }
       // Alcance por defecto según el ticket (el usuario lo cambia con "Alcance").
       const reach = reachForDealSize(ctx.intake?.commercial_deal_size);
       for (const d of generated.detectors) {
@@ -225,8 +226,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
         last_error: null,
       }).eq("id", plan.id).select("*").single();
       if (upErr) throw new Error(upErr.message);
-      const charge = await chargeOrFail(supa, user.id, cost, h);
-      if (charge) return charge;
+      if (cost) await settleReservation(supa, user.id, cost, cost, "radar_plan");
       return json({
         status: "ok", plan: saved, detectors, credits_charged: cost, availability: av,
         reach, signals_covered_in_code: filledSignals,
@@ -254,11 +254,25 @@ Deno.serve(withLlmContext(async (req: Request) => {
 
     if (action === "run_now") {
       if (plan.status !== "active") return json({ error: "Activa el monitoreo primero." }, 400, h);
-      const now = new Date().toISOString();
-      const { data: upd } = await supa.from("radar_detectors")
-        .update({ next_run_at: now, cursor: {}, status: "idle", last_error: null })
-        .eq("plan_id", plan.id).eq("enabled", true).neq("status", "unavailable").select("id");
-      return json({ status: "ok", scheduled: Array.isArray(upd) ? upd.length : 0 }, 200, h);
+      // Respeta el piso de cadencia de cada metodología (el mismo que aplica
+      // el motor al reprogramar y el que asume el precio de 30 días): un
+      // detector que terminó hace menos de ese piso no se relanza. Antes cada
+      // clic reiniciaba TODO (páginas de Apollo con la key compartida,
+      // búsquedas web, Google Places) sin ningún tope.
+      const { data: dets } = await supa.from("radar_detectors")
+        .select("id, kind, last_success_at")
+        .eq("plan_id", plan.id).eq("enabled", true).neq("status", "unavailable");
+      const nowMs = Date.now();
+      let scheduled = 0, held = 0;
+      for (const d of (dets ?? []) as Array<{ id: string; kind: DetectorKind; last_success_at: string | null }>) {
+        const last = d.last_success_at ? Date.parse(d.last_success_at) : 0;
+        if (last && nowMs - last < minCadenceHours(d.kind) * 3600_000) { held++; continue; }
+        await supa.from("radar_detectors")
+          .update({ next_run_at: new Date(nowMs).toISOString(), cursor: {}, status: "idle", last_error: null })
+          .eq("id", d.id);
+        scheduled++;
+      }
+      return json({ status: "ok", scheduled, held }, 200, h);
     }
 
     if (action === "add_detector") {
@@ -268,15 +282,22 @@ Deno.serve(withLlmContext(async (req: Request) => {
       if (!description) return json({ error: "Describe la señal que quieres detectar." }, 400, h);
       const av = await availabilityFor(supa, user.id);
       if (!kindAvailable(kind, av)) return json({ error: unavailableReason(kind, av) }, 400, h);
-      const { data: c } = await supa.from("user_credits").select("balance").eq("user_id", user.id).maybeSingle();
-      if ((c?.balance ?? 0) < RADAR_DETECTOR_COST) return json({ error: "insufficient_credits", balance: c?.balance ?? 0, cost: RADAR_DETECTOR_COST }, 402, h);
+      if (!(await reserveCredits(supa, user.id, RADAR_DETECTOR_COST))) {
+        const { data: c } = await supa.from("user_credits").select("balance").eq("user_id", user.id).maybeSingle();
+        return json({ error: "insufficient_credits", balance: c?.balance ?? 0, cost: RADAR_DETECTOR_COST }, 402, h);
+      }
       const engine = await engineForUser(supa, user.id, "radar", body.engine);
       const ctx = await loadSellerContext(supa, user.id);
-      const det = await detectorFromText({ engine, ctx, kind, description, logPrefix: "[radar-plan]" });
+      let det: Awaited<ReturnType<typeof detectorFromText>>;
+      try {
+        det = await detectorFromText({ engine, ctx, kind, description, logPrefix: "[radar-plan]" });
+      } catch (e) {
+        await refundCredits(supa, user.id, RADAR_DETECTOR_COST, "radar_detector_custom_refund");
+        throw e;
+      }
       if (String(body.name || "").trim()) det.name = String(body.name).trim().slice(0, 90);
       const [row] = await insertDetectors(supa, user.id, plan.id, [det], "user", av);
-      const charge = await chargeOrFail(supa, user.id, RADAR_DETECTOR_COST, h);
-      if (charge) return charge;
+      await settleReservation(supa, user.id, RADAR_DETECTOR_COST, RADAR_DETECTOR_COST, "radar_detector_custom");
       await syncContext(supa, user.id).catch(() => {});
       return json({ status: "ok", detector: row, credits_charged: RADAR_DETECTOR_COST }, 200, h);
     }

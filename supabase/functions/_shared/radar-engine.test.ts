@@ -1,5 +1,5 @@
 // deno test — reglas deterministas del motor de señales del Radar.
-import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import { canonicalCountry, canonicalCountries, countryFit } from "./radar-geo.ts";
 import { adjustWeight, inEmployeeRanges, industryMatches, parseEmployeeCount, scoreSignal } from "./radar-score.ts";
 import { detectTech, evaluateProbeRules, probeHeadline } from "./site-probe.ts";

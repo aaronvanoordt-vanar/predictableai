@@ -5,7 +5,7 @@
 // (/openapi.json), los triggers que emiten eventos (migración
 // 20260923000010) y el espejo de la UI (js/developers.js).
 
-import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
   CONTACT_STATUSES, EVENT_TYPES, OPERATIONS, ROUTES, hmacSha256Hex, isSafeWebhookUrl, matchRoute, signatureHeader, toolName,
 } from "./devapi.ts";

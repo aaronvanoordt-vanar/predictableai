@@ -69,8 +69,8 @@
  * longer deadline) is what actually gets a PESTEL run to finish.
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
+import { callLLM, engineForUser, parseLlmJson, type Engine, withLlmContext } from "../_shared/llm.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -122,17 +122,9 @@ async function callAi(
 
 // deno-lint-ignore no-explicit-any
 function parseJson(raw: string): any {
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  try { return JSON.parse(cleaned); } catch (_) { /* fall through */ }
-  const s = cleaned.indexOf("{");
-  if (s === -1) throw new Error("No JSON found in response");
-  let depth = 0, e = -1;
-  for (let i = s; i < cleaned.length; i++) {
-    if (cleaned[i] === "{") depth++;
-    else if (cleaned[i] === "}") { depth--; if (!depth) { e = i; break; } }
-  }
-  if (e === -1) throw new Error("Unterminated JSON in response");
-  return JSON.parse(cleaned.slice(s, e + 1));
+  // _shared/llm-json.ts: tolera prosa alrededor, "{" dentro de strings y
+  // salidas cortadas (el contador de llaves que vivía aquí, no).
+  return parseLlmJson(raw);
 }
 
 // Two framings of the same PESTEL task: scoped to a client the user prospects

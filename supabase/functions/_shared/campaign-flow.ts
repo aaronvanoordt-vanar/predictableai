@@ -98,11 +98,12 @@ export interface Located {
   branch: "yes" | "no" | null;
 }
 
-// Cuánto cuesta cada cosa (espejo de _shared/credit-costs.ts y
-// js/credit-costs.js): 2 por mensaje IA y 1 por lead que entra a la campaña
-// (cubre todos sus envíos).
-export const AI_MESSAGE_CREDITS = 2;
-export const LEAD_CREDITS = 1;
+// Cuánto cuesta cada cosa: se lee del tarifario único (_shared/credit-costs.ts)
+// en vez de copiarlo a mano; js/campaign-flow.js sigue con los literales y
+// credit-costs.test.ts comprueba que coinciden.
+import { CREDIT_COSTS } from "./credit-costs.ts";
+export const AI_MESSAGE_CREDITS: number = CREDIT_COSTS.outreach_step;
+export const LEAD_CREDITS: number = CREDIT_COSTS.campaign_lead;
 
 // deno-lint-ignore no-explicit-any
 type Json = any;

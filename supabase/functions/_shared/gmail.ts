@@ -181,14 +181,15 @@ export async function readThread(
   const auth = { Authorization: "Bearer " + accessToken };
   const byId = new Map<string, GmailMessage>();
 
-  const res = await fetch(`${GMAIL}/threads/${threadId}?format=full`, { headers: auth });
+  const res = await fetch(`${GMAIL}/threads/${threadId}?format=full`, { headers: auth, signal: AbortSignal.timeout(20_000) });
   const text = await res.text();
   if (!res.ok && res.status !== 404) {
     console.error(`[gmail] thread ${res.status}: ${text.slice(0, 200)}`);
     throw new GmailError("Gmail no devolvió el hilo (" + res.status + ").", 502);
   }
   if (res.ok) {
-    const thread = JSON.parse(text);
+    let thread: Json;
+    try { thread = JSON.parse(text); } catch { throw new GmailError("Gmail devolvió una respuesta ilegible.", 502); }
     for (const m of thread?.messages ?? []) byId.set(m.id, toMessageRecord(m, mine));
   }
 
@@ -197,14 +198,14 @@ export async function readThread(
     const since = Number(opts.since);
     let q = `(from:"${contactEmail}" OR to:"${contactEmail}")`;
     if (Number.isFinite(since) && since > 0) q += ` after:${Math.floor(since)}`;
-    const searchRes = await fetch(`${GMAIL}/messages?q=${encodeURIComponent(q)}&maxResults=25`, { headers: auth });
+    const searchRes = await fetch(`${GMAIL}/messages?q=${encodeURIComponent(q)}&maxResults=25`, { headers: auth, signal: AbortSignal.timeout(20_000) });
     const searchJson = searchRes.ok ? await searchRes.json().catch(() => null) : null;
     if (!searchRes.ok) console.error(`[gmail] contact search ${searchRes.status}`);
     const misses = (searchJson?.messages ?? []).filter((m: { id: string }) => !byId.has(m.id));
     // Bounded (maxResults=25) and only for ids threads.get didn't already
     // give us — a handful of extra fetches per open thread, not a scan.
     await Promise.all(misses.map(async (m: { id: string }) => {
-      const r = await fetch(`${GMAIL}/messages/${m.id}?format=full`, { headers: auth });
+      const r = await fetch(`${GMAIL}/messages/${m.id}?format=full`, { headers: auth, signal: AbortSignal.timeout(20_000) });
       if (!r.ok) return;
       const full = await r.json().catch(() => null);
       if (full) byId.set(full.id, toMessageRecord(full, mine));

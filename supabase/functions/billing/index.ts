@@ -23,8 +23,22 @@
  * STRIPE_IDS (_shared/billing-plans.ts).
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { STRIPE_IDS, TOPUP_PACKS, planForUser, type Interval } from "../_shared/billing-plans.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
+import { STRIPE_IDS, TOPUP_PACKS, normalizePlan, type Interval, type Plan } from "../_shared/billing-plans.ts";
+
+/**
+ * Plan actual para DECIDIR UN COBRO, o null si el RPC falla. planForUser()
+ * devuelve "starter" cuando current_plan no responde (fail-open pensado para
+ * las puertas de funciones); aquí eso bloqueaba toda suscripción nueva con un
+ * "ya tienes un plan" y vendía recargas a cuentas gratuitas.
+ */
+// deno-lint-ignore no-explicit-any
+async function strictPlan(supa: any, userId: string): Promise<Plan | null> {
+  const { data, error } = await supa.rpc("current_plan", { p_user_id: userId });
+  if (error) { console.error("[billing] current_plan:", error.message); return null; }
+  return normalizePlan(data);
+}
+const PLAN_UNAVAILABLE = { error: "billing_unavailable", message: "No pudimos verificar tu plan. Inténtalo de nuevo en unos minutos." };
 import { StripeError, stripeRequest } from "../_shared/stripe.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -99,7 +113,8 @@ Deno.serve(async (req: Request) => {
   try {
     if (action === "checkout_subscription") {
       const interval: Interval = body.interval === "year" ? "year" : "month";
-      const plan = await planForUser(supa, user.id);
+      const plan = await strictPlan(supa, user.id);
+      if (plan === null) return json(PLAN_UNAVAILABLE, 503, h);
       if (plan !== "free") return json({ error: "already_subscribed", plan }, 409, h);
       const customer = await ensureCustomer(supa, user.id, user.email);
       const session = await stripeRequest<{ url: string }>("POST", "/checkout/sessions", {
@@ -124,7 +139,8 @@ Deno.serve(async (req: Request) => {
       const packKey = String(body.pack || "");
       const pack = TOPUP_PACKS[packKey];
       if (!pack) return json({ error: "invalid_pack" }, 400, h);
-      const plan = await planForUser(supa, user.id);
+      const plan = await strictPlan(supa, user.id);
+      if (plan === null) return json(PLAN_UNAVAILABLE, 503, h);
       if (plan === "free") {
         return json({ error: "plan_required", message: "Las recargas son para cuentas con un plan activo. Activa Starter para seguir." }, 403, h);
       }

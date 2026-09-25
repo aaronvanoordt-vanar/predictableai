@@ -60,8 +60,6 @@
   // escribe apollo-proxy).
   let lastApolloAuthMode = null;
   let lastApolloAccountEmail = null;
-  function apolloAuthMode() { return lastApolloAuthMode; }
-  function apolloAccountEmail() { return lastApolloAccountEmail; }
 
   // Cómo nombrar, en un mensaje de error, la cuenta de Apollo con la que
   // acabamos de hablar — para no decir "tu cuenta de Apollo" a ciegas cuando
@@ -128,14 +126,10 @@
   }
 
   // Todas las llamadas a Apollo van vía el edge function apollo-proxy
-  // (la API key vive en secrets de Supabase, nunca en el cliente).
-  // `method` solo hace falta en los endpoints que aceptan más de un verbo
-  // (PUT/DELETE sobre pasos y touches); el proxy valida el par endpoint+método
-  // contra su allowlist y rechaza cualquier combinación que no esté ahí.
-  function apolloProxy(endpoint, body, method) {
-    const payload = { endpoint, body: body || {} };
-    if (method) payload.method = method;
-    return edgeFetch('apollo-proxy', payload);
+  // (la API key vive en secrets de Supabase, nunca en el cliente); el proxy
+  // valida el endpoint contra su allowlist.
+  function apolloProxy(endpoint, body) {
+    return edgeFetch('apollo-proxy', { endpoint, body: body || {} });
   }
 
   function apolloErrorMessage(detail, status) {
@@ -418,14 +412,33 @@
     if (error) throw new Error('No se pudo eliminar la búsqueda guardada: ' + error.message);
   }
 
+  // PostgREST corta cada respuesta en `max-rows` (1000 por defecto) sin
+  // avisar: una lista de 1.500 mostraba 1.000, y el CSV y "Enrolar" salían de
+  // ese recorte. Se pagina hasta agotar (orden estable: created_at + id).
+  const PAGE = 1000;
+  async function fetchAllRows(build) {
+    const out = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await build().range(from, from + PAGE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      out.push(...rows);
+      if (rows.length < PAGE) break;
+    }
+    return out;
+  }
+
   async function fetchMembers(listId) {
-    const { data, error } = await sb()
-      .from('prospect_list_members')
-      .select('*')
-      .eq('list_id', listId)
-      .order('created_at', { ascending: false });
-    if (error) throw new Error('No se pudieron cargar los contactos: ' + error.message);
-    return data || [];
+    try {
+      return await fetchAllRows(() => sb()
+        .from('prospect_list_members')
+        .select('*')
+        .eq('list_id', listId)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false }));
+    } catch (error) {
+      throw new Error('No se pudieron cargar los contactos: ' + (error && error.message ? error.message : error));
+    }
   }
 
   async function deleteMembers(memberIds) {
@@ -435,7 +448,7 @@
   }
 
   async function updateMember(memberId, patch) {
-    const allowed = ['email', 'email_status', 'phone', 'phone_status', 'outreach', 'outreach_status', 'sequence_status', 'apollo_contact_id', 'snapshot', 'enriched_at', 'contact_status', 'company', 'company_domain', 'title', 'first_name', 'last_name', 'name', 'linkedin_url', 'country', 'city', 'state'];
+    const allowed = ['email', 'email_status', 'phone', 'phone_status', 'outreach', 'outreach_status', 'apollo_contact_id', 'snapshot', 'enriched_at', 'contact_status', 'company', 'company_domain', 'title', 'first_name', 'last_name', 'name', 'linkedin_url', 'country', 'city', 'state'];
     const safe = {};
     for (const k of allowed) if (k in (patch || {})) safe[k] = patch[k];
     if (!Object.keys(safe).length) return;
@@ -447,12 +460,17 @@
   // Una sola consulta con el nombre de la lista embebido (FK list_id) para
   // que la pestaña Contactos muestre a qué lista pertenece cada persona.
   async function fetchAllContacts() {
-    const { data, error } = await sb()
-      .from('prospect_list_members')
-      .select('*, prospect_lists(id, name)')
-      .order('created_at', { ascending: false });
-    if (error) throw new Error('No se pudieron cargar tus contactos: ' + error.message);
-    return (data || []).map((m) => {
+    let data;
+    try {
+      data = await fetchAllRows(() => sb()
+        .from('prospect_list_members')
+        .select('*, prospect_lists(id, name)')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false }));
+    } catch (error) {
+      throw new Error('No se pudieron cargar tus contactos: ' + (error && error.message ? error.message : error));
+    }
+    return data.map((m) => {
       m.list_name = (m.prospect_lists && m.prospect_lists.name) || '—';
       return m;
     });
@@ -464,101 +482,6 @@
     const valid = CONTACT_STATUSES.some((s) => s.value === status);
     if (!valid) throw new Error('Estado de contacto inválido.');
     await updateMember(memberId, { contact_status: status });
-  }
-
-  // Conteo de reuniones conseguidas (reunion_agendada + reunion_tomada) —
-  // lo consume el KPI "Reuniones generadas" del dashboard.
-  async function countMeetings() {
-    const { count, error } = await sb()
-      .from('prospect_list_members')
-      .select('id', { count: 'exact', head: true })
-      .in('contact_status', MEETING_STATUSES);
-    if (error) throw new Error('No se pudieron contar las reuniones: ' + error.message);
-    return count || 0;
-  }
-
-  // ── Plantillas locales (message_templates — texto libre con variables) ──
-  // Independientes de las plantillas de Meta: viven en Supabase, no
-  // requieren WABA ID ni aprobación, y se usan en campañas de WhatsApp.
-
-  async function fetchMessageTemplates() {
-    const { data, error } = await sb()
-      .from('message_templates')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (error) throw new Error('No se pudieron cargar tus plantillas: ' + error.message);
-    return data || [];
-  }
-
-  async function createMessageTemplate({ name, body, channel }) {
-    const cleanName = String(name || '').trim();
-    const cleanBody = String(body || '').trim();
-    if (!cleanName) throw new Error('Escribe un nombre para la plantilla.');
-    if (!cleanBody) throw new Error('Escribe el contenido de la plantilla.');
-    const userId = await getUserId();
-    const { data, error } = await sb()
-      .from('message_templates')
-      .insert({ user_id: userId, name: cleanName, body: cleanBody, channel: channel || 'whatsapp' })
-      .select()
-      .single();
-    if (error) {
-      if (String(error.code) === '23505') throw new Error('Ya tienes una plantilla con ese nombre.');
-      throw new Error('No se pudo guardar la plantilla: ' + error.message);
-    }
-    return data;
-  }
-
-  async function updateMessageTemplate(id, { name, body, channel }) {
-    const patch = {};
-    if (name != null) patch.name = String(name).trim();
-    if (body != null) patch.body = String(body).trim();
-    if (channel != null) patch.channel = channel;
-    const { error } = await sb().from('message_templates').update(patch).eq('id', id);
-    if (error) throw new Error('No se pudo actualizar la plantilla: ' + error.message);
-  }
-
-  async function deleteMessageTemplate(id) {
-    const { error } = await sb().from('message_templates').delete().eq('id', id);
-    if (error) throw new Error('No se pudo eliminar la plantilla: ' + error.message);
-  }
-
-  // Sustituye {{nombre}} / {{apellido}} / {{nombre_completo}} / {{empresa}} /
-  // {{rol}} con los datos reales del contacto (campañas y previews).
-  function renderTemplateForMember(body, member) {
-    const m = member || {};
-    const firstName = m.first_name || String(m.name || '').split(' ')[0] || '';
-    const values = {
-      nombre: firstName,
-      apellido: m.last_name || '',
-      nombre_completo: m.name || [m.first_name, m.last_name].filter(Boolean).join(' ') || firstName,
-      empresa: m.company || '',
-      rol: m.title || '',
-    };
-    return String(body || '').replace(/\{\{\s*([a-zA-Z_]+)\s*\}\}/g, (full, key) => {
-      const k = key.toLowerCase();
-      return (k in values) ? values[k] : full;
-    });
-  }
-
-  // Variables sin dato real para este contacto (aviso antes de enviar).
-  function missingTemplateVars(body, member) {
-    const rendered = renderTemplateForMember(body, member);
-    const out = [];
-    const re = /\{\{\s*([a-zA-Z_]+)\s*\}\}/g;
-    let match;
-    while ((match = re.exec(rendered)) !== null) {
-      if (out.indexOf(match[1]) === -1) out.push(match[1]);
-    }
-    // También variables conocidas cuyo valor quedó vacío
-    ['nombre', 'empresa', 'rol'].forEach((k) => {
-      const hasVar = new RegExp('\\{\\{\\s*' + k + '\\s*\\}\\}').test(String(body || ''));
-      if (!hasVar) return;
-      const val = k === 'nombre'
-        ? (member?.first_name || String(member?.name || '').split(' ')[0] || '')
-        : k === 'empresa' ? (member?.company || '') : (member?.title || '');
-      if (!val && out.indexOf(k) === -1) out.push(k);
-    });
-    return out;
   }
 
   // ── Agregar personas a una lista ───────────────────────────
@@ -1623,23 +1546,6 @@
     } catch (_) { /* storage lleno o bloqueado */ }
   }
 
-  // Primer mensaje fijo de WhatsApp (regla de producto: no se personaliza).
-  function firstWhatsAppMessage(sender) {
-    const s = sender || getSenderInfo();
-    const rolePart = s.role ? ', ' + s.role : '';
-    const companyPart = s.company ? ' de ' + s.company : '';
-    return 'Hola! Soy ' + s.name + rolePart + companyPart + '. Qué tal todo?';
-  }
-
-  // wa.me/<dígitos>?text=<mensaje> — null si el teléfono no sirve.
-  function waLink(phone, text) {
-    if (!phone) return null;
-    let digits = String(phone).replace(/[^\d]/g, '');
-    if (digits.startsWith('00')) digits = digits.slice(2);
-    if (digits.length < 8 || digits.length > 15) return null;
-    return 'https://wa.me/' + digits + '?text=' + encodeURIComponent(text || '');
-  }
-
   // ── API pública ────────────────────────────────────────────
   global.prospectingData = {
     CONTACT_STATUSES,
@@ -1647,17 +1553,8 @@
     searchPeople,
     syncIcpFromSearch,
     fetchLists,
-    apolloAuthMode,
-    apolloAccountEmail,
     fetchAllContacts,
     setContactStatus,
-    countMeetings,
-    fetchMessageTemplates,
-    createMessageTemplate,
-    updateMessageTemplate,
-    deleteMessageTemplate,
-    renderTemplateForMember,
-    missingTemplateVars,
     createList,
     deleteList,
     renameList,
@@ -1699,7 +1596,5 @@
     hasLegacyListsPendingImport,
     getSenderInfo,
     saveSenderInfo,
-    firstWhatsAppMessage,
-    waLink,
   };
 })(window);

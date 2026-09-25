@@ -111,7 +111,7 @@
  * (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are injected by the platform.)
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { callLLM, engineForUser, parseLlmJson, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { coachMeetingCost } from "../_shared/credit-costs.ts";
 import { buildTrainingBlock, coachDoctrine, loadTraining, type Training, type TrainingTarget } from "../_shared/sales-training.ts";
@@ -713,10 +713,30 @@ async function loadAuthorizedMeeting(ctx: Ctx, meetingId: unknown): Promise<Json
     .from("coach_meetings").select("*").eq("id", meetingId).maybeSingle();
   if (error) throw new Error(error.message);
   if (!m) throw new Error("Meeting no encontrada");
+  if (!(await mayAccessMeeting(ctx, m))) throw new Error("No autorizado");
+  return m;
+}
+
+/**
+ * Dueño (user_id o sdr_email) o manager DE LA MISMA EMPRESA. Antes bastaba
+ * `role in (admin, director)`: un director de la empresa A podía leer,
+ * cerrar y cobrar reuniones de la empresa B con solo tener el UUID. Misma
+ * regla que scopeEmails/resolveTargetEmail: un manager sin company_name ve
+ * todo (instalación de una sola empresa).
+ */
+async function mayAccessMeeting(ctx: Ctx, m: Json): Promise<boolean> {
   const own = (m.user_id && m.user_id === ctx.userId) ||
     (m.sdr_email && String(m.sdr_email).toLowerCase() === ctx.sdrEmail);
-  if (!own && !ctx.isManager) throw new Error("No autorizado");
-  return m;
+  if (own) return true;
+  if (!ctx.isManager) return false;
+  if (!ctx.companyName) return true;
+  const email = String(m.sdr_email ?? "").toLowerCase();
+  const q = ctx.supa.from("profiles").select("company_name");
+  const { data: owner } = email
+    ? await q.eq("email", email).maybeSingle()
+    : await q.eq("id", String(m.user_id ?? "")).maybeSingle();
+  if (owner && owner.company_name && owner.company_name !== ctx.companyName) return false;
+  return true;
 }
 
 /**
@@ -1497,14 +1517,14 @@ async function meetingReportPayload(ctx: Ctx, m: Json, includeTranscript: boolea
 
 /** One meeting's report by id (owner or manager). `processing` meetings come back as pending. */
 async function actionGetMeetingReport(ctx: Ctx, p: Json): Promise<Json> {
-  const { data: m, error } = await ctx.supa
+  const { data, error } = await ctx.supa
     .from("coach_meetings").select(MEETING_REPORT_COLUMNS)
     .eq("id", String(p?.meeting_id ?? "")).maybeSingle();
   if (error) throw new Error(error.message);
+  // La lista de columnas es un string concatenado: el tipado de supabase-js no lo parsea.
+  const m = data as unknown as Json | null;
   if (!m) throw new Error("Meeting no encontrada");
-  const own = (m.user_id && m.user_id === ctx.userId) ||
-    (m.sdr_email && String(m.sdr_email).toLowerCase() === ctx.sdrEmail);
-  if (!own && !ctx.isManager) throw new Error("No autorizado");
+  if (!(await mayAccessMeeting(ctx, m))) throw new Error("No autorizado");
   return meetingReportPayload(ctx, m, p?.include_transcript !== false);
 }
 
@@ -1516,7 +1536,7 @@ async function actionGetLastMeetingReport(ctx: Ctx, p: Json): Promise<Json> {
   // Newest finished-or-finishing meeting: a `processing` one (bot transcript
   // still on its way) is returned as pending so the UI can poll finalizeReport
   // instead of silently showing an older report.
-  const { data: m } = await ctx.supa
+  const { data: mRow } = await ctx.supa
     .from("coach_meetings")
     .select(MEETING_REPORT_COLUMNS)
     .eq("sdr_email", target)
@@ -1524,6 +1544,7 @@ async function actionGetLastMeetingReport(ctx: Ctx, p: Json): Promise<Json> {
     .order("started_at", { ascending: false, nullsFirst: false })
     .limit(1)
     .maybeSingle();
+  const m = mRow as unknown as Json | null; // lista de columnas concatenada: el tipado no la parsea
   if (m && (m.final_report || m.status === "processing")) {
     return meetingReportPayload(ctx, m, p?.include_transcript !== false);
   }

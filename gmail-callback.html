@@ -24,7 +24,7 @@
   <div class="err" id="err"></div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/dist/umd/supabase.min.js" integrity="sha384-q36VSR1ktH2hgqgm+0LDeyqPW8CyZHSxfDSttSPm5ReOJzB+sYThmh7D4fE+jWTs" crossorigin="anonymous"></script>
 <script src="js/config.js"></script>
 <script src="js/supabase-client.js"></script>
 <script>
@@ -39,9 +39,19 @@
     function fail(text, withLink) {
       spinner.style.display = 'none';
       msg.textContent = 'No se pudo conectar Gmail.';
-      err.innerHTML = withLink
-        ? text + ' <a href="./index.html">Volver a la app</a>.'
-        : text;
+      // textContent, nunca innerHTML: `text` llega del query string (?error=)
+      // y de respuestas del servidor; con innerHTML un link armado a mano
+      // ejecutaba JS en el origen de la app y podía leer la sesión (XSS
+      // reflejado, corregido 2026-09-25).
+      err.textContent = text;
+      if (withLink) {
+        var a = document.createElement('a');
+        a.href = './index.html';
+        a.textContent = 'Volver a la app';
+        err.appendChild(document.createTextNode(' '));
+        err.appendChild(a);
+        err.appendChild(document.createTextNode('.'));
+      }
     }
 
     var params = new URLSearchParams(window.location.search);

@@ -201,18 +201,6 @@
     if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
-  function copyText(text) {
-    if (!text) return;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(
-        function () { toast('Copiado', 'success'); },
-        function () { toast('No se pudo copiar al portapapeles.', 'error'); }
-      );
-    } else {
-      toast('No se pudo copiar al portapapeles.', 'error');
-    }
-  }
-  function waOpen(url) { if (url) window.open(url, '_blank', 'noopener'); }
 
   // DOM builder. attrs.text → textContent (auto-safe); attrs.html → innerHTML
   // (static or pre-escaped strings ONLY).

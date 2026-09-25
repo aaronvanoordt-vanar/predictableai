@@ -48,7 +48,7 @@
  * Secretos: SUPABASE_*, APOLLO_API_KEY (fallback), APOLLO_OAUTH_CLIENT_ID/SECRET.
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import * as wati from "../_shared/wati.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
@@ -184,10 +184,11 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
 
   if (template) {
     const tpl = resolveTemplate(acc, template);
-    if (/deleted|missing|reject|paused|disabled|error/i.test(tpl.status)) {
+    // Misma clasificación que campaign-run (_shared/wati.ts, cubierta por deno test).
+    if (wati.isTemplateDead(tpl.status) || /missing/i.test(tpl.status)) {
       throw new HttpError(`La plantilla "${tpl.name}" ya no sirve para enviar (${tpl.status}). En Campañas → WhatsApp pulsa "Volver a crear" para generar una nueva.`, 409, "whatsapp_template_unusable");
     }
-    if (!/approved/i.test(tpl.status)) throw new HttpError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tpl.status}).`, 409, "whatsapp_template_not_approved");
+    if (!wati.isTemplateApproved(tpl.status)) throw new HttpError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tpl.status}).`, 409, "whatsapp_template_not_approved");
     const params = templateParams(tpl.body, member);
     const missing = Object.keys(params).filter((k) => !params[k]);
     if (missing.length) {
@@ -455,7 +456,9 @@ Deno.serve(async (req) => {
     if (channel !== "whatsapp" && channel !== "email") return json({ error: "channel debe ser whatsapp, email o linkedin" }, 400, cors);
     const memberId = String(body?.member_id ?? "");
     const contactRef = String(body?.contact_ref ?? "").trim().slice(0, 200);
-    const template = String(body?.template ?? "").trim().slice(0, 12);
+    // 512 = tope de Meta para el nombre de una plantilla. Con 12 ninguna del
+    // catálogo (px_hola_1_v3_<hash>_r2, welcome_message_v2…) coincidía nunca.
+    const template = String(body?.template ?? "").trim().slice(0, 512);
     if (memberId && !UUID_RE.test(memberId)) return json({ error: "member_id inválido" }, 400, cors);
     if (!memberId && !(channel === "whatsapp" && wati.digits(contactRef))) return json({ error: "member_id inválido" }, 400, cors);
     const text = String(body?.body ?? "").replace(/\r\n/g, "\n").trim().slice(0, MAX_BODY);

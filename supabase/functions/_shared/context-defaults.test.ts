@@ -1,5 +1,5 @@
 // deno test supabase/functions/_shared/context-defaults.test.ts
-import { assertEquals, assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals, assert } from "jsr:@std/assert@1";
 import * as cd from "./context-defaults.ts";
 import {
   ICP_COUNTRIES, ICP_INDUSTRIES, ICP_EMPLOYEE_RANGES, ICP_DEPARTMENTS, ICP_SENIORITIES,

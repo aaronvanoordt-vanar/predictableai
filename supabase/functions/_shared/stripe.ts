@@ -47,7 +47,7 @@ export async function stripeRequest<T = Record<string, unknown>>(
   const headers: Record<string, string> = { Authorization: `Bearer ${key}` };
   if (method === "POST") headers["Content-Type"] = "application/x-www-form-urlencoded";
   if (opts.idempotencyKey) headers["Idempotency-Key"] = opts.idempotencyKey;
-  const res = await fetch(url, { method, headers, body: method === "POST" ? body : undefined });
+  const res = await fetch(url, { method, headers, body: method === "POST" ? body : undefined, signal: AbortSignal.timeout(20_000) });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = (json as { error?: { message?: string; code?: string } }).error;

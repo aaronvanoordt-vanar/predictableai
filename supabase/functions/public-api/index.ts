@@ -20,7 +20,7 @@
  * Cabeceras: X-Request-Id, X-RateLimit-Limit, X-RateLimit-Remaining.
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import {
   API_VERSION, ApiError, RATE_LIMIT_PER_MIN, authenticate, extractKey, logRequest, matchRoute, rateLimit, runOperation,
 } from "../_shared/devapi.ts";

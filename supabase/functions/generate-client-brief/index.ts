@@ -23,7 +23,7 @@
  * OPENAI_API_KEY or PERPLEXITY_API_KEY)
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
 import {

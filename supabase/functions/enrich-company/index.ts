@@ -92,7 +92,7 @@
  * OPENAI_API_KEY or PERPLEXITY_API_KEY).
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
 import {
@@ -519,6 +519,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
   const { data: { user }, error: authErr } =
     await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, h);
+  const uid = user.id; // capturado: el narrowing de `user` no entra a los closures async
 
   let body: { linkedin_url?: string; website_url?: string; engine?: string; custom_prompt?: string };
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400, h); }
@@ -628,7 +629,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
       .then(async (icp) => {
         const { data: current } = await supa.from("intel_hub_intake")
           .select("context_confirmed_at, icp_countries, icp_industry_tags, icp_employee_ranges, icp_departments, icp_seniorities, icp_titles, icp_buying_triggers, icp_disqualifiers, competitors, commercial_model, commercial_deal_size, commercial_sales_cycle, commercial_primary_cta, outreach_tone, outreach_channels, outreach_language")
-          .eq("user_id", user.id).maybeSingle();
+          .eq("user_id", uid).maybeSingle();
         const confirmed = Boolean(current?.context_confirmed_at);
         // deno-lint-ignore no-explicit-any
         const isEmpty = (v: any) => v === null || v === undefined || v === "" ||

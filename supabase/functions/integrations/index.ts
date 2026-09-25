@@ -42,7 +42,7 @@
  * Amplemarket no tiene OAuth público: se conecta con la API key del usuario.
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { GOOGLE_AUTH, GOOGLE_TOKEN } from "../_shared/gmail.ts";
 import {
   amplemarketListLeads,
@@ -126,7 +126,7 @@ async function readBody(res: Response): Promise<Json> {
 
 /** fetch + JSON; lanza HttpError(502) con el mensaje de la plataforma si falla. */
 async function call(url: string, init: RequestInit, label: string): Promise<Json> {
-  const res = await fetch(url, init);
+  const res = await fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(30_000) });
   const body = await readBody(res);
   if (!res.ok) {
     console.error(`[integrations] ${label} ${res.status}: ${JSON.stringify(body).slice(0, 300)}`);

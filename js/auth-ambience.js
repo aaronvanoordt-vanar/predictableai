@@ -36,12 +36,6 @@
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var coarsePointer = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
 
-  'use strict';
-
-  var SOUND_KEY = 'pai_auth_sound';
-  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var coarsePointer = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-
   /* ── Paralaje del lienzo ────────────────────────────────────────────── */
   (function initParallax() {
     if (reduceMotion || coarsePointer) return;

@@ -46,12 +46,13 @@
  *           502 llm_error (con detail)
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { loadIntelligence } from "../_shared/intelligence.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import { spendCredits } from "../_shared/credits.ts";
 import { buildTrainingBlock, loadTraining } from "../_shared/sales-training.ts";
 import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
 
@@ -256,8 +257,8 @@ function finalize(raw: Json, ch: Channels): flowLib.Flow {
   return flow;
 }
 
-async function askModel(engine: Engine, user: string): Promise<Json> {
-  const res = await callLLM({ engine, system: SYSTEM_PROMPT, user, maxTokens: 4000, timeoutMs: TIMEOUT_MS, retries: 1, retryDelayMs: 3000, logPrefix: "[generate-campaign]" });
+async function askModel(engine: Engine, user: string, timeoutMs = TIMEOUT_MS): Promise<Json> {
+  const res = await callLLM({ engine, system: SYSTEM_PROMPT, user, maxTokens: 4000, timeoutMs, retries: 1, retryDelayMs: 3000, logPrefix: "[generate-campaign]" });
   const parsed = parseLlmJson(res.text) as Json;
   if (!parsed || typeof parsed !== "object") throw new Error("La IA no devolvió JSON.");
   return parsed;
@@ -314,7 +315,8 @@ Deno.serve(withLlmContext(async (req) => {
   try {
     for (let attempt = 0; attempt < 2 && !flow; attempt++) {
       const ask = attempt === 0 ? prompt : `${prompt}\n\n== TU RESPUESTA ANTERIOR NO VALIDÓ ==\n${lastErrors.map((e) => "- " + e).join("\n")}\nCorrige y devuelve el JSON completo otra vez.`;
-      out = await askModel(engine, ask);
+      // Dos intentos de 90 s superaban el tope de ~150 s del Edge Runtime.
+      out = await askModel(engine, ask, attempt === 0 ? TIMEOUT_MS : 45_000);
       const candidate = finalize(out.flow ?? out, channels);
       const v = flowLib.validate(candidate);
       lastErrors = [...v.errors.map((e) => e.message), ...businessErrors(candidate, channels)];
@@ -327,10 +329,13 @@ Deno.serve(withLlmContext(async (req) => {
   }
   if (!flow) return json({ error: "invalid_flow", detail: "La IA no logró una cadencia válida: " + lastErrors.slice(0, 4).join(" ") }, 502, h);
 
-  // Cobro solo tras éxito (mismo criterio que generate-outreach).
-  const { data: spent, error: spendErr } = await supa.rpc("spend_credits", { p_user_id: user.id, p_amount: COST });
-  if (spendErr || spent === null || spent === undefined) console.error("[generate-campaign] charge after success failed:", spendErr);
-  else await supa.from("credit_transactions").insert({ user_id: user.id, delta: -COST, reason: "campaign_recommendation" });
+  // Cobro solo tras éxito (mismo criterio que generate-outreach), con la
+  // service role: spend_credits está revocado para `authenticated`, así que
+  // por el cliente del usuario el cobro fallaba en silencio y la cadencia
+  // recomendada salía gratis desde el lanzamiento del tarifario.
+  const svc = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
+  const charged = await spendCredits(svc, user.id, COST, "campaign_recommendation");
+  if (!charged.ok) console.error("[generate-campaign] charge after success failed: saldo insuficiente al cobrar");
 
   const name = String(out?.name ?? "").trim().replace(/[—–]/g, "-").slice(0, 60) || hint || "Campaña recomendada";
   const rationale = String(out?.rationale ?? "").trim().replace(/[—–]/g, ",").slice(0, 900);

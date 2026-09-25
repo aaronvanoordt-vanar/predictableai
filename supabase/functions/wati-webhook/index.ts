@@ -39,7 +39,7 @@
  * Siempre responde 200.
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -99,10 +99,13 @@ async function findMember(db: SupabaseClient, userId: string, waId: string): Pro
     .ilike("phone", `%${tail}%`)
     .limit(20);
   const rows = (data ?? []) as Json[];
+  // Sin coincidencia real no se adivina (antes: rows[0]): dos leads de países
+  // distintos con los mismos 8 dígitos finales paraban la cadencia del que no
+  // era. El mensaje entra igual a la bandeja con member_id null.
   return rows.find((m) => {
     const p = wati.digits(m.phone);
     return p === d || p.endsWith(d) || d.endsWith(p);
-  }) ?? rows[0] ?? null;
+  }) ?? null;
 }
 
 // Estados del CRM que nunca se pisan con un "respondió": ya están más adelante.

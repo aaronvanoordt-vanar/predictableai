@@ -41,10 +41,11 @@
  *                   APOLLO_WEBHOOK_SECRET (only for phone-reveal requests)
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { ApolloError, resolveApolloAuth } from "../_shared/apollo-auth.ts";
 import type { ApolloAuth } from "../_shared/apollo-auth.ts";
 import { apolloBillableCount, CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
 import { blockedInPlatformMode, PLATFORM_SKIPPED_CONTACT, sanitizePlatformSearch } from "../_shared/apollo-platform.ts";
 
 type Method = "GET" | "POST" | "PUT" | "DELETE";
@@ -56,12 +57,6 @@ const STATIC_ENDPOINTS = new Map<string, Method[]>([
   ["/people/match", ["POST"]],
   ["/people/bulk_match", ["POST"]],
   ["/contacts", ["POST"]],
-  ["/emailer_campaigns/search", ["POST"]],
-  ["/emailer_campaigns", ["POST"]],
-  ["/emailer_campaigns/remove_or_stop_contact_ids", ["POST"]],
-  ["/emailer_steps", ["POST"]],
-  ["/emailer_touches", ["POST"]],
-  ["/emailer_schedules", ["GET"]],
   ["/email_accounts", ["GET"]],
   // Who is the credential acting as (the user's own Apollo in oauth mode, the
   // workspace admin in platform mode). Cheap, 0 credits.
@@ -79,33 +74,14 @@ const STATIC_ENDPOINTS = new Map<string, Method[]>([
   ["/emailer_messages", ["POST"]],
 ]);
 
-// Dynamic entries: per-sequence sub-resources. The id segment is validated by
-// SHAPE only (URL-safe token, no slashes) — the anti-abuse guarantee is the
-// path pattern, not Apollo's internal id encoding (today 24-hex Mongo-style,
-// but that is Apollo's implementation detail and may change).
-//
-// SEQUENCE STEPS: an earlier note here claimed Apollo had no public API for
-// adding email steps, and that only its web app could (a session-authenticated
-// PUT to app.apollo.io). That is wrong, and the "shell-only" createSequence it
-// justified left users finishing every sequence inside Apollo. Probed against
-// the live API with this function's own key: POST /emailer_steps creates the
-// step AND an empty touch + template, and PUT /emailer_touches/{id} writes the
-// subject and body onto it. What genuinely does NOT work is passing
-// emailer_steps to POST/PUT /emailer_campaigns — it answers 200 and silently
-// drops them (num_steps stays 0), which is probably what produced the old note.
+// Dynamic entries: the id segment is validated by SHAPE only (URL-safe token,
+// no slashes) — the anti-abuse guarantee is the path pattern, not Apollo's
+// internal id encoding. The Apollo-sequence endpoints (emailer_campaigns /
+// emailer_steps / emailer_touches / emailer_schedules) were dropped on
+// 2026-09-25: js/apollo-sequences.js died in PR #31 and no caller remained
+// (grep js/), so they were attack surface without users.
 const ID = "[A-Za-z0-9_-]{8,64}";
 const DYNAMIC_ENDPOINTS: Array<{ re: RegExp; methods: Method[] }> = [
-  // Sequences
-  { re: new RegExp(`^/emailer_campaigns/${ID}$`), methods: ["PUT", "GET"] },
-  { re: new RegExp(`^/emailer_campaigns/${ID}/add_contact_ids$`), methods: ["POST"] },
-  { re: new RegExp(`^/emailer_campaigns/${ID}/approve$`), methods: ["POST"] },
-  { re: new RegExp(`^/emailer_campaigns/${ID}/archive$`), methods: ["POST"] },
-  // Steps (one email of a sequence) and touches (its subject + body)
-  { re: new RegExp(`^/emailer_steps/${ID}$`), methods: ["PUT", "DELETE", "GET"] },
-  { re: new RegExp(`^/emailer_touches/${ID}$`), methods: ["PUT", "GET"] },
-  // Reading a step's copy back. The query string is pinned to this one
-  // parameter so the path can never be used to reach anything else.
-  { re: new RegExp(`^/emailer_touches\\?emailer_step_id=${ID}$`), methods: ["GET"] },
   // ⚠️ SENDS A REAL EMAIL, IMMEDIATELY. Not "schedules", not "validates":
   // probing this with an empty body dispatched a live message to a prospect
   // one second later. There is no unsend — /cancel, /unschedule and DELETE on
@@ -249,13 +225,15 @@ Deno.serve(async (req) => {
     creditReason = wantsPhone ? "enrich_phone" : "enrich_email";
   }
 
-  const admin = creditCost > 0
-    ? createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } })
-    : null;
+  const admin = creditCost > 0 ? svc : null;
 
   if (admin) {
-    const { data: c } = await admin.from("user_credits").select("balance").eq("user_id", user.id).maybeSingle();
-    if ((c?.balance ?? 0) < creditCost) {
+    // Reserva atómica del peor caso ANTES de tocar la key compartida; lo que
+    // Apollo no entregó se devuelve abajo. Con una lectura simple, N requests
+    // paralelos pasaban el chequeo, todos gastaban créditos reales de Apollo
+    // y solo uno pagaba.
+    if (!(await reserveCredits(admin, user.id, creditCost))) {
+      const { data: c } = await admin.from("user_credits").select("balance").eq("user_id", user.id).maybeSingle();
       return json({ error: "insufficient_credits", balance: c?.balance ?? 0, cost: creditCost }, 402, cors);
     }
   }
@@ -272,7 +250,15 @@ Deno.serve(async (req) => {
   // GET/DELETE carry everything they need in the path — forward with no body.
   if (sendsBody) init.body = JSON.stringify(body);
 
-  const res = await fetch("https://api.apollo.io/api/v1" + endpoint, init);
+  init.signal = AbortSignal.timeout(60_000);
+  let res: Response;
+  try {
+    res = await fetch("https://api.apollo.io/api/v1" + endpoint, init);
+  } catch (e) {
+    if (admin) await refundCredits(admin, user.id, creditCost, creditReason + "_refund");
+    console.error(`[apollo-proxy] upstream unreachable for ${endpoint}:`, (e as Error).message);
+    return json({ error: "Apollo no respondió a tiempo. Inténtalo de nuevo en unos segundos." }, 504, cors);
+  }
 
   let text = await res.text();
   if (res.ok && auth.mode === "platform" && endpoint === "/mixed_people/api_search") {
@@ -287,7 +273,8 @@ Deno.serve(async (req) => {
     console.error(`[apollo-proxy] upstream ${res.status} for ${endpoint}: ${text.slice(0, 300)}`);
   }
 
-  // Cobrar solo si Apollo respondió OK y solo por las personas con dato.
+  // Cobrar solo si Apollo respondió OK y solo por las personas con dato; el
+  // resto de la reserva vuelve al saldo (todo, si Apollo falló).
   let charge = 0;
   if (admin && res.ok) {
     try {
@@ -296,14 +283,7 @@ Deno.serve(async (req) => {
       charge = creditCost; // respuesta ilegible: se cobra lo pedido, como antes
     }
   }
-  if (admin && charge > 0) {
-    const { data: spent, error: spendErr } = await admin.rpc("spend_credits", { p_user_id: user.id, p_amount: charge });
-    if (spendErr || spent === null || spent === undefined) {
-      console.error("[apollo-proxy] credit charge failed (race/insufficient):", spendErr);
-    } else {
-      await admin.from("credit_transactions").insert({ user_id: user.id, delta: -charge, reason: creditReason });
-    }
-  }
+  if (admin) await settleReservation(admin, user.id, creditCost, charge, creditReason);
 
   return new Response(text, {
     status: res.status,

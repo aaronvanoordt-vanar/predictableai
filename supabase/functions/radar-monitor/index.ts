@@ -47,8 +47,8 @@
  * GOOGLE_PLACES_API_KEY y RADAR_WATI_* (ver _shared/radar-notify.ts).
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
+import { engineForUser, languageForUser, setRequestLanguage, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { resolveApolloAuth, type ApolloAuth } from "../_shared/apollo-auth.ts";
 import { findDecisionMakers } from "../_shared/radar-apollo.ts";
 import { loadHubDigest, loadSellerContext, type SellerContext } from "../_shared/radar-context.ts";
@@ -109,6 +109,8 @@ interface UserBundle {
   ctx: SellerContext;
   apollo: ApolloAuth | null;
   engine: Engine;
+  /** ui_language del usuario: el store de withLlmContext es por request y el cron atiende a varios usuarios. */
+  language: Awaited<ReturnType<typeof languageForUser>>;
 }
 const bundles = new Map<string, Promise<UserBundle>>();
 
@@ -116,10 +118,10 @@ function bundleFor(supa: Json, userId: string): Promise<UserBundle> {
   let p = bundles.get(userId);
   if (!p) {
     p = (async () => {
-      const [ctx, engine] = await Promise.all([loadSellerContext(supa, userId), engineForUser(supa, userId, "radar")]);
+      const [ctx, engine, language] = await Promise.all([loadSellerContext(supa, userId), engineForUser(supa, userId, "radar"), languageForUser(supa, userId)]);
       let apollo: ApolloAuth | null = null;
       try { apollo = await resolveApolloAuth(supa, userId); } catch (e) { console.warn("[radar-monitor] apollo:", (e as Error).message); }
-      return { ctx, apollo, engine };
+      return { ctx, apollo, engine, language };
     })();
     bundles.set(userId, p);
   }
@@ -234,6 +236,7 @@ async function dmUnit(supa: Json, userFilter: string | null): Promise<number> {
   if (!list.length) return 0;
   for (const s of list) {
     const bundle = await bundleFor(supa, s.user_id);
+    setRequestLanguage(bundle.language);
     let dms: Record<string, unknown>[] = [];
     if (bundle.apollo && s.company_domain) {
       dms = await findDecisionMakers(bundle.apollo, s.company_domain, Array.isArray(s.decision_maker_titles) ? s.decision_maker_titles : [], "[radar-monitor]");
@@ -321,6 +324,7 @@ async function detectorUnit(supa: Json, claimed: { det: Json; plan: Json }): Pro
   const { det, plan } = claimed;
   if (!(await billDetector(supa, det))) return { inserted: 0, done: true, note: "sin créditos" };
   const bundle = await bundleFor(supa, det.user_id);
+  setRequestLanguage(bundle.language);
   const kind = det.kind as DetectorKind;
   const logs: string[] = [];
   try {
@@ -386,6 +390,7 @@ async function hubRefreshUnit(supa: Json): Promise<number> {
     await supa.from("radar_plans").update({ hub_synced_at: nowIso(), hub_report_keys: hub.keys }).eq("id", plan.id);
     try {
       const bundle = await bundleFor(supa, plan.user_id);
+      setRequestLanguage(bundle.language);
       const av: Availability = {
         llm_web: true, apollo: !!bundle.apollo || !!platformKey(), apollo_user: !!bundle.apollo && bundle.apollo.mode !== "platform",
         places: !!Deno.env.get("GOOGLE_PLACES_API_KEY"), probe: true,

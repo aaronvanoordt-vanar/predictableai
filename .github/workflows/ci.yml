@@ -15,3 +15,23 @@ jobs:
           node-version: 22
       - name: Smoke checks (inline-script syntax, div balance, secrets)
         run: node scripts/check.mjs
+
+  edge-functions:
+    # The mirror pairs (credit costs, ICP taxonomy, campaign flow, providers,
+    # developer API, WATI/Dripify parsing…) are covered by `deno test`. Until
+    # 2026-09-24 these tests only ran when someone remembered to run them
+    # locally; a drift between js/ and _shared/ shipped silently.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Unit tests for supabase/functions/_shared
+        working-directory: supabase/functions
+        run: deno test --allow-read --allow-env _shared/
+      - name: Type-check every edge function
+        working-directory: supabase/functions
+        run: |
+          set -e
+          for f in */index.ts; do deno check "$f"; done

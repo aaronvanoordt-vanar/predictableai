@@ -15,7 +15,7 @@
  * al email que venía después. DELETED es terminal, igual que REJECTED.
  */
 
-import { assert, assertEquals, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
 import {
   ACCOUNT_BLOCK_RETRY_MS,
   accountBlockCode,

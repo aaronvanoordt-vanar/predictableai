@@ -29,8 +29,9 @@
  *   SCHEDULER_SECRET
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callLLM, engineForUser, resolveEngine, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
+import { callLLM, engineForUser, parseLlmJson, resolveEngine, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { refundCredits } from "../_shared/credits.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { loadIntelligence } from "../_shared/intelligence.ts";
 
@@ -749,21 +750,9 @@ Research task: ${section.researchPrompt}
 Search the web now and produce the JSON for this segment, tailored to THIS company — their products, their exact ICP (industries, roles, geographies), and how the findings change their go-to-market actions.`;
 
   function extractJson(raw: string): GeneratedContent {
-    const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-    let parsed: GeneratedContent;
-    try {
-      parsed = JSON.parse(cleaned) as GeneratedContent;
-    } catch (_) {
-      const start = cleaned.indexOf("{");
-      if (start === -1) throw new Error(`No JSON object found in response: ${cleaned.slice(0, 200)}`);
-      let depth = 0, end = -1;
-      for (let i = start; i < cleaned.length; i++) {
-        if (cleaned[i] === "{") depth++;
-        else if (cleaned[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
-      }
-      if (end === -1) throw new Error(`Unterminated JSON object: ${cleaned.slice(0, 200)}`);
-      parsed = JSON.parse(cleaned.slice(start, end + 1)) as GeneratedContent;
-    }
+    // _shared/llm-json.ts: tolera prosa alrededor, "{" dentro de strings y
+    // salidas cortadas (el contador de llaves que vivía aquí, no).
+    const parsed = parseLlmJson(raw) as GeneratedContent;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new Error("Response is not a JSON object");
     }
@@ -800,7 +789,9 @@ async function runGeneration(
   engine: Engine,
   userId: string,
   sectionKeys: string[],
-  triggeredBy: string
+  triggeredBy: string,
+  /** créditos ya cobrados por sección (se devuelven si esa sección falla) */
+  charged: Record<string, number> = {},
 ) {
   const today = new Date().toISOString().slice(0, 10);
 
@@ -897,6 +888,9 @@ async function runGeneration(
         },
         { onConflict: "user_id,section_key" }
       );
+      // Se cobró por adelantado: un 502 del proveedor o un JSON ilegible no
+      // puede costarle al usuario una sección que nunca recibió.
+      if (charged[section.key]) await refundCredits(supabase, userId, charged[section.key], "intel_hub_refund");
       return null;
     }
   };
@@ -1034,6 +1028,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
   // plan (la cadencia automática la limita schedule-intel-hub según el plan).
   const wantsAnalysis = requestedSections.includes("market_analysis");
   const pulseRequested = requestedSections.filter((k) => k !== "market_analysis");
+  const charged: Record<string, number> = {};
   if (triggeredBy === "manual" || (wantsAnalysis && !isServiceRole)) {
     const { data: chargeProfile } = await supabase
       .from("profiles")
@@ -1081,12 +1076,13 @@ Deno.serve(withLlmContext(async (req: Request) => {
     }));
     if (analysisCost) txs.push({ user_id: userId, delta: -analysisCost, reason: "market_analysis", section_key: "market_analysis" });
     if (txs.length) await supabase.from("credit_transactions").insert(txs);
+    for (const t of txs) charged[String(t.section_key)] = Math.abs(Number(t.delta) || 0);
   }
 
   const engine = await engineForUser(supabase, userId!, "intel_hub", body.engine);
 
   const generationPromise = runGeneration(
-    supabase, engine, userId!, requestedSections, triggeredBy
+    supabase, engine, userId!, requestedSections, triggeredBy, charged
   );
 
   // @ts-ignore — Supabase Edge Runtime global

@@ -23,6 +23,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { parseLlmJson as parseLlmJsonRobust } from "./llm-json.ts";
 
 // ── Idioma de salida por petición ────────────────────────────────────────────
 // El usuario elige el idioma de la interfaz (profiles.ui_language, lo escribe
@@ -195,6 +196,13 @@ export function engineConfigured(engine: Engine): boolean {
 // ── Models ───────────────────────────────────────────────────────────────────
 
 export const DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6";
+/**
+ * Used only if a pinned Claude id is rejected as unknown. OpenAI and Perplexity
+ * always had a fallback; Claude did not, so the first retired id would have
+ * been a platform-wide outage of every Claude feature. Sonnet 5 is the
+ * current-generation id already in the intel-hub allowlist.
+ */
+export const CLAUDE_FALLBACK_MODEL = "claude-sonnet-5";
 
 function openaiModel(): string {
   return Deno.env.get("OPENAI_MODEL") || "gpt-5";
@@ -470,7 +478,7 @@ async function callAnthropic(
       messages: [{ role: "user", content }],
     }),
   });
-  return tag(res, model);
+  return tag(res, model, model === CLAUDE_FALLBACK_MODEL ? undefined : CLAUDE_FALLBACK_MODEL);
 }
 
 // ── OpenAI (Responses API — the only path with the web_search tool) ───────────
@@ -586,12 +594,22 @@ function extract(engine: Engine, raw: string): string {
     if (data?.stop_reason === "refusal") {
       throw new Error("Claude rechazó la solicitud por sus clasificadores de seguridad");
     }
-    const blocks = (Array.isArray(data?.content) ? data.content : [])
-      .filter((b: ContentItem) => b?.type === "text");
+    const content: ContentItem[] = Array.isArray(data?.content) ? data.content : [];
+    // With web_search/web_fetch the answer arrives as SEVERAL text blocks
+    // (citations split them) after the last tool block; returning only the
+    // last one handed a JSON fragment to the parser. Join every text block
+    // that follows the last non-text block (all of them when there are none).
+    let from = 0;
+    content.forEach((b, i) => { if (b?.type !== "text") from = i + 1; });
+    let blocks = content.slice(from).filter((b) => b?.type === "text");
+    if (!blocks.length) blocks = content.filter((b) => b?.type === "text");
     if (!blocks.length) {
       throw new Error(`Claude devolvió una respuesta sin texto (stop_reason: ${data?.stop_reason})`);
     }
-    return blocks[blocks.length - 1].text ?? "";
+    if (data?.stop_reason === "max_tokens") {
+      console.warn("[llm] Claude cortó la respuesta por max_tokens: el JSON puede venir truncado (sube maxTokens)");
+    }
+    return blocks.map((b) => b.text ?? "").join("");
   }
 
   if (engine === "openai") {
@@ -631,17 +649,11 @@ function extract(engine: Engine, raw: string): string {
 /**
  * Every engine occasionally wraps JSON in fences or a sentence of prose despite
  * instructions; Perplexity in particular likes to add a citation line.
+ * Delegates to llm-json.ts: string-aware (a "{" inside a value no longer
+ * derails the scan) and repairs truncated output. The naive brace counter
+ * that lived here was the bug llm-json.ts was written to fix.
  */
 // deno-lint-ignore no-explicit-any
 export function parseLlmJson(raw: string): any {
-  const cleaned = raw.replace(/```(?:json)?/gi, "").trim();
-  try { return JSON.parse(cleaned); } catch (_) { /* fall through */ }
-  const s = cleaned.indexOf("{");
-  if (s === -1) throw new Error("No JSON found in response");
-  let depth = 0;
-  for (let i = s; i < cleaned.length; i++) {
-    if (cleaned[i] === "{") depth++;
-    else if (cleaned[i] === "}") { depth--; if (!depth) return JSON.parse(cleaned.slice(s, i + 1)); }
-  }
-  throw new Error("Unterminated JSON in response");
+  return parseLlmJsonRobust(raw);
 }

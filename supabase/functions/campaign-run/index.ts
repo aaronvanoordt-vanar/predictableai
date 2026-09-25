@@ -77,7 +77,7 @@
  * email). Opcionales: APOLLO_OAUTH_CLIENT_ID/SECRET, GOOGLE_CLIENT_ID/SECRET.
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
@@ -393,8 +393,19 @@ async function event(ctx: Ctx, en: Json, channel: string, type: string, extra: J
 }
 
 async function finish(ctx: Ctx, en: Json, patch: Json) {
-  const { error } = await ctx.db.from("campaign_enrollments").update({ processing_since: null, ...patch }).eq("id", en.id);
-  if (error) console.error("[campaign-run] enrollment update:", error.message);
+  // Solo si la fila sigue reclamada por esta corrida. Si un webhook la pasó a
+  // `replied` (o el usuario la pausó) mientras se procesaba, ese estado
+  // manda: pisarlo con `active` volvía a escribirle a un lead que ya
+  // respondió, la única regla que el motor promete no romper.
+  const { data, error } = await ctx.db.from("campaign_enrollments")
+    .update({ processing_since: null, ...patch })
+    .eq("id", en.id)
+    .eq("status", "processing")
+    .select("id");
+  if (error) { console.error("[campaign-run] enrollment update:", error.message); return; }
+  if (!data || !data.length) {
+    await ctx.db.from("campaign_enrollments").update({ processing_since: null }).eq("id", en.id);
+  }
 }
 
 async function spendCredits(ctx: Ctx, en: Json) {
@@ -573,14 +584,23 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
         throw new StepError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tplStatus}).`, "hold");
       }
       bodyText = String(tpl.body ?? "").replace(/\{\{\s*name\s*\}\}/gi, firstName(member));
-      const r = await wati.sendTemplate(creds, {
-        templateName: tpl.name,
-        broadcastName: `px_${String(campaign.name).slice(0, 40)}_${localId.slice(0, 8)}`,
-        phone,
-        localMessageId: localId,
-        params: { name: firstName(member) || "" },
-        channel: acc.config?.channel || undefined,
-      });
+      let r: Awaited<ReturnType<typeof wati.sendTemplate>>;
+      try {
+        r = await wati.sendTemplate(creds, {
+          templateName: tpl.name,
+          broadcastName: `px_${String(campaign.name).slice(0, 40)}_${localId.slice(0, 8)}`,
+          phone,
+          localMessageId: localId,
+          params: { name: firstName(member) || "" },
+          channel: acc.config?.channel || undefined,
+        });
+      } catch (e) {
+        // Igual que el texto libre: un 429/5xx o un corte de red era un error
+        // genérico → modo "stop" y el enrolamiento quedaba en `error` para
+        // siempre. 401 = retener (credencial); el resto = fallar este paso y
+        // seguir con el siguiente canal.
+        throw new StepError("WATI no aceptó la plantilla: " + wati.humanError(e), e instanceof wati.WatiError && e.status === 401 ? "hold" : "fail");
+      }
       if (!r.accepted) throw new StepError("WATI rechazó el envío: " + (r.errors.join("; ") || "sin detalle"), "fail");
     } else {
       // Texto libre: solo dentro de la ventana de 24 h desde el último
@@ -617,6 +637,11 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     }
     await spendCredits(ctx, en);
   } else if (step.channel === "email") {
+    // Sin email revelado el paso se omite ANTES de pedir el texto IA: para
+    // esos leads preparePending nunca crea la fila de campaign_messages, así
+    // que aiText() lanzaba wait_short cada 2 min para siempre y el lead
+    // jamás llegaba al paso siguiente (LinkedIn / WhatsApp).
+    if (!hasEmail(member)) throw new StepError("El lead no tiene email revelado: se omite el email y sigue con el siguiente paso.", "skip");
     let subject = "", bodyText = "";
     let messageRowId: string | null = null;
     if (step.content_kind === "custom") {
@@ -627,7 +652,6 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       subject = t.subject; bodyText = t.body; messageRowId = t.messageId;
     }
     if (!subject.trim() || !bodyText.trim()) throw new StepError("No hay email personalizado generado para este lead.", "skip");
-    if (!hasEmail(member)) throw new StepError("El lead no tiene email revelado: se omite el email y sigue con el siguiente paso.", "skip");
     const auth = await apolloFor(ctx, en.user_id);
     if (!auth) throw new StepError("Email no está conectado: conecta tu cuenta de Apollo.", "hold");
     // La key compartida de la beta es OTRA cuenta de Apollo: enviar con ella
@@ -948,6 +972,7 @@ async function generateStepMessage(ctx: Ctx, en: Json, campaign: Json, node: flo
     .limit(5);
   const res = await fetch(url, {
     method: "POST",
+    signal: AbortSignal.timeout(90_000),
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + serviceKey },
     body: JSON.stringify({
       mode: "step",
@@ -1189,7 +1214,11 @@ Deno.serve(async (req) => {
   if (dueErr) return json({ error: dueErr.message }, 500);
 
   let processed = 0;
+  const loopStarted = Date.now();
   for (const en of (due ?? []) as Json[]) {
+    // El Edge Runtime mata el isolate a ~150 s: lo que no entre ahora sale en
+    // la corrida siguiente (cada minuto) en vez de quedar en `processing`.
+    if (Date.now() - loopStarted > 100_000) { console.warn("[campaign-run] presupuesto de tiempo agotado; el resto espera a la próxima corrida"); break; }
     const { data: claimed } = await db
       .from("campaign_enrollments")
       .update({ status: "processing", processing_since: now.toISOString() })

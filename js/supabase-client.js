@@ -16,7 +16,8 @@
     return;
   }
 
-  // El SDK se carga desde index.html como <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js">
+  // El SDK se carga desde cada página como <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/dist/umd/supabase.min.js" integrity="…">
+  // (versión fija + SRI: un @2 flotante cambiaba de minor en cada despliegue de jsDelivr).
   if (typeof supabase === 'undefined' || !supabase.createClient) {
     console.error('[supabase] SDK no cargado. Verifica el <script> CDN en el HTML.');
     return;
@@ -57,9 +58,29 @@
       return data;
     },
 
+    /**
+     * Borra la sesión local y los datos por usuario, y CONSERVA las
+     * preferencias de la interfaz (tema, idioma, riel, grupos, sonido).
+     * Antes se hacía localStorage.clear() en seis sitios: cerrar sesión en
+     * una pestaña reseteaba el tema y el idioma en todas.
+     */
+    clearLocalSession() {
+      try {
+        const doomed = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (!k) continue;
+          if (k.startsWith('sb-') || k === 'predictable_brand' || k === 'predictable_tour_v1' ||
+              k === 'px_ai_engines' || k.startsWith('predictable_miforms_popup_seen')) doomed.push(k);
+        }
+        doomed.forEach((k) => localStorage.removeItem(k));
+      } catch (e) { /* almacenamiento bloqueado */ }
+    },
+
     /** Logout */
     async signOut() {
       await client.auth.signOut();
+      this.clearLocalSession();
       window.location.href = './auth.html';
     }
   };

@@ -35,12 +35,13 @@
  * (solo para revelar teléfonos), APOLLO_OAUTH_CLIENT_ID/SECRET.
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { ApolloError, apolloCall, resolveApolloAuth } from "../_shared/apollo-auth.ts";
 import type { ApolloAuth } from "../_shared/apollo-auth.ts";
 import { blockedInPlatformMode } from "../_shared/apollo-platform.ts";
 import { apolloBillableCount, CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
 import { profileFillPatch } from "../_shared/person-fill.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -90,21 +91,10 @@ function isTransient(e: unknown): boolean {
 
 // ── créditos (espejo de apollo-proxy) ──────────────────────────────────────
 
-async function hasCredits(svc: SupabaseClient, userId: string, cost: number): Promise<boolean> {
-  if (cost <= 0) return true;
-  const { data } = await svc.from("user_credits").select("balance").eq("user_id", userId).maybeSingle();
-  return (data?.balance ?? 0) >= cost;
-}
-
-async function spendCredits(svc: SupabaseClient, userId: string, cost: number, reason: string) {
-  if (cost <= 0) return;
-  const { data: spent, error } = await svc.rpc("spend_credits", { p_user_id: userId, p_amount: cost });
-  if (error || spent === null || spent === undefined) {
-    console.error("[enrich-list] credit charge failed (race/insufficient):", error);
-    return;
-  }
-  await svc.from("credit_transactions").insert({ user_id: userId, delta: -cost, reason });
-}
+// Reserva atómica → trabajo pagado → devolución de lo no usado
+// (_shared/credits.ts). Antes se leía el saldo, se llamaba a Apollo con la key
+// compartida y se cobraba al final: el cron y el disparo del navegador corren
+// a la vez, los dos pasaban la lectura y solo uno pagaba.
 
 const NO_CREDITS = "Sin créditos de predictable.ai para la cuenta de Apollo compartida. Recarga o conecta tu Apollo y vuelve a enriquecer.";
 
@@ -159,7 +149,7 @@ async function processEmailRows(svc: SupabaseClient, auth: ApolloAuth, userId: s
   // Tarifario en _shared/credit-costs.ts: se verifica el peor caso y se
   // cobra solo por los emails que Apollo sí trajo (como apollo-proxy).
   const cost = auth.mode === "platform" ? rows.length * CREDIT_COSTS.enrich_email : 0;
-  if (!(await hasCredits(svc, userId, cost))) {
+  if (!(await reserveCredits(svc, userId, cost))) {
     for (const r of rows) { await finishRow(svc, r.id, failPatch(r, NO_CREDITS)); stats.failed++; }
     return;
   }
@@ -171,6 +161,7 @@ async function processEmailRows(svc: SupabaseClient, auth: ApolloAuth, userId: s
     });
     matches = res?.matches || [];
   } catch (e) {
+    await refundCredits(svc, userId, cost, "enrich_email_refund");
     const msg = "Guardado sin email — " + (e as Error).message;
     for (const r of rows) {
       if (isTransient(e) && r.enrich_attempts < MAX_ATTEMPTS) { await releaseRow(svc, r.id, msg); stats.retried++; }
@@ -180,7 +171,7 @@ async function processEmailRows(svc: SupabaseClient, auth: ApolloAuth, userId: s
   }
   if (cost > 0) {
     const found = apolloBillableCount("/people/bulk_match", { matches }, false);
-    await spendCredits(svc, userId, found * CREDIT_COSTS.enrich_email, "enrich_email");
+    await settleReservation(svc, userId, cost, found * CREDIT_COSTS.enrich_email, "enrich_email");
   }
 
   for (let i = 0; i < rows.length; i++) {
@@ -231,7 +222,7 @@ async function processFullRow(svc: SupabaseClient, auth: ApolloAuth, userId: str
   const cost = auth.mode === "platform"
     ? (revealPhones ? CREDIT_COSTS.enrich_phone : CREDIT_COSTS.enrich_email)
     : 0;
-  if (!(await hasCredits(svc, userId, cost))) {
+  if (!(await reserveCredits(svc, userId, cost))) {
     await finishRow(svc, r.id, failPatch(r, NO_CREDITS));
     stats.failed++;
     return;
@@ -264,6 +255,7 @@ async function processFullRow(svc: SupabaseClient, auth: ApolloAuth, userId: str
     const res = await apolloCall(auth, "POST", "/people/match", query);
     person = res?.person || null;
   } catch (e) {
+    await refundCredits(svc, userId, cost, revealPhones ? "enrich_phone_refund" : "enrich_email_refund");
     const revert: Record<string, unknown> = {};
     if (revealPhones && (prevPhoneStatus === "none" || prevPhoneStatus === "unavailable")) revert.phone_status = prevPhoneStatus;
     if (isTransient(e) && r.enrich_attempts < MAX_ATTEMPTS) {
@@ -280,7 +272,9 @@ async function processFullRow(svc: SupabaseClient, auth: ApolloAuth, userId: str
   const gotEmail = !!person && (!isMaskedEmail(person.email) ||
     (person.personal_emails || []).some((e: string) => !isMaskedEmail(e)));
   if (person && (revealPhones || gotEmail)) {
-    await spendCredits(svc, userId, cost, revealPhones ? "enrich_phone" : "enrich_email");
+    await settleReservation(svc, userId, cost, cost, revealPhones ? "enrich_phone" : "enrich_email");
+  } else {
+    await refundCredits(svc, userId, cost, revealPhones ? "enrich_phone_refund" : "enrich_email_refund");
   }
 
   const patch: Record<string, unknown> = { enriched_at: nowIso(), enrich_error: null };
@@ -303,6 +297,9 @@ async function processFullRow(svc: SupabaseClient, auth: ApolloAuth, userId: str
     patch.snapshot = Object.assign({}, r.snapshot || {}, person);
     if (patch.email) stats.enriched++; else stats.noData++;
   } else {
+    // Sin persona no habrá webhook de teléfono: devolver el estado previo;
+    // si no, la fila decía "Pendiente" para siempre y nunca se reintentaba.
+    if (revealPhones && (prevPhoneStatus === "none" || prevPhoneStatus === "unavailable")) patch.phone_status = prevPhoneStatus;
     if (r.email_status === "pending") patch.email_status = r.email ? null : "unavailable";
     stats.noData++;
   }

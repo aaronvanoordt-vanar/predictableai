@@ -34,7 +34,7 @@
  *           (inyectadas por Supabase) y SHEET_SYNC_SECRET para el cron.
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import {
   CRM_TAB_CANDIDATES,
   METRICS_TAB_CANDIDATES,

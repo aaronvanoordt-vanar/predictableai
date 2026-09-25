@@ -62,7 +62,7 @@
  * WATI y Dripify no necesitan secretos: cada usuario pega su token / API key.
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as apollo from "../_shared/apollo-auth.ts";
@@ -590,22 +590,9 @@ Deno.serve(async (req) => {
         }, status === 401 || status === 403 ? 400 : 502, cors);
       }
 
-      // ¿Es master key? /labels la exige y devuelve 403 sin ella — es justo el
-      // endpoint del que vive "Importar desde Apollo", así que se comprueba al
-      // conectar en vez de fallar callado después.
-      let masterKey = true;
-      let masterKeyError: string | null = null;
-      try {
-        await apollo.apolloCall(headers, "GET", "/labels");
-      } catch (e) {
-        if (e instanceof apollo.ApolloError && (e.status === 403 || e.status === 401)) {
-          masterKey = false;
-          masterKeyError = "La key funciona, pero no es master key: importar listas desde Apollo va a fallar. En Apollo → Settings → Integrations → API, marca la opción de master key.";
-        } else {
-          console.warn("[channel-connect] apollo /labels probe:", apollo.humanError(e));
-        }
-      }
-
+      // (La sonda de master key vía /labels se quitó el 2026-09-25: "Importar
+      // desde Apollo" ya no existe y apollo-proxy no permite /labels, así que
+      // marcaba como error una conexión que funcionaba.)
       let emailAccounts: apollo.ApolloEmailAccount[] = [];
       try {
         emailAccounts = await apollo.fetchEmailAccounts(headers);
@@ -620,7 +607,6 @@ Deno.serve(async (req) => {
         name: profile.name,
         apollo_user_id: profile.id,
         email_accounts: emailAccounts.map((a) => ({ id: a.id, email: a.email, default: a.default, active: a.active !== false })),
-        master_key: masterKey,
         connected_at: new Date().toISOString(),
       };
       const { data: row, error } = await db
@@ -632,13 +618,13 @@ Deno.serve(async (req) => {
           secret: apiKey,
           webhook_secret: prev?.webhook_secret || randomSecret(),
           status: "connected",
-          last_error: masterKeyError,
+          last_error: null,
         }, { onConflict: "user_id,provider" })
         .select("*")
         .single();
       if (error) throw new Error("No se pudo guardar la cuenta: " + error.message);
       if (contactIdsFromOtherAccount(prev?.config, profile.id)) await forgetApolloContacts(db, user.id);
-      return json({ apollo: publicRow(row), account: publicRow(row), master_key: masterKey, warning: masterKeyError }, 200, cors);
+      return json({ apollo: publicRow(row), account: publicRow(row) }, 200, cors);
     }
 
     if (action === "connect_wati") {
@@ -926,9 +912,23 @@ Deno.serve(async (req) => {
     if (action === "disconnect") {
       const provider = String(payload.provider ?? "");
       if (!["wati", "dripify", "apollo"].includes(provider)) return json({ error: "provider inválido" }, 400, cors);
-      const { error } = await db.from("channel_accounts").delete().eq("user_id", user.id).eq("provider", provider);
-      if (error) throw new Error(error.message);
-      return json({ ok: true }, 200, cors);
+      // La fila se conserva (status 'disconnected', credencial borrada) para
+      // que webhook_secret sobreviva: WATI solo sabe CREAR webhooks (listar o
+      // borrar responde 405 y el tenant tiene tope) y Dripify tiene la URL
+      // pegada en cada campaña. Borrar la fila rotaba el secreto al
+      // reconectar y todo callback llegaba a una clave desconocida:
+      // respuestas y recibos perdidos en silencio. Mientras la migración
+      // 20260925000001 (que admite ese status) no esté aplicada, se borra
+      // como antes.
+      const { data: kept, error } = await db.from("channel_accounts")
+        .update({ status: "disconnected", secret: "", last_error: null })
+        .eq("user_id", user.id).eq("provider", provider).select("id");
+      if (error) {
+        console.warn("[channel-connect] disconnect: status 'disconnected' no admitido aún, se borra la fila:", error.message);
+        const del = await db.from("channel_accounts").delete().eq("user_id", user.id).eq("provider", provider);
+        if (del.error) throw new Error(del.error.message);
+      }
+      return json({ ok: true, kept: !!(kept && kept.length) }, 200, cors);
     }
 
     return json({ error: "Unknown action" }, 400, cors);

@@ -1,5 +1,5 @@
 // deno test _shared/stripe.test.ts
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals } from "jsr:@std/assert@1";
 import { formEncode, signForTest, verifyStripeSignature } from "./stripe.ts";
 
 Deno.test("formEncode anida objetos y arrays como espera Stripe", () => {
