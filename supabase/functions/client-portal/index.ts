@@ -37,7 +37,7 @@
  * Requiere: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (inyectadas por Supabase).
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { callLLM, parseLlmJson, RECOMMENDED_ENGINE, isEngine, type Engine } from "../_shared/llm.ts";
 
 const BUCKET = "client-assets";
@@ -376,7 +376,8 @@ Deno.serve(async (req) => {
   }
   if (!found.data) return json({ error: "Link inválido o revocado", code: "invalid_token" }, 404, origin);
 
-  const client = found.data;
+  // deno-lint-ignore no-explicit-any
+  const client = found.data as unknown as any; // select() con lista concatenada: el tipado no la parsea
   const clientId: string = client.id;
   const canEdit = client.portal_can_edit !== false;
   const action = String(body?.action ?? "get");
@@ -524,7 +525,10 @@ Deno.serve(async (req) => {
       const path = String(body?.path ?? "");
       // Solo se aceptan paths dentro de la carpeta de ESTE cliente y con el
       // prefijo que emite upload_url.
-      if (!path.startsWith(`${clientId}/portal-`)) return json({ error: "Ruta inválida" }, 400, origin);
+      // El servidor nunca emite otro separador tras el prefijo: un "../" ahí
+      // se normaliza en la URL de storage y firmaba el archivo de OTRO cliente.
+      const rel = path.slice(clientId.length + 1);
+      if (!path.startsWith(`${clientId}/portal-`) || rel.includes("/") || rel.includes("..")) return json({ error: "Ruta inválida" }, 400, origin);
 
       const signed = await signOne(db, path);
       if (!signed) return json({ error: "El archivo no llegó a subirse. Inténtalo de nuevo." }, 400, origin);

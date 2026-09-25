@@ -22,7 +22,7 @@
  * Secrets: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET.
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { STARTER, TOPUP_PACKS } from "../_shared/billing-plans.ts";
 import { stripeRequest, verifyStripeSignature } from "../_shared/stripe.ts";
 
@@ -147,9 +147,20 @@ Deno.serve(async (req: Request) => {
   });
 
   // Reclamar el evento; si ya estaba, es un reintento de algo ya aplicado.
-  const { error: claimErr } = await supa.from("billing_events").insert({ id: event.id, type: event.type });
+  let claimErr = (await supa.from("billing_events").insert({ id: event.id, type: event.type })).error;
+  if (claimErr && (claimErr as Json).code === "23505") {
+    // Ya reclamado. Si quedó sin `processed_at` hace más de 10 min es un
+    // reclamo huérfano (el isolate murió a mitad, p. ej. esperando a Stripe):
+    // se retoma en vez de contestar "duplicado" y perder el pago para siempre.
+    // Sin la migración 20260925000001 (columna processed_at) se comporta como antes.
+    const { data: prev } = await supa.from("billing_events").select("processed_at, created_at").eq("id", event.id).maybeSingle();
+    const stale = !!prev && !prev.processed_at && Date.parse(prev.created_at) < Date.now() - 10 * 60_000;
+    if (!stale) return json({ received: true, duplicate: true });
+    console.warn(`[stripe-webhook] ${event.id}: reclamo huérfano, se reprocesa`);
+    await supa.from("billing_events").delete().eq("id", event.id);
+    claimErr = (await supa.from("billing_events").insert({ id: event.id, type: event.type })).error;
+  }
   if (claimErr) {
-    if ((claimErr as Json).code === "23505") return json({ received: true, duplicate: true });
     console.error("[stripe-webhook] billing_events:", claimErr.message);
     return json({ error: "db_error" }, 500);
   }
@@ -172,6 +183,7 @@ Deno.serve(async (req: Request) => {
         break;
     }
     console.log(`[stripe-webhook] ${event.type} ${event.id}: ${outcome}`);
+    await supa.from("billing_events").update({ processed_at: new Date().toISOString() }).eq("id", event.id);
     return json({ received: true, outcome });
   } catch (e) {
     // Soltar el reclamo para que el reintento de Stripe lo vuelva a aplicar.

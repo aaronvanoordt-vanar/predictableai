@@ -31,7 +31,7 @@
  * Lo usan apollo-proxy, campaign-run, inbox-send y channel-connect.
  */
 
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -157,6 +157,7 @@ async function tokenRequest(form: Record<string, string>): Promise<ApolloTokens>
   if (!creds) throw new ApolloError("apollo_oauth_not_configured", 503);
   const res = await fetch(APOLLO_OAUTH_TOKEN, {
     method: "POST",
+    signal: AbortSignal.timeout(20_000),
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body: new URLSearchParams({ client_id: creds.clientId, client_secret: creds.clientSecret, ...form }),
   });
@@ -301,6 +302,7 @@ export async function apolloCall(
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body ?? {});
   }
+  init.signal = AbortSignal.timeout(60_000);
   const res = await fetch(APOLLO_API + endpoint, init);
   const text = await res.text();
   let data: Json = null;

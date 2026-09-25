@@ -79,7 +79,6 @@ export const TECH_RULES: TechRule[] = [
 ];
 
 const RULE_BY_KEY: Map<string, TechRule> = new Map(TECH_RULES.map((r) => [r.key, r]));
-export const TECH_KEYS: string[] = TECH_RULES.map((r) => r.key);
 
 /** Grupos que las reglas del detector pueden nombrar en lugar de una clave. */
 export const TECH_GROUPS: Record<string, string[]> = {
@@ -152,10 +151,39 @@ export function probeHeadline(found: string[], rules: ProbeRules): string {
   return cap.length > 70 ? cap.slice(0, 67) + "…" : cap;
 }
 
-/** Sondeo: portada pública, con timeout y sin seguir a otros hosts. */
+/**
+ * Solo hosts públicos con nombre: nada de IPs literales, localhost ni
+ * dominios internos. Los dominios sondeados salen de Apollo (incluidas las
+ * cuentas del CRM del propio usuario), así que sin esto el runtime hacía GET
+ * a lo que le pidieran (SSRF ciego).
+ */
+export function isPublicHostname(host: string): boolean {
+  const h = String(host || "").trim().toLowerCase().replace(/:\d+$/, "");
+  if (!h || h.length > 253) return false;
+  if (h.includes(":") || /^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return false;           // IPv6 / IPv4 literal
+  if (/^(localhost|.*\.(local|localhost|internal|lan|intranet|home|corp|test|invalid))$/.test(h)) return false;
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(h);                                     // exige un TLD
+}
+
+/** Lee como máximo `max` caracteres y corta la conexión: no se carga la página entera en memoria. */
+async function readCapped(res: Response, max: number): Promise<string> {
+  if (!res.body) return (await res.text()).slice(0, max);
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let out = "";
+  while (out.length < max) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    out += dec.decode(value, { stream: true });
+  }
+  try { await reader.cancel(); } catch { /* ya cerrado */ }
+  return out.slice(0, max);
+}
+
+/** Sondeo: portada pública, con timeout, solo hosts públicos y lectura acotada. */
 export async function fetchHomepage(domain: string, timeoutMs = 8000): Promise<{ ok: boolean; html: string; status: number; finalUrl: string }> {
-  const d = String(domain || "").trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
-  if (!d) return { ok: false, html: "", status: 0, finalUrl: "" };
+  const d = String(domain || "").trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase();
+  if (!d || !isPublicHostname(d)) return { ok: false, html: "", status: 0, finalUrl: "" };
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -171,9 +199,12 @@ export async function fetchHomepage(domain: string, timeoutMs = 8000): Promise<{
             "Accept-Language": "es-419,es;q=0.9,en;q=0.7",
           },
         });
+        let finalHost = "";
+        try { finalHost = new URL(res.url || url).hostname; } catch { /* sin URL final */ }
+        if (finalHost && !isPublicHostname(finalHost)) continue;   // redirigió a un host privado
         const type = res.headers.get("content-type") || "";
         if (!res.ok || (type && !/html|xml|text\/plain/i.test(type))) continue;
-        const html = (await res.text()).slice(0, 600_000);
+        const html = await readCapped(res, 600_000);
         return { ok: true, html, status: res.status, finalUrl: res.url || url };
       } catch (_) { /* siguiente variante */ }
     }

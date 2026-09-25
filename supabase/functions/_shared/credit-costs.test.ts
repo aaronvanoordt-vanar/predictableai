@@ -1,5 +1,5 @@
 // deno test --allow-read _shared/credit-costs.test.ts
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals } from "jsr:@std/assert@1";
 import {
   apolloBillableCount, coachMeetingCost, CREDIT_COSTS, minCadenceHours, radarDetectorMonthCost,
 } from "./credit-costs.ts";
@@ -30,6 +30,14 @@ Deno.test("js/credit-costs.js es espejo del tarifario que cobran las edge functi
     coach_bot_block: CREDIT_COSTS.coach_bot_block,
   };
   assertEquals(shown, expected);
+});
+
+Deno.test("js/campaign-flow.js usa los mismos precios por mensaje IA y por lead", async () => {
+  const js = await Deno.readTextFile(new URL("../../../js/campaign-flow.js", import.meta.url));
+  const ai = js.match(/AI_MESSAGE_CREDITS\s*=\s*(\d+)/);
+  const lead = js.match(/LEAD_CREDITS\s*=\s*(\d+)/);
+  assertEquals(Number(ai?.[1]), CREDIT_COSTS.outreach_step);
+  assertEquals(Number(lead?.[1]), CREDIT_COSTS.campaign_lead);
 });
 
 Deno.test("radarDetectorMonthCost por tipo y alcance", () => {

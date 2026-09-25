@@ -29,7 +29,7 @@
  * alcanza para gastar tokens).
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { callLLM, engineForUser, withLlmContext } from "../_shared/llm.ts";
 import { buildTrainingBlock, coachDoctrine, DOC_KINDS, hasTraining, loadTraining } from "../_shared/sales-training.ts";
 

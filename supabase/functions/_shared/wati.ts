@@ -96,6 +96,7 @@ function baseFor(creds: WatiCreds, path: string): string {
 async function call(creds: WatiCreds, method: string, path: string, body?: Json): Promise<Json> {
   const res = await fetch(`${baseFor(creds, path)}${path}`, {
     method,
+    signal: AbortSignal.timeout(30_000),
     headers: {
       "Authorization": `Bearer ${creds.token}`,
       "Content-Type": "application/json",
@@ -458,12 +459,6 @@ export async function sendText(creds: WatiCreds, phone: string, text: string): P
   });
   const m = data?.message ?? data ?? {};
   return { id: m.id ? String(m.id) : null, conversationId: m.conversation_id ? String(m.conversation_id) : null };
-}
-
-/** GET /api/ext/v3/conversations/{target}/messages */
-export async function getMessages(creds: WatiCreds, phone: string, page = 1, pageSize = 50): Promise<Json[]> {
-  const data = await call(creds, "GET", `/api/ext/v3/conversations/${encodeURIComponent(digits(phone))}/messages?page_number=${page}&page_size=${pageSize}`);
-  return Array.isArray(data?.message_list) ? data.message_list : [];
 }
 
 // ── Webhooks ────────────────────────────────────────────────────────────────

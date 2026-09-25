@@ -48,8 +48,9 @@
  * Requires migration: 20260819000002_outreach_playbook.sql
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
+import { callLLM, engineForUser, parseLlmJson, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { refundCredits } from "../_shared/credits.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { PLAN_LIMITS, plansForUsers } from "../_shared/billing-plans.ts";
 
@@ -71,7 +72,9 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
 const PLAYBOOK_COST = CREDIT_COSTS.outreach_playbook; // solo en runs manuales (_shared/credit-costs.ts)
 const MAX_SWEEP_USERS = 50;          // techo de usuarios despachados por barrido
 const STALE_GENERATING_MS = 15 * 60 * 1000;
-const CLAUDE_TIMEOUT_MS = 240_000;
+// Por debajo del tope de ~150 s del Edge Runtime: con 240 s el plazo nunca
+// llegaba a dispararse y la fila quedaba en `generating`.
+const CLAUDE_TIMEOUT_MS = 120_000;
 // 6 (antes 12): cada búsqueda relee sus resultados en cada vuelta del modelo;
 // con 12 una investigación costaba 0.30–0.60 USD (docs/PRICING.md).
 const MAX_SEARCHES = 6;
@@ -102,17 +105,9 @@ async function callAi(engine: Engine, system: string, user: string): Promise<str
 
 // deno-lint-ignore no-explicit-any
 function parseJson(raw: string): any {
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  try { return JSON.parse(cleaned); } catch (_) { /* fall through */ }
-  const s = cleaned.indexOf("{");
-  if (s === -1) throw new Error("No JSON found in response");
-  let depth = 0, e = -1;
-  for (let i = s; i < cleaned.length; i++) {
-    if (cleaned[i] === "{") depth++;
-    else if (cleaned[i] === "}") { depth--; if (!depth) { e = i; break; } }
-  }
-  if (e === -1) throw new Error("Unterminated JSON in response");
-  return JSON.parse(cleaned.slice(s, e + 1));
+  // _shared/llm-json.ts: tolera prosa alrededor, "{" dentro de strings y
+  // salidas cortadas (el contador de llaves que vivía aquí, no).
+  return parseLlmJson(raw);
 }
 
 const SYSTEM_PROMPT = `Eres el investigador de outbound de una plataforma de sales intelligence en LATAM. Tu trabajo es averiguar, con evidencia pública y RECIENTE, qué está funcionando HOY en outreach en frío: qué aperturas generan respuesta, cómo se están construyendo los correos, qué canales rinden más y qué patrones ya quemó el mercado.
@@ -287,6 +282,9 @@ async function runForUser(
       // Reprograma igual: un fallo no debe dejar la cadencia colgada para siempre.
       next_refresh_at: nextRefreshFor(cadence),
     }).eq("user_id", userId);
+    // El disparo manual se cobra por adelantado: un fallo del proveedor no
+    // puede costarle al usuario un playbook que nunca recibió.
+    if (trigger === "manual") await refundCredits(supa, userId, PLAYBOOK_COST, "outreach_playbook_refund");
   }
 }
 

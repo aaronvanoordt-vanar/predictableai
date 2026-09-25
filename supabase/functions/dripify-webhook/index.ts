@@ -40,7 +40,7 @@
  * ahí se puede guardar el contacto en una lista (inbox-send link_member).
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as dripify from "../_shared/dripify.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -176,15 +176,20 @@ async function ingestThread(
 
 async function findMember(db: SupabaseClient, userId: string, url: string): Promise<Json | null> {
   const slug = dripify.linkedinSlug(url);
-  if (!slug) return null;
+  // Los metacaracteres de LIKE (% _) ensanchaban la búsqueda y , ( ) " rompen
+  // el filtro de PostgREST; el slug viene del payload del proveedor.
+  if (!slug || /[,()"]/.test(slug)) return null;
+  const like = slug.replace(/[%_\\]/g, "\\$&");
   const { data } = await db
     .from("prospect_list_members")
     .select("id, name, first_name, company, linkedin_url, contact_status")
     .eq("user_id", userId)
-    .ilike("linkedin_url", `%${slug}%`)
+    .ilike("linkedin_url", `%${like}%`)
     .limit(10);
   const rows = (data ?? []) as Json[];
-  return rows.find((m) => dripify.linkedinSlug(m.linkedin_url) === slug) ?? rows[0] ?? null;
+  // Sin coincidencia exacta no se adivina (antes: rows[0]): "ana-perez" y
+  // "ana-perez-2" resolvían a un lead arbitrario y se paraba su cadencia.
+  return rows.find((m) => dripify.linkedinSlug(m.linkedin_url) === slug) ?? null;
 }
 
 Deno.serve(async (req) => {

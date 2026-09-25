@@ -18,7 +18,7 @@
  * Growth = daily + weekly + monthly.
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { PLAN_LIMITS, plansForUsers } from "../_shared/billing-plans.ts";
 
 const CADENCE_SECTIONS: Record<string, string[]> = {

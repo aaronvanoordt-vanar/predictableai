@@ -18,7 +18,7 @@
  * Required secrets: ANTHROPIC_API_KEY (plus OPENAI_API_KEY when OpenAI is chosen)
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
 
 function corsHeaders(origin: string) {
@@ -104,6 +104,10 @@ Deno.serve(withLlmContext(async (req: Request) => {
     .select("id, user_id, file_name, storage_path")
     .eq("id", body.document_id).eq("user_id", user.id).maybeSingle();
   if (docErr || !doc) return json({ error: "not_found" }, 404, h);
+  // Defensa en profundidad (igual que ai-training): la fila la inserta el
+  // cliente y su política solo comprueba user_id, no la ruta; con la service
+  // role se descargaría el PDF de otra cuenta.
+  if (String(doc.storage_path ?? "").split("/")[0] !== user.id) return json({ error: "forbidden_path" }, 403, h);
 
   await supa.from("company_documents").update({ status: "analyzing", error_message: null }).eq("id", doc.id);
 

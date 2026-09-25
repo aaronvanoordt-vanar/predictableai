@@ -46,7 +46,7 @@
  * 20260919000001_learning_loop.sql.
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { distillHubRules } from "../_shared/intelligence.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -119,7 +119,7 @@ function nodeTitle(node: Json, ordinal: number): string {
 
 async function learnCampaigns(supa: Json, userId: string, out: Insight[], actions: string[]) {
   const [{ data: campaigns }, { data: enrollments }, { data: events }, { data: messages }] = await Promise.all([
-    supa.from("campaigns").select("id, name, status, flow").eq("user_id", userId).limit(200),
+    supa.from("campaigns").select("id, name, status, flow, updated_at").eq("user_id", userId).limit(200),
     supa.from("campaign_enrollments").select("id, campaign_id, member_id, status, replied_at, replied_channel").eq("user_id", userId).limit(20000),
     supa.from("campaign_events").select("enrollment_id, campaign_id, node_id, channel, type, created_at").eq("user_id", userId)
       .in("type", ["sent", "replied", "opened", "connection_accepted"]).order("created_at", { ascending: false }).limit(20000),
@@ -224,14 +224,20 @@ async function learnCampaigns(supa: Json, userId: string, out: Insight[], action
         actions.push(`${c.name}: ${nodeTitle(node, i)} pausado (0/${ns.sent}).`);
       } else if (learning.paused) {
         action = "Pausado por aprendizaje (reactívalo desde la campaña si quieres insistir).";
-      } else if (setNodeLearning(flow, node.id, { verdict, sent: ns.sent, replies: ns.replies, rate: pct(ns.replies, ns.sent), computed_at: nowIso() })) {
-        flowChanged = true;
       }
+      // Las métricas por paso viven en learning_insights (la fila de abajo),
+      // no en el flow: reescribir la cadencia entera de cada campaña en cada
+      // corrida pisaba lo que el usuario acababa de guardar en el builder.
       out.push({ scope: "campaign_node", key: `${c.id}|${node.id}`, label: `${c.name} · ${nodeTitle(node, i)}`, verdict, action, metrics: { campaign_id: c.id, node_id: node.id, channel: node.channel, angle: node.content?.angle || null, sent: ns.sent, replies: ns.replies, meetings: ns.meetings, reply_rate: pct(ns.replies, ns.sent), campaign_reply_rate: pct(cs.replies, cs.sent), paused: !!(flow && flowActions(flow).find((a) => a.id === node.id)?.settings?.learning?.paused) } });
     });
     if (flowChanged) {
-      const { error } = await supa.from("campaigns").update({ flow }).eq("id", c.id);
+      // Solo si nadie tocó la campaña desde que se leyó (updated_at lo mantiene
+      // el trigger campaigns_updated_at); si cambió, la pausa se aplica mañana.
+      let q = supa.from("campaigns").update({ flow }).eq("id", c.id);
+      if (c.updated_at) q = q.eq("updated_at", c.updated_at);
+      const { data: upd, error } = await q.select("id");
       if (error) console.warn("[learning-loop] flow update", c.id, error.message);
+      else if (!upd || !upd.length) console.warn("[learning-loop] flow update skipped: la campaña cambió mientras tanto", c.id);
     }
   }
 

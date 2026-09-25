@@ -1,5 +1,5 @@
 // deno test supabase/functions/_shared/intelligence.test.ts
-import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
   buildIntelligenceBlock, distillHubRules, HUB_ACTION_NOTE_PREFIX, latestHubVerdicts, type InsightRow,
 } from "./intelligence.ts";

@@ -2,7 +2,7 @@
 // El entrenamiento por empresa: sin entrenamiento todo queda como antes, la
 // doctrina del coach cambia con las metodologías elegidas y el catálogo del
 // servidor es espejo del de js/ai-training.js.
-import { assert, assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { buildTrainingBlock, cleanMethods, coachDoctrine, hasTraining, METHODOLOGIES, NEURO_DOCTRINE, type Training } from "./sales-training.ts";
 
 Deno.test("sin entrenamiento: doctrina de neuroventas y ningún bloque", () => {

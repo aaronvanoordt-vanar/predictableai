@@ -5,7 +5,7 @@
  * guardó en esa cuenta de Apollo (contactos, emails revelados, etiquetas).
  */
 
-import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import { blockedInPlatformMode, contactAsPerson, contactIdsFromOtherAccount, sanitizePlatformSearch } from "./apollo-platform.ts";
 
 Deno.test("POST /contacts no llega a la cuenta compartida", () => {

@@ -1,7 +1,7 @@
 // deno test _shared/llm-language.test.ts
 // El idioma de salida viaja por petición (AsyncLocalStorage) y no se cruza
 // entre peticiones concurrentes.
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals } from "jsr:@std/assert@1";
 import { requestLanguage, setRequestLanguage, withLlmContext } from "./llm.ts";
 
 Deno.test("withLlmContext aísla el idioma entre peticiones concurrentes", async () => {

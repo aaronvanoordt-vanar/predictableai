@@ -140,6 +140,8 @@ export function scoreSignal(input: ScoreInput): ScoreResult {
 /**
  * Aprendizaje simple: cada "útil" sube el peso del detector, cada "no útil"
  * lo baja más (una señal inútil cuesta tiempo real). Acotado a [10, 100].
+ * Sin llamadas en producción (learning-loop recalcula el peso por su cuenta);
+ * se conserva porque radar-engine.test.ts la cubre.
  */
 export function adjustWeight(current: number, feedback: "useful" | "not_useful" | null): number {
   const w = Number.isFinite(current) ? current : 60;

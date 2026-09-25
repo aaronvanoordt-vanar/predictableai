@@ -104,8 +104,8 @@
  *                      messages generate exactly as before)
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
+import { callLLM, engineForUser, parseLlmJson, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { buildTrainingBlock, loadTraining } from "../_shared/sales-training.ts";
 import { loadIntelligence } from "../_shared/intelligence.ts";
@@ -488,21 +488,9 @@ interface Outreach {
 }
 
 function parseJson(raw: string): Outreach {
-  // Agents sometimes wrap JSON in fences or add a sentence of prose around
-  // it despite instructions — strip fences anywhere, then parse defensively.
-  const cleaned = raw.replace(/```(?:json)?/gi, "").trim();
-  try { return JSON.parse(cleaned); } catch (_) { /* fall through */ }
-  const s = cleaned.indexOf("{");
-  const e = cleaned.lastIndexOf("}");
-  if (s === -1 || e === -1 || e <= s) throw new Error("No JSON found in response");
-  try { return JSON.parse(cleaned.slice(s, e + 1)); } catch (_) { /* fall through */ }
-  // Last resort: brace-match the first balanced object.
-  let depth = 0;
-  for (let i = s; i < cleaned.length; i++) {
-    if (cleaned[i] === "{") depth++;
-    else if (cleaned[i] === "}") { depth--; if (!depth) return JSON.parse(cleaned.slice(s, i + 1)); }
-  }
-  throw new Error("Unterminated JSON in response");
+  // _shared/llm-json.ts: tolera prosa alrededor, "{" dentro de strings y
+  // salidas cortadas (el contador de llaves que vivía aquí, no).
+  return parseLlmJson(raw) as Outreach;
 }
 
 function isValidOutreach(o: Outreach | null | undefined): o is Outreach {

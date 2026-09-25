@@ -51,8 +51,6 @@ export interface Methodology {
   outreach: string[];
 }
 
-export const DEFAULT_COACH_METHODS = ["neuroventas"];
-
 export const METHODOLOGIES: Methodology[] = [
   {
     id: "neuroventas", name: "Neuroventas", author: "Jürgen Klarić", book: "Véndele a la mente, no a la gente", focus: "both",

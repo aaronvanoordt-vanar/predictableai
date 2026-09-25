@@ -1,5 +1,5 @@
 // deno test supabase/functions/_shared/campaign-flow.test.ts
-import { assertEquals, assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals, assert } from "jsr:@std/assert@1";
 import * as cf from "./campaign-flow.ts";
 
 const wa = (id: string, days = 0, mode: cf.DelayMode = "after_prev", kind: cf.ContentKind = "template_a"): cf.ActionNode =>

@@ -546,8 +546,6 @@ async function tickFunding(t: TickContext): Promise<TickResult> {
 
 interface PlacesCursor { qi?: number; ci?: number; token?: string }
 
-export function placesConfigured(): boolean { return !!Deno.env.get("GOOGLE_PLACES_API_KEY"); }
-
 async function tickPresence(t: TickContext): Promise<TickResult> {
   const key = Deno.env.get("GOOGLE_PLACES_API_KEY");
   if (!key) throw new Error("GOOGLE_PLACES_API_KEY no está configurada.");

@@ -22,7 +22,7 @@
  * sitio) y `devapi.test.ts` verifica que cada ruta REST esté documentada.
  */
 
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { delayMs, firstNode, normalize as normalizeFlow, actions as flowActions } from "./campaign-flow.ts";
 
 // deno-lint-ignore no-explicit-any

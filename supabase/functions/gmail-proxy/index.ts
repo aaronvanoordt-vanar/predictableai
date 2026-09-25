@@ -62,7 +62,7 @@
  * OAuth connect/disconnect flow and the HTTP surface.
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { GMAIL, GMAIL_SCOPES as SCOPES, GOOGLE_AUTH, GOOGLE_TOKEN, GmailError, readThread, refreshAccessToken } from "../_shared/gmail.ts";
 
 function corsHeaders(origin: string) {

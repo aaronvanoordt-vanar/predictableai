@@ -1,4 +1,4 @@
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals } from "jsr:@std/assert@1";
 import { profileFillPatch } from "./person-fill.ts";
 
 Deno.test("fills LinkedIn, location and company from the enriched person", () => {
