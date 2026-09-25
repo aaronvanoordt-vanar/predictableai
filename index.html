@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD" crossorigin="anonymous"></script>
 <script>
 /* Tema antes del primer paint (evita flash) */
 (function(){try{var t=localStorage.getItem('predictable-theme');if(t==='dark'){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();
@@ -2893,12 +2893,8 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <div class="settings-row">
         <div class="settings-row-label">Rol</div>
         <div class="settings-row-value">
-          <div class="role-seg" id="set-role-seg" role="radiogroup" aria-label="Tu rol">
-            <button type="button" class="role-opt" data-role="sdr">SDR</button>
-            <button type="button" class="role-opt" data-role="director">Director</button>
-            <button type="button" class="role-opt" data-role="admin">Admin</button>
-          </div>
-          <div class="settings-row-hint" id="set-role-hint">Define qué vistas y reportes ves. Directors y admins gestionan al equipo.</div>
+          <span class="settings-pill" id="set-role-pill">—</span>
+          <div class="settings-row-hint" id="set-role-hint">Define qué vistas y reportes ves. Lo asigna un administrador o director de tu equipo (tabla «Equipo», más abajo).</div>
         </div>
       </div>
 
@@ -3137,7 +3133,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 </div>
 </main>
   <!-- Supabase Auth (NUEVO, debe ir primero) -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/dist/umd/supabase.min.js" integrity="sha384-q36VSR1ktH2hgqgm+0LDeyqPW8CyZHSxfDSttSPm5ReOJzB+sYThmh7D4fE+jWTs" crossorigin="anonymous"></script>
 <script src="js/config.js"></script>
 <script src="js/supabase-client.js"></script>
 <script src="js/auth-guard.js"></script>
@@ -3175,95 +3171,32 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/intel-hub-cadence-tabs.js?v=20260823"></script>
 <!-- Contexto estratégico IA: PESTEL + 5 fuerzas de Porter + FODA→CAME (contexto opcional, debajo del Intelligence Hub) -->
 <script src="js/coda-ai.js"></script>
-<script src="js/hub-unlock.js"></script>
 <script src="js/context-gate.js"></script>
 <script src="js/onboarding-tour.js"></script>
 <script src="js/miforms-prompt.js"></script>
 <script src="js/ux.js?v=20260919b"></script>
 <script src="js/dashboard-flow.js?v=20260919"></script>
 <script>
-// ─── ROL PROPIO (SDR / Director / Admin) ───────────────────────────
+// ─── ROL PROPIO (solo lectura) ─────────────────────────────────────
+// El rol lo asigna un admin/director del equipo (tabla "Equipo" más abajo).
+// El trigger prevent_profile_role_escalation rechaza cualquier cambio del
+// propio rol desde el cliente (invariante #1 de CLAUDE.md), así que el
+// selector que había aquí nunca funcionó: solo mostraba el error de Postgres.
 (function () {
   'use strict';
-  const seg = () => document.getElementById('set-role-seg');
-
-  function paint(role) {
-    const s = seg(); if (!s) return;
-    s.querySelectorAll('.role-opt').forEach(b => b.classList.toggle('on', b.dataset.role === role));
-  }
-
-  function currentRole() {
+  function paint() {
+    const el = document.getElementById('set-role-pill');
+    if (!el) return;
     const p = window.currentProfile;
-    return (p && p.role) ? p.role.toLowerCase() : 'sdr';
+    const role = (p && p.role) ? String(p.role).toLowerCase() : '';
+    el.textContent = role === 'admin' ? 'Admin' : role === 'director' ? 'Director' : role === 'sdr' ? 'SDR' : '—';
   }
-
-  function applyRoleEverywhere(role) {
-    const p = window.currentProfile;
-    if (p) p.role = role;
-    // Pill del sidebar
-    const roleEl = document.getElementById('user-pill-role');
-    if (roleEl && p) {
-      const company = p.company_name || '';
-      const cap = role.charAt(0).toUpperCase() + role.slice(1);
-      roleEl.textContent = company ? (cap + ' · ' + company) : cap;
-    }
-    // Visibilidad admin
-    const isAdmin = role === 'admin' || role === 'director';
-    document.querySelectorAll('[data-admin-only="true"]').forEach(el => {
-      el.style.display = isAdmin ? '' : 'none';
-    });
-    const teamCard = document.getElementById('settings-team-card');
-    if (teamCard) teamCard.style.display = isAdmin ? '' : 'none';
-    // Tabs de reportes según rol
-    if (typeof initReportPageForRole === 'function') { try { initReportPageForRole(); } catch (e) {} }
-  }
-
-  async function saveRole(role, btn) {
-    const prev = currentRole();
-    if (role === prev) return;
-    const s = seg();
-    s.querySelectorAll('.role-opt').forEach(b => b.disabled = true);
-    paint(role);
-    try {
-      const sb = window.supabaseClient;
-      const u = window.currentUser;
-      if (!sb || !u) throw new Error('Sesión no disponible');
-      const { error } = await sb.from('profiles').update({ role }).eq('id', u.id);
-      if (error) throw error;
-      applyRoleEverywhere(role);
-      if (window.uiHelpers && window.uiHelpers.toast) window.uiHelpers.toast('Rol actualizado a ' + role.toUpperCase(), 'success');
-    } catch (e) {
-      paint(prev);
-      if (window.uiHelpers && window.uiHelpers.toast) window.uiHelpers.toast('No se pudo cambiar el rol: ' + (e.message || e), 'error');
-    } finally {
-      s.querySelectorAll('.role-opt').forEach(b => b.disabled = false);
-    }
-  }
-
-  function init() {
-    const s = seg(); if (!s || s.dataset.wired) return;
-    s.dataset.wired = '1';
-    s.querySelectorAll('.role-opt').forEach(b => {
-      b.addEventListener('click', () => saveRole(b.dataset.role, b));
-    });
-    paint(currentRole());
-  }
-
-  document.addEventListener('predictable:profile-ready', () => { init(); paint(currentRole()); });
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-  else init();
-  setTimeout(() => { init(); paint(currentRole()); }, 1500);
+  document.addEventListener('predictable:profile-ready', paint);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', paint);
+  else paint();
 })();
 </script>
 <script>
-// ── END MEETING ──
-function endMeeting() {
-  nav(document.querySelector('[data-page=ventas-reportes]'), 'ventas-reportes');
-  setTimeout(() => {
-    const lastMeetingTab = document.querySelector('#page-ventas-reportes .tab[onclick*="rep-meeting"]');
-    if (lastMeetingTab && typeof switchReportTab === 'function') switchReportTab(lastMeetingTab, 'rep-meeting');
-  }, 200);
-}
   
 // ── COACH: landing state helpers ──
 function toggleBriefPanel() {
@@ -3524,10 +3457,14 @@ function switchReportTab(el, tabId) {
 
   // Init charts / data on demand
   if (tabId === 'rep-equipo') loadTeamFromSupabase();
-  if (tabId === 'rep-deals') initDealsCharts();
   if (tabId === 'rep-meeting') loadLastMeeting();
   if (tabId === 'rep-my-perf') loadMyPerformance();
   if (tabId === 'rep-objeciones') loadObjectionsReport();
+}
+
+function reportsPageActive() {
+  const pg = document.getElementById('page-ventas-reportes');
+  return !!(pg && pg.classList.contains('active'));
 }
 
 function initReportPageForRole() {
@@ -3538,8 +3475,6 @@ function initReportPageForRole() {
   // Show/hide tabs and topbar elements
   document.querySelectorAll('[data-admin-tab]').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
   document.querySelectorAll('[data-sdr-tab]').forEach(el => { el.style.display = isAdmin ? 'none' : ''; });
-  const btnDir = document.getElementById('rep-btn-director');
-  if (btnDir) btnDir.style.display = isAdmin ? '' : 'none';
   const titleEl = document.getElementById('rep-topbar-title');
   const subEl   = document.getElementById('rep-topbar-sub');
   const navLabel = document.getElementById('nav-reportes-label');
@@ -3547,24 +3482,21 @@ function initReportPageForRole() {
     if (titleEl) titleEl.textContent = 'Reportes SDR';
     if (subEl) subEl.textContent = 'Visibilidad total sobre el performance del equipo de ventas';
     if (navLabel) navLabel.textContent = 'Reportes SDR';
-    // Activate equipo tab by default for admin
+    // Activate equipo tab by default for admin — only when the page is on
+    // screen: this also runs from fillUserMenu() at every app load, and used
+    // to query sales_reports and build Chart.js instances on hidden canvases.
     const equipoTab = document.getElementById('tab-rep-equipo');
-    if (equipoTab) switchReportTab(equipoTab, 'rep-equipo');
+    if (equipoTab && reportsPageActive()) switchReportTab(equipoTab, 'rep-equipo');
   } else {
     if (titleEl) titleEl.textContent = 'Performance';
     if (subEl) subEl.textContent = 'Tu historial de performance en reuniones de venta';
     if (navLabel) navLabel.textContent = 'Performance';
     // Activate personal tab by default for SDR
     const myPerfTab = document.getElementById('tab-rep-my-perf');
-    if (myPerfTab) switchReportTab(myPerfTab, 'rep-my-perf');
+    if (myPerfTab && reportsPageActive()) switchReportTab(myPerfTab, 'rep-my-perf');
   }
 }
 
-function initReportCharts() {
-  // Sin datos reales no se pintan gráficas demo: el empty state de equipo se encarga.
-}
-
-function initDealsCharts() { /* la vista de deals muestra empty state hasta tener reuniones analizadas */ }
 // ── ÚLTIMA REUNIÓN ──────────────────────────────────────────
 // Renderiza el reporte post-reunión completo. Soporta el schema NUEVO del
 // edge function sales-coach (resumen, insights, objeciones detalladas,
@@ -3572,13 +3504,8 @@ function initDealsCharts() { /* la vista de deals muestra empty state hasta tene
 // fallback a reportes históricos con el schema viejo (verdict, scores,
 // highlights, missed, next_steps como strings): pinta lo que exista.
 // El backend ya persiste el reporte en sales_reports — aquí solo se lee.
-// Render + carga viven en js/meeting-report.js (MeetingReport). Estos
-// wrappers se conservan porque switchReportTab y js/realtime-coach.js los
-// llaman por nombre.
-function renderLastMeetingReport(data) {
-  return window.MeetingReport ? window.MeetingReport.render(data, false) : '';
-}
-
+// Render + carga viven en js/meeting-report.js (MeetingReport); switchReportTab
+// llama a loadLastMeeting por nombre.
 async function loadLastMeeting() {
   if (window.MeetingReport) return window.MeetingReport.loadLast();
   const empty = document.getElementById('last-meeting-empty');
@@ -3807,7 +3734,7 @@ async function loadMyPerformance() {
 
 async function loadTeamFromSupabase() {
   const tbody = document.querySelector('#rep-equipo tbody');
-  if (!tbody) { initReportCharts(); return; }
+  if (!tbody) return;
   const eqEmpty = document.getElementById('equipo-empty');
   const eqContent = document.getElementById('equipo-content');
   const host = document.getElementById('rep-equipo');
@@ -3827,7 +3754,7 @@ async function loadTeamFromSupabase() {
   try {
     const sb = window.supabaseClient;
     const p  = window.currentProfile;
-    if (!sb || !p || !p.company_name) { if (skEl) skEl.remove(); initReportCharts(); return; }
+    if (!sb || !p || !p.company_name) { if (skEl) skEl.remove(); return; }
     const { data, error } = await sb.from('sales_reports')
       .select('*')
       .eq('company_name', p.company_name)
@@ -3885,8 +3812,6 @@ async function loadTeamFromSupabase() {
         '</tr>';
     }).join('');
 
-    // Rebuild charts with live data
-    window._repChartsInit = false;
     const labels = sdrs.map(s => s.name);
     const scores = sdrs.map(s => s.avgScore);
     const colors = scores.map(s => s>=80?'#10B981':s>=65?'#2563EB':'#F59E0B');
@@ -3915,7 +3840,6 @@ async function loadTeamFromSupabase() {
   } catch(e) {
     if (skEl) skEl.remove();
     console.warn('[loadTeamFromSupabase]', e);
-    initReportCharts();
   }
 }
 
@@ -3958,18 +3882,6 @@ function nav(el, pageId) {
   if (mainEl) mainEl.scrollTop = 0;
   window.scrollTo(0,0);
 
-  // Intelligence Hub lifecycle
-  if (_activePageId === 'mi-dashboard' && pageId !== 'mi-dashboard') {
-    if (typeof window.ihV2Destroy === 'function') window.ihV2Destroy();
-    else if (typeof window.intelHubDestroy === 'function') window.intelHubDestroy();
-  }
-  if (pageId === 'mi-dashboard' && _activePageId !== 'mi-dashboard') {
-    setTimeout(() => {
-      if (typeof window.ihV2Init === 'function') window.ihV2Init();
-      else if (typeof window.intelHubInit === 'function') window.intelHubInit();
-      if (typeof window.hubUnlockInit === 'function') window.hubUnlockInit();
-    }, 50);
-  }
   // Contexto estratégico IA lifecycle: si la página se activa por deep-link/hash
   // antes de que el módulo cargara su sesión, forzamos el init (idempotente) para que monte.
   if (pageId === 'coda-ai' && typeof window.codaAiInit === 'function') {
@@ -4082,6 +3994,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // sin filtrar por data-pros-tab, querySelector agarra el primero y el
   // sidebar se queda resaltando ese aunque el contenido restaurado sea
   // otra pestaña (Listas, Campañas).
+  if (!/^[a-z0-9-]+$/i.test(hash)) return; // un valor raro en el hash/localStorage rompía querySelector
   const navEl = (hash === 'pro-main' && proTab)
     ? (document.querySelector(`.nav-item[data-page="pro-main"][data-pros-tab="${proTab}"]`) ||
        document.querySelector(`.nav-item[data-page="${hash}"]`))
@@ -4229,7 +4142,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
     const u = window.currentUser;
     const p = window.currentProfile;
     if (!u) return false;
-    const name  = (p && p.full_name) || u.email.split('@')[0];
+    const name  = (p && p.full_name) || String(u.email || '').split('@')[0];
     const email = u.email;
     const company = (p && (p.brand_name || p.company_name || extractCompanySlug(p.linkedin_company_url))) || '';
     const role  = (p && p.role) ? capitalize(p.role) : 'User';
@@ -4250,19 +4163,6 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
       const fecha = new Date().toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' });
       dashSub.textContent = fecha.charAt(0).toUpperCase() + fecha.slice(1) + (company ? ' · ' + company : '');
     }
-    // Update workspace switcher
-    const wsName = document.getElementById('ws-name');
-    if (wsName && company) wsName.textContent = company;
-    const wsAv = document.getElementById('ws-av');
-    if (wsAv) wsAv.textContent = company ? company.charAt(0).toUpperCase() : 'P';
-    const wsPlan = document.getElementById('ws-plan');
-    if (wsPlan) wsPlan.textContent = role + ' · Revenue OS';
-    // Apply role-based nav visibility
-    const rawRole = (p && p.role) ? p.role.toLowerCase() : '';
-    const isAdmin = rawRole === 'admin' || rawRole === 'director';
-    document.querySelectorAll('[data-admin-only="true"]').forEach(el => {
-      el.style.display = isAdmin ? '' : 'none';
-    });
     // Initialize reports page role-based tabs
     initReportPageForRole();
     return true;
@@ -4322,7 +4222,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
         confirmBtn.disabled = true;
         confirmBtn.textContent = 'Cerrando…';
         try { if (window.supabaseClient) await window.supabaseClient.auth.signOut(); } catch (e) {}
-        try { localStorage.clear(); } catch (e) {}
+        try { if (window.supabaseHelpers) window.supabaseHelpers.clearLocalSession(); } catch (e) {}
         location.href = './auth.html';
       };
       const onKey = (e) => {
@@ -4369,24 +4269,6 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
 (function () {
   'use strict';
 
-  // ─── FIX: mover page-settings a ser hijo directo de <main> ────
-  // El HTML inicial quedo anidado dentro de otra page (bug de
-  // insertion durante la generacion del archivo). Esto lo corrige.
-  function fixSettingsLocation() {
-    const settings = document.getElementById('page-settings');
-    const main = document.querySelector('main.main');
-    if (!settings || !main) return;
-    if (settings.parentElement !== main) {
-      console.log('[settings] re-parenting page-settings a <main>');
-      main.appendChild(settings);
-    }
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', fixSettingsLocation);
-  } else {
-    fixSettingsLocation();
-  }
-
   const $ = (s) => document.querySelector(s);
   const LINKEDIN_RE = /^https?:\/\/(www\.)?linkedin\.com\/company\/([a-zA-Z0-9_\-\.~]+)\/?(\?.*)?$/i;
 
@@ -4414,7 +4296,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
     if (existing) existing.remove();
     const el = document.createElement('div');
     el.className = 'settings-toast ' + (type || '');
-    el.innerHTML = msg;
+    el.textContent = msg; // mensajes de Auth/PostgREST: nunca innerHTML
     document.body.appendChild(el);
     setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .25s'; setTimeout(() => el.remove(), 250); }, 2800);
   }
@@ -4435,7 +4317,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
 
     const client = await waitForSupabase(5000);
     if (!client) {
-      toast('No se pudo conectar a Supabase. Abre la consola (F12) y ejecuta <code>predictableDiag()</code> para diagnosticar.', 'err');
+      toast('No se pudo conectar a Supabase. Abre la consola (F12) y ejecuta predictableDiag() para diagnosticar.', 'err');
       console.error('[settings] window.supabaseClient no disponible despues de 5s');
       console.error('Causas probables: js/config.js no cargo, anon key invalido, o SDK Supabase bloqueado.');
       return;
@@ -4621,7 +4503,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
         redirectTo: window.location.origin + '/auth-reset.html'
       });
       if (error) throw error;
-      toast('Te enviamos un email a <strong>' + user.email + '</strong> con el link para cambiar tu contrasena.', 'ok');
+      toast('Te enviamos un email a ' + user.email + ' con el link para cambiar tu contraseña.', 'ok');
     } catch (e) {
       toast('Error: ' + e.message, 'err');
     } finally {
@@ -4670,16 +4552,9 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
       confirmBtn.textContent = 'Borrando...';
       try {
         const { error } = await window.supabaseClient.rpc('delete_my_account');
-        if (error) {
-          if (/function .* does not exist/i.test(error.message)) {
-            cleanup();
-            toast('Necesitas correr delete-account-rpc.sql en Supabase primero.', 'err');
-            return;
-          }
-          throw error;
-        }
+        if (error) throw error;
         try { await window.supabaseClient.auth.signOut(); } catch (e) {}
-        try { localStorage.clear(); } catch (e) {}
+        try { if (window.supabaseHelpers) window.supabaseHelpers.clearLocalSession(); } catch (e) {}
         location.href = './auth.html';
       } catch (e) {
         cleanup();
@@ -4763,7 +4638,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
     const u = window.currentUser;
     const p = window.currentProfile;
     if (!u) return;
-    const name = (p && p.full_name) || u.email.split('@')[0];
+    const name = (p && p.full_name) || String(u.email || '').split('@')[0];
     const company = (p && (p.brand_name || p.company_name)) || '';
     function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
     function initials(n, e) {
@@ -4783,30 +4658,6 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
       roleEl.textContent = company ? (role + ' · ' + company) : role;
     }
     if (dropName) dropName.textContent = cap(name);
-    // Update workspace switcher in sidebar
-    const wsName = document.getElementById('ws-name');
-    if (wsName && company) wsName.textContent = company;
-    const wsAv = document.getElementById('ws-av');
-    if (wsAv) wsAv.textContent = company ? company.charAt(0).toUpperCase() : 'P';
-    const wsPlan = document.getElementById('ws-plan');
-    if (wsPlan) {
-      const roleLabel = (p && p.role) ? cap(p.role) : 'Pro';
-      wsPlan.textContent = roleLabel + ' · Revenue OS';
-    }
-    // Apply role-based nav visibility
-    const rawRoleR = (p && p.role) ? p.role.toLowerCase() : '';
-    const isAdmin = rawRoleR === 'admin' || rawRoleR === 'director';
-    document.querySelectorAll('[data-admin-only="true"]').forEach(el => {
-      el.style.display = isAdmin ? '' : 'none';
-    });
-    // Update sidebar status time
-    const sfStatus = document.getElementById('sf-status');
-    if (sfStatus) {
-      const now = new Date();
-      const h = String(now.getHours()).padStart(2, '0');
-      const m = String(now.getMinutes()).padStart(2, '0');
-      sfStatus.textContent = 'OPERANDO · ' + h + ':' + m;
-    }
   };
 
   // ─── Helper de diagnostico global ─────────────────────────
@@ -4817,9 +4668,6 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
     const client = window.supabaseClient || null;
     console.log('1. SDK Supabase cargado :', sdk ? 'SI' : 'NO');
     console.log('2. SUPABASE_CONFIG      :', cfg);
-    if (cfg && cfg.anonKey === 'PEGA_AQUI_TU_ANON_KEY') {
-      console.warn('   >> Tu anonKey sigue siendo el placeholder. Editalo en js/config.js');
-    }
     console.log('3. supabaseClient       :', client ? 'OK' : 'NO INICIALIZADO');
     console.log('4. currentUser          :', window.currentUser);
     console.log('5. currentProfile       :', window.currentProfile);
@@ -4833,7 +4681,6 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
           console.log('7. profiles row         :', error ? 'ERROR: ' + error.message : (data ? 'OK' : 'no existe'));
           if (error) {
             console.warn('   >> Probable: faltan policies RLS o el SQL del schema no corrio completo.');
-            console.warn('   >> Corre supabase-schema.sql completo en el SQL Editor de Supabase.');
           }
         }
       } catch (e) {

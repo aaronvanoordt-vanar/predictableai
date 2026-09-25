@@ -159,7 +159,7 @@
           <span class="ihx-status-text" id="ihx-status-text">Cargando…</span>
         </div>
         <span class="ihx-engine" id="ih-engine"></span>
-        <span class="ihx-toolbar-hint">Cada ítem cuesta 2 créditos al actualizarse · gratis durante la beta</span>
+        <span class="ihx-toolbar-hint">Cada ítem cuesta ${(window.creditCosts && window.creditCosts.format('intel_hub_item')) || '3 créditos'} al actualizarse</span>
       </div>
       <div class="ihx-progress" id="ih-progress" style="display:none"></div>
       <nav class="ihx-tabs" id="ihx-tabs"></nav>
@@ -466,12 +466,21 @@
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
       if (!session) return;
-      await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/generate-client-brief', {
+      const res = await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/generate-client-brief', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
         body: JSON.stringify({ engine: onboardingEngine() }),
       });
-    } catch (e) { console.warn('[research] client-brief refresh error', e); }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || ('HTTP ' + res.status));
+      }
+    } catch (e) {
+      // Antes se absorbía y la pantalla decía "Generando…" cinco minutos.
+      console.warn('[research] client-brief refresh error', e);
+      STATE.brief = { ...(STATE.brief || {}), status: 'error', error_message: 'No se pudo iniciar la síntesis: ' + (e && e.message ? e.message : e) };
+      renderResearch();
+    }
   }
   // enrich-company dispara generate-client-brief él mismo al terminar. Si esa
   // llamada del servidor no prendió (red, cold start), en unos segundos el
@@ -1150,6 +1159,7 @@
   // (syncResearchRows): el realtime avisa, Postgres manda.
   async function retryEnrichmentFromLinkedin(linkedinUrl) {
     if (!STATE.user || !linkedinUrl) return;
+    const prevIntake = STATE.intake;
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
       STATE.researchSource = 'linkedin';
@@ -1164,17 +1174,26 @@
       };
       resetProgress();
       renderResearch();
-      await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
+      const res = await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
         body: JSON.stringify({ linkedin_url: linkedinUrl, engine: onboardingEngine() }),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || ('HTTP ' + res.status));
+      }
     } catch (e) {
+      // Un 400/401/500 mostraba 20 s de barra de progreso y luego nada.
       console.error('[research] retry enrichment from linkedin error', e);
+      STATE.intake = prevIntake;
+      renderResearch();
+      hubToast('No se pudo iniciar la investigación: ' + (e && e.message ? e.message : e), 'error');
     }
   }
   async function retryEnrichmentFromWebsite(website) {
     if (!STATE.user || !website) return;
+    const prevIntake = STATE.intake;
     try {
       const session = (await window.supabaseClient.auth.getSession()).data.session;
       const promptEl = document.getElementById('ihx-website-prompt');
@@ -1195,13 +1214,20 @@
       renderResearch();
       const payload = { website_url: website, engine: onboardingEngine() };
       if (customPrompt) payload.custom_prompt = customPrompt;
-      await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
+      const res = await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/enrich-company', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
         body: JSON.stringify(payload),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || ('HTTP ' + res.status));
+      }
     } catch (e) {
       console.error('[research] retry enrichment from website error', e);
+      STATE.intake = prevIntake;
+      renderResearch();
+      hubToast('No se pudo iniciar la investigación: ' + (e && e.message ? e.message : e), 'error');
     }
   }
   const DOC_MAX_BYTES = 20 * 1024 * 1024; // 20MB
@@ -1229,11 +1255,22 @@
       renderResearch();
       if (msg) msg.textContent = 'Analizando…';
       const session = (await window.supabaseClient.auth.getSession()).data.session;
-      await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/analyze-company-document', {
+      const res = await fetch(window.SUPABASE_CONFIG.url + '/functions/v1/analyze-company-document', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
         body: JSON.stringify({ document_id: row.id, engine: onboardingEngine() }),
       });
+      if (!res.ok) {
+        // Antes el documento quedaba en "Pendiente" para siempre.
+        const body = await res.json().catch(() => ({}));
+        const why = body.error || ('HTTP ' + res.status);
+        STATE.documents = (STATE.documents || []).map(function (d) {
+          return d.id === row.id ? Object.assign({}, d, { status: 'error', error_message: why }) : d;
+        });
+        renderResearch();
+        if (msg) msg.textContent = '❌ No se pudo analizar el documento: ' + why;
+        return;
+      }
     } catch (e) {
       console.error('[research] upload document error', e);
       const m = document.getElementById('ihx-doc-upload-msg');
@@ -1499,7 +1536,7 @@
     // Bloqueado si hay una corrida en curso (esta u otra) o si este segmento en
     // particular ya está generando — evita disparar el mismo agente dos veces.
     const genLock = STATE.generating || (rep?.status === 'generating' && !isStaleGenerating(rep));
-    const creditLabel = (window.creditCosts && window.creditCosts.format('intel_hub_item')) || '2 créditos';
+    const creditLabel = (window.creditCosts && window.creditCosts.format('intel_hub_item')) || '3 créditos';
     const refreshBtn = `
       <button class="ihx-mod-refresh" data-refresh-section="${s.key}" title="Actualizar solo este segmento · ${creditLabel}" ${genLock ? 'disabled' : ''}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
@@ -1594,7 +1631,7 @@
     strategic_actions:            ['campaign', 'trigger'],
   };
   const HUB_ACTION_META = {
-    radar:      { label: 'Vigilar en el Radar',        hint: 'Crea un detector con esta señal (1 crédito)', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.5"/><path d="M8 8l4-4"/></svg>' },
+    radar:      { label: 'Vigilar en el Radar',        hint: 'Crea un detector con esta señal (' + ((window.creditCosts && window.creditCosts.format('radar_detector_custom')) || '3 créditos') + ')', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.5"/><path d="M8 8l4-4"/></svg>' },
     trigger:    { label: 'Señal de compra',            hint: 'La guarda en «Dolores y señales de compra» de tu contexto', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6" stroke-linecap="round"><path d="M9 2L3 9h5l-1 5 6-7H8l1-5z"/></svg>' },
     objection:  { label: 'Objeción para el coach',     hint: 'La añade a tus objeciones; el Meeting Coach la usa en vivo', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><path d="M2 3h12v7H7l-3 2.5V10H2z"/></svg>' },
     competitor: { label: 'Añadir competidor',          hint: 'Lo suma a «Competencia y exclusiones» de tu contexto', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><circle cx="5.5" cy="6" r="2.5"/><circle cx="11" cy="6" r="2.5"/><path d="M1.5 13c0-2.2 1.8-4 4-4s4 1.8 4 4M7 13c0-2.2 1.8-4 4-4s4 1.8 4 4"/></svg>' },

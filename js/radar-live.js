@@ -203,6 +203,18 @@
     state.renderTimer = global.setTimeout(() => { state.renderTimer = null; render(); }, 250);
   }
 
+  // El payload de realtime NO trae las columnas JSONB grandes que el UPDATE no
+  // tocó (TOAST → null): adoptarlo entero borraba evidencia y decisores de la
+  // tarjeta hasta recargar. Se mezcla ignorando nulls (regla de CLAUDE.md).
+  function mergeRow(current, incoming) {
+    if (!incoming) return current;
+    var merged = Object.assign({}, current || {});
+    Object.keys(incoming).forEach(function (k) {
+      if (incoming[k] !== null && incoming[k] !== undefined) merged[k] = incoming[k];
+    });
+    return merged;
+  }
+
   function ensureRealtime() {
     if (state.channel || !state.user) return;
     try {
@@ -220,7 +232,7 @@
             scheduleRender();
             return;
           }
-          if (i === -1) state.signals.unshift(row); else state.signals[i] = row;
+          if (i === -1) state.signals.unshift(row); else state.signals[i] = mergeRow(state.signals[i], row);
           scheduleRender();
         })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'radar_detectors', filter: 'user_id=eq.' + state.user.id }, (p) => {
@@ -228,7 +240,7 @@
           if (p.eventType === 'DELETE') { state.detectors = state.detectors.filter((d) => d.id !== (p.old && p.old.id)); scheduleRender(); return; }
           if (!row || !row.id) return;
           const i = state.detectors.findIndex((d) => d.id === row.id);
-          if (i === -1) state.detectors.push(row); else state.detectors[i] = row;
+          if (i === -1) state.detectors.push(row); else state.detectors[i] = mergeRow(state.detectors[i], row);
           scheduleRender();
         })
         .subscribe();
@@ -308,6 +320,7 @@
     try {
       const r = await post('radar-plan', { action: 'run_now' });
       state.driveLog.push(r.scheduled + ' detector' + (r.scheduled === 1 ? '' : 'es') + ' en cola.');
+      if (r.held) state.driveLog.push(r.held + ' detector' + (r.held === 1 ? '' : 'es') + ' corri' + (r.held === 1 ? 'ó' : 'eron') + ' hace poco: espera' + (r.held === 1 ? '' : 'n') + ' su cadencia mínima antes de volver a buscar.');
       let guard = 0;
       while (!state.driveStop && guard++ < 60) {
         const t = await post('radar-monitor', { mode: 'tick' });

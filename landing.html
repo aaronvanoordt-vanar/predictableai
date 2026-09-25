@@ -1419,18 +1419,20 @@
 
 <script>
   const items = [
-    {ic:'↑', cls:'g', body:'<b>Sofia Reyes</b> agendó reunión en Banamex, ICP-002', tag:'meeting'},
-    {ic:'→', cls:'b', body:'<b>Outreach v.2</b> supera baseline, +28% reply rate', tag:'a/b'},
-    {ic:'→', cls:'b', body:'<b>3 cuentas</b> detectadas con high intent score', tag:'intel'},
-    {ic:'!', cls:'r', body:'<b>Riesgo:</b> deal Acme detenido 8 días, sugerir mutual plan', tag:'sales'},
-    {ic:'↑', cls:'g', body:'<b>Camila Méndez</b> respondió en Kavak, pricing call', tag:'reply'},
-    {ic:'→', cls:'b', body:'<b>Capa 03</b> personalizada para 12 contactos, trigger Series B', tag:'prosp'},
+    // Ilustrativo: describe lo que produce cada módulo, sin nombres de
+    // personas ni de empresas reales (regla del producto: nada inventado).
+    {ic:'↑', cls:'g', body:'<b>Un lead de tu ICP</b> agendó reunión a partir de una señal de compra', tag:'meeting'},
+    {ic:'→', cls:'b', body:'<b>Paso 2 de la cadencia</b> supera al paso 1: +28% de respuestas', tag:'a/b'},
+    {ic:'→', cls:'b', body:'<b>3 cuentas</b> con señales de compra detectadas esta semana', tag:'radar'},
+    {ic:'!', cls:'r', body:'<b>Riesgo:</b> oportunidad sin actividad 8 días, sugerir siguiente paso', tag:'ventas'},
+    {ic:'↑', cls:'g', body:'<b>Un prospecto</b> respondió por WhatsApp y pregunta por precios', tag:'reply'},
+    {ic:'→', cls:'b', body:'<b>Mensajes IA</b> personalizados para 12 contactos, ángulo: ronda de inversión', tag:'prosp'},
     {ic:'!', cls:'w', body:'<b>Reunión en vivo:</b> mencionó 2 opciones, anclar valor', tag:'coach'},
-    {ic:'↑', cls:'g', body:'<b>+$24K ARR</b>, deal Tul movido a Proposal', tag:'pipeline'},
-    {ic:'→', cls:'b', body:'<b>Señal regulatoria:</b> nueva norma impacta 4 cuentas', tag:'mercado'},
-    {ic:'→', cls:'b', body:'<b>Mutual plan</b> generado para 3 deals de cierre Q1', tag:'ventas'},
-    {ic:'↑', cls:'g', body:'<b>Diego Martín</b>, CRO de Rappi Pro, agendó demo', tag:'meeting'},
-    {ic:'→', cls:'b', body:'<b>ICP refinado:</b> 18 señales operativas detectadas', tag:'intel'},
+    {ic:'↑', cls:'g', body:'<b>Reunión tomada</b> desde la campaña de LinkedIn', tag:'pipeline'},
+    {ic:'→', cls:'b', body:'<b>Señal regulatoria:</b> nueva norma impacta 4 cuentas de tu lista', tag:'mercado'},
+    {ic:'→', cls:'b', body:'<b>Siguiente paso</b> sugerido por el coach para 3 reuniones', tag:'ventas'},
+    {ic:'↑', cls:'g', body:'<b>Un decisor de tu ICP</b> agendó una demo', tag:'meeting'},
+    {ic:'→', cls:'b', body:'<b>ICP refinado:</b> 18 señales de compra activas', tag:'intel'},
   ];
   const rail = document.getElementById('ros-rail');
   if (rail) {

@@ -32,6 +32,10 @@
   var PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
   var PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   var MAMMOTH = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
+  // Subresource Integrity de cada lector (el worker de pdf.js lo carga pdf.js).
+  var SRI = {};
+  SRI[PDFJS] = 'sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e';
+  SRI[MAMMOTH] = 'sha384-nFoSjZIoH3CCp8W639jJyQkuPHinJ2NHe7on1xvlUA7SuGfJAfvMldrsoAVm6ECz';
 
   var KINDS = {
     framework: { label: 'Framework de venta', short: 'Framework', hint: 'Tu metodología: SPIN, Challenger, PAS, AIDA o la tuya. La IA sigue su estructura en cada mensaje.', always: true, ph: 'Ej.: 1) Abre con una observación del negocio del lead. 2) Nombra el costo del problema. 3) Muestra el cómo en una frase. 4) Cierra con una pregunta de sí/no…' },
@@ -135,6 +139,7 @@
       scriptPromises[src] = new Promise(function (resolve, reject) {
         var s = document.createElement('script');
         s.src = src; s.async = true;
+        if (SRI[src]) { s.integrity = SRI[src]; s.crossOrigin = 'anonymous'; }
         s.onload = resolve;
         s.onerror = function () { delete scriptPromises[src]; reject(new Error('No se pudo cargar el lector de archivos. Revisa tu conexión.')); };
         document.head.appendChild(s);

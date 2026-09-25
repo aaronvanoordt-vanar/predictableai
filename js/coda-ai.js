@@ -121,6 +121,26 @@
   const esc = (s) => (window.escHtml ? window.escHtml(s) : String(s == null ? '' : s));
   function log() { try { console.log.apply(console, ['[coda-ai]'].concat([].slice.call(arguments))); } catch (e) {} }
 
+  // El payload de realtime NO trae las columnas JSONB que el UPDATE no tocó
+  // (TOAST → null): adoptarlo entero borraba Porter/CAME/FODA/PESTEL de la
+  // pantalla con cada escritura de estado. Se mezcla ignorando nulls y se
+  // relee la fila (regla de CLAUDE.md: el realtime avisa, Postgres manda).
+  function mergeRealtimeRow(current, incoming) {
+    if (!incoming) return current;
+    const merged = Object.assign({}, current || {});
+    Object.keys(incoming).forEach((k) => {
+      if (incoming[k] !== null && incoming[k] !== undefined) merged[k] = incoming[k];
+    });
+    return merged;
+  }
+  const rereadTimers = {};
+  function scheduleReread(key, loader, render) {
+    clearTimeout(rereadTimers[key]);
+    rereadTimers[key] = setTimeout(() => {
+      Promise.resolve(loader()).then(render).catch((e) => log('reread', e));
+    }, 700);
+  }
+
   // Si generate-coda muere a mitad de camino (cold start, timeout, crash del
   // background task) sin llegar a escribir status ready/error, la fila queda
   // en 'generating' para siempre: la realtime subscription nunca dispara, y
@@ -155,9 +175,10 @@
         event: '*', schema: 'public', table: 'coda_analysis',
         filter: `user_id=eq.${STATE.user.id}`,
       }, (payload) => {
-        STATE.row = payload.new || STATE.row;
+        STATE.row = mergeRealtimeRow(STATE.row, payload.new);
         renderPorter();
         renderCame();
+        scheduleReread('row', loadRow, () => { renderPorter(); renderCame(); });
       })
       .subscribe();
   }
@@ -216,8 +237,9 @@
       }, (payload) => {
         const row = payload.new;
         if (!row || row.country !== STATE.selectedCountry) return;
-        STATE.pestelRow = row;
+        STATE.pestelRow = mergeRealtimeRow(STATE.pestelRow, row);
         renderPestel();
+        scheduleReread('pestel', loadPestelRow, renderPestel);
       })
       .subscribe();
   }
@@ -340,14 +362,22 @@
   }
 
   async function saveFoda() {
-    if (!STATE.user) return;
+    if (!STATE.user) return false;
     const foda = readFoda();
     try {
-      await window.supabaseClient.from('coda_analysis')
+      // supabase-js no lanza: devuelve { error }. Antes se ignoraba y el botón
+      // decía "FODA guardado." aunque RLS o la red lo hubieran rechazado.
+      const { error } = await window.supabaseClient.from('coda_analysis')
         .upsert({ user_id: STATE.user.id, foda }, { onConflict: 'user_id' });
+      if (error) throw error;
       if (!STATE.row) STATE.row = {};
       STATE.row.foda = foda;
-    } catch (e) { log('saveFoda error', e); }
+      return true;
+    } catch (e) {
+      log('saveFoda error', e);
+      if (window.uiHelpers) window.uiHelpers.toast('No se pudo guardar el FODA: ' + (e && e.message ? e.message : e), 'error');
+      return false;
+    }
   }
 
   async function generateCame() {
@@ -655,8 +685,7 @@
     });
     const bSave = document.getElementById('coda-btn-savefoda');
     if (bSave) bSave.addEventListener('click', async () => {
-      await saveFoda();
-      if (window.uiHelpers) window.uiHelpers.toast('FODA guardado.', 'success');
+      if (await saveFoda() && window.uiHelpers) window.uiHelpers.toast('FODA guardado.', 'success');
     });
     const bCame = document.getElementById('coda-btn-came');
     if (bCame) bCame.addEventListener('click', generateCame);

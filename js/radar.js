@@ -433,7 +433,8 @@
     });
     const data = await res.json().catch(() => ({}));
     if (res.status === 402) {
-      throw new Error('No tienes créditos suficientes: esta investigación cuesta ' + (data.cost || 12) + ' créditos y tienes ' + (data.balance || 0) + '.');
+      var rc = window.creditCosts && window.creditCosts.get && window.creditCosts.get('radar_run');
+      throw new Error('No tienes créditos suficientes: esta investigación cuesta ' + (data.cost || (rc && rc.credits) || 20) + ' créditos y tienes ' + (data.balance || 0) + '.');
     }
     if (res.status === 409) return { conflict: true, run_id: data.run_id };
     if (!res.ok) throw new Error(data.error || ('Error ' + res.status));

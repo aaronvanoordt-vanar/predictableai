@@ -21,6 +21,7 @@
   let elapsedTimer = null;
   let elapsedSeconds = 0;
   let currentMeetingId = null;
+  let currentProspect = null;      // brief/ángulo del lead elegido; lo leen los turnos del coach
   let recentTranscript = [];    // últimos turnos {speaker, text, ts, el}
   let pendingTurn = null;       // turno abierto: sigue recibiendo chunks del mismo hablante
   let totalTurns = 0;
@@ -66,6 +67,7 @@
     // el timer, el WebSocket y los tracks de mic/pantalla.
     if (active) { console.warn('[Coach] Ya hay una sesión activa; ignorando start().'); return; }
     active = true;
+    currentProspect = prospectContext || null;
     // El camino OpenAI arma su prompt en el navegador: trae en paralelo el
     // entrenamiento del equipo. Si no llega, el coach usa su prompt de siempre.
     trainedPrompt = null;
@@ -622,6 +624,7 @@
     if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
     cancelScheduledCoaching();
     coachPending = false;
+    currentProspect = null;
     // Liberar el guard de re-entrancy para permitir reiniciar tras un fallo.
     active = false;
   }

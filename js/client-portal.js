@@ -166,7 +166,9 @@
         body: JSON.stringify(Object.assign({ action: action, token: token }, payload || {})),
       });
     } catch (e) {
-      throw new Unavailable('No se pudo contactar al servidor');
+      var u = new Unavailable('No se pudo contactar al servidor');
+      u.transient = true; // red caída ≠ función sin desplegar: no cae al flujo con cuenta
+      throw u;
     }
 
     var data = null;
@@ -636,6 +638,9 @@
     try {
       await enterPortal();
     } catch (e) {
+      if (e instanceof Unavailable && e.transient) {
+        return showError('No se pudo abrir el portal: sin conexión con el servidor. Revisa tu conexión y recarga la página.');
+      }
       if (e instanceof Unavailable) {
         console.warn('[client-portal] edge function no disponible, usando el flujo con cuenta:', e.message);
         return bootLegacy();

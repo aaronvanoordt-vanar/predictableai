@@ -172,7 +172,7 @@
   function validate(raw) {
     var errors = [];
     var f = normalize(raw);
-    var ids = {};
+    var ids = Object.create(null); // como el Set del espejo TS: "constructor" no es un id repetido
     function seen(id) {
       if (ids[id]) errors.push({ nodeId: id, message: 'Hay dos pasos con el mismo id.' });
       ids[id] = true;

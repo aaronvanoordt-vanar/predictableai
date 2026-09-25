@@ -867,7 +867,7 @@
       // data-credit-pos="inside": credit-costs.js coloca el badge DENTRO de la
       // tarjeta. Como hermano caía en el grid de tarjetas y se estiraba en un
       // círculo azul gigante (border-radius:999px sobre una celda de 200 px).
-      var ai = h('button', { type: 'button', class: 'cb-start' + (st.startKind === 'ai' ? ' on' : ''), 'data-action': 'cb-start', 'data-kind': 'ai', disabled: st.aiLoading, 'data-credit-cost': 'outreach_playbook', 'data-credit-pos': 'inside' });
+      var ai = h('button', { type: 'button', class: 'cb-start' + (st.startKind === 'ai' ? ' on' : ''), 'data-action': 'cb-start', 'data-kind': 'ai', disabled: st.aiLoading, 'data-credit-cost': 'campaign_recommendation', 'data-credit-pos': 'inside' });
       ai.appendChild(h('div', { class: 'cb-start-title' }, icon('ai', 'purple'), st.aiLoading ? 'Armando la cadencia…' : 'Recomendada por la IA'));
       ai.appendChild(h('div', { class: 'cb-start-sub', text: 'Arma la cadencia con tu contexto de empresa, el ICP y el brief, y con los canales que tienes conectados: ' + channelSummary() + '. Después la ajustas paso a paso.' }));
       cards.appendChild(ai);
@@ -1388,7 +1388,7 @@
       var cr = h('div', { class: 'chart-card' });
       cr.appendChild(h('div', { class: 'cb-lbl', text: 'Créditos estimados' }));
       cr.appendChild(h('div', { class: 'cb-kv' }, h('dt', { text: 'Mensajes IA' }), h('dd', { text: est.aiMessages + ' × ' + L.AI_MESSAGE_CREDITS }), h('dt', { text: 'Leads en campaña' }), h('dd', { text: (n || 0) + ' × ' + L.LEAD_CREDITS }), h('dt', { text: 'Máximo' }), h('dd', { text: est.credits + ' créditos' })));
-      cr.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: n ? 'Es el tope si todos los leads recorren toda la cadencia; se cobra paso a paso y se detiene con la primera respuesta. Las aperturas reutilizan el mensaje de 5 capas ya generado sin cobrar.' : 'Se calcula con los leads de la lista: sin lista, el costo depende de cuántos enroles.' }));
+      cr.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: n ? 'Es el tope si todos los leads recorren toda la cadencia; se cobra paso a paso y se detiene con la primera respuesta.' : 'Se calcula con los leads de la lista: sin lista, el costo depende de cuántos enroles.' }));
       right.appendChild(cr);
 
       var warns = [];

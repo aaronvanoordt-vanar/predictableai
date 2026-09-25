@@ -19,12 +19,15 @@
     // El contexto va primero porque el resto de la plataforma está bloqueada
     // hasta completarlo (js/context-gate.js): mandar al usuario al hub como
     // primer paso lo dejaría chocando contra el overlay.
-    { id: 's2', title: 'Completa el contexto de tu empresa', desc: 'Quién eres y a quién le vendes. Desbloquea el resto de la plataforma.', credits: 30, page: 'mi-research', icon: 'grid' },
-    { id: 's1', title: 'Explora tu Intelligence Hub', desc: 'Conoce los informes que tus agentes generan a diario.', credits: 20, page: 'mi-dashboard', icon: 'chart' },
-    { id: 's4', title: 'Corre tu primera búsqueda', desc: 'Encuentra contactos que calzan tu ICP en segundos.', credits: 35, page: 'pro-main', icon: 'search' },
-    { id: 's5', title: 'Guarda tu primera lista', desc: 'Crea un segmento reutilizable para tus campañas.', credits: 40, page: 'pro-main', icon: 'bookmark' },
-    { id: 's6', title: 'Prueba el Meeting Coach', desc: 'Recibe guía en vivo durante tus llamadas de venta.', credits: 30, page: 'ventas-coach', icon: 'mic' },
-    { id: 's7', title: 'Configura tu equipo y rol', desc: 'Asigna roles SDR, Director o Admin en Ajustes.', credits: 20, page: 'settings', icon: 'users' }
+    // Sin "créditos por paso": ningún RPC los otorgaba (el único bono real es
+    // el de marca / miforms, que revalida el servidor) y la lista prometía
+    // 175 y el cierre 200. Regla del producto: nada inventado.
+    { id: 's2', title: 'Completa el contexto de tu empresa', desc: 'Quién eres y a quién le vendes. Desbloquea el resto de la plataforma.', page: 'mi-research', icon: 'grid' },
+    { id: 's1', title: 'Explora tu Intelligence Hub', desc: 'Conoce los informes que tus agentes generan a diario.', page: 'mi-dashboard', icon: 'chart' },
+    { id: 's4', title: 'Corre tu primera búsqueda', desc: 'Encuentra contactos que calzan tu ICP en segundos.', page: 'pro-main', icon: 'search' },
+    { id: 's5', title: 'Guarda tu primera lista', desc: 'Crea un segmento reutilizable para tus campañas.', page: 'pro-main', icon: 'bookmark' },
+    { id: 's6', title: 'Prueba el Meeting Coach', desc: 'Recibe guía en vivo durante tus llamadas de venta.', page: 'ventas-coach', icon: 'mic' },
+    { id: 's7', title: 'Revisa tu equipo y tu rol', desc: 'Tu rol lo asigna un administrador; el equipo se gestiona en Ajustes.', page: 'settings', icon: 'users' }
   ];
   var TOTAL = STEPS.length;
 
@@ -207,7 +210,7 @@
     els.launcher.hidden = !!state.dismissed;
     els.launcher.classList.toggle('tour-complete', complete);
     els.launcherLabel.textContent = complete ? 'Configuración completa' : 'Primeros pasos';
-    els.launcherSub.textContent = n + '/' + TOTAL + ' · +' + state.credits + ' créditos';
+    els.launcherSub.textContent = n + '/' + TOTAL + ' completados';
     els.ringFill.setAttribute('stroke-dashoffset', (RING_C * (1 - n / TOTAL)).toFixed(2));
   }
 
@@ -246,7 +249,7 @@
           '<div class="tour-confetti"></div>' +
           '<div class="tour-celebrate-check">' + svgIcon('check', 26) + '</div>' +
           '<h3>¡Todo listo!</h3>' +
-          '<p>Ganaste 200 créditos de bienvenida.</p>' +
+          '<p>Ya conoces lo esencial de Predictable.</p>' +
         '</div>' +
         '<div class="tour-progress"><div class="tour-progress-fill"></div></div>' +
       '</div>' +
@@ -293,7 +296,7 @@
           '<span class="tour-step-desc">' + s.desc + '</span>' +
         '</span>' +
         '<span class="tour-step-side">' +
-          '<span class="tour-chip">+' + s.credits + '</span>' +
+          '' +
           (done ? '' : '<button type="button" class="tour-go" data-tour-go="' + s.page + '">Ir ' + svgIcon('arrow', 12) + '</button>') +
         '</span>' +
       '</li>';
@@ -305,7 +308,7 @@
     if (!els.panel) return;
     var n = doneCount();
     var complete = allDone();
-    els.pill.textContent = '+' + state.credits + ' créditos de bienvenida';
+    els.pill.textContent = 'Primeros pasos';
     els.count.textContent = n + ' de ' + TOTAL + ' completados';
     els.fill.style.width = ((n / TOTAL) * 100).toFixed(1) + '%';
     els.headMain.hidden = complete;
@@ -375,13 +378,12 @@
     var step = stepById(id);
     if (!step) return;
     state.done[id] = true;
-    state.credits += step.credits;
     save();
     render();
     if (state.dismissed || !mounted) return;
     pulseLauncher();
     if (!isOpen && window.uiHelpers && window.uiHelpers.toast) {
-      window.uiHelpers.toast('Paso completado: +' + step.credits + ' créditos', 'success');
+      window.uiHelpers.toast('Paso completado', 'success');
     }
   }
 
@@ -413,7 +415,9 @@
       };
       window.nav.__tourWrapped = true;
     }
-    wrapFn('runAnalysis', 's2');
+    // s2: el contexto avisa con este evento al guardarse (window.runAnalysis
+    // no existe desde hace varias generaciones del Hub: el paso no cerraba nunca).
+    window.addEventListener('company-context-saved', function () { markDone('s2'); });
     // s4/s5: el nuevo workspace de Prospección (js/prospecting.js) emite
     // eventos en lugar de exponer funciones globales envolvibles.
     if (!document.__tourProspectingHooks) {

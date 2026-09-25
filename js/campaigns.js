@@ -804,6 +804,9 @@
     }).then(function (out) {
       var patch = { body: out.body };
       if (node.channel === 'email') patch.subject = out.subject || msg.subject || '';
+      // Un texto nuevo vuelve a revisión: si ya estaba aprobado, el motor lo
+      // habría enviado sin que nadie leyera la versión regenerada.
+      if (c.review_required) { patch.status = 'draft'; patch.approved_at = null; }
       return updateMessage(msg.id, patch);
     });
   }
@@ -1549,10 +1552,10 @@
     function haveIt() {
       api.setTitle('Conectar Email');
       api.body.innerHTML = '';
-      api.body.appendChild(pathBox('En tu cuenta de Apollo:', ['Settings → Integrations → API', 'Create new key (o edita la que ya tengas)', 'Marca la opción de master key', 'Copia la key y pégala aquí']));
+      api.body.appendChild(pathBox('En tu cuenta de Apollo:', ['Settings → Integrations → API', 'Create new key (o edita la que ya tengas)', 'Copia la key y pégala aquí']));
       var keyI = h('input', { type: 'password', placeholder: 'API key', autocomplete: 'off' });
       api.body.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'API key de Apollo' }), keyI));
-      api.body.appendChild(h('div', { class: 'pros-hint', text: 'Tiene que ser master key: sin eso Apollo no deja leer tus listas y "Importar desde Apollo" seguirá vacío. Los créditos de enriquecimiento pasan a cobrarse en tu cuenta de Apollo, no en la de la plataforma.' }));
+      api.body.appendChild(h('div', { class: 'pros-hint', text: 'Los créditos de enriquecimiento pasan a cobrarse en tu cuenta de Apollo, no en la de la plataforma.' }));
       api.setActions([
         { label: 'Atrás', onClick: choice },
         { label: isConn(state.apollo) ? 'Guardar' : 'Conectar Email', className: 'btn btn-primary', onClick: function (m) {
@@ -1561,10 +1564,7 @@
           return edgeFetch(FN_CHANNEL, { action: 'apollo_connect_key', payload: { api_key: keyI.value.trim() } }).then(function (r) {
             state.apollo = (r && (r.account || r.apollo)) || state.apollo;
             m.close();
-            // Una key que no es master key conecta igual (sirve para enviar),
-            // pero el import de listas no va a funcionar: se dice, no se calla.
-            if (r && r.master_key === false) toast(r.warning || 'Conectado, pero la key no es master key: importar listas va a fallar.', 'error');
-            else toast('Apollo conectado con tu cuenta.', 'success');
+            toast('Apollo conectado con tu cuenta.', 'success');
             render();
             openChannelDetails('email');
           });
@@ -2002,11 +2002,6 @@
       if (es.state === 'connected') {
         body.appendChild(h('p', { text: 'Cuenta conectada: ' + (es.detail || '—') + (acfg.name ? ' (' + acfg.name + ')' : '') + (acfg.connected_at ? ' · desde ' + fmtDate(acfg.connected_at) : '') }));
         body.appendChild(h('div', { class: 'pros-hint', text: 'Los emails de campaña salen como mensajes individuales desde tu cuenta; los datos revelados se cobran a los créditos de tu propia cuenta, no a los de la plataforma.' }));
-        // Apollo exige master key para listar listas: si no lo es, el import
-        // falla y conviene decirlo donde se ve la conexión, no solo al conectar.
-        if (acfg.master_key === false) {
-          body.appendChild(h('div', { class: 'cmp-chip-warn', style: 'margin-top:8px', text: '⚠ La API key no es master key: "Importar desde Apollo" va a seguir vacío. En Apollo → Settings → Integrations → API, marca master key y vuelve a pegarla.' }));
-        }
       } else {
         body.appendChild(h('p', { text: 'Sin conectar.' }));
         body.appendChild(h('div', { class: 'pros-hint', text: 'Conecta tu cuenta de Apollo para que las campañas envíen email desde tu buzón, con tus listas, tus contactos y tus créditos de Apollo.' }));
@@ -2033,6 +2028,9 @@
   // Dripify, porque su API no acepta texto por lead.
   function csvCell(v) {
     var s = String(v == null ? '' : v).replace(/\r?\n/g, ' ').trim();
+    // Datos de Apollo / del prospecto = no confiables: neutralizar fórmulas
+    // (=, +, -, @) al abrir el CSV en Excel/Sheets (igual que en Listas).
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return '"' + s.replace(/"/g, '""') + '"';
   }
   function downloadLinkedinCsv(c) {
