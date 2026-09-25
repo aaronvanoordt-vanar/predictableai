@@ -1,0 +1,30 @@
+Copyright (c) 2026 Vanarsi / predictable.ai. All rights reserved.
+
+PROPRIETARY AND CONFIDENTIAL — NOT OPEN SOURCE
+
+This repository and everything in it (source code, edge functions, database
+migrations, prompts, documentation, designs, copy and assets) is the
+proprietary work of the copyright holder and is protected by copyright and
+trade-secret law.
+
+No licence of any kind is granted. Without the prior written permission of
+the copyright holder you may not:
+
+  1. copy, reproduce, download, mirror or archive this code or any part of it;
+  2. modify, translate, adapt or create derivative works from it;
+  3. distribute, sublicense, sell, rent or otherwise make it available;
+  4. use it, in whole or in part, to build, train, prompt or fine-tune any
+     software, model or AI system, or to produce a competing product;
+  5. remove or alter this notice.
+
+Publication of this repository on GitHub, or the fact that GitHub Pages
+serves parts of it, does NOT place it in the public domain and does NOT
+constitute a licence to reuse it. The GitHub Terms of Service allow viewing
+and forking through the GitHub interface only; no further rights are
+granted.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE.
+
+Contact: aaron@vanarsi.com

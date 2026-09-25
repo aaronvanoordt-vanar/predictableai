@@ -1,12 +1,17 @@
-import http.server, urllib.request, urllib.parse, json, os, sys
+"""Servidor estático local: python3 server.py → http://127.0.0.1:3000
+
+La app en producción habla directo con Supabase (edge functions); el proxy
+de Apollo que vivía aquí (y en server.js) no lo usaba nada del frontend y
+exponía la API key del desarrollador a cualquier página abierta en el
+navegador (CORS *, escuchando en todas las interfaces). Se quitó el
+2026-09-25. Este servidor solo sirve archivos y solo en localhost.
+"""
+import http.server
+import os
 
 PORT = 3000
-# La key NUNCA va hardcodeada (este repo es público). Para usar el proxy local:
-#   APOLLO_API_KEY=tu_key python3 server.py
-# La app en producción no usa este proxy — llama a la edge function apollo-proxy.
-APOLLO_KEY = os.environ.get('APOLLO_API_KEY', '')
-APOLLO_BASE = 'https://api.apollo.io/api/v1'
 DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -15,59 +20,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print(f"  {args[0]} {args[1]}")
 
-    def send_cors(self):
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type,X-Api-Key')
 
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_cors()
-        self.end_headers()
-
-    def do_POST(self):
-        if not self.path.startswith('/proxy/apollo/'):
-            self.send_response(404); self.end_headers(); return
-
-        if not APOLLO_KEY:
-            self.send_response(503)
-            self.send_header('Content-Type', 'application/json')
-            self.send_cors()
-            self.end_headers()
-            self.wfile.write(b'{"error":"APOLLO_API_KEY no configurada (exporta la variable antes de arrancar)"}')
-            return
-
-        apollo_path = self.path.replace('/proxy/apollo/', '/')
-        length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(length)
-
-        req = urllib.request.Request(
-            APOLLO_BASE + apollo_path,
-            data=body,
-            headers={
-                'Content-Type': 'application/json',
-                'Cache-Control': 'no-cache',
-                'X-Api-Key': APOLLO_KEY,
-            },
-            method='POST'
-        )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                data = resp.read()
-                self.send_response(resp.status)
-                self.send_header('Content-Type', 'application/json')
-                self.send_cors()
-                self.end_headers()
-                self.wfile.write(data)
-        except urllib.error.HTTPError as e:
-            data = e.read()
-            self.send_response(e.code)
-            self.send_header('Content-Type', 'application/json')
-            self.send_cors()
-            self.end_headers()
-            self.wfile.write(data)
-
-print(f"\n✅ Servidor corriendo en http://localhost:{PORT}")
-print(f"   Abre esa URL en tu navegador\n")
-httpd = http.server.HTTPServer(('', PORT), Handler)
-httpd.serve_forever()
+print(f"\n✅ Servidor corriendo en http://127.0.0.1:{PORT}")
+print("   Abre esa URL en tu navegador\n")
+http.server.HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

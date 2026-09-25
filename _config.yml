@@ -1,0 +1,31 @@
+# GitHub Pages (Jekyll) configuration.
+#
+# Pages serves the `main` branch straight from the repo root, so WITHOUT this
+# list the whole backend was downloadable from the production domain:
+#   https://predictableai.vanarsi.com/supabase/functions/sales-coach/index.ts
+#   https://predictableai.vanarsi.com/supabase/migrations/…  (every RLS policy)
+#   https://predictableai.vanarsi.com/docs/PRICING.md         (margins)
+#   https://predictableai.vanarsi.com/CLAUDE.md               (internal decisions)
+# all returned 200 on 2026-09-24. Nothing in the served frontend loads any of
+# these paths (js/ and *.html only mention them in comments), so excluding
+# them changes nothing for users.
+#
+# Jekyll already skips paths that start with `_` or `.` (that is why
+# supabase/functions/_shared/ and .claude/ were 404). Do NOT add a `.nojekyll`
+# file: it would disable this list and start serving those too.
+#
+# Everything the app needs stays served: *.html, js/, css/, assets/, miforms/,
+# openapi.json (js/dev-docs.js fetches it), favicon.svg, CNAME.
+
+exclude:
+  - supabase/
+  - docs/
+  - scripts/
+  - CLAUDE.md
+  - TODOS.md
+  - LICENSE
+  - server.py
+  - Gemfile
+  - Gemfile.lock
+  - node_modules/
+  - vendor/
