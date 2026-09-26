@@ -3854,11 +3854,11 @@ window.setTheme = function (t) {
   if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
   else document.documentElement.removeAttribute('data-theme');
   try { localStorage.setItem('predictable-theme', t); } catch (e) {}
-  document.querySelectorAll('.tt-opt').forEach(b => b.classList.toggle('on', b.dataset.thm === t));
+  document.querySelectorAll('#theme-toggle .tt-opt').forEach(b => b.classList.toggle('on', b.dataset.thm === t));
 };
 window.addEventListener('DOMContentLoaded', () => {
   const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
-  document.querySelectorAll('.tt-opt').forEach(b => {
+  document.querySelectorAll('#theme-toggle .tt-opt').forEach(b => {
     b.classList.toggle('on', b.dataset.thm === current);
     b.addEventListener('click', () => window.setTheme(b.dataset.thm));
   });
