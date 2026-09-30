@@ -66,6 +66,8 @@ function isOptOut(ev: Json): boolean {
 }
 
 function inboundText(ev: Json): string {
+  const reaction = wati.parseReaction(ev);
+  if (reaction) return reaction.emoji || "Reacción quitada";
   const btn = ev?.buttonReply?.text ?? ev?.buttonReply?.title ?? ev?.interactiveButtonReply?.title ?? ev?.listReply?.title ?? "";
   // En fotos y videos `text` es el pie de foto; a veces WATI pone ahí la URL
   // del archivo (…/showFile?fileName=…), que no es texto del lead.
@@ -76,6 +78,19 @@ function inboundText(ev: Json): string {
     document: "📄 Documento", location: "📍 Ubicación", sticker: "Sticker", contacts: "👤 Contacto", reaction: "Reacción",
   };
   return label[String(ev?.type ?? "")] || "Mensaje";
+}
+
+/**
+ * Campos de una reacción para el payload de la fila: el emoji y el wamid del
+ * mensaje reaccionado (la bandeja la pinta pegada a ese mensaje). `raw` guarda
+ * lo que mandó WATI mientras no documente la forma exacta.
+ */
+function reactionPayload(ev: Json): Json {
+  const r = wati.parseReaction(ev);
+  if (!r) return {};
+  let raw = "";
+  try { raw = JSON.stringify({ text: ev?.text ?? null, data: ev?.data ?? null, replyContextId: ev?.replyContextId ?? null }).slice(0, 1000); } catch { /* no serializable */ }
+  return { emoji: r.emoji, reacts_to: r.target, reaction_raw: raw };
 }
 
 /** Fecha del evento (WATI manda `created` ISO o `timestamp` unix en segundos). */
@@ -174,6 +189,7 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
             caption: ev?.text && !wati.mediaFileName(ev.text) ? String(ev.text).slice(0, 2000) : null,
           }
           : {}),
+        ...reactionPayload(ev),
       },
     }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true })
     .select("id");
@@ -182,6 +198,9 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
   if (wamid && (!inserted || !inserted.length)) return;
 
   if (!member) return; // número sin lead asociado: queda en la bandeja igual
+  // Quitar una reacción no es una respuesta: no detiene la cadencia ni cambia el CRM.
+  const reaction = wati.parseReaction(ev);
+  if (reaction && !reaction.emoji) return;
 
   const optOut = isOptOut(ev);
 
@@ -505,6 +524,25 @@ async function recordOperatorMessage(db: SupabaseClient, acc: Json, ev: Json) {
   if (!waId) return;
   const member = await findMember(db, acc.user_id, waId);
   const wamid = ev?.whatsappMessageId ? String(ev.whatsappMessageId) : (ev?.id ? `wati:${ev.id}` : null);
+  // Una reacción que mandó la bandeja vuelve aquí como mensaje del operador:
+  // ya está guardada (inbox-send, provider_message_id = nuestro id local).
+  const reaction = wati.parseReaction(ev);
+  if (reaction) {
+    const ids = [ev?.localMessageId, ev?.id].filter(Boolean).map(String);
+    if (ids.length) {
+      const { data: mine } = await db.from("inbox_messages").select("id")
+        .eq("user_id", acc.user_id).eq("provider", "wati").eq("direction", "out").in("provider_message_id", ids).limit(1);
+      if (mine?.length) return;
+    }
+    if (reaction.target) {
+      const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      const { data: recent } = await db.from("inbox_messages").select("id")
+        .eq("user_id", acc.user_id).eq("provider", "wati").eq("direction", "out")
+        .eq("payload->>source", "inbox_reaction").eq("payload->>reacts_to", reaction.target).eq("payload->>emoji", reaction.emoji)
+        .gte("sent_at", since).limit(1);
+      if (recent?.length) return;
+    }
+  }
   let primary: Json | null = null;
   if (member) {
     const { data } = await db.from("campaign_enrollments").select("id, campaign_id, status, created_at")
@@ -525,6 +563,6 @@ async function recordOperatorMessage(db: SupabaseClient, acc: Json, ev: Json) {
     sent_at: eventDate(ev),
     campaign_id: primary?.campaign_id ?? null,
     enrollment_id: primary?.id ?? null,
-    payload: { type: ev?.type ?? null, operator: ev?.operatorEmail ?? null, source: "wati_ui" },
+    payload: { type: ev?.type ?? null, operator: ev?.operatorEmail ?? null, source: "wati_ui", ...reactionPayload(ev) },
   }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true });
 }

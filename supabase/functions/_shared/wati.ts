@@ -461,6 +461,73 @@ export async function sendText(creds: WatiCreds, phone: string, text: string): P
   return { id: m.id ? String(m.id) : null, conversationId: m.conversation_id ? String(m.conversation_id) : null };
 }
 
+// ── Reacciones ──────────────────────────────────────────────────────────────
+
+/**
+ * Emojis que la bandeja ofrece para reaccionar: el set rápido de WhatsApp.
+ * Espejo de REACTION_EMOJIS en js/campaigns.js.
+ */
+export const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+/**
+ * ¿Sirve como reacción? Un solo emoji (con sus modificadores: tono de piel,
+ * variante, ZWJ) o "" para quitar la reacción. Nada de letras ni números: la
+ * reacción no es un canal para colar texto.
+ */
+export function isReactionEmoji(raw: unknown): boolean {
+  const s = String(raw ?? "");
+  if (s === "") return true;
+  if (s.length > 16 || /[\p{L}\p{N}\s]/u.test(s)) return false;
+  return /\p{Extended_Pictographic}/u.test(s);
+}
+
+/**
+ * Reacción que llega en el webhook `message` (type "reaction"). WATI no
+ * documenta dónde van el emoji y el mensaje reaccionado, así que se leen los
+ * lugares posibles: la forma de Meta ({reaction:{emoji,message_id}}), `data`
+ * y los campos planos (`text` + `replyContextId`). `emoji` "" = la quitó.
+ */
+export function parseReaction(ev: Json): { emoji: string; target: string | null } | null {
+  if (String(ev?.type ?? "").toLowerCase() !== "reaction") return null;
+  let data: Json = ev?.data;
+  if (typeof data === "string") { try { data = JSON.parse(data); } catch { data = null; } }
+  const r: Json = ev?.reaction ?? data?.reaction ?? data ?? {};
+  const emojiRaw = r?.emoji ?? ev?.text ?? "";
+  const emoji = isReactionEmoji(emojiRaw) ? String(emojiRaw) : "";
+  const targetRaw = r?.message_id ?? r?.messageId ?? r?.whatsappMessageId ?? ev?.replyContextId ?? ev?.context?.id ?? null;
+  const target = targetRaw ? String(targetRaw) : null;
+  return { emoji, target };
+}
+
+/**
+ * Reacciona a un mensaje de WhatsApp (o la quita con emoji "").
+ *
+ * EXPERIMENTAL (2026-09-30): la API pública de WATI no documenta reacciones
+ * (ni en v1 ni en v3). Se usa el envío directo v1, cuyo modelo acepta `type`,
+ * `text` y `replyContextId` — el mismo que usa su propia bandeja — con
+ * type "reaction". Si WATI lo rechaza, el error sube tal cual a la UI.
+ */
+export async function sendReaction(
+  creds: WatiCreds,
+  input: { phone: string; targetWamid: string; emoji: string; localMessageId: string; channel?: string },
+): Promise<{ accepted: boolean; id: string | null; info: string | null }> {
+  const phone = digits(input.phone);
+  let path = `/api/v1/sendDirectSendMessage/${encodeURIComponent(phone)}`;
+  if (input.channel && digits(input.channel).length >= 8) path += `?channelPhoneNumber=${digits(input.channel)}`;
+  const data = await call(creds, "POST", path, {
+    type: "reaction",
+    text: input.emoji,
+    replyContextId: input.targetWamid,
+    localMessageId: input.localMessageId,
+  });
+  const accepted = data?.result !== false && data?.ok !== false;
+  return {
+    accepted,
+    id: data?.messageId ? String(data.messageId) : null,
+    info: accepted ? null : String(data?.info || data?.message || data?.error || "sin detalle").slice(0, 300),
+  };
+}
+
 // ── Medios entrantes (fotos, videos, stickers, audios, documentos) ──────────
 
 /** Tipos de mensaje de WATI que traen un archivo descargable. */

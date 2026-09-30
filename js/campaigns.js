@@ -978,6 +978,35 @@
     var row = r && r.message;
     if (row && row.id && !state.inbox.some(function (x) { return x.id === row.id; })) state.inbox.unshift(row);
   }
+  /** Reacciona a un WhatsApp del hilo (emoji '' la quita). Se pinta al instante; inbox-send corre detrás. */
+  async function sendReaction(convKey, messageId, emoji) {
+    var target = state.inbox.find(function (x) { return x.id === messageId; });
+    if (!target) return;
+    var local = {
+      id: 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+      member_id: target.member_id || null, contact_ref: target.contact_ref || '', channel: 'whatsapp',
+      direction: 'out', body: emoji || 'Reacción quitada', status: 'sending', sent_at: new Date().toISOString(),
+      payload: { type: 'reaction', emoji: emoji, reacts_to: wamidOfMsg(target), reacts_to_id: target.id, source: 'inbox_reaction' },
+    };
+    state.pendingOut.unshift(local);
+    state.inbox.unshift(local);
+    if (state.view === 'inbox') renderKeepingReplyFocus(convKey);
+    function dropLocal() {
+      state.pendingOut = state.pendingOut.filter(function (x) { return x !== local; });
+      state.inbox = state.inbox.filter(function (x) { return x !== local; });
+    }
+    try {
+      var r = await edgeFetch(FN_INBOX, { action: 'react', message_id: messageId, emoji: emoji });
+      dropLocal();
+      var row = r && r.message;
+      if (row && row.id && !state.inbox.some(function (x) { return x.id === row.id; })) state.inbox.unshift(row);
+    } catch (e) {
+      dropLocal();
+      if (e && e.code === 'whatsapp_window_closed') state.waClosed[convKey] = true;
+      toast(errMsg(e), 'error');
+    }
+    if (state.view === 'inbox') renderKeepingReplyFocus(convKey);
+  }
   /** Guarda un contacto de la bandeja (sin lead) en una lista y enlaza sus mensajes. */
   function saveContactToList(conv) {
     var lead = conv.lead || {};
@@ -1247,6 +1276,32 @@
       '#prospecting-shell .cmp-ticks-read { color:#34B7F1; }',
       '#prospecting-shell .cmp-ticks-err { color:var(--red); font-weight:600; }',
       '#prospecting-shell .cmp-bubble.empty-body { font-style:italic; color:var(--text3); }',
+      '#prospecting-shell .cmp-rmsg { position:relative; display:flex; flex-direction:column; max-width:78%; }',
+      '#prospecting-shell .cmp-rmsg.in { align-self:flex-start; align-items:flex-start; }',
+      '#prospecting-shell .cmp-rmsg.out { align-self:flex-end; align-items:flex-end; }',
+      '#prospecting-shell .cmp-rmsg > .cmp-bubble { max-width:100%; }',
+      '#prospecting-shell .cmp-react-bar { position:absolute; top:2px; z-index:2; white-space:nowrap; display:flex; gap:2px; padding:3px 5px; border-radius:999px; background:var(--surface); border:1px solid var(--hair); box-shadow:0 4px 14px rgba(0,0,0,.12); opacity:0; pointer-events:none; transform:translateY(4px); transition:opacity var(--dur-1,.12s) ease, transform var(--dur-1,.12s) ease; }',
+      '#prospecting-shell .cmp-rmsg.in .cmp-react-bar { left:calc(100% + 6px); }',
+      '#prospecting-shell .cmp-react-bar::before { content:""; position:absolute; top:0; bottom:0; width:10px; }',
+      '#prospecting-shell .cmp-rmsg.in .cmp-react-bar::before { left:-10px; }',
+      '#prospecting-shell .cmp-rmsg.out .cmp-react-bar::before { right:-10px; }',
+      '#prospecting-shell .cmp-rmsg.out .cmp-react-bar { right:calc(100% + 6px); }',
+      '@media (max-width:640px) { #prospecting-shell .cmp-rmsg.in .cmp-react-bar { left:0; top:-38px; } #prospecting-shell .cmp-rmsg.out .cmp-react-bar { right:0; left:auto; top:-38px; } }',
+      '#prospecting-shell .cmp-rmsg:hover .cmp-react-bar, #prospecting-shell .cmp-rmsg:focus-within .cmp-react-bar, #prospecting-shell .cmp-rmsg.show-react .cmp-react-bar { opacity:1; pointer-events:auto; transform:none; }',
+      '#prospecting-shell .cmp-react-bar button { border:0; background:transparent; font-size:17px; line-height:1; padding:4px; border-radius:50%; cursor:pointer; transition:transform var(--dur-1,.12s) ease; }',
+      '#prospecting-shell .cmp-react-bar button:hover:not(:disabled) { transform:scale(1.25); background:var(--surface3); }',
+      '#prospecting-shell .cmp-react-bar button.active { background:var(--accent-soft); }',
+      '#prospecting-shell .cmp-react-bar button:disabled { opacity:.4; cursor:not-allowed; }',
+      '#prospecting-shell .cmp-react-chips { display:flex; gap:4px; margin-top:-8px; padding:0 10px; position:relative; }',
+      '#prospecting-shell .cmp-react-chip { display:inline-flex; align-items:center; gap:2px; font-size:14px; line-height:1; padding:3px 6px; border-radius:999px; background:var(--surface); border:1px solid var(--hair); box-shadow:0 1px 3px rgba(0,0,0,.08); font-family:inherit; }',
+      '#prospecting-shell button.cmp-react-chip { cursor:pointer; }',
+      '#prospecting-shell button.cmp-react-chip:not([data-action]) { cursor:default; }',
+      '#prospecting-shell .cmp-react-chip.mine { border-color:var(--accent-2); }',
+      '#prospecting-shell .cmp-react-chip.sending { opacity:.55; }',
+      '#prospecting-shell .cmp-react-chip.err { border-color:var(--red); color:var(--red); font-size:12px; }',
+      '#prospecting-shell .cmp-react-orphan { font-size:11.5px; color:var(--text3); }',
+      '#prospecting-shell .cmp-react-orphan.out { align-self:flex-end; }',
+      '@media (prefers-reduced-motion: reduce) { #prospecting-shell .cmp-react-bar, #prospecting-shell .cmp-react-bar button { transition:none; } }',
       '#prospecting-shell .cmp-media { margin:-2px 0 4px; min-height:40px; }',
       '#prospecting-shell .cmp-media img, #prospecting-shell .cmp-media video { display:block; max-width:min(320px, 100%); max-height:360px; border-radius:10px; cursor:zoom-in; }',
       '#prospecting-shell .cmp-media.sticker img { max-width:140px; max-height:140px; background:transparent; cursor:default; }',
@@ -2660,6 +2715,7 @@
       conv.messages.forEach(function (m) {
         if (f0.campaign && String(m.campaign_id || '') !== String(f0.campaign)) return;
         if (f0.channel && chanKey(m.channel) !== f0.channel) return;
+        if (isReaction(m)) return;
         if (m.direction === 'in') totIn++;
         else if (m.status === 'failed') totFailed++;
         else totOut++;
@@ -2687,7 +2743,7 @@
       item.appendChild(name);
       item.appendChild(h('div', { class: 'cmp-conv-time', text: fmtRel(conv.last && conv.last.sent_at) }));
       item.appendChild(h('div', { class: 'cmp-conv-sub', text: convSub(conv) }));
-      var snippet = conv.last ? ((conv.last.direction === 'out' ? 'Tú: ' : '') + bubbleText(conv.last)) : '';
+      var snippet = conv.last ? ((conv.last.direction === 'out' && !isReaction(conv.last) ? 'Tú: ' : '') + bubbleText(conv.last)) : '';
       item.appendChild(h('div', { class: 'cmp-conv-snip', text: snippet }));
       list.appendChild(item);
     });
@@ -2703,9 +2759,54 @@
     box.innerHTML = emptyHtml(SVG.inbox, 'Elige una conversación', 'Aquí ves el hilo completo del lead en todos los canales — lo enviado y lo recibido — y le respondes por email, WhatsApp o LinkedIn.');
     return box;
   }
+  // ── Reacciones de WhatsApp ──
+  // Una reacción es una fila de inbox_messages con payload.type = 'reaction'
+  // (emoji + reacts_to = wamid del mensaje). No se pinta como globo: va pegada
+  // al mensaje que reacciona. Emoji vacío = reacción quitada. El envío pasa por
+  // inbox-send (action 'react'), EXPERIMENTAL: WATI no documenta reacciones.
+  // Espejo de REACTION_EMOJIS en supabase/functions/_shared/wati.ts.
+  var REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+  function isReaction(m) { return !!(m && m.payload && m.payload.type === 'reaction'); }
+  function reactionEmoji(m) {
+    var pl = m.payload || {};
+    return pl.emoji != null ? String(pl.emoji) : (m.body && m.body !== 'Reacción' && m.body !== 'Reacción quitada' ? String(m.body) : '');
+  }
+  function reactionLabel(m) {
+    var e = reactionEmoji(m);
+    if (m.direction === 'in') return e ? 'Reaccionó con ' + e : 'Quitó su reacción';
+    return e ? 'Reaccionaste con ' + e : 'Quitaste tu reacción';
+  }
+  /** wamid de un mensaje: el entrante lo trae como id; el saliente, en el payload tras el primer recibo. */
+  function wamidOfMsg(m) {
+    var id = String(m.provider_message_id || '');
+    if (id.indexOf('wamid.') === 0) return id;
+    var w = String((m.payload && m.payload.wamid) || '');
+    return w.indexOf('wamid.') === 0 ? w : '';
+  }
+  /** Reacciones vigentes por mensaje (la última de cada lado gana) y las que no encuentran su mensaje. */
+  function groupReactions(messages) {
+    var byId = {}, byWamid = {}, slots = {}, orphans = [];
+    messages.forEach(function (m) {
+      if (isReaction(m)) return;
+      byId[m.id] = m;
+      var w = wamidOfMsg(m);
+      if (w) byWamid[w] = m;
+    });
+    messages.forEach(function (m) {
+      if (!isReaction(m)) return;
+      var pl = m.payload || {};
+      var t = (pl.reacts_to_id && byId[pl.reacts_to_id]) || (pl.reacts_to && byWamid[pl.reacts_to]) || null;
+      if (!t) { if (reactionEmoji(m)) orphans.push(m); return; }
+      var slot = slots[t.id] = slots[t.id] || {};
+      slot[m.direction === 'in' ? 'in' : 'out'] = m; // vienen en orden cronológico
+    });
+    return { slots: slots, orphans: orphans };
+  }
+
   /** Texto visible de un mensaje (los envíos de LinkedIn que sincroniza Dripify no traen texto). */
   function bubbleText(msg) {
     var pl = msg.payload || {};
+    if (isReaction(msg)) return reactionLabel(msg);
     if (msg.body) return msg.body;
     if (chanKey(msg.channel) === 'linkedin' && msg.direction === 'out') {
       if (pl.kind === 'connection_sent') return 'Solicitud de conexión enviada desde tu LinkedIn' + (pl.dripify_campaign_name ? ' (campaña «' + pl.dripify_campaign_name + '»)' : '') + '.';
@@ -2853,8 +2954,17 @@
     card.appendChild(head);
 
     var thread = h('div', { class: 'cmp-thread' });
+    var reacts = groupReactions(conv.messages);
+    var waOpen = sessionOpen(conv);
     conv.messages.forEach(function (msg) {
       var pl = msg.payload || {};
+      if (isReaction(msg)) {
+        // Solo se pinta la que no encontró su mensaje (p. ej. fuera de las 2000 filas cargadas).
+        if (reacts.orphans.indexOf(msg) !== -1) {
+          thread.appendChild(h('div', { class: 'cmp-react-orphan ' + (msg.direction === 'in' ? 'in' : 'out'), text: reactionLabel(msg) + ' a un mensaje anterior · ' + fmtDateTime(msg.sent_at) }));
+        }
+        return;
+      }
       var isSystem = chanKey(msg.channel) === 'linkedin' && msg.direction === 'out' && !msg.body;
       var b = h('div', { class: 'cmp-bubble ' + (isSystem ? 'system' : (msg.direction === 'in' ? 'in' : 'out')) + (msg.body ? '' : ' empty-body') });
       var ctx = msg.direction === 'out' ? stepContext(msg) : '';
@@ -2877,12 +2987,56 @@
         meta.appendChild(h('span', { text: fmtDateTime(msg.sent_at) }));
       }
       b.appendChild(meta);
-      thread.appendChild(b);
+      if (isSystem) { thread.appendChild(b); return; }
+      thread.appendChild(messageWithReactions(conv, msg, b, reacts.slots[msg.id] || {}, waOpen));
     });
     card.appendChild(thread);
     card.appendChild(renderReplyBox(conv));
     setTimeout(function () { thread.scrollTop = thread.scrollHeight; }, 0);
     return card;
+  }
+  /**
+   * Globo + sus reacciones (chips debajo) + la barra de emojis que aparece al
+   * pasar el mouse (o al tocar el globo en móvil). Solo WhatsApp con wamid:
+   * sin él no hay a qué mensaje apuntar.
+   */
+  function messageWithReactions(conv, msg, bubble, slot, waOpen) {
+    var dir = msg.direction === 'in' ? 'in' : 'out';
+    var wrap = h('div', { class: 'cmp-rmsg ' + dir });
+    var canReact = chanKey(msg.channel) === 'whatsapp' && !!wamidOfMsg(msg) && String(msg.id).indexOf('local-') !== 0;
+    if (canReact) {
+      bubble.setAttribute('data-action', 'react-toggle');
+      var mine = slot.out ? reactionEmoji(slot.out) : '';
+      var bar = h('div', { class: 'cmp-react-bar', role: 'toolbar', 'aria-label': 'Reaccionar' });
+      REACTION_EMOJIS.forEach(function (e) {
+        var active = mine === e;
+        bar.appendChild(h('button', {
+          type: 'button', class: active ? 'active' : '',
+          'data-action': 'react', 'data-id': msg.id, 'data-key': conv.key, 'data-emoji': active ? '' : e,
+          disabled: waOpen ? null : 'disabled',
+          title: !waOpen ? 'La ventana de 24 h está cerrada: WhatsApp solo deja reaccionar mientras está abierta.' : (active ? 'Quitar tu reacción' : 'Reaccionar con ' + e),
+          text: e,
+        }));
+      });
+      wrap.appendChild(bar);
+    }
+    wrap.appendChild(bubble);
+    var chips = h('div', { class: 'cmp-react-chips' });
+    if (slot.in && reactionEmoji(slot.in)) {
+      chips.appendChild(h('span', { class: 'cmp-react-chip', title: 'Reacción del lead · ' + fmtDateTime(slot.in.sent_at), text: reactionEmoji(slot.in) }));
+    }
+    if (slot.out && reactionEmoji(slot.out)) {
+      var st = String(slot.out.status || '');
+      var failed = st === 'failed';
+      var tip = failed ? 'Tu reacción no llegó' + (slot.out.error_detail ? ': ' + slot.out.error_detail : '') : (st === 'sending' ? 'Enviando tu reacción…' : 'Tu reacción · clic para quitarla');
+      chips.appendChild(h('button', {
+        type: 'button', class: 'cmp-react-chip mine' + (failed ? ' err' : '') + (st === 'sending' ? ' sending' : ''),
+        'data-action': canReact && waOpen && !failed && st !== 'sending' ? 'react' : null, 'data-id': msg.id, 'data-key': conv.key, 'data-emoji': '',
+        title: tip, text: reactionEmoji(slot.out) + (failed ? ' !' : ''),
+      }));
+    }
+    if (chips.childNodes.length) wrap.appendChild(chips);
+    return wrap;
   }
   function renderReplyBox(conv) {
     var box = h('div', { class: 'cmp-reply' });
@@ -3172,6 +3326,15 @@
         render();
       }, function (err) { rM(); toast('No se pudo actualizar el estado: ' + err.message, 'error'); });
     }
+    if (action === 'react-toggle') {
+      var wrapR = btn.closest('.cmp-rmsg');
+      if (wrapR && !(window.getSelection && String(window.getSelection()))) wrapR.classList.toggle('show-react');
+      return;
+    }
+    if (action === 'react' && id) {
+      if (btn.disabled) return;
+      return sendReaction(key, id, btn.getAttribute('data-emoji') || '');
+    }
     if (action === 'reply-template' && key) {
       var convT = findConv(key);
       if (!convT) return;
@@ -3191,7 +3354,7 @@
       return pd().generateReply({
         member_id: convA.member.id,
         channel: channel,
-        conversation: convA.messages.map(function (x) { return { direction: x.direction, channel: chanKey(x.channel), body: x.body, sent_at: x.sent_at }; }),
+        conversation: convA.messages.map(function (x) { return { direction: x.direction, channel: chanKey(x.channel), body: isReaction(x) ? '(' + reactionLabel(x) + ')' : x.body, sent_at: x.sent_at }; }),
         sender: senderDefaults(),
       }).then(function (out) {
         state.replyDraft[key] = out.body;

@@ -968,6 +968,7 @@ async function generateStepMessage(ctx: Ctx, en: Json, campaign: Json, node: flo
     .select("channel, body, sent_at")
     .eq("member_id", en.member_id)
     .eq("direction", "out")
+    .or("payload->>type.is.null,payload->>type.neq.reaction") // una reacción no es un mensaje enviado
     .order("sent_at", { ascending: false })
     .limit(5);
   const res = await fetch(url, {
