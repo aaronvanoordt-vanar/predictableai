@@ -37,6 +37,13 @@
  *      (POST /emailer_messages, con in_response_to_emailer_message_id del
  *      último envío nuestro — Apollo lo ignora hoy y abre hilo nuevo, pero es
  *      lo documentado) + send_now.  → { message }
+ *  • { action: "react", message_id: uuid, emoji }
+ *      Reacciona con un emoji a un WhatsApp del hilo (emoji "" la quita).
+ *      EXPERIMENTAL: WATI no documenta reacciones; va por el envío directo v1
+ *      (wati.sendReaction). Misma ventana de 24 h que el texto libre. Se
+ *      guarda como fila saliente de inbox_messages con payload.type =
+ *      "reaction" y payload.reacts_to (= wamid del mensaje reaccionado); la
+ *      bandeja la pinta pegada a ese mensaje, no como globo. → { message }
  *  • { action: "mark_read", ids: [uuid…] }
  *      UPDATE inbox_messages SET read_at = now() WHERE id = ANY(ids) AND
  *      user_id = uid AND direction = 'in' AND read_at IS NULL → { updated: n }
@@ -281,6 +288,84 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
   return row;
 }
 
+// ── Reacción (WhatsApp) ─────────────────────────────────────────────────────
+
+/** wamid de un mensaje de la bandeja: el entrante lo trae como id; el saliente, en el payload tras el primer recibo. */
+function wamidOf(row: Json): string | null {
+  const id = String(row?.provider_message_id ?? "");
+  if (id.startsWith("wamid.")) return id;
+  const w = String(row?.payload?.wamid ?? "");
+  return w.startsWith("wamid.") ? w : null;
+}
+
+async function reactWhatsApp(db: SupabaseClient, userId: string, messageId: string, emoji: string): Promise<Json> {
+  const { data: target } = await db
+    .from("inbox_messages")
+    .select("id, member_id, channel, provider, contact_ref, provider_message_id, payload, campaign_id, enrollment_id")
+    .eq("id", messageId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!target) throw new HttpError("Ese mensaje no existe en tu bandeja.", 404);
+  if (target.channel !== "whatsapp" || target.provider !== "wati") {
+    throw new HttpError("Solo se puede reaccionar a mensajes de WhatsApp.", 400, "reaction_unsupported");
+  }
+  if (target.payload?.type === "reaction") throw new HttpError("No se puede reaccionar a una reacción.", 400, "reaction_unsupported");
+  const targetWamid = wamidOf(target);
+  if (!targetWamid) {
+    throw new HttpError("WhatsApp todavía no confirmó este mensaje: espera a que salga el primer check e inténtalo de nuevo.", 409, "reaction_target_unconfirmed");
+  }
+  const phone = wati.digits(target.contact_ref);
+  if (!phone) throw new HttpError("El contacto no tiene teléfono.", 400, "member_without_phone");
+
+  let lastInQ = db
+    .from("inbox_messages")
+    .select("sent_at")
+    .eq("user_id", userId)
+    .eq("channel", "whatsapp")
+    .eq("direction", "in")
+    .order("sent_at", { ascending: false })
+    .limit(1);
+  lastInQ = target.member_id ? lastInQ.or(`member_id.eq.${target.member_id},contact_ref.eq.${phone}`) : lastInQ.eq("contact_ref", phone);
+  const [{ data: acc }, { data: lastIn }] = await Promise.all([
+    db.from("channel_accounts").select("*").eq("user_id", userId).eq("provider", "wati").maybeSingle(),
+    lastInQ.maybeSingle(),
+  ]);
+  if (!acc || acc.status !== "connected") throw new HttpError("WhatsApp no está conectado.", 428, "whatsapp_not_connected");
+  const lastInbound = lastIn?.sent_at ? Date.parse(lastIn.sent_at) : 0;
+  if (!lastInbound || Date.now() - lastInbound > WHATSAPP_SESSION_MS) {
+    throw new HttpError("La ventana de 24 h de WhatsApp está cerrada: solo se puede reaccionar mientras está abierta.", 409, "whatsapp_window_closed");
+  }
+
+  const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
+  const localId = crypto.randomUUID();
+  let r: { accepted: boolean; id: string | null; info: string | null };
+  try {
+    r = await wati.sendReaction(creds, { phone, targetWamid, emoji, localMessageId: localId, channel: acc.config?.channel || undefined });
+  } catch (e) {
+    const status = e instanceof wati.WatiError && e.status >= 400 && e.status < 500 ? 400 : 502;
+    throw new HttpError("WATI no aceptó la reacción: " + wati.humanError(e), status, "whatsapp_reaction_failed");
+  }
+  if (!r.accepted) throw new HttpError("WATI no aceptó la reacción: " + r.info, 400, "whatsapp_reaction_failed");
+
+  const { data: row, error } = await db.from("inbox_messages").insert({
+    user_id: userId,
+    member_id: target.member_id ?? null,
+    channel: "whatsapp",
+    provider: "wati",
+    direction: "out",
+    contact_ref: phone,
+    body: emoji || "Reacción quitada",
+    provider_message_id: localId,
+    status: "pending",
+    sent_at: new Date().toISOString(),
+    campaign_id: target.campaign_id ?? null,
+    enrollment_id: target.enrollment_id ?? null,
+    payload: { type: "reaction", emoji, reacts_to: targetWamid, reacts_to_id: target.id, source: "inbox_reaction", wati_message_id: r.id },
+  }).select("*").single();
+  if (error) throw new HttpError("La reacción salió pero no se pudo guardar en la bandeja: " + error.message, 500);
+  return row;
+}
+
 // ── Email (Apollo) ──────────────────────────────────────────────────────────
 
 async function sendEmail(db: SupabaseClient, userId: string, member: Json, text: string, subjectIn: string): Promise<Json> {
@@ -429,6 +514,15 @@ Deno.serve(async (req) => {
         .select("id");
       if (error) throw new HttpError(error.message, 500);
       return json({ updated: data?.length ?? 0 }, 200, cors);
+    }
+
+    if (body?.action === "react") {
+      const messageId = String(body.message_id ?? "");
+      const emoji = String(body.emoji ?? "");
+      if (!UUID_RE.test(messageId)) return json({ error: "message_id inválido" }, 400, cors);
+      if (!wati.isReactionEmoji(emoji)) return json({ error: "emoji inválido", message: "La reacción debe ser un solo emoji." }, 400, cors);
+      const row = await reactWhatsApp(db, user.id, messageId, emoji);
+      return json({ message: row }, 200, cors);
     }
 
     if (body?.action === "link_member") {

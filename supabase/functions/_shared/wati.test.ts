@@ -23,8 +23,11 @@ import {
   activeAccountBlock,
   isTemplateApproved,
   isTemplateDead,
+  isReactionEmoji,
   isWebhookLimitError,
   normalizeTemplateName,
+  parseReaction,
+  REACTION_EMOJIS,
   revisionName,
   revisionOf,
   templateVariables,
@@ -188,4 +191,35 @@ Deno.test("activeAccountBlock: vigente solo durante el plazo de reintento", () =
   assertEquals(activeAccountBlock({}, at), null);
   assertEquals(activeAccountBlock(null, at), null);
   assertEquals(activeAccountBlock({ send_block: { code: "131037", at: "no es fecha" } }, at), null);
+});
+
+// ── Reacciones (2026-09-30) ─────────────────────────────────────────────────
+
+Deno.test("isReactionEmoji: un emoji o vacío; nunca texto", () => {
+  for (const e of REACTION_EMOJIS) assert(isReactionEmoji(e), e);
+  assert(isReactionEmoji(""));
+  assert(isReactionEmoji("👍🏽"));
+  assert(isReactionEmoji("👨‍💻"));
+  assert(!isReactionEmoji("ok"));
+  assert(!isReactionEmoji("👍 gracias"));
+  assert(!isReactionEmoji("1"));
+  assert(!isReactionEmoji("👍".repeat(10)));
+});
+
+Deno.test("parseReaction: ignora lo que no es reacción", () => {
+  assertEquals(parseReaction({ type: "text", text: "👍" }), null);
+});
+
+Deno.test("parseReaction: forma plana de WATI (text + replyContextId)", () => {
+  assertEquals(parseReaction({ type: "reaction", text: "❤️", replyContextId: "wamid.X" }), { emoji: "❤️", target: "wamid.X" });
+});
+
+Deno.test("parseReaction: forma de Meta dentro de data (objeto o JSON)", () => {
+  assertEquals(parseReaction({ type: "reaction", data: { emoji: "😂", message_id: "wamid.Y" } }), { emoji: "😂", target: "wamid.Y" });
+  assertEquals(parseReaction({ type: "reaction", data: JSON.stringify({ reaction: { emoji: "🙏", message_id: "wamid.Z" } }) }), { emoji: "🙏", target: "wamid.Z" });
+});
+
+Deno.test("parseReaction: reacción quitada o texto raro → emoji vacío", () => {
+  assertEquals(parseReaction({ type: "reaction", text: "", replyContextId: "wamid.X" }), { emoji: "", target: "wamid.X" });
+  assertEquals(parseReaction({ type: "reaction", text: "Reacción" }), { emoji: "", target: null });
 });
