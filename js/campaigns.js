@@ -1095,9 +1095,20 @@
   }
 
   // ── Render: layout ───────────────────────────────────────────────────────
+  // La vista (Campañas / Bandeja) se recuerda para que un refresh vuelva a
+  // la misma: index.html la lee al restaurar la pestaña de Campañas. Antes un
+  // F5 en la Bandeja siempre caía en la lista de campañas.
+  var VIEW_KEY = 'predictable_cmp_view';
+  var savedView = null;
+  function saveView(v) {
+    if (v === savedView) return;
+    savedView = v;
+    try { localStorage.setItem(VIEW_KEY, v); } catch (e) { /* modo privado */ }
+  }
   function render() {
     var root = state.root;
     if (!root) return;
+    if (!state.loading) saveView(state.view);
     root.innerHTML = '';
     if (state.status === undefined && state.loading) {
       root.appendChild(h('div', { class: 'pros-hint', text: 'Cargando canales y campañas…' }));
@@ -3369,6 +3380,7 @@
   function setView(view) {
     var v = view === 'inbox' || view === 'knowledge' ? view : 'campaigns';
     if (v === 'knowledge') state.knowledgeHost = null;
+    saveView(v);
     if (!built || state.loading || state.status === undefined) { state.pendingView = v; return; }
     state.view = v;
     render();
