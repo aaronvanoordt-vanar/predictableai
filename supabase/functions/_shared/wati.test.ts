@@ -20,6 +20,9 @@ import * as wati from "./wati.ts";
 import {
   ACCOUNT_BLOCK_RETRY_MS,
   accountBlockCode,
+  errorDetail,
+  humanError,
+  metaErrorHint,
   accountBlockMessage,
   activeAccountBlock,
   isTemplateApproved,
@@ -251,4 +254,19 @@ Deno.test("sniffMediaType: los bytes mandan sobre el octet-stream de WATI", () =
   // Sin firma conocida: el header si es útil, si no el tipo de mensaje.
   assertEquals(wati.sniffMediaType(b(1, 2, 3), "document", "application/vnd.ms-excel"), "application/vnd.ms-excel");
   assertEquals(wati.sniffMediaType(b(1, 2, 3), "sticker", "application/octet-stream"), "image/webp");
+});
+
+Deno.test("errorDetail: saca el motivo real que WATI deja fuera de `message`", () => {
+  assertEquals(errorDetail({ message: "Message Sent Failed", errors: [{ code: 131026, message: "Message undeliverable" }] }), "Message undeliverable (#131026)");
+  assertEquals(errorDetail({ message: "x" }), "");
+  assertEquals(errorDetail(null), "");
+});
+
+Deno.test("humanError: traduce los códigos de Meta y conserva el detalle crudo", () => {
+  const e = new WatiError("Message Sent Failed — (#131026)", 400);
+  const h = humanError(e);
+  assertEquals(h.includes("no puede recibir"), true);
+  assertEquals(h.includes("131026"), true);
+  assertEquals(humanError(new WatiError("otra cosa", 400)), "otra cosa");
+  assertEquals(metaErrorHint("(#131047)")?.includes("24 h"), true);
 });
