@@ -109,9 +109,50 @@ async function call(creds: WatiCreds, method: string, path: string, body?: Json)
   try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text.slice(0, 500) }; }
   if (!res.ok) {
     const msg = data?.message || data?.error || data?.info || `WATI respondió ${res.status}`;
-    throw new WatiError(String(msg).slice(0, 300), res.status, data);
+    // "Message Sent Failed" a secas no dice nada: el motivo real (código de Meta)
+    // viene en otro campo del cuerpo y antes se perdía.
+    const detail = errorDetail(data);
+    const full = detail && !String(msg).includes(detail) ? `${msg} — ${detail}` : String(msg);
+    throw new WatiError(full.slice(0, 400), res.status, data);
   }
   return data;
+}
+
+/** Texto útil dentro del cuerpo de error de WATI/Meta (varía según el endpoint). */
+export function errorDetail(body: Json): string {
+  if (!body || typeof body !== "object") return "";
+  const parts: string[] = [];
+  const push = (v: unknown) => {
+    if (v == null || v === "") return;
+    if (Array.isArray(v)) { v.forEach(push); return; }
+    if (typeof v === "object") {
+      const o = v as Json;
+      push(o.message ?? o.error_user_msg ?? o.title ?? o.details);
+      if (o.code != null) parts.push(`(#${o.code})`);
+      return;
+    }
+    parts.push(String(v));
+  };
+  for (const k of ["errors", "error_details", "details", "detail", "reason", "error_message", "error_code", "code", "result", "info"]) {
+    if (k in body && body[k] !== body.message) push(body[k]);
+  }
+  return [...new Set(parts)].join(" ").trim();
+}
+
+/** Códigos de Meta (Cloud API) que aparecen en las fallas de envío de WATI → causa y arreglo. */
+export function metaErrorHint(text: unknown): string | null {
+  const s = String(text ?? "");
+  const has = (c: string) => new RegExp(`(^|\\D)${c}(\\D|$)`).test(s);
+  if (has("131047") || /re-?engagement|more than 24 hours/i.test(s)) return "La ventana de 24 h de WhatsApp ya se cerró: envía una plantilla aprobada para reabrir la conversación.";
+  if (has("131026") || /undeliverable|not a whatsapp|not registered/i.test(s)) return "Ese número no puede recibir el mensaje (no tiene WhatsApp, te bloqueó o no aceptó los términos). Revisa el teléfono del lead.";
+  if (has("131037")) return accountBlockMessage("131037");
+  if (has("131048") || has("131056") || has("130429")) return "Meta limitó los envíos de tu número por volumen o por reportes de spam. Espera unos minutos/horas antes de reintentar.";
+  if (has("131049")) return "Meta decidió no entregar este mensaje para cuidar la experiencia del usuario. Reintenta más tarde o con una plantilla.";
+  if (has("131030")) return "El número del lead no está en la lista permitida de tu cuenta (modo de prueba de WhatsApp).";
+  if (has("131042") || /payment|billing/i.test(s)) return "Hay un problema de pago en tu cuenta de WhatsApp Business (Meta). Revisa la facturación en WhatsApp Manager.";
+  if (has("131031") || has("131045") || /account (has been )?(locked|restricted)|not registered/i.test(s)) return "Tu número de WhatsApp está restringido o sin registrar en Meta. Revisa WhatsApp Manager.";
+  if (/invalid.*(phone|number|target)|phone.*invalid/i.test(s)) return "El teléfono del lead no tiene un formato válido (usa el código de país, solo dígitos).";
+  return null;
 }
 
 // ── Cuenta / canales ────────────────────────────────────────────────────────
@@ -633,7 +674,8 @@ export function humanError(err: unknown): string {
     if (isWebhookLimitError(err)) {
       return "Tu cuenta de WATI ya llegó al máximo de webhooks y su API no permite listarlos ni borrarlos. Revisa la lista en WATI → Webhooks y deja puesta la URL de Predictable.";
     }
-    return err.message;
+    const hint = metaErrorHint(err.message);
+    return hint ? `${hint} [${err.message}]` : err.message;
   }
   return (err as Error)?.message || String(err);
 }

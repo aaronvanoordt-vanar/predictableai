@@ -266,6 +266,8 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
     r = await wati.sendText(creds, phone, text);
   } catch (e) {
     const status = e instanceof wati.WatiError && e.status >= 400 && e.status < 500 ? 400 : 502;
+    // Cuerpo completo de WATI en los logs de la función: es lo que dice el motivo real.
+    console.error("inbox-send whatsapp text failed", { phone, http: (e as wati.WatiError)?.status, body: JSON.stringify((e as wati.WatiError)?.body ?? null).slice(0, 1500) });
     throw new HttpError("WhatsApp no aceptó el mensaje: " + wati.humanError(e), status, "whatsapp_send_failed");
   }
   const localId = r.id || crypto.randomUUID();
