@@ -1230,6 +1230,11 @@
       '#prospecting-shell .cmp-bubble-subj { font-weight:600; margin-bottom:3px; }',
       '#prospecting-shell .cmp-bubble-meta { display:flex; align-items:center; gap:6px; font-size:10.5px; color:var(--text3); margin-top:5px; }',
       '#prospecting-shell .cmp-bubble-meta .cmp-ch-ic, #prospecting-shell .cmp-bubble-meta .cmp-ch-ic svg { width:13px; height:13px; }',
+      '#prospecting-shell .cmp-ticks { display:inline-flex; align-items:center; color:var(--text3); }',
+      '#prospecting-shell .cmp-ticks svg { width:16px; height:11px; }',
+      '#prospecting-shell .cmp-ticks svg[viewBox="0 0 16 16"] { width:12px; height:12px; }',
+      '#prospecting-shell .cmp-ticks-read { color:#34B7F1; }',
+      '#prospecting-shell .cmp-ticks-err { color:var(--red); font-weight:600; }',
       '#prospecting-shell .cmp-bubble.empty-body { font-style:italic; color:var(--text3); }',
       '#prospecting-shell .cmp-reply { border-top:1px solid var(--hair); padding:12px 14px; display:grid; gap:8px; }',
       '#prospecting-shell .cmp-reply textarea { width:100%; min-height:72px; }',
@@ -2693,6 +2698,23 @@
     if (pl.subject && msg.direction === 'out') return pl.subject;
     return msg.direction === 'in' ? 'Respuesta recibida (el texto no está disponible aquí).' : 'Mensaje enviado (texto no guardado).';
   }
+  // Estado de un saliente como en WhatsApp: reloj mientras se envía, un check
+  // si salió pero no llegó, dos si llegó, dos azules si lo leyó y "Error" (con
+  // el motivo) si no se envió. El texto va en el title para lectores de pantalla.
+  var TICK_1 = '<svg viewBox="0 0 16 11" aria-hidden="true"><path d="M11.1.7 4.6 7.2 1.9 4.5.8 5.6l3.8 3.8L12.2 1.8z" fill="currentColor"/></svg>';
+  var TICK_2 = '<svg viewBox="0 0 16 11" aria-hidden="true"><path d="M11.1.7 4.6 7.2 1.9 4.5.8 5.6l3.8 3.8L12.2 1.8zM15.2.7 8.7 7.2l-.8-.8-1.1 1.1 1.9 1.9L16.3 1.8z" fill="currentColor"/></svg>';
+  var TICK_CLOCK = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.6V8l2.3 1.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+  function deliveryTicks(msg) {
+    var st = String(msg.status || '');
+    if (st === 'failed') {
+      var detail = msg.error_detail ? String(msg.error_detail) : '';
+      return h('span', { class: 'cmp-ticks cmp-ticks-err', title: detail ? 'No se envió: ' + detail : 'No se envió', text: 'Error' + (detail ? ' · ' + detail : '') });
+    }
+    if (st === 'sending') return h('span', { class: 'cmp-ticks', title: 'Enviando…', html: TICK_CLOCK });
+    if (st === 'read' || st === 'replied') return h('span', { class: 'cmp-ticks cmp-ticks-read', title: 'Leído', html: TICK_2 });
+    if (st === 'delivered') return h('span', { class: 'cmp-ticks', title: 'Entregado', html: TICK_2 });
+    return h('span', { class: 'cmp-ticks', title: st === 'sent' ? 'Enviado' : 'Enviado · aún no entregado', html: TICK_1 });
+  }
   function stepContext(msg) {
     var pl = msg.payload || {};
     var parts = [];
@@ -2765,11 +2787,15 @@
       // Los emails salientes guardan "Asunto: …" al inicio del cuerpo: el asunto ya va arriba.
       if (chanKey(msg.channel) === 'email' && pl.subject && raw.indexOf('Asunto: ') === 0) raw = raw.replace(/^Asunto: [^\n]*\n+/, '');
       b.appendChild(h('div', { style: 'white-space:pre-wrap', text: raw }));
-      var status = msg.direction === 'out' ? (MSG_STATUS[msg.status] || msg.status || '') : (pl.reply_class ? String(pl.reply_class).replace(/_/g, ' ') : '');
-      if (msg.status === 'failed' && msg.error_detail) status += ' · ' + msg.error_detail;
       var meta = h('div', { class: 'cmp-bubble-meta', html: chanIcon(msg.channel) });
-      if (status) { meta.appendChild(h('span', { text: status })); meta.appendChild(h('span', { text: '·' })); }
-      meta.appendChild(h('span', { text: fmtDateTime(msg.sent_at) }));
+      if (msg.direction === 'out') {
+        meta.appendChild(h('span', { text: fmtDateTime(msg.sent_at) }));
+        meta.appendChild(deliveryTicks(msg));
+      } else {
+        var rc = pl.reply_class ? String(pl.reply_class).replace(/_/g, ' ') : '';
+        if (rc) { meta.appendChild(h('span', { text: rc })); meta.appendChild(h('span', { text: '·' })); }
+        meta.appendChild(h('span', { text: fmtDateTime(msg.sent_at) }));
+      }
       b.appendChild(meta);
       thread.appendChild(b);
     });
