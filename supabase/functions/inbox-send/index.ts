@@ -177,10 +177,27 @@ function templateParams(body: string, m: Json | null): Record<string, string> {
 async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | null, contactRef: string, text: string, template: string): Promise<Json> {
   const phone = wati.digits(member?.phone || contactRef);
   if (!phone) throw new HttpError("El lead no tiene teléfono.", 400, "member_without_phone");
-  const { data: acc } = await db.from("channel_accounts").select("*").eq("user_id", userId).eq("provider", "wati").maybeSingle();
+  // Las tres lecturas son independientes: van en paralelo (antes eran tres
+  // idas y vueltas seguidas a Postgres antes de tocar WATI).
+  const lastInQuery = () => {
+    let q = db
+      .from("inbox_messages")
+      .select("sent_at")
+      .eq("user_id", userId)
+      .eq("channel", "whatsapp")
+      .eq("direction", "in")
+      .order("sent_at", { ascending: false })
+      .limit(1);
+    q = member ? q.or(`member_id.eq.${member.id},contact_ref.eq.${phone}`) : q.eq("contact_ref", phone);
+    return q.maybeSingle();
+  };
+  const [{ data: acc }, en, lastInRes] = await Promise.all([
+    db.from("channel_accounts").select("*").eq("user_id", userId).eq("provider", "wati").maybeSingle(),
+    member ? latestEnrollment(db, userId, member.id) : Promise.resolve(null),
+    template ? Promise.resolve({ data: null }) : lastInQuery(),
+  ]);
   if (!acc || acc.status !== "connected") throw new HttpError("WhatsApp no está conectado.", 428, "whatsapp_not_connected");
   const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
-  const en = member ? await latestEnrollment(db, userId, member.id) : null;
 
   if (template) {
     const tpl = resolveTemplate(acc, template);
@@ -217,29 +234,19 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
       throw new HttpError("WhatsApp no aceptó la plantilla: " + wati.humanError(e), status, "whatsapp_send_failed");
     }
     if (!sent.accepted) throw new HttpError("WhatsApp rechazó la plantilla: " + (sent.errors.join("; ") || "sin detalle"), 400, "whatsapp_send_failed");
-    const { data: row, error } = await db.from("inbox_messages").insert({
+    const [{ data: row, error }] = await Promise.all([db.from("inbox_messages").insert({
       user_id: userId, member_id: member?.id ?? null, channel: "whatsapp", provider: "wati", direction: "out",
       contact_ref: phone, body: bodyText, provider_message_id: localId, status: "pending", sent_at: new Date().toISOString(),
       campaign_id: en?.campaign_id ?? null, enrollment_id: en?.id ?? null,
       payload: { source: "inbox_reply", content_kind: "template", template_name: tpl.name },
-    }).select("*").single();
+    }).select("*").single().then((r) => r), spendCredits(db, userId)]);
     if (error) throw new HttpError("La plantilla salió pero no se pudo guardar en la bandeja: " + error.message, 500);
-    await spendCredits(db, userId);
     return row;
   }
 
   // Ventana de 24 h: último entrante de ese número por WhatsApp.
   const now = Date.now();
-  let q = db
-    .from("inbox_messages")
-    .select("sent_at")
-    .eq("user_id", userId)
-    .eq("channel", "whatsapp")
-    .eq("direction", "in")
-    .order("sent_at", { ascending: false })
-    .limit(1);
-  q = member ? q.or(`member_id.eq.${member.id},contact_ref.eq.${phone}`) : q.eq("contact_ref", phone);
-  const { data: lastIn } = await q.maybeSingle();
+  const lastIn = lastInRes?.data as Json | null;
   const candidates = [lastIn?.sent_at, en?.last_inbound_whatsapp_at].map((v) => (v ? Date.parse(v) : 0)).filter((n) => n > 0);
   const lastInbound = candidates.length ? Math.max(...candidates) : 0;
   if (!lastInbound || now - lastInbound > WHATSAPP_SESSION_MS) {
@@ -254,7 +261,7 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
     throw new HttpError("WhatsApp no aceptó el mensaje: " + wati.humanError(e), status, "whatsapp_send_failed");
   }
   const localId = r.id || crypto.randomUUID();
-  const { data: row, error } = await db.from("inbox_messages").insert({
+  const [{ data: row, error }] = await Promise.all([db.from("inbox_messages").insert({
     user_id: userId,
     member_id: member?.id ?? null,
     channel: "whatsapp",
@@ -269,9 +276,8 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
     campaign_id: en?.campaign_id ?? null,
     enrollment_id: en?.id ?? null,
     payload: { source: "inbox_reply", wati_message_id: r.id },
-  }).select("*").single();
+  }).select("*").single().then((r) => r), spendCredits(db, userId)]);
   if (error) throw new HttpError("El mensaje salió pero no se pudo guardar en la bandeja: " + error.message, 500);
-  await spendCredits(db, userId);
   return row;
 }
 
@@ -280,31 +286,33 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
 async function sendEmail(db: SupabaseClient, userId: string, member: Json, text: string, subjectIn: string): Promise<Json> {
   const email = String(member.email ?? "");
   if (!email || /email_not_unlocked/.test(email)) throw new HttpError("El lead no tiene email revelado.", 400, "member_without_email");
-  let auth: apolloAuth.ApolloAuth;
-  try {
-    auth = await apolloAuth.resolveApolloAuth(db, userId);
-  } catch (e) {
+  // Credenciales, enrolamiento y último email nuestro (asunto por defecto e
+  // in_response_to) son independientes: una sola espera en vez de tres.
+  const [authRes, en, { data: lastOut }] = await Promise.all([
+    apolloAuth.resolveApolloAuth(db, userId).then((a) => ({ a, e: null as unknown }), (e) => ({ a: null, e })),
+    latestEnrollment(db, userId, member.id),
+    db
+      .from("inbox_messages")
+      .select("provider_message_id, provider_conversation_id, payload, campaign_id")
+      .eq("user_id", userId)
+      .eq("member_id", member.id)
+      .eq("channel", "email")
+      .eq("direction", "out")
+      .eq("provider", "apollo")
+      .order("sent_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  if (!authRes.a) {
+    const e = authRes.e;
     throw new HttpError("Email no está conectado.", e instanceof apolloAuth.ApolloError ? e.status : 503, "email_not_connected");
   }
+  const auth: apolloAuth.ApolloAuth = authRes.a;
   // Nunca contestar con la key compartida de la beta: es el buzón de otra
   // cuenta de Apollo (la de la plataforma), no el del usuario.
   if (auth.mode === "platform") {
     throw new HttpError("Conecta tu cuenta de Apollo para responder por email desde tu buzón.", 403, "email_not_connected");
   }
-  const en = await latestEnrollment(db, userId, member.id);
-
-  // Último email nuestro al lead: para el asunto por defecto y el in_response_to.
-  const { data: lastOut } = await db
-    .from("inbox_messages")
-    .select("provider_message_id, provider_conversation_id, payload, campaign_id")
-    .eq("user_id", userId)
-    .eq("member_id", member.id)
-    .eq("channel", "email")
-    .eq("direction", "out")
-    .eq("provider", "apollo")
-    .order("sent_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
   let subject = subjectIn.trim();
   if (!subject) {
     const prev = String(lastOut?.payload?.subject ?? "").trim();
@@ -363,7 +371,7 @@ async function sendEmail(db: SupabaseClient, userId: string, member: Json, text:
       throw new HttpError("Apollo no envió el correo: " + (r.failure_reason || r.not_sent_reason || "motivo no informado"), 502, "email_send_failed");
     }
     const threadId = r.provider_thread_id || draft?.emailer_message?.provider_thread_id || lastOut?.provider_conversation_id || null;
-    const { data: row, error } = await db.from("inbox_messages").insert({
+    const [{ data: row, error }] = await Promise.all([db.from("inbox_messages").insert({
       user_id: userId,
       member_id: member.id,
       channel: "email",
@@ -378,9 +386,8 @@ async function sendEmail(db: SupabaseClient, userId: string, member: Json, text:
       campaign_id: campaignId,
       enrollment_id: en?.id ?? null,
       payload: { source: "inbox_reply", subject, provider_thread_id: threadId, from_email: from.email, apollo_mode: auth.mode, in_reply_to: lastOut?.provider_message_id ?? null },
-    }).select("*").single();
+    }).select("*").single().then((r) => r), spendCredits(db, userId)]);
     if (error) throw new HttpError("El correo salió pero no se pudo guardar en la bandeja: " + error.message, 500);
-    await spendCredits(db, userId);
     return row;
   } catch (e) {
     if (e instanceof HttpError) throw e;
@@ -400,14 +407,12 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "POST only" }, 405, cors);
 
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
-  const { data: { user }, error: authErr } = await createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_ANON_KEY")!,
-  ).auth.getUser(token);
+  const [{ data: { user }, error: authErr }, body] = await Promise.all([
+    createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!).auth.getUser(token),
+    req.json().catch(() => undefined) as Promise<Json>,
+  ]);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, cors);
-
-  let body: Json;
-  try { body = await req.json(); } catch { return json({ error: "Invalid JSON body" }, 400, cors); }
+  if (body === undefined) return json({ error: "Invalid JSON body" }, 400, cors);
   const db = svc();
 
   try {

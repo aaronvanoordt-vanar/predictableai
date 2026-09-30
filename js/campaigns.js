@@ -112,11 +112,12 @@
     completed: { label: 'Terminada',  pill: 'gray' },
   };
   var MSG_STATUS = {
-    pending: 'Pendiente', queued: 'En cola', sent: 'Enviado', delivered: 'Entregado', read: 'Leído',
+    sending: 'Enviando…', pending: 'Pendiente', queued: 'En cola', sent: 'Enviado', delivered: 'Entregado', read: 'Leído',
     failed: 'Falló', received: 'Recibido', replied: 'Respondido',
   };
 
   var state = {
+    pendingOut: [],            // respuestas de la bandeja pintadas antes de que inbox-send conteste
     pane: null,
     root: null,
     uid: null,
@@ -151,6 +152,7 @@
     convKey: null,
     inboxFilter: { campaign: '', channel: '', status: '', q: '' },
     replyDraft: {},
+    sendingKey: {},
     replyChannel: {},
     waClosed: {},
     gmail: undefined,
@@ -817,7 +819,7 @@
       var res = await sb().from('inbox_messages').select('*').order('sent_at', { ascending: false }).limit(2000);
       if (res.error) throw new Error(res.error.message);
       var rows = res.data || [];
-      state.inbox = rows;
+      state.inbox = state.pendingOut.concat(rows);
       state.inboxHasReadAt = rows.length ? Object.prototype.hasOwnProperty.call(rows[0], 'read_at') : false;
       state.inboxError = null;
       var ids = [];
@@ -933,7 +935,7 @@
     filteredConversations(buildConversations()).forEach(function (c) { ids = ids.concat(c.unreadIds || []); });
     return markIdsRead(ids);
   }
-  async function sendReply(conv, channel, body, subject, template) {
+  async function sendReply(conv, channel, body, subject, template, onOptimistic) {
     if (!conv.member_id && !(channel === 'whatsapp' && conv.contact_ref)) throw new Error('Este contacto no está en tus listas; guárdalo en una lista para responderle.');
     var text = String(body || '').trim();
     if (!text && !template) throw new Error('Escribe el mensaje antes de enviar.');
@@ -941,10 +943,40 @@
     if (conv.member_id) payload.member_id = conv.member_id; else payload.contact_ref = conv.contact_ref;
     if (template) payload.template = template;
     if (channel === 'email') payload.subject = String(subject || '').trim() || 'Re:';
-    var r = await edgeFetch(FN_INBOX, payload);
-    if (r && r.message && r.message.id) state.inbox.unshift(r.message);
-    if (!template) state.replyDraft[conv.key] = '';
-    await loadInbox();
+    // El mensaje aparece en el hilo al instante ("Enviando…") y el cuadro se
+    // vacía; inbox-send corre detrás. Antes se esperaba el envío y además se
+    // recargaba toda la bandeja (hasta 2000 filas) antes de pintar nada; el
+    // realtime de inbox_messages ya trae los cambios de estado después.
+    var local = null;
+    if (!template) {
+      local = {
+        id: 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+        member_id: conv.member_id || null, contact_ref: conv.contact_ref || '', channel: channel,
+        direction: 'out', body: channel === 'email' ? 'Asunto: ' + payload.subject + '\n\n' + text : text,
+        status: 'sending', sent_at: new Date().toISOString(),
+        payload: channel === 'email' ? { source: 'inbox_reply', subject: payload.subject } : { source: 'inbox_reply' },
+      };
+      state.pendingOut.unshift(local);
+      state.inbox.unshift(local);
+      state.replyDraft[conv.key] = '';
+      if (onOptimistic) onOptimistic();
+    }
+    function dropLocal() {
+      if (!local) return;
+      state.pendingOut = state.pendingOut.filter(function (x) { return x !== local; });
+      state.inbox = state.inbox.filter(function (x) { return x !== local; });
+    }
+    var r;
+    try {
+      r = await edgeFetch(FN_INBOX, payload);
+    } catch (e) {
+      dropLocal();
+      if (local && !state.replyDraft[conv.key]) state.replyDraft[conv.key] = text; // no perder lo escrito
+      throw e;
+    }
+    dropLocal();
+    var row = r && r.message;
+    if (row && row.id && !state.inbox.some(function (x) { return x.id === row.id; })) state.inbox.unshift(row);
   }
   /** Guarda un contacto de la bandeja (sin lead) en una lista y enlaza sus mensajes. */
   function saveContactToList(conv) {
@@ -2786,7 +2818,7 @@
       lta.value = state.replyDraft[conv.key] || '';
       box.appendChild(lta);
       var lfoot = h('div', { class: 'cmp-reply-row' });
-      lfoot.appendChild(h('span', { class: 'pros-hint', text: 'Ni Dripify ni LinkedIn permiten enviar mensajes por API: copiamos tu respuesta y abrimos el perfil para que la pegues en el chat.' }));
+      lfoot.appendChild(h('span', { class: 'pros-hint', text: 'Ni Dripify ni LinkedIn permiten enviar mensajes por API: copiamos tu respuesta y abrimos el perfil para que la pegues en el chat. Enter copia y abre · Shift+Enter, nueva línea.' }));
       lfoot.appendChild(aiDraftBtn(conv, 'linkedin'));
       lfoot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-linkedin', 'data-key': conv.key, text: 'Copiar y abrir LinkedIn' }));
       box.appendChild(lfoot);
@@ -2829,7 +2861,7 @@
     ta.value = state.replyDraft[conv.key] || '';
     box.appendChild(ta);
     var foot = h('div', { class: 'cmp-reply-row' });
-    foot.appendChild(h('span', { class: 'pros-hint', text: chosen === 'whatsapp' ? 'Texto libre dentro de las 24 h desde el último mensaje del lead. Sale desde tu número de WhatsApp.' : 'Sale como respuesta individual desde tu cuenta de email.' }));
+    foot.appendChild(h('span', { class: 'pros-hint', text: (chosen === 'whatsapp' ? 'Texto libre dentro de las 24 h desde el último mensaje del lead. Sale desde tu número de WhatsApp.' : 'Sale como respuesta individual desde tu cuenta de email.') + ' Enter envía · Shift+Enter, nueva línea.' }));
     foot.appendChild(aiDraftBtn(conv, chosen));
     foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-send', 'data-key': conv.key, 'data-channel': chosen, text: 'Enviar por ' + CH[chosen].label }));
     box.appendChild(foot);
@@ -3079,15 +3111,20 @@
       if (!conv2) return;
       var ta = state.root.querySelector('textarea[data-action="reply-draft"][data-key="' + key + '"]');
       var subj = state.root.querySelector('input[data-action="reply-subject"][data-key="' + key + '"]');
-      var r6 = btnLoading(btn, '⏳ Enviando…');
-      return sendReply(conv2, channel, ta ? ta.value : '', subj ? subj.value : '').then(function () {
+      if (state.sendingKey[key]) return;
+      state.sendingKey[key] = true;
+      return sendReply(conv2, channel, ta ? ta.value : '', subj ? subj.value : '', null, function () {
+        state.sendingKey[key] = false; // ya se pintó: se puede escribir y mandar el siguiente
+        renderKeepingReplyFocus(key);
+      }).then(function () {
+        state.sendingKey[key] = false;
         delete state.replyDraft[key + ':subject'];
-        toast('Respuesta enviada por ' + CH[channel].label + '.', 'success');
-        r6();
-        render();
+        if (state.view === 'inbox') renderKeepingReplyFocus(key);
       }, function (err) {
-        r6();
-        if (err && err.code === 'whatsapp_window_closed') { state.waClosed[key] = true; render(); return; }
+        state.sendingKey[key] = false;
+        if (err && err.code === 'whatsapp_window_closed') { state.waClosed[key] = true; render(); }
+        else if (state.view === 'inbox') renderKeepingReplyFocus(key);
+        if (err && err.code === 'whatsapp_window_closed') return;
         throw err;
       });
     }
@@ -3182,6 +3219,29 @@
     }
   }
 
+  /** Repinta y devuelve el foco al cuadro de respuesta si lo tenía (para seguir escribiendo). */
+  function renderKeepingReplyFocus(key) {
+    var a = document.activeElement;
+    var had = !a || a === document.body || (a.getAttribute && a.getAttribute('data-action') === 'reply-draft');
+    render();
+    if (!had || !state.root) return;
+    var ta = state.root.querySelector('textarea[data-action="reply-draft"][data-key="' + key + '"]');
+    if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
+  }
+  // En la bandeja Enter envía y Shift+Enter hace un salto de línea (como en
+  // WhatsApp). Se respeta la composición del IME (acentos, emojis).
+  function onKeyDown(e) {
+    var t = e.target;
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+    if (!t || !t.getAttribute || t.getAttribute('data-action') !== 'reply-draft') return;
+    var box = t.closest('.cmp-reply');
+    var send = box && box.querySelector('[data-action="reply-send"], [data-action="reply-linkedin"]');
+    if (!send || send.disabled) return;
+    e.preventDefault();
+    if (!t.value.trim()) return;
+    send.click();
+  }
+
   function onInput(e) {
     var t = e.target;
     var action = t.getAttribute && t.getAttribute('data-action');
@@ -3247,6 +3307,7 @@
       pane.addEventListener('click', guarded(onClick));
       pane.addEventListener('change', guarded(onChange));
       pane.addEventListener('input', guarded(onInput));
+      pane.addEventListener('keydown', onKeyDown);
       built = true;
     }
     if (!built) return;
