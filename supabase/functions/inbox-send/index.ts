@@ -270,7 +270,7 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
 
   let r: { id: string | null; conversationId: string | null };
   try {
-    r = await wati.sendText(creds, phone, text);
+    r = await wati.sendText(creds, phone, text, acc.config?.channel || undefined);
   } catch (e) {
     const status = e instanceof wati.WatiError && e.status >= 400 && e.status < 500 ? 400 : 502;
     // Cuerpo completo de WATI en los logs de la función: es lo que dice el motivo real.

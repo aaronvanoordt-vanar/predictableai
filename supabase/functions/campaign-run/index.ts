@@ -618,7 +618,7 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       }
       if (!bodyText.trim()) throw new StepError("No hay mensaje personalizado generado para este lead.", "skip");
       let r: { id: string | null; conversationId: string | null };
-      try { r = await wati.sendText(creds, phone, bodyText); }
+      try { r = await wati.sendText(creds, phone, bodyText, acc.config?.channel || undefined); }
       catch (e) { throw new StepError("WATI no aceptó el mensaje: " + wati.humanError(e), e instanceof wati.WatiError && e.status === 401 ? "hold" : "fail"); }
       if (!r.id) throw new StepError("WATI no confirmó el mensaje.", "fail");
     }
