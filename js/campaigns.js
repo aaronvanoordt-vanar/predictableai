@@ -1126,7 +1126,7 @@
       '#prospecting-shell .cmp-card { background:var(--surface); border:1px solid var(--hair); border-radius:var(--r-md); padding:14px; cursor:pointer; display:flex; flex-direction:column; gap:10px; }',
       '#prospecting-shell .cmp-card:hover { border-color:var(--accent-2); }',
       '#prospecting-shell .cmp-card-head { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }',
-      '#prospecting-shell .cmp-card-name { font-weight:600; font-size:14px; }',
+      '#prospecting-shell .cmp-card-name { font-weight:600; font-size:14px; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }',
       '#prospecting-shell .cmp-card-ch { display:flex; gap:6px; }',
       '#prospecting-shell .cmp-card-kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }',
       '#prospecting-shell .cmp-card-kpis b { display:block; font-size:18px; font-weight:700; }',
