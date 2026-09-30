@@ -493,11 +493,11 @@ export async function sendTemplate(creds: WatiCreds, input: SendTemplateInput): 
 }
 
 /** POST /api/ext/v3/conversations/messages/text — solo con sesión activa (24 h). */
-export async function sendText(creds: WatiCreds, phone: string, text: string): Promise<{ id: string | null; conversationId: string | null }> {
-  const data = await call(creds, "POST", "/api/ext/v3/conversations/messages/text", {
-    target: digits(phone),
-    text,
-  });
+export async function sendText(creds: WatiCreds, phone: string, text: string, channel?: string): Promise<{ id: string | null; conversationId: string | null }> {
+  const body: Json = { target: digits(phone), text };
+  // Igual que sendTemplate: sin `channel` WATI no sabe desde qué número enviar.
+  if (channel && digits(channel).length >= 8) body.channel = digits(channel);
+  const data = await call(creds, "POST", "/api/ext/v3/conversations/messages/text", body);
   const m = data?.message ?? data ?? {};
   return { id: m.id ? String(m.id) : null, conversationId: m.conversation_id ? String(m.conversation_id) : null };
 }
