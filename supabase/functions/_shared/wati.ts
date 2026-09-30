@@ -528,6 +528,127 @@ export async function sendReaction(
   };
 }
 
+// ── Medios entrantes (fotos, videos, stickers, audios, documentos) ──────────
+
+/** Tipos de mensaje de WATI que traen un archivo descargable. */
+export const MEDIA_TYPES = ["image", "video", "sticker", "audio", "voice", "document"] as const;
+
+export function isMediaType(type: unknown): boolean {
+  return (MEDIA_TYPES as readonly string[]).includes(String(type ?? ""));
+}
+
+/** Tope de lo que se descarga (WhatsApp limita los medios a 16 MB; los documentos a 100). */
+export const MEDIA_MAX_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Nombre de archivo de WATI dentro de `data` del webhook ("data/images/x.jpg"
+ * o una URL …/showFile?fileName=data/images/x.jpg). Sirve para el camino v1
+ * (/api/v1/getMedia?fileName=…) cuando el v3 por id no responde.
+ */
+export function mediaFileName(data: unknown): string | null {
+  if (data == null) return null;
+  if (typeof data === "object") {
+    const d = data as Json;
+    return mediaFileName(d.fileName ?? d.file_name ?? d.url ?? d.link ?? d.path ?? null);
+  }
+  const s = String(data).trim();
+  if (!s) return null;
+  const q = s.match(/[?&]fileName=([^&#]+)/i);
+  if (q) { try { return decodeURIComponent(q[1]); } catch { return q[1]; } }
+  if (/^data\//i.test(s)) return s;
+  return null;
+}
+
+/**
+ * Content-Type real del archivo. WATI responde `application/octet-stream`, y
+ * con eso el navegador no pinta ni la imagen ni el sticker: se deduce de los
+ * primeros bytes y, si no se reconoce, del tipo de mensaje.
+ */
+export function sniffMediaType(bytes: Uint8Array, msgType: string, header?: string | null): string {
+  const h = String(header ?? "").split(";")[0].trim().toLowerCase();
+  const b = bytes;
+  const at = (i: number, s: string) => s.split("").every((c, k) => b[i + k] === c.charCodeAt(0));
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (b.length >= 8 && b[0] === 0x89 && at(1, "PNG")) return "image/png";
+  if (b.length >= 6 && at(0, "GIF8")) return "image/gif";
+  if (b.length >= 12 && at(0, "RIFF") && at(8, "WEBP")) return "image/webp";
+  if (b.length >= 5 && at(0, "%PDF-")) return "application/pdf";
+  if (b.length >= 4 && at(0, "OggS")) return "audio/ogg";
+  if (b.length >= 3 && at(0, "ID3")) return "audio/mpeg";
+  if (b.length >= 12 && at(4, "ftyp")) {
+    const brand = String.fromCharCode(...b.slice(8, 12));
+    if (/^M4A/.test(brand)) return "audio/mp4";
+    if (/^(3gp|3g2)/.test(brand)) return "video/3gpp";
+    return msgType === "audio" || msgType === "voice" ? "audio/mp4" : "video/mp4";
+  }
+  if (h && h !== "application/octet-stream" && h !== "binary/octet-stream") return h;
+  const byType: Record<string, string> = {
+    image: "image/jpeg", sticker: "image/webp", video: "video/mp4",
+    audio: "audio/ogg", voice: "audio/ogg", document: "application/octet-stream",
+  };
+  return byType[msgType] ?? "application/octet-stream";
+}
+
+async function fetchBinary(creds: WatiCreds, path: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; header: string | null }> {
+  const res = await fetch(`${baseFor(creds, path)}${path}`, {
+    method: "GET",
+    signal: AbortSignal.timeout(30_000),
+    headers: { "Authorization": `Bearer ${creds.token}`, "Accept": "*/*" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new WatiError(`WATI respondió ${res.status} al descargar el archivo`, res.status, { raw: text.slice(0, 300) });
+  }
+  const len = Number(res.headers.get("content-length") ?? 0);
+  if (len > MEDIA_MAX_BYTES) throw new WatiError("El archivo es demasiado grande para mostrarlo aquí.", 413);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.byteLength > MEDIA_MAX_BYTES) throw new WatiError("El archivo es demasiado grande para mostrarlo aquí.", 413);
+  const header = res.headers.get("content-type");
+  // Un 200 con JSON o HTML es un error disfrazado (id desconocido, login).
+  if (/json|html/i.test(header ?? "") && bytes.byteLength < 4096) {
+    throw new WatiError("WATI no devolvió el archivo.", 404, { raw: new TextDecoder().decode(bytes).slice(0, 300) });
+  }
+  return { bytes, header };
+}
+
+/** GET /api/ext/v3/conversations/messages/file/{message_id} (id de WATI, no el WAMID). */
+export function getMediaByMessageId(creds: WatiCreds, messageId: string) {
+  return fetchBinary(creds, `/api/ext/v3/conversations/messages/file/${encodeURIComponent(messageId)}`);
+}
+
+/** GET /{tenant}/api/v1/getMedia?fileName=… (legacy; nombre sacado de `data` del webhook). */
+export function getMediaByFileName(creds: WatiCreds, fileName: string) {
+  return fetchBinary(creds, `/api/v1/getMedia?fileName=${encodeURIComponent(fileName)}`);
+}
+
+/**
+ * Id de WATI de un mensaje entrante que se guardó sin él (antes del
+ * 2026-09-30 el webhook solo guardaba el WAMID). Busca en el historial de la
+ * conversación un mensaje del lead del mismo tipo creado a ±5 s.
+ */
+export async function findInboundMessageId(creds: WatiCreds, phone: string, type: string, sentAt: string, wamid?: string | null): Promise<string | null> {
+  const target = new Date(sentAt).getTime();
+  if (!digits(phone) || isNaN(target)) return null;
+  let best: { id: string; diff: number } | null = null;
+  for (let page = 1; page <= 3; page++) {
+    const data = await call(creds, "GET", `/api/ext/v3/conversations/${encodeURIComponent(digits(phone))}/messages?page_number=${page}&page_size=100`);
+    const list: Json[] = Array.isArray(data?.message_list) ? data.message_list : [];
+    for (const m of list) {
+      if (!m?.id) continue;
+      const mw = m.whatsapp_message_id ?? m.whatsappMessageId ?? null;
+      if (wamid && mw && String(mw) === wamid) return String(m.id);
+      if (m.owner === true || String(m.type ?? "") !== type) continue;
+      const diff = Math.abs(new Date(m.created ?? m.timestamp).getTime() - target);
+      if (!isNaN(diff) && diff <= 5_000 && (!best || diff < best.diff)) best = { id: String(m.id), diff };
+    }
+    if (best || list.length < 100) break;
+    // La lista viene de lo más nuevo a lo más viejo: si el último de la página ya es anterior, no hay más que buscar.
+    const oldest = list[list.length - 1];
+    if (new Date(oldest?.created ?? oldest?.timestamp).getTime() < target - 60_000) break;
+  }
+  return best?.id ?? null;
+}
+
 // ── Webhooks ────────────────────────────────────────────────────────────────
 
 /**

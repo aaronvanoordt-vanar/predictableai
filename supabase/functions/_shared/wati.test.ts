@@ -16,6 +16,7 @@
  */
 
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
+import * as wati from "./wati.ts";
 import {
   ACCOUNT_BLOCK_RETRY_MS,
   accountBlockCode,
@@ -222,4 +223,32 @@ Deno.test("parseReaction: forma de Meta dentro de data (objeto o JSON)", () => {
 Deno.test("parseReaction: reacción quitada o texto raro → emoji vacío", () => {
   assertEquals(parseReaction({ type: "reaction", text: "", replyContextId: "wamid.X" }), { emoji: "", target: "wamid.X" });
   assertEquals(parseReaction({ type: "reaction", text: "Reacción" }), { emoji: "", target: null });
+});
+
+// ── Medios entrantes ────────────────────────────────────────────────────────
+
+Deno.test("mediaFileName: saca el fileName de la URL de WATI, de la ruta o de un objeto", () => {
+  assertEquals(wati.mediaFileName("https://live-mt-server.wati.io/123/api/file/showFile?fileName=data%2Fimages%2Fa.jpg"), "data/images/a.jpg");
+  assertEquals(wati.mediaFileName("data/stickers/x.webp"), "data/stickers/x.webp");
+  assertEquals(wati.mediaFileName({ url: "https://x.wati.io/showFile?fileName=data/v.mp4&t=1" }), "data/v.mp4");
+  assertEquals(wati.mediaFileName("hola, ¿cómo estás?"), null);
+  assertEquals(wati.mediaFileName(null), null);
+});
+
+Deno.test("isMediaType: solo los tipos con archivo", () => {
+  for (const t of ["image", "video", "sticker", "audio", "voice", "document"]) assertEquals(wati.isMediaType(t), true);
+  for (const t of ["text", "button", "location", "reaction", "", undefined]) assertEquals(wati.isMediaType(t), false);
+});
+
+Deno.test("sniffMediaType: los bytes mandan sobre el octet-stream de WATI", () => {
+  const b = (...xs: (number | string)[]) => new Uint8Array(xs.flatMap((x) => typeof x === "string" ? x.split("").map((c) => c.charCodeAt(0)) : [x]));
+  assertEquals(wati.sniffMediaType(b(0xff, 0xd8, 0xff, 0xe0), "image", "application/octet-stream"), "image/jpeg");
+  assertEquals(wati.sniffMediaType(b("RIFF", 0, 0, 0, 0, "WEBPVP8 "), "sticker", "application/octet-stream"), "image/webp");
+  assertEquals(wati.sniffMediaType(b(0x89, "PNG", 13, 10, 26, 10), "image", null), "image/png");
+  assertEquals(wati.sniffMediaType(b("OggS", 0), "voice", "application/octet-stream"), "audio/ogg");
+  assertEquals(wati.sniffMediaType(b(0, 0, 0, 0x18, "ftypmp42"), "video", null), "video/mp4");
+  assertEquals(wati.sniffMediaType(b("%PDF-1.7"), "document", null), "application/pdf");
+  // Sin firma conocida: el header si es útil, si no el tipo de mensaje.
+  assertEquals(wati.sniffMediaType(b(1, 2, 3), "document", "application/vnd.ms-excel"), "application/vnd.ms-excel");
+  assertEquals(wati.sniffMediaType(b(1, 2, 3), "sticker", "application/octet-stream"), "image/webp");
 });

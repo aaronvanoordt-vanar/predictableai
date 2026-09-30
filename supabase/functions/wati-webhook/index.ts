@@ -69,7 +69,9 @@ function inboundText(ev: Json): string {
   const reaction = wati.parseReaction(ev);
   if (reaction) return reaction.emoji || "Reacción quitada";
   const btn = ev?.buttonReply?.text ?? ev?.buttonReply?.title ?? ev?.interactiveButtonReply?.title ?? ev?.listReply?.title ?? "";
-  if (ev?.text) return String(ev.text);
+  // En fotos y videos `text` es el pie de foto; a veces WATI pone ahí la URL
+  // del archivo (…/showFile?fileName=…), que no es texto del lead.
+  if (ev?.text && !wati.mediaFileName(ev.text)) return String(ev.text);
   if (btn) return String(btn);
   const label: Record<string, string> = {
     image: "📷 Foto", video: "🎬 Video", audio: "🎤 Audio", voice: "🎤 Audio",
@@ -175,7 +177,20 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
       sent_at: at,
       campaign_id: primary?.campaign_id ?? null,
       enrollment_id: primary?.id ?? null,
-      payload: { type: ev?.type ?? null, senderName: ev?.senderName ?? null, buttonReply: ev?.buttonReply ?? null, sourceType: ev?.sourceType ?? null, ...reactionPayload(ev) },
+      payload: {
+        type: ev?.type ?? null, senderName: ev?.senderName ?? null, buttonReply: ev?.buttonReply ?? null, sourceType: ev?.sourceType ?? null,
+        // Foto, video, sticker, audio o documento: la bandeja lo descarga por
+        // inbox-send {action:"media"} con el id de WATI (o el fileName, v1).
+        ...(wati.isMediaType(ev?.type)
+          ? {
+            media: true,
+            wati_id: ev?.id ? String(ev.id) : null,
+            media_file: wati.mediaFileName(ev?.data) ?? wati.mediaFileName(ev?.text),
+            caption: ev?.text && !wati.mediaFileName(ev.text) ? String(ev.text).slice(0, 2000) : null,
+          }
+          : {}),
+        ...reactionPayload(ev),
+      },
     }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true })
     .select("id");
   if (insErr) console.error("[wati-webhook] inbox insert:", insErr.message);
