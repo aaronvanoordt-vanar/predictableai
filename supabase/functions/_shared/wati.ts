@@ -690,6 +690,24 @@ export async function findInboundMessageId(creds: WatiCreds, phone: string, type
   return best?.id ?? null;
 }
 
+/**
+ * Ids que WATI guarda de un mensaje identificado por su WAMID: el suyo (`id`,
+ * que es lo que guardan las respuestas de la bandeja como provider_message_id)
+ * y el nuestro (`local_message_id`, el de las plantillas). Sirve para enlazar
+ * una reacción a un saliente que se guardó sin wamid. Hasta 3 páginas de 100.
+ */
+export async function findIdsByWamid(creds: WatiCreds, phone: string, wamid: string): Promise<string[]> {
+  if (!digits(phone) || !wamid) return [];
+  for (let page = 1; page <= 3; page++) {
+    const data = await call(creds, "GET", `/api/ext/v3/conversations/${encodeURIComponent(digits(phone))}/messages?page_number=${page}&page_size=100`);
+    const list: Json[] = Array.isArray(data?.message_list) ? data.message_list : [];
+    const m = list.find((x) => String(x?.whatsapp_message_id ?? x?.whatsappMessageId ?? "") === wamid);
+    if (m) return [m.id, m.local_message_id, m.localMessageId].filter(Boolean).map(String);
+    if (list.length < 100) break;
+  }
+  return [];
+}
+
 // ── Webhooks ────────────────────────────────────────────────────────────────
 
 /**

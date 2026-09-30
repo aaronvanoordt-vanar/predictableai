@@ -197,9 +197,11 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
   // Reentrega del mismo mensaje: no volver a disparar efectos.
   if (wamid && (!inserted || !inserted.length)) return;
 
+  const reaction = wati.parseReaction(ev);
+  if (reaction?.target) await linkReactionTarget(db, acc, waId, reaction.target);
+
   if (!member) return; // número sin lead asociado: queda en la bandeja igual
   // Quitar una reacción no es una respuesta: no detiene la cadencia ni cambia el CRM.
-  const reaction = wati.parseReaction(ev);
   if (reaction && !reaction.emoji) return;
 
   const optOut = isOptOut(ev);
@@ -245,6 +247,29 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
     }
   }
   await setContactStatus(db, member, optOut ? "dado_de_baja" : "respondio");
+}
+
+/**
+ * La reacción apunta a un WAMID. Si el mensaje reaccionado es un saliente que
+ * se guardó sin él (recibos que no llegaron, o de antes del 2026-09-30), se
+ * busca en el historial de WATI su id y se le sella payload.wamid: así la
+ * bandeja pinta la reacción pegada a ese mensaje. Falla suave.
+ */
+async function linkReactionTarget(db: SupabaseClient, acc: Json, waId: string, wamid: string) {
+  try {
+    const { data: known } = await db.from("inbox_messages").select("id")
+      .eq("user_id", acc.user_id).eq("provider", "wati")
+      .or(`provider_message_id.eq."${wamid}",payload->>wamid.eq."${wamid}"`).limit(1);
+    if (known?.length) return;
+    const ids = await wati.findIdsByWamid({ endpoint: acc.config?.endpoint, token: acc.secret }, waId, wamid);
+    if (!ids.length) return;
+    const { data: rows } = await db.from("inbox_messages").select("id, payload")
+      .eq("user_id", acc.user_id).eq("provider", "wati").eq("direction", "out").in("provider_message_id", ids).limit(1);
+    const row = rows?.[0];
+    if (row) await db.from("inbox_messages").update({ payload: { ...(row.payload ?? {}), wamid } }).eq("id", row.id);
+  } catch (e) {
+    console.error("[wati-webhook] reaction target:", (e as Error).message);
+  }
 }
 
 async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sent" | "delivered" | "read" | "replied" | "failed") {
