@@ -1247,6 +1247,11 @@
       '#prospecting-shell .cmp-ticks-read { color:#34B7F1; }',
       '#prospecting-shell .cmp-ticks-err { color:var(--red); font-weight:600; }',
       '#prospecting-shell .cmp-bubble.empty-body { font-style:italic; color:var(--text3); }',
+      '#prospecting-shell .cmp-media { margin:-2px 0 4px; min-height:40px; }',
+      '#prospecting-shell .cmp-media img, #prospecting-shell .cmp-media video { display:block; max-width:min(320px, 100%); max-height:360px; border-radius:10px; cursor:zoom-in; }',
+      '#prospecting-shell .cmp-media.sticker img { max-width:140px; max-height:140px; background:transparent; cursor:default; }',
+      '#prospecting-shell .cmp-media audio { display:block; width:260px; max-width:100%; }',
+      '#prospecting-shell .cmp-media-note { font-size:12px; color:var(--text3); font-style:italic; }',
       '#prospecting-shell .cmp-reply { border-top:1px solid var(--hair); padding:12px 14px; display:grid; gap:8px; }',
       '#prospecting-shell .cmp-reply textarea { width:100%; min-height:72px; }',
       '#prospecting-shell .cmp-reply input { width:100%; }',
@@ -2744,6 +2749,67 @@
     var m = conv.member;
     return safeUrl(m ? m.linkedin_url : ((conv.lead && conv.lead.linkedin_url) || (conv.channel === 'linkedin' ? conv.contact_ref : '')));
   }
+  // Fotos, videos, stickers, audios y documentos que el lead mandó por
+  // WhatsApp: el archivo vive en WATI y lo baja inbox-send {action:"media"}
+  // con la credencial de la cuenta. Se pide al pintar la burbuja y el blob se
+  // guarda por id para que re-pintar la bandeja no lo vuelva a descargar.
+  var MEDIA_TYPES = ['image', 'video', 'sticker', 'audio', 'voice', 'document'];
+  var MEDIA_LABELS = ['📷 Foto', '🎬 Video', '🎤 Audio', '📄 Documento', 'Sticker'];
+  var mediaCache = {}; // id → Promise<{ url, type }>
+  function isMediaMsg(msg) {
+    var pl = msg.payload || {};
+    return chanKey(msg.channel) === 'whatsapp' && msg.direction === 'in' && msg.provider === 'wati' && MEDIA_TYPES.indexOf(String(pl.type || '')) !== -1;
+  }
+  function loadMedia(id) {
+    if (mediaCache[id]) return mediaCache[id];
+    mediaCache[id] = (async function () {
+      var sess = await sb().auth.getSession();
+      var token = sess && sess.data && sess.data.session ? sess.data.session.access_token : null;
+      if (!token) throw new Error('Sesión expirada. Vuelve a iniciar sesión.');
+      var res = await fetch(global.SUPABASE_CONFIG.url + '/functions/v1/' + FN_INBOX, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ action: 'media', id: id }),
+      });
+      if (!res.ok) {
+        var body = null;
+        try { body = await res.json(); } catch (e) { /* no-JSON */ }
+        throw new Error((body && (body.message || body.error)) || ('HTTP ' + res.status));
+      }
+      var blob = await res.blob();
+      return { url: URL.createObjectURL(blob), type: blob.type || '' };
+    })();
+    // Un fallo no queda cacheado: al volver a abrir la conversación se reintenta.
+    mediaCache[id].catch(function () { delete mediaCache[id]; });
+    return mediaCache[id];
+  }
+  function renderMedia(msg) {
+    var kind = String((msg.payload || {}).type || '');
+    var box = h('div', { class: 'cmp-media' + (kind === 'sticker' ? ' sticker' : '') });
+    var note = h('div', { class: 'cmp-media-note', text: 'Cargando archivo…' });
+    box.appendChild(note);
+    loadMedia(msg.id).then(function (m) {
+      box.innerHTML = '';
+      var t = m.type;
+      var el;
+      if (/^image\//.test(t) || (!t && (kind === 'image' || kind === 'sticker'))) {
+        el = h('img', { src: m.url, alt: kind === 'sticker' ? 'Sticker' : 'Foto', loading: 'lazy' });
+        if (kind !== 'sticker') el.addEventListener('click', function () { global.open(m.url, '_blank', 'noopener'); });
+      } else if (/^video\//.test(t) || kind === 'video') {
+        el = h('video', { src: m.url, controls: 'controls', preload: 'metadata', playsinline: 'playsinline' });
+      } else if (/^audio\//.test(t) || kind === 'audio' || kind === 'voice') {
+        el = h('audio', { src: m.url, controls: 'controls', preload: 'metadata' });
+      } else {
+        var ext = t === 'application/pdf' ? '.pdf' : '';
+        el = h('a', { href: m.url, download: 'documento-whatsapp' + ext, target: '_blank', rel: 'noopener', class: 'cmp-link', text: '📄 Abrir documento' });
+      }
+      box.appendChild(el);
+    }).catch(function (err) {
+      note.textContent = 'No se pudo cargar el archivo: ' + errMsg(err);
+    });
+    return box;
+  }
+
   function renderThread(conv) {
     var card = h('div', { class: 'table-card' });
     var m = conv.member;
@@ -2794,10 +2860,13 @@
       var ctx = msg.direction === 'out' ? stepContext(msg) : '';
       if (ctx) b.appendChild(h('div', { class: 'cmp-bubble-ctx', text: ctx }));
       if (chanKey(msg.channel) === 'email' && pl.subject) b.appendChild(h('div', { class: 'cmp-bubble-subj', text: pl.subject }));
+      var media = isMediaMsg(msg);
+      if (media) b.appendChild(renderMedia(msg));
       var raw = bubbleText(msg);
       // Los emails salientes guardan "Asunto: …" al inicio del cuerpo: el asunto ya va arriba.
       if (chanKey(msg.channel) === 'email' && pl.subject && raw.indexOf('Asunto: ') === 0) raw = raw.replace(/^Asunto: [^\n]*\n+/, '');
-      b.appendChild(h('div', { style: 'white-space:pre-wrap', text: raw }));
+      // En un medio, el texto es la etiqueta ("Sticker", "📷 Foto"): solo se muestra si es un pie de foto real.
+      if (!media || MEDIA_LABELS.indexOf(String(raw).trim()) === -1) b.appendChild(h('div', { style: 'white-space:pre-wrap', text: raw }));
       var meta = h('div', { class: 'cmp-bubble-meta', html: chanIcon(msg.channel) });
       if (msg.direction === 'out') {
         meta.appendChild(h('span', { text: fmtDateTime(msg.sent_at) }));
