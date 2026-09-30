@@ -560,6 +560,9 @@ export async function sendReaction(
     text: input.emoji,
     replyContextId: input.targetWamid,
     localMessageId: input.localMessageId,
+    // Obligatorio en este endpoint: sin él responde «Category is required and
+    // must be 'utility'» (comprobado el 2026-09-30 con el tenant real).
+    category: "utility",
   });
   const accepted = data?.result !== false && data?.ok !== false;
   return {
