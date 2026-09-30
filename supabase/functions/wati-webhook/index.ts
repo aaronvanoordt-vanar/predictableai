@@ -216,24 +216,52 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
 
 async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sent" | "delivered" | "read" | "replied" | "failed") {
   if (kind === "delivered" || kind === "read" || kind === "replied") await clearAccountBlock(db, acc);
-  const local = ev?.localMessageId ? String(ev.localMessageId) : null;
-  if (!local) return;
   const at = eventDate(ev);
   const wamid = ev?.whatsappMessageId ? String(ev.whatsappMessageId) : null;
-
-  // Mensaje saliente en la bandeja (lo creó campaign-run con nuestro id).
-  const inboxStatus = kind === "replied" ? "read" : kind;
-  const inboxPatch: Json = { status: inboxStatus };
-  if (wamid) inboxPatch.payload = { wamid, conversationId: ev?.conversationId ?? null };
-  if (kind === "failed") inboxPatch.error_detail = `${ev?.failedCode ?? ""} ${ev?.failedDetail ?? ""}`.trim().slice(0, 300);
-  const { data: msg } = await db
+  // Las plantillas (campaign-run, plantilla desde la bandeja) se guardan con
+  // NUESTRO id, que vuelve como `localMessageId`. El texto libre de la bandeja
+  // sale por /conversations/messages/text, que no acepta un id propio: se
+  // guarda con el id de WATI, que vuelve como `id`. Antes solo se buscaba por
+  // localMessageId y esos mensajes se quedaban en "Pendiente" para siempre.
+  const ids = [ev?.localMessageId, ev?.id, wamid].filter(Boolean).map(String);
+  if (!ids.length) return;
+  const cols = "id, member_id, status, payload, provider_message_id";
+  let { data: found } = await db
     .from("inbox_messages")
-    .update(inboxPatch)
+    .select(cols)
     .eq("user_id", acc.user_id)
     .eq("provider", "wati")
-    .eq("provider_message_id", local)
-    .select("id, member_id")
-    .maybeSingle();
+    .eq("direction", "out")
+    .in("provider_message_id", ids)
+    .limit(1);
+  if (!found?.length && wamid) {
+    ({ data: found } = await db
+      .from("inbox_messages")
+      .select(cols)
+      .eq("user_id", acc.user_id)
+      .eq("provider", "wati")
+      .eq("direction", "out")
+      .eq("payload->>wamid", wamid)
+      .limit(1));
+  }
+  const msg: Json = found?.[0] ?? null;
+  const local = ev?.localMessageId ? String(ev.localMessageId) : (msg?.provider_message_id ?? null);
+
+  let errorDetail: string | null = null;
+  if (kind === "failed") errorDetail = `${ev?.failedCode ?? ""} ${ev?.failedDetail ?? ""}`.trim().slice(0, 300);
+  if (msg) {
+    // Los recibos pueden llegar desordenados: el estado solo avanza
+    // (un "sent" tardío no pisa un "read"), y el payload se mezcla.
+    const next = kind === "replied" ? "read" : kind;
+    const patch: Json = {};
+    if (inboxStatusRank(next) > inboxStatusRank(msg.status)) patch.status = next;
+    if (kind === "failed" && patch.status) patch.error_detail = errorDetail;
+    if (wamid && msg.payload?.wamid !== wamid) {
+      patch.payload = { ...(msg.payload ?? {}), wamid, conversationId: ev?.conversationId ?? msg.payload?.conversationId ?? null };
+    }
+    if (Object.keys(patch).length) await db.from("inbox_messages").update(patch).eq("id", msg.id);
+  }
+  if (!local) return;
 
   // Evento de campaña original (type=sent, provider_message_id=local).
   const { data: origin } = await db
@@ -266,7 +294,7 @@ async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sen
     step_position: origin.step_position,
     node_id: origin.node_id ?? null,
     provider_message_id: local,
-    detail: kind === "failed" ? inboxPatch.error_detail : null,
+    detail: kind === "failed" ? errorDetail : null,
     payload: { wamid, at },
   });
   // Una falla de entrega es de ESE envío: queda el evento `failed` y el lead
@@ -276,8 +304,23 @@ async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sen
   // excepción es un bloqueo de la CUENTA (nombre visible sin aprobar): ahí el
   // paso se retiene y se reintenta, porque no es culpa del lead.
   if (kind === "failed" && origin.enrollment_id) {
-    const code = wati.accountBlockCode(inboxPatch.error_detail);
-    if (code) await holdForAccountBlock(db, acc, origin, code, String(inboxPatch.error_detail));
+    const code = wati.accountBlockCode(errorDetail);
+    if (code) await holdForAccountBlock(db, acc, origin, code, String(errorDetail));
+  }
+}
+
+/**
+ * Orden de los estados de un saliente: pending → sent → delivered → read.
+ * `failed` solo entra si el mensaje no se entregó (un recibo de entrega o
+ * lectura prueba que llegó aunque un callback de falla venga después).
+ */
+function inboxStatusRank(status: unknown): number {
+  switch (String(status ?? "")) {
+    case "read": return 4;
+    case "delivered": return 3;
+    case "failed": return 2;
+    case "sent": return 1;
+    default: return 0;
   }
 }
 
