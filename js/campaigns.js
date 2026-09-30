@@ -826,7 +826,10 @@
       rows.forEach(function (m) { if (m.member_id && !state.inboxMembers[m.member_id] && ids.indexOf(m.member_id) === -1) ids.push(m.member_id); });
       for (var i = 0; i < ids.length; i += 200) {
         var chunk = ids.slice(i, i + 200);
-        var mr = await sb().from('prospect_list_members').select('id, name, first_name, last_name, company, title, email, phone, linkedin_url, contact_status, list_id, apollo_contact_id').in('id', chunk);
+        var memCols = 'id, name, first_name, last_name, company, title, email, phone, linkedin_url, contact_status, list_id, apollo_contact_id';
+        var mr = await sb().from('prospect_list_members').select(memCols + ', is_favorite').in('id', chunk);
+        // Migración de favoritos aún sin aplicar: la bandeja sigue igual, sin estrellas.
+        if (mr.error && /is_favorite/.test(mr.error.message || '')) mr = await sb().from('prospect_list_members').select(memCols).in('id', chunk);
         if (mr.error) { console.warn('[campaigns] inbox members:', mr.error.message); break; }
         (mr.data || []).forEach(function (m) { state.inboxMembers[m.id] = m; });
       }
@@ -881,6 +884,7 @@
       if (f.status === 'replied' && !c.inCount) return false;
       if (f.status === 'sent_only' && c.inCount) return false;
       if (f.status === 'unread' && !c.unread) return false;
+      if (f.status === 'favorites' && !(c.member && c.member.is_favorite)) return false;
       if (q) {
         var hay = [convName(c), c.member && c.member.company, c.member && c.member.title, c.lead && c.lead.company, c.contact_ref].filter(Boolean).join(' ').toLowerCase();
         if (hay.indexOf(q) === -1) return false;
@@ -1261,6 +1265,10 @@
       '#prospecting-shell .cmp-conv-sub { font-size:11.5px; color:var(--text3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }',
       '#prospecting-shell .cmp-conv-snip { grid-column:1 / -1; font-size:12px; color:var(--text2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }',
       '#prospecting-shell .cmp-conv-time { font-size:11px; color:var(--text3); white-space:nowrap; }',
+      '#prospecting-shell .cmp-fav-mark { color:#f5a524; font-size:13px; line-height:1; flex:none; }',
+      '#prospecting-shell .cmp-fav-btn { background:none; border:0; padding:0 2px; cursor:pointer; font-size:18px; line-height:1; color:var(--text3); }',
+      '#prospecting-shell .cmp-fav-btn:hover { color:#f5a524; }',
+      '#prospecting-shell .cmp-fav-btn.on { color:#f5a524; }',
       '#prospecting-shell .cmp-unread { width:8px; height:8px; border-radius:50%; background:var(--accent-2); flex:none; }',
       '#prospecting-shell .cmp-thread-head { display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:flex-start; padding:12px 14px; border-bottom:1px solid var(--hair); }',
       '#prospecting-shell .cmp-thread { display:flex; flex-direction:column; gap:10px; padding:14px; max-height:55vh; overflow-y:auto; }',
@@ -2694,7 +2702,7 @@
     var search = h('input', { type: 'search', placeholder: 'Buscar por nombre, empresa o cargo…', 'data-action': 'inbox-filter-q', value: state.inboxFilter.q || '' });
     filters.appendChild(search);
     var stSel = h('select', { 'data-action': 'inbox-filter-status' });
-    [['', 'Todas las conversaciones'], ['unanswered', 'Sin responder (última palabra del lead)'], ['unread', 'Sin leer'], ['replied', 'Respondieron'], ['sent_only', 'Solo enviados (sin respuesta)']].forEach(function (x) { var o = h('option', { value: x[0], text: x[1] }); if (x[0] === state.inboxFilter.status) o.selected = true; stSel.appendChild(o); });
+    [['', 'Todas las conversaciones'], ['unanswered', 'Sin responder (última palabra del lead)'], ['unread', 'Sin leer'], ['replied', 'Respondieron'], ['sent_only', 'Solo enviados (sin respuesta)'], ['favorites', '★ Favoritos']].forEach(function (x) { var o = h('option', { value: x[0], text: x[1] }); if (x[0] === state.inboxFilter.status) o.selected = true; stSel.appendChild(o); });
     filters.appendChild(stSel);
     var row1 = h('div', { class: 'cmp-filter-row' });
     var chSel = h('select', { 'data-action': 'inbox-filter-channel' });
@@ -2738,6 +2746,7 @@
       var name = h('div', { class: 'cmp-conv-name' });
       if (conv.unread) name.appendChild(h('span', { class: 'cmp-unread' }));
       name.appendChild(h('span', { class: 'nm', text: convName(conv) }));
+      if (conv.member && conv.member.is_favorite) name.appendChild(h('span', { class: 'cmp-fav-mark', title: 'Favorito', text: '★' }));
       name.insertAdjacentHTML('beforeend', chanIconsHtml(CH_ORDER.filter(function (k) { return conv.channels[k]; })));
       if (!conv.member) name.appendChild(h('span', { class: 'cmp-conv-tag', title: 'No está en ninguna lista', text: 'sin lista' }));
       item.appendChild(name);
@@ -2916,7 +2925,13 @@
     var m = conv.member;
     var head = h('div', { class: 'cmp-thread-head' });
     var left = h('div', { style: 'min-width:0' });
-    left.appendChild(h('div', { style: 'font-weight:700;font-size:14px', text: convName(conv) }));
+    var titleRow = h('div', { style: 'display:flex;align-items:center;gap:6px;font-weight:700;font-size:14px' });
+    titleRow.appendChild(h('span', { text: convName(conv) }));
+    if (m) {
+      var fav = !!m.is_favorite;
+      titleRow.appendChild(h('button', { type: 'button', class: 'cmp-fav-btn' + (fav ? ' on' : ''), 'data-action': 'conv-fav', 'data-member': m.id, 'data-on': fav ? '1' : '0', title: fav ? 'Quitar de favoritos' : 'Marcar como favorito', 'aria-pressed': fav ? 'true' : 'false', 'aria-label': fav ? 'Quitar de favoritos' : 'Marcar como favorito', text: fav ? '★' : '☆' }));
+    }
+    left.appendChild(titleRow);
     left.appendChild(h('div', { class: 'pros-cellsub', text: convSub(conv) || (conv.contact_ref || '') }));
     var links = h('div', { class: 'cmp-thread-links' });
     var liUrl = convLinkedinUrl(conv);
@@ -3312,6 +3327,20 @@
     if (action === 'inbox-mark-all') {
       var rA = btnLoading(btn, '⏳');
       return markAllRead().then(function () { rA(); render(); toast('Bandeja al día.', 'success'); }, function () { rA(); render(); });
+    }
+    if (action === 'conv-fav') {
+      var memF = btn.getAttribute('data-member');
+      if (!memF || !pdSafe().setFavorite) return;
+      var nextFav = btn.getAttribute('data-on') !== '1';
+      var mF = state.inboxMembers[memF];
+      // Optimista: la estrella cambia al instante y se revierte si la base falla.
+      if (mF) mF.is_favorite = nextFav;
+      render();
+      return Promise.resolve(pdSafe().setFavorite(memF, nextFav)).catch(function (err) {
+        if (mF) mF.is_favorite = !nextFav;
+        render();
+        toast('No se pudo actualizar el favorito: ' + (/is_favorite/.test(err.message) ? 'falta aplicar la migración de favoritos.' : err.message), 'error');
+      });
     }
     if (action === 'reply-channel' && key) { state.replyChannel[key] = channel; return render(); }
     if (action === 'conv-save' && key) { var convS = findConv(key); if (convS) saveContactToList(convS); return; }
