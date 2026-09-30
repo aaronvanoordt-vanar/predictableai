@@ -37,6 +37,14 @@
  *      (POST /emailer_messages, con in_response_to_emailer_message_id del
  *      último envío nuestro — Apollo lo ignora hoy y abre hilo nuevo, pero es
  *      lo documentado) + send_now.  → { message }
+ *  • { action: "media", id: uuid }
+ *      Devuelve EL ARCHIVO (no JSON) de una foto, video, sticker, audio o
+ *      documento que el lead mandó por WhatsApp: la fila de inbox_messages
+ *      tiene que ser del usuario. Se baja de WATI con la credencial de su
+ *      cuenta (v3 por id de mensaje; si no, v1 por fileName). Las filas
+ *      guardadas antes del 2026-09-30 no tienen el id de WATI: se busca en el
+ *      historial de la conversación y se guarda en payload.wati_id.
+ *      Content-Type deducido de los bytes (WATI manda octet-stream).
  *  • { action: "mark_read", ids: [uuid…] }
  *      UPDATE inbox_messages SET read_at = now() WHERE id = ANY(ids) AND
  *      user_id = uid AND direction = 'in' AND read_at IS NULL → { updated: n }
@@ -399,6 +407,69 @@ async function sendEmail(db: SupabaseClient, userId: string, member: Json, text:
   }
 }
 
+// ── Medios entrantes ────────────────────────────────────────────────────────
+
+async function serveMedia(db: SupabaseClient, userId: string, id: string, cors: Record<string, string>): Promise<Response> {
+  if (!UUID_RE.test(id)) return json({ error: "id inválido" }, 400, cors);
+  const { data: msg } = await db
+    .from("inbox_messages")
+    .select("id, channel, provider, direction, contact_ref, provider_message_id, sent_at, payload")
+    .eq("id", id).eq("user_id", userId).maybeSingle();
+  if (!msg) return json({ error: "El mensaje no existe o no es tuyo." }, 404, cors);
+  const pl = msg.payload ?? {};
+  const type = String(pl.type ?? "");
+  if (msg.channel !== "whatsapp" || msg.provider !== "wati" || !wati.isMediaType(type)) {
+    return json({ error: "not_media", message: "Este mensaje no trae un archivo." }, 400, cors);
+  }
+  const { data: acc } = await db.from("channel_accounts").select("status, secret, config").eq("user_id", userId).eq("provider", "wati").maybeSingle();
+  if (!acc || acc.status !== "connected" || !acc.secret) {
+    return json({ error: "whatsapp_not_connected", message: "Conecta WhatsApp para ver los archivos." }, 428, cors);
+  }
+  const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
+  const pmid = String(msg.provider_message_id ?? "");
+  let watiId: string | null = pl.wati_id ? String(pl.wati_id) : (pmid.startsWith("wati:") ? pmid.slice(5) : null);
+  const fileName: string | null = pl.media_file ? String(pl.media_file) : null;
+
+  let got: { bytes: Uint8Array<ArrayBuffer>; header: string | null } | null = null;
+  let lastErr: unknown = null;
+  const tryId = async (mid: string) => {
+    try { got = await wati.getMediaByMessageId(creds, mid); } catch (e) { lastErr = e; }
+  };
+  if (watiId) await tryId(watiId);
+  if (!got && fileName) {
+    try { got = await wati.getMediaByFileName(creds, fileName); } catch (e) { lastErr = e; }
+  }
+  if (!got && !watiId) {
+    // Fila vieja: buscar el id en el historial de WATI y recordarlo.
+    try {
+      watiId = await wati.findInboundMessageId(creds, msg.contact_ref, type, msg.sent_at, pmid.startsWith("wamid.") ? pmid : null);
+    } catch (e) { lastErr = e; }
+    if (watiId) {
+      await db.from("inbox_messages").update({ payload: { ...pl, media: true, wati_id: watiId } }).eq("id", msg.id).eq("user_id", userId);
+      await tryId(watiId);
+    }
+  }
+  if (!got) {
+    const e = lastErr as { status?: number; message?: string } | null;
+    console.error("[inbox-send] media", msg.id, e?.status, e?.message);
+    const status = e?.status === 413 ? 413 : 404;
+    return json({
+      error: "media_unavailable",
+      message: status === 413 ? "El archivo es demasiado grande para mostrarlo aquí: ábrelo en WATI." : "WATI no entregó este archivo (puede haber vencido): ábrelo en WATI.",
+    }, status, cors);
+  }
+  const { bytes, header } = got as { bytes: Uint8Array<ArrayBuffer>; header: string | null };
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      ...cors,
+      "Content-Type": wati.sniffMediaType(bytes, type, header),
+      "Cache-Control": "private, max-age=86400",
+      "Access-Control-Expose-Headers": "Content-Type",
+    },
+  });
+}
+
 // ── Handler ─────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -416,6 +487,8 @@ Deno.serve(async (req) => {
   const db = svc();
 
   try {
+    if (body?.action === "media") return await serveMedia(db, user.id, String(body.id ?? ""), cors);
+
     if (body?.action === "mark_read") {
       const ids: string[] = (Array.isArray(body.ids) ? body.ids : []).map(String).filter((id: string) => UUID_RE.test(id)).slice(0, 500);
       if (!ids.length) return json({ updated: 0 }, 200, cors);
