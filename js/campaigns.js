@@ -1165,9 +1165,50 @@
     savedView = v;
     try { localStorage.setItem(VIEW_KEY, v); } catch (e) { /* modo privado */ }
   }
+  // Cada repintado reemplaza el DOM entero, y lo disparan también cosas que el
+  // usuario no hizo (realtime de la bandeja, sincronización de WhatsApp, marcar
+  // leída la conversación abierta). Sin esto, el cuadro donde estaba escribiendo
+  // se recreaba y perdía el foco a media frase: había que volver a hacer clic.
+  function captureFocus(root) {
+    var a = document.activeElement;
+    if (!a || a === document.body || !root.contains(a) || !a.matches) return null;
+    if (!a.matches('textarea, input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="button"]):not([type="submit"]), select')) return null;
+    var sel = a.tagName.toLowerCase();
+    var act = a.getAttribute('data-action');
+    var key = a.getAttribute('data-key');
+    var field = a.getAttribute('data-field');
+    if (act) sel += '[data-action="' + CSS.escape(act) + '"]';
+    if (key) sel += '[data-key="' + CSS.escape(key) + '"]';
+    if (field) sel += '[data-field="' + CSS.escape(field) + '"]';
+    if (!act && !key && !field) {
+      if (a.id) sel = '#' + CSS.escape(a.id);
+      else if (a.name) sel += '[name="' + CSS.escape(a.name) + '"]';
+      else return null; // sin identidad estable no se puede reencontrar con certeza
+    }
+    var snap = { sel: sel, scrollTop: a.scrollTop };
+    try { snap.start = a.selectionStart; snap.end = a.selectionEnd; snap.dir = a.selectionDirection; } catch (e) { /* select / tipos sin selección */ }
+    return snap;
+  }
+  function restoreFocus(root, snap) {
+    if (!snap) return;
+    var a = document.activeElement;
+    if (a && a !== document.body && root.contains(a)) return; // el repintado ya movió el foco a propósito
+    var el = root.querySelector(snap.sel);
+    if (!el || el.disabled) return;
+    try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+    if (snap.start != null && typeof el.setSelectionRange === 'function') {
+      var len = (el.value || '').length;
+      try { el.setSelectionRange(Math.min(snap.start, len), Math.min(snap.end, len), snap.dir || 'none'); } catch (e) { /* tipo sin selección */ }
+    }
+    el.scrollTop = snap.scrollTop;
+  }
   function render() {
     var root = state.root;
     if (!root) return;
+    var focus = captureFocus(root);
+    try { renderInto(root); } finally { restoreFocus(root, focus); }
+  }
+  function renderInto(root) {
     if (!state.loading) saveView(state.view);
     root.innerHTML = '';
     if (state.status === undefined && state.loading) {
