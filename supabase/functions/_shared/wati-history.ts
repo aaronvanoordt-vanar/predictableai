@@ -135,7 +135,8 @@ export async function findMemberByPhone(db: SupabaseClient, userId: string, phon
   }) ?? null;
 }
 
-export interface SyncResult { conversations: number; inserted: number; pending: number; error: string | null; }
+/** `next` = posición desde la que sigue el pase siguiente (0 = ya se recorrió todo). */
+export interface SyncResult { conversations: number; inserted: number; pending: number; next: number; error: string | null; }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -169,25 +170,43 @@ async function phonesToSync(db: SupabaseClient, acc: Json, creds: wati.WatiCreds
   return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
 }
 
+/** Las más recientes se revisan en cada pase, aunque el cursor esté más abajo. */
+export const ALWAYS_FRESH = 5;
+
+/** Índices a recorrer: todo si `start` es 0; si no, las ALWAYS_FRESH primeras y desde `start`. */
+export function visitOrder(total: number, start: number): number[] {
+  const all = Array.from({ length: total }, (_, i) => i);
+  if (start <= ALWAYS_FRESH || start >= total) return all;
+  return [...all.slice(0, ALWAYS_FRESH), ...all.slice(start)];
+}
+
 /**
  * Un pase de sincronización para una cuenta de WATI. Corta a `deadline`
- * (epoch ms); `pending` dice cuántas conversaciones quedaron para el siguiente.
+ * (epoch ms). Revisa las ALWAYS_FRESH conversaciones más recientes y sigue
+ * desde `start` (el `next` del pase anterior): sin el cursor, cada pase
+ * volvía a empezar arriba y las conversaciones viejas no se alcanzaban nunca.
  */
-export async function syncWatiHistory(db: SupabaseClient, acc: Json, deadline: number): Promise<SyncResult> {
+export async function syncWatiHistory(db: SupabaseClient, acc: Json, deadline: number, start = 0): Promise<SyncResult> {
   const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
-  const out: SyncResult = { conversations: 0, inserted: 0, pending: 0, error: null };
+  const out: SyncResult = { conversations: 0, inserted: 0, pending: 0, next: 0, error: null };
   if (!creds.endpoint || !creds.token) return { ...out, error: "WhatsApp no está conectado." };
   const since = Date.now() - SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   const phones = await phonesToSync(db, acc, creds, since);
-  for (let i = 0; i < phones.length; i++) {
-    if (Date.now() > deadline) { out.pending = phones.length - i; break; }
+  const order = visitOrder(phones.length, start);
+  const from = order.length < phones.length ? order[Math.min(ALWAYS_FRESH, order.length - 1)] : 0;
+  // Cortado en la posición k: el pase siguiente sigue desde ahí (o desde el
+  // cursor, si el corte fue todavía entre las más recientes).
+  const stopAt = (k: number) => { out.next = Math.max(order[k], from); out.pending = phones.length - out.next; };
+  for (let k = 0; k < order.length; k++) {
+    const i = order[k];
+    if (Date.now() > deadline) { stopAt(k); break; }
     const phone = phones[i];
     let list: Json[];
     try {
       list = await wati.listConversationMessages(creds, phone, 1, 100);
     } catch (e) {
       if (e instanceof wati.WatiError && (e.status === 401 || e.status === 403)) { out.error = wati.humanError(e); break; }
-      if (e instanceof wati.WatiError && e.status === 429) { out.pending = phones.length - i; break; }
+      if (e instanceof wati.WatiError && e.status === 429) { stopAt(k); break; }
       console.warn("[wati-history] messages", phone, (e as Error).message);
       await sleep(PACE_MS);
       continue;
@@ -195,7 +214,7 @@ export async function syncWatiHistory(db: SupabaseClient, acc: Json, deadline: n
     out.conversations++;
     const items = list.map(parseHistoryItem).filter((h): h is HistoryMessage => !!h && Date.parse(h.at) >= since);
     if (items.length) out.inserted += await insertMissing(db, acc, phone, items);
-    if (i < phones.length - 1) await sleep(PACE_MS);
+    if (k < order.length - 1) await sleep(PACE_MS);
   }
   return out;
 }

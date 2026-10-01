@@ -680,7 +680,7 @@ async function syncWati(db: SupabaseClient, userId: string): Promise<Json> {
   const last = acc.config?.history_sync;
   if (last?.at && Date.now() - Date.parse(last.at) < WATI_SYNC_COOLDOWN_MS) return { ...last, cached: true };
   const started = Date.now();
-  const r = await syncWatiHistory(db, acc, started + 60_000);
+  const r = await syncWatiHistory(db, acc, started + 60_000, Number(last?.next) || 0);
   const stamp = { ...r, at: new Date().toISOString(), ms: Date.now() - started, by: "inbox" };
   // Se relee la fila: el webhook pudo sellar config.webhook mientras tanto.
   const { data: fresh } = await db.from("channel_accounts").select("config").eq("id", acc.id).maybeSingle();

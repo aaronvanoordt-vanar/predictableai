@@ -6,7 +6,7 @@
  * por hora). Una regla floja aquí duplica cada mensaje del lead en la bandeja.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { historyIds, isKnown, parseHistoryItem } from "./wati-history.ts";
+import { historyIds, isKnown, parseHistoryItem, visitOrder } from "./wati-history.ts";
 
 const base = {
   id: "507f1f77bcf86cd799439011",
@@ -64,4 +64,11 @@ Deno.test("isKnown: sin id común, mismo sentido a ±5 s (filas del webhook con 
   assert(isKnown(h, [{ direction: "in", provider_message_id: "wamid.OLD", sent_at: "2026-10-01T14:32:03.000Z", payload: {} }]));
   assert(!isKnown(h, [{ direction: "out", provider_message_id: "wamid.OLD", sent_at: "2026-10-01T14:32:03.000Z", payload: {} }]));
   assert(!isKnown(h, [{ direction: "in", provider_message_id: "wamid.OLD", sent_at: "2026-10-01T14:32:30.000Z", payload: {} }]));
+});
+
+Deno.test("visitOrder: el cursor sigue donde quedó sin dejar de mirar las más recientes", () => {
+  assertEquals(visitOrder(8, 0), [0, 1, 2, 3, 4, 5, 6, 7]);
+  assertEquals(visitOrder(10, 7), [0, 1, 2, 3, 4, 7, 8, 9]);
+  assertEquals(visitOrder(10, 3), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assertEquals(visitOrder(10, 12), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]); // la lista se achicó: se empieza de nuevo
 });

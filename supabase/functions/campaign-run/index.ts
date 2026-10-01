@@ -1266,7 +1266,7 @@ async function syncWatiHistoryAll(ctx: Ctx, deadline: number): Promise<number> {
     const startedAt = new Date().toISOString();
     await db.from("channel_accounts").update({ config: { ...(acc.config ?? {}), history_sync: { ...(acc.config?.history_sync ?? {}), at: startedAt } } }).eq("id", acc.id);
     const started = Date.now();
-    const r = await watiHistory.syncWatiHistory(db, acc, Math.min(deadline, started + 45_000));
+    const r = await watiHistory.syncWatiHistory(db, acc, Math.min(deadline, started + 45_000), Number(acc.config?.history_sync?.next) || 0);
     inserted += r.inserted;
     const { data: fresh } = await db.from("channel_accounts").select("config").eq("id", acc.id).maybeSingle();
     await db.from("channel_accounts").update({ config: { ...(fresh?.config ?? {}), history_sync: { ...r, at: startedAt, ms: Date.now() - started, by: "cron" } } }).eq("id", acc.id);
