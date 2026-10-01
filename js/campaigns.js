@@ -2370,10 +2370,27 @@
   function nodeCounters(c) {
     var counters = {};
     function bump(nodeId, key) { if (!nodeId) return; var o = counters[nodeId] = counters[nodeId] || {}; o[key] = (o[key] || 0) + 1; }
+    // Se cuentan LEADS, no eventos: un paso retenido (p. ej. Meta bloqueando
+    // la cuenta con 131037) se reintenta y cada intento deja otro "sent" y otro
+    // "failed" — sumados, una campaña de 100 leads mostraba 273 enviados. Por
+    // lead y paso vale el resultado de su ÚLTIMO intento (enviado, falló u
+    // omitido); recibos y ramas se cuentan una vez por lead.
+    var OUTCOME = ['sent', 'failed', 'skipped'];
+    var ONCE = ['delivered', 'read', 'opened', 'replied', 'queued', 'connection_accepted'];
+    var seen = {};
+    // state.events viene de la más nueva a la más vieja: el primero que se ve es el último.
     state.events.forEach(function (ev) {
       if (!ev.node_id) return;
-      if (ev.type === 'branched') { bump(ev.node_id, ev.payload && ev.payload.branch === 'yes' ? 'yes' : 'no'); return; }
-      if (['sent', 'delivered', 'read', 'opened', 'replied', 'skipped', 'failed', 'queued', 'connection_accepted'].indexOf(ev.type) !== -1) bump(ev.node_id, ev.type);
+      var who = ev.enrollment_id || ev.id;
+      var key;
+      if (ev.type === 'branched') key = 'branch';
+      else if (OUTCOME.indexOf(ev.type) !== -1) key = 'outcome';
+      else if (ONCE.indexOf(ev.type) !== -1) key = ev.type;
+      else return;
+      var k = ev.node_id + '|' + who + '|' + key;
+      if (seen[k]) return;
+      seen[k] = true;
+      bump(ev.node_id, key === 'branch' ? (ev.payload && ev.payload.branch === 'yes' ? 'yes' : 'no') : ev.type);
     });
     state.enrollments.forEach(function (e) { if (e.status === 'active' || e.status === 'processing') bump(e.next_node_id, 'waiting'); });
     // Todo nodo del grafo aparece aunque no tenga actividad.
