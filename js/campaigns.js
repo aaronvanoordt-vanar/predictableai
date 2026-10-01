@@ -2761,6 +2761,12 @@
       countRow.appendChild(document.createTextNode(' · '));
       countRow.appendChild(h('button', { type: 'button', class: 'cmp-link-btn', 'data-action': 'inbox-mark-all', text: 'Marcar todo como leído' }));
     }
+    // Aviso sonoro de mensajes nuevos (js/inbox-alert.js, suena en toda la app).
+    if (global.inboxAlert) {
+      var soundOn = global.inboxAlert.isEnabled();
+      countRow.appendChild(document.createTextNode(' · '));
+      countRow.appendChild(h('button', { type: 'button', class: 'cmp-link-btn', 'data-action': 'inbox-sound-toggle', title: 'Un sonido suave cuando llega un mensaje, aunque estés en otra pestaña', text: soundOn ? 'Sonido: activado' : 'Sonido: silenciado' }));
+    }
     if (isConn(state.wati)) {
       countRow.appendChild(document.createTextNode(' · '));
       var syncBtn = h('button', { type: 'button', class: 'cmp-link-btn', 'data-action': 'inbox-sync-wati', title: 'Trae lo que escribiste en WATI y cualquier mensaje que no haya llegado', text: watiSync.running ? 'Sincronizando WhatsApp…' : 'Sincronizar WhatsApp' });
@@ -3359,6 +3365,11 @@
       btn.disabled = true;
       btn.textContent = 'Sincronizando WhatsApp…';
       return syncWatiHistory(true);
+    }
+    if (action === 'inbox-sound-toggle') {
+      if (global.inboxAlert) global.inboxAlert.setEnabled(!global.inboxAlert.isEnabled());
+      render();
+      return;
     }
     if (action === 'inbox-mark-all') {
       var rA = btnLoading(btn, '⏳');
