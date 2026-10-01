@@ -34,27 +34,40 @@
   }
   function setEnabled(on) {
     try { localStorage.setItem(PREF_KEY, on ? 'on' : 'off'); } catch (e) { /* modo privado */ }
-    if (on) { unlock(); play(); }
+    if (on) canPlay().then(function (ok) { if (ok) play(); });
   }
 
   function unlock() {
     var AC = global.AudioContext || global.webkitAudioContext;
-    if (!AC) return;
+    if (!AC) return null;
     try {
-      if (!ctx) ctx = new AC();
-      if (ctx.state === 'suspended') ctx.resume();
+      if (!ctx || ctx.state === 'closed') ctx = new AC();
+      if (ctx.state !== 'running') ctx.resume().catch(function () { /* sin gesto aún */ });
     } catch (e) { ctx = null; }
+    return ctx;
   }
   ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) {
     document.addEventListener(ev, unlock, { capture: true, passive: true });
   });
+
+  // Puede sonar si el contexto ya corre o si se deja reanudar (la página ya
+  // recibió un clic: Chrome y Safari lo permiten aunque la pestaña esté detrás).
+  function canPlay() {
+    var c = unlock();
+    if (!c) return Promise.resolve(false);
+    if (c.state === 'running') return Promise.resolve(true);
+    return Promise.race([
+      c.resume().then(function () { return c.state === 'running'; }, function () { return false; }),
+      new Promise(function (r) { setTimeout(function () { r(false); }, 500); }),
+    ]);
+  }
 
   // Dos notas (Mi5 → La5) con ataque blando y cola corta: se oye, no asusta.
   function play() {
     if (!ctx || ctx.state !== 'running') return;
     var t0 = ctx.currentTime + 0.01;
     var master = ctx.createGain();
-    master.gain.value = 0.12;
+    master.gain.value = 0.25;
     master.connect(ctx.destination);
     [[659.25, 0], [880, 0.11]].forEach(function (n) {
       var osc = ctx.createOscillator();
@@ -103,7 +116,13 @@
     var ts = Date.parse(m.sent_at || m.created_at || '');
     if (ts && Date.now() - ts > MAX_AGE_MS) return;
     bumpTitle();
-    if (isEnabled() && claim()) play();
+    if (!isEnabled()) return;
+    // Solo reclama el turno la pestaña que de verdad puede sonar: antes una
+    // pestaña sin audio desbloqueado lo reclamaba y las demás callaban.
+    canPlay().then(function (ok) {
+      if (!ok) { console.info('[inbox-alert] mensaje nuevo, pero el audio sigue bloqueado: haz un clic en la página'); return; }
+      if (claim()) play();
+    });
   }
 
   function subscribe(userId) {
@@ -114,7 +133,7 @@
       channel = global.supabaseClient
         .channel('inbox-alert-' + userId)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inbox_messages', filter: 'user_id=eq.' + userId }, onInsert)
-        .subscribe();
+        .subscribe(function (status) { console.info('[inbox-alert] realtime:', status); });
     } catch (e) { console.warn('[inbox-alert] realtime:', e.message); }
   }
   function stop() {
@@ -136,6 +155,6 @@
     });
   }
 
-  global.inboxAlert = { isEnabled: isEnabled, setEnabled: setEnabled, test: function () { unlock(); play(); } };
+  global.inboxAlert = { isEnabled: isEnabled, setEnabled: setEnabled, test: function () { return canPlay().then(function (ok) { if (ok) play(); return ok; }); } };
   init();
 })(window);
