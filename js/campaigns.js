@@ -1007,35 +1007,6 @@
     var row = r && r.message;
     if (row && row.id && !state.inbox.some(function (x) { return x.id === row.id; })) state.inbox.unshift(row);
   }
-  /** Reacciona a un WhatsApp del hilo (emoji '' la quita). Se pinta al instante; inbox-send corre detrás. */
-  async function sendReaction(convKey, messageId, emoji) {
-    var target = state.inbox.find(function (x) { return x.id === messageId; });
-    if (!target) return;
-    var local = {
-      id: 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
-      member_id: target.member_id || null, contact_ref: target.contact_ref || '', channel: 'whatsapp',
-      direction: 'out', body: emoji || 'Reacción quitada', status: 'sending', sent_at: new Date().toISOString(),
-      payload: { type: 'reaction', emoji: emoji, reacts_to: wamidOfMsg(target), reacts_to_id: target.id, source: 'inbox_reaction' },
-    };
-    state.pendingOut.unshift(local);
-    state.inbox.unshift(local);
-    if (state.view === 'inbox') renderKeepingReplyFocus(convKey);
-    function dropLocal() {
-      state.pendingOut = state.pendingOut.filter(function (x) { return x !== local; });
-      state.inbox = state.inbox.filter(function (x) { return x !== local; });
-    }
-    try {
-      var r = await edgeFetch(FN_INBOX, { action: 'react', message_id: messageId, emoji: emoji });
-      dropLocal();
-      var row = r && r.message;
-      if (row && row.id && !state.inbox.some(function (x) { return x.id === row.id; })) state.inbox.unshift(row);
-    } catch (e) {
-      dropLocal();
-      if (e && e.code === 'whatsapp_window_closed') state.waClosed[convKey] = true;
-      toast(errMsg(e), 'error');
-    }
-    if (state.view === 'inbox') renderKeepingReplyFocus(convKey);
-  }
   /** Guarda un contacto de la bandeja (sin lead) en una lista y enlaza sus mensajes. */
   function saveContactToList(conv) {
     var lead = conv.lead || {};
@@ -1322,28 +1293,11 @@
       '#prospecting-shell .cmp-rmsg.in { align-self:flex-start; align-items:flex-start; }',
       '#prospecting-shell .cmp-rmsg.out { align-self:flex-end; align-items:flex-end; }',
       '#prospecting-shell .cmp-rmsg > .cmp-bubble { max-width:100%; }',
-      '#prospecting-shell .cmp-react-bar { position:absolute; top:2px; z-index:2; white-space:nowrap; display:flex; gap:2px; padding:3px 5px; border-radius:999px; background:var(--surface); border:1px solid var(--hair); box-shadow:0 4px 14px rgba(0,0,0,.12); opacity:0; pointer-events:none; transform:translateY(4px); transition:opacity var(--dur-1,.12s) ease, transform var(--dur-1,.12s) ease; }',
-      '#prospecting-shell .cmp-rmsg.in .cmp-react-bar { left:calc(100% + 6px); }',
-      '#prospecting-shell .cmp-react-bar::before { content:""; position:absolute; top:0; bottom:0; width:10px; }',
-      '#prospecting-shell .cmp-rmsg.in .cmp-react-bar::before { left:-10px; }',
-      '#prospecting-shell .cmp-rmsg.out .cmp-react-bar::before { right:-10px; }',
-      '#prospecting-shell .cmp-rmsg.out .cmp-react-bar { right:calc(100% + 6px); }',
-      '@media (max-width:640px) { #prospecting-shell .cmp-rmsg.in .cmp-react-bar { left:0; top:-38px; } #prospecting-shell .cmp-rmsg.out .cmp-react-bar { right:0; left:auto; top:-38px; } }',
-      '#prospecting-shell .cmp-rmsg:hover .cmp-react-bar, #prospecting-shell .cmp-rmsg:focus-within .cmp-react-bar, #prospecting-shell .cmp-rmsg.show-react .cmp-react-bar { opacity:1; pointer-events:auto; transform:none; }',
-      '#prospecting-shell .cmp-react-bar button { border:0; background:transparent; font-size:17px; line-height:1; padding:4px; border-radius:50%; cursor:pointer; transition:transform var(--dur-1,.12s) ease; }',
-      '#prospecting-shell .cmp-react-bar button:hover:not(:disabled) { transform:scale(1.25); background:var(--surface3); }',
-      '#prospecting-shell .cmp-react-bar button.active { background:var(--accent-soft); }',
-      '#prospecting-shell .cmp-react-bar button:disabled { opacity:.4; cursor:not-allowed; }',
       '#prospecting-shell .cmp-react-chips { display:flex; gap:4px; margin-top:-8px; padding:0 10px; position:relative; }',
       '#prospecting-shell .cmp-react-chip { display:inline-flex; align-items:center; gap:2px; font-size:14px; line-height:1; padding:3px 6px; border-radius:999px; background:var(--surface); border:1px solid var(--hair); box-shadow:0 1px 3px rgba(0,0,0,.08); font-family:inherit; }',
-      '#prospecting-shell button.cmp-react-chip { cursor:pointer; }',
-      '#prospecting-shell button.cmp-react-chip:not([data-action]) { cursor:default; }',
       '#prospecting-shell .cmp-react-chip.mine { border-color:var(--accent-2); }',
-      '#prospecting-shell .cmp-react-chip.sending { opacity:.55; }',
-      '#prospecting-shell .cmp-react-chip.err { border-color:var(--red); color:var(--red); font-size:12px; }',
       '#prospecting-shell .cmp-react-orphan { font-size:11.5px; color:var(--text3); }',
       '#prospecting-shell .cmp-react-orphan.out { align-self:flex-end; }',
-      '@media (prefers-reduced-motion: reduce) { #prospecting-shell .cmp-react-bar, #prospecting-shell .cmp-react-bar button { transition:none; } }',
       '#prospecting-shell .cmp-media { margin:-2px 0 4px; min-height:40px; }',
       '#prospecting-shell .cmp-media img, #prospecting-shell .cmp-media video { display:block; max-width:min(320px, 100%); max-height:360px; border-radius:10px; cursor:zoom-in; }',
       '#prospecting-shell .cmp-media.sticker img { max-width:140px; max-height:140px; background:transparent; cursor:default; }',
@@ -2831,10 +2785,10 @@
   // ── Reacciones de WhatsApp ──
   // Una reacción es una fila de inbox_messages con payload.type = 'reaction'
   // (emoji + reacts_to = wamid del mensaje). No se pinta como globo: va pegada
-  // al mensaje que reacciona. Emoji vacío = reacción quitada. El envío pasa por
-  // inbox-send (action 'react'), EXPERIMENTAL: WATI no documenta reacciones.
-  // Espejo de REACTION_EMOJIS en supabase/functions/_shared/wati.ts.
-  var REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+  // al mensaje que reacciona. Emoji vacío = reacción quitada. Solo se MUESTRAN:
+  // la API de WATI no permite enviarlas (rechaza type "reaction": «Type must be
+  // 'text' or 'interactive'», 2026-10-01), así que la bandeja no ofrece
+  // reaccionar. Ver docs/OMNICANAL.md.
   function isReaction(m) { return !!(m && m.payload && m.payload.type === 'reaction'); }
   function reactionEmoji(m) {
     var pl = m.payload || {};
@@ -3030,7 +2984,6 @@
 
     var thread = h('div', { class: 'cmp-thread' });
     var reacts = groupReactions(conv.messages);
-    var waOpen = sessionOpen(conv);
     conv.messages.forEach(function (msg) {
       var pl = msg.payload || {};
       if (isReaction(msg)) {
@@ -3063,7 +3016,7 @@
       }
       b.appendChild(meta);
       if (isSystem) { thread.appendChild(b); return; }
-      thread.appendChild(messageWithReactions(conv, msg, b, reacts.slots[msg.id] || {}, waOpen));
+      thread.appendChild(messageWithReactions(msg, b, reacts.slots[msg.id] || {}));
     });
     card.appendChild(thread);
     card.appendChild(renderReplyBox(conv));
@@ -3071,44 +3024,18 @@
     return card;
   }
   /**
-   * Globo + sus reacciones (chips debajo) + la barra de emojis que aparece al
-   * pasar el mouse (o al tocar el globo en móvil). Solo WhatsApp con wamid:
-   * sin él no hay a qué mensaje apuntar.
+   * Globo + sus reacciones (chips debajo). Solo lectura: WATI no permite
+   * reaccionar por API (ver el comentario de "Reacciones de WhatsApp").
    */
-  function messageWithReactions(conv, msg, bubble, slot, waOpen) {
-    var dir = msg.direction === 'in' ? 'in' : 'out';
-    var wrap = h('div', { class: 'cmp-rmsg ' + dir });
-    var canReact = chanKey(msg.channel) === 'whatsapp' && !!wamidOfMsg(msg) && String(msg.id).indexOf('local-') !== 0;
-    if (canReact) {
-      bubble.setAttribute('data-action', 'react-toggle');
-      var mine = slot.out ? reactionEmoji(slot.out) : '';
-      var bar = h('div', { class: 'cmp-react-bar', role: 'toolbar', 'aria-label': 'Reaccionar' });
-      REACTION_EMOJIS.forEach(function (e) {
-        var active = mine === e;
-        bar.appendChild(h('button', {
-          type: 'button', class: active ? 'active' : '',
-          'data-action': 'react', 'data-id': msg.id, 'data-key': conv.key, 'data-emoji': active ? '' : e,
-          disabled: waOpen ? null : 'disabled',
-          title: !waOpen ? 'La ventana de 24 h está cerrada: WhatsApp solo deja reaccionar mientras está abierta.' : (active ? 'Quitar tu reacción' : 'Reaccionar con ' + e),
-          text: e,
-        }));
-      });
-      wrap.appendChild(bar);
-    }
+  function messageWithReactions(msg, bubble, slot) {
+    var wrap = h('div', { class: 'cmp-rmsg ' + (msg.direction === 'in' ? 'in' : 'out') });
     wrap.appendChild(bubble);
     var chips = h('div', { class: 'cmp-react-chips' });
     if (slot.in && reactionEmoji(slot.in)) {
       chips.appendChild(h('span', { class: 'cmp-react-chip', title: 'Reacción del lead · ' + fmtDateTime(slot.in.sent_at), text: reactionEmoji(slot.in) }));
     }
     if (slot.out && reactionEmoji(slot.out)) {
-      var st = String(slot.out.status || '');
-      var failed = st === 'failed';
-      var tip = failed ? 'Tu reacción no llegó' + (slot.out.error_detail ? ': ' + slot.out.error_detail : '') : (st === 'sending' ? 'Enviando tu reacción…' : 'Tu reacción · clic para quitarla');
-      chips.appendChild(h('button', {
-        type: 'button', class: 'cmp-react-chip mine' + (failed ? ' err' : '') + (st === 'sending' ? ' sending' : ''),
-        'data-action': canReact && waOpen && !failed && st !== 'sending' ? 'react' : null, 'data-id': msg.id, 'data-key': conv.key, 'data-emoji': '',
-        title: tip, text: reactionEmoji(slot.out) + (failed ? ' !' : ''),
-      }));
+      chips.appendChild(h('span', { class: 'cmp-react-chip mine', title: 'Tu reacción · ' + fmtDateTime(slot.out.sent_at), text: reactionEmoji(slot.out) }));
     }
     if (chips.childNodes.length) wrap.appendChild(chips);
     return wrap;
@@ -3426,15 +3353,6 @@
         toast('Reunión conseguida registrada. Prepárala desde el Meeting Coach.', 'success');
         render();
       }, function (err) { rM(); toast('No se pudo actualizar el estado: ' + err.message, 'error'); });
-    }
-    if (action === 'react-toggle') {
-      var wrapR = btn.closest('.cmp-rmsg');
-      if (wrapR && !(window.getSelection && String(window.getSelection()))) wrapR.classList.toggle('show-react');
-      return;
-    }
-    if (action === 'react' && id) {
-      if (btn.disabled) return;
-      return sendReaction(key, id, btn.getAttribute('data-emoji') || '');
     }
     if (action === 'reply-template' && key) {
       var convT = findConv(key);

@@ -505,8 +505,10 @@ export async function sendText(creds: WatiCreds, phone: string, text: string, ch
 // ── Reacciones ──────────────────────────────────────────────────────────────
 
 /**
- * Emojis que la bandeja ofrece para reaccionar: el set rápido de WhatsApp.
- * Espejo de REACTION_EMOJIS en js/campaigns.js.
+ * El set rápido de reacciones de WhatsApp (lo usan los tests de
+ * isReactionEmoji). Las reacciones solo se RECIBEN: la API de WATI no permite
+ * enviarlas — sendDirectSendMessage rechaza type "reaction" con «Type must be
+ * 'text' or 'interactive'» (2026-10-01) y no hay otro endpoint documentado.
  */
 export const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
@@ -538,38 +540,6 @@ export function parseReaction(ev: Json): { emoji: string; target: string | null 
   const targetRaw = r?.message_id ?? r?.messageId ?? r?.whatsappMessageId ?? ev?.replyContextId ?? ev?.context?.id ?? null;
   const target = targetRaw ? String(targetRaw) : null;
   return { emoji, target };
-}
-
-/**
- * Reacciona a un mensaje de WhatsApp (o la quita con emoji "").
- *
- * EXPERIMENTAL (2026-09-30): la API pública de WATI no documenta reacciones
- * (ni en v1 ni en v3). Se usa el envío directo v1, cuyo modelo acepta `type`,
- * `text` y `replyContextId` — el mismo que usa su propia bandeja — con
- * type "reaction". Si WATI lo rechaza, el error sube tal cual a la UI.
- */
-export async function sendReaction(
-  creds: WatiCreds,
-  input: { phone: string; targetWamid: string; emoji: string; localMessageId: string; channel?: string },
-): Promise<{ accepted: boolean; id: string | null; info: string | null }> {
-  const phone = digits(input.phone);
-  let path = `/api/v1/sendDirectSendMessage/${encodeURIComponent(phone)}`;
-  if (input.channel && digits(input.channel).length >= 8) path += `?channelPhoneNumber=${digits(input.channel)}`;
-  const data = await call(creds, "POST", path, {
-    type: "reaction",
-    text: input.emoji,
-    replyContextId: input.targetWamid,
-    localMessageId: input.localMessageId,
-    // Obligatorio en este endpoint: sin él responde «Category is required and
-    // must be 'utility'» (comprobado el 2026-09-30 con el tenant real).
-    category: "utility",
-  });
-  const accepted = data?.result !== false && data?.ok !== false;
-  return {
-    accepted,
-    id: data?.messageId ? String(data.messageId) : null,
-    info: accepted ? null : String(data?.info || data?.message || data?.error || "sin detalle").slice(0, 300),
-  };
 }
 
 // ── Medios entrantes (fotos, videos, stickers, audios, documentos) ──────────
