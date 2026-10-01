@@ -18,6 +18,11 @@
  *      (mismo camino que un paso de campaña). `contact_ref` (dígitos del
  *      número) sirve para contestar a un número que escribió y no está en
  *      ninguna lista. → { message: <fila de inbox_messages> }
+ *  • multipart/form-data { channel: "whatsapp", member_id | contact_ref,
+ *      file, body? } — foto (JPEG/PNG, ≤ 5 MB), video, audio o documento
+ *      (≤ 16 MB) con pie opcional (`body`). Misma ventana de 24 h que el
+ *      texto; sale por POST /api/ext/v3/conversations/messages/file y se
+ *      guarda con payload.type/media/wati_id para que la bandeja lo pinte.
  *  • { channel: "linkedin", … } → 501 {error:"linkedin_send_unavailable"}:
  *      ni Dripify ni LinkedIn exponen envío de mensajes por API (comprobado
  *      el 2026-09-14 en api.dripify.com); la bandeja copia el texto y abre
@@ -42,7 +47,8 @@
  *      responde así a una pestaña con la versión vieja de la bandeja.
  *  • { action: "media", id: uuid }
  *      Devuelve EL ARCHIVO (no JSON) de una foto, video, sticker, audio o
- *      documento que el lead mandó por WhatsApp: la fila de inbox_messages
+ *      documento de un WhatsApp, del lead o nuestro (bandeja o UI de WATI):
+ *      la fila de inbox_messages
  *      tiene que ser del usuario. Se baja de WATI con la credencial de su
  *      cuenta (v3 por id de mensaje; si no, v1 por fileName). Las filas
  *      guardadas antes del 2026-09-30 no tienen el id de WATI: se busca en el
@@ -193,7 +199,9 @@ function templateParams(body: string, m: Json | null): Record<string, string> {
  * `template` ("a"|"b"|"c") sale la plantilla de saludo aprobada en vez de
  * texto libre: es lo único que Meta acepta fuera de la ventana de 24 h.
  */
-async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | null, contactRef: string, text: string, template: string): Promise<Json> {
+const FILE_LABEL: Record<string, string> = { image: "📷 Foto", video: "🎬 Video", audio: "🎤 Audio", document: "📄 Documento" };
+
+async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | null, contactRef: string, text: string, template: string, file: File | null = null): Promise<Json> {
   const phone = wati.digits(member?.phone || contactRef);
   if (!phone) throw new HttpError("El lead no tiene teléfono.", 400, "member_without_phone");
   // Las tres lecturas son independientes: van en paralelo (antes eran tres
@@ -272,6 +280,8 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
     throw new HttpError("La ventana de 24 h de WhatsApp está cerrada.", 409, "whatsapp_window_closed");
   }
 
+  if (file) return await sendWhatsAppFile(db, userId, member, phone, acc, creds, en, file, text);
+
   let r: { id: string | null; conversationId: string | null };
   try {
     r = await wati.sendText(creds, phone, text, acc.config?.channel || undefined);
@@ -299,6 +309,49 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
     payload: { source: "inbox_reply", wati_message_id: r.id },
   }).select("*").single().then((r) => r), spendCredits(db, userId)]);
   if (error) throw new HttpError("El mensaje salió pero no se pudo guardar en la bandeja: " + error.message, 500);
+  return row;
+}
+
+/** Foto, video, audio o documento desde la bandeja (dentro de la ventana de 24 h). */
+async function sendWhatsAppFile(
+  db: SupabaseClient, userId: string, member: Json | null, phone: string, acc: Json, creds: wati.WatiCreds, en: Json, file: File, caption: string,
+): Promise<Json> {
+  const kind = wati.mediaKindForMime(file.type);
+  const max = kind === "image" ? wati.SEND_IMAGE_MAX_BYTES : wati.SEND_FILE_MAX_BYTES;
+  if (!file.size) throw new HttpError("El archivo está vacío.", 400, "whatsapp_file_invalid");
+  if (file.size > max) {
+    throw new HttpError(`WhatsApp acepta ${kind === "image" ? "fotos" : "archivos"} de hasta ${Math.round(max / 1024 / 1024)} MB.`, 413, "whatsapp_file_too_large");
+  }
+  const fileName = String(file.name || "archivo").replace(/[\r\n"]/g, "").slice(0, 120) || "archivo";
+  let r: { id: string | null; conversationId: string | null; type: string | null };
+  try {
+    r = await wati.sendFile(creds, phone, file, fileName, caption || undefined, acc.config?.channel || undefined);
+  } catch (e) {
+    const status = e instanceof wati.WatiError && e.status >= 400 && e.status < 500 ? 400 : 502;
+    console.error("inbox-send whatsapp file failed", { phone, http: (e as wati.WatiError)?.status, body: JSON.stringify((e as wati.WatiError)?.body ?? null).slice(0, 1500) });
+    throw new HttpError("WhatsApp no aceptó el archivo: " + wati.humanError(e), status, "whatsapp_send_failed");
+  }
+  const type = r.type && wati.isMediaType(r.type) ? r.type : kind;
+  const [{ data: row, error }] = await Promise.all([db.from("inbox_messages").insert({
+    user_id: userId,
+    member_id: member?.id ?? null,
+    channel: "whatsapp",
+    provider: "wati",
+    direction: "out",
+    contact_ref: phone,
+    body: caption || FILE_LABEL[type] || FILE_LABEL.document,
+    provider_message_id: r.id || crypto.randomUUID(),
+    provider_conversation_id: r.conversationId,
+    status: "pending",
+    sent_at: new Date().toISOString(),
+    campaign_id: en?.campaign_id ?? null,
+    enrollment_id: en?.id ?? null,
+    payload: {
+      source: "inbox_reply", type, media: true, wati_id: r.id, wati_message_id: r.id,
+      caption: caption || null, file_name: fileName, mime: file.type || null,
+    },
+  }).select("*").single().then((r) => r), spendCredits(db, userId)]);
+  if (error) throw new HttpError("El archivo salió pero no se pudo guardar en la bandeja: " + error.message, 500);
   return row;
 }
 
@@ -420,7 +473,7 @@ async function sendEmail(db: SupabaseClient, userId: string, member: Json, text:
   }
 }
 
-// ── Medios entrantes ────────────────────────────────────────────────────────
+// ── Medios (entrantes y salientes) ────────────────────────────────────────────
 
 async function serveMedia(db: SupabaseClient, userId: string, id: string, cors: Record<string, string>): Promise<Response> {
   if (!UUID_RE.test(id)) return json({ error: "id inválido" }, 400, cors);
@@ -455,7 +508,7 @@ async function serveMedia(db: SupabaseClient, userId: string, id: string, cors: 
   if (!got && !watiId) {
     // Fila vieja: buscar el id en el historial de WATI y recordarlo.
     try {
-      watiId = await wati.findInboundMessageId(creds, msg.contact_ref, type, msg.sent_at, pmid.startsWith("wamid.") ? pmid : null);
+      watiId = await wati.findInboundMessageId(creds, msg.contact_ref, type, msg.sent_at, pmid.startsWith("wamid.") ? pmid : null, msg.direction === "out");
     } catch (e) { lastErr = e; }
     if (watiId) {
       await db.from("inbox_messages").update({ payload: { ...pl, media: true, wati_id: watiId } }).eq("id", msg.id).eq("user_id", userId);
@@ -483,6 +536,21 @@ async function serveMedia(db: SupabaseClient, userId: string, id: string, cors: 
   });
 }
 
+/** JSON, o multipart/form-data cuando la bandeja manda un archivo. undefined = cuerpo inválido. */
+async function readBody(req: Request): Promise<Json> {
+  try {
+    if (/multipart\/form-data/i.test(req.headers.get("Content-Type") ?? "")) {
+      const form = await req.formData();
+      const out: Json = {};
+      for (const [k, v] of form.entries()) out[k] = v;
+      return out;
+    }
+    return await req.json();
+  } catch {
+    return undefined;
+  }
+}
+
 // ── Handler ─────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -493,7 +561,7 @@ Deno.serve(async (req) => {
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
   const [{ data: { user }, error: authErr }, body] = await Promise.all([
     createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!).auth.getUser(token),
-    req.json().catch(() => undefined) as Promise<Json>,
+    readBody(req),
   ]);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401, cors);
   if (body === undefined) return json({ error: "Invalid JSON body" }, 400, cors);
@@ -561,8 +629,11 @@ Deno.serve(async (req) => {
     const template = String(body?.template ?? "").trim().slice(0, 512);
     if (memberId && !UUID_RE.test(memberId)) return json({ error: "member_id inválido" }, 400, cors);
     if (!memberId && !(channel === "whatsapp" && wati.digits(contactRef))) return json({ error: "member_id inválido" }, 400, cors);
-    const text = String(body?.body ?? "").replace(/\r\n/g, "\n").trim().slice(0, MAX_BODY);
-    if (!text && !template) return json({ error: "Escribe un mensaje." }, 400, cors);
+    const file: File | null = body?.file instanceof File ? body.file : null;
+    if (file && channel !== "whatsapp") return json({ error: "Los archivos solo se envían por WhatsApp." }, 400, cors);
+    // Con archivo, `body` es el pie de foto (WhatsApp lo corta en 1024).
+    const text = String(body?.body ?? "").replace(/\r\n/g, "\n").trim().slice(0, file ? 1024 : MAX_BODY);
+    if (!text && !template && !file) return json({ error: "Escribe un mensaje." }, 400, cors);
 
     let member: Json | null = null;
     if (memberId) {
@@ -577,7 +648,7 @@ Deno.serve(async (req) => {
     }
 
     const row = channel === "whatsapp"
-      ? await sendWhatsApp(db, user.id, member, contactRef, text, template)
+      ? await sendWhatsApp(db, user.id, member, contactRef, text, file ? "" : template, file)
       : await sendEmail(db, user.id, member, text, String(body?.subject ?? ""));
     return json({ message: row }, 200, cors);
   } catch (err) {
