@@ -1178,7 +1178,8 @@
       root.appendChild(renderSetupHero());
       return;
     }
-    root.appendChild(renderChannelBar(false));
+    // Las tarjetas de canales son configuración de Campañas: la Bandeja no las lleva.
+    if (state.view !== 'inbox') root.appendChild(renderChannelBar(false));
     root.appendChild(renderSubnav());
     updateBadge();
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
