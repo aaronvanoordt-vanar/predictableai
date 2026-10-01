@@ -1269,9 +1269,18 @@
       '#prospecting-shell .cmp-inbox-filters label { display:flex; align-items:center; gap:6px; font-size:12px; }',
       '#prospecting-shell .cmp-inbox-filters input[type=search] { width:100%; }',
       '#prospecting-shell .cmp-inbox-filters .cmp-filter-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }',
-      '#prospecting-shell .cmp-inbox-count { padding:6px 12px; font-size:11px; color:var(--text3); border-bottom:1px solid var(--hair); }',
-      '#prospecting-shell .cmp-link-btn { background:none; border:0; padding:0; font:inherit; color:var(--accent-2); cursor:pointer; text-decoration:underline; }',
-      '#prospecting-shell .cmp-link-btn:disabled { opacity:.6; cursor:default; }',
+      '#prospecting-shell .cmp-inbox-count { padding:8px 12px; font-size:11px; color:var(--text3); border-bottom:1px solid var(--hair); display:flex; flex-direction:column; gap:7px; }',
+      '#prospecting-shell .cmp-inbox-tools { display:flex; flex-wrap:wrap; gap:6px; }',
+      '#prospecting-shell .cmp-pill { display:inline-flex; align-items:center; gap:5px; height:24px; padding:0 10px; border-radius:999px; border:1px solid var(--hair); background:var(--surface2); color:var(--text2); font:inherit; font-size:11px; font-weight:600; line-height:1; cursor:pointer; white-space:nowrap; transition:background .15s, border-color .15s, color .15s, transform .1s; }',
+      '#prospecting-shell .cmp-pill svg { flex:none; opacity:.85; }',
+      '#prospecting-shell .cmp-pill:hover:not(:disabled) { border-color:var(--accent-2); color:var(--accent-2); }',
+      '#prospecting-shell .cmp-pill:active:not(:disabled) { transform:scale(.96); }',
+      '#prospecting-shell .cmp-pill:focus-visible { outline:2px solid var(--accent-2); outline-offset:1px; }',
+      '#prospecting-shell .cmp-pill.is-on { background:var(--accent-soft, var(--surface2)); border-color:transparent; color:var(--accent-ink, var(--accent-2)); }',
+      '#prospecting-shell .cmp-pill:disabled { opacity:.6; cursor:default; }',
+      '#prospecting-shell .cmp-pill.is-busy svg { animation:cmpPillSpin 1s linear infinite; }',
+      '@keyframes cmpPillSpin { to { transform:rotate(360deg); } }',
+      '@media (prefers-reduced-motion: reduce) { #prospecting-shell .cmp-pill.is-busy svg { animation:none; } }',
       '#prospecting-shell .cmp-conv-tag { font-size:10px; padding:1px 6px; border-radius:999px; background:var(--surface3); color:var(--text3); white-space:nowrap; }',
       '#prospecting-shell .cmp-bubble.system { align-self:center; max-width:90%; background:transparent; border-style:dashed; font-size:12px; color:var(--text3); text-align:center; }',
       '#prospecting-shell .cmp-bubble-ctx { font-size:10.5px; color:var(--text3); margin-bottom:3px; }',
@@ -2716,6 +2725,22 @@
   }
 
   // ── Render: Bandeja omnicanal ────────────────────────────────────────────
+  // Botones píldora pequeños de la cabecera de la bandeja. Los iconos son SVG
+  // fijos (sin datos del usuario), por eso van por innerHTML.
+  var PILL_ICONS = {
+    check: '<path d="M3 8.5l3 3 7-7"/>',
+    bell: '<path d="M4 11V7a4 4 0 0 1 8 0v4l1 1.5H3L4 11z"/><path d="M6.5 14a1.5 1.5 0 0 0 3 0"/>',
+    bellOff: '<path d="M4 11V7a4 4 0 0 1 6.5-3.1M12 7v4l1 1.5H5"/><path d="M6.5 14a1.5 1.5 0 0 0 3 0"/><path d="M2.5 2.5l11 11"/>',
+    sync: '<path d="M13 8a5 5 0 0 1-8.6 3.5M3 8a5 5 0 0 1 8.6-3.5"/><path d="M11.5 1.8v2.9H8.6M4.5 14.2v-2.9h2.9"/>',
+  };
+  function pillBtn(action, icon, label, opts) {
+    opts = opts || {};
+    var b = h('button', { type: 'button', class: 'cmp-pill' + (opts.on ? ' is-on' : '') + (opts.busy ? ' is-busy' : ''), 'data-action': action, title: opts.title || null });
+    b.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + PILL_ICONS[icon] + '</svg>';
+    b.appendChild(h('span', { 'data-role': 'pill-label', text: label }));
+    if (opts.busy) b.disabled = true;
+    return b;
+  }
   function renderInbox() {
     ensureGmailStatus();
     var wrap = h('div', { class: 'cmp-inbox' });
@@ -2754,25 +2779,23 @@
         else totOut++;
       });
     });
-    var countRow = h('div', { class: 'cmp-inbox-count', text: shown.length + (shown.length === 1 ? ' conversación' : ' conversaciones') + ' · ' + totOut + ' enviados' + (totFailed ? ' · ' + totFailed + ' fallidos' : '') + ' · ' + totIn + ' recibidos' + (unreadCount() ? ' · ' + unreadCount() + ' sin leer' : '') });
+    var countRow = h('div', { class: 'cmp-inbox-count' });
+    countRow.appendChild(h('div', { class: 'cmp-inbox-stats', text: shown.length + (shown.length === 1 ? ' conversación' : ' conversaciones') + ' · ' + totOut + ' enviados' + (totFailed ? ' · ' + totFailed + ' fallidos' : '') + ' · ' + totIn + ' recibidos' + (unreadCount() ? ' · ' + unreadCount() + ' sin leer' : '') }));
+    var tools = h('div', { class: 'cmp-inbox-tools' });
     // Las respuestas de LinkedIn se suelen leer en LinkedIn mismo y Dripify no
     // avisa cuándo: este botón es la forma de dejar la bandeja al día.
     if (shown.some(function (c) { return c.unread; })) {
-      countRow.appendChild(document.createTextNode(' · '));
-      countRow.appendChild(h('button', { type: 'button', class: 'cmp-link-btn', 'data-action': 'inbox-mark-all', text: 'Marcar todo como leído' }));
+      tools.appendChild(pillBtn('inbox-mark-all', 'check', 'Marcar todo leído', { title: 'Marca como leídas todas las conversaciones que ves' }));
     }
     // Aviso sonoro de mensajes nuevos (js/inbox-alert.js, suena en toda la app).
     if (global.inboxAlert) {
       var soundOn = global.inboxAlert.isEnabled();
-      countRow.appendChild(document.createTextNode(' · '));
-      countRow.appendChild(h('button', { type: 'button', class: 'cmp-link-btn', 'data-action': 'inbox-sound-toggle', title: 'Un sonido suave cuando llega un mensaje, aunque estés en otra pestaña', text: soundOn ? 'Sonido: activado' : 'Sonido: silenciado' }));
+      tools.appendChild(pillBtn('inbox-sound-toggle', soundOn ? 'bell' : 'bellOff', soundOn ? 'Sonido' : 'Silenciado', { title: soundOn ? 'Suena al llegar un mensaje, aunque estés en otra pestaña. Clic para silenciar.' : 'Sin sonido al llegar un mensaje. Clic para activarlo.', on: soundOn }));
     }
     if (isConn(state.wati)) {
-      countRow.appendChild(document.createTextNode(' · '));
-      var syncBtn = h('button', { type: 'button', class: 'cmp-link-btn', 'data-action': 'inbox-sync-wati', title: 'Trae lo que escribiste en WATI y cualquier mensaje que no haya llegado', text: watiSync.running ? 'Sincronizando WhatsApp…' : 'Sincronizar WhatsApp' });
-      if (watiSync.running) syncBtn.disabled = true;
-      countRow.appendChild(syncBtn);
+      tools.appendChild(pillBtn('inbox-sync-wati', 'sync', watiSync.running ? 'Sincronizando…' : 'Sincronizar WhatsApp', { title: 'Trae lo que escribiste en WATI y cualquier mensaje que no haya llegado', busy: watiSync.running }));
     }
+    if (tools.childNodes.length) countRow.appendChild(tools);
     left.appendChild(countRow);
     var list = h('div', { class: 'cmp-conv-list' });
     if (state.inboxError) list.appendChild(h('div', { class: 'pros-note-red', style: 'margin:12px', text: '⚠ ' + state.inboxError }));
@@ -3363,7 +3386,9 @@
     }
     if (action === 'inbox-sync-wati') {
       btn.disabled = true;
-      btn.textContent = 'Sincronizando WhatsApp…';
+      btn.classList.add('is-busy');
+      var pl = btn.querySelector('[data-role="pill-label"]');
+      if (pl) pl.textContent = 'Sincronizando…'; else btn.textContent = 'Sincronizando…';
       return syncWatiHistory(true);
     }
     if (action === 'inbox-sound-toggle') {
