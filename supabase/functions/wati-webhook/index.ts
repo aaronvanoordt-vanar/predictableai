@@ -206,6 +206,10 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
   for (const en of (enrollments ?? []) as Json[]) {
     const patch: Json = { last_inbound_whatsapp_at: at };
     const stops = ["active", "processing", "paused"].includes(en.status);
+    // Primera respuesta a una cadencia que ya terminó (p. ej. una campaña de un
+    // solo WhatsApp): no cambia el estado, pero sí cuenta como respuesta del
+    // paso que la provocó, igual que en email y LinkedIn.
+    const lateReply = !optOut && !stops && !en.replied_at;
     if (optOut) {
       patch.status = "unsubscribed";
       patch.stop_reason = "El lead pidió darse de baja por WhatsApp.";
@@ -221,7 +225,7 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
       patch.replied_channel = "whatsapp";
     }
     await db.from("campaign_enrollments").update(patch).eq("id", en.id);
-    if (optOut || stops) {
+    if (optOut || stops || lateReply) {
       // La respuesta se atribuye al último paso que este lead recibió (no al
       // que estaba esperando): así los contadores por paso y el aprendizaje
       // saben qué mensaje la provocó.
