@@ -838,6 +838,31 @@
       state.inbox = [];
     }
   }
+  // Historial de WATI (inbox-send {action:"sync_wati"}): trae a la bandeja lo
+  // escrito en la UI de WATI y los entrantes que el webhook no entregó. Al
+  // abrir la bandeja corre solo (una vez cada 5 min); el botón lo fuerza. Las
+  // filas nuevas llegan por realtime, igual que un mensaje en vivo.
+  var watiSync = { running: false, lastAt: 0 };
+  function syncWatiHistory(manual) {
+    if (!isConn(state.wati) || watiSync.running) return Promise.resolve();
+    if (!manual && Date.now() - watiSync.lastAt < 5 * 60 * 1000) return Promise.resolve();
+    watiSync.running = true;
+    watiSync.lastAt = Date.now();
+    return edgeFetch(FN_INBOX, { action: 'sync_wati' }).then(function (r) {
+      if (r && r.error) throw new Error(r.error);
+      if (manual) {
+        var n = (r && r.inserted) || 0;
+        toast(n ? (n === 1 ? '1 mensaje nuevo de WhatsApp.' : n + ' mensajes nuevos de WhatsApp.') : (r && r.pending ? 'Sincronización parcial: el resto sigue en segundo plano.' : 'WhatsApp ya estaba al día.'), 'success');
+      }
+      if (r && r.inserted) return loadInbox();
+    }).catch(function (e) {
+      if (manual) toast('No se pudo sincronizar con WhatsApp: ' + errMsg(e), 'error');
+      else console.warn('[campaigns] wati sync:', errMsg(e));
+    }).then(function () {
+      watiSync.running = false;
+      if (state.view === 'inbox') render(); else updateBadge();
+    });
+  }
   function convKeyOf(m) { return m.member_id ? 'm:' + m.member_id : 'r:' + chanKey(m.channel) + ':' + (m.contact_ref || m.id); }
   /** Datos del contacto cuando no está en ninguna lista: lo que mandó el proveedor. */
   function leadFromMessages(msgs) {
@@ -1155,7 +1180,7 @@
     root.appendChild(renderSubnav());
     updateBadge();
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
-    if (state.view === 'inbox') { root.appendChild(renderInbox()); markOpenConvRead(); }
+    if (state.view === 'inbox') { root.appendChild(renderInbox()); markOpenConvRead(); setTimeout(function () { syncWatiHistory(false); }, 0); }
     else if (state.view === 'knowledge') root.appendChild(knowledgeNode());
     else if (state.builder) root.appendChild(state.builderHost);
     else if (state.activeId && findCampaign(state.activeId)) root.appendChild(renderDetail());
@@ -2736,6 +2761,12 @@
       countRow.appendChild(document.createTextNode(' · '));
       countRow.appendChild(h('button', { type: 'button', class: 'cmp-link-btn', 'data-action': 'inbox-mark-all', text: 'Marcar todo como leído' }));
     }
+    if (isConn(state.wati)) {
+      countRow.appendChild(document.createTextNode(' · '));
+      var syncBtn = h('button', { type: 'button', class: 'cmp-link-btn', 'data-action': 'inbox-sync-wati', title: 'Trae lo que escribiste en WATI y cualquier mensaje que no haya llegado', text: watiSync.running ? 'Sincronizando WhatsApp…' : 'Sincronizar WhatsApp' });
+      if (watiSync.running) syncBtn.disabled = true;
+      countRow.appendChild(syncBtn);
+    }
     left.appendChild(countRow);
     var list = h('div', { class: 'cmp-conv-list' });
     if (state.inboxError) list.appendChild(h('div', { class: 'pros-note-red', style: 'margin:12px', text: '⚠ ' + state.inboxError }));
@@ -3323,6 +3354,11 @@
     if (action === 'conv-open' && key) {
       state.convKey = key;
       return render(); // render() marca leída la conversación abierta
+    }
+    if (action === 'inbox-sync-wati') {
+      btn.disabled = true;
+      btn.textContent = 'Sincronizando WhatsApp…';
+      return syncWatiHistory(true);
     }
     if (action === 'inbox-mark-all') {
       var rA = btnLoading(btn, '⏳');

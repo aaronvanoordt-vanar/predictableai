@@ -43,6 +43,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
+import { findMemberByPhone } from "../_shared/wati-history.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -112,25 +113,13 @@ function eventDate(ev: Json): string {
   return new Date().toISOString();
 }
 
-/** Busca el lead del usuario cuyo teléfono coincide en dígitos con el waId. */
-async function findMember(db: SupabaseClient, userId: string, waId: string): Promise<Json | null> {
-  const d = wati.digits(waId);
-  if (d.length < 7) return null;
-  const tail = d.slice(-8);
-  const { data } = await db
-    .from("prospect_list_members")
-    .select("id, name, first_name, company, phone, contact_status")
-    .eq("user_id", userId)
-    .ilike("phone", `%${tail}%`)
-    .limit(20);
-  const rows = (data ?? []) as Json[];
-  // Sin coincidencia real no se adivina (antes: rows[0]): dos leads de países
-  // distintos con los mismos 8 dígitos finales paraban la cadencia del que no
-  // era. El mensaje entra igual a la bandeja con member_id null.
-  return rows.find((m) => {
-    const p = wati.digits(m.phone);
-    return p === d || p.endsWith(d) || d.endsWith(p);
-  }) ?? null;
+/**
+ * Busca el lead del usuario cuyo teléfono coincide en dígitos con el waId. Sin
+ * coincidencia real no se adivina (antes: el primero de los que compartían los
+ * 8 dígitos finales): el mensaje entra igual a la bandeja con member_id null.
+ */
+function findMember(db: SupabaseClient, userId: string, waId: string): Promise<Json | null> {
+  return findMemberByPhone(db, userId, waId);
 }
 
 // Estados del CRM que nunca se pisan con un "respondió": ya están más adelante.

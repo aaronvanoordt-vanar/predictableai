@@ -52,6 +52,12 @@
  *      guardadas antes del 2026-09-30 no tienen el id de WATI: se busca en el
  *      historial de la conversación y se guarda en payload.wati_id.
  *      Content-Type deducido de los bytes (WATI manda octet-stream).
+ *  • { action: "sync_wati" }
+ *      Trae del historial de WATI lo que no está en la bandeja: mensajes
+ *      escritos en la UI de WATI (o por sus bots) y entrantes que el webhook
+ *      no entregó (_shared/wati-history.ts). Un pase por llamada, cortado a
+ *      ~60 s; con otro pase en menos de 2 min devuelve el último resultado.
+ *      → { conversations, inserted, pending, error, at }
  *  • { action: "mark_read", ids: [uuid…] }
  *      UPDATE inbox_messages SET read_at = now() WHERE id = ANY(ids) AND
  *      user_id = uid AND direction = 'in' AND read_at IS NULL → { updated: n }
@@ -66,6 +72,7 @@
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import * as wati from "../_shared/wati.ts";
+import { syncWatiHistory } from "../_shared/wati-history.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -576,6 +583,8 @@ Deno.serve(async (req) => {
   try {
     if (body?.action === "media") return await serveMedia(db, user.id, String(body.id ?? ""), cors);
 
+    if (body?.action === "sync_wati") return json(await syncWati(db, user.id), 200, cors);
+
     if (body?.action === "mark_read") {
       const ids: string[] = (Array.isArray(body.ids) ? body.ids : []).map(String).filter((id: string) => UUID_RE.test(id)).slice(0, 500);
       if (!ids.length) return json({ updated: 0 }, 200, cors);
@@ -662,3 +671,19 @@ Deno.serve(async (req) => {
     return json({ error: (err as Error)?.message ?? String(err) }, 500, cors);
   }
 });
+
+/** Un pase de sincronización del historial de WATI para la cuenta del usuario. */
+const WATI_SYNC_COOLDOWN_MS = 2 * 60 * 1000;
+async function syncWati(db: SupabaseClient, userId: string): Promise<Json> {
+  const { data: acc } = await db.from("channel_accounts").select("id, user_id, status, secret, config").eq("user_id", userId).eq("provider", "wati").maybeSingle();
+  if (!acc || acc.status !== "connected") return { conversations: 0, inserted: 0, pending: 0, error: "WhatsApp no está conectado.", at: null };
+  const last = acc.config?.history_sync;
+  if (last?.at && Date.now() - Date.parse(last.at) < WATI_SYNC_COOLDOWN_MS) return { ...last, cached: true };
+  const started = Date.now();
+  const r = await syncWatiHistory(db, acc, started + 60_000);
+  const stamp = { ...r, at: new Date().toISOString(), ms: Date.now() - started, by: "inbox" };
+  // Se relee la fila: el webhook pudo sellar config.webhook mientras tanto.
+  const { data: fresh } = await db.from("channel_accounts").select("config").eq("id", acc.id).maybeSingle();
+  await db.from("channel_accounts").update({ config: { ...(fresh?.config ?? acc.config ?? {}), history_sync: stamp } }).eq("id", acc.id);
+  return stamp;
+}

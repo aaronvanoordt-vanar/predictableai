@@ -711,6 +711,20 @@ export async function findIdsByWamid(creds: WatiCreds, phone: string, wamid: str
   return [];
 }
 
+// ── Historial ───────────────────────────────────────────────────────────────
+
+/** GET /api/ext/v3/conversations/{phone}/messages — de lo más nuevo a lo más viejo. */
+export async function listConversationMessages(creds: WatiCreds, phone: string, page = 1, pageSize = 100): Promise<Json[]> {
+  const data = await call(creds, "GET", `/api/ext/v3/conversations/${encodeURIComponent(digits(phone))}/messages?page_number=${page}&page_size=${pageSize}`);
+  return Array.isArray(data?.message_list) ? data.message_list : [];
+}
+
+/** GET /api/ext/v3/contacts — una página de contactos (wa_id, last_updated…). */
+export async function listContactsPage(creds: WatiCreds, page = 1, pageSize = 100): Promise<Json[]> {
+  const data = await call(creds, "GET", `/api/ext/v3/contacts?page_number=${page}&page_size=${pageSize}`);
+  return Array.isArray(data?.contact_list) ? data.contact_list : [];
+}
+
 // ── Webhooks ────────────────────────────────────────────────────────────────
 
 /**
