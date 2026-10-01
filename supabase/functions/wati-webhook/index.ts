@@ -44,6 +44,7 @@
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
 import { findMemberByPhone } from "../_shared/wati-history.ts";
+import { patchChannelConfig } from "../_shared/channel-config.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -322,7 +323,10 @@ async function isCampaignSend(db: SupabaseClient, acc: Json, ev: Json): Promise<
 }
 
 async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sent" | "delivered" | "read" | "replied" | "failed") {
-  if (kind === "delivered" || kind === "read" || kind === "replied") await clearAccountBlock(db, acc);
+  // Solo un recibo de un mensaje NUESTRO prueba que Meta ya acepta envíos. Un
+  // mensaje entrante no: llega aunque el nombre visible siga sin aprobar, y
+  // levantar el bloqueo con él soltaba todos los reintentos de golpe.
+  if (kind === "delivered" || kind === "read") await clearAccountBlock(db, acc);
   const at = eventDate(ev);
   const wamid = ev?.whatsappMessageId ? String(ev.whatsappMessageId) : null;
   // Las plantillas (campaign-run, plantilla desde la bandeja) se guardan con
@@ -437,9 +441,8 @@ const RECEIPT_TYPES = ["delivered", "read", "failed", "replied", "opted_out"];
  */
 async function holdForAccountBlock(db: SupabaseClient, acc: Json, origin: Json, code: string, detail: string) {
   const now = new Date();
-  const config = { ...(acc.config ?? {}), send_block: { code, detail: detail.slice(0, 300), at: now.toISOString() } };
-  await db.from("channel_accounts").update({ config }).eq("id", acc.id);
-  acc.config = config;
+  const send_block = { code, detail: detail.slice(0, 300), at: now.toISOString() };
+  acc.config = (await patchChannelConfig(db, acc.id, { send_block })) ?? { ...(acc.config ?? {}), send_block };
 
   if (!origin.node_id || !origin.created_at) return;
   const { count } = await db
@@ -465,8 +468,7 @@ async function clearAccountBlock(db: SupabaseClient, acc: Json) {
   if (!acc.config?.send_block) return;
   const config = { ...acc.config };
   delete config.send_block;
-  await db.from("channel_accounts").update({ config }).eq("id", acc.id);
-  acc.config = config;
+  acc.config = (await patchChannelConfig(db, acc.id, {}, ["send_block"])) ?? config;
 }
 
 /**
@@ -501,7 +503,7 @@ async function handleTemplateReviewed(db: SupabaseClient, acc: Json) {
     }));
     templates.synced_at = new Date().toISOString();
     templates.error = null;
-    await db.from("channel_accounts").update({ config: { ...acc.config, templates } }).eq("id", acc.id);
+    acc.config = (await patchChannelConfig(db, acc.id, { templates })) ?? { ...acc.config, templates };
   } catch (e) {
     console.error("[wati-webhook] template sync:", (e as Error).message);
   }
@@ -522,15 +524,15 @@ async function stampWebhookSeen(db: SupabaseClient, acc: Json, eventType: string
   const wh: Json = acc.config?.webhook ?? {};
   const last = wh.last_received_at ? new Date(wh.last_received_at).getTime() : 0;
   if (Date.now() - last < WEBHOOK_STAMP_MS) return;
-  const config = {
-    ...acc.config,
+  const webhook = {
     // No se marca `registered`: eso significa "lo registramos nosotros por API".
     // Lo que prueba esto es que la URL está puesta y entrega, sea quien sea
     // que la haya puesto; channel-connect deriva el estado de aquí.
-    webhook: { ...wh, last_received_at: new Date().toISOString(), last_event: eventType || null, error: null, limit: false },
+    ...wh, last_received_at: new Date().toISOString(), last_event: eventType || null, error: null, limit: false,
   };
-  await db.from("channel_accounts").update({ config }).eq("id", acc.id);
-  acc.config = config;
+  // Solo la clave `webhook`: reescribir el config entero desde la copia de
+  // esta petición borraba el send_block que otro recibo acababa de sellar.
+  acc.config = (await patchChannelConfig(db, acc.id, { webhook })) ?? { ...acc.config, webhook };
 }
 
 Deno.serve(async (req) => {

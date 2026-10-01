@@ -67,6 +67,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import { patchChannelConfig } from "../_shared/channel-config.ts";
 import * as wati from "../_shared/wati.ts";
 import { syncWatiHistory } from "../_shared/wati-history.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
@@ -598,8 +599,8 @@ async function syncWati(db: SupabaseClient, userId: string): Promise<Json> {
   const started = Date.now();
   const r = await syncWatiHistory(db, acc, started + 60_000, Number(last?.next) || 0);
   const stamp = { ...r, at: new Date().toISOString(), ms: Date.now() - started, by: "inbox" };
-  // Se relee la fila: el webhook pudo sellar config.webhook mientras tanto.
-  const { data: fresh } = await db.from("channel_accounts").select("config").eq("id", acc.id).maybeSingle();
-  await db.from("channel_accounts").update({ config: { ...(fresh?.config ?? acc.config ?? {}), history_sync: stamp } }).eq("id", acc.id);
+  // Solo la clave history_sync: el webhook pudo sellar send_block o
+  // config.webhook mientras tanto.
+  await patchChannelConfig(db, acc.id, { history_sync: stamp });
   return stamp;
 }

@@ -79,6 +79,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
+import { patchChannelConfig } from "../_shared/channel-config.ts";
 import * as watiHistory from "../_shared/wati-history.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
@@ -1264,12 +1265,11 @@ async function syncWatiHistoryAll(ctx: Ctx, deadline: number): Promise<number> {
     const last = acc.config?.history_sync?.at ? Date.parse(acc.config.history_sync.at) : 0;
     if (ctx.now.getTime() - last < watiHistory.WATI_HISTORY_SYNC_MS) continue;
     const startedAt = new Date().toISOString();
-    await db.from("channel_accounts").update({ config: { ...(acc.config ?? {}), history_sync: { ...(acc.config?.history_sync ?? {}), at: startedAt } } }).eq("id", acc.id);
+    await patchChannelConfig(db, acc.id, { history_sync: { ...(acc.config?.history_sync ?? {}), at: startedAt } });
     const started = Date.now();
     const r = await watiHistory.syncWatiHistory(db, acc, Math.min(deadline, started + 45_000), Number(acc.config?.history_sync?.next) || 0);
     inserted += r.inserted;
-    const { data: fresh } = await db.from("channel_accounts").select("config").eq("id", acc.id).maybeSingle();
-    await db.from("channel_accounts").update({ config: { ...(fresh?.config ?? {}), history_sync: { ...r, at: startedAt, ms: Date.now() - started, by: "cron" } } }).eq("id", acc.id);
+    await patchChannelConfig(db, acc.id, { history_sync: { ...r, at: startedAt, ms: Date.now() - started, by: "cron" } });
   }
   return inserted;
 }
