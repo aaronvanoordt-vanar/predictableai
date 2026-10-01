@@ -99,6 +99,16 @@
     paused:       { label: 'Pausado',       pill: 'amber' },
     error:        { label: 'Error',         pill: 'red' },
   };
+  /**
+   * Estado que se muestra y se cuenta. Una respuesta que llega cuando la
+   * cadencia ya terminó (p. ej. una campaña de un solo WhatsApp) deja el
+   * enrolamiento en `completed` con `replied_at` puesto: para el usuario ese
+   * lead respondió, y así lo cuentan los KPIs y la tabla.
+   */
+  function displayStatus(e) {
+    if (e && e.replied_at && (e.status === 'completed' || e.status === 'error')) return 'replied';
+    return e ? e.status : '';
+  }
   var EVENT_LABEL = {
     queued: 'Enrolado en la campaña de LinkedIn', sent: 'Enviado', delivered: 'Entregado', read: 'Leído', opened: 'Abierto', replied: 'Respondió',
     failed: 'Falló', skipped: 'Omitido', opted_out: 'Se dio de baja', connection_sent: 'Conexión enviada',
@@ -608,12 +618,12 @@
   async function loadCampaigns() {
     var res = await sb()
       .from('campaigns')
-      .select('*, campaign_enrollments(status)')
+      .select('*, campaign_enrollments(status, replied_at)')
       .order('created_at', { ascending: false });
     if (res.error) throw new Error('No se pudieron cargar las campañas: ' + res.error.message);
     state.campaigns = (res.data || []).map(function (c) {
       var counts = {};
-      (c.campaign_enrollments || []).forEach(function (e) { counts[e.status] = (counts[e.status] || 0) + 1; });
+      (c.campaign_enrollments || []).forEach(function (e) { var k = displayStatus(e); counts[k] = (counts[k] || 0) + 1; });
       var out = Object.assign({}, c, { flow: flowLib().normalize(c.flow), counts: counts, total: (c.campaign_enrollments || []).length });
       delete out.campaign_enrollments;
       return out;
@@ -2684,7 +2694,7 @@
     var aiSteps = L.actions(flow).filter(function (a) { return a.content.kind === 'ai' && !L.isLinkedin(a.channel); }).length;
     state.enrollments.forEach(function (e) {
       var m = e.member || {};
-      var s = ENROLL_STATUS[e.status] || ENROLL_STATUS.active;
+      var s = ENROLL_STATUS[displayStatus(e)] || ENROLL_STATUS.active;
       var loc = L.find(flow, e.next_node_id);
       var evs = byEnroll[e.id] || [];
       var last = evs[0];
@@ -2692,7 +2702,9 @@
       var pathTxt = path.length ? path.map(function (p) { var cl = L.CONDITION_LABELS[p.check]; return (cl ? cl.label : p.check) + ': ' + (p.branch === 'yes' ? 'Sí' : 'No'); }).join(' · ') : '';
       var next = (e.status === 'active' || e.status === 'processing' || e.status === 'paused') && loc
         ? esc(L.nodeTitle(loc.node)) + (e.next_run_at && e.status !== 'paused' ? '<div class="pros-cellsub">' + esc(fmtDateTime(e.next_run_at)) + '</div>' : '')
-        : (e.stop_reason ? esc(e.stop_reason) : '—');
+        : (displayStatus(e) === 'replied' && e.status !== 'replied'
+          ? 'Respondió' + (e.replied_channel ? ' por ' + esc(chanLabel(e.replied_channel)) : '') + '<div class="pros-cellsub">' + esc(fmtDateTime(e.replied_at)) + '</div>'
+          : (e.stop_reason ? esc(e.stop_reason) : '—'));
       if (pathTxt) next += '<div class="pros-cellsub">' + esc(pathTxt) + '</div>';
       var open = state.expanded.has(String(e.id));
       var msgs = messagesFor(e.id, c);
