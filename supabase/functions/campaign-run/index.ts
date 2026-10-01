@@ -79,6 +79,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
+import * as watiHistory from "../_shared/wati-history.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
@@ -1241,8 +1242,37 @@ Deno.serve(async (req) => {
   try { synced = await syncDripify(ctx); } catch (e) { console.error("[campaign-run] dripify sync:", e); }
   let emailSynced = 0;
   try { emailSynced = await syncApolloEmail(ctx); } catch (e) { console.error("[campaign-run] apollo email sync:", e); }
-  return json({ ok: true, due: due?.length ?? 0, processed, prepared, dripify_synced: synced, email_synced: emailSynced });
+  let watiSynced = 0;
+  // Lo que quede del presupuesto (~150 s del Edge Runtime) para el historial de WATI.
+  try { watiSynced = await syncWatiHistoryAll(ctx, loopStarted + 130_000); } catch (e) { console.error("[campaign-run] wati history sync:", e); }
+  return json({ ok: true, due: due?.length ?? 0, processed, prepared, dripify_synced: synced, email_synced: emailSynced, wati_history_synced: watiSynced });
 });
+
+// ── Historial de WATI ───────────────────────────────────────────────────────
+// Red de seguridad del webhook: cada WATI_HISTORY_SYNC_MS por cuenta se lee el
+// historial de las conversaciones recientes y se guarda lo que falte (lo
+// escrito en la UI de WATI, entrantes que el webhook no entregó).
+// _shared/wati-history.ts. Se sella antes de empezar: un pase que se corta
+// no se repite en la corrida siguiente, sigue al cabo del intervalo.
+
+async function syncWatiHistoryAll(ctx: Ctx, deadline: number): Promise<number> {
+  const db = ctx.db;
+  const { data: accounts } = await db.from("channel_accounts").select("id, user_id, status, secret, config").eq("provider", "wati").eq("status", "connected");
+  let inserted = 0;
+  for (const acc of (accounts ?? []) as Json[]) {
+    if (Date.now() > deadline - 10_000) break;
+    const last = acc.config?.history_sync?.at ? Date.parse(acc.config.history_sync.at) : 0;
+    if (ctx.now.getTime() - last < watiHistory.WATI_HISTORY_SYNC_MS) continue;
+    const startedAt = new Date().toISOString();
+    await db.from("channel_accounts").update({ config: { ...(acc.config ?? {}), history_sync: { ...(acc.config?.history_sync ?? {}), at: startedAt } } }).eq("id", acc.id);
+    const started = Date.now();
+    const r = await watiHistory.syncWatiHistory(db, acc, Math.min(deadline, started + 45_000), Number(acc.config?.history_sync?.next) || 0);
+    inserted += r.inserted;
+    const { data: fresh } = await db.from("channel_accounts").select("config").eq("id", acc.id).maybeSingle();
+    await db.from("channel_accounts").update({ config: { ...(fresh?.config ?? {}), history_sync: { ...r, at: startedAt, ms: Date.now() - started, by: "cron" } } }).eq("id", acc.id);
+  }
+  return inserted;
+}
 
 // ── Sincronización con Dripify ──────────────────────────────────────────────
 // Dripify no avisa por API cuando manda la conexión o el lead la acepta:

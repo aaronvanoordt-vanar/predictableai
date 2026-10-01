@@ -22,7 +22,9 @@
  *      "Darse de baja" (o escribe baja/stop), status=unsubscribed y CRM
  *      `dado_de_baja`.
  *  • templateMessageSent(_v2) / sessionMessageSent(_v2) → confirma el envío
- *      de un mensaje nuestro (enlazado por localMessageId) y guarda el WAMID.
+ *      de un mensaje nuestro (enlazado por localMessageId / id) y guarda el
+ *      WAMID. Si no es nuestro, es un mensaje escrito en la UI de WATI (o de
+ *      un bot de WATI): entra a la bandeja como saliente `source: wati_ui`.
  *  • sentMessageDELIVERED / READ / REPLIED (_v2) → recibos.
  *  • templateMessageFailed → el envío falló (número sin WhatsApp, plantilla
  *      pausada…): evento failed + enrolamiento en error con el detalle.
@@ -41,6 +43,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
+import { findMemberByPhone } from "../_shared/wati-history.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -80,6 +83,12 @@ function inboundText(ev: Json): string {
   return label[String(ev?.type ?? "")] || "Mensaje";
 }
 
+/** Texto de un saliente escrito en WATI; una plantilla sin texto se nombra. */
+function operatorText(ev: Json): string {
+  if (!ev?.text && ev?.templateName) return `Plantilla ${ev.templateName}`;
+  return inboundText(ev);
+}
+
 /**
  * Campos de una reacción para el payload de la fila: el emoji y el wamid del
  * mensaje reaccionado (la bandeja la pinta pegada a ese mensaje). `raw` guarda
@@ -104,25 +113,13 @@ function eventDate(ev: Json): string {
   return new Date().toISOString();
 }
 
-/** Busca el lead del usuario cuyo teléfono coincide en dígitos con el waId. */
-async function findMember(db: SupabaseClient, userId: string, waId: string): Promise<Json | null> {
-  const d = wati.digits(waId);
-  if (d.length < 7) return null;
-  const tail = d.slice(-8);
-  const { data } = await db
-    .from("prospect_list_members")
-    .select("id, name, first_name, company, phone, contact_status")
-    .eq("user_id", userId)
-    .ilike("phone", `%${tail}%`)
-    .limit(20);
-  const rows = (data ?? []) as Json[];
-  // Sin coincidencia real no se adivina (antes: rows[0]): dos leads de países
-  // distintos con los mismos 8 dígitos finales paraban la cadencia del que no
-  // era. El mensaje entra igual a la bandeja con member_id null.
-  return rows.find((m) => {
-    const p = wati.digits(m.phone);
-    return p === d || p.endsWith(d) || d.endsWith(p);
-  }) ?? null;
+/**
+ * Busca el lead del usuario cuyo teléfono coincide en dígitos con el waId. Sin
+ * coincidencia real no se adivina (antes: el primero de los que compartían los
+ * 8 dígitos finales): el mensaje entra igual a la bandeja con member_id null.
+ */
+function findMember(db: SupabaseClient, userId: string, waId: string): Promise<Json | null> {
+  return findMemberByPhone(db, userId, waId);
 }
 
 // Estados del CRM que nunca se pisan con un "respondió": ya están más adelante.
@@ -272,6 +269,54 @@ async function linkReactionTarget(db: SupabaseClient, acc: Json, waId: string, w
   }
 }
 
+/**
+ * Margen para que el que envió por API (campaign-run, inbox-send) guarde su
+ * fila antes de tratar el callback como un mensaje escrito en WATI.
+ */
+const OWN_SEND_GRACE_MS = 4_000;
+
+/** Ids con los que un saliente puede estar guardado: el nuestro, el de WATI y el WAMID. */
+function outgoingIds(ev: Json): string[] {
+  const out = [ev?.localMessageId, ev?.id, ev?.id ? `wati:${ev.id}` : null, ev?.whatsappMessageId];
+  return [...new Set(out.filter(Boolean).map(String))];
+}
+
+/** Fila saliente de la bandeja que corresponde a este callback, si existe. */
+async function findOutgoing(db: SupabaseClient, acc: Json, ev: Json): Promise<Json | null> {
+  const ids = outgoingIds(ev);
+  if (!ids.length) return null;
+  const cols = "id, member_id, status, payload, provider_message_id";
+  const { data: found } = await db
+    .from("inbox_messages")
+    .select(cols)
+    .eq("user_id", acc.user_id)
+    .eq("provider", "wati")
+    .eq("direction", "out")
+    .in("provider_message_id", ids)
+    .limit(1);
+  if (found?.length) return found[0];
+  const wamid = ev?.whatsappMessageId ? String(ev.whatsappMessageId) : null;
+  if (!wamid) return null;
+  const { data: byWamid } = await db
+    .from("inbox_messages")
+    .select(cols)
+    .eq("user_id", acc.user_id)
+    .eq("provider", "wati")
+    .eq("direction", "out")
+    .eq("payload->>wamid", wamid)
+    .limit(1);
+  return byWamid?.[0] ?? null;
+}
+
+/** ¿El motor registró un envío con este id local? (entonces no es un mensaje de la UI). */
+async function isCampaignSend(db: SupabaseClient, acc: Json, ev: Json): Promise<boolean> {
+  if (!ev?.localMessageId) return false;
+  const { count } = await db.from("campaign_events")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", acc.user_id).eq("provider_message_id", String(ev.localMessageId)).eq("type", "sent");
+  return !!count;
+}
+
 async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sent" | "delivered" | "read" | "replied" | "failed") {
   if (kind === "delivered" || kind === "read" || kind === "replied") await clearAccountBlock(db, acc);
   const at = eventDate(ev);
@@ -281,28 +326,20 @@ async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sen
   // sale por /conversations/messages/text, que no acepta un id propio: se
   // guarda con el id de WATI, que vuelve como `id`. Antes solo se buscaba por
   // localMessageId y esos mensajes se quedaban en "Pendiente" para siempre.
-  const ids = [ev?.localMessageId, ev?.id, wamid].filter(Boolean).map(String);
-  if (!ids.length) return;
-  const cols = "id, member_id, status, payload, provider_message_id";
-  let { data: found } = await db
-    .from("inbox_messages")
-    .select(cols)
-    .eq("user_id", acc.user_id)
-    .eq("provider", "wati")
-    .eq("direction", "out")
-    .in("provider_message_id", ids)
-    .limit(1);
-  if (!found?.length && wamid) {
-    ({ data: found } = await db
-      .from("inbox_messages")
-      .select(cols)
-      .eq("user_id", acc.user_id)
-      .eq("provider", "wati")
-      .eq("direction", "out")
-      .eq("payload->>wamid", wamid)
-      .limit(1));
+  if (!outgoingIds(ev).length) return;
+  let msg: Json = await findOutgoing(db, acc, ev);
+
+  // Un "enviado" que no es de nada que hayamos mandado nosotros es un mensaje
+  // que el usuario (o un bot de WATI) escribió desde la UI de WATI: WATI lo
+  // avisa como sessionMessageSent / templateMessageSent, NO como `message`
+  // con owner:true. Antes se descartaba aquí y la bandeja no mostraba nada de
+  // lo que se escribía en WATI (2026-10-01). Se espera unos segundos antes de
+  // darlo por ajeno: el callback puede llegar antes de que campaign-run o
+  // inbox-send inserten su fila con el id que WATI les devolvió.
+  if (kind === "sent" && !msg) {
+    if (await recordOperatorMessage(db, acc, ev)) return;
+    msg = await findOutgoing(db, acc, ev);
   }
-  const msg: Json = found?.[0] ?? null;
   const local = ev?.localMessageId ? String(ev.localMessageId) : (msg?.provider_message_id ?? null);
 
   let errorDetail: string | null = null;
@@ -543,29 +580,39 @@ Deno.serve(async (req) => {
   return json({ ok: true });
 });
 
-/** Mensajes que el usuario escribe desde la UI de WATI: van a la bandeja como salientes. */
-async function recordOperatorMessage(db: SupabaseClient, acc: Json, ev: Json) {
+/**
+ * Mensajes que el usuario escribe desde la UI de WATI: van a la bandeja como
+ * salientes. Devuelve true si el mensaje NO era nuestro (se guardó, o ya
+ * estaba guardado como mensaje de WATI); false si resultó ser un envío de
+ * campaign-run / inbox-send, que sigue su camino de recibo.
+ */
+async function recordOperatorMessage(db: SupabaseClient, acc: Json, ev: Json): Promise<boolean> {
   const waId = wati.digits(ev?.waId);
-  if (!waId) return;
+  const realWamid = ev?.whatsappMessageId ? String(ev.whatsappMessageId) : null;
+  // Clave = id de WATI (el mismo que guarda inbox-send), o el WAMID.
+  const key = ev?.id ? String(ev.id) : realWamid;
+  if (!waId || !key) return false;
+  // El mismo mensaje puede llegar dos veces (`message` con owner:true y
+  // `sessionMessageSent`), o ser uno que ya guardó la bandeja o el motor.
+  // Se espera unos segundos antes de darlo por ajeno: el callback puede
+  // llegar antes de que campaign-run o inbox-send inserten su fila con el id
+  // que WATI les devolvió.
+  const existing = await findOutgoing(db, acc, ev);
+  if (existing) return existing.payload?.source === "wati_ui";
+  await new Promise((r) => setTimeout(r, OWN_SEND_GRACE_MS));
+  if (await findOutgoing(db, acc, ev) || await isCampaignSend(db, acc, ev)) return false;
   const member = await findMember(db, acc.user_id, waId);
-  const wamid = ev?.whatsappMessageId ? String(ev.whatsappMessageId) : (ev?.id ? `wati:${ev.id}` : null);
   // Una reacción que mandó la bandeja vuelve aquí como mensaje del operador:
   // ya está guardada (inbox-send, provider_message_id = nuestro id local).
   const reaction = wati.parseReaction(ev);
   if (reaction) {
-    const ids = [ev?.localMessageId, ev?.id].filter(Boolean).map(String);
-    if (ids.length) {
-      const { data: mine } = await db.from("inbox_messages").select("id")
-        .eq("user_id", acc.user_id).eq("provider", "wati").eq("direction", "out").in("provider_message_id", ids).limit(1);
-      if (mine?.length) return;
-    }
     if (reaction.target) {
       const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
       const { data: recent } = await db.from("inbox_messages").select("id")
         .eq("user_id", acc.user_id).eq("provider", "wati").eq("direction", "out")
         .eq("payload->>source", "inbox_reaction").eq("payload->>reacts_to", reaction.target).eq("payload->>emoji", reaction.emoji)
         .gte("sent_at", since).limit(1);
-      if (recent?.length) return;
+      if (recent?.length) return false;
     }
   }
   let primary: Json | null = null;
@@ -581,13 +628,30 @@ async function recordOperatorMessage(db: SupabaseClient, acc: Json, ev: Json) {
     provider: "wati",
     direction: "out",
     contact_ref: waId,
-    body: inboundText(ev),
-    provider_message_id: wamid,
+    body: operatorText(ev),
+    provider_message_id: key,
     provider_conversation_id: ev?.conversationId ? String(ev.conversationId) : null,
     status: "sent",
     sent_at: eventDate(ev),
     campaign_id: primary?.campaign_id ?? null,
     enrollment_id: primary?.id ?? null,
-    payload: { type: ev?.type ?? null, operator: ev?.operatorEmail ?? null, source: "wati_ui", ...reactionPayload(ev) },
+    payload: {
+      type: ev?.type ?? null,
+      operator: ev?.operatorEmail ?? ev?.operatorName ?? null,
+      source: "wati_ui",
+      wamid: realWamid,
+      wati_id: ev?.id ? String(ev.id) : null,
+      template_name: ev?.templateName ?? null,
+      // Foto, documento… que se mandó desde WATI: la bandeja lo descarga igual que un entrante.
+      ...(wati.isMediaType(ev?.type)
+        ? {
+          media: true,
+          media_file: wati.mediaFileName(ev?.data) ?? wati.mediaFileName(ev?.text),
+          caption: ev?.text && !wati.mediaFileName(ev.text) ? String(ev.text).slice(0, 2000) : null,
+        }
+        : {}),
+      ...reactionPayload(ev),
+    },
   }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true });
+  return true;
 }
