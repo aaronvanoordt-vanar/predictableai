@@ -162,6 +162,7 @@
     convKey: null,
     inboxFilter: { campaign: '', channel: '', status: '', q: '' },
     replyDraft: {},
+    replyFile: {},             // key → File adjunto por WhatsApp (aún sin enviar)
     sendingKey: {},
     replyChannel: {},
     waClosed: {},
@@ -337,10 +338,14 @@
     var sess = await sb().auth.getSession();
     var token = sess && sess.data && sess.data.session ? sess.data.session.access_token : null;
     if (!token) throw new Error('Sesión expirada. Vuelve a iniciar sesión.');
+    // FormData (un archivo de la bandeja) va como multipart: el navegador pone el boundary.
+    var isForm = typeof FormData !== 'undefined' && payload instanceof FormData;
+    var headers = { Authorization: 'Bearer ' + token };
+    if (!isForm) headers['Content-Type'] = 'application/json';
     var res = await fetch(global.SUPABASE_CONFIG.url + '/functions/v1/' + fnName, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-      body: JSON.stringify(payload),
+      headers: headers,
+      body: isForm ? payload : JSON.stringify(payload),
     });
     var body = null;
     try { body = await res.json(); } catch (e) { /* no-JSON */ }
@@ -974,14 +979,17 @@
     filteredConversations(buildConversations()).forEach(function (c) { ids = ids.concat(c.unreadIds || []); });
     return markIdsRead(ids);
   }
-  async function sendReply(conv, channel, body, subject, template, onOptimistic) {
+  async function sendReply(conv, channel, body, subject, template, onOptimistic, file) {
     if (!conv.member_id && !(channel === 'whatsapp' && conv.contact_ref)) throw new Error('Este contacto no está en tus listas; guárdalo en una lista para responderle.');
+    if (file && channel !== 'whatsapp') file = null;
     var text = String(body || '').trim();
-    if (!text && !template) throw new Error('Escribe el mensaje antes de enviar.');
+    if (!text && !template && !file) throw new Error('Escribe el mensaje antes de enviar.');
     var payload = { channel: channel, body: text };
     if (conv.member_id) payload.member_id = conv.member_id; else payload.contact_ref = conv.contact_ref;
     if (template) payload.template = template;
     if (channel === 'email') payload.subject = String(subject || '').trim() || 'Re:';
+    var kind = file ? fileKind(file) : '';
+    var localUrl = file ? URL.createObjectURL(file) : null;
     // El mensaje aparece en el hilo al instante ("Enviando…") y el cuadro se
     // vacía; inbox-send corre detrás. Antes se esperaba el envío y además se
     // recargaba toda la bandeja (hasta 2000 filas) antes de pintar nada; el
@@ -991,13 +999,16 @@
       local = {
         id: 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
         member_id: conv.member_id || null, contact_ref: conv.contact_ref || '', channel: channel,
-        direction: 'out', body: channel === 'email' ? 'Asunto: ' + payload.subject + '\n\n' + text : text,
+        direction: 'out', body: channel === 'email' ? 'Asunto: ' + payload.subject + '\n\n' + text : (text || (file ? FILE_LABEL[kind] : '')),
         status: 'sending', sent_at: new Date().toISOString(),
-        payload: channel === 'email' ? { source: 'inbox_reply', subject: payload.subject } : { source: 'inbox_reply' },
+        payload: channel === 'email' ? { source: 'inbox_reply', subject: payload.subject }
+          : (file ? { source: 'inbox_reply', type: kind, media: true, file_name: file.name, local_url: localUrl } : { source: 'inbox_reply' }),
+        provider: channel === 'whatsapp' ? 'wati' : undefined,
       };
       state.pendingOut.unshift(local);
       state.inbox.unshift(local);
       state.replyDraft[conv.key] = '';
+      if (file) delete state.replyFile[conv.key];
       if (onOptimistic) onOptimistic();
     }
     function dropLocal() {
@@ -1007,14 +1018,24 @@
     }
     var r;
     try {
-      r = await edgeFetch(FN_INBOX, payload);
+      if (file) {
+        var form = new FormData();
+        Object.keys(payload).forEach(function (k) { form.append(k, payload[k]); });
+        form.append('file', file, file.name || 'archivo');
+        r = await edgeFetch(FN_INBOX, form);
+      } else {
+        r = await edgeFetch(FN_INBOX, payload);
+      }
     } catch (e) {
       dropLocal();
       if (local && !state.replyDraft[conv.key]) state.replyDraft[conv.key] = text; // no perder lo escrito
+      if (file && !state.replyFile[conv.key]) state.replyFile[conv.key] = file; // ni el adjunto
       throw e;
     }
     dropLocal();
     var row = r && r.message;
+    // El archivo ya está en el navegador: la burbuja definitiva no lo vuelve a bajar de WATI.
+    if (row && row.id && localUrl) mediaCache[row.id] = Promise.resolve({ url: localUrl, type: file.type || '' });
     if (row && row.id && !state.inbox.some(function (x) { return x.id === row.id; })) state.inbox.unshift(row);
   }
   /** Guarda un contacto de la bandeja (sin lead) en una lista y enlaza sus mensajes. */
@@ -1313,6 +1334,10 @@
       '#prospecting-shell .cmp-media.sticker img { max-width:140px; max-height:140px; background:transparent; cursor:default; }',
       '#prospecting-shell .cmp-media audio { display:block; width:260px; max-width:100%; }',
       '#prospecting-shell .cmp-media-note { font-size:12px; color:var(--text3); font-style:italic; }',
+      '#prospecting-shell .cmp-attach-chip { display:inline-flex; align-items:center; gap:8px; justify-self:start; max-width:100%; padding:4px 6px 4px 12px; border:1px solid var(--hair); border-radius:999px; background:var(--surface2); font-size:12px; }',
+      '#prospecting-shell .cmp-attach-chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }',
+      '#prospecting-shell .cmp-attach-x { border:0; background:transparent; color:var(--text3); cursor:pointer; font-size:12px; padding:2px 6px; border-radius:999px; }',
+      '#prospecting-shell .cmp-attach-x:hover { color:var(--text); background:var(--surface3); }',
       '#prospecting-shell .cmp-reply { border-top:1px solid var(--hair); padding:12px 14px; display:grid; gap:8px; }',
       '#prospecting-shell .cmp-reply textarea { width:100%; min-height:72px; }',
       '#prospecting-shell .cmp-reply input { width:100%; }',
@@ -2891,12 +2916,41 @@
   // guarda por id para que re-pintar la bandeja no lo vuelva a descargar.
   var MEDIA_TYPES = ['image', 'video', 'sticker', 'audio', 'voice', 'document'];
   var MEDIA_LABELS = ['📷 Foto', '🎬 Video', '🎤 Audio', '📄 Documento', 'Sticker'];
+  var FILE_LABEL = { image: '📷 Foto', video: '🎬 Video', audio: '🎤 Audio', document: '📄 Documento' };
   var mediaCache = {}; // id → Promise<{ url, type }>
+  // Entrantes y salientes: lo que mandaste desde WATI o desde aquí también se ve.
   function isMediaMsg(msg) {
     var pl = msg.payload || {};
-    return chanKey(msg.channel) === 'whatsapp' && msg.direction === 'in' && msg.provider === 'wati' && MEDIA_TYPES.indexOf(String(pl.type || '')) !== -1;
+    return chanKey(msg.channel) === 'whatsapp' && msg.provider === 'wati' && MEDIA_TYPES.indexOf(String(pl.type || '')) !== -1;
   }
-  function loadMedia(id) {
+  // Adjuntos desde la bandeja. Mismo criterio que mediaKindForMime en
+  // _shared/wati.ts: Meta solo acepta JPEG y PNG como foto.
+  var FILE_ACCEPT = 'image/jpeg,image/png,video/mp4,video/3gpp,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip';
+  var FILE_MAX = 16 * 1024 * 1024;
+  var IMAGE_MAX = 5 * 1024 * 1024;
+  function fileKind(file) {
+    var t = String((file && file.type) || '').toLowerCase();
+    if (t === 'image/jpeg' || t === 'image/png') return 'image';
+    if (t === 'video/mp4' || t === 'video/3gpp') return 'video';
+    if (/^audio\//.test(t)) return 'audio';
+    return 'document';
+  }
+  function fmtSize(n) {
+    return n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1).replace(/\.0$/, '') + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+  }
+  /** Valida y guarda el adjunto de una conversación. Devuelve false (con aviso) si no sirve. */
+  function attachFile(key, file) {
+    if (!file) return false;
+    var kind = fileKind(file);
+    var max = kind === 'image' ? IMAGE_MAX : FILE_MAX;
+    if (!file.size) { toast('El archivo está vacío.', 'warn'); return false; }
+    if (file.size > max) { toast('WhatsApp acepta ' + (kind === 'image' ? 'fotos' : 'archivos') + ' de hasta ' + fmtSize(max) + ' (este pesa ' + fmtSize(file.size) + ').', 'warn'); return false; }
+    state.replyFile[key] = file;
+    return true;
+  }
+  function loadMedia(id, msg) {
+    var pl = (msg && msg.payload) || {};
+    if (pl.local_url) return Promise.resolve({ url: pl.local_url, type: '' });
     if (mediaCache[id]) return mediaCache[id];
     mediaCache[id] = (async function () {
       var sess = await sb().auth.getSession();
@@ -2924,7 +2978,8 @@
     var box = h('div', { class: 'cmp-media' + (kind === 'sticker' ? ' sticker' : '') });
     var note = h('div', { class: 'cmp-media-note', text: 'Cargando archivo…' });
     box.appendChild(note);
-    loadMedia(msg.id).then(function (m) {
+    var pl = msg.payload || {};
+    loadMedia(msg.id, msg).then(function (m) {
       box.innerHTML = '';
       var t = m.type;
       var el;
@@ -2937,7 +2992,8 @@
         el = h('audio', { src: m.url, controls: 'controls', preload: 'metadata' });
       } else {
         var ext = t === 'application/pdf' ? '.pdf' : '';
-        el = h('a', { href: m.url, download: 'documento-whatsapp' + ext, target: '_blank', rel: 'noopener', class: 'cmp-link', text: '📄 Abrir documento' });
+        var fname = pl.file_name ? String(pl.file_name) : '';
+        el = h('a', { href: m.url, download: fname || ('documento-whatsapp' + ext), target: '_blank', rel: 'noopener', class: 'cmp-link', text: '📄 ' + (fname || 'Abrir documento') });
       }
       box.appendChild(el);
     }).catch(function (err) {
@@ -3131,11 +3187,22 @@
       var draftSubj = state.replyDraft[conv.key + ':subject'];
       box.appendChild(h('input', { type: 'text', placeholder: 'Asunto', value: draftSubj != null ? draftSubj : defSubj, 'data-action': 'reply-subject', 'data-key': conv.key }));
     }
-    var ta = h('textarea', { placeholder: chosen === 'whatsapp' ? 'Escribe tu respuesta por WhatsApp…' : 'Escribe tu respuesta por email…', 'data-action': 'reply-draft', 'data-key': conv.key });
+    var att = chosen === 'whatsapp' ? state.replyFile[conv.key] : null;
+    if (att) {
+      var chip = h('div', { class: 'cmp-attach-chip' });
+      chip.appendChild(h('span', { text: FILE_LABEL[fileKind(att)] + ' · ' + (att.name || 'archivo') + ' · ' + fmtSize(att.size) }));
+      chip.appendChild(h('button', { type: 'button', class: 'cmp-attach-x', 'data-action': 'reply-file-clear', 'data-key': conv.key, title: 'Quitar el archivo', 'aria-label': 'Quitar el archivo', text: '✕' }));
+      box.appendChild(chip);
+    }
+    var ta = h('textarea', { placeholder: chosen === 'whatsapp' ? (att ? 'Agrega un pie (opcional)…' : 'Escribe tu respuesta por WhatsApp…') : 'Escribe tu respuesta por email…', 'data-action': 'reply-draft', 'data-key': conv.key });
     ta.value = state.replyDraft[conv.key] || '';
     box.appendChild(ta);
     var foot = h('div', { class: 'cmp-reply-row' });
-    foot.appendChild(h('span', { class: 'pros-hint', text: (chosen === 'whatsapp' ? 'Texto libre dentro de las 24 h desde el último mensaje del lead. Sale desde tu número de WhatsApp.' : 'Sale como respuesta individual desde tu cuenta de email.') + ' Enter envía · Shift+Enter, nueva línea.' }));
+    foot.appendChild(h('span', { class: 'pros-hint', text: (chosen === 'whatsapp' ? 'Texto, fotos y archivos dentro de las 24 h desde el último mensaje del lead. Sale desde tu número de WhatsApp.' : 'Sale como respuesta individual desde tu cuenta de email.') + ' Enter envía · Shift+Enter, nueva línea.' }));
+    if (chosen === 'whatsapp') {
+      foot.appendChild(h('input', { type: 'file', accept: FILE_ACCEPT, 'data-action': 'reply-file', 'data-key': conv.key, hidden: 'hidden', style: 'display:none' }));
+      foot.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-attach', 'data-key': conv.key, title: 'Foto (JPG o PNG, hasta 5 MB), video, audio o documento (hasta 16 MB). También puedes pegar una imagen en el cuadro.', text: '📎 Adjuntar' }));
+    }
     foot.appendChild(aiDraftBtn(conv, chosen));
     foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-send', 'data-key': conv.key, 'data-channel': chosen, text: 'Enviar por ' + CH[chosen].label }));
     box.appendChild(foot);
@@ -3416,7 +3483,7 @@
       return sendReply(conv2, channel, ta ? ta.value : '', subj ? subj.value : '', null, function () {
         state.sendingKey[key] = false; // ya se pintó: se puede escribir y mandar el siguiente
         renderKeepingReplyFocus(key);
-      }).then(function () {
+      }, channel === 'whatsapp' ? state.replyFile[key] : null).then(function () {
         state.sendingKey[key] = false;
         delete state.replyDraft[key + ':subject'];
         if (state.view === 'inbox') renderKeepingReplyFocus(key);
@@ -3428,6 +3495,12 @@
         throw err;
       });
     }
+    if (action === 'reply-attach' && key) {
+      var fin = state.root.querySelector('input[data-action="reply-file"][data-key="' + key + '"]');
+      if (fin) { fin.value = ''; fin.click(); }
+      return;
+    }
+    if (action === 'reply-file-clear' && key) { delete state.replyFile[key]; return renderKeepingReplyFocus(key); }
     if (action === 'thread-gmail' && key) {
       var conv3 = findConv(key);
       if (!conv3 || !pros().openThread) return;
@@ -3494,6 +3567,10 @@
         if (t.checked) state.selected.add(String(m.id)); else state.selected.delete(String(m.id));
       });
       render();
+    } else if (action === 'reply-file') {
+      var fkey = t.getAttribute('data-key');
+      var f = t.files && t.files[0];
+      if (fkey && f && attachFile(fkey, f)) renderKeepingReplyFocus(fkey);
     } else if (action === 'inbox-filter-campaign') { state.inboxFilter.campaign = t.value; render(); }
     else if (action === 'inbox-filter-channel') { state.inboxFilter.channel = t.value; render(); }
     else if (action === 'inbox-filter-status') { state.inboxFilter.status = t.value; render(); }
@@ -3538,8 +3615,20 @@
     var send = box && box.querySelector('[data-action="reply-send"], [data-action="reply-linkedin"]');
     if (!send || send.disabled) return;
     e.preventDefault();
-    if (!t.value.trim()) return;
+    if (!t.value.trim() && !state.replyFile[t.getAttribute('data-key')]) return;
     send.click();
+  }
+
+  // Pegar una imagen (captura de pantalla) en el cuadro de WhatsApp la adjunta.
+  function onPaste(e) {
+    var t = e.target;
+    if (!t || !t.getAttribute || t.getAttribute('data-action') !== 'reply-draft') return;
+    var key = t.getAttribute('data-key');
+    if (!key || state.replyChannel[key] !== 'whatsapp') return;
+    var items = (e.clipboardData && e.clipboardData.files) || [];
+    if (!items.length) return;
+    e.preventDefault();
+    if (attachFile(key, items[0])) renderKeepingReplyFocus(key);
   }
 
   function onInput(e) {
@@ -3608,6 +3697,7 @@
       pane.addEventListener('change', guarded(onChange));
       pane.addEventListener('input', guarded(onInput));
       pane.addEventListener('keydown', onKeyDown);
+      pane.addEventListener('paste', onPaste);
       built = true;
     }
     if (!built) return;

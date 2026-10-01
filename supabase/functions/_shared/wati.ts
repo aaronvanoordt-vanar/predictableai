@@ -502,6 +502,57 @@ export async function sendText(creds: WatiCreds, phone: string, text: string, ch
   return { id: m.id ? String(m.id) : null, conversationId: m.conversation_id ? String(m.conversation_id) : null };
 }
 
+/** Tope de un archivo que se manda desde la bandeja (WhatsApp: 16 MB en video y audio, 5 MB en fotos). */
+export const SEND_FILE_MAX_BYTES = 16 * 1024 * 1024;
+export const SEND_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+/** Tipo de mensaje de WhatsApp que sale de un archivo, por su MIME. */
+export function mediaKindForMime(mime: unknown): "image" | "video" | "audio" | "document" {
+  const m = String(mime ?? "").toLowerCase();
+  // Meta solo acepta JPEG y PNG como foto: cualquier otra imagen sale como documento.
+  if (m === "image/jpeg" || m === "image/png") return "image";
+  if (m === "video/mp4" || m === "video/3gpp") return "video";
+  if (/^audio\//.test(m)) return "audio";
+  return "document";
+}
+
+/**
+ * POST /api/ext/v3/conversations/messages/file (multipart) — foto, video,
+ * audio o documento con pie opcional. Solo con sesión activa (24 h), igual
+ * que el texto. `target` = "<canal>:<teléfono>" para elegir el número.
+ */
+export async function sendFile(
+  creds: WatiCreds, phone: string, file: Blob, fileName: string, caption?: string, channel?: string,
+): Promise<{ id: string | null; conversationId: string | null; type: string | null }> {
+  const form = new FormData();
+  const ch = channel && digits(channel).length >= 8 ? digits(channel) : "";
+  form.append("target", ch ? `${ch}:${digits(phone)}` : digits(phone));
+  form.append("file", file, fileName);
+  if (caption) form.append("caption", caption);
+  const path = "/api/ext/v3/conversations/messages/file";
+  const res = await fetch(`${baseFor(creds, path)}${path}`, {
+    method: "POST",
+    signal: AbortSignal.timeout(60_000),
+    headers: { "Authorization": `Bearer ${creds.token}`, "Accept": "application/json" },
+    body: form,
+  });
+  const text = await res.text();
+  let data: Json = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text.slice(0, 500) }; }
+  if (!res.ok || data?.ok === false) {
+    const msg = data?.error?.message || data?.message || data?.info || `WATI respondió ${res.status}`;
+    const detail = errorDetail(data);
+    const full = detail && !String(msg).includes(detail) ? `${msg} — ${detail}` : String(msg);
+    throw new WatiError(full.slice(0, 400), res.ok ? 400 : res.status, data);
+  }
+  const m = data?.message ?? data ?? {};
+  return {
+    id: m.id ? String(m.id) : null,
+    conversationId: m.conversation_id ? String(m.conversation_id) : null,
+    type: m.type ? String(m.type) : null,
+  };
+}
+
 // ── Reacciones ──────────────────────────────────────────────────────────────
 
 /**
@@ -636,11 +687,11 @@ export function getMediaByFileName(creds: WatiCreds, fileName: string) {
 }
 
 /**
- * Id de WATI de un mensaje entrante que se guardó sin él (antes del
+ * Id de WATI de un mensaje (entrante, o saliente con owner) que se guardó sin él (antes del
  * 2026-09-30 el webhook solo guardaba el WAMID). Busca en el historial de la
  * conversación un mensaje del lead del mismo tipo creado a ±5 s.
  */
-export async function findInboundMessageId(creds: WatiCreds, phone: string, type: string, sentAt: string, wamid?: string | null): Promise<string | null> {
+export async function findInboundMessageId(creds: WatiCreds, phone: string, type: string, sentAt: string, wamid?: string | null, owner = false): Promise<string | null> {
   const target = new Date(sentAt).getTime();
   if (!digits(phone) || isNaN(target)) return null;
   let best: { id: string; diff: number } | null = null;
@@ -651,7 +702,8 @@ export async function findInboundMessageId(creds: WatiCreds, phone: string, type
       if (!m?.id) continue;
       const mw = m.whatsapp_message_id ?? m.whatsappMessageId ?? null;
       if (wamid && mw && String(mw) === wamid) return String(m.id);
-      if (m.owner === true || String(m.type ?? "") !== type) continue;
+      // owner = true: un archivo que mandamos nosotros (desde WATI o la bandeja).
+      if ((m.owner === true) !== owner || String(m.type ?? "") !== type) continue;
       const diff = Math.abs(new Date(m.created ?? m.timestamp).getTime() - target);
       if (!isNaN(diff) && diff <= 5_000 && (!best || diff < best.diff)) best = { id: String(m.id), diff };
     }

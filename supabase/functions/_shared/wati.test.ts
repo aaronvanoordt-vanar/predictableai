@@ -270,3 +270,14 @@ Deno.test("humanError: traduce los códigos de Meta y conserva el detalle crudo"
   assertEquals(humanError(new WatiError("otra cosa", 400)), "otra cosa");
   assertEquals(metaErrorHint("(#131047)")?.includes("24 h"), true);
 });
+
+Deno.test("mediaKindForMime: solo JPEG/PNG salen como foto; lo demás, según su familia", () => {
+  assertEquals(wati.mediaKindForMime("image/jpeg"), "image");
+  assertEquals(wati.mediaKindForMime("image/png"), "image");
+  assertEquals(wati.mediaKindForMime("image/webp"), "document");
+  assertEquals(wati.mediaKindForMime("video/mp4"), "video");
+  assertEquals(wati.mediaKindForMime("video/quicktime"), "document");
+  assertEquals(wati.mediaKindForMime("audio/ogg"), "audio");
+  assertEquals(wati.mediaKindForMime("application/pdf"), "document");
+  assertEquals(wati.mediaKindForMime(""), "document");
+});
