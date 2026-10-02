@@ -571,6 +571,11 @@
     if (!accs.length && state.apollo.config && Array.isArray(state.apollo.config.email_accounts)) {
       accs = state.apollo.config.email_accounts.map(function (a) { return { id: a.id, email: a.email, default: !!a.default }; });
     }
+    // El buzón que el usuario eligió en el canal Email manda sobre el predeterminado de Apollo.
+    var pref = state.apollo.config && state.apollo.config.default_email_account_id;
+    if (pref && accs.some(function (a) { return String(a.id) === String(pref); })) {
+      accs = accs.map(function (a) { return Object.assign({}, a, { default: String(a.id) === String(pref), is_default: undefined }); });
+    }
     state.emailAccounts = accs;
     return accs;
   }
@@ -2456,9 +2461,26 @@
         body.appendChild(h('div', { class: 'pros-hint', text: 'Conecta tu cuenta de Apollo para que las campañas envíen email desde tu buzón, con tus listas, tus contactos y tus créditos de Apollo.' }));
       }
       var accs = state.emailAccounts || [];
-      if (accs.length) {
-        body.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Cuentas remitentes' }));
-        body.appendChild(h('div', { class: 'pros-hint', text: accs.map(function (a) { return (a.email || a.id) + ((a.default || a.is_default) ? ' (predeterminada)' : ''); }).join(' · ') }));
+      if (accs.length && es.state === 'connected') {
+        body.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Enviar desde' }));
+        var defAcc = defaultEmailAccount();
+        var sel = h('select', { style: 'width:100%' });
+        accs.forEach(function (a) { sel.appendChild(h('option', { value: String(a.id), text: a.email || a.id, selected: !!defAcc && String(defAcc.id) === String(a.id) })); });
+        var saveSel = h('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: 'Guardar' });
+        saveSel.addEventListener('click', function () {
+          var r1 = btnLoading(saveSel, '⏳');
+          edgeFetch(FN_CHANNEL, { action: 'set_default_email_account', payload: { email_account_id: sel.value } }).then(function (r) {
+            r1();
+            state.apollo = (r && (r.account || r.apollo)) || state.apollo;
+            state.emailAccounts = null;
+            return loadEmailAccounts().then(function () {
+              toast('Los emails saldrán desde ' + (sel.options[sel.selectedIndex].text) + ' salvo que una campaña elija otro buzón.', 'success');
+              render(); api.close(); openChannelDetails('email');
+            });
+          }, function (e) { r1(); toast(e.message || 'No se pudo guardar el buzón.', 'error'); });
+        });
+        body.appendChild(h('div', { class: 'cmp-row' }, sel, saveSel));
+        body.appendChild(h('div', { class: 'pros-hint', text: 'Buzón con el que salen los emails y tus respuestas de la Bandeja. Cada campaña puede usar otro: lo eliges al lanzarla, en el resumen. Estos son todos los buzones que Apollo reporta en tu cuenta (' + accs.length + ').' }));
       }
       var acts = [];
       if (state.apolloOauth) acts.push({ label: es.state === 'connected' ? 'Reconectar' : 'Conectar mi cuenta', onClick: function (m, btn) { return connectEmail(btn).then(function () { m.close(); }); } });

@@ -1451,17 +1451,39 @@
       cr.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: n ? 'Es el tope si todos los leads recorren toda la cadencia; se cobra paso a paso y se detiene con la primera respuesta.' : 'Se calcula con los leads de la lista: sin lista, el costo depende de cuántos enroles.' }));
       right.appendChild(cr);
 
+      if (needs.email) {
+        var mb = h('div', { class: 'chart-card' });
+        mb.appendChild(h('div', { class: 'cb-lbl', text: 'Enviar emails desde' }));
+        mb.appendChild(mailboxSelect());
+        mb.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: 'Elige el buzón de Apollo que firma los emails de esta campaña. El predeterminado se cambia en Campañas → Email.' }));
+        right.appendChild(mb);
+      }
+
       var warns = [];
       if (needs.whatsapp && !watiOk()) warns.push('WhatsApp no está conectado: esos pasos se reintentan cada 6 h hasta que lo conectes.');
       if (needs.linkedin && !dripifyOk()) warns.push('LinkedIn no está conectado: ese paso se reintenta cada 6 h hasta que lo conectes.');
       var unlinked = acts.filter(function (a) { return a.channel === 'linkedin_connect' && a.settings && a.settings.linkedin_campaign_id && !a.settings.dripify_campaign_id; });
       if (unlinked.length) warns.push('La campaña de LinkedIn «' + (unlinked[0].settings.linkedin_campaign_name || '') + '» aún no existe en Dripify: el paso espera (reintento cada hora) y se vincula solo cuando la crees allá con ese nombre.');
-      if (needs.email && !(st.draft.sender && st.draft.sender.email_account_id)) warns.push('Elige la cuenta de email que firma en Ajustes avanzados.');
+      if (needs.email && !(st.draft.sender && st.draft.sender.email_account_id)) warns.push('Elige el buzón desde el que salen los emails.');
       warns.forEach(function (w) { right.appendChild(h('div', { class: 'cb-note amber', text: '⚠ ' + w })); });
       grid.appendChild(right);
       wrap.appendChild(grid);
       wrap.appendChild(renderAdvanced());
       return wrap;
+    }
+
+    /** Selector del buzón que firma los emails de la campaña (st.draft.sender). */
+    function mailboxSelect() {
+      var s = st.draft.sender || (st.draft.sender = {});
+      var emailSel = h('select', { style: 'width:100%', onchange: function () {
+        s.email_account_id = emailSel.value || '';
+        var a = (st.emailAccounts || []).find(function (x) { return String(x.id) === String(emailSel.value); });
+        s.email = a ? a.email : '';
+        refresh();
+      } });
+      emailSel.appendChild(h('option', { value: '', text: st.emailAccounts ? (st.emailAccounts.length ? 'Elige la cuenta de email…' : 'Sin cuentas de email conectadas') : 'Cargando cuentas de email…' }));
+      (st.emailAccounts || []).forEach(function (a) { emailSel.appendChild(h('option', { value: a.id, text: (a.email || a.id) + (a.default || a.is_default ? ' (predeterminado)' : ''), selected: String(a.id) === String(s.email_account_id) })); });
+      return emailSel;
     }
 
     function renderAdvanced() {
@@ -1475,14 +1497,7 @@
       body.appendChild(field('Nombre (firma)', h('input', { type: 'text', value: s.name || '', 'data-key': 's-name', oninput: function (e) { s.name = e.target.value; } })));
       body.appendChild(field('Cargo', h('input', { type: 'text', value: s.role || '', 'data-key': 's-role', oninput: function (e) { s.role = e.target.value; } })));
       body.appendChild(field('Empresa', h('input', { type: 'text', value: s.company || '', 'data-key': 's-comp', oninput: function (e) { s.company = e.target.value; } })));
-      var emailSel = h('select', { onchange: function () {
-        s.email_account_id = emailSel.value || '';
-        var a = (st.emailAccounts || []).find(function (x) { return String(x.id) === String(emailSel.value); });
-        s.email = a ? a.email : '';
-        refresh();
-      } });
-      emailSel.appendChild(h('option', { value: '', text: st.emailAccounts ? (st.emailAccounts.length ? 'Elige la cuenta de email…' : 'Sin cuentas de email conectadas') : 'Cargando cuentas de email…' }));
-      (st.emailAccounts || []).forEach(function (a) { emailSel.appendChild(h('option', { value: a.id, text: a.email || a.id, selected: String(a.id) === String(s.email_account_id) })); });
+      var emailSel = mailboxSelect();
       body.appendChild(field('Cuenta de email', emailSel));
       var tzSel = h('select', { onchange: function () { d.timezone = tzSel.value; } });
       var tzs = TIMEZONES.slice();
