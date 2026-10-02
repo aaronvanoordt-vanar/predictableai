@@ -224,6 +224,18 @@ Comprobado en producción: sin `APOLLO_OAUTH_CLIENT_ID` cargado, **todos los usu
 
 ---
 
+## Plantillas elegidas por paso, sin ranuras fijas (2026-10-02)
+
+**El problema:** la lógica asumía tres pasos de WhatsApp con tres plantillas predeterminadas que Predictable creaba al conectar ("Saludo 1 / Recordatorio / Último intento", `config.templates.items`), y cada paso apuntaba a una ranura (`template_a/b/c`). Una campaña puede tener cuantos WhatsApp quiera, cada uno con la plantilla que el usuario decida.
+
+**Cómo quedó:**
+- `channel-connect` ya no crea ni recrea plantillas (`ensureTemplates`, `refreshTemplateStatus` y `assign_template` se eliminaron). `connect_wati` y `sync_templates` solo leen el catálogo (`config.templates.all`), los números y el webhook; `saveWatiSync` escribe con `patchChannelConfig`. La firma (`config.sender`) solo sirve para sugerir el texto.
+- La pestaña de WhatsApp es el catálogo: estado de Meta, «usada en N campañas», «↻ Sincronizar», «+ Nueva plantilla» y «Borrar». El formulario sugiere `Hola {{name}}, te saluda <nombre>, <cargo> de <empresa>. Qué tal todo?` con el botón `Hola <nombre>! Todo bien, y tú?` (si pasa de 25 caracteres, `Todo bien, y tú?`). Nombre, cargo y empresa del remitente van escritos en el texto: en el envío `{{company}}` es la empresa del LEAD, y Meta no admite variables en los botones. **"Darse de baja" va siempre primero** (`validateTemplateDraft`, `UNSUBSCRIBE_BUTTON`): es lo que `wati-webhook` reconoce como baja.
+- Grafo: `content.kind = 'template'` + `settings.template_name`. Un paso de WhatsApp sin plantilla no valida ("elige una plantilla de WhatsApp") y la campaña no se puede lanzar. `template_a/b/c` se normalizan a `template` + `settings.template_slot`; el motor resuelve la ranura con `config.templates.items` (que se conserva tal cual) y el builder la reescribe con el nombre al abrir la campaña. La migración `20261002000001_whatsapp_step_templates.sql` convirtió las campañas existentes al nombre que cada ranura enviaba.
+- `campaign-run`: llena cada variable de la plantilla con el dato del lead (nombre, nombre completo, empresa, cargo); si falta uno o el paso no tiene plantilla, `skipped` y sigue con el canal siguiente. Plantilla muerta = `skipped`; en revisión = `hold`.
+- `generate-campaign` recibe el catálogo (aprobadas primero, luego en revisión; nunca las muertas) y propone una por paso por nombre; `businessErrors` rechaza un nombre que no esté en la lista. Sin plantillas, no propone WhatsApp.
+- La Bandeja reabre la ventana de 24 h con cualquier plantilla aprobada, todas por igual.
+
 ## Multi-touchpoint real: la conexión de LinkedIn separada del mensaje + más señales (2026-09-15)
 
 ### El problema

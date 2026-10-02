@@ -34,7 +34,7 @@
  *      también los contactos que no están en ninguna lista (un número que
  *      escribió, un perfil de LinkedIn que respondió en Dripify), con la
  *      opción de guardarlos en una lista. Se responde desde aquí por
- *      WhatsApp (WATI: texto en la ventana de 24 h o plantilla de saludo si
+ *      WhatsApp (WATI: texto en la ventana de 24 h o una plantilla aprobada si
  *      se cerró) y email (Apollo) vía la edge function inbox-send. LinkedIn
  *      se redacta aquí pero se pega en LinkedIn: ni Dripify ni LinkedIn
  *      exponen envío de mensajes por API (comprobado el 2026-09-14).
@@ -454,23 +454,41 @@
     return map[s] || s;
   }
   function tplStatusKind(status) { return tplIsApproved(status) ? 'green' : tplIsDead(status) ? 'red' : 'amber'; }
-  /** Las tres plantillas de saludo que usan las campañas, en orden. */
-  var GREETINGS = [['a', 'Saludo 1'], ['b', 'Recordatorio'], ['c', 'Último intento']];
+  // No hay plantillas predeterminadas (2026-10-02): el canal muestra el
+  // catálogo del tenant y cada paso de WhatsApp de cada campaña elige la suya
+  // (settings.template_name). `templates.items` solo sobrevive para los pasos
+  // viejos que aún apuntan a una ranura (settings.template_slot).
   function watiCfg() { return (state.wati && state.wati.config) || {}; }
-  function greetingItems() { var t = watiCfg().templates; return (t && t.items) || {}; }
   function templateCatalogue() { var t = watiCfg().templates; return (t && t.all) || []; }
-  function deadGreetings() {
-    var items = greetingItems();
-    return GREETINGS.filter(function (g) { return !items[g[0]] || tplIsDead(items[g[0]].status); });
+  function legacySlotName(slot) { var t = watiCfg().templates; var it = t && t.items && t.items[slot]; return (it && it.name) || ''; }
+  /** Plantilla que usa un paso de WhatsApp (por nombre o por ranura vieja), o null. */
+  function stepTemplateName(a) {
+    var L = flowLib();
+    var nm = L.templateName(a);
+    if (nm) return nm;
+    return a.settings && a.settings.template_slot ? legacySlotName(a.settings.template_slot) : '';
+  }
+  /** nombre de plantilla → nombres de las campañas que la usan en algún paso. */
+  function templateUsage() {
+    var out = {};
+    state.campaigns.forEach(function (c) {
+      flowLib().actions(campaignFlow(c)).forEach(function (a) {
+        if (a.channel !== 'whatsapp' || a.content.kind !== 'template') return;
+        var nm = stepTemplateName(a);
+        if (!nm) return;
+        var list = out[nm] = out[nm] || [];
+        if (list.indexOf(c.name) === -1) list.push(c.name);
+      });
+    });
+    return out;
   }
   function templateSummary(cfg) {
-    var items = (cfg.templates && cfg.templates.items) || {};
-    var statuses = ['a', 'b', 'c'].map(function (k) { return items[k] ? String(items[k].status || 'PENDING') : 'MISSING'; });
-    var dead = statuses.filter(tplIsDead).length;
-    if (dead) return { label: dead === 1 ? 'Falta una plantilla de saludo' : 'Faltan ' + dead + ' plantillas de saludo', kind: 'red' };
-    var pending = statuses.filter(function (s) { return !tplIsApproved(s); }).length;
-    if (!pending) return { label: 'Plantillas aprobadas', kind: 'green' };
-    return { label: 'Plantillas en revisión de Meta (' + pending + ')', kind: 'amber' };
+    var all = (cfg.templates && cfg.templates.all) || [];
+    var approved = all.filter(function (t) { return tplIsApproved(t.status); }).length;
+    var pending = all.filter(function (t) { return !tplIsApproved(t.status) && !tplIsDead(t.status); }).length;
+    if (approved) return { label: approved === 1 ? '1 plantilla aprobada' : approved + ' plantillas aprobadas', kind: 'green' };
+    if (pending) return { label: 'Plantillas en revisión de Meta (' + pending + ')', kind: 'amber' };
+    return { label: 'Crea tu primera plantilla', kind: 'red' };
   }
   /**
    * ¿El webhook de WhatsApp está entregando? La API de WATI solo permite CREAR
@@ -1627,7 +1645,7 @@
       var preview = h('div', { class: 'pros-hint', style: 'margin-top:8px' });
       function updPreview() {
         var who = nameI.value.trim() + (roleI.value.trim() ? ', ' + roleI.value.trim() : '') + (compI.value.trim() ? ' de ' + compI.value.trim() : '');
-        preview.textContent = 'Con estos datos se crean tres plantillas de saludo en tu cuenta y se envían a revisión de Meta. Saludo 1: "Hola {{nombre}}! Te saluda ' + who + '. Qué tal todo?"';
+        preview.textContent = 'No creamos plantillas por ti: después de conectar creas las tuyas en la pestaña de WhatsApp y eliges una en cada paso de tus campañas. Con estos datos te sugerimos el saludo: "Hola {{name}}, te saluda ' + who + '. Qué tal todo?"';
       }
       [nameI, roleI, compI].forEach(function (i) { i.addEventListener('input', updPreview); });
       updPreview();
@@ -1636,7 +1654,7 @@
         { label: 'Atrás', onClick: choice },
         { label: state.wati ? 'Guardar y reconectar' : 'Conectar WhatsApp', className: 'btn btn-primary', onClick: function (m) {
           if (!endpointI.value.trim() || !tokenI.value.trim()) throw new Error('Pega el endpoint y el token.');
-          if (!nameI.value.trim()) { det.open = true; throw new Error('Escribe tu nombre: es quien firma los saludos.'); }
+          if (!nameI.value.trim()) { det.open = true; throw new Error('Escribe tu nombre: es quien firma tus mensajes.'); }
           m.setBusy(true);
           if (pdSafe().saveSenderInfo) pdSafe().saveSenderInfo({ name: nameI.value, role: roleI.value, company: compI.value });
           return edgeFetch(FN_CHANNEL, {
@@ -1645,7 +1663,7 @@
           }).then(function (r) {
             state.wati = (r && (r.account || r.wati)) || state.wati;
             m.close();
-            toast('WhatsApp conectado. Las plantillas de saludo quedaron en revisión de Meta.', 'success');
+            toast('WhatsApp conectado. Crea tus plantillas en la pestaña de WhatsApp para usarlas en tus campañas.', 'success');
             render();
           });
         } },
@@ -1815,10 +1833,11 @@
   }
 
   /**
-   * Pestaña de WhatsApp. Tres bloques: las plantillas de saludo que usan las
-   * campañas, el catálogo completo del tenant (el estado lo pone Meta y lo
-   * relee channel-connect; desde aquí se crean y se borran) y el webhook de
-   * respuestas.
+   * Pestaña de WhatsApp. Dos bloques: el catálogo completo del tenant (el
+   * estado lo pone Meta y lo relee channel-connect `sync_templates`; desde
+   * aquí se crean, se sincronizan y se borran) y el webhook de respuestas.
+   * No hay plantillas predeterminadas: cada paso de WhatsApp de una campaña
+   * elige la suya en el asistente.
    */
   function renderWhatsAppDetails(api) {
     var body = api.body;
@@ -1833,64 +1852,32 @@
         + (sender.role ? ', ' + sender.role : '') + (sender.company ? ' de ' + sender.company : ''),
     }));
 
-    // ── 1. Plantillas de saludo (las que envían las campañas) ──────────────
-    body.appendChild(h('div', { class: 'pros-lbl', text: 'Plantillas de saludo (las que usan tus campañas)' }));
-    var items = greetingItems();
-    var tplBox = h('div', { class: 'cmp-tpl' });
-    GREETINGS.forEach(function (g) {
-      var t = items[g[0]];
-      var status = t ? String(t.status || 'PENDING') : 'MISSING';
-      var row = h('div', {
-        html: pill(g[1], 'gray') + pill(tplStatusLabel(status), tplStatusKind(status))
-          + '<span style="flex:1;color:var(--text2)">' + esc(t ? t.body : '—')
-          + (t && t.error ? ' <span style="color:var(--red)">' + esc(t.error) + '</span>' : '') + '</span>',
-      });
-      var pickBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'margin-left:auto;flex:none', text: 'Usar otra plantilla' });
-      pickBtn.addEventListener('click', function () { openAssignTemplateModal(g[0], g[1], api); });
-      row.appendChild(pickBtn);
-      tplBox.appendChild(row);
-    });
-    body.appendChild(tplBox);
-
-    // "Actualizar" es lo que las repara: sync_templates recrea con el nombre de
-    // la revisión siguiente la ranura que quedó muerta (Meta no revive una
-    // plantilla borrada ni deja reusar su nombre en 30 días).
-    var dead = deadGreetings();
-    if (dead.length) {
-      var fix = h('div', { class: 'pros-note-red', style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' });
-      fix.appendChild(h('span', {
-        style: 'flex:1',
-        text: '⚠ ' + (dead.length === 1 ? 'Una plantilla de saludo ya no sirve' : dead.length + ' plantillas de saludo ya no sirven')
-          + ' (' + dead.map(function (g) { return g[1].toLowerCase(); }).join(', ') + '). Los pasos de WhatsApp que las usen se omiten y el lead sigue con el canal siguiente. '
-          + 'Meta no deja reutilizar el nombre de una plantilla borrada o rechazada, así que las nuevas salen con un nombre distinto y vuelven a revisión.',
-      }));
-      var fixBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: 'Volver a crear' });
-      fixBtn.addEventListener('click', guarded(function () {
-        return watiAction('sync_templates', {}, fixBtn).then(function () {
-          var left = deadGreetings().length;
-          toast(left ? 'WhatsApp no aceptó todas las plantillas: revisa el detalle.' : 'Plantillas enviadas a revisión de Meta.', left ? 'error' : 'success');
-          renderWhatsAppDetails(api);
-        });
-      }));
-      fix.appendChild(fixBtn);
-      body.appendChild(fix);
-    }
     body.appendChild(h('div', {
-      class: 'pros-hint', style: 'margin-top:8px',
-      text: 'Meta revisa las plantillas en minutos u horas. Las campañas de WhatsApp solo envían con la plantilla APROBADA; los botones "Darse de baja" y "Hola! Qué tal?" van incluidos.',
+      class: 'pros-hint',
+      text: 'Estas son tus plantillas en WhatsApp. En cada paso de WhatsApp de una campaña eliges cuál se envía. Meta revisa cada plantilla nueva en minutos u horas y solo se envían las APROBADAS. "Sincronizar" trae las que Meta ya revisó.',
     }));
 
-    // ── 2. Catálogo completo del tenant ────────────────────────────────────
+    // ── 1. Catálogo completo del tenant ────────────────────────────────────
     var all = templateCatalogue().slice();
     var rank = function (t) { return tplIsApproved(t.status) ? 0 : tplIsDead(t.status) ? 2 : 1; };
     all.sort(function (a, b) { return rank(a) - rank(b) || String(a.name).localeCompare(String(b.name)); });
-    var greetingNames = GREETINGS.map(function (g) { return items[g[0]] && items[g[0]].name; }).filter(Boolean);
+    var usage = templateUsage();
 
     var head = h('div', { class: 'cmp-tpl-head' });
-    head.appendChild(h('div', { class: 'pros-lbl', style: 'margin:0', text: 'Todas tus plantillas en WhatsApp' + (all.length ? ' (' + all.length + ')' : '') }));
+    head.appendChild(h('div', { class: 'pros-lbl', style: 'margin:0', text: 'Tus plantillas de WhatsApp' + (all.length ? ' (' + all.length + ')' : '') }));
+    var headBtns = h('div', { class: 'cmp-row', style: 'margin:0' });
+    var syncBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', title: 'Trae de WhatsApp las plantillas nuevas y el estado que puso Meta a las que están en revisión', text: '↻ Sincronizar' });
+    syncBtn.addEventListener('click', guarded(function () {
+      return watiAction('sync_templates', {}, syncBtn).then(function () {
+        toast('Plantillas sincronizadas con WhatsApp.', 'success');
+        renderWhatsAppDetails(api);
+      });
+    }));
+    headBtns.appendChild(syncBtn);
     var newBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: '+ Nueva plantilla' });
     newBtn.addEventListener('click', function () { openTemplateForm(function () { renderWhatsAppDetails(api); }); });
-    head.appendChild(newBtn);
+    headBtns.appendChild(newBtn);
+    head.appendChild(headBtns);
     body.appendChild(head);
 
     if (tpls.error) body.appendChild(h('div', { class: 'pros-note-red', text: '⚠ ' + tpls.error }));
@@ -1899,8 +1886,8 @@
       body.appendChild(h('div', {
         class: 'pros-hint',
         text: tpls.catalogue_error || tpls.error
-          ? 'No pudimos leer tu catálogo de plantillas: revisa el error de arriba (puede ser el token o sus permisos en WATI) y pulsa "Actualizar estado" para reintentar.'
-          : 'Todavía no leímos tus plantillas. Pulsa "Actualizar estado" para traerlas desde WhatsApp.',
+          ? 'No pudimos leer tu catálogo de plantillas: revisa el error de arriba (puede ser el token o sus permisos en WATI) y pulsa "Sincronizar" para reintentar.'
+          : 'No tienes plantillas todavía (o aún no las leímos). Crea la primera con "+ Nueva plantilla" o pulsa "Sincronizar" para traer las que ya tengas en WhatsApp.',
       }));
     } else {
       var list = h('div', { class: 'cmp-tpl-list' });
@@ -1911,10 +1898,10 @@
         top.appendChild(h('span', { html: pill(tplStatusLabel(t.status), tplStatusKind(t.status)) }));
         if (t.category) top.appendChild(h('span', { class: 'cmp-tpl-meta', text: t.category }));
         if (t.language) top.appendChild(h('span', { class: 'cmp-tpl-meta', text: t.language }));
-        var isGreeting = greetingNames.indexOf(t.name) !== -1;
-        if (isGreeting) top.appendChild(h('span', { class: 'cmp-tpl-meta cmp-tpl-own', text: 'usada por tus campañas' }));
+        var usedBy = usage[t.name] || [];
+        if (usedBy.length) top.appendChild(h('span', { class: 'cmp-tpl-meta cmp-tpl-own', title: usedBy.join(' · '), text: 'usada en ' + (usedBy.length === 1 ? '1 campaña' : usedBy.length + ' campañas') }));
         var del = h('button', { type: 'button', class: 'btn btn-ghost btn-sm cmp-tpl-del', title: 'Borrar en WhatsApp', text: 'Borrar' });
-        del.addEventListener('click', function () { confirmDeleteTemplate(t, isGreeting, api); });
+        del.addEventListener('click', function () { confirmDeleteTemplate(t, usedBy, api); });
         top.appendChild(del);
         row.appendChild(top);
         if (t.body) row.appendChild(h('div', { class: 'cmp-tpl-body', text: t.body }));
@@ -1964,70 +1951,16 @@
     }
 
     api.setActions([
-      { label: 'Actualizar estado', onClick: function (m, btn) {
-        return watiAction('sync_templates', {}, btn).then(function () {
-          toast('Plantillas y webhook releídos desde WhatsApp.', 'success');
-          renderWhatsAppDetails(api);
-        });
-      } },
       { label: 'Reconectar', onClick: function (m) { m.close(); openWhatsAppWizard('have'); } },
       { label: 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('whatsapp', 'wati', m); } },
       { label: 'Cerrar' },
     ]);
   }
 
-  /**
-   * Apunta una ranura de saludo a una plantilla YA aprobada del catálogo, en
-   * vez de dejar que sync_templates le genere una px_ nueva. Para el usuario
-   * que ya tiene sus propias plantillas (creadas a mano en WATI, con su
-   * propio texto y botones) y no quiere duplicados que Meta tiene que
-   * revisar de cero.
-   */
-  function openAssignTemplateModal(slot, label, api) {
-    var current = greetingItems()[slot];
-    var approved = templateCatalogue().filter(function (t) { return tplIsApproved(t.status); });
-    var m = openModal({ title: 'Elegir plantilla para «' + label + '»', width: 560 });
-    var b = m.body;
-    if (!approved.length) {
-      b.appendChild(h('div', {
-        class: 'pros-note-red',
-        text: '⚠ No tienes ninguna plantilla aprobada todavía. Espera a que Meta apruebe alguna o crea una nueva desde "+ Nueva plantilla".',
-      }));
-      m.setActions([{ label: 'Cerrar' }]);
-      return;
-    }
-    b.appendChild(h('p', { text: 'Las campañas de WhatsApp envían esta plantilla en el paso «' + label + '». Elige cualquiera de tus plantillas ya aprobadas por Meta; no hace falta crear una nueva.' }));
-    var sel = h('select');
-    approved.forEach(function (t) {
-      sel.appendChild(h('option', { value: t.name, text: t.name + (t.name === (current && current.name) ? ' (actual)' : '') }));
-    });
-    if (current && current.name) sel.value = current.name;
-    b.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Plantilla' }), sel));
-    var preview = h('div', { class: 'cmp-tpl-body', style: 'margin-top:8px' });
-    function refreshPreview() {
-      var t = approved.filter(function (x) { return x.name === sel.value; })[0];
-      preview.textContent = t ? t.body : '';
-    }
-    sel.addEventListener('change', refreshPreview);
-    refreshPreview();
-    b.appendChild(preview);
-
-    m.setActions([
-      { label: 'Cancelar' },
-      { label: 'Usar esta plantilla', className: 'btn btn-primary', onClick: function (modal, btn) {
-        return watiAction('assign_template', { slot: slot, name: sel.value }, btn).then(function () {
-          toast('«' + label + '» ahora usa "' + sel.value + '".', 'success');
-          modal.close();
-          renderWhatsAppDetails(api);
-        });
-      } },
-    ]);
-  }
-
   /** Borrar una plantilla en WhatsApp. Meta no libera el nombre: se avisa. */
-  function confirmDeleteTemplate(t, isGreeting, api) {
-    var extra = isGreeting
-      ? ' Tus campañas la usan como plantilla de saludo: se va a crear una nueva con el nombre de la revisión siguiente, que vuelve a pasar por revisión de Meta.'
+  function confirmDeleteTemplate(t, usedBy, api) {
+    var extra = usedBy && usedBy.length
+      ? ' La usan ' + (usedBy.length === 1 ? 'la campaña' : 'las campañas') + ' «' + usedBy.join('», «') + '»: esos pasos de WhatsApp se van a omitir hasta que elijas otra plantilla en cada uno.'
       : '';
     return confirmModal({
       title: 'Borrar plantilla', danger: true, confirmLabel: 'Borrar',
@@ -2046,13 +1979,46 @@
    * de verdad vive en el servidor (_shared/wati.ts#validateTemplateDraft);
    * aquí solo se avisa antes de gastar una revisión.
    */
+  /**
+   * Texto sugerido para una plantilla nueva (2026-10-02): el saludo con la
+   * firma del canal ya escrita. Nombre, cargo y empresa son del REMITENTE, así
+   * que van fijos en el texto (en el envío {{company}} sería la empresa del
+   * lead) y solo {{name}} queda como variable. Meta no admite variables en
+   * los botones, por eso la respuesta rápida lleva el nombre ya escrito.
+   */
+  function suggestedTemplate() {
+    var sender = watiCfg().sender || {};
+    var me = String(sender.name || '').trim();
+    var role = String(sender.role || '').trim();
+    var company = String(sender.company || '').trim();
+    var who = me ? me + (role && company ? ', ' + role + ' de ' + company : company ? ', de ' + company : role ? ', ' + role : '') : '';
+    var first = me.split(/\s+/)[0] || '';
+    // Meta corta los botones en 25 caracteres: se usa la versión más larga
+    // que quepa ("Hola Aarón! Todo bien, y tú?" ya tiene 28).
+    var reply = [
+      first ? 'Hola ' + first + '! Todo bien, y tú?' : '',
+      first ? 'Hola ' + first + '! Bien, y tú?' : '',
+      'Todo bien, y tú?',
+    ].filter(function (t) { return t && t.length <= 25; })[0];
+    var taken = {};
+    templateCatalogue().forEach(function (t) { taken[t.name] = true; });
+    var name = 'saludo', n = 2;
+    while (taken[name]) name = 'saludo_' + (n++);
+    return {
+      name: name,
+      body: who ? 'Hola {{name}}, te saluda ' + who + '. Qué tal todo?' : 'Hola {{name}}! Qué tal todo?',
+      reply: reply,
+    };
+  }
+
   function openTemplateForm(onDone) {
+    var sug = suggestedTemplate();
     var m = openModal({ title: 'Nueva plantilla de WhatsApp', width: 620 });
     var b = m.body;
     b.appendChild(h('p', { text: 'Meta revisa cada plantilla antes de permitir enviarla (minutos u horas). Escribe el texto como si fuera un primer mensaje: promesas exageradas, precios o lenguaje de spam se rechazan.' }));
 
     var grid = h('div', { class: 'cmp-sender-grid' });
-    var nameI = h('input', { type: 'text', placeholder: 'seguimiento_propuesta', maxlength: '60' });
+    var nameI = h('input', { type: 'text', placeholder: 'seguimiento_propuesta', maxlength: '60', value: sug.name });
     var catS = h('select');
     [['MARKETING', 'Marketing (prospección)'], ['UTILITY', 'Utilidad (seguimiento de algo ya acordado)']].forEach(function (o) {
       catS.appendChild(h('option', { value: o[0], text: o[1] }));
@@ -2069,18 +2035,23 @@
 
     b.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Texto del mensaje' }));
     var bodyI = h('textarea', { rows: '5', placeholder: 'Hola {{name}}! Te escribo desde Acme porque…' });
+    bodyI.value = sug.body;
     b.appendChild(bodyI);
-    b.appendChild(h('div', { class: 'pros-hint', text: 'Escribe {{name}} donde quieras el nombre del lead. Puedes usar hasta 5 variables.' }));
+    b.appendChild(h('div', { class: 'pros-hint', text: 'Te sugerimos un saludo con tu firma; edítalo como quieras. {{name}} se reemplaza por el nombre del lead al enviar. Puedes usar hasta 5 variables.' }));
 
-    b.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Botones de respuesta rápida (opcional, hasta 3)' }));
+    b.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Botones de respuesta rápida' }));
     var btnRow = h('div', { class: 'cmp-sender-grid' });
-    var btnInputs = [0, 1, 2].map(function (i) {
-      var inp = h('input', { type: 'text', maxlength: '25', placeholder: i === 0 ? 'Darse de baja' : 'Cuéntame más' });
+    // "Darse de baja" va siempre (el servidor lo agrega igual): es la salida
+    // que detecta wati-webhook para dar de baja al lead.
+    btnRow.appendChild(h('input', { type: 'text', value: 'Darse de baja', disabled: 'disabled', title: 'Siempre incluido: es la salida para que el lead se dé de baja.' }));
+    var btnInputs = [0, 1].map(function (i) {
+      var inp = h('input', { type: 'text', maxlength: '25', placeholder: i === 0 ? 'Todo bien, y tú?' : 'Cuéntame más (opcional)' });
+      if (i === 0) inp.value = sug.reply;
       btnRow.appendChild(inp);
       return inp;
     });
     b.appendChild(btnRow);
-    b.appendChild(h('div', { class: 'pros-hint', text: 'Meta no admite variables dentro de los botones. Incluye siempre una salida tipo "Darse de baja".' }));
+    b.appendChild(h('div', { class: 'pros-hint', text: '"Darse de baja" siempre va incluido. Meta no admite variables dentro de los botones (máx. 25 caracteres cada uno).' }));
 
     var footI = h('input', { type: 'text', maxlength: '60', placeholder: 'Enviado por Acme' });
     b.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Pie de página (opcional)' }));
@@ -2503,15 +2474,15 @@
     } else {
       card.appendChild(h('div', { class: 'pros-lbl', style: 'margin:4px 0 8px', text: 'Cadencia · ' + acts.length + (acts.length === 1 ? ' envío' : ' envíos') + ' · ' + L.durationDays(c.flow) + ' días' }));
       var warnings = {};
-      var tpls = (state.wati && state.wati.config && state.wati.config.templates && state.wati.config.templates.items) || {};
       acts.forEach(function (a) {
         var k = chanKey(a.channel);
         if (CH[k] && !channelConnected(k)) { warnings[a.id] = [CH[k].label + ' sin conectar']; return; }
-        if (a.channel === 'whatsapp' && a.content.kind.indexOf('template_') === 0) {
-          var pick = a.settings && a.settings.template_name;
-          var all = (state.wati && state.wati.config && state.wati.config.templates && state.wati.config.templates.all) || [];
-          var t = pick ? all.find(function (x) { return x.name === pick; }) : tpls[{ template_a: 'a', template_b: 'b', template_c: 'c' }[a.content.kind]];
-          if (t && !/approved/i.test(String(t.status || ''))) {
+        if (a.channel === 'whatsapp' && a.content.kind === 'template') {
+          var pick = stepTemplateName(a);
+          if (!pick) { warnings[a.id] = ['sin plantilla: el paso se omite']; return; }
+          var t = templateCatalogue().find(function (x) { return x.name === pick; });
+          if (!t) { warnings[a.id] = ['la plantilla ya no está en tu WhatsApp']; return; }
+          if (!/approved/i.test(String(t.status || ''))) {
             var tst = String(t.status || 'pendiente');
             warnings[a.id] = [TEMPLATE_DEAD.test(tst) ? 'plantilla ' + tst.toLowerCase() + ': el paso se omite' : 'plantilla ' + tst.toLowerCase()];
           }
@@ -2964,7 +2935,7 @@
     }
     if (pl.source === 'inbox_reply') parts.push('respuesta desde la bandeja' + (pl.template_name ? ' · plantilla ' + pl.template_name : ''));
     else if (pl.source === 'wati_ui') parts.push('desde WATI');
-    else if (pl.content_kind && String(pl.content_kind).indexOf('template_') === 0) parts.push('plantilla de saludo');
+    else if (pl.content_kind && String(pl.content_kind).indexOf('template') === 0) parts.push('plantilla de WhatsApp');
     return parts.join(' · ');
   }
   function convLinkedinUrl(conv) {
@@ -3217,27 +3188,17 @@
     }
     if (chosen === 'whatsapp' && (state.waClosed[conv.key] || !sessionOpen(conv))) {
       box.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:0', text: 'La ventana de 24 h de WhatsApp está cerrada (el lead no escribió en las últimas 24 h). Meta solo acepta una plantilla aprobada para reabrirla; cuando conteste, podrás escribirle texto libre.' }));
-      // Las tres de saludo primero (las que arma Predictable) y después
-      // cualquier plantilla aprobada del catálogo del usuario: sirven igual
-      // para reabrir la ventana, y ahora también se crean desde aquí.
-      var tpls = greetingItems();
+      // Cualquier plantilla aprobada del catálogo del usuario sirve para
+      // reabrir la ventana; todas valen igual (no hay plantillas "de saludo").
       var trow = h('div', { class: 'cmp-tpl-row' });
       trow.appendChild(h('span', { class: 'pros-hint', text: 'Enviar plantilla:' }));
       var any = false;
-      GREETINGS.forEach(function (x) {
-        var t = tpls[x[0]];
-        if (!t) return;
-        any = true;
-        var ok = tplIsApproved(t.status);
-        trow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-template', 'data-key': conv.key, 'data-template': x[0], disabled: ok ? null : 'disabled', title: ok ? (t.body || '') : 'Plantilla ' + tplStatusLabel(t.status).toLowerCase() + ' en Meta', text: x[1] }));
-      });
-      var ownNames = GREETINGS.map(function (x) { return tpls[x[0]] && tpls[x[0]].name; }).filter(Boolean);
       templateCatalogue().forEach(function (t) {
-        if (!tplIsApproved(t.status) || ownNames.indexOf(t.name) !== -1) return;
+        if (!tplIsApproved(t.status)) return;
         any = true;
         trow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-template', 'data-key': conv.key, 'data-template': t.name, title: t.body || '', text: t.name }));
       });
-      if (!any) trow.appendChild(h('span', { class: 'pros-hint', text: 'Conecta WhatsApp para crear las plantillas de saludo.' }));
+      if (!any) trow.appendChild(h('span', { class: 'pros-hint', text: isConn(state.wati) ? 'No tienes plantillas aprobadas todavía: créalas en Campañas → WhatsApp.' : 'Conecta WhatsApp para enviar una plantilla.' }));
       box.appendChild(trow);
       return box;
     }

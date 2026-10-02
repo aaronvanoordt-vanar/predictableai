@@ -2,13 +2,13 @@
 import { assertEquals, assert } from "jsr:@std/assert@1";
 import * as cf from "./campaign-flow.ts";
 
-const wa = (id: string, days = 0, mode: cf.DelayMode = "after_prev", kind: cf.ContentKind = "template_a"): cf.ActionNode =>
-  ({ id, type: "action", channel: "whatsapp", delay: { mode, days, hours: 0 }, content: { kind } });
+const wa = (id: string, days = 0, mode: cf.DelayMode = "after_prev", template = "holavanar"): cf.ActionNode =>
+  ({ id, type: "action", channel: "whatsapp", delay: { mode, days, hours: 0 }, content: { kind: "template" }, settings: { template_name: template } });
 const email = (id: string, days = 0, mode: cf.DelayMode = "after_prev"): cf.ActionNode =>
   ({ id, type: "action", channel: "email", delay: { mode, days, hours: 0 }, content: { kind: "ai", angle: "apertura" } });
 
 Deno.test("validate: cadencia lineal válida", () => {
-  const r = cf.validate({ v: 1, nodes: [wa("a"), email("b", 0, "with_prev"), wa("c", 3, "after_prev", "template_b")] });
+  const r = cf.validate({ v: 1, nodes: [wa("a"), email("b", 0, "with_prev"), wa("c", 3, "after_prev", "recordatorio")] });
   assertEquals(r.errors, []);
   assert(r.ok);
 });
@@ -47,7 +47,7 @@ Deno.test("normalize: descarta condiciones anidadas y coerce content_kind viejo"
 Deno.test("recorrido: rama Sí/No con unión", () => {
   const flow: cf.Flow = { v: 1, nodes: [
     wa("a"),
-    { id: "c", type: "condition", check: "linkedin_connected", delay: { mode: "after_prev", days: 3, hours: 0 }, yes: [email("y1", 1)], no: [wa("n1", 2), wa("n2", 3, "after_prev", "template_c")] },
+    { id: "c", type: "condition", check: "linkedin_connected", delay: { mode: "after_prev", days: 3, hours: 0 }, yes: [email("y1", 1)], no: [wa("n1", 2), wa("n2", 3, "after_prev", "ultimo_intento")] },
     email("z", 4),
   ] };
   assertEquals(cf.firstNode(flow)!.id, "a");
@@ -106,7 +106,7 @@ Deno.test("delayMs y legacyKind", () => {
   const norm = cf.normalize({ nodes: [{ id: "c", type: "condition", check: "has_email", delay: { mode: "with_prev", days: 3 }, yes: [{ id: "a", type: "action", channel: "email" }], no: [] }] });
   assertEquals((norm.nodes[0] as cf.ConditionNode).delay, { mode: "after_prev", days: 3, hours: 0 });
   assertEquals(cf.legacyKind(email("e")), "ai_personalized");
-  assertEquals(cf.legacyKind(wa("w")), "template_a");
+  assertEquals(cf.legacyKind(wa("w")), "template");
 });
 
 Deno.test("validate: el paso de LinkedIn acepta una campaña diseñada en Predictable", () => {
@@ -162,4 +162,34 @@ Deno.test("condiciones: las señales nuevas sobreviven a normalize", () => {
   // Una señal que no existe cae en la de siempre, nunca rompe el grafo.
   const bad = cf.normalize({ nodes: [{ id: "c", type: "condition", check: "respondio", yes: [], no: [] }] });
   assertEquals((bad.nodes[0] as cf.ConditionNode).check, "linkedin_connected");
+});
+
+Deno.test("validate: cada paso de WhatsApp necesita una plantilla elegida (sin predeterminadas)", () => {
+  const sin = cf.validate({ v: 1, nodes: [{ id: "w", type: "action", channel: "whatsapp", delay: {}, content: { kind: "template" } }] });
+  assert(!sin.ok);
+  assert(/elige una plantilla de WhatsApp/.test(sin.errors.map((e) => e.message).join(" ")), JSON.stringify(sin.errors));
+  // Un paso de WhatsApp sin contenido ya no cae a "Saludo 1": queda sin plantilla.
+  const vacio = cf.normalize({ nodes: [{ id: "w", type: "action", channel: "whatsapp" }] });
+  assertEquals((vacio.nodes[0] as cf.ActionNode).content.kind, "template");
+  assertEquals((vacio.nodes[0] as cf.ActionNode).settings, undefined);
+  // Cualquier número de pasos de WhatsApp, cada uno con su plantilla.
+  const muchos = cf.validate({ v: 1, nodes: [1, 2, 3, 4, 5].map((i) => wa("w" + i, i, "after_prev", "tpl_" + i)) });
+  assertEquals(muchos.errors, []);
+});
+
+Deno.test("normalize: las ranuras viejas template_a/b/c se leen como template + template_slot", () => {
+  const f = cf.normalize({ nodes: [
+    { id: "a", type: "action", channel: "whatsapp", content: { kind: "template_a" } },
+    { id: "b", type: "action", channel: "whatsapp", content: { kind: "template_c" }, settings: { foo: 1 } },
+    { id: "c", type: "action", channel: "whatsapp", content: { kind: "template_b" }, settings: { template_name: "mia" } },
+  ] });
+  const [a, b, c] = f.nodes as cf.ActionNode[];
+  assertEquals([a.content.kind, b.content.kind, c.content.kind], ["template", "template", "template"]);
+  assertEquals(a.settings, { template_slot: "a" });
+  assertEquals(b.settings, { foo: 1, template_slot: "c" });
+  // Con una plantilla elegida, la ranura ya no importa.
+  assertEquals(c.settings, { template_name: "mia" });
+  assertEquals(cf.templateName(c), "mia");
+  // Siguen siendo válidas: el motor las resuelve hasta que el usuario elija.
+  assertEquals(cf.validate(f).errors, []);
 });

@@ -359,7 +359,7 @@ export async function createTemplate(creds: WatiCreds, input: CreateTemplateInpu
  */
 export async function deleteTemplate(creds: WatiCreds, wabaId: string, name: string, language?: string): Promise<void> {
   const waba = String(wabaId ?? "").trim();
-  if (!waba) throw new WatiError("Falta el WABA id de tu número de WhatsApp: pulsa \"Actualizar estado\" y vuelve a intentarlo.", 400);
+  if (!waba) throw new WatiError("Falta el WABA id de tu número de WhatsApp: pulsa \"Sincronizar\" en Campañas → WhatsApp y vuelve a intentarlo.", 400);
   const path = `/api/v1/whatsApp/templates/${encodeURIComponent(waba)}/${encodeURIComponent(name)}` +
     (language ? `/${encodeURIComponent(language)}` : "");
   const data = await call(creds, "DELETE", path);
@@ -408,6 +408,9 @@ export interface TemplateDraft {
  * mandarlo a Meta. Lanza WatiError 400 con el motivo en español: rebotar aquí
  * es gratis, rebotar en Meta cuesta una revisión y un nombre quemado.
  */
+/** Botón de baja que llevan todas las plantillas creadas desde Predictable. */
+export const UNSUBSCRIBE_BUTTON = "Darse de baja";
+
 export function validateTemplateDraft(input: Json): TemplateDraft {
   const name = normalizeTemplateName(input?.name);
   if (name.length < 3) {
@@ -425,9 +428,12 @@ export function validateTemplateDraft(input: Json): TemplateDraft {
     throw new WatiError("Hay una variable mal escrita. Usa exactamente {{nombre_de_variable}}, sin espacios raros ni tildes.", 400);
   }
 
-  const quickReplies = (Array.isArray(input?.quick_replies) ? input.quick_replies : [])
+  // "Darse de baja" va SIEMPRE y primero (2026-10-02): es la salida que
+  // wati-webhook reconoce como baja (isOptOut) y lo que Meta espera de una
+  // plantilla de marketing. Quedan dos botones libres.
+  const quickReplies = [UNSUBSCRIBE_BUTTON, ...(Array.isArray(input?.quick_replies) ? input.quick_replies : [])
     .map((t: unknown) => String(t ?? "").replace(/\s+/g, " ").trim().slice(0, 25))
-    .filter((t: string) => t.length > 0)
+    .filter((t: string) => t.length > 0 && !/^darse de baja$/i.test(t))]
     .slice(0, 3);
 
   const category = String(input?.category ?? "MARKETING").toUpperCase() === "UTILITY" ? "UTILITY" : "MARKETING";
