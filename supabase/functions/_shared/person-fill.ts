@@ -21,6 +21,27 @@ function str(v: unknown): string | null {
   return s ? s : null;
 }
 
+/**
+ * ¿El nombre guardado es solo una parte (o una versión ofuscada) del que
+ * reveló Apollo? La búsqueda gratuita trae el nombre y el apellido ofuscado
+ * ("Ga***z") o nada, y el Radar guardaba eso tal cual: la lista y la Bandeja
+ * mostraban medio nombre y, como "solo rellena huecos", nunca se corregía.
+ * Se corrige solo cuando lo guardado está vacío, ofuscado o es un prefijo de
+ * palabras del nombre completo; un nombre distinto escrito por el usuario no
+ * se toca.
+ */
+export function isPartialName(current: unknown, full: unknown): boolean {
+  const c = str(current);
+  const f = str(full);
+  if (!f) return false;
+  if (!c) return true;
+  if (c.includes("*")) return true;
+  const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/\s+/).filter(Boolean);
+  const cw = norm(c);
+  const fw = norm(f);
+  return cw.length < fw.length && cw.every((w, i) => fw[i] === w);
+}
+
 export function profileFillPatch(row: Json, person: Json): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   if (!person || typeof person !== "object") return patch;
@@ -40,5 +61,22 @@ export function profileFillPatch(row: Json, person: Json): Record<string, unknow
   for (const [k, v] of Object.entries(fromPerson)) {
     if (v && !str(row?.[k])) patch[k] = v;
   }
+  // Nombre: si lo guardado es parcial u ofuscado, el revelado lo reemplaza
+  // (los tres campos juntos para que no queden cruzados).
+  const full = fromPerson.name;
+  if (full && !str(person.last_name_obfuscated) && isPartialName(row?.name, full)) {
+    patch.name = full;
+    if (fromPerson.first_name) patch.first_name = fromPerson.first_name;
+    if (fromPerson.last_name) patch.last_name = fromPerson.last_name;
+  }
   return patch;
+}
+
+/** Empareja `matches` de /people/bulk_match con los ids pedidos (ver espejo JS). */
+export function alignMatches(ids: string[], matches: Json): Json[] {
+  const list: Json[] = Array.isArray(matches) ? matches : [];
+  const byId = new Map<string, Json>();
+  for (const m of list) if (m && m.id) byId.set(m.id, m);
+  const positional = list.length === ids.length && list.every((m) => !m || !m.id);
+  return ids.map((id, i) => byId.get(id) || (positional ? list[i] || null : null));
 }

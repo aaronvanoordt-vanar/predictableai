@@ -42,7 +42,7 @@ import type { ApolloAuth } from "../_shared/apollo-auth.ts";
 import { blockedInPlatformMode } from "../_shared/apollo-platform.ts";
 import { apolloBillableCount, CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
-import { profileFillPatch } from "../_shared/person-fill.ts";
+import { alignMatches, profileFillPatch } from "../_shared/person-fill.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -159,7 +159,7 @@ async function processEmailRows(svc: SupabaseClient, auth: ApolloAuth, userId: s
       details: rows.map((r) => ({ id: r.apollo_person_id })),
       reveal_personal_emails: false,
     });
-    matches = res?.matches || [];
+    matches = alignMatches(rows.map((r) => r.apollo_person_id), res?.matches);
   } catch (e) {
     await refundCredits(svc, userId, cost, "enrich_email_refund");
     const msg = "Guardado sin email — " + (e as Error).message;
