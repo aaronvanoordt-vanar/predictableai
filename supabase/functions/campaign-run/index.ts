@@ -799,7 +799,14 @@ async function preflight(ctx: Ctx, en: Json, campaign: Json, step: StepLike): Pr
   const caps = campaign.daily_caps ?? {};
   // LinkedIn no tiene tope aquí: el ritmo lo decide Dripify (Activity Control);
   // daily_caps.linkedin se ignora aunque una campaña vieja lo traiga.
-  const cap = ch === "linkedin" ? 0 : Number(caps[ch] ?? 0);
+  let cap = ch === "linkedin" ? 0 : Number(caps[ch] ?? 0);
+  // El tope del canal de WhatsApp (config.daily_cap, desde la tarjeta del canal)
+  // manda sobre el de la campaña: el conteo ya junta todas las campañas.
+  if (ch === "whatsapp") {
+    const wa = await watiAccount(ctx, en.user_id);
+    const chanCap = wa?.config?.daily_cap;
+    if (chanCap !== undefined && chanCap !== null && Number.isFinite(Number(chanCap))) cap = Number(chanCap);
+  }
   if (cap > 0) {
     const used = await sentLast24h(ctx, en.user_id, ch);
     if (used >= cap) {
@@ -809,7 +816,7 @@ async function preflight(ctx: Ctx, en: Json, campaign: Json, step: StepLike): Pr
       await finish(ctx, en, {
         status: "active",
         next_run_at: new Date(ctx.now.getTime() + 60 * 60 * 1000).toISOString(),
-        error_detail: `Tope diario de ${label} alcanzado (${cap} en 24 h). Sube «Máx. ${label} / día» en la campaña para enviar ya.`,
+        error_detail: `Tope diario de ${label} alcanzado (${cap} en 24 h). ${ch === "whatsapp" ? "Súbelo en Campañas → WhatsApp → Configuración" : `Sube «Máx. ${label} / día» en la campaña`} para enviar ya.`,
       });
       return null;
     }
