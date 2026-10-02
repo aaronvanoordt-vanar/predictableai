@@ -3586,6 +3586,7 @@
     openEditContact: openEditContactModal,
     // Reutilizados por js/campaigns.js para no duplicar el modal ni el DOM helper.
     confirm: confirmModal,
+    modal: openModal,
     h: h,
     emptyHtml: emptyHtml,
     // Hilo de Gmail + responder por email (Campañas → Respuestas).

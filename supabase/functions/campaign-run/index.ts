@@ -13,7 +13,9 @@
  *  3. Para cada uno evalúa el nodo pendiente de la cadencia. La cadencia vive
  *     en `campaigns.flow` (grafo: ver _shared/campaign-flow.ts); una campaña
  *     sin nodos cierra el enrolamiento (campaign_steps ya no existe).
- *       • la campaña sigue activa (si está pausada, se suelta sin ejecutar);
+ *       • la campaña sigue activa (si está pausada, se suelta sin ejecutar)
+ *         y ya llegó su inicio programado (campaigns.launch_at; si no, el
+ *         enrolamiento se suelta con next_run_at = launch_at);
  *       • CONDICIÓN → se evalúa UNA vez (aceptó conexión, leyó WhatsApp,
  *         abrió email, tiene teléfono/email/LinkedIn), se registra `branched`
  *         y el lead entra a la rama Sí o No sin espera;
@@ -994,6 +996,14 @@ async function runOne(ctx: Ctx, en: Json) {
   if (campErr) { console.warn("[campaign-run] campaign fetch", en.campaign_id, campErr.message); await finish(ctx, en, { status: "active" }); return; }
   if (!campaign) { await finish(ctx, en, { status: "error", error_detail: "La campaña ya no existe." }); return; }
   if (campaign.status !== "active") { await finish(ctx, en, { status: "active" }); return; }
+  // Campaña programada (campaigns.launch_at): nada sale antes de la fecha de
+  // inicio; el lead se suelta para esa hora (la ventana horaria se aplica
+  // entonces, como siempre).
+  const launchAt = campaign.launch_at ? new Date(campaign.launch_at) : null;
+  if (launchAt && !isNaN(launchAt.getTime()) && launchAt > ctx.now) {
+    await finish(ctx, en, { status: "active", next_run_at: launchAt.toISOString() });
+    return;
+  }
   const flow = flowLib.normalize(campaign.flow);
   if (!flow.nodes.length) { await completeEnrollment(ctx, en, "La campaña no tiene pasos."); return; }
   await runFlow(ctx, en, campaign, flow);
@@ -1059,6 +1069,8 @@ async function preparePending(ctx: Ctx): Promise<number> {
     if (generated >= PREPARE_BATCH || Date.now() - started > PREPARE_BUDGET_MS) break;
     const campaign = await campaignById(ctx, en.campaign_id);
     if (!campaign || campaign.status !== "active") continue;
+    // Programada: los mensajes IA se preparan desde 24 h antes del inicio.
+    if (campaign.launch_at && new Date(campaign.launch_at).getTime() > ctx.now.getTime() + PREPARE_AHEAD_MS) continue;
     const flow = flowLib.normalize(campaign.flow);
     const loc = flowLib.find(flow, en.next_node_id);
     if (!loc || loc.node.type !== "action") continue;

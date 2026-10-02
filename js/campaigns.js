@@ -120,7 +120,18 @@
     active:    { label: 'Activa',     pill: 'green' },
     paused:    { label: 'Pausada',    pill: 'amber' },
     completed: { label: 'Terminada',  pill: 'gray' },
+    scheduled: { label: 'Programada', pill: 'blue' },
   };
+  /** launch_at en el futuro → la campaña está programada (aunque su status sea active). */
+  function launchPending(c) { return !!(c && c.launch_at && new Date(c.launch_at).getTime() > Date.now()); }
+  function campaignStatusInfo(c) {
+    if (c && c.status === 'active' && launchPending(c)) return CAMPAIGN_STATUS.scheduled;
+    return CAMPAIGN_STATUS[c && c.status] || CAMPAIGN_STATUS.draft;
+  }
+  function fmtLaunch(c) {
+    var B = global.CampaignBuilder;
+    return B && B.fmtLaunch ? B.fmtLaunch(c.launch_at, c.timezone) : fmtDateTime(c.launch_at);
+  }
   var MSG_STATUS = {
     sending: 'Enviando…', pending: 'Pendiente', queued: 'En cola', sent: 'Enviado', delivered: 'Entregado', read: 'Leído',
     failed: 'Falló', received: 'Recibido', replied: 'Respondido',
@@ -699,6 +710,10 @@
       review_required: !!draft.review_required,
       recommended: draft.origin === 'ai',
     };
+    // launch_at solo viaja si el builder lo tocó: sin la migración 20261002000002
+    // una campaña que nunca se programa se sigue guardando igual.
+    if (draft.launch_at !== undefined && (draft.launch_at || hasLaunchColumn())) row.launch_at = draft.launch_at || null;
+    if (row.launch_at && new Date(row.launch_at).getTime() <= Date.now()) row.launch_at = null;
     if (!(row.send_end_hour > row.send_start_hour)) throw new Error('La hora de fin debe ser mayor que la de inicio.');
     if (!row.send_days.length) throw new Error('Elige al menos un día de envío.');
     if (draft.id) {
@@ -715,6 +730,33 @@
   async function setCampaignStatus(id, status) {
     var res = await sb().from('campaigns').update({ status: status }).eq('id', id);
     if (res.error) throw new Error('No se pudo cambiar el estado: ' + res.error.message);
+  }
+  function hasLaunchColumn() {
+    return state.campaigns.some(function (c) { return Object.prototype.hasOwnProperty.call(c, 'launch_at'); });
+  }
+  /**
+   * Programa (iso) o adelanta a ahora (null) el arranque de una campaña y la
+   * deja activa. Los leads que aún no hicieron ningún paso se mueven al nuevo
+   * inicio: así el pase "preparar" del motor escribe sus mensajes IA 24 h antes
+   * de la fecha real y no 24 h antes de la vieja.
+   */
+  async function scheduleCampaign(c, iso) {
+    var res = await sb().from('campaigns').update({ launch_at: iso || null, status: 'active' }).eq('id', c.id);
+    if (res.error) {
+      if (/launch_at/.test(res.error.message || '')) throw new Error('Falta aplicar la migración de campañas programadas (launch_at).');
+      throw new Error('No se pudo programar la campaña: ' + res.error.message);
+    }
+    await alignStart(Object.assign({}, c, { launch_at: iso || null }));
+  }
+  async function alignStart(c) {
+    var L = flowLib();
+    var first = L.firstNode(campaignFlow(c));
+    if (!first) return;
+    var base = Math.max(Date.now(), c.launch_at ? new Date(c.launch_at).getTime() || 0 : 0);
+    var res = await sb().from('campaign_enrollments')
+      .update({ next_run_at: new Date(base + L.delayMs(first)).toISOString() })
+      .eq('campaign_id', c.id).eq('status', 'active').eq('next_node_id', first.id).is('last_action_at', null);
+    if (res.error) console.warn('[campaigns] alignStart:', res.error.message);
   }
 
   async function deleteCampaign(id) {
@@ -772,6 +814,8 @@
     var first = L.firstNode(flow);
     if (!first) throw new Error('La campaña no tiene pasos.');
     var now = Date.now();
+    // Campaña programada: el primer paso cuenta desde la fecha de inicio.
+    var base = launchPending(c) ? new Date(c.launch_at).getTime() : now;
     var rows = members.map(function (m) {
       return {
         campaign_id: c.id,
@@ -781,7 +825,7 @@
         started_at: new Date(now).toISOString(),
         next_position: 0,
         next_node_id: first.id,
-        next_run_at: new Date(now + L.delayMs(first)).toISOString(),
+        next_run_at: new Date(base + L.delayMs(first)).toISOString(),
       };
     });
     var res = await sb().from('campaign_enrollments').upsert(rows, { onConflict: 'campaign_id,member_id', ignoreDuplicates: true }).select('member_id');
@@ -2483,7 +2527,7 @@
     }
     var grid = h('div', { class: 'cmp-cards' });
     state.campaigns.forEach(function (c) {
-      var st = CAMPAIGN_STATUS[c.status] || CAMPAIGN_STATUS.draft;
+      var st = campaignStatusInfo(c);
       var counts = c.counts || {};
       var card = h('div', { class: 'cmp-card', 'data-action': 'cmp-open', 'data-id': c.id });
       card.appendChild(h('div', { class: 'cmp-card-head', html: '<div class="cmp-card-name">' + esc(c.name) + '</div>' + pill(st.label, st.pill) }));
@@ -2494,11 +2538,50 @@
       });
       card.appendChild(k);
       var nA = flowActions(c).length;
-      card.appendChild(h('div', { class: 'cmp-card-foot', text: 'Creada ' + fmtDate(c.created_at) + ' · ' + nA + (nA === 1 ? ' envío' : ' envíos') }));
+      card.appendChild(h('div', { class: 'cmp-card-foot', text: (launchPending(c) ? 'Arranca ' + fmtLaunch(c) : 'Creada ' + fmtDate(c.created_at)) + ' · ' + nA + (nA === 1 ? ' envío' : ' envíos') }));
       grid.appendChild(card);
     });
     wrap.appendChild(grid);
     return wrap;
+  }
+
+  /** "Programar" / "Cambiar fecha" desde el detalle: fecha y hora en la zona de la campaña. */
+  function openScheduleModal(c) {
+    if (!c) return;
+    var B = global.CampaignBuilder || {};
+    var tz = c.timezone || 'America/Lima';
+    if (!pros().modal || !B.zonedToIso) return toast('No se pudo abrir el selector de fecha. Usa Editar → paso 4.', 'warn');
+    var start = launchPending(c) ? B.isoToZoned(c.launch_at, tz) : B.defaultLaunchLocal(tz, c.send_start_hour, c.send_days);
+    var input = h('input', { type: 'datetime-local', value: start, min: B.isoToZoned(new Date().toISOString(), tz), style: 'width:100%;margin-top:8px' });
+    var body = h('div', null,
+      h('p', { text: 'Elige cuándo arranca «' + c.name + '». Los leads quedan enrolados y nadie recibe nada antes de esa hora.' }),
+      input,
+      h('div', { class: 'pros-hint', style: 'margin-top:6px', text: 'Hora de ' + tz.replace(/_/g, ' ') + '. Si cae fuera de la ventana horaria (' + c.send_start_hour + ':00–' + c.send_end_hour + ':00) o de los días de envío, el primer envío sale en la siguiente ventana.' }));
+    pros().modal({
+      title: launchPending(c) ? 'Cambiar fecha de inicio' : 'Programar campaña',
+      bodyNode: body,
+      actions: [
+        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
+        {
+          label: 'Programar', className: 'btn btn-primary',
+          onClick: function (api) {
+            var iso = B.zonedToIso(input.value, tz);
+            if (!iso) return toast('Elige la fecha y la hora.', 'warn');
+            if (new Date(iso).getTime() <= Date.now() + 60000) return toast('Esa hora ya pasó: elige una futura.', 'warn');
+            if (c.status !== 'active') {
+              var missing = campaignChannels(c).filter(function (k) { return !channelConnected(k); });
+              if (missing.length) toast('Conecta ' + missing.map(function (k) { return CH[k].label; }).join(' y ') + ' antes del inicio para que esos pasos salgan.', 'warn');
+            }
+            api.setBusy(true);
+            return scheduleCampaign(c, iso).then(function () {
+              api.close();
+              toast('Campaña programada: arranca el ' + B.fmtLaunch(iso, tz) + '.', 'success');
+              return loadCampaigns().then(function () { return openCampaign(c.id); });
+            });
+          },
+        },
+      ],
+    });
   }
 
   // ── Builder (crear / editar) ─────────────────────────────────────────────
@@ -2541,11 +2624,15 @@
     state.builderHost = null;
   }
   async function onBuilderSave(draft, info) {
+    var before = draft.id ? findCampaign(draft.id) : null;
+    var wasPending = launchPending(before);
     var id = await saveCampaign(draft);
     var isNew = !draft.id;
     await loadCampaigns();
     var c = findCampaign(id);
     var msg = isNew ? 'Campaña guardada como borrador.' : 'Campaña guardada.';
+    if (c && wasPending && String(before.launch_at) !== String(c.launch_at || '')) await alignStart(c);
+    if (c && launchPending(c) && !(info && info.launch)) msg += c.status === 'active' ? ' Arranca el ' + fmtLaunch(c) + '.' : ' Al activarla arrancará el ' + fmtLaunch(c) + '.';
     if (info && info.launch && c) {
       var members = info.members || [];
       var enrolled = await sb().from('campaign_enrollments').select('member_id').eq('campaign_id', id);
@@ -2554,7 +2641,10 @@
       var res = fresh.length ? await enrollMembers(c, fresh) : { enrolled: 0, skipped: 0 };
       await setCampaignStatus(id, 'active');
       await loadCampaigns();
-      msg = 'Campaña lanzada: ' + res.enrolled + ' leads enrolados' + (already.size ? ' (' + already.size + ' ya estaban)' : '') + '. El motor envía cada minuto dentro de la ventana horaria.';
+      if (wasPending && !launchPending(c)) await alignStart(c);
+      msg = launchPending(c)
+        ? 'Campaña programada: ' + res.enrolled + ' leads enrolados' + (already.size ? ' (' + already.size + ' ya estaban)' : '') + '. Arranca el ' + fmtLaunch(c) + '; antes no sale ningún mensaje.'
+        : 'Campaña lanzada: ' + res.enrolled + ' leads enrolados' + (already.size ? ' (' + already.size + ' ya estaban)' : '') + '. El motor envía cada minuto dentro de la ventana horaria.';
       var missing = campaignChannels(c).filter(function (k) { return !channelConnected(k); });
       if (missing.length) msg += ' Conecta ' + missing.map(function (k) { return CH[k].label; }).join(' y ') + ' para que esos pasos salgan.';
     }
@@ -2718,13 +2808,23 @@
     var card = h('div', { class: 'chart-card' });
     var head = h('div', { style: 'display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start' });
     var left = h('div', { style: 'flex:1;min-width:220px' });
-    var st = CAMPAIGN_STATUS[c.status] || CAMPAIGN_STATUS.draft;
+    var st = campaignStatusInfo(c);
     left.appendChild(h('div', { class: 'chart-title', html: esc(c.name) + ' ' + pill(st.label, st.pill) + ' <span class="cmp-card-ch" style="display:inline-flex;vertical-align:middle;margin-left:4px">' + chanIconsHtml(campaignChannels(c)) + '</span>' }));
     var list = state.lists.find(function (l) { return String(l.id) === String(c.list_id); });
     left.appendChild(h('div', { class: 'pros-cellsub', style: 'margin-top:4px', text: (list ? 'Lista: ' + list.name + ' · ' : '') + c.timezone + ' · ' + c.send_start_hour + ':00–' + c.send_end_hour + ':00 · ' + (c.send_days || []).map(function (d) { return labelOf(DAYS, d); }).join(' ') + (c.review_required ? ' · revisas cada mensaje IA' : '') }));
+    if (launchPending(c)) {
+      left.appendChild(h('div', { class: 'pros-cellsub', style: 'margin-top:4px', html: '<b>' + esc(c.status === 'active' ? 'Arranca el ' : 'Programada para el ') + esc(fmtLaunch(c)) + '</b>' + esc(c.status === 'active' ? ': antes no sale ningún mensaje.' : ' cuando la actives.') }));
+    }
     var actions = h('div', { class: 'pros-actions' });
-    if (c.status === 'active') actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-status', 'data-status': 'paused', text: 'Pausar' }));
-    else actions.appendChild(h('button', { type: 'button', class: 'btn btn-teal btn-sm', 'data-action': 'cmp-status', 'data-status': 'active', text: c.status === 'draft' ? 'Activar campaña' : 'Reanudar' }));
+    if (c.status === 'active' && launchPending(c)) {
+      actions.appendChild(h('button', { type: 'button', class: 'btn btn-teal btn-sm', 'data-action': 'cmp-launch-now', text: 'Lanzar ahora' }));
+      actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-schedule', text: 'Cambiar fecha' }));
+      actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-status', 'data-status': 'paused', text: 'Pausar' }));
+    } else if (c.status === 'active') actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-status', 'data-status': 'paused', text: 'Pausar' }));
+    else {
+      actions.appendChild(h('button', { type: 'button', class: 'btn btn-teal btn-sm', 'data-action': 'cmp-status', 'data-status': 'active', text: c.status === 'draft' ? 'Activar campaña' : 'Reanudar' }));
+      if (c.status === 'draft' || c.status === 'paused') actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-schedule', text: launchPending(c) ? 'Cambiar fecha' : 'Programar' }));
+    }
     actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-edit', text: 'Editar' }));
     actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-delete', text: 'Eliminar' }));
     head.appendChild(left); head.appendChild(actions);
@@ -3674,10 +3774,22 @@
       }
       var r1 = btnLoading(btn, '⏳');
       return setCampaignStatus(c1.id, status).then(function () {
-        toast(status === 'active' ? 'Campaña activa. El motor envía cada minuto dentro de la ventana horaria.' : 'Campaña pausada.', 'success');
+        toast(status === 'active' && launchPending(c1) ? 'Campaña programada: arranca el ' + fmtLaunch(c1) + '.' : status === 'active' ? 'Campaña activa. El motor envía cada minuto dentro de la ventana horaria.' : 'Campaña pausada.', 'success');
         return loadCampaigns().then(render);
       }).then(r1, function (err) { r1(); throw err; });
     }
+    if (action === 'cmp-launch-now') {
+      var cN = findCampaign(state.activeId);
+      if (!cN) return;
+      return confirmModal({
+        title: 'Lanzar ahora', confirmLabel: 'Lanzar ahora',
+        message: 'La campaña «' + cN.name + '» deja de esperar al ' + fmtLaunch(cN) + ' y el motor empieza a enviar dentro de la ventana horaria.',
+        onConfirm: function () {
+          return scheduleCampaign(cN, null).then(function () { toast('Campaña activa. El motor envía cada minuto dentro de la ventana horaria.', 'success'); return loadCampaigns().then(function () { return openCampaign(cN.id); }); });
+        },
+      });
+    }
+    if (action === 'cmp-schedule') return openScheduleModal(findCampaign(state.activeId));
     if (action === 'cmp-delete') {
       var c2 = findCampaign(state.activeId);
       if (!c2) return;
