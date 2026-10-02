@@ -23,8 +23,15 @@
  *            after_prev → espera desde la ÚLTIMA acción ejecutada por ese lead
  *            (o desde el enrolamiento para la primera). with_prev → sale junto
  *            con la acción anterior de la misma lista (envío en paralelo).
- *   content  { kind: template_a|template_b|template_c|ai|custom,
- *              angle?, instructions?, subject?, body? }
+ *   content  { kind: template|ai|custom, angle?, instructions?, subject?, body? }
+ *            `template` = una plantilla aprobada de WhatsApp que el usuario
+ *            elige a mano para ESE paso (settings.template_name, del catálogo
+ *            config.templates.all). No hay plantillas predeterminadas ni un
+ *            número fijo de pasos de WhatsApp (2026-10-02). Los viejos
+ *            template_a/b/c (las tres ranuras "Saludo 1 / Recordatorio /
+ *            Último intento") se leen como `template` con
+ *            settings.template_slot = a|b|c, que el motor resuelve con
+ *            config.templates.items mientras no se haya elegido un nombre.
  *   check    linkedin_connection_sent | linkedin_connected |
  *            whatsapp_delivered | whatsapp_read |
  *            email_delivered | email_opened | email_bounced |
@@ -42,7 +49,8 @@
  * los pasos de LinkedIn exigen una campaña de LinkedIn
  * (settings.dripify_campaign_id de Dripify o settings.linkedin_campaign_id
  * diseñada en Predictable y vinculada a Dripify por nombre); custom exige
- * body (y subject en email); template_* solo en WhatsApp; ids únicos.
+ * body (y subject en email); template solo en WhatsApp y con una plantilla
+ * elegida; ids únicos.
  *
  * La regla de parada NO vive aquí: una respuesta por cualquier canal, la baja
  * o la detención manual cierran el enrolamiento en el motor.
@@ -51,7 +59,9 @@
 export const FLOW_VERSION = 1;
 
 export const CHANNELS = ["whatsapp", "email", "linkedin_connect", "linkedin_message"] as const;
-export const CONTENT_KINDS = ["template_a", "template_b", "template_c", "ai", "custom"] as const;
+export const CONTENT_KINDS = ["template", "ai", "custom"] as const;
+/** Las tres ranuras fijas de antes (2026-10-02): se leen como `template`. */
+export const LEGACY_TEMPLATE_KINDS = ["template_a", "template_b", "template_c"] as const;
 export const ANGLES = ["apertura", "valor", "prueba_social", "objecion", "ultima_carta", "libre"] as const;
 export const CONDITIONS = [
   "linkedin_connection_sent", "linkedin_connected",
@@ -141,7 +151,8 @@ function normalizeContent(raw: unknown, channel: Channel): Content {
   const c = isObj(raw) ? raw : {};
   let kind = String(c.kind ?? "");
   if (kind === "ai_personalized") kind = "ai";
-  if (!(CONTENT_KINDS as readonly string[]).includes(kind)) kind = channel === "whatsapp" ? "template_a" : "ai";
+  if ((LEGACY_TEMPLATE_KINDS as readonly string[]).includes(kind)) kind = "template";
+  if (!(CONTENT_KINDS as readonly string[]).includes(kind)) kind = channel === "whatsapp" ? "template" : "ai";
   // El texto de un paso de LinkedIn vive en la campaña de Dripify (su API no
   // acepta texto por lead): aquí el ángulo solo alimenta el CSV de Custom
   // Lead Fields, así que nunca es "mi texto" ni plantilla de WhatsApp.
@@ -169,7 +180,26 @@ function normalizeAction(raw: Json, allowWithPrev: boolean): ActionNode {
     content: normalizeContent(raw?.content, channel),
   };
   if (isObj(raw?.settings) && Object.keys(raw.settings).length) node.settings = raw.settings;
+  legacySlot(node, raw?.content?.kind);
   return node;
+}
+
+/**
+ * Un paso guardado con una de las tres ranuras viejas y sin plantilla elegida
+ * conserva cuál era (settings.template_slot) para que el motor siga enviando
+ * lo mismo hasta que el usuario elija una.
+ */
+function legacySlot(node: ActionNode, rawKind: unknown): void {
+  const k = String(rawKind ?? "");
+  if (node.content.kind !== "template" || !(LEGACY_TEMPLATE_KINDS as readonly string[]).includes(k)) return;
+  if (typeof node.settings?.template_name === "string" && node.settings.template_name.trim()) return;
+  node.settings = { ...(node.settings ?? {}), template_slot: k.slice(-1) };
+}
+
+/** Nombre de la plantilla de WhatsApp elegida para un paso ("" si no hay). */
+export function templateName(node: ActionNode): string {
+  const n = node.settings?.template_name;
+  return typeof n === "string" ? n.trim() : "";
 }
 
 function normalizeList(raw: unknown, allowConditions: boolean): FlowNode[] {
@@ -221,8 +251,11 @@ export function validate(raw: unknown): { ok: boolean; errors: FlowError[] } {
       const what = a.channel === "linkedin_connect" ? "de solo conexión" : "de solo mensaje";
       errors.push({ nodeId: a.id, message: `${label}: el paso de LinkedIn necesita una campaña de Dripify ${what} (elige una o crea la tuya).` });
     }
-    if (a.content.kind.startsWith("template_") && a.channel !== "whatsapp") {
-      errors.push({ nodeId: a.id, message: `${label}: las plantillas de saludo son solo de WhatsApp.` });
+    if (a.content.kind === "template" && a.channel !== "whatsapp") {
+      errors.push({ nodeId: a.id, message: `${label}: las plantillas son solo de WhatsApp.` });
+    }
+    if (a.content.kind === "template" && a.channel === "whatsapp" && !templateName(a) && !a.settings?.template_slot) {
+      errors.push({ nodeId: a.id, message: `${label}: elige una plantilla de WhatsApp.` });
     }
     if (a.content.kind === "custom") {
       if (!a.content.body) errors.push({ nodeId: a.id, message: `${label}: el texto propio está vacío.` });
@@ -325,7 +358,9 @@ export function fromLegacySteps(rows: Json[]): Flow {
     const offset = Math.max(0, Number(s.offset_hours ?? 0));
     const channel: Channel = (CHANNELS as readonly string[]).includes(s.channel) ? s.channel : "email";
     const kindRaw = String(s.content_kind ?? "");
-    const kind: ContentKind = kindRaw === "ai_personalized" ? "ai" : ((CONTENT_KINDS as readonly string[]).includes(kindRaw) ? kindRaw as ContentKind : "ai");
+    const kind: ContentKind = kindRaw === "ai_personalized" ? "ai"
+      : (LEGACY_TEMPLATE_KINDS as readonly string[]).includes(kindRaw) ? "template"
+      : ((CONTENT_KINDS as readonly string[]).includes(kindRaw) ? kindRaw as ContentKind : "ai");
     const content: Content = { kind };
     if (kind === "ai") {
       const chKey = channel.startsWith("linkedin") ? "linkedin" : channel;
@@ -345,6 +380,7 @@ export function fromLegacySteps(rows: Json[]): Flow {
       content,
     };
     if (isObj(s.settings) && Object.keys(s.settings).length) node.settings = { ...s.settings };
+    legacySlot(node, kindRaw);
     if (cond) {
       if (!openCond) {
         openCond = { id: typeof s.condition_node_id === "string" && s.condition_node_id ? s.condition_node_id : newId(), type: "condition", check: "linkedin_connected", delay: { mode: "after_prev", days: 0, hours: 0 }, yes: [], no: [] };

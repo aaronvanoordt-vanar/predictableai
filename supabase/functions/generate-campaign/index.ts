@@ -25,9 +25,12 @@
  * primera respuesta no valida, se reintenta UNA vez pasándole los errores.
  *
  * Reglas duras que se le imponen al modelo (y se verifican):
- *   - El primer WhatsApp es siempre una plantilla de saludo aprobada por Meta
- *     (template_a/b/c); el texto libre de WhatsApp solo existe con sesión de
- *     24 h abierta, así que no se propone.
+ *   - Cada WhatsApp es una plantilla del catálogo del usuario
+ *     (config.templates.all) elegida por nombre (settings.template_name),
+ *     aprobada de preferencia. No hay plantillas predeterminadas ni un número
+ *     fijo de pasos: la IA propone una por paso y el usuario la cambia en el
+ *     asistente. El texto libre de WhatsApp solo existe con sesión de 24 h
+ *     abierta, así que no se propone.
  *   - LinkedIn solo si Dripify está conectado y tiene campañas; se elige una
  *     campaña de Dripify real por id.
  *   - Condiciones solo en el nivel raíz (sin anidar); `linkedin_connected`
@@ -51,6 +54,7 @@ import { callLLM, engineForUser, type Engine, withLlmContext } from "../_shared/
 import { loadIntelligence } from "../_shared/intelligence.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
+import * as wati from "../_shared/wati.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { spendCredits } from "../_shared/credits.ts";
 import { buildTrainingBlock, loadTraining } from "../_shared/sales-training.ts";
@@ -101,7 +105,7 @@ function briefSummary(row: Json): string {
 
 interface Channels {
   wati: boolean;
-  templates: { key: string; status: string; body: string }[];
+  templates: { name: string; status: string; approved: boolean; body: string }[];
   dripify: boolean;
   dripifyCampaigns: { id: string | number; name: string; active: boolean }[];
 }
@@ -113,11 +117,17 @@ async function loadChannels(supa: Json, userId: string): Promise<Channels> {
     if (acc.status !== "connected") continue;
     if (acc.provider === "wati") {
       out.wati = true;
-      const items = acc.config?.templates?.items ?? {};
-      for (const k of ["a", "b", "c"]) {
-        const t = items[k];
-        if (t) out.templates.push({ key: `template_${k}`, status: String(t.status ?? "PENDING"), body: String(t.body ?? "").slice(0, 300) });
+      // Todo el catálogo del tenant que todavía puede enviarse: aprobadas
+      // primero y después las que Meta sigue revisando. Las muertas
+      // (borradas, rechazadas, pausadas…) no se ofrecen.
+      for (const t of (acc.config?.templates?.all ?? []) as Json[]) {
+        const name = String(t?.name ?? "").trim();
+        const status = String(t?.status ?? "PENDING");
+        if (!name || wati.isTemplateDead(status)) continue;
+        out.templates.push({ name, status, approved: wati.isTemplateApproved(status), body: String(t.body ?? "").slice(0, 300) });
       }
+      out.templates.sort((a, b) => Number(b.approved) - Number(a.approved));
+      out.templates = out.templates.slice(0, 30);
     }
     if (acc.provider === "dripify") {
       out.dripify = true;
@@ -152,8 +162,9 @@ const SYSTEM_PROMPT = `Eres el estratega de outbound de una plataforma de sales 
 Nodo acción:
   { "type": "action", "channel": "whatsapp" | "email" | "linkedin_connect",
     "delay": { "mode": "after_prev" | "with_prev", "days": 0-21, "hours": 0-23 },
-    "content": { "kind": "template_a" | "template_b" | "template_c" | "ai", "angle": "apertura" | "valor" | "prueba_social" | "objecion" | "ultima_carta" | "libre", "instructions": "≤ 300 caracteres, opcional" },
+    "content": { "kind": "template" | "ai", "angle": "apertura" | "valor" | "prueba_social" | "objecion" | "ultima_carta" | "libre", "instructions": "≤ 300 caracteres, opcional" },
     "settings": { "dripify_campaign_id": <id real de la lista de campañas de Dripify> }   // SOLO en linkedin_connect
+    "settings": { "template_name": "<nombre EXACTO de una plantilla de WhatsApp de la lista>" }   // SOLO en whatsapp
   }
 Nodo condición (solo en el nivel raíz, nunca dentro de una rama):
   { "type": "condition", "check": "linkedin_connected" | "whatsapp_read" | "email_opened" | "has_phone" | "has_email" | "has_linkedin",
@@ -163,7 +174,7 @@ Las ramas se vuelven a unir: después de la condición la cadencia sigue con los
 
 == REGLAS DURAS ==
 1. La espera de cada nodo cuenta desde el nodo anterior (after_prev). "with_prev" = sale a la misma hora que el envío anterior (útil para reforzar un WhatsApp con un email el mismo día); solo puede usarse si el nodo justo anterior en la misma lista es una acción.
-2. WhatsApp: el PRIMER toque por WhatsApp es SIEMPRE una plantilla de saludo (template_a). Los siguientes WhatsApp usan template_b y template_c (una vez cada una). Nunca propongas WhatsApp con "kind":"ai": el texto libre solo funciona con una conversación abierta de 24 h. Si WATI no está conectado, evita WhatsApp o úsalo como máximo una vez y dilo en rationale.
+2. WhatsApp: cada toque por WhatsApp es "kind":"template" con "settings.template_name" = el nombre EXACTO de una plantilla de la lista de plantillas de WhatsApp (prefiere las APROBADAS). Elige para cada paso la plantilla cuyo texto encaje con ese momento de la cadencia (un saludo para abrir, un recordatorio para seguir, etc.) y no repitas la misma plantilla en dos pasos si hay otras que encajen. Puede haber tantos WhatsApp como tenga sentido. Nunca propongas WhatsApp con "kind":"ai": el texto libre solo funciona con una conversación abierta de 24 h. Si WATI no está conectado o no hay plantillas en la lista, NO uses WhatsApp y dilo en rationale.
 3. Email: "kind":"ai" con ángulo. El primer email de la cadencia es "apertura"; los siguientes rotan valor → prueba_social → objecion → ultima_carta. No repitas un ángulo en el mismo canal.
 4. LinkedIn (linkedin_connect): SOLO si Dripify está conectado Y hay campañas de Dripify; usa un "dripify_campaign_id" que exista en la lista (prefiere una activa). Máximo un paso de LinkedIn. Su "content" es {"kind":"ai","angle":"apertura"}.
 5. Condiciones: "linkedin_connected" solo después de un paso de LinkedIn (dale 2-4 días). "whatsapp_read" solo si hay WATI y un WhatsApp antes. "email_opened" solo si hay un email antes. "has_phone" / "has_email" / "has_linkedin" sirven para elegir canal según los datos del lead cuando la lista tiene muchos huecos. Máximo 2 condiciones; ninguna rama con más de 3 acciones; una rama puede quedar vacía si tiene sentido.
@@ -185,8 +196,8 @@ function userPrompt(intake: Json, brief: Json, ch: Channels, stats: Json, hint: 
   lines.push("== CANALES CONECTADOS ==");
   lines.push(`WhatsApp (WATI): ${ch.wati ? "conectado" : "NO conectado"}`);
   if (ch.wati) {
-    for (const t of ch.templates) lines.push(`  ${t.key}: estado ${t.status} · "${t.body}"`);
-    if (!ch.templates.length) lines.push("  (sin plantillas creadas)");
+    for (const t of ch.templates) lines.push(`  plantilla ${JSON.stringify(t.name)}: ${t.approved ? "APROBADA" : `en revisión (${t.status})`} · "${t.body}"`);
+    if (!ch.templates.length) lines.push("  (sin plantillas que se puedan enviar: NO uses WhatsApp)");
   }
   lines.push("Email (Apollo): disponible (la cuenta remitente se elige en la campaña)");
   lines.push(`LinkedIn (Dripify): ${ch.dripify ? "conectado" : "NO conectado"}`);
@@ -209,12 +220,14 @@ function businessErrors(flow: flowLib.Flow, ch: Channels): string[] {
   const acts = flowLib.actions(flow);
   if (acts.length < 3) errs.push("La cadencia tiene menos de 3 envíos.");
   if (acts.length > 10) errs.push("La cadencia tiene más de 10 envíos.");
-  let firstWa = true;
   for (const a of acts) {
     if (a.channel === "whatsapp") {
-      if (a.content.kind === "ai" || a.content.kind === "custom") errs.push("WhatsApp con texto libre: usa template_a/b/c.");
-      if (firstWa && a.content.kind !== "template_a") errs.push("El primer WhatsApp debe ser template_a.");
-      firstWa = false;
+      if (a.content.kind !== "template") errs.push("WhatsApp con texto libre: usa \"kind\":\"template\" con una plantilla de la lista.");
+      else if (!ch.templates.some((t) => t.name === flowLib.templateName(a))) {
+        errs.push(ch.templates.length
+          ? `WhatsApp con una plantilla que no está en la lista (${JSON.stringify(flowLib.templateName(a))}): usa el nombre exacto de una plantilla de la lista.`
+          : "No hay plantillas de WhatsApp que se puedan enviar: quita los pasos de WhatsApp.");
+      }
     }
     if (a.channel === "linkedin_connect") {
       if (!ch.dripify || !ch.dripifyCampaigns.length) errs.push("LinkedIn sin Dripify conectado o sin campañas: quita el paso de LinkedIn.");
@@ -251,6 +264,12 @@ function finalize(raw: Json, ch: Channels): flowLib.Flow {
     if (a.channel === "linkedin_connect" && a.settings?.dripify_campaign_id) {
       const dc = ch.dripifyCampaigns.find((c) => String(c.id) === String(a.settings!.dripify_campaign_id));
       if (dc) a.settings = { dripify_campaign_id: dc.id, dripify_campaign_name: dc.name };
+    }
+    // WhatsApp: solo sobrevive el nombre de la plantilla (nunca una ranura vieja).
+    if (a.channel === "whatsapp") {
+      const name = flowLib.templateName(a);
+      if (name) a.settings = { template_name: name.slice(0, 200) };
+      else delete a.settings;
     }
     if (a.content.instructions) a.content.instructions = a.content.instructions.replace(/[—–]/g, ",").slice(0, 600);
   }

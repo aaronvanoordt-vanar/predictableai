@@ -10,7 +10,10 @@
  *   Action    = { id, type: 'action', channel, delay, content, settings? }
  *   Condition = { id, type: 'condition', check, delay, yes: Action[], no: Action[] }  (delay siempre after_prev)
  *   delay     = { mode: 'after_prev' | 'with_prev', days, hours }
- *   content   = { kind: template_a|template_b|template_c|ai|custom, angle?, instructions?, subject?, body? }
+ *   content   = { kind: template|ai|custom, angle?, instructions?, subject?, body? }
+ *               template = plantilla aprobada de WhatsApp elegida a mano para
+ *               ESE paso (settings.template_name). Los viejos template_a/b/c
+ *               se leen como template + settings.template_slot (2026-10-02).
  *
  * Los dos canales de LinkedIn (linkedin_connect / linkedin_message) suben el
  * lead a una campaña de Dripify de UN SOLO paso: la conexión y el mensaje son
@@ -27,7 +30,9 @@
 
   var FLOW_VERSION = 1;
   var CHANNELS = ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message'];
-  var CONTENT_KINDS = ['template_a', 'template_b', 'template_c', 'ai', 'custom'];
+  var CONTENT_KINDS = ['template', 'ai', 'custom'];
+  /** Las tres ranuras fijas de antes (2026-10-02): se leen como `template`. */
+  var LEGACY_TEMPLATE_KINDS = ['template_a', 'template_b', 'template_c'];
   var ANGLES = ['apertura', 'valor', 'prueba_social', 'objecion', 'ultima_carta', 'libre'];
   var CONDITIONS = [
     'linkedin_connection_sent', 'linkedin_connected',
@@ -48,12 +53,12 @@
     linkedin_message: { label: 'LinkedIn · mensaje',  short: 'Mensaje LI', tone: 'teal',  needs: 'dripify' },
   };
   var KIND_LABELS = {
-    template_a: 'Saludo 1 (plantilla de WhatsApp)',
-    template_b: 'Recordatorio (plantilla de WhatsApp)',
-    template_c: 'Último intento (plantilla de WhatsApp)',
+    template: 'Plantilla de WhatsApp',
     ai: 'IA personalizada',
     custom: 'Mi texto',
   };
+  // Nombre visible de una ranura vieja mientras el paso no tenga plantilla elegida.
+  var LEGACY_SLOT_LABELS = { a: 'Saludo 1', b: 'Recordatorio', c: 'Último intento' };
   var ANGLE_LABELS = {
     apertura: 'Apertura (primer contacto)',
     valor: 'Seguimiento de valor',
@@ -108,7 +113,8 @@
     var c = isObj(raw) ? raw : {};
     var kind = String(c.kind == null ? '' : c.kind);
     if (kind === 'ai_personalized') kind = 'ai';
-    if (CONTENT_KINDS.indexOf(kind) === -1) kind = channel === 'whatsapp' ? 'template_a' : 'ai';
+    if (LEGACY_TEMPLATE_KINDS.indexOf(kind) !== -1) kind = 'template';
+    if (CONTENT_KINDS.indexOf(kind) === -1) kind = channel === 'whatsapp' ? 'template' : 'ai';
     // El texto de un paso de LinkedIn vive en la campaña de Dripify (su API no
     // acepta texto por lead): el ángulo solo alimenta el CSV de Custom Lead
     // Fields, así que nunca es "mi texto" ni plantilla de WhatsApp.
@@ -136,7 +142,26 @@
       content: normalizeContent(raw && raw.content, channel),
     };
     if (raw && isObj(raw.settings) && Object.keys(raw.settings).length) node.settings = raw.settings;
+    legacySlot(node, raw && raw.content && raw.content.kind);
     return node;
+  }
+
+  /**
+   * Un paso guardado con una de las tres ranuras viejas y sin plantilla
+   * elegida conserva cuál era (settings.template_slot) para que el motor siga
+   * enviando lo mismo hasta que el usuario elija una.
+   */
+  function legacySlot(node, rawKind) {
+    var k = String(rawKind == null ? '' : rawKind);
+    if (node.content.kind !== 'template' || LEGACY_TEMPLATE_KINDS.indexOf(k) === -1) return;
+    if (templateName(node)) return;
+    node.settings = Object.assign({}, node.settings || {}, { template_slot: k.slice(-1) });
+  }
+
+  /** Nombre de la plantilla de WhatsApp elegida para un paso ('' si no hay). */
+  function templateName(node) {
+    var n = node && node.settings && node.settings.template_name;
+    return typeof n === 'string' ? n.trim() : '';
   }
 
   function normalizeList(raw, allowConditions) {
@@ -186,8 +211,11 @@
         var what = a.channel === 'linkedin_connect' ? 'de solo conexión' : 'de solo mensaje';
         errors.push({ nodeId: a.id, message: label + ': el paso de LinkedIn necesita una campaña de Dripify ' + what + ' (elige una o crea la tuya).' });
       }
-      if (a.content.kind.indexOf('template_') === 0 && a.channel !== 'whatsapp') {
-        errors.push({ nodeId: a.id, message: label + ': las plantillas de saludo son solo de WhatsApp.' });
+      if (a.content.kind === 'template' && a.channel !== 'whatsapp') {
+        errors.push({ nodeId: a.id, message: label + ': las plantillas son solo de WhatsApp.' });
+      }
+      if (a.content.kind === 'template' && a.channel === 'whatsapp' && !templateName(a) && !(a.settings && a.settings.template_slot)) {
+        errors.push({ nodeId: a.id, message: label + ': elige una plantilla de WhatsApp.' });
       }
       if (a.content.kind === 'custom') {
         if (!a.content.body) errors.push({ nodeId: a.id, message: label + ': el texto propio está vacío.' });
@@ -278,7 +306,9 @@
       var offset = Math.max(0, Number(s.offset_hours || 0));
       var channel = CHANNELS.indexOf(s.channel) !== -1 ? s.channel : 'email';
       var kindRaw = String(s.content_kind == null ? '' : s.content_kind);
-      var kind = kindRaw === 'ai_personalized' ? 'ai' : (CONTENT_KINDS.indexOf(kindRaw) !== -1 ? kindRaw : 'ai');
+      var kind = kindRaw === 'ai_personalized' ? 'ai'
+        : LEGACY_TEMPLATE_KINDS.indexOf(kindRaw) !== -1 ? 'template'
+        : (CONTENT_KINDS.indexOf(kindRaw) !== -1 ? kindRaw : 'ai');
       var content = { kind: kind };
       if (kind === 'ai') {
         var chKey = channel.indexOf('linkedin') === 0 ? 'linkedin' : channel;
@@ -298,6 +328,7 @@
         content: content,
       };
       if (isObj(s.settings) && Object.keys(s.settings).length) node.settings = Object.assign({}, s.settings);
+      legacySlot(node, kindRaw);
       if (cond) {
         if (!openCond) {
           openCond = { id: typeof s.condition_node_id === 'string' && s.condition_node_id ? s.condition_node_id : newId(), type: 'condition', check: 'linkedin_connected', delay: { mode: 'after_prev', days: 0, hours: 0 }, yes: [], no: [] };
@@ -339,7 +370,11 @@
     var k = node.content.kind;
     if (k === 'ai') return ch.label + ' · IA: ' + (ANGLE_LABELS[node.content.angle] || node.content.angle || 'apertura').replace(/\s*\(.*\)$/, '');
     if (k === 'custom') return ch.label + ' · Mi texto';
-    if (node.settings && node.settings.template_name && k.indexOf('template_') === 0) return ch.label + ' · ' + node.settings.template_name;
+    if (k === 'template') {
+      if (templateName(node)) return ch.label + ' · ' + templateName(node);
+      if (node.settings && node.settings.template_slot) return ch.label + ' · ' + (LEGACY_SLOT_LABELS[node.settings.template_slot] || 'Plantilla');
+      return ch.label + ' · Elige una plantilla';
+    }
     return ch.label + ' · ' + (KIND_LABELS[k] || k).replace(/\s*\(.*\)$/, '');
   }
 
@@ -375,9 +410,10 @@
   var C = function (check, delay, yes, no) { return { id: newId(), type: 'condition', check: check, delay: delay, yes: yes, no: no }; };
 
   /**
-   * Cadencias fijas. Los pasos de LinkedIn salen sin campaña de LinkedIn:
-   * la validación pide elegir una de Dripify o crear la propia. Cada llamada
-   * genera ids nuevos.
+   * Cadencias fijas. Los pasos de LinkedIn salen sin campaña de LinkedIn y
+   * los de WhatsApp sin plantilla: la validación pide elegir una de Dripify
+   * (o crear la propia) y una plantilla aprobada de WhatsApp para cada paso.
+   * Cada llamada genera ids nuevos.
    */
   function templates() {
     return [
@@ -388,27 +424,27 @@
           A('linkedin_connect', D(0), { kind: 'ai', angle: 'apertura' }, {}),
           C('linkedin_connected', D(3),
             [A('linkedin_message', D(0), { kind: 'ai', angle: 'apertura' }, {})],
-            [A('whatsapp', D(0), { kind: 'template_a' })]),
+            [A('whatsapp', D(0), { kind: 'template' })]),
           C('whatsapp_read', D(2),
-            [A('whatsapp', D(1), { kind: 'template_b' })],
+            [A('whatsapp', D(1), { kind: 'template' })],
             [A('email', D(0), { kind: 'ai', angle: 'apertura' })]),
           A('email', D(3), { kind: 'ai', angle: 'valor' }),
           C('email_opened', D(2),
             [A('email', D(1), { kind: 'ai', angle: 'prueba_social' })],
-            [A('whatsapp', D(0), { kind: 'template_c' })]),
+            [A('whatsapp', D(0), { kind: 'template' })]),
           A('email', D(3), { kind: 'ai', angle: 'ultima_carta' }),
         ] }; },
       },
       {
         key: 'whatsapp_first', label: 'WhatsApp primero', needs: ['wati', 'apollo'],
-        summary: 'Saludo por WhatsApp con el email de refuerzo el mismo día; si lo leyó, recordatorio; si no, un email de valor. Cierra con último intento y última carta.',
+        summary: 'WhatsApp con el email de refuerzo el mismo día; si lo leyó, otro WhatsApp; si no, un email de valor. Cierra con un último WhatsApp y la última carta. Tú eliges la plantilla de cada WhatsApp.',
         build: function () { return { v: FLOW_VERSION, nodes: [
-          A('whatsapp', D(0), { kind: 'template_a' }),
+          A('whatsapp', D(0), { kind: 'template' }),
           A('email', W, { kind: 'ai', angle: 'apertura' }),
           C('whatsapp_read', D(2),
-            [A('whatsapp', D(1), { kind: 'template_b' })],
+            [A('whatsapp', D(1), { kind: 'template' })],
             [A('email', D(1), { kind: 'ai', angle: 'valor' })]),
-          A('whatsapp', D(3), { kind: 'template_c' }),
+          A('whatsapp', D(3), { kind: 'template' }),
           A('email', D(3), { kind: 'ai', angle: 'ultima_carta' }),
         ] }; },
       },
@@ -419,7 +455,7 @@
           A('email', D(0), { kind: 'ai', angle: 'apertura' }),
           C('email_opened', D(2),
             [A('email', D(1), { kind: 'ai', angle: 'valor' })],
-            [A('whatsapp', D(1), { kind: 'template_a' })]),
+            [A('whatsapp', D(1), { kind: 'template' })]),
           A('email', D(3), { kind: 'ai', angle: 'prueba_social' }),
           A('email', D(3), { kind: 'ai', angle: 'objecion' }),
           A('email', D(4), { kind: 'ai', angle: 'ultima_carta' }),
@@ -432,9 +468,9 @@
           A('linkedin_connect', D(0), { kind: 'ai', angle: 'apertura' }, {}),
           C('linkedin_connected', D(3),
             [A('email', D(0), { kind: 'ai', angle: 'apertura' })],
-            [A('whatsapp', D(0), { kind: 'template_a' }), A('email', W, { kind: 'ai', angle: 'apertura' })]),
+            [A('whatsapp', D(0), { kind: 'template' }), A('email', W, { kind: 'ai', angle: 'apertura' })]),
           A('email', D(3), { kind: 'ai', angle: 'valor' }),
-          A('whatsapp', D(3), { kind: 'template_b' }),
+          A('whatsapp', D(3), { kind: 'template' }),
           A('email', D(4), { kind: 'ai', angle: 'ultima_carta' }),
         ] }; },
       },
@@ -461,6 +497,6 @@
     nodeTitle: nodeTitle, cloneWithNewIds: cloneWithNewIds, durationDays: durationDays, templates: templates, isLinkedin: isLinkedin,
     newId: newId, emptyFlow: emptyFlow, normalize: normalize, validate: validate,
     actions: actions, ordinal: ordinal, find: find, firstNode: firstNode, nextAfter: nextAfter, enterBranch: enterBranch,
-    delayMs: delayMs, legacyKind: legacyKind, fromLegacySteps: fromLegacySteps, estimateCredits: estimateCredits, delayLabel: delayLabel,
+    delayMs: delayMs, legacyKind: legacyKind, templateName: templateName, LEGACY_TEMPLATE_KINDS: LEGACY_TEMPLATE_KINDS, LEGACY_SLOT_LABELS: LEGACY_SLOT_LABELS, fromLegacySteps: fromLegacySteps, estimateCredits: estimateCredits, delayLabel: delayLabel,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

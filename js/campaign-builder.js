@@ -52,8 +52,6 @@
     { n: 3, label: 'Mensajes' },
     { n: 4, label: 'Revisar y lanzar' },
   ];
-  var TEMPLATE_NAMES = { template_a: 'Saludo 1', template_b: 'Recordatorio', template_c: 'Último intento' };
-  var TEMPLATE_KEY = { template_a: 'a', template_b: 'b', template_c: 'c' };
   // Estados de los que Meta no vuelve. Espejo de TEMPLATE_DEAD en
   // supabase/functions/_shared/wati.ts y js/campaigns.js.
   var TEMPLATE_DEAD = /reject|error|paused|disabled|delet|archiv/i;
@@ -410,7 +408,11 @@
     }
     if (k === 'ai') return (node.content.instructions ? 'Instrucciones: ' + excerpt(node.content.instructions, 90) : 'Mensaje escrito por la IA para cada lead con tu contexto de empresa.');
     if (k === 'custom') return node.content.body ? excerpt((node.content.subject ? node.content.subject + ' · ' : '') + node.content.body, 110) : 'Sin texto todavía.';
-    if (node.settings && node.settings.template_name && k.indexOf('template_') === 0) return node.settings.template_name + ' (plantilla de WhatsApp)';
+    if (k === 'template') {
+      if (L.templateName(node)) return L.templateName(node) + ' (plantilla de WhatsApp)';
+      if (node.settings && node.settings.template_slot) return (L.LEGACY_SLOT_LABELS[node.settings.template_slot] || 'Plantilla') + ' (plantilla de WhatsApp)';
+      return 'Elige qué plantilla de WhatsApp se envía en este paso.';
+    }
     return L.KIND_LABELS[k] || k;
   }
 
@@ -474,6 +476,22 @@
       },
     };
     draft.flow = L.normalize(draft.flow);
+    // Pasos de WhatsApp que aún apuntan a una ranura vieja (Saludo 1 /
+    // Recordatorio / Último intento): se reescriben con el nombre de la
+    // plantilla que esa ranura enviaba, así el usuario ve cuál es y la cambia.
+    // Una ranura sin plantilla detrás queda sin elegir: la validación la pide.
+    (function () {
+      var items = (o.wati && o.wati.config && o.wati.config.templates && o.wati.config.templates.items) || {};
+      L.actions(draft.flow).forEach(function (a) {
+        var slot = a.settings && a.settings.template_slot;
+        if (!slot || a.content.kind !== 'template') return;
+        var it = items[slot];
+        var next = Object.assign({}, a.settings);
+        delete next.template_slot;
+        if (it && it.name) next.template_name = it.name;
+        if (Object.keys(next).length) a.settings = next; else delete a.settings;
+      });
+    })();
     draft.sender = draft.sender || {};
     if (!draft.sender.email_account_id && o.defaultEmailAccount) { draft.sender.email_account_id = o.defaultEmailAccount.id; draft.sender.email = o.defaultEmailAccount.email || ''; }
     draft.daily_caps = Object.assign({ whatsapp: 50, email: 80 }, draft.daily_caps || {});
@@ -566,14 +584,14 @@
         if (lc) a.settings = linkedinSettings(lc);
       });
     }
-    function watiTemplates() { return (o.wati && o.wati.config && o.wati.config.templates && o.wati.config.templates.items) || {}; }
     // Catálogo completo del tenant (lo sincroniza channel-connect `sync_templates`).
+    // No hay plantillas predeterminadas: cada paso elige la suya.
     function watiCatalogue() { return (o.wati && o.wati.config && o.wati.config.templates && o.wati.config.templates.all) || []; }
-    // Plantilla que usa un paso: la elegida del catálogo (settings.template_name) o la ranura a/b/c.
+    /** Plantilla elegida para un paso (settings.template_name), o null si no hay o ya no existe. */
     function stepTemplate(a) {
-      var nm = a.settings && a.settings.template_name;
-      if (nm) return watiCatalogue().find(function (t) { return t.name === nm; }) || null;
-      return watiTemplates()[TEMPLATE_KEY[a.content.kind]] || null;
+      var nm = L.templateName(a);
+      if (!nm) return null;
+      return watiCatalogue().find(function (t) { return t.name === nm; }) || null;
     }
     function apolloOk() {
       if (o.channelConnected) return !!o.channelConnected('email');
@@ -602,14 +620,14 @@
     }
     function flowWarnings() {
       var w = {};
-      var tpls = watiTemplates();
       L.actions(st.draft.flow).forEach(function (a) {
         var list = [];
         if (a.channel === 'whatsapp') {
           if (!watiOk()) list.push('WhatsApp sin conectar');
-          else if (a.content.kind.indexOf('template_') === 0) {
+          else if (a.content.kind === 'template') {
             var t = stepTemplate(a);
-            if (!t) list.push('plantilla sin crear');
+            // Sin plantilla elegida ya lo marca la validación ("elige una plantilla").
+            if (!t) { if (L.templateName(a)) list.push('la plantilla ya no está en tu WhatsApp'); }
             else if (!/approved/i.test(String(t.status || ''))) {
               var tst = String(t.status || 'pendiente').toLowerCase();
               list.push(TEMPLATE_DEAD.test(tst) ? 'plantilla ' + tst + ': el paso se omite' : 'plantilla ' + tst);
@@ -698,13 +716,6 @@
       var loc = locate(condId);
       return loc && loc.node.type === 'condition' ? loc.node[listKey] : null;
     }
-    function nextTemplateKind() {
-      var used = {};
-      L.actions(st.draft.flow).forEach(function (a) { if (a.channel === 'whatsapp' && a.content.kind.indexOf('template_') === 0) used[a.content.kind] = true; });
-      var order = ['template_a', 'template_b', 'template_c'];
-      for (var i = 0; i < order.length; i++) if (!used[order[i]]) return order[i];
-      return 'ai';
-    }
     function nextAngle(channel) {
       var order = ['apertura', 'valor', 'prueba_social', 'objecion', 'ultima_carta'];
       var used = {};
@@ -714,7 +725,8 @@
     }
     function newAction(channel, first) {
       var node = { id: L.newId(), type: 'action', channel: channel, delay: { mode: 'after_prev', days: first ? 0 : 2, hours: 0 }, content: { kind: 'ai', angle: 'apertura' } };
-      if (channel === 'whatsapp') { var k = nextTemplateKind(); node.content = k === 'ai' ? { kind: 'ai', angle: nextAngle('whatsapp') } : { kind: k }; }
+      // WhatsApp: sin plantilla elegida; el usuario la escoge en el panel del paso.
+      if (channel === 'whatsapp') node.content = { kind: 'template' };
       else if (channel === 'email') node.content = { kind: 'ai', angle: nextAngle('email') };
       else if (L.isLinkedin(channel)) {
         node.content = { kind: 'ai', angle: 'apertura' };
@@ -1066,7 +1078,7 @@
         var b = h('button', { type: 'button', class: node.channel === ch ? 'on' : '', onclick: function () {
           if (node.channel === ch) return;
           node.channel = ch;
-          if (ch === 'whatsapp') { var k = nextTemplateKind(); node.content = k === 'ai' ? { kind: 'ai', angle: nextAngle('whatsapp') } : { kind: k }; delete node.settings; }
+          if (ch === 'whatsapp') { node.content = { kind: 'template' }; delete node.settings; }
           else if (ch === 'email') { node.content = { kind: node.content.kind === 'custom' ? 'custom' : 'ai', angle: nextAngle('email'), subject: node.content.subject, body: node.content.body }; delete node.settings; }
           // Conexión y mensaje son campañas DISTINTAS en Dripify: al cambiar
           // de una a otra la campaña elegida deja de servir.
@@ -1152,8 +1164,12 @@
       box.appendChild(h('div', { class: 'cb-lbl', text: 'Contenido' }));
       var seg = h('div', { class: 'cb-seg' });
       function modeBtn(kind, label, small) {
-        var b = h('button', { type: 'button', class: node.content.kind === kind || (kind === 'template' && node.content.kind.indexOf('template_') === 0) ? 'on' : '', onclick: function () {
-          if (kind === 'template') { if (node.content.kind.indexOf('template_') !== 0) node.content = { kind: nextTemplateKind() === 'ai' ? 'template_a' : nextTemplateKind() }; }
+        var b = h('button', { type: 'button', class: node.content.kind === kind ? 'on' : '', onclick: function () {
+          if (kind !== 'template' && node.settings) {
+            delete node.settings.template_name; delete node.settings.template_slot;
+            if (!Object.keys(node.settings).length) delete node.settings;
+          }
+          if (kind === 'template') { if (node.content.kind !== 'template') node.content = { kind: 'template' }; }
           else if (kind === 'ai') node.content = { kind: 'ai', angle: node.content.angle || nextAngle(node.channel), instructions: node.content.instructions };
           else node.content = { kind: 'custom', subject: node.content.subject || '', body: node.content.body || '' };
           st.draft.flow = L.normalize(st.draft.flow);
@@ -1195,42 +1211,51 @@
         box.appendChild(h('div', { class: 'cb-hint', text: 'El mismo texto para todos los leads; las variables se reemplazan con los datos de cada uno al enviar.' }));
         if (node.channel === 'whatsapp') box.appendChild(h('div', { class: 'cb-note amber', text: 'WhatsApp solo permite texto libre dentro de las 24 h siguientes a un mensaje del lead. Si no hay conversación abierta, este paso se omite.' }));
       } else {
-        var chosen = node.settings && node.settings.template_name;
+        var chosen = L.templateName(node);
         var tsel = h('select', { onchange: function () {
           var v = tsel.value;
-          if (v.indexOf('tpl:') === 0) {
-            node.content = { kind: 'template_a' };
-            node.settings = Object.assign({}, node.settings, { template_name: v.slice(4) });
-          } else {
-            node.content = { kind: v };
-            if (node.settings) { delete node.settings.template_name; if (!Object.keys(node.settings).length) delete node.settings; }
-          }
+          var next = Object.assign({}, node.settings || {});
+          delete next.template_slot;
+          if (v) next.template_name = v; else delete next.template_name;
+          node.content = { kind: 'template' };
+          if (Object.keys(next).length) node.settings = next; else delete node.settings;
           markCustom(); render();
         } });
-        ['template_a', 'template_b', 'template_c'].forEach(function (k) { tsel.appendChild(h('option', { value: k, text: L.KIND_LABELS[k], selected: !chosen && kind === k })); });
-        // Todas las demás plantillas del tenant (las que creaste en WATI/Meta).
-        var slotNames = {};
-        var slots = watiTemplates();
-        Object.keys(slots).forEach(function (k) { if (slots[k] && slots[k].name) slotNames[slots[k].name] = true; });
-        var extra = watiCatalogue().filter(function (t) { return t && t.name && !slotNames[t.name] && !TEMPLATE_DEAD.test(String(t.status || '')); });
-        if (chosen && !extra.some(function (t) { return t.name === chosen; })) extra.push({ name: chosen, status: 'MISSING' });
-        if (extra.length) {
-          var grp = h('optgroup', { label: 'Mis otras plantillas' });
-          extra.forEach(function (t) {
-            var ok = /approved/i.test(String(t.status || ''));
-            grp.appendChild(h('option', { value: 'tpl:' + t.name, text: t.name + (ok ? '' : ' · ' + String(t.status || 'pendiente').toLowerCase()), selected: chosen === t.name }));
+        // Todas las plantillas del tenant que se pueden enviar: aprobadas
+        // primero y luego las que Meta sigue revisando. Ninguna viene elegida
+        // de antemano: cada paso escoge la suya.
+        tsel.appendChild(h('option', { value: '', text: 'Elige una plantilla…', selected: !chosen }));
+        var cat = watiCatalogue().filter(function (t) { return t && t.name; });
+        var approved = cat.filter(function (t) { return /approved/i.test(String(t.status || '')); });
+        var pending = cat.filter(function (t) { return !/approved/i.test(String(t.status || '')) && !TEMPLATE_DEAD.test(String(t.status || '')); });
+        function addGroup(label, list, suffix) {
+          if (!list.length) return;
+          var grp = h('optgroup', { label: label });
+          list.forEach(function (t) {
+            grp.appendChild(h('option', { value: t.name, text: t.name + (suffix ? suffix(t) : '') + (t.body ? ' — ' + excerpt(t.body, 60) : ''), selected: chosen === t.name }));
           });
           tsel.appendChild(grp);
         }
+        addGroup('Aprobadas', approved);
+        addGroup('En revisión de Meta', pending, function (t) { return ' · ' + String(t.status || 'pendiente').toLowerCase(); });
+        // La elegida ya no se puede enviar (borrada, rechazada…) o ya no está:
+        // se muestra igual para que el usuario vea qué tenía y la cambie.
+        if (chosen && !approved.concat(pending).some(function (t) { return t.name === chosen; })) {
+          var gone = cat.find(function (t) { return t.name === chosen; });
+          tsel.appendChild(h('option', { value: chosen, text: chosen + ' · ' + (gone ? String(gone.status || '').toLowerCase() : 'ya no existe'), selected: true }));
+        }
         box.appendChild(tsel);
         var t = stepTemplate(node);
-        if (!watiOk()) box.appendChild(h('div', { class: 'cb-warn', text: 'Conecta WhatsApp para crear las plantillas y enviarlas a revisión de Meta.' }));
-        else if (!t) box.appendChild(h('div', { class: 'cb-warn', text: 'Esta plantilla no existe en tu cuenta de WhatsApp. Reconecta el canal para crearla.' }));
+        if (!watiOk()) box.appendChild(h('div', { class: 'cb-warn', text: 'Conecta WhatsApp para usar tus plantillas.' }));
+        else if (!cat.length) box.appendChild(h('div', { class: 'cb-warn', text: 'No tienes plantillas en WhatsApp todavía. Créalas en Campañas → WhatsApp → "+ Nueva plantilla" y vuelve aquí a elegirla.' }));
+        else if (!chosen) box.appendChild(h('div', { class: 'cb-hint', text: 'Elige qué plantilla se envía en este paso. Puedes usar una distinta en cada paso de WhatsApp de la cadencia.' }));
+        else if (!t) box.appendChild(h('div', { class: 'cb-warn', text: 'Esta plantilla ya no está en tu cuenta de WhatsApp. Elige otra.' }));
         else {
           var status = String(t.status || 'PENDING');
           var dead = TEMPLATE_DEAD.test(status);
-          box.appendChild(h('div', { class: 'cb-row' }, pill(status, /approved/i.test(status) ? 'green' : dead ? 'red' : 'amber'), h('span', { class: 'cb-hint', text: dead ? 'Meta no va a aprobar esta plantilla: el paso se omite y el lead sigue con el canal siguiente. Ve a Campañas → WhatsApp → Actualizar estado para crear una nueva, o elige otra plantilla aquí.' : 'Estado en Meta. Solo se envía con la plantilla aprobada.' })));
+          box.appendChild(h('div', { class: 'cb-row' }, pill(status, /approved/i.test(status) ? 'green' : dead ? 'red' : 'amber'), h('span', { class: 'cb-hint', text: dead ? 'Meta no va a aprobar esta plantilla: el paso se omite y el lead sigue con el canal siguiente. Elige otra plantilla aquí.' : /approved/i.test(status) ? 'Aprobada por Meta.' : 'En revisión de Meta: el paso espera hasta que la aprueben.' })));
           box.appendChild(h('div', { class: 'cb-note', text: t.body || '' }));
+          if (t.buttons && t.buttons.length) box.appendChild(h('div', { class: 'cb-hint', text: 'Botones: ' + t.buttons.map(function (x) { return x.text; }).join(' · ') }));
         }
       }
       return box;
@@ -1319,16 +1344,14 @@
     function renderPreview(a) {
       var box = h('div', { class: 'cb-preview' });
       box.appendChild(h('div', { class: 'cb-lbl', text: 'Vista previa con un lead real' }));
-      if (a.content.kind.indexOf('template_') === 0) {
+      if (a.content.kind === 'template') {
         var t = stepTemplate(a);
         var m = sampleMember();
         var text = t && t.body ? String(t.body) : '';
-        if (text && m) text = text.replace(/\{\{\s*(nombre|name|1)\s*\}\}/gi, (memberName(m).split(' ')[0] || ''));
-        box.appendChild(text ? h('div', { class: 'cb-preview-text', text: text }) : h('div', { class: 'cb-hint', text: 'La plantilla aún no existe en WATI.' }));
-        // Los botones salen de la plantilla real (catálogo de WATI), nunca de un texto fijo:
-        // las plantillas propias del usuario traen sus propios botones.
-        var full = t && (watiCatalogue().find(function (c) { return c.name === t.name; }) || t);
-        var labels = ((full && full.buttons) || []).map(function (b) { return b && b.text; }).filter(Boolean);
+        if (text && m) text = text.replace(/\{\{\s*(nombre|name|first_name|1)\s*\}\}/gi, (memberName(m).split(' ')[0] || ''));
+        box.appendChild(text ? h('div', { class: 'cb-preview-text', text: text }) : h('div', { class: 'cb-hint', text: L.templateName(a) ? 'La plantilla ya no está en tu WhatsApp.' : 'Elige una plantilla para ver la vista previa.' }));
+        // Los botones salen de la plantilla real del catálogo, nunca de un texto fijo.
+        var labels = ((t && t.buttons) || []).map(function (x) { return x && x.text; }).filter(Boolean);
         if (labels.length) box.appendChild(h('div', { class: 'cb-hint', text: 'Incluye ' + (labels.length > 1 ? 'los botones ' : 'el botón ') + labels.map(function (x) { return '"' + x + '"'; }).join(' y ') + '.' }));
         return box;
       }

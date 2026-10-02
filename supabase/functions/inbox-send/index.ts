@@ -13,8 +13,8 @@
  *      inbox_messages (o campaign_enrollments.last_inbound_whatsapp_at) hace
  *      menos de 24 h; si no → 409 {error:"whatsapp_window_closed"}. Fuera de
  *      la ventana Meta solo acepta plantillas: por eso existe
- *      { channel: "whatsapp", member_id | contact_ref, template: "a"|"b"|"c" },
- *      que manda una de las tres plantillas de saludo APROBADAS de la cuenta
+ *      { channel: "whatsapp", member_id | contact_ref, template: "<nombre de una plantilla aprobada>" },
+ *      que manda esa plantilla APROBADA del catálogo de la cuenta
  *      (mismo camino que un paso de campaña). `contact_ref` (dígitos del
  *      número) sirve para contestar a un número que escribió y no está en
  *      ninguna lista. → { message: <fila de inbox_messages> }
@@ -157,11 +157,10 @@ function firstName(m: Json): string {
 }
 
 /**
- * Plantilla pedida desde la bandeja: una de las tres ranuras de saludo
- * ("a"|"b"|"c", las que arma Predictable) o el NOMBRE de cualquier plantilla
- * del catálogo del usuario (config.templates.all, que sincroniza
- * channel-connect). Así una plantilla creada a mano también sirve para
- * reabrir la ventana de 24 h.
+ * Plantilla pedida desde la bandeja: el NOMBRE de cualquier plantilla del
+ * catálogo del usuario (config.templates.all, que sincroniza channel-connect).
+ * "a"|"b"|"c" (las tres ranuras de saludo que Predictable creaba hasta el
+ * 2026-10-02) se sigue aceptando por si llega de una pestaña vieja.
  */
 function resolveTemplate(acc: Json, template: string): { name: string; body: string; status: string } {
   const raw = String(template ?? "").trim();
@@ -172,7 +171,7 @@ function resolveTemplate(acc: Json, template: string): { name: string; body: str
   }
   const found = (acc.config?.templates?.all ?? []).find((t: Json) => String(t?.name) === raw);
   if (!found) {
-    throw new HttpError(`No encontramos la plantilla "${raw}" en tu cuenta de WhatsApp. Abre Campañas → WhatsApp y pulsa "Actualizar".`, 400, "whatsapp_template_missing");
+    throw new HttpError(`No encontramos la plantilla "${raw}" en tu cuenta de WhatsApp. Abre Campañas → WhatsApp y pulsa "Sincronizar".`, 400, "whatsapp_template_missing");
   }
   return { name: String(found.name), body: String(found.body ?? ""), status: String(found.status ?? "PENDING") };
 }
@@ -196,7 +195,7 @@ function templateParams(body: string, m: Json | null): Record<string, string> {
 /**
  * WhatsApp por WATI. `member` puede ser null cuando se contesta a un número
  * que escribió sin estar en ninguna lista (`contactRef` = dígitos). Con
- * `template` ("a"|"b"|"c") sale la plantilla de saludo aprobada en vez de
+ * `template` (nombre de una plantilla aprobada) sale esa plantilla en vez de
  * texto libre: es lo único que Meta acepta fuera de la ventana de 24 h.
  */
 const FILE_LABEL: Record<string, string> = { image: "📷 Foto", video: "🎬 Video", audio: "🎤 Audio", document: "📄 Documento" };
@@ -230,7 +229,7 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
     const tpl = resolveTemplate(acc, template);
     // Misma clasificación que campaign-run (_shared/wati.ts, cubierta por deno test).
     if (wati.isTemplateDead(tpl.status) || /missing/i.test(tpl.status)) {
-      throw new HttpError(`La plantilla "${tpl.name}" ya no sirve para enviar (${tpl.status}). En Campañas → WhatsApp pulsa "Volver a crear" para generar una nueva.`, 409, "whatsapp_template_unusable");
+      throw new HttpError(`La plantilla "${tpl.name}" ya no sirve para enviar (${tpl.status}). Elige otra aprobada o crea una nueva en Campañas → WhatsApp.`, 409, "whatsapp_template_unusable");
     }
     if (!wati.isTemplateApproved(tpl.status)) throw new HttpError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tpl.status}).`, 409, "whatsapp_template_not_approved");
     const params = templateParams(tpl.body, member);

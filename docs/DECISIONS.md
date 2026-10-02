@@ -26,4 +26,5 @@ Registro de decisiones ya tomadas para que futuras sesiones no las reviertan sin
 | Alcance del Radar | Lo elige el usuario por detector y por plan (`config.max_companies`, 300 por defecto) | 2026-09-19 |
 | OAuth en canales | Solo Email/Apollo tiene OAuth (construido, pendiente de aprobación de partner). WhatsApp y LinkedIn siguen con token pegado porque WATI y Dripify no tienen OAuth; el pedido de "OAuth embedded signup" en los tres canales exigiría cambiar de proveedor (decisión del 2026-09-03 vigente) | Señalado el 2026-09-19 |
 | Shell | Un nombre por concepto en español; páginas huérfanas con datos simulados eliminadas | 2026-09-19 |
+| Plantillas de WhatsApp en campañas | **Sin plantillas predeterminadas ni número fijo de pasos.** La pestaña de WhatsApp muestra el catálogo (crear, sincronizar, borrar); cada paso de WhatsApp elige su plantilla a mano (la IA de cadencias propone una y el usuario la cambia). "Darse de baja" va siempre en las plantillas nuevas | Hasta 2026-10-02 Predictable creaba tres ranuras fijas (Saludo 1 / Recordatorio / Último intento) y las recreaba al morir; eliminado a petición del dueño |
 
