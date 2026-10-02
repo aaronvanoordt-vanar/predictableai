@@ -893,7 +893,7 @@
       else console.warn('[campaigns] wati sync:', errMsg(e));
     }).then(function () {
       watiSync.running = false;
-      if (state.view === 'inbox') render(); else updateBadge();
+      renderInboxQuietly();
     });
   }
   function convKeyOf(m) { return m.member_id ? 'm:' + m.member_id : 'r:' + chanKey(m.channel) + ':' + (m.contact_ref || m.id); }
@@ -1143,10 +1143,7 @@
   function onInboxRealtime() {
     clearTimeout(inboxTimer);
     inboxTimer = setTimeout(function () {
-      loadInbox().then(function () {
-        if (state.view === 'inbox') render();
-        else updateBadge();
-      });
+      loadInbox().then(renderInboxQuietly);
     }, 800);
   }
   // La conversación abierta está a la vista: lo que llegue a ella (realtime,
@@ -1158,7 +1155,7 @@
     if (document.visibilityState && document.visibilityState !== 'visible') return;
     if (!state.root || !state.root.isConnected || !state.root.getClientRects().length) return; // otra página del shell
     var conv = findConv(state.convKey);
-    if (conv && conv.unread) markRead(conv).then(function () { if (state.view === 'inbox') render(); });
+    if (conv && conv.unread) markRead(conv).then(renderInboxQuietly);
   }
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') markOpenConvRead(); });
   // Sin la pestaña "Bandeja" el único aviso de mensajes sin leer es el ítem de
@@ -1220,11 +1217,48 @@
     }
     el.scrollTop = snap.scrollTop;
   }
+  // El repintado vacía el DOM: el contenedor con scroll (.main) se queda sin
+  // altura un instante y el navegador lo devuelve arriba, la lista de
+  // conversaciones vuelve al inicio y el hilo salta al último mensaje. Con la
+  // bandeja recibiendo realtime cada pocos segundos eso sacaba al usuario de
+  // lo que estaba leyendo. Se guarda y se devuelve cada posición.
+  var threadKeep = null;
+  function captureScroll(root) {
+    var snap = { anc: [], list: null, thread: null };
+    for (var p = root.parentElement; p; p = p.parentElement) if (p.scrollTop) snap.anc.push([p, p.scrollTop]);
+    var list = root.querySelector('.cmp-conv-list');
+    if (list) snap.list = list.scrollTop;
+    var th = root.querySelector('.cmp-thread[data-key]');
+    if (th) snap.thread = { key: th.getAttribute('data-key'), top: th.scrollTop, atBottom: th.scrollHeight - th.scrollTop - th.clientHeight < 40 };
+    return snap;
+  }
+  function restoreScroll(root, snap) {
+    snap.anc.forEach(function (x) { if (x[0].scrollTop !== x[1]) x[0].scrollTop = x[1]; });
+    var list = root.querySelector('.cmp-conv-list');
+    if (list && snap.list != null) list.scrollTop = snap.list;
+    var th = snap.thread && root.querySelector('.cmp-thread[data-key]');
+    if (th && th.getAttribute('data-key') === snap.thread.key && !snap.thread.atBottom) th.scrollTop = snap.thread.top;
+  }
   function render() {
     var root = state.root;
     if (!root) return;
     var focus = captureFocus(root);
-    try { renderInto(root); } finally { restoreFocus(root, focus); }
+    var scroll = captureScroll(root);
+    threadKeep = scroll.thread;
+    try { renderInto(root); } finally { threadKeep = null; restoreScroll(root, scroll); restoreFocus(root, focus); }
+  }
+  // Repintado que el usuario no pidió (realtime, sincronización de WhatsApp,
+  // marcar leída la conversación abierta). Mientras escribe —o compone un
+  // acento con tecla muerta, que un repintado corta— se pospone hasta que
+  // hace una pausa; los datos ya quedaron cargados en state.
+  var typing = { at: 0, composing: false };
+  var quietTimer = null;
+  function renderInboxQuietly() {
+    clearTimeout(quietTimer);
+    if (state.view !== 'inbox') { updateBadge(); return; }
+    var wait = typing.composing ? 500 : typing.at + 1500 - Date.now();
+    if (wait > 0) { updateBadge(); quietTimer = setTimeout(renderInboxQuietly, wait); return; }
+    render();
   }
   function renderInto(root) {
     if (!state.loading) saveView(state.view);
@@ -3082,7 +3116,7 @@
     head.appendChild(links);
     card.appendChild(head);
 
-    var thread = h('div', { class: 'cmp-thread' });
+    var thread = h('div', { class: 'cmp-thread', 'data-key': conv.key });
     var reacts = groupReactions(conv.messages);
     conv.messages.forEach(function (msg) {
       var pl = msg.payload || {};
@@ -3120,7 +3154,10 @@
     });
     card.appendChild(thread);
     card.appendChild(renderReplyBox(conv));
-    setTimeout(function () { thread.scrollTop = thread.scrollHeight; }, 0);
+    // Un repintado de fondo no mueve el hilo que el usuario estaba leyendo:
+    // solo baja al final si ya estaba abajo (o si es otra conversación).
+    var keep = threadKeep && threadKeep.key === conv.key && !threadKeep.atBottom ? threadKeep.top : null;
+    setTimeout(function () { thread.scrollTop = keep != null ? keep : thread.scrollHeight; }, 0);
     return card;
   }
   /**
@@ -3657,6 +3694,7 @@
     var t = e.target;
     var action = t.getAttribute && t.getAttribute('data-action');
     var key = t.getAttribute && t.getAttribute('data-key');
+    if (action === 'reply-draft' || action === 'reply-subject' || action === 'inbox-filter-q') typing.at = Date.now();
     if (action === 'reply-draft' && key) state.replyDraft[key] = t.value;
     else if (action === 'reply-subject' && key) state.replyDraft[key + ':subject'] = t.value;
     else if (action === 'inbox-filter-q') {
@@ -3720,6 +3758,8 @@
       pane.addEventListener('input', guarded(onInput));
       pane.addEventListener('keydown', onKeyDown);
       pane.addEventListener('paste', onPaste);
+      pane.addEventListener('compositionstart', function () { typing.composing = true; typing.at = Date.now(); });
+      pane.addEventListener('compositionend', function () { typing.composing = false; typing.at = Date.now(); });
       built = true;
     }
     if (!built) return;
