@@ -1057,11 +1057,17 @@
     if (row && row.id && !state.inbox.some(function (x) { return x.id === row.id; })) state.inbox.unshift(row);
   }
   /** Guarda un contacto de la bandeja (sin lead) en una lista y enlaza sus mensajes. */
-  function saveContactToList(conv) {
+  /**
+   * then: 'favorite' | 'meeting' | '' — lo que el usuario pidió desde un
+   * contacto sin lista (la estrella o «Reunión conseguida»); se aplica sobre
+   * el contacto recién creado.
+   */
+  function saveContactToList(conv, then) {
     var lead = conv.lead || {};
     var lists = state.lists || [];
     if (!pdSafe().addManualMember) return toast('No se puede crear el contacto desde esta sesión.', 'warn');
-    var api = openModal({ title: 'Guardar contacto en una lista', width: 520 });
+    var api = openModal({ title: then === 'meeting' ? 'Reunión conseguida: guarda el contacto' : then === 'favorite' ? 'Favorito: guarda el contacto' : 'Guardar contacto en una lista', width: 520 });
+    var newListI = h('input', { type: 'text', placeholder: 'Nombre de la lista', value: 'Bandeja' });
     var sel = h('select');
     lists.forEach(function (l) { sel.appendChild(h('option', { value: l.id, text: l.name })); });
     var nameParts = String(lead.name || '').split(' ');
@@ -1072,8 +1078,11 @@
     var emailI = h('input', { type: 'text', placeholder: 'Email', value: lead.email || (conv.channel === 'email' ? conv.contact_ref : '') });
     var phoneI = h('input', { type: 'text', placeholder: 'Teléfono', value: lead.phone || (conv.channel === 'whatsapp' ? '+' + conv.contact_ref : '') });
     var liI = h('input', { type: 'text', placeholder: 'URL de LinkedIn', value: lead.linkedin_url || (conv.channel === 'linkedin' ? conv.contact_ref : '') });
-    api.body.appendChild(h('p', { text: 'El contacto respondió pero no está en ninguna lista. Guárdalo para verlo en Listas, enriquecerlo, enrolarlo en campañas y responderle por cualquier canal.' }));
-    if (!lists.length) api.body.appendChild(h('div', { class: 'pros-note-red', text: 'Aún no tienes listas. Crea una en Listas y vuelve.' }));
+    var intro = then === 'meeting' ? 'El estado del lead (reunión, favorito) vive en tus listas. Guarda el contacto y quedará como «Reunión agendada».'
+      : then === 'favorite' ? 'Los favoritos viven en tus listas. Guarda el contacto y quedará marcado con ★.'
+      : 'El contacto respondió pero no está en ninguna lista. Guárdalo para verlo en Listas, enriquecerlo, enrolarlo en campañas y responderle por cualquier canal.';
+    api.body.appendChild(h('p', { text: intro }));
+    if (!lists.length) api.body.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Aún no tienes listas: se creará una nueva' }), newListI));
     else api.body.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Lista' }), sel));
     api.body.appendChild(h('div', { class: 'cmp-sender-grid' },
       h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Nombre' }), firstI),
@@ -1087,18 +1096,28 @@
       { label: 'Cancelar' },
       { label: 'Guardar', className: 'btn btn-primary', onClick: function (m) {
         var list = lists.find(function (l) { return String(l.id) === sel.value; });
-        if (!list) throw new Error('Elige una lista.');
+        if (!list && lists.length) throw new Error('Elige una lista.');
+        if (!list && !pdSafe().createList) throw new Error('Crea una lista en Listas y vuelve.');
         m.setBusy(true);
-        return Promise.resolve(pdSafe().addManualMember({ list: list, source: { kind: 'inbox', channel: conv.channel || null }, contact: {
+        var listP = list ? Promise.resolve(list) : Promise.resolve(pdSafe().createList(newListI.value)).then(function (nl) {
+          state.lists = (state.lists || []).concat([nl]);
+          return nl;
+        });
+        return listP.then(function (l) { list = l; return pdSafe().addManualMember({ list: list, source: { kind: 'inbox', channel: conv.channel || null }, contact: {
           first_name: firstI.value.trim(), last_name: lastI.value.trim(), company: compI.value.trim(), title: titleI.value.trim(),
           email: emailI.value.trim(), phone: phoneI.value.trim(), linkedin_url: liI.value.trim(),
-        } })).then(function (created) {
+        } }); }).then(function (created) {
           var member = created && (created.member || created);
           var memberId = member && member.id;
           if (!memberId) throw new Error('No se pudo crear el contacto.');
           return edgeFetch(FN_INBOX, { action: 'link_member', member_id: memberId, channel: conv.channel, contact_ref: conv.contact_ref }).then(function () {
+            // El contacto ya quedó guardado: si falla lo que venía después, se avisa y se puede repetir desde la conversación.
+            if (then === 'favorite' && pdSafe().setFavorite) return Promise.resolve(pdSafe().setFavorite(memberId, true)).then(function () { return 'Guardado en «' + list.name + '» y marcado como favorito.'; }, function (err) { return { warn: 'Contacto guardado, pero no se pudo marcar como favorito: ' + err.message }; });
+            if (then === 'meeting' && pdSafe().setContactStatus) return Promise.resolve(pdSafe().setContactStatus(memberId, 'reunion_agendada')).then(function () { return 'Reunión conseguida registrada. Prepárala desde el Meeting Coach.'; }, function (err) { return { warn: 'Contacto guardado, pero no se pudo actualizar el estado: ' + err.message }; });
+            return 'Contacto guardado en «' + list.name + '».';
+          }).then(function (msg) {
             m.close();
-            toast('Contacto guardado en «' + list.name + '».', 'success');
+            if (msg && msg.warn) toast(msg.warn, 'warn'); else toast(msg, 'success');
             state.convKey = 'm:' + memberId;
             state.inboxMembers = {};
             return loadInbox().then(render);
@@ -3078,6 +3097,10 @@
     if (m) {
       var fav = !!m.is_favorite;
       titleRow.appendChild(h('button', { type: 'button', class: 'cmp-fav-btn' + (fav ? ' on' : ''), 'data-action': 'conv-fav', 'data-member': m.id, 'data-on': fav ? '1' : '0', title: fav ? 'Quitar de favoritos' : 'Marcar como favorito', 'aria-pressed': fav ? 'true' : 'false', 'aria-label': fav ? 'Quitar de favoritos' : 'Marcar como favorito', text: fav ? '★' : '☆' }));
+    } else {
+      // Favorito y estado viven en prospect_list_members: un contacto sin lista
+      // se guarda primero (con el favorito ya aplicado) en vez de esconder la estrella.
+      titleRow.appendChild(h('button', { type: 'button', class: 'cmp-fav-btn', 'data-action': 'conv-save', 'data-key': conv.key, 'data-then': 'favorite', title: 'Marcar como favorito (se guarda en una lista)', 'aria-label': 'Marcar como favorito', text: '☆' }));
     }
     left.appendChild(titleRow);
     left.appendChild(h('div', { class: 'pros-cellsub', text: convSub(conv) || (conv.contact_ref || '') }));
@@ -3095,7 +3118,10 @@
       var names = campIds.map(function (id) { var c = findCampaign(id); return c ? c.name : null; }).filter(Boolean);
       if (names.length) links.appendChild(h('span', { class: 'pros-hint', text: 'Campaña: ' + names.join(', ') }));
     }
-    if (!m) links.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'conv-save', 'data-key': conv.key, text: 'Guardar en una lista' }));
+    if (!m) {
+      links.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'conv-save', 'data-key': conv.key, text: 'Guardar en una lista' }));
+      links.appendChild(h('button', { type: 'button', class: 'btn btn-teal btn-sm', 'data-action': 'conv-save', 'data-key': conv.key, 'data-then': 'meeting', title: 'Se guarda en una lista con el estado «Reunión agendada»', text: 'Reunión conseguida' }));
+    }
     if (m) {
       // Estado del lead en el CRM, editable desde la conversación: es aquí
       // donde se sabe si hubo reunión, y ese estado es lo que alimenta el
@@ -3480,7 +3506,7 @@
       });
     }
     if (action === 'reply-channel' && key) { state.replyChannel[key] = channel; return render(); }
-    if (action === 'conv-save' && key) { var convS = findConv(key); if (convS) saveContactToList(convS); return; }
+    if (action === 'conv-save' && key) { var convS = findConv(key); if (convS) saveContactToList(convS, btn.getAttribute('data-then') || ''); return; }
     if (action === 'conv-meeting') {
       var memM = btn.getAttribute('data-member');
       if (!memM || !pdSafe().setContactStatus) return;
