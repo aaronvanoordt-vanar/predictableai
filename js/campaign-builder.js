@@ -1325,7 +1325,11 @@
         var text = t && t.body ? String(t.body) : '';
         if (text && m) text = text.replace(/\{\{\s*(nombre|name|1)\s*\}\}/gi, (memberName(m).split(' ')[0] || ''));
         box.appendChild(text ? h('div', { class: 'cb-preview-text', text: text }) : h('div', { class: 'cb-hint', text: 'La plantilla aún no existe en WATI.' }));
-        box.appendChild(h('div', { class: 'cb-hint', text: 'Incluye los botones "Darse de baja" y "Hola! Qué tal?".' }));
+        // Los botones salen de la plantilla real (catálogo de WATI), nunca de un texto fijo:
+        // las plantillas propias del usuario traen sus propios botones.
+        var full = t && (watiCatalogue().find(function (c) { return c.name === t.name; }) || t);
+        var labels = ((full && full.buttons) || []).map(function (b) { return b && b.text; }).filter(Boolean);
+        if (labels.length) box.appendChild(h('div', { class: 'cb-hint', text: 'Incluye ' + (labels.length > 1 ? 'los botones ' : 'el botón ') + labels.map(function (x) { return '"' + x + '"'; }).join(' y ') + '.' }));
         return box;
       }
       if (a.content.kind === 'custom') {
