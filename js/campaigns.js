@@ -157,6 +157,7 @@
     playbook: undefined,       // outreach_playbooks
     inbox: [],
     inboxMembers: {},
+    inboxSignals: {},          // radar_signals.id → señal que trajo al lead (tarjeta «Viene del Radar»)
     inboxHasReadAt: false,
     inboxError: null,
     convKey: null,
@@ -857,20 +858,76 @@
       state.inboxError = null;
       var ids = [];
       rows.forEach(function (m) { if (m.member_id && !state.inboxMembers[m.member_id] && ids.indexOf(m.member_id) === -1) ids.push(m.member_id); });
+      var memCols = 'id, name, first_name, last_name, company, title, email, phone, linkedin_url, contact_status, list_id, apollo_contact_id';
+      // Columnas opcionales: si una migración no está aplicada se quita y la
+      // bandeja sigue igual (sin estrellas o sin el origen del Radar).
+      // `radar` es solo la copia de la señal del snapshot, no el snapshot entero.
+      var extras = [['is_favorite', ', is_favorite'], ['source', ', source, radar:snapshot->radar']];
       for (var i = 0; i < ids.length; i += 200) {
         var chunk = ids.slice(i, i + 200);
-        var memCols = 'id, name, first_name, last_name, company, title, email, phone, linkedin_url, contact_status, list_id, apollo_contact_id';
-        var mr = await sb().from('prospect_list_members').select(memCols + ', is_favorite').in('id', chunk);
-        // Migración de favoritos aún sin aplicar: la bandeja sigue igual, sin estrellas.
-        if (mr.error && /is_favorite/.test(mr.error.message || '')) mr = await sb().from('prospect_list_members').select(memCols).in('id', chunk);
+        var mr = null;
+        for (;;) {
+          mr = await sb().from('prospect_list_members').select(memCols + extras.map(function (x) { return x[1]; }).join('')).in('id', chunk);
+          var bad = mr.error ? extras.findIndex(function (x) { return (mr.error.message || '').indexOf(x[0]) !== -1; }) : -1;
+          if (bad === -1) break;
+          extras.splice(bad, 1);
+        }
         if (mr.error) { console.warn('[campaigns] inbox members:', mr.error.message); break; }
         (mr.data || []).forEach(function (m) { state.inboxMembers[m.id] = m; });
       }
+      await loadInboxSignals();
     } catch (e) {
       state.inboxError = errMsg(e);
       state.inbox = [];
     }
   }
+  // Señales del Radar de los leads de la bandeja (RLS: solo las del usuario).
+  // Falla suave: sin la fila queda la copia del snapshot (memberRadar).
+  async function loadInboxSignals() {
+    var sids = [];
+    Object.keys(state.inboxMembers).forEach(function (id) {
+      var src = state.inboxMembers[id].source;
+      var sid = src && src.kind === 'radar' && src.signal_id;
+      if (sid && !state.inboxSignals[sid] && sids.indexOf(sid) === -1) sids.push(sid);
+    });
+    for (var i = 0; i < sids.length; i += 200) {
+      var res = await sb().from('radar_signals')
+        .select('id, detector_id, detector_name, detector_kind, company_name, headline, why_fit, signal_date, evidence, score, strength')
+        .in('id', sids.slice(i, i + 200));
+      if (res.error) { console.warn('[campaigns] inbox radar signals:', res.error.message); return; }
+      (res.data || []).forEach(function (sg) { state.inboxSignals[sg.id] = sg; });
+    }
+  }
+
+  /**
+   * La señal del Radar que trajo al lead, o null. La fila de radar_signals
+   * manda; la copia del snapshot cubre la investigación puntual y la señal
+   * borrada. Espejo de radarSignalOf en supabase/functions/_shared/radar-lead.ts.
+   * Sin titular no hay tarjeta: nunca se inventa.
+   */
+  function memberRadar(m) {
+    if (!m) return null;
+    var src = m.source && typeof m.source === 'object' ? m.source : null;
+    var snap = m.radar && typeof m.radar === 'object' ? m.radar : {};
+    var isRadar = (src && src.kind === 'radar') || !!String(snap.signal_headline || '').trim();
+    if (!isRadar) return null;
+    var sg = (src && src.signal_id && state.inboxSignals[src.signal_id]) || null;
+    var headline = String((sg && sg.headline) || snap.signal_headline || '').trim();
+    if (!headline) return null;
+    var ev = (sg && Array.isArray(sg.evidence) && sg.evidence.length) ? sg.evidence : (Array.isArray(snap.evidence) ? snap.evidence : []);
+    var kinds = (global.radarLive && global.radarLive.kinds) || {};
+    var kind = sg && sg.detector_kind ? kinds[sg.detector_kind] : null;
+    return {
+      detector: (sg && sg.detector_name) || (src && src.detector_id ? 'Detector del Radar' : 'Investigación puntual'),
+      kindLabel: kind ? kind.label : '',
+      kindIcon: kind ? kind.icon : '📡',
+      headline: headline,
+      whyFit: String((sg && sg.why_fit) || snap.why_fit || '').trim(),
+      date: (sg && sg.signal_date) || snap.signal_date || '',
+      evidence: ev.filter(function (e) { return e && (e.summary || e.url); }).slice(0, 2),
+    };
+  }
+
   // Historial de WATI (inbox-send {action:"sync_wati"}): trae a la bandeja lo
   // escrito en la UI de WATI y los entrantes que el webhook no entregó. Al
   // abrir la bandeja corre solo (una vez cada 5 min); el botón lo fuerza. Las
@@ -1457,6 +1514,16 @@
       '#prospecting-shell .cmp-reply-row { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }',
       '#prospecting-shell .cmp-thread-links { display:flex; gap:12px; flex-wrap:wrap; align-items:center; font-size:12px; }',
       '#prospecting-shell .cmp-thread-links a { color:var(--accent-2); }',
+      '#prospecting-shell .cmp-conv-tag.radar { background:color-mix(in srgb, var(--accent-2) 16%, transparent); color:var(--accent-2); }',
+      '#prospecting-shell .cmp-radar-origin { margin:0 14px 10px; padding:10px 12px; border:1px solid var(--hair); border-left:3px solid var(--accent-2); border-radius:10px; background:var(--surface2); display:grid; gap:5px; font-size:12.5px; }',
+      '#prospecting-shell .cmp-radar-top { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }',
+      '#prospecting-shell .cmp-radar-kicker { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--accent-2); }',
+      '#prospecting-shell .cmp-radar-det { font-size:12px; font-weight:600; }',
+      '#prospecting-shell .cmp-radar-headline { font-weight:700; font-size:13px; }',
+      '#prospecting-shell .cmp-radar-ev { color:var(--text2); display:flex; flex-wrap:wrap; gap:8px; }',
+      '#prospecting-shell .cmp-radar-ev a { color:var(--accent-2); white-space:nowrap; }',
+      '#prospecting-shell .cmp-radar-why { color:var(--text3); }',
+      '#prospecting-shell .cmp-radar-foot { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-top:2px; }',
       '.cmp-modal { width:560px; text-align:left; }',
       '.cmp-modal h3 { text-align:left; }',
       '.cmp-modal-body { font-size:13px; line-height:1.55; }',
@@ -2904,6 +2971,8 @@
       if (conv.member && conv.member.is_favorite) name.appendChild(h('span', { class: 'cmp-fav-mark', title: 'Favorito', text: '★' }));
       name.insertAdjacentHTML('beforeend', chanIconsHtml(CH_ORDER.filter(function (k) { return conv.channels[k]; })));
       if (!conv.member) name.appendChild(h('span', { class: 'cmp-conv-tag', title: 'No está en ninguna lista', text: 'sin lista' }));
+      var rdr = memberRadar(conv.member);
+      if (rdr) name.appendChild(h('span', { class: 'cmp-conv-tag radar', title: 'Viene del Radar · ' + rdr.detector + ': ' + rdr.headline, text: 'Radar' }));
       item.appendChild(name);
       item.appendChild(h('div', { class: 'cmp-conv-time', text: fmtRel(conv.last && conv.last.sent_at) }));
       item.appendChild(h('div', { class: 'cmp-conv-sub', text: convSub(conv) }));
@@ -3160,6 +3229,8 @@
     head.appendChild(left);
     head.appendChild(links);
     card.appendChild(head);
+    var radarSig = memberRadar(m);
+    if (radarSig) card.appendChild(renderRadarOrigin(conv, radarSig));
 
     var thread = h('div', { class: 'cmp-thread', 'data-key': conv.key });
     var reacts = groupReactions(conv.messages);
@@ -3205,6 +3276,42 @@
     setTimeout(function () { thread.scrollTop = keep != null ? keep : thread.scrollHeight; }, 0);
     return card;
   }
+  /**
+   * «Viene del Radar»: de qué detector salió el lead, la señal (titular,
+   * fecha, resumen de la fuente y por qué encaja) y un borrador IA cuyo
+   * gancho es esa señal, escrito con el entrenamiento IA de la cuenta
+   * (generate-outreach modo "signal"). Todo es dato guardado por el Radar.
+   */
+  function renderRadarOrigin(conv, sig) {
+    var box = h('div', { class: 'cmp-radar-origin' });
+    var top = h('div', { class: 'cmp-radar-top' });
+    top.appendChild(h('span', { class: 'cmp-radar-kicker', text: sig.kindIcon + ' Viene del Radar' }));
+    top.appendChild(h('span', { class: 'cmp-radar-det', text: sig.detector + (sig.kindLabel ? ' · ' + sig.kindLabel : '') }));
+    // signal_date es DATE (AAAA-MM-DD): a mediodía para que la zona horaria no lo mueva un día.
+    if (sig.date) top.appendChild(h('span', { class: 'pros-hint', text: fmtDate(/^\d{4}-\d{2}-\d{2}$/.test(sig.date) ? sig.date + 'T12:00:00' : sig.date) }));
+    box.appendChild(top);
+    box.appendChild(h('div', { class: 'cmp-radar-headline', text: sig.headline }));
+    sig.evidence.forEach(function (e) {
+      var line = h('div', { class: 'cmp-radar-ev' });
+      if (e.summary) line.appendChild(h('span', { text: e.summary }));
+      var u = safeUrl(e.url);
+      if (u) line.appendChild(h('a', { href: u, target: '_blank', rel: 'noopener', text: 'Ver fuente' }));
+      box.appendChild(line);
+    });
+    if (sig.whyFit) box.appendChild(h('div', { class: 'cmp-radar-why', text: 'Por qué encaja: ' + sig.whyFit }));
+    var foot = h('div', { class: 'cmp-radar-foot' });
+    // «Entrenado con…» (js/ai-training.js lo pinta solo al aparecer en el DOM).
+    foot.appendChild(h('div', { 'data-ai-training-badge': 'campaigns' }));
+    foot.appendChild(h('button', {
+      type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-signal-ai', 'data-key': conv.key,
+      'data-credit-cost': 'outreach_message', 'data-credit-muted': '',
+      title: 'Escribe un mensaje cuyo gancho es esta señal, con las metodologías de venta, el estilo y la base de conocimiento con que entrenaste la IA. Cae en el cuadro de respuesta para que lo edites; nunca se envía solo.',
+      text: 'Redactar con IA sobre esta señal',
+    }));
+    box.appendChild(foot);
+    return box;
+  }
+
   /**
    * Globo + sus reacciones (chips debajo). Solo lectura: WATI no permite
    * reaccionar por API (ver el comentario de "Reacciones de WhatsApp").
@@ -3566,6 +3673,29 @@
         var kRefs = (out.knowledge || []).map(function (r) { return r.title; });
         toast('Borrador listo: revísalo y edítalo antes de enviarlo.' + (kRefs.length ? ' Basado en: ' + kRefs.slice(0, 3).join(', ') + '.' : ''), 'success');
       }, function (err) { rA(); throw err; });
+    }
+    if (action === 'reply-signal-ai' && key) {
+      var convR = findConv(key);
+      if (!convR || !convR.member) return toast('Guarda el contacto en una lista para redactar con IA.', 'warn');
+      var chR = state.replyChannel[key];
+      if (!chR) return toast('Este lead no tiene teléfono, email ni LinkedIn para escribirle: revélalos desde Listas → Enriquecer.', 'warn');
+      if (chR === 'whatsapp' && (state.waClosed[key] || !sessionOpen(convR))) {
+        return toast('La ventana de 24 h de WhatsApp está cerrada: Meta solo acepta una plantilla aprobada. Elige Email o LinkedIn para redactar sobre la señal.', 'warn');
+      }
+      var rR = btnLoading(btn, '⏳ Redactando…');
+      return pd().generateSignalMessage({
+        member_id: convR.member.id,
+        channel: chR,
+        conversation: convR.messages.map(function (x) { return { direction: x.direction, channel: chanKey(x.channel), body: isReaction(x) ? '(' + reactionLabel(x) + ')' : x.body, sent_at: x.sent_at }; }),
+        sender: senderDefaults(),
+      }).then(function (out) {
+        state.replyDraft[key] = out.body;
+        if (chR === 'email' && out.subject) state.replyDraft[key + ':subject'] = out.subject;
+        rR();
+        render();
+        var kRefsR = (out.knowledge || []).map(function (r) { return r.title; });
+        toast('Borrador sobre la señal listo en ' + CH[chR].label + ': revísalo antes de enviarlo.' + (kRefsR.length ? ' Basado en: ' + kRefsR.slice(0, 3).join(', ') + '.' : ''), 'success');
+      }, function (err) { rR(); throw err; });
     }
     if (action === 'reply-linkedin' && key) {
       var convL = findConv(key);

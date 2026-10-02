@@ -1436,6 +1436,28 @@
     return { subject: data.subject || '', body: data.body, knowledge: Array.isArray(data.knowledge) ? data.knowledge : [] };
   }
 
+  /**
+   * Bandeja, lead que vino del Radar: un mensaje cuyo gancho es la señal (la
+   * noticia) que lo trajo, escrito con el entrenamiento IA de la cuenta
+   * (metodologías, estilo y base de conocimiento). Mismo costo que un
+   * borrador de respuesta. No exige mensaje entrante: sirve también para
+   * escribirle a quien todavía no contestó.
+   */
+  async function generateSignalMessage({ member_id, channel, conversation, sender, engine }) {
+    if (!member_id) throw new Error('Este contacto no está en tus listas.');
+    const thread = (Array.isArray(conversation) ? conversation : []).filter((m) => m && String(m.body || '').trim());
+    const data = await edgeFetch('generate-outreach', {
+      mode: 'signal',
+      member_id,
+      channel,
+      conversation: thread.slice(-12).map((m) => ({ direction: m.direction, channel: m.channel, body: String(m.body).slice(0, 2000), sent_at: m.sent_at })),
+      sender: sender || getSenderInfo(),
+      engine: engine || (global.AIEngine && global.AIEngine.get('outreach')),
+    });
+    if (!data?.body) throw new Error('La IA no devolvió el mensaje. Reintenta.');
+    return { subject: data.subject || '', body: data.body, angle_note: data.angle_note || '', knowledge: Array.isArray(data.knowledge) ? data.knowledge : [] };
+  }
+
   // ── Brief del cliente ("MI Cliente") ────────────────────────
   // Contexto del vendedor generado por generate-client-brief: identidad,
   // mecanismo, ICP, social proof y filtros Apollo recomendados. RLS por dueño.
@@ -1602,6 +1624,7 @@
     generateOutreach,
     generateStepMessage,
     generateReply,
+    generateSignalMessage,
     ensureBriefReady,
     fetchClientBrief,
     generateClientBrief,
