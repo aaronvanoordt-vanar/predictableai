@@ -75,6 +75,11 @@
  *   "use_playbook": true|false (optional, default true — false skips the
  *                outbound-trends layer for this generation)
  * }
+ * Modes (body.mode): "step" (campaign step), "reply" (Bandeja reply; a Radar
+ *       lead's signal goes in as context) and "signal" (Bandeja, 2026-10-02:
+ *       one message whose hook is the Radar signal that brought the lead —
+ *       409 { error: "not_radar_lead" } if the member has none). All three
+ *       return { subject, body, angle_note, knowledge, radar_signal }.
  * Response 200: {
  *   "whatsapp_followup", "linkedin_message", "email_subject", "email_body",
  *   "angle": { "layer", "hypothesis", "objection", "neutralizer",
@@ -110,6 +115,7 @@ import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { buildTrainingBlock, loadTraining } from "../_shared/sales-training.ts";
 import { loadIntelligence } from "../_shared/intelligence.ts";
 import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
+import { buildRadarSignalBlock, isRadarMember, radarSignalOf, type RadarLeadSignal } from "../_shared/radar-lead.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -997,7 +1003,7 @@ interface StepRequest {
 
 interface StepSpec {
   channel: "email" | "whatsapp" | "linkedin";
-  angle: "apertura" | "valor" | "prueba_social" | "objecion" | "ultima_carta" | "libre" | "respuesta";
+  angle: "apertura" | "valor" | "prueba_social" | "objecion" | "ultima_carta" | "libre" | "respuesta" | "senal";
   instructions: string;
   previous: Array<{ channel: string; body: string; sent_at: string }>;
   // Solo en modo respuesta: el hilo real, en orden, con quién escribió cada
@@ -1007,12 +1013,16 @@ interface StepSpec {
 
 const STEP_ANGLES = ["apertura", "valor", "prueba_social", "objecion", "ultima_carta", "libre"] as const;
 
-function normalizeStep(body: StepRequest, replyMode = false): StepSpec | null {
+type StepMode = "step" | "reply" | "signal";
+
+function normalizeStep(body: StepRequest, mode: StepMode = "step"): StepSpec | null {
+  const replyMode = mode === "reply";
   const chRaw = String(body.channel ?? "");
   const channel = chRaw.startsWith("linkedin") ? "linkedin" : chRaw;
   if (!["email", "whatsapp", "linkedin"].includes(channel)) return null;
   const angle: StepSpec["angle"] = replyMode
     ? "respuesta"
+    : mode === "signal" ? "senal"
     : ((STEP_ANGLES as readonly string[]).includes(String(body.angle)) ? String(body.angle) as StepSpec["angle"] : "valor");
   const previous = (Array.isArray(body.previous) ? body.previous : [])
     .filter((p) => p && typeof p.body === "string" && p.body.trim())
@@ -1066,6 +1076,7 @@ const STEP_ANGLE_RULES: Record<StepSpec["angle"], string> = {
   objecion: "OBJECIÓN PREVENTIVA: nombra en voz observacional la objeción más probable de este rol (\"cuando cuento esto, lo primero que escucho es…\") y neutralízala en una o dos frases con el cómo real del vendedor. Sin tono defensivo.",
   ultima_carta: "ÚLTIMA CARTA: di explícitamente que es el último mensaje por este canal y que no vas a insistir. Sin presión ni culpa. Deja una salida fácil (una pregunta de sí/no o una alternativa de bajo esfuerzo) y agradece el tiempo.",
   libre: "LIBRE: sigue al pie de la letra las INSTRUCCIONES DEL VENDEDOR del bloque PASO DE LA CADENCIA, dentro de las reglas duras.",
+  senal: "MENSAJE SOBRE LA SEÑAL DEL RADAR (desde la Bandeja): el gancho es la noticia o el hecho del bloque SEÑAL DEL RADAR, no un dato genérico. Primera oración: el hecho concreto, dicho como alguien que lo leyó (\"Vi que…\"). Después, en una o dos frases, qué suele implicar eso para alguien en su rol y cómo lo resuelve el vendedor (con su cómo real, sin inventar casos ni cifras). Cierra con UNA pregunta o invitación de bajo esfuerzo. Si ya hay mensajes en la conversación, NO te presentes de nuevo ni repitas lo que ya se le dijo; si el lead ya contestó, reconoce lo que dijo antes de traer la noticia. La metodología del bloque de entrenamiento manda sobre la estructura.",
   respuesta: "RESPUESTA A UN LEAD QUE YA CONTESTÓ: esto NO es prospección. El lead escribió: lo primero es responder lo que preguntó o reconocer lo que dijo, con su mismo nivel de formalidad y en su idioma. Prohibido volver a presentarte, repetir la apertura o soltar el pitch completo. Si pidió información, dásela concreta; si objetó, responde la objeción sin pelear; si mostró interés, propone el siguiente paso con una hora concreta; si dijo que no, agradece y cierra sin insistir. Como máximo UNA pregunta al final. Nunca inventes datos, precios, casos ni disponibilidad que no estén en el contexto del vendedor: si falta un dato, dilo y ofrece confirmarlo.",
 };
 
@@ -1105,7 +1116,8 @@ async function buildLearningContext(supa: any, userId: string, channel: string):
 
 function buildStepContext(step: StepSpec): string {
   const reply = step.angle === "respuesta";
-  const lines = ["", reply ? "=== RESPUESTA EN LA BANDEJA (modo respuesta) ===" : "=== PASO DE LA CADENCIA (modo paso) ==="];
+  const signal = step.angle === "senal";
+  const lines = ["", reply ? "=== RESPUESTA EN LA BANDEJA (modo respuesta) ===" : signal ? "=== MENSAJE DESDE LA BANDEJA SOBRE LA SEÑAL DEL RADAR (modo señal) ===" : "=== PASO DE LA CADENCIA (modo paso) ==="];
   lines.push(`Canal: ${step.channel}`);
   lines.push(`Ángulo: ${step.angle}`);
   lines.push(STEP_ANGLE_RULES[step.angle]);
@@ -1114,6 +1126,15 @@ function buildStepContext(step: StepSpec): string {
   if (reply) {
     lines.push("", "CONVERSACIÓN HASTA AHORA (en orden; \"lead\" es lo que escribió él, \"yo\" lo que salió de tu lado). Contesta el ÚLTIMO mensaje del lead:");
     step.conversation.forEach((c) => lines.push(`[${c.who}${c.channel ? " · " + c.channel : ""}${c.sent_at ? " · " + c.sent_at : ""}] ${c.body.replace(/\s+/g, " ")}`));
+    return lines.join("\n");
+  }
+  if (signal) {
+    if (step.conversation.length) {
+      lines.push("", "CONVERSACIÓN HASTA AHORA (en orden; \"lead\" es lo que escribió él, \"yo\" lo que salió de tu lado). No repitas nada de lo que ya se le dijo:");
+      step.conversation.forEach((c) => lines.push(`[${c.who}${c.channel ? " · " + c.channel : ""}${c.sent_at ? " · " + c.sent_at : ""}] ${c.body.replace(/\s+/g, " ")}`));
+    } else {
+      lines.push("", "Todavía no hay mensajes con este lead.");
+    }
     return lines.join("\n");
   }
   if (step.previous.length) {
@@ -1131,6 +1152,12 @@ const STEP_CLOSING =
 
 // En una respuesta el lead ya habló: investigar de nuevo solo retrasa y
 // tienta al modelo a meter datos nuevos. Manda el hilo.
+// En modo señal la noticia ya está verificada en el contexto: buscar de
+// nuevo invita a mezclarla con otra o a agregarle cifras.
+const SIGNAL_CLOSING =
+  "\n\nNO busques en la web: la señal del Radar y el contexto del vendedor son todo lo que necesitas. Escribe SOLO este mensaje. Responde ÚNICAMENTE con JSON válido, sin fences ni texto adicional:\n" +
+  '{ "subject": "asunto (vacío si no es email)", "body": "el mensaje", "angle_note": "1 frase: cómo usaste la señal y qué metodología aplicaste" }';
+
 const REPLY_CLOSING =
   "\n\nNO busques en la web: responde con lo que ya tienes en el contexto y, sobre todo, con lo que el lead escribió. Escribe SOLO la respuesta al último mensaje del lead. Responde ÚNICAMENTE con JSON válido, sin fences ni texto adicional:\n" +
   '{ "subject": "asunto (vacío si no es email)", "body": "la respuesta", "angle_note": "1 frase: qué contestaste y qué asumiste" }';
@@ -1172,6 +1199,32 @@ function stepViolations(step: StepSpec, out: StepOut): string[] {
   if (step.channel !== "email" && step.angle === "apertura" && !out.body.trim().startsWith(REQUIRED_OPENER)) v.push(`"body" no empieza con "${REQUIRED_OPENER} [empresa] nos dedicamos a [solución]."`);
   if (step.channel === "email" && !out.subject.trim()) v.push('"subject" está vacío (el email necesita asunto)');
   return v;
+}
+
+/** La señal del Radar del lead: fila de radar_signals (dueño) + copia del snapshot. Falla suave → null. */
+// deno-lint-ignore no-explicit-any
+async function loadRadarSignal(supa: any, userId: string, mrow: BriefRow): Promise<RadarLeadSignal | null> {
+  const src = (mrow.source && typeof mrow.source === "object") ? mrow.source as Record<string, unknown> : {};
+  const uuid = (v: unknown) => typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v) ? v : null;
+  let signal: Record<string, unknown> | null = null;
+  let detectorName = "";
+  try {
+    const sid = uuid(src.signal_id);
+    if (sid) {
+      const { data } = await supa.from("radar_signals")
+        .select("headline, why_fit, signal_date, evidence, detector_name, detector_kind")
+        .eq("id", sid).eq("user_id", userId).maybeSingle();
+      signal = data ?? null;
+    }
+    const did = uuid(src.detector_id);
+    if (!signal?.detector_name && did) {
+      const { data } = await supa.from("radar_detectors").select("name").eq("id", did).eq("user_id", userId).maybeSingle();
+      detectorName = String(data?.name ?? "");
+    }
+  } catch (e) {
+    console.warn("[outreach] radar signal lookup failed:", e);
+  }
+  return radarSignalOf(mrow, signal, detectorName);
 }
 
 async function generateStep(engine: Engine, spec: StepSpec, userPrompt: string): Promise<StepOut> {
@@ -1273,18 +1326,27 @@ Deno.serve(withLlmContext(async (req: Request) => {
   // "step"  → un paso de la cadencia (lo pide campaign-run o la vista previa).
   // "reply"  → una respuesta a un lead que ya contestó, desde la Bandeja.
   //            Misma maquinaria: cambia el ángulo y el contexto (el hilo).
+  // "signal" → desde la Bandeja, un mensaje cuyo gancho es la señal del
+  //            Radar que trajo al lead (la noticia), con el entrenamiento IA.
   const replyMode = body.mode === "reply";
-  const stepMode = body.mode === "step" || replyMode;
+  const signalMode = body.mode === "signal";
+  const stepMode = body.mode === "step" || replyMode || signalMode;
   const memberId = typeof body.member_id === "string" && body.member_id.trim() ? body.member_id.trim() : null;
   let lead = body.lead;
   let step: StepSpec | null = null;
+  let radarSignal: RadarLeadSignal | null = null;
   if (stepMode) {
     // Modo paso: el lead sale de la fila del miembro (el motor no manda lead).
     if (!memberId) return json({ error: "member_id required in step mode" }, 400, h);
     const { data: mrow } = await supa.from("prospect_list_members").select("*").eq("id", memberId).eq("user_id", user.id).maybeSingle();
     if (!mrow) return json({ error: "member not found" }, 404, h);
     lead = leadFromMember(mrow);
-    step = normalizeStep(body, replyMode);
+    step = normalizeStep(body, replyMode ? "reply" : signalMode ? "signal" : "step");
+    // La señal del Radar que trajo al lead: gancho en modo señal, contexto en
+    // modo respuesta. La fila de radar_signals manda; la copia del snapshot
+    // cubre la investigación puntual y la señal borrada.
+    if ((replyMode || signalMode) && isRadarMember(mrow)) radarSignal = await loadRadarSignal(supa, user.id, mrow);
+    if (signalMode && !radarSignal) return json({ error: "not_radar_lead", detail: "Este lead no viene de una señal del Radar." }, 409, h);
     if (!step) {
       return json({ error: replyMode
         ? "reply mode requires channel (email|whatsapp|linkedin) and a conversation with at least one inbound message"
@@ -1358,11 +1420,11 @@ Deno.serve(withLlmContext(async (req: Request) => {
   // ── Modo paso: UN mensaje para un paso de la cadencia ─────────────────────
   if (stepMode && step) {
     try {
-      const closing = replyMode ? REPLY_CLOSING : STEP_CLOSING;
+      const closing = replyMode ? REPLY_CLOSING : signalMode ? SIGNAL_CLOSING : STEP_CLOSING;
       // Mensajes ganadores y ángulos (solo en modo paso) + la inteligencia
       // universal (perfiles que responden, objeciones reales) en ambos modos.
       const [stepLearned, universal, knowledgeDocs] = await Promise.all([
-        replyMode ? Promise.resolve("") : buildLearningContext(supa, user.id, step.channel),
+        (replyMode || signalMode) ? Promise.resolve("") : buildLearningContext(supa, user.id, step.channel),
         loadIntelligence(supa, user.id, "outreach"),
         loadKnowledge(supa, user.id),
       ]);
@@ -1376,14 +1438,16 @@ Deno.serve(withLlmContext(async (req: Request) => {
         angle: step.angle,
         text: [
           step.angle.replace("_", " "), step.instructions, lastLead.slice(0, 1200),
+          radarSignal ? [radarSignal.headline, radarSignal.why_fit, radarSignal.detector_kind].join(" ") : "",
           lead.title, lead.headline, lead.industry, lead.company, lead.seniority,
           Array.isArray(lead.departments) ? lead.departments.join(" ") : lead.departments,
           typeof intake?.icp_pain_points === "string" ? intake.icp_pain_points.slice(0, 600) : "",
         ].filter(Boolean).join(" "),
       });
       const knowledge = buildKnowledgePrompt(knowledgeHits, "message");
-      const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + knowledge + learned + closing);
-      console.log(`[outreach] ✓ ${replyMode ? "reply" : "step"} ${user.id} ${step.channel}/${step.angle} via ${engine} (knowledge: ${knowledgeHits.length} fragmentos de ${knowledgeDocs.length} docs)`);
+      const radarBlock = buildRadarSignalBlock(radarSignal, signalMode);
+      const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + radarBlock + knowledge + learned + closing);
+      console.log(`[outreach] ✓ ${replyMode ? "reply" : signalMode ? "signal" : "step"} ${user.id} ${step.channel}/${step.angle} via ${engine} (knowledge: ${knowledgeHits.length} fragmentos de ${knowledgeDocs.length} docs)`);
       const { data: stSpent, error: stSpendErr } = await supa
         .rpc("spend_credits", { p_user_id: user.id, p_amount: OUTREACH_COST });
       if (stSpendErr || stSpent === null || stSpent === undefined) {
@@ -1391,7 +1455,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
       } else {
         await supa.from("credit_transactions").insert({ user_id: user.id, delta: -OUTREACH_COST, reason: "outreach_message" });
       }
-      return json({ subject: out.subject, body: out.body, angle_note: out.angle_note ?? null, channel: step.channel, angle: step.angle, knowledge: knowledgeRefs(knowledgeHits), generated_via: "fallback_api" }, 200, h);
+      return json({ subject: out.subject, body: out.body, angle_note: out.angle_note ?? null, channel: step.channel, angle: step.angle, knowledge: knowledgeRefs(knowledgeHits), radar_signal: radarSignal ? { headline: radarSignal.headline, detector_name: radarSignal.detector_name } : null, generated_via: "fallback_api" }, 200, h);
     } catch (err) {
       console.error("[outreach] step error:", err);
       return json({ error: "llm_error", detail: String(err) }, 502, h);

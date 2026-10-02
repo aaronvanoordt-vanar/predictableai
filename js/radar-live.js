@@ -1354,6 +1354,7 @@
     document.head.appendChild(s);
   }
 
-  global.radarLive = { show, refresh };
+  // `kinds`: etiqueta e icono por metodología (la Bandeja los usa en «Viene del Radar»).
+  global.radarLive = { show, refresh, kinds: DETECTOR_KINDS };
   console.log('[radar-live] module loaded');
 })(window);
