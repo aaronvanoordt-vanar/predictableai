@@ -129,10 +129,30 @@ export async function findMemberByPhone(db: SupabaseClient, userId: string, phon
     .eq("user_id", userId)
     .ilike("phone", `%${d.slice(-8)}%`)
     .limit(20);
-  return ((data ?? []) as Json[]).find((m) => {
+  const byPhone = ((data ?? []) as Json[]).find((m) => {
     const p = wati.digits(m.phone);
     return p === d || p.endsWith(d) || d.endsWith(p);
-  }) ?? null;
+  });
+  if (byPhone) return byPhone;
+  // La fila de la lista puede no tener aún el teléfono (la campaña lo trae de
+  // otra fuente), pero el envío saliente a ese número ya lleva member_id: ese
+  // es el lead. Sin esto la respuesta entraba sin lead y la bandeja la
+  // mostraba con el nombre del perfil de WhatsApp.
+  const { data: sent } = await db
+    .from("inbox_messages")
+    .select("member_id")
+    .eq("user_id", userId).eq("channel", "whatsapp").eq("direction", "out")
+    .eq("contact_ref", d)
+    .not("member_id", "is", null)
+    .order("sent_at", { ascending: false })
+    .limit(1);
+  const memberId = (sent as Json[] | null)?.[0]?.member_id;
+  if (!memberId) return null;
+  const { data: member } = await db
+    .from("prospect_list_members")
+    .select("id, name, first_name, company, phone, contact_status")
+    .eq("id", memberId).eq("user_id", userId).maybeSingle();
+  return member ?? null;
 }
 
 /** `next` = posición desde la que sigue el pase siguiente (0 = ya se recorrió todo). */

@@ -953,7 +953,34 @@
       renderInboxQuietly();
     });
   }
-  function convKeyOf(m) { return m.member_id ? 'm:' + m.member_id : 'r:' + chanKey(m.channel) + ':' + (m.contact_ref || m.id); }
+  function refNorm(m) {
+    var r = String(m.contact_ref || '');
+    return chanKey(m.channel) === 'whatsapp' ? r.replace(/\D/g, '') : r.toLowerCase();
+  }
+  /**
+   * Un mensaje sin lead (el número no estaba en el teléfono de ninguna fila al
+   * llegar) se une al lead cuando otro mensaje del mismo contacto sí lo trae:
+   * los salientes de una campaña llevan member_id aunque la lista aún no tenga
+   * el teléfono. Sin esto la conversación se partía en dos y la entrante se
+   * llamaba como el perfil de WhatsApp, no como el lead de la lista.
+   */
+  function memberIdByRef(msgs) {
+    var by = {};
+    msgs.forEach(function (m) {
+      var r = m.member_id && refNorm(m);
+      if (r) by[chanKey(m.channel) + '|' + r] = m.member_id;
+    });
+    return by;
+  }
+  function resolveMemberId(m, by) {
+    if (m.member_id) return m.member_id;
+    var r = refNorm(m);
+    return (r && by && by[chanKey(m.channel) + '|' + r]) || null;
+  }
+  function convKeyOf(m, by) {
+    var id = resolveMemberId(m, by);
+    return id ? 'm:' + id : 'r:' + chanKey(m.channel) + ':' + (m.contact_ref || m.id);
+  }
   /** Datos del contacto cuando no está en ninguna lista: lo que mandó el proveedor. */
   function leadFromMessages(msgs) {
     var lead = null;
@@ -966,11 +993,13 @@
   }
   function buildConversations() {
     var map = {}, order = [];
+    var byRef = memberIdByRef(state.inbox);
     state.inbox.forEach(function (m) {
-      var key = convKeyOf(m);
+      var memberId = resolveMemberId(m, byRef);
+      var key = convKeyOf(m, byRef);
       var conv = map[key];
       if (!conv) {
-        conv = map[key] = { key: key, member_id: m.member_id || null, contact_ref: m.contact_ref || '', channel: chanKey(m.channel), member: m.member_id ? (state.inboxMembers[m.member_id] || null) : null, messages: [], channels: {}, unread: 0, unreadIds: [], campaigns: {}, inCount: 0, outCount: 0 };
+        conv = map[key] = { key: key, member_id: memberId, contact_ref: m.contact_ref || '', channel: chanKey(m.channel), member: memberId ? (state.inboxMembers[memberId] || null) : null, messages: [], channels: {}, unread: 0, unreadIds: [], campaigns: {}, inCount: 0, outCount: 0 };
         order.push(key);
       }
       conv.messages.push(m);
