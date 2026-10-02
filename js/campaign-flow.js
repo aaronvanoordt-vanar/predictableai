@@ -339,6 +339,7 @@
     var k = node.content.kind;
     if (k === 'ai') return ch.label + ' · IA: ' + (ANGLE_LABELS[node.content.angle] || node.content.angle || 'apertura').replace(/\s*\(.*\)$/, '');
     if (k === 'custom') return ch.label + ' · Mi texto';
+    if (node.settings && node.settings.template_name && k.indexOf('template_') === 0) return ch.label + ' · ' + node.settings.template_name;
     return ch.label + ' · ' + (KIND_LABELS[k] || k).replace(/\s*\(.*\)$/, '');
   }
 
