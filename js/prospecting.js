@@ -2261,7 +2261,7 @@
       '<div><div style="font-weight:600;font-size:13.5px">' + esc(all ? 'Todos los contactos' : ((list && list.name) || 'Lista')) + '</div>' +
       '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos' + (all ? ' en todas tus listas' : '') + '</div></div>' +
       (all
-        ? '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_email" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer seleccionados</button>'
+        ? '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer teléfonos</button>'
         : '<button type="button" class="btn btn-primary btn-sm" data-action="create-campaign"' + (st.members.length ? '' : ' disabled') + '>' + SVG_CAMPAIGN + ' Crear campaña con esta lista</button>') +
       '</div>' +
       '<div data-enrich-banner>' + enrichBannerHtml() + '</div>';
@@ -2284,7 +2284,7 @@
 
     // Acciones sobre la selección / la lista.
     html += '<div class="pros-actions" style="padding:10px 18px 14px">' +
-      (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_email" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer seleccionados</button>') +
+      (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer teléfonos</button>') +
       (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>') +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-members">Actualizar</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="export-csv"' + (st.members.length ? '' : ' disabled') + '>Exportar CSV</button>' +
@@ -2756,29 +2756,31 @@
   }
 
   function openEnrichModal() {
-    var sel = selectedListMembers();
-    if (!sel.length) return toast('Selecciona al menos un contacto.', 'warn');
-    var phoneCb = h('input', { type: 'checkbox' });
-    phoneCb.checked = true;
+    var picked = selectedListMembers();
+    if (!picked.length) return toast('Selecciona al menos un contacto.', 'warn');
+    // Solo teléfonos: los que ya tienen uno (o lo están buscando) no se vuelven a cobrar.
+    var sel = picked.filter(function (m) { return !m.phone && m.phone_status !== 'pending'; });
+    var skipped = picked.length - sel.length;
+    if (!sel.length) return toast('Los contactos seleccionados ya tienen teléfono o se está buscando.', 'info');
     var bodyN = h('div', null,
       h('p', {
         style: 'font-size:13px;color:var(--text2);margin:0 0 12px;line-height:1.55',
-        text: 'Se revelará el email personal y (opcional) el teléfono de ' + fmtNum(sel.length) +
-          ' contactos vía Apollo. Costo: 2 créditos por email y 8 por teléfono, solo cuando Apollo encuentra el dato (con tu propia cuenta de Apollo conectada no gastas créditos de predictable.ai). ' +
-          'El enriquecimiento corre en segundo plano — puedes seguir usando la app; usa «Actualizar» en unos minutos para ver los resultados.',
-      }),
-      h('label', { class: 'pros-check', style: 'display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text2);cursor:pointer;font-family:var(--font-body);font-weight:400;text-transform:none;letter-spacing:0' }, phoneCb, 'Incluir teléfonos'));
+        text: 'Se buscará el teléfono de ' + fmtNum(sel.length) + ' contacto' + (sel.length === 1 ? '' : 's') +
+          (skipped ? ' (' + fmtNum(skipped) + ' ya tenían teléfono y se omiten)' : '') +
+          ' vía Apollo. Costo: 8 créditos por teléfono, solo cuando Apollo lo encuentra (con tu propia cuenta de Apollo conectada no gastas créditos de predictable.ai). ' +
+          'Corre en segundo plano — puedes seguir usando la app; usa «Actualizar» en unos minutos para ver los resultados.',
+      }));
     var api = openModal({
-      title: 'Enriquecer contactos',
+      title: 'Enriquecer teléfonos',
       bodyNode: bodyN,
       actions: [
         { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
         {
-          label: 'Enriquecer',
+          label: 'Buscar teléfonos',
           className: 'btn btn-primary',
           onClick: function () {
             var members = sel;
-            var revealPhones = phoneCb.checked;
+            var revealPhones = true;
             var targetListId = state.listas.activeListId;
             // No bloquea el modal: el enriquecimiento sigue en segundo plano
             // (mismo espíritu que los teléfonos, que ya llegan async vía
