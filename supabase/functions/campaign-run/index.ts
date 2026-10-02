@@ -566,8 +566,14 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
 
     if (["template_a", "template_b", "template_c"].includes(step.content_kind)) {
       const key = step.content_kind.slice(-1);
-      const tpl = acc.config?.templates?.items?.[key];
-      if (!tpl?.name) throw new StepError("La plantilla de saludo no existe en WATI. Reconecta WATI.", "hold");
+      // El paso puede apuntar a cualquier plantilla del catálogo del tenant
+      // (settings.template_name, de config.templates.all); sin eso usa la
+      // ranura a/b/c que arma Predictable.
+      const wanted = typeof step.settings?.template_name === "string" ? step.settings.template_name.trim() : "";
+      const tpl = wanted
+        ? (acc.config?.templates?.all ?? []).find((t: Json) => t?.name === wanted)
+        : acc.config?.templates?.items?.[key];
+      if (!tpl?.name) throw new StepError(wanted ? `La plantilla "${wanted}" no existe en tu cuenta de WhatsApp. Actualiza las plantillas en Campañas → WhatsApp.` : "La plantilla de saludo no existe en WATI. Reconecta WATI.", "hold");
       const tplStatus = String(tpl.status ?? "PENDING");
       // Borrada / rechazada / pausada / deshabilitada: Meta no la va a aprobar
       // sola, así que el paso se omite y el lead sigue con los otros canales
@@ -585,7 +591,25 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       if (!wati.isTemplateApproved(tplStatus)) {
         throw new StepError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tplStatus}).`, "hold");
       }
-      bodyText = String(tpl.body ?? "").replace(/\{\{\s*name\s*\}\}/gi, firstName(member));
+      // Ranura de Predictable: solo {{name}}. Plantilla elegida del catálogo:
+      // cada variable se llena con el dato del lead; si falta alguna, el
+      // paso se omite en vez de mandar un mensaje con un hueco.
+      const params: Record<string, string> = { name: firstName(member) || "" };
+      if (wanted) {
+        for (const k of Object.keys(params)) delete params[k];
+        for (const v of wati.templateVariables(tpl.body)) {
+          const k = v.toLowerCase();
+          params[v] = /^(name|nombre|first_name|1)$/.test(k) ? firstName(member)
+            : /^(full_name|nombre_completo|fullname)$/.test(k) ? String(member.name ?? "").trim()
+            : /^(company|empresa|compania)$/.test(k) ? String(member.company ?? "").trim()
+            : /^(title|cargo|puesto|rol)$/.test(k) ? String(member.title ?? "").trim()
+            : "";
+        }
+        const missing = Object.keys(params).filter((k) => !params[k]);
+        if (missing.length) throw new StepError(`La plantilla "${tpl.name}" necesita ${missing.map((k) => `{{${k}}}`).join(", ")} y el lead no lo tiene: se omite el WhatsApp.`, "skip");
+      }
+      bodyText = String(tpl.body ?? "");
+      for (const [k, v] of Object.entries(params)) bodyText = bodyText.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, "gi"), v);
       let r: Awaited<ReturnType<typeof wati.sendTemplate>>;
       try {
         r = await wati.sendTemplate(creds, {
@@ -593,7 +617,7 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
           broadcastName: `px_${String(campaign.name).slice(0, 40)}_${localId.slice(0, 8)}`,
           phone,
           localMessageId: localId,
-          params: { name: firstName(member) || "" },
+          params,
           channel: acc.config?.channel || undefined,
         });
       } catch (e) {

@@ -2508,7 +2508,9 @@
         var k = chanKey(a.channel);
         if (CH[k] && !channelConnected(k)) { warnings[a.id] = [CH[k].label + ' sin conectar']; return; }
         if (a.channel === 'whatsapp' && a.content.kind.indexOf('template_') === 0) {
-          var t = tpls[{ template_a: 'a', template_b: 'b', template_c: 'c' }[a.content.kind]];
+          var pick = a.settings && a.settings.template_name;
+          var all = (state.wati && state.wati.config && state.wati.config.templates && state.wati.config.templates.all) || [];
+          var t = pick ? all.find(function (x) { return x.name === pick; }) : tpls[{ template_a: 'a', template_b: 'b', template_c: 'c' }[a.content.kind]];
           if (t && !/approved/i.test(String(t.status || ''))) {
             var tst = String(t.status || 'pendiente');
             warnings[a.id] = [TEMPLATE_DEAD.test(tst) ? 'plantilla ' + tst.toLowerCase() + ': el paso se omite' : 'plantilla ' + tst.toLowerCase()];

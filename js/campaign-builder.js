@@ -410,6 +410,7 @@
     }
     if (k === 'ai') return (node.content.instructions ? 'Instrucciones: ' + excerpt(node.content.instructions, 90) : 'Mensaje escrito por la IA para cada lead con tu contexto de empresa.');
     if (k === 'custom') return node.content.body ? excerpt((node.content.subject ? node.content.subject + ' · ' : '') + node.content.body, 110) : 'Sin texto todavía.';
+    if (node.settings && node.settings.template_name && k.indexOf('template_') === 0) return node.settings.template_name + ' (plantilla de WhatsApp)';
     return L.KIND_LABELS[k] || k;
   }
 
@@ -566,6 +567,14 @@
       });
     }
     function watiTemplates() { return (o.wati && o.wati.config && o.wati.config.templates && o.wati.config.templates.items) || {}; }
+    // Catálogo completo del tenant (lo sincroniza channel-connect `sync_templates`).
+    function watiCatalogue() { return (o.wati && o.wati.config && o.wati.config.templates && o.wati.config.templates.all) || []; }
+    // Plantilla que usa un paso: la elegida del catálogo (settings.template_name) o la ranura a/b/c.
+    function stepTemplate(a) {
+      var nm = a.settings && a.settings.template_name;
+      if (nm) return watiCatalogue().find(function (t) { return t.name === nm; }) || null;
+      return watiTemplates()[TEMPLATE_KEY[a.content.kind]] || null;
+    }
     function apolloOk() {
       if (o.channelConnected) return !!o.channelConnected('email');
       return st.emailAccounts === null ? true : st.emailAccounts.length > 0;
@@ -599,7 +608,7 @@
         if (a.channel === 'whatsapp') {
           if (!watiOk()) list.push('WhatsApp sin conectar');
           else if (a.content.kind.indexOf('template_') === 0) {
-            var t = tpls[TEMPLATE_KEY[a.content.kind]];
+            var t = stepTemplate(a);
             if (!t) list.push('plantilla sin crear');
             else if (!/approved/i.test(String(t.status || ''))) {
               var tst = String(t.status || 'pendiente').toLowerCase();
@@ -1186,11 +1195,35 @@
         box.appendChild(h('div', { class: 'cb-hint', text: 'El mismo texto para todos los leads; las variables se reemplazan con los datos de cada uno al enviar.' }));
         if (node.channel === 'whatsapp') box.appendChild(h('div', { class: 'cb-note amber', text: 'WhatsApp solo permite texto libre dentro de las 24 h siguientes a un mensaje del lead. Si no hay conversación abierta, este paso se omite.' }));
       } else {
-        var tpls = watiTemplates();
-        var tsel = h('select', { onchange: function () { node.content = { kind: tsel.value }; markCustom(); render(); } });
-        ['template_a', 'template_b', 'template_c'].forEach(function (k) { tsel.appendChild(h('option', { value: k, text: L.KIND_LABELS[k], selected: kind === k })); });
+        var chosen = node.settings && node.settings.template_name;
+        var tsel = h('select', { onchange: function () {
+          var v = tsel.value;
+          if (v.indexOf('tpl:') === 0) {
+            node.content = { kind: 'template_a' };
+            node.settings = Object.assign({}, node.settings, { template_name: v.slice(4) });
+          } else {
+            node.content = { kind: v };
+            if (node.settings) { delete node.settings.template_name; if (!Object.keys(node.settings).length) delete node.settings; }
+          }
+          markCustom(); render();
+        } });
+        ['template_a', 'template_b', 'template_c'].forEach(function (k) { tsel.appendChild(h('option', { value: k, text: L.KIND_LABELS[k], selected: !chosen && kind === k })); });
+        // Todas las demás plantillas del tenant (las que creaste en WATI/Meta).
+        var slotNames = {};
+        var slots = watiTemplates();
+        Object.keys(slots).forEach(function (k) { if (slots[k] && slots[k].name) slotNames[slots[k].name] = true; });
+        var extra = watiCatalogue().filter(function (t) { return t && t.name && !slotNames[t.name] && !TEMPLATE_DEAD.test(String(t.status || '')); });
+        if (chosen && !extra.some(function (t) { return t.name === chosen; })) extra.push({ name: chosen, status: 'MISSING' });
+        if (extra.length) {
+          var grp = h('optgroup', { label: 'Mis otras plantillas' });
+          extra.forEach(function (t) {
+            var ok = /approved/i.test(String(t.status || ''));
+            grp.appendChild(h('option', { value: 'tpl:' + t.name, text: t.name + (ok ? '' : ' · ' + String(t.status || 'pendiente').toLowerCase()), selected: chosen === t.name }));
+          });
+          tsel.appendChild(grp);
+        }
         box.appendChild(tsel);
-        var t = tpls[TEMPLATE_KEY[kind]];
+        var t = stepTemplate(node);
         if (!watiOk()) box.appendChild(h('div', { class: 'cb-warn', text: 'Conecta WhatsApp para crear las plantillas y enviarlas a revisión de Meta.' }));
         else if (!t) box.appendChild(h('div', { class: 'cb-warn', text: 'Esta plantilla no existe en tu cuenta de WhatsApp. Reconecta el canal para crearla.' }));
         else {
@@ -1287,7 +1320,7 @@
       var box = h('div', { class: 'cb-preview' });
       box.appendChild(h('div', { class: 'cb-lbl', text: 'Vista previa con un lead real' }));
       if (a.content.kind.indexOf('template_') === 0) {
-        var t = watiTemplates()[TEMPLATE_KEY[a.content.kind]];
+        var t = stepTemplate(a);
         var m = sampleMember();
         var text = t && t.body ? String(t.body) : '';
         if (text && m) text = text.replace(/\{\{\s*(nombre|name|1)\s*\}\}/gi, (memberName(m).split(' ')[0] || ''));
