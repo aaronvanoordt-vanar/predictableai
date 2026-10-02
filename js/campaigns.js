@@ -1184,6 +1184,50 @@
     ]);
     return api;
   }
+  /** Edita los datos de un lead que ya está en una lista (nombre, empresa, cargo, contacto) desde la bandeja. */
+  function editMember(conv) {
+    var mem = conv.member;
+    if (!mem) return;
+    if (!pdSafe().updateMember) return toast('No se puede editar el contacto desde esta sesión.', 'warn');
+    var api = openModal({ title: 'Editar lead', width: 520 });
+    var parts = String(mem.name || '').trim().split(/\s+/);
+    var firstI = h('input', { type: 'text', placeholder: 'Nombre', value: mem.first_name || parts[0] || '' });
+    var lastI = h('input', { type: 'text', placeholder: 'Apellido', value: mem.last_name || (mem.first_name ? '' : parts.slice(1).join(' ')) || '' });
+    var compI = h('input', { type: 'text', placeholder: 'Empresa', value: mem.company || '' });
+    var titleI = h('input', { type: 'text', placeholder: 'Cargo', value: mem.title || '' });
+    var emailI = h('input', { type: 'text', placeholder: 'Email', value: hasEmail(mem) ? mem.email : '' });
+    var phoneI = h('input', { type: 'text', placeholder: 'Teléfono', value: mem.phone || '' });
+    var liI = h('input', { type: 'text', placeholder: 'URL de LinkedIn', value: mem.linkedin_url || '' });
+    api.body.appendChild(h('p', { text: 'Los cambios se guardan en tu lista y se reflejan en Listas y Campañas.' }));
+    api.body.appendChild(h('div', { class: 'cmp-sender-grid' },
+      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Nombre' }), firstI),
+      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Apellido' }), lastI),
+      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Empresa' }), compI),
+      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Cargo' }), titleI),
+      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Email' }), emailI),
+      h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'Teléfono' }), phoneI)));
+    api.body.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'pros-lbl', text: 'LinkedIn' }), liI));
+    api.setActions([
+      { label: 'Cancelar' },
+      { label: 'Guardar', className: 'btn btn-primary', onClick: function (m) {
+        var first = firstI.value.trim(), last = lastI.value.trim();
+        if (!first && !last) throw new Error('Escribe al menos el nombre.');
+        var patch = {
+          first_name: first || null, last_name: last || null, name: [first, last].filter(Boolean).join(' '),
+          company: compI.value.trim() || null, title: titleI.value.trim() || null,
+          email: emailI.value.trim() || null, phone: phoneI.value.trim() || null, linkedin_url: liI.value.trim() || null,
+        };
+        m.setBusy(true);
+        return Promise.resolve(pdSafe().updateMember(mem.id, patch)).then(function () {
+          Object.keys(patch).forEach(function (k) { mem[k] = patch[k]; });
+          m.close();
+          toast('Lead actualizado.', 'success');
+          render();
+        });
+      } },
+    ]);
+    return api;
+  }
   function ensureGmailStatus() {
     if (state.gmail !== undefined || !pros().gmailStatus) return;
     state.gmail = null;
@@ -3184,6 +3228,7 @@
     titleRow.appendChild(h('span', { text: convName(conv) }));
     if (m) {
       var fav = !!m.is_favorite;
+      titleRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'conv-edit', 'data-key': conv.key, title: 'Editar nombre, empresa, cargo y datos de contacto', text: 'Editar' }));
       titleRow.appendChild(h('button', { type: 'button', class: 'cmp-fav-btn' + (fav ? ' on' : ''), 'data-action': 'conv-fav', 'data-member': m.id, 'data-on': fav ? '1' : '0', title: fav ? 'Quitar de favoritos' : 'Marcar como favorito', 'aria-pressed': fav ? 'true' : 'false', 'aria-label': fav ? 'Quitar de favoritos' : 'Marcar como favorito', text: fav ? '★' : '☆' }));
     } else {
       // Favorito y estado viven en prospect_list_members: un contacto sin lista
@@ -3632,6 +3677,7 @@
       });
     }
     if (action === 'reply-channel' && key) { state.replyChannel[key] = channel; return render(); }
+    if (action === 'conv-edit' && key) { var convE = findConv(key); if (convE) editMember(convE); return; }
     if (action === 'conv-save' && key) { var convS = findConv(key); if (convS) saveContactToList(convS, btn.getAttribute('data-then') || ''); return; }
     if (action === 'conv-meeting') {
       var memM = btn.getAttribute('data-member');
