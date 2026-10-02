@@ -677,6 +677,23 @@ Deno.serve(async (req) => {
       return json({ account: publicRow(row) }, 200, cors);
     }
 
+    // Tope diario de envíos de WhatsApp (config.daily_cap). null = usar el de
+    // cada campaña; 0 = sin tope. campaign-run lo aplica sobre el de la campaña.
+    if (action === "set_daily_cap") {
+      const acc = await loadAccount("wati");
+      if (!acc) return json({ error: "wati_not_connected" }, 428, cors);
+      const raw = payload.daily_cap;
+      if (raw === null || raw === undefined || raw === "") {
+        await patchChannelConfig(db, acc.id, {}, ["daily_cap"]);
+      } else {
+        const n = Math.floor(Number(raw));
+        if (!Number.isFinite(n) || n < 0 || n > 100000) return json({ error: "El tope debe ser un número entre 0 y 100000." }, 400, cors);
+        await patchChannelConfig(db, acc.id, { daily_cap: n });
+      }
+      const { data: row } = await db.from("channel_accounts").select("*").eq("id", acc.id).maybeSingle();
+      return json({ account: publicRow(row) }, 200, cors);
+    }
+
     // Estado del webhook. `confirmed: true` = "ya lo pegué en WATI": se cree al
     // usuario (la API no deja listarlos) y queda verificado de verdad cuando
     // llegue el primer callback.

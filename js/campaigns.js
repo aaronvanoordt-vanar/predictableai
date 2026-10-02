@@ -1633,7 +1633,7 @@
       body.innerHTML = '<span class="cmp-dot"></span><span class="cmp-ch-detail">' + esc(st.detail || '') + '</span>';
       if (st.sub) body.insertAdjacentHTML('beforeend', pill(st.sub, st.subKind));
       if ((key === 'linkedin' || key === 'whatsapp') && st.state === 'connected' && !st.webhookOk) body.appendChild(h('span', { class: 'cmp-chip-warn', text: '⚠ Falta el webhook de respuestas' }));
-      foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-details', 'data-channel': key, text: 'Detalles' }));
+      foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-details', 'data-channel': key, text: 'Configuración' }));
     } else {
       if (!big) body.appendChild(h('span', { class: 'pros-hint', text: 'Sin conectar' }));
       foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'ch-connect', 'data-channel': key, text: 'Conectar' }));
@@ -2096,6 +2096,39 @@
       body.appendChild(list);
     }
     if (tpls.synced_at) body.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:6px', text: 'Leído de WhatsApp el ' + fmtDateTime(tpls.synced_at) + '.' }));
+
+    // ── 2. Tope diario de envíos ───────────────────────────────────────────
+    // Vive en el canal (config.daily_cap) y manda sobre el «Máx. WhatsApp / día»
+    // de cada campaña: el motor cuenta los envíos de TODAS las campañas juntas.
+    body.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:12px', text: 'Tope diario de WhatsApp' }));
+    var capIn = h('input', { type: 'number', min: '0', style: 'width:110px', placeholder: 'Sin definir', value: cfg.daily_cap != null ? String(cfg.daily_cap) : '' });
+    var capSave = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: 'Guardar' });
+    capSave.addEventListener('click', guarded(function () {
+      var raw = String(capIn.value).trim();
+      var n = raw === '' ? null : Math.max(0, Math.floor(Number(raw)));
+      if (n !== null && !isFinite(n)) { toast('Escribe un número válido.', 'error'); return null; }
+      return watiAction('set_daily_cap', { daily_cap: n }, capSave).then(function () {
+        toast(n === null ? 'Se usará el tope de cada campaña.' : n === 0 ? 'Sin tope diario.' : 'Tope diario: ' + n + ' WhatsApp en 24 h.', 'success');
+        renderWhatsAppDetails(api);
+      });
+    }));
+    body.appendChild(h('div', { class: 'cmp-row' }, h('span', { text: 'Máx. WhatsApp en 24 h' }), capIn, capSave));
+    body.appendChild(h('div', {
+      class: 'pros-hint',
+      text: 'Cuenta todos los envíos de todas tus campañas. Déjalo vacío para usar el «Máx. WhatsApp / día» de cada campaña, o pon 0 para quitar el tope. Ojo: Meta también limita las conversaciones nuevas por día según el nivel de tu número; no lo subas por encima de eso.',
+    }));
+    var retryHeld = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Reintentar retenidos ahora' });
+    retryHeld.addEventListener('click', guarded(function () {
+      var r0 = btnLoading(retryHeld, '⏳');
+      return Promise.resolve(sb().from('campaign_enrollments')
+        .update({ error_detail: null, next_run_at: new Date().toISOString() })
+        .eq('status', 'active').not('error_detail', 'is', null)).then(function (r) {
+        r0();
+        if (r && r.error) throw new Error('No se pudieron reintentar los leads: ' + r.error.message);
+        toast('Los leads retenidos se reintentan en la próxima corrida (≤ 1 min).', 'success');
+      }, function (e) { r0(); throw e; });
+    }));
+    body.appendChild(retryHeld);
 
     // ── 3. Webhook de respuestas ───────────────────────────────────────────
     var wh = waWebhookState(cfg);
