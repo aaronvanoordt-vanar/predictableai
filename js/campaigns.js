@@ -1602,6 +1602,7 @@
   }
   async function refreshStatus() {
     await loadStatus();
+    notifyApolloStatus();
     state.emailAccounts = null;
     await loadEmailAccounts();
     render();
@@ -1817,6 +1818,7 @@
             state.apollo = (r && (r.account || r.apollo)) || state.apollo;
             m.close();
             toast('Apollo conectado con tu cuenta.', 'success');
+            notifyApolloStatus();
             render();
             openChannelDetails('email');
           });
@@ -1832,6 +1834,22 @@
     if (key === 'email') return state.apolloOauth ? connectEmail(btn) : openApolloKeyWizard();
     if (key === 'whatsapp') return openWhatsAppWizard();
     if (key === 'linkedin') return openLinkedInWizard();
+  }
+
+  // ── Apollo como requisito de toda la Prospección (2026-10-02) ────────────
+  // js/prospecting.js no deja entrar a Buscar, Listas ni Campañas sin una
+  // cuenta de Apollo propia y reutiliza este mismo asistente para conectarla.
+  // Cada cambio de estado se avisa con 'predictable:apollo-status'.
+  async function apolloStatus(force) {
+    if (force || !state.status) await loadStatus();
+    return { connected: isConn(state.apollo), error: state.status ? null : (state.statusError || 'No se pudo leer el estado de Apollo.') };
+  }
+  function notifyApolloStatus() {
+    try { document.dispatchEvent(new CustomEvent('predictable:apollo-status', { detail: { connected: isConn(state.apollo) } })); } catch (e) { /* navegador viejo */ }
+  }
+  function connectApollo(btn) {
+    injectStyles();
+    return Promise.resolve(openConnect('email', btn));
   }
 
   // ── Detalles por canal (modal) ───────────────────────────────────────────
@@ -1850,6 +1868,7 @@
           if (key === 'whatsapp') state.wati = null;
           if (key === 'linkedin') state.dripify = null;
           if (key === 'email') { state.apollo = null; state.emailAccounts = null; }
+          if (key === 'email') notifyApolloStatus();
           toast(CH[key].label + ' desconectado.', 'success');
           return (key === 'email' ? loadEmailAccounts() : Promise.resolve()).then(render);
         });
@@ -3838,6 +3857,6 @@
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
 
-  global.campaigns = { show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openLinkedinDesigner: openLinkedinDesigner };
+  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openLinkedinDesigner: openLinkedinDesigner };
   console.log('[campaigns] module loaded');
 })(window);
