@@ -801,7 +801,14 @@ async function preflight(ctx: Ctx, en: Json, campaign: Json, step: StepLike): Pr
   if (cap > 0) {
     const used = await sentLast24h(ctx, en.user_id, ch);
     if (used >= cap) {
-      await finish(ctx, en, { status: "active", next_run_at: new Date(ctx.now.getTime() + 60 * 60 * 1000).toISOString() });
+      // El motivo queda a la vista: antes el lead decía "se envía en 1 hora"
+      // sin explicar que el tope diario de la campaña lo estaba reteniendo.
+      const label = ch === "whatsapp" ? "WhatsApp" : "email";
+      await finish(ctx, en, {
+        status: "active",
+        next_run_at: new Date(ctx.now.getTime() + 60 * 60 * 1000).toISOString(),
+        error_detail: `Tope diario de ${label} alcanzado (${cap} en 24 h). Sube «Máx. ${label} / día» en la campaña para enviar ya.`,
+      });
       return null;
     }
   }
