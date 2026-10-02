@@ -1722,9 +1722,13 @@
       '<button type="button" class="btn btn-ghost btn-sm" data-action="page-next"' + (hasNextPage ? '' : ' disabled') + '>›</button>' +
       '</div></div>';
 
-    if (hidden > 0) {
+    // Total excluido = personas guardadas en las listas excluidas (no solo las que
+    // coinciden con el buffer cargado, que daba 79 con ~325 contactos excluidos).
+    var excludedTotal = s.excluded && s.excluded.total > 0 ? s.excluded.total : 0;
+    if (excludedTotal > 0 || hidden > 0) {
       html += '<div style="font-size:12px;color:var(--text3);margin-top:6px">' +
-        '🚫 ' + esc(fmtNum(hidden)) + ' persona(s) ocultadas por ya estar en las listas excluidas.</div>';
+        '🚫 ' + esc(fmtNum(Math.max(excludedTotal, hidden))) + ' persona(s) excluidas por estar en las listas excluidas' +
+        (hidden > 0 ? ' · ' + esc(fmtNum(hidden)) + ' ocultas en los resultados cargados' : '') + '.</div>';
     }
 
     if (s.hitFetchCap && rows.length < perPage) {

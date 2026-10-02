@@ -352,15 +352,29 @@
   // contactar a quien ya está en una lista).
   async function fetchListMemberIds(listIds) {
     const ids = (listIds || []).filter(Boolean);
-    if (!ids.length) return { personIds: new Set(), contactIds: new Set() };
-    const { data, error } = await sb()
-      .from('prospect_list_members')
-      .select('apollo_person_id, apollo_contact_id')
-      .in('list_id', ids);
-    if (error) throw new Error('No se pudieron leer las listas a excluir: ' + error.message);
+    if (!ids.length) return { personIds: new Set(), contactIds: new Set(), total: 0 };
+    // PostgREST corta en 1.000 filas por consulta: se pagina para no subcontar.
+    const PAGE = 1000;
+    let data = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data: chunk, error } = await sb()
+        .from('prospect_list_members')
+        .select('apollo_person_id, apollo_contact_id')
+        .in('list_id', ids)
+        .order('id')
+        .range(from, from + PAGE - 1);
+      if (error) throw new Error('No se pudieron leer las listas a excluir: ' + error.message);
+      data = data.concat(chunk || []);
+      if (!chunk || chunk.length < PAGE) break;
+    }
+    // total = personas distintas guardadas en las listas excluidas (una persona
+    // en dos listas cuenta una vez).
+    const distinct = new Set();
+    data.forEach((r, i) => distinct.add(r.apollo_person_id || r.apollo_contact_id || 'row' + i));
     return {
-      personIds: new Set((data || []).map((r) => r.apollo_person_id).filter(Boolean)),
-      contactIds: new Set((data || []).map((r) => r.apollo_contact_id).filter(Boolean)),
+      personIds: new Set(data.map((r) => r.apollo_person_id).filter(Boolean)),
+      contactIds: new Set(data.map((r) => r.apollo_contact_id).filter(Boolean)),
+      total: distinct.size,
     };
   }
 
