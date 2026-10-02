@@ -8,6 +8,7 @@ Deno.test("fills LinkedIn, location and company from the enriched person", () =>
     title: "CEO",
     first_name: "Webert",
     last_name: "Silva",
+    name: "Webert Silva",
     country: "Brazil",
     city: "São Paulo",
     state: "São Paulo",
@@ -37,7 +38,7 @@ Deno.test("no person, no patch", () => {
 Deno.test("profileFillPatch: el nombre completo reemplaza al parcial u ofuscado", () => {
   const person = { first_name: "Juan", last_name: "Pérez Gómez", name: "Juan Pérez Gómez" };
   assertEquals(profileFillPatch({ name: "Juan", first_name: "Juan" }, person), {
-    last_name: "Pérez Gómez", name: "Juan Pérez Gómez",
+    first_name: "Juan", last_name: "Pérez Gómez", name: "Juan Pérez Gómez",
   });
   assertEquals(profileFillPatch({ name: "Juan Pé***", first_name: "Juan", last_name: "Pé***" }, person), {
     name: "Juan Pérez Gómez", last_name: "Pérez Gómez", first_name: "Juan",
