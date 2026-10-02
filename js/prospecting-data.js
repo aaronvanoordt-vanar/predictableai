@@ -512,6 +512,29 @@
   // solo llegan aquí (antes quedaban únicamente en `snapshot`). Solo rellena
   // huecos, nunca pisa lo que ya tiene la fila. Espejo de
   // supabase/functions/_shared/person-fill.ts; se cambian juntos.
+  // Apollo omite de `matches` a quien no encontró: emparejar por posición
+  // cruzaba email y nombre entre personas. Se empareja por id; la posición
+  // solo vale si todos vinieron y ninguno trae id. Espejo de
+  // supabase/functions/_shared/person-fill.ts (alignMatches).
+  function alignMatches(ids, matches) {
+    const list = Array.isArray(matches) ? matches : [];
+    const byId = new Map();
+    list.forEach((m) => { if (m && m.id) byId.set(m.id, m); });
+    const positional = list.length === ids.length && list.every((m) => !m || !m.id);
+    return ids.map((id, i) => byId.get(id) || (positional ? list[i] || null : null));
+  }
+
+  function isPartialName(current, full) {
+    const s = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+    const c = s(current); const f = s(full);
+    if (!f) return false;
+    if (!c) return true;
+    if (c.indexOf('*') !== -1) return true;
+    const norm = (x) => x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean);
+    const cw = norm(c); const fw = norm(f);
+    return cw.length < fw.length && cw.every((w, i) => fw[i] === w);
+  }
+
   function profileFillPatch(row, person) {
     const patch = {};
     if (!person || typeof person !== 'object') return patch;
@@ -531,6 +554,11 @@
     };
     for (const k of Object.keys(fromPerson)) {
       if (fromPerson[k] && !str(row?.[k])) patch[k] = fromPerson[k];
+    }
+    if (fromPerson.name && !str(person.last_name_obfuscated) && isPartialName(row?.name, fromPerson.name)) {
+      patch.name = fromPerson.name;
+      if (fromPerson.first_name) patch.first_name = fromPerson.first_name;
+      if (fromPerson.last_name) patch.last_name = fromPerson.last_name;
     }
     return patch;
   }
@@ -699,7 +727,7 @@
           details: chunk.map((p) => ({ id: p.id })),
           reveal_personal_emails: false,
         });
-        matches = res?.matches || matches;
+        matches = alignMatches(chunk.map((p) => p.id), res?.matches);
       } catch (e) {
         // El lote falló completo: las filas se quedan guardadas (sin email),
         // se reporta como advertencia, no se reintenta.
@@ -772,11 +800,18 @@
           details: chunk.map((id) => ({ id })),
           reveal_personal_emails: false,
         });
-        const matches = res?.matches || [];
+        const aligned = alignMatches(chunk, res?.matches);
         chunk.forEach((id, j) => {
-          const m = matches[j];
-          byId.set(id, m && !isMaskedEmail(m.email)
-            ? { email: m.email, email_status: m.email_status || null }
+          const m = aligned[j];
+          byId.set(id, m
+            ? {
+                email: isMaskedEmail(m.email) ? null : m.email,
+                email_status: m.email_status || null,
+                first_name: m.first_name || null,
+                last_name: m.last_name || null,
+                name: m.name || null,
+                person: m,
+              }
             : null);
         });
       } catch (e) {

@@ -578,9 +578,11 @@
     return Object.assign(baseRow(userId, listId), {
       source: sourceOf(co),
       apollo_person_id: dm.apollo_person_id || null,
-      first_name: dm.first_name || null,
-      last_name: dm.last_name || null,
-      name: dm.name || null,
+      // El nombre revelado (bulk_match) manda: la búsqueda gratuita trae el
+      // apellido ofuscado o ausente y se guardaba medio nombre.
+      first_name: (match && match.first_name) || dm.first_name || null,
+      last_name: (match && match.last_name) || dm.last_name || null,
+      name: (match && match.name) || dm.name || null,
       title: dm.title || null,
       company: co.name || null,
       company_domain: dm.company_domain || null,
@@ -592,11 +594,11 @@
       // (bulkMatchByPersonId, llamado en saveToList antes de armar la fila).
       // El teléfono no se revela aquí: sigue el mismo camino que el resto
       // de la plataforma (Prospección → Listas → "Revelar teléfono").
-      email: match ? match.email : null,
-      email_status: match ? match.email_status : null,
+      email: match && match.email ? match.email : null,
+      email_status: match && match.email ? match.email_status : null,
       phone: null,
       phone_status: 'none',
-      enriched_at: match ? new Date().toISOString() : null,
+      enriched_at: match && match.email ? new Date().toISOString() : null,
       snapshot: radarSnapshot(co),
     });
   }
@@ -724,7 +726,7 @@
             rows.push(dmRow(state.user.id, list.id, co, dm, match));
           }
           dmCount += dms.length;
-          contactCount += dms.filter((dm) => dm && dm.apollo_person_id && emailByPersonId.get(dm.apollo_person_id)).length;
+          contactCount += dms.filter((dm) => dm && dm.apollo_person_id && (emailByPersonId.get(dm.apollo_person_id) || {}).email).length;
         } else {
           rows.push(companyRow(state.user.id, list.id, co));
           companiesWithoutDms++;
