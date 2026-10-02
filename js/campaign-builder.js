@@ -1350,7 +1350,9 @@
         var text = t && t.body ? String(t.body) : '';
         if (text && m) text = text.replace(/\{\{\s*(nombre|name|first_name|1)\s*\}\}/gi, (memberName(m).split(' ')[0] || ''));
         box.appendChild(text ? h('div', { class: 'cb-preview-text', text: text }) : h('div', { class: 'cb-hint', text: L.templateName(a) ? 'La plantilla ya no está en tu WhatsApp.' : 'Elige una plantilla para ver la vista previa.' }));
-        if (t && t.buttons && t.buttons.length) box.appendChild(h('div', { class: 'cb-hint', text: 'Botones: ' + t.buttons.map(function (x) { return '"' + x.text + '"'; }).join(' y ') + '.' }));
+        // Los botones salen de la plantilla real del catálogo, nunca de un texto fijo.
+        var labels = ((t && t.buttons) || []).map(function (x) { return x && x.text; }).filter(Boolean);
+        if (labels.length) box.appendChild(h('div', { class: 'cb-hint', text: 'Incluye ' + (labels.length > 1 ? 'los botones ' : 'el botón ') + labels.map(function (x) { return '"' + x + '"'; }).join(' y ') + '.' }));
         return box;
       }
       if (a.content.kind === 'custom') {
