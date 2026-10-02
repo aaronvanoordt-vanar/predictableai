@@ -197,11 +197,25 @@ export function bearer(accessToken: string): Record<string, string> {
   return { Authorization: "Bearer " + accessToken };
 }
 
-function emailAccountsFromConfig(config: Json): ApolloEmailAccount[] {
+/**
+ * El buzón que el usuario eligió como predeterminado (config.default_email_account_id)
+ * manda sobre la marca `default` de Apollo. Si el id ya no está en la lista
+ * (buzón desconectado en Apollo) se ignora y vale la marca de Apollo.
+ */
+export function withPreferredDefault(list: ApolloEmailAccount[], preferredId: unknown): ApolloEmailAccount[] {
+  const id = preferredId ? String(preferredId) : "";
+  if (!id || !list.some((a) => a.id === id)) return list;
+  return list.map((a) => ({ ...a, default: a.id === id }));
+}
+
+export function emailAccountsFromConfig(config: Json): ApolloEmailAccount[] {
   const list = Array.isArray(config?.email_accounts) ? config.email_accounts : [];
-  return list
-    .filter((a: Json) => a?.id && a?.email)
-    .map((a: Json) => ({ id: String(a.id), email: String(a.email), default: a.default === true, active: a.active !== false }));
+  return withPreferredDefault(
+    list
+      .filter((a: Json) => a?.id && a?.email)
+      .map((a: Json) => ({ id: String(a.id), email: String(a.email), default: a.default === true, active: a.active !== false })),
+    config?.default_email_account_id,
+  );
 }
 
 /**

@@ -48,6 +48,8 @@
  *      dripify-webhook?key=<secreto> que el usuario pega en cada campaña de
  *      Dripify (Settings → Webhooks, condición "After LinkedIn reply is received").
  *  • refresh_dripify   {}  → vuelve a leer las campañas de Dripify.
+ *  • set_default_email_account {email_account_id?} → buzón de Apollo desde el que
+ *      salen los emails por defecto (config.default_email_account_id; vacío = el de Apollo).
  *  • disconnect        {provider}   (wati | dripify | apollo)
  *
  * Secretos: SUPABASE_* de la plataforma; para Email por OAuth,
@@ -62,6 +64,12 @@ import * as dripify from "../_shared/dripify.ts";
 import * as apollo from "../_shared/apollo-auth.ts";
 import { contactIdsFromOtherAccount } from "../_shared/apollo-platform.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
+
+/** Reconectar Apollo conserva el buzón predeterminado que el usuario eligió, si sigue existiendo. */
+function keepDefaultEmailAccount(prevConfig: { default_email_account_id?: unknown } | null | undefined, accounts: apollo.ApolloEmailAccount[]): { default_email_account_id?: string } {
+  const id = prevConfig?.default_email_account_id ? String(prevConfig.default_email_account_id) : "";
+  return id && accounts.some((a) => a.id === id) ? { default_email_account_id: id } : {};
+}
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -439,6 +447,7 @@ Deno.serve(async (req) => {
         name: profile.name,
         apollo_user_id: profile.id,
         email_accounts: emailAccounts.map((a) => ({ id: a.id, email: a.email, default: a.default, active: a.active !== false })),
+        ...keepDefaultEmailAccount(prev?.config, emailAccounts),
         scope: tokens.scope ?? null,
         token_expires_at: tokens.expires_at,
         connected_at: new Date().toISOString(),
@@ -500,6 +509,7 @@ Deno.serve(async (req) => {
         name: profile.name,
         apollo_user_id: profile.id,
         email_accounts: emailAccounts.map((a) => ({ id: a.id, email: a.email, default: a.default, active: a.active !== false })),
+        ...keepDefaultEmailAccount(prev?.config, emailAccounts),
         connected_at: new Date().toISOString(),
       };
       const { data: row, error } = await db
@@ -675,6 +685,23 @@ Deno.serve(async (req) => {
 
       const row = await saveWatiSync(db, acc);
       return json({ account: publicRow(row) }, 200, cors);
+    }
+
+    // Buzón de Apollo desde el que salen los emails por defecto (campañas sin
+    // buzón propio y respuestas de la Bandeja). Vacío = el predeterminado de Apollo.
+    if (action === "set_default_email_account") {
+      const acc = await loadAccount("apollo");
+      if (!acc || acc.status !== "connected") return json({ error: "apollo_not_connected" }, 428, cors);
+      const id = clean(payload.email_account_id, 100);
+      if (!id) {
+        await patchChannelConfig(db, acc.id, {}, ["default_email_account_id"]);
+      } else {
+        const known = Array.isArray(acc.config?.email_accounts) ? acc.config.email_accounts : [];
+        if (!known.some((a: { id?: unknown }) => String(a?.id) === id)) return json({ error: "Ese buzón no está en tu cuenta de Apollo. Reconecta para releerlos." }, 400, cors);
+        await patchChannelConfig(db, acc.id, { default_email_account_id: id });
+      }
+      const { data: row } = await db.from("channel_accounts").select("*").eq("id", acc.id).maybeSingle();
+      return json({ account: publicRow(row), apollo: publicRow(row) }, 200, cors);
     }
 
     // Tope diario de envíos de WhatsApp (config.daily_cap). null = usar el de
