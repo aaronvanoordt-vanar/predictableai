@@ -105,6 +105,50 @@
   function hasLinkedin(m) { return !!(m && m.linkedin_url); }
   function browserTz() { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Lima'; } catch (e) { return 'America/Lima'; } }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  // ── Programación (campaigns.launch_at) ──
+  // El usuario elige la hora en la zona horaria de la campaña, no en la del
+  // navegador: "lunes 9:00" significa 9:00 donde viven sus leads.
+  function tzOffsetMs(ms, tz) {
+    try {
+      var parts = {};
+      new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        .formatToParts(new Date(ms)).forEach(function (p) { parts[p.type] = p.value; });
+      return Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute, +parts.second) - Math.floor(ms / 1000) * 1000;
+    } catch (e) { return -new Date(ms).getTimezoneOffset() * 60000; }
+  }
+  /** 'YYYY-MM-DDTHH:mm' (hora de pared en `tz`) → ISO UTC, o null si no es válida. */
+  function zonedToIso(local, tz) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(local || ''));
+    if (!m) return null;
+    var guess = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+    var ms = guess - tzOffsetMs(guess, tz);
+    ms = guess - tzOffsetMs(ms, tz);
+    return isNaN(ms) ? null : new Date(ms).toISOString();
+  }
+  /** ISO UTC → 'YYYY-MM-DDTHH:mm' en `tz` (para el <input type="datetime-local">). */
+  function isoToZoned(iso, tz) {
+    var ms = new Date(iso).getTime();
+    if (!iso || isNaN(ms)) return '';
+    return new Date(ms + tzOffsetMs(ms, tz)).toISOString().slice(0, 16);
+  }
+  /** "lun 6 oct, 09:00 (America/Lima)" */
+  function fmtLaunch(iso, tz) {
+    var d = new Date(iso);
+    if (!iso || isNaN(d.getTime())) return '';
+    var opts = { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' };
+    try { opts.timeZone = tz || undefined; return d.toLocaleString('es-MX', opts) + (tz ? ' (' + tz.replace(/_/g, ' ') + ')' : ''); }
+    catch (e) { delete opts.timeZone; return d.toLocaleString('es-MX', opts); }
+  }
+  /** Valor por defecto del selector: el próximo día de envío (desde mañana) a la hora de inicio de la ventana. */
+  function defaultLaunchLocal(tz, hour, days) {
+    var now = isoToZoned(new Date().toISOString(), tz) || new Date().toISOString().slice(0, 16);
+    var ok = (days || []).map(Number);
+    for (var i = 1; i <= 7; i++) {
+      var d = new Date(Date.UTC(+now.slice(0, 4), +now.slice(5, 7) - 1, +now.slice(8, 10) + i, Number(hour) || 9, 0));
+      if (!ok.length || ok.indexOf(d.getUTCDay() || 7) !== -1) return d.toISOString().slice(0, 16);
+    }
+    return d.toISOString().slice(0, 16);
+  }
   function dayLabel(v) { for (var i = 0; i < DAYS.length; i++) if (DAYS[i].value === Number(v)) return DAYS[i].label; return String(v); }
   // Variables de "Mi texto" (las resuelve el motor: campaign-run fill()).
   var TEXT_VARS = [
@@ -517,7 +561,15 @@
       advanced: false,
       saving: false,
       emailAccounts: o.emailAccounts || null,
+      // Programación: solo antes de que la campaña arranque (nueva, borrador,
+      // pausada o activa con launch_at futuro).
+      scheduleOn: !!(draft.launch_at && new Date(draft.launch_at).getTime() > Date.now()),
+      scheduleLocal: '',
     };
+    st.scheduleLocal = st.scheduleOn ? isoToZoned(draft.launch_at, draft.timezone) : '';
+    function canSchedule() { return st.isNew || st.draft.status !== 'active' || st.scheduleOn; }
+    /** launch_at que corresponde a lo elegido en "¿Cuándo empieza?" (null = en cuanto se active). */
+    function launchIso() { return st.scheduleOn ? zonedToIso(st.scheduleLocal, st.draft.timezone || browserTz()) : null; }
 
     var root = h('div', { class: 'cb-root' });
     container.innerHTML = '';
@@ -701,6 +753,11 @@
         if (hasEmailStep && !s.email_account_id && !(st.emailAccounts && st.emailAccounts.length)) msgs.push('La cadencia tiene emails: conecta el canal Email (o elige la cuenta remitente en Ajustes avanzados).');
         if (Number(st.draft.send_end_hour) <= Number(st.draft.send_start_hour)) msgs.push('La hora de fin debe ser mayor que la de inicio.');
         if (!(st.draft.send_days || []).length) msgs.push('Elige al menos un día de envío.');
+        if (st.scheduleOn) {
+          var li = launchIso();
+          if (!li) msgs.push('Elige la fecha y la hora de inicio de la campaña.');
+          else if (new Date(li).getTime() <= Date.now() + 60000) msgs.push('La fecha de inicio ya pasó: elige una futura (o «En cuanto la lance»).');
+        }
       }
       return msgs;
     }
@@ -837,7 +894,7 @@
       else {
         right.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cb-save-draft', disabled: st.saving, text: st.isNew ? 'Guardar borrador' : 'Guardar cambios' }));
         if (st.isNew || st.draft.status !== 'active') {
-          var launch = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'cb-launch', disabled: !!blockers.length || st.saving || !st.draft.list_id, text: st.isNew ? 'Lanzar campaña' : 'Guardar y activar', 'data-credit-cost': 'campaign_send', 'data-credit-muted': '' });
+          var launch = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'cb-launch', disabled: !!blockers.length || st.saving || !st.draft.list_id, text: st.scheduleOn ? 'Programar campaña' : (st.isNew ? 'Lanzar campaña' : 'Guardar y activar'), 'data-credit-cost': 'campaign_send', 'data-credit-muted': '' });
           right.appendChild(launch);
         }
       }
@@ -1460,8 +1517,33 @@
       warns.forEach(function (w) { right.appendChild(h('div', { class: 'cb-note amber', text: '⚠ ' + w })); });
       grid.appendChild(right);
       wrap.appendChild(grid);
+      if (canSchedule()) wrap.appendChild(renderSchedule());
       wrap.appendChild(renderAdvanced());
       return wrap;
+    }
+
+    function renderSchedule() {
+      var d = st.draft;
+      var tz = d.timezone || browserTz();
+      var card = h('div', { class: 'chart-card' });
+      card.appendChild(h('div', { class: 'cb-lbl', text: '¿Cuándo empieza?' }));
+      var seg = h('div', { class: 'cb-seg', style: 'margin-top:6px' });
+      seg.appendChild(h('button', { type: 'button', class: st.scheduleOn ? '' : 'on', onclick: function () { st.scheduleOn = false; render(); } },
+        'En cuanto la lance', h('small', { text: 'El motor empieza a enviar dentro de la ventana horaria.' })));
+      seg.appendChild(h('button', { type: 'button', class: st.scheduleOn ? 'on' : '', onclick: function () {
+        st.scheduleOn = true;
+        if (!st.scheduleLocal) st.scheduleLocal = defaultLaunchLocal(tz, d.send_start_hour, d.send_days);
+        render();
+      } }, 'Programar fecha y hora', h('small', { text: 'Los leads quedan enrolados y nadie recibe nada antes.' })));
+      card.appendChild(seg);
+      if (st.scheduleOn) {
+        var input = h('input', { type: 'datetime-local', value: st.scheduleLocal, 'data-key': 'launch-at', min: isoToZoned(new Date().toISOString(), tz), style: 'margin-top:10px;max-width:260px',
+          onchange: function () { st.scheduleLocal = input.value; render(); } });
+        card.appendChild(input);
+        var iso = launchIso();
+        card.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: 'Hora de ' + tz.replace(/_/g, ' ') + ' (la zona de la campaña, en Ajustes avanzados).' + (iso ? ' Arranca el ' + fmtLaunch(iso, tz) + '.' : '') + ' Si cae fuera de la ventana horaria o de los días de envío, el primer envío sale en la siguiente ventana. Los mensajes IA se preparan desde 24 h antes.' }));
+      }
+      return card;
     }
 
     function renderAdvanced() {
@@ -1558,7 +1640,9 @@
           var run = function () {
             st.saving = true;
             render();
-            return Promise.resolve(o.onSave(clone(st.draft), { launch: launch, members: st.members })).catch(function (err) {
+            var out = clone(st.draft);
+            if (canSchedule()) out.launch_at = launchIso();
+            return Promise.resolve(o.onSave(out, { launch: launch, members: st.members })).catch(function (err) {
               st.saving = false;
               render();
               throw err;
@@ -1566,10 +1650,13 @@
           };
           if (launch) {
             var est = L.estimateCredits(st.draft.flow, st.members.length);
+            var sched = st.scheduleOn ? launchIso() : null;
             return confirmModal({
-              title: st.isNew ? 'Lanzar campaña' : 'Guardar y activar',
-              confirmLabel: 'Lanzar',
-              message: 'Se enrolan ' + st.members.length + ' leads de la lista y la campaña queda activa: el motor empieza a enviar dentro de la ventana horaria. Costo máximo estimado: ' + est.credits + ' créditos.',
+              title: sched ? 'Programar campaña' : (st.isNew ? 'Lanzar campaña' : 'Guardar y activar'),
+              confirmLabel: sched ? 'Programar' : 'Lanzar',
+              message: sched
+                ? 'Se enrolan ' + st.members.length + ' leads de la lista y la campaña arranca el ' + fmtLaunch(sched, st.draft.timezone) + ': antes de esa hora no sale ningún mensaje. Costo máximo estimado: ' + est.credits + ' créditos.'
+                : 'Se enrolan ' + st.members.length + ' leads de la lista y la campaña queda activa: el motor empieza a enviar dentro de la ventana horaria. Costo máximo estimado: ' + est.credits + ' créditos.',
               onConfirm: run,
             });
           }
@@ -1587,6 +1674,6 @@
     };
   }
 
-  global.CampaignBuilder = { mount: mount, renderTimeline: renderTimeline, injectStyles: injectStyles, renderStats: renderStats };
+  global.CampaignBuilder = { mount: mount, renderTimeline: renderTimeline, injectStyles: injectStyles, renderStats: renderStats, zonedToIso: zonedToIso, isoToZoned: isoToZoned, fmtLaunch: fmtLaunch, defaultLaunchLocal: defaultLaunchLocal };
   console.log('[campaign-builder] module loaded');
 })(window);
