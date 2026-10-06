@@ -95,6 +95,8 @@ const campaignRow = {
 Deno.test("parseHistoryItem: plantilla de difusión = saliente con su falla de Meta", () => {
   const h = parseHistoryItem(broadcast)!;
   assertEquals(h.direction, "out");
+  assert(h.broadcast);
+  assert(!parseHistoryItem(base)!.broadcast);
   assertEquals(h.status, "failed");
   assertEquals(h.failedDetail, broadcast.failed_detail);
   assert(h.body.startsWith("Hola Alfonso!"));
