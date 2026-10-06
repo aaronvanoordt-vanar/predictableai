@@ -303,3 +303,27 @@ Deno.test("activeTemplateFault: vale 24 h; después un lead vuelve a probar", ()
   assertEquals(activeTemplateFault(config, "saludo", new Date(Date.parse("2026-10-06T16:02:13Z") + TEMPLATE_FAULT_TTL_MS)), null);
   assertEquals(activeTemplateFault({}, "saludo", now), null);
 });
+
+// 2026-10-06: la respuesta de un lead de México llegó con waId 5218180993406 y
+// la lista lo tenía como +52 81 8099 3406. La bandeja la mostró sin lead, con
+// el nombre del perfil de WhatsApp y sin los mensajes que la campaña le mandó.
+Deno.test("phoneKey: el 521 de México y el 549 de Argentina son el mismo número que 52/54", () => {
+  assertEquals(wati.phoneKey("5218180993406"), "528180993406");
+  assertEquals(wati.phoneKey("+52 81 8099 3406"), "528180993406");
+  assertEquals(wati.phoneKey("+52 1 81 8099 3406"), "528180993406");
+  assertEquals(wati.phoneKey("5491123456789"), "541123456789");
+  assertEquals(wati.phoneKey("0052 1 8180993406"), "528180993406");
+  // Otros países y números que no son celulares de MX/AR quedan igual.
+  assertEquals(wati.phoneKey("51987654321"), "51987654321");
+  assertEquals(wati.phoneKey("14155552671"), "14155552671");
+  assertEquals(wati.phoneKey("52181809934"), "52181809934");
+  assertEquals(wati.phoneKey(""), "");
+});
+
+Deno.test("phoneVariants: las dos formas en que puede estar guardado el contact_ref", () => {
+  assertEquals(new Set(wati.phoneVariants("5218180993406")), new Set(["5218180993406", "528180993406"]));
+  assertEquals(new Set(wati.phoneVariants("+52 81 8099 3406")), new Set(["528180993406", "5218180993406"]));
+  assertEquals(new Set(wati.phoneVariants("541123456789")), new Set(["541123456789", "5491123456789"]));
+  assertEquals(wati.phoneVariants("51987654321"), ["51987654321"]);
+  assertEquals(wati.phoneVariants(""), []);
+});
