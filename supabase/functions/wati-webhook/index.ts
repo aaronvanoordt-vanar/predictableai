@@ -27,7 +27,9 @@
  *      un bot de WATI): entra a la bandeja como saliente `source: wati_ui`.
  *  • sentMessageDELIVERED / READ / REPLIED (_v2) → recibos.
  *  • templateMessageFailed → el envío falló (número sin WhatsApp, plantilla
- *      pausada…): evento failed + enrolamiento en error con el detalle.
+ *      pausada…): evento failed; si es de la cuenta o de la plantilla, el lead
+ *      vuelve al paso (_shared/wati-receipts.ts). WATI no siempre avisa:
+ *      campaign-run pregunta por los envíos que se quedan sin recibo.
  *  • templateReviewed → Meta revisó una plantilla: se resincroniza el catálogo
  *      completo de plantillas de la cuenta (no solo las tres de saludo).
  *
@@ -45,6 +47,7 @@ import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-
 import * as wati from "../_shared/wati.ts";
 import { findMemberByPhone } from "../_shared/wati-history.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
+import { clearAccountBlock, inboxStatusRank, recordCampaignReceipt } from "../_shared/wati-receipts.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -365,110 +368,16 @@ async function handleReceipt(db: SupabaseClient, acc: Json, ev: Json, kind: "sen
     if (Object.keys(patch).length) await db.from("inbox_messages").update(patch).eq("id", msg.id);
   }
   if (!local) return;
-
-  // Evento de campaña original (type=sent, provider_message_id=local).
-  const { data: origin } = await db
-    .from("campaign_events")
-    .select("id, enrollment_id, campaign_id, member_id, step_position, node_id, created_at")
-    .eq("user_id", acc.user_id)
-    .eq("provider_message_id", local)
-    .eq("type", "sent")
-    .maybeSingle();
-  if (!origin) return;
-  if (kind === "sent") {
-    if (wamid) await db.from("campaign_events").update({ payload: { wamid } }).eq("id", origin.id);
-    return;
-  }
-  // Recibos idempotentes: un mismo tipo por mensaje.
-  const { data: dup } = await db
-    .from("campaign_events")
-    .select("id")
-    .eq("provider_message_id", local)
-    .eq("type", kind)
-    .limit(1);
-  if (dup && dup.length) return;
-  await db.from("campaign_events").insert({
-    enrollment_id: origin.enrollment_id,
-    campaign_id: origin.campaign_id,
-    member_id: origin.member_id ?? msg?.member_id ?? null,
-    user_id: acc.user_id,
-    channel: "whatsapp",
-    type: kind,
-    step_position: origin.step_position,
-    node_id: origin.node_id ?? null,
-    provider_message_id: local,
-    detail: kind === "failed" ? errorDetail : null,
-    payload: { wamid, at },
+  await recordCampaignReceipt(db, acc, {
+    local,
+    kind,
+    detail: errorDetail,
+    wamid,
+    at,
+    memberId: msg?.member_id ?? null,
+    templateName: ev?.templateName ?? msg?.payload?.template_name ?? null,
+    source: "webhook",
   });
-  // Una falla de entrega es de ESE envío: queda el evento `failed` y el lead
-  // sigue con su cadencia, igual que un rechazo al enviar en campaign-run.
-  // Antes el enrolamiento pasaba a `error` y el lead no llegaba nunca a
-  // LinkedIn ni al email (2026-09-23: 48 de 100 leads de una campaña). La
-  // excepción es un bloqueo de la CUENTA (nombre visible sin aprobar): ahí el
-  // paso se retiene y se reintenta, porque no es culpa del lead.
-  if (kind === "failed" && origin.enrollment_id) {
-    const code = wati.accountBlockCode(errorDetail);
-    if (code) await holdForAccountBlock(db, acc, origin, code, String(errorDetail));
-  }
-}
-
-/**
- * Orden de los estados de un saliente: pending → sent → delivered → read.
- * `failed` solo entra si el mensaje no se entregó (un recibo de entrega o
- * lectura prueba que llegó aunque un callback de falla venga después).
- */
-function inboxStatusRank(status: unknown): number {
-  switch (String(status ?? "")) {
-    case "read": return 4;
-    case "delivered": return 3;
-    case "failed": return 2;
-    case "sent": return 1;
-    default: return 0;
-  }
-}
-
-/** Tipos de evento que no son un paso del motor: recibos que llegan después del envío. */
-const RECEIPT_TYPES = ["delivered", "read", "failed", "replied", "opted_out"];
-
-/**
- * Meta bloqueó la cuenta entera (hoy: 131037, nombre visible sin aprobar).
- * 1) Sella `config.send_block`: campaign-run retiene los WhatsApp siguientes
- *    sin gastar un envío que Meta va a rechazar.
- * 2) Devuelve el enrolamiento al paso que falló, retenido 6 h, para que el
- *    saludo salga cuando Meta apruebe. Solo si el lead no hizo nada más desde
- *    ese envío (el motor ya lo había pasado al siguiente nodo, que espera su
- *    demora): si ya avanzó, se deja como está.
- */
-async function holdForAccountBlock(db: SupabaseClient, acc: Json, origin: Json, code: string, detail: string) {
-  const now = new Date();
-  const send_block = { code, detail: detail.slice(0, 300), at: now.toISOString() };
-  acc.config = (await patchChannelConfig(db, acc.id, { send_block })) ?? { ...(acc.config ?? {}), send_block };
-
-  if (!origin.node_id || !origin.created_at) return;
-  const { count } = await db
-    .from("campaign_events")
-    .select("id", { count: "exact", head: true })
-    .eq("enrollment_id", origin.enrollment_id)
-    .gt("created_at", origin.created_at)
-    .not("type", "in", `(${RECEIPT_TYPES.join(",")})`);
-  if (count) return;
-  await db.from("campaign_enrollments")
-    .update({
-      next_node_id: origin.node_id,
-      next_position: origin.step_position,
-      next_run_at: new Date(now.getTime() + wati.ACCOUNT_BLOCK_RETRY_MS).toISOString(),
-      error_detail: wati.accountBlockMessage(code),
-    })
-    .eq("id", origin.enrollment_id)
-    .eq("status", "active");
-}
-
-/** Un recibo de entrega prueba que Meta ya acepta los envíos: se levanta el bloqueo. */
-async function clearAccountBlock(db: SupabaseClient, acc: Json) {
-  if (!acc.config?.send_block) return;
-  const config = { ...acc.config };
-  delete config.send_block;
-  acc.config = (await patchChannelConfig(db, acc.id, {}, ["send_block"])) ?? config;
 }
 
 /**

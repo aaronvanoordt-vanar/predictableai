@@ -52,6 +52,8 @@ export interface HistoryMessage {
   body: string;
   at: string;
   status: string;
+  /** Motivo de Meta cuando status = failed ("OAuthException! (#132001) …"). */
+  failedDetail: string;
   operator: string | null;
   conversationId: string | null;
   media: boolean;
@@ -79,14 +81,19 @@ export function parseHistoryItem(m: Json): HistoryMessage | null {
   if (type === "reaction") return null; // la bandeja las pinta pegadas a otro mensaje: las trae el webhook
   const at = new Date(m.created ?? m.timestamp ?? "");
   if (isNaN(at.getTime())) return null;
-  const rawText = m.text == null ? "" : String(m.text);
+  // Los mensajes de difusión (plantillas de campaign-run) traen `final_text`
+  // en vez de `text` y no traen `owner`: antes se descartaban por no tener
+  // cuerpo, y su estado real (FAILED con el código de Meta) nunca se leía.
+  const broadcast = /broadcast/i.test(ev);
+  const rawSource = m.text ?? m.final_text ?? m.finalText;
+  const rawText = rawSource == null ? "" : String(rawSource);
   const text = rawText && !wati.mediaFileName(rawText) ? rawText : "";
   const media = wati.isMediaType(type);
   const body = text || MEDIA_LABEL[type] || (m.template_name ? `Plantilla ${m.template_name}` : "");
   if (!body) return null;
   const wamid = m.whatsapp_message_id ?? m.whatsappMessageId ?? null;
   return {
-    direction: m.owner === true ? "out" : "in",
+    direction: m.owner === true || broadcast ? "out" : "in",
     watiId: String(m.id),
     localId: m.local_message_id ?? m.localMessageId ? String(m.local_message_id ?? m.localMessageId) : null,
     wamid: wamid ? String(wamid) : null,
@@ -94,6 +101,7 @@ export function parseHistoryItem(m: Json): HistoryMessage | null {
     body: body.slice(0, 4000),
     at: at.toISOString(),
     status: statusOf(m.status ?? m.status_string ?? m.statusString),
+    failedDetail: String(m.failed_detail ?? m.failedDetail ?? "").trim().slice(0, 300),
     operator: m.operator_name ?? m.operatorName ?? null,
     conversationId: m.conversation_id ?? m.conversationId ? String(m.conversation_id ?? m.conversationId) : null,
     media,
@@ -111,12 +119,56 @@ export function rowIds(r: Json): string[] {
   return [r?.provider_message_id, pl.wati_id, pl.wati_message_id, pl.wamid].filter(Boolean).map(String);
 }
 
-/** ¿Alguna fila existente es este mensaje? (por id o, si no, mismo sentido a ±5 s). */
+/**
+ * Ventana de un envío de campaña: campaign-run guarda `sent_at` = la hora en
+ * que EMPEZÓ la corrida y WATI fecha el mensaje cuando lo procesa, segundos o
+ * minutos después (62 envíos de una corrida: hasta ~35 s).
+ */
+export const CAMPAIGN_SEND_BEFORE_MS = 10_000;
+export const CAMPAIGN_SEND_AFTER_MS = 10 * 60 * 1000;
+
+const norm = (s: unknown) => String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/** ¿El texto de WATI es el de la fila? (WATI puede añadir el encabezado o el pie de la plantilla). */
+export function sameBody(a: unknown, b: unknown): boolean {
+  const x = norm(a), y = norm(b);
+  if (!x || !y) return false;
+  return x === y || x.includes(y) || y.includes(x);
+}
+
+/** ¿La hora de WATI cae en la ventana del envío de campaña de esta fila? */
+function inSendWindow(h: HistoryMessage, row: Json): boolean {
+  const d = Date.parse(h.at) - Date.parse(row.sent_at);
+  return Number.isFinite(d) && d >= -CAMPAIGN_SEND_BEFORE_MS && d <= CAMPAIGN_SEND_AFTER_MS;
+}
+
+/**
+ * El mensaje del historial que corresponde a un envío de campaña (fila de
+ * inbox_messages), o null si WATI no tiene ninguno. Por id si lo hay; si no,
+ * un saliente en la ventana del envío con el mismo texto; si no, el único
+ * saliente en esa ventana. `claimed` evita darle el mismo mensaje a dos filas.
+ */
+export function matchCampaignSend(row: Json, items: HistoryMessage[], claimed: Set<string> = new Set()): HistoryMessage | null {
+  const free = items.filter((h) => h.direction === "out" && !claimed.has(h.watiId));
+  const ids = new Set(rowIds(row));
+  const byId = free.find((h) => historyIds(h).some((id) => ids.has(id)));
+  if (byId) return byId;
+  const near = free.filter((h) => inSendWindow(h, row));
+  const byBody = near.filter((h) => sameBody(h.body, row.body));
+  if (byBody.length) return byBody.sort((a, b) => Math.abs(Date.parse(a.at) - Date.parse(row.sent_at)) - Math.abs(Date.parse(b.at) - Date.parse(row.sent_at)))[0];
+  return near.length === 1 ? near[0] : null;
+}
+
+/** ¿Alguna fila existente es este mensaje? (por id, mismo sentido a ±5 s, o el envío de campaña con su texto). */
 export function isKnown(h: HistoryMessage, rows: Json[]): boolean {
   const ids = new Set(historyIds(h));
   if (rows.some((r) => rowIds(r).some((id) => ids.has(id)))) return true;
   const t = Date.parse(h.at);
-  return rows.some((r) => r.direction === h.direction && Math.abs(Date.parse(r.sent_at) - t) <= MATCH_WINDOW_MS);
+  if (rows.some((r) => r.direction === h.direction && Math.abs(Date.parse(r.sent_at) - t) <= MATCH_WINDOW_MS)) return true;
+  // Plantilla de campaign-run: guardada con NUESTRO id (WATI no lo devuelve en
+  // el historial) y la hora de la corrida. Sin esto cada saludo de campaña
+  // entraba otra vez a la bandeja como "desde WATI".
+  return h.direction === "out" && rows.some((r) => r.direction === "out" && inSendWindow(h, r) && sameBody(h.body, r.body));
 }
 
 /** Lead del usuario cuyo teléfono coincide en dígitos (mismo criterio que wati-webhook). */
@@ -241,9 +293,9 @@ export async function syncWatiHistory(db: SupabaseClient, acc: Json, deadline: n
 
 async function insertMissing(db: SupabaseClient, acc: Json, phone: string, items: HistoryMessage[]): Promise<number> {
   const times = items.map((h) => Date.parse(h.at));
-  const from = new Date(Math.min(...times) - 60_000).toISOString();
+  const from = new Date(Math.min(...times) - CAMPAIGN_SEND_AFTER_MS).toISOString();
   const { data: existing } = await db.from("inbox_messages")
-    .select("id, direction, provider_message_id, sent_at, payload")
+    .select("id, direction, provider_message_id, sent_at, body, payload")
     .eq("user_id", acc.user_id).eq("provider", "wati").eq("contact_ref", phone)
     .gte("sent_at", from)
     .limit(2000);
