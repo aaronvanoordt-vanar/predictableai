@@ -82,6 +82,30 @@ export function digits(phone: unknown): string {
 }
 
 /**
+ * Clave de un número para reconocer al mismo contacto. WhatsApp (y WATI en el
+ * waId) escribe los celulares de México como 521 + 10 dígitos y los de
+ * Argentina como 549 + 10, mientras Apollo y las listas los guardan como
+ * 52 + 10 / 54 + 10. Sin esto la respuesta de un lead entraba a la bandeja
+ * sin lead, con el nombre del perfil de WhatsApp y separada de los mensajes
+ * que la campaña le había mandado (2026-10-06). Espejo: `waKey` en js/campaigns.js.
+ */
+export function phoneKey(phone: unknown): string {
+  const d = digits(phone);
+  if (/^521\d{10}$/.test(d) || /^549\d{10}$/.test(d)) return d.slice(0, 2) + d.slice(3);
+  return d;
+}
+
+/** Formas en que el mismo número puede estar guardado en `inbox_messages.contact_ref`. */
+export function phoneVariants(phone: unknown): string[] {
+  const d = digits(phone);
+  const k = phoneKey(d);
+  const out = new Set([d, k].filter(Boolean));
+  if (/^52\d{10}$/.test(k)) out.add("521" + k.slice(2));
+  if (/^54\d{10}$/.test(k)) out.add("549" + k.slice(2));
+  return [...out];
+}
+
+/**
  * Forma de las URLs, comprobada contra el tenant real el 2026-09-01:
  *   • v3  (/api/ext/v3/…)  cuelga del ORIGEN, sin tenant: el token ya lo
  *     identifica. Con el tenant en el path responde 404.

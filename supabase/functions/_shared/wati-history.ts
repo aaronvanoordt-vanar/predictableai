@@ -184,9 +184,10 @@ export async function findMemberByPhone(db: SupabaseClient, userId: string, phon
     .eq("user_id", userId)
     .ilike("phone", `%${d.slice(-8)}%`)
     .limit(20);
+  const k = wati.phoneKey(d);
   const byPhone = ((data ?? []) as Json[]).find((m) => {
-    const p = wati.digits(m.phone);
-    return p === d || p.endsWith(d) || d.endsWith(p);
+    const p = wati.phoneKey(m.phone);
+    return p.length >= 7 && (p === k || p.endsWith(k) || k.endsWith(p));
   });
   if (byPhone) return byPhone;
   // La fila de la lista puede no tener aún el teléfono (la campaña lo trae de
@@ -197,7 +198,7 @@ export async function findMemberByPhone(db: SupabaseClient, userId: string, phon
     .from("inbox_messages")
     .select("member_id")
     .eq("user_id", userId).eq("channel", "whatsapp").eq("direction", "out")
-    .eq("contact_ref", d)
+    .in("contact_ref", wati.phoneVariants(d))
     .not("member_id", "is", null)
     .order("sent_at", { ascending: false })
     .limit(1);
@@ -303,7 +304,7 @@ async function insertMissing(db: SupabaseClient, acc: Json, phone: string, items
   const from = new Date(Math.min(...times) - CAMPAIGN_SEND_AFTER_MS).toISOString();
   const { data: existing } = await db.from("inbox_messages")
     .select("id, direction, provider_message_id, sent_at, body, payload")
-    .eq("user_id", acc.user_id).eq("provider", "wati").eq("contact_ref", phone)
+    .eq("user_id", acc.user_id).eq("provider", "wati").in("contact_ref", wati.phoneVariants(phone))
     .gte("sent_at", from)
     .limit(2000);
   const rows: Json[] = existing ?? [];

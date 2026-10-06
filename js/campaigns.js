@@ -1019,9 +1019,19 @@
       renderInboxQuietly();
     });
   }
+  /**
+   * Espejo de phoneKey() en _shared/wati.ts: WhatsApp escribe los celulares de
+   * México como 521… y los de Argentina como 549…; la lista, como 52… / 54….
+   * Es el mismo contacto: sin esto la respuesta quedaba en otra conversación.
+   */
+  function waKey(ref) {
+    var d = String(ref || '').replace(/\D/g, '');
+    if (d.indexOf('00') === 0) d = d.slice(2);
+    return /^521\d{10}$/.test(d) || /^549\d{10}$/.test(d) ? d.slice(0, 2) + d.slice(3) : d;
+  }
   function refNorm(m) {
     var r = String(m.contact_ref || '');
-    return chanKey(m.channel) === 'whatsapp' ? r.replace(/\D/g, '') : r.toLowerCase();
+    return chanKey(m.channel) === 'whatsapp' ? waKey(r) : r.toLowerCase();
   }
   /**
    * Un mensaje sin lead (el número no estaba en el teléfono de ninguna fila al

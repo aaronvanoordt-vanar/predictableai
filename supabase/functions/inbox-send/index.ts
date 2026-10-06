@@ -215,7 +215,9 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
       .eq("direction", "in")
       .order("sent_at", { ascending: false })
       .limit(1);
-    q = member ? q.or(`member_id.eq.${member.id},contact_ref.eq.${phone}`) : q.eq("contact_ref", phone);
+    // El mismo número puede estar como 52… (lista) o 521… (waId de WATI).
+    const refs = wati.phoneVariants(phone);
+    q = member ? q.or(`member_id.eq.${member.id},contact_ref.in.(${refs.join(",")})`) : q.in("contact_ref", refs);
     return q.maybeSingle();
   };
   const [{ data: acc }, en, lastInRes] = await Promise.all([
@@ -612,7 +614,7 @@ Deno.serve(async (req) => {
         .update({ member_id: memberId })
         .eq("user_id", user.id)
         .eq("channel", channel)
-        .eq("contact_ref", ref)
+        .in("contact_ref", channel === "whatsapp" && wati.digits(ref) ? wati.phoneVariants(ref) : [ref])
         .is("member_id", null)
         .select("id");
       if (error) throw new HttpError(error.message, 500);
