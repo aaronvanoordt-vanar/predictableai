@@ -24,6 +24,9 @@ import {
   humanError,
   metaErrorHint,
   accountBlockMessage,
+  activeTemplateFault,
+  templateFaultCode,
+  TEMPLATE_FAULT_TTL_MS,
   activeAccountBlock,
   isTemplateApproved,
   isTemplateDead,
@@ -282,4 +285,21 @@ Deno.test("mediaKindForMime: solo JPEG/PNG salen como foto; lo demás, según su
   assertEquals(wati.mediaKindForMime("audio/ogg"), "audio");
   assertEquals(wati.mediaKindForMime("application/pdf"), "document");
   assertEquals(wati.mediaKindForMime(""), "document");
+});
+
+Deno.test("templateFaultCode: la plantilla que Meta no reconoce es culpa de la plantilla, no del lead", () => {
+  assertEquals(templateFaultCode("OAuthException! (#132001) Template name does not exist in the translation"), "132001");
+  assertEquals(templateFaultCode("132015 Template is paused"), "132015");
+  for (const d of ["Message undeliverable", "130497 Business account is restricted from messaging users in this country.", "(#131037)", "1320010", "", null]) {
+    assertEquals(templateFaultCode(d), null, String(d));
+  }
+});
+
+Deno.test("activeTemplateFault: vale 24 h; después un lead vuelve a probar", () => {
+  const now = new Date("2026-10-06T18:00:00Z");
+  const config = { template_faults: { saludo: { code: "132001", at: "2026-10-06T16:02:13Z" } } };
+  assertEquals(activeTemplateFault(config, "saludo", now)?.code, "132001");
+  assertEquals(activeTemplateFault(config, "otra", now), null);
+  assertEquals(activeTemplateFault(config, "saludo", new Date(Date.parse("2026-10-06T16:02:13Z") + TEMPLATE_FAULT_TTL_MS)), null);
+  assertEquals(activeTemplateFault({}, "saludo", now), null);
 });

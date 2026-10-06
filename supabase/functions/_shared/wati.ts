@@ -263,6 +263,48 @@ export function activeAccountBlock(config: Json, now: Date): { code: string; at:
   return { code: String(b.code), at: String(b.at) };
 }
 
+/**
+ * Fallas de entrega que son de la PLANTILLA, no del lead: Meta rechaza el
+ * envío aunque el catálogo de WATI la muestre APPROVED (2026-10-06:
+ * "saludo_botmakervanar" respondía #132001 "Template name does not exist in
+ * the translation" a 62 leads de dos campañas). El lead no tiene la culpa:
+ * se devuelve al paso que falló y espera a que el usuario elija otra
+ * plantilla (o a que Meta la publique), en vez de seguir con el
+ * "recordatorio" de un saludo que nunca recibió.
+ *  132000 número de variables · 132001 no existe en ese idioma · 132005 texto
+ *  demasiado largo · 132007 viola políticas · 132012 formato de variable ·
+ *  132015 pausada · 132016 deshabilitada.
+ */
+export const TEMPLATE_FAULT_CODES = ["132000", "132001", "132005", "132007", "132012", "132015", "132016"] as const;
+/** Cuánto vale la marca de plantilla que falla: pasado el plazo, UN lead la vuelve a probar. */
+export const TEMPLATE_FAULT_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Código de falla de plantilla presente en el detalle de una falla, o null. */
+export function templateFaultCode(detail: unknown): string | null {
+  const text = String(detail ?? "");
+  return TEMPLATE_FAULT_CODES.find((c) => new RegExp(`(^|\\D)${c}(\\D|$)`).test(text)) ?? null;
+}
+
+/** Motivo en lenguaje del usuario para un lead retenido por una plantilla que Meta rechaza. */
+export function templateFaultMessage(name: string | null, code: string): string {
+  const tpl = name ? `La plantilla "${name}"` : "La plantilla de este paso";
+  return `${tpl} falla en Meta (#${code}) aunque WATI la muestre aprobada: el WhatsApp no llegó. ` +
+    "Edita la campaña, elige otra plantilla aprobada para este paso y pulsa «Reintentar retenidos».";
+}
+
+/**
+ * Marca vigente de una plantilla que Meta rechazó (`config.template_faults`,
+ * la sella el recibo de falla). Vigente = de hace menos de
+ * TEMPLATE_FAULT_TTL_MS: mientras tanto el motor no la vuelve a mandar.
+ */
+export function activeTemplateFault(config: Json, name: string, now: Date): { code: string; at: string } | null {
+  const f = config?.template_faults?.[name];
+  if (!f?.code || !f?.at) return null;
+  const at = new Date(f.at).getTime();
+  if (!Number.isFinite(at) || now.getTime() - at >= TEMPLATE_FAULT_TTL_MS) return null;
+  return { code: String(f.code), at: String(f.at) };
+}
+
 /** Nombre de una ranura en su revisión N: la 1 es el nombre base. */
 export function revisionName(base: string, rev: number): string {
   return rev <= 1 ? base : `${base}_r${rev}`;

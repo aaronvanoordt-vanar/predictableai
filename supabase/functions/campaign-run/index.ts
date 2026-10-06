@@ -81,6 +81,7 @@ import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-
 import * as wati from "../_shared/wati.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import * as watiHistory from "../_shared/wati-history.ts";
+import { reconcileWatiReceipts } from "../_shared/wati-receipts.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
@@ -254,6 +255,7 @@ interface Ctx {
   gmailByUser: Map<string, { token: string; email: string } | null>;
   sentToday: Map<string, number>; // `${user}:${channel}` → envíos en 24 h
   watiProbed: Set<string>; // usuarios con bloqueo de cuenta vencido que ya mandaron su envío de prueba en esta corrida
+  templateProbed: Set<string>; // `${user}:${plantilla}` con marca de falla vencida que ya mandó su envío de prueba
   campaignCache: Map<string, Json | null>;
 }
 
@@ -563,6 +565,7 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     const localId = crypto.randomUUID();
     let bodyText = "";
     let messageId: string | null = null;
+    let templateName: string | null = null;
 
     if (step.content_kind === "template") {
       // Cada paso de WhatsApp lleva la plantilla que el usuario eligió para
@@ -597,6 +600,18 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       if (!wati.isTemplateApproved(tplStatus)) {
         throw new StepError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tplStatus}).`, "hold");
       }
+      // Meta rechazó esta plantilla en un envío reciente (#132001…) aunque el
+      // catálogo diga APPROVED (_shared/wati-receipts.ts la marca): no se
+      // quema otro saludo. El lead espera con el motivo hasta que el usuario
+      // elija otra plantilla para el paso. Vencida la marca, UN lead por
+      // corrida la prueba: si se entrega, la marca se levanta.
+      const fault = wati.activeTemplateFault(acc.config, String(tpl.name), ctx.now);
+      if (fault) throw new StepError(wati.templateFaultMessage(String(tpl.name), fault.code), "hold");
+      if (acc.config?.template_faults?.[tpl.name]?.code) {
+        const key = `${en.user_id}:${tpl.name}`;
+        if (ctx.templateProbed.has(key)) throw new StepError(wati.templateFaultMessage(String(tpl.name), String(acc.config.template_faults[tpl.name].code)), "hold_short");
+        ctx.templateProbed.add(key);
+      }
       // Cada variable se llena con el dato del lead; si falta alguna, el paso
       // se omite en vez de mandar un mensaje con un hueco.
       const params: Record<string, string> = {};
@@ -630,6 +645,7 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
         throw new StepError("WATI no aceptó la plantilla: " + wati.humanError(e), e instanceof wati.WatiError && e.status === 401 ? "hold" : "fail");
       }
       if (!r.accepted) throw new StepError("WATI rechazó el envío: " + (r.errors.join("; ") || "sin detalle"), "fail");
+      templateName = String(tpl.name);
     } else {
       // Texto libre: solo dentro de la ventana de 24 h desde el último
       // mensaje del lead; si no hay sesión, WhatsApp lo rechazaría.
@@ -655,9 +671,11 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       user_id: en.user_id, member_id: member.id, channel: "whatsapp", provider: "wati", direction: "out",
       contact_ref: phone, body: bodyText, provider_message_id: localId, status: "pending", sent_at: ctx.now.toISOString(),
       campaign_id: campaign.id, enrollment_id: en.id,
-      payload: { campaign_id: campaign.id, step_position: step.position, node_id: step.node_id, content_kind: step.content_kind },
+      payload: { campaign_id: campaign.id, step_position: step.position, node_id: step.node_id, content_kind: step.content_kind, template_name: templateName },
     });
-    await event(ctx, en, "whatsapp", "sent", { provider_message_id: localId, detail: bodyText.slice(0, 200), step_position: step.position, node_id: step.node_id });
+    // Un 200 de WATI es "aceptado", no "entregado": el estado real llega por
+    // wati-webhook o, si WATI no avisa, lo trae reconcileWatiReceipts.
+    await event(ctx, en, "whatsapp", "sent", { provider_message_id: localId, detail: bodyText.slice(0, 200), step_position: step.position, node_id: step.node_id, payload: templateName ? { template_name: templateName } : {} });
     if (messageId) await db.from("campaign_messages").update({ status: "sent", sent_at: ctx.now.toISOString() }).eq("id", messageId);
     ctx.sentToday.set(`${en.user_id}:whatsapp`, (await sentLast24h(ctx, en.user_id, "whatsapp")) + 1);
     if (["no_contactado", "en_campana"].includes(member.contact_status)) {
@@ -1238,7 +1256,7 @@ Deno.serve(async (req) => {
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, { auth: { persistSession: false } });
   const now = new Date();
-  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), dripifyCampaignsByUser: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), sentToday: new Map(), watiProbed: new Set(), campaignCache: new Map() };
+  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), dripifyCampaignsByUser: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), sentToday: new Map(), watiProbed: new Set(), templateProbed: new Set(), campaignCache: new Map() };
 
   // 1. Recuperar lo que un run caído dejó a medias.
   await db.from("campaign_enrollments")
@@ -1283,11 +1301,29 @@ Deno.serve(async (req) => {
   try { synced = await syncDripify(ctx); } catch (e) { console.error("[campaign-run] dripify sync:", e); }
   let emailSynced = 0;
   try { emailSynced = await syncApolloEmail(ctx); } catch (e) { console.error("[campaign-run] apollo email sync:", e); }
+  let receipts = 0;
+  try { receipts = await reconcileReceiptsAll(ctx, loopStarted + 110_000); } catch (e) { console.error("[campaign-run] wati receipts:", e); }
   let watiSynced = 0;
   // Lo que quede del presupuesto (~150 s del Edge Runtime) para el historial de WATI.
   try { watiSynced = await syncWatiHistoryAll(ctx, loopStarted + 130_000); } catch (e) { console.error("[campaign-run] wati history sync:", e); }
-  return json({ ok: true, due: due?.length ?? 0, processed, prepared, dripify_synced: synced, email_synced: emailSynced, wati_history_synced: watiSynced });
+  return json({ ok: true, due: due?.length ?? 0, processed, prepared, dripify_synced: synced, email_synced: emailSynced, wati_receipts: receipts, wati_history_synced: watiSynced });
 });
+
+// ── Recibos de WhatsApp ─────────────────────────────────────────────────────
+// WATI no siempre llama al webhook: el 2026-10-06 62 plantillas fallaron
+// (#132001) y 10 se entregaron sin un solo callback, y la bandeja las mostró
+// "enviadas" para siempre. Cada corrida pregunta a WATI por los envíos de
+// campaña que siguen sin estado final (_shared/wati-receipts.ts).
+
+async function reconcileReceiptsAll(ctx: Ctx, deadline: number): Promise<number> {
+  const { data: accounts } = await ctx.db.from("channel_accounts").select("id, user_id, status, secret, config").eq("provider", "wati").eq("status", "connected");
+  let changed = 0;
+  for (const acc of (accounts ?? []) as Json[]) {
+    if (Date.now() > deadline - 5_000) break;
+    changed += await reconcileWatiReceipts(ctx.db, acc, Math.min(deadline, Date.now() + 20_000));
+  }
+  return changed;
+}
 
 // ── Historial de WATI ───────────────────────────────────────────────────────
 // Red de seguridad del webhook: cada WATI_HISTORY_SYNC_MS por cuenta se lee el
