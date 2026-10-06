@@ -413,6 +413,66 @@
     return api;
   }
 
+  // ── Notificaciones push (js/push.js) ─────────────────────────────────────
+  // Safari exige que el permiso se pida dentro del clic: «Activar» llama a
+  // pushNotify.enable() sin nada asíncrono antes.
+  function openPushModal() {
+    var pn = global.pushNotify;
+    if (!pn) return;
+    var api = openModal({ title: 'Avisos en el teléfono', width: 480, actions: [{ label: 'Cerrar' }] });
+    function paint(st) {
+      api.body.innerHTML = '';
+      var intro = {
+        on: 'Este dispositivo recibe una notificación cada vez que un lead te escribe por WhatsApp, email o LinkedIn, aunque Predictable esté cerrado. Al tocarla se abre la conversación.',
+        off: 'Recibe una notificación cuando un lead te escribe por WhatsApp, email o LinkedIn, aunque Predictable esté cerrado. Se activa por dispositivo: hazlo en cada teléfono o computadora donde quieras recibirlas.',
+        'needs-install': 'En iPhone, Apple solo permite notificaciones a las apps de la pantalla de inicio (iOS 16.4 o más reciente). Son tres pasos:',
+        denied: 'Las notificaciones de Predictable están bloqueadas en este dispositivo. Para activarlas:',
+        unsupported: '',
+      }[st] || '';
+      if (intro) api.body.appendChild(h('p', { class: 'pros-hint', style: 'margin:0 0 10px', text: intro }));
+      var steps = pn.instructions(st);
+      if (steps.length) {
+        var ol = h('ol', { style: 'margin:0 0 4px;padding-left:20px;display:grid;gap:6px' });
+        steps.forEach(function (t) { ol.appendChild(h('li', { text: t })); });
+        api.body.appendChild(ol);
+      }
+      if (st === 'on' || st === 'off') api.body.appendChild(h('p', { class: 'pros-hint', style: 'margin:10px 0 0', text: 'Solo avisa de mensajes recibidos, nunca de los que envías tú o tus campañas.' }));
+      var actions = [];
+      if (st === 'off') actions.push({ label: 'Activar avisos', className: 'btn btn-primary', onClick: function (m, btn) {
+        m.setBusy(true);
+        var done = btnLoading(btn, 'Activando…');
+        return pn.enable().then(function () { return pn.test().catch(function () { return null; }); }).then(function () {
+          done(); m.setBusy(false);
+          toast('Avisos activados. Te mandamos una notificación de prueba.', 'success');
+          paint('on'); render();
+        }, function (e) { done(); m.setBusy(false); toast(errMsg(e), 'error'); pn.status().then(function (s2) { paint(s2); render(); }); });
+      } });
+      if (st === 'on') {
+        actions.push({ label: 'Desactivar', onClick: function (m) {
+          m.setBusy(true);
+          return pn.disable().then(function () { m.setBusy(false); toast('Avisos desactivados en este dispositivo.', 'info'); paint('off'); render(); });
+        } });
+        actions.push({ label: 'Enviar prueba', className: 'btn btn-primary', onClick: function (m, btn) {
+          m.setBusy(true);
+          var done = btnLoading(btn, 'Enviando…');
+          return pn.test().then(function () { done(); m.setBusy(false); toast('Listo: revisa la notificación.', 'success'); }, function (e) { done(); m.setBusy(false); toast(errMsg(e), 'error'); });
+        } });
+      }
+      actions.push({ label: 'Cerrar' });
+      api.setActions(actions);
+    }
+    paint(pn.cachedStatus() || 'off');
+    pn.status().then(paint, function () { /* se queda lo pintado */ });
+  }
+  document.addEventListener('predictable:push-status', function () { if (built && state.view === 'inbox') render(); });
+
+  /** Abre una conversación de la Bandeja (al tocar una notificación push). */
+  function openConversation(key) {
+    if (!key) return;
+    state.convKey = String(key);
+    setView('inbox');
+  }
+
   // ── Estado de canales ────────────────────────────────────────────────────
   function isConn(acc) { return !!(acc && acc.status === 'connected'); }
   function defaultEmailAccount() {
@@ -3093,6 +3153,7 @@
     bell: '<path d="M4 11V7a4 4 0 0 1 8 0v4l1 1.5H3L4 11z"/><path d="M6.5 14a1.5 1.5 0 0 0 3 0"/>',
     bellOff: '<path d="M4 11V7a4 4 0 0 1 6.5-3.1M12 7v4l1 1.5H5"/><path d="M6.5 14a1.5 1.5 0 0 0 3 0"/><path d="M2.5 2.5l11 11"/>',
     sync: '<path d="M13 8a5 5 0 0 1-8.6 3.5M3 8a5 5 0 0 1 8.6-3.5"/><path d="M11.5 1.8v2.9H8.6M4.5 14.2v-2.9h2.9"/>',
+    phone: '<rect x="4.5" y="1.5" width="7" height="13" rx="1.6"/><path d="M7 12.5h2"/>',
   };
   function pillBtn(action, icon, label, opts) {
     opts = opts || {};
@@ -3152,6 +3213,13 @@
     if (global.inboxAlert) {
       var soundOn = global.inboxAlert.isEnabled();
       tools.appendChild(pillBtn('inbox-sound-toggle', soundOn ? 'bell' : 'bellOff', soundOn ? 'Sonido' : 'Silenciado', { title: soundOn ? 'Suena al llegar un mensaje, aunque estés en otra pestaña. Clic para silenciar.' : 'Sin sonido al llegar un mensaje. Clic para activarlo.', on: soundOn }));
+    }
+    // Notificaciones push en el teléfono (js/push.js + edge function push-send).
+    if (global.pushNotify) {
+      var pushSt = global.pushNotify.cachedStatus();
+      if (pushSt === null) global.pushNotify.status().catch(function () { /* se reintenta al abrir el modal */ });
+      var pushOn = pushSt === 'on';
+      tools.appendChild(pillBtn('inbox-push', 'phone', pushOn ? 'Avisos activos' : 'Avisos en el teléfono', { title: pushOn ? 'Te llega una notificación a este dispositivo cuando te escribe un lead.' : 'Recibe una notificación en tu iPhone (o en este navegador) cuando te escribe un lead.', on: pushOn }));
     }
     if (isConn(state.wati)) {
       tools.appendChild(pillBtn('inbox-sync-wati', 'sync', watiSync.running ? 'Sincronizando…' : 'Sincronizar WhatsApp', { title: 'Trae lo que escribiste en WATI y cualquier mensaje que no haya llegado', busy: watiSync.running }));
@@ -3909,6 +3977,7 @@
       render();
       return;
     }
+    if (action === 'inbox-push') return openPushModal();
     if (action === 'inbox-mark-all') {
       var rA = btnLoading(btn, '⏳');
       return markAllRead().then(function () { rA(); render(); toast('Bandeja al día.', 'success'); }, function () { rA(); render(); });
@@ -4307,6 +4376,6 @@
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
 
-  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openLinkedinDesigner: openLinkedinDesigner };
+  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openConversation: openConversation, openLinkedinDesigner: openLinkedinDesigner };
   console.log('[campaigns] module loaded');
 })(window);

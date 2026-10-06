@@ -15,7 +15,9 @@
 # file: it would disable this list and start serving those too.
 #
 # Everything the app needs stays served: *.html, js/, css/, assets/, miforms/,
-# openapi.json (js/dev-docs.js fetches it), favicon.svg, CNAME.
+# openapi.json (js/dev-docs.js fetches it), favicon.svg, CNAME, and the PWA
+# files for push notifications (manifest.webmanifest, sw.js — sw.js must stay
+# at the root so its scope covers index.html).
 
 exclude:
   - supabase/
