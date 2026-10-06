@@ -54,6 +54,8 @@ export interface HistoryMessage {
   status: string;
   /** Motivo de Meta cuando status = failed ("OAuthException! (#132001) …"). */
   failedDetail: string;
+  /** Plantilla de difusión (las de campaign-run y las difusiones de WATI). */
+  broadcast: boolean;
   operator: string | null;
   conversationId: string | null;
   media: boolean;
@@ -102,6 +104,7 @@ export function parseHistoryItem(m: Json): HistoryMessage | null {
     at: at.toISOString(),
     status: statusOf(m.status ?? m.status_string ?? m.statusString),
     failedDetail: String(m.failed_detail ?? m.failedDetail ?? "").trim().slice(0, 300),
+    broadcast,
     operator: m.operator_name ?? m.operatorName ?? null,
     conversationId: m.conversation_id ?? m.conversationId ? String(m.conversation_id ?? m.conversationId) : null,
     media,
@@ -284,7 +287,11 @@ export async function syncWatiHistory(db: SupabaseClient, acc: Json, deadline: n
       continue;
     }
     out.conversations++;
-    const items = list.map(parseHistoryItem).filter((h): h is HistoryMessage => !!h && Date.parse(h.at) >= since);
+    // Las difusiones solo sirven para leer recibos (_shared/wati-receipts.ts):
+    // no entran a la bandeja. WATI escribe los números de México como 521…
+    // (nosotros 52…) y el mismo número de WATI puede llevar campañas de otra
+    // cuenta de Predictable: el 2026-10-06 eso metió 23 saludos repetidos.
+    const items = list.map(parseHistoryItem).filter((h): h is HistoryMessage => !!h && !h.broadcast && Date.parse(h.at) >= since);
     if (items.length) out.inserted += await insertMissing(db, acc, phone, items);
     if (k < order.length - 1) await sleep(PACE_MS);
   }
