@@ -275,6 +275,7 @@
     '#prospecting-shell .pros-acc-head:hover { background:var(--surface2); }',
     '#prospecting-shell .pros-acc-badge { display:none; min-width:18px; text-align:center; padding:1px 6px; border-radius:99px; background:var(--accent-soft); color:var(--accent-ink); font-family:var(--font-mono); font-size:10px; font-weight:600; }',
     '#prospecting-shell .pros-acc-badge.on { display:inline-block; }',
+    '#prospecting-shell .pros-acc-clear { align-self:flex-start; margin-top:4px; }',
     '#prospecting-shell .pros-acc-chev { margin-left:auto; color:var(--ink-4); font-size:15px; line-height:1; transition:transform .15s; }',
     '#prospecting-shell .pros-acc.open .pros-acc-chev { transform:rotate(90deg); }',
     '#prospecting-shell .pros-acc-body { display:none; padding:2px 14px 14px; flex-direction:column; gap:10px; }',
@@ -792,15 +793,29 @@
     var panel = h('div', { class: 'chart-card', style: 'padding:0;overflow:hidden' });
     state.search.badgeSecs = [];
 
-    function section(title, countFn, build, open) {
+    // keys = campos de `filters` que pertenecen a la sección; con ellos
+    // aparece el botón «Limpiar sección» (solo si hay algo aplicado).
+    function section(title, countFn, build, open, keys) {
       var badge = h('span', { class: 'pros-acc-badge' });
       var body = h('div', { class: 'pros-acc-body' });
       var head = h('div', { class: 'pros-acc-head' },
         h('span', { text: title }), badge, h('span', { class: 'pros-acc-chev', text: '›' }));
-      var acc = h('div', { class: 'pros-acc' + (open ? ' open' : '') }, head, body);
-      head.addEventListener('click', function () { acc.classList.toggle('open'); });
+      var wasOpen = (state.search.openSecs || {})[title];
+      var acc = h('div', { class: 'pros-acc' + ((wasOpen != null ? wasOpen : open) ? ' open' : '') }, head, body);
+      head.addEventListener('click', function () {
+        acc.classList.toggle('open');
+        state.search.openSecs = state.search.openSecs || {};
+        state.search.openSecs[title] = acc.classList.contains('open');
+      });
       build(body);
-      state.search.badgeSecs.push({ badge: badge, countFn: countFn });
+      var entry = { badge: badge, countFn: countFn };
+      if (keys && keys.length) {
+        var clr = h('button', { type: 'button', class: 'btn btn-ghost btn-sm pros-acc-clear', text: 'Limpiar ' + title.toLowerCase() });
+        clr.addEventListener('click', guarded(function () { clearSection(title, keys); }));
+        body.appendChild(clr);
+        entry.clearBtn = clr;
+      }
+      state.search.badgeSecs.push(entry);
       panel.appendChild(acc);
     }
 
@@ -896,7 +911,7 @@
         chipsHost.innerHTML = '';
         chipsHost.appendChild(h('div', { style: 'font-size:12px;color:var(--red)', text: errMsg(e) }));
       });
-    });
+    }, false, ['exclude_list_ids']);
 
     // 2. Cargos
     section('Cargos', function (x) { return x.person_titles.length + x.person_seniorities.length; }, function (body) {
@@ -914,7 +929,7 @@
         options: enums().seniorities || [],
         get: function () { return f().person_seniorities; }, onChange: changed,
       }));
-    }, true);
+    }, true, ['person_titles', 'include_similar_titles', 'person_seniorities']);
 
     // 3. Ubicación
     section('Ubicación', function (x) { return x.person_locations.length + x.organization_locations.length; }, function (body) {
@@ -937,7 +952,7 @@
         placeholder: 'País, estado o ciudad',
         get: function () { return f().organization_locations; }, onChange: changed,
       }));
-    });
+    }, false, ['person_locations', 'organization_locations']);
 
     // 4. Email
     section('Email', function (x) { return x.contact_email_status.length; }, function (body) {
@@ -946,7 +961,7 @@
         options: EMAIL_STATUS_OPTIONS,
         get: function () { return f().contact_email_status; }, onChange: changed,
       }));
-    });
+    }, false, ['contact_email_status']);
 
     // 5. Nº de empleados
     section('Nº de empleados', function (x) { return x.organization_num_employees_ranges.length; }, function (body) {
@@ -954,7 +969,7 @@
         options: enums().employee_ranges || [],
         get: function () { return f().organization_num_employees_ranges; }, onChange: changed,
       }));
-    });
+    }, false, ['organization_num_employees_ranges']);
 
     // 6. Industria y keywords
     section('Industria y keywords', function (x) {
@@ -995,7 +1010,7 @@
         get: function () { return f().q_keywords; },
         set: function (v) { f().q_keywords = v; }, onChange: changed,
       }));
-    });
+    }, false, ['industry_tags', 'q_organization_keyword_tags', 'market_segments', 'q_keywords']);
 
     // 7. Empresa
     section('Empresa', function (x) { return x.q_organization_domains_list.length + x.person_linkedin_urls.length; }, function (body) {
@@ -1010,7 +1025,7 @@
         placeholder: 'https://linkedin.com/in/…',
         get: function () { return f().person_linkedin_urls; }, onChange: changed,
       }));
-    });
+    }, false, ['q_organization_domains_list', 'person_linkedin_urls']);
 
     // 8. Tecnologías
     section('Tecnologías', function (x) { return x.tech_any.length + x.tech_all.length + x.tech_not.length; }, function (body) {
@@ -1030,7 +1045,7 @@
         get: function () { return f().tech_not; }, onChange: changed,
       }));
       body.appendChild(h('div', { class: 'pros-hint', text: 'Se normaliza al slug de Apollo (minúsculas, espacios y puntos → guion bajo).' }));
-    });
+    }, false, ['tech_any', 'tech_all', 'tech_not']);
 
     // 9. Financiero
     section('Financiero', function (x) {
@@ -1051,7 +1066,7 @@
         get: function () { return f().organization_include_unknown_founded_year; },
         set: function (v) { f().organization_include_unknown_founded_year = v; }, onChange: changed,
       }));
-    });
+    }, false, ['revenue_min', 'revenue_max', 'founded_min', 'founded_max', 'organization_include_unknown_founded_year']);
 
     // 10. Señales de contratación
     section('Señales de contratación', function (x) {
@@ -1078,7 +1093,7 @@
         boundInput({ type: 'date', get: function () { return f().job_posted_min; }, set: function (v) { f().job_posted_min = v; }, onChange: changed }),
         boundInput({ type: 'date', get: function () { return f().job_posted_max; }, set: function (v) { f().job_posted_max = v; }, onChange: changed })
       ));
-    });
+    }, false, ['q_organization_job_titles', 'organization_job_locations', 'jobs_min', 'jobs_max', 'job_posted_min', 'job_posted_max']);
 
     // 11. Experiencia
     section('Experiencia', function () {
@@ -1094,7 +1109,7 @@
         boundInput({ type: 'number', placeholder: 'Mín', attrs: { min: '0' }, get: function () { return f().yoe_min; }, set: function (v) { f().yoe_min = v; }, onChange: changed }),
         boundInput({ type: 'number', placeholder: 'Máx', attrs: { min: '0' }, get: function () { return f().yoe_max; }, set: function (v) { f().yoe_max = v; }, onChange: changed })
       ));
-    });
+    }, false, ['years_title_min', 'years_title_max', 'yoe_min', 'yoe_max']);
 
     // 12. Avanzado
     section('Avanzado', function (x) {
@@ -1163,7 +1178,7 @@
         placeholder: 'Ej. 6021', normalize: digitsOnly,
         get: function () { return f().not_sic_codes; }, onChange: changed,
       }));
-    });
+    }, false, ['dept_counts', 'growth_min', 'growth_max', 'growth_months', 'naics_codes', 'not_naics_codes', 'sic_codes', 'not_sic_codes']);
 
     // Footer
     var searchBtn = h('button', { type: 'button', class: 'btn btn-primary', style: 'width:100%;justify-content:center', text: 'Buscar' });
@@ -1173,6 +1188,7 @@
     panel.appendChild(h('div', { style: 'padding:14px;display:flex;flex-direction:column;gap:10px' },
       searchBtn, clearBtn));
     state.search.searchBtn = searchBtn;
+    updateFilterBadges();
     return panel;
   }
 
@@ -1183,10 +1199,28 @@
       try { n = s.countFn(f) || 0; } catch (_) { n = 0; }
       s.badge.textContent = String(n);
       s.badge.classList.toggle('on', n > 0);
+      if (s.clearBtn) s.clearBtn.style.display = n > 0 ? '' : 'none';
     });
   }
 
+  function clearSection(title, keys) {
+    var defaults = defaultFilters();
+    var hadExclusions = keys.indexOf('exclude_list_ids') !== -1;
+    keys.forEach(function (k) { state.search.filters[k] = defaults[k]; });
+    persistFilters();
+    if (state.search.panelHost) {
+      state.search.openSecs = state.search.openSecs || {};
+      state.search.openSecs[title] = true;
+      state.search.panelHost.innerHTML = '';
+      state.search.panelHost.appendChild(buildFilterPanel());
+    }
+    updateFilterBadges();
+    if (hadExclusions) reapplyExclusions();
+    toast('Sección «' + title + '» restablecida.', 'info');
+  }
+
   function clearFilters() {
+    state.search.openSecs = null;
     state.search.filters = defaultFilters();
     setActiveSavedId(null);
     persistFilters();
