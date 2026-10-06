@@ -164,6 +164,7 @@
     inboxFilter: { campaign: '', channel: '', status: '', q: '' },
     replyDraft: {},
     replyFile: {},             // key → File adjunto por WhatsApp (aún sin enviar)
+    rec: null,                 // nota de voz grabándose: { key, recorder, stream, chunks, started, timer, cancelled }
     sendingKey: {},
     replyChannel: {},
     waClosed: {},
@@ -1093,6 +1094,16 @@
     if (file && channel !== 'whatsapp') file = null;
     var text = String(body || '').trim();
     if (!text && !template && !file) throw new Error('Escribe el mensaje antes de enviar.');
+    if (file && text && fileKind(file) === 'audio') {
+      // WhatsApp no admite pie en un audio: primero el audio, después el texto.
+      try {
+        await sendReply(conv, channel, '', subject, null, onOptimistic, file);
+      } catch (e) {
+        if (!state.replyDraft[conv.key]) state.replyDraft[conv.key] = text;
+        throw e;
+      }
+      return sendReply(conv, channel, text, subject, null, null, null);
+    }
     var payload = { channel: channel, body: text };
     if (conv.member_id) payload.member_id = conv.member_id; else payload.contact_ref = conv.contact_ref;
     if (template) payload.template = template;
@@ -1111,13 +1122,13 @@
         direction: 'out', body: channel === 'email' ? 'Asunto: ' + payload.subject + '\n\n' + text : (text || (file ? FILE_LABEL[kind] : '')),
         status: 'sending', sent_at: new Date().toISOString(),
         payload: channel === 'email' ? { source: 'inbox_reply', subject: payload.subject }
-          : (file ? { source: 'inbox_reply', type: kind, media: true, file_name: file.name, local_url: localUrl } : { source: 'inbox_reply' }),
+          : (file ? { source: 'inbox_reply', type: kind, media: true, file_name: file.name, local_url: localUrl, voice: !!file.__voice } : { source: 'inbox_reply' }),
         provider: channel === 'whatsapp' ? 'wati' : undefined,
       };
       state.pendingOut.unshift(local);
       state.inbox.unshift(local);
       state.replyDraft[conv.key] = '';
-      if (file) delete state.replyFile[conv.key];
+      if (file) clearReplyFile(conv.key);
       if (onOptimistic) onOptimistic();
     }
     function dropLocal() {
@@ -1131,6 +1142,7 @@
         var form = new FormData();
         Object.keys(payload).forEach(function (k) { form.append(k, payload[k]); });
         form.append('file', file, file.name || 'archivo');
+        if (file.__voice) form.append('voice', '1');
         r = await edgeFetch(FN_INBOX, form);
       } else {
         r = await edgeFetch(FN_INBOX, payload);
@@ -1638,6 +1650,13 @@
       '#prospecting-shell .cmp-attach-chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }',
       '#prospecting-shell .cmp-attach-x { border:0; background:transparent; color:var(--text3); cursor:pointer; font-size:12px; padding:2px 6px; border-radius:999px; }',
       '#prospecting-shell .cmp-attach-x:hover { color:var(--text); background:var(--surface3); }',
+      '#prospecting-shell .cmp-attach-chip audio { height:32px; width:220px; max-width:100%; }',
+      '#prospecting-shell .cmp-rec { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:8px 12px; border:1px solid var(--hair); border-radius:12px; background:var(--surface2); font-size:13px; }',
+      '#prospecting-shell .cmp-rec-dot { width:10px; height:10px; border-radius:50%; background:#ef4444; animation:cmpRecPulse 1.2s ease-in-out infinite; }',
+      '#prospecting-shell .cmp-rec-time { font-variant-numeric:tabular-nums; font-weight:600; }',
+      '#prospecting-shell .cmp-rec .grow { flex:1; }',
+      '@keyframes cmpRecPulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }',
+      '@media (prefers-reduced-motion: reduce) { #prospecting-shell .cmp-rec-dot { animation:none; } }',
       '#prospecting-shell .cmp-reply { border-top:1px solid var(--hair); padding:12px 14px; display:grid; gap:8px; }',
       '#prospecting-shell .cmp-reply textarea { width:100%; min-height:72px; }',
       '#prospecting-shell .cmp-reply input { width:100%; }',
@@ -3301,6 +3320,89 @@
     state.replyFile[key] = file;
     return true;
   }
+
+  // ── Notas de voz (WhatsApp) ──────────────────────────────────────────────
+  // Se graban en el navegador con MediaRecorder y salen como un adjunto de
+  // audio más. Chrome y Edge solo graban WebM, que WhatsApp no acepta:
+  // inbox-send le cambia el contenedor a Ogg (_shared/webm-opus.ts). Firefox
+  // ya graba Ogg y Safari MP4 (AAC); los dos pasan tal cual.
+  var VOICE_MAX_MS = 10 * 60 * 1000;
+  var VOICE_MIMES = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'];
+  function canRecordVoice() {
+    return !!(global.navigator && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && global.MediaRecorder);
+  }
+  function fmtClock(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
+  }
+  function voicePreviewUrl(file) {
+    if (!file.__previewUrl) file.__previewUrl = URL.createObjectURL(file);
+    return file.__previewUrl;
+  }
+  function clearReplyFile(key) {
+    var f = state.replyFile[key];
+    if (f && f.__previewUrl) { URL.revokeObjectURL(f.__previewUrl); f.__previewUrl = null; }
+    delete state.replyFile[key];
+  }
+  function stopRecTracks(rec) {
+    clearInterval(rec.timer);
+    if (rec.stream) rec.stream.getTracks().forEach(function (t) { t.stop(); });
+  }
+  async function startVoice(key) {
+    if (state.rec) return toast('Ya estás grabando una nota de voz.', 'warn');
+    if (!canRecordVoice()) return toast('Este navegador no permite grabar audio.', 'warn');
+    var stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      var denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+      return toast(denied ? 'Dale permiso al navegador para usar el micrófono y vuelve a intentarlo.' : 'No encontramos un micrófono disponible.', 'warn');
+    }
+    var mime = VOICE_MIMES.find(function (m) { return MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m); }) || '';
+    var recorder;
+    try {
+      recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    } catch (e) {
+      stream.getTracks().forEach(function (t) { t.stop(); });
+      return toast('No se pudo empezar a grabar: ' + errMsg(e), 'warn');
+    }
+    var rec = { key: key, recorder: recorder, stream: stream, chunks: [], started: Date.now(), timer: null, cancelled: false };
+    recorder.ondataavailable = function (ev) { if (ev.data && ev.data.size) rec.chunks.push(ev.data); };
+    recorder.onstop = function () {
+      stopRecTracks(rec);
+      if (state.rec === rec) state.rec = null;
+      if (!rec.cancelled) {
+        var type = String(recorder.mimeType || mime || 'audio/webm').split(';')[0];
+        var ext = /ogg/.test(type) ? 'ogg' : /mp4|aac/.test(type) ? 'm4a' : 'webm';
+        var d = new Date();
+        var stamp = d.getFullYear() + ('0' + (d.getMonth() + 1)).slice(-2) + ('0' + d.getDate()).slice(-2) + '-' + ('0' + d.getHours()).slice(-2) + ('0' + d.getMinutes()).slice(-2) + ('0' + d.getSeconds()).slice(-2);
+        var file = new File(rec.chunks, 'nota-de-voz-' + stamp + '.' + ext, { type: type });
+        file.__voice = true;
+        var prev = state.replyFile[key];
+        if (Date.now() - rec.started < 700) toast('La nota de voz quedó muy corta: graba al menos un segundo.', 'warn');
+        else if (attachFile(key, file) && prev && prev.__previewUrl) URL.revokeObjectURL(prev.__previewUrl);
+      }
+      if (state.view === 'inbox') renderKeepingReplyFocus(key);
+    };
+    rec.timer = setInterval(function () {
+      // Si el usuario sale de la Bandeja, se corta el micrófono y la nota queda adjunta.
+      if (state.view !== 'inbox' || !state.root || !state.root.isConnected || !state.root.getClientRects().length) { stopVoice(false); return; }
+      var elapsed = Date.now() - rec.started;
+      var t = state.root && state.root.querySelector('[data-rec-time="' + key + '"]');
+      if (t) t.textContent = fmtClock(elapsed);
+      if (elapsed >= VOICE_MAX_MS) { toast('Las notas de voz duran hasta 10 minutos: la grabación se detuvo.', 'info'); stopVoice(false); }
+    }, 250);
+    state.rec = rec;
+    recorder.start(1000);
+    renderKeepingReplyFocus(key);
+  }
+  function stopVoice(cancel) {
+    var rec = state.rec;
+    if (!rec) return;
+    rec.cancelled = !!cancel;
+    if (rec.recorder.state !== 'inactive') rec.recorder.stop();
+    else { stopRecTracks(rec); state.rec = null; }
+  }
   function loadMedia(id, msg) {
     var pl = (msg && msg.payload) || {};
     if (pl.local_url) return Promise.resolve({ url: pl.local_url, type: '' });
@@ -3573,20 +3675,40 @@
       box.appendChild(h('input', { type: 'text', placeholder: 'Asunto', value: draftSubj != null ? draftSubj : defSubj, 'data-action': 'reply-subject', 'data-key': conv.key }));
     }
     var att = chosen === 'whatsapp' ? state.replyFile[conv.key] : null;
-    if (att) {
+    var isAudio = !!att && fileKind(att) === 'audio';
+    var recHere = chosen === 'whatsapp' && state.rec && state.rec.key === conv.key;
+    if (recHere) {
+      var rbar = h('div', { class: 'cmp-rec', role: 'status' });
+      rbar.appendChild(h('span', { class: 'cmp-rec-dot', 'aria-hidden': 'true' }));
+      rbar.appendChild(h('span', { text: 'Grabando nota de voz' }));
+      rbar.appendChild(h('span', { class: 'cmp-rec-time', 'data-rec-time': conv.key, text: fmtClock(Date.now() - state.rec.started) }));
+      rbar.appendChild(h('span', { class: 'grow' }));
+      rbar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-voice-cancel', 'data-key': conv.key, text: 'Descartar' }));
+      rbar.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-voice-stop', 'data-key': conv.key, text: '■ Detener' }));
+      box.appendChild(rbar);
+    } else if (att) {
       var chip = h('div', { class: 'cmp-attach-chip' });
-      chip.appendChild(h('span', { text: FILE_LABEL[fileKind(att)] + ' · ' + (att.name || 'archivo') + ' · ' + fmtSize(att.size) }));
-      chip.appendChild(h('button', { type: 'button', class: 'cmp-attach-x', 'data-action': 'reply-file-clear', 'data-key': conv.key, title: 'Quitar el archivo', 'aria-label': 'Quitar el archivo', text: '✕' }));
+      chip.appendChild(h('span', { text: att.__voice ? '🎤 Nota de voz · ' + fmtSize(att.size) : FILE_LABEL[fileKind(att)] + ' · ' + (att.name || 'archivo') + ' · ' + fmtSize(att.size) }));
+      if (att.__voice) chip.appendChild(h('audio', { src: voicePreviewUrl(att), controls: 'controls', preload: 'metadata' }));
+      chip.appendChild(h('button', { type: 'button', class: 'cmp-attach-x', 'data-action': 'reply-file-clear', 'data-key': conv.key, title: att.__voice ? 'Descartar la nota de voz' : 'Quitar el archivo', 'aria-label': att.__voice ? 'Descartar la nota de voz' : 'Quitar el archivo', text: '✕' }));
       box.appendChild(chip);
     }
-    var ta = h('textarea', { placeholder: chosen === 'whatsapp' ? (att ? 'Agrega un pie (opcional)…' : 'Escribe tu respuesta por WhatsApp…') : 'Escribe tu respuesta por email…', 'data-action': 'reply-draft', 'data-key': conv.key });
+    var ta = h('textarea', { placeholder: chosen === 'whatsapp' ? (att ? (isAudio ? 'Agrega un mensaje (opcional, sale después del audio)…' : 'Agrega un pie (opcional)…') : 'Escribe tu respuesta por WhatsApp…') : 'Escribe tu respuesta por email…', 'data-action': 'reply-draft', 'data-key': conv.key });
     ta.value = state.replyDraft[conv.key] || '';
     box.appendChild(ta);
     var foot = h('div', { class: 'cmp-reply-row' });
-    foot.appendChild(h('span', { class: 'pros-hint', text: (chosen === 'whatsapp' ? 'Texto, fotos y archivos dentro de las 24 h desde el último mensaje del lead. Sale desde tu número de WhatsApp.' : 'Sale como respuesta individual desde tu cuenta de email.') + ' Enter envía · Shift+Enter, nueva línea.' }));
+    foot.appendChild(h('span', { class: 'pros-hint', text: (chosen === 'whatsapp' ? 'Texto, fotos, notas de voz y archivos dentro de las 24 h desde el último mensaje del lead. Sale desde tu número de WhatsApp.' : 'Sale como respuesta individual desde tu cuenta de email.') + ' Enter envía · Shift+Enter, nueva línea.' }));
     if (chosen === 'whatsapp') {
       foot.appendChild(h('input', { type: 'file', accept: FILE_ACCEPT, 'data-action': 'reply-file', 'data-key': conv.key, hidden: 'hidden', style: 'display:none' }));
       foot.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-attach', 'data-key': conv.key, title: 'Foto (JPG o PNG, hasta 5 MB), video, audio o documento (hasta 16 MB). También puedes pegar una imagen en el cuadro.', text: '📎 Adjuntar' }));
+      if (canRecordVoice()) {
+        foot.appendChild(h('button', {
+          type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-voice', 'data-key': conv.key,
+          disabled: state.rec ? 'disabled' : null,
+          title: 'Graba una nota de voz con tu micrófono (hasta 10 minutos). La escuchas antes de enviarla.',
+          text: '🎤 Nota de voz',
+        }));
+      }
     }
     foot.appendChild(aiDraftBtn(conv, chosen));
     foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-send', 'data-key': conv.key, 'data-channel': chosen, text: 'Enviar por ' + CH[chosen].label }));
@@ -3923,7 +4045,10 @@
       if (fin) { fin.value = ''; fin.click(); }
       return;
     }
-    if (action === 'reply-file-clear' && key) { delete state.replyFile[key]; return renderKeepingReplyFocus(key); }
+    if (action === 'reply-file-clear' && key) { clearReplyFile(key); return renderKeepingReplyFocus(key); }
+    if (action === 'reply-voice' && key) return startVoice(key);
+    if (action === 'reply-voice-stop' && key) return stopVoice(false);
+    if (action === 'reply-voice-cancel' && key) return stopVoice(true);
     if (action === 'thread-gmail' && key) {
       var conv3 = findConv(key);
       if (!conv3 || !pros().openThread) return;
