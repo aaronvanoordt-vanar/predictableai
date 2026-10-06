@@ -75,6 +75,7 @@ import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import * as wati from "../_shared/wati.ts";
+import { isWebmAudio, WebmOpusError, webmOpusToOgg } from "../_shared/webm-opus.ts";
 import { syncWatiHistory } from "../_shared/wati-history.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 
@@ -200,7 +201,7 @@ function templateParams(body: string, m: Json | null): Record<string, string> {
  */
 const FILE_LABEL: Record<string, string> = { image: "📷 Foto", video: "🎬 Video", audio: "🎤 Audio", document: "📄 Documento" };
 
-async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | null, contactRef: string, text: string, template: string, file: File | null = null): Promise<Json> {
+async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | null, contactRef: string, text: string, template: string, file: File | null = null, voice = false): Promise<Json> {
   const phone = wati.digits(member?.phone || contactRef);
   if (!phone) throw new HttpError("El lead no tiene teléfono.", 400, "member_without_phone");
   // Las tres lecturas son independientes: van en paralelo (antes eran tres
@@ -279,7 +280,7 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
     throw new HttpError("La ventana de 24 h de WhatsApp está cerrada.", 409, "whatsapp_window_closed");
   }
 
-  if (file) return await sendWhatsAppFile(db, userId, member, phone, acc, creds, en, file, text);
+  if (file) return await sendWhatsAppFile(db, userId, member, phone, acc, creds, en, file, text, voice);
 
   let r: { id: string | null; conversationId: string | null };
   try {
@@ -311,11 +312,16 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
   return row;
 }
 
-/** Foto, video, audio o documento desde la bandeja (dentro de la ventana de 24 h). */
+/**
+ * Foto, video, audio o documento desde la bandeja (dentro de la ventana de
+ * 24 h). `voice` = nota de voz grabada en la bandeja (ya convertida a Ogg).
+ */
 async function sendWhatsAppFile(
-  db: SupabaseClient, userId: string, member: Json | null, phone: string, acc: Json, creds: wati.WatiCreds, en: Json, file: File, caption: string,
+  db: SupabaseClient, userId: string, member: Json | null, phone: string, acc: Json, creds: wati.WatiCreds, en: Json, file: File, captionIn: string, voice = false,
 ): Promise<Json> {
   const kind = wati.mediaKindForMime(file.type);
+  // WhatsApp no admite pie en un audio: la bandeja manda el texto aparte.
+  const caption = kind === "audio" ? "" : captionIn;
   const max = kind === "image" ? wati.SEND_IMAGE_MAX_BYTES : wati.SEND_FILE_MAX_BYTES;
   if (!file.size) throw new HttpError("El archivo está vacío.", 400, "whatsapp_file_invalid");
   if (file.size > max) {
@@ -347,7 +353,7 @@ async function sendWhatsAppFile(
     enrollment_id: en?.id ?? null,
     payload: {
       source: "inbox_reply", type, media: true, wati_id: r.id, wati_message_id: r.id,
-      caption: caption || null, file_name: fileName, mime: file.type || null,
+      caption: caption || null, file_name: fileName, mime: file.type || null, ...(voice ? { voice: true } : {}),
     },
   }).select("*").single().then((r) => r), spendCredits(db, userId)]);
   if (error) throw new HttpError("El archivo salió pero no se pudo guardar en la bandeja: " + error.message, 500);
@@ -628,8 +634,24 @@ Deno.serve(async (req) => {
     const template = String(body?.template ?? "").trim().slice(0, 512);
     if (memberId && !UUID_RE.test(memberId)) return json({ error: "member_id inválido" }, 400, cors);
     if (!memberId && !(channel === "whatsapp" && wati.digits(contactRef))) return json({ error: "member_id inválido" }, 400, cors);
-    const file: File | null = body?.file instanceof File ? body.file : null;
+    let file: File | null = body?.file instanceof File ? body.file : null;
     if (file && channel !== "whatsapp") return json({ error: "Los archivos solo se envían por WhatsApp." }, 400, cors);
+    const voice = !!file && String(body?.voice ?? "") === "1";
+    // Chrome y Edge graban las notas de voz en WebM, que WhatsApp no acepta:
+    // se cambia el contenedor a Ogg (mismo audio Opus, sin recodificar).
+    if (file && isWebmAudio(file.type, file.name)) {
+      if (file.size > wati.SEND_FILE_MAX_BYTES) {
+        return json({ error: "whatsapp_file_too_large", message: "WhatsApp acepta audios de hasta 16 MB." }, 413, cors);
+      }
+      try {
+        const ogg = webmOpusToOgg(new Uint8Array(await file.arrayBuffer()));
+        const base = String(file.name || "nota-de-voz").replace(/\.[a-z0-9]+$/i, "") || "nota-de-voz";
+        file = new File([ogg], `${base}.ogg`, { type: "audio/ogg" });
+      } catch (e) {
+        if (!(e instanceof WebmOpusError)) throw e;
+        return json({ error: "whatsapp_file_invalid", message: e.message }, 400, cors);
+      }
+    }
     // Con archivo, `body` es el pie de foto (WhatsApp lo corta en 1024).
     const text = String(body?.body ?? "").replace(/\r\n/g, "\n").trim().slice(0, file ? 1024 : MAX_BODY);
     if (!text && !template && !file) return json({ error: "Escribe un mensaje." }, 400, cors);
@@ -647,7 +669,7 @@ Deno.serve(async (req) => {
     }
 
     const row = channel === "whatsapp"
-      ? await sendWhatsApp(db, user.id, member, contactRef, text, file ? "" : template, file)
+      ? await sendWhatsApp(db, user.id, member, contactRef, text, file ? "" : template, file, voice)
       : await sendEmail(db, user.id, member, text, String(body?.subject ?? ""));
     return json({ message: row }, 200, cors);
   } catch (err) {
