@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>predictable.ai — Revenue OS</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
+<!-- App instalable (iPhone: Compartir → Agregar a inicio) para las notificaciones push de la Bandeja: js/push.js + sw.js -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/pwa/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Predictable">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0B0C10">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -3154,8 +3162,9 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/linkedin-campaigns.js?v=20260915"></script>
 <script src="js/campaign-builder.js?v=20260923"></script>
 <script src="js/campaign-knowledge.js?v=20260923"></script>
-<script src="js/campaigns.js?v=20261006"></script>
+<script src="js/campaigns.js?v=20261006b"></script>
 <script src="js/inbox-alert.js?v=20261001b"></script>
+<script src="js/push.js?v=20261006"></script>
 <script src="js/radar.js?v=20260918"></script>
 <script src="js/radar-live.js?v=20260918"></script>
 <script src="js/clients.js?v=20260824-sheets"></script>
@@ -4231,6 +4240,8 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
       const onConfirm = async () => {
         confirmBtn.disabled = true;
         confirmBtn.textContent = 'Cerrando…';
+        // Este dispositivo deja de recibir los avisos de esta cuenta (js/push.js).
+        try { if (window.pushNotify) await Promise.race([window.pushNotify.disable(), new Promise((r) => setTimeout(r, 3000))]); } catch (e) {}
         try { if (window.supabaseClient) await window.supabaseClient.auth.signOut(); } catch (e) {}
         try { if (window.supabaseHelpers) window.supabaseHelpers.clearLocalSession(); } catch (e) {}
         location.href = './auth.html';

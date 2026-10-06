@@ -88,7 +88,7 @@ jobs:
           # Con JWT (no listar aquí): channel-connect, apollo-proxy, inbox-send,
           # gmail-proxy, billing, integrations, campaign-run (la llama pg_cron con la service role),
           # api-webhooks (idem).
-          NO_JWT="apollo-webhook enrich-company sales-coach wati-webhook dripify-webhook generate-outreach-playbook client-portal sheet-sync stripe-webhook public-api mcp"
+          NO_JWT="apollo-webhook enrich-company sales-coach wati-webhook dripify-webhook generate-outreach-playbook client-portal sheet-sync stripe-webhook public-api mcp push-send"
 
           FAILED=""
           for fn in $FUNCTIONS; do
