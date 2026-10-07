@@ -483,7 +483,7 @@ HOW TO WRITE
       "signal": "≤ 80 chars, Spanish: an observable fact that happens to a company (e.g. 'Abrió vacantes de ejecutivos de ventas')",
       "evidence": "≤ 90 chars, Spanish: where it is visible (LinkedIn Jobs, prensa, portal de compras públicas, su sitio web, Google Maps…)",
       "why": "≤ 150 chars, Spanish: why this fact means they need the seller now",
-      "detector_kind": "news | tenders | hiring | technographics | site_probe | funding | leadership | growth | presence | website_visitors",
+      "detector_kind": "news | tenders | web_footprint | hiring | technographics | site_probe | funding | leadership | growth | presence | website_visitors (site_probe = what the company's own website and DNS show: Meta Business Manager verification, WhatsApp button without a platform, rigid menu bot, marketplace store links, payment gateways, email marketing, DMARC…; web_footprint = a public state on the internet: official store on Mercado Libre/Amazon, directory or trade-fair listing, public complaints)",
       "segment": "the segment name above it applies to, or 'Todos'",
       "priority": "high | medium"
     }

@@ -44,6 +44,7 @@ Deno.test("radarDetectorMonthCost por tipo y alcance", () => {
   assertEquals(radarDetectorMonthCost("leadership"), 10);
   assertEquals(radarDetectorMonthCost("website_visitors", 1000), 10);
   assertEquals(radarDetectorMonthCost("news"), 40);
+  assertEquals(radarDetectorMonthCost("web_footprint"), 40);
   assertEquals(radarDetectorMonthCost("tenders"), 40);
   assertEquals(radarDetectorMonthCost("presence"), 60);
   assertEquals(radarDetectorMonthCost("hiring", 300), 30);
@@ -56,6 +57,7 @@ Deno.test("radarDetectorMonthCost por tipo y alcance", () => {
 Deno.test("minCadenceHours: pisos que asume el precio", () => {
   assertEquals(minCadenceHours("presence"), 168);
   assertEquals(minCadenceHours("news"), 48);
+  assertEquals(minCadenceHours("web_footprint"), 48);
   assertEquals(minCadenceHours("hiring"), 72);
   assertEquals(minCadenceHours("website_visitors"), 1);
 });

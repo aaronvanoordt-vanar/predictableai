@@ -47,9 +47,10 @@
   const DETECTOR_KINDS = {
     news:             { label: 'Noticias y anuncios',          icon: '📰', requires: ['IA con búsqueda web'],        desc: 'Prensa, comunicados, registros oficiales y job boards, con fecha verificada.' },
     tenders:          { label: 'Licitaciones y compras públicas', icon: '🏛️', requires: ['IA con búsqueda web'],     desc: 'Convocatorias y adjudicaciones en los portales de compras de tus países.' },
+    web_footprint:    { label: 'Huella pública en internet',   icon: '🌐', requires: ['IA con búsqueda web'],        desc: 'Empresas por lo que se ve de ellas en la web, no por una noticia: tiendas oficiales en Mercado Libre o Amazon, directorios, expositores de ferias, quejas públicas.' },
     hiring:           { label: 'Contrataciones',               icon: '🧑‍💼', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Empresas con vacantes activas para los cargos que delatan la necesidad.' },
     technographics:   { label: 'Tecnologías en uso',           icon: '🧩', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Empresas que usan ciertas herramientas, según Apollo. Para "no usa X" está el sondeo del sitio.' },
-    site_probe:       { label: 'Sondeo del sitio web',         icon: '🔍', requires: ['Apollo (1 crédito de Apollo por página)', 'Sondeo web'], desc: 'Leemos la portada pública del sitio: píxel de Meta, botón de WhatsApp sin proceso, chat, tienda online…' },
+    site_probe:       { label: 'Huella digital del sitio',     icon: '🔍', requires: ['Apollo (1 crédito de Apollo por página)', 'Sondeo web'], desc: 'Leemos la portada y el DNS de cada empresa: ~180 huellas (Meta Business Manager, WhatsApp sin plataforma, bots de menús, marketplaces, pasarelas de pago, email marketing, DMARC…).' },
     funding:          { label: 'Financiamiento',               icon: '💸', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Rondas de inversión recientes dentro de tu ICP.' },
     leadership:       { label: 'Cambios de liderazgo',         icon: '🪑', requires: ['Apollo'],                     desc: 'Decision makers nuevos en el cargo: sus primeros 90 días son cuando compran.' },
     growth:           { label: 'Crecimiento de plantilla',     icon: '📈', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Empresas del ICP cuya plantilla creció más de X % en 6-24 meses.' },
@@ -92,6 +93,8 @@
     planPrompt: '',
     showPlanPrompt: false,
     addForm: { kind: 'news', description: '', open: false },
+    // Biblioteca de detectores listos (radar-plan → recipes / add_recipe).
+    library: { open: false, loading: false, loaded: false, tried: false, error: '', categories: [], recipes: [], labels: {}, cat: '', q: '' },
     driving: false,
     driveLog: [],
     driveStop: false,
@@ -903,7 +906,8 @@
     if (f.rating != null) chips.push(f.rating + '★');
     if (f.reviews != null) chips.push(f.reviews + ' reseñas');
     if (f.address) chips.push(f.address);
-    if (Array.isArray(f.detected) && f.detected.length) chips.push('detectado: ' + f.detected.join(', '));
+    if (Array.isArray(f.detected_labels) && f.detected_labels.length) chips.push('detectado: ' + f.detected_labels.slice(0, 8).join(', '));
+    else if (Array.isArray(f.detected) && f.detected.length) chips.push('detectado: ' + f.detected.map(probeLabel).join(', '));
     if (f.growth_pct != null) chips.push('+' + f.growth_pct + ' % plantilla');
     if (f.stage) chips.push(f.stage);
     if (f.website_intent) chips.push('intención ' + f.website_intent);
@@ -919,11 +923,18 @@
     const j = (a, n) => (Array.isArray(a) ? a.slice(0, n || 4).join(', ') + (a.length > (n || 4) ? '…' : '') : '');
     switch (kind) {
       case 'news': return (Array.isArray(cfg.queries) ? cfg.queries.length : 0) + ' consultas · últimos ' + (cfg.window_days || 30) + ' días' + (cfg.sources && cfg.sources.length ? ' · fuentes: ' + j(cfg.sources, 3) : '');
+      case 'web_footprint': return (Array.isArray(cfg.queries) && cfg.queries.length ? '"' + cfg.queries[0] + '"' + (cfg.queries.length > 1 ? ' y ' + (cfg.queries.length - 1) + ' consulta' + (cfg.queries.length === 2 ? '' : 's') + ' más' : '') : 'sin consultas') + (cfg.sources && cfg.sources.length ? ' · fuentes: ' + j(cfg.sources, 3) : '');
       case 'tenders': return (Array.isArray(cfg.queries) ? cfg.queries.length : 0) + ' consultas · ' + (cfg.portals && cfg.portals.length ? j(cfg.portals, 4) : 'portales de compras públicas');
       case 'hiring': return 'Vacantes de ' + j(cfg.job_titles) + ' · mín. ' + (cfg.min_jobs || 1) + ' · publicadas en ' + (cfg.posted_within_days || 30) + ' días';
       // Solo "usa X": Apollo no filtra "no usa X" en la búsqueda de empresas (para eso está el sondeo del sitio).
       case 'technographics': return cfg.using_any && cfg.using_any.length ? 'usa ' + j(cfg.using_any) : 'sin tecnologías en uso configuradas';
-      case 'site_probe': return (cfg.must_have && cfg.must_have.length ? 'con ' + j(cfg.must_have) : '') + (cfg.must_not_have && cfg.must_not_have.length ? (cfg.must_have && cfg.must_have.length ? ' · ' : '') + 'sin ' + j(cfg.must_not_have) : '');
+      case 'site_probe': {
+        const lj = (a) => j((a || []).map(probeLabel));
+        return (cfg.must_have && cfg.must_have.length ? 'con ' + lj(cfg.must_have) : '') +
+          (cfg.must_not_have && cfg.must_not_have.length ? (cfg.must_have && cfg.must_have.length ? ' · ' : '') + 'sin ' + lj(cfg.must_not_have) : '') +
+          (cfg.population_using_any && cfg.population_using_any.length ? ' · entre empresas que usan ' + j(cfg.population_using_any, 3) : '') +
+          (cfg.keywords && cfg.keywords.length ? ' · sector: ' + j(cfg.keywords, 3) : '');
+      }
       case 'funding': return 'Rondas en los últimos ' + (cfg.window_days || 90) + ' días' + (cfg.min_amount ? ' · desde US$' + Number(cfg.min_amount).toLocaleString('es-MX') : '') + (cfg.stages && cfg.stages.length ? ' · ' + j(cfg.stages) : '');
       case 'leadership': return j(cfg.titles) + ' · menos de ' + (cfg.max_days_in_role || 90) + ' días en el cargo';
       case 'growth': return 'Plantilla +' + (cfg.min_growth_pct || 20) + ' % en ' + (cfg.months || 6) + ' meses';
@@ -933,8 +944,93 @@
     return '';
   }
 
+  // Las claves del sondeo (any_whatsapp_platform) en español; las etiquetas
+  // llegan con la biblioteca (radar-plan → recipes). Sin ellas, la clave legible.
+  function probeLabel(k) {
+    const l = state.library.labels && state.library.labels[k];
+    return l || String(k || '').replace(/^any_/, '').replace(/_/g, ' ');
+  }
+
+  // ── Biblioteca de detectores ──
+
+  async function loadLibrary() {
+    const L = state.library;
+    if (L.loading) return;
+    L.loading = true; L.error = '';
+    render();
+    try {
+      const r = await post('radar-plan', { action: 'recipes' });
+      L.categories = Array.isArray(r.categories) ? r.categories : [];
+      L.recipes = Array.isArray(r.recipes) ? r.recipes : [];
+      L.labels = r.probe_labels || {};
+      L.loaded = true;
+    } catch (e) {
+      L.error = e.message || String(e);
+    } finally {
+      L.loading = false;
+      render();
+    }
+  }
+
+  function addRecipe(id) {
+    const rec = state.library.recipes.find((r) => r.id === id);
+    return run('Agregando detector…', async () => {
+      const r = await post('radar-plan', { action: 'add_recipe', recipe_id: id });
+      if (rec && r.detector) rec.added_detector_id = r.detector.id;
+      await load();
+      state.notice = 'Agregaste «' + (rec ? rec.name : 'el detector') + '».' + (state.plan && state.plan.status === 'active' ? ' Corre en el próximo ciclo.' : ' Activa el monitoreo para que empiece a buscar.');
+    });
+  }
+
+  function libraryHtml() {
+    const L = state.library;
+    const total = L.recipes.length;
+    if (!L.open) {
+      return '<div class="card rl-lib-cta"><div><div class="rl-plan-t">Biblioteca de detectores</div>' +
+        '<div class="rl-hero-s">Más de 70 señales listas que van más allá de Apollo: leemos el sitio y el DNS de cada empresa (Meta Business Manager, WhatsApp sin plataforma o con un bot rígido, tiendas en Mercado Libre y Amazon, pasarelas de pago, email marketing, DMARC…) y buscamos su huella pública en internet. Se agregan con un clic, sin costo extra de IA.</div></div>' +
+        '<button class="btn btn-ghost" data-act="lib-open">Explorar biblioteca</button></div>';
+    }
+    let h = '<div class="card rl-lib">' +
+      '<div class="rl-plan-top"><div class="rl-plan-t">Biblioteca de detectores' + (total ? ' <span class="rl-muted rl-xs">' + total + ' señales</span>' : '') + '</div>' +
+      '<div class="rl-plan-btns"><button class="btn btn-ghost btn-sm" data-act="lib-close">Cerrar</button></div></div>';
+    if (L.loading && !L.loaded) return h + '<div class="rl-empty"><span class="rl-spin"></span> Cargando la biblioteca…</div></div>';
+    if (L.error) return h + '<div class="rl-alert rl-alert-err">' + esc(L.error) + ' <button class="rl-link" data-act="lib-retry">Reintentar</button></div></div>';
+    const q = L.q.trim().toLowerCase();
+    const list = L.recipes.filter((r) => (!L.cat || r.category === L.cat) &&
+      (!q || (r.name + ' ' + r.for_who + ' ' + r.rationale).toLowerCase().indexOf(q) !== -1));
+    h += '<div class="rl-lib-bar">' +
+      '<input class="rl-input rl-lib-q" type="search" data-act="lib-q" value="' + esc(L.q) + '" placeholder="Busca por lo que vendes: WhatsApp, Meta Ads, marketplaces, pagos, ciberseguridad…">' +
+      '<div class="rl-lib-cats"><button class="rl-chip' + (!L.cat ? ' is-on' : '') + '" data-act="lib-cat" data-v="">Todas</button>' +
+      L.categories.map((c) => '<button class="rl-chip' + (L.cat === c.id ? ' is-on' : '') + '" data-act="lib-cat" data-v="' + esc(c.id) + '">' + esc(c.label) + '</button>').join('') +
+      '</div></div>';
+    if (!list.length) return h + '<div class="rl-empty">Ninguna señal coincide. Prueba otra palabra o agrega un detector propio describiéndolo abajo.</div></div>';
+    const added = {};
+    state.detectors.forEach((d) => { if (d.config && d.config.recipe_id) added[d.config.recipe_id] = true; });
+    h += '<div class="rl-lib-grid">' + list.map((r) => {
+      const kind = DETECTOR_KINDS[r.kind] || { label: r.kind, icon: '•' };
+      const isAdded = added[r.id] || (r.added_detector_id && state.detectors.some((d) => d.id === r.added_detector_id));
+      const btn = isAdded ? '<span class="rl-lib-added">✓ En tu plan</span>'
+        : !r.available ? '<span class="rl-muted rl-xs" title="' + esc(r.unavailable_reason || '') + '">No disponible</span>'
+        : '<button class="btn btn-ghost btn-sm" data-act="lib-add" data-id="' + esc(r.id) + '"' + (state.busy ? ' disabled' : '') + '>Agregar</button>';
+      return '<div class="rl-lib-item' + (isAdded ? ' is-added' : '') + '">' +
+        '<div class="rl-lib-kind">' + kind.icon + ' ' + esc(kind.label) + '</div>' +
+        '<div class="rl-lib-name">' + esc(r.name) + '</div>' +
+        '<div class="rl-lib-why">' + esc(r.rationale) + '</div>' +
+        '<div class="rl-lib-for">Para: ' + esc(r.for_who) + '</div>' +
+        (!r.available && r.unavailable_reason ? '<div class="rl-lib-for">' + esc(r.unavailable_reason) + '</div>' : '') +
+        '<div class="rl-lib-foot">' + btn + '</div></div>';
+    }).join('') + '</div></div>';
+    return h;
+  }
+
   function planHtml() {
     if (state.loading && !state.loaded) return '<div class="rl-empty"><span class="rl-spin"></span> Cargando…</div>';
+    // Las etiquetas en español de las huellas llegan con la biblioteca: se
+    // piden una vez al abrir el plan (si falla, las tarjetas usan la clave).
+    if (!state.library.loaded && !state.library.loading && !state.library.tried) {
+      state.library.tried = true;
+      global.setTimeout(loadLibrary, 0);
+    }
     const p = state.plan;
     const hasPlan = p && state.detectors.length;
     let h = '';
@@ -945,7 +1041,7 @@
         promptBoxHtml() +
         '<div class="rl-hero-btns"><button class="btn btn-primary" data-act="generate"' + (state.busy ? ' disabled' : '') + '>Generar plan con IA</button>' +
         '<span class="rl-cost">' + (p && p.generated_at ? '<span data-credit-cost="radar_plan" data-credit-pos="inside"></span>' : 'El primer plan es gratis') + '</span></div></div>';
-      return h;
+      return h + libraryHtml();
     }
     const countries = Array.isArray(p.countries) ? p.countries : [];
     h += '<div class="card rl-planbox">' +
@@ -967,6 +1063,7 @@
       '</div>';
     const sorted = state.detectors.slice().sort((a, b) => (b.enabled - a.enabled) || (b.weight - a.weight));
     h += '<div class="rl-dets">' + sorted.map(detectorCardHtml).join('') + '</div>';
+    h += libraryHtml();
     h += addDetectorHtml();
     return h;
   }
@@ -1115,6 +1212,11 @@
         case 'add-open': state.addForm.open = true; render(); break;
         case 'add-close': state.addForm.open = false; render(); break;
         case 'add-submit': addDetector(); break;
+        case 'lib-open': state.library.open = true; if (!state.library.loaded) loadLibrary(); else render(); break;
+        case 'lib-close': state.library.open = false; render(); break;
+        case 'lib-retry': loadLibrary(); break;
+        case 'lib-cat': state.library.cat = t.getAttribute('data-v') || ''; render(); break;
+        case 'lib-add': addRecipe(id); break;
         case 'det-delete': deleteDetector(id); break;
         case 'toggle': state.expanded[id] = !state.expanded[id]; render(); break;
         case 'save': saveSignals([id], false); break;
@@ -1173,6 +1275,7 @@
       const act = t.getAttribute('data-act');
       if (act === 'plan-prompt') state.planPrompt = t.value;
       else if (act === 'add-desc') state.addForm.description = t.value;
+      else if (act === 'lib-q') { state.library.q = t.value; scheduleRender(); }
       else if (act === 'filter-q') { state.filters.q = t.value; scheduleRender(); }
       else if (act === 'fq') { state.filterQ = t.value; scheduleRender(); }
       else if (act === 'filter-score') { const b = t.closest('.rl-range') && t.closest('.rl-range').querySelector('b'); if (b) b.textContent = t.value; }
@@ -1331,6 +1434,21 @@
       '.rl-dets{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}',
       '.rl-det{padding:14px 16px;display:flex;flex-direction:column;gap:7px}.rl-det.is-off{opacity:.62}.rl-det.is-unavail{border-style:dashed}',
       '.rl-det-top{display:flex;align-items:center;gap:8px}',
+      '.rl-lib-cta{padding:16px 18px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}.rl-lib-cta>div{flex:1;min-width:260px;display:flex;flex-direction:column;gap:4px}',
+      '.rl-lib{padding:16px 18px;display:flex;flex-direction:column;gap:12px}',
+      '.rl-lib-bar{display:flex;flex-direction:column;gap:8px}',
+      '.rl-lib-cats{display:flex;gap:6px;flex-wrap:wrap}',
+      '.rl-chip{font-family:inherit;font-size:12px;font-weight:600;padding:5px 11px;border-radius:999px;border:1px solid var(--hair);background:var(--surface2);color:var(--ink-3);cursor:pointer}',
+      '.rl-chip:hover{color:var(--ink)}.rl-chip.is-on{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}',
+      '.rl-lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}',
+      '.rl-lib-item{border:1px solid var(--hair);border-radius:var(--r-sm);background:var(--surface2);padding:12px;display:flex;flex-direction:column;gap:6px}',
+      '.rl-lib-item.is-added{opacity:.75}',
+      '.rl-lib-kind{font-size:10.5px;font-weight:700;color:var(--ink-4);text-transform:uppercase;letter-spacing:.05em}',
+      '.rl-lib-name{font-size:13.5px;font-weight:700;color:var(--ink)}',
+      '.rl-lib-why{font-size:12.5px;color:var(--ink-3);line-height:1.45}',
+      '.rl-lib-for{font-size:11.5px;color:var(--ink-4);line-height:1.4}',
+      '.rl-lib-foot{margin-top:auto;padding-top:4px;display:flex;justify-content:flex-end}',
+      '.rl-lib-added{font-size:12px;font-weight:600;color:var(--green,#059669)}',
       '.rl-det-kind{font-size:11px;font-weight:700;color:var(--ink-4);text-transform:uppercase;letter-spacing:.05em;flex:1}',
       '.rl-origin{font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--surface3);color:var(--ink-4)}',
       '.rl-switch{position:relative;width:34px;height:20px;flex:none;cursor:pointer}.rl-switch input{opacity:0;width:0;height:0}.rl-switch span{position:absolute;inset:0;background:var(--surface3);border-radius:999px;transition:.2s}.rl-switch span:before{content:"";position:absolute;width:14px;height:14px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 2px rgba(0,0,0,.2)}.rl-switch input:checked+span{background:var(--accent)}.rl-switch input:checked+span:before{transform:translateX(14px)}.rl-switch input:disabled+span{opacity:.4;cursor:not-allowed}',

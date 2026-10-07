@@ -21,13 +21,14 @@ Contexto de tu empresa  →  Intelligence Hub  →  Radar  →  Listas  →  Cam
 
 | Pieza | Archivo | Qué hace |
 |---|---|---|
-| Plan de señales | `supabase/functions/radar-plan/` | `generate` (IA diseña 5-10 detectores desde contexto + Hub + prompt), `activate`, `pause`, `run_now`, `add_detector` (lenguaje natural → config), `sync_context`, `refresh_from_hub` |
+| Plan de señales | `supabase/functions/radar-plan/` | `generate` (IA diseña 5-10 detectores desde contexto + Hub + prompt), `activate`, `pause`, `run_now`, `add_detector` (lenguaje natural → config), `recipes` / `add_recipe` (biblioteca), `sync_context`, `refresh_from_hub` |
+| Biblioteca de detectores | `_shared/radar-recipes.ts` | 71 recetas listas por tipo de vendedor (ver abajo). Se agregan con un clic, sin IA, y el planificador las recibe como repertorio |
 | Motor | `supabase/functions/radar-monitor/` | pg_cron cada 2 min (service role) o "Buscar ahora" (JWT del usuario). Unidades acotadas: lotes de decision makers, ticks de detectores, avisos WhatsApp, plan ← Hub |
 | Catálogo y validación | `_shared/radar-plan.ts` | `KIND_META`, `normalizeDetector/normalizePlan`, `signalFingerprint`, `PLAN_JSON_SPEC`. **Espejo de `DETECTOR_KINDS` en `js/radar-live.js`** |
 | Detectores | `_shared/radar-detectors.ts` | Un `tick()` por metodología (ver tabla) |
 | Puntaje | `_shared/radar-score.ts` | fit ICP (país/industria/tamaño) 35 % · fuerza 35 % · recencia 15 % · alcanzabilidad 15 %, × peso del detector. `adjustWeight` aprende del 👍/👎 |
 | Países | `_shared/radar-geo.ts` | 'México' / 'MX' / 'mexicana' → 'Mexico'. `countryFit` decide `in / out / unknown` |
-| Sondeo web | `_shared/site-probe.ts` | Huellas en el HTML de la portada (píxel de Meta, wa.me, widgets de WhatsApp, chats, ecommerce, CRM, agenda, CMS) + reglas `must_have / must_not_have` |
+| Huella digital | `_shared/site-probe.ts` | ~180 huellas en el HTML de la portada **y en el DNS público del dominio** (TXT, MX y `_dmarc` por DNS sobre HTTPS, `dns.google`) + reglas `must_have / must_not_have` con grupos (`any_whatsapp_platform`, `any_marketplace`…) |
 | Apollo | `_shared/radar-apollo.ts` | people search (0 créditos) agrupada por empresa; org search (1 crédito/página) para financiamiento; `findDecisionMakers` |
 | Prompts | `_shared/radar-planner.ts`, `_shared/radar-research.ts` | Plan, detector desde texto, detectores desde el Hub; investigador de noticias (compartido con `generate-radar`) |
 | Contexto | `_shared/radar-context.ts` | Bloque de texto del vendedor + targets + filtros base de Apollo + digest del Hub |
@@ -41,9 +42,10 @@ Contexto de tu empresa  →  Intelligence Hub  →  Radar  →  Listas  →  Cam
 |---|---|---|---|
 | `news` | LLM con búsqueda web (motor "radar", Perplexity recomendado) | tokens | Prensa, comunicados, registros, job boards. Recencia garantizada en código (`withinWindow`) |
 | `tenders` | LLM con búsqueda web sobre portales de compras públicas (SECOP II, CompraNet, Mercado Público, SEACE, COMPR.AR, PLACE, SAM.gov) | tokens | Entidades que licitan lo que el cliente vende |
+| `web_footprint` | LLM con búsqueda web de un **estado**, no de un evento (`FOOTPRINT_SYSTEM` en `radar-research.ts`): sin ventana de fechas, la URL de evidencia tiene que mostrar la huella | tokens (precio y cadencia mínima de búsqueda web) | Tiendas oficiales en Mercado Libre / Amazon / Shopee, directorios y asociaciones, expositores de ferias, quejas públicas. Una señal por empresa y detector |
 | `hiring` | Apollo organization search: `q_organization_job_titles`, `organization_num_jobs_range`, `organization_job_posted_at_range` | **1 crédito de Apollo por página** (máx. 3 páginas por ciclo) | Empresas con vacantes activas para los cargos que delatan la necesidad |
 | `technographics` | Apollo organization search: `currently_using_any_of_technology_uids` (solo "usa X": la búsqueda de empresas no tiene "no usa X"; la ausencia de una herramienta se caza con `site_probe.must_not_have`) | **1 crédito de Apollo por página** (máx. 3) | Empresas que usan ciertas herramientas |
-| `site_probe` | Apollo organization search (población del ICP: 300 empresas por ciclo) + GET de la portada pública | **1 crédito de Apollo por página** (máx. 3) | Ej. "botón wa.me sin ninguna herramienta de WhatsApp ni chatbot": WhatsApp atendido a mano |
+| `site_probe` | Apollo organization search (población del ICP; `keywords` y `population_using_any` la acotan) + GET de la portada pública + DNS del dominio cuando la regla lo pide | **1 crédito de Apollo por página** (máx. 3) | Ver "Huella digital" abajo |
 | `leadership` | Apollo people search: `person_days_in_current_title_range` | 0 | Decision makers nuevos en el cargo (≤ N días). La señal es la persona: la empresa puede venir sin dominio ni país (ver abajo) |
 | `growth` | Apollo organization search: `organization_headcount_growth_*` | **1 crédito de Apollo por página** (máx. 3) | Plantilla +X % en 6/12/24 meses |
 | `website_visitors` | Apollo people search: `website_visitors_people_*` (solo con la cuenta propia del cliente y la función Website Visitors) | 0 | Empresas que visitaron el sitio del cliente |
@@ -53,6 +55,16 @@ Contexto de tu empresa  →  Intelligence Hub  →  Radar  →  Listas  →  Cam
 **Por qué los detectores de empresa usan la búsqueda de organizaciones (2026-09-18).** `/mixed_people/api_search` devuelve la organización de cada persona solo con `name` y banderas `has_*`: sin `id`, `primary_domain`, `website_url` ni `country`. Con esa población el sondeo del sitio terminaba cada ciclo con "0 sitios sondeados" (no había dominio que leer), el filtro por país no podía descartar nada (país vacío pasa como "desconocido") y los decision makers no se podían buscar por dominio. `/mixed_companies/search` sí trae `id` + dominio + sitio (país, industria y plantilla tampoco vienen, pero el país ya lo filtró Apollo con `organization_locations`), a 1 crédito de Apollo por página de 100. `leadership` y `website_visitors` filtran por la persona y no tienen equivalente de empresa: siguen en people search.
 
 Reglas comunes que aplica el motor a TODO candidato: fuera de los países del plan → se descarta; propia empresa, competidores y exclusiones → se descartan; `fingerprint` único por usuario (por empresa+detector en los kinds por API, por empresa+titular en noticias/licitaciones); una señal descartada no resucita; los decision makers que la propia búsqueda de Apollo trajo se guardan gratis, el resto se busca en lotes de 3 (`dm_status = pending`). El correo se revela solo al guardar en una lista (igual que siempre).
+
+## Huella digital y biblioteca (2026-10-07)
+
+Pedido del dueño: los detectores eran vagos y se quedaban en lo que Apollo filtra. Ahora el Radar lee lo que cada empresa muestra de sí misma.
+
+**Huellas del sondeo** (`TECH_RULES`, ~180, por categoría): publicidad (píxeles de Meta, Google Ads, TikTok, LinkedIn, Pinterest, X, Criteo…), **Meta** (dominio verificado en Business Manager por etiqueta `facebook-domain-verification` o registro TXT, Messenger, Facebook/Instagram Shops), redes sociales enlazadas, analítica, **WhatsApp** separado en *botón* (wa.me o plugin) y *plataforma* (WATI, Botmaker, Treble, Gupshup, Zenvia, B2Chat, Leadsales, Blip, Yalo, Sirena, Callbell, Chattigo, Octadesk, Twilio, Infobip…), **chatbots** separados en *de menús* (Landbot, Typebot, Chatfuel, ManyChat, Cliengo…) y *con IA*, chat en vivo, **marketplaces** (Mercado Libre, Amazon, Shopee, Falabella, Walmart, Liverpool, Coppel, Ripley/Paris, Linio, Magalu, AliExpress, Dafiti, Claro Shop), apps de delivery, app móvil propia, plataformas de tienda, **pasarelas de pago** locales y globales + BNPL, envíos, email marketing, reseñas, CRM y soporte, agenda (también clínicas, restaurantes y hoteles), ATS y bolsas de empleo, banner de cookies, CMS y constructores, **correo del dominio por DNS** (Google Workspace, Microsoft 365, Zoho, SPF, DMARC y su política, servicios de envío masivo), herramientas que verificaron el dominio (Search Console, Atlassian, DocuSign, Adobe, Apple, Zoom) y contenido del sitio (© de hace 3+ años, sin viewport móvil, formulario sin aviso de privacidad, franquicias, distribuidores, sucursales, cotizaciones, demos, precios, idiomas, empleos).
+
+Reglas del sondeo: cada clave de `must_have` tiene que estar (para "una de varias" están los grupos `any_*`), ninguna de `must_not_have`. Si la regla necesita el DNS y la consulta falla, o la portada pesa menos de 1.200 caracteres (cascarón de JS, parking), el dominio cuenta como "sin respuesta": una regla "sin DMARC" o "sin chat" no se afirma sobre lo que no se pudo leer. Los enlaces del sitio a su propia marca (rappi.com.mx → rappi.com.co) se ignoran. Lo que un sitio inyecta después por Tag Manager no está en el HTML: las reglas "sin X" son más fiables con herramientas que se instalan en el código.
+
+**Biblioteca** (`RADAR_RECIPES`, Plan de señales → «Explorar biblioteca»): recetas en 9 categorías (WhatsApp y conversación; Meta, redes y publicidad; Marketplaces y e-commerce; Pagos y logística; Email, CRM y ventas; Sitio web y presencia; Correo, seguridad y cumplimiento; Crecimiento y expansión; Talento y liderazgo). Ejemplos: «Atiende WhatsApp a mano», «Chatbot rígido de menús», «Dominio verificado en Meta Business Manager», «Business Manager activo pero sin píxel», «Vende en marketplaces», «Tiendas oficiales en Mercado Libre», «Tienda sin pasarela de pago local», «Dominio sin DMARC», «Correo sin Google ni Microsoft», «Vende franquicias». Agregar una receta no cobra IA (el monitoreo se cobra como cualquier detector), queda con origen `user` y `config.recipe_id`; las consultas con `{country}`, `{industry}`, `{ml_site}` y `{amazon_site}` se rellenan en código con los países del plan y la industria del ICP (también cuando el planificador copia una receta). El planificador recibe la biblioteca y la instrucción de que al menos la mitad del plan sea `site_probe` o `web_footprint` cuando la oferta toca algo visible en un sitio. Todas las recetas validan en `deno test` (`radar-footprint.test.ts`).
 
 ## Integraciones necesarias (checklist para producción)
 
@@ -68,7 +80,7 @@ Secrets en Supabase (Project → Edge Functions → Secrets):
 
 Pasos manuales:
 
-1. Aplicar `supabase/migrations/20260918000001_radar_signal_engine.sql`.
+1. Aplicar `supabase/migrations/20260918000001_radar_signal_engine.sql` y `20261007000003_radar_web_footprint.sql` (amplía el CHECK de `radar_detectors.kind` con `web_footprint`).
 2. `supabase functions deploy radar-plan radar-monitor generate-radar` (el workflow *Deploy Edge Functions* ya los incluye por defecto).
 3. Programar el cron (SQL editor), con la URL del proyecto y la service role:
    ```sql
@@ -85,7 +97,8 @@ Pasos manuales:
 ## Lo que NO se integró y por qué
 
 - **Meta Ad Library API**: fuera de la Unión Europea solo devuelve anuncios políticos o de temas sociales, así que no sirve para saber si una empresa latinoamericana pauta. "¿Hace anuncios?" se responde con el sondeo del sitio (píxel de Meta, etiqueta de Google Ads, píxel de TikTok, Insight Tag de LinkedIn).
-- **Meta Business Manager**: no hay API pública para saber si una empresa lo tiene. La señal equivalente y observable es el sondeo del sitio: botón `wa.me` sin ninguna herramienta de WhatsApp Business ni chatbot detrás.
+- **Meta Business Manager**: no hay API pública para saber si una empresa lo tiene, pero verificar el dominio en el Business Manager deja una huella pública: la etiqueta `<meta name="facebook-domain-verification">` en la portada o un registro TXT `facebook-domain-verification=` en el DNS. El sondeo lee las dos (`meta_domain_verification`, 2026-10-07).
+- **APIs de búsqueda de los marketplaces**: Mercado Libre restringió su búsqueda pública con token; los vendedores se encuentran por los enlaces de su sitio (`any_marketplace`) y por búsqueda web con `site:` (`web_footprint`).
 - **Portales de licitaciones por API**: solo SECOP II (Colombia) tiene API abierta limpia; el resto se cubre por búsqueda web con el modo `tenders`, que exige la URL del aviso como evidencia.
 - **Intent data (Bombora) de Apollo**: no está expuesta en la API de búsqueda; queda fuera.
 

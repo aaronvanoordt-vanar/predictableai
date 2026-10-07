@@ -19,6 +19,13 @@
  *   POST { action: "add_detector", kind, description }
  *        La IA traduce la descripción a la config del kind elegido
  *        (RADAR_DETECTOR_COST créditos). Origen 'user'.
+ *   POST { action: "recipes" }      → la biblioteca de detectores listos
+ *        (_shared/radar-recipes.ts) con su disponibilidad para esta cuenta y
+ *        cuáles ya están en el plan.
+ *   POST { action: "add_recipe", recipe_id }
+ *        Agrega una receta tal cual (sin IA, sin costo extra: el monitoreo
+ *        se cobra como cualquier detector). Las consultas se rellenan con los
+ *        países del plan y la industria del ICP. Origen 'user'.
  *   POST { action: "sync_context" } → recalcula
  *        intel_hub_intake.radar_suggested_triggers desde el plan. Si
  *        icp_buying_triggers está vacío lo rellena; si el usuario ya
@@ -38,6 +45,9 @@ import {
   detectorFromText, detectorsFromHub, generatePlan, kindAvailable, type Availability,
 } from "../_shared/radar-planner.ts";
 import { CREDIT_COSTS, minCadenceHours } from "../_shared/credit-costs.ts";
+import { RADAR_RECIPES, RECIPE_CATEGORIES, buildRecipeDetector, recipeById } from "../_shared/radar-recipes.ts";
+import { canonicalCountries } from "../_shared/radar-geo.ts";
+import { TECH_GROUPS, TECH_RULES, techLabel } from "../_shared/site-probe.ts";
 import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
 
 // Keep in sync with js/credit-costs.js (radar_plan / radar_detector_custom).
@@ -300,6 +310,51 @@ Deno.serve(withLlmContext(async (req: Request) => {
       await settleReservation(supa, user.id, RADAR_DETECTOR_COST, RADAR_DETECTOR_COST, "radar_detector_custom");
       await syncContext(supa, user.id).catch(() => {});
       return json({ status: "ok", detector: row, credits_charged: RADAR_DETECTOR_COST }, 200, h);
+    }
+
+    if (action === "recipes") {
+      const [av, { data: dets }] = await Promise.all([
+        availabilityFor(supa, user.id),
+        supa.from("radar_detectors").select("id, config").eq("user_id", user.id),
+      ]);
+      const added: Record<string, string> = {};
+      for (const d of (Array.isArray(dets) ? dets : []) as Array<{ id: string; config: Json }>) {
+        const rid = d?.config?.recipe_id;
+        if (typeof rid === "string") added[rid] = d.id;
+      }
+      return json({
+        status: "ok",
+        categories: RECIPE_CATEGORIES,
+        // Etiquetas de las huellas del sondeo para que la tarjeta del detector diga
+        // "sin Plataforma de WhatsApp" y no "sin any_whatsapp_platform".
+        probe_labels: Object.fromEntries([...TECH_RULES.map((r) => r.key), ...Object.keys(TECH_GROUPS)].map((k) => [k, techLabel(k)])),
+        recipes: RADAR_RECIPES.map((r) => ({
+          id: r.id, category: r.category, kind: r.kind, name: r.name, for_who: r.for_who, rationale: r.rationale,
+          available: kindAvailable(r.kind, av),
+          unavailable_reason: kindAvailable(r.kind, av) ? "" : unavailableReason(r.kind, av),
+          added_detector_id: added[r.id] || null,
+        })),
+      }, 200, h);
+    }
+
+    if (action === "add_recipe") {
+      const recipe = recipeById(body.recipe_id);
+      if (!recipe) return json({ error: "Esa receta no existe." }, 400, h);
+      const { data: same } = await supa.from("radar_detectors").select("id")
+        .eq("user_id", user.id).eq("plan_id", plan.id).contains("config", { recipe_id: recipe.id }).limit(1);
+      if (Array.isArray(same) && same.length) return json({ error: "Ese detector ya está en tu plan." }, 409, h);
+      const [ctx, av] = await Promise.all([loadSellerContext(supa, user.id), availabilityFor(supa, user.id)]);
+      if (!kindAvailable(recipe.kind, av)) return json({ error: unavailableReason(recipe.kind, av) }, 400, h);
+      const planCountries = canonicalCountries(plan.countries);
+      const countries = planCountries.length ? planCountries : ctx.targets.countries;
+      const det = buildRecipeDetector(recipe, { countries, industries: ctx.targets.industries });
+      if (!det) return json({ error: "La receta no produjo un detector válido." }, 500, h);
+      // El plan aún sin generar no tiene países: se fijan los del contexto
+      // para que el motor filtre igual que con un plan de la IA.
+      if (!planCountries.length && countries.length) await supa.from("radar_plans").update({ countries }).eq("id", plan.id);
+      const [row] = await insertDetectors(supa, user.id, plan.id, [det], "user", av);
+      await syncContext(supa, user.id).catch(() => {});
+      return json({ status: "ok", detector: row }, 200, h);
     }
 
     if (action === "sync_context") {
