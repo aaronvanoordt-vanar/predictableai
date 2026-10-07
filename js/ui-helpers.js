@@ -17,8 +17,22 @@
     return c;
   }
 
+  // Avisos visibles por texto: el mismo aviso repetido (p. ej. «Sesión
+  // expirada» cada vez que se abre una conversación) no se apila; se renueva
+  // el que ya está y lleva la cuenta.
+  const liveToasts = new Map();
+
   function toast(message, type = "info") {
     const container = ensureToastContainer();
+    const key = type + "|" + message;
+    const live = liveToasts.get(key);
+    if (live && live.el.isConnected) {
+      live.count += 1;
+      live.el.textContent = message + " (×" + live.count + ")";
+      clearTimeout(live.timer);
+      live.timer = scheduleHide(live.el, key);
+      return;
+    }
     const colors = {
       info:    { bg: "var(--accent-soft, #EEF2FF)", bd: "var(--hair-3, rgba(31,75,255,.30))",  fg: "var(--accent-ink, #1A3FD6)" },
       success: { bg: "var(--green-soft, #E9F7F0)", bd: "rgba(14,169,104,.35)", fg: "var(--green, #0B7F4F)" },
@@ -35,8 +49,12 @@
       animation: fadeIn .25s ease;`;
     t.textContent = message;
     container.appendChild(t);
+    liveToasts.set(key, { el: t, count: 1, timer: scheduleHide(t, key) });
+  }
 
-    setTimeout(() => {
+  function scheduleHide(t, key) {
+    return setTimeout(() => {
+      liveToasts.delete(key);
       t.style.opacity = "0";
       t.style.transition = "opacity .3s";
       setTimeout(() => t.remove(), 300);

@@ -336,25 +336,50 @@
     return state.uid;
   }
 
+  var SESSION_EXPIRED_MSG = 'Sesión expirada. Vuelve a iniciar sesión.';
+  function sessionExpiredError() {
+    var err = new Error(SESSION_EXPIRED_MSG);
+    err.status = 401;
+    err.code = 'session_expired';
+    return err;
+  }
+  async function refreshAccessToken() {
+    try {
+      var r = await sb().auth.refreshSession();
+      return r && r.data && r.data.session ? r.data.session.access_token : null;
+    } catch (e) { return null; }
+  }
+
   async function edgeFetch(fnName, payload) {
     var sess = await sb().auth.getSession();
     var token = sess && sess.data && sess.data.session ? sess.data.session.access_token : null;
-    if (!token) throw new Error('Sesión expirada. Vuelve a iniciar sesión.');
+    if (!token) throw sessionExpiredError();
     // FormData (un archivo de la bandeja) va como multipart: el navegador pone el boundary.
     var isForm = typeof FormData !== 'undefined' && payload instanceof FormData;
-    var headers = { Authorization: 'Bearer ' + token };
-    if (!isForm) headers['Content-Type'] = 'application/json';
-    var res = await fetch(global.SUPABASE_CONFIG.url + '/functions/v1/' + fnName, {
-      method: 'POST',
-      headers: headers,
-      body: isForm ? payload : JSON.stringify(payload),
-    });
+    function send(tok) {
+      var headers = { Authorization: 'Bearer ' + tok };
+      if (!isForm) headers['Content-Type'] = 'application/json';
+      return fetch(global.SUPABASE_CONFIG.url + '/functions/v1/' + fnName, {
+        method: 'POST',
+        headers: headers,
+        body: isForm ? payload : JSON.stringify(payload),
+      });
+    }
+    var res = await send(token);
+    // Un 401 suele ser un access token vencido que el navegador no alcanzó a
+    // renovar (pestaña dormida, equipo suspendido): se renueva y se reintenta
+    // UNA vez antes de dar la sesión por perdida.
+    if (res.status === 401) {
+      var fresh = await refreshAccessToken();
+      if (!fresh) throw sessionExpiredError();
+      res = await send(fresh);
+    }
     var body = null;
     try { body = await res.json(); } catch (e) { /* no-JSON */ }
     if (!res.ok) {
       // Las edge functions devuelven {error: código, message: texto humano}.
       var detail = (body && (body.message || body.detail || body.error)) || ('HTTP ' + res.status);
-      if (res.status === 401) detail = 'Sesión expirada. Vuelve a iniciar sesión.';
+      if (res.status === 401) throw sessionExpiredError();
       if (res.status === 404) detail = 'La función ' + fnName + ' no está desplegada todavía (supabase functions deploy ' + fnName + ').';
       if (body && body.error === 'insufficient_credits') detail = 'No tienes créditos suficientes' + (body.cost ? ' (necesitas ' + body.cost + ')' : '') + '.';
       var err = new Error(detail);
