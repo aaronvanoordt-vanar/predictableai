@@ -229,7 +229,23 @@ async function withSessionTarget<T>(targets: string[], send: (to: string) => Pro
 
 const FILE_LABEL: Record<string, string> = { image: "📷 Foto", video: "🎬 Video", audio: "🎤 Audio", document: "📄 Documento" };
 
-async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | null, contactRef: string, text: string, template: string, file: File | null = null, voice = false): Promise<Json> {
+/** Mensaje de la bandeja al que se responde (solo del propio usuario), reducido a lo que se guarda en el payload. */
+async function loadReplyTo(db: SupabaseClient, userId: string, id: string): Promise<Json | null> {
+  if (!UUID_RE.test(id)) return null;
+  const { data } = await db.from("inbox_messages")
+    .select("id, direction, channel, body, provider_message_id, payload")
+    .eq("id", id).eq("user_id", userId).maybeSingle();
+  if (!data) return null;
+  const pid = String(data.provider_message_id ?? "");
+  const wamid = String(data.payload?.wamid ?? "") || (/^wamid\./.test(pid) ? pid : "");
+  return {
+    ref: { id: data.id, direction: data.direction, channel: data.channel, body: String(data.body ?? "").slice(0, 240) },
+    wamid: wamid || null,
+    emailId: data.channel === "email" && data.direction === "out" && pid ? pid : null,
+  };
+}
+
+async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | null, contactRef: string, text: string, template: string, file: File | null = null, voice = false, replyTo: Json | null = null): Promise<Json> {
   const phone = wati.digits(member?.phone || contactRef);
   if (!phone) throw new HttpError("El lead no tiene teléfono.", 400, "member_without_phone");
   // Las tres lecturas son independientes: van en paralelo (antes eran tres
@@ -320,7 +336,13 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
 
   let r: { id: string | null; conversationId: string | null };
   try {
-    r = await withSessionTarget(targets, (to) => wati.sendText(creds, to, text, acc.config?.channel || undefined));
+    try {
+      r = await withSessionTarget(targets, (to) => wati.sendText(creds, to, text, acc.config?.channel || undefined, replyTo?.wamid || undefined));
+    } catch (e) {
+      // WATI no aceptó citar el mensaje: se envía igual (la cita queda en la bandeja).
+      if (!replyTo?.wamid || !(e instanceof wati.WatiError && e.status >= 400 && e.status < 500 && e.status !== 404)) throw e;
+      r = await withSessionTarget(targets, (to) => wati.sendText(creds, to, text, acc.config?.channel || undefined));
+    }
   } catch (e) {
     const status = e instanceof wati.WatiError && e.status >= 400 && e.status < 500 ? 400 : 502;
     // Cuerpo completo de WATI en los logs de la función: es lo que dice el motivo real.
@@ -342,7 +364,7 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
     sent_at: new Date().toISOString(),
     campaign_id: en?.campaign_id ?? null,
     enrollment_id: en?.id ?? null,
-    payload: { source: "inbox_reply", wati_message_id: r.id },
+    payload: { source: "inbox_reply", wati_message_id: r.id, ...(replyTo ? { reply_to: replyTo.ref } : {}) },
   }).select("*").single().then((r) => r), spendCredits(db, userId)]);
   if (error) throw new HttpError("El mensaje salió pero no se pudo guardar en la bandeja: " + error.message, 500);
   return row;
@@ -398,7 +420,7 @@ async function sendWhatsAppFile(
 
 // ── Email (Apollo) ──────────────────────────────────────────────────────────
 
-async function sendEmail(db: SupabaseClient, userId: string, member: Json, text: string, subjectIn: string): Promise<Json> {
+async function sendEmail(db: SupabaseClient, userId: string, member: Json, text: string, subjectIn: string, replyTo: Json | null = null): Promise<Json> {
   const email = String(member.email ?? "");
   if (!email || /email_not_unlocked/.test(email)) throw new HttpError("El lead no tiene email revelado.", 400, "member_without_email");
   // Credenciales, enrolamiento y último email nuestro (asunto por defecto e
@@ -473,7 +495,8 @@ async function sendEmail(db: SupabaseClient, userId: string, member: Json, text:
       await db.from("prospect_list_members").update({ apollo_contact_id: contactId }).eq("id", member.id);
     }
     const draftBody: Json = { contact_id: contactId, subject, body_html: bodyToHtml(text) };
-    if (lastOut?.provider_message_id) draftBody.in_response_to_emailer_message_id = lastOut.provider_message_id;
+    const inResponseTo = replyTo?.emailId || lastOut?.provider_message_id;
+    if (inResponseTo) draftBody.in_response_to_emailer_message_id = inResponseTo;
     const draft = await apolloAuth.apolloCall(auth, "POST", "/emailer_messages", draftBody);
     const messageId = draft?.emailer_message?.id;
     if (!messageId) throw new HttpError("Apollo no devolvió el borrador del correo.", 502);
@@ -500,7 +523,7 @@ async function sendEmail(db: SupabaseClient, userId: string, member: Json, text:
       sent_at: new Date().toISOString(),
       campaign_id: campaignId,
       enrollment_id: en?.id ?? null,
-      payload: { source: "inbox_reply", subject, provider_thread_id: threadId, from_email: from.email, apollo_mode: auth.mode, in_reply_to: lastOut?.provider_message_id ?? null },
+      payload: { source: "inbox_reply", subject, provider_thread_id: threadId, from_email: from.email, apollo_mode: auth.mode, in_reply_to: inResponseTo ?? null, ...(replyTo ? { reply_to: replyTo.ref } : {}) },
     }).select("*").single().then((r) => r), spendCredits(db, userId)]);
     if (error) throw new HttpError("El correo salió pero no se pudo guardar en la bandeja: " + error.message, 500);
     return row;
@@ -704,9 +727,11 @@ Deno.serve(async (req) => {
       member = data;
     }
 
+    // Responder a un mensaje concreto (no aplica a plantillas ni archivos).
+    const replyTo = body?.reply_to && !file && !template ? await loadReplyTo(db, user.id, String(body.reply_to)) : null;
     const row = channel === "whatsapp"
-      ? await sendWhatsApp(db, user.id, member, contactRef, text, file ? "" : template, file, voice)
-      : await sendEmail(db, user.id, member, text, String(body?.subject ?? ""));
+      ? await sendWhatsApp(db, user.id, member, contactRef, text, file ? "" : template, file, voice, replyTo)
+      : await sendEmail(db, user.id, member, text, String(body?.subject ?? ""), replyTo);
     return json({ message: row }, 200, cors);
   } catch (err) {
     if (err instanceof HttpError) {

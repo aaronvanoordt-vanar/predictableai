@@ -127,6 +127,7 @@
   };
 
   var state = {
+    replyTo: {},               // conv.key → mensaje (inbox_messages.id) al que se responde
     pendingOut: [],            // respuestas de la bandeja pintadas antes de que inbox-send conteste
     pane: null,
     root: null,
@@ -1184,6 +1185,22 @@
     filteredConversations(buildConversations()).forEach(function (c) { ids = ids.concat(c.unreadIds || []); });
     return markIdsRead(ids);
   }
+  /** Mensaje de la conversación al que se está respondiendo (null si ya no existe). */
+  function replyTarget(conv) {
+    var id = state.replyTo[conv.key];
+    if (!id) return null;
+    return conv.messages.find(function (x) { return x.id === id; }) || null;
+  }
+  function quoteRef(msg) {
+    return { id: msg.id, direction: msg.direction, channel: msg.channel, body: String(msg.body || '').slice(0, 240) };
+  }
+  /** Texto corto de un mensaje para citarlo (sin el «Asunto:» de los emails). */
+  function quoteSnippet(body, channel) {
+    var t = String(body || '');
+    if (chanKey(channel) === 'email') t = t.replace(/^Asunto: [^\n]*\n+/, '');
+    t = t.replace(/\s+/g, ' ').trim();
+    return t.length > 140 ? t.slice(0, 140) + '…' : t;
+  }
   async function sendReply(conv, channel, body, subject, template, onOptimistic, file) {
     if (!conv.member_id && !(channel === 'whatsapp' && conv.contact_ref)) throw new Error('Este contacto no está en tus listas; guárdalo en una lista para responderle.');
     if (file && channel !== 'whatsapp') file = null;
@@ -1200,6 +1217,9 @@
       return sendReply(conv, channel, text, subject, null, null, null);
     }
     var payload = { channel: channel, body: text };
+    var quoted = !file && !template && channel !== 'linkedin' ? replyTarget(conv) : null;
+    if (quoted) payload.reply_to = quoted.id;
+    else if (file) delete state.replyTo[conv.key];
     if (conv.member_id) payload.member_id = conv.member_id; else payload.contact_ref = conv.contact_ref;
     if (template) payload.template = template;
     if (channel === 'email') payload.subject = String(subject || '').trim() || 'Re:';
@@ -1216,13 +1236,14 @@
         member_id: conv.member_id || null, contact_ref: conv.contact_ref || '', channel: channel,
         direction: 'out', body: channel === 'email' ? 'Asunto: ' + payload.subject + '\n\n' + text : (text || (file ? FILE_LABEL[kind] : '')),
         status: 'sending', sent_at: new Date().toISOString(),
-        payload: channel === 'email' ? { source: 'inbox_reply', subject: payload.subject }
-          : (file ? { source: 'inbox_reply', type: kind, media: true, file_name: file.name, local_url: localUrl, voice: !!file.__voice } : { source: 'inbox_reply' }),
+        payload: channel === 'email' ? { source: 'inbox_reply', subject: payload.subject, reply_to: quoted ? quoteRef(quoted) : undefined }
+          : (file ? { source: 'inbox_reply', type: kind, media: true, file_name: file.name, local_url: localUrl, voice: !!file.__voice } : { source: 'inbox_reply', reply_to: quoted ? quoteRef(quoted) : undefined }),
         provider: channel === 'whatsapp' ? 'wati' : undefined,
       };
       state.pendingOut.unshift(local);
       state.inbox.unshift(local);
       state.replyDraft[conv.key] = '';
+      delete state.replyTo[conv.key];
       if (file) clearReplyFile(conv.key);
       if (onOptimistic) onOptimistic();
     }
@@ -1245,6 +1266,7 @@
     } catch (e) {
       dropLocal();
       if (local && !state.replyDraft[conv.key]) state.replyDraft[conv.key] = text; // no perder lo escrito
+      if (quoted && !state.replyTo[conv.key]) state.replyTo[conv.key] = quoted.id;
       if (file && !state.replyFile[conv.key]) state.replyFile[conv.key] = file; // ni el adjunto
       throw e;
     }
@@ -1752,6 +1774,15 @@
       '#prospecting-shell .cmp-rec .grow { flex:1; }',
       '@keyframes cmpRecPulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }',
       '@media (prefers-reduced-motion: reduce) { #prospecting-shell .cmp-rec-dot { animation:none; } }',
+      '#prospecting-shell .cmp-quote { border-left:3px solid var(--accent-2); background:var(--surface3); border-radius:8px; padding:4px 8px; margin-bottom:6px; font-size:12px; min-width:0; }',
+      '#prospecting-shell .cmp-quote.out { border-left-color:var(--text3); }',
+      '#prospecting-shell .cmp-quote-who { font-weight:600; font-size:11px; color:var(--text2); }',
+      '#prospecting-shell .cmp-quote-txt { color:var(--text2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }',
+      '#prospecting-shell .cmp-quote-edit { display:flex; align-items:center; gap:8px; margin:0; }',
+      '#prospecting-shell .cmp-quote-edit .grow { flex:1; min-width:0; }',
+      '#prospecting-shell .cmp-reply-to { border:0; background:transparent; color:var(--text3); font-size:11px; cursor:pointer; padding:2px 4px; opacity:0; transition:opacity var(--dur-1, .15s); }',
+      '#prospecting-shell .cmp-rmsg:hover .cmp-reply-to, #prospecting-shell .cmp-reply-to:focus-visible { opacity:1; }',
+      '@media (hover: none) { #prospecting-shell .cmp-reply-to { opacity:1; } }',
       '#prospecting-shell .cmp-reply { border-top:1px solid var(--hair); padding:12px 14px; display:grid; gap:8px; }',
       '#prospecting-shell .cmp-reply textarea { width:100%; min-height:72px; }',
       '#prospecting-shell .cmp-reply input { width:100%; }',
@@ -3624,6 +3655,13 @@
       }
       var isSystem = chanKey(msg.channel) === 'linkedin' && msg.direction === 'out' && !msg.body;
       var b = h('div', { class: 'cmp-bubble ' + (isSystem ? 'system' : (msg.direction === 'in' ? 'in' : 'out')) + (msg.body ? '' : ' empty-body') });
+      if (pl.reply_to && !isSystem) {
+        var qm = conv.messages.find(function (x) { return x.id === pl.reply_to.id; });
+        var q = h('div', { class: 'cmp-quote ' + (pl.reply_to.direction === 'in' ? 'in' : 'out') });
+        q.appendChild(h('div', { class: 'cmp-quote-who', text: pl.reply_to.direction === 'in' ? convName(conv) : 'Tú' }));
+        q.appendChild(h('div', { class: 'cmp-quote-txt', text: quoteSnippet(qm ? qm.body : pl.reply_to.body, pl.reply_to.channel) || 'Mensaje' }));
+        b.appendChild(q);
+      }
       var ctx = msg.direction === 'out' ? stepContext(msg) : '';
       if (ctx) b.appendChild(h('div', { class: 'cmp-bubble-ctx', text: ctx }));
       if (chanKey(msg.channel) === 'email' && pl.subject) b.appendChild(h('div', { class: 'cmp-bubble-subj', text: pl.subject }));
@@ -3645,7 +3683,7 @@
       }
       b.appendChild(meta);
       if (isSystem) { thread.appendChild(b); return; }
-      thread.appendChild(messageWithReactions(msg, b, reacts.slots[msg.id] || {}));
+      thread.appendChild(messageWithReactions(msg, b, reacts.slots[msg.id] || {}, conv));
     });
     card.appendChild(thread);
     card.appendChild(renderReplyBox(conv));
@@ -3695,9 +3733,13 @@
    * Globo + sus reacciones (chips debajo). Solo lectura: WATI no permite
    * reaccionar por API (ver el comentario de "Reacciones de WhatsApp").
    */
-  function messageWithReactions(msg, bubble, slot) {
+  function messageWithReactions(msg, bubble, slot, conv) {
     var wrap = h('div', { class: 'cmp-rmsg ' + (msg.direction === 'in' ? 'in' : 'out') });
     wrap.appendChild(bubble);
+    // Responder a este mensaje: solo email y WhatsApp (LinkedIn no se envía por API) y solo filas ya guardadas.
+    if (conv && msg.status !== 'sending' && !/^local-/.test(String(msg.id)) && ['whatsapp', 'email'].indexOf(chanKey(msg.channel)) !== -1) {
+      wrap.appendChild(h('button', { type: 'button', class: 'cmp-reply-to', 'data-action': 'reply-to', 'data-key': conv.key, 'data-msg': msg.id, title: 'Responder a este mensaje', 'aria-label': 'Responder a este mensaje', text: '↩ Responder' }));
+    }
     var chips = h('div', { class: 'cmp-react-chips' });
     if (slot.in && reactionEmoji(slot.in)) {
       chips.appendChild(h('span', { class: 'cmp-react-chip', title: 'Reacción del lead · ' + fmtDateTime(slot.in.sent_at), text: reactionEmoji(slot.in) }));
@@ -3795,6 +3837,16 @@
       if (att.__voice) chip.appendChild(h('audio', { src: voicePreviewUrl(att), controls: 'controls', preload: 'metadata' }));
       chip.appendChild(h('button', { type: 'button', class: 'cmp-attach-x', 'data-action': 'reply-file-clear', 'data-key': conv.key, title: att.__voice ? 'Descartar la nota de voz' : 'Quitar el archivo', 'aria-label': att.__voice ? 'Descartar la nota de voz' : 'Quitar el archivo', text: '✕' }));
       box.appendChild(chip);
+    }
+    var qt = chosen !== 'linkedin' && !att ? replyTarget(conv) : null;
+    if (qt) {
+      var qchip = h('div', { class: 'cmp-quote cmp-quote-edit ' + (qt.direction === 'in' ? 'in' : 'out') });
+      var qbody = h('div', { class: 'grow' });
+      qbody.appendChild(h('div', { class: 'cmp-quote-who', text: 'Respondiendo a ' + (qt.direction === 'in' ? convName(conv) : 'tu mensaje') }));
+      qbody.appendChild(h('div', { class: 'cmp-quote-txt', text: quoteSnippet(bubbleText(qt), qt.channel) || 'Mensaje' }));
+      qchip.appendChild(qbody);
+      qchip.appendChild(h('button', { type: 'button', class: 'cmp-attach-x', 'data-action': 'reply-to-clear', 'data-key': conv.key, title: 'Quitar la cita', 'aria-label': 'Quitar la cita', text: '✕' }));
+      box.appendChild(qchip);
     }
     var ta = h('textarea', { placeholder: chosen === 'whatsapp' ? (att ? (isAudio ? 'Agrega un mensaje (opcional, sale después del audio)…' : 'Agrega un pie (opcional)…') : 'Escribe tu respuesta por WhatsApp…') : 'Escribe tu respuesta por email…', 'data-action': 'reply-draft', 'data-key': conv.key });
     ta.value = state.replyDraft[conv.key] || '';
@@ -4144,6 +4196,19 @@
         throw err;
       });
     }
+    if (action === 'reply-to' && key) {
+      state.replyTo[key] = btn.getAttribute('data-msg');
+      var cvR = findConv(key);
+      if (cvR && ['whatsapp', 'email'].indexOf(state.replyChannel[key]) === -1) {
+        var mR = cvR.messages.find(function (x) { return x.id === state.replyTo[key]; });
+        if (mR) state.replyChannel[key] = chanKey(mR.channel);
+      }
+      renderKeepingReplyFocus(key);
+      var taR = state.root.querySelector('textarea[data-action="reply-draft"][data-key="' + key + '"]');
+      if (taR) taR.focus();
+      return;
+    }
+    if (action === 'reply-to-clear' && key) { delete state.replyTo[key]; return renderKeepingReplyFocus(key); }
     if (action === 'reply-attach' && key) {
       var fin = state.root.querySelector('input[data-action="reply-file"][data-key="' + key + '"]');
       if (fin) { fin.value = ''; fin.click(); }
