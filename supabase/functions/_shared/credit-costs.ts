@@ -52,7 +52,7 @@ export type CreditAction = keyof typeof CREDIT_COSTS;
 
 /** Tipos de detector del Radar según lo que cuesta correrlos 30 días. */
 const RADAR_PEOPLE_KINDS = new Set(["leadership", "website_visitors"]);
-const RADAR_WEB_KINDS = new Set(["news", "tenders"]);
+const RADAR_WEB_KINDS = new Set(["news", "tenders", "web_footprint"]);
 const RADAR_PRESENCE_KINDS = new Set(["presence"]);
 
 export const RADAR_MONTH_COST = {

@@ -14,15 +14,15 @@
  * integración necesita) — se cambian juntos en el mismo PR.
  */
 
-import { isTechKey } from "./site-probe.ts";
+import { isTechKey, probeKeysSpec } from "./site-probe.ts";
 import { NEWS_WINDOWS, normalizeWindowDays } from "./radar-recency.ts";
 
 export type DetectorKind =
   | "news" | "tenders" | "hiring" | "technographics" | "site_probe"
-  | "funding" | "leadership" | "growth" | "presence" | "website_visitors";
+  | "funding" | "leadership" | "growth" | "presence" | "website_visitors" | "web_footprint";
 
 export const DETECTOR_KINDS: DetectorKind[] = [
-  "news", "tenders", "hiring", "technographics", "site_probe",
+  "news", "tenders", "web_footprint", "hiring", "technographics", "site_probe",
   "funding", "leadership", "growth", "presence", "website_visitors",
 ];
 
@@ -49,6 +49,11 @@ export const KIND_META: Record<DetectorKind, KindMeta> = {
     description: "Convocatorias y adjudicaciones en los portales de compras de cada país objetivo.",
     requires: ["llm_web"], defaultCadenceHours: 48, identity: "headline",
   },
+  web_footprint: {
+    label: "Huella pública en internet",
+    description: "Búsqueda web de un ESTADO, no de una noticia: tiendas oficiales en Mercado Libre o Amazon, directorios, expositores, quejas públicas… La URL de evidencia muestra la huella.",
+    requires: ["llm_web"], defaultCadenceHours: 168, identity: "company",
+  },
   hiring: {
     label: "Contrataciones",
     description: "Empresas con vacantes activas para los cargos que delatan la necesidad (Apollo, 1 crédito de Apollo por página).",
@@ -60,8 +65,8 @@ export const KIND_META: Record<DetectorKind, KindMeta> = {
     requires: ["apollo"], defaultCadenceHours: 72, identity: "company",
   },
   site_probe: {
-    label: "Sondeo del sitio web",
-    description: "Se lee la portada pública del sitio: píxel de Meta, botón de WhatsApp sin proceso, chat, tienda online… (población: Apollo, 1 crédito de Apollo por página)",
+    label: "Huella digital del sitio",
+    description: "Se lee la portada pública del sitio y el DNS del dominio: ~180 huellas (Meta Business Manager, botón de WhatsApp sin plataforma, bots de menús, marketplaces, pasarelas de pago, email marketing, DMARC…). Población: Apollo, 1 crédito de Apollo por página.",
     requires: ["apollo", "probe"], defaultCadenceHours: 72, identity: "company",
   },
   funding: {
@@ -162,6 +167,8 @@ export function normalizeConfig(kind: DetectorKind, raw: unknown): Record<string
   if (c.max_companies !== undefined && c.max_companies !== null && c.max_companies !== "") {
     cfg.max_companies = maxCompaniesOf(c);
   }
+  // De qué receta de la biblioteca salió (radar-recipes.ts): la UI la marca como "agregada".
+  if (typeof c.recipe_id === "string" && /^[a-z0-9_]{2,40}$/.test(c.recipe_id)) cfg.recipe_id = c.recipe_id;
   return cfg;
 }
 
@@ -209,7 +216,17 @@ function normalizeKindConfig(kind: DetectorKind, raw: unknown): Record<string, u
       const must_have = strList(c.must_have, 8, 40).filter(isTechKey);
       const must_not_have = strList(c.must_not_have, 8, 40).filter(isTechKey);
       if (!must_have.length && !must_not_have.length) return null;
-      return { must_have, must_not_have, keywords: strList(c.keywords, 6, 60) };
+      // population_using_any: tecnologías de Apollo que acotan la POBLACIÓN a
+      // sondear (p. ej. solo tiendas Shopify y después "sin Klaviyo").
+      return {
+        must_have, must_not_have, keywords: strList(c.keywords, 6, 60),
+        population_using_any: strList(c.population_using_any, 10, 60).map(techUid).filter(Boolean),
+      };
+    }
+    case "web_footprint": {
+      const queries = strList(c.queries, 12, 200);
+      if (!queries.length) return null;
+      return { queries, sources: strList(c.sources, 8, 80) };
     }
     case "funding": {
       return {
@@ -388,16 +405,18 @@ export function signalFingerprint(input: {
 
 // ── el JSON que le pedimos al modelo ────────────────────────────────────────
 
+const PROBE_KEYS = probeKeysSpec();
+
 export const PLAN_JSON_SPEC = `{
   "hypothesis": "3-5 sentences in neutral Latin-American Spanish (tuteo), addressed to the seller: which buying signals you will monitor and why each one means a company needs them NOW. Concrete, no filler.",
   "countries_override": ["ONLY if the seller's TARGET DESCRIPTION explicitly names other countries than the context: canonical English names (e.g. 'Mexico', 'Peru'). Otherwise []."],
   "detectors": [
     {
-      "kind": "news | tenders | hiring | technographics | site_probe | funding | leadership | growth | presence | website_visitors",
+      "kind": "news | tenders | web_footprint | hiring | technographics | site_probe | funding | leadership | growth | presence | website_visitors",
       "name": "≤ 60 chars, Spanish, what this detector hunts (e.g. 'Vacantes de SDR abiertas', 'Sin automatización de WhatsApp')",
       "rationale": "1-2 sentences, Spanish: why this observable fact means the company needs the seller now",
       "weight": 0-100 (how strongly this signal predicts a purchase; spread the values, do not cluster),
-      "cadence_hours": how often to re-run (news/tenders 48, leadership 48, hiring/funding/technographics/site_probe/growth 72, presence 168, website_visitors 6; lower values are raised to these floors),
+      "cadence_hours": how often to re-run (news/tenders 48, leadership 48, hiring/funding/technographics/site_probe/growth 72, web_footprint/presence 168, website_visitors 6; lower values are raised to these floors),
       "decision_maker_titles": ["3-6 English job titles of who buys this at the target company"],
       "config": { see CONFIG BY KIND },
       "signal_index": "0-based index of the MARKET ANALYSIS signal this detector covers (omit if it covers none)"
@@ -407,10 +426,13 @@ export const PLAN_JSON_SPEC = `{
 
 CONFIG BY KIND (every field shown is required unless marked optional):
 - news:            { "queries": ["3-5 concrete web-search queries, in the language of the sources (Spanish for LATAM), each a DIFFERENT way into the signal, written to surface dated recent items (press, filings, job boards, announcements)"], "sources": ["kinds of sources to trust"], "window_days": 7|30|90|180|365 }
+- web_footprint:   { "queries": ["3-5 web-search queries that surface companies in a STATE (not a dated event): official stores on a marketplace (e.g. 'site:mercadolibre.com.mx tienda oficial cosmética'), sellers on Amazon/Shopee/Falabella, members of an association or directory, exhibitors listed on a trade-fair site, companies with public complaints on Reclame Aqui/Profeco/Google reviews, app pages with bad reviews. Use site: operators and local-language terms"], "sources": ["kinds of pages that prove the footprint"] } — no date window: the evidence URL must SHOW the footprint (the store page, the listing, the complaint).
 - tenders:         { "queries": ["3-5 queries against public-procurement portals of the target countries (SECOP II Colombia, CompraNet México, Mercado Público Chile, SEACE Perú, COMPR.AR Argentina, PLACE España, SAM.gov USA…) for the goods/services the seller sells"], "portals": ["portal names"], "window_days": 30|90 }
 - hiring:          { "job_titles": ["2-8 job titles whose active postings reveal the need, in English (Apollo)"], "min_jobs": 1, "posted_within_days": 30, "job_locations": ["optional cities/countries"] }
 - technographics:  { "using_any": ["Apollo technology uids the target USES, e.g. 'salesforce', 'hubspot', 'shopify', 'wordpress_org', 'zendesk', 'intercom'"] } — non-empty. There is NO "not using" filter: to hunt for the ABSENCE of a tool use site_probe with must_not_have. Combine with the seller's ICP automatically.
-- site_probe:      { "must_have": ["keys"], "must_not_have": ["keys"] } — keys: meta_pixel, google_ads_tag, tiktok_pixel, linkedin_insight, gtm, ga4, hotjar, clarity, whatsapp_click_to_chat, whatsapp_widget, wati, manychat, respond_io, kommo, cliengo, intercom, drift, hubspot_chat, zendesk, tidio, crisp, freshchat, tawk, livechat, chatbot_ai, shopify, woocommerce, vtex, magento, tiendanube, mercadopago, stripe, calendly, hubspot_meetings, pipedrive, salesforce, zoho, wordpress, wix, squarespace, webflow, or the groups any_chat, any_whatsapp_tool, any_ads_pixel, any_ecommerce, any_crm, any_booking, any_analytics. Example "sells WhatsApp AI automation": { "must_have": ["whatsapp_click_to_chat"], "must_not_have": ["any_whatsapp_tool", "chatbot_ai"] }.
+- site_probe:      { "must_have": ["keys"], "must_not_have": ["keys"], "keywords": ["optional Apollo keyword tags to narrow the population, e.g. 'restaurant', 'dental clinic'"], "population_using_any": ["optional Apollo technology uids to narrow the population, e.g. 'shopify'"] } — reads the company's homepage AND its public DNS records (TXT/MX/DMARC). Every must_have key must be present (use a group for "any of"); no must_not_have key may be present. Keys by category:
+${PROBE_KEYS}
+  Examples: "sells WhatsApp automation" → { "must_have": ["any_whatsapp_button"], "must_not_have": ["any_whatsapp_platform", "any_chatbot"] } (WhatsApp answered by hand) or { "must_have": ["any_rule_bot"] } (rigid menu bot to replace); "sells Meta ads / social commerce" → { "must_have": ["meta_domain_verification"] } (domain verified in Meta Business Manager) or { "must_have": ["any_social"], "must_not_have": ["any_ads_pixel"] }; "sells marketplace tech" → { "must_have": ["any_marketplace"] } or { "must_have": ["any_ecommerce"], "must_not_have": ["any_marketplace"] }; "sells email security" → { "must_not_have": ["dmarc_enforced"] }.
 - funding:         { "window_days": 90, "min_amount": 0 (USD, optional), "stages": ["optional: seed, series_a, series_b…"] }
 - leadership:      { "titles": ["2-8 buyer titles in English"], "max_days_in_role": 90 }
 - growth:          { "months": 6|12|24, "min_growth_pct": 20 }

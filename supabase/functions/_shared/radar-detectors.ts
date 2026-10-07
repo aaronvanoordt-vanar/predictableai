@@ -11,9 +11,11 @@
  * el único que filtra por país, deduplica por fingerprint, puntúa y guarda.
  *
  *   news / tenders     LLM + web_search (una consulta por tick)     0 créditos Apollo
+ *   web_footprint      LLM + web_search de un ESTADO (sin ventana)  0 créditos Apollo
  *   hiring             Apollo ORGANIZATION search + filtros de vacantes   1 crédito Apollo / página
  *   technographics     Apollo ORGANIZATION search + tecnologías en uso    1 crédito Apollo / página
- *   site_probe         Apollo ORGANIZATION search (población) + GET portada 1 crédito Apollo / página
+ *   site_probe         Apollo ORGANIZATION search (población) + GET portada
+ *                      + DNS público (TXT/MX/DMARC) si la regla lo pide 1 crédito Apollo / página
  *   growth             Apollo ORGANIZATION search + crecimiento plantilla 1 crédito Apollo / página
  *   funding            Apollo ORGANIZATION search + rondas            1 crédito Apollo / página
  *   leadership         Apollo people search + días en el cargo      0
@@ -41,8 +43,10 @@ import {
 import { apolloBaseFilters, apolloPeopleFilters, type SellerContext } from "./radar-context.ts";
 import { COUNTRY_CODE, canonicalCountry, countryLabelEs } from "./radar-geo.ts";
 import { cutoffIso, recencyBlock } from "./radar-recency.ts";
-import { RESEARCH_SYSTEM, filterByWindow, shapeResearchCompanies } from "./radar-research.ts";
-import { detectTech, evaluateProbeRules, fetchHomepage, probeHeadline, type ProbeRules } from "./site-probe.ts";
+import { FOOTPRINT_SYSTEM, RESEARCH_SYSTEM, filterByWindow, shapeResearchCompanies } from "./radar-research.ts";
+import {
+  detectTech, detectedLabels, evaluateProbeRules, fetchDnsText, fetchHomepage, probeHeadline, probeNeeds, type ProbeRules,
+} from "./site-probe.ts";
 import { maxCompaniesOf, type DetectorKind } from "./radar-plan.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -98,7 +102,7 @@ export interface TickResult {
 
 /** Cuánto suele tardar un tick de cada kind: el motor no arranca uno si no le queda ese tiempo. */
 export const TICK_ESTIMATE_MS: Record<DetectorKind, number> = {
-  news: 100_000, tenders: 100_000, hiring: 20_000, technographics: 20_000, site_probe: 45_000,
+  news: 100_000, tenders: 100_000, web_footprint: 100_000, hiring: 20_000, technographics: 20_000, site_probe: 45_000,
   funding: 20_000, leadership: 20_000, growth: 20_000, presence: 20_000, website_visitors: 20_000,
 };
 
@@ -117,6 +121,7 @@ function pagesFor(t: TickContext): number {
 const PROBE_BATCH = 12;                 // dominios sondeados en paralelo por tick
 const PROBE_TIMEOUT_MS = 8000;
 const PROBE_MEMORY = 600;               // dominios recordados (no re-sondear en 30 días)
+const MIN_PROBE_HTML = 1200;            // menos que esto no es una portada legible
 
 function baseCandidate(org: ApolloOrg | null | undefined, g?: OrgGroup): Candidate {
   const domain = g ? g.domain : orgDomain(org);
@@ -164,6 +169,9 @@ async function tickNews(t: TickContext): Promise<TickResult> {
   if (!queries.length || i >= queries.length) return { candidates: [], cursor: {}, done: true };
   const windowDays = Number(cfg.window_days) || 30;
   const isTenders = t.detector.kind === "tenders";
+  // web_footprint busca un estado (una tienda, un listado), no un evento: sin
+  // ventana de fechas; la evidencia tiene que mostrar la huella.
+  const isFootprint = t.detector.kind === "web_footprint";
   const exclusions = [t.ctx.companyName, ...t.ctx.competitorNames, ...t.ctx.excludedNames].filter(Boolean);
   const prompt =
     t.ctx.text +
@@ -180,7 +188,7 @@ async function tickNews(t: TickContext): Promise<TickResult> {
     (t.countries.length
       ? `\n\n=== GEOGRAPHY (HARD REQUIREMENT) ===\nOnly companies operating in: ${t.countries.map(countryLabelEs).join(", ")}. Anything else is discarded automatically.`
       : "") +
-    recencyBlock(windowDays) +
+    (isFootprint ? "" : recencyBlock(windowDays)) +
     (isTenders ? TENDERS_BLOCK : "") +
     `\n\nRun exactly one web_search with this query now and return the JSON described in your instructions.`;
 
@@ -188,8 +196,8 @@ async function tickNews(t: TickContext): Promise<TickResult> {
   let note = "";
   try {
     const res = await callLLM({
-      engine: t.engine, system: RESEARCH_SYSTEM, user: prompt, maxTokens: 2500,
-      webSearch: 1, searchAfterDate: cutoffIso(windowDays), claudeWebSearchTool: "web_search_20260209",
+      engine: t.engine, system: isFootprint ? FOOTPRINT_SYSTEM : RESEARCH_SYSTEM, user: prompt, maxTokens: 2500,
+      webSearch: 1, ...(isFootprint ? {} : { searchAfterDate: cutoffIso(windowDays) }), claudeWebSearchTool: "web_search_20260209",
       perplexityModel: "sonar",
       timeoutMs: 95_000, retries: 1, logPrefix: "[radar-monitor]",
     });
@@ -197,7 +205,9 @@ async function tickNews(t: TickContext): Promise<TickResult> {
     try { parsed = parseLlmJson(res.text); } catch { note = "respuesta ilegible, consulta omitida"; }
     // El tope por consulta respeta el de empresas del detector (config.max_companies).
     const shaped = shapeResearchCompanies(parsed, Math.min(25, maxCompaniesOf(t.detector.config)));
-    const { kept, droppedOld, droppedUndated } = filterByWindow(shaped, windowDays);
+    const { kept, droppedOld, droppedUndated } = isFootprint
+      ? { kept: shaped, droppedOld: 0, droppedUndated: 0 }
+      : filterByWindow(shaped, windowDays);
     if (droppedOld || droppedUndated) note = `${droppedOld} fuera de fecha, ${droppedUndated} sin fecha`;
     candidates = kept.map((c) => ({
       name: c.name,
@@ -210,7 +220,7 @@ async function tickNews(t: TickContext): Promise<TickResult> {
       headline: c.signal_headline || c.why_fit.slice(0, 70),
       why_fit: c.why_fit,
       strength: c.signal_strength,
-      signal_date: c.signal_date,
+      signal_date: c.signal_date || (isFootprint ? today() : ""),
       evidence: c.evidence,
       facts: { query: queries[i] },
       decision_maker_titles: c.decision_maker_titles,
@@ -442,6 +452,9 @@ async function tickSiteProbe(t: TickContext): Promise<TickResult> {
   if (!queue.length && !exhausted) {
     const extra: Record<string, unknown> = {};
     if (Array.isArray(cfg.keywords) && cfg.keywords.length) extra.q_organization_keyword_tags = cfg.keywords;
+    if (Array.isArray(cfg.population_using_any) && cfg.population_using_any.length) {
+      extra.currently_using_any_of_technology_uids = cfg.population_using_any;
+    }
     const { orgs: found, totalPages } = await orgPage(t, extra, page);
     fetched += found.length;
     for (const org of found) {
@@ -460,12 +473,25 @@ async function tickSiteProbe(t: TickContext): Promise<TickResult> {
     page += 1;
   }
 
-  // 2. Sondear un lote.
+  // 2. Sondear un lote: la portada y, si la regla lo pide, el DNS público.
+  //    Si falta una de las dos fuentes que la regla necesita, el dominio
+  //    cuenta como "sin respuesta": una regla "sin DMARC" o "sin chat" no se
+  //    puede afirmar sobre lo que no se pudo leer.
+  const needs = probeNeeds(rules);
   const batch = queue.slice(0, PROBE_BATCH);
   queue = queue.slice(PROBE_BATCH);
   const results = await Promise.all(batch.map(async (d) => {
-    const r = await fetchHomepage(d, PROBE_TIMEOUT_MS);
-    return { domain: d, ok: r.ok, found: r.ok ? detectTech(r.html) : [], url: r.finalUrl || "https://" + d };
+    const [page, dns] = await Promise.all([
+      needs.html || !needs.dns ? fetchHomepage(d, PROBE_TIMEOUT_MS) : Promise.resolve(null),
+      needs.dns ? fetchDnsText(d, PROBE_TIMEOUT_MS) : Promise.resolve(null),
+    ]);
+    // Una portada de menos de ~1.200 caracteres es un cascarón (redirección
+    // por JS, página de parking): no dice qué tiene el sitio.
+    const htmlOk = !page || (page.ok && page.html.length >= MIN_PROBE_HTML);
+    const dnsOk = !dns || dns.ok;
+    const ok = htmlOk && dnsOk;
+    const found = ok ? detectTech(page?.html || "", dns?.text || "", { selfDomain: d }) : [];
+    return { domain: d, ok, found, url: page?.finalUrl || "https://" + d, usedDns: !!dns };
   }));
   const candidates: Candidate[] = [];
   const nowIso = new Date().toISOString();
@@ -479,11 +505,13 @@ async function tickSiteProbe(t: TickContext): Promise<TickResult> {
     const c = baseCandidate(info.org);
     c.domain = r.domain;
     c.website = r.url;
+    const labels = detectedLabels(r.found);
+    const what = needs.html && r.usedDns ? "la portada y el DNS" : r.usedDns ? "los registros DNS" : "la portada";
     c.headline = probeHeadline(r.found, rules) || "Sitio coincide con la señal";
-    c.why_fit = `Leímos la portada de ${r.domain}: ${probeHeadline(r.found, rules).toLowerCase()}. Es el hueco exacto que cubre tu oferta.`;
+    c.why_fit = `Leímos ${what} de ${r.domain}: ${probeHeadline(r.found, rules).toLowerCase()}. Es el hueco exacto que cubre tu oferta.`;
     c.strength = "alta";
-    c.facts = { detected: r.found, rules };
-    c.evidence = [{ url: r.url, summary: "Portada del sitio (sondeo del " + nowIso.slice(0, 10) + "): " + (r.found.length ? r.found.join(", ") : "sin huellas conocidas"), published_at: nowIso.slice(0, 10) }];
+    c.facts = { detected: r.found, detected_labels: labels.slice(0, 20), rules };
+    c.evidence = [{ url: r.url, summary: (r.usedDns ? "Sitio y DNS del dominio" : "Portada del sitio") + " (sondeo del " + nowIso.slice(0, 10) + "): " + (labels.length ? labels.slice(0, 12).join(", ") : "sin huellas conocidas"), published_at: nowIso.slice(0, 10) }];
     candidates.push(c);
   }
 
@@ -621,7 +649,8 @@ async function tickPresence(t: TickContext): Promise<TickResult> {
 export async function runTick(t: TickContext): Promise<TickResult> {
   switch (t.detector.kind) {
     case "news":
-    case "tenders": return tickNews(t);
+    case "tenders":
+    case "web_footprint": return tickNews(t);
     case "hiring": return tickHiring(t);
     case "technographics": return tickTechnographics(t);
     case "site_probe": return tickSiteProbe(t);

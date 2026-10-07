@@ -2816,8 +2816,9 @@ function saxIcon(kind) {
   // lo bloquea y radar-plan lo revalida en el servidor).
   const MKA_KIND_LABEL = {
     news: 'Noticias', tenders: 'Licitaciones', hiring: 'Contrataciones', technographics: 'Tecnologías en uso',
-    site_probe: 'Sondeo del sitio', funding: 'Financiamiento', leadership: 'Cambio de liderazgo',
+    site_probe: 'Huella digital del sitio', funding: 'Financiamiento', leadership: 'Cambio de liderazgo',
     growth: 'Crecimiento de plantilla', presence: 'Presencia local', website_visitors: 'Visitas a tu web',
+    web_footprint: 'Huella pública en internet',
   };
   const MKA_MODULE_LABEL = { radar: 'Radar', campaign: 'Campañas', search: 'Buscar', context: 'Contexto' };
   function marketReport() { return STATE.reports[MARKET_KEY] || null; }

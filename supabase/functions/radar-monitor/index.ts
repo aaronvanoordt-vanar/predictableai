@@ -329,7 +329,8 @@ async function detectorUnit(supa: Json, claimed: { det: Json; plan: Json }): Pro
   const logs: string[] = [];
   try {
     let knownNames: string[] = [];
-    if (KIND_META[kind].identity === "headline") {
+    // Las búsquedas web reciben las empresas ya entregadas para no repetirlas.
+    if (KIND_META[kind].identity === "headline" || kind === "web_footprint") {
       const { data: known } = await supa.from("radar_signals").select("company_name")
         .eq("detector_id", det.id).order("last_seen_at", { ascending: false }).limit(120);
       knownNames = (Array.isArray(known) ? known : []).map((k: Json) => asStr(k.company_name)).filter(Boolean);

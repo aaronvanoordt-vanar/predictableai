@@ -18,6 +18,7 @@ import {
   type AnalysisSignal, type DetectorKind, type NormalizedDetector, type NormalizedPlan, type Requirement,
 } from "./radar-plan.ts";
 import type { SellerContext } from "./radar-context.ts";
+import { fillDetectorPlaceholders, recipesPromptBlock } from "./radar-recipes.ts";
 
 export interface Availability {
   llm_web: boolean;
@@ -35,13 +36,18 @@ function availabilityBlock(av: Availability): string {
   const ok = DETECTOR_KINDS.filter((k) => kindAvailable(k, av));
   const ko = DETECTOR_KINDS.filter((k) => !kindAvailable(k, av));
   return `\n\n=== AVAILABLE DETECTOR KINDS ===\nUse ONLY these kinds: ${ok.join(", ")}.` +
-    (ko.length ? `\nNOT available for this account right now (do not propose them): ${ko.join(", ")}.` : "");
+    (ko.length ? `\nNOT available for this account right now (do not propose them): ${ko.join(", ")}.` : "") +
+    recipesPromptBlock((k) => kindAvailable(k, av));
 }
 
 const PLAN_SYSTEM = `You are the "Radar" strategist of a B2B sales-intelligence platform. Given a seller's company context (and, when present, what their Intelligence Hub says the market is doing), design a PLAN OF BUYING SIGNALS: a set of DETECTORS, each a different, concrete, observable methodology that finds companies that need this seller RIGHT NOW.
 
-Think like the best outbound strategist alive. A buying signal is any observable fact that raises the probability of a purchase in the next weeks: a job posting for the role that will own the problem; a tool the company lacks (or has) on its website; a funding round; a new decision maker in their first 90 days; headcount growth; a public tender for exactly what the seller sells; a local business with no website; a company that visited the seller's site. Reason from the seller's OFFER to the FACT that reveals the need. Examples:
-- Sells WhatsApp AI automation → site_probe { must_have: ["whatsapp_click_to_chat"], must_not_have: ["any_whatsapp_tool","chatbot_ai"] } (a bare wa.me button = no automated process), plus hiring for "customer service agent" / "community manager", plus presence for local businesses with many reviews but no website.
+Think like the best outbound strategist alive. A buying signal is any observable fact that raises the probability of a purchase in the next weeks: a job posting for the role that will own the problem; a tool the company lacks (or has) on its website; a funding round; a new decision maker in their first 90 days; headcount growth; a public tender for exactly what the seller sells; a local business with no website; a company that visited the seller's site. Reason from the seller's OFFER to the FACT that reveals the need.
+
+Do NOT settle for what a database filters (industry, size, "uses HubSpot") nor for generic news queries: the strongest detectors read the company's own digital footprint. site_probe reads every company's homepage AND its public DNS (~180 fingerprints: Meta Business Manager domain verification, WhatsApp buttons vs. WhatsApp platforms vs. rigid menu bots vs. AI bots, marketplace store links, delivery apps, payment gateways, shipping, email marketing, reviews, booking, ATS, cookie consent, CMS/site builders, Google Workspace / Microsoft 365, SPF/DMARC, stale copyright, careers/franchise/distributor pages…). web_footprint finds companies by a public STATE on the internet (official stores on Mercado Libre/Amazon, directories, trade-fair exhibitor lists, public complaints). At least half of the plan should be site_probe or web_footprint when the seller's offer touches anything visible on a website. Examples:
+- Sells WhatsApp AI automation (like Botmaker) → site_probe { must_have: ["any_whatsapp_button"], must_not_have: ["any_whatsapp_platform","any_chatbot"] } (WhatsApp answered by hand) + site_probe { must_have: ["any_rule_bot"], must_not_have: ["chatbot_ai"] } (rigid menu bot to replace) + hiring for "customer service agent" / "community manager" + web_footprint on public complaints about unanswered WhatsApp.
+- Sells Facebook/Instagram ads or social commerce → site_probe { must_have: ["meta_domain_verification"] } (Meta Business Manager active) + site_probe { must_have: ["meta_domain_verification"], must_not_have: ["meta_pixel"] } + site_probe { must_have: ["any_social"], must_not_have: ["any_ads_pixel"] }.
+- Sells tech for marketplace sellers → site_probe { must_have: ["any_marketplace"] } + web_footprint { queries: ["site:{ml_site} tienda oficial {industry}", "marcas {industry} venden en Amazon {country}"] } + site_probe { must_have: ["any_ecommerce"], must_not_have: ["any_marketplace"] } + hiring for "Marketplace Manager".
 - Sells sales-predictability SaaS → hiring for SDR/AE titles, leadership (new VP Sales / CRO, ≤ 90 days), technographics using_any ["hubspot","pipedrive","salesforce"], news about missed-quota / restructured sales teams.
 - Sells asset liquidation in Mexico → news on concurso mercantil filings, tenders for auction services, leadership (new CFO / restructuring officer).
 - Sells cybersecurity → news on breaches/regulatory fines in the target countries, hiring for CISO / security analyst, technographics using_any ["wordpress_org","woocommerce"] (self-hosted stacks that get breached).
@@ -52,6 +58,7 @@ Rules:
 - Geography: the seller sells ONLY in the countries of their context. If the user's TARGET DESCRIPTION explicitly names other countries, put them in countries_override (canonical English names); otherwise countries_override = [].
 - If the user gave a TARGET DESCRIPTION, it is ground truth: build the detectors around it, never replace it with your own idea.
 - If Intelligence Hub content is present, turn its concrete recommendations (segments, roles, keywords, signals) into detectors or into the queries/titles of detectors — that is how market intelligence becomes leads.
+- Copying a PROVEN RECIPE (listed at the end) is encouraged; keep its placeholders as-is, they are filled in code.
 - Apollo technology uids: lowercase, spaces and dots as underscores (salesforce, hubspot, google_analytics, wordpress_org, shopify, zendesk, intercom, mailchimp, stripe, aws, microsoft_dynamics, sap, oracle, zoho_crm, pipedrive, whatsapp_business).
 - Job titles and decision_maker_titles in English (Apollo). Everything the seller reads (hypothesis, name, rationale) in neutral Latin-American Spanish (tuteo).
 - You may use web_search (max 2) ONLY to understand the seller when the context is thin — scope it to their website/LinkedIn.
@@ -119,7 +126,7 @@ export async function generatePlan(opts: {
     return true;
   });
   const covered = coverSignals(plan.detectors, signals, countries);
-  plan.detectors = covered.detectors;
+  plan.detectors = covered.detectors.map((d) => fillDetectorPlaceholders(d, countries, opts.ctx.targets.industries));
   if (!plan.detectors.length) throw new Error("Ningún detector propuesto puede correr con las integraciones disponibles.");
   if (covered.filled.length) console.warn(`${opts.logPrefix || "[radar-plan]"} señales cubiertas en código: ${covered.filled.join(", ")}`);
   return { plan, countries, filledSignals: covered.filled };
@@ -145,7 +152,7 @@ export async function detectorFromText(opts: {
   if (raw && typeof raw === "object") raw.kind = opts.kind; // el kind lo eligió el usuario
   const d = normalizeDetector(raw);
   if (!d) throw new Error("No se pudo convertir la descripción en un detector válido de ese tipo.");
-  return d;
+  return fillDetectorPlaceholders(d, opts.ctx.targets.countries, opts.ctx.targets.industries);
 }
 
 const HUB_SYSTEM = `You maintain the plan of buying-signal detectors of a B2B seller. Their Intelligence Hub just published new market intelligence. Propose 0 to 3 ADDITIONAL detectors that turn the NEW, concrete facts in the Hub (a segment now buying, a role being hired, a regulation with a deadline, a competitor's stumble, a technology wave) into ways of finding companies that need the seller now. Do NOT repeat what the existing detectors already cover; if the Hub adds nothing actionable, return an empty list — that is a valid, honest answer.
@@ -172,5 +179,6 @@ export async function detectorsFromHub(opts: {
   return plan.detectors
     .filter((d) => kindAvailable(d.kind, opts.availability))
     .filter((d) => !names.has((d.kind + "|" + d.name).toLowerCase()))
-    .slice(0, 3);
+    .slice(0, 3)
+    .map((d) => fillDetectorPlaceholders(d, opts.ctx.targets.countries, opts.ctx.targets.industries));
 }
