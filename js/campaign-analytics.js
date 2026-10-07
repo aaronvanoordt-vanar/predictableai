@@ -39,13 +39,22 @@
  * contactos en cantidad. Una cohorte reciente tuvo menos días para responder
  * que la anterior: la nota lo advierte en vez de ajustar los números.
  *
+ * Filtro por canal (Email / WhatsApp / LinkedIn): todo se mide SOLO en ese
+ * canal. Contactos = leads de las campañas que usan el canal (más cualquiera
+ * que haya recibido algo por él); Enviados = con al menos un envío aceptado
+ * por ese canal; la respuesta cuenta en el canal por el que llegó (un lead que
+ * recibió WhatsApp y contestó por email cuenta como respuesta de Email, no de
+ * WhatsApp); visto = leído / abierto en ese canal. La cohorte, la tendencia y
+ * la comparación usan el primer envío por ese canal. Las campañas que no usan
+ * el canal no se muestran.
+ *
  * Tendencia semanal: cada tarjeta muestra, por semana (lunes a domingo, hora
  * local) del PRIMER envío, cuántos leads enviados respondieron, quedaron en
  * visto o sin leer — la misma cohorte del filtro, así una semana reciente
  * todavía puede ganar respuestas. Los sin enviar no tienen semana de envío y
  * no entran. Cada segmento abre a esas personas.
  *
- *   window.campaignAnalytics.compute(enrollments, events, { from, to })   // función pura; from/to en ms, to exclusivo
+ *   window.campaignAnalytics.compute(enrollments, events, { from, to, channel, campaignChannels })   // función pura; from/to en ms, to exclusivo
  *   window.campaignAnalytics.weekly(leads, { maxWeeks })                   // función pura
  */
 (function (global) {
@@ -86,8 +95,15 @@
     { key: 'custom', label: 'Personalizado' },
   ];
   var RANGE_KEY = 'predictable_cana_range';
+  var CHANNELS = [
+    { key: 'all', label: 'Todos' },
+    { key: 'email', label: 'Email' },
+    { key: 'whatsapp', label: 'WhatsApp' },
+    { key: 'linkedin', label: 'LinkedIn' },
+  ];
+  var CHANNEL_KEY = 'predictable_cana_channel';
 
-  var state = { host: null, opts: null, loading: false, error: null, raw: null, data: null, prev: null, open: null, q: '', range: loadRange() };
+  var state = { host: null, opts: null, loading: false, error: null, raw: null, data: null, prev: null, open: null, q: '', range: loadRange(), channel: loadChannel() };
 
   // ── Utilidades ───────────────────────────────────────────────────────────
   function sb() {
@@ -145,11 +161,14 @@
   function compute(enrollments, events, range) {
     var from = range && range.from != null ? range.from : null;
     var to = range && range.to != null ? range.to : null;
+    var channel = range && range.channel ? range.channel : null;
+    var campaignChannels = (range && range.campaignChannels) || null;
     var failed = {};
     (events || []).forEach(function (ev) { if (ev.type === 'failed' && ev.provider_message_id) failed[ev.provider_message_id] = true; });
     var byEn = {};
     (events || []).forEach(function (ev) {
       if (!ev.enrollment_id) return;
+      if (channel && chanKey(ev.channel) !== channel) return;
       var a = byEn[ev.enrollment_id] = byEn[ev.enrollment_id] || { sends: 0, channels: {}, firstSent: null, lastSent: null, seenAt: null, seenChannel: null, repliedAt: null, repliedChannel: null };
       if (SEND_TYPES[ev.type]) {
         if (ev.provider_message_id && failed[ev.provider_message_id]) return;
@@ -168,14 +187,27 @@
     var leads = [];
     (enrollments || []).forEach(function (e) {
       var a = byEn[e.id] || { sends: 0, channels: {}, firstSent: null, lastSent: null, seenAt: null, repliedAt: null };
+      if (channel) {
+        // Solo los leads que este canal pudo alcanzar: su campaña lo usa o ya recibieron algo por él.
+        var uses = campaignChannels && (campaignChannels[e.campaign_id] || []).indexOf(channel) !== -1;
+        if (!uses && !a.sends) return;
+      }
       // Fecha de cohorte: primer envío aceptado, o el enrolamiento si aún no se envió nada.
       var cohortAt = a.firstSent || e.created_at || null;
       if (from != null || to != null) {
         var t = cohortAt ? new Date(cohortAt).getTime() : NaN;
         if (isNaN(t) || (from != null && t < from) || (to != null && t >= to)) return;
       }
-      var repliedAt = e.replied_at || a.repliedAt || null;
-      var replied = !!(e.replied_at || a.repliedAt || e.status === 'replied');
+      var repliedAt, replied;
+      if (channel) {
+        // La respuesta cuenta en el canal por el que llegó.
+        var viaChannel = !!(e.replied_at && e.replied_channel && chanKey(e.replied_channel) === channel);
+        replied = !!(a.repliedAt || viaChannel);
+        repliedAt = a.repliedAt || (viaChannel ? e.replied_at : null) || null;
+      } else {
+        repliedAt = e.replied_at || a.repliedAt || null;
+        replied = !!(e.replied_at || a.repliedAt || e.status === 'replied');
+      }
       var bucket = replied ? 'replied' : (a.sends ? (a.seenAt ? 'seen' : 'unread') : (a.seenAt ? 'seen' : 'notsent'));
       var lead = {
         id: e.id,
@@ -191,7 +223,7 @@
         seenAt: a.seenAt,
         seenChannel: a.seenChannel || null,
         repliedAt: repliedAt,
-        repliedChannel: e.replied_channel || a.repliedChannel || null,
+        repliedChannel: (channel ? (a.repliedChannel || (replied ? channel : null)) : (e.replied_channel || a.repliedChannel)) || null,
       };
       var s = byCampaign[e.campaign_id] = byCampaign[e.campaign_id] || emptyStats();
       addLead(s, lead); addLead(total, lead);
@@ -321,6 +353,27 @@
     } catch (e) { /* modo privado o valor viejo */ }
     return { key: 'all', from: '', to: '' };
   }
+  function loadChannel() {
+    try {
+      var v = localStorage.getItem(CHANNEL_KEY);
+      if (CHANNELS.some(function (c) { return c.key === v; })) return v;
+    } catch (e) { /* modo privado */ }
+    return 'all';
+  }
+  function channelLabel() { var c = CHANNELS.find(function (x) { return x.key === state.channel; }); return c ? c.label : 'Todos'; }
+  /** Opciones de compute(): el rango + el canal elegido y qué canales usa cada campaña. */
+  function computeOpts(bounds) {
+    var map = {};
+    (state.opts.campaigns || []).forEach(function (c) { map[c.id] = c.channels || []; });
+    return Object.assign({}, bounds, { channel: state.channel !== 'all' ? state.channel : null, campaignChannels: map });
+  }
+  function setChannel(key) {
+    state.channel = key;
+    try { localStorage.setItem(CHANNEL_KEY, key); } catch (e) { /* modo privado */ }
+    state.open = null;
+    recompute();
+    rerender();
+  }
   function saveRange() {
     try { localStorage.setItem(RANGE_KEY, JSON.stringify(state.range)); } catch (e) { /* modo privado */ }
   }
@@ -380,9 +433,9 @@
   }
   function recompute() {
     if (!state.raw) return;
-    state.data = compute(state.raw.enrollments, state.raw.events, rangeBounds(state.range));
+    state.data = compute(state.raw.enrollments, state.raw.events, computeOpts(rangeBounds(state.range)));
     var pb = prevBounds(state.range);
-    state.prev = pb ? Object.assign(compute(state.raw.enrollments, state.raw.events, pb), { bounds: pb }) : null;
+    state.prev = pb ? Object.assign(compute(state.raw.enrollments, state.raw.events, computeOpts(pb)), { bounds: pb }) : null;
   }
   function setRange(patch) {
     state.range = Object.assign({}, state.range, patch);
@@ -397,7 +450,7 @@
     global.scrollTo(0, y);
   }
   function renderFilter() {
-    var bar = h('div', { class: 'cana-filter', role: 'group', 'aria-label': 'Filtrar por fecha' });
+    var bar = h('div', { class: 'cana-filter', role: 'group', 'aria-label': 'Filtros' });
     bar.appendChild(h('span', { class: 'cana-filter-lbl', text: 'Período' }));
     var chips = h('div', { class: 'cana-chips' });
     RANGES.forEach(function (r) {
@@ -432,6 +485,21 @@
     else if (rangeActive()) note += ' Elige un período con fecha de inicio para comparar con el anterior.';
     else note += ' Elige un período para compararlo con el anterior.';
     bar.appendChild(h('div', { class: 'cana-note', style: 'flex-basis:100%', text: note }));
+
+    // Canal: segunda fila del mismo bloque de filtros.
+    bar.appendChild(h('span', { class: 'cana-filter-lbl', text: 'Canal' }));
+    var cchips = h('div', { class: 'cana-chips', role: 'group', 'aria-label': 'Filtrar por canal' });
+    CHANNELS.forEach(function (ch) {
+      var on = state.channel === ch.key;
+      cchips.appendChild(h('button', { type: 'button', class: 'cana-chip' + (on ? ' is-on' : ''), 'aria-pressed': on ? 'true' : 'false', text: ch.label,
+        onclick: function () { if (!on) setChannel(ch.key); } }));
+    });
+    bar.appendChild(cchips);
+    if (state.channel !== 'all') {
+      var cnote = 'Solo ' + channelLabel() + ': contactos de las campañas que usan ' + channelLabel() + ', enviados por ' + channelLabel() + ' y la respuesta cuenta en el canal por el que llegó.';
+      if (state.channel === 'linkedin') cnote += ' LinkedIn no reporta lecturas: «En visto» siempre queda en 0.';
+      bar.appendChild(h('div', { class: 'cana-note', style: 'flex-basis:100%', text: cnote }));
+    }
     return bar;
   }
 
@@ -501,7 +569,7 @@
       '.cana-tip-row { display:flex; align-items:center; gap:6px; }',
       '.cana-tip-hint { margin-top:4px; font-size:11px; color:var(--text3); }',
       '.cana-filter { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap; }',
-      '.cana-filter-lbl { font-size:12px; font-weight:600; color:var(--text2); }',
+      '.cana-filter-lbl { font-size:12px; font-weight:600; color:var(--text2); min-width:52px; }',
       '.cana-chips { display:flex; gap:6px; flex-wrap:wrap; }',
       '.cana-chip { font:inherit; font-size:12px; color:var(--text2); background:var(--surface); border:1px solid var(--hair); border-radius:999px; padding:5px 12px; cursor:pointer; }',
       '.cana-chip:hover { color:var(--text); border-color:var(--accent-2, var(--accent)); }',
@@ -540,9 +608,23 @@
       wrap.appendChild(h('div', { class: 'pros-hint', text: 'Calculando el rendimiento de tus campañas…' }));
     } else {
       var campaigns = state.opts.campaigns || [];
+      // Con un canal elegido, las campañas que no lo usan (y no tienen envíos por él) no aplican.
+      var notUsing = [];
+      if (state.channel !== 'all') {
+        campaigns = campaigns.filter(function (c) {
+          var s0 = state.data.byCampaign[c.id];
+          var ok = (c.channels || []).indexOf(state.channel) !== -1 || (s0 && s0.contacts);
+          if (!ok) notUsing.push(c);
+          return ok;
+        });
+      }
       var withLeads = campaigns.filter(function (c) { var s = state.data.byCampaign[c.id]; return s && s.contacts; });
-      if (!withLeads.length && rangeActive() && state.raw && state.raw.enrollments.length) {
+      if (!campaigns.length && state.channel !== 'all') {
+        wrap.appendChild(h('div', { class: 'chart-card', html: '<div class="pros-hint">' + esc('Ninguna de tus campañas usa ' + channelLabel() + '. Elige otro canal o «Todos».') + '</div>' }));
+      } else if (!withLeads.length && rangeActive() && state.raw && state.raw.enrollments.length) {
         wrap.appendChild(h('div', { class: 'chart-card', html: '<div class="pros-hint">Ningún lead tuvo su primer envío en este período. Elige otro rango o «Todo».</div>' }));
+      } else if (!withLeads.length && state.channel !== 'all') {
+        wrap.appendChild(h('div', { class: 'chart-card', html: '<div class="pros-hint">' + esc('Ninguna campaña que usa ' + channelLabel() + ' tiene leads todavía.') + '</div>' }));
       } else if (!withLeads.length) {
         wrap.appendChild(h('div', { class: 'chart-card', html: '<div class="pros-hint">Aún no hay leads enrolados en ninguna campaña. Cuando lances una, aquí verás cuántos recibieron el mensaje, cuántos respondieron, cuántos lo dejaron en visto y cuántos ni lo abrieron.</div>' }));
       } else {
@@ -551,6 +633,7 @@
       }
       var empty = campaigns.filter(function (c) { var s = state.data.byCampaign[c.id]; return !s || !s.contacts; });
       if (empty.length) wrap.appendChild(h('div', { class: 'cana-drafts', text: (rangeActive() ? 'Sin leads en este período: ' : 'Sin leads enrolados todavía: ') + empty.map(function (c) { return c.name; }).join(' · ') }));
+      if (notUsing.length) wrap.appendChild(h('div', { class: 'cana-drafts', text: 'No usan ' + channelLabel() + ': ' + notUsing.map(function (c) { return c.name; }).join(' · ') }));
     }
     state.host.appendChild(wrap);
   }
@@ -852,6 +935,7 @@
     var b = rangeBounds(state.range);
     var period = rangeActive() ? '-' + (b.from != null ? dayValue(new Date(b.from)) : 'inicio') + '_a_' + (b.to != null ? dayValue(new Date(b.to - 1)) : dayValue(new Date())) : '';
     if (week != null) period = '-semana_' + dayValue(new Date(week));
+    if (state.channel !== 'all') period = '-' + state.channel + period;
     a.download = slug(c.name || 'campanas') + '-' + slug(TILE_TITLE[key]).toLowerCase() + period + '.csv';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);

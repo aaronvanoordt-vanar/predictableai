@@ -2804,7 +2804,7 @@
           focusId: state.analyticsFocus || null,
           campaigns: state.campaigns.map(function (c) {
             var st = CAMPAIGN_STATUS[c.status] || CAMPAIGN_STATUS.draft;
-            return { id: c.id, name: c.name, statusLabel: st.label, statusPill: st.pill, channelsHtml: chanIconsHtml(campaignChannels(c)) };
+            return { id: c.id, name: c.name, statusLabel: st.label, statusPill: st.pill, channels: campaignChannels(c), channelsHtml: chanIconsHtml(campaignChannels(c)) };
           }),
           onOpenCampaign: function (id) { state.analyticsHost = null; openCampaign(id); },
           onBack: function () { state.view = 'campaigns'; state.analyticsHost = null; state.activeId = null; render(); },
