@@ -199,6 +199,34 @@ function templateParams(body: string, m: Json | null): Record<string, string> {
  * `template` (nombre de una plantilla aprobada) sale esa plantilla en vez de
  * texto libre: es lo único que Meta acepta fuera de la ventana de 24 h.
  */
+/**
+ * Números a los que se intenta un mensaje de sesión, en orden: primero el
+ * waId del último entrante (con ese número abrió WATI la conversación), luego
+ * el del lead y sus otras formas (52…/521…, 54…/549…).
+ */
+function sessionTargets(phone: string, inboundRef: unknown): string[] {
+  const first = wati.digits(inboundRef);
+  const out = new Set<string>();
+  if (first && wati.phoneKey(first) === wati.phoneKey(phone)) out.add(first);
+  out.add(phone);
+  for (const v of wati.phoneVariants(phone)) out.add(v);
+  return [...out];
+}
+
+/** Prueba cada número mientras WATI responda 404 (conversación no encontrada). */
+async function withSessionTarget<T>(targets: string[], send: (to: string) => Promise<T>): Promise<T> {
+  let last: unknown;
+  for (const to of targets) {
+    try {
+      return await send(to);
+    } catch (e) {
+      last = e;
+      if (!(e instanceof wati.WatiError && e.status === 404)) throw e;
+    }
+  }
+  throw last;
+}
+
 const FILE_LABEL: Record<string, string> = { image: "📷 Foto", video: "🎬 Video", audio: "🎤 Audio", document: "📄 Documento" };
 
 async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | null, contactRef: string, text: string, template: string, file: File | null = null, voice = false): Promise<Json> {
@@ -209,7 +237,7 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
   const lastInQuery = () => {
     let q = db
       .from("inbox_messages")
-      .select("sent_at")
+      .select("sent_at, contact_ref")
       .eq("user_id", userId)
       .eq("channel", "whatsapp")
       .eq("direction", "in")
@@ -282,11 +310,17 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
     throw new HttpError("La ventana de 24 h de WhatsApp está cerrada.", 409, "whatsapp_window_closed");
   }
 
-  if (file) return await sendWhatsAppFile(db, userId, member, phone, acc, creds, en, file, text, voice);
+  // WATI abre la conversación con el waId del que escribió el lead (521… en
+  // celulares de México, 549… en Argentina), no con el número de la lista
+  // (52…/54…): mandar texto o archivo al otro número responde 404
+  // "Conversation with phone number … not found" (2026-10-07).
+  const targets = sessionTargets(phone, lastIn?.contact_ref);
+
+  if (file) return await sendWhatsAppFile(db, userId, member, phone, targets, acc, creds, en, file, text, voice);
 
   let r: { id: string | null; conversationId: string | null };
   try {
-    r = await wati.sendText(creds, phone, text, acc.config?.channel || undefined);
+    r = await withSessionTarget(targets, (to) => wati.sendText(creds, to, text, acc.config?.channel || undefined));
   } catch (e) {
     const status = e instanceof wati.WatiError && e.status >= 400 && e.status < 500 ? 400 : 502;
     // Cuerpo completo de WATI en los logs de la función: es lo que dice el motivo real.
@@ -319,7 +353,7 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
  * 24 h). `voice` = nota de voz grabada en la bandeja (ya convertida a Ogg).
  */
 async function sendWhatsAppFile(
-  db: SupabaseClient, userId: string, member: Json | null, phone: string, acc: Json, creds: wati.WatiCreds, en: Json, file: File, captionIn: string, voice = false,
+  db: SupabaseClient, userId: string, member: Json | null, phone: string, targets: string[], acc: Json, creds: wati.WatiCreds, en: Json, file: File, captionIn: string, voice = false,
 ): Promise<Json> {
   const kind = wati.mediaKindForMime(file.type);
   // WhatsApp no admite pie en un audio: la bandeja manda el texto aparte.
@@ -332,7 +366,7 @@ async function sendWhatsAppFile(
   const fileName = String(file.name || "archivo").replace(/[\r\n"]/g, "").slice(0, 120) || "archivo";
   let r: { id: string | null; conversationId: string | null; type: string | null };
   try {
-    r = await wati.sendFile(creds, phone, file, fileName, caption || undefined, acc.config?.channel || undefined);
+    r = await withSessionTarget(targets, (to) => wati.sendFile(creds, to, file, fileName, caption || undefined, acc.config?.channel || undefined));
   } catch (e) {
     const status = e instanceof wati.WatiError && e.status >= 400 && e.status < 500 ? 400 : 502;
     console.error("inbox-send whatsapp file failed", { phone, http: (e as wati.WatiError)?.status, body: JSON.stringify((e as wati.WatiError)?.body ?? null).slice(0, 1500) });
