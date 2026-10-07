@@ -55,7 +55,7 @@
  *   window.campaigns.show(paneEl)       // monta / refresca la pestaña
  *   window.campaigns.newFromList(id)    // abre el builder con esa lista
  *   window.campaigns.refresh()          // recarga canales, campañas y bandeja
- *   window.campaigns.setView('inbox')   // abre la bandeja (o 'campaigns');
+ *   window.campaigns.setView('inbox')   // abre la bandeja (o 'campaigns' / 'analytics');
  *                                       // lo llama el ítem "Bandeja" del sidebar
  *
  * Convenciones: todo string dinámico pasa por esc(); copy en español neutro
@@ -1607,12 +1607,13 @@
       return;
     }
     // Las tarjetas de canales son configuración de Campañas: la Bandeja no las lleva.
-    if (state.view !== 'inbox') root.appendChild(renderChannelBar(false));
+    if (state.view !== 'inbox' && state.view !== 'analytics') root.appendChild(renderChannelBar(false));
     root.appendChild(renderSubnav());
     updateBadge();
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
     if (state.view === 'inbox') { root.appendChild(renderInbox()); markOpenConvRead(); setTimeout(function () { syncWatiHistory(false); }, 0); }
     else if (state.view === 'knowledge') root.appendChild(knowledgeNode());
+    else if (state.view === 'analytics') root.appendChild(analyticsNode());
     else if (state.builder) root.appendChild(state.builderHost);
     else if (state.activeId && findCampaign(state.activeId)) root.appendChild(renderDetail());
     else root.appendChild(renderCampaignCards());
@@ -1912,8 +1913,17 @@
       bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Entrenar la IA'));
       return bar;
     }
+    if (state.view === 'analytics') {
+      bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Analytics'));
+      return bar;
+    }
     bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas'));
     bar.appendChild(h('div', { class: 'cmp-spacer' }));
+    if (state.campaigns.length) {
+      bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-analytics',
+        title: 'El rendimiento de cada campaña: enviados, respuestas, vistos y sin leer, con la lista de personas de cada grupo.',
+        text: 'Analytics' }));
+    }
     var ks = state.knowledge;
     bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-knowledge',
       title: 'Tu metodología, tus scripts ganadores y tu material: la IA los consulta antes de escribir cada mensaje.',
@@ -2781,6 +2791,37 @@
     }
     return state.knowledgeHost;
   }
+  /**
+   * Analytics (js/campaign-analytics.js): el rendimiento de cada campaña por
+   * lead. Solo lee; se vuelve a montar (y a calcular) cada vez que se entra.
+   */
+  function analyticsNode() {
+    if (!state.analyticsHost) {
+      state.analyticsHost = h('div');
+      if (global.campaignAnalytics && global.campaignAnalytics.mount) {
+        global.campaignAnalytics.mount(state.analyticsHost, {
+          h: h, esc: esc, toast: toast,
+          focusId: state.analyticsFocus || null,
+          campaigns: state.campaigns.map(function (c) {
+            var st = CAMPAIGN_STATUS[c.status] || CAMPAIGN_STATUS.draft;
+            return { id: c.id, name: c.name, statusLabel: st.label, statusPill: st.pill, channelsHtml: chanIconsHtml(campaignChannels(c)) };
+          }),
+          onOpenCampaign: function (id) { state.analyticsHost = null; openCampaign(id); },
+          onBack: function () { state.view = 'campaigns'; state.analyticsHost = null; state.activeId = null; render(); },
+        });
+      } else {
+        state.analyticsHost.appendChild(h('div', { class: 'pros-hint', text: 'El módulo de Analytics no cargó. Recarga la página.' }));
+      }
+    }
+    return state.analyticsHost;
+  }
+  function openAnalytics(focusId) {
+    closeBuilder();
+    state.view = 'analytics';
+    state.analyticsFocus = focusId || null;
+    state.analyticsHost = null;
+    render();
+  }
   function openKnowledge() {
     state.view = 'knowledge';
     // Siempre relee la base al entrar (pudo cambiar en otra pestaña).
@@ -2921,6 +2962,7 @@
     var actions = h('div', { class: 'pros-actions' });
     if (c.status === 'active') actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-status', 'data-status': 'paused', text: 'Pausar' }));
     else actions.appendChild(h('button', { type: 'button', class: 'btn btn-teal btn-sm', 'data-action': 'cmp-status', 'data-status': 'active', text: c.status === 'draft' ? 'Activar campaña' : 'Reanudar' }));
+    if (c.total) actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-analytics', 'data-id': c.id, text: 'Analytics' }));
     actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-edit', text: 'Editar' }));
     actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-delete', text: 'Eliminar' }));
     head.appendChild(left); head.appendChild(actions);
@@ -3923,6 +3965,7 @@
     if (action === 'csv-linkedin') { var c9 = findCampaign(state.activeId); if (c9) downloadLinkedinCsv(c9); return; }
     if (action === 'cmp-new') { if (btn.disabled) return; return openBuilder(null); }
     if (action === 'cmp-knowledge') return openKnowledge();
+    if (action === 'cmp-analytics') return openAnalytics(id);
     if (action === 'cmp-open') return openCampaign(id);
     if (action === 'cmp-back') { state.activeId = null; closeBuilder(); return render(); }
     if (action === 'cmp-edit') { var c0 = findCampaign(state.activeId); if (c0) return openBuilder(c0); return; }
@@ -4442,6 +4485,7 @@
     subscribeRealtime();
     if (applyPendingList()) return;
     if (state.pendingView) { state.view = state.pendingView; state.pendingView = null; }
+    if (state.view === 'analytics') state.analyticsHost = null; // recalcula con las campañas recién cargadas
     render();
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
@@ -4457,8 +4501,9 @@
 
   /** Cambia de vista ('campaigns' | 'inbox' | 'knowledge'); si la pestaña aún no cargó, se aplica al montar. */
   function setView(view) {
-    var v = view === 'inbox' || view === 'knowledge' ? view : 'campaigns';
+    var v = view === 'inbox' || view === 'knowledge' || view === 'analytics' ? view : 'campaigns';
     if (v === 'knowledge') state.knowledgeHost = null;
+    if (v === 'analytics') { state.analyticsHost = null; state.analyticsFocus = null; }
     saveView(v);
     if (!built || state.loading || state.status === undefined) { state.pendingView = v; return; }
     state.view = v;
@@ -4472,6 +4517,7 @@
     await autoLinkLinkedinCampaigns();
     state.emailAccounts = null;
     await loadEmailAccounts();
+    if (state.view === 'analytics') state.analyticsHost = null;
     render();
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
