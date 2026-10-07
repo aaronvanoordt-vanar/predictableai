@@ -32,7 +32,14 @@
  * escribe nada. Lo monta js/campaigns.js:
  *
  *   window.campaignAnalytics.mount(host, { h, esc, toast, campaigns, focusId, onOpenCampaign, onBack })
+ * Tendencia semanal: cada tarjeta muestra, por semana (lunes a domingo, hora
+ * local) del PRIMER envío, cuántos leads enviados respondieron, quedaron en
+ * visto o sin leer — la misma cohorte del filtro, así una semana reciente
+ * todavía puede ganar respuestas. Los sin enviar no tienen semana de envío y
+ * no entran. Cada segmento abre a esas personas.
+ *
  *   window.campaignAnalytics.compute(enrollments, events, { from, to })   // función pura; from/to en ms, to exclusivo
+ *   window.campaignAnalytics.weekly(leads, { maxWeeks })                   // función pura
  */
 (function (global) {
   'use strict';
@@ -203,6 +210,42 @@
       unread: pct(s.unread, s.sent),
     };
     return s;
+  }
+
+  // ── Tendencia semanal (pura) ─────────────────────────────────────────────
+  var TREND_BUCKETS = ['replied', 'seen', 'unread'];
+  var MAX_WEEKS = 26;
+  /** Lunes 00:00 (hora local) de la semana de `ms`. */
+  function weekStart(ms) {
+    var d = new Date(ms);
+    var monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7));
+    return monday.getTime();
+  }
+  function nextWeek(ms) { var d = new Date(ms); return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7).getTime(); }
+  /**
+   * Leads enviados agrupados por la semana de su primer envío, sin huecos
+   * entre la primera y la última semana (una semana sin envíos es un 0 real).
+   * Devuelve { weeks: [{ start, replied, seen, unread, sent }], truncated }.
+   */
+  function weekly(leads, opts) {
+    var max = (opts && opts.maxWeeks) || MAX_WEEKS;
+    var by = {};
+    var first = null, last = null;
+    (leads || []).forEach(function (l) {
+      if (TREND_BUCKETS.indexOf(l.bucket) === -1 || !l.firstSent) return;
+      var t = new Date(l.firstSent).getTime();
+      if (isNaN(t)) return;
+      var w = weekStart(t);
+      var o = by[w] = by[w] || { start: w, replied: 0, seen: 0, unread: 0, sent: 0 };
+      o[l.bucket]++; o.sent++;
+      if (first == null || w < first) first = w;
+      if (last == null || w > last) last = w;
+    });
+    if (first == null) return { weeks: [], truncated: false };
+    var weeks = [];
+    for (var w = first; w <= last; w = nextWeek(w)) weeks.push(by[w] || { start: w, replied: 0, seen: 0, unread: 0, sent: 0 });
+    var truncated = weeks.length > max;
+    return { weeks: truncated ? weeks.slice(-max) : weeks, truncated: truncated };
   }
 
   // ── Datos ────────────────────────────────────────────────────────────────
@@ -399,6 +442,25 @@
       '.cana-table a { color:var(--accent); text-decoration:none; }',
       '.cana-empty { padding:14px; font-size:12.5px; color:var(--text3); }',
       '.cana-drafts { font-size:12px; color:var(--text3); }',
+      '.cana-trend { border-top:1px solid var(--hair); padding-top:12px; display:flex; flex-direction:column; gap:10px; min-width:0; }',
+      '.cana-trend-head { display:flex; align-items:baseline; gap:6px 12px; flex-wrap:wrap; }',
+      '.cana-trend-title { font-size:13px; font-weight:700; }',
+      '.cana-trend-head .cana-note { flex:1; min-width:180px; }',
+      '.cana-linkbtn { background:none; border:0; padding:0; font:inherit; font-size:12px; color:var(--accent); cursor:pointer; }',
+      '.cana-plot { position:relative; display:flex; gap:8px; height:170px; min-width:0; }',
+      '.cana-grid { display:flex; flex-direction:column; justify-content:space-between; font-size:10.5px; line-height:1; color:var(--text3); padding-bottom:20px; text-align:right; min-width:18px; font-variant-numeric:tabular-nums; }',
+      '.cana-chartcol { flex:1; min-width:0; display:flex; flex-direction:column; gap:6px; }',
+      '.cana-cols { flex:1; min-height:0; display:flex; align-items:stretch; gap:4px; border-bottom:1px solid var(--hair); background:linear-gradient(var(--hair),var(--hair)) 0 0/100% 1px no-repeat, linear-gradient(var(--hair),var(--hair)) 0 50%/100% 1px no-repeat; }',
+      '.cana-xrow { display:flex; gap:4px; height:14px; }',
+      '.cana-xrow span { flex:1 1 0; min-width:0; max-width:56px; font-size:10.5px; color:var(--text3); text-align:center; white-space:nowrap; overflow:visible; }',
+      '.cana-col { flex:1 1 0; min-width:0; max-width:56px; display:flex; flex-direction:column; justify-content:flex-end; align-items:stretch; cursor:pointer; border-radius:6px 6px 0 0; outline:none; padding:0 2px; }',
+      '.cana-col:hover, .cana-col:focus-visible { background:var(--surface2); }',
+      '.cana-col:focus-visible { box-shadow:0 0 0 2px var(--accent) inset; }',
+      '.cana-stack { display:flex; flex-direction:column-reverse; gap:2px; min-height:0; border-radius:4px 4px 0 0; overflow:hidden; }',
+      '.cana-seg { display:block; min-height:2px; }',
+      '.cana-tip { position:absolute; top:0; z-index:2; width:200px; padding:8px 10px; font-size:12px; line-height:1.5; color:var(--text); background:var(--bg-2, var(--bg, var(--surface))); border:1px solid var(--border, var(--hair)); border-radius:var(--r-sm, 8px); box-shadow:var(--glass-shadow, 0 8px 24px rgba(0,0,0,.18)); pointer-events:none; }',
+      '.cana-tip-row { display:flex; align-items:center; gap:6px; }',
+      '.cana-tip-hint { margin-top:4px; font-size:11px; color:var(--text3); }',
       '.cana-filter { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap; }',
       '.cana-filter-lbl { font-size:12px; font-weight:600; color:var(--text2); }',
       '.cana-chips { display:flex; gap:6px; flex-wrap:wrap; }',
@@ -493,13 +555,109 @@
     });
     card.appendChild(bar);
     card.appendChild(legend);
+    card.appendChild(renderTrend(c));
 
     if (state.open && String(state.open.campaignId) === String(c.id)) card.appendChild(renderDrill(c, isTotal));
     return card;
   }
 
+  function fmtWeek(ms) { return new Date(ms).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' }); }
+  function weekRangeText(ms) { return fmtWeek(ms) + ' – ' + fmtWeek(nextWeek(ms) - 1); }
+
+  /**
+   * Barras apiladas por semana del primer envío (Respondieron · En visto ·
+   * Sin leer, los mismos colores de la barra de distribución). Un eje, sin
+   * tasa dibujada encima: la tasa va en el tooltip y en la tabla.
+   */
+  function renderTrend(c) {
+    var leads = state.data.leads.filter(function (l) { return c.id === '__all' || String(l.campaign_id) === String(c.id); });
+    var tr = weekly(leads);
+    var box = h('div', { class: 'cana-trend' });
+    var head = h('div', { class: 'cana-trend-head' });
+    head.appendChild(h('span', { class: 'cana-trend-title', text: 'Tendencia semanal' }));
+    head.appendChild(h('span', { class: 'cana-note', text: 'Leads enviados por semana de su primer envío' + (tr.truncated ? ' · últimas ' + MAX_WEEKS + ' semanas' : '') }));
+    var showTable = !!(state.trendTable && state.trendTable[c.id]);
+    if (tr.weeks.length) {
+      head.appendChild(h('button', { type: 'button', class: 'cana-linkbtn', text: showTable ? 'Ver gráfico' : 'Ver como tabla',
+        onclick: function () { state.trendTable = state.trendTable || {}; state.trendTable[c.id] = !showTable; rerender(); } }));
+    }
+    box.appendChild(head);
+    if (!tr.weeks.length) {
+      box.appendChild(h('div', { class: 'cana-empty', style: 'padding:6px 0', text: 'Aún no hay envíos para dibujar la tendencia.' }));
+      return box;
+    }
+    if (showTable) { box.appendChild(h('div', { class: 'cana-table', html: trendTableHtml(tr.weeks) })); return box; }
+
+    // Tope par para que la línea del medio caiga en un entero.
+    var peak = Math.max.apply(null, tr.weeks.map(function (w) { return w.sent; })) || 1;
+    var max = peak % 2 ? peak + 1 : peak;
+    var plot = h('div', { class: 'cana-plot' });
+    plot.appendChild(h('div', { class: 'cana-grid', 'aria-hidden': 'true' },
+      h('span', { text: String(max) }), h('span', { text: String(max / 2) }), h('span', { text: '0' })));
+    var cols = h('div', { class: 'cana-cols', role: 'list', 'aria-label': 'Leads enviados por semana' });
+    // Etiquetas del eje X selectivas: como mucho ~8 para que no choquen.
+    var every = Math.max(1, Math.ceil(tr.weeks.length / 8));
+    var xrow = h('div', { class: 'cana-xrow', 'aria-hidden': 'true' });
+    var tip = h('div', { class: 'cana-tip', role: 'status' });
+    tip.hidden = true;
+    tr.weeks.forEach(function (w, i) {
+      var col = h('div', { class: 'cana-col', role: 'listitem', tabindex: '0',
+        'aria-label': weekRangeText(w.start) + ': ' + w.sent + ' enviados, ' + w.replied + ' respondieron, ' + w.seen + ' en visto, ' + w.unread + ' sin leer' });
+      var stack = h('div', { class: 'cana-stack', style: 'height:' + (w.sent / max * 100) + '%' });
+      // De abajo hacia arriba en el orden fijo: Respondieron, En visto, Sin leer.
+      TREND_BUCKETS.forEach(function (k) {
+        if (!w[k]) return;
+        stack.appendChild(h('span', { class: 'cana-seg', style: 'flex:' + w[k] + ' 1 0;background:' + BUCKETS[k].color,
+          onclick: function (ev) { ev.stopPropagation(); openWeek(c.id, k, w.start); } }));
+      });
+      col.appendChild(stack);
+      xrow.appendChild(h('span', { text: (i % every === 0 || i === tr.weeks.length - 1) ? fmtWeek(w.start) : '' }));
+      function show() {
+        tip.innerHTML = '';
+        tip.appendChild(h('b', { text: 'Semana del ' + weekRangeText(w.start) }));
+        tip.appendChild(h('div', { text: w.sent + (w.sent === 1 ? ' lead enviado' : ' leads enviados') }));
+        TREND_BUCKETS.forEach(function (k) {
+          tip.appendChild(h('div', { class: 'cana-tip-row' }, h('span', { class: 'cana-dot', style: 'background:' + BUCKETS[k].color }),
+            BUCKETS[k].label + ': ' + w[k] + ' (' + fmtPct(pct(w[k], w.sent)) + ')'));
+        });
+        tip.appendChild(h('div', { class: 'cana-tip-hint', text: 'Clic en un color para ver a esas personas' }));
+        tip.hidden = false;
+        var pr = plot.getBoundingClientRect(), cr = col.getBoundingClientRect();
+        var x = cr.left - pr.left + cr.width / 2;
+        tip.style.left = Math.max(0, Math.min(x - 100, pr.width - 200)) + 'px';
+      }
+      col.addEventListener('mouseenter', show);
+      col.addEventListener('focus', show);
+      col.addEventListener('mouseleave', function () { tip.hidden = true; });
+      col.addEventListener('blur', function () { tip.hidden = true; });
+      col.addEventListener('click', function () { openWeek(c.id, 'sent', w.start); });
+      col.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openWeek(c.id, 'sent', w.start); } });
+      cols.appendChild(col);
+    });
+    plot.appendChild(h('div', { class: 'cana-chartcol' }, cols, xrow));
+    plot.appendChild(tip);
+    box.appendChild(plot);
+    var lg = h('div', { class: 'cana-legend' });
+    TREND_BUCKETS.forEach(function (k) { lg.appendChild(h('span', { style: 'display:inline-flex;align-items:center;gap:6px' }, h('span', { class: 'cana-dot', style: 'background:' + BUCKETS[k].color }), BUCKETS[k].label)); });
+    box.appendChild(lg);
+    return box;
+  }
+  function trendTableHtml(weeks) {
+    var html = '<table style="min-width:0"><thead><tr><th>Semana</th><th>Enviados</th><th>Respondieron</th><th>En visto</th><th>Sin leer</th><th>Tasa de respuesta</th></tr></thead><tbody>';
+    weeks.slice().reverse().forEach(function (w) {
+      html += '<tr><td>' + esc(weekRangeText(w.start)) + '</td><td>' + w.sent + '</td><td>' + w.replied + '</td><td>' + w.seen + '</td><td>' + w.unread + '</td><td>' + esc(fmtPct(pct(w.replied, w.sent))) + '</td></tr>';
+    });
+    return html + '</tbody></table>';
+  }
+  function rerender() { var y = global.scrollY; render(); global.scrollTo(0, y); }
+  function openWeek(campaignId, key, week) {
+    state.open = { campaignId: campaignId, key: key, week: week };
+    state.q = '';
+    rerender();
+  }
+
   function tile(campaignId, key, label, color, num, sub, rateLabel, rate) {
-    var pressed = !!(state.open && String(state.open.campaignId) === String(campaignId) && state.open.key === key);
+    var pressed = !!(state.open && String(state.open.campaignId) === String(campaignId) && state.open.key === key && state.open.week == null);
     var b = h('button', { type: 'button', class: 'cana-tile', 'aria-pressed': pressed ? 'true' : 'false',
       title: 'Ver las personas: ' + label.toLowerCase(), onclick: function () { toggle(campaignId, key); } });
     var lbl = h('span', { class: 'cana-tile-lbl' });
@@ -513,20 +671,22 @@
   }
 
   function toggle(campaignId, key) {
-    if (state.open && String(state.open.campaignId) === String(campaignId) && state.open.key === key) state.open = null;
+    if (state.open && String(state.open.campaignId) === String(campaignId) && state.open.key === key && state.open.week == null) state.open = null;
     else { state.open = { campaignId: campaignId, key: key }; state.q = ''; }
     var y = global.scrollY;
     render();
     global.scrollTo(0, y);
   }
 
-  function drillLeads(campaignId, key) {
+  function drillLeads(campaignId, key, week) {
     var set = TILE_SETS[key] || [];
     return state.data.leads.filter(function (l) {
+      if (week != null && !(l.firstSent && weekStart(new Date(l.firstSent).getTime()) === week)) return false;
       return (campaignId === '__all' || String(l.campaign_id) === String(campaignId)) && set.indexOf(l.bucket) !== -1;
     });
   }
   function matches(l, q) {
+    q = String(q || '').trim().toLowerCase();
     if (!q) return true;
     var m = l.member || {};
     return [memberName(m), m.company, m.title, realEmail(m), m.phone].join(' ').toLowerCase().indexOf(q) !== -1;
@@ -538,16 +698,17 @@
 
   function renderDrill(c, isTotal) {
     var key = state.open.key;
-    var all = drillLeads(c.id, key);
+    var week = state.open.week;
+    var all = drillLeads(c.id, key, week);
     var box = h('div', { class: 'cana-drill' });
     var head = h('div', { class: 'cana-drill-head' });
-    head.appendChild(h('div', { class: 'cana-drill-name', text: TILE_TITLE[key] + ' · ' + all.length + (all.length === 1 ? ' persona' : ' personas') }));
+    head.appendChild(h('div', { class: 'cana-drill-name', text: TILE_TITLE[key] + (week != null ? ' · semana del ' + weekRangeText(week) : '') + ' · ' + all.length + (all.length === 1 ? ' persona' : ' personas') }));
     var search = h('input', { type: 'search', placeholder: 'Buscar por nombre, empresa o cargo…', value: state.q });
     head.appendChild(search);
-    var exp = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: 'Exportar CSV', onclick: function () { exportCsv(c, key, all.filter(function (l) { return matches(l, state.q); })); } });
+    var exp = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: 'Exportar CSV', onclick: function () { exportCsv(c, key, all.filter(function (l) { return matches(l, state.q); }), week); } });
     if (!all.length) exp.disabled = true;
     head.appendChild(exp);
-    head.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Cerrar', onclick: function () { toggle(c.id, key); } }));
+    head.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Cerrar', onclick: function () { state.open = null; rerender(); } }));
     box.appendChild(head);
     var tableHost = h('div');
     box.appendChild(tableHost);
@@ -600,7 +761,7 @@
     return '"' + s.replace(/"/g, '""') + '"';
   }
   function isoOrEmpty(v) { return v ? new Date(v).toISOString().replace('T', ' ').slice(0, 16) : ''; }
-  function exportCsv(c, key, rows) {
+  function exportCsv(c, key, rows, week) {
     if (!rows.length) return toast('No hay personas para exportar.', 'warn');
     var header = ['nombre', 'first_name', 'last_name', 'cargo', 'empresa', 'email', 'telefono', 'linkedin_url', 'campana', 'resultado', 'envios', 'canales', 'primer_envio', 'ultimo_envio', 'visto_en', 'visto_por', 'respondio_en', 'respondio_por', 'estado_en_campana'];
     var lines = [header.join(',')];
@@ -619,6 +780,7 @@
     var slug = function (s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40); };
     var b = rangeBounds(state.range);
     var period = rangeActive() ? '-' + (b.from != null ? dayValue(new Date(b.from)) : 'inicio') + '_a_' + (b.to != null ? dayValue(new Date(b.to - 1)) : dayValue(new Date())) : '';
+    if (week != null) period = '-semana_' + dayValue(new Date(week));
     a.download = slug(c.name || 'campanas') + '-' + slug(TILE_TITLE[key]).toLowerCase() + period + '.csv';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
@@ -636,5 +798,5 @@
     reload();
   }
 
-  global.campaignAnalytics = { mount: mount, compute: compute };
+  global.campaignAnalytics = { mount: mount, compute: compute, weekly: weekly };
 })(window);
