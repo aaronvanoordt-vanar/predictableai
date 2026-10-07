@@ -10,9 +10,10 @@
 --
 -- Esto borra las tablas y columnas que solo usaba esa lectura (creadas en
 -- 20260824000003 / 20260824000004). Sus datos eran una copia del sheet: el
--- original sigue en Google Sheets. Se conservan clients.crm_sheet_url (el link
--- a la base de datos), crm_metrics y metric_strategies, que el equipo edita a
--- mano en Clients.
+-- original sigue en Google Sheets. También se quita clients.crm_sheet_url: el
+-- link y la vista embebida del sheet salieron de Clients y del portal. Se
+-- conservan crm_metrics y metric_strategies, que el equipo edita a mano en
+-- Clients.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 DROP TABLE IF EXISTS public.client_reviews;
@@ -21,6 +22,7 @@ DROP TABLE IF EXISTS public.client_crm_rows;
 DROP TABLE IF EXISTS public.client_sheet_state;
 
 ALTER TABLE public.clients
+  DROP COLUMN IF EXISTS crm_sheet_url,
   DROP COLUMN IF EXISTS crm_sheet_tab,
   DROP COLUMN IF EXISTS metrics_sheet_tab,
   DROP COLUMN IF EXISTS sheet_sync_enabled,

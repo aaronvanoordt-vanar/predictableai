@@ -723,7 +723,6 @@ html[data-theme="dark"] { --field: rgba(255,255,255,.06); --field-edge: rgba(255
 #clients-shell .cl-thr { border-radius: 14px; }
 #clients-shell .cl-thr-badge { border-radius: 999px; }
 #clients-shell .cl-sync-note { border-radius: 12px; background: var(--field); border-color: var(--field-edge); }
-#clients-shell .cl-sheet-frame { border-radius: 14px; background: var(--field); border-color: var(--field-edge); }
 #clients-shell .cl-cty { border-radius: 999px; background: var(--surface-raised); border-color: var(--glass-edge); }
 #clients-shell .cl-cty.on { background: var(--accent-soft); border-color: var(--accent); }
 #clients-shell .cl-mat { border-radius: 12px; background: var(--field); border-color: var(--field-edge); }

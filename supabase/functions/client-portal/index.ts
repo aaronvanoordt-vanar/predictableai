@@ -72,7 +72,7 @@ const EDITABLE_TEXT: Record<string, number> = {
 /** Columnas que viajan al portal. share_token / created_by / id nunca salen. */
 const CLIENT_COLUMNS = [
   "name", "status", "country", "start_date", "meta", "linkedin_status",
-  "prospecting_brief_url", "crm_sheet_url", "campaigns_url", "matriz_url",
+  "prospecting_brief_url", "campaigns_url", "matriz_url",
   "kickoff_url", "crm_metrics", "metric_strategies", "target_countries", "icp",
   "industries", "historical_notes", "portal_updated_at",
 ];

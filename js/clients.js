@@ -3,7 +3,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Vista de cuadrícula de clientes (con foto) + dashboard editable por cliente:
  * status, links (brief / campañas / matriz / kick off), CRM (métricas críticas,
- * incl. follow ups pendientes, + Google Sheets embebido), material de apoyo
+ * incl. follow ups pendientes), material de apoyo
  * (PDFs en Supabase Storage), notas, ICP, industrias y países objetivo
  * (multiselect Latam).
  *
@@ -279,20 +279,6 @@
     });
   }
 
-  // Convierte un link de Google Sheets a su URL embebible; null si no aplica.
-  function sheetEmbedUrl(url) {
-    try {
-      var u = new URL(String(url || ''));
-      if (u.hostname !== 'docs.google.com') return null;
-      var m = /^\/spreadsheets\/d\/([\w-]+)/.exec(u.pathname);
-      if (!m) return null;
-      var gid = '';
-      var gm = /gid=(\d+)/.exec(u.hash || '') || /gid=(\d+)/.exec(u.search || '');
-      if (gm) gid = '?gid=' + gm[1];
-      return 'https://docs.google.com/spreadsheets/d/' + m[1] + '/preview' + gid;
-    } catch (e) { return null; }
-  }
-
   function portalLink(client) {
     var base = location.origin + location.pathname.replace(/[^/]*$/, '');
     return base + 'client.html?token=' + client.share_token;
@@ -394,7 +380,6 @@
       '.cl-thr-strategy label{font-size:9.5px;font-weight:800;color:var(--red);text-transform:uppercase;letter-spacing:.04em}',
       '.cl-thr-strategy textarea{width:100%;min-height:64px;resize:vertical;background:var(--surface);border:1px solid var(--hair-3);border-radius:var(--r-sm);padding:6px 8px;font-size:12px;line-height:1.4;font-family:inherit;color:var(--ink)}',
       '.cl-thr-strategy textarea:focus{outline:none;border-color:var(--accent)}',
-      '.cl-sheet-frame{width:100%;height:380px;border:1px solid var(--hair);border-radius:var(--r);background:var(--surface2)}',
       '.cl-countries{display:flex;flex-wrap:wrap;gap:6px}',
       '.cl-cty{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;border:1px solid var(--hair-3);background:var(--surface);font-size:12px;font-weight:600;cursor:pointer;color:var(--ink-2);font-family:inherit}',
       '.cl-cty.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)}',
@@ -728,8 +713,6 @@
         x.flag + ' ' + esc(x.name) + '</button>';
     }).join('');
 
-    var embed = sheetEmbedUrl(c.crm_sheet_url);
-
     state.body.innerHTML =
       '<div class="cl-detail">' +
         '<div class="cl-head">' +
@@ -787,23 +770,12 @@
           '</div>' +
 
           '<div class="cl-sec cl-span2">' +
-            '<div class="cl-sec-title">CRM' +
-              '<a class="cl-open-a" id="cl-crm-open" href="' + esc(su(c.crm_sheet_url || '')) + '" target="_blank" rel="noopener"' + (c.crm_sheet_url ? '' : ' style="display:none"') + '>Abrir base de datos ↗</a>' +
-            '</div>' +
-            '<div class="cl-field"><span class="cl-lbl">Google Sheets (base de datos)</span>' +
-              '<input class="cl-inp" data-field="crm_sheet_url" type="url" placeholder="https://docs.google.com/spreadsheets/…" value="' + esc(c.crm_sheet_url || '') + '"></div>' +
+            '<div class="cl-sec-title">CRM</div>' +
             '<div class="cl-lbl" style="margin-top:4px">Datos críticos</div>' +
             '<div class="cl-metrics">' + metricCells + '</div>' +
             '<div class="cl-ratios" id="cl-ratios"></div>' +
             '<div class="cl-lbl" style="margin-top:6px">Umbrales mínimos aceptables</div>' +
             '<div class="cl-thr-grid" id="cl-thresholds"></div>' +
-            '<div id="cl-sheet-embed">' +
-              (embed
-                ? '<iframe class="cl-sheet-frame" src="' + esc(embed) + '" loading="lazy" referrerpolicy="no-referrer"></iframe>'
-                : (c.crm_sheet_url
-                    ? '<div class="cl-empty" style="padding:16px">El link no parece ser de Google Sheets, no se puede embeber. Usa el botón "Abrir base de datos".</div>'
-                    : '<div class="cl-empty" style="padding:16px">Pega el link del Google Sheets para embeberlo aquí.</div>')) +
-            '</div>' +
           '</div>' +
 
           '<div class="cl-sec">' +
@@ -894,7 +866,6 @@
           openA.href = su(el.value.trim());
           openA.style.display = el.value.trim() ? '' : 'none';
         }
-        if (f === 'crm_sheet_url') refreshSheetEmbed(el.value.trim());
       });
     });
 
@@ -1001,21 +972,6 @@
         toast('No se pudo eliminar: ' + (e.message || e), 'error');
       }
     });
-  }
-
-  function refreshSheetEmbed(url) {
-    var host = state.body.querySelector('#cl-sheet-embed');
-    var openA = state.body.querySelector('#cl-crm-open');
-    if (openA) { openA.href = su(url); openA.style.display = url ? '' : 'none'; }
-    if (!host) return;
-    var embed = sheetEmbedUrl(url);
-    if (embed) {
-      host.innerHTML = '<iframe class="cl-sheet-frame" src="' + esc(embed) + '" loading="lazy" referrerpolicy="no-referrer"></iframe>';
-    } else if (url) {
-      host.innerHTML = '<div class="cl-empty" style="padding:16px">El link no parece ser de Google Sheets, no se puede embeber. Usa el botón "Abrir base de datos".</div>';
-    } else {
-      host.innerHTML = '<div class="cl-empty" style="padding:16px">Pega el link del Google Sheets para embeberlo aquí.</div>';
-    }
   }
 
   function renderRatios() {

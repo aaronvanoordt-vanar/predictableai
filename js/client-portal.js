@@ -99,19 +99,6 @@
 
   // ── Utilidades de formato ──────────────────────────────────────────────
 
-  function sheetEmbedUrl(url) {
-    try {
-      var u = new URL(String(url || ''));
-      if (u.hostname !== 'docs.google.com') return null;
-      var m = /^\/spreadsheets\/d\/([\w-]+)/.exec(u.pathname);
-      if (!m) return null;
-      var gid = '';
-      var gm = /gid=(\d+)/.exec(u.hash || '') || /gid=(\d+)/.exec(u.search || '');
-      if (gm) gid = '?gid=' + gm[1];
-      return 'https://docs.google.com/spreadsheets/d/' + m[1] + '/preview' + gid;
-    } catch (e) { return null; }
-  }
-
   function fmtDate(d) {
     if (!d) return '—';
     try {
@@ -281,8 +268,6 @@
       return '<a class="cp-link" href="' + esc(su(v)) + '" target="_blank" rel="noopener noreferrer">' + f.label + ' ↗</a>';
     }).join('') || '<span class="cp-muted">Sin links aún.</span>';
 
-    var embed = sheetEmbedUrl(c.crm_sheet_url);
-
     var textSections = TEXT_SECTIONS.map(function (s) {
       var v = c[s.k] || '';
       var inner = editable
@@ -293,7 +278,7 @@
 
     var banner = editable
       ? '<div class="cp-note">✏️ Este portal es tuyo: lo que edites aquí lo ve al instante tu equipo de predictable.ai. ' +
-        'Las métricas del CRM y los links de trabajo los mantiene el equipo, por eso están en solo lectura.</div>'
+        'Los links de trabajo los mantiene el equipo, por eso están en solo lectura.</div>'
       : (state.legacy
           ? ''
           : '<div class="cp-note">👀 Este portal está en modo solo lectura. Pídele a tu contacto en predictable.ai que lo habilite si quieres editarlo.</div>');
@@ -328,15 +313,6 @@
       // Lo que el equipo preparó en el espacio del cliente (contexto, análisis
       // de mercado, Radar): solo si está confirmado. Ver mountIntelligence().
       '<div id="cp-intel"></div>' +
-
-      '<div class="cp-sec">' +
-        '<h2>Base de datos (CRM)' +
-          (c.crm_sheet_url ? '<a class="cp-link" href="' + esc(su(c.crm_sheet_url)) + '" target="_blank" rel="noopener noreferrer">Abrir en Google Sheets ↗</a>' : '') +
-        '</h2>' +
-        (embed
-          ? '<iframe class="cp-frame" src="' + esc(embed) + '" loading="lazy" referrerpolicy="no-referrer"></iframe>'
-          : '<p class="cp-text cp-muted">Tu equipo todavía no ha enlazado la base de datos.</p>') +
-      '</div>' +
 
       '<div class="cp-cols">' +
         '<div class="cp-sec"><h2>Links de trabajo</h2><div class="cp-links">' + links + '</div></div>' +
