@@ -3,7 +3,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Vista de cuadrícula de clientes (con foto) + dashboard editable por cliente:
  * status, links (brief / campañas / matriz / kick off), CRM (métricas críticas,
- * incl. follow ups pendientes, + Google Sheets embebido), material de apoyo
+ * incl. follow ups pendientes), material de apoyo
  * (PDFs en Supabase Storage), notas, ICP, industrias y países objetivo
  * (multiselect Latam).
  *
@@ -127,7 +127,6 @@
     loading: false,
     error: null,
     current: null,          // client row being viewed
-    sheetState: null,       // último sync del Google Sheets (client_sheet_state)
     materials: [],
     photoUrl: null,         // signed url of current client photo
     gridPhotoUrls: {},      // path -> signed url
@@ -157,41 +156,6 @@
     var res = await sb().from('clients').select('*').eq('id', id).maybeSingle();
     if (res.error) throw res.error;
     return res.data;
-  }
-
-  async function fetchSheetState(id) {
-    var res = await sb().from('client_sheet_state')
-      .select('synced_at,ok,error,crm_tab,metrics_tab,row_count,dated_row_count')
-      .eq('client_id', id).maybeSingle();
-    if (res.error) return null;   // tabla aún no migrada: no rompe el dashboard
-    return res.data;
-  }
-
-  /**
-   * Pide a la edge function `sheet-sync` que relea el Google Sheets. La
-   * autorización la decide RLS: la función consulta clients con el JWT de quien
-   * llama, así que solo sincroniza clientes que ya puede ver.
-   */
-  async function syncSheet(id) {
-    var cfg = window.SUPABASE_CONFIG || {};
-    var session = await sb().auth.getSession();
-    var jwt = session && session.data && session.data.session ? session.data.session.access_token : null;
-    if (!jwt) throw new Error('Sesión expirada, vuelve a entrar.');
-
-    var res = await fetch(cfg.url + '/functions/v1/sheet-sync', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': cfg.anonKey,
-        'Authorization': 'Bearer ' + jwt,
-      },
-      body: JSON.stringify({ action: 'sync', client_id: id, force: true }),
-    });
-    var body = null;
-    try { body = await res.json(); } catch (e) { /* sin JSON */ }
-    if (!res.ok && res.status !== 422) throw new Error((body && body.error) || ('Error ' + res.status));
-    if (body && body.ok === false) throw new Error(body.error || 'No se pudo leer el sheet.');
-    return body;
   }
 
   async function createClient(name) {
@@ -315,20 +279,6 @@
     });
   }
 
-  // Convierte un link de Google Sheets a su URL embebible; null si no aplica.
-  function sheetEmbedUrl(url) {
-    try {
-      var u = new URL(String(url || ''));
-      if (u.hostname !== 'docs.google.com') return null;
-      var m = /^\/spreadsheets\/d\/([\w-]+)/.exec(u.pathname);
-      if (!m) return null;
-      var gid = '';
-      var gm = /gid=(\d+)/.exec(u.hash || '') || /gid=(\d+)/.exec(u.search || '');
-      if (gm) gid = '?gid=' + gm[1];
-      return 'https://docs.google.com/spreadsheets/d/' + m[1] + '/preview' + gid;
-    } catch (e) { return null; }
-  }
-
   function portalLink(client) {
     var base = location.origin + location.pathname.replace(/[^/]*$/, '');
     return base + 'client.html?token=' + client.share_token;
@@ -411,13 +361,6 @@
       '.cl-open-a{flex:none;font-size:12px;font-weight:700;color:var(--accent-ink);text-decoration:none;padding:7px 10px;border:1px solid var(--hair-3);border-radius:var(--r-sm);background:var(--surface)}',
       '.cl-open-a:hover{background:var(--accent-soft-2)}',
       '.cl-metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}',
-      '.cl-sheet-cfg{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:8px}',
-      '.cl-sheet-cfg .cl-field{margin:0}',
-      '.cl-sync-note{font-size:11.5px;color:var(--ink-3);line-height:1.5;margin-top:8px;padding:7px 10px;background:var(--surface2);border:1px solid var(--hair);border-radius:var(--r-sm)}',
-      '.cl-sync-note.is-ok{color:var(--ink-3)}',
-      '.cl-sync-note.is-err{background:var(--red-soft);border-color:transparent;color:var(--red)}',
-      '.cl-auto{font-weight:600;text-transform:none;letter-spacing:0;color:var(--ink-4)}',
-      '@media (max-width:720px){.cl-sheet-cfg{grid-template-columns:1fr}}',
       '.cl-metric{background:var(--surface2);border:1px solid var(--hair);border-radius:var(--r);padding:10px 12px;display:flex;flex-direction:column;gap:4px}',
       '.cl-metric input{border:none;background:transparent;font-size:20px;font-weight:800;color:var(--ink);width:100%;padding:0;font-family:inherit}',
       '.cl-metric input:focus{outline:none}',
@@ -437,7 +380,6 @@
       '.cl-thr-strategy label{font-size:9.5px;font-weight:800;color:var(--red);text-transform:uppercase;letter-spacing:.04em}',
       '.cl-thr-strategy textarea{width:100%;min-height:64px;resize:vertical;background:var(--surface);border:1px solid var(--hair-3);border-radius:var(--r-sm);padding:6px 8px;font-size:12px;line-height:1.4;font-family:inherit;color:var(--ink)}',
       '.cl-thr-strategy textarea:focus{outline:none;border-color:var(--accent)}',
-      '.cl-sheet-frame{width:100%;height:380px;border:1px solid var(--hair);border-radius:var(--r);background:var(--surface2)}',
       '.cl-countries{display:flex;flex-wrap:wrap;gap:6px}',
       '.cl-cty{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;border:1px solid var(--hair-3);background:var(--surface);font-size:12px;font-weight:600;cursor:pointer;color:var(--ink-2);font-family:inherit}',
       '.cl-cty.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)}',
@@ -675,10 +617,9 @@
     setTopbarActions('');
     state.body.innerHTML = '';
     try {
-      var rows = await Promise.all([fetchClient(id), fetchMaterials(id), fetchSheetState(id)]);
+      var rows = await Promise.all([fetchClient(id), fetchMaterials(id)]);
       state.current = rows[0];
       state.materials = rows[1];
-      state.sheetState = rows[2];
       if (!state.current) throw new Error('Cliente no encontrado');
       state.photoUrl = state.current.photo_path ? await signPath(state.current.photo_path) : null;
       renderDetail();
@@ -772,8 +713,6 @@
         x.flag + ' ' + esc(x.name) + '</button>';
     }).join('');
 
-    var embed = sheetEmbedUrl(c.crm_sheet_url);
-
     state.body.innerHTML =
       '<div class="cl-detail">' +
         '<div class="cl-head">' +
@@ -831,32 +770,12 @@
           '</div>' +
 
           '<div class="cl-sec cl-span2">' +
-            '<div class="cl-sec-title">CRM' +
-              '<a class="cl-open-a" id="cl-crm-open" href="' + esc(su(c.crm_sheet_url || '')) + '" target="_blank" rel="noopener"' + (c.crm_sheet_url ? '' : ' style="display:none"') + '>Abrir base de datos ↗</a>' +
-            '</div>' +
-            '<div class="cl-field"><span class="cl-lbl">Google Sheets (base de datos)</span>' +
-              '<input class="cl-inp" data-field="crm_sheet_url" type="url" placeholder="https://docs.google.com/spreadsheets/…" value="' + esc(c.crm_sheet_url || '') + '"></div>' +
-            '<div class="cl-sheet-cfg">' +
-              '<div class="cl-field"><span class="cl-lbl">Pestaña del CRM</span>' +
-                '<input class="cl-inp" data-field="crm_sheet_tab" type="text" placeholder="CRM (se autodetecta)" value="' + esc(c.crm_sheet_tab || '') + '"></div>' +
-              '<div class="cl-field"><span class="cl-lbl">Pestaña de métricas</span>' +
-                '<input class="cl-inp" data-field="metrics_sheet_tab" type="text" placeholder="Métricas (se autodetecta)" value="' + esc(c.metrics_sheet_tab || '') + '"></div>' +
-              '<button class="btn btn-ghost btn-sm" id="cl-sync">↻ Leer el sheet ahora</button>' +
-            '</div>' +
-            '<div class="cl-sync-note" id="cl-sync-note"></div>' +
-            '<div class="cl-lbl" style="margin-top:4px">Datos críticos ' +
-              '<span class="cl-auto">se rellenan solos desde la pestaña de métricas</span></div>' +
+            '<div class="cl-sec-title">CRM</div>' +
+            '<div class="cl-lbl" style="margin-top:4px">Datos críticos</div>' +
             '<div class="cl-metrics">' + metricCells + '</div>' +
             '<div class="cl-ratios" id="cl-ratios"></div>' +
             '<div class="cl-lbl" style="margin-top:6px">Umbrales mínimos aceptables</div>' +
             '<div class="cl-thr-grid" id="cl-thresholds"></div>' +
-            '<div id="cl-sheet-embed">' +
-              (embed
-                ? '<iframe class="cl-sheet-frame" src="' + esc(embed) + '" loading="lazy" referrerpolicy="no-referrer"></iframe>'
-                : (c.crm_sheet_url
-                    ? '<div class="cl-empty" style="padding:16px">El link no parece ser de Google Sheets, no se puede embeber. Usa el botón "Abrir base de datos".</div>'
-                    : '<div class="cl-empty" style="padding:16px">Pega el link del Google Sheets para embeberlo aquí.</div>')) +
-            '</div>' +
           '</div>' +
 
           '<div class="cl-sec">' +
@@ -947,42 +866,8 @@
           openA.href = su(el.value.trim());
           openA.style.display = el.value.trim() ? '' : 'none';
         }
-        if (f === 'crm_sheet_url') refreshSheetEmbed(el.value.trim());
       });
     });
-
-    renderSyncNote();
-
-    var syncBtn = body.querySelector('#cl-sync');
-    if (syncBtn) {
-      syncBtn.addEventListener('click', async function () {
-        var c = state.current;
-        if (!c) return;
-        // Un cambio de link o de pestaña sin guardar haría releer el sheet viejo.
-        await flushSave();
-        var label = syncBtn.textContent;
-        syncBtn.disabled = true;
-        syncBtn.textContent = 'Leyendo el sheet…';
-        try {
-          await syncSheet(c.id);
-          state.sheetState = await fetchSheetState(c.id);
-          var fresh = await fetchClient(c.id);
-          if (fresh && state.current && state.current.id === fresh.id) {
-            Object.assign(state.current, fresh);
-            refreshMetricInputs();
-            renderRatios();
-            renderThresholds();
-          }
-          toast('Sheet leído correctamente.', 'success');
-        } catch (e) {
-          state.sheetState = await fetchSheetState(c.id);
-          toast('No se pudo leer el sheet: ' + (e.message || e), 'error');
-        }
-        syncBtn.disabled = false;
-        syncBtn.textContent = label;
-        renderSyncNote();
-      });
-    }
 
     // Métricas CRM
     body.querySelectorAll('[data-metric]').forEach(function (el) {
@@ -1086,60 +971,6 @@
       } catch (e) {
         toast('No se pudo eliminar: ' + (e.message || e), 'error');
       }
-    });
-  }
-
-  function refreshSheetEmbed(url) {
-    var host = state.body.querySelector('#cl-sheet-embed');
-    var openA = state.body.querySelector('#cl-crm-open');
-    if (openA) { openA.href = su(url); openA.style.display = url ? '' : 'none'; }
-    if (!host) return;
-    var embed = sheetEmbedUrl(url);
-    if (embed) {
-      host.innerHTML = '<iframe class="cl-sheet-frame" src="' + esc(embed) + '" loading="lazy" referrerpolicy="no-referrer"></iframe>';
-    } else if (url) {
-      host.innerHTML = '<div class="cl-empty" style="padding:16px">El link no parece ser de Google Sheets, no se puede embeber. Usa el botón "Abrir base de datos".</div>';
-    } else {
-      host.innerHTML = '<div class="cl-empty" style="padding:16px">Pega el link del Google Sheets para embeberlo aquí.</div>';
-    }
-  }
-
-  /** Estado del último sync del sheet, bajo los campos de configuración. */
-  function renderSyncNote() {
-    var host = state.body ? state.body.querySelector('#cl-sync-note') : null;
-    if (!host) return;
-    var st = state.sheetState;
-
-    if (!st || !st.synced_at) {
-      host.className = 'cl-sync-note';
-      host.textContent = state.current && state.current.crm_sheet_url
-        ? 'Este sheet todavía no se ha leído. Pulsa "Leer el sheet ahora".'
-        : 'Pega el link del Google Sheets para poder leerlo automáticamente.';
-      return;
-    }
-
-    if (!st.ok) {
-      host.className = 'cl-sync-note is-err';
-      host.textContent = 'No se pudo leer el sheet: ' + (st.error || 'error desconocido');
-      return;
-    }
-
-    var undated = (st.row_count || 0) - (st.dated_row_count || 0);
-    host.className = 'cl-sync-note is-ok';
-    host.textContent = 'Leído el ' + new Date(st.synced_at).toLocaleString('es-MX') +
-      ' · pestañas "' + (st.crm_tab || '—') + '"' +
-      (st.metrics_tab ? ' y "' + st.metrics_tab + '"' : ' (sin pestaña de métricas)') +
-      ' · ' + (st.row_count || 0) + ' filas, ' + (st.dated_row_count || 0) + ' con fecha' +
-      (undated > 0 ? ' (' + undated + ' sin fecha no entran en los filtros por período)' : '') + '.';
-  }
-
-  /** Refresca los inputs de métricas tras un sync que pisó crm_metrics. */
-  function refreshMetricInputs() {
-    if (!state.body || !state.current) return;
-    var m = state.current.crm_metrics || {};
-    state.body.querySelectorAll('[data-metric]').forEach(function (el) {
-      var v = m[el.getAttribute('data-metric')];
-      el.value = v == null ? '' : v;
     });
   }
 

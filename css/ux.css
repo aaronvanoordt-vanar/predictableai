@@ -457,7 +457,7 @@ html.ux-theming, html.ux-theming *, html.ux-theming *::before, html.ux-theming *
   #prospecting-shell .pros-grid, #prospecting-shell .pros-grid.pros-grid-300, #prospecting-shell .pros-2col,
   .cmp-inbox, .cmp-msg, .cmp-ch-grid, .cmp-conv, .cb-cad, .cb-msg-body, .cb-review,
   .coda-foda-grid, .coda-came-grid, .ihx-context-gallery, .ihx-field-row, .sax-cols-2, .sax-cols-3, .mks-tiles,
-  .cl-sheet-cfg, .cl-sections, .cl-row2, .lrn-grid, .rl-grid, .rl-cols, .rdr-grid {
+  .cl-sections, .cl-row2, .lrn-grid, .rl-grid, .rl-cols, .rdr-grid {
     grid-template-columns: 1fr !important;
   }
   .cmp-card-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
