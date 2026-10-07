@@ -813,6 +813,30 @@ export async function listConversationMessages(creds: WatiCreds, phone: string, 
   return Array.isArray(data?.message_list) ? data.message_list : [];
 }
 
+/**
+ * Igual que listConversationMessages, pero prueba las dos formas del número
+ * (52… y 521… en México, 54… y 549… en Argentina) hasta encontrar la
+ * conversación: WATI la guarda con la forma con la que se creó el contacto, y
+ * un contacto que ya existía con 521… responde vacío a 52…. Sin esto la
+ * reconciliación de recibos dio por perdido un saliente que el lead había
+ * contestado (2026-10-06).
+ */
+export async function listConversationMessagesAnyForm(creds: WatiCreds, phone: string, page = 1, pageSize = 100): Promise<Json[]> {
+  let list: Json[] | null = null;
+  let notFound: unknown = null;
+  for (const p of phoneVariants(phone)) {
+    try {
+      list = await listConversationMessages(creds, p, page, pageSize);
+    } catch (e) {
+      if (e instanceof WatiError && e.status === 404) { notFound = e; continue; }
+      throw e;
+    }
+    if (list.length) return list;
+  }
+  if (list === null && notFound) throw notFound;
+  return list ?? [];
+}
+
 /** GET /api/ext/v3/contacts — una página de contactos (wa_id, last_updated…). */
 export async function listContactsPage(creds: WatiCreds, page = 1, pageSize = 100): Promise<Json[]> {
   const data = await call(creds, "GET", `/api/ext/v3/contacts?page_number=${page}&page_size=${pageSize}`);

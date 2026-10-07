@@ -327,3 +327,39 @@ Deno.test("phoneVariants: las dos formas en que puede estar guardado el contact_
   assertEquals(wati.phoneVariants("51987654321"), ["51987654321"]);
   assertEquals(wati.phoneVariants(""), []);
 });
+
+// 2026-10-06: la reconciliación preguntó por 528180993406, WATI tenía la
+// conversación como 5218180993406 (el contacto ya existía) y respondió vacío:
+// el saludo que el lead contestó quedó «WATI no registró este mensaje».
+Deno.test("listConversationMessagesAnyForm: prueba 521… si 52… viene vacío o 404", async () => {
+  const real = globalThis.fetch;
+  const asked: string[] = [];
+  const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+  try {
+    globalThis.fetch = ((url: string) => {
+      const phone = /conversations\/(\d+)\//.exec(String(url))?.[1] ?? "";
+      asked.push(phone);
+      return Promise.resolve(phone === "5218180993406" ? reply(200, { message_list: [{ id: "a" }] }) : reply(200, { message_list: [] }));
+    }) as typeof fetch;
+    const creds = { endpoint: "https://live-mt-server.wati.io/123", token: "t" };
+    const list = await wati.listConversationMessagesAnyForm(creds, "528180993406", 1, 50);
+    assertEquals(list.map((m) => m.id), ["a"]);
+    assertEquals(asked, ["528180993406", "5218180993406"]);
+
+    asked.length = 0;
+    globalThis.fetch = ((url: string) => {
+      const phone = /conversations\/(\d+)\//.exec(String(url))?.[1] ?? "";
+      asked.push(phone);
+      return Promise.resolve(phone === "5218180993406" ? reply(200, { message_list: [{ id: "b" }] }) : reply(404, { message: "not found" }));
+    }) as typeof fetch;
+    assertEquals((await wati.listConversationMessagesAnyForm(creds, "528180993406")).map((m) => m.id), ["b"]);
+
+    // Otros países: una sola pregunta, y el vacío se devuelve tal cual.
+    asked.length = 0;
+    globalThis.fetch = ((url: string) => { asked.push(String(url)); return Promise.resolve(reply(200, { message_list: [] })); }) as typeof fetch;
+    assertEquals(await wati.listConversationMessagesAnyForm(creds, "51987654321"), []);
+    assertEquals(asked.length, 1);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
