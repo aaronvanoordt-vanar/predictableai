@@ -3038,6 +3038,42 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       </div>
     </div>
 
+    <!-- ===== HORARIO DE ENVÍO ===== -->
+    <div class="settings-card">
+      <div class="settings-card-header">
+        <div class="icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5">
+            <circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/>
+          </svg>
+        </div>
+        <div class="settings-card-title">Horario de envío de campañas</div>
+      </div>
+      <div class="settings-card-sub">Rango horario y días permitidos para enviar. Se usa como punto de partida en cada campaña nueva; las campañas que ya creaste conservan su propio horario y puedes cambiarlo en cada una.</div>
+
+      <div class="settings-row">
+        <div class="settings-row-label">Zona horaria</div>
+        <div class="settings-row-value">
+          <select class="settings-input" id="set-sw-tz"></select>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-label">Desde (hora)</div>
+        <div class="settings-row-value"><input class="settings-input" type="number" min="0" max="23" id="set-sw-start"></div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-label">Hasta (hora)</div>
+        <div class="settings-row-value"><input class="settings-input" type="number" min="1" max="24" id="set-sw-end"></div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-label">Días</div>
+        <div class="settings-row-value" id="set-sw-days" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+      </div>
+
+      <div class="settings-actions">
+        <button class="settings-btn settings-btn-primary" id="set-save-send-window">Guardar horario</button>
+      </div>
+    </div>
+
     <!-- ===== CUENTA ===== -->
     <div class="settings-card">
       <div class="settings-card-header">
@@ -4402,6 +4438,9 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
     const modelSel = $('#set-claude-model');
     if (modelSel) modelSel.value = (profile && profile.preferred_claude_model) || '';
 
+    // Horario de envío de campañas
+    fillSendWindow(profile && profile.send_window);
+
     // Cuenta
     const provider = (user.app_metadata && user.app_metadata.provider) || 'email';
     const providerLabels = { google: 'Google', linkedin_oidc: 'LinkedIn', email: 'Email + Password' };
@@ -4441,6 +4480,65 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
       if (window.currentProfile) window.currentProfile.full_name = fullName;
       if (typeof window.refreshUserMenu === 'function') window.refreshUserMenu();
       toast('Perfil actualizado correctamente.', 'ok');
+    } catch (e) {
+      toast('Error: ' + e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = orig;
+    }
+  }
+
+  const SW_TZ = ['America/Lima', 'America/Bogota', 'America/Mexico_City', 'America/Santiago',
+    'America/Argentina/Buenos_Aires', 'America/Sao_Paulo', 'America/Guayaquil', 'America/La_Paz',
+    'America/Caracas', 'America/Panama', 'America/Costa_Rica', 'America/Guatemala',
+    'America/Montevideo', 'America/Asuncion', 'America/Santo_Domingo', 'America/New_York',
+    'America/Los_Angeles', 'Europe/Madrid'];
+  const SW_DAYS = [[1, 'Lu'], [2, 'Ma'], [3, 'Mi'], [4, 'Ju'], [5, 'Vi'], [6, 'Sá'], [7, 'Do']];
+
+  function fillSendWindow(w) {
+    w = w || {};
+    let browserTz = 'America/Lima';
+    try { browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || browserTz; } catch (e) {}
+    const tz = w.timezone || browserTz;
+    const sel = $('#set-sw-tz');
+    const tzs = SW_TZ.slice();
+    if (tzs.indexOf(tz) === -1) tzs.unshift(tz);
+    sel.innerHTML = '';
+    tzs.forEach(function (z) {
+      const o = document.createElement('option');
+      o.value = z; o.textContent = z.replace(/_/g, ' '); o.selected = z === tz;
+      sel.appendChild(o);
+    });
+    $('#set-sw-start').value = Number.isInteger(w.start_hour) ? w.start_hour : 9;
+    $('#set-sw-end').value = Number.isInteger(w.end_hour) ? w.end_hour : 18;
+    const days = Array.isArray(w.days) && w.days.length ? w.days.map(Number) : [1, 2, 3, 4, 5];
+    const box = $('#set-sw-days');
+    box.innerHTML = '';
+    SW_DAYS.forEach(function (d) {
+      const lab = document.createElement('label');
+      lab.style.cssText = 'display:inline-flex;gap:4px;align-items:center';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.value = d[0]; cb.checked = days.indexOf(d[0]) !== -1;
+      lab.appendChild(cb); lab.appendChild(document.createTextNode(d[1]));
+      box.appendChild(lab);
+    });
+  }
+
+  async function saveSendWindow() {
+    const btn = $('#set-save-send-window');
+    const start = parseInt($('#set-sw-start').value, 10);
+    const end = parseInt($('#set-sw-end').value, 10);
+    const days = Array.from(document.querySelectorAll('#set-sw-days input:checked')).map(function (c) { return Number(c.value); });
+    if (!(start >= 0 && start <= 23) || !(end >= 1 && end <= 24)) { toast('Las horas deben estar entre 0 y 23 (desde) y 1 y 24 (hasta).', 'err'); return; }
+    if (end <= start) { toast('La hora final debe ser posterior a la inicial.', 'err'); return; }
+    if (!days.length) { toast('Elige al menos un día de envío.', 'err'); return; }
+    btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando...';
+    try {
+      const value = { timezone: $('#set-sw-tz').value, start_hour: start, end_hour: end, days: days };
+      const { user } = window.__currentSettings;
+      const { error } = await window.supabaseClient.from('profiles').update({ send_window: value }).eq('id', user.id);
+      if (error) throw error;
+      if (window.currentProfile) window.currentProfile.send_window = value;
+      toast('Horario de envío guardado. Se aplicará a tus campañas nuevas.', 'ok');
     } catch (e) {
       toast('Error: ' + e.message, 'err');
     } finally {
@@ -4600,6 +4698,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
     $('#set-save-profile').addEventListener('click', saveProfile);
     $('#set-save-company').addEventListener('click', saveCompany);
     if ($('#set-save-claude-model')) $('#set-save-claude-model').addEventListener('click', saveClaudeModel);
+    if ($('#set-save-send-window')) $('#set-save-send-window').addEventListener('click', saveSendWindow);
     $('#set-reset-password').addEventListener('click', resetPassword);
     $('#set-delete-account').addEventListener('click', deleteAccount);
 

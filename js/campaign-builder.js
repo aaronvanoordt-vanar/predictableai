@@ -105,6 +105,21 @@
   function hasLinkedin(m) { return !!(m && m.linkedin_url); }
   function browserTz() { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Lima'; } catch (e) { return 'America/Lima'; } }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  // Horario por defecto de campañas nuevas: profiles.send_window (Ajustes);
+  // sin él, 9–18 de lunes a viernes en la zona del navegador. Valida cada campo.
+  function defaultWindow() {
+    var w = (window.currentProfile && window.currentProfile.send_window) || {};
+    var start = Number.isInteger(w.start_hour) && w.start_hour >= 0 && w.start_hour <= 23 ? w.start_hour : 9;
+    var end = Number.isInteger(w.end_hour) && w.end_hour >= 1 && w.end_hour <= 24 ? w.end_hour : 18;
+    if (end <= start) { start = 9; end = 18; }
+    var days = Array.isArray(w.days) ? w.days.map(Number).filter(function (d) { return d >= 1 && d <= 7; }) : [];
+    return {
+      timezone: (typeof w.timezone === 'string' && w.timezone) || browserTz(),
+      start_hour: start,
+      end_hour: end,
+      days: days.length ? days.slice().sort() : [1, 2, 3, 4, 5],
+    };
+  }
   function dayLabel(v) { for (var i = 0; i < DAYS.length; i++) if (DAYS[i].value === Number(v)) return DAYS[i].label; return String(v); }
   // Variables de "Mi texto" (las resuelve el motor: campaign-run fill()).
   var TEXT_VARS = [
@@ -463,10 +478,10 @@
       flow: L.emptyFlow(),
       origin: null,
       review_required: false,
-      timezone: browserTz(),
-      send_start_hour: 9,
-      send_end_hour: 18,
-      send_days: [1, 2, 3, 4, 5],
+      timezone: defaultWindow().timezone,
+      send_start_hour: defaultWindow().start_hour,
+      send_end_hour: defaultWindow().end_hour,
+      send_days: defaultWindow().days,
       daily_caps: { whatsapp: 50, email: 80 },
       sender: {
         name: (watiSender && watiSender.name) || senderInfo.name || '',
