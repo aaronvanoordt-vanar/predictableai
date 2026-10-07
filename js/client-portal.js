@@ -333,6 +333,10 @@
       // filtrables por fecha.
       '<div id="cr-review"></div>' +
 
+      // Lo que el equipo preparó en el espacio del cliente (contexto, análisis
+      // de mercado, Radar): solo si está confirmado. Ver mountIntelligence().
+      '<div id="cp-intel"></div>' +
+
       '<div class="cp-sec">' +
         '<h2>Base de datos (CRM)' +
           (c.crm_sheet_url ? '<a class="cp-link" href="' + esc(su(c.crm_sheet_url)) + '" target="_blank" rel="noopener noreferrer">Abrir en Google Sheets ↗</a>' : '') +
@@ -409,8 +413,118 @@
     });
   }
 
+  // ── Inteligencia comercial (espacio del cliente en Predictable) ───────
+
+  function injectIntelCss() {
+    if (document.getElementById('cp-intel-css')) return;
+    var s = document.createElement('style');
+    s.id = 'cp-intel-css';
+    s.textContent =
+      '.cpi-lead{font-size:16px;font-weight:700;line-height:1.4;margin-bottom:6px}' +
+      '.cpi-sub{font-size:13px;color:var(--ink-2);margin-bottom:12px}' +
+      '.cpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}' +
+      '.cpi-item{background:var(--surface2);border:1px solid var(--hair);border-radius:var(--r);padding:12px 14px;min-width:0}' +
+      '.cpi-item h3{font-size:13px;font-weight:800;margin-bottom:4px;overflow-wrap:anywhere}' +
+      '.cpi-item p{font-size:12.5px;color:var(--ink-2);margin-top:4px;overflow-wrap:anywhere}' +
+      '.cpi-item .cpi-k{font-size:10.5px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em}' +
+      '.cpi-meta{font-size:12px;color:var(--ink-3);display:flex;gap:10px;flex-wrap:wrap}' +
+      '.cpi-list{display:flex;flex-direction:column;gap:6px;padding-left:18px}' +
+      '.cpi-list li{font-size:13px;color:var(--ink-2)}' +
+      '.cpi-h{font-size:11px;font-weight:800;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px}' +
+      '.cpi-ev{display:block;font-size:12px;margin-top:6px;color:var(--accent-ink);overflow-wrap:anywhere}';
+    document.head.appendChild(s);
+  }
+
+  function fmtShort(d) {
+    var t = Date.parse(d || '');
+    return isNaN(t) ? '' : new Date(t).toLocaleDateString('es', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function intelCompanyHtml(co) {
+    var lead = co.positional_phrase || co.what_it_does || '';
+    var meta = [co.industry, co.country].filter(Boolean).map(function (x) { return '<span>' + esc(x) + '</span>'; }).join('') +
+      (co.website ? '<a class="cp-link" href="' + esc(su(co.website)) + '" target="_blank" rel="noopener noreferrer">Sitio web ↗</a>' : '');
+    var offers = (co.offerings || []).map(function (o) {
+      return '<div class="cpi-item"><h3>' + esc(o.name) + '</h3>' +
+        (o.for_whom ? '<p><span class="cpi-k">Para</span> ' + esc(o.for_whom) + '</p>' : '') +
+        (o.problem ? '<p>' + esc(o.problem) + '</p>' : '') + '</div>';
+    }).join('');
+    var outcomes = (co.key_outcomes || []).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('');
+    return '<div class="cp-sec"><h2>Resumen de tu empresa</h2>' +
+      (lead ? '<div class="cpi-lead">' + esc(lead) + '</div>' : '') +
+      (meta ? '<div class="cpi-meta" style="margin-bottom:10px">' + meta + '</div>' : '') +
+      (co.about ? '<p class="cp-text">' + esc(co.about) + '</p>' : '') +
+      (offers ? '<div class="cpi-h">Qué ofreces y a quién</div><div class="cpi-grid">' + offers + '</div>' : '') +
+      (outcomes ? '<div class="cpi-h">Resultados que entregas</div><ul class="cpi-list">' + outcomes + '</ul>' : '') +
+      '</div>';
+  }
+
+  function intelMarketHtml(m) {
+    var segs = (m.segments || []).map(function (x, i) {
+      return '<div class="cpi-item"><span class="cpi-k">Prioridad ' + (i + 1) + '</span><h3>' + esc(x.name) + '</h3>' +
+        (x.why_now ? '<p><b>Por qué ahora:</b> ' + esc(x.why_now) + '</p>' : '') +
+        (x.pain ? '<p><b>Dolor:</b> ' + esc(x.pain) + '</p>' : '') +
+        (x.angle ? '<p><b>Ángulo:</b> ' + esc(x.angle) + '</p>' : '') + '</div>';
+    }).join('');
+    var sigs = (m.signals || []).map(function (x) {
+      return '<div class="cpi-item"><h3>' + esc(x.signal) + '</h3>' +
+        (x.evidence ? '<p><span class="cpi-k">Dónde se ve</span> ' + esc(x.evidence) + '</p>' : '') +
+        (x.why ? '<p>' + esc(x.why) + '</p>' : '') + '</div>';
+    }).join('');
+    var acts = (m.actions || []).map(function (x) {
+      return '<li><b>' + esc(x.action) + '</b>' + (x.why ? ' — ' + esc(x.why) : '') + '</li>';
+    }).join('');
+    return '<div class="cp-sec"><h2>Análisis de mercado' +
+        (m.generated_at ? '<span class="cp-muted" style="font-weight:600;font-size:12px">' + esc(fmtShort(m.generated_at)) + '</span>' : '') +
+      '</h2>' +
+      (m.headline ? '<div class="cpi-lead">' + esc(m.headline) + '</div>' : '') +
+      (m.summary ? '<div class="cpi-sub">' + esc(m.summary) + '</div>' : '') +
+      (segs ? '<div class="cpi-h">Segmentos para atacar primero</div><div class="cpi-grid">' + segs + '</div>' : '') +
+      (sigs ? '<div class="cpi-h">Señales de compra que vamos a vigilar</div><div class="cpi-grid">' + sigs + '</div>' : '') +
+      (acts ? '<div class="cpi-h">Qué hacer esta semana</div><ul class="cpi-list">' + acts + '</ul>' : '') +
+      '</div>';
+  }
+
+  function intelRadarHtml(r) {
+    var cos = (r.companies || []).map(function (x) {
+      var meta = [x.industry, x.country, x.signal_date].filter(Boolean).map(function (v) { return '<span>' + esc(v) + '</span>'; }).join('');
+      var ev = (x.evidence || []).map(function (e) {
+        return '<a class="cpi-ev" href="' + esc(su(e.url)) + '" target="_blank" rel="noopener noreferrer">' + esc(e.summary || 'Fuente') + ' ↗</a>';
+      }).join('');
+      return '<div class="cpi-item"><h3>' + (x.website
+          ? '<a href="' + esc(su(x.website)) + '" target="_blank" rel="noopener noreferrer" style="color:inherit">' + esc(x.name) + ' ↗</a>'
+          : esc(x.name)) + '</h3>' +
+        (meta ? '<div class="cpi-meta">' + meta + '</div>' : '') +
+        (x.signal ? '<p><b>Señal:</b> ' + esc(x.signal) + '</p>' : '') +
+        (x.why_fit ? '<p><b>Por qué encaja:</b> ' + esc(x.why_fit) + '</p>' : '') +
+        ev + '</div>';
+    }).join('');
+    if (!cos) return '';
+    return '<div class="cp-sec"><h2>Radar: empresas con señales de compra' +
+        (r.generated_at ? '<span class="cp-muted" style="font-weight:600;font-size:12px">' + esc(fmtShort(r.generated_at)) + '</span>' : '') +
+      '</h2><div class="cpi-grid">' + cos + '</div></div>';
+  }
+
+  async function mountIntelligence() {
+    var host = el('cp-intel');
+    if (!host || state.legacy || !token) return;
+    try {
+      var data = await api('intelligence');
+      if (!data || !data.available) return;
+      injectIntelCss();
+      host.innerHTML =
+        (data.company ? intelCompanyHtml(data.company) : '') +
+        (data.market ? intelMarketHtml(data.market) : '') +
+        (data.radar ? intelRadarHtml(data.radar) : '');
+    } catch (e) {
+      // Función sin redesplegar o espacio sin preparar: el portal sigue igual.
+      console.warn('[client-portal] intelligence', e && e.message);
+    }
+  }
+
   function bindDashboard() {
     mountReview();
+    mountIntelligence();
 
     var logout = el('cp-logout');
     if (logout) {
