@@ -41,6 +41,11 @@
  *
  * Filtro por lista: la lista de la que viene cada lead enrolado
  * (prospect_list_members.list_id). Una campaña puede tener leads de varias.
+ *
+ * Filtro por empresa: texto libre con sugerencias de las empresas de los leads
+ * cargados. Si el texto es una empresa tal cual, cuenta solo esa; si no, las
+ * que lo contienen (sin distinguir mayúsculas ni acentos). No se recuerda entre visitas: es una
+ * búsqueda puntual, no una preferencia.
  * Comparación con el período anterior: con un período elegido, cada tarjeta
  * muestra la diferencia contra el período inmediatamente anterior del mismo
  * largo (para «Este mes», los mismos días del mes pasado), con la misma regla
@@ -63,7 +68,7 @@
  * todavía puede ganar respuestas. Los sin enviar no tienen semana de envío y
  * no entran. Cada segmento abre a esas personas.
  *
- *   window.campaignAnalytics.compute(enrollments, events, { from, to, channel, campaignChannels, listId })   // función pura; from/to en ms, to exclusivo
+ *   window.campaignAnalytics.compute(enrollments, events, { from, to, channel, campaignChannels, listId, company })   // función pura; from/to en ms, to exclusivo
  *   window.campaignAnalytics.weekly(leads, { maxWeeks })                   // función pura
  */
 (function (global) {
@@ -113,7 +118,7 @@
   var CHANNEL_KEY = 'predictable_cana_channel';
   var LIST_KEY = 'predictable_cana_list';
 
-  var state = { host: null, opts: null, loading: false, error: null, raw: null, data: null, prev: null, open: null, q: '', range: loadRange(), channel: loadChannel(), listId: loadList() };
+  var state = { host: null, opts: null, loading: false, error: null, raw: null, data: null, prev: null, open: null, q: '', range: loadRange(), channel: loadChannel(), listId: loadList(), company: '' };
 
   // ── Utilidades ───────────────────────────────────────────────────────────
   function sb() {
@@ -159,6 +164,8 @@
   function memberName(m) {
     return (m && (m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim())) || '—';
   }
+  /** Minúsculas, sin acentos ni espacios de más: «Grupo Éxito » = «grupo exito». */
+  function normText(v) { return String(v == null ? '' : v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim(); }
   function realEmail(m) { return m && m.email && !/email_not_unlocked/.test(String(m.email)) ? String(m.email) : ''; }
 
   // ── Cálculo (puro) ───────────────────────────────────────────────────────
@@ -174,6 +181,8 @@
     var channel = range && range.channel ? range.channel : null;
     var campaignChannels = (range && range.campaignChannels) || null;
     var listId = range && range.listId ? String(range.listId) : null;
+    var company = range && range.company ? normText(range.company) : '';
+    var companyExact = !!(range && range.companyExact);
     var failed = {};
     (events || []).forEach(function (ev) { if (ev.type === 'failed' && ev.provider_message_id) failed[ev.provider_message_id] = true; });
     var byEn = {};
@@ -198,6 +207,10 @@
     var leads = [];
     (enrollments || []).forEach(function (e) {
       if (listId && String((e.member || {}).list_id || '') !== listId) return;
+      if (company) {
+        var mc = normText((e.member || {}).company);
+        if (companyExact ? mc !== company : mc.indexOf(company) === -1) return;
+      }
       var a = byEn[e.id] || { sends: 0, channels: {}, firstSent: null, lastSent: null, seenAt: null, repliedAt: null };
       if (channel) {
         // Solo los leads que este canal pudo alcanzar: su campaña lo usa o ya recibieron algo por él.
@@ -395,6 +408,36 @@
     var l = id && leadLists().find(function (x) { return x.id === id; });
     return l ? l.name : 'Todas las listas';
   }
+  /** Empresas de los leads cargados (sugerencias del filtro). */
+  function leadCompanies() {
+    var seen = {}, out = [];
+    ((state.raw && state.raw.enrollments) || []).forEach(function (e) {
+      var c = String((e.member && e.member.company) || '').trim();
+      var k = normText(c);
+      if (!k || seen[k]) return;
+      seen[k] = true;
+      out.push(c);
+    });
+    return out.sort(function (a, b) { return a.localeCompare(b, 'es'); }).slice(0, 500);
+  }
+  /** ¿El texto es una empresa tal cual (elegida de las sugerencias)? Entonces no se mezclan «Empresa 3» y «Empresa 31». */
+  function companyIsExact() {
+    var k = normText(state.company);
+    return !!k && leadCompanies().some(function (c) { return normText(c) === k; });
+  }
+  var companyTimer = null;
+  function setCompany(v) {
+    state.company = String(v || '').trim();
+    state.open = null;
+    recompute();
+    // El repintado recrea el campo: se devuelve el foco y el cursor para seguir escribiendo.
+    var focused = document.activeElement && document.activeElement.getAttribute && document.activeElement.getAttribute('data-cana-company') != null;
+    rerender();
+    if (focused && state.host) {
+      var inp = state.host.querySelector('[data-cana-company]');
+      if (inp) { inp.focus(); try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch (e) { /* no-op */ } }
+    }
+  }
   function setList(id) {
     state.listId = id || 'all';
     try { localStorage.setItem(LIST_KEY, state.listId); } catch (e) { /* modo privado */ }
@@ -418,7 +461,7 @@
     var map = {};
     (state.opts.campaigns || []).forEach(function (c) { map[c.id] = c.channels || []; });
     var ch = activeChannel();
-    return Object.assign({}, bounds, { channel: ch !== 'all' ? ch : null, campaignChannels: map, listId: activeListId() });
+    return Object.assign({}, bounds, { channel: ch !== 'all' ? ch : null, campaignChannels: map, listId: activeListId(), company: state.company || '', companyExact: companyIsExact() });
   }
   function setChannel(key) {
     state.channel = key;
@@ -568,6 +611,28 @@
       bar.appendChild(sel);
       if (activeListId()) bar.appendChild(h('div', { class: 'cana-note', style: 'flex-basis:100%', text: 'Solo los leads que vienen de la lista «' + listLabel() + '».' }));
     }
+
+    // Empresa: texto libre con las empresas de los leads como sugerencias.
+    var companies = leadCompanies();
+    if (companies.length || state.company) {
+      bar.appendChild(h('span', { class: 'cana-filter-lbl', text: 'Empresa' }));
+      var dlId = 'cana-companies-' + (isCampaignMode() ? 'c' : 'o');
+      var dl = h('datalist', { id: dlId });
+      companies.forEach(function (c) { dl.appendChild(h('option', { value: c })); });
+      var inp = h('input', { type: 'search', class: 'cana-select cana-company', list: dlId, 'data-cana-company': '',
+        placeholder: 'Todas las empresas', 'aria-label': 'Filtrar por empresa', autocomplete: 'off', value: state.company || '' });
+      inp.addEventListener('input', function () {
+        clearTimeout(companyTimer);
+        companyTimer = setTimeout(function () { if (inp.value.trim() !== state.company) setCompany(inp.value); }, 300);
+      });
+      inp.addEventListener('change', function () { clearTimeout(companyTimer); if (inp.value.trim() !== state.company) setCompany(inp.value); });
+      bar.appendChild(inp);
+      bar.appendChild(dl);
+      if (state.company) {
+        bar.appendChild(h('button', { type: 'button', class: 'cana-linkbtn', text: 'Quitar', onclick: function () { setCompany(''); } }));
+        bar.appendChild(h('div', { class: 'cana-note', style: 'flex-basis:100%', text: companyIsExact() ? 'Solo los leads de «' + state.company + '».' : 'Solo los leads cuya empresa contiene «' + state.company + '».' }));
+      }
+    }
     return bar;
   }
 
@@ -619,6 +684,7 @@
       '.cana-drafts { font-size:12px; color:var(--text3); }',
       '.cana-select { font:inherit; font-size:12.5px; color:var(--text); background:var(--surface); border:1px solid var(--hair); border-radius:999px; padding:5px 12px; max-width:100%; }',
       '#prospecting-shell .cmp-cards.cana-grid-cards { grid-template-columns:repeat(auto-fill,minmax(min(420px,100%),1fr)); }',
+      '.cana-company { min-width:0; width:240px; border-radius:999px; }',
       '.cana-mini-card { cursor:pointer; }',
       '#prospecting-shell .cmp-card.cana-mini-total { cursor:default; }',
       '#prospecting-shell .cmp-card.cana-mini-total:hover { border-color:var(--hair); }',
@@ -713,6 +779,7 @@
     var why = [];
     if (rangeActive()) why.push('el período');
     if (activeListId()) why.push('la lista «' + listLabel() + '»');
+    if (state.company) why.push('la empresa «' + state.company + '»');
     if (ch !== 'all') why.push('el canal ' + channelLabel());
     return why.length ? 'Ningún lead coincide con ' + why.join(', ') + '.' : 'Sin leads.';
   }
@@ -1059,6 +1126,7 @@
     if (week != null) period = '-semana_' + dayValue(new Date(week));
     if (activeChannel() !== 'all') period = '-' + activeChannel() + period;
     if (activeListId()) period = '-' + slug(listLabel()).toLowerCase() + period;
+    if (state.company) period = '-' + slug(state.company).toLowerCase() + period;
     a.download = slug(c.name || 'campanas') + '-' + slug(TILE_TITLE[key]).toLowerCase() + period + '.csv';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
