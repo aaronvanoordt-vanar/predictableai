@@ -99,9 +99,6 @@
 
   // ── Utilidades de formato ──────────────────────────────────────────────
 
-  // Los umbrales y ratios del CRM viven ahora en js/client-review.js, que los
-  // calcula sobre los datos leídos del sheet y filtrados por período.
-
   function sheetEmbedUrl(url) {
     try {
       var u = new URL(String(url || ''));
@@ -328,11 +325,6 @@
         '</div>' +
       '</div>' +
 
-      // La revisión (js/client-review.js) sustituye a las tarjetas de métricas
-      // que antes se tecleaban a mano: los mismos números, leídos del sheet y
-      // filtrables por fecha.
-      '<div id="cr-review"></div>' +
-
       // Lo que el equipo preparó en el espacio del cliente (contexto, análisis
       // de mercado, Radar): solo si está confirmado. Ver mountIntelligence().
       '<div id="cp-intel"></div>' +
@@ -393,24 +385,6 @@
     });
     if (up.error) throw up.error;
     return pre.path;
-  }
-
-  /**
-   * Monta la revisión automática. En el flujo viejo (cuenta + solo lectura) no
-   * hay share_token que pasarle a la edge function, así que se omite en vez de
-   * romper la página.
-   */
-  function mountReview() {
-    var host = el('cr-review');
-    if (!host || !window.clientReview || state.legacy || !token) return;
-    window.clientReview.mount({
-      host: host,
-      api: api,
-      token: token,
-      client: state.client,
-      canEdit: state.canEdit,
-      onPatch: queueSave,
-    });
   }
 
   // ── Inteligencia comercial (espacio del cliente en Predictable) ───────
@@ -523,7 +497,6 @@
   }
 
   function bindDashboard() {
-    mountReview();
     mountIntelligence();
 
     var logout = el('cp-logout');
