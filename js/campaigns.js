@@ -55,7 +55,7 @@
  *   window.campaigns.show(paneEl)       // monta / refresca la pestaña
  *   window.campaigns.newFromList(id)    // abre el builder con esa lista
  *   window.campaigns.refresh()          // recarga canales, campañas y bandeja
- *   window.campaigns.setView('inbox')   // abre la bandeja (o 'campaigns' / 'analytics');
+ *   window.campaigns.setView('inbox')   // abre la bandeja (o 'campaigns');
  *                                       // lo llama el ítem "Bandeja" del sidebar
  *
  * Convenciones: todo string dinámico pasa por esc(); copy en español neutro
@@ -1607,13 +1607,12 @@
       return;
     }
     // Las tarjetas de canales son configuración de Campañas: la Bandeja no las lleva.
-    if (state.view !== 'inbox' && state.view !== 'analytics') root.appendChild(renderChannelBar(false));
+    if (state.view !== 'inbox') root.appendChild(renderChannelBar(false));
     root.appendChild(renderSubnav());
     updateBadge();
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
     if (state.view === 'inbox') { root.appendChild(renderInbox()); markOpenConvRead(); setTimeout(function () { syncWatiHistory(false); }, 0); }
     else if (state.view === 'knowledge') root.appendChild(knowledgeNode());
-    else if (state.view === 'analytics') root.appendChild(analyticsNode());
     else if (state.builder) root.appendChild(state.builderHost);
     else if (state.activeId && findCampaign(state.activeId)) root.appendChild(renderDetail());
     else root.appendChild(renderCampaignCards());
@@ -1913,17 +1912,8 @@
       bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Entrenar la IA'));
       return bar;
     }
-    if (state.view === 'analytics') {
-      bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Analytics'));
-      return bar;
-    }
     bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas'));
     bar.appendChild(h('div', { class: 'cmp-spacer' }));
-    if (state.campaigns.length) {
-      bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-analytics',
-        title: 'El rendimiento de cada campaña: enviados, respuestas, vistos y sin leer, con la lista de personas de cada grupo.',
-        text: 'Analytics' }));
-    }
     var ks = state.knowledge;
     bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-knowledge',
       title: 'Tu metodología, tus scripts ganadores y tu material: la IA los consulta antes de escribir cada mensaje.',
@@ -2687,6 +2677,12 @@
       wrap.appendChild(box);
       return wrap;
     }
+    if (hasAnalytics()) {
+      // La clave cambia si cambia la lista de campañas, su nombre o su estado: ahí se recalcula.
+      var key = 'overview|' + state.campaigns.map(function (c) { return c.id + ':' + c.status + ':' + c.name; }).join(',');
+      wrap.appendChild(analyticsHost('overview', state.campaigns, key));
+      return wrap;
+    }
     var grid = h('div', { class: 'cmp-cards' });
     state.campaigns.forEach(function (c) {
       var st = CAMPAIGN_STATUS[c.status] || CAMPAIGN_STATUS.draft;
@@ -2792,36 +2788,38 @@
     return state.knowledgeHost;
   }
   /**
-   * Analytics (js/campaign-analytics.js): el rendimiento de cada campaña por
-   * lead. Solo lee; se vuelve a montar (y a calcular) cada vez que se entra.
+   * Métricas de las campañas (js/campaign-analytics.js): en la lista, una
+   * tarjeta por campaña con contactos, enviados, respondieron, en visto y sin
+   * leer (con sus tasas); en el detalle, las mismas con las personas de cada
+   * número, CSV, tendencia y comparación. Ya NO hay una vista «Analytics»
+   * aparte (2026-10-07, pedido del dueño): se ve al abrir cada campaña.
+   *
+   * El host se conserva entre repintados (realtime, bandeja) para no volver
+   * a consultar a cada evento; se rearma solo cuando cambia lo que muestra.
    */
-  function analyticsNode() {
-    if (!state.analyticsHost) {
-      state.analyticsHost = h('div');
-      if (global.campaignAnalytics && global.campaignAnalytics.mount) {
-        global.campaignAnalytics.mount(state.analyticsHost, {
-          h: h, esc: esc, toast: toast,
-          focusId: state.analyticsFocus || null,
-          campaigns: state.campaigns.map(function (c) {
-            var st = CAMPAIGN_STATUS[c.status] || CAMPAIGN_STATUS.draft;
-            return { id: c.id, name: c.name, statusLabel: st.label, statusPill: st.pill, channels: campaignChannels(c), channelsHtml: chanIconsHtml(campaignChannels(c)) };
-          }),
-          onOpenCampaign: function (id) { state.analyticsHost = null; openCampaign(id); },
-          onBack: function () { state.view = 'campaigns'; state.analyticsHost = null; state.activeId = null; render(); },
-        });
-      } else {
-        state.analyticsHost.appendChild(h('div', { class: 'pros-hint', text: 'El módulo de Analytics no cargó. Recarga la página.' }));
-      }
-    }
-    return state.analyticsHost;
+  function campaignMeta(c) {
+    var st = CAMPAIGN_STATUS[c.status] || CAMPAIGN_STATUS.draft;
+    var nA = flowActions(c).length;
+    return {
+      id: c.id, name: c.name, statusLabel: st.label, statusPill: st.pill,
+      channels: campaignChannels(c), channelsHtml: chanIconsHtml(campaignChannels(c)),
+      foot: 'Creada ' + fmtDate(c.created_at) + ' · ' + nA + (nA === 1 ? ' envío' : ' envíos'),
+    };
   }
-  function openAnalytics(focusId) {
-    closeBuilder();
-    state.view = 'analytics';
-    state.analyticsFocus = focusId || null;
-    state.analyticsHost = null;
-    render();
+  function analyticsHost(mode, campaigns, key) {
+    if (state.ana && state.ana.key === key) return state.ana.host;
+    var host = h('div');
+    state.ana = { key: key, host: host };
+    global.campaignAnalytics.mount(host, {
+      mode: mode, h: h, esc: esc, toast: toast,
+      campaigns: campaigns.map(campaignMeta),
+      lists: (state.lists || []).map(function (l) { return { id: l.id, name: l.name }; }),
+      onOpenCampaign: function (id) { openCampaign(id); },
+    });
+    return host;
   }
+  function hasAnalytics() { return !!(global.campaignAnalytics && global.campaignAnalytics.mount); }
+  function invalidateAnalytics() { state.ana = null; }
   function openKnowledge() {
     state.view = 'knowledge';
     // Siempre relee la base al entrar (pudo cambiar en otra pestaña).
@@ -2962,18 +2960,21 @@
     var actions = h('div', { class: 'pros-actions' });
     if (c.status === 'active') actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-status', 'data-status': 'paused', text: 'Pausar' }));
     else actions.appendChild(h('button', { type: 'button', class: 'btn btn-teal btn-sm', 'data-action': 'cmp-status', 'data-status': 'active', text: c.status === 'draft' ? 'Activar campaña' : 'Reanudar' }));
-    if (c.total) actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-analytics', 'data-id': c.id, text: 'Analytics' }));
     actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-edit', text: 'Editar' }));
     actions.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-delete', text: 'Eliminar' }));
     head.appendChild(left); head.appendChild(actions);
     card.appendChild(head);
 
-    var counts = c.counts || {};
-    var kpis = h('div', { class: 'cmp-kpis' });
-    [['Leads', c.total || 0], ['Activos', (counts.active || 0) + (counts.processing || 0)], ['Respondieron', counts.replied || 0], ['Bajas', counts.unsubscribed || 0], ['Completados', counts.completed || 0], ['Errores', counts.error || 0]].forEach(function (k) {
-      kpis.appendChild(h('div', { class: 'cmp-kpi' }, h('b', { text: String(k[1]) }), h('span', { text: k[0] })));
-    });
-    card.appendChild(kpis);
+    if (hasAnalytics()) {
+      card.appendChild(h('div', { style: 'margin:14px 0 6px' }, analyticsHost('campaign', [c], 'campaign|' + c.id)));
+    } else {
+      var counts = c.counts || {};
+      var kpis = h('div', { class: 'cmp-kpis' });
+      [['Leads', c.total || 0], ['Activos', (counts.active || 0) + (counts.processing || 0)], ['Respondieron', counts.replied || 0], ['Bajas', counts.unsubscribed || 0], ['Completados', counts.completed || 0], ['Errores', counts.error || 0]].forEach(function (k) {
+        kpis.appendChild(h('div', { class: 'cmp-kpi' }, h('b', { text: String(k[1]) }), h('span', { text: k[0] })));
+      });
+      card.appendChild(kpis);
+    }
 
     if (!acts.length) {
       card.appendChild(h('div', { class: 'pros-note-red', text: '⚠ Esta campaña no tiene pasos. Edítala para armar la cadencia.' }));
@@ -3965,7 +3966,6 @@
     if (action === 'csv-linkedin') { var c9 = findCampaign(state.activeId); if (c9) downloadLinkedinCsv(c9); return; }
     if (action === 'cmp-new') { if (btn.disabled) return; return openBuilder(null); }
     if (action === 'cmp-knowledge') return openKnowledge();
-    if (action === 'cmp-analytics') return openAnalytics(id);
     if (action === 'cmp-open') return openCampaign(id);
     if (action === 'cmp-back') { state.activeId = null; closeBuilder(); return render(); }
     if (action === 'cmp-edit') { var c0 = findCampaign(state.activeId); if (c0) return openBuilder(c0); return; }
@@ -4060,7 +4060,7 @@
         },
       });
     }
-    if (action === 'cmp-refresh') return openCampaign(state.activeId);
+    if (action === 'cmp-refresh') { invalidateAnalytics(); return openCampaign(state.activeId); }
     if (action === 'enroll') return doEnroll(btn);
     if (action === 'en-pause' && id) return updateEnrollment(id, { status: 'paused' }).then(function () { return openCampaign(state.activeId); });
     if (action === 'en-resume' && id) return updateEnrollment(id, { status: 'active', error_detail: null, next_run_at: new Date().toISOString() }).then(function () { return openCampaign(state.activeId); });
@@ -4308,7 +4308,7 @@
       var parts = [res.enrolled + ' leads enrolados'];
       if (res.skipped) parts.push(res.skipped + ' ya estaban');
       toast(parts.join(' · ') + (c3.status !== 'active' ? '. Activa la campaña para que empiecen los envíos.' : '.'), 'success');
-      return Promise.all([loadCampaigns(), loadEnrollments(c3.id), loadMembersForCampaign(c3)]).then(render);
+      return Promise.all([loadCampaigns(), loadEnrollments(c3.id), loadMembersForCampaign(c3)]).then(function () { invalidateAnalytics(); render(); });
     }).then(r2, function (err) { r2(); setProgress(''); throw err; });
   }
 
@@ -4485,7 +4485,7 @@
     subscribeRealtime();
     if (applyPendingList()) return;
     if (state.pendingView) { state.view = state.pendingView; state.pendingView = null; }
-    if (state.view === 'analytics') state.analyticsHost = null; // recalcula con las campañas recién cargadas
+    invalidateAnalytics(); // recalcula con las campañas recién cargadas
     render();
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
@@ -4501,9 +4501,9 @@
 
   /** Cambia de vista ('campaigns' | 'inbox' | 'knowledge'); si la pestaña aún no cargó, se aplica al montar. */
   function setView(view) {
-    var v = view === 'inbox' || view === 'knowledge' || view === 'analytics' ? view : 'campaigns';
+    // 'analytics' era una vista aparte hasta el 2026-10-07: un valor guardado viejo cae en Campañas.
+    var v = view === 'inbox' || view === 'knowledge' ? view : 'campaigns';
     if (v === 'knowledge') state.knowledgeHost = null;
-    if (v === 'analytics') { state.analyticsHost = null; state.analyticsFocus = null; }
     saveView(v);
     if (!built || state.loading || state.status === undefined) { state.pendingView = v; return; }
     state.view = v;
@@ -4517,7 +4517,7 @@
     await autoLinkLinkedinCampaigns();
     state.emailAccounts = null;
     await loadEmailAccounts();
-    if (state.view === 'analytics') state.analyticsHost = null;
+    invalidateAnalytics();
     render();
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
