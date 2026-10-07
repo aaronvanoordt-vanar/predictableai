@@ -565,8 +565,11 @@ export async function sendTemplate(creds: WatiCreds, input: SendTemplateInput): 
 }
 
 /** POST /api/ext/v3/conversations/messages/text — solo con sesión activa (24 h). */
-export async function sendText(creds: WatiCreds, phone: string, text: string, channel?: string): Promise<{ id: string | null; conversationId: string | null }> {
+export async function sendText(creds: WatiCreds, phone: string, text: string, channel?: string, replyContextId?: string): Promise<{ id: string | null; conversationId: string | null }> {
   const body: Json = { target: digits(phone), text };
+  // Responder citando un mensaje (wamid de WhatsApp). Es el mismo campo que usa
+  // la API v1 de WATI; si la v3 lo rechazara, inbox-send reintenta sin él.
+  if (replyContextId) body.replyContextId = replyContextId;
   // Igual que sendTemplate: sin `channel` WATI no sabe desde qué número enviar.
   if (channel && digits(channel).length >= 8) body.channel = digits(channel);
   const data = await call(creds, "POST", "/api/ext/v3/conversations/messages/text", body);
