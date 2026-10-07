@@ -2801,7 +2801,7 @@
     var st = CAMPAIGN_STATUS[c.status] || CAMPAIGN_STATUS.draft;
     var nA = flowActions(c).length;
     return {
-      id: c.id, name: c.name, statusLabel: st.label, statusPill: st.pill,
+      id: c.id, name: c.name, status: c.status, statusLabel: st.label, statusPill: st.pill,
       channels: campaignChannels(c), channelsHtml: chanIconsHtml(campaignChannels(c)),
       foot: 'Creada ' + fmtDate(c.created_at) + ' · ' + nA + (nA === 1 ? ' envío' : ' envíos'),
     };
