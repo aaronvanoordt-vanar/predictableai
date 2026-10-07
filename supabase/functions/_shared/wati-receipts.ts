@@ -226,7 +226,7 @@ export async function reconcileWatiReceipts(db: SupabaseClient, acc: Json, deadl
   });
   const byPhone = new Map<string, Json[]>();
   for (const r of due) {
-    const phone = wati.digits(r.contact_ref);
+    const phone = wati.phoneKey(r.contact_ref);
     if (!phone) continue;
     if (!byPhone.has(phone)) byPhone.set(phone, []);
     byPhone.get(phone)!.push(r);
@@ -239,7 +239,7 @@ export async function reconcileWatiReceipts(db: SupabaseClient, acc: Json, deadl
     visited++;
     let list: Json[];
     try {
-      list = await wati.listConversationMessages(creds, phone, 1, RECEIPT_PAGE_SIZE);
+      list = await wati.listConversationMessagesAnyForm(creds, phone, 1, RECEIPT_PAGE_SIZE);
     } catch (e) {
       if (e instanceof wati.WatiError && (e.status === 401 || e.status === 403 || e.status === 429)) break;
       console.warn("[wati-receipts] messages", phone, (e as Error).message);
