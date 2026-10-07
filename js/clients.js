@@ -26,6 +26,16 @@
 (function () {
   'use strict';
 
+  // «Entrar al espacio» + la píldora «Volver a mi cuenta» viven en
+  // js/workspace.js. Se carga desde aquí porque este módulo está en toda la
+  // app (también dentro del espacio del cliente, donde Clientes no se ve).
+  if (!window.Workspace && !document.querySelector('script[data-workspace-js]')) {
+    var wsScript = document.createElement('script');
+    wsScript.src = 'js/workspace.js';
+    wsScript.setAttribute('data-workspace-js', '1');
+    (document.head || document.documentElement).appendChild(wsScript);
+  }
+
   var BUCKET = 'client-assets';
 
   var LATAM = [
@@ -81,6 +91,7 @@
   ];
 
   var LINK_FIELDS = [
+    { k: 'website',               label: 'Sitio web del cliente' },
     { k: 'prospecting_brief_url', label: 'Prospecting Brief' },
     { k: 'campaigns_url',         label: 'Campañas' },
     { k: 'matriz_url',            label: 'Matriz' },
@@ -365,6 +376,9 @@
       '.cl-card-photo img{width:100%;height:100%;object-fit:cover}',
       '.cl-avatar{width:52px;height:52px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px}',
       '.cl-card-body{padding:12px 14px;display:flex;flex-direction:column;gap:6px}',
+      '.cl-card-enter{align-self:flex-start;margin-top:4px;border:1px solid var(--hair-3);background:transparent;color:var(--accent);border-radius:999px;padding:4px 10px;font:inherit;font-size:12px;font-weight:600;cursor:pointer}',
+      '.cl-card-enter:hover{background:var(--surface2)}',
+      '.cl-card-enter[disabled]{opacity:.6;cursor:default}',
       '.cl-card-name{font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.cl-card-meta{font-size:12px;color:var(--ink-3);display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
       '.cl-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700}',
@@ -589,6 +603,7 @@
             '<span class="cl-chip ' + st.cls + '">' + esc(st.label) + '</span>' +
             (c.country ? '<span>' + esc(c.country) + '</span>' : '') +
           '</div>' +
+          '<button type="button" class="cl-card-enter" data-enter="' + esc(c.id) + '" title="Abre el Predictable de este cliente para preparar la reunión">Entrar al espacio →</button>' +
         '</div></div>';
     }).join('');
 
@@ -607,9 +622,37 @@
     state.body.querySelectorAll('.cl-card').forEach(function (el) {
       el.addEventListener('click', function () { openClient(el.getAttribute('data-id')); });
     });
+    state.body.querySelectorAll('[data-enter]').forEach(function (btn) {
+      btn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        enterWorkspace(btn.getAttribute('data-enter'), btn);
+      });
+    });
     [actionsEl && actionsEl.querySelector('#cl-new-btn'), state.body.querySelector('#cl-new-card')].forEach(function (btn) {
       if (btn) btn.addEventListener('click', onNewClient);
     });
+  }
+
+  // ── Entrar al espacio del cliente (js/workspace.js) ───────────────────
+
+  async function enterWorkspace(clientId, btn, website) {
+    if (!window.Workspace) { toast('Todavía se está cargando. Intenta de nuevo en un segundo.', 'error'); return; }
+    var label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Abriendo espacio…'; }
+    try {
+      try {
+        await window.Workspace.enter(clientId, { website: website || undefined });
+      } catch (e) {
+        if (e.code !== 'website_required') throw e;
+        var url = prompt('¿Cuál es el sitio web del cliente? (ej. https://empresa.com)\nDe ahí sale su contexto, su Intelligence Hub y su Radar.');
+        if (!url || !url.trim()) throw null;
+        await window.Workspace.enter(clientId, { website: url.trim() });
+      }
+      // enter() recarga la app como el cliente.
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+      if (e) toast('No se pudo entrar al espacio: ' + (e.message || e), 'error');
+    }
   }
 
   async function onNewClient() {
@@ -740,6 +783,7 @@
             '<label class="cl-portal-tgl" title="Si lo apagas, el link del portal sigue funcionando pero queda en solo lectura.">' +
               '<input type="checkbox" id="cl-portal-edit"' + (c.portal_can_edit === false ? '' : ' checked') + '>Portal editable</label>' +
             '<button class="btn btn-ghost btn-sm" id="cl-share">🔗 Copiar link del portal</button>' +
+            '<button class="btn btn-primary btn-sm" id="cl-enter-ws" title="Abre el Predictable de este cliente: Contexto, Intelligence Hub, Radar y todo lo demás con sus datos">Entrar al espacio →</button>' +
             '<button class="btn btn-ghost btn-sm" id="cl-delete" style="color:var(--red)">Eliminar</button>' +
           '</div>' +
         '</div>' +
@@ -857,6 +901,12 @@
     var c = state.current;
 
     body.querySelector('#cl-back').addEventListener('click', showGrid);
+
+    body.querySelector('#cl-enter-ws').addEventListener('click', async function (ev) {
+      var btn = ev.currentTarget;
+      await flushSave(); // el sitio web recién escrito tiene que llegar antes
+      enterWorkspace(c.id, btn, c.website);
+    });
 
     // Nombre
     var nameInp = body.querySelector('#cl-name');

@@ -29,6 +29,12 @@
  *   commit_photo    → { photo_url } — fija la foto recién subida
  *   commit_material → { material } — registra el PDF recién subido
  *   delete_material → { ok } — solo materiales con source = 'portal'
+ *   intelligence    → { available, company, market, radar } — lo que el equipo
+ *                     preparó y CONFIRMÓ en el espacio del cliente
+ *                     (client_workspaces): resumen de la empresa, análisis de
+ *                     mercado y las empresas de la última investigación del
+ *                     Radar. Sin confirmar no se publica nada; nunca salen
+ *                     nombres ni datos de contacto de personas.
  *
  * Si clients.portal_can_edit es false, `get` sigue funcionando y todo lo demás
  * responde 403: el equipo puede dejar un portal en solo lectura sin romper el
@@ -76,7 +82,7 @@ const CLIENT_COLUMNS = [
 ];
 
 /** Acciones que solo leen: siguen funcionando con el portal en solo lectura. */
-const READ_ACTIONS = new Set(["get", "analytics"]);
+const READ_ACTIONS = new Set(["get", "analytics", "intelligence"]);
 
 /** Cuántas filas del CRM viajan al portal como máximo. */
 const MAX_ANALYTICS_ROWS = 20_000;
@@ -185,6 +191,101 @@ function publicClient(row: any) {
   const out: Record<string, any> = {};
   for (const k of CLIENT_COLUMNS) out[k] = row[k] ?? null;
   return out;
+}
+
+// ── Inteligencia del espacio del cliente ───────────────────────────────────
+
+// deno-lint-ignore no-explicit-any
+function str(v: any, max: number): string {
+  return typeof v === "string" ? v.trim().slice(0, max) : "";
+}
+
+// deno-lint-ignore no-explicit-any
+function arrOf(v: any, max: number): any[] {
+  return Array.isArray(v) ? v.filter((x) => x && typeof x === "object").slice(0, max) : [];
+}
+
+function httpUrl(v: unknown): string {
+  const s = typeof v === "string" ? v.trim() : "";
+  return /^https?:\/\//i.test(s) && s.length <= 500 ? s : "";
+}
+
+async function loadIntelligence(db: Db, clientId: string) {
+  const ws = await db.from("client_workspaces").select("workspace_user_id").eq("client_id", clientId).maybeSingle();
+  const uid = ws.data?.workspace_user_id;
+  if (!uid) return { available: false };
+
+  const [intake, brief, report, run] = await Promise.all([
+    db.from("intel_hub_intake")
+      .select("company_website, company_about, company_industry, company_country, company_offerings, context_confirmed_at, market_analysis_confirmed_at")
+      .eq("user_id", uid).maybeSingle(),
+    db.from("client_brief").select("what_it_does, positional_phrase, key_outcomes").eq("user_id", uid).maybeSingle(),
+    db.from("intelligence_hub_reports").select("status, content, generated_at")
+      .eq("user_id", uid).eq("section_key", "market_analysis").maybeSingle(),
+    db.from("radar_runs").select("companies, created_at")
+      .eq("user_id", uid).eq("status", "ready").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+
+  const it = intake.data;
+  // deno-lint-ignore no-explicit-any
+  let company: any = null;
+  if (it?.context_confirmed_at) {
+    const b = brief.data || {};
+    company = {
+      website: httpUrl(it.company_website),
+      about: str(it.company_about, 1200),
+      industry: str(it.company_industry, 120),
+      country: str(it.company_country, 80),
+      positional_phrase: str(b.positional_phrase, 300),
+      what_it_does: str(b.what_it_does, 600),
+      key_outcomes: (Array.isArray(b.key_outcomes) ? b.key_outcomes : [])
+        .map((x: unknown) => str(x, 200)).filter(Boolean).slice(0, 5),
+      offerings: arrOf(it.company_offerings, 6).map((o) => ({
+        name: str(o.name, 100), for_whom: str(o.for_whom, 140), problem: str(o.problem, 240),
+      })).filter((o) => o.name),
+    };
+  }
+
+  // El análisis solo se publica si el equipo lo confirmó DESPUÉS de generarlo.
+  // deno-lint-ignore no-explicit-any
+  let market: any = null;
+  const r = report.data;
+  const confirmedAt = it?.market_analysis_confirmed_at ? Date.parse(it.market_analysis_confirmed_at) : NaN;
+  if (r?.status === "ready" && r.content && r.generated_at && confirmedAt >= Date.parse(r.generated_at)) {
+    const c = r.content;
+    market = {
+      generated_at: r.generated_at,
+      headline: str(c.headline, 160),
+      summary: str(c.summary, 500),
+      segments: arrOf(c.segments, 3).map((x) => ({
+        name: str(x.name, 90), why_now: str(x.why_now, 220), pain: str(x.pain, 160), angle: str(x.angle, 200),
+      })).filter((x) => x.name),
+      signals: arrOf(c.signals, 8).map((x) => ({
+        signal: str(x.signal, 100), evidence: str(x.evidence, 120), why: str(x.why, 200),
+      })).filter((x) => x.signal),
+      actions: arrOf(c.actions, 5).map((x) => ({ action: str(x.action, 140), why: str(x.why, 200) })).filter((x) => x.action),
+    };
+  }
+
+  // deno-lint-ignore no-explicit-any
+  let radar: any = null;
+  if (run.data && Array.isArray(run.data.companies) && run.data.companies.length) {
+    radar = {
+      generated_at: run.data.created_at,
+      companies: arrOf(run.data.companies, 5).map((x) => ({
+        name: str(x.name, 120),
+        website: httpUrl(x.website),
+        country: str(x.country, 80),
+        industry: str(x.industry, 120),
+        signal: str(x.signal_headline, 220),
+        why_fit: str(x.why_fit, 400),
+        signal_date: str(x.signal_date, 40),
+        evidence: arrOf(x.evidence, 2).map((e) => ({ url: httpUrl(e.url), summary: str(e.summary, 240) })).filter((e) => e.url),
+      })).filter((x) => x.name),
+    };
+  }
+
+  return { available: !!(company || market || radar), company, market, radar };
 }
 
 async function touchPortal(db: Db, clientId: string) {
@@ -415,6 +516,10 @@ Deno.serve(async (req) => {
         return json({ error: "No se pudo guardar" }, 500, origin);
       }
       return json({ ok: true, saved: Object.keys(update).filter((k) => k !== "portal_updated_at") }, 200, origin);
+    }
+
+    if (action === "intelligence") {
+      return json(await loadIntelligence(db, clientId), 200, origin);
     }
 
     if (action === "analytics") {
