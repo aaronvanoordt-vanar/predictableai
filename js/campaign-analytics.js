@@ -20,11 +20,19 @@
  * sobre los contactos y las otras tres sobre los enviados. Cada número abre la
  * lista de personas que lo cumplen, con búsqueda y exportación a CSV.
  *
+ * Filtro por fechas (cohorte): un lead entra al período por la fecha de su
+ * PRIMER envío aceptado (o la de su enrolamiento si aún no se le envió nada).
+ * Lo que pasa después con esos leads (respuestas, lecturas, más envíos) cuenta
+ * aunque caiga fuera del rango: así las tasas comparan siempre a las mismas
+ * personas. Filtrar los eventos por fecha mezclaría respuestas de un período
+ * con envíos de otro y daría tasas sin significado. El filtro se aplica en el
+ * navegador sobre lo ya cargado: cambiarlo no vuelve a consultar.
+ *
  * Solo lee (campaign_enrollments + campaign_events, RLS del usuario); no
  * escribe nada. Lo monta js/campaigns.js:
  *
  *   window.campaignAnalytics.mount(host, { h, esc, toast, campaigns, focusId, onOpenCampaign, onBack })
- *   window.campaignAnalytics.compute(enrollments, events)   // función pura
+ *   window.campaignAnalytics.compute(enrollments, events, { from, to })   // función pura; from/to en ms, to exclusivo
  */
 (function (global) {
   'use strict';
@@ -54,7 +62,18 @@
   };
   var TILE_TITLE = { contacts: 'Todos los contactos', sent: 'Enviados', replied: 'Respondieron', seen: 'En visto', unread: 'Sin leer', notsent: 'Sin enviar' };
 
-  var state = { host: null, opts: null, loading: false, error: null, data: null, open: null, q: '' };
+  // Rangos rápidos del filtro. `days` cuenta hoy: 7 = hoy y los 6 días anteriores.
+  var RANGES = [
+    { key: 'all', label: 'Todo' },
+    { key: 'd7', label: 'Últimos 7 días', days: 7 },
+    { key: 'd30', label: 'Últimos 30 días', days: 30 },
+    { key: 'd90', label: 'Últimos 90 días', days: 90 },
+    { key: 'month', label: 'Este mes' },
+    { key: 'custom', label: 'Personalizado' },
+  ];
+  var RANGE_KEY = 'predictable_cana_range';
+
+  var state = { host: null, opts: null, loading: false, error: null, raw: null, data: null, open: null, q: '', range: loadRange() };
 
   // ── Utilidades ───────────────────────────────────────────────────────────
   function sb() {
@@ -109,18 +128,21 @@
    * events: [{ enrollment_id, channel, type, provider_message_id, created_at }]
    * Devuelve { leads: [...], byCampaign: { id: stats }, total: stats }.
    */
-  function compute(enrollments, events) {
+  function compute(enrollments, events, range) {
+    var from = range && range.from != null ? range.from : null;
+    var to = range && range.to != null ? range.to : null;
     var failed = {};
     (events || []).forEach(function (ev) { if (ev.type === 'failed' && ev.provider_message_id) failed[ev.provider_message_id] = true; });
     var byEn = {};
     (events || []).forEach(function (ev) {
       if (!ev.enrollment_id) return;
-      var a = byEn[ev.enrollment_id] = byEn[ev.enrollment_id] || { sends: 0, channels: {}, lastSent: null, seenAt: null, seenChannel: null, repliedAt: null, repliedChannel: null };
+      var a = byEn[ev.enrollment_id] = byEn[ev.enrollment_id] || { sends: 0, channels: {}, firstSent: null, lastSent: null, seenAt: null, seenChannel: null, repliedAt: null, repliedChannel: null };
       if (SEND_TYPES[ev.type]) {
         if (ev.provider_message_id && failed[ev.provider_message_id]) return;
         a.sends++;
         a.channels[chanKey(ev.channel)] = true;
         if (!a.lastSent || ev.created_at > a.lastSent) a.lastSent = ev.created_at;
+        if (!a.firstSent || ev.created_at < a.firstSent) a.firstSent = ev.created_at;
       } else if (SEEN_TYPES[ev.type]) {
         if (!a.seenAt || ev.created_at > a.seenAt) { a.seenAt = ev.created_at; a.seenChannel = ev.channel; }
       } else if (ev.type === 'replied') {
@@ -129,8 +151,15 @@
     });
     var byCampaign = {};
     var total = emptyStats();
-    var leads = (enrollments || []).map(function (e) {
-      var a = byEn[e.id] || { sends: 0, channels: {}, lastSent: null, seenAt: null, repliedAt: null };
+    var leads = [];
+    (enrollments || []).forEach(function (e) {
+      var a = byEn[e.id] || { sends: 0, channels: {}, firstSent: null, lastSent: null, seenAt: null, repliedAt: null };
+      // Fecha de cohorte: primer envío aceptado, o el enrolamiento si aún no se envió nada.
+      var cohortAt = a.firstSent || e.created_at || null;
+      if (from != null || to != null) {
+        var t = cohortAt ? new Date(cohortAt).getTime() : NaN;
+        if (isNaN(t) || (from != null && t < from) || (to != null && t >= to)) return;
+      }
       var repliedAt = e.replied_at || a.repliedAt || null;
       var replied = !!(e.replied_at || a.repliedAt || e.status === 'replied');
       var bucket = replied ? 'replied' : (a.sends ? (a.seenAt ? 'seen' : 'unread') : (a.seenAt ? 'seen' : 'notsent'));
@@ -142,6 +171,8 @@
         bucket: bucket,
         sends: a.sends,
         channels: Object.keys(a.channels),
+        cohortAt: cohortAt,
+        firstSent: a.firstSent,
         lastSent: a.lastSent,
         seenAt: a.seenAt,
         seenChannel: a.seenChannel || null,
@@ -150,7 +181,7 @@
       };
       var s = byCampaign[e.campaign_id] = byCampaign[e.campaign_id] || emptyStats();
       addLead(s, lead); addLead(total, lead);
-      return lead;
+      leads.push(lead);
     });
     Object.keys(byCampaign).forEach(function (k) { finish(byCampaign[k]); });
     finish(total);
@@ -216,13 +247,13 @@
       });
       events = events.concat(ev);
     }
-    return compute(enrollments, events);
+    return { enrollments: enrollments, events: events };
   }
 
   async function reload() {
     state.loading = true; state.error = null;
     render();
-    try { state.data = await load(); }
+    try { state.raw = await load(); recompute(); }
     catch (e) { state.error = 'No se pudo cargar el rendimiento: ' + errMsg(e); }
     finally { state.loading = false; }
     render();
@@ -230,6 +261,100 @@
       var el = state.host && state.host.querySelector('[data-cana-campaign="' + CSS.escape(String(state.opts.focusId)) + '"]');
       if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+  }
+
+  // ── Filtro por fechas ────────────────────────────────────────────────────
+  function loadRange() {
+    try {
+      var v = JSON.parse(localStorage.getItem(RANGE_KEY) || 'null');
+      if (v && RANGES.some(function (r) { return r.key === v.key; })) return { key: v.key, from: v.from || '', to: v.to || '' };
+    } catch (e) { /* modo privado o valor viejo */ }
+    return { key: 'all', from: '', to: '' };
+  }
+  function saveRange() {
+    try { localStorage.setItem(RANGE_KEY, JSON.stringify(state.range)); } catch (e) { /* modo privado */ }
+  }
+  function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+  // 'AAAA-MM-DD' de un <input type=date> → medianoche local de ese día.
+  function parseDay(v) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v || ''));
+    return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+  }
+  function dayValue(d) {
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+  /** El rango elegido en milisegundos: { from, to } con `to` exclusivo; null = sin límite. */
+  function rangeBounds(r) {
+    var today = startOfDay(new Date());
+    var def = RANGES.find(function (x) { return x.key === r.key; }) || RANGES[0];
+    if (def.days) return { from: addDays(today, 1 - def.days).getTime(), to: null };
+    if (r.key === 'month') return { from: new Date(today.getFullYear(), today.getMonth(), 1).getTime(), to: null };
+    if (r.key === 'custom') {
+      var f = parseDay(r.from), t = parseDay(r.to);
+      return { from: f ? f.getTime() : null, to: t ? addDays(t, 1).getTime() : null };
+    }
+    return { from: null, to: null };
+  }
+  function rangeActive() { var b = rangeBounds(state.range); return b.from != null || b.to != null; }
+  function fmtDay(ms) { return new Date(ms).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' }); }
+  function rangeText() {
+    var b = rangeBounds(state.range);
+    if (b.from == null && b.to == null) return 'Todo el historial';
+    if (b.to == null) return 'Desde el ' + fmtDay(b.from);
+    if (b.from == null) return 'Hasta el ' + fmtDay(b.to - 1);
+    return fmtDay(b.from) + ' – ' + fmtDay(b.to - 1);
+  }
+  function recompute() {
+    if (!state.raw) return;
+    state.data = compute(state.raw.enrollments, state.raw.events, rangeBounds(state.range));
+  }
+  function setRange(patch) {
+    state.range = Object.assign({}, state.range, patch);
+    if (state.range.key === 'custom' && state.range.from && state.range.to && state.range.from > state.range.to) {
+      var tmp = state.range.from; state.range.from = state.range.to; state.range.to = tmp;
+    }
+    saveRange();
+    state.open = null;
+    recompute();
+    var y = global.scrollY;
+    render();
+    global.scrollTo(0, y);
+  }
+  function renderFilter() {
+    var bar = h('div', { class: 'cana-filter', role: 'group', 'aria-label': 'Filtrar por fecha' });
+    bar.appendChild(h('span', { class: 'cana-filter-lbl', text: 'Período' }));
+    var chips = h('div', { class: 'cana-chips' });
+    RANGES.forEach(function (r) {
+      var on = state.range.key === r.key;
+      chips.appendChild(h('button', { type: 'button', class: 'cana-chip' + (on ? ' is-on' : ''), 'aria-pressed': on ? 'true' : 'false', text: r.label,
+        onclick: function () {
+          if (r.key !== 'custom') return setRange({ key: r.key });
+          // Al abrir el personalizado se parte de lo que se estaba viendo (o de los últimos 30 días).
+          var b = rangeBounds(state.range);
+          var today = startOfDay(new Date());
+          setRange({ key: 'custom',
+            from: state.range.from || dayValue(b.from != null ? new Date(b.from) : addDays(today, -29)),
+            to: state.range.to || dayValue(b.to != null ? new Date(b.to - 1) : today) });
+        } }));
+    });
+    bar.appendChild(chips);
+    if (state.range.key === 'custom') {
+      var dates = h('div', { class: 'cana-dates' });
+      var f = h('input', { type: 'date', 'aria-label': 'Desde', value: state.range.from || '', max: state.range.to || null });
+      var t = h('input', { type: 'date', 'aria-label': 'Hasta', value: state.range.to || '', min: state.range.from || null });
+      f.addEventListener('change', function () { setRange({ from: f.value }); });
+      t.addEventListener('change', function () { setRange({ to: t.value }); });
+      dates.appendChild(h('label', null, 'Desde ', f));
+      dates.appendChild(h('label', null, 'Hasta ', t));
+      bar.appendChild(dates);
+    }
+    var note = rangeActive()
+      ? rangeText() + ' · cuenta a los leads cuyo primer envío (o su enrolamiento, si aún no se les envió nada) cae en el período; sus respuestas y lecturas cuentan aunque lleguen después.'
+      : rangeText() + '.';
+    bar.appendChild(h('div', { class: 'cana-note', style: 'flex-basis:100%', text: note }));
+    return bar;
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -274,6 +399,16 @@
       '.cana-table a { color:var(--accent); text-decoration:none; }',
       '.cana-empty { padding:14px; font-size:12.5px; color:var(--text3); }',
       '.cana-drafts { font-size:12px; color:var(--text3); }',
+      '.cana-filter { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap; }',
+      '.cana-filter-lbl { font-size:12px; font-weight:600; color:var(--text2); }',
+      '.cana-chips { display:flex; gap:6px; flex-wrap:wrap; }',
+      '.cana-chip { font:inherit; font-size:12px; color:var(--text2); background:var(--surface); border:1px solid var(--hair); border-radius:999px; padding:5px 12px; cursor:pointer; }',
+      '.cana-chip:hover { color:var(--text); border-color:var(--accent-2, var(--accent)); }',
+      '.cana-chip:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }',
+      '.cana-chip.is-on { color:#fff; background:var(--accent); border-color:var(--accent); font-weight:600; }',
+      '.cana-dates { display:flex; gap:8px 12px; flex-wrap:wrap; font-size:12px; color:var(--text2); }',
+      '.cana-dates label { display:inline-flex; align-items:center; gap:6px; }',
+      '.cana-dates input[type=date] { font:inherit; font-size:12.5px; color:var(--text); background:var(--surface); border:1px solid var(--hair); border-radius:var(--r-sm, 8px); padding:4px 8px; color-scheme:light dark; }',
     ].join('\n');
     var st = document.createElement('style');
     st.id = 'campaign-analytics-styles';
@@ -296,6 +431,7 @@
     if (state.loading) refresh.disabled = true;
     top.appendChild(refresh);
     wrap.appendChild(top);
+    wrap.appendChild(renderFilter());
 
     if (state.error) {
       wrap.appendChild(h('div', { class: 'pros-note-red', text: '⚠ ' + state.error }));
@@ -304,14 +440,16 @@
     } else {
       var campaigns = state.opts.campaigns || [];
       var withLeads = campaigns.filter(function (c) { var s = state.data.byCampaign[c.id]; return s && s.contacts; });
-      if (!withLeads.length) {
+      if (!withLeads.length && rangeActive() && state.raw && state.raw.enrollments.length) {
+        wrap.appendChild(h('div', { class: 'chart-card', html: '<div class="pros-hint">Ningún lead tuvo su primer envío en este período. Elige otro rango o «Todo».</div>' }));
+      } else if (!withLeads.length) {
         wrap.appendChild(h('div', { class: 'chart-card', html: '<div class="pros-hint">Aún no hay leads enrolados en ninguna campaña. Cuando lances una, aquí verás cuántos recibieron el mensaje, cuántos respondieron, cuántos lo dejaron en visto y cuántos ni lo abrieron.</div>' }));
       } else {
         if (withLeads.length > 1) wrap.appendChild(renderBlock({ id: '__all', name: 'Todas las campañas' }, state.data.total, true));
         withLeads.forEach(function (c) { wrap.appendChild(renderBlock(c, state.data.byCampaign[c.id], false)); });
       }
       var empty = campaigns.filter(function (c) { var s = state.data.byCampaign[c.id]; return !s || !s.contacts; });
-      if (empty.length) wrap.appendChild(h('div', { class: 'cana-drafts', text: 'Sin leads enrolados todavía: ' + empty.map(function (c) { return c.name; }).join(' · ') }));
+      if (empty.length) wrap.appendChild(h('div', { class: 'cana-drafts', text: (rangeActive() ? 'Sin leads en este período: ' : 'Sin leads enrolados todavía: ') + empty.map(function (c) { return c.name; }).join(' · ') }));
     }
     state.host.appendChild(wrap);
   }
@@ -464,14 +602,14 @@
   function isoOrEmpty(v) { return v ? new Date(v).toISOString().replace('T', ' ').slice(0, 16) : ''; }
   function exportCsv(c, key, rows) {
     if (!rows.length) return toast('No hay personas para exportar.', 'warn');
-    var header = ['nombre', 'first_name', 'last_name', 'cargo', 'empresa', 'email', 'telefono', 'linkedin_url', 'campana', 'resultado', 'envios', 'canales', 'ultimo_envio', 'visto_en', 'visto_por', 'respondio_en', 'respondio_por', 'estado_en_campana'];
+    var header = ['nombre', 'first_name', 'last_name', 'cargo', 'empresa', 'email', 'telefono', 'linkedin_url', 'campana', 'resultado', 'envios', 'canales', 'primer_envio', 'ultimo_envio', 'visto_en', 'visto_por', 'respondio_en', 'respondio_por', 'estado_en_campana'];
     var lines = [header.join(',')];
     rows.forEach(function (l) {
       var m = l.member || {};
       lines.push([
         memberName(m), m.first_name || '', m.last_name || '', m.title || '', m.company || '', realEmail(m), m.phone || '', m.linkedin_url || '',
         campaignName(l.campaign_id), BUCKETS[l.bucket].label, l.sends, l.channels.map(chanLabel).join(' / '),
-        isoOrEmpty(l.lastSent), isoOrEmpty(l.seenAt), l.seenAt ? chanLabel(l.seenChannel) : '',
+        isoOrEmpty(l.firstSent), isoOrEmpty(l.lastSent), isoOrEmpty(l.seenAt), l.seenAt ? chanLabel(l.seenChannel) : '',
         l.bucket === 'replied' ? isoOrEmpty(l.repliedAt) : '', l.bucket === 'replied' && l.repliedChannel ? chanLabel(l.repliedChannel) : '', l.status || '',
       ].map(csvCell).join(','));
     });
@@ -479,7 +617,9 @@
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     var slug = function (s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40); };
-    a.download = slug(c.name || 'campanas') + '-' + slug(TILE_TITLE[key]).toLowerCase() + '.csv';
+    var b = rangeBounds(state.range);
+    var period = rangeActive() ? '-' + (b.from != null ? dayValue(new Date(b.from)) : 'inicio') + '_a_' + (b.to != null ? dayValue(new Date(b.to - 1)) : dayValue(new Date())) : '';
+    a.download = slug(c.name || 'campanas') + '-' + slug(TILE_TITLE[key]).toLowerCase() + period + '.csv';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
     toast(rows.length + (rows.length === 1 ? ' persona exportada.' : ' personas exportadas.'), 'success');
@@ -491,7 +631,7 @@
     state.host = host;
     host.style.minWidth = '0';
     state.opts = opts || {};
-    state.data = null; state.error = null;
+    state.raw = null; state.data = null; state.error = null;
     state.open = null; state.q = '';
     reload();
   }
