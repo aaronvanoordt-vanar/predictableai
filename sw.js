@@ -22,8 +22,8 @@ self.addEventListener('push', function (event) {
     body: data.body || 'Tienes un mensaje nuevo en la Bandeja.',
     tag: data.tag || undefined,
     renotify: !!data.tag,
-    icon: 'assets/pwa/icon-192.png',
-    badge: 'assets/pwa/badge-96.png',
+    icon: 'assets/pwa/icon-192.png?v=2',
+    badge: 'assets/pwa/badge-96.png?v=2',
     data: { url: data.url || '/index.html#bandeja', conv: data.conv || null },
   }));
 });
