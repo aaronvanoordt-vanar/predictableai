@@ -3162,7 +3162,8 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/linkedin-campaigns.js?v=20260915"></script>
 <script src="js/campaign-builder.js?v=20260923"></script>
 <script src="js/campaign-knowledge.js?v=20260923"></script>
-<script src="js/campaigns.js?v=20261006b"></script>
+<script src="js/campaign-analytics.js?v=20261007"></script>
+<script src="js/campaigns.js?v=20261007"></script>
 <script src="js/inbox-alert.js?v=20261001b"></script>
 <script src="js/push.js?v=20261006"></script>
 <script src="js/radar.js?v=20260918"></script>
@@ -3998,7 +3999,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // dejar el sidebar sin resaltar ni el shell sin pestaña.
   if (hash === 'pro-main') proTab = normalizeProTab(proTab);
   if (proTab === 'campanas' && !cmpView) {
-    try { if (localStorage.getItem('predictable_cmp_view') === 'inbox') cmpView = 'inbox'; } catch (e) {}
+    try { const v = localStorage.getItem('predictable_cmp_view'); if (v === 'inbox' || v === 'analytics') cmpView = v; } catch (e) {}
   }
 
   if (hash === 'settings' && typeof window.openSettingsPage === 'function') {
@@ -4019,7 +4020,7 @@ window.addEventListener('DOMContentLoaded', () => {
     : document.querySelector(`.nav-item[data-page="${hash}"]`);
   if (navEl) setTimeout(() => {
     window.nav(navEl, hash);
-    if (proTab === 'campanas' && window.campaigns) window.campaigns.setView(cmpView === 'inbox' ? 'inbox' : 'campaigns');
+    if (proTab === 'campanas' && window.campaigns) window.campaigns.setView(cmpView === 'inbox' || cmpView === 'analytics' ? cmpView : 'campaigns');
     if (proTab && window.prospecting) window.prospecting.show(proTab);
     // Páginas con shell propio: montarlas también al restaurar (el onclick
     // del nav-item no corre en este camino).
