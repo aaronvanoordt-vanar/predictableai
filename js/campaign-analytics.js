@@ -32,6 +32,13 @@
  * escribe nada. Lo monta js/campaigns.js:
  *
  *   window.campaignAnalytics.mount(host, { h, esc, toast, campaigns, focusId, onOpenCampaign, onBack })
+ * Comparación con el período anterior: con un período elegido, cada tarjeta
+ * muestra la diferencia contra el período inmediatamente anterior del mismo
+ * largo (para «Este mes», los mismos días del mes pasado), con la misma regla
+ * de cohorte. Las tasas se comparan en puntos porcentuales (pp) y los
+ * contactos en cantidad. Una cohorte reciente tuvo menos días para responder
+ * que la anterior: la nota lo advierte en vez de ajustar los números.
+ *
  * Tendencia semanal: cada tarjeta muestra, por semana (lunes a domingo, hora
  * local) del PRIMER envío, cuántos leads enviados respondieron, quedaron en
  * visto o sin leer — la misma cohorte del filtro, así una semana reciente
@@ -80,7 +87,7 @@
   ];
   var RANGE_KEY = 'predictable_cana_range';
 
-  var state = { host: null, opts: null, loading: false, error: null, raw: null, data: null, open: null, q: '', range: loadRange() };
+  var state = { host: null, opts: null, loading: false, error: null, raw: null, data: null, prev: null, open: null, q: '', range: loadRange() };
 
   // ── Utilidades ───────────────────────────────────────────────────────────
   function sb() {
@@ -340,6 +347,28 @@
     }
     return { from: null, to: null };
   }
+  /**
+   * El período anterior del mismo largo, justo antes del elegido. Sin inicio
+   * («Todo», o un personalizado sin «Desde») no hay con qué comparar: null.
+   * Se cuenta en días de calendario para que un cambio de horario no corra
+   * el límite una hora.
+   */
+  function prevBounds(r) {
+    var b = rangeBounds(r);
+    if (b.from == null) return null;
+    var from = new Date(b.from);
+    var to = new Date(b.to != null ? b.to : addDays(startOfDay(new Date()), 1).getTime());
+    var days = Math.max(1, Math.round((to - from) / 86400000));
+    if (r.key === 'month') {
+      // Los mismos días del mes pasado (1 → hoy), sin pasarse del fin de ese mes.
+      var pf = new Date(from.getFullYear(), from.getMonth() - 1, 1);
+      var monthEnd = new Date(from.getFullYear(), from.getMonth(), 1);
+      var pt = addDays(pf, days);
+      return { from: pf.getTime(), to: Math.min(pt.getTime(), monthEnd.getTime()) };
+    }
+    return { from: addDays(from, -days).getTime(), to: from.getTime() };
+  }
+  function boundsText(b) { return fmtDay(b.from) + ' – ' + fmtDay(b.to - 1); }
   function rangeActive() { var b = rangeBounds(state.range); return b.from != null || b.to != null; }
   function fmtDay(ms) { return new Date(ms).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' }); }
   function rangeText() {
@@ -352,6 +381,8 @@
   function recompute() {
     if (!state.raw) return;
     state.data = compute(state.raw.enrollments, state.raw.events, rangeBounds(state.range));
+    var pb = prevBounds(state.range);
+    state.prev = pb ? Object.assign(compute(state.raw.enrollments, state.raw.events, pb), { bounds: pb }) : null;
   }
   function setRange(patch) {
     state.range = Object.assign({}, state.range, patch);
@@ -396,6 +427,10 @@
     var note = rangeActive()
       ? rangeText() + ' · cuenta a los leads cuyo primer envío (o su enrolamiento, si aún no se les envió nada) cae en el período; sus respuestas y lecturas cuentan aunque lleguen después.'
       : rangeText() + '.';
+    var pb = prevBounds(state.range);
+    if (pb) note += ' Se compara con ' + boundsText(pb) + '; el período actual puede seguir sumando respuestas.';
+    else if (rangeActive()) note += ' Elige un período con fecha de inicio para comparar con el anterior.';
+    else note += ' Elige un período para compararlo con el anterior.';
     bar.appendChild(h('div', { class: 'cana-note', style: 'flex-basis:100%', text: note }));
     return bar;
   }
@@ -424,6 +459,10 @@
       '.cana-tile-rate { font-size:12px; color:var(--text2); }',
       '.cana-tile-rate b { color:var(--text); font-weight:700; }',
       '.cana-tile-sub { font-size:11px; color:var(--text3); }',
+      '.cana-delta { font-size:11.5px; font-weight:600; color:var(--text2); font-variant-numeric:tabular-nums; }',
+      '.cana-delta.is-good { color:var(--green); }',
+      '.cana-delta.is-bad { color:var(--red); }',
+      '.cana-delta.is-na, .cana-delta.is-flat { font-weight:500; color:var(--text3); }',
       '.cana-bar { display:flex; gap:2px; height:10px; border-radius:6px; overflow:hidden; background:var(--surface2); }',
       '.cana-bar > span { display:block; height:100%; min-width:3px; cursor:pointer; }',
       '.cana-bar > span:first-child { border-radius:6px 0 0 6px; }',
@@ -527,15 +566,16 @@
     if (!isTotal && state.opts.onOpenCampaign) head.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Ver campaña', onclick: function () { state.opts.onOpenCampaign(c.id); } }));
     card.appendChild(head);
 
+    var p = state.prev ? (isTotal ? state.prev.total : (state.prev.byCampaign[c.id] || finish(emptyStats()))) : null;
     var tiles = h('div', { class: 'cana-tiles' });
     tiles.appendChild(tile(c.id, 'contacts', 'Contactos', null, s.contacts,
-      s.notsent ? s.notsent + ' sin enviar todavía' : 'todos recibieron al menos un envío', null, null));
+      s.notsent ? s.notsent + ' sin enviar todavía' : 'todos recibieron al menos un envío', null, null, p && countDelta(s.contacts, p.contacts)));
     tiles.appendChild(tile(c.id, 'sent', 'Enviados', null, s.sent,
-      s.messages + (s.messages === 1 ? ' envío realizado' : ' envíos realizados'), 'Tasa de envío', s.rates.sent));
-    tiles.appendChild(tile(c.id, 'replied', 'Respondieron', BUCKETS.replied.color, s.replied, null, 'Tasa de respuesta', s.rates.replied));
-    tiles.appendChild(tile(c.id, 'seen', 'En visto', BUCKETS.seen.color, s.seen, 'leído o abierto, sin respuesta', 'Tasa de visto', s.rates.seen));
+      s.messages + (s.messages === 1 ? ' envío realizado' : ' envíos realizados'), 'Tasa de envío', s.rates.sent, p && rateDelta(s.rates.sent, p.rates.sent, 1, p.sent + ' de ' + p.contacts)));
+    tiles.appendChild(tile(c.id, 'replied', 'Respondieron', BUCKETS.replied.color, s.replied, null, 'Tasa de respuesta', s.rates.replied, p && rateDelta(s.rates.replied, p.rates.replied, 1, p.replied + ' de ' + p.sent)));
+    tiles.appendChild(tile(c.id, 'seen', 'En visto', BUCKETS.seen.color, s.seen, 'leído o abierto, sin respuesta', 'Tasa de visto', s.rates.seen, p && rateDelta(s.rates.seen, p.rates.seen, 0, p.seen + ' de ' + p.sent)));
     tiles.appendChild(tile(c.id, 'unread', 'Sin leer', BUCKETS.unread.color, s.unread,
-      s.unreadLinkedinOnly ? s.unreadLinkedinOnly + ' solo por LinkedIn (no reporta lecturas)' : 'ni lo abrieron', 'Tasa sin leer', s.rates.unread));
+      s.unreadLinkedinOnly ? s.unreadLinkedinOnly + ' solo por LinkedIn (no reporta lecturas)' : 'ni lo abrieron', 'Tasa sin leer', s.rates.unread, p && rateDelta(s.rates.unread, p.rates.unread, -1, p.unread + ' de ' + p.sent)));
     card.appendChild(tiles);
 
     // Distribución de los contactos: una barra apilada + leyenda clicable.
@@ -656,7 +696,37 @@
     rerender();
   }
 
-  function tile(campaignId, key, label, color, num, sub, rateLabel, rate) {
+  /**
+   * Diferencia contra el período anterior. `good`: 1 = subir es bueno, -1 =
+   * bajar es bueno, 0 = neutro. El sentido va en la flecha y el signo, no
+   * solo en el color.
+   */
+  function fmtNum1(v) { return String(Math.round(Math.abs(v) * 10) / 10).replace('.', ','); }
+  function deltaNode(diff, text, good, title) {
+    var cls = 'cana-delta';
+    if (diff == null) cls += ' is-na';
+    else if (diff === 0) cls += ' is-flat';
+    else if (good !== 0) cls += (diff > 0) === (good > 0) ? ' is-good' : ' is-bad';
+    var arrow = diff == null ? '' : diff > 0 ? '▲ ' : diff < 0 ? '▼ ' : '= ';
+    return h('span', { class: cls, title: title || null }, arrow + text);
+  }
+  function rateDelta(cur, prev, good, prevDetail) {
+    var where = 'Período anterior (' + boundsText(state.prev.bounds) + ')';
+    if (prev == null) return deltaNode(null, 'sin envíos en el período anterior', good, where + ': sin envíos');
+    var title = where + ': ' + fmtPct(prev) + ' · ' + prevDetail;
+    if (cur == null) return deltaNode(null, 'antes ' + fmtPct(prev), good, title);
+    var diff = Math.round((cur - prev) * 10) / 10;
+    return deltaNode(diff, diff === 0 ? 'igual que el período anterior' : (diff > 0 ? '+' : '−') + fmtNum1(diff) + ' pp vs período anterior', good, title);
+  }
+  function countDelta(cur, prev) {
+    var title = 'Período anterior (' + boundsText(state.prev.bounds) + '): ' + prev + (prev === 1 ? ' contacto' : ' contactos');
+    var diff = cur - prev;
+    if (!prev) return deltaNode(diff ? diff : 0, diff ? '+' + diff + ' (antes 0)' : 'igual que el período anterior', 0, title);
+    var rel = Math.round(diff / prev * 100);
+    return deltaNode(diff, diff === 0 ? 'igual que el período anterior' : (diff > 0 ? '+' : '−') + Math.abs(diff) + ' (' + (rel > 0 ? '+' : '−') + Math.abs(rel) + ' %) vs período anterior', 0, title);
+  }
+
+  function tile(campaignId, key, label, color, num, sub, rateLabel, rate, delta) {
     var pressed = !!(state.open && String(state.open.campaignId) === String(campaignId) && state.open.key === key && state.open.week == null);
     var b = h('button', { type: 'button', class: 'cana-tile', 'aria-pressed': pressed ? 'true' : 'false',
       title: 'Ver las personas: ' + label.toLowerCase(), onclick: function () { toggle(campaignId, key); } });
@@ -666,6 +736,7 @@
     b.appendChild(lbl);
     b.appendChild(h('span', { class: 'cana-tile-num', text: String(num) }));
     if (rateLabel) b.appendChild(h('span', { class: 'cana-tile-rate' }, h('b', { text: fmtPct(rate) }), ' ' + rateLabel.toLowerCase()));
+    if (delta) b.appendChild(delta);
     if (sub) b.appendChild(h('span', { class: 'cana-tile-sub', text: sub }));
     return b;
   }
@@ -793,10 +864,10 @@
     state.host = host;
     host.style.minWidth = '0';
     state.opts = opts || {};
-    state.raw = null; state.data = null; state.error = null;
+    state.raw = null; state.data = null; state.prev = null; state.error = null;
     state.open = null; state.q = '';
     reload();
   }
 
-  global.campaignAnalytics = { mount: mount, compute: compute, weekly: weekly };
+  global.campaignAnalytics = { mount: mount, compute: compute, weekly: weekly, prevBounds: prevBounds };
 })(window);
