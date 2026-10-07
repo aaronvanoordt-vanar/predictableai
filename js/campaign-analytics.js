@@ -48,6 +48,14 @@
  * acentos). No se recuerdan entre visitas: son búsquedas puntuales, no
  * preferencias.
  *
+ * Filtros de selección (SELECT_FILTERS, panel «Más filtros»): país, origen del
+ * lead (búsqueda / Radar / manual / importado / Bandeja), estado en el CRM
+ * (contact_status), estado en la campaña (el del enrolamiento), datos de
+ * contacto (con / sin email, teléfono, LinkedIn) y favoritos; en la lista de
+ * campañas, además, el estado de la campaña. Las opciones salen de los leads
+ * cargados, con cuántos hay de cada una: no se ofrece un valor sin leads.
+ * Los filtros activos se ven como chips que se quitan con un clic.
+ *
  * Comparación con el período anterior: con un período elegido, cada tarjeta
  * muestra la diferencia contra el período inmediatamente anterior del mismo
  * largo (para «Este mes», los mismos días del mes pasado), con la misma regla
@@ -70,7 +78,7 @@
  * todavía puede ganar respuestas. Los sin enviar no tienen semana de envío y
  * no entran. Cada segmento abre a esas personas.
  *
- *   window.campaignAnalytics.compute(enrollments, events, { from, to, channel, campaignChannels, listId, company, companyExact, title, titleExact })   // función pura; from/to en ms, to exclusivo
+ *   window.campaignAnalytics.compute(enrollments, events, { from, to, channel, campaignChannels, listId, company, companyExact, title, titleExact, sel, campaignIds })   // función pura; from/to en ms, to exclusivo
  *   window.campaignAnalytics.weekly(leads, { maxWeeks })                   // función pura
  */
 (function (global) {
@@ -119,13 +127,59 @@
   ];
   var CHANNEL_KEY = 'predictable_cana_channel';
   var LIST_KEY = 'predictable_cana_list';
+  var ENROLL_LABELS = { active: 'Activo', processing: 'Enviando', replied: 'Respondió', completed: 'Completado', paused: 'Pausado', error: 'Error', unsubscribed: 'Dado de baja' };
+  var SOURCE_LABELS = { search: 'Búsqueda', radar: 'Radar', manual: 'Manual', import: 'Importado', inbox: 'Bandeja', none: 'Sin dato' };
+  /** Estado del enrolamiento como lo ve el usuario: una respuesta tras terminar la cadencia cuenta como «Respondió». */
+  function enrollStatus(e) {
+    if (e.replied_at && (e.status === 'completed' || e.status === 'error')) return 'replied';
+    return e.status || 'active';
+  }
+  function crmLabel(v) {
+    var list = (global.prospectingData && global.prospectingData.CONTACT_STATUSES) || [];
+    var f = list.find(function (x) { return x.value === v; });
+    return f ? f.label : String(v || '').replace(/_/g, ' ');
+  }
+  function hasPhone(m) { return String((m && m.phone) || '').replace(/\D/g, '').length >= 8; }
+  // Filtros de selección sobre el enrolamiento y su lead. Con `get`, el valor
+  // del lead se compara con el elegido; con `options` + `test`, cada opción es
+  // una condición (datos de contacto, favoritos).
+  var SELECT_FILTERS = [
+    { key: 'country', label: 'País', all: 'Todos los países',
+      get: function (e) { return String((e.member || {}).country || '').trim() || '__none'; },
+      labelOf: function (v) { return v === '__none' ? 'Sin país' : v; } },
+    { key: 'source', label: 'Origen', all: 'Todos los orígenes',
+      get: function (e) { var src = (e.member || {}).source; return (src && src.kind) || 'none'; },
+      labelOf: function (v) { return SOURCE_LABELS[v] || v; } },
+    { key: 'crm', label: 'Estado en el CRM', all: 'Todos los estados',
+      get: function (e) { return (e.member || {}).contact_status || 'no_contactado'; },
+      labelOf: crmLabel },
+    { key: 'enroll', label: 'Estado en la campaña', all: 'Todos los estados',
+      get: enrollStatus,
+      labelOf: function (v) { return ENROLL_LABELS[v] || v; } },
+    { key: 'contact', label: 'Datos de contacto', all: 'Cualquiera',
+      options: [
+        { value: 'email', label: 'Con email', test: function (m) { return !!realEmail(m); } },
+        { value: 'no_email', label: 'Sin email', test: function (m) { return !realEmail(m); } },
+        { value: 'phone', label: 'Con teléfono', test: function (m) { return hasPhone(m); } },
+        { value: 'no_phone', label: 'Sin teléfono', test: function (m) { return !hasPhone(m); } },
+        { value: 'linkedin', label: 'Con LinkedIn', test: function (m) { return !!(m && m.linkedin_url); } },
+        { value: 'no_linkedin', label: 'Sin LinkedIn', test: function (m) { return !(m && m.linkedin_url); } },
+      ] },
+    { key: 'fav', label: 'Favoritos', all: 'Todos los leads',
+      options: [{ value: 'yes', label: 'Solo favoritos', test: function (m) { return !!(m && m.is_favorite); } }] },
+  ];
+  function selMatches(f, e, v) {
+    if (f.get) return f.get(e) === v;
+    var o = f.options.find(function (x) { return x.value === v; });
+    return !o || o.test(e.member || {});
+  }
   // Filtros de texto sobre el lead. `key` es el campo de prospect_list_members.
   var TEXT_FILTERS = [
     { key: 'company', label: 'Empresa', noun: 'empresa', placeholder: 'Todas las empresas' },
     { key: 'title', label: 'Cargo', noun: 'cargo', placeholder: 'Todos los cargos' },
   ];
 
-  var state = { host: null, opts: null, loading: false, error: null, raw: null, data: null, prev: null, open: null, q: '', range: loadRange(), channel: loadChannel(), listId: loadList(), text: { company: '', title: '' } };
+  var state = { host: null, opts: null, loading: false, error: null, raw: null, data: null, prev: null, open: null, q: '', range: loadRange(), channel: loadChannel(), listId: loadList(), text: { company: '', title: '' }, sel: {}, campStatus: '', moreOpen: false };
 
   // ── Utilidades ───────────────────────────────────────────────────────────
   function sb() {
@@ -192,6 +246,9 @@
     var textMatch = TEXT_FILTERS.map(function (f) {
       return { field: f.key, q: range && range[f.key] ? normText(range[f.key]) : '', exact: !!(range && range[f.key + 'Exact']) };
     }).filter(function (t) { return t.q; });
+    var sel = (range && range.sel) || {};
+    var selActive = SELECT_FILTERS.filter(function (f) { return sel[f.key]; });
+    var campaignIds = range && range.campaignIds ? range.campaignIds.map(String) : null;
     var failed = {};
     (events || []).forEach(function (ev) { if (ev.type === 'failed' && ev.provider_message_id) failed[ev.provider_message_id] = true; });
     var byEn = {};
@@ -218,6 +275,8 @@
       if (listId && String((e.member || {}).list_id || '') !== listId) return;
       var m0 = e.member || {};
       if (textMatch.some(function (t) { var v = normText(m0[t.field]); return t.exact ? v !== t.q : v.indexOf(t.q) === -1; })) return;
+      if (selActive.some(function (f) { return !selMatches(f, e, sel[f.key]); })) return;
+      if (campaignIds && campaignIds.indexOf(String(e.campaign_id)) === -1) return;
       var a = byEn[e.id] || { sends: 0, channels: {}, firstSent: null, lastSent: null, seenAt: null, repliedAt: null };
       if (channel) {
         // Solo los leads que este canal pudo alcanzar: su campaña lo usa o ya recibieron algo por él.
@@ -245,6 +304,7 @@
         id: e.id,
         campaign_id: e.campaign_id,
         status: e.status,
+        enrollStatus: enrollStatus(e),
         member: e.member || {},
         bucket: bucket,
         sends: a.sends,
@@ -333,19 +393,27 @@
   }
   function chunks(arr, n) { var out = []; for (var i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
 
+  var MEMBER_COLS = 'id, list_id, name, first_name, last_name, company, title, email, phone, linkedin_url, country, contact_status';
+  var MEMBER_OPTIONAL_COLS = ', source, is_favorite';
+  function fetchEnrollments(part, cols) {
+    return fetchAll(function () {
+      return sb().from('campaign_enrollments')
+        .select('id, campaign_id, status, replied_at, replied_channel, created_at, prospect_list_members(' + cols + ')')
+        .in('campaign_id', part)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true });
+    });
+  }
   async function load() {
     var ids = (state.opts.campaigns || []).map(function (c) { return c.id; });
     var enrollments = [];
     var events = [];
     for (var i = 0, parts = chunks(ids, 50); i < parts.length; i++) {
       var part = parts[i];
-      var en = await fetchAll(function () {
-        return sb().from('campaign_enrollments')
-          .select('id, campaign_id, status, replied_at, replied_channel, created_at, prospect_list_members(id, list_id, name, first_name, last_name, company, title, email, phone, linkedin_url)')
-          .in('campaign_id', part)
-          .order('created_at', { ascending: true })
-          .order('id', { ascending: true });
-      });
+      var en;
+      try { en = await fetchEnrollments(part, MEMBER_COLS + MEMBER_OPTIONAL_COLS); }
+      // `source` e `is_favorite` llegaron con migraciones posteriores: sin ellas, se carga lo demás.
+      catch (err) { if (!/source|is_favorite|column/i.test(errMsg(err))) throw err; en = await fetchEnrollments(part, MEMBER_COLS); }
       enrollments = enrollments.concat(en.map(function (e) {
         var out = Object.assign({}, e, { member: e.prospect_list_members || null });
         delete out.prospect_list_members;
@@ -469,7 +537,89 @@
     var map = {};
     (state.opts.campaigns || []).forEach(function (c) { map[c.id] = c.channels || []; });
     var ch = activeChannel();
-    return Object.assign({}, bounds, { channel: ch !== 'all' ? ch : null, campaignChannels: map, listId: activeListId() }, textOpts());
+    return Object.assign({}, bounds, { channel: ch !== 'all' ? ch : null, campaignChannels: map, listId: activeListId(), sel: activeSel(), campaignIds: campaignIdsForStatus() }, textOpts());
+  }
+  /** Opciones de un filtro de selección con cuántos leads cargados tiene cada una (sin las vacías). */
+  function selOptions(f) {
+    var ens = (state.raw && state.raw.enrollments) || [];
+    if (f.options) {
+      return f.options.map(function (o) {
+        var n = ens.filter(function (e) { return o.test(e.member || {}); }).length;
+        return { value: o.value, label: o.label, n: n };
+      }).filter(function (o) { return o.n; });
+    }
+    var counts = {};
+    ens.forEach(function (e) { var v = f.get(e); counts[v] = (counts[v] || 0) + 1; });
+    return Object.keys(counts).map(function (v) { return { value: v, label: f.labelOf(v), n: counts[v] }; })
+      .sort(function (a, b) { return b.n - a.n || a.label.localeCompare(b.label, 'es'); });
+  }
+  /** Solo los filtros elegidos que siguen teniendo leads (un valor viejo no deja la pantalla vacía sin explicación). */
+  function activeSel() {
+    var out = {};
+    SELECT_FILTERS.forEach(function (f) {
+      var v = state.sel[f.key];
+      if (v && selOptions(f).some(function (o) { return o.value === v; })) out[f.key] = v;
+    });
+    return out;
+  }
+  function selLabel(f, v) {
+    if (f.options) { var o = f.options.find(function (x) { return x.value === v; }); return o ? o.label : v; }
+    return f.labelOf(v);
+  }
+  function setSel(key, v) {
+    if (v) state.sel[key] = v; else delete state.sel[key];
+    state.open = null;
+    recompute();
+    rerender();
+  }
+  /** Estado de la campaña (solo en la lista): restringe a las campañas con ese estado. */
+  function campaignStatusChoices() {
+    if (isCampaignMode()) return [];
+    var seen = {}, out = [];
+    (state.opts.campaigns || []).forEach(function (c) {
+      if (!c.status || seen[c.status]) return;
+      seen[c.status] = true;
+      out.push({ value: c.status, label: c.statusLabel || c.status, n: (state.opts.campaigns || []).filter(function (x) { return x.status === c.status; }).length });
+    });
+    return out;
+  }
+  function campaignIdsForStatus() {
+    if (!state.campStatus || isCampaignMode()) return null;
+    return (state.opts.campaigns || []).filter(function (c) { return c.status === state.campStatus; }).map(function (c) { return c.id; });
+  }
+  function setCampStatus(v) {
+    state.campStatus = v || '';
+    state.open = null;
+    recompute();
+    rerender();
+  }
+  /** Filtros del panel «Más filtros» que están aplicados (para el contador, los chips y «Limpiar»). */
+  function advancedActive() {
+    var out = [];
+    if (activeListId()) out.push({ label: 'Lista: ' + listLabel(), clear: function () { setList('all'); } });
+    TEXT_FILTERS.forEach(function (f) {
+      var cur = state.text[f.key];
+      if (cur) out.push({ label: f.label + (textIsExact(f.key) ? ': ' : ' contiene «') + cur + (textIsExact(f.key) ? '' : '»'), clear: function () { setText(f.key, ''); } });
+    });
+    if (state.campStatus && !isCampaignMode()) {
+      var cs = campaignStatusChoices().find(function (x) { return x.value === state.campStatus; });
+      out.push({ label: 'Campañas: ' + (cs ? cs.label : state.campStatus), clear: function () { setCampStatus(''); } });
+    }
+    var act = activeSel();
+    SELECT_FILTERS.forEach(function (f) {
+      if (act[f.key]) out.push({ label: f.label + ': ' + selLabel(f, act[f.key]), clear: function () { setSel(f.key, ''); } });
+    });
+    return out;
+  }
+  function clearAdvanced() {
+    state.listId = 'all';
+    try { localStorage.setItem(LIST_KEY, 'all'); } catch (e) { /* modo privado */ }
+    state.text = { company: '', title: '' };
+    state.sel = {};
+    state.campStatus = '';
+    state.open = null;
+    recompute();
+    rerender();
   }
   function textOpts() {
     var o = {};
@@ -612,44 +762,77 @@
       bar.appendChild(h('div', { class: 'cana-note', style: 'flex-basis:100%', text: cnote }));
     }
 
-    // Lista: de qué lista vienen los leads. Con una sola lista no hay nada que elegir.
-    var lists = leadLists();
-    if (lists.length > 1 || activeListId()) {
-      bar.appendChild(h('span', { class: 'cana-filter-lbl', text: 'Lista' }));
-      var sel = h('select', { class: 'cana-select', 'aria-label': 'Filtrar por lista' });
-      sel.appendChild(h('option', { value: 'all', text: 'Todas las listas' }));
-      lists.forEach(function (l) { sel.appendChild(h('option', { value: l.id, text: l.name })); });
-      sel.value = activeListId() || 'all';
-      sel.addEventListener('change', function () { setList(sel.value); });
-      bar.appendChild(sel);
-      if (activeListId()) bar.appendChild(h('div', { class: 'cana-note', style: 'flex-basis:100%', text: 'Solo los leads que vienen de la lista «' + listLabel() + '».' }));
-    }
-
-    // Empresa y cargo: texto libre con los valores de los leads como sugerencias.
-    TEXT_FILTERS.forEach(function (f) {
-      var values = leadValues(f.key);
-      var cur = state.text[f.key] || '';
-      if (!values.length && !cur) return;
-      bar.appendChild(h('span', { class: 'cana-filter-lbl', text: f.label }));
-      var dlId = 'cana-' + f.key + '-' + (isCampaignMode() ? 'c' : 'o');
-      var dl = h('datalist', { id: dlId });
-      values.forEach(function (c) { dl.appendChild(h('option', { value: c })); });
-      var inp = h('input', { type: 'search', class: 'cana-select cana-textf', list: dlId, 'data-cana-text': f.key,
-        placeholder: f.placeholder, 'aria-label': 'Filtrar por ' + f.noun, autocomplete: 'off', value: cur });
-      inp.addEventListener('input', function () {
-        clearTimeout(textTimer);
-        textTimer = setTimeout(function () { if (inp.value.trim() !== (state.text[f.key] || '')) setText(f.key, inp.value); }, 300);
-      });
-      inp.addEventListener('change', function () { clearTimeout(textTimer); if (inp.value.trim() !== (state.text[f.key] || '')) setText(f.key, inp.value); });
-      bar.appendChild(inp);
-      bar.appendChild(dl);
-      if (cur) {
-        bar.appendChild(h('button', { type: 'button', class: 'cana-linkbtn', text: 'Quitar', 'aria-label': 'Quitar el filtro de ' + f.noun, onclick: function () { setText(f.key, ''); } }));
-        bar.appendChild(h('div', { class: 'cana-note', style: 'flex-basis:100%', text: textIsExact(f.key)
-          ? 'Solo los leads con ' + f.noun + ' «' + cur + '».'
-          : 'Solo los leads cuyo ' + (f.key === 'company' ? 'nombre de empresa' : 'cargo') + ' contiene «' + cur + '».' }));
-      }
+    // Más filtros: lista, empresa, cargo, estado de la campaña y los de selección,
+    // en un panel plegable para no saturar la cabecera. Los activos se ven siempre como chips.
+    var active = advancedActive();
+    var row = h('div', { class: 'cana-more-row' });
+    var toggle = h('button', { type: 'button', class: 'cana-chip cana-more-btn' + (state.moreOpen ? ' is-open' : ''), 'aria-expanded': state.moreOpen ? 'true' : 'false',
+      text: (state.moreOpen ? 'Ocultar filtros' : 'Más filtros') + (active.length ? ' (' + active.length + ')' : ''),
+      onclick: function () { state.moreOpen = !state.moreOpen; rerender(); } });
+    row.appendChild(toggle);
+    active.forEach(function (a) {
+      row.appendChild(h('button', { type: 'button', class: 'cana-active', title: 'Quitar este filtro', 'aria-label': 'Quitar el filtro ' + a.label, onclick: a.clear },
+        h('span', { text: a.label }), h('span', { class: 'cana-active-x', 'aria-hidden': 'true', text: '×' })));
     });
+    if (active.length > 1) row.appendChild(h('button', { type: 'button', class: 'cana-linkbtn', text: 'Limpiar filtros', onclick: clearAdvanced }));
+    bar.appendChild(row);
+
+    if (state.moreOpen) {
+      var panel = h('div', { class: 'cana-more-panel' });
+      var field = function (label, control) { panel.appendChild(h('div', { class: 'cana-field' }, h('span', { class: 'cana-field-lbl', text: label }), control)); };
+      // Lista: de qué lista vienen los leads. Con una sola lista no hay nada que elegir.
+      var lists = leadLists();
+      if (lists.length > 1 || activeListId()) {
+        var lsel = h('select', { class: 'cana-select', 'aria-label': 'Filtrar por lista' });
+        lsel.appendChild(h('option', { value: 'all', text: 'Todas las listas' }));
+        lists.forEach(function (l) { lsel.appendChild(h('option', { value: l.id, text: l.name })); });
+        lsel.value = activeListId() || 'all';
+        lsel.addEventListener('change', function () { setList(lsel.value); });
+        field('Lista', lsel);
+      }
+      // Empresa y cargo: texto libre con los valores de los leads como sugerencias.
+      TEXT_FILTERS.forEach(function (f) {
+        var values = leadValues(f.key);
+        var cur = state.text[f.key] || '';
+        if (!values.length && !cur) return;
+        var dlId = 'cana-' + f.key + '-' + (isCampaignMode() ? 'c' : 'o');
+        var dl = h('datalist', { id: dlId });
+        values.forEach(function (c) { dl.appendChild(h('option', { value: c })); });
+        var inp = h('input', { type: 'search', class: 'cana-select cana-textf', list: dlId, 'data-cana-text': f.key,
+          placeholder: f.placeholder, 'aria-label': 'Filtrar por ' + f.noun, autocomplete: 'off', value: cur });
+        inp.addEventListener('input', function () {
+          clearTimeout(textTimer);
+          textTimer = setTimeout(function () { if (inp.value.trim() !== (state.text[f.key] || '')) setText(f.key, inp.value); }, 300);
+        });
+        inp.addEventListener('change', function () { clearTimeout(textTimer); if (inp.value.trim() !== (state.text[f.key] || '')) setText(f.key, inp.value); });
+        field(f.label, h('span', { class: 'cana-field-ctl' }, inp, dl));
+      });
+      // Estado de la campaña: solo en la lista de campañas.
+      var cstats = campaignStatusChoices();
+      if (cstats.length > 1 || state.campStatus) {
+        var csel = h('select', { class: 'cana-select', 'aria-label': 'Filtrar por estado de la campaña' });
+        csel.appendChild(h('option', { value: '', text: 'Todas las campañas' }));
+        cstats.forEach(function (o) { csel.appendChild(h('option', { value: o.value, text: o.label + ' (' + o.n + ')' })); });
+        csel.value = state.campStatus || '';
+        csel.addEventListener('change', function () { setCampStatus(csel.value); });
+        field('Estado de la campaña', csel);
+      }
+      // Selección: solo si hay más de una opción con leads (o el filtro ya está puesto).
+      var act = activeSel();
+      SELECT_FILTERS.forEach(function (f) {
+        var opts = selOptions(f);
+        if (f.get ? opts.length < 2 && !act[f.key] : !opts.length) return;
+        var ssel = h('select', { class: 'cana-select', 'aria-label': 'Filtrar por ' + f.label.toLowerCase() });
+        ssel.appendChild(h('option', { value: '', text: f.all }));
+        opts.forEach(function (o) { ssel.appendChild(h('option', { value: o.value, text: o.label + ' (' + o.n + ')' })); });
+        ssel.value = act[f.key] || '';
+        ssel.addEventListener('change', function () { setSel(f.key, ssel.value); });
+        field(f.label, ssel);
+      });
+      if (!panel.childNodes.length) panel.appendChild(h('div', { class: 'cana-note', text: 'Todavía no hay leads con datos para filtrar.' }));
+      else panel.appendChild(h('div', { class: 'cana-note', style: 'grid-column:1/-1', text: 'Entre paréntesis, cuántos leads cargados tienen ese valor (sin contar los demás filtros).' }));
+      bar.appendChild(panel);
+    }
     return bar;
   }
 
@@ -734,6 +917,17 @@
       '.cana-tip-hint { margin-top:4px; font-size:11px; color:var(--text3); }',
       '.cana-filter { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap; }',
       '.cana-filter-lbl { font-size:12px; font-weight:600; color:var(--text2); min-width:52px; }',
+      '.cana-more-row { flex-basis:100%; display:flex; align-items:center; gap:6px 8px; flex-wrap:wrap; }',
+      '.cana-more-btn.is-open { color:var(--text); border-color:var(--accent); }',
+      '.cana-active { display:inline-flex; align-items:center; gap:6px; font:inherit; font-size:12px; color:var(--text); background:var(--accent-soft, var(--surface2)); border:1px solid var(--hair); border-radius:999px; padding:4px 6px 4px 10px; cursor:pointer; max-width:100%; }',
+      '.cana-active span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }',
+      '.cana-active-x { font-size:14px; line-height:1; color:var(--text2); padding:0 2px; }',
+      '.cana-active:hover .cana-active-x { color:var(--text); }',
+      '.cana-more-panel { flex-basis:100%; display:grid; grid-template-columns:repeat(auto-fill,minmax(min(220px,100%),1fr)); gap:10px 14px; padding:12px; border:1px solid var(--hair); border-radius:var(--r-md, 12px); background:var(--surface); }',
+      '.cana-field { display:flex; flex-direction:column; gap:4px; min-width:0; }',
+      '.cana-field-lbl { font-size:11.5px; font-weight:600; color:var(--text2); }',
+      '.cana-field-ctl { display:block; min-width:0; }',
+      '.cana-field .cana-select, .cana-field .cana-textf { width:100%; }',
       '.cana-chips { display:flex; gap:6px; flex-wrap:wrap; }',
       '.cana-chip { font:inherit; font-size:12px; color:var(--text2); background:var(--surface); border:1px solid var(--hair); border-radius:999px; padding:5px 12px; cursor:pointer; }',
       '.cana-chip:hover { color:var(--text); border-color:var(--accent-2, var(--accent)); }',
@@ -776,12 +970,13 @@
       if (s && s.contacts) wrap.appendChild(renderBlock(c, s, false));
       else wrap.appendChild(h('div', { class: 'chart-card', html: '<div class="pros-hint">' + esc(emptyReason(c)) + '</div>' }));
     } else {
-      var campaigns = state.opts.campaigns || [];
+      var campaigns = (state.opts.campaigns || []).filter(function (c) { return !state.campStatus || c.status === state.campStatus; });
       var withLeads = campaigns.filter(function (c) { var st = state.data.byCampaign[c.id]; return st && st.contacts; });
       // El total va compacto arriba: la lista de campañas es lo principal de esta pantalla.
       if (withLeads.length > 1) wrap.appendChild(renderMiniCard({ id: '__all', name: 'Todas las campañas' }, state.data.total));
       var grid = h('div', { class: 'cmp-cards cana-grid-cards' });
       campaigns.forEach(function (c) { grid.appendChild(renderMiniCard(c)); });
+      if (!campaigns.length) wrap.appendChild(h('div', { class: 'cana-mini-empty', text: 'Ninguna campaña tiene ese estado.' }));
       wrap.appendChild(grid);
     }
     state.host.appendChild(wrap);
@@ -798,6 +993,8 @@
     if (activeListId()) why.push('la lista «' + listLabel() + '»');
     TEXT_FILTERS.forEach(function (f) { if (state.text[f.key]) why.push('la ' + (f.key === 'company' ? 'empresa' : 'búsqueda de cargo') + ' «' + state.text[f.key] + '»'); });
     if (ch !== 'all') why.push('el canal ' + channelLabel());
+    var act = activeSel();
+    SELECT_FILTERS.forEach(function (f) { if (act[f.key]) why.push(f.label.toLowerCase() + ' «' + selLabel(f, act[f.key]) + '»'); });
     return why.length ? 'Ningún lead coincide con ' + why.join(', ') + '.' : 'Sin leads.';
   }
 
@@ -1123,7 +1320,7 @@
   function isoOrEmpty(v) { return v ? new Date(v).toISOString().replace('T', ' ').slice(0, 16) : ''; }
   function exportCsv(c, key, rows, week) {
     if (!rows.length) return toast('No hay personas para exportar.', 'warn');
-    var header = ['nombre', 'first_name', 'last_name', 'cargo', 'empresa', 'email', 'telefono', 'linkedin_url', 'campana', 'lista', 'resultado', 'envios', 'canales', 'primer_envio', 'ultimo_envio', 'visto_en', 'visto_por', 'respondio_en', 'respondio_por', 'estado_en_campana'];
+    var header = ['nombre', 'first_name', 'last_name', 'cargo', 'empresa', 'email', 'telefono', 'linkedin_url', 'campana', 'lista', 'resultado', 'envios', 'canales', 'primer_envio', 'ultimo_envio', 'visto_en', 'visto_por', 'respondio_en', 'respondio_por', 'estado_en_campana', 'estado_crm', 'pais', 'origen'];
     var lines = [header.join(',')];
     rows.forEach(function (l) {
       var m = l.member || {};
@@ -1131,7 +1328,8 @@
         memberName(m), m.first_name || '', m.last_name || '', m.title || '', m.company || '', realEmail(m), m.phone || '', m.linkedin_url || '',
         campaignName(l.campaign_id), listName(m.list_id), BUCKETS[l.bucket].label, l.sends, l.channels.map(chanLabel).join(' / '),
         isoOrEmpty(l.firstSent), isoOrEmpty(l.lastSent), isoOrEmpty(l.seenAt), l.seenAt ? chanLabel(l.seenChannel) : '',
-        l.bucket === 'replied' ? isoOrEmpty(l.repliedAt) : '', l.bucket === 'replied' && l.repliedChannel ? chanLabel(l.repliedChannel) : '', l.status || '',
+        l.bucket === 'replied' ? isoOrEmpty(l.repliedAt) : '', l.bucket === 'replied' && l.repliedChannel ? chanLabel(l.repliedChannel) : '', ENROLL_LABELS[l.enrollStatus] || l.status || '',
+        crmLabel(m.contact_status || 'no_contactado'), m.country || '', SOURCE_LABELS[(m.source && m.source.kind) || 'none'] || '',
       ].map(csvCell).join(','));
     });
     var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
@@ -1143,6 +1341,7 @@
     if (week != null) period = '-semana_' + dayValue(new Date(week));
     if (activeChannel() !== 'all') period = '-' + activeChannel() + period;
     if (activeListId()) period = '-' + slug(listLabel()).toLowerCase() + period;
+    if (Object.keys(activeSel()).length || state.campStatus) period = '-filtrado' + period;
     TEXT_FILTERS.forEach(function (f) { if (state.text[f.key]) period = '-' + slug(state.text[f.key]).toLowerCase() + period; });
     a.download = slug(c.name || 'campanas') + '-' + slug(TILE_TITLE[key]).toLowerCase() + period + '.csv';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
