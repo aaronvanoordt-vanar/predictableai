@@ -6,7 +6,7 @@
  * por hora). Una regla floja aquí duplica cada mensaje del lead en la bandeja.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { historyIds, isKnown, matchCampaignSend, parseHistoryItem, sameBody, visitOrder } from "./wati-history.ts";
+import { historyIds, isKnown, matchCampaignSend, parseHistoryItem, sameBody, sameTenant, visitOrder } from "./wati-history.ts";
 
 const base = {
   id: "507f1f77bcf86cd799439011",
@@ -131,4 +131,11 @@ Deno.test("isKnown: la plantilla de campaña ya guardada no entra otra vez como 
 Deno.test("sameBody: espacios y encabezados no rompen la coincidencia", () => {
   assert(sameBody(" \n\n Hola Guillermo, te saluda", "Hola Guillermo, te saluda"));
   assert(!sameBody("", "Hola"));
+});
+
+Deno.test("sameTenant: el mismo endpoint de WATI en dos cuentas, sin importar mayúsculas ni la barra final", () => {
+  assert(sameTenant("https://live-mt-server.wati.io/123456", "https://LIVE-mt-server.wati.io/123456/"));
+  assert(!sameTenant("https://live-mt-server.wati.io/123456", "https://live-mt-server.wati.io/654321"));
+  assert(!sameTenant("", ""));
+  assert(!sameTenant(null, undefined));
 });

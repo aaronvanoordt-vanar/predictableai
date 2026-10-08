@@ -24,6 +24,16 @@
  * sentido a ±MATCH_WINDOW_MS (las filas del webhook anteriores al
  * 2026-09-30 solo guardaban el WAMID, que el historial no trae).
  *
+ * Un mismo tenant de WATI puede estar conectado en VARIAS cuentas de
+ * Predictable, y la clave única de inbox_messages (provider,
+ * provider_message_id) no lleva user_id: la cuenta que sincronizaba primero se
+ * quedaba con la respuesta y la del dueño del lead ya no podía guardarla
+ * (2026-10-08: las respuestas de Carlos y Andrés terminaron en otra cuenta que
+ * nunca les escribió). Por eso un número es de la cuenta que le escribió desde
+ * Predictable o lo tiene en sus listas (`knowsPhone`): otra cuenta del mismo
+ * tenant lo deja pasar (`ownerElsewhere`) y el dueño recupera lo que otra se
+ * llevó (`reclaimFromSiblings`).
+ *
  * Usado por inbox-send ({action:"sync_wati"}, botón de la bandeja) y por
  * campaign-run (cada WATI_HISTORY_SYNC_MS por cuenta).
  */
@@ -211,6 +221,77 @@ export async function findMemberByPhone(db: SupabaseClient, userId: string, phon
   return member ?? null;
 }
 
+/** ¿Dos `config.endpoint` de WATI son el mismo tenant? */
+export function sameTenant(a: unknown, b: unknown): boolean {
+  const n = (v: unknown) => String(v ?? "").trim().toLowerCase().replace(/\/+$/, "");
+  return !!n(a) && n(a) === n(b);
+}
+
+/** Otras cuentas conectadas de Predictable sobre el mismo tenant de WATI. */
+export async function siblingAccounts(db: SupabaseClient, acc: Json): Promise<Json[]> {
+  if (!acc?.config?.endpoint) return [];
+  const { data } = await db.from("channel_accounts")
+    .select("id, user_id, config")
+    .eq("provider", "wati").eq("status", "connected").neq("user_id", acc.user_id);
+  return ((data ?? []) as Json[]).filter((s) => sameTenant(s.config?.endpoint, acc.config.endpoint));
+}
+
+/**
+ * ¿Este usuario tiene relación con el número? Lo tiene en una lista o le
+ * escribió desde Predictable (campaña o bandeja). Un entrante o un saliente
+ * copiado del historial de WATI no cuenta: es justo lo que otra cuenta del
+ * mismo tenant pudo haberse llevado.
+ */
+export async function knowsPhone(db: SupabaseClient, userId: string, phone: string): Promise<boolean> {
+  if (await findMemberByPhone(db, userId, phone)) return true;
+  const { data } = await db.from("inbox_messages")
+    .select("id")
+    .eq("user_id", userId).eq("provider", "wati").eq("direction", "out")
+    .in("contact_ref", wati.phoneVariants(phone))
+    .or("payload->>source.is.null,payload->>source.neq.wati_ui")
+    .limit(1);
+  return !!(data && data.length);
+}
+
+/**
+ * user_id de otra cuenta del mismo tenant que es dueña del número, cuando esta
+ * no lo es; null si el número es de esta cuenta o de nadie (entonces se guarda
+ * aquí, como siempre: un lead que escribió primero).
+ */
+export async function ownerElsewhere(db: SupabaseClient, acc: Json, phone: string, siblings?: Json[], mine?: boolean): Promise<string | null> {
+  const others = siblings ?? await siblingAccounts(db, acc);
+  if (!others.length) return null;
+  if (mine ?? await knowsPhone(db, acc.user_id, phone)) return null;
+  for (const s of others) if (await knowsPhone(db, s.user_id, phone)) return s.user_id;
+  return null;
+}
+
+/**
+ * Filas de estos ids que guardó otra cuenta del mismo tenant sin relación con
+ * el número: pasan a esta cuenta (que sí la tiene) con su lead y campaña.
+ * Devuelve cuántas se movieron.
+ */
+async function reclaimFromSiblings(db: SupabaseClient, acc: Json, phone: string, ids: string[], siblings: Json[], fields: Json): Promise<number> {
+  if (!ids.length || !siblings.length) return 0;
+  const { data } = await db.from("inbox_messages")
+    .select("id, user_id")
+    .eq("provider", "wati").in("provider_message_id", ids)
+    .in("user_id", siblings.map((s) => s.user_id));
+  const rows = (data ?? []) as Json[];
+  let moved = 0;
+  for (const userId of new Set(rows.map((r) => String(r.user_id)))) {
+    if (await knowsPhone(db, userId, phone)) continue;
+    const { data: upd, error } = await db.from("inbox_messages")
+      .update({ ...fields, user_id: acc.user_id })
+      .in("id", rows.filter((r) => r.user_id === userId).map((r) => r.id))
+      .eq("user_id", userId)
+      .select("id");
+    if (error) console.error("[wati-history] reclaim:", error.message);
+    else moved += upd?.length ?? 0;
+  }
+  return moved;
+}
+
 /** `next` = posición desde la que sigue el pase siguiente (0 = ya se recorrió todo). */
 export interface SyncResult { conversations: number; inserted: number; pending: number; next: number; error: string | null; }
 
@@ -268,6 +349,7 @@ export async function syncWatiHistory(db: SupabaseClient, acc: Json, deadline: n
   if (!creds.endpoint || !creds.token) return { ...out, error: "WhatsApp no está conectado." };
   const since = Date.now() - SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   const phones = await phonesToSync(db, acc, creds, since);
+  const siblings = await siblingAccounts(db, acc);
   const order = visitOrder(phones.length, start);
   const from = order.length < phones.length ? order[Math.min(ALWAYS_FRESH, order.length - 1)] : 0;
   // Cortado en la posición k: el pase siguiente sigue desde ahí (o desde el
@@ -293,13 +375,13 @@ export async function syncWatiHistory(db: SupabaseClient, acc: Json, deadline: n
     // (nosotros 52…) y el mismo número de WATI puede llevar campañas de otra
     // cuenta de Predictable: el 2026-10-06 eso metió 23 saludos repetidos.
     const items = list.map(parseHistoryItem).filter((h): h is HistoryMessage => !!h && !h.broadcast && Date.parse(h.at) >= since);
-    if (items.length) out.inserted += await insertMissing(db, acc, phone, items);
+    if (items.length) out.inserted += await insertMissing(db, acc, phone, items, siblings);
     if (k < order.length - 1) await sleep(PACE_MS);
   }
   return out;
 }
 
-async function insertMissing(db: SupabaseClient, acc: Json, phone: string, items: HistoryMessage[]): Promise<number> {
+async function insertMissing(db: SupabaseClient, acc: Json, phone: string, items: HistoryMessage[], siblings: Json[] = []): Promise<number> {
   const times = items.map((h) => Date.parse(h.at));
   const from = new Date(Math.min(...times) - CAMPAIGN_SEND_AFTER_MS).toISOString();
   const { data: existing } = await db.from("inbox_messages")
@@ -312,6 +394,9 @@ async function insertMissing(db: SupabaseClient, acc: Json, phone: string, items
   if (!missing.length) return 0;
 
   const member = await findMemberByPhone(db, acc.user_id, phone);
+  const mine = !!member || (siblings.length > 0 && await knowsPhone(db, acc.user_id, phone));
+  // El número es de otra cuenta del mismo tenant: su sincronización lo guarda.
+  if (!mine && await ownerElsewhere(db, acc, phone, siblings, false)) return 0;
   let primary: Json | null = null;
   if (member) {
     const { data } = await db.from("campaign_enrollments").select("id, campaign_id, status, created_at")
@@ -353,5 +438,14 @@ async function insertMissing(db: SupabaseClient, acc: Json, phone: string, items
     console.error("[wati-history] insert:", error.message);
     return 0;
   }
-  return data?.length ?? 0;
+  let count = data?.length ?? 0;
+  // Lo que no entró ya lo tenía otra cuenta: si es de esta, se recupera.
+  if (mine && siblings.length && count < insert.length) {
+    count += await reclaimFromSiblings(db, acc, phone, insert.map((r) => r.provider_message_id), siblings, {
+      member_id: member?.id ?? null,
+      campaign_id: primary?.campaign_id ?? null,
+      enrollment_id: primary?.id ?? null,
+    });
+  }
+  return count;
 }
