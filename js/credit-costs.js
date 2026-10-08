@@ -51,6 +51,9 @@
     // "Preparar con IA": personalización de 5 capas + preparación del coach.
     outreach_full:          { credits: 4,  label: 'por lead',            variable: false },
     campaign_recommendation:{ credits: 6,  label: 'por cadencia',        variable: false },
+    // «Investigar con IA» (Listas): puesto actual + empresa + ángulo. Con la
+    // cuenta de Apollo de la plataforma se suma el match (enrich_email).
+    lead_research:          { credits: 3,  label: 'por lead',            variable: false },
     // Tendencias de outbound (investigación manual).
     outreach_playbook:      { credits: 10, label: 'por investigación',   variable: false },
 

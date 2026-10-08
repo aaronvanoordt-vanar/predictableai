@@ -260,6 +260,17 @@
     for (var i = 0; i < list.length; i++) if (String(list[i].value) === String(value)) return list[i].label;
     return String(value || '—');
   }
+  // Investigación previa de Listas (lead-research): el lead probablemente ya
+  // no trabaja en la empresa guardada. Se puede enrolar igual; solo se avisa.
+  function isOutdated(m) {
+    var r = m && m.research;
+    return !!(r && r.employment && r.employment.status === 'outdated');
+  }
+  function outdatedNote(members) {
+    var n = (members || []).filter(isOutdated).length;
+    if (!n) return '';
+    return ' Ojo: ' + n + (n === 1 ? ' lead tiene' : ' leads tienen') + ' el puesto desactualizado (probablemente ya no ' + (n === 1 ? 'trabaja' : 'trabajan') + ' en esa empresa); revísalo en Listas.';
+  }
   function memberName(m) {
     return (m && (m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim())) || '—';
   }
@@ -2782,6 +2793,7 @@
       await setCampaignStatus(id, 'active');
       await loadCampaigns();
       msg = 'Campaña lanzada: ' + res.enrolled + ' leads enrolados' + (already.size ? ' (' + already.size + ' ya estaban)' : '') + '. El motor envía cada minuto dentro de la ventana horaria.';
+      msg += outdatedNote(fresh);
       var missing = campaignChannels(c).filter(function (k) { return !channelConnected(k); });
       if (missing.length) msg += ' Conecta ' + missing.map(function (k) { return CH[k].label; }).join(' y ') + ' para que esos pasos salgan.';
     }
@@ -3139,7 +3151,7 @@
       var checked = state.selected.has(String(m.id)) ? ' checked' : '';
       html += '<tr><td><input type="checkbox" data-action="enroll-check" data-id="' + esc(String(m.id)) + '"' + checked + '></td>' +
         '<td><div style="font-weight:600">' + esc(memberName(m)) + '</div>' + (m.title ? '<div class="pros-cellsub">' + esc(m.title) + '</div>' : '') + '</td>' +
-        '<td>' + esc(m.company || '—') + '</td>' +
+        '<td>' + esc(m.company || '—') + (isOutdated(m) ? '<div title="' + esc((m.research.employment.reason || '') + (m.research.employment.current_company ? ' Hoy: ' + m.research.employment.current_company + '.' : '')) + '">' + pill('Desactualizado', 'red') + '</div>' : '') + '</td>' +
         '<td>' + (hasPhone(m) ? pill('sí', 'green') : (needsWa ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
         '<td>' + (hasEmail(m) ? pill('sí', 'green') : (needsEmail ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
         '<td>' + (m.linkedin_url ? pill('sí', 'green') : (needsLi ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td></tr>';
@@ -3150,6 +3162,8 @@
     if (needsWa) hints.push('WhatsApp necesita teléfono revelado (Listas → Enriquecer).');
     if (needsEmail) hints.push('Email necesita email revelado.');
     if (needsLi) hints.push('LinkedIn necesita la URL del perfil del lead.');
+    var outdated = candidates.filter(isOutdated).length;
+    if (outdated) hints.push(outdated + (outdated === 1 ? ' lead tiene' : ' leads tienen') + ' el puesto desactualizado según la investigación de Listas: puedes enrolarlos igual, pero revisa antes si siguen en esa empresa.');
     if (needsAi) hints.push('Los ' + aiSteps + (aiSteps === 1 ? ' mensaje IA de esta cadencia se escribe' : ' mensajes IA de esta cadencia se escriben') + ' por lead y por paso, 24 h antes de cada envío, con el ángulo y las instrucciones que pusiste en la campaña (2 créditos cada uno). No se generan al enrolar: si el lead responde antes, los que faltaban no se escriben ni se cobran.');
     card.appendChild(h('div', { style: 'padding:10px 14px' }, h('span', { class: 'pros-hint', text: hints.join(' ') })));
     var prog = h('div', { class: 'cmp-progress', 'data-role': 'enroll-progress' });
@@ -4332,7 +4346,8 @@
       setProgress('');
       var parts = [res.enrolled + ' leads enrolados'];
       if (res.skipped) parts.push(res.skipped + ' ya estaban');
-      toast(parts.join(' · ') + (c3.status !== 'active' ? '. Activa la campaña para que empiecen los envíos.' : '.'), 'success');
+      var warn = outdatedNote(chosen);
+      toast(parts.join(' · ') + (c3.status !== 'active' ? '. Activa la campaña para que empiecen los envíos.' : '.') + warn, warn ? 'warn' : 'success');
       return Promise.all([loadCampaigns(), loadEnrollments(c3.id), loadMembersForCampaign(c3)]).then(function () { invalidateAnalytics(); render(); });
     }).then(r2, function (err) { r2(); setProgress(''); throw err; });
   }

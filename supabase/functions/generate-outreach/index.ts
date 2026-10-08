@@ -116,6 +116,7 @@ import { buildTrainingBlock, loadTraining } from "../_shared/sales-training.ts";
 import { loadIntelligence } from "../_shared/intelligence.ts";
 import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
 import { buildRadarSignalBlock, isRadarMember, radarSignalOf, type RadarLeadSignal } from "../_shared/radar-lead.ts";
+import { buildResearchBlock } from "../_shared/lead-research.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -1392,7 +1393,9 @@ Deno.serve(withLlmContext(async (req: Request) => {
       .in("section_key", ["market_analysis", "prospecting_recommendations", "industry_insight_digest", "competitor_threat_radar"])
       .order("generated_at", { ascending: false }).limit(4),
     memberId
-      ? supa.from("prospect_list_members").select("snapshot").eq("id", memberId).eq("user_id", user.id).maybeSingle()
+      // "*": el snapshot de Apollo + las notas y la investigación previa de
+      // Listas (research_notes / research; sin la migración simplemente no vienen).
+      ? supa.from("prospect_list_members").select("*").eq("id", memberId).eq("user_id", user.id).maybeSingle()
       : Promise.resolve({ data: null }),
     usePlaybook
       ? supa.from("outreach_playbooks")
@@ -1413,6 +1416,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     buildHubContext(Array.isArray(hubReports) ? hubReports : []) +
     buildLeadContext(lead) +
     buildPersonaContext(snapshot) +
+    buildResearchBlock(memberRes?.data ?? null) +
     buildPlaybookContext(playbook) +
     buildTrainingBlock(training, "outreach");
   const userPrompt = contextPrompt + CLOSING_INSTRUCTION;
