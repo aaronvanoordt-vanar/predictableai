@@ -158,6 +158,19 @@ Deno.test("validateTemplateDraft rechaza lo que Meta rechazaría", () => {
   );
 });
 
+Deno.test("validateTemplateDraft aplica las reglas de Meta sobre variables", () => {
+  const ok = (body: string) => validateTemplateDraft({ name: "hola_mundo", body });
+  ok("Hola {{name}}, vi que en {{company}} están creciendo. Qué tal?");
+  assertThrows(() => ok("{{name}}, te escribo para saludarte."), WatiError);
+  assertThrows(() => ok("Te escribo para saludarte, {{name}}"), WatiError);
+  assertThrows(() => ok("Hola {{name}}{{company}} qué tal todo?"), WatiError);
+  assertThrows(() => ok("Hola {{Name}}, qué tal todo por ahí?"), WatiError);
+});
+
+Deno.test("metaErrorHint explica Invalid parameter", () => {
+  assert(String(metaErrorHint("Invalid parameter")).includes("variable"));
+});
+
 Deno.test("isWebhookLimitError distingue el tope de cualquier otro fallo", () => {
   assert(isWebhookLimitError(new WatiError("Number of Webhooks exceed limitation", 400)));
   assert(isWebhookLimitError(new WatiError("WATI respondió 400", 400, { message: "Number of Webhooks exceed limitation" })));

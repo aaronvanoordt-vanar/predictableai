@@ -351,6 +351,12 @@ const EXAMPLE_DEFAULTS: Record<string, string> = {
   empresa: "Acme",
   title: "Director de Operaciones",
   cargo: "Director de Operaciones",
+  puesto: "Director de Operaciones",
+  rol: "Director de Operaciones",
+  full_name: "Carlos Ramírez",
+  nombre_completo: "Carlos Ramírez",
+  fullname: "Carlos Ramírez",
+  compania: "Acme",
 };
 
 function exampleParamsFor(variables: string[], given: Json): Record<string, string> {

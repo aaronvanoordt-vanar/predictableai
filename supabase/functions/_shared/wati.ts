@@ -175,6 +175,7 @@ export function metaErrorHint(text: unknown): string | null {
   if (has("131030")) return "El número del lead no está en la lista permitida de tu cuenta (modo de prueba de WhatsApp).";
   if (has("131042") || /payment|billing/i.test(s)) return "Hay un problema de pago en tu cuenta de WhatsApp Business (Meta). Revisa la facturación en WhatsApp Manager.";
   if (has("131031") || has("131045") || /account (has been )?(locked|restricted)|not registered/i.test(s)) return "Tu número de WhatsApp está restringido o sin registrar en Meta. Revisa WhatsApp Manager.";
+  if (/invalid parameter/i.test(s)) return "Meta rechazó algún dato de la plantilla. Lo más común: una variable al inicio o al final del texto, dos variables pegadas, o demasiadas variables para un texto tan corto. Revisa el texto y vuelve a intentar.";
   if (/invalid.*(phone|number|target)|phone.*invalid/i.test(s)) return "El teléfono del lead no tiene un formato válido (usa el código de país, solo dígitos).";
   return null;
 }
@@ -492,6 +493,23 @@ export function validateTemplateDraft(input: Json): TemplateDraft {
   const openBraces = (body.match(/\{\{/g) ?? []).length;
   if (openBraces !== variables.length) {
     throw new WatiError("Hay una variable mal escrita. Usa exactamente {{nombre_de_variable}}, sin espacios raros ni tildes.", 400);
+  }
+
+  // Reglas de Meta para variables en el cuerpo (si no, responde solo
+  // "Invalid parameter", sin decir cuál): nombres en minúsculas, ni al inicio
+  // ni al final del texto, y nunca dos pegadas.
+  const rawVars = body.match(/\{\{[^}]*\}\}/g) ?? [];
+  if (rawVars.some((v) => /[A-Z]/.test(v))) {
+    throw new WatiError("Meta solo admite variables en minúsculas: usa {{name}}, {{company}}… (no {{Name}}).", 400);
+  }
+  if (/^\{\{[^}]*\}\}/.test(body)) {
+    throw new WatiError("Meta no admite que el texto empiece con una variable. Antepón una palabra, por ejemplo «Hola {{name}}».", 400);
+  }
+  if (/\{\{[^}]*\}\}$/.test(body)) {
+    throw new WatiError("Meta no admite que el texto termine con una variable. Agrega algo después, por ejemplo un punto o «¿Qué tal todo?».", 400);
+  }
+  if (/\}\}\{\{/.test(body)) {
+    throw new WatiError("Meta no admite dos variables pegadas ({{a}}{{b}}): separa con texto.", 400);
   }
 
   // "Darse de baja" va SIEMPRE y primero (2026-10-02): es la salida que

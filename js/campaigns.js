@@ -2578,6 +2578,10 @@
       live.textContent = 'Se creará como «' + (n || '—') + '»'
         + (vars.length ? ' · variables: ' + vars.map(function (v) { return '{{' + v + '}}'; }).join(', ') : ' · sin variables')
         + ' · ' + String(bodyI.value || '').trim().length + '/1024 caracteres.';
+      var txt = String(bodyI.value || '').trim();
+      if (/^\{\{/.test(txt)) live.textContent += ' ⚠ Meta no admite que el texto empiece con una variable.';
+      if (/\}\}$/.test(txt)) live.textContent += ' ⚠ Meta no admite que el texto termine con una variable: agrega algo después.';
+      if (/\}\}\{\{/.test(txt)) live.textContent += ' ⚠ Hay dos variables pegadas: sepáralas con texto.';
       var unknown = vars.filter(function (v) { return !knownVars[v.toLowerCase()]; });
       if (unknown.length) {
         live.textContent += ' ⚠ ' + unknown.map(function (v) { return '{{' + v + '}}'; }).join(', ')
