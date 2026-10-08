@@ -2520,7 +2520,37 @@
     var bodyI = h('textarea', { rows: '5', placeholder: 'Hola {{name}}! Te escribo desde Acme porque…' });
     bodyI.value = sug.body;
     b.appendChild(bodyI);
-    b.appendChild(h('div', { class: 'pros-hint', text: 'Te sugerimos un saludo con tu firma; edítalo como quieras. {{name}} se reemplaza por el nombre del lead al enviar. Puedes usar hasta 5 variables.' }));
+    b.appendChild(h('div', { class: 'pros-hint', text: 'Te sugerimos un saludo con tu firma; edítalo como quieras. Puedes usar hasta 5 variables distintas.' }));
+
+    // Variables que el motor (campaign-run) llena con los datos de cada lead.
+    // Espejo de la resolución en supabase/functions/campaign-run/index.ts
+    // (envío de plantilla): si agregas una allí, agrégala aquí.
+    var TPL_VARS = [
+      { key: 'name', label: 'Nombre', hint: 'Primer nombre del lead (ej. Ana)', aliases: ['name', 'nombre', 'first_name', '1'] },
+      { key: 'full_name', label: 'Nombre completo', hint: 'Nombre y apellido del lead', aliases: ['full_name', 'nombre_completo', 'fullname'] },
+      { key: 'company', label: 'Empresa', hint: 'Empresa donde trabaja el lead', aliases: ['company', 'empresa', 'compania'] },
+      { key: 'title', label: 'Cargo', hint: 'Cargo del lead (ej. Gerente Comercial)', aliases: ['title', 'cargo', 'puesto', 'rol'] },
+    ];
+    var knownVars = {};
+    TPL_VARS.forEach(function (v) { v.aliases.forEach(function (a) { knownVars[a] = true; }); });
+    var varRow = h('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px' });
+    varRow.appendChild(h('span', { class: 'pros-hint', text: 'Variables disponibles (clic para insertar):' }));
+    TPL_VARS.forEach(function (v) {
+      varRow.appendChild(h('button', {
+        type: 'button', class: 'btn btn-ghost btn-sm', title: v.hint, text: v.label + ' · {{' + v.key + '}}',
+        onclick: function () {
+          var tag = '{{' + v.key + '}}';
+          var s = bodyI.selectionStart, e = bodyI.selectionEnd;
+          if (typeof s !== 'number') { s = e = bodyI.value.length; }
+          bodyI.value = bodyI.value.slice(0, s) + tag + bodyI.value.slice(e);
+          bodyI.focus();
+          bodyI.setSelectionRange(s + tag.length, s + tag.length);
+          refreshLive();
+        },
+      }));
+    });
+    b.appendChild(varRow);
+    b.appendChild(h('div', { class: 'pros-hint', text: 'Al enviar, cada variable se reemplaza por el dato del lead; si un lead no tiene ese dato, ese paso se omite en vez de mandar un hueco. Meta no admite una variable al inicio ni al final del texto, ni dos juntas.' }));
 
     b.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Botones de respuesta rápida' }));
     var btnRow = h('div', { class: 'cmp-sender-grid' });
@@ -2548,6 +2578,11 @@
       live.textContent = 'Se creará como «' + (n || '—') + '»'
         + (vars.length ? ' · variables: ' + vars.map(function (v) { return '{{' + v + '}}'; }).join(', ') : ' · sin variables')
         + ' · ' + String(bodyI.value || '').trim().length + '/1024 caracteres.';
+      var unknown = vars.filter(function (v) { return !knownVars[v.toLowerCase()]; });
+      if (unknown.length) {
+        live.textContent += ' ⚠ ' + unknown.map(function (v) { return '{{' + v + '}}'; }).join(', ')
+          + ' no es una variable conocida: el envío se omitiría por falta de dato. Usa las de arriba.';
+      }
     }
     nameI.addEventListener('input', refreshLive);
     bodyI.addEventListener('input', refreshLive);
