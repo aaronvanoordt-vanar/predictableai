@@ -273,6 +273,9 @@ Deno.test("humanError: traduce los códigos de Meta y conserva el detalle crudo"
   assertEquals(h.includes("no puede recibir"), true);
   assertEquals(h.includes("131026"), true);
   assertEquals(humanError(new WatiError("otra cosa", 400)), "otra cosa");
+  const h500 = humanError(new WatiError("Unexpected Error. Please try again.", 500));
+  assert(h500.startsWith("WATI tuvo un error interno (500)"));
+  assert(h500.endsWith("[Unexpected Error. Please try again.]"));
   assertEquals(metaErrorHint("(#131047)")?.includes("24 h"), true);
 });
 

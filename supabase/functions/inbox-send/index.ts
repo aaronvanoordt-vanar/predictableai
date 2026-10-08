@@ -215,18 +215,30 @@ function sessionTargets(phone: string, inboundRef: unknown): string[] {
   return [...out];
 }
 
-/** Prueba cada número mientras WATI responda 404 (conversación no encontrada). */
+/** 404 (conversación no encontrada) o 5xx: WATI no dice el motivo, vale probar de otra forma. */
+function isRetryableWati(e: unknown): boolean {
+  return e instanceof wati.WatiError && (e.status === 404 || e.status >= 500);
+}
+
+/**
+ * Prueba cada número mientras WATI responda 404 o 5xx. Un 500 «Unexpected
+ * Error» llegó con el 52… de la lista cuando el lead escribía desde 521…
+ * (2026-10-08) y antes cortaba sin probar el otro. Si todos fallan se
+ * reporta el primer error que no sea 404: es el que explica algo.
+ */
 async function withSessionTarget<T>(targets: string[], send: (to: string) => Promise<T>): Promise<T> {
+  let first: unknown;
   let last: unknown;
   for (const to of targets) {
     try {
       return await send(to);
     } catch (e) {
       last = e;
-      if (!(e instanceof wati.WatiError && e.status === 404)) throw e;
+      if (!isRetryableWati(e)) throw e;
+      if (first === undefined && (e as wati.WatiError).status !== 404) first = e;
     }
   }
-  throw last;
+  throw first ?? last;
 }
 
 const FILE_LABEL: Record<string, string> = { image: "📷 Foto", video: "🎬 Video", audio: "🎤 Audio", document: "📄 Documento" };
@@ -341,14 +353,15 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
     try {
       r = await withSessionTarget(targets, (to) => wati.sendText(creds, to, text, acc.config?.channel || undefined, replyTo?.wamid || undefined));
     } catch (e) {
-      // WATI no aceptó citar el mensaje: se envía igual (la cita queda en la bandeja).
-      if (!replyTo?.wamid || !(e instanceof wati.WatiError && e.status >= 400 && e.status < 500 && e.status !== 404)) throw e;
+      // WATI no aceptó citar el mensaje (4xx, o un 500 sin motivo): se envía
+      // igual sin cita (la cita queda en la bandeja).
+      if (!replyTo?.wamid || !(e instanceof wati.WatiError && e.status >= 400 && e.status !== 404)) throw e;
       r = await withSessionTarget(targets, (to) => wati.sendText(creds, to, text, acc.config?.channel || undefined));
     }
   } catch (e) {
     const status = e instanceof wati.WatiError && e.status >= 400 && e.status < 500 ? 400 : 502;
     // Cuerpo completo de WATI en los logs de la función: es lo que dice el motivo real.
-    console.error("inbox-send whatsapp text failed", { phone, http: (e as wati.WatiError)?.status, body: JSON.stringify((e as wati.WatiError)?.body ?? null).slice(0, 1500) });
+    console.error("inbox-send whatsapp text failed", { phone, targets, quoted: Boolean(replyTo?.wamid), http: (e as wati.WatiError)?.status, body: JSON.stringify((e as wati.WatiError)?.body ?? null).slice(0, 1500) });
     throw new HttpError("WhatsApp no aceptó el mensaje: " + wati.humanError(e), status, "whatsapp_send_failed");
   }
   const localId = r.id || crypto.randomUUID();
