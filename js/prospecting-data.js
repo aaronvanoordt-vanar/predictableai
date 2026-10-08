@@ -462,7 +462,7 @@
   }
 
   async function updateMember(memberId, patch) {
-    const allowed = ['email', 'email_status', 'phone', 'phone_status', 'outreach', 'outreach_status', 'apollo_contact_id', 'snapshot', 'enriched_at', 'contact_status', 'is_favorite', 'company', 'company_domain', 'title', 'first_name', 'last_name', 'name', 'linkedin_url', 'country', 'city', 'state'];
+    const allowed = ['email', 'email_status', 'phone', 'phone_status', 'outreach', 'outreach_status', 'apollo_contact_id', 'snapshot', 'enriched_at', 'contact_status', 'is_favorite', 'company', 'company_domain', 'title', 'first_name', 'last_name', 'name', 'linkedin_url', 'country', 'city', 'state', 'research_notes'];
     const safe = {};
     for (const k of allowed) if (k in (patch || {})) safe[k] = patch[k];
     if (!Object.keys(safe).length) return;
@@ -1526,6 +1526,17 @@
     return data || null;
   }
 
+  // «Investigar con IA» de Listas: verifica el puesto (Apollo + web),
+  // investiga la empresa y propone el ángulo. La edge function guarda el
+  // resultado en la fila (research / research_status) aunque se cierre la pestaña.
+  async function researchLead(memberId) {
+    if (!memberId) throw new Error('Falta el contacto.');
+    return edgeFetch('lead-research', {
+      member_id: memberId,
+      engine: global.AIEngine && global.AIEngine.get('outreach'),
+    });
+  }
+
   async function generateOutreachPlaybook() {
     return edgeFetch('generate-outreach-playbook', {});
   }
@@ -1555,22 +1566,35 @@
   // reunión con el coach" (Prospección) como el selector de lead del coach.
   function buildCoachLeadContext(m) {
     const ang = (m.outreach && m.outreach.angle) || {};
+    // Investigación previa de Listas (lead-research): el ángulo cubre a los
+    // leads sin «Preparar con IA», y el estado del puesto avisa al coach.
+    const res = (m.research && typeof m.research === 'object') ? m.research : {};
+    const rAng = res.angle || {};
+    const emp = res.employment || {};
+    const notes = (m.research_notes || '').trim();
+    const why = ang.hypothesis
+      ? ang.hypothesis + (ang.social_proof && ang.social_proof !== 'ninguno' ? ' Social proof sugerido: ' + ang.social_proof + '.' : '')
+      : (rAng.headline
+        ? rAng.headline + (rAng.why_now ? ' ' + rAng.why_now : '') + (rAng.proof ? ' Prueba a citar: ' + rAng.proof + '.' : '')
+        : 'Lead trabajado desde Prospección.');
+    const risks = [];
+    if (emp.status === 'outdated') risks.push('Puesto desactualizado: probablemente ya no trabaja en ' + (emp.listed_company || m.company || 'esa empresa') + (emp.current_company ? ' (hoy en ' + emp.current_company + ')' : '') + '.');
+    else if (emp.status === 'unconfirmed') risks.push('Su cargo actual está por confirmar: valídalo al inicio de la reunión.');
+    if (ang.objection) risks.push('Objeción probable: ' + ang.objection + (ang.neutralizer ? '. Neutralizador: ' + ang.neutralizer + '.' : ''));
+    else if (rAng.avoid) risks.push('Cuidado: ' + rAng.avoid);
     return {
       id: String(m.id),
       name: m.name || '',
       title: m.title || '',
       company: m.company || '',
       brief_who: (m.name || '—') + (m.title ? ' · ' + m.title : '') + (m.company ? ' en ' + m.company : '') + '.',
-      brief_why: ang.hypothesis
-        ? ang.hypothesis + (ang.social_proof && ang.social_proof !== 'ninguno' ? ' Social proof sugerido: ' + ang.social_proof + '.' : '')
-        : 'Lead trabajado desde Prospección.',
-      brief_risks: ang.objection
-        ? 'Objeción probable: ' + ang.objection + (ang.neutralizer ? '. Neutralizador: ' + ang.neutralizer + '.' : '')
-        : 'Sin alertas previas.',
+      brief_why: why + (notes ? ' Notas del vendedor: ' + notes.slice(0, 600) : ''),
+      brief_risks: risks.length ? risks.join(' ') : 'Sin alertas previas.',
       // Preparación de reunión generada junto con el outreach (nuevo
       // generate-outreach). null para leads con outreach antiguo.
       coach_prep: (m.outreach && m.outreach.coach_prep) || null,
-      person_hook: ang.person_hook || null,
+      person_hook: ang.person_hook || rAng.hook || null,
+      research_questions: Array.isArray(rAng.questions) ? rAng.questions : [],
       outreach: m.outreach || null,
     };
   }
@@ -1665,6 +1689,7 @@
     generateClientBrief,
     fetchOutreachPlaybook,
     generateOutreachPlaybook,
+    researchLead,
     saveOutreachPlaybookPrefs,
     buildCoachLeadContext,
     saveCoachContext,

@@ -20,6 +20,10 @@ export const CREDIT_COSTS = {
   outreach_full: 4,          // "Preparar con IA" (5 capas + prep del coach)
   outreach_step: 2,          // un paso de campaña o un borrador de la Bandeja
   campaign_recommendation: 6,
+  // «Investigar con IA» en Listas: verifica el puesto (Apollo + web), investiga
+  // la empresa y propone el ángulo. El match de Apollo se cobra aparte como
+  // enrich_email solo con la key de la plataforma.
+  lead_research: 3,
 
   // Campañas: 1 crédito por lead que entra a una campaña (cubre TODOS sus
   // envíos). Responder a mano desde la Bandeja no cuesta.
