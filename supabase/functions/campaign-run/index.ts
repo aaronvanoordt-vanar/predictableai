@@ -1193,9 +1193,11 @@ async function syncApolloEmail(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
     const chunk = list.slice(i, i + 10);
     const ids = chunk.map((e) => String(e.provider_message_id));
     let messages: Json[] = [];
+    let respKeys: string[] = [];   // diagnóstico: qué claves trae la respuesta de Apollo
     try {
       const r = await apollo(auth, "/emailer_messages/search", { ids, emailer_message_ids: ids, per_page: 10 });
       messages = Array.isArray(r?.emailer_messages) ? r.emailer_messages : [];
+      respKeys = r && typeof r === "object" ? Object.keys(r).slice(0, 8) : [];
     } catch (e) {
       console.warn("[campaign-run] apollo email sync:", (e as Error).message);
       // Se marca como revisado igual: si el endpoint no está en el plan, no
@@ -1208,6 +1210,12 @@ async function syncApolloEmail(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
     for (const ev of chunk) {
       const m = byId.get(String(ev.provider_message_id));
       const payload: Json = { ...(ev.payload ?? {}), apollo_checked_at: ctx.now.toISOString() };
+      // Diagnóstico (2026-10-08): ¿Apollo devolvió el mensaje por id? Si no,
+      // la detección de respuestas por Apollo no puede funcionar para este
+      // envío. Se sobrescribe en cada revisión; no afecta a nada más.
+      payload.apollo_found = !!m;
+      payload.apollo_diag = { asked: ids.length, returned: messages.length, resp_keys: respKeys, replied: m ? !!m.replied : null, status: m?.status ?? null };
+      if (!m) console.warn("[campaign-run] apollo no devolvió el emailer_message", ev.provider_message_id, "devueltos:", messages.length);
       if (m) {
         payload.apollo_status = m.status ?? null;
         const opened = !!m.opened || Number(m.num_opens ?? 0) > 0;
