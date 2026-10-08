@@ -378,6 +378,48 @@
     };
   }
 
+  // ── Listas de Apollo para excluir (solo cuentas habilitadas) ──
+  // apollo-proxy solo deja leer /labels y /contacts/search a las cuentas de
+  // _shared/apollo-lists.ts y con su propio Apollo conectado; al resto le
+  // responde 403 apollo_lists_not_enabled y aquí se devuelve null para que
+  // la UI no muestre nada. Los contactos llegan solo como ids: sirven para
+  // ocultarlos de Buscar, no se copian a Predictable.
+  async function fetchApolloLists() {
+    try {
+      const res = await apolloProxy('/labels', {});
+      return Array.isArray(res && res.labels) ? res.labels : [];
+    } catch (e) {
+      if (e && e.detail === 'apollo_lists_not_enabled') return null;
+      throw e;
+    }
+  }
+
+  async function fetchApolloListMemberIds(labelIds) {
+    const ids = (labelIds || []).filter(Boolean);
+    const out = { personIds: new Set(), contactIds: new Set(), total: 0 };
+    if (!ids.length) return out;
+    const seen = new Set();
+    function take(res) {
+      ((res && res.contacts) || []).forEach((c) => {
+        if (c.person_id) out.personIds.add(c.person_id);
+        if (c.id) out.contactIds.add(c.id);
+        seen.add(c.person_id || c.id);
+      });
+    }
+    const page = (n) => apolloProxy('/contacts/search', { contact_label_ids: ids, page: n });
+    const first = await page(1);
+    take(first);
+    // Apollo entrega hasta 500 páginas de 100; se piden de a 5 en paralelo.
+    const totalPages = Math.min(500, (first && first.pagination && first.pagination.total_pages) || 1);
+    for (let n = 2; n <= totalPages; n += 5) {
+      const batch = [];
+      for (let k = n; k < n + 5 && k <= totalPages; k++) batch.push(page(k));
+      (await Promise.all(batch)).forEach(take);
+    }
+    out.total = seen.size;
+    return out;
+  }
+
   // ── Búsquedas guardadas (Supabase, RLS por dueño) ──────────
   // Apollo no expone una API pública para "saved searches" — solo persiste
   // los criterios de filtro en Predictable. Guardar también en Apollo se
@@ -1659,6 +1701,8 @@
     deleteList,
     renameList,
     fetchListMemberIds,
+    fetchApolloLists,
+    fetchApolloListMemberIds,
     fetchSavedSearches,
     createSavedSearch,
     updateSavedSearch,
