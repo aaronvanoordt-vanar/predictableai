@@ -894,6 +894,9 @@ export function humanError(err: unknown): string {
     if (err.status === 403) return "El token de WATI no tiene permisos para esta operación (revisa los scopes al generarlo).";
     if (err.status === 404) return "WATI no encontró el recurso. Revisa la URL del API endpoint (debe incluir tu tenant id).";
     if (err.status === 429) return "WATI limitó las solicitudes. Reintenta en unos segundos.";
+    if (err.status >= 500) {
+      return `WATI tuvo un error interno (${err.status}) y no dijo el motivo. Reintenta en unos minutos; si sigue, prueba enviarlo desde el panel de WATI: si ahí también falla, es de su cuenta y lo resuelve su soporte. [${err.message}]`;
+    }
     if (isWebhookLimitError(err)) {
       return "Tu cuenta de WATI ya llegó al máximo de webhooks y su API no permite listarlos ni borrarlos. Revisa la lista en WATI → Webhooks y deja puesta la URL de Predictable.";
     }
