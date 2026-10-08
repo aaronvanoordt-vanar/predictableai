@@ -540,10 +540,16 @@
   }
 
   // ══ TAB 1: BÚSQUEDA — filter state ══════════════════════════════════════
+  function excludedListCount(fl) {
+    return ((fl && fl.exclude_list_ids) || []).length + ((fl && fl.exclude_apollo_list_ids) || []).length;
+  }
+
   function defaultFilters() {
     return {
       // Excluir listas (personas ya guardadas — no repetir contacto)
       exclude_list_ids: [],
+      // Listas de Apollo a excluir (solo cuentas habilitadas en apollo-proxy)
+      exclude_apollo_list_ids: [],
       // Cargos
       person_titles: [], include_similar_titles: true, person_seniorities: [],
       // Ubicación
@@ -839,7 +845,7 @@
         }
         rows.forEach(function (row) {
           var isActive = String(row.id) === getActiveSavedId();
-          var nEx = ((row.filters && row.filters.exclude_list_ids) || []).length;
+          var nEx = excludedListCount(row.filters);
           var loadBtn = h('button', {
             type: 'button', class: 'btn btn-ghost btn-sm',
             style: 'flex:1;justify-content:flex-start' + (isActive ? ';font-weight:700;color:var(--accent)' : ''),
@@ -880,7 +886,7 @@
     });
 
     // 1. Excluir listas — no volver a mostrar a quien ya está guardado
-    section('Excluir listas', function (x) { return x.exclude_list_ids.length; }, function (body) {
+    section('Excluir listas', excludedListCount, function (body) {
       body.appendChild(lbl('No mostrar personas ya guardadas en'));
       var chipsHost = h('div', null);
       if (window.Skeleton) chipsHost.innerHTML = window.Skeleton.listRows(2, { avatar: false });
@@ -911,7 +917,60 @@
         chipsHost.innerHTML = '';
         chipsHost.appendChild(h('div', { style: 'font-size:12px;color:var(--red)', text: errMsg(e) }));
       });
-    }, false, ['exclude_list_ids']);
+
+      // Listas guardadas en Apollo. Solo aparece si apollo-proxy la habilita
+      // para esta cuenta (fetchApolloLists → null en las demás).
+      var apolloHost = h('div', null);
+      body.appendChild(apolloHost);
+      function renderApollo(labels) {
+        apolloHost.innerHTML = '';
+        if (labels === null) {
+          f().exclude_apollo_list_ids = [];
+          return;
+        }
+        var head = h('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:14px' });
+        head.appendChild(lbl('Listas de Apollo'));
+        var reload = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '↻ Actualizar', title: 'Volver a traer las listas de tu Apollo' });
+        reload.addEventListener('click', function () {
+          apolloHost.innerHTML = '';
+          apolloHost.appendChild(h('div', { style: 'font-size:12px;color:var(--text3);margin-top:14px', text: 'Cargando listas de Apollo…' }));
+          state.search._apolloExcludeCache = null;
+          state.search._excludeCache = null;
+          pd().fetchApolloLists().then(function (l) { state.search.apolloLabels = l; renderApollo(l); reapplyExclusions(); })
+            .catch(showApolloError);
+        });
+        head.appendChild(reload);
+        apolloHost.appendChild(head);
+        if (!labels.length) {
+          apolloHost.appendChild(h('div', { style: 'font-size:12px;color:var(--text3)', text: 'Tu cuenta de Apollo no tiene listas de contactos.' }));
+          f().exclude_apollo_list_ids = [];
+          return;
+        }
+        var valid = new Set(labels.map(function (l) { return l.id; }));
+        f().exclude_apollo_list_ids = (f().exclude_apollo_list_ids || []).filter(function (id) { return valid.has(id); });
+        apolloHost.appendChild(chipGroup({
+          options: labels.map(function (l) { return { label: l.name + (l.count != null ? ' (' + fmtNum(l.count) + ')' : ''), value: l.id }; }),
+          get: function () { return f().exclude_apollo_list_ids; },
+          onChange: function () { changed(); reapplyExclusions(); },
+        }));
+        apolloHost.appendChild(h('div', {
+          style: 'font-size:11.5px;color:var(--text3);margin-top:6px;line-height:1.4',
+          text: 'Oculta a quienes ya están guardados en esas listas de tu Apollo. No se copian a Predictable.',
+        }));
+      }
+      function showApolloError(e) {
+        apolloHost.innerHTML = '';
+        apolloHost.appendChild(h('div', { style: 'font-size:12px;color:var(--red);margin-top:14px', text: 'Listas de Apollo: ' + errMsg(e) }));
+      }
+      if (state.search.apolloLabels !== undefined) renderApollo(state.search.apolloLabels);
+      else {
+        pd().fetchApolloLists().then(function (l) {
+          state.search.apolloLabels = l;
+          renderApollo(l);
+          if (l && (f().exclude_apollo_list_ids || []).length) reapplyExclusions();
+        }).catch(showApolloError);
+      }
+    }, false, ['exclude_list_ids', 'exclude_apollo_list_ids']);
 
     // 2. Cargos
     section('Cargos', function (x) { return x.person_titles.length + x.person_seniorities.length; }, function (body) {
@@ -1205,7 +1264,7 @@
 
   function clearSection(title, keys) {
     var defaults = defaultFilters();
-    var hadExclusions = keys.indexOf('exclude_list_ids') !== -1;
+    var hadExclusions = keys.indexOf('exclude_list_ids') !== -1 || keys.indexOf('exclude_apollo_list_ids') !== -1;
     keys.forEach(function (k) { state.search.filters[k] = defaults[k]; });
     persistFilters();
     if (state.search.panelHost) {
@@ -1510,13 +1569,39 @@
   function refreshExcludedIds() {
     var s = state.search;
     var ids = (s.filters.exclude_list_ids || []).slice();
-    if (!ids.length) { s.excluded = null; return Promise.resolve(null); }
-    var sig = ids.slice().sort().join(',');
+    // Las listas de Apollo solo cuentan cuando la cuenta las tiene habilitadas
+    // (apolloLabels = null en las demás) y ya se cargaron.
+    var apolloIds = s.apolloLabels ? (s.filters.exclude_apollo_list_ids || []).slice() : [];
+    if (!ids.length && !apolloIds.length) { s.excluded = null; return Promise.resolve(null); }
+    var sig = ids.slice().sort().join(',') + '|' + apolloIds.slice().sort().join(',');
     if (s._excludeCache && s._excludeCache.sig === sig) {
       s.excluded = s._excludeCache.data;
       return Promise.resolve(s.excluded);
     }
-    return Promise.resolve(pd().fetchListMemberIds(ids)).then(function (data) {
+    // Las de Apollo se cachean aparte: guardar en una lista de Predictable
+    // invalida _excludeCache, y no hace falta volver a paginar Apollo por eso.
+    var apolloSig = apolloIds.slice().sort().join(',');
+    var apolloP = !apolloIds.length ? Promise.resolve(null)
+      : (s._apolloExcludeCache && s._apolloExcludeCache.sig === apolloSig) ? Promise.resolve(s._apolloExcludeCache.data)
+      : Promise.resolve(pd().fetchApolloListMemberIds(apolloIds)).then(function (d) {
+          s._apolloExcludeCache = { sig: apolloSig, data: d };
+          return d;
+        });
+    var ownP = ids.length ? Promise.resolve(pd().fetchListMemberIds(ids))
+      : Promise.resolve({ personIds: new Set(), contactIds: new Set(), total: 0 });
+    return Promise.all([ownP, apolloP]).then(function (both) {
+      var data = both[0];
+      var ap = both[1];
+      if (ap) {
+        // Total sin contar dos veces a quien está en las dos fuentes.
+        var extra = 0;
+        ap.personIds.forEach(function (id) { if (!data.personIds.has(id)) extra++; });
+        ap.personIds.forEach(function (id) { data.personIds.add(id); });
+        ap.contactIds.forEach(function (id) { data.contactIds.add(id); });
+        data.total += Math.max(extra, ap.total - (ap.personIds.size - extra));
+      }
+      return data;
+    }).then(function (data) {
       s._excludeCache = { sig: sig, data: data };
       s.excluded = data;
       return data;
@@ -2007,7 +2092,7 @@
     // las listas excluidas quedan guardadas en ella y no hay que volver a
     // marcarlas la próxima vez.
     var active = activeSavedSearch();
-    var nEx = (state.search.filters.exclude_list_ids || []).length;
+    var nEx = excludedListCount(state.search.filters);
     var exNote = nEx
       ? 'Se guarda con ' + nEx + (nEx === 1 ? ' lista excluida' : ' listas excluidas') + ': al cargarla, esas personas ya no aparecen.'
       : '';
