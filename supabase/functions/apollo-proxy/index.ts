@@ -47,6 +47,13 @@ import type { ApolloAuth } from "../_shared/apollo-auth.ts";
 import { apolloBillableCount, CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
 import { blockedInPlatformMode, PLATFORM_SKIPPED_CONTACT, sanitizePlatformSearch } from "../_shared/apollo-platform.ts";
+import {
+  APOLLO_LIST_ENDPOINTS,
+  apolloListsAllowed,
+  sanitizeContactsSearch,
+  sanitizeContactsSearchBody,
+  sanitizeLabels,
+} from "../_shared/apollo-lists.ts";
 
 type Method = "GET" | "POST" | "PUT" | "DELETE";
 
@@ -140,8 +147,13 @@ Deno.serve(async (req) => {
   if (typeof endpoint !== "string") {
     return json({ error: "Endpoint not allowed" }, 400, cors);
   }
+  // /labels y /contacts/search: solo para las cuentas de
+  // _shared/apollo-lists.ts y con su propio Apollo (se revisa abajo, una vez
+  // resuelta la credencial).
+  const listMethod = APOLLO_LIST_ENDPOINTS.get(endpoint);
   const allowed = STATIC_ENDPOINTS.get(endpoint) ??
-    DYNAMIC_ENDPOINTS.find((d) => d.re.test(endpoint))?.methods;
+    DYNAMIC_ENDPOINTS.find((d) => d.re.test(endpoint))?.methods ??
+    (listMethod ? [listMethod] : undefined);
   if (!allowed) return json({ error: "Endpoint not allowed" }, 400, cors);
 
   // The client may only pick from the verbs this endpoint declares; naming no
@@ -155,7 +167,7 @@ Deno.serve(async (req) => {
     return json({ error: "Method not allowed for this endpoint" }, 400, cors);
   }
 
-  const body: Record<string, unknown> =
+  let body: Record<string, unknown> =
     payload.body && typeof payload.body === "object" && !Array.isArray(payload.body)
       ? { ...(payload.body as Record<string, unknown>) }
       : {};
@@ -193,6 +205,17 @@ Deno.serve(async (req) => {
       error: "apollo_account_required",
       message: "Conecta tu cuenta de Apollo para usar el canal de Email: la cuenta compartida de la beta no envía correo a tu nombre.",
     }, 403, cors);
+  }
+
+  if (listMethod) {
+    if (!apolloListsAllowed(user.id, auth.mode)) {
+      return json({ error: "apollo_lists_not_enabled" }, 403, cors);
+    }
+    if (endpoint === "/contacts/search") {
+      const clean = sanitizeContactsSearchBody(body);
+      if (!clean) return json({ error: "contact_label_ids requerido" }, 400, cors);
+      body = clean;
+    }
   }
 
   // La cuenta compartida es la misma para todos los clientes: lo que uno
@@ -266,6 +289,14 @@ Deno.serve(async (req) => {
       text = JSON.stringify(sanitizePlatformSearch(JSON.parse(text)));
     } catch (_) {
       // Si no se puede limpiar, no se entrega: podría traer contactos ajenos.
+      return json({ error: "Respuesta de Apollo no válida" }, 502, cors);
+    }
+  }
+  if (res.ok && listMethod) {
+    try {
+      const parsed = JSON.parse(text);
+      text = JSON.stringify(endpoint === "/labels" ? sanitizeLabels(parsed) : sanitizeContactsSearch(parsed));
+    } catch (_) {
       return json({ error: "Respuesta de Apollo no válida" }, 502, cors);
     }
   }
