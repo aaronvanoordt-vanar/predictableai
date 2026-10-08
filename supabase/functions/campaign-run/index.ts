@@ -311,12 +311,17 @@ async function gmailFor(ctx: Ctx, userId: string): Promise<{ token: string; emai
 
 /** Última respuesta del lead en el hilo de Gmail posterior a nuestro envío (Apollo nunca entrega el texto). */
 async function gmailReply(ctx: Ctx, userId: string, threadId: string | null, contactEmail: string | null, sentAt: string | null): Promise<{ body: string; subject: string; at: string | null } | null> {
-  if (!threadId) return null;
+  // Sin hilo (Apollo no lo entrega para un email individual) se busca por
+  // remitente: lo que el lead escribió al buzón conectado desde el envío.
+  if (!threadId && !contactEmail) return null;
   const g = await gmailFor(ctx, userId);
   if (!g) return null;
   try {
     const sentMs = sentAt ? (Date.parse(sentAt) || 0) : 0;
-    const msgs = await gmail.readThread(g.token, g.email, { threadId, contactEmail: contactEmail ?? undefined, since: sentMs ? Math.floor(sentMs / 1000) - 60 : undefined });
+    const since = sentMs ? Math.floor(sentMs / 1000) - 60 : undefined;
+    const msgs = threadId
+      ? await gmail.readThread(g.token, g.email, { threadId, contactEmail: contactEmail ?? undefined, since })
+      : await gmail.findInbound(g.token, g.email, { contactEmail: contactEmail!, since });
     const inbound = msgs.filter((m) => !m.outbound && (m.internal_date ?? 0) >= sentMs - 60_000);
     const last = inbound[inbound.length - 1];
     if (!last) return null;
@@ -1123,7 +1128,7 @@ async function preparePending(ctx: Ctx): Promise<number> {
 // traduce a nuestros eventos. Cada email se revisa como mucho cada 15 min
 // durante 14 días; después de una respuesta o un rebote ya no se consulta.
 
-async function handleEmailReply(ctx: Ctx, ev: Json, msg: Json) {
+async function handleEmailReply(ctx: Ctx, ev: Json, msg: Json | null, preloaded?: { body: string; subject: string; at: string | null }) {
   const db = ctx.db;
   const { data: en } = await db.from("campaign_enrollments").select("*").eq("id", ev.enrollment_id).maybeSingle();
   if (!en) return;
@@ -1135,7 +1140,7 @@ async function handleEmailReply(ctx: Ctx, ev: Json, msg: Json) {
   }
   if (!en.replied_at) { patch.replied_at = ctx.now.toISOString(); patch.replied_channel = "email"; }
   if (Object.keys(patch).length) await db.from("campaign_enrollments").update(patch).eq("id", en.id);
-  await event(ctx, en, "email", "replied", { provider_message_id: ev.provider_message_id, detail: "Respuesta registrada por Apollo.", step_position: ev.step_position, node_id: ev.node_id });
+  await event(ctx, en, "email", "replied", { provider_message_id: ev.provider_message_id, detail: preloaded ? "Respuesta encontrada en el buzón de Gmail." : "Respuesta registrada por Apollo.", step_position: ev.step_position, node_id: ev.node_id });
   // El texto del lead solo existe en el buzón: se intenta leer del hilo de
   // Gmail (provider_thread_id de Apollo = id del hilo). Sin Gmail, body null y
   // la bandeja ofrece "Conectar Gmail para leer el hilo completo".
@@ -1143,7 +1148,7 @@ async function handleEmailReply(ctx: Ctx, ev: Json, msg: Json) {
     .eq("provider", "apollo").eq("provider_message_id", String(ev.provider_message_id)).eq("direction", "out").maybeSingle();
   const threadId = msg?.provider_thread_id ? String(msg.provider_thread_id) : (outRow?.provider_conversation_id ?? null);
   const contactEmail = outRow?.contact_ref ?? null;
-  const fromGmail = await gmailReply(ctx, en.user_id, threadId, contactEmail, outRow?.sent_at ?? null);
+  const fromGmail = preloaded ?? await gmailReply(ctx, en.user_id, threadId, contactEmail, outRow?.sent_at ?? null);
   await db.from("inbox_messages").upsert({
     user_id: en.user_id, member_id: en.member_id, channel: "email", provider: "apollo", direction: "in",
     contact_ref: contactEmail, body: fromGmail ? fromGmail.body : null,
@@ -1161,13 +1166,21 @@ async function handleEmailReply(ctx: Ctx, ev: Json, msg: Json) {
 /** `userId` + `force` = «Sincronizar todo» de la Bandeja: solo ese usuario y sin esperar los 15 min. */
 type SyncOpts = { userId?: string; force?: boolean };
 
+/** Respuesta del lead a un email de campaña leída del Gmail conectado, o null (sin Gmail, sin respuesta o con error). */
+async function gmailInboundFor(ctx: Ctx, ev: Json): Promise<{ body: string; subject: string; at: string | null } | null> {
+  const { data: outRow } = await ctx.db.from("inbox_messages").select("contact_ref, sent_at")
+    .eq("provider", "apollo").eq("provider_message_id", String(ev.provider_message_id)).eq("direction", "out").maybeSingle();
+  if (!outRow?.contact_ref) return null;
+  return await gmailReply(ctx, ev.user_id, null, outRow.contact_ref, outRow.sent_at ?? ev.created_at ?? null);
+}
+
 async function syncApolloEmail(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
   const db = ctx.db;
   const since = new Date(ctx.now.getTime() - EMAIL_SYNC_WINDOW_MS).toISOString();
   const checkedBefore = new Date(ctx.now.getTime() - EMAIL_SYNC_EVERY_MS).toISOString();
   let q = db
     .from("campaign_events")
-    .select("id, enrollment_id, campaign_id, member_id, user_id, step_position, node_id, provider_message_id, payload")
+    .select("id, enrollment_id, campaign_id, member_id, user_id, step_position, node_id, provider_message_id, payload, created_at")
     .eq("channel", "email").eq("type", "sent")
     .gte("created_at", since)
     .not("provider_message_id", "is", null)
@@ -1215,7 +1228,18 @@ async function syncApolloEmail(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
       // envío. Se sobrescribe en cada revisión; no afecta a nada más.
       payload.apollo_found = !!m;
       payload.apollo_diag = { asked: ids.length, returned: messages.length, resp_keys: respKeys, replied: m ? !!m.replied : null, status: m?.status ?? null };
-      if (!m) console.warn("[campaign-run] apollo no devolvió el emailer_message", ev.provider_message_id, "devueltos:", messages.length);
+      if (!m) {
+        console.warn("[campaign-run] apollo no devolvió el emailer_message", ev.provider_message_id, "devueltos:", messages.length);
+        // Apollo no lista los emails individuales por id: la respuesta se busca
+        // directamente en el Gmail conectado (si lo hay).
+        const found = await gmailInboundFor(ctx, ev);
+        if (found) {
+          payload.apollo_done = true;
+          payload.reply_source = "gmail";
+          await handleEmailReply(ctx, ev, null, found);
+          touched++;
+        }
+      }
       if (m) {
         payload.apollo_status = m.status ?? null;
         const opened = !!m.opened || Number(m.num_opens ?? 0) > 0;
