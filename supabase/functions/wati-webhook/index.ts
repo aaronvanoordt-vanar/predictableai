@@ -45,7 +45,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
-import { findMemberByPhone } from "../_shared/wati-history.ts";
+import { findMemberByPhone, ownerElsewhere } from "../_shared/wati-history.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import { clearAccountBlock, inboxStatusRank, recordCampaignReceipt } from "../_shared/wati-receipts.ts";
 
@@ -147,6 +147,10 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
   const waId = wati.digits(ev?.waId);
   if (!waId) return;
   const member = await findMember(db, acc.user_id, waId);
+  // Mismo tenant de WATI conectado en otra cuenta que sí le escribió a este
+  // número: la respuesta es suya (su webhook o su sincronización la guarda).
+  // Sin esto la primera cuenta en recibirla se la quedaba (clave única global).
+  if (!member && await ownerElsewhere(db, acc, waId)) return;
   const wamid = ev?.whatsappMessageId ? String(ev.whatsappMessageId) : (ev?.id ? `wati:${ev.id}` : null);
   const at = eventDate(ev);
 
