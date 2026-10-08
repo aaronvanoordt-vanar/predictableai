@@ -604,6 +604,11 @@
     .price-card.featured .price .u { color: rgba(255,255,255,0.5); }
     .price-card .badge-top { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.16em; padding: 5px 12px; border-radius: 999px; text-transform: uppercase; display: inline-flex; align-items: center; gap: 6px; }
     .price-card .badge-top::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #fff; }
+    .bill-toggle { display: inline-flex; gap: 4px; padding: 4px; margin: 0 0 32px; background: #fff; border: 1px solid var(--hair); border-radius: 999px; }
+    .bill-toggle button { font: inherit; font-size: 13px; padding: 8px 18px; border: 0; border-radius: 999px; background: transparent; color: var(--ink-3); cursor: pointer; }
+    .bill-toggle button.on { background: var(--ink); color: #fff; }
+    .bill-toggle .save { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--accent); margin-left: 4px; }
+    .bill-toggle button.on .save { color: var(--accent-2); }
     .price-foot { margin-top: 28px; padding: 24px 28px; background: rgba(31,75,255,0.06); border: 1px solid rgba(31,75,255,0.18); border-radius: 12px; display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: center; font-size: 14px; color: var(--ink-2); line-height: 1.5; }
     .price-foot .l { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; color: var(--accent); text-transform: uppercase; line-height: 1.4; max-width: 140px; }
     .price-note { margin-top: 18px; font-size: 13px; color: var(--ink-3); line-height: 1.55; max-width: 820px; }
@@ -1285,13 +1290,13 @@
   <div class="container">
     <div class="sec-head reveal">
       <div class="eyebrow">Retorno</div>
-      <h2 class="h2" style="margin-top:18px;">97 USD al mes.<br>Una reunión calificada.<br>Retorno de <span class="accent">10x</span>.</h2>
+      <h2 class="h2" style="margin-top:18px;">497 USD al mes.<br>Una reunión calificada.<br>Retorno de <span class="accent">10x</span>.</h2>
     </div>
 
     <div class="roi-grid">
       <div class="roi-card reveal">
         <div class="meta">Por qué 10x</div>
-        <p>Starter cuesta 97 USD al mes. Si con eso consigues una sola reunión calificada y cierras un ticket de 1,000 USD, tu costo de adquisición fue 97 USD por 1,000 USD de ingreso: más de 10 veces lo invertido. Todo lo que venga después de esa primera reunión es margen.</p>
+        <p>Starter cuesta 497 USD al mes. Si con eso consigues una sola reunión calificada y cierras un ticket de 5,000 USD, tu costo de adquisición fue 497 USD por 5,000 USD de ingreso: más de 10 veces lo invertido. Todo lo que venga después de esa primera reunión es margen.</p>
         <p>Ajusta los números a tu negocio. Si tu ticket es recurrente, cuenta los meses; si tu equipo cierra más de una reunión al mes, súmalas. La inversión no cambia.</p>
       </div>
 
@@ -1300,7 +1305,7 @@
         <div class="roi-fields">
           <div class="roi-field">
             <label for="roi-ticket">Ticket promedio (USD)</label>
-            <input id="roi-ticket" type="number" inputmode="numeric" min="0" step="1" value="1000">
+            <input id="roi-ticket" type="number" inputmode="numeric" min="0" step="1" value="5000">
           </div>
           <div class="roi-field">
             <label for="roi-months">Meses de recurrencia</label>
@@ -1312,11 +1317,11 @@
           </div>
         </div>
         <div class="roi-out" aria-live="polite">
-          <div><div class="k">Inversión</div><div class="v">97<span class="u">USD</span></div></div>
-          <div><div class="k">Ingreso</div><div class="v"><span id="roi-income">1,000</span><span class="u">USD</span></div></div>
+          <div><div class="k">Inversión</div><div class="v">497<span class="u">USD</span></div></div>
+          <div><div class="k">Ingreso</div><div class="v"><span id="roi-income">5,000</span><span class="u">USD</span></div></div>
           <div><div class="k">ROI</div><div class="v acc"><span id="roi-ratio">10</span>x</div></div>
         </div>
-        <div class="roi-foot">Ingreso = ticket × meses × reuniones. ROI = ingreso ÷ 97 USD del plan Starter.</div>
+        <div class="roi-foot">Ingreso = ticket × meses × reuniones. ROI = ingreso ÷ 497 USD del plan Starter.</div>
       </div>
     </div>
   </div>
@@ -1328,6 +1333,11 @@
       <div class="eyebrow">Pricing</div>
       <h2 class="h2" style="margin-top:18px;">Compras lo que usas.<br>Escalas cuando <span class="accent">estás listo</span>.</h2>
       <p class="lead" style="max-width:680px;">Empiezas gratis con 100 créditos. Cada acción de IA o de datos gasta créditos y ves cuántos antes de hacerla. Sin permanencia: activas hoy y cancelas cuando quieras.</p>
+    </div>
+
+    <div class="bill-toggle reveal" role="group" aria-label="Periodo de pago">
+      <button type="button" class="on" data-bill="month" aria-pressed="true">Mensual</button>
+      <button type="button" data-bill="year" aria-pressed="false">Anual <span class="save">-20%</span></button>
     </div>
 
     <div class="price-grid">
@@ -1346,12 +1356,11 @@
         <a class="btn outline cta" href="https://predictableai.vanarsi.com">Crear mi cuenta <span class="arr">→</span></a>
       </div>
 
-      <div class="price-card featured reveal">
-        <span class="badge-top">Self-serve</span>
+      <div class="price-card reveal">
         <div class="meta"><span>Starter</span><span>1 usuario</span></div>
         <div class="tier">Starter</div>
-        <div class="price">97<span class="u">USD/mes</span></div>
-        <div class="desc">77 USD/mes pagando el año (924 USD). Para generar reuniones desde hoy, tú solo.</div>
+        <div class="price"><span data-bill-price data-month="497" data-year="398">497</span><span class="u">USD/mes</span></div>
+        <div class="desc" data-bill-desc data-month="Para generar reuniones desde hoy, tú solo." data-year="398 USD/mes pagando el año (4,776 USD). Para generar reuniones desde hoy, tú solo.">Para generar reuniones desde hoy, tú solo.</div>
         <ul>
           <li>1,500 créditos cada mes: ~150 leads con email verificado, 3 mensajes IA y campaña</li>
           <li>Los 3 canales incluidos: email, WhatsApp y LinkedIn</li>
@@ -1360,14 +1369,15 @@
           <li>Meeting Coach con reporte de cada reunión</li>
           <li>Recargas cuando las necesites: 500 créditos por 45 USD</li>
         </ul>
-        <a class="btn cta" href="https://predictableai.vanarsi.com" style="background:#fff;color:var(--ink);">Empezar <span class="arr">→</span></a>
+        <a class="btn outline cta" href="https://predictableai.vanarsi.com">Empezar <span class="arr">→</span></a>
       </div>
 
-      <div class="price-card reveal">
+      <div class="price-card featured reveal">
+        <span class="badge-top">Recomendado</span>
         <div class="meta"><span>Growth</span><span>Servicio asistido</span></div>
         <div class="tier">Growth</div>
-        <div class="price">Por resultados</div>
-        <div class="desc">Nuestro equipo opera la plataforma contigo. No pagas por el software: pagas por las reuniones que generamos.</div>
+        <div class="price"><span data-bill-price data-month="1,500" data-year="1,200">1,500</span><span class="u">USD/mes</span></div>
+        <div class="desc" data-bill-desc data-month="Nuestro equipo opera la plataforma contigo y te entrega reuniones, no solo software." data-year="1,200 USD/mes pagando el año (14,400 USD). Nuestro equipo opera la plataforma contigo y te entrega reuniones, no solo software.">Nuestro equipo opera la plataforma contigo y te entrega reuniones, no solo software.</div>
         <ul>
           <li>Todo lo de Starter, operado por nuestro equipo</li>
           <li>Estrategia, listas, cadencias y mensajes a cargo nuestro</li>
@@ -1375,7 +1385,7 @@
           <li>Intelligence Hub diario</li>
           <li>Revisión de resultados con tu equipo</li>
         </ul>
-        <a class="btn outline cta" href="https://wa.me/51945327636?text=Hola%2C%20quiero%20saber%20m%C3%A1s%20del%20plan%20Growth%20de%20predictable.ai" target="_blank" rel="noopener">Hablar por WhatsApp <span class="arr">→</span></a>
+        <a class="btn cta" href="https://wa.me/51945327636?text=Hola%2C%20quiero%20saber%20m%C3%A1s%20del%20plan%20Growth%20de%20predictable.ai" target="_blank" rel="noopener" style="background:#fff;color:var(--ink);">Hablar por WhatsApp <span class="arr">→</span></a>
       </div>
     </div>
 
@@ -1383,7 +1393,7 @@
 
     <div class="price-foot reveal">
       <div class="l">Sin permanencia</div>
-      <div>Starter se activa hoy mismo con tarjeta (pago seguro con Stripe, en USD) y se cancela cuando quieras desde la plataforma. Los créditos del plan se renuevan cada mes; las recargas no vencen.</div>
+      <div>Starter se activa hoy mismo con tarjeta (pago seguro con Stripe, en USD) y se cancela cuando quieras desde la plataforma. Growth se coordina con nuestro equipo. Los créditos del plan se renuevan cada mes; las recargas no vencen.</div>
     </div>
   </div>
 </section>
@@ -1448,10 +1458,10 @@
     onScroll();
   }
 
-  // ROI calculator (plan Starter = 97 USD/mes)
+  // ROI calculator (plan Starter = 497 USD/mes)
   const roiCalc = document.getElementById('roi-calc');
   if (roiCalc) {
-    const PLAN_USD = 97;
+    const PLAN_USD = 497;
     const ticket = document.getElementById('roi-ticket');
     const months = document.getElementById('roi-months');
     const meetings = document.getElementById('roi-meetings');
@@ -1467,6 +1477,20 @@
     [ticket, months, meetings].forEach(el => el.addEventListener('input', update));
     update();
   }
+
+  // Billing toggle (mensual / anual)
+  document.querySelectorAll('.bill-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.bill;
+      document.querySelectorAll('.bill-toggle button').forEach(b => {
+        const on = b === btn;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+      document.querySelectorAll('[data-bill-price]').forEach(el => { el.textContent = el.dataset[mode]; });
+      document.querySelectorAll('[data-bill-desc]').forEach(el => { el.textContent = el.dataset[mode]; });
+    });
+  });
 
   // Reveal on scroll
   const io = new IntersectionObserver((entries) => {
