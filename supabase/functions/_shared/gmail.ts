@@ -214,3 +214,46 @@ export async function readThread(
 
   return [...byId.values()].sort((a, b) => (a.internal_date ?? 0) - (b.internal_date ?? 0));
 }
+
+/** Consulta de Gmail para lo que `contactEmail` nos escribió desde `since` (segundos Unix). null si el correo no es válido. */
+export function inboundQuery(contactEmail: string, since?: number): string | null {
+  const email = String(contactEmail ?? "").trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) return null;
+  let q = `from:"${email}"`;
+  if (Number.isFinite(since) && Number(since) > 0) q += ` after:${Math.floor(Number(since))}`;
+  return q;
+}
+
+/**
+ * Respuestas del lead sin conocer el hilo: Apollo no entrega el id del hilo de
+ * un email individual ni lo lista por id, así que la respuesta se busca en el
+ * buzón por remitente y fecha. Devuelve solo mensajes entrantes (no del buzón),
+ * del más viejo al más nuevo.
+ */
+export async function findInbound(
+  accessToken: string,
+  mailbox: string,
+  opts: { contactEmail: string; since?: number },
+): Promise<GmailMessage[]> {
+  const q = inboundQuery(opts.contactEmail, opts.since);
+  if (!q) return [];
+  const mine = String(mailbox).toLowerCase();
+  const auth = { Authorization: "Bearer " + accessToken };
+  const res = await fetch(`${GMAIL}/messages?q=${encodeURIComponent(q)}&maxResults=10`, { headers: auth, signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) {
+    console.error(`[gmail] inbound search ${res.status}`);
+    throw new GmailError("Gmail no devolvió la búsqueda (" + res.status + ").", 502);
+  }
+  const json = await res.json().catch(() => null);
+  const out: GmailMessage[] = [];
+  await Promise.all((json?.messages ?? []).slice(0, 10).map(async (m: { id: string }) => {
+    const r = await fetch(`${GMAIL}/messages/${m.id}?format=full`, { headers: auth, signal: AbortSignal.timeout(20_000) });
+    if (!r.ok) return;
+    const full = await r.json().catch(() => null);
+    if (full) {
+      const rec = toMessageRecord(full, mine);
+      if (!rec.outbound) out.push(rec);
+    }
+  }));
+  return out.sort((a, b) => (a.internal_date ?? 0) - (b.internal_date ?? 0));
+}
