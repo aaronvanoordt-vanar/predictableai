@@ -1158,20 +1158,25 @@ async function handleEmailReply(ctx: Ctx, ev: Json, msg: Json) {
   }
 }
 
-async function syncApolloEmail(ctx: Ctx): Promise<number> {
+/** `userId` + `force` = «Sincronizar todo» de la Bandeja: solo ese usuario y sin esperar los 15 min. */
+type SyncOpts = { userId?: string; force?: boolean };
+
+async function syncApolloEmail(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
   const db = ctx.db;
   const since = new Date(ctx.now.getTime() - EMAIL_SYNC_WINDOW_MS).toISOString();
   const checkedBefore = new Date(ctx.now.getTime() - EMAIL_SYNC_EVERY_MS).toISOString();
-  const { data: evs } = await db
+  let q = db
     .from("campaign_events")
     .select("id, enrollment_id, campaign_id, member_id, user_id, step_position, node_id, provider_message_id, payload")
     .eq("channel", "email").eq("type", "sent")
     .gte("created_at", since)
     .not("provider_message_id", "is", null)
-    .is("payload->>apollo_done", null)
-    .or(`payload->>apollo_checked_at.is.null,payload->>apollo_checked_at.lt.${checkedBefore}`)
+    .is("payload->>apollo_done", null);
+  if (opts.userId) q = q.eq("user_id", opts.userId);
+  if (!opts.force) q = q.or(`payload->>apollo_checked_at.is.null,payload->>apollo_checked_at.lt.${checkedBefore}`);
+  const { data: evs } = await q
     .order("created_at", { ascending: true })
-    .limit(EMAIL_SYNC_BATCH);
+    .limit(opts.force ? EMAIL_SYNC_BATCH * 4 : EMAIL_SYNC_BATCH);
   const all: Json[] = evs ?? [];
   if (!all.length) return 0;
   let touched = 0;
@@ -1257,6 +1262,20 @@ Deno.serve(async (req) => {
   const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, { auth: { persistSession: false } });
   const now = new Date();
   const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), dripifyCampaignsByUser: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), sentToday: new Map(), watiProbed: new Set(), templateProbed: new Set(), campaignCache: new Map() };
+
+  // «Sincronizar todo» de la Bandeja (la llama inbox-send con la service role):
+  // solo email (Apollo) y LinkedIn (Dripify) de ESE usuario, sin esperar el
+  // intervalo. No toca los envíos vencidos ni a los demás usuarios.
+  const reqBody = await req.json().catch(() => null);
+  const syncUser = typeof reqBody?.sync_user === "string" && /^[0-9a-f-]{36}$/i.test(reqBody.sync_user) ? reqBody.sync_user : null;
+  if (syncUser) {
+    const opts: SyncOpts = { userId: syncUser, force: true };
+    let linkedin = 0, email = 0;
+    const errors: Record<string, string> = {};
+    try { linkedin = await syncDripify(ctx, opts); } catch (e) { errors.linkedin = String((e as Error)?.message ?? e).slice(0, 200); console.error("[campaign-run] dripify sync (manual):", e); }
+    try { email = await syncApolloEmail(ctx, opts); } catch (e) { errors.email = String((e as Error)?.message ?? e).slice(0, 200); console.error("[campaign-run] apollo email sync (manual):", e); }
+    return json({ ok: true, linkedin, email, errors });
+  }
 
   // 1. Recuperar lo que un run caído dejó a medias.
   await db.from("campaign_enrollments")
@@ -1359,13 +1378,15 @@ async function syncWatiHistoryAll(ctx: Ctx, deadline: number): Promise<number> {
 
 const DRIPIFY_SYNC_MS = 15 * 60 * 1000;
 
-async function syncDripify(ctx: Ctx): Promise<number> {
+async function syncDripify(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
   const db = ctx.db;
-  const { data: accounts } = await db.from("channel_accounts").select("*").eq("provider", "dripify").eq("status", "connected");
+  let aq = db.from("channel_accounts").select("*").eq("provider", "dripify").eq("status", "connected");
+  if (opts.userId) aq = aq.eq("user_id", opts.userId);
+  const { data: accounts } = await aq;
   let touched = 0;
   for (const acc of (accounts ?? []) as Json[]) {
     const last = acc.config?.dripify_synced_at ? new Date(acc.config.dripify_synced_at).getTime() : 0;
-    if (ctx.now.getTime() - last < DRIPIFY_SYNC_MS) continue;
+    if (!opts.force && ctx.now.getTime() - last < DRIPIFY_SYNC_MS) continue;
     // Enrolamientos de este usuario que Dripify aún puede mover.
     const { data: ens } = await db
       .from("campaign_enrollments")

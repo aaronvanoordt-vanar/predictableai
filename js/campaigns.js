@@ -1045,6 +1045,31 @@
       renderInboxQuietly();
     });
   }
+  // «Sincronizar todo» (inbox-send {action:"sync_all"}): WhatsApp + email
+  // (Apollo) + LinkedIn (Dripify) al momento, sin esperar los 15 min del
+  // motor. Cada canal informa por separado; uno caído no frena los demás.
+  function syncAllChannels() {
+    if (watiSync.running) return Promise.resolve();
+    watiSync.running = true;
+    watiSync.lastAt = Date.now();
+    return edgeFetch(FN_INBOX, { action: 'sync_all' }).then(function (r) {
+      if (r && r.error) throw new Error(r.error);
+      var wa = (r && r.whatsapp) || {};
+      var errs = (r && r.errors) || {};
+      var parts = [];
+      if (isConn(state.wati)) parts.push('WhatsApp ' + (wa.error ? 'con error' : (wa.inserted || 0) + ' nuevos'));
+      if (isConn(state.apollo)) parts.push('Email ' + (errs.email ? 'con error' : 'revisado'));
+      if (isConn(state.dripify)) parts.push('LinkedIn ' + (errs.linkedin ? 'con error' : 'revisado'));
+      var failed = !!(wa.error || errs.email || errs.linkedin);
+      toast('Sincronizado: ' + parts.join(' · ') + '.', failed ? 'error' : 'success');
+      return loadInbox();
+    }).catch(function (e) {
+      toast('No se pudo sincronizar: ' + errMsg(e), 'error');
+    }).then(function () {
+      watiSync.running = false;
+      renderInboxQuietly();
+    });
+  }
   /**
    * Espejo de phoneKey() en _shared/wati.ts: WhatsApp escribe los celulares de
    * México como 521… y los de Argentina como 549…; la lista, como 52… / 54….
@@ -3330,8 +3355,8 @@
       var pushOn = pushSt === 'on';
       tools.appendChild(pillBtn('inbox-push', 'phone', pushOn ? 'Avisos activos' : 'Avisos en el teléfono', { title: pushOn ? 'Te llega una notificación a este dispositivo cuando te escribe un lead.' : 'Recibe una notificación en tu iPhone (o en este navegador) cuando te escribe un lead.', on: pushOn }));
     }
-    if (isConn(state.wati)) {
-      tools.appendChild(pillBtn('inbox-sync-wati', 'sync', watiSync.running ? 'Sincronizando…' : 'Sincronizar WhatsApp', { title: 'Trae lo que escribiste en WATI y cualquier mensaje que no haya llegado', busy: watiSync.running }));
+    if (isConn(state.wati) || isConn(state.apollo) || isConn(state.dripify)) {
+      tools.appendChild(pillBtn('inbox-sync-wati', 'sync', watiSync.running ? 'Sincronizando…' : 'Sincronizar todo', { title: 'Trae ahora mismo los mensajes de WhatsApp, email y LinkedIn que no hayan llegado, sin esperar la revisión automática', busy: watiSync.running }));
     }
     if (tools.childNodes.length) countRow.appendChild(tools);
     left.appendChild(countRow);
@@ -4100,7 +4125,7 @@
       btn.classList.add('is-busy');
       var pl = btn.querySelector('[data-role="pill-label"]');
       if (pl) pl.textContent = 'Sincronizando…'; else btn.textContent = 'Sincronizando…';
-      return syncWatiHistory(true);
+      return syncAllChannels();
     }
     if (action === 'inbox-sound-toggle') {
       if (global.inboxAlert) global.inboxAlert.setEnabled(!global.inboxAlert.isEnabled());

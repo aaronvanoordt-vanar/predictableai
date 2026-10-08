@@ -54,6 +54,8 @@
  *      guardadas antes del 2026-09-30 no tienen el id de WATI: se busca en el
  *      historial de la conversación y se guarda en payload.wati_id.
  *      Content-Type deducido de los bytes (WATI manda octet-stream).
+ *  • { action: "sync_all" }   «Sincronizar todo»: WhatsApp (historial de WATI) + email (Apollo)
+ *                              + LinkedIn (Dripify), ya, sin esperar los 15 min del cron.
  *  • { action: "sync_wati" }
  *      Trae del historial de WATI lo que no está en la bandeja: mensajes
  *      escritos en la UI de WATI (o por sus bots) y entrantes que el webhook
@@ -636,6 +638,8 @@ Deno.serve(async (req) => {
 
     if (body?.action === "sync_wati") return json(await syncWati(db, user.id), 200, cors);
 
+    if (body?.action === "sync_all") return json(await syncAll(db, user.id), 200, cors);
+
     if (body?.action === "mark_read") {
       const ids: string[] = (Array.isArray(body.ids) ? body.ids : []).map(String).filter((id: string) => UUID_RE.test(id)).slice(0, 500);
       if (!ids.length) return json({ updated: 0 }, 200, cors);
@@ -744,6 +748,27 @@ Deno.serve(async (req) => {
 
 /** Un pase de sincronización del historial de WATI para la cuenta del usuario. */
 const WATI_SYNC_COOLDOWN_MS = 2 * 60 * 1000;
+/**
+ * «Sincronizar todo»: WhatsApp aquí mismo y, en paralelo, email y LinkedIn
+ * llamando a campaign-run (que es quien sabe leer Apollo y Dripify) con la
+ * service role y `sync_user`. Cada canal falla por separado: uno caído no
+ * impide los otros.
+ */
+async function syncAll(db: SupabaseClient, userId: string): Promise<Json> {
+  const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/campaign-run`;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const [wati, rest] = await Promise.all([
+    syncWati(db, userId).catch((e) => ({ inserted: 0, error: String((e as Error)?.message ?? e).slice(0, 200) } as Json)),
+    fetch(fnUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+      body: JSON.stringify({ sync_user: userId }),
+    }).then(async (r) => (r.ok ? await r.json() : { email: 0, linkedin: 0, errors: { email: `HTTP ${r.status}`, linkedin: `HTTP ${r.status}` } }))
+      .catch((e) => ({ email: 0, linkedin: 0, errors: { email: String(e?.message ?? e).slice(0, 200), linkedin: String(e?.message ?? e).slice(0, 200) } })),
+  ]);
+  return { whatsapp: wati, email: rest.email ?? 0, linkedin: rest.linkedin ?? 0, errors: rest.errors ?? {} };
+}
+
 async function syncWati(db: SupabaseClient, userId: string): Promise<Json> {
   const { data: acc } = await db.from("channel_accounts").select("id, user_id, status, secret, config").eq("user_id", userId).eq("provider", "wati").maybeSingle();
   if (!acc || acc.status !== "connected") return { conversations: 0, inserted: 0, pending: 0, error: "WhatsApp no está conectado.", at: null };
