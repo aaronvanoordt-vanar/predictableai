@@ -2554,17 +2554,16 @@
 
     b.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Botones de respuesta rápida' }));
     var btnRow = h('div', { class: 'cmp-sender-grid' });
-    // "Darse de baja" va siempre (el servidor lo agrega igual): es la salida
-    // que detecta wati-webhook para dar de baja al lead.
-    btnRow.appendChild(h('input', { type: 'text', value: 'Darse de baja', disabled: 'disabled', title: 'Siempre incluido: es la salida para que el lead se dé de baja.' }));
-    var btnInputs = [0, 1].map(function (i) {
-      var inp = h('input', { type: 'text', maxlength: '25', placeholder: i === 0 ? 'Todo bien, y tú?' : 'Cuéntame más (opcional)' });
+    // Todos los botones son opcionales (para plantillas de seguimiento basta
+    // dejarlos vacíos). Si escribes "Darse de baja", wati-webhook lo trata como baja.
+    var btnInputs = [0, 1, 2].map(function (i) {
+      var inp = h('input', { type: 'text', maxlength: '25', placeholder: ['Todo bien, y tú?', 'Cuéntame más (opcional)', 'Darse de baja (opcional)'][i] });
       if (i === 0) inp.value = sug.reply;
       btnRow.appendChild(inp);
       return inp;
     });
     b.appendChild(btnRow);
-    b.appendChild(h('div', { class: 'pros-hint', text: '"Darse de baja" siempre va incluido. Meta no admite variables dentro de los botones (máx. 25 caracteres cada uno).' }));
+    b.appendChild(h('div', { class: 'pros-hint', text: 'Los botones son opcionales: déjalos vacíos en una plantilla de seguimiento. Meta no admite variables dentro de los botones (máx. 25 caracteres cada uno).' }));
 
     var footI = h('input', { type: 'text', maxlength: '60', placeholder: 'Enviado por Acme' });
     b.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Pie de página (opcional)' }));

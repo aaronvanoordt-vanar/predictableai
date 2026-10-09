@@ -129,8 +129,8 @@ Deno.test("validateTemplateDraft normaliza el borrador completo", () => {
   assertEquals(d.category, "UTILITY");
   assertEquals(d.language, "es");
   // Meta admite 3 botones de respuesta rápida; los vacíos no cuentan y
-  // "Darse de baja" va siempre primero (sin duplicarse).
-  assertEquals(d.quickReplies, ["Darse de baja", "Sí, cuéntame", "Cuarto botón"]);
+  // "Darse de baja" ya no se impone (solo está si el usuario lo escribe).
+  assertEquals(d.quickReplies, ["Sí, cuéntame", "Darse de baja", "Cuarto botón"]);
   assertEquals(d.variables, ["name", "company"]);
   assertEquals(d.footer, "Enviado por Predictable");
 });
@@ -139,8 +139,8 @@ Deno.test("validateTemplateDraft cae a los valores por defecto", () => {
   const d = validateTemplateDraft({ name: "hola_mundo", body: "Buenas, te escribo desde Predictable." });
   assertEquals(d.category, "MARKETING");
   assertEquals(d.language, "es");
-  // Sin botones propios igual lleva la salida de baja.
-  assertEquals(d.quickReplies, ["Darse de baja"]);
+  // Sin botones propios, la plantilla sale sin botones (seguimiento).
+  assertEquals(d.quickReplies, []);
   assertEquals(d.variables, []);
 });
 
