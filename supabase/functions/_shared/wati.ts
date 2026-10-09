@@ -475,7 +475,7 @@ export interface TemplateDraft {
  * mandarlo a Meta. Lanza WatiError 400 con el motivo en español: rebotar aquí
  * es gratis, rebotar en Meta cuesta una revisión y un nombre quemado.
  */
-/** Botón de baja que llevan todas las plantillas creadas desde Predictable. */
+/** Texto del botón de baja (opcional en las plantillas creadas desde Predictable). */
 export const UNSUBSCRIBE_BUTTON = "Darse de baja";
 
 export function validateTemplateDraft(input: Json): TemplateDraft {
@@ -512,12 +512,12 @@ export function validateTemplateDraft(input: Json): TemplateDraft {
     throw new WatiError("Meta no admite dos variables pegadas ({{a}}{{b}}): separa con texto.", 400);
   }
 
-  // "Darse de baja" va SIEMPRE y primero (2026-10-02): es la salida que
-  // wati-webhook reconoce como baja (isOptOut) y lo que Meta espera de una
-  // plantilla de marketing. Quedan dos botones libres.
-  const quickReplies = [UNSUBSCRIBE_BUTTON, ...(Array.isArray(input?.quick_replies) ? input.quick_replies : [])
+  // Los botones son opcionales (2026-10-09): ya no se impone "Darse de baja"
+  // (las plantillas de seguimiento no lo llevan). Si el usuario lo escribe,
+  // wati-webhook lo sigue reconociendo como baja (isOptOut).
+  const quickReplies = (Array.isArray(input?.quick_replies) ? input.quick_replies : [])
     .map((t: unknown) => String(t ?? "").replace(/\s+/g, " ").trim().slice(0, 25))
-    .filter((t: string) => t.length > 0 && !/^darse de baja$/i.test(t))]
+    .filter((t: string, i: number, a: string[]) => t.length > 0 && a.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i)
     .slice(0, 3);
 
   const category = String(input?.category ?? "MARKETING").toUpperCase() === "UTILITY" ? "UTILITY" : "MARKETING";
