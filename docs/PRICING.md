@@ -6,7 +6,7 @@
 
 | Tema | Decisión |
 |---|---|
-| Pasarela | **Stripe**, a nombre de la LLC de Wyoming. Todo se cobra en **USD**. |
+| Pasarela | **Stripe**, a nombre de la LLC de Wyoming. El precio de lista es en **USD**; desde 2026-10-17 (Fase A de `docs/BILLING_LATAM.md`) Checkout puede cobrar el equivalente en MXN, BRL, COP, CLP o PEN y aceptar OXXO y Pix en recargas, siempre liquidando en USD. |
 | Costo de Apollo para la plataforma | Plan de 447 USD con ~20k créditos, o sea **~0.022 USD por crédito de Apollo**. Revelar un email cuesta 1 crédito, un teléfono 8 y exportar 1. |
 | Self-serve | **Un solo plan pago: Starter.** Growth es un **servicio asistido que se cobra por resultados**: no se vende por Checkout. El equipo lo da de alta a mano (`subscriptions.provider = 'manual'`). |
 | Prueba | **Gratis, sin tarjeta y sin fecha de vencimiento: 100 créditos una sola vez.** La prueba no incluye lo que corre solo (Hub automático, re-plan del Radar, playbook automático) y permite como máximo 2 detectores del Radar activos. |
@@ -124,7 +124,7 @@ Cada cuenta de prueba nos cuesta como máximo ~4 USD (onboarding + 100 créditos
 
 - **`billing`** (con JWT):
   - `checkout_subscription` abre Stripe Checkout de Starter, mensual o anual. Responde 409 si ya hay un plan activo.
-  - `checkout_topup` abre el Checkout de una recarga. Responde 403 `plan_required` en la prueba.
+  - `checkout_topup` abre el Checkout de una recarga. Responde 403 `plan_required` en la prueba. Emite factura con el número fiscal del cliente (deducible en México con la regla 2.7.1.14) y acepta los medios asíncronos que el Dashboard encienda (OXXO, Pix) cuando el precio tiene moneda local. Ver `docs/BILLING_LATAM.md`.
   - `portal` abre el portal de Stripe (tarjeta, facturas, cancelar).
   - Nunca da créditos.
 - **`stripe-webhook`** (con `--no-verify-jwt`; firma verificada con `STRIPE_WEBHOOK_SECRET`) es lo **único** que da créditos o cambia el plan:
