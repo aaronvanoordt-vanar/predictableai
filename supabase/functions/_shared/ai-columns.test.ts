@@ -1,7 +1,7 @@
 // deno test --allow-read _shared/ai-columns.test.ts
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import {
-  ANSWER_TYPES, buildAiColumnsBlock, buildCellPrompt, cellCost, cellDisplay, type ColumnDraft, LIMITS, memberAnswerable,
+  aiColumnMatches, aiColumnPending, ANSWER_TYPES, buildAiColumnsBlock, buildCellPrompt, cellCost, cellDisplay, type ColumnDraft, LIMITS, memberAnswerable,
   normalizeAnswer, validateColumnDraft,
 } from "./ai-columns.ts";
 import { CREDIT_COSTS } from "./credit-costs.ts";
@@ -172,4 +172,27 @@ Deno.test("js/ai-columns.js: tipos espejo y plantillas válidas", async () => {
     keys.add(String(t.key));
   }
   for (const k of ["mercado_libre", "tienda_online", "whatsapp", "contrata_vendedores"]) assert(keys.has(k), k);
+});
+
+Deno.test("aiColumnMatches: rama Sí solo con respuesta que cumple", () => {
+  const done = (o: Record<string, unknown>) => ({ status: "done", ...o });
+  assert(aiColumnMatches({ op: "yes", value: null }, done({ value_bool: true })));
+  assert(!aiColumnMatches({ op: "yes", value: null }, done({ value_bool: false })));
+  assert(aiColumnMatches({ op: "no", value: null }, done({ value_bool: false })));
+  assert(aiColumnMatches({ op: "gte", value: 3 }, done({ value_num: "3" })));
+  assert(!aiColumnMatches({ op: "gte", value: 3 }, done({ value_num: 2 })));
+  assert(aiColumnMatches({ op: "lte", value: 3 }, done({ value_num: 1 })));
+  assert(!aiColumnMatches({ op: "lte", value: null }, done({ value_num: 1 })));
+  assert(aiColumnMatches({ op: "is", value: "logistica" }, done({ value_text: "Logística" })));
+  assert(aiColumnMatches({ op: "contains", value: "sap" }, done({ value_text: "SAP Business One" })));
+  assert(!aiColumnMatches({ op: "contains", value: "" }, done({ value_text: "SAP" })));
+  assert(aiColumnMatches({ op: "answered", value: null }, done({ value_text: "x" })));
+  // «No encontrado», error, en cola o sin celda: No.
+  for (const c of [{ status: "not_found" }, { status: "error" }, { status: "queued" }, null]) {
+    assert(!aiColumnMatches({ op: "answered", value: null }, c));
+  }
+  assert(aiColumnPending({ status: "queued" }));
+  assert(aiColumnPending({ status: "running" }));
+  assert(!aiColumnPending({ status: "done" }));
+  assert(!aiColumnPending(null));
 });

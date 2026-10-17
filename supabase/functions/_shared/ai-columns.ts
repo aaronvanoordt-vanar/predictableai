@@ -298,3 +298,44 @@ export function buildAiColumnsBlock(rows: Json[] | null | undefined): string {
   if (!lines.length) return "";
   return "\n\n=== COLUMNAS IA DEL LEAD (respuestas verificadas en Listas; úsalas solo si sirven al mensaje) ===\n" + lines.join("\n");
 }
+
+// ── condición de campaña (campaigns.flow, check "ai_column") ───────────────
+
+/** Regla ya normalizada por campaign-flow.ts (`normalizeAiColumnRule`). */
+export interface AiColumnCondition {
+  op: string;
+  value: string | number | null;
+}
+
+/**
+ * ¿La celda del lead cumple la regla? Rama Sí solo con una respuesta con
+ * evidencia (status 'done') que cumple el operador; «No encontrado», error o
+ * sin celda = No. Las celdas en cola las espera el motor antes de llamar aquí
+ * (`aiColumnPending`).
+ */
+export function aiColumnMatches(rule: AiColumnCondition | null | undefined, cell: Json): boolean {
+  if (!rule || !cell || cell.status !== "done") return false;
+  switch (rule.op) {
+    case "answered": return true;
+    case "yes": return cell.value_bool === true;
+    case "no": return cell.value_bool === false;
+    case "gte":
+    case "lte": {
+      const n = Number(cell.value_num);
+      const v = Number(rule.value);
+      if (cell.value_num == null || !Number.isFinite(n) || rule.value == null || !Number.isFinite(v)) return false;
+      return rule.op === "gte" ? n >= v : n <= v;
+    }
+    case "is": return !!rule.value && normKey(cell.value_text) === normKey(rule.value);
+    case "contains": {
+      const k = normKey(rule.value);
+      return !!k && normKey(cell.value_text).includes(k);
+    }
+  }
+  return false;
+}
+
+/** La celda todavía se está respondiendo: el motor espera en vez de ramificar. */
+export function aiColumnPending(cell: Json): boolean {
+  return !!cell && (cell.status === "queued" || cell.status === "running");
+}

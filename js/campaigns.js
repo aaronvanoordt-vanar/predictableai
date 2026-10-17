@@ -3294,7 +3294,12 @@
       var evs = byEnroll[e.id] || [];
       var last = evs[0];
       var path = Array.isArray(e.branch_path) ? e.branch_path : [];
-      var pathTxt = path.length ? path.map(function (p) { var cl = L.CONDITION_LABELS[p.check]; return (cl ? cl.label : p.check) + ': ' + (p.branch === 'yes' ? 'Sí' : 'No'); }).join(' · ') : '';
+      var pathTxt = path.length ? path.map(function (p) {
+        var pl = p.check === 'ai_column' ? L.find(flow, p.node_id) : null;
+        var cl = L.CONDITION_LABELS[p.check];
+        var label = pl ? L.nodeTitle(pl.node).replace(/^¿|\?$/g, '') : (cl ? cl.label : p.check);
+        return label + ': ' + (p.branch === 'yes' ? 'Sí' : 'No');
+      }).join(' · ') : '';
       var next = (e.status === 'active' || e.status === 'processing' || e.status === 'paused') && loc
         ? esc(L.nodeTitle(loc.node)) + (e.next_run_at && e.status !== 'paused' ? '<div class="pros-cellsub">' + esc(fmtDateTime(e.next_run_at)) + '</div>' : '')
         : (displayStatus(e) === 'replied' && e.status !== 'replied'
