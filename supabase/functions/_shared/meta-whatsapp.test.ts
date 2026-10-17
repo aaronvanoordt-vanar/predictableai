@@ -18,6 +18,7 @@
 import { assert, assertEquals, assertFalse } from "jsr:@std/assert@1";
 import * as meta from "./meta-whatsapp.ts";
 import * as whatsapp from "./whatsapp.ts";
+import { isOptOut } from "./whatsapp-inbound.ts";
 
 async function sign(body: string, secret: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -78,7 +79,7 @@ Deno.test("parseWebhook: botón de plantilla, archivo, nota de voz y reacción",
   const msgs = ev.map((e) => (e.kind === "message" ? e.message : null)).filter(Boolean) as meta.WaMessage[];
   assertEquals(msgs.length, 6);
   assertEquals(msgs[0].buttonText, "Darse de baja");
-  assert(whatsapp.isOptOutText(msgs[0].buttonText));
+  assert(isOptOut(msgs[0].text, msgs[0].buttonText));
   assertEquals(msgs[1].mediaId, "MEDIA1");
   assertEquals(msgs[1].text, "mi local");
   assertEquals(msgs[2].type, "voice");
@@ -299,9 +300,4 @@ Deno.test("metaSecret: el token nunca se rompe por un secreto viejo o vacío", (
   assertEquals(whatsapp.metaSecret({ secret: "" }), { access_token: "", pin: "" });
   assertEquals(whatsapp.metaSecret({ secret: "not json" }), { access_token: "", pin: "" });
   assertEquals(whatsapp.metaCreds({ secret: JSON.stringify({ access_token: "T" }), config: { phone_number_id: "PN", waba_id: "W" } }), { token: "T", phoneNumberId: "PN", wabaId: "W" });
-});
-
-Deno.test("isOptOutText: el botón y las palabras de baja", () => {
-  for (const t of ["Darse de baja", "baja", "STOP por favor", "No me escribas más", "cancelar"]) assert(whatsapp.isOptOutText(t), t);
-  for (const t of ["Hola", "¿y si damos de baja el plan viejo?", "", null]) assertFalse(whatsapp.isOptOutText(t), String(t));
 });

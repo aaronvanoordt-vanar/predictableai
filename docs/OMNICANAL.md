@@ -361,7 +361,7 @@ Decisión del dueño: Predictable se vuelve Tech Provider de Meta y revierte la 
 - **Webhook:** `meta-whatsapp-webhook` (`--no-verify-jwt`, firma `X-Hub-Signature-256`).
 - **Adaptador común:** `_shared/whatsapp.ts`, que usan el motor, la Bandeja y la pestaña de WhatsApp.
 - **Cliente de la Graph API:** `_shared/meta-whatsapp.ts`.
-- **Lógica compartida con WATI:** la política (plantillas muertas, fallas de plantilla, bloqueos de cuenta) sigue en `_shared/wati.ts`, y los recibos pasan por `recordCampaignReceipt`. Los dos proveedores usan la misma.
+- **Lógica compartida con WATI:** la política (plantillas muertas, fallas de plantilla, bloqueos de cuenta) sigue en `_shared/wati.ts`, los recibos pasan por `recordCampaignReceipt` y los entrantes del lead por `_shared/whatsapp-inbound.ts#recordInbound` (también `wati-webhook`). Los dos proveedores usan la misma.
 - **Monitor de calidad del número:** `config.quality`. Avisa antes del bloqueo y, si la calidad llega a rojo, el motor retiene las campañas. El usuario puede desactivar esa retención.
 
 El diseño completo y la guía de configuración para el dueño (app de Meta, App Review, Facebook Login for Business, secrets) están en `docs/WHATSAPP_META.md`.

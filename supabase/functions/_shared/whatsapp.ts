@@ -76,16 +76,6 @@ export function findTemplate(acc: Json, name: string): Json | null {
   return (acc?.config?.templates?.all ?? []).find((t: Json) => t?.name === name) ?? null;
 }
 
-/**
- * ¿El lead pidió la baja? El botón "Darse de baja" de una plantilla o un
- * mensaje que empieza con baja / stop / no me escribas… Mismo criterio que
- * wati-webhook (isOptOut) para los dos proveedores.
- */
-const UNSUB_RE = /^\s*(darse de baja|baja|stop|no me escribas|no me escriban|unsubscribe|cancelar)\b/i;
-export function isOptOutText(text: unknown): boolean {
-  return UNSUB_RE.test(String(text ?? ""));
-}
-
 // ── Errores comunes ─────────────────────────────────────────────────────────
 
 /** Texto para el usuario, sea cual sea el proveedor que falló. */

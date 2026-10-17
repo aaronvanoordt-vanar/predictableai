@@ -159,6 +159,7 @@ POST meta_connect {code, waba_id, …, mode} ─▶ GET /oauth/access_token (cod
 | Envío (plantilla, texto, archivo) | `sender(acc)` | Meta: `_shared/meta-whatsapp.ts` · WATI: `_shared/wati.ts` |
 | Política: plantillas muertas, fallas #132xxx, bloqueo #131037, variables, validación del borrador | `_shared/wati.ts` (reexportada) | los dos (son códigos de Meta) |
 | Recibos → evento de campaña, lead de vuelta al paso | `_shared/wati-receipts.ts#recordCampaignReceipt` | los dos |
+| Entrante del lead → bandeja, cadencias detenidas, baja, CRM | `_shared/whatsapp-inbound.ts#recordInbound` (`deno test` con base en memoria) | los dos (cada webhook solo traduce su evento) |
 | Catálogo y calidad de Meta | `syncMetaAccount` | Meta |
 
 - Con Meta y WATI conectadas, **manda Meta**. La Bandeja contesta por el
@@ -184,7 +185,7 @@ recibos) o por el WABA (`entry.id`: plantillas, calidad, cuenta).
 
 | Campo | Qué hace |
 |---|---|
-| `messages.messages[]` | Entrante del lead. Mismo efecto que en `wati-webhook`: va a la Bandeja, detiene la cadencia y pasa el CRM a `respondio`; con «Darse de baja», `baja` o `stop`, el lead queda dado de baja |
+| `messages.messages[]` | Entrante del lead. La misma regla que `wati-webhook`, en `_shared/whatsapp-inbound.ts#recordInbound`: va a la Bandeja, detiene la cadencia y pasa el CRM a `respondio`; con «Darse de baja», `baja` o `stop`, el lead queda dado de baja |
 | `messages.statuses[]` | Recibos. El estado de la fila solo avanza. Pasan por `recordCampaignReceipt` (bloqueo de cuenta / falla de plantilla) |
 | `smb_message_echoes` | Coexistencia: lo que escribiste desde la app. Entra como saliente `source: wa_app` |
 | `history` | Coexistencia: chats anteriores. Entran como `source: wa_history`, ya leídos y sin efectos |
@@ -229,9 +230,6 @@ puntos en la primera prueba real:
 
 ## 4. Pendiente (fuera de este PR)
 
-- Unificar `wati-webhook` sobre el mismo módulo de entrantes que
-  `meta-whatsapp-webhook`. Hoy la lógica de «respondió / baja / CRM» está
-  duplicada a propósito, para no tocar el camino de WATI que ya está en producción.
 - Reacciones salientes: la Cloud API sí las permite (`type: "reaction"`).
   Con WATI no se puede; la UI tendría que ofrecerlas solo con Meta.
 - Encabezados con archivo en las plantillas.
