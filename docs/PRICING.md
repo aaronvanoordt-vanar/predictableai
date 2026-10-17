@@ -54,6 +54,9 @@ Columnas:
 | Revelar email (Apollo de la plataforma) | **2** | ~0.045 (revelar + exportar) | 35 % | Solo si Apollo encuentra el email |
 | Revelar teléfono (Apollo de la plataforma) | **8** | ~0.20 | 38 % | Solo si Apollo encuentra a la persona |
 | Revelar con el Apollo propio (OAuth) | **0** | lo paga el cliente | — | |
+| Email encontrado en la cascada (waterfall, si Apollo no lo encontró) | **3** | ~0.04–0.06 + verificación ~0.001–0.01 | 21–45 % | Solo si un proveedor lo encuentra y no sale inválido. Se cobra también con el Apollo propio (las keys de la cascada son de la plataforma). `docs/ENRICHMENT_WATERFALL.md` |
+| Teléfono encontrado en la cascada | **20** | ~0.39–0.60 | 30–46 % | Solo si un proveedor lo encuentra |
+| Verificar un email de Apollo sin «verified» | **1** | ~0.001–0.01 | 2–15 % | Solo con veredicto (válido, inválido o catch-all) |
 | Mensaje IA: paso de campaña, muestra o borrador de la Bandeja | **2** | ~0.02–0.03 | 20 % | Haiku con 1 búsqueda y sin fetch (antes 3 búsquedas + 2 fetch: 0.07–0.12) |
 | Preparar lead con IA (5 capas + preparación del coach) | **4** | ~0.10 | 38 % | |
 | Investigar lead con IA (Listas: puesto actual + empresa + ángulo) | **3** | ~0.05–0.07 | 26–36 % | Haiku con 4 búsquedas + 2 fetch. Con la key de Apollo de la plataforma se suma `enrich_email` (2) por el match, solo si Apollo encuentra a la persona |
