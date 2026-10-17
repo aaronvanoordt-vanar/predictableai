@@ -352,7 +352,7 @@
     const toast = global.uiHelpers && global.uiHelpers.toast;
     if (!toast) return;
     if (flag === 'success') toast('¡Listo! Tu plan Starter está activo. Los créditos del mes aparecen en unos segundos.', 'success');
-    else if (flag === 'topup') toast('Pago recibido. La recarga aparece en tu saldo en unos segundos.', 'success');
+    else if (flag === 'topup') toast('Listo. Si pagaste con tarjeta, la recarga aparece en tu saldo en unos segundos; si elegiste OXXO o Pix, cuando se confirme el pago.', 'success');
     else if (flag === 'cancel') toast('Pago cancelado. No se hizo ningún cobro.', 'info');
     if (flag === 'success' || flag === 'topup') {
       // El webhook de Stripe suele tardar unos segundos; el realtime del chip
