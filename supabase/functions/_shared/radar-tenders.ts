@@ -117,7 +117,7 @@ export function normalizeUnspsc(v: unknown): string[] {
   const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(/[,\s]+/) : [];
   const out: string[] = [];
   for (const x of list) {
-    const s = String(x ?? "").replace(/\D/g, "");
+    const s = String(x ?? "").replace(/^V1\./i, "").replace(/\D/g, "");
     if (s.length >= 2 && s.length <= 8 && !out.includes(s)) out.push(s);
     if (out.length >= 15) break;
   }

@@ -10,7 +10,9 @@
  * Todos devuelven CANDIDATOS con la misma forma; el motor (radar-monitor) es
  * el único que filtra por país, deduplica por fingerprint, puntúa y guarda.
  *
- *   news / tenders     LLM + web_search (una consulta por tick)     0 créditos Apollo
+ *   news               LLM + web_search (una consulta por tick)     0 créditos Apollo
+ *   tenders            APIs oficiales de compras públicas por país (radar-tender-sources.ts)
+ *                      y, para los países sin fuente, LLM + web_search  0 créditos Apollo
  *   web_footprint      LLM + web_search de un ESTADO (sin ventana)  0 créditos Apollo
  *   hiring             Apollo ORGANIZATION search + filtros de vacantes   1 crédito Apollo / página
  *   technographics     Apollo ORGANIZATION search + tecnologías en uso    1 crédito Apollo / página
@@ -48,6 +50,10 @@ import {
   detectTech, detectedLabels, evaluateProbeRules, fetchDnsText, fetchHomepage, probeHeadline, probeNeeds, type ProbeRules,
 } from "./site-probe.ts";
 import { maxCompaniesOf, type DetectorKind } from "./radar-plan.ts";
+import { classifyTender, matchTender, normalizeUnspsc, tenderKeywords, type TenderRecord } from "./radar-tenders.ts";
+import {
+  planTenderUnits, runUnit, sourceById, TenderSourceError, tenderSignalsOf, type TenderPlanUnit,
+} from "./radar-tender-sources.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -231,6 +237,120 @@ async function tickNews(t: TickContext): Promise<TickResult> {
   }
   const next = i + 1;
   return { candidates, cursor: next >= queries.length ? {} : { i: next }, done: next >= queries.length, note };
+}
+
+// ── tenders: fuentes oficiales + búsqueda web de respaldo ───────────────────
+//
+// Un ciclo = fase "official" (una unidad por fuente y modo: abiertas /
+// adjudicadas, de a una por tick) y después fase "web" con las consultas de
+// siempre, SOLO para los países sin fuente oficial lista (sin API, sin su
+// token, o cuya API falló en este ciclo). El cursor guarda `last_cycle_at`
+// entre ciclos: cada ciclo pide lo publicado desde el anterior (menos un día
+// de margen), y el primero mira `window_days` hacia atrás con tope de 7 días
+// para no bajar un mes de Brasil de una vez.
+
+const TENDER_UNIT_BUDGET_MS = 70_000;
+const TENDER_FIRST_LOOKBACK_DAYS = 7;
+
+async function tickTenders(t: TickContext): Promise<TickResult> {
+  const cfg = t.detector.config || {};
+  const env = (k: string) => Deno.env.get(k);
+  const cur: Json = t.detector.cursor || {};
+  const startedAt = Date.now();
+
+  // Arranque de ciclo.
+  if (!cur.phase) {
+    const windowDays = Math.min(Number(cfg.window_days) || 30, TENDER_FIRST_LOOKBACK_DAYS);
+    const last = Date.parse(asStr(cur.last_cycle_at));
+    const sinceMs = Number.isFinite(last) ? Math.max(last - 86400_000, Date.now() - 30 * 86400_000) : Date.now() - windowDays * 86400_000;
+    const plan = planTenderUnits(t.countries, cfg, env);
+    const fresh = {
+      phase: "official", since: new Date(sinceMs).toISOString().slice(0, 10), started_at: new Date().toISOString(),
+      units: plan.units, ui: 0, ustate: {}, web: plan.webCountries, failed: [] as string[], notes: plan.skipped, i: 0,
+      // Sin países en el plan no hay a qué fuente oficial preguntar: todo por la web.
+      all_web: !t.countries.length,
+    };
+    return tickTenders({ ...t, detector: { ...t.detector, cursor: fresh } });
+  }
+
+  if (cur.phase === "official") {
+    const units: TenderPlanUnit[] = Array.isArray(cur.units) ? cur.units : [];
+    const ui = Math.max(0, Number(cur.ui) || 0);
+    if (ui >= units.length) {
+      return tickTenders({ ...t, detector: { ...t.detector, cursor: { ...cur, phase: "web", i: 0 } } });
+    }
+    const unit = units[ui];
+    const src = sourceById(unit.source);
+    const keywords = tenderKeywords(cfg);
+    const unspsc = normalizeUnspsc(cfg.unspsc);
+    const subKeywords: string[] = Array.isArray(cfg.subcontract_keywords) ? cfg.subcontract_keywords.filter((x: unknown) => typeof x === "string") : [];
+    const signals = tenderSignalsOf(cfg);
+    // Prefiltro por texto: el rubro, más lo que ganan los subcontratistas cuando se buscan adjudicaciones.
+    const prefKeywords = unit.mode === "awards" || unit.source === "pe_oece"
+      ? [...keywords, ...(signals.includes("subcontract_award") ? subKeywords : [])]
+      : keywords;
+    const prefilter = (text: string) => {
+      if (!prefKeywords.length) return true; // solo UNSPSC: el código se mira en el registro completo
+      const rec = { title: text, description: "", codes: [] } as unknown as TenderRecord;
+      return matchTender(rec, { keywords: prefKeywords, unspsc: [] }).ok;
+    };
+    let records: TenderRecord[] = [];
+    let note = "";
+    let state: Json = {};
+    let unitDone = true;
+    const failed: string[] = Array.isArray(cur.failed) ? [...cur.failed] : [];
+    const web: string[] = Array.isArray(cur.web) ? [...cur.web] : [];
+    try {
+      const r = await runUnit({
+        source: src, mode: unit.mode, since: asStr(cur.since), keywords: prefKeywords, unspsc, prefilter,
+        state: cur.ustate || {}, deadline: startedAt + TENDER_UNIT_BUDGET_MS, env,
+      });
+      records = r.records; state = r.state; unitDone = r.done; note = r.note;
+    } catch (e) {
+      if (!(e instanceof TenderSourceError)) throw e;
+      // La fuente falló: ese país va a la búsqueda web en este ciclo y el detector sigue.
+      note = `${src.label} no respondió (${e.message}); ${countryLabelEs(src.country)} va por búsqueda web`;
+      t.log(note);
+      if (!failed.includes(src.id)) failed.push(src.id);
+      if (!web.includes(src.country)) web.push(src.country);
+    }
+    // Una fuente que falló no vuelve a intentarse en este ciclo (su otra unidad se quita).
+    const nextUnits = failed.includes(src.id) ? units.filter((x, k) => k <= ui || x.source !== unit.source) : units;
+    const candidates: Candidate[] = [];
+    const titles = Array.isArray(cfg.decision_maker_titles) ? cfg.decision_maker_titles : [];
+    for (const rec of records) {
+      candidates.push(...classifyTender(rec, {
+        filter: { keywords, unspsc }, subcontractKeywords: subKeywords, competitors: t.ctx.competitorNames,
+        // Una unidad de adjudicadas no debe volver a entregar las abiertas (y viceversa).
+        signals: signals.filter((s) => unit.source === "pe_oece" || (unit.mode === "open" ? s === "tender_open" : s !== "tender_open")),
+        decisionMakerTitles: titles,
+      }));
+    }
+    const nextCursor = { ...cur, units: nextUnits, ui: unitDone ? ui + 1 : ui, ustate: unitDone ? {} : state, failed, web };
+    return { candidates: candidates.slice(0, 120), cursor: nextCursor, done: false, note };
+  }
+
+  // Fase web: las consultas de siempre, solo para los países que no cubrió una fuente oficial.
+  const webCountries: string[] = cur.all_web ? t.countries : (Array.isArray(cur.web) ? cur.web : []);
+  const queries: string[] = Array.isArray(cfg.queries) ? cfg.queries : [];
+  const finish = (r: { candidates: Candidate[]; note?: string }): TickResult => ({
+    candidates: r.candidates,
+    cursor: { last_cycle_at: asStr(cur.started_at) || new Date().toISOString() },
+    done: true,
+    note: [r.note, ...(Array.isArray(cur.notes) ? cur.notes : [])].filter(Boolean).join(" · "),
+  });
+  if ((!cur.all_web && !webCountries.length) || !queries.length) {
+    return finish({
+      candidates: [],
+      note: webCountries.length ? `sin consultas web para ${webCountries.map(countryLabelEs).join(", ")}` : "todo por fuentes oficiales",
+    });
+  }
+  const r = await tickNews({ ...t, countries: webCountries, detector: { ...t.detector, cursor: { i: Number(cur.i) || 0 } } });
+  // Lo que la web devuelva de un país que ya cubrió una fuente oficial se descarta (sería un duplicado sin datos).
+  const covered = new Set(t.countries.filter((c) => !webCountries.includes(c)));
+  const kept = r.candidates.filter((c) => !covered.has(canonicalCountry(c.country)));
+  if (!r.done) return { candidates: kept, cursor: { ...cur, i: Number(r.cursor?.i) || 0 }, done: false, note: r.note };
+  return finish({ candidates: kept, note: r.note });
 }
 
 // ── Apollo people search (hiring, technographics, leadership, growth, website_visitors, población del probe) ──
@@ -649,8 +769,8 @@ async function tickPresence(t: TickContext): Promise<TickResult> {
 export async function runTick(t: TickContext): Promise<TickResult> {
   switch (t.detector.kind) {
     case "news":
-    case "tenders":
     case "web_footprint": return tickNews(t);
+    case "tenders": return tickTenders(t);
     case "hiring": return tickHiring(t);
     case "technographics": return tickTechnographics(t);
     case "site_probe": return tickSiteProbe(t);

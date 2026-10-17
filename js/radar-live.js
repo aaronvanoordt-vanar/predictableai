@@ -46,7 +46,7 @@
   // Espejo de KIND_META (supabase/functions/_shared/radar-plan.ts).
   const DETECTOR_KINDS = {
     news:             { label: 'Noticias y anuncios',          icon: '📰', requires: ['IA con búsqueda web'],        desc: 'Prensa, comunicados, registros oficiales y job boards, con fecha verificada.' },
-    tenders:          { label: 'Licitaciones y compras públicas', icon: '🏛️', requires: ['IA con búsqueda web'],     desc: 'Convocatorias y adjudicaciones en los portales de compras de tus países.' },
+    tenders:          { label: 'Licitaciones y compras públicas', icon: '🏛️', requires: ['Fuentes oficiales (Chile, Colombia, Brasil, Perú)', 'IA con búsqueda web'], desc: 'Licitaciones abiertas de tu rubro, adjudicaciones a tu competencia y ganadores que pueden subcontratarte, con organismo, monto, cierre y enlace oficial.' },
     web_footprint:    { label: 'Huella pública en internet',   icon: '🌐', requires: ['IA con búsqueda web'],        desc: 'Empresas por lo que se ve de ellas en la web, no por una noticia: tiendas oficiales en Mercado Libre o Amazon, directorios, expositores de ferias, quejas públicas.' },
     hiring:           { label: 'Contrataciones',               icon: '🧑‍💼', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Empresas con vacantes activas para los cargos que delatan la necesidad.' },
     technographics:   { label: 'Tecnologías en uso',           icon: '🧩', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Empresas que usan ciertas herramientas, según Apollo. Para "no usa X" está el sondeo del sitio.' },
@@ -903,6 +903,15 @@
   function factsHtml(s) {
     const f = s.facts || {};
     const chips = [];
+    // Licitaciones (fuentes oficiales): organismo, monto, cierre, ganador y fuente.
+    if (f.tender_source) {
+      if (f.buyer && f.tender_signal === 'subcontract_award') chips.push('comprador: ' + f.buyer);
+      if (f.supplier && f.tender_signal === 'competitor_award') chips.push('adjudicada a ' + f.supplier);
+      if (f.amount_label) chips.push(f.amount_label);
+      if (f.closes_at) chips.push('cierra ' + f.closes_at);
+      if (f.awarded_at) chips.push('adjudicada ' + f.awarded_at);
+      chips.push(f.tender_source + (f.tender_id ? ' · ' + f.tender_id : ''));
+    }
     if (f.rating != null) chips.push(f.rating + '★');
     if (f.reviews != null) chips.push(f.reviews + ' reseñas');
     if (f.address) chips.push(f.address);
@@ -924,7 +933,13 @@
     switch (kind) {
       case 'news': return (Array.isArray(cfg.queries) ? cfg.queries.length : 0) + ' consultas · últimos ' + (cfg.window_days || 30) + ' días' + (cfg.sources && cfg.sources.length ? ' · fuentes: ' + j(cfg.sources, 3) : '');
       case 'web_footprint': return (Array.isArray(cfg.queries) && cfg.queries.length ? '"' + cfg.queries[0] + '"' + (cfg.queries.length > 1 ? ' y ' + (cfg.queries.length - 1) + ' consulta' + (cfg.queries.length === 2 ? '' : 's') + ' más' : '') : 'sin consultas') + (cfg.sources && cfg.sources.length ? ' · fuentes: ' + j(cfg.sources, 3) : '');
-      case 'tenders': return (Array.isArray(cfg.queries) ? cfg.queries.length : 0) + ' consultas · ' + (cfg.portals && cfg.portals.length ? j(cfg.portals, 4) : 'portales de compras públicas');
+      case 'tenders': {
+        const sig = { tender_open: 'abiertas', competitor_award: 'adjudicadas a tu competencia', subcontract_award: 'ganadores que subcontratan' };
+        const signals = Array.isArray(cfg.signals) && cfg.signals.length ? cfg.signals : ['tender_open', 'competitor_award'].concat(cfg.subcontract_keywords && cfg.subcontract_keywords.length ? ['subcontract_award'] : []);
+        return (cfg.keywords && cfg.keywords.length ? '"' + j(cfg.keywords, 3) + '"' : (Array.isArray(cfg.queries) ? cfg.queries.length : 0) + ' consultas') +
+          (cfg.unspsc && cfg.unspsc.length ? ' · UNSPSC ' + j(cfg.unspsc, 3) : '') +
+          ' · ' + signals.map((x) => sig[x] || x).join(', ');
+      }
       case 'hiring': return 'Vacantes de ' + j(cfg.job_titles) + ' · mín. ' + (cfg.min_jobs || 1) + ' · publicadas en ' + (cfg.posted_within_days || 30) + ' días';
       // Solo "usa X": Apollo no filtra "no usa X" en la búsqueda de empresas (para eso está el sondeo del sitio).
       case 'technographics': return cfg.using_any && cfg.using_any.length ? 'usa ' + j(cfg.using_any) : 'sin tecnologías en uso configuradas';

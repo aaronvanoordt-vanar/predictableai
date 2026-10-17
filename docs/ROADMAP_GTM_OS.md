@@ -85,7 +85,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 
 **P2**
 - [ ] Registros públicos de empresas
-- [ ] APIs oficiales de licitaciones
+- [x] APIs oficiales de licitaciones (Chile, Colombia, Brasil y Perú; México y Argentina sin API usable, siguen por la web — `docs/RADAR.md` § Licitaciones oficiales)
 - [ ] Listas "No llamar"
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
 - [ ] Agendamiento con recordatorios por WhatsApp
