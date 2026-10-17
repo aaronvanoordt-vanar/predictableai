@@ -9,7 +9,7 @@
 | Pasarela | **Stripe**, a nombre de la LLC de Wyoming. Todo se cobra en **USD**. |
 | Costo de Apollo para la plataforma | Plan de 447 USD con ~20k créditos, o sea **~0.022 USD por crédito de Apollo**. Revelar un email cuesta 1 crédito, un teléfono 8 y exportar 1. |
 | Self-serve | **Un solo plan pago: Starter.** Growth es un **servicio asistido que se cobra por resultados**: no se vende por Checkout. El equipo lo da de alta a mano (`subscriptions.provider = 'manual'`). |
-| Prueba | **Gratis, sin tarjeta y sin fecha de vencimiento: 100 créditos una sola vez.** La prueba no incluye lo que corre solo (Hub automático, re-plan del Radar, playbook automático) y permite como máximo 2 detectores del Radar activos. |
+| Prueba | **Gratis y sin tarjeta.** Con el **email de la empresa** (confirmado, una prueba por dominio): **300 créditos que vencen a los 30 días**. Con un email personal: **100 créditos sin vencimiento**. El primer detector del Radar corre sus primeros 30 días sin costo. La prueba no incluye lo que corre solo (Hub automático, re-plan del Radar, playbook automático), permite como máximo 2 detectores del Radar activos y, con la key de Apollo de la plataforma, revela como máximo 25 emails y ningún teléfono. Revisión y números en `docs/TRIAL_REVIEW.md` (2026-10-17, opción B). |
 | Cuentas existentes | **Se reinician.** La migración deja las 22 cuentas en los 100 créditos de la prueba; casi todo su saldo venía de compras simuladas. |
 
 ## 2. Planes y recargas
@@ -17,7 +17,7 @@
 | | **Prueba** | **Starter** | **Growth** |
 |---|---|---|---|
 | Precio | 0 | **97 USD/mes** o **77 USD/mes pagando el año** (924 USD) | por resultados (servicio asistido) |
-| Créditos | 100, una vez | **1,500 cada mes** | a medida (se configura por cuenta) |
+| Créditos | 300 por 30 días con email corporativo; 100 sin vencimiento con email personal | **1,500 cada mes** | a medida (se configura por cuenta) |
 | Usuarios | 1 | 1 | a medida |
 | Hub automático | no | semanal + mensual | diario + semanal + mensual |
 | Detectores del Radar activos a la vez | 2 | 5 | 15 |
@@ -103,7 +103,7 @@ Los tokens se midieron sobre los prompts reales del código (caracteres ÷ 4, to
 | Uso típico (60 % de la bolsa) | 13 USD | 5.3 USD | 3.3 USD | **~78 %** |
 | Anual (77 USD/mes), paquete típico al 100 % | 21 USD | 4.2 USD | 3.3 USD | **~63 %** |
 
-Cada cuenta de prueba nos cuesta como máximo ~4 USD (onboarding + 100 créditos).
+Cada cuenta de prueba nos cuesta como máximo ~14 USD con email corporativo (primeras veces gratis + detector gratis + 350 créditos con bonos) y ~7 USD con email personal; lo típico es ~4–6 USD (`docs/TRIAL_REVIEW.md` §3).
 
 ## 5. Competencia (resumen)
 
@@ -132,6 +132,7 @@ Cada cuenta de prueba nos cuesta como máximo ~4 USD (onboarding + 100 créditos
   - `checkout.session.completed` de una recarga → `billing_add_topup`, que no se aplica dos veces a la misma sesión.
   - `customer.subscription.*` → copia el estado a `subscriptions`; al cancelarse, la bolsa del mes vence.
   - Los eventos duplicados se ignoran (`billing_events`).
+- **Prueba corporativa:** el RPC `claim_trial_credits` (lo llama `js/credits.js` al abrir la app; idempotente) suma 200 créditos a los 100 del alta y deja en `plan_balance` lo que quede de la prueba + esos 200, así vencen juntos. Una fila por dominio en `trial_grants`. El cron `billing-expire-trials` (`billing_expire_trials`) vence el `plan_balance` a los 30 días si la cuenta sigue en `free`; si pasó a Starter, la bolsa del plan ya lo reemplazó. Los bonos (miforms, «Hazlo tuyo») no vencen. Migración `20261017000001`.
 - **Plan vigente:** `current_plan(user)` devuelve `free`, `starter` o `growth`. `past_due` sigue activo mientras Stripe reintenta el cobro. Los crons (Hub, playbook, re-plan del Radar) y el Radar (tope de detectores) lo consultan vía `_shared/billing-plans.ts`.
 - **Growth manual:** se inserta una fila en `subscriptions` con `plan = 'growth'`, `provider = 'manual'`, `status = 'active'`, `monthly_credits = N` y `next_grant_at = now()`. El cron le entrega la bolsa cada mes.
 

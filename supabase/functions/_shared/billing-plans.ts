@@ -29,7 +29,18 @@ export const STARTER = {
   price_cents: { month: 9700, year: 92400 } as Record<Interval, number>,
 } as const;
 
+// Prueba gratis (docs/TRIAL_REVIEW.md, opción B). Todos reciben
+// FREE_TRIAL_CREDITS al registrarse, sin vencimiento. Con un email
+// corporativo confirmado (uno por dominio) la prueba sube a
+// CORPORATE_TRIAL.credits que vencen a los CORPORATE_TRIAL.days días: lo
+// concede el RPC `claim_trial_credits` (migración 20261017000001, espejo de
+// estos números; lo verifica trial-limits.test.ts).
 export const FREE_TRIAL_CREDITS = 100;
+export const CORPORATE_TRIAL = { credits: 300, days: 30 } as const;
+
+// Revelados con la key de Apollo de la PLATAFORMA durante la prueba (con el
+// Apollo propio no hay tope: lo paga el cliente). Ver _shared/trial-limits.ts.
+export const TRIAL_PLATFORM_REVEALS = { email: 25, phone: 0 } as const;
 
 export const TOPUP_PACKS: Record<string, { credits: number; price_cents: number; price_id: string }> = {
   topup_500: { credits: 500, price_cents: 4500, price_id: "price_1UIu4L08udt2Or8yvzmT3DHz" },

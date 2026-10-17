@@ -306,6 +306,27 @@ async function billDetector(supa: Json, det: Json): Promise<boolean> {
   }
 
   const cost = radarDetectorMonthCost(String(det.kind), maxCompaniesOf(det.config));
+
+  // Prueba gratis: el primer detector de la cuenta corre sus primeros 30 días
+  // sin gastar la bolsa (docs/TRIAL_REVIEW.md). El índice único parcial
+  // ct_user_radar_detector_trial_uidx (migración 20261017000001) deja pasar
+  // una sola fila por cuenta; si ya existe, se cobra como siempre.
+  if (plan === "free") {
+    const { count: used } = await supa.from("credit_transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", det.user_id).eq("reason", "radar_detector_trial");
+    if ((used ?? 1) === 0) {
+      const { error: trialErr } = await supa.from("credit_transactions")
+        .insert({ user_id: det.user_id, delta: 0, reason: "radar_detector_trial", section_key: String(det.id) });
+      if (!trialErr) {
+        await supa.from("radar_detectors").update({ billed_until: new Date(Date.now() + BILLING_PERIOD_MS).toISOString() }).eq("id", det.id);
+        return true;
+      }
+      // 23505 = otro detector se llevó el período gratis en paralelo.
+      if (trialErr.code !== "23505") console.warn("[radar-monitor] radar_detector_trial:", trialErr.message);
+    }
+  }
+
   const { data: spent, error } = await supa.rpc("spend_credits", { p_user_id: det.user_id, p_amount: cost });
   if (error || spent === null || spent === undefined) {
     await supa.from("radar_detectors").update({

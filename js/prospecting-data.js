@@ -108,6 +108,9 @@
         msg = 'Se agotaron tus créditos de predictable.ai para usar la cuenta de Apollo compartida de la plataforma' +
           (body.cost != null && body.balance != null ? ' (necesitas ' + body.cost + ', tienes ' + body.balance + ')' : '') +
           '. Esto no tiene relación con tu cuenta de Apollo — conecta la tuya en Campañas → canales → Email para dejar de depender de este saldo, o recarga créditos de predictable.ai.';
+      } else if (fnName === 'apollo-proxy' && body?.error === 'trial_reveal_limit') {
+        // Tope de la prueba gratis con la cuenta compartida (_shared/trial-limits.ts).
+        msg = body.message || 'Llegaste al tope de la prueba gratis con la cuenta de Apollo compartida. Conecta tu Apollo o activa Starter.';
       } else {
         msg = fnName === 'apollo-proxy'
           ? apolloErrorMessage(detail, res.status)

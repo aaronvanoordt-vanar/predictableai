@@ -81,7 +81,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] LinkedIn nativo
 - [ ] CRM de cuentas y oportunidades
 - [ ] Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos
-- [ ] Revisar la prueba gratis
+- [x] Revisar la prueba gratis
 
 **P2**
 - [ ] Registros públicos de empresas

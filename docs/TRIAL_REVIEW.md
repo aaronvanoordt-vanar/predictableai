@@ -1,6 +1,6 @@
 # Revisión de la prueba gratis (2026-10-17)
 
-> **Estado: propuesta, sin implementar.** Ítem 16 de `docs/ROADMAP_GTM_OS.md` §1 (P1). El pricing vigente es una decisión del dueño (`docs/DECISIONS.md`, fila «Pricing público»; `docs/PRICING.md`): **este documento no cambia nada hasta que el dueño apruebe una opción.**
+> **Estado: el dueño aprobó la opción B el 2026-10-17 y está implementada** (migración `20261017000001_corporate_trial.sql`, `_shared/trial-limits.ts`, `radar-monitor`, `apollo-proxy`, `enrich-list`, `js/credits.js`, `landing.html`). Ítem 16 de `docs/ROADMAP_GTM_OS.md` §1 (P1). Lo vigente está en `docs/PRICING.md` y `docs/DECISIONS.md`; este documento queda como el análisis que llevó a la decisión.
 
 ## 0. Resumen
 
