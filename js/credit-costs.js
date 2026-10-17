@@ -54,6 +54,9 @@
     // «Investigar con IA» (Listas): puesto actual + empresa + ángulo. Con la
     // cuenta de Apollo de la plataforma se suma el match (enrich_email).
     lead_research:          { credits: 3,  label: 'por lead',            variable: false },
+    // Columnas IA (Listas): por fila respondida; «No encontrado» no se cobra.
+    ai_column_cell:         { credits: 2,  label: 'por fila respondida (con búsqueda web)', variable: true },
+    ai_column_cell_basic:   { credits: 1,  label: 'por fila respondida (sin búsqueda web)', variable: true },
     // Tendencias de outbound (investigación manual).
     outreach_playbook:      { credits: 10, label: 'por investigación',   variable: false },
 
