@@ -103,3 +103,7 @@ Reglas:
 ## Revisión de código 2026-09-25
 
 Hallazgos, lo aplicado y lo pendiente en `docs/REVIEW_2026-09-25.md`. Las decisiones vigentes siguen en `docs/DECISIONS.md`: si una tarea las contradice, señálalo antes de cambiar.
+
+## Hoja de ruta GTM OS (2026-10-17)
+
+`docs/ROADMAP_GTM_OS.md` lista lo que falta para que Predictable sea el GTM OS completo de Latam (paridad con Oxygen + funciones latinas), priorizado P0–P3. Si trabajas un ítem, marca su casilla en el PR que lo cierra. **El ítem de WhatsApp revierte a propósito la regla «WhatsApp sale SOLO por WATI»** (decisión del dueño, `docs/DECISIONS.md`): la sesión que lo construya actualiza también las líneas de este archivo que lo prohíben.
