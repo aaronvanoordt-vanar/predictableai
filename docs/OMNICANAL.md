@@ -365,3 +365,12 @@ Decisión del dueño: Predictable se vuelve Tech Provider de Meta y revierte la 
 - **Monitor de calidad del número:** `config.quality`. Avisa antes del bloqueo y, si la calidad llega a rojo, el motor retiene las campañas. El usuario puede desactivar esa retención.
 
 El diseño completo y la guía de configuración para el dueño (app de Meta, App Review, Facebook Login for Business, secrets) están en `docs/WHATSAPP_META.md`.
+
+### Reacciones salientes con Meta (2026-10-17)
+
+Con WhatsApp directo con Meta, la Bandeja permite reaccionar con emoji. Con WATI sigue sin poder hacerse, porque su API no lo permite (ver «Reacciones con emoji en la Bandeja»).
+
+- **Dónde aparece:** cada mensaje de una conversación de Meta que tiene WAMID muestra «🙂 Reaccionar». El selector ofrece el set rápido de WhatsApp. Tocar otra vez el emoji que ya pusiste lo quita; también se puede quitar con «Quitar».
+- **Cómo se envía:** `inbox-send {action:"react", id, emoji}` llama a `meta.sendReaction` (`type: "reaction"`). Aplica la misma ventana de 24 h que el texto. La reacción se guarda como fila saliente con `payload.type = "reaction"`, `reacts_to` (el WAMID) y `reacts_to_id` (la fila), y la bandeja la pinta como chip «mine» bajo el mensaje.
+- **Con un mensaje de WATI** responde 410 `reaction_unsupported`, como antes.
+- **Quién decide si se puede reaccionar:** `_shared/whatsapp.ts#reactableWamid` (cubierto por `deno test`), con su espejo `canReactTo` en `js/campaigns.js`.

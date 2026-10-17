@@ -230,8 +230,6 @@ puntos en la primera prueba real:
 
 ## 4. Pendiente (fuera de este PR)
 
-- Reacciones salientes: la Cloud API sí las permite (`type: "reaction"`).
-  Con WATI no se puede; la UI tendría que ofrecerlas solo con Meta.
 - Encabezados con archivo en las plantillas.
 - Avisar de la calidad fuera de la app (push o email). Hoy la alerta se ve en
   la tarjeta del canal y en la pestaña de WhatsApp.

@@ -214,6 +214,21 @@ export function sender(acc: Json): WhatsAppSender {
   };
 }
 
+/**
+ * WAMID al que se puede reaccionar desde la Bandeja, o null (pura: deno test).
+ * Solo WhatsApp directo con Meta (la API de WATI no envía reacciones), solo
+ * un mensaje real ya guardado (no otra reacción) y con WAMID: el entrante lo
+ * trae como id; el saliente, como id (Meta) o en payload.wamid.
+ */
+export function reactableWamid(row: Json): string | null {
+  if (!row || row.channel !== "whatsapp" || row.provider !== "meta") return null;
+  if (row.payload?.type === "reaction") return null;
+  const id = String(row.provider_message_id ?? "");
+  if (id.startsWith("wamid.")) return id;
+  const w = String(row.payload?.wamid ?? "");
+  return w.startsWith("wamid.") ? w : null;
+}
+
 /** Nombre del proveedor para los textos de error ("WhatsApp no aceptó…" + detalle). */
 export function providerLabel(acc: Json): string {
   return acc?.provider === "meta" ? "Meta" : "WATI";

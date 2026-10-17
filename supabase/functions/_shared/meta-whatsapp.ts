@@ -393,6 +393,21 @@ export async function sendText(creds: MetaCreds, to: string, text: string, reply
   return { wamid: wamidOf(await graph(creds.token, "POST", `${creds.phoneNumberId}/messages`, body)) };
 }
 
+/**
+ * Reacción con emoji a un mensaje de la conversación (`emoji` "" la quita).
+ * Es un mensaje más de la ventana de 24 h; la API de WATI no la permite.
+ */
+export async function sendReaction(creds: MetaCreds, to: string, targetWamid: string, emoji: string): Promise<SendOut> {
+  const d = await graph(creds.token, "POST", `${creds.phoneNumberId}/messages`, {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: policy.digits(to),
+    type: "reaction",
+    reaction: { message_id: targetWamid, emoji },
+  });
+  return { wamid: wamidOf(d) };
+}
+
 /** Sube un archivo a Meta y devuelve su id (vale 30 días). */
 export async function uploadMedia(creds: MetaCreds, file: Blob, fileName: string, mime: string): Promise<string> {
   const form = new FormData();

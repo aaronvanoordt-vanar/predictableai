@@ -128,6 +128,7 @@
 
   var state = {
     replyTo: {},               // conv.key → mensaje (inbox_messages.id) al que se responde
+    reactPick: {},             // conv.key → mensaje con el selector de reacciones abierto
     pendingOut: [],            // respuestas de la bandeja pintadas antes de que inbox-send conteste
     pane: null,
     root: null,
@@ -1822,6 +1823,12 @@
       '#prospecting-shell .cmp-react-chips { display:flex; gap:4px; margin-top:-8px; padding:0 10px; position:relative; }',
       '#prospecting-shell .cmp-react-chip { display:inline-flex; align-items:center; gap:2px; font-size:14px; line-height:1; padding:3px 6px; border-radius:999px; background:var(--surface); border:1px solid var(--hair); box-shadow:0 1px 3px rgba(0,0,0,.08); font-family:inherit; }',
       '#prospecting-shell .cmp-react-chip.mine { border-color:var(--accent-2); }',
+      '#prospecting-shell .cmp-react-pick { display:flex; flex-wrap:wrap; gap:4px; padding:4px 6px; margin:2px 0 4px; border-radius:999px; background:var(--surface); border:1px solid var(--hair); box-shadow:0 2px 8px rgba(0,0,0,.08); width:max-content; max-width:100%; }',
+      '#prospecting-shell .cmp-react-opt { border:0; background:transparent; font-size:18px; line-height:1; padding:4px 6px; border-radius:999px; cursor:pointer; font-family:inherit; }',
+      '#prospecting-shell .cmp-react-opt:hover, #prospecting-shell .cmp-react-opt:focus-visible { background:var(--surface3); }',
+      '#prospecting-shell .cmp-react-opt.on { background:var(--surface3); box-shadow:inset 0 0 0 1px var(--accent-2); }',
+      '#prospecting-shell .cmp-react-opt.clear { font-size:11px; color:var(--text3); }',
+      '#prospecting-shell .cmp-rmsg.in .cmp-react-pick { align-self:flex-start; } #prospecting-shell .cmp-rmsg.out .cmp-react-pick { align-self:flex-end; }',
       '#prospecting-shell .cmp-react-orphan { font-size:11.5px; color:var(--text3); }',
       '#prospecting-shell .cmp-react-orphan.out { align-self:flex-end; }',
       '#prospecting-shell .cmp-media { margin:-2px 0 4px; min-height:40px; }',
@@ -3677,10 +3684,28 @@
   // ── Reacciones de WhatsApp ──
   // Una reacción es una fila de inbox_messages con payload.type = 'reaction'
   // (emoji + reacts_to = wamid del mensaje). No se pinta como globo: va pegada
-  // al mensaje que reacciona. Emoji vacío = reacción quitada. Solo se MUESTRAN:
-  // la API de WATI no permite enviarlas (rechaza type "reaction": «Type must be
-  // 'text' or 'interactive'», 2026-10-01), así que la bandeja no ofrece
-  // reaccionar. Ver docs/OMNICANAL.md.
+  // al mensaje que reacciona. Emoji vacío = reacción quitada. Con WhatsApp
+  // directo con Meta (2026-10-17) la bandeja también ENVÍA reacciones
+  // (inbox-send {action:"react"}); con WATI solo se muestran: su API no las
+  // permite (rechaza type "reaction", 2026-10-01). Ver docs/OMNICANAL.md.
+  // Espejo del set rápido de wati.REACTION_EMOJIS.
+  var REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+  /** ¿Se le puede reaccionar desde aquí? Espejo de whatsapp.reactableWamid (solo Meta, mensaje real con WAMID). */
+  function canReactTo(msg) {
+    if (!msg || chanKey(msg.channel) !== 'whatsapp' || msg.provider !== 'meta' || isReaction(msg)) return false;
+    if (/^local-/.test(String(msg.id)) || msg.status === 'sending') return false;
+    return !!wamidOfMsg(msg) && isConn(state.metaRow);
+  }
+  function sendReaction(key, msgId, emoji, btn) {
+    var r0 = btnLoading(btn, '⏳');
+    return edgeFetch(FN_INBOX, { action: 'react', id: msgId, emoji: emoji }).then(function (r) {
+      r0();
+      delete state.reactPick[key];
+      var row = r && r.message;
+      if (row && row.id && !state.inbox.some(function (x) { return x.id === row.id; })) state.inbox.push(row);
+      renderKeepingReplyFocus(key);
+    }, function (e) { r0(); throw e; });
+  }
   function isReaction(m) { return !!(m && m.payload && m.payload.type === 'reaction'); }
   function reactionEmoji(m) {
     var pl = m.payload || {};
@@ -4079,8 +4104,9 @@
   }
 
   /**
-   * Globo + sus reacciones (chips debajo). Solo lectura: WATI no permite
-   * reaccionar por API (ver el comentario de "Reacciones de WhatsApp").
+   * Globo + sus reacciones (chips debajo). Con Meta directo se puede
+   * reaccionar («🙂 Reaccionar»); con WATI solo se muestran (ver el comentario
+   * de "Reacciones de WhatsApp").
    */
   function messageWithReactions(msg, bubble, slot, conv) {
     var wrap = h('div', { class: 'cmp-rmsg ' + (msg.direction === 'in' ? 'in' : 'out') });
@@ -4088,6 +4114,19 @@
     // Responder a este mensaje: solo email y WhatsApp (LinkedIn no se envía por API) y solo filas ya guardadas.
     if (conv && msg.status !== 'sending' && !/^local-/.test(String(msg.id)) && ['whatsapp', 'email'].indexOf(chanKey(msg.channel)) !== -1) {
       wrap.appendChild(h('button', { type: 'button', class: 'cmp-reply-to', 'data-action': 'reply-to', 'data-key': conv.key, 'data-msg': msg.id, title: 'Responder a este mensaje', 'aria-label': 'Responder a este mensaje', text: '↩ Responder' }));
+    }
+    var mineEmoji = slot.out ? reactionEmoji(slot.out) : '';
+    if (conv && canReactTo(msg)) {
+      var open = state.reactPick[conv.key] === msg.id;
+      wrap.appendChild(h('button', { type: 'button', class: 'cmp-reply-to', 'data-action': 'react-open', 'data-key': conv.key, 'data-msg': msg.id, 'aria-expanded': open ? 'true' : 'false', title: 'Reaccionar', 'aria-label': 'Reaccionar a este mensaje', text: '🙂 Reaccionar' }));
+      if (open) {
+        var pick = h('div', { class: 'cmp-react-pick', role: 'group', 'aria-label': 'Elige una reacción' });
+        REACTION_EMOJIS.forEach(function (e) {
+          pick.appendChild(h('button', { type: 'button', class: 'cmp-react-opt' + (e === mineEmoji ? ' on' : ''), 'data-action': 'react-send', 'data-key': conv.key, 'data-msg': msg.id, 'data-emoji': e, 'aria-pressed': e === mineEmoji ? 'true' : 'false', title: e === mineEmoji ? 'Ya reaccionaste con ' + e : 'Reaccionar con ' + e, text: e }));
+        });
+        if (mineEmoji) pick.appendChild(h('button', { type: 'button', class: 'cmp-react-opt clear', 'data-action': 'react-send', 'data-key': conv.key, 'data-msg': msg.id, 'data-emoji': '', title: 'Quitar mi reacción', text: 'Quitar' }));
+        wrap.appendChild(pick);
+      }
     }
     var chips = h('div', { class: 'cmp-react-chips' });
     if (slot.in && reactionEmoji(slot.in)) {
@@ -4558,6 +4597,21 @@
       return;
     }
     if (action === 'reply-to-clear' && key) { delete state.replyTo[key]; return renderKeepingReplyFocus(key); }
+    if (action === 'react-open' && key) {
+      var rm = btn.getAttribute('data-msg');
+      if (state.reactPick[key] === rm) delete state.reactPick[key]; else state.reactPick[key] = rm;
+      return renderKeepingReplyFocus(key);
+    }
+    if (action === 'react-send' && key) {
+      var rEmoji = btn.getAttribute('data-emoji') || '';
+      var rMsg = btn.getAttribute('data-msg');
+      var cvX = findConv(key);
+      var target = cvX && cvX.messages.find(function (x) { return x.id === rMsg; });
+      var current = '';
+      if (cvX && target) { var sl = groupReactions(cvX.messages).slots[target.id]; current = sl && sl.out ? reactionEmoji(sl.out) : ''; }
+      // Tocar el emoji que ya pusiste lo quita, como en WhatsApp.
+      return sendReaction(key, rMsg, rEmoji && rEmoji === current ? '' : rEmoji, btn);
+    }
     if (action === 'reply-attach' && key) {
       var fin = state.root.querySelector('input[data-action="reply-file"][data-key="' + key + '"]');
       if (fin) { fin.value = ''; fin.click(); }

@@ -301,3 +301,13 @@ Deno.test("metaSecret: el token nunca se rompe por un secreto viejo o vacío", (
   assertEquals(whatsapp.metaSecret({ secret: "not json" }), { access_token: "", pin: "" });
   assertEquals(whatsapp.metaCreds({ secret: JSON.stringify({ access_token: "T" }), config: { phone_number_id: "PN", waba_id: "W" } }), { token: "T", phoneNumberId: "PN", wabaId: "W" });
 });
+
+Deno.test("reactableWamid: solo mensajes reales de Meta con WAMID", () => {
+  assertEquals(whatsapp.reactableWamid({ channel: "whatsapp", provider: "meta", provider_message_id: "wamid.IN", payload: {} }), "wamid.IN");
+  assertEquals(whatsapp.reactableWamid({ channel: "whatsapp", provider: "meta", provider_message_id: "local-1", payload: { wamid: "wamid.OUT" } }), "wamid.OUT");
+  assertEquals(whatsapp.reactableWamid({ channel: "whatsapp", provider: "wati", provider_message_id: "wamid.W", payload: {} }), null, "WATI no envía reacciones");
+  assertEquals(whatsapp.reactableWamid({ channel: "whatsapp", provider: "meta", provider_message_id: "wamid.R", payload: { type: "reaction" } }), null, "no se reacciona a una reacción");
+  assertEquals(whatsapp.reactableWamid({ channel: "email", provider: "meta", provider_message_id: "wamid.X" }), null);
+  assertEquals(whatsapp.reactableWamid({ channel: "whatsapp", provider: "meta", provider_message_id: "abc", payload: {} }), null);
+  assertEquals(whatsapp.reactableWamid(null), null);
+});
