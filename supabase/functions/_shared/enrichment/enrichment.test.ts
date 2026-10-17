@@ -9,6 +9,7 @@ import { bettercontact } from "./providers/bettercontact.ts";
 import { fullenrich } from "./providers/fullenrich.ts";
 import { contactout } from "./providers/contactout.ts";
 import { kaspr } from "./providers/kaspr.ts";
+import { lusha, lushaEmails, lushaPhones } from "./providers/lusha.ts";
 import { millionverifier } from "./verifiers/millionverifier.ts";
 import { reoon } from "./verifiers/reoon.ts";
 import { zerobounce } from "./verifiers/zerobounce.ts";
@@ -118,6 +119,41 @@ Deno.test("ContactOut y Kaspr (beta): solo con LinkedIn", async () => {
   const k = await kaspr.start({ key: "K", fetch: ks.f }, person, ["phone"]);
   assertEquals(ks.calls[0].body, { id: "ana-gomez", name: "Ana Gómez", dataToGet: ["phone"] });
   assertEquals(k, { kind: "done", found: { phones: [{ number: "+5215512345678", type: null }] } });
+});
+
+Deno.test("Lusha v3 (beta): request del nodo oficial, un identificador, errores", async () => {
+  const lu = fakeFetch([on("v3/contacts/search-and-enrich", 200, {
+    requestId: "r1",
+    results: [{ clientReferenceId: "1", id: "900", emails: [{ email: "ana@acme.mx", type: "work" }], phones: [{ number: "+52 1 55 1234 5678", type: "mobile" }, { number: "+52 55 0000 0000", doNotCall: true }] }],
+    billing: { creditsCharged: 6 },
+  })]);
+  const r = await lusha.start({ key: "K", fetch: lu.f }, person, ["email", "phone"]);
+  assertEquals(lu.calls[0].headers.api_key, "K");
+  // Sin email: LinkedIn como único identificador (como el nodo oficial).
+  assertEquals(lu.calls[0].body, { contacts: [{ clientReferenceId: "1", linkedinUrl: person.linkedin_url }], reveal: ["emails", "phones"] });
+  assertEquals(r, { kind: "done", found: { emails: [{ address: "ana@acme.mx", verdict: null }], phones: [{ number: "+52 1 55 1234 5678", type: "mobile" }] } });
+  // Con email: el email es el identificador; nombre + dominio si no hay nada más.
+  await lusha.start({ key: "K", fetch: lu.f }, { ...person, email: "ana@acme.mx" }, ["phone"]);
+  assertEquals(lu.calls[1].body, { contacts: [{ clientReferenceId: "1", email: "ana@acme.mx" }], reveal: ["phones"] });
+  await lusha.start({ key: "K", fetch: lu.f }, { ...person, linkedin_url: "" }, ["email"]);
+  assertEquals(lu.calls[2].body.contacts[0], { clientReferenceId: "1", firstName: "Ana", lastName: "Gómez", companyDomain: "acme.mx" });
+  // Formas alternativas del resultado (v2 dentro de `contact`, texto plano).
+  assertEquals(lushaEmails({ contact: { emailAddresses: [{ email: "A@b.co" }] } }), ["a@b.co"]);
+  assertEquals(lushaPhones({ data: { phoneNumbers: [{ internationalNumber: "+5491143211234", phoneType: "mobile" }] } }), [{ number: "+5491143211234", type: "mobile" }]);
+  assertEquals(lushaPhones({ phones: ["+56987654321"] }), [{ number: "+56987654321", type: null }]);
+  const nores = fakeFetch([on("search-and-enrich", 200, { requestId: "r", results: [] })]);
+  assertEquals(await lusha.start({ key: "K", fetch: nores.f }, person, ["email"]), { kind: "done", found: {} });
+  const gdpr = fakeFetch([on("search-and-enrich", 451, { message: "restricted" })]);
+  assertEquals(await lusha.start({ key: "K", fetch: gdpr.f }, person, ["email"]), { kind: "done", found: {} });
+  const broke = fakeFetch([on("search-and-enrich", 402, { message: "Insufficient credits" })]);
+  const e = await lusha.start({ key: "K", fetch: broke.f }, person, ["email"]);
+  assertEquals(e.kind === "error" && e.disable, true);
+  const slow = fakeFetch([on("search-and-enrich", 429, {})]);
+  const t = await lusha.start({ key: "K", fetch: slow.f }, person, ["email"]);
+  assertEquals(t.kind === "error" && t.transient, true);
+  // Beta: no entra sin ENRICH_WATERFALL_ORDER.
+  assertEquals(providerOrder((k) => ({ LUSHA_API_KEY: "x" } as Record<string, string>)[k]).email.length, 0);
+  assertEquals(providerOrder((k) => ({ LUSHA_API_KEY: "x", ENRICH_WATERFALL_ORDER: "lusha" } as Record<string, string>)[k]).phone.map((p) => p.id), ["lusha"]);
 });
 
 Deno.test("verificadores: veredictos y errores con HTTP 200", async () => {

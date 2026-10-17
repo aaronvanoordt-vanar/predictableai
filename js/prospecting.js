@@ -495,7 +495,7 @@
   // registry.ts (lo verifica enrichment.test.ts).
   var ENRICH_SOURCES = {
     apollo: 'Apollo', prospeo: 'Prospeo', bettercontact: 'BetterContact', fullenrich: 'FullEnrich',
-    contactout: 'ContactOut', kaspr: 'Kaspr', millionverifier: 'MillionVerifier', reoon: 'Reoon', zerobounce: 'ZeroBounce',
+    contactout: 'ContactOut', kaspr: 'Kaspr', lusha: 'Lusha', millionverifier: 'MillionVerifier', reoon: 'Reoon', zerobounce: 'ZeroBounce',
   };
 
   function sourceLabel(id) {

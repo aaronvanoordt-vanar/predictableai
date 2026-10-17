@@ -20,11 +20,12 @@ import { bettercontact } from "./providers/bettercontact.ts";
 import { fullenrich } from "./providers/fullenrich.ts";
 import { contactout } from "./providers/contactout.ts";
 import { kaspr } from "./providers/kaspr.ts";
+import { lusha } from "./providers/lusha.ts";
 import { millionverifier } from "./verifiers/millionverifier.ts";
 import { reoon } from "./verifiers/reoon.ts";
 import { zerobounce } from "./verifiers/zerobounce.ts";
 
-export const PROVIDERS: EnrichProvider[] = [prospeo, bettercontact, fullenrich, contactout, kaspr];
+export const PROVIDERS: EnrichProvider[] = [prospeo, bettercontact, fullenrich, contactout, kaspr, lusha];
 export const VERIFIERS: EmailVerifier[] = [millionverifier, reoon, zerobounce];
 
 export type EnvGet = (name: string) => string | undefined;

@@ -63,6 +63,7 @@ El proxy de la sesión bloqueaba los sitios de documentación, así que cada ada
 | `fullenrich` | FullEnrich v2 `POST /contact/enrich/bulk` → `GET …/{id}` | email, teléfono | asíncrono (sondeo a 2 min y luego cada 5) | nodo oficial de n8n | 0.055 / 0.55 USD (1 / 10) | `FULLENRICH_API_KEY` |
 | `contactout` | ContactOut `GET /v1/people/linkedin` | email, teléfono | síncrono, exige LinkedIn | api.contactout.com | ~0.1 / ~0.6 USD | `CONTACTOUT_API_KEY` (beta) |
 | `kaspr` | Kaspr `POST /profile/linkedin` | email, teléfono | síncrono, exige LinkedIn | Stoplight de Kaspr | ~0.08 / ~0.5 USD | `KASPR_API_KEY` (beta) |
+| `lusha` | Lusha v3 `POST /v3/contacts/search-and-enrich` | email, teléfono | síncrono | nodo oficial `@lusha-org/n8n-nodes-lusha@1.3.1` | ~0.1 / ~0.5 USD (1 / 5 créditos; sin match no cobra) | `LUSHA_API_KEY` (beta) |
 
 | Id | Verificador | Endpoint | Costo | Secret |
 |---|---|---|---|---|
@@ -72,7 +73,7 @@ El proxy de la sesión bloqueaba los sitios de documentación, así que cada ada
 
 Sin `ENRICH_EMAIL_VERIFIER`, se usa el verificador más barato que tenga secret.
 
-**Lusha no está.** Su Person API v2 deja de responder el 2026-11-30, y la forma de la respuesta de la v3 (`POST /v3/contacts/search-and-enrich`) no se pudo verificar. Es el próximo adaptador, en cuanto haya una llamada real con la v3.
+**Lusha (v3, beta).** La Person API v2 deja de responder el 2026-11-30, así que el adaptador usa la v3. El request (endpoint, header `api_key`, un identificador por contacto: email, LinkedIn o nombre + dominio) y la envoltura de la respuesta (`results[]` con `clientReferenceId`, `billing.creditsCharged`, 451 por GDPR) salen del nodo oficial de Lusha para n8n y de sus mocks e2e. **Lo que no está verificado es el nombre de los campos revelados dentro de cada resultado**: el nodo oficial devuelve la respuesta sin leerla. El parser acepta `emails`/`emailAddresses` y `phones`/`phoneNumbers`, como texto o como objeto, descarta los teléfonos con `doNotCall`, y si Lusha cobró sin que se pudiera leer nada lo deja en el log de `enrich-list` con las claves que llegaron. Por eso es beta: con la primera llamada real se confirma el parser y se puede sacar de beta.
 
 **Qué fuente de fondo encontró el dato**: BetterContact lo informa (`contact_email_address_provider` / `email_provider`; se leen los dos nombres porque no está confirmado cuál es el vigente). FullEnrich no lo informa.
 
@@ -92,7 +93,7 @@ E.164 es compatible con lo que ya existía: `digits()` y `phoneKey()` de `_share
 
 ## Pendiente
 
-- Lusha v3 (arriba).
+- Confirmar con una llamada real los campos de la respuesta de Lusha v3 y sacarlo de beta (también ContactOut y Kaspr).
 - Webhook propio para FullEnrich (`webhook_events.contact_finished`) en lugar del sondeo cada 5 minutos, si el volumen lo pide (60 llamadas/min por key).
 - Orden de la cascada por cuenta (hoy es de la plataforma, por secret).
 - Mirar el teléfono «¿está en WhatsApp?» antes de gastar una plantilla (§4 de la hoja de ruta).
