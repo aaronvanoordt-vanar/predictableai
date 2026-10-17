@@ -7,8 +7,12 @@
  * aceptaría la anon key pública).
  *
  * POST body (una de estas formas):
+ *  WhatsApp sale por el adaptador _shared/whatsapp.ts (2026-10-17): por el
+ *  proveedor al que escribió el lead si sigue conectado; si no, por la cuenta
+ *  activa (Meta directo si está conectada, si no WATI).
  *  • { channel: "whatsapp", member_id | contact_ref, body }
- *      Texto de sesión por WATI (POST /api/ext/v3/conversations/messages/text).
+ *      Texto de sesión (WATI: POST /api/ext/v3/conversations/messages/text;
+ *      Meta: POST /{phone_number_id}/messages).
  *      Solo dentro de la ventana de 24 h: último WhatsApp ENTRANTE del lead en
  *      inbox_messages (o campaign_enrollments.last_inbound_whatsapp_at) hace
  *      menos de 24 h; si no → 409 {error:"whatsapp_window_closed"}. Fuera de
@@ -77,6 +81,8 @@ import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import * as wati from "../_shared/wati.ts";
+import * as whatsapp from "../_shared/whatsapp.ts";
+import * as meta from "../_shared/meta-whatsapp.ts";
 import { isWebmAudio, WebmOpusError, webmOpusToOgg } from "../_shared/webm-opus.ts";
 import { syncWatiHistory } from "../_shared/wati-history.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
@@ -215,10 +221,6 @@ function sessionTargets(phone: string, inboundRef: unknown): string[] {
   return [...out];
 }
 
-/** 404 (conversación no encontrada) o 5xx: WATI no dice el motivo, vale probar de otra forma. */
-function isRetryableWati(e: unknown): boolean {
-  return e instanceof wati.WatiError && (e.status === 404 || e.status >= 500);
-}
 
 /**
  * Prueba cada número mientras WATI responda 404 o 5xx. Un 500 «Unexpected
@@ -226,19 +228,25 @@ function isRetryableWati(e: unknown): boolean {
  * (2026-10-08) y antes cortaba sin probar el otro. Si todos fallan se
  * reporta el primer error que no sea 404: es el que explica algo.
  */
-async function withSessionTarget<T>(targets: string[], send: (to: string) => Promise<T>): Promise<T> {
+async function withSessionTarget<T>(wa: whatsapp.WhatsAppSender, targets: string[], send: (to: string) => Promise<T>): Promise<T> {
   let first: unknown;
   let last: unknown;
-  for (const to of targets) {
+  // Meta responde con el motivo real: un solo intento, al waId del lead.
+  for (const to of wa.provider === "meta" ? targets.slice(0, 1) : targets) {
     try {
       return await send(to);
     } catch (e) {
       last = e;
-      if (!isRetryableWati(e)) throw e;
-      if (first === undefined && (e as wati.WatiError).status !== 404) first = e;
+      if (!wa.retryOtherNumber(e)) throw e;
+      if (first === undefined && whatsapp.errorStatus(e) !== 404) first = e;
     }
   }
   throw first ?? last;
+}
+
+/** Estado HTTP de la respuesta a la bandeja para un error del proveedor. */
+function sendStatus(e: unknown): number {
+  return whatsapp.isClientError(e) ? 400 : 502;
 }
 
 const FILE_LABEL: Record<string, string> = { image: "📷 Foto", video: "🎬 Video", audio: "🎤 Audio", document: "📄 Documento" };
@@ -267,7 +275,7 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
   const lastInQuery = () => {
     let q = db
       .from("inbox_messages")
-      .select("sent_at, contact_ref")
+      .select("sent_at, contact_ref, provider")
       .eq("user_id", userId)
       .eq("channel", "whatsapp")
       .eq("direction", "in")
@@ -278,13 +286,18 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
     q = member ? q.or(`member_id.eq.${member.id},contact_ref.in.(${refs.join(",")})`) : q.in("contact_ref", refs);
     return q.maybeSingle();
   };
-  const [{ data: acc }, en, lastInRes] = await Promise.all([
-    db.from("channel_accounts").select("*").eq("user_id", userId).eq("provider", "wati").maybeSingle(),
+  const [{ data: accounts }, en, lastInRes] = await Promise.all([
+    db.from("channel_accounts").select("*").eq("user_id", userId).in("provider", whatsapp.WHATSAPP_PROVIDERS),
     member ? latestEnrollment(db, userId, member.id) : Promise.resolve(null),
-    template ? Promise.resolve({ data: null }) : lastInQuery(),
+    lastInQuery(),
   ]);
-  if (!acc || acc.status !== "connected") throw new HttpError("WhatsApp no está conectado.", 428, "whatsapp_not_connected");
-  const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
+  // Se contesta por el número al que escribió el lead (si ese canal sigue
+  // conectado); si no, por la cuenta activa (Meta, si no WATI).
+  const lastIn = lastInRes?.data as Json | null;
+  const connected = ((accounts ?? []) as Json[]).filter((a) => a.status === "connected");
+  const acc = connected.find((a) => a.provider === lastIn?.provider) ?? whatsapp.pickWhatsAppAccount(connected);
+  if (!acc) throw new HttpError("WhatsApp no está conectado.", 428, "whatsapp_not_connected");
+  const wa = whatsapp.sender(acc);
 
   if (template) {
     const tpl = resolveTemplate(acc, template);
@@ -293,6 +306,10 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
       throw new HttpError(`La plantilla "${tpl.name}" ya no sirve para enviar (${tpl.status}). Elige otra aprobada o crea una nueva en Campañas → WhatsApp.`, 409, "whatsapp_template_unusable");
     }
     if (!wati.isTemplateApproved(tpl.status)) throw new HttpError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tpl.status}).`, 409, "whatsapp_template_not_approved");
+    if (acc.provider === "meta") {
+      const problem = whatsapp.metaTemplateProblem(tpl);
+      if (problem) throw new HttpError(problem, 409, "whatsapp_template_unusable");
+    }
     const params = templateParams(tpl.body, member);
     const missing = Object.keys(params).filter((k) => !params[k]);
     if (missing.length) {
@@ -306,26 +323,23 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
       bodyText = bodyText.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, "gi"), v);
     }
     const localId = crypto.randomUUID();
-    let sent: wati.SendResult;
+    let sent: whatsapp.SendResult;
     try {
-      sent = await wati.sendTemplate(creds, {
-        templateName: tpl.name,
+      sent = await wa.sendTemplate({
+        template: tpl,
         broadcastName: `px_inbox_${localId.slice(0, 8)}`,
         phone,
-        localMessageId: localId,
+        localId,
         params,
-        channel: acc.config?.channel || undefined,
       });
     } catch (e) {
-      const status = e instanceof wati.WatiError && e.status >= 400 && e.status < 500 ? 400 : 502;
-      throw new HttpError("WhatsApp no aceptó la plantilla: " + wati.humanError(e), status, "whatsapp_send_failed");
+      throw new HttpError("WhatsApp no aceptó la plantilla: " + whatsapp.humanError(e), sendStatus(e), "whatsapp_send_failed");
     }
-    if (!sent.accepted) throw new HttpError("WhatsApp rechazó la plantilla: " + (sent.errors.join("; ") || "sin detalle"), 400, "whatsapp_send_failed");
     const [{ data: row, error }] = await Promise.all([db.from("inbox_messages").insert({
-      user_id: userId, member_id: member?.id ?? null, channel: "whatsapp", provider: "wati", direction: "out",
-      contact_ref: phone, body: bodyText, provider_message_id: localId, status: "pending", sent_at: new Date().toISOString(),
+      user_id: userId, member_id: member?.id ?? null, channel: "whatsapp", provider: acc.provider, direction: "out",
+      contact_ref: phone, body: bodyText, provider_message_id: sent.messageId, status: "pending", sent_at: new Date().toISOString(),
       campaign_id: en?.campaign_id ?? null, enrollment_id: en?.id ?? null,
-      payload: { source: "inbox_reply", content_kind: "template", template_name: tpl.name },
+      payload: { source: "inbox_reply", content_kind: "template", template_name: tpl.name, ...(sent.wamid ? { wamid: sent.wamid } : {}) },
     }).select("*").single().then((r) => r), spendCredits(db, userId)]);
     if (error) throw new HttpError("La plantilla salió pero no se pudo guardar en la bandeja: " + error.message, 500);
     return row;
@@ -333,7 +347,6 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
 
   // Ventana de 24 h: último entrante de ese número por WhatsApp.
   const now = Date.now();
-  const lastIn = lastInRes?.data as Json | null;
   const candidates = [lastIn?.sent_at, en?.last_inbound_whatsapp_at].map((v) => (v ? Date.parse(v) : 0)).filter((n) => n > 0);
   const lastInbound = candidates.length ? Math.max(...candidates) : 0;
   if (!lastInbound || now - lastInbound > WHATSAPP_SESSION_MS) {
@@ -346,40 +359,43 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
   // "Conversation with phone number … not found" (2026-10-07).
   const targets = sessionTargets(phone, lastIn?.contact_ref);
 
-  if (file) return await sendWhatsAppFile(db, userId, member, phone, targets, acc, creds, en, file, text, voice);
+  if (file) return await sendWhatsAppFile(db, userId, member, phone, targets, acc, wa, en, file, text, voice);
 
-  let r: { id: string | null; conversationId: string | null };
+  let r: whatsapp.SendResult;
   try {
     try {
-      r = await withSessionTarget(targets, (to) => wati.sendText(creds, to, text, acc.config?.channel || undefined, replyTo?.wamid || undefined));
+      r = await withSessionTarget(wa, targets, (to) => wa.sendText(to, text, replyTo?.wamid || undefined));
     } catch (e) {
-      // WATI no aceptó citar el mensaje (4xx, o un 500 sin motivo): se envía
-      // igual sin cita (la cita queda en la bandeja).
-      if (!replyTo?.wamid || !(e instanceof wati.WatiError && e.status >= 400 && e.status !== 404)) throw e;
-      r = await withSessionTarget(targets, (to) => wati.sendText(creds, to, text, acc.config?.channel || undefined));
+      // El proveedor no aceptó citar el mensaje (4xx, o un 500 sin motivo): se
+      // envía igual sin cita (la cita queda en la bandeja).
+      const st = whatsapp.errorStatus(e);
+      if (!replyTo?.wamid || !(st >= 400 && st !== 404)) throw e;
+      r = await withSessionTarget(wa, targets, (to) => wa.sendText(to, text));
     }
   } catch (e) {
-    const status = e instanceof wati.WatiError && e.status >= 400 && e.status < 500 ? 400 : 502;
-    // Cuerpo completo de WATI en los logs de la función: es lo que dice el motivo real.
-    console.error("inbox-send whatsapp text failed", { phone, targets, quoted: Boolean(replyTo?.wamid), http: (e as wati.WatiError)?.status, body: JSON.stringify((e as wati.WatiError)?.body ?? null).slice(0, 1500) });
-    throw new HttpError("WhatsApp no aceptó el mensaje: " + wati.humanError(e), status, "whatsapp_send_failed");
+    // Cuerpo completo del proveedor en los logs de la función: es lo que dice el motivo real.
+    console.error("inbox-send whatsapp text failed", { provider: acc.provider, phone, targets, quoted: Boolean(replyTo?.wamid), http: whatsapp.errorStatus(e), body: JSON.stringify((e as { body?: unknown })?.body ?? null).slice(0, 1500) });
+    throw new HttpError("WhatsApp no aceptó el mensaje: " + whatsapp.humanError(e), sendStatus(e), "whatsapp_send_failed");
   }
-  const localId = r.id || crypto.randomUUID();
   const [{ data: row, error }] = await Promise.all([db.from("inbox_messages").insert({
     user_id: userId,
     member_id: member?.id ?? null,
     channel: "whatsapp",
-    provider: "wati",
+    provider: acc.provider,
     direction: "out",
     contact_ref: phone,
     body: text,
-    provider_message_id: localId,
+    provider_message_id: r.messageId,
     provider_conversation_id: r.conversationId,
     status: "pending",
     sent_at: new Date().toISOString(),
     campaign_id: en?.campaign_id ?? null,
     enrollment_id: en?.id ?? null,
-    payload: { source: "inbox_reply", wati_message_id: r.id, ...(replyTo ? { reply_to: replyTo.ref } : {}) },
+    payload: {
+      source: "inbox_reply",
+      ...(acc.provider === "wati" ? { wati_message_id: r.messageId } : { wamid: r.wamid }),
+      ...(replyTo ? { reply_to: replyTo.ref } : {}),
+    },
   }).select("*").single().then((r) => r), spendCredits(db, userId)]);
   if (error) throw new HttpError("El mensaje salió pero no se pudo guardar en la bandeja: " + error.message, 500);
   return row;
@@ -390,7 +406,7 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
  * 24 h). `voice` = nota de voz grabada en la bandeja (ya convertida a Ogg).
  */
 async function sendWhatsAppFile(
-  db: SupabaseClient, userId: string, member: Json | null, phone: string, targets: string[], acc: Json, creds: wati.WatiCreds, en: Json, file: File, captionIn: string, voice = false,
+  db: SupabaseClient, userId: string, member: Json | null, phone: string, targets: string[], acc: Json, wa: whatsapp.WhatsAppSender, en: Json, file: File, captionIn: string, voice = false,
 ): Promise<Json> {
   const kind = wati.mediaKindForMime(file.type);
   // WhatsApp no admite pie en un audio: la bandeja manda el texto aparte.
@@ -401,31 +417,31 @@ async function sendWhatsAppFile(
     throw new HttpError(`WhatsApp acepta ${kind === "image" ? "fotos" : "archivos"} de hasta ${Math.round(max / 1024 / 1024)} MB.`, 413, "whatsapp_file_too_large");
   }
   const fileName = String(file.name || "archivo").replace(/[\r\n"]/g, "").slice(0, 120) || "archivo";
-  let r: { id: string | null; conversationId: string | null; type: string | null };
+  let r: whatsapp.SendResult;
   try {
-    r = await withSessionTarget(targets, (to) => wati.sendFile(creds, to, file, fileName, caption || undefined, acc.config?.channel || undefined));
+    r = await withSessionTarget(wa, targets, (to) => wa.sendFile(to, file, fileName, caption, voice));
   } catch (e) {
-    const status = e instanceof wati.WatiError && e.status >= 400 && e.status < 500 ? 400 : 502;
-    console.error("inbox-send whatsapp file failed", { phone, http: (e as wati.WatiError)?.status, body: JSON.stringify((e as wati.WatiError)?.body ?? null).slice(0, 1500) });
-    throw new HttpError("WhatsApp no aceptó el archivo: " + wati.humanError(e), status, "whatsapp_send_failed");
+    console.error("inbox-send whatsapp file failed", { provider: acc.provider, phone, http: whatsapp.errorStatus(e), body: JSON.stringify((e as { body?: unknown })?.body ?? null).slice(0, 1500) });
+    throw new HttpError("WhatsApp no aceptó el archivo: " + whatsapp.humanError(e), sendStatus(e), "whatsapp_send_failed");
   }
   const type = r.type && wati.isMediaType(r.type) ? r.type : kind;
   const [{ data: row, error }] = await Promise.all([db.from("inbox_messages").insert({
     user_id: userId,
     member_id: member?.id ?? null,
     channel: "whatsapp",
-    provider: "wati",
+    provider: acc.provider,
     direction: "out",
     contact_ref: phone,
     body: caption || FILE_LABEL[type] || FILE_LABEL.document,
-    provider_message_id: r.id || crypto.randomUUID(),
+    provider_message_id: r.messageId,
     provider_conversation_id: r.conversationId,
     status: "pending",
     sent_at: new Date().toISOString(),
     campaign_id: en?.campaign_id ?? null,
     enrollment_id: en?.id ?? null,
     payload: {
-      source: "inbox_reply", type, media: true, wati_id: r.id, wati_message_id: r.id,
+      source: "inbox_reply", type, media: true,
+      ...(acc.provider === "wati" ? { wati_id: r.messageId, wati_message_id: r.messageId } : { wamid: r.wamid, meta_media_id: r.mediaId ?? null }),
       caption: caption || null, file_name: fileName, mime: file.type || null, ...(voice ? { voice: true } : {}),
     },
   }).select("*").single().then((r) => r), spendCredits(db, userId)]);
@@ -563,9 +579,10 @@ async function serveMedia(db: SupabaseClient, userId: string, id: string, cors: 
   if (!msg) return json({ error: "El mensaje no existe o no es tuyo." }, 404, cors);
   const pl = msg.payload ?? {};
   const type = String(pl.type ?? "");
-  if (msg.channel !== "whatsapp" || msg.provider !== "wati" || !wati.isMediaType(type)) {
+  if (msg.channel !== "whatsapp" || !["wati", "meta"].includes(msg.provider) || !wati.isMediaType(type)) {
     return json({ error: "not_media", message: "Este mensaje no trae un archivo." }, 400, cors);
   }
+  if (msg.provider === "meta") return await serveMetaMedia(db, userId, msg, cors);
   const { data: acc } = await db.from("channel_accounts").select("status, secret, config").eq("user_id", userId).eq("provider", "wati").maybeSingle();
   if (!acc || acc.status !== "connected" || !acc.secret) {
     return json({ error: "whatsapp_not_connected", message: "Conecta WhatsApp para ver los archivos." }, 428, cors);
@@ -613,6 +630,40 @@ async function serveMedia(db: SupabaseClient, userId: string, id: string, cors: 
       "Access-Control-Expose-Headers": "Content-Type",
     },
   });
+}
+
+/**
+ * Archivo de un WhatsApp de Meta: se pide la URL por el id del archivo
+ * (webhook: vale 7 días; los que subimos: 30) y se baja con el token del
+ * cliente. Vencido, Meta ya no lo entrega.
+ */
+async function serveMetaMedia(db: SupabaseClient, userId: string, msg: Json, cors: Record<string, string>): Promise<Response> {
+  const pl = msg.payload ?? {};
+  const mediaId = pl.meta_media_id ? String(pl.meta_media_id) : "";
+  if (!mediaId) return json({ error: "media_unavailable", message: "Este archivo no se guardó con su id de WhatsApp: ábrelo en tu teléfono." }, 404, cors);
+  const { data: acc } = await db.from("channel_accounts").select("status, secret, config").eq("user_id", userId).eq("provider", "meta").maybeSingle();
+  if (!acc || acc.status !== "connected") {
+    return json({ error: "whatsapp_not_connected", message: "Conecta WhatsApp para ver los archivos." }, 428, cors);
+  }
+  try {
+    const { bytes, mime } = await meta.downloadMedia(whatsapp.metaSecret(acc).access_token, mediaId);
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        ...cors,
+        "Content-Type": wati.sniffMediaType(bytes, String(pl.type ?? ""), mime),
+        "Cache-Control": "private, max-age=86400",
+        "Access-Control-Expose-Headers": "Content-Type",
+      },
+    });
+  } catch (e) {
+    const status = whatsapp.errorStatus(e) === 413 ? 413 : 404;
+    console.error("[inbox-send] meta media", msg.id, whatsapp.errorStatus(e), (e as Error)?.message);
+    return json({
+      error: "media_unavailable",
+      message: status === 413 ? "El archivo es demasiado grande para mostrarlo aquí: ábrelo en tu teléfono." : "WhatsApp ya no entrega este archivo (los guarda unos días): ábrelo en tu teléfono.",
+    }, status, cors);
+  }
 }
 
 /** JSON, o multipart/form-data cuando la bandeja manda un archivo. undefined = cuerpo inválido. */
@@ -784,7 +835,13 @@ async function syncAll(db: SupabaseClient, userId: string): Promise<Json> {
 
 async function syncWati(db: SupabaseClient, userId: string): Promise<Json> {
   const { data: acc } = await db.from("channel_accounts").select("id, user_id, status, secret, config").eq("user_id", userId).eq("provider", "wati").maybeSingle();
-  if (!acc || acc.status !== "connected") return { conversations: 0, inserted: 0, pending: 0, error: "WhatsApp no está conectado.", at: null };
+  if (!acc || acc.status !== "connected") {
+    // WhatsApp directo con Meta no necesita esta red de seguridad: Meta
+    // reintenta sus webhooks hasta 7 días (y no hay API de historial).
+    const { data: m } = await db.from("channel_accounts").select("id").eq("user_id", userId).eq("provider", "meta").eq("status", "connected").maybeSingle();
+    if (m) return { conversations: 0, inserted: 0, pending: 0, error: null, at: new Date().toISOString(), provider: "meta" };
+    return { conversations: 0, inserted: 0, pending: 0, error: "WhatsApp no está conectado.", at: null };
+  }
   const last = acc.config?.history_sync;
   if (last?.at && Date.now() - Date.parse(last.at) < WATI_SYNC_COOLDOWN_MS) return { ...last, cached: true };
   const started = Date.now();

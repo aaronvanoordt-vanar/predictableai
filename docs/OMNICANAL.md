@@ -352,3 +352,16 @@ el lead, sin volver a presentarse ni soltar el pitch.
 ## Un tenant de WATI en varias cuentas (2026-10-08)
 
 El mismo WATI puede estar conectado en más de una cuenta de Predictable, y la clave única de `inbox_messages` es `(provider, provider_message_id)`, sin `user_id`. La cuenta que sincronizaba (o recibía el webhook) primero se quedaba con la respuesta y la del dueño del lead ya no podía guardarla: el 2026-10-08, 212 mensajes de los leads de una cuenta quedaron en otra que nunca les escribió. Regla: un número es de la cuenta que lo tiene en sus listas o le escribió desde Predictable (`knowsPhone` en `_shared/wati-history.ts`; lo copiado del historial de WATI no cuenta). `wati-webhook` y la sincronización dejan pasar los números de otra cuenta del mismo tenant (`ownerElsewhere`), y la sincronización del dueño recupera las filas que otra cuenta se llevó (`reclaimFromSiblings`). Un número que no es de nadie se guarda como siempre.
+
+## WhatsApp directo con Meta: Embedded Signup v4 + coexistencia (2026-10-17)
+
+Decisión del dueño: Predictable se vuelve Tech Provider de Meta y revierte la regla del 2026-09-02 («WhatsApp sale SOLO por WATI»). El cliente conecta su número desde un popup de Meta, y puede ser el mismo que ya usa en la app de WhatsApp Business (coexistencia). WATI sigue funcionando igual para quien ya lo tiene. Con las dos cuentas conectadas, los envíos salen por Meta.
+
+- **Conexión:** `channel-connect meta_connect`.
+- **Webhook:** `meta-whatsapp-webhook` (`--no-verify-jwt`, firma `X-Hub-Signature-256`).
+- **Adaptador común:** `_shared/whatsapp.ts`, que usan el motor, la Bandeja y la pestaña de WhatsApp.
+- **Cliente de la Graph API:** `_shared/meta-whatsapp.ts`.
+- **Lógica compartida con WATI:** la política (plantillas muertas, fallas de plantilla, bloqueos de cuenta) sigue en `_shared/wati.ts`, y los recibos pasan por `recordCampaignReceipt`. Los dos proveedores usan la misma.
+- **Monitor de calidad del número:** `config.quality`. Avisa antes del bloqueo y, si la calidad llega a rojo, el motor retiene las campañas. El usuario puede desactivar esa retención.
+
+El diseño completo y la guía de configuración para el dueño (app de Meta, App Review, Facebook Login for Business, secrets) están en `docs/WHATSAPP_META.md`.
