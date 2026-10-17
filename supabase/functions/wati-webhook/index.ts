@@ -48,6 +48,7 @@ import * as wati from "../_shared/wati.ts";
 import { findMemberByPhone, ownerElsewhere } from "../_shared/wati-history.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import { clearAccountBlock, inboxStatusRank, recordCampaignReceipt } from "../_shared/wati-receipts.ts";
+import { markReach } from "../_shared/wa-reachability.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -201,6 +202,9 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
   if (insErr) console.error("[wati-webhook] inbox insert:", insErr.message);
   // Reentrega del mismo mensaje: no volver a disparar efectos.
   if (wamid && (!inserted || !inserted.length)) return;
+  // Escribió por WhatsApp: el número tiene WhatsApp (levanta un «sin WhatsApp»
+  // viejo y hace que un fijo con WhatsApp Business deje de omitirse).
+  await markReach(db, acc.user_id, waId, { status: "has_whatsapp", source: "inbound", memberId: member?.id ?? null });
 
   const reaction = wati.parseReaction(ev);
   if (reaction?.target) await linkReactionTarget(db, acc, waId, reaction.target);

@@ -86,6 +86,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 **P2**
 - [ ] Registros públicos de empresas
 - [ ] APIs oficiales de licitaciones
+- [x] ¿El número está en WhatsApp? antes de gastar plantilla (heurística por plan de numeración + aprendizaje de #131026; no existe validación oficial previa: `docs/OMNICANAL.md`)
 - [ ] Listas "No llamar"
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
 - [ ] Agendamiento con recordatorios por WhatsApp
