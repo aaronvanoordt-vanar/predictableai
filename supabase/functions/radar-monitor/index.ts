@@ -189,7 +189,8 @@ async function persistCandidates(
       country: c.country, industry: c.industry, employeeCount: c.employee_count, strength: c.strength,
       signalDate: c.signal_date, decisionMakers: dms ? dms.length : 0, dmPending: dmStatus === "pending",
       detectorWeight: det.weight, targets: bundle.ctx.targets,
-      windowDays: Number(det.config?.window_days) || 90,
+      // site_visitors mira una ventana corta (7 días por defecto): la recencia se mide contra ella.
+      windowDays: det.kind === "site_visitors" ? (Number(det.config?.days) || 7) : (Number(det.config?.window_days) || 90),
     });
     inserts.push({
       user_id: det.user_id,
@@ -375,6 +376,13 @@ async function detectorUnit(supa: Json, claimed: { det: Json; plan: Json }): Pro
   }
 }
 
+/** ¿Tiene el usuario un píxel web propio activo? (requisito de site_visitors) */
+async function hasPixel(supa: Json, userId: string): Promise<boolean> {
+  const { count, error } = await supa.from("web_pixel_sites").select("id", { count: "exact", head: true })
+    .eq("user_id", userId).eq("enabled", true);
+  return !error && (count ?? 0) > 0;
+}
+
 // ── plan ← Hub ──────────────────────────────────────────────────────────────
 
 async function hubRefreshUnit(supa: Json): Promise<number> {
@@ -394,7 +402,7 @@ async function hubRefreshUnit(supa: Json): Promise<number> {
       setRequestLanguage(bundle.language);
       const av: Availability = {
         llm_web: true, apollo: !!bundle.apollo || !!platformKey(), apollo_user: !!bundle.apollo && bundle.apollo.mode !== "platform",
-        places: !!Deno.env.get("GOOGLE_PLACES_API_KEY"), probe: true,
+        places: !!Deno.env.get("GOOGLE_PLACES_API_KEY"), probe: true, pixel: await hasPixel(supa, plan.user_id),
       };
       const { data: existing } = await supa.from("radar_detectors").select("kind, name").eq("plan_id", plan.id);
       const extra = await detectorsFromHub({ engine: bundle.engine, ctx: bundle.ctx, hubText: hub.text, existing: existing || [], availability: av });

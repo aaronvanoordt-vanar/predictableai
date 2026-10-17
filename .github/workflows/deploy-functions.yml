@@ -38,6 +38,12 @@
 # (las dos últimas salen con --no-verify-jwt automáticamente). Los secretos
 # APOLLO_OAUTH_CLIENT_ID / APOLLO_OAUTH_CLIENT_SECRET se cargan en Supabase
 # (Edge Functions → Secrets), no aquí.
+# Píxel web propio (2026-10-17): pixel-collect (nueva, --no-verify-jwt: la
+#   llama el navegador de los visitantes del sitio del cliente con la clave
+#   pública del sitio) + web-pixel (nueva, CON JWT) + radar-plan radar-monitor
+#   generate-intel-hub (detector site_visitors). Migración 20261017000005.
+#   Secrets: IPINFO_TOKEN (IPinfo Lite, gratis) y opcionales IPINFO_COMPANY=1,
+#   SNITCHER_API_KEY, PIXEL_HASH_SECRET. Ver docs/RADAR.md § Píxel web.
 name: Deploy Edge Functions
 
 on:
@@ -88,7 +94,7 @@ jobs:
           # Con JWT (no listar aquí): channel-connect, apollo-proxy, inbox-send,
           # gmail-proxy, billing, integrations, campaign-run (la llama pg_cron con la service role),
           # api-webhooks (idem).
-          NO_JWT="apollo-webhook enrich-company sales-coach wati-webhook dripify-webhook generate-outreach-playbook client-portal stripe-webhook public-api mcp push-send"
+          NO_JWT="apollo-webhook enrich-company sales-coach wati-webhook dripify-webhook generate-outreach-playbook client-portal stripe-webhook public-api mcp push-send pixel-collect"
 
           FAILED=""
           for fn in $FUNCTIONS; do

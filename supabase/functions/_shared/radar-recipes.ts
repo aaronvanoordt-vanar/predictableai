@@ -329,6 +329,13 @@ export const RADAR_RECIPES: RadarRecipe[] = [
     config: { job_titles: ["Sales Development Representative", "Business Development Representative", "Account Executive", "Inside Sales Representative"], min_jobs: 2, posted_within_days: 30 } },
 
   // ── Sitio web y presencia ────────────────────────────────────────────────
+  // Píxel propio (2026-10-17): sirve a cualquier vendedor, necesita el píxel instalado.
+  { id: "pixel_repeat_intent", category: "web", kind: "site_visitors", weight: 90,
+    name: "Volvió a tus precios o demo esta semana",
+    for_who: "Cualquier vendedor con sitio web: instala el píxel de Predictable (Radar → Píxel web)",
+    rationale: "Una empresa de tu ICP que vuelve dos o más veces en la semana a tus páginas de precios, demo o contacto está comparando proveedores ahora.",
+    decision_maker_titles: CEO_TITLES,
+    config: { days: 7, min_visits: 2, intent: "high", icp_only: true } },
   { id: "outdated_site", category: "web", kind: "site_probe", weight: 60,
     name: "Sitio desactualizado (© de hace 3+ años)",
     for_who: "Agencias web, rediseño, marketing digital",

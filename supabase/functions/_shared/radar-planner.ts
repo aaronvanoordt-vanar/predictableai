@@ -26,6 +26,8 @@ export interface Availability {
   apollo_user: boolean;
   places: boolean;
   probe: boolean;
+  /** El usuario tiene el píxel web propio instalado (web_pixel_sites). */
+  pixel: boolean;
 }
 
 export function kindAvailable(kind: DetectorKind, av: Availability): boolean {

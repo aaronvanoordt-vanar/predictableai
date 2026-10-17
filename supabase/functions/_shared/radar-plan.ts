@@ -19,15 +19,15 @@ import { NEWS_WINDOWS, normalizeWindowDays } from "./radar-recency.ts";
 
 export type DetectorKind =
   | "news" | "tenders" | "hiring" | "technographics" | "site_probe"
-  | "funding" | "leadership" | "growth" | "presence" | "website_visitors" | "web_footprint";
+  | "funding" | "leadership" | "growth" | "presence" | "website_visitors" | "web_footprint" | "site_visitors";
 
 export const DETECTOR_KINDS: DetectorKind[] = [
   "news", "tenders", "web_footprint", "hiring", "technographics", "site_probe",
-  "funding", "leadership", "growth", "presence", "website_visitors",
+  "funding", "leadership", "growth", "presence", "website_visitors", "site_visitors",
 ];
 
 /** Qué necesita cada metodología para correr. */
-export type Requirement = "llm_web" | "apollo" | "apollo_user" | "places" | "probe";
+export type Requirement = "llm_web" | "apollo" | "apollo_user" | "places" | "probe" | "pixel";
 
 export interface KindMeta {
   label: string;
@@ -90,9 +90,14 @@ export const KIND_META: Record<DetectorKind, KindMeta> = {
     requires: ["places"], defaultCadenceHours: 168, identity: "company",
   },
   website_visitors: {
-    label: "Visitantes de tu sitio",
+    label: "Visitantes de tu sitio (Apollo)",
     description: "Empresas que visitaron tu web (Apollo Website Visitors, requiere tu cuenta de Apollo con esa función).",
     requires: ["apollo_user"], defaultCadenceHours: 6, identity: "company",
+  },
+  site_visitors: {
+    label: "Visitantes de tu sitio (píxel propio)",
+    description: "Empresas que volvieron varias veces en la semana a tus páginas de alta intención (precios, demo, contacto), según el píxel de Predictable instalado en tu web. Solo empresas, nunca personas.",
+    requires: ["pixel"], defaultCadenceHours: 6, identity: "company",
   },
 };
 
@@ -264,6 +269,19 @@ function normalizeKindConfig(kind: DetectorKind, raw: unknown): Record<string, u
       const intent = strList(c.intent, 3, 10).map((s) => s.toLowerCase()).filter((s) => ["low", "medium", "high"].includes(s));
       return { days, intent: intent.length ? intent : ["high", "medium"], pages: strList(c.pages, 6, 120) };
     }
+    case "site_visitors": {
+      // Píxel propio (web_pixel_hits). "Varias veces en la semana" = min_visits
+      // visitas (páginas del mismo visitante con < 30 min entre sí) en `days`.
+      // intent "high" cuenta solo visitas con una página de alta intención (las
+      // rutas viven en web_pixel_sites.high_intent_paths); "any", cualquiera.
+      const days = [7, 14, 30].includes(Number(c.days)) ? Number(c.days) : 7;
+      return {
+        days,
+        min_visits: intIn(c.min_visits, 1, 20, 2),
+        intent: c.intent === "any" ? "any" : "high",
+        icp_only: c.icp_only === false || c.icp_only === "false" ? false : true,
+      };
+    }
   }
 }
 
@@ -412,11 +430,11 @@ export const PLAN_JSON_SPEC = `{
   "countries_override": ["ONLY if the seller's TARGET DESCRIPTION explicitly names other countries than the context: canonical English names (e.g. 'Mexico', 'Peru'). Otherwise []."],
   "detectors": [
     {
-      "kind": "news | tenders | web_footprint | hiring | technographics | site_probe | funding | leadership | growth | presence | website_visitors",
+      "kind": "news | tenders | web_footprint | hiring | technographics | site_probe | funding | leadership | growth | presence | website_visitors | site_visitors",
       "name": "≤ 60 chars, Spanish, what this detector hunts (e.g. 'Vacantes de SDR abiertas', 'Sin automatización de WhatsApp')",
       "rationale": "1-2 sentences, Spanish: why this observable fact means the company needs the seller now",
       "weight": 0-100 (how strongly this signal predicts a purchase; spread the values, do not cluster),
-      "cadence_hours": how often to re-run (news/tenders 48, leadership 48, hiring/funding/technographics/site_probe/growth 72, web_footprint/presence 168, website_visitors 6; lower values are raised to these floors),
+      "cadence_hours": how often to re-run (news/tenders 48, leadership 48, hiring/funding/technographics/site_probe/growth 72, web_footprint/presence 168, website_visitors/site_visitors 6; lower values are raised to these floors),
       "decision_maker_titles": ["3-6 English job titles of who buys this at the target company"],
       "config": { see CONFIG BY KIND },
       "signal_index": "0-based index of the MARKET ANALYSIS signal this detector covers (omit if it covers none)"
@@ -437,4 +455,5 @@ ${PROBE_KEYS}
 - leadership:      { "titles": ["2-8 buyer titles in English"], "max_days_in_role": 90 }
 - growth:          { "months": 6|12|24, "min_growth_pct": 20 }
 - presence:        { "queries": ["1-3 business-type phrases in the local language, e.g. 'clínica dental', 'restaurante'"], "cities": ["3-5 cities in the target countries"], "rules": { "no_website": true|false, "no_phone": true|false, "max_rating": 4.0 (optional), "max_reviews": 20 (optional), "min_reviews": 50 (optional) } } — at least one rule.
-- website_visitors:{ "days": 30, "intent": ["high","medium"], "pages": ["optional path fragments, e.g. '/precios'"] }`;
+- website_visitors:{ "days": 30, "intent": ["high","medium"], "pages": ["optional path fragments, e.g. '/precios'"] }
+- site_visitors:   { "days": 7|14|30, "min_visits": 2, "intent": "high"|"any", "icp_only": true } — companies (never people) that came back to the seller's high-intent pages (pricing, demo, contact) via Predictable's own web pixel. Propose it whenever it is available: it is the warmest signal there is.`;

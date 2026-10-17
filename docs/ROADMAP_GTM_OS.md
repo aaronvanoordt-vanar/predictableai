@@ -21,8 +21,8 @@ Fecha: 2026-10-17. Versión viva (con checklist) en Claude Docs: https://claude.
 | 9 | HubSpot 2 sentidos, Attio, Pipedrive; envío a Instantly/Smartlead/lemlist/HeyReach | HubSpot, Salesforce, Amplemarket y otras | Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos | P1 |
 | 10 | Recipes / Agents / Workflows | Piezas sueltas | Automatizaciones: señal del Radar → enriquecer → investigar → enrolar, con aprobación | P3 |
 | 11 | Mapa de TAM con tiers | Análisis de mercado sin tabla de cuentas | Tabla de TAM por país con tiers y cobertura | P2 |
-| 12 | Señales de engagement en LinkedIn | No | Detector del Radar | P2 |
-| 13 | Píxel de visitantes propio | Solo vía Apollo | Script propio; medir rendimiento en Latam | P2 |
+| 12 | Señales de engagement en LinkedIn | No. Investigado el 2026-10-17: solo salen automatizando la sesión del usuario, contra los términos. Pendiente de decisión (`docs/RADAR.md`) | Detector del Radar | P2 |
+| 13 | Píxel de visitantes propio | Píxel propio + detector `site_visitors` (2026-10-17), cobertura medida por sitio | Script propio; medir rendimiento en Latam | P2 |
 | 14 | Publicación de contenido en LinkedIn | No | Motor de social selling con aprobación | P3 |
 | 15 | Agencias: org por cliente, factura consolidada, directorio | Espacios por cliente sin facturación consolidada | Créditos/facturación por cliente, cambio rápido, directorio | P2 |
 | 16 | Prueba gratis de 1.000 créditos | 100 | Revisar la oferta de entrada | P1 |
@@ -91,7 +91,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Agendamiento con recordatorios por WhatsApp
 - [ ] Cobro local y CFDI
 - [ ] Facturación y créditos por cliente para agencias
-- [ ] Mapa de TAM, señales de LinkedIn y píxel web
+- [ ] Mapa de TAM, señales de LinkedIn y píxel web — píxel web construido (PR del 2026-10-17); señales de LinkedIn pendientes de decisión del dueño; mapa de TAM sin empezar
 
 **P3**
 - [ ] Automatizaciones de punta a punta

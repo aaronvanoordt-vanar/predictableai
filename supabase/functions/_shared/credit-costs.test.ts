@@ -47,6 +47,7 @@ Deno.test("js/campaign-flow.js usa los mismos precios por mensaje IA y por lead"
 Deno.test("radarDetectorMonthCost por tipo y alcance", () => {
   assertEquals(radarDetectorMonthCost("leadership"), 10);
   assertEquals(radarDetectorMonthCost("website_visitors", 1000), 10);
+  assertEquals(radarDetectorMonthCost("site_visitors"), 10);
   assertEquals(radarDetectorMonthCost("news"), 40);
   assertEquals(radarDetectorMonthCost("web_footprint"), 40);
   assertEquals(radarDetectorMonthCost("tenders"), 40);
