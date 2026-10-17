@@ -29,10 +29,31 @@
  * Cada fila se escribe en cuanto termina: la tabla de Listas (realtime) va
  * mostrando los resultados uno a uno mientras el resto sigue «Pendiente».
  *
+ * Waterfall (2026-10-17, docs/ENRICHMENT_WATERFALL.md): en modo 'full', si
+ * Apollo no encontró el email (o el teléfono pedido), la fila sigue con los
+ * proveedores de `_shared/enrichment/` que tengan su secret en Supabase, los
+ * baratos primero. Los asíncronos (FullEnrich, BetterContact) y la espera
+ * del teléfono de Apollo (webhook) posponen la fila: enrich_requested_at en
+ * el futuro y el estado en enrich_waterfall. Se cobra por dato encontrado
+ * (enrich_email_waterfall / enrich_phone_waterfall), también con el Apollo
+ * propio, porque las keys de la cascada son de la plataforma. El email que
+ * no viene verificado pasa por el verificador (MillionVerifier / Reoon /
+ * ZeroBounce) y un inválido se descarta. Todo teléfono queda en E.164 con su
+ * tipo (`_shared/phone-latam.ts`). Sin ningún secret de la cascada, todo
+ * funciona como antes. El modo 'email' (al guardar desde Buscar) no entra a
+ * la cascada: gastaría créditos que nadie pidió.
+ *
  * Auth: Bearer <service role> (cron) o <user JWT>. Se despliega CON
  * verificación de JWT (como campaign-run).
  * Secrets: APOLLO_API_KEY (fallback de plataforma), APOLLO_WEBHOOK_SECRET
- * (solo para revelar teléfonos), APOLLO_OAUTH_CLIENT_ID/SECRET.
+ * (solo para revelar teléfonos), APOLLO_OAUTH_CLIENT_ID/SECRET. Cascada
+ * (opcionales): PROSPEO_API_KEY, BETTERCONTACT_API_KEY, FULLENRICH_API_KEY,
+ * CONTACTOUT_API_KEY y KASPR_API_KEY (beta), MILLIONVERIFIER_API_KEY,
+ * REOON_API_KEY, ZEROBOUNCE_API_KEY, ENRICH_WATERFALL_ORDER,
+ * ENRICH_EMAIL_VERIFIER.
+ *
+ * POST { action: "providers" } con el JWT del usuario devuelve la cascada
+ * vigente (ids y nombres, nunca keys) para que Listas la muestre.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
@@ -43,6 +64,12 @@ import { blockedInPlatformMode } from "../_shared/apollo-platform.ts";
 import { apolloBillableCount, CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
 import { alignMatches, profileFillPatch } from "../_shared/person-fill.ts";
+import { pickBestPhone } from "../_shared/phone-latam.ts";
+import { activeVerifier, keyFor, providerOrder, publicConfig } from "../_shared/enrichment/registry.ts";
+import type { EmailVerifier, EnrichProvider, Field } from "../_shared/enrichment/types.ts";
+import { usableEmail } from "../_shared/enrichment/http.ts";
+import { abandon, isState, newState, stepWaterfall } from "../_shared/enrichment/waterfall.ts";
+import type { WaterfallState } from "../_shared/enrichment/waterfall.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -52,6 +79,11 @@ const BATCH_ESTIMATE_MS = 25_000;     // un lote de 10 en modo 'full' (~2 s/pers
 const BATCH_SIZE = 10;                // límite de /people/bulk_match
 const LEASE_SECONDS = 180;
 const MAX_ATTEMPTS = 3;
+// Apollo entrega el teléfono por webhook: se lo espera esto antes de pasar
+// el teléfono a la cascada.
+const APOLLO_PHONE_WAIT_MS = 8 * 60_000;
+// Margen para escribir la fila tras el último proveedor.
+const WATERFALL_DEADLINE_MS = 95_000;
 
 function corsHeaders(origin: string) {
   return {
@@ -100,11 +132,24 @@ const NO_CREDITS = "Sin créditos de predictable.ai para la cuenta de Apollo com
 
 // ── escritura de filas ─────────────────────────────────────────────────────
 
-const DONE = { enrich_requested_at: null, enrich_claimed_at: null };
+const DONE = { enrich_requested_at: null, enrich_claimed_at: null, enrich_waterfall: null };
+
+// Columnas de la migración 20261017000001: si todavía no se aplicó, la fila
+// se guarda sin ellas (como antes) en vez de perder el resultado.
+const WATERFALL_COLS = ["source_provider", "email_verification", "email_verified_at", "phone_type", "enrich_waterfall"];
+
+async function updateRow(svc: SupabaseClient, id: string, patch: Record<string, unknown>) {
+  let { error } = await svc.from("prospect_list_members").update(patch).eq("id", id);
+  if (error && WATERFALL_COLS.some((c) => (error!.message || "").includes(c))) {
+    const lean = { ...patch };
+    for (const c of WATERFALL_COLS) delete lean[c];
+    ({ error } = await svc.from("prospect_list_members").update(lean).eq("id", id));
+  }
+  if (error) console.error("[enrich-list] no se pudo guardar la fila", id, error.message);
+}
 
 async function finishRow(svc: SupabaseClient, id: string, patch: Record<string, unknown>) {
-  const { error } = await svc.from("prospect_list_members").update({ ...patch, ...DONE }).eq("id", id);
-  if (error) console.error("[enrich-list] no se pudo guardar la fila", id, error.message);
+  await updateRow(svc, id, { ...patch, ...DONE });
 }
 
 // Soltar el lease para que la siguiente corrida la vuelva a tomar.
@@ -112,6 +157,24 @@ async function releaseRow(svc: SupabaseClient, id: string, reason: string) {
   await svc.from("prospect_list_members")
     .update({ enrich_claimed_at: null, enrich_error: reason })
     .eq("id", id);
+}
+
+function sources(row: Json, patch: Record<string, unknown>): Record<string, unknown> {
+  const cur = (patch.source_provider || row.source_provider) as Record<string, unknown> | null;
+  return cur && typeof cur === "object" ? { ...cur } : {};
+}
+
+/** Teléfonos de una persona de Apollo → el mejor en E.164 con su tipo. */
+function apolloPhonePatch(row: Json, person: Json, patch: Record<string, unknown>) {
+  const best = pickBestPhone(
+    (person?.phone_numbers || []).map((n: Json) => ({ number: n?.sanitized_number || n?.raw_number, type: n?.type })),
+    patch.country || row.country || person?.country,
+  );
+  if (!best) return;
+  patch.phone = best.e164;
+  patch.phone_status = "revealed";
+  patch.phone_type = best.type;
+  patch.source_provider = { ...sources(row, patch), phone: "apollo" };
 }
 
 // Cierre de una fila sin datos: en modo 'email' deja de estar «pending».
@@ -188,6 +251,7 @@ async function processEmailRows(svc: SupabaseClient, auth: ApolloAuth, userId: s
       Object.assign(patch, profileFillPatch(r, match));
       patch.snapshot = match;
     }
+    if (email && !r.email) patch.source_provider = { ...sources(r, patch), email: "apollo" };
     // Con la key compartida NO se crea el contacto en Apollo: esa cuenta es
     // la misma para todos los clientes y el lead se vería desde otro (misma
     // regla que apollo-proxy, _shared/apollo-platform.ts).
@@ -207,7 +271,7 @@ async function processEmailRows(svc: SupabaseClient, auth: ApolloAuth, userId: s
 
 // ── modo 'full': /people/match con email personal (+ teléfono) ─────────────
 
-async function processFullRow(svc: SupabaseClient, auth: ApolloAuth, userId: string, r: Json, stats: Stats) {
+async function processFullRow(svc: SupabaseClient, auth: ApolloAuth, userId: string, r: Json, stats: Stats, wf: Waterfall) {
   if (!r.apollo_person_id && !r.email && !r.linkedin_url && !r.name) {
     await finishRow(svc, r.id, failPatch(r, "No hay datos suficientes (nombre, email o LinkedIn) para buscarlo en Apollo."));
     stats.failed++;
@@ -284,43 +348,221 @@ async function processFullRow(svc: SupabaseClient, auth: ApolloAuth, userId: str
     const work = isMaskedEmail(person.email) ? null : person.email;
     const personal = (person.personal_emails || []).find((e: string) => !isMaskedEmail(e)) || null;
     if (work || personal) patch.email = r.email || work || personal;
+    if (!r.email && (work || personal)) patch.source_provider = { ...sources(r, patch), email: "apollo" };
     if (person.email_status) patch.email_status = person.email_status;
     else if (r.email_status === "pending") patch.email_status = (work || personal || r.email) ? null : "unavailable";
-    // Algunos planes devuelven el teléfono en la misma respuesta.
-    const syncPhone = (person.phone_numbers || [])
-      .map((n: Json) => n?.sanitized_number || n?.raw_number)
-      .find(Boolean);
-    if (syncPhone) {
-      patch.phone = syncPhone;
-      patch.phone_status = "revealed";
-    }
+    // Algunos planes devuelven el teléfono en la misma respuesta (el mejor,
+    // en E.164 y con su tipo: _shared/phone-latam.ts).
+    if (!r.phone) apolloPhonePatch(r, person, patch);
     patch.snapshot = Object.assign({}, r.snapshot || {}, person);
-    if (patch.email) stats.enriched++; else stats.noData++;
   } else {
     // Sin persona no habrá webhook de teléfono: devolver el estado previo;
     // si no, la fila decía "Pendiente" para siempre y nunca se reintentaba.
     if (revealPhones && (prevPhoneStatus === "none" || prevPhoneStatus === "unavailable")) patch.phone_status = prevPhoneStatus;
     if (r.email_status === "pending") patch.email_status = r.email ? null : "unavailable";
-    stats.noData++;
   }
   // Si pidió teléfono y no llegó en la respuesta, queda en 'pending' hasta
-  // que apollo-webhook lo entregue.
-  await finishRow(svc, r.id, patch);
+  // que apollo-webhook lo entregue (y, con la cascada, hasta que venza la espera).
+  await continueWaterfall(svc, userId, r, patch, stats, wf, {
+    apolloPhonePending: revealPhones && !!person && !patch.phone,
+  });
 }
+
+// ── waterfall: los demás proveedores si Apollo no lo encontró ─────────────
+
+interface Waterfall {
+  order: Record<Field, EnrichProvider[]>;
+  verifier: EmailVerifier | null;
+  /** Proveedores apagados en esta invocación (key inválida o sin saldo). */
+  disabled: Set<string>;
+  deadline: number;
+}
+
+const env = (k: string) => Deno.env.get(k);
+
+const WATERFALL_PRICE: Record<Field, number> = {
+  email: CREDIT_COSTS.enrich_email_waterfall,
+  phone: CREDIT_COSTS.enrich_phone_waterfall,
+};
+
+function hasCascade(wf: Waterfall): boolean {
+  return wf.order.email.length > 0 || wf.order.phone.length > 0 || !!wf.verifier;
+}
+
+const sameInstant = (a: unknown, b: unknown) => !!a && !!b && Date.parse(String(a)) === Date.parse(String(b));
+
+function settler(svc: SupabaseClient, userId: string) {
+  return async (f: Field, reserved: number, found: boolean) => {
+    // Nunca se devuelve más de lo que vale el campo (el estado lo escribe
+    // solo la service role, pero no se confía en un número guardado).
+    const held = Math.min(Math.max(0, reserved), WATERFALL_PRICE[f]);
+    if (held <= 0) return;
+    await settleReservation(svc, userId, held, found ? held : 0, f === "email" ? "enrich_email_waterfall" : "enrich_phone_waterfall");
+  };
+}
+
+/** Verifica un email que ya trajo Apollo sin «verified» (1 crédito con veredicto). */
+async function verifyApolloEmail(svc: SupabaseClient, userId: string, wf: Waterfall, email: string) {
+  const v = wf.verifier;
+  if (!v || wf.disabled.has(v.id)) return null;
+  const cost = CREDIT_COSTS.email_verify;
+  if (!(await reserveCredits(svc, userId, cost))) return null;
+  const res = await v.verify({ key: keyFor(env, v.id), fetch }, email);
+  if (res.kind === "error") {
+    if (res.disable) wf.disabled.add(v.id);
+    await refundCredits(svc, userId, cost, "email_verify_refund");
+    return null;
+  }
+  const conclusive = res.verdict === "valid" || res.verdict === "invalid" || res.verdict === "catch_all";
+  await settleReservation(svc, userId, cost, conclusive ? cost : 0, "email_verify");
+  return { verdict: res.verdict, verifier: v.id };
+}
+
+/**
+ * Después de Apollo (modo 'full') o en una fila pospuesta: decide qué falta,
+ * corre un paso de la cascada y guarda la fila — terminada o pospuesta.
+ */
+async function continueWaterfall(
+  svc: SupabaseClient, userId: string, r: Json, patch: Record<string, unknown>, stats: Stats, wf: Waterfall,
+  opts: { apolloPhonePending?: boolean; state?: WaterfallState | null } = {},
+) {
+  const count = () => { if (usableEmail(patch.email ?? r.email) || patch.phone) stats.enriched++; else stats.noData++; };
+  let state = opts.state || null;
+  if (!hasCascade(wf) || r.enrich_mode !== "full") {
+    // Se quitaron los secrets con una cascada a medias: devolver lo reservado.
+    if (state) await abandon(state, settler(svc, userId));
+    await finishRow(svc, r.id, patch);
+    count();
+    return;
+  }
+
+  if (!state) {
+    const need: Field[] = [];
+    const freshEmail = !r.email && usableEmail(patch.email);
+    // Email que Apollo acaba de traer sin «verified»: el verificador decide.
+    // Un inválido no se guarda (rebotaría en la campaña) y se busca otro. Un
+    // email que la fila ya tenía no se verifica aquí (nadie lo pidió).
+    const apolloStatus = String(patch.email_status ?? "").toLowerCase();
+    const toVerify = freshEmail ? usableEmail(patch.email) : "";
+    if (toVerify && apolloStatus !== "verified") {
+      const v = await verifyApolloEmail(svc, userId, wf, toVerify);
+      if (v) {
+        patch.email_verification = v.verdict;
+        patch.email_verified_at = nowIso();
+        patch.source_provider = { ...sources(r, patch), email_verifier: v.verifier };
+        if (v.verdict === "invalid" && freshEmail) {
+          patch.source_provider = { ...(patch.source_provider as Json), rejected_emails: [toVerify], email: null };
+          patch.email = null;
+          patch.email_verification = null;
+        }
+      }
+    }
+    if (!usableEmail(patch.email ?? r.email)) need.push("email");
+    if (r.enrich_reveal_phones && !(patch.phone ?? r.phone)) need.push("phone");
+    const wanted = need.filter((f) => wf.order[f].length > 0);
+    if (!wanted.length) { await finishRow(svc, r.id, patch); count(); return; }
+    state = newState(wanted);
+    if (wanted.includes("phone") && opts.apolloPhonePending) {
+      state.wait_apollo_phone_until = new Date(Date.now() + APOLLO_PHONE_WAIT_MS).toISOString();
+    }
+    if (patch.source_provider && (patch.source_provider as Json).rejected_emails) {
+      state.rejected = [...(patch.source_provider as Json).rejected_emails];
+    }
+  }
+
+  // ¿Llegó (o se descartó) el teléfono de Apollo mientras se esperaba?
+  if (state.wait_apollo_phone_until) {
+    if (patch.phone || r.phone) {
+      state.done = [...new Set([...state.done, "phone" as Field])];
+      state.wait_apollo_phone_until = null;
+    } else if ((patch.phone_status ?? r.phone_status) !== "pending" || Date.parse(state.wait_apollo_phone_until) <= Date.now()) {
+      state.wait_apollo_phone_until = null;
+    }
+  }
+
+  const person = { ...r, ...patch };
+  const out = await stepWaterfall(state, person, {
+    order: wf.order,
+    keyFor: (id) => keyFor(env, id),
+    verifier: wf.verifier,
+    fetch,
+    now: () => Date.now(),
+    deadline: wf.deadline,
+    disabled: wf.disabled,
+    reserve: (f) => reserveCredits(svc, userId, WATERFALL_PRICE[f]),
+    settle: settler(svc, userId),
+    price: (f) => WATERFALL_PRICE[f],
+  });
+
+  const src = sources(r, patch);
+  if (out.email) {
+    patch.email = out.email.address;
+    patch.email_verification = out.email.verdict;
+    patch.email_verified_at = nowIso();
+    if ((patch.email_status ?? r.email_status) === "pending" || (patch.email_status ?? r.email_status) === "unavailable") patch.email_status = null;
+    Object.assign(src, { email: out.email.provider, email_via: out.email.via, email_verifier: out.email.verifier });
+  }
+  if (out.phone) {
+    patch.phone = out.phone.phone.e164;
+    patch.phone_type = out.phone.phone.type;
+    patch.phone_status = "revealed";
+    Object.assign(src, { phone: out.phone.provider, phone_via: out.phone.via });
+  }
+  if (out.rejected.length) src.rejected_emails = [...new Set([...(src.rejected_emails as string[] || []), ...out.rejected])].slice(-5);
+  if (Object.keys(src).length) patch.source_provider = src;
+  if (out.noCredits.length) patch.enrich_error = NO_CREDITS_WATERFALL;
+  if (!patch.enriched_at) patch.enriched_at = nowIso();
+
+  const phoneLeft = out.state.need.includes("phone") && !out.state.done.includes("phone");
+  if (out.next.kind === "wait") {
+    // Mientras la cascada busca el teléfono, la fila lo muestra «Pendiente».
+    if (phoneLeft && !(patch.phone ?? r.phone)) patch.phone_status = "pending";
+    // Sin tiempo en esta invocación (seconds = 0): la toma la próxima corrida.
+    const at = new Date(Date.now() + Math.max(20, out.next.seconds) * 1000).toISOString();
+    await updateRow(svc, r.id, {
+      ...patch,
+      enrich_waterfall: { ...out.state, req: at },
+      enrich_requested_at: at,
+      enrich_claimed_at: null,
+      enrich_attempts: 0,
+    });
+    stats.deferred++;
+    return;
+  }
+  // Terminó: un teléfono buscado y no encontrado deja de estar «Pendiente».
+  if (out.state.need.includes("phone") && !(patch.phone ?? r.phone) && (patch.phone_status ?? r.phone_status) === "pending") {
+    patch.phone_status = "unavailable";
+  }
+  await finishRow(svc, r.id, patch);
+  count();
+}
+
+const NO_CREDITS_WATERFALL = "Sin créditos para seguir buscando con otros proveedores. Recarga y vuelve a enriquecer.";
 
 // ── lote ───────────────────────────────────────────────────────────────────
 
-interface Stats { enriched: number; noData: number; failed: number; retried: number }
+interface Stats { enriched: number; noData: number; failed: number; retried: number; deferred: number }
 
-async function processUserRows(svc: SupabaseClient, userId: string, rows: Json[], stats: Stats, authCache: Map<string, ApolloAuth | Error>) {
+async function processUserRows(svc: SupabaseClient, userId: string, rows: Json[], stats: Stats, authCache: Map<string, ApolloAuth | Error>, wf: Waterfall) {
   // Filas que ya se reclamaron demasiadas veces sin terminar (la invocación
   // murió con ellas): cerrarlas en vez de reintentarlas para siempre.
   const live: Json[] = [];
   for (const r of rows) {
+    const state = isState(r.enrich_waterfall) ? r.enrich_waterfall as WaterfallState & { req?: string } : null;
     if (r.enrich_attempts > MAX_ATTEMPTS) {
+      if (state) await abandon(state, settler(svc, userId));
       await finishRow(svc, r.id, failPatch(r, r.enrich_error || "No se pudo enriquecer tras varios intentos."));
       stats.failed++;
+    } else if (state && sameInstant(state.req, r.enrich_requested_at)) {
+      // Fila pospuesta por la cascada: Apollo ya pasó, sigue desde el estado.
+      await continueWaterfall(svc, userId, r, {}, stats, wf, { state });
     } else {
+      // El usuario volvió a pedir el enriquecimiento: la cascada anterior se
+      // descarta (y se devuelve lo que tenía reservado).
+      if (state) {
+        await abandon(state, settler(svc, userId));
+        r.enrich_waterfall = null;
+      }
       live.push(r);
     }
   }
@@ -345,7 +587,7 @@ async function processUserRows(svc: SupabaseClient, userId: string, rows: Json[]
     const names = new Map<string, string>((lists || []).map((l: Json) => [l.id, l.name]));
     await processEmailRows(svc, auth, userId, emailRows, names, stats);
   }
-  for (const r of fullRows) await processFullRow(svc, auth, userId, r, stats);
+  for (const r of fullRows) await processFullRow(svc, auth, userId, r, stats, wf);
 }
 
 Deno.serve(async (req: Request) => {
@@ -367,10 +609,29 @@ Deno.serve(async (req: Request) => {
     userFilter = user.id;
   }
 
+  let body: Json = {};
+  try { body = await req.json(); } catch (_) { /* cuerpo vacío = procesar la cola */ }
+  if (body?.action === "providers") {
+    return json({
+      ...publicConfig(env),
+      costs: {
+        email: CREDIT_COSTS.enrich_email_waterfall,
+        phone: CREDIT_COSTS.enrich_phone_waterfall,
+        verify: CREDIT_COSTS.email_verify,
+      },
+    }, 200, h);
+  }
+
   const started = Date.now();
   const remainingMs = () => INVOCATION_BUDGET_MS - (Date.now() - started);
-  const stats: Stats = { enriched: 0, noData: 0, failed: 0, retried: 0 };
+  const stats: Stats = { enriched: 0, noData: 0, failed: 0, retried: 0, deferred: 0 };
   const authCache = new Map<string, ApolloAuth | Error>();
+  const wf: Waterfall = {
+    order: providerOrder(env),
+    verifier: activeVerifier(env),
+    disabled: new Set(),
+    deadline: started + WATERFALL_DEADLINE_MS,
+  };
   let batches = 0;
 
   try {
@@ -390,7 +651,7 @@ Deno.serve(async (req: Request) => {
         list.push(r);
         byUser.set(r.user_id, list);
       }
-      for (const [uid, urows] of byUser) await processUserRows(svc, uid, urows, stats, authCache);
+      for (const [uid, urows] of byUser) await processUserRows(svc, uid, urows, stats, authCache, wf);
     }
   } catch (e) {
     console.error("[enrich-list]", (e as Error).message);
