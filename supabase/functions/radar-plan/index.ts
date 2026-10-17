@@ -48,6 +48,7 @@ import { CREDIT_COSTS, minCadenceHours } from "../_shared/credit-costs.ts";
 import { RADAR_RECIPES, RECIPE_CATEGORIES, buildRecipeDetector, recipeById } from "../_shared/radar-recipes.ts";
 import { canonicalCountries } from "../_shared/radar-geo.ts";
 import { TECH_GROUPS, TECH_RULES, techLabel } from "../_shared/site-probe.ts";
+import { registryAvailableFor } from "../_shared/registry-fetch.ts";
 import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
 
 // Keep in sync with js/credit-costs.js (radar_plan / radar_detector_custom).
@@ -84,7 +85,16 @@ export async function availabilityFor(supa: Json, userId: string): Promise<Avail
     apollo_user: apolloUser,
     places: !!Deno.env.get("GOOGLE_PLACES_API_KEY"),
     probe: true,
+    registry: registryAvailableFor(await planCountries(supa, userId)),
   };
+}
+
+/** Países del plan (o del contexto si todavía no hay plan): deciden si hay registro público. */
+async function planCountries(supa: Json, userId: string): Promise<string[]> {
+  const { data: plan } = await supa.from("radar_plans").select("countries").eq("user_id", userId).maybeSingle();
+  if (Array.isArray(plan?.countries) && plan.countries.length) return plan.countries;
+  const { data: intake } = await supa.from("intel_hub_intake").select("icp_countries").eq("user_id", userId).maybeSingle();
+  return canonicalCountries(Array.isArray(intake?.icp_countries) ? intake.icp_countries : []);
 }
 
 function unavailableReason(kind: DetectorKind, av: Availability): string {
@@ -95,6 +105,7 @@ function unavailableReason(kind: DetectorKind, av: Availability): string {
     places: "Google Places (GOOGLE_PLACES_API_KEY)",
     llm_web: "un motor de IA con búsqueda web",
     probe: "sondeo web",
+    registry: "un país del plan con registro público conectado (Brasil con CNPJA_API_KEY, México con INEGI_DENUE_TOKEN, o Colombia)",
   };
   return "Necesita " + missing.map((m) => label[m] || m).join(" y ");
 }

@@ -16,6 +16,14 @@ export const CREDIT_COSTS = {
   enrich_email: 2,
   enrich_phone: 8,
 
+  // Registros públicos de empresas (company-registry). México (DENUE) y
+  // Colombia (datos.gov.co) son fuentes gratuitas, igual que la ficha por
+  // CNPJ (BrasilAPI): 0. La búsqueda de Brasil va por CNPJá, que cobra por
+  // consulta: una página de hasta 25 empresas, o una ficha buscada por el
+  // dominio del email de registro. Revisar con el contrato de CNPJá.
+  registry_search_br: 5,
+  registry_lookup_br: 1,
+
   // Mensajes IA.
   outreach_full: 4,          // "Preparar con IA" (5 capas + prep del coach)
   outreach_step: 2,          // un paso de campaña o un borrador de la Bandeja

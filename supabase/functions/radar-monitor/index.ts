@@ -61,6 +61,7 @@ import { detectorsFromHub, type Availability } from "../_shared/radar-planner.ts
 import { platformKey } from "../_shared/apollo-auth.ts";
 import { minCadenceHours, radarDetectorMonthCost } from "../_shared/credit-costs.ts";
 import { PLAN_LIMITS, planForUser } from "../_shared/billing-plans.ts";
+import { registryAvailableFor } from "../_shared/registry-fetch.ts";
 
 const BILLING_PERIOD_MS = 30 * 86400_000;
 
@@ -395,6 +396,7 @@ async function hubRefreshUnit(supa: Json): Promise<number> {
       const av: Availability = {
         llm_web: true, apollo: !!bundle.apollo || !!platformKey(), apollo_user: !!bundle.apollo && bundle.apollo.mode !== "platform",
         places: !!Deno.env.get("GOOGLE_PLACES_API_KEY"), probe: true,
+        registry: registryAvailableFor(bundle.ctx.targets.countries),
       };
       const { data: existing } = await supa.from("radar_detectors").select("kind, name").eq("plan_id", plan.id);
       const extra = await detectorsFromHub({ engine: bundle.engine, ctx: bundle.ctx, hubText: hub.text, existing: existing || [], availability: av });
