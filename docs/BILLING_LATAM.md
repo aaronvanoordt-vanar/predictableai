@@ -1,6 +1,6 @@
 # Cobro local y factura en Latam (investigación, 2026-10-17)
 
-> **Estado: fase 1, solo investigación.** No cambia código de billing. Cierra la parte de investigación del ítem P2 «Cobro local y CFDI» de `docs/ROADMAP_GTM_OS.md`; la implementación espera a que el dueño elija una opción (§6).
+> **Estado: el dueño aprobó la Fase A (2026-10-17); el código está en este PR y faltan los pasos del Dashboard de Stripe y la consulta al contador (§6.1).** La Fase B (entidad mexicana + CFDI) sigue sin decidir. Ítem P2 «Cobro local y CFDI» de `docs/ROADMAP_GTM_OS.md`.
 >
 > **No es asesoría fiscal ni legal.** Lo marcado con **[contador]** lo tiene que confirmar un contador o abogado del país antes de decidir. Las fuentes son oficiales cuando existen (SAT, DIAN, SII, SUNAT, docs de Stripe); cuando solo había análisis de despachos, se dice. Los datos de Stripe se leyeron en sus páginas públicas el 2026-10-17: lo que está en *preview* puede cambiar, y lo que vale es lo que muestre el Dashboard de la cuenta.
 
@@ -115,6 +115,25 @@ Nada de esto está construido. Reglas para cuando se haga:
 2. **Moneda local** (MXN, BRL, COP, CLP, PEN) en Checkout para subir la aprobación de tarjetas corporativas.
 3. **OXXO para recargas** (pago único, ≤ 10,000 MXN: el paquete de 5,000 créditos ronda 6,500 MXN) y **Pix** si el Dashboard lo ofrece en la cuenta (también en suscripciones).
 4. **Respuesta del contador sobre el 18-B** antes de vender más en México. Si aplica, inscribir la LLC (ficha 1/PLT), cobrar 16 % con Stripe Tax y emitir el comprobante del 18-D. Eso **no** es CFDI, pero el cliente acredita el IVA.
+
+### 6.1 Fase A: qué quedó hecho y qué falta
+
+**En el código (este PR):**
+- `billing` → `checkout_topup` crea una **factura** de Stripe al pagar la recarga (`invoice_creation`), con el número fiscal del cliente (`tax_id_collection`) y su domicilio. Antes la recarga solo dejaba un recibo sin RFC, que no sirve para deducir. La suscripción ya pedía el número fiscal y ya emitía factura.
+- `stripe-webhook` no cambia: la factura de la recarga llega como `invoice.paid` con `billing_reason = "manual"` y se ignora; los créditos siguen saliendo **solo** de la sesión pagada (`billing_add_topup`, idempotente por sesión), también cuando el pago es asíncrono (OXXO, Pix: `checkout.session.async_payment_succeeded`).
+- `js/credits.js`: al volver del Checkout, el aviso ya no dice «Pago recibido» a quien eligió OXXO o Pix y todavía no pagó.
+- Los créditos no dependen del monto ni de la moneda del cobro (salen del paquete o del plan), así que cobrar en MXN o BRL no cambia lo que se acredita.
+
+**En el Dashboard de Stripe (lo hace el dueño; la clave restringida de `billing` solo lee Prices):**
+1. *Settings → Business → Public details*: nombre legal y domicilio de la LLC. *Settings → Billing → Invoice template*: agregar el EIN de la LLC como número fiscal por defecto de las facturas. Con eso la factura trae todo lo que pide la regla 2.7.1.14 (emisor con domicilio y número fiscal, fecha y lugar, RFC del receptor, descripción e importe).
+2. *Product catalog*: a los precios de Starter (mensual y anual) y de las tres recargas, agregar **monedas** (`currency_options`): MXN, BRL, COP, CLP y PEN, redondeadas. Se mantiene el mismo `price_…`, así que `_shared/billing-plans.ts` no cambia. Argentina se queda en USD por la conversión y las percepciones. Alternativa: *Adaptive Pricing* (Stripe convierte solo y cobra el cambio al cliente).
+3. *Settings → Payment methods* (configuración de Checkout): encender **OXXO** y **Pix** si la cuenta los ofrece. Solo aparecen cuando el cobro es en MXN o BRL (paso 2). OXXO no sirve para suscripciones: queda para las recargas (el tope de 10,000 MXN cubre el paquete de 5,000 créditos).
+4. *Developers → Webhooks*: confirmar que el endpoint de `stripe-webhook` tiene `checkout.session.async_payment_succeeded` (sin ese evento, una recarga pagada en OXXO nunca se acredita).
+5. Antes de desplegar `billing`: probar en modo de prueba una recarga con tarjeta mexicana y otra con OXXO. Si Checkout rechaza `invoice_creation` por permisos, darle a la clave restringida (`STRIPE_SECRET_KEY`) escritura en *Invoices*. Mientras no se despliegue, producción sigue con la versión anterior.
+
+**Con el contador:** la pregunta del 18-B (§3.3). Si aplica, inscribir la LLC (ficha 1/PLT) y activar Stripe Tax para México con ese registro.
+
+Hasta que los pasos 2–3 estén hechos, la app no anuncia pagos en moneda local ni OXXO: la única copia nueva es el aviso de vuelta, que es cierto con o sin ellos.
 
 ### Fase B — cuando haya demanda mexicana pagada (2–4 meses, costo fijo mensual)
 
