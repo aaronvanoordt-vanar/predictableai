@@ -108,7 +108,7 @@ export function validateColumnDraft(raw: Json): { ok: true; column: ColumnDraft 
   };
 }
 
-/** Créditos por fila RESPONDIDA (las «No encontrado» y los errores no se cobran). */
+/** Créditos por fila investigada (también «No encontrado»; los errores no se cobran). */
 export function cellCost(column: { use_web?: boolean }): number {
   return column?.use_web === false ? CREDIT_COSTS.ai_column_cell_basic : CREDIT_COSTS.ai_column_cell;
 }

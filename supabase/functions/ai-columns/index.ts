@@ -25,9 +25,10 @@
  * evidencia o fuera del tipo pedido = «No encontrado». Nunca se inventa.
  *
  * Créditos (_shared/credit-costs.ts): ai_column_cell (con web) o
- * ai_column_cell_basic (sin web) por FILA RESPONDIDA. Se reserva antes de
- * llamar al modelo y se liquida después: «No encontrado» y los errores se
- * devuelven. Sin saldo, la celda queda en error «Sin créditos» y el resto de
+ * ai_column_cell_basic (sin web) por fila que la IA investigó, también
+ * «No encontrado» (decisión del dueño, 2026-10-17). Se reserva antes de
+ * llamar al modelo y se liquida después; los errores y las filas sin
+ * empresa (no llegan a la IA) no se cobran. Sin saldo, la celda queda en error «Sin créditos» y el resto de
  * la cola del usuario también (no se reintenta en loop).
  *
  * Auth: Bearer <service role> (cron) o <user JWT>. Se despliega CON
@@ -305,7 +306,9 @@ async function processCell(
     let parsed: Json = null;
     try { parsed = parseLlmJson(res.text); } catch (_) { parsed = null; }
     const answer = normalizeAnswer(draft, parsed);
-    const charged = answer.status === "done" ? cost : 0;
+    // Toda fila investigada se cobra, también «No encontrado» (decisión del
+    // dueño, 2026-10-17: la búsqueda se hizo igual). Los errores no.
+    const charged = cost;
     await settleReservation(svc, userId, cost, charged, "ai_column_cell");
     await finishCell(svc, cell.id, {
       ...answer,

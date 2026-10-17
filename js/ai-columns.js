@@ -114,7 +114,7 @@
     if (!res.ok) {
       var msg;
       if (res.status === 404 && !body) msg = 'Las columnas IA todavía no están disponibles (falta desplegar la función ai-columns).';
-      else if (body && body.error === 'insufficient_credits') msg = 'No tienes créditos suficientes: cada fila respondida cuesta ' + body.cost + ' y tienes ' + body.balance + '.';
+      else if (body && body.error === 'insufficient_credits') msg = 'No tienes créditos suficientes: cada fila cuesta ' + body.cost + ' y tienes ' + body.balance + '.';
       else msg = (body && (body.detail || body.error)) || ('HTTP ' + res.status);
       var err = new Error(msg);
       err.status = res.status;
@@ -578,9 +578,9 @@
       body.querySelector('[data-show="category"]').hidden = d.answer_type !== 'category';
       var cost = cellCost(d);
       var n = members().length;
-      body.querySelector('[data-cost]').innerHTML = '<b>' + esc(cost) + ' crédito' + (cost === 1 ? '' : 's') + ' por fila respondida</b>' +
+      body.querySelector('[data-cost]').innerHTML = '<b>' + esc(cost) + ' crédito' + (cost === 1 ? '' : 's') + ' por fila</b>' +
         (d.use_web ? ' (con búsqueda web)' : ' (solo con los datos del contacto)') +
-        '. «No encontrado» no se cobra. Esta lista tiene ' + esc(fmtNum(n)) + ' contacto' + (n === 1 ? '' : 's') +
+        ', también si queda «No encontrado» (solo los errores no se cobran). Esta lista tiene ' + esc(fmtNum(n)) + ' contacto' + (n === 1 ? '' : 's') +
         ': responderla entera cuesta hasta ' + esc(fmtNum(n * cost)) + ' créditos. Primero se prueba con ' + SAMPLE_SIZE + '.';
     }
     body.addEventListener('click', function (e) {
@@ -673,7 +673,7 @@
         title: rerun ? 'Volver a preguntar todas las filas' : 'Responder toda la columna',
         bodyNode: el('div', null,
           '<p>Se responderán <b>' + esc(fmtNum(n)) + '</b> fila' + (n === 1 ? '' : 's') + ' de «' + esc(col.name) + '» en el servidor.</p>' +
-          '<p>Costo: <b>hasta ' + esc(fmtNum(n * cost)) + ' créditos</b> (' + esc(cost) + ' por fila respondida; «No encontrado» no se cobra).' +
+          '<p>Costo: <b>hasta ' + esc(fmtNum(n * cost)) + ' créditos</b> (' + esc(cost) + ' por fila, también si queda «No encontrado»; los errores no se cobran).' +
           (rerun ? ' Las respuestas actuales se reemplazan y se vuelven a cobrar.' : '') + '</p>'),
         onClose: resolve,
         actions: [
@@ -699,7 +699,7 @@
     var body = el('div', { class: 'aic-form' },
       '<div class="aic-q">' + esc(col.question) + '</div>' +
       '<div class="pros-cellsub">' + esc(typeLabel) + (col.answer_type === 'category' ? ': ' + esc((col.options || []).join(' · ')) : '') +
-        ' · ' + (col.use_web === false ? 'sin búsqueda web' : 'con búsqueda web') + ' · ' + esc(cost) + ' crédito' + (cost === 1 ? '' : 's') + ' por fila respondida</div>' +
+        ' · ' + (col.use_web === false ? 'sin búsqueda web' : 'con búsqueda web') + ' · ' + esc(cost) + ' crédito' + (cost === 1 ? '' : 's') + ' por fila</div>' +
       '<div class="aic-stats">' +
         '<div><b>' + esc(fmtNum(s.done)) + '</b><span>Respondidas</span></div>' +
         '<div><b>' + esc(fmtNum(s.not_found)) + '</b><span>No encontrado</span></div>' +
@@ -781,7 +781,7 @@
         (c.source_url ? '<div style="margin-top:6px"><a href="' + esc(safeUrl(c.source_url)) + '" target="_blank" rel="noopener noreferrer">' + esc(c.source_url) + '</a></div>'
           : '<div class="pros-cellsub" style="margin-top:6px">Sale de los datos del contacto (sin enlace).</div>') + '</div>';
     } else if (c.status === 'not_found') {
-      html += '<div class="aic-sec">La IA no encontró una fuente que respalde una respuesta' + (c.evidence ? ': ' + esc(c.evidence) : '.') + ' No se cobró.</div>';
+      html += '<div class="aic-sec">La IA no encontró una fuente que respalde una respuesta' + (c.evidence ? ': ' + esc(c.evidence) : '.') + '</div>';
     } else if (c.status === 'error') {
       html += '<div class="aic-sec">' + esc(c.error || 'No se pudo responder.') + '</div>';
     }
