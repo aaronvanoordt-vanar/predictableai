@@ -95,6 +95,7 @@ import * as apolloAuth from "../_shared/apollo-auth.ts";
 import * as gmail from "../_shared/gmail.ts";
 import * as suppression from "../_shared/suppression.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import { aiColumnMatches, aiColumnPending } from "../_shared/ai-columns.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -961,8 +962,13 @@ async function handleStepError(ctx: Ctx, en: Json, step: StepLike, e: unknown): 
 
 // ── Camino con grafo (campaigns.flow) ───────────────────────────────────────
 
-async function evalCondition(ctx: Ctx, en: Json, check: flowLib.ConditionCheck): Promise<boolean> {
+/** Cuánto espera un lead cuya celda de Columna IA sigue en cola, y hasta cuándo. */
+const AI_COLUMN_WAIT_MS = 15 * 60 * 1000;
+const AI_COLUMN_MAX_WAIT_MS = 24 * 60 * 60 * 1000;
+
+async function evalCondition(ctx: Ctx, en: Json, node: flowLib.ConditionNode): Promise<boolean | "wait"> {
   const db = ctx.db;
+  const check = node.check;
   const hasEvent = async (types: string[], channel?: string) => {
     let q = db.from("campaign_events").select("id", { count: "exact", head: true }).eq("enrollment_id", en.id).in("type", types);
     if (channel) q = q.eq("channel", channel);
@@ -992,6 +998,27 @@ async function evalCondition(ctx: Ctx, en: Json, check: flowLib.ConditionCheck):
       if (check === "has_phone") return !!wati.digits(m.phone);
       if (check === "has_email") return hasEmail(m);
       return !!dripify.canonicalLinkedinUrl(m.linkedin_url);
+    }
+    // Columna IA de Listas (2026-10-17): la celda de ESTE lead en esa columna.
+    // Sin la tabla (migración sin aplicar) o sin celda → No.
+    case "ai_column": {
+      const rule = node.settings?.ai_column ?? null;
+      if (!rule) return false;
+      const { data: cell, error } = await db.from("list_ai_cells")
+        .select("status, value_bool, value_num, value_text")
+        .eq("column_id", rule.column_id).eq("member_id", en.member_id).eq("user_id", en.user_id)
+        .maybeSingle();
+      if (error) { console.warn("[campaign-run] ai_column:", error.message); return false; }
+      if (aiColumnPending(cell)) {
+        // La respuesta viene en camino: esperar, pero no para siempre (la
+        // cola sin cron o detenida a medias no deja al lead clavado). Se
+        // cuenta desde que la condición debía evaluarse.
+        const base = Date.parse(en.last_action_at || en.started_at || "") || ctx.now.getTime();
+        const dueAt = base + flowLib.delayMs(node);
+        if (ctx.now.getTime() - dueAt > AI_COLUMN_MAX_WAIT_MS) return false;
+        return "wait";
+      }
+      return aiColumnMatches(rule, cell);
     }
   }
   return false;
@@ -1037,10 +1064,17 @@ async function runFlow(ctx: Ctx, en: Json, campaign: Json, flow: flowLib.Flow) {
   const node = loc.node;
 
   if (node.type === "condition") {
-    const yes = await evalCondition(ctx, en, node.check);
+    const result = await evalCondition(ctx, en, node);
+    if (result === "wait") {
+      const detail = `Esperando la respuesta de la columna IA «${node.settings?.ai_column?.column_name || "columna IA"}» para este lead.`;
+      if (en.error_detail !== detail) await event(ctx, en, "system", "skipped", { detail: detail + " Se vuelve a mirar en 15 minutos.", node_id: node.id });
+      await finish(ctx, en, { status: "active", next_run_at: new Date(ctx.now.getTime() + AI_COLUMN_WAIT_MS).toISOString(), error_detail: detail });
+      return;
+    }
+    const yes = result;
     const branch = yes ? "yes" : "no";
     const path = Array.isArray(en.branch_path) ? en.branch_path : [];
-    await event(ctx, en, "system", "branched", { detail: `${node.check}: ${yes ? "Sí" : "No"}`, node_id: node.id, payload: { check: node.check, branch } });
+    await event(ctx, en, "system", "branched", { detail: `${node.check === "ai_column" ? `Columna IA «${node.settings?.ai_column?.column_name || "?"}»` : node.check}: ${yes ? "Sí" : "No"}`, node_id: node.id, payload: { check: node.check, branch } });
     const next = flowLib.enterBranch(flow, node.id, branch);
     const base = en.last_action_at ? new Date(en.last_action_at) : new Date(en.started_at);
     await moveTo(ctx, en, flow, next, base, null, { branch_path: [...path, { node_id: node.id, check: node.check, branch, at: ctx.now.toISOString() }] });
