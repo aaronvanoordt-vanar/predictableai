@@ -16,18 +16,33 @@
 
 import { isTechKey, probeKeysSpec } from "./site-probe.ts";
 import { NEWS_WINDOWS, normalizeWindowDays } from "./radar-recency.ts";
+import { normalizeChampionConfig } from "./champion-watch.ts";
+import { ICP_INDUSTRIES, allowOnly } from "./icp-taxonomy.ts";
 
 export type DetectorKind =
   | "news" | "tenders" | "hiring" | "technographics" | "site_probe"
-  | "funding" | "leadership" | "growth" | "presence" | "website_visitors" | "web_footprint";
+  | "funding" | "leadership" | "growth" | "presence" | "website_visitors" | "web_footprint"
+  | "public_registry" | "champion_moves";
 
 export const DETECTOR_KINDS: DetectorKind[] = [
   "news", "tenders", "web_footprint", "hiring", "technographics", "site_probe",
-  "funding", "leadership", "growth", "presence", "website_visitors",
+  "funding", "leadership", "growth", "presence", "website_visitors", "public_registry", "champion_moves",
 ];
 
+/**
+ * Kinds que NO diseña la IA del plan: `champion_moves` no busca empresas del
+ * mercado sino que sigue a personas que el usuario ya conoce (su lista de
+ * champions, _shared/champion-watch.ts). Se activa desde la pestaña
+ * Champions del Radar (radar-plan → champion_detector), nunca desde un plan
+ * generado ni desde el Hub.
+ */
+export const USER_ONLY_KINDS: DetectorKind[] = ["champion_moves"];
+export function isPlannerKind(kind: DetectorKind): boolean {
+  return !USER_ONLY_KINDS.includes(kind);
+}
+
 /** Qué necesita cada metodología para correr. */
-export type Requirement = "llm_web" | "apollo" | "apollo_user" | "places" | "probe";
+export type Requirement = "llm_web" | "apollo" | "apollo_user" | "places" | "probe" | "registry";
 
 export interface KindMeta {
   label: string;
@@ -94,7 +109,23 @@ export const KIND_META: Record<DetectorKind, KindMeta> = {
     description: "Empresas que visitaron tu web (Apollo Website Visitors, requiere tu cuenta de Apollo con esa función).",
     requires: ["apollo_user"], defaultCadenceHours: 6, identity: "company",
   },
+  public_registry: {
+    label: "Registros públicos de empresas",
+    description: "Empresas recién constituidas, o que cambiaron de actividad o de tamaño, según el registro oficial de cada país (CNPJ en Brasil, DENUE en México, registro mercantil en Colombia). Llega a la pyme que Apollo no tiene.",
+    requires: ["registry"], defaultCadenceHours: 168, identity: "company",
+  },
+  champion_moves: {
+    label: "Tus champions cambian de empresa",
+    description: "Sigue a quienes ya te compraron o te respondieron bien (tu lista de champions): si Apollo los ubica en otra empresa, la nueva empresa es una señal. Con la key compartida, 2 créditos por persona encontrada.",
+    // Una señal por persona y empresa nueva: el titular lleva el nombre.
+    requires: ["apollo"], defaultCadenceHours: 24, identity: "headline",
+  },
 };
+
+/** Qué mira el detector de registros públicos. */
+export const REGISTRY_EVENTS = ["new_companies", "activity_change", "size_change"] as const;
+export type RegistryEvent = typeof REGISTRY_EVENTS[number];
+export const REGISTRY_WINDOWS = [30, 60, 90, 180] as const;
 
 export function isDetectorKind(v: unknown): v is DetectorKind {
   return typeof v === "string" && (DETECTOR_KINDS as string[]).includes(v);
@@ -259,11 +290,29 @@ function normalizeKindConfig(kind: DetectorKind, raw: unknown): Record<string, u
       if (!Object.keys(rules).length) return null;
       return { queries, cities, rules };
     }
+    case "public_registry": {
+      // Industrias del ICP (vacío = las del contexto al correr) y/o códigos de
+      // actividad propios del registro (CNAE / SCIAN / CIIU, prefijos).
+      const event: RegistryEvent = (REGISTRY_EVENTS as readonly string[]).includes(c.event) ? c.event : "new_companies";
+      const sizes = strList(c.sizes, 4, 10).filter((x) => ["micro", "small", "medium", "large"].includes(x));
+      const contact = ["phone", "email"].includes(c.require_contact) ? c.require_contact : "";
+      return {
+        event,
+        window_days: (REGISTRY_WINDOWS as readonly number[]).includes(Number(c.window_days)) ? Number(c.window_days) : 60,
+        industries: allowOnly(c.industries, ICP_INDUSTRIES, 10),
+        activity_codes: strList(c.activity_codes, 20, 12).map((x) => x.replace(/\D+/g, "")).filter((x) => x.length >= 2),
+        sizes,
+        regions: strList(c.regions, 6, 60),
+        require_contact: contact,
+      };
+    }
     case "website_visitors": {
       const days = [7, 15, 30, 60, 90].includes(Number(c.days)) ? Number(c.days) : 30;
       const intent = strList(c.intent, 3, 10).map((s) => s.toLowerCase()).filter((s) => ["low", "medium", "high"].includes(s));
       return { days, intent: intent.length ? intent : ["high", "medium"], pages: strList(c.pages, 6, 120) };
     }
+    case "champion_moves":
+      return { ...normalizeChampionConfig(c) };
   }
 }
 
@@ -306,7 +355,7 @@ export function normalizePlan(raw: unknown): NormalizedPlan {
   const seen = new Set<string>();
   for (const d of Array.isArray(p.detectors) ? p.detectors : []) {
     const n = normalizeDetector(d);
-    if (!n) continue;
+    if (!n || !isPlannerKind(n.kind)) continue;
     const key = n.kind + "|" + n.name.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -412,11 +461,11 @@ export const PLAN_JSON_SPEC = `{
   "countries_override": ["ONLY if the seller's TARGET DESCRIPTION explicitly names other countries than the context: canonical English names (e.g. 'Mexico', 'Peru'). Otherwise []."],
   "detectors": [
     {
-      "kind": "news | tenders | web_footprint | hiring | technographics | site_probe | funding | leadership | growth | presence | website_visitors",
+      "kind": "news | tenders | web_footprint | hiring | technographics | site_probe | funding | leadership | growth | presence | website_visitors | public_registry",
       "name": "≤ 60 chars, Spanish, what this detector hunts (e.g. 'Vacantes de SDR abiertas', 'Sin automatización de WhatsApp')",
       "rationale": "1-2 sentences, Spanish: why this observable fact means the company needs the seller now",
       "weight": 0-100 (how strongly this signal predicts a purchase; spread the values, do not cluster),
-      "cadence_hours": how often to re-run (news/tenders 48, leadership 48, hiring/funding/technographics/site_probe/growth 72, web_footprint/presence 168, website_visitors 6; lower values are raised to these floors),
+      "cadence_hours": how often to re-run (news/tenders 48, leadership 48, hiring/funding/technographics/site_probe/growth 72, web_footprint/presence/public_registry 168, website_visitors 6; lower values are raised to these floors),
       "decision_maker_titles": ["3-6 English job titles of who buys this at the target company"],
       "config": { see CONFIG BY KIND },
       "signal_index": "0-based index of the MARKET ANALYSIS signal this detector covers (omit if it covers none)"
@@ -437,4 +486,5 @@ ${PROBE_KEYS}
 - leadership:      { "titles": ["2-8 buyer titles in English"], "max_days_in_role": 90 }
 - growth:          { "months": 6|12|24, "min_growth_pct": 20 }
 - presence:        { "queries": ["1-3 business-type phrases in the local language, e.g. 'clínica dental', 'restaurante'"], "cities": ["3-5 cities in the target countries"], "rules": { "no_website": true|false, "no_phone": true|false, "max_rating": 4.0 (optional), "max_reviews": 20 (optional), "min_reviews": 50 (optional) } } — at least one rule.
-- website_visitors:{ "days": 30, "intent": ["high","medium"], "pages": ["optional path fragments, e.g. '/precios'"] }`;
+- website_visitors:{ "days": 30, "intent": ["high","medium"], "pages": ["optional path fragments, e.g. '/precios'"] }
+- public_registry: { "event": "new_companies" | "activity_change" | "size_change", "window_days": 30|60|90|180 (new_companies only), "industries": ["optional ICP industry values (same taxonomy as the context); empty = the seller's ICP industries"], "activity_codes": ["optional official activity-code prefixes: CNAE (Brazil) / CIIU (Colombia) 2-4 digits, SCIAN (Mexico) 2-6 digits"], "sizes": ["optional: micro | small | medium | large"], "regions": ["optional states: Brazilian UF like 'SP', Mexican state like 'Jalisco', Colombian chamber city like 'Medellín'"], "require_contact": "" | "phone" | "email" } — reads the official company registry: Brazil (CNPJ), Mexico (DENUE) and Colombia (Confecámaras). Only useful when the seller targets one of those countries. Best for sellers whose buyers are SMBs and newly formed companies (accounting, banking, payroll, insurance, POS, software for small businesses, office supplies, web design, legal). new_companies finds companies incorporated in the window (not available in Mexico: DENUE has no incorporation date); activity_change / size_change report companies whose registered activity or size bracket changed between two runs (the first run only takes a baseline).`;
