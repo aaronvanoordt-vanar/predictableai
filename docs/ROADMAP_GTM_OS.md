@@ -58,7 +58,7 @@ Decisión del dueño (2026-10-17): **Predictable se vuelve Tech Provider de Meta
 | Agencia | Reporte semanal automático, benchmarks por país e industria, plantillas de campaña de Eleva, supresión por cliente | Experiencia de Eleva |
 | Reuniones | Agendamiento propio + recordatorios por WhatsApp + traspaso al AE con BANT | El no-show es el gran problema |
 | Equipo | Metas, ranking, revisión de llamadas, rampa | Gestión del SDR |
-| Inbound | Formularios y widget que abren WhatsApp, enrutamiento, speed-to-lead — en curso (sesión propia, `docs/INBOUND.md`) | El inbound llega por WhatsApp |
+| Inbound | Formularios y widget que abren WhatsApp, enrutamiento, speed-to-lead — hecho, PR #368 (`docs/INBOUND.md`) | El inbound llega por WhatsApp |
 | Señales | Cambio de empresa de clientes y champions | Reuniones cálidas |
 | Cumplimiento | Bajas por canal y base legal: LGPD, Ley 1581, LFPDPPP, Ley 21.719 (Chile, dic 2026) | Lo exige el comprador mediano |
 | Cobro | Mercado Pago, Pix, OXXO, PSE, moneda local, factura CFDI | Sin factura no compra la empresa mexicana |
@@ -98,6 +98,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [x] Mapa de TAM — PR #355 (`js/tam-map.js`, `_shared/tam.ts`, edge function `tam-map`)
 - [ ] Señales de engagement en LinkedIn y píxel web
 - [x] Señales: cambio de empresa de clientes y champions (Radar → Champions, detector `champion_moves`)
+- [x] Inbound: widget web (formulario + botón de WhatsApp), enrutamiento a la nómina de Equipo y speed-to-lead — PR #368 (`docs/INBOUND.md`)
 
 **P3**
 - [ ] Automatizaciones de punta a punta
