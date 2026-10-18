@@ -248,8 +248,10 @@ Project Settings → Edge Functions → Secrets:
 
 ### 4. Base y funciones
 
-1. Aplica la migración `supabase/migrations/20261018200001_voice_agent.sql`.
-2. Despliega las funciones (Actions → Deploy Edge Functions, o por CLI):
+Todo esto se hace **desde `main`, después de mergear el PR** (regla del 2026-10-18 en `CLAUDE.md`: desplegar desde una rama atrasada deja código viejo de `_shared/` en producción).
+
+1. Aplica la migración `supabase/migrations/20261018200001_voice_agent.sql` (Actions → Apply Migration).
+2. Despliega solo estas dos funciones (Actions → Deploy Edge Functions sobre `main`, o por CLI):
    ```bash
    supabase functions deploy voice-agent
    supabase functions deploy voice-webhook --no-verify-jwt
