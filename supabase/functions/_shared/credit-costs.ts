@@ -48,6 +48,11 @@ export const CREDIT_COSTS = {
   // de calificación + investigación previa). Agendar y los recordatorios no
   // cuestan: no hay IA.
   meeting_handoff: 3,
+  // Seguimiento de champions (Radar → champion_moves): búsqueda web de
+  // respaldo cuando Apollo no ubica a la persona en su empresa (Haiku + 2
+  // búsquedas, ~0.02 USD). El match de Apollo se cobra como enrich_email
+  // solo con la key de la plataforma y solo si encontró a la persona.
+  champion_web_check: 2,
   // Columnas IA en Listas: por fila investigada, también «No encontrado»
   // (la búsqueda se hizo igual); un error no se cobra. Con búsqueda web (~1–2 búsquedas con Haiku o Sonar,
   // ≤ 0.035 USD) o solo con los datos del contacto (sin web, ~0.003 USD).
@@ -84,7 +89,7 @@ export const CREDIT_COSTS = {
 export type CreditAction = keyof typeof CREDIT_COSTS;
 
 /** Tipos de detector del Radar según lo que cuesta correrlos 30 días. */
-const RADAR_PEOPLE_KINDS = new Set(["leadership", "website_visitors"]);
+const RADAR_PEOPLE_KINDS = new Set(["leadership", "website_visitors", "champion_moves"]);
 const RADAR_WEB_KINDS = new Set(["news", "tenders", "web_footprint"]);
 const RADAR_PRESENCE_KINDS = new Set(["presence"]);
 
