@@ -74,6 +74,7 @@
     linkedin: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M7 9v5M7 6.4v.1M10.5 14v-3a2 2 0 0 1 4 0v3M10.5 9v5"/></svg>',
     campaign: '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 10h3l2-5 3 10 2-5h4"/></svg>',
     inbox: '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><path d="M3 4h14v9H8l-4 3v-3H3z"/></svg>',
+    voice: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h3l1.5 4-2 1.2a9 9 0 0 0 4.3 4.3l1.2-2 4 1.5v3a2 2 0 0 1-2 2A14 14 0 0 1 3 5a2 2 0 0 1 2-2z"/></svg>',
   };
   // Estados de plantilla de WhatsApp de los que Meta no vuelve: el motor omite
   // el paso en vez de esperarla. Espejo de TEMPLATE_DEAD en
@@ -85,6 +86,10 @@
     linkedin: { key: 'linkedin', label: 'LinkedIn', icon: SVG.linkedin, desc: 'Conexiones y mensajes con el ritmo seguro que decide tu propia cuenta de LinkedIn.' },
   };
   var CH_ORDER = ['email', 'whatsapp', 'linkedin'];
+  // Llamadas del agente de voz IA (js/voice-agent.js): solo aparecen en la
+  // Bandeja (no es un canal de campaña ni se conecta en la barra de canales).
+  CH.voice = { key: 'voice', label: 'Llamada', icon: SVG.voice, desc: 'Llamadas del agente de voz IA.' };
+  var INBOX_CH_ORDER = CH_ORDER.concat(['voice']);
 
   var DAYS = [
     { value: 1, label: 'Lu' }, { value: 2, label: 'Ma' }, { value: 3, label: 'Mi' }, { value: 4, label: 'Ju' },
@@ -3364,7 +3369,7 @@
     filters.appendChild(stSel);
     var row1 = h('div', { class: 'cmp-filter-row' });
     var chSel = h('select', { 'data-action': 'inbox-filter-channel' });
-    [['', 'Todos los canales'], ['email', 'Email'], ['whatsapp', 'WhatsApp'], ['linkedin', 'LinkedIn']].forEach(function (x) { var o = h('option', { value: x[0], text: x[1] }); if (x[0] === state.inboxFilter.channel) o.selected = true; chSel.appendChild(o); });
+    [['', 'Todos los canales'], ['email', 'Email'], ['whatsapp', 'WhatsApp'], ['linkedin', 'LinkedIn'], ['voice', 'Llamadas']].forEach(function (x) { var o = h('option', { value: x[0], text: x[1] }); if (x[0] === state.inboxFilter.channel) o.selected = true; chSel.appendChild(o); });
     var campSel = h('select', { 'data-action': 'inbox-filter-campaign' });
     campSel.appendChild(h('option', { value: '', text: 'Todas las campañas' }));
     state.campaigns.forEach(function (c) { var o = h('option', { value: c.id, text: c.name }); if (String(c.id) === String(state.inboxFilter.campaign)) o.selected = true; campSel.appendChild(o); });
@@ -3422,7 +3427,7 @@
       if (conv.unread) name.appendChild(h('span', { class: 'cmp-unread' }));
       name.appendChild(h('span', { class: 'nm', text: convName(conv) }));
       if (conv.member && conv.member.is_favorite) name.appendChild(h('span', { class: 'cmp-fav-mark', title: 'Favorito', text: '★' }));
-      name.insertAdjacentHTML('beforeend', chanIconsHtml(CH_ORDER.filter(function (k) { return conv.channels[k]; })));
+      name.insertAdjacentHTML('beforeend', chanIconsHtml(INBOX_CH_ORDER.filter(function (k) { return conv.channels[k]; })));
       if (!conv.member) name.appendChild(h('span', { class: 'cmp-conv-tag', title: 'No está en ninguna lista', text: 'sin lista' }));
       var rdr = memberRadar(conv.member);
       if (rdr) name.appendChild(h('span', { class: 'cmp-conv-tag radar', title: 'Viene del Radar · ' + rdr.detector + ': ' + rdr.headline, text: 'Radar' }));
@@ -3795,7 +3800,8 @@
       var meta = h('div', { class: 'cmp-bubble-meta', html: chanIcon(msg.channel) });
       if (msg.direction === 'out') {
         meta.appendChild(h('span', { text: fmtDateTime(msg.sent_at) }));
-        meta.appendChild(deliveryTicks(msg));
+        // Una llamada no tiene «entregado/leído»: el resultado ya va en el texto.
+        if (chanKey(msg.channel) !== 'voice') meta.appendChild(deliveryTicks(msg));
       } else {
         var rc = pl.reply_class ? String(pl.reply_class).replace(/_/g, ' ') : '';
         if (rc) { meta.appendChild(h('span', { text: rc })); meta.appendChild(h('span', { text: '·' })); }

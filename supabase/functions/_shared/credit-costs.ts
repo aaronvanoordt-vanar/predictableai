@@ -50,6 +50,13 @@ export const CREDIT_COSTS = {
   coach_bot_block: 8,
   coach_local_block: 5,
   coach_report: 5,
+
+  // Agente de voz IA (docs/AGENTE_DE_VOZ.md): por minuto conectado,
+  // redondeando hacia arriba. Retell (~0.08 USD/min con voz y LLM) + el
+  // operador (Twilio 0.04–0.075 USD/min a móviles de MX/CO/CL/PE/BR). Los
+  // móviles de Argentina cuestan ~0.35 USD/min en el operador: tarifa propia.
+  voice_minute: 6,
+  voice_minute_ar: 18,
 } as const;
 
 export type CreditAction = keyof typeof CREDIT_COSTS;
@@ -98,6 +105,22 @@ export function coachBlocks(durationSeconds: number): number {
 export function coachMeetingCost(mode: "bot" | "local", durationSeconds: number): number {
   const block = mode === "bot" ? CREDIT_COSTS.coach_bot_block : CREDIT_COSTS.coach_local_block;
   return CREDIT_COSTS.coach_report + block * coachBlocks(durationSeconds);
+}
+
+/** Minutos que se cobran de una llamada del agente de voz: hacia arriba, 0 si no conectó. */
+export function voiceMinutes(durationSeconds: number): number {
+  const s = Math.max(0, Number(durationSeconds) || 0);
+  return s > 0 ? Math.ceil(s / 60) : 0;
+}
+
+/** Créditos por minuto según el país del número al que se llama (ISO-2). */
+export function voiceMinuteCost(country: string | null | undefined): number {
+  return String(country ?? "").toUpperCase() === "AR" ? CREDIT_COSTS.voice_minute_ar : CREDIT_COSTS.voice_minute;
+}
+
+/** Cobro de una llamada del agente de voz al terminar. */
+export function voiceCallCost(country: string | null | undefined, durationSeconds: number): number {
+  return voiceMinutes(durationSeconds) * voiceMinuteCost(country);
 }
 
 /**
