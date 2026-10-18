@@ -134,7 +134,7 @@ La investigación se hizo con búsquedas web. El proxy de esta sesión bloqueaba
    - `mailbox-connect` y `mailbox-sync`: con JWT.
    - `email-unsubscribe`: **`--no-verify-jwt`**.
    - `campaign-run` e `inbox-send`: se redespliegan porque cambiaron.
-3. **Cron:** programar `mailbox-sync` cada 5 minutos con el `SELECT cron.schedule(...)` que trae comentado la migración.
+3. **Cron:** aplicar `supabase/migrations/20261018231500_mailbox_sync_cron.sql` después de desplegar `mailbox-sync`. Programa la función cada 5 minutos copiando la URL y la autorización del cron de `campaign-run` que ya existe en la base, así la service role key no pasa por el repo. Si no encuentra ese cron, falla con un mensaje y se usa el `SELECT cron.schedule(...)` comentado en la migración de las tablas.
 4. **Secrets:** cargar los de la sección siguiente. Sin ellos todo funciona igual que antes:
    - Sin Google ni Microsoft, los botones de OAuth salen deshabilitados y se puede conectar por SMTP.
    - Sin Instantly, solo corre la rampa.
