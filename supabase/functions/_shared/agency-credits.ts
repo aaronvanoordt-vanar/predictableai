@@ -29,7 +29,7 @@ export const USAGE_CATEGORIES: { key: string; label: string; prefixes: string[] 
   { key: "ai", label: "IA: mensajes · investigación · columnas", prefixes: ["outreach_message", "outreach_full", "outreach_step", "campaign_recommendation", "lead_research", "ai_column"] },
   { key: "campaigns", label: "Campañas", prefixes: ["campaign_lead", "campaign_send", "inbox_"] },
   { key: "hub", label: "Intelligence Hub", prefixes: ["intel_hub", "market_analysis", "outreach_playbook"] },
-  { key: "radar", label: "Radar", prefixes: ["radar_"] },
+  { key: "radar", label: "Radar", prefixes: ["radar_", "champion_"] },
   { key: "coach", label: "Meeting Coach", prefixes: ["coach_"] },
 ];
 export const OTHER_CATEGORY = { key: "other", label: "Otros" };
