@@ -24,6 +24,8 @@
 -- columna); el veredicto y el historial los escribe solo la service role.
 
 -- ── 1. tipo de detector ─────────────────────────────────────────────────────
+-- Reemplaza el CHECK de 20261017000031_public_registries.sql: la lista incluye
+-- su 'public_registry' para no borrarlo al aplicarse después.
 
 DO $$
 DECLARE
@@ -44,7 +46,7 @@ ALTER TABLE public.radar_detectors
   ADD CONSTRAINT radar_detectors_kind_check
   CHECK (kind IN ('news', 'hiring', 'technographics', 'site_probe', 'funding',
                   'leadership', 'growth', 'tenders', 'presence', 'website_visitors',
-                  'web_footprint', 'champion_moves'));
+                  'web_footprint', 'public_registry', 'champion_moves'));
 
 -- ── 2. lista de seguimiento ─────────────────────────────────────────────────
 

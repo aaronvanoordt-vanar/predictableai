@@ -79,6 +79,12 @@
     // Verificar un email de Apollo que no venía verificado (solo si hay veredicto).
     email_verify:           { credits: 1,  label: 'por email verificado', variable: false },
 
+    // ── Registros públicos de empresas ───────────────────────────────
+    // México (DENUE) y Colombia (datos.gov.co) son gratis; la ficha por CNPJ
+    // también (BrasilAPI). Brasil se busca en CNPJá, que cobra por consulta.
+    registry_search_br:     { credits: 5,  label: 'por página de empresas de Brasil', variable: false },
+    registry_lookup_br:     { credits: 1,  label: 'por ficha de Brasil buscada por dominio', variable: false },
+
     // ── Meeting Coach (por duración) ──────────────────────────────────
     // Captura local: 5 por cada 10 min + 5 del reporte final.
     coach_meeting:          { credits: 5,  label: 'por cada 10 min (+5 del reporte)', variable: true },
