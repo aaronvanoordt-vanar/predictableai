@@ -56,9 +56,12 @@
     growth:           { label: 'Crecimiento de plantilla',     icon: '📈', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Empresas del ICP cuya plantilla creció más de X % en 6-24 meses.' },
     presence:         { label: 'Presencia digital local',      icon: '📍', requires: ['Google Places'],              desc: 'Negocios en Google Maps sin sitio web, con pocas reseñas o mala calificación.' },
     website_visitors: { label: 'Visitantes de tu sitio',       icon: '👀', requires: ['Tu cuenta de Apollo con Website Visitors'], desc: 'Empresas que visitaron tu web (lo más caliente que existe).' },
+    champion_moves:   { label: 'Tus champions cambian de empresa', icon: '🤝', requires: ['Apollo'],                  desc: 'Sigue a quienes ya te compraron o te respondieron bien: si se mudan de empresa, la nueva es una señal. Se activa en la pestaña Champions.' },
     public_registry:  { label: 'Registros públicos de empresas', icon: '🏢', requires: ['Registro público de tu país (Brasil, México o Colombia)'], desc: 'Empresas recién constituidas, o que cambiaron de actividad o de tamaño, según el registro oficial (CNPJ, DENUE, registro mercantil). Llega a la pyme que Apollo no tiene.' },
   };
-  const KIND_ORDER = Object.keys(DETECTOR_KINDS);
+  // champion_moves no se crea en lenguaje natural ni lo propone la IA del
+  // plan (USER_ONLY_KINDS en _shared/radar-plan.ts): vive en la pestaña Champions.
+  const KIND_ORDER = Object.keys(DETECTOR_KINDS).filter((k) => k !== 'champion_moves');
   // Espejo de MAX_COMPANIES_OPTIONS / DEFAULT_MAX_COMPANIES en _shared/radar-plan.ts.
   const MAX_COMPANIES_OPTIONS = [25, 50, 100, 200, 300, 500, 1000];
   const DEFAULT_MAX_COMPANIES = 300;
@@ -73,7 +76,7 @@
 
   const state = {
     user: null,
-    tab: 'signals',        // 'signals' | 'plan' | 'puntual' | 'alerts'
+    tab: 'signals',        // 'signals' | 'plan' | 'champions' | 'puntual' | 'alerts'
     loading: true,
     loaded: false,
     busy: '',              // etiqueta de la acción en curso
@@ -108,6 +111,10 @@
     // migración no está aplicada y el tope se aplica solo en el navegador.
     batch: null,
     fallbackCap: 25,
+    // Seguimiento de champions (tabla champion_watch, detector champion_moves).
+    champions: { rows: [], loaded: false, missing: false, customers: [], form: null, filter: 'all' },
+    // Borradores de «Redactar con IA» por señal de champion: {channel, loading, subject, body, error}.
+    drafts: {},
   };
 
   const DAILY_BATCH = 25;
@@ -191,6 +198,7 @@
       state.detectors = dets.data || [];
       state.signals = sigs.data || [];
       state.profile = prof.data || null;
+      await loadChampions();
       state.loaded = true;
       state.error = '';
     } catch (e) {
@@ -201,6 +209,263 @@
   }
 
   async function refresh() { await load(); render(); }
+
+  // ── Champions ────────────────────────────────────────────────────────────
+  //
+  // Lista de seguimiento (champion_watch): contactos marcados como champion
+  // a mano (aquí o con la estrella de Listas), sugeridos por la base cuando
+  // un lead tiene una reunión, y contactos de los clientes
+  // actuales del Contexto. El detector champion_moves los chequea con Apollo
+  // (y la web de respaldo); el veredicto lo decide el servidor
+  // (_shared/champion-watch.ts) y la mudanza llega como señal al feed.
+  // Falla suave: sin la migración la pestaña lo dice y el resto del Radar sigue.
+  const WATCH_STATUS = {
+    pending: ['En cola', 'gray'], current: ['Verificado', 'green'], moved: ['Cambió', 'purple'],
+    left: ['Se fue', 'amber'], unconfirmed: ['Por confirmar', 'amber'], unknown: ['Sin verificar', 'gray'],
+  };
+  const WATCH_ORIGIN = {
+    manual: 'Marcado a mano', customer: 'Contacto de un cliente',
+    meeting: 'Tuvieron una reunión', qualified_meeting: 'Reunión calificada',
+  };
+  // Espejo de RECHECK_DAYS_OPTIONS / MAX_CHECKS_MONTH_OPTIONS en _shared/champion-watch.ts.
+  const RECHECK_DAYS = [14, 30, 60, 90, 180];
+  const MAX_CHECKS_MONTH = [25, 50, 100, 200, 500];
+
+  async function loadChampions() {
+    const sb = global.supabaseClient;
+    const ch = state.champions;
+    try {
+      const [w, intake] = await Promise.all([
+        sb.from('champion_watch').select('*').eq('user_id', state.user.id).neq('state', 'dismissed')
+          .order('moved_at', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }).limit(1000),
+        sb.from('intel_hub_intake').select('current_customers').eq('user_id', state.user.id).maybeSingle(),
+      ]);
+      if (w.error) {
+        ch.missing = /champion_watch|does not exist|schema cache/i.test(w.error.message);
+        if (!ch.missing) console.warn('[radar-live] champions:', w.error.message);
+        ch.rows = [];
+      } else {
+        ch.missing = false;
+        ch.rows = w.data || [];
+      }
+      ch.customers = (intake.data && Array.isArray(intake.data.current_customers) ? intake.data.current_customers : [])
+        .map((c) => c && String(c.name || '').trim()).filter(Boolean);
+    } catch (e) {
+      console.warn('[radar-live] champions:', e);
+    }
+    ch.loaded = true;
+  }
+
+  function championDetector() { return state.detectors.find((d) => d.kind === 'champion_moves') || null; }
+
+  function championCfg() {
+    const c = (championDetector() || {}).config || {};
+    return {
+      recheck_days: RECHECK_DAYS.indexOf(Number(c.recheck_days)) !== -1 ? Number(c.recheck_days) : 30,
+      max_checks_month: MAX_CHECKS_MONTH.indexOf(Number(c.max_checks_month)) !== -1 ? Number(c.max_checks_month) : 100,
+      web_fallback: c.web_fallback !== false,
+    };
+  }
+
+  function championDetectorPost(body, label) {
+    return run(label || 'Guardando…', async () => {
+      const r = await post('radar-plan', Object.assign({ action: 'champion_detector' }, body || {}));
+      if (r.detector) {
+        const i = state.detectors.findIndex((d) => d.id === r.detector.id);
+        if (i === -1) state.detectors.push(r.detector); else state.detectors[i] = r.detector;
+      }
+      if (!state.plan) await load();
+      state.notice = r.plan_status === 'active' || (state.plan && state.plan.status === 'active')
+        ? 'Listo: el seguimiento corre con el monitoreo del Radar.'
+        : 'Listo. El seguimiento corre con el monitoreo del Radar: actívalo para que empiece a chequear.';
+    });
+  }
+
+  async function watchUpdate(id, patch) {
+    const { error } = await global.supabaseClient.from('champion_watch').update(patch).eq('id', id);
+    if (error) { state.error = error.message; render(); return false; }
+    const r = state.champions.rows.find((x) => x.id === id);
+    if (r) Object.assign(r, patch);
+    if (patch.state === 'dismissed') state.champions.rows = state.champions.rows.filter((x) => x.id !== id);
+    render();
+    return true;
+  }
+
+  async function watchDelete(id) {
+    const r = state.champions.rows.find((x) => x.id === id);
+    if (!r || !global.confirm('¿Dejar de seguir a ' + (r.name || 'este contacto') + '? Se borra de la lista de champions (el lead de tu lista no se toca).')) return;
+    const { error } = await global.supabaseClient.from('champion_watch').delete().eq('id', id);
+    if (error) { state.error = error.message; render(); return; }
+    state.champions.rows = state.champions.rows.filter((x) => x.id !== id);
+    render();
+  }
+
+  async function watchAdd() {
+    const f = state.champions.form || {};
+    const name = String(f.name || '').trim();
+    const company = String(f.company || '').trim();
+    if (!name || !company) { state.error = 'Escribe al menos el nombre y la empresa donde trabaja hoy.'; render(); return; }
+    const li = String(f.linkedin_url || '').trim();
+    if (li && !/^https?:\/\/([a-z]+\.)?linkedin\.com\//i.test(li)) { state.error = 'El LinkedIn tiene que ser la URL del perfil (https://www.linkedin.com/in/…).'; render(); return; }
+    const parts = name.split(/\s+/);
+    const isCustomer = !!f.customer;
+    const row = {
+      user_id: state.user.id, origin: isCustomer ? 'customer' : 'manual', state: 'active',
+      name, first_name: parts[0] || null, last_name: parts.slice(1).join(' ') || null,
+      title: String(f.title || '').trim() || null, company,
+      company_domain: String(f.company_domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') || null,
+      linkedin_url: li || null, email: String(f.email || '').trim() || null,
+      customer_name: isCustomer ? (String(f.customer_name || '').trim() || company) : null,
+    };
+    await run('Guardando…', async () => {
+      const { data, error } = await global.supabaseClient.from('champion_watch').insert(row).select('*').single();
+      if (error) throw new Error(/duplicate|unique/i.test(error.message) ? 'Ese contacto ya está en tu lista de champions.' : error.message);
+      state.champions.rows.unshift(data);
+      state.champions.form = null;
+      state.notice = name + ' quedó en seguimiento.' + (championDetector() ? '' : ' Activa el seguimiento arriba para que el Radar lo chequee.');
+    });
+  }
+
+  // Las señales de champion guardadas en una lista: el lead nuevo se busca por
+  // source.signal_id para «Redactar con IA» (generate-outreach modo signal, que
+  // agrega la historia real con esa persona). Nunca se envía solo.
+  async function draftForSignal(id) {
+    const s = state.signals.find((x) => x.id === id);
+    if (!s) return;
+    const d = state.drafts[id] || (state.drafts[id] = { channel: 'email' });
+    d.loading = true; d.error = ''; render();
+    try {
+      let q = global.supabaseClient.from('prospect_list_members').select('id').eq('user_id', state.user.id)
+        .eq('source->>signal_id', s.id).limit(1);
+      if (s.list_id) q = q.eq('list_id', s.list_id);
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+      const member = data && data[0];
+      if (!member) throw new Error('No encontramos a esta persona en tu lista. Guárdala de nuevo en una lista.');
+      const r = await post('generate-outreach', { mode: 'signal', member_id: member.id, channel: d.channel, engine: global.AIEngine && global.AIEngine.get('outreach') });
+      d.subject = r.subject || ''; d.body = r.body || ''; d.member_id = member.id;
+    } catch (e) {
+      d.error = e.message || String(e);
+    } finally {
+      d.loading = false; render();
+    }
+  }
+
+  function championFactsHtml(s) {
+    const f = s.facts || {};
+    const chips = [];
+    if (f.from_company) chips.push('antes: ' + [f.from_title, f.from_company].filter(Boolean).join(' en '));
+    if (f.to_title) chips.push('ahora: ' + f.to_title);
+    if (f.champion_origin && WATCH_ORIGIN[f.champion_origin]) chips.push(WATCH_ORIGIN[f.champion_origin] + (f.customer_name ? ' · ' + f.customer_name : ''));
+    if (f.since) chips.push('desde ' + String(f.since).slice(0, 7));
+    return chips.length ? '<div class="rl-facts">' + chips.map((c) => '<span>' + esc(c) + '</span>').join('') + '</div>' : '';
+  }
+
+  function championDraftHtml(s) {
+    if (s.detector_kind !== 'champion_moves' || s.status !== 'saved') return '';
+    const d = state.drafts[s.id] || { channel: 'email' };
+    const sel = '<select class="rl-select rl-select-sm" data-act="ch-draft-channel" data-id="' + esc(s.id) + '">' +
+      [['email', 'Email'], ['whatsapp', 'WhatsApp'], ['linkedin', 'LinkedIn']].map((c) => '<option value="' + c[0] + '"' + (d.channel === c[0] ? ' selected' : '') + '>' + c[1] + '</option>').join('') + '</select>';
+    let h = '<div class="rl-ch-draft"><div class="rl-ch-draft-top">' + sel +
+      '<button class="btn btn-primary btn-sm" data-act="ch-draft" data-id="' + esc(s.id) + '" data-credit-cost="outreach_message"' + (d.loading ? ' disabled' : '') + ' title="Un mensaje para retomar la relación en su empresa nueva, con la historia real (mensajes, reuniones, notas) y tu entrenamiento IA. Nunca se envía solo.">' +
+      (d.loading ? 'Redactando…' : d.body ? 'Redactar otro' : 'Redactar con IA') + '</button>' +
+      '<span class="rl-muted rl-xs">Usa la historia real con esta persona. Nunca se envía solo.</span></div>';
+    if (d.error) h += '<div class="rl-det-err">' + esc(d.error) + '</div>';
+    if (d.body) {
+      h += (d.subject ? '<input class="rl-input" data-act="ch-draft-subject" data-id="' + esc(s.id) + '" value="' + esc(d.subject) + '">' : '') +
+        '<textarea class="rl-ta" rows="6" data-act="ch-draft-body" data-id="' + esc(s.id) + '">' + esc(d.body) + '</textarea>' +
+        '<div class="rl-hero-btns"><button class="btn btn-ghost btn-sm" data-act="ch-draft-copy" data-id="' + esc(s.id) + '">Copiar</button>' +
+        '<span class="rl-muted rl-xs">Envíalo desde tu canal o enrólala en una campaña desde Listas.</span></div>';
+    }
+    return h + '</div>';
+  }
+
+  function championsHtml() {
+    const ch = state.champions;
+    if (!ch.loaded) return '<div class="rl-empty"><span class="rl-spin"></span> Cargando…</div>';
+    if (ch.missing) return '<div class="rl-alert rl-alert-warn">El seguimiento de champions todavía no está disponible: falta aplicar la migración 20261018170000_champion_watch.sql.</div>';
+    const det = championDetector();
+    const cfg = championCfg();
+    const planActive = state.plan && state.plan.status === 'active';
+    const active = ch.rows.filter((r) => r.state === 'active');
+    const suggested = ch.rows.filter((r) => r.state === 'suggested');
+    const moved = active.filter((r) => r.employment_status === 'moved');
+    let h = '<div class="card rl-planbox">' +
+      '<div class="rl-plan-t">Tus champions cambian de empresa</div>' +
+      '<div class="rl-hero-s">Cuando alguien que ya te compró o te respondió bien se muda a otra empresa, esa empresa es la reunión más cálida que vas a conseguir. El Radar chequea a tus champions con Apollo (y, si Apollo no los ubica, con una búsqueda web pública) y te avisa con la señal «Tu champion se mudó a…». No se lee LinkedIn por API ni se scrapea.</div>';
+    if (!det) {
+      h += '<div class="rl-hero-btns"><button class="btn btn-primary btn-sm" data-act="ch-enable"' + (state.busy ? ' disabled' : '') + '>Activar seguimiento</button>' +
+        '<span class="rl-cost"><span data-credit-cost="radar_detector_month" data-credit-pos="inside"></span></span>' +
+        '<span class="rl-muted rl-xs">Corre como un detector de personas (10 créditos cada 30 días). Con la cuenta de Apollo de la plataforma, cada persona encontrada cuesta 2 créditos; con tu propio Apollo, lo paga tu cuenta.</span></div>';
+    } else {
+      const st = det.status || 'idle';
+      h += '<div class="rl-det-ctl">' +
+        '<label class="rl-chk"><input type="checkbox" data-act="ch-enabled"' + (det.enabled ? ' checked' : '') + (st === 'unavailable' ? ' disabled' : '') + '> Seguimiento encendido</label>' +
+        '<label class="rl-lbl-in">Rechequear a cada persona <select class="rl-select rl-select-sm" data-act="ch-recheck">' + RECHECK_DAYS.map((n) => '<option value="' + n + '"' + (cfg.recheck_days === n ? ' selected' : '') + '>cada ' + n + ' días</option>').join('') + '</select></label>' +
+        '<label class="rl-lbl-in">Tope <select class="rl-select rl-select-sm" data-act="ch-cap">' + MAX_CHECKS_MONTH.map((n) => '<option value="' + n + '"' + (cfg.max_checks_month === n ? ' selected' : '') + '>' + n + ' chequeos cada 30 días</option>').join('') + '</select></label>' +
+        '<label class="rl-chk" title="Solo cuando Apollo no ubica a la persona en su empresa"><input type="checkbox" data-act="ch-web"' + (cfg.web_fallback ? ' checked' : '') + '> Confirmar en la web <span class="rl-cost"><span data-credit-cost="champion_web_check" data-credit-pos="inside"></span></span></label>' +
+        '</div>' +
+        '<div class="rl-det-foot">' + (st === 'unavailable' || st === 'no_credits' || st === 'error' ? '<span class="rl-st rl-st-bad">' + esc(STATUS_LABEL[st] || st) + '</span>' : det.enabled ? '<span class="rl-st">' + (det.next_run_at && new Date(det.next_run_at) > new Date() ? 'Próxima corrida ' + esc(nextTime(det.next_run_at)) : 'En cola') + '</span>' : '<span class="rl-st">Apagado</span>') +
+        (det.stats && det.stats.last_note ? '<span class="rl-muted rl-xs">' + esc(det.stats.last_note) + '</span>' : '') + '</div>' +
+        (det.last_error ? '<div class="rl-det-err">' + esc(det.last_error) + '</div>' : '');
+      if (!planActive) h += '<div class="rl-alert rl-alert-warn">El seguimiento corre con el monitoreo del Radar, que está ' + (state.plan && state.plan.status === 'paused' ? 'en pausa' : 'sin activar') + '. <button class="rl-link" data-act="tab" data-tab="plan">Ir al plan</button></div>';
+    }
+    h += '</div>';
+
+    if (suggested.length) {
+      h += '<div class="card rl-planbox"><div class="rl-plan-t">Sugeridos (' + suggested.length + ')</div>' +
+        '<div class="rl-hero-s">Leads con los que tuviste una reunión. Síguelos para enterarte si cambian de empresa.</div>' +
+        '<div class="rl-ch-list">' + suggested.slice(0, 50).map((r) =>
+          '<div class="rl-ch-row"><div class="rl-ch-who"><b>' + esc(r.name || '—') + '</b><span class="rl-muted rl-xs">' + esc([r.title, r.company].filter(Boolean).join(' · ')) + '</span></div>' +
+          '<span class="pill pill-gray" style="font-size:10.5px">' + esc(WATCH_ORIGIN[r.origin] || r.origin) + '</span>' +
+          '<span class="rl-right"><button class="btn btn-primary btn-sm" data-act="ch-accept" data-id="' + esc(r.id) + '">Seguir</button> ' +
+          '<button class="rl-link" data-act="ch-dismiss" data-id="' + esc(r.id) + '">Descartar</button></span></div>').join('') +
+        (suggested.length > 50 ? '<div class="rl-muted rl-xs">Y ' + (suggested.length - 50) + ' más.</div>' : '') +
+        (suggested.length > 1 ? '<div class="rl-hero-btns"><button class="btn btn-ghost btn-sm" data-act="ch-accept-all">Seguir a los ' + suggested.length + '</button></div>' : '') +
+        '</div></div>';
+    }
+
+    const f = ch.form;
+    h += '<div class="card rl-planbox"><div class="rl-plan-t" style="display:flex;align-items:center;gap:8px">En seguimiento (' + active.length + ')' + (moved.length ? '<span class="pill pill-purple" style="font-size:10.5px">' + moved.length + ' cambiaron</span>' : '') +
+      (!f ? '<span class="rl-right"><button class="btn btn-ghost btn-sm" data-act="ch-form-open">+ Agregar contacto</button></span>' : '') + '</div>';
+    if (f) {
+      h += '<div class="rl-add-grid rl-ch-form">' +
+        '<div class="rl-field"><label class="rl-lbl">Nombre</label><input class="rl-input" type="text" data-act="ch-f" data-k="name" value="' + esc(f.name || '') + '" placeholder="Ana Pérez"></div>' +
+        '<div class="rl-field"><label class="rl-lbl">Cargo</label><input class="rl-input" type="text" data-act="ch-f" data-k="title" value="' + esc(f.title || '') + '" placeholder="Gerente Comercial"></div>' +
+        '<div class="rl-field"><label class="rl-lbl">Empresa donde trabaja hoy</label><input class="rl-input" type="text" data-act="ch-f" data-k="company" list="rl-ch-customers" value="' + esc(f.company || '') + '">' +
+          '<datalist id="rl-ch-customers">' + ch.customers.map((c) => '<option value="' + esc(c) + '">').join('') + '</datalist></div>' +
+        '<div class="rl-field"><label class="rl-lbl">Dominio de la empresa (opcional)</label><input class="rl-input" type="text" data-act="ch-f" data-k="company_domain" value="' + esc(f.company_domain || '') + '" placeholder="empresa.com"></div>' +
+        '<div class="rl-field"><label class="rl-lbl">LinkedIn (opcional)</label><input class="rl-input" type="text" data-act="ch-f" data-k="linkedin_url" value="' + esc(f.linkedin_url || '') + '" placeholder="https://www.linkedin.com/in/…"></div>' +
+        '<div class="rl-field"><label class="rl-lbl">Email (opcional)</label><input class="rl-input" type="text" data-act="ch-f" data-k="email" value="' + esc(f.email || '') + '"></div>' +
+        '</div>' +
+        '<label class="rl-chk"><input type="checkbox" data-act="ch-f-customer"' + (f.customer ? ' checked' : '') + '> Es contacto de un cliente actual' + (ch.customers.length ? '' : ' (agrega tus clientes en el Contexto)') + '</label>' +
+        '<div class="rl-hint">Con LinkedIn o email Apollo la encuentra con más certeza. Solo se usa para verificar dónde trabaja; no se revela nada.</div>' +
+        '<div class="rl-hero-btns"><button class="btn btn-primary btn-sm" data-act="ch-add"' + (state.busy ? ' disabled' : '') + '>Seguir a este contacto</button><button class="btn btn-ghost btn-sm" data-act="ch-form-close">Cancelar</button></div>';
+    }
+    if (!active.length) {
+      h += '<div class="rl-empty">Todavía no sigues a nadie. Marca a tus champions con la estrella en Listas, acepta los sugeridos o agrega a los contactos de tus clientes actuales.</div>';
+    } else {
+      const order = { moved: 0, left: 1, unconfirmed: 2, unknown: 3, pending: 4, current: 5 };
+      const list = active.slice().sort((a, b) => (order[a.employment_status] ?? 9) - (order[b.employment_status] ?? 9));
+      h += '<div class="rl-ch-list">' + list.map((r) => {
+        const st = WATCH_STATUS[r.employment_status] || WATCH_STATUS.pending;
+        const mv = r.employment_status === 'moved' && r.last_move ? r.last_move : null;
+        const emp = r.employment || {};
+        const sig = mv && state.signals.find((s) => s.detector_kind === 'champion_moves' && s.facts && s.facts.champion_watch_id === r.id);
+        return '<div class="rl-ch-row' + (mv ? ' is-moved' : '') + '"><div class="rl-ch-who"><b>' + esc(r.name || '—') + '</b>' +
+          '<span class="rl-muted rl-xs">' + esc([r.title, r.company].filter(Boolean).join(' · ')) + (r.customer_name ? ' · cliente ' + esc(r.customer_name) : '') + '</span>' +
+          (mv ? '<span class="rl-xs">Antes en ' + esc(mv.from_company || '—') + ' → ahora ' + esc([mv.to_title, mv.to_company].filter(Boolean).join(' en ')) + '</span>' : '') +
+          (!mv && emp.reason && r.employment_status !== 'current' ? '<span class="rl-muted rl-xs">' + esc(emp.reason) + '</span>' : '') +
+          (r.last_error ? '<span class="rl-muted rl-xs">' + esc(r.last_error) + '</span>' : '') + '</div>' +
+          '<span class="pill pill-' + st[1] + '" style="font-size:10.5px" title="' + esc(emp.reason || '') + '">' + st[0] + '</span>' +
+          '<span class="rl-muted rl-xs">' + esc(WATCH_ORIGIN[r.origin] || '') + (r.last_checked_at ? ' · revisado ' + esc(relTime(r.last_checked_at)) : '') + '</span>' +
+          '<span class="rl-right">' + (sig ? '<button class="rl-link" data-act="ch-see-signal" data-id="' + esc(sig.id) + '">Ver señal</button> ' : '') +
+          '<button class="rl-link" data-act="ch-recheck-now" data-id="' + esc(r.id) + '" title="Lo vuelve a chequear en la próxima corrida">Rechequear</button> ' +
+          '<button class="rl-link rl-del" data-act="ch-delete" data-id="' + esc(r.id) + '">Dejar de seguir</button></span></div>';
+      }).join('') + '</div>';
+    }
+    return h + '</div>';
+  }
 
   function scheduleRender() {
     if (state.renderTimer) return;
@@ -508,7 +773,7 @@
       return;
     }
     const focus = captureFocus(body);
-    body.innerHTML = noticeHtml() + (state.tab === 'plan' ? planHtml() : state.tab === 'alerts' ? alertsHtml() : signalsHtml());
+    body.innerHTML = noticeHtml() + (state.tab === 'plan' ? planHtml() : state.tab === 'alerts' ? alertsHtml() : state.tab === 'champions' ? championsHtml() : signalsHtml());
     restoreFocus(body, focus);
     if (global.creditCosts && typeof global.creditCosts.decorate === 'function') global.creditCosts.decorate(body);
   }
@@ -581,10 +846,18 @@
     return '<div class="rl-tabs">' +
       tab('signals', 'Señales', c.new || '') +
       tab('plan', 'Plan de señales', state.detectors.filter((d) => d.enabled).length || '') +
+      tab('champions', 'Champions', championsBadge()) +
       tab('puntual', 'Investigación puntual', '') +
       tab('alerts', 'Avisos', state.profile && state.profile.radar_whatsapp_phone ? '✓' : '') +
       (global.AIEngine && state.tab === 'plan' ? '<div class="rl-tabs-right"><div data-ai-engine="radar" data-ai-engine-compact="1"></div></div>' : '') +
       '</div>';
+  }
+
+  function championsBadge() {
+    const rows = state.champions.rows;
+    const moved = rows.filter((r) => r.state === 'active' && r.employment_status === 'moved').length;
+    const sug = rows.filter((r) => r.state === 'suggested').length;
+    return moved ? '🤝 ' + moved : sug || '';
   }
 
   function noticeHtml() {
@@ -883,7 +1156,7 @@
       '<div class="rl-sig-head">' + esc(s.headline) + '</div>' +
       (s.why_fit ? '<div class="rl-sig-why">' + esc(s.why_fit) + '</div>' : '') +
       (ev.length ? '<div class="rl-sig-ev">' + ev.slice(0, 4).map((e) => '<a href="' + esc(safeUrl(e.url)) + '" target="_blank" rel="noopener" title="' + esc(e.summary || '') + '">' + esc(hostOf(safeUrl(e.url))) + (e.published_at ? ' · ' + esc(e.published_at) : '') + '</a>').join('') + '</div>' : '') +
-      factsHtml(s) +
+      (s.detector_kind === 'champion_moves' ? championFactsHtml(s) : factsHtml(s)) +
       '<div class="rl-sig-dm">' + dmLine + '</div>' +
       (open && dms.length ? '<div class="rl-dms">' + dms.map((d) =>
         '<div class="rl-dm"><span class="rl-dm-name">' + esc(d.name || '—') + '</span><span class="rl-dm-title">' + esc(d.title || '') + '</span>' +
@@ -899,7 +1172,7 @@
       '<span class="rl-fb"><button class="rl-fb-b' + (s.feedback === 'useful' ? ' is-on' : '') + '" data-act="fb" data-v="useful" data-id="' + esc(s.id) + '" title="Señal útil: sube el peso de este detector">👍</button>' +
       '<button class="rl-fb-b' + (s.feedback === 'not_useful' ? ' is-on' : '') + '" data-act="fb" data-v="not_useful" data-id="' + esc(s.id) + '" title="No útil: baja el peso de este detector">👎</button></span>' +
       (s.status !== 'dismissed' ? '<button class="rl-link rl-dismiss" data-act="dismiss" data-id="' + esc(s.id) + '">Descartar</button>' : '') +
-      '</div></div></div></div>';
+      '</div>' + championDraftHtml(s) + '</div></div></div>';
     return h;
   }
 
@@ -951,6 +1224,7 @@
       case 'growth': return 'Plantilla +' + (cfg.min_growth_pct || 20) + ' % en ' + (cfg.months || 6) + ' meses';
       case 'presence': { const r = cfg.rules || {}; const rs = []; if (r.no_website) rs.push('sin sitio web'); if (r.no_phone) rs.push('sin teléfono'); if (r.max_rating != null) rs.push('≤ ' + r.max_rating + '★'); if (r.max_reviews != null) rs.push('≤ ' + r.max_reviews + ' reseñas'); if (r.min_reviews != null) rs.push('≥ ' + r.min_reviews + ' reseñas'); return j(cfg.queries, 3) + ' en ' + j(cfg.cities, 4) + ' · ' + rs.join(', '); }
       case 'website_visitors': return 'Últimos ' + (cfg.days || 30) + ' días · intención ' + j(cfg.intent) + (cfg.pages && cfg.pages.length ? ' · páginas ' + j(cfg.pages, 3) : '');
+      case 'champion_moves': return 'Rechequea cada ' + (cfg.recheck_days || 30) + ' días · tope ' + (cfg.max_checks_month || 100) + ' chequeos cada 30 días' + (cfg.web_fallback === false ? '' : ' · confirma en la web');
       case 'public_registry': {
         const ev = { new_companies: 'Constituidas en los últimos ' + (cfg.window_days || 60) + ' días', activity_change: 'Cambiaron de actividad', size_change: 'Cambiaron de tamaño' }[cfg.event] || 'Constituidas recientemente';
         const sz = { micro: 'micro', small: 'pequeñas', medium: 'medianas', large: 'grandes' };
@@ -1272,6 +1546,39 @@
         case 'go-lists': { const n = document.querySelector('.nav-item[data-page="pro-main"][data-pros-tab="listas"]'); if (n) n.click(); break; }
         case 'use-profile-phone': state.settings.phone = (state.profile && state.profile.phone) || ''; render(); break;
         case 'save-settings': saveSettings(); break;
+        case 'ch-enable': championDetectorPost({ enabled: true }, 'Activando…'); break;
+        case 'ch-accept': watchUpdate(id, { state: 'active', next_check_at: new Date().toISOString() }); break;
+        case 'ch-accept-all': {
+          const ids = state.champions.rows.filter((r) => r.state === 'suggested').map((r) => r.id);
+          run('Guardando…', async () => {
+            const patch = { state: 'active', next_check_at: new Date().toISOString() };
+            const { error } = await global.supabaseClient.from('champion_watch').update(patch).in('id', ids);
+            if (error) throw new Error(error.message);
+            state.champions.rows.forEach((r) => { if (ids.indexOf(r.id) !== -1) Object.assign(r, patch); });
+            state.notice = ids.length + ' champions en seguimiento.';
+          });
+          break;
+        }
+        case 'ch-dismiss': watchUpdate(id, { state: 'dismissed' }); break;
+        case 'ch-delete': watchDelete(id); break;
+        case 'ch-recheck-now': watchUpdate(id, { next_check_at: new Date().toISOString() }).then((ok) => { if (ok) { state.notice = 'Se vuelve a chequear en la próxima corrida del Radar.'; render(); } }); break;
+        case 'ch-see-signal': {
+          const sg = state.signals.find((x) => x.id === id);
+          state.tab = 'signals';
+          if (sg) { state.filters.status = sg.status; state.filters.q = sg.company_name || ''; }
+          render(); break;
+        }
+        case 'ch-form-open': state.champions.form = {}; render(); break;
+        case 'ch-form-close': state.champions.form = null; render(); break;
+        case 'ch-add': watchAdd(); break;
+        case 'ch-draft': draftForSignal(id); break;
+        case 'ch-draft-copy': {
+          const d = state.drafts[id] || {};
+          const txt = (d.subject ? 'Asunto: ' + d.subject + '\n\n' : '') + (d.body || '');
+          Promise.resolve(global.navigator.clipboard && global.navigator.clipboard.writeText(txt))
+            .then(() => { state.notice = 'Mensaje copiado.'; render(); }, () => { state.error = 'No se pudo copiar: selecciona el texto y cópialo a mano.'; render(); });
+          break;
+        }
       }
     });
     el.addEventListener('change', (ev) => {
@@ -1288,6 +1595,12 @@
       else if (act === 'plan-max-companies') { const n = Number(t.value); if (n) Promise.all(state.detectors.map((d) => patchDetector(d.id, { config: Object.assign({}, d.config || {}, { max_companies: n }) }))).then(render); }
       else if (act === 'add-kind') { state.addForm.kind = t.value; render(); }
       else if (act === 'set-every') { state.settings.every = Number(t.value) || 24; }
+      else if (act === 'ch-enabled') { championDetectorPost({ enabled: t.checked }); }
+      else if (act === 'ch-recheck') { championDetectorPost({ config: { recheck_days: Number(t.value) } }); }
+      else if (act === 'ch-cap') { championDetectorPost({ config: { max_checks_month: Number(t.value) } }); }
+      else if (act === 'ch-web') { championDetectorPost({ config: { web_fallback: t.checked } }); }
+      else if (act === 'ch-f-customer') { state.champions.form.customer = t.checked; }
+      else if (act === 'ch-draft-channel') { (state.drafts[id] || (state.drafts[id] = {})).channel = t.value; }
     });
     el.addEventListener('input', (ev) => {
       const t = ev.target.closest('[data-act]');
@@ -1301,6 +1614,9 @@
       else if (act === 'filter-score') { const b = t.closest('.rl-range') && t.closest('.rl-range').querySelector('b'); if (b) b.textContent = t.value; }
       else if (act === 'det-weight') { const b = t.closest('.rl-range') && t.closest('.rl-range').querySelector('b'); if (b) b.textContent = t.value; }
       else if (act === 'set-phone') state.settings.phone = t.value;
+      else if (act === 'ch-f') { state.champions.form[t.getAttribute('data-k')] = t.value; }
+      else if (act === 'ch-draft-body') { (state.drafts[t.getAttribute('data-id')] || {}).body = t.value; }
+      else if (act === 'ch-draft-subject') { (state.drafts[t.getAttribute('data-id')] || {}).subject = t.value; }
       else if (act === 'set-min') { state.settings.minScore = Number(t.value) || 0; const b = t.closest('.rl-field') && t.closest('.rl-field').querySelector('b'); if (b) b.textContent = t.value; }
     });
   }
@@ -1332,6 +1648,15 @@
     s.textContent = [
       '.rl-wrap{display:flex;flex-direction:column;gap:8px;padding:0 26px 26px;max-width:1080px;margin:0 auto;width:100%}',
       '.rl-pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:5px 11px;border-radius:999px;background:var(--surface3);color:var(--ink-3)}',
+      '.rl-ch-list{display:flex;flex-direction:column;gap:2px;margin-top:8px}',
+      '.rl-ch-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 10px;border-radius:var(--r-sm);border:1px solid var(--hair)}',
+      '.rl-ch-row.is-moved{border-color:var(--accent);background:var(--accent-soft)}',
+      '.rl-ch-who{display:flex;flex-direction:column;gap:2px;min-width:200px;flex:1}',
+      '.rl-ch-draft{display:flex;flex-direction:column;gap:6px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--hair)}',
+      '.rl-ch-draft-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.rl-chk{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-2)}',
+      '.rl-lbl-in{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-3)}',
+      '.rl-ch-form{margin-top:10px}',
       '.rl-pill-on{background:var(--green-soft,rgba(16,185,129,.12));color:var(--green,#059669)}',
       '.rl-dot{width:7px;height:7px;border-radius:50%;background:currentColor;animation:rlPulse 1.4s ease-in-out infinite}',
       '@keyframes rlPulse{0%,100%{opacity:.35}50%{opacity:1}}',

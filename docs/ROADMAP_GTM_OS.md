@@ -97,6 +97,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Equipo: metas de actividad, ranking, revisión del Meeting Coach con comentarios y rampa — en curso (sesión propia; las llamadas se enganchan cuando exista la telefonía)
 - [x] Mapa de TAM — PR #355 (`js/tam-map.js`, `_shared/tam.ts`, edge function `tam-map`)
 - [ ] Señales de engagement en LinkedIn y píxel web
+- [x] Señales: cambio de empresa de clientes y champions (Radar → Champions, detector `champion_moves`)
 
 **P3**
 - [ ] Automatizaciones de punta a punta
