@@ -35,8 +35,8 @@
 --     asignan créditos y el tope mensual igual lo frena.
 --   · El plan del espacio NO se hereda: un espacio sin suscripción sigue con
 --     los límites de la prueba salvo que sea ilimitado. Heredarlo cambiaría
---     lo que incluye Starter (automatismos sin costo por cada espacio), y eso
---     es una decisión de precios pendiente (docs/PRICING.md).
+--     lo que incluye Starter (automatismos sin costo por cada espacio): el
+--     dueño decidió no heredarlo (2026-10-18, docs/PRICING.md §7).
 --
 -- Seguridad: todas las funciones nuevas son default-deny. Solo las de
 -- lectura del panel (agency_workspaces, agency_usage, my_workspace_access) se
