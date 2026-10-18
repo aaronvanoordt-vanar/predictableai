@@ -99,6 +99,9 @@
       // (sobreviven a los refrescos por realtime hasta que se guardan),
       // timers de guardado y corridas de IA en curso desde esta pestaña.
       researchOpen: new Set(), notesDraft: {}, notesTimers: {}, notesSaving: {}, researching: new Set(),
+      // Champions (tabla champion_watch, pestaña Champions del Radar): member id
+      // → { id, state }. null = la migración no está aplicada (sin estrella).
+      champions: {},
       // ¿Está en WhatsApp? Lo aprendido de los envíos (whatsapp_reachability,
       // Map phone_key → fila) que junto al plan de numeración pinta el
       // indicador del teléfono (js/phone-lines.js). null = aún no se leyó.
@@ -239,6 +242,8 @@
   var SVG_LIST = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h6"/></svg>';
   var SVG_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z"/></svg>';
   var SVG_LINK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14L21 3"/><path d="M15 3h6v6"/><path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>';
+  var SVG_STAR = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9 6.8 19.6l1-5.8-4.3-4.1 5.9-.9z"/></svg>';
+  var SVG_STAR_ON = SVG_STAR.replace('fill="none"', 'fill="currentColor"');
   var SVG_EDIT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
   var SVG_TRASH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>';
   var SVG_USER_PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>';
@@ -356,6 +361,8 @@
     // Listas: investigación previa por lead (notas + «Investigar con IA»)
     '#prospecting-shell .pros-iconbtn.pros-research-btn:hover, #prospecting-shell .pros-iconbtn.pros-research-btn.on { color:var(--accent-ink); background:var(--accent-soft); }',
     '#prospecting-shell .pros-iconbtn.pros-research-btn.has { color:var(--accent-ink); }',
+    '#prospecting-shell .pros-iconbtn.pros-champion-btn.on { color:var(--amber, #d97706); }',
+    '#prospecting-shell .pros-iconbtn.pros-champion-btn.sug { color:var(--amber, #d97706); opacity:.75; }',
     '#prospecting-shell tr.pros-research-row > td { background:var(--surface2); padding:0 !important; }',
     '#prospecting-shell .pros-research { display:grid; grid-template-columns:minmax(220px,1fr) minmax(0,2fr); gap:18px; padding:16px 18px; }',
     // En pantallas angostas la tabla se desplaza en horizontal: el panel se queda fijo al ancho visible.
@@ -1604,8 +1611,45 @@
   }
 
   // ══ TAB 1: BÚSQUEDA — search + results ══════════════════════════════════
+  // Buscar tiene dos modos (2026-10-17): personas en Apollo (lo de siempre) y
+  // empresas en registros públicos (js/registry-search.js: CNPJ, DENUE,
+  // registro mercantil de Colombia). El modo se recuerda por navegador.
+  var SEARCH_MODE_KEY = 'prospecting_search_mode_v1';
+  function getSearchMode() {
+    try { return localStorage.getItem(SEARCH_MODE_KEY) === 'registry' ? 'registry' : 'people'; } catch (_) { return 'people'; }
+  }
+  function setSearchMode(mode) {
+    try { localStorage.setItem(SEARCH_MODE_KEY, mode); } catch (_) {}
+    var s = state.search;
+    if (!s.modeHosts) return;
+    s.modeHosts.people.style.display = mode === 'people' ? '' : 'none';
+    s.modeHosts.registry.style.display = mode === 'registry' ? '' : 'none';
+    s.modeBtns.forEach(function (b) {
+      var on = b.getAttribute('data-mode') === mode;
+      b.className = 'btn btn-sm ' + (on ? 'btn-primary' : 'btn-ghost');
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    if (mode === 'registry' && !s.registryMounted) {
+      if (!window.registrySearch) { s.modeHosts.registry.textContent = 'El módulo de registros públicos no está cargado. Recarga la página.'; return; }
+      s.registryMounted = true;
+      Promise.resolve(window.registrySearch.mount(s.modeHosts.registry)).catch(function (e) { toast(errMsg(e), 'error'); });
+    }
+  }
+
   function buildSearchPane() {
-    var pane = state.panes.busqueda;
+    var root = state.panes.busqueda;
+    var modeBtns = [
+      h('button', { type: 'button', 'data-mode': 'people', text: 'Personas (Apollo)' }),
+      h('button', { type: 'button', 'data-mode': 'registry', text: 'Empresas en registros públicos' }),
+    ];
+    modeBtns.forEach(function (b) { b.addEventListener('click', function () { setSearchMode(b.getAttribute('data-mode')); }); });
+    root.appendChild(h('div', { role: 'group', 'aria-label': 'Qué buscar', style: 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px' }, modeBtns[0], modeBtns[1]));
+    var pane = h('div', null);
+    var registryHost = h('div', { style: 'display:none' });
+    root.appendChild(pane);
+    root.appendChild(registryHost);
+    state.search.modeHosts = { people: pane, registry: registryHost };
+    state.search.modeBtns = modeBtns;
     var recoHost = h('div', null);
     pane.appendChild(recoHost);
     state.search.recoHost = recoHost;
@@ -1623,6 +1667,7 @@
     results.addEventListener('click', guarded(onResultsClick));
     results.addEventListener('change', guarded(onResultsChange));
     renderResults();
+    setSearchMode(getSearchMode());
   }
 
   // ── Paginación con buffer ───────────────────────────────────────────────
@@ -2469,11 +2514,86 @@
         (window.Dialer && String(m.phone || '').replace(/\D/g, '').length >= 8
           ? '<button type="button" class="pros-iconbtn" data-action="call-member" data-id="' + id + '" title="Llamar">' + SVG_PHONE + '</button>' : '') +
         '<button type="button" class="pros-iconbtn pros-research-btn' + (open ? ' on' : '') + (hasResearch ? ' has' : '') + '" data-action="toggle-research" data-id="' + id + '" title="Investigación previa: notas y ángulo con IA" aria-expanded="' + (open ? 'true' : 'false') + '">' + SVG_RESEARCH + '</button>' +
+        championBtnHtml(m) +
         '<button type="button" class="pros-iconbtn" data-action="edit-member" data-id="' + id + '" title="Editar contacto">' + SVG_EDIT + '</button>' +
         '<button type="button" class="pros-iconbtn" data-action="delete-member" data-id="' + id + '" title="Eliminar contacto">' + SVG_TRASH + '</button>' +
       '</td>' +
       '</tr>' +
       (open ? '<tr class="pros-research-row"><td colspan="' + ((isAllList() ? 10 : 9) + aiColCount()) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
+  }
+
+  // ── Champions ───────────────────────────────────────────────────────────
+  // La estrella marca al lead como champion: el Radar (detector
+  // champion_moves) lo chequea y avisa si cambia de empresa. Sugerido = lo
+  // propuso la base porque tuvo una reunión; un clic lo sigue.
+
+  function championBtnHtml(m) {
+    var ch = state.listas.champions;
+    if (!ch) return '';
+    var w = ch[String(m.id)];
+    var on = w && w.state === 'active';
+    var sug = w && w.state === 'suggested';
+    var title = on ? 'Champion en seguimiento: el Radar te avisa si cambia de empresa. Clic para dejar de seguirlo.'
+      : sug ? 'Sugerido como champion (tuvo una reunión). Clic para seguirlo.'
+      : 'Marcar como champion: el Radar te avisa si cambia de empresa.';
+    return '<button type="button" class="pros-iconbtn pros-champion-btn' + (on ? ' on' : '') + (sug ? ' sug' : '') + '" data-action="toggle-champion" data-id="' + esc(String(m.id)) + '" title="' + esc(title) + '" aria-pressed="' + (on ? 'true' : 'false') + '">' + (on ? SVG_STAR_ON : SVG_STAR) + '</button>';
+  }
+
+  // Una sola consulta por recarga: la lista de champions de un usuario es
+  // chica comparada con sus contactos (RLS: solo las filas propias).
+  function loadChampionMarks() {
+    var st = state.listas;
+    if (!window.supabaseClient) return Promise.resolve();
+    return Promise.resolve(window.supabaseClient.from('champion_watch').select('id, member_id, state')
+      .not('member_id', 'is', null).neq('state', 'dismissed').limit(5000))
+      .then(function (r) {
+        if (r.error) { if (/champion_watch|does not exist|schema cache/i.test(r.error.message)) st.champions = null; return; }
+        var map = {};
+        (r.data || []).forEach(function (w) { map[String(w.member_id)] = { id: w.id, state: w.state }; });
+        st.champions = map;
+      })
+      .catch(function (e) { console.warn('[prospecting] champions:', e); });
+  }
+
+  function toggleChampion(id) {
+    var st = state.listas;
+    var m = findListMember(id);
+    if (!m || !st.champions) return Promise.resolve();
+    var w = st.champions[id];
+    var sb = window.supabaseClient;
+    var done = function (msg) { renderListsRight(); if (msg) toast(msg, 'success'); };
+    var fail = function (e) { toast('No se pudo guardar: ' + errMsg(e), 'error'); };
+    if (w && w.state === 'active') {
+      return Promise.resolve(sb.from('champion_watch').delete().eq('id', w.id)).then(function (r) {
+        if (r.error) throw r.error;
+        delete st.champions[id]; done('Dejaste de seguirlo como champion.');
+      }).catch(fail);
+    }
+    if (w) {
+      return Promise.resolve(sb.from('champion_watch').update({ state: 'active', next_check_at: new Date().toISOString() }).eq('id', w.id)).then(function (r) {
+        if (r.error) throw r.error;
+        w.state = 'active'; done('Champion en seguimiento: el Radar te avisa si cambia de empresa.');
+      }).catch(fail);
+    }
+    var name = m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim();
+    if (!name || !(m.company || m.company_domain)) { toast('Para seguirlo como champion necesita nombre y empresa: agrégalos con «Editar contacto».', 'warn'); return Promise.resolve(); }
+    return Promise.resolve(sb.from('champion_watch').insert({
+      user_id: m.user_id || (window.currentUser && window.currentUser.id), member_id: m.id, origin: 'manual', state: 'active',
+      name: name, first_name: m.first_name || null, last_name: m.last_name || null, title: m.title || null,
+      company: m.company || null, company_domain: m.company_domain || null, linkedin_url: m.linkedin_url || null,
+      email: m.email || null, apollo_person_id: m.apollo_person_id || null,
+    }).select('id, state').single()).then(function (r) {
+      // Ya estaba (descartada antes): se reactiva en vez de duplicarla.
+      if (r.error && /duplicate|unique/i.test(r.error.message)) {
+        return sb.from('champion_watch').update({ state: 'active', next_check_at: new Date().toISOString() })
+          .eq('member_id', m.id).select('id, state').single();
+      }
+      return r;
+    }).then(function (r) {
+      if (r.error) throw new Error(/duplicate|unique/i.test(r.error.message) ? 'esa persona ya está en tu lista de champions.' : r.error.message);
+      st.champions[id] = { id: r.data.id, state: r.data.state };
+      done('Champion en seguimiento: el Radar te avisa si cambia de empresa (pestaña Champions).');
+    }).catch(fail);
   }
 
   // ── Investigación previa por lead ───────────────────────────────────────
@@ -2609,6 +2729,7 @@
         '<textarea id="pros-notes-' + id + '" data-action="research-notes" data-id="' + id + '" maxlength="5000" placeholder="Lo que sabes de esta persona o su empresa: cómo la conociste, qué te contaron, qué revisar…">' + esc(memberNotes(m)) + '</textarea>' +
         '<div class="pros-cellsub" data-notes-state="' + id + '">' + esc(notesState) + '</div>' +
         '<div class="pros-cellsub">Se guardan solas. La IA las usa al investigar, en los mensajes de campaña y en el Meeting Coach.</div>' +
+        registryPanelHtml(m) +
       '</div>' +
       '<div class="pros-research-col">' +
         '<div class="pros-research-head"><span class="pros-lbl">Ángulo e investigación</span>' +
@@ -2619,6 +2740,90 @@
         '<div data-lead-calls="' + id + '"></div>' +
       '</div>' +
     '</div>';
+  }
+
+  // ── Datos de registro de la empresa del lead (company-registry) ────────
+  // Enriquecimiento de cuenta: identificador fiscal, actividad, fecha de
+  // constitución, socios y estado según el registro público del país
+  // (Brasil, México, Colombia). Solo se guarda una ficha inequívoca; si hay
+  // varias parecidas, el usuario elige.
+  function memberRegistry(m) {
+    var r = m && m.registry && typeof m.registry === 'object' && m.registry.registry_id ? m.registry : null;
+    if (r) return r;
+    var s = m && m.snapshot && m.snapshot.registry;
+    return s && typeof s === 'object' && s.registry_id ? s : null;
+  }
+
+  function registryPanelHtml(m) {
+    var id = esc(String(m.id));
+    var st = state.listas;
+    st.registryCands = st.registryCands || {};
+    var busy = st.registryBusy && st.registryBusy[String(m.id)];
+    var r = memberRegistry(m);
+    var out = '<div class="pros-research-head" style="margin-top:10px"><span class="pros-lbl">Datos de registro</span>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="registry-run" data-id="' + id + '"' + (busy ? ' disabled' : '') + '>' +
+      (busy ? 'Buscando…' : (r ? 'Actualizar' : 'Buscar en el registro público')) + '</button></div>';
+    if (r) {
+      var stat = { active: 'Activa', inactive: 'De baja', unknown: 'Estado sin confirmar' }[r.status] || '';
+      var rows = [
+        r.tax_id ? (r.tax_id_label || 'ID fiscal') + ': ' + r.tax_id : '',
+        r.legal_name ? 'Razón social: ' + r.legal_name : '',
+        r.activity && (r.activity.code || r.activity.description) ? 'Actividad: ' + [r.activity.code, r.activity.description].filter(Boolean).join(' · ') : '',
+        r.founded_on ? (r.founded_label || 'Constitución') + ': ' + fmtDate(r.founded_on) : '',
+        stat || r.status_detail ? 'Estado: ' + [stat, r.status_detail].filter(Boolean).join(' · ') : '',
+        r.size && r.size.label ? 'Tamaño: ' + r.size.label : '',
+      ].filter(Boolean);
+      out += '<div class="pros-research-sec">' + rows.map(function (x) { return '<div>' + esc(x) + '</div>'; }).join('');
+      if (Array.isArray(r.partners) && r.partners.length) {
+        out += '<div style="margin-top:6px">Socios: ' + esc(r.partners.slice(0, 6).map(function (p) { return p.name + (p.role ? ' (' + p.role + ')' : ''); }).join(', ')) + '</div>' +
+          '<div class="pros-cellsub">Dato público del registro; úsalo solo para identificar la cuenta (LGPD).</div>';
+      }
+      out += '<div class="pros-cellsub">Fuente: ' + esc(r.source || r.registry || 'registro público') + (r.fetched_at ? ' · ' + esc(fmtDate(r.fetched_at)) : '') + '</div></div>';
+    }
+    var c = st.registryCands[String(m.id)];
+    if (c) {
+      if (c.note) out += '<div class="pros-cellsub">' + esc(c.note) + '</div>';
+      (c.candidates || []).forEach(function (x) {
+        out += '<button type="button" class="btn btn-ghost btn-sm" style="justify-content:flex-start;text-align:left" data-action="registry-pick" data-id="' + id + '" data-registry="' + esc(x.registry) + '" data-rid="' + esc(x.registry_id) + '">' +
+          esc((x.trade_name || x.legal_name || '—') + (x.tax_id ? ' · ' + x.tax_id : '') + (x.address && x.address.city ? ' · ' + x.address.city : '')) + '</button>';
+      });
+    } else if (!r) {
+      out += '<div class="pros-cellsub">Completa el identificador fiscal, la actividad, la fecha de constitución, los socios y el estado de la empresa desde el registro oficial (Brasil, México y Colombia).</div>';
+    }
+    return out;
+  }
+
+  function runRegistry(id, choice) {
+    var st = state.listas;
+    st.registryBusy = st.registryBusy || {};
+    st.registryCands = st.registryCands || {};
+    st.registryBusy[String(id)] = true;
+    renderListsRight();
+    return Promise.resolve(pd().enrichMemberRegistry(id, choice ? { choice: choice } : {}))
+      .then(function (res) {
+        res = res || {};
+        if (res.match) {
+          delete st.registryCands[String(id)];
+          var mm = findListMember(id);
+          if (mm) mm.registry = res.match;
+          toast('Datos de registro guardados.', 'success');
+        } else {
+          st.registryCands[String(id)] = { note: res.note || 'No encontramos una ficha inequívoca.', candidates: res.candidates || [] };
+        }
+        if (res.charged && window.credits && typeof window.credits.refresh === 'function') window.credits.refresh();
+      })
+      .catch(function (e) {
+        if (e && e.status === 503) throw new Error((e.detail || 'El registro público no está disponible en el servidor') + '.');
+        throw new Error('No se pudo consultar el registro' + (e && e.detail ? ' (' + e.detail + ')' : '') + '.');
+      })
+      .then(function () {
+        delete st.registryBusy[String(id)];
+        return reloadMembers({ keepSelection: true });
+      }, function (err) {
+        delete st.registryBusy[String(id)];
+        renderListsRight();
+        throw err;
+      });
   }
 
   function setNotesState(id, value) {
@@ -2845,6 +3050,9 @@
         if (st.activeListId !== listId) return; // el usuario cambió de lista mientras cargaba
         if (res[1]) st.waLearned = res[1];
         st.members = Array.isArray(members) ? members : [];
+        if (st.champions) return loadChampionMarks();
+      })
+      .then(function () {
         if (keep) {
           var ids = new Set(st.members.map(function (m) { return String(m.id); }));
           Array.from(st.selected).forEach(function (id) { if (!ids.has(id)) st.selected.delete(id); });
@@ -3014,6 +3222,9 @@
       window.Dialer.power(pdRows.map(function (m) { return { member: m, opts: {} }; }), { title: lst ? lst.name : 'Todos los contactos' });
       return;
     }
+    if (action === 'toggle-champion') return toggleChampion(String(btn.getAttribute('data-id')));
+    if (action === 'registry-run') return runRegistry(btn.getAttribute('data-id'));
+    if (action === 'registry-pick') return runRegistry(btn.getAttribute('data-id'), { registry: btn.getAttribute('data-registry'), registry_id: btn.getAttribute('data-rid') });
     if (action === 'create-campaign') return createCampaignFromList();
     if (action === 'add-manual') return openAddManualModal();
     if (action === 'enrich-selected') return openEnrichModal();
@@ -4202,6 +4413,34 @@
         toast(errMsg(e), 'error');
       }
     },
+    // Registros públicos → «Buscar personas en Apollo»: Buscar (personas) con
+    // el dominio de la empresa o, sin dominio, su nombre como palabra clave,
+    // y el país. No borra el resto de los filtros a propósito: el usuario ve
+    // y ajusta lo que se aplicó.
+    searchCompanyPeople: function (opts) {
+      try {
+        ensureBuilt();
+        switchTab('busqueda');
+        setSearchMode('people');
+        if (apollo.connected !== true) return;
+        var f = state.search.filters || defaultFilters();
+        var domain = normalizeDomain(opts && opts.domain);
+        var name = String((opts && opts.name) || '').trim();
+        if (!domain && !name) return toast('Esta empresa no tiene dominio ni nombre para buscar.', 'warn');
+        f.q_organization_domains_list = domain ? [domain] : [];
+        f.q_keywords = domain ? '' : name;
+        if (opts && opts.country) f.organization_locations = [opts.country];
+        state.search.filters = f;
+        persistFilters();
+        if (state.search.panelHost) { state.search.panelHost.innerHTML = ''; state.search.panelHost.appendChild(buildFilterPanel()); }
+        updateFilterBadges();
+        toast(domain ? 'Buscando personas en ' + domain : 'Buscando personas de «' + name + '» (sin dominio: por nombre, revisa que sean de esa empresa)', 'info');
+        return runSearch(1, true);
+      } catch (e) {
+        console.error('[prospecting]', e);
+        toast(errMsg(e), 'error');
+      }
+    },
     show: function (tabId) {
       try {
         ensureBuilt();
@@ -4216,6 +4455,7 @@
     openEditContact: openEditContactModal,
     // Reutilizados por js/campaigns.js para no duplicar el modal ni el DOM helper.
     confirm: confirmModal,
+    openModal: openModal,
     h: h,
     emptyHtml: emptyHtml,
     // Hilo de Gmail + responder por email (Campañas → Respuestas).

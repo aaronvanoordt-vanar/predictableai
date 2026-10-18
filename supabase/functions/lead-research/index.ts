@@ -20,7 +20,8 @@
  * respuestas de la Bandeja y el Meeting Coach lo leen sin volver a pagarlo
  * (`buildResearchBlock`).
  *
- * Auth: Bearer <user JWT> (validado con auth.getUser). Con JWT en el deploy.
+ * Auth: Bearer <user JWT> (validado con auth.getUser), o la service role con
+ * { user_id } (la investigación automática de inbound-capture). Con JWT en el deploy.
  * POST { member_id }
  * 200 { research, research_status: 'ready' }
  * 402 insufficient_credits · 404 member not found · 409 already_running
@@ -58,6 +59,17 @@ function corsHeaders(origin: string) {
 
 function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...extra } });
+}
+
+// Mismo criterio que enrich-list: cualquier JWT cuyo claim role sea service_role.
+function jwtRole(token: string): string | null {
+  try {
+    const payload = token.split(".")[1] ?? "";
+    const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof decoded?.role === "string" ? decoded.role : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 /** Una corrida colgada (la invocación murió) libera la fila después de esto. */
@@ -143,6 +155,24 @@ function leadBlock(m: Json, snap: Json): string {
   return lines.join("\n");
 }
 
+/** Ficha del registro público de la empresa (company-registry), si el lead la tiene. Hechos oficiales: el modelo no los contradice. */
+function registryBlock(m: Json): string {
+  const r = m?.registry?.registry_id ? m.registry : m?.snapshot?.registry?.registry_id ? m.snapshot.registry : null;
+  if (!r) return "";
+  const lines = ["", "", "=== REGISTRO PÚBLICO DE LA EMPRESA (dato oficial) ==="];
+  const push = (label: string, v: unknown) => { const s = str(v, 300); if (s) lines.push(`- ${label}: ${s}`); };
+  push(r.tax_id_label || "Identificador fiscal", r.tax_id);
+  push("Razón social", r.legal_name);
+  push("Actividad registrada", [r.activity?.code, r.activity?.description].filter(Boolean).join(" · "));
+  push(r.founded_label || "Fecha de constitución", r.founded_on);
+  push("Estado", [r.status, r.status_detail].filter(Boolean).join(" · "));
+  push("Tamaño", r.size?.label);
+  push("Ciudad", [r.address?.city, r.address?.region].filter(Boolean).join(", "));
+  if (Array.isArray(r.partners) && r.partners.length) push("Socios (registro)", r.partners.slice(0, 6).map((p: Json) => [p?.name, p?.role].filter(Boolean).join(" — ")).join("; "));
+  push("Fuente", r.source);
+  return lines.join("\n");
+}
+
 function apolloBlock(a: ApolloEmployment, ran: boolean): string {
   if (!ran) return "\n\n=== APOLLO ===\nNo se pudo consultar Apollo en esta corrida.";
   return `\n\n=== LO QUE DICE APOLLO HOY (pista, no veredicto) ===\n${a.detail}` +
@@ -203,10 +233,18 @@ Deno.serve(withLlmContext(async (req: Request) => {
   const memberId = typeof body?.member_id === "string" && /^[0-9a-f-]{36}$/i.test(body.member_id) ? body.member_id : null;
   if (!memberId) return json({ error: "member_id required" }, 400, h);
 
-  const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
-  const { data: authData, error: authErr } = await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
-  if (authErr || !authData?.user) return json({ error: "Unauthorized" }, 401, h);
-  const userId = authData.user.id;
+  const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "").trim();
+  // inbound-capture la llama con la service role + user_id (investigación
+  // automática de un lead inbound, «Investigar al llegar» del sitio).
+  let userId: string;
+  if (token && (token === SERVICE_KEY || jwtRole(token) === "service_role")) {
+    if (typeof body?.user_id !== "string" || !/^[0-9a-f-]{36}$/i.test(body.user_id)) return json({ error: "user_id required" }, 400, h);
+    userId = body.user_id;
+  } else {
+    const { data: authData, error: authErr } = await createClient(SUPABASE_URL, ANON_KEY).auth.getUser(token);
+    if (authErr || !authData?.user) return json({ error: "Unauthorized" }, 401, h);
+    userId = authData.user.id;
+  }
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
@@ -306,6 +344,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     radar,
     buildTrainingBlock(training, "outreach"),
     leadBlock(m, snapshot),
+    registryBlock(m),
     apolloBlock(apollo, apolloRan),
     notes ? `\n\n=== NOTAS DEL VENDEDOR SOBRE ESTE LEAD (mandan sobre lo inferido) ===\n${notes}` : "",
     `\n\nHoy es ${new Date().toISOString().slice(0, 10)}. Investiga y responde con el JSON.`,

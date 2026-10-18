@@ -54,6 +54,9 @@
     // «Investigar con IA» (Listas): puesto actual + empresa + ángulo. Con la
     // cuenta de Apollo de la plataforma se suma el match (enrich_email).
     lead_research:          { credits: 3,  label: 'por lead',            variable: false },
+    // Seguimiento de champions (Radar): búsqueda web de respaldo cuando
+    // Apollo no ubica a la persona en su empresa.
+    champion_web_check:     { credits: 2,  label: 'por verificación web', variable: false },
     // Columnas IA (Listas): por fila investigada, también «No encontrado»; los errores no.
     ai_column_cell:         { credits: 2,  label: 'por fila (con búsqueda web)', variable: true },
     ai_column_cell_basic:   { credits: 1,  label: 'por fila (sin búsqueda web)', variable: true },
@@ -75,6 +78,12 @@
     enrich_phone_waterfall: { credits: 20, label: 'por teléfono encontrado en la cascada', variable: false },
     // Verificar un email de Apollo que no venía verificado (solo si hay veredicto).
     email_verify:           { credits: 1,  label: 'por email verificado', variable: false },
+
+    // ── Registros públicos de empresas ───────────────────────────────
+    // México (DENUE) y Colombia (datos.gov.co) son gratis; la ficha por CNPJ
+    // también (BrasilAPI). Brasil se busca en CNPJá, que cobra por consulta.
+    registry_search_br:     { credits: 5,  label: 'por página de empresas de Brasil', variable: false },
+    registry_lookup_br:     { credits: 1,  label: 'por ficha de Brasil buscada por dominio', variable: false },
 
     // ── Meeting Coach (por duración) ──────────────────────────────────
     // Captura local: 5 por cada 10 min + 5 del reporte final.

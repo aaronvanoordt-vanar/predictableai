@@ -3706,6 +3706,8 @@
     var shown = filteredConversations(convs);
 
     var left = h('div', { class: 'table-card' });
+    // Leads inbound esperando su primer contacto, con cronómetro (js/inbound.js).
+    if (global.inbound && global.inbound.inboxStrip) left.appendChild(global.inbound.inboxStrip());
     var filters = h('div', { class: 'cmp-inbox-filters' });
     var search = h('input', { type: 'search', placeholder: 'Buscar por nombre, empresa o cargo…', 'data-action': 'inbox-filter-q', value: state.inboxFilter.q || '' });
     filters.appendChild(search);
@@ -4113,6 +4115,9 @@
       if (names.length) links.appendChild(h('span', { class: 'pros-hint', text: 'Campaña: ' + names.join(', ') }));
     }
     if (!m) links.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'conv-save', 'data-key': conv.key, text: 'Guardar en una lista' }));
+    // CRM (js/crm.js): una respuesta es el momento de abrir la oportunidad.
+    // Solo se sugiere; el usuario decide si la respuesta es interés real.
+    if (m && global.crm && global.crm.createOpportunityFor) links.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'conv-crm-opp', 'data-member': m.id, text: 'Crear oportunidad' }));
     // Estado del lead en el CRM, editable desde la conversación: es aquí
     // donde se sabe si hubo reunión, y ese estado es lo que alimenta el
     // dashboard y el bucle de aprendizaje.
@@ -4613,6 +4618,7 @@
     }
     if (action === 'reply-channel' && key) { state.replyChannel[key] = channel; return render(); }
     if (action === 'conv-edit' && key) { var convE = findConv(key); if (convE) editMember(convE); return; }
+    if (action === 'conv-crm-opp') { var memO = btn.getAttribute('data-member'); if (memO && global.crm) global.crm.createOpportunityFor(memO, { source: 'reply' }); return; }
     if (action === 'conv-save' && key) { var convS = findConv(key); if (convS) saveContactToList(convS, btn.getAttribute('data-then') || ''); return; }
     if (action === 'conv-meeting') {
       if (!pdSafe().setContactStatus) return;

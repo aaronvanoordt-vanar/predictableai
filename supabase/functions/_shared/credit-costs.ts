@@ -28,6 +28,14 @@ export const CREDIT_COSTS = {
   // (válido, inválido o catch-all).
   email_verify: 1,
 
+  // Registros públicos de empresas (company-registry). México (DENUE) y
+  // Colombia (datos.gov.co) son fuentes gratuitas, igual que la ficha por
+  // CNPJ (BrasilAPI): 0. La búsqueda de Brasil va por CNPJá, que cobra por
+  // consulta: una página de hasta 25 empresas, o una ficha buscada por el
+  // dominio del email de registro. Revisar con el contrato de CNPJá.
+  registry_search_br: 5,
+  registry_lookup_br: 1,
+
   // Mensajes IA.
   outreach_full: 4,          // "Preparar con IA" (5 capas + prep del coach)
   outreach_step: 2,          // un paso de campaña o un borrador de la Bandeja
@@ -36,6 +44,11 @@ export const CREDIT_COSTS = {
   // la empresa y propone el ángulo. El match de Apollo se cobra aparte como
   // enrich_email solo con la key de la plataforma.
   lead_research: 3,
+  // Seguimiento de champions (Radar → champion_moves): búsqueda web de
+  // respaldo cuando Apollo no ubica a la persona en su empresa (Haiku + 2
+  // búsquedas, ~0.02 USD). El match de Apollo se cobra como enrich_email
+  // solo con la key de la plataforma y solo si encontró a la persona.
+  champion_web_check: 2,
   // Columnas IA en Listas: por fila investigada, también «No encontrado»
   // (la búsqueda se hizo igual); un error no se cobra. Con búsqueda web (~1–2 búsquedas con Haiku o Sonar,
   // ≤ 0.035 USD) o solo con los datos del contacto (sin web, ~0.003 USD).
@@ -103,7 +116,7 @@ export function callCost(country: string, seconds: number): number {
 export type CreditAction = keyof typeof CREDIT_COSTS;
 
 /** Tipos de detector del Radar según lo que cuesta correrlos 30 días. */
-const RADAR_PEOPLE_KINDS = new Set(["leadership", "website_visitors"]);
+const RADAR_PEOPLE_KINDS = new Set(["leadership", "website_visitors", "champion_moves"]);
 const RADAR_WEB_KINDS = new Set(["news", "tenders", "web_footprint"]);
 const RADAR_PRESENCE_KINDS = new Set(["presence"]);
 

@@ -615,7 +615,19 @@
       company_domain: site ? hostOf(site) : null,
       country: co.country || null,
       snapshot: radarSnapshot(co),
-    });
+    }, registryFields(co.registry));
+  }
+
+  // Señal del detector de registros públicos: el teléfono y el email son los
+  // que la empresa dejó en el registro oficial (no los de una persona).
+  function registryFields(reg) {
+    if (!reg || typeof reg !== 'object') return {};
+    const out = { registry: reg };
+    if (reg.phone) { out.phone = reg.phone; out.phone_status = 'revealed'; }
+    if (reg.email) out.email = reg.email;
+    if (reg.address && reg.address.city) out.city = reg.address.city;
+    if (reg.address && reg.address.region) out.state = reg.address.region;
+    return out;
   }
 
   // Apollo: una llamada HTTP por decision maker. Un run del Radar puede traer
@@ -739,6 +751,11 @@
       render();
       let { data: inserted, error } = await global.supabaseClient
         .from('prospect_list_members').insert(rows).select('id, apollo_person_id');
+      if (error && /registry/i.test(error.message)) {
+        // Migración 20261017000031 (columna registry) sin aplicar: el teléfono y el email igual se guardan.
+        rows.forEach((r) => { delete r.registry; });
+        ({ data: inserted, error } = await global.supabaseClient.from('prospect_list_members').insert(rows).select('id, apollo_person_id'));
+      }
       if (error && /source/i.test(error.message)) {
         // Migración 20260919000001 (columna source) todavía sin aplicar: se guarda sin procedencia.
         rows.forEach((r) => { delete r.source; });

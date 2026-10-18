@@ -61,6 +61,7 @@ import { detectorsFromHub, type Availability } from "../_shared/radar-planner.ts
 import { platformKey } from "../_shared/apollo-auth.ts";
 import { minCadenceHours, radarDetectorMonthCost } from "../_shared/credit-costs.ts";
 import { PLAN_LIMITS, planForUser } from "../_shared/billing-plans.ts";
+import { registryAvailableFor } from "../_shared/registry-fetch.ts";
 
 const BILLING_PERIOD_MS = 30 * 86400_000;
 
@@ -356,13 +357,13 @@ async function detectorUnit(supa: Json, claimed: { det: Json; plan: Json }): Pro
         .eq("detector_id", det.id).order("last_seen_at", { ascending: false }).limit(120);
       knownNames = (Array.isArray(known) ? known : []).map((k: Json) => asStr(k.company_name)).filter(Boolean);
     }
-    const row: DetectorRow = { id: det.id, user_id: det.user_id, kind, name: det.name, config: det.config || {}, cursor: det.cursor || {}, weight: Number(det.weight) || 60 };
+    const row: DetectorRow = { id: det.id, user_id: det.user_id, kind, name: det.name, config: det.config || {}, cursor: det.cursor || {}, weight: Number(det.weight) || 60, stats: det.stats || {} };
     const result = await runTick({
       supa, detector: row, ctx: bundle.ctx, countries: Array.isArray(plan.countries) ? plan.countries : [],
       apollo: bundle.apollo, engine: bundle.engine, knownNames, log: (m) => logs.push(m),
     });
     const saved = await persistCandidates(supa, det, plan, bundle, result.candidates);
-    const stats = { ...(det.stats || {}) };
+    const stats = { ...(det.stats || {}), ...(result.statsPatch || {}) };
     const cycleSoFar = (Number(det.stats?.cycle_new) || 0) + saved.inserted;
     stats.total_new = (Number(stats.total_new) || 0) + saved.inserted;
     stats.last_candidates = result.candidates.length;
@@ -416,6 +417,7 @@ async function hubRefreshUnit(supa: Json): Promise<number> {
       const av: Availability = {
         llm_web: true, apollo: !!bundle.apollo || !!platformKey(), apollo_user: !!bundle.apollo && bundle.apollo.mode !== "platform",
         places: !!Deno.env.get("GOOGLE_PLACES_API_KEY"), probe: true,
+        registry: registryAvailableFor(bundle.ctx.targets.countries),
       };
       const { data: existing } = await supa.from("radar_detectors").select("kind, name").eq("plan_id", plan.id);
       const extra = await detectorsFromHub({ engine: bundle.engine, ctx: bundle.ctx, hubText: hub.text, existing: existing || [], availability: av });
