@@ -84,7 +84,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Revisar la prueba gratis
 
 **P2**
-- [ ] Registros públicos de empresas
+- [x] Registros públicos de empresas (Brasil, México, Colombia; Perú y Chile documentados en `docs/REGISTROS.md`)
 - [ ] APIs oficiales de licitaciones
 - [ ] Listas "No llamar"
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
