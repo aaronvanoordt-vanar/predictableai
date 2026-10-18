@@ -91,7 +91,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Agendamiento con recordatorios por WhatsApp
 - [ ] Cobro local y CFDI
 - [ ] Facturación y créditos por cliente para agencias
-- [ ] Mapa de TAM, señales de LinkedIn y píxel web
+- [ ] Mapa de TAM, señales de LinkedIn y píxel web — Mapa de TAM construido (rama `claude/tam-map`); faltan señales de LinkedIn y píxel web
 
 **P3**
 - [ ] Automatizaciones de punta a punta
