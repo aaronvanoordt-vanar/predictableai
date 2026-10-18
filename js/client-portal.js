@@ -313,6 +313,8 @@
       // Lo que el equipo preparó en el espacio del cliente (contexto, análisis
       // de mercado, Radar): solo si está confirmado. Ver mountIntelligence().
       '<div id="cp-intel"></div>' +
+      // Reporte semanal y calidad de reunión (js/portal-meetings.js).
+      '<div id="cp-meetings"></div>' +
 
       '<div class="cp-cols">' +
         '<div class="cp-sec"><h2>Links de trabajo</h2><div class="cp-links">' + links + '</div></div>' +
@@ -474,6 +476,9 @@
 
   function bindDashboard() {
     mountIntelligence();
+    if (!state.legacy && token && window.PortalMeetings) {
+      window.PortalMeetings.mount(el('cp-meetings'), { api: api, canEdit: state.canEdit, esc: esc });
+    }
 
     var logout = el('cp-logout');
     if (logout) {

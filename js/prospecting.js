@@ -99,6 +99,7 @@
       // (sobreviven a los refrescos por realtime hasta que se guardan),
       // timers de guardado y corridas de IA en curso desde esta pestaña.
       researchOpen: new Set(), notesDraft: {}, notesTimers: {}, notesSaving: {}, researching: new Set(),
+      meetingQuality: {},      // member_id → veredicto del cliente (lead_meetings)
     },
   };
 
@@ -2354,7 +2355,7 @@
       '<td>' + esc(m.country || '—') +
         (m.city ? '<div class="pros-cellsub">' + esc(m.city) + '</div>' : '') + '</td>' +
       (isAllList() ? '<td><span class="pill pill-purple">' + esc(m.list_name || '—') + '</span></td>' : '') +
-      '<td>' + statusSelectHtml(m) + '</td>' +
+      '<td>' + statusSelectHtml(m) + meetingQualityPillHtml(m) + '</td>' +
       '<td>' + memberEmailCell(m) + '</td>' +
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
@@ -2400,6 +2401,44 @@
     if (!meta || emp.status === 'unknown') return '';
     var title = meta.title + (emp.reason ? ' — ' + emp.reason : '');
     return '<div class="pros-emp" title="' + esc(title) + '"><span class="pill pill-' + meta.pill + '">' + esc(meta.label) + '</span></div>';
+  }
+
+  // ── Calidad de reunión según el cliente ──────────────────────────────────
+  // Lo marca el cliente final en su portal (client.html); aquí solo se lee.
+  // Espejo de VERDICT_LABEL en supabase/functions/_shared/meeting-quality.ts.
+  var MEETING_VERDICT_LABELS = {
+    held: 'Se dio',
+    no_show: 'No se presentó',
+    qualified: 'Calificada',
+    not_qualified: 'No calificada',
+  };
+  var MEETING_VERDICT_PILL = { qualified: 'green', not_qualified: 'amber', held: 'blue', no_show: 'red' };
+  function meetingQualityOf(m) { return state.listas.meetingQuality[String(m.id)] || null; }
+  function meetingQualityPillHtml(m) {
+    var q = meetingQualityOf(m);
+    if (!q || !q.client_verdict || !MEETING_VERDICT_LABELS[q.client_verdict]) return '';
+    var title = 'Según el cliente' + (q.client_reason ? ': ' + q.client_reason : '');
+    return '<div class="pros-emp" title="' + esc(title) + '"><span class="pill pill-' + MEETING_VERDICT_PILL[q.client_verdict] + '">Cliente: ' + esc(MEETING_VERDICT_LABELS[q.client_verdict]) + '</span></div>';
+  }
+  function meetingQualitySectionHtml(m) {
+    var q = meetingQualityOf(m);
+    if (!q) return '';
+    var verdict = q.client_verdict && MEETING_VERDICT_LABELS[q.client_verdict];
+    return '<div class="pros-research-sec"><div class="pros-lbl" style="margin-bottom:4px">Calidad de la reunión según el cliente</div>' +
+      (verdict
+        ? '<div><b>' + esc(verdict) + '</b>' + (q.verdict_at ? ' <span class="pros-cellsub">· ' + esc(fmtDay(q.verdict_at)) + '</span>' : '') + '</div>' +
+          (q.client_reason ? '<div class="pros-cellsub">' + esc(q.client_reason) + '</div>' : '')
+        : '<div class="pros-cellsub">El cliente todavía no la calificó en su portal.</div>') +
+      '</div>';
+  }
+  function loadMeetingQuality(members) {
+    var ids = (members || []).filter(function (m) {
+      return ['reunion_agendada', 'reunion_tomada', 'no_show'].indexOf(m.contact_status) !== -1;
+    }).map(function (m) { return String(m.id); });
+    if (!ids.length || !pd().fetchMeetingQuality) { state.listas.meetingQuality = {}; return Promise.resolve(); }
+    return Promise.resolve(pd().fetchMeetingQuality(ids))
+      .then(function (map) { state.listas.meetingQuality = map || {}; })
+      .catch(function () { state.listas.meetingQuality = {}; });
   }
 
   function fmtDay(iso) {
@@ -2500,6 +2539,7 @@
         '<textarea id="pros-notes-' + id + '" data-action="research-notes" data-id="' + id + '" maxlength="5000" placeholder="Lo que sabes de esta persona o su empresa: cómo la conociste, qué te contaron, qué revisar…">' + esc(memberNotes(m)) + '</textarea>' +
         '<div class="pros-cellsub" data-notes-state="' + id + '">' + esc(notesState) + '</div>' +
         '<div class="pros-cellsub">Se guardan solas. La IA las usa al investigar, en los mensajes de campaña y en el Meeting Coach.</div>' +
+        meetingQualitySectionHtml(m) +
       '</div>' +
       '<div class="pros-research-col">' +
         '<div class="pros-research-head"><span class="pros-lbl">Ángulo e investigación</span>' +
@@ -2722,6 +2762,8 @@
           var ids = new Set(st.members.map(function (m) { return String(m.id); }));
           Array.from(st.selected).forEach(function (id) { if (!ids.has(id)) st.selected.delete(id); });
         }
+        // El veredicto del cliente (portal) llega antes de pintar; si falla, la tabla sale igual.
+        return loadMeetingQuality(st.members);
       })
       .catch(function (e) { st.members = []; st.membersError = errMsg(e); })
       .then(function () {

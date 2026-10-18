@@ -27,6 +27,11 @@
  *                    inyecta en vivo y en el reporte.
  *   icp_attribute    cargo / país / industria / tamaño con tasa de respuesta
  *                    vs. el promedio (sugerencia para el Contexto; no pisa el ICP).
+ *   meeting_quality  veredicto del CLIENTE sobre cada reunión (portal →
+ *                    lead_meetings: calificada / no calificada / no se
+ *                    presentó / se dio) por canal, ángulo, país, industria,
+ *                    cargo y seniority (_shared/meeting-quality.ts). Toda IA
+ *                    lo lee por _shared/intelligence.ts.
  *   summary          titulares para el dashboard.
  *
  * Intelligence Hub (2026-09-23): el 👍/👎 de cada hallazgo y las acciones
@@ -48,6 +53,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { distillHubRules } from "../_shared/intelligence.ts";
+import { attributeMeeting, qualityInsights, type MeetingVerdict } from "../_shared/meeting-quality.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -365,6 +371,54 @@ async function learnObjections(supa: Json, userId: string, out: Insight[]) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Calidad de reunión: el veredicto del cliente final (portal)
+// ─────────────────────────────────────────────────────────────────────────────
+async function learnMeetingQuality(supa: Json, userId: string, out: Insight[]) {
+  const { data, error } = await supa.from("lead_meetings").select("member_id, client_verdict")
+    .eq("user_id", userId).not("client_verdict", "is", null).limit(5000);
+  // Sin la migración (o sin veredictos) no hay nada que aprender.
+  if (error || !Array.isArray(data) || !data.length) return { rated: 0 };
+  const ids: string[] = data.map((r: Json) => r.member_id);
+  const members = new Map<string, Json>();
+  const enrollments: Json[] = [], events: Json[] = [], messages: Json[] = [];
+  for (let i = 0; i < ids.length; i += 300) {
+    const part = ids.slice(i, i + 300);
+    const [{ data: ms }, { data: ens }] = await Promise.all([
+      supa.from("prospect_list_members").select("id, title, country, snapshot").in("id", part),
+      supa.from("campaign_enrollments").select("id, member_id, replied_at, replied_channel").in("member_id", part),
+    ]);
+    for (const m of (ms || [])) members.set(m.id, m);
+    enrollments.push(...(ens || []));
+  }
+  const enIds = enrollments.map((e) => e.id);
+  for (let i = 0; i < enIds.length; i += 300) {
+    const part = enIds.slice(i, i + 300);
+    const [{ data: evs }, { data: msgs }] = await Promise.all([
+      supa.from("campaign_events").select("enrollment_id, node_id, channel, type, provider_message_id, created_at")
+        .in("enrollment_id", part).in("type", ["sent", "connection_sent", "failed"]).limit(20000),
+      supa.from("campaign_messages").select("enrollment_id, node_id, angle").in("enrollment_id", part).eq("status", "sent").limit(20000),
+    ]);
+    events.push(...(evs || []));
+    messages.push(...(msgs || []));
+  }
+  const rated = data.map((r: Json) => {
+    const m = members.get(r.member_id) || {};
+    const snap = m.snapshot && typeof m.snapshot === "object" ? m.snapshot : {};
+    const attr = attributeMeeting(r.member_id, enrollments, events, messages);
+    return {
+      verdict: r.client_verdict as MeetingVerdict,
+      channel: attr.channel, angle: attr.angle,
+      country: asStr(m.country), industry: asStr(snap.organization?.industry),
+      title: asStr(m.title).replace(/\s+/g, " ").slice(0, 60), seniority: asStr(snap.seniority),
+    };
+  });
+  const insights = qualityInsights(rated);
+  out.push(...insights);
+  const total = insights.find((i) => i.key === "all");
+  return { rated: rated.length, qualified: total?.metrics.qualified ?? 0, judged: total?.metrics.judged ?? 0 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ICP: qué atributos responden mejor
 // ─────────────────────────────────────────────────────────────────────────────
 function sizeBucket(n: number): string {
@@ -437,18 +491,21 @@ async function recomputeUser(supa: Json, userId: string) {
   const camp = await learnCampaigns(supa, userId, out, actions);
   const radar = await learnRadar(supa, userId, out, actions);
   const coach = await learnObjections(supa, userId, out);
+  const quality = await learnMeetingQuality(supa, userId, out);
   const icp = await learnIcp(supa, userId, out);
   const hub = await learnHub(supa, userId);
 
   const count = (scope: string, v: Verdict) => out.filter((i) => i.scope === scope && i.verdict === v).length;
   const headlines: string[] = [];
-  const works = out.filter((i) => i.verdict === "works" && ["campaign_node", "channel", "angle", "radar_detector", "icp_attribute"].includes(i.scope)).slice(0, 6).map((i) => i.label);
-  const fails = out.filter((i) => i.verdict === "fails").slice(0, 6).map((i) => i.label);
+  const isTotal = (i: Insight) => i.scope === "meeting_quality" && i.key === "all";
+  const works = out.filter((i) => i.verdict === "works" && !isTotal(i) && ["campaign_node", "channel", "angle", "radar_detector", "icp_attribute", "meeting_quality"].includes(i.scope)).slice(0, 6).map((i) => i.label);
+  const fails = out.filter((i) => i.verdict === "fails" && !isTotal(i)).slice(0, 6).map((i) => i.label);
   if (camp.sent) headlines.push(`${camp.replies} respuestas y ${camp.meetings} reuniones sobre ${camp.sent} envíos.`);
   if (radar.detectors) headlines.push(`${count("radar_detector", "works")} detectores funcionan, ${count("radar_detector", "fails")} se apagaron.`);
   if (coach.meetings) headlines.push(`${coach.meetings} reuniones analizadas, ${coach.objections} objeciones reales.`);
+  if (quality.rated) headlines.push(`${quality.qualified} de ${quality.judged} reuniones calificadas por tus clientes.`);
   if (hub.judged) headlines.push(`${hub.judged} hallazgos del Hub juzgados, ${hub.used} convertidos en acción.`);
-  out.push({ scope: "summary", key: "all", label: "Resumen", verdict: out.some((i) => i.verdict !== "insufficient") ? "neutral" : "insufficient", metrics: { headlines, works, fails, actions, campaigns: camp, radar, coach, icp, hub, computed_at: nowIso() } });
+  out.push({ scope: "summary", key: "all", label: "Resumen", verdict: out.some((i) => i.verdict !== "insufficient") ? "neutral" : "insufficient", metrics: { headlines, works, fails, actions, campaigns: camp, radar, coach, quality, icp, hub, computed_at: nowIso() } });
 
   // Reemplazo atómico por usuario: borra lo que ya no existe y upsert del resto.
   const keys = out.map((i) => `${i.scope}|${i.key}`);
@@ -478,6 +535,7 @@ async function activeUsers(supa: Json): Promise<string[]> {
     ["coach_meetings", "created_at"],
     ["prospect_list_members", "status_changed_at"],
     ["intel_hub_feedback", "created_at"],
+    ["lead_meetings", "updated_at"],
   ];
   for (const [t, col] of tables) {
     const { data } = await supa.from(t).select("user_id").gte(col, since).limit(5000);

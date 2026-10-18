@@ -87,7 +87,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Registros públicos de empresas
 - [ ] APIs oficiales de licitaciones
 - [ ] Listas "No llamar"
-- [ ] Calidad de reunión en el portal y benchmarks de Eleva
+- [x] Calidad de reunión en el portal y benchmarks de Eleva — estructura lista; faltan el histórico y las plantillas reales de Eleva (`docs/BENCHMARKS.md`)
 - [ ] Agendamiento con recordatorios por WhatsApp
 - [ ] Cobro local y CFDI
 - [ ] Facturación y créditos por cliente para agencias
