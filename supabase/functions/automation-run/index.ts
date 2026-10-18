@@ -1,7 +1,7 @@
 /**
  * automation-run — motor de Automatizaciones (2026-10-17).
  *
- * Avanza la cola `automation_runs` (migración 20261017000001). Las filas las
+ * Avanza la cola `automation_runs` (migración 20261018000003). Las filas las
  * crean triggers de la base cuando pasa algo (señal del Radar entregada, lead
  * nuevo en una lista, respuesta en la Bandeja, campaña terminada sin
  * respuesta, reunión agendada o tomada), una por (regla, sujeto): la misma
@@ -54,6 +54,7 @@ import {
   MAX_DEPTH, normalizeRule, pickContacts, type Rule, SENTIMENT_LABEL, taskTitle, TRIGGER_SUBJECT,
 } from "../_shared/automations.ts";
 import { notifyUserDevices } from "../_shared/push-devices.ts";
+import { SUPPRESSION_CHANNELS, type SuppressionChannel, suppressedMembers } from "../_shared/suppression.ts";
 import { appUrl, sendPlatformTemplate } from "../_shared/radar-notify.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -527,16 +528,36 @@ async function actEnroll(ctx: Ctx, cfg: Json): Promise<ActionResult> {
   if (!campaign) return { kind: "fail", text: "La campaña ya no existe." };
   if (campaign.status !== "active") return { kind: "fail", text: `La campaña «${campaign.name}» no está activa: actívala y vuelve a aprobar.` };
 
-  const { data: rows } = await ctx.svc.from("prospect_list_members").select("id, contact_status, enrich_requested_at").in("id", ids).eq("user_id", ctx.userId);
+  const { data: rows } = await ctx.svc.from("prospect_list_members")
+    .select("id, contact_status, enrich_requested_at, email, phone, linkedin_url, company_domain")
+    .in("id", ids).eq("user_id", ctx.userId);
   // Sin email todavía, el primer paso de email se omitiría: esperar a enrich-list.
   if ((rows || []).some((r: Json) => r.enrich_requested_at) && elapsed(st.started_at) < ENRICH_WAIT_MAX_MS) return { kind: "wait" };
 
   const flow = flowLib.normalize(campaign.flow);
   const first = flowLib.firstNode(flow);
   if (!first) return { kind: "fail", text: `La campaña «${campaign.name}» no tiene pasos.` };
+
+  // Lista de supresión, mismo criterio que enrollMembers() de js/campaigns.js:
+  // quien está suprimido en TODOS los canales de la campaña no se enrola; el
+  // suprimido en algunos se enrola y campaign-run salta esos pasos.
+  const chans = [...new Set(flowLib.actions(flow).map((a): string => (a.channel.startsWith("linkedin") ? "linkedin" : a.channel)))]
+    .filter((c): c is SuppressionChannel => (SUPPRESSION_CHANNELS as readonly string[]).includes(c));
+  let members: Json[] = rows || [];
+  let suppressed = 0;
+  if (chans.length && members.length) {
+    const sup = await suppressedMembers(ctx.svc, ctx.userId, members, chans);
+    if (sup.error) console.warn("[automation-run] suppression:", sup.error); // campaign-run vuelve a mirar antes de cada envío
+    const blocked = new Set(members.filter((m) => { const r = sup.result[m.id]; return r && chans.every((c) => r[c]); }).map((m) => m.id));
+    suppressed = blocked.size;
+    members = members.filter((m) => !blocked.has(m.id));
+  }
+  if (!members.length) {
+    return { kind: "done", level: "warn", text: `Ninguno enrolado: ${suppressed} en la lista de «No contactar» en todos los canales de la campaña.` };
+  }
   const now = Date.now();
   // Misma fila que enrollMembers() de js/campaigns.js.
-  const enrollRows = (rows || []).map((m: Json) => ({
+  const enrollRows = members.map((m: Json) => ({
     campaign_id: campaign.id,
     member_id: m.id,
     user_id: ctx.userId,
@@ -550,7 +571,7 @@ async function actEnroll(ctx: Ctx, cfg: Json): Promise<ActionResult> {
     .upsert(enrollRows, { onConflict: "campaign_id,member_id", ignoreDuplicates: true }).select("member_id");
   if (error) return { kind: "fail", text: "No se pudieron enrolar los leads: " + error.message };
   const enrolled = (inserted || []).map((r: Json) => r.member_id);
-  const toFlag = (rows || []).filter((m: Json) => enrolled.includes(m.id) && (m.contact_status || "no_contactado") === "no_contactado").map((m: Json) => m.id);
+  const toFlag = members.filter((m: Json) => enrolled.includes(m.id) && (m.contact_status || "no_contactado") === "no_contactado").map((m: Json) => m.id);
   if (toFlag.length) {
     await ctx.svc.from("prospect_list_members").update({ contact_status: "en_campana", status_changed_at: nowIso() }).in("id", toFlag);
   }
@@ -559,7 +580,7 @@ async function actEnroll(ctx: Ctx, cfg: Json): Promise<ActionResult> {
   return {
     kind: "done",
     cost,
-    text: `${enrolled.length} enrolados en «${campaign.name}»${enrolled.length < enrollRows.length ? ` (${enrollRows.length - enrolled.length} ya estaban)` : ""}. El crédito por lead se cobra al primer envío.`,
+    text: `${enrolled.length} enrolados en «${campaign.name}»${enrolled.length < enrollRows.length ? ` (${enrollRows.length - enrolled.length} ya estaban)` : ""}${suppressed ? `; ${suppressed} omitidos por «No contactar»` : ""}. El crédito por lead se cobra al primer envío.`,
     fact: `enrolados en «${campaign.name}»`,
   };
 }
@@ -884,7 +905,7 @@ Deno.serve(async (req: Request) => {
       });
       if (error) {
         if (/claim_automation_runs/.test(error.message) && /does not exist|not find/i.test(error.message)) {
-          return json({ error: "migration_pending", detail: "Falta aplicar la migración 20261017000001_automations.sql." }, 503, h);
+          return json({ error: "migration_pending", detail: "Falta aplicar la migración 20261018000003_automations.sql." }, 503, h);
         }
         throw new Error("claim_automation_runs: " + error.message);
       }
