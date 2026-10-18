@@ -42,6 +42,8 @@
     { key: 'radar', label: 'Radar', prefixes: ['radar_', 'champion_'] },
     { key: 'coach', label: 'Meeting Coach', prefixes: ['coach_'] },
     { key: 'voice', label: 'Agente de voz', prefixes: ['voice_'] },
+    // Minutos del dialer de Predictable (telefonía: `call_minutes`, `call_minutes_refund`).
+    { key: 'calls', label: 'Llamadas', prefixes: ['call_minutes'] },
   ];
   var OTHER_CATEGORY = { key: 'other', label: 'Otros' };
   var NON_USAGE_REASONS = ['agency_assign_in', 'agency_assign_out', 'agency_withdraw_in', 'agency_withdraw_out', 'workspace_trial_void', 'plan_expire', 'plan_grant', 'launch_reset', 'trial_grant', 'topup'];

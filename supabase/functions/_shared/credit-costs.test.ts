@@ -1,7 +1,7 @@
 // deno test --allow-read _shared/credit-costs.test.ts
 import { assertEquals } from "jsr:@std/assert@1";
 import {
-  apolloBillableCount, coachMeetingCost, CREDIT_COSTS, minCadenceHours, radarDetectorMonthCost, voiceCallCost, voiceMinutes,
+  apolloBillableCount, CALL_MINUTE_CREDITS, callCost, coachMeetingCost, CREDIT_COSTS, minCadenceHours, radarDetectorMonthCost, voiceCallCost, voiceMinutes,
 } from "./credit-costs.ts";
 
 Deno.test("js/credit-costs.js es espejo del tarifario que cobran las edge functions", async () => {
@@ -38,6 +38,7 @@ Deno.test("js/credit-costs.js es espejo del tarifario que cobran las edge functi
     email_verify: CREDIT_COSTS.email_verify,
     coach_meeting: CREDIT_COSTS.coach_local_block,
     coach_bot_block: CREDIT_COSTS.coach_bot_block,
+    call_minute: CALL_MINUTE_CREDITS.MX,
     voice_minute: CREDIT_COSTS.voice_minute,
     voice_minute_ar: CREDIT_COSTS.voice_minute_ar,
   };
@@ -92,6 +93,23 @@ Deno.test("apolloBillableCount cobra solo lo que Apollo encontró", () => {
     matches: [{ email: "x@y.com" }, null, { email: "" }, { email: "z@y.com" }],
   }, false), 2);
   assertEquals(apolloBillableCount("/people/bulk_match", { matches: [{}, null, {}] }, true), 2);
+});
+
+Deno.test("js/credit-costs.js espeja los créditos por minuto de cada país", async () => {
+  const js = await Deno.readTextFile(new URL("../../../js/credit-costs.js", import.meta.url));
+  const m = js.match(/CALL_MINUTE_CREDITS\s*=\s*\{([^}]*)\}/);
+  const shown: Record<string, number> = {};
+  for (const p of (m?.[1] ?? "").matchAll(/(\w+):\s*(\d+)/g)) shown[p[1]] = Number(p[2]);
+  assertEquals(shown, CALL_MINUTE_CREDITS);
+});
+
+Deno.test("callCost: minuto iniciado = minuto cobrado; país sin tarifa = 0", () => {
+  assertEquals(callCost("MX", 0), 0);
+  assertEquals(callCost("MX", 1), 3);
+  assertEquals(callCost("MX", 60), 3);
+  assertEquals(callCost("MX", 61), 6);
+  assertEquals(callCost("AR", 125), 45);
+  assertEquals(callCost("ZZ", 600), 0);
 });
 
 Deno.test("voiceCallCost: minutos conectados hacia arriba, tarifa propia para Argentina", () => {

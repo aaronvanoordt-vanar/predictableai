@@ -32,6 +32,8 @@ export const USAGE_CATEGORIES: { key: string; label: string; prefixes: string[] 
   { key: "radar", label: "Radar", prefixes: ["radar_", "champion_"] },
   { key: "coach", label: "Meeting Coach", prefixes: ["coach_"] },
   { key: "voice", label: "Agente de voz", prefixes: ["voice_"] },
+  // Minutos del dialer de Predictable (telefonía: `call_minutes`, `call_minutes_refund`).
+  { key: "calls", label: "Llamadas", prefixes: ["call_minutes"] },
 ];
 export const OTHER_CATEGORY = { key: "other", label: "Otros" };
 

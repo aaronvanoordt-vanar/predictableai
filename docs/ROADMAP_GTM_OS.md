@@ -76,8 +76,8 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 
 **P1**
 - [ ] Columnas de IA en Listas — en curso (sesión propia)
-- [ ] Dialer nativo con la llamada en el Meeting Coach
-- [ ] Conectores CloudTalk, Aircall, Ringover
+- [x] Dialer nativo con la llamada en el Meeting Coach (`docs/TELEFONIA.md`)
+- [x] Conectores CloudTalk, Aircall, Ringover (`docs/TELEFONIA.md`)
 - [ ] LinkedIn nativo
 - [x] CRM de cuentas y oportunidades
 - [ ] Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos
@@ -88,6 +88,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] APIs oficiales de licitaciones
 - [x] ¿El número está en WhatsApp? antes de gastar plantilla (tipo de línea del normalizador del waterfall + aprendizaje de #131026; no existe validación oficial previa: `docs/OMNICANAL.md`)
 - [x] Listas "No llamar" — lista de supresión por canal + bajas centralizadas + registros oficiales (`docs/COMPLIANCE_LATAM.md`)
+- [x] Horarios de contacto de Colombia (Ley 2300): horario legal, festivos y un envío por día por lead en `campaign-run` (`_shared/contact-rules.ts`)
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
 - [x] Agendamiento con recordatorios por WhatsApp — `docs/AGENDA.md` (Google Calendar y Outlook)
 - [ ] Cobro local y CFDI (`docs/BILLING_LATAM.md`)

@@ -1006,7 +1006,7 @@ interface StepRequest {
 }
 
 interface StepSpec {
-  channel: "email" | "whatsapp" | "linkedin";
+  channel: "email" | "whatsapp" | "linkedin" | "phone";
   angle: "apertura" | "valor" | "prueba_social" | "objecion" | "ultima_carta" | "libre" | "respuesta" | "senal";
   instructions: string;
   previous: Array<{ channel: string; body: string; sent_at: string }>;
@@ -1022,8 +1022,10 @@ type StepMode = "step" | "reply" | "signal";
 function normalizeStep(body: StepRequest, mode: StepMode = "step"): StepSpec | null {
   const replyMode = mode === "reply";
   const chRaw = String(body.channel ?? "");
-  const channel = chRaw.startsWith("linkedin") ? "linkedin" : chRaw;
-  if (!["email", "whatsapp", "linkedin"].includes(channel)) return null;
+  // `call` = paso de llamada de la cadencia (o el guion del dialer): escribe un guion, no un mensaje.
+  const channel = chRaw.startsWith("linkedin") ? "linkedin" : chRaw === "call" ? "phone" : chRaw;
+  if (!["email", "whatsapp", "linkedin", "phone"].includes(channel)) return null;
+  if (channel === "phone" && mode !== "step") return null;
   const angle: StepSpec["angle"] = replyMode
     ? "respuesta"
     : mode === "signal" ? "senal"
@@ -1088,6 +1090,7 @@ const STEP_CHANNEL_RULES: Record<StepSpec["channel"], string> = {
   email: "Canal EMAIL: devuelve \"subject\" (≤ 9 palabras, específico, sin clickbait; en seguimientos puede referir al hilo sin decir \"seguimiento\") y \"body\" (máximo 4 oraciones en apertura, 5 en seguimientos; gramática completa; sin firma; sin saludo tipo \"Espero que estés bien\").",
   whatsapp: "Canal WHATSAPP: \"subject\" vacío. Es un mensaje dentro de una conversación YA abierta (el lead escribió antes): sin saludo formal ni presentación repetida. Máximo 70 palabras, 2-3 párrafos cortos, frases de 8-14 palabras, sin \"¿\" de apertura.",
   linkedin: "Canal LINKEDIN (mensaje directo): \"subject\" vacío. Máximo 70 palabras, 3 párrafos compactos, ligeramente más formal que WhatsApp, sin saludo inicial tipo \"Hola\".",
+  phone: "LLAMADA TELEFÓNICA: \"subject\" vacío y \"body\" = el GUION que el vendedor tiene a la vista mientras llama, no un mensaje para enviar. Escríbelo hablado, en frases cortas y en este orden, con un título en mayúsculas por bloque: APERTURA (quién llama y por qué llama a ESTA persona, máximo 2 frases, y pide permiso: \"¿tienes 30 segundos?\"), GANCHO (la observación del ángulo de este paso), PREGUNTAS (2-3 preguntas abiertas de descubrimiento para su rol), OBJECIONES (las 2 más probables, cada una con su respuesta en una frase), CIERRE (pide UNA reunión con dos horarios concretos) y BUZÓN DE VOZ (un mensaje de máximo 25 segundos, unas 50 palabras, que deja el motivo y una forma de devolver la llamada). Máximo 260 palabras en total. La apertura obligatoria de WhatsApp/LinkedIn NO aplica. Si ya hubo mensajes por otro canal, menciónalos en la apertura (\"te escribí por…\") sin repetir su contenido.",
 };
 
 /**
@@ -1202,6 +1205,10 @@ function stepViolations(step: StepSpec, out: StepOut): string[] {
   // prospección no aplica (puede tener que explicar algo que preguntaron).
   if (step.angle === "respuesta") {
     if (step.channel === "email" && !out.subject.trim()) v.push('"subject" está vacío (el email necesita asunto)');
+    return v;
+  }
+  if (step.channel === "phone") {
+    if (wordCount(out.body) > 300) v.push(`"body" tiene ${wordCount(out.body)} palabras (máximo 260 en un guion)`);
     return v;
   }
   if (step.channel !== "email" && wordCount(out.body) > MAX_WORDS) v.push(`"body" tiene ${wordCount(out.body)} palabras (máximo ${MAX_WORDS})`);
@@ -1363,7 +1370,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     if (!step) {
       return json({ error: replyMode
         ? "reply mode requires channel (email|whatsapp|linkedin) and a conversation with at least one inbound message"
-        : "step mode requires channel (email|whatsapp|linkedin)" }, 400, h);
+        : "step mode requires channel (email|whatsapp|linkedin|call)" }, 400, h);
     }
   }
   const sender: Sender = (body.sender && typeof body.sender === "object") ? body.sender : {};
@@ -1459,8 +1466,10 @@ Deno.serve(withLlmContext(async (req: Request) => {
       // tienen que ver con ESTE paso y ESTE lead. Va antes de lo aprendido y
       // de las tendencias en peso (lo dice el propio bloque).
       const lastLead = [...step.conversation].reverse().find((c) => c.who === "lead")?.body ?? "";
-      const knowledgeHits = retrieve(knowledgeDocs, {
-        channel: step.channel,
+      // Un guion de llamada solo usa documentos sin canal fijo (un documento
+      // con canal fijo nunca se usa en otro canal).
+      const knowledgeHits = retrieve(step.channel === "phone" ? knowledgeDocs.filter((d) => !d.channel) : knowledgeDocs, {
+        channel: step.channel === "phone" ? null : step.channel,
         angle: step.angle,
         text: [
           step.angle.replace("_", " "), step.instructions, lastLead.slice(0, 1200),
