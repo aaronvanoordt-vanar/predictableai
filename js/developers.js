@@ -40,6 +40,11 @@
     { id: 'signal.created', label: 'Señal nueva del Radar' },
     { id: 'enrollment.status_changed', label: 'Cambio en un lead de campaña' },
     { id: 'meeting.completed', label: 'Reunión analizada' },
+    { id: 'company.created', label: 'Cuenta creada en el CRM' },
+    { id: 'opportunity.created', label: 'Oportunidad creada' },
+    { id: 'opportunity.stage_changed', label: 'Oportunidad cambió de etapa' },
+    { id: 'task.created', label: 'Tarea creada' },
+    { id: 'task.completed', label: 'Tarea hecha' },
   ];
 
   // Espejo de las operaciones de _shared/devapi.ts como herramientas MCP.
@@ -54,6 +59,12 @@
     ['campaigns_enroll', 'Enrolar contactos'], ['enrollments_update', 'Pausar / reanudar / detener un lead'],
     ['messages_list', 'Mensajes y respuestas'], ['signals_list', 'Señales del Radar'], ['signals_update', 'Guardar o descartar señal'],
     ['meetings_list', 'Reuniones del Meeting Coach'], ['meetings_get', 'Reporte de una reunión'],
+    ['pipeline_get', 'Etapas del pipeline'],
+    ['companies_list', 'Listar cuentas'], ['companies_get', 'Ver cuenta con contactos y señales'],
+    ['companies_upsert', 'Crear o actualizar cuenta'], ['companies_update', 'Cambiar datos de una cuenta'],
+    ['opportunities_list', 'Listar oportunidades'], ['opportunities_get', 'Ver oportunidad e historial'],
+    ['opportunities_create', 'Crear oportunidad'], ['opportunities_update', 'Mover de etapa o cambiar monto'],
+    ['tasks_list', 'Listar tareas'], ['tasks_create', 'Crear tarea'], ['tasks_update', 'Marcar tarea como hecha'],
     ['events_list', 'Eventos recientes'], ['webhooks_list', 'Listar webhooks'], ['webhooks_create', 'Registrar webhook'], ['webhooks_delete', 'Eliminar webhook'],
   ];
 
