@@ -94,6 +94,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
   - [x] Fase A: factura de Stripe con el número fiscal del cliente, moneda local y OXXO/Pix en recargas (#344; faltan los pasos del Dashboard de Stripe y la consulta al contador sobre el 18-B)
   - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC — en curso: CFDI en modo prueba con Facturapi; falta la entidad
 - [ ] Facturación y créditos por cliente para agencias
+- [ ] Equipo: metas de actividad, ranking, revisión del Meeting Coach con comentarios y rampa — en curso (sesión propia; las llamadas se enganchan cuando exista la telefonía)
 - [ ] Mapa de TAM, señales de LinkedIn y píxel web — Mapa de TAM construido (rama `claude/tam-map`); faltan señales de LinkedIn y píxel web
 - [x] Señales: cambio de empresa de clientes y champions (Radar → Champions, detector `champion_moves`)
 
