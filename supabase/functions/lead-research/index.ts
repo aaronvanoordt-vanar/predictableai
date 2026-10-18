@@ -156,6 +156,24 @@ function leadBlock(m: Json, snap: Json): string {
   return lines.join("\n");
 }
 
+/** Ficha del registro público de la empresa (company-registry), si el lead la tiene. Hechos oficiales: el modelo no los contradice. */
+function registryBlock(m: Json): string {
+  const r = m?.registry?.registry_id ? m.registry : m?.snapshot?.registry?.registry_id ? m.snapshot.registry : null;
+  if (!r) return "";
+  const lines = ["", "", "=== REGISTRO PÚBLICO DE LA EMPRESA (dato oficial) ==="];
+  const push = (label: string, v: unknown) => { const s = str(v, 300); if (s) lines.push(`- ${label}: ${s}`); };
+  push(r.tax_id_label || "Identificador fiscal", r.tax_id);
+  push("Razón social", r.legal_name);
+  push("Actividad registrada", [r.activity?.code, r.activity?.description].filter(Boolean).join(" · "));
+  push(r.founded_label || "Fecha de constitución", r.founded_on);
+  push("Estado", [r.status, r.status_detail].filter(Boolean).join(" · "));
+  push("Tamaño", r.size?.label);
+  push("Ciudad", [r.address?.city, r.address?.region].filter(Boolean).join(", "));
+  if (Array.isArray(r.partners) && r.partners.length) push("Socios (registro)", r.partners.slice(0, 6).map((p: Json) => [p?.name, p?.role].filter(Boolean).join(" — ")).join("; "));
+  push("Fuente", r.source);
+  return lines.join("\n");
+}
+
 function apolloBlock(a: ApolloEmployment, ran: boolean): string {
   if (!ran) return "\n\n=== APOLLO ===\nNo se pudo consultar Apollo en esta corrida.";
   return `\n\n=== LO QUE DICE APOLLO HOY (pista, no veredicto) ===\n${a.detail}` +
@@ -328,6 +346,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     radar,
     buildTrainingBlock(training, "outreach"),
     leadBlock(m, snapshot),
+    registryBlock(m),
     apolloBlock(apollo, apolloRan),
     notes ? `\n\n=== NOTAS DEL VENDEDOR SOBRE ESTE LEAD (mandan sobre lo inferido) ===\n${notes}` : "",
     `\n\nHoy es ${new Date().toISOString().slice(0, 10)}. Investiga y responde con el JSON.`,

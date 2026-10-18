@@ -1596,6 +1596,68 @@
     });
   }
 
+  // ── Registros públicos de empresas (company-registry, 2026-10-17) ───────
+  // action: 'status' | 'search' | 'lookup' | 'enrich_member'. Ver
+  // supabase/functions/company-registry/index.ts.
+  async function registry(action, payload) {
+    return edgeFetch('company-registry', Object.assign({ action: action }, payload || {}));
+  }
+
+  // Enriquecimiento de cuenta de un lead de Listas: busca la ficha de SU
+  // empresa (país, razón social, dominio) y, si la coincidencia es
+  // inequívoca, la guarda en prospect_list_members.registry.
+  async function enrichMemberRegistry(memberId, opts) {
+    if (!memberId) throw new Error('Falta el contacto.');
+    return registry('enrich_member', Object.assign({ member_id: memberId }, opts || {}));
+  }
+
+  // Guarda empresas del registro como contactos de CUENTA: la empresa, el
+  // teléfono y el email que dejó en el registro, y su ficha. El nombre de la
+  // persona queda vacío: no se inventa un contacto que el registro no trae.
+  async function addRegistryCompaniesToList({ list, companies }) {
+    if (!list || !list.id) throw new Error('Elige una lista.');
+    const userId = await getUserId();
+    const rows = (companies || []).map((c) => {
+      const ficha = {
+        registry: c.registry, country: c.country, tax_id: c.tax_id, registry_id: c.registry_id,
+        legal_name: c.legal_name, trade_name: c.trade_name, activity: c.activity, industries: c.industries,
+        size: c.size, founded_on: c.founded_on, founded_label: c.founded_label, status: c.status, status_detail: c.status_detail,
+        address: c.address, phone: c.phone, email: c.email, website: c.website, domain: c.domain,
+        partners: (c.partners || []).slice(0, 12), source_url: c.source_url, fetched_at: new Date().toISOString(),
+      };
+      const row = {
+        user_id: userId, list_id: list.id,
+        company: c.trade_name || c.legal_name || null,
+        company_domain: c.domain || null,
+        country: c.country || null,
+        city: (c.address && c.address.city) || null,
+        state: (c.address && c.address.region) || null,
+        email: c.email || null,
+        snapshot: { registry: ficha },
+        registry: ficha,
+        source: { kind: 'registry', registry: c.registry, registry_id: c.registry_id },
+      };
+      if (c.phone) { row.phone = c.phone; row.phone_status = 'revealed'; }
+      return row;
+    });
+    // No repetir una empresa que ya está en la lista (por su clave de registro).
+    const { data: existing } = await sb().from('prospect_list_members').select('snapshot').eq('list_id', list.id);
+    const have = new Set((existing || []).map((m) => {
+      const r = m && m.snapshot && m.snapshot.registry;
+      return r && r.registry_id ? r.registry + '|' + r.registry_id : null;
+    }).filter(Boolean));
+    const fresh = rows.filter((r) => !have.has(r.registry.registry + '|' + r.registry.registry_id));
+    if (!fresh.length) return { added: 0, already: rows.length };
+    let { error } = await sb().from('prospect_list_members').insert(fresh);
+    if (error && /registry|source/i.test(error.message)) {
+      // Migraciones de registry/source sin aplicar: la ficha igual queda en snapshot.
+      fresh.forEach((r) => { delete r.registry; if (/source/i.test(error.message)) delete r.source; });
+      ({ error } = await sb().from('prospect_list_members').insert(fresh));
+    }
+    if (error) throw new Error('No se pudieron guardar las empresas: ' + error.message);
+    return { added: fresh.length, already: rows.length - fresh.length };
+  }
+
   async function generateOutreachPlaybook() {
     return edgeFetch('generate-outreach-playbook', {});
   }
@@ -1752,6 +1814,9 @@
     fetchOutreachPlaybook,
     generateOutreachPlaybook,
     researchLead,
+    registry,
+    enrichMemberRegistry,
+    addRegistryCompaniesToList,
     saveOutreachPlaybookPrefs,
     buildCoachLeadContext,
     saveCoachContext,
