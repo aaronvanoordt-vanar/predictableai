@@ -117,6 +117,7 @@ import { loadIntelligence } from "../_shared/intelligence.ts";
 import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
 import { buildRadarSignalBlock, isRadarMember, radarSignalOf, type RadarLeadSignal } from "../_shared/radar-lead.ts";
 import { buildResearchBlock } from "../_shared/lead-research.ts";
+import { handoffBlock } from "../_shared/booking.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -1124,6 +1125,11 @@ function buildStepContext(step: StepSpec): string {
   lines.push(STEP_ANGLE_RULES[step.angle]);
   lines.push(STEP_CHANNEL_RULES[step.channel]);
   if (step.instructions) lines.push(`INSTRUCCIONES DEL VENDEDOR para esta respuesta: ${step.instructions}`);
+  // Paso de campaña que propone agendar: el enlace real lo pone campaign-run
+  // ({{link_agenda}} → agenda.html del vendedor con la referencia del lead).
+  if (!reply && !signal && /agenda|agendar|link_agenda|calendario/i.test(step.instructions || "")) {
+    lines.push("ENLACE DE AGENDA: donde vaya el enlace para agendar escribe literalmente {{link_agenda}} (el sistema lo reemplaza por el enlace real del vendedor). Nunca inventes ni acortes un enlace.");
+  }
   if (reply) {
     lines.push("", "CONVERSACIÓN HASTA AHORA (en orden; \"lead\" es lo que escribió él, \"yo\" lo que salió de tu lado). Contesta el ÚLTIMO mensaje del lead:");
     step.conversation.forEach((c) => lines.push(`[${c.who}${c.channel ? " · " + c.channel : ""}${c.sent_at ? " · " + c.sent_at : ""}] ${c.body.replace(/\s+/g, " ")}`));
@@ -1417,6 +1423,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     buildLeadContext(lead) +
     buildPersonaContext(snapshot) +
     buildResearchBlock(memberRes?.data ?? null) +
+    handoffBlock(memberRes?.data?.meeting_handoff) +
     buildPlaybookContext(playbook) +
     buildTrainingBlock(training, "outreach");
   const userPrompt = contextPrompt + CLOSING_INSTRUCTION;

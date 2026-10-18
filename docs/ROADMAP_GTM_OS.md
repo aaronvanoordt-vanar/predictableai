@@ -88,7 +88,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] APIs oficiales de licitaciones
 - [ ] Listas "No llamar"
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
-- [ ] Agendamiento con recordatorios por WhatsApp
+- [x] Agendamiento con recordatorios por WhatsApp — `docs/AGENDA.md` (Outlook pendiente)
 - [ ] Cobro local y CFDI
 - [ ] Facturación y créditos por cliente para agencias
 - [ ] Mapa de TAM, señales de LinkedIn y píxel web

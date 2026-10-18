@@ -45,6 +45,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
+import { handleBookingReply } from "../_shared/booking-inbound.ts";
 import { findMemberByPhone, ownerElsewhere } from "../_shared/wati-history.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import { clearAccountBlock, inboxStatusRank, recordCampaignReceipt } from "../_shared/wati-receipts.ts";
@@ -204,6 +205,11 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
 
   const reaction = wati.parseReaction(ev);
   if (reaction?.target) await linkReactionTarget(db, acc, waId, reaction.target);
+
+  // Respuesta a un recordatorio de la agenda («Confirmo», «Reprogramar»…):
+  // marca la confirmación de la reunión. Vale también sin lead (invitado que
+  // agendó directo con su WhatsApp).
+  if (!reaction) await handleBookingReply(db, acc.user_id, waId, inboundText(ev), member?.id ?? null);
 
   if (!member) return; // número sin lead asociado: queda en la bandeja igual
   // Quitar una reacción no es una respuesta: no detiene la cadencia ni cambia el CRM.

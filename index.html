@@ -2163,6 +2163,13 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M3 14V6l4-4h6v12H3z"/><path d="M7 2v4H3"/><path d="M6 9h4M6 11h3"/></svg>
       <span id="nav-reportes-label">Reportes</span>
     </div>
+    <!-- Agenda (2026-10-17, js/scheduling.js): agenda pública tipo Calendly
+         (agenda.html), recordatorios por WhatsApp contra el no-show,
+         asistencia real y la nota BANT del traspaso al AE. -->
+    <div class="nav-item" data-page="agenda" onclick="nav(this,'agenda');if(window.scheduling)window.scheduling.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3M6 10l1.5 1.5L10.5 8.5"/></svg>
+      Agenda
+    </div>
 
     <!-- CONECTAR (2026-09-23, js/integrations.js): HubSpot, Salesforce,
          Amplemarket, Google Sheets, Google Calendar, Notion y ClickUp por su
@@ -2413,6 +2420,17 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
   <div id="ai-training-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: AGENDA (js/scheduling.js) ═══════ -->
+<div class="page fade-in" id="page-agenda" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Agenda</div>
+      <div class="topbar-sub">Tu enlace para agendar, recordatorios contra el no-show y el traspaso al AE</div>
+    </div>
+  </div>
+  <div id="agenda-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: INTEGRACIONES (js/integrations.js) ═══════ -->
@@ -3185,21 +3203,21 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <!-- ═════ Predictable JS modules ═════ -->
 <script src="js/ui-helpers.js"></script>
 <script src="js/ai-engine.js"></script>
-<script src="js/credit-costs.js?v=20261008"></script>
+<script src="js/credit-costs.js?v=20261017"></script>
 <script src="js/credits.js"></script>
 <script src="js/skeletons.js"></script>
 <script src="js/i18n.js"></script>
 <script src="js/api.js"></script>
 <script src="js/apollo-enums.js"></script>
 <script src="js/company-context.js?v=20260823"></script>
-<script src="js/prospecting-data.js?v=20261008"></script>
+<script src="js/prospecting-data.js?v=20261017"></script>
 <script src="js/prospecting.js?v=20261008"></script>
 <script src="js/campaign-flow.js?v=20260915"></script>
 <script src="js/linkedin-campaigns.js?v=20260915"></script>
-<script src="js/campaign-builder.js?v=20260923"></script>
+<script src="js/campaign-builder.js?v=20261017"></script>
 <script src="js/campaign-knowledge.js?v=20260923"></script>
 <script src="js/campaign-analytics.js?v=20261008a"></script>
-<script src="js/campaigns.js?v=20261008b"></script>
+<script src="js/campaigns.js?v=20261017"></script>
 <script src="js/inbox-alert.js?v=20261001b"></script>
 <script src="js/push.js?v=20261006"></script>
 <script src="js/radar.js?v=20260918"></script>
@@ -3211,6 +3229,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/learning.js?v=20260919"></script>
 <script src="js/ai-training.js?v=20260923"></script>
 <script src="js/integrations.js?v=20260923"></script>
+<script src="js/scheduling.js?v=20261017"></script>
 <script src="js/dev-docs.js?v=20260923"></script>
 <script src="js/developers.js?v=20260923"></script>
 <script src="js/coach-lead-picker.js?v=20260915"></script>
@@ -4061,6 +4080,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // Páginas con shell propio: montarlas también al restaurar (el onclick
     // del nav-item no corre en este camino).
     if (hash === 'clients' && window.clientsModule) window.clientsModule.show();
+    if (hash === 'agenda' && window.scheduling) window.scheduling.show();
   }, 0);
 });
 

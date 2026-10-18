@@ -24,6 +24,10 @@ export const CREDIT_COSTS = {
   // la empresa y propone el ángulo. El match de Apollo se cobra aparte como
   // enrich_email solo con la key de la plataforma.
   lead_research: 3,
+  // Nota BANT del traspaso al AE al agendar desde tu agenda (hilo + respuestas
+  // de calificación + investigación previa). Agendar y los recordatorios no
+  // cuestan: no hay IA.
+  meeting_handoff: 3,
 
   // Campañas: 1 crédito por lead que entra a una campaña (cubre TODOS sus
   // envíos). Responder a mano desde la Bandeja no cuesta.

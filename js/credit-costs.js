@@ -54,6 +54,9 @@
     // «Investigar con IA» (Listas): puesto actual + empresa + ángulo. Con la
     // cuenta de Apollo de la plataforma se suma el match (enrich_email).
     lead_research:          { credits: 3,  label: 'por lead',            variable: false },
+    // Nota BANT del traspaso al AE cuando un lead agenda desde tu agenda.
+    // Agendar y los recordatorios por WhatsApp y email no cuestan.
+    meeting_handoff:        { credits: 3,  label: 'por reunión agendada', variable: false },
     // Tendencias de outbound (investigación manual).
     outreach_playbook:      { credits: 10, label: 'por investigación',   variable: false },
 

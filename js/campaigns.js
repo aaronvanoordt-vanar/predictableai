@@ -3911,6 +3911,7 @@
       box.appendChild(lta);
       var lfoot = h('div', { class: 'cmp-reply-row' });
       lfoot.appendChild(h('span', { class: 'pros-hint', text: 'Ni Dripify ni LinkedIn permiten enviar mensajes por API: copiamos tu respuesta y abrimos el perfil para que la pegues en el chat. Enter copia y abre · Shift+Enter, nueva línea.' }));
+      lfoot.appendChild(agendaBtn(conv));
       lfoot.appendChild(aiDraftBtn(conv, 'linkedin'));
       lfoot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-linkedin', 'data-key': conv.key, text: 'Copiar y abrir LinkedIn' }));
       box.appendChild(lfoot);
@@ -3985,6 +3986,7 @@
         }));
       }
     }
+    foot.appendChild(agendaBtn(conv));
     foot.appendChild(aiDraftBtn(conv, chosen));
     foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-send', 'data-key': conv.key, 'data-channel': chosen, text: 'Enviar por ' + CH[chosen].label }));
     box.appendChild(foot);
@@ -4008,6 +4010,20 @@
       title: can ? 'Escribe un borrador con lo que te dijo el lead y tu contexto de empresa. Lo puedes editar antes de enviar.'
         : (conv.member ? 'Todavía no hay ningún mensaje del lead que responder.' : 'Guarda el contacto en una lista para redactar con IA.'),
       text: 'Redactar con IA',
+    });
+  }
+  /**
+   * "Enviar mi agenda": pone en el cuadro de texto el enlace a tu agenda con la
+   * referencia de este lead (js/scheduling.js linkFor). Si agenda, la cadencia
+   * se detiene y el lead pasa a «reunión agendada». No se envía solo.
+   */
+  function agendaBtn(conv) {
+    var can = !!(conv.member && conv.member.id);
+    return h('button', {
+      type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-agenda', 'data-key': conv.key,
+      disabled: can ? null : 'disabled',
+      title: can ? 'Agrega al mensaje el enlace para que elija un horario libre de tu calendario.' : 'Guarda el contacto en una lista para enviarle tu agenda.',
+      text: '📅 Enviar mi agenda',
     });
   }
   /** ¿Hay sesión de WhatsApp abierta (entrante hace < 24 h)? */
@@ -4327,6 +4343,20 @@
       var taR = state.root.querySelector('textarea[data-action="reply-draft"][data-key="' + key + '"]');
       if (taR) taR.focus();
       return;
+    }
+    if (action === 'reply-agenda' && key) {
+      var convA = findConv(key);
+      if (!convA || !convA.member || !window.scheduling) return;
+      var rA = btnLoading(btn, '⏳');
+      return window.scheduling.linkFor(convA.member.id).then(function (url) {
+        rA();
+        if (!url) return toast('Activa tu agenda en Ventas → Agenda para enviar el enlace.', 'warn');
+        url += (url.indexOf('?') === -1 ? '?' : '&') + 'v=inbox';
+        var cur = (state.replyDraft[key] || '').replace(/\s+$/, '');
+        var first = convName(convA).split(/\s+/)[0] || '';
+        state.replyDraft[key] = (cur ? cur + '\n\n' : (first ? first + ', ' : '')) + 'elige el horario que mejor te quede aquí: ' + url;
+        renderKeepingReplyFocus(key);
+      }, function (err) { rA(); throw err; });
     }
     if (action === 'reply-to-clear' && key) { delete state.replyTo[key]; return renderKeepingReplyFocus(key); }
     if (action === 'reply-attach' && key) {
