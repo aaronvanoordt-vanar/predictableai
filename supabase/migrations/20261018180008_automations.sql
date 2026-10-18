@@ -401,7 +401,8 @@ REVOKE ALL ON FUNCTION public.automation_on_member()     FROM PUBLIC, anon, auth
 REVOKE ALL ON FUNCTION public.automation_on_message()    FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.automation_on_enrollment() FROM PUBLIC, anon, authenticated;
 
--- ── 6. Cron del motor (ejecutar a mano en el SQL editor DESPUÉS de desplegar
+-- ── 6. Cron del motor: lo programa 20261018233000_automation_cron.sql (después
+--    de desplegar automation-run). Si hiciera falta a mano (SQL editor, DESPUÉS de desplegar
 --    automation-run; lleva la service role, por eso no va en la migración) ──
 -- SELECT cron.schedule('automation-run', '* * * * *', $cron$
 --   SELECT net.http_post(
