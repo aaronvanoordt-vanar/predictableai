@@ -303,7 +303,8 @@
       <div id="credits-pkg-list">${renderPackages()}</div>
       <button id="credits-topup" type="button" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:4px">Comprar recarga</button>
       <button id="credits-portal" type="button" class="btn btn-ghost" style="width:100%;justify-content:center;margin-top:8px">Gestionar facturación</button>
-      <p style="margin:10px 0 0;${S.muted};line-height:1.5">Tarjeta, facturas y cancelación en el portal seguro de Stripe.</p>`}`;
+      <p style="margin:10px 0 0;${S.muted};line-height:1.5">Tarjeta, facturas y cancelación en el portal seguro de Stripe.</p>
+      <div id="credits-cfdi-slot"></div>`}`;
   }
 
   async function goTo(btn, action, extra, loadingText) {
@@ -376,6 +377,9 @@
     if (top) top.addEventListener('click', () => goTo(top, 'checkout_topup', { pack: selectedPackage }, 'Abriendo pago…'));
     const portal = body.querySelector('#credits-portal');
     if (portal) portal.addEventListener('click', () => goTo(portal, 'portal', {}, 'Abriendo portal…'));
+    // Factura CFDI (js/billing-cfdi.js): no pinta nada si `cfdi` está apagada.
+    const cfdiSlot = body.querySelector('#credits-cfdi-slot');
+    if (cfdiSlot && global.billingCfdi) global.billingCfdi.mount(cfdiSlot);
   }
 
   /** Vuelta de Stripe Checkout: ?billing=success|topup|cancel. */
