@@ -42,6 +42,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as dripify from "../_shared/dripify.ts";
+import * as suppression from "../_shared/suppression.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -271,14 +272,27 @@ Deno.serve(async (req) => {
     // Sin hilo no hay forma de saber si el webhook repite algo ya visto, así
     // que se sigue registrando el evento como antes.
     const somethingNew = !entries.length || added > 0;
+    // «No me escribas» por LinkedIn = baja: enrolamiento `unsubscribed`, CRM
+    // `dado_de_baja` y lista de supresión (todos sus datos, todos los canales).
+    const optOut = signal === "replied" && somethingNew && suppression.isOptOutText(replyText);
+    if (optOut && url) {
+      const { data: full } = member
+        ? await db.from("prospect_list_members").select("id, email, phone, linkedin_url").eq("id", member.id).maybeSingle()
+        : { data: null };
+      await suppression.recordOptOut(db, {
+        userId: acc.user_id, member: full, linkedin_url: url, source: "reply", channel: "linkedin", at,
+        evidence: { text: replyText, campaign_id: primary?.campaign_id ?? null, enrollment_id: primary?.id ?? null },
+      });
+    }
 
     for (const en of (ens ?? []) as Json[]) {
       const patch: Json = {};
       let type: string | null = null;
       if (signal === "replied") {
-        if (["active", "processing", "paused"].includes(en.status)) { patch.status = "replied"; patch.stop_reason = "Respondió por LinkedIn."; }
+        if (optOut) { patch.status = "unsubscribed"; patch.stop_reason = "El lead pidió no recibir más mensajes por LinkedIn."; patch.next_run_at = null; }
+        else if (["active", "processing", "paused"].includes(en.status)) { patch.status = "replied"; patch.stop_reason = "Respondió por LinkedIn."; }
         if (!en.replied_at) { patch.replied_at = at; patch.replied_channel = "linkedin"; }
-        type = "replied";
+        type = optOut ? "opted_out" : "replied";
       } else if (signal === "connection_accepted") {
         if (!en.linkedin_connected_at) patch.linkedin_connected_at = at;
         type = "connection_accepted";
@@ -303,8 +317,8 @@ Deno.serve(async (req) => {
     }
 
     if (member) {
-      const crm = signal === "replied" ? "respondio" : signal === "connection_accepted" ? "conexion_aceptada" : signal === "connection_sent" ? "conexion_enviada" : null;
-      if (crm && crm !== member.contact_status && !["reunion_agendada", "reunion_tomada", "dado_de_baja"].includes(member.contact_status)) {
+      const crm = optOut ? "dado_de_baja" : signal === "replied" ? "respondio" : signal === "connection_accepted" ? "conexion_aceptada" : signal === "connection_sent" ? "conexion_enviada" : null;
+      if (crm && crm !== member.contact_status && (optOut || !["reunion_agendada", "reunion_tomada", "dado_de_baja"].includes(member.contact_status))) {
         await db.from("prospect_list_members").update({ contact_status: crm, status_changed_at: at }).eq("id", member.id);
       }
     } else if (!url || (!entries.length && signal !== "replied")) {
