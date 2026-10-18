@@ -41,6 +41,11 @@ export const CREDIT_COSTS = {
   // búsquedas, ~0.02 USD). El match de Apollo se cobra como enrich_email
   // solo con la key de la plataforma y solo si encontró a la persona.
   champion_web_check: 2,
+  // Columnas IA en Listas: por fila investigada, también «No encontrado»
+  // (la búsqueda se hizo igual); un error no se cobra. Con búsqueda web (~1–2 búsquedas con Haiku o Sonar,
+  // ≤ 0.035 USD) o solo con los datos del contacto (sin web, ~0.003 USD).
+  ai_column_cell: 2,
+  ai_column_cell_basic: 1,
 
   // Campañas: 1 crédito por lead que entra a una campaña (cubre TODOS sus
   // envíos). Responder a mano desde la Bandeja no cuesta.

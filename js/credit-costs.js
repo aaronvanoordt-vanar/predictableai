@@ -57,6 +57,9 @@
     // Seguimiento de champions (Radar): búsqueda web de respaldo cuando
     // Apollo no ubica a la persona en su empresa.
     champion_web_check:     { credits: 2,  label: 'por verificación web', variable: false },
+    // Columnas IA (Listas): por fila investigada, también «No encontrado»; los errores no.
+    ai_column_cell:         { credits: 2,  label: 'por fila (con búsqueda web)', variable: true },
+    ai_column_cell_basic:   { credits: 1,  label: 'por fila (sin búsqueda web)', variable: true },
     // Tendencias de outbound (investigación manual).
     outreach_playbook:      { credits: 10, label: 'por investigación',   variable: false },
 
