@@ -1,7 +1,7 @@
 // deno test --allow-read _shared/credit-costs.test.ts
 import { assertEquals } from "jsr:@std/assert@1";
 import {
-  apolloBillableCount, CALL_MINUTE_CREDITS, callCost, coachMeetingCost, CREDIT_COSTS, minCadenceHours, radarDetectorMonthCost,
+  apolloBillableCount, CALL_MINUTE_CREDITS, callCost, coachMeetingCost, CREDIT_COSTS, minCadenceHours, radarDetectorMonthCost, voiceCallCost, voiceMinutes,
 } from "./credit-costs.ts";
 
 Deno.test("js/credit-costs.js es espejo del tarifario que cobran las edge functions", async () => {
@@ -38,6 +38,8 @@ Deno.test("js/credit-costs.js es espejo del tarifario que cobran las edge functi
     coach_meeting: CREDIT_COSTS.coach_local_block,
     coach_bot_block: CREDIT_COSTS.coach_bot_block,
     call_minute: CALL_MINUTE_CREDITS.MX,
+    voice_minute: CREDIT_COSTS.voice_minute,
+    voice_minute_ar: CREDIT_COSTS.voice_minute_ar,
   };
   assertEquals(shown, expected);
 });
@@ -107,4 +109,16 @@ Deno.test("callCost: minuto iniciado = minuto cobrado; país sin tarifa = 0", ()
   assertEquals(callCost("MX", 61), 6);
   assertEquals(callCost("AR", 125), 45);
   assertEquals(callCost("ZZ", 600), 0);
+});
+
+Deno.test("voiceCallCost: minutos conectados hacia arriba, tarifa propia para Argentina", () => {
+  assertEquals(voiceMinutes(0), 0);
+  assertEquals(voiceMinutes(1), 1);
+  assertEquals(voiceMinutes(60), 1);
+  assertEquals(voiceMinutes(61), 2);
+  assertEquals(voiceCallCost("MX", 0), 0);
+  assertEquals(voiceCallCost("MX", 150), 18);
+  assertEquals(voiceCallCost("co", 59), 6);
+  assertEquals(voiceCallCost("AR", 61), 36);
+  assertEquals(voiceCallCost(null, 60), 6);
 });

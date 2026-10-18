@@ -94,6 +94,11 @@
     // ── Llamadas (dialer nativo; con CloudTalk, Aircall o Ringover, 0) ─
     // Por minuto según el país (CALL_MINUTE_CREDITS): desde 2 (EE. UU.) hasta 15 (móvil de Argentina).
     call_minute:            { credits: 3,  label: 'por minuto a México (2–15 según el país)', variable: true },
+    // ── Agente de voz IA (por minuto conectado, hacia arriba) ─────────
+    // Una llamada que no contesta no cuesta. Argentina tiene tarifa propia
+    // porque sus móviles cuestan ~5 veces más en el operador.
+    voice_minute:           { credits: 6,  label: 'por minuto de llamada', variable: true },
+    voice_minute_ar:        { credits: 18, label: 'por minuto de llamada a Argentina', variable: true },
   };
 
   // Créditos por minuto del dialer nativo por país de destino.

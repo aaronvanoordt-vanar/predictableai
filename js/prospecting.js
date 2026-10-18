@@ -2738,6 +2738,8 @@
         right +
         // Las llamadas del lead con el reporte del Meeting Coach (js/calls.js).
         '<div data-lead-calls="' + id + '"></div>' +
+        // Agente de voz IA (js/voice-agent.js): llamadas a este lead con su resultado.
+        '<div data-voice-mount="' + id + '"></div>' +
       '</div>' +
     '</div>';
   }
@@ -3009,6 +3011,7 @@
         window.Calls.renderLeadCalls(el, el.getAttribute('data-lead-calls')).catch(function () {});
       });
     }
+    if (window.VoiceAgent) window.VoiceAgent.mountAll(host);
     if (keepNotes) {
       var again = host.querySelector('textarea[data-action="research-notes"][data-id="' + keepNotes.id + '"]');
       if (again) {
@@ -4452,6 +4455,8 @@
     },
     goTab: goTab,
     refreshBadge: refreshBadge,
+    // js/voice-agent.js abre el diálogo de llamada con el lead que ya está en memoria.
+    findMember: findListMember,
     openEditContact: openEditContactModal,
     // Reutilizados por js/campaigns.js para no duplicar el modal ni el DOM helper.
     confirm: confirmModal,

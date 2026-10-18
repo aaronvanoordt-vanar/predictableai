@@ -104,7 +104,7 @@
  *                   401/403/404, fall back to a direct /v1/messages call
  *                   (claude-haiku-4-5 + web tools, same prompts).
  * Requires migrations: 20260709000002_outreach_agent_config.sql,
- *                      20260819000002_outreach_playbook.sql (optional layer —
+ *                      20260819000004_outreach_playbook.sql (optional layer —
  *                      without it the playbook select fails soft and the
  *                      messages generate exactly as before)
  */
