@@ -133,12 +133,36 @@ ALTER TABLE public.voice_platform ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.voice_platform FROM anon, authenticated, PUBLIC;
 
 -- ── 4. Bandeja: canal 'voice' y proveedor 'retell' ───────────────────────────
-ALTER TABLE public.inbox_messages DROP CONSTRAINT IF EXISTS inbox_messages_channel_check;
-ALTER TABLE public.inbox_messages
-  ADD CONSTRAINT inbox_messages_channel_check CHECK (channel IN ('whatsapp', 'email', 'linkedin', 'voice'));
-ALTER TABLE public.inbox_messages DROP CONSTRAINT IF EXISTS inbox_messages_provider_check;
-ALTER TABLE public.inbox_messages
-  ADD CONSTRAINT inbox_messages_provider_check CHECK (provider IN ('wati', 'apollo', 'gmail', 'dripify', 'retell'));
+-- SUMA los valores a lo que el CHECK ya permita, sin quitar nada: otras
+-- migraciones (WhatsApp con Meta, LinkedIn nativo…) agregan los suyos y una
+-- lista cerrada aquí los borraría. Mismo criterio que extend_provider_check
+-- (20261018161500_whatsapp_meta), escrito en línea para servir también a la
+-- columna `channel`.
+DO $$
+DECLARE
+  r      record;
+  v_def  text;
+  v_vals text[];
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+    ('inbox_messages_channel_check',  'channel',  ARRAY['whatsapp', 'email', 'linkedin', 'voice']),
+    ('inbox_messages_provider_check', 'provider', ARRAY['wati', 'apollo', 'gmail', 'dripify', 'retell'])
+  ) AS t(conname, col, vals)
+  LOOP
+    SELECT pg_get_constraintdef(c.oid) INTO v_def
+      FROM pg_constraint c
+     WHERE c.conrelid = 'public.inbox_messages'::regclass AND c.conname = r.conname;
+    v_vals := ARRAY(
+      SELECT DISTINCT v FROM (
+        SELECT (regexp_matches(coalesce(v_def, ''), '''([^'']+)''', 'g'))[1] AS v
+        UNION SELECT unnest(r.vals)
+      ) s ORDER BY 1
+    );
+    EXECUTE format('ALTER TABLE public.inbox_messages DROP CONSTRAINT IF EXISTS %I', r.conname);
+    EXECUTE format('ALTER TABLE public.inbox_messages ADD CONSTRAINT %I CHECK (%I IN (%s))', r.conname, r.col,
+      (SELECT string_agg(quote_literal(x), ', ') FROM unnest(v_vals) AS x));
+  END LOOP;
+END $$;
 
 -- ── 5. Realtime: la ficha del lead ve terminar la llamada sin recargar ──────
 DO $$
