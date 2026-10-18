@@ -91,7 +91,7 @@ Cada par es opcional: sin él, la tarjeta ofrece el token (si la plataforma lo p
 
 HubSpot: agregar a la app pública los alcances **opcionales** `crm.objects.deals.read`, `crm.objects.companies.read` y `crm.objects.owners.read` (la vuelta). Sin ellos la ida sigue funcionando.
 
-**Cron** (una vez, con la URL del proyecto y la service role; el texto exacto está comentado al final de la migración `20261018230000`): `integrations-sync`, `*/15 * * * *`, `POST /functions/v1/integrations` con `{"action":"cron"}`.
+**Cron** `integrations-sync` (`*/15 * * * *`, `POST /functions/v1/integrations` con `{"action":"cron"}`): lo programa la migración `20261018231000_integrations_sync_cron.sql`, que copia la URL del proyecto y el header `Authorization` de un cron existente que ya llama a una edge function con la service role (la key nunca va en el repo). Si no encuentra ninguno, no programa nada y avisa; entonces se programa a mano con el SQL comentado al final de `20261018230000`. Se aplica **después** de desplegar `integrations`.
 
 `calendar.events` es un scope sensible: para usuarios fuera del dominio de Google Workspace de Vanar, Google exige verificar la app (mientras tanto funciona con usuarios de prueba).
 
