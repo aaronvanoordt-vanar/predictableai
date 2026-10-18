@@ -21,7 +21,7 @@
  *
  * Una cuenta de espacio de cliente (client_workspaces) recibe 403
  * workspace_billing en los dos checkouts: sus créditos los asigna la agencia
- * (migración 20261019000001), así la agencia es la única que paga.
+ * (migración 20261018180006), así la agencia es la única que paga.
  *
  * Secrets: STRIPE_SECRET_KEY (clave restringida: Customers, Checkout
  * Sessions y Customer portal en escritura; Subscriptions y Prices en

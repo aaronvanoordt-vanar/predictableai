@@ -1,5 +1,5 @@
 /**
- * Créditos de agencia (2026-10-17, migración 20261019000001).
+ * Créditos de agencia (2026-10-17, migración 20261018180006).
  *
  * Una agencia aprobada (o el equipo) reparte créditos de su pozo a los
  * espacios de sus clientes y ve el consumo de cada espacio por función para

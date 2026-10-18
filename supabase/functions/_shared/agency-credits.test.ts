@@ -109,7 +109,7 @@ Deno.test("espejo de js/agency.js", async () => {
 });
 
 Deno.test("la migración define los motivos que se excluyen del consumo", async () => {
-  const sql = await Deno.readTextFile(new URL("../../migrations/20261019000001_agency_credits.sql", import.meta.url));
+  const sql = await Deno.readTextFile(new URL("../../migrations/20261018180006_agency_credits.sql", import.meta.url));
   for (const r of ["agency_assign_in", "agency_assign_out", "agency_withdraw_in", "agency_withdraw_out", "workspace_trial_void"]) {
     assert(sql.includes(`'${r}'`), r);
     assert(NON_USAGE_REASONS.includes(r), r);

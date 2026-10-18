@@ -17,7 +17,7 @@
  * Quién puede entrar: una cuenta del equipo (is_vanarsi_account: email
  * @vanarsi.com confirmado, nunca otra cuenta de espacio) o una agencia
  * aprobada (is_agency_account: ficha `agencies` aprobada a mano por el dueño +
- * plan pago; migración 20261019000001) — juntas, `can_open_workspaces` — que
+ * plan pago; migración 20261018180006) — juntas, `can_open_workspaces` — que
  * además gestiona el cliente (can_manage_client). Cualquier otra combinación
  * → 403.
  *
