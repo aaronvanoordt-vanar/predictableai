@@ -445,12 +445,15 @@ async function learnDeals(supa: Json, userId: string, out: Insight[]) {
   const wonIds = (stages || []).filter((s: Json) => s.kind === "won").map((s: Json) => s.id);
   if (!lostIds.length) return { lost: 0, won: 0 };
   const [lostRes, wonRes] = await Promise.all([
-    supa.from("crm_opportunities").select("lost_reason, lost_competitor, lost_note").eq("user_id", userId).in("stage_id", lostIds).gte("closed_at", since).limit(5000),
+    supa.from("crm_opportunities").select("lost_reason, lost_competitor, lost_note, stage_changed_by").eq("user_id", userId).in("stage_id", lostIds).gte("closed_at", since).limit(5000),
     wonIds.length
       ? supa.from("crm_opportunities").select("id", { count: "exact", head: true }).eq("user_id", userId).in("stage_id", wonIds).gte("closed_at", since)
       : Promise.resolve({ count: 0 }),
   ]);
-  const lost: Json[] = Array.isArray(lostRes.data) ? lostRes.data : [];
+  // Una pérdida que trajo un CRM externo sin motivo reconocible («otro» +
+  // la nota de la plataforma) no enseña nada: no entra al aprendizaje.
+  const lost: Json[] = (Array.isArray(lostRes.data) ? lostRes.data : [])
+    .filter((o: Json) => !(o.stage_changed_by === "integration" && o.lost_reason === "otro"));
   const won = Number(wonRes.count) || 0;
   out.push(...lossInsights(lost, won));
   return { lost: lost.length, won };

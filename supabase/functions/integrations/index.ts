@@ -53,6 +53,7 @@ import {
   hubspotStatusOptions, runHubspotPull, saveSync, statusMapOf, syncConfig, validateDealOptions, writeMemberStates,
 } from "./crm.ts";
 import { sanitizeStatusMap } from "../_shared/hubspot-sync.ts";
+import { isTwoWay, linkCompanies, nativeSettings, nativeSyncOf, pipedriveToNative, runNativeSync } from "./native-crm.ts";
 import {
   amplemarketListLeads,
   amplemarketSequenceLeads,
@@ -660,6 +661,7 @@ async function runListExport(
         if (!latam) throw new HttpError("Esta integración no recibe listas.", 400);
         const x = await exportCrm(ctx, conn, leads, { deal, cursor });
         await writeMemberStates(ctx, provider, x.links);
+        await linkExportToNative(ctx, conn, x.links);
         r = { counts: x.counts as unknown as Record<string, number>, skipped: x.skipped, errors: x.errors, url: x.url, next_cursor: x.next_cursor, total_people: x.total_people };
       }
     }
@@ -709,6 +711,24 @@ async function runListExport(
   };
 }
 
+/**
+ * Después de enviar una tanda a un CRM: la organización externa queda enlazada
+ * a la cuenta del CRM de Predictable, y en Pipedrive el deal creado aparece
+ * como oportunidad. Nunca corta el envío.
+ */
+async function linkExportToNative(ctx: Ctx, conn: Conn, links: { id: string; state: Json }[]) {
+  try {
+    await linkCompanies(ctx, conn.provider, links.filter((l) => l.state?.org_id).map((l) => ({ memberId: l.id, externalId: String(l.state.org_id) })));
+    if (conn.provider === "pipedrive") {
+      const deals = links.filter((l) => l.state?.deal_id).map((l) => ({ dealId: String(l.state.deal_id), memberId: l.id }));
+      if (deals.length) await pipedriveToNative(ctx, conn, deals);
+    }
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 428) throw e;
+    console.warn("[integrations] envío → CRM nativo:", e instanceof Error ? e.message : e);
+  }
+}
+
 // ── Cron: HubSpot de vuelta + envío automático de leads nuevos ────────────
 
 const CRON_BUDGET_MS = 120_000;
@@ -735,6 +755,10 @@ async function cronRun(admin: Ctx["admin"]): Promise<Json> {
           await runHubspotPull(ctx, c, "cron");
           out.pulled++;
         }
+      }
+      if (c.provider === "pipedrive" && nativeSyncOf(c).pull) {
+        const last = Date.parse(nativeSyncOf(c).last_run_at ?? "") || 0;
+        if (Date.now() - last > 14 * 60_000) await runNativeSync(ctx, c, "cron");
       }
       for (const [listId, al] of Object.entries(sc.auto_lists ?? {})) {
         if (Date.now() - began > CRON_BUDGET_MS) break;
@@ -913,6 +937,29 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
     return { suppressed: (data ?? []).map((m: Json) => ({ id: m.id, reason: m.crm_suppression_reason })), source: "stored" };
   }
 
+  // CRM de Predictable: qué CRM externos sincronizan oportunidades (sin
+  // secretos) y el empuje inmediato después de mover una etapa.
+  if (action === "native_status" || action === "native_push") {
+    const { data } = await ctx.admin.from("integration_connections")
+      .select("id, user_id, provider, auth_type, account_label, account_id, config, access_token, refresh_token, token_expires_at")
+      .eq("user_id", ctx.userId).in("provider", ["hubspot", "pipedrive"]).eq("status", "connected");
+    const conns = ((data ?? []) as Conn[]).filter((c) => isTwoWay(c.provider));
+    if (action === "native_status") {
+      return {
+        providers: conns.map((c) => {
+          const n = nativeSyncOf(c);
+          return { provider: c.provider, account_label: c.account_label, pull: n.pull, push: n.push, last_run_at: n.last_run_at ?? null, last_status: n.last_status ?? null, last_error: n.last_error ?? null, push_scope_missing: !!n.push_scope_missing };
+        }),
+      };
+    }
+    const pushed: Json = {};
+    for (const c of conns) {
+      if (!nativeSyncOf(c).push) continue;
+      pushed[c.provider] = await runNativeSync(ctx, c, "stage_change");
+    }
+    return { ok: true, pushed };
+  }
+
   const provider = asProvider(p.provider);
   const conn = await loadConn(ctx, provider);
 
@@ -932,6 +979,17 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
     if (provider !== "hubspot") throw new HttpError("Esta integración no trae cambios de vuelta.", 400);
     const r = await runHubspotPull(ctx, conn, "manual");
     return { ...r, suppressedIds: undefined, sync: publicSync(conn) };
+  }
+
+  // CRM de Predictable ↔ HubSpot / Pipedrive (native-crm.ts): ajustes y mapeo
+  // de etapas, «Sincronizar ahora» y el empuje después de mover una etapa.
+  if (action === "native_settings") return await nativeSettings(ctx, conn, p);
+  if (action === "native_sync_now") {
+    if (conn.provider === "hubspot") {
+      const r = await runHubspotPull(ctx, conn, "manual");
+      return { ok: true, native: r.native ?? null, missing_scopes: r.missingScopes };
+    }
+    return { ok: true, native: await runNativeSync(ctx, conn, "manual") };
   }
 
   // Ajustes de sincronización: pull (HubSpot) y envío automático de una lista.
