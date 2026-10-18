@@ -2,7 +2,7 @@
  * mailbox-sync — Supabase Edge Function (buzones propios del canal Email)
  *
  * La llama pg_cron cada 5 minutos con la service role (ver la migración
- * 20261017000001_own_mailboxes.sql), o el usuario con su JWT desde la
+ * 20261018180004_own_mailboxes.sql), o el usuario con su JWT desde la
  * Bandeja / el canal Email («Revisar ahora»: solo sus buzones).
  *
  * En cada corrida, por buzón conectado (el que hace más tiempo no se revisa

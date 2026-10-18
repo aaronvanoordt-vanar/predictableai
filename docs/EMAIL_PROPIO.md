@@ -32,7 +32,7 @@ Hasta hoy el email de campaña salía solo por Apollo (`emailer_messages` + `sen
 
 | Pieza | Qué hace |
 |---|---|
-| `supabase/migrations/20261018170000_own_mailboxes.sql` | Tablas `email_mailboxes` (secreto oculto por grants de columna), `email_sends` (registro por buzón: tope, hilo, rebotes), `email_domain_health`, `email_settings`. Agrega `mailbox` al CHECK de `inbox_messages.provider` con `extend_provider_check` (migración de WhatsApp-Meta), sin reescribir la lista. Cron de `mailbox-sync` comentado, para aplicar a mano. |
+| `supabase/migrations/20261018180004_own_mailboxes.sql` | Tablas `email_mailboxes` (secreto oculto por grants de columna), `email_sends` (registro por buzón: tope, hilo, rebotes), `email_domain_health`, `email_settings`. Agrega `mailbox` al CHECK de `inbox_messages.provider` con `extend_provider_check` (migración de WhatsApp-Meta), sin reescribir la lista. Cron de `mailbox-sync` comentado, para aplicar a mano. |
 | `_shared/email-mime.ts` | Arma el correo RFC 5322 / MIME: Message-ID propio, In-Reply-To / References, `List-Unsubscribe` + `List-Unsubscribe-Post` (RFC 8058) y encabezados RFC 2047. Los encabezados se sanean: no se puede inyectar CR/LF. |
 | `_shared/mailbox.ts` | OAuth de Google y Microsoft. Envío por Gmail API, Graph (MIME) o SMTP. Lectura de la bandeja por Gmail API, Graph o IMAP. |
 | `_shared/smtp.ts`, `_shared/imap.ts` | Clientes mínimos con TLS implícito (465 / 993). IMAP solo lee y usa `BODY.PEEK`, así que no marca nada como leído. |
@@ -129,7 +129,7 @@ La investigación se hizo con búsquedas web. El proxy de esta sesión bloqueaba
 
 ## Pasos manuales para ponerlo en producción
 
-1. **Migración:** aplicar `supabase/migrations/20261018170000_own_mailboxes.sql`. Requiere antes `20261017000004_suppression.sql` y `20261018161500_whatsapp_meta.sql` (ya aplicadas en producción).
+1. **Migración:** aplicar `supabase/migrations/20261018180004_own_mailboxes.sql`. Requiere antes `20261017000004_suppression.sql` y `20261018161500_whatsapp_meta.sql` (ya aplicadas en producción).
 2. **Funciones:** desplegar con Actions → Deploy Edge Functions (ya sabe las banderas).
    - `mailbox-connect` y `mailbox-sync`: con JWT.
    - `email-unsubscribe`: **`--no-verify-jwt`**.
