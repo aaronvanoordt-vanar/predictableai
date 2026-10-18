@@ -16,7 +16,7 @@
 
    `idea → borrador → aprobado → programado → publicado`
 
-   El trigger `linkedin_posts_guard` (migración `20261017000001`) es la regla de fondo:
+   El trigger `linkedin_posts_guard` (migración `20261018000002`) es la regla de fondo:
    - un post nace como idea o borrador;
    - solo se aprueba con texto;
    - solo se programa o publica algo aprobado;
@@ -77,7 +77,7 @@ Con estos secrets puestos, «Conectar LinkedIn» usa esta app (perfil + páginas
 
 ### 3. Despliegue
 
-1. Aplica la migración `supabase/migrations/20261017000001_linkedin_content.sql`.
+1. Aplica la migración `supabase/migrations/20261018000002_linkedin_content.sql`.
 2. `supabase functions deploy linkedin-content` (con JWT: el cron usa la service role). También sirve Actions → Deploy Edge Functions.
 3. Programa el cron (SQL comentado al final de la migración): `run_due` cada 5 minutos con la service role. Sin el cron, «Publicar ahora» funciona igual, pero lo programado como automático no sale solo.
 
