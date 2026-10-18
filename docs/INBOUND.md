@@ -10,7 +10,7 @@ Fecha: 2026-10-17. Ítem «Inbound» de `docs/ROADMAP_GTM_OS.md` §4. En Latam e
 | `supabase/functions/inbound-capture` | Edge function **pública** (`--no-verify-jwt`). `GET ?key=` devuelve la configuración pública; `POST submit` crea el lead; `POST whatsapp_click` cuenta un clic directo. |
 | `supabase/functions/_shared/inbound.ts` | Lógica pura con `deno test`: configuración, origen, validación y anti-spam, país por prefijo telefónico, enrutamiento, calificación contra el ICP, link de WhatsApp. |
 | `js/inbound.js` | Página «Inbound» (sección Conectar): Leads, Tiempo de respuesta, Sitios. Franja de leads pendientes arriba de la Bandeja y contador `#nav-inbound-badge`. |
-| Migración `20261018170000_inbound.sql` | `inbound_sites`, `inbound_leads`, `inbound_hits`, RPCs y el trigger de primer contacto. |
+| Migración `20261018180001_inbound.sql` | `inbound_sites`, `inbound_leads`, `inbound_hits`, RPCs y el trigger de primer contacto. |
 
 Instalación en el sitio del cliente (el código exacto sale en Inbound → Sitios → Copiar código):
 

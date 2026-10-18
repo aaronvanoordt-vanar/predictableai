@@ -101,7 +101,7 @@
         client.from('channel_accounts').select('status, config').eq('provider', 'wati').maybeSingle(),
       ]);
       if (res[0].error) {
-        if (/inbound_sites/.test(res[0].error.message || '') || res[0].error.code === '42P01') throw new Error('Falta aplicar la migración 20261018170000_inbound.sql.');
+        if (/inbound_sites/.test(res[0].error.message || '') || res[0].error.code === '42P01') throw new Error('Falta aplicar la migración 20261018180001_inbound.sql.');
         throw res[0].error;
       }
       state.sites = res[0].data || [];
