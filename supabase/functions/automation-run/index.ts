@@ -592,32 +592,43 @@ function taskNotes(ctx: Ctx): string | null {
   return null;
 }
 
+// Las tareas viven en el CRM (crm_tasks, migración 20261017100001): una por
+// lead, o una para la cuenta de la señal. external_id = '<run>:<lead|none>'
+// + su índice único = reintentar el paso no duplica tareas.
+const TASK_SOURCE = "automation";
+
 async function actCreateTask(ctx: Ctx, cfg: Json): Promise<ActionResult> {
   const s = ctx.run.subject || {};
   const dueDays = Math.max(0, Math.min(30, Number(cfg.due_days) || 0));
   const due = new Date(Date.now() + dueDays * 86_400_000);
   due.setUTCHours(23, 0, 0, 0);
-  const notes = taskNotes(ctx);
-  const { data: prev } = await ctx.svc.from("sales_tasks").select("member_id").eq("run_id", ctx.run.id);
-  const done = new Set((prev || []).map((r: Json) => r.member_id || "none"));
-  const base = { user_id: ctx.userId, rule_id: ctx.rule.id, run_id: ctx.run.id, due_at: due.toISOString(), notes };
+  const notes = [taskNotes(ctx), `Creada por la automatización «${str(ctx.rule.name, 120)}».`].filter(Boolean).join("\n");
+  const key = (memberId: string | null) => `${ctx.run.id}:${memberId || "none"}`;
+  const { data: prev, error: prevErr } = await ctx.svc.from("crm_tasks").select("external_id")
+    .eq("user_id", ctx.userId).eq("external_source", TASK_SOURCE).like("external_id", `${ctx.run.id}:%`);
+  if (prevErr) return { kind: "fail", text: "Las tareas del CRM no están disponibles todavía: " + prevErr.message };
+  const done = new Set((prev || []).map((r: Json) => r.external_id));
+  const base = { user_id: ctx.userId, due_at: due.toISOString(), notes, external_source: TASK_SOURCE };
   const rows: Json[] = [];
   if (ctx.state.members.length) {
     const { data: members } = await ctx.svc.from("prospect_list_members").select("id, name, first_name, last_name, company")
       .in("id", ctx.state.members).eq("user_id", ctx.userId);
     for (const m of members || []) {
-      if (done.has(m.id)) continue;
+      if (done.has(key(m.id))) continue;
       const name = m.name || [m.first_name, m.last_name].filter(Boolean).join(" ");
-      rows.push({ ...base, member_id: m.id, title: taskTitle(String(cfg.title), { name, company: m.company }, s.headline) });
+      rows.push({ ...base, member_id: m.id, external_id: key(m.id), title: taskTitle(String(cfg.title), { name, company: m.company }, s.headline).slice(0, 240) });
     }
-  } else if (!done.has("none")) {
-    rows.push({ ...base, member_id: null, title: taskTitle(String(cfg.title), { name: "", company: s.company_name || s.company }, s.headline) });
+  } else if (!done.has(key(null))) {
+    rows.push({ ...base, member_id: null, external_id: key(null), title: taskTitle(String(cfg.title), { name: "", company: s.company_name || s.company }, s.headline).slice(0, 240) });
   }
-  if (rows.length) {
-    const { error } = await ctx.svc.from("sales_tasks").insert(rows);
-    if (error) return { kind: "fail", text: "No se pudieron crear las tareas: " + error.message };
+  let created = 0;
+  for (const row of rows) {
+    const { error } = await ctx.svc.from("crm_tasks").insert(row);
+    if (!error) { created++; continue; }
+    if (error.code === "23505") continue; // ya existía (otra pasada la creó)
+    return { kind: "fail", text: "No se pudo crear la tarea en el CRM: " + error.message };
   }
-  return { kind: "done", text: `${rows.length} tarea${rows.length === 1 ? "" : "s"} creada${rows.length === 1 ? "" : "s"}.`, fact: `${rows.length} tareas` };
+  return { kind: "done", text: `${created} tarea${created === 1 ? "" : "s"} en CRM → Tareas.`, fact: `${created} tareas` };
 }
 
 async function actNotify(ctx: Ctx, cfg: Json): Promise<ActionResult> {

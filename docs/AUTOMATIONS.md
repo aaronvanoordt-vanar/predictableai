@@ -43,7 +43,7 @@ Reglas sin código **cuando → si → entonces**, con aprobación humana por de
 | Investigar con IA | Llama a `lead-research` con la service role (`user_id` en el body). Una investigación de menos de 30 días no se vuelve a pagar | `lead-research` |
 | Enrolar | Inserta `campaign_enrollments` igual que `enrollMembers()` de `js/campaigns.js`. Solo campañas activas. Respeta la lista «No contactar» con el mismo criterio (`suppressedMembers`): quien está suprimido en todos los canales de la campaña no se enrola. Espera a que no quede enriquecimiento en cola | `campaign-run` (1 crédito por lead al primer envío) |
 | Agregar a una lista | Copia la fila (sin duplicar por person id, email o LinkedIn) | — |
-| Crear una tarea | `sales_tasks`, una por lead (índice único por ejecución y lead) | — |
+| Crear una tarea | `crm_tasks` del CRM (CRM → Tareas), una por lead o una para la cuenta de la señal; `external_source = 'automation'` + `external_id = '<ejecución>:<lead>'` y el índice único del CRM evitan duplicados al reintentar. No hay tabla de tareas propia | — |
 | Avisarme | Push con `_shared/push-devices.ts`; WhatsApp por el tenant de la plataforma con la plantilla `AUTOMATION_WATI_TEMPLATE` al número de Radar → Avisos (`profiles.radar_whatsapp_phone`). Un aviso que no sale nunca frena la ejecución | — |
 
 El motor no cobra nada por su cuenta: todo pasa por `_shared/credits.ts` en la función que hace el trabajo.

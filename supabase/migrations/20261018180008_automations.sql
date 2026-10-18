@@ -14,8 +14,10 @@
 --                       dispara dos veces la misma regla) y la avanza el motor
 --                       `automation-run` (pg_cron cada minuto, service role).
 --                       El usuario la ve y la decide con decide_automation_runs().
---   sales_tasks       — tareas por lead (acción «Crear una tarea»; también
---                       manuales). RLS por dueño.
+--   La acción «Crear una tarea» escribe en crm_tasks (CRM, migración
+--   20261017100001) con external_source = 'automation' y external_id =
+--   '<run_id>:<member_id|none>': su índice único hace que reintentar un paso
+--   no duplique tareas. No hay tabla de tareas propia.
 --
 -- Estados de una ejecución:
 --   queued → (motor planifica: filtros, costo, topes)
@@ -118,41 +120,7 @@ DROP POLICY IF EXISTS "Users can view own automation runs" ON public.automation_
 CREATE POLICY "Users can view own automation runs" ON public.automation_runs
   FOR SELECT TO authenticated USING (auth.uid() = user_id);
 
--- ── 3. Tareas ──────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.sales_tasks (
-  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID        NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
-  member_id   UUID        REFERENCES public.prospect_list_members(id) ON DELETE SET NULL,
-  rule_id     UUID        REFERENCES public.automation_rules(id) ON DELETE SET NULL,
-  run_id      UUID        REFERENCES public.automation_runs(id) ON DELETE SET NULL,
-  title       TEXT        NOT NULL CHECK (char_length(title) BETWEEN 1 AND 300),
-  notes       TEXT        CHECK (notes IS NULL OR char_length(notes) <= 2000),
-  due_at      TIMESTAMPTZ,
-  done_at     TIMESTAMPTZ,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS sales_tasks_open_idx ON public.sales_tasks (user_id, due_at) WHERE done_at IS NULL;
--- Una tarea por (ejecución, lead): reintentar un paso no duplica tareas.
-CREATE UNIQUE INDEX IF NOT EXISTS sales_tasks_run_member_key
-  ON public.sales_tasks (run_id, COALESCE(member_id, '00000000-0000-0000-0000-000000000000'::uuid))
-  WHERE run_id IS NOT NULL;
-
-DROP TRIGGER IF EXISTS sales_tasks_updated_at ON public.sales_tasks;
-CREATE TRIGGER sales_tasks_updated_at
-  BEFORE UPDATE ON public.sales_tasks
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
-ALTER TABLE public.sales_tasks ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.sales_tasks FROM anon;
-DROP POLICY IF EXISTS "Users manage own sales tasks" ON public.sales_tasks;
-CREATE POLICY "Users manage own sales tasks" ON public.sales_tasks
-  FOR ALL TO authenticated
-  USING (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
-
--- ── 4. Decidir (aprobar / rechazar / cancelar) ─────────────────────────────
+-- ── 3. Decidir (aprobar / rechazar / cancelar) ─────────────────────────────
 -- approve: pending_approval → approved (el motor la toma en la próxima pasada)
 -- reject:  pending_approval → rejected (con motivo opcional; learning-loop lo agrega)
 -- cancel:  queued / approved / running → canceled (lo ya hecho no se deshace)
@@ -194,7 +162,7 @@ $$;
 REVOKE ALL ON FUNCTION public.decide_automation_runs(UUID[], TEXT, TEXT) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.decide_automation_runs(UUID[], TEXT, TEXT) TO authenticated;
 
--- ── 5. Cola del motor ──────────────────────────────────────────────────────
+-- ── 4. Cola del motor ──────────────────────────────────────────────────────
 -- Reclamo atómico (FOR UPDATE SKIP LOCKED): el cron y el disparo del
 -- navegador pueden correr a la vez sin procesar dos veces la misma ejecución.
 CREATE OR REPLACE FUNCTION public.claim_automation_runs(
@@ -233,7 +201,7 @@ $$;
 REVOKE ALL ON FUNCTION public.claim_automation_runs(UUID, INTEGER, INTEGER) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.claim_automation_runs(UUID, INTEGER, INTEGER) TO service_role;
 
--- ── 6. Disparadores ────────────────────────────────────────────────────────
+-- ── 5. Disparadores ────────────────────────────────────────────────────────
 -- Filtro por ids en trigger_config: vacío o ausente = todos.
 CREATE OR REPLACE FUNCTION public.automation_id_filter(p_cfg JSONB, p_key TEXT, p_val TEXT)
 RETURNS BOOLEAN
@@ -433,7 +401,7 @@ REVOKE ALL ON FUNCTION public.automation_on_member()     FROM PUBLIC, anon, auth
 REVOKE ALL ON FUNCTION public.automation_on_message()    FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.automation_on_enrollment() FROM PUBLIC, anon, authenticated;
 
--- ── 7. Cron del motor (ejecutar a mano en el SQL editor DESPUÉS de desplegar
+-- ── 6. Cron del motor (ejecutar a mano en el SQL editor DESPUÉS de desplegar
 --    automation-run; lleva la service role, por eso no va en la migración) ──
 -- SELECT cron.schedule('automation-run', '* * * * *', $cron$
 --   SELECT net.http_post(

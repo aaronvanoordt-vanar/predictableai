@@ -26,6 +26,10 @@
   var GATED_PAGES = [
     'radar', 'mi-dashboard', 'coda-ai',
     'pro-main', 'tam-map', 'automations',
+    // CRM (2026-10-17): vive entre la Bandeja y el Meeting Coach, dentro del
+    // bloque contiguo que el gate agrupa en el sidebar; sin contexto tampoco
+    // hay leads que convertir en oportunidades.
+    'crm',
     'ventas-coach', 'ventas-reportes',
   ];
 

@@ -12,11 +12,13 @@
  *   Reglas      — las reglas del usuario + «Nueva regla» (recetas listas o
  *                 desde cero) y el constructor.
  *   Historial   — cada ejecución con su resultado, su costo y su registro.
- *   Tareas      — las tareas que crean las reglas (y las manuales).
+ *
+ * Las tareas que crean las reglas viven en el CRM (crm_tasks → CRM · Tareas):
+ * no hay una lista de tareas aparte.
  *
  * Datos: `automation_rules` (el usuario escribe, RLS por dueño),
  * `automation_runs` (solo lectura; se decide con la RPC
- * decide_automation_runs), `sales_tasks`. El motor es la edge function
+ * decide_automation_runs). El motor es la edge function
  * `automation-run` (pg_cron cada minuto); al aprobar se la llama con el JWT
  * para no esperar al cron.
  *
@@ -58,7 +60,7 @@
     { id: 'enrich', label: 'Enriquecer', leads: true, hint: 'Email personal y, si quieres, teléfono. Corre en el servidor como «Enriquecer seleccionados».' },
     { id: 'research', label: 'Investigar con IA', leads: true, hint: 'Verifica que sigan en la empresa, investiga la empresa y propone el ángulo. Una investigación de menos de 30 días no se vuelve a pagar.' },
     { id: 'enroll', label: 'Enrolar en una campaña', leads: true, hint: 'Los enrola en una campaña activa. La campaña envía los mensajes.' },
-    { id: 'create_task', label: 'Crear una tarea', leads: false, hint: 'Una tarea por lead en la pestaña Tareas. Usa {nombre}, {empresa} y {senal} en el título.' },
+    { id: 'create_task', label: 'Crear una tarea', leads: false, hint: 'Una tarea por lead en CRM → Tareas. Usa {nombre}, {empresa} y {senal} en el título.' },
     { id: 'notify', label: 'Avisarme', leads: false, hint: 'Aviso por push (si activaste las notificaciones) y/o por WhatsApp al número de Radar → Avisos.' },
   ];
 
@@ -117,8 +119,8 @@
 
   var state = {
     loaded: false, loading: false, error: '', pending: false,
-    tab: 'pending', rules: [], runs: [], tasks: [], lists: [], campaigns: [], detectors: [],
-    draft: null, draftErrors: [], picking: false, selected: {}, open: {}, showDone: false, busy: false,
+    tab: 'pending', rules: [], runs: [], lists: [], campaigns: [], detectors: [],
+    draft: null, draftErrors: [], picking: false, selected: {}, open: {}, busy: false,
   };
 
   function shell() { return document.getElementById('automations-shell'); }
@@ -149,7 +151,7 @@
   }
 
   // ─── Backend ────────────────────────────────────────────────────────────
-  function missingTable(err) { return err && /automation_|sales_tasks/.test(err.message || '') && /does not exist|schema cache|not find/i.test(err.message || ''); }
+  function missingTable(err) { return err && /automation_/.test(err.message || '') && /does not exist|schema cache|not find/i.test(err.message || ''); }
 
   async function load() {
     if (state.loading) return;
@@ -162,8 +164,6 @@
         client.from('automation_rules').select('*').order('created_at', { ascending: false }),
         client.from('automation_runs').select('id, rule_id, trigger_kind, subject, status, approval_reason, plan, cost_estimate, leads_estimate, cost_actual, leads_actual, sends, auto_started, error, decision_note, log, step, created_at, started_at, finished_at, decided_at')
           .order('created_at', { ascending: false }).limit(300),
-        client.from('sales_tasks').select('id, title, notes, due_at, done_at, created_at, member_id, rule_id, prospect_list_members(name, company)')
-          .order('due_at', { ascending: true, nullsFirst: false }).limit(300),
         client.from('prospect_lists').select('id, name').order('name'),
         client.from('campaigns').select('id, name, status').order('created_at', { ascending: false }).limit(200),
         client.from('radar_detectors').select('id, name, kind, enabled').order('name').limit(100),
@@ -175,10 +175,9 @@
         state.pending = false;
         state.rules = res[0].data || [];
         state.runs = res[1].data || [];
-        state.tasks = res[2].error ? [] : (res[2].data || []);
-        state.lists = res[3].data || [];
-        state.campaigns = res[4].data || [];
-        state.detectors = res[5].error ? [] : (res[5].data || []);
+        state.lists = res[2].data || [];
+        state.campaigns = res[3].data || [];
+        state.detectors = res[4].error ? [] : (res[4].data || []);
         state.error = '';
         if (!state.loaded && !pendingRuns().length) state.tab = state.rules.length ? 'history' : 'rules';
       }
@@ -269,30 +268,6 @@
     if (r.error) { toast('No se pudo eliminar: ' + r.error.message, 'error'); return; }
     state.draft = null;
     await load();
-  }
-
-  async function setTaskDone(id, done) {
-    var r = await sb().from('sales_tasks').update({ done_at: done ? new Date().toISOString() : null }).eq('id', id);
-    if (r.error) { toast('No se pudo actualizar la tarea: ' + r.error.message, 'error'); return; }
-    var t = byId(state.tasks, id); if (t) t.done_at = done ? new Date().toISOString() : null;
-    render();
-  }
-
-  async function deleteTask(id) {
-    var r = await sb().from('sales_tasks').delete().eq('id', id);
-    if (r.error) { toast('No se pudo borrar la tarea: ' + r.error.message, 'error'); return; }
-    state.tasks = state.tasks.filter(function (t) { return t.id !== id; });
-    render();
-  }
-
-  async function addTask(title) {
-    title = String(title || '').trim();
-    if (!title) return;
-    var due = new Date(); due.setHours(23, 0, 0, 0);
-    var r = await sb().from('sales_tasks').insert({ title: title.slice(0, 300), due_at: due.toISOString() }).select('id, title, notes, due_at, done_at, created_at, member_id, rule_id');
-    if (r.error) { toast('No se pudo crear la tarea: ' + r.error.message, 'error'); return; }
-    state.tasks = (r.data || []).concat(state.tasks);
-    render();
   }
 
   async function updateBadge() {
@@ -424,12 +399,10 @@
     }
 
     var nPending = pendingRuns().length;
-    var nTasks = state.tasks.filter(function (t) { return !t.done_at; }).length;
     var tabs = [
       { id: 'pending', label: 'Por aprobar', n: nPending },
       { id: 'rules', label: 'Reglas', n: state.rules.length },
       { id: 'history', label: 'Historial', n: 0 },
-      { id: 'tasks', label: 'Tareas', n: nTasks },
     ];
     html += '<div class="aut-tabs" role="tablist">' + tabs.map(function (t) {
       return '<button role="tab" class="aut-tab' + (state.tab === t.id ? ' on' : '') + '" aria-selected="' + (state.tab === t.id) + '" data-aut="tab" data-id="' + t.id + '">' + esc(t.label) + (t.n ? ' <span class="aut-count">' + t.n + '</span>' : '') + '</button>';
@@ -437,8 +410,7 @@
 
     if (state.tab === 'pending') html += pendingHtml();
     else if (state.tab === 'rules') html += rulesHtml();
-    else if (state.tab === 'history') html += historyHtml();
-    else html += tasksHtml();
+    else html += historyHtml();
     root.innerHTML = html + '</div>';
   }
 
@@ -641,25 +613,6 @@
     }).join('') + '</ul></section>';
   }
 
-  function tasksHtml() {
-    var tasks = state.tasks.filter(function (t) { return state.showDone || !t.done_at; });
-    var html = '<section class="aut-block"><div class="aut-row"><input class="aut-input" type="text" maxlength="300" placeholder="Nueva tarea para hoy…" data-aut="task-new">' +
-      '<button class="btn btn-ghost btn-sm" data-aut="task-add">Agregar</button><span class="aut-grow"></span>' +
-      '<label class="aut-check"><input type="checkbox" data-aut="show-done"' + (state.showDone ? ' checked' : '') + '> Mostrar terminadas</label></div>';
-    if (!tasks.length) return html + '<div class="aut-empty"><b>Sin tareas pendientes</b><span>Las reglas con «Crear una tarea» las dejan aquí, una por lead.</span></div></section>';
-    return html + '<ul class="aut-list">' + tasks.map(function (t) {
-      var lead = t.prospect_list_members || null;
-      var due = dueLabel(t.due_at);
-      return '<li class="aut-item task' + (t.done_at ? ' done' : '') + '"><label class="aut-check"><input type="checkbox" data-aut="task-done" data-id="' + esc(t.id) + '"' + (t.done_at ? ' checked' : '') + ' aria-label="Terminada"></label>' +
-        '<div class="aut-item-main"><div class="aut-item-t">' + esc(t.title) + '</div>' +
-        (lead && (lead.name || lead.company) ? '<div class="aut-muted">' + esc([lead.name, lead.company].filter(Boolean).join(' · ')) + '</div>' : '') +
-        (t.notes ? '<div class="aut-item-s">' + esc(t.notes) + '</div>' : '') +
-        (t.rule_id ? '<div class="aut-muted">De la regla «' + esc(ruleName(t.rule_id)) + '»</div>' : '') + '</div>' +
-        '<div class="aut-item-side">' + (due && !t.done_at ? '<span class="aut-pill' + (due === 'Vencida' ? ' err' : due === 'Hoy' ? ' warn' : '') + '">' + esc(due) + '</span>' : '') +
-        '<button class="aut-link aut-danger" data-aut="task-del" data-id="' + esc(t.id) + '">Borrar</button></div></li>';
-    }).join('') + '</ul></section>';
-  }
-
   // ─── Eventos ────────────────────────────────────────────────────────────
   function onClick(ev) {
     var el = ev.target.closest('[data-aut]');
@@ -704,8 +657,6 @@
       }
       case 'cancel-run': if (global.confirm('¿Cancelar esta ejecución? Lo que ya hizo no se deshace.')) decide([id], 'cancel'); break;
       case 'log': state.open[id] = !state.open[id]; render(); break;
-      case 'task-del': deleteTask(id); break;
-      case 'task-add': { var inp = shell().querySelector('[data-aut="task-new"]'); if (inp) addTask(inp.value); break; }
       default: break;
     }
   }
@@ -720,8 +671,6 @@
       case 'select': state.selected[el.getAttribute('data-id')] = el.checked; render(); break;
       case 'select-all': pendingRuns().forEach(function (r) { state.selected[r.id] = el.checked; }); render(); break;
       case 'toggle': setEnabled(el.getAttribute('data-id'), el.checked); break;
-      case 'task-done': setTaskDone(el.getAttribute('data-id'), el.checked); break;
-      case 'show-done': state.showDone = el.checked; render(); break;
       case 'trigger':
         if (!d) break;
         d.trigger_kind = el.value;
@@ -773,10 +722,6 @@
     }
   }
 
-  function onKey(ev) {
-    if (ev.key === 'Enter' && ev.target.getAttribute && ev.target.getAttribute('data-aut') === 'task-new') addTask(ev.target.value);
-  }
-
   var bound = false;
   function bind() {
     var root = shell();
@@ -785,7 +730,6 @@
     root.addEventListener('click', onClick);
     root.addEventListener('change', onChange);
     root.addEventListener('input', onInput);
-    root.addEventListener('keydown', onKey);
   }
 
   async function show() {
