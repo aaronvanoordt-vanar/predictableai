@@ -99,6 +99,7 @@ Reglas:
 
 - One session branch = one PR. Write the PR body as plain markdown (past sessions leaked `$(cat <<'EOF'` heredoc wrappers into PR bodies — don't).
 - State in the body: what was verified locally, pending manual steps (migrations to apply, edge functions to deploy).
+- **Las migraciones y el despliegue de funciones los hace la sesión, no el dueño (pedido del dueño, 2026-10-18: «SIEMPRE aplica tú las migraciones y despliega las funciones»).** Se hace disparando **Actions → Deploy Edge Functions** (`mcp__github__actions_run_trigger` sobre `deploy-functions.yml`) con `migrations` (archivos de `supabase/migrations/`, en orden; se aplican por la Management API de Supabase, se registran en `supabase_migrations.schema_migrations` y se saltan si ya estaban) y `functions` (o `none`), y revisando el resultado del run. Migración primero, funciones después. El PR dice qué se aplicó y qué se desplegó, y desde qué commit.
 
 ## Revisión de código 2026-09-25
 
