@@ -414,6 +414,12 @@
       return c ? c.hint : '';
     }
     var k = node.content.kind;
+    if (L.isNativeLinkedin(node)) {
+      if (k === 'custom') return node.content.body ? excerpt(node.content.body, 110) : 'Sin texto todavía.';
+      return node.channel === 'linkedin_message'
+        ? 'Mensaje desde tu cuenta de LinkedIn, escrito por la IA para cada lead. Solo si ya aceptó tu conexión.'
+        : 'Solicitud de conexión desde tu cuenta de LinkedIn, con una nota escrita por la IA para cada lead.';
+    }
     if (L.isLinkedin(node.channel)) {
       var chosen = node.settings && (node.settings.dripify_campaign_name || node.settings.linkedin_campaign_name);
       if (!chosen) return node.channel === 'linkedin_message' ? 'Elige la campaña de LinkedIn de solo mensaje.' : 'Elige la campaña de LinkedIn de solo conexión.';
@@ -572,6 +578,9 @@
     function watiOk() { return o.channelConnected ? !!o.channelConnected('whatsapp') : !!(o.wati && o.wati.status === 'connected'); }
     function dripifyOk() { return o.channelConnected ? !!o.channelConnected('linkedin') : !!(o.dripify && o.dripify.status === 'connected'); }
     function dripifyCampaigns() { return (o.dripify && o.dripify.config && o.dripify.config.campaigns) || []; }
+    // LinkedIn nativo (Unipile): la cuenta de LinkedIn propia conectada.
+    function nativeOk() { return typeof o.linkedinNative === 'function' ? !!o.linkedinNative() : !!o.linkedinNative; }
+    function dripifyConnected() { return !!(o.dripify && o.dripify.status === 'connected'); }
     function ownLinkedinCampaigns() { return (typeof o.linkedinCampaigns === 'function' ? o.linkedinCampaigns() : o.linkedinCampaigns) || []; }
     function linkedinSettings(row) {
       if (global.LinkedinCampaigns) return global.LinkedinCampaigns.settingsFor(row);
@@ -586,6 +595,8 @@
      * expone la secuencia), así que esas siempre las elige el usuario.
      */
     function defaultLinkedinSettings(channel) {
+      // Con la cuenta propia conectada, el paso sale desde ahí por defecto.
+      if (nativeOk()) return { linkedin_via: 'unipile' };
       var want = channel === 'linkedin_message' ? 'message' : 'connect';
       var own = ownLinkedinCampaigns().filter(function (x) { return (x.purpose || 'connect') === want; });
       return own.length === 1 ? linkedinSettings(own[0]) : {};
@@ -650,7 +661,7 @@
           } else list.push('solo con sesión de 24 h abierta');
         }
         if (L.isLinkedin(a.channel)) {
-          if (!dripifyOk()) list.push('LinkedIn sin conectar');
+          if (L.isNativeLinkedin(a) ? !nativeOk() : !dripifyConnected()) list.push('LinkedIn sin conectar');
           else if (a.settings && a.settings.linkedin_campaign_id && !a.settings.dripify_campaign_id) list.push('campaña sin crear en Dripify');
           // Un mensaje de LinkedIn solo sale si el lead aceptó la conexión:
           // si no hay un paso de conexión antes, el motor lo omite siempre.
@@ -797,10 +808,15 @@
       st.picker = null;
       st.previews = {};
       // LinkedIn: si solo hay una campaña activa en Dripify, se preselecciona.
+      // Con la cuenta propia conectada, los pasos de LinkedIn sin campaña
+      // elegida salen desde ahí.
       var dcs = dripifyCampaigns().filter(function (d) { return d.active !== false; });
-      if (dcs.length === 1) L.actions(st.draft.flow).forEach(function (a) {
-        if (a.channel === 'linkedin_connect' && !(a.settings && a.settings.dripify_campaign_id)) a.settings = { dripify_campaign_id: dcs[0].id, dripify_campaign_name: dcs[0].name };
+      L.actions(st.draft.flow).forEach(function (a) {
+        if (!L.isLinkedin(a.channel) || (a.settings && (a.settings.dripify_campaign_id || a.settings.linkedin_campaign_id || a.settings.linkedin_via))) return;
+        if (nativeOk()) a.settings = { linkedin_via: 'unipile' };
+        else if (dcs.length === 1 && a.channel === 'linkedin_connect') a.settings = { dripify_campaign_id: dcs[0].id, dripify_campaign_name: dcs[0].name };
       });
+      st.draft.flow = L.normalize(st.draft.flow);
     }
 
     // ── render ──
@@ -1113,7 +1129,33 @@
 
     function contentFields(node, fopts) {
       var box = h('div', { style: 'display:flex;flex-direction:column;gap:10px' });
-      if (L.isLinkedin(node.channel)) {
+      var liNative = L.isNativeLinkedin(node);
+      if (L.isLinkedin(node.channel) && (nativeOk() || liNative)) {
+        // Cómo sale el paso: desde la cuenta propia (Unipile) o por Dripify.
+        var via = h('div', { class: 'cb-seg' });
+        var viaBtn = function (native, label, small) {
+          var b = h('button', { type: 'button', class: liNative === native ? 'on' : '', onclick: function () {
+            if (native) node.settings = { linkedin_via: 'unipile' };
+            else { var keep = node.settings || {}; delete keep.linkedin_via; node.settings = keep; }
+            node.content = { kind: 'ai', angle: node.content.angle || nextAngle(node.channel) };
+            st.draft.flow = L.normalize(st.draft.flow);
+            markCustom(); render();
+          } }, label);
+          if (small) b.appendChild(h('small', { text: small }));
+          return b;
+        };
+        box.appendChild(h('div', { class: 'cb-lbl', text: 'Cómo sale' }));
+        via.appendChild(viaBtn(true, 'Desde mi cuenta de LinkedIn', nativeOk() ? 'Predictable envía el texto de este paso' : 'Conecta tu cuenta en Campañas → LinkedIn'));
+        if (dripifyConnected() || !liNative) via.appendChild(viaBtn(false, 'Campaña de Dripify', 'Dripify envía con sus propias plantillas'));
+        box.appendChild(via);
+      }
+      if (L.isLinkedin(node.channel) && liNative) {
+        var isConnect = node.channel === 'linkedin_connect';
+        box.appendChild(h('div', { class: 'cb-hint', text: isConnect
+          ? 'Envía la solicitud de conexión con una nota (máx. ' + L.LINKEDIN_NOTE_MAX + ' caracteres) desde tu cuenta. Si ya son contactos, el paso se omite y la conexión cuenta como aceptada.'
+          : 'Envía un mensaje desde tu cuenta, solo si el lead ya aceptó tu conexión (si no, el paso se omite y sigue con el siguiente).' }));
+        box.appendChild(h('div', { class: 'cb-note', text: 'Topes por cuenta para cuidar tu LinkedIn: 20 invitaciones por día (100 por semana) y 50 mensajes por día, dentro de la ventana horaria de la campaña y con 2 a 8 minutos entre envíos. Cuesta 1 crédito por envío.' }));
+      } else if (L.isLinkedin(node.channel)) {
         var isMsg = node.channel === 'linkedin_message';
         var want = isMsg ? 'message' : 'connect';
         box.appendChild(h('div', { class: 'cb-lbl', text: isMsg ? 'Campaña de LinkedIn (solo mensaje)' : 'Campaña de LinkedIn (solo conexión)' }));
@@ -1216,7 +1258,7 @@
           subj = h('input', { type: 'text', placeholder: 'Asunto', value: node.content.subject || '', 'data-key': 'subj-' + node.id, maxlength: '200', oninput: function () { node.content.subject = subj.value; refresh(); } });
           fields.push(subj);
         }
-        var ta = h('textarea', { placeholder: node.channel === 'email' ? 'Hola {{nombre}}, vi que lideras {{cargo}} en {{empresa}}…' : 'Texto del mensaje', 'data-key': 'body-' + node.id, maxlength: '4000', style: fopts && fopts.compact ? '' : 'min-height:140px', oninput: function () { node.content.body = ta.value; refresh(); } });
+        var ta = h('textarea', { placeholder: node.channel === 'email' ? 'Hola {{nombre}}, vi que lideras {{cargo}} en {{empresa}}…' : node.channel === 'linkedin_connect' ? 'Nota de la invitación: Hola {{nombre}}, vi que lideras {{cargo}} en {{empresa}}…' : 'Texto del mensaje', 'data-key': 'body-' + node.id, maxlength: node.channel === 'linkedin_connect' ? String(L.LINKEDIN_NOTE_MAX) : '4000', style: fopts && fopts.compact ? '' : 'min-height:140px', oninput: function () { node.content.body = ta.value; refresh(); } });
         ta.value = node.content.body || '';
         fields.push(ta);
         // Los botones de variables insertan en el asunto o en el cuerpo, según cuál se enfocó último.
@@ -1329,7 +1371,7 @@
         card.appendChild(head);
         var body = h('div', { class: 'cb-msg-body' });
         body.appendChild(contentFields(a, { compact: false }));
-        body.appendChild(L.isLinkedin(a.channel) ? renderLinkedinInfo(a) : renderPreview(a));
+        body.appendChild(L.isLinkedin(a.channel) && !L.isNativeLinkedin(a) ? renderLinkedinInfo(a) : renderPreview(a));
         card.appendChild(body);
         wrap.appendChild(card);
       });
@@ -1460,9 +1502,10 @@
         if (miss.length) right.appendChild(h('div', { class: 'cb-note amber' }, h('b', { text: 'Datos faltantes: ' }), miss.join(' · ') + '. Revela teléfonos y emails desde Listas → Enriquecer.'));
       }
       var est = L.estimateCredits(st.draft.flow, n || 0);
+      var liNativeSends = L.actions(st.draft.flow).filter(function (x) { return L.isNativeLinkedin(x); }).length;
       var cr = h('div', { class: 'chart-card' });
       cr.appendChild(h('div', { class: 'cb-lbl', text: 'Créditos estimados' }));
-      cr.appendChild(h('div', { class: 'cb-kv' }, h('dt', { text: 'Mensajes IA' }), h('dd', { text: est.aiMessages + ' × ' + L.AI_MESSAGE_CREDITS }), h('dt', { text: 'Leads en campaña' }), h('dd', { text: (n || 0) + ' × ' + L.LEAD_CREDITS }), h('dt', { text: 'Máximo' }), h('dd', { text: est.credits + ' créditos' })));
+      cr.appendChild(h('div', { class: 'cb-kv' }, h('dt', { text: 'Mensajes IA' }), h('dd', { text: est.aiMessages + ' × ' + L.AI_MESSAGE_CREDITS }), h('dt', { text: 'Leads en campaña' }), h('dd', { text: (n || 0) + ' × ' + L.LEAD_CREDITS }), liNativeSends ? h('dt', { text: 'Envíos de LinkedIn' }) : null, liNativeSends ? h('dd', { text: liNativeSends * (n || 0) + ' × ' + L.LINKEDIN_SEND_CREDITS }) : null, h('dt', { text: 'Máximo' }), h('dd', { text: est.credits + ' créditos' })));
       cr.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: n ? 'Es el tope si todos los leads recorren toda la cadencia; se cobra paso a paso y se detiene con la primera respuesta.' : 'Se calcula con los leads de la lista: sin lista, el costo depende de cuántos enroles.' }));
       right.appendChild(cr);
 
@@ -1476,7 +1519,7 @@
 
       var warns = [];
       if (needs.whatsapp && !watiOk()) warns.push('WhatsApp no está conectado: esos pasos se reintentan cada 6 h hasta que lo conectes.');
-      if (needs.linkedin && !dripifyOk()) warns.push('LinkedIn no está conectado: ese paso se reintenta cada 6 h hasta que lo conectes.');
+      if (needs.linkedin && !dripifyOk() && !nativeOk()) warns.push('LinkedIn no está conectado: ese paso se reintenta cada 6 h hasta que lo conectes.');
       var unlinked = acts.filter(function (a) { return a.channel === 'linkedin_connect' && a.settings && a.settings.linkedin_campaign_id && !a.settings.dripify_campaign_id; });
       if (unlinked.length) warns.push('La campaña de LinkedIn «' + (unlinked[0].settings.linkedin_campaign_name || '') + '» aún no existe en Dripify: el paso espera (reintento cada hora) y se vincula solo cuando la crees allá con ese nombre.');
       if (needs.email && !(st.draft.sender && st.draft.sender.email_account_id)) warns.push('Elige el buzón desde el que salen los emails.');

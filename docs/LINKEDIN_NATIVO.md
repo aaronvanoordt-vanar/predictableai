@@ -1,6 +1,12 @@
-# LinkedIn nativo — propuesta y decisión pendiente (2026-10-17)
+# LinkedIn nativo — decisión y diseño (2026-10-17)
 
-Ítem 7 de `docs/ROADMAP_GTM_OS.md` (P1). Estado: **propuesta, sin código**. Choca con dos decisiones vigentes de `docs/DECISIONS.md` («Canales de campaña» del 2026-09-03: quedarse con Dripify en vez de Unipile; «Tope diario de LinkedIn: no existe») y tiene un riesgo de términos que el dueño tiene que aceptar antes de construir.
+Ítem 7 de `docs/ROADMAP_GTM_OS.md` (P1). Estado: **decidido y construido** (PR #341). Revierte en parte dos decisiones de `docs/DECISIONS.md` («Canales de campaña» del 2026-09-03: quedarse con Dripify en vez de Unipile; «Tope diario de LinkedIn: no existe»), que ya quedaron actualizadas.
+
+## Decisión del dueño (2026-10-17)
+
+1. **Sí**, con Unipile, y con un **aviso explícito y una casilla obligatoria al conectar** (riesgo de la sección 8.2 de LinkedIn). Dripify sigue como opción.
+2. **La plataforma paga Unipile** y cobra **1 crédito por envío de campaña** (`linkedin_send`). Responder a mano desde la Bandeja no cuesta.
+3. **Topes por defecto aprobados**: 20 invitaciones/día, ≤ 100/semana, 50 mensajes/día; el usuario solo puede bajarlos.
 
 ## Qué se quiere
 
@@ -41,9 +47,18 @@ Precios tomados de las páginas de precios y de directorios el 2026-10-17 (las p
 - **Migración nueva**: `channel_accounts.provider` acepta `unipile`; nada se borra.
 - **Costo**: si el cliente no paga Unipile, la plataforma paga ~5 €/cuenta/mes; proponer un cargo en créditos por envío de LinkedIn igual que `campaign_send` (1 crédito), o incluirlo en Starter.
 
-## Lo que falta decidir (dueño)
+## Cómo quedó construido
 
-1. ¿Se acepta que Predictable opere la automatización de LinkedIn fuera de los términos de LinkedIn? (Si no, el ítem se cierra como «no se hace» y Dripify queda como está.)
-2. ¿Unipile pagado por la plataforma (incluido en el plan o por créditos) o que el cliente lo pague?
-3. ¿Los topes por defecto propuestos están bien?
-4. Aviso al cliente al conectar: texto explícito de que LinkedIn puede restringir la cuenta y de que el cliente acepta ese riesgo (recomendado).
+- `_shared/unipile.ts` (cliente, estado firmado, parser de avisos, clasificación de errores) y `_shared/linkedin-limits.ts` (topes y ritmo), los dos con `deno test`.
+- `channel-connect`: `linkedin_auth_url`, `linkedin_refresh`, `linkedin_limits`, `disconnect` con `provider: "unipile"` (borra también la cuenta en Unipile).
+- `unipile-webhook` (nueva, `--no-verify-jwt`): conexión de cuenta, mensajes, relaciones nuevas y estado de cuenta.
+- `campaign-run`: pasos con `settings.linkedin_via = "unipile"`; modo `pace` para reintentar a la hora exacta; `syncUnipileRelations` cada 15 min.
+- `inbox-send`: respuesta por LinkedIn en el chat del lead.
+- `generate-outreach`: la nota de conexión (≤ 300 caracteres). `generate-campaign`: propone pasos nativos si la cuenta está conectada.
+- UI: asistente «Conectar mi cuenta de LinkedIn» (aviso + casilla, ventana emergente, `linkedin-callback.html`), detalle con topes, «Cómo sale» en cada paso del builder, «Enviar por LinkedIn» en la Bandeja.
+- Migración `20261018000001_linkedin_unipile.sql`.
+
+## Lo que se verifica al desplegar (no se pudo localmente)
+
+- Las rutas y los nombres de campo de Unipile salen de su documentación v1 (la página no se pudo abrir desde la sesión): confirmar con una cuenta real el aviso del link embebido (`status`, `account_id`, `name`), el `network_distance` de `GET /users/{id}` y el formato de `message_received` / `new_relation`. Si un campo difiere, se cambia solo en `_shared/unipile.ts` y su test.
+- Si `findAccountByName` no encuentra la cuenta (Unipile podría no guardar el `name` del link como nombre de la cuenta), la conexión depende del aviso a `unipile-webhook`.

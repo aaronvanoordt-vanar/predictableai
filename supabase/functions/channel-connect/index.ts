@@ -50,7 +50,17 @@
  *  • refresh_dripify   {}  → vuelve a leer las campañas de Dripify.
  *  • set_default_email_account {email_account_id?} → buzón de Apollo desde el que
  *      salen los emails por defecto (config.default_email_account_id; vacío = el de Apollo).
- *  • disconnect        {provider}   (wati | dripify | apollo)
+ *  • linkedin_auth_url {return_url} → {url}
+ *      LinkedIn nativo (Unipile, 2026-10-17): link de conexión embebido de
+ *      Unipile (el usuario inicia sesión en LinkedIn en la página de Unipile,
+ *      que resuelve 2FA y checkpoints). Unipile avisa a unipile-webhook con el
+ *      account_id, que se guarda en la fila `unipile` (secret = account_id).
+ *      Registra de paso los webhooks de la plataforma (mensajes, relaciones,
+ *      estado de cuenta). Sin UNIPILE_DSN/UNIPILE_API_KEY → 503.
+ *  • linkedin_refresh  {} → relee el estado de la cuenta en Unipile.
+ *  • linkedin_limits   {invites_per_day?, invites_per_week?, messages_per_day?}
+ *      Topes de la cuenta (solo hacia abajo de 20 / 100 / 50).
+ *  • disconnect        {provider}   (wati | dripify | apollo | unipile)
  *
  * Secretos: SUPABASE_* de la plataforma; para Email por OAuth,
  * APOLLO_OAUTH_CLIENT_ID + APOLLO_OAUTH_CLIENT_SECRET (app de partner de
@@ -64,6 +74,8 @@ import * as dripify from "../_shared/dripify.ts";
 import * as apollo from "../_shared/apollo-auth.ts";
 import { contactIdsFromOtherAccount } from "../_shared/apollo-platform.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
+import * as unipile from "../_shared/unipile.ts";
+import { LINKEDIN_LIMITS } from "../_shared/linkedin-limits.ts";
 
 /** Reconectar Apollo conserva el buzón predeterminado que el usuario eligió, si sigue existiendo. */
 function keepDefaultEmailAccount(prevConfig: { default_email_account_id?: unknown } | null | undefined, accounts: apollo.ApolloEmailAccount[]): { default_email_account_id?: string } {
@@ -394,13 +406,74 @@ Deno.serve(async (req) => {
 
   try {
     if (action === "status") {
-      const [w, d, a] = await Promise.all([loadAccount("wati"), loadAccount("dripify"), loadAccount("apollo")]);
+      const [w, d, a, u] = await Promise.all([loadAccount("wati"), loadAccount("dripify"), loadAccount("apollo"), loadAccount("unipile")]);
       return json({
         wati: publicRow(w),
         dripify: publicRow(d),
         apollo: publicRow(a),
+        unipile: publicRow(u),
         apollo_oauth_available: apollo.oauthAvailable(),
+        linkedin_native_available: !!unipile.unipileEnv() && !!(Deno.env.get("UNIPILE_WEBHOOK_SECRET") ?? "").trim(),
+        linkedin_limits: LINKEDIN_LIMITS,
       }, 200, cors);
+    }
+
+    if (action === "linkedin_auth_url") {
+      const env = unipile.unipileEnv();
+      const hookSecret = (Deno.env.get("UNIPILE_WEBHOOK_SECRET") ?? "").trim();
+      if (!env || !hookSecret) {
+        return json({ error: "linkedin_native_not_configured", message: "Conectar tu propia cuenta de LinkedIn todavía no está habilitado. Mientras tanto puedes usar Dripify." }, 503, cors);
+      }
+      const ret = clean(payload.return_url, 500);
+      if (!/^https:\/\//i.test(ret) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(ret)) return json({ error: "return_url inválido." }, 400, cors);
+      const sep = ret.includes("?") ? "&" : "?";
+      const hookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/unipile-webhook?key=${hookSecret}`;
+      // Los webhooks son de la cuenta de la plataforma: se registran una vez.
+      // Si falla no se bloquea la conexión (la sincronización de cada 15 min
+      // cubre las aceptaciones; los mensajes esperan al próximo intento).
+      try { await unipile.ensureWebhooks(env, hookUrl, hookSecret); } catch (e) { console.warn("[channel-connect] unipile webhooks:", unipile.humanError(e)); }
+      const prev = await loadAccount("unipile");
+      const url = await unipile.hostedLink(env, {
+        state: await unipile.signState(hookSecret, user.id),
+        notifyUrl: hookUrl,
+        successUrl: `${ret}${sep}linkedin=ok`,
+        failureUrl: `${ret}${sep}linkedin=error`,
+        reconnectAccountId: prev?.secret && prev.status !== "disconnected" ? prev.secret : null,
+      });
+      return json({ url }, 200, cors);
+    }
+
+    if (action === "linkedin_refresh") {
+      const env = unipile.unipileEnv();
+      const hookSecret = (Deno.env.get("UNIPILE_WEBHOOK_SECRET") ?? "").trim();
+      if (!env || !hookSecret) return json({ error: "linkedin_native_not_configured" }, 503, cors);
+      const prev = await loadAccount("unipile");
+      if (prev?.secret) {
+        const acc = await unipile.getAccount(env, prev.secret);
+        return json({ account: publicRow(await unipile.saveAccount(db, user.id, acc)) }, 200, cors);
+      }
+      // El aviso de Unipile todavía no llegó (o no llegó nunca): se busca la
+      // cuenta por el estado firmado del link, que Unipile guarda como nombre.
+      const state = await unipile.signState(hookSecret, user.id);
+      const found = await unipile.findAccountByName(env, state);
+      if (!found) return json({ account: null }, 200, cors);
+      return json({ account: publicRow(await unipile.saveAccount(db, user.id, found)) }, 200, cors);
+    }
+
+    if (action === "linkedin_limits") {
+      const acc = await loadAccount("unipile");
+      if (!acc) return json({ error: "linkedin_not_connected" }, 428, cors);
+      const pick = (v: unknown, max: number) => {
+        const n = Math.floor(Number(v));
+        return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : max;
+      };
+      const limits = {
+        invites_per_day: pick(payload.invites_per_day, LINKEDIN_LIMITS.invites_per_day),
+        invites_per_week: pick(payload.invites_per_week, LINKEDIN_LIMITS.invites_per_week),
+        messages_per_day: pick(payload.messages_per_day, LINKEDIN_LIMITS.messages_per_day),
+      };
+      const config = await patchChannelConfig(db, acc.id, { limits });
+      return json({ account: publicRow({ ...acc, config: config ?? { ...acc.config, limits } }) }, 200, cors);
     }
 
     if (action === "apollo_auth_url") {
@@ -790,7 +863,15 @@ Deno.serve(async (req) => {
 
     if (action === "disconnect") {
       const provider = String(payload.provider ?? "");
-      if (!["wati", "dripify", "apollo"].includes(provider)) return json({ error: "provider inválido" }, 400, cors);
+      if (!["wati", "dripify", "apollo", "unipile"].includes(provider)) return json({ error: "provider inválido" }, 400, cors);
+      // LinkedIn nativo: la cuenta se borra también en Unipile (deja de
+      // cobrarse y la sesión de LinkedIn deja de usarse). Si falla, se sigue:
+      // sin account_id guardado el motor ya no puede enviar.
+      if (provider === "unipile") {
+        const prev = await loadAccount("unipile");
+        const env = unipile.unipileEnv();
+        if (env && prev?.secret) { try { await unipile.deleteAccount(env, prev.secret); } catch (e) { console.warn("[channel-connect] unipile delete:", unipile.humanError(e)); } }
+      }
       // La fila se conserva (status 'disconnected', credencial borrada) para
       // que webhook_secret sobreviva: WATI solo sabe CREAR webhooks (listar o
       // borrar responde 405 y el tenant tiene tope) y Dripify tiene la URL
@@ -813,6 +894,7 @@ Deno.serve(async (req) => {
     return json({ error: "Unknown action" }, 400, cors);
   } catch (err) {
     console.error("[channel-connect]", action, err);
+    if (err instanceof unipile.UnipileError) return json({ error: unipile.humanError(err) }, err.status >= 400 && err.status < 500 ? 400 : 502, cors);
     const status = err instanceof wati.WatiError ? (err.status >= 400 && err.status < 500 ? 400 : 502) : 500;
     return json({ error: wati.humanError(err) }, status, cors);
   }

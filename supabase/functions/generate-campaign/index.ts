@@ -31,8 +31,9 @@
  *     fijo de pasos: la IA propone una por paso y el usuario la cambia en el
  *     asistente. El texto libre de WhatsApp solo existe con sesión de 24 h
  *     abierta, así que no se propone.
- *   - LinkedIn solo si Dripify está conectado y tiene campañas; se elige una
- *     campaña de Dripify real por id.
+ *   - LinkedIn solo si la cuenta propia (Unipile) está conectada — pasos con
+ *     settings.linkedin_via = "unipile", conexión y mensaje — o si Dripify
+ *     está conectado y tiene campañas (se elige una campaña real por id).
  *   - Condiciones solo en el nivel raíz (sin anidar); `linkedin_connected`
  *     necesita un paso de LinkedIn antes; `whatsapp_read` necesita WATI;
  *     `email_opened` necesita email.
@@ -108,11 +109,12 @@ interface Channels {
   templates: { name: string; status: string; approved: boolean; body: string }[];
   dripify: boolean;
   dripifyCampaigns: { id: string | number; name: string; active: boolean }[];
+  linkedinNative: boolean; // cuenta de LinkedIn propia conectada (Unipile)
 }
 
 async function loadChannels(supa: Json, userId: string): Promise<Channels> {
   const { data } = await supa.from("channel_accounts").select("provider, status, config").eq("user_id", userId);
-  const out: Channels = { wati: false, templates: [], dripify: false, dripifyCampaigns: [] };
+  const out: Channels = { wati: false, templates: [], dripify: false, dripifyCampaigns: [], linkedinNative: false };
   for (const acc of (data ?? []) as Json[]) {
     if (acc.status !== "connected") continue;
     if (acc.provider === "wati") {
@@ -129,6 +131,7 @@ async function loadChannels(supa: Json, userId: string): Promise<Channels> {
       out.templates.sort((a, b) => Number(b.approved) - Number(a.approved));
       out.templates = out.templates.slice(0, 30);
     }
+    if (acc.provider === "unipile") out.linkedinNative = true;
     if (acc.provider === "dripify") {
       out.dripify = true;
       out.dripifyCampaigns = ((acc.config?.campaigns ?? []) as Json[]).map((c) => ({ id: c.id, name: String(c.name ?? ""), active: c.active !== false }));
@@ -160,10 +163,11 @@ const SYSTEM_PROMPT = `Eres el estratega de outbound de una plataforma de sales 
   "flow": { "v": 1, "nodes": [ Nodo, ... ] }
 }
 Nodo acción:
-  { "type": "action", "channel": "whatsapp" | "email" | "linkedin_connect",
+  { "type": "action", "channel": "whatsapp" | "email" | "linkedin_connect" | "linkedin_message",
     "delay": { "mode": "after_prev" | "with_prev", "days": 0-21, "hours": 0-23 },
     "content": { "kind": "template" | "ai", "angle": "apertura" | "valor" | "prueba_social" | "objecion" | "ultima_carta" | "libre", "instructions": "≤ 300 caracteres, opcional" },
-    "settings": { "dripify_campaign_id": <id real de la lista de campañas de Dripify> }   // SOLO en linkedin_connect
+    "settings": { "linkedin_via": "unipile" }   // LinkedIn desde la cuenta propia (si está conectada)
+    "settings": { "dripify_campaign_id": <id real de la lista de campañas de Dripify> }   // LinkedIn por Dripify, SOLO en linkedin_connect
     "settings": { "template_name": "<nombre EXACTO de una plantilla de WhatsApp de la lista>" }   // SOLO en whatsapp
   }
 Nodo condición (solo en el nivel raíz, nunca dentro de una rama):
@@ -176,7 +180,7 @@ Las ramas se vuelven a unir: después de la condición la cadencia sigue con los
 1. La espera de cada nodo cuenta desde el nodo anterior (after_prev). "with_prev" = sale a la misma hora que el envío anterior (útil para reforzar un WhatsApp con un email el mismo día); solo puede usarse si el nodo justo anterior en la misma lista es una acción.
 2. WhatsApp: cada toque por WhatsApp es "kind":"template" con "settings.template_name" = el nombre EXACTO de una plantilla de la lista de plantillas de WhatsApp (prefiere las APROBADAS). Elige para cada paso la plantilla cuyo texto encaje con ese momento de la cadencia (un saludo para abrir, un recordatorio para seguir, etc.) y no repitas la misma plantilla en dos pasos si hay otras que encajen. Puede haber tantos WhatsApp como tenga sentido. Nunca propongas WhatsApp con "kind":"ai": el texto libre solo funciona con una conversación abierta de 24 h. Si WATI no está conectado o no hay plantillas en la lista, NO uses WhatsApp y dilo en rationale.
 3. Email: "kind":"ai" con ángulo. El primer email de la cadencia es "apertura"; los siguientes rotan valor → prueba_social → objecion → ultima_carta. No repitas un ángulo en el mismo canal.
-4. LinkedIn (linkedin_connect): SOLO si Dripify está conectado Y hay campañas de Dripify; usa un "dripify_campaign_id" que exista en la lista (prefiere una activa). Máximo un paso de LinkedIn. Su "content" es {"kind":"ai","angle":"apertura"}.
+4. LinkedIn. Si la CUENTA PROPIA de LinkedIn está conectada: "linkedin_connect" (la nota de la invitación, máx. 300 caracteres) y, opcionalmente, "linkedin_message" SOLO dentro de la rama Sí de una condición "linkedin_connected"; ambos con "settings": {"linkedin_via":"unipile"} y "content" {"kind":"ai","angle":...}; máximo un linkedin_connect y dos linkedin_message. Si no, y Dripify está conectado con campañas: solo "linkedin_connect" con un "dripify_campaign_id" que exista en la lista (prefiere una activa), máximo uno, "content" {"kind":"ai","angle":"apertura"}. Sin ninguno de los dos, NO uses LinkedIn.
 5. Condiciones: "linkedin_connected" solo después de un paso de LinkedIn (dale 2-4 días). "whatsapp_read" solo si hay WATI y un WhatsApp antes. "email_opened" solo si hay un email antes. "has_phone" / "has_email" / "has_linkedin" sirven para elegir canal según los datos del lead cuando la lista tiene muchos huecos. Máximo 2 condiciones; ninguna rama con más de 3 acciones; una rama puede quedar vacía si tiene sentido.
 6. Tamaño: entre 4 y 8 envíos por lead sumando ramas; duración total 10 a 21 días; la primera acción en el día 0.
 7. Elige canales según los datos de la lista: si casi nadie tiene teléfono, no lideres con WhatsApp; si casi nadie tiene LinkedIn, no uses LinkedIn.
@@ -200,8 +204,9 @@ function userPrompt(intake: Json, brief: Json, ch: Channels, stats: Json, hint: 
     if (!ch.templates.length) lines.push("  (sin plantillas que se puedan enviar: NO uses WhatsApp)");
   }
   lines.push("Email (Apollo): disponible (la cuenta remitente se elige en la campaña)");
+  lines.push(`LinkedIn (cuenta propia): ${ch.linkedinNative ? "conectada: usa \"linkedin_via\": \"unipile\"" : "NO conectada"}`);
   lines.push(`LinkedIn (Dripify): ${ch.dripify ? "conectado" : "NO conectado"}`);
-  if (ch.dripify) {
+  if (ch.dripify && !ch.linkedinNative) {
     if (ch.dripifyCampaigns.length) for (const c of ch.dripifyCampaigns.slice(0, 20)) lines.push(`  campaña de Dripify id=${JSON.stringify(c.id)} · "${c.name}"${c.active ? "" : " (inactiva)"}`);
     else lines.push("  (sin campañas en Dripify: NO uses LinkedIn)");
   }
@@ -229,21 +234,27 @@ function businessErrors(flow: flowLib.Flow, ch: Channels): string[] {
           : "No hay plantillas de WhatsApp que se puedan enviar: quita los pasos de WhatsApp.");
       }
     }
+    if (flowLib.isNativeLinkedin(a)) {
+      if (!ch.linkedinNative) errs.push("La cuenta de LinkedIn propia no está conectada: quita \"linkedin_via\" o el paso de LinkedIn.");
+      continue;
+    }
     if (a.channel === "linkedin_connect") {
       if (!ch.dripify || !ch.dripifyCampaigns.length) errs.push("LinkedIn sin Dripify conectado o sin campañas: quita el paso de LinkedIn.");
       else if (!ch.dripifyCampaigns.some((c) => String(c.id) === String(a.settings?.dripify_campaign_id))) errs.push("dripify_campaign_id no existe en la lista de campañas de Dripify.");
     }
-    if (a.channel === "linkedin_message") errs.push("linkedin_message no está disponible: usa linkedin_connect.");
+    if (a.channel === "linkedin_message") errs.push("linkedin_message solo está disponible desde la cuenta de LinkedIn propia: usa linkedin_connect.");
   }
   let liBefore = false, waBefore = false, emBefore = false;
   for (const n of flow.nodes) {
     if (n.type === "condition") {
       if (n.check === "linkedin_connected" && !liBefore) errs.push("linkedin_connected necesita un paso de LinkedIn antes.");
+      if (n.no.some((a) => a.channel === "linkedin_message") || (n.check !== "linkedin_connected" && n.yes.some((a) => a.channel === "linkedin_message"))) errs.push("linkedin_message va solo en la rama Sí de \"linkedin_connected\".");
       if (n.check === "whatsapp_read" && (!waBefore || !ch.wati)) errs.push("whatsapp_read necesita WATI conectado y un WhatsApp antes.");
       if (n.check === "email_opened" && !emBefore) errs.push("email_opened necesita un email antes.");
       for (const a of [...n.yes, ...n.no]) { if (a.channel === "linkedin_connect") liBefore = true; if (a.channel === "whatsapp") waBefore = true; if (a.channel === "email") emBefore = true; }
       continue;
     }
+    if (n.channel === "linkedin_message") errs.push("linkedin_message va solo en la rama Sí de \"linkedin_connected\".");
     if (n.channel === "linkedin_connect") liBefore = true;
     if (n.channel === "whatsapp") waBefore = true;
     if (n.channel === "email") emBefore = true;
@@ -261,7 +272,11 @@ function finalize(raw: Json, ch: Channels): flowLib.Flow {
   };
   const flow = flowLib.normalize({ v: 1, nodes: (raw?.nodes ?? []).map(strip) });
   for (const a of flowLib.actions(flow)) {
-    if (a.channel === "linkedin_connect" && a.settings?.dripify_campaign_id) {
+    // Con la cuenta propia conectada, un paso de LinkedIn sin campaña de
+    // Dripify sale desde ahí.
+    if (flowLib.isLinkedin(a.channel) && ch.linkedinNative && !a.settings?.dripify_campaign_id) {
+      a.settings = { linkedin_via: "unipile" };
+    } else if (a.channel === "linkedin_connect" && a.settings?.dripify_campaign_id) {
       const dc = ch.dripifyCampaigns.find((c) => String(c.id) === String(a.settings!.dripify_campaign_id));
       if (dc) a.settings = { dripify_campaign_id: dc.id, dripify_campaign_name: dc.name };
     }

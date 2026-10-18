@@ -23,10 +23,12 @@
  *      (≤ 16 MB) con pie opcional (`body`). Misma ventana de 24 h que el
  *      texto; sale por POST /api/ext/v3/conversations/messages/file y se
  *      guarda con payload.type/media/wati_id para que la bandeja lo pinte.
- *  • { channel: "linkedin", … } → 501 {error:"linkedin_send_unavailable"}:
- *      ni Dripify ni LinkedIn exponen envío de mensajes por API (comprobado
- *      el 2026-09-14 en api.dripify.com); la bandeja copia el texto y abre
- *      el perfil para pegarlo.
+ *  • { channel: "linkedin", member_id | contact_ref, body }
+ *      Con la cuenta de LinkedIn propia conectada (Unipile, 2026-10-17):
+ *      responde en el chat de LinkedIn del lead (el chat de la conversación,
+ *      o uno nuevo si ya son contactos). Sin Unipile → 501
+ *      {error:"linkedin_send_unavailable"}: Dripify no expone envío por API
+ *      (comprobado el 2026-09-14) y la bandeja copia el texto y abre el perfil.
  *  • { action: "link_member", member_id, channel, contact_ref }
  *      Enlaza a un lead de mis listas las filas de la bandeja de ese contacto
  *      (URL de LinkedIn, dígitos del teléfono o email) que estaban sin lead:
@@ -80,6 +82,9 @@ import * as wati from "../_shared/wati.ts";
 import { isWebmAudio, WebmOpusError, webmOpusToOgg } from "../_shared/webm-opus.ts";
 import { syncWatiHistory } from "../_shared/wati-history.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
+import * as unipile from "../_shared/unipile.ts";
+import { activeBlock } from "../_shared/linkedin-limits.ts";
+import { canonicalLinkedinUrl } from "../_shared/dripify.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -697,10 +702,14 @@ Deno.serve(async (req) => {
 
     const channel = String(body?.channel ?? "");
     if (channel === "linkedin") {
-      return json({
-        error: "linkedin_send_unavailable",
-        message: "Ni Dripify ni LinkedIn permiten enviar mensajes por API: copia la respuesta y pégala en el chat de LinkedIn.",
-      }, 501, cors);
+      const row = await sendLinkedin(db, user.id, String(body?.member_id ?? ""), String(body?.contact_ref ?? "").trim().slice(0, 300), String(body?.body ?? "").replace(/\r\n/g, "\n").trim().slice(0, 8000));
+      if (!row) {
+        return json({
+          error: "linkedin_send_unavailable",
+          message: "Dripify no permite enviar mensajes por API: copia la respuesta y pégala en el chat de LinkedIn, o conecta tu cuenta de LinkedIn en Campañas para responder desde aquí.",
+        }, 501, cors);
+      }
+      return json({ message: row }, 200, cors);
     }
     if (channel !== "whatsapp" && channel !== "email") return json({ error: "channel debe ser whatsapp, email o linkedin" }, 400, cors);
     const memberId = String(body?.member_id ?? "");
@@ -758,6 +767,67 @@ Deno.serve(async (req) => {
     return json({ error: (err as Error)?.message ?? String(err) }, 500, cors);
   }
 });
+
+/**
+ * Respuesta por LinkedIn desde la cuenta propia (Unipile). null = el usuario
+ * no tiene la cuenta conectada (la bandeja sigue con copiar y pegar).
+ * Responder a mano no cobra créditos (inbox_reply = 0) ni cuenta para los
+ * topes del motor: lo escribe una persona, a su ritmo.
+ */
+async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string, contactRef: string, text: string): Promise<Json | null> {
+  const env = unipile.unipileEnv();
+  if (!env) return null;
+  const { data: acc } = await db.from("channel_accounts").select("id, secret, status, config").eq("user_id", userId).eq("provider", "unipile").maybeSingle();
+  if (!acc?.secret || acc.status === "disconnected") return null;
+  if (!text) throw new HttpError("Escribe un mensaje.", 400);
+  const block = activeBlock(acc.config);
+  if (block) throw new HttpError(block.reason + (block.until ? "" : " Vuelve a conectar tu cuenta de LinkedIn en Campañas."), 409, "linkedin_blocked");
+  if (memberId && !UUID_RE.test(memberId)) throw new HttpError("member_id inválido", 400);
+  let member: Json | null = null;
+  if (memberId) {
+    const { data } = await db.from("prospect_list_members").select("id, linkedin_url, contact_status").eq("id", memberId).eq("user_id", userId).maybeSingle();
+    if (!data) throw new HttpError("El lead no existe o no es tuyo.", 404);
+    member = data;
+  }
+  const profileUrl = canonicalLinkedinUrl(member?.linkedin_url) || canonicalLinkedinUrl(contactRef) || "";
+  // El chat ya abierto con este contacto (de la bandeja o del enrolamiento).
+  let q = db.from("inbox_messages").select("provider_conversation_id, campaign_id, enrollment_id")
+    .eq("user_id", userId).eq("channel", "linkedin").eq("provider", "unipile").not("provider_conversation_id", "is", null)
+    .order("sent_at", { ascending: false }).limit(1);
+  q = member ? q.eq("member_id", member.id) : q.eq("contact_ref", contactRef);
+  const { data: lastRow } = await q.maybeSingle();
+  let chatId: string | null = lastRow?.provider_conversation_id ?? null;
+  let enrollment: Json | null = null;
+  if (member) {
+    const { data } = await db.from("campaign_enrollments").select("id, campaign_id, provider_refs").eq("user_id", userId).eq("member_id", member.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    enrollment = data ?? null;
+    if (!chatId && enrollment?.provider_refs?.unipile_chat_id) chatId = String(enrollment.provider_refs.unipile_chat_id);
+  }
+  let messageId: string | null = null;
+  try {
+    if (chatId) {
+      messageId = (await unipile.messageChat(env, chatId, text)).messageId;
+    } else {
+      if (!profileUrl) throw new HttpError("El contacto no tiene URL de LinkedIn ni un chat abierto.", 400);
+      const profile = await unipile.resolveUser(env, acc.secret, profileUrl);
+      if (!profile.firstDegree) throw new HttpError("No son contactos en LinkedIn: LinkedIn solo deja escribirle a un contacto. Envíale una invitación desde una campaña.", 409, "linkedin_not_connected");
+      const r = await unipile.messageUser(env, acc.secret, profile.providerId, text);
+      chatId = r.chatId; messageId = r.messageId;
+    }
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    throw new HttpError(unipile.humanError(e), unipile.classifyError(e) === "transient" ? 502 : 409, "linkedin_send_failed");
+  }
+  const { data: row, error } = await db.from("inbox_messages").insert({
+    user_id: userId, member_id: member?.id ?? null, channel: "linkedin", provider: "unipile", direction: "out",
+    contact_ref: profileUrl || contactRef || null, body: text, provider_message_id: messageId, provider_conversation_id: chatId,
+    status: "sent", sent_at: new Date().toISOString(),
+    campaign_id: lastRow?.campaign_id ?? enrollment?.campaign_id ?? null, enrollment_id: lastRow?.enrollment_id ?? enrollment?.id ?? null,
+    payload: { source: "inbox", chat_id: chatId },
+  }).select("*").single();
+  if (error) throw new HttpError(error.message, 500);
+  return row;
+}
 
 /** Un pase de sincronización del historial de WATI para la cuenta del usuario. */
 const WATI_SYNC_COOLDOWN_MS = 2 * 60 * 1000;

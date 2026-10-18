@@ -352,3 +352,14 @@ el lead, sin volver a presentarse ni soltar el pitch.
 ## Un tenant de WATI en varias cuentas (2026-10-08)
 
 El mismo WATI puede estar conectado en más de una cuenta de Predictable, y la clave única de `inbox_messages` es `(provider, provider_message_id)`, sin `user_id`. La cuenta que sincronizaba (o recibía el webhook) primero se quedaba con la respuesta y la del dueño del lead ya no podía guardarla: el 2026-10-08, 212 mensajes de los leads de una cuenta quedaron en otra que nunca les escribió. Regla: un número es de la cuenta que lo tiene en sus listas o le escribió desde Predictable (`knowsPhone` en `_shared/wati-history.ts`; lo copiado del historial de WATI no cuenta). `wati-webhook` y la sincronización dejan pasar los números de otra cuenta del mismo tenant (`ownerElsewhere`), y la sincronización del dueño recupera las filas que otra cuenta se llevó (`reclaimFromSiblings`). Un número que no es de nadie se guarda como siempre.
+
+## LinkedIn nativo con Unipile (2026-10-17)
+
+Opción por cuenta junto a Dripify; decisión, proveedores evaluados y diseño en `docs/LINKEDIN_NATIVO.md`.
+
+- **Conexión**: login embebido de Unipile (resuelve 2FA y checkpoints). `channel_accounts` `provider = 'unipile'`, `secret` = account_id; la API key es de la plataforma. Al conectar, aviso del riesgo de términos de LinkedIn y casilla obligatoria.
+- **Pasos**: `settings.linkedin_via = "unipile"` → `linkedin_connect` manda la invitación con la nota del paso (IA o texto propio, ≤ 300); `linkedin_message` manda el mensaje solo a un contacto. Sin URL, sin conexión, ya invitado o ya contacto → `skipped` y sigue.
+- **Topes por cuenta** (`_shared/linkedin-limits.ts`): 20 invitaciones/día, 100/semana, 50 mensajes/día, 2–8 min entre envíos, a la mitad en calentamiento. Contados con `campaign_events.payload.via = 'unipile'`. Las respuestas a mano desde la Bandeja no cuentan.
+- **Errores**: cuenta (desconectada, checkpoint, restringida) o límite de LinkedIn → `config.send_block` retiene todo LinkedIn de ese usuario (el límite vence a las 24 h; la cuenta, al reconectar); error del lead → `failed` y sigue.
+- **Señales**: `unipile-webhook` (`message_received` → Bandeja y regla de parada; `new_relation` → `linkedin_connected_at`; `account_status`) + respaldo de relaciones cada 15 min en `campaign-run`.
+- **Créditos**: 1 por envío de campaña (`linkedin_send`); con Dripify no se cobra.

@@ -78,7 +78,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Columnas de IA en Listas — en curso (sesión propia)
 - [ ] Dialer nativo con la llamada en el Meeting Coach
 - [ ] Conectores CloudTalk, Aircall, Ringover
-- [ ] LinkedIn nativo
+- [x] LinkedIn nativo
 - [ ] CRM de cuentas y oportunidades
 - [ ] Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos
 - [ ] Revisar la prueba gratis
