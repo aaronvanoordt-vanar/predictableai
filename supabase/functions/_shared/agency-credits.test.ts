@@ -33,7 +33,9 @@ Deno.test("cada acción del tarifario cae en una función que no es «Otros»", 
   assertEquals(usageCategory("intel_hub_refund").key, "hub");
   assertEquals(usageCategory("call_minutes").key, "calls");
   assertEquals(usageCategory("call_minutes_refund").key, "calls");
+  // Agente de voz: el tarifario (voice_minute*) y el motivo del registro (voice_call / voice_call_refund).
   assertEquals(usageCategory("voice_call").key, "voice");
+  assertEquals(usageCategory("voice_call_refund").key, "voice");
   assertEquals(usageCategory("algo_nuevo").key, "other");
 });
 
