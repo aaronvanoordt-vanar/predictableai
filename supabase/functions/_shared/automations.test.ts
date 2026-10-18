@@ -31,7 +31,7 @@ Deno.test("espejo: TRIGGERS y ACTIONS de js/automations.js", async () => {
 });
 
 Deno.test("espejo: los triggers SQL usan las mismas claves de idempotencia y disparadores", async () => {
-  const sql = await Deno.readTextFile(new URL("../../migrations/20261018000003_automations.sql", import.meta.url));
+  const sql = await Deno.readTextFile(new URL("../../migrations/20261018180008_automations.sql", import.meta.url));
   for (const k of TRIGGER_KINDS) assert(sql.includes(`'${k}'`), `falta ${k} en la migración`);
   const prefixes: Record<string, string> = {
     radar_signal: subjectKey("radar_signal", { signal_id: "x" }),

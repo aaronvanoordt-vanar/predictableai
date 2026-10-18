@@ -411,7 +411,7 @@
       '<button class="btn btn-primary btn-sm" data-aut="new">+ Nueva regla</button></section>';
 
     if (state.pending) {
-      html += '<section class="aut-block"><div class="aut-note">Las automatizaciones se activan cuando se aplique la migración <code>20261018000003_automations.sql</code> y se despliegue la función <code>automation-run</code>.</div></section></div>';
+      html += '<section class="aut-block"><div class="aut-note">Las automatizaciones se activan cuando se aplique la migración <code>20261018180008_automations.sql</code> y se despliegue la función <code>automation-run</code>.</div></section></div>';
       root.innerHTML = html; return;
     }
     if (state.error) html += '<section class="aut-block"><div class="aut-err">' + esc(state.error) + '</div></section>';

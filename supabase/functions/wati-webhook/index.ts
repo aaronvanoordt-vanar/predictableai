@@ -16,11 +16,15 @@
  *
  * Eventos (docs.wati.io → Webhooks, leídos el 2026-09-01):
  *  • message / newContactMessageReceived  → mensaje ENTRANTE del lead.
- *      Guarda inbox_messages (dedupe por whatsappMessageId), enlaza el lead
- *      por los dígitos del teléfono, detiene todos los enrolamientos activos
+ *      La regla es la misma que en meta-whatsapp-webhook y vive en
+ *      _shared/whatsapp-inbound.ts (recordInbound, deno test): guarda
+ *      inbox_messages (dedupe por whatsappMessageId), enlaza el lead por los
+ *      dígitos del teléfono, detiene todos los enrolamientos activos
  *      (status=replied) y sube el CRM a `respondio`. Si el lead tocó el botón
  *      "Darse de baja" (o pide no recibir más mensajes), status=unsubscribed, CRM
- *      `dado_de_baja` y lista de supresión (_shared/suppression.ts).
+ *      `dado_de_baja` y lista de supresión (_shared/suppression.ts). Aquí solo
+ *      se traduce el evento de WATI y se agregan el tenant compartido
+ *      (ownerElsewhere) y el WAMID de las reacciones.
  *  • templateMessageSent(_v2) / sessionMessageSent(_v2) → confirma el envío
  *      de un mensaje nuestro (enlazado por localMessageId / id) y guarda el
  *      WAMID. Si no es nuestro, es un mensaje escrito en la UI de WATI (o de
@@ -48,7 +52,7 @@ import * as wati from "../_shared/wati.ts";
 import { findMemberByPhone, ownerElsewhere } from "../_shared/wati-history.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import { clearAccountBlock, inboxStatusRank, recordCampaignReceipt } from "../_shared/wati-receipts.ts";
-import * as suppression from "../_shared/suppression.ts";
+import { primaryEnrollment, recordInbound } from "../_shared/whatsapp-inbound.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -63,20 +67,6 @@ function svc(): SupabaseClient {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     { auth: { persistSession: false } },
   );
-}
-
-/**
- * ¿El lead pidió la baja? El botón «Darse de baja» de una plantilla, o un
- * texto que lo pide de verdad (_shared/suppression.ts isOptOutText). Antes
- * bastaba con que el mensaje EMPEZARA con «baja», «stop» o «cancelar», y
- * «Cancelar la reunión de mañana» o «Baja el precio» daban de baja al lead;
- * desde el 2026-10-17 la baja además lo suprime en todos los canales, así que
- * la detección se volvió estricta.
- */
-function optOutKind(ev: Json): "whatsapp_button" | "reply" | null {
-  const btn = ev?.buttonReply?.text ?? ev?.buttonReply?.title ?? ev?.interactiveButtonReply?.title ?? ev?.interactiveButtonReply?.text ?? "";
-  if (btn && /darse de baja/i.test(String(btn))) return "whatsapp_button";
-  return suppression.isOptOutText(ev?.text) ? "reply" : null;
 }
 
 function inboundText(ev: Json): string {
@@ -133,149 +123,56 @@ function findMember(db: SupabaseClient, userId: string, waId: string): Promise<J
   return findMemberByPhone(db, userId, waId);
 }
 
-// Estados del CRM que nunca se pisan con un "respondió": ya están más adelante.
-const CRM_KEEP = new Set(["reunion_agendada", "reunion_tomada"]);
-
-async function setContactStatus(db: SupabaseClient, member: Json, status: string) {
-  if (!member?.id) return;
-  if (CRM_KEEP.has(member.contact_status) && status !== "dado_de_baja") return;
-  if (member.contact_status === status) return;
-  await db.from("prospect_list_members")
-    .update({ contact_status: status, status_changed_at: new Date().toISOString() })
-    .eq("id", member.id);
+/** Texto del botón que tocó el lead (respuesta rápida de plantilla o interactivo). */
+function buttonText(ev: Json): string | null {
+  const b = ev?.buttonReply?.text ?? ev?.buttonReply?.title ?? ev?.interactiveButtonReply?.title ?? ev?.interactiveButtonReply?.text ?? null;
+  return b ? String(b) : null;
 }
 
-/** Enrolamiento al que se atribuye un mensaje: uno vivo si lo hay, si no el más reciente. */
-function primaryEnrollment(list: Json[]): Json | null {
-  return list.find((e) => ["active", "processing", "paused"].includes(e.status)) ?? list[0] ?? null;
-}
-
+/**
+ * Mensaje ENTRANTE del lead. La regla (bandeja, cadencias, baja, CRM) es la
+ * misma para WATI y Meta y vive en _shared/whatsapp-inbound.ts; aquí solo se
+ * traduce el evento de WATI y se agregan sus dos particularidades: un tenant
+ * compartido entre cuentas (la respuesta es de la cuenta dueña del número) y
+ * el WAMID de una reacción que hay que buscar en el historial.
+ */
 async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
   const waId = wati.digits(ev?.waId);
   if (!waId) return;
-  const member = await findMember(db, acc.user_id, waId);
-  // Mismo tenant de WATI conectado en otra cuenta que sí le escribió a este
-  // número: la respuesta es suya (su webhook o su sincronización la guarda).
-  // Sin esto la primera cuenta en recibirla se la quedaba (clave única global).
-  if (!member && await ownerElsewhere(db, acc, waId)) return;
-  const wamid = ev?.whatsappMessageId ? String(ev.whatsappMessageId) : (ev?.id ? `wati:${ev.id}` : null);
-  const at = eventDate(ev);
-
-  // Enrolamientos del lead (antes de guardar: la fila de la bandeja lleva
-  // campaign_id / enrollment_id del enrolamiento vivo, o del más reciente).
-  const { data: enrollments } = member
-    ? await db
-      .from("campaign_enrollments")
-      .select("id, campaign_id, status, next_position, replied_at, created_at")
-      .eq("member_id", member.id)
-      .eq("user_id", acc.user_id)
-      .order("created_at", { ascending: false })
-    : { data: [] as Json[] };
-  const primary = primaryEnrollment(enrollments ?? []);
-
-  const { data: inserted, error: insErr } = await db
-    .from("inbox_messages")
-    .upsert({
-      user_id: acc.user_id,
-      member_id: member?.id ?? null,
-      channel: "whatsapp",
-      provider: "wati",
-      direction: "in",
-      contact_ref: waId,
-      body: inboundText(ev),
-      provider_message_id: wamid,
-      provider_conversation_id: ev?.conversationId ? String(ev.conversationId) : null,
-      status: "delivered",
-      sent_at: at,
-      campaign_id: primary?.campaign_id ?? null,
-      enrollment_id: primary?.id ?? null,
-      payload: {
-        type: ev?.type ?? null, senderName: ev?.senderName ?? null, buttonReply: ev?.buttonReply ?? null, sourceType: ev?.sourceType ?? null,
-        // Foto, video, sticker, audio o documento: la bandeja lo descarga por
-        // inbox-send {action:"media"} con el id de WATI (o el fileName, v1).
-        ...(wati.isMediaType(ev?.type)
-          ? {
-            media: true,
-            wati_id: ev?.id ? String(ev.id) : null,
-            media_file: wati.mediaFileName(ev?.data) ?? wati.mediaFileName(ev?.text),
-            caption: ev?.text && !wati.mediaFileName(ev.text) ? String(ev.text).slice(0, 2000) : null,
-          }
-          : {}),
-        ...reactionPayload(ev),
-      },
-    }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true })
-    .select("id");
-  if (insErr) console.error("[wati-webhook] inbox insert:", insErr.message);
-  // Reentrega del mismo mensaje: no volver a disparar efectos.
-  if (wamid && (!inserted || !inserted.length)) return;
-
   const reaction = wati.parseReaction(ev);
-  if (reaction?.target) await linkReactionTarget(db, acc, waId, reaction.target);
-
-  // Quitar una reacción no es una respuesta: no detiene la cadencia ni cambia el CRM.
-  if (reaction && !reaction.emoji) return;
-  const optKind = reaction ? null : optOutKind(ev);
-  const optOut = !!optKind;
-  if (optKind) {
-    // Lista de supresión: el número que escribió y, si es un lead, todos sus
-    // datos, en todos los canales, con el mensaje como prueba. También si el
-    // número no tiene lead: así no se le escribe cuando aparezca en una lista.
-    const { data: full } = member
-      ? await db.from("prospect_list_members").select("id, email, phone, linkedin_url").eq("id", member.id).maybeSingle()
-      : { data: null };
-    await suppression.recordOptOut(db, {
-      userId: acc.user_id, member: full ?? member, phone: waId, source: optKind, channel: "whatsapp", at,
-      evidence: { text: inboundText(ev), wamid, campaign_id: primary?.campaign_id ?? null, enrollment_id: primary?.id ?? null },
-    });
-  }
-
-  if (!member) return; // número sin lead asociado: queda en la bandeja igual
-
-  for (const en of (enrollments ?? []) as Json[]) {
-    const patch: Json = { last_inbound_whatsapp_at: at };
-    const stops = ["active", "processing", "paused"].includes(en.status);
-    // Primera respuesta a una cadencia que ya terminó (p. ej. una campaña de un
-    // solo WhatsApp): no cambia el estado, pero sí cuenta como respuesta del
-    // paso que la provocó, igual que en email y LinkedIn.
-    const lateReply = !optOut && !stops && !en.replied_at;
-    if (optOut) {
-      patch.status = "unsubscribed";
-      patch.stop_reason = "El lead pidió darse de baja por WhatsApp.";
-      patch.replied_at = en.replied_at ?? at;
-      patch.replied_channel = "whatsapp";
-    } else if (stops) {
-      patch.status = "replied";
-      patch.stop_reason = "Respondió por WhatsApp.";
-      patch.replied_at = at;
-      patch.replied_channel = "whatsapp";
-    } else if (!en.replied_at) {
-      patch.replied_at = at;
-      patch.replied_channel = "whatsapp";
-    }
-    await db.from("campaign_enrollments").update(patch).eq("id", en.id);
-    if (optOut || stops || lateReply) {
-      // La respuesta se atribuye al último paso que este lead recibió (no al
-      // que estaba esperando): así los contadores por paso y el aprendizaje
-      // saben qué mensaje la provocó.
-      const { data: lastSent } = await db.from("campaign_events")
-        .select("node_id, step_position")
-        .eq("enrollment_id", en.id).eq("type", "sent").not("node_id", "is", null)
-        .order("created_at", { ascending: false }).limit(1).maybeSingle();
-      await db.from("campaign_events").insert({
-        enrollment_id: en.id,
-        campaign_id: en.campaign_id,
-        member_id: member.id,
-        user_id: acc.user_id,
-        channel: "whatsapp",
-        type: optOut ? "opted_out" : "replied",
-        step_position: lastSent?.step_position ?? en.next_position,
-        node_id: lastSent?.node_id ?? null,
-        provider_message_id: wamid,
-        detail: inboundText(ev).slice(0, 300),
-      });
-    }
-  }
-  await setContactStatus(db, member, optOut ? "dado_de_baja" : "respondio");
+  await recordInbound(db, acc, {
+    provider: "wati",
+    from: waId,
+    messageId: ev?.whatsappMessageId ? String(ev.whatsappMessageId) : (ev?.id ? `wati:${ev.id}` : null),
+    conversationId: ev?.conversationId ? String(ev.conversationId) : null,
+    at: eventDate(ev),
+    text: inboundText(ev),
+    // La baja escrita se busca solo en lo que el lead tecleó (no en la URL de
+    // un archivo ni en el texto de un botón).
+    typedText: ev?.text && !wati.mediaFileName(ev.text) ? String(ev.text) : null,
+    buttonText: buttonText(ev),
+    reaction,
+    payload: {
+      type: ev?.type ?? null, senderName: ev?.senderName ?? null, buttonReply: ev?.buttonReply ?? null, sourceType: ev?.sourceType ?? null,
+      // Foto, video, sticker, audio o documento: la bandeja lo descarga por
+      // inbox-send {action:"media"} con el id de WATI (o el fileName, v1).
+      ...(wati.isMediaType(ev?.type)
+        ? {
+          media: true,
+          wati_id: ev?.id ? String(ev.id) : null,
+          media_file: wati.mediaFileName(ev?.data) ?? wati.mediaFileName(ev?.text),
+          caption: ev?.text && !wati.mediaFileName(ev.text) ? String(ev.text).slice(0, 2000) : null,
+        }
+        : {}),
+      ...reactionPayload(ev),
+    },
+  }, {
+    // Mismo tenant de WATI conectado en otra cuenta que sí le escribió a este
+    // número: la respuesta es suya (su webhook o su sincronización la guarda).
+    // Sin esto la primera cuenta en recibirla se la quedaba (clave única global).
+    ownedElsewhere: async () => !!(await ownerElsewhere(db, acc, waId)),
+    afterInsert: reaction?.target ? () => linkReactionTarget(db, acc, waId, reaction.target!) : undefined,
+  });
 }
 
 /**

@@ -1,7 +1,7 @@
 /**
  * automation-run — motor de Automatizaciones (2026-10-17).
  *
- * Avanza la cola `automation_runs` (migración 20261018000003). Las filas las
+ * Avanza la cola `automation_runs` (migración 20261018180008). Las filas las
  * crean triggers de la base cuando pasa algo (señal del Radar entregada, lead
  * nuevo en una lista, respuesta en la Bandeja, campaña terminada sin
  * respuesta, reunión agendada o tomada), una por (regla, sujeto): la misma
@@ -905,7 +905,7 @@ Deno.serve(async (req: Request) => {
       });
       if (error) {
         if (/claim_automation_runs/.test(error.message) && /does not exist|not find/i.test(error.message)) {
-          return json({ error: "migration_pending", detail: "Falta aplicar la migración 20261018000003_automations.sql." }, 503, h);
+          return json({ error: "migration_pending", detail: "Falta aplicar la migración 20261018180008_automations.sql." }, 503, h);
         }
         throw new Error("claim_automation_runs: " + error.message);
       }

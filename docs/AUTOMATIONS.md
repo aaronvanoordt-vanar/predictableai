@@ -17,7 +17,7 @@ Reglas sin código **cuando → si → entonces**, con aprobación humana por de
 | Pieza | Archivo |
 |---|---|
 | Catálogo, validación, filtros, clasificador de respuestas, costo y aprobación | `supabase/functions/_shared/automations.ts` (+ `automations.test.ts`) |
-| Tablas, RLS, RPCs y triggers de la base | `supabase/migrations/20261018000003_automations.sql` |
+| Tablas, RLS, RPCs y triggers de la base | `supabase/migrations/20261018180008_automations.sql` |
 | Motor | `supabase/functions/automation-run` (pg_cron cada minuto con la service role; el navegador lo llama al aprobar) |
 | UI | `js/automations.js` (página `automations`, sidebar en Prospección después de la Bandeja, badge `#nav-auto-badge`) |
 | Push reutilizable | `supabase/functions/_shared/push-devices.ts` (extraído de `push-send`) |
@@ -62,7 +62,7 @@ Un lead creado por una automatización lleva `source.automation = { rule_id, run
 
 ## Puesta en marcha
 
-1. Aplicar `supabase/migrations/20261018000003_automations.sql`.
+1. Aplicar `supabase/migrations/20261018180008_automations.sql`.
 2. `supabase functions deploy automation-run` (con JWT) y redesplegar `lead-research`, `push-send` (con `--no-verify-jwt`, como siempre), `radar-monitor` y `learning-loop` (cambió código compartido).
 3. Programar el cron (SQL al final de la migración).
 4. Opcional: crear en el tenant de WATI de la plataforma la plantilla del aviso y poner `AUTOMATION_WATI_TEMPLATE`. Sin ella, el aviso por WhatsApp queda en el registro como «no enviado».
