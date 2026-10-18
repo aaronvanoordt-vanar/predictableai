@@ -14,7 +14,7 @@
 import { callLLM, parseLlmJson, type Engine } from "./llm.ts";
 import { canonicalCountries } from "./radar-geo.ts";
 import {
-  DETECTOR_KINDS, KIND_META, PLAN_JSON_SPEC, coverSignals, normalizeDetector, normalizePlan,
+  DETECTOR_KINDS, KIND_META, PLAN_JSON_SPEC, coverSignals, isPlannerKind, normalizeDetector, normalizePlan,
   type AnalysisSignal, type DetectorKind, type NormalizedDetector, type NormalizedPlan, type Requirement,
 } from "./radar-plan.ts";
 import type { SellerContext } from "./radar-context.ts";
@@ -35,8 +35,8 @@ export function kindAvailable(kind: DetectorKind, av: Availability): boolean {
 }
 
 function availabilityBlock(av: Availability): string {
-  const ok = DETECTOR_KINDS.filter((k) => kindAvailable(k, av));
-  const ko = DETECTOR_KINDS.filter((k) => !kindAvailable(k, av));
+  const ok = DETECTOR_KINDS.filter((k) => isPlannerKind(k) && kindAvailable(k, av));
+  const ko = DETECTOR_KINDS.filter((k) => isPlannerKind(k) && !kindAvailable(k, av));
   return `\n\n=== AVAILABLE DETECTOR KINDS ===\nUse ONLY these kinds: ${ok.join(", ")}.` +
     (ko.length ? `\nNOT available for this account right now (do not propose them): ${ko.join(", ")}.` : "") +
     recipesPromptBlock((k) => kindAvailable(k, av));

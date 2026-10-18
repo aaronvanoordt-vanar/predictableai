@@ -21,7 +21,8 @@
  * (`buildResearchBlock`).
  *
  * Auth: Bearer <user JWT> (validado con auth.getUser), o la service role con
- * `user_id` en el body (automation-run). Con JWT en el deploy.
+ * { user_id } (la investigación automática de inbound-capture). Con JWT en el deploy.
+ * Las automatizaciones (automation-run) la llaman igual.
  * POST { member_id, user_id? }
  * 200 { research, research_status: 'ready', credits }
  * 402 insufficient_credits · 404 member not found · 409 already_running
@@ -61,8 +62,7 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...extra } });
 }
 
-// El Bearer de la service role no siempre es byte a byte la variable de
-// entorno (mismo caso que enrich-list y campaign-run): vale su claim `role`.
+// Mismo criterio que enrich-list: cualquier JWT cuyo claim role sea service_role.
 function jwtRole(token: string): string | null {
   try {
     const payload = token.split(".")[1] ?? "";
@@ -234,10 +234,10 @@ Deno.serve(withLlmContext(async (req: Request) => {
   const memberId = typeof body?.member_id === "string" && /^[0-9a-f-]{36}$/i.test(body.member_id) ? body.member_id : null;
   if (!memberId) return json({ error: "member_id required" }, 400, h);
 
-  // Auth: JWT del usuario, o la service role con user_id en el body (el motor
-  // de automatizaciones, automation-run, investiga leads sin sesión; mismo
-  // contrato que generate-outreach con campaign-run).
-  const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
+  const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "").trim();
+  // inbound-capture la llama con la service role + user_id (investigación
+  // automática de un lead inbound, «Investigar al llegar» del sitio), igual
+  // que automation-run (acción «Investigar con IA» de las automatizaciones).
   let userId: string;
   if (token && (token === SERVICE_KEY || jwtRole(token) === "service_role")) {
     if (typeof body?.user_id !== "string" || !/^[0-9a-f-]{36}$/i.test(body.user_id)) return json({ error: "user_id required" }, 400, h);
