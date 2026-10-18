@@ -15,6 +15,7 @@
 //   outreach   → claude       (Prospección — message writing)
 //   radar      → perplexity   (Intelligence Hub — signal detection, search-grounded)
 //   coach      → openai       (AI Sales Coach)
+//   ai_columns → perplexity   (Listas — columnas IA, una búsqueda corta por fila)
 //
 // Required secrets (only the ones for engines actually used need to be set):
 //   ANTHROPIC_API_KEY, OPENAI_API_KEY, PERPLEXITY_API_KEY
@@ -82,7 +83,8 @@ export type Feature =
   | "outreach"
   | "coach"
   | "onboarding"
-  | "radar";
+  | "radar"
+  | "ai_columns";
 
 /** Default engine per feature when the user has not chosen one. */
 export const RECOMMENDED_ENGINE: Record<Feature, Engine> = {
@@ -92,6 +94,7 @@ export const RECOMMENDED_ENGINE: Record<Feature, Engine> = {
   outreach:   "claude",
   radar:      "perplexity",
   coach:      "openai",
+  ai_columns: "perplexity",
 };
 
 export function isEngine(v: unknown): v is Engine {

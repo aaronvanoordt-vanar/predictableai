@@ -2126,6 +2126,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
          Estas son las únicas pestañas de js/prospecting.js (no hay un padre "Prospección":
          llevaba al mismo lugar que Buscar). Los ids viejos (resumen/contactos/outreach/
          secuencias/bandeja) siguen resolviendo vía PRO_HASH_ALIASES y prospecting.show(). -->
+    <!-- Mapa de TAM (2026-10-17, js/tam-map.js + js/tam-rules.js): el mercado
+         real del ICP por país y segmento (totales de Apollo), tiers A/B/C con
+         reglas editables y cobertura. Va antes de Buscar: de aquí se abre
+         Buscar con las cuentas Tier A sin contactar. -->
+    <div class="nav-item" data-page="tam-map" onclick="nav(this,'tam-map');if(window.tamMap)window.tamMap.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5"/><path d="M1.5 6h13M1.5 10.5h13M6 1.5v13M10.5 1.5v13"/></svg>
+      Mapa de TAM
+    </div>
     <div class="nav-item" data-page="pro-main" data-pros-tab="busqueda" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('busqueda')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5L10.3 10.3"/></svg>
       Buscar
@@ -2162,6 +2170,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="nav-item" data-page="ventas-reportes" onclick="nav(this,'ventas-reportes')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M3 14V6l4-4h6v12H3z"/><path d="M7 2v4H3"/><path d="M6 9h4M6 11h3"/></svg>
       <span id="nav-reportes-label">Reportes</span>
+    </div>
+    <!-- Equipo (2026-10-17, js/team.js): metas, ranking, revisión y rampa del
+         equipo SDR. Fuera del context-gate: dirigir el equipo no depende del
+         Contexto. Lo ve todo el mundo; quien no está en la nómina ve un
+         estado vacío que dice qué falta. -->
+    <div class="nav-item" data-page="team" onclick="nav(this,'team')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="6" cy="5.5" r="2.5"/><path d="M1.5 14c0-2.6 2-4.2 4.5-4.2s4.5 1.6 4.5 4.2"/><path d="M11 3.2a2.3 2.3 0 010 4.6M12.3 9.9c1.4.5 2.2 1.9 2.2 4.1"/></svg>
+      Equipo
     </div>
 
     <!-- CONECTAR (2026-09-23, js/integrations.js): HubSpot, Salesforce,
@@ -2414,6 +2430,28 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
   <div id="ai-training-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: EQUIPO (js/team.js + js/team-metrics.js) ═══════ -->
+<div class="page fade-in" id="page-team" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Equipo</div>
+      <div class="topbar-sub">Metas de actividad, ranking, revisión y rampa de tu equipo de ventas</div>
+    </div>
+  </div>
+  <div id="team-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: MAPA DE TAM (js/tam-map.js) ═══════ -->
+<div class="page fade-in" id="page-tam-map" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Mapa de TAM</div>
+      <div class="topbar-sub">Cuántas empresas de tu ICP existen, cuáles atacar primero y cuánto llevas cubierto</div>
+    </div>
+  </div>
+  <div id="tam-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: INTEGRACIONES (js/integrations.js) ═══════ -->
@@ -3006,6 +3044,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
           <div class="settings-row-hint">Detección de empresas con señal de compra y sus decision makers.</div>
         </div>
       </div>
+
+      <div class="settings-row">
+        <div class="settings-row-label">Columnas IA de Listas</div>
+        <div class="settings-row-value">
+          <div data-ai-engine="ai_columns" data-ai-engine-compact data-ai-engine-nolabel></div>
+          <div class="settings-row-hint">Responde fila por fila las preguntas que agregas como columna en una lista. Cada columna puede usar otro motor.</div>
+        </div>
+      </div>
     </div>
 
     <!-- ===== INTELIGENCIA (modelo de Claude) ===== -->
@@ -3185,22 +3231,28 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/branding.js?v=20260923"></script>
 <!-- ═════ Predictable JS modules ═════ -->
 <script src="js/ui-helpers.js"></script>
-<script src="js/ai-engine.js"></script>
-<script src="js/credit-costs.js?v=20261008"></script>
+<script src="js/ai-engine.js?v=20261017"></script>
+<script src="js/credit-costs.js?v=20261017"></script>
 <script src="js/credits.js"></script>
+<script src="js/billing-cfdi.js"></script>
 <script src="js/skeletons.js"></script>
 <script src="js/i18n.js?v=20261017"></script>
 <script src="js/api.js"></script>
 <script src="js/apollo-enums.js"></script>
+<script src="js/tam-rules.js?v=20261017"></script>
 <script src="js/company-context.js?v=20260823"></script>
 <script src="js/prospecting-data.js?v=20261008"></script>
-<script src="js/prospecting.js?v=20261008"></script>
-<script src="js/campaign-flow.js?v=20260915"></script>
+<script src="js/phone-latam.js?v=20261018"></script>
+<script src="js/phone-lines.js?v=20261018"></script>
+<script src="js/ai-columns.js?v=20261017"></script>
+<script src="js/prospecting.js?v=20261018b"></script>
+<script src="js/campaign-flow.js?v=20261018b"></script>
 <script src="js/linkedin-campaigns.js?v=20260915"></script>
-<script src="js/campaign-builder.js?v=20260923"></script>
+<script src="js/campaign-builder.js?v=20261017"></script>
 <script src="js/campaign-knowledge.js?v=20260923"></script>
 <script src="js/campaign-analytics.js?v=20261008a"></script>
-<script src="js/campaigns.js?v=20261008b"></script>
+<script src="js/suppression.js?v=20261017"></script>
+<script src="js/campaigns.js?v=20261018b"></script>
 <script src="js/inbox-alert.js?v=20261001b"></script>
 <script src="js/push.js?v=20261006"></script>
 <script src="js/radar.js?v=20260918"></script>
@@ -3211,9 +3263,12 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/meeting-report.js"></script>
 <script src="js/learning.js?v=20260919"></script>
 <script src="js/ai-training.js?v=20260923"></script>
+<script src="js/tam-map.js?v=20261017"></script>
 <script src="js/integrations.js?v=20260923"></script>
 <script src="js/dev-docs.js?v=20260923"></script>
 <script src="js/developers.js?v=20260923"></script>
+<script src="js/team-metrics.js?v=20261017"></script>
+<script src="js/team.js?v=20261017"></script>
 <script src="js/coach-lead-picker.js?v=20260915"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js?v=20260823"></script>
@@ -3966,6 +4021,11 @@ function nav(el, pageId) {
   }
 
 
+  // Equipo: se monta al entrar por el sidebar, por hash o por la paleta ⌘K.
+  if (pageId === 'team' && window.Team && typeof window.Team.show === 'function') {
+    setTimeout(() => { window.Team.show(); }, 0);
+  }
+
   // Re-apply role-based tab state when navigating to reports
   if (pageId === 'ventas-reportes' && typeof initReportPageForRole === 'function') {
     initReportPageForRole();
@@ -4062,6 +4122,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // Páginas con shell propio: montarlas también al restaurar (el onclick
     // del nav-item no corre en este camino).
     if (hash === 'clients' && window.clientsModule) window.clientsModule.show();
+    if (hash === 'tam-map' && window.tamMap) window.tamMap.show();
   }, 0);
 });
 

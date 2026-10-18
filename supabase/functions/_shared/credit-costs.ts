@@ -15,6 +15,18 @@ export const CREDIT_COSTS = {
   // propio del cliente vía OAuth es gratis: lo paga su cuenta).
   enrich_email: 2,
   enrich_phone: 8,
+  // Waterfall (docs/ENRICHMENT_WATERFALL.md): si Apollo no lo encuentra, los
+  // demás proveedores en cascada, con las keys de la plataforma (se cobra
+  // aunque el cliente tenga su Apollo). Solo por dato encontrado; el precio
+  // es el mismo lo encuentre quien lo encuentre (proveedor más caro de la
+  // cascada ≈ 0.06 USD por email y ≈ 0.6 USD por móvil → ≤ ~45 %). El email
+  // incluye su verificación.
+  enrich_email_waterfall: 3,
+  enrich_phone_waterfall: 20,
+  // Verificar un email que ya trajo Apollo sin «verified» (MillionVerifier /
+  // Reoon / ZeroBounce ≈ 0.001–0.01 USD). Solo si el veredicto es concluyente
+  // (válido, inválido o catch-all).
+  email_verify: 1,
 
   // Mensajes IA.
   outreach_full: 4,          // "Preparar con IA" (5 capas + prep del coach)
@@ -24,6 +36,11 @@ export const CREDIT_COSTS = {
   // la empresa y propone el ángulo. El match de Apollo se cobra aparte como
   // enrich_email solo con la key de la plataforma.
   lead_research: 3,
+  // Columnas IA en Listas: por fila investigada, también «No encontrado»
+  // (la búsqueda se hizo igual); un error no se cobra. Con búsqueda web (~1–2 búsquedas con Haiku o Sonar,
+  // ≤ 0.035 USD) o solo con los datos del contacto (sin web, ~0.003 USD).
+  ai_column_cell: 2,
+  ai_column_cell_basic: 1,
 
   // Campañas: 1 crédito por lead que entra a una campaña (cubre TODOS sus
   // envíos). Responder a mano desde la Bandeja no cuesta.
