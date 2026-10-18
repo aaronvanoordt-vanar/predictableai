@@ -103,9 +103,23 @@ Fuentes:
 
 Una llamada no puede ir «junto con el anterior»: la hace una persona.
 
+## Llamadas en la página Equipo
+
+La página Equipo (`js/team.js`, #360) ya trae una métrica de llamadas. Esta migración la conecta así:
+
+- **Metas, rampa y ranking.** `team_member_activity` cuenta las **personas llamadas** en el período. Cuenta cada lead (o número suelto) al que se le marcó al menos una vez, contestara o no, y no cuenta las llamadas que no llegaron a salir (`failed`). Se reemplaza la función entera de `20261018000003_team_management`; solo cambia ese conteo.
+  - En el ranking es una columna de contexto, como «Contactadas»: nunca lo ordena.
+  - Sin la migración de telefonía llega `NULL` y la UI dice «Sin telefonía».
+- **Revisión.** `team_review_calls(p_member)` tiene el mismo permiso que `team_review_meetings`: el propio SDR, o su director si está en la nómina. Devuelve:
+  - el resultado, la duración, la nota y el resumen del Meeting Coach;
+  - el enlace `https` de la grabación de un conector.
+  - No incluye la transcripción.
+- **Grabación nativa.** El director la escucha con «Escuchar». La acción `recording` de `telephony` la sirve al dueño de la llamada o a su director, y lo valida con `team_is_manager` + `team_is_rostered` usando el JWT del usuario.
+- **Comentarios.** Los comentarios de coaching sobre una llamada (`subject_kind = 'call'`) se validan contra `calls`.
+
 ## Pasos que solo puede hacer el dueño
 
-1. **Aplicar la migración** `supabase/migrations/20261018180009_telephony.sql`.
+1. **Aplicar la migración** `supabase/migrations/20261018180009_telephony.sql`. Va **después** de `20261018000003_team_management.sql`, porque reemplaza su `team_member_activity` y su `team_add_comment` y agrega `team_review_calls`.
 2. **Desplegar las funciones:**
    - `telephony` y `campaign-run`, con JWT;
    - `telephony-webhook`, con `--no-verify-jwt` (ya está en `NO_JWT` del workflow);

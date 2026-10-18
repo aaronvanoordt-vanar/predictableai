@@ -438,5 +438,53 @@
 
   global.addEventListener('predictable:call-saved', function () { if (isVisible()) refresh(); });
 
+  // ── Equipo (js/team.js): las llamadas en la revisión del director ─────────
+  // La RPC team_review_calls devuelve las llamadas de un miembro (él mismo, o
+  // su director si está en la nómina). Cada una lleva su resultado, la nota y
+  // el resumen del Meeting Coach; los comentarios se guardan con
+  // subject_kind = 'call'. La grabación nativa se escucha con «Escuchar»
+  // (telephony `recording` valida el mismo permiso); la de un conector es su enlace.
+  var PROVIDER_LABEL = { twilio: 'Dialer', cloudtalk: 'CloudTalk', aircall: 'Aircall', ringover: 'Ringover' };
+  async function teamCallSource(memberId) {
+    var r = await sb().rpc('team_review_calls', { p_member: memberId, p_limit: 30 });
+    if (r.error) throw new Error(r.error.message);
+    return (r.data || []).map(function (c) {
+      var coach = c.coach || null;
+      var parts = [];
+      if (c.outcome_note) parts.push(c.outcome_note);
+      if (coach) {
+        var res = Array.isArray(coach.resumen_corto) ? coach.resumen_corto.join(' ') : (coach.resumen_corto || '');
+        if (res) parts.push('Coach' + (coach.score != null ? ' (' + coach.score + '/100)' : '') + ': ' + res);
+        var sp = coach.siguiente_paso;
+        if (sp) parts.push('Siguiente paso: ' + (typeof sp === 'string' ? sp : [sp.accion, sp.cuando].filter(Boolean).join(' · ')));
+      }
+      var native = c.provider === 'twilio' && !!c.has_recording;
+      return {
+        id: c.id,
+        at: c.started_at,
+        title: [(c.lead_name || 'Número sin lead') + (c.lead_company ? ' · ' + c.lead_company : ''),
+          c.outcome ? OUTCOME_LABEL[c.outcome] : (STATUS_LABEL[c.status] || c.status),
+          c.duration_seconds != null ? fmtDur(c.duration_seconds) : null,
+          PROVIDER_LABEL[c.provider] || c.provider].filter(Boolean).join(' · '),
+        summary: parts.join(' · '),
+        url: native ? null : safeUrl(c.recording_url) || null,
+        // Grabación del dialer: se pide con el JWT y se reproduce aquí mismo.
+        listen: native ? function () {
+          return tel('recording', { call_id: c.id }).then(function (res) {
+            if (!res || typeof res.blob !== 'function') throw new Error('Esta llamada no tiene grabación.');
+            return res.blob();
+          }).then(function (blob) { return URL.createObjectURL(blob); });
+        } : null,
+      };
+    });
+  }
+  function registerWithTeam() {
+    if (!global.Team || typeof global.Team.registerCallSource !== 'function') return false;
+    global.Team.registerCallSource(teamCallSource);
+    return true;
+  }
+  // js/team.js se carga después de este archivo.
+  if (!registerWithTeam()) document.addEventListener('DOMContentLoaded', registerWithTeam);
+
   global.Calls = { mount: mount, show: show, renderLeadCalls: renderLeadCalls, OUTCOME_LABEL: OUTCOME_LABEL };
 })(window);

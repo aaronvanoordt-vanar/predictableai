@@ -137,7 +137,27 @@ async function syncAccount(db: SupabaseClient, acc: TelephonyAccount): Promise<n
   return n;
 }
 
-async function handle(db: SupabaseClient, userId: string, action: string, p: Json): Promise<Response | Json> {
+/**
+ * ¿Quien llama puede escuchar las llamadas de `owner`? Él mismo, o su director
+ * si `owner` está en la nómina de su empresa (página Equipo). Se pregunta con
+ * el JWT del usuario a las mismas RPC que usa la revisión (team_is_manager /
+ * team_is_rostered): sin la migración del equipo, solo el dueño.
+ */
+async function canReviewCallsOf(userId: string, owner: string, token: string): Promise<boolean> {
+  if (owner === userId) return true;
+  try {
+    const asUser = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+      auth: { persistSession: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const [mgr, rost] = await Promise.all([asUser.rpc("team_is_manager"), asUser.rpc("team_is_rostered", { p_user: owner })]);
+    return mgr.data === true && rost.data === true;
+  } catch {
+    return false;
+  }
+}
+
+async function handle(db: SupabaseClient, userId: string, action: string, p: Json, token = ""): Promise<Response | Json> {
   const env = twilio.twilioEnv();
 
   switch (action) {
@@ -301,8 +321,9 @@ async function handle(db: SupabaseClient, userId: string, action: string, p: Jso
 
     case "recording": {
       if (!UUID.test(String(p?.call_id ?? ""))) throw new TelephonyError("Llamada inválida.");
-      const { data: call } = await db.from("calls").select("provider, recording_ref, recording_url").eq("id", p.call_id).eq("user_id", userId).maybeSingle();
-      if (!call) throw new TelephonyError("La llamada no existe.", 404);
+      // El SDR escucha las suyas; su director, las de su equipo (revisión en Equipo).
+      const { data: call } = await db.from("calls").select("user_id, provider, recording_ref, recording_url").eq("id", p.call_id).maybeSingle();
+      if (!call || !(await canReviewCallsOf(userId, call.user_id, token))) throw new TelephonyError("La llamada no existe.", 404);
       if (call.provider === NATIVE_PROVIDER && call.recording_ref) {
         if (!env) throw new TelephonyError("El dialer no está configurado.", 503);
         const res = await twilio.fetchRecording(env, call.recording_ref);
@@ -364,7 +385,7 @@ Deno.serve(async (req) => {
   if (!userId) return json({ error: "Unauthorized" }, 401, h);
 
   try {
-    const out = await handle(db, userId, action, p);
+    const out = await handle(db, userId, action, p, token);
     if (out instanceof Response) {
       for (const [k, v] of Object.entries(h)) out.headers.set(k, v);
       return out;

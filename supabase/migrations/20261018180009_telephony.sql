@@ -228,7 +228,216 @@ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
--- ── 6. pg_cron: sincronización de conectores sin webhook (CloudTalk) ───────
+-- ── 6. Equipo: las llamadas en las metas, el ranking, la rampa y la revisión ─
+-- La página Equipo (migración 20261018000003_team_management, js/team.js)
+-- dejó el enganche: `calls` llegaba NULL («Sin telefonía») y las llamadas se
+-- registran para la revisión con Team.registerCallSource. Aquí:
+--   • team_member_activity cuenta las PERSONAS llamadas en la ventana (la
+--     misma función alimenta metas, ranking y rampa). Se reemplaza entera: es
+--     la de 20261018000003 con el conteo de llamadas en lugar de NULL.
+--   • team_review_calls: las llamadas de un miembro para la revisión del
+--     director (mismo permiso que team_review_meetings: él mismo, o su
+--     director si está en la nómina). Sin transcripción ni audio nativo: el
+--     resultado, la nota y el resumen del Meeting Coach; el enlace de la
+--     grabación solo si es de un conector (https).
+--   • team_add_comment valida que la llamada comentada sea de esa persona.
+
+CREATE OR REPLACE FUNCTION public.team_member_activity(p_user UUID, p_from TIMESTAMPTZ, p_to TIMESTAMPTZ)
+RETURNS JSONB
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_contacts INTEGER; v_email INTEGER; v_wa INTEGER; v_li INTEGER; v_sent INTEGER;
+  v_replies INTEGER; v_booked INTEGER; v_held INTEGER;
+  v_cohort INTEGER; v_cohort_replied INTEGER; v_cohort_meetings INTEGER;
+  v_calls INTEGER;
+BEGIN
+  -- Personas nuevas: primera aparición de la persona en sus listas.
+  SELECT count(*) INTO v_contacts FROM (
+    SELECT min(m.created_at) AS first_at
+      FROM public.prospect_list_members m
+     WHERE m.user_id = p_user AND m.created_at < p_to
+     GROUP BY COALESCE(NULLIF(m.apollo_person_id, ''), lower(NULLIF(m.email, '')),
+                       lower(NULLIF(m.linkedin_url, '')), m.id::text)
+  ) s WHERE s.first_at >= p_from;
+
+  -- Envíos aceptados en la ventana (campaña sin `failed` posterior + manuales).
+  WITH sends AS (
+    SELECT COALESCE(ev.member_id::text, ev.enrollment_id::text, ev.id::text) AS who, ev.channel AS ch
+      FROM public.campaign_events ev
+     WHERE ev.user_id = p_user
+       AND ev.type IN ('sent', 'connection_sent')
+       AND ev.channel IN ('email', 'whatsapp', 'linkedin')
+       AND ev.created_at >= p_from AND ev.created_at < p_to
+       AND (ev.provider_message_id IS NULL OR NOT EXISTS (
+             SELECT 1 FROM public.campaign_events f
+              WHERE f.provider_message_id = ev.provider_message_id AND f.type = 'failed'))
+    UNION ALL
+    SELECT COALESCE(im.member_id::text, 'ref:' || im.channel || ':' || COALESCE(im.contact_ref, im.id::text)), im.channel
+      FROM public.inbox_messages im
+     WHERE im.user_id = p_user AND im.direction = 'out'
+       AND im.campaign_id IS NULL AND im.status <> 'failed'
+       AND im.sent_at >= p_from AND im.sent_at < p_to
+  )
+  SELECT count(DISTINCT who) FILTER (WHERE ch = 'email'),
+         count(DISTINCT who) FILTER (WHERE ch = 'whatsapp'),
+         count(DISTINCT who) FILTER (WHERE ch = 'linkedin'),
+         count(DISTINCT who)
+    INTO v_email, v_wa, v_li, v_sent FROM sends;
+
+  -- Personas llamadas en la ventana (telefonía, 2026-10-17): cada lead (o
+  -- número suelto) al que se le marcó al menos una vez, contestara o no.
+  -- Una llamada que no llegó a salir (`failed`) no cuenta.
+  SELECT count(DISTINCT COALESCE(c.member_id::text, 'tel:' || COALESCE(c.to_number, c.id::text)))
+    INTO v_calls
+    FROM public.calls c
+   WHERE c.user_id = p_user AND c.direction = 'outbound' AND c.status <> 'failed'
+     AND c.started_at >= p_from AND c.started_at < p_to;
+
+  -- Personas que respondieron / escribieron en la ventana.
+  SELECT count(DISTINCT who) INTO v_replies FROM (
+    SELECT COALESCE(e.member_id::text, e.id::text) AS who
+      FROM public.campaign_enrollments e
+     WHERE e.user_id = p_user AND e.replied_at >= p_from AND e.replied_at < p_to
+    UNION
+    SELECT COALESCE(ev.member_id::text, ev.enrollment_id::text, ev.id::text)
+      FROM public.campaign_events ev
+     WHERE ev.user_id = p_user AND ev.type = 'replied' AND ev.created_at >= p_from AND ev.created_at < p_to
+    UNION
+    SELECT COALESCE(im.member_id::text, 'ref:' || im.channel || ':' || COALESCE(im.contact_ref, im.id::text))
+      FROM public.inbox_messages im
+     WHERE im.user_id = p_user AND im.direction = 'in' AND im.sent_at >= p_from AND im.sent_at < p_to
+  ) r;
+
+  -- Reuniones: primera entrada de cada persona.
+  SELECT count(*) FILTER (WHERE booked_at >= p_from AND booked_at < p_to),
+         count(*) FILTER (WHERE held_at >= p_from AND held_at < p_to)
+    INTO v_booked, v_held
+    FROM (SELECT h.member_id,
+                 min(h.changed_at) FILTER (WHERE h.to_status IN ('reunion_agendada', 'reunion_tomada')) AS booked_at,
+                 min(h.changed_at) FILTER (WHERE h.to_status = 'reunion_tomada') AS held_at
+            FROM public.contact_status_history h
+           WHERE h.user_id = p_user AND h.to_status IN ('reunion_agendada', 'reunion_tomada')
+           GROUP BY h.member_id) mtg;
+
+  -- Cohorte para las tasas: primer envío aceptado de campaña en la ventana.
+  WITH first_send AS (
+    SELECT ev.member_id, min(ev.created_at) AS first_at
+      FROM public.campaign_events ev
+     WHERE ev.user_id = p_user AND ev.member_id IS NOT NULL
+       AND ev.type IN ('sent', 'connection_sent')
+       AND ev.channel IN ('email', 'whatsapp', 'linkedin')
+       AND ev.created_at < p_to
+       AND (ev.provider_message_id IS NULL OR NOT EXISTS (
+             SELECT 1 FROM public.campaign_events f
+              WHERE f.provider_message_id = ev.provider_message_id AND f.type = 'failed'))
+     GROUP BY ev.member_id
+  ), cohort AS (
+    SELECT member_id FROM first_send WHERE first_at >= p_from
+  )
+  SELECT count(*),
+         count(*) FILTER (WHERE EXISTS (
+           SELECT 1 FROM public.campaign_enrollments e
+            WHERE e.user_id = p_user AND e.member_id = c.member_id
+              AND (e.replied_at IS NOT NULL OR e.status = 'replied'))
+           OR EXISTS (
+           SELECT 1 FROM public.campaign_events ev
+            WHERE ev.user_id = p_user AND ev.member_id = c.member_id AND ev.type = 'replied')
+           OR EXISTS (
+           SELECT 1 FROM public.inbox_messages im
+            WHERE im.user_id = p_user AND im.member_id = c.member_id AND im.direction = 'in')),
+         count(*) FILTER (WHERE EXISTS (
+           SELECT 1 FROM public.contact_status_history h
+            WHERE h.user_id = p_user AND h.member_id = c.member_id
+              AND h.to_status IN ('reunion_agendada', 'reunion_tomada')))
+    INTO v_cohort, v_cohort_replied, v_cohort_meetings
+    FROM cohort c;
+
+  RETURN jsonb_build_object(
+    'contacts_new', v_contacts,
+    'sent_email', v_email, 'sent_whatsapp', v_wa, 'sent_linkedin', v_li, 'sent_total', v_sent,
+    -- Personas llamadas (tabla calls de telefonía).
+    'calls', v_calls,
+    'replies', v_replies,
+    'meetings_booked', v_booked, 'meetings_held', v_held,
+    'cohort', v_cohort, 'cohort_replied', v_cohort_replied, 'cohort_meetings', v_cohort_meetings);
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.team_member_activity(UUID, TIMESTAMPTZ, TIMESTAMPTZ) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.team_member_activity(UUID, TIMESTAMPTZ, TIMESTAMPTZ) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.team_review_calls(p_member UUID, p_limit INTEGER DEFAULT 30)
+RETURNS JSONB
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  IF auth.uid() IS NULL OR NOT (
+       p_member = auth.uid()
+       OR (public.team_is_manager() AND public.team_is_rostered(p_member))) THEN
+    RAISE EXCEPTION 'No puedes ver las llamadas de esa persona.' USING ERRCODE = '42501';
+  END IF;
+  RETURN COALESCE((
+    SELECT jsonb_agg(x ORDER BY x->>'started_at' DESC)
+      FROM (
+        SELECT jsonb_build_object(
+                 'id', c.id,
+                 'started_at', c.started_at,
+                 'provider', c.provider,
+                 'direction', c.direction,
+                 'status', c.status,
+                 'outcome', c.outcome,
+                 'outcome_note', c.outcome_note,
+                 'duration_seconds', c.duration_seconds,
+                 'lead_name', m.name,
+                 'lead_company', m.company,
+                 'coach', c.payload->'coach',
+                 'coach_meeting_id', c.coach_meeting_id,
+                 'has_recording', c.recording_ref IS NOT NULL,
+                 'recording_url', CASE WHEN c.recording_url ~* '^https://' THEN c.recording_url END
+               ) AS x
+          FROM public.calls c
+          LEFT JOIN public.prospect_list_members m ON m.id = c.member_id
+         WHERE c.user_id = p_member AND c.status <> 'failed'
+         ORDER BY c.started_at DESC
+         LIMIT LEAST(GREATEST(COALESCE(p_limit, 30), 1), 100)
+      ) q), '[]'::jsonb);
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.team_review_calls(UUID, INTEGER) FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.team_review_calls(UUID, INTEGER) TO authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.team_add_comment(p_member UUID, p_kind TEXT, p_subject TEXT, p_body TEXT)
+RETURNS UUID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_id UUID;
+  v_kind TEXT := COALESCE(NULLIF(p_kind, ''), 'general');
+BEGIN
+  IF NOT (public.team_is_manager() AND public.team_is_rostered(p_member)) THEN
+    RAISE EXCEPTION 'Solo el director del equipo deja comentarios de coaching.' USING ERRCODE = '42501';
+  END IF;
+  IF v_kind = 'meeting' AND NOT EXISTS (
+       SELECT 1 FROM public.coach_meetings WHERE id::text = p_subject AND user_id = p_member) THEN
+    RAISE EXCEPTION 'Esa reunión no es de esta persona.' USING ERRCODE = '22023';
+  END IF;
+  IF v_kind = 'call' AND NOT EXISTS (
+       SELECT 1 FROM public.calls WHERE id::text = p_subject AND user_id = p_member) THEN
+    RAISE EXCEPTION 'Esa llamada no es de esta persona.' USING ERRCODE = '22023';
+  END IF;
+  INSERT INTO public.sales_team_comments (company_name, member_id, author_id, subject_kind, subject_id, body)
+  VALUES (public.team_my_company(), p_member, auth.uid(), v_kind,
+          CASE WHEN v_kind = 'general' THEN NULL ELSE p_subject END, btrim(p_body))
+  RETURNING id INTO v_id;
+  RETURN v_id;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.team_add_comment(UUID, TEXT, TEXT, TEXT) FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.team_add_comment(UUID, TEXT, TEXT, TEXT) TO authenticated, service_role;
+
+-- ── 7. pg_cron: sincronización de conectores sin webhook (CloudTalk) ───────
 -- NO se crea aquí (la service-role key nunca vive en el repo). Aplicar una
 -- vez desde el SQL editor de Supabase (docs/TELEFONIA.md):
 --
