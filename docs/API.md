@@ -26,7 +26,7 @@ Para que el CRM interno de un cliente, sus automatizaciones (Zapier / Make / n8n
 
 ## Eventos
 
-Los triggers de la migración `20260923000010` llaman a `emit_api_event()` y **nunca rompen la escritura original** (un error se degrada a WARNING). Solo registran eventos si el usuario tiene una clave activa o un webhook activo.
+Los triggers de las migraciones `20260923000010` y `20261017100001` (CRM) llaman a `emit_api_event()` y **nunca rompen la escritura original** (un error se degrada a WARNING). Solo registran eventos si el usuario tiene una clave activa o un webhook activo.
 
 | Evento | Origen |
 |---|---|
@@ -37,6 +37,10 @@ Los triggers de la migración `20260923000010` llaman a `emit_api_event()` y **n
 | `signal.created` | el Radar entrega la señal en el lote diario (`radar_signals.surfaced_at` pasa a tener fecha); la reserva no emite |
 | `enrollment.status_changed` | enrolamiento pasa a replied / unsubscribed / completed / paused / error (NO el vaivén active ↔ processing del motor) |
 | `meeting.completed` | `coach_meetings.status` pasa a `closed` |
+| `company.created` | INSERT en `crm_companies` (a mano, por la API o cuando un lead nuevo trae un dominio sin cuenta; el enlace inicial de `crm_backfill_companies` no emite) |
+| `opportunity.created` | INSERT en `crm_opportunities` |
+| `opportunity.stage_changed` | cambio de `stage_id` (lleva la etapa anterior, la nueva y su `stage_kind`; una perdida trae `lost_reason`). Incluye el que hace el Meeting Coach al cerrar una reunión (`stage_changed_by: "coach"`) |
+| `task.created` / `task.completed` | INSERT en `crm_tasks` / `done_at` pasa a tener fecha |
 
 `api-webhooks` reclama entregas con `claim_webhook_deliveries` (`FOR UPDATE SKIP LOCKED`), reintenta 1 min → 24 h (8 intentos), desactiva el webhook tras 50 fallos seguidos (reactivarlo reinicia el contador) y borra eventos y registro de más de 30 días. Quien no pueda recibir webhooks consulta `GET /v1/events`.
 

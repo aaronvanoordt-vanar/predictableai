@@ -1603,8 +1603,45 @@
   }
 
   // ══ TAB 1: BÚSQUEDA — search + results ══════════════════════════════════
+  // Buscar tiene dos modos (2026-10-17): personas en Apollo (lo de siempre) y
+  // empresas en registros públicos (js/registry-search.js: CNPJ, DENUE,
+  // registro mercantil de Colombia). El modo se recuerda por navegador.
+  var SEARCH_MODE_KEY = 'prospecting_search_mode_v1';
+  function getSearchMode() {
+    try { return localStorage.getItem(SEARCH_MODE_KEY) === 'registry' ? 'registry' : 'people'; } catch (_) { return 'people'; }
+  }
+  function setSearchMode(mode) {
+    try { localStorage.setItem(SEARCH_MODE_KEY, mode); } catch (_) {}
+    var s = state.search;
+    if (!s.modeHosts) return;
+    s.modeHosts.people.style.display = mode === 'people' ? '' : 'none';
+    s.modeHosts.registry.style.display = mode === 'registry' ? '' : 'none';
+    s.modeBtns.forEach(function (b) {
+      var on = b.getAttribute('data-mode') === mode;
+      b.className = 'btn btn-sm ' + (on ? 'btn-primary' : 'btn-ghost');
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    if (mode === 'registry' && !s.registryMounted) {
+      if (!window.registrySearch) { s.modeHosts.registry.textContent = 'El módulo de registros públicos no está cargado. Recarga la página.'; return; }
+      s.registryMounted = true;
+      Promise.resolve(window.registrySearch.mount(s.modeHosts.registry)).catch(function (e) { toast(errMsg(e), 'error'); });
+    }
+  }
+
   function buildSearchPane() {
-    var pane = state.panes.busqueda;
+    var root = state.panes.busqueda;
+    var modeBtns = [
+      h('button', { type: 'button', 'data-mode': 'people', text: 'Personas (Apollo)' }),
+      h('button', { type: 'button', 'data-mode': 'registry', text: 'Empresas en registros públicos' }),
+    ];
+    modeBtns.forEach(function (b) { b.addEventListener('click', function () { setSearchMode(b.getAttribute('data-mode')); }); });
+    root.appendChild(h('div', { role: 'group', 'aria-label': 'Qué buscar', style: 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px' }, modeBtns[0], modeBtns[1]));
+    var pane = h('div', null);
+    var registryHost = h('div', { style: 'display:none' });
+    root.appendChild(pane);
+    root.appendChild(registryHost);
+    state.search.modeHosts = { people: pane, registry: registryHost };
+    state.search.modeBtns = modeBtns;
     var recoHost = h('div', null);
     pane.appendChild(recoHost);
     state.search.recoHost = recoHost;
@@ -1622,6 +1659,7 @@
     results.addEventListener('click', guarded(onResultsClick));
     results.addEventListener('change', guarded(onResultsChange));
     renderResults();
+    setSearchMode(getSearchMode());
   }
 
   // ── Paginación con buffer ───────────────────────────────────────────────
@@ -2605,6 +2643,7 @@
         '<textarea id="pros-notes-' + id + '" data-action="research-notes" data-id="' + id + '" maxlength="5000" placeholder="Lo que sabes de esta persona o su empresa: cómo la conociste, qué te contaron, qué revisar…">' + esc(memberNotes(m)) + '</textarea>' +
         '<div class="pros-cellsub" data-notes-state="' + id + '">' + esc(notesState) + '</div>' +
         '<div class="pros-cellsub">Se guardan solas. La IA las usa al investigar, en los mensajes de campaña y en el Meeting Coach.</div>' +
+        registryPanelHtml(m) +
       '</div>' +
       '<div class="pros-research-col">' +
         '<div class="pros-research-head"><span class="pros-lbl">Ángulo e investigación</span>' +
@@ -2613,6 +2652,90 @@
         right +
       '</div>' +
     '</div>';
+  }
+
+  // ── Datos de registro de la empresa del lead (company-registry) ────────
+  // Enriquecimiento de cuenta: identificador fiscal, actividad, fecha de
+  // constitución, socios y estado según el registro público del país
+  // (Brasil, México, Colombia). Solo se guarda una ficha inequívoca; si hay
+  // varias parecidas, el usuario elige.
+  function memberRegistry(m) {
+    var r = m && m.registry && typeof m.registry === 'object' && m.registry.registry_id ? m.registry : null;
+    if (r) return r;
+    var s = m && m.snapshot && m.snapshot.registry;
+    return s && typeof s === 'object' && s.registry_id ? s : null;
+  }
+
+  function registryPanelHtml(m) {
+    var id = esc(String(m.id));
+    var st = state.listas;
+    st.registryCands = st.registryCands || {};
+    var busy = st.registryBusy && st.registryBusy[String(m.id)];
+    var r = memberRegistry(m);
+    var out = '<div class="pros-research-head" style="margin-top:10px"><span class="pros-lbl">Datos de registro</span>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="registry-run" data-id="' + id + '"' + (busy ? ' disabled' : '') + '>' +
+      (busy ? 'Buscando…' : (r ? 'Actualizar' : 'Buscar en el registro público')) + '</button></div>';
+    if (r) {
+      var stat = { active: 'Activa', inactive: 'De baja', unknown: 'Estado sin confirmar' }[r.status] || '';
+      var rows = [
+        r.tax_id ? (r.tax_id_label || 'ID fiscal') + ': ' + r.tax_id : '',
+        r.legal_name ? 'Razón social: ' + r.legal_name : '',
+        r.activity && (r.activity.code || r.activity.description) ? 'Actividad: ' + [r.activity.code, r.activity.description].filter(Boolean).join(' · ') : '',
+        r.founded_on ? (r.founded_label || 'Constitución') + ': ' + fmtDate(r.founded_on) : '',
+        stat || r.status_detail ? 'Estado: ' + [stat, r.status_detail].filter(Boolean).join(' · ') : '',
+        r.size && r.size.label ? 'Tamaño: ' + r.size.label : '',
+      ].filter(Boolean);
+      out += '<div class="pros-research-sec">' + rows.map(function (x) { return '<div>' + esc(x) + '</div>'; }).join('');
+      if (Array.isArray(r.partners) && r.partners.length) {
+        out += '<div style="margin-top:6px">Socios: ' + esc(r.partners.slice(0, 6).map(function (p) { return p.name + (p.role ? ' (' + p.role + ')' : ''); }).join(', ')) + '</div>' +
+          '<div class="pros-cellsub">Dato público del registro; úsalo solo para identificar la cuenta (LGPD).</div>';
+      }
+      out += '<div class="pros-cellsub">Fuente: ' + esc(r.source || r.registry || 'registro público') + (r.fetched_at ? ' · ' + esc(fmtDate(r.fetched_at)) : '') + '</div></div>';
+    }
+    var c = st.registryCands[String(m.id)];
+    if (c) {
+      if (c.note) out += '<div class="pros-cellsub">' + esc(c.note) + '</div>';
+      (c.candidates || []).forEach(function (x) {
+        out += '<button type="button" class="btn btn-ghost btn-sm" style="justify-content:flex-start;text-align:left" data-action="registry-pick" data-id="' + id + '" data-registry="' + esc(x.registry) + '" data-rid="' + esc(x.registry_id) + '">' +
+          esc((x.trade_name || x.legal_name || '—') + (x.tax_id ? ' · ' + x.tax_id : '') + (x.address && x.address.city ? ' · ' + x.address.city : '')) + '</button>';
+      });
+    } else if (!r) {
+      out += '<div class="pros-cellsub">Completa el identificador fiscal, la actividad, la fecha de constitución, los socios y el estado de la empresa desde el registro oficial (Brasil, México y Colombia).</div>';
+    }
+    return out;
+  }
+
+  function runRegistry(id, choice) {
+    var st = state.listas;
+    st.registryBusy = st.registryBusy || {};
+    st.registryCands = st.registryCands || {};
+    st.registryBusy[String(id)] = true;
+    renderListsRight();
+    return Promise.resolve(pd().enrichMemberRegistry(id, choice ? { choice: choice } : {}))
+      .then(function (res) {
+        res = res || {};
+        if (res.match) {
+          delete st.registryCands[String(id)];
+          var mm = findListMember(id);
+          if (mm) mm.registry = res.match;
+          toast('Datos de registro guardados.', 'success');
+        } else {
+          st.registryCands[String(id)] = { note: res.note || 'No encontramos una ficha inequívoca.', candidates: res.candidates || [] };
+        }
+        if (res.charged && window.credits && typeof window.credits.refresh === 'function') window.credits.refresh();
+      })
+      .catch(function (e) {
+        if (e && e.status === 503) throw new Error((e.detail || 'El registro público no está disponible en el servidor') + '.');
+        throw new Error('No se pudo consultar el registro' + (e && e.detail ? ' (' + e.detail + ')' : '') + '.');
+      })
+      .then(function () {
+        delete st.registryBusy[String(id)];
+        return reloadMembers({ keepSelection: true });
+      }, function (err) {
+        delete st.registryBusy[String(id)];
+        renderListsRight();
+        throw err;
+      });
   }
 
   function setNotesState(id, value) {
@@ -2990,6 +3113,8 @@
       return;
     }
     if (action === 'research-run') return runResearch(btn, btn.getAttribute('data-id'));
+    if (action === 'registry-run') return runRegistry(btn.getAttribute('data-id'));
+    if (action === 'registry-pick') return runRegistry(btn.getAttribute('data-id'), { registry: btn.getAttribute('data-registry'), registry_id: btn.getAttribute('data-rid') });
     if (action === 'create-campaign') return createCampaignFromList();
     if (action === 'add-manual') return openAddManualModal();
     if (action === 'enrich-selected') return openEnrichModal();
@@ -4158,6 +4283,34 @@
         toast(errMsg(e), 'error');
       }
     },
+    // Registros públicos → «Buscar personas en Apollo»: Buscar (personas) con
+    // el dominio de la empresa o, sin dominio, su nombre como palabra clave,
+    // y el país. No borra el resto de los filtros a propósito: el usuario ve
+    // y ajusta lo que se aplicó.
+    searchCompanyPeople: function (opts) {
+      try {
+        ensureBuilt();
+        switchTab('busqueda');
+        setSearchMode('people');
+        if (apollo.connected !== true) return;
+        var f = state.search.filters || defaultFilters();
+        var domain = normalizeDomain(opts && opts.domain);
+        var name = String((opts && opts.name) || '').trim();
+        if (!domain && !name) return toast('Esta empresa no tiene dominio ni nombre para buscar.', 'warn');
+        f.q_organization_domains_list = domain ? [domain] : [];
+        f.q_keywords = domain ? '' : name;
+        if (opts && opts.country) f.organization_locations = [opts.country];
+        state.search.filters = f;
+        persistFilters();
+        if (state.search.panelHost) { state.search.panelHost.innerHTML = ''; state.search.panelHost.appendChild(buildFilterPanel()); }
+        updateFilterBadges();
+        toast(domain ? 'Buscando personas en ' + domain : 'Buscando personas de «' + name + '» (sin dominio: por nombre, revisa que sean de esa empresa)', 'info');
+        return runSearch(1, true);
+      } catch (e) {
+        console.error('[prospecting]', e);
+        toast(errMsg(e), 'error');
+      }
+    },
     show: function (tabId) {
       try {
         ensureBuilt();
@@ -4172,6 +4325,7 @@
     openEditContact: openEditContactModal,
     // Reutilizados por js/campaigns.js para no duplicar el modal ni el DOM helper.
     confirm: confirmModal,
+    openModal: openModal,
     h: h,
     emptyHtml: emptyHtml,
     // Hilo de Gmail + responder por email (Campañas → Respuestas).

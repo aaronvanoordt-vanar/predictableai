@@ -156,7 +156,7 @@ El dueño eligió **Facturapi** como PAC y construir todo **en modo prueba** mie
 **Lo que falta para pasar a vivo:** la entidad mexicana con RFC y CSD dados de alta en Facturapi, `FACTURAPI_KEY=sk_live_…`, `CFDI_MODE=live`, y decidir si los cobros mexicanos pasan a una cuenta de Stripe México (otro webhook y otro secreto).
 
 **Pasos para el modo prueba:**
-1. Aplicar la migración `20261018000002_cfdi.sql`.
+1. Aplicar la migración `20261018000004_cfdi.sql`.
 2. En Facturapi: crear la organización de prueba y copiar su llave secreta de prueba.
 3. Secrets de Supabase: `CFDI_MODE=test`, `FACTURAPI_KEY=sk_test_…`. La clave restringida de Stripe necesita lectura en *Invoices*, *Invoice payments*, *Checkout Sessions*, *PaymentIntents* y *Charges*.
 4. Desplegar `cfdi` (con JWT) y `stripe-webhook` (con `--no-verify-jwt`).

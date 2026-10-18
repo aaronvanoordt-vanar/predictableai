@@ -2818,7 +2818,7 @@ function saxIcon(kind) {
     news: 'Noticias', tenders: 'Licitaciones', hiring: 'Contrataciones', technographics: 'Tecnologías en uso',
     site_probe: 'Huella digital del sitio', funding: 'Financiamiento', leadership: 'Cambio de liderazgo',
     growth: 'Crecimiento de plantilla', presence: 'Presencia local', website_visitors: 'Visitas a tu web',
-    web_footprint: 'Huella pública en internet',
+    web_footprint: 'Huella pública en internet', public_registry: 'Registros públicos',
   };
   const MKA_MODULE_LABEL = { radar: 'Radar', campaign: 'Campañas', search: 'Buscar', context: 'Contexto' };
   function marketReport() { return STATE.reports[MARKET_KEY] || null; }
