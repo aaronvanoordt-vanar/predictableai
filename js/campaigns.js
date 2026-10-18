@@ -3527,7 +3527,7 @@
           (waLines ? waLines + (waLines === 1 ? ' es fijo o conmutador' : ' son fijos o conmutadores') : '') +
           (waLines && ws.no_whatsapp ? ' y ' : '') +
           (ws.no_whatsapp ? ws.no_whatsapp + ' ya ' + (ws.no_whatsapp === 1 ? 'falló' : 'fallaron') + ' como sin WhatsApp' : '') +
-          ': no reciben la plantilla (' + ws.avoided + ' envío' + (ws.avoided === 1 ? '' : 's') + ' que no se gasta' + (ws.avoided === 1 ? '' : 'n') + ') y pasan directo al siguiente canal.');
+          ': no reciben la plantilla (' + (ws.avoided === 1 ? '1 envío que no se gasta' : ws.avoided + ' envíos que no se gastan') + ') y pasan directo al siguiente canal.');
       }
       if (ws.unknown) hints.push(ws.unknown + (ws.unknown === 1 ? ' número no dice' : ' números no dicen') + ' si es celular (p. ej. México o Argentina sin el 9): se les envía y, si WhatsApp responde que no está, no se les vuelve a intentar en ninguna campaña.');
     }

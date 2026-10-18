@@ -3311,7 +3311,7 @@
     if (!sel.length && !emailSel.length) return toast('Los contactos seleccionados ya tienen teléfono y email, o se están buscando.', 'info');
     var parts = [];
     if (sel.length) parts.push('el teléfono de ' + fmtNum(sel.length) + ' contacto' + (sel.length === 1 ? '' : 's') + ' (y su email si falta)');
-    if (emailSel.length) parts.push('el email de ' + fmtNum(emailSel.length) + ' contacto' + (emailSel.length === 1 ? '' : 's') + ' que ya tiene' + (emailSel.length === 1 ? '' : 'n') + ' teléfono');
+    if (emailSel.length) parts.push(emailSel.length === 1 ? 'el email de 1 contacto que ya tiene teléfono' : 'el email de ' + fmtNum(emailSel.length) + ' contactos que ya tienen teléfono');
     var cascadeP = h('p', { style: 'font-size:12.5px;color:var(--text2);margin:0 0 12px;line-height:1.55;display:none' });
     var bodyN = h('div', null,
       h('p', {
