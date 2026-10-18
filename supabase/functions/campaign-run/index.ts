@@ -82,6 +82,8 @@ import * as wati from "../_shared/wati.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import * as watiHistory from "../_shared/wati-history.ts";
 import { reconcileWatiReceipts } from "../_shared/wati-receipts.ts";
+import * as phoneLines from "../_shared/phone-lines.ts";
+import * as waReach from "../_shared/wa-reachability.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
@@ -556,6 +558,12 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     if (!acc) throw new StepError("WATI no está conectado.", "hold");
     const phone = wati.digits(member.phone);
     if (!phone) throw new StepError("El lead no tiene teléfono revelado: se omite el WhatsApp y sigue con el siguiente paso.", "skip");
+    // ¿Está en WhatsApp? (_shared/phone-lines.ts). Un fijo o el conmutador de
+    // la empresa no recibe la plantilla, y un número que ya respondió #131026
+    // no se vuelve a intentar en ninguna campaña: el paso se omite con su
+    // motivo y el lead sigue con el siguiente canal. Ante la duda se envía.
+    const reach = await waReach.reachForMember(db, en.user_id, member);
+    if (!reach.send) throw new StepError(phoneLines.skipMessage(reach), "skip");
     // Meta está rechazando todo envío de la cuenta (nombre visible sin
     // aprobar, lo sella wati-webhook): se retiene sin gastar un envío que va a
     // fallar. Vencido el plazo, UN solo lead por corrida prueba de nuevo; si
@@ -648,9 +656,13 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
         // genérico → modo "stop" y el enrolamiento quedaba en `error` para
         // siempre. 401 = retener (credencial); el resto = fallar este paso y
         // seguir con el siguiente canal.
+        await waReach.learnFromFailure(db, en.user_id, phone, (e as Error)?.message, "send", member.id);
         throw new StepError("WATI no aceptó la plantilla: " + wati.humanError(e), e instanceof wati.WatiError && e.status === 401 ? "hold" : "fail");
       }
-      if (!r.accepted) throw new StepError("WATI rechazó el envío: " + (r.errors.join("; ") || "sin detalle"), "fail");
+      if (!r.accepted) {
+        await waReach.learnFromFailure(db, en.user_id, phone, r.errors.join("; "), "send", member.id);
+        throw new StepError("WATI rechazó el envío: " + (r.errors.join("; ") || "sin detalle"), "fail");
+      }
       templateName = String(tpl.name);
     } else {
       // Texto libre: solo dentro de la ventana de 24 h desde el último

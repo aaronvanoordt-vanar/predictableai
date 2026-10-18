@@ -152,6 +152,7 @@
     events: [],
     members: [],
     membersLoading: false,
+    waLearned: null,           // whatsapp_reachability (Map phone_key → fila), lo lee js/phone-lines.js
     selected: new Set(),
     expanded: new Set(),
     brief: undefined,          // client_brief (undefined = sin cargar)
@@ -864,8 +865,23 @@
     state.members = [];
     if (!c || !c.list_id) return;
     state.membersLoading = true;
-    try { state.members = await pd().fetchMembers(c.list_id); }
+    try {
+      // Lo aprendido de los envíos de WhatsApp (whatsapp_reachability) para el
+      // indicador «probable WhatsApp / fijo / sin WhatsApp» del enrolamiento.
+      var learned = window.PhoneLines ? window.PhoneLines.loadLearned().catch(function () { return null; }) : null;
+      var res = await Promise.all([pd().fetchMembers(c.list_id), learned]);
+      state.members = res[0];
+      if (res[1]) state.waLearned = res[1];
+    }
     finally { state.membersLoading = false; }
+  }
+
+  // ¿Está en WhatsApp? (js/phone-lines.js, el mismo veredicto que aplica
+  // campaign-run antes de cada plantilla). null sin teléfono o sin el módulo.
+  var WA_REACH_PILL = { confirmed: 'green', probable: 'blue', unknown: 'gray', fixed: 'amber', switchboard: 'amber', no_whatsapp: 'red' };
+  function waReachOf(m) {
+    var PL = window.PhoneLines;
+    return PL && hasPhone(m) ? PL.memberReach(m, state.waLearned || null) : null;
   }
 
   async function enrollMembers(c, members) {
@@ -3239,7 +3255,9 @@
       html += '<tr><td><input type="checkbox" data-action="enroll-check" data-id="' + esc(String(m.id)) + '"' + checked + '></td>' +
         '<td><div style="font-weight:600">' + esc(memberName(m)) + '</div>' + (m.title ? '<div class="pros-cellsub">' + esc(m.title) + '</div>' : '') + '</td>' +
         '<td>' + esc(m.company || '—') + (isOutdated(m) ? '<div title="' + esc((m.research.employment.reason || '') + (m.research.employment.current_company ? ' Hoy: ' + m.research.employment.current_company + '.' : '')) + '">' + pill('Desactualizado', 'red') + '</div>' : '') + '</td>' +
-        '<td>' + (hasPhone(m) ? pill('sí', 'green') : (needsWa ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
+        '<td>' + (hasPhone(m)
+          ? (needsWa && waReachOf(m) ? '<span title="' + esc(waReachOf(m).reason) + '">' + pill(waReachOf(m).label, WA_REACH_PILL[waReachOf(m).status] || 'gray') + '</span>' : pill('sí', 'green'))
+          : (needsWa ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
         '<td>' + (hasEmail(m) ? pill('sí', 'green') : (needsEmail ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
         '<td>' + (m.linkedin_url ? pill('sí', 'green') : (needsLi ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td></tr>';
     });
@@ -3247,6 +3265,21 @@
     card.insertAdjacentHTML('beforeend', html);
     var hints = [];
     if (needsWa) hints.push('WhatsApp necesita teléfono revelado (Listas → Enriquecer).');
+    var waTemplateSteps = acts.filter(function (a) { return a.channel === 'whatsapp' && a.content.kind !== 'ai' && a.content.kind !== 'custom'; }).length;
+    if (needsWa && waTemplateSteps && window.PhoneLines) {
+      var picked = candidates.filter(function (m) { return state.selected.has(String(m.id)); });
+      var pool = picked.length ? picked : candidates;
+      var ws = window.PhoneLines.reachSummary(pool.map(waReachOf).filter(Boolean), waTemplateSteps);
+      var waLines = ws.fixed + ws.switchboard;
+      if (waLines || ws.no_whatsapp) {
+        hints.push((picked.length ? 'De los seleccionados, ' : 'En esta lista, ') +
+          (waLines ? waLines + (waLines === 1 ? ' es fijo o conmutador' : ' son fijos o conmutadores') : '') +
+          (waLines && ws.no_whatsapp ? ' y ' : '') +
+          (ws.no_whatsapp ? ws.no_whatsapp + ' ya ' + (ws.no_whatsapp === 1 ? 'falló' : 'fallaron') + ' como sin WhatsApp' : '') +
+          ': no reciben la plantilla (' + ws.avoided + ' envío' + (ws.avoided === 1 ? '' : 's') + ' que no se gasta' + (ws.avoided === 1 ? '' : 'n') + ') y pasan directo al siguiente canal.');
+      }
+      if (ws.unknown) hints.push(ws.unknown + (ws.unknown === 1 ? ' número no dice' : ' números no dicen') + ' si es celular (p. ej. México o Argentina sin el 9): se les envía y, si WhatsApp responde que no está, no se les vuelve a intentar en ninguna campaña.');
+    }
     if (needsEmail) hints.push('Email necesita email revelado.');
     if (needsLi) hints.push('LinkedIn necesita la URL del perfil del lead.');
     var outdated = candidates.filter(isOutdated).length;
