@@ -1,6 +1,6 @@
 # Cobro local y factura en Latam (investigación, 2026-10-17)
 
-> **Estado: el dueño aprobó la Fase A (2026-10-17); el código está en este PR y faltan los pasos del Dashboard de Stripe y la consulta al contador (§6.1).** La Fase B (entidad mexicana + CFDI) sigue sin decidir. Ítem P2 «Cobro local y CFDI» de `docs/ROADMAP_GTM_OS.md`.
+> **Estado: el dueño aprobó la Fase A (2026-10-17); el código está en este PR y faltan los pasos del Dashboard de Stripe y la consulta al contador (§6.1).** La Fase B corre en modo prueba con Facturapi (§6.2); la entidad mexicana sigue sin decidir. Ítem P2 «Cobro local y CFDI» de `docs/ROADMAP_GTM_OS.md`.
 >
 > **No es asesoría fiscal ni legal.** Lo marcado con **[contador]** lo tiene que confirmar un contador o abogado del país antes de decidir. Las fuentes son oficiales cuando existen (SAT, DIAN, SII, SUNAT, docs de Stripe); cuando solo había análisis de despachos, se dice. Los datos de Stripe se leyeron en sus páginas públicas el 2026-10-17: lo que está en *preview* puede cambiar, y lo que vale es lo que muestre el Dashboard de la cuenta.
 
@@ -138,6 +138,29 @@ Hasta que los pasos 2–3 estén hechos, la app no anuncia pagos en moneda local
 ### Fase B — cuando haya demanda mexicana pagada (2–4 meses, costo fijo mensual)
 
 **Entidad mexicana + cuenta de Stripe México + PAC por API.** Da CFDI 4.0 automático en cada `invoice.paid`, liquidación en MXN, SPEI, OXXO y meses sin intereses en la misma integración de Stripe (otra cuenta, mismo código con la llave de la cuenta MX). Mercado Pago, después, sobre esa entidad. Mientras tanto, los clientes Growth que exijan CFDI pueden pasar por un **revendedor con RFC** (§3.5).
+
+### 6.2 Fase B: CFDI en modo prueba (2026-10-18)
+
+El dueño eligió **Facturapi** como PAC y construir todo **en modo prueba** mientras la entidad mexicana no exista (la entidad sigue sin decidir). Con las llaves `sk_test_` Facturapi timbra sin validez fiscal: sirve para probar el circuito completo con cobros reales de Stripe.
+
+**Cómo funciona:**
+1. El cliente guarda sus datos fiscales en «Plan y créditos» → «Factura CFDI (México)»: RFC, razón social (como en la constancia, sin régimen societario), régimen fiscal, CP del domicilio fiscal, uso del CFDI (G03 por defecto) y un correo opcional. Los valida `_shared/cfdi.ts` (incluido que el régimen corresponda a persona moral o física) en la edge function `cfdi` y, al timbrar, el SAT.
+2. `stripe-webhook`, **después** de acreditar (`billing_grant_plan_credits` o `billing_add_topup`), encola el cobro en `cfdi_documents` si `CFDI_MODE` está puesto y el usuario tiene datos fiscales. Un `source_id` único (la factura `in_…` o la sesión `cs_…`) impide facturar dos veces; encolar nunca condiciona los créditos.
+3. `cfdi` (`action: "process"`, cron cada 5 min con la service role) lee en Stripe la forma de pago (tarjeta de crédito 04, débito 28, OXXO 01, transferencia 03), timbra en Facturapi un CFDI de ingreso PUE con la clave de idempotencia del cobro y guarda UUID, serie y folio. Un error de datos (4xx) queda en «Error» con el motivo y el botón «Reintentar»; un 5xx o un 429 se reintenta solo (5 min, 30 min, 2 h, 6 h, 24 h).
+4. El cliente descarga PDF y XML desde la misma tarjeta; la llave de Facturapi nunca llega al navegador.
+
+**Apagado por defecto:** sin `CFDI_MODE` no se encola nada y la tarjeta no aparece. Una llave `sk_test_` solo timbra con `CFDI_MODE=test` y una `sk_live_` solo con `live`.
+
+**Supuestos a confirmar con el contador** [contador]: clave de producto 81112106 (proveedores de servicios de aplicación) y unidad E48; el precio de Stripe se trata como IVA 16 % incluido; un cobro en USD se timbra en USD (falta confirmar en modo prueba si Facturapi pide el tipo de cambio o lo toma del DOF); los cobros anteriores a guardar los datos fiscales no se facturan (no hay factura global a público en general todavía).
+
+**Lo que falta para pasar a vivo:** la entidad mexicana con RFC y CSD dados de alta en Facturapi, `FACTURAPI_KEY=sk_live_…`, `CFDI_MODE=live`, y decidir si los cobros mexicanos pasan a una cuenta de Stripe México (otro webhook y otro secreto).
+
+**Pasos para el modo prueba:**
+1. Aplicar la migración `20261018000002_cfdi.sql`.
+2. En Facturapi: crear la organización de prueba y copiar su llave secreta de prueba.
+3. Secrets de Supabase: `CFDI_MODE=test`, `FACTURAPI_KEY=sk_test_…`. La clave restringida de Stripe necesita lectura en *Invoices*, *Invoice payments*, *Checkout Sessions*, *PaymentIntents* y *Charges*.
+4. Desplegar `cfdi` (con JWT) y `stripe-webhook` (con `--no-verify-jwt`).
+5. Programar el cron `cfdi-issue` con el SQL comentado al final de la migración.
 
 ### Después
 
