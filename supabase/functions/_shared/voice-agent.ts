@@ -98,9 +98,9 @@ interface CountryRule {
 
 export const COUNTRY_RULES: Record<VoiceCountry, CountryRule> = {
   MX: { name: "México", dial: "52", nsn: [10, 10], tz: "America/Mexico_City", lang: "es", locale: "es-MX", weekday: [9, 19], saturday: [9, 14], holidays: ["01-01", "05-01", "09-16", "12-25"] },
-  CO: { name: "Colombia", dial: "57", nsn: [10, 10], tz: "America/Bogota", lang: "es", locale: "es-CO", weekday: [8, 19], saturday: [9, 15], holidays: ["01-01", "05-01", "07-20", "08-07", "12-08", "12-25"] },
+  CO: { name: "Colombia", dial: "57", nsn: [10, 10], tz: "America/Bogota", lang: "es", locale: "es-CO", weekday: [8, 19], saturday: [9, 15], holidays: ["01-01", "05-01", "07-20", "08-07", "12-08", "12-25"] }, // + Ley Emiliani y Semana Santa (movableHolidays)
   CL: { name: "Chile", dial: "56", nsn: [9, 9], tz: "America/Santiago", lang: "es", locale: "es-CL", weekday: [9, 19], saturday: [9, 14], holidays: ["01-01", "05-01", "05-21", "09-18", "09-19", "12-08", "12-25"] },
-  PE: { name: "Perú", dial: "51", nsn: [8, 9], tz: "America/Lima", lang: "es", locale: "es-PE", weekday: [9, 19], saturday: null, holidays: ["01-01", "05-01", "06-29", "07-28", "07-29", "08-30", "10-08", "11-01", "12-08", "12-25"] },
+  PE: { name: "Perú", dial: "51", nsn: [8, 9], tz: "America/Lima", lang: "es", locale: "es-PE", weekday: [9, 19], saturday: null, holidays: ["01-01", "05-01", "06-07", "06-29", "07-23", "07-28", "07-29", "08-06", "08-30", "10-08", "11-01", "12-08", "12-09", "12-25"] }, // + Semana Santa
   AR: { name: "Argentina", dial: "54", nsn: [10, 11], tz: "America/Argentina/Buenos_Aires", lang: "es", locale: "es-AR", weekday: [9, 19], saturday: [9, 14], holidays: ["01-01", "03-24", "04-02", "05-01", "05-25", "06-20", "07-09", "12-08", "12-25"] },
   BR: { name: "Brasil", dial: "55", nsn: [10, 11], tz: "America/Sao_Paulo", lang: "pt", locale: "pt-BR", weekday: [9, 19], saturday: [9, 14], holidays: ["01-01", "04-21", "05-01", "09-07", "10-12", "11-02", "11-15", "11-20", "12-25"] },
 };
@@ -160,24 +160,67 @@ export function normalizePhone(raw: unknown, hint?: VoiceCountry | null): { e164
 }
 
 /** Hora local del país: { dow (0=domingo), hour, minute, mmdd }. */
-export function localParts(country: VoiceCountry, at: Date): { dow: number; hour: number; minute: number; mmdd: string } {
+export function localParts(country: VoiceCountry, at: Date): { dow: number; hour: number; minute: number; mmdd: string; year: number } {
   const f = new Intl.DateTimeFormat("en-US", {
     timeZone: COUNTRY_RULES[country].tz, weekday: "short", hour: "2-digit", minute: "2-digit",
-    month: "2-digit", day: "2-digit", hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit", hourCycle: "h23",
   });
   const p: Record<string, string> = {};
   for (const x of f.formatToParts(at)) p[x.type] = x.value;
   const dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday);
-  return { dow, hour: Number(p.hour), minute: Number(p.minute), mmdd: `${p.month}-${p.day}` };
+  return { dow, hour: Number(p.hour), minute: Number(p.minute), mmdd: `${p.month}-${p.day}`, year: Number(p.year) };
+}
+
+/** Domingo de Pascua (calendario gregoriano, algoritmo anónimo de Meeus/Jones/Butcher), en UTC. */
+export function easterSunday(year: number): Date {
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+const mmddOf = (d: Date) => `${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86_400_000);
+/** El lunes siguiente (o el mismo día si ya es lunes): Ley Emiliani. */
+const nextMonday = (d: Date) => addDays(d, (8 - d.getUTCDay()) % 7);
+
+/**
+ * Feriados que cambian de fecha cada año ("MM-DD"):
+ *   • CO — Ley 51 de 1983 (Emiliani): Reyes, San José, San Pedro y San Pablo,
+ *     Asunción, Día de la Raza, Todos los Santos e Independencia de Cartagena
+ *     pasan al lunes siguiente; Jueves y Viernes Santo; Ascensión, Corpus
+ *     Christi y Sagrado Corazón (Pascua + 43, + 64 y + 71, ya en lunes).
+ *   • PE — Jueves y Viernes Santo.
+ * Otros países: solo los fijos de COUNTRY_RULES (ver docs/AGENTE_DE_VOZ.md).
+ */
+export function movableHolidays(country: VoiceCountry, year: number): string[] {
+  if (country !== "CO" && country !== "PE") return [];
+  const easter = easterSunday(year);
+  const out = [addDays(easter, -3), addDays(easter, -2)];
+  if (country === "CO") {
+    for (const md of ["01-06", "03-19", "06-29", "08-15", "10-12", "11-01", "11-11"]) {
+      const [m, d] = md.split("-").map(Number);
+      out.push(nextMonday(new Date(Date.UTC(year, m - 1, d))));
+    }
+    out.push(addDays(easter, 43), addDays(easter, 64), addDays(easter, 71));
+  }
+  return out.map(mmddOf);
+}
+
+/** ¿Es feriado (fijo o móvil) en ese país ese día? */
+export function isHoliday(country: VoiceCountry, year: number, mmdd: string): boolean {
+  return COUNTRY_RULES[country].holidays.includes(mmdd) || movableHolidays(country, year).includes(mmdd);
 }
 
 /** ¿Se puede llamar ahora a ese país? Si no, el motivo en español. */
 export function callingWindow(country: VoiceCountry, at: Date = new Date()): { ok: boolean; reason: string } {
   const rule = COUNTRY_RULES[country];
-  const { dow, hour, mmdd } = localParts(country, at);
+  const { dow, hour, mmdd, year } = localParts(country, at);
   const hours = (w: [number, number]) => `${w[0]}:00 a ${w[1]}:00`;
   const allowed = `De lunes a viernes de ${hours(rule.weekday)}` + (rule.saturday ? ` y sábados de ${hours(rule.saturday)}` : "") + ` (hora de ${rule.name}).`;
-  if (rule.holidays.includes(mmdd)) return { ok: false, reason: `Hoy es feriado en ${rule.name}. ${allowed}` };
+  if (isHoliday(country, year, mmdd)) return { ok: false, reason: `Hoy es feriado en ${rule.name}. ${allowed}` };
   const w = dow === 0 ? null : dow === 6 ? rule.saturday : rule.weekday;
   if (!w) return { ok: false, reason: `No se llama ${dow === 0 ? "los domingos" : "los sábados"} en ${rule.name}. ${allowed}` };
   if (hour < w[0] || hour >= w[1]) return { ok: false, reason: `Fuera del horario permitido. ${allowed}` };
@@ -652,10 +695,9 @@ export function freeSlots(
   // Primer múltiplo de 30 min desde mañana a esta hora (sin ofrecer horarios de hoy).
   let t = Math.ceil((now.getTime() + 18 * 3_600_000) / step) * step;
   const end = now.getTime() + 8 * 86_400_000;
-  const rule = COUNTRY_RULES[country];
   for (; t < end && out.length < max; t += step) {
     const p = localParts(country, new Date(t));
-    if (p.dow === 0 || p.dow === 6 || rule.holidays.includes(p.mmdd)) continue;
+    if (p.dow === 0 || p.dow === 6 || isHoliday(country, p.year, p.mmdd)) continue;
     const startMin = p.hour * 60 + p.minute;
     if (startMin < 9 * 60 || startMin + minutes > 18 * 60) continue;
     if ((perDay[p.mmdd] ?? 0) >= 2) continue;

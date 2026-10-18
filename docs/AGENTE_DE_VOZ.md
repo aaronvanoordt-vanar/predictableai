@@ -32,7 +32,7 @@ El agente llama por teléfono para tres cosas:
 - **Supresión y «No llamar»:**
   - Se respetan los «no me llamen» de llamadas anteriores y las bajas de campañas.
   - Las listas oficiales entran por el enganche `is_phone_suppressed` (ver «Enganches» abajo).
-- **Horario legal por país** (`callingWindow`): sin domingos y sin feriados de fecha fija. Colombia y Perú van con las franjas que fija la ley.
+- **Horario legal por país** (`callingWindow`): sin domingos ni feriados. Colombia y Perú van con las franjas que fija la ley y con sus feriados móviles (Ley Emiliani y Semana Santa).
 - **Precios:** solo se mencionan los del Contexto, es decir las ofertas con precio, el ticket habitual y el ciclo de venta (`contextPrices`).
   - Los documentos de precios del Entrenamiento IA **no** entran al agente de voz (`buildTrainingBlock(t, "voice")`).
   - Si preguntan por algo que no está, una persona del equipo lo confirma.
@@ -153,7 +153,14 @@ Ninguno de los seis tiene hoy una ley vigente que obligue a decir que la voz es 
 | **Argentina** | **Ley 25.326**: consentimiento informado y deber de información (art. 6) | **Ley 26.951 «No Llame»** y su Decreto 2501/2014: consultar el registro cada 30 días | L-V 9–19, sáb 9–14 |
 | **Brasil** | **LGPD (Lei 13.709)**: base legal del art. 7 (interés legítimo o contrato) y transparencia del art. 9 → aviso «ligação gravada» | **Não Me Perturbe** (opt-out de telecom y bancos). Anatel revocó el prefijo obligatorio **0303** en agosto de 2025 (el MPF-GO pidió restituirlo en enero de 2026) | L-V 9–19, sáb 9–14. El agente habla **portugués** |
 
-**Feriados:** el agente bloquea solo los de fecha fija de cada país. Los móviles (Semana Santa, los puentes de la Ley Emiliani en Colombia, Carnaval en Brasil) no se bloquean todavía. **Cuidado en Colombia y Perú**, donde llamar en feriado está prohibido.
+**Feriados** (`isHoliday` / `movableHolidays` en `_shared/voice-agent.ts`, con `deno test`):
+
+- **Colombia y Perú, donde la ley prohíbe llamar en feriado, tienen el calendario completo.**
+  - **Colombia:** los fijos, más Jueves y Viernes Santo y la **Ley 51 de 1983 (Emiliani)**. Reyes, San José, San Pedro y San Pablo, Asunción, Día de la Raza, Todos los Santos e Independencia de Cartagena pasan al lunes siguiente. Ascensión, Corpus Christi y Sagrado Corazón se calculan desde la Pascua. Los tests comparan contra el calendario publicado de 2026.
+  - **Perú:** los 14 fijos, incluidos los más recientes (7 de junio, 23 de julio, 6 de agosto y 9 de diciembre), más Jueves y Viernes Santo.
+- **México, Chile, Argentina y Brasil:** solo los de fecha fija. Ahí la ley no prohíbe llamar en feriado y los móviles (Semana Santa, Carnaval, los lunes de México) quedan pendientes.
+- **Pendiente de confirmar:** un medio colombiano cuenta un festivo nuevo, la Virgen de Chiquinquirá (Ley 2578 de 2026, lunes 13 de julio de 2026). No se encontró el texto de la ley, así que **no se bloquea** hasta confirmarlo.
+- Los «días no laborables» que decreta el gobierno de Perú cada año no son feriados y no se bloquean.
 
 **Varios husos horarios:** México, Brasil y Chile tienen más de uno. El agente usa la hora de la capital (Ciudad de México, São Paulo, Santiago) y deja margen al inicio y al final del día.
 
@@ -162,7 +169,8 @@ Ninguno de los seis tiene hoy una ley vigente que obligue a decir que la voz es 
 **Fuentes:**
 
 - **México:** [LFPDPPP 2025](https://www.ordenjuridico.gob.mx/Documentos/Federal/html/wo125102.html) · [reforma del art. 18 Bis](https://www.publimetro.com.mx/nacional/2026/10/08/te-llaman-a-cada-rato-para-venderte-algo-senado-aprueba-multas/)
-- **Colombia:** [Ley 2300 de 2023](https://www.funcionpublica.gov.co/eva/gestornormativo/norma.php?i=213990) · [SFC, Boletín Jurídico 107](https://www.superfinanciera.gov.co/publicaciones/10114938/boletin-juridico-107/)
+- **Colombia:** [Ley 2300 de 2023](https://www.funcionpublica.gov.co/eva/gestornormativo/norma.php?i=213990) · [SFC, Boletín Jurídico 107](https://www.superfinanciera.gov.co/publicaciones/10114938/boletin-juridico-107/) · [festivos de 2026 (El País)](https://www.elpais.com.co/colombia/calendario-completo-de-festivos-en-colombia-2026-dias-de-descanso-y-fechas-claves-cuando-es-semana-santa-1946.html)
+- **Perú:** [feriados de 2026 (Gestión)](https://gestion.pe/peru/feriados-2026-lista-de-fechas-festivas-y-no-laborales-para-este-ano-noticia/)
 - **Chile:** [Ley 21.719 y su entrada en vigor](https://camara.cl/transparencia/leydatospersonales.aspx) · [Diario Constitucional sobre la Ley 21.719](https://www.diarioconstitucional.cl/2026/06/12/la-ley-21-719-entra-en-vigor-el-1-de-diciembre-y-expone-vacios-en-regulacion-de-pequenas-empresas/) · [Subtel, prefijos 600/809](https://www.pauta.cl/actualidad/2025/03/20/subtel-regula-llamadas-comerciales-desde-agosto-el-prefijo-809-identificara-las-no-solicitadas.html)
 - **Argentina:** [Decreto 2501/2014 (Ley 26.951)](https://www.argentina.gob.ar/normativa/nacional/240407/texto)
 - **Brasil:** [MPF y el prefijo 0303](https://olhardigital.com.br/2026/01/19/seguranca/mpf-pede-que-anatel-retome-prefixo-0303-no-telemarketing/)

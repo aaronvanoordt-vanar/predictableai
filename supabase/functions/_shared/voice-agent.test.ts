@@ -3,7 +3,7 @@
 // de IA, precios solo del Contexto y lectura determinista del resultado.
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import {
-  buildVoicePrompt, callingWindow, contactStatusAfter, contextPrices, countryFromName, freeSlots, hadConversation, meetingLabel,
+  buildVoicePrompt, callingWindow, contactStatusAfter, contextPrices, countryFromName, easterSunday, freeSlots, hadConversation, isHoliday, meetingLabel, movableHolidays,
   normalizeCallResult, normalizePhone, openingLine, retellSign, verifyRetellSignature, warmGate,
 } from "./voice-agent.ts";
 
@@ -217,4 +217,50 @@ Deno.test("freeSlots: oficina del país, sin ocupados ni fines de semana, dos po
   assertEquals(s[0].iso, "2026-10-19T16:00:00.000Z", "el lunes empieza cuando se libera la agenda");
   const days = s.map((x) => x.iso.slice(0, 10));
   for (const d of new Set(days)) assert(days.filter((x) => x === d).length <= 2);
+});
+
+Deno.test("easterSunday: fechas conocidas", () => {
+  assertEquals(easterSunday(2024).toISOString().slice(0, 10), "2024-03-31");
+  assertEquals(easterSunday(2025).toISOString().slice(0, 10), "2025-04-20");
+  assertEquals(easterSunday(2026).toISOString().slice(0, 10), "2026-04-05");
+  assertEquals(easterSunday(2027).toISOString().slice(0, 10), "2027-03-28");
+});
+
+Deno.test("feriados móviles de Colombia 2026 (Ley Emiliani + Semana Santa), según el calendario publicado", () => {
+  const co = movableHolidays("CO", 2026).sort();
+  assertEquals(co, [
+    "01-12", // Reyes (6 ene → lunes)
+    "03-23", // San José (19 mar → lunes)
+    "04-02", "04-03", // Jueves y Viernes Santo
+    "05-18", // Ascensión
+    "06-08", // Corpus Christi
+    "06-15", // Sagrado Corazón
+    "06-29", // San Pedro y San Pablo (ya es lunes)
+    "08-17", // Asunción (15 ago → lunes)
+    "10-12", // Día de la Raza (ya es lunes)
+    "11-02", // Todos los Santos (1 nov → lunes)
+    "11-16", // Independencia de Cartagena (11 nov → lunes)
+  ]);
+  // Lunes 23 de marzo de 2026, 10:00 en Bogotá: festivo trasladado.
+  const r = callingWindow("CO", new Date("2026-03-23T15:00:00Z"));
+  assertEquals(r.ok, false);
+  assertStringIncludes(r.reason, "feriado");
+  // El 19 de marzo (jueves) ya no es festivo: el descanso se movió al lunes.
+  assert(callingWindow("CO", new Date("2026-03-19T15:00:00Z")).ok);
+});
+
+Deno.test("Perú: Semana Santa y los feriados fijos recientes", () => {
+  assertEquals(movableHolidays("PE", 2026).sort(), ["04-02", "04-03"]);
+  for (const md of ["06-07", "07-23", "08-06", "12-09"]) assert(isHoliday("PE", 2026, md), md);
+  // Jueves Santo 2026 a las 10:00 en Lima.
+  assertEquals(callingWindow("PE", new Date("2026-04-02T15:00:00Z")).ok, false);
+  assert(callingWindow("PE", new Date("2026-04-07T15:00:00Z")).ok);
+  assertEquals(movableHolidays("MX", 2026), [], "los demás países no cambian");
+});
+
+Deno.test("freeSlots no ofrece un festivo trasladado", () => {
+  // Viernes 2026-11-13 12:00 en Bogotá: el lunes 16 es festivo (Cartagena).
+  const s = freeSlots([], new Date("2026-11-13T17:00:00Z"), "CO", 30, 4);
+  assert(s.length > 0);
+  for (const x of s) assert(!x.iso.startsWith("2026-11-16"), `ofreció el festivo: ${x.iso}`);
 });
