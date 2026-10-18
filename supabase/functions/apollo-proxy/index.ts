@@ -46,6 +46,7 @@ import { ApolloError, resolveApolloAuth } from "../_shared/apollo-auth.ts";
 import type { ApolloAuth } from "../_shared/apollo-auth.ts";
 import { apolloBillableCount, CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
+import { platformRevealsLeft, TRIAL_REVEAL_MESSAGE } from "../_shared/trial-limits.ts";
 import { blockedInPlatformMode, PLATFORM_SKIPPED_CONTACT, sanitizePlatformSearch } from "../_shared/apollo-platform.ts";
 import {
   APOLLO_LIST_ENDPOINTS,
@@ -246,6 +247,15 @@ Deno.serve(async (req) => {
     perPerson = wantsPhone ? CREDIT_COSTS.enrich_phone : CREDIT_COSTS.enrich_email;
     creditCost = people * perPerson;
     creditReason = wantsPhone ? "enrich_phone" : "enrich_email";
+  }
+
+  // Prueba gratis: tope de revelados con la key compartida (_shared/trial-limits.ts).
+  if (creditCost > 0) {
+    const kind = wantsPhone ? "phone" : "email";
+    const people = creditCost / perPerson;
+    if ((await platformRevealsLeft(svc, user.id, kind)) < people) {
+      return json({ error: "trial_reveal_limit", message: TRIAL_REVEAL_MESSAGE[kind] }, 403, cors);
+    }
   }
 
   const admin = creditCost > 0 ? svc : null;

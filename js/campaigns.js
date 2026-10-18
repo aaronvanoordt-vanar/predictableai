@@ -142,7 +142,7 @@
     emailAccounts: null,
     campaigns: [],
     loading: false,
-    view: 'campaigns',         // 'campaigns' | 'inbox' | 'knowledge' (Entrenar la IA)
+    view: 'campaigns',         // 'campaigns' | 'inbox' | 'knowledge' (Entrenar la IA) | 'suppression' (Bajas y exclusiones)
     activeId: null,
     builder: null,             // api del builder montado (crear / editar)
     builderHost: null,
@@ -152,6 +152,7 @@
     events: [],
     members: [],
     membersLoading: false,
+    waLearned: null,           // whatsapp_reachability (Map phone_key → fila), lo lee js/phone-lines.js
     selected: new Set(),
     expanded: new Set(),
     brief: undefined,          // client_brief (undefined = sin cargar)
@@ -864,8 +865,23 @@
     state.members = [];
     if (!c || !c.list_id) return;
     state.membersLoading = true;
-    try { state.members = await pd().fetchMembers(c.list_id); }
+    try {
+      // Lo aprendido de los envíos de WhatsApp (whatsapp_reachability) para el
+      // indicador «probable WhatsApp / fijo / sin WhatsApp» del enrolamiento.
+      var learned = window.PhoneLines ? window.PhoneLines.loadLearned().catch(function () { return null; }) : null;
+      var res = await Promise.all([pd().fetchMembers(c.list_id), learned]);
+      state.members = res[0];
+      if (res[1]) state.waLearned = res[1];
+    }
     finally { state.membersLoading = false; }
+  }
+
+  // ¿Está en WhatsApp? (js/phone-lines.js, el mismo veredicto que aplica
+  // campaign-run antes de cada plantilla). null sin teléfono o sin el módulo.
+  var WA_REACH_PILL = { confirmed: 'green', probable: 'blue', unknown: 'gray', fixed: 'amber', switchboard: 'amber', no_whatsapp: 'red' };
+  function waReachOf(m) {
+    var PL = window.PhoneLines;
+    return PL && hasPhone(m) ? PL.memberReach(m, state.waLearned || null) : null;
   }
 
   async function enrollMembers(c, members) {
@@ -874,6 +890,21 @@
     var flow = campaignFlow(c);
     var first = L.firstNode(flow);
     if (!first) throw new Error('La campaña no tiene pasos.');
+    // Lista de supresión (js/suppression.js → edge function `suppression`):
+    // quien está suprimido en TODOS los canales de la campaña no se enrola;
+    // el suprimido en algunos se enrola y el motor salta esos pasos. Si la
+    // función no responde, se enrola igual: campaign-run vuelve a mirar la
+    // lista antes de cada envío.
+    var blocked = [];
+    var chans = campaignChannels(c);
+    if (chans.length && global.suppression && global.suppression.checkMembers) {
+      var sup = await global.suppression.checkMembers(members.map(function (m) { return m.id; }), chans);
+      if (sup) {
+        blocked = members.filter(function (m) { var r = sup[m.id]; return r && chans.every(function (k) { return r[k]; }); });
+        if (blocked.length) members = members.filter(function (m) { return blocked.indexOf(m) === -1; });
+      }
+    }
+    if (!members.length) return { enrolled: 0, skipped: 0, suppressed: blocked.length };
     var now = Date.now();
     var rows = members.map(function (m) {
       return {
@@ -894,7 +925,13 @@
     if (toFlag.length) {
       await sb().from('prospect_list_members').update({ contact_status: 'en_campana', status_changed_at: new Date().toISOString() }).in('id', toFlag);
     }
-    return { enrolled: enrolledIds.length, skipped: members.length - enrolledIds.length };
+    return { enrolled: enrolledIds.length, skipped: members.length - enrolledIds.length, suppressed: blocked.length };
+  }
+  /** «N no se enrolaron: están suprimidos en todos los canales de la campaña». */
+  function suppressedNote(res) {
+    var n = res && res.suppressed;
+    if (!n) return '';
+    return ' ' + n + (n === 1 ? ' lead no se enroló: está suprimido' : ' leads no se enrolaron: están suprimidos') + ' en todos los canales de la campaña (Bajas y exclusiones).';
   }
 
   async function updateEnrollment(id, patch) {
@@ -1638,7 +1675,7 @@
       root.appendChild(h('div', { class: 'pros-hint', text: 'Cargando canales y campañas…' }));
       return;
     }
-    if (!anyConnected() && !state.campaigns.length && !state.builder && state.view !== 'knowledge') {
+    if (!anyConnected() && !state.campaigns.length && !state.builder && state.view !== 'knowledge' && state.view !== 'suppression') {
       root.appendChild(renderSetupHero());
       return;
     }
@@ -1649,6 +1686,7 @@
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
     if (state.view === 'inbox') { root.appendChild(renderInbox()); markOpenConvRead(); setTimeout(function () { syncWatiHistory(false); }, 0); }
     else if (state.view === 'knowledge') root.appendChild(knowledgeNode());
+    else if (state.view === 'suppression') root.appendChild(suppressionNode());
     else if (state.builder) root.appendChild(state.builderHost);
     else if (state.activeId && findCampaign(state.activeId)) root.appendChild(renderDetail());
     else root.appendChild(renderCampaignCards());
@@ -1948,12 +1986,19 @@
       bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Entrenar la IA'));
       return bar;
     }
+    if (state.view === 'suppression') {
+      bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Bajas y exclusiones'));
+      return bar;
+    }
     bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas'));
     bar.appendChild(h('div', { class: 'cmp-spacer' }));
     var ks = state.knowledge;
     bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-knowledge',
       title: 'Tu metodología, tus scripts ganadores y tu material: la IA los consulta antes de escribir cada mensaje.',
       text: 'Entrenar la IA' + (ks && ks.active ? ' · ' + ks.active : '') }));
+    bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-suppression',
+      title: 'Contactos a los que no se les escribe ni se les llama: bajas, tus exclusiones y registros oficiales.',
+      text: 'Bajas y exclusiones' }));
     var newBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'cmp-new', text: '+ Nueva campaña' });
     if (!anyConnected()) { newBtn.disabled = true; newBtn.title = 'Conecta al menos un canal'; }
     bar.appendChild(newBtn);
@@ -2831,7 +2876,7 @@
       await setCampaignStatus(id, 'active');
       await loadCampaigns();
       msg = 'Campaña lanzada: ' + res.enrolled + ' leads enrolados' + (already.size ? ' (' + already.size + ' ya estaban)' : '') + '. El motor envía cada minuto dentro de la ventana horaria.';
-      msg += outdatedNote(fresh);
+      msg += outdatedNote(fresh) + suppressedNote(res);
       var missing = campaignChannels(c).filter(function (k) { return !channelConnected(k); });
       if (missing.length) msg += ' Conecta ' + missing.map(function (k) { return CH[k].label; }).join(' y ') + ' para que esos pasos salgan.';
     }
@@ -2895,6 +2940,26 @@
   }
   function hasAnalytics() { return !!(global.campaignAnalytics && global.campaignAnalytics.mount); }
   function invalidateAnalytics() { state.ana = null; }
+  /** «Bajas y exclusiones» (js/suppression.js): se rearma al entrar para releer la lista. */
+  function suppressionNode() {
+    if (!state.suppressionHost) {
+      state.suppressionHost = h('div');
+      if (global.suppression && global.suppression.mount) {
+        global.suppression.mount(state.suppressionHost, {
+          h: h, toast: toast,
+          onBack: function () { state.view = 'campaigns'; saveView('campaigns'); render(); },
+        });
+      } else {
+        state.suppressionHost.appendChild(h('div', { class: 'pros-hint', text: 'El módulo de supresión no cargó. Recarga la página.' }));
+      }
+    }
+    return state.suppressionHost;
+  }
+  function openSuppression() {
+    state.view = 'suppression';
+    state.suppressionHost = null;
+    render();
+  }
   function openKnowledge() {
     state.view = 'knowledge';
     // Siempre relee la base al entrar (pudo cambiar en otra pestaña).
@@ -3190,7 +3255,9 @@
       html += '<tr><td><input type="checkbox" data-action="enroll-check" data-id="' + esc(String(m.id)) + '"' + checked + '></td>' +
         '<td><div style="font-weight:600">' + esc(memberName(m)) + '</div>' + (m.title ? '<div class="pros-cellsub">' + esc(m.title) + '</div>' : '') + '</td>' +
         '<td>' + esc(m.company || '—') + (isOutdated(m) ? '<div title="' + esc((m.research.employment.reason || '') + (m.research.employment.current_company ? ' Hoy: ' + m.research.employment.current_company + '.' : '')) + '">' + pill('Desactualizado', 'red') + '</div>' : '') + '</td>' +
-        '<td>' + (hasPhone(m) ? pill('sí', 'green') : (needsWa ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
+        '<td>' + (hasPhone(m)
+          ? (needsWa && waReachOf(m) ? '<span title="' + esc(waReachOf(m).reason) + '">' + pill(waReachOf(m).label, WA_REACH_PILL[waReachOf(m).status] || 'gray') + '</span>' : pill('sí', 'green'))
+          : (needsWa ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
         '<td>' + (hasEmail(m) ? pill('sí', 'green') : (needsEmail ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td>' +
         '<td>' + (m.linkedin_url ? pill('sí', 'green') : (needsLi ? pill('falta', 'amber') : pill('—', 'gray'))) + '</td></tr>';
     });
@@ -3198,6 +3265,21 @@
     card.insertAdjacentHTML('beforeend', html);
     var hints = [];
     if (needsWa) hints.push('WhatsApp necesita teléfono revelado (Listas → Enriquecer).');
+    var waTemplateSteps = acts.filter(function (a) { return a.channel === 'whatsapp' && a.content.kind !== 'ai' && a.content.kind !== 'custom'; }).length;
+    if (needsWa && waTemplateSteps && window.PhoneLines) {
+      var picked = candidates.filter(function (m) { return state.selected.has(String(m.id)); });
+      var pool = picked.length ? picked : candidates;
+      var ws = window.PhoneLines.reachSummary(pool.map(waReachOf).filter(Boolean), waTemplateSteps);
+      var waLines = ws.fixed + ws.switchboard;
+      if (waLines || ws.no_whatsapp) {
+        hints.push((picked.length ? 'De los seleccionados, ' : 'En esta lista, ') +
+          (waLines ? waLines + (waLines === 1 ? ' es fijo o conmutador' : ' son fijos o conmutadores') : '') +
+          (waLines && ws.no_whatsapp ? ' y ' : '') +
+          (ws.no_whatsapp ? ws.no_whatsapp + ' ya ' + (ws.no_whatsapp === 1 ? 'falló' : 'fallaron') + ' como sin WhatsApp' : '') +
+          ': no reciben la plantilla (' + ws.avoided + ' envío' + (ws.avoided === 1 ? '' : 's') + ' que no se gasta' + (ws.avoided === 1 ? '' : 'n') + ') y pasan directo al siguiente canal.');
+      }
+      if (ws.unknown) hints.push(ws.unknown + (ws.unknown === 1 ? ' número no dice' : ' números no dicen') + ' si es celular (p. ej. México o Argentina sin el 9): se les envía y, si WhatsApp responde que no está, no se les vuelve a intentar en ninguna campaña.');
+    }
     if (needsEmail) hints.push('Email necesita email revelado.');
     if (needsLi) hints.push('LinkedIn necesita la URL del perfil del lead.');
     var outdated = candidates.filter(isOutdated).length;
@@ -4043,6 +4125,7 @@
     if (action === 'csv-linkedin') { var c9 = findCampaign(state.activeId); if (c9) downloadLinkedinCsv(c9); return; }
     if (action === 'cmp-new') { if (btn.disabled) return; return openBuilder(null); }
     if (action === 'cmp-knowledge') return openKnowledge();
+    if (action === 'cmp-suppression') return openSuppression();
     if (action === 'cmp-open') return openCampaign(id);
     if (action === 'cmp-back') { state.activeId = null; closeBuilder(); return render(); }
     if (action === 'cmp-edit') { var c0 = findCampaign(state.activeId); if (c0) return openBuilder(c0); return; }
@@ -4384,7 +4467,7 @@
       setProgress('');
       var parts = [res.enrolled + ' leads enrolados'];
       if (res.skipped) parts.push(res.skipped + ' ya estaban');
-      var warn = outdatedNote(chosen);
+      var warn = outdatedNote(chosen) + suppressedNote(res);
       toast(parts.join(' · ') + (c3.status !== 'active' ? '. Activa la campaña para que empiecen los envíos.' : '.') + warn, warn ? 'warn' : 'success');
       return Promise.all([loadCampaigns(), loadEnrollments(c3.id), loadMembersForCampaign(c3)]).then(function () { invalidateAnalytics(); render(); });
     }).then(r2, function (err) { r2(); setProgress(''); throw err; });
@@ -4519,7 +4602,7 @@
     flow.nodes.push({ id: L.newId(), type: 'action', channel: 'email', delay: { mode: 'after_prev', days: 0, hours: 0 }, content: { kind: 'ai', angle: 'apertura', instructions: String(b.instructions || '').slice(0, 600) } });
     state.activeId = null;
     openBuilder({ name: String(b.name || 'Campaña desde el Hub').slice(0, 120), status: 'draft', flow: flow }, null);
-    toast('Borrador creado con el hallazgo como instrucción del primer mensaje. Ajusta la cadencia y guarda.', 'info');
+    toast(b.toast ? String(b.toast) : 'Borrador creado con el hallazgo como instrucción del primer mensaje. Ajusta la cadencia y guarda.', 'info');
     return true;
   }
   function applyPendingList() {
@@ -4577,11 +4660,12 @@
     if (built && !state.loading && state.status !== undefined) applyPendingList();
   }
 
-  /** Cambia de vista ('campaigns' | 'inbox' | 'knowledge'); si la pestaña aún no cargó, se aplica al montar. */
+  /** Cambia de vista ('campaigns' | 'inbox' | 'knowledge' | 'suppression'); si la pestaña aún no cargó, se aplica al montar. */
   function setView(view) {
     // 'analytics' era una vista aparte hasta el 2026-10-07: un valor guardado viejo cae en Campañas.
-    var v = view === 'inbox' || view === 'knowledge' ? view : 'campaigns';
+    var v = view === 'inbox' || view === 'knowledge' || view === 'suppression' ? view : 'campaigns';
     if (v === 'knowledge') state.knowledgeHost = null;
+    if (v === 'suppression') state.suppressionHost = null;
     saveView(v);
     if (!built || state.loading || state.status === undefined) { state.pendingView = v; return; }
     state.view = v;

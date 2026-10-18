@@ -82,10 +82,13 @@ import * as wati from "../_shared/wati.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import * as watiHistory from "../_shared/wati-history.ts";
 import { reconcileWatiReceipts } from "../_shared/wati-receipts.ts";
+import * as phoneLines from "../_shared/phone-lines.ts";
+import * as waReach from "../_shared/wa-reachability.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 import * as gmail from "../_shared/gmail.ts";
+import * as suppression from "../_shared/suppression.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -555,6 +558,12 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     if (!acc) throw new StepError("WATI no está conectado.", "hold");
     const phone = wati.digits(member.phone);
     if (!phone) throw new StepError("El lead no tiene teléfono revelado: se omite el WhatsApp y sigue con el siguiente paso.", "skip");
+    // ¿Está en WhatsApp? (_shared/phone-lines.ts). Un fijo o el conmutador de
+    // la empresa no recibe la plantilla, y un número que ya respondió #131026
+    // no se vuelve a intentar en ninguna campaña: el paso se omite con su
+    // motivo y el lead sigue con el siguiente canal. Ante la duda se envía.
+    const reach = await waReach.reachForMember(db, en.user_id, member);
+    if (!reach.send) throw new StepError(phoneLines.skipMessage(reach), "skip");
     // Meta está rechazando todo envío de la cuenta (nombre visible sin
     // aprobar, lo sella wati-webhook): se retiene sin gastar un envío que va a
     // fallar. Vencido el plazo, UN solo lead por corrida prueba de nuevo; si
@@ -647,9 +656,13 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
         // genérico → modo "stop" y el enrolamiento quedaba en `error` para
         // siempre. 401 = retener (credencial); el resto = fallar este paso y
         // seguir con el siguiente canal.
+        await waReach.learnFromFailure(db, en.user_id, phone, (e as Error)?.message, "send", member.id);
         throw new StepError("WATI no aceptó la plantilla: " + wati.humanError(e), e instanceof wati.WatiError && e.status === 401 ? "hold" : "fail");
       }
-      if (!r.accepted) throw new StepError("WATI rechazó el envío: " + (r.errors.join("; ") || "sin detalle"), "fail");
+      if (!r.accepted) {
+        await waReach.learnFromFailure(db, en.user_id, phone, r.errors.join("; "), "send", member.id);
+        throw new StepError("WATI rechazó el envío: " + (r.errors.join("; ") || "sin detalle"), "fail");
+      }
       templateName = String(tpl.name);
     } else {
       // Texto libre: solo dentro de la ventana de 24 h desde el último
@@ -811,6 +824,20 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
   } else {
     throw new StepError(`Canal desconocido en la cadencia: ${step.channel}.`, "skip");
   }
+}
+
+/**
+ * Lista de supresión (_shared/suppression.ts): un lead suprimido en el canal
+ * del paso lo salta con el motivo y sigue la cadencia, igual que cuando le
+ * falta el dato. Si la lista no se pudo leer, el paso espera 1 h: nunca se
+ * envía a ciegas. Sin la migración aplicada, todo sigue como antes.
+ */
+async function assertNotSuppressed(ctx: Ctx, en: Json, member: Json, step: StepLike) {
+  const channel = channelKey(step.channel) as suppression.SuppressionChannel;
+  if (!suppression.SUPPRESSION_CHANNELS.includes(channel)) return;
+  const r = await suppression.isSuppressed(ctx.db, en.user_id, channel, suppression.contactOfMember(member));
+  if (r.error) throw new StepError("No se pudo comprobar la lista de supresión: " + r.error, "hold_short");
+  if (r.suppressed) throw new StepError(r.reason!, "skip");
 }
 
 /** Comprobaciones previas comunes: ventana, tope diario, lead vigente. Devuelve el miembro o null si ya se resolvió el enrolamiento. */
@@ -999,6 +1026,7 @@ async function runFlow(ctx: Ctx, en: Json, campaign: Json, flow: flowLib.Flow) {
   let advance = true;
   let executed = false;
   try {
+    await assertNotSuppressed(ctx, en, member, step);
     await executeStep(ctx, en, campaign, member, step);
     executed = true;
   } catch (e) {
@@ -1157,9 +1185,38 @@ async function handleEmailReply(ctx: Ctx, ev: Json, msg: Json | null, preloaded?
     campaign_id: en.campaign_id, enrollment_id: en.id,
     payload: { emailer_message_id: ev.provider_message_id, apollo_status: msg?.status ?? null, reply_class: msg?.reply_class ?? null, subject: fromGmail?.subject ?? null, body_source: fromGmail ? "gmail" : null },
   }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true });
+  // «No me escribas» en la respuesta = baja: se registra en la lista de
+  // supresión (todos sus datos, todos los canales) con el texto como prueba.
+  // Sin Gmail no hay texto: Apollo solo avisa que respondió.
+  if (fromGmail?.body && suppression.isOptOutText(fromGmail.body)) {
+    await markEmailOptOut(ctx, en, "reply", { text: fromGmail.body, provider_message_id: ev.provider_message_id, campaign_id: en.campaign_id, subject: fromGmail.subject ?? null });
+    return;
+  }
   if (en.member_id) {
     await db.from("prospect_list_members").update({ contact_status: "respondio", status_changed_at: ctx.now.toISOString() })
       .eq("id", en.member_id).not("contact_status", "in", "(reunion_agendada,reunion_tomada,dado_de_baja)");
+  }
+}
+
+/**
+ * Baja por email (respuesta «no me escribas» o el enlace de baja que Apollo
+ * pone en el correo, List-Unsubscribe): enrolamiento `unsubscribed`, CRM
+ * `dado_de_baja` y la lista de supresión con la prueba.
+ */
+async function markEmailOptOut(ctx: Ctx, en: Json, source: "reply" | "list_unsubscribe", evidence: Json) {
+  const db = ctx.db;
+  const stopReason = source === "reply" ? "El lead pidió no recibir más correos." : "El lead se dio de baja con el enlace del correo.";
+  await db.from("campaign_enrollments").update({
+    status: "unsubscribed", stop_reason: stopReason, next_run_at: null,
+    ...(en.replied_at ? {} : { replied_at: ctx.now.toISOString(), replied_channel: "email" }),
+  }).eq("id", en.id).in("status", ["active", "processing", "paused", "replied", "completed"]);
+  await event(ctx, en, "email", "opted_out", { provider_message_id: evidence.provider_message_id ?? null, detail: stopReason, step_position: evidence.step_position, node_id: evidence.node_id });
+  const { data: member } = en.member_id
+    ? await db.from("prospect_list_members").select("id, email, phone, linkedin_url, contact_status").eq("id", en.member_id).maybeSingle()
+    : { data: null };
+  await suppression.recordOptOut(db, { userId: en.user_id, member, source, channel: "email", evidence, at: ctx.now.toISOString() });
+  if (member && member.contact_status !== "dado_de_baja") {
+    await db.from("prospect_list_members").update({ contact_status: "dado_de_baja", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
   }
 }
 
@@ -1270,6 +1327,14 @@ async function syncApolloEmail(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
           touched++;
         } else if (m.unsubscribe) {
           payload.apollo_done = true;
+          const { data: enRow } = await db.from("campaign_enrollments").select("*").eq("id", ev.enrollment_id).maybeSingle();
+          if (enRow) {
+            await markEmailOptOut(ctx, enRow, "list_unsubscribe", {
+              provider_message_id: ev.provider_message_id, campaign_id: ev.campaign_id, step_position: ev.step_position, node_id: ev.node_id,
+              apollo_status: m.status ?? null, text: "Baja con el enlace del correo (Apollo).",
+            });
+          }
+          touched++;
         }
       }
       await db.from("campaign_events").update({ payload }).eq("id", ev.id);
