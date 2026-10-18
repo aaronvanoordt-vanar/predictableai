@@ -1,6 +1,6 @@
 /**
  * _shared/wa-reachability.ts — lo aprendido de los envíos de WhatsApp por
- * número (tabla `whatsapp_reachability`, migración 20261018000001).
+ * número (tabla `whatsapp_reachability`, migración 20261018000002).
  *
  * Lo escriben campaign-run (rechazo al enviar), wati-receipts (recibo de
  * entrega o de falla, por webhook o por reconciliación) y wati-webhook (el
