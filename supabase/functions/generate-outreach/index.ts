@@ -110,7 +110,7 @@
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
-import { callLLM, engineForUser, parseLlmJson, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { callLLM, engineForUser, languageDirective, parseLlmJson, requestLanguage, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { buildTrainingBlock, loadTraining } from "../_shared/sales-training.ts";
 import { loadIntelligence } from "../_shared/intelligence.ts";
@@ -1265,7 +1265,9 @@ async function generateViaManagedAgent(
     const sessionId = await createSession(apiKey, cfg, `outreach ${leadName}`.slice(0, 120));
     const seen = new Set<string>();
     await baselineSeen(apiKey, sessionId, seen);
-    await sendUserMessage(apiKey, sessionId, userPrompt);
+    // El agente tiene un system prompt fijo y no pasa por callLLM: la directiva
+    // de idioma (pt-BR / en) viaja en el mensaje.
+    await sendUserMessage(apiKey, sessionId, userPrompt + languageDirective(requestLanguage()));
     let out = parseJson(await pollForReply(apiKey, sessionId, seen, FIRST_TURN_BUDGET_MS));
     if (!isValidOutreach(out)) throw new Error("Model returned malformed outreach JSON");
 

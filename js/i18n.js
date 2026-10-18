@@ -10,7 +10,7 @@
  *
  * API pública: window.i18n = { get(), set(lang), apply(), t(str), locale(),
  *   formatDate(), formatDateTime(), formatNumber(), formatCurrency(),
- *   countryName(), missing() }
+ *   countryName(), list(), missing() }
  */
 (function () {
   'use strict';
@@ -396,17 +396,19 @@
     if (compiled[lang]) return compiled[lang];
     var src = DICTS[lang];
     if (!src) return null;
-    var exact = Object.create(null), pre = Object.create(null), suf = Object.create(null), loose = [];
+    var exact = Object.create(null), pre = Object.create(null), suf = Object.create(null), loose = [], outs = Object.create(null);
     Object.keys(src).forEach(function (k) {
       var key = norm(k), val = src[k];
       if (!key || typeof val !== 'string') return;
+      outs[norm(val)] = 1;
       if (!/\{\d+\}/.test(key)) { exact[key] = val; return; }
       var parts = key.split(/(\{\d+\})/), order = [], lit = 0;
       var re = '^' + parts.map(function (p) {
         var m = /^\{(\d+)\}$/.exec(p);
-        if (m) { order.push(+m[1]); return '([\\s\\S]+?)'; }
+        if (m) { order.push(+m[1]); return '([\\s\\S]*?)'; }
         lit += p.length; return reEsc(p);
       }).join('') + '$';
+      if (lit < 2) return; // «{0}» solo, o «{0} {1}»: coincidiría con todo
       var pat = { re: new RegExp(re), order: order, value: val, lit: lit };
       var head = parts[0], tail = parts[parts.length - 1];
       if (head.length >= 3) (pre[head.slice(0, 3).toLowerCase()] = pre[head.slice(0, 3).toLowerCase()] || []).push(pat);
@@ -417,39 +419,72 @@
     Object.keys(pre).forEach(function (k) { pre[k].sort(byLit); });
     Object.keys(suf).forEach(function (k) { suf[k].sort(byLit); });
     loose.sort(byLit);
-    compiled[lang] = { exact: exact, pre: pre, suf: suf, loose: loose };
+    compiled[lang] = { exact: exact, pre: pre, suf: suf, loose: loose, outs: outs };
     return compiled[lang];
   }
+  // Devuelve la traducción, o null. Entre varios patrones que coinciden gana
+  // el primero cuyos huecos se tradujeron todos (o no tienen letras); si
+  // ninguno lo logra, el primero que coincidió (marcado como parcial).
+  var partial = false, partialLeft = 0; // letras que quedaron sin traducir en el mejor parcial
   function lookup(t, C, depth) {
+    partial = false; partialLeft = 0;
     if (t in C.exact) return C.exact[t];
     if (depth > 2 || t.length > 2000) return null;
     var lists = [C.pre[t.slice(0, 3).toLowerCase()], C.suf[t.slice(-3).toLowerCase()], C.loose];
+    var first = null, firstLeft = 0;
     for (var i = 0; i < lists.length; i++) {
       var L = lists[i];
       if (!L) continue;
       for (var j = 0; j < L.length; j++) {
         var p = L[j], m = p.re.exec(t);
         if (!m) continue;
-        return p.value.replace(/\{(\d+)\}/g, function (all, d) {
+        var left = 0;
+        var out = p.value.replace(/\{(\d+)\}/g, function (all, d) {
           var gi = p.order.indexOf(+d);
-          return gi < 0 ? all : piece(m[gi + 1], C, depth + 1);
+          if (gi < 0) return all;
+          var raw = m[gi + 1], tr = piece(raw, C, depth + 1);
+          if (tr === raw && LETTER.test(raw)) left += raw.length;
+          return tr;
         });
+        if (!left) { partial = false; partialLeft = 0; return out; }
+        if (first == null) { first = out; firstLeft = left; }
       }
     }
-    return null;
+    partial = first != null; partialLeft = firstLeft;
+    return first;
   }
   // Un hueco o un texto suelto: conserva los espacios de los bordes y prueba
   // también sin el número del principio («12 leads tienen» → «leads tienen»).
   function piece(s, C, depth) {
     var lead = /^\s*/.exec(s)[0], trail = /\s*$/.exec(s)[0], core = norm(s);
     if (!core) return s;
-    var r = lookup(core, C, depth);
+    // Ya es una traducción: no se vuelve a traducir (evita bucles con el observer).
+    if (depth === 0 && C.outs[core] && !(core in C.exact)) return s;
+    var r = lookup(core, C, depth), weak = partial, weakLeft = partialLeft;
     if (r == null) {
       var m = /^([\d.,%+\-–·\s]+)(\D.*)$/.exec(core);
       if (m) { var r2 = lookup(m[2], C, depth); if (r2 != null) r = m[1] + r2; }
     }
+    // Signos pegados al texto por el módulo («Crear una clave →», «Autor ·»).
+    if (r == null) {
+      var a = /^([«¡¿·•\s]*)([\s\S]*?)([\s·•→←:…,.;!?»]*)$/.exec(core);
+      if (a && (a[1] || a[3]) && a[2]) { var r3 = lookup(a[2], C, depth); if (r3 != null) r = a[1] + r3 + a[3]; }
+    }
+    // Etiquetas compuestas («Contexto: Tarjetas por completar», «Email · IA:
+    // Apertura»): se traduce cada parte por separado.
+    if ((r == null || weak) && depth < 2 && SEP.test(core)) {
+      var parts = core.split(SEP_SPLIT), changed = 0, left = 0;
+      for (var i = 0; i < parts.length; i += 2) {
+        if (!LETTER.test(parts[i])) continue;
+        var tp = piece(parts[i], C, depth + 1);
+        if (tp !== parts[i]) { parts[i] = tp; changed++; } else left += tp.length;
+      }
+      // Una traducción parcial por patrón solo cede si partir deja menos sin traducir.
+      if (changed && (r == null || left < weakLeft)) r = parts.join('');
+    }
     return lead + (r == null ? core : r) + trail;
   }
+  var SEP = / · | — | \| |: /, SEP_SPLIT = /( · | — | \| |: )/;
   /** Traduce un texto al idioma actual (o lo devuelve igual). Para lo que no pasa por el DOM. */
   function t(s, lang) {
     if (s == null) return s;
@@ -463,7 +498,7 @@
   // ── DOM ────────────────────────────────────────────────────────────────────
   // data-no-i18n / .notranslate marcan contenido del usuario o de los leads
   // (mensajes de la Bandeja, notas) que nunca se traduce.
-  var SKIP_TAGS = { SCRIPT: 1, STYLE: 1, TEXTAREA: 1, CODE: 1, PRE: 1, NOSCRIPT: 1, SVG: 1 };
+  var SKIP_TAGS = { SCRIPT: 1, STYLE: 1, TEXTAREA: 1, CODE: 1, PRE: 1, NOSCRIPT: 1 };
   var SKIP_SEL = '[data-no-i18n],.notranslate,[contenteditable="true"],[contenteditable=""]';
   var ATTRS = ['placeholder', 'title', 'aria-label', 'alt', 'data-tip'];
   var LETTER = /[A-Za-zÁÉÍÓÚáéíóúÑñ]/;
@@ -484,11 +519,15 @@
     if (r !== v) { node.nodeValue = r; done.set(node, r); }
     else done.set(node, v);
   }
+  var doneAttr = new WeakMap(); // elemento → { atributo: valor que le pusimos }
   function doAttrs(el, C) {
+    var mine = doneAttr.get(el);
     for (var i = 0; i < ATTRS.length; i++) {
       var a = ATTRS[i], v = el.getAttribute(a);
-      if (!v || !LETTER.test(v)) continue;
+      if (!v || !LETTER.test(v) || (mine && mine[a] === v)) continue;
       var r = piece(v, C, 0);
+      if (!mine) { mine = {}; doneAttr.set(el, mine); }
+      mine[a] = r;
       if (r !== v) el.setAttribute(a, r);
     }
     if (el.tagName === 'INPUT' && /^(button|submit|reset)$/i.test(el.type) && el.value) {
@@ -500,9 +539,16 @@
     if (!root) return;
     if (root.nodeType === 3) { if (!inSkipped(root.parentElement)) doText(root, C); return; }
     if (root.nodeType !== 1 && root.nodeType !== 11) return;
-    if (root.nodeType === 1) { if (inSkipped(root)) return; doAttrs(root, C); }
+    if (root.nodeType === 1) {
+      if (root.tagName === 'TEXTAREA' && !inSkipped(root.parentElement) && !root.matches(SKIP_SEL)) { doAttrs(root, C); return; }
+      if (inSkipped(root)) return;
+      doAttrs(root, C);
+    }
     var w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-      acceptNode: function (n) { return n.nodeType === 1 && skipEl(n) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; }
+      acceptNode: function (n) {
+        if (n.nodeType === 1 && skipEl(n)) { if (n.tagName === 'TEXTAREA' && !n.matches(SKIP_SEL)) doAttrs(n, C); return NodeFilter.FILTER_REJECT; }
+        return NodeFilter.FILTER_ACCEPT;
+      }
     });
     var n;
     while ((n = w.nextNode())) { if (n.nodeType === 3) doText(n, C); else doAttrs(n, C); }
@@ -556,7 +602,7 @@
           continue;
         } else if (r.type === 'characterData') {
           if (!inSkipped(r.target.parentElement)) doText(r.target, C);
-        } else if (r.type === 'attributes' && r.target.nodeType === 1 && !inSkipped(r.target)) {
+        } else if (r.type === 'attributes' && r.target.nodeType === 1 && !inSkipped(r.target.parentElement) && !r.target.matches(SKIP_SEL)) {
           doAttrs(r.target, C);
         }
       }
@@ -605,6 +651,12 @@
     try { return new Intl.NumberFormat(locale(), Object.assign({ style: 'currency', currency: cur, maximumFractionDigits: 0 }, opts || {})).format(x); }
     catch (e) { return cur + ' ' + x; }
   }
+  /** «A, B y C» en el idioma elegido («A, B e C» en pt-BR). */
+  function list(items) {
+    var arr = Array.prototype.slice.call(items || []).map(String);
+    try { return new Intl.ListFormat(locale(), { style: 'long', type: 'conjunction' }).format(arr); }
+    catch (e) { return arr.length > 1 ? arr.slice(0, -1).join(', ') + ' y ' + arr[arr.length - 1] : arr.join(''); }
+  }
   // Nombre de un país por su código ISO 3166 (o el nombre en español/inglés
   // que guarda Apollo: el diccionario cubre esos).
   var regionNames = {};
@@ -622,7 +674,8 @@
   }
 
   // Diagnóstico (Playwright / consola): textos visibles que siguen en español.
-  var ES_HINT = /[áéíóúñ¿¡]|\b(de|la|el|los|las|para|con|sin|que|tu|tus|una|aún|más|está|están|hay|cuando|aquí|también|guardar|crear|buscar|campaña|campañas|contactos|empresa|cuenta)\b/i;
+  // Solo marcas que el portugués no comparte (ñ, ¿¡, -ción, el/los/las/una…).
+  var ES_HINT = /[ñ¿¡]|ción(?![a-zà-ÿ])|ciones(?![a-zà-ÿ])|(?<![a-zà-ÿ-])(el|los|las|una|unos|unas|con|sin|tu|tus|mi|mis|y|aún|están|aquí|también|cuando|qué|cómo|dónde|todavía|ahora|hoy|mañana|guardar|crear|campaña|campañas|contactos|cuenta|señal|señales|bandeja|reunión|reuniones|listo|cerrar|eliminar|agregar|elige|selecciona|dinos)(?![a-zà-ÿ])/i;
   function missing(root) {
     var out = [], seen = {};
     if (currentLang() === 'es') return out;
@@ -759,7 +812,7 @@
   window.i18n = {
     get: currentLang, set: setLang, apply: apply, t: t,
     locale: locale, formatDate: formatDate, formatDateTime: formatDateTime,
-    formatNumber: formatNumber, formatCurrency: formatCurrency, countryName: countryName,
+    formatNumber: formatNumber, formatCurrency: formatCurrency, countryName: countryName, list: list,
     missing: missing, languages: function () { return Object.keys(LANGS); }
   };
 

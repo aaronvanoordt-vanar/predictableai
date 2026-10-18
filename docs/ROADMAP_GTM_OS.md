@@ -92,6 +92,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Cobro local y CFDI
 - [ ] Facturación y créditos por cliente para agencias
 - [ ] Mapa de TAM, señales de LinkedIn y píxel web
+- [x] Portugués completo (pt-BR): interfaz, IA y formatos
 
 **P3**
 - [ ] Automatizaciones de punta a punta

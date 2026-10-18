@@ -511,6 +511,8 @@
   }
 
   // ── Estado de canales ────────────────────────────────────────────────────
+  // «A y B» en el idioma de la interfaz (js/i18n.js); sin i18n, en español.
+  function joinAnd(arr) { return global.i18n && global.i18n.list ? global.i18n.list(arr) : arr.join(' y '); }
   function isConn(acc) { return !!(acc && acc.status === 'connected'); }
   function defaultEmailAccount() {
     var accs = state.emailAccounts || [];
@@ -2474,23 +2476,35 @@
     var me = String(sender.name || '').trim();
     var role = String(sender.role || '').trim();
     var company = String(sender.company || '').trim();
-    var who = me ? me + (role && company ? ', ' + role + ' de ' + company : company ? ', de ' + company : role ? ', ' + role : '') : '';
+    // Con la interfaz en portugués el saludo sugerido se escribe en portugués
+    // de Brasil (no traducido del español) y la plantilla sale como pt_BR.
+    var pt = !!(global.i18n && global.i18n.get() === 'pt-BR');
+    var of = pt ? ' na ' : ' de ';
+    var who = me ? me + (role && company ? ', ' + role + of + company : company ? ',' + of + company : role ? ', ' + role : '') : '';
     var first = me.split(/\s+/)[0] || '';
     // Meta corta los botones en 25 caracteres: se usa la versión más larga
     // que quepa ("Hola Aarón! Todo bien, y tú?" ya tiene 28).
-    var reply = [
+    var reply = (pt ? [
+      first ? 'Olá ' + first + '! Tudo bem, e você?' : '',
+      first ? 'Oi ' + first + '! Tudo bem, e você?' : '',
+      'Tudo bem, e você?',
+    ] : [
       first ? 'Hola ' + first + '! Todo bien, y tú?' : '',
       first ? 'Hola ' + first + '! Bien, y tú?' : '',
       'Todo bien, y tú?',
-    ].filter(function (t) { return t && t.length <= 25; })[0];
+    ]).filter(function (t) { return t && t.length <= 25; })[0];
     var taken = {};
     templateCatalogue().forEach(function (t) { taken[t.name] = true; });
-    var name = 'saludo', n = 2;
-    while (taken[name]) name = 'saludo_' + (n++);
+    var base = pt ? 'saudacao' : 'saludo';
+    var name = base, n = 2;
+    while (taken[name]) name = base + '_' + (n++);
     return {
       name: name,
-      body: who ? 'Hola {{name}}, te saluda ' + who + '. Qué tal todo?' : 'Hola {{name}}! Qué tal todo?',
+      body: pt
+        ? (who ? 'Olá {{name}}, aqui é ' + who + '. Tudo bem?' : 'Olá {{name}}! Tudo bem?')
+        : (who ? 'Hola {{name}}, te saluda ' + who + '. Qué tal todo?' : 'Hola {{name}}! Qué tal todo?'),
       reply: reply,
+      language: pt ? 'pt_BR' : 'es',
     };
   }
 
@@ -2510,6 +2524,7 @@
     [['es', 'Español'], ['es_MX', 'Español (México)'], ['es_AR', 'Español (Argentina)'], ['es_ES', 'Español (España)'], ['en', 'Inglés'], ['en_US', 'Inglés (EE. UU.)'], ['pt_BR', 'Portugués (Brasil)']].forEach(function (o) {
       langS.appendChild(h('option', { value: o[0], text: o[1] }));
     });
+    langS.value = sug.language;
     grid.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Nombre' }), nameI));
     grid.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Categoría' }), catS));
     grid.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Idioma' }), langS));
@@ -2833,7 +2848,7 @@
       msg = 'Campaña lanzada: ' + res.enrolled + ' leads enrolados' + (already.size ? ' (' + already.size + ' ya estaban)' : '') + '. El motor envía cada minuto dentro de la ventana horaria.';
       msg += outdatedNote(fresh);
       var missing = campaignChannels(c).filter(function (k) { return !channelConnected(k); });
-      if (missing.length) msg += ' Conecta ' + missing.map(function (k) { return CH[k].label; }).join(' y ') + ' para que esos pasos salgan.';
+      if (missing.length) msg += ' Conecta ' + joinAnd(missing.map(function (k) { return CH[k].label; })) + ' para que esos pasos salgan.';
     }
     closeBuilder();
     toast(msg, 'success');
@@ -4118,7 +4133,7 @@
       if (!c1) return;
       if (status === 'active') {
         var missing = campaignChannels(c1).filter(function (k) { return !channelConnected(k); });
-        if (missing.length) toast('Conecta ' + missing.map(function (k) { return CH[k].label; }).join(' y ') + ' para que esos pasos salgan.', 'warn');
+        if (missing.length) toast('Conecta ' + joinAnd(missing.map(function (k) { return CH[k].label; })) + ' para que esos pasos salgan.', 'warn');
       }
       var r1 = btnLoading(btn, '⏳');
       return setCampaignStatus(c1.id, status).then(function () {
