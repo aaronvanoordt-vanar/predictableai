@@ -144,7 +144,7 @@ async function handleInvoicePaid(supa: Json, invoice: Json) {
     p_user_id: userId, p_credits: STARTER.monthly_credits, p_ref: String(invoice.id),
   });
   if (error) throw new Error(`grant: ${error.message}`);
-  const yearly = sub.items?.data?.[0]?.price?.recurring?.interval === "year";
+  const yearly = (sub as Json).items?.data?.[0]?.price?.recurring?.interval === "year";
   await enqueueCfdi(supa, {
     userId, kind: "invoice", sourceId: String(invoice.id),
     description: `Plan Starter de predictable.ai (${yearly ? "anual" : "mensual"})`,
