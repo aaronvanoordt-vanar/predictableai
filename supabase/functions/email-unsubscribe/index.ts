@@ -15,7 +15,8 @@
  *    escáneres de enlaces del correo abren los links solos. Además Supabase
  *    no sirve HTML desde una función (lo reescribe a text/plain).
  *
- * Efecto (applyUnsubscribe): email_suppressions (reason = 'unsubscribed'),
+ * Efecto (applyUnsubscribe): la baja va a la lista central «No contactar»
+ * (recordOptOut, fuente list_unsubscribe, todos los datos del lead),
  * el lead pasa a `dado_de_baja` y sus enrolamientos vivos se detienen.
  *
  * Secretos: EMAIL_UNSUBSCRIBE_SECRET (opcional; si falta firma con la service
@@ -58,7 +59,11 @@ Deno.serve(async (req) => {
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
   try {
-    await applyUnsubscribe(db, claims.u, claims.e, "Se dio de baja con el enlace del correo.");
+    await applyUnsubscribe(db, claims.u, claims.e, {
+      source: "list_unsubscribe",
+      detail: "Se dio de baja con el enlace del correo.",
+      evidence: { member_id: claims.m ?? null },
+    });
   } catch (e) {
     console.error("[email-unsubscribe]", (e as Error)?.message ?? e);
     return text("No se pudo registrar la baja. Intenta de nuevo en unos minutos.", 500);

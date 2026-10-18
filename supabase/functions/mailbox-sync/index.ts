@@ -14,10 +14,12 @@
  *                      parada, igual que una respuesta de WhatsApp).
  *       • auto-respuesta (fuera de la oficina) → a la Bandeja como leída; NO
  *                      detiene nada.
- *       • «baja» al mailto de List-Unsubscribe → baja del lead.
+ *       • «baja» al mailto de List-Unsubscribe, o una respuesta que la pide
+ *                      (isOptOutText) → baja en la lista central «No
+ *                      contactar» (recordOptOut) y la cadencia se detiene.
  *       • rebote     → el envío queda `bounced`, evento `failed` (alimenta la
- *                      condición email_bounced), y si es duro la dirección
- *                      queda suprimida.
+ *                      condición email_bounced); si es duro, esa dirección
+ *                      no recibe más correos de campaña (hardBounceOf).
  *  2. Una vez al día por usuario: monitor de entregabilidad por dominio
  *     (SPF / DKIM / DMARC con el DNS de _shared/site-probe.ts + tasa de
  *     rebote de 7 días; _shared/deliverability.ts) y pausa automática del
@@ -32,7 +34,8 @@ import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-
 import { fetchInbound, MailboxError, MailboxRow } from "../_shared/mailbox.ts";
 import { classifyInbound, Known, stripQuoted } from "../_shared/email-inbound.ts";
 import { normalizeMessageId } from "../_shared/email-mime.ts";
-import { applyUnsubscribe, suppress } from "../_shared/mailbox-send.ts";
+import { applyUnsubscribe } from "../_shared/mailbox-send.ts";
+import { isOptOutText } from "../_shared/suppression.ts";
 import { assessDomain, DKIM_SELECTORS, mailHost, shouldAutoPause } from "../_shared/deliverability.ts";
 import { fetchDnsText, fetchTxtRecords } from "../_shared/site-probe.ts";
 import * as warmup from "../_shared/warmup.ts";
@@ -120,7 +123,7 @@ async function processMailbox(db: SupabaseClient, mb: MailboxRow & Json): Promis
       stats.bounces++;
       await db.from("email_sends").update({ status: "bounced", bounce_hard: c.hard, bounce_reason: c.reason.slice(0, 300) }).eq("id", send.id);
       send.status = "bounced";
-      if (c.hard) await suppress(db, mb.user_id, send.to_email, "bounced", c.reason, mb.id);
+      // El rebote duro queda en email_sends (bounce_hard) y bloquea esa dirección en las campañas (hardBounceOf).
       const why = (c.hard ? "Rebote duro" : "Rebote temporal") + (c.status ? ` (${c.status})` : "");
       await db.from("inbox_messages").update({ status: "failed", error_detail: why }).eq("provider", "mailbox").eq("provider_message_id", send.message_id).eq("direction", "out");
       if (send.enrollment_id) {
@@ -152,8 +155,15 @@ async function processMailbox(db: SupabaseClient, mb: MailboxRow & Json): Promis
     // Ya estaba (reproceso del mismo mensaje): no se repite el efecto.
     if (!inserted || !inserted.length) continue;
     if (c.kind === "auto_reply") continue;
-    if (c.kind === "unsubscribe") {
-      await applyUnsubscribe(db, mb.user_id, c.fromEmail, `Pidió la baja respondiendo a ${mb.email}.`, mb.id);
+    // Baja: «baja» al mailto de List-Unsubscribe o una respuesta cuyo texto lo pide
+    // (isOptOutText, el mismo criterio estricto de la lista central).
+    if (c.kind === "unsubscribe" || isOptOutText(stripQuoted(String(rec.body ?? "")))) {
+      await applyUnsubscribe(db, mb.user_id, c.fromEmail, {
+        source: "reply",
+        detail: `Pidió la baja respondiendo a ${mb.email}.`,
+        evidence: { text: stripQuoted(String(rec.body ?? "")).slice(0, 500) || rec.subject, message_id: pid, mailbox_id: mb.id, enrollment_id: send.enrollment_id },
+      });
+      if (send.status !== "replied") await db.from("email_sends").update({ status: "replied", replied_at: at }).eq("id", send.id);
       continue;
     }
     stats.replies++;

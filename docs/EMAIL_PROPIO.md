@@ -10,7 +10,7 @@ Hasta hoy el email de campaña salía solo por Apollo (`emailer_messages` + `sen
   - Envío: rotación entre buzones, tope diario por buzón, rampa de volumen, separación entre envíos y horario propio.
   - Hilo correcto: In-Reply-To y References.
   - Respuestas y rebotes detectados en la bandeja de entrada.
-  - Warm-up, monitor de SPF / DKIM / DMARC y de rebotes, baja en un clic y lista de supresión.
+  - Warm-up, monitor de SPF / DKIM / DMARC y de rebotes, baja en un clic que alimenta la lista central «No contactar».
 
 ## Cómo se usa
 
@@ -32,12 +32,12 @@ Hasta hoy el email de campaña salía solo por Apollo (`emailer_messages` + `sen
 
 | Pieza | Qué hace |
 |---|---|
-| `supabase/migrations/20261017000001_own_mailboxes.sql` | Tablas `email_mailboxes` (secreto oculto por grants de columna), `email_sends` (registro por buzón: tope, hilo, rebotes), `email_suppressions`, `email_domain_health`, `email_settings`. `inbox_messages.provider` acepta `mailbox`. Cron de `mailbox-sync` comentado, para aplicar a mano. |
+| `supabase/migrations/20261018170000_own_mailboxes.sql` | Tablas `email_mailboxes` (secreto oculto por grants de columna), `email_sends` (registro por buzón: tope, hilo, rebotes), `email_domain_health`, `email_settings`. Agrega `mailbox` al CHECK de `inbox_messages.provider` con `extend_provider_check` (migración de WhatsApp-Meta), sin reescribir la lista. Cron de `mailbox-sync` comentado, para aplicar a mano. |
 | `_shared/email-mime.ts` | Arma el correo RFC 5322 / MIME: Message-ID propio, In-Reply-To / References, `List-Unsubscribe` + `List-Unsubscribe-Post` (RFC 8058) y encabezados RFC 2047. Los encabezados se sanean: no se puede inyectar CR/LF. |
 | `_shared/mailbox.ts` | OAuth de Google y Microsoft. Envío por Gmail API, Graph (MIME) o SMTP. Lectura de la bandeja por Gmail API, Graph o IMAP. |
 | `_shared/smtp.ts`, `_shared/imap.ts` | Clientes mínimos con TLS implícito (465 / 993). IMAP solo lee y usa `BODY.PEEK`, así que no marca nada como leído. |
 | `_shared/mailbox-rotation.ts` | Elige el buzón (`pickMailbox`), calcula la rampa (`rampLimit`), resuelve Apollo o buzones (`resolveEmailProvider`) y decide el hilo de un seguimiento (`threadPlan`). |
-| `_shared/mailbox-send.ts` | Orquesta un envío en este orden: supresión → hilo → rotación → MIME → envío → `email_sends` + `inbox_messages`. Además: `applyUnsubscribe`. |
+| `_shared/mailbox-send.ts` | Orquesta un envío en este orden: rebote duro previo → hilo → rotación → MIME → envío → `email_sends` + `inbox_messages`. Además: `applyUnsubscribe` (baja → `recordOptOut` de la lista central + detiene las cadencias) y `hardBounceOf`. |
 | `_shared/email-inbound.ts` | Clasifica lo que llega: rebote (DSN RFC 3464), respuesta automática (RFC 3834), baja, respuesta u otro. |
 | `_shared/deliverability.ts` | Interpreta SPF, DKIM, DMARC y la tasa de rebote, y genera las alertas. El DNS sale de `_shared/site-probe.ts` (`fetchDnsText`, el mismo chequeo de DMARC del Radar, más `fetchTxtRecords` para DKIM). |
 | `_shared/warmup.ts` | Adaptador del servicio de warm-up (Instantly API v2). |
@@ -58,7 +58,8 @@ Hasta hoy el email de campaña salía solo por Apollo (`emailer_messages` + `sen
   - Entre dos envíos del mismo buzón pasan al menos 5 minutos.
   - Un buzón ocupado no es un error. El enrolamiento se reprograma a la hora exacta en que vuelve a estar libre (modo `defer`) y se muestra el motivo.
   - El tope por campaña (`daily_caps.email`) sigue valiendo.
-- **Supresión.** Antes de cada paso de email se revisa `email_suppressions`, también para Apollo. Una baja o un rebote duro omite el paso y el lead sigue con el canal siguiente.
+- **Supresión: lista central, no una propia.** Las bajas van a la lista «No contactar» (`suppression_entries`, `_shared/suppression.ts`): el enlace List-Unsubscribe con `recordOptOut(source: "list_unsubscribe")` y la respuesta «baja» (o cualquier texto que `isOptOutText` reconozca) con `source: "reply"`. `campaign-run` ya la revisa antes de cada paso (`assertNotSuppressed`).
+  - Los rebotes duros no son bajas y la lista central no tiene esa fuente: quedan en `email_sends.bounce_hard` y `hardBounceOf` omite esa dirección en los pasos de email, con buzones propios o con Apollo. El lead sigue con el canal siguiente.
 - **Rechazo del destinatario.** Si el servidor rechaza al destinatario al enviar (550 en RCPT), cuenta como rebote duro: se suprime la dirección y el paso queda `failed`.
 - **Credencial rota.** Una credencial revocada deja el buzón en `error` («Reconectar») y el paso se retiene 6 h.
 - **Aperturas: no se miden.** No hay píxel, porque perjudica la entrega. Con buzones propios, la condición `email_opened` nunca se cumple, y el asistente lo avisa.
@@ -128,7 +129,7 @@ La investigación se hizo con búsquedas web. El proxy de esta sesión bloqueaba
 
 ## Pasos manuales para ponerlo en producción
 
-1. **Migración:** aplicar `supabase/migrations/20261017000001_own_mailboxes.sql`.
+1. **Migración:** aplicar `supabase/migrations/20261018170000_own_mailboxes.sql`. Requiere antes `20261017000004_suppression.sql` y `20261018161500_whatsapp_meta.sql` (ya aplicadas en producción).
 2. **Funciones:** desplegar con Actions → Deploy Edge Functions (ya sabe las banderas).
    - `mailbox-connect` y `mailbox-sync`: con JWT.
    - `email-unsubscribe`: **`--no-verify-jwt`**.
@@ -187,7 +188,7 @@ Se reutiliza el cliente OAuth que ya usa la lectura de hilos (`GOOGLE_CLIENT_ID`
    - Comprobar que `email_sends.message_id` coincide con el encabezado.
 3. **Respuesta:** responder desde la cuenta del lead. En ≤ 5 minutos (o con «Sincronizar todo») debe aparecer en la Bandeja y el enrolamiento debe pasar a «Respondió».
 4. **Seguimiento:** con un segundo paso de email, comprobar que llega como «Re:» en el mismo hilo.
-5. **Rebote:** enviar a una dirección inexistente del propio dominio. Debe aparecer `failed` («Rebote duro») y la dirección debe quedar en la lista de supresión.
+5. **Rebote:** enviar a una dirección inexistente del propio dominio. Debe aparecer `failed` («Rebote duro») y un segundo paso de email a esa dirección debe omitirse («rebotó en duro»).
 6. **Baja:** usar el botón «Anular suscripción» de Gmail o el enlace. El lead debe pasar a «Dado de baja».
 7. **Microsoft:** repetir los pasos 1-4 con un buzón de Microsoft 365. Verificar que el hilo y `List-Unsubscribe` sobreviven al envío por Graph.
 8. **SMTP:** conectar un buzón SMTP (p. ej. Zoho, `smtp.zoho.com:465` / `imap.zoho.com:993`). Confirma que Supabase deja salir por 465 y 993.

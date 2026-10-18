@@ -14,13 +14,16 @@
 --     role) escribe; el cliente lee todo MENOS `secret` (grants de columna).
 --   • email_sends          — registro de envíos por buzón (tope, rotación,
 --     hilo, rebotes). Solo service role escribe; el cliente lee lo suyo.
---   • email_suppressions   — no escribir a estas direcciones. El motor y la
---     baja escriben; el cliente lee, agrega a mano (reason = 'manual') y borra.
+--   • Las bajas NO tienen tabla propia: van a la lista central «No contactar»
+--     (suppression_entries, migración 20261017000004) con recordOptOut, y el
+--     motor la consulta con isSuppressed. Los rebotes duros quedan en
+--     email_sends (status 'bounced', bounce_hard) y bloquean esa dirección.
 --   • email_domain_health  — último chequeo SPF/DKIM/DMARC/rebotes por
 --     dominio. Solo service role escribe.
 --   • email_settings       — preferencia del canal (Apollo o buzones propios)
 --     y pie de baja. El cliente la escribe (no es sensible).
 --
+-- Requiere public.extend_provider_check (migración 20261018161500_whatsapp_meta).
 -- Idempotente y no destructivo.
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -103,6 +106,7 @@ CREATE TABLE IF NOT EXISTS public.email_sends (
 CREATE UNIQUE INDEX IF NOT EXISTS email_sends_message_id_key ON public.email_sends (message_id);
 CREATE INDEX IF NOT EXISTS email_sends_mailbox_sent_idx ON public.email_sends (mailbox_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS email_sends_user_to_idx ON public.email_sends (user_id, to_email, sent_at DESC);
+CREATE INDEX IF NOT EXISTS email_sends_hard_bounce_idx ON public.email_sends (user_id, to_email) WHERE bounce_hard;
 CREATE INDEX IF NOT EXISTS email_sends_enrollment_idx ON public.email_sends (enrollment_id, sent_at DESC);
 
 ALTER TABLE public.email_sends ENABLE ROW LEVEL SECURITY;
@@ -112,35 +116,6 @@ CREATE POLICY "Users can read own email sends"
   USING (auth.uid() = user_id);
 REVOKE ALL ON public.email_sends FROM anon, PUBLIC;
 REVOKE INSERT, UPDATE, DELETE ON public.email_sends FROM authenticated;
-
--- ── Supresión ──────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.email_suppressions (
-  id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id           UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  email             TEXT        NOT NULL CHECK (email = lower(email) AND position('@' IN email) > 1),
-  reason            TEXT        NOT NULL CHECK (reason IN ('unsubscribed', 'bounced', 'complaint', 'manual')),
-  detail            TEXT,
-  source_mailbox_id UUID        REFERENCES public.email_mailboxes(id) ON DELETE SET NULL,
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT email_suppressions_user_email_key UNIQUE (user_id, email)
-);
-
-ALTER TABLE public.email_suppressions ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Users can read own suppressions" ON public.email_suppressions;
-CREATE POLICY "Users can read own suppressions"
-  ON public.email_suppressions FOR SELECT TO authenticated
-  USING (auth.uid() = user_id);
-DROP POLICY IF EXISTS "Users can add manual suppressions" ON public.email_suppressions;
-CREATE POLICY "Users can add manual suppressions"
-  ON public.email_suppressions FOR INSERT TO authenticated
-  WITH CHECK (auth.uid() = user_id AND reason = 'manual');
-DROP POLICY IF EXISTS "Users can remove own suppressions" ON public.email_suppressions;
-CREATE POLICY "Users can remove own suppressions"
-  ON public.email_suppressions FOR DELETE TO authenticated
-  USING (auth.uid() = user_id);
-REVOKE ALL ON public.email_suppressions FROM anon, PUBLIC;
-REVOKE UPDATE ON public.email_suppressions FROM authenticated;
-GRANT SELECT, INSERT, DELETE ON public.email_suppressions TO authenticated;
 
 -- ── Salud por dominio ──────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.email_domain_health (
@@ -177,10 +152,9 @@ REVOKE ALL ON public.email_settings FROM anon, PUBLIC;
 GRANT SELECT, INSERT, UPDATE ON public.email_settings TO authenticated;
 
 -- ── La bandeja acepta mensajes de buzones propios ──────────────────────────
-ALTER TABLE public.inbox_messages DROP CONSTRAINT IF EXISTS inbox_messages_provider_check;
-ALTER TABLE public.inbox_messages
-  ADD CONSTRAINT inbox_messages_provider_check
-  CHECK (provider IN ('wati', 'apollo', 'gmail', 'dripify', 'mailbox'));
+-- Se AGREGA 'mailbox' a lo que el CHECK ya permite (incluido 'meta'): nunca
+-- se reescribe la lista entera.
+SELECT public.extend_provider_check('public.inbox_messages', 'inbox_messages_provider_check', ARRAY['mailbox']);
 
 -- ── Cron (aplicar a mano, igual que los demás) ─────────────────────────────
 -- Lee las bandejas (respuestas, rebotes, bajas), revisa el DNS de los

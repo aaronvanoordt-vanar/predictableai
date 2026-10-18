@@ -9,12 +9,13 @@
  *   • la lista de buzones (estado, envíos de hoy / tope, warm-up) con sus
  *     ajustes (tope diario, separación, rampa, horario), pausa, prueba y baja;
  *   • el monitor de entregabilidad por dominio (SPF / DKIM / DMARC / rebotes);
- *   • la baja: pie opcional y la lista de supresión.
+ *   • la baja: pie opcional y el acceso a «Bajas y exclusiones» (la lista
+ *     central de js/suppression.js; acá no hay otra lista).
  * Y el selector de buzones del resumen del asistente de campañas.
  *
  * Todo lo que escribe pasa por la edge function mailbox-connect (los tokens
  * y contraseñas nunca llegan acá). Lee directo solo lo suyo por RLS
- * (email_sends para «hoy», email_suppressions).
+ * (email_sends para «hoy»).
  *
  * js/campaigns.js lo inicializa con sus helpers (h, esc, toast, openModal,
  * edgeFetch…) para que se vea igual que el resto de Campañas.
@@ -326,11 +327,11 @@
     return wrap;
   }
 
-  function unsubscribeBlock(rerender) {
+  function unsubscribeBlock(rerender, onOpenSuppression) {
     var st = S.settings || {};
     var wrap = h('div', { style: 'margin-top:16px' });
-    wrap.appendChild(h('div', { class: 'pros-lbl', text: 'Baja y supresión' }));
-    wrap.appendChild(h('div', { class: 'pros-hint', text: 'Cada correo de campaña lleva el encabezado de baja en un clic que piden Gmail, Yahoo y Outlook. Quien se da de baja, rebota en duro o responde «baja» no vuelve a recibir correos de tus campañas.' }));
+    wrap.appendChild(h('div', { class: 'pros-lbl', text: 'Baja' }));
+    wrap.appendChild(h('div', { class: 'pros-hint', text: 'Cada correo de campaña lleva el encabezado de baja en un clic que piden Gmail, Yahoo y Outlook. Quien se da de baja o responde «baja» entra a tu lista «No contactar» y no vuelve a recibir mensajes de tus campañas por ningún canal. Una dirección que rebota en duro deja de recibir correos de campaña.' }));
     var foot = h('input', { type: 'checkbox' });
     foot.checked = !!st.unsubscribe_footer;
     var text = input({ value: st.footer_text || '', placeholder: 'Si prefieres no recibir más correos míos, respóndeme «baja» y no te escribo más.' });
@@ -343,62 +344,21 @@
     });
     wrap.appendChild(h('label', { style: 'display:flex;gap:8px;align-items:center;margin-top:8px' }, foot, h('span', { text: 'Agregar una línea de baja al final de cada correo de campaña' })));
     wrap.appendChild(h('div', { class: 'cmp-row' }, text, save));
-    var list = h('button', { type: 'button', class: 'cmp-link', style: 'margin-top:8px', text: 'Ver lista de supresión' });
-    list.addEventListener('click', function () { openSuppressions(); });
-    wrap.appendChild(list);
-    return wrap;
-  }
-
-  var REASON = { unsubscribed: 'Se dio de baja', bounced: 'Rebotó', complaint: 'Marcó spam', manual: 'Agregado a mano' };
-
-  function openSuppressions() {
-    var body = h('div');
-    var api = H.openModal({ title: 'Lista de supresión', width: 560, bodyNode: body });
-    function paint() {
-      body.innerHTML = '';
-      body.appendChild(h('p', { class: 'pros-hint', style: 'margin:0 0 10px', text: 'Estas direcciones no reciben correos de tus campañas, con Apollo o con tus buzones. Quitar una de la lista vuelve a permitir escribirle: hazlo solo si te lo pidió.' }));
-      var add = input({ type: 'email', placeholder: 'correo@empresa.com' });
-      var addBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Agregar' });
-      addBtn.addEventListener('click', function () {
-        var e = String(add.value || '').trim().toLowerCase();
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return H.toast('Escribe un correo válido.', 'warn');
-        sb().auth.getUser().then(function (u) {
-          var uid = u && u.data && u.data.user && u.data.user.id;
-          return sb().from('email_suppressions').insert({ user_id: uid, email: e, reason: 'manual' });
-        }).then(function (r) { if (r && r.error) throw r.error; paint(); }, function (err) { H.toast(H.errMsg(err), 'error'); });
-      });
-      body.appendChild(h('div', { class: 'cmp-row' }, add, addBtn));
-      var listEl = h('div', { class: 'cmp-tpl-list' });
-      body.appendChild(listEl);
-      listEl.appendChild(h('span', { class: 'pros-hint', text: 'Cargando…' }));
-      sb().from('email_suppressions').select('id, email, reason, detail, created_at').order('created_at', { ascending: false }).limit(500).then(function (r) {
-        listEl.innerHTML = '';
-        if (r.error) { listEl.appendChild(h('div', { class: 'pros-note-red', text: 'No se pudo leer la lista: ' + r.error.message })); return; }
-        if (!(r.data || []).length) { listEl.appendChild(h('span', { class: 'pros-hint', text: 'La lista está vacía.' })); return; }
-        r.data.forEach(function (s) {
-          var item = h('div', { class: 'cmp-tpl-item' });
-          var top = h('div', { class: 'cmp-tpl-item-top' }, h('b', { text: s.email }), h('span', { class: 'cmp-tpl-meta', text: (REASON[s.reason] || s.reason) + ' · ' + H.fmtDate(s.created_at) }));
-          var del = h('button', { type: 'button', class: 'cmp-link cmp-tpl-del', text: 'Quitar' });
-          del.addEventListener('click', function () {
-            sb().from('email_suppressions').delete().eq('id', s.id).then(function (x) { if (x.error) throw x.error; paint(); }, function (err) { H.toast(H.errMsg(err), 'error'); });
-          });
-          top.appendChild(del);
-          item.appendChild(top);
-          if (s.detail) item.appendChild(h('div', { class: 'cmp-tpl-body', text: s.detail }));
-          listEl.appendChild(item);
-        });
-      });
+    if (onOpenSuppression) {
+      var list = h('button', { type: 'button', class: 'cmp-link', style: 'margin-top:8px', text: 'Ver bajas y exclusiones' });
+      list.addEventListener('click', function () { onOpenSuppression(); });
+      wrap.appendChild(list);
     }
-    paint();
-    return api;
+    return wrap;
   }
 
   /**
    * Sección completa dentro del detalle del canal Email. `apolloInfo` =
    * {connected, detail} para pintar la opción Apollo; `rerender` vuelve a
-   * pintar el modal después de cada cambio.
+   * pintar el modal después de cada cambio; `onOpenSuppression` abre la
+   * vista central «Bajas y exclusiones» de Campañas (js/suppression.js).
    */
-  function renderSection(container, apolloInfo, rerender) {
+  function renderSection(container, apolloInfo, rerender, onOpenSuppression) {
     if (!S) {
       container.appendChild(h('span', { class: 'pros-hint', text: 'Cargando buzones…' }));
       load().then(rerender);
@@ -456,7 +416,7 @@
     if (S.mailboxes.length) {
       box.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:8px', text: 'Las respuestas y los rebotes se revisan cada 5 minutos. Las aperturas no se miden con buzones propios (sin píxel de seguimiento, que perjudica la entrega): la condición «¿abrió el email?» de la cadencia solo funciona con Apollo.' }));
       box.appendChild(healthBlock(rerender));
-      box.appendChild(unsubscribeBlock(rerender));
+      box.appendChild(unsubscribeBlock(rerender, onOpenSuppression));
     }
     container.appendChild(box);
   }
@@ -514,6 +474,6 @@
   global.EmailMailboxes = {
     init: init, load: load, current: current, connected: connected, provider: provider,
     activeForChannel: activeForChannel, renderSection: renderSection, builderPicker: builderPicker,
-    campaignUsesMailboxes: campaignUsesMailboxes, openSuppressions: openSuppressions,
+    campaignUsesMailboxes: campaignUsesMailboxes,
   };
 })(window);

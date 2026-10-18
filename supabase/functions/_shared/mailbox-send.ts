@@ -4,8 +4,10 @@
  * Lo usan campaign-run (pasos de email de una campaña con
  * email_provider = 'mailboxes') e inbox-send (responder desde la Bandeja).
  * Hace, en orden:
- *  1. Supresión: una dirección dada de baja, que rebotó en duro o que el
- *     usuario bloqueó no recibe nada (devuelve `suppressed`).
+ *  1. Rebote duro: una dirección que ya rebotó en duro desde un buzón no
+ *     recibe más correos de campaña (devuelve `suppressed`). Las bajas y la
+ *     lista «No contactar» las revisa campaign-run antes de cada paso con
+ *     isSuppressed (_shared/suppression.ts); acá no se abre otra lista.
  *  2. Hilo: si ya le escribimos a este lead en este enrolamiento (o en la
  *     conversación que se responde), el correo sale del mismo buzón, como
  *     "Re:" con In-Reply-To / References (mailbox-rotation.ts → threadPlan).
@@ -20,6 +22,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.
 import { buildMime, isEmail, newMessageId, normalizeMessageId } from "./email-mime.ts";
 import { MailboxError, MailboxRow, sendMime } from "./mailbox.ts";
 import { MailboxLite, pickMailbox, PrevSend, threadPlan, usageFromSends } from "./mailbox-rotation.ts";
+import { recordOptOut } from "./suppression.ts";
 import { signUnsubscribe, unsubscribeFooter, unsubscribeKey, unsubscribeMailto, unsubscribeUrl } from "./email-unsubscribe.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -34,43 +37,46 @@ export async function loadEmailSettings(db: SupabaseClient, userId: string): Pro
   return { provider: String(data.provider ?? "apollo"), unsubscribe_footer: !!data.unsubscribe_footer, footer_text: data.footer_text ?? null };
 }
 
-/** Motivo de supresión de la dirección para este usuario, o null. Falla suave: sin la tabla, null. */
-export async function suppressionOf(db: SupabaseClient, userId: string, email: string): Promise<string | null> {
+/**
+ * Motivo si la dirección ya rebotó en duro desde algún buzón del usuario, o
+ * null. La lista central «No contactar» no tiene la fuente «rebote» (es para
+ * bajas, registros y decisiones del equipo): el rebote vive en email_sends.
+ * Falla suave: sin la tabla, null.
+ */
+export async function hardBounceOf(db: SupabaseClient, userId: string, email: string): Promise<string | null> {
   const e = String(email ?? "").trim().toLowerCase();
   if (!e) return null;
-  const { data, error } = await db.from("email_suppressions").select("reason").eq("user_id", userId).eq("email", e).maybeSingle();
-  if (error) return null;
-  return data?.reason ?? null;
-}
-
-export async function suppress(db: SupabaseClient, userId: string, email: string, reason: "unsubscribed" | "bounced" | "complaint" | "manual", detail: string | null, mailboxId: string | null = null): Promise<void> {
-  const e = String(email ?? "").trim().toLowerCase();
-  if (!isEmail(e)) return;
-  // Una baja pesa más que un rebote: no se pisa una fila existente.
-  await db.from("email_suppressions").upsert(
-    { user_id: userId, email: e, reason, detail: detail?.slice(0, 300) ?? null, source_mailbox_id: mailboxId },
-    { onConflict: "user_id,email", ignoreDuplicates: true },
-  );
+  const { data, error } = await db.from("email_sends").select("bounce_reason, sent_at")
+    .eq("user_id", userId).eq("to_email", e).eq("bounce_hard", true).order("sent_at", { ascending: false }).limit(1).maybeSingle();
+  if (error || !data) return null;
+  return `${e} rebotó en duro (${String(data.bounce_reason ?? "dirección inválida").slice(0, 160)})`;
 }
 
 /**
- * Baja de una dirección (enlace de List-Unsubscribe, "baja" al mailto o
- * marcada a mano): supresión + el lead pasa a `dado_de_baja` + sus
- * enrolamientos vivos se detienen (regla de parada: la baja). Idempotente.
+ * Baja de una dirección (enlace de List-Unsubscribe o «baja» respondida al
+ * buzón): la registra en la lista central con recordOptOut (todos los datos
+ * del lead, todos los canales, con la prueba), el lead pasa a `dado_de_baja`
+ * y sus enrolamientos vivos se detienen (regla de parada: la baja).
+ * Idempotente.
  */
-export async function applyUnsubscribe(db: SupabaseClient, userId: string, email: string, detail: string, mailboxId: string | null = null): Promise<{ members: number; stopped: number }> {
+export async function applyUnsubscribe(
+  db: SupabaseClient,
+  userId: string,
+  email: string,
+  opts: { source: "list_unsubscribe" | "reply"; detail: string; evidence?: Json },
+): Promise<{ members: number; stopped: number }> {
   const e = String(email ?? "").trim().toLowerCase();
   if (!isEmail(e)) return { members: 0, stopped: 0 };
-  await db.from("email_suppressions").upsert(
-    { user_id: userId, email: e, reason: "unsubscribed", detail: detail.slice(0, 300), source_mailbox_id: mailboxId },
-    { onConflict: "user_id,email" },
-  );
   const variants = [...new Set([e, String(email).trim()])];
-  const { data: members } = await db.from("prospect_list_members").select("id").eq("user_id", userId).in("email", variants);
-  const ids = (members ?? []).map((m: Json) => m.id);
+  const { data: members } = await db.from("prospect_list_members").select("id, email, phone, linkedin_url").eq("user_id", userId).in("email", variants);
+  const list: Json[] = members ?? [];
+  const at = new Date().toISOString();
+  const evidence = { ...(opts.evidence ?? {}), detail: opts.detail };
+  if (!list.length) await recordOptOut(db, { userId, email: e, source: opts.source, channel: "email", evidence, at });
+  for (const m of list) await recordOptOut(db, { userId, member: m, email: e, source: opts.source, channel: "email", evidence, at });
+  const ids = list.map((m) => m.id);
   if (!ids.length) return { members: 0, stopped: 0 };
-  const now = new Date().toISOString();
-  await db.from("prospect_list_members").update({ contact_status: "dado_de_baja", status_changed_at: now }).in("id", ids);
+  await db.from("prospect_list_members").update({ contact_status: "dado_de_baja", status_changed_at: at }).in("id", ids);
   const { data: live } = await db.from("campaign_enrollments")
     .update({ status: "unsubscribed", next_run_at: null, stop_reason: "Se dio de baja por email." })
     .eq("user_id", userId).in("member_id", ids).in("status", ["active", "processing", "paused"])
@@ -79,7 +85,7 @@ export async function applyUnsubscribe(db: SupabaseClient, userId: string, email
     await db.from("campaign_events").insert({
       enrollment_id: en.id, campaign_id: en.campaign_id, member_id: en.member_id, user_id: userId,
       channel: "email", type: "opted_out", step_position: en.next_position ?? 0, node_id: en.next_node_id ?? null,
-      detail: detail.slice(0, 400),
+      detail: opts.detail.slice(0, 400),
     });
   }
   return { members: ids.length, stopped: (live ?? []).length };
@@ -130,11 +136,10 @@ export async function sendViaMailboxes(db: SupabaseClient, input: MailboxSendInp
   const to = String(input.to ?? "").trim().toLowerCase();
   if (!isEmail(to)) return { ok: false, reason: "El lead no tiene un email válido.", retryAt: null };
 
-  const sup = await suppressionOf(db, input.userId, to);
-  // Responder a mano a alguien que escribió no se bloquea por un rebote viejo, pero sí por una baja.
-  if (sup && (input.kind === "campaign" || sup === "unsubscribed" || sup === "complaint")) {
-    const why = sup === "unsubscribed" ? "se dio de baja" : sup === "bounced" ? "rebotó antes (dirección inválida)" : sup === "complaint" ? "marcó un correo como spam" : "está en tu lista de supresión";
-    return { ok: false, reason: `No se envía: ${to} ${why}.`, retryAt: null, suppressed: sup };
+  // Una respuesta a mano a alguien que escribió no se bloquea por un rebote viejo.
+  if (input.kind === "campaign") {
+    const bounced = await hardBounceOf(db, input.userId, to);
+    if (bounced) return { ok: false, reason: `No se envía: ${bounced}.`, retryAt: null, suppressed: "bounced" };
   }
 
   const mailboxes = await loadMailboxes(db, input.userId);

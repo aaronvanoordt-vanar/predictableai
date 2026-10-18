@@ -410,6 +410,7 @@
   function defaultSubtitle(node) {
     var L = lib();
     if (node.type === 'condition') {
+      if (node.check === 'ai_column') return 'Sí: la columna IA tiene esa respuesta, con evidencia. No: otra respuesta, «No encontrado» o sin responder.';
       var c = L.CONDITION_LABELS[node.check];
       return c ? c.hint : '';
     }
@@ -554,7 +555,35 @@
     render();
 
     // ── datos ──
+    // Columnas IA de la lista elegida (para la condición «Columna IA»), con
+    // cuántos leads ya tienen respuesta. Solo lectura; sin la migración, vacío.
+    function loadAiColumns() {
+      var id = st.draft.list_id;
+      if (st.aiColumnsListId === id) return Promise.resolve();
+      st.aiColumnsListId = id;
+      st.aiColumns = [];
+      st.aiColumnsReady = false;
+      var sb = global.supabaseClient;
+      if (!id || !sb) return Promise.resolve();
+      return Promise.resolve(sb.from('list_ai_columns').select('id, name, answer_type, options').eq('list_id', id).order('position', { ascending: true }))
+        .then(function (r) {
+          if (r.error || st.aiColumnsListId !== id) return;
+          var cols = r.data || [];
+          return Promise.all(cols.map(function (c) {
+            return Promise.resolve(sb.from('list_ai_cells').select('id', { count: 'exact', head: true }).eq('column_id', c.id).eq('status', 'done'))
+              .then(function (cr) { c.answered = cr && !cr.error && typeof cr.count === 'number' ? cr.count : null; return c; });
+          })).then(function (withCounts) {
+            if (st.aiColumnsListId !== id) return;
+            st.aiColumns = withCounts;
+            st.aiColumnsReady = true;
+            render();
+          });
+        })
+        .catch(function () { /* sin columnas IA: la condición lo dice */ });
+    }
+
     function loadMembers() {
+      loadAiColumns();
       var id = st.draft.list_id;
       if (!id || !o.fetchMembers) { st.members = []; st.membersListId = id; return Promise.resolve(); }
       if (st.membersListId === id && !st.membersLoading) return Promise.resolve();
@@ -663,6 +692,13 @@
       });
       st.draft.flow.nodes.forEach(function (n) {
         if (n.type !== 'condition') return;
+        if (n.check === 'ai_column') {
+          var r = n.settings && n.settings.ai_column;
+          if (r && st.aiColumnsReady && st.aiColumnsListId === st.draft.list_id && !(st.aiColumns || []).some(function (c) { return String(c.id) === String(r.column_id); })) {
+            w[n.id] = ['la columna «' + (r.column_name || 'IA') + '» no es de la lista elegida: siempre dará "No"'];
+          }
+          return;
+        }
         var c = L.CONDITION_LABELS[n.check];
         if (c && c.needs && !needOk(c.needs)) w[n.id] = ['necesita ' + needLabel(c.needs)];
         // Preguntar "¿leyó el WhatsApp?" sin haber mandado ninguno responde
@@ -1281,7 +1317,12 @@
     function renderConditionFields(panel, node, loc) {
       var box = h('div', { class: 'form-group' });
       box.appendChild(h('div', { class: 'cb-lbl', text: 'Condición' }));
-      var sel = h('select', { onchange: function () { node.check = sel.value; markCustom(); render(); } });
+      var sel = h('select', { onchange: function () {
+        node.check = sel.value;
+        if (node.check === 'ai_column') node.settings = { ai_column: defaultAiColumnRule() };
+        else delete node.settings;
+        markCustom(); render();
+      } });
       L.CONDITIONS.forEach(function (c) {
         var m = L.CONDITION_LABELS[c];
         var ok = !m.needs || needOk(m.needs);
@@ -1290,8 +1331,79 @@
       box.appendChild(sel);
       var m2 = L.CONDITION_LABELS[node.check];
       if (m2) box.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: m2.hint + ' Si se cumple, el lead sigue por la rama Sí; si no, por la rama No. Una rama vacía salta al paso que viene después de la condición.' }));
+      if (node.check === 'ai_column') box.appendChild(aiColumnFields(node));
       panel.appendChild(box);
       panel.appendChild(delayFields(node, loc));
+    }
+
+    function defaultAiColumnRule() {
+      var c = (st.aiColumns || [])[0];
+      if (!c) return null;
+      return L.normalizeAiColumnRule({ column_id: c.id, column_name: c.name, answer_type: c.answer_type, op: c.answer_type === 'boolean' ? 'yes' : 'answered' });
+    }
+
+    // Columna + operador + valor de la condición «Columna IA».
+    function aiColumnFields(node) {
+      var wrap = h('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-top:10px' });
+      var cols = st.aiColumns || [];
+      if (!st.draft.list_id) {
+        wrap.appendChild(h('div', { class: 'cb-warn', text: 'Elige una lista en el paso Base: las columnas IA son de cada lista.' }));
+        return wrap;
+      }
+      if (!cols.length && !st.aiColumnsReady) {
+        wrap.appendChild(h('div', { class: 'cb-hint', text: 'Cargando las columnas IA de la lista…' }));
+        return wrap;
+      }
+      if (!cols.length) {
+        wrap.appendChild(h('div', { class: 'cb-warn', text: 'Esta lista no tiene columnas IA. Créalas en Listas → «+ Columna IA» y vuelve aquí.' }));
+        return wrap;
+      }
+      node.settings = node.settings || {};
+      var rule = node.settings.ai_column;
+      var col = rule && cols.find(function (c) { return String(c.id) === String(rule.column_id); });
+      function set(patch) {
+        node.settings.ai_column = L.normalizeAiColumnRule(Object.assign({}, node.settings.ai_column || {}, patch));
+        markCustom();
+        refresh();
+      }
+      var csel = h('select', { onchange: function () {
+        var c = cols.find(function (x) { return String(x.id) === csel.value; });
+        if (!c) return;
+        set({ column_id: c.id, column_name: c.name, answer_type: c.answer_type, op: c.answer_type === 'boolean' ? 'yes' : 'answered', value: null });
+        render();
+      } });
+      if (!col) csel.appendChild(h('option', { value: '', text: rule ? 'La columna ya no está en esta lista' : 'Elige una columna', selected: true }));
+      cols.forEach(function (c) { csel.appendChild(h('option', { value: c.id, text: c.name, selected: !!col && String(col.id) === String(c.id) })); });
+      wrap.appendChild(h('label', { class: 'cb-lbl', text: 'Columna IA' }));
+      wrap.appendChild(csel);
+      if (!col || !rule) return wrap;
+
+      var osel = h('select', { onchange: function () { set({ op: osel.value, value: null }); render(); } });
+      (L.AI_COLUMN_OPS[col.answer_type] || ['answered']).forEach(function (op) {
+        osel.appendChild(h('option', { value: op, text: L.AI_COLUMN_OP_LABELS[op] || op, selected: rule.op === op }));
+      });
+      wrap.appendChild(h('label', { class: 'cb-lbl', text: 'Rama Sí cuando la respuesta' }));
+      wrap.appendChild(osel);
+      if (rule.op === 'is') {
+        var vsel = h('select', { onchange: function () { set({ value: vsel.value }); } });
+        vsel.appendChild(h('option', { value: '', text: 'Elige una categoría', selected: !rule.value }));
+        (col.options || []).forEach(function (opt) { vsel.appendChild(h('option', { value: opt, text: opt, selected: rule.value === opt })); });
+        wrap.appendChild(vsel);
+      } else if (rule.op === 'gte' || rule.op === 'lte') {
+        var num = h('input', { type: 'number', value: rule.value == null ? '' : String(rule.value), oninput: function () { set({ value: num.value }); } });
+        wrap.appendChild(num);
+      } else if (rule.op === 'contains') {
+        var txt = h('input', { type: 'text', maxlength: '200', value: rule.value || '', placeholder: 'Ej.: SAP', oninput: function () { set({ value: txt.value }); } });
+        wrap.appendChild(txt);
+      }
+      var total = st.members.length;
+      if (col.answered != null && total) {
+        var missing = Math.max(0, total - col.answered);
+        wrap.appendChild(h('div', { class: missing ? 'cb-warn' : 'cb-hint', text: missing
+          ? col.answered + ' de ' + total + ' leads tienen respuesta en «' + col.name + '». Los ' + missing + ' sin respuesta (o «No encontrado») irán por la rama No; responde la columna en Listas antes de lanzar.'
+          : 'Todos los leads de la lista tienen respuesta en «' + col.name + '».' }));
+      }
+      return wrap;
     }
 
     /** Vuelve a pintar solo la línea de tiempo y el pie (sin perder el foco del panel). */
