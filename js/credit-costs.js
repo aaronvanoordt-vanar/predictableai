@@ -54,6 +54,9 @@
     // «Investigar con IA» (Listas): puesto actual + empresa + ángulo. Con la
     // cuenta de Apollo de la plataforma se suma el match (enrich_email).
     lead_research:          { credits: 3,  label: 'por lead',            variable: false },
+    // Contenido en LinkedIn: una tanda de ideas o un borrador (o reescritura).
+    linkedin_ideas:         { credits: 2,  label: 'por tanda de ideas',  variable: false },
+    linkedin_post:          { credits: 3,  label: 'por borrador',        variable: false },
     // Tendencias de outbound (investigación manual).
     outreach_playbook:      { credits: 10, label: 'por investigación',   variable: false },
 

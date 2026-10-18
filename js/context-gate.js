@@ -27,6 +27,7 @@
     'radar', 'mi-dashboard', 'coda-ai',
     'pro-main',
     'ventas-coach', 'ventas-reportes',
+    'linkedin-content',
   ];
 
   // Segundo candado, solo para el Radar (2026-09-23): con el contexto listo,

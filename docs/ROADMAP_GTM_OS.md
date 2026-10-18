@@ -23,7 +23,7 @@ Fecha: 2026-10-17. Versión viva (con checklist) en Claude Docs: https://claude.
 | 11 | Mapa de TAM con tiers | Análisis de mercado sin tabla de cuentas | Tabla de TAM por país con tiers y cobertura | P2 |
 | 12 | Señales de engagement en LinkedIn | No | Detector del Radar | P2 |
 | 13 | Píxel de visitantes propio | Solo vía Apollo | Script propio; medir rendimiento en Latam | P2 |
-| 14 | Publicación de contenido en LinkedIn | No | Motor de social selling con aprobación | P3 |
+| 14 | Publicación de contenido en LinkedIn | Construido (2026-10-17): ideas, borradores, calendario con aprobación, Posts API + «Copiar y abrir LinkedIn» (`docs/LINKEDIN_CONTENT.md`) | Imágenes y carruseles; páginas y métricas cuando LinkedIn apruebe la Community Management API | P3 |
 | 15 | Agencias: org por cliente, factura consolidada, directorio | Espacios por cliente sin facturación consolidada | Créditos/facturación por cliente, cambio rápido, directorio | P2 |
 | 16 | Prueba gratis de 1.000 créditos | 100 | Revisar la oferta de entrada | P1 |
 
@@ -95,7 +95,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 
 **P3**
 - [ ] Automatizaciones de punta a punta
-- [ ] Contenido en LinkedIn con aprobación
+- [x] Contenido en LinkedIn con aprobación (`docs/LINKEDIN_CONTENT.md`; páginas de empresa y métricas esperan la aprobación de la Community Management API)
 - [ ] Agente de voz IA
 
 ## Fuentes

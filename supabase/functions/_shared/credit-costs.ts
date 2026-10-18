@@ -24,6 +24,12 @@ export const CREDIT_COSTS = {
   // la empresa y propone el ángulo. El match de Apollo se cobra aparte como
   // enrich_email solo con la key de la plataforma.
   lead_research: 3,
+  // Contenido en LinkedIn (social selling), sin búsqueda web: el contexto
+  // ya está en la base. Ideas con Haiku (~0.02 USD por tanda); el borrador
+  // con el modelo por defecto, porque el texto se publica tal cual
+  // (~0.06 USD con Sonnet).
+  linkedin_ideas: 2,
+  linkedin_post: 3,
 
   // Campañas: 1 crédito por lead que entra a una campaña (cubre TODOS sus
   // envíos). Responder a mano desde la Bandeja no cuesta.

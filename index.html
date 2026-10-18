@@ -2150,6 +2150,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       Bandeja
       <span id="nav-bandeja-badge" class="nav-badge" style="display:none">0</span>
     </div>
+    <!-- Contenido en LinkedIn con aprobación (2026-10-17, js/linkedin-content.js +
+         edge function `linkedin-content`): social selling con ideas → borrador →
+         aprobado → programado → publicado. No es una pestaña de Prospección:
+         tiene su propia página. -->
+    <div class="nav-item" data-page="linkedin-content" onclick="nav(this,'linkedin-content');if(window.linkedinContent)window.linkedinContent.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 7v4M5 5v.01M8 11V8.5a1.5 1.5 0 013 0V11M8 7v4"/></svg>
+      Contenido
+    </div>
 
     <!-- AI SALES COACH -->
     <div class="sidebar-section">
@@ -2413,6 +2421,17 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
   <div id="ai-training-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: CONTENIDO EN LINKEDIN (js/linkedin-content.js) ═══════ -->
+<div class="page fade-in" id="page-linkedin-content" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Contenido</div>
+      <div class="topbar-sub">Ideas, borradores y calendario de tus posts de LinkedIn, con tu aprobación antes de publicar</div>
+    </div>
+  </div>
+  <div id="linkedin-content-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: INTEGRACIONES (js/integrations.js) ═══════ -->
@@ -3185,7 +3204,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <!-- ═════ Predictable JS modules ═════ -->
 <script src="js/ui-helpers.js"></script>
 <script src="js/ai-engine.js"></script>
-<script src="js/credit-costs.js?v=20261008"></script>
+<script src="js/credit-costs.js?v=20261017"></script>
 <script src="js/credits.js"></script>
 <script src="js/skeletons.js"></script>
 <script src="js/i18n.js"></script>
@@ -3210,6 +3229,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/meeting-report.js"></script>
 <script src="js/learning.js?v=20260919"></script>
 <script src="js/ai-training.js?v=20260923"></script>
+<script src="js/linkedin-content.js?v=20261017"></script>
 <script src="js/integrations.js?v=20260923"></script>
 <script src="js/dev-docs.js?v=20260923"></script>
 <script src="js/developers.js?v=20260923"></script>
@@ -3218,7 +3238,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/intel-hub-cadence-tabs.js?v=20260823"></script>
 <!-- Contexto estratégico IA: PESTEL + 5 fuerzas de Porter + FODA→CAME (contexto opcional, debajo del Intelligence Hub) -->
 <script src="js/coda-ai.js"></script>
-<script src="js/context-gate.js"></script>
+<script src="js/context-gate.js?v=20261017"></script>
 <script src="js/onboarding-tour.js"></script>
 <script src="js/miforms-prompt.js"></script>
 <script src="js/ux.js?v=20260919b"></script>

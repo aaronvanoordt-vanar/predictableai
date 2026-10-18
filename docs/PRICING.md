@@ -57,6 +57,8 @@ Columnas:
 | Mensaje IA: paso de campaña, muestra o borrador de la Bandeja | **2** | ~0.02–0.03 | 20 % | Haiku con 1 búsqueda y sin fetch (antes 3 búsquedas + 2 fetch: 0.07–0.12) |
 | Preparar lead con IA (5 capas + preparación del coach) | **4** | ~0.10 | 38 % | |
 | Investigar lead con IA (Listas: puesto actual + empresa + ángulo) | **3** | ~0.05–0.07 | 26–36 % | Haiku con 4 búsquedas + 2 fetch. Con la key de Apollo de la plataforma se suma `enrich_email` (2) por el match, solo si Apollo encuentra a la persona |
+| Contenido en LinkedIn: tanda de ideas (6–10) | **2** | ~0.02 | 15 % | Haiku sin búsqueda web; el contexto ya está en la base |
+| Contenido en LinkedIn: borrador o reescritura de un post | **3** | ~0.04–0.07 | 20–36 % | Modelo por defecto (Sonnet), sin búsqueda web. Publicar, programar y consultar métricas no cuesta |
 | Lead que entra a una campaña | **1** | ~0 | — | Cubre **todos** sus envíos; antes se cobraba 1 por envío |
 | Responder a mano desde la Bandeja | **0** | ~0 | — | Antes 1 |
 | Cadencia recomendada por IA | 6 | ~0.06–0.12 | 20 % | |
