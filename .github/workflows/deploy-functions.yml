@@ -18,6 +18,10 @@
 # Integraciones (2026-09-23): integrations (nueva, CON JWT). Secrets opcionales
 #   HUBSPOT_/SALESFORCE_/NOTION_/CLICKUP_CLIENT_ID + _CLIENT_SECRET (Google usa
 #   los de Gmail). Ver docs/INTEGRACIONES.md.
+# CFDI en modo prueba (2026-10-18): cfdi (nueva, CON JWT; cron con la service
+#   role) + stripe-webhook (encola el CFDI después de acreditar). Secrets
+#   CFDI_MODE=test y FACTURAPI_KEY=sk_test_…; migración 20261018000002. Ver
+#   docs/BILLING_LATAM.md §6.2.
 # Billing con Stripe (2026-09-23): billing + stripe-webhook (nuevas; la
 #   segunda sale con --no-verify-jwt: Stripe la llama sin JWT y se autentica
 #   por firma) + las que cambiaron de tarifario: apollo-proxy campaign-run
@@ -38,14 +42,6 @@
 # (las dos últimas salen con --no-verify-jwt automáticamente). Los secretos
 # APOLLO_OAUTH_CLIENT_ID / APOLLO_OAUTH_CLIENT_SECRET se cargan en Supabase
 # (Edge Functions → Secrets), no aquí.
-# Migraciones (2026-10-18, pedido del dueño: «SIEMPRE aplica tú las
-#   migraciones y despliega las funciones»): input `migrations` con los nombres
-#   de archivo de supabase/migrations/ (separados por espacio) o `status` para
-#   solo listar las que faltan. Se aplican ANTES del deploy, en orden, por la
-#   Management API de Supabase (POST /v1/projects/{ref}/database/query) con el
-#   mismo SUPABASE_ACCESS_TOKEN: no hace falta la contraseña de la base. Cada
-#   una se registra en supabase_migrations.schema_migrations y se salta si ya
-#   estaba registrada. `functions: none` = solo migraciones.
 name: Deploy Edge Functions
 
 on:
@@ -55,83 +51,9 @@ on:
         description: 'Funciones a desplegar, separadas por espacio. Vacío = las 6 del contexto de empresa v2.'
         required: false
         default: ''
-      migrations:
-        description: 'Migraciones a aplicar antes del deploy (archivos de supabase/migrations/ separados por espacio), o "status" para listar las pendientes. Vacío = ninguna.'
-        required: false
-        default: ''
 
 jobs:
-  migrate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Apply migrations
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || 'yskaojvuhaqfmimwmvbi' }}
-          # Por env, nunca interpolado en el script (inyección de comandos).
-          MIGRATIONS_INPUT: ${{ inputs.migrations }}
-        run: |
-          set -euo pipefail
-          MIGRATIONS="${MIGRATIONS_INPUT:-}"
-          if [ -z "$MIGRATIONS" ]; then
-            echo "Sin migraciones que aplicar."
-            exit 0
-          fi
-          if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
-            echo "::error::Falta el secret SUPABASE_ACCESS_TOKEN."
-            exit 1
-          fi
-
-          API="https://api.supabase.com/v1/projects/$PROJECT_REF/database/query"
-          # Ejecuta SQL; imprime el JSON de respuesta. Falla con el cuerpo del error.
-          run_sql() {
-            local body status
-            body=$(jq -Rs '{query: .}')
-            status=$(curl -sS -o /tmp/resp.json -w '%{http_code}' -X POST "$API" \
-              -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" \
-              --data "$body")
-            if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
-              echo "HTTP $status: $(head -c 2000 /tmp/resp.json)" >&2
-              return 1
-            fi
-            cat /tmp/resp.json
-          }
-
-          # Historial de migraciones (lo crea el CLI de Supabase; si no existe, se crea igual).
-          printf '%s' "CREATE SCHEMA IF NOT EXISTS supabase_migrations; CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text PRIMARY KEY, statements text[], name text);" | run_sql >/dev/null
-          APPLIED=$(printf '%s' "SELECT version FROM supabase_migrations.schema_migrations" | run_sql | jq -r '.[].version')
-
-          if [ "$MIGRATIONS" = "status" ]; then
-            echo "Migraciones del repo que no están registradas en producción (las aplicadas a mano desde el SQL editor tampoco figuran: revísalas antes de aplicar):"
-            for f in supabase/migrations/*.sql; do
-              v=$(basename "$f" | cut -d_ -f1)
-              grep -qx "$v" <<<"$APPLIED" || echo "  - $(basename "$f")"
-            done
-            exit 0
-          fi
-
-          for name in $MIGRATIONS; do
-            f="supabase/migrations/$name"
-            case "$name" in */*|*..*) echo "::error::Nombre inválido: $name"; exit 1 ;; esac
-            if [ ! -f "$f" ]; then echo "::error::No existe $f en esta rama."; exit 1; fi
-            v=$(basename "$name" | cut -d_ -f1)
-            if grep -qx "$v" <<<"$APPLIED"; then
-              echo "↷ $name ya estaba aplicada (versión $v)."
-              continue
-            fi
-            echo "::group::Aplicando $name"
-            run_sql < "$f" >/dev/null
-            label=$(basename "$name" .sql | cut -d_ -f2-)
-            printf "INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('%s', '%s') ON CONFLICT (version) DO NOTHING;" "$v" "$label" | run_sql >/dev/null
-            echo "✓ $name aplicada"
-            echo "::endgroup::"
-          done
-
   deploy:
-    needs: migrate
-    if: ${{ inputs.functions != 'none' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

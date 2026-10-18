@@ -21,9 +21,10 @@
  *      inbox_messages (dedupe por whatsappMessageId), enlaza el lead por los
  *      dígitos del teléfono, detiene todos los enrolamientos activos
  *      (status=replied) y sube el CRM a `respondio`. Si el lead tocó el botón
- *      "Darse de baja" (o escribe baja/stop), status=unsubscribed y CRM
- *      `dado_de_baja`. Aquí solo se traduce el evento de WATI y se agregan el
- *      tenant compartido (ownerElsewhere) y el WAMID de las reacciones.
+ *      "Darse de baja" (o pide no recibir más mensajes), status=unsubscribed, CRM
+ *      `dado_de_baja` y lista de supresión (_shared/suppression.ts). Aquí solo
+ *      se traduce el evento de WATI y se agregan el tenant compartido
+ *      (ownerElsewhere) y el WAMID de las reacciones.
  *  • templateMessageSent(_v2) / sessionMessageSent(_v2) → confirma el envío
  *      de un mensaje nuestro (enlazado por localMessageId / id) y guarda el
  *      WAMID. Si no es nuestro, es un mensaje escrito en la UI de WATI (o de
@@ -146,6 +147,9 @@ async function handleInbound(db: SupabaseClient, acc: Json, ev: Json) {
     conversationId: ev?.conversationId ? String(ev.conversationId) : null,
     at: eventDate(ev),
     text: inboundText(ev),
+    // La baja escrita se busca solo en lo que el lead tecleó (no en la URL de
+    // un archivo ni en el texto de un botón).
+    typedText: ev?.text && !wati.mediaFileName(ev.text) ? String(ev.text) : null,
     buttonText: buttonText(ev),
     reaction,
     payload: {

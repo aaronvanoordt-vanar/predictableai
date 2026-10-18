@@ -9,7 +9,7 @@
  */
 
 import { assert, assertEquals, assertFalse } from "jsr:@std/assert@1";
-import { enrollmentPatch, isOptOut, nextContactStatus, primaryEnrollment, recordInbound } from "./whatsapp-inbound.ts";
+import { enrollmentPatch, isOptOut, nextContactStatus, optOutKind, primaryEnrollment, recordInbound } from "./whatsapp-inbound.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -79,7 +79,12 @@ class FakeQuery {
 
 class FakeDb {
   tables: Record<string, Json[]> = {};
+  rpcs: { fn: string; args: Json }[] = [];
   from(t: string) { return new FakeQuery(this, t); }
+  rpc(fn: string, args: Json) {
+    this.rpcs.push({ fn, args });
+    return Promise.resolve({ data: { added: (args?.p_rows ?? []).length, updated: 0 }, error: null });
+  }
 }
 
 const USER = "u1";
@@ -108,10 +113,13 @@ function msg(over: Json = {}) {
 
 // ── Puro ────────────────────────────────────────────────────────────────────
 
-Deno.test("isOptOut: botón de baja en cualquier parte, palabra de baja al inicio", () => {
-  for (const t of ["Darse de baja", "baja", "STOP por favor", "No me escribas más", "cancelar"]) assert(isOptOut(t), t);
-  assert(isOptOut("📷 Foto", "Quiero darse de baja"));
-  for (const t of ["Hola", "¿y si damos de baja el plan viejo?", "", null]) assertFalse(isOptOut(t), String(t));
+Deno.test("isOptOut: el botón «Darse de baja» o un texto que la pide de verdad (suppression.isOptOutText)", () => {
+  for (const t of ["BAJA", "stop", "No me escribas más", "sáquenme de su lista", "unsubscribe"]) assert(isOptOut(t), t);
+  assert(isOptOut(null, "Darse de baja"));
+  assertEquals(optOutKind(null, "Darse de baja"), "whatsapp_button");
+  assertEquals(optOutKind("no me escriban más"), "reply");
+  // #352: estas ya NO son bajas (antes «empieza con cancelar/baja» lo eran).
+  for (const t of ["Cancelar la reunión de mañana", "Baja el precio y hablamos", "No me interesa", "Hola", "", null]) assertFalse(isOptOut(t), String(t));
   assertFalse(isOptOut("Hola", "Sí, hablemos"));
 });
 
@@ -163,6 +171,31 @@ Deno.test("recordInbound: la reentrega del webhook no repite efectos", async () 
   assert(r.duplicate);
   assertEquals(db.tables.inbox_messages.length, 1);
   assertEquals(db.tables.campaign_events.filter((e) => e.type === "replied").length, 1);
+});
+
+Deno.test("recordInbound: marca el número como «tiene WhatsApp» (#350)", async () => {
+  const db = seed();
+  await recordInbound(asDb(db), acc, msg());
+  const reach = db.tables.whatsapp_reachability ?? [];
+  assertEquals(reach.length, 1);
+  assertEquals([reach[0].status, reach[0].source, reach[0].member_id], ["has_whatsapp", "inbound", "m1"]);
+});
+
+Deno.test("recordInbound: la baja va a la lista de supresión, también sin lead (#352)", async () => {
+  const db = seed();
+  await recordInbound(asDb(db), acc, msg({ text: "No me escriban más por favor" }));
+  assertEquals(db.rpcs.filter((r) => r.fn === "suppression_upsert").length, 1);
+  const db2 = seed();
+  await recordInbound(asDb(db2), acc, msg({ from: "5491100000000", messageId: "wamid.X", text: "BAJA" }));
+  assertEquals(db2.rpcs.filter((r) => r.fn === "suppression_upsert").length, 1, "número sin lead también se suprime");
+  const db3 = seed();
+  await recordInbound(asDb(db3), acc, msg({ text: "Cancelar la reunión de mañana" }));
+  assertEquals(db3.rpcs.length, 0);
+  assertEquals(db3.tables.campaign_enrollments[0].status, "replied");
+  // Una foto cuyo pie dice «baja» no se lee como baja si el lead no lo tecleó como texto.
+  const db4 = seed();
+  await recordInbound(asDb(db4), acc, msg({ text: "BAJA", typedText: null }));
+  assertEquals(db4.rpcs.length, 0);
 });
 
 Deno.test("recordInbound: el botón «Darse de baja» da de baja (WATI y Meta igual)", async () => {

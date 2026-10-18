@@ -17,6 +17,12 @@
  *     atribuye al último paso que el lead recibió.
  *  4. CRM: `respondio` (o `dado_de_baja`), sin pisar una reunión ya agendada
  *     o tomada.
+ *  5. El número escribió por WhatsApp: queda marcado «tiene WhatsApp»
+ *     (_shared/wa-reachability.ts, #350).
+ *  6. Una baja (botón «Darse de baja» o un texto que la pide de verdad,
+ *     suppression.isOptOutText) va a la lista de supresión en TODOS los
+ *     canales con el mensaje como prueba, aunque el número no sea un lead
+ *     (_shared/suppression.ts, #352).
  *  Quitar una reacción no es responder: queda en la bandeja y nada más.
  *
  * Lo propio de cada proveedor entra por `hooks`: WATI comparte tenants entre
@@ -26,6 +32,8 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { findMemberByPhone } from "./wati-history.ts";
+import { markReach } from "./wa-reachability.ts";
+import * as suppression from "./suppression.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -42,6 +50,11 @@ export interface InboundMessage {
   text: string;
   /** Texto del botón que tocó (respuesta rápida de una plantilla, lista…). */
   buttonText?: string | null;
+  /**
+   * Lo que el lead ESCRIBIÓ, para detectar una baja escrita. Sin definir = `text`;
+   * null = no escribió nada (foto sin pie, botón…).
+   */
+  typedText?: string | null;
   /** Reacción: emoji "" = la quitó. */
   reaction?: { emoji: string; target: string | null } | null;
   payload: Json;
@@ -62,16 +75,19 @@ export interface InboundResult {
   stopped: number;
 }
 
-const UNSUB_RE = /^\s*(darse de baja|baja|stop|no me escribas|no me escriban|unsubscribe|cancelar)\b/i;
-
 /**
- * ¿El lead pidió la baja? El botón "Darse de baja" (en cualquier parte del
- * texto del botón) o un mensaje que EMPIEZA con baja / stop / no me escribas…
- * (pura: deno test). "¿y si damos de baja el plan viejo?" no es una baja.
+ * ¿El lead pidió la baja? (pura: deno test). El botón «Darse de baja» de una
+ * plantilla, o un texto que lo pide de verdad (suppression.isOptOutText, #352:
+ * «Cancelar la reunión de mañana» o «Baja el precio» NO son una baja; desde
+ * el 2026-10-17 la baja suprime al lead en todos los canales).
  */
-export function isOptOut(text: unknown, buttonText?: unknown): boolean {
-  if (buttonText && /darse de baja/i.test(String(buttonText))) return true;
-  return UNSUB_RE.test(String(text ?? ""));
+export function optOutKind(typedText: unknown, buttonText?: unknown): "whatsapp_button" | "reply" | null {
+  if (buttonText && /darse de baja/i.test(String(buttonText))) return "whatsapp_button";
+  return suppression.isOptOutText(typedText) ? "reply" : null;
+}
+
+export function isOptOut(typedText: unknown, buttonText?: unknown): boolean {
+  return optOutKind(typedText, buttonText) !== null;
 }
 
 /** Estados del CRM que nunca se pisan con un "respondió": ya están más adelante. */
@@ -160,15 +176,33 @@ export async function recordInbound(db: SupabaseClient, acc: Json, m: InboundMes
   // Reentrega del mismo mensaje: no se repiten los efectos.
   if (m.messageId && (!inserted || !inserted.length)) return { ...none, duplicate: true, memberId: member?.id ?? null };
 
+  // Escribió por WhatsApp: el número tiene WhatsApp (levanta un «sin WhatsApp»
+  // viejo y hace que un fijo con WhatsApp Business deje de omitirse).
+  try { await markReach(db, acc.user_id, m.from, { status: "has_whatsapp", source: "inbound", memberId: member?.id ?? null }); }
+  catch (e) { console.error("[whatsapp-inbound] reach:", (e as Error)?.message ?? e); }
+
   if (hooks.afterInsert) {
     try { await hooks.afterInsert(); } catch (e) { console.error("[whatsapp-inbound] afterInsert:", (e as Error)?.message ?? e); }
   }
   const result: InboundResult = { stored: true, duplicate: false, memberId: member?.id ?? null, optOut: false, stopped: 0 };
-  if (!member) return result; // número sin lead: queda en la bandeja igual
   if (m.reaction && !m.reaction.emoji) return result; // quitar una reacción no es responder
 
-  const optOut = isOptOut(m.text, m.buttonText);
+  const optKind = m.reaction ? null : optOutKind(m.typedText === undefined ? m.text : m.typedText, m.buttonText);
+  const optOut = !!optKind;
   result.optOut = optOut;
+  if (optKind) {
+    // Lista de supresión: el número que escribió y, si es un lead, todos sus
+    // datos, en todos los canales, con el mensaje como prueba. También si el
+    // número no tiene lead: así no se le escribe cuando aparezca en una lista.
+    const { data: full } = member
+      ? await db.from("prospect_list_members").select("id, email, phone, linkedin_url").eq("id", member.id).maybeSingle()
+      : { data: null };
+    await suppression.recordOptOut(db, {
+      userId: acc.user_id, member: full ?? member, phone: m.from, source: optKind, channel: "whatsapp", at: m.at,
+      evidence: { text: m.text, wamid: m.messageId, provider: m.provider, campaign_id: primary?.campaign_id ?? null, enrollment_id: primary?.id ?? null },
+    });
+  }
+  if (!member) return result; // número sin lead: queda en la bandeja igual
   for (const en of list) {
     const { patch, event } = enrollmentPatch(en, m.at, optOut);
     await db.from("campaign_enrollments").update(patch).eq("id", en.id);

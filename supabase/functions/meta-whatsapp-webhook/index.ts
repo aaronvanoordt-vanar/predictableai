@@ -115,6 +115,7 @@ async function handleInbound(db: SupabaseClient, acc: Json, m: meta.WaMessage) {
     messageId: m.wamid,
     at: m.at,
     text: m.text,
+    typedText: m.type === "text" ? m.text : m.caption,
     buttonText: m.buttonText,
     reaction: m.reaction,
     payload: messagePayload(m),
