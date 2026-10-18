@@ -70,7 +70,7 @@ Decisión del dueño (2026-10-17): **Predictable se vuelve Tech Provider de Meta
 Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesión por ítem, una rama y un PR cada una.
 
 **P0**
-- [ ] Waterfall enrichment + verificación de email + normalización de teléfonos latinos — en curso (sesión propia)
+- [x] Waterfall enrichment + verificación de email + normalización de teléfonos latinos — PR #346 (`docs/ENRICHMENT_WATERFALL.md`)
 - [ ] WhatsApp por embedded signup (Tech Provider) + monitor de calidad del número — en curso (sesión propia)
 - [ ] Envío de email propio con warm-up y monitor de entregabilidad — en curso (sesión propia)
 
@@ -81,7 +81,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] LinkedIn nativo
 - [ ] CRM de cuentas y oportunidades
 - [ ] Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos
-- [ ] Revisar la prueba gratis
+- [x] Revisar la prueba gratis
 
 **P2**
 - [ ] Registros públicos de empresas
@@ -89,7 +89,9 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Listas "No llamar"
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
 - [ ] Agendamiento con recordatorios por WhatsApp
-- [ ] Cobro local y CFDI
+- [ ] Cobro local y CFDI (`docs/BILLING_LATAM.md`)
+  - [x] Fase A: factura de Stripe con el número fiscal del cliente, moneda local y OXXO/Pix en recargas (#344; faltan los pasos del Dashboard de Stripe y la consulta al contador sobre el 18-B)
+  - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC
 - [ ] Facturación y créditos por cliente para agencias
 - [ ] Mapa de TAM, señales de LinkedIn y píxel web — Mapa de TAM construido (rama `claude/tam-map`); faltan señales de LinkedIn y píxel web
 

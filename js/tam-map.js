@@ -253,7 +253,7 @@
     if (!state.loaded) { el.innerHTML = ''; return; }
     var html = '<div class="tam-wrap">' + renderHero();
     if (state.migrationPending) {
-      html += '<div class="tam-block tam-warn">El mapa todavía no está activado en tu cuenta (falta aplicar la migración <code>20261017000001_tam_map.sql</code>). La cobertura de tus listas y del Radar ya se ve abajo; medir el mercado en Apollo estará disponible al activarlo.</div>';
+      html += '<div class="tam-block tam-warn">El mapa todavía no está activado en tu cuenta (falta aplicar la migración <code>20261018000002_tam_map.sql</code>). La cobertura de tus listas y del Radar ya se ve abajo; medir el mercado en Apollo estará disponible al activarlo.</div>';
     }
     if (state.partial.length) {
       html += '<div class="tam-block tam-warn">No se pudo leer: ' + esc(state.partial.join(', ')) + '. Los números de abajo no los incluyen.</div>';

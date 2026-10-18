@@ -2,7 +2,7 @@
  * tam-map — Mapa de TAM (2026-10-17, docs/ROADMAP_GTM_OS.md §1 ítem 11).
  *
  * Mide el mercado real del ICP con los totales de Apollo y guarda la foto en
- * tam_maps / tam_accounts (migración 20261017000001). Las reglas de tiers y
+ * tam_maps / tam_accounts (migración 20261018000002). Las reglas de tiers y
  * la cobertura se calculan con _shared/tam.ts (espejo js/tam-rules.js); aquí
  * solo se validan y se guardan.
  *
@@ -120,7 +120,7 @@ Deno.serve(async (req: Request) => {
   ]);
   if (mapRes.error) {
     if (/tam_maps/.test(mapRes.error.message || "")) {
-      return json({ error: "migration_pending", detail: "Falta aplicar la migración 20261017000001_tam_map.sql." }, 503, h);
+      return json({ error: "migration_pending", detail: "Falta aplicar la migración 20261018000002_tam_map.sql." }, 503, h);
     }
     return json({ error: "db_error", detail: mapRes.error.message }, 500, h);
   }
