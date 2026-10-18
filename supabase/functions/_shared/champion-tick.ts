@@ -76,7 +76,7 @@ export async function tickChampions(t: TickContext): Promise<TickResult> {
     .order("next_check_at", { ascending: true, nullsFirst: true })
     .limit(Math.min(PER_TICK, remainingMonth) + 1);
   if (error) {
-    if (/champion_watch/.test(error.message)) throw new Error("Falta aplicar la migración 20261018000003_champion_watch.sql.");
+    if (/champion_watch/.test(error.message)) throw new Error("Falta aplicar la migración 20261018170000_champion_watch.sql.");
     throw new Error("No se pudo leer la lista de champions: " + error.message);
   }
   const due: Json[] = Array.isArray(data) ? data : [];

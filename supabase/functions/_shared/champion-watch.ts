@@ -3,7 +3,7 @@
  *
  * Cuando alguien que ya te compró o te respondió bien cambia de empresa, es
  * la reunión más cálida que existe. La lista de seguimiento vive en
- * `champion_watch` (migración 20261018000003): contactos marcados como
+ * `champion_watch` (migración 20261018170000): contactos marcados como
  * champion, sugeridos al tener una reunión, y contactos de los
  * clientes actuales que el usuario carga. El detector `champion_moves` del
  * Radar (champion-tick.ts) los chequea con Apollo /people/match y, si Apollo
