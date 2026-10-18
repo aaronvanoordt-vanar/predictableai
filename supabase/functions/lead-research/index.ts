@@ -22,8 +22,9 @@
  *
  * Auth: Bearer <user JWT> (validado con auth.getUser), o la service role con
  * { user_id } (la investigación automática de inbound-capture). Con JWT en el deploy.
- * POST { member_id }
- * 200 { research, research_status: 'ready' }
+ * Las automatizaciones (automation-run) la llaman igual.
+ * POST { member_id, user_id? }
+ * 200 { research, research_status: 'ready', credits }
  * 402 insufficient_credits · 404 member not found · 409 already_running
  * 502 llm_error (la verificación de Apollo igual queda guardada)
  * 503 migration_pending (falta 20261008000001_lead_research.sql)
@@ -235,7 +236,8 @@ Deno.serve(withLlmContext(async (req: Request) => {
 
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "").trim();
   // inbound-capture la llama con la service role + user_id (investigación
-  // automática de un lead inbound, «Investigar al llegar» del sitio).
+  // automática de un lead inbound, «Investigar al llegar» del sitio), igual
+  // que automation-run (acción «Investigar con IA» de las automatizaciones).
   let userId: string;
   if (token && (token === SERVICE_KEY || jwtRole(token) === "service_role")) {
     if (typeof body?.user_id !== "string" || !/^[0-9a-f-]{36}$/i.test(body.user_id)) return json({ error: "user_id required" }, 400, h);
@@ -386,7 +388,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     const { error: saveErr } = await release("ready", { ...memberPatch, research });
     if (saveErr) console.error("[lead-research] save:", saveErr.message);
     console.log(`[lead-research] ✓ ${userId} ${memberId} via ${res.engine} · ${EMPLOYMENT_LABEL[employment.status]} (apollo ${apollo.verdict}, web ${out.web_employment?.verdict ?? "—"})`);
-    return json({ research, research_status: "ready" }, 200, h);
+    return json({ research, research_status: "ready", credits: aiCost + (person ? apolloCost : 0) }, 200, h);
   } catch (err) {
     console.error("[lead-research] llm:", err);
     await refundCredits(supa, userId, aiCost, "lead_research_refund");
@@ -394,6 +396,6 @@ Deno.serve(withLlmContext(async (req: Request) => {
     const employment = combineEmployment(m, apollo, null);
     const research = { ...prev, employment, error: "No se pudo completar la investigación: " + str((err as Error)?.message ?? String(err), 200), error_at: new Date().toISOString() };
     await release("error", { ...memberPatch, research });
-    return json({ error: "llm_error", detail: research.error, research, research_status: "error" }, 502, h);
+    return json({ error: "llm_error", detail: research.error, research, research_status: "error", credits: person ? apolloCost : 0 }, 502, h);
   }
 }));

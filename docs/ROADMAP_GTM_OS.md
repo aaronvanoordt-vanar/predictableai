@@ -101,7 +101,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [x] Inbound: widget web (formulario + botón de WhatsApp), enrutamiento a la nómina de Equipo y speed-to-lead — PR #368 (`docs/INBOUND.md`)
 
 **P3**
-- [ ] Automatizaciones de punta a punta
+- [x] Automatizaciones de punta a punta (`docs/AUTOMATIONS.md`)
 - [ ] Contenido en LinkedIn con aprobación
 - [x] Agente de voz IA — PR #365 (`docs/AGENTE_DE_VOZ.md`: Retell + Twilio; usa la lista «No contactar» en el canal de llamadas). Pendiente en producción: migración, despliegue y secrets
 
