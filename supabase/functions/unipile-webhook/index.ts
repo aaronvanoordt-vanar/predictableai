@@ -21,7 +21,8 @@
  *  • message_received: cada mensaje del chat (del lead o propio, también los
  *    que el usuario escribe a mano en LinkedIn) es una fila de inbox_messages
  *    sin duplicar (índice único provider + provider_message_id). Uno del lead
- *    detiene la cadencia, igual que con Dripify.
+ *    detiene la cadencia, igual que con Dripify; un «no me escribas» es baja
+ *    (lista de supresión, `_shared/suppression.ts`).
  *  • new_relation: el lead aceptó la invitación → linkedin_connected_at.
  *  • account_status: credenciales vencidas / checkpoint / detenida → la cuenta
  *    queda retenida (config.send_block sin fecha) hasta reconectar.
@@ -33,6 +34,7 @@ import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-
 import * as unipile from "../_shared/unipile.ts";
 import { linkedinSlug } from "../_shared/dripify.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
+import * as suppression from "../_shared/suppression.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -187,17 +189,33 @@ Deno.serve(async (req) => {
     const isNew = !error && !!inserted?.length;
     if (ev.own || !isNew) return json({ ok: true, new: isNew });
 
+    // «No me escribas» por LinkedIn = baja: enrolamiento `unsubscribed`, CRM
+    // `dado_de_baja` y lista de supresión (todos sus datos, todos los canales).
+    const optOut = suppression.isOptOutText(ev.text);
+    if (optOut) {
+      const { data: full } = member
+        ? await db.from("prospect_list_members").select("id, email, phone, linkedin_url").eq("id", member.id).maybeSingle()
+        : { data: null };
+      await suppression.recordOptOut(db, {
+        userId, member: full, linkedin_url: member?.linkedin_url || leadUrl || undefined, source: "reply", channel: "linkedin", at,
+        evidence: { text: ev.text, campaign_id: primary?.campaign_id ?? null, enrollment_id: primary?.id ?? null },
+      });
+    }
+
     for (const en of ens) {
       const patch: Json = {};
-      if (LIVE.includes(en.status)) { patch.status = "replied"; patch.stop_reason = "Respondió por LinkedIn."; }
+      if (optOut) { patch.status = "unsubscribed"; patch.stop_reason = "El lead pidió no recibir más mensajes por LinkedIn."; patch.next_run_at = null; }
+      else if (LIVE.includes(en.status)) { patch.status = "replied"; patch.stop_reason = "Respondió por LinkedIn."; }
       if (!en.replied_at) { patch.replied_at = at; patch.replied_channel = "linkedin"; }
       // Si respondió, la conexión existe (o el mensaje llegó como InMail).
       const refs = { ...(en.provider_refs ?? {}), unipile_chat_id: ev.chatId };
       patch.provider_refs = refs;
       await db.from("campaign_enrollments").update(patch).eq("id", en.id);
-      await stepEvent(db, en, userId, member?.id ?? null, "replied", ev.text, { chat_id: ev.chatId, message_id: ev.messageId });
+      await stepEvent(db, en, userId, member?.id ?? null, optOut ? "opted_out" : "replied", ev.text, { chat_id: ev.chatId, message_id: ev.messageId });
     }
-    await setCrm(db, member, "respondio", at);
+    if (optOut) {
+      if (member && member.contact_status !== "dado_de_baja") await db.from("prospect_list_members").update({ contact_status: "dado_de_baja", status_changed_at: at }).eq("id", member.id);
+    } else await setCrm(db, member, "respondio", at);
     return json({ ok: true, new: true, matched: ens.length });
   } catch (e) {
     console.error("[unipile-webhook]", ev.kind, e);

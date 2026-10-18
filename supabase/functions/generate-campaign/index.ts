@@ -56,6 +56,7 @@ import { loadIntelligence } from "../_shared/intelligence.ts";
 import { parseLlmJson } from "../_shared/llm-json.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 import * as wati from "../_shared/wati.ts";
+import * as whatsapp from "../_shared/whatsapp.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { spendCredits } from "../_shared/credits.ts";
 import { buildTrainingBlock, loadTraining } from "../_shared/sales-training.ts";
@@ -115,9 +116,12 @@ interface Channels {
 async function loadChannels(supa: Json, userId: string): Promise<Channels> {
   const { data } = await supa.from("channel_accounts").select("provider, status, config").eq("user_id", userId);
   const out: Channels = { wati: false, templates: [], dripify: false, dripifyCampaigns: [], linkedinNative: false };
+  // WhatsApp: la cuenta con la que se envía (Meta directo si está conectada,
+  // si no WATI): las plantillas que la IA propone salen de SU catálogo.
+  const waActive = whatsapp.pickWhatsAppAccount(data as Json[]);
   for (const acc of (data ?? []) as Json[]) {
     if (acc.status !== "connected") continue;
-    if (acc.provider === "wati") {
+    if (acc === waActive) {
       out.wati = true;
       // Todo el catálogo del tenant que todavía puede enviarse: aprobadas
       // primero y después las que Meta sigue revisando. Las muertas

@@ -56,7 +56,7 @@ Precios tomados de las páginas de precios y de directorios el 2026-10-17 (las p
 - `inbox-send`: respuesta por LinkedIn en el chat del lead.
 - `generate-outreach`: la nota de conexión (≤ 300 caracteres). `generate-campaign`: propone pasos nativos si la cuenta está conectada.
 - UI: asistente «Conectar mi cuenta de LinkedIn» (aviso + casilla, ventana emergente, `linkedin-callback.html`), detalle con topes, «Cómo sale» en cada paso del builder, «Enviar por LinkedIn» en la Bandeja.
-- Migración `20261018000001_linkedin_unipile.sql`.
+- Migración `20261018170000_linkedin_unipile.sql`.
 
 ## Lo que se verifica al desplegar (no se pudo localmente)
 

@@ -117,6 +117,7 @@ import { loadIntelligence } from "../_shared/intelligence.ts";
 import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
 import { buildRadarSignalBlock, isRadarMember, radarSignalOf, type RadarLeadSignal } from "../_shared/radar-lead.ts";
 import { buildResearchBlock } from "../_shared/lead-research.ts";
+import { buildAiColumnsBlock } from "../_shared/ai-columns.ts";
 
 function corsHeaders(origin: string) {
   return {
@@ -1393,7 +1394,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
 
   // Seller context: client_brief (preferred) → intake fallback + hub insights,
   // plus the member's Apollo snapshot (persona/empresa) when member_id given.
-  const [{ data: brief }, { data: intake }, { data: hubReports }, memberRes, playbookRes, training] = await Promise.all([
+  const [{ data: brief }, { data: intake }, { data: hubReports }, memberRes, playbookRes, training, aiCellsRes] = await Promise.all([
     supa.from("client_brief").select("*").eq("user_id", user.id).maybeSingle(),
     supa.from("intel_hub_intake")
       .select("company_about, company_solutions, value_proposition, value_problem_solved, value_success_cases, company_industry, company_country, icp_industries, icp_company_sizes, icp_roles, icp_geographies, icp_pain_points, what_to_know, icp_countries, icp_industry_tags, icp_titles, icp_buying_triggers, icp_disqualifiers, commercial_model, commercial_deal_size, commercial_sales_cycle, commercial_primary_cta, outreach_signature, outreach_tone, outreach_channels, outreach_language, social_proof, common_objections")
@@ -1416,6 +1417,14 @@ Deno.serve(withLlmContext(async (req: Request) => {
     // Entrenamiento IA del equipo (metodologías de campaña, estilo, reglas y
     // base de conocimiento). Tolerante: sin tabla o sin fila → bloque vacío.
     loadTraining(supa, user.id),
+    // Columnas IA de Listas: solo respuestas con evidencia. Sin la migración
+    // 20261017000002 el select falla suave y el bloque queda vacío.
+    memberId
+      ? supa.from("list_ai_cells")
+          .select("status, value_bool, value_num, value_text, evidence, list_ai_columns(question, answer_type)")
+          .eq("member_id", memberId).eq("user_id", user.id).eq("status", "done")
+          .order("answered_at", { ascending: false }).limit(20)
+      : Promise.resolve({ data: null }),
   ]);
   const snapshot = (memberRes?.data?.snapshot ?? null) as Snapshot | null;
   // La tabla puede no existir todavía (migración sin aplicar): el select falla
@@ -1428,6 +1437,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     buildLeadContext(lead) +
     buildPersonaContext(snapshot) +
     buildResearchBlock(memberRes?.data ?? null) +
+    buildAiColumnsBlock(aiCellsRes?.data) +
     buildPlaybookContext(playbook) +
     buildTrainingBlock(training, "outreach");
   const userPrompt = contextPrompt + CLOSING_INSTRUCTION;

@@ -63,6 +63,7 @@ import type { ApolloAuth } from "../_shared/apollo-auth.ts";
 import { blockedInPlatformMode } from "../_shared/apollo-platform.ts";
 import { apolloBillableCount, CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
+import { platformRevealsLeft, TRIAL_REVEAL_MESSAGE } from "../_shared/trial-limits.ts";
 import { alignMatches, profileFillPatch } from "../_shared/person-fill.ts";
 import { pickBestPhone } from "../_shared/phone-latam.ts";
 import { activeVerifier, keyFor, providerOrder, publicConfig } from "../_shared/enrichment/registry.ts";
@@ -209,6 +210,15 @@ async function createApolloContact(auth: ApolloAuth, row: Json, match: Json, ema
 // ── modo 'email': bulk_match + contacto en Apollo ──────────────────────────
 
 async function processEmailRows(svc: SupabaseClient, auth: ApolloAuth, userId: string, rows: Json[], listNames: Map<string, string>, stats: Stats) {
+  // Prueba gratis: tope de emails con la key compartida (_shared/trial-limits.ts).
+  if (auth.mode === "platform") {
+    const left = await platformRevealsLeft(svc, userId, "email");
+    if (left < rows.length) {
+      for (const r of rows.slice(Math.max(0, left))) { await finishRow(svc, r.id, failPatch(r, TRIAL_REVEAL_MESSAGE.email)); stats.failed++; }
+      rows = rows.slice(0, Math.max(0, left));
+      if (!rows.length) return;
+    }
+  }
   // Tarifario en _shared/credit-costs.ts: se verifica el peor caso y se
   // cobra solo por los emails que Apollo sí trajo (como apollo-proxy).
   const cost = auth.mode === "platform" ? rows.length * CREDIT_COSTS.enrich_email : 0;
@@ -282,6 +292,15 @@ async function processFullRow(svc: SupabaseClient, auth: ApolloAuth, userId: str
   if (revealPhones && !webhookSecret) {
     console.warn("[enrich-list] APOLLO_WEBHOOK_SECRET no configurado: se enriquece sin teléfono");
     revealPhones = false;
+  }
+  // Prueba gratis: tope de revelados con la key compartida (_shared/trial-limits.ts).
+  if (auth.mode === "platform") {
+    const kind = revealPhones ? "phone" : "email";
+    if ((await platformRevealsLeft(svc, userId, kind)) < 1) {
+      await finishRow(svc, r.id, failPatch(r, TRIAL_REVEAL_MESSAGE[kind]));
+      stats.failed++;
+      return;
+    }
   }
   const cost = auth.mode === "platform"
     ? (revealPhones ? CREDIT_COSTS.enrich_phone : CREDIT_COSTS.enrich_email)

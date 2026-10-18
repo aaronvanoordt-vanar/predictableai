@@ -313,7 +313,7 @@ export function templateFaultCode(detail: unknown): string | null {
 /** Motivo en lenguaje del usuario para un lead retenido por una plantilla que Meta rechaza. */
 export function templateFaultMessage(name: string | null, code: string): string {
   const tpl = name ? `La plantilla "${name}"` : "La plantilla de este paso";
-  return `${tpl} falla en Meta (#${code}) aunque WATI la muestre aprobada: el WhatsApp no llegó. ` +
+  return `${tpl} falla en Meta (#${code}) aunque el catálogo la muestre aprobada: el WhatsApp no llegó. ` +
     "Edita la campaña, elige otra plantilla aprobada para este paso y pulsa «Reintentar retenidos».";
 }
 

@@ -9,19 +9,14 @@
 --   • Índices para que unipile-webhook encuentre la cuenta por account_id y el
 --     lead por el provider_id / chat_id que el motor guarda en provider_refs.
 --
--- Dripify sigue igual. Nada se borra. Idempotente.
+-- Dripify sigue igual. Nada se borra. Idempotente. Va después de
+-- 20261018161500_whatsapp_meta.sql, que crea extend_provider_check.
 
-ALTER TABLE public.channel_accounts
-  DROP CONSTRAINT IF EXISTS channel_accounts_provider_check;
-ALTER TABLE public.channel_accounts
-  ADD CONSTRAINT channel_accounts_provider_check
-  CHECK (provider IN ('wati', 'dripify', 'apollo', 'unipile'));
-
-ALTER TABLE public.inbox_messages
-  DROP CONSTRAINT IF EXISTS inbox_messages_provider_check;
-ALTER TABLE public.inbox_messages
-  ADD CONSTRAINT inbox_messages_provider_check
-  CHECK (provider IN ('wati', 'apollo', 'gmail', 'dripify', 'unipile'));
+-- Se SUMA 'unipile' a lo que cada CHECK ya permita, sin quitar nada (helper
+-- extend_provider_check de 20261018161500_whatsapp_meta.sql): una lista
+-- cerrada aquí borraría 'meta' y cualquier otro proveedor agregado en paralelo.
+SELECT public.extend_provider_check('public.channel_accounts', 'channel_accounts_provider_check', ARRAY['unipile']);
+SELECT public.extend_provider_check('public.inbox_messages', 'inbox_messages_provider_check', ARRAY['unipile']);
 
 CREATE INDEX IF NOT EXISTS channel_accounts_unipile_account_idx
   ON public.channel_accounts (secret)
