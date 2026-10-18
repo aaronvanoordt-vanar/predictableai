@@ -3679,6 +3679,8 @@
     var shown = filteredConversations(convs);
 
     var left = h('div', { class: 'table-card' });
+    // Leads inbound esperando su primer contacto, con cronómetro (js/inbound.js).
+    if (global.inbound && global.inbound.inboxStrip) left.appendChild(global.inbound.inboxStrip());
     var filters = h('div', { class: 'cmp-inbox-filters' });
     var search = h('input', { type: 'search', placeholder: 'Buscar por nombre, empresa o cargo…', 'data-action': 'inbox-filter-q', value: state.inboxFilter.q || '' });
     filters.appendChild(search);
