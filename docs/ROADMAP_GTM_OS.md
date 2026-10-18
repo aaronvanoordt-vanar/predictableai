@@ -84,7 +84,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [x] Revisar la prueba gratis
 
 **P2**
-- [ ] Registros públicos de empresas
+- [x] Registros públicos de empresas (Brasil, México, Colombia; Perú y Chile documentados en `docs/REGISTROS.md`)
 - [ ] APIs oficiales de licitaciones
 - [x] ¿El número está en WhatsApp? antes de gastar plantilla (tipo de línea del normalizador del waterfall + aprendizaje de #131026; no existe validación oficial previa: `docs/OMNICANAL.md`)
 - [x] Listas "No llamar" — lista de supresión por canal + bajas centralizadas + registros oficiales (`docs/COMPLIANCE_LATAM.md`)
