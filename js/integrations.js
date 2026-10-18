@@ -5,7 +5,11 @@
  * siete plataformas por su API oficial, todas a través de la edge function
  * `integrations` (los tokens nunca llegan al navegador):
  *
- *   CRM ............ HubSpot (contactos, upsert por email) · Salesforce (Leads)
+ *   CRM ............ HubSpot (contactos, upsert por email; y de vuelta: lifecycle,
+ *                    deal, dueño y «no contactar») · Salesforce (Leads) ·
+ *                    Pipedrive · Kommo · Zoho CRM · Bitrix24 · RD Station CRM
+ *                    (personas + organizaciones sin duplicar, deal opcional en
+ *                    la etapa que elijas, envío automático de leads nuevos)
  *   Secuencias ..... Amplemarket (a una secuencia o a una lista nueva)
  *   Productividad .. Google Sheets (hoja por lista) · Google Calendar (próximas
  *                    reuniones → Meeting Coach, seguimientos) · Notion (listas y
@@ -35,10 +39,10 @@
   // Espejo de PROVIDERS (supabase/functions/_shared/integrations.ts).
   var PROVIDERS = [
     { id: 'hubspot', name: 'HubSpot', category: 'crm', mono: 'H', color: '#FF7A59',
-      what: 'Envía tus listas como contactos. No duplica: si el email ya existe, lo actualiza.',
+      what: 'Envía tus listas como contactos sin duplicar y trae de vuelta su etapa, deal y dueño. Quien ya es cliente o tiene una oportunidad abierta queda en «no contactar».',
       token: { label: 'Token de la app privada', placeholder: 'pat-na1-…', link: 'https://developers.hubspot.com/docs/api/private-apps',
         steps: ['En HubSpot abre Configuración → Integraciones → Apps privadas → Crear app privada.',
-                'En «Alcances» marca crm.objects.contacts.read y crm.objects.contacts.write.',
+                'En «Alcances» marca crm.objects.contacts.read y crm.objects.contacts.write; para traer cambios de vuelta, también crm.objects.deals.read, crm.objects.companies.read y crm.objects.owners.read.',
                 'Crea la app, copia el token de acceso (empieza con pat-) y pégalo aquí.'] } },
     { id: 'salesforce', name: 'Salesforce', category: 'crm', mono: 'S', color: '#00A1E0',
       what: 'Crea Leads con tus listas. Los que ya existen con el mismo email no se duplican.' },
@@ -58,6 +62,34 @@
         steps: ['Abre notion.so/profile/integrations y crea una integración interna.',
                 'Copia el «Internal Integration Secret» (empieza con ntn_) y pégalo aquí.',
                 'En cada página donde quieras guardar: ••• → Conexiones → agrega tu integración.'] } },
+    { id: 'pipedrive', name: 'Pipedrive', category: 'crm', mono: 'P', color: '#1A1A1A',
+      what: 'Envía tus listas como personas y organizaciones sin duplicar (por email y por empresa) y, si quieres, crea un deal en la etapa que elijas.',
+      token: { label: 'Token personal de la API', placeholder: 'Tu token de Pipedrive', link: 'https://pipedrive.readme.io/docs/how-to-find-the-api-token',
+        steps: ['En Pipedrive abre tu avatar → Preferencias personales → API.',
+                'Copia tu token personal de la API.',
+                'Pégalo aquí: Predictable lo guarda en el servidor y nunca lo muestra.'] } },
+    { id: 'kommo', name: 'Kommo', category: 'crm', mono: 'K', color: '#4C8BF5',
+      what: 'Envía tus listas como contactos y empresas a Kommo (ex amoCRM) sin duplicar y crea un lead en la etapa del embudo que elijas, listo para seguir por WhatsApp.',
+      token: { label: 'Token de larga duración', placeholder: 'eyJ0eXAiOiJKV1Qi…', link: 'https://developers.kommo.com/docs/long-lived-token',
+        account: { label: 'Subdominio de tu cuenta', placeholder: 'tuempresa (de tuempresa.kommo.com)' },
+        steps: ['En Kommo abre Configuración → Integraciones → Crear integración → Integración privada (debes ser administrador).',
+                'En «Llaves y alcances» genera un token de larga duración y cópialo (solo se muestra una vez).',
+                'Escribe el subdominio de tu cuenta y pega el token aquí.'] } },
+    { id: 'zoho', name: 'Zoho CRM', category: 'crm', mono: 'Z', color: '#E42527',
+      what: 'Envía tus listas como contactos y cuentas sin duplicar y crea deals en la etapa que elijas. Funciona con cualquier centro de datos de Zoho (.com, .eu, .in…).' },
+    { id: 'bitrix24', name: 'Bitrix24', category: 'crm', mono: 'B', color: '#2FC6F6',
+      what: 'Envía tus listas como contactos y compañías sin duplicar y crea negociaciones en la etapa del pipeline que elijas.',
+      oauthAccount: { label: 'Dirección de tu Bitrix24', placeholder: 'tuempresa.bitrix24.com' },
+      token: { label: 'URL del webhook entrante', placeholder: 'https://tuempresa.bitrix24.com/rest/1/xxxxxxxx/', link: 'https://apidocs.bitrix24.com/local-integrations/local-webhooks.html',
+        steps: ['En Bitrix24 abre Aplicaciones → Recursos para desarrolladores → Otro → Webhook entrante.',
+                'En permisos marca «CRM (crm)» y guarda.',
+                'Copia la URL completa del webhook (https://…/rest/…/…/) y pégala aquí. Es secreta: Predictable la guarda en el servidor.'] } },
+    { id: 'rdstation', name: 'RD Station CRM', category: 'crm', mono: 'R', color: '#19C1CE',
+      what: 'Envía tus listas como contactos y empresas a RD Station CRM sin duplicar y crea negociaciones en la etapa del embudo que elijas.',
+      token: { label: 'Token de RD Station CRM', placeholder: 'Tu token de la instancia', link: 'https://developers.rdstation.com/reference/crm-v1-token',
+        steps: ['En RD Station CRM abre tu perfil → Integraciones (o Preferencias → API).',
+                'Copia el token de la API del CRM (no el de RD Station Marketing).',
+                'Pégalo aquí.'] } },
     { id: 'clickup', name: 'ClickUp', category: 'productivity', mono: 'U', color: '#7B68EE',
       what: 'Convierte leads y el siguiente paso de tus reuniones en tareas de ClickUp.',
       token: { label: 'Token personal de ClickUp', placeholder: 'pk_…', link: 'https://app.clickup.com/settings/apps',
@@ -70,7 +102,12 @@
     { id: 'engagement', label: 'Prospección y secuencias' },
     { id: 'productivity', label: 'Productividad' },
   ];
-  var LIST_TARGETS = ['hubspot', 'salesforce', 'amplemarket', 'google_sheets', 'notion', 'clickup'];
+  var LIST_TARGETS = ['hubspot', 'salesforce', 'amplemarket', 'google_sheets', 'notion', 'clickup', 'pipedrive', 'kommo', 'zoho', 'bitrix24', 'rdstation'];
+  // CRM de Latam: personas + organizaciones + deal opcional, envío por tandas.
+  var LATAM_CRMS = ['pipedrive', 'kommo', 'zoho', 'bitrix24', 'rdstation'];
+  // Los que pueden recibir solos los leads nuevos de una lista (cron cada 15 min).
+  var AUTO_PUSH = ['hubspot', 'salesforce'].concat(LATAM_CRMS);
+  function isLatam(id) { return LATAM_CRMS.indexOf(id) !== -1; }
   var MEETING_TARGETS = ['notion', 'clickup'];
   var OAUTH_KEY = 'predictable_integration_oauth';
 
@@ -149,8 +186,8 @@
     var client = sb();
     if (!client) return Promise.resolve();
     return client.from('integration_sync_log')
-      .select('id, provider, action, status, counts, detail, target_url, created_at')
-      .order('created_at', { ascending: false }).limit(12)
+      .select('id, provider, action, source_kind, status, counts, detail, target_url, created_at')
+      .order('created_at', { ascending: false }).limit(20)
       .then(function (r) { state.log = r.data || []; });
   }
 
@@ -185,7 +222,14 @@
         challenge = p.challenge;
         verifier = p.verifier;
       }
-      var r = await fn('auth_url', { provider: id, redirect_uri: redirectUri(), state: st, code_challenge: challenge });
+      var account = '';
+      var pp = byId(id);
+      if (pp.oauthAccount) {
+        var ai = shell().querySelector('[data-oauth-account="' + id + '"]');
+        account = ai ? ai.value.trim() : '';
+        if (!account) { setBusy(id, 'connect', false, btn); toast('Escribe primero ' + pp.oauthAccount.label.toLowerCase() + '.', 'error'); return; }
+      }
+      var r = await fn('auth_url', { provider: id, redirect_uri: redirectUri(), state: st, code_challenge: challenge, account: account });
       try { sessionStorage.setItem(OAUTH_KEY, JSON.stringify({ provider: id, state: st, verifier: verifier })); } catch (e) {}
       global.location.assign(r.url);
     } catch (e) {
@@ -199,9 +243,12 @@
     var input = root && root.querySelector('[data-token-input="' + id + '"]');
     var token = input ? input.value.trim() : '';
     if (!token) { toast('Pega el token primero.', 'error'); return; }
+    var accEl = root && root.querySelector('[data-account-input="' + id + '"]');
+    var account = accEl ? accEl.value.trim() : '';
+    if (accEl && !account) { toast('Escribe ' + byId(id).token.account.label.toLowerCase() + '.', 'error'); return; }
     setBusy(id, 'connect', true, btn);
     try {
-      var r = await fn('connect_token', { provider: id, token: token });
+      var r = await fn('connect_token', { provider: id, token: token, account: account });
       state.tokenFor = null;
       toast(byId(id).name + ' conectado' + (r.account_label ? ' (' + r.account_label + ')' : '') + '.', 'success');
       state.open = id;
@@ -262,7 +309,7 @@
     render();
     if (state.open !== id) return;
     if (id === 'google_calendar') loadEvents();
-    else if (['amplemarket', 'notion', 'clickup'].indexOf(id) !== -1 && !state.opts[id]) loadOptions(id, '');
+    else if ((['amplemarket', 'notion', 'clickup', 'hubspot', 'salesforce'].indexOf(id) !== -1 || isLatam(id)) && !state.opts[id]) loadOptions(id, '');
   }
 
   async function loadOptions(id, query) {
@@ -282,6 +329,10 @@
         f.list_id = f.list_id || last.list_id || '';
       } else if (id === 'notion') {
         f.parent_page_id = f.parent_page_id || last.parent_page_id || '';
+      } else if (isLatam(id) && last.deal && !f.deal_stage) {
+        f.deal_on = true;
+        f.deal_stage = last.deal.stage_id || '';
+        f.closing_date = last.deal.closing_date || '';
       }
     } catch (e) {
       state.opts[id] = {};
@@ -322,6 +373,18 @@
     else if (id === 'google_sheets') add(c.rows, 'filas en la hoja');
     else if (id === 'notion') add(c.rows, 'contactos en la página');
     else if (id === 'clickup') add(c.created, 'tareas creadas');
+    if (r.action === 'pull_state') {
+      parts = [];
+      add(c.checked, 'leads revisados'); add(c.matched, 'encontrados en HubSpot');
+      add(c.suppressed, 'nuevos en «no contactar»'); add(c.lifted, 'vuelven a poder contactarse');
+      add(c.paused, 'enrolamientos pausados');
+      return parts.length ? parts.join(' · ') : 'Sin cambios.';
+    }
+    if (isLatam(id)) {
+      add(c.people_created, 'personas nuevas'); add(c.people_existing, 'ya existían');
+      add(c.orgs_created, 'organizaciones nuevas'); add(c.orgs_existing, 'organizaciones existentes');
+      add(c.deals_created, 'deals creados');
+    }
     add(c.skipped, 'omitidos');
     add(c.failed, 'con error');
     return parts.length ? parts.join(' · ') : 'Listo.';
@@ -343,11 +406,27 @@
       opts.list_id = f.list_id;
       var l = ((state.opts.clickup && state.opts.clickup.lists) || []).filter(function (x) { return x.id === f.list_id; })[0];
       if (l) opts.team_id = l.team_id;
+    } else if (isLatam(id)) {
+      var d = dealOptions(id);
+      if (d === false) return;
+      if (d) opts.deal = d;
     }
     setBusy(id, 'export', true, btn);
     state.results[id] = null;
     try {
-      var r = await fn('export_list', { provider: id, list_id: f.list_id_src, options: opts });
+      // Los CRM de Latam van por tandas (límites de ritmo de cada API): se
+      // sigue con el cursor hasta terminar, mostrando el avance.
+      var r = null, cursor = 0, skipped = [], errors = [];
+      for (var round = 0; round < 60; round++) {
+        r = await fn('export_list', { provider: id, list_id: f.list_id_src, options: opts, cursor: cursor });
+        if (round === 0) skipped = r.skipped || [];
+        errors = errors.concat(r.errors || []);
+        if (r.next_cursor === null || r.next_cursor === undefined || r.next_cursor <= cursor) break;
+        cursor = r.next_cursor;
+        if (btn) btn.textContent = 'Enviando… ' + cursor + ' de ' + (r.total_people || '?');
+      }
+      r.skipped = skipped;
+      r.errors = errors.slice(0, 20);
       state.results[id] = { ok: true, kind: 'list', data: r };
       toast('Enviado a ' + byId(id).name + '.', 'success');
       if (id === 'google_sheets') loadOptions('google_sheets');
@@ -358,6 +437,66 @@
       setBusy(id, 'export', false, btn);
       loadLog().then(render, render);
     }
+  }
+
+  /** Deal opcional de los CRM de Latam. null = sin deal; false = falta un dato. */
+  function dealOptions(id) {
+    var f = form(id);
+    if (!f.deal_on) return null;
+    var stages = (state.opts[id] && state.opts[id].stages) || [];
+    var st = stages.filter(function (s) { return s.id === f.deal_stage; })[0];
+    if (!st) { toast('Elige la etapa del deal.', 'error'); return false; }
+    var d = { stage_id: st.id };
+    if (st.pipeline_id) d.pipeline_id = st.pipeline_id;
+    if (id === 'zoho') {
+      if (!f.closing_date) { toast('Zoho pide una fecha de cierre estimada para el deal.', 'error'); return false; }
+      d.closing_date = f.closing_date;
+    }
+    return d;
+  }
+
+  async function syncNow(btn) {
+    setBusy('hubspot', 'sync', true, btn);
+    try {
+      var r = await fn('sync_now', { provider: 'hubspot' });
+      if (state.opts.hubspot) state.opts.hubspot.sync = r.sync;
+      if (r.missingScopes) toast('Falta el permiso para leer deals, dueños y empresas en HubSpot. Reconecta (o agrega esos alcances a tu app privada).', 'error');
+      else toast('HubSpot sincronizado: ' + r.matched + ' leads encontrados, ' + r.suppressed + ' nuevos en «no contactar».', 'success');
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setBusy('hubspot', 'sync', false, btn);
+      loadLog().then(render, render);
+    }
+  }
+
+  async function syncSettings(id, payload, btn, okMsg) {
+    setBusy(id, 'settings', true, btn);
+    try {
+      var r = await fn('sync_settings', Object.assign({ provider: id }, payload));
+      state.opts[id] = Object.assign({}, state.opts[id] || {}, { sync: r.sync });
+      if (okMsg) toast(okMsg, 'success');
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setBusy(id, 'settings', false, btn);
+      render();
+    }
+  }
+
+  function toggleAutoList(id, btn) {
+    var f = form(id);
+    if (!f.list_id_src || f.list_id_src === 'all') return toast('Elige una lista (el envío automático es por lista).', 'error');
+    var sync = (state.opts[id] && state.opts[id].sync) || {};
+    var on = !!(sync.auto_lists && sync.auto_lists[f.list_id_src]);
+    var options = {};
+    if (!on && isLatam(id)) {
+      var d = dealOptions(id);
+      if (d === false) return;
+      if (d) options.deal = d;
+    }
+    syncSettings(id, { auto_list: { list_id: f.list_id_src, enabled: !on, options: options } }, btn,
+      on ? 'Envío automático apagado para esta lista.' : 'Listo: cada lead nuevo de esta lista llegará solo a ' + byId(id).name + ' (cada 15 minutos).');
   }
 
   async function exportMeeting(id, btn) {
@@ -460,6 +599,10 @@
     if (state.tokenFor === p.id && token) {
       html += '<div class="itg-token">';
       html += '<ol class="itg-steps">' + p.token.steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>';
+      if (p.token.account) {
+        html += '<label class="itg-field"><span>' + esc(p.token.account.label) + '</span>' +
+          '<input type="text" autocomplete="off" spellcheck="false" data-account-input="' + p.id + '" placeholder="' + esc(p.token.account.placeholder) + '"></label>';
+      }
       html += '<label class="itg-field"><span>' + esc(p.token.label) + '</span>' +
         '<input type="password" autocomplete="off" spellcheck="false" data-token-input="' + p.id + '" placeholder="' + esc(p.token.placeholder) + '"></label>';
       html += '<div class="itg-row">' +
@@ -471,6 +614,9 @@
     }
     var label = c ? 'Reconectar' : 'Conectar';
     if (oauth) {
+      if (p.oauthAccount) {
+        html += '<input type="text" class="itg-inline-input" autocomplete="off" spellcheck="false" data-oauth-account="' + p.id + '" placeholder="' + esc(p.oauthAccount.placeholder) + '" aria-label="' + esc(p.oauthAccount.label) + '">';
+      }
       html += '<button class="btn ' + (c ? 'btn-ghost' : 'btn-primary') + ' btn-sm" data-act="oauth" data-id="' + p.id + '"' + (busy ? ' disabled' : '') + '>' + label + ' con ' + esc(p.name) + '</button>';
       if (token) html += '<button class="itg-link-btn" data-act="token-open" data-id="' + p.id + '">Usar un token</button>';
     } else if (token) {
@@ -490,7 +636,63 @@
     return '<label class="itg-field"><span>Lista de Predictable</span><select data-f="list_id_src" data-id="' + id + '">' + opts + '</select></label>';
   }
 
+  function dealFields(id) {
+    var f = form(id);
+    var o = state.opts[id];
+    if (!o || o.loading) return '<div class="itg-muted">Cargando etapas de ' + esc(byId(id).name) + '…</div>';
+    if (state.optsErr[id]) return '<div class="itg-err">' + esc(state.optsErr[id]) + ' <button class="itg-link-btn" data-act="reload-opts" data-id="' + id + '">Reintentar</button></div>';
+    var html = '<label class="itg-field itg-check"><input type="checkbox" data-f="deal_on" data-id="' + id + '"' + (f.deal_on ? ' checked' : '') + '><span>Crear también un deal por persona</span></label>';
+    if (!f.deal_on) return html;
+    var stages = o.stages || [];
+    html += stages.length
+      ? '<label class="itg-field"><span>Etapa del deal</span><select data-f="deal_stage" data-id="' + id + '"><option value="">Elige…</option>' +
+        stages.map(function (s) { return '<option value="' + esc(s.id) + '"' + (f.deal_stage === s.id ? ' selected' : '') + '>' + esc(s.name) + '</option>'; }).join('') + '</select></label>'
+      : '<div class="itg-muted">Tu ' + esc(byId(id).name) + ' no tiene etapas abiertas visibles para esta conexión.</div>';
+    if (id === 'zoho') {
+      html += '<label class="itg-field"><span>Fecha de cierre estimada</span><input type="date" data-f="closing_date" data-id="zoho" value="' + esc(f.closing_date || '') + '"></label>';
+    }
+    return html;
+  }
+
+  /** HubSpot de vuelta: estado, «Sincronizar ahora» y el interruptor. */
+  function hubspotSyncPanel() {
+    var o = state.opts.hubspot;
+    var sync = (o && o.sync) || {};
+    var html = '<div class="itg-sub">Traer cambios de HubSpot</div>' +
+      '<p class="itg-muted" style="margin:0">Cada 15 minutos Predictable lee de HubSpot la etapa del ciclo de vida, el deal y su etapa, y el dueño de tus leads (los muestra en Listas). ' +
+      'Quien allá ya es cliente o tiene una oportunidad abierta (él o su empresa) queda en «no contactar»: Campañas no lo enrola y, si ya estaba en una, se pausa con el motivo.</p>';
+    if (!o || o.loading) return html + '<div class="itg-muted">Cargando…</div>';
+    if (sync.missing_scopes) {
+      html += '<div class="itg-err">Tu conexión no tiene permiso para leer deals, dueños y empresas. Reconecta HubSpot (o, con una app privada, agrega crm.objects.deals.read, crm.objects.companies.read y crm.objects.owners.read y pega el token de nuevo).</div>';
+    }
+    var last = sync.last_run_at ? 'Última sincronización: ' + fmtDate(sync.last_run_at, true) + (sync.last_status === 'error' ? ' (falló: ' + (sync.last_error || 'error') + ')' : '') : 'Todavía no se sincroniza.';
+    html += '<div class="itg-row"><button class="btn btn-ghost btn-sm" data-act="sync-now"' + (state.busy['hubspot:sync'] ? ' disabled' : '') + '>Sincronizar ahora</button>' +
+      '<label class="itg-check"><input type="checkbox" data-act-change="pull-toggle"' + (sync.pull !== false ? ' checked' : '') + '><span>Sincronización automática</span></label>' +
+      '<span class="itg-muted">' + esc(last) + '</span></div>';
+    return html;
+  }
+
+  /** Envío automático de los leads nuevos de la lista elegida. */
+  function autoListRow(id) {
+    if (AUTO_PUSH.indexOf(id) === -1) return '';
+    var f = form(id);
+    var sync = (state.opts[id] && state.opts[id].sync) || {};
+    var lists = sync.auto_lists || {};
+    var names = Object.keys(lists).map(function (lid) {
+      var l = state.lists.filter(function (x) { return x.id === lid; })[0];
+      return l ? l.name : null;
+    }).filter(Boolean);
+    var on = f.list_id_src && lists[f.list_id_src];
+    var html = '<div class="itg-row">';
+    if (f.list_id_src && f.list_id_src !== 'all') {
+      html += '<button class="itg-link-btn" data-act="auto-list" data-id="' + id + '">' + (on ? 'Apagar el envío automático de esta lista' : 'Enviar solos los leads nuevos de esta lista') + '</button>';
+    }
+    if (names.length) html += '<span class="itg-muted">Envío automático (cada 15 min): ' + esc(names.join(', ')) + '</span>';
+    return html + '</div>';
+  }
+
   function destinationFields(id) {
+    if (isLatam(id)) return dealFields(id);
     if (['amplemarket', 'clickup', 'notion'].indexOf(id) === -1) return '';
     var f = form(id);
     var o = state.opts[id];
@@ -601,6 +803,8 @@
         if (prev && prev.url) html += '<a class="itg-link" href="' + esc(safeUrl(prev.url)) + '" target="_blank" rel="noopener">Hoja actual ↗</a><span class="itg-muted">Enviar de nuevo la actualiza.</span>';
       }
       html += '</div>';
+      html += autoListRow(id);
+      if (id === 'hubspot') html += hubspotSyncPanel();
       if (MEETING_TARGETS.indexOf(id) !== -1) {
         html += '<div class="itg-sub">Enviar un reporte del Meeting Coach</div>';
         if (!state.meetings.length) html += '<div class="itg-muted">Aún no tienes reuniones con reporte.</div>';
@@ -644,12 +848,15 @@
 
   function logCard() {
     if (!state.log.length) return '';
-    var ACTIONS = { export_list: 'Lista', export_meeting: 'Reporte', calendar_create: 'Evento' };
+    var ACTIONS = { export_list: 'Lista', export_meeting: 'Reporte', calendar_create: 'Evento', pull_state: 'Cambios de vuelta' };
     return '<div class="itg-block"><div class="itg-h">Actividad reciente</div><ul class="itg-log">' +
       state.log.map(function (l) {
         var p = byId(l.provider) || { name: l.provider };
         var cls = l.status === 'ok' ? 'ok' : (l.status === 'partial' ? 'warn' : 'err');
-        return '<li><span class="itg-log-dot ' + cls + '"></span><div class="itg-log-main"><div>' + esc((ACTIONS[l.action] || l.action) + ' → ' + p.name) +
+        var arrow = l.action === 'pull_state' ? (p.name + ' → Predictable') : ((ACTIONS[l.action] || l.action) + ' → ' + p.name);
+        if (l.action === 'pull_state') arrow = (ACTIONS.pull_state) + ': ' + arrow;
+        if (l.source_kind === 'auto_list') arrow += ' (automático)';
+        return '<li><span class="itg-log-dot ' + cls + '"></span><div class="itg-log-main"><div>' + esc(arrow) +
           (l.detail ? ' · ' + esc(l.detail) : '') + '</div><div class="itg-muted">' + esc(fmtDate(l.created_at, true)) +
           (l.status === 'ok' || l.status === 'partial' ? ' · ' + esc(countsText(l.provider, l)) : '') + '</div></div>' +
           (l.target_url ? '<a class="itg-link" href="' + esc(safeUrl(l.target_url)) + '" target="_blank" rel="noopener">Abrir ↗</a>' : '') + '</li>';
@@ -676,12 +883,16 @@
     html += '</div>';
     // Conserva lo que el usuario tecleó en campos que no guardamos en estado.
     var keep = {};
-    root.querySelectorAll('[data-token-input],[data-cal],[data-notion-q]').forEach(function (el) {
-      keep[el.getAttribute('data-token-input') || el.getAttribute('data-cal') || 'nq'] = el.value;
-    });
+    var SEL = '[data-token-input],[data-account-input],[data-oauth-account],[data-cal],[data-notion-q]';
+    function keyOf(el) {
+      var attrs = ['data-token-input', 'data-account-input', 'data-oauth-account', 'data-cal'];
+      for (var i = 0; i < attrs.length; i++) if (el.hasAttribute(attrs[i])) return attrs[i] + ':' + el.getAttribute(attrs[i]);
+      return 'nq';
+    }
+    root.querySelectorAll(SEL).forEach(function (el) { keep[keyOf(el)] = el.value; });
     root.innerHTML = html;
-    root.querySelectorAll('[data-token-input],[data-cal],[data-notion-q]').forEach(function (el) {
-      var k = el.getAttribute('data-token-input') || el.getAttribute('data-cal') || 'nq';
+    root.querySelectorAll(SEL).forEach(function (el) {
+      var k = keyOf(el);
       if (keep[k] !== undefined) el.value = keep[k];
     });
   }
@@ -708,16 +919,22 @@
       loadOptions('notion', form('notion').q);
     }
     else if (act === 'cal-create') createFollowUp(el);
+    else if (act === 'sync-now') syncNow(el);
+    else if (act === 'auto-list') toggleAutoList(id, el);
     else if (act === 'coach') prepareInCoach(el.getAttribute('data-url'));
   }
 
   function onChange(e) {
     var el = e.target;
+    if (el && el.getAttribute && el.getAttribute('data-act-change') === 'pull-toggle') {
+      syncSettings('hubspot', { pull: !!el.checked }, null, el.checked ? 'Sincronización automática encendida.' : 'Sincronización automática apagada.');
+      return;
+    }
     var key = el && el.getAttribute && el.getAttribute('data-f');
     if (!key) return;
     var id = el.getAttribute('data-id');
-    form(id)[key] = el.value;
-    if (key === 'mode' || (key === 'list_id_src' && id === 'google_sheets')) render();
+    form(id)[key] = el.type === 'checkbox' ? el.checked : el.value;
+    if (key === 'mode' || key === 'deal_on' || key === 'list_id_src') render();
   }
 
   function onKey(e) {
@@ -793,6 +1010,10 @@
       '.itg-field>span{font-size:10.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--ink-4)}',
       '.itg-field input,.itg-field select{width:100%;box-sizing:border-box;font:inherit;font-size:12.5px;color:var(--ink);background:var(--surface2);border:1px solid var(--hair-2);border-radius:var(--r-sm,8px);padding:8px 10px;min-width:0}',
       '.itg-field .itg-row input{flex:1}',
+      '.itg-check{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer}',
+      '.itg-field.itg-check input,.itg-check input{width:auto;flex:0 0 auto}',
+      '.itg-check>span{font-size:12.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--ink-2)}',
+      '.itg-inline-input{font:inherit;font-size:12.5px;color:var(--ink);background:var(--surface2);border:1px solid var(--hair-2);border-radius:var(--r-sm,8px);padding:7px 10px;min-width:0;flex:1 1 180px}',
       '.itg-panel{border-top:1px solid var(--hair);margin-top:6px;padding-top:12px;display:flex;flex-direction:column;gap:12px}',
       '.itg-sub{font-size:12.5px;font-weight:700;color:var(--ink-2)}',
       '.itg-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}',
@@ -814,6 +1035,7 @@
       '.itg-log-dot{flex:0 0 8px;height:8px;border-radius:50%;margin-top:5px;background:var(--ink-4)}',
       '.itg-log-dot.ok{background:var(--green)}.itg-log-dot.warn{background:var(--amber,#E0A100)}.itg-log-dot.err{background:var(--red)}',
       '[data-theme="dark"] .itg-mono[style*="#37352F"]{background:#fff;color:#37352F}',
+      '[data-theme="dark"] .itg-mono[style*="#1A1A1A"]{background:#fff;color:#1A1A1A}',
       '@media (max-width:840px){.itg-wrap{padding:16px 16px 90px}.itg-grid{grid-template-columns:1fr}.itg-cards{grid-template-columns:1fr}}',
     ].join('\n');
     document.head.appendChild(st);

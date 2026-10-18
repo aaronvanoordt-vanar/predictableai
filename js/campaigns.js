@@ -868,7 +868,40 @@
     finally { state.membersLoading = false; }
   }
 
+  /**
+   * Supresión del CRM (2026-10-17): antes de enrolar se le pregunta al CRM
+   * conectado con sincronización de vuelta (hoy HubSpot) si alguno ya es
+   * cliente o tiene una oportunidad abierta, y esos no se enrolan. La
+   * consulta es de mejor esfuerzo: si la función no responde se usa lo que
+   * ya trajo la última sincronización (crm_suppressed_at en la fila).
+   */
+  async function crmSuppressedIds(members) {
+    var out = new Set();
+    members.forEach(function (m) { if (m.crm_suppressed_at) out.add(String(m.id)); });
+    try {
+      var ids = members.map(function (m) { return m.id; });
+      for (var i = 0; i < ids.length; i += 500) {
+        var body = await edgeFetch('integrations', { action: 'crm_check', payload: { member_ids: ids.slice(i, i + 500) } });
+        ((body && body.suppressed) || []).forEach(function (s) { out.add(String(s.id)); });
+      }
+    } catch (e) { console.warn('[campaigns] crm_check:', e && e.message); }
+    return out;
+  }
+  function suppressedNote(n) {
+    if (!n) return '';
+    return ' ' + n + (n === 1 ? ' lead no se enroló' : ' leads no se enrolaron') + ': en tu CRM ya ' + (n === 1 ? 'es cliente o tiene' : 'son clientes o tienen') + ' una oportunidad abierta (míralos en Listas).';
+  }
+
   async function enrollMembers(c, members) {
+    var blocked = await crmSuppressedIds(members);
+    var allowed = members.filter(function (m) { return !blocked.has(String(m.id)); });
+    if (!allowed.length) return { enrolled: 0, skipped: 0, suppressed: members.length };
+    var res0 = await enrollAllowed(c, allowed);
+    res0.suppressed = members.length - allowed.length;
+    return res0;
+  }
+
+  async function enrollAllowed(c, members) {
     var uid = await getUid();
     var L = flowLib();
     var flow = campaignFlow(c);
@@ -2832,6 +2865,7 @@
       await loadCampaigns();
       msg = 'Campaña lanzada: ' + res.enrolled + ' leads enrolados' + (already.size ? ' (' + already.size + ' ya estaban)' : '') + '. El motor envía cada minuto dentro de la ventana horaria.';
       msg += outdatedNote(fresh);
+      msg += suppressedNote(res.suppressed);
       var missing = campaignChannels(c).filter(function (k) { return !channelConnected(k); });
       if (missing.length) msg += ' Conecta ' + missing.map(function (k) { return CH[k].label; }).join(' y ') + ' para que esos pasos salgan.';
     }
@@ -4384,7 +4418,7 @@
       setProgress('');
       var parts = [res.enrolled + ' leads enrolados'];
       if (res.skipped) parts.push(res.skipped + ' ya estaban');
-      var warn = outdatedNote(chosen);
+      var warn = outdatedNote(chosen) + suppressedNote(res.suppressed);
       toast(parts.join(' · ') + (c3.status !== 'active' ? '. Activa la campaña para que empiecen los envíos.' : '.') + warn, warn ? 'warn' : 'success');
       return Promise.all([loadCampaigns(), loadEnrollments(c3.id), loadMembersForCampaign(c3)]).then(function () { invalidateAnalytics(); render(); });
     }).then(r2, function (err) { r2(); setProgress(''); throw err; });
