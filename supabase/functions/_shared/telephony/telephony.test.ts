@@ -177,14 +177,22 @@ Deno.test("registro: cada proveedor se describe solo y el id coincide", () => {
   assertEquals(adapterFor("nope"), null);
 });
 
-Deno.test("dnc: la baja bloquea y un registro caído no", async () => {
-  assertEquals((await checkDoNotCall("+525512345678", { userId: "u", country: "MX", contactStatus: "dado_de_baja" })).blocked, true);
-  assertEquals((await checkDoNotCall("+525512345678", { userId: "u", country: "MX", contactStatus: "respondio" })).blocked, false);
-  const blocked = await checkDoNotCall("+525512345678", { userId: "u", country: "MX" }, [
-    () => Promise.reject(new Error("caído")),
-    (n) => Promise.resolve({ blocked: n.startsWith("+52"), source: "REPEP" }),
-  ]);
-  assertEquals(blocked, { blocked: true, source: "REPEP" });
+Deno.test("dnc: la baja, la lista «No contactar» y la lista caída bloquean", async () => {
+  const clean = () => Promise.resolve({ suppressed: false });
+  assertEquals((await checkDoNotCall(null, "+525512345678", { userId: "u", country: "MX", contactStatus: "dado_de_baja" }, clean)).blocked, true);
+  assertEquals((await checkDoNotCall(null, "+525512345678", { userId: "u", country: "MX", contactStatus: "respondio" }, clean)).blocked, false);
+  // Un registro oficial (REPEP) que el usuario subió a su lista de supresión.
+  let asked: Record<string, unknown> = {};
+  const repep = await checkDoNotCall(null, "+525512345678", { userId: "u", country: "MX", member: { email: "ana@acme.mx" } }, (_db, _u, c) => {
+    asked = c as Record<string, unknown>;
+    return Promise.resolve({ suppressed: true, reason: "Está en el REPEP (México)." });
+  });
+  assertEquals(repep, { blocked: true, source: "suppression", reason: "Está en el REPEP (México)." });
+  assertEquals(asked.phone, "+525512345678");
+  assertEquals(asked.email, "ana@acme.mx");
+  // Si la lista no se pudo leer, no se marca a ciegas.
+  assertEquals((await checkDoNotCall(null, "+525512345678", { userId: "u", country: "MX" }, () => Promise.reject(new Error("caído")))).source, "error");
+  assertEquals((await checkDoNotCall(null, "+525512345678", { userId: "u", country: "MX" }, () => Promise.resolve({ suppressed: false, error: "timeout" }))).blocked, true);
 });
 
 Deno.test("resultado: qué detiene la cadencia y qué no", () => {

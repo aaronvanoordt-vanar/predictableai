@@ -121,7 +121,7 @@
       if (!st.status || st.tab === 'config') await loadStatus();
     } catch (e) {
       st.error = /relation .* does not exist|calls|call_tasks/i.test(e.message) && /exist/i.test(e.message)
-        ? 'Falta aplicar la migración de telefonía (20261017000001_telephony.sql).'
+        ? 'Falta aplicar la migración de telefonía (20261018000003_telephony.sql).'
         : e.message;
     }
     render();

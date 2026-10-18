@@ -6,7 +6,7 @@ Fecha: 2026-10-17. Ítems P1 «Dialer nativo con la llamada en el Meeting Coach�
 
 | Pieza | Dónde |
 |---|---|
-| Modelo común de llamadas | migración `20261017000001_telephony.sql`: `calls`, `call_tasks`, `telephony_accounts` |
+| Modelo común de llamadas | migración `20261018000003_telephony.sql`: `calls`, `call_tasks`, `telephony_accounts` |
 | Un adaptador por proveedor | `supabase/functions/_shared/telephony/<proveedor>.ts` + una línea en `registry.ts` |
 | Lo que pide el navegador | edge function `telephony` (con JWT) |
 | Lo que avisan los proveedores | edge function `telephony-webhook` (`--no-verify-jwt`) |
@@ -15,7 +15,7 @@ Fecha: 2026-10-17. Ítems P1 «Dialer nativo con la llamada en el Meeting Coach�
 | Coach en la llamada | `js/realtime-coach.js` recibe el audio de la llamada en vez de la pantalla |
 | Paso `call` de campaña | `_shared/campaign-flow.ts` ↔ `js/campaign-flow.js`, `campaign-run` |
 | Créditos por minuto | `CALL_MINUTE_CREDITS` en `_shared/credit-costs.ts` ↔ `js/credit-costs.js` |
-| Listas «No llamar» | `_shared/telephony/dnc.ts` (punto de enganche; los registros públicos son el ítem P2) |
+| Listas «No llamar» | `_shared/telephony/dnc.ts` → la lista de supresión (`_shared/suppression.ts`, canal `phone`): bajas, exclusiones y los registros oficiales que sube el usuario |
 
 Sumar un proveedor = un archivo en `_shared/telephony/` que exporta `adapter` (con `meta`: nombre, campos que se pegan, pasos guiados, cómo marca y cómo llega el registro) + una línea en `registry.ts`. La tabla guarda `provider` como texto, el asistente de conexión se pinta desde `meta` y el webhook es el mismo para todos (`…/telephony-webhook?provider=<id>&key=<webhook_secret>`).
 
@@ -105,7 +105,7 @@ Una llamada no puede ir «junto con el anterior»: la hace una persona.
 
 ## Pasos que solo puede hacer el dueño
 
-1. **Aplicar la migración** `supabase/migrations/20261017000001_telephony.sql`.
+1. **Aplicar la migración** `supabase/migrations/20261018000003_telephony.sql`.
 2. **Desplegar las funciones:**
    - `telephony` y `campaign-run`, con JWT;
    - `telephony-webhook`, con `--no-verify-jwt` (ya está en `NO_JWT` del workflow);
@@ -145,7 +145,7 @@ Una llamada no puede ir «junto con el anterior»: la hace una persona.
 
 ## Fuera de alcance (a propósito)
 
-- **Listas «No llamar»** (REPEP, RNE, No Llame, No Molestar, Não Me Perturbe): es el ítem P2. Cada registro se agrega como una función en `REGISTRY_CHECKS` de `_shared/telephony/dnc.ts`, sin tocar a quien marca. Hoy solo bloquea al lead dado de baja.
+- **Listas «No llamar»:** no son de este PR. Viven en la lista de supresión «No contactar» (`_shared/suppression.ts`, PR #352): el usuario sube el registro oficial de su país y `checkDoNotCall` lo cruza antes de cada marcación (dialer, conector, power dialer y paso `call`). Si la lista no se puede leer, no se marca.
 - **Llamadas entrantes al dialer nativo.** El token lleva `incoming.allow = false`.
 - **Compra de números desde la app.** La hace el dueño en la consola, por los requisitos regulatorios de cada país.
 - **La IA de cadencias (`generate-campaign`) todavía no propone pasos de llamada.** El usuario los agrega en el builder.

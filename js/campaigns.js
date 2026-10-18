@@ -143,7 +143,7 @@
     emailAccounts: null,
     campaigns: [],
     loading: false,
-    view: 'campaigns',         // 'campaigns' | 'inbox' | 'knowledge' (Entrenar la IA) | 'calls' (Llamadas, js/calls.js)
+    view: 'campaigns',         // 'campaigns' | 'inbox' | 'knowledge' (Entrenar la IA) | 'suppression' (Bajas y exclusiones) | 'calls' (Llamadas, js/calls.js)
     activeId: null,
     builder: null,             // api del builder montado (crear / editar)
     builderHost: null,
@@ -875,6 +875,21 @@
     var flow = campaignFlow(c);
     var first = L.firstNode(flow);
     if (!first) throw new Error('La campaña no tiene pasos.');
+    // Lista de supresión (js/suppression.js → edge function `suppression`):
+    // quien está suprimido en TODOS los canales de la campaña no se enrola;
+    // el suprimido en algunos se enrola y el motor salta esos pasos. Si la
+    // función no responde, se enrola igual: campaign-run vuelve a mirar la
+    // lista antes de cada envío.
+    var blocked = [];
+    var chans = campaignChannels(c);
+    if (chans.length && global.suppression && global.suppression.checkMembers) {
+      var sup = await global.suppression.checkMembers(members.map(function (m) { return m.id; }), chans);
+      if (sup) {
+        blocked = members.filter(function (m) { var r = sup[m.id]; return r && chans.every(function (k) { return r[k]; }); });
+        if (blocked.length) members = members.filter(function (m) { return blocked.indexOf(m) === -1; });
+      }
+    }
+    if (!members.length) return { enrolled: 0, skipped: 0, suppressed: blocked.length };
     var now = Date.now();
     var rows = members.map(function (m) {
       return {
@@ -895,7 +910,13 @@
     if (toFlag.length) {
       await sb().from('prospect_list_members').update({ contact_status: 'en_campana', status_changed_at: new Date().toISOString() }).in('id', toFlag);
     }
-    return { enrolled: enrolledIds.length, skipped: members.length - enrolledIds.length };
+    return { enrolled: enrolledIds.length, skipped: members.length - enrolledIds.length, suppressed: blocked.length };
+  }
+  /** «N no se enrolaron: están suprimidos en todos los canales de la campaña». */
+  function suppressedNote(res) {
+    var n = res && res.suppressed;
+    if (!n) return '';
+    return ' ' + n + (n === 1 ? ' lead no se enroló: está suprimido' : ' leads no se enrolaron: están suprimidos') + ' en todos los canales de la campaña (Bajas y exclusiones).';
   }
 
   async function updateEnrollment(id, patch) {
@@ -1640,7 +1661,7 @@
       return;
     }
     // Llamar no depende de un canal conectado: la vista de Llamadas no espera al asistente.
-    if (!anyConnected() && !state.campaigns.length && !state.builder && state.view !== 'knowledge' && state.view !== 'calls') {
+    if (!anyConnected() && !state.campaigns.length && !state.builder && state.view !== 'knowledge' && state.view !== 'suppression' && state.view !== 'calls') {
       root.appendChild(renderSetupHero());
       return;
     }
@@ -1652,6 +1673,7 @@
     if (state.view === 'inbox') { root.appendChild(renderInbox()); markOpenConvRead(); setTimeout(function () { syncWatiHistory(false); }, 0); }
     else if (state.view === 'knowledge') root.appendChild(knowledgeNode());
     else if (state.view === 'calls') root.appendChild(callsNode());
+    else if (state.view === 'suppression') root.appendChild(suppressionNode());
     else if (state.builder) root.appendChild(state.builderHost);
     else if (state.activeId && findCampaign(state.activeId)) root.appendChild(renderDetail());
     else root.appendChild(renderCampaignCards());
@@ -1957,6 +1979,10 @@
       bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-back-campaigns', text: '← Volver a Campañas' }));
       return bar;
     }
+    if (state.view === 'suppression') {
+      bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Bajas y exclusiones'));
+      return bar;
+    }
     bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas'));
     bar.appendChild(h('div', { class: 'cmp-spacer' }));
     var ks = state.knowledge;
@@ -1967,6 +1993,9 @@
     // cómo se llama (dialer de Predictable o CloudTalk / Aircall / Ringover).
     if (global.Calls) bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-calls',
       title: 'Las llamadas de tus campañas, tu historial y cómo llamas', text: 'Llamadas' }));
+    bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-suppression',
+      title: 'Contactos a los que no se les escribe ni se les llama: bajas, tus exclusiones y registros oficiales.',
+      text: 'Bajas y exclusiones' }));
     var newBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'cmp-new', text: '+ Nueva campaña' });
     if (!anyConnected()) { newBtn.disabled = true; newBtn.title = 'Conecta al menos un canal'; }
     bar.appendChild(newBtn);
@@ -2844,7 +2873,7 @@
       await setCampaignStatus(id, 'active');
       await loadCampaigns();
       msg = 'Campaña lanzada: ' + res.enrolled + ' leads enrolados' + (already.size ? ' (' + already.size + ' ya estaban)' : '') + '. El motor envía cada minuto dentro de la ventana horaria.';
-      msg += outdatedNote(fresh);
+      msg += outdatedNote(fresh) + suppressedNote(res);
       var missing = campaignChannels(c).filter(function (k) { return !channelConnected(k); });
       if (missing.length) msg += ' Conecta ' + missing.map(function (k) { return CH[k].label; }).join(' y ') + ' para que esos pasos salgan.';
     }
@@ -2921,6 +2950,26 @@
   function openCalls(tab) {
     state.callsTab = tab || null;
     setView('calls');
+  }
+  /** «Bajas y exclusiones» (js/suppression.js): se rearma al entrar para releer la lista. */
+  function suppressionNode() {
+    if (!state.suppressionHost) {
+      state.suppressionHost = h('div');
+      if (global.suppression && global.suppression.mount) {
+        global.suppression.mount(state.suppressionHost, {
+          h: h, toast: toast,
+          onBack: function () { state.view = 'campaigns'; saveView('campaigns'); render(); },
+        });
+      } else {
+        state.suppressionHost.appendChild(h('div', { class: 'pros-hint', text: 'El módulo de supresión no cargó. Recarga la página.' }));
+      }
+    }
+    return state.suppressionHost;
+  }
+  function openSuppression() {
+    state.view = 'suppression';
+    state.suppressionHost = null;
+    render();
   }
   function openKnowledge() {
     state.view = 'knowledge';
@@ -4084,6 +4133,7 @@
     if (action === 'cmp-knowledge') return openKnowledge();
     if (action === 'cmp-calls') return openCalls();
     if (action === 'cmp-back-campaigns') { state.view = 'campaigns'; return render(); }
+    if (action === 'cmp-suppression') return openSuppression();
     if (action === 'cmp-open') return openCampaign(id);
     if (action === 'cmp-back') { state.activeId = null; closeBuilder(); return render(); }
     if (action === 'cmp-edit') { var c0 = findCampaign(state.activeId); if (c0) return openBuilder(c0); return; }
@@ -4425,7 +4475,7 @@
       setProgress('');
       var parts = [res.enrolled + ' leads enrolados'];
       if (res.skipped) parts.push(res.skipped + ' ya estaban');
-      var warn = outdatedNote(chosen);
+      var warn = outdatedNote(chosen) + suppressedNote(res);
       toast(parts.join(' · ') + (c3.status !== 'active' ? '. Activa la campaña para que empiecen los envíos.' : '.') + warn, warn ? 'warn' : 'success');
       return Promise.all([loadCampaigns(), loadEnrollments(c3.id), loadMembersForCampaign(c3)]).then(function () { invalidateAnalytics(); render(); });
     }).then(r2, function (err) { r2(); setProgress(''); throw err; });
@@ -4560,7 +4610,7 @@
     flow.nodes.push({ id: L.newId(), type: 'action', channel: 'email', delay: { mode: 'after_prev', days: 0, hours: 0 }, content: { kind: 'ai', angle: 'apertura', instructions: String(b.instructions || '').slice(0, 600) } });
     state.activeId = null;
     openBuilder({ name: String(b.name || 'Campaña desde el Hub').slice(0, 120), status: 'draft', flow: flow }, null);
-    toast('Borrador creado con el hallazgo como instrucción del primer mensaje. Ajusta la cadencia y guarda.', 'info');
+    toast(b.toast ? String(b.toast) : 'Borrador creado con el hallazgo como instrucción del primer mensaje. Ajusta la cadencia y guarda.', 'info');
     return true;
   }
   function applyPendingList() {
@@ -4618,11 +4668,12 @@
     if (built && !state.loading && state.status !== undefined) applyPendingList();
   }
 
-  /** Cambia de vista ('campaigns' | 'inbox' | 'knowledge'); si la pestaña aún no cargó, se aplica al montar. */
+  /** Cambia de vista ('campaigns' | 'inbox' | 'knowledge' | 'suppression'); si la pestaña aún no cargó, se aplica al montar. */
   function setView(view) {
     // 'analytics' era una vista aparte hasta el 2026-10-07: un valor guardado viejo cae en Campañas.
-    var v = view === 'inbox' || view === 'knowledge' || view === 'calls' ? view : 'campaigns';
+    var v = view === 'inbox' || view === 'knowledge' || view === 'suppression' || view === 'calls' ? view : 'campaigns';
     if (v === 'knowledge') state.knowledgeHost = null;
+    if (v === 'suppression') state.suppressionHost = null;
     saveView(v);
     if (!built || state.loading || state.status === undefined) { state.pendingView = v; return; }
     state.view = v;

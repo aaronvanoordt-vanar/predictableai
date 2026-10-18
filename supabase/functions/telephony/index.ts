@@ -100,7 +100,7 @@ async function resolveTarget(db: SupabaseClient, userId: string, p: Json): Promi
   let to: string | null = null;
   if (p?.member_id) {
     if (!UUID.test(String(p.member_id))) throw new TelephonyError("Lead inválido.");
-    const { data } = await db.from("prospect_list_members").select("id, name, company, phone, country, contact_status").eq("id", p.member_id).eq("user_id", userId).maybeSingle();
+    const { data } = await db.from("prospect_list_members").select("id, name, company, phone, email, company_domain, linkedin_url, country, contact_status").eq("id", p.member_id).eq("user_id", userId).maybeSingle();
     if (!data) throw new TelephonyError("El lead no existe.", 404);
     member = data;
     to = toE164(data.phone, data.country);
@@ -110,8 +110,8 @@ async function resolveTarget(db: SupabaseClient, userId: string, p: Json): Promi
     if (!to) throw new TelephonyError("Escribe el número con el prefijo del país (+52…).");
   }
   const country = countryOfE164(to);
-  const dnc = await checkDoNotCall(to, { userId, country, contactStatus: member?.contact_status ?? null });
-  return { to, country, member, blocked: dnc.blocked ? (dnc.reason ?? `Está en la lista «No llamar» (${dnc.source}).`) : null };
+  const dnc = await checkDoNotCall(db, to, { userId, country, contactStatus: member?.contact_status ?? null, member });
+  return { to, country, member, blocked: dnc.blocked ? (dnc.reason ?? "Este número está en tu lista «No contactar».") : null };
 }
 
 async function taskOf(db: SupabaseClient, userId: string, taskId: unknown): Promise<Json | null> {

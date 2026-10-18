@@ -60,7 +60,7 @@ async function twilioVoice(db: SupabaseClient, env: twilio.TwilioEnv, p: Record<
 
   let member: Json = null;
   if (p.member_id && UUID.test(p.member_id)) {
-    const { data } = await db.from("prospect_list_members").select("id, phone, country, contact_status").eq("id", p.member_id).eq("user_id", userId).maybeSingle();
+    const { data } = await db.from("prospect_list_members").select("id, phone, email, company_domain, linkedin_url, country, contact_status").eq("id", p.member_id).eq("user_id", userId).maybeSingle();
     member = data;
   }
   const to = toE164(p.to) ?? (member ? toE164(member.phone, member.country) : null);
@@ -68,8 +68,8 @@ async function twilioVoice(db: SupabaseClient, env: twilio.TwilioEnv, p: Record<
   const country = countryOfE164(to);
   const rate = country ? CALL_MINUTE_CREDITS[country] ?? 0 : 0;
   if (!rate) return xml(twilio.sayTwiml("Ese país todavía no está habilitado en el dialer de Predictable."));
-  const dnc = await checkDoNotCall(to, { userId, country, contactStatus: member?.contact_status ?? null });
-  if (dnc.blocked) return xml(twilio.sayTwiml("Este número está en la lista de no llamar."));
+  const dnc = await checkDoNotCall(db, to, { userId, country, contactStatus: member?.contact_status ?? null, member });
+  if (dnc.blocked) return xml(twilio.sayTwiml(dnc.source === "error" ? "No pudimos comprobar tu lista de no contactar. Intenta de nuevo en un momento." : "Este número está en tu lista de no contactar."));
 
   // Reserva: hasta 30 minutos o lo que alcance el saldo. El <Dial> corta al
   // llegar a lo reservado, así nunca se habla más de lo que se puede pagar.
