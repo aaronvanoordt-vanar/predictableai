@@ -70,7 +70,7 @@ Decisión del dueño (2026-10-17): **Predictable se vuelve Tech Provider de Meta
 Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesión por ítem, una rama y un PR cada una.
 
 **P0**
-- [ ] Waterfall enrichment + verificación de email + normalización de teléfonos latinos — en curso (sesión propia)
+- [x] Waterfall enrichment + verificación de email + normalización de teléfonos latinos — PR #346 (`docs/ENRICHMENT_WATERFALL.md`)
 - [ ] WhatsApp por embedded signup (Tech Provider) + monitor de calidad del número — en curso (sesión propia)
 - [ ] Envío de email propio con warm-up y monitor de entregabilidad — en curso (sesión propia)
 
@@ -86,7 +86,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 **P2**
 - [ ] Registros públicos de empresas
 - [ ] APIs oficiales de licitaciones
-- [x] ¿El número está en WhatsApp? antes de gastar plantilla (heurística por plan de numeración + aprendizaje de #131026; no existe validación oficial previa: `docs/OMNICANAL.md`)
+- [x] ¿El número está en WhatsApp? antes de gastar plantilla (tipo de línea del normalizador del waterfall + aprendizaje de #131026; no existe validación oficial previa: `docs/OMNICANAL.md`)
 - [ ] Listas "No llamar"
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
 - [ ] Agendamiento con recordatorios por WhatsApp

@@ -1,13 +1,14 @@
 /**
  * _shared/wa-reachability.ts — lo aprendido de los envíos de WhatsApp por
- * número (tabla `whatsapp_reachability`, migración 20261017000001).
+ * número (tabla `whatsapp_reachability`, migración 20261018000001).
  *
  * Lo escriben campaign-run (rechazo al enviar), wati-receipts (recibo de
  * entrega o de falla, por webhook o por reconciliación) y wati-webhook (el
  * número escribió). Lo lee campaign-run antes de cada WhatsApp con
- * `reachForMember`, que junta lo aprendido con la heurística de
- * `phone-lines.ts`. Falla suave: sin la tabla, solo cuenta la heurística y
- * los envíos siguen igual.
+ * `reachForMember`, que junta lo aprendido con el tipo de línea de
+ * `phone-lines.ts` (sobre el normalizador del waterfall, `phone-latam.ts`).
+ * Falla suave: sin la tabla, solo cuenta el tipo de línea y los envíos
+ * siguen igual.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as lines from "./phone-lines.ts";
@@ -32,7 +33,10 @@ export async function reachForMember(db: SupabaseClient, userId: string, member:
   return lines.whatsappReach({
     phone: member?.phone,
     country: member?.country,
-    apolloType: lines.apolloPhoneType(member?.snapshot, member?.phone),
+    // phone_type lo guarda el waterfall (phone-latam.ts); las filas anteriores
+    // caen al tipo que Apollo puso a ese número en el snapshot.
+    providerType: (member?.phone_type && member.phone_type !== "unknown" ? member.phone_type : null) ??
+      lines.apolloPhoneType(member?.snapshot, member?.phone),
     learned: await learnedFor(db, userId, member?.phone),
   });
 }

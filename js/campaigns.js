@@ -878,7 +878,7 @@
 
   // ¿Está en WhatsApp? (js/phone-lines.js, el mismo veredicto que aplica
   // campaign-run antes de cada plantilla). null sin teléfono o sin el módulo.
-  var WA_REACH_PILL = { confirmed: 'green', probable: 'blue', unknown: 'gray', fixed: 'amber', no_whatsapp: 'red' };
+  var WA_REACH_PILL = { confirmed: 'green', probable: 'blue', unknown: 'gray', fixed: 'amber', switchboard: 'amber', no_whatsapp: 'red' };
   function waReachOf(m) {
     var PL = window.PhoneLines;
     return PL && hasPhone(m) ? PL.memberReach(m, state.waLearned || null) : null;
@@ -3221,10 +3221,11 @@
       var picked = candidates.filter(function (m) { return state.selected.has(String(m.id)); });
       var pool = picked.length ? picked : candidates;
       var ws = window.PhoneLines.reachSummary(pool.map(waReachOf).filter(Boolean), waTemplateSteps);
-      if (ws.fixed || ws.no_whatsapp) {
+      var waLines = ws.fixed + ws.switchboard;
+      if (waLines || ws.no_whatsapp) {
         hints.push((picked.length ? 'De los seleccionados, ' : 'En esta lista, ') +
-          (ws.fixed ? ws.fixed + (ws.fixed === 1 ? ' es fijo' : ' son fijos') : '') +
-          (ws.fixed && ws.no_whatsapp ? ' y ' : '') +
+          (waLines ? waLines + (waLines === 1 ? ' es fijo o conmutador' : ' son fijos o conmutadores') : '') +
+          (waLines && ws.no_whatsapp ? ' y ' : '') +
           (ws.no_whatsapp ? ws.no_whatsapp + ' ya ' + (ws.no_whatsapp === 1 ? 'falló' : 'fallaron') + ' como sin WhatsApp' : '') +
           ': no reciben la plantilla (' + ws.avoided + ' envío' + (ws.avoided === 1 ? '' : 's') + ' que no se gasta' + (ws.avoided === 1 ? '' : 'n') + ') y pasan directo al siguiente canal.');
       }

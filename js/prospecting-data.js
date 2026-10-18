@@ -1056,6 +1056,20 @@
     return kickChain;
   }
 
+  // La cascada de proveedores vigente (si Apollo no encuentra el dato):
+  // { email: ['apollo', 'prospeo', …], phone: […], verifier, labels, costs }.
+  // null si enrich-list todavía no la conoce (sin desplegar): la UI habla
+  // solo de Apollo, como antes.
+  let enrichProvidersCache = null;
+  async function fetchEnrichProviders() {
+    if (enrichProvidersCache) return enrichProvidersCache;
+    try {
+      const r = await edgeFetch('enrich-list', { action: 'providers' });
+      if (r && Array.isArray(r.email)) enrichProvidersCache = r;
+    } catch (_) { /* sin la función: sin cascada visible */ }
+    return enrichProvidersCache;
+  }
+
   // Servidor primero; `inBrowser` es el respaldo mientras enrich-list o su
   // migración no estén desplegadas (el frente se despliega al mergear, el
   // backend no).
@@ -1715,6 +1729,7 @@
     addManualMember,
     matchByLinkedinUrl,
     enrichMembers,
+    fetchEnrichProviders,
     fetchEnrichmentQueue,
     kickEnrichment,
     updateMember,
