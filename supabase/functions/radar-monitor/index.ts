@@ -357,13 +357,13 @@ async function detectorUnit(supa: Json, claimed: { det: Json; plan: Json }): Pro
         .eq("detector_id", det.id).order("last_seen_at", { ascending: false }).limit(120);
       knownNames = (Array.isArray(known) ? known : []).map((k: Json) => asStr(k.company_name)).filter(Boolean);
     }
-    const row: DetectorRow = { id: det.id, user_id: det.user_id, kind, name: det.name, config: det.config || {}, cursor: det.cursor || {}, weight: Number(det.weight) || 60 };
+    const row: DetectorRow = { id: det.id, user_id: det.user_id, kind, name: det.name, config: det.config || {}, cursor: det.cursor || {}, weight: Number(det.weight) || 60, stats: det.stats || {} };
     const result = await runTick({
       supa, detector: row, ctx: bundle.ctx, countries: Array.isArray(plan.countries) ? plan.countries : [],
       apollo: bundle.apollo, engine: bundle.engine, knownNames, log: (m) => logs.push(m),
     });
     const saved = await persistCandidates(supa, det, plan, bundle, result.candidates);
-    const stats = { ...(det.stats || {}) };
+    const stats = { ...(det.stats || {}), ...(result.statsPatch || {}) };
     const cycleSoFar = (Number(det.stats?.cycle_new) || 0) + saved.inserted;
     stats.total_new = (Number(stats.total_new) || 0) + saved.inserted;
     stats.last_candidates = result.candidates.length;

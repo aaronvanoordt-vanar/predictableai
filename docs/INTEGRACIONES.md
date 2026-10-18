@@ -27,7 +27,7 @@ Si más adelante se quiere que una IA de Predictable consulte el CRM en conversa
 - `integration_connections` — una fila por (usuario, plataforma). Solo la escribe la edge function; el cliente lee columnas no secretas y puede borrar la suya (desconectar). `config` guarda lo no secreto: `instance_url` de Salesforce, `sheets[list_id]` de Google Sheets, `users`/`owner` de Amplemarket, `last_destination` (el último destino elegido).
 - `integration_sync_log` — cada envío con `status` (`ok` / `partial` / `error`), `counts`, `detail` y `target_url`.
 
-Migración: `supabase/migrations/20260923000009_integrations.sql`.
+Migración: `supabase/migrations/20260923000011_integrations.sql`.
 
 ## Tokens
 

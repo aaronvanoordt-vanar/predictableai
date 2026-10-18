@@ -128,7 +128,7 @@
   var CHANNEL_KEY = 'predictable_cana_channel';
   var LIST_KEY = 'predictable_cana_list';
   var ENROLL_LABELS = { active: 'Activo', processing: 'Enviando', replied: 'Respondió', completed: 'Completado', paused: 'Pausado', error: 'Error', unsubscribed: 'Dado de baja' };
-  var SOURCE_LABELS = { search: 'Búsqueda', radar: 'Radar', manual: 'Manual', import: 'Importado', inbox: 'Bandeja', none: 'Sin dato' };
+  var SOURCE_LABELS = { search: 'Búsqueda', radar: 'Radar', manual: 'Manual', import: 'Importado', inbox: 'Bandeja', inbound: 'Inbound (tu web)', none: 'Sin dato' };
   /** Estado del enrolamiento como lo ve el usuario: una respuesta tras terminar la cadencia cuenta como «Respondió». */
   function enrollStatus(e) {
     if (e.replied_at && (e.status === 'completed' || e.status === 'error')) return 'replied';

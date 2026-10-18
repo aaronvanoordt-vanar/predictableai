@@ -104,7 +104,7 @@
  *                   401/403/404, fall back to a direct /v1/messages call
  *                   (claude-haiku-4-5 + web tools, same prompts).
  * Requires migrations: 20260709000002_outreach_agent_config.sql,
- *                      20260819000002_outreach_playbook.sql (optional layer —
+ *                      20260819000004_outreach_playbook.sql (optional layer —
  *                      without it the playbook select fails soft and the
  *                      messages generate exactly as before)
  */
@@ -117,6 +117,7 @@ import { loadIntelligence } from "../_shared/intelligence.ts";
 import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
 import { buildRadarSignalBlock, isRadarMember, radarSignalOf, type RadarLeadSignal } from "../_shared/radar-lead.ts";
 import { buildResearchBlock } from "../_shared/lead-research.ts";
+import { buildChampionHistoryBlock, type ChampionHistory, loadChampionHistory } from "../_shared/champion-watch.ts";
 import { buildAiColumnsBlock } from "../_shared/ai-columns.ts";
 
 function corsHeaders(origin: string) {
@@ -1339,6 +1340,9 @@ Deno.serve(withLlmContext(async (req: Request) => {
   let lead = body.lead;
   let step: StepSpec | null = null;
   let radarSignal: RadarLeadSignal | null = null;
+  // Lead que vino de «Tu champion se mudó a X» (detector champion_moves): la
+  // historia real con esa persona reemplaza al bloque genérico de la señal.
+  let champion: ChampionHistory | null = null;
   if (stepMode) {
     // Modo paso: el lead sale de la fila del miembro (el motor no manda lead).
     if (!memberId) return json({ error: "member_id required in step mode" }, 400, h);
@@ -1351,6 +1355,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     // cubre la investigación puntual y la señal borrada.
     if ((replyMode || signalMode) && isRadarMember(mrow)) radarSignal = await loadRadarSignal(supa, user.id, mrow);
     if (signalMode && !radarSignal) return json({ error: "not_radar_lead", detail: "Este lead no viene de una señal del Radar." }, 409, h);
+    if (radarSignal?.detector_kind === "champion_moves") champion = await loadChampionHistory(supa, user.id, mrow);
     if (!step) {
       return json({ error: replyMode
         ? "reply mode requires channel (email|whatsapp|linkedin) and a conversation with at least one inbound message"
@@ -1461,7 +1466,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
         ].filter(Boolean).join(" "),
       });
       const knowledge = buildKnowledgePrompt(knowledgeHits, "message");
-      const radarBlock = buildRadarSignalBlock(radarSignal, signalMode);
+      const radarBlock = champion ? buildChampionHistoryBlock(champion, signalMode) : buildRadarSignalBlock(radarSignal, signalMode);
       const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + radarBlock + knowledge + learned + closing);
       console.log(`[outreach] ✓ ${replyMode ? "reply" : signalMode ? "signal" : "step"} ${user.id} ${step.channel}/${step.angle} via ${engine} (knowledge: ${knowledgeHits.length} fragmentos de ${knowledgeDocs.length} docs)`);
       const { data: stSpent, error: stSpendErr } = await supa
@@ -1471,7 +1476,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
       } else {
         await supa.from("credit_transactions").insert({ user_id: user.id, delta: -OUTREACH_COST, reason: "outreach_message" });
       }
-      return json({ subject: out.subject, body: out.body, angle_note: out.angle_note ?? null, channel: step.channel, angle: step.angle, knowledge: knowledgeRefs(knowledgeHits), radar_signal: radarSignal ? { headline: radarSignal.headline, detector_name: radarSignal.detector_name } : null, generated_via: "fallback_api" }, 200, h);
+      return json({ subject: out.subject, body: out.body, angle_note: out.angle_note ?? null, channel: step.channel, angle: step.angle, knowledge: knowledgeRefs(knowledgeHits), radar_signal: radarSignal ? { headline: radarSignal.headline, detector_name: radarSignal.detector_name } : null, champion: !!champion, generated_via: "fallback_api" }, 200, h);
     } catch (err) {
       console.error("[outreach] step error:", err);
       return json({ error: "llm_error", detail: String(err) }, 502, h);

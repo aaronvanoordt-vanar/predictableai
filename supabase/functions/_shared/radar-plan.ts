@@ -16,17 +16,30 @@
 
 import { isTechKey, probeKeysSpec } from "./site-probe.ts";
 import { NEWS_WINDOWS, normalizeWindowDays } from "./radar-recency.ts";
+import { normalizeChampionConfig } from "./champion-watch.ts";
 import { ICP_INDUSTRIES, allowOnly } from "./icp-taxonomy.ts";
 
 export type DetectorKind =
   | "news" | "tenders" | "hiring" | "technographics" | "site_probe"
   | "funding" | "leadership" | "growth" | "presence" | "website_visitors" | "web_footprint"
-  | "public_registry";
+  | "public_registry" | "champion_moves";
 
 export const DETECTOR_KINDS: DetectorKind[] = [
   "news", "tenders", "web_footprint", "hiring", "technographics", "site_probe",
-  "funding", "leadership", "growth", "presence", "website_visitors", "public_registry",
+  "funding", "leadership", "growth", "presence", "website_visitors", "public_registry", "champion_moves",
 ];
+
+/**
+ * Kinds que NO diseña la IA del plan: `champion_moves` no busca empresas del
+ * mercado sino que sigue a personas que el usuario ya conoce (su lista de
+ * champions, _shared/champion-watch.ts). Se activa desde la pestaña
+ * Champions del Radar (radar-plan → champion_detector), nunca desde un plan
+ * generado ni desde el Hub.
+ */
+export const USER_ONLY_KINDS: DetectorKind[] = ["champion_moves"];
+export function isPlannerKind(kind: DetectorKind): boolean {
+  return !USER_ONLY_KINDS.includes(kind);
+}
 
 /** Qué necesita cada metodología para correr. */
 export type Requirement = "llm_web" | "apollo" | "apollo_user" | "places" | "probe" | "registry";
@@ -100,6 +113,12 @@ export const KIND_META: Record<DetectorKind, KindMeta> = {
     label: "Registros públicos de empresas",
     description: "Empresas recién constituidas, o que cambiaron de actividad o de tamaño, según el registro oficial de cada país (CNPJ en Brasil, DENUE en México, registro mercantil en Colombia). Llega a la pyme que Apollo no tiene.",
     requires: ["registry"], defaultCadenceHours: 168, identity: "company",
+  },
+  champion_moves: {
+    label: "Tus champions cambian de empresa",
+    description: "Sigue a quienes ya te compraron o te respondieron bien (tu lista de champions): si Apollo los ubica en otra empresa, la nueva empresa es una señal. Con la key compartida, 2 créditos por persona encontrada.",
+    // Una señal por persona y empresa nueva: el titular lleva el nombre.
+    requires: ["apollo"], defaultCadenceHours: 24, identity: "headline",
   },
 };
 
@@ -292,6 +311,8 @@ function normalizeKindConfig(kind: DetectorKind, raw: unknown): Record<string, u
       const intent = strList(c.intent, 3, 10).map((s) => s.toLowerCase()).filter((s) => ["low", "medium", "high"].includes(s));
       return { days, intent: intent.length ? intent : ["high", "medium"], pages: strList(c.pages, 6, 120) };
     }
+    case "champion_moves":
+      return { ...normalizeChampionConfig(c) };
   }
 }
 
@@ -334,7 +355,7 @@ export function normalizePlan(raw: unknown): NormalizedPlan {
   const seen = new Set<string>();
   for (const d of Array.isArray(p.detectors) ? p.detectors : []) {
     const n = normalizeDetector(d);
-    if (!n) continue;
+    if (!n || !isPlannerKind(n.kind)) continue;
     const key = n.kind + "|" + n.name.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
