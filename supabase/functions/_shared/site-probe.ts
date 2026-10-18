@@ -578,6 +578,26 @@ export async function fetchDnsText(domain: string, timeoutMs = 6000): Promise<{ 
 }
 
 /**
+ * TXT de un nombre cualquiera del dominio (p. ej. `google._domainkey.acme.com`
+ * para el monitor de entregabilidad de los buzones propios). [] si no existe,
+ * null si la consulta falló. DNS sobre HTTPS sigue los CNAME (los de DKIM de
+ * Microsoft 365 lo son).
+ */
+export async function fetchTxtRecords(name: string, timeoutMs = 6000): Promise<string[] | null> {
+  const n = String(name || "").trim().toLowerCase();
+  const base = n.replace(/^([a-z0-9_-]+\.)*_domainkey\./, "").replace(/^_dmarc\./, "");
+  if (!n || !/^[a-z0-9_.-]+$/.test(n) || !isPublicHostname(base)) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const recs = await dohQuery(n, "TXT", ctrl.signal);
+    return recs ? recs.map((t) => t.replace(/"\s+"/g, "")) : null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Solo hosts públicos con nombre: nada de IPs literales, localhost ni
  * dominios internos. Los dominios sondeados salen de Apollo (incluidas las
  * cuentas del CRM del propio usuario), así que sin esto el runtime hacía GET
