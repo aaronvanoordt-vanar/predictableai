@@ -9,8 +9,26 @@
  * POST body: { "action": "<name>", "payload": { ... } }
  *
  * Acciones:
- *  • status            {}  → { wati, dripify, apollo: account|null,
- *                              apollo_oauth_available: boolean }
+ *  • status            {}  → { wati, meta, whatsapp, dripify, apollo: account|null,
+ *                              apollo_oauth_available: boolean,
+ *                              meta_signup: {app_id, config_id, graph_version}|null }
+ *      `whatsapp` = la cuenta con la que se envía (Meta si está conectada, si
+ *      no WATI: _shared/whatsapp.ts#pickWhatsAppAccount). `meta_signup` solo
+ *      existe con META_APP_ID + META_APP_SECRET + META_ES_CONFIG_ID puestos:
+ *      sin ellos la opción de Meta no aparece y todo sigue como antes.
+ *  • meta_connect      {code, waba_id, phone_number_id?, business_id?, mode:
+ *      "coexistence"|"new", sender?} → {account}
+ *      Embedded Signup v4 (2026-10-17). Canjea el código del popup por el
+ *      token de negocio (nunca llega al navegador), comprueba con debug_token
+ *      que el WABA es de ese token, registra el número (solo si es nuevo: uno
+ *      de coexistencia ya está registrado), suscribe la app a los webhooks del
+ *      WABA y, en coexistencia, pide a Meta los contactos y el historial de la
+ *      app (solo se puede dentro de las 24 h del alta). Guarda la fila
+ *      provider = 'meta' y lee el catálogo y la calidad del número.
+ *  • set_quality_guard {enabled} → pausar (o no) las campañas si Meta pone la
+ *      calidad del número en rojo (config.quality_guard; por defecto sí).
+ *  sync_templates, create_template, delete_template, set_daily_cap y
+ *  verify_webhook actúan sobre la cuenta de WhatsApp activa (Meta o WATI).
  *  • apollo_auth_url   {redirect_uri} → {url}
  *      URL de consentimiento de Apollo (opción B: cada cliente conecta SU
  *      Apollo). `state` = base64url({uid, nonce, exp}) + "." + HMAC-SHA256.
@@ -60,6 +78,8 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
+import * as meta from "../_shared/meta-whatsapp.ts";
+import * as whatsapp from "../_shared/whatsapp.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as apollo from "../_shared/apollo-auth.ts";
 import { contactIdsFromOtherAccount } from "../_shared/apollo-platform.ts";
@@ -367,6 +387,197 @@ function exampleParamsFor(variables: string[], given: Json): Record<string, stri
   return out;
 }
 
+// ── WhatsApp directo con Meta (Embedded Signup v4) ──────────────────────────
+
+/** Cuenta de WhatsApp con la que se envía (Meta si está conectada, si no WATI). */
+async function loadActiveWhatsApp(db: SupabaseClient, userId: string): Promise<Json | null> {
+  return await whatsapp.loadWhatsAppAccount(db, userId);
+}
+
+function metaEnv() {
+  return {
+    appId: (Deno.env.get("META_APP_ID") ?? "").trim(),
+    appSecret: (Deno.env.get("META_APP_SECRET") ?? "").trim(),
+    configId: (Deno.env.get("META_ES_CONFIG_ID") ?? "").trim(),
+  };
+}
+
+/** Lo que el navegador necesita para abrir el popup (todo público). null = Meta no configurado. */
+function metaSignupConfig(): Json | null {
+  const e = metaEnv();
+  if (!e.appId || !e.appSecret || !e.configId) return null;
+  return { app_id: e.appId, config_id: e.configId, graph_version: meta.graphVersion() };
+}
+
+function randomPin(): string {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return String(buf[0] % 1_000_000).padStart(6, "0");
+}
+
+function metaWebhookUrl(): string {
+  return `${Deno.env.get("SUPABASE_URL")}/functions/v1/meta-whatsapp-webhook`;
+}
+
+async function metaConnect(db: SupabaseClient, userId: string, payload: Json, cors: Record<string, string>): Promise<Response> {
+  const env = metaEnv();
+  if (!metaSignupConfig()) return json({ error: "meta_not_configured", message: "La conexión directa con Meta todavía no está activada en Predictable." }, 503, cors);
+  const code = clean(payload.code, 2000);
+  const wabaId = clean(payload.waba_id, 40).replace(/\D/g, "");
+  let phoneNumberId = clean(payload.phone_number_id, 40).replace(/\D/g, "");
+  const businessId = clean(payload.business_id, 40).replace(/\D/g, "");
+  const coexistence = payload.mode === "coexistence";
+  if (!code || !wabaId) return json({ error: "Meta no devolvió los datos de tu cuenta. Vuelve a abrir la ventana de Meta y termina todos los pasos." }, 400, cors);
+
+  // 1. El código vence en ~30 s y es de un solo uso: se canjea primero.
+  let token = "";
+  try { token = await meta.exchangeCode(env.appId, env.appSecret, code); }
+  catch (e) { return json({ error: "Meta no aceptó la autorización (puede haber vencido): vuelve a intentarlo. " + meta.humanError(e) }, 400, cors); }
+
+  // 2. No se confía en el WABA que manda el navegador: tiene que estar entre
+  //    los que el cliente le dio a este token.
+  let granted: string[] = [];
+  try { granted = await meta.grantedWabaIds(env.appId, env.appSecret, token); } catch (e) { console.warn("[channel-connect] debug_token:", meta.humanError(e)); }
+  const owns = granted.length ? granted.includes(wabaId) : await meta.canReadWaba(token, wabaId);
+  if (!owns) return json({ error: "Esa cuenta de WhatsApp no es la que autorizaste en la ventana de Meta. Vuelve a conectarla." }, 403, cors);
+
+  // 3. El número: el que eligió en el popup o, si no lo informó, el primero
+  //    del WABA. Tiene que ser DE ese WABA: el webhook enruta por
+  //    phone_number_id, y aceptar uno ajeno desviaría las respuestas de otro
+  //    negocio a esta cuenta.
+  let phones: meta.PhoneInfo[] = [];
+  try { phones = await meta.listPhones(token, wabaId); }
+  catch (e) { return json({ error: "No pudimos leer los números de tu cuenta de WhatsApp: " + meta.humanError(e) }, 400, cors); }
+  if (!phoneNumberId) phoneNumberId = phones[0]?.id ?? "";
+  if (!phoneNumberId) return json({ error: "Tu cuenta de WhatsApp Business no tiene un número todavía. Vuelve a abrir la ventana de Meta y agrega tu número." }, 400, cors);
+  if (!phones.some((p) => p.id === phoneNumberId)) return json({ error: "Ese número no pertenece a la cuenta de WhatsApp que autorizaste. Vuelve a conectarlo." }, 403, cors);
+  const { data: taken } = await db.from("channel_accounts").select("user_id")
+    .eq("provider", "meta").eq("status", "connected").eq("config->>phone_number_id", phoneNumberId).neq("user_id", userId).limit(1);
+  if (taken?.length) return json({ error: "Ese número de WhatsApp ya está conectado en otra cuenta de Predictable. Desconéctalo allá primero." }, 409, cors);
+
+  const { data: prev } = await db.from("channel_accounts").select("*").eq("user_id", userId).eq("provider", "meta").maybeSingle();
+  const prevSecret = prev ? whatsapp.metaSecret(prev) : { access_token: "", pin: "" };
+  const samePhone = prev?.config?.phone_number_id === phoneNumberId;
+  const pin = samePhone && prevSecret.pin ? prevSecret.pin : randomPin();
+
+  let phone: meta.PhoneInfo | null = null;
+  try { phone = await meta.getPhone(token, phoneNumberId); } catch (e) { console.warn("[channel-connect] phone:", meta.humanError(e)); }
+
+  // 4. Registro en la Cloud API: solo un número NUEVO. Uno de coexistencia
+  //    ya está registrado (y sigue en la app del teléfono): no se toca.
+  const problems: string[] = [];
+  let registered = coexistence || (samePhone && !!prev?.config?.registered_at);
+  if (!registered) {
+    try { await meta.registerPhone(token, phoneNumberId, pin); registered = true; }
+    catch (e) { problems.push("No pudimos activar el número en la API de WhatsApp: " + meta.humanError(e)); }
+  }
+
+  // 5. Sin esta suscripción Meta no manda ni respuestas ni recibos, y no avisa.
+  let subscribed = false;
+  try { await meta.subscribeApp(token, wabaId); subscribed = true; }
+  catch (e) { problems.push("No pudimos suscribir Predictable a los mensajes de tu cuenta: " + meta.humanError(e)); }
+
+  // 6. Coexistencia: contactos e historial de la app (una vez, dentro de 24 h).
+  const coex: Json = coexistence ? { ...(prev?.config?.coexistence ?? {}), onboarded_at: prev?.config?.coexistence?.onboarded_at ?? new Date().toISOString() } : null;
+  if (coexistence) {
+    for (const t of ["smb_app_state_sync", "history"] as const) {
+      if (coex[t]?.request_id) continue;
+      try { coex[t] = { request_id: await meta.requestSmbSync(token, phoneNumberId, t), at: new Date().toISOString() }; }
+      catch (e) { coex[t] = { error: meta.humanError(e), at: new Date().toISOString() }; }
+    }
+  }
+
+  const sender = {
+    name: clean(payload.sender?.name, 80) || prev?.config?.sender?.name || "",
+    role: clean(payload.sender?.role, 80) || prev?.config?.sender?.role || "",
+    company: clean(payload.sender?.company, 80) || prev?.config?.sender?.company || "",
+  };
+  const config: Json = {
+    ...(samePhone ? (prev?.config ?? {}) : {}),
+    waba_id: wabaId,
+    phone_number_id: phoneNumberId,
+    business_id: businessId || prev?.config?.business_id || null,
+    mode: coexistence ? "coexistence" : "cloud_api",
+    phone: phone?.display_phone_number || (samePhone ? prev?.config?.phone : "") || "",
+    verified_name: phone?.verified_name || "",
+    phone_numbers: [{ phone: whatsapp.digits(phone?.display_phone_number), waba_id: wabaId, enabled: true }],
+    sender,
+    registered_at: registered ? (samePhone && prev?.config?.registered_at) || new Date().toISOString() : null,
+    webhook: { ...(samePhone ? prev?.config?.webhook ?? {} : {}), url: metaWebhookUrl(), registered: subscribed, subscribed_at: subscribed ? new Date().toISOString() : null },
+    ...(coex ? { coexistence: coex } : {}),
+    connected_at: new Date().toISOString(),
+  };
+  if (!samePhone) {
+    // Otro número: lo de antes (bloqueos, fallas de plantilla) era de aquel.
+    for (const k of ["send_block", "template_faults", "quality", "templates"]) delete config[k];
+  }
+  const { data: row, error } = await db.from("channel_accounts").upsert({
+    user_id: userId,
+    provider: "meta",
+    config,
+    secret: JSON.stringify({ access_token: token, pin }),
+    webhook_secret: prev?.webhook_secret || randomSecret(),
+    status: problems.length ? "error" : "connected",
+    last_error: problems.length ? problems.join(" ").slice(0, 500) : null,
+  }, { onConflict: "user_id,provider" }).select("*").single();
+  if (error) {
+    const dup = /channel_accounts_meta_phone_uniq|duplicate key/i.test(error.message);
+    return json({ error: dup ? "Ese número de WhatsApp ya está conectado en otra cuenta de Predictable." : "No se pudo guardar la cuenta: " + error.message }, dup ? 409 : 500, cors);
+  }
+  const acc = await whatsapp.syncMetaAccount(db, row, { templates: true, phone: true });
+  return json({ account: publicRow({ ...row, config: acc.config }), problems }, 200, cors);
+}
+
+/** sync_templates / create_template / delete_template / verify_webhook sobre una cuenta de Meta. */
+async function metaTemplateAction(db: SupabaseClient, acc: Json, action: string, payload: Json, cors: Record<string, string>): Promise<Response> {
+  const creds = whatsapp.metaCreds(acc);
+  const reload = async () => {
+    const { data } = await db.from("channel_accounts").select("*").eq("id", acc.id).maybeSingle();
+    return publicRow(data);
+  };
+  if (action === "sync_templates") {
+    await whatsapp.syncMetaAccount(db, acc, { templates: true, phone: true });
+    return json({ account: await reload() }, 200, cors);
+  }
+  if (action === "verify_webhook") {
+    // Volver a suscribir la app es idempotente: es lo único que se puede
+    // "reintentar" del lado de Meta (la URL del webhook es de la app).
+    let subscribed = false, err: string | null = null;
+    try { await meta.subscribeApp(creds.token, creds.wabaId); subscribed = true; } catch (e) { err = meta.humanError(e); }
+    const webhook = { ...(acc.config?.webhook ?? {}), url: metaWebhookUrl(), registered: subscribed || !!acc.config?.webhook?.registered, error: err, checked_at: new Date().toISOString() };
+    await patchChannelConfig(db, acc.id, { webhook });
+    return json({ account: await reload() }, 200, cors);
+  }
+  if (action === "create_template") {
+    let draft: wati.TemplateDraft;
+    try { draft = wati.validateTemplateDraft(payload); } catch (e) { return json({ error: whatsapp.humanError(e) }, 400, cors); }
+    let existing: meta.TemplateRow[] = [];
+    try { existing = await meta.listTemplates(creds.token, creds.wabaId); } catch (e) { return json({ error: meta.humanError(e) }, 400, cors); }
+    const clash = existing.find((t) => t.name === draft.name);
+    if (clash) {
+      return json({
+        error: /delet/i.test(clash.status)
+          ? `Ya tuviste una plantilla llamada "${draft.name}" y la borraste. Meta no libera ese nombre en 30 días: elige uno distinto.`
+          : `Ya tienes una plantilla llamada "${draft.name}" (${clash.status}). Elige otro nombre.`,
+      }, 400, cors);
+    }
+    try { await meta.createTemplate(creds.token, creds.wabaId, draft, exampleParamsFor(draft.variables, payload.examples)); }
+    catch (e) { return json({ error: "Meta no aceptó la plantilla: " + meta.humanError(e) }, 400, cors); }
+    await whatsapp.syncMetaAccount(db, acc, { templates: true });
+    return json({ account: await reload(), name: draft.name }, 200, cors);
+  }
+  // delete_template
+  const name = clean(payload.name, 200);
+  if (!name) return json({ error: "Falta el nombre de la plantilla." }, 400, cors);
+  const language = /^[a-z]{2}(_[A-Za-z]{2})?$/.test(String(payload.language ?? "")) ? String(payload.language) : "";
+  // Con idioma se borra solo esa traducción (hsm_id); sin él, todas las del nombre.
+  const row = language ? (acc.config?.templates?.all ?? []).find((t: Json) => t?.name === name && t?.language === language) : null;
+  try { await meta.deleteTemplate(creds.token, creds.wabaId, name, row?.id || undefined); }
+  catch (e) { return json({ error: "Meta no pudo borrarla: " + meta.humanError(e) }, 400, cors); }
+  await whatsapp.syncMetaAccount(db, acc, { templates: true });
+  return json({ account: await reload() }, 200, cors);
+}
+
 // ── Handler ─────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -394,13 +605,35 @@ Deno.serve(async (req) => {
 
   try {
     if (action === "status") {
-      const [w, d, a] = await Promise.all([loadAccount("wati"), loadAccount("dripify"), loadAccount("apollo")]);
+      const [w, m, d, a] = await Promise.all([loadAccount("wati"), loadAccount("meta"), loadAccount("dripify"), loadAccount("apollo")]);
       return json({
         wati: publicRow(w),
+        meta: publicRow(m),
+        whatsapp: publicRow(whatsapp.pickWhatsAppAccount([w, m])),
         dripify: publicRow(d),
         apollo: publicRow(a),
         apollo_oauth_available: apollo.oauthAvailable(),
+        meta_signup: metaSignupConfig(),
       }, 200, cors);
+    }
+
+    if (action === "meta_connect") {
+      return await metaConnect(db, user.id, payload, cors);
+    }
+
+    if (action === "set_quality_guard") {
+      const acc = await loadAccount("meta");
+      if (!acc || acc.status !== "connected") return json({ error: "whatsapp_not_connected" }, 428, cors);
+      await patchChannelConfig(db, acc.id, { quality_guard: payload.enabled !== false });
+      const { data: row } = await db.from("channel_accounts").select("*").eq("id", acc.id).maybeSingle();
+      return json({ account: publicRow(row) }, 200, cors);
+    }
+
+    // Plantillas, tope y webhook de una cuenta de Meta: mismas acciones que
+    // WATI, contra la Graph API.
+    if (["sync_templates", "create_template", "delete_template", "verify_webhook"].includes(action)) {
+      const active = await loadActiveWhatsApp(db, user.id);
+      if (active?.provider === "meta") return await metaTemplateAction(db, active, action, payload, cors);
     }
 
     if (action === "apollo_auth_url") {
@@ -713,7 +946,7 @@ Deno.serve(async (req) => {
     // Tope diario de envíos de WhatsApp (config.daily_cap). null = usar el de
     // cada campaña; 0 = sin tope. campaign-run lo aplica sobre el de la campaña.
     if (action === "set_daily_cap") {
-      const acc = await loadAccount("wati");
+      const acc = await loadActiveWhatsApp(db, user.id);
       if (!acc) return json({ error: "wati_not_connected" }, 428, cors);
       const raw = payload.daily_cap;
       if (raw === null || raw === undefined || raw === "") {
@@ -790,7 +1023,7 @@ Deno.serve(async (req) => {
 
     if (action === "disconnect") {
       const provider = String(payload.provider ?? "");
-      if (!["wati", "dripify", "apollo"].includes(provider)) return json({ error: "provider inválido" }, 400, cors);
+      if (!["wati", "dripify", "apollo", "meta"].includes(provider)) return json({ error: "provider inválido" }, 400, cors);
       // La fila se conserva (status 'disconnected', credencial borrada) para
       // que webhook_secret sobreviva: WATI solo sabe CREAR webhooks (listar o
       // borrar responde 405 y el tenant tiene tope) y Dripify tiene la URL
