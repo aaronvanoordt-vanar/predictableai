@@ -7,7 +7,7 @@
 
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
-  CONTACT_STATUSES, EVENT_TYPES, OPERATIONS, ROUTES, hmacSha256Hex, isSafeWebhookUrl, matchRoute, signatureHeader, toolName,
+  CONTACT_COLUMNS, CONTACT_STATUSES, EVENT_TYPES, OPERATIONS, ROUTES, hmacSha256Hex, isSafeWebhookUrl, matchRoute, signatureHeader, toolName,
 } from "./devapi.ts";
 
 const root = new URL("../../../", import.meta.url);
@@ -36,8 +36,9 @@ Deno.test("cada ruta apunta a una operación existente", () => {
 Deno.test("tipos de evento: devapi.ts = openapi.json = migración = js/developers.js", () => {
   const spec = JSON.parse(read("openapi.json"));
   assertEquals([...spec.components.schemas.Event.properties.type.enum].sort(), [...EVENT_TYPES].sort());
-  const sql = read("supabase/migrations/20260923000010_developer_api.sql");
-  const emitted = new Set([...sql.matchAll(/'((?:contact|message|signal|enrollment|meeting)\.[a-z_]+)'/g)].map((m) => m[1]));
+  // Los triggers que emiten viven en la migración de la API y en la del CRM.
+  const sql = read("supabase/migrations/20260923000010_developer_api.sql") + read("supabase/migrations/20261017100001_crm_accounts_opportunities.sql");
+  const emitted = new Set([...sql.matchAll(/'((?:contact|message|signal|enrollment|meeting|company|opportunity|task)\.[a-z_]+)'/g)].map((m) => m[1]));
   assertEquals([...emitted].sort(), [...EVENT_TYPES].sort());
   const js = read("js/developers.js");
   for (const e of EVENT_TYPES) assert(js.includes(`'${e}'`), `js/developers.js no lista ${e}`);
@@ -90,4 +91,19 @@ Deno.test("firma HMAC: vector conocido y formato de cabecera", async () => {
   assertEquals(await hmacSha256Hex("Jefe", "what do ya want for nothing?"), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
   const h = await signatureHeader("whsec_test", '{"a":1}', 1700000000);
   assertEquals(h, `t=1700000000,v1=${await hmacSha256Hex("whsec_test", '1700000000.{"a":1}')}`);
+});
+
+Deno.test("columnas de contacto = api_contact_json() vigente (migración del CRM)", () => {
+  const sql = read("supabase/migrations/20261017100001_crm_accounts_opportunities.sql");
+  const fn = sql.slice(sql.indexOf("FUNCTION public.api_contact_json"), sql.indexOf("$$;", sql.indexOf("FUNCTION public.api_contact_json")));
+  const cols = [...fn.matchAll(/'([a-z_]+)', m\.([a-z_]+)/g)].map((m) => m[1]);
+  assertEquals([...cols].sort(), CONTACT_COLUMNS.split(",").sort());
+});
+
+Deno.test("CRM: rutas nuevas resuelven", () => {
+  const id = "0b7f2f5c-1d7a-4d5e-9d0e-6a0f0d8b1c2e";
+  assertEquals(matchRoute("GET", "/v1/pipeline"), { op: "pipeline.get", params: {} });
+  assertEquals(matchRoute("POST", "/v1/companies"), { op: "companies.upsert", params: {} });
+  assertEquals(matchRoute("PATCH", `/v1/opportunities/${id}`), { op: "opportunities.update", params: { opportunity_id: id } });
+  assertEquals(matchRoute("PATCH", `/v1/tasks/${id}`), { op: "tasks.update", params: { task_id: id } });
 });
