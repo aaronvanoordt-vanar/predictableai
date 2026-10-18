@@ -94,7 +94,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Mapa de TAM, señales de LinkedIn y píxel web
 
 **P3**
-- [ ] Automatizaciones de punta a punta
+- [x] Automatizaciones de punta a punta (`docs/AUTOMATIONS.md`)
 - [ ] Contenido en LinkedIn con aprobación
 - [ ] Agente de voz IA
 

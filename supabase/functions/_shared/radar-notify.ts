@@ -15,6 +15,12 @@
  *                         de compra nuevas. La mejor: {{top}}. Míralas aquí:
  *                         {{link}}"
  *   RADAR_WATI_CHANNEL   (opcional) número del canal si el tenant tiene varios
+ *   AUTOMATION_WATI_TEMPLATE (opcional) plantilla del aviso «Avisarme» de las
+ *                        automatizaciones, por el mismo tenant. Variables:
+ *                        {{name}}, {{rule}}, {{detail}}, {{link}}. Texto
+ *                        sugerido: "Hola {{name}}, tu automatización
+ *                        «{{rule}}» tiene novedades: {{detail}}. Míralo aquí:
+ *                        {{link}}"
  *   APP_URL              (opcional) base del link, default
  *                        https://predictableai.vanarsi.com
  *
@@ -46,25 +52,30 @@ export interface NotifyInput {
   localId: string;
 }
 
-export async function sendRadarWhatsApp(input: NotifyInput): Promise<{ sent: boolean; error?: string }> {
+/**
+ * Una plantilla aprobada por el tenant de WATI de la plataforma a un número
+ * del usuario. La usan el aviso del Radar y el de las automatizaciones
+ * (AUTOMATION_WATI_TEMPLATE). Nunca lanza.
+ */
+export async function sendPlatformTemplate(input: {
+  phone: string;
+  template: string;
+  params: Record<string, string>;
+  localId: string;
+  broadcast: string;
+}): Promise<{ sent: boolean; error?: string }> {
   const c = creds();
-  const template = (Deno.env.get("RADAR_WATI_TEMPLATE") || "").trim();
-  if (!c || !template) return { sent: false, error: "RADAR_WATI_* no configurado" };
+  const template = input.template.trim();
+  if (!c || !template) return { sent: false, error: "WhatsApp de la plataforma no configurado" };
   const phone = digits(input.phone);
   if (phone.length < 8) return { sent: false, error: "teléfono inválido" };
-  const link = (Deno.env.get("APP_URL") || "https://predictableai.vanarsi.com").replace(/\/+$/, "") + "/index.html#radar";
   try {
     const r = await sendTemplate(c, {
       templateName: template,
-      broadcastName: `radar_${input.localId.slice(0, 12)}`,
+      broadcastName: input.broadcast,
       phone,
       localMessageId: input.localId,
-      params: {
-        name: input.name || "",
-        count: String(input.count),
-        top: input.top.slice(0, 160),
-        link,
-      },
+      params: input.params,
       channel: Deno.env.get("RADAR_WATI_CHANNEL") || undefined,
     });
     if (!r.accepted) return { sent: false, error: r.errors.join("; ") || "WATI rechazó el envío" };
@@ -72,6 +83,28 @@ export async function sendRadarWhatsApp(input: NotifyInput): Promise<{ sent: boo
   } catch (e) {
     return { sent: false, error: (e as Error)?.message || String(e) };
   }
+}
+
+/** Base de los enlaces que van en los avisos. */
+export function appUrl(path: string): string {
+  return (Deno.env.get("APP_URL") || "https://predictableai.vanarsi.com").replace(/\/+$/, "") + path;
+}
+
+export async function sendRadarWhatsApp(input: NotifyInput): Promise<{ sent: boolean; error?: string }> {
+  const template = (Deno.env.get("RADAR_WATI_TEMPLATE") || "").trim();
+  if (!creds() || !template) return { sent: false, error: "RADAR_WATI_* no configurado" };
+  return await sendPlatformTemplate({
+    phone: input.phone,
+    template,
+    broadcast: `radar_${input.localId.slice(0, 12)}`,
+    localId: input.localId,
+    params: {
+      name: input.name || "",
+      count: String(input.count),
+      top: input.top.slice(0, 160),
+      link: appUrl("/index.html#radar"),
+    },
+  });
 }
 
 /**
