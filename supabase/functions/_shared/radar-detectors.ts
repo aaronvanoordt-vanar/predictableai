@@ -50,6 +50,7 @@ import { FOOTPRINT_SYSTEM, RESEARCH_SYSTEM, filterByWindow, shapeResearchCompani
 import {
   detectTech, detectedLabels, evaluateProbeRules, fetchDnsText, fetchHomepage, probeHeadline, probeNeeds, type ProbeRules,
 } from "./site-probe.ts";
+import { tickChampions } from "./champion-tick.ts";
 import { maxCompaniesOf, type DetectorKind, type RegistryEvent } from "./radar-plan.ts";
 import {
   compactCompany, normalizeSearch, REGISTRIES, SIZE_LABEL, brState, mxState, registryForCountry,
@@ -87,6 +88,8 @@ export interface DetectorRow {
   config: Json;
   cursor: Json;
   weight: number;
+  /** radar_detectors.stats (lo lee champion_moves para su tope mensual). */
+  stats?: Json;
 }
 
 export interface TickContext {
@@ -106,12 +109,15 @@ export interface TickResult {
   cursor: Json;
   done: boolean;
   note?: string;
+  /** Claves que el motor mezcla en radar_detectors.stats (sobrevive a "Buscar ahora", que vacía el cursor). */
+  statsPatch?: Record<string, unknown>;
 }
 
 /** Cuánto suele tardar un tick de cada kind: el motor no arranca uno si no le queda ese tiempo. */
 export const TICK_ESTIMATE_MS: Record<DetectorKind, number> = {
   news: 100_000, tenders: 100_000, web_footprint: 100_000, hiring: 20_000, technographics: 20_000, site_probe: 45_000,
   funding: 20_000, leadership: 20_000, growth: 20_000, presence: 20_000, website_visitors: 20_000,
+  champion_moves: 95_000,
   public_registry: 25_000,
 };
 
@@ -809,6 +815,7 @@ export async function runTick(t: TickContext): Promise<TickResult> {
     case "growth": return tickGrowth(t);
     case "presence": return tickPresence(t);
     case "website_visitors": return tickWebsiteVisitors(t);
+    case "champion_moves": return tickChampions(t);
     case "public_registry": return tickPublicRegistry(t);
   }
 }
