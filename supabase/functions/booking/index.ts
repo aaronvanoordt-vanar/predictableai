@@ -41,7 +41,7 @@
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { GOOGLE_TOKEN, googleCredentials } from "../_shared/gmail.ts";
 import { GRAPH, MS_TOKEN, OUTLOOK_CALENDAR_SCOPES } from "../_shared/integrations.ts";
-import * as wati from "../_shared/wati.ts";
+import * as wa from "../_shared/whatsapp.ts";
 import { callLLM, engineForUser, parseLlmJson, withLlmContext } from "../_shared/llm.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
@@ -378,14 +378,14 @@ async function sendReminder(ctx: Ctx, b: Json, page: Page | null, kind: B.Remind
   const d = reminderData(b, member, host);
   const out: Json = { at: stamp };
 
-  const phone = wati.digits(b.guest_phone) || wati.digits(member?.phone);
+  const phone = wa.digits(b.guest_phone) || wa.digits(member?.phone);
   if (!cfg.whatsapp_template) out.whatsapp = { ok: false, detail: "Sin plantilla de WhatsApp elegida en tu agenda." };
   else if (!phone) out.whatsapp = { ok: false, detail: "El invitado no dejó su WhatsApp." };
   else {
     const { tpl, detail } = await resolveWhatsAppTemplate(ctx.db, b.user_id, cfg.whatsapp_template);
     if (!tpl) out.whatsapp = { ok: false, detail };
     else {
-      const { params, missing } = B.reminderTemplateParams(wati.templateVariables(tpl.body), d);
+      const { params, missing } = B.reminderTemplateParams(wa.templateVariables(tpl.body), d);
       out.whatsapp = missing.length
         ? { ok: false, detail: `La plantilla necesita ${missing.map((k) => `{{${k}}}`).join(", ")} y no hay ese dato.` }
         : await sendWhatsAppTemplate(ctx.db, b.user_id, { phone, templateName: String(tpl.name), params, memberId: b.member_id, bookingId: b.id, kind });
@@ -518,7 +518,7 @@ async function book(ctx: Ctx, p: Json) {
   const email = String(p.email ?? "").trim().toLowerCase().slice(0, 200);
   if (name.length < 2) throw new HttpError("Escribe tu nombre.", 400);
   if (!EMAIL_RE.test(email)) throw new HttpError("Escribe un email válido.", 400);
-  const phone = wati.digits(p.phone);
+  const phone = wa.digits(p.phone);
   if (p.phone && (phone.length < 8 || phone.length > 15)) throw new HttpError("Revisa tu número de WhatsApp (con código de país).", 400);
   const { answers, missing } = B.sanitizeAnswers(page.config.questions, p.answers);
   if (missing.length) throw new HttpError("Responde: " + missing.join(" · "), 400);
@@ -674,16 +674,18 @@ function calStatus(c: CalConn | null) {
 }
 
 async function settingsGet(ctx: Ctx, userId: string) {
-  const [{ data: row }, google, outlook, { data: wa }, host] = await Promise.all([
+  const [{ data: row }, google, outlook, waAcc, host] = await Promise.all([
     ctx.db.from("booking_pages").select("*").eq("user_id", userId).maybeSingle(),
     calendarConn(ctx, userId, "google"),
     calendarConn(ctx, userId, "outlook"),
-    ctx.db.from("channel_accounts").select("config").eq("user_id", userId).eq("provider", "wati").maybeSingle(),
+    wa.loadWhatsAppAccount(ctx.db, userId),
     hostProfile(ctx, userId),
   ]);
-  const templates = ((wa?.config?.templates?.all ?? []) as Json[])
-    .filter((t) => wati.isTemplateApproved(t?.status))
-    .map((t) => ({ name: String(t.name), body: String(t.body ?? "").slice(0, 600), variables: wati.templateVariables(t.body) }));
+  // Plantillas de la cuenta con la que salen los recordatorios (Meta si está
+  // conectada, si no WATI: la misma regla que el adaptador común).
+  const templates = ((waAcc?.config?.templates?.all ?? []) as Json[])
+    .filter((t) => wa.isTemplateApproved(t?.status) && !(waAcc?.provider === "meta" && wa.metaTemplateProblem(t)))
+    .map((t) => ({ name: String(t.name), body: String(t.body ?? "").slice(0, 600), variables: wa.templateVariables(t.body) }));
   const suggested = B.slugify(host.name || host.brand || "mi-agenda") || "mi-agenda";
   return {
     page: row ? { ...toPage(row).config, id: row.id } : null,
@@ -697,7 +699,7 @@ async function settingsGet(ctx: Ctx, userId: string) {
       google: calStatus(google),
       outlook: { ...calStatus(outlook), available: !!(env("MICROSOFT_CLIENT_ID") && env("MICROSOFT_CLIENT_SECRET")) },
     },
-    whatsapp: { connected: !!wa, templates },
+    whatsapp: { connected: !!waAcc, provider: waAcc?.provider ?? null, templates },
     base_url: appUrl(),
   };
 }

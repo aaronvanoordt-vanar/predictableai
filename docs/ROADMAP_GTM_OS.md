@@ -70,8 +70,8 @@ Decisión del dueño (2026-10-17): **Predictable se vuelve Tech Provider de Meta
 Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesión por ítem, una rama y un PR cada una.
 
 **P0**
-- [ ] Waterfall enrichment + verificación de email + normalización de teléfonos latinos — en curso (sesión propia)
-- [ ] WhatsApp por embedded signup (Tech Provider) + monitor de calidad del número — en curso (sesión propia)
+- [x] Waterfall enrichment + verificación de email + normalización de teléfonos latinos — PR #346 (`docs/ENRICHMENT_WATERFALL.md`)
+- [x] WhatsApp por embedded signup (Tech Provider) + monitor de calidad del número — PR #347 (`docs/WHATSAPP_META.md`)
 - [ ] Envío de email propio con warm-up y monitor de entregabilidad — en curso (sesión propia)
 
 **P1**
@@ -81,17 +81,22 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] LinkedIn nativo
 - [ ] CRM de cuentas y oportunidades
 - [ ] Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos
-- [ ] Revisar la prueba gratis
+- [x] Revisar la prueba gratis
 
 **P2**
 - [ ] Registros públicos de empresas
 - [ ] APIs oficiales de licitaciones
-- [ ] Listas "No llamar"
+- [x] ¿El número está en WhatsApp? antes de gastar plantilla (tipo de línea del normalizador del waterfall + aprendizaje de #131026; no existe validación oficial previa: `docs/OMNICANAL.md`)
+- [x] Listas "No llamar" — lista de supresión por canal + bajas centralizadas + registros oficiales (`docs/COMPLIANCE_LATAM.md`)
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
 - [x] Agendamiento con recordatorios por WhatsApp — `docs/AGENDA.md` (Google Calendar y Outlook)
-- [ ] Cobro local y CFDI
+- [ ] Cobro local y CFDI (`docs/BILLING_LATAM.md`)
+  - [x] Fase A: factura de Stripe con el número fiscal del cliente, moneda local y OXXO/Pix en recargas (#344; faltan los pasos del Dashboard de Stripe y la consulta al contador sobre el 18-B)
+  - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC — en curso: CFDI en modo prueba con Facturapi; falta la entidad
 - [ ] Facturación y créditos por cliente para agencias
-- [ ] Mapa de TAM, señales de LinkedIn y píxel web
+- [ ] Equipo: metas de actividad, ranking, revisión del Meeting Coach con comentarios y rampa — en curso (sesión propia; las llamadas se enganchan cuando exista la telefonía)
+- [x] Mapa de TAM — PR #355 (`js/tam-map.js`, `_shared/tam.ts`, edge function `tam-map`)
+- [ ] Señales de engagement en LinkedIn y píxel web
 
 **P3**
 - [ ] Automatizaciones de punta a punta

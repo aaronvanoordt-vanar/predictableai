@@ -108,6 +108,9 @@
         msg = 'Se agotaron tus créditos de predictable.ai para usar la cuenta de Apollo compartida de la plataforma' +
           (body.cost != null && body.balance != null ? ' (necesitas ' + body.cost + ', tienes ' + body.balance + ')' : '') +
           '. Esto no tiene relación con tu cuenta de Apollo — conecta la tuya en Campañas → canales → Email para dejar de depender de este saldo, o recarga créditos de predictable.ai.';
+      } else if (fnName === 'apollo-proxy' && body?.error === 'trial_reveal_limit') {
+        // Tope de la prueba gratis con la cuenta compartida (_shared/trial-limits.ts).
+        msg = body.message || 'Llegaste al tope de la prueba gratis con la cuenta de Apollo compartida. Conecta tu Apollo o activa Starter.';
       } else {
         msg = fnName === 'apollo-proxy'
           ? apolloErrorMessage(detail, res.status)
@@ -1056,6 +1059,20 @@
     return kickChain;
   }
 
+  // La cascada de proveedores vigente (si Apollo no encuentra el dato):
+  // { email: ['apollo', 'prospeo', …], phone: […], verifier, labels, costs }.
+  // null si enrich-list todavía no la conoce (sin desplegar): la UI habla
+  // solo de Apollo, como antes.
+  let enrichProvidersCache = null;
+  async function fetchEnrichProviders() {
+    if (enrichProvidersCache) return enrichProvidersCache;
+    try {
+      const r = await edgeFetch('enrich-list', { action: 'providers' });
+      if (r && Array.isArray(r.email)) enrichProvidersCache = r;
+    } catch (_) { /* sin la función: sin cascada visible */ }
+    return enrichProvidersCache;
+  }
+
   // Servidor primero; `inBrowser` es el respaldo mientras enrich-list o su
   // migración no estén desplegadas (el frente se despliega al mergear, el
   // backend no).
@@ -1726,6 +1743,7 @@
     addManualMember,
     matchByLinkedinUrl,
     enrichMembers,
+    fetchEnrichProviders,
     fetchEnrichmentQueue,
     kickEnrichment,
     updateMember,

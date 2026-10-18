@@ -2,19 +2,18 @@
  * _shared/booking-notify.ts — por dónde salen los avisos de la agenda
  * (confirmación, recordatorios de 24 h y 1 h, respuesta a «reprogramar»).
  *
- * Es la ÚNICA puerta de salida de la agenda hacia WhatsApp y email, a
- * propósito: hoy WhatsApp sale por el WATI del usuario y el email por su
- * Apollo propio (igual que las campañas). Cuando el adaptador común de
- * WhatsApp (Cloud API de Meta + WATI, hoja de ruta P0) llegue a main, solo
- * cambia `sendWhatsAppTemplate` / `sendWhatsAppText`: la edge function
- * `booking` no sabe qué proveedor hay detrás.
+ * Es la ÚNICA puerta de salida de la agenda hacia WhatsApp y email. WhatsApp
+ * sale por el adaptador común `_shared/whatsapp.ts` (Meta directo si el
+ * usuario lo conectó, si no su WATI: la misma regla que las campañas) y el
+ * email por su Apollo propio. La edge function `booking` no sabe qué
+ * proveedor hay detrás.
  *
  * Nunca lanza: devuelve { ok, detail } para que el recordatorio deje
  * constancia de por qué no salió (sin canal conectado, plantilla sin aprobar,
  * variable sin dato…) y el otro canal siga.
  */
 
-import * as wati from "./wati.ts";
+import * as wa from "./whatsapp.ts";
 import * as apolloAuth from "./apollo-auth.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -24,20 +23,19 @@ type Db = any;
 
 export interface SendOutcome { ok: boolean; detail: string; provider?: string; message_id?: string | null }
 
-async function watiAccount(db: Db, userId: string): Promise<Json | null> {
-  const { data } = await db.from("channel_accounts").select("*").eq("user_id", userId).eq("provider", "wati").maybeSingle();
-  return data ?? null;
-}
-
 /** Plantilla aprobada del catálogo del usuario, o el motivo por el que no sirve. */
 export async function resolveWhatsAppTemplate(db: Db, userId: string, name: string): Promise<{ tpl: Json | null; acc: Json | null; detail: string }> {
-  const acc = await watiAccount(db, userId);
+  const acc = await wa.loadWhatsAppAccount(db, userId);
   if (!acc) return { tpl: null, acc: null, detail: "WhatsApp no está conectado." };
-  const tpl = (acc.config?.templates?.all ?? []).find((t: Json) => t?.name === name) ?? null;
-  if (!tpl) return { tpl: null, acc, detail: `La plantilla "${name}" no existe en tu cuenta de WhatsApp.` };
-  if (!wati.isTemplateApproved(tpl.status)) return { tpl: null, acc, detail: `La plantilla "${name}" no está aprobada por Meta (${tpl.status ?? "PENDING"}).` };
-  if (wati.activeTemplateFault(acc.config, String(tpl.name), new Date())) {
+  const tpl = wa.findTemplate(acc, name);
+  if (!tpl) return { tpl: null, acc, detail: `La plantilla "${name}" no existe en tu cuenta de WhatsApp (${wa.providerLabel(acc)}).` };
+  if (!wa.isTemplateApproved(tpl.status)) return { tpl: null, acc, detail: `La plantilla "${name}" no está aprobada por Meta (${tpl.status ?? "PENDING"}).` };
+  if (wa.activeTemplateFault(acc.config, String(tpl.name), new Date())) {
     return { tpl: null, acc, detail: `Meta rechazó la plantilla "${name}" en un envío reciente: elige otra en tu agenda.` };
+  }
+  if (acc.provider === "meta") {
+    const problem = wa.metaTemplateProblem(tpl);
+    if (problem) return { tpl: null, acc, detail: problem };
   }
   return { tpl, acc, detail: "" };
 }
@@ -50,50 +48,44 @@ async function logInbox(db: Db, row: Json) {
 export async function sendWhatsAppTemplate(db: Db, userId: string, input: {
   phone: string; templateName: string; params: Record<string, string>; memberId: string | null; bookingId: string; kind: string;
 }): Promise<SendOutcome> {
-  const phone = wati.digits(input.phone);
+  const phone = wa.digits(input.phone);
   if (!phone) return { ok: false, detail: "Sin teléfono de WhatsApp." };
   const { tpl, acc, detail } = await resolveWhatsAppTemplate(db, userId, input.templateName);
   if (!tpl || !acc) return { ok: false, detail };
   const localId = crypto.randomUUID();
+  let r: wa.SendResult;
   try {
-    const r = await wati.sendTemplate({ endpoint: acc.config?.endpoint, token: acc.secret }, {
-      templateName: String(tpl.name),
-      broadcastName: `px_agenda_${input.kind}_${localId.slice(0, 8)}`,
-      phone,
-      localMessageId: localId,
-      params: input.params,
-      channel: acc.config?.channel || undefined,
+    r = await wa.sender(acc).sendTemplate({
+      phone, template: tpl, params: input.params, localId, broadcastName: `px_agenda_${input.kind}_${localId.slice(0, 8)}`,
     });
-    if (!r.accepted) return { ok: false, detail: "WATI rechazó el envío: " + (r.errors.join("; ") || "sin detalle") };
   } catch (e) {
-    return { ok: false, detail: "WATI no aceptó la plantilla: " + wati.humanError(e) };
+    return { ok: false, detail: "WhatsApp no aceptó la plantilla: " + wa.humanError(e) };
   }
   let body = String(tpl.body ?? "");
   for (const [k, v] of Object.entries(input.params)) body = body.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, "gi"), v);
   await logInbox(db, {
-    user_id: userId, member_id: input.memberId, channel: "whatsapp", provider: "wati", direction: "out",
-    contact_ref: phone, body, provider_message_id: localId, status: "pending", sent_at: new Date().toISOString(),
-    payload: { template_name: tpl.name, booking_id: input.bookingId, booking_reminder: input.kind },
+    user_id: userId, member_id: input.memberId, channel: "whatsapp", provider: acc.provider, direction: "out",
+    contact_ref: phone, body, provider_message_id: r.messageId, status: "pending", sent_at: new Date().toISOString(),
+    payload: { template_name: tpl.name, booking_id: input.bookingId, booking_reminder: input.kind, ...(r.wamid ? { wamid: r.wamid } : {}) },
   });
-  return { ok: true, detail: "", provider: "wati", message_id: localId };
+  return { ok: true, detail: "", provider: acc.provider, message_id: r.messageId };
 }
 
 /** Texto libre (solo dentro de la ventana de 24 h: se usa al contestar un recordatorio). */
 export async function sendWhatsAppText(db: Db, userId: string, input: { phone: string; text: string; memberId: string | null; bookingId: string }): Promise<SendOutcome> {
-  const phone = wati.digits(input.phone);
-  const acc = await watiAccount(db, userId);
+  const phone = wa.digits(input.phone);
+  const acc = await wa.loadWhatsAppAccount(db, userId);
   if (!acc || !phone) return { ok: false, detail: "WhatsApp no está conectado." };
   try {
-    const r = await wati.sendText({ endpoint: acc.config?.endpoint, token: acc.secret }, phone, input.text, acc.config?.channel || undefined);
-    if (!r.id) return { ok: false, detail: "WATI no confirmó el mensaje." };
+    const r = await wa.sender(acc).sendText(phone, input.text);
     await logInbox(db, {
-      user_id: userId, member_id: input.memberId, channel: "whatsapp", provider: "wati", direction: "out",
-      contact_ref: phone, body: input.text, provider_message_id: r.id, status: "sent", sent_at: new Date().toISOString(),
-      payload: { booking_id: input.bookingId, booking_reply: true },
+      user_id: userId, member_id: input.memberId, channel: "whatsapp", provider: acc.provider, direction: "out",
+      contact_ref: phone, body: input.text, provider_message_id: r.messageId, status: "sent", sent_at: new Date().toISOString(),
+      payload: { booking_id: input.bookingId, booking_reply: true, ...(r.wamid ? { wamid: r.wamid } : {}) },
     });
-    return { ok: true, detail: "", provider: "wati", message_id: r.id };
+    return { ok: true, detail: "", provider: acc.provider, message_id: r.messageId };
   } catch (e) {
-    return { ok: false, detail: "WATI no aceptó el mensaje: " + wati.humanError(e) };
+    return { ok: false, detail: "WhatsApp no aceptó el mensaje: " + wa.humanError(e) };
   }
 }
 

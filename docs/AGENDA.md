@@ -9,11 +9,11 @@ Hoja de ruta GTM OS, P2 «Agendamiento con recordatorios por WhatsApp» (`docs/R
 | `agenda.html` + `js/booking-page.js` | Página pública tipo Calendly, **sin login** (no carga `auth-guard.js` ni `supabase-client.js`). `?u=<slug>[&r=<booking_ref>][&v=inbox]` agenda; `?m=<token>[&a=confirm\|reschedule]` gestiona. Todo se pinta con `textContent`. |
 | Edge function `booking` (`--no-verify-jwt`) | Acciones públicas `page`, `slots`, `book`, `manage_get`, `confirm`, `reschedule`, `cancel`; del dueño (JWT validado en código) `settings_get`, `settings_save`, `set_attendance`, `regenerate_handoff`; de pg_cron (service role, comparada con la key, no con el rol del JWT) `tick`. |
 | `_shared/booking.ts` (`deno test`) | Lógica pura: zonas horarias, horarios libres, recordatorios, variables de la plantilla, respuestas del invitado, nota BANT, saneado de la configuración. |
-| `_shared/booking-notify.ts` | ÚNICA salida de la agenda hacia WhatsApp (WATI del usuario) y email (Apollo propio). Cuando llegue el adaptador común de WhatsApp (Cloud API + WATI) solo cambia este archivo. |
-| `_shared/booking-inbound.ts` | `wati-webhook` le pasa cada entrante: «Confirmo» confirma; «Reprogramar» / «no puedo» / «cancelar» marca `reschedule_requested` y responde con el enlace para elegir otro horario. |
+| `_shared/booking-notify.ts` | ÚNICA salida de la agenda hacia WhatsApp (adaptador común `_shared/whatsapp.ts`: Meta directo si está conectado, si no WATI) y email (Apollo propio). |
+| `_shared/booking-inbound.ts` | `recordInbound` (`_shared/whatsapp-inbound.ts`, WATI y Meta) le pasa cada entrante: «Confirmo» confirma; «Reprogramar» / «no puedo» / «cancelar» marca `reschedule_requested` y responde con el enlace para elegir otro horario. |
 | `js/scheduling.js` | Página `agenda` de la app (sección Ventas): pestañas Reuniones y Configurar (incluye la elección del calendario). `window.scheduling.linkFor(memberId)` arma el enlace de un lead. |
 | Integraciones: `outlook_calendar` | Nuevo proveedor en `_shared/integrations.ts` ↔ `js/integrations.js`: OAuth de Microsoft, próximas reuniones para el Meeting Coach y seguimientos, igual que Google Calendar. |
-| Migración `20261017000001_meeting_scheduling.sql` | `booking_pages` (con `calendar_provider`), `bookings`, `prospect_list_members.booking_ref` / `meeting_handoff`, scope `meeting_attendance` en `learning_insights`, `outlook_calendar` en `integration_connections`, cron comentado. |
+| Migración `20261018200000_meeting_scheduling.sql` | `booking_pages` (con `calendar_provider`), `bookings`, `prospect_list_members.booking_ref` / `meeting_handoff`, scope `meeting_attendance` en `learning_insights`, `outlook_calendar` en `integration_connections`, cron comentado. |
 
 ## Disponibilidad y calendario (Google Calendar u Outlook)
 
@@ -54,8 +54,8 @@ Hoja de ruta GTM OS, P2 «Agendamiento con recordatorios por WhatsApp» (`docs/R
 
 ## Pasos manuales para ponerlo en producción
 
-1. Aplicar la migración `20261017000001_meeting_scheduling.sql`.
-2. `supabase functions deploy booking --no-verify-jwt` (ya está en `NO_JWT` del workflow) y redesplegar `integrations`, `campaign-run`, `wati-webhook`, `generate-outreach`, `learning-loop` y `sales-coach`.
+1. Aplicar la migración `20261018200000_meeting_scheduling.sql`.
+2. `supabase functions deploy booking --no-verify-jwt` (ya está en `NO_JWT` del workflow) y redesplegar `integrations`, `campaign-run`, `wati-webhook`, `meta-whatsapp-webhook`, `generate-outreach`, `learning-loop` y `sales-coach`.
 3. Programar el cron `booking-reminders` (cada 5 min) con el SQL comentado al final de la migración.
 4. Para Outlook: registrar una app en Microsoft Entra (ver `docs/INTEGRACIONES.md`) y poner `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` en los secrets; redesplegar `integrations`. Sin ese par, la tarjeta de Outlook dice que aún no está disponible y la agenda funciona con Google.
 5. Opcional: secret `PUBLIC_APP_URL` si la app no vive en `https://predictableai.vanarsi.com`.

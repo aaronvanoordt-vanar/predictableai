@@ -99,6 +99,10 @@
       // (sobreviven a los refrescos por realtime hasta que se guardan),
       // timers de guardado y corridas de IA en curso desde esta pestaña.
       researchOpen: new Set(), notesDraft: {}, notesTimers: {}, notesSaving: {}, researching: new Set(),
+      // ¿Está en WhatsApp? Lo aprendido de los envíos (whatsapp_reachability,
+      // Map phone_key → fila) que junto al plan de numeración pinta el
+      // indicador del teléfono (js/phone-lines.js). null = aún no se leyó.
+      waLearned: null,
     },
   };
 
@@ -374,6 +378,7 @@
     '.pros-manual-row { display:flex; gap:10px; }',
     '.pros-manual-row > * { flex:1; min-width:0; }',
     '.pros-manual-row .pros-phone-code { flex:0 0 auto; width:150px; }',
+    '.pros-linkbtn { background:none; border:0; padding:0 0 0 4px; color:var(--accent); font-size:11.5px; cursor:pointer; text-decoration:underline; }',
     '.pros-manual-linkedin { display:flex; gap:8px; align-items:flex-start; }',
     '.pros-manual-linkedin input { flex:1; min-width:0; }',
   ].join('\n');
@@ -490,19 +495,98 @@
     return '<span class="pill pill-gray">No disponible</span>';
   }
 
+  // Quién encontró cada dato (prospect_list_members.source_provider, waterfall
+  // de enrich-list). Espejo de los ids de supabase/functions/_shared/enrichment/
+  // registry.ts (lo verifica enrichment.test.ts).
+  var ENRICH_SOURCES = {
+    apollo: 'Apollo', prospeo: 'Prospeo', bettercontact: 'BetterContact', fullenrich: 'FullEnrich',
+    contactout: 'ContactOut', kaspr: 'Kaspr', lusha: 'Lusha', millionverifier: 'MillionVerifier', reoon: 'Reoon', zerobounce: 'ZeroBounce',
+  };
+
+  function sourceLabel(id) {
+    return id ? (ENRICH_SOURCES[id] || String(id)) : '';
+  }
+
+  // Veredicto del verificador / del proveedor (email_verification), que manda
+  // sobre el email_status de Apollo cuando existe.
+  function verificationPillHtml(v) {
+    if (v === 'valid') return '<span class="pill pill-green">Verificado</span>';
+    if (v === 'catch_all') return '<span class="pill pill-blue" title="El dominio acepta cualquier dirección: no se puede confirmar el buzón">Catch-all</span>';
+    if (v === 'risky') return '<span class="pill pill-amber">Riesgoso</span>';
+    if (v === 'invalid') return '<span class="pill pill-red">Inválido</span>';
+    return '<span class="pill pill-amber">Sin confirmar</span>';
+  }
+
+  function sourceLineHtml(m, field) {
+    var src = m.source_provider || {};
+    var parts = [];
+    if (src[field]) parts.push('vía ' + sourceLabel(src[field]) + (src[field + '_via'] ? ' (' + src[field + '_via'] + ')' : ''));
+    if (field === 'email' && src.email_verifier && m.email_verification) parts.push('verificado con ' + sourceLabel(src.email_verifier));
+    if (!parts.length) return '';
+    return '<div class="pros-cellsub" style="margin-top:2px">' + esc(parts.join(' · ')) + '</div>';
+  }
+
   function memberEmailCell(m) {
-    if (m.email_status === 'pending' || m.enrich_requested_at || state.listas.enrichingIds.has(String(m.id))) {
+    var hasEmail = m.email && !isMaskedEmail(m.email);
+    if (!hasEmail && (m.email_status === 'pending' || m.enrich_requested_at || state.listas.enrichingIds.has(String(m.id)))) {
       return '<span class="pill pill-amber">Enriqueciendo…</span>';
     }
-    if (m.email && !isMaskedEmail(m.email)) {
+    if (hasEmail) {
+      var pill = m.email_verification ? verificationPillHtml(m.email_verification) : (m.email_status ? emailPillHtml(m.email_status) : '');
       return '<div>' + esc(m.email) + '</div>' +
-        (m.email_status ? '<div style="margin-top:3px">' + emailPillHtml(m.email_status) + '</div>' : '');
+        (pill ? '<div style="margin-top:3px">' + pill + '</div>' : '') + sourceLineHtml(m, 'email');
     }
-    return '<span class="pill pill-gray"' + (m.enrich_error ? ' title="' + esc(m.enrich_error) + '"' : '') + '>Sin email</span>';
+    var rejected = (m.source_provider && m.source_provider.rejected_emails) || [];
+    var title = [m.enrich_error, rejected.length ? 'Descartados por inválidos: ' + rejected.join(', ') : ''].filter(Boolean).join(' · ');
+    return '<span class="pill pill-gray"' + (title ? ' title="' + esc(title) + '"' : '') + '>Sin email</span>';
+  }
+
+  // ── ¿El número está en WhatsApp? (js/phone-lines.js) ─────────────────────
+  // Mismo veredicto que usa campaign-run antes de mandar una plantilla: un
+  // fijo o un número que ya falló con #131026 no la recibe (el paso se omite).
+  var WA_REACH_PILL = { confirmed: 'green', probable: 'blue', unknown: 'gray', fixed: 'amber', switchboard: 'amber', no_whatsapp: 'red' };
+
+  function waReachOf(m) {
+    var PL = window.PhoneLines;
+    return PL && m && m.phone ? PL.memberReach(m, state.listas.waLearned) : null;
+  }
+
+  function waReachPillHtml(m) {
+    var r = waReachOf(m);
+    if (!r || !WA_REACH_PILL[r.status]) return '';
+    var reset = r.status === 'no_whatsapp'
+      ? ' <button type="button" class="pros-linkbtn" data-action="wa-reach-reset" data-key="' + esc(window.PhoneLines.reachKey(m.phone)) + '" title="Si sabes que este número ya tiene WhatsApp, las campañas vuelven a intentarlo">Volver a intentar</button>'
+      : '';
+    return '<div style="margin-top:3px" title="' + esc(r.reason) + '"><span class="pill pill-' + WA_REACH_PILL[r.status] + '">' + esc(r.label) + '</span>' + reset + '</div>';
+  }
+
+  // Resumen de la tabla: cuántos números recibirían la plantilla y cuántos envíos se evitan.
+  function waSummaryHtml(rows) {
+    var PL = window.PhoneLines;
+    if (!PL) return '';
+    var reaches = rows.filter(function (m) { return m.phone; }).map(waReachOf);
+    if (!reaches.length) return '';
+    var s = PL.reachSummary(reaches, 1);
+    var parts = [];
+    if (s.confirmed) parts.push(fmtNum(s.confirmed) + ' con WhatsApp confirmado');
+    if (s.probable) parts.push(fmtNum(s.probable) + ' probables');
+    if (s.unknown) parts.push(fmtNum(s.unknown) + ' por confirmar');
+    if (s.fixed) parts.push(fmtNum(s.fixed) + ' fijos');
+    if (s.switchboard) parts.push(fmtNum(s.switchboard) + ' conmutadores');
+    if (s.no_whatsapp) parts.push(fmtNum(s.no_whatsapp) + ' sin WhatsApp');
+    var saved = s.avoided
+      ? ' · <strong>' + esc(fmtNum(s.avoided)) + ' plantilla' + (s.avoided === 1 ? '' : 's') + ' que no se mandan</strong> por paso de WhatsApp: el lead pasa directo al siguiente canal'
+      : '';
+    return '<div class="pros-cellsub" style="margin-top:2px" title="Celular, fijo o conmutador según el plan de numeración de cada país (el mismo tipo que guarda el enriquecimiento); «sin WhatsApp» = WhatsApp ya rechazó un envío a ese número (#131026). Por confirmar = el número no lo dice (p. ej. México): se envía igual.">WhatsApp: ' +
+      esc(parts.join(' · ')) + saved + '</div>';
   }
 
   function memberPhoneCell(m) {
-    if (m.phone) return esc(m.phone);
+    if (m.phone) {
+      // El indicador de WhatsApp incluye el tipo de línea (phone_type del
+      // waterfall o el plan de numeración): Fijo / Conmutador / Probable…
+      return '<div>' + esc(m.phone) + '</div>' + waReachPillHtml(m) + sourceLineHtml(m, 'phone');
+    }
     if (m.phone_status === 'pending') return '<span class="pill pill-amber">Pendiente…</span>';
     if (m.phone_status === 'unavailable') return '<span class="pill pill-gray">No disponible</span>';
     return '<span style="color:var(--text3)">—</span>';
@@ -2232,7 +2316,24 @@
     pane.addEventListener('click', guarded(onListasClick));
     pane.addEventListener('change', guarded(onListasChange));
     pane.addEventListener('input', onListasInput);
+    // Columnas IA (js/ai-columns.js): cabeceras, celdas, filtros y orden de la tabla.
+    if (window.AIColumns) {
+      window.AIColumns.attach({
+        toast: toast,
+        openModal: openModal,
+        rerender: function () { renderListsRight(); },
+        members: function () { return isAllList() ? [] : state.listas.members; },
+        visibleMembers: function () { return visibleListMembers(); },
+        host: function () { return state.listas.rightEl; },
+      });
+    }
   }
+
+  // Columnas IA de la lista abierta (no en «Todos los contactos»: son por lista).
+  function aiCols() {
+    return (window.AIColumns && !isAllList() && state.listas.activeListId) ? window.AIColumns : null;
+  }
+  function aiColCount() { var a = aiCols(); return a ? a.count() : 0; }
 
   function isAllList() { return state.listas.activeListId === ALL_LIST_ID; }
 
@@ -2327,7 +2428,7 @@
     var st = state.listas;
     var q = (st.q || '').trim().toLowerCase();
     var all = isAllList();
-    return st.members.filter(function (m) {
+    var rows = st.members.filter(function (m) {
       if (all && st.statusFilter && (m.contact_status || 'no_contactado') !== st.statusFilter) return false;
       if (all && st.listFilter && String(m.list_id) !== st.listFilter) return false;
       if (!q) return true;
@@ -2335,6 +2436,9 @@
         .filter(Boolean).join(' ').toLowerCase();
       return hay.indexOf(q) !== -1;
     });
+    // Filtros y orden por columnas IA.
+    var ai = aiCols();
+    return ai ? ai.apply(rows) : rows;
   }
 
   function listMemberRowHtml(m) {
@@ -2358,13 +2462,14 @@
       '<td>' + memberEmailCell(m) + '</td>' +
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
+      (aiCols() ? aiCols().cellsHtml(m) : '') +
       '<td style="white-space:nowrap">' +
         '<button type="button" class="pros-iconbtn pros-research-btn' + (open ? ' on' : '') + (hasResearch ? ' has' : '') + '" data-action="toggle-research" data-id="' + id + '" title="Investigación previa: notas y ángulo con IA" aria-expanded="' + (open ? 'true' : 'false') + '">' + SVG_RESEARCH + '</button>' +
         '<button type="button" class="pros-iconbtn" data-action="edit-member" data-id="' + id + '" title="Editar contacto">' + SVG_EDIT + '</button>' +
         '<button type="button" class="pros-iconbtn" data-action="delete-member" data-id="' + id + '" title="Eliminar contacto">' + SVG_TRASH + '</button>' +
       '</td>' +
       '</tr>' +
-      (open ? '<tr class="pros-research-row"><td colspan="' + (isAllList() ? 10 : 9) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
+      (open ? '<tr class="pros-research-row"><td colspan="' + ((isAllList() ? 10 : 9) + aiColCount()) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
   }
 
   // ── Investigación previa por lead ───────────────────────────────────────
@@ -2621,9 +2726,10 @@
       // Header: título + acción principal en la esquina superior derecha.
       '<div class="table-head" style="gap:12px;flex-wrap:wrap;align-items:flex-start">' +
       '<div><div style="font-weight:600;font-size:13.5px">' + esc(all ? 'Todos los contactos' : ((list && list.name) || 'Lista')) + '</div>' +
-      '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos' + (all ? ' en todas tus listas' : '') + '</div></div>' +
+      '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos' + (all ? ' en todas tus listas' : '') + '</div>' +
+      waSummaryHtml(st.members) + '</div>' +
       (all
-        ? '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer teléfonos</button>'
+        ? '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer</button>'
         : '<button type="button" class="btn btn-primary btn-sm" data-action="create-campaign"' + (st.members.length ? '' : ' disabled') + '>' + SVG_CAMPAIGN + ' Crear campaña con esta lista</button>') +
       '</div>' +
       '<div data-enrich-banner>' + enrichBannerHtml() + '</div>';
@@ -2646,12 +2752,14 @@
 
     // Acciones sobre la selección / la lista.
     html += '<div class="pros-actions" style="padding:10px 18px 14px">' +
-      (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer teléfonos</button>') +
+      (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer</button>') +
       (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>') +
+      (aiCols() ? aiCols().addButtonHtml() : '') +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-members">Actualizar</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="export-csv"' + (st.members.length ? '' : ' disabled') + '>Exportar CSV</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="delete-members" style="color:var(--red)"' + (n ? '' : ' disabled') + '>Eliminar</button>' +
       '</div>';
+    if (aiCols() && st.members.length) html += aiCols().progressHtml() + aiCols().filtersHtml();
 
     var cols = all ? ['30%', '35%', '25%', '20%', '30%', '40%', '28%', '18%', '14%'] : ['30%', '40%', '20%', '30%', '45%', '30%', '25%', '14%'];
     if (st.loadingMembers) {
@@ -2670,7 +2778,8 @@
       var allChecked = rows.every(function (m) { return st.selected.has(String(m.id)); });
       html += '<div class="pros-scroll-x"><table><thead><tr>' +
         '<th style="width:34px"><input type="checkbox" data-action="mem-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-        '<th>Nombre</th><th>Empresa</th><th>País</th>' + (all ? '<th>Lista</th>' : '') + '<th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th><th></th>' +
+        '<th>Nombre</th><th>Empresa</th><th>País</th>' + (all ? '<th>Lista</th>' : '') + '<th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th>' +
+        (aiCols() ? aiCols().headHtml() : '') + '<th></th>' +
         '</tr></thead><tbody>' + rows.map(listMemberRowHtml).join('') + '</tbody></table></div>';
       if (all) {
         html += '<div style="padding:10px 18px;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(st.members.length)) + ' contactos · El estado se actualiza al instante en todo el sistema (Campañas, dashboard y este CRM leen la misma base).</div>';
@@ -2713,10 +2822,16 @@
     if (!keep) renderListsRight();
     var all = isAllList();
     var listId = st.activeListId;
+    if (window.AIColumns) window.AIColumns.setList(all ? null : listId);
     return Promise.resolve()
-      .then(function () { return all ? pd().fetchAllContacts() : pd().fetchMembers(listId); })
-      .then(function (members) {
+      .then(function () {
+        var learned = window.PhoneLines ? window.PhoneLines.loadLearned().catch(function () { return null; }) : null;
+        return Promise.all([all ? pd().fetchAllContacts() : pd().fetchMembers(listId), learned]);
+      })
+      .then(function (res) {
+        var members = res[0];
         if (st.activeListId !== listId) return; // el usuario cambió de lista mientras cargaba
+        if (res[1]) st.waLearned = res[1];
         st.members = Array.isArray(members) ? members : [];
         if (keep) {
           var ids = new Set(st.members.map(function (m) { return String(m.id); }));
@@ -2756,6 +2871,7 @@
   function onListasInput(e) {
     var t = e.target;
     if (t.getAttribute && t.getAttribute('data-action') === 'research-notes') return onResearchNotesInput(t);
+    if (window.AIColumns && window.AIColumns.handleInput(t)) return;
     if (!t.getAttribute || t.getAttribute('data-action') !== 'ct-search') return;
     var st = state.listas;
     st.q = t.value || '';
@@ -2779,6 +2895,7 @@
     var t = e.target;
     var action = t.getAttribute && t.getAttribute('data-action');
     var st = state.listas;
+    if (window.AIColumns && window.AIColumns.handleChange(t)) return;
     if (action === 'mem-check') {
       var id = t.getAttribute('data-id');
       if (t.checked) st.selected.add(id); else st.selected.delete(id);
@@ -2817,6 +2934,7 @@
     if (!btn) return;
     var action = btn.getAttribute('data-action');
     var st = state.listas;
+    if (window.AIColumns && window.AIColumns.handleClick(btn)) return;
     if (action === 'create-list') {
       var input = document.getElementById('pros-newlist-name');
       var name = input ? input.value.trim() : '';
@@ -2882,6 +3000,17 @@
         .then(function () { renderListsLeft(); return reloadMembers(); });
     }
     if (action === 'export-csv') return exportListCsv();
+    if (action === 'wa-reach-reset') {
+      // Olvida el «sin WhatsApp» aprendido de ese número: la próxima campaña lo intenta.
+      var key = btn.getAttribute('data-key');
+      return window.supabaseClient.from('whatsapp_reachability').delete().eq('phone_key', key)
+        .then(function (r) {
+          if (r.error) throw new Error('No se pudo reiniciar el número: ' + r.error.message);
+          if (st.waLearned) st.waLearned.delete(key);
+          toast('Listo: las campañas vuelven a intentar este WhatsApp.', 'success');
+          renderListsRight();
+        });
+    }
     if (action === 'delete-members') return openDeleteMembersModal();
     if (action === 'delete-member') {
       var mDel = findListMember(btn.getAttribute('data-id'));
@@ -3145,32 +3274,68 @@
     }
   }
 
+  // Texto de la cascada vigente: "Si Apollo no lo encuentra: Prospeo →
+  // FullEnrich (3 créditos por email y 20 por teléfono, solo si lo encuentra)".
+  function cascadeText(cfg) {
+    if (!cfg) return '';
+    var labels = cfg.labels || {};
+    var name = function (id) { return labels[id] || sourceLabel(id); };
+    var em = (cfg.email || []).filter(function (id) { return id !== 'apollo'; }).map(name);
+    var ph = (cfg.phone || []).filter(function (id) { return id !== 'apollo'; }).map(name);
+    var costs = cfg.costs || {};
+    var out = [];
+    if (em.length || ph.length) {
+      var same = em.join() === ph.join();
+      out.push('Si Apollo no lo encuentra, se busca en cascada' +
+        (same ? ' con ' + em.join(' → ') : (em.length ? ' — email: ' + em.join(' → ') : '') + (ph.length ? (em.length ? '; teléfono: ' : ' — teléfono: ') + ph.join(' → ') : '')) +
+        '. Se cobra solo lo que se encuentra' +
+        (em.length && costs.email ? ': ' + costs.email + ' créditos por email' : '') +
+        (ph.length && costs.phone ? (em.length && costs.email ? ' y ' : ': ') + costs.phone + ' por teléfono' : '') +
+        ', también con tu propio Apollo.');
+    }
+    if (cfg.verifier) out.push('Los emails sin verificar se revisan con ' + name(cfg.verifier) + ' y los inválidos se descartan.');
+    return out.join(' ');
+  }
+
   function openEnrichModal() {
     var picked = selectedListMembers();
     if (!picked.length) return toast('Selecciona al menos un contacto.', 'warn');
-    // Solo teléfonos: los que ya tienen uno (o lo están buscando) no se vuelven a cobrar.
-    var sel = picked.filter(function (m) { return !m.phone && m.phone_status !== 'pending'; });
-    var skipped = picked.length - sel.length;
-    if (!sel.length) return toast('Los contactos seleccionados ya tienen teléfono o se está buscando.', 'info');
+    // Teléfono: los que ya tienen uno (o lo están buscando) no se vuelven a
+    // cobrar. Email: solo los que no tienen y ya tienen teléfono (los demás
+    // reciben el email en la misma búsqueda del teléfono).
+    var sel = picked.filter(function (m) { return !m.phone && m.phone_status !== 'pending' && !m.enrich_requested_at; });
+    var emailSel = picked.filter(function (m) {
+      return sel.indexOf(m) === -1 && !(m.email && !isMaskedEmail(m.email)) && !m.enrich_requested_at && m.email_status !== 'pending';
+    });
+    var skipped = picked.length - sel.length - emailSel.length;
+    if (!sel.length && !emailSel.length) return toast('Los contactos seleccionados ya tienen teléfono y email, o se están buscando.', 'info');
+    var parts = [];
+    if (sel.length) parts.push('el teléfono de ' + fmtNum(sel.length) + ' contacto' + (sel.length === 1 ? '' : 's') + ' (y su email si falta)');
+    if (emailSel.length) parts.push('el email de ' + fmtNum(emailSel.length) + ' contacto' + (emailSel.length === 1 ? '' : 's') + ' que ya tiene' + (emailSel.length === 1 ? '' : 'n') + ' teléfono');
+    var cascadeP = h('p', { style: 'font-size:12.5px;color:var(--text2);margin:0 0 12px;line-height:1.55;display:none' });
     var bodyN = h('div', null,
       h('p', {
         style: 'font-size:13px;color:var(--text2);margin:0 0 12px;line-height:1.55',
-        text: 'Se buscará el teléfono de ' + fmtNum(sel.length) + ' contacto' + (sel.length === 1 ? '' : 's') +
-          (skipped ? ' (' + fmtNum(skipped) + ' ya tenían teléfono y se omiten)' : '') +
-          ' vía Apollo. Costo: 8 créditos por teléfono, solo cuando Apollo lo encuentra (con tu propia cuenta de Apollo conectada no gastas créditos de predictable.ai). ' +
-          'Corre en segundo plano — puedes seguir usando la app; usa «Actualizar» en unos minutos para ver los resultados.',
-      }));
+        text: 'Se buscará ' + parts.join(' y ') +
+          (skipped ? ' (' + fmtNum(skipped) + ' ya tenían los datos o se están buscando y se omiten)' : '') +
+          ' vía Apollo. Costo en Apollo: 8 créditos por teléfono y 2 por email, solo cuando Apollo lo encuentra (con tu propia cuenta de Apollo conectada no gastas créditos de predictable.ai). ' +
+          'Corre en segundo plano — puedes seguir usando la app; los resultados aparecen solos en la tabla.',
+      }),
+      cascadeP);
+    Promise.resolve(pd().fetchEnrichProviders && pd().fetchEnrichProviders()).then(function (cfg) {
+      var t = cascadeText(cfg);
+      if (t) { cascadeP.textContent = t; cascadeP.style.display = ''; }
+    }).catch(function () {});
     var api = openModal({
-      title: 'Enriquecer teléfonos',
+      title: 'Enriquecer contactos',
       bodyNode: bodyN,
       actions: [
         { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
         {
-          label: 'Buscar teléfonos',
+          label: 'Enriquecer',
           className: 'btn btn-primary',
           onClick: function () {
-            var members = sel;
-            var revealPhones = true;
+            var members = sel.concat(emailSel);
             var targetListId = state.listas.activeListId;
             // No bloquea el modal: el enriquecimiento sigue en segundo plano
             // (mismo espíritu que los teléfonos, que ya llegan async vía
@@ -3192,9 +3357,19 @@
             setTimeout(function () { refreshEnrichQueue(); }, 1500);
             Promise.resolve()
               .then(function () {
-                return pd().enrichMembers({
-                  members: members, revealPhones: revealPhones,
-                  onProgress: function (p) { enrichJobProgress(job, p); },
+                var onProgress = function (p) { enrichJobProgress(job, p); };
+                var phones = sel.length ? pd().enrichMembers({ members: sel, revealPhones: true, onProgress: onProgress }) : Promise.resolve(null);
+                return phones.then(function (a) {
+                  if (!emailSel.length) return a;
+                  return pd().enrichMembers({ members: emailSel, revealPhones: false, onProgress: onProgress }).then(function (b) {
+                    if (!a) return b;
+                    return Object.assign({}, a, {
+                      server: a.server && b.server,
+                      updated: (a.updated || 0) + (b.updated || 0),
+                      phonePending: (a.phonePending || 0) + (b.phonePending || 0),
+                      failed: (a.failed || []).concat(b.failed || []),
+                    });
+                  });
                 });
               })
               .then(function (res) {
@@ -3278,9 +3453,12 @@
     var cols = isAllList()
       ? ['name', 'title', 'company', 'list_name', 'contact_status', 'email', 'phone', 'linkedin_url']
       : ['name', 'title', 'company', 'contact_status', 'email', 'phone', 'linkedin_url'];
-    var lines = [cols.join(',')];
+    // Columnas IA: respuesta, evidencia y fuente de cada una.
+    var extra = aiCols() ? aiCols().csvColumns() : [];
+    var lines = [cols.concat(extra.map(function (x) { return csvCell(x.header); })).join(',')];
     rows.forEach(function (m) {
-      lines.push(cols.map(function (c) { return csvCell(m[c]); }).join(','));
+      lines.push(cols.map(function (c) { return csvCell(m[c]); })
+        .concat(extra.map(function (x) { return csvCell(x.get(m)); })).join(','));
     });
     var blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
     var url = URL.createObjectURL(blob);
@@ -3946,7 +4124,25 @@
         ensureBuilt();
         switchTab('busqueda');
         if (apollo.connected !== true) return; // el bloqueo de Apollo ya está a la vista
-        var kw = (opts && Array.isArray(opts.keywords) ? opts.keywords : []).map(function (k) { return String(k || '').trim(); }).filter(Boolean);
+        // Mapa de TAM (js/tam-map.js): cuentas concretas por dominio. Se parte
+        // de filtros limpios — un país o un cargo de la búsqueda anterior
+        // escondería cuentas de la lista — y se buscan sus decisores del ICP.
+        var domains = (opts && Array.isArray(opts.domains) ? opts.domains : []).map(function (d) { return String(d || '').trim().toLowerCase(); }).filter(Boolean);
+        if (domains.length) {
+          var fd = defaultFilters();
+          fd.q_organization_domains_list = Array.from(new Set(domains)).slice(0, 1000);
+          var titles = (Array.isArray(opts.titles) ? opts.titles : []).filter(function (x) { return typeof x === 'string' && x.trim(); }).slice(0, 20);
+          if (titles.length) fd.person_titles = titles;
+          else fd.person_seniorities = (Array.isArray(opts.seniorities) ? opts.seniorities : []).filter(function (x) { return typeof x === 'string'; }).slice(0, 10);
+          state.search.filters = fd;
+          setActiveSavedId(null);
+          persistFilters();
+          if (state.search.panelHost) { state.search.panelHost.innerHTML = ''; state.search.panelHost.appendChild(buildFilterPanel()); }
+          updateFilterBadges();
+          toast(opts.note ? String(opts.note) : 'Buscando en ' + fd.q_organization_domains_list.length + ' cuentas.', 'info');
+          return runSearch(1, true);
+        }
+        var kw =(opts && Array.isArray(opts.keywords) ? opts.keywords : []).map(function (k) { return String(k || '').trim(); }).filter(Boolean);
         if (kw.length) {
           var f = state.search.filters || defaultFilters();
           f.q_organization_keyword_tags = Array.from(new Set((f.q_organization_keyword_tags || []).concat(kw))).slice(0, 6);

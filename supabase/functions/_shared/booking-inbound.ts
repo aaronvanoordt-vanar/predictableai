@@ -2,7 +2,8 @@
  * _shared/booking-inbound.ts — el invitado contesta un recordatorio por
  * WhatsApp (texto o botón de respuesta rápida de la plantilla).
  *
- * Lo llama wati-webhook con cada mensaje entrante. Solo actúa si ese número
+ * Lo llama `recordInbound` (_shared/whatsapp-inbound.ts) con cada entrante,
+ * por WATI o por Meta directo. Solo actúa si ese número
  * tiene una reunión viva agendada desde la agenda (y ya recibió algún aviso):
  *   • «Confirmo» / «Sí, ahí estaré»   → confirmation = confirmed.
  *   • «Reprogramar» / «no puedo»       → reschedule_requested + le responde con
@@ -13,7 +14,7 @@
  * Cualquier otro mensaje no cambia nada. Nunca lanza.
  */
 
-import * as wati from "./wati.ts";
+import { digits } from "./wati.ts";
 import { classifyReminderReply, manageUrl, PUBLIC_APP_URL } from "./booking.ts";
 import { sendWhatsAppText } from "./booking-notify.ts";
 
@@ -26,7 +27,7 @@ export async function handleBookingReply(db: Db, userId: string, waId: string, t
   try {
     const intent = classifyReminderReply(text);
     if (!intent) return null;
-    const phone = wati.digits(waId);
+    const phone = digits(waId);
     if (!phone) return null;
     const { data } = await db.from("bookings")
       .select("id, member_id, guest_phone, guest_name, start_at, end_at, confirmation, manage_token, reminders")
@@ -35,7 +36,7 @@ export async function handleBookingReply(db: Db, userId: string, waId: string, t
       .order("start_at").limit(20);
     const tail = phone.slice(-8);
     const b = ((data ?? []) as Json[]).find((x) =>
-      (memberId && x.member_id === memberId) || (x.guest_phone && wati.digits(x.guest_phone).slice(-8) === tail));
+      (memberId && x.member_id === memberId) || (x.guest_phone && digits(x.guest_phone).slice(-8) === tail));
     if (!b || !b.reminders?.confirmation) return null;
     const now = new Date().toISOString();
     if (intent === "confirm") {
