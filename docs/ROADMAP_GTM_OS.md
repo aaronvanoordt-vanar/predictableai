@@ -71,7 +71,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 
 **P0**
 - [x] Waterfall enrichment + verificación de email + normalización de teléfonos latinos — PR #346 (`docs/ENRICHMENT_WATERFALL.md`)
-- [ ] WhatsApp por embedded signup (Tech Provider) + monitor de calidad del número — en curso (sesión propia)
+- [x] WhatsApp por embedded signup (Tech Provider) + monitor de calidad del número — PR #347 (`docs/WHATSAPP_META.md`)
 - [ ] Envío de email propio con warm-up y monitor de entregabilidad — en curso (sesión propia)
 
 **P1**
