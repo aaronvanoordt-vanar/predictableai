@@ -5,7 +5,7 @@
  * `linkedin-content.test.ts` la cubre):
  *
  *   · estados del calendario editorial y qué transiciones valen (la base lo
- *     revalida con un trigger: migración 20261018000002_linkedin_content.sql);
+ *     revalida con un trigger: migración 20261018170000_linkedin_content.sql);
  *   · la prueba social CITABLE del Contexto (solo `social_proof` con cliente y
  *     resultado). Sin prueba, el post no menciona casos, clientes ni cifras
  *     de resultados, y una idea de tipo «caso» se descarta;

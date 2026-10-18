@@ -57,6 +57,9 @@
     // Contenido en LinkedIn: una tanda de ideas o un borrador (o reescritura).
     linkedin_ideas:         { credits: 2,  label: 'por tanda de ideas',  variable: false },
     linkedin_post:          { credits: 3,  label: 'por borrador',        variable: false },
+    // Columnas IA (Listas): por fila investigada, también «No encontrado»; los errores no.
+    ai_column_cell:         { credits: 2,  label: 'por fila (con búsqueda web)', variable: true },
+    ai_column_cell_basic:   { credits: 1,  label: 'por fila (sin búsqueda web)', variable: true },
     // Tendencias de outbound (investigación manual).
     outreach_playbook:      { credits: 10, label: 'por investigación',   variable: false },
 
