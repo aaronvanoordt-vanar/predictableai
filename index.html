@@ -2150,6 +2150,13 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       Bandeja
       <span id="nav-bandeja-badge" class="nav-badge" style="display:none">0</span>
     </div>
+    <!-- Llamadas (2026-10-17, js/calls.js + js/dialer.js): cola de llamadas de
+         las campañas, historial con grabación/transcripción/coach y la
+         configuración del dialer y de CloudTalk/Aircall/Ringover. -->
+    <div class="nav-item" data-page="llamadas" onclick="nav(this,'llamadas');if(window.Calls)window.Calls.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M3.5 2.5h2.5l1.2 3.2-1.6 1a6.8 6.8 0 0 0 3.7 3.7l1-1.6 3.2 1.2v2.5a1.2 1.2 0 0 1-1.3 1.2A10.5 10.5 0 0 1 2.3 3.8 1.2 1.2 0 0 1 3.5 2.5z"/></svg>
+      Llamadas
+    </div>
 
     <!-- AI SALES COACH -->
     <div class="sidebar-section">
@@ -2413,6 +2420,17 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
   <div id="ai-training-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: LLAMADAS (js/calls.js + js/dialer.js) ═══════ -->
+<div class="page fade-in" id="page-llamadas" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Llamadas</div>
+      <div class="topbar-sub">Las llamadas de tus campañas, tu historial y cómo llamas: el dialer de Predictable o tu proveedor</div>
+    </div>
+  </div>
+  <div id="calls-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: INTEGRACIONES (js/integrations.js) ═══════ -->
@@ -3185,7 +3203,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <!-- ═════ Predictable JS modules ═════ -->
 <script src="js/ui-helpers.js"></script>
 <script src="js/ai-engine.js"></script>
-<script src="js/credit-costs.js?v=20261008"></script>
+<script src="js/credit-costs.js?v=20261017"></script>
 <script src="js/credits.js"></script>
 <script src="js/skeletons.js"></script>
 <script src="js/i18n.js"></script>
@@ -3193,20 +3211,22 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/apollo-enums.js"></script>
 <script src="js/company-context.js?v=20260823"></script>
 <script src="js/prospecting-data.js?v=20261008"></script>
-<script src="js/prospecting.js?v=20261008"></script>
-<script src="js/campaign-flow.js?v=20260915"></script>
+<script src="js/prospecting.js?v=20261017"></script>
+<script src="js/campaign-flow.js?v=20261017"></script>
 <script src="js/linkedin-campaigns.js?v=20260915"></script>
-<script src="js/campaign-builder.js?v=20260923"></script>
+<script src="js/campaign-builder.js?v=20261017"></script>
 <script src="js/campaign-knowledge.js?v=20260923"></script>
 <script src="js/campaign-analytics.js?v=20261008a"></script>
-<script src="js/campaigns.js?v=20261008b"></script>
+<script src="js/campaigns.js?v=20261017"></script>
 <script src="js/inbox-alert.js?v=20261001b"></script>
 <script src="js/push.js?v=20261006"></script>
 <script src="js/radar.js?v=20260918"></script>
 <script src="js/radar-live.js?v=20260918"></script>
 <script src="js/clients.js?v=20260824-sheets"></script>
 <script src="js/meeting-coach.js"></script>
-<script src="js/realtime-coach.js"></script>
+<script src="js/realtime-coach.js?v=20261017"></script>
+<script src="js/dialer.js?v=20261017"></script>
+<script src="js/calls.js?v=20261017"></script>
 <script src="js/meeting-report.js"></script>
 <script src="js/learning.js?v=20260919"></script>
 <script src="js/ai-training.js?v=20260923"></script>
@@ -4061,6 +4081,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // Páginas con shell propio: montarlas también al restaurar (el onclick
     // del nav-item no corre en este camino).
     if (hash === 'clients' && window.clientsModule) window.clientsModule.show();
+    if (hash === 'llamadas' && window.Calls) window.Calls.show();
   }, 0);
 });
 

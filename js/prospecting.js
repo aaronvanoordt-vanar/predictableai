@@ -239,6 +239,7 @@
   var SVG_TRASH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>';
   var SVG_USER_PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>';
   // Icon matching the Campañas sidebar glyph (CTA «Crear campaña con esta lista»).
+  var SVG_PHONE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h3.5l1.8 4.6-2.3 1.4a10 10 0 0 0 5 5l1.4-2.3L19 13.5V17a2 2 0 0 1-2.1 2A16 16 0 0 1 3 5.1 2 2 0 0 1 5 3z"/></svg>';
   var SVG_RESEARCH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h9M4 10h6M4 15h5"/><circle cx="16.5" cy="14.5" r="3.5"/><path d="M19 17l2.5 2.5"/></svg>';
   var SVG_CAMPAIGN = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>';
 
@@ -2359,6 +2360,9 @@
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
       '<td style="white-space:nowrap">' +
+        // Clic para llamar (js/dialer.js): dialer de Predictable o el proveedor conectado.
+        (window.Dialer && String(m.phone || '').replace(/\D/g, '').length >= 8
+          ? '<button type="button" class="pros-iconbtn" data-action="call-member" data-id="' + id + '" title="Llamar">' + SVG_PHONE + '</button>' : '') +
         '<button type="button" class="pros-iconbtn pros-research-btn' + (open ? ' on' : '') + (hasResearch ? ' has' : '') + '" data-action="toggle-research" data-id="' + id + '" title="Investigación previa: notas y ángulo con IA" aria-expanded="' + (open ? 'true' : 'false') + '">' + SVG_RESEARCH + '</button>' +
         '<button type="button" class="pros-iconbtn" data-action="edit-member" data-id="' + id + '" title="Editar contacto">' + SVG_EDIT + '</button>' +
         '<button type="button" class="pros-iconbtn" data-action="delete-member" data-id="' + id + '" title="Eliminar contacto">' + SVG_TRASH + '</button>' +
@@ -2506,6 +2510,8 @@
           '<button type="button" class="btn btn-ai btn-sm" data-action="research-run" data-id="' + id + '" data-credit-cost="lead_research"' + (running ? ' disabled' : '') + '>' +
             (running ? 'Investigando…' : (r.angle ? 'Volver a investigar' : 'Investigar con IA')) + '</button></div>' +
         right +
+        // Las llamadas del lead con el reporte del Meeting Coach (js/calls.js).
+        '<div data-lead-calls="' + id + '"></div>' +
       '</div>' +
     '</div>';
   }
@@ -2648,6 +2654,7 @@
     html += '<div class="pros-actions" style="padding:10px 18px 14px">' +
       (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer teléfonos</button>') +
       (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>') +
+      (window.Dialer ? '<button type="button" class="btn btn-ghost btn-sm" data-action="power-dial"' + (st.members.length ? '' : ' disabled') + ' title="Llama uno por uno a los seleccionados (o a todos los que ves) y marca el resultado de cada uno">' + SVG_PHONE + ' Llamar ' + (n ? 'a los seleccionados' : 'a la lista') + '</button>' : '') +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-members">Actualizar</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="export-csv"' + (st.members.length ? '' : ' disabled') + '>Exportar CSV</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="delete-members" style="color:var(--red)"' + (n ? '' : ' disabled') + '>Eliminar</button>' +
@@ -2683,6 +2690,11 @@
       ? { id: active.getAttribute('data-id'), start: active.selectionStart, end: active.selectionEnd, scroll: active.scrollTop }
       : null;
     host.innerHTML = html;
+    if (window.Calls) {
+      Array.prototype.forEach.call(host.querySelectorAll('[data-lead-calls]'), function (el) {
+        window.Calls.renderLeadCalls(el, el.getAttribute('data-lead-calls')).catch(function () {});
+      });
+    }
     if (keepNotes) {
       var again = host.querySelector('textarea[data-action="research-notes"][data-id="' + keepNotes.id + '"]');
       if (again) {
@@ -2872,6 +2884,18 @@
       return;
     }
     if (action === 'research-run') return runResearch(btn, btn.getAttribute('data-id'));
+    if (action === 'call-member') {
+      var cm = findListMember(btn.getAttribute('data-id'));
+      if (cm && window.Dialer) window.Dialer.call(cm, { onDone: function () { reloadMembers({ keepSelection: true }); } });
+      return;
+    }
+    if (action === 'power-dial') {
+      if (!window.Dialer) return;
+      var pdRows = st.selected.size ? selectedListMembers() : visibleListMembers();
+      var lst = isAllList() ? null : findList(st.activeListId);
+      window.Dialer.power(pdRows.map(function (m) { return { member: m, opts: {} }; }), { title: lst ? lst.name : 'Todos los contactos' });
+      return;
+    }
     if (action === 'create-campaign') return createCampaignFromList();
     if (action === 'add-manual') return openAddManualModal();
     if (action === 'enrich-selected') return openEnrichModal();

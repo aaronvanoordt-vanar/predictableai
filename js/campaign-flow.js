@@ -29,7 +29,7 @@
   'use strict';
 
   var FLOW_VERSION = 1;
-  var CHANNELS = ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message'];
+  var CHANNELS = ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message', 'call'];
   var CONTENT_KINDS = ['template', 'ai', 'custom'];
   /** Las tres ranuras fijas de antes (2026-10-02): se leen como `template`. */
   var LEGACY_TEMPLATE_KINDS = ['template_a', 'template_b', 'template_c'];
@@ -40,6 +40,7 @@
     'email_delivered', 'email_opened', 'email_bounced',
     'engaged_any',
     'has_phone', 'has_email', 'has_linkedin',
+    'call_answered', 'call_voicemail',
   ];
   var DELAY_MODES = ['after_prev', 'with_prev'];
   var AI_MESSAGE_CREDITS = 2; // espejo de _shared/campaign-flow.ts y js/credit-costs.js
@@ -51,6 +52,9 @@
     email:            { label: 'Email',               short: 'Email',    tone: 'blue',   needs: 'apollo' },
     linkedin_connect: { label: 'LinkedIn · conexión', short: 'Conexión', tone: 'teal',   needs: 'dripify' },
     linkedin_message: { label: 'LinkedIn · mensaje',  short: 'Mensaje LI', tone: 'teal',  needs: 'dripify' },
+    // La llamada no necesita un canal conectado: el dialer de Predictable está
+    // siempre, y CloudTalk/Aircall/Ringover son opcionales (docs/TELEFONIA.md).
+    call:             { label: 'Llamada',             short: 'Llamada',  tone: 'amber',  needs: null },
   };
   var KIND_LABELS = {
     template: 'Plantilla de WhatsApp',
@@ -82,6 +86,8 @@
     has_phone: { label: 'Tiene teléfono', hint: 'El lead tiene un número revelado.', needs: null },
     has_email: { label: 'Tiene email', hint: 'El lead tiene un email revelado.', needs: null },
     has_linkedin: { label: 'Tiene LinkedIn', hint: 'El lead tiene URL de perfil.', needs: null },
+    call_answered: { label: 'Contestó la llamada', hint: 'El SDR marcó «Contestó» en la llamada de esta cadencia. «Reunión agendada» y «No interesado» detienen la campaña solos.', needs: null, after: 'call' },
+    call_voicemail: { label: 'La llamada cayó en buzón', hint: 'La llamada de esta cadencia terminó en buzón de voz (lo marca el SDR o el proveedor).', needs: null, after: 'call' },
   };
 
   /** Los dos pasos que suben el lead a una campaña de Dripify. */
@@ -119,6 +125,8 @@
     // acepta texto por lead): el ángulo solo alimenta el CSV de Custom Lead
     // Fields, así que nunca es "mi texto" ni plantilla de WhatsApp.
     if (isLinkedin(channel) && kind !== 'ai') kind = 'ai';
+    // Una llamada lleva guion IA o el guion propio, nunca una plantilla.
+    if (channel === 'call' && kind === 'template') kind = 'ai';
     var out = { kind: kind };
     if (kind === 'ai') {
       var angle = String(c.angle == null ? '' : c.angle);
@@ -221,6 +229,9 @@
         if (!a.content.body) errors.push({ nodeId: a.id, message: label + ': el texto propio está vacío.' });
         if (a.channel === 'email' && !a.content.subject) errors.push({ nodeId: a.id, message: label + ': el email necesita asunto.' });
       }
+      if (a.channel === 'call' && a.delay.mode === 'with_prev') {
+        errors.push({ nodeId: a.id, message: label + ': una llamada no puede salir "junto con el anterior": la hace una persona.' });
+      }
     }
     var count = 0;
     f.nodes.forEach(function (n, i) {
@@ -290,6 +301,12 @@
   function delayMs(node) {
     if (!node) return 0;
     return (node.delay.days * 24 + node.delay.hours) * 60 * 60 * 1000;
+  }
+
+  /** Días que la tarea de llamar espera al SDR antes de omitirse (settings.call_wait_days, 1-14). */
+  function callWaitDays(node) {
+    var n = Number(node.settings && node.settings.call_wait_days);
+    return isFinite(n) && n >= 1 ? Math.min(14, Math.round(n)) : 3;
   }
 
   function legacyKind(node) { return node.content.kind === 'ai' ? 'ai_personalized' : node.content.kind; }
@@ -368,6 +385,7 @@
       return ch.label + (dc ? ' · ' + dc : '');
     }
     var k = node.content.kind;
+    if (node.channel === 'call') return ch.label + (k === 'custom' ? ' · Mi guion' : ' · Guion IA: ' + (ANGLE_LABELS[node.content.angle] || node.content.angle || 'apertura').replace(/\s*\(.*\)$/, ''));
     if (k === 'ai') return ch.label + ' · IA: ' + (ANGLE_LABELS[node.content.angle] || node.content.angle || 'apertura').replace(/\s*\(.*\)$/, '');
     if (k === 'custom') return ch.label + ' · Mi texto';
     if (k === 'template') {
@@ -497,6 +515,6 @@
     nodeTitle: nodeTitle, cloneWithNewIds: cloneWithNewIds, durationDays: durationDays, templates: templates, isLinkedin: isLinkedin,
     newId: newId, emptyFlow: emptyFlow, normalize: normalize, validate: validate,
     actions: actions, ordinal: ordinal, find: find, firstNode: firstNode, nextAfter: nextAfter, enterBranch: enterBranch,
-    delayMs: delayMs, legacyKind: legacyKind, templateName: templateName, LEGACY_TEMPLATE_KINDS: LEGACY_TEMPLATE_KINDS, LEGACY_SLOT_LABELS: LEGACY_SLOT_LABELS, fromLegacySteps: fromLegacySteps, estimateCredits: estimateCredits, delayLabel: delayLabel,
+    delayMs: delayMs, legacyKind: legacyKind, callWaitDays: callWaitDays, templateName: templateName, LEGACY_TEMPLATE_KINDS: LEGACY_TEMPLATE_KINDS, LEGACY_SLOT_LABELS: LEGACY_SLOT_LABELS, fromLegacySteps: fromLegacySteps, estimateCredits: estimateCredits, delayLabel: delayLabel,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

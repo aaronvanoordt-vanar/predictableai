@@ -114,6 +114,7 @@
     failed: 'Falló', skipped: 'Omitido', opted_out: 'Se dio de baja', connection_sent: 'Conexión enviada',
     connection_accepted: 'Conexión aceptada', stopped: 'Detenido', completed: 'Cadencia completada',
     generated: 'Mensaje IA listo', branched: 'Condición evaluada',
+    task_created: 'Tarea de llamar creada', called: 'Llamada',
   };
   var CAMPAIGN_STATUS = {
     draft:     { label: 'Borrador',   pill: 'gray' },
@@ -314,7 +315,7 @@
     var s = String(stepChannel || '');
     return /^linkedin/.test(s) ? 'linkedin' : s;
   }
-  function chanLabel(ch) { var k = chanKey(ch); return CH[k] ? CH[k].label : String(ch || '—'); }
+  function chanLabel(ch) { var k = chanKey(ch); if (k === 'phone' || k === 'call') return 'Llamada'; return CH[k] ? CH[k].label : String(ch || '—'); }
   function chanIcon(ch) {
     var k = chanKey(ch);
     return CH[k] ? '<span class="cmp-ch-ic cmp-ch-' + k + '" title="' + esc(CH[k].label) + '">' + CH[k].icon + '</span>' : '';
@@ -3729,6 +3730,12 @@
     if (liUrl) links.appendChild(h('a', { href: liUrl, target: '_blank', rel: 'noopener', text: 'Perfil de LinkedIn' }));
     if (m && hasEmail(m)) links.appendChild(h('span', { class: 'pros-hint', text: m.email }));
     if (m && hasPhone(m)) links.appendChild(h('span', { class: 'pros-hint', text: m.phone }));
+    // Clic para llamar (js/dialer.js): el resultado mueve el CRM y la campaña.
+    if (m && hasPhone(m) && global.Dialer) {
+      var callBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', title: 'Llamar con el dialer de Predictable o tu proveedor', text: 'Llamar' });
+      callBtn.addEventListener('click', function () { global.Dialer.call(m); });
+      links.appendChild(callBtn);
+    }
     if (conv.channels.email && m && m.email) {
       if (state.gmail && state.gmail.connected && pros().openThread) links.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'thread-gmail', 'data-key': conv.key, text: 'Ver hilo completo en Gmail' }));
       else if (state.gmail && !state.gmail.connected && pros().connectGmail) links.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'gmail-connect', text: 'Conectar Gmail para leer el hilo completo' }));
@@ -3759,6 +3766,12 @@
     head.appendChild(left);
     head.appendChild(links);
     card.appendChild(head);
+    // Las llamadas con este lead (resultado, grabación y el reporte del coach).
+    if (m && global.Calls) {
+      var callsBox = h('div', { style: 'padding:0 14px' });
+      card.appendChild(callsBox);
+      global.Calls.renderLeadCalls(callsBox, m.id).catch(function () {});
+    }
     var radarSig = memberRadar(m);
     if (radarSig) card.appendChild(renderRadarOrigin(conv, radarSig));
 

@@ -11,7 +11,7 @@
  *   Action    = { id, type: "action", channel, delay, content, settings? }
  *   Condition = { id, type: "condition", check, delay?, yes: Action[], no: Action[] }
  *
- *   channel  whatsapp | email | linkedin_connect | linkedin_message
+ *   channel  whatsapp | email | linkedin_connect | linkedin_message | call
  *            Los dos canales de LinkedIn suben el lead a una campaña de
  *            Dripify (lo único que la Open API permite). Son pasos DISTINTOS
  *            a propósito: la campaña de `linkedin_connect` solo manda la
@@ -19,6 +19,11 @@
  *            la cadencia la decide Predictable paso a paso y una respuesta por
  *            otro canal la detiene de verdad (una campaña de Dripify con su
  *            propia secuencia seguiría sola). Ver docs/OMNICANAL.md.
+ *            `call` (2026-10-17) no envía nada: crea una TAREA para el SDR
+ *            (call_tasks) con el guion (IA = campaign_messages, o "mi texto")
+ *            y la cadencia espera su resultado hasta settings.call_wait_days
+ *            (1-14, 3 por defecto); vencido el plazo, el paso se omite. Sin
+ *            teléfono se omite como los demás canales. Ver docs/TELEFONIA.md.
  *   delay    { mode: "after_prev" | "with_prev", days, hours }
  *            after_prev → espera desde la ÚLTIMA acción ejecutada por ese lead
  *            (o desde el enrolamiento para la primera). with_prev → sale junto
@@ -35,7 +40,10 @@
  *   check    linkedin_connection_sent | linkedin_connected |
  *            whatsapp_delivered | whatsapp_read |
  *            email_delivered | email_opened | email_bounced |
- *            engaged_any | has_phone | has_email | has_linkedin
+ *            engaged_any | has_phone | has_email | has_linkedin |
+ *            call_answered | call_voicemail (resultado de la última llamada
+ *            de la cadencia; "reunión agendada" y "no interesado" detienen el
+ *            enrolamiento, así que no son ramas)
  *            La condición puede esperar (delay, siempre after_prev) antes de
  *            evaluarse: "3 días después, ¿aceptó la conexión?". Se evalúa UNA
  *            vez, cuando el lead llega a ella.
@@ -58,7 +66,7 @@
 
 export const FLOW_VERSION = 1;
 
-export const CHANNELS = ["whatsapp", "email", "linkedin_connect", "linkedin_message"] as const;
+export const CHANNELS = ["whatsapp", "email", "linkedin_connect", "linkedin_message", "call"] as const;
 export const CONTENT_KINDS = ["template", "ai", "custom"] as const;
 /** Las tres ranuras fijas de antes (2026-10-02): se leen como `template`. */
 export const LEGACY_TEMPLATE_KINDS = ["template_a", "template_b", "template_c"] as const;
@@ -69,6 +77,7 @@ export const CONDITIONS = [
   "email_delivered", "email_opened", "email_bounced",
   "engaged_any",
   "has_phone", "has_email", "has_linkedin",
+  "call_answered", "call_voicemail",
 ] as const;
 export const DELAY_MODES = ["after_prev", "with_prev"] as const;
 
@@ -157,6 +166,8 @@ function normalizeContent(raw: unknown, channel: Channel): Content {
   // acepta texto por lead): aquí el ángulo solo alimenta el CSV de Custom
   // Lead Fields, así que nunca es "mi texto" ni plantilla de WhatsApp.
   if (isLinkedin(channel) && kind !== "ai") kind = "ai";
+  // Una llamada lleva guion IA o el guion propio, nunca una plantilla.
+  if (channel === "call" && kind === "template") kind = "ai";
   const out: Content = { kind: kind as ContentKind };
   if (out.kind === "ai") {
     const angle = String(c.angle ?? "");
@@ -261,6 +272,9 @@ export function validate(raw: unknown): { ok: boolean; errors: FlowError[] } {
       if (!a.content.body) errors.push({ nodeId: a.id, message: `${label}: el texto propio está vacío.` });
       if (a.channel === "email" && !a.content.subject) errors.push({ nodeId: a.id, message: `${label}: el email necesita asunto.` });
     }
+    if (a.channel === "call" && a.delay.mode === "with_prev") {
+      errors.push({ nodeId: a.id, message: `${label}: una llamada no puede salir "junto con el anterior": la hace una persona.` });
+    }
   };
   let count = 0;
   f.nodes.forEach((n, i) => {
@@ -334,6 +348,12 @@ export function enterBranch(flow: Flow, conditionId: string, branch: "yes" | "no
 export function delayMs(node: FlowNode | null | undefined): number {
   if (!node) return 0;
   return (node.delay.days * 24 + node.delay.hours) * 60 * 60 * 1000;
+}
+
+/** Días que la tarea de llamar espera al SDR antes de omitirse (settings.call_wait_days, 1-14). */
+export function callWaitDays(node: ActionNode): number {
+  const n = Number(node.settings?.call_wait_days);
+  return Number.isFinite(n) && n >= 1 ? Math.min(14, Math.round(n)) : 3;
 }
 
 /** Contenido "clásico" de un nodo (lo que campaign_steps guardaba): para reusar el ejecutor del motor. */
