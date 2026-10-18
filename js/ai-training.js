@@ -314,7 +314,7 @@
       return;
     }
     if (state.error === 'pending_migration') {
-      root.innerHTML = '<div class="ait-wrap"><div class="ait-card"><div class="ait-h">El entrenamiento todavía no está activado</div><p class="ait-p">Falta aplicar la migración <code>20260923000001_ai_training.sql</code> en Supabase. Cuando esté, esta página funciona sola.</p></div></div>';
+      root.innerHTML = '<div class="ait-wrap"><div class="ait-card"><div class="ait-h">El entrenamiento todavía no está activado</div><p class="ait-p">Falta aplicar la migración <code>20260922235959_ai_training.sql</code> en Supabase. Cuando esté, esta página funciona sola.</p></div></div>';
       return;
     }
     if (state.error) {

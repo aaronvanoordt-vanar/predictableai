@@ -65,7 +65,7 @@ Si más adelante se quiere que una IA de Predictable consulte el CRM en conversa
 - `config.sync` — `pull`, `cursor`, `missing_scopes`, `last_run_at`, `last_status`, `auto_lists`. `config.export_progress` suma las tandas de un envío en curso.
 - `prospect_list_members.crm_state` — un objeto por plataforma (`{ hubspot: {…}, pipedrive: { person_id, org_id, deal_id, url, pushed_at } }`), escrito con la RPC `merge_member_crm_state` (solo service role).
 
-Migraciones: `20260923000009_integrations.sql` y `20261018230000_crm_integrations_latam.sql` (proveedores nuevos, columnas `crm_*`, trigger que las protege, RPC y el cron comentado).
+Migraciones: `20260923000011_integrations.sql`, `20261018230000_crm_integrations_latam.sql` (proveedores nuevos, columnas `crm_*`, trigger que las protege, RPC y el cron comentado) y `20261018231000_integrations_sync_cron.sql` (programa el cron).
 
 ## Tokens
 

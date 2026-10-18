@@ -19,6 +19,10 @@
  *   { action: "portal" }
  *       → { url }  Portal de Stripe: tarjeta, facturas, cancelar.
  *
+ * Una cuenta de espacio de cliente (client_workspaces) recibe 403
+ * workspace_billing en los dos checkouts: sus créditos los asigna la agencia
+ * (migración 20261018180006), así la agencia es la única que paga.
+ *
  * Secrets: STRIPE_SECRET_KEY (clave restringida: Customers, Checkout
  * Sessions y Customer portal en escritura; Subscriptions y Prices en
  * lectura). Opcionales: APP_URL (por defecto https://predictableai.vanarsi.com)
@@ -114,6 +118,20 @@ Deno.serve(async (req: Request) => {
   const base = appUrl(origin);
 
   try {
+    // Un espacio de cliente (client_workspaces) no paga por su cuenta: sus
+    // créditos los asigna la agencia o el equipo que lo gestiona, que es
+    // quien tiene el plan y recibe la factura.
+    if (action === "checkout_subscription" || action === "checkout_topup") {
+      const { data: ws } = await supa.from("client_workspaces")
+        .select("client_id").eq("workspace_user_id", user.id).maybeSingle();
+      if (ws) {
+        return json({
+          error: "workspace_billing",
+          message: "Los créditos de este espacio los asigna tu agencia desde su cuenta (Agencia → Créditos por espacio).",
+        }, 403, h);
+      }
+    }
+
     if (action === "checkout_subscription") {
       const interval: Interval = body.interval === "year" ? "year" : "month";
       const plan = await strictPlan(supa, user.id);

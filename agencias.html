@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agencias de Predictable</title>
+<meta name="description" content="Agencias que trabajan con Predictable AI en Latinoamérica: países, verticales y sitio web.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<!--
+  Directorio público de agencias (2026-10-17). Sin login: no carga
+  auth-guard.js ni el SDK de Supabase. Lee el RPC público
+  public_agency_directory() (migración 20261018180006), que devuelve SOLO la
+  ficha de las agencias que el dueño aprobó a mano y que eligieron aparecer.
+  Nada inventado: si no hay ninguna aprobada, la página lo dice.
+-->
+<style>
+:root {
+  --bg: #F7F8FA; --surface: #FFFFFF; --surface2: #F6F7F9;
+  --hair: rgba(10,10,15,0.08); --hair-2: rgba(10,10,15,0.05); --hair-3: rgba(10,10,15,0.13);
+  --ink: #0A0A0F; --ink-2: rgba(10,10,15,0.78); --ink-3: rgba(10,10,15,0.55); --ink-4: rgba(10,10,15,0.40);
+  --accent: #1F4BFF; --accent-soft: rgba(31,75,255,0.10);
+  --green: #0EA968; --green-soft: rgba(14,169,104,0.11);
+  --red: #D64545; --red-soft: rgba(214,69,69,0.10);
+  --amber: #B87514; --amber-soft: rgba(184,117,20,0.11);
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
+  --grad-ai: linear-gradient(120deg, #1F4BFF, #4364FF, #6E5CF5);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0B0C10; --surface: #13141A; --surface2: #1A1B23;
+    --hair: rgba(255,255,255,0.08); --hair-2: rgba(255,255,255,0.05); --hair-3: rgba(255,255,255,0.15);
+    --ink: #F5F6F8; --ink-2: rgba(245,246,248,0.80); --ink-3: rgba(245,246,248,0.56); --ink-4: rgba(245,246,248,0.40);
+    --accent: #5C82FF; --accent-soft: rgba(92,130,255,0.16);
+    --green: #33C284; --green-soft: rgba(51,194,132,0.14);
+    --red: #E66A6A; --red-soft: rgba(230,106,106,0.13);
+    --amber: #DFA24E; --amber-soft: rgba(223,162,78,0.13);
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+.top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 24px; background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--hair); }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-weight: 700; font-size: 15px; }
+.brand img { width: 26px; height: 26px; }
+.brand small { font-weight: 500; color: var(--ink-3); font-size: 13px; }
+.top a.cta { font-size: 13px; font-weight: 600; color: #fff; background: var(--grad-ai); padding: 8px 14px; border-radius: 999px; text-decoration: none; white-space: nowrap; }
+.hero { max-width: 1080px; margin: 0 auto; padding: 40px 24px 8px; }
+.hero h1 { font-size: 30px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -0.4px; }
+.hero p { font-size: 15px; line-height: 1.6; color: var(--ink-3); max-width: 720px; margin: 0; }
+.filters { max-width: 1080px; margin: 0 auto; padding: 20px 24px 0; display: flex; gap: 8px; flex-wrap: wrap; }
+.filters input, .filters select { font: inherit; font-size: 13px; padding: 8px 10px; border-radius: var(--r-md); border: 1px solid var(--hair-3); background: var(--surface); color: var(--ink); min-width: 0; }
+.filters input { flex: 1 1 220px; }
+#list { max-width: 1080px; margin: 0 auto; padding: 20px 24px 60px; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--hair); border-radius: var(--r-lg); padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+.card h2 { font-size: 16px; margin: 0; }
+.card p { font-size: 13px; line-height: 1.55; color: var(--ink-2); margin: 0; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { font-size: 11.5px; font-weight: 600; color: var(--ink-2); border: 1px solid var(--hair-3); border-radius: 999px; padding: 3px 9px; }
+.tag.v { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+.card a.site { font-size: 13px; color: var(--accent); text-decoration: none; font-weight: 600; margin-top: auto; overflow-wrap: anywhere; }
+.state { grid-column: 1 / -1; font-size: 14px; color: var(--ink-3); }
+footer { max-width: 1080px; margin: 0 auto; padding: 0 24px 40px; font-size: 12px; color: var(--ink-4); line-height: 1.6; }
+@media (max-width: 640px) { .top { padding: 10px 16px; } .brand small { display: none; } .hero { padding: 28px 16px 4px; } .hero h1 { font-size: 24px; } .filters { padding: 16px 16px 0; } #list { padding: 16px 16px 48px; grid-template-columns: 1fr; } footer { padding: 0 16px 32px; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="landing.html"><img src="assets/predictable-favicon.png" alt="">Predictable AI <small>· Agencias</small></a>
+  <a class="cta" href="index.html">Ir a la app</a>
+</header>
+<section class="hero">
+  <h1>Agencias que trabajan con Predictable</h1>
+  <p>Agencias de prospección y ventas en Latinoamérica que operan Predictable para sus clientes. Cada ficha la revisamos a mano antes de publicarla.</p>
+</section>
+<div class="filters">
+  <input id="q" type="search" placeholder="Buscar por nombre o vertical" aria-label="Buscar agencia">
+  <select id="country" aria-label="Filtrar por país"><option value="">Todos los países</option></select>
+</div>
+<main id="list"><p class="state">Cargando agencias…</p></main>
+<footer>¿Tienes una agencia? Envía tu ficha desde Predictable → Agencia. Predictable no garantiza los resultados de las agencias del directorio.</footer>
+<script src="js/config.js"></script>
+<script>
+(function () {
+  'use strict';
+  var list = document.getElementById('list');
+  var q = document.getElementById('q');
+  var countrySel = document.getElementById('country');
+  var all = [];
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function safeUrl(u) {
+    try { var x = new URL(String(u || '')); return (x.protocol === 'https:' || x.protocol === 'http:') ? x.href : null; } catch (e) { return null; }
+  }
+  function state(text) {
+    list.textContent = '';
+    list.appendChild(el('p', 'state', text));
+  }
+  function norm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+
+  function render() {
+    var term = norm(q.value.trim());
+    var c = countrySel.value;
+    var rows = all.filter(function (a) {
+      if (c && (a.countries || []).indexOf(c) === -1) return false;
+      if (!term) return true;
+      return norm(a.name).indexOf(term) !== -1 || (a.verticals || []).some(function (v) { return norm(v).indexOf(term) !== -1; });
+    });
+    if (!all.length) return state('Todavía no hay agencias aprobadas en el directorio.');
+    if (!rows.length) return state('Ninguna agencia coincide con la búsqueda.');
+    list.textContent = '';
+    rows.forEach(function (a) {
+      var card = el('article', 'card');
+      card.appendChild(el('h2', null, a.name));
+      if (a.description) card.appendChild(el('p', null, a.description));
+      if ((a.countries || []).length) {
+        var t = el('div', 'tags');
+        a.countries.forEach(function (x) { t.appendChild(el('span', 'tag', x)); });
+        card.appendChild(t);
+      }
+      if ((a.verticals || []).length) {
+        var v = el('div', 'tags');
+        a.verticals.forEach(function (x) { v.appendChild(el('span', 'tag v', x)); });
+        card.appendChild(v);
+      }
+      var href = safeUrl(a.website);
+      if (href) {
+        var link = el('a', 'site', new URL(href).hostname.replace(/^www\./, ''));
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener nofollow ugc';
+        card.appendChild(link);
+      }
+      list.appendChild(card);
+    });
+  }
+
+  async function load() {
+    var cfg = window.SUPABASE_CONFIG || {};
+    try {
+      var res = await fetch(String(cfg.url || '').replace(/\/$/, '') + '/rest/v1/rpc/public_agency_directory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey, Authorization: 'Bearer ' + cfg.anonKey },
+        body: '{}',
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      all = await res.json();
+      if (!Array.isArray(all)) all = [];
+    } catch (e) {
+      return state('No se pudo cargar el directorio. Intenta de nuevo en unos minutos.');
+    }
+    var countries = {};
+    all.forEach(function (a) { (a.countries || []).forEach(function (c) { countries[c] = true; }); });
+    Object.keys(countries).sort(function (a, b) { return a.localeCompare(b, 'es'); }).forEach(function (c) {
+      var o = el('option', null, c);
+      o.value = c;
+      countrySel.appendChild(o);
+    });
+    render();
+  }
+
+  q.addEventListener('input', render);
+  countrySel.addEventListener('change', render);
+  load();
+})();
+</script>
+</body>
+</html>
