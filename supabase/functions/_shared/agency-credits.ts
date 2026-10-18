@@ -31,6 +31,7 @@ export const USAGE_CATEGORIES: { key: string; label: string; prefixes: string[] 
   { key: "hub", label: "Intelligence Hub", prefixes: ["intel_hub", "market_analysis", "outreach_playbook"] },
   { key: "radar", label: "Radar", prefixes: ["radar_", "champion_"] },
   { key: "coach", label: "Meeting Coach", prefixes: ["coach_"] },
+  { key: "voice", label: "Agente de voz", prefixes: ["voice_"] },
 ];
 export const OTHER_CATEGORY = { key: "other", label: "Otros" };
 
