@@ -1,6 +1,9 @@
 // deno test supabase/functions/_shared/hubspot-sync.test.ts
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { dealState, leadState, mainDeal, modifiedSinceBody, ownerMap, stageMap, suppressionReason } from "./hubspot-sync.ts";
+import {
+  dealState, DEFAULT_STATUS_MAP, leadState, mainDeal, mappedStatus, modifiedSinceBody, ownerMap, sanitizeStatusMap,
+  shouldApplyStatus, stageMap, suppressionReason,
+} from "./hubspot-sync.ts";
 
 const pipelines = {
   results: [{
@@ -63,4 +66,26 @@ Deno.test("búsqueda incremental por fecha de modificación", () => {
   assertEquals(b.filterGroups[0].filters[0], { propertyName: "lastmodifieddate", operator: "GTE", value: "1760000000000" });
   assertEquals(b.limit, 200);
   assertEquals(b.after, "200");
+});
+
+Deno.test("etapas → estado: el deal manda, solo cambios nuevos, nunca retrocede ni pisa la baja", () => {
+  const map = sanitizeStatusMap({
+    lifecycle: { salesqualifiedlead: "respondio", customer: "dado_de_baja", "bad key!": "respondio" },
+    deal: DEFAULT_STATUS_MAP.deal,
+  });
+  assertEquals(map.lifecycle, { salesqualifiedlead: "respondio" }, "solo estados permitidos y claves válidas");
+  const contact = (lifecycle: string) => ({ id: "1", properties: { lifecyclestage: lifecycle } });
+  const sql = leadState(contact("salesqualifiedlead"), [], null, stages, owners, "1");
+  assertEquals(mappedStatus(sql, map), "respondio");
+  const withDeal = leadState(contact("salesqualifiedlead"), [deal("9", "appointmentscheduled")], null, stages, owners, "1");
+  assertEquals(mappedStatus(withDeal, map), "reunion_agendada");
+  assertEquals(mappedStatus(leadState(contact("lead"), [deal("9", "custom")], null, stages, owners, "1"), map), null);
+
+  assert(shouldApplyStatus("en_campana", "reunion_agendada", undefined));
+  assert(!shouldApplyStatus("en_campana", "reunion_agendada", "reunion_agendada"), "ya se aplicó: un cambio manual no se pisa");
+  assert(!shouldApplyStatus("reunion_tomada", "reunion_agendada", null), "no retrocede");
+  assert(!shouldApplyStatus("dado_de_baja", "reunion_tomada", null), "la baja manda");
+  assert(shouldApplyStatus("reunion_tomada", "no_interesado", "reunion_tomada"), "perdido después de la reunión");
+  assert(shouldApplyStatus("no_interesado", "reunion_agendada", "no_interesado"), "reabierto en HubSpot");
+  assert(!shouldApplyStatus(null, null, null));
 });

@@ -220,3 +220,86 @@ export function modifiedSinceBody(prop: string, sinceMs: number, properties: str
   if (after) body.after = after;
   return body;
 }
+
+// ── Etapas de HubSpot → estado del lead en Predictable (2026-10-18) ───────
+//
+// El usuario elige a qué `contact_status` lleva cada etapa del ciclo de vida
+// y cada etapa de deal (Integraciones → HubSpot → «Etapas de HubSpot → estado
+// del lead»). Solo se puede llevar a los estados que describen la
+// conversación comercial; los de canal (en campaña, saludo/conexión enviada)
+// los escribe el motor de campañas y «dado de baja» es una decisión del lead
+// que HubSpot no informa.
+
+export const MAPPABLE_STATUSES = ["respondio", "reunion_agendada", "reunion_tomada", "no_interesado", "no_show"] as const;
+export type MappableStatus = typeof MAPPABLE_STATUSES[number];
+
+export interface StatusMap {
+  lifecycle: Record<string, MappableStatus>;
+  deal: Record<string, MappableStatus>;
+}
+
+/**
+ * Por defecto solo el pipeline de ventas estándar de HubSpot (ids fijos):
+ * reunión agendada → «Reunión conseguida»; etapas posteriores (ya hubo
+ * reunión) → «Reunión tomada»; perdido → «No interesado». El ciclo de vida
+ * no mueve el estado salvo que el usuario lo elija.
+ */
+export const DEFAULT_STATUS_MAP: StatusMap = {
+  lifecycle: {},
+  deal: {
+    appointmentscheduled: "reunion_agendada",
+    qualifiedtobuy: "reunion_tomada",
+    presentationscheduled: "reunion_tomada",
+    decisionmakerboughtin: "reunion_tomada",
+    contractsent: "reunion_tomada",
+    closedwon: "reunion_tomada",
+    closedlost: "no_interesado",
+  },
+};
+
+/** Valida el mapa que manda el navegador (claves cortas, solo estados permitidos). */
+export function sanitizeStatusMap(v: unknown): StatusMap {
+  const out: StatusMap = { lifecycle: {}, deal: {} };
+  const src = (v ?? {}) as Record<string, unknown>;
+  for (const kind of ["lifecycle", "deal"] as const) {
+    const m = (src[kind] ?? {}) as Record<string, unknown>;
+    for (const [k, s] of Object.entries(m).slice(0, 300)) {
+      if (!/^[A-Za-z0-9_.:-]{1,80}$/.test(k)) continue;
+      if ((MAPPABLE_STATUSES as readonly string[]).includes(String(s))) out[kind][k] = s as MappableStatus;
+    }
+  }
+  return out;
+}
+
+/** El estado al que lleva HubSpot: el del deal que se muestra manda sobre el ciclo de vida. */
+export function mappedStatus(s: HubspotLeadState, map: StatusMap): MappableStatus | null {
+  if (s.deal?.stage && map.deal[s.deal.stage]) return map.deal[s.deal.stage];
+  if (s.lifecycle && map.lifecycle[s.lifecycle]) return map.lifecycle[s.lifecycle];
+  return null;
+}
+
+// Orden del embudo para no retroceder a un lead (los negativos van aparte).
+const FUNNEL_RANK: Record<string, number> = {
+  no_contactado: 0, en_campana: 1, saludo_enviado: 2, conexion_enviada: 2, conexion_aceptada: 3,
+  respondio: 4, reunion_agendada: 5, reunion_tomada: 6,
+};
+const NEGATIVE = new Set(["no_interesado", "no_show"]);
+
+/**
+ * ¿Se aplica `target` sobre el estado actual? Reglas:
+ *   • solo cuando lo que dice HubSpot CAMBIÓ desde la última vez que se aplicó
+ *     (`lastApplied`): un cambio manual en Predictable no se pisa en cada
+ *     sincronización;
+ *   • nunca sobre «dado de baja»;
+ *   • un estado positivo solo hace avanzar (o saca de un negativo); nunca
+ *     retrocede «Reunión tomada» a «Reunión conseguida»;
+ *   • un negativo (perdido, no se presentó) se aplica sobre cualquier otro.
+ */
+export function shouldApplyStatus(current: string | null | undefined, target: MappableStatus | null, lastApplied: string | null | undefined): boolean {
+  if (!target || target === lastApplied) return false;
+  const cur = current || "no_contactado";
+  if (cur === "dado_de_baja" || cur === target) return false;
+  if (NEGATIVE.has(target)) return true;
+  if (NEGATIVE.has(cur)) return true;
+  return (FUNNEL_RANK[target] ?? 0) > (FUNNEL_RANK[cur] ?? 0);
+}

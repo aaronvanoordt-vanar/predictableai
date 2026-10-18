@@ -377,6 +377,7 @@
       parts = [];
       add(c.checked, 'leads revisados'); add(c.matched, 'encontrados en HubSpot');
       add(c.suppressed, 'nuevos en «no contactar»'); add(c.lifted, 'vuelven a poder contactarse');
+      add(c.status_updated, 'cambiaron de estado');
       add(c.paused, 'enrolamientos pausados');
       return parts.length ? parts.join(' · ') : 'Sin cambios.';
     }
@@ -470,7 +471,7 @@
     }
   }
 
-  async function syncSettings(id, payload, btn, okMsg) {
+  async function syncSettings(id, payload, btn, okMsg) { // devuelve la promesa para encadenar
     setBusy(id, 'settings', true, btn);
     try {
       var r = await fn('sync_settings', Object.assign({ provider: id }, payload));
@@ -666,10 +667,58 @@
       html += '<div class="itg-err">Tu conexión no tiene permiso para leer deals, dueños y empresas. Reconecta HubSpot (o, con una app privada, agrega crm.objects.deals.read, crm.objects.companies.read y crm.objects.owners.read y pega el token de nuevo).</div>';
     }
     var last = sync.last_run_at ? 'Última sincronización: ' + fmtDate(sync.last_run_at, true) + (sync.last_status === 'error' ? ' (falló: ' + (sync.last_error || 'error') + ')' : '') : 'Todavía no se sincroniza.';
+    html += statusMapEditor();
     html += '<div class="itg-row"><button class="btn btn-ghost btn-sm" data-act="sync-now"' + (state.busy['hubspot:sync'] ? ' disabled' : '') + '>Sincronizar ahora</button>' +
       '<label class="itg-check"><input type="checkbox" data-act-change="pull-toggle"' + (sync.pull !== false ? ' checked' : '') + '><span>Sincronización automática</span></label>' +
       '<span class="itg-muted">' + esc(last) + '</span></div>';
     return html;
+  }
+
+  // Etiquetas de los estados del lead (espejo de CONTACT_STATUSES de
+  // js/prospecting-data.js; se usa el de allá si está cargado).
+  var STATUS_LABELS = { respondio: 'Respondió', reunion_agendada: 'Reunión conseguida', reunion_tomada: 'Reunión tomada', no_interesado: 'No interesado', no_show: 'No se presentó' };
+  function statusLabel(v) {
+    var list = (global.prospectingData && global.prospectingData.CONTACT_STATUSES) || [];
+    for (var i = 0; i < list.length; i++) if (list[i].value === v) return list[i].label;
+    return STATUS_LABELS[v] || v;
+  }
+  function statusMapDraft() {
+    var f = form('hubspot');
+    var o = state.opts.hubspot || {};
+    if (!f.status_map) {
+      var m = o.status_map || o.default_status_map || { lifecycle: {}, deal: {} };
+      f.status_map = { lifecycle: Object.assign({}, m.lifecycle || {}), deal: Object.assign({}, m.deal || {}) };
+    }
+    return f.status_map;
+  }
+
+  /** «Etapas de HubSpot → estado del lead»: un select por etapa (vacío = no cambiar). */
+  function statusMapEditor() {
+    var o = state.opts.hubspot || {};
+    if (!o.mappable) return '';
+    var f = form('hubspot');
+    var draft = statusMapDraft();
+    var enabled = o.status_map_enabled !== false;
+    function sel(kind, id) {
+      var cur = draft[kind][id] || '';
+      return '<select data-smap="' + kind + '" data-stage="' + esc(id) + '"' + (enabled ? '' : ' disabled') + '><option value="">No cambiar</option>' +
+        o.mappable.map(function (v) { return '<option value="' + esc(v) + '"' + (cur === v ? ' selected' : '') + '>' + esc(statusLabel(v)) + '</option>'; }).join('') + '</select>';
+    }
+    var html = '<details class="itg-smap"' + (f.smap_open ? ' open' : '') + '><summary data-act="smap-toggle">Etapas de HubSpot → estado del lead</summary>' +
+      '<p class="itg-muted">Cuando un lead cambia de etapa en HubSpot, su estado en Predictable cambia según este mapa. Solo cuenta el cambio: si después lo editas a mano en Predictable, no se vuelve a pisar hasta que HubSpot cambie otra vez. ' +
+      'El deal manda sobre el ciclo de vida, un estado nunca retrocede (una «Reunión tomada» no vuelve a «Reunión conseguida») y «Dado de baja» nunca se toca.</p>' +
+      '<label class="itg-check"><input type="checkbox" data-act-change="smap-enabled"' + (enabled ? ' checked' : '') + '><span>Actualizar el estado del lead con HubSpot</span></label>';
+    html += '<div class="itg-smap-grid"><div class="itg-sub">Etapas de los deals</div>';
+    if (o.deal_stages_error) html += '<div class="itg-err">' + esc(o.deal_stages_error) + '</div>';
+    else if (!(o.deal_stages || []).length) html += '<div class="itg-muted">Tu HubSpot no tiene pipelines de deals visibles para esta conexión.</div>';
+    else html += (o.deal_stages || []).map(function (st) {
+      return '<label class="itg-smap-row"><span>' + esc((st.pipeline ? st.pipeline + ' / ' : '') + st.label) + '</span>' + sel('deal', st.id) + '</label>';
+    }).join('');
+    html += '<div class="itg-sub">Ciclo de vida del contacto (si no tiene deal)</div>' +
+      (o.lifecycle || []).map(function (lc) { return '<label class="itg-smap-row"><span>' + esc(lc.label) + '</span>' + sel('lifecycle', lc.id) + '</label>'; }).join('') + '</div>';
+    html += '<div class="itg-row"><button class="btn btn-primary btn-sm" data-act="smap-save"' + (enabled ? '' : ' disabled') + '>Guardar mapa</button>' +
+      '<button class="itg-link-btn" data-act="smap-reset"' + (enabled ? '' : ' disabled') + '>Volver a los valores por defecto</button></div>';
+    return html + '</details>';
   }
 
   /** Envío automático de los leads nuevos de la lista elegida. */
@@ -920,12 +969,33 @@
     }
     else if (act === 'cal-create') createFollowUp(el);
     else if (act === 'sync-now') syncNow(el);
+    else if (act === 'smap-toggle') { form('hubspot').smap_open = !el.parentNode.open; }
+    else if (act === 'smap-save') {
+      syncSettings('hubspot', { status_map: statusMapDraft() }, el, 'Mapa guardado: se aplica desde la próxima sincronización.')
+        .then(function () { form('hubspot').status_map = null; loadOptions('hubspot', ''); });
+    }
+    else if (act === 'smap-reset') {
+      var dm = (state.opts.hubspot && state.opts.hubspot.default_status_map) || { lifecycle: {}, deal: {} };
+      form('hubspot').status_map = { lifecycle: Object.assign({}, dm.lifecycle), deal: Object.assign({}, dm.deal) };
+      render();
+    }
     else if (act === 'auto-list') toggleAutoList(id, el);
     else if (act === 'coach') prepareInCoach(el.getAttribute('data-url'));
   }
 
   function onChange(e) {
     var el = e.target;
+    if (el && el.getAttribute && el.getAttribute('data-smap')) {
+      var dr = statusMapDraft(), kind = el.getAttribute('data-smap'), stg = el.getAttribute('data-stage');
+      if (el.value) dr[kind][stg] = el.value; else delete dr[kind][stg];
+      return;
+    }
+    if (el && el.getAttribute && el.getAttribute('data-act-change') === 'smap-enabled') {
+      syncSettings('hubspot', { status_map: el.checked ? statusMapDraft() : false }, null,
+        el.checked ? 'El estado del lead vuelve a seguir a HubSpot.' : 'El estado del lead ya no cambia con HubSpot.')
+        .then(function () { loadOptions('hubspot', ''); });
+      return;
+    }
     if (el && el.getAttribute && el.getAttribute('data-act-change') === 'pull-toggle') {
       syncSettings('hubspot', { pull: !!el.checked }, null, el.checked ? 'Sincronización automática encendida.' : 'Sincronización automática apagada.');
       return;
@@ -1013,6 +1083,12 @@
       '.itg-check{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer}',
       '.itg-field.itg-check input,.itg-check input{width:auto;flex:0 0 auto}',
       '.itg-check>span{font-size:12.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--ink-2)}',
+      '.itg-smap{border:1px solid var(--hair);border-radius:var(--r-md,10px);padding:10px 12px;display:flex;flex-direction:column;gap:10px}',
+      '.itg-smap summary{cursor:pointer;font-size:12.5px;font-weight:700;color:var(--ink-2)}',
+      '.itg-smap[open]>*:not(summary){margin-top:10px}',
+      '.itg-smap-grid{display:flex;flex-direction:column;gap:6px}',
+      '.itg-smap-row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12.5px;color:var(--ink-2)}',
+      '.itg-smap-row select{font:inherit;font-size:12.5px;color:var(--ink);background:var(--surface2);border:1px solid var(--hair-2);border-radius:var(--r-sm,8px);padding:6px 8px;min-width:180px}',
       '.itg-inline-input{font:inherit;font-size:12.5px;color:var(--ink);background:var(--surface2);border:1px solid var(--hair-2);border-radius:var(--r-sm,8px);padding:7px 10px;min-width:0;flex:1 1 180px}',
       '.itg-panel{border-top:1px solid var(--hair);margin-top:6px;padding-top:12px;display:flex;flex-direction:column;gap:12px}',
       '.itg-sub{font-size:12.5px;font-weight:700;color:var(--ink-2)}',

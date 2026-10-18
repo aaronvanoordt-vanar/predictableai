@@ -50,8 +50,9 @@ import {
 } from "./runtime.ts";
 import {
   crmAuthUrl, crmExchange, crmStages, crmTokenConn, exportCrm, HUBSPOT_SYNC_SCOPES, hubspotSync, identifyCrm,
-  runHubspotPull, saveSync, syncConfig, validateDealOptions, writeMemberStates,
+  hubspotStatusOptions, runHubspotPull, saveSync, statusMapOf, syncConfig, validateDealOptions, writeMemberStates,
 } from "./crm.ts";
+import { sanitizeStatusMap } from "../_shared/hubspot-sync.ts";
 import {
   amplemarketListLeads,
   amplemarketSequenceLeads,
@@ -561,7 +562,8 @@ async function exportClickup(ctx: Ctx, conn: Conn, listName: string, leads: Lead
 
 async function options(ctx: Ctx, conn: Conn, query: string): Promise<Json> {
   if (LATAM_CRMS.includes(conn.provider)) return { ...(await crmStages(ctx, conn)), sync: publicSync(conn) };
-  if (conn.provider === "hubspot" || conn.provider === "salesforce") return { sync: publicSync(conn) };
+  if (conn.provider === "hubspot") return { sync: publicSync(conn), ...(await hubspotStatusOptions(ctx, conn)) };
+  if (conn.provider === "salesforce") return { sync: publicSync(conn) };
   switch (conn.provider) {
     case "amplemarket": {
       const res = await apiCall(ctx, conn, "https://api.amplemarket.com/sequences", { method: "GET" }, "Amplemarket");
@@ -898,7 +900,7 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
     const hconn = hs as (Conn & { status?: string }) | null;
     if (hconn?.access_token && hconn.status === "connected" && syncConfig(hconn).pull !== false && !syncConfig(hconn).missing_scopes) {
       try {
-        const r = await hubspotSync(ctx, hconn, { memberIds: ids });
+        const r = await hubspotSync(ctx, hconn, { memberIds: ids, statusMap: statusMapOf(hconn) });
         if (r.missingScopes) await saveSync(ctx, hconn, { missing_scopes: true });
         else return { suppressed: r.suppressedIds.map((id) => ({ id })), checked: r.checked, source: "hubspot" };
       } catch (e) {
@@ -936,6 +938,8 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
   if (action === "sync_settings") {
     const patch: Json = {};
     if (typeof p.pull === "boolean" && provider === "hubspot") patch.pull = p.pull;
+    // Etapas de HubSpot → estado del lead: el mapa entero, o false para apagarlo.
+    if (provider === "hubspot" && p.status_map !== undefined) patch.status_map = p.status_map === false ? false : sanitizeStatusMap(p.status_map);
     if (p.auto_list) {
       if (!AUTO_PUSH_PROVIDERS.includes(provider)) throw new HttpError("Esta integración no tiene envío automático.", 400);
       const listId = String(p.auto_list.list_id ?? "");

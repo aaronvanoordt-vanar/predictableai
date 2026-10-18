@@ -61,12 +61,19 @@ import {
   CONTACT_PROPS,
   DEAL_PROPS,
   HUBSPOT_SYNC_SCOPES,
+  DEFAULT_STATUS_MAP,
+  LIFECYCLE_LABELS,
   leadState,
+  mappedStatus,
+  MAPPABLE_STATUSES,
   modifiedSinceBody,
   nextCursor,
   ownerMap,
   stageMap,
+  sanitizeStatusMap,
+  shouldApplyStatus,
   type StageInfo,
+  type StatusMap,
   suppressionReason,
 } from "../_shared/hubspot-sync.ts";
 import { chunk, type Lead, type ProviderId, type Skipped } from "../_shared/integrations.ts";
@@ -793,6 +800,7 @@ interface MemberRow {
   company_domain: string | null;
   crm_state: Json;
   crm_suppressed_at: string | null;
+  contact_status?: string | null;
 }
 
 export interface HubspotSyncResult {
@@ -800,6 +808,7 @@ export interface HubspotSyncResult {
   matched: number;
   suppressed: number;
   lifted: number;
+  status_updated: number;
   paused: number;
   suppressedIds: string[];
   missingScopes: boolean;
@@ -858,7 +867,7 @@ async function hsSearchModified(ctx: Ctx, conn: Conn, object: string, prop: stri
   return out;
 }
 
-const MEMBER_SYNC_COLS = "id, email, company_domain, crm_state, crm_suppressed_at";
+const MEMBER_SYNC_COLS = "id, email, company_domain, crm_state, crm_suppressed_at, contact_status";
 
 /**
  * Trae de HubSpot el estado de los leads y aplica la supresión.
@@ -867,9 +876,9 @@ const MEMBER_SYNC_COLS = "id, email, company_domain, crm_state, crm_suppressed_a
  *   • con cursor → contactos, deals y empresas modificados desde entonces +
  *                  los leads nuevos de Predictable desde entonces.
  */
-export async function hubspotSync(ctx: Ctx, conn: Conn, opts: { memberIds?: string[]; cursor?: number | null }): Promise<HubspotSyncResult> {
+export async function hubspotSync(ctx: Ctx, conn: Conn, opts: { memberIds?: string[]; cursor?: number | null; statusMap?: StatusMap | null }): Promise<HubspotSyncResult> {
   const runStarted = Date.now();
-  const res: HubspotSyncResult = { checked: 0, matched: 0, suppressed: 0, lifted: 0, paused: 0, suppressedIds: [], missingScopes: false, cursor: null };
+  const res: HubspotSyncResult = { checked: 0, matched: 0, suppressed: 0, lifted: 0, status_updated: 0, paused: 0, suppressedIds: [], missingScopes: false, cursor: null };
   let hctx: Awaited<ReturnType<typeof hsContext>>;
   try {
     hctx = await hsContext(ctx, conn);
@@ -966,6 +975,7 @@ export async function hubspotSync(ctx: Ctx, conn: Conn, opts: { memberIds?: stri
   const portal = String(conn.account_id ?? "");
   const writes: { id: string; state: Json; suppress?: string | null }[] = [];
   const newlySuppressed: { id: string; reason: string }[] = [];
+  const statusChanges = new Map<string, string[]>();
   for (const m of rows) {
     const email = String(m.email ?? "").trim().toLowerCase();
     const contact = hsContacts.get(email) ?? null;
@@ -978,8 +988,17 @@ export async function hubspotSync(ctx: Ctx, conn: Conn, opts: { memberIds?: stri
     }
     res.matched++;
     const deals = contact ? (dealsByContact.get(String(contact.id)) ?? []).map((id) => dealById.get(id)).filter(Boolean) : [];
-    const state = leadState(contact, deals, company, hctx.stages, hctx.owners, portal);
+    const state: Json = leadState(contact, deals, company, hctx.stages, hctx.owners, portal);
     const reason = suppressionReason(state);
+    // Etapa de HubSpot → estado del lead (mapa del usuario; null = no mapear).
+    if (opts.statusMap) {
+      const target = mappedStatus(state, opts.statusMap);
+      if (shouldApplyStatus(m.contact_status, target, m.crm_state?.hubspot?.applied_status)) {
+        statusChanges.set(target!, [...(statusChanges.get(target!) ?? []), m.id]);
+      }
+      // Lo que HubSpot dice hoy (aplicado o no): la próxima vez solo cuenta si cambia.
+      state.applied_status = target;
+    }
     writes.push({ id: m.id, state, suppress: reason });
     if (reason) {
       res.suppressedIds.push(m.id);
@@ -990,6 +1009,15 @@ export async function hubspotSync(ctx: Ctx, conn: Conn, opts: { memberIds?: stri
     } else if (m.crm_suppressed_at) res.lifted++;
   }
   await writeMemberStates(ctx, "hubspot", writes);
+  for (const [status, ids] of statusChanges) {
+    for (const part of chunk(ids, 200)) {
+      // El trigger de la tabla sella status_changed_at y el evento de la API pública.
+      const { error, count } = await ctx.admin.from("prospect_list_members")
+        .update({ contact_status: status }, { count: "exact" }).eq("user_id", ctx.userId).in("id", part);
+      if (error) console.warn("[integrations] contact_status:", error.message);
+      else res.status_updated += count ?? part.length;
+    }
+  }
 
   // 6) Los que pasaron a «no contactar» con una campaña en curso: se pausan
   //    (reversible desde la campaña), con el motivo a la vista.
@@ -1024,6 +1052,15 @@ export interface SyncConfig {
   last_status?: "ok" | "error";
   last_error?: string | null;
   auto_lists?: Record<string, { options: Json; since: string; cursor?: number; enabled_at: string }>;
+  /** Etapas de HubSpot → estado del lead. Ausente = DEFAULT_STATUS_MAP; `false` = apagado. */
+  status_map?: StatusMap | false;
+}
+
+/** El mapa vigente (null = el usuario apagó el mapeo). */
+export function statusMapOf(conn: Conn): StatusMap | null {
+  const m = syncConfig(conn).status_map;
+  if (m === false) return null;
+  return m ? sanitizeStatusMap(m) : DEFAULT_STATUS_MAP;
 }
 
 export function syncConfig(conn: Conn): SyncConfig {
@@ -1040,7 +1077,7 @@ export async function saveSync(ctx: Ctx, conn: Conn, patch: Partial<SyncConfig>)
 export async function runHubspotPull(ctx: Ctx, conn: Conn, trigger: "cron" | "manual"): Promise<HubspotSyncResult> {
   const sc = syncConfig(conn);
   try {
-    const r = await hubspotSync(ctx, conn, { cursor: sc.cursor ?? null });
+    const r = await hubspotSync(ctx, conn, { cursor: sc.cursor ?? null, statusMap: statusMapOf(conn) });
     await saveSync(ctx, conn, {
       cursor: r.missingScopes ? sc.cursor ?? null : r.cursor,
       missing_scopes: r.missingScopes,
@@ -1048,10 +1085,10 @@ export async function runHubspotPull(ctx: Ctx, conn: Conn, trigger: "cron" | "ma
       last_status: "ok",
       last_error: null,
     });
-    if (trigger === "manual" || r.matched || r.suppressed || r.lifted || r.missingScopes) {
+    if (trigger === "manual" || r.suppressed || r.lifted || r.status_updated || r.missingScopes) {
       await logSync(ctx, {
         provider: "hubspot", action: "pull_state", source_kind: trigger, status: r.missingScopes ? "partial" : "ok",
-        counts: { checked: r.checked, matched: r.matched, suppressed: r.suppressed, lifted: r.lifted, paused: r.paused },
+        counts: { checked: r.checked, matched: r.matched, suppressed: r.suppressed, lifted: r.lifted, status_updated: r.status_updated, paused: r.paused },
         detail: r.missingScopes
           ? "Falta el permiso para leer deals, dueños y empresas: reconecta HubSpot (o agrega esos alcances a tu app privada)."
           : sc.cursor ? "Cambios desde la última sincronización." : "Primera sincronización completa.",
@@ -1067,3 +1104,24 @@ export async function runHubspotPull(ctx: Ctx, conn: Conn, trigger: "cron" | "ma
 }
 
 export { sleep };
+
+/** Lo que el panel de HubSpot necesita para editar el mapa de etapas. */
+export async function hubspotStatusOptions(ctx: Ctx, conn: Conn): Promise<Json> {
+  const out: Json = {
+    status_map: statusMapOf(conn),
+    status_map_enabled: syncConfig(conn).status_map !== false,
+    default_status_map: DEFAULT_STATUS_MAP,
+    mappable: MAPPABLE_STATUSES,
+    lifecycle: Object.entries(LIFECYCLE_LABELS).map(([id, label]) => ({ id, label })),
+    deal_stages: [] as Json[],
+  };
+  try {
+    const pipes = await apiCall(ctx, conn, HS + "/crm/v3/pipelines/deals", { method: "GET" }, "HubSpot (pipelines)");
+    const st = stageMap(pipes);
+    out.deal_stages = Object.entries(st).map(([id, s]) => ({ id, label: s.label, pipeline: s.pipeline_label }));
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 428) throw e;
+    out.deal_stages_error = "No pudimos leer tus pipelines de HubSpot (¿falta el permiso de deals?).";
+  }
+  return out;
+}
