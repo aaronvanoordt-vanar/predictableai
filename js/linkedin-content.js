@@ -116,7 +116,7 @@
         .then(function (r) {
           if (r.error) {
             state.dbError = /linkedin_posts/.test(r.error.message || '')
-              ? 'Falta aplicar la migración 20261018170000_linkedin_content.sql.'
+              ? 'Falta aplicar la migración 20261018180010_linkedin_content.sql.'
               : 'No pudimos cargar tus posts: ' + r.error.message;
             state.posts = [];
           } else { state.dbError = ''; state.posts = r.data || []; }
