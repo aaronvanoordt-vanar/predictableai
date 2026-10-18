@@ -4573,7 +4573,7 @@
     flow.nodes.push({ id: L.newId(), type: 'action', channel: 'email', delay: { mode: 'after_prev', days: 0, hours: 0 }, content: { kind: 'ai', angle: 'apertura', instructions: String(b.instructions || '').slice(0, 600) } });
     state.activeId = null;
     openBuilder({ name: String(b.name || 'Campaña desde el Hub').slice(0, 120), status: 'draft', flow: flow }, null);
-    toast('Borrador creado con el hallazgo como instrucción del primer mensaje. Ajusta la cadencia y guarda.', 'info');
+    toast(b.toast ? String(b.toast) : 'Borrador creado con el hallazgo como instrucción del primer mensaje. Ajusta la cadencia y guarda.', 'info');
     return true;
   }
   function applyPendingList() {
