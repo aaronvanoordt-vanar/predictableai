@@ -79,12 +79,12 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Dialer nativo con la llamada en el Meeting Coach
 - [ ] Conectores CloudTalk, Aircall, Ringover
 - [ ] LinkedIn nativo
-- [ ] CRM de cuentas y oportunidades
+- [x] CRM de cuentas y oportunidades
 - [ ] Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos
 - [x] Revisar la prueba gratis
 
 **P2**
-- [ ] Registros públicos de empresas
+- [x] Registros públicos de empresas (Brasil, México, Colombia; Perú y Chile documentados en `docs/REGISTROS.md`)
 - [ ] APIs oficiales de licitaciones
 - [x] ¿El número está en WhatsApp? antes de gastar plantilla (tipo de línea del normalizador del waterfall + aprendizaje de #131026; no existe validación oficial previa: `docs/OMNICANAL.md`)
 - [x] Listas "No llamar" — lista de supresión por canal + bajas centralizadas + registros oficiales (`docs/COMPLIANCE_LATAM.md`)
