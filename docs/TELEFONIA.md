@@ -11,7 +11,7 @@ Fecha: 2026-10-17. Ítems P1 «Dialer nativo con la llamada en el Meeting Coach�
 | Lo que pide el navegador | edge function `telephony` (con JWT) |
 | Lo que avisan los proveedores | edge function `telephony-webhook` (`--no-verify-jwt`) |
 | Dialer flotante y power dialer | `js/dialer.js` |
-| Página Llamadas (cola, historial, configuración) | `js/calls.js`, entrada «Llamadas» del sidebar debajo de Bandeja |
+| Vista Llamadas (cola, historial, configuración) | `js/calls.js`, dentro de Campañas: botón «Llamadas» de la cabecera (vista `calls` de `js/campaigns.js`; `#llamadas` lleva ahí) |
 | Coach en la llamada | `js/realtime-coach.js` recibe el audio de la llamada en vez de la pantalla |
 | Paso `call` de campaña | `_shared/campaign-flow.ts` ↔ `js/campaign-flow.js`, `campaign-run` |
 | Créditos por minuto | `CALL_MINUTE_CREDITS` en `_shared/credit-costs.ts` ↔ `js/credit-costs.js` |
@@ -89,7 +89,7 @@ Fuentes:
 
 ## Paso de campaña `call`
 
-1. El nodo `call` crea una tarea en Llamadas (`call_tasks`) con el guion: el IA, que se escribe 24 h antes con `generate-outreach` en modo paso y cuesta 2 créditos, o «Mi guion».
+1. El nodo `call` crea una tarea en Campañas → Llamadas (`call_tasks`) con el guion: el IA, que se escribe 24 h antes con `generate-outreach` en modo paso y cuesta 2 créditos, o «Mi guion».
 2. La cadencia espera el resultado hasta `settings.call_wait_days` (1–14 días; 3 por defecto). Si nadie llama en ese plazo, el paso se omite.
 3. Si el lead no tiene teléfono, el paso se omite, igual que en los demás canales.
 4. El resultado alimenta las ramas con las condiciones `call_answered` («Contestó la llamada») y `call_voicemail` («La llamada cayó en buzón»).
@@ -133,7 +133,7 @@ Una llamada no puede ir «junto con el anterior»: la hace una persona.
        timeout_milliseconds := 150000);
    $cron$);
    ```
-6. **Números locales (opcional).** Cada usuario puede verificar su propio número desde Llamadas → Configuración: Twilio lo llama y el usuario teclea un código. Para darle un número local de Twilio:
+6. **Números locales (opcional).** Cada usuario puede verificar su propio número desde Campañas → Llamadas → Configuración: Twilio lo llama y el usuario teclea un código. Para darle un número local de Twilio:
    1. Cómpralo en la consola con su regulatory bundle.
    2. Asígnaselo con:
       ```sql

@@ -143,7 +143,7 @@
     emailAccounts: null,
     campaigns: [],
     loading: false,
-    view: 'campaigns',         // 'campaigns' | 'inbox' | 'knowledge' (Entrenar la IA)
+    view: 'campaigns',         // 'campaigns' | 'inbox' | 'knowledge' (Entrenar la IA) | 'calls' (Llamadas, js/calls.js)
     activeId: null,
     builder: null,             // api del builder montado (crear / editar)
     builderHost: null,
@@ -1639,7 +1639,8 @@
       root.appendChild(h('div', { class: 'pros-hint', text: 'Cargando canales y campañas…' }));
       return;
     }
-    if (!anyConnected() && !state.campaigns.length && !state.builder && state.view !== 'knowledge') {
+    // Llamar no depende de un canal conectado: la vista de Llamadas no espera al asistente.
+    if (!anyConnected() && !state.campaigns.length && !state.builder && state.view !== 'knowledge' && state.view !== 'calls') {
       root.appendChild(renderSetupHero());
       return;
     }
@@ -1650,6 +1651,7 @@
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
     if (state.view === 'inbox') { root.appendChild(renderInbox()); markOpenConvRead(); setTimeout(function () { syncWatiHistory(false); }, 0); }
     else if (state.view === 'knowledge') root.appendChild(knowledgeNode());
+    else if (state.view === 'calls') root.appendChild(callsNode());
     else if (state.builder) root.appendChild(state.builderHost);
     else if (state.activeId && findCampaign(state.activeId)) root.appendChild(renderDetail());
     else root.appendChild(renderCampaignCards());
@@ -1949,12 +1951,22 @@
       bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Entrenar la IA'));
       return bar;
     }
+    if (state.view === 'calls') {
+      bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Llamadas'));
+      bar.appendChild(h('div', { class: 'cmp-spacer' }));
+      bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-back-campaigns', text: '← Volver a Campañas' }));
+      return bar;
+    }
     bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas'));
     bar.appendChild(h('div', { class: 'cmp-spacer' }));
     var ks = state.knowledge;
     bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-knowledge',
       title: 'Tu metodología, tus scripts ganadores y tu material: la IA los consulta antes de escribir cada mensaje.',
       text: 'Entrenar la IA' + (ks && ks.active ? ' · ' + ks.active : '') }));
+    // Llamadas (js/calls.js): las tareas de los pasos `call`, el historial y
+    // cómo se llama (dialer de Predictable o CloudTalk / Aircall / Ringover).
+    if (global.Calls) bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-calls',
+      title: 'Las llamadas de tus campañas, tu historial y cómo llamas', text: 'Llamadas' }));
     var newBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'cmp-new', text: '+ Nueva campaña' });
     if (!anyConnected()) { newBtn.disabled = true; newBtn.title = 'Conecta al menos un canal'; }
     bar.appendChild(newBtn);
@@ -2896,6 +2908,20 @@
   }
   function hasAnalytics() { return !!(global.campaignAnalytics && global.campaignAnalytics.mount); }
   function invalidateAnalytics() { state.ana = null; }
+  /** Vista «Llamadas»: la pinta js/calls.js en su propio host. */
+  function callsNode() {
+    if (!state.callsHost) {
+      state.callsHost = h('div');
+      if (!global.Calls || !global.Calls.mount) state.callsHost.appendChild(h('div', { class: 'pros-hint', text: 'El módulo de llamadas no cargó. Recarga la página.' }));
+    }
+    // Se monta después de colgarlo en el DOM (Calls pinta solo si su host está conectado).
+    setTimeout(function () { if (global.Calls && global.Calls.mount && state.view === 'calls') global.Calls.mount(state.callsHost, state.callsTab || null); state.callsTab = null; }, 0);
+    return state.callsHost;
+  }
+  function openCalls(tab) {
+    state.callsTab = tab || null;
+    setView('calls');
+  }
   function openKnowledge() {
     state.view = 'knowledge';
     // Siempre relee la base al entrar (pudo cambiar en otra pestaña).
@@ -4056,6 +4082,8 @@
     if (action === 'csv-linkedin') { var c9 = findCampaign(state.activeId); if (c9) downloadLinkedinCsv(c9); return; }
     if (action === 'cmp-new') { if (btn.disabled) return; return openBuilder(null); }
     if (action === 'cmp-knowledge') return openKnowledge();
+    if (action === 'cmp-calls') return openCalls();
+    if (action === 'cmp-back-campaigns') { state.view = 'campaigns'; return render(); }
     if (action === 'cmp-open') return openCampaign(id);
     if (action === 'cmp-back') { state.activeId = null; closeBuilder(); return render(); }
     if (action === 'cmp-edit') { var c0 = findCampaign(state.activeId); if (c0) return openBuilder(c0); return; }
@@ -4593,7 +4621,7 @@
   /** Cambia de vista ('campaigns' | 'inbox' | 'knowledge'); si la pestaña aún no cargó, se aplica al montar. */
   function setView(view) {
     // 'analytics' era una vista aparte hasta el 2026-10-07: un valor guardado viejo cae en Campañas.
-    var v = view === 'inbox' || view === 'knowledge' ? view : 'campaigns';
+    var v = view === 'inbox' || view === 'knowledge' || view === 'calls' ? view : 'campaigns';
     if (v === 'knowledge') state.knowledgeHost = null;
     saveView(v);
     if (!built || state.loading || state.status === undefined) { state.pendingView = v; return; }
@@ -4613,6 +4641,6 @@
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
 
-  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openConversation: openConversation, openLinkedinDesigner: openLinkedinDesigner };
+  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openCalls: openCalls, openConversation: openConversation, openLinkedinDesigner: openLinkedinDesigner };
   console.log('[campaigns] module loaded');
 })(window);

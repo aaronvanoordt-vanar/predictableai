@@ -530,10 +530,12 @@
     prepare(member, opts || {});
   }
 
+  /** Campañas → Llamadas → Configuración (la vista vive dentro de Campañas). */
   function openSettings() {
-    var item = document.querySelector('.nav-item[data-page="llamadas"]');
-    if (typeof global.nav === 'function') global.nav(item, 'llamadas');
-    if (global.Calls && global.Calls.show) global.Calls.show('config');
+    var item = document.querySelector('.nav-item[data-page="pro-main"][data-pros-tab="campanas"]:not([data-pros-view])');
+    if (typeof global.nav === 'function') global.nav(item, 'pro-main');
+    if (global.prospecting && global.prospecting.show) global.prospecting.show('campanas');
+    if (global.campaigns && global.campaigns.openCalls) global.campaigns.openCalls('config');
   }
 
   global.Dialer = { call: call, power: power, status: status, openSettings: openSettings, activeProvider: activeProvider, OUTCOMES: OUTCOMES };

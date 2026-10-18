@@ -1212,7 +1212,7 @@
           markCustom(); refresh();
         } });
         box.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'cb-hint', style: 'margin-bottom:4px', text: 'Días que la cadencia espera la llamada' }), wait));
-        box.appendChild(h('div', { class: 'cb-hint', text: 'Este paso crea una tarea en Llamadas con el guion. Cuando marcas el resultado, la cadencia sigue: «Reunión agendada» y «No interesado» la detienen; «Contestó» y «Buzón» se pueden usar en una condición. Si nadie llama en ese plazo, el paso se omite. Sin teléfono, se omite.' }));
+        box.appendChild(h('div', { class: 'cb-hint', text: 'Este paso crea una tarea en Campañas → Llamadas con el guion. Cuando marcas el resultado, la cadencia sigue: «Reunión agendada» y «No interesado» la detienen; «Contestó» y «Buzón» se pueden usar en una condición. Si nadie llama en ese plazo, el paso se omite. Sin teléfono, se omite.' }));
       }
 
       var kind = node.content.kind;

@@ -1,5 +1,7 @@
 /**
- * js/calls.js — página «Llamadas» (2026-10-17), montada en #calls-shell.
+ * js/calls.js — vista «Llamadas» de Campañas (2026-10-17). js/campaigns.js
+ * la monta con Calls.mount(host) desde el botón «Llamadas» de la cabecera
+ * (vista `calls`, igual que «Entrenar la IA»); no tiene página propia.
  * ─────────────────────────────────────────────────────────────────────────────
  *   Por llamar     → las tareas que crean los pasos `call` de las campañas
  *                    (call_tasks), con su guion; «Llamar a todos» abre el
@@ -23,11 +25,11 @@
   var OUTCOME_LABEL = { answered: 'Contestó', voicemail: 'Buzón de voz', no_answer: 'No contesta', meeting_booked: 'Reunión agendada', not_interested: 'No interesado' };
   var STATUS_LABEL = { queued: 'En cola', ringing: 'Sonando', in_progress: 'En curso', completed: 'Terminada', failed: 'Falló', busy: 'Ocupado', no_answer: 'Sin respuesta', canceled: 'Cancelada' };
 
-  var st = { tab: 'tasks', tasks: null, calls: null, status: null, error: null, verify: null, channel: null };
+  var st = { tab: 'tasks', tasks: null, calls: null, status: null, error: null, verify: null, channel: null, host: null };
 
   function sb() { return global.supabaseClient; }
   function toast(m, t) { if (global.uiHelpers && global.uiHelpers.toast) global.uiHelpers.toast(m, t || 'info'); }
-  function shell() { return document.getElementById('calls-shell'); }
+  function shell() { return st.host && st.host.isConnected ? st.host : null; }
 
   function h(tag, attrs) {
     var el = document.createElement(tag);
@@ -132,9 +134,9 @@
     var el = document.createElement('style');
     el.id = 'calls-styles';
     el.textContent = [
-      '#calls-shell .pros-hint{font-size:12px;color:var(--text3);line-height:1.5;text-transform:none;letter-spacing:normal;font-family:inherit;font-weight:400}',
-      '#calls-shell .pill{align-self:flex-start}',
-      '#calls-shell .chart-card{min-width:0}',
+      '.calls-view .pros-hint{font-size:12px;color:var(--text3);line-height:1.5;text-transform:none;letter-spacing:normal;font-family:inherit;font-weight:400}',
+      '.calls-view .pill{align-self:flex-start}',
+      '.calls-view .chart-card{min-width:0}',
     ].join('\n');
     document.head.appendChild(el);
   }
@@ -144,7 +146,7 @@
     if (!root) return;
     injectStyles();
     root.innerHTML = '';
-    var wrap = h('div', { style: 'padding:20px 24px;display:flex;flex-direction:column;gap:14px;max-width:1100px' });
+    var wrap = h('div', { class: 'calls-view', style: 'display:flex;flex-direction:column;gap:14px' });
     var tabs = h('div', { class: 'tabs', role: 'tablist', style: 'display:flex;gap:6px;flex-wrap:wrap' });
     [['tasks', 'Por llamar'], ['history', 'Historial'], ['config', 'Configuración']].forEach(function (t) {
       tabs.appendChild(h('button', { type: 'button', role: 'tab', 'aria-selected': st.tab === t[0] ? 'true' : 'false', class: 'btn btn-sm ' + (st.tab === t[0] ? 'btn-primary' : 'btn-ghost'), text: t[1], onclick: function () { show(t[0]); } }));
@@ -411,8 +413,15 @@
     r.data.forEach(function (c) { el.appendChild(callCard(c, false)); });
   }
 
+  /** Monta la vista en `host` (lo crea js/campaigns.js para su vista `calls`). */
+  function mount(host, tab) {
+    st.host = host;
+    show(tab);
+  }
+
   function show(tab) {
     if (tab) st.tab = tab;
+    if (!shell()) return;
     render();
     refresh();
     if (!st.channel && sb()) {
@@ -425,9 +434,9 @@
       } catch (e) { st.channel = null; }
     }
   }
-  function isVisible() { var p = document.getElementById('page-llamadas'); return !!(p && p.classList.contains('active')); }
+  function isVisible() { return !!shell(); }
 
   global.addEventListener('predictable:call-saved', function () { if (isVisible()) refresh(); });
 
-  global.Calls = { show: show, renderLeadCalls: renderLeadCalls, OUTCOME_LABEL: OUTCOME_LABEL };
+  global.Calls = { mount: mount, show: show, renderLeadCalls: renderLeadCalls, OUTCOME_LABEL: OUTCOME_LABEL };
 })(window);
