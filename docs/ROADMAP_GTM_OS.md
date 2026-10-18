@@ -102,7 +102,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 **P3**
 - [ ] Automatizaciones de punta a punta
 - [ ] Contenido en LinkedIn con aprobación
-- [ ] Agente de voz IA
+- [ ] Agente de voz IA — PR #365 en revisión (`docs/AGENTE_DE_VOZ.md`: Retell + Twilio; usa la lista «No contactar» en el canal de llamadas)
 
 ## Fuentes
 
