@@ -2317,7 +2317,24 @@
     pane.addEventListener('click', guarded(onListasClick));
     pane.addEventListener('change', guarded(onListasChange));
     pane.addEventListener('input', onListasInput);
+    // Columnas IA (js/ai-columns.js): cabeceras, celdas, filtros y orden de la tabla.
+    if (window.AIColumns) {
+      window.AIColumns.attach({
+        toast: toast,
+        openModal: openModal,
+        rerender: function () { renderListsRight(); },
+        members: function () { return isAllList() ? [] : state.listas.members; },
+        visibleMembers: function () { return visibleListMembers(); },
+        host: function () { return state.listas.rightEl; },
+      });
+    }
   }
+
+  // Columnas IA de la lista abierta (no en «Todos los contactos»: son por lista).
+  function aiCols() {
+    return (window.AIColumns && !isAllList() && state.listas.activeListId) ? window.AIColumns : null;
+  }
+  function aiColCount() { var a = aiCols(); return a ? a.count() : 0; }
 
   function isAllList() { return state.listas.activeListId === ALL_LIST_ID; }
 
@@ -2412,7 +2429,7 @@
     var st = state.listas;
     var q = (st.q || '').trim().toLowerCase();
     var all = isAllList();
-    return st.members.filter(function (m) {
+    var rows = st.members.filter(function (m) {
       if (all && st.statusFilter && (m.contact_status || 'no_contactado') !== st.statusFilter) return false;
       if (all && st.listFilter && String(m.list_id) !== st.listFilter) return false;
       if (!q) return true;
@@ -2420,6 +2437,9 @@
         .filter(Boolean).join(' ').toLowerCase();
       return hay.indexOf(q) !== -1;
     });
+    // Filtros y orden por columnas IA.
+    var ai = aiCols();
+    return ai ? ai.apply(rows) : rows;
   }
 
   function listMemberRowHtml(m) {
@@ -2443,6 +2463,7 @@
       '<td>' + memberEmailCell(m) + '</td>' +
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
+      (aiCols() ? aiCols().cellsHtml(m) : '') +
       '<td style="white-space:nowrap">' +
         // Clic para llamar (js/dialer.js): dialer de Predictable o el proveedor conectado.
         (window.Dialer && String(m.phone || '').replace(/\D/g, '').length >= 8
@@ -2452,7 +2473,7 @@
         '<button type="button" class="pros-iconbtn" data-action="delete-member" data-id="' + id + '" title="Eliminar contacto">' + SVG_TRASH + '</button>' +
       '</td>' +
       '</tr>' +
-      (open ? '<tr class="pros-research-row"><td colspan="' + (isAllList() ? 10 : 9) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
+      (open ? '<tr class="pros-research-row"><td colspan="' + ((isAllList() ? 10 : 9) + aiColCount()) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
   }
 
   // ── Investigación previa por lead ───────────────────────────────────────
@@ -2740,10 +2761,12 @@
       (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer</button>') +
       (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>') +
       (window.Dialer ? '<button type="button" class="btn btn-ghost btn-sm" data-action="power-dial"' + (st.members.length ? '' : ' disabled') + ' title="Llama uno por uno a los seleccionados (o a todos los que ves) y marca el resultado de cada uno">' + SVG_PHONE + ' Llamar ' + (n ? 'a los seleccionados' : 'a la lista') + '</button>' : '') +
+      (aiCols() ? aiCols().addButtonHtml() : '') +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-members">Actualizar</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="export-csv"' + (st.members.length ? '' : ' disabled') + '>Exportar CSV</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="delete-members" style="color:var(--red)"' + (n ? '' : ' disabled') + '>Eliminar</button>' +
       '</div>';
+    if (aiCols() && st.members.length) html += aiCols().progressHtml() + aiCols().filtersHtml();
 
     var cols = all ? ['30%', '35%', '25%', '20%', '30%', '40%', '28%', '18%', '14%'] : ['30%', '40%', '20%', '30%', '45%', '30%', '25%', '14%'];
     if (st.loadingMembers) {
@@ -2762,7 +2785,8 @@
       var allChecked = rows.every(function (m) { return st.selected.has(String(m.id)); });
       html += '<div class="pros-scroll-x"><table><thead><tr>' +
         '<th style="width:34px"><input type="checkbox" data-action="mem-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-        '<th>Nombre</th><th>Empresa</th><th>País</th>' + (all ? '<th>Lista</th>' : '') + '<th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th><th></th>' +
+        '<th>Nombre</th><th>Empresa</th><th>País</th>' + (all ? '<th>Lista</th>' : '') + '<th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th>' +
+        (aiCols() ? aiCols().headHtml() : '') + '<th></th>' +
         '</tr></thead><tbody>' + rows.map(listMemberRowHtml).join('') + '</tbody></table></div>';
       if (all) {
         html += '<div style="padding:10px 18px;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(st.members.length)) + ' contactos · El estado se actualiza al instante en todo el sistema (Campañas, dashboard y este CRM leen la misma base).</div>';
@@ -2810,6 +2834,7 @@
     if (!keep) renderListsRight();
     var all = isAllList();
     var listId = st.activeListId;
+    if (window.AIColumns) window.AIColumns.setList(all ? null : listId);
     return Promise.resolve()
       .then(function () {
         var learned = window.PhoneLines ? window.PhoneLines.loadLearned().catch(function () { return null; }) : null;
@@ -2858,6 +2883,7 @@
   function onListasInput(e) {
     var t = e.target;
     if (t.getAttribute && t.getAttribute('data-action') === 'research-notes') return onResearchNotesInput(t);
+    if (window.AIColumns && window.AIColumns.handleInput(t)) return;
     if (!t.getAttribute || t.getAttribute('data-action') !== 'ct-search') return;
     var st = state.listas;
     st.q = t.value || '';
@@ -2881,6 +2907,7 @@
     var t = e.target;
     var action = t.getAttribute && t.getAttribute('data-action');
     var st = state.listas;
+    if (window.AIColumns && window.AIColumns.handleChange(t)) return;
     if (action === 'mem-check') {
       var id = t.getAttribute('data-id');
       if (t.checked) st.selected.add(id); else st.selected.delete(id);
@@ -2919,6 +2946,7 @@
     if (!btn) return;
     var action = btn.getAttribute('data-action');
     var st = state.listas;
+    if (window.AIColumns && window.AIColumns.handleClick(btn)) return;
     if (action === 'create-list') {
       var input = document.getElementById('pros-newlist-name');
       var name = input ? input.value.trim() : '';
@@ -3449,9 +3477,12 @@
     var cols = isAllList()
       ? ['name', 'title', 'company', 'list_name', 'contact_status', 'email', 'phone', 'linkedin_url']
       : ['name', 'title', 'company', 'contact_status', 'email', 'phone', 'linkedin_url'];
-    var lines = [cols.join(',')];
+    // Columnas IA: respuesta, evidencia y fuente de cada una.
+    var extra = aiCols() ? aiCols().csvColumns() : [];
+    var lines = [cols.concat(extra.map(function (x) { return csvCell(x.header); })).join(',')];
     rows.forEach(function (m) {
-      lines.push(cols.map(function (c) { return csvCell(m[c]); }).join(','));
+      lines.push(cols.map(function (c) { return csvCell(m[c]); })
+        .concat(extra.map(function (x) { return csvCell(x.get(m)); })).join(','));
     });
     var blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
     var url = URL.createObjectURL(blob);

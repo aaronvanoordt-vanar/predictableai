@@ -6,7 +6,7 @@ Fecha: 2026-10-17. Ítems P1 «Dialer nativo con la llamada en el Meeting Coach�
 
 | Pieza | Dónde |
 |---|---|
-| Modelo común de llamadas | migración `20261018000003_telephony.sql`: `calls`, `call_tasks`, `telephony_accounts` |
+| Modelo común de llamadas | migración `20261018230000_telephony.sql`: `calls`, `call_tasks`, `telephony_accounts` |
 | Un adaptador por proveedor | `supabase/functions/_shared/telephony/<proveedor>.ts` + una línea en `registry.ts` |
 | Lo que pide el navegador | edge function `telephony` (con JWT) |
 | Lo que avisan los proveedores | edge function `telephony-webhook` (`--no-verify-jwt`) |
@@ -105,7 +105,7 @@ Una llamada no puede ir «junto con el anterior»: la hace una persona.
 
 ## Pasos que solo puede hacer el dueño
 
-1. **Aplicar la migración** `supabase/migrations/20261018000003_telephony.sql`.
+1. **Aplicar la migración** `supabase/migrations/20261018230000_telephony.sql`.
 2. **Desplegar las funciones:**
    - `telephony` y `campaign-run`, con JWT;
    - `telephony-webhook`, con `--no-verify-jwt` (ya está en `NO_JWT` del workflow);
