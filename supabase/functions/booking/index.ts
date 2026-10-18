@@ -29,17 +29,18 @@
  * De pg_cron (service role, cada 5 min):
  *  • tick — recordatorios de 24 h y 1 h y «no respondió».
  *
- * La disponibilidad sale del Google Calendar que el usuario conectó en
- * Integraciones (integration_connections, provider google_calendar, scope
- * calendar.events: alcanza para leer eventos y crear el de la reunión).
- * Outlook queda pendiente (docs/AGENDA.md).
+ * La disponibilidad sale del calendario que el usuario conectó en
+ * Integraciones y eligió en su agenda: Google Calendar (scope calendar.events)
+ * u Outlook / Microsoft 365 (Graph, Calendars.ReadWrite). La reunión se crea
+ * con Google Meet o Microsoft Teams e invita al invitado.
  *
- * Secrets: SUPABASE_*, GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (los de
- * Integraciones). Opcional: PUBLIC_APP_URL (por defecto el dominio de prod).
+ * Secrets: SUPABASE_*, GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET y
+ * MICROSOFT_CLIENT_ID / MICROSOFT_CLIENT_SECRET (los de Integraciones). Opcional: PUBLIC_APP_URL (por defecto el dominio de prod).
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { GOOGLE_TOKEN, googleCredentials } from "../_shared/gmail.ts";
+import { GRAPH, MS_TOKEN, OUTLOOK_CALENDAR_SCOPES } from "../_shared/integrations.ts";
 import * as wati from "../_shared/wati.ts";
 import { callLLM, engineForUser, parseLlmJson, withLlmContext } from "../_shared/llm.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
@@ -52,7 +53,7 @@ type Json = any;
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
-const CAL = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
+const GCAL = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
 const HANDOFF_COST = CREDIT_COSTS.meeting_handoff;
 const MAX_RANGE_DAYS = 31;
 const TICK_BUDGET_MS = 100_000;
@@ -86,77 +87,173 @@ const nowIso = () => new Date().toISOString();
 
 interface Ctx { db: SupabaseClient }
 
-// ── Google Calendar del anfitrión ─────────────────────────────────────────
+// ── Calendario del anfitrión (Google Calendar u Outlook) ─────────────────
+// La agenda usa el calendario que el usuario conectó en Integraciones y eligió
+// en Configurar (booking_pages.calendar_provider). Cada reunión recuerda el
+// suyo (bookings.calendar_provider): reprogramar o cancelar va al mismo.
 
-interface CalConn { id: string; access_token: string; refresh_token: string | null; token_expires_at: string | null; account_label: string | null; status: string }
+interface CalConn {
+  id: string; provider: B.CalendarProvider; access_token: string; refresh_token: string | null;
+  token_expires_at: string | null; account_label: string | null; status: string; config: Json;
+}
 
-async function calendarConn(ctx: Ctx, userId: string): Promise<CalConn | null> {
+async function calendarConn(ctx: Ctx, userId: string, provider: B.CalendarProvider): Promise<CalConn | null> {
   const { data } = await ctx.db.from("integration_connections")
-    .select("id, access_token, refresh_token, token_expires_at, account_label, status")
-    .eq("user_id", userId).eq("provider", "google_calendar").maybeSingle();
-  return data?.access_token ? data as CalConn : null;
+    .select("id, access_token, refresh_token, token_expires_at, account_label, status, config")
+    .eq("user_id", userId).eq("provider", B.CALENDAR_INTEGRATION[provider]).maybeSingle();
+  return data?.access_token ? { ...data, provider } as CalConn : null;
 }
 
 async function refreshCal(ctx: Ctx, conn: CalConn): Promise<boolean> {
-  const creds = googleCredentials();
-  if (!creds || !conn.refresh_token) return false;
-  const res = await fetch(GOOGLE_TOKEN, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "refresh_token", client_id: creds.clientId, client_secret: creds.clientSecret, refresh_token: conn.refresh_token }),
-  });
+  if (!conn.refresh_token) return false;
+  let res: Response;
+  if (conn.provider === "outlook") {
+    const id = env("MICROSOFT_CLIENT_ID"), secret = env("MICROSOFT_CLIENT_SECRET");
+    if (!id || !secret) return false;
+    res = await fetch(MS_TOKEN, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "refresh_token", client_id: id, client_secret: secret, refresh_token: conn.refresh_token, scope: OUTLOOK_CALENDAR_SCOPES.join(" ") }),
+    });
+  } else {
+    const creds = googleCredentials();
+    if (!creds) return false;
+    res = await fetch(GOOGLE_TOKEN, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "refresh_token", client_id: creds.clientId, client_secret: creds.clientSecret, refresh_token: conn.refresh_token }),
+    });
+  }
   const tok = await res.json().catch(() => null);
   if (!res.ok || !tok?.access_token) return false;
   conn.access_token = String(tok.access_token);
+  // Microsoft rota el refresh token: siempre se guarda el último.
+  if (tok.refresh_token) conn.refresh_token = String(tok.refresh_token);
   conn.token_expires_at = tok.expires_in ? new Date(Date.now() + Number(tok.expires_in) * 1000).toISOString() : null;
   await ctx.db.from("integration_connections").update({
-    access_token: conn.access_token, token_expires_at: conn.token_expires_at, status: "connected", last_error: null, updated_at: nowIso(),
+    access_token: conn.access_token, refresh_token: conn.refresh_token, token_expires_at: conn.token_expires_at,
+    status: "connected", last_error: null, updated_at: nowIso(),
   }).eq("id", conn.id);
   return true;
 }
 
 const CAL_DOWN = "La agenda no puede leer el calendario en este momento. Intenta más tarde.";
 
-async function gcal(ctx: Ctx, conn: CalConn, method: string, url: string, body?: Json): Promise<Json> {
+async function calFetch(ctx: Ctx, conn: CalConn, method: string, url: string, body?: Json, headers: Record<string, string> = {}): Promise<Json> {
   if (conn.token_expires_at && Date.parse(conn.token_expires_at) < Date.now() + 60_000) await refreshCal(ctx, conn);
   const go = () => fetch(url, {
     method,
-    headers: { Authorization: "Bearer " + conn.access_token, Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) },
+    headers: { Authorization: "Bearer " + conn.access_token, Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}), ...headers },
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(20_000),
   });
   let res = await go();
   if (res.status === 401 && await refreshCal(ctx, conn)) res = await go();
-  if (res.status === 204) return null;
+  if (res.status === 204 || res.status === 202) return null;
   const data = await res.json().catch(() => null);
   if (res.status === 401) {
     await ctx.db.from("integration_connections").update({ status: "error", last_error: "El acceso fue revocado o expiró. Vuelve a conectar la integración.", updated_at: nowIso() }).eq("id", conn.id);
     throw new HttpError(CAL_DOWN, 503, "calendar_unavailable");
   }
-  if (!res.ok && !(method === "DELETE" && (res.status === 404 || res.status === 410))) {
-    console.error(`[booking] google ${method} ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
+  // Borrar o cancelar un evento que ya no existe no es un error.
+  if (!res.ok && !((method === "DELETE" || /\/cancel$/.test(url)) && (res.status === 404 || res.status === 410))) {
+    console.error(`[booking] ${conn.provider} ${method} ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
     throw new HttpError(CAL_DOWN, 502, "calendar_error");
   }
   return data;
 }
 
-async function calendarEvents(ctx: Ctx, conn: CalConn, from: Date, to: Date): Promise<Json[]> {
+/** Lo ocupado en el calendario entre from y to (sin el evento `excludeEventId`). */
+async function calendarBusy(ctx: Ctx, conn: CalConn, tz: string, from: Date, to: Date, excludeEventId?: string | null): Promise<B.Interval[]> {
   const items: Json[] = [];
+  if (conn.provider === "outlook") {
+    const u = new URL(GRAPH + "/me/calendarView");
+    u.searchParams.set("startDateTime", from.toISOString());
+    u.searchParams.set("endDateTime", to.toISOString());
+    u.searchParams.set("$select", "id,showAs,isCancelled,start,end,responseStatus");
+    u.searchParams.set("$top", "500");
+    let next = u.toString();
+    for (let i = 0; i < 5 && next; i++) {
+      const r = await calFetch(ctx, conn, "GET", next, undefined, { Prefer: 'outlook.timezone="UTC"' });
+      items.push(...(r?.value ?? []));
+      next = typeof r?.["@odata.nextLink"] === "string" ? r["@odata.nextLink"] : "";
+    }
+    return B.busyFromOutlookEvents(items.filter((e) => !excludeEventId || e?.id !== excludeEventId));
+  }
   let page = "";
   for (let i = 0; i < 5; i++) {
-    const u = new URL(CAL);
+    const u = new URL(GCAL);
     u.searchParams.set("timeMin", from.toISOString());
     u.searchParams.set("timeMax", to.toISOString());
     u.searchParams.set("singleEvents", "true");
     u.searchParams.set("maxResults", "2500");
     u.searchParams.set("fields", "nextPageToken,items(id,status,transparency,start,end,attendees(self,responseStatus))");
     if (page) u.searchParams.set("pageToken", page);
-    const r = await gcal(ctx, conn, "GET", u.toString());
+    const r = await calFetch(ctx, conn, "GET", u.toString());
     items.push(...(r?.items ?? []));
     page = r?.nextPageToken ?? "";
     if (!page) break;
   }
-  return items;
+  return B.busyFromGoogleEvents(items.filter((e) => !excludeEventId || e?.id !== excludeEventId), tz);
+}
+
+const graphTime = (iso: string) => ({ dateTime: new Date(iso).toISOString().replace("Z", ""), timeZone: "UTC" });
+
+interface NewEvent { requestId: string; title: string; description: string; start: string; end: string; guestEmail: string; guestName: string; type: B.MeetingType }
+
+/**
+ * Crea la reunión e invita al invitado (Google: sendUpdates=all; Graph invita
+ * solo al crear un evento con asistentes). Videollamada: Google Meet o
+ * Microsoft Teams según el calendario, o el enlace fijo del tipo.
+ */
+async function createCalEvent(ctx: Ctx, conn: CalConn, e: NewEvent): Promise<{ id: string; htmlLink: string; meetUrl: string }> {
+  const custom = e.type.video === "custom" ? e.type.video_url : "";
+  if (conn.provider === "outlook") {
+    const online = custom ? null : B.outlookOnlineProvider(conn.config?.online_meeting_providers, conn.config?.online_meeting_default);
+    const ev = await calFetch(ctx, conn, "POST", GRAPH + "/me/events", {
+      subject: e.title,
+      body: { contentType: "text", content: e.description + (custom ? `\n\nVideollamada: ${custom}` : "") },
+      start: graphTime(e.start),
+      end: graphTime(e.end),
+      attendees: [{ emailAddress: { address: e.guestEmail, name: e.guestName }, type: "required" }],
+      location: custom ? { displayName: custom } : undefined,
+      ...(online ? { isOnlineMeeting: true, onlineMeetingProvider: online } : {}),
+      transactionId: e.requestId,
+    });
+    return { id: String(ev?.id ?? ""), htmlLink: String(ev?.webLink ?? ""), meetUrl: custom || String(ev?.onlineMeeting?.joinUrl ?? "") };
+  }
+  const meet = !custom;
+  const ev = await calFetch(ctx, conn, "POST", `${GCAL}?sendUpdates=all${meet ? "&conferenceDataVersion=1" : ""}`, {
+    summary: e.title,
+    description: e.description.slice(0, 4000),
+    start: { dateTime: e.start },
+    end: { dateTime: e.end },
+    attendees: [{ email: e.guestEmail, displayName: e.guestName }],
+    location: custom || undefined,
+    conferenceData: meet ? { createRequest: { requestId: e.requestId, conferenceSolutionKey: { type: "hangoutsMeet" } } } : undefined,
+    reminders: { useDefault: true },
+  });
+  const meetUrl = String(ev?.hangoutLink ?? "") ||
+    String((ev?.conferenceData?.entryPoints ?? []).find((x: Json) => x?.entryPointType === "video")?.uri ?? "");
+  return { id: String(ev?.id ?? ""), htmlLink: String(ev?.htmlLink ?? ""), meetUrl: custom || meetUrl };
+}
+
+/** Mueve el evento; el invitado recibe la invitación actualizada. */
+async function moveCalEvent(ctx: Ctx, conn: CalConn, eventId: string, start: string, end: string) {
+  if (conn.provider === "outlook") {
+    await calFetch(ctx, conn, "PATCH", `${GRAPH}/me/events/${encodeURIComponent(eventId)}`, { start: graphTime(start), end: graphTime(end) });
+  } else {
+    await calFetch(ctx, conn, "PATCH", `${GCAL}/${encodeURIComponent(eventId)}?sendUpdates=all`, { start: { dateTime: start }, end: { dateTime: end } });
+  }
+}
+
+/** Cancela el evento avisando al invitado. */
+async function cancelCalEvent(ctx: Ctx, conn: CalConn, eventId: string, reason: string) {
+  if (conn.provider === "outlook") {
+    await calFetch(ctx, conn, "POST", `${GRAPH}/me/events/${encodeURIComponent(eventId)}/cancel`, { comment: reason.slice(0, 300) });
+  } else {
+    await calFetch(ctx, conn, "DELETE", `${GCAL}/${encodeURIComponent(eventId)}?sendUpdates=all`);
+  }
 }
 
 // ── Página y disponibilidad ───────────────────────────────────────────────
@@ -188,15 +285,14 @@ function meetingType(page: Page, id: unknown): B.MeetingType {
   return t;
 }
 
-/** Lo ocupado del anfitrión: Google Calendar + sus reuniones vivas (menos `exclude`). */
+/** Lo ocupado del anfitrión: su calendario + sus reuniones vivas (menos `exclude`). */
 async function busyFor(ctx: Ctx, page: Page, conn: CalConn, from: Date, to: Date, exclude?: { bookingId: string; eventId: string | null }): Promise<B.Interval[]> {
   const pad = 86400000;
-  const [items, { data: own }] = await Promise.all([
-    calendarEvents(ctx, conn, new Date(from.getTime() - pad), new Date(to.getTime() + pad)),
+  const [busy, { data: own }] = await Promise.all([
+    calendarBusy(ctx, conn, page.config.timezone, new Date(from.getTime() - pad), new Date(to.getTime() + pad), exclude?.eventId),
     ctx.db.from("bookings").select("id, start_at, end_at").eq("user_id", page.user_id).eq("status", "scheduled")
       .gte("end_at", new Date(from.getTime() - pad).toISOString()).lte("start_at", new Date(to.getTime() + pad).toISOString()),
   ]);
-  const busy = B.busyFromGoogleEvents(items.filter((e: Json) => !exclude?.eventId || e?.id !== exclude.eventId), page.config.timezone);
   for (const b of (own ?? []) as Json[]) {
     if (exclude && b.id === exclude.bookingId) continue;
     busy.push({ start: Date.parse(b.start_at), end: Date.parse(b.end_at) });
@@ -377,7 +473,7 @@ async function publicPage(ctx: Ctx, p: Json) {
     intro: page.config.intro,
     timezone: page.config.timezone,
     max_days_ahead: page.config.availability.max_days_ahead,
-    types: page.config.meeting_types.map((t) => ({ id: t.id, name: t.name, duration: t.duration, description: t.description, video: t.video === "google_meet" ? "Google Meet" : "Videollamada" })),
+    types: page.config.meeting_types.map((t) => ({ id: t.id, name: t.name, duration: t.duration, description: t.description, video: t.video === "auto" ? B.VIDEO_LABEL[page.config.calendar_provider] : "Videollamada" })),
     questions: page.config.questions,
   };
 }
@@ -405,7 +501,7 @@ async function slots(ctx: Ctx, p: Json) {
     page = await pageBySlug(ctx, p.slug);
     duration = meetingType(page, p.type_id).duration;
   }
-  const conn = await calendarConn(ctx, page.user_id);
+  const conn = await calendarConn(ctx, page.user_id, page.config.calendar_provider);
   if (!conn) throw new HttpError(CAL_DOWN, 503, "calendar_unavailable");
   const { from, to } = rangeOf(p, page);
   const busy = await busyFor(ctx, page, conn, from, to, exclude);
@@ -436,7 +532,7 @@ async function book(ctx: Ctx, p: Json) {
   const upcoming = ((recent ?? []) as Json[]).find((r) => r.status === "scheduled" && Date.parse(r.start_at) > Date.now());
   if (upcoming) throw new HttpError("Ya tienes una reunión agendada. Revisa tu correo: ahí puedes reprogramarla.", 409, "already_booked");
 
-  const conn = await calendarConn(ctx, page.user_id);
+  const conn = await calendarConn(ctx, page.user_id, page.config.calendar_provider);
   if (!conn) throw new HttpError(CAL_DOWN, 503, "calendar_unavailable");
   const end = start + type.duration * 60000;
   const busy = await busyFor(ctx, page, conn, new Date(start - 3600000), new Date(end + 3600000));
@@ -458,7 +554,7 @@ async function book(ctx: Ctx, p: Json) {
     user_id: page.user_id, page_id: page.id, meeting_type_id: type.id, meeting_type_name: type.name, duration_min: type.duration,
     member_id: member?.id ?? null, guest_name: name, guest_email: email, guest_phone: phone || null,
     guest_company: String(p.company ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || null, guest_timezone: guestTz,
-    answers, start_at: startIso, end_at: new Date(end).toISOString(), manage_token: token,
+    answers, start_at: startIso, end_at: new Date(end).toISOString(), manage_token: token, calendar_provider: conn.provider,
     meeting_url: type.video === "custom" ? type.video_url : null,
     source: { kind: member ? (p.via === "inbox" ? "inbox" : "campaign") : "direct", ref: ref || null },
   }).select("*").single();
@@ -471,27 +567,24 @@ async function book(ctx: Ctx, p: Json) {
     answers.length ? "\n" + answers.map((a) => `${a.label}: ${a.answer}`).join("\n") : "",
     `\nConfirmar o reprogramar: ${manage}`,
   ].join("\n");
-  let ev: Json;
+  let ev: { id: string; htmlLink: string; meetUrl: string };
   try {
-    ev = await gcal(ctx, conn, "POST", `${CAL}?sendUpdates=all${type.video === "google_meet" ? "&conferenceDataVersion=1" : ""}`, {
-      summary: `${type.name} · ${name}${row.guest_company ? " (" + row.guest_company + ")" : ""}`,
-      description: desc.slice(0, 4000),
-      start: { dateTime: startIso },
-      end: { dateTime: new Date(end).toISOString() },
-      attendees: [{ email, displayName: name }],
-      location: type.video === "custom" ? type.video_url : undefined,
-      conferenceData: type.video === "google_meet" ? { createRequest: { requestId: row.id, conferenceSolutionKey: { type: "hangoutsMeet" } } } : undefined,
-      reminders: { useDefault: true },
+    ev = await createCalEvent(ctx, conn, {
+      requestId: row.id,
+      title: `${type.name} · ${name}${row.guest_company ? " (" + row.guest_company + ")" : ""}`,
+      description: desc,
+      start: startIso,
+      end: new Date(end).toISOString(),
+      guestEmail: email,
+      guestName: name,
+      type,
     });
   } catch (e) {
     await ctx.db.from("bookings").delete().eq("id", row.id);
     throw e;
   }
-  const meetUrl = String(ev?.hangoutLink ?? "") ||
-    String((ev?.conferenceData?.entryPoints ?? []).find((x: Json) => x?.entryPointType === "video")?.uri ?? "") ||
-    (type.video === "custom" ? type.video_url : "");
   const { data: saved } = await ctx.db.from("bookings").update({
-    calendar_event_id: ev?.id ?? null, calendar_html_link: ev?.htmlLink ?? null, meeting_url: meetUrl || null, updated_at: nowIso(),
+    calendar_event_id: ev.id || null, calendar_html_link: ev.htmlLink || null, meeting_url: ev.meetUrl || null, updated_at: nowIso(),
   }).eq("id", row.id).select("*").single();
   const b = saved ?? row;
 
@@ -535,10 +628,11 @@ async function manage(ctx: Ctx, action: string, p: Json) {
   }
 
   if (action === "cancel") {
-    const conn = await calendarConn(ctx, b.user_id);
-    if (conn && b.calendar_event_id) await gcal(ctx, conn, "DELETE", `${CAL}/${encodeURIComponent(b.calendar_event_id)}?sendUpdates=all`).catch((e) => console.warn("[booking] cancel event:", e.message));
+    const reason = String(p.reason ?? "").trim().slice(0, 300);
+    const conn = await calendarConn(ctx, b.user_id, B.asCalendarProvider(b.calendar_provider));
+    if (conn && b.calendar_event_id) await cancelCalEvent(ctx, conn, b.calendar_event_id, reason || "El invitado canceló la reunión.").catch((e) => console.warn("[booking] cancel event:", e.message));
     const { data } = await ctx.db.from("bookings").update({
-      status: "cancelled", cancelled_at: nowIso(), cancel_reason: String(p.reason ?? "").trim().slice(0, 300) || null, updated_at: nowIso(),
+      status: "cancelled", cancelled_at: nowIso(), cancel_reason: reason || null, updated_at: nowIso(),
     }).eq("id", b.id).select("*").single();
     // Una reunión cancelada no cuenta como agendada: el lead vuelve a «respondió».
     if (b.member_id) await ctx.db.from("prospect_list_members").update({ contact_status: "respondio", status_changed_at: nowIso() }).eq("id", b.member_id).eq("contact_status", "reunion_agendada");
@@ -551,17 +645,18 @@ async function manage(ctx: Ctx, action: string, p: Json) {
     const start = Date.parse(startIso);
     if (!Number.isFinite(start)) throw new HttpError("Elige un horario.", 400);
     const end = start + Number(b.duration_min) * 60000;
-    const conn = await calendarConn(ctx, b.user_id);
-    if (!conn) throw new HttpError(CAL_DOWN, 503, "calendar_unavailable");
-    const busy = await busyFor(ctx, page, conn, new Date(start - 3600000), new Date(end + 3600000), { bookingId: b.id, eventId: b.calendar_event_id });
+    // Lo ocupado sale del calendario actual de la agenda; el evento se mueve en
+    // el calendario donde se creó (pueden ser distintos si el usuario cambió).
+    const evProvider = B.asCalendarProvider(b.calendar_provider);
+    const conn = await calendarConn(ctx, b.user_id, page.config.calendar_provider);
+    const evConn = evProvider === page.config.calendar_provider ? conn : await calendarConn(ctx, b.user_id, evProvider);
+    if (!conn || !evConn) throw new HttpError(CAL_DOWN, 503, "calendar_unavailable");
+    const busy = await busyFor(ctx, page, conn, new Date(start - 3600000), new Date(end + 3600000),
+      { bookingId: b.id, eventId: evProvider === page.config.calendar_provider ? b.calendar_event_id : null });
     if (!B.isSlotAvailable({ availability: page.config.availability, timezone: page.config.timezone, duration: Number(b.duration_min), busy, now: new Date() }, startIso)) {
       throw new HttpError("Ese horario acaba de ocuparse. Elige otro.", 409, "slot_taken");
     }
-    if (b.calendar_event_id) {
-      await gcal(ctx, conn, "PATCH", `${CAL}/${encodeURIComponent(b.calendar_event_id)}?sendUpdates=all`, {
-        start: { dateTime: startIso }, end: { dateTime: new Date(end).toISOString() },
-      });
-    }
+    if (b.calendar_event_id) await moveCalEvent(ctx, evConn, b.calendar_event_id, startIso, new Date(end).toISOString());
     const { data } = await ctx.db.from("bookings").update({
       start_at: startIso, end_at: new Date(end).toISOString(), rescheduled_at: nowIso(), reschedule_count: Number(b.reschedule_count ?? 0) + 1,
       confirmation: "rescheduled", reminders: {}, updated_at: nowIso(),
@@ -574,10 +669,15 @@ async function manage(ctx: Ctx, action: string, p: Json) {
 
 // ── Acciones del dueño ────────────────────────────────────────────────────
 
+function calStatus(c: CalConn | null) {
+  return { connected: !!c && c.status !== "error", account: c?.account_label ?? "", status: c?.status ?? "missing" };
+}
+
 async function settingsGet(ctx: Ctx, userId: string) {
-  const [{ data: row }, conn, { data: wa }, host] = await Promise.all([
+  const [{ data: row }, google, outlook, { data: wa }, host] = await Promise.all([
     ctx.db.from("booking_pages").select("*").eq("user_id", userId).maybeSingle(),
-    calendarConn(ctx, userId),
+    calendarConn(ctx, userId, "google"),
+    calendarConn(ctx, userId, "outlook"),
     ctx.db.from("channel_accounts").select("config").eq("user_id", userId).eq("provider", "wati").maybeSingle(),
     hostProfile(ctx, userId),
   ]);
@@ -587,8 +687,16 @@ async function settingsGet(ctx: Ctx, userId: string) {
   const suggested = B.slugify(host.name || host.brand || "mi-agenda") || "mi-agenda";
   return {
     page: row ? { ...toPage(row).config, id: row.id } : null,
-    defaults: { slug: suggested.length >= 3 ? suggested : "mi-agenda", title: host.name || host.brand, timezone: B.DEFAULT_TIMEZONE, meeting_types: B.defaultMeetingTypes(), availability: B.defaultAvailability(), questions: [], reminders: B.sanitizeReminders({}) },
-    calendar: { connected: !!conn && conn.status !== "error", account: conn?.account_label ?? "", status: conn?.status ?? "missing" },
+    defaults: {
+      slug: suggested.length >= 3 ? suggested : "mi-agenda", title: host.name || host.brand, timezone: B.DEFAULT_TIMEZONE,
+      // Si solo conectó Outlook, la agenda arranca con Outlook.
+      calendar_provider: !google && outlook ? "outlook" : "google",
+      meeting_types: B.defaultMeetingTypes(), availability: B.defaultAvailability(), questions: [], reminders: B.sanitizeReminders({}),
+    },
+    calendars: {
+      google: calStatus(google),
+      outlook: { ...calStatus(outlook), available: !!(env("MICROSOFT_CLIENT_ID") && env("MICROSOFT_CLIENT_SECRET")) },
+    },
     whatsapp: { connected: !!wa, templates },
     base_url: appUrl(),
   };
@@ -600,8 +708,8 @@ async function settingsSave(ctx: Ctx, userId: string, p: Json) {
   const { data: taken } = await ctx.db.from("booking_pages").select("user_id").eq("slug", config.slug).maybeSingle();
   if (taken && taken.user_id !== userId) throw new HttpError("Ese enlace ya lo usa otra persona: elige otro.", 409, "slug_taken");
   if (config.enabled) {
-    const conn = await calendarConn(ctx, userId);
-    if (!conn || conn.status === "error") throw new HttpError("Conecta tu Google Calendar en Integraciones para activar la agenda: de ahí sale tu disponibilidad real.", 428, "calendar_required");
+    const conn = await calendarConn(ctx, userId, config.calendar_provider);
+    if (!conn || conn.status === "error") throw new HttpError(`Conecta tu ${B.CALENDAR_LABEL[config.calendar_provider]} en Integraciones para activar la agenda: de ahí sale tu disponibilidad real.`, 428, "calendar_required");
   }
   const { data, error } = await ctx.db.from("booking_pages").upsert({ user_id: userId, ...config, updated_at: nowIso() }, { onConflict: "user_id" }).select("*").single();
   if (error) throw new HttpError("No se pudo guardar la agenda: " + error.message, 500);

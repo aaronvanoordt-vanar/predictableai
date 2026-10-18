@@ -27,8 +27,9 @@
  *                                       listas de ClickUp, páginas de Notion…
  *  • export_list   {provider, list_id|'all', options}               → {counts, url?}
  *  • export_meeting {provider, meeting_id, options}                 → {url?}
- *  • calendar_events {days?}                                        → {events:[…]}
- *  • calendar_create {title, start, end, description?}              → {url}
+ *  • calendar_events {provider?, days?}                             → {events:[…]}
+ *  • calendar_create {provider?, title, start, end, description?}   → {url}
+ *      provider = google_calendar (por defecto) u outlook_calendar.
  *
  * Los tokens viven en integration_connections (columnas ocultas al cliente
  * por grants). Esta función es lo ÚNICO que los escribe o los lee.
@@ -37,6 +38,7 @@
  *   HUBSPOT_CLIENT_ID / HUBSPOT_CLIENT_SECRET
  *   SALESFORCE_CLIENT_ID / SALESFORCE_CLIENT_SECRET (+ SALESFORCE_LOGIN_URL)
  *   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (los mismos de gmail-proxy)
+ *   MICROSOFT_CLIENT_ID / MICROSOFT_CLIENT_SECRET (Outlook Calendar, app de Microsoft Entra)
  *   NOTION_CLIENT_ID / NOTION_CLIENT_SECRET
  *   CLICKUP_CLIENT_ID / CLICKUP_CLIENT_SECRET
  * Amplemarket no tiene OAuth público: se conecta con la API key del usuario.
@@ -53,12 +55,16 @@ import {
   clickupTaskForMeeting,
   GOOGLE_CALENDAR_SCOPES,
   GOOGLE_SHEETS_SCOPES,
+  GRAPH,
   HUBSPOT_SCOPES,
   hubspotContactInputs,
   type Lead,
   meetingReportBlocks,
+  MS_AUTH,
+  MS_TOKEN,
   notionParagraph,
   notionTableBlocks,
+  OUTLOOK_CALENDAR_SCOPES,
   PROVIDERS,
   type ProviderId,
   providerMeta,
@@ -68,6 +74,8 @@ import {
   TABLE_HEADER,
   tableRows,
   toCalendarItem,
+  type CalendarItem,
+  toOutlookCalendarItem,
 } from "../_shared/integrations.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -221,6 +229,11 @@ async function refresh(ctx: Ctx, conn: Conn): Promise<boolean> {
     res = await fetch(GOOGLE_TOKEN, form({
       grant_type: "refresh_token", client_id: creds.clientId, client_secret: creds.clientSecret, refresh_token: conn.refresh_token,
     }));
+  } else if (conn.provider === "outlook_calendar") {
+    res = await fetch(MS_TOKEN, form({
+      grant_type: "refresh_token", client_id: creds.clientId, client_secret: creds.clientSecret, refresh_token: conn.refresh_token,
+      scope: OUTLOOK_CALENDAR_SCOPES.join(" "),
+    }));
   } else if (conn.provider === "notion") {
     res = await fetch("https://api.notion.com/v1/oauth/token", {
       method: "POST",
@@ -239,7 +252,7 @@ async function refresh(ctx: Ctx, conn: Conn): Promise<boolean> {
     return false;
   }
   conn.access_token = String(tok.access_token);
-  // Notion y HubSpot pueden rotar el refresh token: siempre se guarda el último.
+  // Notion, HubSpot y Microsoft pueden rotar el refresh token: siempre se guarda el último.
   if (tok.refresh_token) conn.refresh_token = String(tok.refresh_token);
   conn.token_expires_at = expiresAt(tok.expires_in);
   const patch: Record<string, unknown> = {
@@ -363,6 +376,23 @@ async function identify(ctx: Ctx, conn: Conn): Promise<Identity> {
       const me = await apiCall(ctx, conn, "https://www.googleapis.com/oauth2/v3/userinfo", { method: "GET" }, "Google");
       return { account_id: String(me?.sub ?? ""), account_label: String(me?.email ?? "Google") };
     }
+    case "outlook_calendar": {
+      const me = await apiCall(ctx, conn, GRAPH + "/me?$select=id,mail,userPrincipalName,displayName", { method: "GET" }, "Microsoft");
+      // Qué videollamada admite su calendario (Teams en Microsoft 365; las
+      // cuentas personales pueden no tener ninguna): la agenda lo usa al crear.
+      let providers: string[] = [];
+      let preferred = "";
+      try {
+        const cal = await apiCall(ctx, conn, GRAPH + "/me/calendar?$select=allowedOnlineMeetingProviders,defaultOnlineMeetingProvider", { method: "GET" }, "Outlook Calendar");
+        providers = (cal?.allowedOnlineMeetingProviders ?? []).map(String).filter((x: string) => x && x !== "unknown");
+        preferred = String(cal?.defaultOnlineMeetingProvider ?? "");
+      } catch (_) { /* sin lectura del calendario: se crea sin videollamada automática */ }
+      return {
+        account_id: String(me?.id ?? ""),
+        account_label: String(me?.mail || me?.userPrincipalName || me?.displayName || "Outlook"),
+        config: { online_meeting_providers: providers, online_meeting_default: preferred },
+      };
+    }
     case "notion": {
       const me = await apiCall(ctx, conn, "https://api.notion.com/v1/users/me", { method: "GET" }, "Notion");
       const ws = String(me?.bot?.workspace_name ?? conn.config?.workspace_name ?? "");
@@ -403,6 +433,13 @@ function authUrl(provider: ProviderId, redirectUri: string, state: string, codeC
       // Sin ambos Google no entrega refresh token al reconsentir.
       url.searchParams.set("access_type", "offline");
       url.searchParams.set("prompt", "consent");
+      break;
+    case "outlook_calendar":
+      url = new URL(MS_AUTH);
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("response_mode", "query");
+      url.searchParams.set("scope", OUTLOOK_CALENDAR_SCOPES.join(" "));
+      url.searchParams.set("prompt", "select_account");
       break;
     case "notion":
       url = new URL("https://api.notion.com/v1/oauth/authorize");
@@ -458,6 +495,15 @@ async function exchangeCode(
     if (!tok?.refresh_token) {
       throw new HttpError("Google no devolvió un refresh token. Quita el acceso de Predictable en tu cuenta de Google y reconecta.", 400);
     }
+  } else if (provider === "outlook_calendar") {
+    tok = await call(MS_TOKEN, form({
+      grant_type: "authorization_code", client_id: creds.clientId, client_secret: creds.clientSecret, redirect_uri: redirectUri, code,
+      scope: OUTLOOK_CALENDAR_SCOPES.join(" "),
+    }), "Microsoft rechazó la autorización");
+    if (!/Calendars\.ReadWrite/i.test(String(tok?.scope ?? ""))) {
+      throw new HttpError("No aceptaste el permiso de calendario en la pantalla de Microsoft. Vuelve a conectar y acéptalo (si tu empresa lo bloquea, pídele a TI que apruebe Predictable).", 400);
+    }
+    if (!tok?.refresh_token) throw new HttpError("Microsoft no devolvió un refresh token. Vuelve a conectar.", 400);
   } else if (provider === "notion") {
     tok = await call("https://api.notion.com/v1/oauth/token", {
       method: "POST",
@@ -892,19 +938,36 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
   }
 
   if (action === "calendar_events" || action === "calendar_create") {
-    const conn = await loadConn(ctx, "google_calendar");
+    const calProvider: ProviderId = p.provider === "outlook_calendar" ? "outlook_calendar" : "google_calendar";
+    const conn = await loadConn(ctx, calProvider);
+    const outlook = calProvider === "outlook_calendar";
     const base = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
     if (action === "calendar_events") {
       const days = Math.min(Math.max(Number(p.days) || 14, 1), 60);
-      const u = new URL(base);
-      u.searchParams.set("timeMin", new Date().toISOString());
-      u.searchParams.set("timeMax", new Date(Date.now() + days * 86400_000).toISOString());
-      u.searchParams.set("singleEvents", "true");
-      u.searchParams.set("orderBy", "startTime");
-      u.searchParams.set("maxResults", "50");
-      const res = await apiCall(ctx, conn, u.toString(), { method: "GET" }, "Google Calendar");
+      const from = new Date().toISOString();
+      const to = new Date(Date.now() + days * 86400_000).toISOString();
+      let items: CalendarItem[];
+      if (outlook) {
+        const u = new URL(GRAPH + "/me/calendarView");
+        u.searchParams.set("startDateTime", from);
+        u.searchParams.set("endDateTime", to);
+        u.searchParams.set("$orderby", "start/dateTime");
+        u.searchParams.set("$top", "50");
+        u.searchParams.set("$select", "id,subject,start,end,isAllDay,isCancelled,webLink,onlineMeeting,onlineMeetingUrl,location,bodyPreview,attendees");
+        const res = await apiCall(ctx, conn, u.toString(), { method: "GET", headers: { Prefer: 'outlook.timezone="UTC"' } }, "Outlook Calendar");
+        items = (res?.value ?? []).filter((e: Json) => !e?.isCancelled).map((e: Json) => toOutlookCalendarItem(e, conn.account_label ?? ""));
+      } else {
+        const u = new URL(base);
+        u.searchParams.set("timeMin", from);
+        u.searchParams.set("timeMax", to);
+        u.searchParams.set("singleEvents", "true");
+        u.searchParams.set("orderBy", "startTime");
+        u.searchParams.set("maxResults", "50");
+        const res = await apiCall(ctx, conn, u.toString(), { method: "GET" }, "Google Calendar");
+        items = (res?.items ?? []).filter((e: Json) => e?.status !== "cancelled").map((e: Json) => toCalendarItem(e, conn.account_label ?? ""));
+      }
       await patchConn(ctx, conn, { last_used_at: new Date().toISOString() });
-      return { events: (res?.items ?? []).filter((e: Json) => e?.status !== "cancelled").map((e: Json) => toCalendarItem(e, conn.account_label ?? "")) };
+      return { events: items };
     }
     const title = String(p.title ?? "").trim().slice(0, 200);
     const start = Date.parse(String(p.start ?? ""));
@@ -912,19 +975,34 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
     if (!title || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       throw new HttpError("Revisa el título y el horario del evento.", 400);
     }
-    // sendUpdates=none: el evento queda en TU calendario; invitar al lead lo
-    // decides tú desde Google.
-    const ev = await apiCall(ctx, conn, base + "?sendUpdates=none", {
-      method: "POST",
-      body: JSON.stringify({
-        summary: title,
-        description: String(p.description ?? "").slice(0, 4000),
-        start: { dateTime: new Date(start).toISOString() },
-        end: { dateTime: new Date(end).toISOString() },
-      }),
-    }, "Google Calendar");
-    await logSync(ctx, { provider: "google_calendar", action: "calendar_create", status: "ok", counts: { created: 1 }, target_url: ev?.htmlLink ?? null, detail: title });
-    return { url: ev?.htmlLink ?? "" };
+    // Sin invitados: el evento queda en TU calendario; invitar al lead lo
+    // decides tú desde el calendario.
+    let url = "";
+    if (outlook) {
+      const ev = await apiCall(ctx, conn, GRAPH + "/me/events", {
+        method: "POST",
+        body: JSON.stringify({
+          subject: title,
+          body: { contentType: "text", content: String(p.description ?? "").slice(0, 4000) },
+          start: { dateTime: new Date(start).toISOString().replace("Z", ""), timeZone: "UTC" },
+          end: { dateTime: new Date(end).toISOString().replace("Z", ""), timeZone: "UTC" },
+        }),
+      }, "Outlook Calendar");
+      url = String(ev?.webLink ?? "");
+    } else {
+      const ev = await apiCall(ctx, conn, base + "?sendUpdates=none", {
+        method: "POST",
+        body: JSON.stringify({
+          summary: title,
+          description: String(p.description ?? "").slice(0, 4000),
+          start: { dateTime: new Date(start).toISOString() },
+          end: { dateTime: new Date(end).toISOString() },
+        }),
+      }, "Google Calendar");
+      url = String(ev?.htmlLink ?? "");
+    }
+    await logSync(ctx, { provider: calProvider, action: "calendar_create", status: "ok", counts: { created: 1 }, target_url: url || null, detail: title });
+    return { url };
   }
 
   const provider = asProvider(p.provider);

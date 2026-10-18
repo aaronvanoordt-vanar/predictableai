@@ -235,7 +235,7 @@
     if (!page || !page.enabled) {
       root.appendChild(h('div', { class: 'ag-block ag-empty' }, [
         h('div', { class: 'ag-title', text: page ? 'Tu agenda está pausada' : 'Todavía no activas tu agenda' }),
-        h('p', { class: 'ag-p', text: 'Comparte un enlace para que tus leads elijan un horario libre de tu Google Calendar. Úsalo en tus campañas con {{link_agenda}} o desde la Bandeja con «Enviar mi agenda»: al agendar, la cadencia se detiene y el lead pasa a «reunión agendada». Recordatorios por WhatsApp y email contra el no-show.' }),
+        h('p', { class: 'ag-p', text: 'Comparte un enlace para que tus leads elijan un horario libre de tu calendario (Google Calendar u Outlook). Úsalo en tus campañas con {{link_agenda}} o desde la Bandeja con «Enviar mi agenda»: al agendar, la cadencia se detiene y el lead pasa a «reunión agendada». Recordatorios por WhatsApp y email contra el no-show.' }),
         h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: page ? 'Revisar y activar' : 'Configurar mi agenda', on: { click: function () { state.tab = 'settings'; render(); } } }),
       ]));
     } else {
@@ -317,23 +317,39 @@
     return s;
   }
 
+  function goIntegrations() {
+    var nav = document.querySelector('.nav-item[data-page="integrations"]');
+    if (nav && typeof global.nav === 'function') { global.nav(nav, 'integrations'); if (global.integrations) global.integrations.show(); }
+  }
+
   function renderSettings(root) {
     var s = state.settings;
     var f = state.form;
     var av = f.availability;
-    var cal = s.calendar || {};
-    if (!cal.connected) {
-      root.appendChild(h('div', { class: 'ag-block ag-warn' }, [
-        h('b', { text: 'Conecta tu Google Calendar' }),
-        h('p', { class: 'ag-p', text: 'Tu disponibilidad real sale de tu calendario (los horarios ocupados no se ofrecen) y cada reunión se crea ahí con su enlace de Google Meet. Outlook todavía no está disponible.' }),
-        h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: 'Ir a Integraciones', on: { click: function () {
-          var nav = document.querySelector('.nav-item[data-page="integrations"]');
-          if (nav && typeof global.nav === 'function') { global.nav(nav, 'integrations'); if (global.integrations) global.integrations.show(); }
-        } } }),
+    var cals = s.calendars || {};
+    var CAL_NAME = { google: 'Google Calendar', outlook: 'Outlook' };
+    var connected = ['google', 'outlook'].filter(function (k) { return cals[k] && cals[k].connected; });
+    if (connected.length && connected.indexOf(f.calendar_provider) === -1) f.calendar_provider = connected[0];
+    var calBlock = h('div', { class: 'ag-block' }, [h('div', { class: 'ag-title', text: 'Tu calendario' }),
+      h('p', { class: 'ag-p', text: 'De ahí sale tu disponibilidad real (lo ocupado no se ofrece) y ahí se crea cada reunión, con su enlace de Google Meet o Microsoft Teams, invitando al lead.' })]);
+    var calRow = h('div', { class: 'ag-cal-row' });
+    ['google', 'outlook'].forEach(function (k) {
+      var c = cals[k] || {};
+      var on = f.calendar_provider === k;
+      var opt = h('label', { class: 'ag-cal' + (on ? ' on' : '') + (c.connected ? '' : ' off') });
+      var radio = h('input', { type: 'radio', name: 'ag-cal', value: k, checked: on ? true : null, disabled: c.connected ? null : true });
+      radio.addEventListener('change', function () { f.calendar_provider = k; render(); });
+      opt.appendChild(radio);
+      opt.appendChild(h('span', { class: 'ag-cal-main' }, [
+        h('b', { text: CAL_NAME[k] }),
+        h('span', { class: 'ag-muted', text: c.connected ? (c.account || 'Conectado') : (c.status === 'error' ? 'Hay que reconectarlo' : (k === 'outlook' && c.available === false ? 'Aún no disponible en esta cuenta' : 'Sin conectar')) }),
       ]));
-    } else {
-      root.appendChild(h('div', { class: 'ag-note', text: 'Disponibilidad leída de Google Calendar · ' + (cal.account || 'conectado') + '.' }));
-    }
+      if (!c.connected && !(k === 'outlook' && c.available === false)) opt.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Conectar', on: { click: goIntegrations } }));
+      calRow.appendChild(opt);
+    });
+    calBlock.appendChild(calRow);
+    if (!connected.length) calBlock.appendChild(h('div', { class: 'ag-note', text: 'Conecta Google Calendar u Outlook en Integraciones para activar tu agenda.' }));
+    root.appendChild(calBlock);
 
     var general = h('div', { class: 'ag-block' }, [h('div', { class: 'ag-title', text: 'Tu enlace' })]);
     var en = h('input', { type: 'checkbox', checked: f.enabled ? true : null });
@@ -358,20 +374,20 @@
       var row = h('div', { class: 'ag-type-row' });
       row.appendChild(field('Nombre', input(t.name, function (v) { t.name = v; }, { maxlength: '80' })));
       row.appendChild(field('Duración', select([[15, '15 min'], [20, '20 min'], [30, '30 min'], [45, '45 min'], [60, '60 min'], [90, '90 min']], t.duration, function (v) { t.duration = Number(v); })));
-      row.appendChild(field('Videollamada', select([['google_meet', 'Google Meet (automático)'], ['custom', 'Mi enlace fijo (Zoom, Teams…)']], t.video, function (v) { t.video = v; render(); })));
+      row.appendChild(field('Videollamada', select([['auto', (f.calendar_provider === 'outlook' ? 'Microsoft Teams' : 'Google Meet') + ' (automático)'], ['custom', 'Mi enlace fijo (Zoom, Webex…)']], t.video === 'custom' ? 'custom' : 'auto', function (v) { t.video = v; render(); })));
       if (t.video === 'custom') row.appendChild(field('Enlace fijo', input(t.video_url, function (v) { t.video_url = v; }, { placeholder: 'https://…' })));
       row.appendChild(field('Descripción', input(t.description, function (v) { t.description = v; }, { maxlength: '300', placeholder: 'Opcional' })));
       if (f.meeting_types.length > 1) row.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm ag-x', text: 'Quitar', on: { click: function () { f.meeting_types.splice(i, 1); render(); } } }));
       types.appendChild(row);
     });
     if (f.meeting_types.length < 6) types.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '+ Tipo de reunión', on: { click: function () {
-      f.meeting_types.push({ id: '', name: '', duration: 30, description: '', video: 'google_meet', video_url: '' }); render();
+      f.meeting_types.push({ id: '', name: '', duration: 30, description: '', video: 'auto', video_url: '' }); render();
     } } }));
     root.appendChild(types);
 
     // Disponibilidad
     var avail = h('div', { class: 'ag-block' }, [h('div', { class: 'ag-title', text: 'Disponibilidad semanal' }),
-      h('p', { class: 'ag-p', text: 'Las horas en las que aceptas reuniones, en tu zona. Lo ocupado en tu Google Calendar se descuenta solo.' })]);
+      h('p', { class: 'ag-p', text: 'Las horas en las que aceptas reuniones, en tu zona. Lo ocupado en tu calendario se descuenta solo.' })]);
     DAYS.forEach(function (d) {
       var wins = av.weekly[d[0]] = av.weekly[d[0]] || [];
       var row = h('div', { class: 'ag-day-row' });
@@ -544,6 +560,12 @@
       '.ag-win input{background:transparent;border:none;font:inherit;font-size:13px;color:var(--ink);width:96px}',
       '.ag-icon{border:none;background:var(--surface3);color:var(--ink-3);border-radius:6px;width:24px;height:24px;cursor:pointer;font-size:12px;line-height:1}',
       '.ag-q-row{display:flex;gap:10px;align-items:center}',
+      '.ag-cal-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}',
+      '.ag-cal{display:flex;align-items:center;gap:10px;border:1px solid var(--hair);border-radius:12px;padding:10px 12px;cursor:pointer}',
+      '.ag-cal.on{border-color:var(--accent);background:var(--accent-soft)}',
+      '.ag-cal.off{cursor:default}',
+      '.ag-cal-main{display:flex;flex-direction:column;flex:1;min-width:0}',
+      '.ag-cal-main b{font-size:13.5px;color:var(--ink)}',
       '.ag-q-row input[type=text]{flex:1}',
       '.ag-tpl{font-size:12.5px;color:var(--ink-2);background:var(--surface2);border-radius:10px;padding:8px 12px;white-space:pre-wrap}',
       '.ag-savebar{position:sticky;bottom:12px;display:flex;justify-content:flex-end;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg,14px);padding:10px 14px;box-shadow:0 8px 24px -12px rgba(10,10,15,.18)}',

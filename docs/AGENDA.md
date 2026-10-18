@@ -11,17 +11,18 @@ Hoja de ruta GTM OS, P2 «Agendamiento con recordatorios por WhatsApp» (`docs/R
 | `_shared/booking.ts` (`deno test`) | Lógica pura: zonas horarias, horarios libres, recordatorios, variables de la plantilla, respuestas del invitado, nota BANT, saneado de la configuración. |
 | `_shared/booking-notify.ts` | ÚNICA salida de la agenda hacia WhatsApp (WATI del usuario) y email (Apollo propio). Cuando llegue el adaptador común de WhatsApp (Cloud API + WATI) solo cambia este archivo. |
 | `_shared/booking-inbound.ts` | `wati-webhook` le pasa cada entrante: «Confirmo» confirma; «Reprogramar» / «no puedo» / «cancelar» marca `reschedule_requested` y responde con el enlace para elegir otro horario. |
-| `js/scheduling.js` | Página `agenda` de la app (sección Ventas): pestañas Reuniones y Configurar. `window.scheduling.linkFor(memberId)` arma el enlace de un lead. |
-| Migración `20261017000001_meeting_scheduling.sql` | `booking_pages`, `bookings`, `prospect_list_members.booking_ref` / `meeting_handoff`, scope `meeting_attendance` en `learning_insights`, cron comentado. |
+| `js/scheduling.js` | Página `agenda` de la app (sección Ventas): pestañas Reuniones y Configurar (incluye la elección del calendario). `window.scheduling.linkFor(memberId)` arma el enlace de un lead. |
+| Integraciones: `outlook_calendar` | Nuevo proveedor en `_shared/integrations.ts` ↔ `js/integrations.js`: OAuth de Microsoft, próximas reuniones para el Meeting Coach y seguimientos, igual que Google Calendar. |
+| Migración `20261017000001_meeting_scheduling.sql` | `booking_pages` (con `calendar_provider`), `bookings`, `prospect_list_members.booking_ref` / `meeting_handoff`, scope `meeting_attendance` en `learning_insights`, `outlook_calendar` en `integration_connections`, cron comentado. |
 
-## Disponibilidad y calendario
+## Disponibilidad y calendario (Google Calendar u Outlook)
 
-- La disponibilidad semanal está en la zona del anfitrión; el invitado ve cada horario en la suya (elige la zona en la página).
-- Lo ocupado sale del **Google Calendar conectado en Integraciones** (`integration_connections`, provider `google_calendar`, scope `calendar.events`): `events.list` con `singleEvents`. No bloquean los eventos «Disponible» (`transparency = transparent`), los cancelados ni los que el dueño rechazó. Un evento de día completo ocupado bloquea el día. También bloquean las reuniones ya agendadas en la agenda.
+- El usuario conecta su calendario en **Integraciones** (Google Calendar u Outlook Calendar) y en Agenda → Configurar elige de cuál sale la disponibilidad (`booking_pages.calendar_provider`). Sin un calendario conectado la agenda no se activa (`settings_save` → 428 `calendar_required`). Si solo conectó Outlook, la agenda arranca con Outlook.
+- La disponibilidad semanal está en la zona del anfitrión; el invitado ve cada horario en la suya (elige la zona en la página). También bloquean las reuniones ya agendadas en la agenda.
+- **Google Calendar** (scope `calendar.events`): `events.list` con `singleEvents`. No bloquean los eventos «Disponible» (`transparency = transparent`), los cancelados ni los rechazados; un evento de día completo ocupado bloquea el día. El evento se crea con `sendUpdates=all` y Google Meet (`conferenceDataVersion=1`).
+- **Outlook / Microsoft 365** (Microsoft Graph, `Calendars.ReadWrite` + `offline_access`, endpoint `common`: cuentas de trabajo y personales): `/me/calendarView` con `Prefer: outlook.timezone="UTC"`. No bloquean `showAs` free / workingElsewhere, los cancelados ni los rechazados (`busyFromOutlookEvents`). El evento se crea con el invitado como asistente (Graph envía la invitación) y `isOnlineMeeting` con el proveedor que permite su calendario (`outlookOnlineProvider`: el predeterminado, si no Teams, si no Skype); si el calendario no admite ninguno, sale sin enlace automático. Reprogramar = `PATCH` del evento (Graph avisa al invitado); cancelar = `POST /events/{id}/cancel`.
+- Cada reunión guarda su calendario (`bookings.calendar_provider`): reprogramar o cancelar actúa sobre el calendario donde se creó aunque el usuario haya cambiado después.
 - Al agendar se vuelve a comprobar el horario (`isSlotAvailable`); si se ocupó, 409 `slot_taken` y la página recarga los horarios.
-- El evento se crea con `sendUpdates=all` (invitación al invitado) y Google Meet (`conferenceDataVersion=1`) o el enlace fijo del tipo de reunión.
-- Sin Google Calendar la agenda no se activa (`settings_save` responde 428 `calendar_required`): sin calendario no hay disponibilidad real.
-- **Outlook: pendiente.** Necesita una app de Azure (Microsoft Entra) con `Calendars.ReadWrite` y `OnlineMeetings.ReadWrite` por Microsoft Graph, su OAuth en `integrations` y `getSchedule` para lo ocupado. No sale simple; queda anotado.
 
 ## {{link_agenda}} y «Enviar mi agenda»
 
@@ -54,6 +55,7 @@ Hoja de ruta GTM OS, P2 «Agendamiento con recordatorios por WhatsApp» (`docs/R
 ## Pasos manuales para ponerlo en producción
 
 1. Aplicar la migración `20261017000001_meeting_scheduling.sql`.
-2. `supabase functions deploy booking --no-verify-jwt` (ya está en `NO_JWT` del workflow) y redesplegar `campaign-run`, `wati-webhook`, `generate-outreach`, `learning-loop` y `sales-coach`.
+2. `supabase functions deploy booking --no-verify-jwt` (ya está en `NO_JWT` del workflow) y redesplegar `integrations`, `campaign-run`, `wati-webhook`, `generate-outreach`, `learning-loop` y `sales-coach`.
 3. Programar el cron `booking-reminders` (cada 5 min) con el SQL comentado al final de la migración.
-4. Opcional: secret `PUBLIC_APP_URL` si la app no vive en `https://predictableai.vanarsi.com`.
+4. Para Outlook: registrar una app en Microsoft Entra (ver `docs/INTEGRACIONES.md`) y poner `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` en los secrets; redesplegar `integrations`. Sin ese par, la tarjeta de Outlook dice que aún no está disponible y la agenda funciona con Google.
+5. Opcional: secret `PUBLIC_APP_URL` si la app no vive en `https://predictableai.vanarsi.com`.

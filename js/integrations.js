@@ -2,7 +2,7 @@
  * js/integrations.js — «Integraciones» (2026-09-23).
  *
  * Página `integrations` (shell `#integrations-shell`). Conexión nativa con
- * siete plataformas por su API oficial, todas a través de la edge function
+ * ocho plataformas por su API oficial, todas a través de la edge function
  * `integrations` (los tokens nunca llegan al navegador):
  *
  *   CRM ............ HubSpot (contactos, upsert por email) · Salesforce (Leads)
@@ -52,6 +52,8 @@
       what: 'Exporta cualquier lista a una hoja de cálculo. Cada nuevo envío actualiza la misma hoja.' },
     { id: 'google_calendar', name: 'Google Calendar', category: 'productivity', mono: 'C', color: '#4285F4',
       what: 'Ve tus próximas reuniones, ábrelas en el Meeting Coach con un clic y agenda seguimientos.' },
+    { id: 'outlook_calendar', name: 'Outlook Calendar', category: 'productivity', mono: 'O', color: '#0078D4',
+      what: 'Outlook o Microsoft 365: tus próximas reuniones en el Meeting Coach, seguimientos y la disponibilidad de tu Agenda con enlace de Teams.' },
     { id: 'notion', name: 'Notion', category: 'productivity', mono: 'N', color: '#37352F',
       what: 'Guarda tus listas y los reportes del Meeting Coach como páginas de Notion.',
       token: { label: 'Secreto de la integración interna', placeholder: 'ntn_…', link: 'https://www.notion.so/profile/integrations',
@@ -261,7 +263,7 @@
     state.open = state.open === id ? null : id;
     render();
     if (state.open !== id) return;
-    if (id === 'google_calendar') loadEvents();
+    if (isCalendar(id)) loadEvents(id);
     else if (['amplemarket', 'notion', 'clickup'].indexOf(id) !== -1 && !state.opts[id]) loadOptions(id, '');
   }
 
@@ -290,12 +292,15 @@
     render();
   }
 
-  async function loadEvents() {
+  var CALENDARS = ['google_calendar', 'outlook_calendar'];
+  function isCalendar(id) { return CALENDARS.indexOf(id) !== -1; }
+
+  async function loadEvents(id) {
     state.events = null;
     state.eventsErr = '';
     render();
     try {
-      var r = await fn('calendar_events', { days: 14 });
+      var r = await fn('calendar_events', { provider: id, days: 14 });
       state.events = r.events || [];
     } catch (e) {
       state.events = [];
@@ -395,17 +400,18 @@
     var start = new Date(date + 'T' + time);
     if (isNaN(start.getTime())) return toast('Fecha u hora inválida.', 'error');
     var end = new Date(start.getTime() + mins * 60000);
-    setBusy('google_calendar', 'create', true, btn);
+    var cal = isCalendar(state.open) ? state.open : 'google_calendar';
+    setBusy(cal, 'create', true, btn);
     try {
-      var r = await fn('calendar_create', { title: title.trim(), start: start.toISOString(), end: end.toISOString(), description: 'Creado desde Predictable.' });
-      state.results.google_calendar = { ok: true, kind: 'event', data: r };
-      toast('Evento creado en tu Google Calendar.', 'success');
-      loadEvents();
+      var r = await fn('calendar_create', { provider: cal, title: title.trim(), start: start.toISOString(), end: end.toISOString(), description: 'Creado desde Predictable.' });
+      state.results[cal] = { ok: true, kind: 'event', data: r };
+      toast('Evento creado en tu ' + (cal === 'outlook_calendar' ? 'Outlook' : 'Google Calendar') + '.', 'success');
+      loadEvents(cal);
     } catch (e) {
-      state.results.google_calendar = { ok: false, message: e.message };
+      state.results[cal] = { ok: false, message: e.message };
       render();
     } finally {
-      setBusy('google_calendar', 'create', false, btn);
+      setBusy(cal, 'create', false, btn);
     }
   }
 
@@ -555,7 +561,7 @@
     return html + '</div>';
   }
 
-  function calendarPanel() {
+  function calendarPanel(id) {
     var html = '<div class="itg-sub">Próximas reuniones (14 días)</div>';
     if (state.events === null) html += '<div class="itg-muted">Leyendo tu calendario…</div>';
     else if (state.eventsErr) html += '<div class="itg-err">' + esc(state.eventsErr) + '</div>';
@@ -581,14 +587,14 @@
       '<label class="itg-field"><span>Hora</span><input type="time" data-cal="time" value="10:00"></label>' +
       '<label class="itg-field"><span>Duración</span><select data-cal="mins"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="45">45 min</option><option value="60">1 hora</option></select></label>' +
       '</div><div class="itg-row"><button class="btn btn-primary btn-sm" data-act="cal-create">Crear en mi calendario</button>' +
-      '<span class="itg-muted">Se crea solo en tu calendario; invitar al lead lo decides en Google.</span></div>';
-    return html + resultBox('google_calendar');
+      '<span class="itg-muted">Se crea solo en tu calendario; invitar al lead lo decides en ' + (id === 'outlook_calendar' ? 'Outlook' : 'Google') + '.</span></div>';
+    return html + resultBox(id);
   }
 
   function usePanel(p) {
     var id = p.id;
     var html = '<div class="itg-panel">';
-    if (id === 'google_calendar') html += calendarPanel();
+    if (isCalendar(id)) html += calendarPanel(id);
     else {
       var f = form(id);
       html += '<div class="itg-sub">Enviar una lista</div>';
@@ -634,7 +640,7 @@
       if (c.status === 'error' && c.last_error) html += '<div class="itg-err">' + esc(c.last_error) + '</div>';
     }
     html += '<div class="itg-actions">';
-    if (c && c.status !== 'error') html += '<button class="btn ' + (open ? 'btn-ghost' : 'btn-primary') + ' btn-sm" data-act="open" data-id="' + p.id + '">' + (open ? 'Cerrar' : (p.id === 'google_calendar' ? 'Ver reuniones' : 'Usar')) + '</button>';
+    if (c && c.status !== 'error') html += '<button class="btn ' + (open ? 'btn-ghost' : 'btn-primary') + ' btn-sm" data-act="open" data-id="' + p.id + '">' + (open ? 'Cerrar' : (isCalendar(p.id) ? 'Ver reuniones' : 'Usar')) + '</button>';
     html += connectArea(p);
     if (c && c.status === 'error') html += '<button class="itg-link-btn itg-danger" data-act="disconnect" data-id="' + p.id + '">Desconectar</button>';
     html += '</div>';

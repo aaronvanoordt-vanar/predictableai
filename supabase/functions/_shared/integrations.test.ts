@@ -18,6 +18,7 @@ import {
   TABLE_HEADER,
   tableRows,
   toCalendarItem,
+  toOutlookCalendarItem,
 } from "./integrations.ts";
 
 const ana: Lead = {
@@ -28,9 +29,9 @@ const ana: Lead = {
 const noEmail: Lead = { id: "2", name: "Luis Gómez Ruiz", company: "Beta", linkedin_url: "https://linkedin.com/in/luis" };
 const nothing: Lead = { id: "3", name: "Solo Nombre" };
 
-Deno.test("catálogo: las 7 plataformas, espejo de js/integrations.js", async () => {
+Deno.test("catálogo: las 8 plataformas, espejo de js/integrations.js", async () => {
   assertEquals(PROVIDERS.map((p) => p.id), [
-    "hubspot", "salesforce", "amplemarket", "google_sheets", "google_calendar", "notion", "clickup",
+    "hubspot", "salesforce", "amplemarket", "google_sheets", "google_calendar", "outlook_calendar", "notion", "clickup",
   ]);
   const js = await Deno.readTextFile(new URL("../../../js/integrations.js", import.meta.url));
   for (const p of PROVIDERS) {
@@ -145,4 +146,24 @@ Deno.test("chunk y mensajes de error", () => {
   assertEquals(apiErrorMessage({ message: "Property values were not valid" }, 400), "Property values were not valid");
   assertEquals(apiErrorMessage({ err: "Token invalid", ECODE: "OAUTH_025" }, 401), "Token invalid");
   assertEquals(apiErrorMessage(null, 503), "Error 503");
+});
+
+Deno.test("toOutlookCalendarItem: fechas UTC de Graph, enlace de Teams y sin el propio usuario", () => {
+  const it = toOutlookCalendarItem({
+    id: "AAMk", subject: "Demo con Acme", isAllDay: false, webLink: "https://outlook.office365.com/owa/?itemid=1",
+    start: { dateTime: "2026-10-20T14:00:00.0000000", timeZone: "UTC" },
+    end: { dateTime: "2026-10-20T14:30:00.0000000", timeZone: "UTC" },
+    onlineMeeting: { joinUrl: "https://teams.microsoft.com/l/meetup-join/abc" },
+    attendees: [
+      { emailAddress: { address: "yo@vanar.com", name: "Yo" }, type: "required" },
+      { emailAddress: { address: "ana@acme.com", name: "Ana" }, type: "required" },
+      { emailAddress: { address: "sala@vanar.com", name: "Sala" }, type: "resource" },
+    ],
+  }, "YO@vanar.com");
+  assertEquals(it.start, "2026-10-20T14:00:00.000Z");
+  assertEquals(it.meeting_url, "https://teams.microsoft.com/l/meetup-join/abc");
+  assertEquals(it.attendees, [{ email: "ana@acme.com", name: "Ana" }]);
+  const zoom = toOutlookCalendarItem({ subject: "", start: {}, end: {}, location: { displayName: "https://zoom.us/j/123" } });
+  assertEquals(zoom.title, "(Sin título)");
+  assertEquals(zoom.meeting_url, "https://zoom.us/j/123");
 });

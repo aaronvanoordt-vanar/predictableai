@@ -4,6 +4,7 @@ import {
   attendanceStats,
   bookingUrl,
   busyFromGoogleEvents,
+  busyFromOutlookEvents,
   classifyReminderReply,
   computeSlots,
   defaultAvailability,
@@ -11,6 +12,7 @@ import {
   handoffBlock,
   isSlotAvailable,
   normalizeHandoff,
+  outlookOnlineProvider,
   reminderEmail,
   reminderTemplateParams,
   sanitizeAnswers,
@@ -186,7 +188,8 @@ Deno.test("sanitizePageConfig y sanitizeAnswers", () => {
   assertEquals(config.timezone, "America/Lima");
   assertEquals(config.meeting_types.length, 1);
   assertEquals(config.meeting_types[0].duration, 240);
-  assertEquals(config.meeting_types[0].video, "google_meet"); // URL no https → Meet
+  assertEquals(config.meeting_types[0].video, "auto"); // URL no https → enlace del calendario
+  assertEquals(config.calendar_provider, "google");
   assertEquals(config.availability.weekly["1"], [{ start: "09:00", end: "13:00" }]);
   assertEquals(config.availability.weekly["2"], []);
   assertEquals(config.questions[1].kind, "text"); // una sola opción no es una elección
@@ -201,4 +204,31 @@ Deno.test("bookingUrl y attendanceStats", () => {
   assertEquals(bookingUrl("https://p.ai/", "luis", "abc"), "https://p.ai/agenda.html?u=luis&r=abc");
   assertEquals(attendanceStats([{ attendance: "held" }, { attendance: "held" }, { attendance: "no_show" }, { attendance: "pending" }]),
     { marked: 3, held: 2, no_show: 1, show_rate: 66.7 });
+});
+
+Deno.test("busyFromOutlookEvents: UTC de Graph; libre, rechazado y cancelado no bloquean", () => {
+  const busy = busyFromOutlookEvents([
+    { start: { dateTime: "2026-10-19T15:00:00.0000000", timeZone: "UTC" }, end: { dateTime: "2026-10-19T16:00:00.0000000", timeZone: "UTC" }, showAs: "busy" },
+    { start: { dateTime: "2026-10-19T17:00:00.0000000" }, end: { dateTime: "2026-10-19T18:00:00.0000000" }, showAs: "free" },
+    { start: { dateTime: "2026-10-19T17:00:00.0000000" }, end: { dateTime: "2026-10-19T18:00:00.0000000" }, showAs: "workingElsewhere" },
+    { start: { dateTime: "2026-10-19T19:00:00.0000000" }, end: { dateTime: "2026-10-19T20:00:00.0000000" }, showAs: "tentative", responseStatus: { response: "declined" } },
+    { start: { dateTime: "2026-10-19T20:00:00.0000000" }, end: { dateTime: "2026-10-19T21:00:00.0000000" }, isCancelled: true },
+    { start: { dateTime: "2026-10-19T21:00:00.0000000" }, end: { dateTime: "2026-10-19T21:30:00.0000000" }, showAs: "oof" },
+  ]);
+  assertEquals(busy, [
+    { start: Date.parse("2026-10-19T15:00:00Z"), end: Date.parse("2026-10-19T16:00:00Z") },
+    { start: Date.parse("2026-10-19T21:00:00Z"), end: Date.parse("2026-10-19T21:30:00Z") },
+  ]);
+  const now = new Date("2026-10-19T00:00:00Z");
+  const slots = computeSlots({ availability: av, timezone: "America/Lima", duration: 30, from: now, to: new Date("2026-10-20T00:00:00Z"), busy, now });
+  assert(!slots.includes("2026-10-19T15:00:00.000Z") && !slots.includes("2026-10-19T15:30:00.000Z"));
+  assert(slots.includes("2026-10-19T17:00:00.000Z"));
+});
+
+Deno.test("outlookOnlineProvider: el preferido si está permitido; Teams antes que Skype; ninguno → null", () => {
+  assertEquals(outlookOnlineProvider(["teamsForBusiness"], "teamsForBusiness"), "teamsForBusiness");
+  assertEquals(outlookOnlineProvider(["skypeForConsumer", "teamsForBusiness"], "unknown"), "teamsForBusiness");
+  assertEquals(outlookOnlineProvider(["skypeForConsumer"], ""), "skypeForConsumer");
+  assertEquals(outlookOnlineProvider([], "teamsForBusiness"), null);
+  assertEquals(outlookOnlineProvider(undefined, undefined), null);
 });

@@ -21,6 +21,8 @@
 --                      Meeting Coach y generate-outreach.
 --   • learning_insights.scope 'meeting_attendance' — asistencia real por
 --                      confirmación, recordatorio y origen (learning-loop).
+--   • integration_connections.provider 'outlook_calendar' — Outlook / Microsoft
+--                      365 por Microsoft Graph (Integraciones y la agenda).
 --
 -- La página pública (agenda.html) NO lee estas tablas: todo pasa por la edge
 -- function `booking` (desplegada con --no-verify-jwt), que solo devuelve lo
@@ -36,6 +38,8 @@ CREATE TABLE IF NOT EXISTS public.booking_pages (
   title         TEXT        NOT NULL DEFAULT '',
   intro         TEXT        NOT NULL DEFAULT '',
   timezone      TEXT        NOT NULL DEFAULT 'America/Lima',
+  -- De qué calendario sale la disponibilidad y dónde se crea la reunión.
+  calendar_provider TEXT    NOT NULL DEFAULT 'google' CHECK (calendar_provider IN ('google', 'outlook')),
   meeting_types JSONB       NOT NULL DEFAULT '[]'::jsonb,
   availability  JSONB       NOT NULL DEFAULT '{}'::jsonb,
   questions     JSONB       NOT NULL DEFAULT '[]'::jsonb,
@@ -83,7 +87,7 @@ CREATE TABLE IF NOT EXISTS public.bookings (
   rescheduled_at      TIMESTAMPTZ,
   cancelled_at        TIMESTAMPTZ,
   cancel_reason       TEXT,
-  calendar_provider   TEXT        NOT NULL DEFAULT 'google',
+  calendar_provider   TEXT        NOT NULL DEFAULT 'google' CHECK (calendar_provider IN ('google', 'outlook')),
   calendar_event_id   TEXT,
   calendar_html_link  TEXT,
   meeting_url         TEXT,
@@ -143,6 +147,23 @@ ALTER TABLE public.learning_insights
   ADD CONSTRAINT learning_insights_scope_check
   CHECK (scope IN ('radar_detector', 'campaign_node', 'campaign', 'channel', 'angle',
                    'winning_message', 'objection', 'icp_attribute', 'summary', 'meeting_attendance'));
+
+-- ── Integraciones: Outlook Calendar ───────────────────────────────────────
+DO $$
+DECLARE c TEXT;
+BEGIN
+  -- El CHECK inline de 20260923000009 no tiene nombre fijo: se busca y se reemplaza.
+  FOR c IN SELECT conname FROM pg_constraint
+           WHERE conrelid = 'public.integration_connections'::regclass AND contype = 'c'
+             AND pg_get_constraintdef(oid) ILIKE '%google_calendar%'
+  LOOP
+    EXECUTE format('ALTER TABLE public.integration_connections DROP CONSTRAINT %I', c);
+  END LOOP;
+END $$;
+ALTER TABLE public.integration_connections
+  ADD CONSTRAINT integration_connections_provider_check
+  CHECK (provider IN ('hubspot', 'salesforce', 'amplemarket', 'google_sheets',
+                      'google_calendar', 'outlook_calendar', 'notion', 'clickup'));
 
 -- ── Cron de recordatorios (cada 5 minutos, con la service role) ──────────
 -- SELECT cron.schedule('booking-reminders', '*/5 * * * *', $cron$

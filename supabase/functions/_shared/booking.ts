@@ -6,8 +6,9 @@
  *
  *  • Zonas horarias y horarios libres (`computeSlots`, `isSlotAvailable`): la
  *    disponibilidad semanal está en la zona del anfitrión; lo ocupado sale de
- *    su Google Calendar (`busyFromGoogleEvents`, respeta «Disponible» y los
- *    eventos rechazados); el invitado ve cada horario en SU zona.
+ *    su Google Calendar o su Outlook (`busyFromGoogleEvents` /
+ *    `busyFromOutlookEvents`, respetan «Disponible» y los eventos rechazados);
+ *    el invitado ve cada horario en SU zona.
  *  • Recordatorios contra el no-show (`dueReminders`, `shouldMarkNoResponse`):
  *    confirmación inmediata, 24 h antes y 1 h antes, sin mandar un «faltan 24 h»
  *    a quien agendó para dentro de 3 horas.
@@ -96,13 +97,24 @@ export interface MeetingType {
   name: string;
   duration: number;
   description: string;
-  video: "google_meet" | "custom";
+  /** auto = el enlace que crea el calendario (Google Meet o Microsoft Teams); custom = enlace fijo. */
+  video: "auto" | "custom";
   video_url: string;
 }
 export interface Question { id: string; label: string; required: boolean; kind: "text" | "choice"; options: string[] }
 export interface ReminderConfig { whatsapp_template: string | null; email: boolean; h24: boolean; h1: boolean }
+export type CalendarProvider = "google" | "outlook";
+export const CALENDAR_INTEGRATION: Record<CalendarProvider, string> = { google: "google_calendar", outlook: "outlook_calendar" };
+export const CALENDAR_LABEL: Record<CalendarProvider, string> = { google: "Google Calendar", outlook: "Outlook" };
+export const VIDEO_LABEL: Record<CalendarProvider, string> = { google: "Google Meet", outlook: "Microsoft Teams" };
+
+export function asCalendarProvider(v: unknown): CalendarProvider {
+  return v === "outlook" ? "outlook" : "google";
+}
+
 export interface PageConfig {
   slug: string;
+  calendar_provider: CalendarProvider;
   enabled: boolean;
   title: string;
   intro: string;
@@ -127,7 +139,7 @@ export function defaultAvailability(): Availability {
 }
 
 export function defaultMeetingTypes(): MeetingType[] {
-  return [{ id: "descubrimiento", name: "Reunión de descubrimiento", duration: 30, description: "", video: "google_meet", video_url: "" }];
+  return [{ id: "descubrimiento", name: "Reunión de descubrimiento", duration: 30, description: "", video: "auto", video_url: "" }];
 }
 
 const str = (v: unknown, max = 200) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
@@ -200,7 +212,7 @@ export function sanitizeMeetingTypes(raw: Json): MeetingType[] {
       name,
       duration: clampInt(t?.duration, 10, 240, 30),
       description: longStr(t?.description, 300),
-      video: custom ? "custom" : "google_meet",
+      video: custom ? "custom" : "auto",
       video_url: custom ? url : "",
     });
   }
@@ -248,6 +260,7 @@ export function sanitizePageConfig(raw: Json): { config: PageConfig; errors: str
   return {
     config: {
       slug,
+      calendar_provider: asCalendarProvider(src.calendar_provider),
       enabled: !!src.enabled,
       title: str(src.title, 120),
       intro: longStr(src.intro, 500),
@@ -308,6 +321,37 @@ export function busyFromGoogleEvents(items: Json[], tz: string): Interval[] {
     if (Number.isFinite(s) && Number.isFinite(e) && e > s) out.push({ start: s, end: e });
   }
   return out;
+}
+
+/**
+ * Lo ocupado de una lista de eventos de Outlook (Microsoft Graph
+ * calendarView, pedida con `Prefer: outlook.timezone="UTC"`). No bloquean: los
+ * cancelados, los «Disponible» / «Trabajando en otro lugar» (showAs free /
+ * workingElsewhere) y los que el dueño rechazó.
+ */
+export function busyFromOutlookEvents(items: Json[]): Interval[] {
+  const utc = (dt: Json) => {
+    const raw = String(dt?.dateTime ?? "");
+    if (!raw) return NaN;
+    return Date.parse(/[zZ]|[+-]\d\d:\d\d$/.test(raw) ? raw : raw + "Z");
+  };
+  const out: Interval[] = [];
+  for (const ev of Array.isArray(items) ? items : []) {
+    if (!ev || ev.isCancelled) continue;
+    if (ev.showAs === "free" || ev.showAs === "workingElsewhere") continue;
+    if (ev.responseStatus?.response === "declined") continue;
+    const s = utc(ev.start), e = utc(ev.end);
+    if (Number.isFinite(s) && Number.isFinite(e) && e > s) out.push({ start: s, end: e });
+  }
+  return out;
+}
+
+/** El proveedor de videollamada de Graph que se pide al crear (null = sin enlace automático). */
+export function outlookOnlineProvider(allowed: unknown, preferred: unknown): string | null {
+  const list = Array.isArray(allowed) ? allowed.map(String) : [];
+  if (typeof preferred === "string" && preferred && preferred !== "unknown" && list.includes(preferred)) return preferred;
+  for (const p of ["teamsForBusiness", "skypeForConsumer", "skypeForBusiness"]) if (list.includes(p)) return p;
+  return null;
 }
 
 export interface SlotQuery {
