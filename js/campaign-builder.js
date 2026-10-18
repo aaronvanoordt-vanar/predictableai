@@ -1648,7 +1648,7 @@
       body.appendChild(field('Máx. WhatsApp / día', h('input', { type: 'number', min: '0', value: String(caps.whatsapp), 'data-key': 'cap-wa', oninput: function (e) { caps.whatsapp = Number(e.target.value) || 0; } })));
       body.appendChild(field('Máx. emails / día', h('input', { type: 'number', min: '0', value: String(caps.email), 'data-key': 'cap-em', oninput: function (e) { caps.email = Number(e.target.value) || 0; } })));
       box.appendChild(body);
-      box.appendChild(h('div', { class: 'cb-hint', style: 'padding:0 12px 12px', text: 'Los WhatsApp salen del número conectado; los emails, de la cuenta elegida. LinkedIn no lleva tope: el ritmo lo decide tu cuenta de LinkedIn. La ventana horaria y los días se aplican en la zona horaria indicada.' }));
+      box.appendChild(h('div', { class: 'cb-hint', style: 'padding:0 12px 12px', text: 'Los WhatsApp salen del número conectado; los emails, de la cuenta elegida. LinkedIn no lleva tope: el ritmo lo decide tu cuenta de LinkedIn. La ventana horaria y los días se aplican en la zona horaria indicada. A los leads de Colombia, además, solo se les envía de lunes a viernes de 7:00 a 19:00 y sábados de 8:00 a 15:00 (hora de Colombia), nunca domingos ni festivos, y un envío por día (Ley 2300).' }));
       return box;
     }
 

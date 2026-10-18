@@ -94,6 +94,7 @@ import * as flowLib from "../_shared/campaign-flow.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 import * as gmail from "../_shared/gmail.ts";
 import * as suppression from "../_shared/suppression.ts";
+import * as contactRules from "../_shared/contact-rules.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { aiColumnMatches, aiColumnPending } from "../_shared/ai-columns.ts";
 
@@ -917,6 +918,30 @@ async function preflight(ctx: Ctx, en: Json, campaign: Json, step: StepLike): Pr
   if (member.contact_status === "dado_de_baja") {
     await finish(ctx, en, { status: "unsubscribed", next_run_at: null, stop_reason: "El lead está dado de baja." });
     return null;
+  }
+  // Reglas del país del lead (_shared/contact-rules.ts; hoy Colombia, Ley
+  // 2300): horario legal en hora local + un envío de campaña por día y por
+  // lead, en cualquier canal y cualquier campaña. Se suman a la ventana de la
+  // campaña; el paso espera, no se omite.
+  const rule = contactRules.countryRuleFor(member);
+  if (rule) {
+    let sentToday = 0;
+    if (contactRules.isAllowed(rule, ctx.now)) {
+      const { count, error } = await ctx.db.from("campaign_events").select("id", { count: "exact", head: true })
+        .eq("user_id", en.user_id).eq("member_id", member.id).in("type", contactRules.CONTACT_EVENT_TYPES)
+        .gte("created_at", contactRules.startOfDay(rule, ctx.now).toISOString());
+      // Sin poder contar, se espera una hora: nunca un segundo envío a ciegas.
+      if (error) {
+        await finish(ctx, en, { status: "active", next_run_at: new Date(ctx.now.getTime() + 60 * 60 * 1000).toISOString(), error_detail: `${rule.law}: no se pudo comprobar los envíos de hoy; se reintenta en 1 hora.` });
+        return null;
+      }
+      sentToday = count ?? 0;
+    }
+    const d = contactRules.checkContactRules(rule, ctx.now, sentToday);
+    if (!d.ok) {
+      await finish(ctx, en, { status: "active", next_run_at: d.retryAt!.toISOString(), error_detail: d.reason });
+      return null;
+    }
   }
   return member;
 }
