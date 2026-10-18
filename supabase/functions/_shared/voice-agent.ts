@@ -625,8 +625,7 @@ export function contactStatusAfter(outcome: VoiceOutcome, current: string | null
   if (outcome === "confirmed" || outcome === "rescheduled") {
     return cur === "reunion_tomada" || cur === "reunion_agendada" ? null : "reunion_agendada";
   }
-  // «No me llamen» es una baja (decisión del dueño): manda sobre cualquier estado.
-  if (outcome === "do_not_call") return cur === "dado_de_baja" ? null : "dado_de_baja";
+  // «No me llamen» bloquea solo las llamadas (lista «No contactar», canal phone): el CRM no cambia.
   if (outcome === "not_interested") return MEETING_STATUSES.includes(cur) ? null : "no_interesado";
   if (["qualified", "wants_human", "call_back_later", "not_qualified"].includes(outcome)) {
     return EARLY_STATUSES.includes(cur) ? "respondio" : null;

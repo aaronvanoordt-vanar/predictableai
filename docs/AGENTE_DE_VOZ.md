@@ -33,7 +33,7 @@ El agente llama por teléfono para tres cosas:
   - Incluye las bajas por cualquier canal, las entradas a mano y los registros oficiales que cargó el cliente (REPEP, RNE, No Llame, No Molestar, Procon-SP).
   - Como respaldo, también cuentan los «no me llamen» de llamadas anteriores y las bajas de campañas.
   - Si la lista no se puede leer, **no se llama**.
-  - **Un «no me llamen» durante la llamada es una baja como cualquier otra.** Así lo decidió el dueño: suprime todos los datos del lead en todos los canales. Se registra con `recordOptOut` y la prueba, las campañas del lead pasan a `unsubscribed` y el CRM a `dado_de_baja`.
+  - **Un «no me llamen» durante la llamada bloquea solo las llamadas** (decisión del dueño, 2026-10-18). El teléfono entra a la lista «No contactar» con canal `phone` y la prueba (`callOptOutRows`). Email, WhatsApp, LinkedIn y el estado del CRM no cambian; las campañas activas se detienen, igual que después de cualquier conversación. Es una excepción explícita a «una baja por cualquier canal suprime todos los canales»: si el lead pide no ser contactado por ningún medio, el vendedor lo da de baja desde Campañas → Bajas y exclusiones.
 - **Horario legal por país** (`callingWindow`): sin domingos ni feriados. Colombia y Perú van con las franjas que fija la ley y con sus feriados móviles (Ley Emiliani y Semana Santa).
 - **Precios:** solo se mencionan los del Contexto, es decir las ofertas con precio, el ticket habitual y el ciclo de venta (`contextPrices`).
   - Los documentos de precios del Entrenamiento IA **no** entran al agente de voz (`buildTrainingBlock(t, "voice")`).
@@ -195,7 +195,7 @@ Ninguno de los seis tiene hoy una ley vigente que obligue a decir que la voz es 
 |---|---|
 | `_shared/voice-agent.ts` (+ test) | Países, teléfonos, horario, compuerta «nunca en frío», saludo, guion, esquema de análisis, lectura del resultado, horarios libres y firma del webhook. Sin I/O |
 | `_shared/retell.ts` | Adaptador de Retell: agente base único (lo crea solo y lo guarda en `voice_platform`), crear, leer y borrar llamadas |
-| `_shared/voice-calls.ts` | `suppressionCheck` (lista «No contactar» en el canal de llamadas + respaldo propio) y `finalizeCall` (idempotente por `finalized_at`; registra las bajas con `recordOptOut`) |
+| `_shared/voice-calls.ts` (+ test) | `suppressionCheck` (lista «No contactar» en el canal de llamadas + respaldo propio), `callOptOutRows` («no me llamen» solo en el canal `phone`) y `finalizeCall` (idempotente por `finalized_at`) |
 | `_shared/google-calendar.ts` | Leer la reunión, freeBusy, mover o anotar el evento sobre la conexión de Integraciones |
 | `voice-agent` (con JWT) | Acciones `status`, `prepare` (gratis: revisa todo y muestra el saludo), `call`, `recording`, `sync` y `reconcile` (service role, pg_cron) |
 | `voice-webhook` (`--no-verify-jwt`) | Eventos de Retell, verificados con `x-retell-signature` |
@@ -213,7 +213,7 @@ Ninguno de los seis tiene hoy una ley vigente que obligue a decir que la voz es 
 
 ## Enganches con otras sesiones
 
-- **Lista «No contactar» (PR #352, ya en `main`):** el agente la usa como un canal más. Revisa con `isSuppressed(db, userId, "phone", …)` antes de marcar y registra sus bajas con `recordOptOut(…, channel: "phone")`. No abre otra lista.
+- **Lista «No contactar» (PR #352, ya en `main`):** el agente la usa como un canal más. Revisa con `isSuppressed(db, userId, "phone", …)` antes de marcar y escribe sus «no me llamen» con `upsertRows` en el canal `phone` (no con `recordOptOut`, que suprime todos los canales). No abre otra lista.
 - **Dialer (P1):** si elige Telnyx, se importan sus números a Retell; el código no cambia. Si el dialer quiere que el agente use sus números por cuenta, el lugar es `VOICE_FROM_NUMBERS` → una tabla por usuario.
 - **Agendamiento propio (P2):** `updateScheduling` en `_shared/voice-calls.ts`.
 - **Bucle de aprendizaje:** `voice_calls` (propósito, resultado y país) queda listo para que `learning-loop` lo agregue. Todavía no lo lee.

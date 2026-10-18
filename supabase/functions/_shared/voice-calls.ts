@@ -7,9 +7,11 @@
  *     REPEP / RNE / No Llame / No Molestar / Procon-SP que cargó el cliente)
  *     + respaldo propio: un «no me llamen» de una llamada anterior y una baja
  *     de campaña. Si la lista no se puede leer, NO se llama.
- *   • un «no me llamen» en la llamada es una baja como cualquier otra
- *     (decisión del dueño: suprime todos sus datos en todos los canales):
- *     `recordOptOut`, campañas en `unsubscribed` y CRM en `dado_de_baja`.
+ *   • un «no me llamen» en la llamada bloquea SOLO las llamadas (decisión del
+ *     dueño, 2026-10-18; excepción a «una baja suprime todos los canales»):
+ *     el teléfono del lead entra a la lista con canal `phone` y la prueba
+ *     (`callOptOutRows`). Email, WhatsApp, LinkedIn y el estado del CRM no
+ *     cambian; las campañas se detienen como con cualquier conversación.
  *   • `finalizeCall`: al terminar (webhook o reconciliación, una sola vez):
  *     liquida los créditos, guarda transcripción/resumen/resultado, actualiza
  *     el estado del CRM, detiene las campañas activas si hubo conversación,
@@ -18,7 +20,7 @@
  */
 
 import { settleReservation } from "./credits.ts";
-import { contactOfMember, isSuppressed, recordOptOut } from "./suppression.ts";
+import { buildRows, contactOfMember, isSuppressed, type SuppressionRow, upsertRows } from "./suppression.ts";
 import { voiceCallCost } from "./credit-costs.ts";
 import { annotateEvent, calendarAccess, getEvent, moveEvent } from "./google-calendar.ts";
 import { deleteCall, type VoiceEnv } from "./retell.ts";
@@ -53,6 +55,19 @@ export async function suppressionCheck(svc: Json, userId: string, e164: string, 
     if (unsub?.length) return { blocked: true, reason: "Este lead pidió la baja en una campaña: no se le llama." };
   }
   return { blocked: false, reason: "" };
+}
+
+/**
+ * «No me llamen»: filas de supresión SOLO para llamadas (canal `phone`) con el
+ * número al que se llamó y el del lead si es otro. Nunca `all`.
+ */
+export function callOptOutRows(member: Json | null, toNumber: string, evidence: Json): SuppressionRow[] {
+  const items = [{ kind: "phone" as const, value: toNumber }];
+  if (member?.phone) items.push({ kind: "phone" as const, value: member.phone });
+  return buildRows(items, ["phone"], {
+    source: "reply", legal_basis: "opt_out", reason: "Pidió no ser llamado (agente de voz).",
+    evidence: { channel: "phone", at: new Date().toISOString(), ...evidence }, member_id: member?.id ?? null, import_id: null,
+  }).rows;
 }
 
 /** Columnas de voice_calls que necesita el cierre. */
@@ -104,20 +119,20 @@ export async function finalizeCall(svc: Json, env: VoiceEnv | null, row: Json, p
     ? await svc.from("prospect_list_members").select("id, email, phone, linkedin_url, contact_status").eq("id", row.member_id).eq("user_id", row.user_id).maybeSingle()
     : { data: null };
   if (r.outcome === "do_not_call") {
-    // Una baja como cualquier otra: todos sus datos, todos los canales, con la prueba.
-    await recordOptOut(svc, {
-      userId: row.user_id, member: m, phone: row.to_number, source: "reply", channel: "phone",
-      evidence: { voice_call_id: row.id, provider_call_id: row.provider_call_id ?? null, text: r.summary || "Pidió no ser llamado (agente de voz)." },
+    // Solo llamadas: el resto de los canales sigue abierto (decisión del dueño, 2026-10-18).
+    const rows = callOptOutRows(m, row.to_number, {
+      voice_call_id: row.id, provider_call_id: row.provider_call_id ?? null, text: (r.summary || "Pidió no ser llamado.").slice(0, 500),
     });
+    if (rows.length) {
+      const res = await upsertRows(svc, row.user_id, rows);
+      // Sin la lista, el respaldo es la propia fila de voice_calls (outcome do_not_call).
+      if (res.error) console.error("[voice] no-call opt-out:", res.error);
+    }
   }
   if (m) {
     const next = contactStatusAfter(r.outcome, m.contact_status);
     if (next) await svc.from("prospect_list_members").update({ contact_status: next }).eq("id", m.id).eq("user_id", row.user_id);
-    if (r.outcome === "do_not_call") {
-      await svc.from("campaign_enrollments").update({
-        status: "unsubscribed", stop_reason: "El lead pidió no ser contactado (llamada del agente de voz).", next_run_at: null, updated_at: nowIso,
-      }).eq("user_id", row.user_id).eq("member_id", m.id).in("status", ["active", "processing", "paused"]);
-    } else if (hadConversation(r.outcome)) {
+    if (hadConversation(r.outcome)) {
       // Regla de parada de las campañas: una conversación por cualquier canal las detiene.
       await svc.from("campaign_enrollments").update({
         status: "replied", replied_at: nowIso, replied_channel: "voice", stop_reason: "voice_call", updated_at: nowIso,
