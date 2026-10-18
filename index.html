@@ -3325,7 +3325,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/prospecting.js?v=20261018d"></script>
 <script src="js/voice-agent.js?v=20261018"></script>
 <script src="js/registry-search.js?v=20261017"></script>
-<script src="js/campaign-flow.js?v=20261018b"></script>
+<script src="js/campaign-flow.js?v=20261018c"></script>
 <script src="js/linkedin-campaigns.js?v=20260915"></script>
 <script src="js/campaign-builder.js?v=20261017"></script>
 <script src="js/campaign-knowledge.js?v=20260923"></script>
@@ -3341,7 +3341,9 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/clients.js?v=20260824-sheets"></script>
 <script src="js/agency.js?v=20261018"></script>
 <script src="js/meeting-coach.js"></script>
-<script src="js/realtime-coach.js"></script>
+<script src="js/realtime-coach.js?v=20261017"></script>
+<script src="js/dialer.js?v=20261018"></script>
+<script src="js/calls.js?v=20261018b"></script>
 <script src="js/meeting-report.js"></script>
 <script src="js/learning.js?v=20261017"></script>
 <script src="js/ai-training.js?v=20260923"></script>
@@ -3350,7 +3352,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/dev-docs.js?v=20260923"></script>
 <script src="js/developers.js?v=20260923"></script>
 <script src="js/team-metrics.js?v=20261017"></script>
-<script src="js/team.js?v=20261017"></script>
+<script src="js/team.js?v=20261018b"></script>
 <script src="js/crm.js?v=20261017"></script>
 <script src="js/coach-lead-picker.js?v=20260915"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
@@ -4138,6 +4140,8 @@ const PRO_HASH_ALIASES = {
   'pro-overview': 'busqueda', 'pro-apollo': 'busqueda', 'resumen': 'busqueda',
   'pro-listas': 'listas', 'contactos': 'listas',
   'pro-mensajes': 'campanas', 'outreach': 'campanas', 'secuencias': 'campanas', 'bandeja': 'campanas',
+  // Llamadas (2026-10-17) es una vista de Campañas (js/calls.js), no una página.
+  'llamadas': 'campanas',
 };
 const PRO_TABS = ['busqueda', 'listas', 'campanas'];
 // Normaliza cualquier id (viejo, nuevo o basura de localStorage) a una pestaña viva.
@@ -4150,7 +4154,7 @@ window.addEventListener('DOMContentLoaded', () => {
   let hash = (location.hash || '').replace(/^#/, '');
   // Bandeja = pestaña Campañas en la vista 'inbox' (js/campaigns.js la
   // recuerda en localStorage; #bandeja la fuerza).
-  let cmpView = hash === 'bandeja' ? 'inbox' : null;
+  let cmpView = hash === 'bandeja' ? 'inbox' : hash === 'llamadas' ? 'calls' : null;
   let proTab = PRO_HASH_ALIASES[hash];
   if (proTab) hash = 'pro-main';
 
@@ -4179,7 +4183,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // dejar el sidebar sin resaltar ni el shell sin pestaña.
   if (hash === 'pro-main') proTab = normalizeProTab(proTab);
   if (proTab === 'campanas' && !cmpView) {
-    try { const v = localStorage.getItem('predictable_cmp_view'); if (v === 'inbox' || v === 'analytics') cmpView = v; } catch (e) {}
+    try { const v = localStorage.getItem('predictable_cmp_view'); if (v === 'inbox' || v === 'analytics' || v === 'calls') cmpView = v; } catch (e) {}
   }
 
   if (hash === 'settings' && typeof window.openSettingsPage === 'function') {
@@ -4200,7 +4204,7 @@ window.addEventListener('DOMContentLoaded', () => {
     : document.querySelector(`.nav-item[data-page="${hash}"]`);
   if (navEl) setTimeout(() => {
     window.nav(navEl, hash);
-    if (proTab === 'campanas' && window.campaigns) window.campaigns.setView(cmpView === 'inbox' || cmpView === 'analytics' ? cmpView : 'campaigns');
+    if (proTab === 'campanas' && window.campaigns) window.campaigns.setView(cmpView === 'inbox' || cmpView === 'analytics' || cmpView === 'calls' ? cmpView : 'campaigns');
     if (proTab && window.prospecting) window.prospecting.show(proTab);
     // Páginas con shell propio: montarlas también al restaurar (el onclick
     // del nav-item no corre en este camino).
