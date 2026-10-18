@@ -199,6 +199,6 @@ Deno.test("espejos: js/radar-live.js, js/intel-hub-cadence-tabs.js y el CHECK de
   const hub = await Deno.readTextFile(new URL("../../../js/intel-hub-cadence-tabs.js", import.meta.url));
   const mka = hub.slice(hub.indexOf("const MKA_KIND_LABEL = {"), hub.indexOf("const MKA_MODULE_LABEL"));
   for (const k of DETECTOR_KINDS) assert(new RegExp(`\\b${k}:`).test(mka), `MKA_KIND_LABEL sin ${k}`);
-  const mig = await Deno.readTextFile(new URL("../../migrations/20261007000003_radar_web_footprint.sql", import.meta.url));
+  const mig = await Deno.readTextFile(new URL("../../migrations/20261017000005_web_pixel.sql", import.meta.url));
   for (const k of DETECTOR_KINDS) assert(mig.includes(`'${k}'`), `CHECK sin ${k}`);
 });

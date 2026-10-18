@@ -67,7 +67,9 @@ export const CREDIT_COSTS = {
 export type CreditAction = keyof typeof CREDIT_COSTS;
 
 /** Tipos de detector del Radar según lo que cuesta correrlos 30 días. */
-const RADAR_PEOPLE_KINDS = new Set(["leadership", "website_visitors"]);
+// site_visitors (píxel propio) cuesta como "personas": no gasta búsquedas por
+// corrida, solo revisa en Apollo los dominios nuevos (≤ 2 créditos de Apollo).
+const RADAR_PEOPLE_KINDS = new Set(["leadership", "website_visitors", "site_visitors"]);
 const RADAR_WEB_KINDS = new Set(["news", "tenders", "web_footprint"]);
 const RADAR_PRESENCE_KINDS = new Set(["presence"]);
 

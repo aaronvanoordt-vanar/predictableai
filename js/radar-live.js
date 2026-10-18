@@ -22,6 +22,8 @@
  *                  en lenguaje natural. Activar = corren solos por pg_cron.
  *   Investigación  la investigación puntual de siempre (js/radar.js), montada
  *                  en #radar-puntual-shell.
+ *   Píxel web      el píxel de visitas propio (js/web-pixel.js, montado en
+ *                  #web-pixel-shell): alimenta el detector site_visitors.
  *   Avisos         WhatsApp con las señales nuevas por encima de un umbral.
  *
  * Backend: radar-plan (plan) y radar-monitor (motor). Este módulo lee
@@ -55,7 +57,8 @@
     leadership:       { label: 'Cambios de liderazgo',         icon: '🪑', requires: ['Apollo'],                     desc: 'Decision makers nuevos en el cargo: sus primeros 90 días son cuando compran.' },
     growth:           { label: 'Crecimiento de plantilla',     icon: '📈', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Empresas del ICP cuya plantilla creció más de X % en 6-24 meses.' },
     presence:         { label: 'Presencia digital local',      icon: '📍', requires: ['Google Places'],              desc: 'Negocios en Google Maps sin sitio web, con pocas reseñas o mala calificación.' },
-    website_visitors: { label: 'Visitantes de tu sitio',       icon: '👀', requires: ['Tu cuenta de Apollo con Website Visitors'], desc: 'Empresas que visitaron tu web (lo más caliente que existe).' },
+    website_visitors: { label: 'Visitantes de tu sitio (Apollo)', icon: '👀', requires: ['Tu cuenta de Apollo con Website Visitors'], desc: 'Empresas que visitaron tu web según el tracker de Apollo.' },
+    site_visitors:    { label: 'Visitantes de tu sitio (píxel propio)', icon: '🎯', requires: ['El píxel de Predictable en tu sitio (pestaña Píxel web)'], desc: 'Empresas de tu ICP que volvieron varias veces en la semana a tus páginas de precios, demo o contacto. Solo empresas, nunca personas.' },
   };
   const KIND_ORDER = Object.keys(DETECTOR_KINDS);
   // Espejo de MAX_COMPANIES_OPTIONS / DEFAULT_MAX_COMPANIES en _shared/radar-plan.ts.
@@ -72,7 +75,7 @@
 
   const state = {
     user: null,
-    tab: 'signals',        // 'signals' | 'plan' | 'puntual' | 'alerts'
+    tab: 'signals',        // 'signals' | 'plan' | 'puntual' | 'pixel' | 'alerts'
     loading: true,
     loaded: false,
     busy: '',              // etiqueta de la acción en curso
@@ -504,6 +507,15 @@
       }
       return;
     }
+    // Píxel web propio (js/web-pixel.js): instalación, verificación y cobertura.
+    if (state.tab === 'pixel') {
+      if (!body.querySelector('#web-pixel-shell')) {
+        body.innerHTML = '<div id="web-pixel-shell"></div>';
+        if (global.webPixel && typeof global.webPixel.mount === 'function') global.webPixel.mount(body.querySelector('#web-pixel-shell'));
+        else body.innerHTML = '<div class="rl-alert rl-alert-warn">No se pudo cargar el módulo del píxel. Recarga la página.</div>';
+      }
+      return;
+    }
     const focus = captureFocus(body);
     body.innerHTML = noticeHtml() + (state.tab === 'plan' ? planHtml() : state.tab === 'alerts' ? alertsHtml() : signalsHtml());
     restoreFocus(body, focus);
@@ -579,6 +591,7 @@
       tab('signals', 'Señales', c.new || '') +
       tab('plan', 'Plan de señales', state.detectors.filter((d) => d.enabled).length || '') +
       tab('puntual', 'Investigación puntual', '') +
+      tab('pixel', 'Píxel web', '') +
       tab('alerts', 'Avisos', state.profile && state.profile.radar_whatsapp_phone ? '✓' : '') +
       (global.AIEngine && state.tab === 'plan' ? '<div class="rl-tabs-right"><div data-ai-engine="radar" data-ai-engine-compact="1"></div></div>' : '') +
       '</div>';
@@ -940,6 +953,7 @@
       case 'growth': return 'Plantilla +' + (cfg.min_growth_pct || 20) + ' % en ' + (cfg.months || 6) + ' meses';
       case 'presence': { const r = cfg.rules || {}; const rs = []; if (r.no_website) rs.push('sin sitio web'); if (r.no_phone) rs.push('sin teléfono'); if (r.max_rating != null) rs.push('≤ ' + r.max_rating + '★'); if (r.max_reviews != null) rs.push('≤ ' + r.max_reviews + ' reseñas'); if (r.min_reviews != null) rs.push('≥ ' + r.min_reviews + ' reseñas'); return j(cfg.queries, 3) + ' en ' + j(cfg.cities, 4) + ' · ' + rs.join(', '); }
       case 'website_visitors': return 'Últimos ' + (cfg.days || 30) + ' días · intención ' + j(cfg.intent) + (cfg.pages && cfg.pages.length ? ' · páginas ' + j(cfg.pages, 3) : '');
+      case 'site_visitors': return (cfg.min_visits || 2) + '+ visitas' + (cfg.intent === 'any' ? '' : ' a páginas de alta intención') + ' en ' + (cfg.days || 7) + ' días' + (cfg.icp_only === false ? '' : ' · solo tu ICP');
     }
     return '';
   }

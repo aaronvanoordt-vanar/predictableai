@@ -20,6 +20,9 @@
  *   funding            Apollo ORGANIZATION search + rondas            1 crédito Apollo / página
  *   leadership         Apollo people search + días en el cargo      0
  *   website_visitors   Apollo people search + visitantes (cuenta propia) 0
+ *   site_visitors      píxel propio (web_pixel_hits) + Apollo org search
+ *                      por dominio para confirmar el ICP (solo dominios
+ *                      nuevos, recordados 30 días)               ≤ 2 créditos Apollo / tick
  *   presence           Google Places Text Search                    SKU Enterprise de Google
  *
  * Por qué los detectores de EMPRESA usan la búsqueda de organizaciones y no
@@ -48,6 +51,7 @@ import {
   detectTech, detectedLabels, evaluateProbeRules, fetchDnsText, fetchHomepage, probeHeadline, probeNeeds, type ProbeRules,
 } from "./site-probe.ts";
 import { maxCompaniesOf, type DetectorKind } from "./radar-plan.ts";
+import { aggregateVisits, meetsRule, visitHeadline, visitStrength, type PixelHit } from "./web-pixel.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -104,6 +108,7 @@ export interface TickResult {
 export const TICK_ESTIMATE_MS: Record<DetectorKind, number> = {
   news: 100_000, tenders: 100_000, web_footprint: 100_000, hiring: 20_000, technographics: 20_000, site_probe: 45_000,
   funding: 20_000, leadership: 20_000, growth: 20_000, presence: 20_000, website_visitors: 20_000,
+  site_visitors: 20_000,
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -430,6 +435,106 @@ async function tickWebsiteVisitors(t: TickContext): Promise<TickResult> {
   return { candidates, ...pagedNext(t, page, totalPages) };
 }
 
+// ── site_visitors (píxel propio) ────────────────────────────────────────────
+
+interface VisitorsCursor { fit?: Record<string, string> }
+const FIT_MEMORY = 600;                 // dominios con su veredicto de ICP
+const FIT_TTL_DAYS = 30;
+const VISITORS_MAX = 100;               // empresas por tick (una página de Apollo)
+
+/**
+ * ¿Qué dominios encajan con el ICP? Dos búsquedas de empresas por dominio
+ * (1 crédito de Apollo cada una, solo con dominios que no se revisaron en
+ * los últimos 30 días): con los filtros del ICP → "in"; sin filtros, lo que
+ * Apollo conoce pero no pasó el ICP → "out"; lo que Apollo no conoce →
+ * "unknown" (pyme latina sin ficha: se entrega igual, marcada).
+ */
+async function icpFit(t: TickContext, domains: string[]): Promise<Record<string, "in" | "out" | "unknown">> {
+  const out: Record<string, "in" | "out" | "unknown"> = {};
+  for (const d of domains) out[d] = "unknown";
+  if (!domains.length || !t.apollo) return out;
+  const base = { q_organization_domains_list: domains, page: 1, per_page: PAGE_SIZE };
+  const icp: Record<string, unknown> = { ...apolloBaseFilters(t.ctx), ...base };
+  if (t.countries.length) icp.organization_locations = t.countries.slice(0, 20);
+  const inSet = new Set((await organizationSearch(t.apollo, icp)).organizations.map((o) => orgDomain(o)).filter(Boolean));
+  for (const d of domains) if (inSet.has(d)) out[d] = "in";
+  const rest = domains.filter((d) => !inSet.has(d));
+  if (rest.length) {
+    const known = new Set((await organizationSearch(t.apollo, { ...base, q_organization_domains_list: rest })).organizations.map((o) => orgDomain(o)).filter(Boolean));
+    for (const d of rest) if (known.has(d)) out[d] = "out";
+  }
+  return out;
+}
+
+async function tickSiteVisitors(t: TickContext): Promise<TickResult> {
+  const { count: sites } = await t.supa.from("web_pixel_sites").select("id", { count: "exact", head: true })
+    .eq("user_id", t.detector.user_id).eq("enabled", true);
+  if (!sites) throw new Error("El píxel web no está configurado: instálalo en Radar → Píxel web.");
+  const cfg = t.detector.config || {};
+  const days = [7, 14, 30].includes(Number(cfg.days)) ? Number(cfg.days) : 7;
+  const rule = { min_visits: Math.max(1, Number(cfg.min_visits) || 2), intent: cfg.intent === "any" ? "any" as const : "high" as const };
+  const icpOnly = cfg.icp_only !== false;
+  const since = new Date(Date.now() - days * 86400_000).toISOString();
+  const { data, error } = await t.supa.from("web_pixel_hits")
+    .select("at, path, high_intent, visitor, company_domain, company_name, country")
+    .eq("user_id", t.detector.user_id).gte("at", since).order("at", { ascending: true }).limit(20000);
+  if (error) throw new Error("No se pudieron leer las visitas del píxel: " + error.message);
+  const hits = (Array.isArray(data) ? data : []) as PixelHit[];
+  const all = aggregateVisits(hits);
+  const passing = all.filter((c) => meetsRule(c, rule) && c.domain !== t.ctx.ownDomain).slice(0, VISITORS_MAX);
+
+  const cur: VisitorsCursor = (t.detector.cursor && typeof t.detector.cursor === "object") ? { ...t.detector.cursor } : {};
+  const memory: Record<string, string> = { ...(cur.fit || {}) };
+  const fresh = (v: string | undefined) => !!v && Date.now() - Date.parse(v.slice(v.indexOf(":") + 1)) < FIT_TTL_DAYS * 86400_000;
+  let fit: Record<string, string> = {};
+  let checked = 0;
+  if (icpOnly) {
+    const toCheck = passing.map((c) => c.domain).filter((d) => !fresh(memory[d]));
+    const res = await icpFit(t, toCheck);
+    checked = t.apollo ? toCheck.length : 0;
+    const stamp = new Date().toISOString().slice(0, 10);
+    // Sin Apollo, "unknown" no se recuerda: se vuelve a revisar cuando haya.
+    for (const [d, v] of Object.entries(res)) if (t.apollo) memory[d] = `${v}:${stamp}`;
+    fit = Object.fromEntries(passing.map((c) => [c.domain, (res[c.domain] || memory[c.domain]?.split(":")[0] || "unknown")]));
+  }
+  const keys = Object.keys(memory);
+  if (keys.length > FIT_MEMORY) for (const k of keys.slice(0, keys.length - FIT_MEMORY)) delete memory[k];
+
+  const candidates: Candidate[] = [];
+  let outIcp = 0;
+  for (const c of passing) {
+    const verdict = icpOnly ? fit[c.domain] : "unchecked";
+    if (verdict === "out") { outIcp++; continue; }
+    const cand = baseCandidate(null);
+    cand.name = c.name;
+    cand.domain = c.domain;
+    cand.website = "https://" + c.domain;
+    cand.country = c.country;
+    cand.headline = visitHeadline(c, days);
+    let strength = visitStrength(c);
+    if (verdict === "unknown" && icpOnly) strength = strength === "alta" ? "media" : "baja";
+    cand.strength = strength;
+    cand.signal_date = c.last_at.slice(0, 10);
+    cand.why_fit = (verdict === "in"
+      ? "Encaja con tu ICP y volvió a tus páginas de alta intención: está evaluando comprar."
+      : verdict === "unknown"
+      ? "Volvió a tus páginas de alta intención. Apollo no tiene ficha de esta empresa, así que no pudimos confirmar que encaje con tu ICP: revísala."
+      : "Volvió a tus páginas de alta intención: está evaluando comprar.") +
+      ` ${c.visits} visita${c.visits === 1 ? "" : "s"} en ${c.days} día${c.days === 1 ? "" : "s"}` +
+      (c.intent_pages.length ? ` (${c.intent_pages.slice(0, 3).join(", ")})` : "") + ".";
+    cand.facts = {
+      visits: c.visits, high_intent_visits: c.high_intent_visits, days_with_visits: c.days, page_views: c.page_views,
+      pages: c.top_pages, intent_pages: c.intent_pages, first_at: c.first_at, last_at: c.last_at, icp: verdict, window_days: days,
+      source: "pixel",
+    };
+    cand.evidence = [];
+    candidates.push(cand);
+  }
+  const note = `${all.length} empresas identificadas en ${days} días, ${passing.length} cumplen la regla` +
+    (checked ? ` · ${checked} revisadas en Apollo` : "") + (outIcp ? ` · ${outIcp} fuera de tu ICP` : "");
+  return { candidates, cursor: { fit: memory }, done: true, note };
+}
+
 // ── site_probe ──────────────────────────────────────────────────────────────
 
 interface ProbeCursor { page?: number; queue?: string[]; seen?: Record<string, string>; orgs?: Record<string, Json>; exhausted?: boolean; fetched?: number }
@@ -659,5 +764,6 @@ export async function runTick(t: TickContext): Promise<TickResult> {
     case "growth": return tickGrowth(t);
     case "presence": return tickPresence(t);
     case "website_visitors": return tickWebsiteVisitors(t);
+    case "site_visitors": return tickSiteVisitors(t);
   }
 }

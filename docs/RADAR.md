@@ -22,7 +22,7 @@ Contexto de tu empresa  →  Intelligence Hub  →  Radar  →  Listas  →  Cam
 | Pieza | Archivo | Qué hace |
 |---|---|---|
 | Plan de señales | `supabase/functions/radar-plan/` | `generate` (IA diseña 5-10 detectores desde contexto + Hub + prompt), `activate`, `pause`, `run_now`, `add_detector` (lenguaje natural → config), `recipes` / `add_recipe` (biblioteca), `sync_context`, `refresh_from_hub` |
-| Biblioteca de detectores | `_shared/radar-recipes.ts` | 71 recetas listas por tipo de vendedor (ver abajo). Se agregan con un clic, sin IA, y el planificador las recibe como repertorio |
+| Biblioteca de detectores | `_shared/radar-recipes.ts` | 72 recetas listas por tipo de vendedor (ver abajo). Se agregan con un clic, sin IA, y el planificador las recibe como repertorio |
 | Motor | `supabase/functions/radar-monitor/` | pg_cron cada 2 min (service role) o "Buscar ahora" (JWT del usuario). Unidades acotadas: lotes de decision makers, ticks de detectores, avisos WhatsApp, plan ← Hub |
 | Catálogo y validación | `_shared/radar-plan.ts` | `KIND_META`, `normalizeDetector/normalizePlan`, `signalFingerprint`, `PLAN_JSON_SPEC`. **Espejo de `DETECTOR_KINDS` en `js/radar-live.js`** |
 | Detectores | `_shared/radar-detectors.ts` | Un `tick()` por metodología (ver tabla) |
@@ -33,7 +33,8 @@ Contexto de tu empresa  →  Intelligence Hub  →  Radar  →  Listas  →  Cam
 | Prompts | `_shared/radar-planner.ts`, `_shared/radar-research.ts` | Plan, detector desde texto, detectores desde el Hub; investigador de noticias (compartido con `generate-radar`) |
 | Contexto | `_shared/radar-context.ts` | Bloque de texto del vendedor + targets + filtros base de Apollo + digest del Hub |
 | Avisos | `_shared/radar-notify.ts` | WhatsApp por el tenant de WATI de la plataforma (plantilla aprobada) |
-| UI | `js/radar-live.js` | Pestañas Señales / Plan de señales / Investigación puntual (`js/radar.js`) / Avisos |
+| Píxel web propio | `px.js` (raíz), `pixel-collect/`, `web-pixel/`, `_shared/web-pixel.ts`, `_shared/ip-company.ts`, `js/web-pixel.js` | Visitas del sitio del cliente → empresa (nunca persona) → detector `site_visitors`. Ver "Píxel web propio" abajo |
+| UI | `js/radar-live.js` | Pestañas Señales / Plan de señales / Investigación puntual (`js/radar.js`) / Píxel web (`js/web-pixel.js`) / Avisos |
 | Tablas | `supabase/migrations/20260918000001_radar_signal_engine.sql` | `radar_plans`, `radar_detectors`, `radar_signals` + columnas en `profiles` e `intel_hub_intake` |
 
 ## Detectores (metodologías)
@@ -49,6 +50,7 @@ Contexto de tu empresa  →  Intelligence Hub  →  Radar  →  Listas  →  Cam
 | `leadership` | Apollo people search: `person_days_in_current_title_range` | 0 | Decision makers nuevos en el cargo (≤ N días). La señal es la persona: la empresa puede venir sin dominio ni país (ver abajo) |
 | `growth` | Apollo organization search: `organization_headcount_growth_*` | **1 crédito de Apollo por página** (máx. 3) | Plantilla +X % en 6/12/24 meses |
 | `website_visitors` | Apollo people search: `website_visitors_people_*` (solo con la cuenta propia del cliente y la función Website Visitors) | 0 | Empresas que visitaron el sitio del cliente |
+| `site_visitors` | Píxel propio (`web_pixel_hits`) + Apollo organization search por dominio para confirmar el ICP (solo dominios nuevos, recordados 30 días) | ≤ 2 créditos de Apollo por corrida; la resolución IP → empresa se paga al recibir la visita (IPinfo Lite: gratis) | Empresas que volvieron N veces en la semana a las páginas de alta intención (precios, demo, contacto) |
 | `funding` | Apollo organization search: `latest_funding_date_range` | **1 crédito de Apollo por página** (máx. 3 páginas por ciclo) | Rondas recientes dentro del ICP |
 | `presence` | Google Places Text Search (API New) | SKU Enterprise de Google por request | Negocios locales sin sitio web / sin teléfono / con rating bajo / con muchas o pocas reseñas |
 
@@ -66,6 +68,43 @@ Reglas del sondeo: cada clave de `must_have` tiene que estar (para "una de varia
 
 **Biblioteca** (`RADAR_RECIPES`, Plan de señales → «Explorar biblioteca»): recetas en 9 categorías (WhatsApp y conversación; Meta, redes y publicidad; Marketplaces y e-commerce; Pagos y logística; Email, CRM y ventas; Sitio web y presencia; Correo, seguridad y cumplimiento; Crecimiento y expansión; Talento y liderazgo). Ejemplos: «Atiende WhatsApp a mano», «Chatbot rígido de menús», «Dominio verificado en Meta Business Manager», «Business Manager activo pero sin píxel», «Vende en marketplaces», «Tiendas oficiales en Mercado Libre», «Tienda sin pasarela de pago local», «Dominio sin DMARC», «Correo sin Google ni Microsoft», «Vende franquicias». Agregar una receta no cobra IA (el monitoreo se cobra como cualquier detector), queda con origen `user` y `config.recipe_id`; las consultas con `{country}`, `{industry}`, `{ml_site}` y `{amazon_site}` se rellenan en código con los países del plan y la industria del ICP (también cuando el planificador copia una receta). El planificador recibe la biblioteca y la instrucción de que al menos la mitad del plan sea `site_probe` o `web_footprint` cuando la oferta toca algo visible en un sitio. Todas las recetas validan en `deno test` (`radar-footprint.test.ts`).
 
+## Píxel web propio (2026-10-17)
+
+Hoja de ruta GTM OS §1 ítem 13. Hasta hoy el Radar solo veía visitas con Apollo Website Visitors, que exige la cuenta propia del cliente con esa función. Ahora el cliente instala nuestro script y el detector `site_visitors` funciona con cualquier plan.
+
+**Flujo.** Radar → pestaña «Píxel web» (`js/web-pixel.js`) → «Crear píxel» (edge function `web-pixel`, JWT; hasta 3 sitios) → el usuario pega `<script async src="https://predictableai.vanarsi.com/px.js" data-key="px_…"></script>` antes de `</head>` (instrucciones para WordPress, Shopify, Wix, Webflow, Tag Manager y CSP) → «Verificar instalación» lee la portada pública y busca la clave; con Tag Manager el HTML no la trae y la verificación la da la primera visita recibida. Al crear el sitio, un detector `site_visitors` que había quedado `unavailable` se reactiva.
+
+**Recepción** (`pixel-collect`, `--no-verify-jwt`, responde siempre 204):
+- `px.js` (raíz del sitio de GitHub Pages) manda con `sendBeacon` (text/plain, sin preflight) solo `{ k, p, h }`: clave pública, ruta sin query ni `#` y host. Sigue `pushState`/`replaceState`/`popstate`. Sin cookies, sin localStorage/sessionStorage. No corre con `navigator.doNotTrack` / `globalPrivacyControl` ni con `navigator.webdriver`.
+- El servidor vuelve a mirar `DNT: 1` y `Sec-GPC: 1` y los descarta (contador `opted_out`), descarta bots por user agent, exige que el host de la página (Origin/Referer, o `h`) sea el dominio del sitio o un subdominio (una clave copiada en otro sitio suma `rejected`), y limita en memoria a 30 eventos/min por visitante, 600/min por sitio y 5.000 consultas al proveedor por sitio y día.
+- La ruta se limpia (`sanitizePath`): emails, números de 6+ dígitos y tokens largos → `:id`.
+- **La IP nunca se guarda.** Se resuelve con `_shared/ip-company.ts` (caché `web_pixel_ip_cache` por HMAC de la IP: 30 días; 1 día si no se supo). Solo si la red es una **empresa** (business / education / government) se inserta una fila en `web_pixel_hits` con la empresa, la ruta, si es de alta intención y un hash del visitante (HMAC de IP + navegador con **sal que rota cada semana**, 16 hex: agrupa páginas en visitas y no permite seguir a nadie de una semana a otra). ISP residencial o móvil, nube/VPN y "no se supo" solo suman en `web_pixel_daily`.
+- Retención: hits 90 días, caché 30 días (`web_pixel_purge()`, la llama `pixel-collect` de vez en cuando).
+
+**Proveedores de reverse IP** (investigados el 2026-10-17; se usa el primero configurado):
+
+| Proveedor | Secret | Qué da | Costo | Notas |
+|---|---|---|---|---|
+| Snitcher IP2Company | `SNITCHER_API_KEY` | Empresa con dominio, industria y tamaño. `POST https://api.snitcher.com/company/find?ip=` | De pago, precio con ventas (la plataforma cuesta 49–529 €/mes) | Nunca devuelve personas. 202 = en cola → se trata como "no se supo" |
+| IPinfo IP to Company | `IPINFO_TOKEN` + `IPINFO_COMPANY=1` | `name`, `domain`, `type` (business/isp/hosting/education/government). `GET https://ipinfo.io/{ip}/company` | Plan Enterprise, a medida | |
+| **IPinfo Lite** (por defecto) | `IPINFO_TOKEN` | Dueño del ASN (`as_name`, `as_domain`) y país. `GET https://api.ipinfo.io/lite/{ip}` | **Gratis e ilimitado** (pide atribución) | Solo identifica empresas con red propia. Sin `type`: operadores, nubes y VPN se descartan con `NETWORK_DOMAINS` / `HOSTING_DOMAINS` + palabras clave (`classifyLite`) |
+
+Descartados: **Clearbit Reveal** (el plan gratis cerró el 2025-04-30; Breeze Intelligence solo vive dentro de HubSpot), **RB2B** (identifica **personas** y solo tráfico de EE. UU.: va contra la regla), **Leadfeeder/Dealfront, Kickfire, 6sense, Demandbase, Albacross, Lead Forensics** (sin API autoservicio o contrato enterprise), **ipdata** (el uso comercial gratuito está restringido). Alternativas gratis si hiciera falta: ipapi.is (1.000/día, con `company` e `is_datacenter`). Sin ningún secret, el píxel cuenta las visitas pero no resuelve ninguna y la UI lo dice.
+
+**Cobertura en Latam: es baja, y se mide.** Los proveedores declaran 40–65 % de identificación en tráfico de escritorio de EE. UU./Europa, 15–30 % en móvil o pago y un techo de 20–40 % con solo IP inversa; ninguno publica cifras de Latinoamérica. Aquí la mayoría del tráfico es móvil o residencial, con CGNAT y trabajo remoto, y las pymes casi nunca tienen red propia: con IPinfo Lite hay que esperar un porcentaje de un dígito (sobre todo corporativos grandes, universidades y gobierno). Por eso `web_pixel_daily` cuenta cada evento por resultado (resuelto / ISP / hosting / sin resolver / DNT-GPC / bot / rechazado) y por país, y la pestaña muestra la tasa real del sitio en los últimos 30 días. Antes de pagar Snitcher o IPinfo Company, medir con Lite en los sitios de 2-3 clientes y comparar.
+
+**Detector `site_visitors`** (`radar-detectors.ts` → `tickSiteVisitors`, config `{ days: 7|14|30, min_visits: 2, intent: "high"|"any", icp_only: true }`, cadencia 6 h, 10 créditos cada 30 días como los de personas). Una *visita* = páginas del mismo visitante con menos de 30 min entre sí (`aggregateVisits`). Pasa la empresa con ≥ `min_visits` visitas de alta intención (o cualquiera con `intent: "any"`) en la ventana. Con `icp_only`, los dominios nuevos se revisan en Apollo (búsqueda de empresas por `q_organization_domains_list`, ≤ 2 créditos de Apollo): con los filtros del ICP → encaja; Apollo la conoce pero no pasa el ICP → se descarta; Apollo no la conoce → se entrega marcada "no pudimos confirmar el ICP" con la fuerza un nivel más baja. El veredicto se recuerda 30 días en el cursor. Fuerza alta = 3+ visitas de alta intención, o 2 en días distintos. La señal se refresca (titular y datos) mientras la empresa siga volviendo, se puntúa con la recencia medida contra la ventana del detector y entra al lote diario como cualquier otra. Decision makers: por dominio, como siempre. Receta de la biblioteca: «Volvió a tus precios o demo esta semana» (`pixel_repeat_intent`).
+
+**Privacidad.** La pestaña ofrece un **aviso de privacidad sugerido** para el sitio del cliente (`privacyNotice` en `_shared/web-pixel.ts`): qué se registra, qué no (cookies, IP, personas), DNT/GPC, base (interés legítimo), 90 días y derechos ARCO con las leyes de la región (LFPDPPP, Ley 1581, Ley 29733, Ley 25.326, Leyes 19.628 y 21.719, LGPD). Es una plantilla y la UI lo dice.
+
+## Señales de engagement en LinkedIn: no se construyeron (2026-10-17)
+
+Hoja de ruta §1 ítem 12 (reacciones y comentarios a los posts del usuario o de su competencia, seguidores nuevos). Investigado y **no construido**, sin scraping:
+
+- **API oficial (Community Management API)**: solo lee posts, comentarios y reacciones de **páginas de empresa donde el usuario es administrador**, con permisos `r_organization_social(_feed)` que LinkedIn aprueba tras una revisión (tier Development → Standard). De quien reacciona o comenta devuelve solo el URN (`urn:li:person:…`), y los términos prohíben guardar datos de perfil aparte del URN. Los seguidores llegan **en agregado** (`organizationalEntityFollowerStatistics`), nunca como lista. El feed personal (`r_member_social_feed`) se da solo a desarrolladores elegidos. Es decir: nada de competidores, nada del perfil personal y nada que se pueda llevar a empresa sin identificar personas.
+- **Unipile, HeyReach, Phantombuster, Expandi, Dripify**: automatizan la **sesión del propio usuario** (usuario y contraseña en un asistente o la cookie `li_at`); no son partners de LinkedIn. Unipile sí expone `GET /api/v1/users/{id}/posts`, `/posts/{id}/reactions` y `/posts/{id}/comments` (también de competidores); no encontramos un endpoint de seguidores nuevos. El User Agreement de LinkedIn prohíbe bots y métodos automatizados para acceder al servicio, el scraping y entrar por interfaces que LinkedIn no provee; el riesgo (restricción o baneo) recae en la cuenta del cliente. Además, esos datos son de **personas**.
+- La regla vigente prohíbe leer LinkedIn por API para investigar leads (Investigación previa, 2026-10-08). Un detector de engagement por Unipile la cruzaría, así que queda **pendiente de decisión del dueño** (`docs/DECISIONS.md`). Si se aprobara, iría detrás de un adaptador en `_shared/` (como `ip-company.ts`) y agregado a nivel de empresa.
+
 ## Integraciones necesarias (checklist para producción)
 
 Secrets en Supabase (Project → Edge Functions → Secrets):
@@ -76,12 +115,13 @@ Secrets en Supabase (Project → Edge Functions → Secrets):
 | `PERPLEXITY_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | news, tenders, generación del plan (motor "radar") | ya existen |
 | `GOOGLE_PLACES_API_KEY` | detector `presence`. Google Cloud → habilitar **Places API (New)** → crear API key restringida a esa API. Se factura por request (SKU Enterprise porque pedimos `websiteUri`, `rating`, `userRatingCount`, teléfono). Máx. 60 fichas por consulta | **nuevo, opcional**: sin ella el detector queda `unavailable` y lo dice |
 | `RADAR_WATI_API_URL`, `RADAR_WATI_TOKEN`, `RADAR_WATI_TEMPLATE` (+ `RADAR_WATI_CHANNEL`, `APP_URL` opcionales) | avisos por WhatsApp. Es un tenant de WATI de la **plataforma** (no el del cliente). Hay que crear en WATI una plantilla y que Meta la apruebe, con variables `{{name}}`, `{{count}}`, `{{top}}`, `{{link}}`; texto sugerido en `_shared/radar-notify.ts` | **nuevo**: sin ellos no se envía nada (el log lo dice) |
+| `IPINFO_TOKEN` (+ opcionales `IPINFO_COMPANY=1`, `SNITCHER_API_KEY`, `PIXEL_HASH_SECRET`) | píxel web propio y detector `site_visitors`. IPinfo → crear cuenta gratis → token de **Lite** | **nuevo**: sin él el píxel cuenta visitas pero no resuelve empresas (la pestaña lo dice) |
 | OAuth de Apollo (`APOLLO_OAUTH_CLIENT_ID/SECRET`, ya existente) | detector `website_visitors` exige la cuenta propia del cliente con la función Website Visitors y su tracker instalado | ya existe; el detector se marca `unavailable` si el cliente usa la key compartida |
 
 Pasos manuales:
 
-1. Aplicar `supabase/migrations/20260918000001_radar_signal_engine.sql` y `20261007000003_radar_web_footprint.sql` (amplía el CHECK de `radar_detectors.kind` con `web_footprint`).
-2. `supabase functions deploy radar-plan radar-monitor generate-radar` (el workflow *Deploy Edge Functions* ya los incluye por defecto).
+1. Aplicar `supabase/migrations/20260918000001_radar_signal_engine.sql`, `20261007000003_radar_web_footprint.sql` (amplía el CHECK de `radar_detectors.kind` con `web_footprint`) y `20261017000005_web_pixel.sql` (tablas del píxel + `site_visitors` en el CHECK).
+2. `supabase functions deploy radar-plan radar-monitor generate-radar` (el workflow *Deploy Edge Functions* ya los incluye por defecto) + `web-pixel` y `pixel-collect --no-verify-jwt` (el workflow pone la bandera solo).
 3. Programar el cron (SQL editor), con la URL del proyecto y la service role:
    ```sql
    SELECT cron.schedule('radar-monitor', '*/2 * * * *', $cron$

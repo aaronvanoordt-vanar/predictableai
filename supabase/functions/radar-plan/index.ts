@@ -78,7 +78,12 @@ export async function availabilityFor(supa: Json, userId: string): Promise<Avail
     apollo = true;
     apolloUser = auth.mode !== "platform";
   } catch { /* sin Apollo: los detectores por API quedan 'unavailable' */ }
+  // Píxel web propio (site_visitors): sin la migración 20261017000005 la
+  // consulta falla y el detector queda como no disponible.
+  const { count: pixelSites, error: pixelErr } = await supa.from("web_pixel_sites")
+    .select("id", { count: "exact", head: true }).eq("user_id", userId).eq("enabled", true);
   return {
+    pixel: !pixelErr && (pixelSites ?? 0) > 0,
     llm_web: true,
     apollo,
     apollo_user: apolloUser,
@@ -95,6 +100,7 @@ function unavailableReason(kind: DetectorKind, av: Availability): string {
     places: "Google Places (GOOGLE_PLACES_API_KEY)",
     llm_web: "un motor de IA con búsqueda web",
     probe: "sondeo web",
+    pixel: "el píxel de Predictable instalado en tu sitio (Radar → Píxel web)",
   };
   return "Necesita " + missing.map((m) => label[m] || m).join(" y ");
 }
