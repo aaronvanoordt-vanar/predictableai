@@ -2,7 +2,7 @@
  * _shared/team-metrics.ts — cálculo del módulo «Equipo» (2026-10-17).
  *
  * Los conteos salen de la base (RPC `team_metrics` / `team_ramp`, migración
- * 20261018000002): personas, no eventos. Aquí vive lo que se hace con ellos,
+ * 20261018000003): personas, no eventos. Aquí vive lo que se hace con ellos,
  * puro y sin dependencias:
  *
  *   periodBounds / comparableBounds  período actual y el anterior comparable

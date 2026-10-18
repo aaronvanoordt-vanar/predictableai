@@ -20,7 +20,7 @@ function both<T>(fn: (m: typeof tm) => T): T {
 }
 
 Deno.test("las métricas de meta coinciden con el CHECK de la migración y con el espejo", async () => {
-  const sql = await Deno.readTextFile(new URL("../../migrations/20261018000002_team_management.sql", import.meta.url));
+  const sql = await Deno.readTextFile(new URL("../../migrations/20261018000003_team_management.sql", import.meta.url));
   const check = sql.match(/metric\s+TEXT\s+NOT NULL CHECK \(metric IN \(([\s\S]*?)\)\)/);
   assert(check, "no encontré el CHECK de sales_team_goals.metric");
   const keys = [...check[1].matchAll(/'(\w+)'/g)].map((m) => m[1]);

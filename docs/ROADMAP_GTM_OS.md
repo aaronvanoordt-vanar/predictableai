@@ -94,7 +94,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
   - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC
 - [ ] Facturación y créditos por cliente para agencias
 - [ ] Equipo: metas de actividad, ranking, revisión del Meeting Coach con comentarios y rampa — en curso (sesión propia; las llamadas se enganchan cuando exista la telefonía)
-- [ ] Mapa de TAM, señales de LinkedIn y píxel web
+- [ ] Mapa de TAM, señales de LinkedIn y píxel web — Mapa de TAM construido (rama `claude/tam-map`); faltan señales de LinkedIn y píxel web
 
 **P3**
 - [ ] Automatizaciones de punta a punta
