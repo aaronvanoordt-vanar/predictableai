@@ -16,7 +16,7 @@ El agente llama por teléfono para tres cosas:
 
   | Propósito | Prueba que exige |
   |---|---|
-  | Devolver la llamada | Un mensaje del lead en la Bandeja, o la declaración del vendedor con su nota de cómo lo pidió |
+  | Devolver la llamada | Un mensaje del lead en la Bandeja, un lead del widget inbound (`source.kind = 'inbound'`), o la declaración del vendedor con su nota de cómo lo pidió |
   | Confirmar o reprogramar | Una reunión: el estado del CRM, un evento de Google Calendar o una fecha cargada a mano |
   | Calificar | Que haya respondido por algún canal, que venga de la Bandeja, o la declaración del vendedor |
 

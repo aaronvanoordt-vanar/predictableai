@@ -61,6 +61,8 @@ Deno.test("warmGate: nunca en frío", () => {
   assertEquals(warmGate({ purpose: "callback", contactStatus: "respondio" }).ok, false, "devolver exige el pedido");
   assertEquals(warmGate({ purpose: "callback", attested: true }).ok, true);
   assertEquals(warmGate({ purpose: "callback", hasInbound: true }).ok, true);
+  assertEquals(warmGate({ purpose: "callback", sourceKind: "inbound" }).ok, true, "llenó el formulario del widget");
+  assertEquals(warmGate({ purpose: "callback", sourceKind: "search" }).ok, false);
   assertEquals(warmGate({ purpose: "confirm", hasInbound: true }).ok, false);
   assertEquals(warmGate({ purpose: "confirm", contactStatus: "reunion_agendada" }).ok, true);
   assertEquals(warmGate({ purpose: "reschedule", hasMeeting: true }).ok, true);

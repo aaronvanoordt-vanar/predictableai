@@ -266,7 +266,8 @@ export function warmGate(i: WarmInput): { ok: boolean; reason: string } {
         ? { ok: true, reason: "" }
         : { ok: false, reason: "Para confirmar o reprogramar hace falta una reunión: elige el evento del calendario o indica la fecha." };
     case "callback":
-      return i.hasInbound || i.attested
+      // Un lead del widget inbound (formulario o botón de WhatsApp) pidió contacto él mismo.
+      return i.hasInbound || i.attested || i.sourceKind === "inbound"
         ? { ok: true, reason: "" }
         : { ok: false, reason: "Devolver la llamada exige que el lead la haya pedido: no tiene mensajes suyos en la Bandeja. Si te la pidió por otro medio, márcalo y anota cómo." };
     case "qualify":
