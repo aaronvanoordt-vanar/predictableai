@@ -11,7 +11,7 @@
  * El equipo es una NÓMINA (`sales_team_members`) que arma el director con
  * perfiles de su misma empresa (`profiles.company_name`): escribir el nombre
  * de una empresa en el perfil no basta para ver su ranking. Todo pasa por las
- * RPC de la migración 20261017000001 (`team_overview`, `team_metrics`,
+ * RPC de la migración 20261018000002 (`team_overview`, `team_metrics`,
  * `team_ramp`, `team_review_meetings`, `team_set_goal`…), que devuelven
  * conteos de personas, nunca leads ajenos. Las cuentas y reglas (período
  * comparable, ritmo de la meta, ranking que no premia el volumen vacío,
