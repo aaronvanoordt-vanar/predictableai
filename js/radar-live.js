@@ -56,6 +56,7 @@
     growth:           { label: 'Crecimiento de plantilla',     icon: '📈', requires: ['Apollo (1 crédito de Apollo por página)'], desc: 'Empresas del ICP cuya plantilla creció más de X % en 6-24 meses.' },
     presence:         { label: 'Presencia digital local',      icon: '📍', requires: ['Google Places'],              desc: 'Negocios en Google Maps sin sitio web, con pocas reseñas o mala calificación.' },
     website_visitors: { label: 'Visitantes de tu sitio',       icon: '👀', requires: ['Tu cuenta de Apollo con Website Visitors'], desc: 'Empresas que visitaron tu web (lo más caliente que existe).' },
+    public_registry:  { label: 'Registros públicos de empresas', icon: '🏢', requires: ['Registro público de tu país (Brasil, México o Colombia)'], desc: 'Empresas recién constituidas, o que cambiaron de actividad o de tamaño, según el registro oficial (CNPJ, DENUE, registro mercantil). Llega a la pyme que Apollo no tiene.' },
   };
   const KIND_ORDER = Object.keys(DETECTOR_KINDS);
   // Espejo de MAX_COMPANIES_OPTIONS / DEFAULT_MAX_COMPANIES en _shared/radar-plan.ts.
@@ -388,6 +389,8 @@
       evidence: Array.isArray(s.evidence) ? s.evidence : [],
       decision_makers: Array.isArray(s.decision_makers) ? s.decision_makers : [],
       decision_maker_titles: Array.isArray(s.decision_maker_titles) ? s.decision_maker_titles : [],
+      // Detector de registros públicos: la ficha (teléfono y email de registro, socios) viaja a la lista.
+      registry: s.facts && s.facts.registry && typeof s.facts.registry === 'object' ? s.facts.registry : null,
       repeat_reason: '', seen_before: false,
     };
   }
@@ -912,6 +915,14 @@
     if (f.stage) chips.push(f.stage);
     if (f.website_intent) chips.push('intención ' + f.website_intent);
     if (Array.isArray(f.new_in_role)) f.new_in_role.slice(0, 3).forEach((p) => chips.push((p.name || '') + ' · ' + (p.title || '')));
+    const reg = f.registry && typeof f.registry === 'object' ? f.registry : null;
+    if (reg) {
+      if (reg.tax_id) chips.push((reg.tax_id_label || 'ID') + ' ' + reg.tax_id);
+      if (reg.activity && reg.activity.description) chips.push(reg.activity.description);
+      if (reg.phone) chips.push('tel. ' + reg.phone);
+      if (reg.email) chips.push(reg.email);
+      if (Array.isArray(reg.partners) && reg.partners.length) chips.push(reg.partners.length + ' socio' + (reg.partners.length === 1 ? '' : 's') + ' en el registro');
+    }
     if (!chips.length) return '';
     return '<div class="rl-facts">' + chips.slice(0, 6).map((c) => '<span>' + esc(c) + '</span>').join('') + '</div>';
   }
@@ -940,6 +951,15 @@
       case 'growth': return 'Plantilla +' + (cfg.min_growth_pct || 20) + ' % en ' + (cfg.months || 6) + ' meses';
       case 'presence': { const r = cfg.rules || {}; const rs = []; if (r.no_website) rs.push('sin sitio web'); if (r.no_phone) rs.push('sin teléfono'); if (r.max_rating != null) rs.push('≤ ' + r.max_rating + '★'); if (r.max_reviews != null) rs.push('≤ ' + r.max_reviews + ' reseñas'); if (r.min_reviews != null) rs.push('≥ ' + r.min_reviews + ' reseñas'); return j(cfg.queries, 3) + ' en ' + j(cfg.cities, 4) + ' · ' + rs.join(', '); }
       case 'website_visitors': return 'Últimos ' + (cfg.days || 30) + ' días · intención ' + j(cfg.intent) + (cfg.pages && cfg.pages.length ? ' · páginas ' + j(cfg.pages, 3) : '');
+      case 'public_registry': {
+        const ev = { new_companies: 'Constituidas en los últimos ' + (cfg.window_days || 60) + ' días', activity_change: 'Cambiaron de actividad', size_change: 'Cambiaron de tamaño' }[cfg.event] || 'Constituidas recientemente';
+        const sz = { micro: 'micro', small: 'pequeñas', medium: 'medianas', large: 'grandes' };
+        return ev + ' · ' + (cfg.industries && cfg.industries.length ? j(cfg.industries, 3) : 'industrias de tu ICP') +
+          (cfg.activity_codes && cfg.activity_codes.length ? ' · códigos ' + j(cfg.activity_codes, 4) : '') +
+          (cfg.sizes && cfg.sizes.length ? ' · ' + j(cfg.sizes.map((x) => sz[x] || x)) : '') +
+          (cfg.regions && cfg.regions.length ? ' · ' + j(cfg.regions, 3) : '') +
+          (cfg.require_contact === 'phone' ? ' · con teléfono' : cfg.require_contact === 'email' ? ' · con email' : '');
+      }
     }
     return '';
   }
