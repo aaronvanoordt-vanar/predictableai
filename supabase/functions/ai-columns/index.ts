@@ -14,7 +14,7 @@
  *   POST { action: "cancel", column_id }                    (saca lo que siga en cola)
  *   POST { action: "process" }                              (la cola; el cron y el navegador)
  *
- * La cola vive en list_ai_cells (migración 20261017000001) y se reclama con
+ * La cola vive en list_ai_cells (migración 20261017000002) y se reclama con
  * `claim_ai_cells_batch` (FOR UPDATE SKIP LOCKED), como enrich-list: pg_cron
  * cada minuto con la service role (todas las cuentas) + el navegador al
  * encolar (solo sus filas; vuelve a llamar mientras quede `remaining`).
@@ -103,7 +103,7 @@ async function createColumn(svc: SupabaseClient, userId: string, body: Json) {
   const { data: existing, error: countErr } = await svc.from("list_ai_columns")
     .select("id, position").eq("list_id", listId).eq("user_id", userId);
   if (countErr) {
-    if (isMissingTable(countErr)) return { status: 503, body: { error: "migration_pending", detail: "Falta aplicar la migración 20261017000001_list_ai_columns.sql." } };
+    if (isMissingTable(countErr)) return { status: 503, body: { error: "migration_pending", detail: "Falta aplicar la migración 20261017000002_list_ai_columns.sql." } };
     return { status: 500, body: { error: "db_error", detail: countErr.message } };
   }
   if ((existing ?? []).length >= LIMITS.columnsPerList) {
@@ -448,7 +448,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     const msg = (e as Error)?.message ?? String(e);
     console.error("[ai-columns]", msg);
     if (/claim_ai_cells_batch|list_ai_c/.test(msg) && /does not exist|not find|schema cache/i.test(msg)) {
-      return json({ error: "migration_pending", detail: "Falta aplicar la migración 20261017000001_list_ai_columns.sql." }, 503, h);
+      return json({ error: "migration_pending", detail: "Falta aplicar la migración 20261017000002_list_ai_columns.sql." }, 503, h);
     }
     return json({ error: msg }, 500, h);
   }

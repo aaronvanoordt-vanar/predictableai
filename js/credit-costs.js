@@ -69,6 +69,12 @@
     // Solo se cobra si Apollo encuentra el dato.
     enrich_email:           { credits: 2,  label: 'por email',           variable: false },
     enrich_phone:           { credits: 8,  label: 'por teléfono',        variable: false },
+    // Si Apollo no lo encuentra, la cascada de proveedores (Prospeo,
+    // BetterContact, FullEnrich…). Solo se cobra el dato encontrado.
+    enrich_email_waterfall: { credits: 3,  label: 'por email encontrado en la cascada', variable: false },
+    enrich_phone_waterfall: { credits: 20, label: 'por teléfono encontrado en la cascada', variable: false },
+    // Verificar un email de Apollo que no venía verificado (solo si hay veredicto).
+    email_verify:           { credits: 1,  label: 'por email verificado', variable: false },
 
     // ── Meeting Coach (por duración) ──────────────────────────────────
     // Captura local: 5 por cada 10 min + 5 del reporte final.

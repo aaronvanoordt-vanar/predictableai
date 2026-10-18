@@ -1407,7 +1407,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     // base de conocimiento). Tolerante: sin tabla o sin fila → bloque vacío.
     loadTraining(supa, user.id),
     // Columnas IA de Listas: solo respuestas con evidencia. Sin la migración
-    // 20261017000001 el select falla suave y el bloque queda vacío.
+    // 20261017000002 el select falla suave y el bloque queda vacío.
     memberId
       ? supa.from("list_ai_cells")
           .select("status, value_bool, value_num, value_text, evidence, list_ai_columns(question, answer_type)")
