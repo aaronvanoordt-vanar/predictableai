@@ -11,7 +11,7 @@ Fecha: 2026-10-17. Ítems P1 «Dialer nativo con la llamada en el Meeting Coach�
 | Lo que pide el navegador | edge function `telephony` (con JWT) |
 | Lo que avisan los proveedores | edge function `telephony-webhook` (`--no-verify-jwt`) |
 | Dialer flotante y power dialer | `js/dialer.js` |
-| Vista Llamadas (cola, historial, configuración) | `js/calls.js`, dentro de Campañas: botón «Llamadas» de la cabecera (vista `calls` de `js/campaigns.js`; `#llamadas` lleva ahí) |
+| Vista Llamadas (cola, historial, configuración) | `js/calls.js`, dentro de Campañas: botón «Llamadas» de la cabecera (vista `calls` de `js/campaigns.js`; `#llamadas` lleva ahí). No exige Apollo conectado: el bloqueo de Prospección la deja pasar y ofrece «Ir a Llamadas» |
 | Coach en la llamada | `js/realtime-coach.js` recibe el audio de la llamada en vez de la pantalla |
 | Paso `call` de campaña | `_shared/campaign-flow.ts` ↔ `js/campaign-flow.js`, `campaign-run` |
 | Créditos por minuto | `CALL_MINUTE_CREDITS` en `_shared/credit-costs.ts` ↔ `js/credit-costs.js` |

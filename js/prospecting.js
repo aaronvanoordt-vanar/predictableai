@@ -3932,11 +3932,24 @@
   // Buscar, enriquecer y enviar email salen de la cuenta de Apollo del
   // usuario, así que no se entra a ninguna pestaña de Prospección sin
   // conectarla. La Bandeja queda libre: junta respuestas de WhatsApp y
-  // LinkedIn, que no dependen de Apollo. El estado y el asistente de
-  // conexión son los de js/campaigns.js (una sola fuente).
+  // LinkedIn, que no dependen de Apollo. Llamadas (vista de Campañas,
+  // js/calls.js) también (pedido del dueño, 2026-10-18): el dialer de
+  // Predictable y CloudTalk/Aircall/Ringover no usan Apollo. El estado y el
+  // asistente de conexión son los de js/campaigns.js (una sola fuente).
   var apollo = { connected: null, checking: null, error: null, pendingTab: null };
+  var APOLLO_FREE_VIEWS = ['inbox', 'calls'];
   function apolloExempt(tabId) {
-    return tabId === 'campanas' && window.campaigns && typeof window.campaigns.currentView === 'function' && window.campaigns.currentView() === 'inbox';
+    return tabId === 'campanas' && window.campaigns && typeof window.campaigns.currentView === 'function' && APOLLO_FREE_VIEWS.indexOf(window.campaigns.currentView()) !== -1;
+  }
+  /** Abre Campañas → Llamadas (sin Apollo). */
+  function openCalls(tab) {
+    if (!window.campaigns || typeof window.campaigns.openCalls !== 'function') return;
+    window.campaigns.openCalls(tab || null);
+    // No se usa goTab: el clic del ítem «Campañas» del sidebar devolvería la vista a la lista.
+    var item = document.querySelector('.nav-item[data-page="pro-main"][data-pros-tab="campanas"]:not([data-pros-view])');
+    if (typeof window.nav === 'function') window.nav(item, 'pro-main');
+    ensureBuilt();
+    switchTab('campanas');
   }
   function checkApollo(force) {
     if (!window.campaigns || typeof window.campaigns.apolloStatus !== 'function') {
@@ -3984,6 +3997,12 @@
     }
     card.appendChild(row);
     card.appendChild(h('div', { class: 'pros-hint', text: '¿Todavía no tienes cuenta? El asistente te muestra cómo crearla.' }));
+    // Llamar no necesita Apollo: la cola de llamadas, el historial y el dialer quedan a mano.
+    if (window.Calls && window.campaigns && typeof window.campaigns.openCalls === 'function') {
+      var callsRow = h('div', { class: 'pros-hint', style: 'border-top:1px solid var(--border);padding-top:12px' }, 'Para llamar no necesitas Apollo. ');
+      callsRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Ir a Llamadas', onclick: function () { openCalls(); } }));
+      card.appendChild(callsRow);
+    }
     state.gate.appendChild(card);
   }
   document.addEventListener('predictable:apollo-status', function (ev) {
@@ -4052,6 +4071,7 @@
 
   // ── Public API ─────────────────────────────────────────────────────────
   window.prospecting = {
+    openCalls: openCalls,
     // Acción directa del Intelligence Hub: abre Buscar con palabras clave de
     // empresa (q_organization_keyword_tags) y lanza la búsqueda.
     searchFor: function (opts) {

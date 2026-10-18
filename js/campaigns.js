@@ -1665,8 +1665,8 @@
       root.appendChild(renderSetupHero());
       return;
     }
-    // Las tarjetas de canales son configuración de Campañas: la Bandeja no las lleva.
-    if (state.view !== 'inbox') root.appendChild(renderChannelBar(false));
+    // Las tarjetas de canales son configuración de Campañas: la Bandeja y Llamadas no las llevan.
+    if (state.view !== 'inbox' && state.view !== 'calls') root.appendChild(renderChannelBar(false));
     root.appendChild(renderSubnav());
     updateBadge();
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
@@ -4132,7 +4132,9 @@
     if (action === 'cmp-new') { if (btn.disabled) return; return openBuilder(null); }
     if (action === 'cmp-knowledge') return openKnowledge();
     if (action === 'cmp-calls') return openCalls();
-    if (action === 'cmp-back-campaigns') { state.view = 'campaigns'; return render(); }
+    // Volver a Campañas pasa otra vez por el bloqueo de Apollo de Prospección
+    // (Llamadas está libre de él; la lista de campañas no).
+    if (action === 'cmp-back-campaigns') { setView('campaigns'); if (pros().show) pros().show('campanas'); return; }
     if (action === 'cmp-suppression') return openSuppression();
     if (action === 'cmp-open') return openCampaign(id);
     if (action === 'cmp-back') { state.activeId = null; closeBuilder(); return render(); }
