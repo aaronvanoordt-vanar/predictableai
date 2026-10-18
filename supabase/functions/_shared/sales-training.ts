@@ -36,7 +36,10 @@
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
-export type TrainingTarget = "coach" | "coach_live" | "outreach" | "cadence";
+// "voice" = el agente de voz IA (docs/AGENTE_DE_VOZ.md): lado campañas, bloque
+// corto (latencia de cada turno) y SIN documentos de precios — en una llamada
+// solo se mencionan los precios y condiciones del Contexto.
+export type TrainingTarget = "coach" | "coach_live" | "outreach" | "cadence" | "voice";
 
 export interface Methodology {
   id: string;
@@ -361,6 +364,7 @@ const BUDGET: Record<TrainingTarget, number> = {
   coach: 10_000,
   outreach: 9_000,
   cadence: 4_000,
+  voice: 5_000,
 };
 
 function txt(v: unknown, max = 1_200): string {
@@ -421,7 +425,8 @@ function usableDocs(docs: TrainingDoc[] | null | undefined, target: TrainingTarg
   const coachSide = target === "coach" || target === "coach_live";
   return (docs ?? []).filter((d) =>
     d && d.enabled !== false && d.status === "done" && txt(d.summary) &&
-    (coachSide ? d.apply_coach !== false : d.apply_campaigns !== false)
+    (coachSide ? d.apply_coach !== false : d.apply_campaigns !== false) &&
+    !(target === "voice" && d.kind === "pricing")
   );
 }
 
@@ -450,6 +455,8 @@ export function buildTrainingBlock(t: Training | null | undefined, target: Train
       lines.push(
         target === "cadence"
           ? "METODOLOGÍAS DE PROSPECCIÓN DEL EQUIPO (que guíen canales, orden, ángulos y tono de la cadencia):"
+          : target === "voice"
+          ? "METODOLOGÍAS DE VENTA DEL EQUIPO (aplícalas en la conversación sin nombrar el libro):"
           : "METODOLOGÍAS DE PROSPECCIÓN DEL EQUIPO (aplícalas en el mensaje sin nombrar el libro):",
         ...methods, "",
       );
@@ -459,7 +466,7 @@ export function buildTrainingBlock(t: Training | null | undefined, target: Train
   const s = (r.style && typeof r.style === "object") ? r.style : {};
   const style: string[] = [];
   if (ADDRESS[s.address]) style.push(ADDRESS[s.address]);
-  if (!coachSide || target === "coach") {
+  if ((!coachSide || target === "coach") && target !== "voice") {
     if (LENGTH[s.length]) style.push(LENGTH[s.length]);
     if (EMOJIS[s.emojis]) style.push(EMOJIS[s.emojis]);
   }
@@ -469,7 +476,7 @@ export function buildTrainingBlock(t: Training | null | undefined, target: Train
   if (use) style.push(`Palabras y expresiones propias que SÍ usan: ${use}`);
   const avoid = txt(s.words_avoid, 500);
   if (avoid) style.push(`Palabras y expresiones PROHIBIDAS: ${avoid}`);
-  const examples = target === "cadence" ? "" : txt(s.examples, target === "coach_live" ? 800 : 1_800);
+  const examples = target === "cadence" ? "" : txt(s.examples, target === "coach_live" || target === "voice" ? 800 : 1_800);
   if (examples) style.push("Ejemplos reales de su voz (imita el tono y el ritmo, NUNCA copies el contenido ni sus datos):", examples);
   if (style.length) {
     lines.push(

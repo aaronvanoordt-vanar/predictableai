@@ -327,6 +327,14 @@
 
   async function openModal() {
     if (document.getElementById('credits-modal-back')) return;
+    // Dentro del espacio de un cliente no se compra: los créditos los asigna
+    // la agencia desde su cuenta (js/agency.js; billing responde 403).
+    if (global.Workspace && global.Workspace.isInside()) {
+      if (global.uiHelpers && global.uiHelpers.toast) {
+        global.uiHelpers.toast('Los créditos de este espacio los asigna tu agencia desde su cuenta (Agencia → Créditos por espacio).', 'info');
+      }
+      return;
+    }
 
     const back = document.createElement('div');
     back.id = 'credits-modal-back';
