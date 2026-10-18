@@ -99,6 +99,10 @@
       // (sobreviven a los refrescos por realtime hasta que se guardan),
       // timers de guardado y corridas de IA en curso desde esta pestaña.
       researchOpen: new Set(), notesDraft: {}, notesTimers: {}, notesSaving: {}, researching: new Set(),
+      // ¿Está en WhatsApp? Lo aprendido de los envíos (whatsapp_reachability,
+      // Map phone_key → fila) que junto al plan de numeración pinta el
+      // indicador del teléfono (js/phone-lines.js). null = aún no se leyó.
+      waLearned: null,
     },
   };
 
@@ -374,6 +378,7 @@
     '.pros-manual-row { display:flex; gap:10px; }',
     '.pros-manual-row > * { flex:1; min-width:0; }',
     '.pros-manual-row .pros-phone-code { flex:0 0 auto; width:150px; }',
+    '.pros-linkbtn { background:none; border:0; padding:0 0 0 4px; color:var(--accent); font-size:11.5px; cursor:pointer; text-decoration:underline; }',
     '.pros-manual-linkedin { display:flex; gap:8px; align-items:flex-start; }',
     '.pros-manual-linkedin input { flex:1; min-width:0; }',
   ].join('\n');
@@ -536,15 +541,51 @@
     return '<span class="pill pill-gray"' + (title ? ' title="' + esc(title) + '"' : '') + '>Sin email</span>';
   }
 
-  var PHONE_TYPES = { mobile: 'Móvil', landline: 'Fijo', switchboard: 'Conmutador' };
+  // ── ¿El número está en WhatsApp? (js/phone-lines.js) ─────────────────────
+  // Mismo veredicto que usa campaign-run antes de mandar una plantilla: un
+  // fijo o un número que ya falló con #131026 no la recibe (el paso se omite).
+  var WA_REACH_PILL = { confirmed: 'green', probable: 'blue', unknown: 'gray', fixed: 'amber', switchboard: 'amber', no_whatsapp: 'red' };
+
+  function waReachOf(m) {
+    var PL = window.PhoneLines;
+    return PL && m && m.phone ? PL.memberReach(m, state.listas.waLearned) : null;
+  }
+
+  function waReachPillHtml(m) {
+    var r = waReachOf(m);
+    if (!r || !WA_REACH_PILL[r.status]) return '';
+    var reset = r.status === 'no_whatsapp'
+      ? ' <button type="button" class="pros-linkbtn" data-action="wa-reach-reset" data-key="' + esc(window.PhoneLines.reachKey(m.phone)) + '" title="Si sabes que este número ya tiene WhatsApp, las campañas vuelven a intentarlo">Volver a intentar</button>'
+      : '';
+    return '<div style="margin-top:3px" title="' + esc(r.reason) + '"><span class="pill pill-' + WA_REACH_PILL[r.status] + '">' + esc(r.label) + '</span>' + reset + '</div>';
+  }
+
+  // Resumen de la tabla: cuántos números recibirían la plantilla y cuántos envíos se evitan.
+  function waSummaryHtml(rows) {
+    var PL = window.PhoneLines;
+    if (!PL) return '';
+    var reaches = rows.filter(function (m) { return m.phone; }).map(waReachOf);
+    if (!reaches.length) return '';
+    var s = PL.reachSummary(reaches, 1);
+    var parts = [];
+    if (s.confirmed) parts.push(fmtNum(s.confirmed) + ' con WhatsApp confirmado');
+    if (s.probable) parts.push(fmtNum(s.probable) + ' probables');
+    if (s.unknown) parts.push(fmtNum(s.unknown) + ' por confirmar');
+    if (s.fixed) parts.push(fmtNum(s.fixed) + ' fijos');
+    if (s.switchboard) parts.push(fmtNum(s.switchboard) + ' conmutadores');
+    if (s.no_whatsapp) parts.push(fmtNum(s.no_whatsapp) + ' sin WhatsApp');
+    var saved = s.avoided
+      ? ' · <strong>' + esc(fmtNum(s.avoided)) + ' plantilla' + (s.avoided === 1 ? '' : 's') + ' que no se mandan</strong> por paso de WhatsApp: el lead pasa directo al siguiente canal'
+      : '';
+    return '<div class="pros-cellsub" style="margin-top:2px" title="Celular, fijo o conmutador según el plan de numeración de cada país (el mismo tipo que guarda el enriquecimiento); «sin WhatsApp» = WhatsApp ya rechazó un envío a ese número (#131026). Por confirmar = el número no lo dice (p. ej. México): se envía igual.">WhatsApp: ' +
+      esc(parts.join(' · ')) + saved + '</div>';
+  }
 
   function memberPhoneCell(m) {
     if (m.phone) {
-      var t = PHONE_TYPES[m.phone_type];
-      return '<div>' + esc(m.phone) + '</div>' +
-        (t ? '<div style="margin-top:3px"><span class="pill ' + (m.phone_type === 'mobile' ? 'pill-green' : 'pill-gray') + '"' +
-          (m.phone_type === 'switchboard' ? ' title="Número de la empresa o con extensión: no sirve para WhatsApp"' : '') + '>' + t + '</span></div>' : '') +
-        sourceLineHtml(m, 'phone');
+      // El indicador de WhatsApp incluye el tipo de línea (phone_type del
+      // waterfall o el plan de numeración): Fijo / Conmutador / Probable…
+      return '<div>' + esc(m.phone) + '</div>' + waReachPillHtml(m) + sourceLineHtml(m, 'phone');
     }
     if (m.phone_status === 'pending') return '<span class="pill pill-amber">Pendiente…</span>';
     if (m.phone_status === 'unavailable') return '<span class="pill pill-gray">No disponible</span>';
@@ -2275,7 +2316,24 @@
     pane.addEventListener('click', guarded(onListasClick));
     pane.addEventListener('change', guarded(onListasChange));
     pane.addEventListener('input', onListasInput);
+    // Columnas IA (js/ai-columns.js): cabeceras, celdas, filtros y orden de la tabla.
+    if (window.AIColumns) {
+      window.AIColumns.attach({
+        toast: toast,
+        openModal: openModal,
+        rerender: function () { renderListsRight(); },
+        members: function () { return isAllList() ? [] : state.listas.members; },
+        visibleMembers: function () { return visibleListMembers(); },
+        host: function () { return state.listas.rightEl; },
+      });
+    }
   }
+
+  // Columnas IA de la lista abierta (no en «Todos los contactos»: son por lista).
+  function aiCols() {
+    return (window.AIColumns && !isAllList() && state.listas.activeListId) ? window.AIColumns : null;
+  }
+  function aiColCount() { var a = aiCols(); return a ? a.count() : 0; }
 
   function isAllList() { return state.listas.activeListId === ALL_LIST_ID; }
 
@@ -2370,7 +2428,7 @@
     var st = state.listas;
     var q = (st.q || '').trim().toLowerCase();
     var all = isAllList();
-    return st.members.filter(function (m) {
+    var rows = st.members.filter(function (m) {
       if (all && st.statusFilter && (m.contact_status || 'no_contactado') !== st.statusFilter) return false;
       if (all && st.listFilter && String(m.list_id) !== st.listFilter) return false;
       if (!q) return true;
@@ -2378,6 +2436,9 @@
         .filter(Boolean).join(' ').toLowerCase();
       return hay.indexOf(q) !== -1;
     });
+    // Filtros y orden por columnas IA.
+    var ai = aiCols();
+    return ai ? ai.apply(rows) : rows;
   }
 
   function listMemberRowHtml(m) {
@@ -2401,13 +2462,14 @@
       '<td>' + memberEmailCell(m) + '</td>' +
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
+      (aiCols() ? aiCols().cellsHtml(m) : '') +
       '<td style="white-space:nowrap">' +
         '<button type="button" class="pros-iconbtn pros-research-btn' + (open ? ' on' : '') + (hasResearch ? ' has' : '') + '" data-action="toggle-research" data-id="' + id + '" title="Investigación previa: notas y ángulo con IA" aria-expanded="' + (open ? 'true' : 'false') + '">' + SVG_RESEARCH + '</button>' +
         '<button type="button" class="pros-iconbtn" data-action="edit-member" data-id="' + id + '" title="Editar contacto">' + SVG_EDIT + '</button>' +
         '<button type="button" class="pros-iconbtn" data-action="delete-member" data-id="' + id + '" title="Eliminar contacto">' + SVG_TRASH + '</button>' +
       '</td>' +
       '</tr>' +
-      (open ? '<tr class="pros-research-row"><td colspan="' + (isAllList() ? 10 : 9) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
+      (open ? '<tr class="pros-research-row"><td colspan="' + ((isAllList() ? 10 : 9) + aiColCount()) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
   }
 
   // ── Investigación previa por lead ───────────────────────────────────────
@@ -2664,7 +2726,8 @@
       // Header: título + acción principal en la esquina superior derecha.
       '<div class="table-head" style="gap:12px;flex-wrap:wrap;align-items:flex-start">' +
       '<div><div style="font-weight:600;font-size:13.5px">' + esc(all ? 'Todos los contactos' : ((list && list.name) || 'Lista')) + '</div>' +
-      '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos' + (all ? ' en todas tus listas' : '') + '</div></div>' +
+      '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos' + (all ? ' en todas tus listas' : '') + '</div>' +
+      waSummaryHtml(st.members) + '</div>' +
       (all
         ? '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer</button>'
         : '<button type="button" class="btn btn-primary btn-sm" data-action="create-campaign"' + (st.members.length ? '' : ' disabled') + '>' + SVG_CAMPAIGN + ' Crear campaña con esta lista</button>') +
@@ -2691,10 +2754,12 @@
     html += '<div class="pros-actions" style="padding:10px 18px 14px">' +
       (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer</button>') +
       (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>') +
+      (aiCols() ? aiCols().addButtonHtml() : '') +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-members">Actualizar</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="export-csv"' + (st.members.length ? '' : ' disabled') + '>Exportar CSV</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="delete-members" style="color:var(--red)"' + (n ? '' : ' disabled') + '>Eliminar</button>' +
       '</div>';
+    if (aiCols() && st.members.length) html += aiCols().progressHtml() + aiCols().filtersHtml();
 
     var cols = all ? ['30%', '35%', '25%', '20%', '30%', '40%', '28%', '18%', '14%'] : ['30%', '40%', '20%', '30%', '45%', '30%', '25%', '14%'];
     if (st.loadingMembers) {
@@ -2713,7 +2778,8 @@
       var allChecked = rows.every(function (m) { return st.selected.has(String(m.id)); });
       html += '<div class="pros-scroll-x"><table><thead><tr>' +
         '<th style="width:34px"><input type="checkbox" data-action="mem-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-        '<th>Nombre</th><th>Empresa</th><th>País</th>' + (all ? '<th>Lista</th>' : '') + '<th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th><th></th>' +
+        '<th>Nombre</th><th>Empresa</th><th>País</th>' + (all ? '<th>Lista</th>' : '') + '<th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th>' +
+        (aiCols() ? aiCols().headHtml() : '') + '<th></th>' +
         '</tr></thead><tbody>' + rows.map(listMemberRowHtml).join('') + '</tbody></table></div>';
       if (all) {
         html += '<div style="padding:10px 18px;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(st.members.length)) + ' contactos · El estado se actualiza al instante en todo el sistema (Campañas, dashboard y este CRM leen la misma base).</div>';
@@ -2756,10 +2822,16 @@
     if (!keep) renderListsRight();
     var all = isAllList();
     var listId = st.activeListId;
+    if (window.AIColumns) window.AIColumns.setList(all ? null : listId);
     return Promise.resolve()
-      .then(function () { return all ? pd().fetchAllContacts() : pd().fetchMembers(listId); })
-      .then(function (members) {
+      .then(function () {
+        var learned = window.PhoneLines ? window.PhoneLines.loadLearned().catch(function () { return null; }) : null;
+        return Promise.all([all ? pd().fetchAllContacts() : pd().fetchMembers(listId), learned]);
+      })
+      .then(function (res) {
+        var members = res[0];
         if (st.activeListId !== listId) return; // el usuario cambió de lista mientras cargaba
+        if (res[1]) st.waLearned = res[1];
         st.members = Array.isArray(members) ? members : [];
         if (keep) {
           var ids = new Set(st.members.map(function (m) { return String(m.id); }));
@@ -2799,6 +2871,7 @@
   function onListasInput(e) {
     var t = e.target;
     if (t.getAttribute && t.getAttribute('data-action') === 'research-notes') return onResearchNotesInput(t);
+    if (window.AIColumns && window.AIColumns.handleInput(t)) return;
     if (!t.getAttribute || t.getAttribute('data-action') !== 'ct-search') return;
     var st = state.listas;
     st.q = t.value || '';
@@ -2822,6 +2895,7 @@
     var t = e.target;
     var action = t.getAttribute && t.getAttribute('data-action');
     var st = state.listas;
+    if (window.AIColumns && window.AIColumns.handleChange(t)) return;
     if (action === 'mem-check') {
       var id = t.getAttribute('data-id');
       if (t.checked) st.selected.add(id); else st.selected.delete(id);
@@ -2860,6 +2934,7 @@
     if (!btn) return;
     var action = btn.getAttribute('data-action');
     var st = state.listas;
+    if (window.AIColumns && window.AIColumns.handleClick(btn)) return;
     if (action === 'create-list') {
       var input = document.getElementById('pros-newlist-name');
       var name = input ? input.value.trim() : '';
@@ -2925,6 +3000,17 @@
         .then(function () { renderListsLeft(); return reloadMembers(); });
     }
     if (action === 'export-csv') return exportListCsv();
+    if (action === 'wa-reach-reset') {
+      // Olvida el «sin WhatsApp» aprendido de ese número: la próxima campaña lo intenta.
+      var key = btn.getAttribute('data-key');
+      return window.supabaseClient.from('whatsapp_reachability').delete().eq('phone_key', key)
+        .then(function (r) {
+          if (r.error) throw new Error('No se pudo reiniciar el número: ' + r.error.message);
+          if (st.waLearned) st.waLearned.delete(key);
+          toast('Listo: las campañas vuelven a intentar este WhatsApp.', 'success');
+          renderListsRight();
+        });
+    }
     if (action === 'delete-members') return openDeleteMembersModal();
     if (action === 'delete-member') {
       var mDel = findListMember(btn.getAttribute('data-id'));
@@ -3367,9 +3453,12 @@
     var cols = isAllList()
       ? ['name', 'title', 'company', 'list_name', 'contact_status', 'email', 'phone', 'linkedin_url']
       : ['name', 'title', 'company', 'contact_status', 'email', 'phone', 'linkedin_url'];
-    var lines = [cols.join(',')];
+    // Columnas IA: respuesta, evidencia y fuente de cada una.
+    var extra = aiCols() ? aiCols().csvColumns() : [];
+    var lines = [cols.concat(extra.map(function (x) { return csvCell(x.header); })).join(',')];
     rows.forEach(function (m) {
-      lines.push(cols.map(function (c) { return csvCell(m[c]); }).join(','));
+      lines.push(cols.map(function (c) { return csvCell(m[c]); })
+        .concat(extra.map(function (x) { return csvCell(x.get(m)); })).join(','));
     });
     var blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
     var url = URL.createObjectURL(blob);
