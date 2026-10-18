@@ -19,7 +19,7 @@
   var MEETING_STATUSES = ['reunion_agendada', 'reunion_tomada'];
 
   function esc(s) { return global.escHtml ? global.escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
-  function fmt(n) { return n == null ? '—' : new Intl.NumberFormat('es').format(n); }
+  function fmt(n) { return n == null ? '—' : new Intl.NumberFormat((window.i18n ? i18n.locale() : 'es-MX')).format(n); }
   function sb() { return global.supabaseClient; }
   function clickNav(sel) {
     var el = document.querySelector(sel);

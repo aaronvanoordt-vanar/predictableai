@@ -65,7 +65,7 @@
   function maxCompaniesSelect(act, id, value, extraClass) {
     return '<select class="rl-select rl-select-sm' + (extraClass ? ' ' + extraClass : '') + '" data-act="' + act + '"' + (id ? ' data-id="' + esc(id) + '"' : '') + ' title="Cuántas empresas revisa cada corrida. En los detectores de Apollo, cada 100 empresas es 1 crédito de Apollo.">' +
       (value === '' ? '<option value="" selected>Empresas por corrida: mixto</option>' : '') +
-      MAX_COMPANIES_OPTIONS.map((n) => '<option value="' + n + '"' + (Number(value) === n ? ' selected' : '') + '>' + n.toLocaleString('es-MX') + ' empresas por corrida</option>').join('') + '</select>';
+      MAX_COMPANIES_OPTIONS.map((n) => '<option value="' + n + '"' + (Number(value) === n ? ' selected' : '') + '>' + n.toLocaleString((window.i18n ? i18n.locale() : 'es-MX')) + ' empresas por corrida</option>').join('') + '</select>';
   }
   const CADENCES = [[6, 'cada 6 h'], [12, 'cada 12 h'], [24, 'cada día'], [48, 'cada 2 días'], [72, 'cada 3 días'], [168, 'cada semana']];
   const STATUS_LABEL = { idle: 'listo', running: 'corriendo', error: 'con error', no_credits: 'sin créditos', unavailable: 'no disponible' };
@@ -311,7 +311,7 @@
       const r = await post('radar-plan', { action: 'refresh_from_hub' });
       await load();
       const n = (r.added || []).length;
-      state.notice = r.reason === 'nothing_new' ? 'El Hub no publicó nada nuevo desde la última sincronización.' : (n ? 'El Hub aportó ' + n + ' detector' + (n === 1 ? '' : 'es') + ' nuevo' + (n === 1 ? '' : 's') + '.' : 'El Hub no aportó detectores nuevos esta vez (nada accionable que el plan no cubra ya).');
+      state.notice = r.reason === 'nothing_new' ? 'El Hub no publicó nada nuevo desde la última sincronización.' : (n ? (n === 1 ? 'El Hub aportó 1 detector nuevo.' : 'El Hub aportó ' + n + ' detectores nuevos.') : 'El Hub no aportó detectores nuevos esta vez (nada accionable que el plan no cubra ya).');
     });
   }
 
@@ -322,13 +322,13 @@
     render();
     try {
       const r = await post('radar-plan', { action: 'run_now' });
-      state.driveLog.push(r.scheduled + ' detector' + (r.scheduled === 1 ? '' : 'es') + ' en cola.');
-      if (r.held) state.driveLog.push(r.held + ' detector' + (r.held === 1 ? '' : 'es') + ' corri' + (r.held === 1 ? 'ó' : 'eron') + ' hace poco: espera' + (r.held === 1 ? '' : 'n') + ' su cadencia mínima antes de volver a buscar.');
+      state.driveLog.push(r.scheduled === 1 ? '1 detector en cola.' : r.scheduled + ' detectores en cola.');
+      if (r.held) state.driveLog.push(r.held === 1 ? '1 detector corrió hace poco: espera su cadencia mínima antes de volver a buscar.' : r.held + ' detectores corrieron hace poco: esperan su cadencia mínima antes de volver a buscar.');
       let guard = 0;
       while (!state.driveStop && guard++ < 60) {
         const t = await post('radar-monitor', { mode: 'tick' });
         (t.notes || []).forEach((n) => state.driveLog.push(n));
-        if (t.inserted) state.driveLog.push('+' + t.inserted + ' señal' + (t.inserted === 1 ? '' : 'es') + ' nueva' + (t.inserted === 1 ? '' : 's') + (state.batch ? ' (entran a tu reserva; ves ' + DAILY_BATCH + ' por día, las de mayor puntaje)' : ''));
+        if (t.inserted) state.driveLog.push((t.inserted === 1 ? '+1 señal nueva' : '+' + t.inserted + ' señales nuevas') + (state.batch ? ' (entran a tu reserva; ves ' + DAILY_BATCH + ' por día, las de mayor puntaje)' : ''));
         await load();
         render();
         if (!t.pending) break;
@@ -404,7 +404,7 @@
     const first = sigs[0];
     const suggested = sigs.length === 1
       ? 'Radar · ' + first.company_name
-      : 'Radar · ' + (first.detector_name || 'Señales') + ' · ' + new Date().toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+      : 'Radar · ' + (first.detector_name || 'Señales') + ' · ' + new Date().toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short' });
     const typed = global.prompt('Nombre de la lista:', suggested);
     if (typed === null) return;
     const name = typed.trim() || suggested;
@@ -811,7 +811,7 @@
     const reserve = reserveCount();
     if (state.filters.status === 'new' && (c.new || reserve)) {
       h += '<div class="rl-daily"><div><strong>' + (c.new
-        ? 'Tus ' + c.new + ' señal' + (c.new === 1 ? '' : 'es') + ' para revisar'
+        ? (c.new === 1 ? 'Tu señal para revisar' : 'Tus ' + c.new + ' señales para revisar')
         : 'Listo por hoy') + '</strong>' +
         '<span>' + (c.new
           ? 'Las de mayor puntaje, hasta ' + DAILY_BATCH + ' por día. Guarda las que valgan la pena y descarta el resto.'
@@ -935,7 +935,7 @@
           (cfg.population_using_any && cfg.population_using_any.length ? ' · entre empresas que usan ' + j(cfg.population_using_any, 3) : '') +
           (cfg.keywords && cfg.keywords.length ? ' · sector: ' + j(cfg.keywords, 3) : '');
       }
-      case 'funding': return 'Rondas en los últimos ' + (cfg.window_days || 90) + ' días' + (cfg.min_amount ? ' · desde US$' + Number(cfg.min_amount).toLocaleString('es-MX') : '') + (cfg.stages && cfg.stages.length ? ' · ' + j(cfg.stages) : '');
+      case 'funding': return 'Rondas en los últimos ' + (cfg.window_days || 90) + ' días' + (cfg.min_amount ? ' · desde US$' + Number(cfg.min_amount).toLocaleString((window.i18n ? i18n.locale() : 'es-MX')) : '') + (cfg.stages && cfg.stages.length ? ' · ' + j(cfg.stages) : '');
       case 'leadership': return j(cfg.titles) + ' · menos de ' + (cfg.max_days_in_role || 90) + ' días en el cargo';
       case 'growth': return 'Plantilla +' + (cfg.min_growth_pct || 20) + ' % en ' + (cfg.months || 6) + ' meses';
       case 'presence': { const r = cfg.rules || {}; const rs = []; if (r.no_website) rs.push('sin sitio web'); if (r.no_phone) rs.push('sin teléfono'); if (r.max_rating != null) rs.push('≤ ' + r.max_rating + '★'); if (r.max_reviews != null) rs.push('≤ ' + r.max_reviews + ' reseñas'); if (r.min_reviews != null) rs.push('≥ ' + r.min_reviews + ' reseñas'); return j(cfg.queries, 3) + ' en ' + j(cfg.cities, 4) + ' · ' + rs.join(', '); }
@@ -1129,7 +1129,7 @@
       maxCompaniesSelect('det-max-companies', d.id, maxCompaniesOf(d), '') +
       '</div>' +
       '<div class="rl-det-foot">' + statusLine +
-      '<span class="rl-muted rl-xs">' + total + ' señal' + (total === 1 ? '' : 'es') + ' en total' + (stats.last_note ? ' · ' + esc(stats.last_note) : '') + '</span>' +
+      '<span class="rl-muted rl-xs">' + (total === 1 ? '1 señal en total' : total + ' señales en total') + (stats.last_note ? ' · ' + esc(stats.last_note) : '') + '</span>' +
       '<button class="rl-link rl-del" data-act="det-delete" data-id="' + esc(d.id) + '">Eliminar</button></div>' +
       (d.last_error ? '<div class="rl-det-err">' + esc(d.last_error) + '</div>' : '') +
       '</div>';

@@ -172,13 +172,13 @@
   }
   function fmtNum(n) {
     var x = Number(n);
-    return isFinite(x) ? x.toLocaleString('es-MX') : String(n == null ? 0 : n);
+    return isFinite(x) ? x.toLocaleString((window.i18n ? i18n.locale() : 'es-MX')) : String(n == null ? 0 : n);
   }
   function fmtDate(v) {
     if (!v) return '—';
     var d = new Date(v);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { year: 'numeric', month: 'short', day: 'numeric' });
   }
   function isMaskedEmail(email) {
     if (!email) return true;
@@ -2405,7 +2405,7 @@
   function fmtDay(iso) {
     var d = new Date(iso);
     if (isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('es', { day: 'numeric', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
   }
   function extLink(url, label) {
     if (!/^https?:\/\//i.test(String(url || ''))) return esc(label || '');

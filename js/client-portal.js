@@ -102,7 +102,7 @@
   function fmtDate(d) {
     if (!d) return '—';
     try {
-      return new Date(d + 'T00:00:00').toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' });
+      return new Date(d + 'T00:00:00').toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
     } catch (e) { return d; }
   }
 
@@ -287,6 +287,7 @@
       '<div class="cp-topbar">' +
         '<span class="cp-brand">predictable<span style="color:var(--accent)">.ai</span> · Portal del cliente</span>' +
         '<div class="cp-topbar-right">' +
+          '<div data-i18n-picker="es,pt-BR"></div>' +
           '<span class="cp-save-ind" id="cp-save-ind"></span>' +
           (state.legacy ? '<button class="cp-ghost" id="cp-logout">Cerrar sesión</button>' : '') +
         '</div>' +
@@ -387,7 +388,7 @@
 
   function fmtShort(d) {
     var t = Date.parse(d || '');
-    return isNaN(t) ? '' : new Date(t).toLocaleDateString('es', { day: 'numeric', month: 'short', year: 'numeric' });
+    return isNaN(t) ? '' : new Date(t).toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
   }
 
   function intelCompanyHtml(co) {

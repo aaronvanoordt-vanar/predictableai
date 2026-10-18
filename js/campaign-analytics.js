@@ -218,7 +218,7 @@
     if (!iso) return '';
     var d = new Date(iso);
     if (isNaN(d)) return '';
-    return d.toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   }
   function chanKey(ch) { return /linkedin/.test(String(ch || '')) ? 'linkedin' : String(ch || ''); }
   function chanLabel(ch) { var k = chanKey(ch); return CH_LABEL[k] || String(ch || '—'); }
@@ -682,7 +682,7 @@
   }
   function boundsText(b) { return fmtDay(b.from) + ' – ' + fmtDay(b.to - 1); }
   function rangeActive() { var b = rangeBounds(state.range); return b.from != null || b.to != null; }
-  function fmtDay(ms) { return new Date(ms).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' }); }
+  function fmtDay(ms) { return new Date(ms).toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' }); }
   function rangeText() {
     var b = rangeBounds(state.range);
     if (b.from == null && b.to == null) return 'Todo el historial';
@@ -1082,7 +1082,7 @@
     return card;
   }
 
-  function fmtWeek(ms) { return new Date(ms).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' }); }
+  function fmtWeek(ms) { return new Date(ms).toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short' }); }
   function weekRangeText(ms) { return fmtWeek(ms) + ' – ' + fmtWeek(nextWeek(ms) - 1); }
 
   /**

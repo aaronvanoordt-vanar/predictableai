@@ -117,7 +117,7 @@
 
   function fmtDate(iso) {
     if (!iso) return '';
-    try { return new Date(iso).toLocaleDateString('es-419', { day: 'numeric', month: 'long', year: 'numeric' }); }
+    try { return new Date(iso).toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'long', year: 'numeric' }); }
     catch (_) { return ''; }
   }
 
@@ -187,7 +187,7 @@
         cursor:pointer; margin-bottom:8px;">
         <span style="display:flex;align-items:center;gap:8px">
           <input type="radio" name="credits-pkg" value="${p.key}" ${p.key === selectedPackage ? 'checked' : ''} style="accent-color:var(--accent,#1F4BFF)">
-          <span style="font-weight:600;font-size:13.5px;color:var(--ink,#0A0A0F)">${p.credits.toLocaleString('es-419')} créditos${p.highlight ? ' <span style="color:var(--accent-ink,#1A3FD6);font-weight:500;font-size:11px">(más elegido)</span>' : ''}</span>
+          <span style="font-weight:600;font-size:13.5px;color:var(--ink,#0A0A0F)">${p.credits.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'))} créditos${p.highlight ? ' <span style="color:var(--accent-ink,#1A3FD6);font-weight:500;font-size:11px">(más elegido)</span>' : ''}</span>
         </span>
         <span style="font-family:var(--font-mono);font-size:12.5px;color:var(--text2,rgba(10,10,15,.62))">${esc(p.price)}</span>
       </label>
@@ -214,8 +214,8 @@
   function freeView(acct) {
     return `
       <p style="margin:0 0 14px;font-size:13px;color:var(--text2,rgba(10,10,15,.62));line-height:1.55">
-        Estás en la prueba gratis: te quedan <b>${acct.balance.toLocaleString('es-419')} créditos</b>. Activa Starter para tener
-        <b>${STARTER.credits.toLocaleString('es-419')} créditos cada mes</b>, el Hub y el Radar corriendo solos y poder recargar cuando lo necesites.
+        Estás en la prueba gratis: te quedan <b>${acct.balance.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'))} créditos</b>. Activa Starter para tener
+        <b>${STARTER.credits.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'))} créditos cada mes</b>, el Hub y el Radar corriendo solos y poder recargar cuando lo necesites.
       </p>
       <div id="credits-int-list" style="display:flex;gap:10px;margin-bottom:12px">${renderIntervals()}</div>
       <ul style="margin:0 0 14px;padding-left:18px;font-size:12.5px;color:var(--text2,rgba(10,10,15,.62));line-height:1.7">
@@ -251,11 +251,11 @@
       <div style="${S.card}">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
           <span style="font-weight:700;font-size:14px;color:var(--ink,#0A0A0F)">Plan ${esc(name)}</span>
-          <span style="font-family:var(--font-mono);font-size:13px;color:var(--ink,#0A0A0F)">${acct.balance.toLocaleString('es-419')} créditos</span>
+          <span style="font-family:var(--font-mono);font-size:13px;color:var(--ink,#0A0A0F)">${acct.balance.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'))} créditos</span>
         </div>
         <div style="margin-top:6px;${S.muted};line-height:1.6">
-          Bolsa del mes: ${acct.planBalance.toLocaleString('es-419')}${renew}<br>
-          Recargas (no vencen): ${topups.toLocaleString('es-419')}
+          Bolsa del mes: ${acct.planBalance.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'))}${renew}<br>
+          Recargas (no vencen): ${topups.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'))}
         </div>
         ${status}
       </div>

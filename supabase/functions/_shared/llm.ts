@@ -34,8 +34,8 @@ import { parseLlmJson as parseLlmJsonRobust } from "./llm-json.ts";
 // engineForUser() —que todas llaman con el usuario— deja allí el idioma.
 // Una función sin envolver simplemente no recibe directiva y responde en
 // español, como siempre.
-export type OutputLanguage = "es" | "en";
-export const OUTPUT_LANGUAGES: readonly OutputLanguage[] = ["es", "en"] as const;
+export type OutputLanguage = "es" | "en" | "pt-BR";
+export const OUTPUT_LANGUAGES: readonly OutputLanguage[] = ["es", "en", "pt-BR"] as const;
 export function isOutputLanguage(v: unknown): v is OutputLanguage {
   return typeof v === "string" && (OUTPUT_LANGUAGES as readonly string[]).includes(v);
 }
@@ -56,10 +56,20 @@ export function setRequestLanguage(lang: unknown): void {
 export function requestLanguage(): OutputLanguage {
   return requestContext.getStore()?.language ?? "es";
 }
-const LANGUAGE_NAME: Record<OutputLanguage, string> = { es: "Spanish (neutral Latin American, tú)", en: "English" };
-function languageDirective(lang: OutputLanguage): string {
+const LANGUAGE_NAME: Record<OutputLanguage, string> = {
+  es: "Spanish (neutral Latin American, tú)",
+  en: "English",
+  "pt-BR": "Brazilian Portuguese (pt-BR)",
+};
+// Matiz de estilo por idioma: el portugués tiene que sonar escrito en Brasil,
+// no traducido del español (ni portugués de Portugal).
+const LANGUAGE_STYLE: Partial<Record<OutputLanguage, string>> = {
+  "pt-BR": ` Write natural, professional Brazilian Portuguese as a Brazilian B2B seller would — address the reader as "você", use Brazilian vocabulary and spelling (never European Portuguese), and rewrite idioms instead of translating Spanish word for word. Where an instruction above says to use "tú" or "usted", apply it as "você" (informal) or "o senhor / a senhora" (formal).`,
+};
+/** Directiva que callLLM agrega al final del system prompt. Espejo en js/realtime-coach.js (coach en vivo por el worker). */
+export function languageDirective(lang: OutputLanguage): string {
   if (lang === "es") return "";
-  return `\n\n=== OUTPUT LANGUAGE (overrides everything above) ===\nThe user reads the product in ${LANGUAGE_NAME[lang]}. Every human-readable string in your answer — titles, summaries, bullet points, messages, objections, actions, JSON string values meant for a person — MUST be written in ${LANGUAGE_NAME[lang]}, even where an instruction above says "en español" / "in Spanish". Keep JSON keys, enum values, ids, URLs, company names and proper nouns exactly as specified.`;
+  return `\n\n=== OUTPUT LANGUAGE (overrides everything above) ===\nThe user reads the product in ${LANGUAGE_NAME[lang]}. Every human-readable string in your answer — titles, summaries, bullet points, messages, objections, actions, JSON string values meant for a person — MUST be written in ${LANGUAGE_NAME[lang]}, even where an instruction above says "en español" / "in Spanish".${LANGUAGE_STYLE[lang] ?? ""} Keep JSON keys, enum values, ids, URLs, company names and proper nouns exactly as specified.`;
 }
 
 export type Engine = "claude" | "openai" | "perplexity";

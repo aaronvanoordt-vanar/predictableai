@@ -233,13 +233,13 @@
     if (!v) return '—';
     var d = new Date(v);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   }
   function fmtDate(v) {
     if (!v) return '—';
     var d = new Date(v);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
   }
   function fmtRel(v) {
     if (!v) return '';
@@ -253,7 +253,7 @@
     if (hrs < 24) return hrs + ' h';
     var days = Math.round(hrs / 24);
     if (days < 7) return days + ' d';
-    return d.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short' });
   }
   function pill(label, kind) { return '<span class="pill pill-' + esc(kind || 'gray') + '">' + esc(label) + '</span>'; }
   function labelOf(list, value) {
@@ -2354,7 +2354,7 @@
         del.addEventListener('click', function () { confirmDeleteTemplate(t, usedBy, api); });
         top.appendChild(del);
         row.appendChild(top);
-        if (t.body) row.appendChild(h('div', { class: 'cmp-tpl-body', text: t.body }));
+        if (t.body) row.appendChild(h('div', { class: 'cmp-tpl-body notranslate', text: t.body }));
         if (t.buttons && t.buttons.length) {
           row.appendChild(h('div', { class: 'cmp-tpl-meta', text: 'Botones: ' + t.buttons.map(function (b) { return b.text; }).join(' · ') }));
         }
@@ -3241,7 +3241,7 @@
       out += '<div><div class="pros-lbl">' + esc(L.nodeTitle(a)) + ' ' + (st ? pill(st.label, st.pill) : pill('aún no escrito', 'gray')) + '</div>';
       if (m && m.status === 'error') out += '<div class="pros-note-red" style="margin:0">' + esc(m.error_detail || 'No se pudo generar.') + '</div>';
       else if (m && String(m.body || '').trim()) {
-        out += '<div class="cmp-ai-block">' + (m.subject ? '<b>' + esc(m.subject) + '</b><br>' : '') + esc(m.body) + '</div>';
+        out += '<div class="cmp-ai-block notranslate">' + (m.subject ? '<b>' + esc(m.subject) + '</b><br>' : '') + esc(m.body) + '</div>';
         if (m.status === 'draft' || m.status === 'approved') {
           out += '<div class="pros-actions"><button type="button" class="btn btn-ghost btn-sm" data-action="msg-regen" data-id="' + esc(String(m.id)) + '" data-credit-cost="outreach_message" data-credit-muted="">Regenerar</button></div>';
         }
@@ -3430,7 +3430,7 @@
       item.appendChild(h('div', { class: 'cmp-conv-time', text: fmtRel(conv.last && conv.last.sent_at) }));
       item.appendChild(h('div', { class: 'cmp-conv-sub', text: convSub(conv) }));
       var snippet = conv.last ? ((conv.last.direction === 'out' && !isReaction(conv.last) ? 'Tú: ' : '') + bubbleText(conv.last)) : '';
-      item.appendChild(h('div', { class: 'cmp-conv-snip', text: snippet }));
+      item.appendChild(h('div', { class: 'cmp-conv-snip notranslate', text: snippet }));
       list.appendChild(item);
     });
     left.appendChild(list);
@@ -3779,19 +3779,19 @@
         var qm = conv.messages.find(function (x) { return x.id === pl.reply_to.id; });
         var q = h('div', { class: 'cmp-quote ' + (pl.reply_to.direction === 'in' ? 'in' : 'out') });
         q.appendChild(h('div', { class: 'cmp-quote-who', text: pl.reply_to.direction === 'in' ? convName(conv) : 'Tú' }));
-        q.appendChild(h('div', { class: 'cmp-quote-txt', text: quoteSnippet(qm ? qm.body : pl.reply_to.body, pl.reply_to.channel) || 'Mensaje' }));
+        q.appendChild(h('div', { class: 'cmp-quote-txt notranslate', text: quoteSnippet(qm ? qm.body : pl.reply_to.body, pl.reply_to.channel) || 'Mensaje' }));
         b.appendChild(q);
       }
       var ctx = msg.direction === 'out' ? stepContext(msg) : '';
       if (ctx) b.appendChild(h('div', { class: 'cmp-bubble-ctx', text: ctx }));
-      if (chanKey(msg.channel) === 'email' && pl.subject) b.appendChild(h('div', { class: 'cmp-bubble-subj', text: pl.subject }));
+      if (chanKey(msg.channel) === 'email' && pl.subject) b.appendChild(h('div', { class: 'cmp-bubble-subj notranslate', text: pl.subject }));
       var media = isMediaMsg(msg);
       if (media) b.appendChild(renderMedia(msg));
       var raw = bubbleText(msg);
       // Los emails salientes guardan "Asunto: …" al inicio del cuerpo: el asunto ya va arriba.
       if (chanKey(msg.channel) === 'email' && pl.subject && raw.indexOf('Asunto: ') === 0) raw = raw.replace(/^Asunto: [^\n]*\n+/, '');
       // En un medio, el texto es la etiqueta ("Sticker", "📷 Foto"): solo se muestra si es un pie de foto real.
-      if (!media || MEDIA_LABELS.indexOf(String(raw).trim()) === -1) b.appendChild(h('div', { style: 'white-space:pre-wrap', text: raw }));
+      if (!media || MEDIA_LABELS.indexOf(String(raw).trim()) === -1) b.appendChild(h('div', { class: 'notranslate', style: 'white-space:pre-wrap', text: raw }));
       var meta = h('div', { class: 'cmp-bubble-meta', html: chanIcon(msg.channel) });
       if (msg.direction === 'out') {
         meta.appendChild(h('span', { text: fmtDateTime(msg.sent_at) }));
@@ -3963,7 +3963,7 @@
       var qchip = h('div', { class: 'cmp-quote cmp-quote-edit ' + (qt.direction === 'in' ? 'in' : 'out') });
       var qbody = h('div', { class: 'grow' });
       qbody.appendChild(h('div', { class: 'cmp-quote-who', text: 'Respondiendo a ' + (qt.direction === 'in' ? convName(conv) : 'tu mensaje') }));
-      qbody.appendChild(h('div', { class: 'cmp-quote-txt', text: quoteSnippet(bubbleText(qt), qt.channel) || 'Mensaje' }));
+      qbody.appendChild(h('div', { class: 'cmp-quote-txt notranslate', text: quoteSnippet(bubbleText(qt), qt.channel) || 'Mensaje' }));
       qchip.appendChild(qbody);
       qchip.appendChild(h('button', { type: 'button', class: 'cmp-attach-x', 'data-action': 'reply-to-clear', 'data-key': conv.key, title: 'Quitar la cita', 'aria-label': 'Quitar la cita', text: '✕' }));
       box.appendChild(qchip);
