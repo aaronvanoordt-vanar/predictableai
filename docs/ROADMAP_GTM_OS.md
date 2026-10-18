@@ -92,7 +92,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Cobro local y CFDI (`docs/BILLING_LATAM.md`)
   - [x] Fase A: factura de Stripe con el número fiscal del cliente, moneda local y OXXO/Pix en recargas (#344; faltan los pasos del Dashboard de Stripe y la consulta al contador sobre el 18-B)
   - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC
-- [ ] Facturación y créditos por cliente para agencias
+- [x] Facturación y créditos por cliente para agencias — créditos repartidos a los espacios, tope mensual y alerta, consumo por cliente con CSV, selector de espacios y directorio (`agencias.html`); migración `20261018000001`. La factura consolidada sale sola: solo la agencia paga (sin cambios en Stripe)
 - [ ] Mapa de TAM, señales de LinkedIn y píxel web
 
 **P3**

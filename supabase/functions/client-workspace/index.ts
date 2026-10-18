@@ -15,17 +15,25 @@
  * queda guardada en el navegador para «Volver a mi cuenta» (js/workspace.js).
  *
  * Quién puede entrar: una cuenta del equipo (is_vanarsi_account: email
- * @vanarsi.com confirmado, nunca otra cuenta de espacio) que además gestiona
- * el cliente (can_manage_client). Cualquier otra combinación → 403.
+ * @vanarsi.com confirmado, nunca otra cuenta de espacio) o una agencia
+ * aprobada (is_agency_account: ficha `agencies` aprobada a mano por el dueño +
+ * plan pago; migración 20261018000001) — juntas, `can_open_workspaces` — que
+ * además gestiona el cliente (can_manage_client). Cualquier otra combinación
+ * → 403.
  *
  * La cuenta del espacio: email `ws-<client_id>@workspaces.vanarsi.com`
  * (subdominio sin buzón: nadie puede recibir un correo de recuperación), sin
  * contraseña, confirmada, con el perfil ya «onboarded» sobre el sitio web del
  * cliente y la marca del cliente (nombre + su foto como logo).
  *
- * Acciones (POST JSON, con el JWT del equipo):
+ * Acciones (POST JSON, con el JWT del equipo o de la agencia):
  *   enter { client_id, website? } → { token_hash, workspace_user_id,
  *          client_name, website, created, needs_research }
+ *   transfer { client_id, amount, note? } → asigna (amount > 0) o retira
+ *          (amount < 0) créditos entre el pozo de la agencia y el espacio
+ *          (RPC agency_transfer_credits, que revalida todo y deja auditoría).
+ *   settings { client_id, monthly_cap, low_balance_alert } → tope de gasto
+ *          mensual y alerta de saldo bajo (RPC agency_workspace_settings).
  *
  * Despliegue: supabase functions deploy client-workspace   (CON verificación
  * de JWT: solo la llama el equipo con sesión).
@@ -34,6 +42,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
+import { parseSettings, parseTransfer, rpcErrorMessage } from "../_shared/agency-credits.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -132,7 +141,7 @@ Deno.serve(async (req) => {
   let body: any = {};
   try { body = await req.json(); } catch { /* vacío */ }
   const action = String(body?.action ?? "enter");
-  if (action !== "enter") return json({ error: "Acción desconocida" }, 400, origin);
+  if (!["enter", "transfer", "settings"].includes(action)) return json({ error: "Acción desconocida" }, 400, origin);
 
   const clientId = String(body?.client_id ?? "");
   if (!UUID_RE.test(clientId)) return json({ error: "client_id inválido" }, 400, origin);
@@ -147,17 +156,50 @@ Deno.serve(async (req) => {
   const caller = userData?.user;
   if (userErr || !caller) return json({ error: "Unauthorized" }, 401, origin);
 
-  // 1. Solo el equipo (y nunca desde dentro de otro espacio).
-  const team = await db.rpc("is_vanarsi_account", { p_user_id: caller.id });
+  // 1. Solo el equipo o una agencia aprobada (y nunca desde dentro de otro
+  //    espacio: las dos funciones excluyen a las cuentas de espacio).
+  let team = await db.rpc("can_open_workspaces", { p_user_id: caller.id });
+  if (team.error) {
+    // Migración de agencias aún sin aplicar: el criterio de siempre.
+    console.warn("[client-workspace] can_open_workspaces", team.error.message);
+    team = await db.rpc("is_vanarsi_account", { p_user_id: caller.id });
+  }
   if (team.error) {
     console.error("[client-workspace] is_vanarsi_account", team.error.message);
     return json({ error: "No se pudo validar tu cuenta" }, 500, origin);
   }
-  if (team.data !== true) return json({ error: "Solo el equipo de predictable.ai puede entrar a un espacio.", code: "team_only" }, 403, origin);
+  // Retirar créditos de un espacio propio no exige la aprobación vigente: lo
+  // decide el RPC (los créditos de la agencia no quedan atrapados).
+  const withdrawing = action === "transfer" && Number(body?.amount) < 0;
+  if (team.data !== true && !withdrawing) {
+    return json({
+      error: "Solo el equipo de predictable.ai o una agencia aprobada puede abrir espacios de clientes.",
+      code: "team_only",
+    }, 403, origin);
+  }
 
   // 2. …que gestiona este cliente (RLS con el JWT de quien llama).
   const manage = await authed.rpc("can_manage_client", { p_client_id: clientId });
   if (manage.data !== true) return json({ error: "No gestionas este cliente.", code: "forbidden" }, 403, origin);
+
+  if (action === "transfer" || action === "settings") {
+    const parsed = action === "transfer" ? parseTransfer(body) : parseSettings(body);
+    if (!parsed.ok) return json({ error: parsed.error, code: "invalid" }, 400, origin);
+    const v = parsed.value as Record<string, unknown>;
+    const res = action === "transfer"
+      ? await db.rpc("agency_transfer_credits", {
+        p_actor: caller.id, p_client_id: clientId, p_amount: v.amount, p_note: v.note,
+      })
+      : await db.rpc("agency_workspace_settings", {
+        p_actor: caller.id, p_client_id: clientId, p_monthly_cap: v.monthly_cap, p_low_balance_alert: v.low_balance_alert,
+      });
+    if (res.error) {
+      const e = rpcErrorMessage(res.error.message);
+      if (e.status === 500) console.error(`[client-workspace] ${action}`, res.error.message);
+      return json({ error: e.error, code: e.code }, e.status, origin);
+    }
+    return json(res.data ?? {}, 200, origin);
+  }
 
   const found = await db.from("clients").select("id, name, website, photo_path").eq("id", clientId).maybeSingle();
   if (found.error) return json({ error: "No se pudo leer el cliente" }, 500, origin);
