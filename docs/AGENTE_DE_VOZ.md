@@ -201,7 +201,7 @@ Ninguno de los seis tiene hoy una ley vigente que obligue a decir que la voz es 
 | `voice-webhook` (`--no-verify-jwt`) | Eventos de Retell, verificados con `x-retell-signature` |
 | `js/voice-agent.js` | Sección en la ficha del lead, diálogo «Llamar con el agente» (propósito → reunión → Revisar → Llamar ahora) y configuración |
 | `js/campaigns.js` | Canal «Llamada» en la Bandeja |
-| Migración `20261018000001_voice_agent.sql` | `voice_agent_settings` (RLS por dueño), `voice_calls` (el usuario solo lee), `voice_platform` (solo service role), canal `voice` y proveedor `retell` en `inbox_messages` |
+| Migración `20261018200001_voice_agent.sql` | `voice_agent_settings` (RLS por dueño), `voice_calls` (el usuario solo lee), `voice_platform` (solo service role), canal `voice` y proveedor `retell` en `inbox_messages` |
 
 **El guion** sale de:
 
@@ -248,7 +248,7 @@ Project Settings → Edge Functions → Secrets:
 
 ### 4. Base y funciones
 
-1. Aplica la migración `supabase/migrations/20261018000001_voice_agent.sql`.
+1. Aplica la migración `supabase/migrations/20261018200001_voice_agent.sql`.
 2. Despliega las funciones (Actions → Deploy Edge Functions, o por CLI):
    ```bash
    supabase functions deploy voice-agent

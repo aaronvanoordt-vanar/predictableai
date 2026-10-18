@@ -86,13 +86,15 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 **P2**
 - [ ] Registros públicos de empresas
 - [ ] APIs oficiales de licitaciones
+- [x] ¿El número está en WhatsApp? antes de gastar plantilla (tipo de línea del normalizador del waterfall + aprendizaje de #131026; no existe validación oficial previa: `docs/OMNICANAL.md`)
 - [x] Listas "No llamar" — lista de supresión por canal + bajas centralizadas + registros oficiales (`docs/COMPLIANCE_LATAM.md`)
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
 - [ ] Agendamiento con recordatorios por WhatsApp
 - [ ] Cobro local y CFDI (`docs/BILLING_LATAM.md`)
   - [x] Fase A: factura de Stripe con el número fiscal del cliente, moneda local y OXXO/Pix en recargas (#344; faltan los pasos del Dashboard de Stripe y la consulta al contador sobre el 18-B)
-  - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC
+  - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC — en curso: CFDI en modo prueba con Facturapi; falta la entidad
 - [ ] Facturación y créditos por cliente para agencias
+- [ ] Equipo: metas de actividad, ranking, revisión del Meeting Coach con comentarios y rampa — en curso (sesión propia; las llamadas se enganchan cuando exista la telefonía)
 - [ ] Mapa de TAM, señales de LinkedIn y píxel web — Mapa de TAM construido (rama `claude/tam-map`); faltan señales de LinkedIn y píxel web
 
 **P3**

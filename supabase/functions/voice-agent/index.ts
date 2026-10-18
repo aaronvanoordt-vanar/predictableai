@@ -8,7 +8,7 @@
  * Diseño, proveedor y leyes por país: docs/AGENTE_DE_VOZ.md.
  *
  * Auth: Bearer <user JWT> (con JWT en el deploy). `reconcile` acepta la
- * service role (pg_cron, ver la migración 20261018000001).
+ * service role (pg_cron, ver la migración 20261018200001).
  *
  * POST { action, … }
  *   status                                   → { configured, countries, settings, costs }
@@ -79,7 +79,7 @@ class HttpError extends Error {
 async function loadSettings(svc: Json, userId: string): Promise<Json> {
   const { data, error } = await svc.from("voice_agent_settings").select("*").eq("user_id", userId).maybeSingle();
   if (error) {
-    if (/does not exist|relation/i.test(error.message)) throw new HttpError("Falta aplicar la migración 20261018000001_voice_agent.sql.", 503, { error: "migration_pending" });
+    if (/does not exist|relation/i.test(error.message)) throw new HttpError("Falta aplicar la migración 20261018200001_voice_agent.sql.", 503, { error: "migration_pending" });
     throw new HttpError(error.message, 500);
   }
   return { ...DEFAULT_SETTINGS, ...(data ?? {}) };
