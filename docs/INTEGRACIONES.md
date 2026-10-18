@@ -65,7 +65,7 @@ Si más adelante se quiere que una IA de Predictable consulte el CRM en conversa
 - `config.sync` — `pull`, `cursor`, `missing_scopes`, `last_run_at`, `last_status`, `auto_lists`. `config.export_progress` suma las tandas de un envío en curso.
 - `prospect_list_members.crm_state` — un objeto por plataforma (`{ hubspot: {…}, pipedrive: { person_id, org_id, deal_id, url, pushed_at } }`), escrito con la RPC `merge_member_crm_state` (solo service role).
 
-Migraciones: `20260923000009_integrations.sql` y `20261017000002_crm_integrations_latam.sql` (proveedores nuevos, columnas `crm_*`, trigger que las protege, RPC y el cron comentado).
+Migraciones: `20260923000009_integrations.sql` y `20261018230000_crm_integrations_latam.sql` (proveedores nuevos, columnas `crm_*`, trigger que las protege, RPC y el cron comentado).
 
 ## Tokens
 
@@ -91,7 +91,7 @@ Cada par es opcional: sin él, la tarjeta ofrece el token (si la plataforma lo p
 
 HubSpot: agregar a la app pública los alcances **opcionales** `crm.objects.deals.read`, `crm.objects.companies.read` y `crm.objects.owners.read` (la vuelta). Sin ellos la ida sigue funcionando.
 
-**Cron** (una vez, con la URL del proyecto y la service role; el texto exacto está comentado al final de la migración `20261017000002`): `integrations-sync`, `*/15 * * * *`, `POST /functions/v1/integrations` con `{"action":"cron"}`.
+**Cron** (una vez, con la URL del proyecto y la service role; el texto exacto está comentado al final de la migración `20261018230000`): `integrations-sync`, `*/15 * * * *`, `POST /functions/v1/integrations` con `{"action":"cron"}`.
 
 `calendar.events` es un scope sensible: para usuarios fuera del dominio de Google Workspace de Vanar, Google exige verificar la app (mientras tanto funciona con usuarios de prueba).
 

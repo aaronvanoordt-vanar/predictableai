@@ -295,7 +295,7 @@ async function loadLeads(ctx: Ctx, listId: string, since?: string): Promise<{ na
     if (error || !list) throw new HttpError("No encontramos esa lista.", 404);
     name = String(list.name ?? "Lista");
   }
-  // crm_state (ids de envíos anteriores) es de la migración 20261017000002:
+  // crm_state (ids de envíos anteriores) es de la migración 20261018230000:
   // sin ella se lee lo demás y el envío funciona igual.
   let leads: Lead[] = [];
   for (const cols of [MEMBER_COLS + ", crm_state", MEMBER_COLS]) {

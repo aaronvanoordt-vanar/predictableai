@@ -876,7 +876,7 @@ export const OPERATIONS: Record<string, Operation> = {
       const first = firstNode(normalizeFlow(c.flow));
       if (!first) throw new ApiError(409, "campaign_empty", "La campaña no tiene pasos todavía.");
 
-      // crm_* (migración 20261017000002): «no contactar» porque en el CRM ya es
+      // crm_* (migración 20261018230000): «no contactar» porque en el CRM ya es
       // cliente o tiene una oportunidad abierta. Sin la migración se lee lo demás.
       const MCOLS = "id, contact_status, email, phone, linkedin_url, company_domain";
       let { data: members, error: mErr } = await ctx.supa.from("prospect_list_members").select(MCOLS + ", crm_suppressed_at, crm_suppression_reason").eq("user_id", ctx.userId).in("id", ids);
