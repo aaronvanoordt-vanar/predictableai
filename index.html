@@ -2126,6 +2126,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
          Estas son las únicas pestañas de js/prospecting.js (no hay un padre "Prospección":
          llevaba al mismo lugar que Buscar). Los ids viejos (resumen/contactos/outreach/
          secuencias/bandeja) siguen resolviendo vía PRO_HASH_ALIASES y prospecting.show(). -->
+    <!-- Mapa de TAM (2026-10-17, js/tam-map.js + js/tam-rules.js): el mercado
+         real del ICP por país y segmento (totales de Apollo), tiers A/B/C con
+         reglas editables y cobertura. Va antes de Buscar: de aquí se abre
+         Buscar con las cuentas Tier A sin contactar. -->
+    <div class="nav-item" data-page="tam-map" onclick="nav(this,'tam-map');if(window.tamMap)window.tamMap.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5"/><path d="M1.5 6h13M1.5 10.5h13M6 1.5v13M10.5 1.5v13"/></svg>
+      Mapa de TAM
+    </div>
     <div class="nav-item" data-page="pro-main" data-pros-tab="busqueda" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('busqueda')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5L10.3 10.3"/></svg>
       Buscar
@@ -2413,6 +2421,17 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
   <div id="ai-training-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: MAPA DE TAM (js/tam-map.js) ═══════ -->
+<div class="page fade-in" id="page-tam-map" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Mapa de TAM</div>
+      <div class="topbar-sub">Cuántas empresas de tu ICP existen, cuáles atacar primero y cuánto llevas cubierto</div>
+    </div>
+  </div>
+  <div id="tam-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: INTEGRACIONES (js/integrations.js) ═══════ -->
@@ -3191,6 +3210,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/i18n.js"></script>
 <script src="js/api.js"></script>
 <script src="js/apollo-enums.js"></script>
+<script src="js/tam-rules.js?v=20261017"></script>
 <script src="js/company-context.js?v=20260823"></script>
 <script src="js/prospecting-data.js?v=20261008"></script>
 <script src="js/prospecting.js?v=20261008"></script>
@@ -3211,6 +3231,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/meeting-report.js"></script>
 <script src="js/learning.js?v=20260919"></script>
 <script src="js/ai-training.js?v=20260923"></script>
+<script src="js/tam-map.js?v=20261017"></script>
 <script src="js/integrations.js?v=20260923"></script>
 <script src="js/dev-docs.js?v=20260923"></script>
 <script src="js/developers.js?v=20260923"></script>
@@ -4062,6 +4083,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // Páginas con shell propio: montarlas también al restaurar (el onclick
     // del nav-item no corre en este camino).
     if (hash === 'clients' && window.clientsModule) window.clientsModule.show();
+    if (hash === 'tam-map' && window.tamMap) window.tamMap.show();
   }, 0);
 });
 

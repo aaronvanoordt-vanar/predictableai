@@ -4035,7 +4035,25 @@
         ensureBuilt();
         switchTab('busqueda');
         if (apollo.connected !== true) return; // el bloqueo de Apollo ya está a la vista
-        var kw = (opts && Array.isArray(opts.keywords) ? opts.keywords : []).map(function (k) { return String(k || '').trim(); }).filter(Boolean);
+        // Mapa de TAM (js/tam-map.js): cuentas concretas por dominio. Se parte
+        // de filtros limpios — un país o un cargo de la búsqueda anterior
+        // escondería cuentas de la lista — y se buscan sus decisores del ICP.
+        var domains = (opts && Array.isArray(opts.domains) ? opts.domains : []).map(function (d) { return String(d || '').trim().toLowerCase(); }).filter(Boolean);
+        if (domains.length) {
+          var fd = defaultFilters();
+          fd.q_organization_domains_list = Array.from(new Set(domains)).slice(0, 1000);
+          var titles = (Array.isArray(opts.titles) ? opts.titles : []).filter(function (x) { return typeof x === 'string' && x.trim(); }).slice(0, 20);
+          if (titles.length) fd.person_titles = titles;
+          else fd.person_seniorities = (Array.isArray(opts.seniorities) ? opts.seniorities : []).filter(function (x) { return typeof x === 'string'; }).slice(0, 10);
+          state.search.filters = fd;
+          setActiveSavedId(null);
+          persistFilters();
+          if (state.search.panelHost) { state.search.panelHost.innerHTML = ''; state.search.panelHost.appendChild(buildFilterPanel()); }
+          updateFilterBadges();
+          toast(opts.note ? String(opts.note) : 'Buscando en ' + fd.q_organization_domains_list.length + ' cuentas.', 'info');
+          return runSearch(1, true);
+        }
+        var kw =(opts && Array.isArray(opts.keywords) ? opts.keywords : []).map(function (k) { return String(k || '').trim(); }).filter(Boolean);
         if (kw.length) {
           var f = state.search.filters || defaultFilters();
           f.q_organization_keyword_tags = Array.from(new Set((f.q_organization_keyword_tags || []).concat(kw))).slice(0, 6);
