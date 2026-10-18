@@ -2163,6 +2163,15 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="sidebar-section">
       <div class="lbl">Ventas</div>
     </div>
+    <!-- CRM (2026-10-17, js/crm.js): oportunidades por etapas, cuentas
+         (empresas, enlazadas por dominio a sus personas y a las señales del
+         Radar) y tareas. Va primero en Ventas: la Bandeja trae la respuesta,
+         aquí nace la oportunidad y el Meeting Coach la avanza. -->
+    <div class="nav-item" data-page="crm" onclick="nav(this,'crm');if(window.crm)window.crm.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1.5" y="2" width="3.5" height="12" rx="1"/><rect x="6.25" y="2" width="3.5" height="8" rx="1"/><rect x="11" y="2" width="3.5" height="5" rx="1"/></svg>
+      CRM
+      <span id="nav-crm-badge" class="nav-badge" style="display:none">0</span>
+    </div>
     <div class="nav-item" data-page="ventas-coach" onclick="nav(this,'ventas-coach')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 13v2M11 13v2M3 15h10"/></svg>
       Meeting Coach
@@ -2462,6 +2471,17 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
   <div id="integrations-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: CRM (js/crm.js) ═══════ -->
+<div class="page fade-in" id="page-crm" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">CRM</div>
+      <div class="topbar-sub">Tus oportunidades por etapa, tus cuentas con toda su actividad y tus tareas</div>
+    </div>
+  </div>
+  <div id="crm-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: DESARROLLADORES (js/developers.js + js/dev-docs.js) ═══════ -->
@@ -3251,7 +3271,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/campaign-knowledge.js?v=20260923"></script>
 <script src="js/campaign-analytics.js?v=20261008a"></script>
 <script src="js/suppression.js?v=20261017"></script>
-<script src="js/campaigns.js?v=20261018crm2"></script>
+<script src="js/campaigns.js?v=20261018crm3"></script>
 <script src="js/inbox-alert.js?v=20261001b"></script>
 <script src="js/push.js?v=20261006"></script>
 <script src="js/radar.js?v=20260918"></script>
@@ -3268,12 +3288,13 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/developers.js?v=20260923"></script>
 <script src="js/team-metrics.js?v=20261017"></script>
 <script src="js/team.js?v=20261017"></script>
+<script src="js/crm.js?v=20261017"></script>
 <script src="js/coach-lead-picker.js?v=20260915"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js?v=20260823"></script>
 <!-- Contexto estratégico IA: PESTEL + 5 fuerzas de Porter + FODA→CAME (contexto opcional, debajo del Intelligence Hub) -->
 <script src="js/coda-ai.js"></script>
-<script src="js/context-gate.js"></script>
+<script src="js/context-gate.js?v=20261018b"></script>
 <script src="js/onboarding-tour.js"></script>
 <script src="js/miforms-prompt.js"></script>
 <script src="js/ux.js?v=20260919b"></script>
