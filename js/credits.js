@@ -28,7 +28,7 @@
   // Prueba gratis (docs/TRIAL_REVIEW.md): 100 créditos sin vencimiento, o 300
   // por 30 días con el email de la empresa. Espejo de CORPORATE_TRIAL en
   // supabase/functions/_shared/billing-plans.ts (lo concede el RPC
-  // claim_trial_credits, migración 20261017000001).
+  // claim_trial_credits, migración 20261018000001).
   const TRIAL = { credits: 100, corporateCredits: 300, days: 30 };
   let trialPromise = null;
 
@@ -391,7 +391,7 @@
     const toast = global.uiHelpers && global.uiHelpers.toast;
     if (!toast) return;
     if (flag === 'success') toast('¡Listo! Tu plan Starter está activo. Los créditos del mes aparecen en unos segundos.', 'success');
-    else if (flag === 'topup') toast('Pago recibido. La recarga aparece en tu saldo en unos segundos.', 'success');
+    else if (flag === 'topup') toast('Listo. Si pagaste con tarjeta, la recarga aparece en tu saldo en unos segundos; si elegiste OXXO o Pix, cuando se confirme el pago.', 'success');
     else if (flag === 'cancel') toast('Pago cancelado. No se hizo ningún cobro.', 'info');
     if (flag === 'success' || flag === 'topup') {
       // El webhook de Stripe suele tardar unos segundos; el realtime del chip

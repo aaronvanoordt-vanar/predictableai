@@ -33,7 +33,7 @@ export const STARTER = {
 // FREE_TRIAL_CREDITS al registrarse, sin vencimiento. Con un email
 // corporativo confirmado (uno por dominio) la prueba sube a
 // CORPORATE_TRIAL.credits que vencen a los CORPORATE_TRIAL.days días: lo
-// concede el RPC `claim_trial_credits` (migración 20261017000001, espejo de
+// concede el RPC `claim_trial_credits` (migración 20261018000001, espejo de
 // estos números; lo verifica trial-limits.test.ts).
 export const FREE_TRIAL_CREDITS = 100;
 export const CORPORATE_TRIAL = { credits: 300, days: 30 } as const;

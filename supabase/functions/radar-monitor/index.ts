@@ -309,7 +309,7 @@ async function billDetector(supa: Json, det: Json): Promise<boolean> {
 
   // Prueba gratis: el primer detector de la cuenta corre sus primeros 30 días
   // sin gastar la bolsa (docs/TRIAL_REVIEW.md). El índice único parcial
-  // ct_user_radar_detector_trial_uidx (migración 20261017000001) deja pasar
+  // ct_user_radar_detector_trial_uidx (migración 20261018000001) deja pasar
   // una sola fila por cuenta; si ya existe, se cobra como siempre.
   if (plan === "free") {
     const { count: used } = await supa.from("credit_transactions")

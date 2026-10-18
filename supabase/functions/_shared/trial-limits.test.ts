@@ -44,7 +44,7 @@ Deno.test("platformRevealsLeft: si no puede leer el libro aplica el tope", async
 });
 
 Deno.test("la migración de la prueba corporativa es espejo de billing-plans.ts", async () => {
-  const sql = await Deno.readTextFile(new URL("../../migrations/20261017000001_corporate_trial.sql", import.meta.url));
+  const sql = await Deno.readTextFile(new URL("../../migrations/20261018000001_corporate_trial.sql", import.meta.url));
   assertMatch(sql, new RegExp(`v_free_credits\\s+CONSTANT INT := ${FREE_TRIAL_CREDITS};`));
   assertMatch(sql, new RegExp(`v_corporate_credits CONSTANT INT := ${CORPORATE_TRIAL.credits};`));
   assertMatch(sql, new RegExp(`v_days\\s+CONSTANT INT := ${CORPORATE_TRIAL.days};`));
