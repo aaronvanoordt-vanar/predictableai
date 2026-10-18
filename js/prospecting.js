@@ -490,19 +490,62 @@
     return '<span class="pill pill-gray">No disponible</span>';
   }
 
-  function memberEmailCell(m) {
-    if (m.email_status === 'pending' || m.enrich_requested_at || state.listas.enrichingIds.has(String(m.id))) {
-      return '<span class="pill pill-amber">Enriqueciendo…</span>';
-    }
-    if (m.email && !isMaskedEmail(m.email)) {
-      return '<div>' + esc(m.email) + '</div>' +
-        (m.email_status ? '<div style="margin-top:3px">' + emailPillHtml(m.email_status) + '</div>' : '');
-    }
-    return '<span class="pill pill-gray"' + (m.enrich_error ? ' title="' + esc(m.enrich_error) + '"' : '') + '>Sin email</span>';
+  // Quién encontró cada dato (prospect_list_members.source_provider, waterfall
+  // de enrich-list). Espejo de los ids de supabase/functions/_shared/enrichment/
+  // registry.ts (lo verifica enrichment.test.ts).
+  var ENRICH_SOURCES = {
+    apollo: 'Apollo', prospeo: 'Prospeo', bettercontact: 'BetterContact', fullenrich: 'FullEnrich',
+    contactout: 'ContactOut', kaspr: 'Kaspr', lusha: 'Lusha', millionverifier: 'MillionVerifier', reoon: 'Reoon', zerobounce: 'ZeroBounce',
+  };
+
+  function sourceLabel(id) {
+    return id ? (ENRICH_SOURCES[id] || String(id)) : '';
   }
 
+  // Veredicto del verificador / del proveedor (email_verification), que manda
+  // sobre el email_status de Apollo cuando existe.
+  function verificationPillHtml(v) {
+    if (v === 'valid') return '<span class="pill pill-green">Verificado</span>';
+    if (v === 'catch_all') return '<span class="pill pill-blue" title="El dominio acepta cualquier dirección: no se puede confirmar el buzón">Catch-all</span>';
+    if (v === 'risky') return '<span class="pill pill-amber">Riesgoso</span>';
+    if (v === 'invalid') return '<span class="pill pill-red">Inválido</span>';
+    return '<span class="pill pill-amber">Sin confirmar</span>';
+  }
+
+  function sourceLineHtml(m, field) {
+    var src = m.source_provider || {};
+    var parts = [];
+    if (src[field]) parts.push('vía ' + sourceLabel(src[field]) + (src[field + '_via'] ? ' (' + src[field + '_via'] + ')' : ''));
+    if (field === 'email' && src.email_verifier && m.email_verification) parts.push('verificado con ' + sourceLabel(src.email_verifier));
+    if (!parts.length) return '';
+    return '<div class="pros-cellsub" style="margin-top:2px">' + esc(parts.join(' · ')) + '</div>';
+  }
+
+  function memberEmailCell(m) {
+    var hasEmail = m.email && !isMaskedEmail(m.email);
+    if (!hasEmail && (m.email_status === 'pending' || m.enrich_requested_at || state.listas.enrichingIds.has(String(m.id)))) {
+      return '<span class="pill pill-amber">Enriqueciendo…</span>';
+    }
+    if (hasEmail) {
+      var pill = m.email_verification ? verificationPillHtml(m.email_verification) : (m.email_status ? emailPillHtml(m.email_status) : '');
+      return '<div>' + esc(m.email) + '</div>' +
+        (pill ? '<div style="margin-top:3px">' + pill + '</div>' : '') + sourceLineHtml(m, 'email');
+    }
+    var rejected = (m.source_provider && m.source_provider.rejected_emails) || [];
+    var title = [m.enrich_error, rejected.length ? 'Descartados por inválidos: ' + rejected.join(', ') : ''].filter(Boolean).join(' · ');
+    return '<span class="pill pill-gray"' + (title ? ' title="' + esc(title) + '"' : '') + '>Sin email</span>';
+  }
+
+  var PHONE_TYPES = { mobile: 'Móvil', landline: 'Fijo', switchboard: 'Conmutador' };
+
   function memberPhoneCell(m) {
-    if (m.phone) return esc(m.phone);
+    if (m.phone) {
+      var t = PHONE_TYPES[m.phone_type];
+      return '<div>' + esc(m.phone) + '</div>' +
+        (t ? '<div style="margin-top:3px"><span class="pill ' + (m.phone_type === 'mobile' ? 'pill-green' : 'pill-gray') + '"' +
+          (m.phone_type === 'switchboard' ? ' title="Número de la empresa o con extensión: no sirve para WhatsApp"' : '') + '>' + t + '</span></div>' : '') +
+        sourceLineHtml(m, 'phone');
+    }
     if (m.phone_status === 'pending') return '<span class="pill pill-amber">Pendiente…</span>';
     if (m.phone_status === 'unavailable') return '<span class="pill pill-gray">No disponible</span>';
     return '<span style="color:var(--text3)">—</span>';
@@ -2625,7 +2668,7 @@
       '<div><div style="font-weight:600;font-size:13.5px">' + esc(all ? 'Todos los contactos' : ((list && list.name) || 'Lista')) + '</div>' +
       '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos' + (all ? ' en todas tus listas' : '') + '</div></div>' +
       (all
-        ? '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer teléfonos</button>'
+        ? '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer</button>'
         : '<button type="button" class="btn btn-primary btn-sm" data-action="create-campaign"' + (st.members.length ? '' : ' disabled') + '>' + SVG_CAMPAIGN + ' Crear campaña con esta lista</button>') +
       '</div>' +
       '<div data-enrich-banner>' + enrichBannerHtml() + '</div>';
@@ -2648,7 +2691,7 @@
 
     // Acciones sobre la selección / la lista.
     html += '<div class="pros-actions" style="padding:10px 18px 14px">' +
-      (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer teléfonos</button>') +
+      (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer</button>') +
       (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>') +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-members">Actualizar</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="export-csv"' + (st.members.length ? '' : ' disabled') + '>Exportar CSV</button>' +
@@ -3148,32 +3191,68 @@
     }
   }
 
+  // Texto de la cascada vigente: "Si Apollo no lo encuentra: Prospeo →
+  // FullEnrich (3 créditos por email y 20 por teléfono, solo si lo encuentra)".
+  function cascadeText(cfg) {
+    if (!cfg) return '';
+    var labels = cfg.labels || {};
+    var name = function (id) { return labels[id] || sourceLabel(id); };
+    var em = (cfg.email || []).filter(function (id) { return id !== 'apollo'; }).map(name);
+    var ph = (cfg.phone || []).filter(function (id) { return id !== 'apollo'; }).map(name);
+    var costs = cfg.costs || {};
+    var out = [];
+    if (em.length || ph.length) {
+      var same = em.join() === ph.join();
+      out.push('Si Apollo no lo encuentra, se busca en cascada' +
+        (same ? ' con ' + em.join(' → ') : (em.length ? ' — email: ' + em.join(' → ') : '') + (ph.length ? (em.length ? '; teléfono: ' : ' — teléfono: ') + ph.join(' → ') : '')) +
+        '. Se cobra solo lo que se encuentra' +
+        (em.length && costs.email ? ': ' + costs.email + ' créditos por email' : '') +
+        (ph.length && costs.phone ? (em.length && costs.email ? ' y ' : ': ') + costs.phone + ' por teléfono' : '') +
+        ', también con tu propio Apollo.');
+    }
+    if (cfg.verifier) out.push('Los emails sin verificar se revisan con ' + name(cfg.verifier) + ' y los inválidos se descartan.');
+    return out.join(' ');
+  }
+
   function openEnrichModal() {
     var picked = selectedListMembers();
     if (!picked.length) return toast('Selecciona al menos un contacto.', 'warn');
-    // Solo teléfonos: los que ya tienen uno (o lo están buscando) no se vuelven a cobrar.
-    var sel = picked.filter(function (m) { return !m.phone && m.phone_status !== 'pending'; });
-    var skipped = picked.length - sel.length;
-    if (!sel.length) return toast('Los contactos seleccionados ya tienen teléfono o se está buscando.', 'info');
+    // Teléfono: los que ya tienen uno (o lo están buscando) no se vuelven a
+    // cobrar. Email: solo los que no tienen y ya tienen teléfono (los demás
+    // reciben el email en la misma búsqueda del teléfono).
+    var sel = picked.filter(function (m) { return !m.phone && m.phone_status !== 'pending' && !m.enrich_requested_at; });
+    var emailSel = picked.filter(function (m) {
+      return sel.indexOf(m) === -1 && !(m.email && !isMaskedEmail(m.email)) && !m.enrich_requested_at && m.email_status !== 'pending';
+    });
+    var skipped = picked.length - sel.length - emailSel.length;
+    if (!sel.length && !emailSel.length) return toast('Los contactos seleccionados ya tienen teléfono y email, o se están buscando.', 'info');
+    var parts = [];
+    if (sel.length) parts.push('el teléfono de ' + fmtNum(sel.length) + ' contacto' + (sel.length === 1 ? '' : 's') + ' (y su email si falta)');
+    if (emailSel.length) parts.push('el email de ' + fmtNum(emailSel.length) + ' contacto' + (emailSel.length === 1 ? '' : 's') + ' que ya tiene' + (emailSel.length === 1 ? '' : 'n') + ' teléfono');
+    var cascadeP = h('p', { style: 'font-size:12.5px;color:var(--text2);margin:0 0 12px;line-height:1.55;display:none' });
     var bodyN = h('div', null,
       h('p', {
         style: 'font-size:13px;color:var(--text2);margin:0 0 12px;line-height:1.55',
-        text: 'Se buscará el teléfono de ' + fmtNum(sel.length) + ' contacto' + (sel.length === 1 ? '' : 's') +
-          (skipped ? ' (' + fmtNum(skipped) + ' ya tenían teléfono y se omiten)' : '') +
-          ' vía Apollo. Costo: 8 créditos por teléfono, solo cuando Apollo lo encuentra (con tu propia cuenta de Apollo conectada no gastas créditos de predictable.ai). ' +
-          'Corre en segundo plano — puedes seguir usando la app; usa «Actualizar» en unos minutos para ver los resultados.',
-      }));
+        text: 'Se buscará ' + parts.join(' y ') +
+          (skipped ? ' (' + fmtNum(skipped) + ' ya tenían los datos o se están buscando y se omiten)' : '') +
+          ' vía Apollo. Costo en Apollo: 8 créditos por teléfono y 2 por email, solo cuando Apollo lo encuentra (con tu propia cuenta de Apollo conectada no gastas créditos de predictable.ai). ' +
+          'Corre en segundo plano — puedes seguir usando la app; los resultados aparecen solos en la tabla.',
+      }),
+      cascadeP);
+    Promise.resolve(pd().fetchEnrichProviders && pd().fetchEnrichProviders()).then(function (cfg) {
+      var t = cascadeText(cfg);
+      if (t) { cascadeP.textContent = t; cascadeP.style.display = ''; }
+    }).catch(function () {});
     var api = openModal({
-      title: 'Enriquecer teléfonos',
+      title: 'Enriquecer contactos',
       bodyNode: bodyN,
       actions: [
         { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
         {
-          label: 'Buscar teléfonos',
+          label: 'Enriquecer',
           className: 'btn btn-primary',
           onClick: function () {
-            var members = sel;
-            var revealPhones = true;
+            var members = sel.concat(emailSel);
             var targetListId = state.listas.activeListId;
             // No bloquea el modal: el enriquecimiento sigue en segundo plano
             // (mismo espíritu que los teléfonos, que ya llegan async vía
@@ -3195,9 +3274,19 @@
             setTimeout(function () { refreshEnrichQueue(); }, 1500);
             Promise.resolve()
               .then(function () {
-                return pd().enrichMembers({
-                  members: members, revealPhones: revealPhones,
-                  onProgress: function (p) { enrichJobProgress(job, p); },
+                var onProgress = function (p) { enrichJobProgress(job, p); };
+                var phones = sel.length ? pd().enrichMembers({ members: sel, revealPhones: true, onProgress: onProgress }) : Promise.resolve(null);
+                return phones.then(function (a) {
+                  if (!emailSel.length) return a;
+                  return pd().enrichMembers({ members: emailSel, revealPhones: false, onProgress: onProgress }).then(function (b) {
+                    if (!a) return b;
+                    return Object.assign({}, a, {
+                      server: a.server && b.server,
+                      updated: (a.updated || 0) + (b.updated || 0),
+                      phonePending: (a.phonePending || 0) + (b.phonePending || 0),
+                      failed: (a.failed || []).concat(b.failed || []),
+                    });
+                  });
                 });
               })
               .then(function (res) {
@@ -3949,7 +4038,25 @@
         ensureBuilt();
         switchTab('busqueda');
         if (apollo.connected !== true) return; // el bloqueo de Apollo ya está a la vista
-        var kw = (opts && Array.isArray(opts.keywords) ? opts.keywords : []).map(function (k) { return String(k || '').trim(); }).filter(Boolean);
+        // Mapa de TAM (js/tam-map.js): cuentas concretas por dominio. Se parte
+        // de filtros limpios — un país o un cargo de la búsqueda anterior
+        // escondería cuentas de la lista — y se buscan sus decisores del ICP.
+        var domains = (opts && Array.isArray(opts.domains) ? opts.domains : []).map(function (d) { return String(d || '').trim().toLowerCase(); }).filter(Boolean);
+        if (domains.length) {
+          var fd = defaultFilters();
+          fd.q_organization_domains_list = Array.from(new Set(domains)).slice(0, 1000);
+          var titles = (Array.isArray(opts.titles) ? opts.titles : []).filter(function (x) { return typeof x === 'string' && x.trim(); }).slice(0, 20);
+          if (titles.length) fd.person_titles = titles;
+          else fd.person_seniorities = (Array.isArray(opts.seniorities) ? opts.seniorities : []).filter(function (x) { return typeof x === 'string'; }).slice(0, 10);
+          state.search.filters = fd;
+          setActiveSavedId(null);
+          persistFilters();
+          if (state.search.panelHost) { state.search.panelHost.innerHTML = ''; state.search.panelHost.appendChild(buildFilterPanel()); }
+          updateFilterBadges();
+          toast(opts.note ? String(opts.note) : 'Buscando en ' + fd.q_organization_domains_list.length + ' cuentas.', 'info');
+          return runSearch(1, true);
+        }
+        var kw =(opts && Array.isArray(opts.keywords) ? opts.keywords : []).map(function (k) { return String(k || '').trim(); }).filter(Boolean);
         if (kw.length) {
           var f = state.search.filters || defaultFilters();
           f.q_organization_keyword_tags = Array.from(new Set((f.q_organization_keyword_tags || []).concat(kw))).slice(0, 6);

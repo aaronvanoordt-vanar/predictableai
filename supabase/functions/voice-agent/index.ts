@@ -8,7 +8,7 @@
  * Diseño, proveedor y leyes por país: docs/AGENTE_DE_VOZ.md.
  *
  * Auth: Bearer <user JWT> (con JWT en el deploy). `reconcile` acepta la
- * service role (pg_cron, ver la migración 20261017000001).
+ * service role (pg_cron, ver la migración 20261018000001).
  *
  * POST { action, … }
  *   status                                   → { configured, countries, settings, costs }
@@ -79,7 +79,7 @@ class HttpError extends Error {
 async function loadSettings(svc: Json, userId: string): Promise<Json> {
   const { data, error } = await svc.from("voice_agent_settings").select("*").eq("user_id", userId).maybeSingle();
   if (error) {
-    if (/does not exist|relation/i.test(error.message)) throw new HttpError("Falta aplicar la migración 20261017000001_voice_agent.sql.", 503, { error: "migration_pending" });
+    if (/does not exist|relation/i.test(error.message)) throw new HttpError("Falta aplicar la migración 20261018000001_voice_agent.sql.", 503, { error: "migration_pending" });
     throw new HttpError(error.message, 500);
   }
   return { ...DEFAULT_SETTINGS, ...(data ?? {}) };
@@ -99,7 +99,6 @@ interface Prepared {
   warm: Json;
   settings: Json;
   maxCredits: number;
-  hook: string;
 }
 
 async function prepare(svc: Json, userId: string, p: Json): Promise<Prepared> {
@@ -157,11 +156,9 @@ async function prepare(svc: Json, userId: string, p: Json): Promise<Prepared> {
     blockers.push("Esa reunión ya pasó.");
   }
 
-  // Supresión y «No llamar».
-  let hook = "ok";
+  // Lista «No contactar» (canal llamadas): bajas, entradas a mano y registros oficiales.
   if (phone) {
-    const sup = await suppressionCheck(svc, userId, phone.e164, m.id);
-    hook = sup.hook;
+    const sup = await suppressionCheck(svc, userId, phone.e164, m);
     if (sup.blocked) blockers.push(sup.reason);
   }
 
@@ -220,8 +217,8 @@ async function prepare(svc: Json, userId: string, p: Json): Promise<Prepared> {
   return {
     blockers: [...new Set(blockers)], member: m, purpose, country, to: phone?.e164 ?? null, from, opening, prompt,
     meeting, slots,
-    warm: { inbound: (inboundCount ?? 0) > 0, attested, note: note || null, contact_status: m.contact_status ?? null, source_kind: m.source?.kind ?? null, suppression_hook: hook },
-    settings, maxCredits, hook,
+    warm: { inbound: (inboundCount ?? 0) > 0, attested, note: note || null, contact_status: m.contact_status ?? null, source_kind: m.source?.kind ?? null },
+    settings, maxCredits,
   };
 }
 
@@ -243,7 +240,6 @@ function publicPrep(x: Prepared) {
     max_credits: x.maxCredits,
     minute_credits: voiceMinuteCost(x.country),
     law,
-    suppression_hook: x.hook,
   };
 }
 

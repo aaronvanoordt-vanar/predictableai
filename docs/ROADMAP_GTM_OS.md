@@ -70,7 +70,7 @@ Decisión del dueño (2026-10-17): **Predictable se vuelve Tech Provider de Meta
 Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesión por ítem, una rama y un PR cada una.
 
 **P0**
-- [ ] Waterfall enrichment + verificación de email + normalización de teléfonos latinos — en curso (sesión propia)
+- [x] Waterfall enrichment + verificación de email + normalización de teléfonos latinos — PR #346 (`docs/ENRICHMENT_WATERFALL.md`)
 - [ ] WhatsApp por embedded signup (Tech Provider) + monitor de calidad del número — en curso (sesión propia)
 - [ ] Envío de email propio con warm-up y monitor de entregabilidad — en curso (sesión propia)
 
@@ -81,22 +81,24 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] LinkedIn nativo
 - [ ] CRM de cuentas y oportunidades
 - [ ] Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos
-- [ ] Revisar la prueba gratis
+- [x] Revisar la prueba gratis
 
 **P2**
 - [ ] Registros públicos de empresas
 - [ ] APIs oficiales de licitaciones
-- [ ] Listas "No llamar"
+- [x] Listas "No llamar" — lista de supresión por canal + bajas centralizadas + registros oficiales (`docs/COMPLIANCE_LATAM.md`)
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
 - [ ] Agendamiento con recordatorios por WhatsApp
-- [ ] Cobro local y CFDI
+- [ ] Cobro local y CFDI (`docs/BILLING_LATAM.md`)
+  - [x] Fase A: factura de Stripe con el número fiscal del cliente, moneda local y OXXO/Pix en recargas (#344; faltan los pasos del Dashboard de Stripe y la consulta al contador sobre el 18-B)
+  - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC
 - [ ] Facturación y créditos por cliente para agencias
-- [ ] Mapa de TAM, señales de LinkedIn y píxel web
+- [ ] Mapa de TAM, señales de LinkedIn y píxel web — Mapa de TAM construido (rama `claude/tam-map`); faltan señales de LinkedIn y píxel web
 
 **P3**
 - [ ] Automatizaciones de punta a punta
 - [ ] Contenido en LinkedIn con aprobación
-- [ ] Agente de voz IA — PR en revisión (`docs/AGENTE_DE_VOZ.md`: Retell + Twilio; enganche `is_phone_suppressed` para las listas «No llamar»)
+- [ ] Agente de voz IA — PR #365 en revisión (`docs/AGENTE_DE_VOZ.md`: Retell + Twilio; usa la lista «No contactar» en el canal de llamadas)
 
 ## Fuentes
 

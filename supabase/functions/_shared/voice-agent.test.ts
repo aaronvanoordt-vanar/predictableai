@@ -185,6 +185,8 @@ Deno.test("contactStatusAfter nunca baja una reunión", () => {
   assertEquals(contactStatusAfter("not_interested", "respondio"), "no_interesado");
   assertEquals(contactStatusAfter("not_interested", "reunion_agendada"), null);
   assertEquals(contactStatusAfter("no_answer", "respondio"), null);
+  assertEquals(contactStatusAfter("do_not_call", "reunion_agendada"), "dado_de_baja", "una baja manda");
+  assertEquals(contactStatusAfter("do_not_call", "dado_de_baja"), null);
   assert(hadConversation("qualified"));
   assert(!hadConversation("voicemail"));
 });

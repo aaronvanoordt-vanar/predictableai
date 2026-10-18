@@ -437,7 +437,7 @@
         ' · ' + (r.handoff ? 'puede pasar con una persona' : 'si pide una persona, se agenda que alguien lo llame') + '</div>';
       if (r.slots && r.slots.length) html += '<div class="pros-cellsub" style="margin-top:4px">Horarios que puede ofrecer: ' + esc(r.slots.join(' · ')) + '</div>';
       if (r.law) html += '<div class="pros-cellsub" style="margin-top:4px">' + esc(r.law.law) + ': ' + esc(r.law.rule) + '</div>';
-      if (r.suppression_hook === 'pending') html += '<div class="pros-cellsub" style="margin-top:4px">Las listas oficiales «No llamar» todavía no están conectadas: se revisan las bajas y los «no me llamen» de tus llamadas anteriores.</div>';
+      html += '<div class="pros-cellsub" style="margin-top:4px">Revisado contra tu lista «No contactar» (bajas y registros «No llamar» que cargaste en Campañas → Bajas y exclusiones).</div>';
       html += '<div class="pros-cellsub" style="margin-top:4px">Se reservan ' + esc(String(r.max_credits)) + ' créditos (' + esc(String(r.max_minutes)) + ' min máx.) y se cobran ' + esc(String(r.minute_credits)) + ' por minuto conectado. Lo que no se use vuelve a tu saldo.</div>';
       return html;
     }

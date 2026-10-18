@@ -29,9 +29,11 @@ El agente llama por teléfono para tres cosas:
   - que es un asistente con inteligencia artificial y de qué empresa llama;
   - que la llamada se transcribe y, si la grabación está encendida, que se graba;
   - que puede pasar con una persona.
-- **Supresión y «No llamar»:**
-  - Se respetan los «no me llamen» de llamadas anteriores y las bajas de campañas.
-  - Las listas oficiales entran por el enganche `is_phone_suppressed` (ver «Enganches» abajo).
+- **Supresión y «No llamar»:** antes de marcar se revisa la lista «No contactar» del usuario en el canal de llamadas (`isSuppressed(…, "phone", …)` de `_shared/suppression.ts`, PR #352).
+  - Incluye las bajas por cualquier canal, las entradas a mano y los registros oficiales que cargó el cliente (REPEP, RNE, No Llame, No Molestar, Procon-SP).
+  - Como respaldo, también cuentan los «no me llamen» de llamadas anteriores y las bajas de campañas.
+  - Si la lista no se puede leer, **no se llama**.
+  - **Un «no me llamen» durante la llamada es una baja como cualquier otra.** Así lo decidió el dueño: suprime todos los datos del lead en todos los canales. Se registra con `recordOptOut` y la prueba, las campañas del lead pasan a `unsubscribed` y el CRM a `dado_de_baja`.
 - **Horario legal por país** (`callingWindow`): sin domingos ni feriados. Colombia y Perú van con las franjas que fija la ley y con sus feriados móviles (Ley Emiliani y Semana Santa).
 - **Precios:** solo se mencionan los del Contexto, es decir las ofertas con precio, el ticket habitual y el ciclo de venta (`contextPrices`).
   - Los documentos de precios del Entrenamiento IA **no** entran al agente de voz (`buildTrainingBlock(t, "voice")`).
@@ -193,13 +195,13 @@ Ninguno de los seis tiene hoy una ley vigente que obligue a decir que la voz es 
 |---|---|
 | `_shared/voice-agent.ts` (+ test) | Países, teléfonos, horario, compuerta «nunca en frío», saludo, guion, esquema de análisis, lectura del resultado, horarios libres y firma del webhook. Sin I/O |
 | `_shared/retell.ts` | Adaptador de Retell: agente base único (lo crea solo y lo guarda en `voice_platform`), crear, leer y borrar llamadas |
-| `_shared/voice-calls.ts` | `suppressionCheck` (internas + enganche externo) y `finalizeCall` (idempotente por `finalized_at`) |
+| `_shared/voice-calls.ts` | `suppressionCheck` (lista «No contactar» en el canal de llamadas + respaldo propio) y `finalizeCall` (idempotente por `finalized_at`; registra las bajas con `recordOptOut`) |
 | `_shared/google-calendar.ts` | Leer la reunión, freeBusy, mover o anotar el evento sobre la conexión de Integraciones |
 | `voice-agent` (con JWT) | Acciones `status`, `prepare` (gratis: revisa todo y muestra el saludo), `call`, `recording`, `sync` y `reconcile` (service role, pg_cron) |
 | `voice-webhook` (`--no-verify-jwt`) | Eventos de Retell, verificados con `x-retell-signature` |
 | `js/voice-agent.js` | Sección en la ficha del lead, diálogo «Llamar con el agente» (propósito → reunión → Revisar → Llamar ahora) y configuración |
 | `js/campaigns.js` | Canal «Llamada» en la Bandeja |
-| Migración `20261017000001_voice_agent.sql` | `voice_agent_settings` (RLS por dueño), `voice_calls` (el usuario solo lee), `voice_platform` (solo service role), canal `voice` y proveedor `retell` en `inbox_messages` |
+| Migración `20261018000001_voice_agent.sql` | `voice_agent_settings` (RLS por dueño), `voice_calls` (el usuario solo lee), `voice_platform` (solo service role), canal `voice` y proveedor `retell` en `inbox_messages` |
 
 **El guion** sale de:
 
@@ -211,11 +213,7 @@ Ninguno de los seis tiene hoy una ley vigente que obligue a decir que la voz es 
 
 ## Enganches con otras sesiones
 
-- **Listas «No llamar» (P2):** `suppressionCheck` llama a la RPC
-  `is_phone_suppressed(p_user_id uuid, p_phone text, p_channel text)`, que devuelve `boolean` o `{ suppressed, reason }`. El teléfono va en E.164 y `p_channel = 'voice'`.
-  - **La sesión que construya esas listas tiene que crear esa función con esa firma** y revocarla de `anon` y `authenticated`.
-  - Mientras no exista, la llamada sigue con las supresiones internas y el diálogo lo dice.
-  - Si existe y falla, **no se llama**.
+- **Lista «No contactar» (PR #352, ya en `main`):** el agente la usa como un canal más. Revisa con `isSuppressed(db, userId, "phone", …)` antes de marcar y registra sus bajas con `recordOptOut(…, channel: "phone")`. No abre otra lista.
 - **Dialer (P1):** si elige Telnyx, se importan sus números a Retell; el código no cambia. Si el dialer quiere que el agente use sus números por cuenta, el lugar es `VOICE_FROM_NUMBERS` → una tabla por usuario.
 - **Agendamiento propio (P2):** `updateScheduling` en `_shared/voice-calls.ts`.
 - **Bucle de aprendizaje:** `voice_calls` (propósito, resultado y país) queda listo para que `learning-loop` lo agregue. Todavía no lo lee.
@@ -250,7 +248,7 @@ Project Settings → Edge Functions → Secrets:
 
 ### 4. Base y funciones
 
-1. Aplica la migración `supabase/migrations/20261017000001_voice_agent.sql`.
+1. Aplica la migración `supabase/migrations/20261018000001_voice_agent.sql`.
 2. Despliega las funciones (Actions → Deploy Edge Functions, o por CLI):
    ```bash
    supabase functions deploy voice-agent
