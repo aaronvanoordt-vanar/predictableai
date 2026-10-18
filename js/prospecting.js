@@ -2378,7 +2378,7 @@
   // ── Champions ───────────────────────────────────────────────────────────
   // La estrella marca al lead como champion: el Radar (detector
   // champion_moves) lo chequea y avisa si cambia de empresa. Sugerido = lo
-  // propuso la base porque respondió o tuvo una reunión; un clic lo sigue.
+  // propuso la base porque tuvo una reunión; un clic lo sigue.
 
   function championBtnHtml(m) {
     var ch = state.listas.champions;
@@ -2387,7 +2387,7 @@
     var on = w && w.state === 'active';
     var sug = w && w.state === 'suggested';
     var title = on ? 'Champion en seguimiento: el Radar te avisa si cambia de empresa. Clic para dejar de seguirlo.'
-      : sug ? 'Sugerido como champion (respondió o tuvo una reunión). Clic para seguirlo.'
+      : sug ? 'Sugerido como champion (tuvo una reunión). Clic para seguirlo.'
       : 'Marcar como champion: el Radar te avisa si cambia de empresa.';
     return '<button type="button" class="pros-iconbtn pros-champion-btn' + (on ? ' on' : '') + (sug ? ' sug' : '') + '" data-action="toggle-champion" data-id="' + esc(String(m.id)) + '" title="' + esc(title) + '" aria-pressed="' + (on ? 'true' : 'false') + '">' + (on ? SVG_STAR_ON : SVG_STAR) + '</button>';
   }

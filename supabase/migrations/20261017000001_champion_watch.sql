@@ -5,7 +5,7 @@
 --
 --   • champion_watch — la lista de seguimiento: contactos marcados como
 --     champion (a mano desde Listas o el Radar, o sugeridos cuando un lead
---     responde o tiene una reunión) y contactos de los clientes actuales que
+--     tiene una reunión) y contactos de los clientes actuales que
 --     el usuario carga. Cada fila guarda su propia copia de la persona (el
 --     lead de la lista se puede borrar) y la EMPRESA BASE contra la que se
 --     verifica: si Apollo dice que ya no está ahí, el código (nunca el modelo
@@ -15,7 +15,7 @@
 --     chequea las filas vencidas con Apollo /people/match (y búsqueda web de
 --     respaldo) y deja la señal «Tu champion se mudó a X».
 --   • triggers que SUGIEREN champions (state = 'suggested'; el usuario los
---     acepta con un clic): un lead que pasa a respondio / reunion_agendada /
+--     acepta con un clic): un lead que pasa a reunion_agendada /
 --     reunion_tomada, y una reunión del Meeting Coach con resultado ganado o
 --     seguimiento. Una sugerencia que el lead pasa a no_interesado o
 --     dado_de_baja se retira. Nunca rompen la escritura que los dispara.
@@ -52,9 +52,10 @@ CREATE TABLE IF NOT EXISTS public.champion_watch (
   id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id           UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   member_id         UUID        REFERENCES public.prospect_list_members(id) ON DELETE SET NULL,
-  -- manual | customer | reply | meeting | qualified_meeting
+  -- manual | customer | meeting | qualified_meeting (solo con reunión:
+  -- una respuesta sola no basta para sugerir un champion, decisión del dueño)
   origin            TEXT        NOT NULL DEFAULT 'manual'
-                    CHECK (origin IN ('manual', 'customer', 'reply', 'meeting', 'qualified_meeting')),
+                    CHECK (origin IN ('manual', 'customer', 'meeting', 'qualified_meeting')),
   -- suggested (lo propuso el sistema) | active (se chequea) | dismissed
   state             TEXT        NOT NULL DEFAULT 'active'
                     CHECK (state IN ('suggested', 'active', 'dismissed')),
@@ -151,11 +152,11 @@ BEGIN
   IF coalesce(nullif(trim(m.name), ''), nullif(trim(m.first_name), '')) IS NULL THEN RETURN; END IF;
   IF coalesce(nullif(trim(m.company), ''), nullif(trim(m.company_domain), '')) IS NULL THEN RETURN; END IF;
 
-  -- Una sugerencia pendiente sube de categoría (respondió → reunión → calificada).
+  -- Una sugerencia pendiente sube de categoría (reunión → calificada).
   UPDATE public.champion_watch w SET origin = p_origin
    WHERE w.user_id = m.user_id AND w.member_id = m.id AND w.state = 'suggested'
-     AND array_position(ARRAY['reply', 'meeting', 'qualified_meeting'], p_origin)
-       > coalesce(array_position(ARRAY['reply', 'meeting', 'qualified_meeting'], w.origin), 0);
+     AND array_position(ARRAY['meeting', 'qualified_meeting'], p_origin)
+       > coalesce(array_position(ARRAY['meeting', 'qualified_meeting'], w.origin), 0);
   IF FOUND THEN RETURN; END IF;
 
   INSERT INTO public.champion_watch
@@ -177,9 +178,7 @@ AS $$
 BEGIN
   BEGIN
     IF NEW.contact_status IS DISTINCT FROM OLD.contact_status THEN
-      IF NEW.contact_status = 'respondio' THEN
-        PERFORM public.champion_suggest_from_member(NEW.id, 'reply');
-      ELSIF NEW.contact_status IN ('reunion_agendada', 'reunion_tomada') THEN
+      IF NEW.contact_status IN ('reunion_agendada', 'reunion_tomada') THEN
         PERFORM public.champion_suggest_from_member(NEW.id, 'meeting');
       ELSIF NEW.contact_status IN ('no_interesado', 'dado_de_baja') THEN
         DELETE FROM public.champion_watch
@@ -228,8 +227,7 @@ CREATE TRIGGER champion_suggest_on_meeting
   FOR EACH ROW EXECUTE FUNCTION public.champion_suggest_on_meeting();
 
 -- ── 4. sugerencias iniciales: los leads que ya tuvieron reunión ─────────────
--- (las respuestas sueltas del pasado no se sugieren de golpe: llegan de aquí
--- en adelante, cuando pasan a «respondió»).
+-- (una respuesta sin reunión no se sugiere: se marca a mano con la estrella).
 
 INSERT INTO public.champion_watch
   (user_id, member_id, origin, state, name, first_name, last_name, title, company,

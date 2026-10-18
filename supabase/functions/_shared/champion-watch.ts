@@ -4,7 +4,7 @@
  * Cuando alguien que ya te compró o te respondió bien cambia de empresa, es
  * la reunión más cálida que existe. La lista de seguimiento vive en
  * `champion_watch` (migración 20261017000001): contactos marcados como
- * champion, sugeridos al responder o al tener una reunión, y contactos de los
+ * champion, sugeridos al tener una reunión, y contactos de los
  * clientes actuales que el usuario carga. El detector `champion_moves` del
  * Radar (champion-tick.ts) los chequea con Apollo /people/match y, si Apollo
  * no los ubica en la empresa base, con una búsqueda web de respaldo.
@@ -28,7 +28,7 @@ import {
 type Row = Record<string, any>;
 
 export type WatchStatus = "pending" | "current" | "moved" | "left" | "unconfirmed" | "unknown";
-export type WatchOrigin = "manual" | "customer" | "reply" | "meeting" | "qualified_meeting";
+export type WatchOrigin = "manual" | "customer" | "meeting" | "qualified_meeting";
 
 export const WATCH_STATUS_LABEL: Record<WatchStatus, string> = {
   pending: "En cola",
@@ -42,7 +42,6 @@ export const WATCH_STATUS_LABEL: Record<WatchStatus, string> = {
 export const ORIGIN_LABEL: Record<WatchOrigin, string> = {
   manual: "Marcado a mano",
   customer: "Contacto de un cliente",
-  reply: "Te respondió",
   meeting: "Tuvieron una reunión",
   qualified_meeting: "Reunión calificada",
 };

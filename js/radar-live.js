@@ -213,7 +213,7 @@
   //
   // Lista de seguimiento (champion_watch): contactos marcados como champion
   // a mano (aquí o con la estrella de Listas), sugeridos por la base cuando
-  // un lead responde o tiene una reunión, y contactos de los clientes
+  // un lead tiene una reunión, y contactos de los clientes
   // actuales del Contexto. El detector champion_moves los chequea con Apollo
   // (y la web de respaldo); el veredicto lo decide el servidor
   // (_shared/champion-watch.ts) y la mudanza llega como señal al feed.
@@ -223,7 +223,7 @@
     left: ['Se fue', 'amber'], unconfirmed: ['Por confirmar', 'amber'], unknown: ['Sin verificar', 'gray'],
   };
   const WATCH_ORIGIN = {
-    manual: 'Marcado a mano', customer: 'Contacto de un cliente', reply: 'Te respondió',
+    manual: 'Marcado a mano', customer: 'Contacto de un cliente',
     meeting: 'Tuvieron una reunión', qualified_meeting: 'Reunión calificada',
   };
   // Espejo de RECHECK_DAYS_OPTIONS / MAX_CHECKS_MONTH_OPTIONS en _shared/champion-watch.ts.
@@ -413,7 +413,7 @@
 
     if (suggested.length) {
       h += '<div class="card rl-planbox"><div class="rl-plan-t">Sugeridos (' + suggested.length + ')</div>' +
-        '<div class="rl-hero-s">Leads que te respondieron o con los que tuviste una reunión. Síguelos para enterarte si cambian de empresa.</div>' +
+        '<div class="rl-hero-s">Leads con los que tuviste una reunión. Síguelos para enterarte si cambian de empresa.</div>' +
         '<div class="rl-ch-list">' + suggested.slice(0, 50).map((r) =>
           '<div class="rl-ch-row"><div class="rl-ch-who"><b>' + esc(r.name || '—') + '</b><span class="rl-muted rl-xs">' + esc([r.title, r.company].filter(Boolean).join(' · ')) + '</span></div>' +
           '<span class="pill pill-gray" style="font-size:10.5px">' + esc(WATCH_ORIGIN[r.origin] || r.origin) + '</span>' +
