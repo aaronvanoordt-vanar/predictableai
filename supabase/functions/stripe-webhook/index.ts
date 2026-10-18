@@ -19,12 +19,17 @@
  * Idempotencia: cada evt_… se registra en `billing_events`; un reintento de
  * Stripe con el mismo id responde 200 sin volver a aplicarse.
  *
+ * CFDI (docs/BILLING_LATAM.md §6.2): con CFDI_MODE = test | live, después de
+ * acreditar se encola el cobro en `cfdi_documents` para quien tenga datos
+ * fiscales. Encolar nunca condiciona los créditos: si falla, solo se loguea.
+ *
  * Secrets: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { STARTER, TOPUP_PACKS } from "../_shared/billing-plans.ts";
 import { stripeRequest, verifyStripeSignature } from "../_shared/stripe.ts";
+import { cfdiMode } from "../_shared/cfdi.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -93,6 +98,37 @@ async function syncSubscription(supa: Json, sub: Json): Promise<string | null> {
   return userId;
 }
 
+/**
+ * Encola el CFDI de un cobro ya acreditado. Solo si CFDI_MODE está puesto y el
+ * usuario guardó sus datos fiscales; el source_id único evita duplicados.
+ * Nunca lanza: los créditos ya se dieron y no dependen de la factura.
+ */
+async function enqueueCfdi(supa: Json, doc: {
+  userId: string; kind: "invoice" | "checkout_session"; sourceId: string;
+  description: string; amount: unknown; currency: unknown; livemode: unknown;
+}) {
+  try {
+    if (cfdiMode(Deno.env.get("CFDI_MODE")) === "off") return;
+    const amount = Number(doc.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const { data: profile } = await supa.from("billing_fiscal_profiles")
+      .select("user_id").eq("user_id", doc.userId).maybeSingle();
+    if (!profile) return;
+    const { error } = await supa.from("cfdi_documents").upsert({
+      user_id: doc.userId,
+      source_kind: doc.kind,
+      source_id: doc.sourceId,
+      description: doc.description,
+      amount_cents: Math.round(amount),
+      currency: String(doc.currency || "usd").toLowerCase(),
+      livemode: !!doc.livemode,
+    }, { onConflict: "source_id", ignoreDuplicates: true });
+    if (error) console.error("[stripe-webhook] cfdi enqueue:", error.message);
+  } catch (e) {
+    console.error("[stripe-webhook] cfdi enqueue:", (e as Error).message);
+  }
+}
+
 async function handleInvoicePaid(supa: Json, invoice: Json) {
   const reason = String(invoice.billing_reason || "");
   if (reason !== "subscription_create" && reason !== "subscription_cycle") return "ignored";
@@ -108,6 +144,12 @@ async function handleInvoicePaid(supa: Json, invoice: Json) {
     p_user_id: userId, p_credits: STARTER.monthly_credits, p_ref: String(invoice.id),
   });
   if (error) throw new Error(`grant: ${error.message}`);
+  const yearly = sub.items?.data?.[0]?.price?.recurring?.interval === "year";
+  await enqueueCfdi(supa, {
+    userId, kind: "invoice", sourceId: String(invoice.id),
+    description: `Plan Starter de predictable.ai (${yearly ? "anual" : "mensual"})`,
+    amount: invoice.amount_paid, currency: invoice.currency, livemode: invoice.livemode,
+  });
   return "granted";
 }
 
@@ -124,6 +166,11 @@ async function handleCheckoutPaid(supa: Json, session: Json) {
     p_user_id: userId, p_credits: pack.credits, p_ref: String(session.id),
   });
   if (error) throw new Error(`topup: ${error.message}`);
+  await enqueueCfdi(supa, {
+    userId, kind: "checkout_session", sourceId: String(session.id),
+    description: `Recarga de ${pack.credits.toLocaleString("en-US")} créditos de predictable.ai`,
+    amount: session.amount_total, currency: session.currency, livemode: session.livemode,
+  });
   return "credited";
 }
 
