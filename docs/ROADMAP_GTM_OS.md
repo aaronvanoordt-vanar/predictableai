@@ -93,7 +93,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Cobro local y CFDI (`docs/BILLING_LATAM.md`)
   - [x] Fase A: factura de Stripe con el número fiscal del cliente, moneda local y OXXO/Pix en recargas (#344; faltan los pasos del Dashboard de Stripe y la consulta al contador sobre el 18-B)
   - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC — en curso: CFDI en modo prueba con Facturapi; falta la entidad
-- [ ] Facturación y créditos por cliente para agencias
+- [x] Facturación y créditos por cliente para agencias — créditos repartidos a los espacios, tope mensual y alerta, consumo por cliente con CSV, selector de espacios y directorio (`agencias.html`); migración `20261018180006`. La factura consolidada sale sola: solo la agencia paga (sin cambios en Stripe)
 - [x] Equipo: metas de actividad, ranking, revisión del Meeting Coach con comentarios y rampa — PR #360 (las llamadas se enganchan cuando exista la telefonía: `window.Team.registerCallSource`)
 - [x] Mapa de TAM — PR #355 (`js/tam-map.js`, `_shared/tam.ts`, edge function `tam-map`)
 - [ ] Señales de engagement en LinkedIn y píxel web
@@ -102,7 +102,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 **P3**
 - [ ] Automatizaciones de punta a punta
 - [ ] Contenido en LinkedIn con aprobación
-- [ ] Agente de voz IA
+- [ ] Agente de voz IA — PR #365 en revisión (`docs/AGENTE_DE_VOZ.md`: Retell + Twilio; usa la lista «No contactar» en el canal de llamadas)
 
 ## Fuentes
 

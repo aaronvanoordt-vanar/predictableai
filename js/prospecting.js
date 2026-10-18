@@ -2732,6 +2732,8 @@
           '<button type="button" class="btn btn-ai btn-sm" data-action="research-run" data-id="' + id + '" data-credit-cost="lead_research"' + (running ? ' disabled' : '') + '>' +
             (running ? 'Investigando…' : (r.angle ? 'Volver a investigar' : 'Investigar con IA')) + '</button></div>' +
         right +
+        // Agente de voz IA (js/voice-agent.js): llamadas a este lead con su resultado.
+        '<div data-voice-mount="' + id + '"></div>' +
       '</div>' +
     '</div>';
   }
@@ -2997,6 +2999,7 @@
       ? { id: active.getAttribute('data-id'), start: active.selectionStart, end: active.selectionEnd, scroll: active.scrollTop }
       : null;
     host.innerHTML = html;
+    if (window.VoiceAgent) window.VoiceAgent.mountAll(host);
     if (keepNotes) {
       var again = host.querySelector('textarea[data-action="research-notes"][data-id="' + keepNotes.id + '"]');
       if (again) {
@@ -4408,6 +4411,8 @@
     },
     goTab: goTab,
     refreshBadge: refreshBadge,
+    // js/voice-agent.js abre el diálogo de llamada con el lead que ya está en memoria.
+    findMember: findListMember,
     openEditContact: openEditContactModal,
     // Reutilizados por js/campaigns.js para no duplicar el modal ni el DOM helper.
     confirm: confirmModal,
