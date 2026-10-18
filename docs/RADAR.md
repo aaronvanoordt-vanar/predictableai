@@ -41,7 +41,7 @@ Contexto de tu empresa  →  Intelligence Hub  →  Radar  →  Listas  →  Cam
 | kind | Fuente | Costo externo | Qué encuentra |
 |---|---|---|---|
 | `news` | LLM con búsqueda web (motor "radar", Perplexity recomendado) | tokens | Prensa, comunicados, registros, job boards. Recencia garantizada en código (`withinWindow`) |
-| `tenders` | LLM con búsqueda web sobre portales de compras públicas (SECOP II, CompraNet, Mercado Público, SEACE, COMPR.AR, PLACE, SAM.gov) | tokens | Entidades que licitan lo que el cliente vende |
+| `tenders` | **APIs oficiales** de Mercado Público (Chile), SECOP II (Colombia), PNCP (Brasil) y OECE (Perú); búsqueda web con LLM para el resto de los países (ver «Licitaciones oficiales») | 0 (APIs) / tokens (web) | Licitaciones abiertas del rubro, adjudicaciones a un competidor y ganadores que pueden subcontratar |
 | `web_footprint` | LLM con búsqueda web de un **estado**, no de un evento (`FOOTPRINT_SYSTEM` en `radar-research.ts`): sin ventana de fechas, la URL de evidencia tiene que mostrar la huella | tokens (precio y cadencia mínima de búsqueda web) | Tiendas oficiales en Mercado Libre / Amazon / Shopee, directorios y asociaciones, expositores de ferias, quejas públicas. Una señal por empresa y detector |
 | `hiring` | Apollo organization search: `q_organization_job_titles`, `organization_num_jobs_range`, `organization_job_posted_at_range` | **1 crédito de Apollo por página** (máx. 3 páginas por ciclo) | Empresas con vacantes activas para los cargos que delatan la necesidad |
 | `technographics` | Apollo organization search: `currently_using_any_of_technology_uids` (solo "usa X": la búsqueda de empresas no tiene "no usa X"; la ausencia de una herramienta se caza con `site_probe.must_not_have`) | **1 crédito de Apollo por página** (máx. 3) | Empresas que usan ciertas herramientas |
@@ -66,6 +66,50 @@ Reglas del sondeo: cada clave de `must_have` tiene que estar (para "una de varia
 
 **Biblioteca** (`RADAR_RECIPES`, Plan de señales → «Explorar biblioteca»): recetas en 9 categorías (WhatsApp y conversación; Meta, redes y publicidad; Marketplaces y e-commerce; Pagos y logística; Email, CRM y ventas; Sitio web y presencia; Correo, seguridad y cumplimiento; Crecimiento y expansión; Talento y liderazgo). Ejemplos: «Atiende WhatsApp a mano», «Chatbot rígido de menús», «Dominio verificado en Meta Business Manager», «Business Manager activo pero sin píxel», «Vende en marketplaces», «Tiendas oficiales en Mercado Libre», «Tienda sin pasarela de pago local», «Dominio sin DMARC», «Correo sin Google ni Microsoft», «Vende franquicias». Agregar una receta no cobra IA (el monitoreo se cobra como cualquier detector), queda con origen `user` y `config.recipe_id`; las consultas con `{country}`, `{industry}`, `{ml_site}` y `{amazon_site}` se rellenan en código con los países del plan y la industria del ICP (también cuando el planificador copia una receta). El planificador recibe la biblioteca y la instrucción de que al menos la mitad del plan sea `site_probe` o `web_footprint` cuando la oferta toca algo visible en un sitio. Todas las recetas validan en `deno test` (`radar-footprint.test.ts`).
 
+## Licitaciones oficiales (2026-10-17)
+
+Ítem P2 de `docs/ROADMAP_GTM_OS.md`. El detector `tenders` lee primero las APIs oficiales de compras públicas de los países del plan y deja la búsqueda web solo para los países que no tienen una (o cuya fuente falló o no tiene su token en ese ciclo).
+
+| País | Fuente | Autenticación | Qué se lee | Frescura |
+|---|---|---|---|---|
+| Chile | Mercado Público (`api.mercadopublico.cl/servicios/v1/publico/licitaciones.json`) | **ticket** (`MERCADOPUBLICO_TICKET`) | `estado=activas` y `fecha=ddmmaaaa&estado=adjudicada`; el listado solo trae código, nombre y cierre, así que se filtra por palabra clave sobre el nombre y se pide el detalle (`?codigo=`) solo de las que coinciden, con 2,5 s entre llamadas (la API limita por IP) | en el día |
+| Colombia | SECOP II en datos.gov.co (Socrata, dataset `p6dx-8zbt`) | opcional (`SECOP_APP_TOKEN`, sin él se comparte el cupo por IP) | `$q` por palabra clave y `starts_with(codigo_principal_de_categoria, 'V1.<UNSPSC>')`, desde la última corrida | en el día |
+| Brasil | PNCP, API de consultas (`pncp.gov.br/api/consulta/v1`) | ninguna | `contratacoes/publicacao` (modalidades 6 pregão eletrônico, 4 concorrência eletrônica, 8 dispensa) y `contratos`; sin búsqueda de texto, se filtra aquí | en el día |
+| Perú | OECE Contrataciones Abiertas, OCDS (`contratacionesabiertas.oece.gob.pe/api/v1/releasesAfter`) | ninguna | releases del más nuevo al más viejo hasta la última corrida | de un día a semanas (las abiertas se exigen con cierre futuro) |
+
+**Qué señales salen** (`_shared/radar-tenders.ts`, `classifyTender`):
+
+- **Licitación abierta en tu rubro** (`tender_open`): la empresa de la señal es el **organismo comprador**. Titular «Licita: … · cierra dd/mm», monto, fecha de cierre y enlace oficial. Fuerza alta si quedan ≥ 5 días y hay monto, baja si cierra en < 3 días. La vía de contacto es el portal: `radar-score.ts` le da 70 de alcanzabilidad sin decision makers (`reachVia: "portal"`).
+- **Adjudicada a un competidor** (`competitor_award`): el comprador ya compra lo que vendes; la señal es el organismo, con el competidor del Contexto (`competitors`) y el monto adjudicado.
+- **Ganador que puede subcontratarte** (`subcontract_award`): la empresa que ganó un contrato de lo que tus clientes ejecutan (`config.subcontract_keywords`: «obra civil», «transporte escolar»…). Solo con esas palabras: el plan las propone cuando el vendedor le vende a quien ejecuta contratos públicos.
+
+**Filtro**: `config.keywords` (frases cortas en el idioma de las licitaciones; todas las palabras de una frase tienen que aparecer, sin acentos y con plurales) y `config.unspsc` (prefijos de 2 a 8 dígitos). Las deriva el plan del Contexto (`PLAN_JSON_SPEC`). Los detectores creados antes de esta fecha solo tienen `queries`: `tenderKeywords()` saca las frases de esas consultas quitando portales, países y «licitación». Chile y Brasil necesitan palabras clave (su listado no trae el código); con solo UNSPSC van por la web.
+
+**Ciclo** (`tickTenders` en `radar-detectors.ts`, `planTenderUnits` y adaptadores en `_shared/radar-tender-sources.ts`): una unidad por fuente y modo (abiertas / adjudicadas) por tick, con ~70 s de presupuesto y su propio cursor; después la fase web con las consultas de siempre, solo para los países sin fuente. Cada ciclo pide lo publicado desde el anterior (menos un día de margen; el primero, hasta 7 días atrás). Lo que la web devuelva de un país que ya cubrió una fuente oficial se descarta. La identidad de cada señal es el id oficial (`facts.signal_key` → `signalFingerprint({ key })`), así que una licitación no se duplica aunque cambie su titular. Puntaje y lote diario: los de siempre (`scoreSignal`, `radar_surface_signals`).
+
+**Si una fuente falla** (caída, 429, JSON inesperado): ese país va por la búsqueda web en ese ciclo, la nota del detector lo dice y el resto sigue. Sin el ticket de Chile pasa lo mismo, con la nota «Mercado Público sin MERCADOPUBLICO_TICKET».
+
+**Investigadas y descartadas por ahora**: México (ComprasMX no tiene API pública, su sitio firma cada petición contra bots, y la API OCDS de la SHCP en `api.datos.gob.mx` se dio de baja en 2025; solo hay CSV de datos abiertos con atraso), Argentina (COMPR.AR no tiene API; datos.gob.ar publica CSV semestrales), Paraguay DNCP (API OCDS por hora, pide un token cuyo trámite no se pudo verificar), Ecuador SERCOP (API OCDS sin token pero lenta y bloqueada desde muchos países), República Dominicana DGCP (API OCDS sin token; falta verificar el formato de fechas). `parseOcdsRelease` ya sirve para cualquier publicador OCDS: sumar uno es un adaptador nuevo en `radar-tender-sources.ts`.
+
+### Cómo sacar los tokens
+
+- **Mercado Público (Chile) — obligatorio para Chile.** En https://www.chilecompra.cl/api/ → «Obtener ticket» (https://api.mercadopublico.cl/modules/IniciarSesion.aspx): se entra con Clave Única, se aceptan los términos y se llena el formulario (nombre, RUT, correo). El ticket llega por correo; es uno por persona. Guardarlo en Supabase → Edge Functions → Secrets como `MERCADOPUBLICO_TICKET`. La API es gratuita, sin garantía, con cupo diario por ticket y límite por IP; hay que citar a ChileCompra como fuente.
+- **SECOP II (Colombia) — opcional.** Crear una cuenta en https://www.datos.gov.co, ir a *Developer Settings* → *Create New App Token* y guardar el *App Token* como `SECOP_APP_TOKEN`. Sin él la API funciona, pero comparte un cupo por IP con todos los que llaman desde Supabase.
+- **PNCP (Brasil) y OECE (Perú)**: no piden token.
+
+### Prueba de humo (antes de dar por buena cada fuente)
+
+Ninguna de estas APIs se pudo llamar desde el entorno donde se escribió el adaptador; los campos salen de su documentación y de proyectos abiertos que las usan. Una llamada por fuente desde cualquier máquina confirma la forma:
+
+```bash
+curl -s "https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json?estado=activas&ticket=$MERCADOPUBLICO_TICKET" | head -c 600
+curl -s "https://www.datos.gov.co/resource/p6dx-8zbt.json?\$limit=1" | head -c 1500
+curl -s "https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao?dataInicial=20261015&dataFinal=20261016&codigoModalidadeContratacao=6&pagina=1&tamanhoPagina=10" | head -c 1500
+curl -s "https://contratacionesabiertas.oece.gob.pe/api/v1/releasesAfter?format=json&order=desc" | head -c 1500
+```
+
+Después, en Supabase, la nota de un detector `tenders` con países de esas fuentes dice cuántas fichas o páginas leyó cada una («Mercado Público: 12 fichas leídas», «PNCP: 9 páginas, 3 coinciden»); si una no responde, dice «… no respondió (…); <país> va por búsqueda web».
+
 ## Integraciones necesarias (checklist para producción)
 
 Secrets en Supabase (Project → Edge Functions → Secrets):
@@ -74,6 +118,8 @@ Secrets en Supabase (Project → Edge Functions → Secrets):
 |---|---|---|
 | `APOLLO_API_KEY` | hiring, technographics, site_probe (población), growth, funding (búsqueda de empresas, 1 crédito por página), leadership, website_visitors, decision makers (búsqueda de personas, 0 créditos) | ya existe |
 | `PERPLEXITY_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | news, tenders, generación del plan (motor "radar") | ya existen |
+| `MERCADOPUBLICO_TICKET` | detector `tenders` en Chile (API de Mercado Público). Cómo sacarlo: «Licitaciones oficiales» arriba | **nuevo, opcional**: sin él Chile va por búsqueda web y la nota lo dice |
+| `SECOP_APP_TOKEN` | detector `tenders` en Colombia (Socrata de datos.gov.co): sube el cupo de consultas | **nuevo, opcional**: sin él funciona con el cupo por IP |
 | `GOOGLE_PLACES_API_KEY` | detector `presence`. Google Cloud → habilitar **Places API (New)** → crear API key restringida a esa API. Se factura por request (SKU Enterprise porque pedimos `websiteUri`, `rating`, `userRatingCount`, teléfono). Máx. 60 fichas por consulta | **nuevo, opcional**: sin ella el detector queda `unavailable` y lo dice |
 | `RADAR_WATI_API_URL`, `RADAR_WATI_TOKEN`, `RADAR_WATI_TEMPLATE` (+ `RADAR_WATI_CHANNEL`, `APP_URL` opcionales) | avisos por WhatsApp. Es un tenant de WATI de la **plataforma** (no el del cliente). Hay que crear en WATI una plantilla y que Meta la apruebe, con variables `{{name}}`, `{{count}}`, `{{top}}`, `{{link}}`; texto sugerido en `_shared/radar-notify.ts` | **nuevo**: sin ellos no se envía nada (el log lo dice) |
 | OAuth de Apollo (`APOLLO_OAUTH_CLIENT_ID/SECRET`, ya existente) | detector `website_visitors` exige la cuenta propia del cliente con la función Website Visitors y su tracker instalado | ya existe; el detector se marca `unavailable` si el cliente usa la key compartida |
@@ -99,7 +145,7 @@ Pasos manuales:
 - **Meta Ad Library API**: fuera de la Unión Europea solo devuelve anuncios políticos o de temas sociales, así que no sirve para saber si una empresa latinoamericana pauta. "¿Hace anuncios?" se responde con el sondeo del sitio (píxel de Meta, etiqueta de Google Ads, píxel de TikTok, Insight Tag de LinkedIn).
 - **Meta Business Manager**: no hay API pública para saber si una empresa lo tiene, pero verificar el dominio en el Business Manager deja una huella pública: la etiqueta `<meta name="facebook-domain-verification">` en la portada o un registro TXT `facebook-domain-verification=` en el DNS. El sondeo lee las dos (`meta_domain_verification`, 2026-10-07).
 - **APIs de búsqueda de los marketplaces**: Mercado Libre restringió su búsqueda pública con token; los vendedores se encuentran por los enlaces de su sitio (`any_marketplace`) y por búsqueda web con `site:` (`web_footprint`).
-- **Portales de licitaciones por API**: solo SECOP II (Colombia) tiene API abierta limpia; el resto se cubre por búsqueda web con el modo `tenders`, que exige la URL del aviso como evidencia.
+- **Portales de licitaciones por API**: desde el 2026-10-17 se leen las APIs oficiales de Chile, Colombia, Brasil y Perú (ver «Licitaciones oficiales»). México y Argentina no tienen una API que sirva y siguen por búsqueda web, que exige la URL del aviso como evidencia.
 - **Intent data (Bombora) de Apollo**: no está expuesta en la API de búsqueda; queda fuera.
 
 ## Alcance y aprendizaje (2026-09-19)

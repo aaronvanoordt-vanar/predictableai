@@ -155,7 +155,7 @@ async function persistCandidates(
     if (isOwnOrExcluded(c, bundle.ctx)) { skippedExcluded++; continue; }
     const fit = countryFit(c.country, countries);
     if (fit === "out") { skippedCountry++; continue; }
-    const fp = signalFingerprint({ kind: det.kind, detectorId: det.id, domain: c.domain, name: c.name, headline: c.headline });
+    const fp = signalFingerprint({ kind: det.kind, detectorId: det.id, domain: c.domain, name: c.name, headline: c.headline, key: typeof c.facts?.signal_key === "string" ? c.facts.signal_key : undefined });
     if (fps.has(fp)) continue;
     fps.add(fp);
     rows.push({ c, fp });
@@ -190,6 +190,7 @@ async function persistCandidates(
       signalDate: c.signal_date, decisionMakers: dms ? dms.length : 0, dmPending: dmStatus === "pending",
       detectorWeight: det.weight, targets: bundle.ctx.targets,
       windowDays: Number(det.config?.window_days) || 90,
+      reachVia: c.facts?.reach_via === "portal" ? "portal" : null,
     });
     inserts.push({
       user_id: det.user_id,

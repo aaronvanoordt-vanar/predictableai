@@ -9,6 +9,7 @@
  *   strength  ¿qué tan fuerte es la señal?           alta / media / baja
  *   recency   ¿sigue siendo noticia?                 días desde signal_date
  *   reach     ¿hay a quién escribirle?               decision makers hallados
+ *                                                  (o el portal, en una licitación)
  *
  * score = base(0-100) × (0.5 + weight/200): un detector al 100 % entrega su
  * base íntegra; uno al 0 % la reduce a la mitad, nunca la anula (una señal
@@ -25,6 +26,12 @@ export interface ScoreInput {
   signalDate: unknown;           // 'YYYY-MM-DD' | Date | null
   decisionMakers: number;        // cuántos se encontraron (0 si aún pendiente)
   dmPending?: boolean;           // true = todavía no se buscaron (no castiga)
+  /**
+   * La vía de contacto es otra: una licitación abierta se gana ofertando en el
+   * portal oficial, no escribiéndole a un decision maker. Sin decision makers
+   * vale 70 en vez de 0.
+   */
+  reachVia?: "portal" | null;
   detectorWeight: number;        // 0-100
   targets: {
     countries: string[];         // canónicos (radar-geo)
@@ -117,9 +124,9 @@ function recencyScore(signalDate: unknown, windowDays: number, now: number): num
   return Math.round(100 - (days / w) * 70);
 }
 
-function reachScore(n: number, pending: boolean | undefined): number {
+function reachScore(n: number, pending: boolean | undefined, via?: "portal" | null): number {
   if (pending) return 60; // neutro hasta que Apollo responda
-  if (n <= 0) return 0;
+  if (n <= 0) return via === "portal" ? 70 : 0;
   if (n === 1) return 60;
   if (n === 2) return 80;
   return 100;
@@ -130,7 +137,7 @@ export function scoreSignal(input: ScoreInput): ScoreResult {
   const { fit, country } = fitScore(input);
   const strength = strengthScore(input.strength);
   const recency = recencyScore(input.signalDate, input.windowDays ?? 90, now);
-  const reach = reachScore(input.decisionMakers, input.dmPending);
+  const reach = reachScore(input.decisionMakers, input.dmPending, input.reachVia);
   const base = fit * WEIGHTS.fit + strength * WEIGHTS.strength + recency * WEIGHTS.recency + reach * WEIGHTS.reach;
   const weight = Math.max(0, Math.min(100, Math.round(Number(input.detectorWeight) || 0)));
   const score = Math.max(0, Math.min(100, Math.round(base * (0.5 + weight / 200))));

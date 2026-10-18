@@ -16,6 +16,7 @@
 
 import { isTechKey, probeKeysSpec } from "./site-probe.ts";
 import { NEWS_WINDOWS, normalizeWindowDays } from "./radar-recency.ts";
+import { normalizeUnspsc, TENDER_SIGNAL_TYPES } from "./radar-tenders.ts";
 
 export type DetectorKind =
   | "news" | "tenders" | "hiring" | "technographics" | "site_probe"
@@ -46,7 +47,7 @@ export const KIND_META: Record<DetectorKind, KindMeta> = {
   },
   tenders: {
     label: "Licitaciones y compras públicas",
-    description: "Convocatorias y adjudicaciones en los portales de compras de cada país objetivo.",
+    description: "Licitaciones abiertas de tu rubro, adjudicaciones a tu competencia y ganadores que pueden subcontratarte. Fuentes oficiales en Chile, Colombia, Brasil y Perú; búsqueda web en el resto.",
     requires: ["llm_web"], defaultCadenceHours: 48, identity: "headline",
   },
   web_footprint: {
@@ -186,13 +187,24 @@ function normalizeKindConfig(kind: DetectorKind, raw: unknown): Record<string, u
       };
     }
     case "tenders": {
+      // queries = búsqueda web (países sin fuente oficial); keywords / unspsc =
+      // filtro de las APIs oficiales (radar-tender-sources.ts). Basta uno.
       const queries = strList(c.queries, 12, 200);
-      if (!queries.length) return null;
-      return {
+      const keywords = strList(c.keywords, 15, 80);
+      const unspsc = normalizeUnspsc(c.unspsc);
+      if (!queries.length && !keywords.length && !unspsc.length) return null;
+      const signals = strList(c.signals, 3, 40).filter((x) => (TENDER_SIGNAL_TYPES as string[]).includes(x));
+      const subcontract_keywords = strList(c.subcontract_keywords, 10, 80);
+      const out: Record<string, unknown> = {
         queries,
         portals: strList(c.portals, 8, 80),
         window_days: NEWS_WINDOWS.includes(Number(c.window_days)) ? Number(c.window_days) : 30,
       };
+      if (keywords.length) out.keywords = keywords;
+      if (unspsc.length) out.unspsc = unspsc;
+      if (signals.length) out.signals = signals;
+      if (subcontract_keywords.length) out.subcontract_keywords = subcontract_keywords;
+      return out;
     }
     case "hiring": {
       const job_titles = strList(c.job_titles, 10, 80);
@@ -395,8 +407,11 @@ export function normHeadline(t: unknown): string {
  */
 export function signalFingerprint(input: {
   kind: DetectorKind; detectorId: string; domain: string; name: string; headline: string;
+  /** Identificador oficial de la señal (p. ej. la licitación): estable aunque cambie el titular. */
+  key?: string;
 }): string {
   const company = (input.domain || "").toLowerCase() || "name:" + normHeadline(input.name);
+  if (input.key) return `${input.kind}|${company}|key:${String(input.key).slice(0, 120)}`;
   if (KIND_META[input.kind].identity === "headline") {
     return `${input.kind}|${company}|${normHeadline(input.headline).slice(0, 80)}`;
   }
@@ -427,7 +442,7 @@ export const PLAN_JSON_SPEC = `{
 CONFIG BY KIND (every field shown is required unless marked optional):
 - news:            { "queries": ["3-5 concrete web-search queries, in the language of the sources (Spanish for LATAM), each a DIFFERENT way into the signal, written to surface dated recent items (press, filings, job boards, announcements)"], "sources": ["kinds of sources to trust"], "window_days": 7|30|90|180|365 }
 - web_footprint:   { "queries": ["3-5 web-search queries that surface companies in a STATE (not a dated event): official stores on a marketplace (e.g. 'site:mercadolibre.com.mx tienda oficial cosmética'), sellers on Amazon/Shopee/Falabella, members of an association or directory, exhibitors listed on a trade-fair site, companies with public complaints on Reclame Aqui/Profeco/Google reviews, app pages with bad reviews. Use site: operators and local-language terms"], "sources": ["kinds of pages that prove the footprint"] } — no date window: the evidence URL must SHOW the footprint (the store page, the listing, the complaint).
-- tenders:         { "queries": ["3-5 queries against public-procurement portals of the target countries (SECOP II Colombia, CompraNet México, Mercado Público Chile, SEACE Perú, COMPR.AR Argentina, PLACE España, SAM.gov USA…) for the goods/services the seller sells"], "portals": ["portal names"], "window_days": 30|90 }
+- tenders:         { "keywords": ["3-10 short phrases (1-3 words, in the language of the country's tenders: Spanish, or Portuguese for Brazil) naming EXACTLY what the seller sells as a public buyer would write it in a tender title, e.g. 'software de gestión documental', 'mantenimiento de ascensores', 'licenças de software'. All words of a phrase must appear in the tender, so keep them short and specific"], "unspsc": ["optional 2-8 digit UNSPSC prefixes of the seller's goods/services, e.g. '4323' (software), '8111' (computer services)"], "signals": ["tender_open", "competitor_award", "subcontract_award" — default the first two; add subcontract_award only when the seller sells TO companies that execute public contracts], "subcontract_keywords": ["required with subcontract_award: 2-6 phrases of what THOSE companies win, e.g. 'obra civil', 'construcción de vías', 'transporte escolar'"], "queries": ["3-5 web-search queries against the procurement portals of the target countries WITHOUT an official API (CompraNet/ComprasMX México, COMPR.AR Argentina, PLACE España, SAM.gov USA…); official APIs already cover Chile, Colombia, Brazil and Peru"], "portals": ["portal names"], "window_days": 30|90 } — keywords drive the official APIs (Mercado Público, SECOP II, PNCP, OECE), the queries only the other countries.
 - hiring:          { "job_titles": ["2-8 job titles whose active postings reveal the need, in English (Apollo)"], "min_jobs": 1, "posted_within_days": 30, "job_locations": ["optional cities/countries"] }
 - technographics:  { "using_any": ["Apollo technology uids the target USES, e.g. 'salesforce', 'hubspot', 'shopify', 'wordpress_org', 'zendesk', 'intercom'"] } — non-empty. There is NO "not using" filter: to hunt for the ABSENCE of a tool use site_probe with must_not_have. Combine with the seller's ICP automatically.
 - site_probe:      { "must_have": ["keys"], "must_not_have": ["keys"], "keywords": ["optional Apollo keyword tags to narrow the population, e.g. 'restaurant', 'dental clinic'"], "population_using_any": ["optional Apollo technology uids to narrow the population, e.g. 'shopify'"] } — reads the company's homepage AND its public DNS records (TXT/MX/DMARC). Every must_have key must be present (use a group for "any of"); no must_not_have key may be present. Keys by category:
