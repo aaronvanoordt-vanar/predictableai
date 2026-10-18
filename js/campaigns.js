@@ -128,13 +128,20 @@
 
   var state = {
     replyTo: {},               // conv.key → mensaje (inbox_messages.id) al que se responde
+    reactPick: {},             // conv.key → mensaje con el selector de reacciones abierto
     pendingOut: [],            // respuestas de la bandeja pintadas antes de que inbox-send conteste
     pane: null,
     root: null,
     uid: null,
     status: undefined,         // undefined = cargando · null = error · objeto = respuesta de status
     statusError: null,
+    // Cuenta de WhatsApp con la que se envía (Meta directo si está conectada,
+    // si no WATI): channel-connect `status.whatsapp`. Todo lo de plantillas,
+    // tope y webhook trabaja sobre ella sin saber qué proveedor hay detrás.
     wati: null,
+    watiRow: null,             // fila de WATI (aunque Meta sea la activa)
+    metaRow: null,             // fila de Meta (aunque esté en error)
+    metaSignup: null,          // {app_id, config_id, graph_version} o null si Meta no está configurado
     dripify: null,
     apollo: null,
     apolloOauth: false,        // apollo_oauth_available
@@ -597,23 +604,43 @@
    * URL correcta ya esté puesta a mano. La prueba real es que WATI nos llame:
    * wati-webhook sella last_received_at.
    */
+  function waProvider() { return (state.wati && state.wati.provider) || 'wati'; }
+  function waIsMeta() { return waProvider() === 'meta'; }
   function waWebhookState(cfg) {
     var wh = (cfg || {}).webhook || {};
+    var prov = waProvider();
     if (wh.last_received_at) return { ok: true, label: 'Recibiendo eventos', detail: 'Último evento de WhatsApp: ' + fmtDateTime(wh.last_received_at) + '.' };
-    if (wh.registered) return { ok: true, label: 'Registrado', detail: 'Lo registramos en tu cuenta de WhatsApp. Se confirma solo cuando llegue el primer mensaje.' };
-    if (state.inbox.some(function (m) { return m.provider === 'wati'; })) return { ok: true, label: 'Recibiendo eventos', detail: 'Ya llegaron mensajes de WhatsApp a tu bandeja.' };
+    if (wh.registered) return { ok: true, label: 'Registrado', detail: prov === 'meta' ? 'Tu cuenta de WhatsApp le avisa a Predictable de cada respuesta y recibo. Se confirma solo cuando llegue el primer evento.' : 'Lo registramos en tu cuenta de WhatsApp. Se confirma solo cuando llegue el primer mensaje.' };
+    if (state.inbox.some(function (m) { return m.provider === prov; })) return { ok: true, label: 'Recibiendo eventos', detail: 'Ya llegaron mensajes de WhatsApp a tu bandeja.' };
+    if (prov === 'meta') return { ok: false, meta: true, error: wh.error || '' };
     if (wh.manual_confirmed_at) return { ok: true, pendingProof: true, label: 'Pegado a mano', detail: 'Lo marcaste como puesto el ' + fmtDateTime(wh.manual_confirmed_at) + '. Queda confirmado cuando llegue el primer mensaje.' };
     return { ok: false, limit: !!wh.limit, error: wh.error || '', url: wh.url || '' };
   }
+  /**
+   * Alerta de calidad del número (solo Meta directo): el texto lo decide
+   * `qualityAlert` en _shared/meta-whatsapp.ts y viene guardado en
+   * config.quality.alert. Aquí solo se pinta.
+   */
+  function waQuality(cfg) {
+    if (!waIsMeta()) return null;
+    var q = (cfg || {}).quality || {};
+    return q.alert && q.alert.level ? q.alert : null;
+  }
   function waState() {
     if (state.status === undefined) return { state: 'loading' };
-    if (!isConn(state.wati)) return { state: 'disconnected' };
+    if (!isConn(state.wati)) {
+      // Meta conectado a medias (registro o suscripción fallaron): se dice qué falta.
+      var m = state.metaRow;
+      return m && m.status === 'error' ? { state: 'disconnected', error: m.last_error || 'La conexión con WhatsApp quedó incompleta.' } : { state: 'disconnected' };
+    }
     var cfg = state.wati.config || {};
     var tpl = templateSummary(cfg);
+    var qa = waQuality(cfg);
+    var alert = qa && qa.level !== 'ok' ? qa : null;
     return {
       state: 'connected',
       detail: cfg.phone || cfg.phone_number || cfg.channel || 'Número conectado',
-      sub: tpl.label, subKind: tpl.kind,
+      sub: alert ? alert.title : tpl.label, subKind: alert ? (alert.level === 'critical' ? 'red' : 'amber') : tpl.kind,
       webhookOk: waWebhookState(cfg).ok,
     };
   }
@@ -641,14 +668,18 @@
     try {
       var r = await edgeFetch(FN_CHANNEL, { action: 'status', payload: {} });
       state.status = r || {};
-      state.wati = r && r.wati ? r.wati : null;
+      state.watiRow = r && r.wati ? r.wati : null;
+      state.metaRow = r && r.meta ? r.meta : null;
+      state.metaSignup = r && r.meta_signup ? r.meta_signup : null;
+      // Respaldo para un channel-connect anterior a `whatsapp`: la de WATI.
+      state.wati = r && r.whatsapp !== undefined ? r.whatsapp : state.watiRow;
       state.dripify = r && r.dripify ? r.dripify : null;
       state.apollo = r && r.apollo ? r.apollo : null;
       state.apolloOauth = !!(r && r.apollo_oauth_available === true);
       state.statusError = null;
     } catch (e) {
       state.status = null;
-      state.wati = null; state.dripify = null; state.apollo = null;
+      state.wati = null; state.watiRow = null; state.metaRow = null; state.metaSignup = null; state.dripify = null; state.apollo = null;
       state.apolloOauth = false;
       state.statusError = errMsg(e);
     }
@@ -1074,7 +1105,7 @@
   // filas nuevas llegan por realtime, igual que un mensaje en vivo.
   var watiSync = { running: false, lastAt: 0 };
   function syncWatiHistory(manual) {
-    if (!isConn(state.wati) || watiSync.running) return Promise.resolve();
+    if (!isConn(state.watiRow) || watiSync.running) return Promise.resolve();
     if (!manual && Date.now() - watiSync.lastAt < 5 * 60 * 1000) return Promise.resolve();
     watiSync.running = true;
     watiSync.lastAt = Date.now();
@@ -1311,7 +1342,7 @@
         status: 'sending', sent_at: new Date().toISOString(),
         payload: channel === 'email' ? { source: 'inbox_reply', subject: payload.subject, reply_to: quoted ? quoteRef(quoted) : undefined }
           : (file ? { source: 'inbox_reply', type: kind, media: true, file_name: file.name, local_url: localUrl, voice: !!file.__voice } : { source: 'inbox_reply', reply_to: quoted ? quoteRef(quoted) : undefined }),
-        provider: channel === 'whatsapp' ? 'wati' : undefined,
+        provider: channel === 'whatsapp' ? waProvider() : undefined,
       };
       state.pendingOut.unshift(local);
       state.inbox.unshift(local);
@@ -1830,6 +1861,12 @@
       '#prospecting-shell .cmp-react-chips { display:flex; gap:4px; margin-top:-8px; padding:0 10px; position:relative; }',
       '#prospecting-shell .cmp-react-chip { display:inline-flex; align-items:center; gap:2px; font-size:14px; line-height:1; padding:3px 6px; border-radius:999px; background:var(--surface); border:1px solid var(--hair); box-shadow:0 1px 3px rgba(0,0,0,.08); font-family:inherit; }',
       '#prospecting-shell .cmp-react-chip.mine { border-color:var(--accent-2); }',
+      '#prospecting-shell .cmp-react-pick { display:flex; flex-wrap:wrap; gap:4px; padding:4px 6px; margin:2px 0 4px; border-radius:999px; background:var(--surface); border:1px solid var(--hair); box-shadow:0 2px 8px rgba(0,0,0,.08); width:max-content; max-width:100%; }',
+      '#prospecting-shell .cmp-react-opt { border:0; background:transparent; font-size:18px; line-height:1; padding:4px 6px; border-radius:999px; cursor:pointer; font-family:inherit; }',
+      '#prospecting-shell .cmp-react-opt:hover, #prospecting-shell .cmp-react-opt:focus-visible { background:var(--surface3); }',
+      '#prospecting-shell .cmp-react-opt.on { background:var(--surface3); box-shadow:inset 0 0 0 1px var(--accent-2); }',
+      '#prospecting-shell .cmp-react-opt.clear { font-size:11px; color:var(--text3); }',
+      '#prospecting-shell .cmp-rmsg.in .cmp-react-pick { align-self:flex-start; } #prospecting-shell .cmp-rmsg.out .cmp-react-pick { align-self:flex-end; }',
       '#prospecting-shell .cmp-react-orphan { font-size:11.5px; color:var(--text3); }',
       '#prospecting-shell .cmp-react-orphan.out { align-self:flex-end; }',
       '#prospecting-shell .cmp-media { margin:-2px 0 4px; min-height:40px; }',
@@ -1941,6 +1978,7 @@
       foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-details', 'data-channel': key, text: 'Configuración' }));
     } else {
       if (!big) body.appendChild(h('span', { class: 'pros-hint', text: 'Sin conectar' }));
+      if (st.error) body.appendChild(h('span', { class: 'cmp-chip-warn', text: '⚠ ' + st.error }));
       foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'ch-connect', 'data-channel': key, text: 'Conectar' }));
     }
     card.appendChild(body);
@@ -2077,11 +2115,133 @@
       company: s.company || (wa && wa.company) || prof.company_name || '',
     };
   }
+  // ── WhatsApp directo con Meta: Embedded Signup v4 (2026-10-17) ──────────
+  // El popup de Meta crea (o reutiliza) la cuenta de WhatsApp Business del
+  // cliente, verifica el número y devuelve un `code` de un solo uso (~30 s).
+  // channel-connect `meta_connect` lo canjea por el token: el token nunca pasa
+  // por el navegador. Solo aparece si el servidor tiene la app de Meta
+  // configurada (status.meta_signup); si no, todo sigue con WATI.
+  var fbSdkPromise = null;
+  function loadFbSdk(cfg) {
+    if (global.FB && global.FB.login && fbSdkPromise) return fbSdkPromise;
+    if (fbSdkPromise) return fbSdkPromise;
+    fbSdkPromise = new Promise(function (resolve, reject) {
+      global.fbAsyncInit = function () {
+        try {
+          global.FB.init({ appId: cfg.app_id, autoLogAppEvents: true, xfbml: false, version: cfg.graph_version || 'v26.0' });
+          resolve(global.FB);
+        } catch (e) { fbSdkPromise = null; reject(e); }
+      };
+      var sc = document.createElement('script');
+      sc.src = 'https://connect.facebook.net/en_US/sdk.js';
+      sc.async = true; sc.defer = true; sc.crossOrigin = 'anonymous';
+      sc.onerror = function () {
+        fbSdkPromise = null;
+        reject(new Error('No se pudo cargar la ventana de Meta. Revisa si un bloqueador de anuncios o de rastreadores la está frenando.'));
+      };
+      document.head.appendChild(sc);
+    });
+    return fbSdkPromise;
+  }
+  var ES_FINISH = ['FINISH', 'FINISH_ONLY_WABA', 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'];
+  /** Abre el popup de Meta y resuelve con {code, data, event} cuando terminó. Llamar dentro del clic. */
+  function runEmbeddedSignup(FB, cfg, coexistence) {
+    return new Promise(function (resolve, reject) {
+      var info = null, code = null, settled = false, waitTimer = null;
+      function finish(err, val) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(waitTimer);
+        global.removeEventListener('message', onMsg);
+        if (err) reject(err); else resolve(val);
+      }
+      function check() {
+        if (info && info.event === 'CANCEL') return finish(new Error('Cerraste la ventana de Meta antes de terminar' + (info.data && info.data.current_step ? ' (paso: ' + info.data.current_step + ')' : '') + '. Vuelve a intentarlo cuando quieras.'));
+        if (info && info.event === 'ERROR') return finish(new Error('Meta no pudo terminar la conexión: ' + ((info.data && info.data.error_message) || 'sin detalle') + '.'));
+        if (code && info && ES_FINISH.indexOf(info.event) !== -1) return finish(null, { code: code, data: info.data || {}, event: info.event });
+      }
+      function onMsg(ev) {
+        var host = '';
+        try { host = new URL(ev.origin).hostname; } catch (e) { return; }
+        if (!/(^|\.)facebook\.com$/.test(host)) return;
+        var d = ev.data;
+        try { if (typeof d === 'string') d = JSON.parse(d); } catch (e) { return; }
+        if (!d || d.type !== 'WA_EMBEDDED_SIGNUP') return;
+        info = d;
+        check();
+      }
+      global.addEventListener('message', onMsg);
+      var extras = { setup: {} };
+      if (coexistence) extras.featureType = 'whatsapp_business_app_onboarding';
+      FB.login(function (response) {
+        code = response && response.authResponse && response.authResponse.code;
+        if (!code) return finish(new Error(info && info.event === 'CANCEL' ? 'Cerraste la ventana de Meta antes de terminar. Vuelve a intentarlo cuando quieras.' : 'No se completó la autorización en Meta.'));
+        check();
+        // El aviso con la cuenta suele llegar antes que el código; si no
+        // llega, no se puede saber qué número conectó.
+        waitTimer = setTimeout(function () { finish(new Error('Meta no devolvió los datos de tu cuenta de WhatsApp. Vuelve a intentarlo.')); }, 12000);
+      }, { config_id: cfg.config_id, response_type: 'code', override_default_response_type: true, extras: extras });
+    });
+  }
+  function metaSignupScreen(api, coexistence, back) {
+    var cfg = state.metaSignup;
+    api.setTitle(coexistence ? 'Conectar tu WhatsApp Business' : 'Conectar un número nuevo');
+    api.body.innerHTML = '';
+    api.body.appendChild(pathBox('En la ventana de Meta:', coexistence
+      ? ['Entra con el Facebook de tu negocio y elige (o crea) tu portafolio comercial', 'Elige «Conectar tu app de WhatsApp Business» y escribe el número que usas en el celular', 'Confirma en la app de WhatsApp Business del celular (te llega un aviso) y acepta compartir tus chats']
+      : ['Entra con el Facebook de tu negocio y elige (o crea) tu portafolio comercial', 'Agrega el número (no puede estar en la app de WhatsApp) y verifícalo con el código por SMS o llamada', 'Escribe el nombre visible de tu negocio: Meta lo revisa antes de dejarte enviar']));
+    api.body.appendChild(h('div', { class: 'pros-hint', text: coexistence
+      ? 'Sigues usando la app del celular como siempre: lo que escribes ahí también aparece en la Bandeja. Tus chats de los últimos meses llegan solos en las próximas horas.'
+      : 'Los mensajes los cobra Meta directamente a tu tarjeta (la agregas en WhatsApp Manager → Pagos). Predictable no cobra extra por conectar.' }));
+    var status = h('div', { class: 'pros-hint', style: 'margin-top:8px', text: 'Preparando la ventana de Meta…' });
+    api.body.appendChild(status);
+    var FBready = null;
+    loadFbSdk(cfg).then(function (FB) { FBready = FB; status.textContent = ''; }, function (e) { status.textContent = '⚠ ' + errMsg(e); });
+    api.setActions([
+      { label: 'Atrás', onClick: back },
+      { label: 'Abrir Meta', className: 'btn btn-primary', onClick: function (m) {
+        if (!FBready) throw new Error('La ventana de Meta todavía está cargando. Espera un segundo y vuelve a intentarlo.');
+        m.setBusy(true);
+        status.textContent = 'Termina los pasos en la ventana de Meta…';
+        return runEmbeddedSignup(FBready, cfg, coexistence).then(function (r) {
+          status.textContent = 'Conectando tu número…';
+          return edgeFetch(FN_CHANNEL, {
+            action: 'meta_connect',
+            payload: {
+              code: r.code,
+              waba_id: r.data.waba_id || '',
+              phone_number_id: r.data.phone_number_id || '',
+              business_id: r.data.business_id || '',
+              mode: r.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING' ? 'coexistence' : 'new',
+              sender: senderDefaults(),
+            },
+          });
+        }).then(function (res) {
+          m.close();
+          var probs = (res && res.problems) || [];
+          if (probs.length) toast('WhatsApp quedó conectado a medias: ' + probs.join(' '), 'warn');
+          else toast('WhatsApp conectado. Crea tus plantillas en la pestaña de WhatsApp para usarlas en tus campañas.', 'success');
+          return refreshStatus().then(function () { if (isConn(state.wati)) openChannelDetails('whatsapp'); });
+        }, function (e) { status.textContent = ''; throw e; });
+      } },
+    ]);
+  }
+
   function openWhatsAppWizard(startStep) {
     var api = openModal({ title: 'Conectar WhatsApp', width: 560 });
     function choice() {
       api.setTitle('Conectar WhatsApp');
       api.body.innerHTML = '';
+      if (state.metaSignup) {
+        api.body.appendChild(h('p', { text: 'Conecta tu número de WhatsApp Business directamente con Meta, en unos minutos y sin intermediarios.' }));
+        var mopts = h('div', { class: 'cmp-wz-choices' });
+        mopts.appendChild(choiceBtn('Ya uso WhatsApp Business en mi celular', 'Conecto ese mismo número y sigo usando la app.', function () { metaSignupScreen(api, true, choice); }));
+        mopts.appendChild(choiceBtn('Quiero usar un número nuevo', 'Un número que todavía no está en WhatsApp.', function () { metaSignupScreen(api, false, choice); }));
+        mopts.appendChild(choiceBtn('Ya tengo una cuenta de WATI', 'Conecto mi WhatsApp Business API de WATI con su token.', haveIt));
+        api.body.appendChild(mopts);
+        api.setActions([{ label: 'Cancelar' }]);
+        return;
+      }
       api.body.appendChild(h('p', { text: 'Para enviar WhatsApp desde tus campañas necesitas una cuenta de WhatsApp Business API.' }));
       var opts = h('div', { class: 'cmp-wz-choices' });
       opts.appendChild(choiceBtn('Ya tengo WhatsApp Business API', 'Tengo el endpoint y el token de mi cuenta.', haveIt));
@@ -2102,7 +2262,7 @@
     function haveIt() {
       api.setTitle('Conectar WhatsApp');
       api.body.innerHTML = '';
-      var prev = (state.wati && state.wati.config) || {};
+      var prev = (state.watiRow && state.watiRow.config) || {};
       var s0 = senderDefaults();
       api.body.appendChild(pathBox('En tu panel de WhatsApp API (WATI):', ['Connector → API', 'Create API Token (permisos de contactos, plantillas y mensajes)', 'Copia el Endpoint (incluye tu tenant id) y el Token']));
       var endpointI = h('input', { type: 'url', placeholder: 'https://live-mt-server.wati.io/123456', value: prev.endpoint || '' });
@@ -2129,7 +2289,7 @@
       api.body.appendChild(preview);
       api.setActions([
         { label: 'Atrás', onClick: choice },
-        { label: state.wati ? 'Guardar y reconectar' : 'Conectar WhatsApp', className: 'btn btn-primary', onClick: function (m) {
+        { label: state.watiRow ? 'Guardar y reconectar' : 'Conectar WhatsApp', className: 'btn btn-primary', onClick: function (m) {
           if (!endpointI.value.trim() || !tokenI.value.trim()) throw new Error('Pega el endpoint y el token.');
           if (!nameI.value.trim()) { det.open = true; throw new Error('Escribe tu nombre: es quien firma tus mensajes.'); }
           m.setBusy(true);
@@ -2137,11 +2297,10 @@
           return edgeFetch(FN_CHANNEL, {
             action: 'connect_wati',
             payload: { endpoint: endpointI.value.trim(), token: tokenI.value.trim(), sender: { name: nameI.value.trim(), role: roleI.value.trim(), company: compI.value.trim() } },
-          }).then(function (r) {
-            state.wati = (r && (r.account || r.wati)) || state.wati;
+          }).then(function () {
             m.close();
-            toast('WhatsApp conectado. Crea tus plantillas en la pestaña de WhatsApp para usarlas en tus campañas.', 'success');
-            render();
+            toast(isConn(state.metaRow) ? 'WATI conectado. Tus campañas siguen saliendo por tu número conectado con Meta mientras esté conectado.' : 'WhatsApp conectado. Crea tus plantillas en la pestaña de WhatsApp para usarlas en tus campañas.', 'success');
+            return refreshStatus();
           });
         } },
       ]);
@@ -2288,11 +2447,12 @@
       message: labels[key],
       onConfirm: function () {
         return edgeFetch(FN_CHANNEL, { action: 'disconnect', provider: provider, payload: { provider: provider } }).then(function () {
-          if (key === 'whatsapp') state.wati = null;
           if (key === 'linkedin') state.dripify = null;
           if (key === 'email') { state.apollo = null; state.emailAccounts = null; }
           if (key === 'email') notifyApolloStatus();
           toast(CH[key].label + ' desconectado.', 'success');
+          // WhatsApp: al quitar Meta puede quedar WATI como cuenta activa.
+          if (key === 'whatsapp') return refreshStatus();
           return (key === 'email' ? loadEmailAccounts() : Promise.resolve()).then(render);
         });
       },
@@ -2346,6 +2506,8 @@
       text: 'Número: ' + (ws.detail || '—') + ' · Firma: ' + (sender.name || '—')
         + (sender.role ? ', ' + sender.role : '') + (sender.company ? ' de ' + sender.company : ''),
     }));
+
+    if (waIsMeta()) renderWhatsAppQuality(body, cfg, api);
 
     body.appendChild(h('div', {
       class: 'pros-hint',
@@ -2447,6 +2609,21 @@
     body.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:12px', text: 'Webhook de respuestas' }));
     if (wh.ok) {
       body.appendChild(h('div', { class: 'cmp-tpl' }, h('div', { html: pill(wh.label, wh.pendingProof ? 'amber' : 'green') + '<span style="flex:1;color:var(--text2)">' + esc(wh.detail) + '</span>' })));
+    } else if (wh.meta) {
+      // Meta: la URL es de la app de Predictable; lo único que depende de la
+      // cuenta del cliente es la suscripción, y se puede reintentar.
+      var mBox = h('div', { class: 'pros-note-red' });
+      mBox.appendChild(h('div', { text: '⚠ Tu cuenta de WhatsApp todavía no le avisa a Predictable de las respuestas y los recibos' + (wh.error ? ' (' + wh.error + ')' : '') + '. Sin esto las respuestas no llegan a la Bandeja ni detienen las campañas.' }));
+      var subBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: 'Reintentar' });
+      subBtn.addEventListener('click', guarded(function () {
+        return watiAction('verify_webhook', {}, subBtn).then(function () {
+          var st = waWebhookState(watiCfg());
+          toast(st.ok ? 'Listo: WhatsApp ya avisa a Predictable.' : 'Meta sigue sin aceptarlo. Vuelve a conectar WhatsApp.', st.ok ? 'success' : 'error');
+          renderWhatsAppDetails(api);
+        });
+      }));
+      mBox.appendChild(h('div', { class: 'cmp-row' }, subBtn));
+      body.appendChild(mBox);
     } else {
       var whBox = h('div', { class: 'pros-note-red' });
       whBox.appendChild(h('div', {
@@ -2479,10 +2656,69 @@
     }
 
     api.setActions([
-      { label: 'Reconectar', onClick: function (m) { m.close(); openWhatsAppWizard('have'); } },
-      { label: 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('whatsapp', 'wati', m); } },
+      { label: 'Reconectar', onClick: function (m) { m.close(); openWhatsAppWizard(waIsMeta() ? null : 'have'); } },
+      { label: 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('whatsapp', waProvider(), m); } },
       { label: 'Cerrar' },
     ]);
+  }
+
+  /**
+   * Salud del número (solo WhatsApp directo con Meta): calidad que pone Meta
+   * según bloqueos y reportes, tope de contactos nuevos por día y la alerta
+   * ANTES del bloqueo. Lo relee campaign-run cada hora y lo actualiza el
+   * webhook (phone_number_quality_update); la regla vive en
+   * _shared/meta-whatsapp.ts (qualityAlert / qualityGuardActive).
+   */
+  var QUALITY_LABEL = { GREEN: ['Alta', 'green'], YELLOW: ['Media', 'amber'], RED: ['Baja', 'red'], UNKNOWN: ['Sin calificar', 'gray'] };
+  var TIER_LABEL = {
+    TIER_50: '50 contactos nuevos al día', TIER_250: '250 contactos nuevos al día', TIER_1K: '1.000 contactos nuevos al día',
+    TIER_2K: '2.000 contactos nuevos al día', TIER_5K: '5.000 contactos nuevos al día', TIER_10K: '10.000 contactos nuevos al día',
+    TIER_100K: '100.000 contactos nuevos al día', TIER_UNLIMITED: 'Sin tope de contactos nuevos',
+  };
+  function renderWhatsAppQuality(body, cfg, api) {
+    var q = cfg.quality || {};
+    var alert = q.alert || { level: 'ok', title: 'Calidad alta', message: '' };
+    body.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:4px', text: 'Salud de tu número' }));
+    if (alert.level !== 'ok') {
+      body.appendChild(h('div', { class: alert.level === 'critical' ? 'pros-note-red' : 'pros-hint', style: alert.level === 'critical' ? '' : 'color:var(--amber)' },
+        h('b', { text: '⚠ ' + alert.title + '. ' }), h('span', { text: alert.message })));
+    }
+    var ql = QUALITY_LABEL[String(q.rating || 'UNKNOWN').toUpperCase()] || QUALITY_LABEL.UNKNOWN;
+    var rows = h('div', { class: 'cmp-tpl' });
+    rows.appendChild(h('div', { html: '<span style="min-width:150px">Calidad (Meta)</span>' + pill(ql[0], ql[1]) }));
+    rows.appendChild(h('div', { html: '<span style="min-width:150px">Tope de envíos</span><span>' + esc(TIER_LABEL[String(q.tier || '').toUpperCase()] || (q.tier ? q.tier : 'Sin dato de Meta todavía')) + '</span>' }));
+    var NUM_STATUS = { FLAGGED: 'Marcado por Meta', RESTRICTED: 'Restringido', BANNED: 'Bloqueado', DISCONNECTED: 'Desconectado', PENDING: 'Pendiente', MIGRATED: 'Migrado', UNVERIFIED: 'Sin verificar' };
+    if (q.status && q.status !== 'CONNECTED') rows.appendChild(h('div', { html: '<span style="min-width:150px">Estado del número</span>' + pill(NUM_STATUS[q.status] || q.status, /FLAG|RESTRICT|BAN/.test(q.status) ? 'red' : 'amber') }));
+    if (q.name_status && q.name_status !== 'APPROVED' && q.name_status !== 'AVAILABLE_WITHOUT_REVIEW') rows.appendChild(h('div', { html: '<span style="min-width:150px">Nombre visible</span>' + pill(q.name_status === 'PENDING_REVIEW' ? 'En revisión de Meta' : q.name_status, 'amber') }));
+    body.appendChild(rows);
+    if (cfg.phone_error) body.appendChild(h('div', { class: 'pros-hint', text: 'No pudimos leer el número en Meta: ' + cfg.phone_error }));
+    var hist = (q.history || []).slice(-4).reverse().filter(function (x) { return x && x.at; });
+    if (hist.length > 1) {
+      body.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:4px', text: 'Cambios recientes: ' + hist.map(function (x) {
+        var l = QUALITY_LABEL[String(x.rating || 'UNKNOWN').toUpperCase()] || QUALITY_LABEL.UNKNOWN;
+        return fmtDateTime(x.at) + ' · calidad ' + l[0].toLowerCase() + (x.event ? ' (' + x.event + ')' : '');
+      }).join(' — ') }));
+    }
+    // Protección: con la calidad en rojo el motor retiene las campañas de
+    // WhatsApp. Las respuestas desde la Bandeja nunca se frenan.
+    var guard = h('input', { type: 'checkbox', style: 'width:auto;flex:none;margin-top:2px' });
+    guard.checked = cfg.quality_guard !== false;
+    guard.addEventListener('change', guarded(function () {
+      var want = guard.checked;
+      return watiAction('set_quality_guard', { enabled: want }).then(function () {
+        toast(want ? 'Las campañas se pausan solas si la calidad baja a roja.' : 'Protección apagada: las campañas siguen aunque la calidad baje.', 'success');
+        renderWhatsAppDetails(api);
+      }, function (e) { guard.checked = !want; throw e; });
+    }));
+    body.appendChild(h('label', { style: 'display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:12.5px' }, guard,
+      h('span', { text: 'Pausar las campañas de WhatsApp si Meta pone la calidad en rojo o marca el número (recomendado). Las respuestas desde la Bandeja siguen saliendo.' })));
+    var cx = cfg.coexistence;
+    if (cx) {
+      var hs = cx.history || {};
+      body.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:6px', text: hs.error
+        ? 'Tu número sigue en la app de WhatsApp Business del teléfono. No pudimos traer tus chats anteriores: ' + hs.error
+        : 'Tu número sigue en la app de WhatsApp Business del teléfono: lo que escribes ahí también aparece en la Bandeja, y tus chats anteriores van llegando solos.' }));
+    }
   }
 
   /** Borrar una plantilla en WhatsApp. Meta no libera el nombre: se avisa. */
@@ -3376,7 +3612,12 @@
       var evs = byEnroll[e.id] || [];
       var last = evs[0];
       var path = Array.isArray(e.branch_path) ? e.branch_path : [];
-      var pathTxt = path.length ? path.map(function (p) { var cl = L.CONDITION_LABELS[p.check]; return (cl ? cl.label : p.check) + ': ' + (p.branch === 'yes' ? 'Sí' : 'No'); }).join(' · ') : '';
+      var pathTxt = path.length ? path.map(function (p) {
+        var pl = p.check === 'ai_column' ? L.find(flow, p.node_id) : null;
+        var cl = L.CONDITION_LABELS[p.check];
+        var label = pl ? L.nodeTitle(pl.node).replace(/^¿|\?$/g, '') : (cl ? cl.label : p.check);
+        return label + ': ' + (p.branch === 'yes' ? 'Sí' : 'No');
+      }).join(' · ') : '';
       var next = (e.status === 'active' || e.status === 'processing' || e.status === 'paused') && loc
         ? esc(L.nodeTitle(loc.node)) + (e.next_run_at && e.status !== 'paused' ? '<div class="pros-cellsub">' + esc(fmtDateTime(e.next_run_at)) + '</div>' : '')
         : (displayStatus(e) === 'replied' && e.status !== 'replied'
@@ -3530,10 +3771,28 @@
   // ── Reacciones de WhatsApp ──
   // Una reacción es una fila de inbox_messages con payload.type = 'reaction'
   // (emoji + reacts_to = wamid del mensaje). No se pinta como globo: va pegada
-  // al mensaje que reacciona. Emoji vacío = reacción quitada. Solo se MUESTRAN:
-  // la API de WATI no permite enviarlas (rechaza type "reaction": «Type must be
-  // 'text' or 'interactive'», 2026-10-01), así que la bandeja no ofrece
-  // reaccionar. Ver docs/OMNICANAL.md.
+  // al mensaje que reacciona. Emoji vacío = reacción quitada. Con WhatsApp
+  // directo con Meta (2026-10-17) la bandeja también ENVÍA reacciones
+  // (inbox-send {action:"react"}); con WATI solo se muestran: su API no las
+  // permite (rechaza type "reaction", 2026-10-01). Ver docs/OMNICANAL.md.
+  // Espejo del set rápido de wati.REACTION_EMOJIS.
+  var REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+  /** ¿Se le puede reaccionar desde aquí? Espejo de whatsapp.reactableWamid (solo Meta, mensaje real con WAMID). */
+  function canReactTo(msg) {
+    if (!msg || chanKey(msg.channel) !== 'whatsapp' || msg.provider !== 'meta' || isReaction(msg)) return false;
+    if (/^local-/.test(String(msg.id)) || msg.status === 'sending') return false;
+    return !!wamidOfMsg(msg) && isConn(state.metaRow);
+  }
+  function sendReaction(key, msgId, emoji, btn) {
+    var r0 = btnLoading(btn, '⏳');
+    return edgeFetch(FN_INBOX, { action: 'react', id: msgId, emoji: emoji }).then(function (r) {
+      r0();
+      delete state.reactPick[key];
+      var row = r && r.message;
+      if (row && row.id && !state.inbox.some(function (x) { return x.id === row.id; })) state.inbox.push(row);
+      renderKeepingReplyFocus(key);
+    }, function (e) { r0(); throw e; });
+  }
   function isReaction(m) { return !!(m && m.payload && m.payload.type === 'reaction'); }
   function reactionEmoji(m) {
     var pl = m.payload || {};
@@ -3629,7 +3888,7 @@
   // Entrantes y salientes: lo que mandaste desde WATI o desde aquí también se ve.
   function isMediaMsg(msg) {
     var pl = msg.payload || {};
-    return chanKey(msg.channel) === 'whatsapp' && msg.provider === 'wati' && MEDIA_TYPES.indexOf(String(pl.type || '')) !== -1;
+    return chanKey(msg.channel) === 'whatsapp' && (msg.provider === 'wati' || msg.provider === 'meta') && MEDIA_TYPES.indexOf(String(pl.type || '')) !== -1;
   }
   // Adjuntos desde la bandeja. Mismo criterio que mediaKindForMime en
   // _shared/wati.ts: Meta solo acepta JPEG y PNG como foto.
@@ -3932,8 +4191,9 @@
   }
 
   /**
-   * Globo + sus reacciones (chips debajo). Solo lectura: WATI no permite
-   * reaccionar por API (ver el comentario de "Reacciones de WhatsApp").
+   * Globo + sus reacciones (chips debajo). Con Meta directo se puede
+   * reaccionar («🙂 Reaccionar»); con WATI solo se muestran (ver el comentario
+   * de "Reacciones de WhatsApp").
    */
   function messageWithReactions(msg, bubble, slot, conv) {
     var wrap = h('div', { class: 'cmp-rmsg ' + (msg.direction === 'in' ? 'in' : 'out') });
@@ -3941,6 +4201,19 @@
     // Responder a este mensaje: solo email y WhatsApp (LinkedIn no se envía por API) y solo filas ya guardadas.
     if (conv && msg.status !== 'sending' && !/^local-/.test(String(msg.id)) && ['whatsapp', 'email'].indexOf(chanKey(msg.channel)) !== -1) {
       wrap.appendChild(h('button', { type: 'button', class: 'cmp-reply-to', 'data-action': 'reply-to', 'data-key': conv.key, 'data-msg': msg.id, title: 'Responder a este mensaje', 'aria-label': 'Responder a este mensaje', text: '↩ Responder' }));
+    }
+    var mineEmoji = slot.out ? reactionEmoji(slot.out) : '';
+    if (conv && canReactTo(msg)) {
+      var open = state.reactPick[conv.key] === msg.id;
+      wrap.appendChild(h('button', { type: 'button', class: 'cmp-reply-to', 'data-action': 'react-open', 'data-key': conv.key, 'data-msg': msg.id, 'aria-expanded': open ? 'true' : 'false', title: 'Reaccionar', 'aria-label': 'Reaccionar a este mensaje', text: '🙂 Reaccionar' }));
+      if (open) {
+        var pick = h('div', { class: 'cmp-react-pick', role: 'group', 'aria-label': 'Elige una reacción' });
+        REACTION_EMOJIS.forEach(function (e) {
+          pick.appendChild(h('button', { type: 'button', class: 'cmp-react-opt' + (e === mineEmoji ? ' on' : ''), 'data-action': 'react-send', 'data-key': conv.key, 'data-msg': msg.id, 'data-emoji': e, 'aria-pressed': e === mineEmoji ? 'true' : 'false', title: e === mineEmoji ? 'Ya reaccionaste con ' + e : 'Reaccionar con ' + e, text: e }));
+        });
+        if (mineEmoji) pick.appendChild(h('button', { type: 'button', class: 'cmp-react-opt clear', 'data-action': 'react-send', 'data-key': conv.key, 'data-msg': msg.id, 'data-emoji': '', title: 'Quitar mi reacción', text: 'Quitar' }));
+        wrap.appendChild(pick);
+      }
     }
     var chips = h('div', { class: 'cmp-react-chips' });
     if (slot.in && reactionEmoji(slot.in)) {
@@ -4412,6 +4685,21 @@
       return;
     }
     if (action === 'reply-to-clear' && key) { delete state.replyTo[key]; return renderKeepingReplyFocus(key); }
+    if (action === 'react-open' && key) {
+      var rm = btn.getAttribute('data-msg');
+      if (state.reactPick[key] === rm) delete state.reactPick[key]; else state.reactPick[key] = rm;
+      return renderKeepingReplyFocus(key);
+    }
+    if (action === 'react-send' && key) {
+      var rEmoji = btn.getAttribute('data-emoji') || '';
+      var rMsg = btn.getAttribute('data-msg');
+      var cvX = findConv(key);
+      var target = cvX && cvX.messages.find(function (x) { return x.id === rMsg; });
+      var current = '';
+      if (cvX && target) { var sl = groupReactions(cvX.messages).slots[target.id]; current = sl && sl.out ? reactionEmoji(sl.out) : ''; }
+      // Tocar el emoji que ya pusiste lo quita, como en WhatsApp.
+      return sendReaction(key, rMsg, rEmoji && rEmoji === current ? '' : rEmoji, btn);
+    }
     if (action === 'reply-attach' && key) {
       var fin = state.root.querySelector('input[data-action="reply-file"][data-key="' + key + '"]');
       if (fin) { fin.value = ''; fin.click(); }
