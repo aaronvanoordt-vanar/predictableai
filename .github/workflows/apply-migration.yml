@@ -1,0 +1,67 @@
+# Aplicación manual de UNA migración a producción.
+#
+# Las migraciones de supabase/migrations/ no se aplican solas al mergear. Este
+# workflow es el botón para hacerlo desde la pestaña Actions sin el CLI ni la
+# contraseña de la base: manda el SQL del archivo a la API de administración
+# de Supabase (POST /v1/projects/{ref}/database/query) con el mismo secret
+# SUPABASE_ACCESS_TOKEN que usa deploy-functions.yml.
+#
+# Reglas:
+#   · Una migración por ejecución, por nombre de archivo exacto.
+#   · Corre el archivo tal cual está en la rama elegida: las migraciones se
+#     escriben para poder correr dos veces (IF NOT EXISTS, CREATE OR REPLACE),
+#     pero revisa el archivo antes de aplicarlo a mano otra vez.
+#   · No registra nada en supabase_migrations: el repo es la fuente de verdad
+#     de qué existe; el PR dice qué migración hay que aplicar.
+name: Apply Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      migration:
+        description: 'Nombre del archivo en supabase/migrations/ (p. ej. 20261018000001_corporate_trial.sql)'
+        required: true
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || 'yskaojvuhaqfmimwmvbi' }}
+          # Por env, nunca interpolado en el script (inyección de comandos).
+          MIGRATION: ${{ inputs.migration }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
+            echo "::error::Falta el secret SUPABASE_ACCESS_TOKEN."
+            exit 1
+          fi
+          if ! printf '%s' "$MIGRATION" | grep -Eq '^[0-9]{14}_[a-z0-9_]+\.sql$'; then
+            echo "::error::Nombre de migración inválido: usa el nombre exacto del archivo (AAAAMMDDhhmmss_nombre.sql)."
+            exit 1
+          fi
+          FILE="supabase/migrations/$MIGRATION"
+          if [ ! -f "$FILE" ]; then
+            echo "::error::No existe $FILE en esta rama."
+            exit 1
+          fi
+
+          echo "Aplicando $FILE ($(wc -c < "$FILE") bytes) al proyecto $PROJECT_REF…"
+          jq -Rs '{query: .}' "$FILE" > /tmp/body.json
+          STATUS=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
+            -X POST "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/body.json)
+          echo "HTTP $STATUS"
+          head -c 2000 /tmp/resp.json; echo
+          if [ "$STATUS" -lt 200 ] || [ "$STATUS" -ge 300 ]; then
+            echo "::error::Falló la migración $MIGRATION (HTTP $STATUS)."
+            exit 1
+          fi
+          echo "✓ $MIGRATION aplicada"
