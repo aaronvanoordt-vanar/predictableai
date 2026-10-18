@@ -143,13 +143,15 @@ COMMENT ON COLUMN public.prospect_list_members.meeting_handoff IS
 
 -- ── learning_insights: asistencia real ───────────────────────────────────
 -- Conserva todos los scopes anteriores (incluido 'deal_loss' del CRM,
--- 20261017100001) y agrega 'meeting_attendance'.
+-- 20261017100001), agrega 'automation_rule' (lo escribe learning-loop desde
+-- #362 y ninguna migración lo había permitido: el upsert fallaba entero para
+-- quien tuviera reglas) y 'meeting_attendance'.
 ALTER TABLE public.learning_insights DROP CONSTRAINT IF EXISTS learning_insights_scope_check;
 ALTER TABLE public.learning_insights
   ADD CONSTRAINT learning_insights_scope_check
   CHECK (scope IN ('radar_detector', 'campaign_node', 'campaign', 'channel', 'angle',
                    'winning_message', 'objection', 'icp_attribute', 'summary', 'deal_loss',
-                   'meeting_attendance'));
+                   'automation_rule', 'meeting_attendance'));
 
 -- ── Integraciones: Outlook Calendar ───────────────────────────────────────
 DO $$

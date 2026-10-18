@@ -2164,6 +2164,15 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       Bandeja
       <span id="nav-bandeja-badge" class="nav-badge" style="display:none">0</span>
     </div>
+    <!-- Automatizaciones (2026-10-17, js/automations.js): reglas «cuando → si →
+         entonces» sobre Radar, Listas, enriquecimiento, investigación IA y
+         Campañas, con aprobación humana por defecto. Motor: automation-run.
+         El contador = ejecuciones por aprobar. -->
+    <div class="nav-item" data-page="automations" onclick="nav(this,'automations');if(window.automations)window.automations.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M9 1.5L3 9h4.5L7 14.5 13 7H8.5z"/></svg>
+      Automatizaciones
+      <span id="nav-auto-badge" class="nav-badge accent" style="display:none">0</span>
+    </div>
 
     <!-- AI SALES COACH -->
     <div class="sidebar-section">
@@ -2472,6 +2481,17 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
   <div id="agenda-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: AUTOMATIZACIONES (js/automations.js) ═══════ -->
+<div class="page fade-in" id="page-automations" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Automatizaciones</div>
+      <div class="topbar-sub">Reglas que hacen el siguiente paso por ti, con tu aprobación</div>
+    </div>
+  </div>
+  <div id="automations-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: AGENCIA (js/agency.js) ═══════ -->
@@ -3332,15 +3352,16 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/campaigns.js?v=20261018n"></script>
 <script src="js/inbox-alert.js?v=20261001b"></script>
 <script src="js/push.js?v=20261006"></script>
+<script src="js/automations.js?v=20261017"></script>
 <script src="js/inbound.js?v=20261017"></script>
 <script src="js/radar.js?v=20261017"></script>
 <script src="js/radar-live.js?v=20261017"></script>
 <script src="js/clients.js?v=20260824-sheets"></script>
-<script src="js/agency.js?v=20261017"></script>
+<script src="js/agency.js?v=20261018"></script>
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
 <script src="js/meeting-report.js"></script>
-<script src="js/learning.js?v=20260919"></script>
+<script src="js/learning.js?v=20261017"></script>
 <script src="js/ai-training.js?v=20260923"></script>
 <script src="js/tam-map.js?v=20261017"></script>
 <script src="js/integrations.js?v=20261018"></script>
