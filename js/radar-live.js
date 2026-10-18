@@ -382,7 +382,7 @@
   function championsHtml() {
     const ch = state.champions;
     if (!ch.loaded) return '<div class="rl-empty"><span class="rl-spin"></span> Cargando…</div>';
-    if (ch.missing) return '<div class="rl-alert rl-alert-warn">El seguimiento de champions todavía no está disponible: falta aplicar la migración 20261017000001_champion_watch.sql.</div>';
+    if (ch.missing) return '<div class="rl-alert rl-alert-warn">El seguimiento de champions todavía no está disponible: falta aplicar la migración 20261018000002_champion_watch.sql.</div>';
     const det = championDetector();
     const cfg = championCfg();
     const planActive = state.plan && state.plan.status === 'active';

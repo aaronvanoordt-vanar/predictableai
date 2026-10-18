@@ -42,7 +42,7 @@
     // Cada detector activo se cobra por período de 30 días según su tipo:
     // personas 10 · datos de Apollo 30 (+10 por cada 100 empresas sobre 300)
     // · búsqueda web 40 · Google Maps 60 (radarDetectorMonthCost).
-    radar_detector_month:   { credits: 30, label: 'por detector cada 30 días (10–60 según el tipo)', variable: true },
+    radar_detector_month:   { credits: 30, label: 'por detector cada 30 días (10–60 según el tipo; el primero, gratis en la prueba)', variable: true },
     radar_detector_custom:  { credits: 3,  label: 'por detector propio', variable: false },
 
     // ── Mensajes IA ───────────────────────────────────────────────────
@@ -69,6 +69,12 @@
     // Solo se cobra si Apollo encuentra el dato.
     enrich_email:           { credits: 2,  label: 'por email',           variable: false },
     enrich_phone:           { credits: 8,  label: 'por teléfono',        variable: false },
+    // Si Apollo no lo encuentra, la cascada de proveedores (Prospeo,
+    // BetterContact, FullEnrich…). Solo se cobra el dato encontrado.
+    enrich_email_waterfall: { credits: 3,  label: 'por email encontrado en la cascada', variable: false },
+    enrich_phone_waterfall: { credits: 20, label: 'por teléfono encontrado en la cascada', variable: false },
+    // Verificar un email de Apollo que no venía verificado (solo si hay veredicto).
+    email_verify:           { credits: 1,  label: 'por email verificado', variable: false },
 
     // ── Meeting Coach (por duración) ──────────────────────────────────
     // Captura local: 5 por cada 10 min + 5 del reporte final.
