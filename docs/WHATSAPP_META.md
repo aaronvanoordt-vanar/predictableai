@@ -95,7 +95,7 @@ En Supabase → Project Settings → Edge Functions → Secrets:
 
 Después:
 
-1. Aplicar la migración `supabase/migrations/20261017000002_whatsapp_meta.sql`.
+1. Aplicar la migración `supabase/migrations/20261018161500_whatsapp_meta.sql`.
 2. **Actions → Deploy Edge Functions** con
    `meta-whatsapp-webhook channel-connect campaign-run inbox-send generate-campaign`
    (`meta-whatsapp-webhook` ya está en `NO_JWT`: se despliega con `--no-verify-jwt`).
