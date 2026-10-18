@@ -48,6 +48,7 @@ import {
   detectTech, detectedLabels, evaluateProbeRules, fetchDnsText, fetchHomepage, probeHeadline, probeNeeds, type ProbeRules,
 } from "./site-probe.ts";
 import { maxCompaniesOf, type DetectorKind } from "./radar-plan.ts";
+import { tickChampions } from "./champion-tick.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -79,6 +80,8 @@ export interface DetectorRow {
   config: Json;
   cursor: Json;
   weight: number;
+  /** radar_detectors.stats (lo lee champion_moves para su tope mensual). */
+  stats?: Json;
 }
 
 export interface TickContext {
@@ -98,12 +101,15 @@ export interface TickResult {
   cursor: Json;
   done: boolean;
   note?: string;
+  /** Claves que el motor mezcla en radar_detectors.stats (sobrevive a "Buscar ahora", que vacía el cursor). */
+  statsPatch?: Record<string, unknown>;
 }
 
 /** Cuánto suele tardar un tick de cada kind: el motor no arranca uno si no le queda ese tiempo. */
 export const TICK_ESTIMATE_MS: Record<DetectorKind, number> = {
   news: 100_000, tenders: 100_000, web_footprint: 100_000, hiring: 20_000, technographics: 20_000, site_probe: 45_000,
   funding: 20_000, leadership: 20_000, growth: 20_000, presence: 20_000, website_visitors: 20_000,
+  champion_moves: 95_000,
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -659,5 +665,6 @@ export async function runTick(t: TickContext): Promise<TickResult> {
     case "growth": return tickGrowth(t);
     case "presence": return tickPresence(t);
     case "website_visitors": return tickWebsiteVisitors(t);
+    case "champion_moves": return tickChampions(t);
   }
 }

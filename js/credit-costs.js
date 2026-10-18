@@ -54,6 +54,9 @@
     // «Investigar con IA» (Listas): puesto actual + empresa + ángulo. Con la
     // cuenta de Apollo de la plataforma se suma el match (enrich_email).
     lead_research:          { credits: 3,  label: 'por lead',            variable: false },
+    // Seguimiento de champions (Radar): búsqueda web de respaldo cuando
+    // Apollo no ubica a la persona en su empresa.
+    champion_web_check:     { credits: 2,  label: 'por verificación web', variable: false },
     // Tendencias de outbound (investigación manual).
     outreach_playbook:      { credits: 10, label: 'por investigación',   variable: false },
 
