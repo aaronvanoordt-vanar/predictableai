@@ -25,6 +25,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { delayMs, firstNode, normalize as normalizeFlow, actions as flowActions } from "./campaign-flow.ts";
 import { companyDomain, CURRENCIES, LOST_REASON_KEYS, STAGE_KINDS } from "./crm.ts";
+import { suppressedMembers, type SuppressionChannel } from "./suppression.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -1098,8 +1099,16 @@ export const OPERATIONS: Record<string, Operation> = {
       const first = firstNode(normalizeFlow(c.flow));
       if (!first) throw new ApiError(409, "campaign_empty", "La campaña no tiene pasos todavía.");
 
-      const { data: members } = await ctx.supa.from("prospect_list_members").select("id, contact_status").eq("user_id", ctx.userId).in("id", ids);
-      const owned = members || [];
+      const { data: members } = await ctx.supa.from("prospect_list_members").select("id, contact_status, email, phone, linkedin_url, company_domain").eq("user_id", ctx.userId).in("id", ids);
+      const found = members || [];
+      // Lista de supresión: quien está suprimido en TODOS los canales de la
+      // campaña no se enrola; el suprimido en algunos se enrola y el motor
+      // salta esos pasos. Si la lista no se puede leer, el motor la vuelve a
+      // mirar antes de cada envío.
+      const channels = [...new Set(flowActions(normalizeFlow(c.flow)).map((a) => (a.channel.startsWith("linkedin") ? "linkedin" : a.channel) as SuppressionChannel))];
+      const { result: sup } = await suppressedMembers(ctx.supa, ctx.userId, found, channels);
+      const blocked = found.filter((m: Json) => channels.length && channels.every((ch) => sup[m.id]?.[ch]));
+      const owned = found.filter((m: Json) => !blocked.includes(m));
       const now = Date.now();
       const rows = owned.map((m: Json) => ({
         campaign_id: id, member_id: m.id, user_id: ctx.userId, status: "active",
@@ -1121,7 +1130,8 @@ export const OPERATIONS: Record<string, Operation> = {
         data: {
           enrolled: enrolled.length,
           already_enrolled: owned.length - enrolled.length,
-          not_found: ids.length - owned.length,
+          not_found: ids.length - found.length,
+          suppressed: blocked.map((m: Json) => ({ contact_id: m.id, reasons: sup[m.id] })),
           campaign_status: c.status,
           note: c.status === "active" ? null : "La campaña no está activa: los leads esperarán hasta que la actives en Predictable.",
         },
