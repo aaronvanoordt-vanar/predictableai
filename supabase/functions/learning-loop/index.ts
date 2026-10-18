@@ -27,6 +27,9 @@
  *                    inyecta en vivo y en el reporte.
  *   icp_attribute    cargo / país / industria / tamaño con tasa de respuesta
  *                    vs. el promedio (sugerencia para el Contexto; no pisa el ICP).
+ *   deal_loss        motivos de las oportunidades perdidas del CRM (el motivo es
+ *                    obligatorio al perderla; reglas en _shared/crm.ts). La IA de
+ *                    campañas, mensajes y Hub los recibe vía intelligence.ts.
  *   summary          titulares para el dashboard.
  *
  * Intelligence Hub (2026-09-23): el 👍/👎 de cada hallazgo y las acciones
@@ -48,6 +51,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { distillHubRules } from "../_shared/intelligence.ts";
+import { lossInsights } from "../_shared/crm.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -431,6 +435,28 @@ async function learnHub(supa: Json, userId: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CRM: por qué se pierden las oportunidades (último año)
+// ─────────────────────────────────────────────────────────────────────────────
+async function learnDeals(supa: Json, userId: string, out: Insight[]) {
+  const since = new Date(Date.now() - 365 * 86400_000).toISOString();
+  const { data: stages, error } = await supa.from("crm_stages").select("id, kind").eq("user_id", userId).in("kind", ["won", "lost"]);
+  if (error) return { lost: 0, won: 0 }; // sin la migración del CRM: nada que aprender
+  const lostIds = (stages || []).filter((s: Json) => s.kind === "lost").map((s: Json) => s.id);
+  const wonIds = (stages || []).filter((s: Json) => s.kind === "won").map((s: Json) => s.id);
+  if (!lostIds.length) return { lost: 0, won: 0 };
+  const [lostRes, wonRes] = await Promise.all([
+    supa.from("crm_opportunities").select("lost_reason, lost_competitor, lost_note").eq("user_id", userId).in("stage_id", lostIds).gte("closed_at", since).limit(5000),
+    wonIds.length
+      ? supa.from("crm_opportunities").select("id", { count: "exact", head: true }).eq("user_id", userId).in("stage_id", wonIds).gte("closed_at", since)
+      : Promise.resolve({ count: 0 }),
+  ]);
+  const lost: Json[] = Array.isArray(lostRes.data) ? lostRes.data : [];
+  const won = Number(wonRes.count) || 0;
+  out.push(...lossInsights(lost, won));
+  return { lost: lost.length, won };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 async function recomputeUser(supa: Json, userId: string) {
   const out: Insight[] = [];
   const actions: string[] = [];
@@ -439,6 +465,7 @@ async function recomputeUser(supa: Json, userId: string) {
   const coach = await learnObjections(supa, userId, out);
   const icp = await learnIcp(supa, userId, out);
   const hub = await learnHub(supa, userId);
+  const deals = await learnDeals(supa, userId, out);
 
   const count = (scope: string, v: Verdict) => out.filter((i) => i.scope === scope && i.verdict === v).length;
   const headlines: string[] = [];
@@ -448,7 +475,9 @@ async function recomputeUser(supa: Json, userId: string) {
   if (radar.detectors) headlines.push(`${count("radar_detector", "works")} detectores funcionan, ${count("radar_detector", "fails")} se apagaron.`);
   if (coach.meetings) headlines.push(`${coach.meetings} reuniones analizadas, ${coach.objections} objeciones reales.`);
   if (hub.judged) headlines.push(`${hub.judged} hallazgos del Hub juzgados, ${hub.used} convertidos en acción.`);
-  out.push({ scope: "summary", key: "all", label: "Resumen", verdict: out.some((i) => i.verdict !== "insufficient") ? "neutral" : "insufficient", metrics: { headlines, works, fails, actions, campaigns: camp, radar, coach, icp, hub, computed_at: nowIso() } });
+  const topLoss = out.find((i) => i.scope === "deal_loss" && i.verdict === "fails");
+  if (deals.lost || deals.won) headlines.push(`${deals.won} oportunidades ganadas y ${deals.lost} perdidas en el último año${topLoss ? `; motivo principal: ${topLoss.label}` : ""}.`);
+  out.push({ scope: "summary", key: "all", label: "Resumen", verdict: out.some((i) => i.verdict !== "insufficient") ? "neutral" : "insufficient", metrics: { headlines, works, fails, actions, campaigns: camp, radar, coach, icp, hub, deals, computed_at: nowIso() } });
 
   // Reemplazo atómico por usuario: borra lo que ya no existe y upsert del resto.
   const keys = out.map((i) => `${i.scope}|${i.key}`);
@@ -478,6 +507,7 @@ async function activeUsers(supa: Json): Promise<string[]> {
     ["coach_meetings", "created_at"],
     ["prospect_list_members", "status_changed_at"],
     ["intel_hub_feedback", "created_at"],
+    ["crm_opportunities", "updated_at"],
   ];
   for (const [t, col] of tables) {
     const { data } = await supa.from(t).select("user_id").gte(col, since).limit(5000);
