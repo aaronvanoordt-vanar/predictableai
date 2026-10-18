@@ -10,7 +10,7 @@
  *               del traspaso al AE, que se abre en el Meeting Coach.
  *   Configurar  enlace, tipos de reunión, disponibilidad semanal, preguntas de
  *               calificación y recordatorios (plantilla aprobada de WhatsApp +
- *               email). La disponibilidad real sale del Google Calendar
+ *               email). La disponibilidad real sale del Google Calendar u Outlook
  *               conectado en Integraciones; sin él la agenda no se activa.
  *
  * Lecturas con la sesión del usuario (RLS: booking_pages y bookings solo del
@@ -77,7 +77,7 @@
     return body || {};
   }
 
-  var BOOKING_COLS = 'id, meeting_type_name, duration_min, member_id, guest_name, guest_email, guest_phone, guest_company, guest_timezone, answers, start_at, end_at, status, confirmation, attendance, attendance_source, reschedule_count, calendar_html_link, meeting_url, reminders, handoff, handoff_status, handoff_error, source, created_at';
+  var BOOKING_COLS = 'id, meeting_type_name, duration_min, member_id, guest_name, guest_email, guest_phone, guest_company, guest_timezone, answers, start_at, end_at, status, confirmation, attendance, attendance_source, reschedule_count, calendar_provider, calendar_html_link, meeting_url, reminders, handoff, handoff_status, handoff_error, source, created_at';
 
   async function load() {
     if (state.loading) return;
@@ -223,7 +223,7 @@
     }
     if (b.member_id && b.status !== 'cancelled') acts.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Abrir en Meeting Coach', on: { click: function () { openCoach(b); } } }));
     if (b.meeting_url && !past && b.status === 'scheduled') acts.appendChild(h('a', { class: 'btn btn-ghost btn-sm', href: b.meeting_url, target: '_blank', rel: 'noopener', text: 'Videollamada' }));
-    if (b.calendar_html_link) acts.appendChild(h('a', { class: 'btn btn-ghost btn-sm', href: b.calendar_html_link, target: '_blank', rel: 'noopener', text: 'Ver en Google Calendar' }));
+    if (b.calendar_html_link) acts.appendChild(h('a', { class: 'btn btn-ghost btn-sm', href: b.calendar_html_link, target: '_blank', rel: 'noopener', text: b.calendar_provider === 'outlook' ? 'Ver en Outlook' : 'Ver en Google Calendar' }));
     if (acts.childNodes.length) card.appendChild(acts);
     if (b.status !== 'cancelled') card.appendChild(handoffBox(b));
     return card;
