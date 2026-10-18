@@ -21,9 +21,12 @@
  *         (si está fuera, next_run_at pasa al próximo inicio de ventana),
  *         tope diario del canal (si se alcanzó, se reintenta en una hora) y
  *         se ejecuta el canal:
- *           whatsapp  → WATI: plantilla de saludo (A/B/C, ya aprobada por
- *                       Meta) o mensaje libre (solo con sesión abierta: el
- *                       lead escribió en las últimas 24 h).
+ *           whatsapp  → Meta directo (Cloud API, Embedded Signup) o WATI,
+ *                       por el adaptador _shared/whatsapp.ts: la plantilla
+ *                       aprobada que eligió el paso o mensaje libre (solo con
+ *                       sesión abierta: el lead escribió en las últimas 24 h).
+ *                       Con Meta, un número en rojo retiene la campaña
+ *                       (protección de calidad, desactivable).
  *           email     → Apollo: emailer_messages + send_now desde la cuenta
  *                       remitente de la campaña (mensaje individual, no
  *                       secuencia: así cada lead recibe SU texto).
@@ -79,14 +82,20 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
+import * as whatsapp from "../_shared/whatsapp.ts";
+import * as meta from "../_shared/meta-whatsapp.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import * as watiHistory from "../_shared/wati-history.ts";
 import { reconcileWatiReceipts } from "../_shared/wati-receipts.ts";
+import * as phoneLines from "../_shared/phone-lines.ts";
+import * as waReach from "../_shared/wa-reachability.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 import * as gmail from "../_shared/gmail.ts";
+import * as suppression from "../_shared/suppression.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import { aiColumnMatches, aiColumnPending } from "../_shared/ai-columns.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -336,11 +345,15 @@ async function gmailReply(ctx: Ctx, userId: string, threadId: string | null, con
   }
 }
 
-async function watiAccount(ctx: Ctx, userId: string): Promise<Json | null> {
+/**
+ * Cuenta de WhatsApp con la que sale el envío: Meta directo si está
+ * conectada, si no WATI (_shared/whatsapp.ts#pickWhatsAppAccount).
+ */
+async function whatsappAccount(ctx: Ctx, userId: string): Promise<Json | null> {
   if (ctx.watiByUser.has(userId)) return ctx.watiByUser.get(userId) ?? null;
-  const { data } = await ctx.db.from("channel_accounts").select("*").eq("user_id", userId).eq("provider", "wati").maybeSingle();
-  ctx.watiByUser.set(userId, data ?? null);
-  return data ?? null;
+  const acc = await whatsapp.loadWhatsAppAccount(ctx.db, userId);
+  ctx.watiByUser.set(userId, acc);
+  return acc;
 }
 
 async function dripifyAccount(ctx: Ctx, userId: string): Promise<Json | null> {
@@ -454,6 +467,25 @@ class StepError extends Error {
   }
 }
 
+/**
+ * Error de envío de WhatsApp → modo del paso. Credencial vencida = retener.
+ * Meta contesta algunas fallas en el mismo envío (WATI las avisa después por
+ * webhook): una de la CUENTA (#131037…) o de la PLANTILLA (#132001…) retiene
+ * el paso con el motivo, igual que el recibo de falla, en vez de quemarle el
+ * envío al lead. El resto = fallar este paso y seguir con el siguiente canal.
+ */
+function sendError(e: unknown, acc: Json, what: string, templateName: string | null): StepError {
+  const msg = `${whatsapp.providerLabel(acc)} no aceptó ${what}: ${whatsapp.humanError(e)}`;
+  if (whatsapp.isAuthError(e)) return new StepError(msg, "hold");
+  const block = whatsapp.sendBlockCode(e);
+  if (block) return new StepError(wati.accountBlockMessage(block), "hold");
+  if (e instanceof meta.MetaError) {
+    const fault = wati.templateFaultCode(e.message);
+    if (fault && templateName) return new StepError(wati.templateFaultMessage(templateName, fault), "hold");
+  }
+  return new StepError(msg, "fail");
+}
+
 async function completeEnrollment(ctx: Ctx, en: Json, detail: string) {
   await event(ctx, en, "system", "completed", { detail });
   await finish(ctx, en, { status: "completed", next_run_at: null, stop_reason: "Cadencia completada." });
@@ -551,10 +583,16 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
   const sender = campaign.sender ?? {};
 
   if (step.channel === "whatsapp") {
-    const acc = await watiAccount(ctx, en.user_id);
-    if (!acc) throw new StepError("WATI no está conectado.", "hold");
+    const acc = await whatsappAccount(ctx, en.user_id);
+    if (!acc) throw new StepError("WhatsApp no está conectado.", "hold");
     const phone = wati.digits(member.phone);
     if (!phone) throw new StepError("El lead no tiene teléfono revelado: se omite el WhatsApp y sigue con el siguiente paso.", "skip");
+    // ¿Está en WhatsApp? (_shared/phone-lines.ts). Un fijo o el conmutador de
+    // la empresa no recibe la plantilla, y un número que ya respondió #131026
+    // no se vuelve a intentar en ninguna campaña: el paso se omite con su
+    // motivo y el lead sigue con el siguiente canal. Ante la duda se envía.
+    const reach = await waReach.reachForMember(db, en.user_id, member);
+    if (!reach.send) throw new StepError(phoneLines.skipMessage(reach), "skip");
     // Meta está rechazando todo envío de la cuenta (nombre visible sin
     // aprobar, lo sella wati-webhook): se retiene sin gastar un envío que va a
     // fallar. Vencido el plazo, UN solo lead por corrida prueba de nuevo; si
@@ -566,8 +604,14 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       if (ctx.watiProbed.has(en.user_id)) throw new StepError(wati.accountBlockMessage(String(acc.config.send_block.code)), "hold_short");
       ctx.watiProbed.add(en.user_id);
     }
-    const creds: wati.WatiCreds = { endpoint: acc.config?.endpoint, token: acc.secret };
+    // Número de Meta con la calidad en rojo (o restringido): se retiene la
+    // campaña antes de que Meta lo bloquee (_shared/meta-whatsapp.ts,
+    // qualityGuardActive). El usuario puede apagar la protección.
+    if (acc.provider === "meta" && meta.qualityGuardActive(acc.config)) throw new StepError(meta.QUALITY_HOLD_MESSAGE, "hold");
+    const wa = whatsapp.sender(acc);
     const localId = crypto.randomUUID();
+    let sentId: string = localId;
+    let sentWamid: string | null = null;
     let bodyText = "";
     let messageId: string | null = null;
     let templateName: string | null = null;
@@ -605,6 +649,10 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       if (!wati.isTemplateApproved(tplStatus)) {
         throw new StepError(`La plantilla "${tpl.name}" aún no está aprobada por Meta (${tplStatus}).`, "hold");
       }
+      if (acc.provider === "meta") {
+        const problem = whatsapp.metaTemplateProblem(tpl);
+        if (problem) throw new StepError(problem + " Se omite el WhatsApp.", "skip");
+      }
       // Meta rechazó esta plantilla en un envío reciente (#132001…) aunque el
       // catálogo diga APPROVED (_shared/wati-receipts.ts la marca): no se
       // quema otro saludo. El lead espera con el motivo hasta que el usuario
@@ -632,24 +680,27 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       if (missing.length) throw new StepError(`La plantilla "${tpl.name}" necesita ${missing.map((k) => `{{${k}}}`).join(", ")} y el lead no lo tiene: se omite el WhatsApp.`, "skip");
       bodyText = String(tpl.body ?? "");
       for (const [k, v] of Object.entries(params)) bodyText = bodyText.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, "gi"), v);
-      let r: Awaited<ReturnType<typeof wati.sendTemplate>>;
       try {
-        r = await wati.sendTemplate(creds, {
-          templateName: tpl.name,
+        const r = await wa.sendTemplate({
+          template: tpl,
           broadcastName: `px_${String(campaign.name).slice(0, 40)}_${localId.slice(0, 8)}`,
           phone,
-          localMessageId: localId,
+          localId,
           params,
-          channel: acc.config?.channel || undefined,
         });
+        sentId = r.messageId;
+        sentWamid = r.wamid;
       } catch (e) {
         // Igual que el texto libre: un 429/5xx o un corte de red era un error
         // genérico → modo "stop" y el enrolamiento quedaba en `error` para
         // siempre. 401 = retener (credencial); el resto = fallar este paso y
         // seguir con el siguiente canal.
-        throw new StepError("WATI no aceptó la plantilla: " + wati.humanError(e), e instanceof wati.WatiError && e.status === 401 ? "hold" : "fail");
+        // Una falla que dice «no está en WhatsApp» (#131026) marca el número
+        // para no volver a gastar plantillas en él (_shared/wa-reachability.ts).
+        // El adaptador lanza también cuando WATI responde accepted:false.
+        await waReach.learnFromFailure(db, en.user_id, phone, (e as Error)?.message, "send", member.id);
+        throw sendError(e, acc, "la plantilla", String(tpl.name));
       }
-      if (!r.accepted) throw new StepError("WATI rechazó el envío: " + (r.errors.join("; ") || "sin detalle"), "fail");
       templateName = String(tpl.name);
     } else {
       // Texto libre: solo dentro de la ventana de 24 h desde el último
@@ -666,21 +717,24 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
         messageId = t.messageId;
       }
       if (!bodyText.trim()) throw new StepError("No hay mensaje personalizado generado para este lead.", "skip");
-      let r: { id: string | null; conversationId: string | null };
-      try { r = await wati.sendText(creds, phone, bodyText, acc.config?.channel || undefined); }
-      catch (e) { throw new StepError("WATI no aceptó el mensaje: " + wati.humanError(e), e instanceof wati.WatiError && e.status === 401 ? "hold" : "fail"); }
-      if (!r.id) throw new StepError("WATI no confirmó el mensaje.", "fail");
+      try {
+        const r = await wa.sendText(phone, bodyText);
+        // WATI: la fila se sigue guardando con nuestro id (como siempre); Meta
+        // devuelve el WAMID al instante y es lo que traen sus recibos.
+        if (acc.provider === "meta") { sentId = r.messageId; sentWamid = r.wamid; }
+      } catch (e) { throw sendError(e, acc, "el mensaje", null); }
     }
 
     await db.from("inbox_messages").insert({
-      user_id: en.user_id, member_id: member.id, channel: "whatsapp", provider: "wati", direction: "out",
-      contact_ref: phone, body: bodyText, provider_message_id: localId, status: "pending", sent_at: ctx.now.toISOString(),
+      user_id: en.user_id, member_id: member.id, channel: "whatsapp", provider: acc.provider, direction: "out",
+      contact_ref: phone, body: bodyText, provider_message_id: sentId, status: "pending", sent_at: ctx.now.toISOString(),
       campaign_id: campaign.id, enrollment_id: en.id,
-      payload: { campaign_id: campaign.id, step_position: step.position, node_id: step.node_id, content_kind: step.content_kind, template_name: templateName },
+      payload: { campaign_id: campaign.id, step_position: step.position, node_id: step.node_id, content_kind: step.content_kind, template_name: templateName, ...(sentWamid ? { wamid: sentWamid } : {}) },
     });
-    // Un 200 de WATI es "aceptado", no "entregado": el estado real llega por
-    // wati-webhook o, si WATI no avisa, lo trae reconcileWatiReceipts.
-    await event(ctx, en, "whatsapp", "sent", { provider_message_id: localId, detail: bodyText.slice(0, 200), step_position: step.position, node_id: step.node_id, payload: templateName ? { template_name: templateName } : {} });
+    // Un 200 es "aceptado", no "entregado": el estado real llega por el
+    // webhook (wati-webhook / meta-whatsapp-webhook) o, si WATI no avisa, lo
+    // trae reconcileWatiReceipts.
+    await event(ctx, en, "whatsapp", "sent", { provider_message_id: sentId, detail: bodyText.slice(0, 200), step_position: step.position, node_id: step.node_id, payload: { ...(templateName ? { template_name: templateName } : {}), ...(sentWamid ? { wamid: sentWamid, provider: acc.provider } : {}) } });
     if (messageId) await db.from("campaign_messages").update({ status: "sent", sent_at: ctx.now.toISOString() }).eq("id", messageId);
     ctx.sentToday.set(`${en.user_id}:whatsapp`, (await sentLast24h(ctx, en.user_id, "whatsapp")) + 1);
     if (["no_contactado", "en_campana"].includes(member.contact_status)) {
@@ -813,6 +867,20 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
   }
 }
 
+/**
+ * Lista de supresión (_shared/suppression.ts): un lead suprimido en el canal
+ * del paso lo salta con el motivo y sigue la cadencia, igual que cuando le
+ * falta el dato. Si la lista no se pudo leer, el paso espera 1 h: nunca se
+ * envía a ciegas. Sin la migración aplicada, todo sigue como antes.
+ */
+async function assertNotSuppressed(ctx: Ctx, en: Json, member: Json, step: StepLike) {
+  const channel = channelKey(step.channel) as suppression.SuppressionChannel;
+  if (!suppression.SUPPRESSION_CHANNELS.includes(channel)) return;
+  const r = await suppression.isSuppressed(ctx.db, en.user_id, channel, suppression.contactOfMember(member));
+  if (r.error) throw new StepError("No se pudo comprobar la lista de supresión: " + r.error, "hold_short");
+  if (r.suppressed) throw new StepError(r.reason!, "skip");
+}
+
 /** Comprobaciones previas comunes: ventana, tope diario, lead vigente. Devuelve el miembro o null si ya se resolvió el enrolamiento. */
 async function preflight(ctx: Ctx, en: Json, campaign: Json, step: StepLike): Promise<Json | null> {
   const win = windowCheck(campaign, ctx.now);
@@ -826,7 +894,7 @@ async function preflight(ctx: Ctx, en: Json, campaign: Json, step: StepLike): Pr
   // El tope del canal de WhatsApp (config.daily_cap, desde la tarjeta del canal)
   // manda sobre el de la campaña: el conteo ya junta todas las campañas.
   if (ch === "whatsapp") {
-    const wa = await watiAccount(ctx, en.user_id);
+    const wa = await whatsappAccount(ctx, en.user_id);
     const chanCap = wa?.config?.daily_cap;
     if (chanCap !== undefined && chanCap !== null && Number.isFinite(Number(chanCap))) cap = Number(chanCap);
   }
@@ -894,8 +962,13 @@ async function handleStepError(ctx: Ctx, en: Json, step: StepLike, e: unknown): 
 
 // ── Camino con grafo (campaigns.flow) ───────────────────────────────────────
 
-async function evalCondition(ctx: Ctx, en: Json, check: flowLib.ConditionCheck): Promise<boolean> {
+/** Cuánto espera un lead cuya celda de Columna IA sigue en cola, y hasta cuándo. */
+const AI_COLUMN_WAIT_MS = 15 * 60 * 1000;
+const AI_COLUMN_MAX_WAIT_MS = 24 * 60 * 60 * 1000;
+
+async function evalCondition(ctx: Ctx, en: Json, node: flowLib.ConditionNode): Promise<boolean | "wait"> {
   const db = ctx.db;
+  const check = node.check;
   const hasEvent = async (types: string[], channel?: string) => {
     let q = db.from("campaign_events").select("id", { count: "exact", head: true }).eq("enrollment_id", en.id).in("type", types);
     if (channel) q = q.eq("channel", channel);
@@ -925,6 +998,27 @@ async function evalCondition(ctx: Ctx, en: Json, check: flowLib.ConditionCheck):
       if (check === "has_phone") return !!wati.digits(m.phone);
       if (check === "has_email") return hasEmail(m);
       return !!dripify.canonicalLinkedinUrl(m.linkedin_url);
+    }
+    // Columna IA de Listas (2026-10-17): la celda de ESTE lead en esa columna.
+    // Sin la tabla (migración sin aplicar) o sin celda → No.
+    case "ai_column": {
+      const rule = node.settings?.ai_column ?? null;
+      if (!rule) return false;
+      const { data: cell, error } = await db.from("list_ai_cells")
+        .select("status, value_bool, value_num, value_text")
+        .eq("column_id", rule.column_id).eq("member_id", en.member_id).eq("user_id", en.user_id)
+        .maybeSingle();
+      if (error) { console.warn("[campaign-run] ai_column:", error.message); return false; }
+      if (aiColumnPending(cell)) {
+        // La respuesta viene en camino: esperar, pero no para siempre (la
+        // cola sin cron o detenida a medias no deja al lead clavado). Se
+        // cuenta desde que la condición debía evaluarse.
+        const base = Date.parse(en.last_action_at || en.started_at || "") || ctx.now.getTime();
+        const dueAt = base + flowLib.delayMs(node);
+        if (ctx.now.getTime() - dueAt > AI_COLUMN_MAX_WAIT_MS) return false;
+        return "wait";
+      }
+      return aiColumnMatches(rule, cell);
     }
   }
   return false;
@@ -970,10 +1064,17 @@ async function runFlow(ctx: Ctx, en: Json, campaign: Json, flow: flowLib.Flow) {
   const node = loc.node;
 
   if (node.type === "condition") {
-    const yes = await evalCondition(ctx, en, node.check);
+    const result = await evalCondition(ctx, en, node);
+    if (result === "wait") {
+      const detail = `Esperando la respuesta de la columna IA «${node.settings?.ai_column?.column_name || "columna IA"}» para este lead.`;
+      if (en.error_detail !== detail) await event(ctx, en, "system", "skipped", { detail: detail + " Se vuelve a mirar en 15 minutos.", node_id: node.id });
+      await finish(ctx, en, { status: "active", next_run_at: new Date(ctx.now.getTime() + AI_COLUMN_WAIT_MS).toISOString(), error_detail: detail });
+      return;
+    }
+    const yes = result;
     const branch = yes ? "yes" : "no";
     const path = Array.isArray(en.branch_path) ? en.branch_path : [];
-    await event(ctx, en, "system", "branched", { detail: `${node.check}: ${yes ? "Sí" : "No"}`, node_id: node.id, payload: { check: node.check, branch } });
+    await event(ctx, en, "system", "branched", { detail: `${node.check === "ai_column" ? `Columna IA «${node.settings?.ai_column?.column_name || "?"}»` : node.check}: ${yes ? "Sí" : "No"}`, node_id: node.id, payload: { check: node.check, branch } });
     const next = flowLib.enterBranch(flow, node.id, branch);
     const base = en.last_action_at ? new Date(en.last_action_at) : new Date(en.started_at);
     await moveTo(ctx, en, flow, next, base, null, { branch_path: [...path, { node_id: node.id, check: node.check, branch, at: ctx.now.toISOString() }] });
@@ -999,6 +1100,7 @@ async function runFlow(ctx: Ctx, en: Json, campaign: Json, flow: flowLib.Flow) {
   let advance = true;
   let executed = false;
   try {
+    await assertNotSuppressed(ctx, en, member, step);
     await executeStep(ctx, en, campaign, member, step);
     executed = true;
   } catch (e) {
@@ -1157,9 +1259,38 @@ async function handleEmailReply(ctx: Ctx, ev: Json, msg: Json | null, preloaded?
     campaign_id: en.campaign_id, enrollment_id: en.id,
     payload: { emailer_message_id: ev.provider_message_id, apollo_status: msg?.status ?? null, reply_class: msg?.reply_class ?? null, subject: fromGmail?.subject ?? null, body_source: fromGmail ? "gmail" : null },
   }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true });
+  // «No me escribas» en la respuesta = baja: se registra en la lista de
+  // supresión (todos sus datos, todos los canales) con el texto como prueba.
+  // Sin Gmail no hay texto: Apollo solo avisa que respondió.
+  if (fromGmail?.body && suppression.isOptOutText(fromGmail.body)) {
+    await markEmailOptOut(ctx, en, "reply", { text: fromGmail.body, provider_message_id: ev.provider_message_id, campaign_id: en.campaign_id, subject: fromGmail.subject ?? null });
+    return;
+  }
   if (en.member_id) {
     await db.from("prospect_list_members").update({ contact_status: "respondio", status_changed_at: ctx.now.toISOString() })
       .eq("id", en.member_id).not("contact_status", "in", "(reunion_agendada,reunion_tomada,dado_de_baja)");
+  }
+}
+
+/**
+ * Baja por email (respuesta «no me escribas» o el enlace de baja que Apollo
+ * pone en el correo, List-Unsubscribe): enrolamiento `unsubscribed`, CRM
+ * `dado_de_baja` y la lista de supresión con la prueba.
+ */
+async function markEmailOptOut(ctx: Ctx, en: Json, source: "reply" | "list_unsubscribe", evidence: Json) {
+  const db = ctx.db;
+  const stopReason = source === "reply" ? "El lead pidió no recibir más correos." : "El lead se dio de baja con el enlace del correo.";
+  await db.from("campaign_enrollments").update({
+    status: "unsubscribed", stop_reason: stopReason, next_run_at: null,
+    ...(en.replied_at ? {} : { replied_at: ctx.now.toISOString(), replied_channel: "email" }),
+  }).eq("id", en.id).in("status", ["active", "processing", "paused", "replied", "completed"]);
+  await event(ctx, en, "email", "opted_out", { provider_message_id: evidence.provider_message_id ?? null, detail: stopReason, step_position: evidence.step_position, node_id: evidence.node_id });
+  const { data: member } = en.member_id
+    ? await db.from("prospect_list_members").select("id, email, phone, linkedin_url, contact_status").eq("id", en.member_id).maybeSingle()
+    : { data: null };
+  await suppression.recordOptOut(db, { userId: en.user_id, member, source, channel: "email", evidence, at: ctx.now.toISOString() });
+  if (member && member.contact_status !== "dado_de_baja") {
+    await db.from("prospect_list_members").update({ contact_status: "dado_de_baja", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
   }
 }
 
@@ -1270,6 +1401,14 @@ async function syncApolloEmail(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
           touched++;
         } else if (m.unsubscribe) {
           payload.apollo_done = true;
+          const { data: enRow } = await db.from("campaign_enrollments").select("*").eq("id", ev.enrollment_id).maybeSingle();
+          if (enRow) {
+            await markEmailOptOut(ctx, enRow, "list_unsubscribe", {
+              provider_message_id: ev.provider_message_id, campaign_id: ev.campaign_id, step_position: ev.step_position, node_id: ev.node_id,
+              apollo_status: m.status ?? null, text: "Baja con el enlace del correo (Apollo).",
+            });
+          }
+          touched++;
         }
       }
       await db.from("campaign_events").update({ payload }).eq("id", ev.id);
@@ -1354,10 +1493,12 @@ Deno.serve(async (req) => {
   try { emailSynced = await syncApolloEmail(ctx); } catch (e) { console.error("[campaign-run] apollo email sync:", e); }
   let receipts = 0;
   try { receipts = await reconcileReceiptsAll(ctx, loopStarted + 110_000); } catch (e) { console.error("[campaign-run] wati receipts:", e); }
+  let metaChecked = 0;
+  try { metaChecked = await refreshMetaAll(ctx, loopStarted + 120_000); } catch (e) { console.error("[campaign-run] meta quality:", e); }
   let watiSynced = 0;
   // Lo que quede del presupuesto (~150 s del Edge Runtime) para el historial de WATI.
   try { watiSynced = await syncWatiHistoryAll(ctx, loopStarted + 130_000); } catch (e) { console.error("[campaign-run] wati history sync:", e); }
-  return json({ ok: true, due: due?.length ?? 0, processed, prepared, dripify_synced: synced, email_synced: emailSynced, wati_receipts: receipts, wati_history_synced: watiSynced });
+  return json({ ok: true, due: due?.length ?? 0, processed, prepared, dripify_synced: synced, email_synced: emailSynced, wati_receipts: receipts, wati_history_synced: watiSynced, meta_checked: metaChecked });
 });
 
 // ── Recibos de WhatsApp ─────────────────────────────────────────────────────
@@ -1374,6 +1515,37 @@ async function reconcileReceiptsAll(ctx: Ctx, deadline: number): Promise<number>
     changed += await reconcileWatiReceipts(ctx.db, acc, Math.min(deadline, Date.now() + 20_000));
   }
   return changed;
+}
+
+// ── WhatsApp directo con Meta: calidad del número y catálogo ────────────────
+// Meta avisa por webhook (phone_number_quality_update, cambios de plantilla),
+// pero un aviso perdido no puede dejar al usuario sin la alarma de calidad:
+// cada hora se relee el número (calidad, tope, estado) y cada 6 h el catálogo.
+// _shared/whatsapp.ts#syncMetaAccount escribe solo esas claves.
+
+const META_PHONE_CHECK_MS = 60 * 60 * 1000;
+const META_TEMPLATES_CHECK_MS = 6 * 60 * 60 * 1000;
+
+async function refreshMetaAll(ctx: Ctx, deadline: number): Promise<number> {
+  const { data: accounts } = await ctx.db.from("channel_accounts").select("id, user_id, provider, status, secret, config").eq("provider", "meta").eq("status", "connected");
+  let n = 0;
+  for (const acc of (accounts ?? []) as Json[]) {
+    if (Date.now() > deadline - 5_000) break;
+    const at = acc.config?.meta_sync ?? {};
+    const phone = ctx.now.getTime() - (Date.parse(at.phone_at ?? "") || 0) >= META_PHONE_CHECK_MS;
+    const templates = ctx.now.getTime() - (Date.parse(at.templates_at ?? "") || 0) >= META_TEMPLATES_CHECK_MS;
+    if (!phone && !templates) continue;
+    await patchChannelConfig(ctx.db, acc.id, {
+      meta_sync: { ...at, ...(phone ? { phone_at: ctx.now.toISOString() } : {}), ...(templates ? { templates_at: ctx.now.toISOString() } : {}) },
+    });
+    try {
+      await whatsapp.syncMetaAccount(ctx.db, acc, { phone, templates });
+      n++;
+    } catch (e) {
+      console.error("[campaign-run] meta sync", acc.id, (e as Error)?.message ?? e);
+    }
+  }
+  return n;
 }
 
 // ── Historial de WATI ───────────────────────────────────────────────────────

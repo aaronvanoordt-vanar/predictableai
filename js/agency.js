@@ -9,7 +9,7 @@
  *     alerta de saldo bajo. Asignar / retirar / tope pasan por la edge
  *     function `client-workspace` (acciones transfer / settings), que llama a
  *     los RPC de service role agency_transfer_credits /
- *     agency_workspace_settings (migración 20261018000001): revalidan
+ *     agency_workspace_settings (migración 20261019000001): revalidan
  *     can_manage_client y dejan auditoría en workspace_credit_log.
  *   · Consumo por cliente: agency_usage() por período, agrupado por función
  *     (USAGE_CATEGORIES) y exportable a CSV para refacturar.
@@ -36,7 +36,7 @@
   // ── Espejo de _shared/agency-credits.ts ────────────────────────────────
   var USAGE_CATEGORIES = [
     { key: 'enrichment', label: 'Enriquecimiento', prefixes: ['enrich_', 'email_verify', 'lead_research_apollo'] },
-    { key: 'ai', label: 'Mensajes e investigación IA', prefixes: ['outreach_message', 'outreach_full', 'outreach_step', 'campaign_recommendation', 'lead_research'] },
+    { key: 'ai', label: 'IA: mensajes · investigación · columnas', prefixes: ['outreach_message', 'outreach_full', 'outreach_step', 'campaign_recommendation', 'lead_research', 'ai_column'] },
     { key: 'campaigns', label: 'Campañas', prefixes: ['campaign_lead', 'campaign_send', 'inbox_'] },
     { key: 'hub', label: 'Intelligence Hub', prefixes: ['intel_hub', 'market_analysis', 'outreach_playbook'] },
     { key: 'radar', label: 'Radar', prefixes: ['radar_'] },

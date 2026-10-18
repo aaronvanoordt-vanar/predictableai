@@ -42,7 +42,7 @@
     // Cada detector activo se cobra por período de 30 días según su tipo:
     // personas 10 · datos de Apollo 30 (+10 por cada 100 empresas sobre 300)
     // · búsqueda web 40 · Google Maps 60 (radarDetectorMonthCost).
-    radar_detector_month:   { credits: 30, label: 'por detector cada 30 días (10–60 según el tipo)', variable: true },
+    radar_detector_month:   { credits: 30, label: 'por detector cada 30 días (10–60 según el tipo; el primero, gratis en la prueba)', variable: true },
     radar_detector_custom:  { credits: 3,  label: 'por detector propio', variable: false },
 
     // ── Mensajes IA ───────────────────────────────────────────────────
@@ -54,6 +54,9 @@
     // «Investigar con IA» (Listas): puesto actual + empresa + ángulo. Con la
     // cuenta de Apollo de la plataforma se suma el match (enrich_email).
     lead_research:          { credits: 3,  label: 'por lead',            variable: false },
+    // Columnas IA (Listas): por fila investigada, también «No encontrado»; los errores no.
+    ai_column_cell:         { credits: 2,  label: 'por fila (con búsqueda web)', variable: true },
+    ai_column_cell_basic:   { credits: 1,  label: 'por fila (sin búsqueda web)', variable: true },
     // Tendencias de outbound (investigación manual).
     outreach_playbook:      { credits: 10, label: 'por investigación',   variable: false },
 

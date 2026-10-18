@@ -25,6 +25,13 @@
     { key: 'topup_5000', credits: 5000, price: '350 USD' },
   ];
 
+  // Prueba gratis (docs/TRIAL_REVIEW.md): 100 créditos sin vencimiento, o 300
+  // por 30 días con el email de la empresa. Espejo de CORPORATE_TRIAL en
+  // supabase/functions/_shared/billing-plans.ts (lo concede el RPC
+  // claim_trial_credits, migración 20261018000001).
+  const TRIAL = { credits: 100, corporateCredits: 300, days: 30 };
+  let trialPromise = null;
+
   let selectedPackage = PACKAGES[1].key;
   let selectedInterval = 'month';
 
@@ -145,6 +152,23 @@
     return body || {};
   }
 
+  /**
+   * Pide la prueba corporativa (idempotente: si ya la tiene, devuelve su
+   * estado). Sin la migración devuelve null y todo sigue como antes.
+   */
+  function claimTrial(client) {
+    if (!trialPromise) {
+      trialPromise = client.rpc('claim_trial_credits')
+        .then(({ data, error }) => (error ? null : data))
+        .catch(() => null);
+    }
+    return trialPromise;
+  }
+
+  function fmtDate(iso) {
+    try { return new Date(iso).toLocaleDateString('es-419', { day: 'numeric', month: 'long' }); } catch (_) { return ''; }
+  }
+
   /** Plan vigente + saldo. Si la migración de billing no está, plan = null. */
   async function loadAccount() {
     const client = await waitForSupabase();
@@ -169,6 +193,7 @@
       active,
       balance: Number(cred.balance) || 0,
       planBalance: Number(cred.plan_balance) || 0,
+      trial: active ? null : await claimTrial(client),
     };
   }
 
@@ -211,10 +236,24 @@
     }).join('');
   }
 
+  function trialNote(acct) {
+    const t = acct.trial || {};
+    const n = (x) => Number(x || 0).toLocaleString('es-419');
+    if ((t.status === 'active' || t.status === 'granted') && t.expires_at) {
+      return acct.planBalance > 0
+        ? ` De ellos, <b>${n(acct.planBalance)}</b> son de la prueba con el email de tu empresa y vencen el <b>${esc(fmtDate(t.expires_at))}</b>.`
+        : ` Tu prueba con el email de tu empresa vence el ${esc(fmtDate(t.expires_at))}.`;
+    }
+    if (t.status === 'expired') return ` Tu prueba de ${n(TRIAL.corporateCredits)} créditos venció el ${esc(fmtDate(t.expires_at))}.`;
+    if (t.status === 'personal_domain') return ` Con el email de tu empresa la prueba es de ${n(TRIAL.corporateCredits)} créditos por ${TRIAL.days} días (una por empresa).`;
+    if (t.status === 'domain_used') return ` Tu empresa ya usó su prueba de ${n(TRIAL.corporateCredits)} créditos con otra cuenta.`;
+    return '';
+  }
+
   function freeView(acct) {
     return `
       <p style="margin:0 0 14px;font-size:13px;color:var(--text2,rgba(10,10,15,.62));line-height:1.55">
-        Estás en la prueba gratis: te quedan <b>${acct.balance.toLocaleString('es-419')} créditos</b>. Activa Starter para tener
+        Estás en la prueba gratis: te quedan <b>${acct.balance.toLocaleString('es-419')} créditos</b>.${trialNote(acct)} Activa Starter para tener
         <b>${STARTER.credits.toLocaleString('es-419')} créditos cada mes</b>, el Hub y el Radar corriendo solos y poder recargar cuando lo necesites.
       </p>
       <div id="credits-int-list" style="display:flex;gap:10px;margin-bottom:12px">${renderIntervals()}</div>
@@ -264,7 +303,8 @@
       <div id="credits-pkg-list">${renderPackages()}</div>
       <button id="credits-topup" type="button" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:4px">Comprar recarga</button>
       <button id="credits-portal" type="button" class="btn btn-ghost" style="width:100%;justify-content:center;margin-top:8px">Gestionar facturación</button>
-      <p style="margin:10px 0 0;${S.muted};line-height:1.5">Tarjeta, facturas y cancelación en el portal seguro de Stripe.</p>`}`;
+      <p style="margin:10px 0 0;${S.muted};line-height:1.5">Tarjeta, facturas y cancelación en el portal seguro de Stripe.</p>
+      <div id="credits-cfdi-slot"></div>`}`;
   }
 
   async function goTo(btn, action, extra, loadingText) {
@@ -345,6 +385,9 @@
     if (top) top.addEventListener('click', () => goTo(top, 'checkout_topup', { pack: selectedPackage }, 'Abriendo pago…'));
     const portal = body.querySelector('#credits-portal');
     if (portal) portal.addEventListener('click', () => goTo(portal, 'portal', {}, 'Abriendo portal…'));
+    // Factura CFDI (js/billing-cfdi.js): no pinta nada si `cfdi` está apagada.
+    const cfdiSlot = body.querySelector('#credits-cfdi-slot');
+    if (cfdiSlot && global.billingCfdi) global.billingCfdi.mount(cfdiSlot);
   }
 
   /** Vuelta de Stripe Checkout: ?billing=success|topup|cancel. */
@@ -380,6 +423,18 @@
     const { data: userData } = await client.auth.getUser();
     const user = userData && userData.user;
     if (!user) return;
+
+    // Prueba con el email de la empresa: se concede una vez, sola.
+    if (!unlimited) {
+      claimTrial(client).then((t) => {
+        if (!t || t.status !== 'granted') return;
+        refreshBalance();
+        const toast = global.uiHelpers && global.uiHelpers.toast;
+        if (toast) {
+          toast(`Por usar el email de tu empresa, tu prueba sube a ${TRIAL.corporateCredits.toLocaleString('es-419')} créditos. Los de la prueba vencen el ${fmtDate(t.expires_at)}.`, 'success');
+        }
+      });
+    }
 
     // Mantiene el chip sincronizado si el saldo cambia en otro lado
     // (ej. el Intelligence Hub descuenta créditos al generar un reporte).

@@ -1,5 +1,5 @@
 /**
- * Créditos de agencia (2026-10-17, migración 20261018000001).
+ * Créditos de agencia (2026-10-17, migración 20261019000001).
  *
  * Una agencia aprobada (o el equipo) reparte créditos de su pozo a los
  * espacios de sus clientes y ve el consumo de cada espacio por función para
@@ -26,7 +26,7 @@ export const MAX_SETTING = 10_000_000;
  */
 export const USAGE_CATEGORIES: { key: string; label: string; prefixes: string[] }[] = [
   { key: "enrichment", label: "Enriquecimiento", prefixes: ["enrich_", "email_verify", "lead_research_apollo"] },
-  { key: "ai", label: "Mensajes e investigación IA", prefixes: ["outreach_message", "outreach_full", "outreach_step", "campaign_recommendation", "lead_research"] },
+  { key: "ai", label: "IA: mensajes · investigación · columnas", prefixes: ["outreach_message", "outreach_full", "outreach_step", "campaign_recommendation", "lead_research", "ai_column"] },
   { key: "campaigns", label: "Campañas", prefixes: ["campaign_lead", "campaign_send", "inbox_"] },
   { key: "hub", label: "Intelligence Hub", prefixes: ["intel_hub", "market_analysis", "outreach_playbook"] },
   { key: "radar", label: "Radar", prefixes: ["radar_"] },
