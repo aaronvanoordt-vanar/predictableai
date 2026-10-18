@@ -14,7 +14,7 @@
 --     no se puede cambiar desde el navegador. El trigger valida el
 --     enrutamiento: solo un admin/director reparte a otros, y solo a cuentas
 --     de su misma empresa (profiles.company_name, la misma regla de equipos
---     de profiles_admin_select_company).
+--     de profiles_admin_select_company) que estén en la nómina de Equipo.
 --   • inbound_leads — cada envío. Solo la service role inserta. La leen el
 --     dueño del sitio (ve a todo su equipo: métricas por SDR) y el SDR
 --     asignado. Se actualiza solo por la RPC inbound_lead_mark().
@@ -73,23 +73,35 @@ CREATE TRIGGER inbound_sites_updated_at
   BEFORE UPDATE ON public.inbound_sites
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
--- ¿p_member es del equipo de p_owner? (misma empresa, no nula) — o él mismo.
+-- ¿p_member es del equipo de p_owner? Él mismo, o alguien de la NÓMINA de su
+-- empresa (sales_team_members, migración 20261018000003_team_management: la
+-- arma el director/admin) cuyo perfil siga teniendo esa empresa. La
+-- company_name sola no alcanza: cualquier SDR puede escribirla en su perfil.
+-- plpgsql (no sql) para que la función se cree aunque la nómina todavía no
+-- exista: sin ella, solo el propio dueño recibe leads.
 CREATE OR REPLACE FUNCTION public.inbound_is_teammate(p_owner UUID, p_member UUID)
 RETURNS BOOLEAN
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT p_owner = p_member OR EXISTS (
+BEGIN
+  IF p_owner = p_member THEN
+    RETURN TRUE;
+  END IF;
+  IF to_regclass('public.sales_team_members') IS NULL THEN
+    RETURN FALSE;
+  END IF;
+  RETURN EXISTS (
     SELECT 1
       FROM public.profiles o
-      JOIN public.profiles m ON m.id = p_member
+      JOIN public.sales_team_members t ON t.user_id = p_member AND t.company_name = btrim(o.company_name)
+      JOIN public.profiles m ON m.id = p_member AND btrim(m.company_name) = t.company_name
      WHERE o.id = p_owner
-       AND o.company_name IS NOT NULL
-       AND btrim(o.company_name) <> ''
-       AND m.company_name = o.company_name
+       AND NULLIF(btrim(o.company_name), '') IS NOT NULL
   );
+END;
 $$;
 
 REVOKE ALL ON FUNCTION public.inbound_is_teammate(UUID, UUID) FROM PUBLIC, anon, authenticated;
@@ -151,7 +163,7 @@ BEGIN
     END IF;
     FOREACH v_uid IN ARRAY v_ids LOOP
       IF NOT public.inbound_is_teammate(NEW.user_id, v_uid) THEN
-        RAISE EXCEPTION 'Solo puedes asignar leads a personas de tu equipo (misma empresa en su perfil).'
+        RAISE EXCEPTION 'Solo puedes asignar leads a personas de la nómina de tu equipo (Equipo → agregar a la nómina).'
           USING ERRCODE = '42501';
       END IF;
     END LOOP;

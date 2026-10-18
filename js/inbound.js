@@ -97,13 +97,11 @@
       var res = await Promise.all([
         client.from('inbound_sites').select('*').order('created_at', { ascending: true }),
         client.from('inbound_leads').select('*').gte('created_at', since).order('created_at', { ascending: false }).limit(1000),
-        state.profile.company_name && isAdmin()
-          ? client.from('profiles').select('id, full_name, email, role').eq('company_name', state.profile.company_name).limit(200)
-          : Promise.resolve({ data: [] }),
+        state.profile.company_name && isAdmin() ? loadRoster(client, state.profile.company_name) : Promise.resolve({ data: [] }),
         client.from('channel_accounts').select('status, config').eq('provider', 'wati').maybeSingle(),
       ]);
       if (res[0].error) {
-        if (/inbound_sites/.test(res[0].error.message || '') || res[0].error.code === '42P01') throw new Error('Falta aplicar la migración 20261017000001_inbound.sql.');
+        if (/inbound_sites/.test(res[0].error.message || '') || res[0].error.code === '42P01') throw new Error('Falta aplicar la migración 20261018170000_inbound.sql.');
         throw res[0].error;
       }
       state.sites = res[0].data || [];
@@ -125,6 +123,17 @@
     state.loading = false;
     render();
     paintBadge();
+  }
+
+  // Personas a las que se puede repartir: la nómina de Equipo (js/team.js,
+  // sales_team_members) con la misma empresa en su perfil. La company_name
+  // sola no alcanza; inbound_is_teammate lo revalida en el servidor.
+  async function loadRoster(client, company) {
+    var r = await client.from('sales_team_members').select('user_id').eq('company_name', String(company).trim()).limit(200);
+    var ids = (r.data || []).map(function (x) { return x.user_id; });
+    if (r.error || !ids.length) return { data: [] };
+    var p = await client.from('profiles').select('id, full_name, email, role, company_name').in('id', ids);
+    return { data: (p.data || []).filter(function (x) { return String(x.company_name || '').trim() === String(company).trim(); }) };
   }
 
   async function loadHits(client) {
@@ -477,7 +486,7 @@
 
     html += '<div class="inb-sub">Enrutamiento</div>';
     if (!isAdmin() || !state.team.length) {
-      html += '<p class="inb-muted">' + (isAdmin() ? 'No encontramos a otras personas con tu misma empresa en su perfil. Cuando tu equipo se sume, podrás repartir los leads aquí.' : 'Los leads de este sitio llegan a ti. Repartirlos entre el equipo lo configura un administrador o director.') + '</p>';
+      html += '<p class="inb-muted">' + (isAdmin() ? 'Para repartir leads, primero arma la nómina de tu equipo en «Equipo». Solo se reparte a personas de esa nómina.' : 'Los leads de este sitio llegan a ti. Repartirlos entre el equipo lo configura un administrador o director.') + '</p>';
     } else {
       var r = d.routing;
       html += field('Reparto', sel('routing.mode', r.mode, [['owner', 'Todos a mí'], ['round_robin', 'Round robin entre las personas elegidas']]));

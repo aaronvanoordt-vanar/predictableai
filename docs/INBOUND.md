@@ -10,7 +10,7 @@ Fecha: 2026-10-17. Ítem «Inbound» de `docs/ROADMAP_GTM_OS.md` §4. En Latam e
 | `supabase/functions/inbound-capture` | Edge function **pública** (`--no-verify-jwt`). `GET ?key=` devuelve la configuración pública; `POST submit` crea el lead; `POST whatsapp_click` cuenta un clic directo. |
 | `supabase/functions/_shared/inbound.ts` | Lógica pura con `deno test`: configuración, origen, validación y anti-spam, país por prefijo telefónico, enrutamiento, calificación contra el ICP, link de WhatsApp. |
 | `js/inbound.js` | Página «Inbound» (sección Conectar): Leads, Tiempo de respuesta, Sitios. Franja de leads pendientes arriba de la Bandeja y contador `#nav-inbound-badge`. |
-| Migración `20261017000001_inbound.sql` | `inbound_sites`, `inbound_leads`, `inbound_hits`, RPCs y el trigger de primer contacto. |
+| Migración `20261018170000_inbound.sql` | `inbound_sites`, `inbound_leads`, `inbound_hits`, RPCs y el trigger de primer contacto. |
 
 Instalación en el sitio del cliente (el código exacto sale en Inbound → Sitios → Copiar código):
 
@@ -36,7 +36,7 @@ En el modo «solo WhatsApp» con pre-chat (por defecto) se piden nombre y WhatsA
 
 - **El lead es del SDR asignado.** Todo Predictable está llaveado por `user_id`; guardarlo en la lista del SDR hace que sus Listas, Bandeja, Campañas y push funcionen sin reescribir RLS. El dueño del sitio ve todos los leads y las métricas de su equipo vía `inbound_leads`.
 - **Créditos del SDR asignado.** Enriquecer (`enrich-list`, mismas reglas: solo cobra con la cuenta de Apollo compartida y si encuentra) e investigar (`lead-research`, 3 créditos) cobran a quien recibe el lead. Sin saldo el lead entra igual.
-- **Solo admin/director reparte**, y solo a cuentas con su misma `company_name` (la regla de equipos de `profiles_admin_select_company`). Lo valida el trigger al guardar y `inbound_is_teammate` en cada envío.
+- **Solo admin/director reparte**, y solo a personas de la nómina de Equipo (`sales_team_members`, con la misma `company_name` en su perfil). La `company_name` sola no alcanza: cualquier SDR puede escribirla. Lo valida el trigger al guardar y `inbound_is_teammate` en cada envío; sin la nómina, los leads llegan solo al dueño.
 - **La respuesta automática no cuenta como primer contacto**: es la máquina. Sale por el WATI del SDR (no por el adaptador de la Cloud API de Meta, que está en construcción en otra sesión) y se guarda en `inbox_messages` con `payload.source = 'inbound_auto_reply'`.
 - **No se tocó el CHECK de `inbox_messages`** (`channel`/`provider`): la sesión de la Cloud API de Meta lo está cambiando y dos migraciones que redefinen la misma restricción se pisan. Por eso el aviso en la Bandeja es una franja propia (`inbound.inboxStrip()`) y el push sale directo desde `inbound-capture`, no por `push_outbox`.
 - **Calificación determinista**, gratis, contra el ICP declarado (país, tamaño, cargo/seniority, email corporativo). Sin criterios comparables dice «Sin datos de ICP»; nunca inventa.

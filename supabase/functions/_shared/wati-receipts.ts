@@ -31,6 +31,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.
 import * as wati from "./wati.ts";
 import * as watiHistory from "./wati-history.ts";
 import { patchChannelConfig } from "./channel-config.ts";
+import * as waReach from "./wa-reachability.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -162,6 +163,22 @@ export async function recordCampaignReceipt(db: SupabaseClient, acc: Json, r: Ca
     .eq("type", r.kind)
     .limit(1);
   if (dup && dup.length) return true;
+  // ¿Está en WhatsApp? Un entregado/leído lo confirma; #131026 lo marca como
+  // sin WhatsApp y ninguna campaña vuelve a mandarle una plantilla
+  // (_shared/phone-lines.ts). El número es el del envío, no el del lead hoy.
+  if (r.kind === "delivered" || r.kind === "read" || (r.kind === "failed" && r.detail)) {
+    const { data: sent } = await db.from("inbox_messages").select("contact_ref, member_id")
+      .eq("user_id", acc.user_id).eq("provider_message_id", r.local).limit(1).maybeSingle();
+    const phone = sent?.contact_ref;
+    const memberId = origin.member_id ?? sent?.member_id ?? r.memberId ?? null;
+    if (phone && r.kind === "failed") {
+      // Una falla que llega DESPUÉS de un entregado no prueba nada (el estado solo avanza).
+      const { count: ok } = await db.from("campaign_events").select("id", { count: "exact", head: true })
+        .eq("provider_message_id", r.local).in("type", ["delivered", "read"]);
+      if (!ok) await waReach.learnFromFailure(db, acc.user_id, phone, r.detail, "receipt", memberId);
+    }
+    else if (phone) await waReach.markReach(db, acc.user_id, phone, { status: "has_whatsapp", source: "receipt", memberId });
+  }
   await db.from("campaign_events").insert({
     enrollment_id: origin.enrollment_id,
     campaign_id: origin.campaign_id,
