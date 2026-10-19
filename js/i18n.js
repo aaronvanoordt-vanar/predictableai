@@ -409,7 +409,7 @@
         lit += p.length; return reEsc(p);
       }).join('') + '$';
       if (lit < 2) return; // «{0}» solo, o «{0} {1}»: coincidiría con todo
-      var pat = { re: new RegExp(re), order: order, value: val, lit: lit };
+      var pat = { re: new RegExp(re), order: order, value: val, lit: lit, sep: key.indexOf(' · ') >= 0 };
       var head = parts[0], tail = parts[parts.length - 1];
       if (head.length >= 3) (pre[head.slice(0, 3).toLowerCase()] = pre[head.slice(0, 3).toLowerCase()] || []).push(pat);
       else if (tail.length >= 3) (suf[tail.slice(-3).toLowerCase()] = suf[tail.slice(-3).toLowerCase()] || []).push(pat);
@@ -438,6 +438,9 @@
       for (var j = 0; j < L.length; j++) {
         var p = L[j], m = p.re.exec(t);
         if (!m) continue;
+        // Un hueco no cruza un « · » que el patrón no tiene: si no, «Ideas {0}»
+        // se tragaría «Ideas 0 · Borradores 3 · …» entero.
+        if (!p.sep && m.slice(1).some(function (g) { return g && g.indexOf(' · ') >= 0; })) continue;
         var left = 0;
         var out = p.value.replace(/\{(\d+)\}/g, function (all, d) {
           var gi = p.order.indexOf(+d);
