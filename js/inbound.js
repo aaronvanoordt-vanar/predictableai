@@ -75,7 +75,7 @@
     return (h ? h + ':' + pad(m) : m) + ':' + pad(sec);
   }
   function fmtDate(iso) {
-    try { return new Date(iso).toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
+    try { return new Date(iso).toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
   }
   function pageLabel(u) {
     try { var x = new URL(u); return x.hostname.replace(/^www\./, '') + (x.pathname !== '/' ? x.pathname : ''); } catch (e) { return ''; }

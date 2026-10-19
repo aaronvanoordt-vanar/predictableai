@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Predictable.ai — Conectando LinkedIn…</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #F7F8FA; color: #0A0A0F; font-family: 'Geist', ui-sans-serif, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  .box { text-align: center; max-width: 420px; padding: 0 20px; }
+  .msg { color: rgba(10,10,15,0.55); font-size: 14px; line-height: 1.55; }
+  .err { color: #D64545; margin-top: 12px; font-size: 13px; line-height: 1.55; }
+  .ok { color: #1B8A5A; margin-top: 12px; font-size: 13px; }
+  a { color: #1F4BFF; }
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="msg" id="msg">Conectando tu cuenta de LinkedIn…</div>
+  <div id="out"></div>
+  <p class="msg"><a href="./index.html#pro-main:campanas">Volver a Campañas</a></p>
+</div>
+<script>
+  // Página de regreso del link de conexión de Unipile (LinkedIn nativo). El
+  // asistente de Campañas la abre como ventana emergente: aquí solo se avisa a
+  // la ventana que la abrió y se cierra. La cuenta ya quedó guardada por
+  // unipile-webhook (o la busca linkedin_refresh); esta página no toca datos
+  // ni carga auth-guard.js.
+  (function () {
+    var params = new URLSearchParams(location.search);
+    var ok = params.get('linkedin') === 'ok';
+    var out = document.getElementById('out');
+    document.getElementById('msg').textContent = ok ? 'Listo.' : 'No se pudo conectar LinkedIn.';
+    out.className = ok ? 'ok' : 'err';
+    out.textContent = ok ? 'Tu cuenta de LinkedIn quedó conectada. Puedes cerrar esta ventana.' : 'LinkedIn no completó el inicio de sesión. Vuelve a intentarlo desde Campañas → LinkedIn.';
+    try { localStorage.setItem('predictable_linkedin_connect', JSON.stringify({ ok: ok, at: Date.now() })); } catch (e) { /* almacenamiento bloqueado */ }
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({ type: 'predictable:linkedin-connected', ok: ok }, location.origin);
+        setTimeout(function () { window.close(); }, 1200);
+      }
+    } catch (e) { /* sin acceso a la ventana que abrió */ }
+  })();
+</script>
+<script src="js/i18n.js?v=20261017"></script>
+</body>
+</html>

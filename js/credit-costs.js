@@ -54,6 +54,12 @@
     // «Investigar con IA» (Listas): puesto actual + empresa + ángulo. Con la
     // cuenta de Apollo de la plataforma se suma el match (enrich_email).
     lead_research:          { credits: 3,  label: 'por lead',            variable: false },
+    // Nota BANT del traspaso al AE cuando un lead agenda desde tu agenda.
+    // Agendar y los recordatorios por WhatsApp y email no cuestan.
+    meeting_handoff:        { credits: 3,  label: 'por reunión agendada', variable: false },
+    // Contenido en LinkedIn: una tanda de ideas o un borrador (o reescritura).
+    linkedin_ideas:         { credits: 2,  label: 'por tanda de ideas',  variable: false },
+    linkedin_post:          { credits: 3,  label: 'por borrador',        variable: false },
     // Seguimiento de champions (Radar): búsqueda web de respaldo cuando
     // Apollo no ubica a la persona en su empresa.
     champion_web_check:     { credits: 2,  label: 'por verificación web', variable: false },
@@ -67,6 +73,9 @@
     // 1 crédito por lead que entra a una campaña: cubre TODOS sus envíos
     // (salen por tu WATI, Apollo o Dripify). Responder a mano no cuesta.
     campaign_send:          { credits: 1,  label: 'por lead en campaña', variable: true },
+    // LinkedIn desde tu cuenta conectada: 1 por invitación o mensaje que
+    // envía el motor (por Dripify no se cobra).
+    linkedin_send:          { credits: 1,  label: 'por envío de LinkedIn', variable: true },
 
     // ── Enriquecimiento (Apollo de la plataforma; con tu Apollo, 0) ───
     // Solo se cobra si Apollo encuentra el dato.

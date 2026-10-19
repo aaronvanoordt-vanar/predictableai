@@ -180,13 +180,13 @@
   }
   function fmtNum(n) {
     var x = Number(n);
-    return isFinite(x) ? x.toLocaleString('es-MX') : String(n == null ? 0 : n);
+    return isFinite(x) ? x.toLocaleString((window.i18n ? i18n.locale() : 'es-MX')) : String(n == null ? 0 : n);
   }
   function fmtDate(v) {
     if (!v) return '—';
     var d = new Date(v);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { year: 'numeric', month: 'short', day: 'numeric' });
   }
   function isMaskedEmail(email) {
     if (!email) return true;
@@ -2505,7 +2505,7 @@
       '<td>' + esc(m.country || '—') +
         (m.city ? '<div class="pros-cellsub">' + esc(m.city) + '</div>' : '') + '</td>' +
       (isAllList() ? '<td><span class="pill pill-purple">' + esc(m.list_name || '—') + '</span></td>' : '') +
-      '<td>' + statusSelectHtml(m) + meetingQualityPillHtml(m) + '</td>' +
+      '<td>' + statusSelectHtml(m) + crmPillHtml(m) + meetingQualityPillHtml(m) + '</td>' +
       '<td>' + memberEmailCell(m) + '</td>' +
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
@@ -2522,6 +2522,27 @@
       '</tr>' +
       (open ? '<tr class="pros-research-row"><td colspan="' + ((isAllList() ? 10 : 9) + aiColCount()) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
   }
+
+  // ── Estado en el CRM (2026-10-17) ───────────────────────────────────────
+  // Lo escribe la edge function `integrations` (crm_state por plataforma +
+  // crm_suppressed_at). «No contactar» = en el CRM ya es cliente o tiene una
+  // oportunidad abierta: Campañas no lo enrola. Se levanta solo cuando cambia
+  // en el CRM (el navegador no puede escribir esas columnas).
+  function crmPillHtml(m) {
+    var hs = m && m.crm_state && m.crm_state.hubspot;
+    var parts = [];
+    if (m && m.crm_suppressed_at) {
+      parts.push('<span class="pill pill-red" title="' + esc(m.crm_suppression_reason || 'En tu CRM ya es cliente o tiene una oportunidad abierta') + '">No contactar</span>');
+    }
+    if (hs && (hs.lifecycle_label || hs.deal)) {
+      var bits = [hs.lifecycle_label, hs.deal && hs.deal.stage_label, hs.owner && hs.owner.name].filter(Boolean);
+      var label = 'HubSpot: ' + bits.join(' · ');
+      parts.push('<span class="pros-cellsub" style="font-size:11.5px" title="' + esc(label) + '">' +
+        (hs.url ? '<a href="' + esc(safeHref(hs.url)) + '" target="_blank" rel="noopener">' + esc(label) + '</a>' : esc(label)) + '</span>');
+    }
+    return parts.length ? '<div class="pros-emp" style="display:flex;flex-direction:column;gap:2px;margin-top:4px">' + parts.join('') + '</div>' : '';
+  }
+  function safeHref(u) { return /^https:\/\//i.test(String(u || '')) ? String(u) : '#'; }
 
   // ── Champions ───────────────────────────────────────────────────────────
   // La estrella marca al lead como champion: el Radar (detector
@@ -2673,7 +2694,7 @@
   function fmtDay(iso) {
     var d = new Date(iso);
     if (isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('es', { day: 'numeric', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
   }
   function extLink(url, label) {
     if (!/^https?:\/\//i.test(String(url || ''))) return esc(label || '');
@@ -3591,7 +3612,7 @@
     if (!sel.length && !emailSel.length) return toast('Los contactos seleccionados ya tienen teléfono y email, o se están buscando.', 'info');
     var parts = [];
     if (sel.length) parts.push('el teléfono de ' + fmtNum(sel.length) + ' contacto' + (sel.length === 1 ? '' : 's') + ' (y su email si falta)');
-    if (emailSel.length) parts.push('el email de ' + fmtNum(emailSel.length) + ' contacto' + (emailSel.length === 1 ? '' : 's') + ' que ya tiene' + (emailSel.length === 1 ? '' : 'n') + ' teléfono');
+    if (emailSel.length) parts.push(emailSel.length === 1 ? 'el email de 1 contacto que ya tiene teléfono' : 'el email de ' + fmtNum(emailSel.length) + ' contactos que ya tienen teléfono');
     var cascadeP = h('p', { style: 'font-size:12.5px;color:var(--text2);margin:0 0 12px;line-height:1.55;display:none' });
     var bodyN = h('div', null,
       h('p', {
@@ -3903,8 +3924,8 @@
     var pending = st.members.filter(function (m) { return m.email_status === 'pending' && !m.enrich_requested_at; }).length;
     if (!pending) return '';
     return '<div class="pros-enrich-banner"><div class="pros-enrich-row"><span class="pill pill-amber">Pendiente</span>' +
-      '<span>' + esc(fmtNum(pending)) + ' contacto' + (pending === 1 ? '' : 's') + ' pendiente' + (pending === 1 ? '' : 's') +
-      ' de enriquecer.</span></div></div>';
+      '<span>' + (pending === 1 ? '1 contacto pendiente de enriquecer.' : esc(fmtNum(pending)) + ' contactos pendientes de enriquecer.') +
+      '</span></div></div>';
   }
 
   // Repinta solo las píldoras y el banner (sin re-renderizar la tabla ni

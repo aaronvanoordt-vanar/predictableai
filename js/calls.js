@@ -54,7 +54,7 @@
   function safeUrl(u) { var s = String(u || '').trim(); return /^https:\/\//i.test(s) ? s : ''; }
   function fmtDate(iso) {
     if (!iso) return '—';
-    try { return new Date(iso).toLocaleString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return String(iso); }
+    try { return new Date(iso).toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return String(iso); }
   }
   function fmtDur(s) {
     if (s === null || s === undefined) return '—';

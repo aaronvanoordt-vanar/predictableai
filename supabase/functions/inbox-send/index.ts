@@ -27,16 +27,21 @@
  *      (≤ 16 MB) con pie opcional (`body`). Misma ventana de 24 h que el
  *      texto; sale por POST /api/ext/v3/conversations/messages/file y se
  *      guarda con payload.type/media/wati_id para que la bandeja lo pinte.
- *  • { channel: "linkedin", … } → 501 {error:"linkedin_send_unavailable"}:
- *      ni Dripify ni LinkedIn exponen envío de mensajes por API (comprobado
- *      el 2026-09-14 en api.dripify.com); la bandeja copia el texto y abre
- *      el perfil para pegarlo.
+ *  • { channel: "linkedin", member_id | contact_ref, body }
+ *      Con la cuenta de LinkedIn propia conectada (Unipile, 2026-10-17):
+ *      responde en el chat de LinkedIn del lead (el chat de la conversación,
+ *      o uno nuevo si ya son contactos). Sin Unipile → 501
+ *      {error:"linkedin_send_unavailable"}: Dripify no expone envío por API
+ *      (comprobado el 2026-09-14) y la bandeja copia el texto y abre el perfil.
  *  • { action: "link_member", member_id, channel, contact_ref }
  *      Enlaza a un lead de mis listas las filas de la bandeja de ese contacto
  *      (URL de LinkedIn, dígitos del teléfono o email) que estaban sin lead:
  *      UPDATE inbox_messages SET member_id WHERE user_id = uid AND channel AND
  *      contact_ref AND member_id IS NULL → { updated: n }
  *  • { channel: "email", member_id, body, subject? }
+ *      Si la conversación ya va por un buzón propio, o la campaña del lead /
+ *      el canal eligieron buzones propios: sale por ese buzón como respuesta
+ *      en el mismo hilo (_shared/mailbox-send.ts). Si no:
  *      Email individual por Apollo con la credencial del usuario
  *      (_shared/apollo-auth.ts: su OAuth o la key de la plataforma):
  *      contacto de Apollo = enrollment.provider_refs.apollo_contact_id →
@@ -63,8 +68,9 @@
  *      guardadas antes del 2026-09-30 no tienen el id de WATI: se busca en el
  *      historial de la conversación y se guarda en payload.wati_id.
  *      Content-Type deducido de los bytes (WATI manda octet-stream).
- *  • { action: "sync_all" }   «Sincronizar todo»: WhatsApp (historial de WATI) + email (Apollo)
- *                              + LinkedIn (Dripify), ya, sin esperar los 15 min del cron.
+ *  • { action: "sync_all" }   «Sincronizar todo»: WhatsApp (historial de WATI) + email (Apollo
+ *                              y buzones propios vía mailbox-sync) + LinkedIn (Dripify), ya,
+ *                              sin esperar los 15 min del cron.
  *  • { action: "sync_wati" }
  *      Trae del historial de WATI lo que no está en la bandeja: mensajes
  *      escritos en la UI de WATI (o por sus bots) y entrantes que el webhook
@@ -91,6 +97,11 @@ import * as meta from "../_shared/meta-whatsapp.ts";
 import { isWebmAudio, WebmOpusError, webmOpusToOgg } from "../_shared/webm-opus.ts";
 import { syncWatiHistory } from "../_shared/wati-history.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
+import * as unipile from "../_shared/unipile.ts";
+import { activeBlock } from "../_shared/linkedin-limits.ts";
+import { canonicalLinkedinUrl } from "../_shared/dripify.ts";
+import { loadEmailSettings, MailboxError, sendViaMailboxes } from "../_shared/mailbox-send.ts";
+import { resolveEmailProvider } from "../_shared/mailbox-rotation.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -260,7 +271,7 @@ const FILE_LABEL: Record<string, string> = { image: "📷 Foto", video: "🎬 Vi
 async function loadReplyTo(db: SupabaseClient, userId: string, id: string): Promise<Json | null> {
   if (!UUID_RE.test(id)) return null;
   const { data } = await db.from("inbox_messages")
-    .select("id, direction, channel, body, provider_message_id, payload")
+    .select("id, direction, channel, provider, body, provider_message_id, provider_conversation_id, payload")
     .eq("id", id).eq("user_id", userId).maybeSingle();
   if (!data) return null;
   const pid = String(data.provider_message_id ?? "");
@@ -268,7 +279,8 @@ async function loadReplyTo(db: SupabaseClient, userId: string, id: string): Prom
   return {
     ref: { id: data.id, direction: data.direction, channel: data.channel, body: String(data.body ?? "").slice(0, 240) },
     wamid: wamid || null,
-    emailId: data.channel === "email" && data.direction === "out" && pid ? pid : null,
+    emailId: data.channel === "email" && data.direction === "out" && data.provider === "apollo" && pid ? pid : null,
+    mailbox: data.channel === "email" && data.provider === "mailbox" ? mailboxThreadOf(data) : null,
   };
 }
 
@@ -454,6 +466,68 @@ async function sendWhatsAppFile(
   return row;
 }
 
+// ── Email (buzones propios) ─────────────────────────────────────────────────
+
+/** Hilo de un mensaje de buzón propio de la Bandeja: a qué Message-ID responder y desde qué buzón. */
+function mailboxThreadOf(row: Json): Json {
+  const p = row?.payload ?? {};
+  return {
+    messageId: p.message_id || row.provider_message_id || null,
+    references: Array.isArray(p.references) ? p.references : [],
+    threadId: p.provider_thread_id || row.provider_conversation_id || null,
+    mailboxId: p.mailbox_id || null,
+    subject: p.subject || null,
+  };
+}
+
+/**
+ * ¿La respuesta sale por un buzón propio? Sí si la conversación ya va por uno
+ * (el último email con el lead es de provider 'mailbox'), o si la campaña del
+ * lead / la preferencia del canal eligieron buzones propios. Si no, Apollo.
+ */
+async function emailRoute(db: SupabaseClient, userId: string, member: Json, replyTo: Json | null): Promise<{ mailbox: boolean; thread: Json | null }> {
+  if (replyTo?.mailbox) return { mailbox: true, thread: replyTo.mailbox };
+  const { data: last } = await db.from("inbox_messages")
+    .select("provider, provider_message_id, provider_conversation_id, payload")
+    .eq("user_id", userId).eq("member_id", member.id).eq("channel", "email")
+    .order("sent_at", { ascending: false }).limit(1).maybeSingle();
+  if (last?.provider === "mailbox") return { mailbox: true, thread: mailboxThreadOf(last) };
+  if (last?.provider === "apollo") return { mailbox: false, thread: null };
+  const en = await latestEnrollment(db, userId, member.id);
+  let sender: Json = null;
+  if (en?.campaign_id) {
+    const { data: camp } = await db.from("campaigns").select("sender").eq("id", en.campaign_id).maybeSingle();
+    sender = camp?.sender ?? null;
+  }
+  return { mailbox: resolveEmailProvider(sender, await loadEmailSettings(db, userId)) === "mailboxes", thread: null };
+}
+
+async function sendEmailFromMailbox(db: SupabaseClient, userId: string, member: Json, text: string, subjectIn: string, thread: Json | null, replyTo: Json | null): Promise<Json> {
+  const email = String(member.email ?? "");
+  const en = await latestEnrollment(db, userId, member.id);
+  let out;
+  try {
+    out = await sendViaMailboxes(db, {
+      userId, member, to: email, subject: subjectIn, text, kind: "reply",
+      campaignId: en?.campaign_id ?? null, enrollmentId: en?.id ?? null,
+      replyTo: thread,
+      inboxPayload: { source: "inbox_reply", ...(replyTo ? { reply_to: replyTo.ref } : {}) },
+    });
+  } catch (e) {
+    if (e instanceof MailboxError) {
+      throw new HttpError(e.message, e.kind === "auth" ? 428 : e.kind === "temporary" ? 502 : 400, e.kind === "auth" ? "email_reauth_required" : "email_send_failed");
+    }
+    throw e;
+  }
+  if (!out.ok) {
+    if (out.noMailbox) throw new HttpError("Conecta un buzón propio para responder por email (Campañas → Email).", 428, "email_not_connected");
+    throw new HttpError(out.reason, out.suppressed ? 409 : 429, out.suppressed ? "email_suppressed" : "email_mailbox_busy");
+  }
+  await spendCredits(db, userId);
+  if (!out.inbox) throw new HttpError("El correo salió pero no se pudo guardar en la bandeja.", 500);
+  return out.inbox;
+}
+
 /**
  * Reacción con emoji desde la Bandeja (solo Meta directo). La API de WATI no
  * la permite (2026-10-01, docs/OMNICANAL.md): con un mensaje de WATI se
@@ -514,6 +588,8 @@ async function sendReaction(db: SupabaseClient, userId: string, id: string, emoj
 async function sendEmail(db: SupabaseClient, userId: string, member: Json, text: string, subjectIn: string, replyTo: Json | null = null): Promise<Json> {
   const email = String(member.email ?? "");
   if (!email || /email_not_unlocked/.test(email)) throw new HttpError("El lead no tiene email revelado.", 400, "member_without_email");
+  const route = await emailRoute(db, userId, member, replyTo);
+  if (route.mailbox) return await sendEmailFromMailbox(db, userId, member, text, subjectIn, route.thread, replyTo);
   // Credenciales, enrolamiento y último email nuestro (asunto por defecto e
   // in_response_to) son independientes: una sola espera en vez de tres.
   const [authRes, en, { data: lastOut }] = await Promise.all([
@@ -803,10 +879,14 @@ Deno.serve(async (req) => {
 
     const channel = String(body?.channel ?? "");
     if (channel === "linkedin") {
-      return json({
-        error: "linkedin_send_unavailable",
-        message: "Ni Dripify ni LinkedIn permiten enviar mensajes por API: copia la respuesta y pégala en el chat de LinkedIn.",
-      }, 501, cors);
+      const row = await sendLinkedin(db, user.id, String(body?.member_id ?? ""), String(body?.contact_ref ?? "").trim().slice(0, 300), String(body?.body ?? "").replace(/\r\n/g, "\n").trim().slice(0, 8000));
+      if (!row) {
+        return json({
+          error: "linkedin_send_unavailable",
+          message: "Dripify no permite enviar mensajes por API: copia la respuesta y pégala en el chat de LinkedIn, o conecta tu cuenta de LinkedIn en Campañas para responder desde aquí.",
+        }, 501, cors);
+      }
+      return json({ message: row }, 200, cors);
     }
     if (channel !== "whatsapp" && channel !== "email") return json({ error: "channel debe ser whatsapp, email o linkedin" }, 400, cors);
     const memberId = String(body?.member_id ?? "");
@@ -865,6 +945,67 @@ Deno.serve(async (req) => {
   }
 });
 
+/**
+ * Respuesta por LinkedIn desde la cuenta propia (Unipile). null = el usuario
+ * no tiene la cuenta conectada (la bandeja sigue con copiar y pegar).
+ * Responder a mano no cobra créditos (inbox_reply = 0) ni cuenta para los
+ * topes del motor: lo escribe una persona, a su ritmo.
+ */
+async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string, contactRef: string, text: string): Promise<Json | null> {
+  const env = unipile.unipileEnv();
+  if (!env) return null;
+  const { data: acc } = await db.from("channel_accounts").select("id, secret, status, config").eq("user_id", userId).eq("provider", "unipile").maybeSingle();
+  if (!acc?.secret || acc.status === "disconnected") return null;
+  if (!text) throw new HttpError("Escribe un mensaje.", 400);
+  const block = activeBlock(acc.config);
+  if (block) throw new HttpError(block.reason + (block.until ? "" : " Vuelve a conectar tu cuenta de LinkedIn en Campañas."), 409, "linkedin_blocked");
+  if (memberId && !UUID_RE.test(memberId)) throw new HttpError("member_id inválido", 400);
+  let member: Json | null = null;
+  if (memberId) {
+    const { data } = await db.from("prospect_list_members").select("id, linkedin_url, contact_status").eq("id", memberId).eq("user_id", userId).maybeSingle();
+    if (!data) throw new HttpError("El lead no existe o no es tuyo.", 404);
+    member = data;
+  }
+  const profileUrl = canonicalLinkedinUrl(member?.linkedin_url) || canonicalLinkedinUrl(contactRef) || "";
+  // El chat ya abierto con este contacto (de la bandeja o del enrolamiento).
+  let q = db.from("inbox_messages").select("provider_conversation_id, campaign_id, enrollment_id")
+    .eq("user_id", userId).eq("channel", "linkedin").eq("provider", "unipile").not("provider_conversation_id", "is", null)
+    .order("sent_at", { ascending: false }).limit(1);
+  q = member ? q.eq("member_id", member.id) : q.eq("contact_ref", contactRef);
+  const { data: lastRow } = await q.maybeSingle();
+  let chatId: string | null = lastRow?.provider_conversation_id ?? null;
+  let enrollment: Json | null = null;
+  if (member) {
+    const { data } = await db.from("campaign_enrollments").select("id, campaign_id, provider_refs").eq("user_id", userId).eq("member_id", member.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    enrollment = data ?? null;
+    if (!chatId && enrollment?.provider_refs?.unipile_chat_id) chatId = String(enrollment.provider_refs.unipile_chat_id);
+  }
+  let messageId: string | null = null;
+  try {
+    if (chatId) {
+      messageId = (await unipile.messageChat(env, chatId, text)).messageId;
+    } else {
+      if (!profileUrl) throw new HttpError("El contacto no tiene URL de LinkedIn ni un chat abierto.", 400);
+      const profile = await unipile.resolveUser(env, acc.secret, profileUrl);
+      if (!profile.firstDegree) throw new HttpError("No son contactos en LinkedIn: LinkedIn solo deja escribirle a un contacto. Envíale una invitación desde una campaña.", 409, "linkedin_not_connected");
+      const r = await unipile.messageUser(env, acc.secret, profile.providerId, text);
+      chatId = r.chatId; messageId = r.messageId;
+    }
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    throw new HttpError(unipile.humanError(e), unipile.classifyError(e) === "transient" ? 502 : 409, "linkedin_send_failed");
+  }
+  const { data: row, error } = await db.from("inbox_messages").insert({
+    user_id: userId, member_id: member?.id ?? null, channel: "linkedin", provider: "unipile", direction: "out",
+    contact_ref: profileUrl || contactRef || null, body: text, provider_message_id: messageId, provider_conversation_id: chatId,
+    status: "sent", sent_at: new Date().toISOString(),
+    campaign_id: lastRow?.campaign_id ?? enrollment?.campaign_id ?? null, enrollment_id: lastRow?.enrollment_id ?? enrollment?.id ?? null,
+    payload: { source: "inbox", chat_id: chatId },
+  }).select("*").single();
+  if (error) throw new HttpError(error.message, 500);
+  return row;
+}
+
 /** Un pase de sincronización del historial de WATI para la cuenta del usuario. */
 const WATI_SYNC_COOLDOWN_MS = 2 * 60 * 1000;
 /**
@@ -876,7 +1017,7 @@ const WATI_SYNC_COOLDOWN_MS = 2 * 60 * 1000;
 async function syncAll(db: SupabaseClient, userId: string): Promise<Json> {
   const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/campaign-run`;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const [wati, rest] = await Promise.all([
+  const [wati, rest, mbx] = await Promise.all([
     syncWati(db, userId).catch((e) => ({ inserted: 0, error: String((e as Error)?.message ?? e).slice(0, 200) } as Json)),
     fetch(fnUrl, {
       method: "POST",
@@ -884,8 +1025,16 @@ async function syncAll(db: SupabaseClient, userId: string): Promise<Json> {
       body: JSON.stringify({ sync_user: userId }),
     }).then(async (r) => (r.ok ? await r.json() : { email: 0, linkedin: 0, errors: { email: `HTTP ${r.status}`, linkedin: `HTTP ${r.status}` } }))
       .catch((e) => ({ email: 0, linkedin: 0, errors: { email: String(e?.message ?? e).slice(0, 200), linkedin: String(e?.message ?? e).slice(0, 200) } })),
+    // Buzones propios (respuestas y rebotes): solo los de este usuario, ya.
+    fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/mailbox-sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+      body: JSON.stringify({ sync_user: userId }),
+    }).then(async (r) => (r.ok ? await r.json() : { replies: 0, bounces: 0 })).catch(() => ({ replies: 0, bounces: 0 })),
   ]);
-  return { whatsapp: wati, email: rest.email ?? 0, linkedin: rest.linkedin ?? 0, errors: rest.errors ?? {} };
+  const errors = { ...(rest.errors ?? {}) };
+  if (Array.isArray(mbx?.errors) && mbx.errors.length) errors.email = [errors.email, ...mbx.errors].filter(Boolean).join(" · ").slice(0, 300);
+  return { whatsapp: wati, email: (rest.email ?? 0) + (mbx?.replies ?? 0) + (mbx?.bounces ?? 0), linkedin: rest.linkedin ?? 0, errors };
 }
 
 async function syncWati(db: SupabaseClient, userId: string): Promise<Json> {

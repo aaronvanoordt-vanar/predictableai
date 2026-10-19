@@ -110,13 +110,14 @@
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
-import { callLLM, engineForUser, parseLlmJson, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { callLLM, engineForUser, languageDirective, parseLlmJson, requestLanguage, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { buildTrainingBlock, loadTraining } from "../_shared/sales-training.ts";
 import { loadIntelligence } from "../_shared/intelligence.ts";
 import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
 import { buildRadarSignalBlock, isRadarMember, radarSignalOf, type RadarLeadSignal } from "../_shared/radar-lead.ts";
 import { buildResearchBlock } from "../_shared/lead-research.ts";
+import { handoffBlock } from "../_shared/booking.ts";
 import { buildChampionHistoryBlock, type ChampionHistory, loadChampionHistory } from "../_shared/champion-watch.ts";
 import { buildAiColumnsBlock } from "../_shared/ai-columns.ts";
 
@@ -1012,7 +1013,12 @@ interface StepSpec {
   // Solo en modo respuesta: el hilo real, en orden, con quién escribió cada
   // mensaje. Sin esto la IA no puede contestar lo que el lead preguntó.
   conversation: Array<{ who: "lead" | "yo"; channel: string; body: string; sent_at: string }>;
+  // Paso linkedin_connect desde la cuenta propia: el texto es la NOTA de la
+  // invitación (LinkedIn corta en 300 caracteres).
+  connectNote?: boolean;
 }
+
+const LINKEDIN_NOTE_MAX = 300;
 
 const STEP_ANGLES = ["apertura", "valor", "prueba_social", "objecion", "ultima_carta", "libre"] as const;
 
@@ -1049,6 +1055,7 @@ function normalizeStep(body: StepRequest, mode: StepMode = "step"): StepSpec | n
     instructions: typeof body.instructions === "string" ? body.instructions.trim().slice(0, 600) : "",
     previous,
     conversation,
+    connectNote: !replyMode && chRaw === "linkedin_connect",
   };
 }
 
@@ -1128,7 +1135,13 @@ function buildStepContext(step: StepSpec): string {
   lines.push(`Ángulo: ${step.angle}`);
   lines.push(STEP_ANGLE_RULES[step.angle]);
   lines.push(STEP_CHANNEL_RULES[step.channel]);
+  if (step.connectNote) lines.push(`ESTE TEXTO ES LA NOTA DE UNA SOLICITUD DE CONEXIÓN DE LINKEDIN: máximo ${LINKEDIN_NOTE_MAX} caracteres contando espacios (LinkedIn la corta). Una o dos frases: por qué conectas con ESTA persona, sin pitch, sin enlaces y sin pedir una reunión. La apertura obligatoria de los mensajes no aplica a la nota.`);
   if (step.instructions) lines.push(`INSTRUCCIONES DEL VENDEDOR para esta respuesta: ${step.instructions}`);
+  // Paso de campaña que propone agendar: el enlace real lo pone campaign-run
+  // ({{link_agenda}} → agenda.html del vendedor con la referencia del lead).
+  if (!reply && !signal && /agenda|agendar|link_agenda|calendario/i.test(step.instructions || "")) {
+    lines.push("ENLACE DE AGENDA: donde vaya el enlace para agendar escribe literalmente {{link_agenda}} (el sistema lo reemplaza por el enlace real del vendedor). Nunca inventes ni acortes un enlace.");
+  }
   if (reply) {
     lines.push("", "CONVERSACIÓN HASTA AHORA (en orden; \"lead\" es lo que escribió él, \"yo\" lo que salió de tu lado). Contesta el ÚLTIMO mensaje del lead:");
     step.conversation.forEach((c) => lines.push(`[${c.who}${c.channel ? " · " + c.channel : ""}${c.sent_at ? " · " + c.sent_at : ""}] ${c.body.replace(/\s+/g, " ")}`));
@@ -1199,6 +1212,10 @@ function stepViolations(step: StepSpec, out: StepOut): string[] {
   // prospección no aplica (puede tener que explicar algo que preguntaron).
   if (step.angle === "respuesta") {
     if (step.channel === "email" && !out.subject.trim()) v.push('"subject" está vacío (el email necesita asunto)');
+    return v;
+  }
+  if (step.connectNote) {
+    if (out.body.trim().length > LINKEDIN_NOTE_MAX) v.push(`"body" tiene ${out.body.trim().length} caracteres (la nota de conexión admite ${LINKEDIN_NOTE_MAX})`);
     return v;
   }
   if (step.channel === "phone") {
@@ -1274,7 +1291,9 @@ async function generateViaManagedAgent(
     const sessionId = await createSession(apiKey, cfg, `outreach ${leadName}`.slice(0, 120));
     const seen = new Set<string>();
     await baselineSeen(apiKey, sessionId, seen);
-    await sendUserMessage(apiKey, sessionId, userPrompt);
+    // El agente tiene un system prompt fijo y no pasa por callLLM: la directiva
+    // de idioma (pt-BR / en) viaja en el mensaje.
+    await sendUserMessage(apiKey, sessionId, userPrompt + languageDirective(requestLanguage()));
     let out = parseJson(await pollForReply(apiKey, sessionId, seen, FIRST_TURN_BUDGET_MS));
     if (!isValidOutreach(out)) throw new Error("Model returned malformed outreach JSON");
 
@@ -1438,6 +1457,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     buildLeadContext(lead) +
     buildPersonaContext(snapshot) +
     buildResearchBlock(memberRes?.data ?? null) +
+    handoffBlock(memberRes?.data?.meeting_handoff) +
     buildAiColumnsBlock(aiCellsRes?.data) +
     buildPlaybookContext(playbook) +
     buildTrainingBlock(training, "outreach");

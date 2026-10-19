@@ -82,7 +82,7 @@
   function ctx() { return state.ctx || {}; }
   function toast(msg, type) { if (ctx().toast) ctx().toast(msg, type); }
   function rerender() { if (ctx().rerender) ctx().rerender(); }
-  function fmtNum(n) { return Number(n || 0).toLocaleString('es'); }
+  function fmtNum(n) { return Number(n || 0).toLocaleString((window.i18n ? i18n.locale() : 'es-MX')); }
   function normKey(v) {
     return String(v == null ? '' : v).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
       .replace(/[^a-z0-9%+]+/g, ' ').trim();
@@ -343,7 +343,7 @@
     var v = display(col, c);
     if (col.answer_type === 'boolean') return '<span class="pill ' + (c.value_bool ? 'pill-jade' : 'pill-gray') + '">' + esc(v) + '</span>';
     if (col.answer_type === 'category') return '<span class="pill pill-purple">' + esc(v) + '</span>';
-    if (col.answer_type === 'number') return '<b>' + esc(Number(v).toLocaleString('es')) + '</b>';
+    if (col.answer_type === 'number') return '<b>' + esc(Number(v).toLocaleString((window.i18n ? i18n.locale() : 'es-MX'))) + '</b>';
     return '<span class="aic-text">' + esc(v) + '</span>';
   }
 
@@ -786,7 +786,7 @@
       html += '<div class="aic-sec">' + esc(c.error || 'No se pudo responder.') + '</div>';
     }
     html += '<div class="pros-cellsub" style="margin-top:8px">' +
-      (c.answered_at ? 'Respondida el ' + esc(new Date(c.answered_at).toLocaleString('es')) : '') +
+      (c.answered_at ? 'Respondida el ' + esc(new Date(c.answered_at).toLocaleString((window.i18n ? i18n.locale() : 'es-MX'))) : '') +
       (c.engine ? ' · ' + esc(c.engine) : '') + (Number(c.credits) ? ' · ' + esc(c.credits) + ' créditos' : '') + '</div>';
     var body = el('div', { class: 'aic-form' }, html);
     ctx().openModal({

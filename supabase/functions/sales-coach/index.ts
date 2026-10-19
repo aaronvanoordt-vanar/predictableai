@@ -1285,6 +1285,15 @@ async function finalizeMeeting(ctx: Ctx, meeting: Json, endedAt: string): Promis
       .update({ contact_status: "reunion_tomada", status_changed_at: endedAt })
       .eq("id", meeting.prospect_id)
       .in("contact_status", ["no_contactado", "en_campana", "saludo_enviado", "conexion_enviada", "conexion_aceptada", "respondio", "reunion_agendada", "no_show"]);
+    // La reunión agendada desde la agenda (± 12 h de hoy) se dio: asistencia
+    // real para las métricas y el learning-loop. Falla suave sin la tabla.
+    const around = Date.parse(endedAt);
+    const { error: bkErr } = await ctx.supa.from("bookings")
+      .update({ attendance: "held", attendance_source: "coach", attendance_marked_at: endedAt, status: "completed", updated_at: endedAt })
+      .eq("member_id", meeting.prospect_id).eq("attendance", "pending").neq("status", "cancelled")
+      .gte("start_at", new Date(around - 12 * 3600_000).toISOString())
+      .lte("start_at", new Date(around + 12 * 3600_000).toISOString());
+    if (bkErr) console.warn("[sales-coach] bookings attendance:", bkErr.message);
   }
 
   const { error: updErr } = await ctx.supa.from("coach_meetings").update({

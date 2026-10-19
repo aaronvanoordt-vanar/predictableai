@@ -108,9 +108,9 @@
   function fmtDate(v) {
     if (!v) return '';
     var d = new Date(String(v).length === 10 ? v + 'T12:00:00' : v);
-    return isNaN(d.getTime()) ? '' : d.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' });
+    return isNaN(d.getTime()) ? '' : d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
   }
-  function fmtNum(n) { return Number(n || 0).toLocaleString('es-MX'); }
+  function fmtNum(n) { return Number(n || 0).toLocaleString((window.i18n ? i18n.locale() : 'es-MX')); }
   function today() { var d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
   function addDays(iso, n) { var d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
 

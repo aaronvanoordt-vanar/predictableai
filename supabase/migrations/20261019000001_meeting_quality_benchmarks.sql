@@ -104,15 +104,28 @@ SELECT m.id, m.user_id,
 ON CONFLICT (member_id) DO NOTHING;
 
 -- learning-loop escribe el veredicto agregado como scope `meeting_quality`.
--- La lista conserva todo lo anterior: 'deal_loss' (20261017100001) y
--- 'automation_rule', que learning-loop ya escribe desde las automatizaciones
--- (20261018180008) sin que ninguna migración lo hubiera permitido (el upsert
--- de learning_insights de esas cuentas fallaba entero).
-ALTER TABLE public.learning_insights DROP CONSTRAINT IF EXISTS learning_insights_scope_check;
-ALTER TABLE public.learning_insights ADD CONSTRAINT learning_insights_scope_check
-  CHECK (scope IN ('radar_detector', 'campaign_node', 'campaign', 'channel', 'angle',
-                   'winning_message', 'objection', 'icp_attribute', 'summary',
-                   'deal_loss', 'automation_rule', 'meeting_quality'));
+-- Varias sesiones suman valores a este CHECK en paralelo ('deal_loss',
+-- 'automation_rule', 'meeting_attendance'…): se leen los valores que ya
+-- permite y se SUMA el nuestro, sin borrar los de otra migración aplicada
+-- antes o después (mismo patrón que 20261018180002). Idempotente.
+DO $$
+DECLARE
+  c    RECORD;
+  vals TEXT[] := ARRAY['radar_detector', 'campaign_node', 'campaign', 'channel', 'angle', 'winning_message',
+                       'objection', 'icp_attribute', 'summary', 'deal_loss', 'automation_rule', 'meeting_quality'];
+BEGIN
+  FOR c IN SELECT con.conname AS name, pg_get_constraintdef(con.oid) AS def
+             FROM pg_constraint con
+            WHERE con.conrelid = 'public.learning_insights'::regclass AND con.contype = 'c'
+              AND pg_get_constraintdef(con.oid) ~ '\mscope\M'
+  LOOP
+    vals := vals || ARRAY(SELECT (regexp_matches(c.def, '''([^'']+)''', 'g'))[1]);
+    EXECUTE format('ALTER TABLE public.learning_insights DROP CONSTRAINT %I', c.name);
+  END LOOP;
+  vals := ARRAY(SELECT DISTINCT v FROM unnest(vals) AS v ORDER BY 1);
+  EXECUTE format('ALTER TABLE public.learning_insights ADD CONSTRAINT learning_insights_scope_check CHECK (scope IN (%s))',
+    (SELECT string_agg(quote_literal(x), ', ') FROM unnest(vals) AS x));
+END $$;
 
 -- ── 2. Reporte semanal ─────────────────────────────────────────────────────
 ALTER TABLE public.clients

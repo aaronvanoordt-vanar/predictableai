@@ -74,6 +74,8 @@
     tab: 'opps', oppView: 'kanban', oppFilter: 'open', q: '', accQ: '',
     stages: [], opps: [], companies: [], tasks: [], suggestions: [], suggestOpen: false,
     me: { id: null, name: '' }, backfilled: false, companiesCapped: false, oppsCapped: false,
+    // CRM externos que sincronizan oportunidades (HubSpot / Pipedrive, integrations/native-crm.ts).
+    native: { providers: [], settings: null, provider: null, busy: false, error: '' },
     company: null, detail: null, modal: null, busy: false, dragId: null, lastCurrency: 'USD',
     // Animación de entrada solo en la primera pintura de una vista (render() repinta todo).
     animate: true,
@@ -114,8 +116,8 @@
     if (amount == null || amount === '') return '';
     var n = Number(amount);
     if (!isFinite(n)) return '';
-    try { return new Intl.NumberFormat('es-419', { style: 'currency', currency: currency || 'USD', maximumFractionDigits: n % 1 ? 2 : 0 }).format(n); }
-    catch (e) { return (currency || '') + ' ' + n.toLocaleString('es'); }
+    try { return new Intl.NumberFormat((window.i18n ? i18n.locale() : 'es-MX'), { style: 'currency', currency: currency || 'USD', maximumFractionDigits: n % 1 ? 2 : 0 }).format(n); }
+    catch (e) { return (currency || '') + ' ' + n.toLocaleString((window.i18n ? i18n.locale() : 'es-MX')); }
   }
   /** Suma por moneda: nunca se mezclan monedas ni se convierten. */
   function totals(list) {
@@ -127,12 +129,12 @@
     if (!d) return '';
     var t = new Date(String(d).length === 10 ? d + 'T12:00:00' : d);
     if (isNaN(t.getTime())) return '';
-    return t.toLocaleDateString('es', { day: 'numeric', month: 'short', year: t.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+    return t.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: t.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
   }
   function fmtDateTime(d) {
     var t = new Date(d);
     if (isNaN(t.getTime())) return '';
-    return t.toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return t.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   }
   function relTime(d) {
     var t = new Date(d).getTime();
@@ -177,7 +179,7 @@
   }
 
   // ─── Datos ───────────────────────────────────────────────────────────────
-  var OPP_SELECT = 'id, name, company_id, member_id, stage_id, amount, currency, close_date, owner_name, lost_reason, lost_note, lost_competitor, closed_at, notes, source, stage_changed_at, stage_changed_by, created_at, updated_at, ' +
+  var OPP_SELECT = 'id, name, company_id, member_id, stage_id, amount, currency, close_date, owner_name, lost_reason, lost_note, lost_competitor, closed_at, notes, source, stage_changed_at, stage_changed_by, external_source, external_id, created_at, updated_at, ' +
     'company:crm_companies(id, name, domain), contact:prospect_list_members(id, name, first_name, last_name, title, email, company, contact_status)';
   var COMPANY_SELECT = 'id, name, domain, website, industry, employee_count, annual_revenue, founded_year, country, state, city, phone, linkedin_url, logo_url, description, owner_name, notes, source, external_source, created_at, updated_at';
   var TASK_SELECT = 'id, title, notes, due_at, done_at, company_id, member_id, opportunity_id, owner_name, created_at, ' +
@@ -204,7 +206,7 @@
       state.stages = (st.data || []).slice().sort(function (a, b) { return a.position - b.position; });
       var since = new Date(Date.now() - 30 * 86400000).toISOString();
       var res = await Promise.all([
-        client.from('crm_opportunities').select(OPP_SELECT).order('updated_at', { ascending: false }).limit(MAX_ROWS),
+        selectOpps(client),
         client.from('crm_companies').select(COMPANY_SELECT + ', people:prospect_list_members(count), deals:crm_opportunities(count), signals:radar_signals(count)').order('updated_at', { ascending: false }).limit(MAX_ROWS),
         client.from('crm_tasks').select(TASK_SELECT).or('done_at.is.null,done_at.gt."' + since + '"').order('due_at', { ascending: true, nullsFirst: false }).limit(MAX_ROWS),
         client.from('profiles').select('full_name').eq('id', user.id).maybeSingle(),
@@ -220,6 +222,7 @@
       state.animate = true;
       paintBadge();
       loadSuggestions();
+      loadNativeStatus();
       if (!state.backfilled) backfill();
     } catch (e) {
       state.error = 'No pudimos cargar el CRM: ' + errMsg(e);
@@ -227,6 +230,141 @@
       state.loading = false;
       render();
     }
+  }
+
+  /** Oportunidades con external_data (migración 20261019014500); sin ella, lo demás. */
+  async function selectOpps(client) {
+    var r = await client.from('crm_opportunities').select(OPP_SELECT + ', external_data').order('updated_at', { ascending: false }).limit(MAX_ROWS);
+    if (r.error && /external_data/.test(r.error.message || '')) {
+      r = await client.from('crm_opportunities').select(OPP_SELECT).order('updated_at', { ascending: false }).limit(MAX_ROWS);
+    }
+    return r;
+  }
+
+  // ─── CRM externos (HubSpot / Pipedrive) ─────────────────────────────────
+  async function integrationsFn(action, payload) {
+    var client = sb();
+    var s0 = await client.auth.getSession();
+    var token = s0 && s0.data && s0.data.session && s0.data.session.access_token;
+    if (!token || !global.SUPABASE_CONFIG) throw new Error('Tu sesión expiró. Vuelve a iniciar sesión.');
+    var res = await fetch(global.SUPABASE_CONFIG.url.replace(/\/$/, '') + '/functions/v1/integrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ action: action, payload: payload || {} }),
+    });
+    var body = null;
+    try { body = await res.json(); } catch (e) { /* sin JSON */ }
+    if (!res.ok) throw new Error((body && body.error) || ('Error ' + res.status));
+    return body || {};
+  }
+
+  /** Qué CRM externos están conectados con sincronización de oportunidades. Silencioso si no hay. */
+  async function loadNativeStatus() {
+    try {
+      var r = await integrationsFn('native_status');
+      state.native.providers = r.providers || [];
+    } catch (e) { state.native.providers = []; }
+    render();
+  }
+
+  /** Después de mover una etapa: que salga ya al CRM externo (si el usuario lo activó). */
+  function pushNativeSoon() {
+    if (!state.native.providers.some(function (p) { return p.push; })) return;
+    integrationsFn('native_push').catch(function (e) { console.warn('[crm] envío al CRM externo:', e && e.message); });
+  }
+
+  var EXT_LABEL = { hubspot: 'HubSpot', pipedrive: 'Pipedrive', kommo: 'Kommo', zoho: 'Zoho CRM', bitrix24: 'Bitrix24', rdstation: 'RD Station CRM' };
+  function extBadge(o) {
+    var label = o && o.external_id && EXT_LABEL[o.external_source];
+    if (!label) return '';
+    var url = o.external_data && o.external_data.url;
+    var title = 'Sincronizada con ' + label + (o.external_data && o.external_data.stage_label ? ' · ' + o.external_data.stage_label : '');
+    return /^https:\/\//i.test(url || '')
+      ? '<a class="crm-ext" href="' + esc(safeUrl(url)) + '" target="_blank" rel="noopener" title="' + esc(title) + '">' + esc(label) + '</a>'
+      : '<span class="crm-ext" title="' + esc(title) + '">' + esc(label) + '</span>';
+  }
+
+  async function openNative(provider) {
+    var p = provider || (state.native.providers[0] && state.native.providers[0].provider);
+    if (!p) return;
+    state.native.provider = p;
+    state.native.settings = null;
+    state.native.error = '';
+    state.modal = { type: 'native' };
+    render();
+    try {
+      state.native.settings = await integrationsFn('native_settings', { provider: p });
+    } catch (e) { state.native.error = e.message || String(e); }
+    if (state.modal && state.modal.type === 'native') render();
+  }
+
+  async function saveNative(form) {
+    var n = state.native;
+    var map = {};
+    Array.prototype.forEach.call(form.querySelectorAll('select[data-map]'), function (sel) { if (sel.value) map[sel.getAttribute('data-map')] = sel.value; });
+    var pull = !!(form.querySelector('[name="pull"]') || {}).checked;
+    var push = !!(form.querySelector('[name="push"]') || {}).checked;
+    n.busy = true; render();
+    try {
+      n.settings = await integrationsFn('native_settings', { provider: n.provider, save: true, pull: pull, push: push, map: map });
+      n.providers.forEach(function (x) { if (x.provider === n.provider) { x.pull = pull; x.push = push; } });
+      toast('Sincronización guardada', 'success');
+    } catch (e) { toast('No se pudo guardar: ' + (e.message || e), 'error'); }
+    n.busy = false; render();
+  }
+
+  async function syncNativeNow() {
+    var n = state.native;
+    n.busy = true; render();
+    try {
+      var r = await integrationsFn('native_sync_now', { provider: n.provider });
+      var c = r.native || {};
+      toast((EXT_LABEL[n.provider] || n.provider) + ': ' + (c.created || 0) + ' nuevas, ' + (c.updated || 0) + ' actualizadas, ' + (c.pushed || 0) + ' cambios enviados.', 'success');
+      n.busy = false;
+      await load();
+      await openNative(n.provider);
+    } catch (e) {
+      n.busy = false; render();
+      toast('No se pudo sincronizar: ' + (e.message || e), 'error');
+    }
+  }
+
+  function nativeFormHtml() {
+    var n = state.native;
+    var label = EXT_LABEL[n.provider] || n.provider;
+    var tabs = n.providers.length > 1 ? '<div class="crm-seg crm-native-tabs" role="group">' + n.providers.map(function (p) {
+      return '<button type="button" class="' + (p.provider === n.provider ? 'on' : '') + '" data-act="native-tab" data-provider="' + esc(p.provider) + '">' + esc(EXT_LABEL[p.provider] || p.provider) + '</button>';
+    }).join('') + '</div>' : '';
+    var h = '<form data-form="native"><h2 id="crm-modal-t">Sincronización con ' + esc(label) + '</h2>' + tabs;
+    if (n.error) return h + '<div class="crm-error">' + esc(n.error) + '</div>' + modalFoot() + '</form>';
+    if (!n.settings) return h + '<p class="crm-muted">Cargando las etapas de ' + esc(label) + '…</p></form>';
+    var cfg = n.settings.config || {};
+    var ext = (n.settings.external_stages || []).filter(function (s) { return s.kind === 'open'; });
+    var pipes = {};
+    ext.forEach(function (s) { (pipes[s.pipeline_id] = pipes[s.pipeline_id] || { label: s.pipeline_label, stages: [] }).stages.push(s); });
+    h += '<p class="crm-muted">Los deals de ' + esc(label) + ' de tus contactos aparecen como oportunidades de tu pipeline, con su monto y su moneda. Ganada y perdida se reconocen solas; las demás etapas se emparejan por probabilidad o por orden, salvo que elijas otra abajo.</p>' +
+      '<label class="crm-toggle"><input type="checkbox" name="pull"' + (cfg.pull ? ' checked' : '') + '> Traer los deals de ' + esc(label) + ' a mi CRM</label>' +
+      '<label class="crm-toggle"><input type="checkbox" name="push"' + (cfg.push ? ' checked' : '') + '> Enviar a ' + esc(label) + ' los cambios de etapa que haga en Predictable</label>';
+    if (cfg.push_scope_missing) h += '<p class="crm-error">Tu conexión con HubSpot no tiene permiso para modificar deals: reconéctala en Integraciones (o agrega el alcance crm.objects.deals.write a tu app privada).</p>';
+    h += '<h3>Etapas</h3><table class="crm-table crm-map"><thead><tr><th>En Predictable</th><th>En ' + esc(label) + '</th></tr></thead><tbody>';
+    (n.settings.native_stages || []).forEach(function (st) {
+      var cell;
+      if (st.kind !== 'open') cell = '<span class="crm-muted">' + (st.kind === 'won' ? 'Ganada (automático)' : 'Perdida (automático, con su motivo)') + '</span>';
+      else {
+        cell = '<select class="crm-input crm-select-sm" data-map="' + esc(st.id) + '"><option value="">Automático</option>' + Object.keys(pipes).map(function (pid) {
+          return '<optgroup label="' + esc(pipes[pid].label || 'Pipeline') + '">' + pipes[pid].stages.map(function (x) {
+            return '<option value="' + esc(x.id) + '"' + ((cfg.map || {})[st.id] === x.id ? ' selected' : '') + '>' + esc(x.label) + (x.probability != null ? ' (' + esc(x.probability) + ' %)' : '') + '</option>';
+          }).join('') + '</optgroup>';
+        }).join('') + '</select>';
+      }
+      h += '<tr><td>' + esc(st.name) + '</td><td>' + cell + '</td></tr>';
+    });
+    h += '</tbody></table>';
+    if (cfg.last_run_at) {
+      var lc = cfg.last_counts || {};
+      h += '<p class="crm-muted">Última sincronización ' + esc(relTime(cfg.last_run_at)) + (cfg.last_status === 'error' ? ' — error: ' + esc(cfg.last_error || '') : ' — ' + esc(lc.created || 0) + ' nuevas, ' + esc(lc.updated || 0) + ' actualizadas, ' + esc(lc.pushed || 0) + ' cambios enviados') + '.</p>';
+    }
+    return h + modalFoot('<button type="button" class="btn btn-ghost btn-sm" data-act="native-sync"' + (n.busy ? ' disabled' : '') + '>Sincronizar ahora</button>') + '</form>';
   }
 
   function flattenCounts(c) {
@@ -315,6 +453,7 @@
     var r = await sb().from('crm_opportunities').update(patch).eq('id', id).select(OPP_SELECT).single();
     if (r.error) { Object.assign(o, prev); render(); toast('No se pudo mover: ' + errMsg(r.error), 'error'); return; }
     Object.assign(o, r.data);
+    if (o.external_id) pushNativeSoon();
     if (st.kind === 'won') toast('¡Oportunidad ganada!', 'success');
     else if (st.kind === 'lost') toast('Marcada como perdida. El motivo alimenta el aprendizaje de la plataforma.', 'info');
     render();
@@ -645,6 +784,7 @@
     if (state.tab === 'opps') {
       h += '<div class="crm-seg" role="group" aria-label="Vista"><button type="button" class="' + (state.oppView === 'kanban' ? 'on' : '') + '" data-oppview="kanban" aria-pressed="' + (state.oppView === 'kanban') + '">Tablero</button>' +
         '<button type="button" class="' + (state.oppView === 'table' ? 'on' : '') + '" data-oppview="table" aria-pressed="' + (state.oppView === 'table') + '">Tabla</button></div>' +
+        (state.native.providers.length ? '<button type="button" class="btn btn-ghost btn-sm" data-act="native">Sincronización</button>' : '') +
         '<button type="button" class="btn btn-ghost btn-sm" data-act="stages">Configurar etapas</button>' +
         '<button type="button" class="btn btn-primary btn-sm" data-act="new-opp">Nueva oportunidad</button>';
     } else if (state.tab === 'accounts') {
@@ -737,6 +877,7 @@
           (st.kind === 'lost' && o.lost_reason ? '<span>' + esc(lostLabel(o.lost_reason)) + '</span>' : '') +
         '</span>' +
       '</button>' +
+      (o.external_id && EXT_LABEL[o.external_source] ? '<div class="crm-card-ext">' + extBadge(o) + '</div>' : '') +
       '<label class="crm-move"><span class="crm-sr">Mover «' + esc(o.name) + '» a</span><select class="crm-move-sel" data-move="' + esc(o.id) + '" aria-label="Mover a otra etapa">' + opts + '</select></label>' +
     '</article>';
   }
@@ -749,7 +890,7 @@
     list.forEach(function (o) {
       var st = stageById(o.stage_id);
       var opts = state.stages.map(function (s) { return '<option value="' + esc(s.id) + '"' + (s.id === o.stage_id ? ' selected' : '') + '>' + esc(s.name) + '</option>'; }).join('');
-      h += '<tr><td><button type="button" class="crm-link" data-act="open-opp" data-id="' + esc(o.id) + '">' + esc(o.name) + '</button>' +
+      h += '<tr><td><button type="button" class="crm-link" data-act="open-opp" data-id="' + esc(o.id) + '">' + esc(o.name) + '</button>' + (o.external_id ? ' ' + extBadge(o) : '') +
         (o.contact ? '<div class="crm-muted">' + esc(personName(o.contact)) + '</div>' : '') + '</td>' +
         '<td>' + (o.company ? '<button type="button" class="crm-link" data-act="open-company" data-id="' + esc(o.company.id) + '">' + esc(o.company.name) + '</button>' : '<span class="crm-muted">—</span>') + '</td>' +
         '<td><select class="crm-input crm-select crm-select-sm" data-move="' + esc(o.id) + '" aria-label="Etapa de ' + esc(o.name) + '">' + opts + '</select>' +
@@ -944,6 +1085,7 @@
     else if (m.type === 'company') body = companyFormHtml(m);
     else if (m.type === 'task') body = taskFormHtml(m);
     else if (m.type === 'stages') body = stagesFormHtml();
+    else if (m.type === 'native') body = nativeFormHtml();
     return '<div class="crm-overlay' + (m.focused ? '' : ' crm-pop') + '" data-act="close-modal"><div class="crm-modal" role="dialog" aria-modal="true" aria-labelledby="crm-modal-t" data-stop>' + body + '</div></div>';
   }
   function field(label, inner, full) { return '<label class="crm-field' + (full ? ' full' : '') + '"><span>' + esc(label) + '</span>' + inner + '</label>'; }
@@ -1155,6 +1297,9 @@
         state.modal = { type: 'task', oppId: a.getAttribute('data-opp') || null, companyId: a.getAttribute('data-company') || (state.detail && state.company) || null };
         render(); break;
       case 'del-task': deleteRow('crm_tasks', id, 'esta tarea'); break;
+      case 'native': openNative(); break;
+      case 'native-tab': openNative(a.getAttribute('data-provider')); break;
+      case 'native-sync': syncNativeNow(); break;
       case 'stages': state.modal = { type: 'stages', rows: state.stages.map(function (s) { return Object.assign({}, s); }) }; render(); break;
       case 'stage-add': syncStageRows(); state.modal.rows.splice(lastOpenIndex(state.modal.rows) + 1, 0, { id: null, name: 'Nueva etapa', probability: 50, kind: 'open' }); render(); break;
       case 'stage-up': case 'stage-down': moveStageRow(a.closest('[data-stage-row]'), act === 'stage-up' ? -1 : 1); break;
@@ -1230,6 +1375,7 @@
     else if (kind === 'company') saveCompany(form);
     else if (kind === 'task') saveTask(form);
     else if (kind === 'stages') saveStages(form);
+    else if (kind === 'native') saveNative(form);
     else if (kind === 'lost') {
       var f = formData(form);
       if (!f.lost_reason) { toast('Elige el motivo de pérdida.', 'error'); return; }
@@ -1429,6 +1575,11 @@
       '.crm-stage-note{grid-column:1/-1;margin-top:-4px}',
       '.crm-prob{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink-3)}',
       '.crm-stage-btns{display:flex;gap:4px}',
+      '.crm-ext{display:inline-flex;align-items:center;font-size:10.5px;font-weight:700;letter-spacing:.02em;color:var(--accent);background:var(--accent-soft);border-radius:999px;padding:2px 8px;text-decoration:none}',
+      '.crm-card-ext{padding:0 12px 6px}',
+      '.crm-toggle{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--ink);margin:6px 0;text-transform:none;letter-spacing:0;font-family:var(--font-sans);font-weight:500}',
+      '.crm-native-tabs{margin-bottom:10px}',
+      '.crm-map td{padding:6px 4px}',
     ].join('\n');
     document.head.appendChild(st);
   }

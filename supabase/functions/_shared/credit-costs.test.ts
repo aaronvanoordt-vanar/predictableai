@@ -23,11 +23,15 @@ Deno.test("js/credit-costs.js es espejo del tarifario que cobran las edge functi
     outreach_full: CREDIT_COSTS.outreach_full,
     campaign_recommendation: CREDIT_COSTS.campaign_recommendation,
     lead_research: CREDIT_COSTS.lead_research,
+    meeting_handoff: CREDIT_COSTS.meeting_handoff,
+    linkedin_ideas: CREDIT_COSTS.linkedin_ideas,
+    linkedin_post: CREDIT_COSTS.linkedin_post,
     champion_web_check: CREDIT_COSTS.champion_web_check,
     ai_column_cell: CREDIT_COSTS.ai_column_cell,
     ai_column_cell_basic: CREDIT_COSTS.ai_column_cell_basic,
     outreach_playbook: CREDIT_COSTS.outreach_playbook,
     campaign_send: CREDIT_COSTS.campaign_lead,
+    linkedin_send: CREDIT_COSTS.linkedin_send,
     enrich_email: CREDIT_COSTS.enrich_email,
     enrich_phone: CREDIT_COSTS.enrich_phone,
     registry_search_br: CREDIT_COSTS.registry_search_br,
@@ -47,7 +51,9 @@ Deno.test("js/credit-costs.js es espejo del tarifario que cobran las edge functi
 Deno.test("js/campaign-flow.js usa los mismos precios por mensaje IA y por lead", async () => {
   const js = await Deno.readTextFile(new URL("../../../js/campaign-flow.js", import.meta.url));
   const ai = js.match(/AI_MESSAGE_CREDITS\s*=\s*(\d+)/);
-  const lead = js.match(/LEAD_CREDITS\s*=\s*(\d+)/);
+  const lead = js.match(/[^_]LEAD_CREDITS\s*=\s*(\d+)/);
+  const li = js.match(/LINKEDIN_SEND_CREDITS\s*=\s*(\d+)/);
+  assertEquals(Number(li?.[1]), CREDIT_COSTS.linkedin_send);
   assertEquals(Number(ai?.[1]), CREDIT_COSTS.outreach_step);
   assertEquals(Number(lead?.[1]), CREDIT_COSTS.campaign_lead);
 });

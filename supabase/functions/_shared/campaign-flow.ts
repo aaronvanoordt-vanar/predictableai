@@ -63,7 +63,9 @@
  * acciones; with_prev necesita una acción justo antes en la misma lista;
  * los pasos de LinkedIn exigen una campaña de LinkedIn
  * (settings.dripify_campaign_id de Dripify o settings.linkedin_campaign_id
- * diseñada en Predictable y vinculada a Dripify por nombre); custom exige
+ * diseñada en Predictable y vinculada a Dripify por nombre) salvo que salgan
+ * desde la cuenta propia conectada (settings.linkedin_via = "unipile",
+ * LinkedIn nativo, 2026-10-17); custom exige
  * body (y subject en email); template solo en WhatsApp y con una plantilla
  * elegida; ids únicos.
  *
@@ -74,6 +76,8 @@
 export const FLOW_VERSION = 1;
 
 export const CHANNELS = ["whatsapp", "email", "linkedin_connect", "linkedin_message", "call"] as const;
+/** Tope de LinkedIn para la nota de una solicitud de conexión. */
+export const LINKEDIN_NOTE_MAX = 300;
 export const CONTENT_KINDS = ["template", "ai", "custom"] as const;
 /** Las tres ranuras fijas de antes (2026-10-02): se leen como `template`. */
 export const LEGACY_TEMPLATE_KINDS = ["template_a", "template_b", "template_c"] as const;
@@ -147,13 +151,23 @@ export interface Located {
 import { CREDIT_COSTS } from "./credit-costs.ts";
 export const AI_MESSAGE_CREDITS: number = CREDIT_COSTS.outreach_step;
 export const LEAD_CREDITS: number = CREDIT_COSTS.campaign_lead;
+export const LINKEDIN_SEND_CREDITS: number = CREDIT_COSTS.linkedin_send;
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
-/** Los dos pasos que suben el lead a una campaña de Dripify. */
+/** Los dos pasos de LinkedIn (Dripify o la cuenta propia vía Unipile). */
 export function isLinkedin(channel: string): boolean {
   return channel === "linkedin_connect" || channel === "linkedin_message";
+}
+
+/**
+ * Paso de LinkedIn que sale desde la cuenta propia conectada (Unipile): el
+ * motor manda la invitación o el mensaje con el texto del paso. Sin la marca,
+ * el paso sigue siendo de Dripify, exactamente como antes.
+ */
+export function isNativeLinkedin(node: { channel: string; settings?: Json }): boolean {
+  return isLinkedin(node.channel) && node.settings?.linkedin_via === "unipile";
 }
 
 const isObj = (v: unknown): v is Record<string, Json> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -180,16 +194,17 @@ export function normalizeDelay(raw: unknown, allowWithPrev = true): Delay {
   return { mode, days: mode === "with_prev" ? 0 : clampInt(d.days, 0, 365), hours: mode === "with_prev" ? 0 : clampInt(d.hours, 0, 23) };
 }
 
-function normalizeContent(raw: unknown, channel: Channel): Content {
+function normalizeContent(raw: unknown, channel: Channel, native = false): Content {
   const c = isObj(raw) ? raw : {};
   let kind = String(c.kind ?? "");
   if (kind === "ai_personalized") kind = "ai";
   if ((LEGACY_TEMPLATE_KINDS as readonly string[]).includes(kind)) kind = "template";
   if (!(CONTENT_KINDS as readonly string[]).includes(kind)) kind = channel === "whatsapp" ? "template" : "ai";
-  // El texto de un paso de LinkedIn vive en la campaña de Dripify (su API no
-  // acepta texto por lead): aquí el ángulo solo alimenta el CSV de Custom
-  // Lead Fields, así que nunca es "mi texto" ni plantilla de WhatsApp.
-  if (isLinkedin(channel) && kind !== "ai") kind = "ai";
+  // El texto de un paso de LinkedIn por Dripify vive en la campaña de Dripify
+  // (su API no acepta texto por lead): aquí el ángulo solo alimenta el CSV de
+  // Custom Lead Fields, así que nunca es "mi texto" ni plantilla de WhatsApp.
+  // Desde la cuenta propia (Unipile) el texto sí sale del paso: IA o propio.
+  if (isLinkedin(channel) && (native ? kind === "template" : kind !== "ai")) kind = "ai";
   // Una llamada lleva guion IA o el guion propio, nunca una plantilla.
   if (channel === "call" && kind === "template") kind = "ai";
   const out: Content = { kind: kind as ContentKind };
@@ -212,7 +227,7 @@ function normalizeAction(raw: Json, allowWithPrev: boolean): ActionNode {
     type: "action",
     channel,
     delay: normalizeDelay(raw?.delay, allowWithPrev),
-    content: normalizeContent(raw?.content, channel),
+    content: normalizeContent(raw?.content, channel, isObj(raw?.settings) && raw.settings.linkedin_via === "unipile"),
   };
   if (isObj(raw?.settings) && Object.keys(raw.settings).length) node.settings = raw.settings;
   legacySlot(node, raw?.content?.kind);
@@ -309,7 +324,7 @@ export function validate(raw: unknown): { ok: boolean; errors: FlowError[] } {
     if (a.delay.mode === "with_prev" && !(idx > 0 && list[idx - 1].type === "action")) {
       errors.push({ nodeId: a.id, message: `${label}: "junto con el anterior" necesita otro envío justo antes.` });
     }
-    if (isLinkedin(a.channel) && !a.settings?.dripify_campaign_id && !a.settings?.linkedin_campaign_id) {
+    if (isLinkedin(a.channel) && !isNativeLinkedin(a) && !a.settings?.dripify_campaign_id && !a.settings?.linkedin_campaign_id) {
       const what = a.channel === "linkedin_connect" ? "de solo conexión" : "de solo mensaje";
       errors.push({ nodeId: a.id, message: `${label}: el paso de LinkedIn necesita una campaña de Dripify ${what} (elige una o crea la tuya).` });
     }
@@ -322,6 +337,9 @@ export function validate(raw: unknown): { ok: boolean; errors: FlowError[] } {
     if (a.content.kind === "custom") {
       if (!a.content.body) errors.push({ nodeId: a.id, message: `${label}: el texto propio está vacío.` });
       if (a.channel === "email" && !a.content.subject) errors.push({ nodeId: a.id, message: `${label}: el email necesita asunto.` });
+      if (a.channel === "linkedin_connect" && (a.content.body ?? "").length > LINKEDIN_NOTE_MAX) {
+        errors.push({ nodeId: a.id, message: `${label}: la nota de conexión de LinkedIn admite hasta ${LINKEDIN_NOTE_MAX} caracteres.` });
+      }
     }
     if (a.channel === "call" && a.delay.mode === "with_prev") {
       errors.push({ nodeId: a.id, message: `${label}: una llamada no puede salir "junto con el anterior": la hace una persona.` });
@@ -473,14 +491,19 @@ export function fromLegacySteps(rows: Json[]): Flow {
   return flow;
 }
 
-/** Créditos estimados para `leads` leads: mensajes IA (2 c/u) + 1 por lead (cubre sus envíos). */
+/**
+ * Créditos estimados para `leads` leads: mensajes IA (2 c/u) + 1 por lead
+ * (cubre sus envíos) + 1 por cada envío de LinkedIn desde la cuenta propia
+ * (la plataforma paga Unipile por cuenta).
+ */
 export function estimateCredits(flow: Flow, leads: number): { aiMessages: number; sends: number; credits: number } {
   const n = Math.max(0, Number(leads) || 0);
-  let ai = 0, sends = 0;
+  let ai = 0, sends = 0, native = 0;
   for (const a of actions(flow)) {
     sends++;
-    // LinkedIn: el mensaje lo escribe el usuario en Dripify, no la IA.
-    if (a.content.kind === "ai" && !isLinkedin(a.channel)) ai++;
+    if (isNativeLinkedin(a)) native++;
+    // LinkedIn por Dripify: el mensaje lo escribe el usuario en Dripify, no la IA.
+    if (a.content.kind === "ai" && (!isLinkedin(a.channel) || isNativeLinkedin(a))) ai++;
   }
-  return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + (sends ? LEAD_CREDITS : 0)) * n };
+  return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + native * LINKEDIN_SEND_CREDITS + (sends ? LEAD_CREDITS : 0)) * n };
 }

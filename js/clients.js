@@ -300,7 +300,7 @@
   function fmtDate(d) {
     if (!d) return '—';
     try {
-      return new Date(d + 'T00:00:00').toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' });
+      return new Date(d + 'T00:00:00').toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
     } catch (e) { return d; }
   }
 
@@ -312,7 +312,7 @@
   function fmtDateTime(ts) {
     if (!ts) return '';
     try {
-      return new Date(ts).toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      return new Date(ts).toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
     } catch (e) { return String(ts); }
   }
 
@@ -525,7 +525,7 @@
         '<td>' + esc(a.full_name || '—') + '</td>' +
         '<td>' + esc(a.company || '—') + '</td>' +
         '<td>' + esc(provider) + '</td>' +
-        '<td>' + esc(a.created_at ? new Date(a.created_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' }) : '—') + '</td>' +
+        '<td>' + esc(a.created_at ? new Date(a.created_at).toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' }) : '—') + '</td>' +
         '<td>' + esc(a.last_sign_in_at ? fmtDateTime(a.last_sign_in_at) : 'Nunca') + '</td>' +
         '<td class="cl-acc-num">' + (a.unlimited ? 'Ilimitados' : esc(a.balance == null ? '—' : a.balance)) + '</td>' +
       '</tr>';

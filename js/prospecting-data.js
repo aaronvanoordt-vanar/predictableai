@@ -1720,19 +1720,30 @@
     else if (emp.status === 'unconfirmed') risks.push('Su cargo actual está por confirmar: valídalo al inicio de la reunión.');
     if (ang.objection) risks.push('Objeción probable: ' + ang.objection + (ang.neutralizer ? '. Neutralizador: ' + ang.neutralizer + '.' : ''));
     else if (rAng.avoid) risks.push('Cuidado: ' + rAng.avoid);
+    // Traspaso al AE (nota BANT al agendar desde la agenda): lo que se sabe y
+    // lo que falta preguntar. Lo «No se sabe todavía» se queda así.
+    const ho = (m.meeting_handoff && m.meeting_handoff.bant) ? m.meeting_handoff : null;
+    const BANT = { budget: 'Presupuesto', authority: 'Autoridad', need: 'Necesidad', timeline: 'Plazo' };
+    const bantText = ho ? Object.keys(BANT).map(function (k) {
+      const f = ho.bant[k] || {};
+      return BANT[k] + ': ' + (f.status === 'unknown' || !f.summary ? 'No se sabe todavía' : f.summary);
+    }).join(' · ') : '';
+    if (ho && Array.isArray(ho.risks)) ho.risks.slice(0, 3).forEach(function (r) { risks.push(r); });
     return {
       id: String(m.id),
       name: m.name || '',
       title: m.title || '',
       company: m.company || '',
       brief_who: (m.name || '—') + (m.title ? ' · ' + m.title : '') + (m.company ? ' en ' + m.company : '') + '.',
-      brief_why: why + (notes ? ' Notas del vendedor: ' + notes.slice(0, 600) : ''),
+      brief_why: why + (notes ? ' Notas del vendedor: ' + notes.slice(0, 600) : '') +
+        (ho ? ' Traspaso BANT — ' + (ho.summary ? ho.summary + ' ' : '') + bantText + '.' : ''),
       brief_risks: risks.length ? risks.join(' ') : 'Sin alertas previas.',
       // Preparación de reunión generada junto con el outreach (nuevo
       // generate-outreach). null para leads con outreach antiguo.
       coach_prep: (m.outreach && m.outreach.coach_prep) || null,
       person_hook: ang.person_hook || rAng.hook || null,
-      research_questions: Array.isArray(rAng.questions) ? rAng.questions : [],
+      research_questions: (ho && Array.isArray(ho.next_questions) ? ho.next_questions : []).concat(Array.isArray(rAng.questions) ? rAng.questions : []).slice(0, 8),
+      handoff: ho,
       outreach: m.outreach || null,
     };
   }
