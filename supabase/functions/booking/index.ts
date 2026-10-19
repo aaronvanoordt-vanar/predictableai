@@ -71,6 +71,37 @@ class HttpError extends Error {
 function env(name: string): string {
   return (Deno.env.get(name) ?? "").trim();
 }
+// pg_cron llama `tick` con un JWT service_role que no siempre es byte a byte
+// SUPABASE_SERVICE_ROLE_KEY. Esta función va sin verify_jwt, así que el rol
+// del JWT no basta (se puede falsificar): se confirma con Auth, que solo
+// responde 200 en un endpoint de admin a una key de service role real.
+const verifiedServiceTokens = new Set<string>();
+function jwtRole(token: string): string | null {
+  try {
+    const payload = token.split(".")[1] ?? "";
+    const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof decoded?.role === "string" ? decoded.role : null;
+  } catch (_) {
+    return null;
+  }
+}
+async function isServiceRoleToken(token: string): Promise<boolean> {
+  if (!token) return false;
+  if (token === env("SUPABASE_SERVICE_ROLE_KEY")) return true;
+  if (jwtRole(token) !== "service_role") return false;
+  if (verifiedServiceTokens.has(token)) return true;
+  try {
+    const res = await fetch(`${env("SUPABASE_URL")}/auth/v1/admin/users?page=1&per_page=1`, {
+      headers: { Authorization: `Bearer ${token}`, apikey: token },
+    });
+    await res.body?.cancel();
+    if (!res.ok) return false;
+  } catch (_) {
+    return false;
+  }
+  verifiedServiceTokens.add(token);
+  return true;
+}
 function appUrl(): string {
   return (env("PUBLIC_APP_URL") || B.PUBLIC_APP_URL).replace(/\/+$/, "");
 }
@@ -776,8 +807,8 @@ async function handle(ctx: Ctx, req: Request, action: string, p: Json) {
 
   const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (action === "tick") {
-    // Sin verify_jwt: el rol del JWT se puede falsificar, la key no.
-    if (!token || token !== env("SUPABASE_SERVICE_ROLE_KEY")) throw new HttpError("Unauthorized", 401);
+    // Sin verify_jwt: la key exacta o un JWT service_role que Auth confirma.
+    if (!(await isServiceRoleToken(token))) throw new HttpError("Unauthorized", 401);
     return await tick(ctx);
   }
   const { data: { user } } = await createClient(env("SUPABASE_URL"), env("SUPABASE_ANON_KEY")).auth.getUser(token);
