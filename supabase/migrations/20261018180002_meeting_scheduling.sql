@@ -141,34 +141,47 @@ COMMENT ON COLUMN public.prospect_list_members.booking_ref IS
 COMMENT ON COLUMN public.prospect_list_members.meeting_handoff IS
   'Última nota BANT del traspaso al AE (copia de bookings.handoff). La leen Preparar con IA del Meeting Coach y generate-outreach.';
 
--- ── learning_insights: asistencia real ───────────────────────────────────
--- Conserva todos los scopes anteriores (incluido 'deal_loss' del CRM,
--- 20261017100001), agrega 'automation_rule' (lo escribe learning-loop desde
--- #362 y ninguna migración lo había permitido: el upsert fallaba entero para
--- quien tuviera reglas) y 'meeting_attendance'.
-ALTER TABLE public.learning_insights DROP CONSTRAINT IF EXISTS learning_insights_scope_check;
-ALTER TABLE public.learning_insights
-  ADD CONSTRAINT learning_insights_scope_check
-  CHECK (scope IN ('radar_detector', 'campaign_node', 'campaign', 'channel', 'angle',
-                   'winning_message', 'objection', 'icp_attribute', 'summary', 'deal_loss',
-                   'automation_rule', 'meeting_attendance'));
-
--- ── Integraciones: Outlook Calendar ───────────────────────────────────────
+-- ── CHECKs compartidos: se SUMAN valores, nunca se reemplaza la lista ─────
+-- Varias sesiones agregan valores a estos CHECK en paralelo (el CRM agregó
+-- 'deal_loss'; otras integraciones agregan proveedores). Se leen los valores
+-- que el CHECK ya permite y se suman los nuestros: así no se borra lo de otra
+-- migración aplicada antes o después. Idempotente.
+--   • learning_insights.scope: 'meeting_attendance' (asistencia real) y
+--     'automation_rule' (lo escribe learning-loop desde #362 y ninguna
+--     migración lo permitía: el upsert por usuario fallaba entero para quien
+--     tuviera reglas).
+--   • integration_connections.provider: 'outlook_calendar' (Microsoft Graph).
 DO $$
-DECLARE c TEXT;
+DECLARE
+  spec RECORD;
+  c    RECORD;
+  vals TEXT[];
 BEGIN
-  -- El CHECK inline de 20260923000009 no tiene nombre fijo: se busca y se reemplaza.
-  FOR c IN SELECT conname FROM pg_constraint
-           WHERE conrelid = 'public.integration_connections'::regclass AND contype = 'c'
-             AND pg_get_constraintdef(oid) ILIKE '%google_calendar%'
+  FOR spec IN
+    SELECT * FROM (VALUES
+      ('public.learning_insights'::regclass, 'scope', 'learning_insights_scope_check',
+       ARRAY['radar_detector', 'campaign_node', 'campaign', 'channel', 'angle', 'winning_message',
+             'objection', 'icp_attribute', 'summary', 'deal_loss', 'automation_rule', 'meeting_attendance']),
+      ('public.integration_connections'::regclass, 'provider', 'integration_connections_provider_check',
+       ARRAY['hubspot', 'salesforce', 'amplemarket', 'google_sheets', 'google_calendar',
+             'outlook_calendar', 'notion', 'clickup'])
+    ) AS t(tbl, col, conname, add_vals)
   LOOP
-    EXECUTE format('ALTER TABLE public.integration_connections DROP CONSTRAINT %I', c);
+    vals := spec.add_vals;
+    -- Todos los CHECK sobre esa columna (el inline de la tabla no tiene nombre fijo).
+    FOR c IN SELECT con.conname AS name, pg_get_constraintdef(con.oid) AS def
+               FROM pg_constraint con
+              WHERE con.conrelid = spec.tbl AND con.contype = 'c'
+                AND pg_get_constraintdef(con.oid) ~ ('\m' || spec.col || '\M')
+    LOOP
+      vals := vals || ARRAY(SELECT (regexp_matches(c.def, '''([^'']+)''', 'g'))[1]);
+      EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', spec.tbl, c.name);
+    END LOOP;
+    vals := ARRAY(SELECT DISTINCT v FROM unnest(vals) AS v ORDER BY 1);
+    EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I CHECK (%I IN (%s))', spec.tbl, spec.conname, spec.col,
+      (SELECT string_agg(quote_literal(x), ', ') FROM unnest(vals) AS x));
   END LOOP;
 END $$;
-ALTER TABLE public.integration_connections
-  ADD CONSTRAINT integration_connections_provider_check
-  CHECK (provider IN ('hubspot', 'salesforce', 'amplemarket', 'google_sheets',
-                      'google_calendar', 'outlook_calendar', 'notion', 'clickup'));
 
 -- ── Cron de recordatorios (cada 5 minutos, con la service role) ──────────
 -- SELECT cron.schedule('booking-reminders', '*/5 * * * *', $cron$
