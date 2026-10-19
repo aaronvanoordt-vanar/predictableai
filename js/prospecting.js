@@ -85,7 +85,7 @@
       loadingLists: false, listsError: null,
       loadingMembers: false, membersError: null,
       // Filtros del CRM (solo en «Todos los contactos»)
-      q: '', statusFilter: '', listFilter: '', companyFilter: '', titleFilter: '', countryFilter: '', contactFilter: '',
+      q: '', cf: emptyColFilters(),
       channel: null,           // suscripción realtime a prospect_list_members
       refreshTimer: null, filterTimer: null,
       refreshing: false, refreshQueued: false, refreshLists: false,
@@ -378,6 +378,29 @@
     '#prospecting-shell .pros-research-title { font-size:13.5px; font-weight:700; color:var(--text); margin-bottom:4px; }',
     '#prospecting-shell .pros-emp { display:inline-flex; margin-top:4px; }',
     '#prospecting-shell .pros-ct-toolbar input[type=search] { flex:1; min-width:150px; }',
+    '#prospecting-shell .pros-th-in { display:inline-flex; align-items:center; gap:6px; }',
+    '#prospecting-shell .pros-colf { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; padding:0; border:0; border-radius:5px; background:transparent; color:var(--text3); cursor:pointer; opacity:.55; }',
+    '#prospecting-shell .pros-colf svg { width:12px; height:12px; }',
+    '#prospecting-shell th:hover .pros-colf, #prospecting-shell .pros-colf:focus-visible { opacity:1; }',
+    '#prospecting-shell .pros-colf:hover { background:var(--surface3); color:var(--text); }',
+    '#prospecting-shell .pros-colf.on { opacity:1; color:var(--accent-ink); background:var(--accent-soft); }',
+  ].join('\n');
+
+
+  // El menú de filtro de columna vive en <body>, fuera de #prospecting-shell.
+  var COLPOP_CSS = [
+    '.pros-colpop { position:fixed; z-index:9000; width:248px; max-height:min(420px, calc(100vh - 16px)); overflow:auto; padding:10px; border-radius:12px; border:1px solid var(--border); background:var(--surface-raised, var(--surface)); color:var(--text); box-shadow:0 12px 32px rgba(0,0,0,.18); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px); font-size:12.5px; }',
+    '.pros-colpop input[type=search] { width:100%; box-sizing:border-box; font-size:12.5px; padding:6px 8px; margin-top:4px; }',
+    '.pros-colpop-lbl { display:block; font-weight:600; color:var(--text2); margin-bottom:8px; }',
+    '.pros-colpop-acts { display:flex; gap:12px; margin:8px 2px 4px; }',
+    '.pros-colpop-acts button { border:0; background:none; padding:0; color:var(--accent-ink); font-size:12px; font-weight:600; cursor:pointer; }',
+    '.pros-colpop-list { max-height:240px; overflow:auto; }',
+    '.pros-colpop-opt { display:flex; align-items:center; gap:8px; padding:5px 4px; border-radius:6px; cursor:pointer; }',
+    '.pros-colpop-opt:hover { background:var(--surface3); }',
+    '.pros-colpop-opt input { accent-color:var(--accent); margin:0; }',
+    '.pros-colpop-opt span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }',
+    '.pros-colpop-opt em { font-style:normal; color:var(--text3); font-size:11.5px; }',
+    '.pros-colpop-empty { padding:10px 4px; color:var(--text3); }'
   ].join('\n');
 
   // Manual-add form grid lives inside a modal (outside #prospecting-shell),
@@ -2474,31 +2497,182 @@
     return String(v == null ? '' : v).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
   }
 
-  function activeListFilters() {
-    var st = state.listas;
-    return ['q', 'statusFilter', 'companyFilter', 'titleFilter', 'countryFilter', 'contactFilter']
-      .concat(isAllList() ? ['listFilter'] : [])
-      .filter(function (k) { return String(st[k] || '').trim(); }).length;
+
+  var SVG_FUNNEL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>';
+
+  function thFilterHtml(col) {
+    var def = COL_FILTERS[col], on = colFilterActive(col);
+    return '<th><span class="pros-th-in">' + esc(def.label) +
+      '<button type="button" class="pros-colf' + (on ? ' on' : '') + '" data-action="col-filter" data-col="' + col + '" aria-haspopup="true" ' +
+      'title="Filtrar por ' + esc(def.label) + '" aria-label="Filtrar por ' + esc(def.label) + (on ? ' (activo)' : '') + '">' + SVG_FUNNEL + '</button></span></th>';
   }
 
-  // Filtros del CRM (texto / estado / empresa / cargo / país / datos / lista). En una lista real solo aplica
-  // el texto si el usuario escribió algo; los selects viven en «Todos».
+  // ── Menú de filtro de una columna (se monta en <body>, fuera de la tabla que se re-pinta) ──
+  var colPop = null;
+
+  function closeColPop() {
+    if (!colPop) return;
+    document.removeEventListener('mousedown', colPop.onDown, true);
+    document.removeEventListener('keydown', colPop.onKey, true);
+    window.removeEventListener('resize', closeColPop);
+    if (colPop.el.parentNode) colPop.el.parentNode.removeChild(colPop.el);
+    colPop = null;
+  }
+
+  // Valores distintos de la columna con cuántos contactos tiene cada uno.
+  function colValueOptions(col) {
+    var map = {}, order = [];
+    state.listas.members.forEach(function (m) {
+      var v = colValueOf(m, col);
+      if (!map[v.key]) { map[v.key] = { key: v.key, label: v.label, n: 0 }; order.push(v.key); }
+      map[v.key].n++;
+    });
+    return order.map(function (k) { return map[k]; }).sort(function (a, b) {
+      if (!a.key !== !b.key) return a.key ? -1 : 1; // «(vacío)» al final
+      return a.label.localeCompare(b.label);
+    });
+  }
+
+  function colPopBodyHtml(col, search) {
+    var st = state.listas, cf = st.cf, def = COL_FILTERS[col];
+    if (def.kind === 'text') {
+      return def.fields.map(function (f) {
+        return '<label class="pros-colpop-lbl">' + esc(f[1]) +
+          '<input type="search" data-pop="text" data-field="' + f[0] + '" value="' + esc(cf[f[0]] || '') + '" placeholder="Escribe para filtrar…"></label>';
+      }).join('');
+    }
+    if (def.kind === 'has') {
+      return [['', 'Todos'], ['con', 'Con ' + def.label.toLowerCase()], ['sin', 'Sin ' + def.label.toLowerCase()]].map(function (o) {
+        return '<label class="pros-colpop-opt"><input type="radio" name="pros-has" data-pop="has" value="' + o[0] + '"' + (cf[col] === o[0] ? ' checked' : '') + '><span>' + esc(o[1]) + '</span></label>';
+      }).join('');
+    }
+    var q = filterNorm(search);
+    var opts = colValueOptions(col).filter(function (o) { return !q || filterNorm(o.label).indexOf(q) !== -1; });
+    return '<input type="search" class="pros-colpop-search" data-pop="search" placeholder="Buscar…" value="' + esc(search || '') + '">' +
+      '<div class="pros-colpop-acts"><button type="button" data-pop="all">Seleccionar todo</button><button type="button" data-pop="none">Borrar</button></div>' +
+      '<div class="pros-colpop-list">' + (opts.length ? opts.map(function (o) {
+        var checked = !cf[col].length || cf[col].indexOf(o.key) !== -1;
+        return '<label class="pros-colpop-opt"><input type="checkbox" data-pop="val" data-key="' + esc(o.key) + '"' + (checked ? ' checked' : '') + '>' +
+          '<span>' + esc(o.label || '(vacío)') + '</span><em>' + esc(fmtNum(o.n)) + '</em></label>';
+      }).join('') : '<div class="pros-colpop-empty">Sin resultados</div>') + '</div>';
+  }
+
+  function openColPop(btn, col) {
+    var wasSame = colPop && colPop.col === col;
+    closeColPop();
+    if (wasSame) return;
+    var el = document.createElement('div');
+    el.className = 'pros-colpop';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-label', 'Filtrar por ' + COL_FILTERS[col].label);
+    el.innerHTML = '<div class="pros-colpop-body">' + colPopBodyHtml(col, '') + '</div>';
+    document.body.appendChild(el);
+    var r = btn.getBoundingClientRect();
+    var left = Math.max(8, Math.min(r.left, window.innerWidth - el.offsetWidth - 8));
+    var top = Math.min(r.bottom + 4, Math.max(8, window.innerHeight - el.offsetHeight - 8));
+    el.style.left = left + 'px'; el.style.top = top + 'px';
+    var search = '';
+    var refresh = function () { renderListsRight(); };
+    var rebuild = function () {
+      var body = el.querySelector('.pros-colpop-body');
+      body.innerHTML = colPopBodyHtml(col, search);
+      var s = body.querySelector('[data-pop="search"]');
+      if (s) { s.focus(); try { s.setSelectionRange(search.length, search.length); } catch (_) {} }
+    };
+    var cf = state.listas.cf;
+    el.addEventListener('input', function (e) {
+      var t = e.target, kind = t.getAttribute('data-pop');
+      if (kind === 'search') { search = t.value; rebuild(); }
+      else if (kind === 'text') {
+        cf[t.getAttribute('data-field')] = t.value;
+        clearTimeout(colPop && colPop.timer);
+        if (colPop) colPop.timer = setTimeout(refresh, 200);
+      }
+    });
+    el.addEventListener('change', function (e) {
+      var t = e.target, kind = t.getAttribute('data-pop');
+      if (kind === 'has') { cf[col] = t.value; refresh(); return; }
+      if (kind !== 'val') return;
+      // Marcar/desmarcar parte desde «todos» deja marcado solo lo que se ve marcado.
+      var all = colValueOptions(col).map(function (o) { return o.key; });
+      var cur = cf[col].length ? cf[col].filter(function (k) { return k !== '\u0000none'; }) : all.slice();
+      var key = t.getAttribute('data-key'), i = cur.indexOf(key);
+      if (t.checked && i === -1) cur.push(key);
+      if (!t.checked && i !== -1) cur.splice(i, 1);
+      cf[col] = cur.length === all.length ? [] : (cur.length ? cur : ['\u0000none']);
+      refresh();
+    });
+    el.addEventListener('click', function (e) {
+      var kind = e.target.getAttribute && e.target.getAttribute('data-pop');
+      if (kind === 'all') { cf[col] = []; refresh(); rebuild(); }
+      else if (kind === 'none') { cf[col] = ['\u0000none']; refresh(); rebuild(); }
+    });
+    colPop = {
+      el: el, col: col, timer: null,
+      onDown: function (e) { if (!el.contains(e.target) && !(e.target.closest && e.target.closest('[data-action="col-filter"]'))) closeColPop(); },
+      onKey: function (e) { if (e.key === 'Escape') closeColPop(); }
+    };
+    document.addEventListener('mousedown', colPop.onDown, true);
+    document.addEventListener('keydown', colPop.onKey, true);
+    window.addEventListener('resize', closeColPop);
+    var first = el.querySelector('input'); if (first) first.focus();
+  }
+
+  // Filtros por columna (estilo hoja de cálculo): las columnas de valores guardan
+  // los valores marcados (vacío = todos) y las de texto / dato, un texto o «con» / «sin».
+  function emptyColFilters() {
+    return { company: [], country: [], status: [], list: [], name: '', title: '', email: '', phone: '', linkedin: '' };
+  }
+
+  var COL_FILTERS = {
+    name:     { label: 'Nombre',   kind: 'text', fields: [['name', 'Nombre contiene'], ['title', 'Cargo contiene']] },
+    company:  { label: 'Empresa',  kind: 'values' },
+    country:  { label: 'País',     kind: 'values' },
+    list:     { label: 'Lista',    kind: 'values' },
+    status:   { label: 'Estado',   kind: 'values' },
+    email:    { label: 'Email',    kind: 'has' },
+    phone:    { label: 'Teléfono', kind: 'has' },
+    linkedin: { label: 'LinkedIn', kind: 'has' }
+  };
+
+  function colFilterActive(col) {
+    var cf = state.listas.cf, def = COL_FILTERS[col];
+    if (def.kind === 'values') return cf[col].length > 0;
+    if (def.kind === 'has') return !!cf[col];
+    return def.fields.some(function (f) { return String(cf[f[0]] || '').trim() !== ''; });
+  }
+
+  function activeListFilters() {
+    var st = state.listas;
+    return (String(st.q || '').trim() ? 1 : 0) +
+      Object.keys(COL_FILTERS).filter(function (c) { return (c !== 'list' || isAllList()) && colFilterActive(c); }).length;
+  }
+
+  // Valor de una fila para una columna de valores (clave interna + etiqueta).
+  function colValueOf(m, col) {
+    if (col === 'company') return { key: m.company || '', label: m.company || '' };
+    if (col === 'country') return { key: m.country || '', label: m.country || '' };
+    if (col === 'list') return { key: String(m.list_id || ''), label: m.list_name || '' };
+    var v = m.contact_status || 'no_contactado';
+    return { key: v, label: statusMeta(v).label };
+  }
+
+  // Filtros del CRM: búsqueda general + los de cada columna.
   function visibleListMembers() {
     var st = state.listas;
     var q = (st.q || '').trim().toLowerCase();
     var all = isAllList();
-    var fCompany = filterNorm(st.companyFilter), fTitle = filterNorm(st.titleFilter);
+    var cf = st.cf;
+    var fName = filterNorm(cf.name), fTitle = filterNorm(cf.title);
     var rows = st.members.filter(function (m) {
-      if (st.statusFilter && (m.contact_status || 'no_contactado') !== st.statusFilter) return false;
-      if (all && st.listFilter && String(m.list_id) !== st.listFilter) return false;
-      if (fCompany && filterNorm(m.company).indexOf(fCompany) === -1) return false;
-      if (fTitle && filterNorm(m.title).indexOf(fTitle) === -1) return false;
-      if (st.countryFilter && (m.country || '') !== st.countryFilter) return false;
-      if (st.contactFilter) {
-        var has = { email: !!m.email, phone: !!m.phone, linkedin: !!m.linkedin_url };
-        var key = st.contactFilter.replace(/^(con|sin)_/, '');
-        if (has[key] !== (st.contactFilter.indexOf('con_') === 0)) return false;
+      var cols = ['company', 'country', 'status'].concat(all ? ['list'] : []);
+      for (var i = 0; i < cols.length; i++) {
+        if (cf[cols[i]].length && cf[cols[i]].indexOf(colValueOf(m, cols[i]).key) === -1) return false;
       }
+      if (fName && filterNorm(m.name || ((m.first_name || '') + ' ' + (m.last_name || ''))).indexOf(fName) === -1) return false;
+      if (fTitle && filterNorm(m.title).indexOf(fTitle) === -1) return false;
+      var has = { email: !!m.email, phone: !!m.phone, linkedin: !!m.linkedin_url };
+      for (var k in has) { if (cf[k] && has[k] !== (cf[k] === 'con')) return false; }
       if (!q) return true;
       var hay = [m.name, m.first_name, m.last_name, m.company, m.title, m.email, m.phone, m.list_name, m.country, m.city]
         .filter(Boolean).join(' ').toLowerCase();
@@ -3030,41 +3204,9 @@
       '<div data-enrich-banner>' + enrichBannerHtml() + '</div>';
 
     if (st.members.length) {
-      var listOpts = {}, countries = {}, companies = {}, titles = {};
-      st.members.forEach(function (m) {
-        if (m.list_id) listOpts[String(m.list_id)] = m.list_name || '—';
-        if (m.country) countries[m.country] = 1;
-        if (m.company) companies[m.company] = 1;
-        if (m.title) titles[m.title] = 1;
-      });
-      var optsHtml = function (map, cur) {
-        return Object.keys(map).sort(function (a, b) { return a.localeCompare(b); }).map(function (v) {
-          return '<option value="' + esc(v) + '"' + (cur === v ? ' selected' : '') + '>' + esc(map[v] === 1 ? v : map[v]) + '</option>';
-        }).join('');
-      };
-      var dlHtml = function (id, map) {
-        return '<datalist id="' + id + '">' + Object.keys(map).sort().slice(0, 300).map(function (v) {
-          return '<option value="' + esc(v) + '"></option>';
-        }).join('') + '</datalist>';
-      };
       var nAct = activeListFilters();
       html += '<div class="pros-ct-toolbar" style="padding:12px 18px 0">' +
         '<input type="search" data-action="ct-search" placeholder="Buscar por nombre, empresa, email…" value="' + esc(st.q) + '">' +
-        '<input type="search" data-action="ct-company" list="pros-dl-company" placeholder="Empresa" value="' + esc(st.companyFilter) + '" aria-label="Filtrar por empresa">' +
-        '<input type="search" data-action="ct-title" list="pros-dl-title" placeholder="Cargo" value="' + esc(st.titleFilter) + '" aria-label="Filtrar por cargo">' +
-        dlHtml('pros-dl-company', companies) + dlHtml('pros-dl-title', titles) +
-        '</div>' +
-        '<div class="pros-ct-toolbar" style="padding:10px 18px 0">' +
-        '<select data-action="ct-filter-status" aria-label="Filtrar por estado"><option value="">Todos los estados</option>' +
-        contactStatuses().map(function (s) {
-          return '<option value="' + esc(s.value) + '"' + (st.statusFilter === s.value ? ' selected' : '') + '>' + esc(s.label) + '</option>';
-        }).join('') + '</select>' +
-        (Object.keys(countries).length ? '<select data-action="ct-filter-country" aria-label="Filtrar por país"><option value="">Todos los países</option>' + optsHtml(countries, st.countryFilter) + '</select>' : '') +
-        '<select data-action="ct-filter-contact" aria-label="Filtrar por datos de contacto"><option value="">Datos de contacto</option>' +
-        [['con_email', 'Con email'], ['sin_email', 'Sin email'], ['con_phone', 'Con teléfono'], ['sin_phone', 'Sin teléfono'], ['con_linkedin', 'Con LinkedIn'], ['sin_linkedin', 'Sin LinkedIn']].map(function (o) {
-          return '<option value="' + o[0] + '"' + (st.contactFilter === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
-        }).join('') + '</select>' +
-        (all ? '<select data-action="ct-filter-list"><option value="">Todas las listas</option>' + optsHtml(listOpts, st.listFilter) + '</select>' : '') +
         (nAct ? '<button type="button" class="btn btn-ghost btn-sm" data-action="ct-clear-filters">Limpiar filtros (' + nAct + ')</button>' : '') +
         '</div>' +
         (nAct ? '<div style="padding:8px 18px 0;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(st.members.length)) + ' contactos coinciden con los filtros.</div>' : '');
@@ -3093,15 +3235,16 @@
       html += all
         ? emptyHtml(SVG_LIST, 'Aún no tienes contactos', 'Busca personas en Buscar y guárdalas en una lista: todas aparecerán aquí, tu CRM de prospección.')
         : emptyHtml(SVG_LIST, 'Lista vacía', 'Agrega prospectos a esta lista desde Buscar.');
-    } else if (!rows.length) {
-      html += emptyHtml(SVG_SEARCH, 'Sin resultados', 'Ningún contacto coincide con la búsqueda o los filtros.');
     } else {
-      var allChecked = rows.every(function (m) { return st.selected.has(String(m.id)); });
+      var allChecked = rows.length > 0 && rows.every(function (m) { return st.selected.has(String(m.id)); });
       html += '<div class="pros-scroll-x"><table><thead><tr>' +
         '<th style="width:34px"><input type="checkbox" data-action="mem-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-        '<th>Nombre</th><th>Empresa</th><th>País</th>' + (all ? '<th>Lista</th>' : '') + '<th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th>' +
+        thFilterHtml('name') + thFilterHtml('company') + thFilterHtml('country') + (all ? thFilterHtml('list') : '') + thFilterHtml('status') +
+        thFilterHtml('email') + thFilterHtml('phone') + thFilterHtml('linkedin') +
         (aiCols() ? aiCols().headHtml() : '') + '<th></th>' +
-        '</tr></thead><tbody>' + rows.map(listMemberRowHtml).join('') + '</tbody></table></div>';
+        '</tr></thead><tbody>' + (rows.length ? rows.map(listMemberRowHtml).join('') :
+          '<tr><td colspan="' + (9 + (all ? 1 : 0) + (aiCols() ? aiCols().headHtml().split('<th').length - 1 : 0)) + '" style="text-align:center;padding:28px 12px;color:var(--text3);font-size:12.5px">Sin resultados: ningún contacto coincide con la búsqueda o los filtros.</td></tr>') +
+        '</tbody></table></div>';
       if (all) {
         html += '<div style="padding:10px 18px;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(st.members.length)) + ' contactos · El estado se actualiza al instante en todo el sistema (Campañas, dashboard y este CRM leen la misma base).</div>';
       }
@@ -3205,10 +3348,9 @@
     if (t.getAttribute && t.getAttribute('data-action') === 'research-notes') return onResearchNotesInput(t);
     if (window.AIColumns && window.AIColumns.handleInput(t)) return;
     var inAct = t.getAttribute && t.getAttribute('data-action');
-    var textKey = { 'ct-search': 'q', 'ct-company': 'companyFilter', 'ct-title': 'titleFilter' }[inAct];
-    if (!textKey) return;
+    if (inAct !== 'ct-search') return;
     var st = state.listas;
-    st[textKey] = t.value || '';
+    st.q = t.value || '';
     clearTimeout(st.filterTimer);
     st.filterTimer = setTimeout(function () {
       // Re-render solo la tabla conservando el foco del buscador.
@@ -3259,10 +3401,7 @@
           renderListsRight();
           throw err;
         });
-    } else if (action === 'ct-filter-status') { st.statusFilter = t.value; renderListsRight(); }
-    else if (action === 'ct-filter-list') { st.listFilter = t.value; renderListsRight(); }
-    else if (action === 'ct-filter-country') { st.countryFilter = t.value; renderListsRight(); }
-    else if (action === 'ct-filter-contact') { st.contactFilter = t.value; renderListsRight(); }
+    }
   }
 
   function onListasClick(e) {
@@ -3303,8 +3442,9 @@
         })
         .then(function () { restoreImp(); }, function (e) { restoreImp(); throw e; });
     }
+    if (action === 'col-filter') return openColPop(btn, btn.getAttribute('data-col'));
     if (action === 'ct-clear-filters') {
-      st.q = ''; st.statusFilter = ''; st.listFilter = ''; st.companyFilter = ''; st.titleFilter = ''; st.countryFilter = ''; st.contactFilter = '';
+      st.q = ''; st.cf = emptyColFilters(); closeColPop();
       return renderListsRight();
     }
     if (action === 'rename-list') return openRenameListModal(btn.getAttribute('data-id'));
@@ -3312,7 +3452,7 @@
     if (action === 'select-list') {
       st.activeListId = btn.getAttribute('data-id');
       st.selected.clear();
-      st.q = ''; st.statusFilter = ''; st.listFilter = ''; st.companyFilter = ''; st.titleFilter = ''; st.countryFilter = ''; st.contactFilter = '';
+      st.q = ''; st.cf = emptyColFilters(); closeColPop();
       renderListsLeft();
       return reloadMembers();
     }
@@ -4326,7 +4466,7 @@
     state.shell = shell;
     state.search.filters = loadFiltersFromStorage();
     shell.innerHTML = '';
-    shell.appendChild(h('style', { text: SCOPED_CSS + '\n' + MANUAL_FORM_CSS + '\n' + THREAD_CSS }));
+    shell.appendChild(h('style', { text: SCOPED_CSS + '\n' + MANUAL_FORM_CSS + '\n' + THREAD_CSS + '\n' + COLPOP_CSS }));
     // Título y subtítulo viven en el <div class="topbar"> estático de
     // index.html (cabecera única, igual que Intelligence Hub y Contexto).
     // No in-page tab bar here on purpose — the left sidebar (Prospección →

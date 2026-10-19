@@ -6627,4 +6627,12 @@ window.I18N_DICTS['pt-BR'] = {
   "Período": "Período",
   "Fecha en que se encontró la señal": "Data em que o sinal foi encontrado",
   "Fecha: {0} → {1}": "Data: {0} → {1}",
+  "Nombre contiene": "Nome contém",
+  "Cargo contiene": "Cargo contém",
+  "Escribe para filtrar…": "Digite para filtrar…",
+  "Buscar…": "Buscar…",
+  "Seleccionar todo": "Selecionar tudo",
+  "(vacío)": "(vazio)",
+  "Todos": "Todos",
+  "Sin resultados: ningún contacto coincide con la búsqueda o los filtros.": "Sem resultados: nenhum contato corresponde à busca ou aos filtros.",
 };

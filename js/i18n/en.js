@@ -6479,4 +6479,10 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Personalizado…": "Custom…",
   "Fecha en que se encontró la señal": "Date the signal was found",
   "Fecha: {0} → {1}": "Date: {0} → {1}",
+  "Nombre contiene": "Name contains",
+  "Cargo contiene": "Job title contains",
+  "Escribe para filtrar…": "Type to filter…",
+  "Seleccionar todo": "Select all",
+  "(vacío)": "(empty)",
+  "Sin resultados: ningún contacto coincide con la búsqueda o los filtros.": "No results: no contact matches the search or filters.",
 });
