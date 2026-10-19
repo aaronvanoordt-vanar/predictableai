@@ -179,13 +179,13 @@
   }
   function fmtNum(n) {
     var x = Number(n);
-    return isFinite(x) ? x.toLocaleString('es-MX') : String(n == null ? 0 : n);
+    return isFinite(x) ? x.toLocaleString((window.i18n ? i18n.locale() : 'es-MX')) : String(n == null ? 0 : n);
   }
   function fmtDate(v) {
     if (!v) return '—';
     var d = new Date(v);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { year: 'numeric', month: 'short', day: 'numeric' });
   }
   function isMaskedEmail(email) {
     if (!email) return true;
@@ -2655,7 +2655,7 @@
   function fmtDay(iso) {
     var d = new Date(iso);
     if (isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('es', { day: 'numeric', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
   }
   function extLink(url, label) {
     if (!/^https?:\/\//i.test(String(url || ''))) return esc(label || '');
@@ -3570,7 +3570,7 @@
     if (!sel.length && !emailSel.length) return toast('Los contactos seleccionados ya tienen teléfono y email, o se están buscando.', 'info');
     var parts = [];
     if (sel.length) parts.push('el teléfono de ' + fmtNum(sel.length) + ' contacto' + (sel.length === 1 ? '' : 's') + ' (y su email si falta)');
-    if (emailSel.length) parts.push('el email de ' + fmtNum(emailSel.length) + ' contacto' + (emailSel.length === 1 ? '' : 's') + ' que ya tiene' + (emailSel.length === 1 ? '' : 'n') + ' teléfono');
+    if (emailSel.length) parts.push(emailSel.length === 1 ? 'el email de 1 contacto que ya tiene teléfono' : 'el email de ' + fmtNum(emailSel.length) + ' contactos que ya tienen teléfono');
     var cascadeP = h('p', { style: 'font-size:12.5px;color:var(--text2);margin:0 0 12px;line-height:1.55;display:none' });
     var bodyN = h('div', null,
       h('p', {

@@ -128,8 +128,8 @@
   function fmtDate(iso) {
     if (!iso) return '';
     var d = new Date(iso);
-    return isNaN(d.getTime()) ? '' : d.toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' }) +
-      ' · ' + d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+    return isNaN(d.getTime()) ? '' : d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'long', year: 'numeric' }) +
+      ' · ' + d.toLocaleTimeString((window.i18n ? i18n.locale() : 'es-MX'), { hour: '2-digit', minute: '2-digit' });
   }
   function fmtDuration(sec) {
     if (sec == null || isNaN(sec)) return '';
@@ -387,7 +387,7 @@
     var others = insights.filter(function (i) { return opps.indexOf(i) === -1; });
     if (insights.length) {
       html += '<div class="mr-card"><div class="mr-h">Oportunidades y señales' +
-        (opps.length ? ' <span class="pill pill-green">' + opps.length + ' oportunidad' + (opps.length === 1 ? '' : 'es') + '</span>' : '') + '</div>';
+        (opps.length ? ' <span class="pill pill-green">' + (opps.length === 1 ? '1 oportunidad' : opps.length + ' oportunidades') + '</span>' : '') + '</div>';
       html += '<div class="mr-grid-3">';
       opps.concat(others).forEach(function (ins) {
         var t = INSIGHT[String(ins.tipo || '').toLowerCase()] || { label: ins.tipo || 'Insight', color: 'var(--text3)', soft: 'var(--surface2)' };

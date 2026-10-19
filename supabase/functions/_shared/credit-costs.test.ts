@@ -23,6 +23,8 @@ Deno.test("js/credit-costs.js es espejo del tarifario que cobran las edge functi
     outreach_full: CREDIT_COSTS.outreach_full,
     campaign_recommendation: CREDIT_COSTS.campaign_recommendation,
     lead_research: CREDIT_COSTS.lead_research,
+    linkedin_ideas: CREDIT_COSTS.linkedin_ideas,
+    linkedin_post: CREDIT_COSTS.linkedin_post,
     champion_web_check: CREDIT_COSTS.champion_web_check,
     ai_column_cell: CREDIT_COSTS.ai_column_cell,
     ai_column_cell_basic: CREDIT_COSTS.ai_column_cell_basic,

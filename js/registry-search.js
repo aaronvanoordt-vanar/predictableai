@@ -62,7 +62,7 @@
   function fmtDate(v) {
     if (!v) return '—';
     var d = new Date(v + (String(v).length === 10 ? 'T12:00:00' : ''));
-    return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' });
+    return isNaN(d.getTime()) ? '—' : d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
   // ── carga inicial ──────────────────────────────────────────────────────

@@ -31,6 +31,7 @@
     // hay leads que convertir en oportunidades.
     'crm',
     'ventas-coach', 'ventas-reportes',
+    'linkedin-content',
   ];
 
   // Segundo candado, solo para el Radar (2026-09-23): con el contexto listo,

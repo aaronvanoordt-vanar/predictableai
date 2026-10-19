@@ -579,7 +579,7 @@
     var opts = withTime
       ? { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }
       : { day: 'numeric', month: 'short', year: 'numeric' };
-    try { return d.toLocaleString('es', opts); } catch (e) { return d.toISOString().slice(0, 16).replace('T', ' '); }
+    try { return d.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), opts); } catch (e) { return d.toISOString().slice(0, 16).replace('T', ' '); }
   }
 
   function statusPill(id) {
