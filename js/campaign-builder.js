@@ -638,6 +638,8 @@
       if (!nm) return null;
       return watiCatalogue().find(function (t) { return t.name === nm; }) || null;
     }
+    /** ¿Los emails de esta campaña salen por buzones propios (no por Apollo)? */
+    function usesMailboxes() { return !!(o.usesMailboxes && o.usesMailboxes(st.draft.sender || {})); }
     function apolloOk() {
       if (o.channelConnected) return !!o.channelConnected('email');
       return st.emailAccounts === null ? true : st.emailAccounts.length > 0;
@@ -750,7 +752,7 @@
       if (step === 4) {
         var s = st.draft.sender || {};
         var hasEmailStep = L.actions(st.draft.flow).some(function (a) { return a.channel === 'email'; });
-        if (hasEmailStep && !s.email_account_id && !(st.emailAccounts && st.emailAccounts.length)) msgs.push('La cadencia tiene emails: conecta el canal Email (o elige la cuenta remitente en Ajustes avanzados).');
+        if (hasEmailStep && !usesMailboxes() && !s.email_account_id && !(st.emailAccounts && st.emailAccounts.length)) msgs.push('La cadencia tiene emails: conecta el canal Email (o elige la cuenta remitente en Ajustes avanzados).');
         if (Number(st.draft.send_end_hour) <= Number(st.draft.send_start_hour)) msgs.push('La hora de fin debe ser mayor que la de inicio.');
         if (!(st.draft.send_days || []).length) msgs.push('Elige al menos un día de envío.');
       }
@@ -1599,9 +1601,16 @@
 
       if (needs.email) {
         var mb = h('div', { class: 'chart-card' });
-        mb.appendChild(h('div', { class: 'cb-lbl', text: 'Enviar emails desde' }));
-        mb.appendChild(mailboxSelect());
-        mb.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: 'Elige el buzón de Apollo que firma los emails de esta campaña. El predeterminado se cambia en Campañas → Email.' }));
+        // Buzones propios (js/email-mailboxes.js): con qué sale el email de ESTA campaña.
+        var picker = o.mailboxPicker ? o.mailboxPicker(st.draft.sender || (st.draft.sender = {}), function () { render(); }) : null;
+        if (picker) mb.appendChild(picker);
+        if (!usesMailboxes()) {
+          mb.appendChild(h('div', { class: 'cb-lbl', style: picker ? 'margin-top:10px' : '', text: 'Enviar emails desde' }));
+          mb.appendChild(mailboxSelect());
+          mb.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: 'Elige el buzón de Apollo que firma los emails de esta campaña. El predeterminado se cambia en Campañas → Email.' }));
+        } else {
+          mb.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: 'Los emails se reparten entre tus buzones respetando el tope diario de cada uno; los seguimientos salen del mismo buzón, en el mismo hilo.' }));
+        }
         right.appendChild(mb);
       }
 
@@ -1610,7 +1619,8 @@
       if (needs.linkedin && !dripifyOk()) warns.push('LinkedIn no está conectado: ese paso se reintenta cada 6 h hasta que lo conectes.');
       var unlinked = acts.filter(function (a) { return a.channel === 'linkedin_connect' && a.settings && a.settings.linkedin_campaign_id && !a.settings.dripify_campaign_id; });
       if (unlinked.length) warns.push('La campaña de LinkedIn «' + (unlinked[0].settings.linkedin_campaign_name || '') + '» aún no existe en Dripify: el paso espera (reintento cada hora) y se vincula solo cuando la crees allá con ese nombre.');
-      if (needs.email && !(st.draft.sender && st.draft.sender.email_account_id)) warns.push('Elige el buzón desde el que salen los emails.');
+      if (needs.email && !usesMailboxes() && !(st.draft.sender && st.draft.sender.email_account_id)) warns.push('Elige el buzón desde el que salen los emails.');
+      if (needs.email && usesMailboxes() && JSON.stringify(st.draft.flow.nodes || []).indexOf('"email_opened"') !== -1) warns.push('La condición «¿Abrió el email?» solo se mide con Apollo: con tus buzones no hay píxel de apertura y esos leads siempre van por la rama «No».');
       warns.forEach(function (w) { right.appendChild(h('div', { class: 'cb-note amber', text: '⚠ ' + w })); });
       grid.appendChild(right);
       wrap.appendChild(grid);
