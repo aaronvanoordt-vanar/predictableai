@@ -1550,7 +1550,7 @@
   /**
    * Bandeja, lead que vino del Radar: un mensaje cuyo gancho es la señal (la
    * noticia) que lo trajo, escrito con el entrenamiento IA de la cuenta
-   * (metodologías, estilo y base de conocimiento). Mismo costo que un
+   * (estilo, reglas y conocimiento de la empresa). Mismo costo que un
    * borrador de respuesta. No exige mensaje entrante: sirve también para
    * escribirle a quien todavía no contestó.
    */

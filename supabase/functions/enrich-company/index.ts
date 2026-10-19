@@ -660,7 +660,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
         put("outreach_channels", icp.outreach_channels);
         put("outreach_language", icp.outreach_language);
         // Espejo hacia las columnas de texto que ya leen generate-radar,
-        // generate-client-brief y generate-coda (mismo criterio que
+        // generate-client-brief (mismo criterio que
         // CompanyContext.legacyMirror en el cliente).
         if (fields.icp_countries) fields.icp_geographies = icp.icp_countries.join(", ");
         if (fields.icp_industry_tags) fields.icp_industries = icp.icp_industry_tags.join(", ");

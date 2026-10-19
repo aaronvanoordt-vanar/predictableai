@@ -24,7 +24,7 @@
   'use strict';
 
   var GATED_PAGES = [
-    'radar', 'mi-dashboard', 'coda-ai',
+    'radar', 'mi-dashboard',
     'pro-main', 'automations',
     // CRM (2026-10-17): vive entre la Bandeja y el Meeting Coach, dentro del
     // bloque contiguo que el gate agrupa en el sidebar; sin contexto tampoco

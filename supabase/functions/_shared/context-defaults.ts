@@ -286,7 +286,7 @@ export function linesOf(text: unknown): string[] {
 
 /**
  * Filas estructuradas → columnas de texto que ya leen outreach, coach,
- * learning-loop y CODA. Espejo de CompanyContext.structuredMirror.
+ * learning-loop. Espejo de CompanyContext.structuredMirror.
  */
 export function structuredMirror(patch: ContextRow): ContextRow {
   const out: ContextRow = {};

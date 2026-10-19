@@ -50,7 +50,6 @@
   // clave de función → { label, recommended }
   var FEATURES = {
     intel_hub:  { label: 'Intelligence Hub',   recommended: 'perplexity' },
-    coda:       { label: 'Global context', recommended: 'perplexity' },
     outreach:   { label: 'Generación de mensajes', recommended: 'claude' },
     coach:      { label: 'AI Sales Coach',     recommended: 'openai' },
     onboarding: { label: 'Onboarding y contexto de empresa', recommended: 'perplexity' },

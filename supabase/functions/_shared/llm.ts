@@ -10,7 +10,6 @@
 //
 // Recommended engine per feature (mirrored in js/ai-engine.js — keep in sync):
 //   intel_hub  → perplexity   (Intelligence Hub — search-grounded research)
-//   coda       → perplexity   (Intelligence Hub — PESTEL / Porter, search-grounded analysis)
 //   onboarding → perplexity   (Intelligence Hub — company enrichment / brief / documents)
 //   outreach   → claude       (Prospección — message writing)
 //   radar      → perplexity   (Intelligence Hub — signal detection, search-grounded)
@@ -79,7 +78,6 @@ export const ENGINES: readonly Engine[] = ["claude", "openai", "perplexity"] as 
 
 export type Feature =
   | "intel_hub"
-  | "coda"
   | "outreach"
   | "coach"
   | "onboarding"
@@ -89,7 +87,6 @@ export type Feature =
 /** Default engine per feature when the user has not chosen one. */
 export const RECOMMENDED_ENGINE: Record<Feature, Engine> = {
   intel_hub:  "perplexity",
-  coda:       "perplexity",
   onboarding: "perplexity",
   outreach:   "claude",
   radar:      "perplexity",
