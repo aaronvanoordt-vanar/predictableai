@@ -28,6 +28,7 @@ export type ProviderId =
   | "amplemarket"
   | "google_sheets"
   | "google_calendar"
+  | "outlook_calendar"
   | "notion"
   | "clickup"
   | "pipedrive"
@@ -52,6 +53,7 @@ export const PROVIDERS: ProviderMeta[] = [
   { id: "amplemarket", name: "Amplemarket", category: "engagement", oauthEnv: [], tokenAllowed: true },
   { id: "google_sheets", name: "Google Sheets", category: "productivity", oauthEnv: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"], tokenAllowed: false },
   { id: "google_calendar", name: "Google Calendar", category: "productivity", oauthEnv: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"], tokenAllowed: false },
+  { id: "outlook_calendar", name: "Outlook Calendar", category: "productivity", oauthEnv: ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"], tokenAllowed: false },
   { id: "notion", name: "Notion", category: "productivity", oauthEnv: ["NOTION_CLIENT_ID", "NOTION_CLIENT_SECRET"], tokenAllowed: true },
   { id: "clickup", name: "ClickUp", category: "productivity", oauthEnv: ["CLICKUP_CLIENT_ID", "CLICKUP_CLIENT_SECRET"], tokenAllowed: true },
   // CRM de Latam (2026-10-17). Kommo: token de larga duración + subdominio;
@@ -99,6 +101,15 @@ export const GOOGLE_CALENDAR_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/userinfo.email",
 ];
+
+// Outlook / Microsoft 365 por Microsoft Graph (cuentas de trabajo y
+// personales: endpoint `common`). Calendars.ReadWrite alcanza para leer la
+// agenda, crear el evento con su enlace de Teams e invitar al invitado;
+// offline_access entrega el refresh token.
+export const MS_AUTH = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
+export const MS_TOKEN = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
+export const GRAPH = "https://graph.microsoft.com/v1.0";
+export const OUTLOOK_CALENDAR_SCOPES = ["offline_access", "openid", "email", "User.Read", "Calendars.ReadWrite"];
 
 // ── Leads ─────────────────────────────────────────────────────────────────
 
@@ -504,6 +515,40 @@ export function toCalendarItem(ev: Json, selfEmail = ""): CalendarItem {
       .filter((a: Json) => a?.email && !a?.self && String(a.email).toLowerCase() !== me && !a?.resource)
       .slice(0, 20)
       .map((a: Json) => ({ email: String(a.email), name: clean(a.displayName, 120) })),
+  };
+}
+
+/**
+ * Fecha de Graph → ISO UTC. Con `Prefer: outlook.timezone="UTC"` llega como
+ * "2026-10-20T14:00:00.0000000" sin zona: es UTC.
+ */
+export function graphDate(dt: Json): string {
+  const raw = String(dt?.dateTime ?? "");
+  if (!raw) return "";
+  const withZone = /[zZ]|[+-]\d\d:\d\d$/.test(raw) ? raw : raw + "Z";
+  const t = Date.parse(withZone);
+  return Number.isFinite(t) ? new Date(t).toISOString() : "";
+}
+
+/** Evento de Outlook (Graph) → lo mismo que pinta la UI para Google. */
+export function toOutlookCalendarItem(ev: Json, selfEmail = ""): CalendarItem {
+  const me = String(selfEmail).toLowerCase();
+  const join = String(ev?.onlineMeeting?.joinUrl ?? ev?.onlineMeetingUrl ?? "");
+  const loc = String(ev?.location?.displayName ?? "").match(MEETING_URL_RE);
+  const body = String(ev?.bodyPreview ?? "").match(MEETING_URL_RE);
+  return {
+    id: String(ev?.id ?? ""),
+    title: clean(ev?.subject, 200) || "(Sin título)",
+    start: graphDate(ev?.start),
+    end: graphDate(ev?.end),
+    all_day: !!ev?.isAllDay,
+    meeting_url: /^https:\/\//.test(join) ? join : (loc?.[0] ?? body?.[0] ?? ""),
+    html_link: String(ev?.webLink ?? ""),
+    attendees: (ev?.attendees ?? [])
+      .map((a: Json) => ({ email: String(a?.emailAddress?.address ?? ""), name: clean(a?.emailAddress?.name, 120), type: a?.type }))
+      .filter((a: Json) => a.email && a.email.toLowerCase() !== me && a.type !== "resource")
+      .slice(0, 20)
+      .map((a: Json) => ({ email: a.email, name: a.name })),
   };
 }
 

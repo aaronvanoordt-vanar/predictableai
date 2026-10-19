@@ -54,6 +54,9 @@
     // «Investigar con IA» (Listas): puesto actual + empresa + ángulo. Con la
     // cuenta de Apollo de la plataforma se suma el match (enrich_email).
     lead_research:          { credits: 3,  label: 'por lead',            variable: false },
+    // Nota BANT del traspaso al AE cuando un lead agenda desde tu agenda.
+    // Agendar y los recordatorios por WhatsApp y email no cuestan.
+    meeting_handoff:        { credits: 3,  label: 'por reunión agendada', variable: false },
     // Contenido en LinkedIn: una tanda de ideas o un borrador (o reescritura).
     linkedin_ideas:         { credits: 2,  label: 'por tanda de ideas',  variable: false },
     linkedin_post:          { credits: 3,  label: 'por borrador',        variable: false },

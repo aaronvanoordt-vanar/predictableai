@@ -129,6 +129,9 @@
     { key: '{{cargo}}', label: 'Cargo del lead' },
     { key: '{{remitente}}', label: 'Tu nombre (firma)' },
     { key: '{{mi_empresa}}', label: 'Tu empresa' },
+    // Enlace a tu agenda (Ventas → Agenda) con la referencia del lead: si
+    // agenda, la cadencia se detiene y pasa a «reunión agendada».
+    { key: '{{link_agenda}}', label: 'Enlace a tu agenda' },
   ];
   function insertAtCursor(input, text) {
     if (!input) return;

@@ -90,7 +90,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [x] Listas "No llamar" — lista de supresión por canal + bajas centralizadas + registros oficiales (`docs/COMPLIANCE_LATAM.md`)
 - [x] Horarios de contacto de Colombia (Ley 2300): horario legal, festivos y un envío por día por lead en `campaign-run` (`_shared/contact-rules.ts`)
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
-- [ ] Agendamiento con recordatorios por WhatsApp
+- [x] Agendamiento con recordatorios por WhatsApp — `docs/AGENDA.md` (Google Calendar y Outlook)
 - [ ] Cobro local y CFDI (`docs/BILLING_LATAM.md`)
   - [x] Fase A: factura de Stripe con el número fiscal del cliente, moneda local y OXXO/Pix en recargas (#344; faltan los pasos del Dashboard de Stripe y la consulta al contador sobre el 18-B)
   - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC — en curso: CFDI en modo prueba con Facturapi; falta la entidad

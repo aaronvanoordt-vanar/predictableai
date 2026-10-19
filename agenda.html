@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Agenda una reunión</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<!--
+  agenda.html — la agenda pública tipo Calendly de cada usuario (2026-10-17).
+  Pública y SIN login: no carga auth-guard.js ni supabase-client.js. Todo pasa
+  por la edge function `booking` (desplegada con --no-verify-jwt), que solo
+  devuelve lo público: nombre, tipos de reunión, preguntas y horarios libres.
+    agenda.html?u=<slug>[&r=<booking_ref>]  → agendar (r = lead de una campaña o de la Bandeja)
+    agenda.html?m=<token>[&a=confirm|reschedule] → el invitado confirma, reprograma o cancela
+-->
+<style>
+:root{
+  --bg:#F7F8FA; --surface:#FFFFFF; --surface2:#F6F7F9; --surface3:#ECEEF3;
+  --hair:rgba(10,10,15,0.08); --hair-3:rgba(10,10,15,0.14);
+  --ink:#0A0A0F; --ink-2:rgba(10,10,15,0.78); --ink-3:rgba(10,10,15,0.56); --ink-4:rgba(10,10,15,0.40);
+  --accent:#1F4BFF; --accent-ink:#1A3FD6; --accent-soft:rgba(31,75,255,0.10);
+  --green:#0EA968; --green-soft:rgba(14,169,104,0.11);
+  --red:#D64545; --red-soft:rgba(214,69,69,0.10);
+  --amber:#B87514; --amber-soft:rgba(184,117,20,0.11);
+  --r:10px; --r-sm:7px; --r-lg:16px;
+  --shadow-2:0 1px 2px rgba(10,10,15,0.04),0 12px 32px -14px rgba(10,10,15,0.14);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0B0C10; --surface:#14161C; --surface2:#1A1D24; --surface3:#232731;
+    --hair:rgba(255,255,255,0.08); --hair-3:rgba(255,255,255,0.14);
+    --ink:#F2F3F7; --ink-2:rgba(242,243,247,0.82); --ink-3:rgba(242,243,247,0.58); --ink-4:rgba(242,243,247,0.40);
+    --accent-soft:rgba(110,140,255,0.16); --accent-ink:#9DB2FF;
+    --shadow-2:0 1px 2px rgba(0,0,0,0.3),0 12px 32px -14px rgba(0,0,0,0.6);
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh}
+button,input,select,textarea{font:inherit;color:inherit}
+.ag-wrap{max-width:760px;margin:0 auto;padding:32px 16px 64px}
+.ag-card{background:var(--surface);border:1px solid var(--hair-3);border-radius:var(--r-lg);box-shadow:var(--shadow-2);overflow:hidden}
+.ag-head{padding:24px 24px 18px;border-bottom:1px solid var(--hair)}
+.ag-host{font-size:13px;font-weight:600;color:var(--ink-3);display:flex;align-items:center;gap:8px}
+.ag-dot{width:10px;height:10px;border-radius:50%;background:var(--accent);flex:none}
+.ag-head h1{font-size:22px;font-weight:800;letter-spacing:-.02em;margin-top:6px}
+.ag-intro{color:var(--ink-2);font-size:14px;margin-top:6px;white-space:pre-line}
+.ag-body{padding:20px 24px 24px}
+.ag-step{font-size:12px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+.ag-types{display:grid;gap:10px}
+.ag-type{display:flex;justify-content:space-between;align-items:center;gap:12px;text-align:left;width:100%;background:var(--surface);border:1px solid var(--hair-3);border-radius:var(--r);padding:14px 16px;cursor:pointer}
+.ag-type:hover,.ag-type:focus-visible{border-color:var(--accent);outline:none}
+.ag-type b{display:block;font-size:15px}
+.ag-type span{font-size:13px;color:var(--ink-3)}
+.ag-pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-3);background:var(--surface2);border-radius:999px;padding:3px 10px}
+.ag-meta{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 16px}
+.ag-tz{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-3);margin-bottom:14px;flex-wrap:wrap}
+.ag-tz select{background:var(--surface2);border:1px solid var(--hair);border-radius:var(--r-sm);padding:6px 8px;max-width:100%}
+.ag-days{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:14px;scrollbar-width:thin}
+.ag-day{flex:none;min-width:74px;background:var(--surface);border:1px solid var(--hair-3);border-radius:var(--r);padding:8px 10px;cursor:pointer;text-align:center}
+.ag-day small{display:block;font-size:11px;color:var(--ink-3);text-transform:capitalize}
+.ag-day b{display:block;font-size:17px}
+.ag-day.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,var(--surface));color:var(--accent)}
+.ag-times{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+.ag-time{background:var(--surface);border:1px solid var(--hair-3);border-radius:var(--r-sm);padding:10px 6px;font-weight:600;cursor:pointer}
+.ag-time:hover,.ag-time:focus-visible{border-color:var(--accent);color:var(--accent);outline:none}
+.ag-field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+.ag-field label{font-size:13px;font-weight:600;color:var(--ink-2)}
+.ag-field label i{font-style:normal;color:var(--ink-4);font-weight:500}
+.ag-field input,.ag-field select,.ag-field textarea{background:var(--surface2);border:1px solid var(--hair);border-radius:var(--r-sm);padding:10px 12px;width:100%}
+.ag-field textarea{min-height:70px;resize:vertical}
+.ag-field input:focus,.ag-field select:focus,.ag-field textarea:focus{outline:none;border-color:var(--accent);background:var(--surface)}
+.ag-hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+.ag-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.ag-btn{border:none;background:var(--accent);color:#fff;border-radius:var(--r-sm);padding:11px 18px;font-weight:700;cursor:pointer}
+.ag-btn:disabled{opacity:.6;cursor:wait}
+.ag-ghost{border:1px solid var(--hair-3);background:var(--surface);color:var(--ink-2);border-radius:var(--r-sm);padding:10px 14px;font-weight:600;cursor:pointer}
+.ag-link{background:none;border:none;color:var(--accent-ink);font-weight:600;cursor:pointer;padding:0;text-decoration:underline}
+.ag-msg{font-size:13.5px;border-radius:var(--r-sm);padding:10px 12px;margin-bottom:12px}
+.ag-msg.err{background:var(--red-soft);color:var(--red)}
+.ag-msg.ok{background:var(--green-soft);color:var(--green)}
+.ag-msg.info{background:var(--surface2);color:var(--ink-2)}
+.ag-done{text-align:center;padding:12px 0}
+.ag-check{width:52px;height:52px;border-radius:50%;background:var(--green-soft);color:var(--green);display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 12px}
+.ag-done h2{font-size:20px;font-weight:800;letter-spacing:-.01em}
+.ag-done p{color:var(--ink-2);margin-top:6px}
+.ag-empty{color:var(--ink-3);font-size:14px;padding:14px 0}
+.ag-foot{text-align:center;font-size:12px;color:var(--ink-4);margin-top:16px}
+.ag-foot a{color:inherit}
+.ag-center{min-height:50vh;display:flex;align-items:center;justify-content:center;color:var(--ink-3)}
+@media (max-width:520px){.ag-head,.ag-body{padding-left:16px;padding-right:16px}.ag-head h1{font-size:20px}}
+@media (prefers-reduced-motion:no-preference){.ag-card{animation:agIn .35s cubic-bezier(.2,.8,.2,1)}@keyframes agIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}}
+</style>
+</head>
+<body>
+<main class="ag-wrap">
+  <div id="ag-root" class="ag-center" aria-live="polite">Cargando la agenda…</div>
+  <div class="ag-foot">Agenda con <a href="https://predictableai.vanarsi.com" target="_blank" rel="noopener">Predictable</a></div>
+</main>
+<script src="js/config.js"></script>
+<script src="js/booking-page.js?v=20261017"></script>
+</body>
+</html>

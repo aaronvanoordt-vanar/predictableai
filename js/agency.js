@@ -36,7 +36,7 @@
   // ── Espejo de _shared/agency-credits.ts ────────────────────────────────
   var USAGE_CATEGORIES = [
     { key: 'enrichment', label: 'Enriquecimiento', prefixes: ['enrich_', 'email_verify', 'lead_research_apollo', 'registry_'] },
-    { key: 'ai', label: 'IA: mensajes · investigación · columnas · contenido', prefixes: ['outreach_message', 'outreach_full', 'outreach_step', 'campaign_recommendation', 'lead_research', 'ai_column', 'linkedin_ideas', 'linkedin_post'] },
+    { key: 'ai', label: 'IA: mensajes · investigación · columnas · contenido', prefixes: ['outreach_message', 'outreach_full', 'outreach_step', 'campaign_recommendation', 'lead_research', 'ai_column', 'linkedin_ideas', 'linkedin_post', 'meeting_handoff'] },
     { key: 'campaigns', label: 'Campañas', prefixes: ['campaign_lead', 'campaign_send', 'inbox_', 'linkedin_send'] },
     { key: 'hub', label: 'Intelligence Hub', prefixes: ['intel_hub', 'market_analysis', 'outreach_playbook'] },
     { key: 'radar', label: 'Radar', prefixes: ['radar_', 'champion_'] },

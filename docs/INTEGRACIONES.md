@@ -1,6 +1,6 @@
 # Integraciones (2026-09-23; CRM de Latam y HubSpot en dos sentidos 2026-10-17)
 
-Predictable se conecta de forma nativa con 12 plataformas. Todo pasa por la edge function `integrations` (JWT del usuario); los tokens viven en `integration_connections` con grants de columna que los ocultan al navegador.
+Predictable se conecta de forma nativa con 13 plataformas. Todo pasa por la edge function `integrations` (JWT del usuario); los tokens viven en `integration_connections` con grants de columna que los ocultan al navegador.
 
 | Plataforma | Cómo se conecta | Qué hace Predictable con ella |
 |---|---|---|
@@ -9,6 +9,7 @@ Predictable se conecta de forma nativa con 12 plataformas. Todo pasa por la edge
 | **Amplemarket** | API key (Amplemarket no tiene OAuth público) | Lista → `POST /sequences/{id}/leads` (250 por lote, email o LinkedIn) o → lista nueva con `POST /lead-lists` (type `email`, dueño = usuario de Amplemarket). |
 | **Google Sheets** | OAuth de Google, scope `drive.file` (no sensible: solo ve los archivos que Predictable crea) | Lista → hoja nueva; el siguiente envío de la misma lista reescribe esa hoja (`valueInputOption=RAW`: un dato que empieza con `=` nunca se vuelve fórmula). |
 | **Google Calendar** | OAuth de Google, scope `calendar.events` | Próximas reuniones (14 días) con su link de Meet/Zoom/Teams → «Preparar en Meeting Coach» rellena la URL del coach. «Agendar un seguimiento» crea un evento en el calendario del usuario (`sendUpdates=none`). |
+| **Outlook Calendar** | OAuth de Microsoft (endpoint `common`: Microsoft 365 y cuentas personales), scopes `offline_access User.Read Calendars.ReadWrite` | Igual que Google Calendar por Microsoft Graph (`/me/calendarView`, `/me/events`): próximas reuniones con su enlace de Teams/Zoom → Meeting Coach y «Agendar un seguimiento». Es también uno de los dos calendarios de la Agenda (`docs/AGENDA.md`). |
 | **Notion** | OAuth (integración pública) o secreto de integración interna (`ntn_…`) | Lista → página con tablas (99 filas por tabla, tope 1.000 filas). Reporte del Meeting Coach → página con resumen, siguiente paso, objeciones y consejo. |
 | **ClickUp** | OAuth (app) o token personal (`pk_…`) | Lista → una tarea por lead (tope 100 por envío, límite de 100 req/min de ClickUp). Reporte del coach → tarea con el siguiente paso. |
 | **Pipedrive** | OAuth (app del Marketplace) o token personal de la API | Lista → personas + organizaciones (API **v2**: los endpoints v1 equivalentes quedaron sin soporte el 2026-08-01) y deal opcional en la etapa elegida. |
@@ -94,6 +95,7 @@ Cada par es opcional: sin él, la tarjeta ofrece el token (si la plataforma lo p
 | `HUBSPOT_CLIENT_ID` / `HUBSPOT_CLIENT_SECRET` | developers.hubspot.com → app pública, scopes `oauth crm.objects.contacts.read crm.objects.contacts.write` | `https://predictableai.vanarsi.com/integrations-callback.html` |
 | `SALESFORCE_CLIENT_ID` / `SALESFORCE_CLIENT_SECRET` (+ `SALESFORCE_LOGIN_URL` opcional, p. ej. `https://test.salesforce.com`) | Setup → External Client App (o Connected App) con OAuth, scopes `api refresh_token`, PKCE | igual |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Los mismos de Gmail. Habilitar **Google Sheets API**, **Google Drive API** y **Google Calendar API** en el proyecto y agregar los scopes `drive.file` y `calendar.events` a la pantalla de consentimiento | agregar la redirect URI a los "Authorized redirect URIs" del cliente |
+| `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` | portal.azure.com → Microsoft Entra ID → App registrations → New registration. Tipos de cuenta: «Accounts in any organizational directory and personal Microsoft accounts». Plataforma Web. API permissions (delegated, Microsoft Graph): `offline_access`, `openid`, `email`, `User.Read`, `Calendars.ReadWrite`. Certificates & secrets → New client secret (vence: anotar la fecha) | igual (Web) |
 | `NOTION_CLIENT_ID` / `NOTION_CLIENT_SECRET` | notion.so/profile/integrations → integración **pública** | igual |
 | `CLICKUP_CLIENT_ID` / `CLICKUP_CLIENT_SECRET` | ClickUp → Settings → Apps → crear app | dominio `predictableai.vanarsi.com` |
 | `PIPEDRIVE_CLIENT_ID` / `PIPEDRIVE_CLIENT_SECRET` | developers.pipedrive.com → Developer Hub → crear app (privada o pública del Marketplace). Alcances en la app: **Contacts: full**, **Deals: full**, **Users** (lectura del usuario) | `https://predictableai.vanarsi.com/integrations-callback.html` |
@@ -105,6 +107,8 @@ Cada par es opcional: sin él, la tarjeta ofrece el token (si la plataforma lo p
 HubSpot: agregar a la app pública los alcances **opcionales** `crm.objects.deals.read`, `crm.objects.companies.read` y `crm.objects.owners.read` (la vuelta). Sin ellos la ida sigue funcionando.
 
 **Cron** `integrations-sync` (`*/15 * * * *`, `POST /functions/v1/integrations` con `{"action":"cron"}`): lo programa la migración `20261018231000_integrations_sync_cron.sql`, que copia la URL del proyecto y el header `Authorization` de un cron existente que ya llama a una edge function con la service role (la key nunca va en el repo). Si no encuentra ninguno, no programa nada y avisa; entonces se programa a mano con el SQL comentado al final de `20261018230000`. Se aplica **después** de desplegar `integrations`.
+
+Microsoft: algunas empresas exigen consentimiento del administrador para apps de terceros; si el usuario ve «Need admin approval», su TI aprueba Predictable una vez para todo el tenant. Publicar la app como «verified publisher» (Partner Center) quita la advertencia de editor no verificado.
 
 `calendar.events` es un scope sensible: para usuarios fuera del dominio de Google Workspace de Vanar, Google exige verificar la app (mientras tanto funciona con usuarios de prueba).
 

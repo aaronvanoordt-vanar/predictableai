@@ -112,6 +112,7 @@ import { resolveEmailProvider } from "../_shared/mailbox-rotation.ts";
 import * as suppression from "../_shared/suppression.ts";
 import * as contactRules from "../_shared/contact-rules.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import { bookingUrl, PUBLIC_APP_URL } from "../_shared/booking.ts";
 import { countryOfE164, toE164 } from "../_shared/telephony/phone.ts";
 import { checkDoNotCall } from "../_shared/telephony/dnc.ts";
 import { aiColumnMatches, aiColumnPending } from "../_shared/ai-columns.ts";
@@ -201,14 +202,43 @@ function firstName(m: Json): string {
   return String(m?.name ?? "").trim().split(/\s+/)[0] || "";
 }
 
-function fill(text: string, m: Json, sender: Json): string {
+function fill(text: string, m: Json, sender: Json, agenda = ""): string {
   const map: Record<string, string> = {
+    link_agenda: agenda,
     nombre: firstName(m), name: firstName(m),
     empresa: String(m?.company ?? ""), company: String(m?.company ?? ""),
     cargo: String(m?.title ?? ""), title: String(m?.title ?? ""),
     remitente: String(sender?.name ?? ""), mi_empresa: String(sender?.company ?? ""),
   };
   return String(text ?? "").replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_, k) => map[String(k).toLowerCase()] ?? "");
+}
+
+// ── {{link_agenda}} ─────────────────────────────────────────────────────────
+// El enlace a la agenda del usuario (agenda.html) con la referencia opaca del
+// lead: si agenda, la edge function `booking` detiene la cadencia y lo pasa a
+// «reunión agendada». Sin agenda activa el paso se retiene (no sale un
+// mensaje con un hueco donde iba el enlace).
+
+const AGENDA_RE = /\{\{\s*link_agenda\s*\}\}/i;
+const AGENDA_OFF = "Este paso usa {{link_agenda}} y tu agenda no está activa: actívala en Ventas → Agenda.";
+
+async function agendaLink(ctx: Ctx, userId: string, m: Json): Promise<string> {
+  if (!ctx.agendaByUser.has(userId)) {
+    const { data } = await ctx.db.from("booking_pages").select("slug, enabled").eq("user_id", userId).maybeSingle();
+    ctx.agendaByUser.set(userId, data?.enabled ? String(data.slug) : null);
+  }
+  const slug = ctx.agendaByUser.get(userId);
+  if (!slug) return "";
+  const base = (Deno.env.get("PUBLIC_APP_URL") ?? "").trim() || PUBLIC_APP_URL;
+  return bookingUrl(base, slug, m?.booking_ref ? String(m.booking_ref) : null);
+}
+
+/** Reemplaza {{link_agenda}} (también en el texto IA); hold si no hay agenda activa. */
+async function withAgenda(ctx: Ctx, en: Json, m: Json, ...texts: string[]): Promise<string> {
+  if (!texts.some((t) => AGENDA_RE.test(t || ""))) return "";
+  const link = await agendaLink(ctx, en.user_id, m);
+  if (!link) throw new StepError(AGENDA_OFF, "hold");
+  return link;
 }
 
 function bodyToHtml(text: string): string {
@@ -291,6 +321,7 @@ interface Ctx {
   watiProbed: Set<string>; // usuarios con bloqueo de cuenta vencido que ya mandaron su envío de prueba en esta corrida
   templateProbed: Set<string>; // `${user}:${plantilla}` con marca de falla vencida que ya mandó su envío de prueba
   campaignCache: Map<string, Json | null>;
+  agendaByUser: Map<string, string | null>; // slug de la agenda activa (null = sin agenda)
 }
 
 /** Lo que el ejecutor necesita de un paso del grafo. */
@@ -449,9 +480,12 @@ async function unipileStepError(ctx: Ctx, acc: Json, e: unknown): Promise<StepEr
 
 /** Texto de un paso de LinkedIn nativo: propio (con variables) o el mensaje IA aprobado. */
 async function linkedinText(ctx: Ctx, en: Json, step: StepLike, member: Json, sender: Json): Promise<{ body: string; messageId: string | null }> {
-  if (step.content_kind === "custom") return { body: fill(step.body ?? "", member, sender), messageId: null };
+  if (step.content_kind === "custom") {
+    return { body: fill(step.body ?? "", member, sender, await withAgenda(ctx, en, member, step.body ?? "")), messageId: null };
+  }
   const t = await aiText(ctx, en, step);
-  return { body: t.body, messageId: t.messageId };
+  const agenda = await withAgenda(ctx, en, member, t.body);
+  return { body: t.body.replace(new RegExp(AGENDA_RE.source, "gi"), agenda), messageId: t.messageId };
 }
 
 /** Nota de conexión ≤ 300 caracteres, cortada en una palabra. */
@@ -790,9 +824,12 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       // Cada variable se llena con el dato del lead; si falta alguna, el paso
       // se omite en vez de mandar un mensaje con un hueco.
       const params: Record<string, string> = {};
+      const tplAgenda = wati.templateVariables(tpl.body).some((v) => /^(link_agenda|agenda)$/i.test(v))
+        ? await withAgenda(ctx, en, member, "{{link_agenda}}") : "";
       for (const v of wati.templateVariables(tpl.body)) {
         const k = v.toLowerCase();
-        params[v] = /^(name|nombre|first_name|1)$/.test(k) ? firstName(member)
+        params[v] = /^(link_agenda|agenda)$/.test(k) ? tplAgenda
+          : /^(name|nombre|first_name|1)$/.test(k) ? firstName(member)
           : /^(full_name|nombre_completo|fullname)$/.test(k) ? String(member.name ?? "").trim()
           : /^(company|empresa|compania)$/.test(k) ? String(member.company ?? "").trim()
           : /^(title|cargo|puesto|rol)$/.test(k) ? String(member.title ?? "").trim()
@@ -832,10 +869,10 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
         throw new StepError("Sin sesión de WhatsApp abierta (el lead no escribió en las últimas 24 h).", "skip");
       }
       if (step.content_kind === "custom") {
-        bodyText = fill(step.body ?? "", member, sender);
+        bodyText = fill(step.body ?? "", member, sender, await withAgenda(ctx, en, member, step.body ?? ""));
       } else {
         const t = await aiText(ctx, en, step);
-        bodyText = t.body;
+        bodyText = t.body.replace(new RegExp(AGENDA_RE.source, "gi"), await withAgenda(ctx, en, member, t.body));
         messageId = t.messageId;
       }
       if (!bodyText.trim()) throw new StepError("No hay mensaje personalizado generado para este lead.", "skip");
@@ -872,11 +909,13 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     let subject = "", bodyText = "";
     let messageRowId: string | null = null;
     if (step.content_kind === "custom") {
-      subject = fill(step.subject ?? "", member, sender);
-      bodyText = fill(step.body ?? "", member, sender);
+      const agenda = await withAgenda(ctx, en, member, step.subject ?? "", step.body ?? "");
+      subject = fill(step.subject ?? "", member, sender, agenda);
+      bodyText = fill(step.body ?? "", member, sender, agenda);
     } else {
       const t = await aiText(ctx, en, step);
-      subject = t.subject; bodyText = t.body; messageRowId = t.messageId;
+      const agenda = await withAgenda(ctx, en, member, t.body);
+      subject = t.subject; bodyText = t.body.replace(new RegExp(AGENDA_RE.source, "gi"), agenda); messageRowId = t.messageId;
     }
     if (!subject.trim() || !bodyText.trim()) throw new StepError("No hay email personalizado generado para este lead.", "skip");
     // Las bajas y la lista «No contactar» ya se revisaron (assertNotSuppressed).
@@ -1819,7 +1858,7 @@ Deno.serve(async (req) => {
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, { auth: { persistSession: false } });
   const now = new Date();
-  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), dripifyCampaignsByUser: new Map(), unipileByUser: new Map(), liCounts: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), emailSettingsByUser: new Map(), sentToday: new Map(), watiProbed: new Set(), templateProbed: new Set(), campaignCache: new Map() };
+  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), dripifyCampaignsByUser: new Map(), unipileByUser: new Map(), liCounts: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), emailSettingsByUser: new Map(), sentToday: new Map(), watiProbed: new Set(), templateProbed: new Set(), campaignCache: new Map(), agendaByUser: new Map() };
 
   // «Sincronizar todo» de la Bandeja (la llama inbox-send con la service role):
   // solo email (Apollo) y LinkedIn (Dripify) de ESE usuario, sin esperar el

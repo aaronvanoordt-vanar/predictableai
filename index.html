@@ -2203,6 +2203,13 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M3 14V6l4-4h6v12H3z"/><path d="M7 2v4H3"/><path d="M6 9h4M6 11h3"/></svg>
       <span id="nav-reportes-label">Reportes</span>
     </div>
+    <!-- Agenda (2026-10-17, js/scheduling.js): agenda pública tipo Calendly
+         (agenda.html), recordatorios por WhatsApp contra el no-show,
+         asistencia real y la nota BANT del traspaso al AE. -->
+    <div class="nav-item" data-page="agenda" onclick="nav(this,'agenda');if(window.scheduling)window.scheduling.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3M6 10l1.5 1.5L10.5 8.5"/></svg>
+      Agenda
+    </div>
     <!-- Equipo (2026-10-17, js/team.js): metas, ranking, revisión y rampa del
          equipo SDR. Fuera del context-gate: dirigir el equipo no depende del
          Contexto. Lo ve todo el mundo; quien no está en la nómina ve un
@@ -2472,6 +2479,17 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
   <div id="ai-training-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: AGENDA (js/scheduling.js) ═══════ -->
+<div class="page fade-in" id="page-agenda" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Agenda</div>
+      <div class="topbar-sub">Tu enlace para agendar, recordatorios contra el no-show y el traspaso al AE</div>
+    </div>
+  </div>
+  <div id="agenda-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: CONTENIDO EN LINKEDIN (js/linkedin-content.js) ═══════ -->
@@ -3329,7 +3347,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <!-- ═════ Predictable JS modules ═════ -->
 <script src="js/ui-helpers.js"></script>
 <script src="js/ai-engine.js?v=20261017"></script>
-<script src="js/credit-costs.js?v=20261018c"></script>
+<script src="js/credit-costs.js?v=20261018n"></script>
 <script src="js/credits.js"></script>
 <script src="js/billing-cfdi.js"></script>
 <script src="js/skeletons.js"></script>
@@ -3338,7 +3356,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/apollo-enums.js"></script>
 <script src="js/tam-rules.js?v=20261017"></script>
 <script src="js/company-context.js?v=20260823"></script>
-<script src="js/prospecting-data.js?v=20261018c"></script>
+<script src="js/prospecting-data.js?v=20261018n"></script>
 <script src="js/phone-latam.js?v=20261018"></script>
 <script src="js/phone-lines.js?v=20261018"></script>
 <script src="js/ai-columns.js?v=20261017"></script>
@@ -3352,7 +3370,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/campaign-analytics.js?v=20261018"></script>
 <script src="js/suppression.js?v=20261017"></script>
 <script src="js/email-mailboxes.js?v=20261018"></script>
-<script src="js/campaigns.js?v=20261019crm"></script>
+<script src="js/campaigns.js?v=20261019crm2"></script>
 <script src="js/inbox-alert.js?v=20261001b"></script>
 <script src="js/push.js?v=20261006"></script>
 <script src="js/automations.js?v=20261017"></script>
@@ -3371,6 +3389,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/linkedin-content.js?v=20261017"></script>
 <script src="js/tam-map.js?v=20261017"></script>
 <script src="js/integrations.js?v=20261018"></script>
+<script src="js/scheduling.js?v=20261018"></script>
 <script src="js/dev-docs.js?v=20260923"></script>
 <script src="js/developers.js?v=20260923"></script>
 <script src="js/team-metrics.js?v=20261017"></script>
@@ -4231,6 +4250,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // Páginas con shell propio: montarlas también al restaurar (el onclick
     // del nav-item no corre en este camino).
     if (hash === 'clients' && window.clientsModule) window.clientsModule.show();
+    if (hash === 'agenda' && window.scheduling) window.scheduling.show();
     if (hash === 'agency' && window.Agency) window.Agency.show();
     if (hash === 'tam-map' && window.tamMap) window.tamMap.show();
   }, 0);

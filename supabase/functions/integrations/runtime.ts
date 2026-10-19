@@ -7,7 +7,7 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { GOOGLE_TOKEN } from "../_shared/gmail.ts";
-import { apiErrorMessage, type ProviderId, providerMeta } from "../_shared/integrations.ts";
+import { apiErrorMessage, MS_TOKEN, OUTLOOK_CALENDAR_SCOPES, type ProviderId, providerMeta } from "../_shared/integrations.ts";
 import { bitrixPortal, kommoHost, pipedriveApiDomain, ZOHO_DCS } from "../_shared/crm-latam.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -149,6 +149,11 @@ export async function refresh(ctx: Ctx, conn: Conn): Promise<boolean> {
     res = await fetch(GOOGLE_TOKEN, form({
       grant_type: "refresh_token", client_id: creds.clientId, client_secret: creds.clientSecret, refresh_token: conn.refresh_token,
     }));
+  } else if (conn.provider === "outlook_calendar") {
+    res = await fetch(MS_TOKEN, form({
+      grant_type: "refresh_token", client_id: creds.clientId, client_secret: creds.clientSecret, refresh_token: conn.refresh_token,
+      scope: OUTLOOK_CALENDAR_SCOPES.join(" "),
+    }));
   } else if (conn.provider === "notion") {
     res = await fetch("https://api.notion.com/v1/oauth/token", {
       method: "POST",
@@ -201,7 +206,7 @@ export async function refresh(ctx: Ctx, conn: Conn): Promise<boolean> {
     return false;
   }
   conn.access_token = String(tok.access_token);
-  // Notion y HubSpot pueden rotar el refresh token: siempre se guarda el último.
+  // Notion, HubSpot y Microsoft pueden rotar el refresh token: siempre se guarda el último.
   if (tok.refresh_token) conn.refresh_token = String(tok.refresh_token);
   conn.token_expires_at = expiresAt(tok.expires_in);
   const patch: Record<string, unknown> = {
