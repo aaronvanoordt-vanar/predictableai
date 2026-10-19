@@ -85,7 +85,7 @@
       loadingLists: false, listsError: null,
       loadingMembers: false, membersError: null,
       // Filtros del CRM (solo en «Todos los contactos»)
-      q: '', statusFilter: '', listFilter: '',
+      q: '', statusFilter: '', listFilter: '', companyFilter: '', titleFilter: '', countryFilter: '', contactFilter: '',
       channel: null,           // suscripción realtime a prospect_list_members
       refreshTimer: null, filterTimer: null,
       refreshing: false, refreshQueued: false, refreshLists: false,
@@ -377,7 +377,7 @@
     '#prospecting-shell .pros-research-sec a { color:var(--accent-ink); }',
     '#prospecting-shell .pros-research-title { font-size:13.5px; font-weight:700; color:var(--text); margin-bottom:4px; }',
     '#prospecting-shell .pros-emp { display:inline-flex; margin-top:4px; }',
-    '#prospecting-shell .pros-ct-toolbar input[type=search] { flex:1; min-width:180px; }',
+    '#prospecting-shell .pros-ct-toolbar input[type=search] { flex:1; min-width:150px; }',
   ].join('\n');
 
   // Manual-add form grid lives inside a modal (outside #prospecting-shell),
@@ -2469,15 +2469,36 @@
     host.innerHTML = html;
   }
 
-  // Filtros del CRM (texto / estado / lista). En una lista real solo aplica
+  // Minúsculas y sin acentos, para que «Ingeniería» coincida con «ingenieria».
+  function filterNorm(v) {
+    return String(v == null ? '' : v).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  }
+
+  function activeListFilters() {
+    var st = state.listas;
+    return ['q', 'statusFilter', 'companyFilter', 'titleFilter', 'countryFilter', 'contactFilter']
+      .concat(isAllList() ? ['listFilter'] : [])
+      .filter(function (k) { return String(st[k] || '').trim(); }).length;
+  }
+
+  // Filtros del CRM (texto / estado / empresa / cargo / país / datos / lista). En una lista real solo aplica
   // el texto si el usuario escribió algo; los selects viven en «Todos».
   function visibleListMembers() {
     var st = state.listas;
     var q = (st.q || '').trim().toLowerCase();
     var all = isAllList();
+    var fCompany = filterNorm(st.companyFilter), fTitle = filterNorm(st.titleFilter);
     var rows = st.members.filter(function (m) {
-      if (all && st.statusFilter && (m.contact_status || 'no_contactado') !== st.statusFilter) return false;
+      if (st.statusFilter && (m.contact_status || 'no_contactado') !== st.statusFilter) return false;
       if (all && st.listFilter && String(m.list_id) !== st.listFilter) return false;
+      if (fCompany && filterNorm(m.company).indexOf(fCompany) === -1) return false;
+      if (fTitle && filterNorm(m.title).indexOf(fTitle) === -1) return false;
+      if (st.countryFilter && (m.country || '') !== st.countryFilter) return false;
+      if (st.contactFilter) {
+        var has = { email: !!m.email, phone: !!m.phone, linkedin: !!m.linkedin_url };
+        var key = st.contactFilter.replace(/^(con|sin)_/, '');
+        if (has[key] !== (st.contactFilter.indexOf('con_') === 0)) return false;
+      }
       if (!q) return true;
       var hay = [m.name, m.first_name, m.last_name, m.company, m.title, m.email, m.phone, m.list_name, m.country, m.city]
         .filter(Boolean).join(' ').toLowerCase();
@@ -3008,20 +3029,45 @@
       '</div>' +
       '<div data-enrich-banner>' + enrichBannerHtml() + '</div>';
 
-    if (all) {
-      var listOpts = {};
-      st.members.forEach(function (m) { if (m.list_id) listOpts[String(m.list_id)] = m.list_name || '—'; });
+    if (st.members.length) {
+      var listOpts = {}, countries = {}, companies = {}, titles = {};
+      st.members.forEach(function (m) {
+        if (m.list_id) listOpts[String(m.list_id)] = m.list_name || '—';
+        if (m.country) countries[m.country] = 1;
+        if (m.company) companies[m.company] = 1;
+        if (m.title) titles[m.title] = 1;
+      });
+      var optsHtml = function (map, cur) {
+        return Object.keys(map).sort(function (a, b) { return a.localeCompare(b); }).map(function (v) {
+          return '<option value="' + esc(v) + '"' + (cur === v ? ' selected' : '') + '>' + esc(map[v] === 1 ? v : map[v]) + '</option>';
+        }).join('');
+      };
+      var dlHtml = function (id, map) {
+        return '<datalist id="' + id + '">' + Object.keys(map).sort().slice(0, 300).map(function (v) {
+          return '<option value="' + esc(v) + '"></option>';
+        }).join('') + '</datalist>';
+      };
+      var nAct = activeListFilters();
       html += '<div class="pros-ct-toolbar" style="padding:12px 18px 0">' +
         '<input type="search" data-action="ct-search" placeholder="Buscar por nombre, empresa, email…" value="' + esc(st.q) + '">' +
-        '<select data-action="ct-filter-status"><option value="">Todos los estados</option>' +
+        '<input type="search" data-action="ct-company" list="pros-dl-company" placeholder="Empresa" value="' + esc(st.companyFilter) + '" aria-label="Filtrar por empresa">' +
+        '<input type="search" data-action="ct-title" list="pros-dl-title" placeholder="Cargo" value="' + esc(st.titleFilter) + '" aria-label="Filtrar por cargo">' +
+        dlHtml('pros-dl-company', companies) + dlHtml('pros-dl-title', titles) +
+        '</div>' +
+        '<div class="pros-ct-toolbar" style="padding:10px 18px 0">' +
+        '<select data-action="ct-filter-status" aria-label="Filtrar por estado"><option value="">Todos los estados</option>' +
         contactStatuses().map(function (s) {
           return '<option value="' + esc(s.value) + '"' + (st.statusFilter === s.value ? ' selected' : '') + '>' + esc(s.label) + '</option>';
         }).join('') + '</select>' +
-        '<select data-action="ct-filter-list"><option value="">Todas las listas</option>' +
-        Object.keys(listOpts).map(function (id) {
-          return '<option value="' + esc(id) + '"' + (st.listFilter === id ? ' selected' : '') + '>' + esc(listOpts[id]) + '</option>';
+        (Object.keys(countries).length ? '<select data-action="ct-filter-country" aria-label="Filtrar por país"><option value="">Todos los países</option>' + optsHtml(countries, st.countryFilter) + '</select>' : '') +
+        '<select data-action="ct-filter-contact" aria-label="Filtrar por datos de contacto"><option value="">Datos de contacto</option>' +
+        [['con_email', 'Con email'], ['sin_email', 'Sin email'], ['con_phone', 'Con teléfono'], ['sin_phone', 'Sin teléfono'], ['con_linkedin', 'Con LinkedIn'], ['sin_linkedin', 'Sin LinkedIn']].map(function (o) {
+          return '<option value="' + o[0] + '"' + (st.contactFilter === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
         }).join('') + '</select>' +
-        '</div>';
+        (all ? '<select data-action="ct-filter-list"><option value="">Todas las listas</option>' + optsHtml(listOpts, st.listFilter) + '</select>' : '') +
+        (nAct ? '<button type="button" class="btn btn-ghost btn-sm" data-action="ct-clear-filters">Limpiar filtros (' + nAct + ')</button>' : '') +
+        '</div>' +
+        (nAct ? '<div style="padding:8px 18px 0;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(st.members.length)) + ' contactos coinciden con los filtros.</div>' : '');
     }
 
     // Acciones sobre la selección / la lista.
@@ -3158,9 +3204,11 @@
     var t = e.target;
     if (t.getAttribute && t.getAttribute('data-action') === 'research-notes') return onResearchNotesInput(t);
     if (window.AIColumns && window.AIColumns.handleInput(t)) return;
-    if (!t.getAttribute || t.getAttribute('data-action') !== 'ct-search') return;
+    var inAct = t.getAttribute && t.getAttribute('data-action');
+    var textKey = { 'ct-search': 'q', 'ct-company': 'companyFilter', 'ct-title': 'titleFilter' }[inAct];
+    if (!textKey) return;
     var st = state.listas;
-    st.q = t.value || '';
+    st[textKey] = t.value || '';
     clearTimeout(st.filterTimer);
     st.filterTimer = setTimeout(function () {
       // Re-render solo la tabla conservando el foco del buscador.
@@ -3168,7 +3216,7 @@
       var pos = t.selectionStart;
       renderListsRight();
       if (hadFocus) {
-        var again = st.rightEl && st.rightEl.querySelector('[data-action="ct-search"]');
+        var again = st.rightEl && st.rightEl.querySelector('[data-action="' + inAct + '"]');
         if (again) {
           again.focus();
           try { again.setSelectionRange(pos, pos); } catch (_) {}
@@ -3213,6 +3261,8 @@
         });
     } else if (action === 'ct-filter-status') { st.statusFilter = t.value; renderListsRight(); }
     else if (action === 'ct-filter-list') { st.listFilter = t.value; renderListsRight(); }
+    else if (action === 'ct-filter-country') { st.countryFilter = t.value; renderListsRight(); }
+    else if (action === 'ct-filter-contact') { st.contactFilter = t.value; renderListsRight(); }
   }
 
   function onListasClick(e) {
@@ -3253,12 +3303,16 @@
         })
         .then(function () { restoreImp(); }, function (e) { restoreImp(); throw e; });
     }
+    if (action === 'ct-clear-filters') {
+      st.q = ''; st.statusFilter = ''; st.listFilter = ''; st.companyFilter = ''; st.titleFilter = ''; st.countryFilter = ''; st.contactFilter = '';
+      return renderListsRight();
+    }
     if (action === 'rename-list') return openRenameListModal(btn.getAttribute('data-id'));
     if (action === 'delete-list') return openDeleteListModal(btn.getAttribute('data-id'));
     if (action === 'select-list') {
       st.activeListId = btn.getAttribute('data-id');
       st.selected.clear();
-      st.q = ''; st.statusFilter = ''; st.listFilter = '';
+      st.q = ''; st.statusFilter = ''; st.listFilter = ''; st.companyFilter = ''; st.titleFilter = ''; st.countryFilter = ''; st.contactFilter = '';
       renderListsLeft();
       return reloadMembers();
     }
