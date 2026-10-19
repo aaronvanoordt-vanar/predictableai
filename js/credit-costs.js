@@ -54,6 +54,9 @@
     // «Investigar con IA» (Listas): puesto actual + empresa + ángulo. Con la
     // cuenta de Apollo de la plataforma se suma el match (enrich_email).
     lead_research:          { credits: 3,  label: 'por lead',            variable: false },
+    // Contenido en LinkedIn: una tanda de ideas o un borrador (o reescritura).
+    linkedin_ideas:         { credits: 2,  label: 'por tanda de ideas',  variable: false },
+    linkedin_post:          { credits: 3,  label: 'por borrador',        variable: false },
     // Seguimiento de champions (Radar): búsqueda web de respaldo cuando
     // Apollo no ubica a la persona en su empresa.
     champion_web_check:     { credits: 2,  label: 'por verificación web', variable: false },

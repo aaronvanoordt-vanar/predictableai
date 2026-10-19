@@ -2164,6 +2164,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       Bandeja
       <span id="nav-bandeja-badge" class="nav-badge" style="display:none">0</span>
     </div>
+    <!-- Contenido en LinkedIn con aprobación (2026-10-17, js/linkedin-content.js +
+         edge function `linkedin-content`): social selling con ideas → borrador →
+         aprobado → programado → publicado. No es una pestaña de Prospección:
+         tiene su propia página. -->
+    <div class="nav-item" data-page="linkedin-content" onclick="nav(this,'linkedin-content');if(window.linkedinContent)window.linkedinContent.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 7v4M5 5v.01M8 11V8.5a1.5 1.5 0 013 0V11M8 7v4"/></svg>
+      Contenido
+    </div>
     <!-- Automatizaciones (2026-10-17, js/automations.js): reglas «cuando → si →
          entonces» sobre Radar, Listas, enriquecimiento, investigación IA y
          Campañas, con aprobación humana por defecto. Motor: automation-run.
@@ -2463,6 +2471,17 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
   <div id="ai-training-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: CONTENIDO EN LINKEDIN (js/linkedin-content.js) ═══════ -->
+<div class="page fade-in" id="page-linkedin-content" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Contenido</div>
+      <div class="topbar-sub">Ideas, borradores y calendario de tus posts de LinkedIn, con tu aprobación antes de publicar</div>
+    </div>
+  </div>
+  <div id="linkedin-content-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: AUTOMATIZACIONES (js/automations.js) ═══════ -->
@@ -3339,7 +3358,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/radar.js?v=20261017"></script>
 <script src="js/radar-live.js?v=20261017"></script>
 <script src="js/clients.js?v=20260824-sheets"></script>
-<script src="js/agency.js?v=20261018"></script>
+<script src="js/agency.js?v=20261019"></script>
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js?v=20261017"></script>
 <script src="js/dialer.js?v=20261018"></script>
@@ -3347,6 +3366,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/meeting-report.js"></script>
 <script src="js/learning.js?v=20261017"></script>
 <script src="js/ai-training.js?v=20260923"></script>
+<script src="js/linkedin-content.js?v=20261017"></script>
 <script src="js/tam-map.js?v=20261017"></script>
 <script src="js/integrations.js?v=20260923"></script>
 <script src="js/dev-docs.js?v=20260923"></script>
@@ -3359,7 +3379,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/intel-hub-cadence-tabs.js?v=20261017"></script>
 <!-- Contexto estratégico IA: PESTEL + 5 fuerzas de Porter + FODA→CAME (contexto opcional, debajo del Intelligence Hub) -->
 <script src="js/coda-ai.js"></script>
-<script src="js/context-gate.js?v=20261018b"></script>
+<script src="js/context-gate.js?v=20261018c"></script>
 <script src="js/onboarding-tour.js"></script>
 <script src="js/miforms-prompt.js"></script>
 <script src="js/ux.js?v=20260919b"></script>
