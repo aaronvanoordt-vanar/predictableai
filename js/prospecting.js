@@ -250,7 +250,6 @@
   var SVG_USER_PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>';
   // Icon matching the Campañas sidebar glyph (CTA «Crear campaña con esta lista»).
   var SVG_PHONE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h3.5l1.8 4.6-2.3 1.4a10 10 0 0 0 5 5l1.4-2.3L19 13.5V17a2 2 0 0 1-2.1 2A16 16 0 0 1 3 5.1 2 2 0 0 1 5 3z"/></svg>';
-  var SVG_RESEARCH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h9M4 10h6M4 15h5"/><circle cx="16.5" cy="14.5" r="3.5"/><path d="M19 17l2.5 2.5"/></svg>';
   var SVG_CAMPAIGN = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>';
 
   // Códigos de país más usados en LatAm + España/EE.UU. (celular es texto
@@ -360,10 +359,11 @@
     '#prospecting-shell .pros-status-no_show { color:var(--amber); background:var(--amber-soft); border-color:rgba(199,126,18,.35); }',
     '#prospecting-shell .pros-ct-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }',
     // Listas: investigación previa por lead (notas + «Investigar con IA»)
-    '#prospecting-shell .pros-iconbtn.pros-research-btn:hover, #prospecting-shell .pros-iconbtn.pros-research-btn.on { color:var(--accent-ink); background:var(--accent-soft); }',
-    '#prospecting-shell .pros-iconbtn.pros-research-btn.has { color:var(--accent-ink); }',
     '#prospecting-shell .pros-iconbtn.pros-champion-btn.on { color:var(--amber, #d97706); }',
     '#prospecting-shell .pros-iconbtn.pros-champion-btn.sug { color:var(--amber, #d97706); opacity:.75; }',
+    '#prospecting-shell td.pros-notes-cell { min-width:230px; max-width:300px; }',
+    '#prospecting-shell .pros-notes-cell textarea { width:100%; min-height:62px; resize:vertical; font:inherit; font-size:12.5px; line-height:1.45; padding:7px 9px; border-radius:var(--r-sm); border:1px solid var(--border); background:var(--surface); color:var(--text); box-sizing:border-box; }',
+    '#prospecting-shell .pros-notes-actions { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:6px; }',
     '#prospecting-shell tr.pros-research-row > td { background:var(--surface2); padding:0 !important; }',
     '#prospecting-shell .pros-research { display:grid; grid-template-columns:minmax(220px,1fr) minmax(0,2fr); gap:18px; padding:16px 18px; }',
     // En pantallas angostas la tabla se desplaza en horizontal: el panel se queda fijo al ancho visible.
@@ -2690,7 +2690,6 @@
     var checked = st.selected.has(String(m.id)) ? ' checked' : '';
     var name = m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim() || '—';
     var open = st.researchOpen.has(String(m.id));
-    var hasResearch = !!(memberNotes(m).trim() || researchOf(m).angle);
     return '<tr>' +
       '<td><input type="checkbox" data-action="mem-check" data-id="' + id + '"' + checked + '></td>' +
       '<td><div style="font-weight:600">' + esc(name) + '</div>' +
@@ -2705,18 +2704,18 @@
       '<td>' + memberEmailCell(m) + '</td>' +
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
+      '<td class="pros-notes-cell">' + notesCellHtml(m, id, open) + '</td>' +
       (aiCols() ? aiCols().cellsHtml(m) : '') +
       '<td style="white-space:nowrap">' +
         // Clic para llamar (js/dialer.js): dialer de Predictable o el proveedor conectado.
         (window.Dialer && String(m.phone || '').replace(/\D/g, '').length >= 8
           ? '<button type="button" class="pros-iconbtn" data-action="call-member" data-id="' + id + '" title="Llamar">' + SVG_PHONE + '</button>' : '') +
-        '<button type="button" class="pros-iconbtn pros-research-btn' + (open ? ' on' : '') + (hasResearch ? ' has' : '') + '" data-action="toggle-research" data-id="' + id + '" title="Investigación previa: notas y ángulo con IA" aria-expanded="' + (open ? 'true' : 'false') + '">' + SVG_RESEARCH + '</button>' +
         championBtnHtml(m) +
         '<button type="button" class="pros-iconbtn" data-action="edit-member" data-id="' + id + '" title="Editar contacto">' + SVG_EDIT + '</button>' +
         '<button type="button" class="pros-iconbtn" data-action="delete-member" data-id="' + id + '" title="Eliminar contacto">' + SVG_TRASH + '</button>' +
       '</td>' +
       '</tr>' +
-      (open ? '<tr class="pros-research-row"><td colspan="' + ((isAllList() ? 10 : 9) + aiColCount()) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
+      (open ? '<tr class="pros-research-row"><td colspan="' + ((isAllList() ? 11 : 10) + aiColCount()) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
   }
 
   // ── Estado en el CRM (2026-10-17) ───────────────────────────────────────
@@ -2967,13 +2966,94 @@
     return html;
   }
 
+  // ── Columna «Notas» ─────────────────────────────────────────────────────
+  // Notas libres del vendedor, o escritas por la IA con todo lo que ya se sabe
+  // del lead (investigación, ángulo, empresa y registro público). Lo de la IA va
+  // después de un separador: «Generar con IA» solo reemplaza ese bloque y nunca
+  // toca lo que el usuario escribió.
+  var AI_NOTES_MARK = '── Notas de la IA ──';
+
+  function notesStateText(id) {
+    var v = state.listas.notesSaving[String(id)];
+    return v === 'saving' ? 'Guardando…' : v === 'error' ? 'No se pudo guardar. Reintenta.' : v === 'saved' ? 'Guardado' : '';
+  }
+
+  function hasKnownContext(m) {
+    var r = researchOf(m);
+    return !!(r.angle || r.person || r.company || memberRegistry(m));
+  }
+
+  function notesCellHtml(m, id, open) {
+    var running = isResearching(m);
+    var known = hasKnownContext(m);
+    return '<textarea data-action="research-notes" data-id="' + id + '" maxlength="5000" aria-label="Notas del contacto" placeholder="Escribe una nota o deja que la IA la arme…">' + esc(memberNotes(m)) + '</textarea>' +
+      '<div class="pros-notes-actions">' +
+        '<button type="button" class="btn btn-ai btn-sm" data-action="notes-ai" data-id="' + id + '"' +
+          (known || running ? '' : ' data-credit-cost="lead_research"') + (running ? ' disabled' : '') +
+          ' title="' + (known ? 'Arma la nota con la investigación y los datos que ya tiene este contacto' : 'Investiga este contacto y arma la nota (usa créditos)') + '">' +
+          (running ? 'Investigando…' : 'Generar con IA') + '</button>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-action="toggle-research" data-id="' + id + '" aria-expanded="' + (open ? 'true' : 'false') + '">' + (open ? 'Ocultar detalle' : 'Ver detalle') + '</button>' +
+        '<span class="pros-cellsub" data-notes-state="' + id + '">' + esc(notesStateText(id)) + '</span>' +
+      '</div>';
+  }
+
+  // Texto de la nota a partir de lo que ya hay en la fila; nunca inventa.
+  function buildAiNotes(m) {
+    var r = researchOf(m), out = [];
+    var emp = r.employment;
+    if (emp && emp.status && emp.status !== 'unknown') {
+      var em = EMPLOYMENT_META[emp.status];
+      out.push('Cargo: ' + em.label + (emp.reason ? ' — ' + emp.reason : ''));
+    }
+    if (r.person && r.person.summary) out.push('Persona: ' + r.person.summary);
+    var c = r.company || {};
+    if (c.summary) out.push('Empresa: ' + c.summary);
+    var reg = memberRegistry(m);
+    if (reg) {
+      var rb = [reg.legal_name, reg.activity && reg.activity.description, reg.founded_on ? 'desde ' + String(reg.founded_on).slice(0, 4) : '', reg.size && reg.size.label].filter(Boolean);
+      if (rb.length) out.push('Registro público: ' + rb.join(' · '));
+    }
+    if (c.signals && c.signals.length) out.push('Señales: ' + c.signals.slice(0, 3).map(function (sg) { return sg.text; }).filter(Boolean).join('; '));
+    var a = r.angle || {};
+    [['Por qué ahora', a.why_now], ['Gancho', a.hook], ['Dolor probable', a.pain], ['Qué le resuelves', a.value], ['Prueba a citar', a.proof], ['Evitar', a.avoid]]
+      .forEach(function (x) { if (x[1]) out.push(x[0] + ': ' + x[1]); });
+    if (a.questions && a.questions.length) out.push('Preguntas: ' + a.questions.slice(0, 3).join(' · '));
+    return out.join('\n');
+  }
+
+  function mergeAiNotes(existing, ai) {
+    var cut = String(existing || '').indexOf(AI_NOTES_MARK);
+    var mine = (cut === -1 ? String(existing || '') : String(existing).slice(0, cut)).replace(/\s+$/, '');
+    return (mine ? mine + '\n\n' : '') + AI_NOTES_MARK + '\n' + ai;
+  }
+
+  function applyAiNotes(id) {
+    var st = state.listas;
+    var mm = findListMember(id);
+    var ai = mm && buildAiNotes(mm);
+    if (!ai) return Promise.resolve(false);
+    st.notesDraft[String(id)] = mergeAiNotes(memberNotes(mm), ai).slice(0, 5000);
+    return saveNotes(String(id)).then(function () { return true; });
+  }
+
+  function generateNotes(id) {
+    var m = findListMember(id);
+    if (!m || isResearching(m)) return Promise.resolve();
+    // Ya hay investigación o datos: se arma la nota sin gastar créditos.
+    if (hasKnownContext(m)) {
+      return applyAiNotes(id).then(function (ok) {
+        renderListsRight();
+        toast(ok ? 'Nota armada con lo que ya sabemos de este contacto.' : 'Todavía no hay datos para armar la nota.', ok ? 'success' : 'warn');
+      }).catch(function () { toast('No se pudo guardar la nota. Reintenta.', 'error'); });
+    }
+    return runResearch(null, id, { fillNotes: true });
+  }
+
   function researchPanelHtml(m) {
     var id = esc(String(m.id));
     var st = state.listas;
     var running = isResearching(m);
     var r = researchOf(m);
-    var saving = st.notesSaving[String(m.id)];
-    var notesState = saving === 'saving' ? 'Guardando…' : saving === 'error' ? 'No se pudo guardar. Reintenta.' : saving === 'saved' ? 'Guardado' : '';
     var right = running
       ? '<div class="pros-research-sec">Investigando la empresa y verificando su cargo actual en Apollo y la web… Suele tardar entre 30 y 90 segundos. Puedes seguir trabajando: el resultado aparece aquí solo.</div>'
       : (r.angle || r.employment || r.error
@@ -2981,10 +3061,6 @@
         : '<div class="pros-research-sec">Todavía no hay investigación. La IA revisa si la persona sigue en la empresa (Apollo y su perfil público), investiga la empresa y propone cómo abordarla según tu Contexto, tu análisis de mercado y las señales del Radar.</div>');
     return '<div class="pros-research" data-research-panel="' + id + '">' +
       '<div class="pros-research-col">' +
-        '<label class="pros-lbl" for="pros-notes-' + id + '">Notas para la investigación</label>' +
-        '<textarea id="pros-notes-' + id + '" data-action="research-notes" data-id="' + id + '" maxlength="5000" placeholder="Lo que sabes de esta persona o su empresa: cómo la conociste, qué te contaron, qué revisar…">' + esc(memberNotes(m)) + '</textarea>' +
-        '<div class="pros-cellsub" data-notes-state="' + id + '">' + esc(notesState) + '</div>' +
-        '<div class="pros-cellsub">Se guardan solas. La IA las usa al investigar, en los mensajes de campaña y en el Meeting Coach.</div>' +
         meetingQualitySectionHtml(m) +
         registryPanelHtml(m) +
       '</div>' +
@@ -3126,7 +3202,7 @@
     }, 900);
   }
 
-  function runResearch(btn, id) {
+  function runResearch(btn, id, opts) {
     var st = state.listas;
     var m = findListMember(id);
     if (!m || isResearching(m)) return;
@@ -3140,8 +3216,9 @@
         if (mm && res && res.research) { mm.research = res.research; mm.research_status = res.research_status || 'ready'; }
         var emp = res && res.research && res.research.employment;
         if (emp && emp.status === 'outdated') toast('Investigación lista. Ojo: probablemente ya no trabaja en ' + (emp.listed_company || 'esa empresa') + '.', 'warn');
-        else toast('Investigación lista.', 'success');
+        else toast(opts && opts.fillNotes ? 'Investigación lista y nota armada.' : 'Investigación lista.', 'success');
         if (window.credits && typeof window.credits.refresh === 'function') window.credits.refresh();
+        return opts && opts.fillNotes ? applyAiNotes(id) : null;
       })
       .catch(function (e) {
         if (e && e.status === 402) throw new Error('No te alcanzan los créditos para investigar este lead. Recarga créditos e intenta de nuevo.');
@@ -3241,10 +3318,10 @@
       html += '<div class="pros-scroll-x"><table><thead><tr>' +
         '<th style="width:34px"><input type="checkbox" data-action="mem-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
         thFilterHtml('name') + thFilterHtml('title') + thFilterHtml('company') + thFilterHtml('country') + (all ? thFilterHtml('list') : '') + thFilterHtml('status') +
-        thFilterHtml('email') + thFilterHtml('phone') + thFilterHtml('linkedin') +
+        thFilterHtml('email') + thFilterHtml('phone') + thFilterHtml('linkedin') + '<th>Notas</th>' +
         (aiCols() ? aiCols().headHtml() : '') + '<th></th>' +
         '</tr></thead><tbody>' + (rows.length ? rows.map(listMemberRowHtml).join('') :
-          '<tr><td colspan="' + (10 + (all ? 1 : 0) + (aiCols() ? aiCols().headHtml().split('<th').length - 1 : 0)) + '" style="text-align:center;padding:28px 12px;color:var(--text3);font-size:12.5px">Sin resultados: ningún contacto coincide con la búsqueda o los filtros.</td></tr>') +
+          '<tr><td colspan="' + (11 + (all ? 1 : 0) + (aiCols() ? aiCols().headHtml().split('<th').length - 1 : 0)) + '" style="text-align:center;padding:28px 12px;color:var(--text3);font-size:12.5px">Sin resultados: ningún contacto coincide con la búsqueda o los filtros.</td></tr>') +
         '</tbody></table></div>';
       if (all) {
         html += '<div style="padding:10px 18px;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(st.members.length)) + ' contactos · El estado se actualiza al instante en todo el sistema (Campañas, dashboard y este CRM leen la misma base).</div>';
@@ -3464,12 +3541,9 @@
         if (st.notesDraft[rid] != null) saveNotes(rid).catch(function (e) { console.warn('[prospecting] notas:', e); });
       } else st.researchOpen.add(rid);
       renderListsRight();
-      if (st.researchOpen.has(rid)) {
-        var ta = st.rightEl && st.rightEl.querySelector('textarea[data-action="research-notes"][data-id="' + rid + '"]');
-        if (ta && !ta.value) ta.focus();
-      }
       return;
     }
+    if (action === 'notes-ai') return generateNotes(btn.getAttribute('data-id'));
     if (action === 'research-run') return runResearch(btn, btn.getAttribute('data-id'));
     if (action === 'call-member') {
       var cm = findListMember(btn.getAttribute('data-id'));
