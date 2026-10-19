@@ -47,6 +47,16 @@ function json(body: unknown, status = 200) {
   });
 }
 
+function jwtRole(token: string): string | null {
+  try {
+    const payload = token.split(".")[1] ?? "";
+    const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof decoded?.role === "string" ? decoded.role : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204 });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -54,9 +64,12 @@ Deno.serve(async (req: Request) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-  // Only allow service_role callers
-  const authHeader = req.headers.get("Authorization") ?? "";
-  if (authHeader !== `Bearer ${serviceKey}`) {
+  // Only allow service_role callers. pg_cron's Bearer is not always byte-equal
+  // to SUPABASE_SERVICE_ROLE_KEY (same as campaign-run / enrich-list): accept a
+  // JWT whose role claim is service_role too (the gateway already verified its
+  // signature: this function runs with JWT verification).
+  const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
+  if (!token || (token !== serviceKey && jwtRole(token) !== "service_role")) {
     return json({ error: "Unauthorized" }, 401);
   }
 
