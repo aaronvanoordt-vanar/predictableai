@@ -27,12 +27,19 @@ type Json = any;
 // sincronización avisa que falta el permiso en vez de romper la conexión.
 export const HUBSPOT_SYNC_SCOPES = [
   "crm.objects.deals.read",
+  // CRM nativo (2026-10-19): enviar a HubSpot los cambios de etapa hechos en
+  // Predictable. Opcional: sin él la sincronización solo trae.
+  "crm.objects.deals.write",
   "crm.objects.owners.read",
   "crm.objects.companies.read",
 ];
 
 export const CONTACT_PROPS = ["email", "firstname", "lastname", "lifecyclestage", "hubspot_owner_id", "hs_lead_status", "lastmodifieddate"];
-export const DEAL_PROPS = ["dealname", "dealstage", "pipeline", "amount", "hubspot_owner_id", "hs_is_closed_won", "hs_lastmodifieddate"];
+export const DEAL_PROPS = [
+  "dealname", "dealstage", "pipeline", "amount", "hubspot_owner_id", "hs_is_closed_won", "hs_lastmodifieddate",
+  // CRM nativo (integrations/native-crm.ts): moneda, cierre y motivo de pérdida.
+  "deal_currency_code", "closedate", "closed_lost_reason",
+];
 export const COMPANY_PROPS = ["name", "domain", "lifecyclestage", "hubspot_owner_id"];
 
 export const LIFECYCLE_LABELS: Record<string, string> = {

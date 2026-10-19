@@ -79,6 +79,7 @@ import {
 import { chunk, type Lead, type ProviderId, type Skipped } from "../_shared/integrations.ts";
 import { companyDomain } from "../_shared/crm-common.ts";
 import { apiCall, call, type Conn, type Ctx, form, HttpError, type Json, logSync, oauthCreds, patchConn } from "./runtime.ts";
+import { hubspotToNative, type NativeCounts, runNativeSync } from "./native-crm.ts";
 
 export { HUBSPOT_SYNC_SCOPES };
 
@@ -813,6 +814,8 @@ export interface HubspotSyncResult {
   suppressedIds: string[];
   missingScopes: boolean;
   cursor: number | null;
+  /** Deals → oportunidades del CRM de Predictable (native-crm.ts). */
+  native?: NativeCounts | null;
 }
 
 async function hsPost(ctx: Ctx, conn: Conn, path: string, body: Json): Promise<Json> {
@@ -976,6 +979,7 @@ export async function hubspotSync(ctx: Ctx, conn: Conn, opts: { memberIds?: stri
   const writes: { id: string; state: Json; suppress?: string | null }[] = [];
   const newlySuppressed: { id: string; reason: string }[] = [];
   const statusChanges = new Map<string, string[]>();
+  const toNative: { memberId: string; deals: Json[]; companyId: string | null }[] = [];
   for (const m of rows) {
     const email = String(m.email ?? "").trim().toLowerCase();
     const contact = hsContacts.get(email) ?? null;
@@ -989,6 +993,7 @@ export async function hubspotSync(ctx: Ctx, conn: Conn, opts: { memberIds?: stri
     res.matched++;
     const deals = contact ? (dealsByContact.get(String(contact.id)) ?? []).map((id) => dealById.get(id)).filter(Boolean) : [];
     const state: Json = leadState(contact, deals, company, hctx.stages, hctx.owners, portal);
+    toNative.push({ memberId: m.id, deals, companyId: company?.id ? String(company.id) : null });
     const reason = suppressionReason(state);
     // Etapa de HubSpot → estado del lead (mapa del usuario; null = no mapear).
     if (opts.statusMap) {
@@ -1009,6 +1014,14 @@ export async function hubspotSync(ctx: Ctx, conn: Conn, opts: { memberIds?: stri
     } else if (m.crm_suppressed_at) res.lifted++;
   }
   await writeMemberStates(ctx, "hubspot", writes);
+  // Deals y empresas → oportunidades y cuentas del CRM de Predictable. Nunca
+  // corta la sincronización de #356 (sin el CRM nativo, se omite).
+  try {
+    res.native = await hubspotToNative(ctx, conn, toNative);
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 428) throw e;
+    console.warn("[integrations] hubspot → CRM nativo:", e instanceof Error ? e.message : e);
+  }
   for (const [status, ids] of statusChanges) {
     for (const part of chunk(ids, 200)) {
       // El trigger de la tabla sella status_changed_at y el evento de la API pública.
@@ -1078,6 +1091,8 @@ export async function runHubspotPull(ctx: Ctx, conn: Conn, trigger: "cron" | "ma
   const sc = syncConfig(conn);
   try {
     const r = await hubspotSync(ctx, conn, { cursor: sc.cursor ?? null, statusMap: statusMapOf(conn) });
+    // Lo que ya se trajo + los cambios de etapa de Predictable que faltan enviar.
+    if (!r.missingScopes) await runNativeSync(ctx, conn, trigger, r.native ?? undefined);
     await saveSync(ctx, conn, {
       cursor: r.missingScopes ? sc.cursor ?? null : r.cursor,
       missing_scopes: r.missingScopes,
