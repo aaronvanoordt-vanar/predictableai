@@ -14,6 +14,9 @@ const INSIGHTS: InsightRow[] = [
   { scope: "objection", key: "precio", label: "Es muy caro", verdict: "fails", metrics: { count: 4 } },
   { scope: "objection", key: "timing", label: "No es el momento", verdict: "neutral", metrics: { count: 9 } },
   { scope: "winning_message", key: "email", label: "x", verdict: "works", metrics: {} },
+  { scope: "meeting_quality", key: "angle:diagnostico", label: "Ángulo: «diagnóstico gratis»", verdict: "works", metrics: { qualified: 6, judged: 8, no_show: 1 } },
+  { scope: "meeting_quality", key: "title:gerente", label: "Cargo: Gerente de compras", verdict: "fails", metrics: { qualified: 0, judged: 6, no_show: 4 } },
+  { scope: "meeting_quality", key: "all", label: "Calidad de reunión (total)", verdict: "works", metrics: { qualified: 6, judged: 14 } },
 ];
 
 Deno.test("sin memoria no hay bloque (comportamiento de siempre)", () => {
@@ -90,6 +93,15 @@ Deno.test("el bloque tiene tope de tamaño", () => {
   }));
   const b = buildIntelligenceBlock({ audience: "hub", insights: many });
   assert(b.length < 3200);
+});
+
+Deno.test("la calidad de reunión del cliente llega a todas las IAs, sin el total", () => {
+  for (const audience of ["hub", "radar", "campaign", "outreach"] as const) {
+    const b = buildIntelligenceBlock({ audience, insights: INSIGHTS });
+    assert(b.includes("Ángulo: «diagnóstico gratis» (6 de 8 reuniones calificadas por el cliente, 1 no se presentaron)"), audience);
+    assert(b.includes("Cargo: Gerente de compras"), audience);
+    assert(!b.includes("Calidad de reunión (total)"), audience);
+  }
 });
 
 Deno.test("motivos de pérdida del CRM: llegan a campañas, mensajes y Hub, no al Radar", () => {

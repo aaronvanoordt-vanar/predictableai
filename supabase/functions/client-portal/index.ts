@@ -35,6 +35,17 @@
  *                     mercado y las empresas de la última investigación del
  *                     Radar. Sin confirmar no se publica nada; nunca salen
  *                     nombres ni datos de contacto de personas.
+ *   meetings        → { available, meetings[] } — las reuniones agendadas o
+ *                     tomadas en el espacio del cliente (lead_meetings): nombre,
+ *                     cargo, empresa, país, fechas y el veredicto. Nunca email,
+ *                     teléfono ni LinkedIn: el cliente necesita reconocer la
+ *                     reunión, no los datos de contacto.
+ *   rate_meeting    → { meeting } — el cliente marca la reunión: se dio / no
+ *                     se presentó / calificada / no calificada + motivo corto
+ *                     (_shared/meeting-quality.ts). `verdict: null` la desmarca.
+ *                     Vuelve al equipo (detalle del lead) y a learning-loop.
+ *   weekly_reports  → { reports[] } — los últimos reportes semanales
+ *                     (client-report los calcula; aquí solo se leen).
  *
  * Si clients.portal_can_edit es false, `get` sigue funcionando y todo lo demás
  * responde 403: el equipo puede dejar un portal en solo lectura sin romper el
@@ -44,6 +55,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
+import { cleanReason, cleanVerdict } from "../_shared/meeting-quality.ts";
 
 const BUCKET = "client-assets";
 const MAX_BODY_BYTES = 64 * 1024;
@@ -78,7 +90,7 @@ const CLIENT_COLUMNS = [
 ];
 
 /** Acciones que solo leen: siguen funcionando con el portal en solo lectura. */
-const READ_ACTIONS = new Set(["get", "intelligence"]);
+const READ_ACTIONS = new Set(["get", "intelligence", "meetings", "weekly_reports"]);
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -272,6 +284,57 @@ async function loadIntelligence(db: Db, clientId: string) {
   return { available: !!(company || market || radar), company, market, radar };
 }
 
+// ── Reuniones y su calidad ─────────────────────────────────────────────────
+
+async function workspaceUser(db: Db, clientId: string): Promise<string | null> {
+  const ws = await db.from("client_workspaces").select("workspace_user_id").eq("client_id", clientId).maybeSingle();
+  return ws.data?.workspace_user_id ?? null;
+}
+
+// deno-lint-ignore no-explicit-any
+function publicMeeting(lm: any, m: any) {
+  const name = str(m?.name, 120) || [str(m?.first_name, 60), str(m?.last_name, 60)].filter(Boolean).join(" ");
+  return {
+    id: lm.member_id,
+    name: name || "Sin nombre",
+    title: str(m?.title, 140),
+    company: str(m?.company, 140),
+    country: str(m?.country, 80),
+    booked_at: lm.booked_at ?? null,
+    held_at: lm.held_at ?? null,
+    verdict: lm.client_verdict ?? null,
+    reason: lm.client_reason ?? null,
+    verdict_at: lm.verdict_at ?? null,
+  };
+}
+
+const MEETING_COLS = "member_id, booked_at, held_at, client_verdict, client_reason, verdict_at";
+const MEMBER_COLS = "id, name, first_name, last_name, title, company, country";
+
+async function loadMeetings(db: Db, clientId: string) {
+  const uid = await workspaceUser(db, clientId);
+  if (!uid) return { available: false, meetings: [] };
+  const res = await db.from("lead_meetings").select(MEETING_COLS)
+    .eq("user_id", uid).order("booked_at", { ascending: false, nullsFirst: false }).limit(200);
+  if (res.error) {
+    // Migración sin aplicar: el portal sigue igual, sin la sección.
+    console.warn("[client-portal] meetings", res.error.message);
+    return { available: false, meetings: [] };
+  }
+  const rows = res.data ?? [];
+  // deno-lint-ignore no-explicit-any
+  const ids = rows.map((r: any) => r.member_id);
+  // deno-lint-ignore no-explicit-any
+  const members = new Map<string, any>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const ms = await db.from("prospect_list_members").select(MEMBER_COLS).eq("user_id", uid).in("id", ids.slice(i, i + 200));
+    // deno-lint-ignore no-explicit-any
+    for (const m of (ms.data ?? []) as any[]) members.set(m.id, m);
+  }
+  // deno-lint-ignore no-explicit-any
+  return { available: true, meetings: rows.filter((r: any) => members.has(r.member_id)).map((r: any) => publicMeeting(r, members.get(r.member_id))) };
+}
+
 async function touchPortal(db: Db, clientId: string) {
   await db.from("clients")
     .update({ portal_updated_at: new Date().toISOString() })
@@ -354,6 +417,48 @@ Deno.serve(async (req) => {
 
     if (action === "intelligence") {
       return json(await loadIntelligence(db, clientId), 200, origin);
+    }
+
+    if (action === "meetings") {
+      return json(await loadMeetings(db, clientId), 200, origin);
+    }
+
+    if (action === "rate_meeting") {
+      const memberId = String(body?.member_id ?? "");
+      if (!UUID_RE.test(memberId)) return json({ error: "Reunión inválida" }, 400, origin);
+      const verdict = cleanVerdict(body?.verdict);
+      if (verdict === undefined) return json({ error: "Elige si se dio, no se presentó, calificada o no calificada." }, 400, origin);
+      const uid = await workspaceUser(db, clientId);
+      if (!uid) return json({ error: "Reunión no encontrada" }, 404, origin);
+      // Solo reuniones del espacio de ESTE cliente: el filtro por user_id es la autorización.
+      const upd = await db.from("lead_meetings")
+        .update({
+          client_verdict: verdict,
+          client_reason: verdict ? cleanReason(body?.reason) : null,
+          verdict_at: verdict ? new Date().toISOString() : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("member_id", memberId).eq("user_id", uid)
+        .select(MEETING_COLS).maybeSingle();
+      if (upd.error) {
+        console.error("[client-portal] rate_meeting", upd.error.message);
+        return json({ error: "No se pudo guardar" }, 500, origin);
+      }
+      if (!upd.data) return json({ error: "Reunión no encontrada" }, 404, origin);
+      const m = await db.from("prospect_list_members").select(MEMBER_COLS).eq("id", memberId).eq("user_id", uid).maybeSingle();
+      await touchPortal(db, clientId);
+      return json({ meeting: publicMeeting(upd.data, m.data) }, 200, origin);
+    }
+
+    if (action === "weekly_reports") {
+      const res = await db.from("client_weekly_reports")
+        .select("week_start, week_end, timezone, metrics, computed_at, email_status, emailed_at")
+        .eq("client_id", clientId).order("week_start", { ascending: false }).limit(12);
+      if (res.error) {
+        console.warn("[client-portal] weekly_reports", res.error.message);
+        return json({ reports: [] }, 200, origin);
+      }
+      return json({ reports: res.data ?? [] }, 200, origin);
     }
 
     if (action === "upload_url") {

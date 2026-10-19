@@ -36,6 +36,14 @@
     (document.head || document.documentElement).appendChild(wsScript);
   }
 
+  // Reporte semanal + calidad de reunión de la ficha (js/client-reports.js).
+  if (!window.ClientReports && !document.querySelector('script[data-client-reports-js]')) {
+    var crScript = document.createElement('script');
+    crScript.src = 'js/client-reports.js';
+    crScript.setAttribute('data-client-reports-js', '1');
+    (document.head || document.documentElement).appendChild(crScript);
+  }
+
   var BUCKET = 'client-assets';
 
   var LATAM = [
@@ -778,6 +786,8 @@
             '<div class="cl-thr-grid" id="cl-thresholds"></div>' +
           '</div>' +
 
+          '<div class="cl-sec cl-span2" id="cl-weekly"></div>' +
+
           '<div class="cl-sec">' +
             '<div class="cl-sec-title">Material de apoyo' +
               '<button class="btn btn-ghost btn-sm" id="cl-mat-btn">+ Subir PDF</button>' +
@@ -813,6 +823,9 @@
     renderRatios();
     renderThresholds();
     renderMaterials();
+    var weekly = state.body.querySelector('#cl-weekly');
+    if (weekly && window.ClientReports) window.ClientReports.mount(weekly, c, { esc: esc, toast: toast, patchClient: patchClient });
+    else if (weekly) weekly.remove();
   }
 
   function bindDetail() {

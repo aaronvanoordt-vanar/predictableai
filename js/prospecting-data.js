@@ -515,6 +515,23 @@
     if (error) throw new Error('No se pudo actualizar el contacto: ' + error.message);
   }
 
+  // ── Calidad de reunión según el cliente (portal → lead_meetings) ─────
+  // Solo lectura: el veredicto lo escribe el cliente final desde su portal
+  // (edge function client-portal). Sin la tabla (migración sin aplicar) o sin
+  // reuniones devuelve {} y la tabla de Listas se ve como siempre.
+  async function fetchMeetingQuality(memberIds) {
+    const out = {};
+    const ids = (memberIds || []).filter(Boolean);
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await sb().from('lead_meetings')
+        .select('member_id, booked_at, held_at, client_verdict, client_reason, verdict_at')
+        .in('member_id', ids.slice(i, i + 200));
+      if (error) { console.warn('[prospecting-data] lead_meetings', error.message); return out; }
+      for (const r of data || []) out[r.member_id] = r;
+    }
+    return out;
+  }
+
   // ── Contactos (CRM): todos los miembros de todas las listas ─────────
   // Una sola consulta con el nombre de la lista embebido (FK list_id) para
   // que la pestaña Contactos muestre a qué lista pertenece cada persona.
@@ -1785,6 +1802,7 @@
     syncIcpFromSearch,
     fetchLists,
     fetchAllContacts,
+    fetchMeetingQuality,
     setContactStatus,
     setFavorite,
     createList,

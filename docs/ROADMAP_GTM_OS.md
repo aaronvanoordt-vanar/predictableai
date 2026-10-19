@@ -89,7 +89,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [x] ¿El número está en WhatsApp? antes de gastar plantilla (tipo de línea del normalizador del waterfall + aprendizaje de #131026; no existe validación oficial previa: `docs/OMNICANAL.md`)
 - [x] Listas "No llamar" — lista de supresión por canal + bajas centralizadas + registros oficiales (`docs/COMPLIANCE_LATAM.md`)
 - [x] Horarios de contacto de Colombia (Ley 2300): horario legal, festivos y un envío por día por lead en `campaign-run` (`_shared/contact-rules.ts`)
-- [ ] Calidad de reunión en el portal y benchmarks de Eleva
+- [x] Calidad de reunión en el portal y benchmarks de Eleva — estructura lista; faltan el histórico y las plantillas reales de Eleva (`docs/BENCHMARKS.md`)
 - [x] Agendamiento con recordatorios por WhatsApp — `docs/AGENDA.md` (Google Calendar y Outlook)
 - [ ] Cobro local y CFDI (`docs/BILLING_LATAM.md`)
   - [x] Fase A: factura de Stripe con el número fiscal del cliente, moneda local y OXXO/Pix en recargas (#344; faltan los pasos del Dashboard de Stripe y la consulta al contador sobre el 18-B)

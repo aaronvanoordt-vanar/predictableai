@@ -16,6 +16,9 @@
  *     qué perfiles responden (vía `loadSellerContext`, que lo anexa solo);
  *   · el generador de campañas elige canales y ángulos con evidencia;
  *   · el redactor de mensajes sabe qué perfiles responden y qué objeciones vienen;
+ *   · todos saben qué canales, ángulos y perfiles traen reuniones que el
+ *     CLIENTE califica (portal → lead_meetings → scope `meeting_quality`),
+ *     no solo reuniones agendadas;
  *   · y todos saben por qué se pierden las oportunidades (motivo obligatorio
  *     al marcar una perdida en el CRM, scope `deal_loss`, `_shared/crm.ts`).
  *
@@ -139,10 +142,10 @@ export function distillHubRules(rows: HubFeedbackRow[]): Map<string, { rules: st
 // ─────────────────────────────────────────────────────────────────────────────
 
 const AUDIENCE_SCOPES: Record<Audience, string[]> = {
-  hub:      ["icp_attribute", "channel", "angle", "radar_detector", "objection", "deal_loss"],
-  radar:    ["icp_attribute", "radar_detector"],
-  campaign: ["icp_attribute", "channel", "angle", "objection", "deal_loss"],
-  outreach: ["icp_attribute", "objection", "deal_loss"],
+  hub:      ["icp_attribute", "channel", "angle", "radar_detector", "objection", "deal_loss", "meeting_quality"],
+  radar:    ["icp_attribute", "radar_detector", "meeting_quality"],
+  campaign: ["icp_attribute", "channel", "angle", "objection", "deal_loss", "meeting_quality"],
+  outreach: ["icp_attribute", "objection", "deal_loss", "meeting_quality"],
 };
 
 function metricTail(r: InsightRow): string {
@@ -151,6 +154,7 @@ function metricTail(r: InsightRow): string {
     case "icp_attribute": return `${m.positive ?? 0} de ${m.contacted ?? 0} respondieron, ${m.reply_rate ?? 0} % vs. ${m.base_rate ?? 0} % promedio`;
     case "channel": case "angle": return `${m.replies ?? 0} respuestas en ${m.sent ?? 0} envíos, ${m.reply_rate ?? 0} %`;
     case "radar_detector": return `${m.hit_rate ?? 0} % de señales útiles, ${m.replies ?? 0} respuestas, ${m.meetings ?? 0} reuniones`;
+    case "meeting_quality": return `${m.qualified ?? 0} de ${m.judged ?? 0} reuniones calificadas por el cliente${m.no_show ? `, ${m.no_show} no se presentaron` : ""}`;
     case "deal_loss": {
       const comps = (Array.isArray(m.competitors) ? m.competitors : []).map((c: Json) => clip(c?.name, 40)).filter(Boolean);
       return `${m.count ?? 0} de ${m.lost_total ?? 0} oportunidades perdidas, ${m.share ?? 0} %${comps.length ? `; contra ${comps.join(", ")}` : ""}`;
@@ -161,7 +165,7 @@ function metricTail(r: InsightRow): string {
 
 function verdictLines(rows: InsightRow[], scope: string, verdict: "works" | "fails"): string[] {
   return rows
-    .filter((r) => r.scope === scope && r.verdict === verdict && str(r.label).trim())
+    .filter((r) => r.scope === scope && r.verdict === verdict && str(r.label).trim() && !(scope === "meeting_quality" && r.key === "all"))
     .slice(0, MAX_PER_LIST)
     .map((r) => `- ${clip(r.label, 120)} (${metricTail(r)})`);
 }
@@ -193,6 +197,10 @@ export function buildIntelligenceBlock(opts: {
   if (scopes.has("radar_detector")) {
     section("Señales de compra del Radar que SÍ traen oportunidades:", verdictLines(rows, "radar_detector", "works"));
     section("Señales de compra del Radar que el vendedor descarta:", verdictLines(rows, "radar_detector", "fails"));
+  }
+  if (scopes.has("meeting_quality")) {
+    section("Lo que trae reuniones que el CLIENTE califica (repítelo):", verdictLines(rows, "meeting_quality", "works"));
+    section("Lo que trae reuniones que el cliente NO califica o a las que el lead no llega (evítalo):", verdictLines(rows, "meeting_quality", "fails"));
   }
   if (scopes.has("objection")) {
     const objs = rows

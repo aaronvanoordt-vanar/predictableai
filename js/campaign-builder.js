@@ -5,8 +5,11 @@
  *
  *   1. Base     — nombre, lista de leads (con cuántos tienen teléfono / email /
  *                 LinkedIn) y punto de partida: cadencia recomendada por la IA
- *                 (edge function generate-campaign), plantilla fija, clonar
- *                 otra campaña o desde cero.
+ *                 (edge function generate-campaign), plantilla fija, plantilla
+ *                 de Eleva por vertical y país (tabla campaign_templates, la
+ *                 carga js/campaigns.js con `loadTemplates`; vacía hasta que el
+ *                 dueño cargue las reales, y sin plantillas no se muestra),
+ *                 clonar otra campaña o desde cero.
  *   2. Cadencia — línea de tiempo vertical sobre el grafo `campaigns.flow`
  *                 (js/campaign-flow.js): tarjetas por canal, chip de espera,
  *                 "+" entre tarjetas para WhatsApp / Email / LinkedIn /
@@ -543,6 +546,10 @@
       advanced: false,
       saving: false,
       emailAccounts: o.emailAccounts || null,
+      eleva: [],          // plantillas de Eleva publicadas (campaign_templates)
+      elevaVertical: '',
+      elevaCountry: '',
+      elevaPick: '',
     };
 
     var root = h('div', { class: 'cb-root' });
@@ -560,6 +567,12 @@
         }
         if (st.step >= 2) render();
       }).catch(function () { st.emailAccounts = []; });
+    }
+    if (o.loadTemplates) {
+      Promise.resolve(o.loadTemplates()).then(function (list) {
+        st.eleva = (Array.isArray(list) ? list : []).filter(function (t) { return t && t.id && L.validate(t.flow).ok; });
+        if (st.eleva.length && st.step === 1) render();
+      }).catch(function () { st.eleva = []; });
     }
     loadMembers();
     render();
@@ -842,7 +855,7 @@
       markCustom();
     }
     function markCustom() {
-      if (st.draft.origin && st.draft.origin !== 'custom' && !/^(ai|template:|clone:)/.test(st.draft.origin)) st.draft.origin = 'custom';
+      if (st.draft.origin && st.draft.origin !== 'custom' && !/^(ai|template:|clone:|eleva:)/.test(st.draft.origin)) st.draft.origin = 'custom';
     }
     function setFlow(flow, origin) {
       st.draft.flow = L.normalize(flow);
@@ -976,6 +989,8 @@
         if (missing.length) b.appendChild(h('div', { class: 'cb-warn', text: 'Necesita ' + joinAnd(missing.map(needLabel)) + '. Puedes empezar igual y conectar después.' }));
         cards.appendChild(b);
       });
+      // Plantillas de Eleva (por vertical y país)
+      if (st.eleva.length) cards.appendChild(elevaCard());
       // Clonar
       var sources = (o.campaigns || []).filter(function (c) { return c.flow && L.normalize(c.flow).nodes.length && String(c.id) !== String(st.draft.id || ''); });
       if (sources.length) {
@@ -996,6 +1011,53 @@
       box.appendChild(cards);
       if (st.rationale && st.startKind === 'ai') box.appendChild(h('div', { class: 'cb-note accent' }, h('b', { text: 'Por qué esta cadencia: ' }), st.rationale));
       return box;
+    }
+    function elevaCard() {
+      var verticals = [], countries = [];
+      st.eleva.forEach(function (t) {
+        if (verticals.indexOf(t.vertical) === -1) verticals.push(t.vertical);
+        var c = t.country || '';
+        if (countries.indexOf(c) === -1) countries.push(c);
+      });
+      var matches = st.eleva.filter(function (t) {
+        return (!st.elevaVertical || t.vertical === st.elevaVertical) && (!st.elevaCountry || (t.country || '') === st.elevaCountry);
+      });
+      if (!matches.some(function (t) { return t.id === st.elevaPick; })) st.elevaPick = matches.length ? matches[0].id : '';
+      var pick = st.eleva.find(function (t) { return t.id === st.elevaPick; }) || null;
+      var card = h('div', { class: 'cb-start' + (st.startKind && st.startKind.indexOf('eleva:') === 0 ? ' on' : '') });
+      card.appendChild(h('div', { class: 'cb-start-title', text: 'Plantilla de Eleva' }));
+      card.appendChild(h('div', { class: 'cb-start-sub', text: 'Cadencias que Eleva usa por vertical y país. Al usarla eliges tus plantillas de WhatsApp y tus campañas de LinkedIn.' }));
+      var vSel = h('select', { 'aria-label': 'Vertical', onchange: function () { st.elevaVertical = vSel.value; render(); } });
+      vSel.appendChild(h('option', { value: '', text: 'Todas las verticales' }));
+      verticals.forEach(function (v) { vSel.appendChild(h('option', { value: v, text: v, selected: v === st.elevaVertical })); });
+      var cSel = h('select', { 'aria-label': 'País', onchange: function () { st.elevaCountry = cSel.value; render(); } });
+      cSel.appendChild(h('option', { value: '', text: 'Todos los países' }));
+      countries.forEach(function (c) { if (c) cSel.appendChild(h('option', { value: c, text: c, selected: c === st.elevaCountry })); });
+      card.appendChild(h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' }, vSel, cSel));
+      if (matches.length) {
+        var tSel = h('select', { 'aria-label': 'Plantilla', onchange: function () { st.elevaPick = tSel.value; render(); } });
+        matches.forEach(function (t) { tSel.appendChild(h('option', { value: t.id, text: t.name + (t.country ? ' · ' + t.country : ''), selected: t.id === st.elevaPick })); });
+        card.appendChild(tSel);
+      } else {
+        card.appendChild(h('div', { class: 'cb-hint', text: 'No hay plantillas para esa combinación.' }));
+      }
+      if (pick) {
+        if (pick.summary) card.appendChild(h('div', { class: 'cb-start-sub', text: pick.summary }));
+        if (pick.results_note) card.appendChild(h('div', { class: 'cb-hint', text: pick.results_note }));
+        card.appendChild(miniFlow(pick.flow));
+        card.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cb-start', 'data-kind': 'eleva', text: 'Usar esta plantilla' }));
+      }
+      return card;
+    }
+    /** Copia de la plantilla sin lo que es de otra cuenta: plantilla de WhatsApp, campaña de Dripify. */
+    function elevaFlow(t) {
+      var f = L.cloneWithNewIds(t.flow);
+      L.actions(f).forEach(function (a) {
+        var set = a.settings || {};
+        ['template_name', 'template_slot', 'linkedin_campaign_id', 'dripify_campaign_id', 'linkedin_campaign_name', 'dripify_campaign_name'].forEach(function (k) { delete set[k]; });
+        a.settings = set;
+      });
+      return f;
     }
     // «A y B» en el idioma de la interfaz (js/i18n.js); sin i18n, en español.
     function joinAnd(arr) { return global.i18n && global.i18n.list ? global.i18n.list(arr) : arr.join(' y '); }
@@ -1027,6 +1089,15 @@
           setFlow(L.cloneWithNewIds(src.flow), 'clone:' + src.id);
           if (!st.draft.name) st.draft.name = src.name + ' (copia)';
           st.startKind = 'clone:' + src.id;
+          st.step = 2;
+          return render();
+        }
+        if (kind === 'eleva') {
+          var et = st.eleva.find(function (x) { return x.id === st.elevaPick; });
+          if (!et) return toast('Elige una plantilla de Eleva.', 'warn');
+          setFlow(elevaFlow(et), 'eleva:' + et.id);
+          if (!st.draft.name) st.draft.name = String(et.name || '').slice(0, 120);
+          st.startKind = 'eleva:' + et.id;
           st.step = 2;
           return render();
         }

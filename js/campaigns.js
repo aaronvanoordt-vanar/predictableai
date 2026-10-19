@@ -3268,6 +3268,7 @@
       // La clave cambia si cambia la lista de campañas, su nombre o su estado: ahí se recalcula.
       var key = 'overview|' + state.campaigns.map(function (c) { return c.id + ':' + c.status + ':' + c.name; }).join(',');
       wrap.appendChild(analyticsHost('overview', state.campaigns, key));
+      if (global.benchmarks && global.benchmarks.mount) wrap.appendChild(benchmarksHost());
       return wrap;
     }
     var grid = h('div', { class: 'cmp-cards' });
@@ -3317,6 +3318,13 @@
       openLinkedinDesigner: openLinkedinDesigner,
       senderInfo: sender,
       fetchMembers: function (id) { return pd().fetchMembers(id); },
+      // Plantillas de Eleva por vertical y país (vacías hasta que el dueño las cargue).
+      loadTemplates: function () {
+        return sb().from('campaign_templates')
+          .select('id, vertical, country, name, summary, results_note, flow, sort')
+          .eq('published', true).order('sort', { ascending: true }).order('name', { ascending: true })
+          .then(function (r) { return r.error ? [] : (r.data || []); }, function () { return []; });
+      },
       edgeFetch: edgeFetch,
       confirm: confirmModal,
       toast: toast,
@@ -3408,6 +3416,13 @@
       onOpenCampaign: function (id) { openCampaign(id); },
     });
     return host;
+  }
+  /** Benchmarks por país e industria (js/benchmarks.js): host persistente, se carga una vez por visita. */
+  function benchmarksHost() {
+    if (state.benchHost) return state.benchHost;
+    state.benchHost = h('div');
+    global.benchmarks.mount(state.benchHost, { h: h, esc: esc, toast: toast, edgeFetch: edgeFetch });
+    return state.benchHost;
   }
   function hasAnalytics() { return !!(global.campaignAnalytics && global.campaignAnalytics.mount); }
   function invalidateAnalytics() { state.ana = null; }
