@@ -75,7 +75,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Envío de email propio con warm-up y monitor de entregabilidad — en curso (sesión propia)
 
 **P1**
-- [ ] Columnas de IA en Listas — en curso (sesión propia)
+- [x] Columnas de IA en Listas — PR #345 + #381 (respuesta con evidencia fila por fila, filtros, CSV, contexto y condición en Campañas)
 - [x] Dialer nativo con la llamada en el Meeting Coach (`docs/TELEFONIA.md`)
 - [x] Conectores CloudTalk, Aircall, Ringover (`docs/TELEFONIA.md`)
 - [ ] LinkedIn nativo
