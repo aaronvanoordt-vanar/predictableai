@@ -364,7 +364,7 @@
   var LANGS = {
     es: { locale: 'es-MX', html: 'es', label: 'ES · Español', short: 'ES', name: 'Español' },
     en: { locale: 'en-US', html: 'en', label: 'EN · English', short: 'EN', name: 'English', dict: 'i18n/en.js?v=20261019' },
-    'pt-BR': { locale: 'pt-BR', html: 'pt-BR', label: 'PT · Português', short: 'PT', name: 'Português (Brasil)', dict: 'i18n/pt-BR.js?v=20261017' }
+    'pt-BR': { locale: 'pt-BR', html: 'pt-BR', label: 'PT · Português', short: 'PT', name: 'Português (Brasil)', dict: 'i18n/pt-BR.js?v=20261019' }
   };
   var DICTS = window.I18N_DICTS = window.I18N_DICTS || {};
   DICTS.en = Object.assign({}, ES_EN, DICTS.en || {});
@@ -774,7 +774,7 @@
     var want = (host.getAttribute('data-i18n-picker') || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
     var langs = want.length ? want.map(cleanLang) : Object.keys(LANGS);
     host.setAttribute('role', 'radiogroup');
-    if (!host.getAttribute('aria-label')) host.setAttribute('aria-label', 'Idioma');
+    if (!host.getAttribute('aria-label')) host.setAttribute('aria-label', (currentLang() === 'en' ? 'Language' : 'Idioma'));
     host.setAttribute('data-no-i18n', '');
     langs.forEach(function (l) {
       var b = document.createElement('button');
