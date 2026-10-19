@@ -85,13 +85,13 @@
   }
 
   function fmtDate(iso) {
-    try { return new Date(iso).toLocaleDateString('es-419', { day: 'numeric', month: 'short', year: 'numeric' }); }
+    try { return new Date(iso).toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' }); }
     catch (_) { return ''; }
   }
 
   function fmtMoney(cents, currency) {
     try {
-      return (Number(cents) / 100).toLocaleString('es-419', { style: 'currency', currency: String(currency || 'usd').toUpperCase() });
+      return (Number(cents) / 100).toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { style: 'currency', currency: String(currency || 'usd').toUpperCase() });
     } catch (_) { return String(Number(cents) / 100) + ' ' + String(currency || '').toUpperCase(); }
   }
 

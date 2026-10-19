@@ -952,7 +952,7 @@
         b.appendChild(h('div', { class: 'cb-start-title', text: 'Plantilla · ' + t.label }));
         b.appendChild(h('div', { class: 'cb-start-sub', text: t.summary }));
         b.appendChild(miniFlow(t.build()));
-        if (missing.length) b.appendChild(h('div', { class: 'cb-warn', text: 'Necesita ' + missing.map(needLabel).join(' y ') + '. Puedes empezar igual y conectar después.' }));
+        if (missing.length) b.appendChild(h('div', { class: 'cb-warn', text: 'Necesita ' + joinAnd(missing.map(needLabel)) + '. Puedes empezar igual y conectar después.' }));
         cards.appendChild(b);
       });
       // Clonar
@@ -976,6 +976,8 @@
       if (st.rationale && st.startKind === 'ai') box.appendChild(h('div', { class: 'cb-note accent' }, h('b', { text: 'Por qué esta cadencia: ' }), st.rationale));
       return box;
     }
+    // «A y B» en el idioma de la interfaz (js/i18n.js); sin i18n, en español.
+    function joinAnd(arr) { return global.i18n && global.i18n.list ? global.i18n.list(arr) : arr.join(' y '); }
     function channelSummary() {
       var parts = [];
       parts.push('WhatsApp ' + (watiOk() ? 'sí' : 'no'));
@@ -1496,7 +1498,7 @@
         box.appendChild(text ? h('div', { class: 'cb-preview-text', text: text }) : h('div', { class: 'cb-hint', text: L.templateName(a) ? 'La plantilla ya no está en tu WhatsApp.' : 'Elige una plantilla para ver la vista previa.' }));
         // Los botones salen de la plantilla real del catálogo, nunca de un texto fijo.
         var labels = ((t && t.buttons) || []).map(function (x) { return x && x.text; }).filter(Boolean);
-        if (labels.length) box.appendChild(h('div', { class: 'cb-hint', text: 'Incluye ' + (labels.length > 1 ? 'los botones ' : 'el botón ') + labels.map(function (x) { return '"' + x + '"'; }).join(' y ') + '.' }));
+        if (labels.length) box.appendChild(h('div', { class: 'cb-hint', text: 'Incluye ' + (labels.length > 1 ? 'los botones ' : 'el botón ') + joinAnd(labels.map(function (x) { return '"' + x + '"'; })) + '.' }));
         return box;
       }
       if (a.content.kind === 'custom') {

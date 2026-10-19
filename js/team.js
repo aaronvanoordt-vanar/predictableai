@@ -88,13 +88,13 @@
     if (!m) return 'Sin nombre';
     return m.full_name || m.email || 'Sin nombre';
   }
-  function fmtInt(n) { return n == null ? '—' : Number(n).toLocaleString('es'); }
+  function fmtInt(n) { return n == null ? '—' : Number(n).toLocaleString((window.i18n ? i18n.locale() : 'es-MX')); }
   function fmtPct(r) { return r == null ? '—' : Math.round(r * 100) + ' %'; }
   function fmtDate(v) {
     if (!v) return '—';
     var d = new Date(v);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleDateString('es', { day: 'numeric', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
   }
   function isoDay(ms) {
     var d = new Date(ms);

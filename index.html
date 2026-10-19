@@ -2267,8 +2267,9 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 
     <!-- Idioma (js/i18n.js) -->
     <div class="theme-toggle" id="lang-toggle" role="radiogroup" aria-label="Idioma de la interfaz">
-      <button type="button" class="tt-opt on" data-lang="es" aria-label="Español">ES · Español</button>
-      <button type="button" class="tt-opt" data-lang="en" aria-label="English">EN · English</button>
+      <button type="button" class="tt-opt on" data-lang="es" aria-label="Español" title="Español" data-no-i18n>ES</button>
+      <button type="button" class="tt-opt" data-lang="en" aria-label="English" title="English" data-no-i18n>EN</button>
+      <button type="button" class="tt-opt" data-lang="pt-BR" aria-label="Português (Brasil)" title="Português (Brasil)" data-no-i18n>PT</button>
     </div>
 
     <!-- Créditos: js/ux.js mueve aquí el chip global de js/credits.js -->
@@ -3332,7 +3333,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/credits.js"></script>
 <script src="js/billing-cfdi.js"></script>
 <script src="js/skeletons.js"></script>
-<script src="js/i18n.js"></script>
+<script src="js/i18n.js?v=20261017"></script>
 <script src="js/api.js"></script>
 <script src="js/apollo-enums.js"></script>
 <script src="js/tam-rules.js?v=20261017"></script>
@@ -3910,7 +3911,7 @@ async function loadMyPerformance() {
         ? '<div class="score-bar" style="width:80px"><div class="score-fill" style="width:'+v+'%;background:var(--grad-jade)"></div></div>'
         : '—';
       tbody.innerHTML = data.map(r => {
-        const date = r.started_at ? new Date(r.started_at).toLocaleDateString('es-MX',{day:'numeric',month:'short',year:'numeric'}) : '—';
+        const date = r.started_at ? new Date(r.started_at).toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'),{day:'numeric',month:'short',year:'numeric'}) : '—';
         const dur  = r.duration_seconds ? Math.round(r.duration_seconds/60)+' min' : '—';
         const sc   = r.score_total || 0;
         const e = window.escHtml || (s => s);
@@ -4386,7 +4387,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
       greet.textContent = salut + ', ' + capitalize(name.split(' ')[0]);
     }
     if (dashSub) {
-      const fecha = new Date().toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' });
+      const fecha = new Date().toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { weekday: 'long', day: 'numeric', month: 'long' });
       dashSub.textContent = fecha.charAt(0).toUpperCase() + fecha.slice(1) + (company ? ' · ' + company : '');
     }
     // Initialize reports page role-based tabs
@@ -4512,7 +4513,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
   function fmtDate(d) {
     if (!d) return '—';
     try {
-      return new Date(d).toLocaleString('es', {
+      return new Date(d).toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), {
         year: 'numeric', month: 'short', day: '2-digit',
         hour: '2-digit', minute: '2-digit'
       });

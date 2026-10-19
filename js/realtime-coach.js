@@ -434,6 +434,15 @@
       return;
     }
 
+    // Espejo de languageDirective() de _shared/llm.ts: este camino no pasa por
+    // callLLM, así que el idioma elegido (js/i18n.js) se agrega aquí.
+    function outputLanguageDirective() {
+      const lang = global.i18n ? global.i18n.get() : 'es';
+      if (lang === 'es') return '';
+      const name = lang === 'pt-BR' ? 'Brazilian Portuguese (pt-BR)' : 'English';
+      const style = lang === 'pt-BR' ? ' Write natural, professional Brazilian Portuguese as a Brazilian B2B seller would — address the reader as "você", use Brazilian vocabulary and spelling (never European Portuguese), and rewrite idioms instead of translating Spanish word for word. Where an instruction above says to use "tú" or "usted", apply it as "você" (informal) or "o senhor / a senhora" (formal).' : '';
+      return '\n\n=== OUTPUT LANGUAGE (overrides everything above) ===\nThe user reads the product in ' + name + '. Every human-readable string in your answer — titles, summaries, bullet points, messages, objections, actions, JSON string values meant for a person — MUST be written in ' + name + ', even where an instruction above says "en español" / "in Spanish".' + style + ' Keep JSON keys, enum values, ids, URLs, company names and proper nouns exactly as specified.';
+    }
     // Espejo corto de NEURO_DOCTRINE (supabase/functions/_shared/sales-training.ts):
     // este camino solo corre cuando el motor es OpenAI vía el worker. Si el
     // equipo entrenó su IA («Entrenamiento IA»), la doctrina corta se cambia
@@ -459,7 +468,7 @@
       '  "next_step": ""',
       '}',
       'Español neutro. NO inventes alertas: si no hay nada accionable, "alerts": [].'
-    ]).join('\n') + ((trainedPrompt && trainedPrompt.block) ? '\n' + trainedPrompt.block : '');
+    ]).join('\n') + ((trainedPrompt && trainedPrompt.block) ? '\n' + trainedPrompt.block : '') + outputLanguageDirective();
     const userContent = 'Contexto del prospecto (brief del lead, ángulo y preparación):\n' + JSON.stringify(currentProspect || {}).slice(0, 4000) + '\n\n' +
       (prior ? 'Conversación anterior (ya analizada, solo contexto):\n' + prior + '\n\n' : '') +
       'Lo nuevo (analiza solo esto):\n' + fresh;

@@ -209,15 +209,15 @@
     });
   }
 
-  function fmt(n) { return n == null ? '—' : Number(n).toLocaleString('es-MX'); }
+  function fmt(n) { return n == null ? '—' : Number(n).toLocaleString((window.i18n ? i18n.locale() : 'es-MX')); }
   function pct(a, b) {
     if (!b) return '';
     var p = (a / b) * 100;
-    return (p > 0 && p < 0.1 ? '<0,1' : p.toLocaleString('es-MX', { maximumFractionDigits: p < 10 ? 1 : 0 })) + ' %';
+    return (p > 0 && p < 0.1 ? '<0,1' : p.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { maximumFractionDigits: p < 10 ? 1 : 0 })) + ' %';
   }
   function fmtDate(iso) {
     if (!iso) return '';
-    try { return new Date(iso).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' }); } catch (e) { return ''; }
+    try { return new Date(iso).toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' }); } catch (e) { return ''; }
   }
   function rangeLabel(v) {
     var E = (global.APOLLO_ENUMS && global.APOLLO_ENUMS.employee_ranges) || [];

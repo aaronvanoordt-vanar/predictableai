@@ -31,7 +31,7 @@
   };
   function toast(m, t) { if (global.uiHelpers && global.uiHelpers.toast) global.uiHelpers.toast(m, t || 'info'); }
   function sb() { return global.supabaseClient; }
-  function fmt(n) { return Number(n || 0).toLocaleString('es-419'); }
+  function fmt(n) { return Number(n || 0).toLocaleString((window.i18n ? i18n.locale() : 'es-MX')); }
 
   // ── Espejo de _shared/agency-credits.ts ────────────────────────────────
   var USAGE_CATEGORIES = [
@@ -321,7 +321,7 @@
         var what = LOG_KIND[l.kind] || l.kind;
         if (l.kind === 'settings') what += ': tope ' + (l.monthly_cap == null ? 'sin tope' : fmt(l.monthly_cap)) + ', alerta ' + (l.low_balance_alert == null ? 'sin alerta' : fmt(l.low_balance_alert));
         if (l.actor_user_id && l.actor_user_id !== me && l.kind !== 'settings') what += ' (otra persona del equipo)';
-        return '<tr><td style="white-space:nowrap">' + esc(new Date(l.created_at).toLocaleString('es-419', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })) + '</td>' +
+        return '<tr><td style="white-space:nowrap">' + esc(new Date(l.created_at).toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })) + '</td>' +
           '<td>' + esc(l.client_name || '—') + '</td><td>' + esc(what) + '</td>' +
           '<td class="ag-num">' + (l.kind === 'settings' ? '—' : (l.kind === 'assign' ? '+' : '−') + fmt(l.amount)) + '</td>' +
           '<td>' + esc(l.note || '') + '</td></tr>';

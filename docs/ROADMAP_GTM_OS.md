@@ -100,6 +100,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Señales de engagement en LinkedIn y píxel web
 - [x] Señales: cambio de empresa de clientes y champions (Radar → Champions, detector `champion_moves`)
 - [x] Inbound: widget web (formulario + botón de WhatsApp), enrutamiento a la nómina de Equipo y speed-to-lead — PR #368 (`docs/INBOUND.md`)
+- [x] Portugués completo (pt-BR): interfaz, IA y formatos
 
 **P3**
 - [x] Automatizaciones de punta a punta (`docs/AUTOMATIONS.md`)
