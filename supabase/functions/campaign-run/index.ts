@@ -101,7 +101,10 @@ import * as flowLib from "../_shared/campaign-flow.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 import * as gmail from "../_shared/gmail.ts";
 import * as suppression from "../_shared/suppression.ts";
+import * as contactRules from "../_shared/contact-rules.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import { countryOfE164, toE164 } from "../_shared/telephony/phone.ts";
+import { checkDoNotCall } from "../_shared/telephony/dnc.ts";
 import { aiColumnMatches, aiColumnPending } from "../_shared/ai-columns.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -542,6 +545,7 @@ async function spendLinkedinSend(ctx: Ctx, en: Json, nodeId: string | null) {
 }
 
 function channelKey(stepChannel: string): string {
+  if (stepChannel === "call") return "phone";
   return stepChannel.startsWith("linkedin") ? "linkedin" : stepChannel;
 }
 
@@ -554,7 +558,9 @@ function channelKey(stepChannel: string): string {
 // wait / wait_short → espera un mensaje IA (aprobación o generación en curso).
 // pace       → ritmo de LinkedIn nativo (tope o espacio entre envíos): se
 //              reintenta a la hora exacta `retryAt`, sin evento.
-type StepErrorMode = "skip" | "fail" | "hold" | "hold_short" | "stop" | "wait" | "wait_short" | "pace";
+// wait_call  → la tarea de llamar espera al SDR (sin evento ni error_detail:
+//              no es algo que haya que "reintentar"); vuelve a mirar en `retryAt`.
+type StepErrorMode = "skip" | "fail" | "hold" | "hold_short" | "stop" | "wait" | "wait_short" | "pace" | "wait_call";
 class StepError extends Error {
   mode: StepErrorMode;
   retryAt: Date | null;
@@ -617,7 +623,7 @@ async function aiText(ctx: Ctx, en: Json, step: StepLike): Promise<AiText> {
     if (row.status === "sent") throw new StepError("El mensaje de este paso ya se envió.", "skip");
     throw new StepError("El mensaje de este paso quedó omitido.", "skip");
   }
-  if (!["email", "whatsapp"].includes(step.channel) && !flowLib.isNativeLinkedin(step)) throw new StepError("No hay mensaje IA para este canal.", "skip");
+  if (!["email", "whatsapp", "call"].includes(step.channel) && !flowLib.isNativeLinkedin(step)) throw new StepError("No hay mensaje IA para este canal.", "skip");
   // Lo genera el pase "preparar" de esta misma corrida; se reintenta en 2 min.
   throw new StepError("Generando el mensaje IA de este paso…", "wait_short");
 }
@@ -1044,9 +1050,77 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       await db.from("prospect_list_members").update({ contact_status: isMsg ? "saludo_enviado" : "conexion_enviada", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
     }
     await spendCredits(ctx, en);
+  } else if (step.channel === "call") {
+    await executeCallStep(ctx, en, campaign, member, step);
   } else {
     throw new StepError(`Canal desconocido en la cadencia: ${step.channel}.`, "skip");
   }
+}
+
+/**
+ * Paso `call`: no envía nada. Crea UNA tarea para el SDR (call_tasks) con el
+ * guion y deja la cadencia esperando su resultado (lo fija la edge function
+ * telephony al marcar el resultado, que además adelanta next_run_at). Vencido
+ * settings.call_wait_days sin llamada, la tarea expira y el paso se omite.
+ * «Reunión agendada» y «No interesado» detienen el enrolamiento desde
+ * _shared/telephony/store.ts; el resto sigue y alimenta call_answered /
+ * call_voicemail.
+ */
+async function executeCallStep(ctx: Ctx, en: Json, campaign: Json, member: Json, step: StepLike) {
+  const db = ctx.db;
+  if (!step.node_id) throw new StepError("El paso no tiene id de nodo: edita la cadencia de la campaña.", "skip");
+  const node = flowLib.find(flowLib.normalize(campaign.flow), step.node_id)?.node;
+  const days = node && node.type === "action" ? flowLib.callWaitDays(node) : 3;
+  const { data: task } = await db.from("call_tasks").select("id, status, expires_at, outcome")
+    .eq("enrollment_id", en.id).eq("node_id", step.node_id).maybeSingle();
+  if (task) {
+    if (task.status === "done") return; // hubo resultado: la cadencia sigue
+    if (task.status === "skipped") throw new StepError("El SDR saltó la llamada: sigue con el siguiente paso.", "skip");
+    if (task.status === "canceled") throw new StepError("La tarea de llamar se canceló.", "skip");
+    if (task.status === "expired" || new Date(task.expires_at) <= ctx.now) {
+      await db.from("call_tasks").update({ status: "expired", completed_at: ctx.now.toISOString() }).eq("id", task.id).eq("status", "pending");
+      throw new StepError(`Nadie llamó en ${days === 1 ? "1 día" : days + " días"}: se omite la llamada y sigue la cadencia.`, "skip");
+    }
+    const retry = new Date(Math.min(new Date(task.expires_at).getTime(), ctx.now.getTime() + 60 * 60 * 1000));
+    throw new StepError("Esperando la llamada del SDR.", "wait_call", retry);
+  }
+
+  const to = toE164(member.phone, member.country);
+  if (!to) throw new StepError("El lead no tiene teléfono revelado: se omite la llamada y sigue con el siguiente paso.", "skip");
+  // La lista de supresión ya la revisó assertNotSuppressed (canal phone); aquí
+  // se cruza además el número normalizado, el mismo que marcará el dialer.
+  const dnc = await checkDoNotCall(ctx.db, to, { userId: en.user_id, country: countryOfE164(to), contactStatus: member.contact_status, member });
+  if (dnc.blocked) throw new StepError((dnc.reason ?? "El número está en tu lista «No contactar».") + " Se omite la llamada.", dnc.source === "error" ? "hold_short" : "skip");
+
+  // Guion: el propio del paso o el IA de campaign_messages (lo prepara el pase
+  // "preparar" 24 h antes). Si la IA falló, la tarea sale igual sin guion: la
+  // llamada no depende de él.
+  let script: string | null = null;
+  if (step.content_kind === "custom") {
+    script = fill(String(step.body ?? ""), member, campaign.sender ?? {});
+  } else {
+    try {
+      script = (await aiText(ctx, en, step)).body;
+    } catch (e) {
+      if (e instanceof StepError && (e.mode === "wait" || e.mode === "wait_short")) throw e;
+    }
+  }
+  const expires = new Date(ctx.now.getTime() + days * 24 * 60 * 60 * 1000);
+  const { error } = await db.from("call_tasks").insert({
+    user_id: en.user_id, member_id: member.id, campaign_id: campaign.id, enrollment_id: en.id, node_id: step.node_id,
+    script, status: "pending", due_at: ctx.now.toISOString(), expires_at: expires.toISOString(),
+  });
+  if (error && !/duplicate|unique/i.test(error.message)) throw new StepError("No se pudo crear la tarea de llamar: " + error.message, "hold_short");
+  await db.from("campaign_messages").update({ status: "sent", sent_at: ctx.now.toISOString() }).eq("enrollment_id", en.id).eq("node_id", step.node_id).eq("status", "approved");
+  await event(ctx, en, "phone", "task_created", {
+    detail: `Llamar a ${member.name ?? "el lead"} (${to}). La cadencia espera el resultado hasta ${days === 1 ? "1 día" : days + " días"}.`,
+    step_position: step.position, node_id: step.node_id,
+  });
+  if (["no_contactado"].includes(member.contact_status)) {
+    await db.from("prospect_list_members").update({ contact_status: "en_campana", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
+  }
+  await spendCredits(ctx, en);
+  throw new StepError("Esperando la llamada del SDR.", "wait_call", new Date(Math.min(expires.getTime(), ctx.now.getTime() + 60 * 60 * 1000)));
 }
 
 /**
@@ -1101,6 +1175,30 @@ async function preflight(ctx: Ctx, en: Json, campaign: Json, step: StepLike): Pr
     await finish(ctx, en, { status: "unsubscribed", next_run_at: null, stop_reason: "El lead está dado de baja." });
     return null;
   }
+  // Reglas del país del lead (_shared/contact-rules.ts; hoy Colombia, Ley
+  // 2300): horario legal en hora local + un envío de campaña por día y por
+  // lead, en cualquier canal y cualquier campaña. Se suman a la ventana de la
+  // campaña; el paso espera, no se omite.
+  const rule = contactRules.countryRuleFor(member);
+  if (rule) {
+    let sentToday = 0;
+    if (contactRules.isAllowed(rule, ctx.now)) {
+      const { count, error } = await ctx.db.from("campaign_events").select("id", { count: "exact", head: true })
+        .eq("user_id", en.user_id).eq("member_id", member.id).in("type", contactRules.CONTACT_EVENT_TYPES)
+        .gte("created_at", contactRules.startOfDay(rule, ctx.now).toISOString());
+      // Sin poder contar, se espera una hora: nunca un segundo envío a ciegas.
+      if (error) {
+        await finish(ctx, en, { status: "active", next_run_at: new Date(ctx.now.getTime() + 60 * 60 * 1000).toISOString(), error_detail: `${rule.law}: no se pudo comprobar los envíos de hoy; se reintenta en 1 hora.` });
+        return null;
+      }
+      sentToday = count ?? 0;
+    }
+    const d = contactRules.checkContactRules(rule, ctx.now, sentToday);
+    if (!d.ok) {
+      await finish(ctx, en, { status: "active", next_run_at: d.retryAt!.toISOString(), error_detail: d.reason });
+      return null;
+    }
+  }
   return member;
 }
 
@@ -1132,6 +1230,10 @@ async function handleStepError(ctx: Ctx, en: Json, step: StepLike, e: unknown): 
   }
   if (mode === "pace") {
     await finish(ctx, en, { status: "active", next_run_at: (err.retryAt ?? new Date(ctx.now.getTime() + 60 * 60 * 1000)).toISOString(), error_detail: err.message });
+    return false;
+  }
+  if (mode === "wait_call") {
+    await finish(ctx, en, { status: "active", next_run_at: (err.retryAt ?? new Date(ctx.now.getTime() + 60 * 60 * 1000)).toISOString(), error_detail: null });
     return false;
   }
   if (mode === "wait" || mode === "wait_short") {
@@ -1177,6 +1279,16 @@ async function evalCondition(ctx: Ctx, en: Json, node: flowLib.ConditionNode): P
     // Cualquier señal de interés, del canal que sea.
     case "engaged_any":
       return !!en.linkedin_connected_at || await hasEvent(["opened", "read", "replied", "connection_accepted"]);
+    // Llamada: el resultado de la última llamada de ESTA cadencia (evento
+    // `called` que escribe _shared/telephony/store.ts al marcarlo).
+    case "call_answered":
+    case "call_voicemail": {
+      const { data } = await db.from("campaign_events").select("payload")
+        .eq("enrollment_id", en.id).eq("channel", "phone").eq("type", "called")
+        .order("created_at", { ascending: false }).limit(1);
+      const outcome = data?.[0]?.payload?.outcome;
+      return check === "call_answered" ? outcome === "answered" : outcome === "voicemail";
+    }
     case "has_phone":
     case "has_email":
     case "has_linkedin": {
@@ -1375,7 +1487,7 @@ async function preparePending(ctx: Ctx): Promise<number> {
     const loc = flowLib.find(flow, en.next_node_id);
     if (!loc || loc.node.type !== "action") continue;
     const node = loc.node;
-    if (node.content.kind !== "ai" || !(["email", "whatsapp"].includes(node.channel) || flowLib.isNativeLinkedin(node))) continue;
+    if (node.content.kind !== "ai" || !(["email", "whatsapp", "call"].includes(node.channel) || flowLib.isNativeLinkedin(node))) continue;
     // Un mensaje de LinkedIn solo sale a un contacto: sin conexión aceptada se omitirá.
     if (node.channel === "linkedin_message" && !en.linkedin_connected_at) continue;
     // WhatsApp libre solo con sesión abierta: no gastar créditos si el paso se va a omitir.
@@ -1388,11 +1500,11 @@ async function preparePending(ctx: Ctx): Promise<number> {
     if (!mem) continue;
     if (flowLib.isLinkedin(node.channel) && !dripify.canonicalLinkedinUrl(mem.linkedin_url)) continue;
     if (node.channel === "email" && !hasEmail(mem)) continue;
-    if (node.channel === "whatsapp" && !wati.digits(mem.phone)) continue;
+    if ((node.channel === "whatsapp" || node.channel === "call") && !wati.digits(mem.phone)) continue;
     const { count } = await db.from("campaign_messages").select("id", { count: "exact", head: true }).eq("enrollment_id", en.id).eq("node_id", node.id);
     if ((count ?? 0) > 0) continue;
 
-    const base = { enrollment_id: en.id, campaign_id: campaign.id, member_id: en.member_id, user_id: en.user_id, node_id: node.id, channel: node.channel, angle: node.content.angle ?? null };
+    const base = { enrollment_id: en.id, campaign_id: campaign.id, member_id: en.member_id, user_id: en.user_id, node_id: node.id, channel: node.channel === "call" ? "phone" : node.channel, angle: node.content.angle ?? null };
     generated++;
     try {
       const out = await generateStepMessage(ctx, en, campaign, node);
@@ -1401,7 +1513,7 @@ async function preparePending(ctx: Ctx): Promise<number> {
         status: campaign.review_required ? "draft" : "approved",
         approved_at: campaign.review_required ? null : ctx.now.toISOString(),
       }, { onConflict: "enrollment_id,node_id", ignoreDuplicates: true });
-      await event(ctx, en, node.channel, "generated", {
+      await event(ctx, en, channelKey(node.channel), "generated", {
         detail: (campaign.review_required ? "Mensaje IA listo para tu revisión: " : "Mensaje IA generado: ") + (out.subject || out.body).slice(0, 160),
         node_id: node.id, step_position: en.next_position,
       });

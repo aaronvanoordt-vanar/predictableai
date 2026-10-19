@@ -51,6 +51,10 @@
       "description": "Reuniones analizadas por el Meeting Coach."
     },
     {
+      "name": "CRM",
+      "description": "Cuentas (empresas), pipeline de oportunidades y tareas. Listo para sincronizar con tu CRM por external_id."
+    },
+    {
       "name": "Eventos y webhooks",
       "description": "Qué pasó en tu cuenta, por polling o empujado a tu URL."
     }
@@ -1698,7 +1702,8 @@
               "enum": [
                 "whatsapp",
                 "email",
-                "linkedin"
+                "linkedin",
+                "voice"
               ]
             },
             "description": "Canal."
@@ -2109,6 +2114,1350 @@
                   "properties": {
                     "data": {
                       "$ref": "#/components/schemas/Meeting"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/pipeline": {
+      "get": {
+        "tags": [
+          "CRM"
+        ],
+        "operationId": "getPipeline",
+        "summary": "Ver el pipeline",
+        "description": "Las etapas de tus oportunidades, en orden. Si todavía no tienes pipeline, se crea el de por defecto (Reunión agendada → Reunión tomada → Propuesta → Negociación → Ganada / Perdida).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Stage"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/companies": {
+      "get": {
+        "tags": [
+          "CRM"
+        ],
+        "operationId": "listCompanies",
+        "summary": "Listar cuentas",
+        "description": "Empresas del CRM. Una cuenta por dominio: cada contacto nuevo con dominio crea o reutiliza la suya.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Texto en el nombre o el dominio."
+          },
+          {
+            "name": "domain",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Dominio exacto (se normaliza)."
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Solo las creadas después de esta fecha (ISO 8601)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Cuántos resultados por página."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "El `next_cursor` de la página anterior."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Company"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "CRM"
+        ],
+        "operationId": "upsertCompany",
+        "summary": "Crear o actualizar cuenta",
+        "description": "Busca por `external_id` (+ `external_source`) y si no por dominio: si existe la actualiza (`created: false`), si no la crea y enlaza los contactos y señales del Radar con ese dominio.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 240
+                  },
+                  "domain": {
+                    "type": "string",
+                    "example": "acme.com.mx"
+                  },
+                  "website": {
+                    "type": "string"
+                  },
+                  "industry": {
+                    "type": "string"
+                  },
+                  "employee_count": {
+                    "type": "string"
+                  },
+                  "annual_revenue": {
+                    "type": "string"
+                  },
+                  "founded_year": {
+                    "type": "integer"
+                  },
+                  "country": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "city": {
+                    "type": "string"
+                  },
+                  "phone": {
+                    "type": "string"
+                  },
+                  "linkedin_url": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "owner_name": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string"
+                  },
+                  "external_id": {
+                    "type": "string",
+                    "description": "Id en tu CRM: actualiza sin duplicar."
+                  },
+                  "external_source": {
+                    "type": "string",
+                    "example": "pipedrive"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              },
+              "example": {
+                "name": "Acme",
+                "domain": "acme.com.mx",
+                "industry": "Retail",
+                "external_id": "org_123",
+                "external_source": "pipedrive"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ya existía",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "company": {
+                          "$ref": "#/components/schemas/Company"
+                        },
+                        "created": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Creada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "company": {
+                          "$ref": "#/components/schemas/Company"
+                        },
+                        "created": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/companies/{company_id}": {
+      "get": {
+        "tags": [
+          "CRM"
+        ],
+        "operationId": "getCompany",
+        "summary": "Ver cuenta",
+        "description": "La cuenta con sus contactos, oportunidades, tareas abiertas y señales del Radar.",
+        "parameters": [
+          {
+            "name": "company_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id de la cuenta."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/CompanyDetail"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "CRM"
+        ],
+        "operationId": "updateCompany",
+        "summary": "Actualizar cuenta",
+        "description": "Cambia firmografía, responsable, notas o el id externo.",
+        "parameters": [
+          {
+            "name": "company_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id de la cuenta."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 240
+                  },
+                  "domain": {
+                    "type": "string",
+                    "example": "acme.com.mx"
+                  },
+                  "website": {
+                    "type": "string"
+                  },
+                  "industry": {
+                    "type": "string"
+                  },
+                  "employee_count": {
+                    "type": "string"
+                  },
+                  "annual_revenue": {
+                    "type": "string"
+                  },
+                  "founded_year": {
+                    "type": "integer"
+                  },
+                  "country": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "city": {
+                    "type": "string"
+                  },
+                  "phone": {
+                    "type": "string"
+                  },
+                  "linkedin_url": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "owner_name": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string"
+                  },
+                  "external_id": {
+                    "type": "string",
+                    "description": "Id en tu CRM: actualiza sin duplicar."
+                  },
+                  "external_source": {
+                    "type": "string",
+                    "example": "pipedrive"
+                  }
+                }
+              },
+              "example": {
+                "owner_name": "Ana",
+                "industry": "Logística"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Company"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/opportunities": {
+      "get": {
+        "tags": [
+          "CRM"
+        ],
+        "operationId": "listOpportunities",
+        "summary": "Listar oportunidades",
+        "description": "Oportunidades con su etapa, monto y moneda local.",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "won",
+                "lost"
+              ]
+            },
+            "description": "open = en curso; won = ganadas; lost = perdidas."
+          },
+          {
+            "name": "stage_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Etapa."
+          },
+          {
+            "name": "company_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Cuenta."
+          },
+          {
+            "name": "contact_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Contacto."
+          },
+          {
+            "name": "updated_after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Solo las modificadas después de esta fecha (sincronización incremental)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Cuántos resultados por página."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "El `next_cursor` de la página anterior."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Opportunity"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "CRM"
+        ],
+        "operationId": "createOpportunity",
+        "summary": "Crear oportunidad",
+        "description": "Crea una oportunidad (fuente `api`). Con `external_id` es idempotente: si ya existe, la actualiza (`created: false`). Una etapa perdida exige `lost_reason` (y `lost_note` con «otro»): el motivo alimenta el aprendizaje de la plataforma.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "stage_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Etapa (GET /v1/pipeline). Por defecto, la primera abierta."
+                  },
+                  "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "company_domain": {
+                    "type": "string",
+                    "description": "Alternativa a company_id; crea la cuenta si no existe."
+                  },
+                  "company_name": {
+                    "type": "string"
+                  },
+                  "contact_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "amount": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0
+                  },
+                  "currency": {
+                    "type": "string",
+                    "enum": [
+                      "USD",
+                      "MXN",
+                      "COP",
+                      "CLP",
+                      "PEN",
+                      "ARS",
+                      "BRL",
+                      "UYU",
+                      "PYG",
+                      "BOB",
+                      "GTQ",
+                      "CRC",
+                      "DOP",
+                      "HNL",
+                      "NIO",
+                      "PAB",
+                      "EUR"
+                    ],
+                    "description": "ISO 4217. Sin conversión de moneda."
+                  },
+                  "close_date": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date"
+                  },
+                  "owner_name": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string"
+                  },
+                  "lost_reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "precio",
+                      "presupuesto",
+                      "competencia",
+                      "timing",
+                      "prioridad",
+                      "decisor",
+                      "sin_respuesta",
+                      "no_encaja",
+                      "interno",
+                      "otro",
+                      null
+                    ],
+                    "description": "Obligatorio en una etapa perdida."
+                  },
+                  "lost_note": {
+                    "type": "string",
+                    "description": "Obligatorio con lost_reason «otro»."
+                  },
+                  "lost_competitor": {
+                    "type": "string"
+                  },
+                  "external_id": {
+                    "type": "string"
+                  },
+                  "external_source": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              },
+              "example": {
+                "name": "Acme — piloto 2027",
+                "company_domain": "acme.com.mx",
+                "amount": 45000,
+                "currency": "MXN",
+                "close_date": "2026-12-15"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ya existía",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "opportunity": {
+                          "$ref": "#/components/schemas/Opportunity"
+                        },
+                        "created": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Creada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "opportunity": {
+                          "$ref": "#/components/schemas/Opportunity"
+                        },
+                        "created": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/opportunities/{opportunity_id}": {
+      "get": {
+        "tags": [
+          "CRM"
+        ],
+        "operationId": "getOpportunity",
+        "summary": "Ver oportunidad",
+        "description": "La oportunidad con su historial de etapas (quién la movió: user, coach o api) y sus tareas.",
+        "parameters": [
+          {
+            "name": "opportunity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id de la oportunidad."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/OpportunityDetail"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "CRM"
+        ],
+        "operationId": "updateOpportunity",
+        "summary": "Actualizar oportunidad",
+        "description": "Mueve de etapa o cambia monto, moneda, fecha de cierre o responsable. Pasar a una etapa perdida exige `lost_reason`.",
+        "parameters": [
+          {
+            "name": "opportunity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id de la oportunidad."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "stage_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Etapa (GET /v1/pipeline). Por defecto, la primera abierta."
+                  },
+                  "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "company_domain": {
+                    "type": "string",
+                    "description": "Alternativa a company_id; crea la cuenta si no existe."
+                  },
+                  "company_name": {
+                    "type": "string"
+                  },
+                  "contact_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "amount": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0
+                  },
+                  "currency": {
+                    "type": "string",
+                    "enum": [
+                      "USD",
+                      "MXN",
+                      "COP",
+                      "CLP",
+                      "PEN",
+                      "ARS",
+                      "BRL",
+                      "UYU",
+                      "PYG",
+                      "BOB",
+                      "GTQ",
+                      "CRC",
+                      "DOP",
+                      "HNL",
+                      "NIO",
+                      "PAB",
+                      "EUR"
+                    ],
+                    "description": "ISO 4217. Sin conversión de moneda."
+                  },
+                  "close_date": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date"
+                  },
+                  "owner_name": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string"
+                  },
+                  "lost_reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "precio",
+                      "presupuesto",
+                      "competencia",
+                      "timing",
+                      "prioridad",
+                      "decisor",
+                      "sin_respuesta",
+                      "no_encaja",
+                      "interno",
+                      "otro",
+                      null
+                    ],
+                    "description": "Obligatorio en una etapa perdida."
+                  },
+                  "lost_note": {
+                    "type": "string",
+                    "description": "Obligatorio con lost_reason «otro»."
+                  },
+                  "lost_competitor": {
+                    "type": "string"
+                  },
+                  "external_id": {
+                    "type": "string"
+                  },
+                  "external_source": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {
+                "stage_id": "6f1c2b0e-8a7d-4c1e-9f3a-2b5d7e9a1c3f",
+                "lost_reason": "competencia",
+                "lost_competitor": "Rival X"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Opportunity"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/tasks": {
+      "get": {
+        "tags": [
+          "CRM"
+        ],
+        "operationId": "listTasks",
+        "summary": "Listar tareas",
+        "description": "Tareas por lead, cuenta u oportunidad.",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "done"
+              ]
+            },
+            "description": "open = pendientes; done = hechas."
+          },
+          {
+            "name": "due_before",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Solo las que vencen antes de esta fecha."
+          },
+          {
+            "name": "company_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Cuenta."
+          },
+          {
+            "name": "contact_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Contacto."
+          },
+          {
+            "name": "opportunity_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Oportunidad."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Cuántos resultados por página."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "El `next_cursor` de la página anterior."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Task"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "CRM"
+        ],
+        "operationId": "createTask",
+        "summary": "Crear tarea",
+        "description": "Si indicas la oportunidad o el contacto, la cuenta se completa sola.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 240
+                  },
+                  "notes": {
+                    "type": "string"
+                  },
+                  "due_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "done": {
+                    "type": "boolean"
+                  },
+                  "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "contact_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "opportunity_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "owner_name": {
+                    "type": "string"
+                  },
+                  "external_id": {
+                    "type": "string"
+                  },
+                  "external_source": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title"
+                ]
+              },
+              "example": {
+                "title": "Enviar propuesta",
+                "opportunity_id": "6f1c2b0e-8a7d-4c1e-9f3a-2b5d7e9a1c3f",
+                "due_at": "2026-10-20T15:00:00Z"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Creada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Task"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/tasks/{task_id}": {
+      "patch": {
+        "tags": [
+          "CRM"
+        ],
+        "operationId": "updateTask",
+        "summary": "Actualizar tarea",
+        "description": "`done: true` la marca como hecha (evento task.completed).",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Id de la tarea."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 240
+                  },
+                  "notes": {
+                    "type": "string"
+                  },
+                  "due_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "done": {
+                    "type": "boolean"
+                  },
+                  "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "contact_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "opportunity_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "owner_name": {
+                    "type": "string"
+                  },
+                  "external_id": {
+                    "type": "string"
+                  },
+                  "external_source": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {
+                "done": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Task"
                     }
                   }
                 }
@@ -2588,6 +3937,101 @@
           }
         }
       }
+    },
+    "company.created": {
+      "post": {
+        "summary": "company.created",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
+    },
+    "opportunity.created": {
+      "post": {
+        "summary": "opportunity.created",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
+    },
+    "opportunity.stage_changed": {
+      "post": {
+        "summary": "opportunity.stage_changed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
+    },
+    "task.created": {
+      "post": {
+        "summary": "task.created",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
+    },
+    "task.completed": {
+      "post": {
+        "summary": "task.completed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responde 2xx en menos de 10 s para confirmar la entrega."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2924,6 +4368,14 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "company_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Cuenta del CRM (crm_companies) a la que pertenece."
           }
         }
       },
@@ -3141,7 +4593,8 @@
             "enum": [
               "whatsapp",
               "email",
-              "linkedin"
+              "linkedin",
+              "voice"
             ]
           },
           "direction": {
@@ -3417,7 +4870,12 @@
               "message.sent",
               "signal.created",
               "enrollment.status_changed",
-              "meeting.completed"
+              "meeting.completed",
+              "company.created",
+              "opportunity.created",
+              "opportunity.stage_changed",
+              "task.created",
+              "task.completed"
             ]
           },
           "created_at": {
@@ -3429,7 +4887,7 @@
           },
           "data": {
             "type": "object",
-            "description": "contact.* → { contact }; message.* → { message }; signal.created → { signal }; enrollment.status_changed → { enrollment }; meeting.completed → { meeting }."
+            "description": "contact.* → { contact }; message.* → { message }; signal.created → { signal }; enrollment.status_changed → { enrollment }; meeting.completed → { meeting }; company.created → { company }; opportunity.created → { opportunity }; opportunity.stage_changed → { opportunity, previous_stage_id, previous_stage_name, stage_id, stage_name, stage_kind }; task.* → { task }."
           }
         }
       },
@@ -3489,6 +4947,576 @@
             "format": "date-time"
           }
         }
+      },
+      "Company": {
+        "type": "object",
+        "description": "Cuenta (empresa). Una por dominio y usuario; los contactos de tus listas se enlazan solos por dominio.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Dominio normalizado: la llave de la cuenta."
+          },
+          "website": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "industry": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "employee_count": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "annual_revenue": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "founded_year": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "city": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "linkedin_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "logo_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "apollo_org_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "owner_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "lead",
+              "radar",
+              "manual",
+              "api",
+              "integration",
+              "backfill"
+            ]
+          },
+          "external_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_synced_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Stage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "open",
+              "won",
+              "lost"
+            ]
+          },
+          "probability": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "auto_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "meeting_scheduled",
+              "meeting_held",
+              null
+            ],
+            "description": "meeting_held = la etapa a la que el Meeting Coach mueve la oportunidad al cerrar una reunión."
+          },
+          "external_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Opportunity": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "company_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "contact_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "stage_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "stage": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "won",
+                  "lost"
+                ]
+              },
+              "probability": {
+                "type": "integer"
+              }
+            }
+          },
+          "amount": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "currency": {
+            "type": "string",
+            "example": "MXN"
+          },
+          "close_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "owner_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lost_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "precio",
+              "presupuesto",
+              "competencia",
+              "timing",
+              "prioridad",
+              "decisor",
+              "sin_respuesta",
+              "no_encaja",
+              "interno",
+              "otro",
+              null
+            ]
+          },
+          "lost_note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lost_competitor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "reply",
+              "meeting",
+              "radar",
+              "api",
+              "integration"
+            ]
+          },
+          "stage_changed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stage_changed_by": {
+            "type": "string",
+            "enum": [
+              "user",
+              "coach",
+              "api",
+              "integration"
+            ]
+          },
+          "external_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_synced_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Task": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "due_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "done_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "company_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "contact_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "opportunity_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "owner_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_synced_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CompanyDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Company"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contacts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Contact"
+                }
+              },
+              "opportunities": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Opportunity"
+                }
+              },
+              "open_tasks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              },
+              "signals": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Signal"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "OpportunityDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Opportunity"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "history": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "from_stage_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uuid"
+                    },
+                    "to_stage_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uuid"
+                    },
+                    "from_stage_name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "to_stage_name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "to_stage_kind": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "changed_by": {
+                      "type": "string"
+                    },
+                    "lost_reason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "note": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              },
+              "tasks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          }
+        ]
       }
     }
   }

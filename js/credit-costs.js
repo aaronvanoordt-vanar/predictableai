@@ -54,6 +54,9 @@
     // «Investigar con IA» (Listas): puesto actual + empresa + ángulo. Con la
     // cuenta de Apollo de la plataforma se suma el match (enrich_email).
     lead_research:          { credits: 3,  label: 'por lead',            variable: false },
+    // Seguimiento de champions (Radar): búsqueda web de respaldo cuando
+    // Apollo no ubica a la persona en su empresa.
+    champion_web_check:     { credits: 2,  label: 'por verificación web', variable: false },
     // Columnas IA (Listas): por fila investigada, también «No encontrado»; los errores no.
     ai_column_cell:         { credits: 2,  label: 'por fila (con búsqueda web)', variable: true },
     ai_column_cell_basic:   { credits: 1,  label: 'por fila (sin búsqueda web)', variable: true },
@@ -79,12 +82,31 @@
     // Verificar un email de Apollo que no venía verificado (solo si hay veredicto).
     email_verify:           { credits: 1,  label: 'por email verificado', variable: false },
 
+    // ── Registros públicos de empresas ───────────────────────────────
+    // México (DENUE) y Colombia (datos.gov.co) son gratis; la ficha por CNPJ
+    // también (BrasilAPI). Brasil se busca en CNPJá, que cobra por consulta.
+    registry_search_br:     { credits: 5,  label: 'por página de empresas de Brasil', variable: false },
+    registry_lookup_br:     { credits: 1,  label: 'por ficha de Brasil buscada por dominio', variable: false },
+
     // ── Meeting Coach (por duración) ──────────────────────────────────
     // Captura local: 5 por cada 10 min + 5 del reporte final.
     coach_meeting:          { credits: 5,  label: 'por cada 10 min (+5 del reporte)', variable: true },
     // Modo bot (Recall.ai): 8 por cada 10 min + 5 del reporte final.
     coach_bot_block:        { credits: 8,  label: 'por cada 10 min en modo bot (+5 del reporte)', variable: true },
+
+    // ── Llamadas (dialer nativo; con CloudTalk, Aircall o Ringover, 0) ─
+    // Por minuto según el país (CALL_MINUTE_CREDITS): desde 2 (EE. UU.) hasta 15 (móvil de Argentina).
+    call_minute:            { credits: 3,  label: 'por minuto a México (2–15 según el país)', variable: true },
+    // ── Agente de voz IA (por minuto conectado, hacia arriba) ─────────
+    // Una llamada que no contesta no cuesta. Argentina tiene tarifa propia
+    // porque sus móviles cuestan ~5 veces más en el operador.
+    voice_minute:           { credits: 6,  label: 'por minuto de llamada', variable: true },
+    voice_minute_ar:        { credits: 18, label: 'por minuto de llamada a Argentina', variable: true },
   };
+
+  // Créditos por minuto del dialer nativo por país de destino.
+  // ESPEJO de CALL_MINUTE_CREDITS en _shared/credit-costs.ts.
+  const CALL_MINUTE_CREDITS = { MX: 3, CO: 4, CL: 4, PE: 7, AR: 15, BR: 4, US: 2, CA: 2 };
 
   function get(key) {
     return COSTS[key] || null;
@@ -178,7 +200,7 @@
     obs.observe(document.body, { childList: true, subtree: true });
   }
 
-  global.creditCosts = { COSTS, get, format, describe, badgeHtml, decorate };
+  global.creditCosts = { COSTS, CALL_MINUTE_CREDITS, get, format, describe, badgeHtml, decorate };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);

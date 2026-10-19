@@ -31,6 +31,11 @@
   let shownAlerts = [];         // {key, phrase, ts} de alertas ya mostradas
   let active = false;
   let trainedPrompt = null;     // {doctrine, block} de «Entrenamiento IA» (solo camino OpenAI/worker)
+  // Llamada del dialer (js/dialer.js): el audio NO viene de compartir pantalla
+  // sino de la propia llamada WebRTC — remoto = el lead, local = el SDR. Esos
+  // tracks son de la llamada: el coach no los detiene al terminar.
+  let callAudio = null;         // { remote: MediaStream, local: MediaStream|null }
+  let sessionOpts = {};         // { meetingUrl, stayOnPage, onCoach(out), onEnded(meetingId) }
 
   function workerUrl(path) {
     const base = (cfg.WORKER_URL || '').replace(/\/$/, '');
@@ -53,7 +58,15 @@
   }
 
   // ─── INICIO ───────────────────────────────────────────────
-  async function start(prospectContext) {
+  /**
+   * start(prospect) = captura de pantalla de siempre.
+   * start(prospect, { streams: {remote, local}, meetingUrl, stayOnPage, onCoach, onEnded })
+   * = la llamada del dialer: mismo pipeline (Deepgram → turnos → coach →
+   * reporte en sales-coach), sin pedir pantalla ni micrófono.
+   */
+  async function start(prospectContext, opts) {
+    sessionOpts = opts || {};
+    callAudio = (sessionOpts.streams && sessionOpts.streams.remote) ? sessionOpts.streams : null;
     if (!cfg.WORKER_URL) {
       toast('WORKER_URL no configurado en js/config.js', 'error'); return;
     }
@@ -78,54 +91,59 @@
       console.log('[Coach] 1/4 Pidiendo token a Deepgram via Worker...');
       const dgToken = await getDeepgramToken();
 
-      console.log('[Coach] 2/4 Pidiendo captura de pantalla...');
-      displayStream = await navigator.mediaDevices.getDisplayMedia({
-        // displaySurface:'monitor' hace que el picker abra en "Pantalla completa";
-        // systemAudio:'include' muestra el checkbox de audio del sistema.
-        video: { displaySurface: 'monitor' },
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-        systemAudio: 'include',
-        monitorTypeSurfaces: 'include',
-        selfBrowserSurface: 'exclude'
-      });
-
-      // El navegador no permite FORZAR la superficie: validar lo elegido.
-      // Una pestaña o ventana deja de oírse en cuanto el cliente cambia de
-      // app/tab — solo pantalla completa garantiza capturar toda la reunión.
-      const vTrack = displayStream.getVideoTracks()[0];
-      const surface = (vTrack && typeof vTrack.getSettings === 'function')
-        ? vTrack.getSettings().displaySurface : null;
-      if (surface && surface !== 'monitor') {
-        cleanup();
-        toast('Compartiste una ' + (surface === 'browser' ? 'pestaña' : 'ventana') +
-          '. Comparte la pantalla completa para que el coach escuche toda la reunión.', 'error');
-        if (typeof coachShowIdle === 'function') coachShowIdle();
-        return;
-      }
-
-      if (displayStream.getAudioTracks().length === 0) {
-        cleanup();
-        toast('No se captó el audio de la reunión. Al compartir la pantalla completa, ' +
-          'marca "Compartir audio del sistema" (requiere Chrome/Edge/Arc actualizado).', 'error');
-        if (typeof coachShowIdle === 'function') coachShowIdle();
-        return;
-      }
-
-      console.log('[Coach] 3/4 Pidiendo permiso del mic...');
-      try {
-        micStream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      if (callAudio) {
+        console.log('[Coach] 2/4 Audio de la llamada del dialer (sin compartir pantalla)');
+        micStream = callAudio.local || null;
+      } else {
+        console.log('[Coach] 2/4 Pidiendo captura de pantalla...');
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          // displaySurface:'monitor' hace que el picker abra en "Pantalla completa";
+          // systemAudio:'include' muestra el checkbox de audio del sistema.
+          video: { displaySurface: 'monitor' },
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+          systemAudio: 'include',
+          monitorTypeSurfaces: 'include',
+          selfBrowserSurface: 'exclude'
         });
-        console.log('[Coach] Mic OK');
-      } catch (e) {
-        console.warn('[Coach] Sin mic:', e); micStream = null;
-        toast('Sin acceso al micrófono: tu voz NO se transcribirá. Habilita el permiso ' +
-          '(candado en la barra de direcciones) y reinicia el coach.', 'warn');
+
+        // El navegador no permite FORZAR la superficie: validar lo elegido.
+        // Una pestaña o ventana deja de oírse en cuanto el cliente cambia de
+        // app/tab — solo pantalla completa garantiza capturar toda la reunión.
+        const vTrack = displayStream.getVideoTracks()[0];
+        const surface = (vTrack && typeof vTrack.getSettings === 'function')
+          ? vTrack.getSettings().displaySurface : null;
+        if (surface && surface !== 'monitor') {
+          cleanup();
+          toast('Compartiste una ' + (surface === 'browser' ? 'pestaña' : 'ventana') +
+            '. Comparte la pantalla completa para que el coach escuche toda la reunión.', 'error');
+          if (typeof coachShowIdle === 'function') coachShowIdle();
+          return;
+        }
+
+        if (displayStream.getAudioTracks().length === 0) {
+          cleanup();
+          toast('No se captó el audio de la reunión. Al compartir la pantalla completa, ' +
+            'marca "Compartir audio del sistema" (requiere Chrome/Edge/Arc actualizado).', 'error');
+          if (typeof coachShowIdle === 'function') coachShowIdle();
+          return;
+        }
+
+        console.log('[Coach] 3/4 Pidiendo permiso del mic...');
+        try {
+          micStream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+          });
+          console.log('[Coach] Mic OK');
+        } catch (e) {
+          console.warn('[Coach] Sin mic:', e); micStream = null;
+          toast('Sin acceso al micrófono: tu voz NO se transcribirá. Habilita el permiso ' +
+            '(candado en la barra de direcciones) y reinicia el coach.', 'warn');
+        }
       }
 
       console.log('[Coach] 4/4 Registrando meeting...');
       const res = await global.api.startMeeting({
-        meeting_url: 'local-capture://realtime',
+        meeting_url: sessionOpts.meetingUrl || 'local-capture://realtime',
         prospect_id: prospectContext && prospectContext.id,
         prospect_name: prospectContext && prospectContext.name,
         context: prospectContext || {},
@@ -140,7 +158,7 @@
       elapsedTimer = setInterval(updateElapsed, 1000);
 
       // Switch UI to active state
-      if (typeof coachShowActive === 'function') {
+      if (!callAudio && typeof coachShowActive === 'function') {
         coachShowActive(prospectContext && prospectContext.name);
       }
 
@@ -148,10 +166,13 @@
       connectDeepgramDirect(dgToken);
       startAudioCapture();
 
-      displayStream.getVideoTracks()[0].onended = function () {
-        toast('Captura detenida', 'warn'); end();
-      };
+      if (displayStream) {
+        displayStream.getVideoTracks()[0].onended = function () {
+          toast('Captura detenida', 'warn'); end();
+        };
+      }
       toast('Coach en vivo iniciado', 'success');
+      return currentMeetingId;
     } catch (e) {
       console.error('[Coach] Start error:', e);
       toast('Error iniciando coach: ' + e.message, 'error');
@@ -177,7 +198,7 @@
         });
       }
 
-      const tabAudio = new MediaStream(displayStream.getAudioTracks());
+      const tabAudio = new MediaStream(callAudio ? callAudio.remote.getAudioTracks() : displayStream.getAudioTracks());
       const tabSource = audioCtx.createMediaStreamSource(tabAudio);
       const tabGain = audioCtx.createGain();
       tabGain.gain.value = 1.0;
@@ -541,6 +562,9 @@
     });
     const events = document.getElementById('mc-events');
     if (events) alerts.forEach(function (a) { events.prepend(buildAlertCard(a)); });
+    if (typeof sessionOpts.onCoach === 'function') {
+      try { sessionOpts.onCoach({ alerts: alerts, stage: out.stage || '', next_step: out.next_step || '' }); } catch (e) {}
+    }
     if (out.stage) { const stEl = document.getElementById('mc-stage'); if (stEl) stEl.textContent = out.stage.charAt(0).toUpperCase() + out.stage.slice(1); }
     if (out.next_step) { const ns = document.getElementById('mc-next-steps'); if (ns) ns.innerHTML = '<div style="font-size:12px;padding:6px 8px;background:var(--surface2);border-radius:6px">' + esc(out.next_step) + '</div>'; }
     return { alerts: alerts, stage: out.stage || '', next_step: out.next_step || '' };
@@ -590,8 +614,23 @@
     currentMeetingId = null;
     active = false;
 
+    const opts = sessionOpts;
+    sessionOpts = {};
     // Return UI to idle state
     if (typeof coachShowIdle === 'function') coachShowIdle();
+
+    if (meetId && opts.stayOnPage) {
+      // Llamada del dialer: el reporte queda con la llamada y en la ficha del
+      // lead; no se navega a Reportes en medio del trabajo.
+      try {
+        const final = await global.api.endMeeting({ meeting_id: meetId });
+        if (typeof opts.onEnded === 'function') opts.onEnded(meetId, final);
+      } catch (e) {
+        console.warn('[Coach] endMeeting error:', e);
+        if (typeof opts.onEnded === 'function') opts.onEnded(meetId, null);
+      }
+      return;
+    }
 
     if (meetId) {
       try {
@@ -619,7 +658,10 @@
     if (audioProcessor) { try { audioProcessor.disconnect(); } catch(e){} audioProcessor = null; }
     if (audioCtx) { try { audioCtx.close(); } catch(e){} audioCtx = null; }
     if (displayStream) { displayStream.getTracks().forEach(function(t){t.stop();}); displayStream = null; }
-    if (micStream) { micStream.getTracks().forEach(function(t){t.stop();}); micStream = null; }
+    // Los tracks de la llamada son del dialer: detenerlos cortaría el audio.
+    if (micStream && !callAudio) { micStream.getTracks().forEach(function(t){t.stop();}); }
+    micStream = null;
+    callAudio = null;
     if (dgSocket) { try { dgSocket.close(); } catch(e){} dgSocket = null; }
     if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
     cancelScheduledCoaching();

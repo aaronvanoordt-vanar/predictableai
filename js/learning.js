@@ -28,6 +28,8 @@
   var SCOPE_LABEL = {
     radar_detector: 'Detector del Radar', campaign_node: 'Paso de campaña', campaign: 'Campaña', channel: 'Canal',
     angle: 'Ángulo de mensaje', winning_message: 'Mensajes que respondieron', objection: 'Objeción', icp_attribute: 'Atributo del ICP',
+    automation_rule: 'Automatización',
+    deal_loss: 'Motivo de pérdida',
   };
 
   var state = { rows: [], loaded: false, loading: null, busy: false, error: '', lastRun: null, mountId: null };
@@ -100,6 +102,8 @@
       case 'radar_detector': return m.judged + ' señales juzgadas · ' + m.hit_rate + ' % útiles · ' + (m.replies || 0) + ' respuestas · ' + (m.meetings || 0) + ' reuniones';
       case 'icp_attribute': return m.positive + ' de ' + m.contacted + ' contactados respondieron (' + m.reply_rate + ' % vs. ' + m.base_rate + ' % promedio)';
       case 'objection': return m.count + ' veces · ganadas ' + m.won + ' · perdidas ' + m.lost;
+      case 'automation_rule': return m.approved + ' aprobadas · ' + m.rejected + ' rechazadas · ' + m.leads + ' leads · ' + m.replies + ' respuestas · ' + m.meetings + ' reuniones';
+      case 'deal_loss': return m.count + ' de ' + m.lost_total + ' oportunidades perdidas (' + m.share + ' %)';
       default: return '';
     }
   }

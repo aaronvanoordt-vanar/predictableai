@@ -18,12 +18,13 @@
  * `read` o `write` (write incluye read). Límite: RATE_LIMIT_PER_MIN por clave.
  *
  * EVENT_TYPES es espejo de EVENT_TYPES en js/developers.js y de los triggers
- * de la migración; el contrato público está en /openapi.json (raíz del
+ * de las migraciones (20260923000010 + 20261017100001, CRM); el contrato público está en /openapi.json (raíz del
  * sitio) y `devapi.test.ts` verifica que cada ruta REST esté documentada.
  */
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { delayMs, firstNode, normalize as normalizeFlow, actions as flowActions } from "./campaign-flow.ts";
+import { companyDomain, CURRENCIES, LOST_REASON_KEYS, STAGE_KINDS } from "./crm.ts";
 import { suppressedMembers, type SuppressionChannel } from "./suppression.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -44,6 +45,11 @@ export const EVENT_TYPES = [
   "signal.created",
   "enrollment.status_changed",
   "meeting.completed",
+  "company.created",
+  "opportunity.created",
+  "opportunity.stage_changed",
+  "task.created",
+  "task.completed",
 ] as const;
 
 /** Estados del CRM de Predictable (CHECK de prospect_list_members.contact_status). */
@@ -60,7 +66,7 @@ export const CONTACT_COLUMNS = [
   "first_name", "last_name", "name", "title", "company", "company_domain",
   "email", "email_status", "phone", "phone_status", "linkedin_url",
   "city", "state", "country", "contact_status", "status_changed_at",
-  "enriched_at", "created_at", "updated_at",
+  "enriched_at", "created_at", "updated_at", "company_id",
 ].join(",");
 
 /** Campos de contacto que se pueden escribir desde afuera, con su tope. */
@@ -459,6 +465,223 @@ const CONTEXT_EXTRA = new Set([
   "common_objections", "social_proof", "social_proof_none", "context_confirmed_at",
   "market_analysis_confirmed_at", "updated_at",
 ]);
+
+// ─── CRM (migración 20261017100001; reglas y espejos en _shared/crm.ts) ────
+
+const COMPANY_COLUMNS = "id, name, domain, website, industry, employee_count, annual_revenue, founded_year, country, state, city, phone, linkedin_url, logo_url, description, apollo_org_id, owner_name, notes, source, external_id, external_source, external_synced_at, created_at, updated_at";
+const OPPORTUNITY_COLUMNS = "id, name, company_id, member_id, stage_id, amount, currency, close_date, owner_name, lost_reason, lost_note, lost_competitor, closed_at, notes, source, stage_changed_at, stage_changed_by, external_id, external_source, external_synced_at, created_at, updated_at";
+const TASK_COLUMNS = "id, title, notes, due_at, done_at, company_id, member_id, opportunity_id, owner_name, external_id, external_source, external_synced_at, created_at, updated_at";
+
+/** Texto seguro dentro de un `or=(…ilike…)` de PostgREST (mismo criterio que contacts.list). */
+const likeTerm = (s: string) => s.replace(/[%_\\,()"]/g, " ").trim();
+
+const EXTERNAL_PROPS = {
+  external_id: S.str("Id del registro en tu CRM. Sirve para actualizar sin duplicar."),
+  external_source: S.str("Nombre de tu sistema (ej. pipedrive, hubspot, crm-interno)."),
+};
+
+const COMPANY_PROPS = {
+  name: S.str("Nombre de la empresa."),
+  domain: S.str("Dominio (acme.com). Es la llave: una cuenta por dominio."),
+  website: S.str("Sitio web."),
+  industry: S.str("Industria."),
+  employee_count: S.str("Empleados (número o rango)."),
+  annual_revenue: S.str("Facturación anual (texto libre, ej. «USD 5M»)."),
+  founded_year: S.int("Año de fundación.", 1600, 2100),
+  country: S.str("País."), state: S.str("Estado / región."), city: S.str("Ciudad."),
+  phone: S.str("Teléfono de la empresa."),
+  linkedin_url: S.str("Página de LinkedIn de la empresa."),
+  description: S.str("Descripción."),
+  owner_name: S.str("Responsable de la cuenta."),
+  notes: S.str("Notas."),
+  ...EXTERNAL_PROPS,
+};
+
+const COMPANY_TEXT: Record<string, number> = {
+  name: 240, website: 500, industry: 200, employee_count: 60, annual_revenue: 80, country: 120, state: 120,
+  city: 120, phone: 60, linkedin_url: 500, description: 4000, owner_name: 120, notes: 20000,
+  external_id: 200, external_source: 60,
+};
+
+function companyPatch(input: Json, forInsert: boolean) {
+  const patch: Json = {};
+  for (const [k, max] of Object.entries(COMPANY_TEXT)) {
+    if (input[k] === undefined) continue;
+    patch[k] = text(input[k], k, max);
+  }
+  if (input.domain !== undefined) {
+    const raw = text(input.domain, "domain", 253);
+    patch.domain = raw ? companyDomain(raw) : null;
+    if (raw && !patch.domain) throw bad("`domain` no es un dominio de empresa válido (los de correo gratuito no cuentan).");
+  }
+  if (input.founded_year !== undefined) patch.founded_year = input.founded_year === null ? null : int(input.founded_year, "founded_year", 1600, 2100, 0);
+  if (patch.linkedin_url && !/^https?:\/\//i.test(patch.linkedin_url)) patch.linkedin_url = "https://" + patch.linkedin_url;
+  if (forInsert) {
+    if (!patch.name) throw bad("Falta `name`.");
+    patch.source = "api";
+    patch.firmographics_source = "api";
+  } else if (input.name !== undefined && !patch.name) {
+    throw bad("`name` no puede quedar vacío.");
+  }
+  return patch;
+}
+
+async function ownCompany(ctx: Ctx, id: string) {
+  const { data, error } = await ctx.supa.from("crm_companies").select(COMPANY_COLUMNS).eq("id", id).eq("user_id", ctx.userId).maybeSingle();
+  if (error) dbFail(error, "leer la cuenta");
+  if (!data) throw notFound("La cuenta");
+  return data;
+}
+
+/** Etapas del usuario (crea el pipeline por defecto la primera vez). */
+async function pipelineOf(ctx: Ctx): Promise<Json[]> {
+  const { data, error } = await ctx.supa.rpc("crm_seed_stages", { p_user: ctx.userId });
+  if (error) dbFail(error, "leer el pipeline");
+  return (data || []).map((s: Json) => ({
+    id: s.id, name: s.name, position: s.position, kind: s.kind, probability: s.probability, auto_key: s.auto_key,
+    external_id: s.external_id, external_source: s.external_source,
+  }));
+}
+
+function opportunityOut(o: Json, stages: Json[]) {
+  const st = stages.find((s) => s.id === o.stage_id);
+  const { member_id, ...rest } = o;
+  return {
+    ...rest,
+    amount: o.amount == null ? null : Number(o.amount),
+    contact_id: member_id,
+    stage: st ? { id: st.id, name: st.name, kind: st.kind, probability: st.probability } : null,
+  };
+}
+
+function taskOut(t: Json) {
+  const { member_id, ...rest } = t;
+  return { ...rest, contact_id: member_id };
+}
+
+const OPPORTUNITY_PROPS = {
+  name: S.str("Nombre de la oportunidad (ej. «Acme — piloto 2027»)."),
+  stage_id: S.id("Etapa (GET /v1/pipeline). Por defecto, la primera etapa abierta."),
+  company_id: S.id("Cuenta."),
+  company_domain: S.str("Alternativa a company_id: el dominio de la cuenta (se crea si no existe)."),
+  company_name: S.str("Nombre de la cuenta si se crea por dominio."),
+  contact_id: S.id("Contacto principal (si no mandas cuenta, se usa la suya)."),
+  amount: { type: ["number", "null"], minimum: 0, description: "Monto." },
+  currency: { type: "string", enum: [...CURRENCIES], description: "Moneda ISO 4217 (sin conversión)." },
+  close_date: { type: ["string", "null"], format: "date", description: "Fecha estimada o real de cierre (AAAA-MM-DD)." },
+  owner_name: S.str("Responsable."),
+  notes: S.str("Notas."),
+  lost_reason: { type: ["string", "null"], enum: [...LOST_REASON_KEYS, null], description: "Obligatorio si la etapa es perdida." },
+  lost_note: S.str("Detalle del motivo (obligatorio con «otro»)."),
+  lost_competitor: S.str("Con qué competidor se perdió."),
+  ...EXTERNAL_PROPS,
+};
+
+async function opportunityPatch(ctx: Ctx, input: Json, stages: Json[], forInsert: boolean) {
+  const patch: Json = {};
+  for (const [k, max] of Object.entries({ name: 200, owner_name: 120, notes: 20000, lost_note: 1000, lost_competitor: 120, external_id: 200, external_source: 60 })) {
+    if (input[k] === undefined) continue;
+    patch[k] = text(input[k], k, max);
+  }
+  if (input.stage_id !== undefined) {
+    const sid = uuid(input.stage_id, "stage_id") as string;
+    if (!stages.some((s) => s.id === sid)) throw bad("`stage_id` no es una etapa de tu pipeline (GET /v1/pipeline).");
+    patch.stage_id = sid;
+  } else if (forInsert) {
+    const first = stages.filter((s) => s.kind === "open").sort((a, b) => a.position - b.position)[0];
+    if (!first) throw new ApiError(409, "pipeline_without_open_stage", "Tu pipeline no tiene etapas abiertas.");
+    patch.stage_id = first.id;
+  }
+  if (input.amount !== undefined) {
+    if (input.amount === null || input.amount === "") patch.amount = null;
+    else {
+      const n = Number(input.amount);
+      if (!Number.isFinite(n) || n < 0 || n > 1e13) throw bad("`amount` debe ser un número positivo.");
+      patch.amount = Math.round(n * 100) / 100;
+    }
+  }
+  if (input.currency !== undefined) {
+    const c = String(input.currency ?? "").trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(c)) throw bad("`currency` debe ser un código ISO 4217 (MXN, COP, USD…).");
+    patch.currency = c;
+  }
+  if (input.close_date !== undefined) {
+    if (input.close_date === null || input.close_date === "") patch.close_date = null;
+    else {
+      const s = String(input.close_date).slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || isNaN(new Date(s).getTime())) throw bad("`close_date` debe ser AAAA-MM-DD.");
+      patch.close_date = s;
+    }
+  }
+  if (input.lost_reason !== undefined) patch.lost_reason = input.lost_reason === null ? null : oneOf(input.lost_reason, "lost_reason", LOST_REASON_KEYS, true);
+  const cid = uuid(input.company_id, "company_id", false);
+  if (cid) patch.company_id = (await ownCompany(ctx, cid)).id;
+  else if (input.company_domain) {
+    const d = companyDomain(text(input.company_domain, "company_domain", 253));
+    if (!d) throw bad("`company_domain` no es un dominio de empresa válido.");
+    const found = await ctx.supa.from("crm_companies").select("id").eq("user_id", ctx.userId).eq("domain", d).maybeSingle();
+    if (found.data) patch.company_id = found.data.id;
+    else {
+      const ins = await ctx.supa.from("crm_companies").insert({
+        user_id: ctx.userId, name: text(input.company_name, "company_name", 240) || d, domain: d, source: "api",
+      }).select("id").single();
+      if (ins.error) crmFail(ins.error, "crear la cuenta");
+      patch.company_id = ins.data.id;
+    }
+  } else if (input.company_id === null) patch.company_id = null;
+  if (input.contact_id !== undefined) patch.member_id = uuid(input.contact_id, "contact_id", false);
+  if (forInsert) {
+    if (!patch.name) throw bad("Falta `name`.");
+    patch.source = "api";
+  } else if (input.name !== undefined && !patch.name) {
+    throw bad("`name` no puede quedar vacío.");
+  }
+  return patch;
+}
+
+const TASK_PROPS = {
+  title: S.str("Qué hay que hacer."),
+  notes: S.str("Detalle."),
+  due_at: S.date("Vencimiento."),
+  done: S.bool("true = hecha; false = pendiente."),
+  company_id: S.id("Cuenta."),
+  contact_id: S.id("Contacto."),
+  opportunity_id: S.id("Oportunidad."),
+  owner_name: S.str("Responsable."),
+  ...EXTERNAL_PROPS,
+};
+
+function taskPatch(input: Json, forInsert: boolean) {
+  const patch: Json = {};
+  for (const [k, max] of Object.entries({ title: 240, notes: 4000, owner_name: 120, external_id: 200, external_source: 60 })) {
+    if (input[k] === undefined) continue;
+    patch[k] = text(input[k], k, max);
+  }
+  if (input.due_at !== undefined) patch.due_at = isoDate(input.due_at, "due_at");
+  if (input.done !== undefined) patch.done_at = bool(input.done) ? new Date().toISOString() : null;
+  if (input.company_id !== undefined) patch.company_id = uuid(input.company_id, "company_id", false);
+  if (input.contact_id !== undefined) patch.member_id = uuid(input.contact_id, "contact_id", false);
+  if (input.opportunity_id !== undefined) patch.opportunity_id = uuid(input.opportunity_id, "opportunity_id", false);
+  if ((forInsert || input.title !== undefined) && !patch.title) throw bad("Falta `title`.");
+  if (forInsert && patch.external_id && !patch.external_source) patch.external_source = "api";
+  return patch;
+}
+
+/** Errores de los triggers del CRM → 400 con un mensaje que el integrador entiende. */
+function crmFail(error: Json, what: string): never {
+  const msg = String(error?.message || "");
+  const known: Record<string, string> = {
+    lost_reason_required: "Una oportunidad en la etapa perdida necesita `lost_reason`.",
+    lost_note_required: "Con `lost_reason: \"otro\"` manda también `lost_note` (mínimo 3 caracteres).",
+    invalid_stage: "`stage_id` no es una etapa de tu pipeline.",
+    invalid_company: "`company_id` no existe o no es tuyo.",
+    invalid_contact: "`contact_id` no existe o no es tuyo.",
+    invalid_opportunity: "`opportunity_id` no existe o no es tuyo.",
+  };
+  for (const [code, message] of Object.entries(known)) if (msg.includes(code)) throw new ApiError(400, code, message);
+  if (error?.code === "23505") throw new ApiError(409, "conflict", "Ya existe un registro con ese dominio o ese external_id.");
+  dbFail(error, what);
+}
 
 export const OPERATIONS: Record<string, Operation> = {
   // ── Cuenta ────────────────────────────────────────────────────────────────
@@ -947,10 +1170,10 @@ export const OPERATIONS: Record<string, Operation> = {
   // ── Bandeja ───────────────────────────────────────────────────────────────
   "messages.list": {
     scope: "read",
-    summary: "Mensajes enviados y recibidos por WhatsApp, email y LinkedIn.",
+    summary: "Mensajes enviados y recibidos por WhatsApp, email y LinkedIn, y las llamadas del agente de voz (canal voice).",
     params: obj({
       contact_id: S.id("Solo los de este contacto."),
-      channel: { type: "string", enum: ["whatsapp", "email", "linkedin"] },
+      channel: { type: "string", enum: ["whatsapp", "email", "linkedin", "voice"] },
       direction: { type: "string", enum: ["in", "out"], description: "in = respuestas del lead; out = enviados." },
       created_after: S.date("Solo los posteriores a esta fecha."),
       ...PAGE_PARAMS,
@@ -960,7 +1183,7 @@ export const OPERATIONS: Record<string, Operation> = {
       let q = ctx.supa.from("inbox_messages").select("id, member_id, channel, direction, contact_ref, body, status, error_detail, sent_at, created_at").eq("user_id", ctx.userId);
       const cid = uuid(input.contact_id, "contact_id", false);
       if (cid) q = q.eq("member_id", cid);
-      const ch = oneOf(input.channel, "channel", ["whatsapp", "email", "linkedin"] as const);
+      const ch = oneOf(input.channel, "channel", ["whatsapp", "email", "linkedin", "voice"] as const);
       if (ch) q = q.eq("channel", ch);
       const dir = oneOf(input.direction, "direction", ["in", "out"] as const);
       if (dir) q = q.eq("direction", dir);
@@ -1046,6 +1269,261 @@ export const OPERATIONS: Record<string, Operation> = {
       if (error) dbFail(error, "leer la reunión");
       if (!data) throw notFound("La reunión");
       return { data: meetingOut(data, true) };
+    },
+  },
+
+  // ── CRM: cuentas, pipeline, oportunidades y tareas ────────────────────────
+  "pipeline.get": {
+    scope: "read",
+    summary: "Etapas del pipeline de oportunidades (se crea el de por defecto si no hay).",
+    params: obj({}),
+    async run(ctx) {
+      return { data: await pipelineOf(ctx) };
+    },
+  },
+
+  "companies.list": {
+    scope: "read",
+    summary: "Cuentas (empresas) del CRM: una por dominio, enlazadas a sus contactos.",
+    params: obj({
+      q: S.str("Busca en el nombre o el dominio."),
+      domain: S.str("Dominio exacto (se normaliza: https://www.acme.com → acme.com)."),
+      created_after: S.date("Solo las creadas después de esta fecha."),
+      ...PAGE_PARAMS,
+    }),
+    async run(ctx, input) {
+      const p = page(input);
+      let q = ctx.supa.from("crm_companies").select(COMPANY_COLUMNS).eq("user_id", ctx.userId);
+      if (input.domain != null && input.domain !== "") {
+        const d = companyDomain(text(input.domain, "domain", 253));
+        if (!d) throw bad("`domain` no es un dominio de empresa válido.");
+        q = q.eq("domain", d);
+      }
+      const ca = isoDate(input.created_after, "created_after");
+      if (ca) q = q.gt("created_at", ca);
+      const term = likeTerm(text(input.q, "q", 120) || "");
+      const groups = term ? [`name.ilike.%${term}%,domain.ilike.%${term}%`] : [];
+      const { data, error } = await paged(q, p, "created_at", groups);
+      if (error) dbFail(error, "leer las cuentas");
+      return pageResult(data, p);
+    },
+  },
+
+  "companies.get": {
+    scope: "read",
+    summary: "Una cuenta con sus contactos, oportunidades, tareas abiertas y señales del Radar.",
+    params: obj({ company_id: S.id("Id de la cuenta.") }, ["company_id"]),
+    async run(ctx, input) {
+      const id = uuid(input.company_id ?? input.id, "company_id") as string;
+      const company = await ownCompany(ctx, id);
+      const [contacts, opps, tasks, signals] = await Promise.all([
+        ctx.supa.from("prospect_list_members").select(CONTACT_COLUMNS).eq("user_id", ctx.userId).eq("company_id", id).order("created_at", { ascending: false }).limit(100),
+        ctx.supa.from("crm_opportunities").select(OPPORTUNITY_COLUMNS).eq("user_id", ctx.userId).eq("company_id", id).order("created_at", { ascending: false }).limit(100),
+        ctx.supa.from("crm_tasks").select(TASK_COLUMNS).eq("user_id", ctx.userId).eq("company_id", id).is("done_at", null).order("due_at", { ascending: true, nullsFirst: false }).limit(100),
+        ctx.supa.from("radar_signals").select(SIGNAL_COLUMNS).eq("user_id", ctx.userId).eq("company_id", id).order("created_at", { ascending: false }).limit(20),
+      ]);
+      const stages = await pipelineOf(ctx);
+      return {
+        data: {
+          ...company,
+          contacts: contacts.data || [],
+          opportunities: (opps.data || []).map((o: Json) => opportunityOut(o, stages)),
+          open_tasks: (tasks.data || []).map(taskOut),
+          signals: signals.data || [],
+        },
+      };
+    },
+  },
+
+  "companies.upsert": {
+    scope: "write",
+    summary: "Crea o actualiza una cuenta sin duplicar (por external_id, si no por dominio).",
+    params: obj({ ...COMPANY_PROPS }, ["name"]),
+    async run(ctx, input) {
+      const patch = companyPatch(input, true);
+      let existing: Json = null;
+      if (patch.external_id) {
+        const { data } = await ctx.supa.from("crm_companies").select(COMPANY_COLUMNS).eq("user_id", ctx.userId)
+          .eq("external_id", patch.external_id).eq("external_source", patch.external_source ?? "api").maybeSingle();
+        existing = data;
+      }
+      if (!existing && patch.domain) {
+        const { data } = await ctx.supa.from("crm_companies").select(COMPANY_COLUMNS).eq("user_id", ctx.userId).eq("domain", patch.domain).maybeSingle();
+        existing = data;
+      }
+      if (existing) {
+        delete patch.source;
+        const { data, error } = await ctx.supa.from("crm_companies").update(patch).eq("id", existing.id).eq("user_id", ctx.userId).select(COMPANY_COLUMNS).single();
+        if (error) crmFail(error, "actualizar la cuenta");
+        return { data: { company: data, created: false } };
+      }
+      if (patch.external_id && !patch.external_source) patch.external_source = "api";
+      const { data, error } = await ctx.supa.from("crm_companies").insert({ ...patch, user_id: ctx.userId }).select(COMPANY_COLUMNS).single();
+      if (error) crmFail(error, "crear la cuenta");
+      return { data: { company: data, created: true }, status: 201 };
+    },
+  },
+
+  "companies.update": {
+    scope: "write",
+    summary: "Cambia datos de una cuenta (firmografía, responsable, notas, id externo).",
+    params: obj({ company_id: S.id("Id de la cuenta."), ...COMPANY_PROPS }, ["company_id"]),
+    async run(ctx, input) {
+      const id = uuid(input.company_id ?? input.id, "company_id") as string;
+      const patch = companyPatch(input, false);
+      if (!Object.keys(patch).length) throw bad("Nada que actualizar.");
+      const { data, error } = await ctx.supa.from("crm_companies").update(patch).eq("id", id).eq("user_id", ctx.userId).select(COMPANY_COLUMNS);
+      if (error) crmFail(error, "actualizar la cuenta");
+      if (!data || !data.length) throw notFound("La cuenta");
+      return { data: data[0] };
+    },
+  },
+
+  "opportunities.list": {
+    scope: "read",
+    summary: "Oportunidades del pipeline, con su etapa, monto y moneda.",
+    params: obj({
+      status: { type: "string", enum: ["open", "won", "lost"], description: "open = en curso; won = ganadas; lost = perdidas." },
+      stage_id: S.id("Solo las de esta etapa."),
+      company_id: S.id("Solo las de esta cuenta."),
+      contact_id: S.id("Solo las de este contacto."),
+      updated_after: S.date("Solo las modificadas después de esta fecha (para sincronizar)."),
+      ...PAGE_PARAMS,
+    }),
+    async run(ctx, input) {
+      const p = page(input);
+      const stages = await pipelineOf(ctx);
+      let q = ctx.supa.from("crm_opportunities").select(OPPORTUNITY_COLUMNS).eq("user_id", ctx.userId);
+      const st = oneOf(input.status, "status", STAGE_KINDS);
+      if (st) q = q.in("stage_id", stages.filter((s: Json) => s.kind === st).map((s: Json) => s.id));
+      const sid = uuid(input.stage_id, "stage_id", false);
+      if (sid) q = q.eq("stage_id", sid);
+      const cid = uuid(input.company_id, "company_id", false);
+      if (cid) q = q.eq("company_id", cid);
+      const mid = uuid(input.contact_id, "contact_id", false);
+      if (mid) q = q.eq("member_id", mid);
+      const ua = isoDate(input.updated_after, "updated_after");
+      if (ua) q = q.gt("updated_at", ua);
+      const { data, error } = await paged(q, p);
+      if (error) dbFail(error, "leer las oportunidades");
+      return pageResult(data, p, "created_at", (o) => opportunityOut(o, stages));
+    },
+  },
+
+  "opportunities.get": {
+    scope: "read",
+    summary: "Una oportunidad con su historial de etapas y sus tareas.",
+    params: obj({ opportunity_id: S.id("Id de la oportunidad.") }, ["opportunity_id"]),
+    async run(ctx, input) {
+      const id = uuid(input.opportunity_id ?? input.id, "opportunity_id") as string;
+      const { data, error } = await ctx.supa.from("crm_opportunities").select(OPPORTUNITY_COLUMNS).eq("id", id).eq("user_id", ctx.userId).maybeSingle();
+      if (error) dbFail(error, "leer la oportunidad");
+      if (!data) throw notFound("La oportunidad");
+      const [stages, hist, tasks] = await Promise.all([
+        pipelineOf(ctx),
+        ctx.supa.from("crm_opportunity_history").select("from_stage_id, to_stage_id, from_stage_name, to_stage_name, to_stage_kind, changed_by, lost_reason, note, created_at")
+          .eq("user_id", ctx.userId).eq("opportunity_id", id).order("created_at", { ascending: false }).limit(100),
+        ctx.supa.from("crm_tasks").select(TASK_COLUMNS).eq("user_id", ctx.userId).eq("opportunity_id", id).order("created_at", { ascending: false }).limit(100),
+      ]);
+      return { data: { ...opportunityOut(data, stages), history: hist.data || [], tasks: (tasks.data || []).map(taskOut) } };
+    },
+  },
+
+  "opportunities.create": {
+    scope: "write",
+    summary: "Crea una oportunidad (o la actualiza si ya existe ese external_id). Perdida exige `lost_reason`.",
+    params: obj({ ...OPPORTUNITY_PROPS }, ["name"]),
+    async run(ctx, input) {
+      const stages = await pipelineOf(ctx);
+      const patch = await opportunityPatch(ctx, input, stages, true);
+      if (patch.external_id) {
+        const { data: ex } = await ctx.supa.from("crm_opportunities").select("id").eq("user_id", ctx.userId)
+          .eq("external_id", patch.external_id).eq("external_source", patch.external_source ?? "api").maybeSingle();
+        if (ex) {
+          delete patch.source;
+          const { data, error } = await ctx.supa.from("crm_opportunities").update(patch).eq("id", ex.id).eq("user_id", ctx.userId).select(OPPORTUNITY_COLUMNS).single();
+          if (error) crmFail(error, "actualizar la oportunidad");
+          return { data: { opportunity: opportunityOut(data, stages), created: false } };
+        }
+        if (!patch.external_source) patch.external_source = "api";
+      }
+      const { data, error } = await ctx.supa.from("crm_opportunities").insert({ ...patch, user_id: ctx.userId }).select(OPPORTUNITY_COLUMNS).single();
+      if (error) crmFail(error, "crear la oportunidad");
+      return { data: { opportunity: opportunityOut(data, stages), created: true }, status: 201 };
+    },
+  },
+
+  "opportunities.update": {
+    scope: "write",
+    summary: "Mueve de etapa o cambia monto, moneda, fecha de cierre o responsable. Perdida exige `lost_reason`.",
+    params: obj({ opportunity_id: S.id("Id de la oportunidad."), ...OPPORTUNITY_PROPS }, ["opportunity_id"]),
+    async run(ctx, input) {
+      const id = uuid(input.opportunity_id ?? input.id, "opportunity_id") as string;
+      const stages = await pipelineOf(ctx);
+      const patch = await opportunityPatch(ctx, input, stages, false);
+      if (!Object.keys(patch).length) throw bad("Nada que actualizar.");
+      const { data, error } = await ctx.supa.from("crm_opportunities").update(patch).eq("id", id).eq("user_id", ctx.userId).select(OPPORTUNITY_COLUMNS);
+      if (error) crmFail(error, "actualizar la oportunidad");
+      if (!data || !data.length) throw notFound("La oportunidad");
+      return { data: opportunityOut(data[0], stages) };
+    },
+  },
+
+  "tasks.list": {
+    scope: "read",
+    summary: "Tareas por lead, cuenta u oportunidad, con su vencimiento.",
+    params: obj({
+      status: { type: "string", enum: ["open", "done"], description: "open = pendientes; done = hechas." },
+      due_before: S.date("Solo las que vencen antes de esta fecha."),
+      company_id: S.id("Solo las de esta cuenta."),
+      contact_id: S.id("Solo las de este contacto."),
+      opportunity_id: S.id("Solo las de esta oportunidad."),
+      ...PAGE_PARAMS,
+    }),
+    async run(ctx, input) {
+      const p = page(input);
+      let q = ctx.supa.from("crm_tasks").select(TASK_COLUMNS).eq("user_id", ctx.userId);
+      const st = oneOf(input.status, "status", ["open", "done"] as const);
+      if (st === "open") q = q.is("done_at", null);
+      if (st === "done") q = q.not("done_at", "is", null);
+      const db = isoDate(input.due_before, "due_before");
+      if (db) q = q.lt("due_at", db);
+      const cid = uuid(input.company_id, "company_id", false);
+      if (cid) q = q.eq("company_id", cid);
+      const mid = uuid(input.contact_id, "contact_id", false);
+      if (mid) q = q.eq("member_id", mid);
+      const oid = uuid(input.opportunity_id, "opportunity_id", false);
+      if (oid) q = q.eq("opportunity_id", oid);
+      const { data, error } = await paged(q, p);
+      if (error) dbFail(error, "leer las tareas");
+      return pageResult(data, p, "created_at", taskOut);
+    },
+  },
+
+  "tasks.create": {
+    scope: "write",
+    summary: "Crea una tarea para un lead, una cuenta o una oportunidad.",
+    params: obj({ ...TASK_PROPS }, ["title"]),
+    async run(ctx, input) {
+      const patch = taskPatch(input, true);
+      const { data, error } = await ctx.supa.from("crm_tasks").insert({ ...patch, user_id: ctx.userId }).select(TASK_COLUMNS).single();
+      if (error) crmFail(error, "crear la tarea");
+      return { data: taskOut(data), status: 201 };
+    },
+  },
+
+  "tasks.update": {
+    scope: "write",
+    summary: "Marca una tarea como hecha (o pendiente) o cambia su título, notas o vencimiento.",
+    params: obj({ task_id: S.id("Id de la tarea."), ...TASK_PROPS }, ["task_id"]),
+    async run(ctx, input) {
+      const id = uuid(input.task_id ?? input.id, "task_id") as string;
+      const patch = taskPatch(input, false);
+      if (!Object.keys(patch).length) throw bad("Nada que actualizar.");
+      const { data, error } = await ctx.supa.from("crm_tasks").update(patch).eq("id", id).eq("user_id", ctx.userId).select(TASK_COLUMNS);
+      if (error) crmFail(error, "actualizar la tarea");
+      if (!data || !data.length) throw notFound("La tarea");
+      return { data: taskOut(data[0]) };
     },
   },
 
@@ -1161,6 +1639,18 @@ export const ROUTES: [string, string, string][] = [
   ["PATCH", "/v1/signals/:signal_id", "signals.update"],
   ["GET", "/v1/meetings", "meetings.list"],
   ["GET", "/v1/meetings/:meeting_id", "meetings.get"],
+  ["GET", "/v1/pipeline", "pipeline.get"],
+  ["GET", "/v1/companies", "companies.list"],
+  ["POST", "/v1/companies", "companies.upsert"],
+  ["GET", "/v1/companies/:company_id", "companies.get"],
+  ["PATCH", "/v1/companies/:company_id", "companies.update"],
+  ["GET", "/v1/opportunities", "opportunities.list"],
+  ["POST", "/v1/opportunities", "opportunities.create"],
+  ["GET", "/v1/opportunities/:opportunity_id", "opportunities.get"],
+  ["PATCH", "/v1/opportunities/:opportunity_id", "opportunities.update"],
+  ["GET", "/v1/tasks", "tasks.list"],
+  ["POST", "/v1/tasks", "tasks.create"],
+  ["PATCH", "/v1/tasks/:task_id", "tasks.update"],
   ["GET", "/v1/events", "events.list"],
   ["GET", "/v1/webhooks", "webhooks.list"],
   ["POST", "/v1/webhooks", "webhooks.create"],

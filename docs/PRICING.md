@@ -78,6 +78,8 @@ Columnas:
 | Tendencias de outbound (manual) | **10** | ~0.2 | 31 % | 6 búsquedas (antes 12) |
 | Coach en modo bot | **8 por cada 10 min** + 5 del reporte | ~0.16 por cada 10 min + 0.07 | 31 % | Una hora: 53 créditos. Antes 188. |
 | Coach en captura local | **5 por cada 10 min** + 5 del reporte | ~0.13 por cada 10 min + 0.07 | 40 % | Antes 8 fijos, que no cubrían Deepgram |
+| Agente de voz IA, por minuto conectado (MX, CO, CL, PE, BR) | **6** | ~0.12–0.16 por minuto | 31–41 % | Retell (~0.08) + operador (Twilio a móvil 0.038–0.075). No contestó, buzón o falla = 0. Se reserva la duración máxima y se devuelve lo que no se usa (`docs/AGENTE_DE_VOZ.md`) |
+| Agente de voz IA, por minuto conectado a Argentina | **18** | ~0.43 por minuto | 37 % | Los móviles de Argentina cuestan ~0.35 USD/min en el operador |
 | Onboarding, PDF del contexto, CODA, reporte del portal de clientes | 0 | 0.01–0.5 una vez | — | Costo de adquisición; está acotado |
 
 **Supuestos de costo** (precios oficiales al 2026-09-23):
@@ -96,6 +98,8 @@ Columnas:
 | Deepgram nova-2 | ~0.0058 USD por minuto por canal |
 | Google Places Text Search (nivel Enterprise) | 35 USD por cada 1,000 |
 | Apollo | 0.022 USD por crédito |
+| Retell AI (agente de voz) | ~0.055 USD por minuto + 0.015 de TTS + LLM ≈ 0.08 |
+| Twilio, llamada a móvil | MX 0.047 · CO 0.038 · CL 0.075 · PE 0.074 · BR 0.066 · AR 0.353 USD por minuto |
 
 Los tokens se midieron sobre los prompts reales del código (caracteres ÷ 4, tomando el rango alto porque el español tokeniza peor).
 
@@ -145,4 +149,5 @@ Cada cuenta de prueba nos cuesta como máximo ~14 USD con email corporativo (pri
 
 - El agente administrado de "Preparar con IA" (Managed Agents) no permite fijar un tope de búsquedas en su toolset. El costo real de ~0.10 USD sale de medir el código, pero conviene revisarlo con la facturación de Anthropic del primer mes.
 - El worker de Cloudflare (`/openai` y `/deepgram-token`) se llama sin autenticación desde el navegador. Su código no está en el repo: hay que confirmar que valida el JWT, o cualquiera puede gastar nuestro OpenAI y Deepgram.
+- **Agencias (2026-10-17)**: la agencia compra con su propio plan y recargas y reparte a sus espacios (`js/agency.js`); la factura consolidada sale sola porque los espacios no pueden pagar (`billing` → 403 `workspace_billing`). Los créditos del plan asignados a un espacio vencen con el plan de la agencia. **Decidido (dueño, 2026-10-18): el espacio NO hereda el plan de la agencia.** Sin suscripción propia queda en `free` (2 detectores del Radar, sin Hub automático, tope de revelados de la prueba con la key compartida) salvo que sea ilimitado; heredarlo multiplicaría el costo fijo de Starter (~3.3 USD por cuenta) por cada cliente.
 - A los 30 días, recalcular los márgenes con los datos reales de `credit_transactions` y la facturación de cada proveedor.
