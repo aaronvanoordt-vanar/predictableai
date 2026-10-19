@@ -1,7 +1,10 @@
 /**
  * _shared/integrations.ts — catálogo y traducciones de las integraciones
  * (2026-09-23): HubSpot, Salesforce, Amplemarket, Google Sheets, Google
- * Calendar, Notion y ClickUp.
+ * Calendar, Notion y ClickUp; y desde el 2026-10-17 los CRM de Latam
+ * (Pipedrive, Kommo, Zoho CRM, Bitrix24, RD Station CRM — sus traducciones
+ * viven en crm-common.ts y crm-latam.ts) y HubSpot en dos sentidos
+ * (hubspot-sync.ts).
  *
  * Solo funciones puras: qué credenciales necesita cada plataforma y cómo se
  * traduce un lead de Predictable (fila de prospect_list_members) o un reporte
@@ -27,7 +30,12 @@ export type ProviderId =
   | "google_calendar"
   | "outlook_calendar"
   | "notion"
-  | "clickup";
+  | "clickup"
+  | "pipedrive"
+  | "kommo"
+  | "zoho"
+  | "bitrix24"
+  | "rdstation";
 
 export interface ProviderMeta {
   id: ProviderId;
@@ -48,7 +56,21 @@ export const PROVIDERS: ProviderMeta[] = [
   { id: "outlook_calendar", name: "Outlook Calendar", category: "productivity", oauthEnv: ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"], tokenAllowed: false },
   { id: "notion", name: "Notion", category: "productivity", oauthEnv: ["NOTION_CLIENT_ID", "NOTION_CLIENT_SECRET"], tokenAllowed: true },
   { id: "clickup", name: "ClickUp", category: "productivity", oauthEnv: ["CLICKUP_CLIENT_ID", "CLICKUP_CLIENT_SECRET"], tokenAllowed: true },
+  // CRM de Latam (2026-10-17). Kommo: token de larga duración + subdominio;
+  // Bitrix24: URL del webhook entrante (su OAuth exige una app del
+  // Marketplace); RD Station CRM: token de la instancia (API v1).
+  { id: "pipedrive", name: "Pipedrive", category: "crm", oauthEnv: ["PIPEDRIVE_CLIENT_ID", "PIPEDRIVE_CLIENT_SECRET"], tokenAllowed: true },
+  { id: "kommo", name: "Kommo", category: "crm", oauthEnv: ["KOMMO_CLIENT_ID", "KOMMO_CLIENT_SECRET"], tokenAllowed: true },
+  { id: "zoho", name: "Zoho CRM", category: "crm", oauthEnv: ["ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET"], tokenAllowed: false },
+  { id: "bitrix24", name: "Bitrix24", category: "crm", oauthEnv: ["BITRIX24_CLIENT_ID", "BITRIX24_CLIENT_SECRET"], tokenAllowed: true },
+  { id: "rdstation", name: "RD Station CRM", category: "crm", oauthEnv: [], tokenAllowed: true },
 ];
+
+/** CRM que reciben listas como personas + organizaciones (+ deal opcional). */
+export const LATAM_CRMS: ProviderId[] = ["pipedrive", "kommo", "zoho", "bitrix24", "rdstation"];
+
+/** Los que aceptan el envío automático de leads nuevos de una lista (cron). */
+export const AUTO_PUSH_PROVIDERS: ProviderId[] = ["hubspot", "salesforce", ...LATAM_CRMS];
 
 export function providerMeta(id: unknown): ProviderMeta | null {
   return PROVIDERS.find((p) => p.id === id) ?? null;
@@ -105,6 +127,9 @@ export interface Lead {
   city?: string | null;
   state?: string | null;
   country?: string | null;
+  /** Lo que el lead ya tiene en cada CRM (ids de un envío anterior, estado de HubSpot). */
+  // deno-lint-ignore no-explicit-any
+  crm_state?: Record<string, any> | null;
 }
 
 export interface Skipped {

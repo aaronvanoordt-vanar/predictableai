@@ -73,6 +73,9 @@
     // 1 crédito por lead que entra a una campaña: cubre TODOS sus envíos
     // (salen por tu WATI, Apollo o Dripify). Responder a mano no cuesta.
     campaign_send:          { credits: 1,  label: 'por lead en campaña', variable: true },
+    // LinkedIn desde tu cuenta conectada: 1 por invitación o mensaje que
+    // envía el motor (por Dripify no se cobra).
+    linkedin_send:          { credits: 1,  label: 'por envío de LinkedIn', variable: true },
 
     // ── Enriquecimiento (Apollo de la plataforma; con tu Apollo, 0) ───
     // Solo se cobra si Apollo encuentra el dato.

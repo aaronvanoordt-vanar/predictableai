@@ -31,13 +31,16 @@
 <script src="js/i18n.js?v=20261017"></script>
 <script>
   // Retorno del OAuth de las integraciones (js/integrations.js): HubSpot,
-  // Salesforce, Google Sheets, Google Calendar, Notion y ClickUp vuelven aquí
-  // con ?code=&state=. NO carga auth-guard.js: si algo falla a mitad del
+  // Salesforce, Google Sheets, Google Calendar, Notion, ClickUp, Pipedrive,
+  // Kommo, Zoho CRM y Bitrix24 vuelven aquí con ?code=&state=. Kommo agrega
+  // `referer` (la cuenta) y Zoho `accounts-server` (su centro de datos): se
+  // reenvían tal cual y la edge function los valida contra su lista. NO carga auth-guard.js: si algo falla a mitad del
   // flujo debe mostrar su error en vez de rebotar al login.
   (function () {
     var NAMES = {
       hubspot: 'HubSpot', salesforce: 'Salesforce', google_sheets: 'Google Sheets',
-      google_calendar: 'Google Calendar', outlook_calendar: 'Outlook Calendar', notion: 'Notion', clickup: 'ClickUp'
+      google_calendar: 'Google Calendar', outlook_calendar: 'Outlook Calendar', notion: 'Notion', clickup: 'ClickUp',
+      pipedrive: 'Pipedrive', kommo: 'Kommo', zoho: 'Zoho CRM', bitrix24: 'Bitrix24'
     };
     var msg = document.getElementById('msg');
     var err = document.getElementById('err');
@@ -90,6 +93,8 @@
               provider: pending.provider,
               code: code,
               code_verifier: pending.verifier || '',
+              referer: params.get('referer') || '',
+              accounts_server: params.get('accounts-server') || '',
               // Tiene que coincidir byte a byte con el usado para pedir el código.
               redirect_uri: window.location.origin + window.location.pathname
             }

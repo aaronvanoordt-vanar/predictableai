@@ -76,8 +76,13 @@
  * Credenciales de Apollo (email): la del usuario si conectó su Apollo por
  * OAuth (channel_accounts.provider = 'apollo', ver _shared/apollo-auth.ts);
  * si no, la key compartida APOLLO_API_KEY (fallback de la beta).
- * LinkedIn no tiene tope diario: el ritmo lo decide Dripify (Activity
- * Control), así que daily_caps.linkedin se ignora aunque exista.
+ * LinkedIn por Dripify no tiene tope diario: el ritmo lo decide Dripify
+ * (Activity Control), así que daily_caps.linkedin se ignora aunque exista.
+ * LinkedIn desde la cuenta propia (Unipile, `settings.linkedin_via =
+ * "unipile"`, 2026-10-17) SÍ tiene topes por cuenta (20 invitaciones/día,
+ * 100/semana, 50 mensajes/día, 2–8 min entre envíos, a la mitad en
+ * calentamiento: _shared/linkedin-limits.ts): el motor manda la invitación o
+ * el mensaje con el texto del paso y cobra 1 crédito por envío.
  * Las filas de inbox_messages llevan campaign_id / enrollment_id para la
  * bandeja de Respuestas; el texto de una respuesta por email se intenta leer
  * del hilo de Gmail (gmail_accounts) porque Apollo nunca lo entrega.
@@ -96,6 +101,8 @@ import { reconcileWatiReceipts } from "../_shared/wati-receipts.ts";
 import * as phoneLines from "../_shared/phone-lines.ts";
 import * as waReach from "../_shared/wa-reachability.ts";
 import * as dripify from "../_shared/dripify.ts";
+import * as unipile from "../_shared/unipile.ts";
+import * as liLimits from "../_shared/linkedin-limits.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 import * as gmail from "../_shared/gmail.ts";
@@ -121,6 +128,9 @@ const WHATSAPP_SESSION_MS = 24 * 60 * 60 * 1000;
 // por el WATI, Apollo o Dripify del cliente y no nos cuesta). Tarifario en
 // _shared/credit-costs.ts (campaign_lead) ↔ js/credit-costs.js.
 const CAMPAIGN_LEAD_COST = CREDIT_COSTS.campaign_lead;
+// LinkedIn desde la cuenta propia: la plataforma paga Unipile por cuenta.
+const LINKEDIN_SEND_COST = CREDIT_COSTS.linkedin_send;
+const UNIPILE_SYNC_MS = 15 * 60 * 1000;
 const PREPARE_AHEAD_MS = 24 * 60 * 60 * 1000; // generar mensajes IA con este adelanto
 const PREPARE_BATCH = 12;                      // generaciones por corrida (cada una tarda ~10-30 s)
 const PREPARE_BUDGET_MS = 90 * 1000;           // tiempo máximo del pase por corrida
@@ -302,6 +312,8 @@ interface Ctx {
   watiByUser: Map<string, Json | null>;
   dripifyByUser: Map<string, Json | null>;
   dripifyCampaignsByUser: Map<string, dripify.DripifyCampaign[] | null>;
+  unipileByUser: Map<string, Json | null>;
+  liCounts: Map<string, liLimits.SendCounts>; // envíos nativos de LinkedIn por usuario (ritmo)
   apolloByUser: Map<string, apolloAuth.ApolloAuth | null>;
   gmailByUser: Map<string, { token: string; email: string } | null>;
   emailSettingsByUser: Map<string, EmailSettings>;
@@ -413,6 +425,74 @@ async function dripifyAccount(ctx: Ctx, userId: string): Promise<Json | null> {
   return data ?? null;
 }
 
+async function unipileAccount(ctx: Ctx, userId: string): Promise<Json | null> {
+  if (ctx.unipileByUser.has(userId)) return ctx.unipileByUser.get(userId) ?? null;
+  const { data } = await ctx.db.from("channel_accounts").select("*").eq("user_id", userId).eq("provider", "unipile").maybeSingle();
+  const acc = data && data.status !== "disconnected" && data.secret ? data : null;
+  ctx.unipileByUser.set(userId, acc);
+  return acc;
+}
+
+/** Envíos nativos de LinkedIn de la cuenta en 24 h / 7 días y el último (para el ritmo). */
+async function linkedinCounts(ctx: Ctx, userId: string): Promise<liLimits.SendCounts> {
+  if (ctx.liCounts.has(userId)) return ctx.liCounts.get(userId)!;
+  const day = new Date(ctx.now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const week = new Date(ctx.now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const base = () => ctx.db.from("campaign_events").select("id", { count: "exact", head: true })
+    .eq("user_id", userId).eq("channel", "linkedin").eq("payload->>via", "unipile");
+  const [d, w, m, last] = await Promise.all([
+    base().eq("type", "connection_sent").gte("created_at", day),
+    base().eq("type", "connection_sent").gte("created_at", week),
+    base().eq("type", "sent").gte("created_at", day),
+    ctx.db.from("campaign_events").select("created_at").eq("user_id", userId).eq("channel", "linkedin")
+      .eq("payload->>via", "unipile").in("type", ["connection_sent", "sent"]).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  const c: liLimits.SendCounts = { invitesDay: d.count ?? 0, invitesWeek: w.count ?? 0, messagesDay: m.count ?? 0, lastSendAt: last.data?.created_at ?? null };
+  ctx.liCounts.set(userId, c);
+  return c;
+}
+
+/**
+ * Error de Unipile en un envío → qué hacer. Un problema de la CUENTA
+ * (desconectada, checkpoint, restringida) o un límite de LinkedIn retiene
+ * todos los envíos de LinkedIn de ese usuario (config.send_block); uno del
+ * lead falla solo ese paso y la cadencia sigue.
+ */
+async function unipileStepError(ctx: Ctx, acc: Json, e: unknown): Promise<StepError> {
+  const cls = unipile.classifyError(e);
+  const msg = unipile.humanError(e);
+  if (cls === "account" || cls === "limit") {
+    const at = ctx.now.toISOString();
+    const block: Json = { reason: msg, code: (e as unipile.UnipileError)?.type || cls, at };
+    const set: Json = { send_block: block };
+    if (cls === "limit") {
+      block.until = new Date(ctx.now.getTime() + liLimits.LINKEDIN_LIMITS.limit_block_ms).toISOString();
+      set.last_limited_at = at;
+    }
+    const config = await patchChannelConfig(ctx.db, acc.id, set);
+    acc.config = config ?? { ...(acc.config ?? {}), ...set };
+    if (cls === "account") await ctx.db.from("channel_accounts").update({ status: "error", last_error: msg }).eq("id", acc.id);
+    return new StepError(msg, "hold");
+  }
+  if (cls === "recipient") return new StepError(msg, "fail");
+  return new StepError(msg, "hold_short");
+}
+
+/** Texto de un paso de LinkedIn nativo: propio (con variables) o el mensaje IA aprobado. */
+async function linkedinText(ctx: Ctx, en: Json, step: StepLike, member: Json, sender: Json): Promise<{ body: string; messageId: string | null }> {
+  if (step.content_kind === "custom") return { body: fill(step.body ?? "", member, sender), messageId: null };
+  const t = await aiText(ctx, en, step);
+  return { body: t.body, messageId: t.messageId };
+}
+
+/** Nota de conexión ≤ 300 caracteres, cortada en una palabra. */
+function clampNote(text: string): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= flowLib.LINKEDIN_NOTE_MAX) return t;
+  const cut = t.slice(0, flowLib.LINKEDIN_NOTE_MAX - 1);
+  return cut.slice(0, Math.max(cut.lastIndexOf(" "), 200)).trim() + "…";
+}
+
 async function campaignById(ctx: Ctx, id: string): Promise<Json | null> {
   if (ctx.campaignCache.has(id)) return ctx.campaignCache.get(id) ?? null;
   const { data } = await ctx.db.from("campaigns").select("*").eq("id", id).maybeSingle();
@@ -497,6 +577,20 @@ async function spendCredits(ctx: Ctx, en: Json) {
   await ctx.db.from("credit_transactions").insert({ user_id: userId, delta: -CAMPAIGN_LEAD_COST, reason: "campaign_lead", section_key: String(en.id) });
 }
 
+/** 1 crédito por envío de LinkedIn desde la cuenta propia (una vez por paso y lead). */
+async function spendLinkedinSend(ctx: Ctx, en: Json, nodeId: string | null) {
+  const key = `${en.id}:${nodeId ?? "?"}`;
+  const { count } = await ctx.db.from("credit_transactions").select("id", { count: "exact", head: true })
+    .eq("reason", "linkedin_send").eq("section_key", key);
+  if ((count ?? 0) > 0) return;
+  const { data, error } = await ctx.db.rpc("spend_credits", { p_user_id: en.user_id, p_amount: LINKEDIN_SEND_COST });
+  if (error || data === null || data === undefined) {
+    console.warn("[campaign-run] spend_credits linkedin_send:", error?.message ?? "sin saldo");
+    return;
+  }
+  await ctx.db.from("credit_transactions").insert({ user_id: en.user_id, delta: -LINKEDIN_SEND_COST, reason: "linkedin_send", section_key: key });
+}
+
 function channelKey(stepChannel: string): string {
   if (stepChannel === "call") return "phone";
   return stepChannel.startsWith("linkedin") ? "linkedin" : stepChannel;
@@ -509,11 +603,13 @@ function channelKey(stepChannel: string): string {
 // hold_short → como hold pero en 1 h (campaña de LinkedIn pendiente de vincular).
 // stop       → el enrolamiento pasa a error (el lead ya no existe, fallo estructural).
 // wait / wait_short → espera un mensaje IA (aprobación o generación en curso).
+// pace       → ritmo de LinkedIn nativo (tope o espacio entre envíos): se
+//              reintenta a la hora exacta `retryAt`, sin evento.
 // defer      → reintentar a una hora precisa (`retryAt`) sin avanzar: buzones
 //              propios en su tope diario, en su separación o fuera de horario.
 // wait_call  → la tarea de llamar espera al SDR (sin evento ni error_detail:
 //              no es algo que haya que "reintentar"); vuelve a mirar en `retryAt`.
-type StepErrorMode = "skip" | "fail" | "hold" | "hold_short" | "stop" | "wait" | "wait_short" | "defer" | "wait_call";
+type StepErrorMode = "skip" | "fail" | "hold" | "hold_short" | "stop" | "wait" | "wait_short" | "pace" | "defer" | "wait_call";
 class StepError extends Error {
   mode: StepErrorMode;
   retryAt: Date | null;
@@ -576,7 +672,7 @@ async function aiText(ctx: Ctx, en: Json, step: StepLike): Promise<AiText> {
     if (row.status === "sent") throw new StepError("El mensaje de este paso ya se envió.", "skip");
     throw new StepError("El mensaje de este paso quedó omitido.", "skip");
   }
-  if (!["email", "whatsapp", "call"].includes(step.channel)) throw new StepError("No hay mensaje IA para este canal.", "skip");
+  if (!["email", "whatsapp", "call"].includes(step.channel) && !flowLib.isNativeLinkedin(step)) throw new StepError("No hay mensaje IA para este canal.", "skip");
   // Lo genera el pase "preparar" de esta misma corrida; se reintenta en 2 min.
   throw new StepError("Generando el mensaje IA de este paso…", "wait_short");
 }
@@ -860,6 +956,90 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       await db.from("prospect_list_members").update({ contact_status: "saludo_enviado", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
     }
     await spendCredits(ctx, en);
+  } else if (flowLib.isNativeLinkedin(step)) {
+    // LinkedIn desde la cuenta propia (Unipile): el motor manda de verdad la
+    // invitación (con la nota del paso) o el mensaje (solo a un contacto).
+    const isMsg = step.channel === "linkedin_message";
+    const acc = await unipileAccount(ctx, en.user_id);
+    if (!acc) throw new StepError("Tu cuenta de LinkedIn no está conectada: conéctala en Campañas → LinkedIn.", "hold");
+    const env = unipile.unipileEnv();
+    if (!env) throw new StepError("El envío desde tu cuenta de LinkedIn no está habilitado en la plataforma.", "hold");
+    const block = liLimits.activeBlock(acc.config, ctx.now);
+    if (block) throw new StepError(block.reason + (block.until ? "" : " Vuelve a conectar tu cuenta de LinkedIn."), "hold");
+    const url = dripify.canonicalLinkedinUrl(member.linkedin_url);
+    if (!url) throw new StepError("El lead no tiene URL de LinkedIn: se omite el paso y sigue con el siguiente.", "skip");
+    if (isMsg && !en.linkedin_connected_at) {
+      throw new StepError("El lead todavía no aceptó la conexión de LinkedIn: se omite el mensaje y sigue con el siguiente paso.", "skip");
+    }
+    // Ritmo ANTES de tocar LinkedIn: leer el perfil también cuenta como actividad.
+    const counts = await linkedinCounts(ctx, en.user_id);
+    const limits = liLimits.effectiveLimits(acc.config, acc.config?.connected_at, ctx.now);
+    // El azar del espacio entre envíos sale del último envío: estable entre
+    // corridas (si se sorteara en cada una, la espera real tendería al mínimo).
+    const rand = counts.lastSendAt ? (Date.parse(counts.lastSendAt) % 1000) / 1000 : 0;
+    const p = liLimits.pace(isMsg ? "message" : "invite", counts, limits, ctx.now, rand);
+    if (!p.ok) throw new StepError(p.reason, "pace", p.retryAt);
+    const { body: rawText, messageId: aiRowId } = await linkedinText(ctx, en, step, member, sender);
+    let profile: unipile.UnipileUser;
+    try { profile = await unipile.resolveUser(env, acc.secret, url); } catch (e) { throw await unipileStepError(ctx, acc, e); }
+    if (!profile.providerId) throw new StepError("LinkedIn no encontró el perfil del lead.", "fail");
+    const refs: Json = { ...(en.provider_refs ?? {}), unipile_provider_id: profile.providerId, unipile_linkedin_url: url };
+    const patch: Json = { provider_refs: refs };
+    if (profile.firstDegree && !en.linkedin_connected_at) { patch.linkedin_connected_at = ctx.now.toISOString(); en.linkedin_connected_at = patch.linkedin_connected_at; }
+    en.provider_refs = refs;
+    await db.from("campaign_enrollments").update(patch).eq("id", en.id);
+    const meta = { step_position: step.position, node_id: step.node_id };
+    const nowIso = ctx.now.toISOString();
+    if (!isMsg) {
+      if (profile.firstDegree) {
+        await event(ctx, en, "linkedin", "connection_accepted", { detail: "Ya eran contactos en LinkedIn.", ...meta, payload: { via: "unipile" } });
+        throw new StepError("Ya son contactos en LinkedIn: no hace falta la invitación.", "skip");
+      }
+      if (profile.invitationPending) throw new StepError("Ya hay una invitación de LinkedIn pendiente para este lead.", "skip");
+      const note = clampNote(rawText);
+      let r: { invitationId: string | null };
+      try { r = await unipile.invite(env, acc.secret, profile.providerId, note); } catch (e) { throw await unipileStepError(ctx, acc, e); }
+      await event(ctx, en, "linkedin", "connection_sent", { provider_message_id: r.invitationId, detail: note ? note.slice(0, 200) : "Invitación sin nota.", ...meta, payload: { via: "unipile" } });
+      counts.invitesDay++; counts.invitesWeek++;
+      if (note) {
+        await db.from("inbox_messages").insert({
+          user_id: en.user_id, member_id: member.id, channel: "linkedin", provider: "unipile", direction: "out",
+          contact_ref: url, body: note, provider_message_id: r.invitationId ? `inv:${r.invitationId}` : null, status: "sent", sent_at: nowIso,
+          campaign_id: campaign.id, enrollment_id: en.id,
+          payload: { campaign_id: campaign.id, step_position: step.position, node_id: step.node_id, kind: "connection_note", provider_id: profile.providerId },
+        });
+      }
+    } else {
+      const text = rawText.trim();
+      if (!text) throw new StepError("No hay mensaje de LinkedIn para este lead.", "skip");
+      let r: { chatId: string | null; messageId: string | null };
+      try {
+        r = refs.unipile_chat_id
+          ? { chatId: String(refs.unipile_chat_id), ...(await unipile.messageChat(env, String(refs.unipile_chat_id), text)) }
+          : await unipile.messageUser(env, acc.secret, profile.providerId, text);
+      } catch (e) { throw await unipileStepError(ctx, acc, e); }
+      if (r.chatId && r.chatId !== refs.unipile_chat_id) {
+        refs.unipile_chat_id = r.chatId;
+        await db.from("campaign_enrollments").update({ provider_refs: refs }).eq("id", en.id);
+      }
+      // El aviso message_received de este mismo mensaje se descarta por el
+      // índice único (provider, provider_message_id).
+      await db.from("inbox_messages").insert({
+        user_id: en.user_id, member_id: member.id, channel: "linkedin", provider: "unipile", direction: "out",
+        contact_ref: url, body: text, provider_message_id: r.messageId, provider_conversation_id: r.chatId, status: "sent", sent_at: nowIso,
+        campaign_id: campaign.id, enrollment_id: en.id,
+        payload: { campaign_id: campaign.id, step_position: step.position, node_id: step.node_id, chat_id: r.chatId, provider_id: profile.providerId },
+      });
+      await event(ctx, en, "linkedin", "sent", { provider_message_id: r.messageId, detail: text.slice(0, 200), ...meta, payload: { via: "unipile" } });
+      counts.messagesDay++;
+    }
+    counts.lastSendAt = nowIso;
+    if (aiRowId) await db.from("campaign_messages").update({ status: "sent", sent_at: nowIso }).eq("id", aiRowId);
+    if (["no_contactado", "en_campana"].includes(member.contact_status)) {
+      await db.from("prospect_list_members").update({ contact_status: isMsg ? "saludo_enviado" : "conexion_enviada", status_changed_at: nowIso }).eq("id", member.id);
+    }
+    await spendLinkedinSend(ctx, en, step.node_id);
+    await spendCredits(ctx, en);
   } else if (flowLib.isLinkedin(step.channel)) {
     // Los dos pasos de LinkedIn hacen lo mismo con Dripify (subir el perfil a
     // una campaña), pero a campañas DISTINTAS: la de conexión solo manda la
@@ -1076,8 +1256,9 @@ async function preflight(ctx: Ctx, en: Json, campaign: Json, step: StepLike): Pr
 
   const ch = channelKey(step.channel);
   const caps = campaign.daily_caps ?? {};
-  // LinkedIn no tiene tope aquí: el ritmo lo decide Dripify (Activity Control);
-  // daily_caps.linkedin se ignora aunque una campaña vieja lo traiga.
+  // LinkedIn no tiene tope aquí: con Dripify lo decide Dripify (Activity
+  // Control) y desde la cuenta propia lo aplica el paso nativo por CUENTA
+  // (_shared/linkedin-limits.ts). daily_caps.linkedin se ignora siempre.
   let cap = ch === "linkedin" ? 0 : Number(caps[ch] ?? 0);
   // El tope del canal de WhatsApp (config.daily_cap, desde la tarjeta del canal)
   // manda sobre el de la campaña: el conteo ya junta todas las campañas.
@@ -1138,7 +1319,7 @@ async function handleStepError(ctx: Ctx, en: Json, step: StepLike, e: unknown): 
   const err = e instanceof StepError ? e : new StepError((e as Error)?.message || String(e), "stop");
   const ch = channelKey(step.channel);
   const mode = err.mode as string;
-  if (mode !== "wait_short") console.warn("[campaign-run]", en.id, step.channel, err.mode, err.message);
+  if (mode !== "wait_short" && mode !== "pace") console.warn("[campaign-run]", en.id, step.channel, err.mode, err.message);
   const meta = { step_position: step.position, node_id: step.node_id };
   if (mode === "skip") {
     await event(ctx, en, ch, "skipped", { detail: err.message, ...meta });
@@ -1157,6 +1338,10 @@ async function handleStepError(ctx: Ctx, en: Json, step: StepLike, e: unknown): 
     const hours = mode === "hold" ? 6 : 1;
     if (en.error_detail !== err.message) await event(ctx, en, ch, "skipped", { detail: err.message + ` Se reintenta en ${hours === 1 ? "1 hora" : hours + " horas"}.`, ...meta });
     await finish(ctx, en, { status: "active", next_run_at: new Date(ctx.now.getTime() + hours * 60 * 60 * 1000).toISOString(), error_detail: err.message });
+    return false;
+  }
+  if (mode === "pace") {
+    await finish(ctx, en, { status: "active", next_run_at: (err.retryAt ?? new Date(ctx.now.getTime() + 60 * 60 * 1000)).toISOString(), error_detail: err.message });
     return false;
   }
   if (mode === "defer") {
@@ -1406,7 +1591,7 @@ async function preparePending(ctx: Ctx): Promise<number> {
   const horizon = new Date(ctx.now.getTime() + PREPARE_AHEAD_MS).toISOString();
   const { data: ens } = await db
     .from("campaign_enrollments")
-    .select("id, campaign_id, member_id, user_id, next_node_id, next_position, started_at, last_inbound_whatsapp_at")
+    .select("id, campaign_id, member_id, user_id, next_node_id, next_position, started_at, last_inbound_whatsapp_at, linkedin_connected_at")
     .eq("status", "active")
     .not("next_node_id", "is", null)
     .lte("next_run_at", horizon)
@@ -1421,15 +1606,18 @@ async function preparePending(ctx: Ctx): Promise<number> {
     const loc = flowLib.find(flow, en.next_node_id);
     if (!loc || loc.node.type !== "action") continue;
     const node = loc.node;
-    if (node.content.kind !== "ai" || !["email", "whatsapp", "call"].includes(node.channel)) continue;
+    if (node.content.kind !== "ai" || !(["email", "whatsapp", "call"].includes(node.channel) || flowLib.isNativeLinkedin(node))) continue;
+    // Un mensaje de LinkedIn solo sale a un contacto: sin conexión aceptada se omitirá.
+    if (node.channel === "linkedin_message" && !en.linkedin_connected_at) continue;
     // WhatsApp libre solo con sesión abierta: no gastar créditos si el paso se va a omitir.
     if (node.channel === "whatsapp") {
       const last = en.last_inbound_whatsapp_at ? new Date(en.last_inbound_whatsapp_at).getTime() : 0;
       if (!last || ctx.now.getTime() - last > WHATSAPP_SESSION_MS) continue;
     }
     // Sin el dato del canal el paso se omite: tampoco se gasta en generarlo.
-    const { data: mem } = await db.from("prospect_list_members").select("email, phone").eq("id", en.member_id).maybeSingle();
+    const { data: mem } = await db.from("prospect_list_members").select("email, phone, linkedin_url").eq("id", en.member_id).maybeSingle();
     if (!mem) continue;
+    if (flowLib.isLinkedin(node.channel) && !dripify.canonicalLinkedinUrl(mem.linkedin_url)) continue;
     if (node.channel === "email" && !hasEmail(mem)) continue;
     if ((node.channel === "whatsapp" || node.channel === "call") && !wati.digits(mem.phone)) continue;
     const { count } = await db.from("campaign_messages").select("id", { count: "exact", head: true }).eq("enrollment_id", en.id).eq("node_id", node.id);
@@ -1667,7 +1855,7 @@ Deno.serve(async (req) => {
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, { auth: { persistSession: false } });
   const now = new Date();
-  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), dripifyCampaignsByUser: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), emailSettingsByUser: new Map(), sentToday: new Map(), watiProbed: new Set(), templateProbed: new Set(), campaignCache: new Map(), agendaByUser: new Map() };
+  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), dripifyCampaignsByUser: new Map(), unipileByUser: new Map(), liCounts: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), emailSettingsByUser: new Map(), sentToday: new Map(), watiProbed: new Set(), templateProbed: new Set(), campaignCache: new Map(), agendaByUser: new Map() };
 
   // «Sincronizar todo» de la Bandeja (la llama inbox-send con la service role):
   // solo email (Apollo) y LinkedIn (Dripify) de ESE usuario, sin esperar el
@@ -1679,6 +1867,7 @@ Deno.serve(async (req) => {
     let linkedin = 0, email = 0;
     const errors: Record<string, string> = {};
     try { linkedin = await syncDripify(ctx, opts); } catch (e) { errors.linkedin = String((e as Error)?.message ?? e).slice(0, 200); console.error("[campaign-run] dripify sync (manual):", e); }
+    try { linkedin += await syncUnipileRelations(ctx, opts); } catch (e) { errors.linkedin = String((e as Error)?.message ?? e).slice(0, 200); console.error("[campaign-run] unipile sync (manual):", e); }
     try { email = await syncApolloEmail(ctx, opts); } catch (e) { errors.email = String((e as Error)?.message ?? e).slice(0, 200); console.error("[campaign-run] apollo email sync (manual):", e); }
     return json({ ok: true, linkedin, email, errors });
   }
@@ -1724,6 +1913,7 @@ Deno.serve(async (req) => {
   try { prepared = await preparePending(ctx); } catch (e) { console.error("[campaign-run] prepare:", e); }
   let synced = 0;
   try { synced = await syncDripify(ctx); } catch (e) { console.error("[campaign-run] dripify sync:", e); }
+  try { synced += await syncUnipileRelations(ctx); } catch (e) { console.error("[campaign-run] unipile sync:", e); }
   let emailSynced = 0;
   try { emailSynced = await syncApolloEmail(ctx); } catch (e) { console.error("[campaign-run] apollo email sync:", e); }
   let receipts = 0;
@@ -1920,6 +2110,51 @@ async function syncDripify(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
       }
     }
     await db.from("channel_accounts").update({ config: { ...(acc.config ?? {}), dripify_synced_at: ctx.now.toISOString() } }).eq("id", acc.id);
+  }
+  return touched;
+}
+
+// ── LinkedIn nativo: aceptaciones (respaldo del webhook new_relation) ───────
+// Unipile avisa las relaciones nuevas por webhook, pero con retraso y sin
+// garantía. Cada 15 min por cuenta se leen los contactos más recientes y se
+// cruzan con los enrolamientos a los que se invitó y siguen sin conexión.
+
+async function syncUnipileRelations(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
+  const env = unipile.unipileEnv();
+  if (!env) return 0;
+  const db = ctx.db;
+  let aq = db.from("channel_accounts").select("id, user_id, secret, config").eq("provider", "unipile").eq("status", "connected");
+  if (opts.userId) aq = aq.eq("user_id", opts.userId);
+  const { data: accounts } = await aq;
+  let touched = 0;
+  for (const acc of (accounts ?? []) as Json[]) {
+    const last = acc.config?.relations_synced_at ? Date.parse(acc.config.relations_synced_at) : 0;
+    if (!opts.force && ctx.now.getTime() - last < UNIPILE_SYNC_MS) continue;
+    await patchChannelConfig(db, acc.id, { relations_synced_at: ctx.now.toISOString() });
+    const { data: ens } = await db.from("campaign_enrollments")
+      .select("id, campaign_id, member_id, user_id, next_position, next_node_id, provider_refs, linkedin_connected_at")
+      .eq("user_id", acc.user_id).is("linkedin_connected_at", null)
+      .in("status", ["active", "paused", "processing"])
+      .not("provider_refs->>unipile_provider_id", "is", null)
+      .limit(500);
+    if (!ens?.length) continue;
+    let relations: unipile.Relation[] = [];
+    try { relations = await unipile.listRelations(env, acc.secret); } catch (e) { console.warn("[campaign-run] unipile relations", acc.user_id, unipile.humanError(e)); continue; }
+    const ids = new Set(relations.map((r) => r.providerId).filter(Boolean));
+    const slugs = new Set(relations.map((r) => r.publicIdentifier.toLowerCase()).filter(Boolean));
+    for (const en of ens as Json[]) {
+      const pid = String(en.provider_refs?.unipile_provider_id ?? "");
+      const slug = dripify.linkedinSlug(en.provider_refs?.unipile_linkedin_url);
+      if (!ids.has(pid) && !(slug && slugs.has(slug))) continue;
+      await db.from("campaign_enrollments").update({ linkedin_connected_at: ctx.now.toISOString() }).eq("id", en.id);
+      const { data: origin } = await db.from("campaign_events").select("node_id, step_position")
+        .eq("enrollment_id", en.id).eq("channel", "linkedin").eq("type", "connection_sent").not("node_id", "is", null)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      await event(ctx, en, "linkedin", "connection_accepted", { detail: "Aceptó la conexión de LinkedIn.", node_id: origin?.node_id ?? en.next_node_id ?? null, step_position: origin?.step_position ?? en.next_position, payload: { via: "unipile" } });
+      await db.from("prospect_list_members").update({ contact_status: "conexion_aceptada", status_changed_at: ctx.now.toISOString() })
+        .eq("id", en.member_id).in("contact_status", ["no_contactado", "en_campana", "saludo_enviado", "conexion_enviada"]);
+      touched++;
+    }
   }
   return touched;
 }

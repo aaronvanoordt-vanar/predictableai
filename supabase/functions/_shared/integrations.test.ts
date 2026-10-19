@@ -29,9 +29,10 @@ const ana: Lead = {
 const noEmail: Lead = { id: "2", name: "Luis Gómez Ruiz", company: "Beta", linkedin_url: "https://linkedin.com/in/luis" };
 const nothing: Lead = { id: "3", name: "Solo Nombre" };
 
-Deno.test("catálogo: las 8 plataformas, espejo de js/integrations.js", async () => {
+Deno.test("catálogo: las 13 plataformas, espejo de js/integrations.js", async () => {
   assertEquals(PROVIDERS.map((p) => p.id), [
     "hubspot", "salesforce", "amplemarket", "google_sheets", "google_calendar", "outlook_calendar", "notion", "clickup",
+    "pipedrive", "kommo", "zoho", "bitrix24", "rdstation",
   ]);
   const js = await Deno.readTextFile(new URL("../../../js/integrations.js", import.meta.url));
   for (const p of PROVIDERS) {
