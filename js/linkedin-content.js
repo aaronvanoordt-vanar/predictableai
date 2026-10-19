@@ -342,7 +342,7 @@
     var o = { day: 'numeric', month: 'short' };
     if (d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
     if (withTime) { o.hour = '2-digit'; o.minute = '2-digit'; }
-    return d.toLocaleString('es', o);
+    return d.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), o);
   }
 
   function localInput(iso) {
@@ -466,7 +466,7 @@
           return '<button type="button" class="lic-ev s-' + esc(p.status) + '" data-open="' + esc(p.id) + '" title="' + esc(STATUS_ONE[p.status]) + '">' + esc(p.title || 'Sin título') + '</button>';
         }).join('') + '</div>');
     }
-    var title = first.toLocaleString('es', { month: 'long', year: 'numeric' });
+    var title = first.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { month: 'long', year: 'numeric' });
     return '<div class="lic-cal-h">' + btn('‹', 'data-act="prev" aria-label="Mes anterior"') +
       '<div class="lic-cal-t">' + esc(title.charAt(0).toUpperCase() + title.slice(1)) + '</div>' +
       btn('›', 'data-act="next" aria-label="Mes siguiente"') + btn('Hoy', 'data-act="today"') + '</div>' +
@@ -481,7 +481,7 @@
     var html = '<div class="lic-sec-t">Métricas</div>';
     if (rows.length) {
       html += '<div class="lic-metrics">' + rows.map(function (k) {
-        return '<div class="lic-metric"><div class="lic-metric-n">' + esc(Number(m[k]).toLocaleString('es')) + '</div><div class="lic-muted">' + esc(METRIC_LABEL[k]) + '</div></div>';
+        return '<div class="lic-metric"><div class="lic-metric-n">' + esc(Number(m[k]).toLocaleString((window.i18n ? i18n.locale() : 'es-MX'))) + '</div><div class="lic-muted">' + esc(METRIC_LABEL[k]) + '</div></div>';
       }).join('') + '</div>';
     }
     var note = p.metrics_note || (p.publish_mode !== 'api'
