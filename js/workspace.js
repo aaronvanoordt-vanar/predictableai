@@ -143,10 +143,45 @@
     global.location.replace('./index.html');
   }
 
+  /**
+   * Entra a la cuenta REAL de una empresa vinculada (la agencia, con la
+   * invitación aceptada) o de cualquier cuenta registrada (el equipo). Mismo
+   * mecanismo que enter(): token de un solo uso del servidor + sesión guardada
+   * para «Volver a mi cuenta». `target` = { link_id } o { user_id }.
+   */
+  async function enterAccount(target) {
+    var cur = (await sb().auth.getSession()).data.session;
+    if (!cur) throw new Error('Tu sesión expiró. Vuelve a iniciar sesión.');
+    var data = await callFunction('client-workspace', cur.access_token, {
+      action: 'enter_account', link_id: target.link_id || undefined, user_id: target.user_id || undefined,
+    });
+    try {
+      localStorage.setItem(RETURN_KEY, JSON.stringify({
+        access_token: cur.access_token,
+        refresh_token: cur.refresh_token,
+        user_id: cur.user && cur.user.id,
+        email: cur.user && cur.user.email,
+        linked_account: true,
+        client_name: data.client_name || '',
+        workspace_user_id: data.workspace_user_id,
+        at: new Date().toISOString(),
+      }));
+    } catch (e) {
+      throw new Error('El navegador no permite guardar la sesión para volver. Revisa el modo privado.');
+    }
+    var verified = await sb().auth.verifyOtp({ type: 'magiclink', token_hash: data.token_hash });
+    if (verified.error || !verified.data || !verified.data.session) {
+      try { localStorage.removeItem(RETURN_KEY); } catch (e) {}
+      throw new Error('No se pudo abrir la cuenta: ' + ((verified.error && verified.error.message) || 'sin sesión'));
+    }
+    clearUserCaches('dashboard');
+    global.location.replace('./index.html');
+  }
+
   /** Vuelve a la cuenta del equipo. */
   async function exit() {
     var ret = readReturn();
-    clearUserCaches('clients');
+    clearUserCaches(ret && ret.linked_account ? 'agency' : 'clients');
     if (!ret) {
       // Sin la sesión guardada (otro navegador, almacenamiento borrado): a iniciar sesión.
       if (global.supabaseHelpers && global.supabaseHelpers.signOut) return global.supabaseHelpers.signOut();
@@ -361,7 +396,7 @@
     document.head.appendChild(s);
   }
 
-  function showPill(name) {
+  function showPill(name, linked) {
     if (document.getElementById('ws-pill')) return;
     injectCss();
     var pill = document.createElement('div');
@@ -372,7 +407,7 @@
     dot.className = 'ws-pill-dot';
     var txt = document.createElement('span');
     txt.className = 'ws-pill-txt';
-    txt.appendChild(document.createTextNode('Estás en el espacio de '));
+    txt.appendChild(document.createTextNode(linked ? 'Estás en la cuenta de ' : 'Estás en el espacio de '));
     var b = document.createElement('b');
     b.textContent = name || 'tu cliente';
     txt.appendChild(b);
@@ -411,6 +446,12 @@
         }
         return;
       }
+      // Cuenta real de una empresa vinculada: la píldora recuerda dónde se está.
+      if (ret && ret.linked_account && ret.workspace_user_id === me.id) {
+        var p2 = global.currentProfile || {};
+        showPill(ret.client_name || p2.brand_name || p2.full_name || '', true);
+        return;
+      }
       // De vuelta en la cuenta del equipo (o se volvió por otro camino): la
       // sesión guardada ya no sirve.
       if (!row.error && ret && ret.user_id === me.id) localStorage.removeItem(RETURN_KEY);
@@ -431,6 +472,7 @@
 
   global.Workspace = {
     enter: enter,
+    enterAccount: enterAccount,
     exit: exit,
     switchTo: switchTo,
     isInside: function () { return !!document.getElementById('ws-pill'); },
