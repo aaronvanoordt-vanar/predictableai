@@ -330,7 +330,7 @@ async function trainedSystemPrompt(
       trainingCache.set(userId, { at: Date.now(), t });
     }
   }
-  return prompt(coachDoctrine(t.row?.coach_methods)) + buildTrainingBlock(t, target);
+  return prompt(coachDoctrine()) + buildTrainingBlock(t, target);
 }
 
 // Coach en vivo (modo bot: Recall.ai manda los chunks y el servidor analiza).

@@ -174,7 +174,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     const t = await loadTraining(supa, user.id, { company: true });
     return json({
       has_training: hasTraining(t),
-      coach_doctrine: coachDoctrine(t.row?.coach_methods),
+      coach_doctrine: coachDoctrine(),
       coach: buildTrainingBlock(t, "coach"),
       coach_live: buildTrainingBlock(t, "coach_live"),
       outreach: buildTrainingBlock(t, "outreach"),
