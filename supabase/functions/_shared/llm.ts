@@ -168,6 +168,25 @@ export class EngineNotConfiguredError extends Error {
   }
 }
 
+/**
+ * The provider rejected the PLATFORM's account, not the request: no balance
+ * left (Anthropic "credit balance is too low", OpenAI "insufficient_quota") or
+ * a revoked key. Retrying the same engine is pointless, so callLLM moves to
+ * another configured engine; only when none is left does the caller see this.
+ * The message is meant for the end user: it must not read like their own
+ * Predictable credits ran out (the raw provider body goes to the logs).
+ */
+export class LlmProviderUnavailableError extends Error {
+  constructor(public engine: Engine, public reason: "billing" | "auth", public detail: string) {
+    super(
+      reason === "billing"
+        ? `El proveedor de IA de la plataforma (${ENGINE_LABEL[engine]}) se quedó sin saldo. No son tus créditos de Predictable; se reintenta solo.`
+        : `El proveedor de IA de la plataforma (${ENGINE_LABEL[engine]}) rechazó la clave de la plataforma. No son tus créditos de Predictable; se reintenta solo.`,
+    );
+    this.name = "LlmProviderUnavailableError";
+  }
+}
+
 /** The call exceeded its own deadline (mirrors the per-function timeouts). */
 export class LlmTimeoutError extends Error {
   constructor(detail: string) {
@@ -312,14 +331,69 @@ function isTransient(status: number): boolean {
 
 // ── Public entry point ───────────────────────────────────────────────────────
 
+/**
+ * Account-level rejections (no balance, bad key). Checked before isTransient:
+ * OpenAI reports an empty quota as a 429, which is not worth retrying.
+ */
+export function providerAccountProblem(status: number, body: string): "billing" | "auth" | null {
+  if (/credit balance is too low|insufficient_quota|exceeded your current quota|insufficient (credits|balance|funds)/i.test(body) &&
+    (status === 400 || status === 402 || status === 403 || status === 429)) return "billing";
+  if (status === 402) return "billing";
+  if (status === 401) return "auth";
+  return null;
+}
+
+/** Order in which the other engines take over when one is unavailable. */
+const FALLBACK_ORDER: Record<Engine, Engine[]> = {
+  claude:     ["openai", "perplexity"],
+  openai:     ["claude", "perplexity"],
+  perplexity: ["claude", "openai"],
+};
+
+/**
+ * An engine whose account was rejected is skipped for a while in this isolate,
+ * so a run of 20 detectors does not hit an empty account 20 times.
+ */
+const PROVIDER_COOLDOWN_MS = 10 * 60_000;
+const providerDownUntil = new Map<Engine, number>();
+/** Tests only. */
+export function _resetProviderCooldowns(): void { providerDownUntil.clear(); }
+
+function canServe(engine: Engine, opts: LlmCall): boolean {
+  return engineConfigured(engine) && !(engine === "perplexity" && opts.documents?.length);
+}
+
 export async function callLLM(opts: LlmCall): Promise<LlmResult> {
-  const retries = opts.retries ?? 2;
-  const baseDelay = opts.retryDelayMs ?? 3000;
   const prefix = opts.logPrefix ?? "[llm]";
   const deadline = opts.timeoutMs ? Date.now() + opts.timeoutMs : null;
-
   const lang = opts.language ?? requestLanguage();
-  opts = { ...opts, engine: resolveUsableEngine(opts, prefix), system: opts.system + languageDirective(lang) };
+  const primary = resolveUsableEngine(opts, prefix);
+  opts = { ...opts, engine: primary, system: opts.system + languageDirective(lang) };
+
+  const now = Date.now();
+  const candidates = [primary, ...FALLBACK_ORDER[primary].filter((e) => canServe(e, opts))];
+  const up = candidates.filter((e) => (providerDownUntil.get(e) ?? 0) <= now);
+  // All of them cooling down: try the chosen one anyway (it may have been recharged).
+  const order = up.length ? up : [primary];
+
+  let lastUnavailable: LlmProviderUnavailableError | null = null;
+  for (const engine of order) {
+    try {
+      return await callEngine({ ...opts, engine }, deadline, prefix);
+    } catch (e) {
+      if (!(e instanceof LlmProviderUnavailableError)) throw e;
+      providerDownUntil.set(engine, Date.now() + PROVIDER_COOLDOWN_MS);
+      console.error(`${prefix} ${ENGINE_LABEL[engine]} no disponible (${e.reason}): ${e.detail}`);
+      lastUnavailable = e;
+      if (deadline !== null && deadline - Date.now() <= 5_000) break;
+    }
+  }
+  throw lastUnavailable ?? new Error("Ningún motor de IA disponible");
+}
+
+async function callEngine(opts: LlmCall, deadline: number | null, prefix: string): Promise<LlmResult> {
+  const retries = opts.retries ?? 2;
+  const baseDelay = opts.retryDelayMs ?? 3000;
   const apiKey = apiKeyFor(opts.engine);
   let lastErr = "";
 
@@ -345,10 +419,14 @@ export async function callLLM(opts: LlmCall): Promise<LlmResult> {
           const retryRes = await dispatch(opts, apiKey, ctrl.signal, res.fallbackModel);
           const retryBody = await retryRes.text();
           if (!retryRes.ok) {
+            const problem = providerAccountProblem(retryRes.status, retryBody);
+            if (problem) throw new LlmProviderUnavailableError(opts.engine, problem, `${retryRes.status}: ${retryBody.slice(0, 300)}`);
             throw new Error(`${ENGINE_LABEL[opts.engine]} ${retryRes.status}: ${retryBody.slice(0, 400)}`);
           }
           return { text: extract(opts.engine, retryBody), engine: opts.engine, model: res.fallbackModel };
         }
+        const problem = providerAccountProblem(res.status, body);
+        if (problem) throw new LlmProviderUnavailableError(opts.engine, problem, `${res.status}: ${body.slice(0, 300)}`);
         if (isTransient(res.status) && attempt < retries) {
           lastErr = `${res.status}: ${body.slice(0, 300)}`;
           console.warn(`${prefix} ${ENGINE_LABEL[opts.engine]} ${lastErr} — reintento ${attempt + 1}/${retries}`);

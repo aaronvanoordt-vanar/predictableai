@@ -406,8 +406,8 @@
         '<label class="rl-chk" title="Solo cuando Apollo no ubica a la persona en su empresa"><input type="checkbox" data-act="ch-web"' + (cfg.web_fallback ? ' checked' : '') + '> Confirmar en la web <span class="rl-cost"><span data-credit-cost="champion_web_check" data-credit-pos="inside"></span></span></label>' +
         '</div>' +
         '<div class="rl-det-foot">' + (st === 'unavailable' || st === 'no_credits' || st === 'error' ? '<span class="rl-st rl-st-bad">' + esc(STATUS_LABEL[st] || st) + '</span>' : det.enabled ? '<span class="rl-st">' + (det.next_run_at && new Date(det.next_run_at) > new Date() ? 'Próxima corrida ' + esc(nextTime(det.next_run_at)) : 'En cola') + '</span>' : '<span class="rl-st">Apagado</span>') +
-        (det.stats && det.stats.last_note ? '<span class="rl-muted rl-xs">' + esc(det.stats.last_note) + '</span>' : '') + '</div>' +
-        (det.last_error ? '<div class="rl-det-err">' + esc(det.last_error) + '</div>' : '');
+        (det.stats && det.stats.last_note ? '<span class="rl-muted rl-xs">' + esc(detNote(det.stats.last_note)) + '</span>' : '') + '</div>' +
+        (det.last_error ? '<div class="rl-det-err">' + esc(detError(det.last_error)) + '</div>' : '');
       if (!planActive) h += '<div class="rl-alert rl-alert-warn">El seguimiento corre con el monitoreo del Radar, que está ' + (state.plan && state.plan.status === 'paused' ? 'en pausa' : 'sin activar') + '. <button class="rl-link" data-act="tab" data-tab="plan">Ir al plan</button></div>';
     }
     h += '</div>';
@@ -1431,6 +1431,13 @@
     return '<span class="pill pill-' + (L.verdict === 'works' ? 'green' : L.verdict === 'fails' ? 'red' : 'gray') + '" style="font-size:10.5px" title="' + esc(tip) + '">' + label + '</span>';
   }
 
+  // Un error de cuenta del proveedor de IA (sin saldo / clave rechazada) es de
+  // la plataforma, no de los créditos del usuario: nunca mostrar el JSON crudo.
+  const PROVIDER_DOWN_RE = /credit balance is too low|insufficient_quota|exceeded your current quota|proveedor de IA de la plataforma/i;
+  const PROVIDER_DOWN_MSG = 'El proveedor de IA de la plataforma no está disponible por ahora. No son tus créditos de Predictable: el detector se reintenta solo.';
+  function detError(msg) { return msg && PROVIDER_DOWN_RE.test(msg) ? PROVIDER_DOWN_MSG : msg; }
+  function detNote(note) { return note && PROVIDER_DOWN_RE.test(note) ? 'error: proveedor de IA no disponible' : note; }
+
   function detectorCardHtml(d) {
     const kind = DETECTOR_KINDS[d.kind] || { label: d.kind, icon: '•', requires: [] };
     const st = d.status || 'idle';
@@ -1457,9 +1464,9 @@
       maxCompaniesSelect('det-max-companies', d.id, maxCompaniesOf(d), '') +
       '</div>' +
       '<div class="rl-det-foot">' + statusLine +
-      '<span class="rl-muted rl-xs">' + (total === 1 ? '1 señal en total' : total + ' señales en total') + (stats.last_note ? ' · ' + esc(stats.last_note) : '') + '</span>' +
+      '<span class="rl-muted rl-xs">' + (total === 1 ? '1 señal en total' : total + ' señales en total') + (stats.last_note ? ' · ' + esc(detNote(stats.last_note)) : '') + '</span>' +
       '<button class="rl-link rl-del" data-act="det-delete" data-id="' + esc(d.id) + '">Eliminar</button></div>' +
-      (d.last_error ? '<div class="rl-det-err">' + esc(d.last_error) + '</div>' : '') +
+      (d.last_error ? '<div class="rl-det-err">' + esc(detError(d.last_error)) + '</div>' : '') +
       '</div>';
   }
 
