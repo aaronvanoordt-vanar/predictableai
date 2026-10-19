@@ -44,6 +44,10 @@ export const CREDIT_COSTS = {
   // la empresa y propone el ángulo. El match de Apollo se cobra aparte como
   // enrich_email solo con la key de la plataforma.
   lead_research: 3,
+  // Nota BANT del traspaso al AE al agendar desde tu agenda (hilo + respuestas
+  // de calificación + investigación previa). Agendar y los recordatorios no
+  // cuestan: no hay IA.
+  meeting_handoff: 3,
   // Contenido en LinkedIn (social selling), sin búsqueda web: el contexto
   // ya está en la base. Ideas con Haiku (~0.02 USD por tanda); el borrador
   // con el modelo por defecto, porque el texto se publica tal cual
@@ -65,6 +69,10 @@ export const CREDIT_COSTS = {
   // envíos). Responder a mano desde la Bandeja no cuesta.
   campaign_lead: 1,
   inbox_reply: 0,
+  // LinkedIn desde la cuenta propia (Unipile, 2026-10-17): 1 crédito por cada
+  // invitación o mensaje que manda el motor (la plataforma paga Unipile por
+  // cuenta conectada). Con Dripify no se cobra: lo paga el cliente allá.
+  linkedin_send: 1,
 
   // Intelligence Hub (manual; el automático va incluido según el plan).
   intel_hub_item: 3,

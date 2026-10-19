@@ -27,8 +27,9 @@
  *                                       listas de ClickUp, páginas de Notion…
  *  • export_list   {provider, list_id|'all', options}               → {counts, url?}
  *  • export_meeting {provider, meeting_id, options}                 → {url?}
- *  • calendar_events {days?}                                        → {events:[…]}
- *  • calendar_create {title, start, end, description?}              → {url}
+ *  • calendar_events {provider?, days?}                             → {events:[…]}
+ *  • calendar_create {provider?, title, start, end, description?}   → {url}
+ *      provider = google_calendar (por defecto) u outlook_calendar.
  *
  * Los tokens viven en integration_connections (columnas ocultas al cliente
  * por grants). Esta función es lo ÚNICO que los escribe o los lee.
@@ -37,28 +38,44 @@
  *   HUBSPOT_CLIENT_ID / HUBSPOT_CLIENT_SECRET
  *   SALESFORCE_CLIENT_ID / SALESFORCE_CLIENT_SECRET (+ SALESFORCE_LOGIN_URL)
  *   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (los mismos de gmail-proxy)
+ *   MICROSOFT_CLIENT_ID / MICROSOFT_CLIENT_SECRET (Outlook Calendar, app de Microsoft Entra)
  *   NOTION_CLIENT_ID / NOTION_CLIENT_SECRET
  *   CLICKUP_CLIENT_ID / CLICKUP_CLIENT_SECRET
  * Amplemarket no tiene OAuth público: se conecta con la API key del usuario.
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { GOOGLE_AUTH, GOOGLE_TOKEN } from "../_shared/gmail.ts";
+import {
+  apiCall, call, type Conn, type Ctx, env, expiresAt, form, HttpError, loadConn,
+  logSync, oauthCreds, patchConn, saveConn, sfLogin,
+} from "./runtime.ts";
+import {
+  crmAuthUrl, crmExchange, crmStages, crmTokenConn, exportCrm, HUBSPOT_SYNC_SCOPES, hubspotSync, identifyCrm,
+  hubspotStatusOptions, runHubspotPull, saveSync, statusMapOf, syncConfig, validateDealOptions, writeMemberStates,
+} from "./crm.ts";
+import { sanitizeStatusMap } from "../_shared/hubspot-sync.ts";
+import { isTwoWay, linkCompanies, nativeSettings, nativeSyncOf, pipedriveToNative, runNativeSync } from "./native-crm.ts";
 import {
   amplemarketListLeads,
   amplemarketSequenceLeads,
-  apiErrorMessage,
   chunk,
   clickupTaskForLead,
   clickupTaskForMeeting,
   GOOGLE_CALENDAR_SCOPES,
   GOOGLE_SHEETS_SCOPES,
+  GRAPH,
   HUBSPOT_SCOPES,
   hubspotContactInputs,
+  LATAM_CRMS,
+  AUTO_PUSH_PROVIDERS,
   type Lead,
   meetingReportBlocks,
+  MS_AUTH,
+  MS_TOKEN,
   notionParagraph,
   notionTableBlocks,
+  OUTLOOK_CALENDAR_SCOPES,
   PROVIDERS,
   type ProviderId,
   providerMeta,
@@ -68,13 +85,13 @@ import {
   TABLE_HEADER,
   tableRows,
   toCalendarItem,
+  type CalendarItem,
+  toOutlookCalendarItem,
 } from "../_shared/integrations.ts";
 
-// deno-lint-ignore no-explicit-any
-type Json = any;
+type Json = import("./runtime.ts").Json;
 
 const SF_API = "v61.0";
-const NOTION_VERSION = "2022-06-28";
 const MAX_MEMBERS = 5000;
 const CLICKUP_MAX_TASKS = 100;
 const NOTION_MAX_ROWS = 1000;
@@ -85,220 +102,6 @@ function corsHeaders(origin: string) {
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
   };
-}
-
-class HttpError extends Error {
-  status: number;
-  code?: string;
-  constructor(message: string, status = 400, code?: string) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
-
-function env(name: string): string {
-  return (Deno.env.get(name) ?? "").trim();
-}
-
-function oauthCreds(provider: ProviderId): { clientId: string; clientSecret: string } | null {
-  const meta = providerMeta(provider);
-  if (!meta || meta.oauthEnv.length !== 2) return null;
-  const clientId = env(meta.oauthEnv[0]);
-  const clientSecret = env(meta.oauthEnv[1]);
-  return clientId && clientSecret ? { clientId, clientSecret } : null;
-}
-
-function sfLogin(): string {
-  const v = env("SALESFORCE_LOGIN_URL") || "https://login.salesforce.com";
-  return v.replace(/\/+$/, "");
-}
-
-async function readBody(res: Response): Promise<Json> {
-  const text = await res.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch (_) {
-    return text.slice(0, 500);
-  }
-}
-
-/** fetch + JSON; lanza HttpError(502) con el mensaje de la plataforma si falla. */
-async function call(url: string, init: RequestInit, label: string): Promise<Json> {
-  const res = await fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(30_000) });
-  const body = await readBody(res);
-  if (!res.ok) {
-    console.error(`[integrations] ${label} ${res.status}: ${JSON.stringify(body).slice(0, 300)}`);
-    throw new HttpError(`${label}: ${apiErrorMessage(body, res.status)}`, res.status === 401 ? 401 : 502);
-  }
-  return body;
-}
-
-function form(data: Record<string, string>): RequestInit {
-  return {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-    body: new URLSearchParams(data),
-  };
-}
-
-function expiresAt(seconds: unknown): string | null {
-  const n = Number(seconds);
-  return Number.isFinite(n) && n > 0 ? new Date(Date.now() + n * 1000).toISOString() : null;
-}
-
-// ── Conexión guardada ─────────────────────────────────────────────────────
-
-interface Conn {
-  id: string;
-  user_id: string;
-  provider: ProviderId;
-  auth_type: "oauth" | "token";
-  account_label: string | null;
-  account_id: string | null;
-  config: Json;
-  access_token: string | null;
-  refresh_token: string | null;
-  token_expires_at: string | null;
-}
-
-interface Ctx {
-  admin: SupabaseClient;
-  userId: string;
-  userEmail: string;
-}
-
-async function loadConn(ctx: Ctx, provider: ProviderId): Promise<Conn> {
-  const { data, error } = await ctx.admin
-    .from("integration_connections")
-    .select("id, user_id, provider, auth_type, account_label, account_id, config, access_token, refresh_token, token_expires_at")
-    .eq("user_id", ctx.userId)
-    .eq("provider", provider)
-    .maybeSingle();
-  if (error) throw new HttpError("No se pudo leer la conexión: " + error.message, 500);
-  if (!data?.access_token) throw new HttpError("not_connected", 428, "not_connected");
-  return data as Conn;
-}
-
-async function saveConn(ctx: Ctx, provider: ProviderId, row: Record<string, unknown>) {
-  const { error } = await ctx.admin.from("integration_connections").upsert({
-    user_id: ctx.userId,
-    provider,
-    status: "connected",
-    last_error: null,
-    updated_at: new Date().toISOString(),
-    ...row,
-  }, { onConflict: "user_id,provider" });
-  if (error) throw new HttpError("No se pudo guardar la conexión: " + error.message, 500);
-}
-
-async function patchConn(ctx: Ctx, conn: Conn, patch: Record<string, unknown>) {
-  await ctx.admin.from("integration_connections")
-    .update({ ...patch, updated_at: new Date().toISOString() })
-    .eq("id", conn.id);
-}
-
-async function markError(ctx: Ctx, conn: Conn, message: string) {
-  await patchConn(ctx, conn, { status: "error", last_error: message.slice(0, 300) });
-}
-
-/** Cambia el refresh token por uno de acceso nuevo. false si no se puede. */
-async function refresh(ctx: Ctx, conn: Conn): Promise<boolean> {
-  if (conn.auth_type !== "oauth" || !conn.refresh_token) return false;
-  const creds = oauthCreds(conn.provider);
-  if (!creds) return false;
-  let res: Response;
-  if (conn.provider === "hubspot") {
-    res = await fetch("https://api.hubapi.com/oauth/v1/token", form({
-      grant_type: "refresh_token", client_id: creds.clientId, client_secret: creds.clientSecret, refresh_token: conn.refresh_token,
-    }));
-  } else if (conn.provider === "salesforce") {
-    res = await fetch(sfLogin() + "/services/oauth2/token", form({
-      grant_type: "refresh_token", client_id: creds.clientId, client_secret: creds.clientSecret, refresh_token: conn.refresh_token,
-    }));
-  } else if (conn.provider === "google_sheets" || conn.provider === "google_calendar") {
-    res = await fetch(GOOGLE_TOKEN, form({
-      grant_type: "refresh_token", client_id: creds.clientId, client_secret: creds.clientSecret, refresh_token: conn.refresh_token,
-    }));
-  } else if (conn.provider === "notion") {
-    res = await fetch("https://api.notion.com/v1/oauth/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Basic " + btoa(creds.clientId + ":" + creds.clientSecret),
-      },
-      body: JSON.stringify({ grant_type: "refresh_token", refresh_token: conn.refresh_token }),
-    });
-  } else {
-    return false;
-  }
-  const tok = await readBody(res);
-  if (!res.ok || !tok?.access_token) {
-    console.error(`[integrations] refresh ${conn.provider} ${res.status}: ${JSON.stringify(tok).slice(0, 200)}`);
-    return false;
-  }
-  conn.access_token = String(tok.access_token);
-  // Notion y HubSpot pueden rotar el refresh token: siempre se guarda el último.
-  if (tok.refresh_token) conn.refresh_token = String(tok.refresh_token);
-  conn.token_expires_at = expiresAt(tok.expires_in);
-  const patch: Record<string, unknown> = {
-    access_token: conn.access_token,
-    refresh_token: conn.refresh_token,
-    token_expires_at: conn.token_expires_at,
-    status: "connected",
-    last_error: null,
-  };
-  if (conn.provider === "salesforce" && tok.instance_url) {
-    conn.config = { ...(conn.config ?? {}), instance_url: String(tok.instance_url) };
-    patch.config = conn.config;
-  }
-  await patchConn(ctx, conn, patch);
-  return true;
-}
-
-function authHeaders(conn: Conn): Record<string, string> {
-  const t = String(conn.access_token ?? "");
-  // ClickUp: el token va tal cual (el personal "pk_…" y el de OAuth).
-  if (conn.provider === "clickup") return { Authorization: t };
-  const h: Record<string, string> = { Authorization: "Bearer " + t };
-  if (conn.provider === "notion") h["Notion-Version"] = NOTION_VERSION;
-  return h;
-}
-
-const REAUTH = "El acceso fue revocado o expiró. Vuelve a conectar la integración.";
-
-/**
- * Llamada autenticada a la plataforma. Refresca antes si el token está por
- * vencer, y una vez más si la plataforma responde 401. Si no se puede,
- * marca la conexión en error y responde 428 para que la UI pida reconectar.
- */
-async function apiCall(ctx: Ctx, conn: Conn, url: string, init: RequestInit, label: string): Promise<Json> {
-  const soon = conn.token_expires_at && Date.parse(conn.token_expires_at) < Date.now() + 60_000;
-  if (soon) await refresh(ctx, conn);
-
-  const doFetch = () => fetch(url, {
-    ...init,
-    headers: {
-      Accept: "application/json",
-      ...(init.body && !(init.headers as Record<string, string>)?.["Content-Type"] ? { "Content-Type": "application/json" } : {}),
-      ...(init.headers as Record<string, string> ?? {}),
-      ...authHeaders(conn),
-    },
-  });
-
-  let res = await doFetch();
-  if (res.status === 401 && await refresh(ctx, conn)) res = await doFetch();
-  const body = await readBody(res);
-  if (res.status === 401) {
-    await markError(ctx, conn, REAUTH);
-    throw new HttpError(REAUTH, 428, "reauth_required");
-  }
-  if (!res.ok) {
-    console.error(`[integrations] ${conn.provider} ${label} ${res.status}: ${JSON.stringify(body).slice(0, 300)}`);
-    throw new HttpError(`${label}: ${apiErrorMessage(body, res.status)}`, res.status === 404 ? 404 : 502);
-  }
-  return body;
 }
 
 // ── Identidad de la cuenta conectada ──────────────────────────────────────
@@ -363,6 +166,23 @@ async function identify(ctx: Ctx, conn: Conn): Promise<Identity> {
       const me = await apiCall(ctx, conn, "https://www.googleapis.com/oauth2/v3/userinfo", { method: "GET" }, "Google");
       return { account_id: String(me?.sub ?? ""), account_label: String(me?.email ?? "Google") };
     }
+    case "outlook_calendar": {
+      const me = await apiCall(ctx, conn, GRAPH + "/me?$select=id,mail,userPrincipalName,displayName", { method: "GET" }, "Microsoft");
+      // Qué videollamada admite su calendario (Teams en Microsoft 365; las
+      // cuentas personales pueden no tener ninguna): la agenda lo usa al crear.
+      let providers: string[] = [];
+      let preferred = "";
+      try {
+        const cal = await apiCall(ctx, conn, GRAPH + "/me/calendar?$select=allowedOnlineMeetingProviders,defaultOnlineMeetingProvider", { method: "GET" }, "Outlook Calendar");
+        providers = (cal?.allowedOnlineMeetingProviders ?? []).map(String).filter((x: string) => x && x !== "unknown");
+        preferred = String(cal?.defaultOnlineMeetingProvider ?? "");
+      } catch (_) { /* sin lectura del calendario: se crea sin videollamada automática */ }
+      return {
+        account_id: String(me?.id ?? ""),
+        account_label: String(me?.mail || me?.userPrincipalName || me?.displayName || "Outlook"),
+        config: { online_meeting_providers: providers, online_meeting_default: preferred },
+      };
+    }
     case "notion": {
       const me = await apiCall(ctx, conn, "https://api.notion.com/v1/users/me", { method: "GET" }, "Notion");
       const ws = String(me?.bot?.workspace_name ?? conn.config?.workspace_name ?? "");
@@ -372,19 +192,25 @@ async function identify(ctx: Ctx, conn: Conn): Promise<Identity> {
       const me = await apiCall(ctx, conn, "https://api.clickup.com/api/v2/user", { method: "GET" }, "ClickUp");
       return { account_id: String(me?.user?.id ?? ""), account_label: String(me?.user?.email ?? me?.user?.username ?? "ClickUp") };
     }
+    default:
+      return await identifyCrm(ctx, conn);
   }
 }
 
 // ── OAuth ─────────────────────────────────────────────────────────────────
 
-function authUrl(provider: ProviderId, redirectUri: string, state: string, codeChallenge: string): string {
+function authUrl(provider: ProviderId, redirectUri: string, state: string, codeChallenge: string, account: string): string {
   const creds = oauthCreds(provider);
   if (!creds) throw new HttpError("Esta integración todavía no tiene app de OAuth configurada.", 503, "oauth_unavailable");
+  if (LATAM_CRMS.includes(provider)) return crmAuthUrl(provider, creds.clientId, redirectUri, state, account);
   let url: URL;
   switch (provider) {
     case "hubspot":
       url = new URL("https://app.hubspot.com/oauth/authorize");
       url.searchParams.set("scope", HUBSPOT_SCOPES.join(" "));
+      // Lectura de vuelta (deals, dueños, empresas): opcional, para que una app
+      // que aún no los tiene configurados siga conectando.
+      url.searchParams.set("optional_scope", HUBSPOT_SYNC_SCOPES.join(" "));
       break;
     case "salesforce":
       url = new URL(sfLogin() + "/services/oauth2/authorize");
@@ -403,6 +229,13 @@ function authUrl(provider: ProviderId, redirectUri: string, state: string, codeC
       // Sin ambos Google no entrega refresh token al reconsentir.
       url.searchParams.set("access_type", "offline");
       url.searchParams.set("prompt", "consent");
+      break;
+    case "outlook_calendar":
+      url = new URL(MS_AUTH);
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("response_mode", "query");
+      url.searchParams.set("scope", OUTLOOK_CALENDAR_SCOPES.join(" "));
+      url.searchParams.set("prompt", "select_account");
       break;
     case "notion":
       url = new URL("https://api.notion.com/v1/oauth/authorize");
@@ -427,7 +260,9 @@ async function exchangeCode(
   code: string,
   redirectUri: string,
   codeVerifier: string,
+  extra: Json = {},
 ): Promise<Conn> {
+  if (LATAM_CRMS.includes(provider)) return await crmExchange(ctx, provider, code, redirectUri, extra);
   const creds = oauthCreds(provider);
   if (!creds) throw new HttpError("Esta integración todavía no tiene app de OAuth configurada.", 503, "oauth_unavailable");
   const base: Conn = {
@@ -458,6 +293,15 @@ async function exchangeCode(
     if (!tok?.refresh_token) {
       throw new HttpError("Google no devolvió un refresh token. Quita el acceso de Predictable en tu cuenta de Google y reconecta.", 400);
     }
+  } else if (provider === "outlook_calendar") {
+    tok = await call(MS_TOKEN, form({
+      grant_type: "authorization_code", client_id: creds.clientId, client_secret: creds.clientSecret, redirect_uri: redirectUri, code,
+      scope: OUTLOOK_CALENDAR_SCOPES.join(" "),
+    }), "Microsoft rechazó la autorización");
+    if (!/Calendars\.ReadWrite/i.test(String(tok?.scope ?? ""))) {
+      throw new HttpError("No aceptaste el permiso de calendario en la pantalla de Microsoft. Vuelve a conectar y acéptalo (si tu empresa lo bloquea, pídele a TI que apruebe Predictable).", 400);
+    }
+    if (!tok?.refresh_token) throw new HttpError("Microsoft no devolvió un refresh token. Vuelve a conectar.", 400);
   } else if (provider === "notion") {
     tok = await call("https://api.notion.com/v1/oauth/token", {
       method: "POST",
@@ -485,20 +329,28 @@ async function exchangeCode(
 
 const MEMBER_COLS = "id, first_name, last_name, name, title, company, company_domain, linkedin_url, email, phone, city, state, country";
 
-async function loadLeads(ctx: Ctx, listId: string): Promise<{ name: string; leads: Lead[] }> {
+async function loadLeads(ctx: Ctx, listId: string, since?: string): Promise<{ name: string; leads: Lead[] }> {
   let name = "Todos los contactos";
-  let q = ctx.admin.from("prospect_list_members").select(MEMBER_COLS).eq("user_id", ctx.userId);
   if (listId !== "all") {
     const { data: list, error } = await ctx.admin
       .from("prospect_lists").select("id, name").eq("id", listId).eq("user_id", ctx.userId).maybeSingle();
     if (error || !list) throw new HttpError("No encontramos esa lista.", 404);
     name = String(list.name ?? "Lista");
-    q = q.eq("list_id", listId);
   }
-  const { data, error } = await q.order("created_at", { ascending: true }).limit(MAX_MEMBERS);
-  if (error) throw new HttpError("No se pudo leer la lista: " + error.message, 500);
-  const leads = (data ?? []) as Lead[];
-  if (!leads.length) throw new HttpError("La lista no tiene contactos.", 400);
+  // crm_state (ids de envíos anteriores) es de la migración 20261018230000:
+  // sin ella se lee lo demás y el envío funciona igual.
+  let leads: Lead[] = [];
+  for (const cols of [MEMBER_COLS + ", crm_state", MEMBER_COLS]) {
+    let q = ctx.admin.from("prospect_list_members").select(cols).eq("user_id", ctx.userId);
+    if (listId !== "all") q = q.eq("list_id", listId);
+    if (since) q = q.gte("created_at", since);
+    const { data, error } = await q.order("created_at", { ascending: true }).order("id", { ascending: true }).limit(MAX_MEMBERS);
+    if (error && cols.includes("crm_state") && /crm_state/.test(error.message)) continue;
+    if (error) throw new HttpError("No se pudo leer la lista: " + error.message, 500);
+    leads = (data ?? []) as unknown as Lead[];
+    break;
+  }
+  if (!leads.length && !since) throw new HttpError("La lista no tiene contactos.", 400);
   return { name, leads };
 }
 
@@ -751,6 +603,9 @@ async function exportClickup(ctx: Ctx, conn: Conn, listName: string, leads: Lead
 // ── Destinos (options) ────────────────────────────────────────────────────
 
 async function options(ctx: Ctx, conn: Conn, query: string): Promise<Json> {
+  if (LATAM_CRMS.includes(conn.provider)) return { ...(await crmStages(ctx, conn)), sync: publicSync(conn) };
+  if (conn.provider === "hubspot") return { sync: publicSync(conn), ...(await hubspotStatusOptions(ctx, conn)) };
+  if (conn.provider === "salesforce") return { sync: publicSync(conn) };
   switch (conn.provider) {
     case "amplemarket": {
       const res = await apiCall(ctx, conn, "https://api.amplemarket.com/sequences", { method: "GET" }, "Amplemarket");
@@ -803,11 +658,176 @@ async function options(ctx: Ctx, conn: Conn, query: string): Promise<Json> {
   }
 }
 
-// ── Log ───────────────────────────────────────────────────────────────────
+// ── Enviar una lista (acción y cron) ──────────────────────────────────────
 
-async function logSync(ctx: Ctx, row: Record<string, unknown>) {
-  const { error } = await ctx.admin.from("integration_sync_log").insert({ user_id: ctx.userId, ...row });
-  if (error) console.error("[integrations] log:", error.message);
+/** Lo que la UI puede ver de la sincronización (sin cursores internos de más). */
+function publicSync(conn: Conn): Json {
+  const sc = syncConfig(conn);
+  return {
+    pull: conn.provider === "hubspot" ? sc.pull !== false : false,
+    missing_scopes: !!sc.missing_scopes,
+    last_run_at: sc.last_run_at ?? null,
+    last_status: sc.last_status ?? null,
+    last_error: sc.last_error ?? null,
+    auto_lists: Object.fromEntries(Object.entries(sc.auto_lists ?? {}).map(([k, v]) => [k, { since: v.since, enabled_at: v.enabled_at, options: v.options }])),
+  };
+}
+
+function sumCounts(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = (Number(out[k]) || 0) + (Number(v) || 0);
+  return out;
+}
+
+async function runListExport(
+  ctx: Ctx, conn: Conn, listId: string, opts: Json,
+  run: { cursor?: number; since?: string; trigger?: "manual" | "auto" },
+): Promise<Json> {
+  const provider = conn.provider;
+  const { name, leads } = await loadLeads(ctx, listId, run.since);
+  if (!leads.length) return { counts: {}, skipped: [], errors: [], list_name: name, total: 0, next_cursor: null };
+  const latam = LATAM_CRMS.includes(provider);
+  const deal = latam ? validateDealOptions(provider, opts.deal) : null;
+  const cursor = latam ? Math.max(0, Math.floor(run.cursor ?? 0)) : 0;
+  let r: ExportResult & { next_cursor?: number | null; total_people?: number };
+  try {
+    switch (provider) {
+      case "hubspot": r = await exportHubspot(ctx, conn, leads); break;
+      case "salesforce": r = await exportSalesforce(ctx, conn, leads, "Predictable"); break;
+      case "amplemarket": r = await exportAmplemarket(ctx, conn, name, leads, opts); break;
+      case "google_sheets": r = await exportSheets(ctx, conn, listId, name, leads); break;
+      case "notion": r = await exportNotion(ctx, conn, name, leads, opts); break;
+      case "clickup": r = await exportClickup(ctx, conn, name, leads, opts); break;
+      default: {
+        if (!latam) throw new HttpError("Esta integración no recibe listas.", 400);
+        const x = await exportCrm(ctx, conn, leads, { deal, cursor });
+        await writeMemberStates(ctx, provider, x.links);
+        await linkExportToNative(ctx, conn, x.links);
+        r = { counts: x.counts as unknown as Record<string, number>, skipped: x.skipped, errors: x.errors, url: x.url, next_cursor: x.next_cursor, total_people: x.total_people };
+      }
+    }
+  } catch (e) {
+    await logSync(ctx, {
+      provider, action: "export_list", source_kind: run.trigger === "auto" ? "auto_list" : "list", source_id: listId, status: "error",
+      detail: (e instanceof Error ? e.message : String(e)).slice(0, 500),
+    });
+    throw e;
+  }
+
+  // Un envío por tandas se registra una sola vez, al terminar, con la suma.
+  const key = provider + ":" + listId + ":" + (run.trigger ?? "manual");
+  const progress = { ...(conn.config?.export_progress ?? {}) };
+  let total = r.counts;
+  if (latam) {
+    total = cursor > 0 && progress[key] ? sumCounts(progress[key], r.counts) : r.counts;
+    if (r.next_cursor !== null && r.next_cursor !== undefined) progress[key] = total;
+    else delete progress[key];
+  }
+  const finished = !latam || r.next_cursor === null || r.next_cursor === undefined;
+  if (finished) {
+    const failed = Number(total.failed ?? 0);
+    await logSync(ctx, {
+      provider, action: "export_list", source_kind: run.trigger === "auto" ? "auto_list" : "list", source_id: listId,
+      status: failed || (r.errors ?? []).length ? "partial" : "ok",
+      counts: total, target_url: r.url ?? null,
+      detail: [name, run.trigger === "auto" ? "envío automático de leads nuevos" : "", r.detail].filter(Boolean).join(" · ").slice(0, 500),
+    });
+  }
+  // Recordar el destino para la próxima vez (solo ids, nada secreto).
+  const dest: Json = {};
+  for (const k of ["mode", "sequence_id", "owner", "list_id", "team_id", "parent_page_id"]) {
+    if (typeof opts[k] === "string" && opts[k].length <= 200) dest[k] = opts[k];
+  }
+  if (deal) dest.deal = deal;
+  conn.config = { ...(conn.config ?? {}), export_progress: progress, ...(run.trigger === "auto" ? {} : { last_destination: dest }) };
+  await patchConn(ctx, conn, { last_used_at: new Date().toISOString(), config: conn.config });
+  return {
+    ...r,
+    counts: total,
+    skipped: r.skipped.slice(0, 50),
+    errors: (r.errors ?? []).slice(0, 10),
+    list_name: name,
+    total: leads.length,
+    next_cursor: r.next_cursor ?? null,
+  };
+}
+
+/**
+ * Después de enviar una tanda a un CRM: la organización externa queda enlazada
+ * a la cuenta del CRM de Predictable, y en Pipedrive el deal creado aparece
+ * como oportunidad. Nunca corta el envío.
+ */
+async function linkExportToNative(ctx: Ctx, conn: Conn, links: { id: string; state: Json }[]) {
+  try {
+    await linkCompanies(ctx, conn.provider, links.filter((l) => l.state?.org_id).map((l) => ({ memberId: l.id, externalId: String(l.state.org_id) })));
+    if (conn.provider === "pipedrive") {
+      const deals = links.filter((l) => l.state?.deal_id).map((l) => ({ dealId: String(l.state.deal_id), memberId: l.id }));
+      if (deals.length) await pipedriveToNative(ctx, conn, deals);
+    }
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 428) throw e;
+    console.warn("[integrations] envío → CRM nativo:", e instanceof Error ? e.message : e);
+  }
+}
+
+// ── Cron: HubSpot de vuelta + envío automático de leads nuevos ────────────
+
+const CRON_BUDGET_MS = 120_000;
+
+async function cronRun(admin: Ctx["admin"]): Promise<Json> {
+  const began = Date.now();
+  const { data: conns, error } = await admin.from("integration_connections")
+    .select("id, user_id, provider, auth_type, account_label, account_id, config, access_token, refresh_token, token_expires_at")
+    .in("provider", AUTO_PUSH_PROVIDERS)
+    .eq("status", "connected")
+    .order("updated_at", { ascending: true })
+    .limit(200);
+  if (error) throw new HttpError("No se pudieron leer las conexiones: " + error.message, 500);
+  const out = { pulled: 0, pushed: 0, errors: 0 };
+  for (const c of (conns ?? []) as Conn[]) {
+    if (Date.now() - began > CRON_BUDGET_MS) break;
+    const ctx: Ctx = { admin, userId: c.user_id, userEmail: "" };
+    const sc = syncConfig(c);
+    try {
+      if (c.provider === "hubspot" && sc.pull !== false && !sc.missing_scopes) {
+        // Cada 15 min como mucho por cuenta (el cron puede correr más seguido).
+        const last = Date.parse(sc.last_run_at ?? "") || 0;
+        if (Date.now() - last > 14 * 60_000) {
+          await runHubspotPull(ctx, c, "cron");
+          out.pulled++;
+        }
+      }
+      if (c.provider === "pipedrive" && nativeSyncOf(c).pull) {
+        const last = Date.parse(nativeSyncOf(c).last_run_at ?? "") || 0;
+        if (Date.now() - last > 14 * 60_000) await runNativeSync(ctx, c, "cron");
+      }
+      for (const [listId, al] of Object.entries(sc.auto_lists ?? {})) {
+        if (Date.now() - began > CRON_BUDGET_MS) break;
+        const started = new Date().toISOString();
+        const r = await runListExport(ctx, c, listId, al.options ?? {}, { since: al.since, cursor: al.cursor ?? 0, trigger: "auto" });
+        const lists = { ...(syncConfig(c).auto_lists ?? {}) };
+        if (!lists[listId]) continue;
+        lists[listId] = r.next_cursor === null
+          ? { ...lists[listId], since: started, cursor: 0 }
+          : { ...lists[listId], cursor: r.next_cursor };
+        await saveSync(ctx, c, { auto_lists: lists });
+        if (r.total) out.pushed++;
+      }
+    } catch (e) {
+      out.errors++;
+      console.error(`[integrations] cron ${c.provider} ${c.user_id}:`, e instanceof Error ? e.message : e);
+      // Una lista borrada deja de enviarse sola.
+      if (e instanceof HttpError && e.status === 404) {
+        const lists = { ...(syncConfig(c).auto_lists ?? {}) };
+        for (const id of Object.keys(lists)) {
+          const { data } = await admin.from("prospect_lists").select("id").eq("id", id).maybeSingle();
+          if (!data) delete lists[id];
+        }
+        await saveSync(ctx, c, { auto_lists: lists }).catch(() => {});
+      }
+    }
+  }
+  return out;
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────
@@ -819,6 +839,8 @@ function asProvider(v: unknown): ProviderId {
 }
 
 async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
+  if (action === "cron") throw new HttpError("El cron se llama con la service role.", 403);
+
   if (action === "catalog") {
     return {
       providers: PROVIDERS.map((m) => ({ id: m.id, oauth: !!oauthCreds(m.id), token: m.tokenAllowed })),
@@ -829,7 +851,7 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
     const provider = asProvider(p.provider);
     const redirectUri = String(p.redirect_uri ?? "");
     if (!/^https?:\/\//.test(redirectUri)) throw new HttpError("Falta redirect_uri.", 400);
-    return { url: authUrl(provider, redirectUri, String(p.state ?? ""), String(p.code_challenge ?? "")) };
+    return { url: authUrl(provider, redirectUri, String(p.state ?? ""), String(p.code_challenge ?? ""), String(p.account ?? "")) };
   }
 
   if (action === "connect_oauth") {
@@ -837,7 +859,9 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
     const code = String(p.code ?? "");
     const redirectUri = String(p.redirect_uri ?? "");
     if (!code || !redirectUri) throw new HttpError("Falta el código de autorización.", 400);
-    const conn = await exchangeCode(ctx, provider, code, redirectUri, String(p.code_verifier ?? ""));
+    const conn = await exchangeCode(ctx, provider, code, redirectUri, String(p.code_verifier ?? ""), {
+      referer: p.referer, accounts_server: p.accounts_server,
+    });
     const who = await identify(ctx, conn);
     await saveConn(ctx, provider, {
       auth_type: "oauth",
@@ -858,10 +882,12 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
     if (!meta.tokenAllowed) throw new HttpError(`${meta.name} se conecta con OAuth, no con un token.`, 400);
     const token = String(p.token ?? "").trim();
     if (token.length < 10 || token.length > 4000 || /\s/.test(token)) throw new HttpError("Ese token no tiene el formato esperado.", 400);
-    const conn: Conn = {
-      id: "", user_id: ctx.userId, provider, auth_type: "token", account_label: null, account_id: null,
-      config: {}, access_token: token, refresh_token: null, token_expires_at: null,
-    };
+    const conn: Conn = LATAM_CRMS.includes(provider)
+      ? crmTokenConn(ctx, provider, token, String(p.account ?? ""))
+      : {
+        id: "", user_id: ctx.userId, provider, auth_type: "token", account_label: null, account_id: null,
+        config: {}, access_token: token, refresh_token: null, token_expires_at: null,
+      };
     let who: Identity;
     try {
       who = await identify(ctx, conn);
@@ -873,12 +899,12 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
     }
     await saveConn(ctx, provider, {
       auth_type: "token",
-      access_token: token,
+      access_token: conn.access_token,
       refresh_token: null,
       token_expires_at: null,
       account_label: who.account_label,
       account_id: who.account_id,
-      config: who.config ?? {},
+      config: { ...conn.config, ...(who.config ?? {}) },
       connected_at: new Date().toISOString(),
     });
     return { account_label: who.account_label };
@@ -892,19 +918,36 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
   }
 
   if (action === "calendar_events" || action === "calendar_create") {
-    const conn = await loadConn(ctx, "google_calendar");
+    const calProvider: ProviderId = p.provider === "outlook_calendar" ? "outlook_calendar" : "google_calendar";
+    const conn = await loadConn(ctx, calProvider);
+    const outlook = calProvider === "outlook_calendar";
     const base = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
     if (action === "calendar_events") {
       const days = Math.min(Math.max(Number(p.days) || 14, 1), 60);
-      const u = new URL(base);
-      u.searchParams.set("timeMin", new Date().toISOString());
-      u.searchParams.set("timeMax", new Date(Date.now() + days * 86400_000).toISOString());
-      u.searchParams.set("singleEvents", "true");
-      u.searchParams.set("orderBy", "startTime");
-      u.searchParams.set("maxResults", "50");
-      const res = await apiCall(ctx, conn, u.toString(), { method: "GET" }, "Google Calendar");
+      const from = new Date().toISOString();
+      const to = new Date(Date.now() + days * 86400_000).toISOString();
+      let items: CalendarItem[];
+      if (outlook) {
+        const u = new URL(GRAPH + "/me/calendarView");
+        u.searchParams.set("startDateTime", from);
+        u.searchParams.set("endDateTime", to);
+        u.searchParams.set("$orderby", "start/dateTime");
+        u.searchParams.set("$top", "50");
+        u.searchParams.set("$select", "id,subject,start,end,isAllDay,isCancelled,webLink,onlineMeeting,onlineMeetingUrl,location,bodyPreview,attendees");
+        const res = await apiCall(ctx, conn, u.toString(), { method: "GET", headers: { Prefer: 'outlook.timezone="UTC"' } }, "Outlook Calendar");
+        items = (res?.value ?? []).filter((e: Json) => !e?.isCancelled).map((e: Json) => toOutlookCalendarItem(e, conn.account_label ?? ""));
+      } else {
+        const u = new URL(base);
+        u.searchParams.set("timeMin", from);
+        u.searchParams.set("timeMax", to);
+        u.searchParams.set("singleEvents", "true");
+        u.searchParams.set("orderBy", "startTime");
+        u.searchParams.set("maxResults", "50");
+        const res = await apiCall(ctx, conn, u.toString(), { method: "GET" }, "Google Calendar");
+        items = (res?.items ?? []).filter((e: Json) => e?.status !== "cancelled").map((e: Json) => toCalendarItem(e, conn.account_label ?? ""));
+      }
       await patchConn(ctx, conn, { last_used_at: new Date().toISOString() });
-      return { events: (res?.items ?? []).filter((e: Json) => e?.status !== "cancelled").map((e: Json) => toCalendarItem(e, conn.account_label ?? "")) };
+      return { events: items };
     }
     const title = String(p.title ?? "").trim().slice(0, 200);
     const start = Date.parse(String(p.start ?? ""));
@@ -912,19 +955,82 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
     if (!title || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       throw new HttpError("Revisa el título y el horario del evento.", 400);
     }
-    // sendUpdates=none: el evento queda en TU calendario; invitar al lead lo
-    // decides tú desde Google.
-    const ev = await apiCall(ctx, conn, base + "?sendUpdates=none", {
-      method: "POST",
-      body: JSON.stringify({
-        summary: title,
-        description: String(p.description ?? "").slice(0, 4000),
-        start: { dateTime: new Date(start).toISOString() },
-        end: { dateTime: new Date(end).toISOString() },
-      }),
-    }, "Google Calendar");
-    await logSync(ctx, { provider: "google_calendar", action: "calendar_create", status: "ok", counts: { created: 1 }, target_url: ev?.htmlLink ?? null, detail: title });
-    return { url: ev?.htmlLink ?? "" };
+    // Sin invitados: el evento queda en TU calendario; invitar al lead lo
+    // decides tú desde el calendario.
+    let url = "";
+    if (outlook) {
+      const ev = await apiCall(ctx, conn, GRAPH + "/me/events", {
+        method: "POST",
+        body: JSON.stringify({
+          subject: title,
+          body: { contentType: "text", content: String(p.description ?? "").slice(0, 4000) },
+          start: { dateTime: new Date(start).toISOString().replace("Z", ""), timeZone: "UTC" },
+          end: { dateTime: new Date(end).toISOString().replace("Z", ""), timeZone: "UTC" },
+        }),
+      }, "Outlook Calendar");
+      url = String(ev?.webLink ?? "");
+    } else {
+      const ev = await apiCall(ctx, conn, base + "?sendUpdates=none", {
+        method: "POST",
+        body: JSON.stringify({
+          summary: title,
+          description: String(p.description ?? "").slice(0, 4000),
+          start: { dateTime: new Date(start).toISOString() },
+          end: { dateTime: new Date(end).toISOString() },
+        }),
+      }, "Google Calendar");
+      url = String(ev?.htmlLink ?? "");
+    }
+    await logSync(ctx, { provider: calProvider, action: "calendar_create", status: "ok", counts: { created: 1 }, target_url: url || null, detail: title });
+    return { url };
+  }
+
+  // Antes de enrolar en una campaña: ¿alguno ya es cliente o tiene una
+  // oportunidad abierta en el CRM? Sin HubSpot (o sin permiso de lectura) se
+  // responde con lo que ya dice cada fila.
+  if (action === "crm_check") {
+    const ids = (Array.isArray(p.member_ids) ? p.member_ids : []).map(String).filter((x: string) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 500);
+    if (!ids.length) return { suppressed: [] };
+    const { data: hs } = await ctx.admin.from("integration_connections")
+      .select("id, user_id, provider, auth_type, account_label, account_id, config, access_token, refresh_token, token_expires_at, status")
+      .eq("user_id", ctx.userId).eq("provider", "hubspot").maybeSingle();
+    const hconn = hs as (Conn & { status?: string }) | null;
+    if (hconn?.access_token && hconn.status === "connected" && syncConfig(hconn).pull !== false && !syncConfig(hconn).missing_scopes) {
+      try {
+        const r = await hubspotSync(ctx, hconn, { memberIds: ids, statusMap: statusMapOf(hconn) });
+        if (r.missingScopes) await saveSync(ctx, hconn, { missing_scopes: true });
+        else return { suppressed: r.suppressedIds.map((id) => ({ id })), checked: r.checked, source: "hubspot" };
+      } catch (e) {
+        console.warn("[integrations] crm_check:", e instanceof Error ? e.message : e);
+      }
+    }
+    const { data, error } = await ctx.admin.from("prospect_list_members")
+      .select("id, crm_suppression_reason").eq("user_id", ctx.userId).in("id", ids).not("crm_suppressed_at", "is", null);
+    if (error) return { suppressed: [] }; // sin la migración: nada que suprimir
+    return { suppressed: (data ?? []).map((m: Json) => ({ id: m.id, reason: m.crm_suppression_reason })), source: "stored" };
+  }
+
+  // CRM de Predictable: qué CRM externos sincronizan oportunidades (sin
+  // secretos) y el empuje inmediato después de mover una etapa.
+  if (action === "native_status" || action === "native_push") {
+    const { data } = await ctx.admin.from("integration_connections")
+      .select("id, user_id, provider, auth_type, account_label, account_id, config, access_token, refresh_token, token_expires_at")
+      .eq("user_id", ctx.userId).in("provider", ["hubspot", "pipedrive"]).eq("status", "connected");
+    const conns = ((data ?? []) as Conn[]).filter((c) => isTwoWay(c.provider));
+    if (action === "native_status") {
+      return {
+        providers: conns.map((c) => {
+          const n = nativeSyncOf(c);
+          return { provider: c.provider, account_label: c.account_label, pull: n.pull, push: n.push, last_run_at: n.last_run_at ?? null, last_status: n.last_status ?? null, last_error: n.last_error ?? null, push_scope_missing: !!n.push_scope_missing };
+        }),
+      };
+    }
+    const pushed: Json = {};
+    for (const c of conns) {
+      if (!nativeSyncOf(c).push) continue;
+      pushed[c.provider] = await runNativeSync(ctx, c, "stage_change");
+    }
+    return { ok: true, pushed };
   }
 
   const provider = asProvider(p.provider);
@@ -941,46 +1047,54 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
 
   if (action === "options") return await options(ctx, conn, String(p.query ?? ""));
 
+  // HubSpot de vuelta: «Sincronizar ahora» y encender/apagar.
+  if (action === "sync_now") {
+    if (provider !== "hubspot") throw new HttpError("Esta integración no trae cambios de vuelta.", 400);
+    const r = await runHubspotPull(ctx, conn, "manual");
+    return { ...r, suppressedIds: undefined, sync: publicSync(conn) };
+  }
+
+  // CRM de Predictable ↔ HubSpot / Pipedrive (native-crm.ts): ajustes y mapeo
+  // de etapas, «Sincronizar ahora» y el empuje después de mover una etapa.
+  if (action === "native_settings") return await nativeSettings(ctx, conn, p);
+  if (action === "native_sync_now") {
+    if (conn.provider === "hubspot") {
+      const r = await runHubspotPull(ctx, conn, "manual");
+      return { ok: true, native: r.native ?? null, missing_scopes: r.missingScopes };
+    }
+    return { ok: true, native: await runNativeSync(ctx, conn, "manual") };
+  }
+
+  // Ajustes de sincronización: pull (HubSpot) y envío automático de una lista.
+  if (action === "sync_settings") {
+    const patch: Json = {};
+    if (typeof p.pull === "boolean" && provider === "hubspot") patch.pull = p.pull;
+    // Etapas de HubSpot → estado del lead: el mapa entero, o false para apagarlo.
+    if (provider === "hubspot" && p.status_map !== undefined) patch.status_map = p.status_map === false ? false : sanitizeStatusMap(p.status_map);
+    if (p.auto_list) {
+      if (!AUTO_PUSH_PROVIDERS.includes(provider)) throw new HttpError("Esta integración no tiene envío automático.", 400);
+      const listId = String(p.auto_list.list_id ?? "");
+      if (!/^[0-9a-f-]{36}$/i.test(listId)) throw new HttpError("Elige una lista (no «Todos los contactos»).", 400);
+      const { data: list } = await ctx.admin.from("prospect_lists").select("id").eq("id", listId).eq("user_id", ctx.userId).maybeSingle();
+      if (!list) throw new HttpError("No encontramos esa lista.", 404);
+      const lists = { ...(syncConfig(conn).auto_lists ?? {}) };
+      if (p.auto_list.enabled) {
+        const o = p.auto_list.options ?? {};
+        const deal = LATAM_CRMS.includes(provider) ? validateDealOptions(provider, o.deal) : null;
+        if (Object.keys(lists).length >= 10 && !lists[listId]) throw new HttpError("Hasta 10 listas con envío automático por integración.", 400);
+        // Desde ahora: lo que ya está en la lista se envía con «Enviar».
+        lists[listId] = { options: deal ? { deal } : {}, since: new Date().toISOString(), cursor: 0, enabled_at: new Date().toISOString() };
+      } else delete lists[listId];
+      patch.auto_lists = lists;
+    }
+    await saveSync(ctx, conn, patch);
+    return { sync: publicSync(conn) };
+  }
+
   if (action === "export_list") {
     const listId = String(p.list_id ?? "");
     if (listId !== "all" && !/^[0-9a-f-]{36}$/i.test(listId)) throw new HttpError("Elige una lista.", 400);
-    const opts = p.options ?? {};
-    const { name, leads } = await loadLeads(ctx, listId);
-    let r: ExportResult;
-    try {
-      switch (provider) {
-        case "hubspot": r = await exportHubspot(ctx, conn, leads); break;
-        case "salesforce": r = await exportSalesforce(ctx, conn, leads, "Predictable"); break;
-        case "amplemarket": r = await exportAmplemarket(ctx, conn, name, leads, opts); break;
-        case "google_sheets": r = await exportSheets(ctx, conn, listId, name, leads); break;
-        case "notion": r = await exportNotion(ctx, conn, name, leads, opts); break;
-        case "clickup": r = await exportClickup(ctx, conn, name, leads, opts); break;
-        default: throw new HttpError("Esta integración no recibe listas.", 400);
-      }
-    } catch (e) {
-      await logSync(ctx, {
-        provider, action, source_kind: "list", source_id: listId, status: "error",
-        detail: (e instanceof Error ? e.message : String(e)).slice(0, 500),
-      });
-      throw e;
-    }
-    const failed = Number(r.counts.failed ?? 0);
-    await logSync(ctx, {
-      provider, action, source_kind: "list", source_id: listId,
-      status: failed ? "partial" : "ok",
-      counts: r.counts, target_url: r.url ?? null,
-      detail: [name, r.detail].filter(Boolean).join(" · ").slice(0, 500),
-    });
-    // Recordar el destino para la próxima vez (solo ids, nada secreto).
-    const dest: Record<string, string> = {};
-    for (const k of ["mode", "sequence_id", "owner", "list_id", "team_id", "parent_page_id"]) {
-      if (typeof opts[k] === "string" && opts[k].length <= 200) dest[k] = opts[k];
-    }
-    await patchConn(ctx, conn, {
-      last_used_at: new Date().toISOString(),
-      config: { ...(conn.config ?? {}), last_destination: dest },
-    });
-    return { ...r, skipped: r.skipped.slice(0, 50), errors: (r.errors ?? []).slice(0, 10), list_name: name, total: leads.length };
+    return await runListExport(ctx, conn, listId, p.options ?? {}, { cursor: Number(p.cursor) || 0 });
   }
 
   if (action === "export_meeting") {
@@ -1019,6 +1133,21 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
+
+  // pg_cron con la service role: solo la acción `cron` (comparación exacta
+  // con la key, igual que enrich-list / campaign-run).
+  const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
+  if (serviceKey && token === serviceKey) {
+    let b: Json = {};
+    try { b = await req.json(); } catch (_) { /* vacío */ }
+    if (b?.action !== "cron") return json({ error: "Solo la acción cron con la service role." }, 400);
+    try {
+      return json(await cronRun(createClient(env("SUPABASE_URL"), serviceKey, { auth: { persistSession: false } })));
+    } catch (e) {
+      console.error("[integrations] cron:", e);
+      return json({ error: e instanceof Error ? e.message : String(e) }, e instanceof HttpError ? e.status : 500);
+    }
+  }
   const { data: { user }, error: authErr } = await createClient(env("SUPABASE_URL"), env("SUPABASE_ANON_KEY")).auth.getUser(token);
   if (authErr || !user) return json({ error: "Unauthorized" }, 401);
 

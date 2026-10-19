@@ -75,12 +75,12 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] Envío de email propio con warm-up y monitor de entregabilidad — en curso (sesión propia)
 
 **P1**
-- [ ] Columnas de IA en Listas — en curso (sesión propia)
+- [x] Columnas de IA en Listas — PR #345 + #381 (respuesta con evidencia fila por fila, filtros, CSV, contexto y condición en Campañas)
 - [x] Dialer nativo con la llamada en el Meeting Coach (`docs/TELEFONIA.md`)
 - [x] Conectores CloudTalk, Aircall, Ringover (`docs/TELEFONIA.md`)
-- [ ] LinkedIn nativo
+- [x] LinkedIn nativo
 - [x] CRM de cuentas y oportunidades
-- [ ] Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos
+- [x] Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos
 - [x] Revisar la prueba gratis
 
 **P2**
@@ -90,7 +90,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [x] Listas "No llamar" — lista de supresión por canal + bajas centralizadas + registros oficiales (`docs/COMPLIANCE_LATAM.md`)
 - [x] Horarios de contacto de Colombia (Ley 2300): horario legal, festivos y un envío por día por lead en `campaign-run` (`_shared/contact-rules.ts`)
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
-- [ ] Agendamiento con recordatorios por WhatsApp
+- [x] Agendamiento con recordatorios por WhatsApp — `docs/AGENDA.md` (Google Calendar y Outlook)
 - [ ] Cobro local y CFDI (`docs/BILLING_LATAM.md`)
   - [x] Fase A: factura de Stripe con el número fiscal del cliente, moneda local y OXXO/Pix en recargas (#344; faltan los pasos del Dashboard de Stripe y la consulta al contador sobre el 18-B)
   - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC — en curso: CFDI en modo prueba con Facturapi; falta la entidad

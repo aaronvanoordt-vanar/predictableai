@@ -34,6 +34,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.
 import { findMemberByPhone } from "./wati-history.ts";
 import { markReach } from "./wa-reachability.ts";
 import * as suppression from "./suppression.ts";
+import { handleBookingReply } from "./booking-inbound.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -202,6 +203,10 @@ export async function recordInbound(db: SupabaseClient, acc: Json, m: InboundMes
       evidence: { text: m.text, wamid: m.messageId, provider: m.provider, campaign_id: primary?.campaign_id ?? null, enrollment_id: primary?.id ?? null },
     });
   }
+  // Respuesta a un recordatorio de la agenda («Confirmo», «Reprogramar»…):
+  // marca la confirmación de la reunión. Vale también sin lead (invitado que
+  // agendó directo con su WhatsApp). Nunca lanza.
+  if (!optOut && !m.reaction) await handleBookingReply(db, acc.user_id, m.from, String(m.text ?? ""), member?.id ?? null);
   if (!member) return result; // número sin lead: queda en la bandeja igual
   for (const en of list) {
     const { patch, event } = enrollmentPatch(en, m.at, optOut);

@@ -194,6 +194,38 @@ Deno.test("normalize: las ranuras viejas template_a/b/c se leen como template + 
   assertEquals(cf.validate(f).errors, []);
 });
 
+Deno.test("LinkedIn nativo (Unipile): sin campaña de Dripify, texto propio o IA", () => {
+  const native = { linkedin_via: "unipile" };
+  const ok = cf.validate({ v: 1, nodes: [
+    { id: "li", type: "action", channel: "linkedin_connect", delay: {}, content: { kind: "custom", body: "Hola {{first_name}}" }, settings: native },
+    { id: "lm", type: "action", channel: "linkedin_message", delay: { days: 2 }, content: { kind: "ai", angle: "valor" }, settings: native },
+  ] });
+  assertEquals(ok.errors, []);
+  const f = cf.normalize({ v: 1, nodes: [
+    { id: "li", type: "action", channel: "linkedin_connect", content: { kind: "custom", body: "x" }, settings: native },
+    { id: "lt", type: "action", channel: "linkedin_message", content: { kind: "template" }, settings: native },
+    { id: "dr", type: "action", channel: "linkedin_connect", content: { kind: "custom", body: "x" }, settings: { dripify_campaign_id: 1 } },
+  ] });
+  const kinds = cf.actions(f).map((a) => a.content.kind);
+  assertEquals(kinds, ["custom", "ai", "ai"]); // Dripify sigue forzando IA; plantilla nunca en LinkedIn
+  assert(cf.isNativeLinkedin(cf.actions(f)[0]));
+  assert(!cf.isNativeLinkedin(cf.actions(f)[2]));
+  const long = cf.validate({ v: 1, nodes: [
+    { id: "li", type: "action", channel: "linkedin_connect", content: { kind: "custom", body: "x".repeat(301) }, settings: native },
+  ] });
+  assert(/hasta 300/.test(long.errors.map((e) => e.message).join(" ")));
+});
+
+Deno.test("estimateCredits: 1 crédito por envío de LinkedIn nativo", () => {
+  const native = { linkedin_via: "unipile" };
+  const f = cf.normalize({ v: 1, nodes: [
+    { id: "li", type: "action", channel: "linkedin_connect", content: { kind: "custom", body: "Hola" }, settings: native },
+    { id: "lm", type: "action", channel: "linkedin_message", content: { kind: "ai" }, settings: native },
+  ] });
+  // por lead: 1 IA (2) + 2 envíos nativos (2) + entrada (1) = 5
+  assertEquals(cf.estimateCredits(f, 10).credits, 50);
+});
+
 Deno.test("js/campaign-flow.js: mismos canales y condiciones que el motor", async () => {
   const js = await Deno.readTextFile(new URL("../../../js/campaign-flow.js", import.meta.url));
   const list = (name: string) => {

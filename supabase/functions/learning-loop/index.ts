@@ -27,6 +27,12 @@
  *                    inyecta en vivo y en el reporte.
  *   icp_attribute    cargo / país / industria / tamaño con tasa de respuesta
  *                    vs. el promedio (sugerencia para el Contexto; no pisa el ICP).
+ *   meeting_attendance asistencia real de las reuniones agendadas desde la agenda
+ *                    (se dio / no se presentó): total y por confirmación, por
+ *                    recordatorio de WhatsApp entregado y por origen (campaña,
+ *                    Bandeja, directo). Solo mide; el no-show ya baja al lead a
+ *                    `no_show` en el CRM, así que deja de contar como reunión en
+ *                    las campañas y el Radar.
  *   deal_loss        motivos de las oportunidades perdidas del CRM (el motivo es
  *                    obligatorio al perderla; reglas en _shared/crm.ts). La IA de
  *                    campañas, mensajes y Hub los recibe vía intelligence.ts.
@@ -435,6 +441,42 @@ async function learnHub(supa: Json, userId: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Reuniones: asistencia real (bookings.attendance)
+// ─────────────────────────────────────────────────────────────────────────────
+const MIN_MEETINGS = 10;          // reuniones con asistencia marcada para opinar
+const MIN_SEGMENT_MEETINGS = 6;
+async function learnMeetings(supa: Json, userId: string, out: Insight[]) {
+  const since = new Date(Date.now() - 180 * 86400_000).toISOString();
+  const { data, error } = await supa.from("bookings").select("attendance, confirmation, reminders, source")
+    .eq("user_id", userId).neq("attendance", "pending").gte("start_at", since).limit(5000);
+  if (error) return { marked: 0, held: 0, no_show: 0, show_rate: 0 }; // sin la migración
+  const rows: Json[] = Array.isArray(data) ? data : [];
+  const rate = (list: Json[]) => {
+    const held = list.filter((r) => r.attendance === "held").length;
+    return { marked: list.length, held, no_show: list.length - held, show_rate: pct(held, list.length) };
+  };
+  const all = rate(rows);
+  out.push({ scope: "meeting_attendance", key: "all", label: "Asistencia a las reuniones agendadas", verdict: all.marked >= MIN_MEETINGS ? "neutral" : "insufficient", metrics: all });
+  if (all.marked < MIN_MEETINGS) return all;
+  const segments: [string, string, (r: Json) => boolean][] = [
+    ["confirmation:confirmed", "Confirmaron su asistencia", (r) => r.confirmation === "confirmed"],
+    ["confirmation:not_confirmed", "No confirmaron su asistencia", (r) => r.confirmation !== "confirmed"],
+    ["reminder_whatsapp:sent", "Recibieron recordatorio por WhatsApp", (r) => !!(r.reminders?.h24?.whatsapp?.ok || r.reminders?.h1?.whatsapp?.ok)],
+    ["reminder_whatsapp:not_sent", "Sin recordatorio por WhatsApp", (r) => !(r.reminders?.h24?.whatsapp?.ok || r.reminders?.h1?.whatsapp?.ok)],
+    ["source:campaign", "Agendaron desde una campaña", (r) => r.source?.kind === "campaign"],
+    ["source:inbox", "Agendaron desde la Bandeja", (r) => r.source?.kind === "inbox"],
+    ["source:direct", "Agendaron con el enlace directo", (r) => (r.source?.kind ?? "direct") === "direct"],
+  ];
+  for (const [key, label, pick] of segments) {
+    const m = rate(rows.filter(pick));
+    const diff = m.show_rate - all.show_rate;
+    const verdict: Verdict = m.marked < MIN_SEGMENT_MEETINGS ? "insufficient" : diff >= 15 ? "works" : diff <= -15 ? "fails" : "neutral";
+    out.push({ scope: "meeting_attendance", key, label, verdict, metrics: { ...m, vs_all: Math.round(diff * 10) / 10 } });
+  }
+  return all;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Automatizaciones: qué reglas aprueba y cuáles rechaza el usuario, y si los
 // leads que crean responden. Solo informa (nunca apaga una regla: el usuario
 // la puso y la apaga él); el rechazo con motivo queda en decision_note.
@@ -490,12 +532,15 @@ async function learnDeals(supa: Json, userId: string, out: Insight[]) {
   const wonIds = (stages || []).filter((s: Json) => s.kind === "won").map((s: Json) => s.id);
   if (!lostIds.length) return { lost: 0, won: 0 };
   const [lostRes, wonRes] = await Promise.all([
-    supa.from("crm_opportunities").select("lost_reason, lost_competitor, lost_note").eq("user_id", userId).in("stage_id", lostIds).gte("closed_at", since).limit(5000),
+    supa.from("crm_opportunities").select("lost_reason, lost_competitor, lost_note, stage_changed_by").eq("user_id", userId).in("stage_id", lostIds).gte("closed_at", since).limit(5000),
     wonIds.length
       ? supa.from("crm_opportunities").select("id", { count: "exact", head: true }).eq("user_id", userId).in("stage_id", wonIds).gte("closed_at", since)
       : Promise.resolve({ count: 0 }),
   ]);
-  const lost: Json[] = Array.isArray(lostRes.data) ? lostRes.data : [];
+  // Una pérdida que trajo un CRM externo sin motivo reconocible («otro» +
+  // la nota de la plataforma) no enseña nada: no entra al aprendizaje.
+  const lost: Json[] = (Array.isArray(lostRes.data) ? lostRes.data : [])
+    .filter((o: Json) => !(o.stage_changed_by === "integration" && o.lost_reason === "otro"));
   const won = Number(wonRes.count) || 0;
   out.push(...lossInsights(lost, won));
   return { lost: lost.length, won };
@@ -510,6 +555,7 @@ async function recomputeUser(supa: Json, userId: string) {
   const coach = await learnObjections(supa, userId, out);
   const icp = await learnIcp(supa, userId, out);
   const hub = await learnHub(supa, userId);
+  const meetings = await learnMeetings(supa, userId, out);
   const automations = await learnAutomations(supa, userId, out);
   const deals = await learnDeals(supa, userId, out);
 
@@ -520,10 +566,11 @@ async function recomputeUser(supa: Json, userId: string) {
   if (camp.sent) headlines.push(`${camp.replies} respuestas y ${camp.meetings} reuniones sobre ${camp.sent} envíos.`);
   if (radar.detectors) headlines.push(`${count("radar_detector", "works")} detectores funcionan, ${count("radar_detector", "fails")} se apagaron.`);
   if (coach.meetings) headlines.push(`${coach.meetings} reuniones analizadas, ${coach.objections} objeciones reales.`);
+  if (meetings.marked) headlines.push(`${meetings.held} de ${meetings.marked} reuniones agendadas se dieron (${meetings.show_rate} % de asistencia).`);
   if (hub.judged) headlines.push(`${hub.judged} hallazgos del Hub juzgados, ${hub.used} convertidos en acción.`);
   const topLoss = out.find((i) => i.scope === "deal_loss" && i.verdict === "fails");
   if (deals.lost || deals.won) headlines.push(`${deals.won} oportunidades ganadas y ${deals.lost} perdidas en el último año${topLoss ? `; motivo principal: ${topLoss.label}` : ""}.`);
-  out.push({ scope: "summary", key: "all", label: "Resumen", verdict: out.some((i) => i.verdict !== "insufficient") ? "neutral" : "insufficient", metrics: { headlines, works, fails, actions, campaigns: camp, radar, coach, icp, hub, automations, deals, computed_at: nowIso() } });
+  out.push({ scope: "summary", key: "all", label: "Resumen", verdict: out.some((i) => i.verdict !== "insufficient") ? "neutral" : "insufficient", metrics: { headlines, works, fails, actions, campaigns: camp, radar, coach, icp, hub, automations, meetings, deals, computed_at: nowIso() } });
 
   // Reemplazo atómico por usuario: borra lo que ya no existe y upsert del resto.
   const keys = out.map((i) => `${i.scope}|${i.key}`);
@@ -553,6 +600,7 @@ async function activeUsers(supa: Json): Promise<string[]> {
     ["coach_meetings", "created_at"],
     ["prospect_list_members", "status_changed_at"],
     ["intel_hub_feedback", "created_at"],
+    ["bookings", "updated_at"],
     ["automation_runs", "created_at"],
     ["crm_opportunities", "updated_at"],
   ];
