@@ -194,6 +194,35 @@ Deno.test("normalize: las ranuras viejas template_a/b/c se leen como template + 
   assertEquals(cf.validate(f).errors, []);
 });
 
+Deno.test("js/campaign-flow.js: mismos canales y condiciones que el motor", async () => {
+  const js = await Deno.readTextFile(new URL("../../../js/campaign-flow.js", import.meta.url));
+  const list = (name: string) => {
+    const m = js.match(new RegExp(`var ${name} = \\[([^\\]]*)\\]`));
+    return [...(m?.[1] ?? "").matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  };
+  assertEquals(list("CHANNELS"), [...cf.CHANNELS]);
+  assertEquals(list("CONDITIONS"), [...cf.CONDITIONS]);
+});
+
+Deno.test("paso de llamada: guion IA o propio, nunca plantilla ni en paralelo", () => {
+  const f = cf.normalize({ nodes: [
+    { id: "a", type: "action", channel: "email", delay: { days: 0, hours: 0 }, content: { kind: "ai", angle: "apertura" } },
+    { id: "c", type: "action", channel: "call", delay: { mode: "with_prev" }, content: { kind: "template" }, settings: { call_wait_days: 30 } },
+    { id: "d", type: "action", channel: "call", delay: { days: 2 }, content: { kind: "custom", body: "" } },
+    { id: "q", type: "condition", check: "call_answered", delay: { days: 0 }, yes: [{ id: "y", type: "action", channel: "email", content: { kind: "ai" } }], no: [] },
+  ] });
+  const call = f.nodes[1] as cf.ActionNode;
+  assertEquals(call.content.kind, "ai");
+  assertEquals(cf.callWaitDays(call), 14);
+  assertEquals(cf.callWaitDays(f.nodes[2] as cf.ActionNode), 3);
+  assertEquals((f.nodes[3] as cf.ConditionNode).check, "call_answered");
+  const v = cf.validate(f);
+  assert(v.errors.some((e) => e.nodeId === "c" && e.message.includes("junto con el anterior")));
+  assert(v.errors.some((e) => e.nodeId === "d" && e.message.includes("vacío")));
+  // El guion IA cuesta como un mensaje IA.
+  assertEquals(cf.estimateCredits(cf.normalize({ nodes: [f.nodes[1]] }), 1).credits, 3);
+});
+
 // ── condición de Columna IA (2026-10-17) ────────────────────────────────────
 
 const COL_ID = "44444444-4444-4444-8444-444444444444";

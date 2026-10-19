@@ -104,7 +104,7 @@
  *                   401/403/404, fall back to a direct /v1/messages call
  *                   (claude-haiku-4-5 + web tools, same prompts).
  * Requires migrations: 20260709000002_outreach_agent_config.sql,
- *                      20260819000002_outreach_playbook.sql (optional layer —
+ *                      20260819000004_outreach_playbook.sql (optional layer —
  *                      without it the playbook select fails soft and the
  *                      messages generate exactly as before)
  */
@@ -117,6 +117,7 @@ import { loadIntelligence } from "../_shared/intelligence.ts";
 import { buildKnowledgePrompt, knowledgeRefs, loadKnowledge, retrieve } from "../_shared/sales-knowledge.ts";
 import { buildRadarSignalBlock, isRadarMember, radarSignalOf, type RadarLeadSignal } from "../_shared/radar-lead.ts";
 import { buildResearchBlock } from "../_shared/lead-research.ts";
+import { buildChampionHistoryBlock, type ChampionHistory, loadChampionHistory } from "../_shared/champion-watch.ts";
 import { buildAiColumnsBlock } from "../_shared/ai-columns.ts";
 
 function corsHeaders(origin: string) {
@@ -1004,7 +1005,7 @@ interface StepRequest {
 }
 
 interface StepSpec {
-  channel: "email" | "whatsapp" | "linkedin";
+  channel: "email" | "whatsapp" | "linkedin" | "phone";
   angle: "apertura" | "valor" | "prueba_social" | "objecion" | "ultima_carta" | "libre" | "respuesta" | "senal";
   instructions: string;
   previous: Array<{ channel: string; body: string; sent_at: string }>;
@@ -1020,8 +1021,10 @@ type StepMode = "step" | "reply" | "signal";
 function normalizeStep(body: StepRequest, mode: StepMode = "step"): StepSpec | null {
   const replyMode = mode === "reply";
   const chRaw = String(body.channel ?? "");
-  const channel = chRaw.startsWith("linkedin") ? "linkedin" : chRaw;
-  if (!["email", "whatsapp", "linkedin"].includes(channel)) return null;
+  // `call` = paso de llamada de la cadencia (o el guion del dialer): escribe un guion, no un mensaje.
+  const channel = chRaw.startsWith("linkedin") ? "linkedin" : chRaw === "call" ? "phone" : chRaw;
+  if (!["email", "whatsapp", "linkedin", "phone"].includes(channel)) return null;
+  if (channel === "phone" && mode !== "step") return null;
   const angle: StepSpec["angle"] = replyMode
     ? "respuesta"
     : mode === "signal" ? "senal"
@@ -1086,6 +1089,7 @@ const STEP_CHANNEL_RULES: Record<StepSpec["channel"], string> = {
   email: "Canal EMAIL: devuelve \"subject\" (≤ 9 palabras, específico, sin clickbait; en seguimientos puede referir al hilo sin decir \"seguimiento\") y \"body\" (máximo 4 oraciones en apertura, 5 en seguimientos; gramática completa; sin firma; sin saludo tipo \"Espero que estés bien\").",
   whatsapp: "Canal WHATSAPP: \"subject\" vacío. Es un mensaje dentro de una conversación YA abierta (el lead escribió antes): sin saludo formal ni presentación repetida. Máximo 70 palabras, 2-3 párrafos cortos, frases de 8-14 palabras, sin \"¿\" de apertura.",
   linkedin: "Canal LINKEDIN (mensaje directo): \"subject\" vacío. Máximo 70 palabras, 3 párrafos compactos, ligeramente más formal que WhatsApp, sin saludo inicial tipo \"Hola\".",
+  phone: "LLAMADA TELEFÓNICA: \"subject\" vacío y \"body\" = el GUION que el vendedor tiene a la vista mientras llama, no un mensaje para enviar. Escríbelo hablado, en frases cortas y en este orden, con un título en mayúsculas por bloque: APERTURA (quién llama y por qué llama a ESTA persona, máximo 2 frases, y pide permiso: \"¿tienes 30 segundos?\"), GANCHO (la observación del ángulo de este paso), PREGUNTAS (2-3 preguntas abiertas de descubrimiento para su rol), OBJECIONES (las 2 más probables, cada una con su respuesta en una frase), CIERRE (pide UNA reunión con dos horarios concretos) y BUZÓN DE VOZ (un mensaje de máximo 25 segundos, unas 50 palabras, que deja el motivo y una forma de devolver la llamada). Máximo 260 palabras en total. La apertura obligatoria de WhatsApp/LinkedIn NO aplica. Si ya hubo mensajes por otro canal, menciónalos en la apertura (\"te escribí por…\") sin repetir su contenido.",
 };
 
 /**
@@ -1195,6 +1199,10 @@ function stepViolations(step: StepSpec, out: StepOut): string[] {
   // prospección no aplica (puede tener que explicar algo que preguntaron).
   if (step.angle === "respuesta") {
     if (step.channel === "email" && !out.subject.trim()) v.push('"subject" está vacío (el email necesita asunto)');
+    return v;
+  }
+  if (step.channel === "phone") {
+    if (wordCount(out.body) > 300) v.push(`"body" tiene ${wordCount(out.body)} palabras (máximo 260 en un guion)`);
     return v;
   }
   if (step.channel !== "email" && wordCount(out.body) > MAX_WORDS) v.push(`"body" tiene ${wordCount(out.body)} palabras (máximo ${MAX_WORDS})`);
@@ -1337,6 +1345,9 @@ Deno.serve(withLlmContext(async (req: Request) => {
   let lead = body.lead;
   let step: StepSpec | null = null;
   let radarSignal: RadarLeadSignal | null = null;
+  // Lead que vino de «Tu champion se mudó a X» (detector champion_moves): la
+  // historia real con esa persona reemplaza al bloque genérico de la señal.
+  let champion: ChampionHistory | null = null;
   if (stepMode) {
     // Modo paso: el lead sale de la fila del miembro (el motor no manda lead).
     if (!memberId) return json({ error: "member_id required in step mode" }, 400, h);
@@ -1349,10 +1360,11 @@ Deno.serve(withLlmContext(async (req: Request) => {
     // cubre la investigación puntual y la señal borrada.
     if ((replyMode || signalMode) && isRadarMember(mrow)) radarSignal = await loadRadarSignal(supa, user.id, mrow);
     if (signalMode && !radarSignal) return json({ error: "not_radar_lead", detail: "Este lead no viene de una señal del Radar." }, 409, h);
+    if (radarSignal?.detector_kind === "champion_moves") champion = await loadChampionHistory(supa, user.id, mrow);
     if (!step) {
       return json({ error: replyMode
         ? "reply mode requires channel (email|whatsapp|linkedin) and a conversation with at least one inbound message"
-        : "step mode requires channel (email|whatsapp|linkedin)" }, 400, h);
+        : "step mode requires channel (email|whatsapp|linkedin|call)" }, 400, h);
     }
   }
   const sender: Sender = (body.sender && typeof body.sender === "object") ? body.sender : {};
@@ -1447,8 +1459,10 @@ Deno.serve(withLlmContext(async (req: Request) => {
       // tienen que ver con ESTE paso y ESTE lead. Va antes de lo aprendido y
       // de las tendencias en peso (lo dice el propio bloque).
       const lastLead = [...step.conversation].reverse().find((c) => c.who === "lead")?.body ?? "";
-      const knowledgeHits = retrieve(knowledgeDocs, {
-        channel: step.channel,
+      // Un guion de llamada solo usa documentos sin canal fijo (un documento
+      // con canal fijo nunca se usa en otro canal).
+      const knowledgeHits = retrieve(step.channel === "phone" ? knowledgeDocs.filter((d) => !d.channel) : knowledgeDocs, {
+        channel: step.channel === "phone" ? null : step.channel,
         angle: step.angle,
         text: [
           step.angle.replace("_", " "), step.instructions, lastLead.slice(0, 1200),
@@ -1459,7 +1473,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
         ].filter(Boolean).join(" "),
       });
       const knowledge = buildKnowledgePrompt(knowledgeHits, "message");
-      const radarBlock = buildRadarSignalBlock(radarSignal, signalMode);
+      const radarBlock = champion ? buildChampionHistoryBlock(champion, signalMode) : buildRadarSignalBlock(radarSignal, signalMode);
       const out = await generateStep(engine, step, contextPrompt + buildStepContext(step) + radarBlock + knowledge + learned + closing);
       console.log(`[outreach] ✓ ${replyMode ? "reply" : signalMode ? "signal" : "step"} ${user.id} ${step.channel}/${step.angle} via ${engine} (knowledge: ${knowledgeHits.length} fragmentos de ${knowledgeDocs.length} docs)`);
       const { data: stSpent, error: stSpendErr } = await supa
@@ -1469,7 +1483,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
       } else {
         await supa.from("credit_transactions").insert({ user_id: user.id, delta: -OUTREACH_COST, reason: "outreach_message" });
       }
-      return json({ subject: out.subject, body: out.body, angle_note: out.angle_note ?? null, channel: step.channel, angle: step.angle, knowledge: knowledgeRefs(knowledgeHits), radar_signal: radarSignal ? { headline: radarSignal.headline, detector_name: radarSignal.detector_name } : null, generated_via: "fallback_api" }, 200, h);
+      return json({ subject: out.subject, body: out.body, angle_note: out.angle_note ?? null, channel: step.channel, angle: step.angle, knowledge: knowledgeRefs(knowledgeHits), radar_signal: radarSignal ? { headline: radarSignal.headline, detector_name: radarSignal.detector_name } : null, champion: !!champion, generated_via: "fallback_api" }, 200, h);
     } catch (err) {
       console.error("[outreach] step error:", err);
       return json({ error: "llm_error", detail: String(err) }, 502, h);

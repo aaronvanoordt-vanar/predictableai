@@ -1702,7 +1702,8 @@
               "enum": [
                 "whatsapp",
                 "email",
-                "linkedin"
+                "linkedin",
+                "voice"
               ]
             },
             "description": "Canal."
@@ -4592,7 +4593,8 @@
             "enum": [
               "whatsapp",
               "email",
-              "linkedin"
+              "linkedin",
+              "voice"
             ]
           },
           "direction": {

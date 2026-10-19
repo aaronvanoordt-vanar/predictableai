@@ -403,6 +403,14 @@ Roadmap GTM OS §4. En los datos B2B latinos muchos «teléfonos» son fijos o e
 - **Dialer**: antes de marcar, `isSuppressed(db, userId, "phone", { phone })` desde una edge function o `window.suppression.check({ channel: 'phone', phone })` desde el navegador (acción `check` de la edge function `suppression`). Si la lista no se pudo leer, la llamada falla (503): no se marca.
 - **El envío de email propio** (buzones propios, 2026-10-18) registra sus bajas aquí: el enlace List-Unsubscribe con `recordOptOut(..., source: "list_unsubscribe")` y la respuesta «baja» al buzón con `source: "reply"`. Ver `docs/EMAIL_PROPIO.md`.
 
+## Horarios de contacto de Colombia (2026-10-18)
+
+- `_shared/contact-rules.ts` (`deno test`): país del lead (`prospect_list_members.country`, o el prefijo +57 si falta), horario de la Ley 2300 (lun–vie 7–19, sáb 8–15, hora de Colombia), los 18 festivos del año (fijos, Ley Emiliani y los que dependen de Pascua) y el tope de un envío de campaña por día y por lead.
+- `campaign-run` lo revisa en `preflight`, después de la ventana de la campaña: las dos se suman. Fuera de horario o con el envío del día ya hecho, el enrolamiento espera hasta el siguiente momento permitido con el motivo en `error_detail` («Ley 2300 (Colombia): …»); el paso no se omite. El tope cuenta los eventos `sent`/`queued` del lead desde la medianoche de Colombia, en todas sus campañas.
+- No se limitan los canales por semana (decisión del dueño): la ley lo pide tras un contacto directo, y una respuesta ya detiene la cadencia.
+- LinkedIn: el motor sube el perfil a Dripify en horario legal, pero Dripify envía con su propio horario; hay que ajustar Activity Control en Dripify.
+- Dialer: antes de marcar, `countryRuleFor(lead)` + `checkContactRules(rule, now, llamadasDeHoy)`.
+
 ## Buzones propios como alternativa a Apollo (2026-10-17)
 
 El canal Email ya no depende solo de Apollo: el usuario puede enviar desde sus propios buzones (Gmail / Microsoft 365 por OAuth, o SMTP + IMAP), con rotación, tope diario por buzón, rampa de volumen, seguimientos en el mismo hilo (In-Reply-To / References), detección de respuestas y rebotes por la bandeja de entrada (`mailbox-sync`), monitor de SPF / DKIM / DMARC, baja en un clic (List-Unsubscribe) y supresión. Apollo sigue igual para quien lo usa y es la opción por defecto. Diseño, decisión de warm-up, APIs comprobadas y guía de secrets en `docs/EMAIL_PROPIO.md`.

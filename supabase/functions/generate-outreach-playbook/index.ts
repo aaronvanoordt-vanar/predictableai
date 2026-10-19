@@ -45,7 +45,7 @@
  * Required secrets: the API key of the chosen engine (ANTHROPIC_API_KEY,
  * OPENAI_API_KEY or PERPLEXITY_API_KEY). Optional: SCHEDULER_SECRET (without it
  * the scheduled path is disabled; the manual path keeps working).
- * Requires migration: 20260819000002_outreach_playbook.sql
+ * Requires migration: 20260819000004_outreach_playbook.sql
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";

@@ -12,6 +12,14 @@
  * «Volver a mi cuenta» (setSession con esos tokens). Mientras se está dentro,
  * una píldora fija abajo lo recuerda.
  *
+ * Cambio rápido (2026-10-17): un selector en la barra lateral lista los
+ * espacios que gestiona la cuenta del equipo o de la agencia (RPC
+ * agency_workspaces). Desde dentro de un espacio, cambiar a otro = volver a
+ * la sesión guardada (setSession, sin recargar) y entrar al siguiente con
+ * enter(): el servidor revalida todo igual que con «Entrar al espacio». La
+ * lista que se ve dentro de un espacio es la copia que se guardó al entrar
+ * (solo ids y nombres, para pintar); nunca autoriza nada.
+ *
  * Lo carga js/clients.js (presente en toda la app) y expone window.Workspace.
  */
 (function (global) {
@@ -82,6 +90,15 @@
       action: 'enter', client_id: clientId, website: opts.website || undefined,
     });
 
+    // Los espacios de esta cuenta, para el selector de adentro (best effort).
+    var spaces = [];
+    try {
+      var list = await sb().rpc('agency_workspaces');
+      if (!list.error && Array.isArray(list.data)) {
+        spaces = list.data.map(function (w) { return { client_id: w.client_id, client_name: w.client_name || '' }; });
+      }
+    } catch (e) { /* sin la migración: sin selector adentro */ }
+
     // La sesión del equipo, para volver. Se guarda ANTES del cambio: si el
     // canje fallara a medias, «Volver» sigue sabiendo a dónde ir.
     try {
@@ -93,6 +110,7 @@
         client_id: clientId,
         client_name: data.client_name || '',
         workspace_user_id: data.workspace_user_id,
+        spaces: spaces.slice(0, 200),
         at: new Date().toISOString(),
       }));
     } catch (e) {
@@ -143,6 +161,183 @@
       return;
     }
     global.location.replace('./index.html');
+  }
+
+  /**
+   * Cambia directo a otro espacio. Desde dentro de un espacio vuelve primero a
+   * la sesión guardada del equipo/agencia (sin recargar) y entra desde ahí.
+   */
+  async function switchTo(clientId) {
+    var ret = readReturn();
+    var me = global.currentUser;
+    if (ret && me && ret.user_id !== me.id) {
+      var res = await sb().auth.setSession({ access_token: ret.access_token, refresh_token: ret.refresh_token });
+      if (res.error || !res.data || !res.data.session) {
+        try { localStorage.removeItem(RETURN_KEY); } catch (e) {}
+        throw new Error('Tu sesión de la agencia expiró. Vuelve a iniciar sesión.');
+      }
+      try {
+        return await enter(clientId);
+      } catch (e) {
+        // Ya estamos de vuelta en la cuenta propia: que la app lo refleje.
+        try { localStorage.removeItem(RETURN_KEY); } catch (e2) {}
+        clearUserCaches('agency');
+        global.location.replace('./index.html');
+        throw e;
+      }
+    }
+    return enter(clientId);
+  }
+
+  // ── Selector de espacios en la barra lateral ────────────────────────────
+
+  function injectSwitchCss() {
+    if (document.getElementById('ws-switch-css')) return;
+    var s = document.createElement('style');
+    s.id = 'ws-switch-css';
+    s.textContent =
+      '.ws-switch{position:relative;margin:6px 10px 2px}' +
+      '.ws-switch-btn{width:100%;display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--r-md,10px);' +
+        'border:1px solid var(--border,rgba(0,0,0,.1));background:var(--surface2,transparent);color:var(--ink,#111);font:inherit;font-size:12.5px;cursor:pointer;text-align:left}' +
+      '.ws-switch-btn:hover{background:var(--surface,#fff)}' +
+      '.ws-switch-ico{flex:none;width:18px;height:18px;border-radius:6px;display:grid;place-items:center;font-size:10px;font-weight:700;color:#fff;background:var(--grad-ai,var(--accent,#1F4BFF))}' +
+      '.ws-switch-lbl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+      '.ws-switch-lbl small{display:block;font-size:10.5px;color:var(--ink-3,#777)}' +
+      '.ws-switch-menu{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:9500;max-height:320px;overflow:auto;padding:6px;' +
+        'border-radius:var(--r-md,10px);border:1px solid var(--border2,rgba(0,0,0,.14));background:var(--surface,#fff);box-shadow:0 12px 30px rgba(0,0,0,.18)}' +
+      '.ws-switch-menu input{width:100%;box-sizing:border-box;margin-bottom:4px;padding:6px 8px;border-radius:8px;border:1px solid var(--border2,rgba(0,0,0,.14));' +
+        'background:var(--surface2,#fafafa);color:var(--ink,#111);font:inherit;font-size:12.5px}' +
+      '.ws-switch-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border:0;border-radius:8px;background:none;color:var(--ink,#111);' +
+        'font:inherit;font-size:12.5px;cursor:pointer;text-align:left}' +
+      '.ws-switch-item:hover,.ws-switch-item:focus{background:var(--surface2,#f3f3f3);outline:none}' +
+      '.ws-switch-item[aria-current="true"]{font-weight:700}' +
+      '.ws-switch-item span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.ws-switch-low{flex:none;width:7px;height:7px;border-radius:50%;background:var(--amber,#d97706)}' +
+      'html[data-rail="1"] .ws-switch-lbl,html[data-rail="1"] .ws-switch-caret{display:none}' +
+      'html[data-rail="1"] .ws-switch{margin:6px auto 2px;width:34px}' +
+      'html[data-rail="1"] .ws-switch-menu{width:240px;right:auto}';
+    document.head.appendChild(s);
+  }
+
+  /**
+   * spaces: [{ client_id, client_name, low? }]; currentId = espacio actual o
+   * null en la cuenta propia.
+   */
+  function renderSwitch(spaces, currentId, currentName) {
+    if (!spaces.length && !currentId) return;
+    var host = document.getElementById('sidebar') || document.querySelector('.sidebar');
+    var anchor = document.getElementById('sb-search');
+    if (!host || document.getElementById('ws-switch')) return;
+    injectSwitchCss();
+
+    var wrap = document.createElement('div');
+    wrap.className = 'ws-switch';
+    wrap.id = 'ws-switch';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ws-switch-btn';
+    btn.setAttribute('aria-haspopup', 'listbox');
+    btn.setAttribute('aria-expanded', 'false');
+    var label = currentId ? (currentName || 'Espacio del cliente') : 'Mi cuenta';
+    btn.title = 'Cambiar de espacio';
+    var ico = document.createElement('span');
+    ico.className = 'ws-switch-ico';
+    ico.textContent = (label.trim()[0] || '·').toUpperCase();
+    var lbl = document.createElement('span');
+    lbl.className = 'ws-switch-lbl';
+    var small = document.createElement('small');
+    small.textContent = currentId ? 'Espacio del cliente' : 'Espacio';
+    lbl.appendChild(small);
+    lbl.appendChild(document.createTextNode(label));
+    var caret = document.createElement('span');
+    caret.className = 'ws-switch-caret';
+    caret.textContent = '▾';
+    btn.appendChild(ico);
+    btn.appendChild(lbl);
+    btn.appendChild(caret);
+    wrap.appendChild(btn);
+
+    var menu = null;
+    function close() {
+      if (menu) { menu.remove(); menu = null; }
+      btn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('click', onDoc, true);
+    }
+    function onDoc(ev) { if (!wrap.contains(ev.target)) close(); }
+    function item(text, isCurrent, low, onPick) {
+      var it = document.createElement('button');
+      it.type = 'button';
+      it.className = 'ws-switch-item';
+      it.setAttribute('role', 'option');
+      if (isCurrent) it.setAttribute('aria-current', 'true');
+      var t = document.createElement('span');
+      t.textContent = text;
+      it.appendChild(t);
+      if (low) {
+        var d = document.createElement('i');
+        d.className = 'ws-switch-low';
+        d.title = 'Saldo bajo';
+        it.appendChild(d);
+      }
+      it.addEventListener('click', function () {
+        if (isCurrent) { close(); return; }
+        close();
+        btn.disabled = true;
+        lbl.lastChild.textContent = 'Cambiando…';
+        Promise.resolve().then(onPick).catch(function (e) {
+          btn.disabled = false;
+          lbl.lastChild.textContent = label;
+          if (global.uiHelpers && global.uiHelpers.toast) global.uiHelpers.toast('No se pudo cambiar de espacio: ' + (e.message || e), 'error');
+        });
+      });
+      return it;
+    }
+    function open() {
+      menu = document.createElement('div');
+      menu.className = 'ws-switch-menu';
+      menu.setAttribute('role', 'listbox');
+      var list = document.createElement('div');
+      function fill(q) {
+        list.textContent = '';
+        list.appendChild(item('Mi cuenta', !currentId, false, function () { return exit(); }));
+        spaces.filter(function (w) { return !q || String(w.client_name).toLowerCase().indexOf(q) !== -1; })
+          .forEach(function (w) {
+            list.appendChild(item(w.client_name || 'Cliente', w.client_id === currentId, !!w.low, function () { return switchTo(w.client_id); }));
+          });
+      }
+      if (spaces.length > 6) {
+        var q = document.createElement('input');
+        q.type = 'search';
+        q.placeholder = 'Buscar cliente';
+        q.addEventListener('input', function () { fill(q.value.trim().toLowerCase()); });
+        menu.appendChild(q);
+        setTimeout(function () { q.focus(); }, 0);
+      }
+      menu.appendChild(list);
+      fill('');
+      wrap.appendChild(menu);
+      btn.setAttribute('aria-expanded', 'true');
+      document.addEventListener('click', onDoc, true);
+    }
+    btn.addEventListener('click', function () { if (menu) close(); else open(); });
+    wrap.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { close(); btn.focus(); } });
+
+    if (anchor && anchor.parentNode === host) host.insertBefore(wrap, anchor.nextSibling);
+    else host.insertBefore(wrap, host.querySelector('.sidebar-nav'));
+  }
+
+  async function mountSwitchOutside() {
+    try {
+      var res = await sb().rpc('agency_workspaces');
+      if (res.error || !Array.isArray(res.data) || !res.data.length) return;
+      renderSwitch(res.data.map(function (w) {
+        return {
+          client_id: w.client_id,
+          client_name: w.client_name || '',
+          low: !w.unlimited && w.low_balance_alert != null && Number(w.balance) <= Number(w.low_balance_alert),
+        };
+      }), null, '');
+    } catch (e) { /* sin la migración: sin selector */ }
   }
 
   // ── Píldora «Estás en el espacio de …» ──────────────────────────────────
@@ -211,16 +406,33 @@
         var p = global.currentProfile || {};
         var name = (ret && ret.client_id === row.data.client_id && ret.client_name) || p.brand_name || p.full_name || '';
         showPill(name);
+        if (ret && ret.workspace_user_id === me.id) {
+          renderSwitch(Array.isArray(ret.spaces) ? ret.spaces : [], row.data.client_id, name);
+        }
         return;
       }
       // De vuelta en la cuenta del equipo (o se volvió por otro camino): la
       // sesión guardada ya no sirve.
       if (!row.error && ret && ret.user_id === me.id) localStorage.removeItem(RETURN_KEY);
     } catch (e) { /* tabla aún sin migrar: nada que mostrar */ }
+    mountSwitchOutside();
   }
 
   document.addEventListener('predictable:profile-ready', check);
   if (global.currentUser) check();
 
-  global.Workspace = { enter: enter, exit: exit, isInside: function () { return !!document.getElementById('ws-pill'); } };
+  // Tras asignar o retirar créditos (js/agency.js) el punto de saldo bajo cambia.
+  document.addEventListener('predictable:agency-spaces', function () {
+    if (document.getElementById('ws-pill')) return;
+    var old = document.getElementById('ws-switch');
+    if (old) old.remove();
+    mountSwitchOutside();
+  });
+
+  global.Workspace = {
+    enter: enter,
+    exit: exit,
+    switchTo: switchTo,
+    isInside: function () { return !!document.getElementById('ws-pill'); },
+  };
 })(window);
