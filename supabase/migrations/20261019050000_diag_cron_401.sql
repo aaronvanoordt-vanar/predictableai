@@ -6,10 +6,10 @@ with t as (
   from cron.job
 ), ref as (select tok from t where jobname = 'campaign-run')
 select json_build_object(
-  'same_as_campaign_run', (select json_agg(jobname order by jobname) from t, ref where t.tok = ref.tok),
-  'different', (select json_agg(json_build_object('n', jobname, 'has_bearer', tok is not null, 'len', length(tok)) order by jobname)
+  'same_as_campaign_run', (select json_agg(t.jobname order by t.jobname) from t, ref where t.tok = ref.tok),
+  'different', (select json_agg(json_build_object('n', t.jobname, 'has_bearer', t.tok is not null, 'len', length(t.tok)) order by t.jobname)
                 from t, ref where t.tok is distinct from ref.tok),
-  'ref_len', (select length(tok) from ref),
+  'ref_len', (select length(ref.tok) from ref),
   'hub_last_scheduled', (select to_char(max(created_at) at time zone 'UTC', 'MM-DD HH24:MI')
                          from public.intelligence_hub_reports)
 ) as r;
