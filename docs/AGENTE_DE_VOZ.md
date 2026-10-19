@@ -206,7 +206,7 @@ Ninguno de los seis tiene hoy una ley vigente que obligue a decir que la voz es 
 **El guion** sale de:
 
 - el **Contexto**: qué ofrece, ofertas, prueba social, ICP, comité de compra, a quién no se le vende y objeciones;
-- el **Entrenamiento IA**: metodologías de campaña, tú o usted, voz, palabras propias y prohibidas, reglas SIEMPRE/NUNCA y documentos que no sean de precios;
+- el **Entrenamiento IA**: tú o usted, voz, palabras propias y prohibidas, reglas SIEMPRE/NUNCA y documentos que no sean de precios;
 - **lo aprendido** (`loadIntelligence(…, "outreach")`);
 - la **investigación del lead**: ángulo, preguntas y notas;
 - lo que **escribió el lead**: los últimos 3 mensajes de la Bandeja.

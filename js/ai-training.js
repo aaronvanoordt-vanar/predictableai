@@ -2,30 +2,30 @@
  * js/ai-training.js — «Entrenamiento IA»: un Predictable distinto para cada
  * empresa (2026-09-23).
  *
- * Página `ai-training` (shell `#ai-training-shell`). El equipo entrena a su
- * Meeting Coach y a sus campañas con:
- *   1. Metodologías de venta (libros): cuáles aplica el coach y cuáles las
- *      campañas. Sin elegir nada el coach sigue con Neuroventas.
- *   2. Estilo de comunicación: tú/usted, largo, emojis, cómo suena el equipo,
- *      palabras propias y prohibidas, ejemplos reales de su voz.
- *   3. Coach y reglas: personalidad del coach, reglas SIEMPRE / NUNCA.
- *   4. Base de conocimiento: libros, playbooks, casos, precios, battlecards,
- *      llamadas modelo — PDF (bucket privado `ai-training`), .txt/.md o texto
- *      pegado. La edge function `ai-training` los destila a principios; el
- *      usuario elige a qué aplican, los apaga y corrige el resumen.
- *   5. «Ver lo que sabe tu IA»: el texto EXACTO que reciben los modelos
+ * Página `ai-training` (shell `#ai-training-shell`). La empresa le enseña a
+ * su Meeting Coach y a sus campañas lo que solo ella sabe:
+ *   1. Conocimiento de tu empresa: playbook, guiones, casos, precios,
+ *      competencia, llamadas modelo — PDF (bucket privado `ai-training`),
+ *      .txt/.md o texto pegado. La edge function `ai-training` los destila a
+ *      principios; el usuario elige a qué aplican, los apaga y corrige el
+ *      resumen.
+ *   2. Cómo habla tu equipo: tú/usted, largo, emojis, voz, palabras propias
+ *      y prohibidas, ejemplos reales.
+ *   3. Reglas del equipo: personalidad del coach, reglas SIEMPRE / NUNCA.
+ *   4. «Ver lo que sabe tu IA»: el texto EXACTO que reciben los modelos
  *      (acción `preview` de `ai-training`, misma función que usan
  *      sales-coach, generate-outreach y generate-campaign).
+ *
+ * El catálogo de metodologías de venta (libros) se quitó el 2026-10-19 a
+ * pedido del dueño: quien no leyó los libros no sabía cuáles elegir. El
+ * coach usa siempre su doctrina por defecto; para que siga un método propio,
+ * la empresa sube su playbook. No lo resucites.
  *
  * También pinta el resumen «Entrenado con…» en cualquier
  * `<div data-ai-training-badge="coach|campaigns">` (Meeting Coach y el
  * asistente de campañas), y `AITraining.coachLivePrompt()` le da al coach en
  * vivo por el worker de OpenAI (js/realtime-coach.js) la misma doctrina y el
  * mismo bloque que usa sales-coach.
- *
- * `METHODS` es espejo de `METHODOLOGIES` en
- * supabase/functions/_shared/sales-training.ts (id, nombre, autor, libro,
- * foco): se cambian juntos — `sales-training.test.ts` lo verifica.
  *
  * Datos: `ai_training` (una fila por usuario, RLS del dueño) y
  * `ai_training_docs` (status/error solo los escribe la edge function).
@@ -38,49 +38,21 @@
     return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; });
   });
 
-  // Espejo de METHODOLOGIES (supabase/functions/_shared/sales-training.ts).
-  var METHODS = [
-    { id: 'neuroventas', name: 'Neuroventas', author: 'Jürgen Klarić', book: 'Véndele a la mente, no a la gente', focus: 'both',
-      blurb: 'Primero el miedo y la seguridad, luego la emoción, al final los datos. Es la doctrina por defecto del coach.' },
-    { id: 'spin', name: 'SPIN Selling', author: 'Neil Rackham', book: 'SPIN Selling', focus: 'coach',
-      blurb: 'Descubrimiento en Situación → Problema → Implicación → Necesidad-beneficio.' },
-    { id: 'challenger', name: 'The Challenger Sale', author: 'Matthew Dixon y Brent Adamson', book: 'The Challenger Sale', focus: 'both',
-      blurb: 'Enseñar un insight que reencuadra el problema, adaptarlo a cada perfil y tomar el control.' },
-    { id: 'sandler', name: 'Sandler', author: 'David Sandler', book: "You Can't Teach a Kid to Ride a Bike at a Seminar", focus: 'coach',
-      blurb: 'Contrato inicial, embudo del dolor y calificar presupuesto y decisión antes de presentar.' },
-    { id: 'meddicc', name: 'MEDDICC', author: 'Jack Napoli y Dick Dunkel (PTC)', book: 'MEDDIC / MEDDICC', focus: 'coach',
-      blurb: 'Calificación de deals complejos: métricas, quién firma, criterios, proceso, dolor, champion y competencia.' },
-    { id: 'gap_selling', name: 'Gap Selling', author: 'Keenan', book: 'Gap Selling', focus: 'coach',
-      blurb: 'Vender la brecha entre el estado actual del cliente y el que desea.' },
-    { id: 'voss', name: 'Negociación táctica', author: 'Chris Voss', book: 'Never Split the Difference', focus: 'coach',
-      blurb: 'Empatía táctica, espejo, etiquetado y preguntas calibradas para negociar y manejar objeciones.' },
-    { id: 'jolt', name: 'The JOLT Effect', author: 'Matthew Dixon y Ted McKenna', book: 'The JOLT Effect', focus: 'coach',
-      blurb: 'Vencer la indecisión: recomendar, limitar opciones y quitar el riesgo de la mesa.' },
-    { id: 'predictable_revenue', name: 'Predictable Revenue', author: 'Aaron Ross y Marylou Tyler', book: 'Predictable Revenue', focus: 'campaigns',
-      blurb: 'Outbound especializado: mensajes cortos, de persona a persona, y pedir dirección antes que reunión.' },
-    { id: 'fanatical_prospecting', name: 'Prospección fanática', author: 'Jeb Blount', book: 'Fanatical Prospecting', focus: 'campaigns',
-      blurb: 'Constancia multicanal y la fórmula de 5 pasos para pedir la reunión.' },
-    { id: 'cialdini', name: 'Influencia', author: 'Robert Cialdini', book: 'Influence', focus: 'both',
-      blurb: 'Reciprocidad, compromiso, prueba social real, autoridad, simpatía, escasez verdadera y unidad.' },
-    { id: 'mom_test', name: 'The Mom Test', author: 'Rob Fitzpatrick', book: 'The Mom Test', focus: 'coach',
-      blurb: 'Preguntar por hechos del pasado, no por opiniones del futuro: los cumplidos no son señales.' },
-    { id: 'pink', name: 'Vender es humano', author: 'Daniel H. Pink', book: 'To Sell Is Human', focus: 'campaigns',
-      blurb: 'Sintonía, claridad y pitches en forma de pregunta; asuntos útiles y específicos.' },
-  ];
-  var MAX_METHODS = 6;
   var MAX_DOCS = 30;
   var PDF_MAX_BYTES = 20 * 1024 * 1024;
   var TEXT_MAX = 60000;
 
+  // Lo que la empresa sabe de sí misma. `book` ya no se ofrece (era para
+  // libros de ventas) pero los documentos viejos siguen con su etiqueta.
   var DOC_KINDS = [
-    { value: 'book', label: 'Libro de ventas' },
-    { value: 'playbook', label: 'Playbook interno' },
-    { value: 'case', label: 'Caso de éxito' },
-    { value: 'pricing', label: 'Precios y oferta' },
-    { value: 'battlecard', label: 'Competencia / battlecard' },
-    { value: 'call', label: 'Llamada o mensaje modelo' },
-    { value: 'other', label: 'Otro' },
+    { value: 'playbook', label: 'Playbook o guion de ventas', hint: 'Tu proceso, cómo calificas, las preguntas que haces y cómo respondes a las objeciones de siempre.' },
+    { value: 'pricing', label: 'Precios y oferta', hint: 'Planes, qué incluye cada uno, condiciones y cómo presentas el precio.' },
+    { value: 'case', label: 'Caso de éxito', hint: 'Clientes reales: qué problema tenían, qué hicieron contigo y qué resultado lograron.' },
+    { value: 'battlecard', label: 'Competencia', hint: 'Contra quién compites, en qué ganas, en qué ganan ellos y qué dices cuando el lead los menciona.' },
+    { value: 'call', label: 'Llamada o mensaje modelo', hint: 'Transcripciones de llamadas o mensajes de tu equipo que salieron bien.' },
+    { value: 'other', label: 'Producto u otro material', hint: 'Fichas del producto, presentación comercial, preguntas frecuentes o cualquier material interno.' },
   ];
+  var LEGACY_KINDS = { book: 'Material de ventas' };
   var STATUS = {
     pending:   { label: 'En cola',     pill: 'gray' },
     analyzing: { label: 'Aprendiendo…', pill: 'amber' },
@@ -88,17 +60,16 @@
     error:     { label: 'Error',       pill: 'red' },
   };
 
-  var EMPTY_ROW = { coach_methods: [], campaign_methods: [], style: {}, coach_persona: '', rules_always: '', rules_never: '' };
+  var EMPTY_ROW = { style: {}, coach_persona: '', rules_always: '', rules_never: '' };
 
   var state = {
     user: null, row: null, draft: null, docs: [], loaded: false, loading: null,
-    error: '', dirty: false, saving: false, addMode: 'upload', channel: null, poll: null,
+    error: '', dirty: false, saving: false, addMode: 'upload', addKind: 'playbook', channel: null, poll: null,
     openDoc: null,
   };
 
   function sb() { return global.supabaseClient; }
   function toast(msg, type) { if (global.uiHelpers && global.uiHelpers.toast) global.uiHelpers.toast(msg, type || 'info'); }
-  function methodById(id) { for (var i = 0; i < METHODS.length; i++) if (METHODS[i].id === id) return METHODS[i]; return null; }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
 
   // ─── Datos ──────────────────────────────────────────────────────────────
@@ -110,7 +81,7 @@
         state.user = u || null;
         if (!u) throw new Error('Tu sesión expiró. Recarga la página.');
         var res = await Promise.all([
-          sb().from('ai_training').select('coach_methods, campaign_methods, style, coach_persona, rules_always, rules_never, updated_at').eq('user_id', u.id).maybeSingle(),
+          sb().from('ai_training').select('style, coach_persona, rules_always, rules_never, updated_at').eq('user_id', u.id).maybeSingle(),
           sb().from('ai_training_docs').select('id, title, kind, source, file_name, storage_path, size_bytes, summary, status, error_message, apply_coach, apply_campaigns, enabled, created_at').order('created_at', { ascending: true }),
         ]);
         var err = res[0].error || res[1].error;
@@ -183,8 +154,9 @@
     var d = state.draft;
     var payload = {
       user_id: state.user.id,
-      coach_methods: d.coach_methods.slice(0, MAX_METHODS),
-      campaign_methods: d.campaign_methods.slice(0, MAX_METHODS),
+      // Las metodologías ya no se eligen: se vacían para que nada viejo quede guardado.
+      coach_methods: [],
+      campaign_methods: [],
       style: d.style || {},
       coach_persona: (d.coach_persona || '').trim().slice(0, 2000) || null,
       rules_always: (d.rules_always || '').trim().slice(0, 3000) || null,
@@ -195,7 +167,7 @@
       if (res.error) throw new Error(res.error.message);
       state.row = clone(d);
       state.dirty = false;
-      toast('Entrenamiento guardado. El coach y las campañas lo usan desde el próximo mensaje.', 'success');
+      toast('Guardado. El coach y las campañas lo usan desde el próximo mensaje.', 'success');
       paintBadges();
     } catch (e) {
       toast('No se pudo guardar: ' + (e.message || e), 'error');
@@ -276,7 +248,8 @@
     renderDocs(); renderHeader(); paintBadges();
   }
 
-  function labelOfKind(v) { for (var i = 0; i < DOC_KINDS.length; i++) if (DOC_KINDS[i].value === v) return DOC_KINDS[i].label; return 'Otro'; }
+  function kindOf(v) { for (var i = 0; i < DOC_KINDS.length; i++) if (DOC_KINDS[i].value === v) return DOC_KINDS[i]; return null; }
+  function labelOfKind(v) { var k = kindOf(v); return k ? k.label : (LEGACY_KINDS[v] || 'Otro'); }
 
   // ─── Resúmenes ──────────────────────────────────────────────────────────
   function learnedDocs(target) {
@@ -290,16 +263,17 @@
   }
   function summaryFor(target, row) {
     row = row || state.row || EMPTY_ROW;
-    var ids = target === 'coach' ? row.coach_methods : row.campaign_methods;
-    var names = (ids || []).map(function (id) { var m = methodById(id); return m ? m.name : null; }).filter(Boolean);
-    if (target === 'coach' && !names.length) names = ['Neuroventas (por defecto)'];
     var docs = learnedDocs(target).length;
-    var extras = [];
-    if (styleCount(row.style)) extras.push('tu estilo');
-    if ((row.rules_always || '').trim() || (row.rules_never || '').trim()) extras.push('tus reglas');
-    if (target === 'coach' && (row.coach_persona || '').trim()) extras.push('su personalidad');
-    if (docs) extras.push(docs + (docs === 1 ? ' documento' : ' documentos'));
-    return { names: names, extras: extras, trained: (ids || []).length > 0 || extras.length > 0 };
+    var parts = [];
+    if (docs) parts.push(docs === 1 ? '1 documento de tu empresa' : docs + ' documentos de tu empresa');
+    if (styleCount(row.style)) parts.push('tu estilo');
+    if ((row.rules_always || '').trim() || (row.rules_never || '').trim()) parts.push('tus reglas');
+    if (target === 'coach' && (row.coach_persona || '').trim()) parts.push('su personalidad');
+    return { parts: parts, trained: parts.length > 0 };
+  }
+  // Un nodo de texto por parte: así i18n.js traduce cada una por separado.
+  function partsHtml(parts) {
+    return parts.map(function (p) { return '<span>' + esc(p) + '</span>'; }).join(' · ');
   }
 
   // ─── Render ─────────────────────────────────────────────────────────────
@@ -325,13 +299,13 @@
     root.innerHTML =
       '<div class="ait-wrap">' +
         '<div id="ait-header"></div>' +
-        section('1', 'Metodologías de venta', 'Elige los libros con los que entrenas a tu equipo. El coach los aplica en la reunión y las campañas al escribir cada mensaje. Hasta ' + MAX_METHODS + ' por destino.', renderMethods(d)) +
-        section('2', 'Estilo de comunicación', 'Cómo le habla tu empresa a sus prospectos. Aplica a los mensajes de campaña, a las respuestas de la Bandeja y a las frases que el coach te sugiere decir. El tono base e idioma siguen en tu Contexto.', renderStyle(d.style || {})) +
-        section('3', 'Coach y reglas del equipo', 'Lo que ninguna metodología sabe: cómo quieres que te hable el coach y las reglas que tu equipo nunca rompe.', renderRules(d)) +
-        section('4', 'Base de conocimiento', 'Sube lo que hace única a tu empresa: libros, tu playbook, casos, precios, competencia o llamadas que salieron bien. La IA lo destila en principios que puedes revisar y corregir.', '<div id="ait-add"></div><div id="ait-docs"></div>') +
+        section('1', 'Conocimiento de tu empresa', 'Sube lo que tu equipo sabe y no está escrito en ningún otro lado: tu forma de vender, tus precios, tus casos y tu competencia. La IA lo resume en principios que puedes revisar y corregir.', '<div id="ait-kinds"></div><div id="ait-add"></div><div id="ait-docs"></div>') +
+        section('2', 'Cómo habla tu equipo', 'Cómo le escribe tu empresa a sus prospectos. Aplica a los mensajes de campaña, a las respuestas de la Bandeja y a las frases que el coach te sugiere decir.', renderStyle(d.style || {})) +
+        section('3', 'Reglas del equipo', 'Lo que tu equipo siempre hace, lo que nunca hace y cómo quieres que te hable el coach.', renderRules(d)) +
         '<div id="ait-savebar"></div>' +
       '</div>';
     renderHeader();
+    renderKinds();
     renderAddForm();
     renderDocs();
     renderSaveBar();
@@ -347,36 +321,32 @@
     var d = state.draft || state.row || EMPTY_ROW;
     var c = summaryFor('coach', d), k = summaryFor('campaigns', d);
     function line(label, s) {
-      var what = s.names.concat(s.extras);
-      return '<div class="ait-sum"><div class="ait-sum-lbl">' + label + '</div><div class="ait-sum-val">' + (what.length ? esc(what.join(' · ')) : '<span class="ait-muted">Sin entrenar: usa el criterio general de Predictable</span>') + '</div></div>';
+      return '<div class="ait-sum"><div class="ait-sum-lbl">' + label + '</div><div class="ait-sum-val">' + (s.parts.length ? '<span>Sabe:</span> ' + partsHtml(s.parts) : '<span class="ait-muted">Todavía solo sabe lo de tu Contexto global</span>') + '</div></div>';
     }
     el.innerHTML =
       '<div class="ait-card ait-hero">' +
-        '<div class="ait-hero-top"><div><div class="ait-kicker">Tu Predictable</div><div class="ait-title">Entrena la IA con la forma de vender de tu empresa</div>' +
-        '<p class="ait-p">Cada empresa vende distinto. Lo que configures aquí lo aplican el Meeting Coach, los mensajes de tus campañas, el diseño de cadencias con IA y el botón «Redactar con IA» de la Bandeja. Nada se inventa: la IA solo usa lo que tú le das y lo que ya está en tu Contexto.</p></div>' +
+        '<div class="ait-hero-top"><div><div class="ait-kicker">Tu Predictable</div><div class="ait-title">Enséñale a la IA cómo vende tu empresa</div>' +
+        '<p class="ait-p">Qué vendes, a quién y contra quién ya está en tu <a href="#" class="ait-link" data-ait="context">Contexto global</a>. Aquí suma lo que solo sabe tu equipo: tu playbook, tus precios, tus casos y cómo hablan. Lo usan el Meeting Coach, los mensajes de tus campañas, el diseño de cadencias y «Redactar con IA» de la Bandeja. Nada se inventa: la IA solo usa lo que tú le das.</p></div>' +
         '<button class="btn btn-ghost btn-sm" data-ait="preview">Ver lo que sabe tu IA</button></div>' +
         '<div class="ait-sums">' + line('Meeting Coach', c) + line('Campañas', k) + '</div>' +
       '</div>';
   }
 
-  function renderMethods(d) {
-    var cards = METHODS.map(function (m) {
-      var inCoach = d.coach_methods.indexOf(m.id) !== -1;
-      var inCamp = d.campaign_methods.indexOf(m.id) !== -1;
-      var rec = m.focus === 'coach' ? 'Ideal para reuniones' : m.focus === 'campaigns' ? 'Ideal para prospección' : 'Reuniones y prospección';
-      return '<div class="ait-method' + (inCoach || inCamp ? ' on' : '') + '">' +
-        '<div class="ait-method-name">' + esc(m.name) + '</div>' +
-        '<div class="ait-method-by">' + esc(m.author) + ' · <i>' + esc(m.book) + '</i></div>' +
-        '<p class="ait-method-blurb">' + esc(m.blurb) + '</p>' +
-        '<div class="ait-method-foot"><span class="ait-rec">' + rec + '</span>' +
-          '<div class="ait-toggles">' +
-            '<button type="button" class="ait-chip' + (inCoach ? ' on' : '') + '" data-ait="method" data-target="coach" data-id="' + m.id + '" aria-pressed="' + inCoach + '">Coach</button>' +
-            '<button type="button" class="ait-chip' + (inCamp ? ' on' : '') + '" data-ait="method" data-target="campaigns" data-id="' + m.id + '" aria-pressed="' + inCamp + '">Campañas</button>' +
-          '</div></div>' +
-      '</div>';
-    }).join('');
-    return '<div class="ait-methods">' + cards + '</div>' +
-      '<p class="ait-note">Sin metodologías para el coach, sigue con Neuroventas (la doctrina de siempre). Los principios de cada libro están resumidos con palabras propias: para entrenar con el texto de un libro que tengas, súbelo en la Base de conocimiento.</p>';
+  // Qué conviene subir: un chip por tipo, marcado si ya hay uno aprendido.
+  // Clic = deja ese tipo elegido en el formulario de abajo.
+  function renderKinds() {
+    var el = document.getElementById('ait-kinds');
+    if (!el) return;
+    var have = {};
+    state.docs.forEach(function (d) { if (d.status === 'done' && d.enabled !== false) have[d.kind] = true; });
+    var done = DOC_KINDS.filter(function (k) { return have[k.value]; }).length;
+    el.innerHTML = '<div class="ait-kinds-head"><span>Lo que más mejora a tu IA</span><span class="ait-muted">' + done + ' de ' + DOC_KINDS.length + '</span></div>' +
+      '<div class="ait-kinds">' + DOC_KINDS.map(function (k) {
+        var ok = !!have[k.value];
+        return '<button type="button" class="ait-kind' + (ok ? ' ok' : '') + '" data-ait="kind" data-kind="' + k.value + '" title="' + esc(k.hint) + '">' +
+          '<span class="ait-kind-mark" aria-hidden="true">' + (ok ? '✓' : '+') + '</span>' +
+          '<span class="ait-kind-txt"><span class="ait-kind-t">' + esc(k.label) + '</span><span class="ait-kind-h">' + esc(k.hint) + '</span></span></button>';
+      }).join('') + '</div>';
   }
 
   function selectField(name, label, opts, value) {
@@ -421,7 +391,7 @@
           '<button type="button" class="ait-tab' + (!upload ? ' on' : '') + '" data-ait="mode" data-mode="text" role="tab" aria-selected="' + !upload + '">Pegar texto</button>' +
         '</div>' +
         '<div class="ait-grid">' +
-          '<label class="ait-field"><span>Qué es</span><select name="ait-doc-kind">' + DOC_KINDS.map(function (k) { return '<option value="' + k.value + '">' + esc(k.label) + '</option>'; }).join('') + '</select></label>' +
+          '<label class="ait-field"><span>Qué es</span><select name="ait-doc-kind">' + DOC_KINDS.map(function (k) { return '<option value="' + k.value + '"' + (state.addKind === k.value ? ' selected' : '') + '>' + esc(k.label) + '</option>'; }).join('') + '</select></label>' +
           '<label class="ait-field"><span>Título (opcional)</span><input type="text" name="ait-doc-title" maxlength="200" placeholder="Ej: Playbook comercial 2026"></label>' +
           '<div class="ait-field"><span>Entrena a</span><div class="ait-checks">' +
             '<label><input type="checkbox" name="ait-doc-coach" checked> Meeting Coach</label>' +
@@ -431,8 +401,8 @@
         (upload
           ? '<label class="ait-drop" id="ait-drop"><input type="file" id="ait-file" accept="application/pdf,.pdf,.txt,.md,text/plain,text/markdown" hidden' + (full ? ' disabled' : '') + '>' +
               '<div class="ait-drop-t">Arrastra un PDF, .txt o .md, o haz clic para elegirlo</div>' +
-              '<div class="ait-drop-s">PDF hasta 20 MB (unas 100 páginas). Para un libro largo, sube los capítulos que más usas.</div></label>'
-          : '<textarea id="ait-text" class="ait-paste" rows="7" maxlength="' + TEXT_MAX + '" placeholder="Pega tus notas de un libro, tu guion de llamada, tus respuestas a objeciones, tu oferta…"></textarea>' +
+              '<div class="ait-drop-s">PDF hasta 20 MB (unas 100 páginas). Si es largo, sube solo las partes que tu equipo usa.</div></label>'
+          : '<textarea id="ait-text" class="ait-paste" rows="7" maxlength="' + TEXT_MAX + '" placeholder="Pega tu guion de llamada, tus respuestas a objeciones, tu oferta, un caso de éxito…"></textarea>' +
             '<div class="ait-add-foot"><button type="button" class="btn btn-primary btn-sm" id="ait-add-btn" data-ait="add-text"' + (full ? ' disabled' : '') + '>Entrenar con este texto</button></div>') +
         (full ? '<p class="ait-note">Llegaste al máximo de ' + MAX_DOCS + ' documentos: borra uno para agregar otro.</p>' : '') +
       '</div>';
@@ -473,8 +443,9 @@
     var el = document.getElementById('ait-docs');
     if (!el) return;
     renderAddFormLimit();
+    renderKinds();
     if (!state.docs.length) {
-      el.innerHTML = '<p class="ait-empty">Todavía no subiste documentos. Empieza por lo que más usa tu equipo: el playbook o las respuestas a las objeciones de siempre.</p>';
+      el.innerHTML = '<p class="ait-empty">Todavía no subiste documentos. Empieza por lo que más usa tu equipo: tu playbook o guion de ventas.</p>';
       return;
     }
     el.innerHTML = '<div class="ait-docs">' + state.docs.map(function (d) {
@@ -512,8 +483,8 @@
     var el = document.getElementById('ait-savebar');
     if (!el) return;
     el.innerHTML = '<div class="ait-savebar' + (state.dirty ? ' dirty' : '') + '">' +
-      '<span>' + (state.dirty ? 'Tienes cambios sin guardar en metodologías, estilo o reglas.' : 'Todo guardado. Los documentos se guardan solos al subirlos.') + '</span>' +
-      '<button type="button" class="btn btn-primary btn-sm" data-ait="save"' + (!state.dirty || state.saving ? ' disabled' : '') + '>' + (state.saving ? 'Guardando…' : 'Guardar entrenamiento') + '</button>' +
+      '<span>' + (state.dirty ? 'Tienes cambios sin guardar en el estilo o las reglas.' : 'Todo guardado. Los documentos se guardan solos al subirlos.') + '</span>' +
+      '<button type="button" class="btn btn-primary btn-sm" data-ait="save"' + (!state.dirty || state.saving ? ' disabled' : '') + '>' + (state.saving ? 'Guardando…' : 'Guardar cambios') + '</button>' +
     '</div>';
   }
 
@@ -566,10 +537,9 @@
       if (state.error) { el.innerHTML = ''; return; }
       var target = el.getAttribute('data-ai-training-badge') === 'coach' ? 'coach' : 'campaigns';
       var s = summaryFor(target);
-      var what = s.names.concat(s.extras);
       el.innerHTML = '<div class="ait-badge"><span class="ait-badge-dot' + (s.trained ? ' on' : '') + '"></span>' +
-        '<span class="ait-badge-t">' + (what.length ? 'Entrenado con: ' + esc(what.join(' · ')) : 'Sin entrenamiento propio todavía') + '</span>' +
-        '<button type="button" class="ait-badge-a" data-ait-go>' + (what.length ? 'Ajustar' : 'Entrenar') + '</button></div>';
+        '<span class="ait-badge-t">' + (s.trained ? '<span>Entrenado con:</span> ' + partsHtml(s.parts) : 'Sin entrenamiento propio todavía') + '</span>' +
+        '<button type="button" class="ait-badge-a" data-ait-go>' + (s.trained ? 'Ajustar' : 'Entrenar') + '</button></div>';
     });
   }
   function go() {
@@ -589,19 +559,18 @@
     if (act === 'save') { save(); return; }
     if (act === 'mode') { state.addMode = t.getAttribute('data-mode'); renderAddForm(); return; }
     if (act === 'add-text') { var x = document.getElementById('ait-text'); addDoc(null, x ? x.value : ''); return; }
-    if (act === 'method') {
-      var key = t.getAttribute('data-target') === 'coach' ? 'coach_methods' : 'campaign_methods';
-      var list = state.draft[key];
-      var i = list.indexOf(id);
-      if (i === -1) {
-        if (list.length >= MAX_METHODS) { toast('Máximo ' + MAX_METHODS + ' metodologías: más marcos a la vez diluyen el consejo.', 'warn'); return; }
-        list.push(id);
-      } else list.splice(i, 1);
-      var card = t.closest('.ait-method');
-      t.classList.toggle('on', i === -1);
-      t.setAttribute('aria-pressed', String(i === -1));
-      if (card) card.classList.toggle('on', !!card.querySelector('.ait-chip.on'));
-      markDirty();
+    if (act === 'context') {
+      e.preventDefault();
+      var ctx = document.querySelector('.nav-item[data-page="mi-research"]');
+      if (typeof global.nav === 'function') global.nav(ctx, 'mi-research');
+      return;
+    }
+    if (act === 'kind') {
+      state.addKind = t.getAttribute('data-kind');
+      var sel = document.querySelector('#ait-add [name=ait-doc-kind]');
+      if (sel) sel.value = state.addKind;
+      var add = document.getElementById('ait-add');
+      if (add) { add.scrollIntoView({ behavior: 'smooth', block: 'center' }); add.classList.add('flash'); setTimeout(function () { add.classList.remove('flash'); }, 900); }
       return;
     }
     var doc = id && state.docs.find(function (d) { return d.id === id; });
@@ -627,6 +596,10 @@
   function onInput(e) {
     var t = e.target;
     if (!state.draft) return;
+    // Los campos de texto ya avisaron con `input`. Su `change` llega al hacer
+    // blur —p. ej. justo al apretar «Guardar»— y repintar la barra en ese
+    // momento reemplazaba el botón y se perdía el clic.
+    if (e.type === 'change' && t.tagName !== 'SELECT') return;
     var sk = t.getAttribute && t.getAttribute('data-ait-style');
     var fk = t.getAttribute && t.getAttribute('data-ait-field');
     if (sk) {
@@ -679,14 +652,19 @@
       '.ait-sum-val{font-size:12.5px;color:var(--ink-2);margin-top:4px;line-height:1.5}',
       '.ait-sec-head{display:flex;gap:12px;align-items:flex-start;margin-bottom:16px}',
       '.ait-num{flex:0 0 24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:var(--accent-soft);color:var(--accent)}',
-      '.ait-methods{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}',
-      '.ait-method{border:1px solid var(--hair);border-radius:var(--r-md,10px);padding:12px 14px;display:flex;flex-direction:column;gap:4px;background:var(--surface2);transition:border-color .2s}',
-      '.ait-method.on{border-color:var(--accent)}',
-      '.ait-method-name{font-size:13.5px;font-weight:700;color:var(--ink)}',
-      '.ait-method-by{font-size:11px;color:var(--ink-4)}',
-      '.ait-method-blurb{font-size:12px;color:var(--ink-3);line-height:1.5;margin:4px 0 6px;flex:1}',
-      '.ait-method-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}',
-      '.ait-rec{font-size:10.5px;color:var(--ink-4)}',
+      '.ait-link{color:var(--accent);text-decoration:none;font-weight:600}',
+      '.ait-link:hover{text-decoration:underline}',
+      '.ait-kinds-head{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--ink-4);margin-bottom:8px}',
+      '.ait-kinds{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px;margin-bottom:14px}',
+      '.ait-kind{font:inherit;display:flex;gap:10px;align-items:flex-start;text-align:left;padding:10px 12px;border:1px solid var(--hair);border-radius:var(--r-md,10px);background:var(--surface2);color:var(--ink-2);cursor:pointer;transition:border-color .2s}',
+      '.ait-kind:hover{border-color:var(--accent)}',
+      '.ait-kind:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
+      '.ait-kind-mark{flex:0 0 20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:var(--accent-soft);color:var(--accent)}',
+      '.ait-kind.ok .ait-kind-mark{background:var(--green);color:#fff}',
+      '.ait-kind-txt{display:flex;flex-direction:column;gap:2px;min-width:0}',
+      '.ait-kind-t{font-size:12.5px;font-weight:700;color:var(--ink)}',
+      '.ait-kind-h{font-size:11.5px;color:var(--ink-4);line-height:1.45}',
+      '.ait-add.flash{border-color:var(--accent);background:var(--accent-soft)}',
       '.ait-toggles{display:flex;gap:6px}',
       '.ait-chip{font:inherit;font-size:11px;font-weight:600;padding:4px 10px;border-radius:999px;border:1px solid var(--hair-2);background:transparent;color:var(--ink-3);cursor:pointer}',
       '.ait-chip:hover{color:var(--ink)}',
@@ -700,7 +678,7 @@
       '.ait-wide{grid-column:1/-1}',
       '.ait-checks{display:flex;gap:14px;align-items:center;min-height:34px;font-size:12.5px;color:var(--ink-2)}',
       '.ait-checks label{display:flex;gap:6px;align-items:center;cursor:pointer}',
-      '.ait-add{border:1px dashed var(--hair-2);border-radius:var(--r-md,10px);padding:14px;display:flex;flex-direction:column;gap:12px}',
+      '.ait-add{border:1px dashed var(--hair-2);border-radius:var(--r-md,10px);padding:14px;display:flex;flex-direction:column;gap:12px;transition:background .3s,border-color .3s}',
       '.ait-tabs{display:flex;gap:6px}',
       '.ait-tab{font:inherit;font-size:12px;font-weight:600;padding:6px 12px;border-radius:999px;border:1px solid var(--hair-2);background:transparent;color:var(--ink-3);cursor:pointer}',
       '.ait-tab.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}',
@@ -765,7 +743,6 @@
   else boot();
 
   global.AITraining = {
-    METHODS: METHODS,
     show: show,
     load: load,
     summaryFor: summaryFor,

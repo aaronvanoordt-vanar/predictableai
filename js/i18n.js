@@ -189,7 +189,6 @@
     'Elige con quién es la reunión para cargar su brief — el coach no inicia sin un lead.': 'Choose who the meeting is with to load their brief — the coach won\'t start without a lead.',
     'El asistente que escucha tu llamada y te dice qué decir, en vivo.': 'The assistant who listens to your call and tells you what to say, live.',
     'Inteligencia de mercado, actualizada por tus agentes': 'Market intelligence, updated by your agents',
-    'PESTEL de tu mercado + 5 fuerzas de Porter de tu competencia + tu FODA convertido en un plan CAME — contexto opcional, todo con IA': 'PESTEL of your market + Porter\'s 5 forces of your competition + your SWOT converted into a CAME plan — optional context, all with AI',
     'Qué hacer esta semana para mover el mercado': 'What to do this week to move the market',
     'Tus accionables se generan desde el Intelligence Hub': 'Your actionables are generated from the Intelligence Hub',
     'Cuando tus agentes publiquen los primeros informes, aquí verás recomendaciones de go-to-market, producto y prospección listas para aplicar.': 'When your agents publish the first reports, you\'ll see go-to-market, product, and prospecting recommendations ready to apply.',
@@ -352,7 +351,7 @@
     'Radar de señales de compra': 'Buying-signal Radar', 'Señales': 'Signals', 'Plan de señales': 'Signal plan', 'Investigación puntual': 'One-off research', 'Avisos': 'Alerts',
     'Monitoreo activo': 'Monitoring active', 'Monitoreo en pausa': 'Monitoring paused', 'Buscar ahora': 'Scan now', 'Activar monitoreo': 'Activate monitoring', 'Diseñar mi plan': 'Design my plan',
     'Pausar': 'Pause', 'Sincronizar con el Hub': 'Sync with the Hub', 'Rediseñar plan…': 'Redesign plan…',
-    'Contexto global': 'Global context', 'Opcional': 'Optional', 'Guardar FODA': 'Save SWOT', 'Convertir a CAME con IA': 'Convert to CAME with AI',
+    'Contexto global': 'Global context', 'Opcional': 'Optional',
     'Bienvenido': 'Welcome', 'Continuar con Google': 'Continue with Google', 'Continuar con LinkedIn': 'Continue with LinkedIn', 'Iniciar sesión': 'Sign in', 'Crear cuenta': 'Create account',
   });
 
