@@ -3,7 +3,7 @@
 -- tokens), más los códigos HTTP de las últimas horas.
 select json_build_object(
   'codes', (select json_object_agg(status_code, n) from (
-             select status_code, count(*) n from net._http_response group by 1) c),
+             select coalesce(status_code::text, 'timeout_or_error') as status_code, count(*) n from net._http_response group by 1) c),
   'r401', (select json_agg(to_char(created at time zone 'UTC','MM-DD HH24:MI') order by created desc)
            from (select created from net._http_response where status_code = 401
                  order by created desc limit 12) a),
