@@ -129,7 +129,7 @@
   function fmtDateTime(iso) {
     var d = new Date(iso);
     if (isNaN(d.getTime())) return '';
-    return d.toLocaleString('es', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   }
   function fmtDuration(s) {
     var n = Number(s) || 0;

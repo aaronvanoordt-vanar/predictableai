@@ -39,6 +39,9 @@
  *      UPDATE inbox_messages SET member_id WHERE user_id = uid AND channel AND
  *      contact_ref AND member_id IS NULL → { updated: n }
  *  • { channel: "email", member_id, body, subject? }
+ *      Si la conversación ya va por un buzón propio, o la campaña del lead /
+ *      el canal eligieron buzones propios: sale por ese buzón como respuesta
+ *      en el mismo hilo (_shared/mailbox-send.ts). Si no:
  *      Email individual por Apollo con la credencial del usuario
  *      (_shared/apollo-auth.ts: su OAuth o la key de la plataforma):
  *      contacto de Apollo = enrollment.provider_refs.apollo_contact_id →
@@ -65,8 +68,9 @@
  *      guardadas antes del 2026-09-30 no tienen el id de WATI: se busca en el
  *      historial de la conversación y se guarda en payload.wati_id.
  *      Content-Type deducido de los bytes (WATI manda octet-stream).
- *  • { action: "sync_all" }   «Sincronizar todo»: WhatsApp (historial de WATI) + email (Apollo)
- *                              + LinkedIn (Dripify), ya, sin esperar los 15 min del cron.
+ *  • { action: "sync_all" }   «Sincronizar todo»: WhatsApp (historial de WATI) + email (Apollo
+ *                              y buzones propios vía mailbox-sync) + LinkedIn (Dripify), ya,
+ *                              sin esperar los 15 min del cron.
  *  • { action: "sync_wati" }
  *      Trae del historial de WATI lo que no está en la bandeja: mensajes
  *      escritos en la UI de WATI (o por sus bots) y entrantes que el webhook
@@ -96,6 +100,8 @@ import * as apolloAuth from "../_shared/apollo-auth.ts";
 import * as unipile from "../_shared/unipile.ts";
 import { activeBlock } from "../_shared/linkedin-limits.ts";
 import { canonicalLinkedinUrl } from "../_shared/dripify.ts";
+import { loadEmailSettings, MailboxError, sendViaMailboxes } from "../_shared/mailbox-send.ts";
+import { resolveEmailProvider } from "../_shared/mailbox-rotation.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -265,7 +271,7 @@ const FILE_LABEL: Record<string, string> = { image: "📷 Foto", video: "🎬 Vi
 async function loadReplyTo(db: SupabaseClient, userId: string, id: string): Promise<Json | null> {
   if (!UUID_RE.test(id)) return null;
   const { data } = await db.from("inbox_messages")
-    .select("id, direction, channel, body, provider_message_id, payload")
+    .select("id, direction, channel, provider, body, provider_message_id, provider_conversation_id, payload")
     .eq("id", id).eq("user_id", userId).maybeSingle();
   if (!data) return null;
   const pid = String(data.provider_message_id ?? "");
@@ -273,7 +279,8 @@ async function loadReplyTo(db: SupabaseClient, userId: string, id: string): Prom
   return {
     ref: { id: data.id, direction: data.direction, channel: data.channel, body: String(data.body ?? "").slice(0, 240) },
     wamid: wamid || null,
-    emailId: data.channel === "email" && data.direction === "out" && pid ? pid : null,
+    emailId: data.channel === "email" && data.direction === "out" && data.provider === "apollo" && pid ? pid : null,
+    mailbox: data.channel === "email" && data.provider === "mailbox" ? mailboxThreadOf(data) : null,
   };
 }
 
@@ -459,6 +466,68 @@ async function sendWhatsAppFile(
   return row;
 }
 
+// ── Email (buzones propios) ─────────────────────────────────────────────────
+
+/** Hilo de un mensaje de buzón propio de la Bandeja: a qué Message-ID responder y desde qué buzón. */
+function mailboxThreadOf(row: Json): Json {
+  const p = row?.payload ?? {};
+  return {
+    messageId: p.message_id || row.provider_message_id || null,
+    references: Array.isArray(p.references) ? p.references : [],
+    threadId: p.provider_thread_id || row.provider_conversation_id || null,
+    mailboxId: p.mailbox_id || null,
+    subject: p.subject || null,
+  };
+}
+
+/**
+ * ¿La respuesta sale por un buzón propio? Sí si la conversación ya va por uno
+ * (el último email con el lead es de provider 'mailbox'), o si la campaña del
+ * lead / la preferencia del canal eligieron buzones propios. Si no, Apollo.
+ */
+async function emailRoute(db: SupabaseClient, userId: string, member: Json, replyTo: Json | null): Promise<{ mailbox: boolean; thread: Json | null }> {
+  if (replyTo?.mailbox) return { mailbox: true, thread: replyTo.mailbox };
+  const { data: last } = await db.from("inbox_messages")
+    .select("provider, provider_message_id, provider_conversation_id, payload")
+    .eq("user_id", userId).eq("member_id", member.id).eq("channel", "email")
+    .order("sent_at", { ascending: false }).limit(1).maybeSingle();
+  if (last?.provider === "mailbox") return { mailbox: true, thread: mailboxThreadOf(last) };
+  if (last?.provider === "apollo") return { mailbox: false, thread: null };
+  const en = await latestEnrollment(db, userId, member.id);
+  let sender: Json = null;
+  if (en?.campaign_id) {
+    const { data: camp } = await db.from("campaigns").select("sender").eq("id", en.campaign_id).maybeSingle();
+    sender = camp?.sender ?? null;
+  }
+  return { mailbox: resolveEmailProvider(sender, await loadEmailSettings(db, userId)) === "mailboxes", thread: null };
+}
+
+async function sendEmailFromMailbox(db: SupabaseClient, userId: string, member: Json, text: string, subjectIn: string, thread: Json | null, replyTo: Json | null): Promise<Json> {
+  const email = String(member.email ?? "");
+  const en = await latestEnrollment(db, userId, member.id);
+  let out;
+  try {
+    out = await sendViaMailboxes(db, {
+      userId, member, to: email, subject: subjectIn, text, kind: "reply",
+      campaignId: en?.campaign_id ?? null, enrollmentId: en?.id ?? null,
+      replyTo: thread,
+      inboxPayload: { source: "inbox_reply", ...(replyTo ? { reply_to: replyTo.ref } : {}) },
+    });
+  } catch (e) {
+    if (e instanceof MailboxError) {
+      throw new HttpError(e.message, e.kind === "auth" ? 428 : e.kind === "temporary" ? 502 : 400, e.kind === "auth" ? "email_reauth_required" : "email_send_failed");
+    }
+    throw e;
+  }
+  if (!out.ok) {
+    if (out.noMailbox) throw new HttpError("Conecta un buzón propio para responder por email (Campañas → Email).", 428, "email_not_connected");
+    throw new HttpError(out.reason, out.suppressed ? 409 : 429, out.suppressed ? "email_suppressed" : "email_mailbox_busy");
+  }
+  await spendCredits(db, userId);
+  if (!out.inbox) throw new HttpError("El correo salió pero no se pudo guardar en la bandeja.", 500);
+  return out.inbox;
+}
+
 /**
  * Reacción con emoji desde la Bandeja (solo Meta directo). La API de WATI no
  * la permite (2026-10-01, docs/OMNICANAL.md): con un mensaje de WATI se
@@ -519,6 +588,8 @@ async function sendReaction(db: SupabaseClient, userId: string, id: string, emoj
 async function sendEmail(db: SupabaseClient, userId: string, member: Json, text: string, subjectIn: string, replyTo: Json | null = null): Promise<Json> {
   const email = String(member.email ?? "");
   if (!email || /email_not_unlocked/.test(email)) throw new HttpError("El lead no tiene email revelado.", 400, "member_without_email");
+  const route = await emailRoute(db, userId, member, replyTo);
+  if (route.mailbox) return await sendEmailFromMailbox(db, userId, member, text, subjectIn, route.thread, replyTo);
   // Credenciales, enrolamiento y último email nuestro (asunto por defecto e
   // in_response_to) son independientes: una sola espera en vez de tres.
   const [authRes, en, { data: lastOut }] = await Promise.all([
@@ -946,7 +1017,7 @@ const WATI_SYNC_COOLDOWN_MS = 2 * 60 * 1000;
 async function syncAll(db: SupabaseClient, userId: string): Promise<Json> {
   const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/campaign-run`;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const [wati, rest] = await Promise.all([
+  const [wati, rest, mbx] = await Promise.all([
     syncWati(db, userId).catch((e) => ({ inserted: 0, error: String((e as Error)?.message ?? e).slice(0, 200) } as Json)),
     fetch(fnUrl, {
       method: "POST",
@@ -954,8 +1025,16 @@ async function syncAll(db: SupabaseClient, userId: string): Promise<Json> {
       body: JSON.stringify({ sync_user: userId }),
     }).then(async (r) => (r.ok ? await r.json() : { email: 0, linkedin: 0, errors: { email: `HTTP ${r.status}`, linkedin: `HTTP ${r.status}` } }))
       .catch((e) => ({ email: 0, linkedin: 0, errors: { email: String(e?.message ?? e).slice(0, 200), linkedin: String(e?.message ?? e).slice(0, 200) } })),
+    // Buzones propios (respuestas y rebotes): solo los de este usuario, ya.
+    fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/mailbox-sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+      body: JSON.stringify({ sync_user: userId }),
+    }).then(async (r) => (r.ok ? await r.json() : { replies: 0, bounces: 0 })).catch(() => ({ replies: 0, bounces: 0 })),
   ]);
-  return { whatsapp: wati, email: rest.email ?? 0, linkedin: rest.linkedin ?? 0, errors: rest.errors ?? {} };
+  const errors = { ...(rest.errors ?? {}) };
+  if (Array.isArray(mbx?.errors) && mbx.errors.length) errors.email = [errors.email, ...mbx.errors].filter(Boolean).join(" · ").slice(0, 300);
+  return { whatsapp: wati, email: (rest.email ?? 0) + (mbx?.replies ?? 0) + (mbx?.bounces ?? 0), linkedin: rest.linkedin ?? 0, errors };
 }
 
 async function syncWati(db: SupabaseClient, userId: string): Promise<Json> {

@@ -1,20 +1,21 @@
 /**
- * js/i18n.js — Interruptor de idioma ES/EN para toda la interfaz
+ * js/i18n.js — Idioma de toda la interfaz: español (fuente), inglés y
+ * portugués de Brasil.
  * ─────────────────────────────────────────────────────────────────────────────
- * Traduce TODO el contenido de la app (chrome + vistas profundas) mediante un
- * diccionario de strings exactos. El español es el idioma fuente; en EN se
- * reemplazan los nodos de texto cuyo contenido coincide con el diccionario.
+ * Los módulos pintan en español; este archivo reemplaza cada nodo de texto (y
+ * placeholder/title/aria-label) por su traducción, con claves exactas y
+ * patrones con huecos ({0}) para los textos que se arman concatenando. Un
+ * MutationObserver traduce lo que los módulos pintan después. EN vive en este
+ * archivo; pt-BR en js/i18n/pt-BR.js, cargado solo si se elige portugués.
  *
- * Usar MutationObserver para detectar cambios dinámicos y re-aplicar la
- * traducción automáticamente cuando el contenido cambia.
- *
- * API pública: window.i18n = { get(), set(lang), apply() }
+ * API pública: window.i18n = { get(), set(lang), apply(), t(str), locale(),
+ *   formatDate(), formatDateTime(), formatNumber(), formatCurrency(),
+ *   countryName(), list(), missing() }
  */
 (function () {
   'use strict';
 
   var LS_KEY = 'predictable_lang';
-  var observer = null;
 
   // Diccionario ES → EN (toda la interfaz, strings exactos tras trim).
   var ES_EN = {
@@ -354,43 +355,346 @@
     'Contexto global': 'Global context', 'Opcional': 'Optional', 'Guardar FODA': 'Save SWOT', 'Convertir a CAME con IA': 'Convert to CAME with AI',
     'Bienvenido': 'Welcome', 'Continuar con Google': 'Continue with Google', 'Continuar con LinkedIn': 'Continue with LinkedIn', 'Iniciar sesión': 'Sign in', 'Crear cuenta': 'Create account',
   });
-  var EN_ES = {};
-  Object.keys(ES_EN).forEach(function (k) { EN_ES[ES_EN[k]] = k; });
 
+  // ── Idiomas ────────────────────────────────────────────────────────────────
+  // El español es el idioma fuente: los módulos pintan en español y este
+  // archivo reemplaza los nodos de texto por su traducción. EN vive arriba;
+  // pt-BR vive en js/i18n/pt-BR.js (≈4.500 textos) y se carga SOLO si el
+  // usuario elige portugués, para no sumarle ese peso a quien usa español.
+  var LANGS = {
+    es: { locale: 'es-MX', html: 'es', label: 'ES · Español', short: 'ES', name: 'Español' },
+    en: { locale: 'en-US', html: 'en', label: 'EN · English', short: 'EN', name: 'English' },
+    'pt-BR': { locale: 'pt-BR', html: 'pt-BR', label: 'PT · Português', short: 'PT', name: 'Português (Brasil)', dict: 'i18n/pt-BR.js?v=20261017' }
+  };
+  var DICTS = window.I18N_DICTS = window.I18N_DICTS || {};
+  DICTS.en = Object.assign({}, ES_EN, DICTS.en || {});
+  var compiled = {};
+  var done = new WeakMap(); // nodo de texto → valor que le pusimos (evita bucles)
+  var SCRIPT_BASE = (function () {
+    var s = document.currentScript && document.currentScript.src;
+    return s ? s.replace(/i18n\.js(\?.*)?$/, '') : 'js/';
+  })();
+
+  function cleanLang(lang) {
+    if (lang === 'en') return 'en';
+    if (typeof lang === 'string' && /^pt([-_]?br)?$/i.test(lang)) return 'pt-BR';
+    return 'es';
+  }
   function currentLang() {
-    try { return localStorage.getItem(LS_KEY) === 'en' ? 'en' : 'es'; } catch (e) { return 'es'; }
+    try { return cleanLang(localStorage.getItem(LS_KEY)); } catch (e) { return 'es'; }
   }
 
-  function translateTextNodes(root, dict) {
-    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-    var node;
-    while ((node = walker.nextNode())) {
-      var raw = node.nodeValue;
-      if (!raw) continue;
-      var trimmed = raw.trim();
-      if (!trimmed || !(trimmed in dict)) continue;
-      node.nodeValue = raw.replace(trimmed, dict[trimmed]);
+  // ── Motor de traducción ────────────────────────────────────────────────────
+  // Claves exactas ('Guardar') y patrones con huecos ('{0} campañas'): los
+  // módulos arman sus textos concatenando ('Ojo: ' + n + ' leads…'), así que un
+  // diccionario solo por texto exacto dejaba en español todo lo dinámico. Cada
+  // hueco se traduce a su vez (un estado, «lista»/«listas»…) si está en el
+  // diccionario.
+  var norm = function (s) { return String(s).replace(/\s+/g, ' ').trim(); };
+  var reEsc = function (s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
+  function compile(lang) {
+    if (compiled[lang]) return compiled[lang];
+    var src = DICTS[lang];
+    if (!src) return null;
+    var exact = Object.create(null), pre = Object.create(null), suf = Object.create(null), loose = [], outs = Object.create(null);
+    Object.keys(src).forEach(function (k) {
+      var key = norm(k), val = src[k];
+      if (!key || typeof val !== 'string') return;
+      outs[norm(val)] = 1;
+      if (!/\{\d+\}/.test(key)) { exact[key] = val; return; }
+      var parts = key.split(/(\{\d+\})/), order = [], lit = 0;
+      var re = '^' + parts.map(function (p) {
+        var m = /^\{(\d+)\}$/.exec(p);
+        if (m) { order.push(+m[1]); return '([\\s\\S]*?)'; }
+        lit += p.length; return reEsc(p);
+      }).join('') + '$';
+      if (lit < 2) return; // «{0}» solo, o «{0} {1}»: coincidiría con todo
+      var pat = { re: new RegExp(re), order: order, value: val, lit: lit };
+      var head = parts[0], tail = parts[parts.length - 1];
+      if (head.length >= 3) (pre[head.slice(0, 3).toLowerCase()] = pre[head.slice(0, 3).toLowerCase()] || []).push(pat);
+      else if (tail.length >= 3) (suf[tail.slice(-3).toLowerCase()] = suf[tail.slice(-3).toLowerCase()] || []).push(pat);
+      else loose.push(pat);
+    });
+    var byLit = function (a, b) { return b.lit - a.lit; };
+    Object.keys(pre).forEach(function (k) { pre[k].sort(byLit); });
+    Object.keys(suf).forEach(function (k) { suf[k].sort(byLit); });
+    loose.sort(byLit);
+    compiled[lang] = { exact: exact, pre: pre, suf: suf, loose: loose, outs: outs };
+    return compiled[lang];
+  }
+  // Devuelve la traducción, o null. Entre varios patrones que coinciden gana
+  // el primero cuyos huecos se tradujeron todos (o no tienen letras); si
+  // ninguno lo logra, el primero que coincidió (marcado como parcial).
+  var partial = false, partialLeft = 0; // letras que quedaron sin traducir en el mejor parcial
+  function lookup(t, C, depth) {
+    partial = false; partialLeft = 0;
+    if (t in C.exact) return C.exact[t];
+    if (depth > 2 || t.length > 2000) return null;
+    var lists = [C.pre[t.slice(0, 3).toLowerCase()], C.suf[t.slice(-3).toLowerCase()], C.loose];
+    var first = null, firstLeft = 0;
+    for (var i = 0; i < lists.length; i++) {
+      var L = lists[i];
+      if (!L) continue;
+      for (var j = 0; j < L.length; j++) {
+        var p = L[j], m = p.re.exec(t);
+        if (!m) continue;
+        var left = 0;
+        var out = p.value.replace(/\{(\d+)\}/g, function (all, d) {
+          var gi = p.order.indexOf(+d);
+          if (gi < 0) return all;
+          var raw = m[gi + 1], tr = piece(raw, C, depth + 1);
+          if (tr === raw && LETTER.test(raw)) left += raw.length;
+          return tr;
+        });
+        if (!left) { partial = false; partialLeft = 0; return out; }
+        if (first == null) { first = out; firstLeft = left; }
+      }
+    }
+    partial = first != null; partialLeft = firstLeft;
+    return first;
+  }
+  // Un hueco o un texto suelto: conserva los espacios de los bordes y prueba
+  // también sin el número del principio («12 leads tienen» → «leads tienen»).
+  function piece(s, C, depth) {
+    var lead = /^\s*/.exec(s)[0], trail = /\s*$/.exec(s)[0], core = norm(s);
+    if (!core) return s;
+    // Ya es una traducción: no se vuelve a traducir (evita bucles con el observer).
+    if (depth === 0 && C.outs[core] && !(core in C.exact)) return s;
+    var r = lookup(core, C, depth), weak = partial, weakLeft = partialLeft;
+    if (r == null) {
+      var m = /^([\d.,%+\-–·\s]+)(\D.*)$/.exec(core);
+      if (m) { var r2 = lookup(m[2], C, depth); if (r2 != null) r = m[1] + r2; }
+    }
+    // Signos pegados al texto por el módulo («Crear una clave →», «Autor ·»).
+    if (r == null) {
+      var a = /^([«¡¿·•\s]*)([\s\S]*?)([\s·•→←:…,.;!?»]*)$/.exec(core);
+      if (a && (a[1] || a[3]) && a[2]) { var r3 = lookup(a[2], C, depth); if (r3 != null) r = a[1] + r3 + a[3]; }
+    }
+    // Etiquetas compuestas («Contexto: Tarjetas por completar», «Email · IA:
+    // Apertura»): se traduce cada parte por separado.
+    if ((r == null || weak) && depth < 2 && SEP.test(core)) {
+      var parts = core.split(SEP_SPLIT), changed = 0, left = 0;
+      for (var i = 0; i < parts.length; i += 2) {
+        if (!LETTER.test(parts[i])) continue;
+        var tp = piece(parts[i], C, depth + 1);
+        if (tp !== parts[i]) { parts[i] = tp; changed++; } else left += tp.length;
+      }
+      // Una traducción parcial por patrón solo cede si partir deja menos sin traducir.
+      if (changed && (r == null || left < weakLeft)) r = parts.join('');
+    }
+    return lead + (r == null ? core : r) + trail;
+  }
+  var SEP = / · | — | \| |: /, SEP_SPLIT = /( · | — | \| |: )/;
+  /** Traduce un texto al idioma actual (o lo devuelve igual). Para lo que no pasa por el DOM. */
+  function t(s, lang) {
+    if (s == null) return s;
+    var C = compile(lang || currentLang());
+    if (!C || currentLang() === 'es' && !lang) return s;
+    var str = String(s), whole = piece(str, C, 0);
+    if (whole !== str || str.indexOf('\n') < 0) return whole;
+    return str.split('\n').map(function (line) { return piece(line, C, 0); }).join('\n');
+  }
+
+  // ── DOM ────────────────────────────────────────────────────────────────────
+  // data-no-i18n / .notranslate marcan contenido del usuario o de los leads
+  // (mensajes de la Bandeja, notas) que nunca se traduce.
+  var SKIP_TAGS = { SCRIPT: 1, STYLE: 1, TEXTAREA: 1, CODE: 1, PRE: 1, NOSCRIPT: 1 };
+  var SKIP_SEL = '[data-no-i18n],.notranslate,[contenteditable="true"],[contenteditable=""]';
+  var ATTRS = ['placeholder', 'title', 'aria-label', 'alt', 'data-tip'];
+  var LETTER = /[A-Za-zÁÉÍÓÚáéíóúÑñ]/;
+
+  function skipEl(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (SKIP_TAGS[el.tagName.toUpperCase()]) return true;
+    return !!(el.matches && el.matches(SKIP_SEL));
+  }
+  function inSkipped(el) {
+    for (var e = el; e && e.nodeType === 1; e = e.parentElement) if (skipEl(e)) return true;
+    return false;
+  }
+  function doText(node, C) {
+    var v = node.nodeValue;
+    if (!v || done.get(node) === v || !LETTER.test(v)) return;
+    var r = piece(v, C, 0);
+    if (r !== v) { node.nodeValue = r; done.set(node, r); }
+    else done.set(node, v);
+  }
+  var doneAttr = new WeakMap(); // elemento → { atributo: valor que le pusimos }
+  function doAttrs(el, C) {
+    var mine = doneAttr.get(el);
+    for (var i = 0; i < ATTRS.length; i++) {
+      var a = ATTRS[i], v = el.getAttribute(a);
+      if (!v || !LETTER.test(v) || (mine && mine[a] === v)) continue;
+      var r = piece(v, C, 0);
+      if (!mine) { mine = {}; doneAttr.set(el, mine); }
+      mine[a] = r;
+      if (r !== v) el.setAttribute(a, r);
+    }
+    if (el.tagName === 'INPUT' && /^(button|submit|reset)$/i.test(el.type) && el.value) {
+      var rv = piece(el.value, C, 0);
+      if (rv !== el.value) el.value = rv;
     }
   }
-
-  function translateAttrs(root, dict) {
-    var els = root.querySelectorAll('[placeholder], [title], [aria-label], [data-placeholder]');
-    Array.prototype.forEach.call(els, function (el) {
-      ['placeholder', 'title', 'aria-label'].forEach(function (a) {
-        var v = el.getAttribute(a);
-        if (v && dict[v.trim()]) el.setAttribute(a, dict[v.trim()]);
-      });
+  function walkTree(root, C) {
+    if (!root) return;
+    if (root.nodeType === 3) { if (!inSkipped(root.parentElement)) doText(root, C); return; }
+    if (root.nodeType !== 1 && root.nodeType !== 11) return;
+    if (root.nodeType === 1) {
+      if (root.tagName === 'TEXTAREA' && !inSkipped(root.parentElement) && !root.matches(SKIP_SEL)) { doAttrs(root, C); return; }
+      if (inSkipped(root)) return;
+      doAttrs(root, C);
+    }
+    var w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode: function (n) {
+        if (n.nodeType === 1 && skipEl(n)) { if (n.tagName === 'TEXTAREA' && !n.matches(SKIP_SEL)) doAttrs(n, C); return NodeFilter.FILTER_REJECT; }
+        return NodeFilter.FILTER_ACCEPT;
+      }
     });
+    var n;
+    while ((n = w.nextNode())) { if (n.nodeType === 3) doText(n, C); else doAttrs(n, C); }
+  }
+  function translateTitle(C) {
+    var tl = document.title, r = tl ? piece(tl, C, 0) : tl;
+    if (r && r !== tl) document.title = r;
   }
 
   function apply() {
-    if (currentLang() !== 'en') return;
-    var dict = ES_EN;
-    translateTextNodes(document.body, dict);
-    translateAttrs(document.body, dict);
+    var lang = currentLang();
     paintToggle();
+    if (lang === 'es') return;
+    var C = compile(lang);
+    if (!C) { loadDict(lang); return; }
+    document.documentElement.lang = LANGS[lang].html;
+    walkTree(document.body, C);
+    translateTitle(C);
+    startObserver();
   }
 
+  var loading = {};
+  function loadDict(lang) {
+    var meta = LANGS[lang];
+    if (!meta || !meta.dict || DICTS[lang] || loading[lang]) return;
+    loading[lang] = true;
+    var s = document.createElement('script');
+    s.src = SCRIPT_BASE + meta.dict;
+    s.onload = function () { compiled[lang] = null; apply(); document.dispatchEvent(new CustomEvent('predictable:i18n-ready', { detail: { lang: lang } })); };
+    s.onerror = function () { loading[lang] = false; console.warn('[i18n] no se pudo cargar el diccionario', lang); };
+    (document.head || document.documentElement).appendChild(s);
+  }
+
+  // Los cambios se traducen dentro del callback del MutationObserver (corre
+  // antes de pintar), así no parpadea el español.
+  var observer = null;
+  function startObserver() {
+    if (observer || !document.body) return;
+    observer = new MutationObserver(function (records) {
+      var lang = currentLang(), C = lang === 'es' ? null : compile(lang), picker = false;
+      for (var i = 0; i < records.length; i++) {
+        var r = records[i];
+        if (r.type === 'childList') {
+          for (var j = 0; j < r.addedNodes.length; j++) {
+            var a = r.addedNodes[j];
+            if (a.nodeType === 1 && !picker && (a.matches('[data-i18n-picker]') || a.querySelector('[data-i18n-picker]'))) picker = true;
+            if (!C) continue;
+            if (a.nodeType === 3) { if (!inSkipped(a.parentElement)) doText(a, C); } else walkTree(a, C);
+          }
+        } else if (!C) {
+          continue;
+        } else if (r.type === 'characterData') {
+          if (!inSkipped(r.target.parentElement)) doText(r.target, C);
+        } else if (r.type === 'attributes' && r.target.nodeType === 1 && !inSkipped(r.target.parentElement) && !r.target.matches(SKIP_SEL)) {
+          doAttrs(r.target, C);
+        }
+      }
+      if (picker) wireToggle();
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS.concat(['value']) });
+    var title = document.querySelector('head > title');
+    if (title) new MutationObserver(function () { var C = compile(currentLang()); if (C && currentLang() !== 'es') translateTitle(C); }).observe(title, { childList: true, characterData: true, subtree: true });
+  }
+
+  // alert/confirm/prompt no pasan por el DOM.
+  ['alert', 'confirm', 'prompt'].forEach(function (fn) {
+    var orig = window[fn];
+    if (typeof orig !== 'function') return;
+    window[fn] = function (msg) {
+      var args = Array.prototype.slice.call(arguments);
+      if (typeof msg === 'string' && currentLang() !== 'es') args[0] = t(msg);
+      return orig.apply(window, args);
+    };
+  });
+
+  // ── Formatos por idioma ────────────────────────────────────────────────────
+  // Fechas, números y moneda con Intl en el locale del idioma elegido. Los
+  // precios de Predictable se cobran en USD (Stripe): formatCurrency formatea
+  // el monto en la moneda que se le pasa y nunca convierte (US$ 97 en pt-BR).
+  function locale() { return LANGS[currentLang()].locale; }
+  function formatDate(d, opts) {
+    var x = d instanceof Date ? d : new Date(d);
+    if (isNaN(x.getTime())) return '';
+    try { return x.toLocaleDateString(locale(), opts || { day: 'numeric', month: 'short', year: 'numeric' }); } catch (e) { return x.toISOString().slice(0, 10); }
+  }
+  function formatDateTime(d, opts) {
+    var x = d instanceof Date ? d : new Date(d);
+    if (isNaN(x.getTime())) return '';
+    try { return x.toLocaleString(locale(), opts || { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return x.toISOString().slice(0, 16).replace('T', ' '); }
+  }
+  function formatNumber(n, opts) {
+    var x = Number(n);
+    if (!isFinite(x)) return String(n == null ? '' : n);
+    try { return x.toLocaleString(locale(), opts); } catch (e) { return String(x); }
+  }
+  function formatCurrency(n, currency, opts) {
+    var x = Number(n);
+    if (!isFinite(x)) return String(n == null ? '' : n);
+    var cur = currency || (currentLang() === 'pt-BR' ? 'BRL' : 'USD');
+    try { return new Intl.NumberFormat(locale(), Object.assign({ style: 'currency', currency: cur, maximumFractionDigits: 0 }, opts || {})).format(x); }
+    catch (e) { return cur + ' ' + x; }
+  }
+  /** «A, B y C» en el idioma elegido («A, B e C» en pt-BR). */
+  function list(items) {
+    var arr = Array.prototype.slice.call(items || []).map(String);
+    try { return new Intl.ListFormat(locale(), { style: 'long', type: 'conjunction' }).format(arr); }
+    catch (e) { return arr.length > 1 ? arr.slice(0, -1).join(', ') + ' y ' + arr[arr.length - 1] : arr.join(''); }
+  }
+  // Nombre de un país por su código ISO 3166 (o el nombre en español/inglés
+  // que guarda Apollo: el diccionario cubre esos).
+  var regionNames = {};
+  function countryName(codeOrName) {
+    if (!codeOrName) return '';
+    var s = String(codeOrName).trim();
+    if (/^[A-Za-z]{2}$/.test(s) && typeof Intl !== 'undefined' && Intl.DisplayNames) {
+      try {
+        var loc = locale();
+        regionNames[loc] = regionNames[loc] || new Intl.DisplayNames([loc], { type: 'region' });
+        return regionNames[loc].of(s.toUpperCase()) || s;
+      } catch (e) { /* navegador viejo */ }
+    }
+    return t(s);
+  }
+
+  // Diagnóstico (Playwright / consola): textos visibles que siguen en español.
+  // Solo marcas que el portugués no comparte (ñ, ¿¡, -ción, el/los/las/una…).
+  var ES_HINT = /[ñ¿¡]|ción(?![a-zà-ÿ])|ciones(?![a-zà-ÿ])|(?<![a-zà-ÿ-])(el|los|las|una|unos|unas|con|sin|tu|tus|mi|mis|y|aún|están|aquí|también|cuando|qué|cómo|dónde|todavía|ahora|hoy|mañana|guardar|crear|campaña|campañas|contactos|cuenta|señal|señales|bandeja|reunión|reuniones|listo|cerrar|eliminar|agregar|elige|selecciona|dinos)(?![a-zà-ÿ])/i;
+  function missing(root) {
+    var out = [], seen = {};
+    if (currentLang() === 'es') return out;
+    var w = document.createTreeWalker(root || document.body, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode: function (n) { return n.nodeType === 1 && skipEl(n) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; }
+    });
+    var n;
+    while ((n = w.nextNode())) {
+      if (n.nodeType !== 3) continue;
+      var v = norm(n.nodeValue);
+      if (!v || !ES_HINT.test(v) || seen[v]) continue;
+      var el = n.parentElement;
+      if (!el || !el.getClientRects().length) continue; // no visible
+      seen[v] = 1; out.push(v);
+    }
+    return out;
+  }
+
+  // ── Perfil ─────────────────────────────────────────────────────────────────
   // El idioma también se guarda en profiles.ui_language: las edge functions
   // con IA lo leen (engineForUser en _shared/llm.ts) y piden al modelo que
   // responda en ese idioma, así los reportes, señales, mensajes y el coach
@@ -398,7 +702,7 @@
   // existe (migración pendiente) se ignora el error.
   function persistToProfile(clean) {
     var sb = window.supabaseClient;
-    if (!sb) return;
+    if (!sb || !sb.auth) return;
     sb.auth.getUser().then(function (r) {
       var user = r && r.data ? r.data.user : null;
       if (!user) return;
@@ -409,13 +713,13 @@
     }).catch(function () { /* sin sesión */ });
   }
   function setLang(lang, opts) {
-    var clean = lang === 'en' ? 'en' : 'es';
+    var clean = cleanLang(lang);
     var prev = currentLang();
     try { localStorage.setItem(LS_KEY, clean); } catch (e) { /* modo privado */ }
     if (!(opts && opts.silent)) persistToProfile(clean);
-    // No hay diccionario EN→ES: al volver a español se recarga la página para
-    // recuperar los textos originales (los módulos pintan en español).
-    if (prev === 'en' && clean === 'es' && !(opts && opts.noReload)) { setTimeout(function () { location.reload(); }, 60); return; }
+    // No hay diccionario de vuelta: los nodos ya traducidos no recuerdan su
+    // español, así que salir de un idioma traducido recarga la página.
+    if (prev !== 'es' && clean !== prev && !(opts && opts.noReload)) { setTimeout(function () { location.reload(); }, 60); return; }
     apply();
   }
   // Al entrar, si el perfil ya trae un idioma y localStorage no, se adopta.
@@ -425,60 +729,97 @@
     var stored = null;
     try { stored = localStorage.getItem(LS_KEY); } catch (e) { /* noop */ }
     if (stored) return;
-    if (p.ui_language === 'en' || p.ui_language === 'es') setLang(p.ui_language, { silent: true, noReload: true });
+    if (p.ui_language === 'en' || p.ui_language === 'es' || p.ui_language === 'pt-BR') setLang(p.ui_language, { silent: true, noReload: true });
+  }
+  // Páginas públicas (landing, login): ?lang=pt-BR en la URL, o el idioma del
+  // navegador si es portugués y nadie eligió todavía.
+  function adoptUrlOrBrowserLanguage() {
+    var stored = null;
+    try { stored = localStorage.getItem(LS_KEY); } catch (e) { /* noop */ }
+    var q = null;
+    try { q = new URLSearchParams(location.search).get('lang'); } catch (e) { /* noop */ }
+    if (q) { try { localStorage.setItem(LS_KEY, cleanLang(q)); } catch (e) { /* noop */ } return; }
+    if (stored || !document.documentElement.hasAttribute('data-i18n-autodetect')) return;
+    var nav = (navigator.languages && navigator.languages[0]) || navigator.language || '';
+    if (/^pt/i.test(nav)) { try { localStorage.setItem(LS_KEY, 'pt-BR'); } catch (e) { /* noop */ } }
   }
 
-  function paintToggle() {
-    var host = document.getElementById('lang-toggle');
-    if (!host) return;
-    var lang = currentLang();
-    Array.prototype.forEach.call(host.querySelectorAll('[data-lang]'), function (b) {
-      b.classList.toggle('on', b.getAttribute('data-lang') === lang);
+  // ── Selectores ─────────────────────────────────────────────────────────────
+  // #lang-toggle (barra lateral de la app) y cualquier [data-i18n-picker]: si
+  // el contenedor está vacío se arma con los idiomas de data-i18n-picker
+  // (p. ej. "es,pt-BR"; vacío = los tres).
+  function pickerHosts() {
+    return Array.prototype.slice.call(document.querySelectorAll('#lang-toggle, [data-i18n-picker]'));
+  }
+  var PICKER_CSS = '[data-i18n-picker]{display:inline-flex;gap:2px;padding:2px;border-radius:999px;background:rgba(127,127,127,.16);vertical-align:middle}' +
+    '[data-i18n-picker] button{all:unset;cursor:pointer;font:600 11.5px/1 system-ui,-apple-system,sans-serif;letter-spacing:.04em;padding:6px 10px;border-radius:999px;color:inherit;opacity:.7}' +
+    '[data-i18n-picker] button:hover{opacity:1}[data-i18n-picker] button.on{opacity:1;background:rgba(127,127,127,.3)}' +
+    '[data-i18n-picker] button:focus-visible{outline:2px solid currentColor;outline-offset:1px}' +
+    '.i18n-float{position:fixed;top:14px;right:16px;z-index:60;color:#fff}';
+  function buildPicker(host) {
+    if (host.querySelector('[data-lang]')) return;
+    if (!document.getElementById('i18n-picker-css')) {
+      var st = document.createElement('style');
+      st.id = 'i18n-picker-css';
+      st.textContent = PICKER_CSS;
+      (document.head || document.documentElement).appendChild(st);
+    }
+    var want = (host.getAttribute('data-i18n-picker') || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+    var langs = want.length ? want.map(cleanLang) : Object.keys(LANGS);
+    host.setAttribute('role', 'radiogroup');
+    if (!host.getAttribute('aria-label')) host.setAttribute('aria-label', 'Idioma');
+    host.setAttribute('data-no-i18n', '');
+    langs.forEach(function (l) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('data-lang', l);
+      b.setAttribute('aria-label', LANGS[l].name);
+      b.title = LANGS[l].name;
+      b.textContent = host.hasAttribute('data-i18n-long') ? LANGS[l].label : LANGS[l].short;
+      host.appendChild(b);
     });
   }
-
+  function paintToggle() {
+    var lang = currentLang();
+    pickerHosts().forEach(function (host) {
+      Array.prototype.forEach.call(host.querySelectorAll('[data-lang]'), function (b) {
+        var on = cleanLang(b.getAttribute('data-lang')) === lang;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+    });
+  }
   function wireToggle() {
-    var host = document.getElementById('lang-toggle');
-    if (!host || host.dataset.wired) return;
-    host.dataset.wired = '1';
-    Array.prototype.forEach.call(host.querySelectorAll('[data-lang]'), function (b) {
-      b.addEventListener('click', function () { setLang(b.getAttribute('data-lang')); });
+    pickerHosts().forEach(function (host) {
+      if (host.dataset.wired) return;
+      host.dataset.wired = '1';
+      buildPicker(host);
+      Array.prototype.forEach.call(host.querySelectorAll('[data-lang]'), function (b) {
+        b.addEventListener('click', function () { setLang(b.getAttribute('data-lang')); });
+      });
     });
     paintToggle();
   }
 
-  function startObserver() {
-    if (observer) return;
-    observer = new MutationObserver(function () {
-      if (currentLang() === 'en') {
-        setTimeout(apply, 16);
-      }
-    });
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      characterData: false,
-      attributeFilter: ['placeholder', 'title', 'aria-label']
-    });
-  }
-
-  function stopObserver() {
-    if (observer) {
-      observer.disconnect();
-      observer = null;
-    }
-  }
-
   function init() {
     wireToggle();
+    apply();
     startObserver();
-    if (currentLang() === 'en') apply();
     document.addEventListener('predictable:profile-ready', adoptProfileLanguage);
     adoptProfileLanguage();
   }
 
-  window.i18n = { get: currentLang, set: setLang, apply: apply };
+  window.i18n = {
+    get: currentLang, set: setLang, apply: apply, t: t,
+    locale: locale, formatDate: formatDate, formatDateTime: formatDateTime,
+    formatNumber: formatNumber, formatCurrency: formatCurrency, countryName: countryName, list: list,
+    missing: missing, languages: function () { return Object.keys(LANGS); }
+  };
 
+  adoptUrlOrBrowserLanguage();
+  // El diccionario se pide apenas se lee este archivo, no al terminar de
+  // cargar la página: así llega casi siempre antes de que los módulos pinten.
+  if (currentLang() !== 'es') { document.documentElement.lang = LANGS[currentLang()].html; loadDict(currentLang()); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();

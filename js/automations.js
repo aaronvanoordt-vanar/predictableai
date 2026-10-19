@@ -147,7 +147,7 @@
     if (days < 0) return 'Vencida';
     if (days === 0) return 'Hoy';
     if (days === 1) return 'Mañana';
-    return d.toLocaleDateString('es', { day: 'numeric', month: 'short' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short' });
   }
 
   // ─── Backend ────────────────────────────────────────────────────────────
