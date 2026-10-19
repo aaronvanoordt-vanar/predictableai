@@ -18,11 +18,13 @@
  * mediana de la rampa) viven en js/team-metrics.js, espejo de
  * supabase/functions/_shared/team-metrics.ts.
  *
- * Telefonía (enganche): las llamadas no existen todavía. `calls` llega NULL de
- * la base y aquí se muestra «Sin telefonía», nunca un cero. Cuando exista, el
- * módulo de telefonía registra sus llamadas para la revisión con
- *   window.Team.registerCallSource(async (memberId) => [{ id, at, title, summary, url }])
- * y los comentarios de coaching se guardan con subject_kind = 'call'.
+ * Telefonía (2026-10-17, docs/TELEFONIA.md): `calls` = personas llamadas en
+ * el período (team_member_activity cuenta la tabla `calls`); solo llega NULL
+ * si falta la migración de telefonía, y entonces se muestra «Sin telefonía»,
+ * nunca un cero. js/calls.js registra las llamadas para la revisión con
+ *   window.Team.registerCallSource(async (memberId) => [{ id, at, title, summary, url, listen }])
+ * (`listen()` devuelve la URL local del audio del dialer; `url`, el enlace de un
+ * conector) y los comentarios de coaching se guardan con subject_kind = 'call'.
  *
  * Depende de js/supabase-client.js, js/ui-helpers.js y js/team-metrics.js.
  */
@@ -86,13 +88,13 @@
     if (!m) return 'Sin nombre';
     return m.full_name || m.email || 'Sin nombre';
   }
-  function fmtInt(n) { return n == null ? '—' : Number(n).toLocaleString('es'); }
+  function fmtInt(n) { return n == null ? '—' : Number(n).toLocaleString((window.i18n ? i18n.locale() : 'es-MX')); }
   function fmtPct(r) { return r == null ? '—' : Math.round(r * 100) + ' %'; }
   function fmtDate(v) {
     if (!v) return '—';
     var d = new Date(v);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleDateString('es', { day: 'numeric', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
   }
   function isoDay(ms) {
     var d = new Date(ms);
@@ -276,12 +278,16 @@
       var ranked = tm.rankTeam(rows, state.sort);
       var host = document.getElementById('team-rank');
       if (!host) return;
-      var anyActivity = ranked.some(function (r) { return Number(r.metrics.sent_total || 0) + Number(r.metrics.replies || 0) + Number(r.metrics.meetings_booked || 0) > 0; });
+      var anyActivity = ranked.some(function (r) { return Number(r.metrics.sent_total || 0) + Number(r.metrics.calls || 0) + Number(r.metrics.replies || 0) + Number(r.metrics.meetings_booked || 0) > 0; });
+      // Llamadas = personas llamadas (telefonía). Contexto, como los envíos:
+      // no ordena el ranking. Sin la migración de telefonía llega NULL y la
+      // columna no se muestra (nunca un cero inventado).
+      var hasCalls = ranked.some(function (r) { return r.metrics.calls != null; });
       host.className = '';
       host.innerHTML = (anyActivity ? '' : '<p class="team-note">Nadie del equipo registró actividad en este período todavía.</p>') +
         '<div class="team-table-wrap"><table class="team-table"><thead><tr>' +
         '<th>#</th><th>Persona</th><th class="num">Reuniones agendadas</th><th class="num">Tomadas</th><th class="num">Respuestas</th>' +
-        '<th class="num">Tasa de respuesta</th><th class="num">Tasa de reunión</th><th class="num ctx">Contactadas</th><th class="num ctx">Contactos nuevos</th>' +
+        '<th class="num">Tasa de respuesta</th><th class="num">Tasa de reunión</th><th class="num ctx">Contactadas</th>' + (hasCalls ? '<th class="num ctx">Llamadas</th>' : '') + '<th class="num ctx">Contactos nuevos</th>' +
         '</tr></thead><tbody>' + ranked.map(function (r) {
           var p = prevRank[r.user_id] || { metrics: {} };
           var mine = r.user_id === me();
@@ -298,6 +304,7 @@
             '<td class="num">' + fmtInt(r.metrics.replies) + ' ' + deltaHtml(tm.delta(r.metrics.replies, p.metrics.replies)) + '</td>' +
             rateCell(r.reply_rate, p.reply_rate) + rateCell(r.meeting_rate, p.meeting_rate) +
             '<td class="num ctx">' + fmtInt(r.metrics.sent_total) + '</td>' +
+            (hasCalls ? '<td class="num ctx">' + (r.metrics.calls == null ? '—' : fmtInt(r.metrics.calls)) + '</td>' : '') +
             '<td class="num ctx">' + fmtInt(r.metrics.contacts_new) + '</td></tr>';
         }).join('') + '</tbody></table></div>';
     }).catch(function (e) {
@@ -599,7 +606,8 @@
     if (Array.isArray(state.calls)) {
       callsHtml = state.calls.length ? state.calls.map(function (c) {
         return '<div class="team-meet open"><div class="team-meet-head static"><span class="team-meet-date">' + esc(fmtDate(c.at)) + '</span><span class="team-meet-name">' + esc(c.title || 'Llamada') + '</span>' +
-          (c.url ? '<a class="team-link" href="' + esc(safeUrl(c.url)) + '" target="_blank" rel="noopener">Escuchar</a>' : '') + '</div>' +
+          (c.url ? '<a class="team-link" href="' + esc(safeUrl(c.url)) + '" target="_blank" rel="noopener">Escuchar</a>'
+            : typeof c.listen === 'function' ? '<span data-listen-slot="' + esc(c.id) + '"><button class="team-link" data-act="listen-call" data-id="' + esc(c.id) + '">Escuchar</button></span>' : '') + '</div>' +
           '<div class="team-meet-body">' + (c.summary ? '<p class="team-p">' + esc(c.summary) + '</p>' : '') + commentsHtml('call', c.id) + '</div></div>';
       }).join('') : '<p class="team-note">Sin llamadas registradas.</p>';
     } else {
@@ -701,6 +709,7 @@
     else if (act === 'save-goals') saveGoals(id, el);
     else if (act === 'toggle-meeting') { state.openMeeting = state.openMeeting === id ? null : id; renderBody(); }
     else if (act === 'comment') addComment(el.getAttribute('data-kind'), id, el);
+    else if (act === 'listen-call') listenCall(id, el);
     else if (act === 'del-comment') { if (global.confirm('¿Borrar este comentario?')) deleteComment(id); }
     else if (act === 'add') memberAction('team_add_member', { p_user: id, p_started_at: null }, 'Agregado al equipo.', el);
     else if (act === 'remove') {
@@ -708,6 +717,30 @@
         memberAction('team_remove_member', { p_user: id }, 'Quitado del equipo.', el);
       }
     }
+  }
+
+  // Grabación del dialer de Predictable: se pide con el JWT (telephony valida
+  // que sea tuya o de alguien de tu equipo) y se reproduce en la tarjeta.
+  function listenCall(id, el) {
+    var c = (state.calls || []).find(function (x) { return String(x.id) === String(id); });
+    if (!c || typeof c.listen !== 'function') return;
+    el.disabled = true;
+    el.textContent = 'Cargando…';
+    Promise.resolve().then(function () { return c.listen(); }).then(function (src) {
+      var slot = shell().querySelector('[data-listen-slot="' + id + '"]');
+      if (!slot) return;
+      var audio = document.createElement('audio');
+      audio.controls = true;
+      audio.src = src;
+      audio.style.cssText = 'height:32px;max-width:260px;vertical-align:middle';
+      slot.innerHTML = '';
+      slot.appendChild(audio);
+      audio.play().catch(function () {});
+    }).catch(function (e) {
+      el.disabled = false;
+      el.textContent = 'Escuchar';
+      toast((e && e.message) || 'No se pudo cargar la grabación.', 'error');
+    });
   }
 
   function onChange(e) {

@@ -2164,6 +2164,23 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       Bandeja
       <span id="nav-bandeja-badge" class="nav-badge" style="display:none">0</span>
     </div>
+    <!-- Contenido en LinkedIn con aprobación (2026-10-17, js/linkedin-content.js +
+         edge function `linkedin-content`): social selling con ideas → borrador →
+         aprobado → programado → publicado. No es una pestaña de Prospección:
+         tiene su propia página. -->
+    <div class="nav-item" data-page="linkedin-content" onclick="nav(this,'linkedin-content');if(window.linkedinContent)window.linkedinContent.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 7v4M5 5v.01M8 11V8.5a1.5 1.5 0 013 0V11M8 7v4"/></svg>
+      Contenido
+    </div>
+    <!-- Automatizaciones (2026-10-17, js/automations.js): reglas «cuando → si →
+         entonces» sobre Radar, Listas, enriquecimiento, investigación IA y
+         Campañas, con aprobación humana por defecto. Motor: automation-run.
+         El contador = ejecuciones por aprobar. -->
+    <div class="nav-item" data-page="automations" onclick="nav(this,'automations');if(window.automations)window.automations.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M9 1.5L3 9h4.5L7 14.5 13 7H8.5z"/></svg>
+      Automatizaciones
+      <span id="nav-auto-badge" class="nav-badge accent" style="display:none">0</span>
+    </div>
 
     <!-- AI SALES COACH -->
     <div class="sidebar-section">
@@ -2250,8 +2267,9 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 
     <!-- Idioma (js/i18n.js) -->
     <div class="theme-toggle" id="lang-toggle" role="radiogroup" aria-label="Idioma de la interfaz">
-      <button type="button" class="tt-opt on" data-lang="es" aria-label="Español">ES · Español</button>
-      <button type="button" class="tt-opt" data-lang="en" aria-label="English">EN · English</button>
+      <button type="button" class="tt-opt on" data-lang="es" aria-label="Español" title="Español" data-no-i18n>ES</button>
+      <button type="button" class="tt-opt" data-lang="en" aria-label="English" title="English" data-no-i18n>EN</button>
+      <button type="button" class="tt-opt" data-lang="pt-BR" aria-label="Português (Brasil)" title="Português (Brasil)" data-no-i18n>PT</button>
     </div>
 
     <!-- Créditos: js/ux.js mueve aquí el chip global de js/credits.js -->
@@ -2454,6 +2472,28 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
   <div id="ai-training-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: CONTENIDO EN LINKEDIN (js/linkedin-content.js) ═══════ -->
+<div class="page fade-in" id="page-linkedin-content" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Contenido</div>
+      <div class="topbar-sub">Ideas, borradores y calendario de tus posts de LinkedIn, con tu aprobación antes de publicar</div>
+    </div>
+  </div>
+  <div id="linkedin-content-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: AUTOMATIZACIONES (js/automations.js) ═══════ -->
+<div class="page fade-in" id="page-automations" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Automatizaciones</div>
+      <div class="topbar-sub">Reglas que hacen el siguiente paso por ti, con tu aprobación</div>
+    </div>
+  </div>
+  <div id="automations-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: AGENCIA (js/agency.js) ═══════ -->
@@ -3293,7 +3333,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/credits.js"></script>
 <script src="js/billing-cfdi.js"></script>
 <script src="js/skeletons.js"></script>
-<script src="js/i18n.js"></script>
+<script src="js/i18n.js?v=20261017"></script>
 <script src="js/api.js"></script>
 <script src="js/apollo-enums.js"></script>
 <script src="js/tam-rules.js?v=20261017"></script>
@@ -3305,38 +3345,43 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/prospecting.js?v=20261018crm5"></script>
 <script src="js/voice-agent.js?v=20261018"></script>
 <script src="js/registry-search.js?v=20261017"></script>
-<script src="js/campaign-flow.js?v=20261018b"></script>
+<script src="js/campaign-flow.js?v=20261018c"></script>
 <script src="js/linkedin-campaigns.js?v=20260915"></script>
 <script src="js/campaign-builder.js?v=20261017"></script>
 <script src="js/campaign-knowledge.js?v=20260923"></script>
 <script src="js/campaign-analytics.js?v=20261018"></script>
 <script src="js/suppression.js?v=20261017"></script>
-<script src="js/campaigns.js?v=20261018crm3"></script>
+<script src="js/email-mailboxes.js?v=20261018"></script>
+<script src="js/campaigns.js?v=20261019crm"></script>
 <script src="js/inbox-alert.js?v=20261001b"></script>
 <script src="js/push.js?v=20261006"></script>
+<script src="js/automations.js?v=20261017"></script>
 <script src="js/inbound.js?v=20261017"></script>
 <script src="js/radar.js?v=20261017"></script>
 <script src="js/radar-live.js?v=20261017"></script>
 <script src="js/clients.js?v=20260824-sheets"></script>
-<script src="js/agency.js?v=20261017"></script>
+<script src="js/agency.js?v=20261019"></script>
 <script src="js/meeting-coach.js"></script>
-<script src="js/realtime-coach.js"></script>
+<script src="js/realtime-coach.js?v=20261017"></script>
+<script src="js/dialer.js?v=20261018"></script>
+<script src="js/calls.js?v=20261018b"></script>
 <script src="js/meeting-report.js"></script>
-<script src="js/learning.js?v=20260919"></script>
+<script src="js/learning.js?v=20261017"></script>
 <script src="js/ai-training.js?v=20260923"></script>
+<script src="js/linkedin-content.js?v=20261017"></script>
 <script src="js/tam-map.js?v=20261017"></script>
 <script src="js/integrations.js?v=20261018"></script>
 <script src="js/dev-docs.js?v=20260923"></script>
 <script src="js/developers.js?v=20260923"></script>
 <script src="js/team-metrics.js?v=20261017"></script>
-<script src="js/team.js?v=20261017"></script>
+<script src="js/team.js?v=20261018b"></script>
 <script src="js/crm.js?v=20261019"></script>
 <script src="js/coach-lead-picker.js?v=20260915"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js?v=20261017"></script>
 <!-- Contexto estratégico IA: PESTEL + 5 fuerzas de Porter + FODA→CAME (contexto opcional, debajo del Intelligence Hub) -->
 <script src="js/coda-ai.js"></script>
-<script src="js/context-gate.js?v=20261018b"></script>
+<script src="js/context-gate.js?v=20261018c"></script>
 <script src="js/onboarding-tour.js"></script>
 <script src="js/miforms-prompt.js"></script>
 <script src="js/ux.js?v=20260919b"></script>
@@ -3867,7 +3912,7 @@ async function loadMyPerformance() {
         ? '<div class="score-bar" style="width:80px"><div class="score-fill" style="width:'+v+'%;background:var(--grad-jade)"></div></div>'
         : '—';
       tbody.innerHTML = data.map(r => {
-        const date = r.started_at ? new Date(r.started_at).toLocaleDateString('es-MX',{day:'numeric',month:'short',year:'numeric'}) : '—';
+        const date = r.started_at ? new Date(r.started_at).toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'),{day:'numeric',month:'short',year:'numeric'}) : '—';
         const dur  = r.duration_seconds ? Math.round(r.duration_seconds/60)+' min' : '—';
         const sc   = r.score_total || 0;
         const e = window.escHtml || (s => s);
@@ -4117,6 +4162,8 @@ const PRO_HASH_ALIASES = {
   'pro-overview': 'busqueda', 'pro-apollo': 'busqueda', 'resumen': 'busqueda',
   'pro-listas': 'listas', 'contactos': 'listas',
   'pro-mensajes': 'campanas', 'outreach': 'campanas', 'secuencias': 'campanas', 'bandeja': 'campanas',
+  // Llamadas (2026-10-17) es una vista de Campañas (js/calls.js), no una página.
+  'llamadas': 'campanas',
 };
 const PRO_TABS = ['busqueda', 'listas', 'campanas'];
 // Normaliza cualquier id (viejo, nuevo o basura de localStorage) a una pestaña viva.
@@ -4129,7 +4176,7 @@ window.addEventListener('DOMContentLoaded', () => {
   let hash = (location.hash || '').replace(/^#/, '');
   // Bandeja = pestaña Campañas en la vista 'inbox' (js/campaigns.js la
   // recuerda en localStorage; #bandeja la fuerza).
-  let cmpView = hash === 'bandeja' ? 'inbox' : null;
+  let cmpView = hash === 'bandeja' ? 'inbox' : hash === 'llamadas' ? 'calls' : null;
   let proTab = PRO_HASH_ALIASES[hash];
   if (proTab) hash = 'pro-main';
 
@@ -4158,7 +4205,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // dejar el sidebar sin resaltar ni el shell sin pestaña.
   if (hash === 'pro-main') proTab = normalizeProTab(proTab);
   if (proTab === 'campanas' && !cmpView) {
-    try { const v = localStorage.getItem('predictable_cmp_view'); if (v === 'inbox' || v === 'analytics') cmpView = v; } catch (e) {}
+    try { const v = localStorage.getItem('predictable_cmp_view'); if (v === 'inbox' || v === 'analytics' || v === 'calls') cmpView = v; } catch (e) {}
   }
 
   if (hash === 'settings' && typeof window.openSettingsPage === 'function') {
@@ -4179,7 +4226,7 @@ window.addEventListener('DOMContentLoaded', () => {
     : document.querySelector(`.nav-item[data-page="${hash}"]`);
   if (navEl) setTimeout(() => {
     window.nav(navEl, hash);
-    if (proTab === 'campanas' && window.campaigns) window.campaigns.setView(cmpView === 'inbox' || cmpView === 'analytics' ? cmpView : 'campaigns');
+    if (proTab === 'campanas' && window.campaigns) window.campaigns.setView(cmpView === 'inbox' || cmpView === 'analytics' || cmpView === 'calls' ? cmpView : 'campaigns');
     if (proTab && window.prospecting) window.prospecting.show(proTab);
     // Páginas con shell propio: montarlas también al restaurar (el onclick
     // del nav-item no corre en este camino).
@@ -4341,7 +4388,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
       greet.textContent = salut + ', ' + capitalize(name.split(' ')[0]);
     }
     if (dashSub) {
-      const fecha = new Date().toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' });
+      const fecha = new Date().toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { weekday: 'long', day: 'numeric', month: 'long' });
       dashSub.textContent = fecha.charAt(0).toUpperCase() + fecha.slice(1) + (company ? ' · ' + company : '');
     }
     // Initialize reports page role-based tabs
@@ -4467,7 +4514,7 @@ window.addEventListener('DOMContentLoaded', refreshDashboard);
   function fmtDate(d) {
     if (!d) return '—';
     try {
-      return new Date(d).toLocaleString('es', {
+      return new Date(d).toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), {
         year: 'numeric', month: 'short', day: '2-digit',
         hour: '2-digit', minute: '2-digit'
       });

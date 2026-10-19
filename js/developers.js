@@ -101,7 +101,7 @@
     if (diff < 60) return 'hace segundos';
     if (diff < 3600) return 'hace ' + Math.floor(diff / 60) + ' min';
     if (diff < 86400) return 'hace ' + Math.floor(diff / 3600) + ' h';
-    return d.toLocaleDateString('es', { day: 'numeric', month: 'short', year: 'numeric' }) + ' ' + d.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' }) + ' ' + d.toLocaleTimeString((window.i18n ? i18n.locale() : 'es-MX'), { hour: '2-digit', minute: '2-digit' });
   }
   function eventLabel(id) { for (var i = 0; i < EVENT_TYPES.length; i++) if (EVENT_TYPES[i].id === id) return EVENT_TYPES[i].label; return id === '*' ? 'Todos los eventos' : id; }
   function pill(text, tone) { return '<span class="dv-pill dv-pill-' + (tone || 'gray') + '">' + esc(text) + '</span>'; }

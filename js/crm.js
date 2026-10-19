@@ -116,8 +116,8 @@
     if (amount == null || amount === '') return '';
     var n = Number(amount);
     if (!isFinite(n)) return '';
-    try { return new Intl.NumberFormat('es-419', { style: 'currency', currency: currency || 'USD', maximumFractionDigits: n % 1 ? 2 : 0 }).format(n); }
-    catch (e) { return (currency || '') + ' ' + n.toLocaleString('es'); }
+    try { return new Intl.NumberFormat((window.i18n ? i18n.locale() : 'es-MX'), { style: 'currency', currency: currency || 'USD', maximumFractionDigits: n % 1 ? 2 : 0 }).format(n); }
+    catch (e) { return (currency || '') + ' ' + n.toLocaleString((window.i18n ? i18n.locale() : 'es-MX')); }
   }
   /** Suma por moneda: nunca se mezclan monedas ni se convierten. */
   function totals(list) {
@@ -129,12 +129,12 @@
     if (!d) return '';
     var t = new Date(String(d).length === 10 ? d + 'T12:00:00' : d);
     if (isNaN(t.getTime())) return '';
-    return t.toLocaleDateString('es', { day: 'numeric', month: 'short', year: t.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+    return t.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: t.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
   }
   function fmtDateTime(d) {
     var t = new Date(d);
     if (isNaN(t.getTime())) return '';
-    return t.toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return t.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   }
   function relTime(d) {
     var t = new Date(d).getTime();

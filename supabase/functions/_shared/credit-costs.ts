@@ -44,6 +44,12 @@ export const CREDIT_COSTS = {
   // la empresa y propone el ángulo. El match de Apollo se cobra aparte como
   // enrich_email solo con la key de la plataforma.
   lead_research: 3,
+  // Contenido en LinkedIn (social selling), sin búsqueda web: el contexto
+  // ya está en la base. Ideas con Haiku (~0.02 USD por tanda); el borrador
+  // con el modelo por defecto, porque el texto se publica tal cual
+  // (~0.06 USD con Sonnet).
+  linkedin_ideas: 2,
+  linkedin_post: 3,
   // Seguimiento de champions (Radar → champion_moves): búsqueda web de
   // respaldo cuando Apollo no ubica a la persona en su empresa (Haiku + 2
   // búsquedas, ~0.02 USD). El match de Apollo se cobra como enrich_email
@@ -88,6 +94,37 @@ export const CREDIT_COSTS = {
   voice_minute: 6,
   voice_minute_ar: 18,
 } as const;
+
+/**
+ * Créditos por minuto del dialer nativo (Twilio), por país de destino.
+ * Cubre el minuto saliente (tarifa móvil o fija, la mayor de las dos), la
+ * pierna del navegador, la grabación y la transcripción, con el costo en
+ * ≤ ~40 % del valor (1 crédito ≈ 0.065 USD). Tarifas públicas de Twilio de
+ * 2026-10 en docs/TELEFONIA.md. Un país fuera de la tabla no se marca.
+ * Los conectores (CloudTalk, Aircall, Ringover) no cobran minutos: los paga
+ * la cuenta del cliente.
+ */
+export const CALL_MINUTE_CREDITS: Record<string, number> = {
+  MX: 3, // móvil 0.0473 / fijo 0.0160 USD
+  CO: 4, // fijo 0.0700 / móvil 0.0377
+  CL: 4, // móvil 0.0746 / fijo 0.0475
+  PE: 7, // fijo 0.1651 / móvil 0.0740
+  AR: 15, // móvil 0.3528 / fijo 0.0604
+  BR: 4, // móvil 0.0663 / fijo 0.0310
+  US: 2,
+  CA: 2,
+};
+
+/** Minutos que se reservan al empezar una llamada nativa (tope de duración). */
+export const CALL_RESERVE_MAX_MINUTES = 30;
+
+/** Créditos de `seconds` segundos de llamada a `country` (minuto iniciado = minuto cobrado). */
+export function callCost(country: string, seconds: number): number {
+  const rate = CALL_MINUTE_CREDITS[country];
+  if (!rate) return 0;
+  const s = Math.max(0, Number(seconds) || 0);
+  return s > 0 ? Math.ceil(s / 60) * rate : 0;
+}
 
 export type CreditAction = keyof typeof CREDIT_COSTS;
 

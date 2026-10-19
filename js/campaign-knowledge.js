@@ -80,7 +80,7 @@
   }
   function fmtDate(v) {
     var d = new Date(v);
-    return isNaN(d.getTime()) ? '' : d.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' });
+    return isNaN(d.getTime()) ? '' : d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
   }
   function fmtSize(n) { return n >= 1000 ? (Math.round(n / 100) / 10) + ' mil caracteres' : n + ' caracteres'; }
 
@@ -213,7 +213,7 @@
     var body = String(ed.body || '').trim();
     if (!title) return toast('Ponle un título para reconocerlo después.', 'warn');
     if (!body) return toast('El contenido está vacío.', 'warn');
-    if (body.length > MAX_BODY) return toast('El contenido supera ' + MAX_BODY.toLocaleString('es-MX') + ' caracteres. Divídelo en varios documentos.', 'warn');
+    if (body.length > MAX_BODY) return toast('El contenido supera ' + MAX_BODY.toLocaleString((window.i18n ? i18n.locale() : 'es-MX')) + ' caracteres. Divídelo en varios documentos.', 'warn');
     if (!ed.id && state.docs && state.docs.length >= MAX_DOCS) return toast('Llegaste al máximo de ' + MAX_DOCS + ' documentos. Elimina o combina alguno.', 'warn');
     var row = {
       title: title.slice(0, 160), kind: ed.kind, channel: ed.channel || null, body: body,
@@ -243,7 +243,7 @@
     try {
       var text = await extractText(file);
       if (!text) throw new Error('No encontramos texto en el archivo. Si es un PDF escaneado (imagen), copia y pega el texto.');
-      if (text.length > MAX_BODY) { text = text.slice(0, MAX_BODY); toast('El archivo es largo: se tomaron los primeros ' + MAX_BODY.toLocaleString('es-MX') + ' caracteres. Divide el resto en otro documento.', 'warn'); }
+      if (text.length > MAX_BODY) { text = text.slice(0, MAX_BODY); toast('El archivo es largo: se tomaron los primeros ' + MAX_BODY.toLocaleString((window.i18n ? i18n.locale() : 'es-MX')) + ' caracteres. Divide el resto en otro documento.', 'warn'); }
       ed.body = ed.body && ed.body.trim() ? ed.body.trim() + '\n\n' + text : text;
       ed.source = 'file';
       ed.file_name = String(file.name).slice(0, 200);
@@ -320,7 +320,7 @@
     var ta = h('textarea', { rows: '12', 'data-ckb-field': 'body', placeholder: k.ph });
     ta.value = ed.body || '';
     var counter = h('span', { class: 'ckb-count' });
-    function upd() { var n = ta.value.length; counter.textContent = n.toLocaleString('es-MX') + ' / ' + MAX_BODY.toLocaleString('es-MX'); counter.classList.toggle('over', n > MAX_BODY); }
+    function upd() { var n = ta.value.length; counter.textContent = n.toLocaleString((window.i18n ? i18n.locale() : 'es-MX')) + ' / ' + MAX_BODY.toLocaleString((window.i18n ? i18n.locale() : 'es-MX')); counter.classList.toggle('over', n > MAX_BODY); }
     ta.addEventListener('input', function () { ed.body = ta.value; upd(); });
     upd();
     box.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'ckb-lblrow' }, h('label', { class: 'ckb-lbl', text: 'Contenido' }), counter), ta));

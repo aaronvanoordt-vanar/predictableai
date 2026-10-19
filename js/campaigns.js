@@ -119,6 +119,7 @@
     failed: 'Falló', skipped: 'Omitido', opted_out: 'Se dio de baja', connection_sent: 'Conexión enviada',
     connection_accepted: 'Conexión aceptada', stopped: 'Detenido', completed: 'Cadencia completada',
     generated: 'Mensaje IA listo', branched: 'Condición evaluada',
+    task_created: 'Tarea de llamar creada', called: 'Llamada',
   };
   var CAMPAIGN_STATUS = {
     draft:     { label: 'Borrador',   pill: 'gray' },
@@ -154,7 +155,7 @@
     emailAccounts: null,
     campaigns: [],
     loading: false,
-    view: 'campaigns',         // 'campaigns' | 'inbox' | 'knowledge' (Entrenar la IA) | 'suppression' (Bajas y exclusiones)
+    view: 'campaigns',         // 'campaigns' | 'inbox' | 'knowledge' (Entrenar la IA) | 'suppression' (Bajas y exclusiones) | 'calls' (Llamadas, js/calls.js)
     activeId: null,
     builder: null,             // api del builder montado (crear / editar)
     builderHost: null,
@@ -246,13 +247,13 @@
     if (!v) return '—';
     var d = new Date(v);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   }
   function fmtDate(v) {
     if (!v) return '—';
     var d = new Date(v);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
   }
   function fmtRel(v) {
     if (!v) return '';
@@ -266,7 +267,7 @@
     if (hrs < 24) return hrs + ' h';
     var days = Math.round(hrs / 24);
     if (days < 7) return days + ' d';
-    return d.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short' });
   }
   function pill(label, kind) { return '<span class="pill pill-' + esc(kind || 'gray') + '">' + esc(label) + '</span>'; }
   function labelOf(list, value) {
@@ -327,7 +328,7 @@
     var s = String(stepChannel || '');
     return /^linkedin/.test(s) ? 'linkedin' : s;
   }
-  function chanLabel(ch) { var k = chanKey(ch); return CH[k] ? CH[k].label : String(ch || '—'); }
+  function chanLabel(ch) { var k = chanKey(ch); if (k === 'phone' || k === 'call') return 'Llamada'; return CH[k] ? CH[k].label : String(ch || '—'); }
   function chanIcon(ch) {
     var k = chanKey(ch);
     return CH[k] ? '<span class="cmp-ch-ic cmp-ch-' + k + '" title="' + esc(CH[k].label) + '">' + CH[k].icon + '</span>' : '';
@@ -524,6 +525,8 @@
   }
 
   // ── Estado de canales ────────────────────────────────────────────────────
+  // «A y B» en el idioma de la interfaz (js/i18n.js); sin i18n, en español.
+  function joinAnd(arr) { return global.i18n && global.i18n.list ? global.i18n.list(arr) : arr.join(' y '); }
   function isConn(acc) { return !!(acc && acc.status === 'connected'); }
   function defaultEmailAccount() {
     var accs = state.emailAccounts || [];
@@ -540,6 +543,17 @@
    * conecta su propio Apollo (OAuth o master key).
    */
   function emailState() {
+    if (state.status === undefined) return { state: 'loading' };
+    // Buzones propios (js/email-mailboxes.js) elegidos para el canal.
+    var mbx = global.EmailMailboxes;
+    if (mbx && mbx.activeForChannel()) {
+      var n = mbx.connected().length;
+      return { state: 'connected', detail: n + (n === 1 ? ' buzón propio' : ' buzones propios') };
+    }
+    return apolloEmailState();
+  }
+  /** Estado de la cuenta de Apollo como remitente de email (sin mirar los buzones propios). */
+  function apolloEmailState() {
     if (state.status === undefined) return { state: 'loading' };
     if (isConn(state.apollo)) {
       var cfg = state.apollo.config || {};
@@ -670,8 +684,11 @@
 
   // ── Datos ────────────────────────────────────────────────────────────────
   async function loadStatus() {
+    // Buzones propios: falla suave (sin la función desplegada el canal sigue con Apollo).
+    var mbxLoad = global.EmailMailboxes ? global.EmailMailboxes.load(true) : null;
     try {
       var r = await edgeFetch(FN_CHANNEL, { action: 'status', payload: {} });
+      if (mbxLoad) await mbxLoad;
       state.status = r || {};
       state.watiRow = r && r.wati ? r.wati : null;
       state.metaRow = r && r.meta ? r.meta : null;
@@ -814,7 +831,9 @@
     var flow = L.normalize(draft.flow);
     var sender = Object.assign({}, draft.sender || {});
     var hasEmailStep = L.actions(flow).some(function (a) { return a.channel === 'email'; });
-    if (hasEmailStep && !sender.email_account_id) {
+    var viaMailboxes = !!(global.EmailMailboxes && global.EmailMailboxes.campaignUsesMailboxes(sender));
+    if (hasEmailStep && viaMailboxes && !global.EmailMailboxes.connected().length) throw new Error('La cadencia tiene emails y eligió tus buzones: conecta al menos uno en Campañas → Email.');
+    if (hasEmailStep && !viaMailboxes && !sender.email_account_id) {
       var def = defaultEmailAccount();
       if (def) { sender.email_account_id = def.id; sender.email = def.email || ''; }
       else throw new Error('La cadencia tiene emails: conecta el canal Email primero.');
@@ -833,7 +852,12 @@
         whatsapp: Math.max(0, Number(draft.daily_caps && draft.daily_caps.whatsapp) || 0),
         email: Math.max(0, Number(draft.daily_caps && draft.daily_caps.email) || 0),
       },
-      sender: { name: sender.name || '', role: sender.role || '', company: sender.company || '', email_account_id: sender.email_account_id || '', email: sender.email || '' },
+      sender: {
+        name: sender.name || '', role: sender.role || '', company: sender.company || '', email_account_id: sender.email_account_id || '', email: sender.email || '',
+        // Buzones propios: '' = lo que diga el canal Email; mailbox_ids vacío = todos.
+        email_provider: sender.email_provider === 'apollo' || sender.email_provider === 'mailboxes' ? sender.email_provider : '',
+        mailbox_ids: Array.isArray(sender.mailbox_ids) ? sender.mailbox_ids.map(String) : [],
+      },
       flow: flow,
       origin: draft.origin || 'custom',
       review_required: !!draft.review_required,
@@ -1745,17 +1769,19 @@
       root.appendChild(h('div', { class: 'pros-hint', text: 'Cargando canales y campañas…' }));
       return;
     }
-    if (!anyConnected() && !state.campaigns.length && !state.builder && state.view !== 'knowledge' && state.view !== 'suppression') {
+    // Llamar no depende de un canal conectado: la vista de Llamadas no espera al asistente.
+    if (!anyConnected() && !state.campaigns.length && !state.builder && state.view !== 'knowledge' && state.view !== 'suppression' && state.view !== 'calls') {
       root.appendChild(renderSetupHero());
       return;
     }
-    // Las tarjetas de canales son configuración de Campañas: la Bandeja no las lleva.
-    if (state.view !== 'inbox') root.appendChild(renderChannelBar(false));
+    // Las tarjetas de canales son configuración de Campañas: la Bandeja y Llamadas no las llevan.
+    if (state.view !== 'inbox' && state.view !== 'calls') root.appendChild(renderChannelBar(false));
     root.appendChild(renderSubnav());
     updateBadge();
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
     if (state.view === 'inbox') { root.appendChild(renderInbox()); markOpenConvRead(); setTimeout(function () { syncWatiHistory(false); }, 0); }
     else if (state.view === 'knowledge') root.appendChild(knowledgeNode());
+    else if (state.view === 'calls') root.appendChild(callsNode());
     else if (state.view === 'suppression') root.appendChild(suppressionNode());
     else if (state.builder) root.appendChild(state.builderHost);
     else if (state.activeId && findCampaign(state.activeId)) root.appendChild(renderDetail());
@@ -2063,6 +2089,12 @@
       bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Entrenar la IA'));
       return bar;
     }
+    if (state.view === 'calls') {
+      bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Llamadas'));
+      bar.appendChild(h('div', { class: 'cmp-spacer' }));
+      bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-back-campaigns', text: '← Volver a Campañas' }));
+      return bar;
+    }
     if (state.view === 'suppression') {
       bar.appendChild(h('div', { class: 'cmp-secname' }, 'Campañas · Bajas y exclusiones'));
       return bar;
@@ -2073,6 +2105,10 @@
     bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-knowledge',
       title: 'Tu metodología, tus scripts ganadores y tu material: la IA los consulta antes de escribir cada mensaje.',
       text: 'Entrenar la IA' + (ks && ks.active ? ' · ' + ks.active : '') }));
+    // Llamadas (js/calls.js): las tareas de los pasos `call`, el historial y
+    // cómo se llama (dialer de Predictable o CloudTalk / Aircall / Ringover).
+    if (global.Calls) bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-calls',
+      title: 'Las llamadas de tus campañas, tu historial y cómo llamas', text: 'Llamadas' }));
     bar.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-suppression',
       title: 'Contactos a los que no se les escribe ni se les llama: bajas, tus exclusiones y registros oficiales.',
       text: 'Bajas y exclusiones' }));
@@ -2600,7 +2636,7 @@
         del.addEventListener('click', function () { confirmDeleteTemplate(t, usedBy, api); });
         top.appendChild(del);
         row.appendChild(top);
-        if (t.body) row.appendChild(h('div', { class: 'cmp-tpl-body', text: t.body }));
+        if (t.body) row.appendChild(h('div', { class: 'cmp-tpl-body notranslate', text: t.body }));
         if (t.buttons && t.buttons.length) {
           row.appendChild(h('div', { class: 'cmp-tpl-meta', text: 'Botones: ' + t.buttons.map(function (b) { return b.text; }).join(' · ') }));
         }
@@ -2794,23 +2830,35 @@
     var me = String(sender.name || '').trim();
     var role = String(sender.role || '').trim();
     var company = String(sender.company || '').trim();
-    var who = me ? me + (role && company ? ', ' + role + ' de ' + company : company ? ', de ' + company : role ? ', ' + role : '') : '';
+    // Con la interfaz en portugués el saludo sugerido se escribe en portugués
+    // de Brasil (no traducido del español) y la plantilla sale como pt_BR.
+    var pt = !!(global.i18n && global.i18n.get() === 'pt-BR');
+    var of = pt ? ' na ' : ' de ';
+    var who = me ? me + (role && company ? ', ' + role + of + company : company ? ',' + of + company : role ? ', ' + role : '') : '';
     var first = me.split(/\s+/)[0] || '';
     // Meta corta los botones en 25 caracteres: se usa la versión más larga
     // que quepa ("Hola Aarón! Todo bien, y tú?" ya tiene 28).
-    var reply = [
+    var reply = (pt ? [
+      first ? 'Olá ' + first + '! Tudo bem, e você?' : '',
+      first ? 'Oi ' + first + '! Tudo bem, e você?' : '',
+      'Tudo bem, e você?',
+    ] : [
       first ? 'Hola ' + first + '! Todo bien, y tú?' : '',
       first ? 'Hola ' + first + '! Bien, y tú?' : '',
       'Todo bien, y tú?',
-    ].filter(function (t) { return t && t.length <= 25; })[0];
+    ]).filter(function (t) { return t && t.length <= 25; })[0];
     var taken = {};
     templateCatalogue().forEach(function (t) { taken[t.name] = true; });
-    var name = 'saludo', n = 2;
-    while (taken[name]) name = 'saludo_' + (n++);
+    var base = pt ? 'saudacao' : 'saludo';
+    var name = base, n = 2;
+    while (taken[name]) name = base + '_' + (n++);
     return {
       name: name,
-      body: who ? 'Hola {{name}}, te saluda ' + who + '. Qué tal todo?' : 'Hola {{name}}! Qué tal todo?',
+      body: pt
+        ? (who ? 'Olá {{name}}, aqui é ' + who + '. Tudo bem?' : 'Olá {{name}}! Tudo bem?')
+        : (who ? 'Hola {{name}}, te saluda ' + who + '. Qué tal todo?' : 'Hola {{name}}! Qué tal todo?'),
       reply: reply,
+      language: pt ? 'pt_BR' : 'es',
     };
   }
 
@@ -2830,6 +2878,7 @@
     [['es', 'Español'], ['es_MX', 'Español (México)'], ['es_AR', 'Español (Argentina)'], ['es_ES', 'Español (España)'], ['en', 'Inglés'], ['en_US', 'Inglés (EE. UU.)'], ['pt_BR', 'Portugués (Brasil)']].forEach(function (o) {
       langS.appendChild(h('option', { value: o[0], text: o[1] }));
     });
+    langS.value = sug.language;
     grid.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Nombre' }), nameI));
     grid.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Categoría' }), catS));
     grid.appendChild(h('label', {}, h('span', { class: 'pros-lbl', text: 'Idioma' }), langS));
@@ -2990,8 +3039,9 @@
         { label: 'Cerrar' },
       ]);
     } else {
-      var es = emailState();
+      var es = apolloEmailState();
       var acfg = (state.apollo && state.apollo.config) || {};
+      if (global.EmailMailboxes) body.appendChild(h('div', { class: 'pros-lbl', text: 'Apollo' }));
       if (es.state === 'connected') {
         body.appendChild(h('p', { text: 'Cuenta conectada: ' + (es.detail || '—') + (acfg.name ? ' (' + acfg.name + ')' : '') + (acfg.connected_at ? ' · desde ' + fmtDate(acfg.connected_at) : '') }));
         body.appendChild(h('div', { class: 'pros-hint', text: 'Los emails de campaña salen como mensajes individuales desde tu cuenta; los datos revelados se cobran a los créditos de tu propia cuenta, no a los de la plataforma.' }));
@@ -3020,6 +3070,11 @@
         });
         body.appendChild(h('div', { class: 'cmp-row' }, sel, saveSel));
         body.appendChild(h('div', { class: 'pros-hint', text: 'Buzón con el que salen los emails y tus respuestas de la Bandeja. Cada campaña puede usar otro: lo eliges al lanzarla, en el resumen. Estos son todos los buzones que Apollo reporta en tu cuenta (' + accs.length + ').' }));
+      }
+      if (global.EmailMailboxes) {
+        global.EmailMailboxes.renderSection(body, { connected: isConn(state.apollo), detail: (state.apollo && state.apollo.config && state.apollo.config.email) || '' }, function () {
+          api.close(); render(); openChannelDetails('email');
+        }, function () { api.close(); openSuppression(); });
       }
       var acts = [];
       if (state.apolloOauth) acts.push({ label: es.state === 'connected' ? 'Reconectar' : 'Conectar mi cuenta', onClick: function (m, btn) { return connectEmail(btn).then(function () { m.close(); }); } });
@@ -3116,6 +3171,8 @@
       loadEmailAccounts: loadEmailAccounts,
       defaultEmailAccount: def ? { id: def.id, email: def.email || '' } : null,
       channelConnected: channelConnected,
+      usesMailboxes: function (sender) { return !!(global.EmailMailboxes && global.EmailMailboxes.campaignUsesMailboxes(sender)); },
+      mailboxPicker: function (sender, onChange) { return global.EmailMailboxes ? global.EmailMailboxes.builderPicker(sender, onChange) : null; },
       channelLabel: function (k) { return CH[k] ? CH[k].label : k; },
       linkedinCampaigns: ownLinkedinCampaigns,
       openLinkedinDesigner: openLinkedinDesigner,
@@ -3153,7 +3210,7 @@
       msg = 'Campaña lanzada: ' + res.enrolled + ' leads enrolados' + (already.size ? ' (' + already.size + ' ya estaban)' : '') + '. El motor envía cada minuto dentro de la ventana horaria.';
       msg += outdatedNote(fresh) + suppressedNote(res) + crmSuppressedNote(res.crm_suppressed);
       var missing = campaignChannels(c).filter(function (k) { return !channelConnected(k); });
-      if (missing.length) msg += ' Conecta ' + missing.map(function (k) { return CH[k].label; }).join(' y ') + ' para que esos pasos salgan.';
+      if (missing.length) msg += ' Conecta ' + joinAnd(missing.map(function (k) { return CH[k].label; })) + ' para que esos pasos salgan.';
     }
     closeBuilder();
     toast(msg, 'success');
@@ -3215,6 +3272,20 @@
   }
   function hasAnalytics() { return !!(global.campaignAnalytics && global.campaignAnalytics.mount); }
   function invalidateAnalytics() { state.ana = null; }
+  /** Vista «Llamadas»: la pinta js/calls.js en su propio host. */
+  function callsNode() {
+    if (!state.callsHost) {
+      state.callsHost = h('div');
+      if (!global.Calls || !global.Calls.mount) state.callsHost.appendChild(h('div', { class: 'pros-hint', text: 'El módulo de llamadas no cargó. Recarga la página.' }));
+    }
+    // Se monta después de colgarlo en el DOM (Calls pinta solo si su host está conectado).
+    setTimeout(function () { if (global.Calls && global.Calls.mount && state.view === 'calls') global.Calls.mount(state.callsHost, state.callsTab || null); state.callsTab = null; }, 0);
+    return state.callsHost;
+  }
+  function openCalls(tab) {
+    state.callsTab = tab || null;
+    setView('calls');
+  }
   /** «Bajas y exclusiones» (js/suppression.js): se rearma al entrar para releer la lista. */
   function suppressionNode() {
     if (!state.suppressionHost) {
@@ -3551,7 +3622,7 @@
           (waLines ? waLines + (waLines === 1 ? ' es fijo o conmutador' : ' son fijos o conmutadores') : '') +
           (waLines && ws.no_whatsapp ? ' y ' : '') +
           (ws.no_whatsapp ? ws.no_whatsapp + ' ya ' + (ws.no_whatsapp === 1 ? 'falló' : 'fallaron') + ' como sin WhatsApp' : '') +
-          ': no reciben la plantilla (' + ws.avoided + ' envío' + (ws.avoided === 1 ? '' : 's') + ' que no se gasta' + (ws.avoided === 1 ? '' : 'n') + ') y pasan directo al siguiente canal.');
+          ': no reciben la plantilla (' + (ws.avoided === 1 ? '1 envío que no se gasta' : ws.avoided + ' envíos que no se gastan') + ') y pasan directo al siguiente canal.');
       }
       if (ws.unknown) hints.push(ws.unknown + (ws.unknown === 1 ? ' número no dice' : ' números no dicen') + ' si es celular (p. ej. México o Argentina sin el 9): se les envía y, si WhatsApp responde que no está, no se les vuelve a intentar en ninguna campaña.');
     }
@@ -3598,7 +3669,7 @@
       out += '<div><div class="pros-lbl">' + esc(L.nodeTitle(a)) + ' ' + (st ? pill(st.label, st.pill) : pill('aún no escrito', 'gray')) + '</div>';
       if (m && m.status === 'error') out += '<div class="pros-note-red" style="margin:0">' + esc(m.error_detail || 'No se pudo generar.') + '</div>';
       else if (m && String(m.body || '').trim()) {
-        out += '<div class="cmp-ai-block">' + (m.subject ? '<b>' + esc(m.subject) + '</b><br>' : '') + esc(m.body) + '</div>';
+        out += '<div class="cmp-ai-block notranslate">' + (m.subject ? '<b>' + esc(m.subject) + '</b><br>' : '') + esc(m.body) + '</div>';
         if (m.status === 'draft' || m.status === 'approved') {
           out += '<div class="pros-actions"><button type="button" class="btn btn-ghost btn-sm" data-action="msg-regen" data-id="' + esc(String(m.id)) + '" data-credit-cost="outreach_message" data-credit-muted="">Regenerar</button></div>';
         }
@@ -3794,7 +3865,7 @@
       item.appendChild(h('div', { class: 'cmp-conv-time', text: fmtRel(conv.last && conv.last.sent_at) }));
       item.appendChild(h('div', { class: 'cmp-conv-sub', text: convSub(conv) }));
       var snippet = conv.last ? ((conv.last.direction === 'out' && !isReaction(conv.last) ? 'Tú: ' : '') + bubbleText(conv.last)) : '';
-      item.appendChild(h('div', { class: 'cmp-conv-snip', text: snippet }));
+      item.appendChild(h('div', { class: 'cmp-conv-snip notranslate', text: snippet }));
       list.appendChild(item);
     });
     left.appendChild(list);
@@ -4111,7 +4182,15 @@
     if (liUrl) links.appendChild(h('a', { href: liUrl, target: '_blank', rel: 'noopener', text: 'Perfil de LinkedIn' }));
     if (m && hasEmail(m)) links.appendChild(h('span', { class: 'pros-hint', text: m.email }));
     if (m && hasPhone(m)) links.appendChild(h('span', { class: 'pros-hint', text: m.phone }));
-    if (conv.channels.email && m && m.email) {
+    // Clic para llamar (js/dialer.js): el resultado mueve el CRM y la campaña.
+    if (m && hasPhone(m) && global.Dialer) {
+      var callBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', title: 'Llamar con el dialer de Predictable o tu proveedor', text: 'Llamar' });
+      callBtn.addEventListener('click', function () { global.Dialer.call(m); });
+      links.appendChild(callBtn);
+    }
+    // Con buzones propios el texto de la respuesta ya llega completo: Gmail solo hace falta para los emails de Apollo.
+    var apolloEmail = conv.messages.some(function (x) { return chanKey(x.channel) === 'email' && x.provider !== 'mailbox'; });
+    if (conv.channels.email && m && m.email && apolloEmail) {
       if (state.gmail && state.gmail.connected && pros().openThread) links.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'thread-gmail', 'data-key': conv.key, text: 'Ver hilo completo en Gmail' }));
       else if (state.gmail && !state.gmail.connected && pros().connectGmail) links.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'gmail-connect', text: 'Conectar Gmail para leer el hilo completo' }));
     }
@@ -4144,6 +4223,12 @@
     head.appendChild(left);
     head.appendChild(links);
     card.appendChild(head);
+    // Las llamadas con este lead (resultado, grabación y el reporte del coach).
+    if (m && global.Calls) {
+      var callsBox = h('div', { style: 'padding:0 14px' });
+      card.appendChild(callsBox);
+      global.Calls.renderLeadCalls(callsBox, m.id).catch(function () {});
+    }
     var radarSig = memberRadar(m);
     if (radarSig) card.appendChild(renderRadarOrigin(conv, radarSig));
 
@@ -4164,19 +4249,19 @@
         var qm = conv.messages.find(function (x) { return x.id === pl.reply_to.id; });
         var q = h('div', { class: 'cmp-quote ' + (pl.reply_to.direction === 'in' ? 'in' : 'out') });
         q.appendChild(h('div', { class: 'cmp-quote-who', text: pl.reply_to.direction === 'in' ? convName(conv) : 'Tú' }));
-        q.appendChild(h('div', { class: 'cmp-quote-txt', text: quoteSnippet(qm ? qm.body : pl.reply_to.body, pl.reply_to.channel) || 'Mensaje' }));
+        q.appendChild(h('div', { class: 'cmp-quote-txt notranslate', text: quoteSnippet(qm ? qm.body : pl.reply_to.body, pl.reply_to.channel) || 'Mensaje' }));
         b.appendChild(q);
       }
       var ctx = msg.direction === 'out' ? stepContext(msg) : '';
       if (ctx) b.appendChild(h('div', { class: 'cmp-bubble-ctx', text: ctx }));
-      if (chanKey(msg.channel) === 'email' && pl.subject) b.appendChild(h('div', { class: 'cmp-bubble-subj', text: pl.subject }));
+      if (chanKey(msg.channel) === 'email' && pl.subject) b.appendChild(h('div', { class: 'cmp-bubble-subj notranslate', text: pl.subject }));
       var media = isMediaMsg(msg);
       if (media) b.appendChild(renderMedia(msg));
       var raw = bubbleText(msg);
       // Los emails salientes guardan "Asunto: …" al inicio del cuerpo: el asunto ya va arriba.
       if (chanKey(msg.channel) === 'email' && pl.subject && raw.indexOf('Asunto: ') === 0) raw = raw.replace(/^Asunto: [^\n]*\n+/, '');
       // En un medio, el texto es la etiqueta ("Sticker", "📷 Foto"): solo se muestra si es un pie de foto real.
-      if (!media || MEDIA_LABELS.indexOf(String(raw).trim()) === -1) b.appendChild(h('div', { style: 'white-space:pre-wrap', text: raw }));
+      if (!media || MEDIA_LABELS.indexOf(String(raw).trim()) === -1) b.appendChild(h('div', { class: 'notranslate', style: 'white-space:pre-wrap', text: raw }));
       var meta = h('div', { class: 'cmp-bubble-meta', html: chanIcon(msg.channel) });
       if (msg.direction === 'out') {
         meta.appendChild(h('span', { text: fmtDateTime(msg.sent_at) }));
@@ -4363,7 +4448,7 @@
       var qchip = h('div', { class: 'cmp-quote cmp-quote-edit ' + (qt.direction === 'in' ? 'in' : 'out') });
       var qbody = h('div', { class: 'grow' });
       qbody.appendChild(h('div', { class: 'cmp-quote-who', text: 'Respondiendo a ' + (qt.direction === 'in' ? convName(conv) : 'tu mensaje') }));
-      qbody.appendChild(h('div', { class: 'cmp-quote-txt', text: quoteSnippet(bubbleText(qt), qt.channel) || 'Mensaje' }));
+      qbody.appendChild(h('div', { class: 'cmp-quote-txt notranslate', text: quoteSnippet(bubbleText(qt), qt.channel) || 'Mensaje' }));
       qchip.appendChild(qbody);
       qchip.appendChild(h('button', { type: 'button', class: 'cmp-attach-x', 'data-action': 'reply-to-clear', 'data-key': conv.key, title: 'Quitar la cita', 'aria-label': 'Quitar la cita', text: '✕' }));
       box.appendChild(qchip);
@@ -4443,6 +4528,10 @@
     if (action === 'csv-linkedin') { var c9 = findCampaign(state.activeId); if (c9) downloadLinkedinCsv(c9); return; }
     if (action === 'cmp-new') { if (btn.disabled) return; return openBuilder(null); }
     if (action === 'cmp-knowledge') return openKnowledge();
+    if (action === 'cmp-calls') return openCalls();
+    // Volver a Campañas pasa otra vez por el bloqueo de Apollo de Prospección
+    // (Llamadas está libre de él; la lista de campañas no).
+    if (action === 'cmp-back-campaigns') { setView('campaigns'); if (pros().show) pros().show('campanas'); return; }
     if (action === 'cmp-suppression') return openSuppression();
     if (action === 'cmp-open') return openCampaign(id);
     if (action === 'cmp-back') { state.activeId = null; closeBuilder(); return render(); }
@@ -4519,7 +4608,7 @@
       if (!c1) return;
       if (status === 'active') {
         var missing = campaignChannels(c1).filter(function (k) { return !channelConnected(k); });
-        if (missing.length) toast('Conecta ' + missing.map(function (k) { return CH[k].label; }).join(' y ') + ' para que esos pasos salgan.', 'warn');
+        if (missing.length) toast('Conecta ' + joinAnd(missing.map(function (k) { return CH[k].label; })) + ' para que esos pasos salgan.', 'warn');
       }
       var r1 = btnLoading(btn, '⏳');
       return setCampaignStatus(c1.id, status).then(function () {
@@ -4997,7 +5086,7 @@
   /** Cambia de vista ('campaigns' | 'inbox' | 'knowledge' | 'suppression'); si la pestaña aún no cargó, se aplica al montar. */
   function setView(view) {
     // 'analytics' era una vista aparte hasta el 2026-10-07: un valor guardado viejo cae en Campañas.
-    var v = view === 'inbox' || view === 'knowledge' || view === 'suppression' ? view : 'campaigns';
+    var v = view === 'inbox' || view === 'knowledge' || view === 'suppression' || view === 'calls' ? view : 'campaigns';
     if (v === 'knowledge') state.knowledgeHost = null;
     if (v === 'suppression') state.suppressionHost = null;
     saveView(v);
@@ -5018,6 +5107,10 @@
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
 
-  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openConversation: openConversation, openLinkedinDesigner: openLinkedinDesigner };
+  // Buzones propios del canal Email: se pintan con los mismos helpers que Campañas.
+  if (global.EmailMailboxes) {
+    global.EmailMailboxes.init({ h: h, esc: esc, toast: toast, errMsg: errMsg, openModal: openModal, edgeFetch: edgeFetch, btnLoading: btnLoading, confirmModal: confirmModal, pill: pill, fmtDateTime: fmtDateTime, fmtDate: fmtDate });
+  }
+  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openCalls: openCalls, openConversation: openConversation, openLinkedinDesigner: openLinkedinDesigner };
   console.log('[campaigns] module loaded');
 })(window);

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Dejar de recibir correos</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<style>
+  :root { --bg: #F7F8FA; --text: #0A0A0F; --muted: rgba(10,10,15,0.6); --accent: #1F4BFF; --ok: #1B8A5A; --err: #D64545; --card: #FFFFFF; --hair: rgba(10,10,15,0.10); }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0B0C10; --text: #F2F3F5; --muted: rgba(242,243,245,0.6); --card: #15171D; --hair: rgba(242,243,245,0.12); }
+  }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; -webkit-font-smoothing: antialiased; }
+  .box { max-width: 420px; margin: 0 16px; padding: 28px 24px; text-align: center; background: var(--card); border: 1px solid var(--hair); border-radius: 14px; }
+  h1 { font-size: 19px; margin: 0 0 10px; }
+  p { color: var(--muted); font-size: 14px; line-height: 1.55; margin: 0 0 18px; }
+  button { font: inherit; font-size: 14px; font-weight: 600; padding: 10px 20px; border-radius: 999px; border: 0; background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: default; }
+  .ok { color: var(--ok); font-size: 14px; }
+  .err { color: var(--err); font-size: 13px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<main class="box">
+  <h1 id="title">¿Dejar de recibir estos correos?</h1>
+  <p id="text">Si confirmas, este remitente no te volverá a escribir por email.</p>
+  <button type="button" id="go">Confirmar la baja</button>
+  <div class="err" id="err"></div>
+</main>
+<script src="js/config.js"></script>
+<script>
+  // Página pública de baja (List-Unsubscribe de los buzones propios). La
+  // función email-unsubscribe redirige el GET acá: la baja solo ocurre con el
+  // clic (POST), así los escáneres de enlaces del correo no dan de baja a nadie.
+  // No carga auth-guard.js: la abre el destinatario, que no tiene cuenta.
+  (function () {
+    var token = new URLSearchParams(location.search).get('t') || '';
+    var btn = document.getElementById('go');
+    var err = document.getElementById('err');
+    if (!token) {
+      btn.style.display = 'none';
+      err.textContent = 'El enlace de baja está incompleto. Responde «baja» al correo y el remitente dejará de escribirte.';
+      return;
+    }
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      err.textContent = '';
+      fetch(window.SUPABASE_CONFIG.url + '/functions/v1/email-unsubscribe?t=' + encodeURIComponent(token), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'List-Unsubscribe=One-Click',
+      }).then(function (res) {
+        return res.text().then(function (t) {
+          if (!res.ok) throw new Error(t || ('Error ' + res.status));
+          document.getElementById('title').textContent = 'Listo';
+          document.getElementById('text').textContent = 'No recibirás más correos de este remitente.';
+          document.getElementById('text').className = 'ok';
+          btn.style.display = 'none';
+        });
+      }).catch(function (e) {
+        btn.disabled = false;
+        err.textContent = (e && e.message) || 'No se pudo registrar la baja. Intenta de nuevo.';
+      });
+    });
+  })();
+</script>
+</body>
+</html>

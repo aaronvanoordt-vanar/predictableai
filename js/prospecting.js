@@ -179,13 +179,13 @@
   }
   function fmtNum(n) {
     var x = Number(n);
-    return isFinite(x) ? x.toLocaleString('es-MX') : String(n == null ? 0 : n);
+    return isFinite(x) ? x.toLocaleString((window.i18n ? i18n.locale() : 'es-MX')) : String(n == null ? 0 : n);
   }
   function fmtDate(v) {
     if (!v) return '—';
     var d = new Date(v);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { year: 'numeric', month: 'short', day: 'numeric' });
   }
   function isMaskedEmail(email) {
     if (!email) return true;
@@ -248,6 +248,7 @@
   var SVG_TRASH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>';
   var SVG_USER_PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>';
   // Icon matching the Campañas sidebar glyph (CTA «Crear campaña con esta lista»).
+  var SVG_PHONE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h3.5l1.8 4.6-2.3 1.4a10 10 0 0 0 5 5l1.4-2.3L19 13.5V17a2 2 0 0 1-2.1 2A16 16 0 0 1 3 5.1 2 2 0 0 1 5 3z"/></svg>';
   var SVG_RESEARCH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h9M4 10h6M4 15h5"/><circle cx="16.5" cy="14.5" r="3.5"/><path d="M19 17l2.5 2.5"/></svg>';
   var SVG_CAMPAIGN = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>';
 
@@ -2509,6 +2510,9 @@
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
       (aiCols() ? aiCols().cellsHtml(m) : '') +
       '<td style="white-space:nowrap">' +
+        // Clic para llamar (js/dialer.js): dialer de Predictable o el proveedor conectado.
+        (window.Dialer && String(m.phone || '').replace(/\D/g, '').length >= 8
+          ? '<button type="button" class="pros-iconbtn" data-action="call-member" data-id="' + id + '" title="Llamar">' + SVG_PHONE + '</button>' : '') +
         '<button type="button" class="pros-iconbtn pros-research-btn' + (open ? ' on' : '') + (hasResearch ? ' has' : '') + '" data-action="toggle-research" data-id="' + id + '" title="Investigación previa: notas y ángulo con IA" aria-expanded="' + (open ? 'true' : 'false') + '">' + SVG_RESEARCH + '</button>' +
         championBtnHtml(m) +
         '<button type="button" class="pros-iconbtn" data-action="edit-member" data-id="' + id + '" title="Editar contacto">' + SVG_EDIT + '</button>' +
@@ -2651,7 +2655,7 @@
   function fmtDay(iso) {
     var d = new Date(iso);
     if (isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('es', { day: 'numeric', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric' });
   }
   function extLink(url, label) {
     if (!/^https?:\/\//i.test(String(url || ''))) return esc(label || '');
@@ -2753,6 +2757,8 @@
           '<button type="button" class="btn btn-ai btn-sm" data-action="research-run" data-id="' + id + '" data-credit-cost="lead_research"' + (running ? ' disabled' : '') + '>' +
             (running ? 'Investigando…' : (r.angle ? 'Volver a investigar' : 'Investigar con IA')) + '</button></div>' +
         right +
+        // Las llamadas del lead con el reporte del Meeting Coach (js/calls.js).
+        '<div data-lead-calls="' + id + '"></div>' +
         // Agente de voz IA (js/voice-agent.js): llamadas a este lead con su resultado.
         '<div data-voice-mount="' + id + '"></div>' +
       '</div>' +
@@ -2982,6 +2988,7 @@
     html += '<div class="pros-actions" style="padding:10px 18px 14px">' +
       (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer</button>') +
       (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>') +
+      (window.Dialer ? '<button type="button" class="btn btn-ghost btn-sm" data-action="power-dial"' + (st.members.length ? '' : ' disabled') + ' title="Llama uno por uno a los seleccionados (o a todos los que ves) y marca el resultado de cada uno">' + SVG_PHONE + ' Llamar ' + (n ? 'a los seleccionados' : 'a la lista') + '</button>' : '') +
       (aiCols() ? aiCols().addButtonHtml() : '') +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-members">Actualizar</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="export-csv"' + (st.members.length ? '' : ' disabled') + '>Exportar CSV</button>' +
@@ -3020,6 +3027,11 @@
       ? { id: active.getAttribute('data-id'), start: active.selectionStart, end: active.selectionEnd, scroll: active.scrollTop }
       : null;
     host.innerHTML = html;
+    if (window.Calls) {
+      Array.prototype.forEach.call(host.querySelectorAll('[data-lead-calls]'), function (el) {
+        window.Calls.renderLeadCalls(el, el.getAttribute('data-lead-calls')).catch(function () {});
+      });
+    }
     if (window.VoiceAgent) window.VoiceAgent.mountAll(host);
     if (keepNotes) {
       var again = host.querySelector('textarea[data-action="research-notes"][data-id="' + keepNotes.id + '"]');
@@ -3222,6 +3234,18 @@
       return;
     }
     if (action === 'research-run') return runResearch(btn, btn.getAttribute('data-id'));
+    if (action === 'call-member') {
+      var cm = findListMember(btn.getAttribute('data-id'));
+      if (cm && window.Dialer) window.Dialer.call(cm, { onDone: function () { reloadMembers({ keepSelection: true }); } });
+      return;
+    }
+    if (action === 'power-dial') {
+      if (!window.Dialer) return;
+      var pdRows = st.selected.size ? selectedListMembers() : visibleListMembers();
+      var lst = isAllList() ? null : findList(st.activeListId);
+      window.Dialer.power(pdRows.map(function (m) { return { member: m, opts: {} }; }), { title: lst ? lst.name : 'Todos los contactos' });
+      return;
+    }
     if (action === 'toggle-champion') return toggleChampion(String(btn.getAttribute('data-id')));
     if (action === 'registry-run') return runRegistry(btn.getAttribute('data-id'));
     if (action === 'registry-pick') return runRegistry(btn.getAttribute('data-id'), { registry: btn.getAttribute('data-registry'), registry_id: btn.getAttribute('data-rid') });
@@ -3546,7 +3570,7 @@
     if (!sel.length && !emailSel.length) return toast('Los contactos seleccionados ya tienen teléfono y email, o se están buscando.', 'info');
     var parts = [];
     if (sel.length) parts.push('el teléfono de ' + fmtNum(sel.length) + ' contacto' + (sel.length === 1 ? '' : 's') + ' (y su email si falta)');
-    if (emailSel.length) parts.push('el email de ' + fmtNum(emailSel.length) + ' contacto' + (emailSel.length === 1 ? '' : 's') + ' que ya tiene' + (emailSel.length === 1 ? '' : 'n') + ' teléfono');
+    if (emailSel.length) parts.push(emailSel.length === 1 ? 'el email de 1 contacto que ya tiene teléfono' : 'el email de ' + fmtNum(emailSel.length) + ' contactos que ya tienen teléfono');
     var cascadeP = h('p', { style: 'font-size:12.5px;color:var(--text2);margin:0 0 12px;line-height:1.55;display:none' });
     var bodyN = h('div', null,
       h('p', {
@@ -4232,11 +4256,24 @@
   // Buscar, enriquecer y enviar email salen de la cuenta de Apollo del
   // usuario, así que no se entra a ninguna pestaña de Prospección sin
   // conectarla. La Bandeja queda libre: junta respuestas de WhatsApp y
-  // LinkedIn, que no dependen de Apollo. El estado y el asistente de
-  // conexión son los de js/campaigns.js (una sola fuente).
+  // LinkedIn, que no dependen de Apollo. Llamadas (vista de Campañas,
+  // js/calls.js) también (pedido del dueño, 2026-10-18): el dialer de
+  // Predictable y CloudTalk/Aircall/Ringover no usan Apollo. El estado y el
+  // asistente de conexión son los de js/campaigns.js (una sola fuente).
   var apollo = { connected: null, checking: null, error: null, pendingTab: null };
+  var APOLLO_FREE_VIEWS = ['inbox', 'calls'];
   function apolloExempt(tabId) {
-    return tabId === 'campanas' && window.campaigns && typeof window.campaigns.currentView === 'function' && window.campaigns.currentView() === 'inbox';
+    return tabId === 'campanas' && window.campaigns && typeof window.campaigns.currentView === 'function' && APOLLO_FREE_VIEWS.indexOf(window.campaigns.currentView()) !== -1;
+  }
+  /** Abre Campañas → Llamadas (sin Apollo). */
+  function openCalls(tab) {
+    if (!window.campaigns || typeof window.campaigns.openCalls !== 'function') return;
+    window.campaigns.openCalls(tab || null);
+    // No se usa goTab: el clic del ítem «Campañas» del sidebar devolvería la vista a la lista.
+    var item = document.querySelector('.nav-item[data-page="pro-main"][data-pros-tab="campanas"]:not([data-pros-view])');
+    if (typeof window.nav === 'function') window.nav(item, 'pro-main');
+    ensureBuilt();
+    switchTab('campanas');
   }
   function checkApollo(force) {
     if (!window.campaigns || typeof window.campaigns.apolloStatus !== 'function') {
@@ -4284,6 +4321,12 @@
     }
     card.appendChild(row);
     card.appendChild(h('div', { class: 'pros-hint', text: '¿Todavía no tienes cuenta? El asistente te muestra cómo crearla.' }));
+    // Llamar no necesita Apollo: la cola de llamadas, el historial y el dialer quedan a mano.
+    if (window.Calls && window.campaigns && typeof window.campaigns.openCalls === 'function') {
+      var callsRow = h('div', { class: 'pros-hint', style: 'border-top:1px solid var(--border);padding-top:12px' }, 'Para llamar no necesitas Apollo. ');
+      callsRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Ir a Llamadas', onclick: function () { openCalls(); } }));
+      card.appendChild(callsRow);
+    }
     state.gate.appendChild(card);
   }
   document.addEventListener('predictable:apollo-status', function (ev) {
@@ -4352,6 +4395,7 @@
 
   // ── Public API ─────────────────────────────────────────────────────────
   window.prospecting = {
+    openCalls: openCalls,
     // Acción directa del Intelligence Hub: abre Buscar con palabras clave de
     // empresa (q_organization_keyword_tags) y lanza la búsqueda.
     searchFor: function (opts) {

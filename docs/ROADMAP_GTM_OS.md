@@ -23,7 +23,7 @@ Fecha: 2026-10-17. Versión viva (con checklist) en Claude Docs: https://claude.
 | 11 | Mapa de TAM con tiers | Análisis de mercado sin tabla de cuentas | Tabla de TAM por país con tiers y cobertura | P2 |
 | 12 | Señales de engagement en LinkedIn | No | Detector del Radar | P2 |
 | 13 | Píxel de visitantes propio | Solo vía Apollo | Script propio; medir rendimiento en Latam | P2 |
-| 14 | Publicación de contenido en LinkedIn | No | Motor de social selling con aprobación | P3 |
+| 14 | Publicación de contenido en LinkedIn | Construido (2026-10-17): ideas, borradores, calendario con aprobación, Posts API + «Copiar y abrir LinkedIn» (`docs/LINKEDIN_CONTENT.md`) | Imágenes y carruseles; páginas y métricas cuando LinkedIn apruebe la Community Management API | P3 |
 | 15 | Agencias: org por cliente, factura consolidada, directorio | Espacios por cliente sin facturación consolidada | Créditos/facturación por cliente, cambio rápido, directorio | P2 |
 | 16 | Prueba gratis de 1.000 créditos | 100 | Revisar la oferta de entrada | P1 |
 
@@ -76,8 +76,8 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 
 **P1**
 - [ ] Columnas de IA en Listas — en curso (sesión propia)
-- [ ] Dialer nativo con la llamada en el Meeting Coach
-- [ ] Conectores CloudTalk, Aircall, Ringover
+- [x] Dialer nativo con la llamada en el Meeting Coach (`docs/TELEFONIA.md`)
+- [x] Conectores CloudTalk, Aircall, Ringover (`docs/TELEFONIA.md`)
 - [ ] LinkedIn nativo
 - [x] CRM de cuentas y oportunidades
 - [x] Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos
@@ -88,22 +88,24 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [ ] APIs oficiales de licitaciones
 - [x] ¿El número está en WhatsApp? antes de gastar plantilla (tipo de línea del normalizador del waterfall + aprendizaje de #131026; no existe validación oficial previa: `docs/OMNICANAL.md`)
 - [x] Listas "No llamar" — lista de supresión por canal + bajas centralizadas + registros oficiales (`docs/COMPLIANCE_LATAM.md`)
+- [x] Horarios de contacto de Colombia (Ley 2300): horario legal, festivos y un envío por día por lead en `campaign-run` (`_shared/contact-rules.ts`)
 - [ ] Calidad de reunión en el portal y benchmarks de Eleva
 - [ ] Agendamiento con recordatorios por WhatsApp
 - [ ] Cobro local y CFDI (`docs/BILLING_LATAM.md`)
   - [x] Fase A: factura de Stripe con el número fiscal del cliente, moneda local y OXXO/Pix en recargas (#344; faltan los pasos del Dashboard de Stripe y la consulta al contador sobre el 18-B)
   - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC — en curso: CFDI en modo prueba con Facturapi; falta la entidad
 - [x] Facturación y créditos por cliente para agencias — créditos repartidos a los espacios, tope mensual y alerta, consumo por cliente con CSV, selector de espacios y directorio (`agencias.html`); migración `20261018180006`. La factura consolidada sale sola: solo la agencia paga (sin cambios en Stripe)
-- [ ] Equipo: metas de actividad, ranking, revisión del Meeting Coach con comentarios y rampa — en curso (sesión propia; las llamadas se enganchan cuando exista la telefonía)
+- [x] Equipo: metas de actividad, ranking, revisión del Meeting Coach con comentarios y rampa — PR #360 (las llamadas se enganchan cuando exista la telefonía: `window.Team.registerCallSource`)
 - [x] Mapa de TAM — PR #355 (`js/tam-map.js`, `_shared/tam.ts`, edge function `tam-map`)
 - [ ] Señales de engagement en LinkedIn y píxel web
 - [x] Señales: cambio de empresa de clientes y champions (Radar → Champions, detector `champion_moves`)
 - [x] Inbound: widget web (formulario + botón de WhatsApp), enrutamiento a la nómina de Equipo y speed-to-lead — PR #368 (`docs/INBOUND.md`)
+- [x] Portugués completo (pt-BR): interfaz, IA y formatos
 
 **P3**
-- [ ] Automatizaciones de punta a punta
-- [ ] Contenido en LinkedIn con aprobación
-- [ ] Agente de voz IA — PR #365 en revisión (`docs/AGENTE_DE_VOZ.md`: Retell + Twilio; usa la lista «No contactar» en el canal de llamadas)
+- [x] Automatizaciones de punta a punta (`docs/AUTOMATIONS.md`)
+- [x] Contenido en LinkedIn con aprobación (`docs/LINKEDIN_CONTENT.md`; páginas de empresa y métricas esperan la aprobación de la Community Management API)
+- [x] Agente de voz IA — PR #365 (`docs/AGENTE_DE_VOZ.md`: Retell + Twilio; usa la lista «No contactar» en el canal de llamadas). Pendiente en producción: migración, despliegue y secrets
 
 ## Fuentes
 
