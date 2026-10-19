@@ -4477,7 +4477,7 @@
     foot.appendChild(h('button', {
       type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-signal-ai', 'data-key': conv.key,
       'data-credit-cost': 'outreach_message', 'data-credit-muted': '',
-      title: 'Escribe un mensaje cuyo gancho es esta señal, con las metodologías de venta, el estilo y la base de conocimiento con que entrenaste la IA. Cae en el cuadro de respuesta para que lo edites; nunca se envía solo.',
+      title: 'Escribe un mensaje cuyo gancho es esta señal, con el estilo, las reglas y el conocimiento de tu empresa con que entrenaste la IA. Cae en el cuadro de respuesta para que lo edites; nunca se envía solo.',
       text: 'Redactar con IA sobre esta señal',
     }));
     box.appendChild(foot);
