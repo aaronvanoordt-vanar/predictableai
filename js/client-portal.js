@@ -287,7 +287,7 @@
       '<div class="cp-topbar">' +
         '<span class="cp-brand">predictable<span style="color:var(--accent)">.ai</span> · Portal del cliente</span>' +
         '<div class="cp-topbar-right">' +
-          '<div data-i18n-picker="es,pt-BR"></div>' +
+          '<div data-i18n-picker="es,en,pt-BR"></div>' +
           '<span class="cp-save-ind" id="cp-save-ind"></span>' +
           (state.legacy ? '<button class="cp-ghost" id="cp-logout">Cerrar sesión</button>' : '') +
         '</div>' +

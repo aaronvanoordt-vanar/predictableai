@@ -614,7 +614,7 @@
       '<p class="lic-p">Ideas y posts escritos con tu Contexto, tu análisis de mercado, lo que ve el Radar, lo que te funciona y tu voz entrenada. Nada sale sin tu aprobación, y la IA no inventa casos, clientes ni cifras: si no tienes prueba social cargada, el post no la menciona.</p>' +
       renderConnection() + '</div>');
     if (state.dbError) html.push('<div class="lic-note err">' + esc(state.dbError) + '</div>');
-    if (due) html.push('<div class="lic-note due">' + due + ' post' + (due === 1 ? '' : 's') + ' programado' + (due === 1 ? '' : 's') + ' a mano ya ' + (due === 1 ? 'debería' : 'deberían') + ' estar en LinkedIn.</div>');
+    if (due) html.push('<div class="lic-note due">' + (due === 1 ? '1 post programado a mano ya debería estar en LinkedIn.' : due + ' posts programados a mano ya deberían estar en LinkedIn.') + '</div>');
 
     html.push('<div class="lic-block lic-gen"><input class="lic-in" data-f="focus" maxlength="500" placeholder="Foco opcional: un tema, un segmento, una objeción, un evento…" value="' + esc(state.focus) + '">' +
       btn(state.busy.ideas ? 'Pensando ideas…' : 'Generar ideas con IA', 'data-act="ideas" data-credit-cost="linkedin_ideas"' + (state.busy.ideas || !fnReady ? ' disabled' : ''), 'btn-primary') +

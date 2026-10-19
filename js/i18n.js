@@ -363,8 +363,8 @@
   // usuario elige portugués, para no sumarle ese peso a quien usa español.
   var LANGS = {
     es: { locale: 'es-MX', html: 'es', label: 'ES · Español', short: 'ES', name: 'Español' },
-    en: { locale: 'en-US', html: 'en', label: 'EN · English', short: 'EN', name: 'English' },
-    'pt-BR': { locale: 'pt-BR', html: 'pt-BR', label: 'PT · Português', short: 'PT', name: 'Português (Brasil)', dict: 'i18n/pt-BR.js?v=20261017' }
+    en: { locale: 'en-US', html: 'en', label: 'EN · English', short: 'EN', name: 'English', dict: 'i18n/en.js?v=20261019' },
+    'pt-BR': { locale: 'pt-BR', html: 'pt-BR', label: 'PT · Português', short: 'PT', name: 'Português (Brasil)', dict: 'i18n/pt-BR.js?v=20261019' }
   };
   var DICTS = window.I18N_DICTS = window.I18N_DICTS || {};
   DICTS.en = Object.assign({}, ES_EN, DICTS.en || {});
@@ -566,21 +566,25 @@
     paintToggle();
     if (lang === 'es') return;
     var C = compile(lang);
-    if (!C) { loadDict(lang); return; }
+    if (LANGS[lang].dict && !loadedDict[lang]) loadDict(lang);
+    if (!C) return;
     document.documentElement.lang = LANGS[lang].html;
     walkTree(document.body, C);
     translateTitle(C);
     startObserver();
   }
 
-  var loading = {};
+  // EN arranca con ES_EN (arriba) y completa con js/i18n/en.js; pt-BR viene
+  // entero de su archivo. Cada archivo se pide una sola vez.
+  var loading = {}, loadedDict = {};
   function loadDict(lang) {
     var meta = LANGS[lang];
-    if (!meta || !meta.dict || DICTS[lang] || loading[lang]) return;
+    if (!meta || !meta.dict || loadedDict[lang] || loading[lang]) return;
     loading[lang] = true;
     var s = document.createElement('script');
     s.src = SCRIPT_BASE + meta.dict;
-    s.onload = function () { compiled[lang] = null; apply(); document.dispatchEvent(new CustomEvent('predictable:i18n-ready', { detail: { lang: lang } })); };
+    // Con el diccionario nuevo se revisan de nuevo los nodos que antes no tenían traducción.
+    s.onload = function () { loadedDict[lang] = true; loading[lang] = false; compiled[lang] = null; done = new WeakMap(); doneAttr = new WeakMap(); apply(); document.dispatchEvent(new CustomEvent('predictable:i18n-ready', { detail: { lang: lang } })); };
     s.onerror = function () { loading[lang] = false; console.warn('[i18n] no se pudo cargar el diccionario', lang); };
     (document.head || document.documentElement).appendChild(s);
   }
@@ -770,7 +774,7 @@
     var want = (host.getAttribute('data-i18n-picker') || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
     var langs = want.length ? want.map(cleanLang) : Object.keys(LANGS);
     host.setAttribute('role', 'radiogroup');
-    if (!host.getAttribute('aria-label')) host.setAttribute('aria-label', 'Idioma');
+    if (!host.getAttribute('aria-label')) host.setAttribute('aria-label', (currentLang() === 'en' ? 'Language' : 'Idioma'));
     host.setAttribute('data-no-i18n', '');
     langs.forEach(function (l) {
       var b = document.createElement('button');

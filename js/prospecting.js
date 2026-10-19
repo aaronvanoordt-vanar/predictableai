@@ -3882,8 +3882,8 @@
     var pending = st.members.filter(function (m) { return m.email_status === 'pending' && !m.enrich_requested_at; }).length;
     if (!pending) return '';
     return '<div class="pros-enrich-banner"><div class="pros-enrich-row"><span class="pill pill-amber">Pendiente</span>' +
-      '<span>' + esc(fmtNum(pending)) + ' contacto' + (pending === 1 ? '' : 's') + ' pendiente' + (pending === 1 ? '' : 's') +
-      ' de enriquecer.</span></div></div>';
+      '<span>' + (pending === 1 ? '1 contacto pendiente de enriquecer.' : esc(fmtNum(pending)) + ' contactos pendientes de enriquecer.') +
+      '</span></div></div>';
   }
 
   // Repinta solo las píldoras y el banner (sin re-renderizar la tabla ni
