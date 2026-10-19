@@ -79,7 +79,7 @@ Con estos secrets puestos, «Conectar LinkedIn» usa esta app (perfil + páginas
 
 1. Aplica la migración `supabase/migrations/20261018180010_linkedin_content.sql`.
 2. `supabase functions deploy linkedin-content` (con JWT: el cron usa la service role). También sirve Actions → Deploy Edge Functions.
-3. Programa el cron (SQL comentado al final de la migración): `run_due` cada 5 minutos con la service role. Sin el cron, «Publicar ahora» funciona igual, pero lo programado como automático no sale solo.
+3. El cron lo programa la migración `20261019041000_linkedin_content_cron.sql` (job `linkedin-content`, `run_due` cada 5 minutos): toma la URL y la service role de un cron que ya existe en producción, así la llave no entra al repo. Sin el cron, «Publicar ahora» funciona igual, pero lo programado como automático no sale solo.
 
 Sin los secrets de ninguna app, la página funciona igual en modo manual: ideas, borradores, aprobación, calendario y «Copiar y abrir LinkedIn». La tarjeta de conexión lo explica. No se finge una conexión que no existe.
 
