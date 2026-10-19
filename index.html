@@ -2142,6 +2142,13 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       Campañas
       <span id="nav-campanas-badge" class="nav-badge teal" style="display:none">0</span>
     </div>
+    <!-- Canales (2026-10-19): Email, WhatsApp, LinkedIn y Llamadas se conectan y
+         configuran aquí (js/campaigns.js, vista 'channels'); antes eran la
+         barra de tarjetas de arriba de Campañas. -->
+    <div class="nav-item" data-page="pro-main" data-pros-tab="campanas" data-pros-view="channels" onclick="nav(this,'pro-main');if(window.campaigns)window.campaigns.setView('channels');if(window.prospecting)window.prospecting.show('campanas')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="4" cy="4" r="1.6"/><circle cx="12" cy="4" r="1.6"/><circle cx="4" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><path d="M5.6 4h4.8M4 5.6v4.8M12 5.6v4.8M5.6 12h4.8"/></svg>
+      Canales
+    </div>
     <!-- Bandeja omnicanal: la pinta js/campaigns.js (vista 'inbox') dentro del
          shell de Prospección, pero esta es su ÚNICA entrada. La pestaña
          "Bandeja" que vivía dentro de Campañas se eliminó el 2026-09-15 (era
@@ -4133,6 +4140,8 @@ const PRO_HASH_ALIASES = {
   'pro-mensajes': 'campanas', 'outreach': 'campanas', 'secuencias': 'campanas', 'bandeja': 'campanas',
   // Llamadas (2026-10-17) es una vista de Campañas (js/calls.js), no una página.
   'llamadas': 'campanas',
+  // Canales (2026-10-19) también: la vista 'channels' de js/campaigns.js.
+  'canales': 'campanas',
 };
 const PRO_TABS = ['busqueda', 'listas', 'campanas'];
 // Normaliza cualquier id (viejo, nuevo o basura de localStorage) a una pestaña viva.
@@ -4145,7 +4154,7 @@ window.addEventListener('DOMContentLoaded', () => {
   let hash = (location.hash || '').replace(/^#/, '');
   // Bandeja = pestaña Campañas en la vista 'inbox' (js/campaigns.js la
   // recuerda en localStorage; #bandeja la fuerza).
-  let cmpView = hash === 'bandeja' ? 'inbox' : hash === 'llamadas' ? 'calls' : null;
+  let cmpView = hash === 'bandeja' ? 'inbox' : hash === 'llamadas' ? 'calls' : hash === 'canales' ? 'channels' : null;
   let proTab = PRO_HASH_ALIASES[hash];
   if (proTab) hash = 'pro-main';
 
@@ -4174,7 +4183,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // dejar el sidebar sin resaltar ni el shell sin pestaña.
   if (hash === 'pro-main') proTab = normalizeProTab(proTab);
   if (proTab === 'campanas' && !cmpView) {
-    try { const v = localStorage.getItem('predictable_cmp_view'); if (v === 'inbox' || v === 'analytics' || v === 'calls') cmpView = v; } catch (e) {}
+    try { const v = localStorage.getItem('predictable_cmp_view'); if (v === 'inbox' || v === 'analytics' || v === 'calls' || v === 'channels') cmpView = v; } catch (e) {}
   }
 
   if (hash === 'settings' && typeof window.openSettingsPage === 'function') {
@@ -4188,14 +4197,14 @@ window.addEventListener('DOMContentLoaded', () => {
   // otra pestaña (Listas, Campañas).
   if (!/^[a-z0-9-]+$/i.test(hash)) return; // un valor raro en el hash/localStorage rompía querySelector
   const navEl = (hash === 'pro-main' && proTab)
-    ? ((cmpView === 'inbox' && document.querySelector('.nav-item[data-page="pro-main"][data-pros-view="inbox"]')) ||
+    ? (((cmpView === 'inbox' || cmpView === 'channels') && document.querySelector(`.nav-item[data-page="pro-main"][data-pros-view="${cmpView}"]`)) ||
        document.querySelector(`.nav-item[data-page="pro-main"][data-pros-tab="${proTab}"]:not([data-pros-view])`) ||
        document.querySelector(`.nav-item[data-page="pro-main"][data-pros-tab="${proTab}"]`) ||
        document.querySelector(`.nav-item[data-page="${hash}"]`))
     : document.querySelector(`.nav-item[data-page="${hash}"]`);
   if (navEl) setTimeout(() => {
     window.nav(navEl, hash);
-    if (proTab === 'campanas' && window.campaigns) window.campaigns.setView(cmpView === 'inbox' || cmpView === 'analytics' || cmpView === 'calls' ? cmpView : 'campaigns');
+    if (proTab === 'campanas' && window.campaigns) window.campaigns.setView(cmpView === 'inbox' || cmpView === 'analytics' || cmpView === 'calls' || cmpView === 'channels' ? cmpView : 'campaigns');
     if (proTab && window.prospecting) window.prospecting.show(proTab);
     // Páginas con shell propio: montarlas también al restaurar (el onclick
     // del nav-item no corre en este camino).

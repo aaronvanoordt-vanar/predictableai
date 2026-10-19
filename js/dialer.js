@@ -530,9 +530,9 @@
     prepare(member, opts || {});
   }
 
-  /** Campañas → Llamadas → Configuración (la vista vive dentro de Campañas y no exige Apollo). */
+  /** Prospección → Canales → Llamadas (no exige Apollo). */
   function openSettings() {
-    if (global.prospecting && global.prospecting.openCalls) global.prospecting.openCalls('config');
+    if (global.prospecting && global.prospecting.openChannels) global.prospecting.openChannels('calls');
   }
 
   global.Dialer = { call: call, power: power, status: status, openSettings: openSettings, activeProvider: activeProvider, OUTCOMES: OUTCOMES };
