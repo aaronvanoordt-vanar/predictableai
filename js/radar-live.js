@@ -89,7 +89,7 @@
     availability: null,    // lo devuelve radar-plan/generate
     // Filtros del feed. det/country/industry son multivalor de tres estados
     // (neutral / 'in' / 'out'): ver la sección "Filtros multivalor".
-    filters: { status: 'new', minScore: 0, q: '', det: {}, country: {}, industry: {} },
+    filters: { status: 'new', minScore: 0, q: '', period: '', from: '', to: '', det: {}, country: {}, industry: {} },
     openFilter: '',        // panel de filtros abierto: 'det' | 'country' | 'industry'
     filterQ: '',           // buscador dentro del panel abierto
     expanded: {},          // signal id → detalle abierto
@@ -923,24 +923,50 @@
   }
   function anyFilter() {
     const f = state.filters;
-    return !!(f.minScore || f.q.trim() || FACET_ORDER.some((k) => Object.keys(f[k]).length));
+    return !!(f.minScore || f.q.trim() || f.period || FACET_ORDER.some((k) => Object.keys(f[k]).length));
   }
   function clearFilters() {
     const f = state.filters;
-    f.minScore = 0; f.q = '';
+    f.minScore = 0; f.q = ''; f.period = ''; f.from = ''; f.to = '';
     FACET_ORDER.forEach((k) => { f[k] = {}; });
   }
 
   // skipFacet = cuenta el feed como si ese filtro no estuviera puesto, para
   // poder mostrar en su panel cuántas señales traería cada opción.
+  // Período por fecha en que el Radar encontró la señal (first_seen_at).
+  const PERIODS = [['', 'Todas las fechas'], ['today', 'Hoy'], ['7', 'Últimos 7 días'], ['30', 'Últimos 30 días'], ['90', 'Últimos 90 días'], ['custom', 'Personalizado…']];
+  function periodBounds() {
+    const f = state.filters;
+    if (!f.period) return null;
+    const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+    if (f.period === 'today') return { from: startOfDay(new Date()).getTime(), to: Infinity };
+    if (f.period === 'custom') {
+      const from = f.from ? new Date(f.from + 'T00:00:00').getTime() : -Infinity;
+      const to = f.to ? new Date(f.to + 'T23:59:59.999').getTime() : Infinity;
+      return { from, to };
+    }
+    const days = Number(f.period);
+    return days ? { from: Date.now() - days * 86400000, to: Infinity } : null;
+  }
+  function periodLabel() {
+    const f = state.filters;
+    if (f.period !== 'custom') return (PERIODS.find((p) => p[0] === f.period) || [])[1] || '';
+    return 'Fecha: ' + (f.from || '…') + ' → ' + (f.to || '…');
+  }
+
   function visibleSignals(skipFacet) {
     const f = state.filters;
+    const pb = periodBounds();
     const q = f.q.trim().toLowerCase();
     return state.signals.filter((s) => {
       if (f.status && s.status !== f.status) return false;
       if (!inBatch(s)) return false;
       if (FACET_ORDER.some((facet) => facet !== skipFacet && !passesSel(f[facet], signalKeys(s, facet)))) return false;
       if (f.minScore && Number(s.score) < f.minScore) return false;
+      if (pb) {
+        const t = Date.parse(s.first_seen_at || s.created_at || '');
+        if (!(t >= pb.from && t <= pb.to)) return false;
+      }
       if (q && !((s.company_name || '') + ' ' + (s.headline || '') + ' ' + (s.industry || '') + ' ' + (s.country || '')).toLowerCase().includes(q)) return false;
       return true;
     });
@@ -1052,6 +1078,8 @@
     });
     if (f.minScore) chips.push('<span class="rl-fchip"><span class="rl-fchip-l">Puntaje ≥ ' + f.minScore + '</span>' +
       '<button data-act="fscore-off" title="Quitar este filtro">✕</button></span>');
+    if (f.period) chips.push('<span class="rl-fchip"><span class="rl-fchip-l">' + esc(periodLabel()) + '</span>' +
+      '<button data-act="fperiod-off" title="Quitar este filtro">✕</button></span>');
     if (f.q.trim()) chips.push('<span class="rl-fchip"><span class="rl-fchip-l">«' + esc(f.q.trim()) + '»</span>' +
       '<button data-act="fq-off" title="Quitar este filtro">✕</button></span>');
     if (!chips.length) return '';
@@ -1079,6 +1107,12 @@
       }, '') + '</div>' +
       FACET_ORDER.map(facetDropHtml).join('') +
       '<label class="rl-range"><span>Puntaje ≥ <b>' + state.filters.minScore + '</b></span><input type="range" min="0" max="100" step="5" value="' + state.filters.minScore + '" data-act="filter-score"></label>' +
+      '<select class="rl-select" data-act="filter-period" title="Fecha en que se encontró la señal" aria-label="Período">' +
+      PERIODS.map((p) => '<option value="' + p[0] + '"' + (state.filters.period === p[0] ? ' selected' : '') + '>' + p[1] + '</option>').join('') + '</select>' +
+      (state.filters.period === 'custom'
+        ? '<label class="rl-range"><span>Desde</span><input type="date" class="rl-select" max="' + esc(state.filters.to) + '" value="' + esc(state.filters.from) + '" data-act="filter-from"></label>' +
+          '<label class="rl-range"><span>Hasta</span><input type="date" class="rl-select" min="' + esc(state.filters.from) + '" value="' + esc(state.filters.to) + '" data-act="filter-to"></label>'
+        : '') +
       '<input class="rl-search" type="search" placeholder="Buscar empresa…" value="' + esc(state.filters.q) + '" data-act="filter-q">' +
       '</div>' + activeFiltersHtml();
     if (state.plan.status !== 'active') {
@@ -1541,6 +1575,7 @@
           render(); break;
         }
         case 'fscore-off': state.filters.minScore = 0; render(); break;
+        case 'fperiod-off': state.filters.period = ''; state.filters.from = ''; state.filters.to = ''; render(); break;
         case 'fq-off': state.filters.q = ''; render(); break;
         case 'fclear-all': clearFilters(); render(); break;
         case 'go-lists': { const n = document.querySelector('.nav-item[data-page="pro-main"][data-pros-tab="listas"]'); if (n) n.click(); break; }
@@ -1587,6 +1622,9 @@
       const act = t.getAttribute('data-act');
       const id = t.getAttribute('data-id');
       if (act === 'filter-score') { state.filters.minScore = Number(t.value) || 0; render(); }
+      else if (act === 'filter-period') { state.filters.period = t.value; render(); }
+      else if (act === 'filter-from') { state.filters.from = t.value; render(); }
+      else if (act === 'filter-to') { state.filters.to = t.value; render(); }
       else if (act === 'select') { state.selected[id] = t.checked; render(); }
       else if (act === 'det-enabled') { patchDetector(id, { enabled: t.checked }).then(render); }
       else if (act === 'det-weight') { patchDetector(id, { weight: Number(t.value) || 0 }).then(render); }

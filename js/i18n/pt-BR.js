@@ -6613,4 +6613,9 @@ window.I18N_DICTS['pt-BR'] = {
   "FODA": "SWOT",
   "intentarlo": "novamente",
   "tu": "sua",
+  "Todas las fechas": "Todas as datas",
+  "Personalizado…": "Personalizado…",
+  "Período": "Período",
+  "Fecha en que se encontró la señal": "Data em que o sinal foi encontrado",
+  "Fecha: {0} → {1}": "Data: {0} → {1}",
 };
