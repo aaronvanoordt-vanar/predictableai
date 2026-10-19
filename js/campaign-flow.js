@@ -61,6 +61,7 @@
   var DELAY_MODES = ['after_prev', 'with_prev'];
   var AI_MESSAGE_CREDITS = 2; // espejo de _shared/campaign-flow.ts y js/credit-costs.js
   var LEAD_CREDITS = 1;       // por lead que entra a la campaña (cubre todos sus envíos)
+  var LINKEDIN_SEND_CREDITS = 1; // por invitación o mensaje de LinkedIn desde la cuenta propia (Unipile)
 
   // Copy para la UI (solo en el espejo JS).
   var CHANNEL_META = {
@@ -107,8 +108,11 @@
     ai_column: { label: 'Columna IA de la lista', hint: 'Usa la respuesta de una Columna IA de Listas («¿vende en Mercado Libre?», «¿cuántas sucursales?»). Solo va por Sí si la celda tiene respuesta con evidencia y cumple la regla; «No encontrado» o sin responder va por No. Si la celda sigue en cola, el lead espera a que termine.', needs: null },
   };
 
-  /** Los dos pasos que suben el lead a una campaña de Dripify. */
+  /** Los dos pasos de LinkedIn (Dripify o la cuenta propia vía Unipile). */
   function isLinkedin(channel) { return channel === 'linkedin_connect' || channel === 'linkedin_message'; }
+  /** Paso de LinkedIn que sale desde la cuenta propia conectada (Unipile). */
+  function isNativeLinkedin(node) { return !!node && isLinkedin(node.channel) && !!node.settings && node.settings.linkedin_via === 'unipile'; }
+  var LINKEDIN_NOTE_MAX = 300;
 
   function isObj(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
   function clampInt(v, min, max) {
@@ -132,16 +136,17 @@
     return { mode: mode, days: mode === 'with_prev' ? 0 : clampInt(d.days, 0, 365), hours: mode === 'with_prev' ? 0 : clampInt(d.hours, 0, 23) };
   }
 
-  function normalizeContent(raw, channel) {
+  function normalizeContent(raw, channel, native) {
     var c = isObj(raw) ? raw : {};
     var kind = String(c.kind == null ? '' : c.kind);
     if (kind === 'ai_personalized') kind = 'ai';
     if (LEGACY_TEMPLATE_KINDS.indexOf(kind) !== -1) kind = 'template';
     if (CONTENT_KINDS.indexOf(kind) === -1) kind = channel === 'whatsapp' ? 'template' : 'ai';
-    // El texto de un paso de LinkedIn vive en la campaña de Dripify (su API no
-    // acepta texto por lead): el ángulo solo alimenta el CSV de Custom Lead
-    // Fields, así que nunca es "mi texto" ni plantilla de WhatsApp.
-    if (isLinkedin(channel) && kind !== 'ai') kind = 'ai';
+    // El texto de un paso de LinkedIn por Dripify vive en la campaña de Dripify
+    // (su API no acepta texto por lead): el ángulo solo alimenta el CSV de
+    // Custom Lead Fields, así que nunca es "mi texto" ni plantilla de WhatsApp.
+    // Desde la cuenta propia (Unipile) el texto sí sale del paso: IA o propio.
+    if (isLinkedin(channel) && (native ? kind === 'template' : kind !== 'ai')) kind = 'ai';
     // Una llamada lleva guion IA o el guion propio, nunca una plantilla.
     if (channel === 'call' && kind === 'template') kind = 'ai';
     var out = { kind: kind };
@@ -164,7 +169,7 @@
       type: 'action',
       channel: channel,
       delay: normalizeDelay(raw && raw.delay, allowWithPrev),
-      content: normalizeContent(raw && raw.content, channel),
+      content: normalizeContent(raw && raw.content, channel, !!(raw && isObj(raw.settings) && raw.settings.linkedin_via === 'unipile')),
     };
     if (raw && isObj(raw.settings) && Object.keys(raw.settings).length) node.settings = raw.settings;
     legacySlot(node, raw && raw.content && raw.content.kind);
@@ -255,7 +260,7 @@
       if (a.delay.mode === 'with_prev' && !(idx > 0 && list[idx - 1].type === 'action')) {
         errors.push({ nodeId: a.id, message: label + ': "junto con el anterior" necesita otro envío justo antes.' });
       }
-      if (isLinkedin(a.channel) && !(a.settings && (a.settings.dripify_campaign_id || a.settings.linkedin_campaign_id))) {
+      if (isLinkedin(a.channel) && !isNativeLinkedin(a) && !(a.settings && (a.settings.dripify_campaign_id || a.settings.linkedin_campaign_id))) {
         var what = a.channel === 'linkedin_connect' ? 'de solo conexión' : 'de solo mensaje';
         errors.push({ nodeId: a.id, message: label + ': el paso de LinkedIn necesita una campaña de Dripify ' + what + ' (elige una o crea la tuya).' });
       }
@@ -268,6 +273,9 @@
       if (a.content.kind === 'custom') {
         if (!a.content.body) errors.push({ nodeId: a.id, message: label + ': el texto propio está vacío.' });
         if (a.channel === 'email' && !a.content.subject) errors.push({ nodeId: a.id, message: label + ': el email necesita asunto.' });
+        if (a.channel === 'linkedin_connect' && (a.content.body || '').length > LINKEDIN_NOTE_MAX) {
+          errors.push({ nodeId: a.id, message: label + ': la nota de conexión de LinkedIn admite hasta ' + LINKEDIN_NOTE_MAX + ' caracteres.' });
+        }
       }
       if (a.channel === 'call' && a.delay.mode === 'with_prev') {
         errors.push({ nodeId: a.id, message: label + ': una llamada no puede salir "junto con el anterior": la hace una persona.' });
@@ -408,13 +416,14 @@
 
   function estimateCredits(flow, leads) {
     var n = Math.max(0, Number(leads) || 0);
-    var ai = 0, sends = 0;
+    var ai = 0, sends = 0, native = 0;
     actions(flow).forEach(function (a) {
       sends++;
-      // LinkedIn: el mensaje lo escribe el usuario en Dripify, no la IA.
-      if (a.content.kind === 'ai' && !isLinkedin(a.channel)) ai++;
+      if (isNativeLinkedin(a)) native++;
+      // LinkedIn por Dripify: el mensaje lo escribe el usuario en Dripify, no la IA.
+      if (a.content.kind === 'ai' && (!isLinkedin(a.channel) || isNativeLinkedin(a))) ai++;
     });
-    return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + (sends ? LEAD_CREDITS : 0)) * n };
+    return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + native * LINKEDIN_SEND_CREDITS + (sends ? LEAD_CREDITS : 0)) * n };
   }
 
   /** Título corto de un nodo para tarjetas y tablas. */
@@ -426,6 +435,10 @@
       return c ? '¿' + c.label + '?' : node.check;
     }
     var ch = CHANNEL_META[node.channel] || { label: node.channel };
+    if (isNativeLinkedin(node)) {
+      var nk = node.content.kind;
+      return ch.label + ' · ' + (nk === 'custom' ? 'Mi texto' : 'IA: ' + (ANGLE_LABELS[node.content.angle] || node.content.angle || 'apertura').replace(/\s*\(.*\)$/, ''));
+    }
     if (isLinkedin(node.channel)) {
       var dc = node.settings && (node.settings.dripify_campaign_name || node.settings.linkedin_campaign_name);
       return ch.label + (dc ? ' · ' + dc : '');
@@ -573,11 +586,11 @@
   global.CampaignFlow = {
     FLOW_VERSION: FLOW_VERSION,
     CHANNELS: CHANNELS, CONTENT_KINDS: CONTENT_KINDS, ANGLES: ANGLES, CONDITIONS: CONDITIONS, DELAY_MODES: DELAY_MODES,
-    AI_MESSAGE_CREDITS: AI_MESSAGE_CREDITS, LEAD_CREDITS: LEAD_CREDITS,
+    AI_MESSAGE_CREDITS: AI_MESSAGE_CREDITS, LINKEDIN_SEND_CREDITS: LINKEDIN_SEND_CREDITS, LEAD_CREDITS: LEAD_CREDITS,
     AI_COLUMN_TYPES: AI_COLUMN_TYPES, AI_COLUMN_OPS: AI_COLUMN_OPS, AI_COLUMN_OP_LABELS: AI_COLUMN_OP_LABELS,
     normalizeAiColumnRule: normalizeAiColumnRule, aiColumnRuleLabel: aiColumnRuleLabel,
     ANGLE_LABELS: ANGLE_LABELS, CONDITION_LABELS: CONDITION_LABELS, CHANNEL_META: CHANNEL_META, KIND_LABELS: KIND_LABELS,
-    nodeTitle: nodeTitle, cloneWithNewIds: cloneWithNewIds, durationDays: durationDays, templates: templates, isLinkedin: isLinkedin,
+    nodeTitle: nodeTitle, cloneWithNewIds: cloneWithNewIds, durationDays: durationDays, templates: templates, isLinkedin: isLinkedin, isNativeLinkedin: isNativeLinkedin, LINKEDIN_NOTE_MAX: LINKEDIN_NOTE_MAX,
     newId: newId, emptyFlow: emptyFlow, normalize: normalize, validate: validate,
     actions: actions, ordinal: ordinal, find: find, firstNode: firstNode, nextAfter: nextAfter, enterBranch: enterBranch,
     delayMs: delayMs, legacyKind: legacyKind, callWaitDays: callWaitDays, templateName: templateName, LEGACY_TEMPLATE_KINDS: LEGACY_TEMPLATE_KINDS, LEGACY_SLOT_LABELS: LEGACY_SLOT_LABELS, fromLegacySteps: fromLegacySteps, estimateCredits: estimateCredits, delayLabel: delayLabel,

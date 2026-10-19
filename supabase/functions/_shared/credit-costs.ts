@@ -65,6 +65,10 @@ export const CREDIT_COSTS = {
   // envíos). Responder a mano desde la Bandeja no cuesta.
   campaign_lead: 1,
   inbox_reply: 0,
+  // LinkedIn desde la cuenta propia (Unipile, 2026-10-17): 1 crédito por cada
+  // invitación o mensaje que manda el motor (la plataforma paga Unipile por
+  // cuenta conectada). Con Dripify no se cobra: lo paga el cliente allá.
+  linkedin_send: 1,
 
   // Intelligence Hub (manual; el automático va incluido según el plan).
   intel_hub_item: 3,

@@ -1012,7 +1012,12 @@ interface StepSpec {
   // Solo en modo respuesta: el hilo real, en orden, con quién escribió cada
   // mensaje. Sin esto la IA no puede contestar lo que el lead preguntó.
   conversation: Array<{ who: "lead" | "yo"; channel: string; body: string; sent_at: string }>;
+  // Paso linkedin_connect desde la cuenta propia: el texto es la NOTA de la
+  // invitación (LinkedIn corta en 300 caracteres).
+  connectNote?: boolean;
 }
+
+const LINKEDIN_NOTE_MAX = 300;
 
 const STEP_ANGLES = ["apertura", "valor", "prueba_social", "objecion", "ultima_carta", "libre"] as const;
 
@@ -1049,6 +1054,7 @@ function normalizeStep(body: StepRequest, mode: StepMode = "step"): StepSpec | n
     instructions: typeof body.instructions === "string" ? body.instructions.trim().slice(0, 600) : "",
     previous,
     conversation,
+    connectNote: !replyMode && chRaw === "linkedin_connect",
   };
 }
 
@@ -1128,6 +1134,7 @@ function buildStepContext(step: StepSpec): string {
   lines.push(`Ángulo: ${step.angle}`);
   lines.push(STEP_ANGLE_RULES[step.angle]);
   lines.push(STEP_CHANNEL_RULES[step.channel]);
+  if (step.connectNote) lines.push(`ESTE TEXTO ES LA NOTA DE UNA SOLICITUD DE CONEXIÓN DE LINKEDIN: máximo ${LINKEDIN_NOTE_MAX} caracteres contando espacios (LinkedIn la corta). Una o dos frases: por qué conectas con ESTA persona, sin pitch, sin enlaces y sin pedir una reunión. La apertura obligatoria de los mensajes no aplica a la nota.`);
   if (step.instructions) lines.push(`INSTRUCCIONES DEL VENDEDOR para esta respuesta: ${step.instructions}`);
   if (reply) {
     lines.push("", "CONVERSACIÓN HASTA AHORA (en orden; \"lead\" es lo que escribió él, \"yo\" lo que salió de tu lado). Contesta el ÚLTIMO mensaje del lead:");
@@ -1199,6 +1206,10 @@ function stepViolations(step: StepSpec, out: StepOut): string[] {
   // prospección no aplica (puede tener que explicar algo que preguntaron).
   if (step.angle === "respuesta") {
     if (step.channel === "email" && !out.subject.trim()) v.push('"subject" está vacío (el email necesita asunto)');
+    return v;
+  }
+  if (step.connectNote) {
+    if (out.body.trim().length > LINKEDIN_NOTE_MAX) v.push(`"body" tiene ${out.body.trim().length} caracteres (la nota de conexión admite ${LINKEDIN_NOTE_MAX})`);
     return v;
   }
   if (step.channel === "phone") {
