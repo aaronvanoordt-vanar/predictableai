@@ -17,7 +17,7 @@
 - **Contactos, enviados y respuestas**: la misma lógica que `js/campaign-analytics.js` (`cohortTotals` es espejo de `compute()`, y `client-report.test.ts` carga el archivo del navegador y compara los dos). Personas, no eventos; cohorte por primer envío aceptado; la respuesta cuenta aunque llegue después.
 - **Reuniones**: por la fecha en que pasaron (agendada = `booked_at`, tomada = `held_at`, calificada = veredicto de una reunión tomada esa semana). Por eso el reporte no publica una «tasa de reunión» que mezcle cohortes.
 - Sin actividad el reporte lo dice; nunca se rellena.
-- **Email**: solo si existen los secrets `RESEND_API_KEY` y `REPORT_EMAIL_FROM` y la ficha tiene destinatarios (`clients.report_emails`, máx. 5, los pone el equipo). Si no, el reporte queda en el portal con el estado `no_channel` / `no_recipients`. No se usa el buzón de Apollo de nadie. `PORTAL_BASE_URL` (opcional) arma el enlace al portal.
+- **Email** (decisión del dueño, 2026-10-19: **Resend**; los destinatarios los edita **solo el equipo**, nunca el portal): solo si existen los secrets `RESEND_API_KEY` y `REPORT_EMAIL_FROM` y la ficha tiene destinatarios (`clients.report_emails`, máx. 5, los pone el equipo). Si no, el reporte queda en el portal con el estado `no_channel` / `no_recipients`. No se usa el buzón de Apollo de nadie. `PORTAL_BASE_URL` (opcional) arma el enlace al portal.
 
 ## 3. Benchmarks por país e industria
 
@@ -67,4 +67,4 @@ Cada archivo queda en `benchmark_history_imports` y se puede borrar entero (reca
 
 - El formato real del histórico de Eleva (pregunta abierta al dueño) y su carga.
 - Las plantillas reales de Eleva.
-- Elegir el proveedor de email transaccional (hoy Resend) y su dominio remitente.
+- El dominio remitente del reporte semanal (`REPORT_EMAIL_FROM`, verificado en Resend).
