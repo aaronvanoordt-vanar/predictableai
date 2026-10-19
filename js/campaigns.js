@@ -936,6 +936,31 @@
     finally { state.membersLoading = false; }
   }
 
+  /**
+   * Supresión del CRM (2026-10-17): antes de enrolar se le pregunta al CRM
+   * conectado con sincronización de vuelta (hoy HubSpot) si alguno ya es
+   * cliente o tiene una oportunidad abierta, y esos no se enrolan. La
+   * consulta es de mejor esfuerzo: si la función no responde se usa lo que
+   * ya trajo la última sincronización (crm_suppressed_at en la fila).
+   */
+  async function crmSuppressedIds(members) {
+    var out = new Set();
+    members.forEach(function (m) { if (m.crm_suppressed_at) out.add(String(m.id)); });
+    try {
+      var ids = members.map(function (m) { return m.id; });
+      for (var i = 0; i < ids.length; i += 500) {
+        var body = await edgeFetch('integrations', { action: 'crm_check', payload: { member_ids: ids.slice(i, i + 500) } });
+        ((body && body.suppressed) || []).forEach(function (s) { out.add(String(s.id)); });
+      }
+    } catch (e) { console.warn('[campaigns] crm_check:', e && e.message); }
+    return out;
+  }
+  // Distinta de la lista de supresión (suppressedNote, abajo): esta viene del
+  // estado del lead en el CRM y se levanta sola cuando el CRM cambia.
+  function crmSuppressedNote(n) {
+    if (!n) return '';
+    return ' ' + n + (n === 1 ? ' lead no se enroló' : ' leads no se enrolaron') + ': en tu CRM ya ' + (n === 1 ? 'es cliente o tiene' : 'son clientes o tienen') + ' una oportunidad abierta (míralos en Listas).';
+  }
   // ¿Está en WhatsApp? (js/phone-lines.js, el mismo veredicto que aplica
   // campaign-run antes de cada plantilla). null sin teléfono o sin el módulo.
   var WA_REACH_PILL = { confirmed: 'green', probable: 'blue', unknown: 'gray', fixed: 'amber', switchboard: 'amber', no_whatsapp: 'red' };
@@ -945,6 +970,15 @@
   }
 
   async function enrollMembers(c, members) {
+    var blocked = await crmSuppressedIds(members);
+    var allowed = members.filter(function (m) { return !blocked.has(String(m.id)); });
+    if (!allowed.length) return { enrolled: 0, skipped: 0, suppressed: 0, crm_suppressed: members.length };
+    var res0 = await enrollAllowed(c, allowed);
+    res0.crm_suppressed = members.length - allowed.length;
+    return res0;
+  }
+
+  async function enrollAllowed(c, members) {
     var uid = await getUid();
     var L = flowLib();
     var flow = campaignFlow(c);
@@ -3174,7 +3208,7 @@
       await setCampaignStatus(id, 'active');
       await loadCampaigns();
       msg = 'Campaña lanzada: ' + res.enrolled + ' leads enrolados' + (already.size ? ' (' + already.size + ' ya estaban)' : '') + '. El motor envía cada minuto dentro de la ventana horaria.';
-      msg += outdatedNote(fresh) + suppressedNote(res);
+      msg += outdatedNote(fresh) + suppressedNote(res) + crmSuppressedNote(res.crm_suppressed);
       var missing = campaignChannels(c).filter(function (k) { return !channelConnected(k); });
       if (missing.length) msg += ' Conecta ' + joinAnd(missing.map(function (k) { return CH[k].label; })) + ' para que esos pasos salgan.';
     }
@@ -4856,7 +4890,7 @@
       setProgress('');
       var parts = [res.enrolled + ' leads enrolados'];
       if (res.skipped) parts.push(res.skipped + ' ya estaban');
-      var warn = outdatedNote(chosen) + suppressedNote(res);
+      var warn = outdatedNote(chosen) + suppressedNote(res) + crmSuppressedNote(res.crm_suppressed);
       toast(parts.join(' · ') + (c3.status !== 'active' ? '. Activa la campaña para que empiecen los envíos.' : '.') + warn, warn ? 'warn' : 'success');
       return Promise.all([loadCampaigns(), loadEnrollments(c3.id), loadMembersForCampaign(c3)]).then(function () { invalidateAnalytics(); render(); });
     }).then(r2, function (err) { r2(); setProgress(''); throw err; });

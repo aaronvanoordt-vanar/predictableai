@@ -80,7 +80,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
 - [x] Conectores CloudTalk, Aircall, Ringover (`docs/TELEFONIA.md`)
 - [ ] LinkedIn nativo
 - [x] CRM de cuentas y oportunidades
-- [ ] Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos
+- [x] Pipedrive, Kommo, Zoho, Bitrix24, RD Station; HubSpot en dos sentidos
 - [x] Revisar la prueba gratis
 
 **P2**

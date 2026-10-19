@@ -1099,7 +1099,13 @@ export const OPERATIONS: Record<string, Operation> = {
       const first = firstNode(normalizeFlow(c.flow));
       if (!first) throw new ApiError(409, "campaign_empty", "La campaña no tiene pasos todavía.");
 
-      const { data: members } = await ctx.supa.from("prospect_list_members").select("id, contact_status, email, phone, linkedin_url, company_domain").eq("user_id", ctx.userId).in("id", ids);
+      // crm_* (migración 20261018230000): «no contactar» porque en el CRM ya es
+      // cliente o tiene una oportunidad abierta. Sin la migración se lee lo demás.
+      const MCOLS = "id, contact_status, email, phone, linkedin_url, company_domain";
+      let { data: members, error: mErr } = await ctx.supa.from("prospect_list_members").select(MCOLS + ", crm_suppressed_at, crm_suppression_reason").eq("user_id", ctx.userId).in("id", ids);
+      if (mErr && /crm_suppress/.test(mErr.message)) {
+        ({ data: members } = await ctx.supa.from("prospect_list_members").select(MCOLS).eq("user_id", ctx.userId).in("id", ids));
+      }
       const found = members || [];
       // Lista de supresión: quien está suprimido en TODOS los canales de la
       // campaña no se enrola; el suprimido en algunos se enrola y el motor
@@ -1107,7 +1113,7 @@ export const OPERATIONS: Record<string, Operation> = {
       // mirar antes de cada envío.
       const channels = [...new Set(flowActions(normalizeFlow(c.flow)).map((a) => (a.channel.startsWith("linkedin") ? "linkedin" : a.channel) as SuppressionChannel))];
       const { result: sup } = await suppressedMembers(ctx.supa, ctx.userId, found, channels);
-      const blocked = found.filter((m: Json) => channels.length && channels.every((ch) => sup[m.id]?.[ch]));
+      const blocked = found.filter((m: Json) => m.crm_suppressed_at || (channels.length && channels.every((ch) => sup[m.id]?.[ch])));
       const owned = found.filter((m: Json) => !blocked.includes(m));
       const now = Date.now();
       const rows = owned.map((m: Json) => ({
@@ -1131,7 +1137,7 @@ export const OPERATIONS: Record<string, Operation> = {
           enrolled: enrolled.length,
           already_enrolled: owned.length - enrolled.length,
           not_found: ids.length - found.length,
-          suppressed: blocked.map((m: Json) => ({ contact_id: m.id, reasons: sup[m.id] })),
+          suppressed: blocked.map((m: Json) => ({ contact_id: m.id, reasons: m.crm_suppressed_at ? { ...(sup[m.id] ?? {}), crm: m.crm_suppression_reason || "No contactar (CRM)" } : sup[m.id] })),
           campaign_status: c.status,
           note: c.status === "active" ? null : "La campaña no está activa: los leads esperarán hasta que la actives en Predictable.",
         },
