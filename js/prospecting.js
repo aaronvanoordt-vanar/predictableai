@@ -656,6 +656,12 @@
     return (state.cache.lists || []).find(function (l) { return String(l.id) === String(id); }) || null;
   }
 
+  // Las búsquedas de empresas (js/company-search.js) viven en la misma tabla
+  // con filters._kind = 'companies'; el panel de personas no las muestra.
+  function peopleSaved(rows) {
+    return (rows || []).filter(function (r) { return !(r && r.filters && r.filters._kind === 'companies'); });
+  }
+
   function loadSavedSearches(force) {
     if (!force && state.cache.savedSearches) return Promise.resolve(state.cache.savedSearches);
     return Promise.resolve(pd().fetchSavedSearches()).then(function (rows) {
@@ -969,12 +975,13 @@
     }
 
     // 0. Búsquedas guardadas
-    section('Búsquedas guardadas', function () { return (state.cache.savedSearches || []).length; }, function (body) {
+    section('Búsquedas guardadas', function () { return peopleSaved(state.cache.savedSearches).length; }, function (body) {
       var list = h('div', { style: 'display:flex;flex-direction:column;gap:6px' });
       if (window.Skeleton) list.innerHTML = window.Skeleton.listRows(2, { avatar: false });
       else list.appendChild(h('div', { style: 'font-size:12px;color:var(--text3)', text: 'Cargando…' }));
       body.appendChild(list);
       function renderList(rows) {
+        rows = peopleSaved(rows);
         list.innerHTML = '';
         if (!rows.length) {
           list.appendChild(h('div', { style: 'font-size:12px;color:var(--text3)', text: 'Aún no guardas ninguna búsqueda.' }));
@@ -1635,19 +1642,25 @@
   }
 
   // ══ TAB 1: BÚSQUEDA — search + results ══════════════════════════════════
-  // Buscar tiene dos modos (2026-10-17): personas en Apollo (lo de siempre) y
-  // empresas en registros públicos (js/registry-search.js: CNPJ, DENUE,
-  // registro mercantil de Colombia). El modo se recuerda por navegador.
+  // Buscar tiene tres modos: personas en Apollo (lo de siempre), empresas en
+  // Apollo (js/company-search.js, 2026-10-19) y empresas en registros públicos
+  // (js/registry-search.js: CNPJ, DENUE, registro mercantil de Colombia). El
+  // modo se recuerda por navegador. «Importar búsqueda de Apollo» traduce el
+  // enlace de una búsqueda de Apollo a los filtros de personas o de empresas
+  // (js/apollo-search-url.js; no llama a Apollo).
   var SEARCH_MODE_KEY = 'prospecting_search_mode_v1';
+  var SEARCH_MODES = ['people', 'companies', 'registry'];
   function getSearchMode() {
-    try { return localStorage.getItem(SEARCH_MODE_KEY) === 'registry' ? 'registry' : 'people'; } catch (_) { return 'people'; }
+    var m = null;
+    try { m = localStorage.getItem(SEARCH_MODE_KEY); } catch (_) {}
+    return SEARCH_MODES.indexOf(m) !== -1 ? m : 'people';
   }
   function setSearchMode(mode) {
+    if (SEARCH_MODES.indexOf(mode) === -1) mode = 'people';
     try { localStorage.setItem(SEARCH_MODE_KEY, mode); } catch (_) {}
     var s = state.search;
     if (!s.modeHosts) return;
-    s.modeHosts.people.style.display = mode === 'people' ? '' : 'none';
-    s.modeHosts.registry.style.display = mode === 'registry' ? '' : 'none';
+    SEARCH_MODES.forEach(function (m) { s.modeHosts[m].style.display = mode === m ? '' : 'none'; });
     s.modeBtns.forEach(function (b) {
       var on = b.getAttribute('data-mode') === mode;
       b.className = 'btn btn-sm ' + (on ? 'btn-primary' : 'btn-ghost');
@@ -1658,21 +1671,56 @@
       s.registryMounted = true;
       Promise.resolve(window.registrySearch.mount(s.modeHosts.registry)).catch(function (e) { toast(errMsg(e), 'error'); });
     }
+    if (mode === 'companies' && !s.companiesMounted) {
+      if (!window.companySearch) { s.modeHosts.companies.textContent = 'El módulo de búsqueda de empresas no está cargado. Recarga la página.'; return; }
+      s.companiesMounted = true;
+      Promise.resolve(window.companySearch.mount(s.modeHosts.companies)).catch(function (e) { toast(errMsg(e), 'error'); });
+    }
+  }
+
+  // Filtros de personas que vienen de fuera (enlace de Apollo importado):
+  // reemplazan a los actuales, salvo las listas excluidas, que son de Predictable.
+  function applyPeopleFilters(filters, opts) {
+    ensureBuilt();
+    switchTab('busqueda');
+    setSearchMode('people');
+    var keep = state.search.filters || defaultFilters();
+    var f = defaultFilters();
+    f.exclude_list_ids = (keep.exclude_list_ids || []).slice();
+    f.exclude_apollo_list_ids = (keep.exclude_apollo_list_ids || []).slice();
+    Object.keys(filters || {}).forEach(function (k) { if (k in f) f[k] = filters[k]; });
+    state.search.filters = f;
+    setActiveSavedId(opts && opts.savedId ? opts.savedId : null);
+    persistFilters();
+    if (state.search.panelHost) { state.search.panelHost.innerHTML = ''; state.search.panelHost.appendChild(buildFilterPanel()); }
+    updateFilterBadges();
+    if (apollo.connected !== true) return;
+    return runSearch(1, true);
   }
 
   function buildSearchPane() {
     var root = state.panes.busqueda;
     var modeBtns = [
-      h('button', { type: 'button', 'data-mode': 'people', text: 'Personas (Apollo)' }),
-      h('button', { type: 'button', 'data-mode': 'registry', text: 'Empresas en registros públicos' }),
+      h('button', { type: 'button', 'data-mode': 'people', text: 'Personas' }),
+      h('button', { type: 'button', 'data-mode': 'companies', text: 'Empresas' }),
+      h('button', { type: 'button', 'data-mode': 'registry', text: 'Registros públicos' }),
     ];
     modeBtns.forEach(function (b) { b.addEventListener('click', function () { setSearchMode(b.getAttribute('data-mode')); }); });
-    root.appendChild(h('div', { role: 'group', 'aria-label': 'Qué buscar', style: 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px' }, modeBtns[0], modeBtns[1]));
+    var importBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Importar búsqueda de Apollo', title: 'Pega el enlace de una búsqueda de personas o empresas de Apollo' });
+    importBtn.addEventListener('click', guarded(function () {
+      if (!window.companySearch || !window.companySearch.openImport) return toast('El importador no está cargado. Recarga la página.', 'warn');
+      window.companySearch.openImport();
+    }));
+    root.appendChild(h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:12px' },
+      h('div', { role: 'group', 'aria-label': 'Qué buscar', style: 'display:flex;gap:6px;flex-wrap:wrap' }, modeBtns[0], modeBtns[1], modeBtns[2]),
+      importBtn));
     var pane = h('div', null);
+    var companiesHost = h('div', { style: 'display:none' });
     var registryHost = h('div', { style: 'display:none' });
     root.appendChild(pane);
+    root.appendChild(companiesHost);
     root.appendChild(registryHost);
-    state.search.modeHosts = { people: pane, registry: registryHost };
+    state.search.modeHosts = { people: pane, companies: companiesHost, registry: registryHost };
     state.search.modeBtns = modeBtns;
     var recoHost = h('div', null);
     pane.appendChild(recoHost);
@@ -4750,23 +4798,42 @@
         setSearchMode('people');
         if (apollo.connected !== true) return;
         var f = state.search.filters || defaultFilters();
-        var domain = normalizeDomain(opts && opts.domain);
+        var domains = (opts && Array.isArray(opts.domains) ? opts.domains : [opts && opts.domain])
+          .map(normalizeDomain).filter(Boolean);
+        domains = domains.filter(function (d, i) { return domains.indexOf(d) === i; });
+        var domain = domains.length === 1 ? domains[0] : '';
         var name = String((opts && opts.name) || '').trim();
-        if (!domain && !name) return toast('Esta empresa no tiene dominio ni nombre para buscar.', 'warn');
-        f.q_organization_domains_list = domain ? [domain] : [];
-        f.q_keywords = domain ? '' : name;
+        if (!domains.length && !name) return toast('Esta empresa no tiene dominio ni nombre para buscar.', 'warn');
+        f.q_organization_domains_list = domains;
+        f.q_keywords = domains.length ? '' : name;
         if (opts && opts.country) f.organization_locations = [opts.country];
+        setActiveSavedId(null);
         state.search.filters = f;
         persistFilters();
         if (state.search.panelHost) { state.search.panelHost.innerHTML = ''; state.search.panelHost.appendChild(buildFilterPanel()); }
         updateFilterBadges();
-        toast(domain ? 'Buscando personas en ' + domain : 'Buscando personas de «' + name + '» (sin dominio: por nombre, revisa que sean de esa empresa)', 'info');
+        toast(domains.length > 1 ? 'Buscando personas en ' + fmtNum(domains.length) + ' empresas'
+          : domain ? 'Buscando personas en ' + domain : 'Buscando personas de «' + name + '» (sin dominio: por nombre, revisa que sean de esa empresa)', 'info');
         return runSearch(1, true);
       } catch (e) {
         console.error('[prospecting]', e);
         toast(errMsg(e), 'error');
       }
     },
+    applyPeopleFilters: function (filters, opts) {
+      try { return applyPeopleFilters(filters, opts); } catch (e) { console.error('[prospecting]', e); toast(errMsg(e), 'error'); }
+    },
+    setSearchMode: function (mode) {
+      try { ensureBuilt(); switchTab('busqueda'); setSearchMode(mode); } catch (e) { console.error('[prospecting]', e); toast(errMsg(e), 'error'); }
+    },
+    loadSavedSearches: loadSavedSearches,
+    refreshSavedSearches: function () {
+      state.cache.savedSearches = null;
+      if (state.search.refreshSavedSearches) return state.search.refreshSavedSearches().catch(function () {});
+      return Promise.resolve();
+    },
+    apolloConnected: function () { return apollo.connected === true; },
+    tagInput: tagInput,
     show: function (tabId) {
       try {
         ensureBuilt();

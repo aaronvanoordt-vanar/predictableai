@@ -141,6 +141,8 @@
     // compartida de la beta: ese buzón es de otra cuenta, no del usuario.
     if (d === 'apollo_account_required')
       return 'Conecta tu cuenta de Apollo para usar el canal de Email (Campañas → Email → Conectar): la cuenta compartida de la plataforma no envía correo a tu nombre.';
+    if (d === 'apollo_account_required_companies')
+      return 'Conecta tu cuenta de Apollo para buscar empresas: cada página usa 1 crédito de tu Apollo.';
     if (status === 401) return 'Sesión expirada. Vuelve a iniciar sesión.';
     if (status === 403 || d.includes('master key') || d.includes('api key is not a master'))
       return 'Tu API key de Apollo debe ser una master key para esta operación (403).';
@@ -215,6 +217,43 @@
       },
       breadcrumbs: data?.breadcrumbs || [],
       partial_results_only: !!data?.partial_results_only,
+    };
+  }
+
+  // ── Búsqueda de empresas (Buscar → Empresas) ────────────────
+  // /mixed_companies/search usa 1 crédito de la cuenta de Apollo conectada por
+  // página (no de Predictable; con la key compartida el proxy la rechaza).
+  // Apollo devuelve las empresas guardadas en la cuenta (`accounts`) aparte de
+  // las demás (`organizations`): se juntan, sin repetir, con `saved` marcado.
+  async function searchCompanies(filters) {
+    const body = cleanFilters(filters);
+    if (!body.page) body.page = 1;
+    if (!body.per_page) body.per_page = 25;
+    const data = await apolloProxy('/mixed_companies/search', body);
+    const num = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const seen = new Set();
+    const companies = [];
+    const push = (o, saved) => {
+      if (!o || typeof o !== 'object') return;
+      const key = String(o.organization_id || o.id || o.primary_domain || o.name || '');
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      companies.push(Object.assign({}, o, { _saved: saved }));
+    };
+    (data?.accounts || []).forEach((o) => push(o, true));
+    (data?.organizations || []).forEach((o) => push(o, false));
+    const pg = data?.pagination || {};
+    return {
+      companies,
+      pagination: {
+        page: num(pg.page) || body.page,
+        per_page: num(pg.per_page) || body.per_page,
+        total_entries: num(pg.total_entries) || num(data?.total_entries),
+        total_pages: num(pg.total_pages) || num(data?.total_pages),
+      },
     };
   }
 
@@ -1799,6 +1838,7 @@
     CONTACT_STATUSES,
     MEETING_STATUSES,
     searchPeople,
+    searchCompanies,
     syncIcpFromSearch,
     fetchLists,
     fetchAllContacts,
