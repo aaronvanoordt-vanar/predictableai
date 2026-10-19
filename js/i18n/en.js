@@ -6466,4 +6466,8 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Cuenta (empresa). Una por dominio y usuario; los contactos de tus listas se enlazan solos por dominio.": "Account (company). One per domain and user; contacts in your lists are linked automatically by domain.",
   "Dominio normalizado: la llave de la cuenta.": "Normalized domain: the account key.",
   "meeting_held = la etapa a la que el Meeting Coach mueve la oportunidad al cerrar una reunión.": "meeting_held = the stage the Meeting Coach moves the opportunity to when a meeting is closed.",
+  "Todas las fechas": "All dates",
+  "Personalizado…": "Custom…",
+  "Fecha en que se encontró la señal": "Date the signal was found",
+  "Fecha: {0} → {1}": "Date: {0} → {1}",
 });
