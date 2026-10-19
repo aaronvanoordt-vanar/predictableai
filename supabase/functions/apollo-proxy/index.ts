@@ -62,6 +62,9 @@ type Method = "GET" | "POST" | "PUT" | "DELETE";
 // The first entry is the default when the client names no method.
 const STATIC_ENDPOINTS = new Map<string, Method[]>([
   ["/mixed_people/api_search", ["POST"]],
+  // Buscar → Empresas (2026-10-19). Gasta 1 crédito de Apollo por página, por
+  // eso solo con el Apollo propio del usuario (ver OWN_APOLLO_SEARCH abajo).
+  ["/mixed_companies/search", ["POST"]],
   ["/people/match", ["POST"]],
   ["/people/bulk_match", ["POST"]],
   ["/contacts", ["POST"]],
@@ -108,6 +111,11 @@ const OWN_ACCOUNT_ONLY = /^\/(email_accounts|emailer_)/;
 function requiresOwnApollo(endpoint: string): boolean {
   return OWN_ACCOUNT_ONLY.test(endpoint);
 }
+
+// La búsqueda de empresas cuesta créditos de Apollo (la de personas no): con
+// la key compartida, cada página de cada cliente saldría de la cuenta de la
+// plataforma sin cobrarse en Predictable. Solo con el Apollo del usuario.
+const OWN_APOLLO_SEARCH = new Set(["/mixed_companies/search"]);
 
 function corsHeaders(origin: string) {
   return {
@@ -205,6 +213,13 @@ Deno.serve(async (req) => {
     return json({
       error: "apollo_account_required",
       message: "Conecta tu cuenta de Apollo para usar el canal de Email: la cuenta compartida de la beta no envía correo a tu nombre.",
+    }, 403, cors);
+  }
+
+  if (auth.mode === "platform" && OWN_APOLLO_SEARCH.has(endpoint)) {
+    return json({
+      error: "apollo_account_required_companies",
+      message: "Conecta tu cuenta de Apollo para buscar empresas: cada página usa 1 crédito de tu Apollo.",
     }, 403, cors);
   }
 
