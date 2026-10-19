@@ -336,16 +336,4 @@ CREATE POLICY campaign_templates_select ON public.campaign_templates
   FOR SELECT TO authenticated
   USING (published);
 
--- ── Crons (ejecutar a mano en el SQL editor, con la URL del proyecto y la
---    service role; igual que learning-loop) ─────────────────────────────────
--- Reporte semanal, lunes 12:10 UTC (≈ 7:10 en Bogotá/Lima, 6:10 en CDMX):
--- SELECT cron.schedule('client-report-weekly', '10 12 * * 1', $cron$
---   SELECT net.http_post(
---     url := 'https://<project-ref>.supabase.co/functions/v1/client-report',
---     headers := jsonb_build_object('Content-Type','application/json','Authorization','Bearer <SUPABASE_SERVICE_ROLE_KEY>'),
---     body := '{"action":"run_weekly"}'::jsonb,
---     timeout_milliseconds := 150000);
--- $cron$);
---
--- Benchmarks, diario (no necesita la edge function):
--- SELECT cron.schedule('refresh-benchmarks', '40 6 * * *', $cron$ SELECT public.refresh_benchmarks(); $cron$);
+-- ── Crons: los programa 20261019070000_client_report_benchmarks_cron.sql ──

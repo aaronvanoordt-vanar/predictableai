@@ -12,7 +12,7 @@
 
 ## 2. Reporte semanal
 
-- Edge function `client-report`: cron los lunes (`run_weekly`, service role) y «Generar la semana pasada» / «Generar y enviar» desde la ficha del cliente (`generate`, `can_manage_client`).
+- Edge function `client-report`: cron los lunes 12:10 UTC (`client-report-weekly`, `run_weekly` con la service role; migración `20261019070000`) y «Generar la semana pasada» / «Generar y enviar» desde la ficha del cliente (`generate`, `can_manage_client`).
 - Semana = lunes a domingo en la zona de `profiles.send_window.timezone` del espacio (por defecto `America/Bogota`).
 - **Contactos, enviados y respuestas**: la misma lógica que `js/campaign-analytics.js` (`cohortTotals` es espejo de `compute()`, y `client-report.test.ts` carga el archivo del navegador y compara los dos). Personas, no eventos; cohorte por primer envío aceptado; la respuesta cuenta aunque llegue después.
 - **Reuniones**: por la fecha en que pasaron (agendada = `booked_at`, tomada = `held_at`, calificada = veredicto de una reunión tomada esa semana). Por eso el reporte no publica una «tasa de reunión» que mezcle cohortes.
@@ -21,7 +21,7 @@
 
 ## 3. Benchmarks por país e industria
 
-- `refresh_benchmarks()` (pg_cron diario) agrega en `benchmark_cells`: leads con al menos un envío aceptado en los últimos 365 días, de todas las cuentas, por país (`prospect_list_members.country`) e industria (`snapshot.organization.industry`, la de Apollo), más los totales por país, por industria y global.
+- `refresh_benchmarks()` (pg_cron diario 06:40 UTC, `refresh-benchmarks`, migración `20261019070000`) agrega en `benchmark_cells`: leads con al menos un envío aceptado en los últimos 365 días, de todas las cuentas, por país (`prospect_list_members.country`) e industria (`snapshot.organization.industry`, la de Apollo), más los totales por país, por industria y global.
 - Tasas: respuesta = respondieron / contactados; reunión = reuniones agendadas / contactados; asistencia = se dieron / (se dieron + no se presentaron); calificadas = calificadas / reuniones con veredicto.
 - **Anonimato y volumen mínimo** (`_shared/benchmarks.ts`): una tasa se publica solo con ≥ 3 cuentas y ≥ 200 contactos en la celda (≥ 20 reuniones para asistencia y calificación). Por debajo: «Sin datos suficientes», sin conteos crudos. `benchmark_cells` no tiene permisos para `authenticated`: la lee solo la edge function `benchmarks`.
 - Se ve en Campañas, debajo de las métricas de la lista.
