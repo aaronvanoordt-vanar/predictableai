@@ -2625,7 +2625,8 @@
   }
 
   var COL_FILTERS = {
-    name:     { label: 'Nombre',   kind: 'text', fields: [['name', 'Nombre contiene'], ['title', 'Cargo contiene']] },
+    name:     { label: 'Nombre',   kind: 'text', fields: [['name', 'Nombre contiene']] },
+    title:    { label: 'Cargo',    kind: 'text', fields: [['title', 'Cargo contiene']] },
     company:  { label: 'Empresa',  kind: 'values' },
     country:  { label: 'País',     kind: 'values' },
     list:     { label: 'Lista',    kind: 'values' },
@@ -2693,8 +2694,8 @@
     return '<tr>' +
       '<td><input type="checkbox" data-action="mem-check" data-id="' + id + '"' + checked + '></td>' +
       '<td><div style="font-weight:600">' + esc(name) + '</div>' +
-        (m.title ? '<div class="pros-cellsub" style="font-size:12px">' + esc(m.title) + '</div>' : '') +
         employmentPillHtml(m) + '</td>' +
+      '<td>' + esc(m.title || '—') + '</td>' +
       '<td>' + esc(m.company || '—') +
         (m.company_domain ? '<div class="pros-cellsub">' + esc(m.company_domain) + '</div>' : '') + '</td>' +
       '<td>' + esc(m.country || '—') +
@@ -3224,7 +3225,7 @@
       '</div>';
     if (aiCols() && st.members.length) html += aiCols().progressHtml() + aiCols().filtersHtml();
 
-    var cols = all ? ['30%', '35%', '25%', '20%', '30%', '40%', '28%', '18%', '14%'] : ['30%', '40%', '20%', '30%', '45%', '30%', '25%', '14%'];
+    var cols = all ? ['30%', '30%', '35%', '25%', '20%', '30%', '40%', '28%', '18%', '14%'] : ['30%', '30%', '40%', '20%', '30%', '45%', '30%', '25%', '14%'];
     if (st.loadingMembers) {
       html += window.Skeleton
         ? '<div class="pros-scroll-x"><table><tbody>' + window.Skeleton.tableRows(cols, 6) + '</tbody></table></div>'
@@ -3239,11 +3240,11 @@
       var allChecked = rows.length > 0 && rows.every(function (m) { return st.selected.has(String(m.id)); });
       html += '<div class="pros-scroll-x"><table><thead><tr>' +
         '<th style="width:34px"><input type="checkbox" data-action="mem-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-        thFilterHtml('name') + thFilterHtml('company') + thFilterHtml('country') + (all ? thFilterHtml('list') : '') + thFilterHtml('status') +
+        thFilterHtml('name') + thFilterHtml('title') + thFilterHtml('company') + thFilterHtml('country') + (all ? thFilterHtml('list') : '') + thFilterHtml('status') +
         thFilterHtml('email') + thFilterHtml('phone') + thFilterHtml('linkedin') +
         (aiCols() ? aiCols().headHtml() : '') + '<th></th>' +
         '</tr></thead><tbody>' + (rows.length ? rows.map(listMemberRowHtml).join('') :
-          '<tr><td colspan="' + (9 + (all ? 1 : 0) + (aiCols() ? aiCols().headHtml().split('<th').length - 1 : 0)) + '" style="text-align:center;padding:28px 12px;color:var(--text3);font-size:12.5px">Sin resultados: ningún contacto coincide con la búsqueda o los filtros.</td></tr>') +
+          '<tr><td colspan="' + (10 + (all ? 1 : 0) + (aiCols() ? aiCols().headHtml().split('<th').length - 1 : 0)) + '" style="text-align:center;padding:28px 12px;color:var(--text3);font-size:12.5px">Sin resultados: ningún contacto coincide con la búsqueda o los filtros.</td></tr>') +
         '</tbody></table></div>';
       if (all) {
         html += '<div style="padding:10px 18px;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(st.members.length)) + ' contactos · El estado se actualiza al instante en todo el sistema (Campañas, dashboard y este CRM leen la misma base).</div>';
