@@ -4572,12 +4572,20 @@
   // Predictable y CloudTalk/Aircall/Ringover no usan Apollo. El estado y el
   // asistente de conexión son los de js/campaigns.js (una sola fuente).
   var apollo = { connected: null, checking: null, error: null, pendingTab: null };
-  var APOLLO_FREE_VIEWS = ['inbox', 'calls'];
+  // Canales (2026-10-19) tampoco: ahí se conecta el propio Apollo, y WhatsApp,
+  // LinkedIn y Llamadas no dependen de él.
+  var APOLLO_FREE_VIEWS = ['inbox', 'calls', 'channels'];
   function apolloExempt(tabId) {
     return tabId === 'campanas' && window.campaigns && typeof window.campaigns.currentView === 'function' && APOLLO_FREE_VIEWS.indexOf(window.campaigns.currentView()) !== -1;
   }
+  /** Abre la pestaña Canales (sin Apollo), con el canal elegido. */
+  function openChannels(key) {
+    if (!window.campaigns || typeof window.campaigns.openChannels !== 'function') return;
+    window.campaigns.openChannels(key || null);
+  }
   /** Abre Campañas → Llamadas (sin Apollo). */
   function openCalls(tab) {
+    if (tab === 'config') return openChannels('calls');
     if (!window.campaigns || typeof window.campaigns.openCalls !== 'function') return;
     window.campaigns.openCalls(tab || null);
     // No se usa goTab: el clic del ítem «Campañas» del sidebar devolvería la vista a la lista.
@@ -4707,6 +4715,7 @@
   // ── Public API ─────────────────────────────────────────────────────────
   window.prospecting = {
     openCalls: openCalls,
+    openChannels: openChannels,
     // Acción directa del Intelligence Hub: abre Buscar con palabras clave de
     // empresa (q_organization_keyword_tags) y lanza la búsqueda.
     searchFor: function (opts) {

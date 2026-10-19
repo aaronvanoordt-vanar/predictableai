@@ -9,7 +9,9 @@
  *   Historial      → todas las llamadas (dialer nativo y conectores) con
  *                    resultado, grabación, transcripción y el resumen del
  *                    Meeting Coach.
- *   Configuración  → el número con el que te ven (dialer de Predictable) y los
+ *   Configuración  → vive en la pestaña «Canales» (2026-10-19): js/campaigns.js
+ *                    la monta con Calls.mount(host, null, { configOnly: true }).
+ *                    El número con el que te ven (dialer de Predictable) y los
  *                    conectores CloudTalk / Aircall / Ringover. El asistente se
  *                    pinta desde el catálogo que devuelve la edge function
  *                    `telephony` (_shared/telephony/registry.ts): un proveedor
@@ -25,7 +27,7 @@
   var OUTCOME_LABEL = { answered: 'Contestó', voicemail: 'Buzón de voz', no_answer: 'No contesta', meeting_booked: 'Reunión agendada', not_interested: 'No interesado' };
   var STATUS_LABEL = { queued: 'En cola', ringing: 'Sonando', in_progress: 'En curso', completed: 'Terminada', failed: 'Falló', busy: 'Ocupado', no_answer: 'Sin respuesta', canceled: 'Cancelada' };
 
-  var st = { tab: 'tasks', tasks: null, calls: null, status: null, error: null, verify: null, channel: null, host: null };
+  var st = { tab: 'tasks', tasks: null, calls: null, status: null, error: null, verify: null, channel: null, host: null, configOnly: false };
 
   function sb() { return global.supabaseClient; }
   function toast(m, t) { if (global.uiHelpers && global.uiHelpers.toast) global.uiHelpers.toast(m, t || 'info'); }
@@ -111,14 +113,41 @@
   async function loadStatus() {
     st.status = await tel('status');
     if (global.Dialer) global.Dialer.status(true).catch(function () {});
+    // La tarjeta «Llamadas» de Canales (js/campaigns.js) se repinta con esto.
+    try { global.dispatchEvent(new CustomEvent('predictable:telephony-status', { detail: summaryOf(st.status) })); } catch (e) {}
+  }
+
+  /** Resumen para la tarjeta del canal: con qué se llama hoy, sin inventar. */
+  function summaryOf(s) {
+    if (!s) return null;
+    var n = s.native || {};
+    var names = [];
+    if (n.available && n.caller_id) names.push('Dialer de Predictable · ' + n.caller_id);
+    var accs = s.accounts || [];
+    accs.forEach(function (a) { if (a.status !== 'error') names.push(providerLabel(a.provider)); });
+    var broken = accs.filter(function (a) { return a.status === 'error'; });
+    return {
+      connected: names.length > 0,
+      detail: names.join(' · '),
+      defaultLabel: names.length && s.default_provider ? providerLabel(s.default_provider) : '',
+      error: broken.length ? providerLabel(broken[0].provider) + ' con error' : '',
+    };
+  }
+  /** Estado del canal Llamadas (lee `telephony status` si aún no se cargó). */
+  function summary(force) {
+    if (st.status && !force) return Promise.resolve(summaryOf(st.status));
+    return tel('status').then(function (s) { st.status = s; return summaryOf(s); });
   }
 
   async function refresh() {
     st.error = null;
     try {
-      if (st.tab === 'tasks') await loadTasks();
-      else if (st.tab === 'history') await loadCalls();
-      if (!st.status || st.tab === 'config') await loadStatus();
+      if (st.configOnly) await loadStatus();
+      else {
+        if (st.tab === 'tasks') await loadTasks();
+        else if (st.tab === 'history') await loadCalls();
+        if (!st.status) await loadStatus();
+      }
     } catch (e) {
       st.error = /relation .* does not exist|calls|call_tasks/i.test(e.message) && /exist/i.test(e.message)
         ? 'Falta aplicar la migración de telefonía (20261018180009_telephony.sql).'
@@ -147,10 +176,20 @@
     injectStyles();
     root.innerHTML = '';
     var wrap = h('div', { class: 'calls-view', style: 'display:flex;flex-direction:column;gap:14px' });
-    var tabs = h('div', { class: 'tabs', role: 'tablist', style: 'display:flex;gap:6px;flex-wrap:wrap' });
-    [['tasks', 'Por llamar'], ['history', 'Historial'], ['config', 'Configuración']].forEach(function (t) {
+    if (st.configOnly) {
+      if (st.error) wrap.appendChild(h('div', { class: 'pros-note-red', text: st.error }));
+      else renderConfig(wrap);
+      root.appendChild(wrap);
+      return;
+    }
+    var tabs = h('div', { class: 'tabs', role: 'tablist', style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center' });
+    [['tasks', 'Por llamar'], ['history', 'Historial']].forEach(function (t) {
       tabs.appendChild(h('button', { type: 'button', role: 'tab', 'aria-selected': st.tab === t[0] ? 'true' : 'false', class: 'btn btn-sm ' + (st.tab === t[0] ? 'btn-primary' : 'btn-ghost'), text: t[1], onclick: function () { show(t[0]); } }));
     });
+    // Cómo se llama (dialer o proveedor) se configura en Canales.
+    if (global.campaigns && global.campaigns.openChannels) {
+      tabs.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'margin-left:auto', text: 'Configurar en Canales', onclick: function () { global.campaigns.openChannels('calls'); } }));
+    }
     wrap.appendChild(tabs);
     if (st.error) wrap.appendChild(h('div', { class: 'pros-note-red', text: st.error }));
     else if (st.tab === 'tasks') renderTasks(wrap);
@@ -413,14 +452,20 @@
     r.data.forEach(function (c) { el.appendChild(callCard(c, false)); });
   }
 
-  /** Monta la vista en `host` (lo crea js/campaigns.js para su vista `calls`). */
-  function mount(host, tab) {
+  /**
+   * Monta la vista en `host`: js/campaigns.js lo hace para su vista `calls`
+   * (Por llamar / Historial) y, con { configOnly: true }, para el panel del
+   * canal Llamadas en «Canales».
+   */
+  function mount(host, tab, opts) {
     st.host = host;
+    st.configOnly = !!(opts && opts.configOnly);
     show(tab);
   }
 
   function show(tab) {
     if (tab) st.tab = tab;
+    if (st.tab === 'config') st.tab = 'tasks'; // la configuración ya no es una pestaña de esta vista
     if (!shell()) return;
     render();
     refresh();
@@ -428,8 +473,8 @@
       // La cola y el historial se actualizan solos (resultado, grabación, transcripción).
       try {
         st.channel = sb().channel('calls-page')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'calls' }, function () { if (st.tab === 'history' && isVisible()) loadCalls().then(render).catch(function () {}); })
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'call_tasks' }, function () { if (st.tab === 'tasks' && isVisible()) loadTasks().then(render).catch(function () {}); })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'calls' }, function () { if (!st.configOnly && st.tab === 'history' && isVisible()) loadCalls().then(render).catch(function () {}); })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'call_tasks' }, function () { if (!st.configOnly && st.tab === 'tasks' && isVisible()) loadTasks().then(render).catch(function () {}); })
           .subscribe();
       } catch (e) { st.channel = null; }
     }
@@ -486,5 +531,5 @@
   // js/team.js se carga después de este archivo.
   if (!registerWithTeam()) document.addEventListener('DOMContentLoaded', registerWithTeam);
 
-  global.Calls = { mount: mount, show: show, renderLeadCalls: renderLeadCalls, OUTCOME_LABEL: OUTCOME_LABEL };
+  global.Calls = { mount: mount, show: show, summary: summary, renderLeadCalls: renderLeadCalls, OUTCOME_LABEL: OUTCOME_LABEL };
 })(window);

@@ -90,6 +90,11 @@
   // Bandeja (no es un canal de campaña ni se conecta en la barra de canales).
   CH.voice = { key: 'voice', label: 'Llamada', icon: SVG.voice, desc: 'Llamadas del agente de voz IA.' };
   var INBOX_CH_ORDER = CH_ORDER.concat(['voice']);
+  // Llamadas (dialer de Predictable o CloudTalk / Aircall / Ringover, js/calls.js):
+  // cuarto canal de la pestaña «Canales». No entra en CH_ORDER porque no es el
+  // gate de «+ Nueva campaña» (un paso `call` es una tarea para el SDR).
+  CH.calls = { key: 'calls', label: 'Llamadas', icon: SVG.voice, desc: 'Llama con un clic desde Listas, la Bandeja y la cola «Por llamar» de tus campañas: con el dialer de Predictable (grabación, transcripción y Meeting Coach en vivo) o con tu proveedor (CloudTalk, Aircall o Ringover).' };
+  var CHANNELS_PAGE_ORDER = CH_ORDER.concat(['calls']);
 
   var DAYS = [
     { value: 1, label: 'Lu' }, { value: 2, label: 'Ma' }, { value: 3, label: 'Mi' }, { value: 4, label: 'Ju' },
@@ -157,7 +162,10 @@
     emailAccounts: null,
     campaigns: [],
     loading: false,
-    view: 'campaigns',         // 'campaigns' | 'inbox' | 'knowledge' (Entrenar la IA) | 'suppression' (Bajas y exclusiones) | 'calls' (Llamadas, js/calls.js)
+    view: 'campaigns',         // 'campaigns' | 'channels' (Canales) | 'inbox' | 'knowledge' (Entrenar la IA) | 'suppression' (Bajas y exclusiones) | 'calls' (Llamadas, js/calls.js)
+    channelSel: null,          // canal abierto en «Canales» (email | whatsapp | linkedin | calls)
+    channelOpts: null,         // opciones del panel abierto (p. ej. { dripify: true })
+    callsSummary: undefined,   // estado del canal Llamadas (Calls.summary); undefined = sin leer
     activeId: null,
     builder: null,             // api del builder montado (crear / editar)
     builderHost: null,
@@ -687,7 +695,32 @@
     var n = (cfg.campaigns || []).length;
     return { state: 'connected', detail: n + (n === 1 ? ' campaña de LinkedIn' : ' campañas de LinkedIn'), webhookOk: liWebhookOk(cfg) };
   }
-  function channelState(key) { return key === 'email' ? emailState() : key === 'whatsapp' ? waState() : liState(); }
+  var callsSummaryLoading = false;
+  function loadCallsSummary(force) {
+    if (callsSummaryLoading || !global.Calls || !global.Calls.summary) return;
+    callsSummaryLoading = true;
+    global.Calls.summary(force).then(function (s) { state.callsSummary = s || { connected: false }; }, function (e) {
+      state.callsSummary = { connected: false, error: errMsg(e) };
+    }).then(function () { callsSummaryLoading = false; updateCallsCard(); });
+  }
+  function callsState() {
+    if (!global.Calls || !global.Calls.summary) return { state: 'disconnected', error: 'El módulo de llamadas no cargó. Recarga la página.' };
+    var s = state.callsSummary;
+    if (s === undefined) { loadCallsSummary(); return { state: 'loading' }; }
+    if (!s || !s.connected) return { state: 'disconnected', error: (s && s.error) || '' };
+    return { state: 'connected', detail: s.detail, sub: s.defaultLabel ? 'Clic para llamar: ' + s.defaultLabel : '', subKind: 'teal', webhookOk: true };
+  }
+  /** Repinta solo la tarjeta de Llamadas: repintar la vista remontaría su configuración. */
+  function updateCallsCard() {
+    if (state.view !== 'channels' || !state.root) return;
+    var old = state.root.querySelector('.cmp-ch[data-channel="calls"]');
+    if (old) old.replaceWith(renderChannelCard('calls', false));
+  }
+  global.addEventListener('predictable:telephony-status', function (ev) {
+    state.callsSummary = (ev && ev.detail) || { connected: false };
+    updateCallsCard();
+  });
+  function channelState(key) { return key === 'email' ? emailState() : key === 'whatsapp' ? waState() : key === 'calls' ? callsState() : liState(); }
   function channelConnected(key) {
     return channelState(key).state === 'connected';
   }
@@ -1783,17 +1816,20 @@
       root.appendChild(h('div', { class: 'pros-hint', text: 'Cargando canales y campañas…' }));
       return;
     }
-    // Llamar no depende de un canal conectado: la vista de Llamadas no espera al asistente.
-    if (!anyConnected() && !state.campaigns.length && !state.builder && state.view !== 'knowledge' && state.view !== 'suppression' && state.view !== 'calls') {
+    // Sin canales ni campañas, Campañas manda a «Canales» (la Bandeja y las
+    // demás vistas no esperan al asistente: llamar no depende de un canal).
+    if (state.view === 'campaigns' && !anyConnected() && !state.campaigns.length && !state.builder) {
       root.appendChild(renderSetupHero());
       return;
     }
-    // Las tarjetas de canales son configuración de Campañas: la Bandeja y Llamadas no las llevan.
-    if (state.view !== 'inbox' && state.view !== 'calls') root.appendChild(renderChannelBar(false));
+    // Los canales tienen su propia pestaña («Canales», 2026-10-19): Campañas
+    // ya no lleva las tarjetas arriba, solo un aviso si un canal pide atención.
     root.appendChild(renderSubnav());
     updateBadge();
+    if (state.view === 'campaigns' && !state.builder) { var issues = renderChannelIssues(); if (issues) root.appendChild(issues); }
     // El builder conserva su propio estado: se vuelve a colgar, no se recrea.
-    if (state.view === 'inbox') { root.appendChild(renderInbox()); markOpenConvRead(); setTimeout(function () { syncWatiHistory(false); }, 0); }
+    if (state.view === 'channels') root.appendChild(renderChannelsView());
+    else if (state.view === 'inbox') { root.appendChild(renderInbox()); markOpenConvRead(); setTimeout(function () { syncWatiHistory(false); }, 0); }
     else if (state.view === 'knowledge') root.appendChild(knowledgeNode());
     else if (state.view === 'calls') root.appendChild(callsNode());
     else if (state.view === 'suppression') root.appendChild(suppressionNode());
@@ -1820,6 +1856,20 @@
       '#prospecting-shell .cmp-ch-whatsapp { color:var(--green); }',
       '#prospecting-shell .cmp-ch-email { color:var(--accent-2); }',
       '#prospecting-shell .cmp-ch-linkedin { color:var(--cyan); }',
+      '#prospecting-shell .cmp-ch-calls { color:var(--accent-2); }',
+      '#prospecting-shell .cmp-ch-grid.four { grid-template-columns:repeat(4,minmax(0,1fr)); }',
+      '@media (max-width:1180px) { #prospecting-shell .cmp-ch-grid.four { grid-template-columns:repeat(2,minmax(0,1fr)); } }',
+      '@media (max-width:640px) { #prospecting-shell .cmp-ch-grid.four { grid-template-columns:1fr; } }',
+      '#prospecting-shell .cmp-ch.sel { border-color:var(--accent-2); box-shadow:0 0 0 1px var(--accent-2); }',
+      '#prospecting-shell .cmp-ch-intro { color:var(--text3); font-size:12.5px; line-height:1.55; margin:0 0 14px; max-width:820px; }',
+      '#prospecting-shell .cmp-chpanel { background:var(--surface); border:1px solid var(--hair); border-radius:var(--r-md); padding:18px; display:flex; flex-direction:column; gap:12px; min-width:0; }',
+      '#prospecting-shell .cmp-chpanel-head { display:flex; align-items:flex-start; gap:10px; flex-wrap:wrap; }',
+      '#prospecting-shell .cmp-chpanel-head h3 { margin:0; font-size:16px; font-weight:700; display:flex; align-items:center; gap:8px; }',
+      '#prospecting-shell .cmp-chpanel-head p { margin:4px 0 0; color:var(--text3); font-size:12.5px; line-height:1.5; max-width:720px; }',
+      '#prospecting-shell .cmp-chpanel-actions { display:flex; gap:8px; flex-wrap:wrap; border-top:1px solid var(--hair); padding-top:12px; }',
+      '#prospecting-shell .cmp-btn-danger { color:var(--red); }',
+      '#prospecting-shell .cmp-ch-issues { display:flex; flex-direction:column; gap:6px; margin:0 0 12px; }',
+      '#prospecting-shell .cmp-ch-issue { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; padding:8px 12px; border-radius:var(--r-md); background:var(--amber-soft); color:var(--amber); border:1px solid rgba(224,166,71,.32); }',
       '#prospecting-shell .cmp-ch-body { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; color:var(--text2); min-width:0; }',
       '#prospecting-shell .cmp-ch-desc { font-size:12.5px; color:var(--text3); line-height:1.5; }',
       '#prospecting-shell .cmp-ch-detail { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }',
@@ -2043,7 +2093,7 @@
     var meta = CH[key];
     var st = channelState(key);
     var on = st.state === 'connected';
-    var card = h('div', { class: 'cmp-ch' + (big ? ' big' : '') + (on ? ' on' : ''), 'data-channel': key });
+    var card = h('div', { class: 'cmp-ch' + (big ? ' big' : '') + (on ? ' on' : '') + (state.view === 'channels' && currentChannelSel() === key ? ' sel' : ''), 'data-channel': key });
     card.appendChild(h('div', { class: 'cmp-ch-head', html: chanIcon(key) + '<span>' + esc(meta.label) + '</span>' }));
     if (big) card.appendChild(h('div', { class: 'cmp-ch-desc', text: meta.desc }));
     var body = h('div', { class: 'cmp-ch-body' });
@@ -2055,6 +2105,7 @@
       if (st.sub) body.insertAdjacentHTML('beforeend', pill(st.sub, st.subKind));
       if ((key === 'linkedin' || key === 'whatsapp') && st.state === 'connected' && !st.webhookOk) body.appendChild(h('span', { class: 'cmp-chip-warn', text: '⚠ Falta el webhook de respuestas' }));
       foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-details', 'data-channel': key, text: 'Configuración' }));
+      if (key === 'calls') foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'cmp-calls', text: 'Ver la cola' }));
     } else {
       if (!big) body.appendChild(h('span', { class: 'pros-hint', text: 'Sin conectar' }));
       if (st.error) body.appendChild(h('span', { class: 'cmp-chip-warn', text: '⚠ ' + st.error }));
@@ -2065,21 +2116,137 @@
     return card;
   }
 
+  // ── Pestaña «Canales» (2026-10-19, pedido del dueño) ────────────────────
+  // Antes las tarjetas de canales vivían arriba de Campañas. Ahora tienen su
+  // propia pestaña (ítem «Canales» del sidebar, vista `channels`): una tarjeta
+  // por canal (Email, WhatsApp, LinkedIn y Llamadas) y, debajo, la
+  // configuración completa del canal elegido — la misma que antes abría el
+  // modal «Configuración», pintada en línea con inlineApi().
+  function currentChannelSel() {
+    if (state.channelSel && CHANNELS_PAGE_ORDER.indexOf(state.channelSel) !== -1) return state.channelSel;
+    for (var i = 0; i < CHANNELS_PAGE_ORDER.length; i++) {
+      if (channelState(CHANNELS_PAGE_ORDER[i]).state === 'connected') return CHANNELS_PAGE_ORDER[i];
+    }
+    return null;
+  }
   function renderChannelBar(big) {
     var wrap = h('div');
     if (state.statusError) wrap.appendChild(h('div', { class: 'pros-note-red', style: 'margin:0 0 12px', text: '⚠ No se pudo consultar el estado de los canales: ' + state.statusError }));
-    var grid = h('div', { class: 'cmp-ch-grid' });
-    CH_ORDER.forEach(function (k) { grid.appendChild(renderChannelCard(k, big)); });
+    var grid = h('div', { class: 'cmp-ch-grid four' });
+    CHANNELS_PAGE_ORDER.forEach(function (k) { grid.appendChild(renderChannelCard(k, big)); });
     wrap.appendChild(grid);
     return wrap;
+  }
+  function renderChannelsView() {
+    var wrap = h('div');
+    wrap.appendChild(h('p', { class: 'cmp-ch-intro', text: 'Conecta y configura los canales por los que salen tus campañas y llegan las respuestas a la Bandeja. Email, WhatsApp y LinkedIn son los pasos de tus cadencias; Llamadas define con qué llamas desde Listas, la Bandeja y la cola «Por llamar».' }));
+    wrap.appendChild(renderChannelBar(false));
+    var sel = currentChannelSel();
+    if (sel) wrap.appendChild(renderChannelPanel(sel));
+    else wrap.appendChild(h('div', { class: 'pros-hint', text: 'Conecta un canal para ver aquí su configuración.' }));
+    return wrap;
+  }
+  /** Equivalente en línea del modal: los renderers de detalle usan la misma API. */
+  function inlineApi() {
+    var body = h('div', { class: 'cmp-modal-body' });
+    var actionsEl = h('div', { class: 'cmp-chpanel-actions' });
+    actionsEl.hidden = true;
+    var api = { inline: true, body: body, actionsEl: actionsEl, buttons: [], close: function () {}, setTitle: function () {}, setBusy: setBusy, setActions: setActions };
+    function setBusy(b) {
+      api.buttons.forEach(function (x) { x.disabled = b; x.style.opacity = b ? '.6' : ''; });
+    }
+    function setActions(list) {
+      actionsEl.innerHTML = '';
+      api.buttons = [];
+      // «Cerrar» (sin onClick) no tiene sentido fuera de un modal.
+      (list || []).forEach(function (a) {
+        if (!a.onClick) return;
+        var danger = /logout-btn-confirm/.test(a.className || '');
+        var btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm' + (danger ? ' cmp-btn-danger' : ''), text: a.label });
+        btn.addEventListener('click', function () {
+          try {
+            var r = a.onClick(api, btn);
+            if (r && typeof r.catch === 'function') r.catch(function (e) { setBusy(false); toast(errMsg(e), 'error'); });
+          } catch (e) { setBusy(false); toast(errMsg(e), 'error'); }
+        });
+        api.buttons.push(btn);
+        actionsEl.appendChild(btn);
+      });
+      actionsEl.hidden = !api.buttons.length;
+    }
+    return api;
+  }
+  function renderChannelPanel(key) {
+    var meta = CH[key];
+    var st = channelState(key);
+    var panel = h('section', { class: 'cmp-chpanel', 'data-panel': key });
+    var head = h('div', { class: 'cmp-chpanel-head' });
+    var titles = h('div', { style: 'flex:1;min-width:220px' });
+    titles.appendChild(h('h3', { html: chanIcon(key) + '<span>' + esc(meta.label) + '</span>' }));
+    titles.appendChild(h('p', { text: meta.desc }));
+    head.appendChild(titles);
+    if (key === 'calls') head.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'cmp-calls', text: 'Ver la cola de llamadas' }));
+    panel.appendChild(head);
+    if (key === 'calls') {
+      panel.appendChild(callsConfigNode());
+      return panel;
+    }
+    if (st.state === 'loading') { panel.appendChild(h('div', { class: 'pros-hint', text: 'Cargando…' })); return panel; }
+    if (st.state !== 'connected') {
+      if (st.error) panel.appendChild(h('div', { class: 'cmp-chip-warn', text: '⚠ ' + st.error }));
+      panel.appendChild(h('div', { class: 'pros-hint', text: 'Sin conectar. El asistente te guía paso a paso, también si todavía no tienes cuenta.' }));
+      panel.appendChild(h('div', null, h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'ch-connect', 'data-channel': key, text: 'Conectar ' + meta.label })));
+      return panel;
+    }
+    var api = inlineApi();
+    panel.appendChild(api.body);
+    panel.appendChild(api.actionsEl);
+    fillChannelDetails(key, api, state.channelOpts);
+    return panel;
+  }
+  /** Configuración de Llamadas (js/calls.js) en su propio host, que persiste entre repintados. */
+  function callsConfigNode() {
+    if (!state.callsCfgHost) {
+      state.callsCfgHost = h('div');
+      if (!global.Calls || !global.Calls.mount) state.callsCfgHost.appendChild(h('div', { class: 'pros-hint', text: 'El módulo de llamadas no cargó. Recarga la página.' }));
+    }
+    setTimeout(function () { if (global.Calls && global.Calls.mount && state.view === 'channels' && currentChannelSel() === 'calls') global.Calls.mount(state.callsCfgHost, null, { configOnly: true }); }, 0);
+    return state.callsCfgHost;
+  }
+  /** En Campañas, una línea por canal que pide atención (con el atajo a Canales). */
+  function renderChannelIssues() {
+    var list = [];
+    if (state.statusError) list.push({ key: null, label: 'Canales', text: state.statusError });
+    CH_ORDER.forEach(function (k) {
+      var st = channelState(k);
+      if (st.state === 'connected' && (k === 'linkedin' || k === 'whatsapp') && !st.webhookOk) list.push({ key: k, label: CH[k].label, text: 'Falta el webhook de respuestas' });
+      else if (st.state === 'connected' && (st.subKind === 'red' || st.subKind === 'amber') && st.sub) list.push({ key: k, label: CH[k].label, text: st.sub });
+      else if (st.state !== 'connected' && st.error) list.push({ key: k, label: CH[k].label, text: st.error });
+    });
+    if (!list.length) return null;
+    var box = h('div', { class: 'cmp-ch-issues' });
+    list.forEach(function (it) {
+      // Etiqueta y mensaje en nodos separados: cada uno se traduce solo (js/i18n.js).
+      var row = h('div', { class: 'cmp-ch-issue' }, h('span', { text: '⚠' }), h('b', { text: it.label }), h('span', { style: 'flex:1', text: it.text }));
+      row.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'go-channels', 'data-channel': it.key || '', text: 'Revisar en Canales' }));
+      box.appendChild(row);
+    });
+    return box;
+  }
+  /** Abre la pestaña «Canales» (con el canal elegido) y resalta su ítem del sidebar. */
+  function openChannels(key) {
+    if (key && CHANNELS_PAGE_ORDER.indexOf(key) !== -1) { state.channelSel = key; state.channelOpts = null; }
+    var item = document.querySelector('.nav-item[data-page="pro-main"][data-pros-view="channels"]');
+    if (item) { item.click(); return; }
+    setView('channels');
   }
 
   function renderSetupHero() {
     var box = h('div', { class: 'cmp-hero' });
     box.appendChild(h('h2', { text: 'Conecta tus canales y lanza tu primera campaña' }));
-    box.appendChild(h('p', { text: 'Una campaña combina Email, WhatsApp y LinkedIn en una sola cadencia y se detiene sola cuando el lead responde por cualquier canal. Conecta al menos un canal para empezar.' }));
-    box.appendChild(renderChannelBar(true));
-    var btn = h('button', { type: 'button', class: 'btn btn-primary', 'data-action': 'cmp-new', text: '+ Nueva campaña' });
+    box.appendChild(h('p', { text: 'Una campaña combina Email, WhatsApp, LinkedIn y llamadas en una sola cadencia y se detiene sola cuando el lead responde por cualquier canal. Conecta al menos un canal en «Canales» para empezar.' }));
+    box.appendChild(h('div', { style: 'display:flex;justify-content:center;margin-bottom:8px' }, h('button', { type: 'button', class: 'btn btn-primary', 'data-action': 'go-channels', text: 'Conectar canales' })));
+    var btn = h('button', { type: 'button', class: 'btn btn-ghost', 'data-action': 'cmp-new', text: '+ Nueva campaña' });
     btn.disabled = true;
     box.appendChild(h('div', { style: 'display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:8px' }, btn, h('span', { class: 'pros-hint', text: 'Conecta al menos un canal' })));
     // Entrenar la IA no depende de los canales: se puede preparar antes.
@@ -2097,6 +2264,10 @@
       var badge = h('span', { class: 'cmp-badge', 'data-role': 'inbox-badge', text: n ? String(n) : '' });
       badge.hidden = !n;
       bar.appendChild(h('div', { class: 'cmp-secname' }, 'Bandeja', badge));
+      return bar;
+    }
+    if (state.view === 'channels') {
+      bar.appendChild(h('div', { class: 'cmp-secname' }, 'Canales'));
       return bar;
     }
     if (state.view === 'knowledge') {
@@ -2127,7 +2298,7 @@
       title: 'Contactos a los que no se les escribe ni se les llama: bajas, tus exclusiones y registros oficiales.',
       text: 'Bajas y exclusiones' }));
     var newBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'cmp-new', text: '+ Nueva campaña' });
-    if (!anyConnected()) { newBtn.disabled = true; newBtn.title = 'Conecta al menos un canal'; }
+    if (!anyConnected()) { newBtn.disabled = true; newBtn.title = 'Conecta al menos un canal en «Canales»'; }
     bar.appendChild(newBtn);
     return bar;
   }
@@ -3115,8 +3286,22 @@
     api.setActions(actions);
   }
 
+  /** En «Canales» la configuración se pinta en línea; desde otra vista, en un modal. */
   function openChannelDetails(key, opts) {
+    if (state.view === 'channels' && state.root && state.root.isConnected) {
+      state.channelSel = key;
+      state.channelOpts = opts || null;
+      render();
+      var panel = state.root.querySelector('.cmp-chpanel[data-panel="' + key + '"]');
+      if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return null;
+    }
+    if (key === 'calls') { openChannels('calls'); return null; }
     var api = openModal({ title: CH[key].label, width: key === 'whatsapp' ? 680 : 600 });
+    fillChannelDetails(key, api, opts);
+    return api;
+  }
+  function fillChannelDetails(key, api, opts) {
     var body = api.body;
     body.innerHTML = '';
     if (key === 'whatsapp') {
@@ -3221,7 +3406,6 @@
       acts.push({ label: 'Cerrar' });
       api.setActions(acts);
     }
-    return api;
   }
 
   // ── CSV de leads para LinkedIn (Custom Lead Fields) ──────────────────────
@@ -3437,6 +3621,8 @@
     return state.callsHost;
   }
   function openCalls(tab) {
+    // La configuración de llamadas vive en «Canales» desde el 2026-10-19.
+    if (tab === 'config') return openChannels('calls');
     state.callsTab = tab || null;
     setView('calls');
   }
@@ -4713,7 +4899,8 @@
     var channel = btn.getAttribute('data-channel');
 
     // Canales / navegación
-    if (action === 'ch-connect') return openConnect(channel, btn);
+    if (action === 'ch-connect') return channel === 'calls' ? openChannelDetails('calls') : openConnect(channel, btn);
+    if (action === 'go-channels') return openChannels(channel || null);
     if (action === 'ch-details') return openChannelDetails(channel);
 
     // Campañas
@@ -5289,10 +5476,12 @@
     if (built && !state.loading && state.status !== undefined) applyPendingList();
   }
 
-  /** Cambia de vista ('campaigns' | 'inbox' | 'knowledge' | 'suppression'); si la pestaña aún no cargó, se aplica al montar. */
+  /** Cambia de vista ('campaigns' | 'channels' | 'inbox' | 'knowledge' | 'suppression' | 'calls'); si la pestaña aún no cargó, se aplica al montar. */
   function setView(view) {
     // 'analytics' era una vista aparte hasta el 2026-10-07: un valor guardado viejo cae en Campañas.
-    var v = view === 'inbox' || view === 'knowledge' || view === 'suppression' || view === 'calls' ? view : 'campaigns';
+    var v = view === 'inbox' || view === 'knowledge' || view === 'suppression' || view === 'calls' || view === 'channels' ? view : 'campaigns';
+    // El estado de Llamadas se relee al entrar a Canales (pudo cambiar desde el dialer).
+    if (v === 'channels') loadCallsSummary(true);
     if (v === 'knowledge') state.knowledgeHost = null;
     if (v === 'suppression') state.suppressionHost = null;
     saveView(v);
@@ -5317,6 +5506,6 @@
   if (global.EmailMailboxes) {
     global.EmailMailboxes.init({ h: h, esc: esc, toast: toast, errMsg: errMsg, openModal: openModal, edgeFetch: edgeFetch, btnLoading: btnLoading, confirmModal: confirmModal, pill: pill, fmtDateTime: fmtDateTime, fmtDate: fmtDate });
   }
-  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openCalls: openCalls, openConversation: openConversation, openLinkedinDesigner: openLinkedinDesigner };
+  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openCalls: openCalls, openChannels: openChannels, openConversation: openConversation, openLinkedinDesigner: openLinkedinDesigner };
   console.log('[campaigns] module loaded');
 })(window);
