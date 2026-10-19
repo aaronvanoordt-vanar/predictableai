@@ -1176,10 +1176,10 @@ export const OPERATIONS: Record<string, Operation> = {
   // ── Bandeja ───────────────────────────────────────────────────────────────
   "messages.list": {
     scope: "read",
-    summary: "Mensajes enviados y recibidos por WhatsApp, email y LinkedIn.",
+    summary: "Mensajes enviados y recibidos por WhatsApp, email y LinkedIn, y las llamadas del agente de voz (canal voice).",
     params: obj({
       contact_id: S.id("Solo los de este contacto."),
-      channel: { type: "string", enum: ["whatsapp", "email", "linkedin"] },
+      channel: { type: "string", enum: ["whatsapp", "email", "linkedin", "voice"] },
       direction: { type: "string", enum: ["in", "out"], description: "in = respuestas del lead; out = enviados." },
       created_after: S.date("Solo los posteriores a esta fecha."),
       ...PAGE_PARAMS,
@@ -1189,7 +1189,7 @@ export const OPERATIONS: Record<string, Operation> = {
       let q = ctx.supa.from("inbox_messages").select("id, member_id, channel, direction, contact_ref, body, status, error_detail, sent_at, created_at").eq("user_id", ctx.userId);
       const cid = uuid(input.contact_id, "contact_id", false);
       if (cid) q = q.eq("member_id", cid);
-      const ch = oneOf(input.channel, "channel", ["whatsapp", "email", "linkedin"] as const);
+      const ch = oneOf(input.channel, "channel", ["whatsapp", "email", "linkedin", "voice"] as const);
       if (ch) q = q.eq("channel", ch);
       const dir = oneOf(input.direction, "direction", ["in", "out"] as const);
       if (dir) q = q.eq("direction", dir);

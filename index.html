@@ -2086,6 +2086,12 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.2"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1.2"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1.2"/><rect x="9" y="9" width="5.5" height="5.5" rx="1.2"/></svg>
       Clientes
     </div>
+    <!-- Agencia (2026-10-17, js/agency.js): créditos repartidos a los espacios
+         de clientes, consumo por cliente (CSV) y ficha del directorio. -->
+    <div class="nav-item" data-page="agency" onclick="nav(this,'agency');if(window.Agency)window.Agency.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="5" cy="5" r="2.2"/><circle cx="11" cy="5" r="2.2"/><path d="M1.5 13.5c0-2 1.6-3.5 3.5-3.5s3.5 1.5 3.5 3.5M7.5 13.5c0-2 1.6-3.5 3.5-3.5s3.5 1.5 3.5 3.5"/></svg>
+      Agencia
+    </div>
 
     <!-- INTELIGENCIA -->
     <div class="sidebar-section">
@@ -2195,6 +2201,16 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
          context-gate: conectar herramientas no depende del Contexto. -->
     <div class="sidebar-section">
       <div class="lbl">Conectar</div>
+    </div>
+    <!-- Inbound (2026-10-17, js/inbound.js): widget web (formulario + botón de
+         WhatsApp), enrutamiento a SDRs y speed-to-lead. Vive en «Conectar»
+         (fuera del bloque del context-gate, que tapa todo lo que queda entre
+         la primera y la última página bloqueada): un lead que escribe no
+         espera a que el Contexto esté confirmado. -->
+    <div class="nav-item" data-page="inbound" onclick="nav(this,'inbound');if(window.inbound)window.inbound.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M8 2v7M5 6l3 3 3-3"/><path d="M2 10v3h12v-3"/></svg>
+      Inbound
+      <span id="nav-inbound-badge" class="nav-badge" style="display:none">0</span>
     </div>
     <div class="nav-item" data-page="integrations" onclick="nav(this,'integrations');if(window.integrations)window.integrations.show()">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M6 2v3M10 2v3"/><path d="M4 5h8v2.5a4 4 0 01-8 0z"/><path d="M8 11.5V14"/></svg>
@@ -2438,6 +2454,28 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
   <div id="ai-training-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: AGENCIA (js/agency.js) ═══════ -->
+<div class="page fade-in" id="page-agency" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Agencia</div>
+      <div class="topbar-sub">Reparte créditos a los espacios de tus clientes y ve cuánto gastó cada uno</div>
+    </div>
+  </div>
+  <div id="agency-shell"></div>
+</div>
+
+<!-- ═══════ PAGE: INBOUND (js/inbound.js) ═══════ -->
+<div class="page fade-in" id="page-inbound" style="padding:0;gap:0;">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Inbound</div>
+      <div class="topbar-sub">Formulario y botón de WhatsApp para tu sitio, reparto a tu equipo y tiempo hasta el primer contacto</div>
+    </div>
+  </div>
+  <div id="inbound-shell"></div>
 </div>
 
 <!-- ═══════ PAGE: EQUIPO (js/team.js + js/team-metrics.js) ═══════ -->
@@ -3264,20 +3302,23 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/phone-latam.js?v=20261018"></script>
 <script src="js/phone-lines.js?v=20261018"></script>
 <script src="js/ai-columns.js?v=20261017"></script>
-<script src="js/prospecting.js?v=20261018crm4"></script>
+<script src="js/prospecting.js?v=20261018crm5"></script>
+<script src="js/voice-agent.js?v=20261018"></script>
 <script src="js/registry-search.js?v=20261017"></script>
 <script src="js/campaign-flow.js?v=20261018b"></script>
 <script src="js/linkedin-campaigns.js?v=20260915"></script>
 <script src="js/campaign-builder.js?v=20261017"></script>
 <script src="js/campaign-knowledge.js?v=20260923"></script>
-<script src="js/campaign-analytics.js?v=20261008a"></script>
+<script src="js/campaign-analytics.js?v=20261018"></script>
 <script src="js/suppression.js?v=20261017"></script>
 <script src="js/campaigns.js?v=20261018crm3"></script>
 <script src="js/inbox-alert.js?v=20261001b"></script>
 <script src="js/push.js?v=20261006"></script>
+<script src="js/inbound.js?v=20261017"></script>
 <script src="js/radar.js?v=20261017"></script>
 <script src="js/radar-live.js?v=20261017"></script>
 <script src="js/clients.js?v=20260824-sheets"></script>
+<script src="js/agency.js?v=20261017"></script>
 <script src="js/meeting-coach.js"></script>
 <script src="js/realtime-coach.js"></script>
 <script src="js/meeting-report.js"></script>
@@ -4143,6 +4184,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // Páginas con shell propio: montarlas también al restaurar (el onclick
     // del nav-item no corre en este camino).
     if (hash === 'clients' && window.clientsModule) window.clientsModule.show();
+    if (hash === 'agency' && window.Agency) window.Agency.show();
     if (hash === 'tam-map' && window.tamMap) window.tamMap.show();
   }, 0);
 });

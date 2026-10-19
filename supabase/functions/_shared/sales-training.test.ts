@@ -11,7 +11,7 @@ Deno.test("sin entrenamiento: doctrina de neuroventas y ningún bloque", () => {
   assertEquals(coachDoctrine(["neuroventas"]), NEURO_DOCTRINE);
   const empty: Training = { row: null, docs: [], company: null };
   assertEquals(hasTraining(empty), false);
-  for (const t of ["coach", "coach_live", "outreach", "cadence"] as const) assertEquals(buildTrainingBlock(empty, t), "");
+  for (const t of ["coach", "coach_live", "outreach", "cadence", "voice"] as const) assertEquals(buildTrainingBlock(empty, t), "");
 });
 
 Deno.test("neuroventas + otra: se conserva la doctrina y se suma el marco", () => {
@@ -100,4 +100,27 @@ Deno.test("espejo: METHODS de js/ai-training.js = METHODOLOGIES", async () => {
   const rows = [...src.matchAll(/\{ id: '([^']+)', name: '([^']+)', author: '([^']+)', book: (?:'([^']+)'|"([^"]+)"), focus: '([^']+)'/g)]
     .map((m) => ({ id: m[1], name: m[2], author: m[3], book: m[4] ?? m[5], focus: m[6] }));
   assertEquals(rows, METHODOLOGIES.map(({ id, name, author, book, focus }) => ({ id, name, author, book, focus })));
+});
+
+Deno.test("agente de voz: lado campañas, sin emojis ni largo y SIN documentos de precios", () => {
+  const t: Training = {
+    row: {
+      campaign_methods: ["spin"],
+      style: { address: "usted", emojis: "a_veces", length: "detallado", words_avoid: "sinergia" },
+      rules_always: "ofrecer pasar con una persona",
+    },
+    docs: [
+      { title: "Playbook", kind: "playbook", summary: "- Pregunta por el piloto.", status: "done", enabled: true, apply_campaigns: true },
+      { title: "Tarifas 2026", kind: "pricing", summary: "- Plan Pro 999 USD con 20 % de descuento.", status: "done", enabled: true, apply_campaigns: true },
+    ],
+  };
+  const v = buildTrainingBlock(t, "voice");
+  assertStringIncludes(v, "SPIN");
+  assertStringIncludes(v, "USTED");
+  assertStringIncludes(v, "sinergia");
+  assertStringIncludes(v, "SIEMPRE: ofrecer pasar con una persona");
+  assertStringIncludes(v, "Pregunta por el piloto");
+  assert(!v.includes("999 USD"), "los precios en una llamada salen solo del Contexto");
+  assert(!v.includes("Un emoji ocasional") && !v.includes("Puedes extenderte"), "una llamada no lleva emojis ni largo de mensaje");
+  assert(v.length <= 5_600, `voice mide ${v.length}`);
 });

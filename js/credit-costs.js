@@ -90,6 +90,12 @@
     coach_meeting:          { credits: 5,  label: 'por cada 10 min (+5 del reporte)', variable: true },
     // Modo bot (Recall.ai): 8 por cada 10 min + 5 del reporte final.
     coach_bot_block:        { credits: 8,  label: 'por cada 10 min en modo bot (+5 del reporte)', variable: true },
+
+    // ── Agente de voz IA (por minuto conectado, hacia arriba) ─────────
+    // Una llamada que no contesta no cuesta. Argentina tiene tarifa propia
+    // porque sus móviles cuestan ~5 veces más en el operador.
+    voice_minute:           { credits: 6,  label: 'por minuto de llamada', variable: true },
+    voice_minute_ar:        { credits: 18, label: 'por minuto de llamada a Argentina', variable: true },
   };
 
   function get(key) {
