@@ -47,6 +47,19 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// pg_cron manda un JWT service_role que no siempre es byte a byte
+// SUPABASE_SERVICE_ROLE_KEY (mismo caso que campaign-run / integrations). La
+// función va con verify_jwt, así que la firma ya la verificó el gateway.
+function jwtRole(token: string): string | null {
+  try {
+    const payload = token.split(".")[1] ?? "";
+    const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof decoded?.role === "string" ? decoded.role : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204 });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -55,8 +68,8 @@ Deno.serve(async (req: Request) => {
   const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
   // Only allow service_role callers
-  const authHeader = req.headers.get("Authorization") ?? "";
-  if (authHeader !== `Bearer ${serviceKey}`) {
+  const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!token || (token !== serviceKey && jwtRole(token) !== "service_role")) {
     return json({ error: "Unauthorized" }, 401);
   }
 
