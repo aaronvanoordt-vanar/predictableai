@@ -34,6 +34,14 @@
  *          (RPC agency_transfer_credits, que revalida todo y deja auditoría).
  *   settings { client_id, monthly_cap, low_balance_alert } → tope de gasto
  *          mensual y alerta de saldo bajo (RPC agency_workspace_settings).
+ *   invite_account { email, label? } → invita por correo a una empresa que ya
+ *          tiene (o va a crear) su cuenta; queda `pending` hasta que ella
+ *          acepte (migración 20261019093000, `agency_linked_accounts`).
+ *   enter_account { link_id? | user_id? } → token de un solo uso para entrar a
+ *          una cuenta REAL: la agencia, solo con un vínculo aceptado; el
+ *          equipo (is_vanarsi_account), a cualquiera que no sea del equipo ni
+ *          un espacio. Cada ingreso queda en `account_access_log`, que la
+ *          empresa ve.
  *
  * Despliegue: supabase functions deploy client-workspace   (CON verificación
  * de JWT: solo la llama el equipo con sesión).
@@ -43,6 +51,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { parseSettings, parseTransfer, rpcErrorMessage } from "../_shared/agency-credits.ts";
+import { enterAccountDecision, inviteEmail, MAX_OPEN_INVITES, parseInvite } from "../_shared/agency-links.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -50,6 +59,7 @@ const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const WORKSPACE_DOMAIN = "workspaces.vanarsi.com";
+const INVITE_FROM = "Predictable <reportes@vanarsi.com>";
 const CLIENT_BUCKET = "client-assets";
 const BRAND_BUCKET = "brand-assets";
 /** Los formatos que acepta brand-assets (js/branding.js). */
@@ -129,6 +139,140 @@ async function copyPhotoAsLogo(db: Db, photoPath: string | null, wsUserId: strin
   }
 }
 
+/** Manda el correo de invitación por Resend; sin la key no hay canal (la invitación igual queda). */
+async function sendInvite(to: string, agencyName: string): Promise<boolean> {
+  const key = Deno.env.get("RESEND_API_KEY");
+  if (!key) return false;
+  const from = (Deno.env.get("REPORT_EMAIL_FROM") || "").trim() || INVITE_FROM;
+  const mail = inviteEmail(agencyName);
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from, to: [to], subject: mail.subject, html: mail.html, text: mail.text }),
+    });
+    if (!res.ok) console.warn("[client-workspace] invite email", res.status, (await res.text().catch(() => "")).slice(0, 200));
+    return res.ok;
+  } catch (e) {
+    console.warn("[client-workspace] invite email", (e as Error).message);
+    return false;
+  }
+}
+
+/** invite_account y enter_account: ya validado que quien llama es del equipo o una agencia aprobada. */
+async function handleAccountAction(
+  db: Db,
+  caller: { id: string; email?: string | null },
+  action: string,
+  // deno-lint-ignore no-explicit-any
+  body: any,
+  origin: string,
+): Promise<Response> {
+  if (action === "invite_account") {
+    const parsed = parseInvite(body, caller.email);
+    if (!parsed.ok) return json({ error: parsed.error, code: "invalid" }, 400, origin);
+    const { email, label } = parsed.value;
+
+    const open = await db.from("agency_linked_accounts").select("id", { count: "exact", head: true })
+      .eq("agency_user_id", caller.id).in("status", ["pending", "active"]);
+    if (open.error) {
+      console.error("[client-workspace] invite count", open.error.message);
+      return json({ error: "No se pudo crear la invitación." }, 500, origin);
+    }
+    if ((open.count ?? 0) >= MAX_OPEN_INVITES) {
+      return json({ error: `Llegaste al máximo de ${MAX_OPEN_INVITES} empresas vinculadas o por aceptar.`, code: "limit" }, 400, origin);
+    }
+
+    const ins = await db.from("agency_linked_accounts")
+      .insert({ agency_user_id: caller.id, invited_email: email, label })
+      .select("id").single();
+    if (ins.error) {
+      if (ins.error.code === "23505") return json({ error: "Ya invitaste o vinculaste ese correo.", code: "duplicate" }, 409, origin);
+      console.error("[client-workspace] invite insert", ins.error.message);
+      return json({ error: "No se pudo crear la invitación." }, 500, origin);
+    }
+    const nameRes = await db.rpc("agency_link_display_name", { p_user_id: caller.id });
+    const emailSent = await sendInvite(email, String(nameRes.data || "Una agencia"));
+    return json({ id: ins.data.id, email, email_sent: emailSent }, 200, origin);
+  }
+
+  // enter_account
+  const linkId = body?.link_id ? String(body.link_id) : "";
+  const userId = body?.user_id ? String(body.user_id) : "";
+  if (linkId && !UUID_RE.test(linkId)) return json({ error: "link_id inválido" }, 400, origin);
+  if (userId && !UUID_RE.test(userId)) return json({ error: "user_id inválido" }, 400, origin);
+  if (!linkId && !userId) return json({ error: "Falta la cuenta a la que entrar.", code: "invalid" }, 400, origin);
+
+  let link: { id: string; agency_user_id: string; member_user_id: string | null; status: string; label: string | null } | null = null;
+  let targetId = userId;
+  if (linkId) {
+    const l = await db.from("agency_linked_accounts")
+      .select("id, agency_user_id, member_user_id, status, label").eq("id", linkId).maybeSingle();
+    if (l.error) return json({ error: "No se pudo leer el vínculo." }, 500, origin);
+    // Un vínculo ajeno es como si no existiera.
+    if (!l.data || l.data.agency_user_id !== caller.id) return json({ error: "Vínculo no encontrado.", code: "forbidden" }, 404, origin);
+    link = l.data;
+    targetId = l.data.member_user_id || "";
+    if (!targetId) return json({ error: "La empresa todavía no aceptó la invitación.", code: "forbidden" }, 403, origin);
+  } else {
+    // Por user_id solo el equipo; si hay vínculo activo propio, también sirve.
+    const l = await db.from("agency_linked_accounts")
+      .select("id, agency_user_id, member_user_id, status, label")
+      .eq("agency_user_id", caller.id).eq("member_user_id", userId).eq("status", "active").maybeSingle();
+    link = l.data ?? null;
+  }
+
+  const [isTeam, tgtTeam, tgtWs] = await Promise.all([
+    db.rpc("is_vanarsi_account", { p_user_id: caller.id }),
+    db.rpc("is_vanarsi_account", { p_user_id: targetId }),
+    db.rpc("is_workspace_account", { p_user_id: targetId }),
+  ]);
+  if (isTeam.error || tgtTeam.error || tgtWs.error) {
+    console.error("[client-workspace] enter_account checks", isTeam.error?.message || tgtTeam.error?.message || tgtWs.error?.message);
+    return json({ error: "No se pudo validar la cuenta." }, 500, origin);
+  }
+  const decision = enterAccountDecision({
+    callerIsTeam: isTeam.data === true,
+    callerId: caller.id,
+    targetId,
+    targetIsTeam: tgtTeam.data === true,
+    targetIsWorkspace: tgtWs.data === true,
+    link,
+  });
+  if (!decision.ok) return json({ error: decision.error, code: decision.code }, decision.code === "invalid" ? 400 : 403, origin);
+
+  try {
+    const target = await db.auth.admin.getUserById(targetId);
+    const targetEmail = target.data?.user?.email;
+    if (!targetEmail || !target.data?.user?.email_confirmed_at) {
+      return json({ error: "Esa cuenta no tiene un correo confirmado." }, 400, origin);
+    }
+    const prof = await db.from("profiles").select("brand_name, company_name, full_name").eq("id", targetId).maybeSingle();
+    const name = String(link?.label || prof.data?.brand_name || prof.data?.company_name || prof.data?.full_name || targetEmail).slice(0, 80);
+
+    const actorName = decision.via === "team"
+      ? "Equipo de Predictable"
+      : String((await db.rpc("agency_link_display_name", { p_user_id: caller.id })).data || "Una agencia");
+
+    // Primero el rastro, después el token: si el registro falla, no se entra.
+    const logged = await db.from("account_access_log").insert({
+      member_user_id: targetId, actor_user_id: caller.id, actor_label: actorName, via: decision.via, link_id: link?.id ?? null,
+    });
+    if (logged.error) throw new Error("account_access_log: " + logged.error.message);
+
+    const gen = await db.auth.admin.generateLink({ type: "magiclink", email: targetEmail });
+    const tokenHash = gen.data?.properties?.hashed_token;
+    if (!tokenHash) throw new Error("generateLink: " + (gen.error?.message || "sin token"));
+
+    if (link) await db.from("agency_linked_accounts").update({ last_entered_at: new Date().toISOString() }).eq("id", link.id);
+
+    return json({ token_hash: tokenHash, workspace_user_id: targetId, client_name: name, linked_account: true }, 200, origin);
+  } catch (e) {
+    console.error("[client-workspace] enter_account", (e as Error).message);
+    return json({ error: "No se pudo abrir la cuenta." }, 500, origin);
+  }
+}
+
 Deno.serve(async (req) => {
   const origin = req.headers.get("origin") ?? "*";
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(origin) });
@@ -141,10 +285,11 @@ Deno.serve(async (req) => {
   let body: any = {};
   try { body = await req.json(); } catch { /* vacío */ }
   const action = String(body?.action ?? "enter");
-  if (!["enter", "transfer", "settings"].includes(action)) return json({ error: "Acción desconocida" }, 400, origin);
+  if (!["enter", "transfer", "settings", "invite_account", "enter_account"].includes(action)) return json({ error: "Acción desconocida" }, 400, origin);
 
+  const accountAction = action === "invite_account" || action === "enter_account";
   const clientId = String(body?.client_id ?? "");
-  if (!UUID_RE.test(clientId)) return json({ error: "client_id inválido" }, 400, origin);
+  if (!accountAction && !UUID_RE.test(clientId)) return json({ error: "client_id inválido" }, 400, origin);
 
   const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const authed = createClient(SUPABASE_URL, ANON_KEY, {
@@ -177,6 +322,8 @@ Deno.serve(async (req) => {
       code: "team_only",
     }, 403, origin);
   }
+
+  if (accountAction) return await handleAccountAction(db, caller, action, body, origin);
 
   // 2. …que gestiona este cliente (RLS con el JWT de quien llama).
   const manage = await authed.rpc("can_manage_client", { p_client_id: clientId });
