@@ -480,9 +480,12 @@ async function unipileStepError(ctx: Ctx, acc: Json, e: unknown): Promise<StepEr
 
 /** Texto de un paso de LinkedIn nativo: propio (con variables) o el mensaje IA aprobado. */
 async function linkedinText(ctx: Ctx, en: Json, step: StepLike, member: Json, sender: Json): Promise<{ body: string; messageId: string | null }> {
-  if (step.content_kind === "custom") return { body: fill(step.body ?? "", member, sender), messageId: null };
+  if (step.content_kind === "custom") {
+    return { body: fill(step.body ?? "", member, sender, await withAgenda(ctx, en, member, step.body ?? "")), messageId: null };
+  }
   const t = await aiText(ctx, en, step);
-  return { body: t.body, messageId: t.messageId };
+  const agenda = await withAgenda(ctx, en, member, t.body);
+  return { body: t.body.replace(new RegExp(AGENDA_RE.source, "gi"), agenda), messageId: t.messageId };
 }
 
 /** Nota de conexión ≤ 300 caracteres, cortada en una palabra. */
