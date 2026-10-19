@@ -8,7 +8,9 @@
  * reuniones de la semana (`lead_meetings`). Lo guarda en
  * `client_weekly_reports` (el portal lo muestra) y lo manda por email si hay
  * un canal de envío configurado:
- *   RESEND_API_KEY + REPORT_EMAIL_FROM (secrets) y `clients.report_emails`.
+ *   RESEND_API_KEY (secret) y `clients.report_emails`. El remitente es
+ *   DEFAULT_FROM (dominio vanarsi.com, decisión del dueño 2026-10-19, verificado
+ *   en Resend); REPORT_EMAIL_FROM lo reemplaza si se define.
  * Sin canal el reporte queda en el portal con `email_status = 'no_channel'`;
  * nunca se manda desde el buzón de Apollo del cliente ni del equipo.
  *
@@ -34,6 +36,7 @@ import {
 type Json = any;
 
 const BUDGET_MS = 120_000;
+const DEFAULT_FROM = "Predictable <reportes@vanarsi.com>";
 const PAGE = 1000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -95,8 +98,8 @@ async function loadCohort(db: Json, uid: string, fromIso: string, toIso: string)
 
 async function sendEmail(to: string[], mail: { subject: string; html: string; text: string }): Promise<{ ok: boolean; error?: string }> {
   const key = Deno.env.get("RESEND_API_KEY");
-  const from = Deno.env.get("REPORT_EMAIL_FROM");
-  if (!key || !from) return { ok: false, error: "no_channel" };
+  const from = (Deno.env.get("REPORT_EMAIL_FROM") || "").trim() || DEFAULT_FROM;
+  if (!key) return { ok: false, error: "no_channel" };
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",

@@ -22,7 +22,7 @@
   var EMAIL_STATUS = {
     sent: 'Enviado por email',
     pending: 'Pendiente de envío',
-    no_channel: 'Solo en el portal: falta configurar el proveedor de email (RESEND_API_KEY y REPORT_EMAIL_FROM)',
+    no_channel: 'Solo en el portal: falta configurar el email (secret RESEND_API_KEY)',
     no_recipients: 'Solo en el portal: sin destinatarios',
     disabled: 'Solo en el portal: el envío semanal está apagado',
     failed: 'El envío falló',
