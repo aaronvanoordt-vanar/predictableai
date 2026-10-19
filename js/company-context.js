@@ -381,7 +381,7 @@
   }
 
   // Espejo de las filas estructuradas hacia las columnas de texto que ya leen
-  // generate-outreach, sales-coach, learning-loop y CODA (company_solutions,
+  // generate-outreach, sales-coach, learning-loop (company_solutions,
   // icp_pain_points, icp_buying_triggers). Mismo criterio que
   // structuredMirror() en _shared/context-defaults.ts.
   function structuredMirror(patch) {
@@ -441,7 +441,7 @@
 
   // Espejo hacia las columnas de texto viejas (icp_industries / icp_roles /
   // icp_geographies / icp_company_sizes). generate-radar, generate-client-brief
-  // y generate-coda ya las leen; mantenerlas escritas evita tener que tocar
+  // ya las leen; mantenerlas escritas evita tener que tocar
   // todas las edge functions a la vez para que nada se quede sin contexto.
   function legacyMirror(patch) {
     var out = {};

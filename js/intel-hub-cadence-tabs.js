@@ -1330,10 +1330,10 @@
       company_about: val('company_about') || null,
       ...ccPatch,
       // Espejo de las filas (soluciones, dolores, señales) hacia las columnas
-      // de texto que leen outreach, coach, learning-loop y CODA.
+      // de texto que leen outreach, coach, learning-loop.
       ...cc.structuredMirror(ccPatch),
       // Espejo hacia las columnas de texto que ya leen generate-radar,
-      // generate-client-brief y generate-coda.
+      // generate-client-brief.
       ...cc.legacyMirror(ccPatch),
     };
     const outcomes = val('key_outcomes').split('\n').map(s2 => s2.trim()).filter(Boolean);
