@@ -528,9 +528,15 @@ async function actEnroll(ctx: Ctx, cfg: Json): Promise<ActionResult> {
   if (!campaign) return { kind: "fail", text: "La campaña ya no existe." };
   if (campaign.status !== "active") return { kind: "fail", text: `La campaña «${campaign.name}» no está activa: actívala y vuelve a aprobar.` };
 
-  const { data: rows } = await ctx.svc.from("prospect_list_members")
-    .select("id, contact_status, enrich_requested_at, email, phone, linkedin_url, company_domain")
-    .in("id", ids).eq("user_id", ctx.userId);
+  // crm_suppressed_at (migración 20261018230000): en el CRM ya es cliente o
+  // tiene una oportunidad abierta → no se enrola. Sin la migración se lee lo demás.
+  const MCOLS = "id, contact_status, enrich_requested_at, email, phone, linkedin_url, company_domain";
+  const first0 = await ctx.svc.from("prospect_list_members")
+    .select(MCOLS + ", crm_suppressed_at").in("id", ids).eq("user_id", ctx.userId);
+  let rows: Json[] | null = first0.data as Json[] | null;
+  if (first0.error && /crm_suppressed_at/.test(first0.error.message)) {
+    rows = (await ctx.svc.from("prospect_list_members").select(MCOLS).in("id", ids).eq("user_id", ctx.userId)).data as Json[] | null;
+  }
   // Sin email todavía, el primer paso de email se omitiría: esperar a enrich-list.
   if ((rows || []).some((r: Json) => r.enrich_requested_at) && elapsed(st.started_at) < ENRICH_WAIT_MAX_MS) return { kind: "wait" };
 
@@ -544,6 +550,8 @@ async function actEnroll(ctx: Ctx, cfg: Json): Promise<ActionResult> {
   const chans = [...new Set(flowLib.actions(flow).map((a): string => (a.channel.startsWith("linkedin") ? "linkedin" : a.channel)))]
     .filter((c): c is SuppressionChannel => (SUPPRESSION_CHANNELS as readonly string[]).includes(c));
   let members: Json[] = rows || [];
+  const crmSuppressed = members.filter((m) => m.crm_suppressed_at).length;
+  members = members.filter((m) => !m.crm_suppressed_at);
   let suppressed = 0;
   if (chans.length && members.length) {
     const sup = await suppressedMembers(ctx.svc, ctx.userId, members, chans);
@@ -552,8 +560,10 @@ async function actEnroll(ctx: Ctx, cfg: Json): Promise<ActionResult> {
     suppressed = blocked.size;
     members = members.filter((m) => !blocked.has(m.id));
   }
+  const crmNote = crmSuppressed ? `${crmSuppressed} ya ${crmSuppressed === 1 ? "es cliente o tiene" : "son clientes o tienen"} una oportunidad abierta en el CRM` : "";
   if (!members.length) {
-    return { kind: "done", level: "warn", text: `Ninguno enrolado: ${suppressed} en la lista de «No contactar» en todos los canales de la campaña.` };
+    const why = [suppressed ? `${suppressed} en la lista de «No contactar» en todos los canales de la campaña` : "", crmNote].filter(Boolean).join("; ");
+    return { kind: "done", level: "warn", text: `Ninguno enrolado: ${why}.` };
   }
   const now = Date.now();
   // Misma fila que enrollMembers() de js/campaigns.js.
@@ -580,7 +590,7 @@ async function actEnroll(ctx: Ctx, cfg: Json): Promise<ActionResult> {
   return {
     kind: "done",
     cost,
-    text: `${enrolled.length} enrolados en «${campaign.name}»${enrolled.length < enrollRows.length ? ` (${enrollRows.length - enrolled.length} ya estaban)` : ""}${suppressed ? `; ${suppressed} omitidos por «No contactar»` : ""}. El crédito por lead se cobra al primer envío.`,
+    text: `${enrolled.length} enrolados en «${campaign.name}»${enrolled.length < enrollRows.length ? ` (${enrollRows.length - enrolled.length} ya estaban)` : ""}${suppressed ? `; ${suppressed} omitidos por «No contactar»` : ""}${crmNote ? `; ${crmNote} (no se enrolaron)` : ""}. El crédito por lead se cobra al primer envío.`,
     fact: `enrolados en «${campaign.name}»`,
   };
 }
