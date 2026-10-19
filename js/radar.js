@@ -136,7 +136,7 @@
     if (days <= 0) return 'Hoy';
     if (days === 1) return 'Ayer';
     if (days < 31) return 'Hace ' + days + ' días';
-    return d.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+    return d.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
   }
 
   const state = {
@@ -676,8 +676,8 @@
       if (!state.user) return null;
     }
     const now = new Date();
-    const baseName = 'Radar ' + now.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' }) +
-      ' ' + now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+    const baseName = 'Radar ' + now.toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short' }) +
+      ' ' + now.toLocaleTimeString((window.i18n ? i18n.locale() : 'es-MX'), { hour: '2-digit', minute: '2-digit' });
     let name = String(opts.name || '').trim();
     if (!name) {
       const typed = global.prompt('Nombre de la lista:', baseName);
@@ -967,8 +967,7 @@
       const saved = savedCompanyKeys();
       const total = uniqNames([].concat.apply([], state.prevRuns.map((r) => r.companies)));
       const withMemory = total.filter((n) => saved.has(n.toLowerCase())).length;
-      rows.push(exRow('prev', '', 'Radares anteriores', state.prevRuns.length + ' investigación' +
-        (state.prevRuns.length === 1 ? '' : 'es') + ' · ' + total.length + ' empresas, ' + withMemory +
+      rows.push(exRow('prev', '', 'Radares anteriores', (state.prevRuns.length === 1 ? '1 investigación' : state.prevRuns.length + ' investigaciones') + ' · ' + total.length + ' empresas, ' + withMemory +
         ' guardadas en una lista — solo esas vuelven con señal nueva',
         state.excludePrevRadar));
     }
@@ -1074,7 +1073,7 @@
   function viewResults(run) {
     const companies = Array.isArray(run.companies) ? run.companies : [];
     const totalDms = companies.reduce((n, c) => n + ((c.decision_makers || []).length), 0);
-    const when = run.generated_at ? new Date(run.generated_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'long' }) : '';
+    const when = run.generated_at ? new Date(run.generated_at).toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'long' }) : '';
     const signal = String(run.signal_hypothesis || '');
     const repeats = companies.filter((c) => c && c.seen_before).length;
     const contactables = companies.reduce((n, c) => n +
@@ -1124,8 +1123,7 @@
     const parts = [];
     if (m.hard) parts.push('Saltando ' + m.hard + ' empresa' + (m.hard === 1 ? '' : 's') + ' que ya trabajas.');
     if (m.soft) {
-      parts.push(m.soft + ' de radares anteriores solo vuelve' + (m.soft === 1 ? '' : 'n') +
-        ' si aparece una señal nueva.');
+      parts.push(m.soft === 1 ? '1 de radares anteriores solo vuelve si aparece una señal nueva.' : m.soft + ' de radares anteriores solo vuelven si aparece una señal nueva.');
     }
     return parts.join(' ');
   }
@@ -1147,8 +1145,7 @@
     }
     if (m.hard) parts.push('Se excluyeron ' + m.hard + ' empresa' + (m.hard === 1 ? '' : 's') + ' que ya trabajas.');
     if (repeats) {
-      parts.push(repeats + ' empresa' + (repeats === 1 ? '' : 's') + ' de un radar anterior vuelve' +
-        (repeats === 1 ? '' : 'n') + ' aquí con una señal nueva.');
+      parts.push(repeats === 1 ? '1 empresa de un radar anterior vuelve aquí con una señal nueva.' : repeats + ' empresas de un radar anterior vuelven aquí con una señal nueva.');
     } else if (m.soft) {
       parts.push('Ninguna de las ' + m.soft + ' empresas de radares anteriores traía una señal nueva.');
     }
@@ -1220,7 +1217,7 @@
       ? '<div class="rdr-again">' +
         (c.previous_seen_at
           ? 'Ya te la entregamos el ' +
-            esc(new Date(c.previous_seen_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })) + '. '
+            esc(new Date(c.previous_seen_at).toLocaleDateString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'long', year: 'numeric' })) + '. '
           : 'Ya te la había entregado un Radar anterior. ') +
         (c.previous_signal ? 'Entonces la señal era: “' + esc(c.previous_signal) + '”. ' : '') +
         (c.repeat_reason ? '<strong>Novedad:</strong> ' + esc(c.repeat_reason) : 'Vuelve con una señal distinta.') +

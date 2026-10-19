@@ -57,6 +57,9 @@
     // Nota BANT del traspaso al AE cuando un lead agenda desde tu agenda.
     // Agendar y los recordatorios por WhatsApp y email no cuestan.
     meeting_handoff:        { credits: 3,  label: 'por reunión agendada', variable: false },
+    // Contenido en LinkedIn: una tanda de ideas o un borrador (o reescritura).
+    linkedin_ideas:         { credits: 2,  label: 'por tanda de ideas',  variable: false },
+    linkedin_post:          { credits: 3,  label: 'por borrador',        variable: false },
     // Seguimiento de champions (Radar): búsqueda web de respaldo cuando
     // Apollo no ubica a la persona en su empresa.
     champion_web_check:     { credits: 2,  label: 'por verificación web', variable: false },

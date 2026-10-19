@@ -31,12 +31,12 @@
   };
   function toast(m, t) { if (global.uiHelpers && global.uiHelpers.toast) global.uiHelpers.toast(m, t || 'info'); }
   function sb() { return global.supabaseClient; }
-  function fmt(n) { return Number(n || 0).toLocaleString('es-419'); }
+  function fmt(n) { return Number(n || 0).toLocaleString((window.i18n ? i18n.locale() : 'es-MX')); }
 
   // ── Espejo de _shared/agency-credits.ts ────────────────────────────────
   var USAGE_CATEGORIES = [
     { key: 'enrichment', label: 'Enriquecimiento', prefixes: ['enrich_', 'email_verify', 'lead_research_apollo', 'registry_'] },
-    { key: 'ai', label: 'IA: mensajes · investigación · columnas', prefixes: ['outreach_message', 'outreach_full', 'outreach_step', 'campaign_recommendation', 'lead_research', 'ai_column', 'meeting_handoff'] },
+    { key: 'ai', label: 'IA: mensajes · investigación · columnas · contenido', prefixes: ['outreach_message', 'outreach_full', 'outreach_step', 'campaign_recommendation', 'lead_research', 'ai_column', 'linkedin_', 'meeting_handoff'] },
     { key: 'campaigns', label: 'Campañas', prefixes: ['campaign_lead', 'campaign_send', 'inbox_'] },
     { key: 'hub', label: 'Intelligence Hub', prefixes: ['intel_hub', 'market_analysis', 'outreach_playbook'] },
     { key: 'radar', label: 'Radar', prefixes: ['radar_', 'champion_'] },
@@ -321,7 +321,7 @@
         var what = LOG_KIND[l.kind] || l.kind;
         if (l.kind === 'settings') what += ': tope ' + (l.monthly_cap == null ? 'sin tope' : fmt(l.monthly_cap)) + ', alerta ' + (l.low_balance_alert == null ? 'sin alerta' : fmt(l.low_balance_alert));
         if (l.actor_user_id && l.actor_user_id !== me && l.kind !== 'settings') what += ' (otra persona del equipo)';
-        return '<tr><td style="white-space:nowrap">' + esc(new Date(l.created_at).toLocaleString('es-419', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })) + '</td>' +
+        return '<tr><td style="white-space:nowrap">' + esc(new Date(l.created_at).toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })) + '</td>' +
           '<td>' + esc(l.client_name || '—') + '</td><td>' + esc(what) + '</td>' +
           '<td class="ag-num">' + (l.kind === 'settings' ? '—' : (l.kind === 'assign' ? '+' : '−') + fmt(l.amount)) + '</td>' +
           '<td>' + esc(l.note || '') + '</td></tr>';
