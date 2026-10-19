@@ -163,9 +163,6 @@ html[data-rail="1"] .nav-item { overflow: visible; }
 .topbar { gap: 14px; }
 .topbar-title { font-size: 17px; font-weight: 600; letter-spacing: -.02em; }
 .topbar-sub { margin-top: 3px; }
-.coda-section-title {
-  font-size: 20px !important; font-weight: 700 !important; letter-spacing: -.02em !important; line-height: 1.2;
-}
 
 /* Chip de créditos: cristal, misma altura que la cabecera */
 #credits-chip {
@@ -178,7 +175,7 @@ html[data-rail="1"] .nav-item { overflow: visible; }
 
 /* ── Botones: un solo sistema de movimiento ───────────────────────────── */
 .btn,
-.settings-btn, .ctxgate-btn, .ctxgate-nav-btn, .coda-btn, .ihx-btn-ai, .ihx-btn-generate,
+.settings-btn, .ctxgate-btn, .ctxgate-nav-btn, .ihx-btn-ai, .ihx-btn-generate,
 .hub-unlock-btn, .miforms-popup-cta, .ccx-confirm-btn, .logout-btn, .ih-refresh-btn, .mc-mode-btn, .tt-opt, .role-opt {
   transition:
     transform var(--dur-1) var(--ease-out),
@@ -186,9 +183,9 @@ html[data-rail="1"] .nav-item { overflow: visible; }
     background var(--dur-1), background-color var(--dur-1),
     border-color var(--dur-1), color var(--dur-1), filter var(--dur-1), opacity var(--dur-1);
 }
-.btn:hover:not([disabled]), .settings-btn:hover:not([disabled]), .ctxgate-btn:hover, .coda-btn:hover, .ihx-btn-ai:hover, .ihx-btn-generate:hover,
+.btn:hover:not([disabled]), .settings-btn:hover:not([disabled]), .ctxgate-btn:hover, .ihx-btn-ai:hover, .ihx-btn-generate:hover,
 .hub-unlock-btn:hover, .miforms-popup-cta:hover, .ccx-confirm-btn:hover, .ih-refresh-btn:hover { transform: translateY(-1px); }
-.btn:active:not([disabled]), .settings-btn:active:not([disabled]), .ctxgate-btn:active, .coda-btn:active, .ihx-btn-ai:active, .ihx-btn-generate:active,
+.btn:active:not([disabled]), .settings-btn:active:not([disabled]), .ctxgate-btn:active, .ihx-btn-ai:active, .ihx-btn-generate:active,
 .hub-unlock-btn:active, .miforms-popup-cta:active, .ccx-confirm-btn:active, .ih-refresh-btn:active { transform: translateY(0) scale(.98); }
 .btn[disabled], .btn.is-loading { cursor: not-allowed; opacity: .72; transform: none !important; }
 
@@ -471,7 +468,7 @@ html.ux-theming, html.ux-theming *, html.ux-theming *::before, html.ux-theming *
   /* Módulos: rejillas a una columna (sus estilos se inyectan después de este archivo) */
   #prospecting-shell .pros-grid, #prospecting-shell .pros-grid.pros-grid-300, #prospecting-shell .pros-2col,
   .cmp-inbox, .cmp-msg, .cmp-ch-grid, .cmp-conv, .cb-cad, .cb-msg-body, .cb-review,
-  .coda-foda-grid, .coda-came-grid, .ihx-context-gallery, .ihx-field-row, .sax-cols-2, .sax-cols-3, .mks-tiles,
+  .ihx-context-gallery, .ihx-field-row, .sax-cols-2, .sax-cols-3, .mks-tiles,
   .cl-sections, .cl-row2, .lrn-grid, .rl-grid, .rl-cols, .rdr-grid,
   .crm-detail-grid, .crm-form {
     grid-template-columns: 1fr !important;

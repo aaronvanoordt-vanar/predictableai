@@ -88,7 +88,7 @@ jobs:
 
           FUNCTIONS="${FUNCTIONS_INPUT:-}"
           if [ -z "$FUNCTIONS" ]; then
-            FUNCTIONS="enrich-company generate-client-brief generate-radar radar-plan radar-monitor generate-intel-hub generate-outreach generate-coda learning-loop sales-coach campaign-run"
+            FUNCTIONS="enrich-company generate-client-brief generate-radar radar-plan radar-monitor generate-intel-hub generate-outreach learning-loop sales-coach campaign-run"
           fi
 
           # Funciones que en producción corren SIN verificación de JWT porque se

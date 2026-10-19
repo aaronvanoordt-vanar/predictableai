@@ -2119,10 +2119,6 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       Radar
       <span id="nav-radar-badge" class="nav-badge accent" style="display:none">0</span>
     </div>
-    <div class="nav-item" data-page="coda-ai" onclick="nav(this,'coda-ai')">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M8 1v14M2 8h12"/></svg>
-      Contexto global
-    </div>
 
     <!-- EJECUTAR -->
     <div class="sidebar-section">
@@ -2467,7 +2463,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   <div class="topbar">
     <div>
       <div class="topbar-title">Entrenamiento IA</div>
-      <div class="topbar-sub">Tu forma de vender: metodologías, estilo, reglas y conocimiento propio para el Meeting Coach y tus campañas</div>
+      <div class="topbar-sub">Lo que solo sabe tu empresa: playbook, precios, casos, estilo y reglas para el Meeting Coach y tus campañas</div>
     </div>
   </div>
   <div id="ai-training-shell"></div>
@@ -2600,17 +2596,6 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   </div>
 </div>
 
-<!-- ═══════ PAGE: Contexto estratégico IA (PESTEL + 5 fuerzas de Porter + FODA→CAME · js/coda-ai.js) ═══════ -->
-<div class="page fade-in" id="page-coda-ai" style="padding:0;gap:0;">
-  <div class="topbar">
-    <div>
-      <div class="topbar-title">Contexto global</div>
-      <div class="topbar-sub">PESTEL de tu mercado + 5 fuerzas de Porter de tu competencia + tu FODA convertido en un plan CAME — contexto opcional, todo con IA</div>
-    </div>
-  </div>
-  <div id="coda-shell"></div>
-</div>
-
 <!-- ═══════ PAGE: PROSPECCIÓN (Buscar · Listas · Campañas — js/prospecting.js + js/campaigns.js) ═══════ -->
 <div class="page fade-in" id="page-pro-main" style="padding:0;gap:0;">
   <div class="topbar">
@@ -2657,7 +2642,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <div id="mc-prospect-meta" style="font-size:13px;color:var(--text3);margin-bottom:22px">Elige con quién es la reunión para cargar su brief — el coach no inicia sin un lead.</div>
 
       <!-- Resumen del entrenamiento del coach (js/ai-training.js): con qué
-           metodologías, estilo, reglas y documentos habla este coach. -->
+           documentos, estilo y reglas de la empresa habla este coach. -->
       <div data-ai-training-badge="coach" style="max-width:560px;margin:-8px 0 20px"></div>
 
       <!-- Selector de lead (obligatorio): se llena desde las Listas guardadas de Prospección -->
@@ -3102,14 +3087,6 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       </div>
 
       <div class="settings-row">
-        <div class="settings-row-label">Contexto global</div>
-        <div class="settings-row-value">
-          <div data-ai-engine="coda" data-ai-engine-compact data-ai-engine-nolabel></div>
-          <div class="settings-row-hint">PESTEL, 5 fuerzas de Porter y conversión FODA → CAME.</div>
-        </div>
-      </div>
-
-      <div class="settings-row">
         <div class="settings-row-label">Generación de mensajes</div>
         <div class="settings-row-value">
           <div data-ai-engine="outreach" data-ai-engine-compact data-ai-engine-nolabel></div>
@@ -3378,8 +3355,6 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/coach-lead-picker.js?v=20260915"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js?v=20261017"></script>
-<!-- Contexto estratégico IA: PESTEL + 5 fuerzas de Porter + FODA→CAME (contexto opcional, debajo del Intelligence Hub) -->
-<script src="js/coda-ai.js"></script>
 <script src="js/context-gate.js?v=20261018c"></script>
 <script src="js/onboarding-tour.js"></script>
 <script src="js/miforms-prompt.js"></script>
@@ -4091,11 +4066,6 @@ function nav(el, pageId) {
   if (mainEl) mainEl.scrollTop = 0;
   window.scrollTo(0,0);
 
-  // Contexto estratégico IA lifecycle: si la página se activa por deep-link/hash
-  // antes de que el módulo cargara su sesión, forzamos el init (idempotente) para que monte.
-  if (pageId === 'coda-ai' && typeof window.codaAiInit === 'function') {
-    setTimeout(() => { window.codaAiInit(); }, 50);
-  }
   _activePageId = pageId;
 
   // Prospección lifecycle: si la página se activa por una vía programática

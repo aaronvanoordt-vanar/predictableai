@@ -2,26 +2,26 @@
  * sales-training — el "Predictable de cada empresa" (2026-09-23).
  *
  * Cada cuenta entrena su IA de ventas desde la página «Entrenamiento IA»
- * (js/ai-training.js): qué metodologías de venta aplica el Meeting Coach y
- * cuáles las campañas, su estilo de comunicación, reglas propias (siempre /
- * nunca), la personalidad del coach y su base de conocimiento (libros,
- * playbooks, casos, battlecards… destilados a principios por la edge
- * function `ai-training`).
+ * (js/ai-training.js) con lo que solo ella sabe: su base de conocimiento
+ * (playbooks, casos, precios, battlecards… destilados a principios por la
+ * edge function `ai-training`), su estilo de comunicación, reglas propias
+ * (siempre / nunca) y la personalidad del coach.
+ *
+ * El catálogo de metodologías de venta (libros: SPIN, Challenger, Sandler…)
+ * se quitó el 2026-10-19 a pedido del dueño: quien no los leyó no sabía
+ * cuáles elegir. Las columnas `coach_methods` / `campaign_methods` de
+ * `ai_training` quedan en la tabla pero ya no se leen: el coach usa siempre
+ * NEURO_DOCTRINE. No lo resucites.
  *
  * Este archivo es la ÚNICA definición de cómo ese entrenamiento se convierte
  * en instrucciones para el modelo. Lo consumen:
- *   - sales-coach       → coachDoctrine() reemplaza la doctrina fija y
- *                         buildTrainingBlock('coach' | 'coach_live').
+ *   - sales-coach       → coachDoctrine() + buildTrainingBlock('coach' |
+ *                         'coach_live').
  *   - generate-outreach → buildTrainingBlock('outreach') (pasos, respuestas
  *                         de la Bandeja y la preparación del coach).
  *   - generate-campaign → buildTrainingBlock('cadence').
  *   - ai-training       → vista previa y el prompt del coach en vivo por el
  *                         worker de OpenAI (js/realtime-coach.js).
- *
- * `METHODOLOGIES` es espejo de `METHODS` en js/ai-training.js (ids, nombre,
- * autor, libro, foco): se cambian juntos — `sales-training.test.ts` lo
- * verifica. Los principios están escritos con palabras propias: son el
- * resumen operativo de cada marco, nunca texto copiado de los libros.
  *
  * Reglas de precedencia (van dentro del bloque, el modelo las lee):
  *   - El entrenamiento personaliza voz, enfoque y conocimiento.
@@ -41,186 +41,9 @@ type Json = any;
 // solo se mencionan los precios y condiciones del Contexto.
 export type TrainingTarget = "coach" | "coach_live" | "outreach" | "cadence" | "voice";
 
-export interface Methodology {
-  id: string;
-  name: string;
-  author: string;
-  book: string;
-  /** Dónde brilla: sirve para la recomendación de la UI, no limita su uso. */
-  focus: "coach" | "campaigns" | "both";
-  /** Cómo aplica el coach (reunión en vivo y reporte). */
-  coach: string[];
-  /** Cómo aplica en mensajes de campaña y diseño de cadencias. */
-  outreach: string[];
-}
-
-export const METHODOLOGIES: Methodology[] = [
-  {
-    id: "neuroventas", name: "Neuroventas", author: "Jürgen Klarić", book: "Véndele a la mente, no a la gente", focus: "both",
-    coach: [
-      "Véndele primero al cerebro reptil (miedo a perder, seguridad, poder, ahorrar energía), luego a la emoción y al final a los datos.",
-      "Descubre el código reptil del lead (control, reconocimiento, seguridad, crecimiento, ahorro) y vende en ese código.",
-      "Menos es más: una idea por frase, tres beneficios como máximo, cero jerga.",
-    ],
-    outreach: [
-      "Abre con lo que el lead pierde o arriesga hoy, no con lo que tú haces.",
-      "Una sola idea por mensaje; lo tangible (una cifra o escena del propio lead) vence a la lista de beneficios.",
-    ],
-  },
-  {
-    id: "spin", name: "SPIN Selling", author: "Neil Rackham", book: "SPIN Selling", focus: "coach",
-    coach: [
-      "Ordena el descubrimiento en Situación → Problema → Implicación → Necesidad-beneficio.",
-      "Pocas preguntas de situación (aburren al lead); invierte el tiempo en las de implicación: qué le cuesta el problema en dinero, tiempo, riesgo y personas.",
-      "Que el lead diga en voz alta el beneficio de resolverlo (preguntas de necesidad-beneficio) antes de mostrar la solución.",
-      "En ventas complejas el objetivo de cada reunión es un avance concreto, no solo una buena conversación.",
-    ],
-    outreach: [
-      "Formula el gancho como una pregunta de implicación ('cuando X pasa, ¿cuánto se retrasa Y?') en lugar de afirmar el dolor.",
-    ],
-  },
-  {
-    id: "challenger", name: "The Challenger Sale", author: "Matthew Dixon y Brent Adamson", book: "The Challenger Sale", focus: "both",
-    coach: [
-      "Enseña: lleva un insight comercial que cambie cómo el lead ve su propio problema (algo que no sabía y le cuesta).",
-      "Adapta el mensaje a cada perfil de la mesa (usuario, financiero, decisor): qué gana y qué arriesga cada uno.",
-      "Toma el control con respeto: sostén tu recomendación ante la presión de precio o de plazos, sin agresividad.",
-      "Construye la tensión constructiva: nombra el costo de seguir igual antes de hablar de tu solución.",
-    ],
-    outreach: [
-      "Cada mensaje trae un reencuadre: una idea que desafía la forma en que su industria resuelve el problema.",
-      "Evita el 'queremos presentarte': el valor es la idea, no la reunión.",
-    ],
-  },
-  {
-    id: "sandler", name: "Sandler", author: "David Sandler", book: "You Can't Teach a Kid to Ride a Bike at a Seminar", focus: "coach",
-    coach: [
-      "Arranca con un contrato inicial: objetivo de la llamada, tiempo, y que al final ambos decidan si hay siguiente paso (un 'no' también vale).",
-      "Embudo del dolor: de lo superficial a lo personal (¿desde cuándo?, ¿qué intentaste?, ¿cuánto te cuesta?, ¿cómo te afecta a ti?).",
-      "Califica presupuesto y proceso de decisión ANTES de presentar.",
-      "Venta inversa: cuando el lead empuja, retrocede un paso ('quizá no es prioridad hoy') para que él argumente a favor.",
-    ],
-    outreach: [
-      "Tono sin necesidad: está bien que no sea para ellos; invita a descartar rápido.",
-    ],
-  },
-  {
-    id: "meddicc", name: "MEDDICC", author: "Jack Napoli y Dick Dunkel (PTC)", book: "MEDDIC / MEDDICC", focus: "coach",
-    coach: [
-      "Califica el deal en voz alta: Métricas (impacto medible), Economic buyer (quién firma), Criterios de decisión, Proceso de decisión, Identificar el dolor, Champion y Competencia.",
-      "Cada reunión debe dejar al menos una letra más confirmada; marca como riesgo la que siga vacía.",
-      "Sin economic buyer identificado ni proceso de decisión claro, el deal no avanza aunque la reunión haya sido buena.",
-    ],
-    outreach: [
-      "Apunta el mensaje al dolor que el economic buyer mide, no a la tarea del usuario.",
-    ],
-  },
-  {
-    id: "gap_selling", name: "Gap Selling", author: "Keenan", book: "Gap Selling", focus: "coach",
-    coach: [
-      "Mapea el estado actual (cómo operan hoy, problemas, impacto, causa raíz) y el estado futuro que desean.",
-      "Vendes la brecha entre ambos: cuanto más grande y más clara para el lead, más urgente la decisión.",
-      "Céntrate en el problema, no en el producto: si no hay brecha no hay venta, dilo con honestidad.",
-    ],
-    outreach: [
-      "Describe en una frase el estado actual típico del rol y el costo de esa brecha, sin pitchear el producto.",
-    ],
-  },
-  {
-    id: "voss", name: "Negociación táctica", author: "Chris Voss", book: "Never Split the Difference", focus: "coach",
-    coach: [
-      "Empatía táctica: etiqueta la emoción del lead ('parece que te preocupa…') y deja que la confirme.",
-      "Espejo: repite sus últimas 2-3 palabras en tono de pregunta para que siga hablando.",
-      "Preguntas calibradas con '¿cómo…?' y '¿qué…?' en lugar de '¿por qué…?' (que suena a juicio).",
-      "Auditoría de acusaciones: nombra tú primero lo negativo que el lead podría pensar.",
-      "Busca un 'eso es correcto' más que un 'sí' de cortesía; un 'no' da seguridad y abre la negociación.",
-    ],
-    outreach: [
-      "Usa preguntas orientadas al 'no' ('¿sería una locura revisar…?') en el CTA.",
-    ],
-  },
-  {
-    id: "jolt", name: "The JOLT Effect", author: "Matthew Dixon y Ted McKenna", book: "The JOLT Effect", focus: "coach",
-    coach: [
-      "Muchas ventas se pierden por indecisión, no por la competencia: detecta el miedo a equivocarse.",
-      "Juzga el nivel de indecisión, Ofrece una recomendación clara ('en tu caso yo haría X'), Limita la exploración (no abras más opciones) y quita el riesgo de la mesa (pilotos, garantías, pasos pequeños).",
-    ],
-    outreach: [
-      "En seguimientos a leads tibios, reduce opciones y propone un único paso de bajo riesgo.",
-    ],
-  },
-  {
-    id: "predictable_revenue", name: "Predictable Revenue", author: "Aaron Ross y Marylou Tyler", book: "Predictable Revenue", focus: "campaigns",
-    coach: [
-      "Una reunión de descubrimiento califica, no vende: confirma encaje con el ICP y agenda el paso con quien decide.",
-    ],
-    outreach: [
-      "Mensajes cortos, en texto plano, escritos como de persona a persona; nada de folleto.",
-      "Pide dirección antes que reunión cuando no sabes si es la persona correcta ('¿quién ve X en tu equipo?').",
-      "Especialización: cada campaña apunta a un ICP y un dolor; no mezcles mensajes para todos.",
-    ],
-  },
-  {
-    id: "fanatical_prospecting", name: "Prospección fanática", author: "Jeb Blount", book: "Fanatical Prospecting", focus: "campaigns",
-    coach: [
-      "Pide la reunión o el siguiente paso de forma directa y asume el sí; luego calla.",
-    ],
-    outreach: [
-      "Multicanal y constante: cada toque es breve y en un canal distinto.",
-      "Fórmula de 5 pasos: interrumpe con su nombre, identifícate, di por qué escribes, un 'porque' que conecte con su mundo, y pide lo que quieres.",
-      "Ten lista la respuesta a los reflejos típicos ('mándame info', 'no me interesa') y responde con una pregunta.",
-    ],
-  },
-  {
-    id: "cialdini", name: "Influencia", author: "Robert Cialdini", book: "Influence", focus: "both",
-    coach: [
-      "Apóyate en los principios de persuasión con ética: reciprocidad (da valor primero), compromiso (micro-síes), prueba social REAL, autoridad, simpatía, escasez verdadera y unidad (identidad compartida).",
-      "Nunca fabriques escasez ni prueba social: solo lo que exista en el contexto.",
-    ],
-    outreach: [
-      "Da algo útil antes de pedir (dato, idea, recurso).",
-      "Prueba social de pares del mismo sector o rol, solo si está en el contexto; nunca inventada.",
-    ],
-  },
-  {
-    id: "mom_test", name: "The Mom Test", author: "Rob Fitzpatrick", book: "The Mom Test", focus: "coach",
-    coach: [
-      "Pregunta por hechos del pasado ('¿cuándo fue la última vez que…?, ¿cómo lo resolviste?'), no por opiniones sobre el futuro.",
-      "Los cumplidos y los 'me encantaría' no son señales: busca compromisos concretos (tiempo, dinero, introducciones).",
-      "Habla menos de tu solución y más de su vida real con el problema.",
-    ],
-    outreach: [],
-  },
-  {
-    id: "pink", name: "Vender es humano", author: "Daniel H. Pink", book: "To Sell Is Human", focus: "campaigns",
-    coach: [
-      "Sintonía: toma la perspectiva del lead y ajusta tu ritmo al suyo.",
-      "Claridad: ayuda al lead a encontrar el problema correcto, no solo a resolver el que trae.",
-    ],
-    outreach: [
-      "Asuntos útiles o de curiosidad concreta, específicos, nunca de relleno.",
-      "Pitch en forma de pregunta cuando los argumentos son fuertes: el lead se convence solo.",
-    ],
-  },
-];
-
-const METHOD_BY_ID: Record<string, Methodology> = Object.fromEntries(METHODOLOGIES.map((m) => [m.id, m]));
-
-export function isMethodology(id: unknown): id is string {
-  return typeof id === "string" && Object.prototype.hasOwnProperty.call(METHOD_BY_ID, id);
-}
-
-/** Filtra ids desconocidos o repetidos; conserva el orden del usuario. */
-export function cleanMethods(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  const out: string[] = [];
-  for (const id of v) if (isMethodology(id) && !out.includes(id)) out.push(id);
-  return out.slice(0, 6);
-}
-
 // ───────────────────────────────────────────────────────────────────────────
-// Doctrina del coach. NEURO_DOCTRINE es la de siempre (2026-09-18) y sigue
-// siendo el default: sin entrenamiento el coach habla exactamente igual.
+// Doctrina del coach. NEURO_DOCTRINE es la de siempre (2026-09-18) y la única
+// desde que se quitaron las metodologías elegibles (2026-10-19).
 // ───────────────────────────────────────────────────────────────────────────
 const COACH_OBJECTIONS_AND_RULES = [
   "MANEJO DE OBJECIONES (siempre en 3 movimientos):",
@@ -263,54 +86,16 @@ export const NEURO_DOCTRINE = [
   ...COACH_OBJECTIONS_AND_RULES,
 ].join("\n");
 
-function methodLines(m: Methodology, kind: "coach" | "outreach"): string[] {
-  const list = kind === "coach" ? m.coach : m.outreach;
-  if (!list.length) return [];
-  return [`${m.name} (${m.author}, «${m.book}»):`, ...list.map((p) => `- ${p}`)];
-}
-
-/**
- * Doctrina del coach según las metodologías elegidas. Sin elección (o solo
- * neuroventas) devuelve NEURO_DOCTRINE tal cual. Con neuroventas + otras, la
- * doctrina de siempre más las otras como marcos adicionales. Sin neuroventas,
- * una identidad neutra construida con los marcos elegidos + las mismas
- * reglas duras y el mismo manejo de objeciones.
- */
-export function coachDoctrine(methods: unknown): string {
-  const ids = cleanMethods(methods);
-  if (!ids.length || (ids.length === 1 && ids[0] === "neuroventas")) return NEURO_DOCTRINE;
-  const others = ids.filter((id) => id !== "neuroventas").map((id) => METHOD_BY_ID[id]);
-  const frameworks = others.flatMap((m) => [...methodLines(m, "coach"), ""]);
-  if (ids.includes("neuroventas")) {
-    return [
-      NEURO_DOCTRINE,
-      "",
-      "MARCOS ADICIONALES QUE ESTE EQUIPO ENTRENA (combínalos con la doctrina de arriba; cuando",
-      "una alerta aplique uno, que la frase sugerida lo refleje sin nombrar el libro):",
-      ...frameworks,
-    ].join("\n").trimEnd();
-  }
-  return [
-    "IDENTIDAD: eres el entrenador de ventas de este equipo, entrenado en las metodologías que",
-    "el equipo eligió. Hablas directo, con energía, sin rodeos, como un coach al oído del",
-    "vendedor. Frases cortas. Tu trabajo NO es explicar teoría: es decirle QUÉ HACER ahora.",
-    "Aplica los marcos en la práctica; no nombres el libro en las frases sugeridas.",
-    "",
-    "METODOLOGÍAS DEL EQUIPO:",
-    ...frameworks,
-    "PRINCIPIOS COMUNES: pregunta más de lo que afirmas (el lead debe hablar más que el",
-    "vendedor), hazlo tangible con datos del propio lead y el cierre es un siguiente paso",
-    "concreto con fecha.",
-    "",
-    ...COACH_OBJECTIONS_AND_RULES,
-  ].join("\n");
+/** Doctrina del coach: la misma para todas las cuentas. */
+export function coachDoctrine(): string {
+  return NEURO_DOCTRINE;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // Bloque de entrenamiento
 // ───────────────────────────────────────────────────────────────────────────
 export const DOC_KINDS: Record<string, string> = {
-  book: "Libro de ventas",
+  book: "Material de ventas",
   playbook: "Playbook interno",
   case: "Caso de éxito",
   pricing: "Precios y oferta",
@@ -334,8 +119,6 @@ const EMOJIS: Record<string, string> = {
 };
 
 export interface TrainingRow {
-  coach_methods?: string[] | null;
-  campaign_methods?: string[] | null;
   style?: Json;
   coach_persona?: string | null;
   rules_always?: string | null;
@@ -414,7 +197,6 @@ export function hasTraining(t: Training | null | undefined): boolean {
   const r = t.row ?? {};
   const s = r.style ?? {};
   return !!(
-    cleanMethods(r.coach_methods).length || cleanMethods(r.campaign_methods).length ||
     txt(r.coach_persona) || txt(r.rules_always) || txt(r.rules_never) ||
     (s && typeof s === "object" && Object.values(s).some((v) => typeof v === "string" ? v.trim() : !!v)) ||
     usableDocs(t.docs, "outreach").length || usableDocs(t.docs, "coach").length
@@ -447,19 +229,6 @@ export function buildTrainingBlock(t: Training | null | undefined, target: Train
     const company = companyLines(t.company);
     if (company.length) {
       lines.push("LO QUE VENDE ESTE EQUIPO (úsalo para las frases sugeridas; nada fuera de esto):", ...company.map((l) => `- ${l}`), "");
-    }
-  } else {
-    const ids = cleanMethods(r.campaign_methods);
-    const methods = ids.map((id) => METHOD_BY_ID[id]).flatMap((m) => methodLines(m, "outreach"));
-    if (methods.length) {
-      lines.push(
-        target === "cadence"
-          ? "METODOLOGÍAS DE PROSPECCIÓN DEL EQUIPO (que guíen canales, orden, ángulos y tono de la cadencia):"
-          : target === "voice"
-          ? "METODOLOGÍAS DE VENTA DEL EQUIPO (aplícalas en la conversación sin nombrar el libro):"
-          : "METODOLOGÍAS DE PROSPECCIÓN DEL EQUIPO (aplícalas en el mensaje sin nombrar el libro):",
-        ...methods, "",
-      );
     }
   }
 
@@ -542,7 +311,7 @@ export async function loadTraining(
   if (!userId) return empty;
   try {
     const [rowRes, docsRes, companyRes] = await Promise.all([
-      supa.from("ai_training").select("coach_methods, campaign_methods, style, coach_persona, rules_always, rules_never")
+      supa.from("ai_training").select("style, coach_persona, rules_always, rules_never")
         .eq("user_id", userId).maybeSingle(),
       supa.from("ai_training_docs").select("title, kind, summary, status, enabled, apply_coach, apply_campaigns")
         .eq("user_id", userId).eq("enabled", true).eq("status", "done")

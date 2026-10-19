@@ -13,6 +13,13 @@
  *     can_manage_client y dejan auditoría en workspace_credit_log.
  *   · Consumo por cliente: agency_usage() por período, agrupado por función
  *     (USAGE_CATEGORIES) y exportable a CSV para refacturar.
+ *   · Empresas vinculadas (2026-10-19, migración 20261019093000): la agencia
+ *     invita por correo a una empresa que ya tiene su propia cuenta; al
+ *     aceptar, la agencia puede «Entrar» a esa cuenta (client-workspace,
+ *     acciones invite_account / enter_account). La empresa ve y revoca el
+ *     acceso en «Acceso a tu cuenta» (visible para todos) y ve cada ingreso.
+ *     El equipo de predictable.ai además ve y abre todas las cuentas
+ *     registradas (platform_list_accounts).
  *   · Ficha del directorio (tabla agencies): la agencia la escribe, el dueño
  *     la aprueba a mano. Aprobada + plan pago = puede abrir espacios. El
  *     directorio público vive en agencias.html.
@@ -122,6 +129,11 @@
     from: '', to: '',
     usage: null,
     open: null,          // { id, kind } formulario abierto en la tabla
+    linked: [],          // empresas que esta agencia invitó / vinculó
+    invites: [],         // invitaciones que me llegaron
+    myAccess: { agencies: [], log: [] },
+    accounts: null,      // equipo: todas las cuentas registradas
+    accQuery: '',
   };
 
   // ── Datos ──────────────────────────────────────────────────────────────
@@ -149,6 +161,23 @@
       .select('client_name, kind, amount, plan_part, monthly_cap, low_balance_alert, note, created_at, actor_user_id')
       .order('created_at', { ascending: false }).limit(25);
     state.log = r.error ? [] : (r.data || []);
+  }
+
+  async function loadLinked() {
+    var r = await sb().rpc('agency_linked_list');
+    state.linked = r.error ? [] : (r.data || []);
+  }
+  async function loadInvites() {
+    var r = await sb().rpc('my_agency_invites');
+    state.invites = r.error ? [] : (r.data || []);
+  }
+  async function loadMyAccess() {
+    var r = await sb().rpc('my_account_access');
+    state.myAccess = r.error || !r.data ? { agencies: [], log: [] } : r.data;
+  }
+  async function loadAccounts() {
+    var r = await sb().rpc('platform_list_accounts');
+    state.accounts = r.error ? null : (r.data || []);
   }
 
   async function loadAgency() {
@@ -368,6 +397,91 @@
       '<div style="font-size:11.5px;color:var(--ink-3);margin-top:10px">Créditos netos: lo gastado menos lo que se devolvió (por ejemplo, un email que Apollo no encontró). Los repartos entre tu cuenta y los espacios no cuentan como consumo. Las fechas van en tu hora local.</div>';
   }
 
+  var LINK_STATUS = {
+    pending:  { label: 'Pendiente', cls: 'ag-st-amber' },
+    active:   { label: 'Vinculada', cls: 'ag-st-green' },
+    declined: { label: 'Rechazó', cls: 'ag-st-gray' },
+  };
+  function fmtWhen(iso) {
+    return iso ? new Date(iso).toLocaleString((window.i18n ? i18n.locale() : 'es-MX'), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+  }
+
+  function renderLinked() {
+    var form = '<form class="ag-form" id="ag-invite-form" style="margin-bottom:14px">' +
+      '<label style="flex:1 1 240px">Correo de la empresa<input class="ag-in" type="email" name="email" required maxlength="254" placeholder="contacto@empresa.com"></label>' +
+      '<label style="flex:1 1 180px">Nombre (opcional)<input class="ag-in" type="text" name="label" maxlength="80" placeholder="Ej. HAI Educators"></label>' +
+      '<button class="btn btn-primary btn-sm" type="submit">Invitar</button>' +
+      '<div style="flex-basis:100%;font-size:11.5px;color:var(--ink-3)">Le enviamos un correo. La empresa tiene que entrar a Predictable con ese mismo correo y aceptar; hasta entonces no tienes acceso a nada de su cuenta.</div>' +
+    '</form>';
+    var rows = state.linked.map(function (l) {
+      var st = LINK_STATUS[l.status] || { label: l.status, cls: 'ag-st-gray' };
+      var name = l.member_name || l.label || l.invited_email;
+      return '<tr><td><b>' + esc(name) + '</b><div style="font-size:11.5px;color:var(--ink-3)">' + esc(l.invited_email) + '</div></td>' +
+        '<td><span class="ag-chip ' + st.cls + '">' + esc(st.label) + '</span></td>' +
+        '<td>' + esc(l.status === 'active' ? fmtWhen(l.last_entered_at) : (l.status === 'pending' ? 'Invitada ' + fmtWhen(l.created_at) : '—')) + '</td>' +
+        '<td><div class="ag-acts">' +
+          (l.status === 'active' ? '<button class="btn btn-primary btn-sm" data-link-enter="' + esc(l.id) + '">Entrar →</button>' : '') +
+          (l.status === 'pending' || l.status === 'active'
+            ? '<button class="btn btn-ghost btn-sm" data-link-revoke="' + esc(l.id) + '" data-active="' + (l.status === 'active' ? '1' : '') + '">' + (l.status === 'active' ? 'Desvincular' : 'Cancelar invitación') + '</button>' : '') +
+        '</div></td></tr>';
+    }).join('');
+    var table = state.linked.length
+      ? '<div class="ag-tw"><table class="ag-t"><thead><tr><th>Empresa</th><th>Estado</th><th>Último ingreso</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      : '<div class="ag-empty">Todavía no has invitado a ninguna empresa.</div>';
+    return form + table;
+  }
+
+  function renderAllAccounts() {
+    var q = state.accQuery;
+    var all = state.accounts || [];
+    var list = all.filter(function (a) {
+      if (!q) return true;
+      return [a.email, a.full_name, a.company].some(function (v) { return v && String(v).toLowerCase().indexOf(q) !== -1; });
+    });
+    var shown = list.slice(0, 100);
+    var rows = shown.map(function (a) {
+      var isTeam = /@vanarsi\.com$/i.test(a.email || '') || a.user_id === (global.currentUser && global.currentUser.id);
+      return '<tr><td><b>' + esc(a.company || a.full_name || '—') + '</b><div style="font-size:11.5px;color:var(--ink-3)">' + esc(a.email || '') + '</div></td>' +
+        '<td>' + esc(a.last_sign_in_at ? fmtWhen(a.last_sign_in_at) : 'Nunca') + '</td>' +
+        '<td class="ag-num">' + (a.unlimited ? 'Ilimitados' : esc(a.balance == null ? '—' : fmt(a.balance))) + '</td>' +
+        '<td><div class="ag-acts">' + (isTeam || !a.email_confirmed ? '' :
+          '<button class="btn btn-ghost btn-sm" data-acc-enter="' + esc(a.user_id) + '">Entrar →</button>') + '</div></td></tr>';
+    }).join('');
+    return '<div class="ag-bar"><input class="ag-in" type="search" id="ag-acc-q" placeholder="Buscar por correo, nombre o empresa" value="' + esc(state.accQuery) + '" style="flex:1 1 260px"></div>' +
+      (rows
+        ? '<div class="ag-tw"><table class="ag-t"><thead><tr><th>Cuenta</th><th>Último acceso</th><th class="ag-num">Créditos</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+          (list.length > shown.length ? '<div style="font-size:11.5px;color:var(--ink-3);margin-top:8px">Mostrando ' + shown.length + ' de ' + list.length + '. Afina la búsqueda.</div>' : '')
+        : '<div class="ag-empty">Ninguna cuenta coincide.</div>');
+  }
+
+  function renderMyAccess() {
+    var inv = state.invites, a = state.myAccess.agencies || [], log = state.myAccess.log || [];
+    if (!inv.length && !a.length && !log.length) return '';
+    var html = '<section class="ag-card" id="ag-my-access"><h3 class="ag-h">Acceso a tu cuenta</h3>';
+    if (inv.length) {
+      html += '<p class="ag-sub">Estas agencias quieren gestionar tu cuenta. <b>Si aceptas, podrán entrar a tu cuenta y ver y operar todos tus datos</b> (Contexto, Radar, Listas, Campañas, créditos). Puedes quitarles el acceso cuando quieras.</p>' +
+        '<div class="ag-tw"><table class="ag-t"><tbody>' + inv.map(function (i) {
+          return '<tr><td><b>' + esc(i.agency_name) + '</b><div style="font-size:11.5px;color:var(--ink-3)">Invitación del ' + esc(fmtWhen(i.created_at)) + '</div></td>' +
+            '<td><div class="ag-acts"><button class="btn btn-primary btn-sm" data-invite-accept="' + esc(i.id) + '">Aceptar</button>' +
+            '<button class="btn btn-ghost btn-sm" data-invite-decline="' + esc(i.id) + '">Rechazar</button></div></td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    if (a.length) {
+      html += '<p class="ag-sub" style="margin-top:14px">Agencias con acceso a tu cuenta</p>' +
+        '<div class="ag-tw"><table class="ag-t"><tbody>' + a.map(function (x) {
+          return '<tr><td><b>' + esc(x.agency_name) + '</b><div style="font-size:11.5px;color:var(--ink-3)">Desde ' + esc(fmtWhen(x.since)) + '</div></td>' +
+            '<td><div class="ag-acts"><button class="btn btn-ghost btn-sm" data-my-revoke="' + esc(x.id) + '" data-name="' + esc(x.agency_name) + '">Quitar acceso</button></div></td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    if (log.length) {
+      html += '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12.5px;color:var(--ink-2)">Últimos ingresos a tu cuenta (' + log.length + ')</summary>' +
+        '<div class="ag-tw"><table class="ag-t" style="margin-top:8px"><tbody>' + log.map(function (g) {
+          return '<tr><td style="white-space:nowrap">' + esc(fmtWhen(g.at)) + '</td><td>' + esc(g.actor || '—') + '</td></tr>';
+        }).join('') + '</tbody></table></div></details>';
+    }
+    return html + '</section>';
+  }
+
   function renderAgencyForm() {
     var a = state.agency || {};
     var st = a.status ? STATUS[a.status] : null;
@@ -408,12 +522,20 @@
       return;
     }
     var html = '<div class="ag-wrap">';
+    html += renderMyAccess();
     if (acc.can_open) {
       html +=
         '<section class="ag-card"><h3 class="ag-h">Créditos por espacio</h3>' +
           '<p class="ag-sub">Compras una vez en tu cuenta y repartes a cada cliente. Lo que asignas sale primero de la bolsa de tu plan y vence con ella; las recargas no vencen. Si borras un cliente, su saldo vuelve a tu cuenta.</p>' +
           renderPoolKpis() + renderSpaces() + renderLog() +
         '</section>' +
+        '<section class="ag-card"><h3 class="ag-h">Empresas vinculadas</h3>' +
+          '<p class="ag-sub">Invita por correo a una empresa que ya tiene su propia cuenta de Predictable (o va a crearla) para verla y operarla desde la tuya. Ella conserva su cuenta y sus créditos, y puede quitarte el acceso cuando quiera.</p>' +
+          renderLinked() +
+        '</section>' +
+        (acc.team && state.accounts ? '<section class="ag-card"><h3 class="ag-h">Todas las cuentas de Predictable</h3>' +
+          '<p class="ag-sub">Como equipo de predictable.ai puedes entrar a cualquier cuenta registrada sin invitación. Cada ingreso queda en el registro que la empresa ve.</p>' +
+          renderAllAccounts() + '</section>' : '') +
         '<section class="ag-card"><h3 class="ag-h">Consumo por cliente</h3>' +
           '<p class="ag-sub">Créditos que gastó cada espacio por función, para refacturar a tus clientes.</p>' +
           renderUsage() +
@@ -480,6 +602,41 @@
     var csv = root.querySelector('#ag-csv');
     if (csv) csv.addEventListener('click', downloadCsv);
 
+    var inv = root.querySelector('#ag-invite-form');
+    if (inv) inv.addEventListener('submit', function (ev) { ev.preventDefault(); onInvite(inv); });
+    root.querySelectorAll('[data-link-enter]').forEach(function (b) {
+      b.addEventListener('click', function () { onEnterAccount(b, { link_id: b.getAttribute('data-link-enter') }); });
+    });
+    root.querySelectorAll('[data-acc-enter]').forEach(function (b) {
+      b.addEventListener('click', function () { onEnterAccount(b, { user_id: b.getAttribute('data-acc-enter') }); });
+    });
+    root.querySelectorAll('[data-link-revoke]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var active = b.getAttribute('data-active') === '1';
+        if (active && !global.confirm('¿Desvincular esta empresa? Dejarás de poder entrar a su cuenta.')) return;
+        revoke(b, b.getAttribute('data-link-revoke'));
+      });
+    });
+    root.querySelectorAll('[data-my-revoke]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!global.confirm('¿Quitarle el acceso a ' + (b.getAttribute('data-name') || 'esta agencia') + '? Ya no podrá entrar a tu cuenta.')) return;
+        revoke(b, b.getAttribute('data-my-revoke'));
+      });
+    });
+    root.querySelectorAll('[data-invite-accept],[data-invite-decline]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var accept = b.hasAttribute('data-invite-accept');
+        respond(b, b.getAttribute(accept ? 'data-invite-accept' : 'data-invite-decline'), accept);
+      });
+    });
+    var accQ = root.querySelector('#ag-acc-q');
+    if (accQ) accQ.addEventListener('input', function () {
+      state.accQuery = accQ.value.trim().toLowerCase();
+      render();
+      var again = state.root.querySelector('#ag-acc-q');
+      if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+    });
+
     var af = root.querySelector('#ag-agency-form');
     if (af) af.addEventListener('submit', function (ev) { ev.preventDefault(); onSubmitAgency(af); });
   }
@@ -509,6 +666,90 @@
       btn.disabled = false;
       toast(e.message || String(e), 'error');
     }
+  }
+
+  async function onInvite(form) {
+    var btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+      var r = await callWorkspaceFn({ action: 'invite_account', email: form.email.value, label: form.label.value });
+      toast(r.email_sent
+        ? 'Invitación enviada a ' + r.email + '.'
+        : 'Invitación creada. No pudimos enviar el correo: avísale a la empresa que entre a Predictable con ' + r.email + ' y la acepte.', r.email_sent ? 'success' : 'info');
+      await loadLinked();
+      render();
+    } catch (e) {
+      btn.disabled = false;
+      toast(e.message || String(e), 'error');
+    }
+  }
+
+  async function onEnterAccount(btn, target) {
+    if (!global.Workspace) return;
+    var label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Abriendo…';
+    try {
+      await global.Workspace.enterAccount(target);
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = label;
+      toast('No se pudo entrar a la cuenta: ' + (e.message || e), 'error');
+    }
+  }
+
+  async function revoke(btn, id) {
+    btn.disabled = true;
+    var r = await sb().rpc('agency_link_revoke', { p_id: id });
+    if (r.error) { btn.disabled = false; toast('No se pudo completar: ' + r.error.message, 'error'); return; }
+    await Promise.all([loadLinked(), loadMyAccess()]);
+    render();
+  }
+
+  async function respond(btn, id, accept) {
+    btn.disabled = true;
+    var r = await sb().rpc('respond_agency_invite', { p_id: id, p_accept: accept });
+    if (r.error) {
+      btn.disabled = false;
+      toast(/agency_not_active/.test(r.error.message) ? 'Esa agencia ya no está activa.' : 'No se pudo responder la invitación.', 'error');
+      return;
+    }
+    toast(accept ? 'Invitación aceptada.' : 'Invitación rechazada.', 'success');
+    await Promise.all([loadInvites(), loadMyAccess()]);
+    hideBanner();
+    render();
+  }
+
+  // Aviso fijo cuando llega una invitación (se quita al responder).
+  function hideBanner() {
+    var b = document.getElementById('agency-invite-banner');
+    if (b && !state.invites.length) b.remove();
+  }
+  function showBanner() {
+    if (!state.invites.length || document.getElementById('agency-invite-banner')) return;
+    var n = state.invites.length;
+    var b = document.createElement('div');
+    b.id = 'agency-invite-banner';
+    b.setAttribute('role', 'status');
+    b.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:8900;display:flex;align-items:center;gap:10px;max-width:calc(100vw - 32px);padding:8px 8px 8px 14px;border-radius:999px;background:var(--surface,#fff);color:var(--ink,#111);border:1px solid var(--border,rgba(0,0,0,.12));box-shadow:0 10px 30px rgba(0,0,0,.18);font-size:13px';
+    var t = document.createElement('span');
+    t.textContent = n === 1 ? 'Una agencia te invitó a vincular tu cuenta.' : n + ' agencias te invitaron a vincular tu cuenta.';
+    var go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'btn btn-primary btn-sm';
+    go.textContent = 'Ver invitación';
+    go.addEventListener('click', function () {
+      var item = document.querySelector('.nav-item[data-page="agency"]');
+      if (item) item.click();
+      b.remove();
+    });
+    var x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'btn btn-ghost btn-sm';
+    x.textContent = 'Ahora no';
+    x.addEventListener('click', function () { b.remove(); });
+    b.appendChild(t); b.appendChild(go); b.appendChild(x);
+    document.body.appendChild(b);
   }
 
   async function onSubmitAgency(form) {
@@ -578,8 +819,11 @@
       state.root.innerHTML = '<div class="ag-wrap"><div class="ag-card"><div class="ag-empty">Esta sección todavía no está disponible.</div></div></div>';
       return;
     }
-    var jobs = [loadAgency()];
-    if (state.access.can_open && !state.access.inside_workspace) jobs.push(loadPool(), loadSpaces(), loadLog(), loadUsage());
+    var jobs = [loadAgency(), loadInvites(), loadMyAccess()];
+    if (state.access.can_open && !state.access.inside_workspace) {
+      jobs.push(loadPool(), loadSpaces(), loadLog(), loadUsage(), loadLinked());
+      if (state.access.team) jobs.push(loadAccounts());
+    }
     try { await Promise.all(jobs); } catch (e) { toast('No se pudieron cargar los espacios: ' + (e.message || e), 'error'); }
     render();
   }
@@ -594,6 +838,10 @@
     document.querySelectorAll('.nav-item[data-page="agency"]').forEach(function (el) {
       el.style.display = acc.inside_workspace ? 'none' : '';
     });
+    if (!acc.inside_workspace && !(document.getElementById('page-agency') || { classList: { contains: function () { return false; } } }).classList.contains('active')) {
+      await loadInvites();
+      showBanner();
+    }
     if (acc.can_open && !acc.inside_workspace) {
       document.querySelectorAll('.nav-item[data-page="clients"]').forEach(function (el) { el.style.display = ''; });
     }

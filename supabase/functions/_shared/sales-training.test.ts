@@ -1,44 +1,27 @@
 // deno test --allow-read _shared/sales-training.test.ts
-// El entrenamiento por empresa: sin entrenamiento todo queda como antes, la
-// doctrina del coach cambia con las metodologías elegidas y el catálogo del
-// servidor es espejo del de js/ai-training.js.
+// El entrenamiento por empresa: sin entrenamiento todo queda como antes y la
+// doctrina del coach es siempre la misma (las metodologías elegibles se
+// quitaron el 2026-10-19; las que quedaron guardadas se ignoran).
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
-import { buildTrainingBlock, cleanMethods, coachDoctrine, hasTraining, METHODOLOGIES, NEURO_DOCTRINE, type Training } from "./sales-training.ts";
+import { buildTrainingBlock, coachDoctrine, hasTraining, NEURO_DOCTRINE, type Training, type TrainingRow } from "./sales-training.ts";
 
 Deno.test("sin entrenamiento: doctrina de neuroventas y ningún bloque", () => {
-  assertEquals(coachDoctrine([]), NEURO_DOCTRINE);
-  assertEquals(coachDoctrine(null), NEURO_DOCTRINE);
-  assertEquals(coachDoctrine(["neuroventas"]), NEURO_DOCTRINE);
+  assertEquals(coachDoctrine(), NEURO_DOCTRINE);
   const empty: Training = { row: null, docs: [], company: null };
   assertEquals(hasTraining(empty), false);
   for (const t of ["coach", "coach_live", "outreach", "cadence", "voice"] as const) assertEquals(buildTrainingBlock(empty, t), "");
 });
 
-Deno.test("neuroventas + otra: se conserva la doctrina y se suma el marco", () => {
-  const d = coachDoctrine(["neuroventas", "spin"]);
-  assert(d.startsWith(NEURO_DOCTRINE));
-  assertStringIncludes(d, "SPIN Selling");
+Deno.test("metodologías guardadas antes del 2026-10-19: no entran a ningún prompt", () => {
+  const old = { coach_methods: ["spin"], campaign_methods: ["predictable_revenue"] } as unknown as TrainingRow;
+  const t: Training = { row: old, docs: [] };
+  assertEquals(hasTraining(t), false);
+  for (const k of ["coach", "coach_live", "outreach", "cadence", "voice"] as const) assertEquals(buildTrainingBlock(t, k), "");
 });
 
-Deno.test("sin neuroventas: identidad neutra, mismas reglas duras", () => {
-  const d = coachDoctrine(["sandler", "meddicc"]);
-  assert(!d.includes("Klarić"));
-  assertStringIncludes(d, "Sandler");
-  assertStringIncludes(d, "MEDDICC");
-  assertStringIncludes(d, "NUNCA inventes datos");
-  assertStringIncludes(d, "MANEJO DE OBJECIONES");
-});
-
-Deno.test("cleanMethods descarta ids desconocidos, repetidos y el exceso", () => {
-  assertEquals(cleanMethods(["spin", "nope", "spin", 3, "voss"]), ["spin", "voss"]);
-  assertEquals(cleanMethods(METHODOLOGIES.map((m) => m.id)).length, 6);
-  assertEquals(cleanMethods("spin"), []);
-});
-
-Deno.test("bloque de campañas: metodologías de campaña, estilo, reglas y docs que aplican", () => {
+Deno.test("bloque de campañas: estilo, reglas y docs que aplican", () => {
   const t: Training = {
     row: {
-      coach_methods: ["voss"], campaign_methods: ["predictable_revenue"],
       style: { address: "usted", emojis: "nunca", words_avoid: "sinergia" },
       rules_never: "dar descuentos",
     },
@@ -51,8 +34,6 @@ Deno.test("bloque de campañas: metodologías de campaña, estilo, reglas y docs
   };
   assert(hasTraining(t));
   const b = buildTrainingBlock(t, "outreach");
-  assertStringIncludes(b, "Predictable Revenue");
-  assert(!b.includes("Negociación táctica"), "las metodologías del coach no van a los mensajes");
   assertStringIncludes(b, "USTED");
   assertStringIncludes(b, "sinergia");
   assertStringIncludes(b, "NUNCA: dar descuentos");
@@ -65,7 +46,7 @@ Deno.test("bloque de campañas: metodologías de campaña, estilo, reglas y docs
 
   const cad = buildTrainingBlock(t, "cadence");
   assert(!cad.includes("Pregunta por el piloto"), "la cadencia no recibe documentos");
-  assertStringIncludes(cad, "Predictable Revenue");
+  assertStringIncludes(cad, "NUNCA: dar descuentos");
 });
 
 Deno.test("coach: lo que vende la empresa sale del contexto, formateado", () => {
@@ -94,18 +75,9 @@ Deno.test("presupuesto: muchos documentos largos no revientan el prompt del coac
   assert(buildTrainingBlock({ row: null, docs }, "outreach").length <= 9_600);
 });
 
-Deno.test("espejo: METHODS de js/ai-training.js = METHODOLOGIES", async () => {
-  const js = await Deno.readTextFile(new URL("../../../js/ai-training.js", import.meta.url));
-  const src = js.slice(js.indexOf("var METHODS = ["), js.indexOf("];", js.indexOf("var METHODS = [")));
-  const rows = [...src.matchAll(/\{ id: '([^']+)', name: '([^']+)', author: '([^']+)', book: (?:'([^']+)'|"([^"]+)"), focus: '([^']+)'/g)]
-    .map((m) => ({ id: m[1], name: m[2], author: m[3], book: m[4] ?? m[5], focus: m[6] }));
-  assertEquals(rows, METHODOLOGIES.map(({ id, name, author, book, focus }) => ({ id, name, author, book, focus })));
-});
-
 Deno.test("agente de voz: lado campañas, sin emojis ni largo y SIN documentos de precios", () => {
   const t: Training = {
     row: {
-      campaign_methods: ["spin"],
       style: { address: "usted", emojis: "a_veces", length: "detallado", words_avoid: "sinergia" },
       rules_always: "ofrecer pasar con una persona",
     },
@@ -115,7 +87,6 @@ Deno.test("agente de voz: lado campañas, sin emojis ni largo y SIN documentos d
     ],
   };
   const v = buildTrainingBlock(t, "voice");
-  assertStringIncludes(v, "SPIN");
   assertStringIncludes(v, "USTED");
   assertStringIncludes(v, "sinergia");
   assertStringIncludes(v, "SIEMPRE: ofrecer pasar con una persona");
