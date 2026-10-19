@@ -6622,4 +6622,9 @@ window.I18N_DICTS['pt-BR'] = {
   "Filtrar por datos de contacto": "Filtrar por dados de contato",
   "Limpiar filtros ({0})": "Limpar filtros ({0})",
   "{0} de {1} contactos coinciden con los filtros.": "{0} de {1} contatos correspondem aos filtros.",
+  "Todas las fechas": "Todas as datas",
+  "Personalizado…": "Personalizado…",
+  "Período": "Período",
+  "Fecha en que se encontró la señal": "Data em que o sinal foi encontrado",
+  "Fecha: {0} → {1}": "Data: {0} → {1}",
 };

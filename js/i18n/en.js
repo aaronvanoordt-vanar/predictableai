@@ -6475,4 +6475,8 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Filtrar por datos de contacto": "Filter by contact data",
   "Limpiar filtros ({0})": "Clear filters ({0})",
   "{0} de {1} contactos coinciden con los filtros.": "{0} of {1} contacts match the filters.",
+  "Todas las fechas": "All dates",
+  "Personalizado…": "Custom…",
+  "Fecha en que se encontró la señal": "Date the signal was found",
+  "Fecha: {0} → {1}": "Date: {0} → {1}",
 });
