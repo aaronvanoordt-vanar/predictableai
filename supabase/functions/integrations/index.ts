@@ -1125,6 +1125,16 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
   throw new HttpError("Acción no reconocida.", 400);
 }
 
+function jwtRole(token: string): string | null {
+  try {
+    const payload = token.split(".")[1] ?? "";
+    const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof decoded?.role === "string" ? decoded.role : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   const cors = corsHeaders(req.headers.get("Origin") ?? "*");
   const json = (body: unknown, status = 200) =>
@@ -1134,10 +1144,12 @@ Deno.serve(async (req) => {
 
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
 
-  // pg_cron con la service role: solo la acción `cron` (comparación exacta
-  // con la key, igual que enrich-list / campaign-run).
+  // pg_cron con la service role: solo la acción `cron`. El Bearer del job no
+  // siempre es byte a byte SUPABASE_SERVICE_ROLE_KEY (mismo caso que
+  // enrich-list / campaign-run): se acepta también un JWT con role
+  // service_role (la firma ya la verificó el gateway: la función va con JWT).
   const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
-  if (serviceKey && token === serviceKey) {
+  if (serviceKey && token && (token === serviceKey || jwtRole(token) === "service_role")) {
     let b: Json = {};
     try { b = await req.json(); } catch (_) { /* vacío */ }
     if (b?.action !== "cron") return json({ error: "Solo la acción cron con la service role." }, 400);
