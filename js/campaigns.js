@@ -544,6 +544,17 @@
    */
   function emailState() {
     if (state.status === undefined) return { state: 'loading' };
+    // Buzones propios (js/email-mailboxes.js) elegidos para el canal.
+    var mbx = global.EmailMailboxes;
+    if (mbx && mbx.activeForChannel()) {
+      var n = mbx.connected().length;
+      return { state: 'connected', detail: n + (n === 1 ? ' buzón propio' : ' buzones propios') };
+    }
+    return apolloEmailState();
+  }
+  /** Estado de la cuenta de Apollo como remitente de email (sin mirar los buzones propios). */
+  function apolloEmailState() {
+    if (state.status === undefined) return { state: 'loading' };
     if (isConn(state.apollo)) {
       var cfg = state.apollo.config || {};
       var first = cfg.email_accounts && cfg.email_accounts[0];
@@ -673,8 +684,11 @@
 
   // ── Datos ────────────────────────────────────────────────────────────────
   async function loadStatus() {
+    // Buzones propios: falla suave (sin la función desplegada el canal sigue con Apollo).
+    var mbxLoad = global.EmailMailboxes ? global.EmailMailboxes.load(true) : null;
     try {
       var r = await edgeFetch(FN_CHANNEL, { action: 'status', payload: {} });
+      if (mbxLoad) await mbxLoad;
       state.status = r || {};
       state.watiRow = r && r.wati ? r.wati : null;
       state.metaRow = r && r.meta ? r.meta : null;
@@ -817,7 +831,9 @@
     var flow = L.normalize(draft.flow);
     var sender = Object.assign({}, draft.sender || {});
     var hasEmailStep = L.actions(flow).some(function (a) { return a.channel === 'email'; });
-    if (hasEmailStep && !sender.email_account_id) {
+    var viaMailboxes = !!(global.EmailMailboxes && global.EmailMailboxes.campaignUsesMailboxes(sender));
+    if (hasEmailStep && viaMailboxes && !global.EmailMailboxes.connected().length) throw new Error('La cadencia tiene emails y eligió tus buzones: conecta al menos uno en Campañas → Email.');
+    if (hasEmailStep && !viaMailboxes && !sender.email_account_id) {
       var def = defaultEmailAccount();
       if (def) { sender.email_account_id = def.id; sender.email = def.email || ''; }
       else throw new Error('La cadencia tiene emails: conecta el canal Email primero.');
@@ -836,7 +852,12 @@
         whatsapp: Math.max(0, Number(draft.daily_caps && draft.daily_caps.whatsapp) || 0),
         email: Math.max(0, Number(draft.daily_caps && draft.daily_caps.email) || 0),
       },
-      sender: { name: sender.name || '', role: sender.role || '', company: sender.company || '', email_account_id: sender.email_account_id || '', email: sender.email || '' },
+      sender: {
+        name: sender.name || '', role: sender.role || '', company: sender.company || '', email_account_id: sender.email_account_id || '', email: sender.email || '',
+        // Buzones propios: '' = lo que diga el canal Email; mailbox_ids vacío = todos.
+        email_provider: sender.email_provider === 'apollo' || sender.email_provider === 'mailboxes' ? sender.email_provider : '',
+        mailbox_ids: Array.isArray(sender.mailbox_ids) ? sender.mailbox_ids.map(String) : [],
+      },
       flow: flow,
       origin: draft.origin || 'custom',
       review_required: !!draft.review_required,
@@ -3018,8 +3039,9 @@
         { label: 'Cerrar' },
       ]);
     } else {
-      var es = emailState();
+      var es = apolloEmailState();
       var acfg = (state.apollo && state.apollo.config) || {};
+      if (global.EmailMailboxes) body.appendChild(h('div', { class: 'pros-lbl', text: 'Apollo' }));
       if (es.state === 'connected') {
         body.appendChild(h('p', { text: 'Cuenta conectada: ' + (es.detail || '—') + (acfg.name ? ' (' + acfg.name + ')' : '') + (acfg.connected_at ? ' · desde ' + fmtDate(acfg.connected_at) : '') }));
         body.appendChild(h('div', { class: 'pros-hint', text: 'Los emails de campaña salen como mensajes individuales desde tu cuenta; los datos revelados se cobran a los créditos de tu propia cuenta, no a los de la plataforma.' }));
@@ -3048,6 +3070,11 @@
         });
         body.appendChild(h('div', { class: 'cmp-row' }, sel, saveSel));
         body.appendChild(h('div', { class: 'pros-hint', text: 'Buzón con el que salen los emails y tus respuestas de la Bandeja. Cada campaña puede usar otro: lo eliges al lanzarla, en el resumen. Estos son todos los buzones que Apollo reporta en tu cuenta (' + accs.length + ').' }));
+      }
+      if (global.EmailMailboxes) {
+        global.EmailMailboxes.renderSection(body, { connected: isConn(state.apollo), detail: (state.apollo && state.apollo.config && state.apollo.config.email) || '' }, function () {
+          api.close(); render(); openChannelDetails('email');
+        }, function () { api.close(); openSuppression(); });
       }
       var acts = [];
       if (state.apolloOauth) acts.push({ label: es.state === 'connected' ? 'Reconectar' : 'Conectar mi cuenta', onClick: function (m, btn) { return connectEmail(btn).then(function () { m.close(); }); } });
@@ -3144,6 +3171,8 @@
       loadEmailAccounts: loadEmailAccounts,
       defaultEmailAccount: def ? { id: def.id, email: def.email || '' } : null,
       channelConnected: channelConnected,
+      usesMailboxes: function (sender) { return !!(global.EmailMailboxes && global.EmailMailboxes.campaignUsesMailboxes(sender)); },
+      mailboxPicker: function (sender, onChange) { return global.EmailMailboxes ? global.EmailMailboxes.builderPicker(sender, onChange) : null; },
       channelLabel: function (k) { return CH[k] ? CH[k].label : k; },
       linkedinCampaigns: ownLinkedinCampaigns,
       openLinkedinDesigner: openLinkedinDesigner,
@@ -4159,7 +4188,9 @@
       callBtn.addEventListener('click', function () { global.Dialer.call(m); });
       links.appendChild(callBtn);
     }
-    if (conv.channels.email && m && m.email) {
+    // Con buzones propios el texto de la respuesta ya llega completo: Gmail solo hace falta para los emails de Apollo.
+    var apolloEmail = conv.messages.some(function (x) { return chanKey(x.channel) === 'email' && x.provider !== 'mailbox'; });
+    if (conv.channels.email && m && m.email && apolloEmail) {
       if (state.gmail && state.gmail.connected && pros().openThread) links.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'thread-gmail', 'data-key': conv.key, text: 'Ver hilo completo en Gmail' }));
       else if (state.gmail && !state.gmail.connected && pros().connectGmail) links.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'gmail-connect', text: 'Conectar Gmail para leer el hilo completo' }));
     }
@@ -5076,6 +5107,10 @@
     if (state.view === 'campaigns' && !state.builder && state.activeId && findCampaign(state.activeId)) await openCampaign(state.activeId);
   }
 
+  // Buzones propios del canal Email: se pintan con los mismos helpers que Campañas.
+  if (global.EmailMailboxes) {
+    global.EmailMailboxes.init({ h: h, esc: esc, toast: toast, errMsg: errMsg, openModal: openModal, edgeFetch: edgeFetch, btnLoading: btnLoading, confirmModal: confirmModal, pill: pill, fmtDateTime: fmtDateTime, fmtDate: fmtDate });
+  }
   global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openCalls: openCalls, openConversation: openConversation, openLinkedinDesigner: openLinkedinDesigner };
   console.log('[campaigns] module loaded');
 })(window);
