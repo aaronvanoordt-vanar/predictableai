@@ -75,7 +75,9 @@ export async function planForUser(supa: any, userId: string): Promise<Plan> {
   return normalizePlan(data);
 }
 
-/** Plan de muchos usuarios de una vez (para los crons). */
+/** Plan de muchos usuarios de una vez (para los crons). Mismo criterio que
+ *  `current_plan()`: una cuenta ilimitada (`user_credits.unlimited`) es
+ *  growth, si no la suscripción vigente, si no free. */
 // deno-lint-ignore no-explicit-any
 export async function plansForUsers(supa: any, userIds: string[]): Promise<Map<string, Plan>> {
   const out = new Map<string, Plan>();
@@ -92,6 +94,14 @@ export async function plansForUsers(supa: any, userIds: string[]): Promise<Map<s
   }
   for (const r of data ?? []) {
     if (["active", "trialing", "past_due"].includes(r.status)) out.set(r.user_id, normalizePlan(r.plan));
+  }
+  const { data: credits, error: creditsErr } = await supa
+    .from("user_credits")
+    .select("user_id, unlimited")
+    .in("user_id", userIds);
+  if (creditsErr) console.warn("[billing] user_credits:", creditsErr.message);
+  for (const r of credits ?? []) {
+    if (r.unlimited === true) out.set(r.user_id, "growth");
   }
   return out;
 }
