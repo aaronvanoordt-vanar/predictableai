@@ -22,7 +22,7 @@
  * esta función no trae datos de ninguna otra parte.
  *
  * Requiere `supabase functions deploy benchmarks` y la migración
- * 20261017000001_meeting_quality_benchmarks.sql.
+ * 20261019000001_meeting_quality_benchmarks.sql.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";

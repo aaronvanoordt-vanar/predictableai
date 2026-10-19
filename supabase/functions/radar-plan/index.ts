@@ -26,6 +26,11 @@
  *        Agrega una receta tal cual (sin IA, sin costo extra: el monitoreo
  *        se cobra como cualquier detector). Las consultas se rellenan con los
  *        países del plan y la industria del ICP. Origen 'user'.
+ *   POST { action: "champion_detector", enabled?, config? }
+ *        Crea (si falta) o actualiza el detector `champion_moves` del plan:
+ *        el seguimiento de champions de la pestaña Champions. Sin IA ni
+ *        costo extra (el monitoreo se cobra como un detector de personas;
+ *        cada chequeo con la key compartida, aparte). Origen 'user'.
  *   POST { action: "sync_context" } → recalcula
  *        intel_hub_intake.radar_suggested_triggers desde el plan. Si
  *        icp_buying_triggers está vacío lo rellena; si el usuario ya
@@ -40,7 +45,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { engineForUser, withLlmContext } from "../_shared/llm.ts";
 import { oauthAvailable, platformKey, resolveApolloAuth } from "../_shared/apollo-auth.ts";
 import { analysisSignals, loadHubDigest, loadMarketAnalysis, loadSellerContext } from "../_shared/radar-context.ts";
-import { KIND_META, isDetectorKind, reachForDealSize, type DetectorKind } from "../_shared/radar-plan.ts";
+import { KIND_META, isDetectorKind, isPlannerKind, normalizeConfig, normalizeDetector, reachForDealSize, type DetectorKind } from "../_shared/radar-plan.ts";
 import {
   detectorFromText, detectorsFromHub, generatePlan, kindAvailable, type Availability,
 } from "../_shared/radar-planner.ts";
@@ -48,6 +53,7 @@ import { CREDIT_COSTS, minCadenceHours } from "../_shared/credit-costs.ts";
 import { RADAR_RECIPES, RECIPE_CATEGORIES, buildRecipeDetector, recipeById } from "../_shared/radar-recipes.ts";
 import { canonicalCountries } from "../_shared/radar-geo.ts";
 import { TECH_GROUPS, TECH_RULES, techLabel } from "../_shared/site-probe.ts";
+import { registryAvailableFor } from "../_shared/registry-fetch.ts";
 import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
 
 // Keep in sync with js/credit-costs.js (radar_plan / radar_detector_custom).
@@ -84,7 +90,16 @@ export async function availabilityFor(supa: Json, userId: string): Promise<Avail
     apollo_user: apolloUser,
     places: !!Deno.env.get("GOOGLE_PLACES_API_KEY"),
     probe: true,
+    registry: registryAvailableFor(await planCountries(supa, userId)),
   };
+}
+
+/** Países del plan (o del contexto si todavía no hay plan): deciden si hay registro público. */
+async function planCountries(supa: Json, userId: string): Promise<string[]> {
+  const { data: plan } = await supa.from("radar_plans").select("countries").eq("user_id", userId).maybeSingle();
+  if (Array.isArray(plan?.countries) && plan.countries.length) return plan.countries;
+  const { data: intake } = await supa.from("intel_hub_intake").select("icp_countries").eq("user_id", userId).maybeSingle();
+  return canonicalCountries(Array.isArray(intake?.icp_countries) ? intake.icp_countries : []);
 }
 
 function unavailableReason(kind: DetectorKind, av: Availability): string {
@@ -95,6 +110,7 @@ function unavailableReason(kind: DetectorKind, av: Availability): string {
     places: "Google Places (GOOGLE_PLACES_API_KEY)",
     llm_web: "un motor de IA con búsqueda web",
     probe: "sondeo web",
+    registry: "un país del plan con registro público conectado (Brasil con CNPJA_API_KEY, México con INEGI_DENUE_TOKEN, o Colombia)",
   };
   return "Necesita " + missing.map((m) => label[m] || m).join(" y ");
 }
@@ -288,7 +304,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     if (action === "add_detector") {
       const kind = body.kind;
       const description = String(body.description || "").trim().slice(0, 1500);
-      if (!isDetectorKind(kind)) return json({ error: "Tipo de detector desconocido." }, 400, h);
+      if (!isDetectorKind(kind) || !isPlannerKind(kind)) return json({ error: "Tipo de detector desconocido." }, 400, h);
       if (!description) return json({ error: "Describe la señal que quieres detectar." }, 400, h);
       const av = await availabilityFor(supa, user.id);
       if (!kindAvailable(kind, av)) return json({ error: unavailableReason(kind, av) }, 400, h);
@@ -355,6 +371,39 @@ Deno.serve(withLlmContext(async (req: Request) => {
       const [row] = await insertDetectors(supa, user.id, plan.id, [det], "user", av);
       await syncContext(supa, user.id).catch(() => {});
       return json({ status: "ok", detector: row }, 200, h);
+    }
+
+    if (action === "champion_detector") {
+      const { data: rows } = await supa.from("radar_detectors").select("*")
+        .eq("user_id", user.id).eq("plan_id", plan.id).eq("kind", "champion_moves").limit(1);
+      const existing = Array.isArray(rows) ? rows[0] : null;
+      const av = await availabilityFor(supa, user.id);
+      if (!existing) {
+        if (!kindAvailable("champion_moves", av)) return json({ error: unavailableReason("champion_moves", av) }, 400, h);
+        const det = normalizeDetector({
+          kind: "champion_moves",
+          name: KIND_META.champion_moves.label,
+          rationale: "Quien ya te compró o te respondió bien y se cambia de empresa abre la reunión más cálida que existe.",
+          weight: 90,
+          cadence_hours: KIND_META.champion_moves.defaultCadenceHours,
+          config: body.config,
+        });
+        if (!det) return json({ error: "Configuración inválida." }, 400, h);
+        const [row] = await insertDetectors(supa, user.id, plan.id, [det], "user", av);
+        return json({ status: "ok", detector: row, plan_status: plan.status }, 200, h);
+      }
+      const patch: Json = {};
+      if (body.config && typeof body.config === "object") {
+        patch.config = { ...(existing.config || {}), ...normalizeConfig("champion_moves", { ...(existing.config || {}), ...body.config }) };
+      }
+      if (typeof body.enabled === "boolean") {
+        patch.enabled = body.enabled;
+        if (body.enabled) { patch.next_run_at = new Date().toISOString(); if (existing.status !== "unavailable") patch.status = "idle"; patch.last_error = null; }
+      }
+      if (!Object.keys(patch).length) return json({ status: "ok", detector: existing, plan_status: plan.status }, 200, h);
+      const { data: saved, error } = await supa.from("radar_detectors").update(patch).eq("id", existing.id).select("*").single();
+      if (error) throw new Error(error.message);
+      return json({ status: "ok", detector: saved, plan_status: plan.status }, 200, h);
     }
 
     if (action === "sync_context") {

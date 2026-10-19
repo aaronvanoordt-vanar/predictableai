@@ -61,6 +61,7 @@ import { detectorsFromHub, type Availability } from "../_shared/radar-planner.ts
 import { platformKey } from "../_shared/apollo-auth.ts";
 import { minCadenceHours, radarDetectorMonthCost } from "../_shared/credit-costs.ts";
 import { PLAN_LIMITS, planForUser } from "../_shared/billing-plans.ts";
+import { registryAvailableFor } from "../_shared/registry-fetch.ts";
 
 const BILLING_PERIOD_MS = 30 * 86400_000;
 
@@ -306,6 +307,27 @@ async function billDetector(supa: Json, det: Json): Promise<boolean> {
   }
 
   const cost = radarDetectorMonthCost(String(det.kind), maxCompaniesOf(det.config));
+
+  // Prueba gratis: el primer detector de la cuenta corre sus primeros 30 días
+  // sin gastar la bolsa (docs/TRIAL_REVIEW.md). El índice único parcial
+  // ct_user_radar_detector_trial_uidx (migración 20261018000001) deja pasar
+  // una sola fila por cuenta; si ya existe, se cobra como siempre.
+  if (plan === "free") {
+    const { count: used } = await supa.from("credit_transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", det.user_id).eq("reason", "radar_detector_trial");
+    if ((used ?? 1) === 0) {
+      const { error: trialErr } = await supa.from("credit_transactions")
+        .insert({ user_id: det.user_id, delta: 0, reason: "radar_detector_trial", section_key: String(det.id) });
+      if (!trialErr) {
+        await supa.from("radar_detectors").update({ billed_until: new Date(Date.now() + BILLING_PERIOD_MS).toISOString() }).eq("id", det.id);
+        return true;
+      }
+      // 23505 = otro detector se llevó el período gratis en paralelo.
+      if (trialErr.code !== "23505") console.warn("[radar-monitor] radar_detector_trial:", trialErr.message);
+    }
+  }
+
   const { data: spent, error } = await supa.rpc("spend_credits", { p_user_id: det.user_id, p_amount: cost });
   if (error || spent === null || spent === undefined) {
     await supa.from("radar_detectors").update({
@@ -335,13 +357,13 @@ async function detectorUnit(supa: Json, claimed: { det: Json; plan: Json }): Pro
         .eq("detector_id", det.id).order("last_seen_at", { ascending: false }).limit(120);
       knownNames = (Array.isArray(known) ? known : []).map((k: Json) => asStr(k.company_name)).filter(Boolean);
     }
-    const row: DetectorRow = { id: det.id, user_id: det.user_id, kind, name: det.name, config: det.config || {}, cursor: det.cursor || {}, weight: Number(det.weight) || 60 };
+    const row: DetectorRow = { id: det.id, user_id: det.user_id, kind, name: det.name, config: det.config || {}, cursor: det.cursor || {}, weight: Number(det.weight) || 60, stats: det.stats || {} };
     const result = await runTick({
       supa, detector: row, ctx: bundle.ctx, countries: Array.isArray(plan.countries) ? plan.countries : [],
       apollo: bundle.apollo, engine: bundle.engine, knownNames, log: (m) => logs.push(m),
     });
     const saved = await persistCandidates(supa, det, plan, bundle, result.candidates);
-    const stats = { ...(det.stats || {}) };
+    const stats = { ...(det.stats || {}), ...(result.statsPatch || {}) };
     const cycleSoFar = (Number(det.stats?.cycle_new) || 0) + saved.inserted;
     stats.total_new = (Number(stats.total_new) || 0) + saved.inserted;
     stats.last_candidates = result.candidates.length;
@@ -395,6 +417,7 @@ async function hubRefreshUnit(supa: Json): Promise<number> {
       const av: Availability = {
         llm_web: true, apollo: !!bundle.apollo || !!platformKey(), apollo_user: !!bundle.apollo && bundle.apollo.mode !== "platform",
         places: !!Deno.env.get("GOOGLE_PLACES_API_KEY"), probe: true,
+        registry: registryAvailableFor(bundle.ctx.targets.countries),
       };
       const { data: existing } = await supa.from("radar_detectors").select("kind, name").eq("plan_id", plan.id);
       const extra = await detectorsFromHub({ engine: bundle.engine, ctx: bundle.ctx, hubText: hub.text, existing: existing || [], availability: av });

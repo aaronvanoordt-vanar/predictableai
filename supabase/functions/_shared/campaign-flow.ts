@@ -9,9 +9,9 @@
  *   { v: 1, nodes: Node[] }
  *   Node = Action | Condition
  *   Action    = { id, type: "action", channel, delay, content, settings? }
- *   Condition = { id, type: "condition", check, delay?, yes: Action[], no: Action[] }
+ *   Condition = { id, type: "condition", check, delay?, settings?, yes: Action[], no: Action[] }
  *
- *   channel  whatsapp | email | linkedin_connect | linkedin_message
+ *   channel  whatsapp | email | linkedin_connect | linkedin_message | call
  *            Los dos canales de LinkedIn suben el lead a una campaña de
  *            Dripify (lo único que la Open API permite). Son pasos DISTINTOS
  *            a propósito: la campaña de `linkedin_connect` solo manda la
@@ -19,6 +19,11 @@
  *            la cadencia la decide Predictable paso a paso y una respuesta por
  *            otro canal la detiene de verdad (una campaña de Dripify con su
  *            propia secuencia seguiría sola). Ver docs/OMNICANAL.md.
+ *            `call` (2026-10-17) no envía nada: crea una TAREA para el SDR
+ *            (call_tasks) con el guion (IA = campaign_messages, o "mi texto")
+ *            y la cadencia espera su resultado hasta settings.call_wait_days
+ *            (1-14, 3 por defecto); vencido el plazo, el paso se omite. Sin
+ *            teléfono se omite como los demás canales. Ver docs/TELEFONIA.md.
  *   delay    { mode: "after_prev" | "with_prev", days, hours }
  *            after_prev → espera desde la ÚLTIMA acción ejecutada por ese lead
  *            (o desde el enrolamiento para la primera). with_prev → sale junto
@@ -35,7 +40,17 @@
  *   check    linkedin_connection_sent | linkedin_connected |
  *            whatsapp_delivered | whatsapp_read |
  *            email_delivered | email_opened | email_bounced |
- *            engaged_any | has_phone | has_email | has_linkedin
+ *            engaged_any | has_phone | has_email | has_linkedin |
+ *            call_answered | call_voicemail (resultado de la última llamada
+ *            de la cadencia; "reunión agendada" y "no interesado" detienen el
+ *            enrolamiento, así que no son ramas) |
+ *            ai_column
+ *            `ai_column` (2026-10-17) pregunta por la respuesta de una
+ *            Columna IA de Listas: settings.ai_column = { column_id,
+ *            column_name, answer_type, op, value } (`normalizeAiColumnRule`).
+ *            Rama Sí solo si la celda del lead está respondida con evidencia
+ *            y cumple la regla; «No encontrado» o sin responder = No. Si la
+ *            celda sigue en cola, el motor espera a que termine.
  *            La condición puede esperar (delay, siempre after_prev) antes de
  *            evaluarse: "3 días después, ¿aceptó la conexión?". Se evalúa UNA
  *            vez, cuando el lead llega a ella.
@@ -58,7 +73,7 @@
 
 export const FLOW_VERSION = 1;
 
-export const CHANNELS = ["whatsapp", "email", "linkedin_connect", "linkedin_message"] as const;
+export const CHANNELS = ["whatsapp", "email", "linkedin_connect", "linkedin_message", "call"] as const;
 export const CONTENT_KINDS = ["template", "ai", "custom"] as const;
 /** Las tres ranuras fijas de antes (2026-10-02): se leen como `template`. */
 export const LEGACY_TEMPLATE_KINDS = ["template_a", "template_b", "template_c"] as const;
@@ -69,7 +84,17 @@ export const CONDITIONS = [
   "email_delivered", "email_opened", "email_bounced",
   "engaged_any",
   "has_phone", "has_email", "has_linkedin",
+  "call_answered", "call_voicemail",
+  "ai_column",
 ] as const;
+/** Operadores de la condición `ai_column` por tipo de respuesta de la columna. */
+export const AI_COLUMN_TYPES = ["boolean", "number", "text", "category"] as const;
+export const AI_COLUMN_OPS: Record<typeof AI_COLUMN_TYPES[number], readonly string[]> = {
+  boolean: ["yes", "no", "answered"],
+  number: ["gte", "lte", "answered"],
+  text: ["contains", "answered"],
+  category: ["is", "answered"],
+};
 export const DELAY_MODES = ["after_prev", "with_prev"] as const;
 
 export type Channel = typeof CHANNELS[number];
@@ -88,11 +113,19 @@ export interface ActionNode {
   content: Content;
   settings?: Record<string, unknown>;
 }
+export interface AiColumnRule {
+  column_id: string;
+  column_name: string;
+  answer_type: typeof AI_COLUMN_TYPES[number];
+  op: string;
+  value: string | number | null;
+}
 export interface ConditionNode {
   id: string;
   type: "condition";
   check: ConditionCheck;
   delay: Delay;
+  settings?: { ai_column?: AiColumnRule | null } & Record<string, unknown>;
   yes: ActionNode[];
   no: ActionNode[];
 }
@@ -157,6 +190,8 @@ function normalizeContent(raw: unknown, channel: Channel): Content {
   // acepta texto por lead): aquí el ángulo solo alimenta el CSV de Custom
   // Lead Fields, así que nunca es "mi texto" ni plantilla de WhatsApp.
   if (isLinkedin(channel) && kind !== "ai") kind = "ai";
+  // Una llamada lleva guion IA o el guion propio, nunca una plantilla.
+  if (channel === "call" && kind === "template") kind = "ai";
   const out: Content = { kind: kind as ContentKind };
   if (out.kind === "ai") {
     const angle = String(c.angle ?? "");
@@ -196,6 +231,31 @@ function legacySlot(node: ActionNode, rawKind: unknown): void {
   node.settings = { ...(node.settings ?? {}), template_slot: k.slice(-1) };
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Regla de la condición `ai_column`. Devuelve null si falta la columna, el
+ * tipo o el operador; un valor que no corresponde al operador queda null (y
+ * validate() lo reporta).
+ */
+export function normalizeAiColumnRule(raw: unknown): AiColumnRule | null {
+  if (!isObj(raw)) return null;
+  const id = typeof raw.column_id === "string" ? raw.column_id.trim() : "";
+  const type = String(raw.answer_type ?? "") as AiColumnRule["answer_type"];
+  if (!UUID_RE.test(id) || !(AI_COLUMN_TYPES as readonly string[]).includes(type)) return null;
+  const op = AI_COLUMN_OPS[type].includes(String(raw.op)) ? String(raw.op) : "answered";
+  let value: string | number | null = null;
+  if (op === "gte" || op === "lte") {
+    const n = Number(raw.value);
+    value = raw.value === "" || raw.value == null || !Number.isFinite(n) ? null : n;
+  } else if (op === "is" || op === "contains") {
+    const v = typeof raw.value === "string" ? raw.value.trim().slice(0, 200) : "";
+    value = v || null;
+  }
+  const name = typeof raw.column_name === "string" ? raw.column_name.trim().slice(0, 40) : "";
+  return { column_id: id, column_name: name, answer_type: type, op, value };
+}
+
 /** Nombre de la plantilla de WhatsApp elegida para un paso ("" si no hay). */
 export function templateName(node: ActionNode): string {
   const n = node.settings?.template_name;
@@ -210,14 +270,16 @@ function normalizeList(raw: unknown, allowConditions: boolean): FlowNode[] {
     if (n.type === "condition") {
       if (!allowConditions) return; // condiciones anidadas: se descartan
       const check = (CONDITIONS as readonly string[]).includes(n.check) ? n.check as ConditionCheck : "linkedin_connected";
-      out.push({
+      const cond: ConditionNode = {
         id: typeof n.id === "string" && n.id.trim() ? n.id.trim().slice(0, 40) : newId(),
         type: "condition",
         check,
         delay: normalizeDelay(n.delay, false),
         yes: normalizeList(n.yes, false) as ActionNode[],
         no: normalizeList(n.no, false) as ActionNode[],
-      });
+      };
+      if (check === "ai_column") cond.settings = { ai_column: normalizeAiColumnRule(n.settings?.ai_column) };
+      out.push(cond);
       return;
     }
     // with_prev se conserva tal cual: validate() avisa si no tiene una acción
@@ -261,12 +323,20 @@ export function validate(raw: unknown): { ok: boolean; errors: FlowError[] } {
       if (!a.content.body) errors.push({ nodeId: a.id, message: `${label}: el texto propio está vacío.` });
       if (a.channel === "email" && !a.content.subject) errors.push({ nodeId: a.id, message: `${label}: el email necesita asunto.` });
     }
+    if (a.channel === "call" && a.delay.mode === "with_prev") {
+      errors.push({ nodeId: a.id, message: `${label}: una llamada no puede salir "junto con el anterior": la hace una persona.` });
+    }
   };
   let count = 0;
   f.nodes.forEach((n, i) => {
     if (n.type === "condition") {
       seen(n.id);
       if (!n.yes.length && !n.no.length) errors.push({ nodeId: n.id, message: "La condición no tiene pasos en ninguna rama." });
+      if (n.check === "ai_column") {
+        const r = n.settings?.ai_column;
+        if (!r) errors.push({ nodeId: n.id, message: "La condición de columna IA necesita una columna de la lista." });
+        else if (["gte", "lte", "is", "contains"].includes(r.op) && r.value === null) errors.push({ nodeId: n.id, message: `La condición «${r.column_name || "columna IA"}» necesita un valor.` });
+      }
       n.yes.forEach((a, j) => { count++; checkAction(a, n.yes, j, `Rama Sí, paso ${j + 1}`); });
       n.no.forEach((a, j) => { count++; checkAction(a, n.no, j, `Rama No, paso ${j + 1}`); });
       return;
@@ -334,6 +404,12 @@ export function enterBranch(flow: Flow, conditionId: string, branch: "yes" | "no
 export function delayMs(node: FlowNode | null | undefined): number {
   if (!node) return 0;
   return (node.delay.days * 24 + node.delay.hours) * 60 * 60 * 1000;
+}
+
+/** Días que la tarea de llamar espera al SDR antes de omitirse (settings.call_wait_days, 1-14). */
+export function callWaitDays(node: ActionNode): number {
+  const n = Number(node.settings?.call_wait_days);
+  return Number.isFinite(n) && n >= 1 ? Math.min(14, Math.round(n)) : 3;
 }
 
 /** Contenido "clásico" de un nodo (lo que campaign_steps guardaba): para reusar el ejecutor del motor. */

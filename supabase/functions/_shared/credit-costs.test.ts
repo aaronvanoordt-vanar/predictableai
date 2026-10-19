@@ -1,7 +1,7 @@
 // deno test --allow-read _shared/credit-costs.test.ts
 import { assertEquals } from "jsr:@std/assert@1";
 import {
-  apolloBillableCount, coachMeetingCost, CREDIT_COSTS, minCadenceHours, radarDetectorMonthCost,
+  apolloBillableCount, CALL_MINUTE_CREDITS, callCost, coachMeetingCost, CREDIT_COSTS, minCadenceHours, radarDetectorMonthCost, voiceCallCost, voiceMinutes,
 } from "./credit-costs.ts";
 
 Deno.test("js/credit-costs.js es espejo del tarifario que cobran las edge functions", async () => {
@@ -23,12 +23,23 @@ Deno.test("js/credit-costs.js es espejo del tarifario que cobran las edge functi
     outreach_full: CREDIT_COSTS.outreach_full,
     campaign_recommendation: CREDIT_COSTS.campaign_recommendation,
     lead_research: CREDIT_COSTS.lead_research,
+    champion_web_check: CREDIT_COSTS.champion_web_check,
+    ai_column_cell: CREDIT_COSTS.ai_column_cell,
+    ai_column_cell_basic: CREDIT_COSTS.ai_column_cell_basic,
     outreach_playbook: CREDIT_COSTS.outreach_playbook,
     campaign_send: CREDIT_COSTS.campaign_lead,
     enrich_email: CREDIT_COSTS.enrich_email,
     enrich_phone: CREDIT_COSTS.enrich_phone,
+    registry_search_br: CREDIT_COSTS.registry_search_br,
+    registry_lookup_br: CREDIT_COSTS.registry_lookup_br,
+    enrich_email_waterfall: CREDIT_COSTS.enrich_email_waterfall,
+    enrich_phone_waterfall: CREDIT_COSTS.enrich_phone_waterfall,
+    email_verify: CREDIT_COSTS.email_verify,
     coach_meeting: CREDIT_COSTS.coach_local_block,
     coach_bot_block: CREDIT_COSTS.coach_bot_block,
+    call_minute: CALL_MINUTE_CREDITS.MX,
+    voice_minute: CREDIT_COSTS.voice_minute,
+    voice_minute_ar: CREDIT_COSTS.voice_minute_ar,
   };
   assertEquals(shown, expected);
 });
@@ -53,6 +64,7 @@ Deno.test("radarDetectorMonthCost por tipo y alcance", () => {
   assertEquals(radarDetectorMonthCost("funding", 1000), 100);
   assertEquals(radarDetectorMonthCost("growth", 50), 30);
   assertEquals(radarDetectorMonthCost("technographics", null), 30);
+  assertEquals(radarDetectorMonthCost("public_registry"), 30);
 });
 
 Deno.test("minCadenceHours: pisos que asume el precio", () => {
@@ -80,4 +92,33 @@ Deno.test("apolloBillableCount cobra solo lo que Apollo encontró", () => {
     matches: [{ email: "x@y.com" }, null, { email: "" }, { email: "z@y.com" }],
   }, false), 2);
   assertEquals(apolloBillableCount("/people/bulk_match", { matches: [{}, null, {}] }, true), 2);
+});
+
+Deno.test("js/credit-costs.js espeja los créditos por minuto de cada país", async () => {
+  const js = await Deno.readTextFile(new URL("../../../js/credit-costs.js", import.meta.url));
+  const m = js.match(/CALL_MINUTE_CREDITS\s*=\s*\{([^}]*)\}/);
+  const shown: Record<string, number> = {};
+  for (const p of (m?.[1] ?? "").matchAll(/(\w+):\s*(\d+)/g)) shown[p[1]] = Number(p[2]);
+  assertEquals(shown, CALL_MINUTE_CREDITS);
+});
+
+Deno.test("callCost: minuto iniciado = minuto cobrado; país sin tarifa = 0", () => {
+  assertEquals(callCost("MX", 0), 0);
+  assertEquals(callCost("MX", 1), 3);
+  assertEquals(callCost("MX", 60), 3);
+  assertEquals(callCost("MX", 61), 6);
+  assertEquals(callCost("AR", 125), 45);
+  assertEquals(callCost("ZZ", 600), 0);
+});
+
+Deno.test("voiceCallCost: minutos conectados hacia arriba, tarifa propia para Argentina", () => {
+  assertEquals(voiceMinutes(0), 0);
+  assertEquals(voiceMinutes(1), 1);
+  assertEquals(voiceMinutes(60), 1);
+  assertEquals(voiceMinutes(61), 2);
+  assertEquals(voiceCallCost("MX", 0), 0);
+  assertEquals(voiceCallCost("MX", 150), 18);
+  assertEquals(voiceCallCost("co", 59), 6);
+  assertEquals(voiceCallCost("AR", 61), 36);
+  assertEquals(voiceCallCost(null, 60), 6);
 });

@@ -104,10 +104,15 @@ SELECT m.id, m.user_id,
 ON CONFLICT (member_id) DO NOTHING;
 
 -- learning-loop escribe el veredicto agregado como scope `meeting_quality`.
+-- La lista conserva todo lo anterior: 'deal_loss' (20261017100001) y
+-- 'automation_rule', que learning-loop ya escribe desde las automatizaciones
+-- (20261018180008) sin que ninguna migración lo hubiera permitido (el upsert
+-- de learning_insights de esas cuentas fallaba entero).
 ALTER TABLE public.learning_insights DROP CONSTRAINT IF EXISTS learning_insights_scope_check;
 ALTER TABLE public.learning_insights ADD CONSTRAINT learning_insights_scope_check
   CHECK (scope IN ('radar_detector', 'campaign_node', 'campaign', 'channel', 'angle',
-                   'winning_message', 'objection', 'icp_attribute', 'summary', 'meeting_quality'));
+                   'winning_message', 'objection', 'icp_attribute', 'summary',
+                   'deal_loss', 'automation_rule', 'meeting_quality'));
 
 -- ── 2. Reporte semanal ─────────────────────────────────────────────────────
 ALTER TABLE public.clients

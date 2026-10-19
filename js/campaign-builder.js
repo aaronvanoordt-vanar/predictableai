@@ -64,6 +64,7 @@
     email: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="15" height="11" rx="2"/><path d="M3 6l7 5 7-5"/></svg>',
     linkedin_connect: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M7 9v5M7 6.5v.1M10.5 14v-3a2 2 0 0 1 4 0v3M10.5 9v5"/></svg>',
     linkedin_message: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5A2 2 0 0 1 5 3.5h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-4 3z"/><path d="M7 7v3M7 5.6v.1M10 10.5V9a1.6 1.6 0 0 1 3.2 0v1.5"/></svg>',
+    call: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 3.5h3l1.5 4-2 1.2a8.5 8.5 0 0 0 4.3 4.3l1.2-2 4 1.5v3a1.5 1.5 0 0 1-1.6 1.5A13 13 0 0 1 3 5.1 1.5 1.5 0 0 1 4.5 3.5z"/></svg>',
     condition: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v4M10 7l-4 4M10 7l4 4M6 11v3M14 11v3"/></svg>',
     stop: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><rect x="7.5" y="7.5" width="5" height="5" rx="1"/></svg>',
     ai: '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3l1.6 3.9L15.5 8.5l-3.9 1.6L10 14l-1.6-3.9L4.5 8.5l3.9-1.6z"/><path d="M15.5 13.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"/></svg>',
@@ -400,7 +401,7 @@
   function renderPicker(allowCondition, disabled) {
     var L = lib();
     var p = h('div', { class: 'cb-picker' });
-    ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message'].forEach(function (ch) {
+    ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message', 'call'].forEach(function (ch) {
       var m = L.CHANNEL_META[ch];
       p.appendChild(h('button', { type: 'button', class: 'cb-pick', 'data-action': 'cb-pick', 'data-kind': ch, title: disabled[ch] || '' }, icon(ch, m.tone), m.short === 'WA' ? 'WhatsApp' : m.short));
     });
@@ -413,6 +414,7 @@
   function defaultSubtitle(node) {
     var L = lib();
     if (node.type === 'condition') {
+      if (node.check === 'ai_column') return 'Sí: la columna IA tiene esa respuesta, con evidencia. No: otra respuesta, «No encontrado» o sin responder.';
       var c = L.CONDITION_LABELS[node.check];
       return c ? c.hint : '';
     }
@@ -567,7 +569,35 @@
     render();
 
     // ── datos ──
+    // Columnas IA de la lista elegida (para la condición «Columna IA»), con
+    // cuántos leads ya tienen respuesta. Solo lectura; sin la migración, vacío.
+    function loadAiColumns() {
+      var id = st.draft.list_id;
+      if (st.aiColumnsListId === id) return Promise.resolve();
+      st.aiColumnsListId = id;
+      st.aiColumns = [];
+      st.aiColumnsReady = false;
+      var sb = global.supabaseClient;
+      if (!id || !sb) return Promise.resolve();
+      return Promise.resolve(sb.from('list_ai_columns').select('id, name, answer_type, options').eq('list_id', id).order('position', { ascending: true }))
+        .then(function (r) {
+          if (r.error || st.aiColumnsListId !== id) return;
+          var cols = r.data || [];
+          return Promise.all(cols.map(function (c) {
+            return Promise.resolve(sb.from('list_ai_cells').select('id', { count: 'exact', head: true }).eq('column_id', c.id).eq('status', 'done'))
+              .then(function (cr) { c.answered = cr && !cr.error && typeof cr.count === 'number' ? cr.count : null; return c; });
+          })).then(function (withCounts) {
+            if (st.aiColumnsListId !== id) return;
+            st.aiColumns = withCounts;
+            st.aiColumnsReady = true;
+            render();
+          });
+        })
+        .catch(function () { /* sin columnas IA: la condición lo dice */ });
+    }
+
     function loadMembers() {
+      loadAiColumns();
       var id = st.draft.list_id;
       if (!id || !o.fetchMembers) { st.members = []; st.membersListId = id; return Promise.resolve(); }
       if (st.membersListId === id && !st.membersLoading) return Promise.resolve();
@@ -636,7 +666,7 @@
     function needLabel(need) {
       var k = NEED_KEY[need] || need;
       if (o.channelLabel) return o.channelLabel(k);
-      return k === 'whatsapp' ? 'WhatsApp' : k === 'linkedin' ? 'LinkedIn' : k === 'email' ? 'Email' : need;
+      return k === 'whatsapp' ? 'WhatsApp' : k === 'linkedin' ? 'LinkedIn' : k === 'email' ? 'Email' : k === 'call' ? 'llamada' : need;
     }
 
     // ── validación ──
@@ -674,6 +704,13 @@
       });
       st.draft.flow.nodes.forEach(function (n) {
         if (n.type !== 'condition') return;
+        if (n.check === 'ai_column') {
+          var r = n.settings && n.settings.ai_column;
+          if (r && st.aiColumnsReady && st.aiColumnsListId === st.draft.list_id && !(st.aiColumns || []).some(function (c) { return String(c.id) === String(r.column_id); })) {
+            w[n.id] = ['la columna «' + (r.column_name || 'IA') + '» no es de la lista elegida: siempre dará "No"'];
+          }
+          return;
+        }
         var c = L.CONDITION_LABELS[n.check];
         if (c && c.needs && !needOk(c.needs)) w[n.id] = ['necesita ' + needLabel(c.needs)];
         // Preguntar "¿leyó el WhatsApp?" sin haber mandado ninguno responde
@@ -760,6 +797,7 @@
         node.content = { kind: 'ai', angle: 'apertura' };
         node.settings = defaultLinkedinSettings(channel);
       }
+      else if (channel === 'call') node.content = { kind: 'ai', angle: nextAngle('call') };
       return node;
     }
     function newCondition() {
@@ -1159,13 +1197,14 @@
       var chBox = h('div', { class: 'form-group' });
       chBox.appendChild(h('div', { class: 'cb-lbl', text: 'Canal' }));
       var seg = h('div', { class: 'cb-seg' });
-      ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message'].forEach(function (ch) {
+      ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message', 'call'].forEach(function (ch) {
         var m = L.CHANNEL_META[ch];
         var b = h('button', { type: 'button', class: node.channel === ch ? 'on' : '', onclick: function () {
           if (node.channel === ch) return;
           node.channel = ch;
           if (ch === 'whatsapp') { node.content = { kind: 'template' }; delete node.settings; }
           else if (ch === 'email') { node.content = { kind: node.content.kind === 'custom' ? 'custom' : 'ai', angle: nextAngle('email'), subject: node.content.subject, body: node.content.body }; delete node.settings; }
+          else if (ch === 'call') { node.content = { kind: node.content.kind === 'custom' ? 'custom' : 'ai', angle: nextAngle('call'), body: node.content.body }; delete node.settings; if (node.delay.mode === 'with_prev') node.delay = { mode: 'after_prev', days: 1, hours: 0 }; }
           // Conexión y mensaje son campañas DISTINTAS en Dripify: al cambiar
           // de una a otra la campaña elegida deja de servir.
           else node.settings = defaultLinkedinSettings(ch);
@@ -1265,10 +1304,23 @@
         if (small) b.appendChild(h('small', { text: small }));
         return b;
       }
-      seg.appendChild(modeBtn('ai', 'IA personalizada', 'Recomendado: un mensaje distinto por lead'));
-      seg.appendChild(modeBtn('custom', 'Mi texto', 'El mismo texto con variables'));
+      var isCall = node.channel === 'call';
+      seg.appendChild(modeBtn('ai', isCall ? 'Guion IA' : 'IA personalizada', isCall ? 'Recomendado: un guion distinto por lead' : 'Recomendado: un mensaje distinto por lead'));
+      seg.appendChild(modeBtn('custom', isCall ? 'Mi guion' : 'Mi texto', 'El mismo texto con variables'));
       if (node.channel === 'whatsapp') seg.appendChild(modeBtn('template', 'Plantilla de WhatsApp', 'Aprobada por Meta: abre conversación'));
       box.appendChild(seg);
+      if (isCall) {
+        // La llamada la hace una persona: el paso crea una tarea en Llamadas y
+        // la cadencia espera su resultado hasta este plazo (call_wait_days).
+        var wait = h('input', { type: 'number', min: '1', max: '14', value: String(L.callWaitDays(node)), style: 'width:80px', onchange: function () {
+          var v = Math.max(1, Math.min(14, Math.round(Number(wait.value) || 3)));
+          node.settings = Object.assign({}, node.settings || {}, { call_wait_days: v });
+          wait.value = String(v);
+          markCustom(); refresh();
+        } });
+        box.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'cb-hint', style: 'margin-bottom:4px', text: 'Días que la cadencia espera la llamada' }), wait));
+        box.appendChild(h('div', { class: 'cb-hint', text: 'Este paso crea una tarea en Campañas → Llamadas con el guion. Cuando marcas el resultado, la cadencia sigue: «Reunión agendada» y «No interesado» la detienen; «Contestó» y «Buzón» se pueden usar en una condición. Si nadie llama en ese plazo, el paso se omite. Sin teléfono, se omite.' }));
+      }
 
       var kind = node.content.kind;
       if (kind === 'ai') {
@@ -1279,6 +1331,7 @@
         ins.value = node.content.instructions || '';
         box.appendChild(h('div', { class: 'form-group' }, h('div', { class: 'cb-hint', style: 'margin-bottom:4px', text: 'Instrucciones' }), ins));
         if (node.channel === 'whatsapp') box.appendChild(h('div', { class: 'cb-note amber', text: 'WhatsApp solo permite texto libre dentro de las 24 h siguientes a un mensaje del lead. Si no hay conversación abierta, este paso se omite; para abrir conversación usa una plantilla de WhatsApp.' }));
+        else if (isCall) box.appendChild(h('div', { class: 'cb-hint', text: 'La IA escribe el guion de cada lead 24 h antes (apertura, preguntas, objeciones, cierre y mensaje de buzón) con el ángulo de ESTE paso y lo que ya se le envió. Cuesta 2 créditos por guion.' }));
         else box.appendChild(h('div', { class: 'cb-hint', text: 'La IA escribe el mensaje de cada lead 24 h antes del envío, con el ángulo y las instrucciones de ESTE paso, tu contexto de empresa, el brief y lo que ya se le envió. Cuesta 2 créditos por mensaje.' }));
       } else if (kind === 'custom') {
         var fields = [];
@@ -1287,14 +1340,14 @@
           subj = h('input', { type: 'text', placeholder: 'Asunto', value: node.content.subject || '', 'data-key': 'subj-' + node.id, maxlength: '200', oninput: function () { node.content.subject = subj.value; refresh(); } });
           fields.push(subj);
         }
-        var ta = h('textarea', { placeholder: node.channel === 'email' ? 'Hola {{nombre}}, vi que lideras {{cargo}} en {{empresa}}…' : 'Texto del mensaje', 'data-key': 'body-' + node.id, maxlength: '4000', style: fopts && fopts.compact ? '' : 'min-height:140px', oninput: function () { node.content.body = ta.value; refresh(); } });
+        var ta = h('textarea', { placeholder: node.channel === 'email' ? 'Hola {{nombre}}, vi que lideras {{cargo}} en {{empresa}}…' : isCall ? 'Hola {{nombre}}, te llamo de… ¿tienes 30 segundos?' : 'Texto del mensaje', 'data-key': 'body-' + node.id, maxlength: '4000', style: fopts && fopts.compact ? '' : 'min-height:140px', oninput: function () { node.content.body = ta.value; refresh(); } });
         ta.value = node.content.body || '';
         fields.push(ta);
         // Los botones de variables insertan en el asunto o en el cuerpo, según cuál se enfocó último.
         box.appendChild(varChips(fields));
         if (subj) box.appendChild(subj);
         box.appendChild(ta);
-        box.appendChild(h('div', { class: 'cb-hint', text: 'El mismo texto para todos los leads; las variables se reemplazan con los datos de cada uno al enviar.' }));
+        box.appendChild(h('div', { class: 'cb-hint', text: isCall ? 'El mismo guion para todos los leads; las variables se reemplazan con los datos de cada uno en la tarea de llamar.' : 'El mismo texto para todos los leads; las variables se reemplazan con los datos de cada uno al enviar.' }));
         if (node.channel === 'whatsapp') box.appendChild(h('div', { class: 'cb-note amber', text: 'WhatsApp solo permite texto libre dentro de las 24 h siguientes a un mensaje del lead. Si no hay conversación abierta, este paso se omite.' }));
       } else {
         var chosen = L.templateName(node);
@@ -1350,7 +1403,12 @@
     function renderConditionFields(panel, node, loc) {
       var box = h('div', { class: 'form-group' });
       box.appendChild(h('div', { class: 'cb-lbl', text: 'Condición' }));
-      var sel = h('select', { onchange: function () { node.check = sel.value; markCustom(); render(); } });
+      var sel = h('select', { onchange: function () {
+        node.check = sel.value;
+        if (node.check === 'ai_column') node.settings = { ai_column: defaultAiColumnRule() };
+        else delete node.settings;
+        markCustom(); render();
+      } });
       L.CONDITIONS.forEach(function (c) {
         var m = L.CONDITION_LABELS[c];
         var ok = !m.needs || needOk(m.needs);
@@ -1359,8 +1417,79 @@
       box.appendChild(sel);
       var m2 = L.CONDITION_LABELS[node.check];
       if (m2) box.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: m2.hint + ' Si se cumple, el lead sigue por la rama Sí; si no, por la rama No. Una rama vacía salta al paso que viene después de la condición.' }));
+      if (node.check === 'ai_column') box.appendChild(aiColumnFields(node));
       panel.appendChild(box);
       panel.appendChild(delayFields(node, loc));
+    }
+
+    function defaultAiColumnRule() {
+      var c = (st.aiColumns || [])[0];
+      if (!c) return null;
+      return L.normalizeAiColumnRule({ column_id: c.id, column_name: c.name, answer_type: c.answer_type, op: c.answer_type === 'boolean' ? 'yes' : 'answered' });
+    }
+
+    // Columna + operador + valor de la condición «Columna IA».
+    function aiColumnFields(node) {
+      var wrap = h('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-top:10px' });
+      var cols = st.aiColumns || [];
+      if (!st.draft.list_id) {
+        wrap.appendChild(h('div', { class: 'cb-warn', text: 'Elige una lista en el paso Base: las columnas IA son de cada lista.' }));
+        return wrap;
+      }
+      if (!cols.length && !st.aiColumnsReady) {
+        wrap.appendChild(h('div', { class: 'cb-hint', text: 'Cargando las columnas IA de la lista…' }));
+        return wrap;
+      }
+      if (!cols.length) {
+        wrap.appendChild(h('div', { class: 'cb-warn', text: 'Esta lista no tiene columnas IA. Créalas en Listas → «+ Columna IA» y vuelve aquí.' }));
+        return wrap;
+      }
+      node.settings = node.settings || {};
+      var rule = node.settings.ai_column;
+      var col = rule && cols.find(function (c) { return String(c.id) === String(rule.column_id); });
+      function set(patch) {
+        node.settings.ai_column = L.normalizeAiColumnRule(Object.assign({}, node.settings.ai_column || {}, patch));
+        markCustom();
+        refresh();
+      }
+      var csel = h('select', { onchange: function () {
+        var c = cols.find(function (x) { return String(x.id) === csel.value; });
+        if (!c) return;
+        set({ column_id: c.id, column_name: c.name, answer_type: c.answer_type, op: c.answer_type === 'boolean' ? 'yes' : 'answered', value: null });
+        render();
+      } });
+      if (!col) csel.appendChild(h('option', { value: '', text: rule ? 'La columna ya no está en esta lista' : 'Elige una columna', selected: true }));
+      cols.forEach(function (c) { csel.appendChild(h('option', { value: c.id, text: c.name, selected: !!col && String(col.id) === String(c.id) })); });
+      wrap.appendChild(h('label', { class: 'cb-lbl', text: 'Columna IA' }));
+      wrap.appendChild(csel);
+      if (!col || !rule) return wrap;
+
+      var osel = h('select', { onchange: function () { set({ op: osel.value, value: null }); render(); } });
+      (L.AI_COLUMN_OPS[col.answer_type] || ['answered']).forEach(function (op) {
+        osel.appendChild(h('option', { value: op, text: L.AI_COLUMN_OP_LABELS[op] || op, selected: rule.op === op }));
+      });
+      wrap.appendChild(h('label', { class: 'cb-lbl', text: 'Rama Sí cuando la respuesta' }));
+      wrap.appendChild(osel);
+      if (rule.op === 'is') {
+        var vsel = h('select', { onchange: function () { set({ value: vsel.value }); } });
+        vsel.appendChild(h('option', { value: '', text: 'Elige una categoría', selected: !rule.value }));
+        (col.options || []).forEach(function (opt) { vsel.appendChild(h('option', { value: opt, text: opt, selected: rule.value === opt })); });
+        wrap.appendChild(vsel);
+      } else if (rule.op === 'gte' || rule.op === 'lte') {
+        var num = h('input', { type: 'number', value: rule.value == null ? '' : String(rule.value), oninput: function () { set({ value: num.value }); } });
+        wrap.appendChild(num);
+      } else if (rule.op === 'contains') {
+        var txt = h('input', { type: 'text', maxlength: '200', value: rule.value || '', placeholder: 'Ej.: SAP', oninput: function () { set({ value: txt.value }); } });
+        wrap.appendChild(txt);
+      }
+      var total = st.members.length;
+      if (col.answered != null && total) {
+        var missing = Math.max(0, total - col.answered);
+        wrap.appendChild(h('div', { class: missing ? 'cb-warn' : 'cb-hint', text: missing
+          ? col.answered + ' de ' + total + ' leads tienen respuesta en «' + col.name + '». Los ' + missing + ' sin respuesta (o «No encontrado») irán por la rama No; responde la columna en Listas antes de lanzar.'
+          : 'Todos los leads de la lista tienen respuesta en «' + col.name + '».' }));
+      }
+      return wrap;
     }
 
     /** Vuelve a pintar solo la línea de tiempo y el pie (sin perder el foco del panel). */
@@ -1512,20 +1641,20 @@
 
       var right = h('div', { style: 'display:flex;flex-direction:column;gap:12px' });
       var acts = L.actions(st.draft.flow);
-      var needs = { whatsapp: acts.some(function (a) { return a.channel === 'whatsapp'; }), email: acts.some(function (a) { return a.channel === 'email'; }), linkedin: acts.some(function (a) { return a.channel === 'linkedin_connect'; }) };
+      var needs = { whatsapp: acts.some(function (a) { return a.channel === 'whatsapp'; }), email: acts.some(function (a) { return a.channel === 'email'; }), linkedin: acts.some(function (a) { return a.channel === 'linkedin_connect'; }), call: acts.some(function (a) { return a.channel === 'call'; }) };
       var list = (o.lists || []).find(function (l) { return String(l.id) === String(st.draft.list_id); });
       var n = st.members.length;
       var kv = h('dl', { class: 'cb-kv' });
       function row(k, v) { kv.appendChild(h('dt', { text: k })); kv.appendChild(h('dd', { text: v })); }
       row('Lista', list ? list.name + ' · ' + n + ' leads' : 'Sin lista (enrolas después)');
       row('Envíos por lead', acts.length + ' · ' + L.durationDays(st.draft.flow) + ' días');
-      row('Canales', [needs.whatsapp ? 'WhatsApp' : null, needs.email ? 'Email' : null, needs.linkedin ? 'LinkedIn' : null].filter(Boolean).join(', ') || '—');
+      row('Canales', [needs.whatsapp ? 'WhatsApp' : null, needs.email ? 'Email' : null, needs.linkedin ? 'LinkedIn' : null, needs.call ? 'Llamada' : null].filter(Boolean).join(', ') || '—');
       row('Mensajes IA', st.draft.review_required ? 'Los revisas antes de enviar' : 'Salen solos');
       right.appendChild(h('div', { class: 'chart-card' }, h('div', { class: 'cb-lbl', text: 'Resumen' }), kv));
 
       if (n) {
         var miss = [];
-        if (needs.whatsapp) { var np = n - st.members.filter(hasPhone).length; if (np) miss.push(np + ' sin teléfono (se omite el WhatsApp)'); }
+        if (needs.whatsapp || needs.call) { var np = n - st.members.filter(hasPhone).length; if (np) miss.push(np + ' sin teléfono (se omite ' + (needs.whatsapp && needs.call ? 'el WhatsApp y la llamada' : needs.call ? 'la llamada' : 'el WhatsApp') + ')'); }
         if (needs.email) { var ne = n - st.members.filter(hasEmail).length; if (ne) miss.push(ne + ' sin email (se omite el email)'); }
         if (needs.linkedin) { var nl = n - st.members.filter(hasLinkedin).length; if (nl) miss.push(nl + ' sin URL de LinkedIn (se omite el paso)'); }
         if (miss.length) right.appendChild(h('div', { class: 'cb-note amber' }, h('b', { text: 'Datos faltantes: ' }), miss.join(' · ') + '. Revela teléfonos y emails desde Listas → Enriquecer.'));
@@ -1607,7 +1736,7 @@
       body.appendChild(field('Máx. WhatsApp / día', h('input', { type: 'number', min: '0', value: String(caps.whatsapp), 'data-key': 'cap-wa', oninput: function (e) { caps.whatsapp = Number(e.target.value) || 0; } })));
       body.appendChild(field('Máx. emails / día', h('input', { type: 'number', min: '0', value: String(caps.email), 'data-key': 'cap-em', oninput: function (e) { caps.email = Number(e.target.value) || 0; } })));
       box.appendChild(body);
-      box.appendChild(h('div', { class: 'cb-hint', style: 'padding:0 12px 12px', text: 'Los WhatsApp salen del número conectado; los emails, de la cuenta elegida. LinkedIn no lleva tope: el ritmo lo decide tu cuenta de LinkedIn. La ventana horaria y los días se aplican en la zona horaria indicada.' }));
+      box.appendChild(h('div', { class: 'cb-hint', style: 'padding:0 12px 12px', text: 'Los WhatsApp salen del número conectado; los emails, de la cuenta elegida. LinkedIn no lleva tope: el ritmo lo decide tu cuenta de LinkedIn. La ventana horaria y los días se aplican en la zona horaria indicada. A los leads de Colombia, además, solo se les envía de lunes a viernes de 7:00 a 19:00 y sábados de 8:00 a 15:00 (hora de Colombia), nunca domingos ni festivos, y un envío por día (Ley 2300).' }));
       return box;
     }
 

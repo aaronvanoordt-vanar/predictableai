@@ -14,7 +14,7 @@
 import { callLLM, parseLlmJson, type Engine } from "./llm.ts";
 import { canonicalCountries } from "./radar-geo.ts";
 import {
-  DETECTOR_KINDS, KIND_META, PLAN_JSON_SPEC, coverSignals, normalizeDetector, normalizePlan,
+  DETECTOR_KINDS, KIND_META, PLAN_JSON_SPEC, coverSignals, isPlannerKind, normalizeDetector, normalizePlan,
   type AnalysisSignal, type DetectorKind, type NormalizedDetector, type NormalizedPlan, type Requirement,
 } from "./radar-plan.ts";
 import type { SellerContext } from "./radar-context.ts";
@@ -26,6 +26,8 @@ export interface Availability {
   apollo_user: boolean;
   places: boolean;
   probe: boolean;
+  /** Algún país del plan tiene registro público conectado (Brasil, México, Colombia). */
+  registry: boolean;
 }
 
 export function kindAvailable(kind: DetectorKind, av: Availability): boolean {
@@ -33,8 +35,8 @@ export function kindAvailable(kind: DetectorKind, av: Availability): boolean {
 }
 
 function availabilityBlock(av: Availability): string {
-  const ok = DETECTOR_KINDS.filter((k) => kindAvailable(k, av));
-  const ko = DETECTOR_KINDS.filter((k) => !kindAvailable(k, av));
+  const ok = DETECTOR_KINDS.filter((k) => isPlannerKind(k) && kindAvailable(k, av));
+  const ko = DETECTOR_KINDS.filter((k) => isPlannerKind(k) && !kindAvailable(k, av));
   return `\n\n=== AVAILABLE DETECTOR KINDS ===\nUse ONLY these kinds: ${ok.join(", ")}.` +
     (ko.length ? `\nNOT available for this account right now (do not propose them): ${ko.join(", ")}.` : "") +
     recipesPromptBlock((k) => kindAvailable(k, av));
@@ -50,6 +52,7 @@ Do NOT settle for what a database filters (industry, size, "uses HubSpot") nor f
 - Sells tech for marketplace sellers → site_probe { must_have: ["any_marketplace"] } + web_footprint { queries: ["site:{ml_site} tienda oficial {industry}", "marcas {industry} venden en Amazon {country}"] } + site_probe { must_have: ["any_ecommerce"], must_not_have: ["any_marketplace"] } + hiring for "Marketplace Manager".
 - Sells sales-predictability SaaS → hiring for SDR/AE titles, leadership (new VP Sales / CRO, ≤ 90 days), technographics using_any ["hubspot","pipedrive","salesforce"], news about missed-quota / restructured sales teams.
 - Sells asset liquidation in Mexico → news on concurso mercantil filings, tenders for auction services, leadership (new CFO / restructuring officer).
+- Sells to SMBs in Brazil, Mexico or Colombia (accounting, banking, payroll, POS, insurance, small-business software) → public_registry { event: "new_companies", window_days: 60 } (companies incorporated in the window, straight from the official registry: Apollo barely has them) + public_registry { event: "size_change" } for companies moving to a bigger size bracket.
 - Sells cybersecurity → news on breaches/regulatory fines in the target countries, hiring for CISO / security analyst, technographics using_any ["wordpress_org","woocommerce"] (self-hosted stacks that get breached).
 
 Rules:

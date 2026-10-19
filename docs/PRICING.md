@@ -6,10 +6,10 @@
 
 | Tema | Decisión |
 |---|---|
-| Pasarela | **Stripe**, a nombre de la LLC de Wyoming. Todo se cobra en **USD**. |
+| Pasarela | **Stripe**, a nombre de la LLC de Wyoming. El precio de lista es en **USD**; desde 2026-10-17 (Fase A de `docs/BILLING_LATAM.md`) Checkout puede cobrar el equivalente en MXN, BRL, COP, CLP o PEN y aceptar OXXO y Pix en recargas, siempre liquidando en USD. |
 | Costo de Apollo para la plataforma | Plan de 447 USD con ~20k créditos, o sea **~0.022 USD por crédito de Apollo**. Revelar un email cuesta 1 crédito, un teléfono 8 y exportar 1. |
 | Self-serve | **Un solo plan pago: Starter.** Growth es un **servicio asistido que se cobra por resultados**: no se vende por Checkout. El equipo lo da de alta a mano (`subscriptions.provider = 'manual'`). |
-| Prueba | **Gratis, sin tarjeta y sin fecha de vencimiento: 100 créditos una sola vez.** La prueba no incluye lo que corre solo (Hub automático, re-plan del Radar, playbook automático) y permite como máximo 2 detectores del Radar activos. |
+| Prueba | **Gratis y sin tarjeta.** Con el **email de la empresa** (confirmado, una prueba por dominio): **300 créditos que vencen a los 30 días**. Con un email personal: **100 créditos sin vencimiento**. El primer detector del Radar corre sus primeros 30 días sin costo. La prueba no incluye lo que corre solo (Hub automático, re-plan del Radar, playbook automático), permite como máximo 2 detectores del Radar activos y, con la key de Apollo de la plataforma, revela como máximo 25 emails y ningún teléfono. Revisión y números en `docs/TRIAL_REVIEW.md` (2026-10-17, opción B). |
 | Cuentas existentes | **Se reinician.** La migración deja las 22 cuentas en los 100 créditos de la prueba; casi todo su saldo venía de compras simuladas. |
 
 ## 2. Planes y recargas
@@ -17,7 +17,7 @@
 | | **Prueba** | **Starter** | **Growth** |
 |---|---|---|---|
 | Precio | 0 | **97 USD/mes** o **77 USD/mes pagando el año** (924 USD) | por resultados (servicio asistido) |
-| Créditos | 100, una vez | **1,500 cada mes** | a medida (se configura por cuenta) |
+| Créditos | 300 por 30 días con email corporativo; 100 sin vencimiento con email personal | **1,500 cada mes** | a medida (se configura por cuenta) |
 | Usuarios | 1 | 1 | a medida |
 | Hub automático | no | semanal + mensual | diario + semanal + mensual |
 | Detectores del Radar activos a la vez | 2 | 5 | 15 |
@@ -54,9 +54,14 @@ Columnas:
 | Revelar email (Apollo de la plataforma) | **2** | ~0.045 (revelar + exportar) | 35 % | Solo si Apollo encuentra el email |
 | Revelar teléfono (Apollo de la plataforma) | **8** | ~0.20 | 38 % | Solo si Apollo encuentra a la persona |
 | Revelar con el Apollo propio (OAuth) | **0** | lo paga el cliente | — | |
+| Email encontrado en la cascada (waterfall, si Apollo no lo encontró) | **3** | ~0.04–0.06 + verificación ~0.001–0.01 | 21–45 % | Solo si un proveedor lo encuentra y no sale inválido. Se cobra también con el Apollo propio (las keys de la cascada son de la plataforma). `docs/ENRICHMENT_WATERFALL.md` |
+| Teléfono encontrado en la cascada | **20** | ~0.39–0.60 | 30–46 % | Solo si un proveedor lo encuentra |
+| Verificar un email de Apollo sin «verified» | **1** | ~0.001–0.01 | 2–15 % | Solo con veredicto (válido, inválido o catch-all) |
 | Mensaje IA: paso de campaña, muestra o borrador de la Bandeja | **2** | ~0.02–0.03 | 20 % | Haiku con 1 búsqueda y sin fetch (antes 3 búsquedas + 2 fetch: 0.07–0.12) |
 | Preparar lead con IA (5 capas + preparación del coach) | **4** | ~0.10 | 38 % | |
 | Investigar lead con IA (Listas: puesto actual + empresa + ángulo) | **3** | ~0.05–0.07 | 26–36 % | Haiku con 4 búsquedas + 2 fetch. Con la key de Apollo de la plataforma se suma `enrich_email` (2) por el match, solo si Apollo encuentra a la persona |
+| Columna IA en Listas, por fila (con búsqueda web) | **2** | ~0.006–0.01 (Sonar) · ~0.03 (Haiku con ≤ 2 búsquedas) | 5–23 % | Se cobra también «No encontrado» (la búsqueda se hizo igual; decisión del dueño 2026-10-17). Solo los errores y las filas sin empresa, dominio ni LinkedIn (no llegan a la IA) se devuelven |
+| Columna IA sin búsqueda web (solo datos del contacto) | **1** | ~0.003 | 5 % | Se responde con Claude u OpenAI (Perplexity siempre busca) |
 | Lead que entra a una campaña | **1** | ~0 | — | Cubre **todos** sus envíos; antes se cobraba 1 por envío |
 | Responder a mano desde la Bandeja | **0** | ~0 | — | Antes 1 |
 | Cadencia recomendada por IA | 6 | ~0.06–0.12 | 20 % | |
@@ -73,6 +78,8 @@ Columnas:
 | Tendencias de outbound (manual) | **10** | ~0.2 | 31 % | 6 búsquedas (antes 12) |
 | Coach en modo bot | **8 por cada 10 min** + 5 del reporte | ~0.16 por cada 10 min + 0.07 | 31 % | Una hora: 53 créditos. Antes 188. |
 | Coach en captura local | **5 por cada 10 min** + 5 del reporte | ~0.13 por cada 10 min + 0.07 | 40 % | Antes 8 fijos, que no cubrían Deepgram |
+| Agente de voz IA, por minuto conectado (MX, CO, CL, PE, BR) | **6** | ~0.12–0.16 por minuto | 31–41 % | Retell (~0.08) + operador (Twilio a móvil 0.038–0.075). No contestó, buzón o falla = 0. Se reserva la duración máxima y se devuelve lo que no se usa (`docs/AGENTE_DE_VOZ.md`) |
+| Agente de voz IA, por minuto conectado a Argentina | **18** | ~0.43 por minuto | 37 % | Los móviles de Argentina cuestan ~0.35 USD/min en el operador |
 | Onboarding, PDF del contexto, CODA, reporte del portal de clientes | 0 | 0.01–0.5 una vez | — | Costo de adquisición; está acotado |
 
 **Supuestos de costo** (precios oficiales al 2026-09-23):
@@ -91,6 +98,8 @@ Columnas:
 | Deepgram nova-2 | ~0.0058 USD por minuto por canal |
 | Google Places Text Search (nivel Enterprise) | 35 USD por cada 1,000 |
 | Apollo | 0.022 USD por crédito |
+| Retell AI (agente de voz) | ~0.055 USD por minuto + 0.015 de TTS + LLM ≈ 0.08 |
+| Twilio, llamada a móvil | MX 0.047 · CO 0.038 · CL 0.075 · PE 0.074 · BR 0.066 · AR 0.353 USD por minuto |
 
 Los tokens se midieron sobre los prompts reales del código (caracteres ÷ 4, tomando el rango alto porque el español tokeniza peor).
 
@@ -103,7 +112,7 @@ Los tokens se midieron sobre los prompts reales del código (caracteres ÷ 4, to
 | Uso típico (60 % de la bolsa) | 13 USD | 5.3 USD | 3.3 USD | **~78 %** |
 | Anual (77 USD/mes), paquete típico al 100 % | 21 USD | 4.2 USD | 3.3 USD | **~63 %** |
 
-Cada cuenta de prueba nos cuesta como máximo ~4 USD (onboarding + 100 créditos).
+Cada cuenta de prueba nos cuesta como máximo ~14 USD con email corporativo (primeras veces gratis + detector gratis + 350 créditos con bonos) y ~7 USD con email personal; lo típico es ~4–6 USD (`docs/TRIAL_REVIEW.md` §3).
 
 ## 5. Competencia (resumen)
 
@@ -124,7 +133,7 @@ Cada cuenta de prueba nos cuesta como máximo ~4 USD (onboarding + 100 créditos
 
 - **`billing`** (con JWT):
   - `checkout_subscription` abre Stripe Checkout de Starter, mensual o anual. Responde 409 si ya hay un plan activo.
-  - `checkout_topup` abre el Checkout de una recarga. Responde 403 `plan_required` en la prueba.
+  - `checkout_topup` abre el Checkout de una recarga. Responde 403 `plan_required` en la prueba. Emite factura con el número fiscal del cliente (deducible en México con la regla 2.7.1.14) y acepta los medios asíncronos que el Dashboard encienda (OXXO, Pix) cuando el precio tiene moneda local. Ver `docs/BILLING_LATAM.md`.
   - `portal` abre el portal de Stripe (tarjeta, facturas, cancelar).
   - Nunca da créditos.
 - **`stripe-webhook`** (con `--no-verify-jwt`; firma verificada con `STRIPE_WEBHOOK_SECRET`) es lo **único** que da créditos o cambia el plan:
@@ -132,6 +141,7 @@ Cada cuenta de prueba nos cuesta como máximo ~4 USD (onboarding + 100 créditos
   - `checkout.session.completed` de una recarga → `billing_add_topup`, que no se aplica dos veces a la misma sesión.
   - `customer.subscription.*` → copia el estado a `subscriptions`; al cancelarse, la bolsa del mes vence.
   - Los eventos duplicados se ignoran (`billing_events`).
+- **Prueba corporativa:** el RPC `claim_trial_credits` (lo llama `js/credits.js` al abrir la app; idempotente) suma 200 créditos a los 100 del alta y deja en `plan_balance` lo que quede de la prueba + esos 200, así vencen juntos. Una fila por dominio en `trial_grants`. El cron `billing-expire-trials` (`billing_expire_trials`) vence el `plan_balance` a los 30 días si la cuenta sigue en `free`; si pasó a Starter, la bolsa del plan ya lo reemplazó. Los bonos (miforms, «Hazlo tuyo») no vencen. Migración `20261018000001`.
 - **Plan vigente:** `current_plan(user)` devuelve `free`, `starter` o `growth`. `past_due` sigue activo mientras Stripe reintenta el cobro. Los crons (Hub, playbook, re-plan del Radar) y el Radar (tope de detectores) lo consultan vía `_shared/billing-plans.ts`.
 - **Growth manual:** se inserta una fila en `subscriptions` con `plan = 'growth'`, `provider = 'manual'`, `status = 'active'`, `monthly_credits = N` y `next_grant_at = now()`. El cron le entrega la bolsa cada mes.
 
@@ -139,4 +149,5 @@ Cada cuenta de prueba nos cuesta como máximo ~4 USD (onboarding + 100 créditos
 
 - El agente administrado de "Preparar con IA" (Managed Agents) no permite fijar un tope de búsquedas en su toolset. El costo real de ~0.10 USD sale de medir el código, pero conviene revisarlo con la facturación de Anthropic del primer mes.
 - El worker de Cloudflare (`/openai` y `/deepgram-token`) se llama sin autenticación desde el navegador. Su código no está en el repo: hay que confirmar que valida el JWT, o cualquiera puede gastar nuestro OpenAI y Deepgram.
+- **Agencias (2026-10-17)**: la agencia compra con su propio plan y recargas y reparte a sus espacios (`js/agency.js`); la factura consolidada sale sola porque los espacios no pueden pagar (`billing` → 403 `workspace_billing`). Los créditos del plan asignados a un espacio vencen con el plan de la agencia. **Decidido (dueño, 2026-10-18): el espacio NO hereda el plan de la agencia.** Sin suscripción propia queda en `free` (2 detectores del Radar, sin Hub automático, tope de revelados de la prueba con la key compartida) salvo que sea ilimitado; heredarlo multiplicaría el costo fijo de Starter (~3.3 USD por cuenta) por cada cliente.
 - A los 30 días, recalcular los márgenes con los datos reales de `credit_transactions` y la facturación de cada proveedor.

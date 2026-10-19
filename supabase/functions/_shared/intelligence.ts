@@ -18,7 +18,9 @@
  *   · el redactor de mensajes sabe qué perfiles responden y qué objeciones vienen;
  *   · todos saben qué canales, ángulos y perfiles traen reuniones que el
  *     CLIENTE califica (portal → lead_meetings → scope `meeting_quality`),
- *     no solo reuniones agendadas.
+ *     no solo reuniones agendadas;
+ *   · y todos saben por qué se pierden las oportunidades (motivo obligatorio
+ *     al marcar una perdida en el CRM, scope `deal_loss`, `_shared/crm.ts`).
  *
  * Reglas: nunca inventa (sin veredicto `works`/`fails` no hay línea), nunca
  * pisa el ICP declarado (lo dice el propio bloque), y si algo falla devuelve
@@ -140,10 +142,10 @@ export function distillHubRules(rows: HubFeedbackRow[]): Map<string, { rules: st
 // ─────────────────────────────────────────────────────────────────────────────
 
 const AUDIENCE_SCOPES: Record<Audience, string[]> = {
-  hub:      ["icp_attribute", "channel", "angle", "radar_detector", "objection", "meeting_quality"],
+  hub:      ["icp_attribute", "channel", "angle", "radar_detector", "objection", "deal_loss", "meeting_quality"],
   radar:    ["icp_attribute", "radar_detector", "meeting_quality"],
-  campaign: ["icp_attribute", "channel", "angle", "objection", "meeting_quality"],
-  outreach: ["icp_attribute", "objection", "meeting_quality"],
+  campaign: ["icp_attribute", "channel", "angle", "objection", "deal_loss", "meeting_quality"],
+  outreach: ["icp_attribute", "objection", "deal_loss", "meeting_quality"],
 };
 
 function metricTail(r: InsightRow): string {
@@ -153,6 +155,10 @@ function metricTail(r: InsightRow): string {
     case "channel": case "angle": return `${m.replies ?? 0} respuestas en ${m.sent ?? 0} envíos, ${m.reply_rate ?? 0} %`;
     case "radar_detector": return `${m.hit_rate ?? 0} % de señales útiles, ${m.replies ?? 0} respuestas, ${m.meetings ?? 0} reuniones`;
     case "meeting_quality": return `${m.qualified ?? 0} de ${m.judged ?? 0} reuniones calificadas por el cliente${m.no_show ? `, ${m.no_show} no se presentaron` : ""}`;
+    case "deal_loss": {
+      const comps = (Array.isArray(m.competitors) ? m.competitors : []).map((c: Json) => clip(c?.name, 40)).filter(Boolean);
+      return `${m.count ?? 0} de ${m.lost_total ?? 0} oportunidades perdidas, ${m.share ?? 0} %${comps.length ? `; contra ${comps.join(", ")}` : ""}`;
+    }
     default: return "";
   }
 }
@@ -203,6 +209,10 @@ export function buildIntelligenceBlock(opts: {
       .slice(0, MAX_PER_LIST)
       .map((r) => `- «${clip(r.label, 140)}» (${Number(r.metrics?.count) || 0} veces${r.verdict === "fails" ? ", hace perder reuniones" : ""})`);
     section("Objeciones reales que ya escuchó en reuniones:", objs);
+  }
+  if (scopes.has("deal_loss")) {
+    section("Por qué pierde oportunidades (motivos que el vendedor registró en su CRM; desactívalos antes de que aparezcan, sin mencionarlos como dato):",
+      verdictLines(rows, "deal_loss", "fails"));
   }
 
   const verdicts = latestHubVerdicts(opts.hubFeedback || []);

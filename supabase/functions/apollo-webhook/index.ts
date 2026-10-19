@@ -13,7 +13,8 @@
  * the caller is Apollo relaying one of our own reveal requests.
  *
  * Behavior: for each person in the payload, picks the best phone number
- * (mobile > any sanitized > raw), then updates prospect_list_members rows
+ * (mobile > unknown > landline > switchboard, normalized to E.164 with its
+ * line type by _shared/phone-latam.ts — 2026-10-17), then updates prospect_list_members rows
  * awaiting it (apollo_person_id match + phone_status = 'pending') via the
  * service-role client: phone, phone_status = 'revealed' (or 'unavailable'
  * when Apollo returned no numbers), enriched_at, and merges the raw
@@ -31,6 +32,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
+import { pickBestPhone } from "../_shared/phone-latam.ts";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -51,15 +53,13 @@ interface WebhookPerson {
   phone_numbers?: unknown;
 }
 
-/** Best number: mobile with sanitized_number > any sanitized_number > raw. */
-function bestNumber(numbers: PhoneNumber[]): string | null {
-  const mobile = numbers.find((n) => n?.type === "mobile" && n?.sanitized_number);
-  if (mobile?.sanitized_number) return mobile.sanitized_number;
-  const sanitized = numbers.find((n) => n?.sanitized_number);
-  if (sanitized?.sanitized_number) return sanitized.sanitized_number;
-  const raw = numbers.find((n) => n?.raw_number);
-  return raw?.raw_number ?? null;
+/** Best number in E.164 + its line type (_shared/phone-latam.ts); the lead's country reads national formats. */
+function bestNumber(numbers: PhoneNumber[], country: unknown) {
+  return pickBestPhone(numbers.map((n) => ({ number: n?.sanitized_number || n?.raw_number, type: n?.type })), country);
 }
+
+// Columns from migration 20261017000001; until it is applied the row is saved without them.
+const NEW_COLS = ["phone_type", "source_provider"];
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204 });
@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
 
   const { data: rows, error: selErr } = await supa
     .from("prospect_list_members")
-    .select("id, apollo_person_id, snapshot")
+    .select("*")
     .in("apollo_person_id", [...byPerson.keys()])
     .eq("phone_status", "pending");
 
@@ -134,21 +134,30 @@ Deno.serve(async (req) => {
 
   await Promise.all(rows.map((row) => {
     const numbers = byPerson.get(row.apollo_person_id as string) ?? [];
-    const phone = bestNumber(numbers);
+    const best = bestNumber(numbers, row.country);
     const snapshot = {
       ...((row.snapshot && typeof row.snapshot === "object") ? row.snapshot : {}),
       phone_numbers: numbers,
     };
-    const update = phone
-      ? { phone, phone_status: "revealed", enriched_at: new Date().toISOString(), snapshot }
+    const update: Record<string, unknown> = best
+      ? {
+        phone: best.e164,
+        phone_status: "revealed",
+        enriched_at: new Date().toISOString(),
+        snapshot,
+        phone_type: best.type,
+        source_provider: { ...((row.source_provider && typeof row.source_provider === "object") ? row.source_provider : {}), phone: "apollo" },
+      }
       : { phone_status: "unavailable", snapshot };
-    return supa
-      .from("prospect_list_members")
-      .update(update)
-      .eq("id", row.id)
-      .then(({ error: updErr }) => {
-        if (updErr) console.error(`[apollo-webhook] update failed for row ${row.id}:`, updErr.message);
-      });
+    const save = async () => {
+      let { error: updErr } = await supa.from("prospect_list_members").update(update).eq("id", row.id);
+      if (updErr && NEW_COLS.some((c) => (updErr!.message || "").includes(c))) {
+        for (const c of NEW_COLS) delete update[c];
+        ({ error: updErr } = await supa.from("prospect_list_members").update(update).eq("id", row.id));
+      }
+      if (updErr) console.error(`[apollo-webhook] update failed for row ${row.id}:`, updErr.message);
+    };
+    return save();
   }));
   console.log(`[apollo-webhook] ✓ ${rows.length} row(s) across ${byPerson.size} person(s)`);
 

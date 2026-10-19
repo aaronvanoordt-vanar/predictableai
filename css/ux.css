@@ -261,6 +261,21 @@ html[data-rail="1"] .nav-item { overflow: visible; }
 .page.active > .topbar { animation: uxFade .3s ease both; }
 @keyframes uxFade { from { opacity: 0; } to { opacity: 1; } }
 
+/* ── CRM (js/crm.js): tablero, tarjetas y modales ─────────────────────── */
+.crm-card { transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), border-color var(--dur-2), opacity var(--dur-2); cursor: grab; }
+.crm-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); border-color: var(--hair-3); }
+.crm-card.dragging { opacity: .45; transform: rotate(1.5deg) scale(.98); cursor: grabbing; }
+.crm-col { transition: border-color var(--dur-2), background-color var(--dur-2), box-shadow var(--dur-2); }
+.crm-col.over { box-shadow: 0 0 0 3px var(--accent-soft); }
+.crm-anim .crm-col-body > .crm-card { animation: uxRise .36s var(--ease-out) both; }
+.crm-tab, .crm-seg button { transition: background-color var(--dur-2), color var(--dur-2), box-shadow var(--dur-2); }
+.crm-suggest-dot { animation: crmPulse 2.4s ease-in-out infinite; }
+@keyframes crmPulse { 0%, 100% { box-shadow: 0 0 0 4px var(--green-soft); } 50% { box-shadow: 0 0 0 7px transparent; } }
+.crm-overlay.crm-pop { animation: uxFade .2s ease both; }
+.crm-pop .crm-modal { animation: uxPop .26s var(--ease-out) both; }
+.crm-anim .crm-timeline > li, .crm-anim .crm-tasks > li, .crm-anim .crm-suggest-list > li, .crm-anim .crm-table tbody tr { animation: uxRise .32s var(--ease-out) both; }
+.crm-task .crm-task-t { transition: color var(--dur-2); }
+
 /* ── Estados vacíos: honestos, pero con vida ──────────────────────────── */
 .empty-ic {
   width: 52px; height: 52px; border-radius: 14px;
@@ -457,9 +472,20 @@ html.ux-theming, html.ux-theming *, html.ux-theming *::before, html.ux-theming *
   #prospecting-shell .pros-grid, #prospecting-shell .pros-grid.pros-grid-300, #prospecting-shell .pros-2col,
   .cmp-inbox, .cmp-msg, .cmp-ch-grid, .cmp-conv, .cb-cad, .cb-msg-body, .cb-review,
   .coda-foda-grid, .coda-came-grid, .ihx-context-gallery, .ihx-field-row, .sax-cols-2, .sax-cols-3, .mks-tiles,
-  .cl-sections, .cl-row2, .lrn-grid, .rl-grid, .rl-cols, .rdr-grid {
+  .cl-sections, .cl-row2, .lrn-grid, .rl-grid, .rl-cols, .rdr-grid,
+  .crm-detail-grid, .crm-form {
     grid-template-columns: 1fr !important;
   }
+  /* CRM: el tablero se desliza columna por columna, el resto a lo ancho */
+  #crm-shell .crm-wrap { padding: 14px 16px 90px !important; }
+  #crm-shell .crm-board { grid-auto-columns: minmax(78vw, 1fr) !important; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; }
+  #crm-shell .crm-col { scroll-snap-align: start; max-height: none; }
+  #crm-shell .crm-head, #crm-shell .crm-actions { width: 100%; }
+  #crm-shell .crm-tabs { width: 100%; justify-content: space-between; }
+  #crm-shell .crm-tab { flex: 1 1 auto; justify-content: center; padding: 7px 8px; }
+  #crm-shell .crm-row-actions { margin-left: 0; width: 100%; }
+  .crm-overlay { padding: 12px 10px; }
+  .crm-modal { padding: 16px; border-radius: var(--r-lg); }
   .cmp-card-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
   #radar-shell .rl-wrap, #radar-shell .rl-head, .ccx-wrap, .ihx-wrap { padding-left: 16px !important; padding-right: 16px !important; }
   .ux-cmdk { padding: 8vh 12px 12px; }
@@ -470,6 +496,9 @@ html.ux-theming, html.ux-theming *, html.ux-theming *::before, html.ux-theming *
   .ux-mobilebar-brand { display: none; }
   .cmp-card-kpis { grid-template-columns: 1fr !important; }
   .topbar-actions .btn { flex: 1 1 auto; justify-content: center; }
+  #crm-shell .crm-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .crm-stage-row { grid-template-columns: 1fr 76px !important; }
+  .crm-stage-row .crm-stage-btns, .crm-stage-row .pill { grid-column: 1 / -1; }
 }
 
 /* Botón de cerrar el cajón (solo móvil) */
@@ -483,4 +512,7 @@ html.ux-theming, html.ux-theming *, html.ux-theming *::before, html.ux-theming *
   .nav-glider { transition: none; }
   .stat-card:hover::before { animation: none; }
   .nav-item:hover, .btn:hover:not([disabled]), .area-card:hover { transform: none; }
+  .crm-card:hover, .crm-card.dragging { transform: none; }
+  .crm-suggest-dot, .crm-pop .crm-modal, .crm-overlay.crm-pop, .crm-anim .crm-col-body > .crm-card,
+  .crm-anim .crm-timeline > li, .crm-anim .crm-tasks > li, .crm-anim .crm-suggest-list > li, .crm-anim .crm-table tbody tr { animation: none; }
 }

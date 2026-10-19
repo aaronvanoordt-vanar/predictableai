@@ -103,3 +103,19 @@ Deno.test("la calidad de reunión del cliente llega a todas las IAs, sin el tota
     assert(!b.includes("Calidad de reunión (total)"), audience);
   }
 });
+
+Deno.test("motivos de pérdida del CRM: llegan a campañas, mensajes y Hub, no al Radar", () => {
+  const rows: InsightRow[] = [
+    { scope: "deal_loss", key: "precio", label: "Precio", verdict: "fails", metrics: { count: 5, lost_total: 12, share: 41.7, competitors: [] } },
+    { scope: "deal_loss", key: "competencia", label: "Eligió a la competencia", verdict: "fails", metrics: { count: 3, lost_total: 12, share: 25, competitors: [{ name: "Rival X", count: 2 }] } },
+    { scope: "deal_loss", key: "timing", label: "No es el momento", verdict: "neutral", metrics: { count: 1, lost_total: 12, share: 8.3 } },
+  ];
+  for (const audience of ["campaign", "outreach", "hub"] as const) {
+    const b = buildIntelligenceBlock({ audience, insights: rows });
+    assert(b.includes("Por qué pierde oportunidades"), audience);
+    assert(b.includes("Precio (5 de 12 oportunidades perdidas, 41.7 %)"), audience);
+    assert(b.includes("contra Rival X"), audience);
+    assert(!b.includes("No es el momento"), "un motivo neutro no genera línea");
+  }
+  assertEquals(buildIntelligenceBlock({ audience: "radar", insights: rows }), "");
+});

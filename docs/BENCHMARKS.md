@@ -1,6 +1,6 @@
 # Benchmarks, calidad de reunión y plantillas de Eleva
 
-Ítem P2 de `docs/ROADMAP_GTM_OS.md` §4 (filas Agencia), 2026-10-17. Migración `20261017000001_meeting_quality_benchmarks.sql`.
+Ítem P2 de `docs/ROADMAP_GTM_OS.md` §4 (filas Agencia), 2026-10-17. Migración `20261019000001_meeting_quality_benchmarks.sql`.
 
 ## 1. Calidad de reunión
 

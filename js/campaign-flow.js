@@ -8,7 +8,10 @@
  * Forma (v1):
  *   { v: 1, nodes: Node[] }
  *   Action    = { id, type: 'action', channel, delay, content, settings? }
- *   Condition = { id, type: 'condition', check, delay, yes: Action[], no: Action[] }  (delay siempre after_prev)
+ *   Condition = { id, type: 'condition', check, delay, settings?, yes: Action[], no: Action[] }  (delay siempre after_prev)
+ *               check 'ai_column' (2026-10-17) = respuesta de una Columna IA
+ *               de Listas: settings.ai_column = { column_id, column_name,
+ *               answer_type, op, value } (normalizeAiColumnRule).
  *   delay     = { mode: 'after_prev' | 'with_prev', days, hours }
  *   content   = { kind: template|ai|custom, angle?, instructions?, subject?, body? }
  *               template = plantilla aprobada de WhatsApp elegida a mano para
@@ -29,7 +32,7 @@
   'use strict';
 
   var FLOW_VERSION = 1;
-  var CHANNELS = ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message'];
+  var CHANNELS = ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message', 'call'];
   var CONTENT_KINDS = ['template', 'ai', 'custom'];
   /** Las tres ranuras fijas de antes (2026-10-02): se leen como `template`. */
   var LEGACY_TEMPLATE_KINDS = ['template_a', 'template_b', 'template_c'];
@@ -40,7 +43,21 @@
     'email_delivered', 'email_opened', 'email_bounced',
     'engaged_any',
     'has_phone', 'has_email', 'has_linkedin',
+    'call_answered', 'call_voicemail',
+    'ai_column',
   ];
+  // Operadores de la condición `ai_column` por tipo de respuesta de la columna.
+  var AI_COLUMN_TYPES = ['boolean', 'number', 'text', 'category'];
+  var AI_COLUMN_OPS = {
+    boolean: ['yes', 'no', 'answered'],
+    number: ['gte', 'lte', 'answered'],
+    text: ['contains', 'answered'],
+    category: ['is', 'answered'],
+  };
+  var AI_COLUMN_OP_LABELS = {
+    yes: 'Sí', no: 'No', answered: 'Tiene respuesta (cualquiera)',
+    gte: 'Mayor o igual a', lte: 'Menor o igual a', contains: 'Contiene', is: 'Es',
+  };
   var DELAY_MODES = ['after_prev', 'with_prev'];
   var AI_MESSAGE_CREDITS = 2; // espejo de _shared/campaign-flow.ts y js/credit-costs.js
   var LEAD_CREDITS = 1;       // por lead que entra a la campaña (cubre todos sus envíos)
@@ -51,6 +68,9 @@
     email:            { label: 'Email',               short: 'Email',    tone: 'blue',   needs: 'apollo' },
     linkedin_connect: { label: 'LinkedIn · conexión', short: 'Conexión', tone: 'teal',   needs: 'dripify' },
     linkedin_message: { label: 'LinkedIn · mensaje',  short: 'Mensaje LI', tone: 'teal',  needs: 'dripify' },
+    // La llamada no necesita un canal conectado: el dialer de Predictable está
+    // siempre, y CloudTalk/Aircall/Ringover son opcionales (docs/TELEFONIA.md).
+    call:             { label: 'Llamada',             short: 'Llamada',  tone: 'amber',  needs: null },
   };
   var KIND_LABELS = {
     template: 'Plantilla de WhatsApp',
@@ -82,6 +102,9 @@
     has_phone: { label: 'Tiene teléfono', hint: 'El lead tiene un número revelado.', needs: null },
     has_email: { label: 'Tiene email', hint: 'El lead tiene un email revelado.', needs: null },
     has_linkedin: { label: 'Tiene LinkedIn', hint: 'El lead tiene URL de perfil.', needs: null },
+    call_answered: { label: 'Contestó la llamada', hint: 'El SDR marcó «Contestó» en la llamada de esta cadencia. «Reunión agendada» y «No interesado» detienen la campaña solos.', needs: null, after: 'call' },
+    call_voicemail: { label: 'La llamada cayó en buzón', hint: 'La llamada de esta cadencia terminó en buzón de voz (lo marca el SDR o el proveedor).', needs: null, after: 'call' },
+    ai_column: { label: 'Columna IA de la lista', hint: 'Usa la respuesta de una Columna IA de Listas («¿vende en Mercado Libre?», «¿cuántas sucursales?»). Solo va por Sí si la celda tiene respuesta con evidencia y cumple la regla; «No encontrado» o sin responder va por No. Si la celda sigue en cola, el lead espera a que termine.', needs: null },
   };
 
   /** Los dos pasos que suben el lead a una campaña de Dripify. */
@@ -119,6 +142,8 @@
     // acepta texto por lead): el ángulo solo alimenta el CSV de Custom Lead
     // Fields, así que nunca es "mi texto" ni plantilla de WhatsApp.
     if (isLinkedin(channel) && kind !== 'ai') kind = 'ai';
+    // Una llamada lleva guion IA o el guion propio, nunca una plantilla.
+    if (channel === 'call' && kind === 'template') kind = 'ai';
     var out = { kind: kind };
     if (kind === 'ai') {
       var angle = String(c.angle == null ? '' : c.angle);
@@ -158,6 +183,27 @@
     node.settings = Object.assign({}, node.settings || {}, { template_slot: k.slice(-1) });
   }
 
+  var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  /** Regla de la condición `ai_column` (espejo de normalizeAiColumnRule en el TS). */
+  function normalizeAiColumnRule(raw) {
+    if (!isObj(raw)) return null;
+    var id = typeof raw.column_id === 'string' ? raw.column_id.trim() : '';
+    var type = String(raw.answer_type == null ? '' : raw.answer_type);
+    if (!UUID_RE.test(id) || AI_COLUMN_TYPES.indexOf(type) === -1) return null;
+    var op = AI_COLUMN_OPS[type].indexOf(String(raw.op)) !== -1 ? String(raw.op) : 'answered';
+    var value = null;
+    if (op === 'gte' || op === 'lte') {
+      var n = Number(raw.value);
+      value = raw.value === '' || raw.value == null || !isFinite(n) ? null : n;
+    } else if (op === 'is' || op === 'contains') {
+      var v = typeof raw.value === 'string' ? raw.value.trim().slice(0, 200) : '';
+      value = v || null;
+    }
+    var name = typeof raw.column_name === 'string' ? raw.column_name.trim().slice(0, 40) : '';
+    return { column_id: id, column_name: name, answer_type: type, op: op, value: value };
+  }
+
   /** Nombre de la plantilla de WhatsApp elegida para un paso ('' si no hay). */
   function templateName(node) {
     var n = node && node.settings && node.settings.template_name;
@@ -172,14 +218,16 @@
       if (n.type === 'condition') {
         if (!allowConditions) return; // condiciones anidadas: se descartan
         var check = CONDITIONS.indexOf(n.check) !== -1 ? n.check : 'linkedin_connected';
-        out.push({
+        var cond = {
           id: typeof n.id === 'string' && n.id.trim() ? n.id.trim().slice(0, 40) : newId(),
           type: 'condition',
           check: check,
           delay: normalizeDelay(n.delay, false),
           yes: normalizeList(n.yes, false),
           no: normalizeList(n.no, false),
-        });
+        };
+        if (check === 'ai_column') cond.settings = { ai_column: normalizeAiColumnRule(n.settings && n.settings.ai_column) };
+        out.push(cond);
         return;
       }
       // with_prev se conserva tal cual: validate() avisa si no tiene una acción
@@ -221,12 +269,20 @@
         if (!a.content.body) errors.push({ nodeId: a.id, message: label + ': el texto propio está vacío.' });
         if (a.channel === 'email' && !a.content.subject) errors.push({ nodeId: a.id, message: label + ': el email necesita asunto.' });
       }
+      if (a.channel === 'call' && a.delay.mode === 'with_prev') {
+        errors.push({ nodeId: a.id, message: label + ': una llamada no puede salir "junto con el anterior": la hace una persona.' });
+      }
     }
     var count = 0;
     f.nodes.forEach(function (n, i) {
       if (n.type === 'condition') {
         seen(n.id);
         if (!n.yes.length && !n.no.length) errors.push({ nodeId: n.id, message: 'La condición no tiene pasos en ninguna rama.' });
+        if (n.check === 'ai_column') {
+          var r = n.settings && n.settings.ai_column;
+          if (!r) errors.push({ nodeId: n.id, message: 'La condición de columna IA necesita una columna de la lista.' });
+          else if (['gte', 'lte', 'is', 'contains'].indexOf(r.op) !== -1 && r.value === null) errors.push({ nodeId: n.id, message: 'La condición «' + (r.column_name || 'columna IA') + '» necesita un valor.' });
+        }
         n.yes.forEach(function (a, j) { count++; checkAction(a, n.yes, j, 'Rama Sí, paso ' + (j + 1)); });
         n.no.forEach(function (a, j) { count++; checkAction(a, n.no, j, 'Rama No, paso ' + (j + 1)); });
         return;
@@ -290,6 +346,12 @@
   function delayMs(node) {
     if (!node) return 0;
     return (node.delay.days * 24 + node.delay.hours) * 60 * 60 * 1000;
+  }
+
+  /** Días que la tarea de llamar espera al SDR antes de omitirse (settings.call_wait_days, 1-14). */
+  function callWaitDays(node) {
+    var n = Number(node.settings && node.settings.call_wait_days);
+    return isFinite(n) && n >= 1 ? Math.min(14, Math.round(n)) : 3;
   }
 
   function legacyKind(node) { return node.content.kind === 'ai' ? 'ai_personalized' : node.content.kind; }
@@ -359,6 +421,7 @@
   function nodeTitle(node) {
     if (!node) return '';
     if (node.type === 'condition') {
+      if (node.check === 'ai_column') return aiColumnRuleLabel(node.settings && node.settings.ai_column);
       var c = CONDITION_LABELS[node.check];
       return c ? '¿' + c.label + '?' : node.check;
     }
@@ -368,6 +431,7 @@
       return ch.label + (dc ? ' · ' + dc : '');
     }
     var k = node.content.kind;
+    if (node.channel === 'call') return ch.label + (k === 'custom' ? ' · Mi guion' : ' · Guion IA: ' + (ANGLE_LABELS[node.content.angle] || node.content.angle || 'apertura').replace(/\s*\(.*\)$/, ''));
     if (k === 'ai') return ch.label + ' · IA: ' + (ANGLE_LABELS[node.content.angle] || node.content.angle || 'apertura').replace(/\s*\(.*\)$/, '');
     if (k === 'custom') return ch.label + ' · Mi texto';
     if (k === 'template') {
@@ -378,12 +442,29 @@
     return ch.label + ' · ' + (KIND_LABELS[k] || k).replace(/\s*\(.*\)$/, '');
   }
 
+  /** «¿Vende en Mercado Libre: Sí?» — título de una condición de columna IA. */
+  function aiColumnRuleLabel(r) {
+    if (!r) return '¿Columna IA? · elige la columna';
+    var name = r.column_name || 'Columna IA';
+    if (r.op === 'answered') return '¿' + name + ' tiene respuesta?';
+    if (r.op === 'yes' || r.op === 'no') return '¿' + name + ': ' + AI_COLUMN_OP_LABELS[r.op] + '?';
+    var val = r.value === null ? '…' : String(r.value);
+    if (r.op === 'gte') return '¿' + name + ' ≥ ' + val + '?';
+    if (r.op === 'lte') return '¿' + name + ' ≤ ' + val + '?';
+    if (r.op === 'contains') return '¿' + name + ' contiene «' + val + '»?';
+    return '¿' + name + ' = ' + val + '?';
+  }
+
   /** Copia profunda con ids nuevos (clonar una campaña). */
   function cloneWithNewIds(flow) {
     var f = normalize(flow);
     function act(a) { var c = JSON.parse(JSON.stringify(a)); c.id = newId(); return c; }
     return { v: FLOW_VERSION, nodes: f.nodes.map(function (n) {
-      if (n.type === 'condition') return { id: newId(), type: 'condition', check: n.check, delay: n.delay, yes: n.yes.map(act), no: n.no.map(act) };
+      if (n.type === 'condition') {
+        var c = { id: newId(), type: 'condition', check: n.check, delay: n.delay, yes: n.yes.map(act), no: n.no.map(act) };
+        if (n.settings) c.settings = JSON.parse(JSON.stringify(n.settings));
+        return c;
+      }
       return act(n);
     }) };
   }
@@ -493,10 +574,12 @@
     FLOW_VERSION: FLOW_VERSION,
     CHANNELS: CHANNELS, CONTENT_KINDS: CONTENT_KINDS, ANGLES: ANGLES, CONDITIONS: CONDITIONS, DELAY_MODES: DELAY_MODES,
     AI_MESSAGE_CREDITS: AI_MESSAGE_CREDITS, LEAD_CREDITS: LEAD_CREDITS,
+    AI_COLUMN_TYPES: AI_COLUMN_TYPES, AI_COLUMN_OPS: AI_COLUMN_OPS, AI_COLUMN_OP_LABELS: AI_COLUMN_OP_LABELS,
+    normalizeAiColumnRule: normalizeAiColumnRule, aiColumnRuleLabel: aiColumnRuleLabel,
     ANGLE_LABELS: ANGLE_LABELS, CONDITION_LABELS: CONDITION_LABELS, CHANNEL_META: CHANNEL_META, KIND_LABELS: KIND_LABELS,
     nodeTitle: nodeTitle, cloneWithNewIds: cloneWithNewIds, durationDays: durationDays, templates: templates, isLinkedin: isLinkedin,
     newId: newId, emptyFlow: emptyFlow, normalize: normalize, validate: validate,
     actions: actions, ordinal: ordinal, find: find, firstNode: firstNode, nextAfter: nextAfter, enterBranch: enterBranch,
-    delayMs: delayMs, legacyKind: legacyKind, templateName: templateName, LEGACY_TEMPLATE_KINDS: LEGACY_TEMPLATE_KINDS, LEGACY_SLOT_LABELS: LEGACY_SLOT_LABELS, fromLegacySteps: fromLegacySteps, estimateCredits: estimateCredits, delayLabel: delayLabel,
+    delayMs: delayMs, legacyKind: legacyKind, callWaitDays: callWaitDays, templateName: templateName, LEGACY_TEMPLATE_KINDS: LEGACY_TEMPLATE_KINDS, LEGACY_SLOT_LABELS: LEGACY_SLOT_LABELS, fromLegacySteps: fromLegacySteps, estimateCredits: estimateCredits, delayLabel: delayLabel,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

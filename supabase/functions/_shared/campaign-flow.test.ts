@@ -193,3 +193,81 @@ Deno.test("normalize: las ranuras viejas template_a/b/c se leen como template + 
   // Siguen siendo válidas: el motor las resuelve hasta que el usuario elija.
   assertEquals(cf.validate(f).errors, []);
 });
+
+Deno.test("js/campaign-flow.js: mismos canales y condiciones que el motor", async () => {
+  const js = await Deno.readTextFile(new URL("../../../js/campaign-flow.js", import.meta.url));
+  const list = (name: string) => {
+    const m = js.match(new RegExp(`var ${name} = \\[([^\\]]*)\\]`));
+    return [...(m?.[1] ?? "").matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  };
+  assertEquals(list("CHANNELS"), [...cf.CHANNELS]);
+  assertEquals(list("CONDITIONS"), [...cf.CONDITIONS]);
+});
+
+Deno.test("paso de llamada: guion IA o propio, nunca plantilla ni en paralelo", () => {
+  const f = cf.normalize({ nodes: [
+    { id: "a", type: "action", channel: "email", delay: { days: 0, hours: 0 }, content: { kind: "ai", angle: "apertura" } },
+    { id: "c", type: "action", channel: "call", delay: { mode: "with_prev" }, content: { kind: "template" }, settings: { call_wait_days: 30 } },
+    { id: "d", type: "action", channel: "call", delay: { days: 2 }, content: { kind: "custom", body: "" } },
+    { id: "q", type: "condition", check: "call_answered", delay: { days: 0 }, yes: [{ id: "y", type: "action", channel: "email", content: { kind: "ai" } }], no: [] },
+  ] });
+  const call = f.nodes[1] as cf.ActionNode;
+  assertEquals(call.content.kind, "ai");
+  assertEquals(cf.callWaitDays(call), 14);
+  assertEquals(cf.callWaitDays(f.nodes[2] as cf.ActionNode), 3);
+  assertEquals((f.nodes[3] as cf.ConditionNode).check, "call_answered");
+  const v = cf.validate(f);
+  assert(v.errors.some((e) => e.nodeId === "c" && e.message.includes("junto con el anterior")));
+  assert(v.errors.some((e) => e.nodeId === "d" && e.message.includes("vacío")));
+  // El guion IA cuesta como un mensaje IA.
+  assertEquals(cf.estimateCredits(cf.normalize({ nodes: [f.nodes[1]] }), 1).credits, 3);
+});
+
+// ── condición de Columna IA (2026-10-17) ────────────────────────────────────
+
+const COL_ID = "44444444-4444-4444-8444-444444444444";
+const aiCond = (rule: unknown, yes: cf.ActionNode[] = [email("y")], no: cf.ActionNode[] = []) =>
+  ({ id: "c", type: "condition", check: "ai_column", delay: { mode: "after_prev", days: 1 }, settings: { ai_column: rule }, yes, no });
+
+Deno.test("ai_column: normaliza la regla y valida columna y valor", () => {
+  const ok = cf.validate({ v: 1, nodes: [email("a"), aiCond({ column_id: COL_ID, column_name: "Mercado Libre", answer_type: "boolean", op: "yes" })] });
+  assertEquals(ok.errors, []);
+  const f = cf.normalize({ v: 1, nodes: [aiCond({ column_id: COL_ID, answer_type: "number", op: "gte", value: "3" })] });
+  const c = f.nodes[0] as cf.ConditionNode;
+  assertEquals(c.settings?.ai_column, { column_id: COL_ID, column_name: "", answer_type: "number", op: "gte", value: 3 });
+  // Sin columna, o con un operador que pide valor y no lo tiene → error.
+  const noCol = cf.validate({ v: 1, nodes: [email("a"), aiCond({ column_id: "x", answer_type: "boolean", op: "yes" })] });
+  assert(/necesita una columna/.test(noCol.errors.map((e) => e.message).join(" ")));
+  const noVal = cf.validate({ v: 1, nodes: [email("a"), aiCond({ column_id: COL_ID, column_name: "ERP", answer_type: "text", op: "contains", value: " " })] });
+  assert(/«ERP» necesita un valor/.test(noVal.errors.map((e) => e.message).join(" ")));
+  // Un operador que no corresponde al tipo cae a "answered" (sin valor).
+  const bad = cf.normalizeAiColumnRule({ column_id: COL_ID, answer_type: "category", op: "gte", value: 3 });
+  assertEquals(bad?.op, "answered");
+  assertEquals(bad?.value, null);
+  // Las otras condiciones no arrastran settings.
+  const other = cf.normalize({ v: 1, nodes: [{ id: "k", type: "condition", check: "has_email", settings: { ai_column: { column_id: COL_ID } }, yes: [email("y")], no: [] }] });
+  assertEquals((other.nodes[0] as cf.ConditionNode).settings, undefined);
+});
+
+Deno.test("js/campaign-flow.js: espejo de condiciones y regla de Columna IA", async () => {
+  const js = await Deno.readTextFile(new URL("../../../js/campaign-flow.js", import.meta.url));
+  const g = globalThis as unknown as { CampaignFlow?: Record<string, unknown> };
+  new Function(js)();
+  // deno-lint-ignore no-explicit-any
+  const J = g.CampaignFlow as any;
+  assertEquals(J.CONDITIONS, [...cf.CONDITIONS]);
+  assertEquals(J.AI_COLUMN_OPS, cf.AI_COLUMN_OPS);
+  const samples = [
+    aiCond({ column_id: COL_ID, column_name: "Sucursales", answer_type: "number", op: "lte", value: 10 }),
+    aiCond({ column_id: COL_ID, answer_type: "category", op: "is", value: " VTEX " }),
+    aiCond({ column_id: COL_ID, answer_type: "text", op: "contains", value: "" }),
+    aiCond(null),
+  ];
+  for (const s of samples) {
+    const flow = { v: 1, nodes: [email("a"), s] };
+    assertEquals(J.normalize(flow), cf.normalize(flow));
+    assertEquals(J.validate(flow).errors, cf.validate(flow).errors);
+  }
+  assertEquals(J.nodeTitle((cf.normalize({ v: 1, nodes: [samples[0]] }).nodes[0])), "¿Sucursales ≤ 10?");
+  delete g.CampaignFlow;
+});

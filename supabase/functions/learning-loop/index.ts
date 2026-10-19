@@ -32,6 +32,9 @@
  *                    presentó / se dio) por canal, ángulo, país, industria,
  *                    cargo y seniority (_shared/meeting-quality.ts). Toda IA
  *                    lo lee por _shared/intelligence.ts.
+ *   deal_loss        motivos de las oportunidades perdidas del CRM (el motivo es
+ *                    obligatorio al perderla; reglas en _shared/crm.ts). La IA de
+ *                    campañas, mensajes y Hub los recibe vía intelligence.ts.
  *   summary          titulares para el dashboard.
  *
  * Intelligence Hub (2026-09-23): el 👍/👎 de cada hallazgo y las acciones
@@ -54,6 +57,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { distillHubRules } from "../_shared/intelligence.ts";
 import { attributeMeeting, qualityInsights, type MeetingVerdict } from "../_shared/meeting-quality.ts";
+import { lossInsights } from "../_shared/crm.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -485,6 +489,73 @@ async function learnHub(supa: Json, userId: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Automatizaciones: qué reglas aprueba y cuáles rechaza el usuario, y si los
+// leads que crean responden. Solo informa (nunca apaga una regla: el usuario
+// la puso y la apaga él); el rechazo con motivo queda en decision_note.
+// ─────────────────────────────────────────────────────────────────────────────
+const MIN_DECIDED_RUNS = 5;
+
+async function learnAutomations(supa: Json, userId: string, out: Insight[]) {
+  const [{ data: rules, error }, { data: runs }, { data: members }] = await Promise.all([
+    supa.from("automation_rules").select("id, name, trigger_kind").eq("user_id", userId).limit(200),
+    supa.from("automation_runs").select("rule_id, status, auto_started, decided_at, decision_note, cost_actual").eq("user_id", userId).limit(20000),
+    supa.from("prospect_list_members").select("contact_status, source").eq("user_id", userId).not("source->automation", "is", null).limit(10000),
+  ]);
+  if (error || !Array.isArray(rules) || !rules.length) return { rules: 0 }; // sin la migración o sin reglas
+  const allRuns: Json[] = Array.isArray(runs) ? runs : [];
+  const mems: Json[] = Array.isArray(members) ? members : [];
+  for (const r of rules) {
+    const mine = allRuns.filter((x) => x.rule_id === r.id);
+    const approved = mine.filter((x) => x.decided_at && !["rejected", "expired", "canceled"].includes(x.status)).length;
+    const rejected = mine.filter((x) => x.status === "rejected").length;
+    const expired = mine.filter((x) => x.status === "expired").length;
+    const auto = mine.filter((x) => x.auto_started).length;
+    const done = mine.filter((x) => x.status === "done").length;
+    const failed = mine.filter((x) => x.status === "failed").length;
+    const credits = mine.reduce((s, x) => s + (Number(x.cost_actual) || 0), 0);
+    const reasons = mine.filter((x) => x.status === "rejected" && asStr(x.decision_note).trim()).slice(-5).map((x) => asStr(x.decision_note).trim().slice(0, 160));
+    const leads = mems.filter((m) => m.source?.automation?.rule_id === r.id);
+    const replies = leads.filter((m) => POSITIVE_STATUS.has(asStr(m.contact_status))).length;
+    const meetings = leads.filter((m) => MEETING_STATUS.has(asStr(m.contact_status))).length;
+    const decided = approved + rejected;
+    let verdict: Verdict = "insufficient";
+    if (decided >= MIN_DECIDED_RUNS || leads.length >= MIN_ICP_CONTACTED || meetings > 0) {
+      if (meetings > 0 || replies >= 2) verdict = "works";
+      else if (decided >= MIN_DECIDED_RUNS && rejected / decided >= 0.7) verdict = "fails";
+      else verdict = "neutral";
+    }
+    const action = verdict === "fails" ? `Rechazas ${rejected} de ${decided} ejecuciones: ajusta sus filtros o apágala.` : null;
+    out.push({
+      scope: "automation_rule", key: r.id, label: asStr(r.name) || r.trigger_kind, verdict, action,
+      metrics: { trigger: r.trigger_kind, runs: mine.length, approved, rejected, expired, auto, done, failed, credits, leads: leads.length, replies, meetings, approval_rate: pct(approved, decided), reject_reasons: reasons },
+    });
+  }
+  return { rules: rules.length };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRM: por qué se pierden las oportunidades (último año)
+// ─────────────────────────────────────────────────────────────────────────────
+async function learnDeals(supa: Json, userId: string, out: Insight[]) {
+  const since = new Date(Date.now() - 365 * 86400_000).toISOString();
+  const { data: stages, error } = await supa.from("crm_stages").select("id, kind").eq("user_id", userId).in("kind", ["won", "lost"]);
+  if (error) return { lost: 0, won: 0 }; // sin la migración del CRM: nada que aprender
+  const lostIds = (stages || []).filter((s: Json) => s.kind === "lost").map((s: Json) => s.id);
+  const wonIds = (stages || []).filter((s: Json) => s.kind === "won").map((s: Json) => s.id);
+  if (!lostIds.length) return { lost: 0, won: 0 };
+  const [lostRes, wonRes] = await Promise.all([
+    supa.from("crm_opportunities").select("lost_reason, lost_competitor, lost_note").eq("user_id", userId).in("stage_id", lostIds).gte("closed_at", since).limit(5000),
+    wonIds.length
+      ? supa.from("crm_opportunities").select("id", { count: "exact", head: true }).eq("user_id", userId).in("stage_id", wonIds).gte("closed_at", since)
+      : Promise.resolve({ count: 0 }),
+  ]);
+  const lost: Json[] = Array.isArray(lostRes.data) ? lostRes.data : [];
+  const won = Number(wonRes.count) || 0;
+  out.push(...lossInsights(lost, won));
+  return { lost: lost.length, won };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 async function recomputeUser(supa: Json, userId: string) {
   const out: Insight[] = [];
   const actions: string[] = [];
@@ -494,6 +565,8 @@ async function recomputeUser(supa: Json, userId: string) {
   const quality = await learnMeetingQuality(supa, userId, out);
   const icp = await learnIcp(supa, userId, out);
   const hub = await learnHub(supa, userId);
+  const automations = await learnAutomations(supa, userId, out);
+  const deals = await learnDeals(supa, userId, out);
 
   const count = (scope: string, v: Verdict) => out.filter((i) => i.scope === scope && i.verdict === v).length;
   const headlines: string[] = [];
@@ -505,7 +578,9 @@ async function recomputeUser(supa: Json, userId: string) {
   if (coach.meetings) headlines.push(`${coach.meetings} reuniones analizadas, ${coach.objections} objeciones reales.`);
   if (quality.rated) headlines.push(`${quality.qualified} de ${quality.judged} reuniones calificadas por tus clientes.`);
   if (hub.judged) headlines.push(`${hub.judged} hallazgos del Hub juzgados, ${hub.used} convertidos en acción.`);
-  out.push({ scope: "summary", key: "all", label: "Resumen", verdict: out.some((i) => i.verdict !== "insufficient") ? "neutral" : "insufficient", metrics: { headlines, works, fails, actions, campaigns: camp, radar, coach, quality, icp, hub, computed_at: nowIso() } });
+  const topLoss = out.find((i) => i.scope === "deal_loss" && i.verdict === "fails");
+  if (deals.lost || deals.won) headlines.push(`${deals.won} oportunidades ganadas y ${deals.lost} perdidas en el último año${topLoss ? `; motivo principal: ${topLoss.label}` : ""}.`);
+  out.push({ scope: "summary", key: "all", label: "Resumen", verdict: out.some((i) => i.verdict !== "insufficient") ? "neutral" : "insufficient", metrics: { headlines, works, fails, actions, campaigns: camp, radar, coach, quality, icp, hub, automations, deals, computed_at: nowIso() } });
 
   // Reemplazo atómico por usuario: borra lo que ya no existe y upsert del resto.
   const keys = out.map((i) => `${i.scope}|${i.key}`);
@@ -536,6 +611,8 @@ async function activeUsers(supa: Json): Promise<string[]> {
     ["prospect_list_members", "status_changed_at"],
     ["intel_hub_feedback", "created_at"],
     ["lead_meetings", "updated_at"],
+    ["automation_runs", "created_at"],
+    ["crm_opportunities", "updated_at"],
   ];
   for (const [t, col] of tables) {
     const { data } = await supa.from(t).select("user_id").gte(col, since).limit(5000);

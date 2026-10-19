@@ -100,6 +100,13 @@
       // timers de guardado y corridas de IA en curso desde esta pestaña.
       researchOpen: new Set(), notesDraft: {}, notesTimers: {}, notesSaving: {}, researching: new Set(),
       meetingQuality: {},      // member_id → veredicto del cliente (lead_meetings)
+      // Champions (tabla champion_watch, pestaña Champions del Radar): member id
+      // → { id, state }. null = la migración no está aplicada (sin estrella).
+      champions: {},
+      // ¿Está en WhatsApp? Lo aprendido de los envíos (whatsapp_reachability,
+      // Map phone_key → fila) que junto al plan de numeración pinta el
+      // indicador del teléfono (js/phone-lines.js). null = aún no se leyó.
+      waLearned: null,
     },
   };
 
@@ -236,10 +243,13 @@
   var SVG_LIST = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h6"/></svg>';
   var SVG_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z"/></svg>';
   var SVG_LINK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14L21 3"/><path d="M15 3h6v6"/><path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>';
+  var SVG_STAR = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9 6.8 19.6l1-5.8-4.3-4.1 5.9-.9z"/></svg>';
+  var SVG_STAR_ON = SVG_STAR.replace('fill="none"', 'fill="currentColor"');
   var SVG_EDIT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
   var SVG_TRASH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>';
   var SVG_USER_PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>';
   // Icon matching the Campañas sidebar glyph (CTA «Crear campaña con esta lista»).
+  var SVG_PHONE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h3.5l1.8 4.6-2.3 1.4a10 10 0 0 0 5 5l1.4-2.3L19 13.5V17a2 2 0 0 1-2.1 2A16 16 0 0 1 3 5.1 2 2 0 0 1 5 3z"/></svg>';
   var SVG_RESEARCH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h9M4 10h6M4 15h5"/><circle cx="16.5" cy="14.5" r="3.5"/><path d="M19 17l2.5 2.5"/></svg>';
   var SVG_CAMPAIGN = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>';
 
@@ -352,6 +362,8 @@
     // Listas: investigación previa por lead (notas + «Investigar con IA»)
     '#prospecting-shell .pros-iconbtn.pros-research-btn:hover, #prospecting-shell .pros-iconbtn.pros-research-btn.on { color:var(--accent-ink); background:var(--accent-soft); }',
     '#prospecting-shell .pros-iconbtn.pros-research-btn.has { color:var(--accent-ink); }',
+    '#prospecting-shell .pros-iconbtn.pros-champion-btn.on { color:var(--amber, #d97706); }',
+    '#prospecting-shell .pros-iconbtn.pros-champion-btn.sug { color:var(--amber, #d97706); opacity:.75; }',
     '#prospecting-shell tr.pros-research-row > td { background:var(--surface2); padding:0 !important; }',
     '#prospecting-shell .pros-research { display:grid; grid-template-columns:minmax(220px,1fr) minmax(0,2fr); gap:18px; padding:16px 18px; }',
     // En pantallas angostas la tabla se desplaza en horizontal: el panel se queda fijo al ancho visible.
@@ -375,6 +387,7 @@
     '.pros-manual-row { display:flex; gap:10px; }',
     '.pros-manual-row > * { flex:1; min-width:0; }',
     '.pros-manual-row .pros-phone-code { flex:0 0 auto; width:150px; }',
+    '.pros-linkbtn { background:none; border:0; padding:0 0 0 4px; color:var(--accent); font-size:11.5px; cursor:pointer; text-decoration:underline; }',
     '.pros-manual-linkedin { display:flex; gap:8px; align-items:flex-start; }',
     '.pros-manual-linkedin input { flex:1; min-width:0; }',
   ].join('\n');
@@ -491,19 +504,98 @@
     return '<span class="pill pill-gray">No disponible</span>';
   }
 
+  // Quién encontró cada dato (prospect_list_members.source_provider, waterfall
+  // de enrich-list). Espejo de los ids de supabase/functions/_shared/enrichment/
+  // registry.ts (lo verifica enrichment.test.ts).
+  var ENRICH_SOURCES = {
+    apollo: 'Apollo', prospeo: 'Prospeo', bettercontact: 'BetterContact', fullenrich: 'FullEnrich',
+    contactout: 'ContactOut', kaspr: 'Kaspr', lusha: 'Lusha', millionverifier: 'MillionVerifier', reoon: 'Reoon', zerobounce: 'ZeroBounce',
+  };
+
+  function sourceLabel(id) {
+    return id ? (ENRICH_SOURCES[id] || String(id)) : '';
+  }
+
+  // Veredicto del verificador / del proveedor (email_verification), que manda
+  // sobre el email_status de Apollo cuando existe.
+  function verificationPillHtml(v) {
+    if (v === 'valid') return '<span class="pill pill-green">Verificado</span>';
+    if (v === 'catch_all') return '<span class="pill pill-blue" title="El dominio acepta cualquier dirección: no se puede confirmar el buzón">Catch-all</span>';
+    if (v === 'risky') return '<span class="pill pill-amber">Riesgoso</span>';
+    if (v === 'invalid') return '<span class="pill pill-red">Inválido</span>';
+    return '<span class="pill pill-amber">Sin confirmar</span>';
+  }
+
+  function sourceLineHtml(m, field) {
+    var src = m.source_provider || {};
+    var parts = [];
+    if (src[field]) parts.push('vía ' + sourceLabel(src[field]) + (src[field + '_via'] ? ' (' + src[field + '_via'] + ')' : ''));
+    if (field === 'email' && src.email_verifier && m.email_verification) parts.push('verificado con ' + sourceLabel(src.email_verifier));
+    if (!parts.length) return '';
+    return '<div class="pros-cellsub" style="margin-top:2px">' + esc(parts.join(' · ')) + '</div>';
+  }
+
   function memberEmailCell(m) {
-    if (m.email_status === 'pending' || m.enrich_requested_at || state.listas.enrichingIds.has(String(m.id))) {
+    var hasEmail = m.email && !isMaskedEmail(m.email);
+    if (!hasEmail && (m.email_status === 'pending' || m.enrich_requested_at || state.listas.enrichingIds.has(String(m.id)))) {
       return '<span class="pill pill-amber">Enriqueciendo…</span>';
     }
-    if (m.email && !isMaskedEmail(m.email)) {
+    if (hasEmail) {
+      var pill = m.email_verification ? verificationPillHtml(m.email_verification) : (m.email_status ? emailPillHtml(m.email_status) : '');
       return '<div>' + esc(m.email) + '</div>' +
-        (m.email_status ? '<div style="margin-top:3px">' + emailPillHtml(m.email_status) + '</div>' : '');
+        (pill ? '<div style="margin-top:3px">' + pill + '</div>' : '') + sourceLineHtml(m, 'email');
     }
-    return '<span class="pill pill-gray"' + (m.enrich_error ? ' title="' + esc(m.enrich_error) + '"' : '') + '>Sin email</span>';
+    var rejected = (m.source_provider && m.source_provider.rejected_emails) || [];
+    var title = [m.enrich_error, rejected.length ? 'Descartados por inválidos: ' + rejected.join(', ') : ''].filter(Boolean).join(' · ');
+    return '<span class="pill pill-gray"' + (title ? ' title="' + esc(title) + '"' : '') + '>Sin email</span>';
+  }
+
+  // ── ¿El número está en WhatsApp? (js/phone-lines.js) ─────────────────────
+  // Mismo veredicto que usa campaign-run antes de mandar una plantilla: un
+  // fijo o un número que ya falló con #131026 no la recibe (el paso se omite).
+  var WA_REACH_PILL = { confirmed: 'green', probable: 'blue', unknown: 'gray', fixed: 'amber', switchboard: 'amber', no_whatsapp: 'red' };
+
+  function waReachOf(m) {
+    var PL = window.PhoneLines;
+    return PL && m && m.phone ? PL.memberReach(m, state.listas.waLearned) : null;
+  }
+
+  function waReachPillHtml(m) {
+    var r = waReachOf(m);
+    if (!r || !WA_REACH_PILL[r.status]) return '';
+    var reset = r.status === 'no_whatsapp'
+      ? ' <button type="button" class="pros-linkbtn" data-action="wa-reach-reset" data-key="' + esc(window.PhoneLines.reachKey(m.phone)) + '" title="Si sabes que este número ya tiene WhatsApp, las campañas vuelven a intentarlo">Volver a intentar</button>'
+      : '';
+    return '<div style="margin-top:3px" title="' + esc(r.reason) + '"><span class="pill pill-' + WA_REACH_PILL[r.status] + '">' + esc(r.label) + '</span>' + reset + '</div>';
+  }
+
+  // Resumen de la tabla: cuántos números recibirían la plantilla y cuántos envíos se evitan.
+  function waSummaryHtml(rows) {
+    var PL = window.PhoneLines;
+    if (!PL) return '';
+    var reaches = rows.filter(function (m) { return m.phone; }).map(waReachOf);
+    if (!reaches.length) return '';
+    var s = PL.reachSummary(reaches, 1);
+    var parts = [];
+    if (s.confirmed) parts.push(fmtNum(s.confirmed) + ' con WhatsApp confirmado');
+    if (s.probable) parts.push(fmtNum(s.probable) + ' probables');
+    if (s.unknown) parts.push(fmtNum(s.unknown) + ' por confirmar');
+    if (s.fixed) parts.push(fmtNum(s.fixed) + ' fijos');
+    if (s.switchboard) parts.push(fmtNum(s.switchboard) + ' conmutadores');
+    if (s.no_whatsapp) parts.push(fmtNum(s.no_whatsapp) + ' sin WhatsApp');
+    var saved = s.avoided
+      ? ' · <strong>' + esc(fmtNum(s.avoided)) + ' plantilla' + (s.avoided === 1 ? '' : 's') + ' que no se mandan</strong> por paso de WhatsApp: el lead pasa directo al siguiente canal'
+      : '';
+    return '<div class="pros-cellsub" style="margin-top:2px" title="Celular, fijo o conmutador según el plan de numeración de cada país (el mismo tipo que guarda el enriquecimiento); «sin WhatsApp» = WhatsApp ya rechazó un envío a ese número (#131026). Por confirmar = el número no lo dice (p. ej. México): se envía igual.">WhatsApp: ' +
+      esc(parts.join(' · ')) + saved + '</div>';
   }
 
   function memberPhoneCell(m) {
-    if (m.phone) return esc(m.phone);
+    if (m.phone) {
+      // El indicador de WhatsApp incluye el tipo de línea (phone_type del
+      // waterfall o el plan de numeración): Fijo / Conmutador / Probable…
+      return '<div>' + esc(m.phone) + '</div>' + waReachPillHtml(m) + sourceLineHtml(m, 'phone');
+    }
     if (m.phone_status === 'pending') return '<span class="pill pill-amber">Pendiente…</span>';
     if (m.phone_status === 'unavailable') return '<span class="pill pill-gray">No disponible</span>';
     return '<span style="color:var(--text3)">—</span>';
@@ -1520,8 +1612,45 @@
   }
 
   // ══ TAB 1: BÚSQUEDA — search + results ══════════════════════════════════
+  // Buscar tiene dos modos (2026-10-17): personas en Apollo (lo de siempre) y
+  // empresas en registros públicos (js/registry-search.js: CNPJ, DENUE,
+  // registro mercantil de Colombia). El modo se recuerda por navegador.
+  var SEARCH_MODE_KEY = 'prospecting_search_mode_v1';
+  function getSearchMode() {
+    try { return localStorage.getItem(SEARCH_MODE_KEY) === 'registry' ? 'registry' : 'people'; } catch (_) { return 'people'; }
+  }
+  function setSearchMode(mode) {
+    try { localStorage.setItem(SEARCH_MODE_KEY, mode); } catch (_) {}
+    var s = state.search;
+    if (!s.modeHosts) return;
+    s.modeHosts.people.style.display = mode === 'people' ? '' : 'none';
+    s.modeHosts.registry.style.display = mode === 'registry' ? '' : 'none';
+    s.modeBtns.forEach(function (b) {
+      var on = b.getAttribute('data-mode') === mode;
+      b.className = 'btn btn-sm ' + (on ? 'btn-primary' : 'btn-ghost');
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    if (mode === 'registry' && !s.registryMounted) {
+      if (!window.registrySearch) { s.modeHosts.registry.textContent = 'El módulo de registros públicos no está cargado. Recarga la página.'; return; }
+      s.registryMounted = true;
+      Promise.resolve(window.registrySearch.mount(s.modeHosts.registry)).catch(function (e) { toast(errMsg(e), 'error'); });
+    }
+  }
+
   function buildSearchPane() {
-    var pane = state.panes.busqueda;
+    var root = state.panes.busqueda;
+    var modeBtns = [
+      h('button', { type: 'button', 'data-mode': 'people', text: 'Personas (Apollo)' }),
+      h('button', { type: 'button', 'data-mode': 'registry', text: 'Empresas en registros públicos' }),
+    ];
+    modeBtns.forEach(function (b) { b.addEventListener('click', function () { setSearchMode(b.getAttribute('data-mode')); }); });
+    root.appendChild(h('div', { role: 'group', 'aria-label': 'Qué buscar', style: 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px' }, modeBtns[0], modeBtns[1]));
+    var pane = h('div', null);
+    var registryHost = h('div', { style: 'display:none' });
+    root.appendChild(pane);
+    root.appendChild(registryHost);
+    state.search.modeHosts = { people: pane, registry: registryHost };
+    state.search.modeBtns = modeBtns;
     var recoHost = h('div', null);
     pane.appendChild(recoHost);
     state.search.recoHost = recoHost;
@@ -1539,6 +1668,7 @@
     results.addEventListener('click', guarded(onResultsClick));
     results.addEventListener('change', guarded(onResultsChange));
     renderResults();
+    setSearchMode(getSearchMode());
   }
 
   // ── Paginación con buffer ───────────────────────────────────────────────
@@ -2233,7 +2363,24 @@
     pane.addEventListener('click', guarded(onListasClick));
     pane.addEventListener('change', guarded(onListasChange));
     pane.addEventListener('input', onListasInput);
+    // Columnas IA (js/ai-columns.js): cabeceras, celdas, filtros y orden de la tabla.
+    if (window.AIColumns) {
+      window.AIColumns.attach({
+        toast: toast,
+        openModal: openModal,
+        rerender: function () { renderListsRight(); },
+        members: function () { return isAllList() ? [] : state.listas.members; },
+        visibleMembers: function () { return visibleListMembers(); },
+        host: function () { return state.listas.rightEl; },
+      });
+    }
   }
+
+  // Columnas IA de la lista abierta (no en «Todos los contactos»: son por lista).
+  function aiCols() {
+    return (window.AIColumns && !isAllList() && state.listas.activeListId) ? window.AIColumns : null;
+  }
+  function aiColCount() { var a = aiCols(); return a ? a.count() : 0; }
 
   function isAllList() { return state.listas.activeListId === ALL_LIST_ID; }
 
@@ -2328,7 +2475,7 @@
     var st = state.listas;
     var q = (st.q || '').trim().toLowerCase();
     var all = isAllList();
-    return st.members.filter(function (m) {
+    var rows = st.members.filter(function (m) {
       if (all && st.statusFilter && (m.contact_status || 'no_contactado') !== st.statusFilter) return false;
       if (all && st.listFilter && String(m.list_id) !== st.listFilter) return false;
       if (!q) return true;
@@ -2336,6 +2483,9 @@
         .filter(Boolean).join(' ').toLowerCase();
       return hay.indexOf(q) !== -1;
     });
+    // Filtros y orden por columnas IA.
+    var ai = aiCols();
+    return ai ? ai.apply(rows) : rows;
   }
 
   function listMemberRowHtml(m) {
@@ -2359,13 +2509,92 @@
       '<td>' + memberEmailCell(m) + '</td>' +
       '<td>' + memberPhoneCell(m) + '</td>' +
       '<td>' + linkedinCell(m.linkedin_url) + '</td>' +
+      (aiCols() ? aiCols().cellsHtml(m) : '') +
       '<td style="white-space:nowrap">' +
+        // Clic para llamar (js/dialer.js): dialer de Predictable o el proveedor conectado.
+        (window.Dialer && String(m.phone || '').replace(/\D/g, '').length >= 8
+          ? '<button type="button" class="pros-iconbtn" data-action="call-member" data-id="' + id + '" title="Llamar">' + SVG_PHONE + '</button>' : '') +
         '<button type="button" class="pros-iconbtn pros-research-btn' + (open ? ' on' : '') + (hasResearch ? ' has' : '') + '" data-action="toggle-research" data-id="' + id + '" title="Investigación previa: notas y ángulo con IA" aria-expanded="' + (open ? 'true' : 'false') + '">' + SVG_RESEARCH + '</button>' +
+        championBtnHtml(m) +
         '<button type="button" class="pros-iconbtn" data-action="edit-member" data-id="' + id + '" title="Editar contacto">' + SVG_EDIT + '</button>' +
         '<button type="button" class="pros-iconbtn" data-action="delete-member" data-id="' + id + '" title="Eliminar contacto">' + SVG_TRASH + '</button>' +
       '</td>' +
       '</tr>' +
-      (open ? '<tr class="pros-research-row"><td colspan="' + (isAllList() ? 10 : 9) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
+      (open ? '<tr class="pros-research-row"><td colspan="' + ((isAllList() ? 10 : 9) + aiColCount()) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
+  }
+
+  // ── Champions ───────────────────────────────────────────────────────────
+  // La estrella marca al lead como champion: el Radar (detector
+  // champion_moves) lo chequea y avisa si cambia de empresa. Sugerido = lo
+  // propuso la base porque tuvo una reunión; un clic lo sigue.
+
+  function championBtnHtml(m) {
+    var ch = state.listas.champions;
+    if (!ch) return '';
+    var w = ch[String(m.id)];
+    var on = w && w.state === 'active';
+    var sug = w && w.state === 'suggested';
+    var title = on ? 'Champion en seguimiento: el Radar te avisa si cambia de empresa. Clic para dejar de seguirlo.'
+      : sug ? 'Sugerido como champion (tuvo una reunión). Clic para seguirlo.'
+      : 'Marcar como champion: el Radar te avisa si cambia de empresa.';
+    return '<button type="button" class="pros-iconbtn pros-champion-btn' + (on ? ' on' : '') + (sug ? ' sug' : '') + '" data-action="toggle-champion" data-id="' + esc(String(m.id)) + '" title="' + esc(title) + '" aria-pressed="' + (on ? 'true' : 'false') + '">' + (on ? SVG_STAR_ON : SVG_STAR) + '</button>';
+  }
+
+  // Una sola consulta por recarga: la lista de champions de un usuario es
+  // chica comparada con sus contactos (RLS: solo las filas propias).
+  function loadChampionMarks() {
+    var st = state.listas;
+    if (!window.supabaseClient) return Promise.resolve();
+    return Promise.resolve(window.supabaseClient.from('champion_watch').select('id, member_id, state')
+      .not('member_id', 'is', null).neq('state', 'dismissed').limit(5000))
+      .then(function (r) {
+        if (r.error) { if (/champion_watch|does not exist|schema cache/i.test(r.error.message)) st.champions = null; return; }
+        var map = {};
+        (r.data || []).forEach(function (w) { map[String(w.member_id)] = { id: w.id, state: w.state }; });
+        st.champions = map;
+      })
+      .catch(function (e) { console.warn('[prospecting] champions:', e); });
+  }
+
+  function toggleChampion(id) {
+    var st = state.listas;
+    var m = findListMember(id);
+    if (!m || !st.champions) return Promise.resolve();
+    var w = st.champions[id];
+    var sb = window.supabaseClient;
+    var done = function (msg) { renderListsRight(); if (msg) toast(msg, 'success'); };
+    var fail = function (e) { toast('No se pudo guardar: ' + errMsg(e), 'error'); };
+    if (w && w.state === 'active') {
+      return Promise.resolve(sb.from('champion_watch').delete().eq('id', w.id)).then(function (r) {
+        if (r.error) throw r.error;
+        delete st.champions[id]; done('Dejaste de seguirlo como champion.');
+      }).catch(fail);
+    }
+    if (w) {
+      return Promise.resolve(sb.from('champion_watch').update({ state: 'active', next_check_at: new Date().toISOString() }).eq('id', w.id)).then(function (r) {
+        if (r.error) throw r.error;
+        w.state = 'active'; done('Champion en seguimiento: el Radar te avisa si cambia de empresa.');
+      }).catch(fail);
+    }
+    var name = m.name || ((m.first_name || '') + ' ' + (m.last_name || '')).trim();
+    if (!name || !(m.company || m.company_domain)) { toast('Para seguirlo como champion necesita nombre y empresa: agrégalos con «Editar contacto».', 'warn'); return Promise.resolve(); }
+    return Promise.resolve(sb.from('champion_watch').insert({
+      user_id: m.user_id || (window.currentUser && window.currentUser.id), member_id: m.id, origin: 'manual', state: 'active',
+      name: name, first_name: m.first_name || null, last_name: m.last_name || null, title: m.title || null,
+      company: m.company || null, company_domain: m.company_domain || null, linkedin_url: m.linkedin_url || null,
+      email: m.email || null, apollo_person_id: m.apollo_person_id || null,
+    }).select('id, state').single()).then(function (r) {
+      // Ya estaba (descartada antes): se reactiva en vez de duplicarla.
+      if (r.error && /duplicate|unique/i.test(r.error.message)) {
+        return sb.from('champion_watch').update({ state: 'active', next_check_at: new Date().toISOString() })
+          .eq('member_id', m.id).select('id, state').single();
+      }
+      return r;
+    }).then(function (r) {
+      if (r.error) throw new Error(/duplicate|unique/i.test(r.error.message) ? 'esa persona ya está en tu lista de champions.' : r.error.message);
+      st.champions[id] = { id: r.data.id, state: r.data.state };
+      done('Champion en seguimiento: el Radar te avisa si cambia de empresa (pestaña Champions).');
+    }).catch(fail);
   }
 
   // ── Investigación previa por lead ───────────────────────────────────────
@@ -2540,14 +2769,103 @@
         '<div class="pros-cellsub" data-notes-state="' + id + '">' + esc(notesState) + '</div>' +
         '<div class="pros-cellsub">Se guardan solas. La IA las usa al investigar, en los mensajes de campaña y en el Meeting Coach.</div>' +
         meetingQualitySectionHtml(m) +
+        registryPanelHtml(m) +
       '</div>' +
       '<div class="pros-research-col">' +
         '<div class="pros-research-head"><span class="pros-lbl">Ángulo e investigación</span>' +
           '<button type="button" class="btn btn-ai btn-sm" data-action="research-run" data-id="' + id + '" data-credit-cost="lead_research"' + (running ? ' disabled' : '') + '>' +
             (running ? 'Investigando…' : (r.angle ? 'Volver a investigar' : 'Investigar con IA')) + '</button></div>' +
         right +
+        // Las llamadas del lead con el reporte del Meeting Coach (js/calls.js).
+        '<div data-lead-calls="' + id + '"></div>' +
+        // Agente de voz IA (js/voice-agent.js): llamadas a este lead con su resultado.
+        '<div data-voice-mount="' + id + '"></div>' +
       '</div>' +
     '</div>';
+  }
+
+  // ── Datos de registro de la empresa del lead (company-registry) ────────
+  // Enriquecimiento de cuenta: identificador fiscal, actividad, fecha de
+  // constitución, socios y estado según el registro público del país
+  // (Brasil, México, Colombia). Solo se guarda una ficha inequívoca; si hay
+  // varias parecidas, el usuario elige.
+  function memberRegistry(m) {
+    var r = m && m.registry && typeof m.registry === 'object' && m.registry.registry_id ? m.registry : null;
+    if (r) return r;
+    var s = m && m.snapshot && m.snapshot.registry;
+    return s && typeof s === 'object' && s.registry_id ? s : null;
+  }
+
+  function registryPanelHtml(m) {
+    var id = esc(String(m.id));
+    var st = state.listas;
+    st.registryCands = st.registryCands || {};
+    var busy = st.registryBusy && st.registryBusy[String(m.id)];
+    var r = memberRegistry(m);
+    var out = '<div class="pros-research-head" style="margin-top:10px"><span class="pros-lbl">Datos de registro</span>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-action="registry-run" data-id="' + id + '"' + (busy ? ' disabled' : '') + '>' +
+      (busy ? 'Buscando…' : (r ? 'Actualizar' : 'Buscar en el registro público')) + '</button></div>';
+    if (r) {
+      var stat = { active: 'Activa', inactive: 'De baja', unknown: 'Estado sin confirmar' }[r.status] || '';
+      var rows = [
+        r.tax_id ? (r.tax_id_label || 'ID fiscal') + ': ' + r.tax_id : '',
+        r.legal_name ? 'Razón social: ' + r.legal_name : '',
+        r.activity && (r.activity.code || r.activity.description) ? 'Actividad: ' + [r.activity.code, r.activity.description].filter(Boolean).join(' · ') : '',
+        r.founded_on ? (r.founded_label || 'Constitución') + ': ' + fmtDate(r.founded_on) : '',
+        stat || r.status_detail ? 'Estado: ' + [stat, r.status_detail].filter(Boolean).join(' · ') : '',
+        r.size && r.size.label ? 'Tamaño: ' + r.size.label : '',
+      ].filter(Boolean);
+      out += '<div class="pros-research-sec">' + rows.map(function (x) { return '<div>' + esc(x) + '</div>'; }).join('');
+      if (Array.isArray(r.partners) && r.partners.length) {
+        out += '<div style="margin-top:6px">Socios: ' + esc(r.partners.slice(0, 6).map(function (p) { return p.name + (p.role ? ' (' + p.role + ')' : ''); }).join(', ')) + '</div>' +
+          '<div class="pros-cellsub">Dato público del registro; úsalo solo para identificar la cuenta (LGPD).</div>';
+      }
+      out += '<div class="pros-cellsub">Fuente: ' + esc(r.source || r.registry || 'registro público') + (r.fetched_at ? ' · ' + esc(fmtDate(r.fetched_at)) : '') + '</div></div>';
+    }
+    var c = st.registryCands[String(m.id)];
+    if (c) {
+      if (c.note) out += '<div class="pros-cellsub">' + esc(c.note) + '</div>';
+      (c.candidates || []).forEach(function (x) {
+        out += '<button type="button" class="btn btn-ghost btn-sm" style="justify-content:flex-start;text-align:left" data-action="registry-pick" data-id="' + id + '" data-registry="' + esc(x.registry) + '" data-rid="' + esc(x.registry_id) + '">' +
+          esc((x.trade_name || x.legal_name || '—') + (x.tax_id ? ' · ' + x.tax_id : '') + (x.address && x.address.city ? ' · ' + x.address.city : '')) + '</button>';
+      });
+    } else if (!r) {
+      out += '<div class="pros-cellsub">Completa el identificador fiscal, la actividad, la fecha de constitución, los socios y el estado de la empresa desde el registro oficial (Brasil, México y Colombia).</div>';
+    }
+    return out;
+  }
+
+  function runRegistry(id, choice) {
+    var st = state.listas;
+    st.registryBusy = st.registryBusy || {};
+    st.registryCands = st.registryCands || {};
+    st.registryBusy[String(id)] = true;
+    renderListsRight();
+    return Promise.resolve(pd().enrichMemberRegistry(id, choice ? { choice: choice } : {}))
+      .then(function (res) {
+        res = res || {};
+        if (res.match) {
+          delete st.registryCands[String(id)];
+          var mm = findListMember(id);
+          if (mm) mm.registry = res.match;
+          toast('Datos de registro guardados.', 'success');
+        } else {
+          st.registryCands[String(id)] = { note: res.note || 'No encontramos una ficha inequívoca.', candidates: res.candidates || [] };
+        }
+        if (res.charged && window.credits && typeof window.credits.refresh === 'function') window.credits.refresh();
+      })
+      .catch(function (e) {
+        if (e && e.status === 503) throw new Error((e.detail || 'El registro público no está disponible en el servidor') + '.');
+        throw new Error('No se pudo consultar el registro' + (e && e.detail ? ' (' + e.detail + ')' : '') + '.');
+      })
+      .then(function () {
+        delete st.registryBusy[String(id)];
+        return reloadMembers({ keepSelection: true });
+      }, function (err) {
+        delete st.registryBusy[String(id)];
+        renderListsRight();
+        throw err;
+      });
   }
 
   function setNotesState(id, value) {
@@ -2661,9 +2979,10 @@
       // Header: título + acción principal en la esquina superior derecha.
       '<div class="table-head" style="gap:12px;flex-wrap:wrap;align-items:flex-start">' +
       '<div><div style="font-weight:600;font-size:13.5px">' + esc(all ? 'Todos los contactos' : ((list && list.name) || 'Lista')) + '</div>' +
-      '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos' + (all ? ' en todas tus listas' : '') + '</div></div>' +
+      '<div class="pros-cellsub">' + esc(fmtNum(st.members.length)) + ' contactos' + (all ? ' en todas tus listas' : '') + '</div>' +
+      waSummaryHtml(st.members) + '</div>' +
       (all
-        ? '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer teléfonos</button>'
+        ? '<button type="button" class="btn btn-primary btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer</button>'
         : '<button type="button" class="btn btn-primary btn-sm" data-action="create-campaign"' + (st.members.length ? '' : ' disabled') + '>' + SVG_CAMPAIGN + ' Crear campaña con esta lista</button>') +
       '</div>' +
       '<div data-enrich-banner>' + enrichBannerHtml() + '</div>';
@@ -2686,12 +3005,15 @@
 
     // Acciones sobre la selección / la lista.
     html += '<div class="pros-actions" style="padding:10px 18px 14px">' +
-      (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer teléfonos</button>') +
+      (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="enrich-selected" data-credit-cost="enrich_phone" data-credit-muted' + (n ? '' : ' disabled') + '>Enriquecer</button>') +
       (all ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="add-manual">' + SVG_USER_PLUS + ' Agregar manualmente</button>') +
+      (window.Dialer ? '<button type="button" class="btn btn-ghost btn-sm" data-action="power-dial"' + (st.members.length ? '' : ' disabled') + ' title="Llama uno por uno a los seleccionados (o a todos los que ves) y marca el resultado de cada uno">' + SVG_PHONE + ' Llamar ' + (n ? 'a los seleccionados' : 'a la lista') + '</button>' : '') +
+      (aiCols() ? aiCols().addButtonHtml() : '') +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-members">Actualizar</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="export-csv"' + (st.members.length ? '' : ' disabled') + '>Exportar CSV</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-action="delete-members" style="color:var(--red)"' + (n ? '' : ' disabled') + '>Eliminar</button>' +
       '</div>';
+    if (aiCols() && st.members.length) html += aiCols().progressHtml() + aiCols().filtersHtml();
 
     var cols = all ? ['30%', '35%', '25%', '20%', '30%', '40%', '28%', '18%', '14%'] : ['30%', '40%', '20%', '30%', '45%', '30%', '25%', '14%'];
     if (st.loadingMembers) {
@@ -2710,7 +3032,8 @@
       var allChecked = rows.every(function (m) { return st.selected.has(String(m.id)); });
       html += '<div class="pros-scroll-x"><table><thead><tr>' +
         '<th style="width:34px"><input type="checkbox" data-action="mem-check-all"' + (allChecked ? ' checked' : '') + '></th>' +
-        '<th>Nombre</th><th>Empresa</th><th>País</th>' + (all ? '<th>Lista</th>' : '') + '<th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th><th></th>' +
+        '<th>Nombre</th><th>Empresa</th><th>País</th>' + (all ? '<th>Lista</th>' : '') + '<th>Estado</th><th>Email</th><th>Teléfono</th><th>LinkedIn</th>' +
+        (aiCols() ? aiCols().headHtml() : '') + '<th></th>' +
         '</tr></thead><tbody>' + rows.map(listMemberRowHtml).join('') + '</tbody></table></div>';
       if (all) {
         html += '<div style="padding:10px 18px;font-size:12px;color:var(--text3)">' + esc(fmtNum(rows.length)) + ' de ' + esc(fmtNum(st.members.length)) + ' contactos · El estado se actualiza al instante en todo el sistema (Campañas, dashboard y este CRM leen la misma base).</div>';
@@ -2723,6 +3046,12 @@
       ? { id: active.getAttribute('data-id'), start: active.selectionStart, end: active.selectionEnd, scroll: active.scrollTop }
       : null;
     host.innerHTML = html;
+    if (window.Calls) {
+      Array.prototype.forEach.call(host.querySelectorAll('[data-lead-calls]'), function (el) {
+        window.Calls.renderLeadCalls(el, el.getAttribute('data-lead-calls')).catch(function () {});
+      });
+    }
+    if (window.VoiceAgent) window.VoiceAgent.mountAll(host);
     if (keepNotes) {
       var again = host.querySelector('textarea[data-action="research-notes"][data-id="' + keepNotes.id + '"]');
       if (again) {
@@ -2753,11 +3082,20 @@
     if (!keep) renderListsRight();
     var all = isAllList();
     var listId = st.activeListId;
+    if (window.AIColumns) window.AIColumns.setList(all ? null : listId);
     return Promise.resolve()
-      .then(function () { return all ? pd().fetchAllContacts() : pd().fetchMembers(listId); })
-      .then(function (members) {
+      .then(function () {
+        var learned = window.PhoneLines ? window.PhoneLines.loadLearned().catch(function () { return null; }) : null;
+        return Promise.all([all ? pd().fetchAllContacts() : pd().fetchMembers(listId), learned]);
+      })
+      .then(function (res) {
+        var members = res[0];
         if (st.activeListId !== listId) return; // el usuario cambió de lista mientras cargaba
+        if (res[1]) st.waLearned = res[1];
         st.members = Array.isArray(members) ? members : [];
+        if (st.champions) return loadChampionMarks();
+      })
+      .then(function () {
         if (keep) {
           var ids = new Set(st.members.map(function (m) { return String(m.id); }));
           Array.from(st.selected).forEach(function (id) { if (!ids.has(id)) st.selected.delete(id); });
@@ -2798,6 +3136,7 @@
   function onListasInput(e) {
     var t = e.target;
     if (t.getAttribute && t.getAttribute('data-action') === 'research-notes') return onResearchNotesInput(t);
+    if (window.AIColumns && window.AIColumns.handleInput(t)) return;
     if (!t.getAttribute || t.getAttribute('data-action') !== 'ct-search') return;
     var st = state.listas;
     st.q = t.value || '';
@@ -2821,6 +3160,7 @@
     var t = e.target;
     var action = t.getAttribute && t.getAttribute('data-action');
     var st = state.listas;
+    if (window.AIColumns && window.AIColumns.handleChange(t)) return;
     if (action === 'mem-check') {
       var id = t.getAttribute('data-id');
       if (t.checked) st.selected.add(id); else st.selected.delete(id);
@@ -2859,6 +3199,7 @@
     if (!btn) return;
     var action = btn.getAttribute('data-action');
     var st = state.listas;
+    if (window.AIColumns && window.AIColumns.handleClick(btn)) return;
     if (action === 'create-list') {
       var input = document.getElementById('pros-newlist-name');
       var name = input ? input.value.trim() : '';
@@ -2914,6 +3255,21 @@
       return;
     }
     if (action === 'research-run') return runResearch(btn, btn.getAttribute('data-id'));
+    if (action === 'call-member') {
+      var cm = findListMember(btn.getAttribute('data-id'));
+      if (cm && window.Dialer) window.Dialer.call(cm, { onDone: function () { reloadMembers({ keepSelection: true }); } });
+      return;
+    }
+    if (action === 'power-dial') {
+      if (!window.Dialer) return;
+      var pdRows = st.selected.size ? selectedListMembers() : visibleListMembers();
+      var lst = isAllList() ? null : findList(st.activeListId);
+      window.Dialer.power(pdRows.map(function (m) { return { member: m, opts: {} }; }), { title: lst ? lst.name : 'Todos los contactos' });
+      return;
+    }
+    if (action === 'toggle-champion') return toggleChampion(String(btn.getAttribute('data-id')));
+    if (action === 'registry-run') return runRegistry(btn.getAttribute('data-id'));
+    if (action === 'registry-pick') return runRegistry(btn.getAttribute('data-id'), { registry: btn.getAttribute('data-registry'), registry_id: btn.getAttribute('data-rid') });
     if (action === 'create-campaign') return createCampaignFromList();
     if (action === 'add-manual') return openAddManualModal();
     if (action === 'enrich-selected') return openEnrichModal();
@@ -2924,6 +3280,17 @@
         .then(function () { renderListsLeft(); return reloadMembers(); });
     }
     if (action === 'export-csv') return exportListCsv();
+    if (action === 'wa-reach-reset') {
+      // Olvida el «sin WhatsApp» aprendido de ese número: la próxima campaña lo intenta.
+      var key = btn.getAttribute('data-key');
+      return window.supabaseClient.from('whatsapp_reachability').delete().eq('phone_key', key)
+        .then(function (r) {
+          if (r.error) throw new Error('No se pudo reiniciar el número: ' + r.error.message);
+          if (st.waLearned) st.waLearned.delete(key);
+          toast('Listo: las campañas vuelven a intentar este WhatsApp.', 'success');
+          renderListsRight();
+        });
+    }
     if (action === 'delete-members') return openDeleteMembersModal();
     if (action === 'delete-member') {
       var mDel = findListMember(btn.getAttribute('data-id'));
@@ -3187,32 +3554,68 @@
     }
   }
 
+  // Texto de la cascada vigente: "Si Apollo no lo encuentra: Prospeo →
+  // FullEnrich (3 créditos por email y 20 por teléfono, solo si lo encuentra)".
+  function cascadeText(cfg) {
+    if (!cfg) return '';
+    var labels = cfg.labels || {};
+    var name = function (id) { return labels[id] || sourceLabel(id); };
+    var em = (cfg.email || []).filter(function (id) { return id !== 'apollo'; }).map(name);
+    var ph = (cfg.phone || []).filter(function (id) { return id !== 'apollo'; }).map(name);
+    var costs = cfg.costs || {};
+    var out = [];
+    if (em.length || ph.length) {
+      var same = em.join() === ph.join();
+      out.push('Si Apollo no lo encuentra, se busca en cascada' +
+        (same ? ' con ' + em.join(' → ') : (em.length ? ' — email: ' + em.join(' → ') : '') + (ph.length ? (em.length ? '; teléfono: ' : ' — teléfono: ') + ph.join(' → ') : '')) +
+        '. Se cobra solo lo que se encuentra' +
+        (em.length && costs.email ? ': ' + costs.email + ' créditos por email' : '') +
+        (ph.length && costs.phone ? (em.length && costs.email ? ' y ' : ': ') + costs.phone + ' por teléfono' : '') +
+        ', también con tu propio Apollo.');
+    }
+    if (cfg.verifier) out.push('Los emails sin verificar se revisan con ' + name(cfg.verifier) + ' y los inválidos se descartan.');
+    return out.join(' ');
+  }
+
   function openEnrichModal() {
     var picked = selectedListMembers();
     if (!picked.length) return toast('Selecciona al menos un contacto.', 'warn');
-    // Solo teléfonos: los que ya tienen uno (o lo están buscando) no se vuelven a cobrar.
-    var sel = picked.filter(function (m) { return !m.phone && m.phone_status !== 'pending'; });
-    var skipped = picked.length - sel.length;
-    if (!sel.length) return toast('Los contactos seleccionados ya tienen teléfono o se está buscando.', 'info');
+    // Teléfono: los que ya tienen uno (o lo están buscando) no se vuelven a
+    // cobrar. Email: solo los que no tienen y ya tienen teléfono (los demás
+    // reciben el email en la misma búsqueda del teléfono).
+    var sel = picked.filter(function (m) { return !m.phone && m.phone_status !== 'pending' && !m.enrich_requested_at; });
+    var emailSel = picked.filter(function (m) {
+      return sel.indexOf(m) === -1 && !(m.email && !isMaskedEmail(m.email)) && !m.enrich_requested_at && m.email_status !== 'pending';
+    });
+    var skipped = picked.length - sel.length - emailSel.length;
+    if (!sel.length && !emailSel.length) return toast('Los contactos seleccionados ya tienen teléfono y email, o se están buscando.', 'info');
+    var parts = [];
+    if (sel.length) parts.push('el teléfono de ' + fmtNum(sel.length) + ' contacto' + (sel.length === 1 ? '' : 's') + ' (y su email si falta)');
+    if (emailSel.length) parts.push('el email de ' + fmtNum(emailSel.length) + ' contacto' + (emailSel.length === 1 ? '' : 's') + ' que ya tiene' + (emailSel.length === 1 ? '' : 'n') + ' teléfono');
+    var cascadeP = h('p', { style: 'font-size:12.5px;color:var(--text2);margin:0 0 12px;line-height:1.55;display:none' });
     var bodyN = h('div', null,
       h('p', {
         style: 'font-size:13px;color:var(--text2);margin:0 0 12px;line-height:1.55',
-        text: 'Se buscará el teléfono de ' + fmtNum(sel.length) + ' contacto' + (sel.length === 1 ? '' : 's') +
-          (skipped ? ' (' + fmtNum(skipped) + ' ya tenían teléfono y se omiten)' : '') +
-          ' vía Apollo. Costo: 8 créditos por teléfono, solo cuando Apollo lo encuentra (con tu propia cuenta de Apollo conectada no gastas créditos de predictable.ai). ' +
-          'Corre en segundo plano — puedes seguir usando la app; usa «Actualizar» en unos minutos para ver los resultados.',
-      }));
+        text: 'Se buscará ' + parts.join(' y ') +
+          (skipped ? ' (' + fmtNum(skipped) + ' ya tenían los datos o se están buscando y se omiten)' : '') +
+          ' vía Apollo. Costo en Apollo: 8 créditos por teléfono y 2 por email, solo cuando Apollo lo encuentra (con tu propia cuenta de Apollo conectada no gastas créditos de predictable.ai). ' +
+          'Corre en segundo plano — puedes seguir usando la app; los resultados aparecen solos en la tabla.',
+      }),
+      cascadeP);
+    Promise.resolve(pd().fetchEnrichProviders && pd().fetchEnrichProviders()).then(function (cfg) {
+      var t = cascadeText(cfg);
+      if (t) { cascadeP.textContent = t; cascadeP.style.display = ''; }
+    }).catch(function () {});
     var api = openModal({
-      title: 'Enriquecer teléfonos',
+      title: 'Enriquecer contactos',
       bodyNode: bodyN,
       actions: [
         { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
         {
-          label: 'Buscar teléfonos',
+          label: 'Enriquecer',
           className: 'btn btn-primary',
           onClick: function () {
-            var members = sel;
-            var revealPhones = true;
+            var members = sel.concat(emailSel);
             var targetListId = state.listas.activeListId;
             // No bloquea el modal: el enriquecimiento sigue en segundo plano
             // (mismo espíritu que los teléfonos, que ya llegan async vía
@@ -3234,9 +3637,19 @@
             setTimeout(function () { refreshEnrichQueue(); }, 1500);
             Promise.resolve()
               .then(function () {
-                return pd().enrichMembers({
-                  members: members, revealPhones: revealPhones,
-                  onProgress: function (p) { enrichJobProgress(job, p); },
+                var onProgress = function (p) { enrichJobProgress(job, p); };
+                var phones = sel.length ? pd().enrichMembers({ members: sel, revealPhones: true, onProgress: onProgress }) : Promise.resolve(null);
+                return phones.then(function (a) {
+                  if (!emailSel.length) return a;
+                  return pd().enrichMembers({ members: emailSel, revealPhones: false, onProgress: onProgress }).then(function (b) {
+                    if (!a) return b;
+                    return Object.assign({}, a, {
+                      server: a.server && b.server,
+                      updated: (a.updated || 0) + (b.updated || 0),
+                      phonePending: (a.phonePending || 0) + (b.phonePending || 0),
+                      failed: (a.failed || []).concat(b.failed || []),
+                    });
+                  });
                 });
               })
               .then(function (res) {
@@ -3320,9 +3733,12 @@
     var cols = isAllList()
       ? ['name', 'title', 'company', 'list_name', 'contact_status', 'email', 'phone', 'linkedin_url']
       : ['name', 'title', 'company', 'contact_status', 'email', 'phone', 'linkedin_url'];
-    var lines = [cols.join(',')];
+    // Columnas IA: respuesta, evidencia y fuente de cada una.
+    var extra = aiCols() ? aiCols().csvColumns() : [];
+    var lines = [cols.concat(extra.map(function (x) { return csvCell(x.header); })).join(',')];
     rows.forEach(function (m) {
-      lines.push(cols.map(function (c) { return csvCell(m[c]); }).join(','));
+      lines.push(cols.map(function (c) { return csvCell(m[c]); })
+        .concat(extra.map(function (x) { return csvCell(x.get(m)); })).join(','));
     });
     var blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
     var url = URL.createObjectURL(blob);
@@ -3861,11 +4277,24 @@
   // Buscar, enriquecer y enviar email salen de la cuenta de Apollo del
   // usuario, así que no se entra a ninguna pestaña de Prospección sin
   // conectarla. La Bandeja queda libre: junta respuestas de WhatsApp y
-  // LinkedIn, que no dependen de Apollo. El estado y el asistente de
-  // conexión son los de js/campaigns.js (una sola fuente).
+  // LinkedIn, que no dependen de Apollo. Llamadas (vista de Campañas,
+  // js/calls.js) también (pedido del dueño, 2026-10-18): el dialer de
+  // Predictable y CloudTalk/Aircall/Ringover no usan Apollo. El estado y el
+  // asistente de conexión son los de js/campaigns.js (una sola fuente).
   var apollo = { connected: null, checking: null, error: null, pendingTab: null };
+  var APOLLO_FREE_VIEWS = ['inbox', 'calls'];
   function apolloExempt(tabId) {
-    return tabId === 'campanas' && window.campaigns && typeof window.campaigns.currentView === 'function' && window.campaigns.currentView() === 'inbox';
+    return tabId === 'campanas' && window.campaigns && typeof window.campaigns.currentView === 'function' && APOLLO_FREE_VIEWS.indexOf(window.campaigns.currentView()) !== -1;
+  }
+  /** Abre Campañas → Llamadas (sin Apollo). */
+  function openCalls(tab) {
+    if (!window.campaigns || typeof window.campaigns.openCalls !== 'function') return;
+    window.campaigns.openCalls(tab || null);
+    // No se usa goTab: el clic del ítem «Campañas» del sidebar devolvería la vista a la lista.
+    var item = document.querySelector('.nav-item[data-page="pro-main"][data-pros-tab="campanas"]:not([data-pros-view])');
+    if (typeof window.nav === 'function') window.nav(item, 'pro-main');
+    ensureBuilt();
+    switchTab('campanas');
   }
   function checkApollo(force) {
     if (!window.campaigns || typeof window.campaigns.apolloStatus !== 'function') {
@@ -3913,6 +4342,12 @@
     }
     card.appendChild(row);
     card.appendChild(h('div', { class: 'pros-hint', text: '¿Todavía no tienes cuenta? El asistente te muestra cómo crearla.' }));
+    // Llamar no necesita Apollo: la cola de llamadas, el historial y el dialer quedan a mano.
+    if (window.Calls && window.campaigns && typeof window.campaigns.openCalls === 'function') {
+      var callsRow = h('div', { class: 'pros-hint', style: 'border-top:1px solid var(--border);padding-top:12px' }, 'Para llamar no necesitas Apollo. ');
+      callsRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Ir a Llamadas', onclick: function () { openCalls(); } }));
+      card.appendChild(callsRow);
+    }
     state.gate.appendChild(card);
   }
   document.addEventListener('predictable:apollo-status', function (ev) {
@@ -3981,6 +4416,7 @@
 
   // ── Public API ─────────────────────────────────────────────────────────
   window.prospecting = {
+    openCalls: openCalls,
     // Acción directa del Intelligence Hub: abre Buscar con palabras clave de
     // empresa (q_organization_keyword_tags) y lanza la búsqueda.
     searchFor: function (opts) {
@@ -3988,7 +4424,25 @@
         ensureBuilt();
         switchTab('busqueda');
         if (apollo.connected !== true) return; // el bloqueo de Apollo ya está a la vista
-        var kw = (opts && Array.isArray(opts.keywords) ? opts.keywords : []).map(function (k) { return String(k || '').trim(); }).filter(Boolean);
+        // Mapa de TAM (js/tam-map.js): cuentas concretas por dominio. Se parte
+        // de filtros limpios — un país o un cargo de la búsqueda anterior
+        // escondería cuentas de la lista — y se buscan sus decisores del ICP.
+        var domains = (opts && Array.isArray(opts.domains) ? opts.domains : []).map(function (d) { return String(d || '').trim().toLowerCase(); }).filter(Boolean);
+        if (domains.length) {
+          var fd = defaultFilters();
+          fd.q_organization_domains_list = Array.from(new Set(domains)).slice(0, 1000);
+          var titles = (Array.isArray(opts.titles) ? opts.titles : []).filter(function (x) { return typeof x === 'string' && x.trim(); }).slice(0, 20);
+          if (titles.length) fd.person_titles = titles;
+          else fd.person_seniorities = (Array.isArray(opts.seniorities) ? opts.seniorities : []).filter(function (x) { return typeof x === 'string'; }).slice(0, 10);
+          state.search.filters = fd;
+          setActiveSavedId(null);
+          persistFilters();
+          if (state.search.panelHost) { state.search.panelHost.innerHTML = ''; state.search.panelHost.appendChild(buildFilterPanel()); }
+          updateFilterBadges();
+          toast(opts.note ? String(opts.note) : 'Buscando en ' + fd.q_organization_domains_list.length + ' cuentas.', 'info');
+          return runSearch(1, true);
+        }
+        var kw =(opts && Array.isArray(opts.keywords) ? opts.keywords : []).map(function (k) { return String(k || '').trim(); }).filter(Boolean);
         if (kw.length) {
           var f = state.search.filters || defaultFilters();
           f.q_organization_keyword_tags = Array.from(new Set((f.q_organization_keyword_tags || []).concat(kw))).slice(0, 6);
@@ -3999,6 +4453,34 @@
           toast('Buscando empresas con «' + kw.join(', ') + '»' + (opts && opts.note ? '. Sugerencia del Hub: ' + opts.note : ''), 'info');
           return runSearch(1, true);
         }
+      } catch (e) {
+        console.error('[prospecting]', e);
+        toast(errMsg(e), 'error');
+      }
+    },
+    // Registros públicos → «Buscar personas en Apollo»: Buscar (personas) con
+    // el dominio de la empresa o, sin dominio, su nombre como palabra clave,
+    // y el país. No borra el resto de los filtros a propósito: el usuario ve
+    // y ajusta lo que se aplicó.
+    searchCompanyPeople: function (opts) {
+      try {
+        ensureBuilt();
+        switchTab('busqueda');
+        setSearchMode('people');
+        if (apollo.connected !== true) return;
+        var f = state.search.filters || defaultFilters();
+        var domain = normalizeDomain(opts && opts.domain);
+        var name = String((opts && opts.name) || '').trim();
+        if (!domain && !name) return toast('Esta empresa no tiene dominio ni nombre para buscar.', 'warn');
+        f.q_organization_domains_list = domain ? [domain] : [];
+        f.q_keywords = domain ? '' : name;
+        if (opts && opts.country) f.organization_locations = [opts.country];
+        state.search.filters = f;
+        persistFilters();
+        if (state.search.panelHost) { state.search.panelHost.innerHTML = ''; state.search.panelHost.appendChild(buildFilterPanel()); }
+        updateFilterBadges();
+        toast(domain ? 'Buscando personas en ' + domain : 'Buscando personas de «' + name + '» (sin dominio: por nombre, revisa que sean de esa empresa)', 'info');
+        return runSearch(1, true);
       } catch (e) {
         console.error('[prospecting]', e);
         toast(errMsg(e), 'error');
@@ -4015,9 +4497,12 @@
     },
     goTab: goTab,
     refreshBadge: refreshBadge,
+    // js/voice-agent.js abre el diálogo de llamada con el lead que ya está en memoria.
+    findMember: findListMember,
     openEditContact: openEditContactModal,
     // Reutilizados por js/campaigns.js para no duplicar el modal ni el DOM helper.
     confirm: confirmModal,
+    openModal: openModal,
     h: h,
     emptyHtml: emptyHtml,
     // Hilo de Gmail + responder por email (Campañas → Respuestas).

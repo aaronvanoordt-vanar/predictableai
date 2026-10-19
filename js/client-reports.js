@@ -118,7 +118,7 @@
 
     function paint() {
       if (st.error === 'missing') {
-        host.innerHTML = '<div class="cl-sec-title">Reporte semanal y calidad de reunión</div><div class="clr-muted">Falta aplicar la migración 20261017000001_meeting_quality_benchmarks.</div>';
+        host.innerHTML = '<div class="cl-sec-title">Reporte semanal y calidad de reunión</div><div class="clr-muted">Falta aplicar la migración 20261019000001_meeting_quality_benchmarks.</div>';
         return;
       }
       var emails = (client.report_emails || []).join(', ');

@@ -13,8 +13,15 @@
  *       → { url }  Checkout del plan Starter. 409 si ya tiene un plan activo.
  *   { action: "checkout_topup", pack: "topup_500" | "topup_1500" | "topup_5000" }
  *       → { url }  Checkout de una recarga. 403 plan_required sin plan activo.
+ *       Sin payment_method_types: los medios salen del Dashboard, así que con
+ *       el precio en MXN o BRL aparecen OXXO y Pix (pagos asíncronos; los
+ *       créditos llegan con checkout.session.async_payment_succeeded).
  *   { action: "portal" }
  *       → { url }  Portal de Stripe: tarjeta, facturas, cancelar.
+ *
+ * Una cuenta de espacio de cliente (client_workspaces) recibe 403
+ * workspace_billing en los dos checkouts: sus créditos los asigna la agencia
+ * (migración 20261018180006), así la agencia es la única que paga.
  *
  * Secrets: STRIPE_SECRET_KEY (clave restringida: Customers, Checkout
  * Sessions y Customer portal en escritura; Subscriptions y Prices en
@@ -111,6 +118,20 @@ Deno.serve(async (req: Request) => {
   const base = appUrl(origin);
 
   try {
+    // Un espacio de cliente (client_workspaces) no paga por su cuenta: sus
+    // créditos los asigna la agencia o el equipo que lo gestiona, que es
+    // quien tiene el plan y recibe la factura.
+    if (action === "checkout_subscription" || action === "checkout_topup") {
+      const { data: ws } = await supa.from("client_workspaces")
+        .select("client_id").eq("workspace_user_id", user.id).maybeSingle();
+      if (ws) {
+        return json({
+          error: "workspace_billing",
+          message: "Los créditos de este espacio los asigna tu agencia desde su cuenta (Agencia → Créditos por espacio).",
+        }, 403, h);
+      }
+    }
+
     if (action === "checkout_subscription") {
       const interval: Interval = body.interval === "year" ? "year" : "month";
       const plan = await strictPlan(supa, user.id);
@@ -152,6 +173,20 @@ Deno.serve(async (req: Request) => {
         line_items: [{ price: pack.price_id, quantity: 1 }],
         metadata: { app: "predictable.ai", user_id: user.id, kind: "topup", pack: packKey },
         payment_intent_data: { metadata: { app: "predictable.ai", user_id: user.id, kind: "topup", pack: packKey } },
+        // Factura (no solo recibo) con el número fiscal del cliente: en México la
+        // deduce con la regla 2.7.1.14 de la RMF (exige su RFC) y en el resto de
+        // Latam es el soporte del pago al exterior (docs/BILLING_LATAM.md §6).
+        // Su invoice.paid llega con billing_reason "manual" y stripe-webhook lo
+        // ignora: la recarga se sigue acreditando solo por la sesión pagada.
+        invoice_creation: {
+          enabled: true,
+          invoice_data: {
+            description: `Recarga de ${pack.credits.toLocaleString("en-US")} créditos de predictable.ai`,
+            metadata: { app: "predictable.ai", user_id: user.id, kind: "topup", pack: packKey },
+          },
+        },
+        billing_address_collection: "auto",
+        tax_id_collection: { enabled: true },
         customer_update: { name: "auto", address: "auto" },
         locale: "es-419",
         success_url: `${base}/index.html?billing=topup`,
