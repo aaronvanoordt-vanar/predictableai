@@ -96,7 +96,7 @@ Cada ítem se marca cuando su PR está mergeado. Workstreams en curso: una sesi�
   - [ ] Fase B: entidad mexicana + Stripe México + CFDI 4.0 por PAC — en curso: CFDI en modo prueba con Facturapi; falta la entidad
 - [x] Facturación y créditos por cliente para agencias — créditos repartidos a los espacios, tope mensual y alerta, consumo por cliente con CSV, selector de espacios y directorio (`agencias.html`); migración `20261018180006`. La factura consolidada sale sola: solo la agencia paga (sin cambios en Stripe)
 - [x] Equipo: metas de actividad, ranking, revisión del Meeting Coach con comentarios y rampa — PR #360 (las llamadas se enganchan cuando exista la telefonía: `window.Team.registerCallSource`)
-- [x] Mapa de TAM — PR #355 (`js/tam-map.js`, `_shared/tam.ts`, edge function `tam-map`)
+- [x] ~~Mapa de TAM~~ — construido en PR #355 y eliminado el 2026-10-19 por decisión del dueño (demasiado complejo)
 - [ ] Señales de engagement en LinkedIn y píxel web
 - [x] Señales: cambio de empresa de clientes y champions (Radar → Champions, detector `champion_moves`)
 - [x] Inbound: widget web (formulario + botón de WhatsApp), enrutamiento a la nómina de Equipo y speed-to-lead — PR #368 (`docs/INBOUND.md`)
