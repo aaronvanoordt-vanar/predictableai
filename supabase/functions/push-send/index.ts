@@ -28,13 +28,13 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
-import { inboxNotification, sendWebPush, vapidFromEnv, type VapidKeys } from "../_shared/webpush.ts";
+import { inboxNotification, vapidFromEnv, type VapidKeys } from "../_shared/webpush.ts";
+import { deliverToDevices as deliver, type Device } from "../_shared/push-devices.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
 const BUDGET_MS = 25_000;
-const DROP_AFTER_FAILURES = 20;
 
 function corsHeaders(origin: string) {
   return {
@@ -47,25 +47,6 @@ function corsHeaders(origin: string) {
 
 function json(body: unknown, status: number, origin: string) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...corsHeaders(origin) } });
-}
-
-interface Device { id: string; user_id: string; endpoint: string; p256dh: string; auth: string; failures: number }
-
-/** Envía a todos los dispositivos y deja la tabla al día. Devuelve cuántos lo recibieron. */
-async function deliver(svc: SupabaseClient, vapid: VapidKeys, devices: Device[], notification: Json) {
-  const results = await Promise.all(devices.map(async (d) => {
-    const r = await sendWebPush(d, notification, vapid);
-    if (r.ok) {
-      await svc.from("push_subscriptions").update({ last_success_at: new Date().toISOString(), failures: 0, last_error: null }).eq("id", d.id);
-    } else if (r.gone || d.failures + 1 >= DROP_AFTER_FAILURES) {
-      await svc.from("push_subscriptions").delete().eq("id", d.id);
-    } else {
-      await svc.from("push_subscriptions").update({ failures: d.failures + 1, last_error: `${r.status} ${r.detail}`.slice(0, 300) }).eq("id", d.id);
-    }
-    if (!r.ok) console.warn("[push-send]", d.id, r.status, r.detail);
-    return { device: d.id, ok: r.ok, status: r.status, gone: r.gone, detail: r.detail };
-  }));
-  return results;
 }
 
 async function dispatch(svc: SupabaseClient, vapid: VapidKeys) {

@@ -28,6 +28,14 @@ export const CREDIT_COSTS = {
   // (válido, inválido o catch-all).
   email_verify: 1,
 
+  // Registros públicos de empresas (company-registry). México (DENUE) y
+  // Colombia (datos.gov.co) son fuentes gratuitas, igual que la ficha por
+  // CNPJ (BrasilAPI): 0. La búsqueda de Brasil va por CNPJá, que cobra por
+  // consulta: una página de hasta 25 empresas, o una ficha buscada por el
+  // dominio del email de registro. Revisar con el contrato de CNPJá.
+  registry_search_br: 5,
+  registry_lookup_br: 1,
+
   // Mensajes IA.
   outreach_full: 4,          // "Preparar con IA" (5 capas + prep del coach)
   outreach_step: 2,          // un paso de campaña o un borrador de la Bandeja
@@ -42,6 +50,11 @@ export const CREDIT_COSTS = {
   // (~0.06 USD con Sonnet).
   linkedin_ideas: 2,
   linkedin_post: 3,
+  // Seguimiento de champions (Radar → champion_moves): búsqueda web de
+  // respaldo cuando Apollo no ubica a la persona en su empresa (Haiku + 2
+  // búsquedas, ~0.02 USD). El match de Apollo se cobra como enrich_email
+  // solo con la key de la plataforma y solo si encontró a la persona.
+  champion_web_check: 2,
   // Columnas IA en Listas: por fila investigada, también «No encontrado»
   // (la búsqueda se hizo igual); un error no se cobra. Con búsqueda web (~1–2 búsquedas con Haiku o Sonar,
   // ≤ 0.035 USD) o solo con los datos del contacto (sin web, ~0.003 USD).
@@ -73,12 +86,50 @@ export const CREDIT_COSTS = {
   coach_bot_block: 8,
   coach_local_block: 5,
   coach_report: 5,
+
+  // Agente de voz IA (docs/AGENTE_DE_VOZ.md): por minuto conectado,
+  // redondeando hacia arriba. Retell (~0.08 USD/min con voz y LLM) + el
+  // operador (Twilio 0.04–0.075 USD/min a móviles de MX/CO/CL/PE/BR). Los
+  // móviles de Argentina cuestan ~0.35 USD/min en el operador: tarifa propia.
+  voice_minute: 6,
+  voice_minute_ar: 18,
 } as const;
+
+/**
+ * Créditos por minuto del dialer nativo (Twilio), por país de destino.
+ * Cubre el minuto saliente (tarifa móvil o fija, la mayor de las dos), la
+ * pierna del navegador, la grabación y la transcripción, con el costo en
+ * ≤ ~40 % del valor (1 crédito ≈ 0.065 USD). Tarifas públicas de Twilio de
+ * 2026-10 en docs/TELEFONIA.md. Un país fuera de la tabla no se marca.
+ * Los conectores (CloudTalk, Aircall, Ringover) no cobran minutos: los paga
+ * la cuenta del cliente.
+ */
+export const CALL_MINUTE_CREDITS: Record<string, number> = {
+  MX: 3, // móvil 0.0473 / fijo 0.0160 USD
+  CO: 4, // fijo 0.0700 / móvil 0.0377
+  CL: 4, // móvil 0.0746 / fijo 0.0475
+  PE: 7, // fijo 0.1651 / móvil 0.0740
+  AR: 15, // móvil 0.3528 / fijo 0.0604
+  BR: 4, // móvil 0.0663 / fijo 0.0310
+  US: 2,
+  CA: 2,
+};
+
+/** Minutos que se reservan al empezar una llamada nativa (tope de duración). */
+export const CALL_RESERVE_MAX_MINUTES = 30;
+
+/** Créditos de `seconds` segundos de llamada a `country` (minuto iniciado = minuto cobrado). */
+export function callCost(country: string, seconds: number): number {
+  const rate = CALL_MINUTE_CREDITS[country];
+  if (!rate) return 0;
+  const s = Math.max(0, Number(seconds) || 0);
+  return s > 0 ? Math.ceil(s / 60) * rate : 0;
+}
 
 export type CreditAction = keyof typeof CREDIT_COSTS;
 
 /** Tipos de detector del Radar según lo que cuesta correrlos 30 días. */
-const RADAR_PEOPLE_KINDS = new Set(["leadership", "website_visitors"]);
+const RADAR_PEOPLE_KINDS = new Set(["leadership", "website_visitors", "champion_moves"]);
 const RADAR_WEB_KINDS = new Set(["news", "tenders", "web_footprint"]);
 const RADAR_PRESENCE_KINDS = new Set(["presence"]);
 
@@ -121,6 +172,22 @@ export function coachBlocks(durationSeconds: number): number {
 export function coachMeetingCost(mode: "bot" | "local", durationSeconds: number): number {
   const block = mode === "bot" ? CREDIT_COSTS.coach_bot_block : CREDIT_COSTS.coach_local_block;
   return CREDIT_COSTS.coach_report + block * coachBlocks(durationSeconds);
+}
+
+/** Minutos que se cobran de una llamada del agente de voz: hacia arriba, 0 si no conectó. */
+export function voiceMinutes(durationSeconds: number): number {
+  const s = Math.max(0, Number(durationSeconds) || 0);
+  return s > 0 ? Math.ceil(s / 60) : 0;
+}
+
+/** Créditos por minuto según el país del número al que se llama (ISO-2). */
+export function voiceMinuteCost(country: string | null | undefined): number {
+  return String(country ?? "").toUpperCase() === "AR" ? CREDIT_COSTS.voice_minute_ar : CREDIT_COSTS.voice_minute;
+}
+
+/** Cobro de una llamada del agente de voz al terminar. */
+export function voiceCallCost(country: string | null | undefined, durationSeconds: number): number {
+  return voiceMinutes(durationSeconds) * voiceMinuteCost(country);
 }
 
 /**

@@ -23,7 +23,7 @@ import { normalizeDetector, type DetectorKind, type NormalizedDetector } from ".
 
 export type RecipeCategory =
   | "whatsapp" | "meta_ads" | "marketplaces" | "payments_logistics"
-  | "marketing_crm" | "web" | "it_compliance" | "expansion" | "talent";
+  | "marketing_crm" | "web" | "it_compliance" | "expansion" | "talent" | "registries";
 
 export const RECIPE_CATEGORIES: { id: RecipeCategory; label: string }[] = [
   { id: "whatsapp", label: "WhatsApp y conversación" },
@@ -35,6 +35,7 @@ export const RECIPE_CATEGORIES: { id: RecipeCategory; label: string }[] = [
   { id: "it_compliance", label: "Correo, seguridad y cumplimiento" },
   { id: "expansion", label: "Crecimiento y expansión" },
   { id: "talent", label: "Talento y liderazgo" },
+  { id: "registries", label: "Registros públicos" },
 ];
 
 export interface RadarRecipe {
@@ -509,6 +510,33 @@ export const RADAR_RECIPES: RadarRecipe[] = [
     rationale: "Busca especialistas de pauta: invierte en anuncios y quiere más resultado por peso.",
     decision_maker_titles: MKT_TITLES,
     config: { job_titles: ["Performance Marketing Manager", "Paid Media Specialist", "Media Buyer", "Growth Marketing Manager", "Digital Marketing Specialist"], min_jobs: 1, posted_within_days: 30 } },
+  // ── Registros públicos (Brasil, México, Colombia) ────────────────────────
+  // La industria sale del ICP al correr; solo sirven si el plan apunta a uno
+  // de esos países (kindAvailable lo decide con requires: ["registry"]).
+  { id: "reg_new_companies", category: "registries", kind: "public_registry", weight: 70,
+    name: "Empresas recién constituidas en tu industria",
+    for_who: "Contabilidad, bancos y fintech, nómina, seguros, software y servicios para pymes",
+    rationale: "Una empresa en sus primeros meses elige por primera vez contador, banco, sistemas y proveedores. El registro oficial la ve antes que Apollo.",
+    decision_maker_titles: ["Founder", "Owner", "Chief Executive Officer", "General Manager"],
+    config: { event: "new_companies", window_days: 60 } },
+  { id: "reg_new_reachable", category: "registries", kind: "public_registry", weight: 65,
+    name: "Recién constituidas con teléfono de registro",
+    for_who: "Venta por WhatsApp o teléfono a pymes nuevas",
+    rationale: "Las mismas empresas nuevas, solo las que dejaron un teléfono en el registro: se pueden contactar el mismo día aunque no tengan sitio web.",
+    decision_maker_titles: ["Owner", "Founder", "General Manager"],
+    config: { event: "new_companies", window_days: 30, require_contact: "phone" } },
+  { id: "reg_activity_change", category: "registries", kind: "public_registry", weight: 60,
+    name: "Cambiaron de actividad económica",
+    for_who: "Software de gestión, consultoría, proveedores que acompañan un cambio de giro",
+    rationale: "Cuando una empresa registra una actividad principal nueva rearma su operación: proveedores, sistemas, permisos y equipo.",
+    decision_maker_titles: CEO_TITLES,
+    config: { event: "activity_change" } },
+  { id: "reg_size_change", category: "registries", kind: "public_registry", weight: 60,
+    name: "Cambiaron de tramo de tamaño",
+    for_who: "ERP, nómina, RR. HH., seguros, financiamiento para empresas que crecen",
+    rationale: "El registro la pasó a otro tramo de tamaño (más personas o más facturación): los procesos que servían de pequeña ya no dan abasto.",
+    decision_maker_titles: [...CEO_TITLES, "Chief Financial Officer"],
+    config: { event: "size_change", sizes: ["small", "medium", "large"] } },
 ];
 
 // ── Plantillas de consultas ─────────────────────────────────────────────────

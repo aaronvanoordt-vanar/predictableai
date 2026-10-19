@@ -21,6 +21,9 @@
  *   leadership         Apollo people search + días en el cargo      0
  *   website_visitors   Apollo people search + visitantes (cuenta propia) 0
  *   presence           Google Places Text Search                    SKU Enterprise de Google
+ *   public_registry    Registros públicos (CNPJ / DENUE / registro mercantil de
+ *                      Colombia): recién constituidas, o cambios de actividad o
+ *                      de tamaño entre dos corridas            CNPJá por página en Brasil; gratis MX/CO
  *
  * Por qué los detectores de EMPRESA usan la búsqueda de organizaciones y no
  * la de personas (2026-09-18): /mixed_people/api_search devuelve la
@@ -47,7 +50,13 @@ import { FOOTPRINT_SYSTEM, RESEARCH_SYSTEM, filterByWindow, shapeResearchCompani
 import {
   detectTech, detectedLabels, evaluateProbeRules, fetchDnsText, fetchHomepage, probeHeadline, probeNeeds, type ProbeRules,
 } from "./site-probe.ts";
-import { maxCompaniesOf, type DetectorKind } from "./radar-plan.ts";
+import { tickChampions } from "./champion-tick.ts";
+import { maxCompaniesOf, type DetectorKind, type RegistryEvent } from "./radar-plan.ts";
+import {
+  compactCompany, normalizeSearch, REGISTRIES, SIZE_LABEL, brState, mxState, registryForCountry,
+  type RegistryCompany, type RegistryCountry, type SizeBucket,
+} from "./registries.ts";
+import { RegistryUnavailable, registryConfigured, searchRegistry } from "./registry-fetch.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -79,6 +88,8 @@ export interface DetectorRow {
   config: Json;
   cursor: Json;
   weight: number;
+  /** radar_detectors.stats (lo lee champion_moves para su tope mensual). */
+  stats?: Json;
 }
 
 export interface TickContext {
@@ -98,12 +109,16 @@ export interface TickResult {
   cursor: Json;
   done: boolean;
   note?: string;
+  /** Claves que el motor mezcla en radar_detectors.stats (sobrevive a "Buscar ahora", que vacía el cursor). */
+  statsPatch?: Record<string, unknown>;
 }
 
 /** Cuánto suele tardar un tick de cada kind: el motor no arranca uno si no le queda ese tiempo. */
 export const TICK_ESTIMATE_MS: Record<DetectorKind, number> = {
   news: 100_000, tenders: 100_000, web_footprint: 100_000, hiring: 20_000, technographics: 20_000, site_probe: 45_000,
   funding: 20_000, leadership: 20_000, growth: 20_000, presence: 20_000, website_visitors: 20_000,
+  champion_moves: 95_000,
+  public_registry: 25_000,
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -646,6 +661,147 @@ async function tickPresence(t: TickContext): Promise<TickResult> {
 
 // ── dispatcher ──────────────────────────────────────────────────────────────
 
+// ── public_registry (registros públicos de empresas) ────────────────────────
+//
+// Recorre la población del ICP en el registro oficial de cada país del plan
+// (Brasil CNPJ por CNPJá, México DENUE, Colombia registro mercantil en
+// datos.gov.co), hasta `max_companies` por ciclo, por país y por región.
+//   new_companies    constituidas dentro de la ventana (filtro de fecha en
+//                    origen). México no aplica: el DENUE no publica la fecha.
+//   activity_change  la actividad registrada cambió desde la corrida anterior
+//   size_change      el tramo de tamaño cambió desde la corrida anterior
+// Para los cambios, cada empresa vista queda en registry_observations (solo
+// service role); la primera corrida solo toma la línea base y no emite nada.
+
+interface RegistryCursor { ci?: number; ri?: number; c?: string; n?: number }
+
+function regionsFor(country: RegistryCountry, regions: string[]): string[] {
+  const ok = regions.filter((r) => country === "Brazil" ? !!brState(r) : country === "Mexico" ? !!mxState(r) : true);
+  return ok.length ? ok : [""];
+}
+
+function registryCandidate(t: TickContext, c: RegistryCompany, headline: string, why: string, strength: Candidate["strength"], date: string): Candidate {
+  const cand = baseCandidate(null);
+  const meta = REGISTRIES[c.registry];
+  cand.name = (c.trade_name || c.legal_name).slice(0, 200);
+  cand.domain = c.domain;
+  cand.website = c.website || (c.domain ? "https://" + c.domain : "");
+  cand.country = c.country;
+  cand.industry = c.industries[0] || c.activity.description;
+  cand.employee_count = c.size.label;
+  cand.headline = headline.slice(0, 160);
+  cand.why_fit = why;
+  cand.strength = strength;
+  cand.signal_date = date || today();
+  const id = c.tax_id ? `${meta.tax_id_label} ${c.tax_id}` : `clave ${c.registry_id}`;
+  cand.evidence = [{
+    url: c.source_url,
+    summary: `${meta.label}: ${id}${c.activity.description ? " · " + meta.activity_label + " " + c.activity.code + " " + c.activity.description : ""}`.slice(0, 300),
+    published_at: date || today(),
+  }];
+  cand.facts = { registry: compactCompany(c) };
+  const titles = t.detector.config?.decision_maker_titles;
+  cand.decision_maker_titles = Array.isArray(titles) ? titles.slice(0, 8) : [];
+  // Sin dominio no hay decision makers que buscar en Apollo: el contacto es el del registro.
+  cand.decision_makers = c.domain ? undefined : [];
+  return cand;
+}
+
+async function registryChanges(t: TickContext, companies: RegistryCompany[], event: RegistryEvent): Promise<Candidate[]> {
+  if (!companies.length) return [];
+  const ids = companies.map((c) => c.registry_id);
+  const { data: prev, error } = await t.supa.from("registry_observations")
+    .select("registry, registry_id, activity_code, size_bucket")
+    .eq("detector_id", t.detector.id).in("registry_id", ids);
+  if (error) throw new Error("registry_observations: " + error.message + " (¿falta la migración 20261017000031_public_registries.sql?)");
+  const byId = new Map<string, { activity_code: string | null; size_bucket: string | null }>(
+    (Array.isArray(prev) ? prev : []).map((r: Json) => [`${r.registry}|${r.registry_id}`, r]),
+  );
+  const now = new Date().toISOString();
+  const { error: upErr } = await t.supa.from("registry_observations").upsert(companies.map((c) => ({
+    detector_id: t.detector.id, registry: c.registry, registry_id: c.registry_id,
+    activity_code: c.activity.code || null, size_bucket: c.size.bucket || null, last_seen_at: now,
+  })), { onConflict: "detector_id,registry,registry_id" });
+  if (upErr) throw new Error("registry_observations: " + upErr.message);
+  const out: Candidate[] = [];
+  const order: SizeBucket[] = ["micro", "small", "medium", "large"];
+  for (const c of companies) {
+    const p = byId.get(`${c.registry}|${c.registry_id}`);
+    if (!p) continue; // primera vez que la vemos: línea base
+    const meta = REGISTRIES[c.registry];
+    if (event === "activity_change" && p.activity_code && c.activity.code && p.activity_code !== c.activity.code) {
+      out.push(registryCandidate(t, c,
+        `Cambió de actividad: ${meta.activity_label} ${p.activity_code} → ${c.activity.code}`,
+        `El registro oficial muestra una actividad principal nueva (${c.activity.description || c.activity.code}): una empresa que cambia de giro rearma proveedores, sistemas y equipo.`,
+        "alta", today()));
+    }
+    if (event === "size_change" && p.size_bucket && c.size.bucket && p.size_bucket !== c.size.bucket) {
+      const grew = order.indexOf(c.size.bucket) > order.indexOf(p.size_bucket as SizeBucket);
+      out.push(registryCandidate(t, c,
+        `${grew ? "Creció" : "Bajó"} de tamaño: ${SIZE_LABEL[p.size_bucket as SizeBucket] || p.size_bucket} → ${SIZE_LABEL[c.size.bucket]}`,
+        grew
+          ? "El registro oficial la pasó a un tramo de tamaño mayor: más personas o más facturación, y procesos que ya no dan abasto."
+          : "El registro oficial la pasó a un tramo menor: está recortando y revisando gastos (sirve si vendes ahorro o eficiencia).",
+        grew ? "alta" : "media", today()));
+    }
+  }
+  return out;
+}
+
+async function tickPublicRegistry(t: TickContext): Promise<TickResult> {
+  const cfg = t.detector.config || {};
+  const event: RegistryEvent = cfg.event || "new_companies";
+  const withRegistry = t.countries.filter((c) => !!registryForCountry(c)) as RegistryCountry[];
+  if (!withRegistry.length) {
+    throw new RegistryUnavailable("El registro público no está configurado para tus países: hoy cubre Brasil, México y Colombia.");
+  }
+  const notes: string[] = [];
+  const countries = withRegistry.filter((c) => {
+    if (event === "new_companies" && c === "Mexico") { notes.push("México: el DENUE no publica la fecha de constitución"); return false; }
+    return registryConfigured(c);
+  });
+  if (!countries.length) {
+    if (notes.length) return { candidates: [], cursor: {}, done: true, note: notes.join(" · ") };
+    throw new RegistryUnavailable("El registro de tus países no está configurado en la plataforma (CNPJA_API_KEY para Brasil, INEGI_DENUE_TOKEN para México).");
+  }
+  const cur: RegistryCursor = t.detector.cursor || {};
+  let ci = Math.max(0, Number(cur.ci) || 0), ri = Math.max(0, Number(cur.ri) || 0);
+  if (ci >= countries.length) return { candidates: [], cursor: {}, done: true };
+  const country = countries[ci];
+  const regions = regionsFor(country, Array.isArray(cfg.regions) ? cfg.regions : []);
+  if (ri >= regions.length) ri = 0;
+  const industries = Array.isArray(cfg.industries) && cfg.industries.length ? cfg.industries : t.ctx.targets.industries;
+  const windowDays = Number(cfg.window_days) || 60;
+  const q = normalizeSearch({
+    country, industries, activity_codes: cfg.activity_codes || [], sizes: cfg.sizes || [], region: regions[ri],
+    founded_from: event === "new_companies" ? daysAgo(windowDays) : "", active_only: true,
+    require_phone: cfg.require_contact === "phone", require_email: cfg.require_contact === "email",
+    limit: country === "Brazil" ? 25 : 50, cursor: cur.c || "",
+  })!;
+  const res = await searchRegistry(q);
+  let candidates: Candidate[];
+  if (event === "new_companies") {
+    const label = (c: RegistryCompany) => c.registry === "rues" ? "Matriculada" : "Inició actividad";
+    candidates = res.companies.filter((c) => c.founded_on).map((c) => registryCandidate(t, c,
+      `${label(c)} el ${c.founded_on}${c.activity.description ? " · " + c.activity.description : ""}`,
+      `Empresa nueva en tu ICP según el registro oficial (${REGISTRIES[c.registry].label}): en sus primeros meses elige proveedores, herramientas y banco por primera vez.`,
+      "alta", c.founded_on));
+  } else {
+    candidates = await registryChanges(t, res.companies, event);
+  }
+  const seen = (Number(cur.n) || 0) + res.scanned;
+  const budget = maxCompaniesOf(cfg);
+  let cursor: RegistryCursor;
+  if (res.next_cursor && seen < budget) cursor = { ci, ri, c: res.next_cursor, n: seen };
+  else if (ri + 1 < regions.length) cursor = { ci, ri: ri + 1, c: "", n: 0 };
+  else if (ci + 1 < countries.length) cursor = { ci: ci + 1, ri: 0, c: "", n: 0 };
+  else cursor = {};
+  const done = !Object.keys(cursor).length;
+  const where = [country, regions[ri]].filter(Boolean).join(" / ");
+  const note = [`${res.scanned} registros leídos en ${where}, ${candidates.length} señales`, ...res.notes, ...notes].join(" · ");
+  return { candidates, cursor, done, note };
+}
+
 export async function runTick(t: TickContext): Promise<TickResult> {
   switch (t.detector.kind) {
     case "news":
@@ -659,5 +815,7 @@ export async function runTick(t: TickContext): Promise<TickResult> {
     case "growth": return tickGrowth(t);
     case "presence": return tickPresence(t);
     case "website_visitors": return tickWebsiteVisitors(t);
+    case "champion_moves": return tickChampions(t);
+    case "public_registry": return tickPublicRegistry(t);
   }
 }
