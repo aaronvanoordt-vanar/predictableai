@@ -29,7 +29,13 @@
  *                       (protección de calidad, desactivable).
  *           email     → Apollo: emailer_messages + send_now desde la cuenta
  *                       remitente de la campaña (mensaje individual, no
- *                       secuencia: así cada lead recibe SU texto).
+ *                       secuencia: así cada lead recibe SU texto), o los
+ *                       buzones propios del usuario si la campaña o el canal
+ *                       eligieron `mailboxes` (Gmail / Microsoft 365 / SMTP,
+ *                       con rotación, tope por buzón, mismo hilo y
+ *                       List-Unsubscribe; ver _shared/mailbox-send.ts). Una
+ *                       dirección que rebotó en duro desde un buzón se omite
+ *                       con cualquiera de los dos.
  *           linkedin_connect / linkedin_message → Dripify: sube el perfil del
  *                       lead a la campaña de Dripify elegida en el paso
  *                       (settings.dripify_campaign_id) o a la diseñada en
@@ -93,6 +99,9 @@ import * as dripify from "../_shared/dripify.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 import * as gmail from "../_shared/gmail.ts";
+import { hardBounceOf, loadEmailSettings, MailboxError, sendViaMailboxes } from "../_shared/mailbox-send.ts";
+import type { EmailSettings } from "../_shared/mailbox-send.ts";
+import { resolveEmailProvider } from "../_shared/mailbox-rotation.ts";
 import * as suppression from "../_shared/suppression.ts";
 import * as contactRules from "../_shared/contact-rules.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
@@ -295,6 +304,7 @@ interface Ctx {
   dripifyCampaignsByUser: Map<string, dripify.DripifyCampaign[] | null>;
   apolloByUser: Map<string, apolloAuth.ApolloAuth | null>;
   gmailByUser: Map<string, { token: string; email: string } | null>;
+  emailSettingsByUser: Map<string, EmailSettings>;
   sentToday: Map<string, number>; // `${user}:${channel}` → envíos en 24 h
   watiProbed: Set<string>; // usuarios con bloqueo de cuenta vencido que ya mandaron su envío de prueba en esta corrida
   templateProbed: Set<string>; // `${user}:${plantilla}` con marca de falla vencida que ya mandó su envío de prueba
@@ -377,6 +387,12 @@ async function gmailReply(ctx: Ctx, userId: string, threadId: string | null, con
     console.warn("[campaign-run] gmail thread", threadId, (e as Error)?.message ?? e);
     return null;
   }
+}
+
+/** Preferencia del canal Email (Apollo o buzones propios), una vez por run. */
+async function emailSettingsFor(ctx: Ctx, userId: string): Promise<EmailSettings> {
+  if (!ctx.emailSettingsByUser.has(userId)) ctx.emailSettingsByUser.set(userId, await loadEmailSettings(ctx.db, userId));
+  return ctx.emailSettingsByUser.get(userId)!;
 }
 
 /**
@@ -493,9 +509,11 @@ function channelKey(stepChannel: string): string {
 // hold_short → como hold pero en 1 h (campaña de LinkedIn pendiente de vincular).
 // stop       → el enrolamiento pasa a error (el lead ya no existe, fallo estructural).
 // wait / wait_short → espera un mensaje IA (aprobación o generación en curso).
+// defer      → reintentar a una hora precisa (`retryAt`) sin avanzar: buzones
+//              propios en su tope diario, en su separación o fuera de horario.
 // wait_call  → la tarea de llamar espera al SDR (sin evento ni error_detail:
 //              no es algo que haya que "reintentar"); vuelve a mirar en `retryAt`.
-type StepErrorMode = "skip" | "fail" | "hold" | "hold_short" | "stop" | "wait" | "wait_short" | "wait_call";
+type StepErrorMode = "skip" | "fail" | "hold" | "hold_short" | "stop" | "wait" | "wait_short" | "defer" | "wait_call";
 class StepError extends Error {
   mode: StepErrorMode;
   retryAt: Date | null;
@@ -801,6 +819,15 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
       subject = t.subject; bodyText = t.body.replace(new RegExp(AGENDA_RE.source, "gi"), agenda); messageRowId = t.messageId;
     }
     if (!subject.trim() || !bodyText.trim()) throw new StepError("No hay email personalizado generado para este lead.", "skip");
+    // Las bajas y la lista «No contactar» ya se revisaron (assertNotSuppressed).
+    // Una dirección que rebotó en duro desde un buzón propio tampoco recibe
+    // más correos de campaña, con cualquiera de los dos proveedores.
+    const bounced = await hardBounceOf(db, en.user_id, String(member.email));
+    if (bounced) throw new StepError(`No se envía el email: ${bounced}. Sigue con el siguiente paso.`, "skip");
+    if (resolveEmailProvider(sender, await emailSettingsFor(ctx, en.user_id)) === "mailboxes") {
+      await sendStepFromMailboxes(ctx, en, campaign, member, step, subject, bodyText, messageRowId);
+      return;
+    }
     const auth = await apolloFor(ctx, en.user_id);
     if (!auth) throw new StepError("Email no está conectado: conecta tu cuenta de Apollo.", "hold");
     // La key compartida de la beta es OTRA cuenta de Apollo: enviar con ella
@@ -911,6 +938,55 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
   } else {
     throw new StepError(`Canal desconocido en la cadencia: ${step.channel}.`, "skip");
   }
+}
+
+/**
+ * Paso de email por los buzones propios del usuario (_shared/mailbox-send.ts):
+ * rotación, tope por buzón, mismo hilo en los seguimientos y List-Unsubscribe.
+ * La Bandeja (inbox_messages, provider 'mailbox') y email_sends los escribe
+ * sendViaMailboxes; acá quedan el evento, las referencias y el cobro, igual
+ * que con Apollo. Respuestas y rebotes los registra mailbox-sync.
+ */
+async function sendStepFromMailboxes(ctx: Ctx, en: Json, campaign: Json, member: Json, step: StepLike, subject: string, bodyText: string, messageRowId: string | null) {
+  const db = ctx.db;
+  const sender = campaign.sender ?? {};
+  let out;
+  try {
+    out = await sendViaMailboxes(db, {
+      userId: en.user_id, member, to: String(member.email), subject, text: bodyText, kind: "campaign",
+      campaignId: campaign.id, enrollmentId: en.id,
+      allowIds: Array.isArray(sender.mailbox_ids) ? sender.mailbox_ids.map(String) : null,
+      newThread: !!step.settings?.email_new_thread,
+      senderName: sender.name || null,
+      now: ctx.now,
+      inboxPayload: { campaign_id: campaign.id, step_position: step.position, node_id: step.node_id },
+    });
+  } catch (e) {
+    if (e instanceof MailboxError) {
+      // Rechazo del destinatario en el envío (550 en RCPT, dirección inválida):
+      // el paso queda `failed` y el lead sigue con el siguiente.
+      const mode: StepErrorMode = e.kind === "auth" || e.kind === "config" ? "hold" : e.kind === "temporary" ? "hold_short" : "fail";
+      throw new StepError(e.message, mode);
+    }
+    throw e;
+  }
+  if (!out.ok) {
+    if (out.suppressed) throw new StepError(out.reason + " Sigue con el siguiente paso.", "skip");
+    if (out.noMailbox) throw new StepError("Email no está conectado: conecta un buzón propio (Campañas → Email) o vuelve a enviar con Apollo.", "hold");
+    if (out.retryAt) throw new StepError(out.reason, "defer", out.retryAt);
+    throw new StepError(out.reason, "skip");
+  }
+  const messageId = String(out.send.message_id);
+  const refs = { ...(en.provider_refs ?? {}), email_provider: "mailboxes", mailbox_id: out.mailbox.id, email_last_message_id: messageId };
+  en.provider_refs = refs;
+  await db.from("campaign_enrollments").update({ provider_refs: refs }).eq("id", en.id);
+  await event(ctx, en, "email", "sent", { provider_message_id: messageId, detail: `${String(out.send.subject ?? subject).slice(0, 160)} · desde ${out.mailbox.email}`, step_position: step.position, node_id: step.node_id, payload: { provider: "mailbox", mailbox_id: out.mailbox.id } });
+  if (messageRowId) await db.from("campaign_messages").update({ status: "sent", sent_at: ctx.now.toISOString() }).eq("id", messageRowId);
+  ctx.sentToday.set(`${en.user_id}:email`, (await sentLast24h(ctx, en.user_id, "email")) + 1);
+  if (["no_contactado", "en_campana"].includes(member.contact_status)) {
+    await db.from("prospect_list_members").update({ contact_status: "saludo_enviado", status_changed_at: ctx.now.toISOString() }).eq("id", member.id);
+  }
+  await spendCredits(ctx, en);
 }
 
 /**
@@ -1081,6 +1157,13 @@ async function handleStepError(ctx: Ctx, en: Json, step: StepLike, e: unknown): 
     const hours = mode === "hold" ? 6 : 1;
     if (en.error_detail !== err.message) await event(ctx, en, ch, "skipped", { detail: err.message + ` Se reintenta en ${hours === 1 ? "1 hora" : hours + " horas"}.`, ...meta });
     await finish(ctx, en, { status: "active", next_run_at: new Date(ctx.now.getTime() + hours * 60 * 60 * 1000).toISOString(), error_detail: err.message });
+    return false;
+  }
+  if (mode === "defer") {
+    // Sin evento: el motivo queda a la vista en el enrolamiento y se reintenta
+    // a la hora exacta en que el buzón vuelve a estar libre.
+    const at = err.retryAt && err.retryAt > ctx.now ? err.retryAt : new Date(ctx.now.getTime() + 15 * 60 * 1000);
+    await finish(ctx, en, { status: "active", next_run_at: at.toISOString(), error_detail: err.message });
     return false;
   }
   if (mode === "wait_call") {
@@ -1465,6 +1548,8 @@ async function syncApolloEmail(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
     .eq("channel", "email").eq("type", "sent")
     .gte("created_at", since)
     .not("provider_message_id", "is", null)
+    // Los envíos por buzones propios no son de Apollo: los sigue mailbox-sync.
+    .is("payload->>provider", null)
     .is("payload->>apollo_done", null);
   if (opts.userId) q = q.eq("user_id", opts.userId);
   if (!opts.force) q = q.or(`payload->>apollo_checked_at.is.null,payload->>apollo_checked_at.lt.${checkedBefore}`);
@@ -1582,7 +1667,7 @@ Deno.serve(async (req) => {
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, { auth: { persistSession: false } });
   const now = new Date();
-  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), dripifyCampaignsByUser: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), sentToday: new Map(), watiProbed: new Set(), templateProbed: new Set(), campaignCache: new Map(), agendaByUser: new Map() };
+  const ctx: Ctx = { db, now, watiByUser: new Map(), dripifyByUser: new Map(), dripifyCampaignsByUser: new Map(), apolloByUser: new Map(), gmailByUser: new Map(), emailSettingsByUser: new Map(), sentToday: new Map(), watiProbed: new Set(), templateProbed: new Set(), campaignCache: new Map(), agendaByUser: new Map() };
 
   // «Sincronizar todo» de la Bandeja (la llama inbox-send con la service role):
   // solo email (Apollo) y LinkedIn (Dripify) de ESE usuario, sin esperar el
