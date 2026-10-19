@@ -1,11 +1,15 @@
--- Solo lectura: resumen por cadencia de las respuestas de schedule-intel-hub de las 07:00 (sin user_id).
-SELECT r.created::text AS at, r.status_code AS status, k.key AS cadence,
-       k.value->>'skipped' AS skipped, left(k.value->>'reason', 80) AS reason,
-       k.value->>'users_triggered' AS users_triggered,
-       (SELECT count(*) FROM jsonb_array_elements(coalesce(k.value->'outcomes', '[]'::jsonb)) o WHERE o->>'ok' = 'true') AS ok,
-       (SELECT string_agg(DISTINCT coalesce(o->>'status', 'err'), ',') FROM jsonb_array_elements(coalesce(k.value->'outcomes', '[]'::jsonb)) o) AS statuses
-  FROM net._http_response r
-  CROSS JOIN LATERAL jsonb_each(coalesce(r.content::jsonb->'results', '{}'::jsonb)) k
- WHERE r.created BETWEEN '2026-10-19 06:59:30+00' AND '2026-10-19 07:06:00+00'
-   AND r.content::text LIKE '%"ran_at"%'
-ORDER BY 1, 3;
+-- Solo lectura: cuántas cuentas con contexto tendrían refresco programado del Hub, por motivo (solo conteos).
+WITH intake AS (
+  SELECT DISTINCT user_id FROM public.intel_hub_intake
+   WHERE what_to_know IS NOT NULL AND what_to_know <> ''
+)
+SELECT 'con_contexto' AS grupo, count(*) AS n FROM intake
+UNION ALL
+SELECT 'unlimited', count(*) FROM intake i JOIN public.user_credits c USING (user_id) WHERE c.unlimited
+UNION ALL
+SELECT 'unlimited_espacio_cliente', count(*) FROM intake i JOIN public.user_credits c USING (user_id)
+ WHERE c.unlimited AND public.is_workspace_account(i.user_id)
+UNION ALL
+SELECT 'subscripcion_' || s.plan || '_' || s.status, count(*) FROM intake i JOIN public.subscriptions s USING (user_id) GROUP BY s.plan, s.status
+UNION ALL
+SELECT 'current_plan_' || public.current_plan(user_id), count(*) FROM intake GROUP BY public.current_plan(user_id);
