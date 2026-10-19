@@ -33,7 +33,7 @@
   // tocar la sesión `sb-*`, que la maneja el SDK).
   var USER_CACHE_KEYS = [
     'predictable_brand', 'predictable_tour_v1', 'px_ai_engines', 'prospecting_filters_v1',
-    'predictable_pros_tab', 'coda_pestel_client_id', 'apollo_lists_imported_v1', 'apollo_lists',
+    'predictable_pros_tab', 'apollo_lists_imported_v1', 'apollo_lists',
     'ihx-cadence',
   ];
 

@@ -220,7 +220,7 @@ html[data-rail="1"] .user-dropdown { left: calc(var(--rail-w) + 6px); right: aut
 /* Títulos de sección DENTRO de un módulo (no la cabecera de página, que ya
    es el <div class="topbar"> compartido — Radar, Prospección y Clientes
    también lo usan desde 2026-09-20, ver index.html). */
-.coda-section-title, .ihx-mod-title, .ccx-block-title {
+.ihx-mod-title, .ccx-block-title {
   font-size: 24px !important; font-weight: 700 !important; letter-spacing: -.035em !important; line-height: 1.1 !important;
 }
 /* Densidad: tablas y filas de contactos más compactas */
@@ -233,7 +233,7 @@ html[data-rail="1"] .user-dropdown { left: calc(var(--rail-w) + 6px); right: aut
 #page-pro-main { --module-accent: var(--cyan); }
 #page-ventas-coach, #page-ventas-reportes, #page-crm { --module-accent: var(--green); }
 #page-clients { --module-accent: var(--purple); }
-#page-radar, #page-mi-dashboard, #page-mi-research, #page-coda-ai, #page-ai-training, #page-developers { --module-accent: var(--accent-2); }
+#page-radar, #page-mi-dashboard, #page-mi-research, #page-ai-training, #page-developers { --module-accent: var(--accent-2); }
 #page-settings { --module-accent: var(--ink-4); }
 #page-integrations { --module-accent: var(--purple); }
 .settings-container { margin-left: auto; margin-right: auto; }
@@ -242,16 +242,16 @@ html[data-rail="1"] .user-dropdown { left: calc(var(--rail-w) + 6px); right: aut
 .btn { border-radius: 999px; padding: 8px 16px; font-size: 13px; font-weight: 600; letter-spacing: -.005em; }
 .btn-sm, .btn.sm { padding: 6px 12px; font-size: 12px; }
 .btn-primary,
-.settings-btn-primary, .ctxgate-btn, .coda-btn-primary, .ihx-btn-generate, .hub-unlock-btn, .miforms-popup-cta, .ccx-confirm-btn {
+.settings-btn-primary, .ctxgate-btn, .ihx-btn-generate, .hub-unlock-btn, .miforms-popup-cta, .ccx-confirm-btn {
   background: var(--grad-ai) !important; background-image: var(--grad-ai) !important; color: #fff !important; border: 0 !important;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 8px 22px -8px rgba(31,75,255,.6) !important;
 }
-.btn-primary:hover, .settings-btn-primary:hover:not([disabled]), .ctxgate-btn:hover, .coda-btn-primary:hover {
+.btn-primary:hover, .settings-btn-primary:hover:not([disabled]), .ctxgate-btn:hover {
   filter: brightness(1.06);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 12px 28px -8px rgba(31,75,255,.7) !important;
 }
 .btn-primary::after { display: none; }
-.btn-ghost, .btn.outline, .settings-btn-secondary, .logout-btn-cancel, .coda-btn:not(.coda-btn-primary) {
+.btn-ghost, .btn.outline, .settings-btn-secondary, .logout-btn-cancel {
   background: var(--surface); border: 1px solid var(--glass-edge); color: var(--ink-2);
   box-shadow: inset 0 1px 0 var(--glass-hi), 0 1px 2px rgba(10,10,15,.04);
   border-radius: 999px;
@@ -259,7 +259,7 @@ html[data-rail="1"] .user-dropdown { left: calc(var(--rail-w) + 6px); right: aut
 .btn-ghost:hover, .btn.outline:hover { background: var(--surface-raised); color: var(--ink); border-color: var(--glass-hi); }
 .btn-teal { background: linear-gradient(135deg, #22B8D8, #0891B2); border: 0; box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 8px 20px -8px rgba(8,145,178,.6); }
 .btn-jade { background: linear-gradient(135deg, #22C07A, #0EA968); border: 0; box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 8px 20px -8px rgba(14,169,104,.6); }
-.settings-btn, .logout-btn, .coda-btn, .ctxgate-btn, .mc-mode-btn { border-radius: 999px; }
+.settings-btn, .logout-btn, .ctxgate-btn, .mc-mode-btn { border-radius: 999px; }
 .pill { border-radius: 999px; }
 .tabs { background: var(--surface2); border: 0; border-radius: 999px; padding: 4px; }
 .tab { border-radius: 999px; font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; text-transform: none; letter-spacing: 0; padding: 6px 14px; }
@@ -492,7 +492,7 @@ html[data-theme="dark"] .rf-step:hover { box-shadow: inset 0 1px 0 rgba(255,255,
    INTERIORES (2026-09-20): el vidrio dentro de cada módulo.
    Los módulos inyectan su CSS después de este archivo; se gana por
    especificidad con el id del shell (#ih-research-shell, #ih-v2-shell,
-   #clients-shell, #radar-shell, #coda-shell) y no con !important salvo
+   #clients-shell, #radar-shell) y no con !important salvo
    donde el módulo pone estilos en línea.
    ═══════════════════════════════════════════════════════════════════════ */
 
@@ -759,46 +759,6 @@ html[data-theme="dark"] { --field: rgba(255,255,255,.06); --field-edge: rgba(255
 #radar-shell .rl-field > input[type=range] { width: 100%; }
 @media (max-width: 840px) { #radar-shell .rl-wrap { padding: 4px 14px 40px; } }
 
-/* ── Contexto global (#coda-shell): sobrio, tipográfico ──────────────── */
-#coda-shell .coda-wrap { padding: 4px 24px 48px; max-width: none; }
-#coda-shell .coda-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-left: 3px solid var(--module-accent); padding-left: 14px; margin: 8px 0 16px; }
-#coda-shell .coda-head-title { font-size: 24px; font-weight: 700; letter-spacing: -.035em; line-height: 1.1; }
-#coda-shell .coda-head-sub { font-size: 13px; color: var(--ink-3); margin-top: 4px; max-width: 760px; line-height: 1.5; }
-#coda-shell .coda-intro { background: var(--pane); border: 1px solid var(--pane-edge); border-radius: 18px; box-shadow: inset 0 1px 0 var(--pane-hi), var(--pane-shadow); margin-bottom: 22px; }
-#coda-shell .coda-intro-badge { color: var(--ink-3); background: var(--field); border: 1px solid var(--field-edge); border-radius: 999px; font-weight: 600; letter-spacing: .04em; }
-#coda-shell .coda-section { margin-bottom: 26px; padding: 22px; border-radius: 22px; background: var(--pane); border: 1px solid var(--pane-edge); box-shadow: inset 0 1px 0 var(--pane-hi), var(--pane-shadow); }
-#coda-shell .coda-section-title { font-size: 19px; font-weight: 700; letter-spacing: -.03em; }
-#coda-shell .coda-kicker { font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--c, var(--accent-2)); background: color-mix(in srgb, var(--c, var(--accent)) 10%, transparent); border: 1px solid color-mix(in srgb, var(--c, var(--accent)) 22%, transparent); border-radius: 999px; padding: 4px 10px; }
-#coda-shell .coda-section-desc { font-size: 13px; }
-#coda-shell .coda-select { border-radius: 12px; background: var(--field); border: 1px solid var(--field-edge); }
-#coda-shell .coda-select-opt { border-radius: 999px; }
-#coda-shell .coda-btn { border-radius: 999px; }
-#coda-shell .coda-dim, #coda-shell .coda-foda-quad, #coda-shell .coda-came-quad {
-  border-radius: 18px; background: var(--field); border: 1px solid var(--field-edge);
-  border-top: 1px solid var(--field-edge); border-left: 1px solid var(--field-edge);
-  box-shadow: none; position: relative; overflow: hidden;
-}
-#coda-shell .coda-dim::before, #coda-shell .coda-foda-quad::before, #coda-shell .coda-came-quad::before {
-  content: ''; position: absolute; left: 16px; right: 16px; top: 0; height: 2px; border-radius: 0 0 2px 2px;
-  background: var(--c, var(--accent)); opacity: .7;
-}
-#coda-shell .coda-dim-letter, #coda-shell .coda-foda-letter {
-  background: var(--surface-raised); color: var(--c, var(--accent)); font-family: var(--font-mono); font-weight: 600; font-size: 16px;
-  border-radius: 12px; box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-1); border: 1px solid var(--glass-edge);
-}
-#coda-shell .coda-dim-name, #coda-shell .coda-foda-name { font-weight: 700; letter-spacing: -.015em; }
-#coda-shell .coda-foda-origin { color: var(--ink-4); }
-#coda-shell .coda-factor, #coda-shell .coda-came-item { background: var(--surface-raised); border-radius: 12px; box-shadow: inset 0 1px 0 var(--glass-hi), 0 1px 2px rgba(10,10,15,.04); }
-#coda-shell .coda-impact { border-radius: 999px; }
-#coda-shell .coda-factor-action { color: var(--accent-ink); }
-#coda-shell .coda-came-badge { background: var(--surface-raised); color: var(--c, var(--accent)); font-family: var(--font-mono); font-weight: 600; font-size: 14px; border: 1px solid var(--glass-edge); box-shadow: inset 0 1px 0 var(--glass-hi); border-radius: 12px; }
-#coda-shell .coda-came-quad-name { color: var(--ink); }
-#coda-shell .coda-foda-ta { border-radius: 12px; background: var(--surface-raised); border: 1px solid var(--field-edge); }
-#coda-shell .coda-lg-dot { border-radius: 50%; width: 8px; height: 8px; }
-#coda-shell .coda-came-placeholder { border-radius: 16px; background: var(--field); }
-#coda-shell .coda-came-arrow { font-family: var(--font-mono); color: var(--ink-4); }
-#coda-shell .coda-dot-pulse { background: var(--accent-2); }
-@media (max-width: 840px) { #coda-shell .coda-wrap { padding: 4px 14px 40px; } #coda-shell .coda-section { padding: 16px; } }
 
 /* Etiquetas de campos del contexto: sans, sin mayúsculas ni tracking mono */
 #ih-research-shell .ihx-field > span, #ih-research-shell .ihx-source-lbl, #ih-research-shell .ccx-lbl, #ih-research-shell .ccx-field > span, #ih-research-shell label {
