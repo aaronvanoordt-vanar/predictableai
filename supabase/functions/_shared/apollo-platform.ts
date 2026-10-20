@@ -63,6 +63,26 @@ export function sanitizePlatformSearch(data: unknown): unknown {
 }
 
 /**
+ * Filtros de búsqueda que apuntan a lo guardado en UNA cuenta de Apollo
+ * (sus listas, sus personas tipo, «guardadas por tu equipo», el dueño…).
+ * Buscar → «Importar búsqueda de Apollo» reenvía tal cual los filtros del
+ * enlace (js/apollo-search-url.js); con la key compartida esos filtros
+ * leerían las listas de la cuenta común — de otro cliente —, así que se
+ * quitan antes de llegar a Apollo. Con el Apollo propio pasan.
+ */
+const ACCOUNT_SCOPED_FILTER = /(label|search_list|persona|prospected_by|owner|account_stage|contact_stage)/;
+
+export function stripAccountScopedFilters(body: Json): { body: Json; removed: string[] } {
+  const out: Json = {};
+  const removed: string[] = [];
+  for (const [k, v] of Object.entries(body ?? {})) {
+    if (ACCOUNT_SCOPED_FILTER.test(k)) removed.push(k);
+    else out[k] = v;
+  }
+  return { body: out, removed };
+}
+
+/**
  * ¿Los `apollo_contact_id` ya guardados del usuario son de OTRA cuenta de
  * Apollo? Pasa al conectar su Apollo por primera vez (los creó la cuenta
  * compartida) o al cambiar a una cuenta distinta. Un id de contacto solo

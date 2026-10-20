@@ -719,6 +719,9 @@
       dept_counts: [], // [{key,min,max}]
       growth_min: '', growth_max: '', growth_months: '',
       naics_codes: [], not_naics_codes: [], sic_codes: [], not_sic_codes: [],
+      // Filtros de un enlace de Apollo importado que Buscar no tiene como
+      // control: viajan tal cual (snake_case de la API). js/apollo-search-url.js.
+      apollo_extra: {},
     };
   }
 
@@ -754,6 +757,7 @@
       var v = saved[k];
       if (v == null) return;
       if (Array.isArray(d[k])) { if (Array.isArray(v)) d[k] = v; }
+      else if (k === 'apollo_extra') { if (typeof v === 'object' && !Array.isArray(v)) d[k] = v; }
       else if (typeof d[k] === 'boolean') d[k] = !!v;
       else if (typeof v === 'string' || typeof v === 'number') d[k] = String(v);
     });
@@ -771,7 +775,10 @@
   // Maps UI filter state → Apollo payload (param names verbatim, only
   // non-empty values).
   function buildSearchFilters(f) {
-    var p = {};
+    // Lo importado de Apollo va primero; cada control de Buscar lo pisa si
+    // toca la misma clave.
+    var p = f && f.apollo_extra && typeof f.apollo_extra === 'object' ? JSON.parse(JSON.stringify(f.apollo_extra)) : {};
+    delete p.page; delete p.per_page;
     function num(v) { if (v === '' || v == null) return null; var n = Number(v); return isFinite(n) ? n : null; }
     function arr(a) { return Array.isArray(a) ? a.filter(Boolean) : []; }
     function range(minV, maxV) {
@@ -1028,6 +1035,36 @@
         list.appendChild(h('div', { style: 'font-size:12px;color:var(--red)', text: errMsg(e) }));
       });
     });
+
+    // 0b. Filtros importados de un enlace de Apollo que viajan tal cual.
+    if (Object.keys(f().apollo_extra || {}).length) {
+      section('Filtros importados de Apollo', function (x) { return Object.keys(x.apollo_extra || {}).length; }, function (body) {
+        var parser = window.ApolloSearchUrl;
+        var listBox = h('div', { style: 'display:flex;flex-direction:column;gap:4px' });
+        function renderExtra() {
+          listBox.innerHTML = '';
+          var extra = f().apollo_extra || {};
+          var rows = parser ? parser.describeExtra(extra) : Object.keys(extra).map(function (k) { return { key: k, label: k, values: [] }; });
+          if (!rows.length) {
+            listBox.appendChild(h('div', { style: 'font-size:12px;color:var(--text3)', text: 'Ya quitaste todos los filtros importados.' }));
+            return;
+          }
+          rows.forEach(function (x) {
+            var del = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '×', title: 'Quitar este filtro', 'aria-label': 'Quitar ' + x.label });
+            del.addEventListener('click', function () { delete f().apollo_extra[x.key]; changed(); renderExtra(); });
+            listBox.appendChild(h('div', { style: 'display:flex;align-items:flex-start;gap:6px;font-size:12.5px;color:var(--text2);line-height:1.4;word-break:break-word' },
+              h('div', { style: 'flex:1;min-width:0' }, h('b', { text: x.label + ': ' }), h('span', { class: 'notranslate', text: x.values.join(', ') })),
+              del));
+          });
+        }
+        renderExtra();
+        body.appendChild(listBox);
+        body.appendChild(h('div', {
+          style: 'font-size:11.5px;color:var(--text3);margin-top:6px;line-height:1.4',
+          text: 'Se envían a Apollo tal como estaban en tu búsqueda. Compara el total con el que muestra Apollo.',
+        }));
+      }, true);
+    }
 
     // 1. Excluir listas — no volver a mostrar a quien ya está guardado
     section('Excluir listas', excludedListCount, function (body) {

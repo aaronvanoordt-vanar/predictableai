@@ -47,7 +47,7 @@ import type { ApolloAuth } from "../_shared/apollo-auth.ts";
 import { apolloBillableCount, CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
 import { platformRevealsLeft, TRIAL_REVEAL_MESSAGE } from "../_shared/trial-limits.ts";
-import { blockedInPlatformMode, PLATFORM_SKIPPED_CONTACT, sanitizePlatformSearch } from "../_shared/apollo-platform.ts";
+import { blockedInPlatformMode, PLATFORM_SKIPPED_CONTACT, sanitizePlatformSearch, stripAccountScopedFilters } from "../_shared/apollo-platform.ts";
 import {
   APOLLO_LIST_ENDPOINTS,
   apolloListsAllowed,
@@ -237,6 +237,12 @@ Deno.serve(async (req) => {
   // La cuenta compartida es la misma para todos los clientes: lo que uno
   // guarda ahí lo ve el siguiente (ver _shared/apollo-platform.ts). El lead
   // se queda solo en Predictable, con su RLS por dueño.
+  // Filtros importados de Apollo que leen listas de UNA cuenta: con la key
+  // compartida esa cuenta es de todos (ver _shared/apollo-platform.ts).
+  if (auth.mode === "platform" && endpoint === "/mixed_people/api_search") {
+    body = stripAccountScopedFilters(body).body;
+  }
+
   if (auth.mode === "platform" && blockedInPlatformMode(endpoint)) {
     return json(PLATFORM_SKIPPED_CONTACT, 200, { ...cors, "X-Apollo-Auth-Mode": auth.mode, "X-Apollo-Account-Email": "" });
   }

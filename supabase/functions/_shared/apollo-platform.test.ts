@@ -6,7 +6,7 @@
  */
 
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { blockedInPlatformMode, contactAsPerson, contactIdsFromOtherAccount, sanitizePlatformSearch } from "./apollo-platform.ts";
+import { blockedInPlatformMode, contactAsPerson, contactIdsFromOtherAccount, sanitizePlatformSearch, stripAccountScopedFilters } from "./apollo-platform.ts";
 
 Deno.test("POST /contacts no llega a la cuenta compartida", () => {
   assert(blockedInPlatformMode("/contacts"));
@@ -70,4 +70,18 @@ Deno.test("los contactos se olvidan al pasar a otra cuenta de Apollo, no al reco
   assert(!contactIdsFromOtherAccount({ apollo_user_id: "u1" }, "u1"), "reconectó la misma");
   assert(!contactIdsFromOtherAccount({ apollo_user_id: 7 }, "7"));
   assert(contactIdsFromOtherAccount({ apollo_user_id: "u1" }, null), "sin id nuevo no se puede probar que sea la misma");
+});
+
+Deno.test("con la key compartida no viajan filtros que leen listas de la cuenta común", () => {
+  const { body, removed } = stripAccountScopedFilters({
+    person_titles: ["ceo"],
+    q_not_organization_search_list_id: "abc",
+    contact_label_ids: ["x"],
+    prospected_by_current_team: ["no"],
+    person_persona_ids: ["p"],
+    organization_industry_tag_ids: ["5567cd4773696439b10b0000"],
+    page: 1,
+  });
+  assertEquals(body, { person_titles: ["ceo"], organization_industry_tag_ids: ["5567cd4773696439b10b0000"], page: 1 });
+  assertEquals(removed.sort(), ["contact_label_ids", "person_persona_ids", "prospected_by_current_team", "q_not_organization_search_list_id"]);
 });
