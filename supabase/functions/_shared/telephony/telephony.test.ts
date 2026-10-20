@@ -2,7 +2,7 @@
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { countryOfE164, sameNumber, toE164 } from "./phone.ts";
 import * as twilio from "./twilio.ts";
-import { normalizeCdr } from "./cloudtalk.ts";
+import { normalizeCdr, parseAgents, pickAgent } from "./cloudtalk.ts";
 import { normalizeCall, transcriptText } from "./aircall.ts";
 import { normalizeEvent, verifyHs512 } from "./ringover.ts";
 import { adapterFor, catalog, PROVIDERS } from "./registry.ts";
@@ -207,4 +207,13 @@ Deno.test("resultado: qué detiene la cadencia y qué no", () => {
     assert(!outcomeEffect(o).from.includes("dado_de_baja"));
     assert(!outcomeEffect(o).from.includes("reunion_tomada"));
   }
+});
+
+Deno.test("cloudtalk: agentes por ID o por email", () => {
+  const agents = parseAgents({ responseData: { data: [{ Agent: { id: 512, email: "Giuseppe@Vanar.com", firstname: "Giuseppe", lastname: "Negro" } }, { Agent: { id: 77, email: "aaron@vanarsi.com" } }] } });
+  assertEquals(agents.length, 2);
+  assertEquals(pickAgent(agents, "giuseppe@vanar.com")?.id, "512");
+  assertEquals(pickAgent(agents, "77")?.email, "aaron@vanarsi.com");
+  assertEquals(pickAgent(agents, "123456"), null);
+  assertEquals(pickAgent(agents, ""), null);
 });
