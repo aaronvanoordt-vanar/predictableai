@@ -39,6 +39,9 @@
       revenue_min: '', revenue_max: '',
       q_organization_job_titles: [], organization_job_locations: [],
       jobs_min: '', jobs_max: '',
+      // Filtros de un enlace de Apollo sin control propio aquí: viajan tal cual
+      // (snake_case de la API). Ver js/apollo-search-url.js.
+      apollo_extra: {},
     };
   }
 
@@ -75,6 +78,8 @@
       if (v == null) return;
       if (Array.isArray(d[k])) {
         if (Array.isArray(v)) d[k] = v.filter(function (x) { return typeof x === 'string' && x.trim(); }).map(function (x) { return x.trim(); });
+      } else if (k === 'apollo_extra') {
+        if (typeof v === 'object' && !Array.isArray(v)) d[k] = JSON.parse(JSON.stringify(v));
       } else if (typeof v === 'string' || typeof v === 'number') d[k] = String(v);
     });
     return d;
@@ -89,13 +94,16 @@
     var n = 0;
     Object.keys(f).forEach(function (k) {
       var v = f[k];
-      if (Array.isArray(v) ? v.length : (v !== '' && v != null)) n++;
+      if (k === 'apollo_extra') n += Object.keys(v || {}).length;
+      else if (Array.isArray(v) ? v.length : (v !== '' && v != null)) n++;
     });
     return n;
   }
 
   // Estado de la UI → cuerpo de /mixed_companies/search (nombres de Apollo).
-  function apolloBody(f, page) {
+  // Los filtros importados tal cual van primero; los controles de Buscar los
+  // pisan si tocan la misma clave. `withExtra === false` los deja fuera.
+  function apolloBody(f, page, withExtra) {
     function num(v) { if (v === '' || v == null) return null; var n = Number(v); return isFinite(n) ? n : null; }
     function range(a, b) {
       var r = {};
@@ -103,7 +111,9 @@
       if (num(b) != null) r.max = num(b);
       return Object.keys(r).length ? r : null;
     }
-    var b = { page: page || 1, per_page: PER_PAGE };
+    var b = withExtra === false ? {} : JSON.parse(JSON.stringify(f.apollo_extra || {}));
+    b.page = page || 1;
+    b.per_page = PER_PAGE;
     if (f.q_organization_name.trim()) b.q_organization_name = f.q_organization_name.trim();
     ['organization_locations', 'organization_not_locations', 'organization_num_employees_ranges',
       'q_organization_keyword_tags', 'q_organization_domains_list', 'q_organization_job_titles',
@@ -120,10 +130,19 @@
   async function search(page) {
     if (P().apolloConnected && !P().apolloConnected()) return toast('Conecta tu cuenta de Apollo para buscar empresas.', 'warn');
     if (!activeCount(state.f)) return toast('Agrega al menos un filtro: buscar todas las empresas de Apollo no sirve para prospectar.', 'warn');
-    state.loading = true; state.error = ''; state.page = page || 1;
+    state.loading = true; state.error = ''; state.warning = ''; state.page = page || 1;
     render();
     try {
-      var r = await pd().searchCompanies(apolloBody(state.f, state.page));
+      var r;
+      try {
+        r = await pd().searchCompanies(apolloBody(state.f, state.page));
+      } catch (e) {
+        // Si Apollo rechaza un filtro importado, se busca sin ellos y se dice:
+        // nunca se muestran resultados distintos a los pedidos sin avisar.
+        if (!Object.keys(state.f.apollo_extra || {}).length || /cr[eé]dito|Conecta|Sesi[oó]n|429/i.test(errMsg(e))) throw e;
+        r = await pd().searchCompanies(apolloBody(state.f, state.page, false));
+        state.warning = 'Apollo rechazó los filtros importados (' + errMsg(e) + '). Estos resultados son SIN ellos: quítalos o vuelve a importar el enlace.';
+      }
       state.rows = r.companies || [];
       state.total = r.pagination.total_entries || 0;
       state.totalPages = r.pagination.total_pages || (state.total ? Math.ceil(state.total / PER_PAGE) : 0);
@@ -247,22 +266,24 @@
         preview.appendChild(h('div', { class: 'cs-error', text: 'Este enlace solo trae el id de una búsqueda guardada en Apollo, y Apollo no permite leerla por API. Ábrela en Apollo, espera a que carguen los filtros (o cambia uno y vuelve a dejarlo) y copia la dirección completa de la barra del navegador.' }));
         return;
       }
-      if (!r.applied.length) {
-        preview.appendChild(h('div', { class: 'cs-error', text: 'El enlace no trae filtros que Predictable pueda aplicar.' }));
-      } else {
-        parsed = r;
-        preview.appendChild(h('div', { class: 'cs-import-kind', text: r.kind === 'companies' ? 'Búsqueda de empresas → se abre en Buscar → Empresas' : 'Búsqueda de personas → se abre en Buscar → Personas' }));
+      if (!r.applied.length && !r.forwarded.length) {
+        preview.appendChild(h('div', { class: 'cs-error', text: 'El enlace no trae filtros.' }));
+        return;
+      }
+      parsed = r;
+      preview.appendChild(h('div', { class: 'cs-import-kind', text: r.kind === 'companies' ? 'Búsqueda de empresas → se abre en Buscar → Empresas' : 'Búsqueda de personas → se abre en Buscar → Personas' }));
+      function list(title, items) {
+        if (!items.length) return;
         var ul = h('ul', { class: 'cs-import-list' });
-        r.applied.forEach(function (a) { ul.appendChild(h('li', null, h('b', { text: a.label + ': ' }), a.values.join(', '))); });
+        items.forEach(function (a) { ul.appendChild(h('li', null, h('b', { text: a.label + ': ' }), h('span', { class: 'notranslate', text: a.values.join(', ') }))); });
+        preview.appendChild(h('div', { class: 'cs-lbl', style: 'margin-top:10px', text: title }));
         preview.appendChild(ul);
-        saveBox.style.display = '';
       }
-      if (r.skipped.length) {
-        var sk = h('ul', { class: 'cs-import-list cs-import-skip' });
-        r.skipped.forEach(function (s) { sk.appendChild(h('li', null, h('b', { text: s.param + ': ' }), s.reason)); });
-        preview.appendChild(h('div', { class: 'cs-lbl', style: 'margin-top:10px', text: 'No se aplica' }));
-        preview.appendChild(sk);
-      }
+      list('En los filtros de Buscar (los puedes editar)', r.applied);
+      list('Se envían a Apollo tal cual', r.forwarded);
+      preview.appendChild(h('div', { class: 'cs-hint', style: 'margin-top:8px', text: 'Se aplican todos los filtros del enlace. Al buscar, compara el total con el que muestra Apollo.' +
+        (r.accountScoped ? ' Algunos usan listas de tu cuenta de Apollo: solo filtran si conectaste esa misma cuenta.' : '') }));
+      saveBox.style.display = '';
     }
     input.addEventListener('input', show);
 
@@ -355,6 +376,30 @@
     return box;
   }
 
+  // Filtros importados de Apollo que viajan tal cual (sin control propio).
+  function extraNode() {
+    var extra = state.f.apollo_extra || {};
+    var keys = Object.keys(extra);
+    if (!keys.length) return null;
+    var parser = global.ApolloSearchUrl;
+    var rows = parser ? parser.describeExtra(extra) : keys.map(function (k) { return { key: k, label: k, values: [] }; });
+    var box = h('div', { class: 'cs-extra' });
+    rows.forEach(function (x) {
+      var del = h('button', { type: 'button', class: 'cs-extra-x', text: '×', title: 'Quitar este filtro', 'aria-label': 'Quitar ' + x.label });
+      del.addEventListener('click', function () {
+        delete state.f.apollo_extra[x.key];
+        persist();
+        render();
+      });
+      box.appendChild(h('div', { class: 'cs-extra-row' },
+        h('div', { style: 'min-width:0;flex:1' }, h('b', { text: x.label + ': ' }), h('span', { class: 'notranslate', text: x.values.join(', ') })),
+        del));
+    });
+    var scoped = parser && keys.some(function (k) { return parser.ACCOUNT_SCOPED.test(k); });
+    return field('Filtros importados de Apollo', box, 'Se envían a Apollo tal como estaban en tu búsqueda.' +
+      (scoped ? ' Los que usan listas de tu Apollo solo filtran con esa misma cuenta conectada.' : ''));
+  }
+
   function filtersNode() {
     var enums = global.APOLLO_ENUMS || {};
     var emp = h('div', { class: 'cs-chips' });
@@ -398,6 +443,7 @@
 
     return h('div', { class: 'cs-filters' },
       savedNode(),
+      extraNode(),
       field('Nombre de la empresa', text('q_organization_name', 'Ej. Colegio San Vicente')),
       field('Ubicación de la empresa', tags('organization_locations', 'País, región o ciudad · Enter'), 'En inglés, como en Apollo: Peru, Mexico, Bogota…'),
       field('Excluir ubicaciones', tags('organization_not_locations', 'País, región o ciudad · Enter')),
@@ -462,6 +508,7 @@
   function resultsNode() {
     var box = h('div', { class: 'cs-results' });
     if (state.error) box.appendChild(h('div', { class: 'cs-error', text: state.error }));
+    if (state.warning) box.appendChild(h('div', { class: 'cs-error', text: state.warning }));
     if (!state.searched && !state.loading) {
       box.appendChild(h('div', { class: 'cs-empty' },
         h('div', { class: 'cs-empty-t', text: 'Busca cuentas antes que personas' }),
@@ -480,6 +527,9 @@
     next.disabled = state.totalPages ? state.page >= state.totalPages : state.rows.length < PER_PAGE;
     next.addEventListener('click', function () { search(state.page + 1); });
     var pagesLabel = state.totalPages ? 'Página ' + fmtNum(state.page) + ' de ' + fmtNum(state.totalPages) : 'Página ' + fmtNum(state.page);
+    if (Object.keys(state.f.apollo_extra || {}).length && !state.warning) {
+      box.appendChild(h('div', { class: 'cs-hint', style: 'margin:0', text: 'Incluye filtros importados de Apollo tal cual. Compara este total con el que muestra Apollo para la misma búsqueda.' }));
+    }
     box.appendChild(h('div', { class: 'cs-head' },
       h('div', null, h('b', { text: fmtNum(state.total || state.rows.length) }), state.total ? ' empresas en Apollo para estos filtros' : ' empresas en esta página'),
       h('div', { style: 'display:flex;align-items:center;gap:6px' }, prev, h('span', { class: 'cs-hint', style: 'margin:0', text: pagesLabel }), next)));
@@ -531,7 +581,9 @@
     '.cs-import-preview{margin-top:10px;font-size:12.5px;color:var(--text2)}' +
     '.cs-import-kind{font-weight:600;color:var(--text);margin-bottom:6px}' +
     '.cs-import-list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px;line-height:1.45}' +
-    '.cs-import-skip{color:var(--text3)}' +
+    '#prospecting-shell .cs-extra{display:flex;flex-direction:column;gap:4px}' +
+    '#prospecting-shell .cs-extra-row{display:flex;align-items:flex-start;gap:6px;font-size:12.5px;color:var(--text2);background:var(--surface2);border-radius:var(--r-sm,8px);padding:5px 8px;line-height:1.4;word-break:break-word}' +
+    '#prospecting-shell .cs-extra-x{border:0;background:none;color:var(--text3);cursor:pointer;font-size:15px;line-height:1;padding:0 2px}' +
     '@media (max-width:640px){#prospecting-shell .cs-row{flex-wrap:wrap}}';
 
   function injectCss() {

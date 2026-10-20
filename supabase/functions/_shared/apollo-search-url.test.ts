@@ -11,7 +11,7 @@ async function load() {
 
 Deno.test("búsqueda de empresas como la de «Colegios Perú»", async () => {
   const A = await load();
-  const url = "https://app.apollo.io/#/companies?page=1&finderViewId=abc123" +
+  const url = "https://app.apollo.io/#/companies?page=1&finderViewId=abc123&organizationIndustryTagIds[]=5567cd4773696439b10b0000" +
     "&organizationLocations[]=Peru&organizationNumEmployeesRanges[]=51%2C" +
     "&qOrganizationKeywordTags[]=primary%2Fsecondary%20education&qOrganizationKeywordTags[]=colegio" +
     "&qOrganizationKeywordTags[]=school&qOrganizationKeywordTags[]=k-12" +
@@ -24,7 +24,12 @@ Deno.test("búsqueda de empresas como la de «Colegios Perú»", async () => {
   assertEquals(r.filters.organization_num_employees_ranges,
     ["51,100", "101,200", "201,500", "501,1000", "1001,2000", "2001,5000", "5001,10000", "10001+"]);
   assertEquals(r.savedViewOnly, false);
-  assertEquals(r.skipped.map((s: any) => s.param), ["includedOrganizationKeywordFields"]);
+  // Lo que Buscar no tiene como control viaja tal cual, con el nombre de la API.
+  assertEquals(r.extra, {
+    included_organization_keyword_fields: ["tags", "name"],
+    organization_industry_tag_ids: ["5567cd4773696439b10b0000"],
+  });
+  assertEquals(r.filters.apollo_extra, r.extra);
 });
 
 Deno.test("búsqueda de personas con cargos, rangos e ingresos", async () => {
@@ -43,16 +48,45 @@ Deno.test("búsqueda de personas con cargos, rangos e ingresos", async () => {
   assertEquals(r.filters.q_keywords, "saas");
   assertEquals(r.filters.revenue_min, "1000000");
   assertEquals(r.filters.revenue_max, "5000000");
-  assertEquals(r.skipped.map((s: any) => s.param), ["organizationIndustryTagIds"]);
+  assertEquals(r.extra, { organization_industry_tag_ids: ["5567cd4773696439b10b0000"] });
 });
 
-Deno.test("filtros que el modo no tiene se informan, no se inventan", async () => {
+Deno.test("un filtro de otro modo también viaja tal cual (como lo manda Apollo)", async () => {
   const A = await load();
   const r = A.parse("https://app.apollo.io/#/companies?personTitles[]=ceo&qOrganizationName=acme&organizationNumEmployeesRanges[]=60%2C90");
   assertEquals(r.filters.q_organization_name, "acme");
   assertEquals(r.filters.person_titles, undefined);
   assertEquals(r.filters.organization_num_employees_ranges, ["60,90"]);
-  assertEquals(r.skipped[0].param, "personTitles");
+  assertEquals(r.extra, { person_titles: ["ceo"] });
+});
+
+Deno.test("enlace real de Apollo (mineras): nada se pierde", async () => {
+  const A = await load();
+  const url = "https://app.apollo.io/#/companies?organizationAnyCorporateLocations%5B%5D=Peru" +
+    "&qOrganizationKeywordTags%5B%5D=compa%C3%B1%C3%ADa%20minera&qOrganizationKeywordTags%5B%5D=mining" +
+    "&includedOrganizationKeywordFields%5B%5D=tags&includedOrganizationKeywordFields%5B%5D=name" +
+    "&qNotOrganizationKeywordTags%5B%5D=consultora&excludedOrganizationKeywordFields%5B%5D=tags" +
+    "&qNotOrganizationSearchListId=6650aa11bb22cc33dd44ee55" +
+    "&organizationNumEmployeesRanges%5B%5D=21%2C50&organizationNumEmployeesRanges%5B%5D=51%2C100" +
+    "&organizationDepartmentOrSubdepartmentCounts%5Bmaster_sales%5D%5Bmin%5D=5" +
+    "&totalFundingRange%5Bmin%5D=1000000&prospectedByCurrentTeam%5B%5D=no" +
+    "&sortAscending=false&sortByField=recommendations_score&page=1&recommendationConfigId=score";
+  const r = A.parse(url);
+  assertEquals(r.kind, "companies");
+  assertEquals(r.filters.q_organization_keyword_tags, ["compañía minera", "mining"]);
+  assertEquals(r.filters.organization_num_employees_ranges, ["21,50", "51,100"]);
+  assertEquals(r.extra, {
+    organization_any_corporate_locations: ["Peru"],
+    included_organization_keyword_fields: ["tags", "name"],
+    q_not_organization_keyword_tags: ["consultora"],
+    excluded_organization_keyword_fields: ["tags"],
+    q_not_organization_search_list_id: "6650aa11bb22cc33dd44ee55",
+    organization_department_or_subdepartment_counts: { master_sales: { min: 5 } },
+    total_funding_range: { min: 1000000 },
+    prospected_by_current_team: ["no"],
+  });
+  assert(r.accountScoped, "la lista de Apollo es de una cuenta");
+  assertEquals(A.describeExtra(r.extra).map((x: any) => x.label)[0], "Cualquier sede de la empresa en");
 });
 
 Deno.test("enlace con solo el id de la búsqueda guardada", async () => {
