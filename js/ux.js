@@ -119,7 +119,7 @@
     return t;
   }
   function setPageTitle(label) {
-    doc.title = label ? label + ' · ' + BASE_TITLE : BASE_TITLE + ' — Revenue OS';
+    doc.title = label ? label + ' · ' + BASE_TITLE : BASE_TITLE + ' — Plataforma GTM';
     var m = doc.getElementById('ux-mobilebar-title');
     if (m) m.textContent = label || '';
   }

@@ -18,6 +18,8 @@
   document.addEventListener('DOMContentLoaded', init);
 
   async function init() {
+    // La landing manda «Prueba gratis» a auth.html?mode=signup.
+    if (new URLSearchParams(location.search).get('mode') === 'signup') setEmailMode('signup');
     const session = await window.supabaseHelpers.getSession();
     if (session && session.user) {
       await routeAfterAuth({ instant: true });

@@ -227,7 +227,7 @@
       if (!nameEl.dataset.pbOriginal) nameEl.dataset.pbOriginal = nameEl.innerHTML;
       if (b && b.name) {
         nameEl.innerHTML = '<span class="pb-brand-name">' + esc(b.name) + '</span>';
-        nameEl.title = b.name + ' · Revenue OS by predictable.ai';
+        nameEl.title = b.name + ' · Plataforma GTM de predictable.ai';
       } else {
         nameEl.innerHTML = nameEl.dataset.pbOriginal;
         nameEl.removeAttribute('title');
@@ -241,7 +241,7 @@
         : mobile.dataset.pbOriginal;
     }
 
-    if (b && b.name) document.title = b.name + ' — Revenue OS';
+    if (b && b.name) document.title = b.name + ' — Plataforma GTM';
     setFavicon(b && b.logoUrl);
     applyAccent(b && b.color);
   }
@@ -511,7 +511,7 @@
       var h = new Date().getHours();
       var salut = h < 12 ? 'Buenos días' : h < 19 ? 'Buenas tardes' : 'Buenas noches';
       q('pv-hi').textContent = salut + (f.person ? ', ' + f.person.split(' ')[0] : '');
-      q('pv-sub').textContent = (f.name ? f.name + ' · ' : '') + 'Revenue OS';
+      q('pv-sub').textContent = (f.name ? f.name + ' · ' : '') + 'Plataforma GTM';
       q('thumb').innerHTML = url ? '<img src="' + esc(url) + '" alt="">' : ICON_IMG;
       q('drop-title').textContent = url ? 'Cambiar logo' : 'Sube o arrastra tu logo';
       q('remove').style.display = url ? '' : 'none';

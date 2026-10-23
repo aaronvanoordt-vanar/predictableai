@@ -362,8 +362,8 @@
   // usuario elige portugués, para no sumarle ese peso a quien usa español.
   var LANGS = {
     es: { locale: 'es-MX', html: 'es', label: 'ES · Español', short: 'ES', name: 'Español' },
-    en: { locale: 'en-US', html: 'en', label: 'EN · English', short: 'EN', name: 'English', dict: 'i18n/en.js?v=20261019' },
-    'pt-BR': { locale: 'pt-BR', html: 'pt-BR', label: 'PT · Português', short: 'PT', name: 'Português (Brasil)', dict: 'i18n/pt-BR.js?v=20261019' }
+    en: { locale: 'en-US', html: 'en', label: 'EN · English', short: 'EN', name: 'English', dict: 'i18n/en.js?v=20261023' },
+    'pt-BR': { locale: 'pt-BR', html: 'pt-BR', label: 'PT · Português', short: 'PT', name: 'Português (Brasil)', dict: 'i18n/pt-BR.js?v=20261023' }
   };
   var DICTS = window.I18N_DICTS = window.I18N_DICTS || {};
   DICTS.en = Object.assign({}, ES_EN, DICTS.en || {});
