@@ -172,6 +172,9 @@ Deno.serve(async (req: Request) => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          // generate-intel-hub se despliega CON verificación de JWT: sin un
+          // Bearer el gateway responde 401 antes de mirar X-Hub-Secret.
+          "Authorization": `Bearer ${serviceKey}`,
           "X-Hub-Secret": schedulerSecret,
         },
         body: JSON.stringify({
