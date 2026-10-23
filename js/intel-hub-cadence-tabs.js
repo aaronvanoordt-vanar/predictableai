@@ -2840,7 +2840,7 @@ function saxIcon(kind) {
     const head = (right) => `
       <header class="mka-h">
         <div>
-          <span class="mka-eyebrow">Paso 2 del Revenue OS · después de tu contexto, antes del Radar</span>
+          <span class="mka-eyebrow">Paso 2 de tu plataforma GTM · después de tu contexto, antes del Radar</span>
           <h3>Análisis de mercado para vender</h3>
           <p>Dónde atacar primero, qué señales de compra vigilar y qué hacer esta semana. Al confirmarlo, el Radar diseña su plan con un detector por cada señal.</p>
         </div>

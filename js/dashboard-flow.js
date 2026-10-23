@@ -178,7 +178,7 @@
   function skeleton() {
     var cells = '';
     for (var i = 0; i < 7; i++) cells += '<div class="rf-step" aria-hidden="true"><div class="rf-step-top"><span class="sk sk-circle" style="width:34px;height:34px"></span></div><span class="sk sk-line" style="width:70%;height:12px"></span><span class="sk sk-line" style="width:90%;height:10px"></span><span class="sk sk-line" style="width:40%;height:18px"></span></div>';
-    return '<div class="rf"><div class="rf-head"><div><div class="rf-eyebrow">Revenue OS</div><div class="rf-title">Tu operación, <em>de punta a punta</em></div></div></div><div class="rf-strip">' + cells + '</div></div>';
+    return '<div class="rf"><div class="rf-head"><div><div class="rf-eyebrow">Plataforma GTM</div><div class="rf-title">Tu operación, <em>de punta a punta</em></div></div></div><div class="rf-strip">' + cells + '</div></div>';
   }
 
   function render(shell, d) {
@@ -209,7 +209,7 @@
 
     shell.innerHTML =
       '<div class="rf">' +
-        '<div class="rf-head"><div><div class="rf-eyebrow">Revenue OS</div><div class="rf-title">Tu operación, <em>de punta a punta</em></div></div>' + nextHtml + '</div>' +
+        '<div class="rf-head"><div><div class="rf-eyebrow">Plataforma GTM</div><div class="rf-title">Tu operación, <em>de punta a punta</em></div></div>' + nextHtml + '</div>' +
         '<div class="rf-strip">' + cells + '</div>' +
       '</div>';
 

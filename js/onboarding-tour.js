@@ -239,7 +239,7 @@
         '<button type="button" class="tour-close" data-tour-close aria-label="Cerrar">' + svgIcon('x', 16) + '</button>' +
         '<div class="tour-head-main">' +
           '<div class="tour-eyebrow">Primeros pasos</div>' +
-          '<h2 class="tour-title">Domina tu Revenue OS</h2>' +
+          '<h2 class="tour-title">Domina tu plataforma GTM</h2>' +
           '<div class="tour-meta">' +
             '<span class="tour-pill"></span>' +
             '<span class="tour-count"></span>' +
