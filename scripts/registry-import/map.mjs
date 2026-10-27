@@ -208,11 +208,12 @@ export const SOURCES = {
     registry: "rns", country: "Argentina", activity_system: "isic4",
     title: "Registro Nacional de Sociedades (ARCA, datos.jus.gob.ar)",
     discover: { type: "ckan", base: "https://datos.jus.gob.ar", package: "registro-nacional-de-sociedades" },
-    pick: /\.(zip|csv)(\?|$)/i, skip: /muestr/i,
+    // Cada archivo anual es una foto completa: basta la más nueva. Fuera las asociaciones sin fines de lucro y los bimestres.
+    pick: /registro-nacional-sociedades-\d{4}\.(zip|csv)(\?|$)/i, skip: /muestr|asociacion|sin-fines|bimestre/i, latestOnly: true,
     fields: {
       cuit: ["cuit"], name: ["razon_social"], founded: ["fecha_hora_contrato_social", "fecha_contrato_social"],
       type: ["tipo_societario"], code: ["actividad_codigo", "codigo_actividad"], activity: ["actividad_descripcion", "descripcion_actividad"],
-      order: ["actividad_orden"], province: ["dom_fiscal_provincia", "dom_legal_provincia"], city: ["dom_fiscal_localidad", "dom_legal_localidad"],
+      order: ["actividad_orden"], state: ["actividad_estado"], province: ["dom_fiscal_provincia", "dom_legal_provincia"], city: ["dom_fiscal_localidad", "dom_legal_localidad"],
       street: ["dom_fiscal_calle", "dom_legal_calle"], number: ["dom_fiscal_numero", "dom_legal_numero"], cp: ["dom_fiscal_cp", "dom_legal_cp", "dom_fiscal_codigo_postal"],
       baja: ["fecha_hora_baja", "fecha_baja"],
     },
@@ -222,6 +223,7 @@ export const SOURCES = {
       if (cuit.length !== 11) return null;
       // Una fila por actividad: la principal es la de orden 1 (o la única).
       if (r.order && digits(r.order) !== "1") return null;
+      if (r.state && !/^AC/i.test(r.state)) return null; // actividad dada de baja: queda la vigente
       const act = r.code ? { code: digits(r.code), description: r.activity } : splitActivity(r.activity);
       return {
         registry_id: cuit, tax_id: cuit, legal_name: r.name,
@@ -238,7 +240,21 @@ export const SOURCES = {
     registry: "sii", country: "Chile", activity_system: "isic4",
     title: "Nómina de personas jurídicas (SII)",
     discover: { type: "page", url: "https://www.sii.cl/sobre_el_sii/nominapersonasjuridicas.html", link: /\.(zip|txt|csv)(\?|$)/i },
-    pick: /nomina|pjur|persona|juridic|pub_/i,
+    // PUB_EMPRESAS_PJ_<años>.zip trae un .txt por año comercial: alcanza el tramo más reciente (2020_A_2024 trae a toda empresa viva).
+    pick: /PUB_EMPRESAS_PJ_\d{4}_A_\d{4}/i, latestOnly: true,
+    // El código de actividad viene aparte (PUB_NOM_ACTECOS: RUT → actividades); se lee primero y se cruza por RUT.
+    aux: {
+      pick: /PUB_NOM_ACTECOS/i,
+      fields: { rut: ["rut"], dv: ["dv"], code: ["codigo_actividad_economica", "codigo_actividad", "cod_actividad", "codigo", "actividad_economica", "actividad"], primary: ["actividad_principal", "principal", "tipo_actividad"], desc: ["glosa_actividad", "descripcion_actividad", "glosa", "descripcion"] },
+      required: ["rut", "code"],
+      key: (r) => digits(r.rut) + String(r.dv || "").toUpperCase().replace(/[^0-9K]/g, ""),
+      value: (r) => {
+        const act = splitActivity(r.code);
+        if (!act.code) return null;
+        const primary = !r.primary || /^(S|SI|1|P|PRINCIPAL|TRUE)$/i.test(stripAccents(r.primary).trim());
+        return { code: act.code, description: r.desc || act.description, primary };
+      },
+    },
     fields: {
       year: ["ano_comercial", "anio_comercial", "ano"], rut: ["rut"], dv: ["dv", "digito_verificador"], name: ["razon_social", "nombre_razon_social"],
       tramo: ["tramo_segun_ventas", "tramo_ventas", "tramo_de_ventas"], workers: ["numero_de_trabajadores_dependientes_informados", "numero_trabajadores", "trabajadores"],
@@ -251,6 +267,7 @@ export const SOURCES = {
       const rut = digits(r.rut);
       if (!rut) return null;
       const id = rut + String(r.dv || "").toUpperCase().replace(/[^0-9K]/g, "");
+      const aux = ctx.aux ? ctx.aux.get(id) : null;
       // El archivo trae un año comercial por fila: queda el más reciente de cada RUT.
       const year = Number(digits(r.year)) || 0;
       if (ctx.seen) {
@@ -258,7 +275,7 @@ export const SOURCES = {
         if (year && year < prev) return null;
         if (year) ctx.seen.set(id, year);
       }
-      const act = splitActivity(r.activity);
+      const act = aux ? { code: aux.code, description: aux.description || splitActivity(r.activity).description } : splitActivity(r.activity);
       const bucket = siiSizeBucket(r.tramo);
       return {
         registry_id: id, tax_id: id, legal_name: r.name,
@@ -327,8 +344,9 @@ export const SOURCES = {
   sri: {
     registry: "sri", country: "Ecuador", activity_system: "isic4",
     title: "Catastro RUC del SRI (datosabiertos.gob.ec)",
-    discover: { type: "ckan_search", base: "https://www.datosabiertos.gob.ec", q: "registro unico de contribuyentes SRI" },
-    pick: /\.(zip|csv|txt)(\?|$)/i, skip: /dicc|_dd|diccionario/i,
+    // El portal datosabiertos.gob.ec responde 403 a los servidores de GitHub: los archivos se toman de la página del SRI.
+    discover: { type: "page", url: "https://www.sri.gob.ec/datasets", link: /\.(zip|csv|txt)(\?|$)/i },
+    pick: /ruc/i, skip: /dicc|_dd|diccionario|natural/i,
     fields: {
       ruc: ["numero_ruc", "ruc"], name: ["razon_social"], trade: ["nombre_comercial", "nombre_fantasia_comercial"],
       status: ["estado_contribuyente", "estado"], kind: ["tipo_contribuyente", "clase_contribuyente"], start: ["fecha_inicio_actividades"],
@@ -369,7 +387,9 @@ export const SOURCES = {
     required: ["rnc", "name"],
     map(r, ctx) {
       const rnc = digits(r.rnc);
-      if (rnc.length !== 9) return null; // 9 dígitos = empresa; 11 = cédula de una persona
+      // 9 dígitos y empieza con 1 (sociedades) o 4 (entidades públicas y sin fines de lucro); 11 = cédula.
+      // Los RNC de 9 dígitos que empiezan con 5 son de personas (extranjeros): fuera.
+      if (rnc.length !== 9 || !/^[14]/.test(rnc)) return null;
       // Las posiciones no están confirmadas: la fecha y el estado se ubican por su forma.
       const cells = ctx.cells || [];
       const statusRe = /^(ACTIVO|SUSPENDIDO|DADO DE BAJA|CESE|INACTIVO|ANULADO|RECHAZADO|BAJA)/i;
@@ -389,8 +409,9 @@ export const SOURCES = {
   rmgt: {
     registry: "rmgt", country: "Guatemala", activity_system: "local",
     title: "Sociedades inscritas en el Registro Mercantil (MINECO)",
-    discover: { type: "ckan_search", base: "https://catalogo.senacyt.gob.gt", q: "sociedades inscritas registro mercantil" },
-    pick: /\.csv(\?|$)/i,
+    // El catálogo catalogo.senacyt.gob.gt responde 403 a los servidores de GitHub: se usa la página de datos del Registro Mercantil.
+    discover: { type: "page", url: "https://principal.registromercantil.gob.gt/datos-estadisticos/", link: /\.(csv|zip)(\?|$)/i },
+    pick: /sociedad|empresa|inscri/i,
     fields: {
       nit: ["nit"], reg: ["numero_de_registro", "registro", "no_registro", "expediente", "numero_registro"],
       name: ["nombre_de_la_sociedad", "nombre_sociedad", "razon_social", "denominacion", "nombre"],
@@ -443,7 +464,7 @@ export const SOURCES = {
     registry: "dnit", country: "Paraguay", activity_system: "local",
     title: "Listado de RUC (DNIT)",
     discover: { type: "page", url: "https://www.dnit.gov.py/web/portal-institucional/listado-de-ruc-con-sus-equivalencias", link: /ruc\d\.zip/i },
-    pick: /\.(zip|txt)(\?|$)/i,
+    pick: /ruc\d\.zip/i, // los enlaces son …/ruc3.zip/<id>?t=…
     fields: { ruc: ["ruc"], name: ["nombre", "razon_social"], dv: ["dv"], status: ["estado"] },
     columns: ["ruc", "nombre", "dv", "codigo_viejo", "estado"],
     required: ["ruc", "name"],
@@ -466,6 +487,13 @@ export function sourcesFor(registry) {
   return Object.entries(SOURCES).filter(([, s]) => s.registry === registry).map(([key]) => key);
 }
 
+/** Marcadores de "sin dato" que algunos registros escriben en vez de dejar vacío. */
+const NULLISH = /^(sin (comuna|region|informacion|info|dato|datos|actividad)|valor por defecto|no informad[oa]|no aplica|n\/?a|null|-+|\.+|0)$/i;
+function nn(v, max) {
+  const t = clean(v || "", max);
+  return NULLISH.test(stripAccents(t)) ? "" : t;
+}
+
 /** Fila del mapa → fila completa de registry_companies, o null. */
 export function finishRow(source, mapped, sourceUpdatedOn = "") {
   if (!mapped || !clean(mapped.legal_name) || !clean(mapped.registry_id)) return null;
@@ -473,13 +501,13 @@ export function finishRow(source, mapped, sourceUpdatedOn = "") {
   const out = {
     registry: s.registry, country: s.country, activity_system: s.activity_system,
     registry_id: clean(mapped.registry_id, 60), tax_id: clean(mapped.tax_id || "", 30),
-    legal_name: clean(mapped.legal_name), trade_name: clean(mapped.trade_name || ""),
+    legal_name: clean(mapped.legal_name), trade_name: nn(mapped.trade_name),
     name_norm: [normCompanyName(mapped.legal_name), normCompanyName(mapped.trade_name || "")].filter(Boolean).join(" "),
-    activity_code: digits(mapped.activity_code).replace(/^0+$/, "").slice(0, 12), activity_description: clean(mapped.activity_description || ""),
-    size_bucket: mapped.size_bucket || "", size_label: clean(mapped.size_label || ""),
+    activity_code: digits(mapped.activity_code).replace(/^0+$/, "").slice(0, 12), activity_description: nn(mapped.activity_description),
+    size_bucket: mapped.size_bucket || "", size_label: nn(mapped.size_label),
     founded_on: mapped.founded_on || "", founded_label: mapped.founded_on ? clean(mapped.founded_label || "") : "",
-    status: mapped.status || "unknown", status_detail: clean(mapped.status_detail || ""),
-    address_line: clean(mapped.address_line || ""), city: clean(mapped.city || "", 120), region: clean(mapped.region || "", 120),
+    status: mapped.status || "unknown", status_detail: nn(mapped.status_detail),
+    address_line: nn(mapped.address_line), city: nn(mapped.city, 120), region: nn(mapped.region, 120),
     postal_code: clean(mapped.postal_code || "", 20), phone: clean(mapped.phone || "", 40), email: clean(mapped.email || "", 200),
     website: clean(mapped.website || "", 200), source_url: clean(mapped.source_url || "", 300), source_updated_on: sourceUpdatedOn || "",
   };

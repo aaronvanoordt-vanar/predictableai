@@ -52,8 +52,18 @@ if (!keys.length) {
 }
 
 // ── red ─────────────────────────────────────────────────────────────────────
+/** fetch con el motivo real del fallo de red (TLS, DNS, conexión) en vez de un "fetch failed" a secas. */
+async function fetchWhy(url, init) {
+  try {
+    return await fetch(url, init);
+  } catch (e) {
+    const c = e?.cause;
+    throw new Error(`${url} → ${e.message}${c ? ` (${c.code || ""} ${c.message || c})` : ""}`);
+  }
+}
+
 async function getText(url) {
-  const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "*/*" } });
+  const res = await fetchWhy(url, { headers: { "User-Agent": UA, Accept: "*/*" } });
   if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
   return res.text();
 }
@@ -67,9 +77,9 @@ function absolute(href, base) {
   try { return new URL(href, base).toString(); } catch { return ""; }
 }
 
-/** URLs de los archivos de datos de una fuente. */
+/** URLs de los archivos de datos de una fuente (y de su archivo auxiliar, si tiene). */
 async function discover(src) {
-  if (URL_OVERRIDE) return [{ url: URL_OVERRIDE, name: URL_OVERRIDE.split("/").pop(), updated: "" }];
+  if (URL_OVERRIDE) return { files: [{ url: URL_OVERRIDE, name: URL_OVERRIDE.split("/").pop(), updated: "" }], aux: [] };
   const d = src.discover;
   let found = [];
   if (d.type === "fixed") found = d.urls.map((u) => ({ url: u, name: u.split("/").pop(), updated: "" }));
@@ -97,11 +107,12 @@ async function discover(src) {
   }
   files.sort((a, b) => (a.updated || a.name).localeCompare(b.updated || b.name)); // lo más nuevo al final: gana en el upsert
   if (src.latestOnly) files = files.slice(-1);
-  return files;
+  const aux = src.aux ? found.filter((f) => src.aux.pick.test(f.url) || src.aux.pick.test(f.name)) : [];
+  return { files, aux };
 }
 
 async function download(url, dir) {
-  const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "*/*" }, redirect: "follow" });
+  const res = await fetchWhy(url, { headers: { "User-Agent": UA, Accept: "*/*" }, redirect: "follow" });
   if (!res.ok || !res.body) throw new Error(`${url} → HTTP ${res.status}`);
   const file = join(dir, "data-" + Date.now() + "-" + (url.split("/").pop() || "f").replace(/[^\w.-]/g, "_").slice(0, 80));
   await pipeline(Readable.fromWeb(res.body), createWriteStream(file));
@@ -164,81 +175,131 @@ async function rest(path, method, body, prefer = "") {
   }
 }
 
+// ── lectura de un archivo ───────────────────────────────────────────────────
+/** Recorre cada CSV/TXT de un archivo descargado y entrega sus filas (arreglos de celdas). */
+async function eachRows(dl, onEntry, onCells, shouldStop) {
+  for (const entry of entries(dl)) {
+    if (shouldStop()) break;
+    const enc = await sniffEncoding(entry.open);
+    const decoder = new TextDecoder(enc === "latin1" ? "latin1" : "utf-8");
+    let parser = null, buffered = "", delim = ",";
+    const stream = entry.open();
+    onEntry(entry.name, enc, () => delim);
+    for await (const chunk of stream) {
+      let text = decoder.decode(chunk, { stream: true });
+      if (!parser) {
+        buffered += text;
+        const nl = buffered.indexOf("\n");
+        if (nl < 0 && buffered.length < 65536) continue;
+        delim = detectDelimiter(buffered.slice(0, nl < 0 ? buffered.length : nl));
+        // DGII, SUNAT y DNIT usan | sin comillas: un " suelto en una razón social no debe abrir un campo.
+        parser = createRowParser(delim, onCells, { quotes: delim !== "|" });
+        text = buffered; buffered = "";
+      }
+      parser.push(text);
+      if (await onChunkDone()) { stream.destroy?.(); break; }
+    }
+    if (parser) { parser.push(decoder.decode()); parser.end(); }
+    await onEntryDone();
+  }
+  // Ganchos opcionales que define quien llama (lotes, tope de filas).
+  async function onChunkDone() { return eachRows.chunkHook ? await eachRows.chunkHook() : false; }
+  async function onEntryDone() { if (eachRows.entryHook) await eachRows.entryHook(); }
+}
+
+/** Archivo auxiliar (Chile: actividades por RUT) → Map clave → valor. */
+async function loadAux(src, auxFiles, dir) {
+  const map = new Map();
+  for (const f of auxFiles) {
+    const dl = await download(f.url, dir);
+    console.log(`Auxiliar ${f.name}: ${(dl.size / 1e6).toFixed(1)} MB`);
+    let cols = null;
+    eachRows.chunkHook = null; eachRows.entryHook = null;
+    await eachRows(dl, (name, enc) => { cols = null; console.log(`  ${name} (${enc})`); }, (cells) => {
+      if (!cols) {
+        cols = resolveColumns(cells, src.aux.fields);
+        console.log(`  Encabezado: ${cells.join(" | ").slice(0, 600)}`);
+        const missing = src.aux.required.filter((k) => cols[k] < 0);
+        if (missing.length) throw new Error(`al auxiliar le faltan columnas (${missing.join(", ")}): agrega el alias en map.mjs.`);
+        return;
+      }
+      const r = rowObject(cells, cols);
+      const k = src.aux.key(r), v = src.aux.value(r);
+      if (!k || !v) return;
+      const prev = map.get(k);
+      if (!prev || (v.primary && !prev.primary)) map.set(k, v);
+    }, () => false);
+    rmSync(dl.file, { force: true });
+  }
+  console.log(`  ${map.size} claves en el auxiliar`);
+  return map;
+}
+
 // ── corrida ─────────────────────────────────────────────────────────────────
 async function importSource(key, dir, stats) {
   const src = SOURCES[key];
   console.log(`\n=== ${src.title} (${key} → ${src.registry}) ===`);
-  const files = await discover(src);
+  const { files, aux } = await discover(src);
   console.log(`Archivos: ${files.length}`);
   files.forEach((f) => console.log(`  - ${f.name}${f.updated ? " (" + f.updated + ")" : ""} → ${f.url}`));
-  const ctx = { seen: key === "sii" ? new Map() : null, cells: null };
+  const ctx = { seen: key === "sii" ? new Map() : null, cells: null, aux: null };
+  if (src.aux) {
+    if (aux.length) ctx.aux = await loadAux(src, aux, dir);
+    else console.log("Sin archivo auxiliar: la actividad queda como texto.");
+  }
+  // El tope de filas (modo prueba) es por fuente: así Chile prueba el SII y el Registro de Empresas.
+  const base = stats.upserted + stats.mapped;
+  const full = () => !!(LIMIT && stats.upserted + stats.mapped - base >= LIMIT);
+  const sampleStart = stats.samples.length;
 
   for (const f of files) {
-    if (LIMIT && stats.upserted + stats.mapped >= LIMIT) break;
+    if (full()) break;
     const dl = await download(f.url, dir);
     if (f.updated && f.updated > stats.dataDate) stats.dataDate = f.updated;
     console.log(`Descargado ${f.name}: ${(dl.size / 1e6).toFixed(1)} MB${dl.zip ? " (zip)" : ""}`);
-    for (const entry of entries(dl)) {
-      if (LIMIT && stats.upserted + stats.mapped >= LIMIT) break;
-      const enc = await sniffEncoding(entry.open);
-      let cols = null, delim = null, header = null, batch = [];
-      const flush = async () => {
-        if (!batch.length) return;
-        const rows = batch; batch = [];
-        if (DRY) { stats.mapped += rows.length; return; }
-        const n = await rest("rpc/registry_import_batch", "POST", { rows });
-        stats.upserted += Number(n) || 0;
-      };
-      const onCells = (cells) => {
-        stats.read++;
-        if (!cols) {
-          if (src.columns && !looksLikeHeader(cells, src.fields)) {
-            header = src.columns;
-            cols = resolveColumns(header, src.fields);
-          } else {
-            header = cells;
-            cols = resolveColumns(header, src.fields);
-            console.log(`Encabezado de ${entry.name} (${enc}, separador ${JSON.stringify(delim)}): ${cells.join(" | ").slice(0, 900)}`);
-            const missing = src.required.filter((k) => cols[k] < 0);
-            if (missing.length) throw new Error(`a ${entry.name} le faltan columnas obligatorias (${missing.join(", ")}). Revisa el encabezado de arriba y agrega el alias en map.mjs.`);
-            console.log("Columnas usadas: " + Object.entries(cols).map(([k, i]) => `${k}=${i >= 0 ? header[i] : "—"}`).join(", "));
-            stats.read--;
-            return;
-          }
-          console.log(`${entry.name} sin encabezado (${enc}, separador ${JSON.stringify(delim)}): posiciones ${src.columns.join("|")}`);
-          console.log(`Primera fila: ${cells.join(" | ").slice(0, 600)}`);
-        }
-        ctx.cells = cells;
-        let mapped = null;
-        try { mapped = src.map(rowObject(cells, cols), ctx); } catch { mapped = null; }
-        const row = finishRow(key, mapped, f.updated);
-        if (!row) { stats.skipped++; return; }
-        if (stats.samples.length < 3) stats.samples.push(row);
-        batch.push(row);
-      };
-
-      const decoder = new TextDecoder(enc === "latin1" ? "latin1" : "utf-8");
-      let parser = null, buffered = "";
-      const stream = entry.open();
-      for await (const chunk of stream) {
-        let text = decoder.decode(chunk, { stream: true });
-        if (!parser) {
-          buffered += text;
-          const nl = buffered.indexOf("\n");
-          if (nl < 0 && buffered.length < 65536) continue;
-          delim = detectDelimiter(buffered.slice(0, nl < 0 ? buffered.length : nl));
-          // DGII, SUNAT y DNIT usan | sin comillas: un " suelto en una razón social no debe abrir un campo.
-          parser = createRowParser(delim, onCells, { quotes: delim !== "|" });
-          text = buffered; buffered = "";
-        }
-        parser.push(text);
-        if (batch.length >= BATCH) await flush();
-        if (LIMIT && stats.upserted + stats.mapped + batch.length >= LIMIT) { stream.destroy?.(); break; }
-      }
-      if (parser) { parser.push(decoder.decode()); parser.end(); }
+    let cols = null, header = null, batch = [], entryName = "", entryEnc = "", getDelim = () => ",";
+    const flush = async () => {
+      if (!batch.length) return;
+      const rows = batch; batch = [];
+      if (DRY) { stats.mapped += rows.length; return; }
+      const n = await rest("rpc/registry_import_batch", "POST", { rows });
+      stats.upserted += Number(n) || 0;
+    };
+    eachRows.chunkHook = async () => {
+      if (batch.length >= BATCH) await flush();
+      return !!(LIMIT && stats.upserted + stats.mapped + batch.length - base >= LIMIT);
+    };
+    eachRows.entryHook = async () => {
       await flush();
-      console.log(`${entry.name}: ${stats.read} filas leídas hasta ahora, ${stats.skipped} descartadas, ${DRY ? stats.mapped + " mapeadas" : stats.upserted + " cargadas"}`);
-    }
+      console.log(`${entryName}: ${stats.read} filas leídas hasta ahora, ${stats.skipped} descartadas, ${DRY ? stats.mapped + " mapeadas" : stats.upserted + " cargadas"}`);
+    };
+    await eachRows(dl, (name, enc, d) => { cols = null; entryName = name; entryEnc = enc; getDelim = d; }, (cells) => {
+      stats.read++;
+      if (!cols) {
+        if (src.columns && !looksLikeHeader(cells, src.fields)) {
+          header = src.columns;
+          cols = resolveColumns(header, src.fields);
+          console.log(`${entryName} sin encabezado (${entryEnc}, separador ${JSON.stringify(getDelim())}): posiciones ${src.columns.join("|")}`);
+          console.log(`Primera fila: ${cells.join(" | ").slice(0, 600)}`);
+        } else {
+          header = cells;
+          cols = resolveColumns(header, src.fields);
+          console.log(`Encabezado de ${entryName} (${entryEnc}, separador ${JSON.stringify(getDelim())}): ${cells.join(" | ").slice(0, 900)}`);
+          const missing = src.required.filter((k) => cols[k] < 0);
+          if (missing.length) throw new Error(`a ${entryName} le faltan columnas obligatorias (${missing.join(", ")}). Revisa el encabezado de arriba y agrega el alias en map.mjs.`);
+          console.log("Columnas usadas: " + Object.entries(cols).map(([k, i]) => `${k}=${i >= 0 ? header[i] : "—"}`).join(", "));
+          stats.read--;
+          return;
+        }
+      }
+      ctx.cells = cells;
+      let mapped = null;
+      try { mapped = src.map(rowObject(cells, cols), ctx); } catch { mapped = null; }
+      const row = finishRow(key, mapped, f.updated);
+      if (!row) { stats.skipped++; return; }
+      if (stats.samples.length - sampleStart < 3) stats.samples.push(row);
+      batch.push(row);
+    }, full);
     rmSync(dl.file, { force: true });
   }
 }

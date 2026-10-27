@@ -95,6 +95,11 @@ Deno.test("Argentina: una fila por sociedad (la actividad de orden 1)", () => {
   assertEquals(a.founded_on, "2024-03-05");
   assertEquals(a.status, "unknown"); // el registro no dice si sigue activa: no se inventa
   assertEquals(mapRow("rns", h, ["30712345678", "ACME S.A.", "", "", "", "631100", "", "2"]), null);
+  const hs = [...h, "actividad_estado"];
+  assertEquals(mapRow("rns", hs, ["30712345678", "ACME S.A.", "", "", "", "620100", "X", "1", "BD"]), null); // actividad dada de baja
+  // Los marcadores de "sin dato" quedan vacíos.
+  const sc = mapRow("sii", ["RUT", "DV", "Razón social", "Comuna", "Región"], ["76123456", "K", "ACME SPA", "Sin Comuna", "Sin Información"], { seen: new Map() })!;
+  assertEquals([sc.city, sc.region], ["", ""]);
 });
 
 Deno.test("Chile: queda el año comercial más reciente y el término de giro la da de baja", () => {
@@ -126,6 +131,7 @@ Deno.test("Perú, Ecuador, Rep. Dominicana y Paraguay: solo personas jurídicas"
   assertEquals(dg.founded_on, "2001-03-15");
   assertEquals(dg.status, "active");
   assertEquals(mapRow("dgii", d, ["00100000001", "PERSONA", "", "", "", "", "", "", "", "", "ACTIVO", ""]), null);
+  assertEquals(mapRow("dgii", d, ["531058447", "JACQUES CZAPLINSKI", "", "SOCIEDADES DE INVERSIÓN", "", "", "", "", "", "", "SUSPENDIDO", "NORMAL"]), null); // 5… = persona
   const py = SOURCES.dnit.columns;
   assertEquals(mapRow("dnit", py, ["80012345", "ACME SA", "6", "", "ACTIVO"])!.tax_id, "800123456");
   assertEquals(mapRow("dnit", py, ["1234567", "PEREZ, JUAN", "1", "", "ACTIVO"]), null);
