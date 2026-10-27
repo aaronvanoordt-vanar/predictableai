@@ -96,8 +96,12 @@ async function discover(src) {
   }
   if (d.type === "page") {
     const html = await getText(d.url);
-    const hrefs = [...html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map((m) => absolute(m[1], d.url)).filter((u) => d.link.test(u));
-    found = [...new Set(hrefs)].map((u) => ({ url: u, name: u.split("/").pop(), updated: "" }));
+    const all = [...new Set([...html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map((m) => absolute(m[1], d.url)).filter(Boolean))];
+    found = all.filter((u) => d.link.test(u)).map((u) => ({ url: u, name: u.split("/").pop(), updated: "" }));
+    if (!found.length) {
+      console.log(`La página ${d.url} (${html.length} caracteres) no enlaza archivos de datos. Enlaces que sí tiene:`);
+      all.slice(0, 80).forEach((u) => console.log(`  · ${u}`));
+    }
   }
   let files = found.filter((f) => f.url && (src.pick.test(f.url) || src.pick.test(f.name)) && !(src.skip && (src.skip.test(f.url) || src.skip.test(f.name))));
   if (!files.length) {
