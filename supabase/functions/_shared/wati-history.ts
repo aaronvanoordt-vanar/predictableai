@@ -38,6 +38,7 @@
  * campaign-run (cada WATI_HISTORY_SYNC_MS por cuenta).
  */
 
+import { sharedContactText } from "./shared-contact.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "./wati.ts";
 
@@ -101,7 +102,7 @@ export function parseHistoryItem(m: Json): HistoryMessage | null {
   const rawText = rawSource == null ? "" : String(rawSource);
   const text = rawText && !wati.mediaFileName(rawText) ? rawText : "";
   const media = wati.isMediaType(type);
-  const body = text || MEDIA_LABEL[type] || (m.template_name ? `Plantilla ${m.template_name}` : "");
+  const body = text || (type === "contacts" ? sharedContactText(m.contacts, m.data) : "") || MEDIA_LABEL[type] || (m.template_name ? `Plantilla ${m.template_name}` : "");
   if (!body) return null;
   const wamid = m.whatsapp_message_id ?? m.whatsappMessageId ?? null;
   return {
