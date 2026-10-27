@@ -1731,7 +1731,6 @@
     persistFilters();
     if (state.search.panelHost) { state.search.panelHost.innerHTML = ''; state.search.panelHost.appendChild(buildFilterPanel()); }
     updateFilterBadges();
-    if (apollo.connected !== true) return;
     return runSearch(1, true);
   }
 
@@ -4639,8 +4638,6 @@
       state.panes[t.id] = p;
       shell.appendChild(p);
     });
-    state.gate = h('div', { class: 'pros-pane', id: 'pros-apollo-gate' });
-    shell.appendChild(state.gate);
     buildSearchPane();
     buildListasPane();
     // Campañas vive en su propio módulo (js/campaigns.js) y se monta en el
@@ -4648,21 +4645,12 @@
     state.built = true;
   }
 
-  // ── Apollo primero (2026-10-02, pedido del dueño) ──────────────────────
-  // Buscar, enriquecer y enviar email salen de la cuenta de Apollo del
-  // usuario, así que no se entra a ninguna pestaña de Prospección sin
-  // conectarla. La Bandeja queda libre: junta respuestas de WhatsApp y
-  // LinkedIn, que no dependen de Apollo. Llamadas (vista de Campañas,
-  // js/calls.js) también (pedido del dueño, 2026-10-18): el dialer de
-  // Predictable y CloudTalk/Aircall/Ringover no usan Apollo. El estado y el
-  // asistente de conexión son los de js/campaigns.js (una sola fuente).
+  // ── Apollo ya no bloquea Prospección (2026-10-27, pedido del dueño) ────
+  // Los datos vienen integrados: Buscar, Listas y Campañas se abren sin
+  // conectar nada. El estado de la cuenta propia de Apollo se sigue leyendo
+  // en segundo plano (js/campaigns.js, una sola fuente) solo para lo que sí
+  // la exige: la búsqueda de empresas y el canal de Email.
   var apollo = { connected: null, checking: null, error: null, pendingTab: null };
-  // Canales (2026-10-19) tampoco: ahí se conecta el propio Apollo, y WhatsApp,
-  // LinkedIn y Llamadas no dependen de él.
-  var APOLLO_FREE_VIEWS = ['inbox', 'calls', 'channels'];
-  function apolloExempt(tabId) {
-    return tabId === 'campanas' && window.campaigns && typeof window.campaigns.currentView === 'function' && APOLLO_FREE_VIEWS.indexOf(window.campaigns.currentView()) !== -1;
-  }
   /** Abre la pestaña Canales (sin Apollo), con el canal elegido. */
   function openChannels(key) {
     if (!window.campaigns || typeof window.campaigns.openChannels !== 'function') return;
@@ -4695,68 +4683,17 @@
     }).then(function (ok) { apollo.checking = null; return ok; });
     return apollo.checking;
   }
-  function showApolloGate(mode) {
-    TABS.forEach(function (t) { state.panes[t.id].classList.remove('active'); });
-    state.gate.classList.add('active');
-    state.gate.innerHTML = '';
-    if (mode === 'loading') {
-      state.gate.innerHTML = emptyHtml(SVG_SEARCH, 'Revisando tu cuenta de Apollo…', 'Un momento.');
-      return;
-    }
-    var card = h('div', { class: 'card', style: 'max-width:620px;margin:24px auto 0;padding:28px;display:flex;flex-direction:column;gap:14px' });
-    card.appendChild(h('div', { class: 'pros-lbl', text: 'Paso 1 de Prospección' }));
-    card.appendChild(h('h2', { style: 'margin:0;font-size:20px;font-weight:700', text: 'Conecta tu cuenta de Apollo' }));
-    card.appendChild(h('p', { style: 'margin:0;color:var(--text2);font-size:13.5px;line-height:1.55',
-      text: 'Las búsquedas de personas y empresas, el enriquecimiento de tus listas y el email de tus campañas salen de tu cuenta de Apollo. Conéctala para empezar a prospectar: usas tus propios datos y créditos de Apollo.' }));
-    if (mode === 'error' && apollo.error) {
-      card.appendChild(h('div', { class: 'pros-hint', style: 'color:var(--red)', text: 'No pudimos revisar tu conexión: ' + apollo.error }));
-    }
-    var row = h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' });
-    var connectBtn = h('button', { type: 'button', class: 'btn btn-primary', text: 'Conectar Apollo' });
-    connectBtn.addEventListener('click', guarded(function () {
-      if (!window.campaigns || typeof window.campaigns.connectApollo !== 'function') throw new Error('No se pudo cargar el asistente de conexión. Recarga la página.');
-      return window.campaigns.connectApollo(connectBtn);
-    }));
-    row.appendChild(connectBtn);
-    if (mode === 'error') {
-      var retry = h('button', { type: 'button', class: 'btn btn-ghost', text: 'Reintentar' });
-      retry.addEventListener('click', function () { apollo.connected = null; switchTab(state.activeTab, true); });
-      row.appendChild(retry);
-    }
-    card.appendChild(row);
-    card.appendChild(h('div', { class: 'pros-hint', text: '¿Todavía no tienes cuenta? El asistente te muestra cómo crearla.' }));
-    // Llamar no necesita Apollo: la cola de llamadas, el historial y el dialer quedan a mano.
-    if (window.Calls && window.campaigns && typeof window.campaigns.openCalls === 'function') {
-      var callsRow = h('div', { class: 'pros-hint', style: 'border-top:1px solid var(--border);padding-top:12px' }, 'Para llamar no necesitas Apollo. ');
-      callsRow.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Ir a Llamadas', onclick: function () { openCalls(); } }));
-      card.appendChild(callsRow);
-    }
-    state.gate.appendChild(card);
-  }
   document.addEventListener('predictable:apollo-status', function (ev) {
-    var was = apollo.connected;
     apollo.connected = !!(ev && ev.detail && ev.detail.connected);
     apollo.error = null;
     // Conectó (o desconectó desde Campañas): repintar la pestaña actual.
-    if (apollo.connected !== was && state.built && state.activeTab) switchTab(state.activeTab);
   });
 
-  function switchTab(tabId, forceCheck) {
+  function switchTab(tabId) {
     tabId = normalizeTab(tabId);
     state.activeTab = tabId;
-    if (!apolloExempt(tabId) && (apollo.connected !== true || forceCheck)) {
-      var want = tabId;
-      if (apollo.connected === null || forceCheck) showApolloGate('loading');
-      else showApolloGate('missing');
-      // Si ya sabíamos que faltaba, se relee: pudo conectarla en otra pestaña.
-      checkApollo(!!forceCheck || apollo.connected === false).then(function (ok) {
-        if (state.activeTab !== want) return; // el usuario ya se fue a otra pestaña
-        if (ok) openPane(want);
-        else showApolloGate(apollo.error ? 'error' : 'missing');
-      });
-      return;
-    }
     openPane(tabId);
+    if (apollo.connected === null) checkApollo(false);
   }
 
   function openPane(tabId) {
@@ -4764,7 +4701,6 @@
     // Respaldo en el hash de la URL: sobrevive un refresh aunque localStorage
     // falle silenciosamente (modo privado, extensiones de privacidad, etc.).
     try { history.replaceState(null, '', '#pro-main:' + tabId); } catch (e) {}
-    if (state.gate) state.gate.classList.remove('active');
     TABS.forEach(function (t) {
       state.panes[t.id].classList.toggle('active', t.id === tabId);
     });
@@ -4807,7 +4743,6 @@
       try {
         ensureBuilt();
         switchTab('busqueda');
-        if (apollo.connected !== true) return; // el bloqueo de Apollo ya está a la vista
         var kw =(opts && Array.isArray(opts.keywords) ? opts.keywords : []).map(function (k) { return String(k || '').trim(); }).filter(Boolean);
         if (kw.length) {
           var f = state.search.filters || defaultFilters();
@@ -4833,7 +4768,6 @@
         ensureBuilt();
         switchTab('busqueda');
         setSearchMode('people');
-        if (apollo.connected !== true) return;
         var f = state.search.filters || defaultFilters();
         var domains = (opts && Array.isArray(opts.domains) ? opts.domains : [opts && opts.domain])
           .map(normalizeDomain).filter(Boolean);
@@ -4869,7 +4803,7 @@
       if (state.search.refreshSavedSearches) return state.search.refreshSavedSearches().catch(function () {});
       return Promise.resolve();
     },
-    apolloConnected: function () { return apollo.connected === true; },
+    apolloConnected: function () { return apollo.connected !== false; },
     tagInput: tagInput,
     show: function (tabId) {
       try {
