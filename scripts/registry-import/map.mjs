@@ -439,10 +439,16 @@ export const SOURCES = {
     discover: { type: "ckan", base: "https://catalogodatos.gub.uy", package: "miem-dei" },
     pick: /\.csv(\?|$)/i, latestOnly: true,
     fields: {
-      rut: ["rut"], name: ["razon_social"], trade: ["nombre_fantasia", "nombre_de_fantasia"], status: ["estado"],
-      code: ["ciiu", "codigo_ciiu", "ciiu_principal", "cod_ciiu"], activity: ["descripcion_ciiu", "ciiu_descripcion", "actividad", "descripcion"],
-      address: ["direccion", "domicilio"], city: ["localidad", "ciudad"], dept: ["departamento"], phone: ["telefono", "telefonos"],
-      email: ["correo_electronico", "email", "correo", "mail"], web: ["pagina_web", "sitio_web", "web"],
+      // Encabezado real (2026-10): Estado de la empresa | RUT | Código CIIU principal | Descripción Código CIIU principal |
+      // Denominación Social | Nombre comercial | Dirección Estab. Principal | Departamento Estab. Principal |
+      // Número de teléfono | Email público | Sitio web | Fec. Registro
+      rut: ["rut"], name: ["denominacion_social", "razon_social"], trade: ["nombre_comercial", "nombre_fantasia", "nombre_de_fantasia"],
+      status: ["estado_de_la_empresa", "estado"],
+      code: ["codigo_ciiu_principal", "ciiu", "codigo_ciiu", "ciiu_principal", "cod_ciiu"],
+      activity: ["descripcion_codigo_ciiu_principal", "descripcion_ciiu", "ciiu_descripcion", "actividad", "descripcion"],
+      address: ["direccion_estab_principal", "direccion", "domicilio"], city: ["localidad", "ciudad"],
+      dept: ["departamento_estab_principal", "departamento"], phone: ["numero_de_telefono", "telefono", "telefonos"],
+      email: ["email_publico", "correo_electronico", "email", "correo", "mail"], web: ["sitio_web", "pagina_web", "web"],
     },
     required: ["rut", "name"],
     map(r) {
