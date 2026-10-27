@@ -263,6 +263,18 @@
       '.cb-branch-lbl.yes { background:var(--green-soft); color:var(--green); }',
       '.cb-branch-lbl.no { background:var(--amber-soft); color:var(--amber); }',
       '.cb-branch-empty { font-size:11.5px; color:var(--text3); padding:4px 0 0 4px; }',
+      // Arrastrar y soltar: paleta de canales + tarjetas que se mueven entre ramas
+      '.cb-palette { display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:8px 10px; border:1px dashed var(--hair); border-radius:var(--r-md); background:var(--surface2); }',
+      '.cb-palette-lbl { font-size:12px; color:var(--text3); margin-right:4px; }',
+      '.cb-palette .cb-pick { cursor:grab; }',
+      '.cb-palette .cb-pick:active { cursor:grabbing; }',
+      '.cb-item[draggable="true"] .cb-card { cursor:grab; }',
+      '.cb-item.cb-dragging { opacity:.4; }',
+      '.cb-tl.cb-drag-on .cb-plus-line { min-height:34px; }',
+      '.cb-tl.cb-drag-on .cb-plus-line:after { content:""; position:absolute; left:34px; right:0; top:50%; height:0; border-top:2px dashed transparent; transition:border-color .12s; }',
+      '.cb-tl.cb-drag-on .cb-plus-line.cb-drop-hot:after { border-top-color:var(--accent-2); }',
+      '.cb-tl.cb-drag-on .cb-plus-line.cb-drop-hot .cb-plus { border-color:var(--accent-2); color:var(--accent); background:var(--accent-soft); }',
+      '.cb-tl.cb-drag-on .cb-plus-line.cb-drop-no { opacity:.35; }',
       '.cb-join { height:14px; margin-left:106px; border-left:2px solid var(--hair); border-bottom:2px solid var(--hair); border-bottom-left-radius:8px; width:40px; }',
       '.cb-branch .cb-item .cb-when { padding-top:8px; }',
       // Panel lateral
@@ -327,7 +339,7 @@
       var on = o.picker && o.picker.list === listKey && String(o.picker.condId || '') === String(condId || '') && o.picker.index === index;
       var wrap = h('div', { class: 'cb-plus-wrap' });
       wrap.appendChild(h('div'));
-      var line = h('div', { class: 'cb-plus-line' });
+      var line = h('div', { class: 'cb-plus-line', 'data-drop-list': listKey, 'data-drop-cond': condId || '', 'data-drop-index': String(index) });
       line.appendChild(h('button', { type: 'button', class: 'cb-plus' + (on ? ' on' : ''), title: 'Agregar paso aquí', 'data-action': 'cb-insert', 'data-list': listKey, 'data-cond': condId || '', 'data-index': String(index), html: ICONS.plus }));
       if (on) line.appendChild(renderPicker(listKey === 'root', o.pickerDisabled || {}));
       wrap.appendChild(line);
@@ -337,7 +349,7 @@
     function card(node, isFirst, inBranch) {
       var isCond = node.type === 'condition';
       var meta = isCond ? { tone: 'purple' } : (L.CHANNEL_META[node.channel] || { tone: 'gray' });
-      var item = h('div', { class: 'cb-item' });
+      var item = h('div', { class: 'cb-item', draggable: o.readOnly ? null : 'true', 'data-drag-id': o.readOnly ? null : node.id, 'data-drag-cond': isCond ? '1' : null });
       var chip = h('span', { class: 'cb-chip' + (o.readOnly ? ' static' : ''), text: L.delayLabel(node, isFirst && !inBranch), 'data-action': o.readOnly ? null : 'cb-select', 'data-id': node.id, 'data-focus': 'delay' });
       item.appendChild(h('div', { class: 'cb-when' }, chip));
       var c = h(o.readOnly ? 'div' : 'button', {
@@ -556,6 +568,11 @@
     container.innerHTML = '';
     container.appendChild(root);
     root.addEventListener('click', onClick);
+    root.addEventListener('dragstart', onDragStart);
+    root.addEventListener('dragover', onDragOver);
+    root.addEventListener('dragleave', onDragLeave);
+    root.addEventListener('drop', onDrop);
+    root.addEventListener('dragend', onDragEnd);
 
     if (st.emailAccounts === null && o.loadEmailAccounts) {
       o.loadEmailAccounts().then(function (list) {
@@ -854,6 +871,24 @@
       st.draft.flow = L.normalize(st.draft.flow);
       markCustom();
     }
+    /** Mueve un paso (o una condición con sus ramas) a otra posición o rama. */
+    function moveNodeTo(id, listKey, condId, index) {
+      var loc = locate(id);
+      if (!loc) return false;
+      if (loc.node.type === 'condition' && listKey !== 'root') { toast('Las condiciones no se anidan: suéltala fuera de las ramas.', 'warn'); return false; }
+      var target = listFor(listKey, condId);
+      if (!target) return false;
+      var at = index;
+      if (target === loc.list && at > loc.index) at -= 1;
+      if (target === loc.list && at === loc.index) return false;
+      loc.list.splice(loc.index, 1);
+      target.splice(Math.max(0, Math.min(at, target.length)), 0, loc.node);
+      st.draft.flow = L.normalize(st.draft.flow);
+      st.selectedId = id;
+      st.picker = null;
+      markCustom();
+      return true;
+    }
     function markCustom() {
       if (st.draft.origin && st.draft.origin !== 'custom' && !/^(ai|template:|clone:|eleva:)/.test(st.draft.origin)) st.draft.origin = 'custom';
     }
@@ -1150,6 +1185,7 @@
         wrap.appendChild(note);
       }
       wrap.appendChild(h('div', { class: 'cb-hint', text: 'Cada tarjeta es un envío. La espera cuenta desde el paso anterior; "junto con el anterior" sale a la misma hora. El "+" agrega WhatsApp, email, LinkedIn o una condición con ramas Sí / No que se vuelven a unir al final.' }));
+      wrap.appendChild(renderPalette());
       var grid = h('div', { class: 'cb-cad' });
       var fe = flowErrors();
       var pickerDisabled = {};
@@ -1157,6 +1193,19 @@
       grid.appendChild(renderPanel(fe));
       wrap.appendChild(grid);
       return wrap;
+    }
+
+    /** Paleta arrastrable: un canal o una condición se suelta en cualquier "+" (clic = al final). */
+    function renderPalette() {
+      var p = h('div', { class: 'cb-palette', title: 'Arrastra un canal a la cadencia o a una rama Sí / No. Con un clic se agrega al final.' });
+      p.appendChild(h('span', { class: 'cb-palette-lbl', text: 'Arrastra a la cadencia:' }));
+      ['whatsapp', 'email', 'linkedin_connect', 'linkedin_message', 'call'].forEach(function (ch) {
+        var m = L.CHANNEL_META[ch];
+        p.appendChild(h('button', { type: 'button', class: 'cb-pick', draggable: 'true', 'data-drag-kind': ch, 'data-action': 'cb-palette-add', 'data-kind': ch }, icon(ch, m.tone), m.short === 'WA' ? 'WhatsApp' : m.short));
+      });
+      p.appendChild(h('button', { type: 'button', class: 'cb-pick', draggable: 'true', 'data-drag-kind': 'condition', 'data-action': 'cb-palette-add', 'data-kind': 'condition' }, icon('condition', 'purple'), 'Condición'));
+      p.appendChild(h('span', { class: 'cb-hint', text: 'También puedes arrastrar una tarjeta para moverla, incluso a otra rama.' }));
+      return p;
     }
 
     function renderPanel(fe) {
@@ -1819,6 +1868,7 @@
           return render();
         }
         if (action === 'cb-pick') { e.stopPropagation(); insertNode(el.getAttribute('data-kind')); return render(); }
+        if (action === 'cb-palette-add') { e.stopPropagation(); st.picker = { list: 'root', condId: null, index: st.draft.flow.nodes.length }; insertNode(el.getAttribute('data-kind')); return render(); }
         if (action === 'cb-pick-close') { e.stopPropagation(); st.picker = null; return render(); }
         if (action === 'cb-move') { e.stopPropagation(); moveNode(id, Number(el.getAttribute('data-dir'))); return render(); }
         if (action === 'cb-del') {
@@ -1867,6 +1917,64 @@
         console.error('[campaign-builder]', err);
         toast(err && err.message ? err.message : String(err), 'error');
       }
+    }
+
+    // ── arrastrar y soltar (los botones ↑ ↓ y el "+" siguen siendo la vía con teclado) ──
+    var drag = null; // { id, cond } al mover una tarjeta · { kind } al soltar un canal de la paleta
+    function dropZone(e) { var z = e.target.closest ? e.target.closest('.cb-plus-line[data-drop-list]') : null; return z && root.contains(z) ? z : null; }
+    function dropAllowed(z) {
+      if (!drag) return false;
+      var isCond = drag.kind === 'condition' || drag.cond;
+      return !(isCond && z.getAttribute('data-drop-list') !== 'root');
+    }
+    function clearHot() { Array.prototype.forEach.call(root.querySelectorAll('.cb-drop-hot'), function (z) { z.classList.remove('cb-drop-hot'); }); }
+    function onDragStart(e) {
+      if (st.step !== 2) return;
+      var src = e.target.closest ? e.target.closest('[data-drag-id],[data-drag-kind]') : null;
+      if (!src || !root.contains(src)) return;
+      drag = src.hasAttribute('data-drag-id') ? { id: src.getAttribute('data-drag-id'), cond: src.getAttribute('data-drag-cond') === '1' } : { kind: src.getAttribute('data-drag-kind') };
+      try { e.dataTransfer.effectAllowed = drag.id ? 'move' : 'copy'; e.dataTransfer.setData('text/plain', drag.id || drag.kind); } catch (err) { /* navegador sin dataTransfer */ }
+      // Cambiar el layout dentro de dragstart cancela el arrastre en Chrome: va en el siguiente tick.
+      setTimeout(function () {
+        if (!drag) return;
+        if (drag.id) src.classList.add('cb-dragging');
+        var tl = root.querySelector('.cb-tl');
+        if (!tl) return;
+        tl.classList.add('cb-drag-on');
+        Array.prototype.forEach.call(tl.querySelectorAll('.cb-plus-line[data-drop-list]'), function (z) { z.classList.toggle('cb-drop-no', !dropAllowed(z)); });
+      }, 0);
+    }
+    function onDragOver(e) {
+      var z = drag && dropZone(e);
+      if (!z || !dropAllowed(z)) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = drag.id ? 'move' : 'copy'; } catch (err) { /* idem */ }
+      if (!z.classList.contains('cb-drop-hot')) { clearHot(); z.classList.add('cb-drop-hot'); }
+    }
+    function onDragLeave(e) { var z = dropZone(e); if (z && !z.contains(e.relatedTarget)) z.classList.remove('cb-drop-hot'); }
+    function onDrop(e) {
+      var z = drag && dropZone(e);
+      if (!z || !dropAllowed(z)) return;
+      e.preventDefault();
+      var listKey = z.getAttribute('data-drop-list');
+      var condId = z.getAttribute('data-drop-cond') || null;
+      var index = Number(z.getAttribute('data-drop-index'));
+      var d = drag;
+      drag = null;
+      try {
+        if (d.id) { if (moveNodeTo(d.id, listKey, condId, index)) render(); else onDragEnd(); }
+        else { st.picker = { list: listKey, condId: condId, index: index }; insertNode(d.kind); render(); }
+      } catch (err) {
+        console.error('[campaign-builder]', err);
+        toast(err && err.message ? err.message : String(err), 'error');
+      }
+    }
+    function onDragEnd() {
+      drag = null;
+      clearHot();
+      Array.prototype.forEach.call(root.querySelectorAll('.cb-dragging'), function (x) { x.classList.remove('cb-dragging'); });
+      var tl = root.querySelector('.cb-tl');
+      if (tl) tl.classList.remove('cb-drag-on');
     }
 
     return {
