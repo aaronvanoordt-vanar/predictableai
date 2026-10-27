@@ -16,62 +16,146 @@
   Desarrolladores dentro de la app).
 -->
 <style>
+/* 2026-10-27 (pedido del dueño): la documentación deja de ser negra y sosa y
+   adopta el mismo lenguaje de la landing: lienzo claro con rejilla de puntos,
+   vidrio líquido y bloques de código oscuros. Solo claro (como la landing). */
 :root {
-  --bg: #F7F8FA; --surface: #FFFFFF; --surface2: #F6F7F9;
-  --hair: rgba(10,10,15,0.08); --hair-2: rgba(10,10,15,0.05); --hair-3: rgba(10,10,15,0.13);
-  --ink: #0A0A0F; --ink-2: rgba(10,10,15,0.78); --ink-3: rgba(10,10,15,0.55); --ink-4: rgba(10,10,15,0.40);
+  --bg: #F3F5FA; --surface: rgba(255,255,255,.72); --surface2: rgba(10,10,15,.045);
+  --hair: rgba(10,10,15,0.09); --hair-2: rgba(10,10,15,0.06); --hair-3: rgba(10,10,15,0.14);
+  --ink: #0A0A0F; --ink-2: #2A2D38; --ink-3: #565C69; --ink-4: #8A91A0;
   --accent: #1F4BFF; --accent-soft: rgba(31,75,255,0.10);
-  --green: #0EA968; --green-soft: rgba(14,169,104,0.11);
-  --red: #D64545; --red-soft: rgba(214,69,69,0.10);
-  --amber: #B87514; --amber-soft: rgba(184,117,20,0.11);
+  --green: #0B8F57; --green-soft: rgba(14,169,104,0.12);
+  --red: #C23B3B; --red-soft: rgba(214,69,69,0.10);
+  --amber: #9A5F0E; --amber-soft: rgba(184,117,20,0.12);
   --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
-  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
+  --r-sm: 6px; --r-md: 12px; --r-lg: 20px;
   --grad-ai: linear-gradient(120deg, #1F4BFF, #4364FF, #6E5CF5);
+  --code-bg: linear-gradient(160deg, #12142A, #0A0B16);
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0B0C10; --surface: #13141A; --surface2: #1A1B23;
-    --hair: rgba(255,255,255,0.08); --hair-2: rgba(255,255,255,0.05); --hair-3: rgba(255,255,255,0.15);
-    --ink: #F5F6F8; --ink-2: rgba(245,246,248,0.80); --ink-3: rgba(245,246,248,0.56); --ink-4: rgba(245,246,248,0.40);
-    --accent: #5C82FF; --accent-soft: rgba(92,130,255,0.16);
-    --green: #33C284; --green-soft: rgba(51,194,132,0.14);
-    --red: #E66A6A; --red-soft: rgba(230,106,106,0.13);
-    --amber: #DFA24E; --amber-soft: rgba(223,162,78,0.13);
-    color-scheme: dark;
-  }
-}
 * { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 96px; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
-.top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 24px; background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--hair); }
-.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-weight: 700; font-size: 15px; }
-.brand img { width: 26px; height: 26px; }
-.brand small { font-weight: 500; color: var(--ink-3); font-size: 13px; }
-.top a.cta { font-size: 13px; font-weight: 600; color: #fff; background: var(--grad-ai); padding: 8px 14px; border-radius: 999px; text-decoration: none; white-space: nowrap; }
-.hero { max-width: 1180px; margin: 0 auto; padding: 40px 24px 8px; }
-.hero h1 { font-size: 30px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -0.4px; }
-.hero p { font-size: 15px; line-height: 1.6; color: var(--ink-3); max-width: 760px; margin: 0; }
-.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
-.chip { font-size: 12px; font-weight: 600; color: var(--ink-2); border: 1px solid var(--hair-3); border-radius: 999px; padding: 5px 12px; background: var(--surface); }
-#docs { max-width: 1180px; margin: 0 auto; padding: 28px 24px 80px; }
+body::before { content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none; background: radial-gradient(70% 40% at 50% -6%, rgba(255,255,255,.95), rgba(255,255,255,0) 70%), radial-gradient(60% 36% at 50% 0%, rgba(31,75,255,.08), rgba(31,75,255,0) 72%); }
+body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .55; background-image: radial-gradient(rgba(10,10,15,.16) 1px, transparent 1.3px); background-size: 26px 26px; -webkit-mask-image: radial-gradient(85% 70% at 50% 25%, #000 10%, transparent 78%); mask-image: radial-gradient(85% 70% at 50% 25%, #000 10%, transparent 78%); }
+a { color: inherit; }
+
+.glass { position: relative; isolation: isolate; background: linear-gradient(140deg, rgba(255,255,255,.8), rgba(255,255,255,.38)); -webkit-backdrop-filter: blur(26px) saturate(2); backdrop-filter: blur(26px) saturate(2); border: 1px solid rgba(255,255,255,.55); box-shadow: inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 1px rgba(255,255,255,.4), 0 1px 2px rgba(10,10,15,.05), 0 24px 56px -26px rgba(20,30,80,.4); }
+.glass::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.3px; z-index: -1; pointer-events: none; background: linear-gradient(145deg, #fff, rgba(255,255,255,.18) 30%, rgba(255,255,255,0) 52%, rgba(255,255,255,.3) 78%, rgba(255,255,255,.85)); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+
+.top { position: sticky; top: 12px; z-index: 20; max-width: 1240px; margin: 12px auto 0; padding: 0 16px; }
+.top-in { height: 60px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 0 10px 0 18px; border-radius: 999px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 700; font-size: 16px; letter-spacing: -.02em; }
+.logo { width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(150deg, #1B1F33, #070810); box-shadow: inset 0 1px 0 rgba(255,255,255,.28), 0 6px 16px -6px rgba(10,10,15,.55); }
+.logo img { width: 21px; height: 21px; }
+.brand small { font-weight: 500; color: var(--ink-3); font-size: 14px; letter-spacing: 0; }
+.top-links { display: flex; align-items: center; gap: 6px; }
+.top-links a { text-decoration: none; font-size: 14px; font-weight: 500; color: var(--ink-2); padding: 8px 13px; border-radius: 999px; }
+.top-links a:hover { background: rgba(255,255,255,.7); box-shadow: inset 0 1px 0 #fff; }
+.top-links a.cta { font-weight: 600; color: #fff; background: var(--grad-ai); box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -2px 6px rgba(10,20,90,.25), 0 10px 28px -10px rgba(31,75,255,.7); padding: 10px 18px; }
+
+.hero { max-width: 1240px; margin: 0 auto; padding: 84px 32px 36px; display: grid; grid-template-columns: 1.05fr 1fr; gap: 44px; align-items: center; }
+.pill { display: inline-flex; align-items: center; gap: 8px; padding: 7px 15px; border-radius: 999px; font-size: 14px; font-weight: 550; color: var(--ink-2); background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.5)); border: 1px solid rgba(255,255,255,.85); box-shadow: inset 0 1px 0 #fff, 0 8px 22px -12px rgba(20,30,80,.4); }
+.hero h1 { font-size: clamp(38px, 5.4vw, 70px); line-height: 1; letter-spacing: -.05em; font-weight: 700; margin: 22px 0 20px; }
+.grad { background: var(--grad-ai); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.hero p { font-size: 18px; line-height: 1.55; color: var(--ink-3); max-width: 560px; margin: 0; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 26px; }
+.chip { font-size: 13px; font-weight: 600; color: var(--ink-2); border-radius: 999px; padding: 7px 14px; background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.55)); border: 1px solid rgba(255,255,255,.9); box-shadow: inset 0 1px 0 #fff, 0 6px 16px -10px rgba(20,30,80,.4); }
+.hero-code { border-radius: 26px; padding: 10px; }
+.hero-code .win { border-radius: 18px; background: var(--code-bg); box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 20px 50px -20px rgba(10,10,40,.6); overflow: hidden; }
+.win-bar { display: flex; align-items: center; gap: 7px; padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.win-bar i { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,.16); }
+.win-bar span { margin-left: 8px; font-family: var(--font-mono); font-size: 12px; color: rgba(255,255,255,.5); }
+.win pre { margin: 0; padding: 18px 20px 22px; font-family: var(--font-mono); font-size: 13px; line-height: 1.75; color: #DCE2FF; overflow-x: auto; white-space: pre; }
+.win .c { color: #6F77A6; } .win .k { color: #9DB4FF; } .win .s { color: #7CE0B0; } .win .v { color: #C9B8FF; }
+.feats { max-width: 1240px; margin: 0 auto; padding: 0 32px 6px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.feat { padding: 22px 24px; border-radius: 22px; }
+.feat b { display: block; font-size: 17px; letter-spacing: -.02em; margin-bottom: 6px; }
+.feat span { font-size: 14.5px; line-height: 1.5; color: var(--ink-3); }
+.feat .ic { width: 34px; height: 34px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; color: #fff; background: var(--grad-ai); box-shadow: inset 0 1px 0 rgba(255,255,255,.4); }
+.feat .ic svg { width: 17px; height: 17px; }
+#docs { max-width: 1240px; margin: 0 auto; padding: 44px 32px 80px; }
 .state { font-size: 14px; color: var(--ink-3); }
-footer { max-width: 1180px; margin: 0 auto; padding: 0 24px 40px; font-size: 12px; color: var(--ink-4); }
-@media (max-width: 640px) { .top { padding: 10px 16px; } .brand small { display: none; } .hero { padding: 28px 16px 4px; } .hero h1 { font-size: 24px; } #docs { padding: 20px 16px 60px; } footer { padding: 0 16px 32px; } }
+footer { max-width: 1240px; margin: 0 auto; padding: 0 32px 40px; }
+.foot { padding: 18px 24px; border-radius: 22px; font-size: 14px; color: var(--ink-3); display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+
+/* ── Documentación (js/dev-docs.js) vestida con la landing ── */
+#docs .dd-wrap { grid-template-columns: 230px minmax(0,1fr); gap: 36px; }
+#docs .dd-nav { top: 96px; padding: 14px; border-radius: 22px; gap: 1px; font-size: 14px; background: linear-gradient(140deg, rgba(255,255,255,.8), rgba(255,255,255,.4)); border: 1px solid rgba(255,255,255,.7); box-shadow: inset 0 1px 0 #fff, 0 20px 46px -26px rgba(20,30,80,.4); -webkit-backdrop-filter: blur(20px) saturate(1.8); backdrop-filter: blur(20px) saturate(1.8); }
+#docs .dd-nav a { padding: 7px 12px; border-radius: 10px; color: var(--ink-3); font-weight: 500; }
+#docs .dd-nav a:hover { background: rgba(255,255,255,.85); color: var(--ink); box-shadow: inset 0 1px 0 #fff; }
+#docs .dd-nav-lbl { font-size: 11px; color: var(--ink-4); margin: 14px 12px 5px; }
+#docs .dd-main { gap: 44px; }
+#docs .dd-sec { scroll-margin-top: 96px; }
+#docs .dd-h2 { font-size: 30px; letter-spacing: -.035em; margin: 0 0 12px; }
+#docs .dd-h4 { font-size: 14px; margin: 20px 0 8px; }
+#docs .dd-sec p, #docs .dd-steps { font-size: 15px; line-height: 1.7; color: var(--ink-2); }
+#docs .dd-sec code, #docs .dd-table code, #docs .dd-kv code { background: rgba(31,75,255,.07); border: 1px solid rgba(31,75,255,.12); color: #1B3FD0; border-radius: 6px; font-size: 12.5px; }
+#docs .dd-sec .dd-pre code { color: inherit; background: none; border: 0; }
+#docs .dd-kv { font-size: 14px; padding: 14px 18px; border-radius: 16px; background: rgba(255,255,255,.6); border: 1px solid rgba(255,255,255,.9); box-shadow: inset 0 1px 0 #fff; }
+#docs .dd-ep { border-radius: 22px; padding: 20px 24px; background: linear-gradient(140deg, rgba(255,255,255,.82), rgba(255,255,255,.45)); border: 1px solid rgba(255,255,255,.75); box-shadow: inset 0 1px 0 #fff, 0 18px 44px -28px rgba(20,30,80,.45); -webkit-backdrop-filter: blur(18px) saturate(1.7); backdrop-filter: blur(18px) saturate(1.7); scroll-margin-top: 96px; }
+#docs .dd-ep-title { font-size: 16px; letter-spacing: -.015em; }
+#docs .dd-path { font-size: 14px; }
+#docs .dd-table { font-size: 13px; }
+#docs .dd-table th { color: var(--ink-4); }
+#docs .dd-code { border-radius: 16px; background: var(--code-bg); border: 1px solid rgba(255,255,255,.06); box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 16px 36px -20px rgba(10,10,40,.55); }
+#docs .dd-code-head { border-bottom-color: rgba(255,255,255,.08); padding: 9px 12px; }
+#docs .dd-ctab, #docs .dd-copy { color: rgba(255,255,255,.58); }
+#docs .dd-ctab:hover, #docs .dd-copy:hover { color: #fff; }
+#docs .dd-ctab.on { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.16); color: #fff; }
+#docs .dd-copy { border-color: rgba(255,255,255,.18); }
+#docs .dd-pre { background: transparent; color: #DCE2FF; font-size: 12.8px; line-height: 1.7; padding: 16px 18px; }
+#docs .dd-sec > .dd-pre, #docs .dd-resp .dd-pre { background: var(--code-bg); border: 1px solid rgba(255,255,255,.06); border-radius: 16px; }
+#docs .dd-resp summary { color: var(--ink-2); }
+@media (max-width: 960px) {
+  .hero { grid-template-columns: 1fr; padding-top: 56px; gap: 30px; }
+  .feats { grid-template-columns: 1fr; }
+  .top-links a:not(.cta) { display: none; }
+}
+@media (max-width: 900px) { #docs .dd-wrap { grid-template-columns: 1fr; } #docs .dd-nav { position: static; border-radius: 16px; } }
+@media (max-width: 640px) { .hero, .feats, #docs, footer { padding-left: 16px; padding-right: 16px; } .brand small { display: none; } .hero p { font-size: 16px; } }
 </style>
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="landing.html"><img src="assets/predictable-favicon.png" alt="">Predictable AI <small>· Desarrolladores</small></a>
-  <a class="cta" href="index.html">Ir a la app</a>
+  <div class="top-in glass">
+    <a class="brand" href="landing.html"><span class="logo"><img src="favicon.svg" alt=""></span>Predictable AI <small>· Desarrolladores</small></a>
+    <nav class="top-links" aria-label="Navegación">
+      <a href="landing.html">Inicio</a>
+      <a href="#referencia">Referencia</a>
+      <a class="cta" href="index.html">Ir a la app</a>
+    </nav>
+  </div>
 </header>
 <section class="hero">
-  <h1>Conecta tu CRM a Predictable</h1>
-  <p>API REST, webhooks firmados y servidor MCP. Carga leads sin duplicar, ponlos en campañas omnicanal y entérate al instante de cada respuesta, reunión y señal de compra.</p>
-  <div class="chips"><span class="chip">REST + JSON</span><span class="chip">OpenAPI 3.1</span><span class="chip">Webhooks con HMAC</span><span class="chip">MCP para agentes de IA</span></div>
+  <div>
+    <span class="pill">API pública · MCP · Webhooks</span>
+    <h1>Conecta tu CRM a <span class="grad">Predictable</span>.</h1>
+    <p>API REST, webhooks firmados y servidor MCP. Carga leads sin duplicar, ponlos en campañas omnicanal y entérate al instante de cada respuesta, reunión y señal de compra.</p>
+    <div class="chips"><span class="chip">REST + JSON</span><span class="chip">OpenAPI 3.1</span><span class="chip">Webhooks con HMAC</span><span class="chip">MCP para agentes de IA</span></div>
+  </div>
+  <div class="hero-code glass" aria-label="Ejemplo de llamada">
+    <div class="win">
+      <div class="win-bar"><i></i><i></i><i></i><span>Tu primera llamada</span></div>
+<pre><span class="c"># Prueba que tu clave funciona</span>
+<span class="k">curl</span> -X GET <span class="s">"$PREDICTABLE_API_URL/v1/me"</span> \
+  -H <span class="s">"Authorization: Bearer $PREDICTABLE_API_KEY"</span>
+
+<span class="c"># Carga contactos sin duplicar</span>
+<span class="k">curl</span> -X POST <span class="s">"$PREDICTABLE_API_URL/v1/contacts/bulk"</span> \
+  -H <span class="s">"Authorization: Bearer $PREDICTABLE_API_KEY"</span> \
+  -d <span class="s">'{ "contacts": [ { "external_id": </span><span class="v">"id-de-tu-crm"</span><span class="s"> } ] }'</span></pre>
+    </div>
+  </div>
 </section>
-<main id="docs"><p class="state">Cargando documentación…</p></main>
-<footer>¿Necesitas una clave? El dueño de la cuenta la crea en Predictable → Desarrolladores → Claves de API.</footer>
+<section class="feats">
+  <div class="feat glass"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5"/></svg></span><b>API REST</b><span>Listas, contactos, campañas, Bandeja, Radar, reuniones y CRM. Con <code>external_id</code> reenviar un registro lo actualiza, no lo duplica.</span></div>
+  <div class="feat glass"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg></span><b>Webhooks firmados</b><span>Recibe respuestas, cambios de estado, señales y reuniones al instante, con firma HMAC para verificar cada evento.</span></div>
+  <div class="feat glass"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg></span><b>Servidor MCP</b><span>Deja que tus agentes de IA consulten y operen Predictable con las mismas claves y los mismos permisos.</span></div>
+</section>
+<main id="docs"><span id="referencia"></span><p class="state">Cargando documentación…</p></main>
+<footer><div class="foot glass"><span>¿Necesitas una clave? El dueño de la cuenta la crea en Predictable → Desarrolladores → Claves de API.</span><span>© 2026 Predictable AI · Vanar</span></div></footer>
 <script src="js/dev-docs.js?v=20260923"></script>
 <script>
 (function () {
