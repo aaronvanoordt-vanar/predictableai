@@ -146,3 +146,12 @@ Deno.test("un lote nunca lleva dos veces la misma empresa (ON CONFLICT no lo adm
   assertEquals(out.length, 2);
   assertEquals(out[0], { registry: "rns", registry_id: "30712345678", legal_name: "ACME S.A.", city: "ROSARIO" });
 });
+
+Deno.test("«S/D» es un dato vacío y el nombre comercial igual a la razón social no se repite", () => {
+  const h = ["RUT", "Denominación Social", "Nombre comercial", "Departamento Estab. Principal"];
+  const a = mapRow("dei", h, ["213534080019", "SINDATEL SA", "SINDATEL S.A.", "S/D"])!;
+  assertEquals(a.region, "");
+  assertEquals(a.name_norm, "sindatel");
+  const b = mapRow("dei", h, ["219577980010", "OEHLER IT SAS", "S/D", "MONTEVIDEO"])!;
+  assertEquals([b.trade_name, b.name_norm], ["", "oehler it"]);
+});

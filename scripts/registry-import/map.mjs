@@ -482,7 +482,7 @@ export function sourcesFor(registry) {
 }
 
 /** Marcadores de "sin dato" que algunos registros escriben en vez de dejar vacío. */
-const NULLISH = /^(sin (comuna|region|informacion|info|dato|datos|actividad)|valor por defecto|no informad[oa]|no aplica|n\/?a|null|-+|\.+|0)$/i;
+const NULLISH = /^(sin (comuna|region|informacion|info|dato|datos|actividad)|valor por defecto|no informad[oa]|no aplica|n\/?a|s\/?d|null|-+|\.+|0)$/i;
 function nn(v, max) {
   const t = clean(v || "", max);
   return NULLISH.test(stripAccents(t)) ? "" : t;
@@ -496,7 +496,7 @@ export function finishRow(source, mapped, sourceUpdatedOn = "") {
     registry: s.registry, country: s.country, activity_system: s.activity_system,
     registry_id: clean(mapped.registry_id, 60), tax_id: clean(mapped.tax_id || "", 30),
     legal_name: clean(mapped.legal_name), trade_name: nn(mapped.trade_name),
-    name_norm: [normCompanyName(mapped.legal_name), normCompanyName(mapped.trade_name || "")].filter(Boolean).join(" "),
+    name_norm: [...new Set([normCompanyName(mapped.legal_name), normCompanyName(nn(mapped.trade_name))].filter(Boolean))].join(" "),
     activity_code: digits(mapped.activity_code).replace(/^0+$/, "").slice(0, 12), activity_description: nn(mapped.activity_description),
     size_bucket: mapped.size_bucket || "", size_label: nn(mapped.size_label),
     founded_on: mapped.founded_on || "", founded_label: mapped.founded_on ? clean(mapped.founded_label || "") : "",
