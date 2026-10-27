@@ -394,8 +394,7 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 .feat-track.scrolly .feat-btn[aria-selected="true"]::after { content: ""; position: absolute; left: 16px; right: 16px; bottom: 7px; height: 2px; border-radius: 2px; background: var(--grad-ai); transform-origin: left; transform: scaleX(var(--sp, 0)); opacity: .85; }
 .feat-track.scrolly .feat-btn:not([aria-selected="true"]) { opacity: .62; }
 .feat-track.scrolly .feat-btn { transition: background .25s, border-color .25s, box-shadow .25s, opacity .35s, transform .25s var(--ease-out); }
-.scroll-hint { text-align: center; font-size: 13px; color: var(--ink-4); margin: 14px 0 0; display: none; }
-.feat-track.scrolly + .scroll-hint { display: block; }
+.feat-track.scrolly .replay { display: none; }
 /* En el teléfono las funciones son cápsulas en una fila deslizable y la descripción va debajo */
 .feat-desc { display: none; }
 @media (max-width: 960px) {
@@ -1436,7 +1435,7 @@ footer { padding: 0 0 40px; }
         <p style="margin:14px 0 0;font-size:14.5px">Una plataforma en vez de cuatro, y los datos fluyen de un paso al siguiente.</p>
       </div>
     </div>
-    <p class="fine">Una herramienta por categoría: Apollo ya trae secuencias de email, así que no sumamos Instantly ni Lemlist aparte. Precios de lista mensuales publicados por cada proveedor o reportados por terceros en octubre de 2026, plan de entrada, sin impuestos. Gong no publica precios: usamos una estimación de terceros. Las funciones y precios de cada proveedor pueden cambiar. Los canales (tu Apollo, tu WhatsApp Business y tu LinkedIn) se conectan con tus propias cuentas.</p>
+    <p class="fine">Una herramienta por categoría: Apollo ya trae secuencias de email, así que no sumamos Instantly ni Lemlist aparte. Precios de lista mensuales publicados por cada proveedor o reportados por terceros en octubre de 2026, plan de entrada, sin impuestos. Gong no publica precios: usamos una estimación de terceros. Las funciones y precios de cada proveedor pueden cambiar. Los canales (tu correo, tu WhatsApp Business y tu LinkedIn) se conectan con tus propias cuentas.</p>
   </div>
 </section>
 
@@ -1532,7 +1531,7 @@ footer { padding: 0 0 40px; }
     </div>
     <div class="plans-foot glass reveal">
       <p style="margin:0"><b>Sin permanencia.</b> Starter se paga con tarjeta (Stripe, en USD) y se cancela cuando quieras. Los créditos del plan se renuevan cada mes; las recargas no vencen.</p>
-      <p style="margin:0"><b>Tus propias cuentas.</b> Conectas tu Apollo, tu WhatsApp Business y tu LinkedIn. Si no las tienes, te guiamos para crearlas en minutos.</p>
+      <p style="margin:0"><b>Los datos ya vienen integrados.</b> No conectas ninguna base de datos: buscas y enriqueces desde el primer día. Solo conectas tu correo, tu WhatsApp Business y tu LinkedIn, y si no los tienes, te guiamos para crearlos en minutos.</p>
     </div>
   </div>
 </section>
@@ -1548,7 +1547,7 @@ footer { padding: 0 0 40px; }
       <details class="glass reveal"><summary>¿Qué incluye la prueba gratis?</summary><p>300 créditos por 30 días si te registras con el email de tu empresa, o 100 sin vencimiento con un email personal. No pedimos tarjeta. Con eso configuras tu contexto, recibes tu análisis de mercado, activas tu primer detector del Radar y lanzas tu primera campaña.</p></details>
       <details class="glass reveal"><summary>¿Cuál es la diferencia entre Starter y Growth?</summary><p>Con Starter tu equipo usa la plataforma. Con Growth nos comprometemos por contrato a un número de reuniones calificadas al mes y nuestro equipo hace todo el trabajo: estrategia, listas, mensajes, cadencias y seguimiento. Tu equipo solo llega a la reunión.</p></details>
       <details class="glass reveal"><summary>¿De dónde salen los datos de contacto?</summary><p>De varias bases de datos consultadas en cascada: si una no encuentra el email o el móvil, seguimos con la siguiente. Verificamos cada email, normalizamos cada teléfono al formato de su país y solo cobramos por dato encontrado.</p></details>
-      <details class="glass reveal"><summary>¿Necesito una cuenta de Apollo?</summary><p>Sí. Para buscar contactos conectas tu propia cuenta de Apollo (tiene un plan gratuito). Así los datos que revelas son tuyos y no gastan créditos de Predictable.</p></details>
+      <details class="glass reveal"><summary>¿Tengo que conectar mi propia base de datos?</summary><p>No. Las bases de datos de contacto ya vienen integradas en la plataforma y solo pagas por dato encontrado, con tus créditos. Lo único que conectas son tus canales de envío: tu correo, tu WhatsApp Business y tu LinkedIn.</p></details>
       <details class="glass reveal"><summary>¿Reemplaza a mi CRM?</summary><p>Puede hacerlo: incluye oportunidades, cuentas y tareas. Si ya usas HubSpot, Pipedrive, Salesforce, Zoho, Kommo, Bitrix24 o RD Station, Predictable AI se conecta y sincroniza en lugar de duplicar.</p></details>
       <details class="glass reveal"><summary>¿Es seguro enviar por WhatsApp y LinkedIn?</summary><p>WhatsApp sale por tu número oficial con plantillas aprobadas por Meta, y vigilamos la calidad del número para frenar antes de un bloqueo. En LinkedIn respetamos topes diarios y semanales por cuenta. Toda baja se respeta en todos los canales.</p></details>
       <details class="glass reveal"><summary>¿La IA inventa datos o casos de éxito?</summary><p>No. Los mensajes solo citan los clientes y resultados que tú cargas. Si una respuesta no tiene evidencia, la marcamos como «No encontrado» en vez de adivinar.</p></details>
@@ -1735,10 +1734,87 @@ footer { padding: 0 0 40px; }
         }).catch(function (e) { if (e !== STOP) console.error('[landing]', e); });
       })();
     }
+
+    // ── Modo scroll: reloj virtual ─────────────────────────────────────
+    // El mismo guion de la escena corre contra un reloj que mueve el scroll
+    // en vez del tiempo: wait / count / type / every se programan en tiempo
+    // virtual y seek(p) avanza hasta p·duración, o reinicia y reproduce si p
+    // retrocede. Así la animación avanza y retrocede exactamente con el scroll.
+    var V = null;
+    var mc = (typeof MessageChannel !== 'undefined') ? new MessageChannel() : null;
+    function flush() {
+      return new Promise(function (res) {
+        if (mc) { mc.port1.onmessage = function () { res(); }; mc.port2.postMessage(0); } else setTimeout(res, 0);
+      });
+    }
+    function vEval() {
+      V.anims.forEach(function (a) { if (V.vt >= a.start) a.f(a.dur > 0 ? Math.min(1, (V.vt - a.start) / a.dur) : 1); });
+    }
+    function vApi() {
+      var A = api(0);
+      A.wait = function (ms) { return new Promise(function (res) { V.timers.push({ at: V.now + ms, fn: res }); }); };
+      A.every = function (ms, f) {
+        if (V.measuring) return;
+        (function sched(at) { V.timers.push({ at: at + ms, fn: function () { f(); sched(at + ms); } }); })(V.now);
+      };
+      A.count = function (n, to, ms, from) {
+        if (!n) return Promise.resolve();
+        from = from || 0;
+        V.anims.push({ start: V.now, dur: ms, f: function (k) { var e = 1 - Math.pow(1 - k, 3); n.textContent = fmt(from + (to - from) * e); } });
+        return A.wait(ms);
+      };
+      A.type = function (wrap, mpc) {
+        if (!wrap) return Promise.resolve();
+        var src = wrap.querySelector('.type-src'), out = wrap.querySelector('.type-out');
+        if (!src || !out) return Promise.resolve();
+        var text = src.textContent, step = text.length > 90 ? 2 : 1, ticks = Math.max(1, Math.ceil(text.length / step)), dur = ticks * (mpc || 24);
+        V.anims.push({ start: V.now, dur: dur, f: function (k) { out.textContent = text.slice(0, Math.min(text.length, Math.ceil(k * ticks) * step)); out.classList.toggle('caret', k < 1); } });
+        return A.wait(dur);
+      };
+      return A;
+    }
+    function vStart() {
+      V.token++; V.now = 0; V.vt = 0; V.timers = []; V.anims = []; V.started = true;
+      reset();
+      if (opts.onStop) opts.onStop(el);
+      try { Promise.resolve(fn(el, vApi(), st)).catch(function (e) { if (e !== STOP) console.error('[landing]', e); }); } catch (e) { console.error('[landing]', e); }
+    }
+    function vAdvance(target) {
+      var tk = V.token;
+      return (function pump() {
+        var best = -1;
+        V.timers.forEach(function (t, i) { if (t.at <= target && (best < 0 || t.at < V.timers[best].at)) best = i; });
+        if (best < 0) { V.vt = target === Infinity ? V.now : target; vEval(); return Promise.resolve(); }
+        var t = V.timers.splice(best, 1)[0];
+        V.now = t.at; V.maxAt = Math.max(V.maxAt, t.at);
+        t.fn();
+        return flush().then(function () { return V && V.token === tk ? pump() : null; });
+      })();
+    }
+    function vRun() {
+      if (!V || V.busy) return;
+      V.busy = true;
+      var done = function () { if (!V) return; V.busy = false; if (V.want !== V.ran) vRun(); };
+      if (V.dur == null) {
+        V.measuring = true; V.maxAt = 0; vStart();
+        vAdvance(Infinity).then(function () { V.dur = Math.max(1, V.maxAt); V.measuring = false; V.started = false; V.busy = false; vRun(); });
+        return;
+      }
+      var target = V.want * V.dur;
+      V.ran = V.want;
+      if (!V.started || target < V.vt) vStart();
+      vAdvance(target).then(done);
+    }
     var r = {
       el: el,
+      setScrub: function (on) {
+        if (on === !!V) return;
+        if (on) { r.deactivate(); V = { token: 0, now: 0, vt: 0, timers: [], anims: [], dur: null, want: 0, ran: -1, busy: false, started: false }; }
+        else { V.token++; V = null; reset(); if (!el.hidden && el.offsetParent !== null) r.restart(); }
+      },
+      seek: function (p) { if (!V) return; V.want = Math.max(0, Math.min(1, p)); vRun(); },
       activate: function () {
-        if (st.active) return;
+        if (V || st.active) return;
         if (opts.once && st.doneOnce) return;
         st.active = true; st.token++;
         loop(st.token);
@@ -2281,7 +2357,11 @@ footer { padding: 0 0 40px; }
         var g = geom(), k = Math.min(n - 1, Math.floor(g.p * n)), cur = tabs.tabs.indexOf(tabs.current());
         track.style.setProperty('--sp', String(Math.max(0, Math.min(1, g.p * n - k))));
         if (k !== cur) { feat._fromScroll = true; tabs.select(tabs.tabs[k], false); feat._fromScroll = false; }
+        // la animación del panel avanza (y retrocede) con el scroll; el último tramo la deja terminada
+        var pn = document.getElementById(tabs.tabs[k].getAttribute('aria-controls'));
+        if (pn && pn._runner) pn._runner.seek(Math.min(1, (g.p * n - k) / 0.8));
       }
+      function setScrub(v) { $$(feat, '.feat-panel').forEach(function (pn) { if (pn._runner) pn._runner.setScrub(v); }); }
       function req() { if (!raf) raf = requestAnimationFrame(update); }
       var prevSel = tabs.onSelect;
       tabs.onSelect = function (tab) {
@@ -2296,15 +2376,13 @@ footer { padding: 0 0 40px; }
         track = document.createElement('div');
         track.className = 'feat-track scrolly'; track.style.setProperty('--n', String(n));
         feat.parentNode.insertBefore(track, feat); track.appendChild(feat);
-        var hint = document.createElement('p'); hint.className = 'scroll-hint'; hint.textContent = 'Sigue bajando: cada función se enciende al pasar.';
-        track.parentNode.insertBefore(hint, track.nextSibling);
-        feat._userTouched = true; on = true; feat._hint = hint; feat._track = track;
+        feat._userTouched = true; on = true; feat._track = track; setScrub(true);
         update();
       }
       function disable() {
         if (!on) return;
         on = false;
-        track.parentNode.insertBefore(feat, track); track.remove(); feat._hint.remove();
+        setScrub(false); track.parentNode.insertBefore(feat, track); track.remove();
         feat._userTouched = false;
       }
       function sync() { if (mq && mq.matches && !reduced) enable(); else disable(); }
