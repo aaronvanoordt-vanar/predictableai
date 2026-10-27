@@ -111,7 +111,10 @@ async function discover(src) {
     const html = await getText(d.url);
     const all = [...new Set([...html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map((m) => absolute(m[1], d.url)).filter(Boolean))];
     found = all.filter((u) => d.link.test(u)).map((u) => ({ url: u, name: u.split("/").pop(), updated: "" }));
-    if (!found.length) {
+    if (!found.length && d.fallback) {
+      console.log(`La página ${d.url} no enlaza archivos ahora: uso las ${d.fallback.length} direcciones conocidas.`);
+      found = d.fallback.map((u) => ({ url: u, name: u.split("/").pop(), updated: "", optional: true }));
+    } else if (!found.length) {
       console.log(`La página ${d.url} (${html.length} caracteres) no enlaza archivos de datos. Enlaces que sí tiene:`);
       all.slice(0, 80).forEach((u) => console.log(`  · ${u}`));
     }
@@ -271,7 +274,14 @@ async function importSource(key, dir, stats) {
 
   for (const f of files) {
     if (full()) break;
-    const dl = await download(f.url, dir);
+    let dl;
+    try {
+      dl = await download(f.url, dir);
+    } catch (e) {
+      // Una dirección conocida que ya no existe (p. ej. una provincia renombrada) no tumba la importación entera.
+      if (f.optional && /HTTP 404/.test(e.message)) { console.log(`  Sin archivo en ${f.url} (404): sigo.`); continue; }
+      throw e;
+    }
     if (f.updated && f.updated > stats.dataDate) stats.dataDate = f.updated;
     console.log(`Descargado ${f.name}: ${(dl.size / 1e6).toFixed(1)} MB${dl.zip ? " (zip)" : ""}`);
     let cols = null, header = null, batch = [], entryName = "", entryEnc = "", getDelim = () => ",";

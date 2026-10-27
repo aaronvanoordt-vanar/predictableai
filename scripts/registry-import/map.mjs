@@ -352,7 +352,15 @@ export const SOURCES = {
     registry: "sri", country: "Ecuador", activity_system: "isic4",
     title: "Catastro RUC del SRI (datosabiertos.gob.ec)",
     // El portal datosabiertos.gob.ec responde 403 a los servidores de GitHub: los archivos se toman de la página del SRI.
-    discover: { type: "page", url: "https://www.sri.gob.ec/datasets", link: /\.(zip|csv|txt)(\?|$)/i },
+    discover: {
+      type: "page", url: "https://www.sri.gob.ec/datasets", link: /\.(zip|csv|txt)(\?|$)/i,
+      // A ratos la página devuelve una portada de error sin enlaces: los archivos tienen una dirección estable por provincia.
+      fallback: [
+        "Azuay", "Bolivar", "Canar", "Carchi", "Chimborazo", "Cotopaxi", "El_Oro", "Esmeraldas", "Galapagos", "Guayas", "Imbabura", "Loja",
+        "Los_Rios", "Manabi", "Morona_Santiago", "Napo", "Orellana", "Pastaza", "Pichincha", "Santa_Elena", "Santo_Domingo", "Sucumbios",
+        "Tungurahua", "Zamora_Chinchipe",
+      ].map((p) => `https://descargas.sri.gob.ec/download/datosAbiertos/SRI_RUC_${p}.zip`),
+    },
     pick: /ruc/i, skip: /dicc|_dd|diccionario|natural/i,
     fields: {
       ruc: ["numero_ruc", "ruc"], name: ["razon_social"], trade: ["nombre_comercial", "nombre_fantasia_comercial"],
