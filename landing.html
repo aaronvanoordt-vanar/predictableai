@@ -11,7 +11,7 @@
 <meta property="og:description" content="La primera plataforma GTM end-to-end para ventas B2B en Latam. Prueba gratis, sin tarjeta.">
 <meta property="og:image" content="https://predictableai.vanarsi.com/assets/predictable-favicon.png">
 <meta name="twitter:card" content="summary">
-<meta name="theme-color" content="#E9EDF7">
+<meta name="theme-color" content="#F3F5FA">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
@@ -46,7 +46,7 @@
    página lo dice.
    ═══════════════════════════════════════════════════════════════════════ */
 :root {
-  --bg: #E9EDF7;
+  --bg: #F3F5FA;
   --ink: #0A0A0F; --ink-2: #23252D; --ink-3: #565C69; --ink-4: #8A91A0;
   --hair: rgba(10,10,15,.08);
   --accent: #1F4BFF; --accent-2: #3B68FF; --accent-ink: #0B2BB8; --accent-soft: rgba(31,75,255,.09);
@@ -54,10 +54,10 @@
   --green: #0EA968; --red: #D14B4B; --warn: #C77A1A;
   --wa: #0F9D58; --li: #0A66C2;
   --grad-ai: linear-gradient(120deg, #1F4BFF, #4364FF, #6E5CF5);
-  --glass-top: rgba(255,255,255,.70);
-  --glass-bot: rgba(255,255,255,.30);
+  --glass-top: rgba(255,255,255,.78);
+  --glass-bot: rgba(255,255,255,.36);
   --glass-blur: blur(26px) saturate(2) brightness(1.03);
-  --glass-shadow: 0 1px 2px rgba(10,10,15,.04), 0 18px 50px -22px rgba(20,30,80,.34);
+  --glass-shadow: 0 1px 2px rgba(10,10,15,.05), 0 2px 10px -2px rgba(20,30,80,.08), 0 24px 56px -24px rgba(20,30,80,.4);
   --glass-shadow-lg: 0 2px 6px rgba(10,10,15,.05), 0 36px 90px -34px rgba(20,30,80,.48);
   --r-md: 16px; --r-lg: 24px; --r-xl: 32px;
   --ease-out: cubic-bezier(.22,1,.36,1);
@@ -69,24 +69,23 @@
 html, body { margin: 0; padding: 0; }
 html { scroll-behavior: smooth; scroll-padding-top: 84px; }
 body { font-family: var(--font-sans); color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased; line-height: 1.45; overflow-x: hidden; }
-/* Malla de halos + orbes que flotan: dan algo que refractar al vidrio */
+/* Fondo minimalista: lienzo claro, rejilla de puntos casi invisible que se
+   desvanece hacia los bordes y un único velo de luz arriba. Sin orbes: el
+   vidrio se nota por su borde especular, su brillo y su sombra. */
 body::before {
-  content: ""; position: fixed; inset: -12%; z-index: -2; pointer-events: none;
+  content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none;
   background:
-    radial-gradient(38% 34% at 12% 8%, rgba(31,75,255,.26), transparent 70%),
-    radial-gradient(30% 30% at 90% 6%, rgba(8,145,178,.22), transparent 70%),
-    radial-gradient(34% 32% at 80% 70%, rgba(124,92,252,.24), transparent 70%),
-    radial-gradient(26% 26% at 18% 82%, rgba(14,169,104,.14), transparent 70%);
-  animation: drift 48s ease-in-out infinite alternate;
+    radial-gradient(70% 46% at 50% -6%, rgba(255,255,255,.95), rgba(255,255,255,0) 70%),
+    radial-gradient(60% 40% at 50% 0%, rgba(31,75,255,.07), rgba(31,75,255,0) 72%);
 }
-.orbs { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
-.orbs i { position: absolute; border-radius: 50%; filter: blur(2px); opacity: .55; }
-.orbs i:nth-child(1) { width: 420px; height: 420px; left: -120px; top: 30%; background: radial-gradient(circle at 35% 35%, rgba(59,104,255,.55), rgba(59,104,255,0) 68%); animation: float1 26s ease-in-out infinite alternate; }
-.orbs i:nth-child(2) { width: 360px; height: 360px; right: -90px; top: 8%; background: radial-gradient(circle at 40% 40%, rgba(110,92,245,.5), rgba(110,92,245,0) 68%); animation: float2 32s ease-in-out infinite alternate; }
-.orbs i:nth-child(3) { width: 300px; height: 300px; right: 18%; bottom: -80px; background: radial-gradient(circle at 40% 40%, rgba(8,145,178,.45), rgba(8,145,178,0) 68%); animation: float1 38s ease-in-out infinite alternate-reverse; }
-@keyframes drift { 0% { transform: translate3d(0,0,0) scale(1); } 50% { transform: translate3d(2%,-1.5%,0) scale(1.04); } 100% { transform: translate3d(-2%,1.5%,0) scale(1.02); } }
-@keyframes float1 { 0% { transform: translate3d(0,0,0); } 100% { transform: translate3d(14vw,-10vh,0); } }
-@keyframes float2 { 0% { transform: translate3d(0,0,0); } 100% { transform: translate3d(-12vw,18vh,0); } }
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-image: radial-gradient(rgba(10,10,15,.16) 1px, transparent 1.3px);
+  background-size: 26px 26px;
+  -webkit-mask-image: radial-gradient(85% 70% at 50% 28%, #000 10%, transparent 78%);
+  mask-image: radial-gradient(85% 70% at 50% 28%, #000 10%, transparent 78%);
+  opacity: .55;
+}
 a { color: inherit; text-decoration: none; }
 img { display: block; max-width: 100%; }
 button { font: inherit; color: inherit; }
@@ -135,7 +134,7 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 }
 .glass-lg { border-radius: var(--r-xl); box-shadow: inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 1px rgba(255,255,255,.45), inset 0 0 40px rgba(255,255,255,.26), var(--glass-shadow-lg); }
 .glass-dark {
-  background: linear-gradient(150deg, rgba(14,16,30,.86), rgba(28,34,72,.8));
+  background: linear-gradient(150deg, rgba(12,14,28,.97), rgba(24,30,78,.95));
   border-color: rgba(255,255,255,.12); color: #fff;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.18), inset 0 0 40px rgba(110,92,245,.12), var(--glass-shadow-lg);
 }
@@ -178,7 +177,9 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 .nav { position: fixed; top: 12px; left: 0; right: 0; z-index: 100; padding: 0 16px; }
 .nav-inner { max-width: 1240px; margin: 0 auto; height: 60px; display: flex; align-items: center; gap: 18px; padding: 0 10px 0 18px; border-radius: 999px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -.02em; font-size: 16px; }
-.brand img { width: 26px; height: 26px; border-radius: 7px; }
+.logo { width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(150deg, #1B1F33, #070810); box-shadow: inset 0 1px 0 rgba(255,255,255,.28), inset 0 0 0 1px rgba(255,255,255,.06), 0 6px 16px -6px rgba(10,10,15,.55); }
+.logo img { width: 21px; height: 21px; }
+.logo.sm { width: 24px; height: 24px; border-radius: 8px; } .logo.sm img { width: 16px; height: 16px; }
 .nav-links { display: flex; gap: 4px; margin-left: 18px; }
 .nav-links a { padding: 8px 12px; border-radius: 999px; font-size: 14px; font-weight: 500; color: var(--ink-2); transition: background .2s; }
 .nav-links a:hover { background: rgba(255,255,255,.7); box-shadow: inset 0 1px 0 #fff; }
@@ -214,10 +215,12 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 .partner img { width: 28px; height: 28px; border-radius: 8px; object-fit: contain; background: #fff; padding: 3px; }
 .partner b { display: block; font-size: 12px; font-weight: 700; letter-spacing: .01em; }
 .partner small { display: block; font-size: 12px; color: var(--ink-3); }
-.proof-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; padding: 24px; max-width: 1040px; margin: 56px auto 0; }
+.proof-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; padding: 36px 24px 32px; max-width: 1120px; margin: 56px auto 0; }
 .proof-grid div { text-align: center; padding: 6px 10px; }
-.proof-grid b { display: block; font-size: clamp(30px, 3.4vw, 44px); letter-spacing: -.04em; font-weight: 700; font-variant-numeric: tabular-nums; }
-.proof-grid span { font-size: 14px; color: var(--ink-3); }
+.proof-grid b { display: block; font-size: clamp(44px, 5.6vw, 76px); line-height: 1; letter-spacing: -.05em; font-weight: 700; font-variant-numeric: tabular-nums; margin-bottom: 10px; }
+.proof-grid b span { font-size: inherit; color: inherit; }
+.proof-grid b .unit { font-size: .52em; letter-spacing: -.03em; margin-left: .12em; }
+.proof-grid > div > span { font-size: 15px; color: var(--ink-3); display: block; max-width: 190px; margin: 0 auto; }
 .proof-note { text-align: center; font-size: 13px; color: var(--ink-4); margin-top: 12px; }
 @media (max-width: 760px) { .proof-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 520px) { .hero-cta .btn { width: 100%; white-space: normal; } }
@@ -388,6 +391,17 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .replay { position: absolute; right: 14px; bottom: 12px; border: 0; background: rgba(255,255,255,.7); box-shadow: inset 0 1px 0 #fff; border-radius: 999px; padding: 5px 11px; font-size: 12px; font-weight: 600; color: var(--ink-3); cursor: pointer; }
 .replay:hover { color: var(--ink); }
+/* Revelado con el scroll (escritorio): el bloque queda fijo y, conforme
+   avanzas, se enciende la siguiente función. En móvil o con movimiento
+   reducido quedan las pestañas de siempre. */
+.feat-track { position: relative; }
+.feat-track.scrolly { height: calc(var(--n, 4) * 62vh + 120px); }
+.feat-track.scrolly > .feat { position: sticky; top: 92px; }
+.feat-track.scrolly .feat-btn[aria-selected="true"]::after { content: ""; position: absolute; left: 16px; right: 16px; bottom: 7px; height: 2px; border-radius: 2px; background: var(--grad-ai); transform-origin: left; transform: scaleX(var(--sp, 0)); opacity: .85; }
+.feat-track.scrolly .feat-btn:not([aria-selected="true"]) { opacity: .62; }
+.feat-track.scrolly .feat-btn { transition: background .25s, border-color .25s, box-shadow .25s, opacity .35s, transform .25s var(--ease-out); }
+.scroll-hint { text-align: center; font-size: 13px; color: var(--ink-4); margin: 14px 0 0; display: none; }
+.feat-track.scrolly + .scroll-hint { display: block; }
 /* En el teléfono las funciones son cápsulas en una fila deslizable y la descripción va debajo */
 .feat-desc { display: none; }
 @media (max-width: 960px) {
@@ -408,7 +422,7 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 .scan { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-3); margin-bottom: 12px; min-height: 22px; }
 .scan b { color: var(--ink); font-weight: 600; }
 .det-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
-.det-tags span { font-size: 11.5px; padding: 4px 9px; border-radius: 999px; background: rgba(255,255,255,.75); border: 1px solid rgba(255,255,255,.95); color: var(--ink-3); transition: background .3s, color .3s; }
+.det-tags span { font-size: 11.5px; padding: 4px 9px; border-radius: 999px; background: rgba(255,255,255,.75); border: 1px solid rgba(255,255,255,.95); color: var(--ink-3); transition: background .6s var(--ease-out), color .6s var(--ease-out), border-color .6s; }
 .det-tags span.hot { background: var(--accent); color: #fff; border-color: transparent; }
 /* Datos en cascada */
 .lead-card { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; }
@@ -563,7 +577,7 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 .cmp thead th.us { color: #fff; background: var(--grad-ai); border-radius: 16px 16px 0 0; box-shadow: inset 0 1px 0 rgba(255,255,255,.4); }
 .cmp thead th.us small { color: rgba(255,255,255,.8); }
 .cmp .us-brand { display: inline-flex; align-items: center; gap: 8px; }
-.cmp .us-brand img { width: 24px; height: 24px; border-radius: 7px; background: #fff; padding: 2px; box-shadow: 0 2px 8px -2px rgba(0,0,0,.3); }
+.cmp .us-brand .logo { box-shadow: inset 0 1px 0 rgba(255,255,255,.28), 0 2px 8px -2px rgba(0,0,0,.4); }
 .cmp td.us { background: var(--accent-soft); font-weight: 700; }
 .cmp tbody tr:last-child td { border-bottom: 0; }
 .y { color: var(--green); font-weight: 700; } .n { color: var(--ink-4); } .p { color: var(--warn); font-weight: 700; }
@@ -582,20 +596,21 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 
 /* ── Origen: línea de tiempo ────────────────────────────────────────── */
 .tl { position: relative; padding: 34px 28px 30px; }
-.tl-track { position: absolute; left: 60px; right: 60px; top: 44px; height: 3px; border-radius: 3px; background: rgba(10,10,15,.08); }
+.tl-track { position: absolute; left: 16.6%; right: 16.6%; top: 44px; height: 3px; border-radius: 3px; background: rgba(10,10,15,.08); }
 .tl-track i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--grad-ai); box-shadow: 0 0 14px rgba(31,75,255,.5); transition: width 2.4s var(--ease-out); }
 .tl.in .tl-track i { width: 100%; }
-.tl-items { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; position: relative; }
+.tl-items { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; position: relative; }
 .tl-items > * { min-width: 0; }
 .tl-item { text-align: center; opacity: .25; transform: translateY(10px); transition: opacity .6s var(--ease-out), transform .6s var(--ease-out); }
 .tl.in .tl-item { opacity: 1; transform: none; }
-.tl.in .tl-item:nth-child(2) { transition-delay: .6s; } .tl.in .tl-item:nth-child(3) { transition-delay: 1.2s; } .tl.in .tl-item:nth-child(4) { transition-delay: 1.8s; }
+.tl.in .tl-item:nth-child(2) { transition-delay: .6s; } .tl.in .tl-item:nth-child(3) { transition-delay: 1.2s; } 
 .tl-dot { display: block; width: 22px; height: 22px; border-radius: 50%; margin: 0 auto 16px; background: #fff; border: 3px solid rgba(31,75,255,.5); box-shadow: 0 0 0 6px rgba(255,255,255,.6), 0 4px 12px -4px rgba(20,30,80,.4); position: relative; z-index: 1; }
 .tl-item.now .tl-dot { background: var(--grad-ai); border-color: #fff; box-shadow: 0 0 0 6px rgba(31,75,255,.18), 0 0 22px rgba(31,75,255,.7); }
 .tl-item .when { font-size: 13px; font-weight: 600; color: var(--accent); }
-.tl-item h3 { font-size: 22px; margin: 6px 0 6px; letter-spacing: -.03em; }
-.tl-item p { margin: 0; font-size: 14.5px; color: var(--ink-3); line-height: 1.5; }
-.tl-item .big { display: block; font-size: 30px; font-weight: 700; letter-spacing: -.04em; color: var(--ink); font-variant-numeric: tabular-nums; margin: 4px 0; }
+.tl-item h3 { font-size: 24px; line-height: 1.12; margin: 6px 0 6px; letter-spacing: -.03em; }
+.tl-item p { margin: 0 auto; max-width: 340px; font-size: 15px; color: var(--ink-3); line-height: 1.5; }
+.origin-note { text-align: center; max-width: 680px; margin: 22px auto 0; font-size: 14.5px; color: var(--ink-3); line-height: 1.55; }
+.tl-item .big { display: block; font-size: 44px; font-weight: 700; letter-spacing: -.04em; color: var(--ink); font-variant-numeric: tabular-nums; margin: 4px 0; }
 @media (max-width: 860px) {
   .tl { padding: 26px 22px; }
   .tl-track { left: 33px; right: auto; top: 30px; bottom: 30px; width: 3px; height: auto; }
@@ -667,7 +682,8 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 
 /* ── Footer ─────────────────────────────────────────────────────────── */
 footer { padding: 0 0 40px; }
-.foot { padding: 26px 28px; display: flex; gap: 20px; align-items: center; justify-content: space-between; flex-wrap: wrap; font-size: 14px; color: var(--ink-3); }
+.foot .brand { color: var(--ink); }
+.foot { padding: 20px 26px; display: flex; gap: 20px; align-items: center; justify-content: space-between; flex-wrap: wrap; font-size: 14px; color: var(--ink-3); }
 .foot nav { display: flex; gap: 18px; flex-wrap: wrap; }
 .foot nav a:hover { color: var(--ink); }
 
@@ -677,11 +693,13 @@ footer { padding: 0 0 40px; }
 .wa-float svg { width: 28px; height: 28px; }
 
 /* ── Aparición al hacer scroll ──────────────────────────────────────── */
-.reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s var(--ease-out), transform .7s var(--ease-out); }
+.reveal { opacity: 0; transform: translateY(26px) scale(.985); transition: opacity .9s var(--ease-out), transform .9s var(--ease-out); }
 .reveal.in { opacity: 1; transform: none; }
+.pain-grid > .reveal:nth-child(2), .flow > .reveal:nth-child(2), .plans > .reveal:nth-child(2), .cost > .reveal:nth-child(2) { transition-delay: .12s; }
+.pain-grid > .reveal:nth-child(3), .flow > .reveal:nth-child(3), .plans > .reveal:nth-child(3) { transition-delay: .24s; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  body::before, .orbs i, .final-card .glow, .flow-link::after, .spin, .typing i, .caret::after { animation: none; }
+  .final-card .glow, .flow-link::after, .spin, .typing i, .caret::after { animation: none; }
   .reveal { opacity: 1; transform: none; transition: none; }
   .feat-panel, .cpanel .mk, .tnode { animation: none; }
   [data-scene] .s, .bar > span, .tl-item, .tl-track i { transition: none; }
@@ -691,7 +709,6 @@ footer { padding: 0 0 40px; }
 </head>
 <body>
 <a class="skip" href="#main">Saltar al contenido</a>
-<div class="orbs" aria-hidden="true"><i></i><i></i><i></i></div>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="i-wa" viewBox="0 0 24 24"><path fill="currentColor" d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38a9.9 9.9 0 0 0 4.74 1.21h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.5 2 12.04 2Zm5.8 14.07c-.24.68-1.42 1.3-1.95 1.35-.5.05-.97.23-3.27-.68-2.77-1.09-4.52-3.92-4.66-4.1-.13-.18-1.11-1.48-1.11-2.83 0-1.35.71-2.01.96-2.29.25-.27.55-.34.73-.34h.52c.17 0 .4-.06.62.48.24.56.8 1.93.87 2.07.07.14.11.3.02.48-.09.18-.14.3-.27.46-.14.16-.29.36-.41.48-.14.14-.28.29-.12.56.16.27.71 1.17 1.53 1.9 1.05.94 1.94 1.23 2.21 1.37.27.14.43.11.59-.07.16-.18.68-.8.87-1.07.18-.27.36-.23.61-.14.25.09 1.59.75 1.86.89.27.14.45.2.52.32.07.11.07.66-.17 1.34Z"/></symbol>
@@ -728,7 +745,7 @@ footer { padding: 0 0 40px; }
 <!-- ─────────────────────────── Navegación ─────────────────────────── -->
 <header class="nav">
   <div class="nav-inner glass">
-    <a class="brand" href="#top" aria-label="Predictable AI"><img src="favicon.svg" alt=""><span>Predictable AI</span></a>
+    <a class="brand" href="#top" aria-label="Predictable AI"><span class="logo"><img src="favicon.svg" alt=""></span><span>Predictable AI</span></a>
     <nav class="nav-links" aria-label="Secciones">
       <a href="#encontrar">Encontrar</a>
       <a href="#contactar">Contactar</a>
@@ -782,10 +799,10 @@ footer { padding: 0 0 40px; }
       <span class="partner glass"><img src="assets/meta-partner.png" alt="Meta"><span><b>Meta</b><small>Business Partner</small></span></span>
     </div>
     <div class="proof-grid glass glass-lg reveal" data-scene="proof">
-      <div><b><span data-count="50">0</span>+</b><span>empresas B2B atendidas</span></div>
-      <div><b><span data-count="1000">0</span>+</b><span>reuniones calificadas con decisores</span></div>
-      <div><b><span data-count="10">0</span>x+</b><span>retorno medido en cuentas de clientes</span></div>
-      <div><b><span data-count="5">0</span> años</b><span>haciendo outbound en Latam</span></div>
+      <div><b><span data-count="50">0</span><span class="unit">+</span></b><span>empresas B2B atendidas</span></div>
+      <div><b><span data-count="1000">0</span><span class="unit">+</span></b><span>reuniones calificadas con decisores</span></div>
+      <div><b><span data-count="10">0</span><span class="unit">x+</span></b><span>retorno medido en cuentas de clientes</span></div>
+      <div><b><span data-count="5">0</span><span class="unit">años</span></b><span>haciendo outbound en Latam</span></div>
     </div>
     <p class="proof-note">Resultados de Eleva, la operación de outbound que dio origen a Predictable AI.</p>
   </div>
@@ -1310,7 +1327,7 @@ footer { padding: 0 0 40px; }
             <th scope="col">Clay<small>Enriquecimiento</small></th>
             <th scope="col">Gong<small>Grabación y coaching</small></th>
             <th scope="col">WATI<small>WhatsApp</small></th>
-            <th scope="col" class="us"><span class="us-brand"><img src="favicon.svg" alt="">Predictable AI</span><small>Todo el proceso</small></th>
+            <th scope="col" class="us"><span class="us-brand"><span class="logo sm"><img src="favicon.svg" alt=""></span>Predictable AI</span><small>Todo el proceso</small></th>
           </tr>
         </thead>
         <tbody>
@@ -1336,7 +1353,7 @@ footer { padding: 0 0 40px; }
         <div class="tot"><span>Total</span><b>~421 USD</b></div>
       </div>
       <div class="cost-card us glass glass-dark reveal">
-        <span class="chip sm on-dark"><span class="ci"><img src="favicon.svg" alt="" style="width:14px;height:14px"></span>Predictable AI Starter</span>
+        <span class="chip sm on-dark"><span class="ci" style="background:#0A0A0F;box-shadow:none"><img src="favicon.svg" alt="" style="width:14px;height:14px"></span>Predictable AI Starter</span>
         <div style="margin-top:14px">
           <div class="line"><span>Señales, datos, campañas, bandeja, coach y CRM</span><span>✓</span></div>
           <div class="line"><span>1,500 créditos cada mes</span><span>✓</span></div>
@@ -1354,18 +1371,18 @@ footer { padding: 0 0 40px; }
   <div class="container">
     <div class="sec-head reveal">
       <span class="chip"><span class="ci"><svg><use href="#i-clock"/></svg></span>De dónde venimos</span>
-      <h2 class="h2">Cinco años operando el servicio antes de construir el producto.</h2>
-      <p class="lead">Cada problema de esta página lo vivimos primero, a mano, con nuestros clientes.</p>
+      <h2 class="h2">Primero lo hicimos a mano. Después lo convertimos en <span class="grad">software</span>.</h2>
+      <p class="lead">Predictable AI no nació de una idea: nació de cinco años vendiendo B2B en Latam para otras empresas.</p>
     </div>
     <div class="tl glass glass-lg" data-scene="timeline">
       <div class="tl-track" aria-hidden="true"><i></i></div>
       <ol class="tl-items" style="list-style:none;margin:0;padding:0">
-        <li class="tl-item"><span class="tl-dot" aria-hidden="true"></span><div><span class="when">2021</span><h3>Nace Eleva</h3><p>Agencia de generación de leads B2B: outbound hecho a mano para empresas de Latam.</p></div></li>
-        <li class="tl-item"><span class="tl-dot" aria-hidden="true"></span><div><span class="when">2021 – 2026</span><span class="big"><span data-count="1000">0</span>+</span><p>reuniones calificadas para más de 50 clientes, con 10x+ de retorno medido en sus cuentas.</p></div></li>
-        <li class="tl-item"><span class="tl-dot" aria-hidden="true"></span><div><span class="when">Infraestructura</span><h3>Vanar</h3><p>La plataforma corporativa que pone el capital, la tecnología y las operaciones para convertir el servicio en producto.</p></div></li>
-        <li class="tl-item now"><span class="tl-dot" aria-hidden="true"></span><div><span class="when">2026 · en vivo</span><h3>Predictable AI</h3><p>El playbook de outbound de Eleva, convertido en software. Construido sobre los modelos de Claude.</p></div></li>
+        <li class="tl-item"><span class="tl-dot" aria-hidden="true"></span><div><span class="when">2021 · Eleva</span><h3>Vendimos por nuestros clientes</h3><p>Empezamos como agencia de outbound: buscábamos a las empresas correctas, les escribíamos a mano y llevábamos a sus decisores a una reunión.</p></div></li>
+        <li class="tl-item"><span class="tl-dot" aria-hidden="true"></span><div><span class="when">2021 – 2026</span><span class="big"><span data-count="1000">0</span>+</span><h3>Aprendimos qué funciona</h3><p>Más de 1,000 reuniones calificadas para más de 50 clientes, con 10x+ de retorno medido en sus cuentas. Cada una nos enseñó qué señal anticipa una compra, qué mensaje responde un decisor y qué canal funciona en cada país.</p></div></li>
+        <li class="tl-item now"><span class="tl-dot" aria-hidden="true"></span><div><span class="when">Hoy · Predictable AI</span><h3>Ese método, ahora en software</h3><p>Convertimos el playbook de Eleva en una plataforma: lo que tu equipo hace hoy con cinco herramientas, la IA lo hace en una sola. Construida sobre los modelos de Claude.</p></div></li>
       </ol>
     </div>
+    <p class="origin-note reveal">Respaldados por Vanar, la plataforma corporativa que aporta el capital, la tecnología y las operaciones para convertir un servicio probado en producto.</p>
   </div>
 </section>
 
@@ -1492,7 +1509,7 @@ footer { padding: 0 0 40px; }
 <footer>
   <div class="container">
     <div class="foot glass">
-      <a class="brand" href="#top"><img src="favicon.svg" alt=""><span>Predictable AI</span></a>
+      <a class="brand" href="#top"><span class="logo"><img src="favicon.svg" alt=""></span><span>Predictable AI</span></a>
       <nav aria-label="Pie de página">
         <a href="#precios">Precios</a>
         <a href="agencias.html">Agencias</a>
@@ -1734,18 +1751,18 @@ footer { padding: 0 0 40px; }
   SCENES.radar = function (el, A) {
     var tags = A.qa('.det-tags span'), rows = A.qa('.mk-row.s'), tip = A.q('.tip.s');
     tags.forEach(function (t) { t.classList.remove('hot'); });
-    A.count(A.q('[data-count="312"]'), 312, 3400);
+    A.count(A.q('[data-count="312"]'), 312, 9000);
     var ti = 0;
-    A.every(240, function () { tags.forEach(function (t) { t.classList.remove('hot'); }); tags[ti++ % tags.length].classList.add('hot'); });
+    A.every(1500, function () { tags.forEach(function (t) { t.classList.remove('hot'); }); tags[ti++ % tags.length].classList.add('hot'); });
     var i = 0;
     function row() {
-      if (i >= rows.length) { A.on(tip, 'pop'); return A.wait(1600); }
+      if (i >= rows.length) { A.on(tip, 'pop'); return A.wait(2600); }
       var r = rows[i++];
       A.on(r);
       var c = r.querySelector('[data-count]');
-      return A.count(c, +c.getAttribute('data-count'), 700).then(function () { return A.wait(250); }).then(row);
+      return A.count(c, +c.getAttribute('data-count'), 1500).then(function () { return A.wait(1300); }).then(row);
     }
-    return A.wait(500).then(row);
+    return A.wait(900).then(row);
   };
 
   SCENES.data = function (el, A) {
@@ -2167,6 +2184,53 @@ footer { padding: 0 0 40px; }
       var r = mount(panel, { onDone: advance, onStop: panel.getAttribute('data-scene') === 'tree' && tree ? tree.cleanup : null });
       if (r && tree && panel === tree.el) tree.setRunner(r);
     });
+    // Revelado con el scroll: el bloque queda fijo y cada tramo de scroll enciende una función
+    (function () {
+      var n = tabs.tabs.length, track = null, on = false, raf = 0, TOP = 92;
+      var mq = window.matchMedia ? window.matchMedia('(min-width: 961px) and (min-height: 700px)') : null;
+      function geom() {
+        var r = track.getBoundingClientRect();
+        var total = Math.max(1, track.offsetHeight - feat.offsetHeight);
+        var y = Math.max(0, Math.min(total, TOP - r.top));
+        return { top: r.top + window.pageYOffset, total: total, p: y / total };
+      }
+      function update() {
+        raf = 0;
+        if (!on) return;
+        var g = geom(), k = Math.min(n - 1, Math.floor(g.p * n)), cur = tabs.tabs.indexOf(tabs.current());
+        track.style.setProperty('--sp', String(Math.max(0, Math.min(1, g.p * n - k))));
+        if (k !== cur) { feat._fromScroll = true; tabs.select(tabs.tabs[k], false); feat._fromScroll = false; }
+      }
+      function req() { if (!raf) raf = requestAnimationFrame(update); }
+      var prevSel = tabs.onSelect;
+      tabs.onSelect = function (tab) {
+        if (prevSel) prevSel(tab);
+        if (!on || feat._fromScroll) return;
+        var g = geom(), i = tabs.tabs.indexOf(tab);
+        window.scrollTo({ top: g.top - TOP + g.total * ((i + 0.5) / n), behavior: reduced ? 'auto' : 'smooth' });
+      };
+      function enable() {
+        if (on) return;
+        track = document.createElement('div');
+        track.className = 'feat-track scrolly'; track.style.setProperty('--n', String(n));
+        feat.parentNode.insertBefore(track, feat); track.appendChild(feat);
+        var hint = document.createElement('p'); hint.className = 'scroll-hint'; hint.textContent = 'Sigue bajando: cada función se enciende al pasar.';
+        track.parentNode.insertBefore(hint, track.nextSibling);
+        feat._userTouched = true; on = true; feat._hint = hint; feat._track = track;
+        update();
+      }
+      function disable() {
+        if (!on) return;
+        on = false;
+        track.parentNode.insertBefore(feat, track); track.remove(); feat._hint.remove();
+        feat._userTouched = false;
+      }
+      function sync() { if (mq && mq.matches && !reduced) enable(); else disable(); }
+      window.addEventListener('scroll', req, { passive: true });
+      window.addEventListener('resize', req, { passive: true });
+      if (mq) { if (mq.addEventListener) mq.addEventListener('change', sync); else if (mq.addListener) mq.addListener(sync); }
+      sync();
+    })();
     var replay = feat.querySelector('[data-replay]');
     if (replay) replay.addEventListener('click', function () {
       feat._userTouched = true;
