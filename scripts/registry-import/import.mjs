@@ -196,11 +196,21 @@ async function resolveServiceKey() {
 async function rest(path, method, body, prefer = "", { retryTimeout = true } = {}) {
   const key = await resolveServiceKey();
   for (let attempt = 1; ; attempt++) {
-    const res = await fetch(`${BASE}/rest/v1/${path}`, {
-      method, headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...(prefer ? { Prefer: prefer } : {}) },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const text = await res.text();
+    let res, text;
+    try {
+      res = await fetch(`${BASE}/rest/v1/${path}`, {
+        method, headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...(prefer ? { Prefer: prefer } : {}) },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      text = await res.text();
+    } catch (e) {
+      // Sin respuesta de Supabase (corte de red o la base reiniciándose): se
+      // espera y se reintenta el mismo lote, que es idempotente.
+      if (attempt >= 6) throw new Error(`${method} ${path} → ${e.message}${e.cause ? ` (${e.cause.code || e.cause.message || e.cause})` : ""}`);
+      console.log(`  ${path} → sin respuesta (${e.message}); reintento ${attempt}/5 en ${15 * attempt} s`);
+      await new Promise((r) => setTimeout(r, 15000 * attempt));
+      continue;
+    }
     if (res.ok) return text ? JSON.parse(text) : null;
     // Un error de datos (21000, 23xxx…) no se arregla reintentando; un corte por
     // tiempo sí puede, salvo que quien llama prefiera partir el lote.
@@ -319,11 +329,15 @@ async function importSource(key, dir, stats) {
     if (f.updated && f.updated > stats.dataDate) stats.dataDate = f.updated;
     console.log(`Descargado ${f.name}: ${(dl.size / 1e6).toFixed(1)} MB${dl.zip ? " (zip)" : ""}`);
     let cols = null, header = null, batch = [], entryName = "", entryEnc = "", getDelim = () => ",";
+    let lastLog = 0;
     const flush = async () => {
       if (!batch.length) return;
       const rows = dedupeBatch(batch); batch = [];
       if (DRY) { stats.mapped += rows.length; return; }
       stats.upserted += await upsertRows(rows);
+      // Progreso cada ~50.000 filas: los logs de Actions solo se leen al terminar,
+      // pero si el job se corta se sabe hasta dónde llegó.
+      if (stats.upserted - lastLog >= 50000) { lastLog = stats.upserted; console.log(`  … ${stats.read} filas leídas, ${stats.upserted} cargadas`); }
     };
     eachRows.chunkHook = async () => {
       if (batch.length >= BATCH) await flush();
