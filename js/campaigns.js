@@ -2795,11 +2795,11 @@
       linkedin: provider === 'unipile'
         ? 'Los pasos de LinkedIn que salen desde tu cuenta dejarán de enviar hasta que vuelvas a conectarla, y ya no podrás responder por LinkedIn desde la Bandeja. Lo enviado y las conversaciones guardadas se quedan.'
         : 'Los pasos de LinkedIn dejarán de enrolar leads hasta que vuelvas a conectar el canal. Lo ya enrolado en tu cuenta de automatización sigue allá.',
-      email: 'Los pasos de email dejarán de enviar hasta que vuelvas a conectar tu cuenta de Apollo.',
+      email: 'Las campañas que envían con Apollo dejarán de enviar email hasta que vuelvas a conectar tu cuenta. Tus buzones propios siguen conectados.',
     };
     if (api) api.close();
     return confirmModal({
-      title: 'Desconectar ' + CH[key].label, danger: true, confirmLabel: 'Desconectar',
+      title: key === 'email' ? 'Desconectar Apollo' : 'Desconectar ' + CH[key].label, danger: true, confirmLabel: 'Desconectar',
       message: labels[key],
       onConfirm: function () {
         return edgeFetch(FN_CHANNEL, { action: 'disconnect', provider: provider, payload: { provider: provider } }).then(function () {
@@ -3401,19 +3401,25 @@
     } else {
       var es = apolloEmailState();
       var acfg = (state.apollo && state.apollo.config) || {};
-      if (global.EmailMailboxes) body.appendChild(h('div', { class: 'pros-lbl', text: 'Apollo' }));
+      // Sección «Apollo» en tarjeta propia, con sus acciones adentro (antes
+      // «Cambiar API key» y «Desconectar» quedaban al pie del panel y no se
+      // sabía si eran de Apollo o de los buzones).
+      var ap = h('section', { class: 'emb-sec' });
+      var apHead = h('div', { class: 'emb-sec-head' });
+      var apTitle = h('h4', { text: 'Apollo' });
+      apTitle.insertAdjacentHTML('beforeend', es.state === 'connected' ? pill('Conectado', 'green') : pill('Sin conectar', 'gray'));
+      apHead.appendChild(apTitle);
+      ap.appendChild(apHead);
       if (es.state === 'connected') {
-        body.appendChild(h('p', { text: 'Cuenta conectada: ' + (es.detail || '—') + (acfg.name ? ' (' + acfg.name + ')' : '') + (acfg.connected_at ? ' · desde ' + fmtDate(acfg.connected_at) : '') }));
-        body.appendChild(h('div', { class: 'pros-hint', text: 'Los emails de campaña salen como mensajes individuales desde tu cuenta; los datos revelados se cobran a los créditos de tu propia cuenta, no a los de la plataforma.' }));
+        ap.appendChild(h('p', { class: 'emb-sub', text: 'Cuenta conectada: ' + (es.detail || '—') + (acfg.name ? ' (' + acfg.name + ')' : '') + (acfg.connected_at ? ' · desde ' + fmtDate(acfg.connected_at) : '') }));
+        ap.appendChild(h('p', { class: 'emb-sub', text: 'Los emails de campaña salen como mensajes individuales desde tu cuenta; los datos revelados se cobran a los créditos de tu propia cuenta, no a los de la plataforma.' }));
       } else {
-        body.appendChild(h('p', { text: 'Sin conectar.' }));
-        body.appendChild(h('div', { class: 'pros-hint', text: 'Conecta tu cuenta de Apollo para que las campañas envíen email desde tu buzón, con tus listas, tus contactos y tus créditos de Apollo.' }));
+        ap.appendChild(h('p', { class: 'emb-sub', text: 'Conecta tu cuenta de Apollo para que las campañas envíen email desde tu buzón, con tus listas, tus contactos y tus créditos de Apollo.' }));
       }
       var accs = state.emailAccounts || [];
       if (accs.length && es.state === 'connected') {
-        body.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:10px', text: 'Enviar desde' }));
         var defAcc = defaultEmailAccount();
-        var sel = h('select', { style: 'width:100%' });
+        var sel = h('select', { 'aria-label': 'Enviar desde' });
         accs.forEach(function (a) { sel.appendChild(h('option', { value: String(a.id), text: a.email || a.id, selected: !!defAcc && String(defAcc.id) === String(a.id) })); });
         var saveSel = h('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: 'Guardar' });
         saveSel.addEventListener('click', function () {
@@ -3428,19 +3434,29 @@
             });
           }, function (e) { r1(); toast(e.message || 'No se pudo guardar el buzón.', 'error'); });
         });
-        body.appendChild(h('div', { class: 'cmp-row' }, sel, saveSel));
-        body.appendChild(h('div', { class: 'pros-hint', text: 'Buzón con el que salen los emails y tus respuestas de la Bandeja. Cada campaña puede usar otro: lo eliges al lanzarla, en el resumen. Estos son todos los buzones que Apollo reporta en tu cuenta (' + accs.length + ').' }));
+        ap.appendChild(h('div', null, h('div', { class: 'pros-lbl', style: 'margin-bottom:6px', text: 'Enviar desde' }), h('div', { class: 'emb-inline' }, sel, saveSel)));
+        ap.appendChild(h('p', { class: 'emb-sub', text: 'Buzón con el que salen los emails y tus respuestas de la Bandeja. Cada campaña puede usar otro: lo eliges al lanzarla, en el resumen. Estos son todos los buzones que Apollo reporta en tu cuenta (' + accs.length + ').' }));
       }
+      var apActs = h('div', { class: 'emb-acts' });
+      function apBtn(label, fn, cls) {
+        var b = h('button', { type: 'button', class: cls || 'btn btn-ghost btn-sm', text: label });
+        b.addEventListener('click', function () {
+          try { var r = fn(api, b); if (r && typeof r.catch === 'function') r.catch(function (e) { toast(errMsg(e), 'error'); }); } catch (e) { toast(errMsg(e), 'error'); }
+        });
+        apActs.appendChild(b);
+      }
+      if (state.apolloOauth) apBtn(es.state === 'connected' ? 'Reconectar' : 'Conectar mi cuenta', function (m, btn) { return connectEmail(btn).then(function () { m.close(); }); }, es.state === 'connected' ? null : 'btn btn-primary btn-sm');
+      apBtn(es.state === 'connected' ? 'Cambiar API key' : 'Conectar con mi API key', function (m) { m.close(); openApolloKeyWizard('have'); });
+      if (es.state === 'connected') apBtn('Desconectar', function (m) { return disconnectChannel('email', 'apollo', m); }, 'btn btn-ghost btn-sm emb-danger');
+      ap.appendChild(apActs);
       if (global.EmailMailboxes) {
-        global.EmailMailboxes.renderSection(body, { connected: isConn(state.apollo), detail: (state.apollo && state.apollo.config && state.apollo.config.email) || '' }, function () {
+        global.EmailMailboxes.renderSection(body, { connected: isConn(state.apollo), detail: (state.apollo && state.apollo.config && state.apollo.config.email) || '', node: ap }, function () {
           api.close(); render(); openChannelDetails('email');
         }, function () { api.close(); openSuppression(); });
+      } else {
+        body.appendChild(h('div', { class: 'emb' }, ap));
       }
-      var acts = [];
-      if (state.apolloOauth) acts.push({ label: es.state === 'connected' ? 'Reconectar' : 'Conectar mi cuenta', onClick: function (m, btn) { return connectEmail(btn).then(function () { m.close(); }); } });
-      acts.push({ label: es.state === 'connected' ? 'Cambiar API key' : 'Conectar con mi API key', onClick: function (m) { m.close(); openApolloKeyWizard('have'); } });
-      if (es.state === 'connected') acts.push({ label: 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('email', 'apollo', m); } });
-      acts.push({ label: 'Cerrar' });
+      var acts = [{ label: 'Cerrar' }];
       api.setActions(acts);
     }
   }

@@ -29,12 +29,55 @@
   var loading = null;
   var popupTimer = null;
   var listenerInstalled = false;
+  var openSections = {}; // secciones plegables abiertas a mano (sobreviven al repintado)
 
   var PROVIDER_LABEL = { gmail: 'Gmail', microsoft: 'Microsoft 365 / Outlook', smtp: 'SMTP' };
   var STATUS = { connected: ['Conectado', 'green'], paused: ['En pausa', 'amber'], error: ['Sin acceso', 'red'] };
   var LEVEL = { ok: ['Bien', 'green'], warn: ['Revisar', 'amber'], critical: ['Urgente', 'red'] };
 
-  function init(helpers) { H = helpers; }
+  function init(helpers) { H = helpers; injectCss(); }
+
+  // Estilos propios del panel de Email. La regla global `label` de index.html
+  // (mayúsculas monoespaciadas) y `.cmp-modal-body label { display:grid }`
+  // descuadraban las opciones y casillas: aquí se neutralizan dentro de .emb.
+  function injectCss() {
+    if (document.getElementById('emb-css')) return;
+    var st = document.createElement('style');
+    st.id = 'emb-css';
+    st.textContent = [
+      '.emb { display:flex; flex-direction:column; gap:14px; min-width:0; }',
+      '.emb-sec { border:1px solid var(--hair); border-radius:var(--r-md); padding:14px 16px; background:var(--surface); display:flex; flex-direction:column; gap:10px; min-width:0; }',
+      '.emb-sec-head { display:flex; align-items:center; justify-content:space-between; gap:8px 12px; flex-wrap:wrap; }',
+      '.emb-sec-head h4, .emb-sec > summary { margin:0; font-size:14px; font-weight:650; color:var(--text); display:flex; align-items:center; gap:8px; }',
+      '.emb-sub { margin:0; color:var(--text3); font-size:12.5px; line-height:1.5; }',
+      '.emb label { font-family:inherit; font-size:13px; font-weight:400; color:var(--text); text-transform:none; letter-spacing:normal; }',
+      '.emb input[type=radio], .emb input[type=checkbox] { width:16px; height:16px; padding:0; margin:2px 0 0; flex:0 0 auto; accent-color:var(--accent); box-shadow:none; }',
+      '.emb-opts { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }',
+      '.emb .emb-opt { display:flex; gap:10px; align-items:flex-start; padding:12px 14px; border:1px solid var(--hair); border-radius:var(--r-md); background:var(--surface2); cursor:pointer; transition:border-color .15s; }',
+      '.emb .emb-opt:hover { border-color:var(--accent); }',
+      '.emb .emb-opt.on { border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }',
+      '.emb .emb-opt.off { opacity:.55; cursor:not-allowed; }',
+      '.emb-opt b { display:block; font-size:13.5px; font-weight:600; }',
+      '.emb-opt small { display:block; color:var(--text3); font-size:12px; line-height:1.45; margin-top:2px; }',
+      '.emb-list { display:flex; flex-direction:column; gap:8px; }',
+      '.emb-mb { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; justify-content:space-between; padding:12px 14px; border:1px solid var(--hair); border-radius:var(--r-md); background:var(--surface2); }',
+      '.emb-mb-main { min-width:0; flex:1 1 260px; }',
+      '.emb-mb-title { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }',
+      '.emb-mb-title b { font-size:13.5px; word-break:break-all; }',
+      '.emb-mb-meta { color:var(--text3); font-size:12px; margin-top:3px; line-height:1.45; }',
+      '.emb-acts, .emb-add, .emb-inline { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }',
+      '.emb-inline select, .emb-inline input:not([type=checkbox]) { flex:1 1 240px; min-width:0; }',
+      '.emb .emb-danger { color:var(--red); }',
+      '.emb .emb-check { display:flex; gap:8px; align-items:center; cursor:pointer; }',
+      '.emb details.emb-sec > summary { cursor:pointer; list-style:none; justify-content:space-between; }',
+      '.emb details.emb-sec:not([open]) { gap:0; }',
+      '.emb details.emb-sec > summary::-webkit-details-marker { display:none; }',
+      '.emb details.emb-sec > summary::after { content:"\\25BE"; color:var(--text3); transition:transform .2s; }',
+      '.emb details.emb-sec[open] > summary::after { transform:rotate(180deg); }',
+      '@media (prefers-reduced-motion: reduce) { .emb details.emb-sec > summary::after, .emb .emb-opt { transition:none; } }',
+    ].join('\n');
+    document.head.appendChild(st);
+  }
   function h() { return H.h.apply(null, arguments); }
   function sb() { return global.supabaseClient; }
 
@@ -242,23 +285,25 @@
 
   function mailboxRow(mb, rerender) {
     var st = STATUS[mb.status] || [mb.status, 'gray'];
-    var row = h('div', { class: 'cmp-tpl-item' });
-    var top = h('div', { class: 'cmp-tpl-item-top' });
-    top.appendChild(h('b', { text: mb.email }));
-    top.insertAdjacentHTML('beforeend', H.pill(st[0], st[1]) + ' <span class="cmp-tpl-meta">' + H.esc(PROVIDER_LABEL[mb.provider] || mb.provider) + '</span>');
-    row.appendChild(top);
+    var row = h('div', { class: 'emb-mb' });
+    var main = h('div', { class: 'emb-mb-main' });
+    var title = h('div', { class: 'emb-mb-title' });
+    title.appendChild(h('b', { text: mb.email }));
+    title.insertAdjacentHTML('beforeend', H.pill(st[0], st[1]) + ' <span class="cmp-tpl-meta">' + H.esc(PROVIDER_LABEL[mb.provider] || mb.provider) + '</span>');
+    main.appendChild(title);
     var cap = rampToday(mb);
     var used = (S.usage && S.usage[mb.id]) || 0;
     var meta = 'Hoy: ' + used + ' de ' + cap + (mb.ramp_enabled && cap < mb.daily_limit ? ' (rampa; tope ' + mb.daily_limit + ')' : '');
     var wl = warmupLabel(mb);
     if (wl) meta += ' · ' + wl;
-    row.appendChild(h('div', { class: 'cmp-tpl-meta', style: 'margin-top:4px', text: meta }));
-    if (mb.status === 'paused' && mb.paused_reason) row.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:4px', text: mb.paused_reason }));
-    if (mb.status === 'error' && mb.last_error) row.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:6px', text: '⚠ ' + mb.last_error }));
-    if (mb.warmup && mb.warmup.state === 'error' && mb.warmup.error) row.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:4px', text: 'Warm-up: ' + mb.warmup.error }));
-    var acts = h('div', { class: 'cmp-row' });
+    main.appendChild(h('div', { class: 'emb-mb-meta', text: meta }));
+    if (mb.status === 'paused' && mb.paused_reason) main.appendChild(h('div', { class: 'emb-mb-meta', text: mb.paused_reason }));
+    if (mb.status === 'error' && mb.last_error) main.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:6px', text: '⚠ ' + mb.last_error }));
+    if (mb.warmup && mb.warmup.state === 'error' && mb.warmup.error) main.appendChild(h('div', { class: 'emb-mb-meta', text: 'Warm-up: ' + mb.warmup.error }));
+    row.appendChild(main);
+    var acts = h('div', { class: 'emb-acts' });
     function btn(label, fn, cls) {
-      var b = h('button', { type: 'button', class: cls || 'cmp-link', text: label });
+      var b = h('button', { type: 'button', class: cls || 'btn btn-ghost btn-sm', text: label });
       b.addEventListener('click', function () {
         try { var r = fn(b); if (r && r.catch) r.catch(function (e) { H.toast(H.errMsg(e), 'error'); }); } catch (e) { H.toast(H.errMsg(e), 'error'); }
       });
@@ -267,32 +312,41 @@
     if (mb.status === 'error') {
       btn('Reconectar', function (b) { return mb.provider === 'smtp' ? openSmtpWizard(rerender) : connectOAuth(mb.provider, b, rerender); }, 'btn btn-primary btn-sm');
     }
-    btn('Ajustes', function () { openSettings(mb, rerender); });
-    if (mb.status === 'connected') btn('Pausar', function () { return act('pause', { id: mb.id }).then(function () { return load(true).then(rerender); }); });
-    if (mb.status === 'paused') btn('Reanudar', function () { return act('resume', { id: mb.id }).then(function () { return load(true).then(rerender); }); });
-    if (mb.status !== 'error') btn(mb.warmup && mb.warmup.state === 'active' ? 'Apagar warm-up' : 'Warm-up', function () { return openWarmup(mb, rerender); });
     if (mb.status === 'connected') btn('Enviar prueba', function (b) {
       var restore = H.btnLoading(b, '⏳');
       return act('test_send', { id: mb.id }).then(function (r) { restore(); H.toast('Correo de prueba enviado a ' + ((r && r.to) || mb.email) + '.', 'success'); }, function (e) { restore(); throw e; });
     });
+    btn('Ajustes', function () { openSettings(mb, rerender); });
+    if (mb.status !== 'error') btn(mb.warmup && mb.warmup.state === 'active' ? 'Apagar warm-up' : 'Warm-up', function () { return openWarmup(mb, rerender); });
+    if (mb.status === 'connected') btn('Pausar', function () { return act('pause', { id: mb.id }).then(function () { return load(true).then(rerender); }); });
+    if (mb.status === 'paused') btn('Reanudar', function () { return act('resume', { id: mb.id }).then(function () { return load(true).then(rerender); }); });
     btn('Quitar', function () {
       return H.confirmModal({ title: 'Quitar buzón', message: 'Las campañas dejan de enviar desde ' + mb.email + '. Lo enviado y las respuestas siguen en la Bandeja.', confirmLabel: 'Quitar', danger: true, onConfirm: function () {
         return act('remove', { id: mb.id }).then(function () { return load(true).then(rerender); });
       } });
-    });
+    }, 'btn btn-ghost btn-sm emb-danger');
     row.appendChild(acts);
     return row;
   }
 
+  function rememberOpen(details, key) {
+    if (openSections[key]) details.open = true;
+    details.addEventListener('toggle', function () { openSections[key] = details.open; });
+  }
+
   function healthBlock(rerender) {
-    var wrap = h('div', { style: 'margin-top:16px' });
-    var head = h('div', { class: 'cmp-tpl-head' }, h('span', { class: 'pros-lbl', text: 'Entregabilidad por dominio' }));
+    var wrap = h('details', { class: 'emb-sec' });
+    wrap.appendChild(h('summary', { text: 'Entregabilidad por dominio' }));
+    rememberOpen(wrap, 'health');
+    var head = h('div', { class: 'emb-sec-head' });
     var check = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '↻ Revisar ahora' });
+    head.appendChild(h('p', { class: 'emb-sub', text: 'SPF, DKIM, DMARC y rebotes de los dominios de tus buzones. Se revisa solo una vez al día.' }));
     check.addEventListener('click', function () {
       var restore = H.btnLoading(check, '⏳');
       H.edgeFetch('mailbox-sync', { action: 'check_domains' }).then(function (r) {
         restore();
         S.health = (r && r.health) || S.health;
+        openSections.health = true;
         rerender();
       }, function (e) { restore(); H.toast(H.errMsg(e), 'error'); });
     });
@@ -300,13 +354,13 @@
     wrap.appendChild(head);
     var list = (S.health || []).slice().sort(function (a, b) { return String(a.domain).localeCompare(String(b.domain)); });
     if (!list.length) {
-      wrap.appendChild(h('div', { class: 'pros-hint', text: 'Todavía no se revisó ningún dominio. Se revisa solo una vez al día (SPF, DKIM, DMARC y rebotes); con «Revisar ahora» lo ves ya. Los buzones @gmail.com u @outlook.com no tienen DNS propio que revisar.' }));
+      wrap.appendChild(h('div', { class: 'emb-sub', text: 'Todavía no se revisó ningún dominio. Los buzones @gmail.com u @outlook.com no tienen DNS propio que revisar.' }));
       return wrap;
     }
     list.forEach(function (d) {
       var lv = LEVEL[d.level] || LEVEL.ok;
       var r = d.report || {};
-      var item = h('div', { class: 'cmp-tpl-item', style: 'margin-top:8px' });
+      var item = h('div', { class: 'cmp-tpl-item' });
       var top = h('div', { class: 'cmp-tpl-item-top' }, h('b', { text: d.domain }));
       top.insertAdjacentHTML('beforeend', H.pill(lv[0], lv[1]) + ' <span class="cmp-tpl-meta">revisado ' + H.esc(H.fmtDateTime(d.checked_at)) + '</span>');
       item.appendChild(top);
@@ -329,9 +383,10 @@
 
   function unsubscribeBlock(rerender, onOpenSuppression) {
     var st = S.settings || {};
-    var wrap = h('div', { style: 'margin-top:16px' });
-    wrap.appendChild(h('div', { class: 'pros-lbl', text: 'Baja' }));
-    wrap.appendChild(h('div', { class: 'pros-hint', text: 'Cada correo de campaña lleva el encabezado de baja en un clic que piden Gmail, Yahoo y Outlook. Quien se da de baja o responde «baja» entra a tu lista «No contactar» y no vuelve a recibir mensajes de tus campañas por ningún canal. Una dirección que rebota en duro deja de recibir correos de campaña.' }));
+    var wrap = h('details', { class: 'emb-sec' });
+    wrap.appendChild(h('summary', { text: 'Baja de los correos' }));
+    rememberOpen(wrap, 'unsub');
+    wrap.appendChild(h('p', { class: 'emb-sub', text: 'Cada correo de campaña lleva el encabezado de baja en un clic que piden Gmail, Yahoo y Outlook. Quien se da de baja o responde «baja» entra a tu lista «No contactar» y no vuelve a recibir mensajes de tus campañas por ningún canal. Una dirección que rebota en duro deja de recibir correos de campaña.' }));
     var foot = h('input', { type: 'checkbox' });
     foot.checked = !!st.unsubscribe_footer;
     var text = input({ value: st.footer_text || '', placeholder: 'Si prefieres no recibir más correos míos, respóndeme «baja» y no te escribo más.' });
@@ -342,10 +397,10 @@
         restore(); S.settings = (r && r.settings) || S.settings; H.toast('Guardado.', 'success');
       }, function (e) { restore(); H.toast(H.errMsg(e), 'error'); });
     });
-    wrap.appendChild(h('label', { style: 'display:flex;gap:8px;align-items:center;margin-top:8px' }, foot, h('span', { text: 'Agregar una línea de baja al final de cada correo de campaña' })));
-    wrap.appendChild(h('div', { class: 'cmp-row' }, text, save));
+    wrap.appendChild(h('label', { class: 'emb-check' }, foot, h('span', { text: 'Agregar una línea de baja al final de cada correo de campaña' })));
+    wrap.appendChild(h('div', { class: 'emb-inline' }, text, save));
     if (onOpenSuppression) {
-      var list = h('button', { type: 'button', class: 'cmp-link', style: 'margin-top:8px', text: 'Ver bajas y exclusiones' });
+      var list = h('button', { type: 'button', class: 'cmp-link', style: 'align-self:flex-start', text: 'Ver bajas y exclusiones' });
       list.addEventListener('click', function () { onOpenSuppression(); });
       wrap.appendChild(list);
     }
@@ -359,22 +414,29 @@
    * vista central «Bajas y exclusiones» de Campañas (js/suppression.js).
    */
   function renderSection(container, apolloInfo, rerender, onOpenSuppression) {
+    var apolloNode = apolloInfo.node || null;
     if (!S) {
       container.appendChild(h('span', { class: 'pros-hint', text: 'Cargando buzones…' }));
+      if (apolloNode) container.appendChild(apolloNode);
       load().then(rerender);
       return;
     }
+    var wrap = h('div', { class: 'emb' });
     if (S.unavailable) {
-      container.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:12px', text: 'Enviar desde tus propios buzones (Gmail, Microsoft 365 o SMTP) todavía no está habilitado en tu cuenta.' }));
+      if (apolloNode) wrap.appendChild(apolloNode);
+      wrap.appendChild(h('div', { class: 'pros-hint', text: 'Enviar desde tus propios buzones (Gmail, Microsoft 365 o SMTP) todavía no está habilitado en tu cuenta.' }));
+      container.appendChild(wrap);
       return;
     }
-    var box = h('div', { style: 'margin-top:14px' });
-    // ── Enviar con ──
-    box.appendChild(h('div', { class: 'pros-lbl', text: 'Enviar con' }));
-    var choice = h('div', { class: 'cmp-sender-grid' });
     var conn = connected().length;
-    [['apollo', 'Apollo', apolloInfo.connected ? (apolloInfo.detail || 'Cuenta conectada') : 'Sin conectar'],
-     ['mailboxes', 'Mis buzones', conn ? conn + (conn === 1 ? ' buzón conectado' : ' buzones conectados') + ', con rotación y warm-up' : 'Conecta un buzón abajo']].forEach(function (o) {
+
+    // ── 1. Con qué salen los emails ──
+    var how = h('section', { class: 'emb-sec' });
+    how.appendChild(h('div', { class: 'emb-sec-head' }, h('h4', { text: 'Cómo se envían tus emails' })));
+    how.appendChild(h('p', { class: 'emb-sub', text: 'Elige con qué salen los emails de tus campañas y tus respuestas de la Bandeja. Cada campaña puede cambiarlo en su resumen.' }));
+    var choice = h('div', { class: 'emb-opts', role: 'radiogroup', 'aria-label': 'Cómo se envían tus emails' });
+    [['mailboxes', 'Mis buzones', conn ? conn + (conn === 1 ? ' buzón conectado' : ' buzones conectados') + ', con rotación y warm-up' : 'Conecta un buzón abajo'],
+     ['apollo', 'Apollo', apolloInfo.connected ? (apolloInfo.detail || 'Cuenta conectada') : 'Sin conectar']].forEach(function (o) {
       var radio = h('input', { type: 'radio', name: 'email-provider', value: o[0] });
       radio.checked = provider() === o[0];
       if (o[0] === 'mailboxes' && !conn) radio.disabled = true;
@@ -386,19 +448,24 @@
           rerender();
         }, function (e) { H.toast(H.errMsg(e), 'error'); rerender(); });
       });
-      choice.appendChild(h('label', { class: 'cmp-tpl-item', style: 'display:flex;gap:8px;align-items:flex-start;cursor:pointer' }, radio, h('span', null, h('b', { text: o[1] }), h('div', { class: 'cmp-tpl-meta', text: o[2] }))));
+      var cls = 'emb-opt' + (radio.checked ? ' on' : '') + (radio.disabled ? ' off' : '');
+      choice.appendChild(h('label', { class: cls }, radio, h('span', null, h('b', { text: o[1] }), h('small', { text: o[2] }))));
     });
-    box.appendChild(choice);
-    box.appendChild(h('div', { class: 'pros-hint', text: 'Cada campaña puede elegir otra opción en su resumen. Los mensajes ya enviados siguen su hilo por el mismo camino.' }));
+    how.appendChild(choice);
+    wrap.appendChild(how);
 
-    // ── Buzones ──
-    var head = h('div', { class: 'cmp-tpl-head' }, h('span', { class: 'pros-lbl', text: 'Mis buzones' }));
-    box.appendChild(head);
-    var list = h('div', { class: 'cmp-tpl-list', style: 'max-height:none' });
-    if (!S.mailboxes.length) list.appendChild(h('div', { class: 'pros-hint', text: 'Sin buzones todavía. Conecta los buzones desde los que quieres prospectar: Predictable reparte los envíos entre ellos, respeta el tope de cada uno y detecta respuestas y rebotes.' }));
-    S.mailboxes.forEach(function (mb) { list.appendChild(mailboxRow(mb, rerender)); });
-    box.appendChild(list);
-    var add = h('div', { class: 'cmp-row' });
+    // ── 2. Mis buzones ──
+    var mbs = h('section', { class: 'emb-sec' });
+    mbs.appendChild(h('div', { class: 'emb-sec-head' }, h('h4', { text: 'Mis buzones' })));
+    mbs.appendChild(h('p', { class: 'emb-sub', text: S.mailboxes.length
+      ? 'Predictable reparte los envíos entre tus buzones, respeta el tope de cada uno y revisa respuestas y rebotes cada 5 minutos. Con buzones propios no se miden aperturas: la condición «¿abrió el email?» de la cadencia solo funciona con Apollo.'
+      : 'Sin buzones todavía. Conecta los buzones desde los que quieres prospectar: Predictable reparte los envíos entre ellos, respeta el tope de cada uno y detecta respuestas y rebotes.' }));
+    if (S.mailboxes.length) {
+      var list = h('div', { class: 'emb-list' });
+      S.mailboxes.forEach(function (mb) { list.appendChild(mailboxRow(mb, rerender)); });
+      mbs.appendChild(list);
+    }
+    var add = h('div', { class: 'emb-add' });
     function addBtn(label, enabled, fn, why) {
       var b = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: label, title: enabled ? '' : why });
       if (!enabled) b.disabled = true;
@@ -411,14 +478,21 @@
     addBtn('+ Gmail / Google Workspace', !!oauth.gmail, function (b) { return connectOAuth('gmail', b, rerender); }, 'Todavía no está habilitado en la plataforma.');
     addBtn('+ Microsoft 365 / Outlook', !!oauth.microsoft, function (b) { return connectOAuth('microsoft', b, rerender); }, 'Todavía no está habilitado en la plataforma.');
     addBtn('+ Otro (SMTP / IMAP)', true, function () { return openSmtpWizard(rerender); });
-    box.appendChild(add);
-    if (!oauth.gmail || !oauth.microsoft) box.appendChild(h('div', { class: 'pros-hint', text: 'Gmail y Microsoft 365 se conectan con su inicio de sesión cuando la plataforma los habilite; mientras tanto puedes conectarlos por SMTP/IMAP con una contraseña de aplicación (Gmail: smtp.gmail.com / imap.gmail.com).' }));
+    mbs.appendChild(add);
+    if (!oauth.gmail || !oauth.microsoft) mbs.appendChild(h('p', { class: 'emb-sub', text: 'Gmail y Microsoft 365 se conectan con su inicio de sesión cuando la plataforma los habilite; mientras tanto puedes conectarlos por SMTP/IMAP con una contraseña de aplicación (Gmail: smtp.gmail.com / imap.gmail.com).' }));
+    wrap.appendChild(mbs);
+
+    // ── 3. Apollo (lo pinta js/campaigns.js) ──
+    if (apolloNode) wrap.appendChild(apolloNode);
+
+    // ── 4 y 5. Avanzado: entregabilidad y baja (plegados) ──
     if (S.mailboxes.length) {
-      box.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:8px', text: 'Las respuestas y los rebotes se revisan cada 5 minutos. Las aperturas no se miden con buzones propios (sin píxel de seguimiento, que perjudica la entrega): la condición «¿abrió el email?» de la cadencia solo funciona con Apollo.' }));
-      box.appendChild(healthBlock(rerender));
-      box.appendChild(unsubscribeBlock(rerender, onOpenSuppression));
+      var hb = healthBlock(rerender);
+      if (openSections.health || (S.health || []).some(function (d) { return d.level && d.level !== 'ok'; })) hb.open = true;
+      wrap.appendChild(hb);
+      wrap.appendChild(unsubscribeBlock(rerender, onOpenSuppression));
     }
-    container.appendChild(box);
+    container.appendChild(wrap);
   }
 
   /**
