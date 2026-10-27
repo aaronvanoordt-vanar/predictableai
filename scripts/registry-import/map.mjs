@@ -507,3 +507,23 @@ export function finishRow(source, mapped, sourceUpdatedOn = "") {
   };
   return out;
 }
+
+/**
+ * Un archivo puede traer la misma empresa dos veces (Argentina repite el CUIT
+ * en filas que solo cambian el domicilio), y Postgres no deja que un mismo
+ * INSERT … ON CONFLICT toque dos veces la misma fila. Se juntan en una: la
+ * primera manda y las siguientes solo rellenan los campos vacíos, igual que
+ * hace registry_import_batch entre archivos.
+ */
+export function dedupeBatch(rows) {
+  const byKey = new Map();
+  for (const row of rows) {
+    const k = `${row.registry}|${row.registry_id}`;
+    const prev = byKey.get(k);
+    if (!prev) { byKey.set(k, { ...row }); continue; }
+    for (const [f, v] of Object.entries(row)) {
+      if ((prev[f] === undefined || prev[f] === null || prev[f] === "") && v !== undefined && v !== null && v !== "") prev[f] = v;
+    }
+  }
+  return [...byKey.values()];
+}

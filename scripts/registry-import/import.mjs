@@ -26,6 +26,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
+  dedupeBatch,
   createRowParser, detectDelimiter, finishRow, looksLikeHeader, resolveColumns, rowObject, SOURCES, sourcesFor,
 } from "./map.mjs";
 
@@ -181,7 +182,7 @@ async function resolveServiceKey() {
   return serviceKey;
 }
 
-async function rest(path, method, body, prefer = "") {
+async function rest(path, method, body, prefer = "", { retryTimeout = true } = {}) {
   const key = await resolveServiceKey();
   for (let attempt = 1; ; attempt++) {
     const res = await fetch(`${BASE}/rest/v1/${path}`, {
@@ -190,8 +191,30 @@ async function rest(path, method, body, prefer = "") {
     });
     const text = await res.text();
     if (res.ok) return text ? JSON.parse(text) : null;
-    if (attempt < 4 && (res.status >= 500 || res.status === 429)) { await new Promise((r) => setTimeout(r, 2000 * attempt)); continue; }
+    // Un error de datos (21000, 23xxx…) no se arregla reintentando; un corte por
+    // tiempo sí puede, salvo que quien llama prefiera partir el lote.
+    const timeout = /"57014"/.test(text);
+    const transient = res.status === 429 || res.status >= 502 || (res.status === 500 && timeout && retryTimeout);
+    if (attempt < 4 && transient) { await new Promise((r) => setTimeout(r, 2000 * attempt)); continue; }
     throw new Error(`${method} ${path} → HTTP ${res.status}: ${text.slice(0, 300)}`);
+  }
+}
+
+// ── carga ───────────────────────────────────────────────────────────────────
+/**
+ * Sube un lote; si la base corta la sentencia por tiempo (57014: con varios
+ * registros cargándose a la vez y el índice de trigramas, 500 filas pueden
+ * pasarse), lo parte en dos y sigue, hasta lotes de 25.
+ */
+async function upsertRows(rows) {
+  try {
+    return Number(await rest("rpc/registry_import_batch", "POST", { rows }, "", { retryTimeout: rows.length <= 25 })) || 0;
+  } catch (e) {
+    if (rows.length > 25 && /57014|statement timeout/.test(e.message)) {
+      const mid = Math.ceil(rows.length / 2);
+      return (await upsertRows(rows.slice(0, mid))) + (await upsertRows(rows.slice(mid)));
+    }
+    throw e;
   }
 }
 
@@ -287,10 +310,9 @@ async function importSource(key, dir, stats) {
     let cols = null, header = null, batch = [], entryName = "", entryEnc = "", getDelim = () => ",";
     const flush = async () => {
       if (!batch.length) return;
-      const rows = batch; batch = [];
+      const rows = dedupeBatch(batch); batch = [];
       if (DRY) { stats.mapped += rows.length; return; }
-      const n = await rest("rpc/registry_import_batch", "POST", { rows });
-      stats.upserted += Number(n) || 0;
+      stats.upserted += await upsertRows(rows);
     };
     eachRows.chunkHook = async () => {
       if (batch.length >= BATCH) await flush();
