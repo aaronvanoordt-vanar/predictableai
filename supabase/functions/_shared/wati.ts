@@ -168,6 +168,7 @@ export function metaErrorHint(text: unknown): string | null {
   const s = String(text ?? "");
   const has = (c: string) => new RegExp(`(^|\\D)${c}(\\D|$)`).test(s);
   if (has("131047") || /re-?engagement|more than 24 hours/i.test(s)) return "La ventana de 24 h de WhatsApp ya se cerró: envía una plantilla aprobada para reabrir la conversación.";
+  if (has("131049") || /restricted it for higher quality|healthy ecosystem/i.test(s)) return "Meta decidió no entregar este mensaje para cuidar la experiencia del usuario (131049): suele pasar con plantillas de marketing a un número que no ha interactuado recientemente. Reintenta en unos días o espera a que el lead escriba para responderle con texto libre.";
   if (has("131026") || /undeliverable|not a whatsapp|not registered/i.test(s)) return "Ese número no puede recibir el mensaje (no tiene WhatsApp, te bloqueó o no aceptó los términos). Revisa el teléfono del lead.";
   if (has("131037")) return accountBlockMessage("131037");
   if (has("131048") || has("131056") || has("130429")) return "Meta limitó los envíos de tu número por volumen o por reportes de spam. Espera unos minutos/horas antes de reintentar.";

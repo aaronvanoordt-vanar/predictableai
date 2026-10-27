@@ -11,7 +11,7 @@
 <meta property="og:description" content="La primera plataforma GTM end-to-end para ventas B2B en Latam. Prueba gratis, sin tarjeta.">
 <meta property="og:image" content="https://predictableai.vanarsi.com/assets/predictable-favicon.png">
 <meta name="twitter:card" content="summary">
-<meta name="theme-color" content="#F3F5FA">
+<meta name="theme-color" content="#F8F8F6">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
@@ -46,7 +46,7 @@
    página lo dice.
    ═══════════════════════════════════════════════════════════════════════ */
 :root {
-  --bg: #F3F5FA;
+  --bg: #F8F8F6;
   --ink: #0A0A0F; --ink-2: #23252D; --ink-3: #565C69; --ink-4: #8A91A0;
   --hair: rgba(10,10,15,.08);
   --accent: #1F4BFF; --accent-2: #3B68FF; --accent-ink: #0B2BB8; --accent-soft: rgba(31,75,255,.09);
@@ -69,23 +69,9 @@
 html, body { margin: 0; padding: 0; }
 html { scroll-behavior: smooth; scroll-padding-top: 84px; }
 body { font-family: var(--font-sans); color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased; line-height: 1.45; overflow-x: hidden; }
-/* Fondo minimalista: lienzo claro, rejilla de puntos casi invisible que se
-   desvanece hacia los bordes y un único velo de luz arriba. Sin orbes: el
-   vidrio se nota por su borde especular, su brillo y su sombra. */
-body::before {
-  content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none;
-  background:
-    radial-gradient(70% 46% at 50% -6%, rgba(255,255,255,.95), rgba(255,255,255,0) 70%),
-    radial-gradient(60% 40% at 50% 0%, rgba(31,75,255,.07), rgba(31,75,255,0) 72%);
-}
-body::after {
-  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background-image: radial-gradient(rgba(10,10,15,.16) 1px, transparent 1.3px);
-  background-size: 26px 26px;
-  -webkit-mask-image: radial-gradient(85% 70% at 50% 28%, #000 10%, transparent 78%);
-  mask-image: radial-gradient(85% 70% at 50% 28%, #000 10%, transparent 78%);
-  opacity: .55;
-}
+/* Fondo minimalista (como Oxygen): un lienzo plano y limpio, sin patrones ni
+   halos. El vidrio se luce sobre «escenas» de color difuminado que viven
+   dentro de las tarjetas (.scene), no en el fondo de la página. */
 a { color: inherit; text-decoration: none; }
 img { display: block; max-width: 100%; }
 button { font: inherit; color: inherit; }
@@ -219,6 +205,7 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 .proof-grid div { text-align: center; padding: 6px 10px; }
 .proof-grid b { display: block; font-size: clamp(44px, 5.6vw, 76px); line-height: 1; letter-spacing: -.05em; font-weight: 700; font-variant-numeric: tabular-nums; margin-bottom: 10px; }
 .proof-grid b span { font-size: inherit; color: inherit; }
+.proof-grid b.blue { color: var(--accent); }
 .proof-grid b .unit { font-size: .52em; letter-spacing: -.03em; margin-left: .12em; }
 .proof-grid > div > span { font-size: 15px; color: var(--ink-3); display: block; max-width: 190px; margin: 0 auto; }
 .proof-note { text-align: center; font-size: 13px; color: var(--ink-4); margin-top: 12px; }
@@ -385,7 +372,14 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 .feat-btn[aria-selected="true"] { background: linear-gradient(160deg, rgba(255,255,255,.95), rgba(255,255,255,.62)); border-color: rgba(255,255,255,.95); box-shadow: inset 0 1px 0 #fff, inset 0 -2px 8px rgba(31,75,255,.06), 0 12px 30px -18px rgba(20,30,80,.55); }
 .feat-btn[aria-selected="true"] b { color: var(--ink); }
 .feat-btn[aria-selected="true"] span.d { display: block; }
-.feat-stage { border-radius: 22px; padding: 22px 22px 52px; min-height: 470px; background: linear-gradient(160deg, rgba(31,75,255,.09), rgba(110,92,245,.09)); box-shadow: inset 0 1px 0 rgba(255,255,255,.6), inset 0 0 0 1px rgba(255,255,255,.4); position: relative; }
+.scene { background:
+    radial-gradient(60% 55% at 12% 10%, rgba(94,129,255,.55), transparent 70%),
+    radial-gradient(55% 50% at 92% 18%, rgba(150,124,255,.45), transparent 70%),
+    radial-gradient(60% 55% at 70% 100%, rgba(56,189,214,.38), transparent 70%),
+    radial-gradient(50% 45% at 0% 100%, rgba(120,150,255,.3), transparent 70%),
+    linear-gradient(160deg, #DDE5FF, #E9E4FF 55%, #DDF1F6); }
+.feat-stage { border-radius: 24px; padding: 22px 22px 52px; min-height: 470px; box-shadow: inset 0 1px 0 rgba(255,255,255,.6), inset 0 0 0 1px rgba(255,255,255,.4); position: relative; overflow: hidden; }
+.feat-stage .mk { background: linear-gradient(160deg, rgba(255,255,255,.78), rgba(255,255,255,.5)); -webkit-backdrop-filter: blur(22px) saturate(1.6); backdrop-filter: blur(22px) saturate(1.6); border-color: rgba(255,255,255,.8); box-shadow: inset 0 1px 0 #fff, 0 20px 50px -26px rgba(30,40,120,.5); }
 .feat-panel[hidden] { display: none !important; }
 .feat-panel { animation: fadeUp .45s var(--ease-out); }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -395,8 +389,8 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
    avanzas, se enciende la siguiente función. En móvil o con movimiento
    reducido quedan las pestañas de siempre. */
 .feat-track { position: relative; }
-.feat-track.scrolly { height: calc(var(--n, 4) * 62vh + 120px); }
-.feat-track.scrolly > .feat { position: sticky; top: 92px; }
+.feat-track.scrolly { height: calc(var(--n, 4) * 62vh + var(--fh, 600px) + 40px); }
+.feat-track.scrolly > .feat { position: sticky; top: var(--stick, 92px); }
 .feat-track.scrolly .feat-btn[aria-selected="true"]::after { content: ""; position: absolute; left: 16px; right: 16px; bottom: 7px; height: 2px; border-radius: 2px; background: var(--grad-ai); transform-origin: left; transform: scaleX(var(--sp, 0)); opacity: .85; }
 .feat-track.scrolly .feat-btn:not([aria-selected="true"]) { opacity: .62; }
 .feat-track.scrolly .feat-btn { transition: background .25s, border-color .25s, box-shadow .25s, opacity .35s, transform .25s var(--ease-out); }
@@ -540,7 +534,7 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 .ctab .prog { position: absolute; left: 14px; right: 14px; bottom: 5px; height: 2px; background: rgba(31,75,255,.1); border-radius: 2px; overflow: hidden; display: none; }
 .ctab[aria-selected="true"] .prog { display: block; }
 .ctab .prog i { display: block; height: 100%; width: 0; background: var(--grad-ai); }
-.cpanel { border-radius: 22px; padding: 22px; background: linear-gradient(160deg, rgba(31,75,255,.09), rgba(110,92,245,.09)); box-shadow: inset 0 1px 0 rgba(255,255,255,.6); display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-content: start; min-height: 330px; }
+.cpanel { border-radius: 22px; padding: 22px; background: linear-gradient(160deg, #DDE5FF, #E9E4FF 60%, #DDF1F6); box-shadow: inset 0 1px 0 rgba(255,255,255,.6); display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-content: start; min-height: 330px; }
 .cpanel > * { min-width: 0; }
 .cpanel[hidden] { display: none; }
 .cpanel .mk { animation: fadeUp .45s var(--ease-out) both; }
@@ -552,6 +546,43 @@ h1, h2, h3 { margin: 0; letter-spacing: -.035em; }
 .phone-norm s { color: var(--ink-4); text-decoration-color: rgba(209,75,75,.6); }
 .phone-norm .to { display: block; color: var(--ink); font-weight: 600; margin-top: 4px; }
 @media (max-width: 900px) { .latam { grid-template-columns: 1fr; } .ctabs { flex-direction: row; overflow-x: auto; padding-bottom: 4px; } .ctab { flex-shrink: 0; } .cpanel { grid-template-columns: 1fr; } }
+
+/* ── Por qué Predictable ─────────────────────────────────────────────── */
+.why-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.why-grid > * { min-width: 0; }
+.why-card { padding: 34px 30px 28px; text-align: center; display: flex; flex-direction: column; }
+.why-card h3 { font-size: clamp(24px, 2.2vw, 32px); line-height: 1.1; letter-spacing: -.035em; }
+.why-card > p { margin: 12px auto 0; max-width: 420px; color: var(--ink-3); font-size: 15px; }
+.why-art { position: relative; margin: 26px 0 18px; border-radius: 24px; min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; overflow: hidden; flex: 1; }
+.mcp { display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-radius: 20px; font-size: 14px; font-weight: 600; flex-wrap: wrap; justify-content: center; }
+.mcp span { display: inline-flex; align-items: center; gap: 8px; }
+.mcp i { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(14,169,104,.18); }
+.mcp b { font-family: var(--font-mono); font-size: 12px; padding: 5px 12px; border-radius: 999px; background: var(--ink); color: #fff; }
+.mcp-tags { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; max-width: 340px; }
+.mcp-tags span { font-size: 12.5px; padding: 5px 11px; border-radius: 999px; background: rgba(255,255,255,.7); border: 1px solid rgba(255,255,255,.9); }
+.why-links { display: flex; gap: 22px; justify-content: center; font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.why-links a:hover { color: var(--accent); }
+.orbit-wrap { min-height: 340px; }
+.orbit { position: relative; width: 300px; height: 300px; flex-shrink: 0; }
+.orbit .ring { position: absolute; left: 50%; top: 50%; border-radius: 50%; border: 1px dashed rgba(10,10,15,.2); transform: translate(-50%, -50%); }
+.orbit .r1 { width: 110px; height: 110px; } .orbit .r2 { width: 200px; height: 200px; } .orbit .r3 { width: 296px; height: 296px; }
+.orbit .core { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 16px; display: flex; align-items: center; justify-content: center; background: linear-gradient(150deg, #1B1F33, #070810); box-shadow: inset 0 1px 0 rgba(255,255,255,.28), 0 12px 28px -10px rgba(10,10,15,.6); }
+.orbit .core img { width: 32px; height: 32px; }
+.orbit .sat { position: absolute; left: 50%; top: 50%; width: 0; height: 0; animation: orb 70s linear infinite; }
+.orbit .sat em { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); font-style: normal; font-size: 11.5px; font-weight: 600; white-space: nowrap; padding: 5px 10px; border-radius: 999px; background: rgba(255,255,255,.88); border: 1px solid #fff; box-shadow: 0 6px 16px -8px rgba(20,30,80,.5); animation: orbback 70s linear infinite; }
+.orbit .s1 { --r: 55px; --a: 20deg; } .orbit .s2 { --r: 55px; --a: 200deg; }
+.orbit .s3 { --r: 100px; --a: 70deg; animation-duration: 95s; } .orbit .s4 { --r: 100px; --a: 190deg; animation-duration: 95s; } .orbit .s5 { --r: 100px; --a: 310deg; animation-duration: 95s; }
+.orbit .s6 { --r: 148px; --a: 10deg; animation-duration: 130s; } .orbit .s7 { --r: 148px; --a: 130deg; animation-duration: 130s; } .orbit .s8 { --r: 148px; --a: 250deg; animation-duration: 130s; }
+.orbit .s4 em, .orbit .s5 em { animation-duration: 95s; } .orbit .s3 em { animation-duration: 95s; }
+.orbit .s6 em, .orbit .s7 em, .orbit .s8 em { animation-duration: 130s; }
+@keyframes orb { from { transform: rotate(var(--a)) translateX(var(--r)); } to { transform: rotate(calc(var(--a) + 360deg)) translateX(var(--r)); } }
+@keyframes orbback { from { transform: translate(-50%, -50%) rotate(calc(var(--a) * -1)); } to { transform: translate(-50%, -50%) rotate(calc(var(--a) * -1 - 360deg)); } }
+.why-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 20px; }
+.why-mini { padding: 22px 24px; border-radius: 22px; }
+.why-mini b { display: block; font-size: 17px; letter-spacing: -.02em; margin-bottom: 6px; }
+.why-mini span { font-size: 14.5px; color: var(--ink-3); line-height: 1.5; }
+@media (max-width: 900px) { .why-grid, .why-row { grid-template-columns: 1fr; } .orbit { transform: scale(.88); } }
+@media (prefers-reduced-motion: reduce) { .orbit .sat, .orbit .sat em { animation: none; } .orbit .sat { transform: rotate(var(--a)) translateX(var(--r)); } .orbit .sat em { transform: translate(-50%, -50%) rotate(calc(var(--a) * -1)); } }
 
 /* ── Para quién ─────────────────────────────────────────────────────── */
 .who-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 18px; }
@@ -798,11 +829,11 @@ footer { padding: 0 0 40px; }
       <span class="partner glass"><img src="assets/linkedin-partner.png" alt="LinkedIn"><span><b>LinkedIn</b><small>Marketing Partner</small></span></span>
       <span class="partner glass"><img src="assets/meta-partner.png" alt="Meta"><span><b>Meta</b><small>Business Partner</small></span></span>
     </div>
-    <div class="proof-grid glass glass-lg reveal" data-scene="proof">
-      <div><b><span data-count="50">0</span><span class="unit">+</span></b><span>empresas B2B atendidas</span></div>
-      <div><b><span data-count="1000">0</span><span class="unit">+</span></b><span>reuniones calificadas con decisores</span></div>
-      <div><b><span data-count="10">0</span><span class="unit">x+</span></b><span>retorno medido en cuentas de clientes</span></div>
-      <div><b><span data-count="5">0</span><span class="unit">años</span></b><span>haciendo outbound en Latam</span></div>
+    <div class="proof-grid glass glass-lg reveal">
+      <div><b>50<span class="unit">+</span></b><span>empresas B2B operadas</span></div>
+      <div><b>1,000<span class="unit">+</span></b><span>reuniones calificadas agendadas</span></div>
+      <div><b class="blue">10<span class="unit">x</span></b><span>retorno a la inversión promedio</span></div>
+      <div><b>5<span class="unit">años</span></b><span>operando outbound en Latam</span></div>
     </div>
     <p class="proof-note">Resultados de Eleva, la operación de outbound que dio origen a Predictable AI.</p>
   </div>
@@ -928,7 +959,7 @@ footer { padding: 0 0 40px; }
         <button class="feat-btn" role="tab" type="button" id="f1-t3" aria-controls="f1-p3" aria-selected="false" tabindex="-1"><b><span class="ic gr" style="background:var(--ink)"><svg><use href="#i-building"/></svg></span>Registros públicos de Latam</b><span class="d">Empresas recién constituidas, que crecieron o que cambiaron de actividad en todos los países de Latam, directo de los registros oficiales.</span></button>
         <button class="feat-btn" role="tab" type="button" id="f1-t4" aria-controls="f1-p4" aria-selected="false" tabindex="-1"><b><span class="ic ph"><svg><use href="#i-table"/></svg></span>Columnas IA e investigación</b><span class="d">Hazle cualquier pregunta a tu lista («¿vende en Mercado Libre?») y la IA la responde fila por fila con evidencia y fuente. Antes de escribir, verifica que el lead siga en la empresa.</span></button>
       </div>
-      <div class="feat-stage">
+      <div class="feat-stage scene">
         <div class="feat-panel" id="f1-p1" role="tabpanel" aria-labelledby="f1-t1" data-scene="radar">
           <div class="mk">
             <div class="mk-h"><span class="mk-t">Radar · lote de hoy</span><span class="mk-pill"><span data-count="312">0</span> señales hoy</span></div>
@@ -1013,7 +1044,7 @@ footer { padding: 0 0 40px; }
         <button class="feat-btn" role="tab" type="button" id="f2-t4" aria-controls="f2-p4" aria-selected="false" tabindex="-1"><b><span class="ic li"><svg><use href="#i-inbox"/></svg></span>Bandeja unificada</b><span class="d">Todas las respuestas de email, WhatsApp y LinkedIn en un solo lugar, con avisos en tu teléfono y un borrador de respuesta escrito por IA.</span></button>
         <button class="feat-btn" role="tab" type="button" id="f2-t5" aria-controls="f2-p5" aria-selected="false" tabindex="-1"><b><span class="ic ph"><svg><use href="#i-phone"/></svg></span>Llamadas y agenda</b><span class="d">Dialer con clic para llamar, agente de voz IA para leads que ya respondieron y tu propia página de agenda con recordatorios por WhatsApp.</span></button>
       </div>
-      <div class="feat-stage">
+      <div class="feat-stage scene">
         <div class="feat-panel" id="f2-p1" role="tabpanel" aria-labelledby="f2-t1" data-scene="tree">
           <div class="tree">
             <div class="tree-pal">
@@ -1124,7 +1155,7 @@ footer { padding: 0 0 40px; }
         <button class="feat-btn" role="tab" type="button" id="f3-t4" aria-controls="f3-p4" aria-selected="false" tabindex="-1"><b><span class="ic wa" style="background:var(--cyan)"><svg><use href="#i-users"/></svg></span>Equipo y metas</b><span class="d">Metas de actividad por SDR, ranking por reuniones (no por envíos), rampa de nuevos vendedores y revisión de llamadas con comentarios.</span></button>
         <button class="feat-btn" role="tab" type="button" id="f3-t5" aria-controls="f3-p5" aria-selected="false" tabindex="-1"><b><span class="ic li" style="background:var(--green)"><svg><use href="#i-chart"/></svg></span>Analytics y aprendizaje</b><span class="d">Qué campaña, canal y mensaje generan reuniones. La IA aprende de cada respuesta y pausa lo que no funciona.</span></button>
       </div>
-      <div class="feat-stage">
+      <div class="feat-stage scene">
         <div class="feat-panel" id="f3-p1" role="tabpanel" aria-labelledby="f3-t1" data-scene="coach">
           <div class="coach">
             <div class="mk">
@@ -1311,6 +1342,49 @@ footer { padding: 0 0 40px; }
 </section>
 
 <!-- ─────────────────────────── Comparación ─────────────────────────── -->
+<!-- ─────────────────────────── Por qué ─────────────────────────── -->
+<section class="sec" id="por-que" style="padding-top:20px">
+  <div class="container">
+    <div class="sec-head reveal">
+      <span class="chip"><span class="ci"><svg><use href="#i-target"/></svg></span>Por qué Predictable AI</span>
+      <h2 class="h2">Por qué los equipos de GTM en Latam eligen <span class="grad">Predictable AI</span>.</h2>
+    </div>
+    <div class="why-grid">
+      <article class="why-card glass glass-lg reveal">
+        <h3>Usa el agente que quieras.</h3>
+        <p>Conecta el agente que ya usas por API o MCP. Mismo espacio de trabajo, mismo contexto, mismas herramientas.</p>
+        <div class="why-art scene">
+          <div class="mcp glass">
+            <span><i></i>Tu agente de IA</span>
+            <b>MCP</b>
+            <span><i></i>Predictable AI</span>
+          </div>
+          <div class="mcp-tags"><span>Listas</span><span>Campañas</span><span>Bandeja</span><span>Radar</span><span>CRM</span><span>Reuniones</span></div>
+        </div>
+        <div class="why-links"><a href="developers.html">Guía de la API <span class="mono">↗</span></a><a href="developers.html#mcp">Guía de MCP <span class="mono">↗</span></a></div>
+      </article>
+      <article class="why-card glass glass-lg reveal">
+        <h3>Una suscripción para todos tus datos GTM.</h3>
+        <p>Varias fuentes de contacto, verificadores de email y canales de envío en un solo plan. Solo pagas por dato encontrado.</p>
+        <div class="why-art scene orbit-wrap">
+          <div class="orbit" aria-hidden="true">
+            <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
+            <span class="core"><img src="favicon.svg" alt=""></span>
+            <span class="sat s1"><em>Apollo</em></span><span class="sat s2"><em>Prospeo</em></span><span class="sat s3"><em>BetterContact</em></span>
+            <span class="sat s4"><em>FullEnrich</em></span><span class="sat s5"><em>ZeroBounce</em></span><span class="sat s6"><em>WhatsApp</em></span>
+            <span class="sat s7"><em>LinkedIn</em></span><span class="sat s8"><em>Registros públicos</em></span>
+          </div>
+        </div>
+      </article>
+    </div>
+    <div class="why-row">
+      <div class="why-mini glass reveal"><b>Hecho para Latam</b><span>WhatsApp nativo, teléfonos en el formato de cada país y registros públicos de la región.</span></div>
+      <div class="why-mini glass reveal"><b>Pagas por resultado</b><span>Solo pagas por dato encontrado, y con Growth nos comprometemos por contrato a reuniones calificadas.</span></div>
+      <div class="why-mini glass reveal"><b>Con cinco años de oficio</b><span>El método de Eleva: más de 1,000 reuniones calificadas agendadas para más de 50 empresas B2B.</span></div>
+    </div>
+  </div>
+</section>
+
 <section class="sec" id="comparar" style="padding-top:20px">
   <div class="container">
     <div class="sec-head reveal">
@@ -1378,7 +1452,7 @@ footer { padding: 0 0 40px; }
       <div class="tl-track" aria-hidden="true"><i></i></div>
       <ol class="tl-items" style="list-style:none;margin:0;padding:0">
         <li class="tl-item"><span class="tl-dot" aria-hidden="true"></span><div><span class="when">2021 · Eleva</span><h3>Vendimos por nuestros clientes</h3><p>Empezamos como agencia de outbound: buscábamos a las empresas correctas, les escribíamos a mano y llevábamos a sus decisores a una reunión.</p></div></li>
-        <li class="tl-item"><span class="tl-dot" aria-hidden="true"></span><div><span class="when">2021 – 2026</span><span class="big"><span data-count="1000">0</span>+</span><h3>Aprendimos qué funciona</h3><p>Más de 1,000 reuniones calificadas para más de 50 clientes, con 10x+ de retorno medido en sus cuentas. Cada una nos enseñó qué señal anticipa una compra, qué mensaje responde un decisor y qué canal funciona en cada país.</p></div></li>
+        <li class="tl-item"><span class="tl-dot" aria-hidden="true"></span><div><span class="when">2021 – 2026</span><span class="big"><span data-count="1000">0</span>+</span><h3>Aprendimos qué funciona</h3><p>Más de 1,000 reuniones calificadas para más de 50 clientes, con un retorno a la inversión promedio de 10x. Cada una nos enseñó qué señal anticipa una compra, qué mensaje responde un decisor y qué canal funciona en cada país.</p></div></li>
         <li class="tl-item now"><span class="tl-dot" aria-hidden="true"></span><div><span class="when">Hoy · Predictable AI</span><h3>Ese método, ahora en software</h3><p>Convertimos el playbook de Eleva en una plataforma: lo que tu equipo hace hoy con cinco herramientas, la IA lo hace en una sola. Construida sobre los modelos de Claude.</p></div></li>
       </ol>
     </div>
@@ -2187,16 +2261,23 @@ footer { padding: 0 0 40px; }
     // Revelado con el scroll: el bloque queda fijo y cada tramo de scroll enciende una función
     (function () {
       var n = tabs.tabs.length, track = null, on = false, raf = 0, TOP = 92;
+      function measure() {
+        if (!track) return;
+        var h = feat.offsetHeight; track.style.setProperty('--fh', h + 'px');
+        TOP = Math.max(92, Math.round((window.innerHeight - h) / 2));
+        track.style.setProperty('--stick', TOP + 'px');
+      }
       var mq = window.matchMedia ? window.matchMedia('(min-width: 961px) and (min-height: 700px)') : null;
       function geom() {
         var r = track.getBoundingClientRect();
-        var total = Math.max(1, track.offsetHeight - feat.offsetHeight);
+        var total = Math.max(1, track.offsetHeight - feat.offsetHeight - 40);
         var y = Math.max(0, Math.min(total, TOP - r.top));
         return { top: r.top + window.pageYOffset, total: total, p: y / total };
       }
       function update() {
         raf = 0;
         if (!on) return;
+        measure();
         var g = geom(), k = Math.min(n - 1, Math.floor(g.p * n)), cur = tabs.tabs.indexOf(tabs.current());
         track.style.setProperty('--sp', String(Math.max(0, Math.min(1, g.p * n - k))));
         if (k !== cur) { feat._fromScroll = true; tabs.select(tabs.tabs[k], false); feat._fromScroll = false; }
@@ -2206,6 +2287,7 @@ footer { padding: 0 0 40px; }
       tabs.onSelect = function (tab) {
         if (prevSel) prevSel(tab);
         if (!on || feat._fromScroll) return;
+        measure();
         var g = geom(), i = tabs.tabs.indexOf(tab);
         window.scrollTo({ top: g.top - TOP + g.total * ((i + 0.5) / n), behavior: reduced ? 'auto' : 'smooth' });
       };
