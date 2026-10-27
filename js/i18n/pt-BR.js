@@ -7201,4 +7201,17 @@ window.I18N_DICTS['pt-BR'] = {
   "Con cinco años de oficio": "Cinco anos de ofício",
   "El método de Eleva: más de 1,000 reuniones calificadas agendadas para más de 50 empresas B2B.": "O método da Eleva: mais de 1.000 reuniões qualificadas agendadas para mais de 50 empresas B2B.",
   "Más de 1,000 reuniones calificadas para más de 50 clientes, con un retorno a la inversión promedio de 10x. Cada una nos enseñó qué señal anticipa una compra, qué mensaje responde un decisor y qué canal funciona en cada país.": "Mais de 1.000 reuniões qualificadas para mais de 50 clientes, com retorno médio sobre o investimento de 10x. Cada uma nos ensinou qual sinal antecipa uma compra, qual mensagem um decisor responde e qual canal funciona em cada país.",
+
+  // ── Landing: registros públicos con los 10 países reales (2026-10-27) ──
+  "Empresas recién constituidas, que crecieron o que cambiaron de actividad, directo de los registros oficiales de 10 países: Argentina, Brasil, Chile, Colombia, Ecuador, México, Paraguay, Perú, República Dominicana y Uruguay.": "Empresas recém-constituídas, que cresceram ou mudaram de atividade, direto dos registros oficiais de 10 países: Argentina, Brasil, Chile, Colômbia, Equador, México, Paraguai, Peru, República Dominicana e Uruguai.",
+  "10 países": "10 países",
+  "Inició actividades hace 5 días · Quito": "Iniciou atividades há 5 dias · Quito",
+  "Contrato social hace 9 días · Rosario": "Contrato social há 9 dias · Rosario",
+  "Registro Nacional de Sociedades (ARCA)": "Registro Nacional de Sociedades (ARCA)",
+  "Sociedades por actividad, provincia y fecha de contrato social.": "Sociedades por atividade, província e data do contrato social.",
+  "SII y Registro de Empresas y Sociedades": "SII e Registro de Empresas y Sociedades",
+  "Empresas por actividad, región y tramo de ventas, y las recién constituidas.": "Empresas por atividade, região e faixa de vendas, e as recém-constituídas.",
+  "Padrón RUC (SUNAT)": "Cadastro RUC (SUNAT)",
+  "Empresas por departamento y razón social, con su estado ante la SUNAT.": "Empresas por departamento e razão social, com a situação na SUNAT.",
+  "En toda Latam y también fuera de ella. Los registros públicos de empresas cubren 10 países (Argentina, Brasil, Chile, Colombia, Ecuador, México, Paraguay, Perú, República Dominicana y Uruguay), y la plataforma está en español, inglés y portugués.": "Em toda a América Latina e também fora dela. Os registros públicos de empresas cobrem 10 países (Argentina, Brasil, Chile, Colômbia, Equador, México, Paraguai, Peru, República Dominicana e Uruguai), e a plataforma está em espanhol, inglês e português.",
 };

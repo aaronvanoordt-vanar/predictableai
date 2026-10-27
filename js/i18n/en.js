@@ -7051,4 +7051,17 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Con cinco años de oficio": "Five years of craft",
   "El método de Eleva: más de 1,000 reuniones calificadas agendadas para más de 50 empresas B2B.": "Eleva's method: over 1,000 qualified meetings booked for 50+ B2B companies.",
   "Más de 1,000 reuniones calificadas para más de 50 clientes, con un retorno a la inversión promedio de 10x. Cada una nos enseñó qué señal anticipa una compra, qué mensaje responde un decisor y qué canal funciona en cada país.": "Over 1,000 qualified meetings for 50+ clients, with an average return on investment of 10x. Each one taught us which signal precedes a purchase, which message a decision maker answers and which channel works in each country.",
+
+  // ── Landing: registros públicos con los 10 países reales (2026-10-27) ──
+  "Empresas recién constituidas, que crecieron o que cambiaron de actividad, directo de los registros oficiales de 10 países: Argentina, Brasil, Chile, Colombia, Ecuador, México, Paraguay, Perú, República Dominicana y Uruguay.": "Newly incorporated companies, and companies that grew or changed their line of business, straight from the official registries of 10 countries: Argentina, Brazil, Chile, Colombia, Ecuador, Mexico, Paraguay, Peru, the Dominican Republic and Uruguay.",
+  "10 países": "10 countries",
+  "Inició actividades hace 5 días · Quito": "Started operating 5 days ago · Quito",
+  "Contrato social hace 9 días · Rosario": "Articles of incorporation 9 days ago · Rosario",
+  "Registro Nacional de Sociedades (ARCA)": "National Companies Registry (ARCA)",
+  "Sociedades por actividad, provincia y fecha de contrato social.": "Companies by activity, province and incorporation date.",
+  "SII y Registro de Empresas y Sociedades": "SII and Companies and Partnerships Registry",
+  "Empresas por actividad, región y tramo de ventas, y las recién constituidas.": "Companies by activity, region and sales bracket, plus newly incorporated ones.",
+  "Padrón RUC (SUNAT)": "RUC register (SUNAT)",
+  "Empresas por departamento y razón social, con su estado ante la SUNAT.": "Companies by department and legal name, with their SUNAT status.",
+  "En toda Latam y también fuera de ella. Los registros públicos de empresas cubren 10 países (Argentina, Brasil, Chile, Colombia, Ecuador, México, Paraguay, Perú, República Dominicana y Uruguay), y la plataforma está en español, inglés y portugués.": "Across LATAM and beyond. Public company registries cover 10 countries (Argentina, Brazil, Chile, Colombia, Ecuador, Mexico, Paraguay, Peru, the Dominican Republic and Uruguay), and the platform is available in Spanish, English and Portuguese.",
 });
