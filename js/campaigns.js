@@ -193,6 +193,7 @@
     sendingKey: {},
     replyChannel: {},
     waClosed: {},
+    draftConv: null,           // «Nuevo mensaje»: { key, member_id, contact_ref, channel } sin mensajes todavía
     gmail: undefined,
     realtime: null,
     pendingListId: null,
@@ -1324,6 +1325,13 @@
       if (m.direction === 'in' && state.inboxHasReadAt && !m.read_at) { conv.unread++; conv.unreadIds.push(m.id); }
       if (m.campaign_id) conv.campaigns[m.campaign_id] = true;
     });
+    // «Nuevo mensaje»: conversación vacía hasta que sale el primer envío (entonces
+    // ya existe por sus mensajes y este borrador deja de hacer falta).
+    var dr = state.draftConv;
+    if (dr && !map[dr.key]) {
+      map[dr.key] = { key: dr.key, member_id: dr.member_id || null, contact_ref: dr.contact_ref || '', channel: dr.channel, member: dr.member_id ? (state.inboxMembers[dr.member_id] || null) : null, messages: [], channels: {}, unread: 0, unreadIds: [], campaigns: {}, inCount: 0, outCount: 0, draft: true };
+      order.unshift(dr.key);
+    }
     return order.map(function (k) {
       var c = map[k];
       c.messages.sort(function (a, b) { return new Date(a.sent_at || 0) - new Date(b.sent_at || 0); });
@@ -1338,6 +1346,7 @@
     var f = state.inboxFilter;
     var q = String(f.q || '').trim().toLowerCase();
     return convs.filter(function (c) {
+      if (c.draft) return true;
       if (f.campaign && !c.campaigns[f.campaign]) return false;
       if (f.channel && !c.channels[f.channel]) return false;
       if (f.status === 'unanswered' && !(c.last && c.last.direction === 'in')) return false;
@@ -1489,6 +1498,12 @@
     // El archivo ya está en el navegador: la burbuja definitiva no lo vuelve a bajar de WATI.
     if (row && row.id && localUrl) mediaCache[row.id] = Promise.resolve({ url: localUrl, type: file.type || '' });
     if (row && row.id && !state.inbox.some(function (x) { return x.id === row.id; })) state.inbox.unshift(row);
+    // Primer envío de un «Nuevo mensaje»: la conversación ya existe por su mensaje real
+    // (el servidor puede normalizar el número y cambiar la clave): se sigue esa.
+    if (row && state.draftConv && state.draftConv.key === conv.key) {
+      state.draftConv = null;
+      if (state.convKey === conv.key) state.convKey = convKeyOf(row, memberIdByRef(state.inbox));
+    }
   }
   /** Guarda un contacto de la bandeja (sin lead) en una lista y enlaza sus mensajes. */
   /**
@@ -4144,6 +4159,7 @@
     bellOff: '<path d="M4 11V7a4 4 0 0 1 6.5-3.1M12 7v4l1 1.5H5"/><path d="M6.5 14a1.5 1.5 0 0 0 3 0"/><path d="M2.5 2.5l11 11"/>',
     sync: '<path d="M13 8a5 5 0 0 1-8.6 3.5M3 8a5 5 0 0 1 8.6-3.5"/><path d="M11.5 1.8v2.9H8.6M4.5 14.2v-2.9h2.9"/>',
     phone: '<rect x="4.5" y="1.5" width="7" height="13" rx="1.6"/><path d="M7 12.5h2"/>',
+    compose: '<path d="M8 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V8"/><path d="M11.5 2.5l2 2L8 10l-2.7.7L6 8z"/>',
   };
   function pillBtn(action, icon, label, opts) {
     opts = opts || {};
@@ -4196,6 +4212,7 @@
     var countRow = h('div', { class: 'cmp-inbox-count' });
     countRow.appendChild(h('div', { class: 'cmp-inbox-stats', text: shown.length + (shown.length === 1 ? ' conversación' : ' conversaciones') + ' · ' + totOut + ' enviados' + (totFailed ? ' · ' + totFailed + ' fallidos' : '') + ' · ' + totIn + ' recibidos' + (unreadCount() ? ' · ' + unreadCount() + ' sin leer' : '') }));
     var tools = h('div', { class: 'cmp-inbox-tools' });
+    tools.appendChild(pillBtn('inbox-new', 'compose', 'Nuevo mensaje', { title: 'Escríbele a un contacto de tus listas o a un número de WhatsApp nuevo' }));
     // Las respuestas de LinkedIn se suelen leer en LinkedIn mismo y Dripify no
     // avisa cuándo: este botón es la forma de dejar la bandeja al día.
     if (shown.some(function (c) { return c.unread; })) {
@@ -4895,6 +4912,83 @@
       text: '📅 Enviar mi agenda',
     });
   }
+  /**
+   * «Nuevo mensaje»: elige un contacto de tus listas (nombre, empresa, email o
+   * teléfono) o escribe un número y se abre su conversación, vacía si es la
+   * primera, con el mismo cuadro de respuesta de siempre (WhatsApp: a un
+   * número sin ventana abierta solo salen plantillas aprobadas). Un email o un
+   * perfil de LinkedIn sin lead no se puede enviar: va por un contacto de lista.
+   */
+  function openNewMessage() {
+    var api = openModal({ title: 'Nuevo mensaje', width: 520, actions: [{ label: 'Cancelar' }] });
+    var input = h('input', { type: 'search', placeholder: 'Nombre, empresa, email o número de WhatsApp (+57…)', autocomplete: 'off' });
+    var results = h('div', { class: 'cmp-newmsg-results', style: 'margin-top:10px;display:flex;flex-direction:column;gap:6px;max-height:300px;overflow:auto' });
+    api.body.appendChild(h('p', { class: 'pros-hint', text: 'Busca un contacto de tus listas o escribe un número para empezar una conversación por WhatsApp.' }));
+    api.body.appendChild(input);
+    api.body.appendChild(results);
+    function openDraft(draft) {
+      var existing = buildConversations().find(function (c) { return c.key === draft.key && !c.draft; });
+      state.draftConv = existing ? null : draft;
+      state.convKey = draft.key;
+      if (state.view !== 'inbox') state.view = 'inbox';
+      api.close();
+      render();
+    }
+    function pickMember(m) {
+      state.inboxMembers[m.id] = Object.assign({}, state.inboxMembers[m.id] || {}, m);
+      var ch = hasPhone(m) ? 'whatsapp' : hasEmail(m) ? 'email' : m.linkedin_url ? 'linkedin' : '';
+      if (!ch) return toast('Este contacto no tiene teléfono, email ni LinkedIn guardados: revélalos desde Listas → Enriquecer.', 'warn');
+      state.replyChannel['m:' + m.id] = ch;
+      openDraft({ key: 'm:' + m.id, member_id: m.id, contact_ref: '', channel: ch });
+    }
+    function pickNumber(digits) {
+      var last10 = digits.slice(-10);
+      var found = buildConversations().find(function (c) { return !c.draft && c.channel === 'whatsapp' && !c.member_id && String(c.contact_ref || '').replace(/\D/g, '').slice(-10) === last10; });
+      if (found) { state.draftConv = null; state.convKey = found.key; api.close(); return render(); }
+      openDraft({ key: 'r:whatsapp:' + digits, member_id: null, contact_ref: digits, channel: 'whatsapp' });
+    }
+    function paint(rows, q) {
+      results.innerHTML = '';
+      var digits = String(q || '').replace(/\D/g, '');
+      if (digits.length >= 8 && /^[+\d\s().-]+$/.test(String(q).trim())) {
+        var nb = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'justify-content:flex-start', text: 'Escribir a +' + digits + ' por WhatsApp' });
+        nb.addEventListener('click', function () { pickNumber(digits); });
+        results.appendChild(nb);
+      }
+      rows.forEach(function (m) {
+        var b = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'justify-content:flex-start;text-align:left;height:auto;padding:8px 10px' });
+        b.appendChild(h('span', { style: 'font-weight:600', text: memberName(m) }));
+        var sub = [m.title, m.company].filter(Boolean).join(' · ');
+        var via = [hasPhone(m) ? 'WhatsApp' : '', hasEmail(m) ? 'Email' : '', m.linkedin_url ? 'LinkedIn' : ''].filter(Boolean).join(' · ');
+        b.appendChild(h('span', { class: 'pros-hint', style: 'margin-left:8px', text: [sub, via].filter(Boolean).join(' — ') }));
+        b.addEventListener('click', function () { pickMember(m); });
+        results.appendChild(b);
+      });
+      if (!results.childNodes.length && q) results.appendChild(h('div', { class: 'pros-hint', text: 'Sin resultados en tus listas. Si es un número, escríbelo con el código de país (+57 300 123 4567).' }));
+    }
+    var timer = null, seq = 0;
+    input.addEventListener('input', function () {
+      clearTimeout(timer);
+      var q = input.value.trim();
+      if (q.length < 2) { results.innerHTML = ''; return; }
+      timer = setTimeout(function () {
+        var mine = ++seq;
+        // Sin comas, paréntesis ni comodines: el término entra en un filtro .or() de PostgREST.
+        var term = q.replace(/[,()%*\\_]/g, ' ').replace(/\s+/g, ' ').trim();
+        var like = '%' + term + '%';
+        sb().from('prospect_list_members')
+          .select('id, name, first_name, last_name, company, title, email, phone, linkedin_url, contact_status, list_id, apollo_contact_id')
+          .or(['name', 'first_name', 'last_name', 'company', 'email', 'phone'].map(function (c) { return c + '.ilike.' + like; }).join(','))
+          .order('created_at', { ascending: false }).limit(15)
+          .then(function (r) {
+            if (mine !== seq) return;
+            if (r.error) { results.innerHTML = ''; results.appendChild(h('div', { class: 'pros-note-red', text: 'No se pudo buscar: ' + r.error.message })); return; }
+            paint(r.data || [], q);
+          });
+      }, 250);
+    });
+    setTimeout(function () { input.focus(); }, 0);
+  }
   /** ¿Hay sesión de WhatsApp abierta (entrante hace < 24 h)? */
   function sessionOpen(conv) {
     var last = 0;
@@ -5059,7 +5153,9 @@
     }
 
     // Respuestas
+    if (action === 'inbox-new') return openNewMessage();
     if (action === 'conv-open' && key) {
+      if (state.draftConv && state.draftConv.key !== key) state.draftConv = null; // el borrador vacío no se queda en la lista
       state.convKey = key;
       return render(); // render() marca leída la conversación abierta
     }
