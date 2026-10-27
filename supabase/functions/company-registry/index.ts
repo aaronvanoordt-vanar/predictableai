@@ -3,15 +3,18 @@
  *
  * Buscar → «Empresas en registros públicos» y el enriquecimiento de cuenta
  * (Listas → Investigación → «Datos de registro»). Brasil (CNPJ), México
- * (DENUE) y Colombia (registro mercantil en datos.gov.co); la lógica vive en
- * `_shared/registries.ts` (pura, `deno test`) y `_shared/registry-fetch.ts`.
- * Investigación de cada registro, licencias y lo que quedó fuera (Perú,
- * Chile) en docs/REGISTROS.md.
+ * (DENUE) y Colombia (registro mercantil en datos.gov.co) en vivo; el resto
+ * de Latam, desde los archivos abiertos importados a `registry_companies`
+ * (Argentina, Chile, Perú, Ecuador, República Dominicana, Guatemala, Uruguay
+ * y Paraguay). La lógica vive en `_shared/registries.ts` (pura, `deno test`)
+ * y `_shared/registry-fetch.ts`. Investigación de cada registro, licencias y
+ * los países que no publican el suyo en docs/REGISTROS.md.
  *
  * Auth: Bearer <user JWT> (auth.getUser). Con JWT en el deploy.
  *
  * POST { action: "status" }
- *   → { registries: [{ id, country, label, configured, can, license, updated_at }] }
+ *   → { registries: [{ id, country, label, kind, configured, can, license, updated_at, rows }],
+ *       unavailable: [{ country, reason }] }
  * POST { action: "search", country, industries[], activity_codes[], sizes[], region, city, name,
  *        founded_from, active_only, require_phone, require_email, limit, cursor }
  *   → { companies: RegistryCompany[], next_cursor, scanned, notes[], charged }
@@ -33,10 +36,10 @@ import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
 import { canonicalCountry } from "../_shared/radar-geo.ts";
 import {
-  compactCompany, detectTaxId, normalizeSearch, REGISTRIES, type RegistryCompany, type RegistryId, registryForCountry,
+  compactCompany, detectTaxId, normalizeSearch, REGISTRIES, REGISTRY_UNAVAILABLE, type RegistryCompany, type RegistryId, registryForCountry,
 } from "../_shared/registries.ts";
 import {
-  lookupRegistry, type LookupInput, type LookupResult, registryConfigured, RegistryUnavailable, ruesUpdatedAt, searchRegistry,
+  importStatus, lookupRegistry, type LookupInput, type LookupResult, registryConfigured, RegistryUnavailable, ruesUpdatedAt, searchRegistry,
 } from "../_shared/registry-fetch.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -103,22 +106,29 @@ Deno.serve(async (req: Request) => {
   const action = str(body?.action, 40);
   try {
     if (action === "status") {
-      const updatedRues = await ruesUpdatedAt();
+      const [updatedRues, imports] = await Promise.all([ruesUpdatedAt(), importStatus()]);
       const registries = (Object.keys(REGISTRIES) as RegistryId[]).map((id) => {
         const m = REGISTRIES[id];
+        const imp = imports[id];
         return {
           id, country: m.country, label: m.label, source: m.source, activity_label: m.activity_label, tax_id_label: m.tax_id_label,
-          configured: registryConfigured(m.country), can: m.can, license: m.license,
-          updated_at: id === "rues" ? updatedRues : "",
+          kind: m.kind, configured: registryConfigured(m.country), can: m.can, license: m.license,
+          updated_at: id === "rues" ? updatedRues : imp ? (imp.source_updated_on || imp.finished_at) : "",
+          rows: imp ? imp.rows_upserted : null,
+          imported: m.kind === "import" ? !!imp : null,
           search_cost: id === "cnpj" ? CREDIT_COSTS.registry_search_br : 0,
         };
       });
-      return json({ registries }, 200, h);
+      const unavailable = Object.entries(REGISTRY_UNAVAILABLE).map(([country, reason]) => ({ country, reason }));
+      return json({ registries, unavailable }, 200, h);
     }
 
     if (action === "search") {
       const q = normalizeSearch(body);
-      if (!q) return json({ error: "unsupported_country", detail: "Ese país todavía no tiene registro público conectado (hoy: Brasil, México y Colombia)." }, 400, h);
+      if (!q) return json({ error: "unsupported_country", detail: REGISTRY_UNAVAILABLE[str(body?.country, 40)] || "Ese país no publica su registro de empresas de forma abierta." }, 400, h);
+      if (!REGISTRIES[registryForCountry(q.country)!].can.search) {
+        return json({ error: "lookup_only", detail: "Ese registro solo trae identificador, razón social y estado: sirve para la ficha de una empresa, no para buscar." }, 400, h);
+      }
       if (!registryConfigured(q.country)) {
         return json({ error: "not_configured", detail: `El registro de ${q.country === "Brazil" ? "Brasil" : "México"} no está configurado en la plataforma.` }, 503, h);
       }
@@ -146,7 +156,7 @@ Deno.serve(async (req: Request) => {
       const snap = m.snapshot && typeof m.snapshot === "object" ? m.snapshot : {};
       const country = canonicalCountry(str(body?.country, 40)) || canonicalCountry(str(snap?.organization?.country)) || canonicalCountry(str(m.country)) || "";
       if (!registryForCountry(country)) {
-        return json({ match: null, candidates: [], note: "El país de esta empresa todavía no tiene registro público conectado (hoy: Brasil, México y Colombia).", charged: 0 }, 200, h);
+        return json({ match: null, candidates: [], note: REGISTRY_UNAVAILABLE[country] || "El país de esta empresa no publica su registro de empresas de forma abierta.", charged: 0 }, 200, h);
       }
       const input: LookupInput = {
         country, tax_id: str(body?.tax_id, 40),

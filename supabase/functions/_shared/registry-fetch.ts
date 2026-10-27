@@ -13,6 +13,9 @@
  *   México   DENUE BuscarAreaAct (INEGI_DENUE_TOKEN, gratis).
  *   Colombia datos.gov.co SODA c82u-588k (sin key; DATOS_GOV_CO_APP_TOKEN
  *            opcional sube el límite de peticiones).
+ *   Resto    registry_companies (Postgres, PostgREST con la service role):
+ *            lo llena el workflow «Import Company Registry» desde los
+ *            archivos abiertos de cada país (scripts/registry-import/).
  *
  * Ninguna fuente se pudo probar en vivo desde la sesión que escribió esto (el
  * proxy bloquea los dominios oficiales): los formatos salen de la
@@ -22,9 +25,9 @@
 
 import {
   type MultiCursor, type RegistryCompany, type RegistryCountry, type RegistrySearchInput,
-  cnpjaSearchUrl, cnpjDigits, compactCompany, denueAreaActUrl, detectTaxId, fromBrasilApi, fromCnpja, fromDenue, fromRues,
-  isValidCnpj, mxState, passesLocalFilters, pickByName, rawCnpjSizeCode, readCursor, registryForCountry, ruesSearchUrl, ruesWhere,
-  splitNit, writeCursor,
+  cnpjaSearchUrl, cnpjDigits, compactCompany, denueAreaActUrl, detectTaxId, fromBrasilApi, fromCnpja, fromDenue, fromImportedRow, fromRues,
+  importedSearchParams, isValidCnpj, mxState, normTaxId, passesLocalFilters, pickByName, rawCnpjSizeCode, readCursor, REGISTRIES,
+  registryForCountry, ruesSearchUrl, ruesWhere, splitNit, writeCursor,
 } from "./registries.ts";
 import { activityDigits, activityPrefixesFor } from "./registry-activity.ts";
 
@@ -58,7 +61,8 @@ async function getJson(url: string, headers: Record<string, string> = {}, label 
 export function registryConfigured(country: RegistryCountry): boolean {
   if (country === "Brazil") return !!Deno.env.get("CNPJA_API_KEY");
   if (country === "Mexico") return !!Deno.env.get("INEGI_DENUE_TOKEN");
-  return country === "Colombia";
+  // Colombia no necesita key; los importados viven en Postgres (vacío = aún no importado, se avisa).
+  return !!registryForCountry(country);
 }
 
 /** ¿Alguno de estos países (canónicos) tiene un registro conectado hoy? */
@@ -207,6 +211,73 @@ export async function ruesUpdatedAt(): Promise<string> {
   } catch { return ""; }
 }
 
+// ── registros importados (registry_companies) ──────────────────────────────
+
+function restBase(): { url: string; key: string } {
+  const url = Deno.env.get("SUPABASE_URL"), key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) throw new RegistryUnavailable("Los registros importados no están configurados: falta SUPABASE_URL o la service role.");
+  return { url, key };
+}
+
+async function restGet(path: string): Promise<Json[]> {
+  const { url, key } = restBase();
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${url}/rest/v1/${path}`, { headers: { apikey: key, Authorization: `Bearer ${key}`, Accept: "application/json" }, signal: ctl.signal });
+    const text = await res.text();
+    if (res.status === 404 || /registry_(companies|imports)/.test(text) && /does not exist|not find/i.test(text)) {
+      throw new RegistryUnavailable("Los registros importados no están listos: falta aplicar la migración 20261027200000_registry_companies.sql.");
+    }
+    if (!res.ok) throw new Error(`registro importado ${res.status}: ${text.slice(0, 160)}`);
+    const data = text ? JSON.parse(text) : [];
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    if ((e as Error)?.name === "AbortError") throw new Error(`registro importado: no respondió en ${TIMEOUT_MS / 1000} s.`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface ImportInfo { rows_upserted: number; source_updated_on: string; finished_at: string }
+
+/** Última importación terminada de cada registro importado (para «datos al …» en la UI). */
+export async function importStatus(): Promise<Record<string, ImportInfo>> {
+  try {
+    const rows = await restGet("registry_imports?select=registry,rows_upserted,source_updated_on,finished_at&status=eq.done&order=finished_at.desc&limit=200");
+    const out: Record<string, ImportInfo> = {};
+    for (const r of rows) {
+      if (out[r.registry]) continue;
+      out[r.registry] = { rows_upserted: Number(r.rows_upserted) || 0, source_updated_on: r.source_updated_on || "", finished_at: r.finished_at || "" };
+    }
+    return out;
+  } catch { return {}; }
+}
+
+async function searchImported(q: RegistrySearchInput, extra: { foundedFrom?: string; taxId?: string } = {}): Promise<SearchResult> {
+  const reg = registryForCountry(q.country)!;
+  const meta = REGISTRIES[reg];
+  const notes: string[] = [];
+  const codes = [...q.activity_codes, ...activityPrefixesFor(meta.system, q.industries)];
+  if (q.industries.length && !activityPrefixesFor(meta.system, q.industries).length && meta.system === "local") {
+    notes.push(`${meta.label} usa un catálogo de actividades propio: el filtro por industria del ICP no aplica. Escribe códigos de actividad si los conoces.`);
+  }
+  if ((q.founded_from || extra.foundedFrom) && !meta.can.founded) notes.push(`${meta.label} no publica la fecha de constitución: el filtro de fecha deja fuera a todas.`);
+  if (q.sizes.length && !meta.can.size) notes.push(`${meta.label} no publica el tamaño: el filtro de tamaño deja fuera a todas.`);
+  const offset = Math.max(0, Number(readCursor(q.cursor).at) || 0);
+  const p = importedSearchParams(q, meta.system === "local" ? q.activity_codes : codes, extra);
+  p.set("limit", String(q.limit));
+  p.set("offset", String(offset));
+  const rows = await restGet(`registry_companies?${p.toString()}`);
+  if (!rows.length && !offset) {
+    const st = (await importStatus())[reg];
+    if (!st) notes.push(`El registro de ${meta.label} todavía no se importó: aparecerá cuando corra la primera importación.`);
+  }
+  const companies = rows.map(fromImportedRow).filter((c): c is RegistryCompany => !!c && passesLocalFilters(c, { ...q, name: "", city: "" }));
+  return { companies, next_cursor: rows.length >= q.limit ? writeCursor({ pi: 0, at: String(offset + q.limit) }) : "", scanned: rows.length, notes };
+}
+
 // ── despacho ────────────────────────────────────────────────────────────────
 
 export async function searchRegistry(q: RegistrySearchInput, extra: { foundedFrom?: string } = {}): Promise<SearchResult> {
@@ -214,6 +285,7 @@ export async function searchRegistry(q: RegistrySearchInput, extra: { foundedFro
     case "Brazil": return searchBrazil(q, extra);
     case "Mexico": return searchMexico(q);
     case "Colombia": return searchColombia(q, extra);
+    default: return searchImported(q, extra);
   }
 }
 
@@ -237,10 +309,25 @@ export async function lookupRegistry(input: LookupInput): Promise<LookupResult> 
   let country = String(input.country || "") as RegistryCountry;
   if (tax.kind === "cnpj") country = "Brazil";
   if (!registryForCountry(country)) {
-    return { match: null, candidates: [], note: "Ese país todavía no tiene registro público conectado (hoy: Brasil, México y Colombia)." };
+    return { match: null, candidates: [], note: "Ese país no publica su registro de empresas de forma abierta: no hay ficha que buscar." };
   }
   const name = String(input.name || "").trim();
   const domain = String(input.domain || "").trim().toLowerCase();
+
+  const reg = registryForCountry(country)!;
+  if (REGISTRIES[reg].kind === "import") {
+    const meta = REGISTRIES[reg];
+    const tid = normTaxId(country, input.tax_id);
+    if (tid.length >= 6) {
+      const r = await searchImported({ ...baseQuery(country), active_only: false }, { taxId: tid });
+      const c = r.companies[0] || null;
+      return { match: c, candidates: r.companies.slice(0, 5), note: c ? "" : r.notes[0] || `Ese ${meta.tax_id_label} no aparece en ${meta.label}.` };
+    }
+    if (!name) return { match: null, candidates: [], note: `Escribe la razón social o el ${meta.tax_id_label}.` };
+    const r = await searchImported({ ...baseQuery(country, name), active_only: false });
+    const p = pickByName(name, r.companies);
+    return { ...p, note: p.match ? "" : p.candidates.length ? "Hay varias empresas parecidas: elige la correcta." : r.notes[0] || "No encontramos esa razón social en el registro." };
+  }
 
   if (country === "Brazil") {
     if (tax.kind === "cnpj" || isValidCnpj(input.tax_id)) {

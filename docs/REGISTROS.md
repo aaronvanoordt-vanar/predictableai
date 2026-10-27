@@ -1,6 +1,37 @@
 # Registros públicos de empresas
 
-Diseño vigente desde el 2026-10-17 (ítem P2 de `docs/ROADMAP_GTM_OS.md` §4). Apollo cubre mal a la pyme y a la mediana empresa latina; los registros oficiales sí las tienen. Este documento deja escrito qué es accesible de verdad en cada país, qué se construyó y qué quedó fuera.
+Diseño vigente desde el 2026-10-17 (ítem P2 de `docs/ROADMAP_GTM_OS.md` §4), ampliado a toda Latam el 2026-10-27 (pedido del dueño). Apollo cubre mal a la pyme y a la mediana empresa latina; los registros oficiales sí las tienen. Este documento deja escrito qué es accesible de verdad en cada país, qué se construyó y qué quedó fuera.
+
+## Cobertura (2026-10-27)
+
+| País | Registro | Cómo | Buscar | Ficha | Fecha | Tamaño | Contacto |
+|---|---|---|---|---|---|---|---|
+| Brasil | CNPJ (Receita Federal) | API en vivo (CNPJá / BrasilAPI) | ✓ | CNPJ, dominio | ✓ | por facturación | ✓ |
+| México | DENUE (INEGI) | API en vivo | ✓ | razón social | — | ✓ | ✓ |
+| Colombia | Registro mercantil (Confecámaras) | API SODA en vivo | ✓ | NIT, razón social | matrícula | — | — |
+| Argentina | Registro Nacional de Sociedades (ARCA) | archivo importado | ✓ | CUIT, razón social | contrato social | — | — |
+| Chile | Nómina de personas jurídicas (SII) + Registro de Empresas y Sociedades | archivos importados | ✓ | RUT, razón social | inicio de actividades / constitución | tramo de ventas | — |
+| Perú | Padrón reducido del RUC (SUNAT) | archivo importado | por región y nombre | RUC, razón social | — | — | — |
+| Ecuador | Catastro RUC del SRI (sociedades) | archivos importados | ✓ | RUC, razón social | inicio de actividades | — | — |
+| República Dominicana | RNC (DGII) | archivo importado | ✓ (sin industria del ICP) | RNC, razón social | inicio de operaciones | — | — |
+| Guatemala | Sociedades del Registro Mercantil (MINECO) | archivo importado | ✓ (sin industria del ICP) | NIT, razón social | inscripción | — | — |
+| Uruguay | Directorio de Empresas Industriales (MIEM) | archivo importado | ✓ (solo industria) | RUT, razón social | — | — | ✓ |
+| Paraguay | RUC (DNIT) | archivo importado | — | RUC, razón social | — | — | — |
+
+**Sin registro (no se puede de forma legal y legible):** Bolivia (el SEPREC solo emite certificados), Venezuela (SENIAT y SAREN sin datos ni API), Panamá (el Registro Público no publica datos abiertos; OpenCorporates tiene una copia de 2021, de pago), El Salvador, Honduras y Nicaragua (sin datos abiertos ni API), Costa Rica (solo un endpoint de Hacienda sin documentación oficial: no se usa). `REGISTRY_UNAVAILABLE` en `_shared/registries.ts` guarda el motivo y la UI lo muestra.
+
+**OpenCorporates** (respaldo comercial) cubre Panamá, Bolivia y Rep. Dominicana con datos de 2017–2021 y cuesta desde ~£2.250/año por 500 llamadas/mes: no se contrató (decisión pendiente del dueño).
+
+### Registros importados: cómo funcionan
+
+- **Tabla** `registry_companies` (migración `20261027200000_registry_companies.sql`): una fila por persona jurídica, clave `(registry, registry_id)`, solo service role. `registry_imports` registra cada corrida (filas, fecha de los datos). El upsert por lotes es la RPC `registry_import_batch` (service role): un archivo parcial nunca borra lo que otro ya cargó (Chile junta el SII y el RES por RUT).
+- **Importador** `scripts/registry-import/` (Node): `map.mjs` define cada fuente (cómo descubrir el archivo —CKAN, página pública o URL fija—, los alias de cada columna, qué filas son personas jurídicas y cómo se mapean); `import.mjs` descarga, descomprime, detecta codificación y separador, mapea y carga. Cada campo se busca por varios nombres posibles en el encabezado real; si falta un campo obligatorio, se detiene mostrando el encabezado. `deno test` en `_shared/registry-import.test.ts` (que además exige que la normalización de la razón social sea idéntica a la de `registries.ts`).
+- **Workflow** `Actions → Import Company Registry` (`.github/workflows/import-registry.yml`): manual por registro (con enlace opcional si el portal movió el archivo y modo de prueba), mensual el día 3 para todos, y en modo prueba (descarga y mapea hasta 20.000 filas, sin escribir) en cada PR que toca el importador. Usa la service role que devuelve la API de administración con `SUPABASE_ACCESS_TOKEN`.
+- **Búsqueda**: `company-registry` (`_shared/registry-fetch.ts`, `searchImported`) consulta la tabla por PostgREST con la service role. Catálogos de actividad propios (DGII, Guatemala) y registros sin actividad (SUNAT, DNIT) usan el sistema `local`: se filtra por código, pero nunca se traduce a industrias del ICP.
+- **Personas naturales fuera**: Perú solo RUC 20…, Ecuador tercer dígito 9 o 6, Rep. Dominicana RNC de 9 dígitos (las cédulas tienen 11), Paraguay RUC 80…; Ecuador además solo la matriz (establecimiento 001).
+- **Estado**: el Registro Nacional de Sociedades de Argentina no dice si la sociedad sigue activa (solo la baja cuando la hay): queda «sin confirmar», nunca «activa» inventada.
+
+Las columnas de los archivos importados **no se pudieron ver** desde la sesión que construyó esto (el proxy bloqueaba los portales); la primera verificación real es el modo prueba del workflow en el PR.
 
 ## Qué se construyó
 
@@ -48,14 +79,14 @@ Investigación del 2026-10-17. El proxy de la sesión que lo construyó bloqueab
 - **Personas naturales fuera:** su «NIT» es la cédula. Se descartan las filas cuyo tipo/organización dice persona natural o cédula (Ley 1581: aunque el registro mercantil es público, no hace falta para prospectar empresas).
 - **Licencia:** datos abiertos de Colombia (CC BY-SA 4.0 según terceros; verificar en la ficha del dataset).
 
-### Perú — SUNAT · fuera de este PR (decisión del dueño, 2026-10-17)
+### Perú — SUNAT · importado desde el 2026-10-27 (solo ficha y búsqueda por región/nombre)
 
 - El **padrón reducido del RUC** (descarga diaria, ~11–14 M filas) trae RUC, razón social, estado, condición de domicilio, ubigeo y dirección. **No trae actividad económica, fecha de inscripción ni socios**: no sirve para buscar por industria ni para «recién constituidas».
 - La API oficial de SUNAT exige credenciales SOL y es para validar comprobantes, no para consultar el RUC; la consulta web no se automatiza. Las API gratuitas de terceros (Factiliza, ApiInti, apis.net.pe) tienen 100–200 consultas/mes.
 - El «Padrón RUC» mensual de datosabiertos.gob.pe (~232 MB) dice incluir actividad económica; hay que descargar uno y ver las columnas.
 - **Para hacerlo:** un workflow de GitHub Actions que descargue el padrón (y el de datosabiertos si trae CIIU), lo cargue a una tabla propia (~2–3 GB) y una fuente `sunat` en `registry-fetch.ts` para la ficha por RUC (estado activo/baja).
 
-### Chile — SII y Registro de Empresas y Sociedades · fuera de este PR (decisión del dueño, 2026-10-17)
+### Chile — SII y Registro de Empresas y Sociedades · importado desde el 2026-10-27
 
 - La **nómina de personas jurídicas del SII** se descarga en .TXT (por año comercial: tramo de ventas, trabajadores, región, rubro, fecha de inicio de actividades; más archivos de actividades, direcciones y razón social). Sin API.
 - El **Registro de Empresas y Sociedades** («Empresa en un Día», datos.gob.cl, CC BY) publica un CSV por año de constituciones (RUT, razón social, fecha, tipo, comuna, capital), solo del régimen simplificado de la Ley 20.659. Es la mejor fuente para «recién constituidas» en Chile.
@@ -66,7 +97,7 @@ Investigación del 2026-10-17. El proxy de la sesión que lo construyó bloqueab
 
 | Acción | Créditos | Por qué |
 |---|---|---|
-| Buscar en México o Colombia | 0 | Fuentes gratuitas |
+| Buscar en México, Colombia o un registro importado | 0 | Fuentes gratuitas |
 | Ficha por CNPJ, NIT o razón social | 0 | BrasilAPI, DENUE y datos.gov.co son gratis |
 | Buscar en Brasil (página de hasta 25) | 5 (`registry_search_br`) | CNPJá cobra por consulta |
 | Ficha de Brasil por dominio | 1 (`registry_lookup_br`) | Es una búsqueda en CNPJá |

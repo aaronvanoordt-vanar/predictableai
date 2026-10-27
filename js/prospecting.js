@@ -1681,7 +1681,7 @@
   // ══ TAB 1: BÚSQUEDA — search + results ══════════════════════════════════
   // Buscar tiene tres modos: personas en Apollo (lo de siempre), empresas en
   // Apollo (js/company-search.js, 2026-10-19) y empresas en registros públicos
-  // (js/registry-search.js: CNPJ, DENUE, registro mercantil de Colombia). El
+  // (js/registry-search.js: registros públicos de Latam). El
   // modo se recuerda por navegador. «Importar búsqueda de Apollo» traduce el
   // enlace de una búsqueda de Apollo a los filtros de personas o de empresas
   // (js/apollo-search-url.js; no llama a Apollo).
@@ -3165,7 +3165,8 @@
   // ── Datos de registro de la empresa del lead (company-registry) ────────
   // Enriquecimiento de cuenta: identificador fiscal, actividad, fecha de
   // constitución, socios y estado según el registro público del país
-  // (Brasil, México, Colombia). Solo se guarda una ficha inequívoca; si hay
+  // (Brasil, México y Colombia en vivo; el resto de Latam desde los archivos
+  // importados). Solo se guarda una ficha inequívoca; si hay
   // varias parecidas, el usuario elige.
   function memberRegistry(m) {
     var r = m && m.registry && typeof m.registry === 'object' && m.registry.registry_id ? m.registry : null;
@@ -3208,7 +3209,7 @@
           esc((x.trade_name || x.legal_name || '—') + (x.tax_id ? ' · ' + x.tax_id : '') + (x.address && x.address.city ? ' · ' + x.address.city : '')) + '</button>';
       });
     } else if (!r) {
-      out += '<div class="pros-cellsub">Completa el identificador fiscal, la actividad, la fecha de constitución, los socios y el estado de la empresa desde el registro oficial (Brasil, México y Colombia).</div>';
+      out += '<div class="pros-cellsub">Completa el identificador fiscal, la actividad, la fecha de constitución, los socios y el estado de la empresa desde el registro oficial de su país, cuando el país lo publica.</div>';
     }
     return out;
   }

@@ -19,9 +19,17 @@
  *            datos.gov.co (dataset c82u-588k, API SODA, sin key; app token
  *            opcional DATOS_GOV_CO_APP_TOKEN). NIT, CIIU, fecha de matrícula y
  *            estado. El portal rues.org.co tiene captcha: no se toca.
- *   Perú y Chile: solo descarga masiva sin API (SUNAT no trae actividad; el
- *            SII y el Registro de Empresas y Sociedades son archivos). Quedan
- *            documentados, fuera de este módulo.
+ *   El resto de Latam (2026-10-27): los registros que solo se publican como
+ *            archivo se importan a `registry_companies` con el workflow
+ *            «Import Company Registry» (scripts/registry-import/) y se
+ *            buscan ahí (kind "import"): Argentina (Registro Nacional de
+ *            Sociedades), Chile (SII + Registro de Empresas y Sociedades),
+ *            Perú (padrón RUC de SUNAT), Ecuador (catastro RUC del SRI),
+ *            República Dominicana (RNC de la DGII), Guatemala (Registro
+ *            Mercantil), Uruguay (Directorio de Empresas Industriales) y
+ *            Paraguay (RUC de la DNIT, solo ficha). Bolivia, Venezuela,
+ *            Panamá, El Salvador, Honduras, Nicaragua y Costa Rica no
+ *            publican su registro de forma legal y legible: no están.
  *
  * Reglas: nunca se inventa un dato que el registro no trae (campo vacío, no
  * estimado); de los socios solo entran nombre, cargo y fecha de ingreso —
@@ -34,13 +42,28 @@ import { type ActivitySystem, activityDigits, industriesForActivity } from "./re
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
-export type RegistryId = "cnpj" | "denue" | "rues";
-export type RegistryCountry = "Brazil" | "Mexico" | "Colombia";
+export type RegistryId = "cnpj" | "denue" | "rues" | "rns" | "sii" | "sunat" | "sri" | "dgii" | "rmgt" | "dei" | "dnit";
+export type RegistryCountry =
+  | "Brazil" | "Mexico" | "Colombia" | "Argentina" | "Chile" | "Peru" | "Ecuador"
+  | "Dominican Republic" | "Guatemala" | "Uruguay" | "Paraguay";
 export type SizeBucket = "micro" | "small" | "medium" | "large";
 export type CompanyStatus = "active" | "inactive" | "unknown";
 
 export const REGISTRY_BY_COUNTRY: Record<RegistryCountry, RegistryId> = {
   Brazil: "cnpj", Mexico: "denue", Colombia: "rues",
+  Argentina: "rns", Chile: "sii", Peru: "sunat", Ecuador: "sri",
+  "Dominican Republic": "dgii", Guatemala: "rmgt", Uruguay: "dei", Paraguay: "dnit",
+};
+
+/** Países de Latam sin registro de empresas publicado de forma legal y legible (docs/REGISTROS.md). */
+export const REGISTRY_UNAVAILABLE: Record<string, string> = {
+  Bolivia: "El SEPREC solo emite certificados: no publica datos abiertos ni API.",
+  Venezuela: "Ni el SENIAT ni el SAREN publican datos abiertos ni API.",
+  Panama: "El Registro Público no publica datos abiertos; solo revendedores comerciales con datos desactualizados.",
+  "El Salvador": "El CNR no publica datos abiertos ni API.",
+  Honduras: "El Registro Mercantil no publica datos abiertos ni API.",
+  Nicaragua: "El Registro Público Mercantil no publica datos abiertos ni API.",
+  "Costa Rica": "Hacienda no publica un archivo ni una API documentada del registro de empresas.",
 };
 
 export interface RegistryMeta {
@@ -56,6 +79,8 @@ export interface RegistryMeta {
   /** Variable de entorno que lo habilita ("" = no necesita). */
   env: string;
   license: string;
+  /** "api": se consulta en vivo · "import": se busca en registry_companies (archivo importado). */
+  kind: "api" | "import";
 }
 
 export const REGISTRIES: Record<RegistryId, RegistryMeta> = {
@@ -65,6 +90,7 @@ export const REGISTRIES: Record<RegistryId, RegistryMeta> = {
     can: { search: true, lookup_tax_id: true, lookup_name: false, lookup_domain: true, founded: true, size: true, partners: true, contact: true },
     env: "CNPJA_API_KEY",
     license: "Datos abiertos de la Receita Federal (CPF de socios enmascarado en origen). LGPD: solo datos que el propio registro hace públicos.",
+    kind: "api",
   },
   denue: {
     id: "denue", country: "Mexico", label: "DENUE · INEGI", source: "Directorio Estadístico Nacional de Unidades Económicas (INEGI)",
@@ -72,6 +98,7 @@ export const REGISTRIES: Record<RegistryId, RegistryMeta> = {
     can: { search: true, lookup_tax_id: false, lookup_name: true, lookup_domain: false, founded: false, size: true, partners: false, contact: true },
     env: "INEGI_DENUE_TOKEN",
     license: "Términos de libre uso de la información del INEGI (citar la fuente).",
+    kind: "api",
   },
   rues: {
     id: "rues", country: "Colombia", label: "Registro mercantil · Confecámaras", source: "Confecámaras (RUES) en datos.gov.co",
@@ -79,6 +106,64 @@ export const REGISTRIES: Record<RegistryId, RegistryMeta> = {
     can: { search: true, lookup_tax_id: true, lookup_name: true, lookup_domain: false, founded: true, size: false, partners: false, contact: false },
     env: "",
     license: "Datos abiertos de Colombia (datos.gov.co). Solo personas jurídicas: las matrículas de personas naturales se descartan.",
+    kind: "api",
+  },
+  // ── registros importados (registry_companies) ──
+  rns: {
+    id: "rns", country: "Argentina", label: "Registro Nacional de Sociedades · ARCA", source: "Registro Nacional de Sociedades (datos de ARCA publicados por el Ministerio de Justicia en datos.jus.gob.ar)",
+    system: "isic4", activity_label: "Actividad", tax_id_label: "CUIT",
+    can: { search: true, lookup_tax_id: true, lookup_name: true, lookup_domain: false, founded: true, size: false, partners: false, contact: false },
+    env: "", kind: "import",
+    license: "Datos abiertos del Ministerio de Justicia de Argentina (datos.jus.gob.ar). Solo sociedades.",
+  },
+  sii: {
+    id: "sii", country: "Chile", label: "SII · Registro de Empresas y Sociedades", source: "Nómina de personas jurídicas del SII y Registro de Empresas y Sociedades (datos.gob.cl)",
+    system: "isic4", activity_label: "Actividad SII", tax_id_label: "RUT",
+    can: { search: true, lookup_tax_id: true, lookup_name: true, lookup_domain: false, founded: true, size: true, partners: false, contact: false },
+    env: "", kind: "import",
+    license: "Datos públicos del SII y datos abiertos del Ministerio de Economía de Chile (datos.gob.cl, CC BY). Solo personas jurídicas.",
+  },
+  sunat: {
+    id: "sunat", country: "Peru", label: "Padrón RUC · SUNAT", source: "Padrón reducido del RUC (SUNAT)",
+    system: "local", activity_label: "Actividad", tax_id_label: "RUC",
+    can: { search: true, lookup_tax_id: true, lookup_name: true, lookup_domain: false, founded: false, size: false, partners: false, contact: false },
+    env: "", kind: "import",
+    license: "Descarga pública de la SUNAT. Solo personas jurídicas (RUC 20…). El padrón no publica actividad ni fecha de inscripción.",
+  },
+  sri: {
+    id: "sri", country: "Ecuador", label: "Catastro RUC · SRI", source: "Catastro del Registro Único de Contribuyentes del SRI (sociedades)",
+    system: "isic4", activity_label: "CIIU", tax_id_label: "RUC",
+    can: { search: true, lookup_tax_id: true, lookup_name: true, lookup_domain: false, founded: true, size: false, partners: false, contact: false },
+    env: "", kind: "import",
+    license: "Datos abiertos del SRI (datosabiertos.gob.ec). Solo sociedades.",
+  },
+  dgii: {
+    id: "dgii", country: "Dominican Republic", label: "RNC · DGII", source: "Listado de contribuyentes (RNC) de la DGII",
+    system: "local", activity_label: "Actividad", tax_id_label: "RNC",
+    can: { search: true, lookup_tax_id: true, lookup_name: true, lookup_domain: false, founded: true, size: false, partners: false, contact: false },
+    env: "", kind: "import",
+    license: "Descarga pública de la DGII. Solo empresas (RNC de 9 dígitos); las cédulas de personas se descartan.",
+  },
+  rmgt: {
+    id: "rmgt", country: "Guatemala", label: "Registro Mercantil · MINECO", source: "Sociedades inscritas en el Registro Mercantil (Ministerio de Economía, datos abiertos)",
+    system: "local", activity_label: "Actividad", tax_id_label: "NIT",
+    can: { search: true, lookup_tax_id: true, lookup_name: true, lookup_domain: false, founded: true, size: false, partners: false, contact: false },
+    env: "", kind: "import",
+    license: "Datos abiertos del Ministerio de Economía de Guatemala (CC0). Solo sociedades.",
+  },
+  dei: {
+    id: "dei", country: "Uruguay", label: "Directorio de Empresas Industriales · MIEM", source: "Directorio de Empresas Industriales del MIEM (catalogodatos.gub.uy)",
+    system: "isic4", activity_label: "CIIU", tax_id_label: "RUT",
+    can: { search: true, lookup_tax_id: true, lookup_name: true, lookup_domain: false, founded: false, size: false, partners: false, contact: true },
+    env: "", kind: "import",
+    license: "Datos abiertos del Uruguay (catalogodatos.gub.uy). Solo empresas industriales: Uruguay no publica su registro completo.",
+  },
+  dnit: {
+    id: "dnit", country: "Paraguay", label: "RUC · DNIT", source: "Listado de RUC de la DNIT",
+    system: "local", activity_label: "Actividad", tax_id_label: "RUC",
+    can: { search: false, lookup_tax_id: true, lookup_name: true, lookup_domain: false, founded: false, size: false, partners: false, contact: false },
+    env: "", kind: "import",
+    license: "Descarga pública de la DNIT. Solo personas jurídicas (RUC 80…). Trae RUC, razón social y estado: solo sirve para la ficha.",
   },
 };
 
@@ -723,6 +808,93 @@ export function readCursor(raw: string): MultiCursor {
 
 export function writeCursor(c: MultiCursor | null): string {
   return c ? JSON.stringify(c) : "";
+}
+
+// ── registros importados (registry_companies) ──────────────────────────────
+
+export function isImportedRegistry(id: unknown): boolean {
+  const m = (REGISTRIES as Record<string, RegistryMeta>)[String(id || "")];
+  return !!m && m.kind === "import";
+}
+
+/**
+ * Identificador fiscal comparable: solo dígitos (y la K del RUT chileno y del NIT guatemalteco).
+ * Es como lo guarda el importador y como se busca: "30-71234567-8" → "30712345678",
+ * "76.123.456-k" → "76123456K".
+ */
+export function normTaxId(country: unknown, v: unknown): string {
+  const t = String(v ?? "").toUpperCase();
+  return country === "Chile" || country === "Guatemala" ? t.replace(/[^0-9K]/g, "") : t.replace(/\D/g, "");
+}
+
+/** Para mostrar: CUIT 30-71234567-8, RUT 76123456-K; el resto tal cual. */
+export function formatTaxId(country: unknown, v: unknown): string {
+  const d = normTaxId(country, v);
+  if (country === "Argentina" && d.length === 11) return `${d.slice(0, 2)}-${d.slice(2, 10)}-${d.slice(10)}`;
+  if (country === "Chile" && d.length >= 2) return `${d.slice(0, -1)}-${d.slice(-1)}`;
+  return d;
+}
+
+/** Fila de registry_companies → forma común. */
+export function fromImportedRow(r: Json): RegistryCompany | null {
+  if (!r || typeof r !== "object" || !isImportedRegistry(r.registry)) return null;
+  const legal = s(r.legal_name), id = s(r.registry_id);
+  if (!legal || !id) return null;
+  const c = emptyCompany(r.registry as RegistryId);
+  const meta = REGISTRIES[c.registry];
+  c.tax_id = r.tax_id ? formatTaxId(meta.country, r.tax_id) : "";
+  c.registry_id = id;
+  c.legal_name = legal;
+  c.trade_name = s(r.trade_name);
+  c.activity = { system: meta.system, code: activityDigits(r.activity_code), description: s(r.activity_description) };
+  c.industries = c.activity.code ? industriesForActivity(meta.system, c.activity.code) : [];
+  const bucket = (SIZE_SET as string[]).includes(r.size_bucket) ? r.size_bucket as SizeBucket : "";
+  c.size = { bucket, label: s(r.size_label) || (bucket ? SIZE_LABEL[bucket] : "") };
+  c.founded_on = isoDate(r.founded_on);
+  c.founded_label = c.founded_on ? (s(r.founded_label) || "Constitución") : "";
+  c.status = r.status === "active" || r.status === "inactive" ? r.status : "unknown";
+  c.status_detail = s(r.status_detail);
+  c.address = { line: s(r.address_line), city: s(r.city), region: s(r.region), postal_code: s(r.postal_code) };
+  c.phone = s(r.phone);
+  c.email = s(r.email).toLowerCase();
+  c.website = s(r.website);
+  c.domain = corporateDomain(c.website, c.email);
+  c.source_url = s(r.source_url);
+  return c;
+}
+
+function postgrestLike(v: string): string {
+  // PostgREST: * es el comodín; se quitan los caracteres que rompen el filtro.
+  return v.replace(/[*,()%\\"]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Query de PostgREST sobre registry_companies para una búsqueda. Lo que la
+ * tabla no tiene (tamaño en Argentina, fecha en Perú) filtra igual: deja
+ * fuera a quien no lo trae, como en los registros en vivo, y la UI avisa.
+ */
+export function importedSearchParams(q: RegistrySearchInput, prefixes: string[], extra: { foundedFrom?: string; taxId?: string } = {}): URLSearchParams {
+  const reg = registryForCountry(q.country)!;
+  const p = new URLSearchParams();
+  p.set("select", "*");
+  p.set("registry", `eq.${reg}`);
+  if (extra.taxId) p.set("tax_id", `eq.${normTaxId(q.country, extra.taxId)}`);
+  const codes = prefixes.map(activityDigits).filter((x) => x.length >= 2).slice(0, 40);
+  if (codes.length) p.set("or", "(" + codes.map((c) => `activity_code.like.${c}*`).join(",") + ")");
+  if (q.active_only) p.set("status", "neq.inactive");
+  const from = extra.foundedFrom || q.founded_from;
+  if (from) p.set("founded_on", `gte.${from}`);
+  if (q.sizes.length) p.set("size_bucket", `in.(${q.sizes.join(",")})`);
+  const region = postgrestLike(q.region);
+  if (region) p.set("region", `ilike.*${region}*`);
+  const city = postgrestLike(q.city);
+  if (city) p.set("city", `ilike.*${city}*`);
+  const name = postgrestLike(normCompanyName(q.name));
+  if (name) p.set("name_norm", `ilike.*${name}*`);
+  if (q.require_phone) p.set("phone", "neq.");
+  if (q.require_email) p.append("email", "neq.");
+  p.set("order", from ? "founded_on.desc.nullslast,registry_id" : "registry_id");
+  return p;
 }
 
 // ── compacto para guardar (lista, radar) ────────────────────────────────────

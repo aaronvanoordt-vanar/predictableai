@@ -1,0 +1,77 @@
+# Importa el registro de empresas de un país que solo se publica como archivo
+# (2026-10-27). Brasil, México y Colombia se consultan en vivo y no pasan por
+# aquí. Fuentes, columnas y licencias en docs/REGISTROS.md; mapeo en
+# scripts/registry-import/map.mjs.
+#
+#   · Manual (Actions → Import Company Registry): elige el registro, opcional
+#     un enlace al archivo si el portal lo movió, y si solo quieres probar
+#     (dry run: descarga, lee y mapea sin escribir). Requiere la migración
+#     20261027200000_registry_companies.sql aplicada.
+#   · Mensual: refresca todos los registros importados (el 3 de cada mes).
+#   · En cada PR que toca el importador: dry run de todos los registros con un
+#     tope de filas, para ver contra los archivos reales que el mapeo sirve.
+#
+# Escribe con la service role, que obtiene de la API de administración con el
+# mismo secret SUPABASE_ACCESS_TOKEN de deploy-functions.yml.
+name: Import Company Registry
+
+on:
+  workflow_dispatch:
+    inputs:
+      registry:
+        description: 'Registro a importar'
+        required: true
+        type: choice
+        options: [rns, sii, sunat, sri, dgii, rmgt, dei, dnit]
+      url:
+        description: 'Opcional: enlace directo al archivo (si el portal cambió la dirección)'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Solo probar (no escribe en la base)'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 6 3 * *'
+  pull_request:
+    paths:
+      - 'scripts/registry-import/**'
+      - '.github/workflows/import-registry.yml'
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        registry: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.registry)) || fromJSON('["rns","sii","sunat","sri","dgii","rmgt","dei","dnit"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Import
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || 'yskaojvuhaqfmimwmvbi' }}
+          # Por env, nunca interpolado en el script (inyección de comandos).
+          REGISTRY: ${{ matrix.registry }}
+          FILE_URL: ${{ inputs.url }}
+          DRY: ${{ github.event_name == 'pull_request' || inputs.dry_run == true }}
+        run: |
+          set -euo pipefail
+          ARGS=(--registry "$REGISTRY")
+          if [ -n "${FILE_URL:-}" ]; then
+            if ! printf '%s' "$FILE_URL" | grep -Eq '^https://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$'; then
+              echo "::error::El enlace debe empezar con https:// y no tener espacios."
+              exit 1
+            fi
+            ARGS+=(--url "$FILE_URL")
+          fi
+          if [ "$DRY" = "true" ]; then
+            # En PR basta con unas miles de filas para validar el mapeo contra el archivo real.
+            ARGS+=(--dry-run --limit 20000)
+          fi
+          node scripts/registry-import/import.mjs "${ARGS[@]}"

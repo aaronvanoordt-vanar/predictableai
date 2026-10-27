@@ -751,13 +751,18 @@ async function registryChanges(t: TickContext, companies: RegistryCompany[], eve
 async function tickPublicRegistry(t: TickContext): Promise<TickResult> {
   const cfg = t.detector.config || {};
   const event: RegistryEvent = cfg.event || "new_companies";
-  const withRegistry = t.countries.filter((c) => !!registryForCountry(c)) as RegistryCountry[];
+  const withRegistry = t.countries.filter((c) => {
+    const reg = registryForCountry(c);
+    return !!reg && REGISTRIES[reg].can.search;
+  }) as RegistryCountry[];
   if (!withRegistry.length) {
-    throw new RegistryUnavailable("El registro público no está configurado para tus países: hoy cubre Brasil, México y Colombia.");
+    throw new RegistryUnavailable("El registro público no está configurado para tus países: ninguno publica un registro de empresas que se pueda buscar (ver docs/REGISTROS.md).");
   }
   const notes: string[] = [];
   const countries = withRegistry.filter((c) => {
-    if (event === "new_companies" && c === "Mexico") { notes.push("México: el DENUE no publica la fecha de constitución"); return false; }
+    const meta = REGISTRIES[registryForCountry(c)!];
+    if (event === "new_companies" && !meta.can.founded) { notes.push(`${c}: ${meta.label} no publica la fecha de constitución`); return false; }
+    if (event === "size_change" && !meta.can.size) { notes.push(`${c}: ${meta.label} no publica el tamaño`); return false; }
     return registryConfigured(c);
   });
   if (!countries.length) {
@@ -781,7 +786,7 @@ async function tickPublicRegistry(t: TickContext): Promise<TickResult> {
   const res = await searchRegistry(q);
   let candidates: Candidate[];
   if (event === "new_companies") {
-    const label = (c: RegistryCompany) => c.registry === "rues" ? "Matriculada" : "Inició actividad";
+    const label = (c: RegistryCompany) => c.registry === "rues" ? "Matriculada" : REGISTRIES[c.registry].kind === "import" ? "Constituida" : "Inició actividad";
     candidates = res.companies.filter((c) => c.founded_on).map((c) => registryCandidate(t, c,
       `${label(c)} el ${c.founded_on}${c.activity.description ? " · " + c.activity.description : ""}`,
       `Empresa nueva en tu ICP según el registro oficial (${REGISTRIES[c.registry].label}): en sus primeros meses elige proveedores, herramientas y banco por primera vez.`,

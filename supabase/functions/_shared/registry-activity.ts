@@ -7,6 +7,11 @@
  *   - CIIU Rev. 4 (Colombia DIAN/RUES; Perú SUNAT), 4 dígitos; Chile SII usa
  *     su adaptación "CIIU4.CL 2012" de 6 dígitos.
  *   - SCIAN 2018/2023 (México, INEGI), 6 dígitos.
+ *   - "local": catálogos propios que no se pudieron confirmar como derivados
+ *     de la CIIU Rev. 4 (DGII de República Dominicana, Registro Mercantil de
+ *     Guatemala) o registros que no publican actividad (SUNAT, DNIT). Se
+ *     muestra la descripción oficial y se filtra por código, pero no se
+ *     traduce a industrias del ICP: no se adivina.
  *
  * CNAE 2.x y CIIU4.CL se derivan de la CIIU Rev. 4 (ISIC Rev. 4) de la ONU y
  * comparten sus DIVISIONES de 2 dígitos; las clases de 4 dígitos ya no
@@ -22,7 +27,7 @@
 
 import { ICP_INDUSTRIES } from "./icp-taxonomy.ts";
 
-export type ActivitySystem = "isic4" | "scian";
+export type ActivitySystem = "isic4" | "scian" | "local";
 
 /** Prefijo de código → industrias del ICP. Gana el prefijo más largo. */
 type PrefixMap = Record<string, string[]>;
@@ -105,7 +110,7 @@ export const SCIAN_TO_ICP: PrefixMap = {
   "93": ["government administration"],
 };
 
-const MAPS: Record<ActivitySystem, PrefixMap> = { isic4: ISIC4_TO_ICP, scian: SCIAN_TO_ICP };
+const MAPS: Record<ActivitySystem, PrefixMap> = { isic4: ISIC4_TO_ICP, scian: SCIAN_TO_ICP, local: {} };
 
 /** Solo dígitos: "6201-5/00" (CNAE con máscara) → "6201500". */
 export function activityDigits(code: unknown): string {
