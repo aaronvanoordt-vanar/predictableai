@@ -9,6 +9,7 @@ import {
   detectTaxId, formatCnpj, fromBrasilApi, fromCnpja, fromDenue, fromRues, isNaturalPersonRow, isoDate, isValidCnpj, matchesSize,
   mxState, nitCheckDigit, normalizeSearch, normCompanyName, passesLocalFilters, pickByName, readCursor, ruesWhere, scianFromClee,
   writeCursor, type RegistrySearchInput,
+  formatTaxId, fromImportedRow, importedSearchParams, isImportedRegistry, normTaxId, REGISTRIES, REGISTRY_BY_COUNTRY, REGISTRY_UNAVAILABLE,
 } from "./registries.ts";
 import { expandCnae } from "./registry-fetch.ts";
 
@@ -205,7 +206,8 @@ function q(over: Partial<RegistrySearchInput> = {}): RegistrySearchInput {
 }
 
 Deno.test("normalizeSearch acota y descarta lo que no existe", () => {
-  assertEquals(normalizeSearch({ country: "Peru" }), null);
+  assertEquals(normalizeSearch({ country: "Bolivia" }), null);
+  assertEquals(normalizeSearch({ country: "Venezuela" }), null);
   const n = normalizeSearch({ country: "Mexico", sizes: ["micro", "gigante"], limit: 999, founded_from: "2026-01-01", activity_codes: ["72-25", "x"] })!;
   assertEquals(n.sizes, ["micro"]);
   assertEquals(n.limit, 50);
@@ -262,4 +264,65 @@ Deno.test("cursor compuesto ida y vuelta", () => {
   assertEquals(readCursor(writeCursor({ pi: 2, at: "51" })), { pi: 2, at: "51" });
   assertEquals(readCursor("basura"), { pi: 0, at: "" });
   assertEquals(writeCursor(null), "");
+});
+
+// ── registros importados (registry_companies) ───────────────────────────────
+
+Deno.test("cada país de REGISTRY_BY_COUNTRY tiene su ficha y ninguno está a la vez sin registro", () => {
+  for (const [country, id] of Object.entries(REGISTRY_BY_COUNTRY)) {
+    assertEquals(REGISTRIES[id].country, country);
+    assert(!(country in REGISTRY_UNAVAILABLE), `${country} no puede estar en los dos lados`);
+  }
+  assert(isImportedRegistry("rns"));
+  assert(!isImportedRegistry("cnpj"));
+  assert(!isImportedRegistry("nada"));
+});
+
+Deno.test("identificador fiscal: se compara por dígitos (y la K del RUT)", () => {
+  assertEquals(normTaxId("Argentina", "30-71234567-8"), "30712345678");
+  assertEquals(normTaxId("Chile", "76.123.456-k"), "76123456K");
+  assertEquals(normTaxId("Peru", "RUC 20100047218"), "20100047218");
+  assertEquals(formatTaxId("Argentina", "30712345678"), "30-71234567-8");
+  assertEquals(formatTaxId("Chile", "76123456K"), "76123456-K");
+  assertEquals(formatTaxId("Peru", "20100047218"), "20100047218");
+});
+
+Deno.test("fila importada → ficha común, sin inventar lo que no trae", () => {
+  const c = fromImportedRow({
+    registry: "rns", registry_id: "30712345678", country: "Argentina", tax_id: "30712345678", legal_name: "ACME SA", trade_name: "",
+    activity_code: "620100", activity_description: "Servicios de consultores en informática", size_bucket: "", founded_on: "2024-03-05",
+    founded_label: "Contrato social", status: "active", status_detail: "Activa", region: "CIUDAD AUTONOMA BUENOS AIRES", city: "",
+    phone: "", email: "", website: "", source_url: "https://datos.jus.gob.ar/dataset/registro-nacional-de-sociedades",
+  })!;
+  assertEquals(c.registry, "rns");
+  assertEquals(c.country, "Argentina");
+  assertEquals(c.tax_id, "30-71234567-8");
+  assertEquals(c.industries, ["computer software", "information technology & services"]);
+  assertEquals(c.size, { bucket: "", label: "" });
+  assertEquals(c.founded_label, "Contrato social");
+  assertEquals(c.domain, "");
+  assertEquals(compactCompany(c).tax_id_label, "CUIT");
+  // Catálogo propio: se muestra la actividad pero no se traduce a industrias.
+  const d = fromImportedRow({ registry: "dgii", registry_id: "101000001", legal_name: "X SRL", activity_code: "620100" })!;
+  assertEquals(d.industries, []);
+  assertEquals(fromImportedRow({ registry: "cnpj", registry_id: "1", legal_name: "x" }), null);
+  assertEquals(fromImportedRow({ registry: "rns", registry_id: "", legal_name: "x" }), null);
+});
+
+Deno.test("búsqueda importada: los filtros van a PostgREST y lo raro se limpia", () => {
+  const p = importedSearchParams(q({ country: "Chile", region: "Valparaíso", city: "Viña*", name: "Acme (Chile) SpA", founded_from: "2026-01-01", sizes: ["small"], require_phone: true }), ["62", "6311"]);
+  assertEquals(p.get("registry"), "eq.sii");
+  assertEquals(p.get("or"), "(activity_code.like.62*,activity_code.like.6311*)");
+  assertEquals(p.get("status"), "neq.inactive");
+  assertEquals(p.get("founded_on"), "gte.2026-01-01");
+  assertEquals(p.get("size_bucket"), "in.(small)");
+  assertEquals(p.get("region"), "ilike.*Valparaíso*");
+  assertEquals(p.get("city"), "ilike.*Viña*");
+  assertEquals(p.get("phone"), "neq.");
+  assertEquals(p.get("order"), "founded_on.desc.nullslast,registry_id");
+  assert(!/[()]/.test(p.get("name_norm")!.replace(/^ilike\.\*|\*$/g, "")));
+  const t = importedSearchParams(q({ country: "Argentina", active_only: false }), [], { taxId: "30-71234567-8" });
+  assertEquals(t.get("tax_id"), "eq.30712345678");
+  assertEquals(t.get("status"), null);
+  assertEquals(t.get("order"), "registry_id");
 });

@@ -955,7 +955,7 @@ footer { padding: 0 0 40px; }
       <div class="feat-list" role="tablist" aria-label="Funciones de Encontrar" aria-orientation="vertical">
         <button class="feat-btn" role="tab" type="button" id="f1-t1" aria-controls="f1-p1" aria-selected="true"><b><span class="ic em"><svg><use href="#i-pulse"/></svg></span>Radar de señales de compra</b><span class="d">Una biblioteca de más de 100 detectores vigila contrataciones, rondas de inversión, cambios de liderazgo, licitaciones, noticias y la huella digital de cada empresa, y te dice quién es el decisor. Cada día recibes las 25 señales con más puntaje.</span></button>
         <button class="feat-btn" role="tab" type="button" id="f1-t2" aria-controls="f1-p2" aria-selected="false" tabindex="-1"><b><span class="ic cd"><svg><use href="#i-db"/></svg></span>Datos de contacto de varias fuentes</b><span class="d">Buscas personas y empresas por industria, tamaño, país y cargo, y para cada decisor consultamos varias bases de datos en cascada hasta encontrar su email y su móvil. Adaptadas a Latam: teléfonos en el formato de cada país, móvil o fijo, y si tiene WhatsApp. Verificamos cada email y solo pagas por dato encontrado.</span></button>
-        <button class="feat-btn" role="tab" type="button" id="f1-t3" aria-controls="f1-p3" aria-selected="false" tabindex="-1"><b><span class="ic gr" style="background:var(--ink)"><svg><use href="#i-building"/></svg></span>Registros públicos de Latam</b><span class="d">Empresas recién constituidas, que crecieron o que cambiaron de actividad en todos los países de Latam, directo de los registros oficiales.</span></button>
+        <button class="feat-btn" role="tab" type="button" id="f1-t3" aria-controls="f1-p3" aria-selected="false" tabindex="-1"><b><span class="ic gr" style="background:var(--ink)"><svg><use href="#i-building"/></svg></span>Registros públicos de Latam</b><span class="d">Empresas recién constituidas, que crecieron o que cambiaron de actividad, directo de los registros oficiales de 10 países: Argentina, Brasil, Chile, Colombia, Ecuador, México, Paraguay, Perú, República Dominicana y Uruguay.</span></button>
         <button class="feat-btn" role="tab" type="button" id="f1-t4" aria-controls="f1-p4" aria-selected="false" tabindex="-1"><b><span class="ic ph"><svg><use href="#i-table"/></svg></span>Columnas IA e investigación</b><span class="d">Hazle cualquier pregunta a tu lista («¿vende en Mercado Libre?») y la IA la responde fila por fila con evidencia y fuente. Antes de escribir, verifica que el lead siga en la empresa.</span></button>
       </div>
       <div class="feat-stage scene">
@@ -993,13 +993,13 @@ footer { padding: 0 0 40px; }
 
         <div class="feat-panel" id="f1-p3" role="tabpanel" aria-labelledby="f1-t3" data-scene="registry" hidden>
           <div class="mk">
-            <div class="mk-h"><span class="mk-t">Registros públicos</span><span class="mk-pill">Toda Latam</span></div>
-            <div class="cc-grid" aria-hidden="true"><span>MX</span><span>GT</span><span>SV</span><span>HN</span><span>NI</span><span>CR</span><span>PA</span><span>DO</span><span>CO</span><span>VE</span><span>EC</span><span>PE</span><span>BO</span><span>CL</span><span>AR</span><span>UY</span><span>PY</span><span>BR</span></div>
+            <div class="mk-h"><span class="mk-t">Registros públicos</span><span class="mk-pill">10 países</span></div>
+            <div class="cc-grid" aria-hidden="true"><span>AR</span><span>BR</span><span>CL</span><span>CO</span><span>DO</span><span>EC</span><span>MX</span><span>PY</span><span>PE</span><span>UY</span></div>
             <div class="mk-row first s" data-cc="BR"><span class="av g">BR</span><span class="who"><b>AgroSur Ltda.</b><small>Constituida hace 12 días · São Paulo</small></span><span class="mk-pill g">Nueva</span></div>
             <div class="mk-row s" data-cc="MX"><span class="av o">MX</span><span class="who"><b>Distribuidora Norte</b><small>Pasó a 51–100 empleados · Monterrey</small></span><span class="mk-pill">Creció</span></div>
             <div class="mk-row s" data-cc="CO"><span class="av c">CO</span><span class="who"><b>Servicios Médicos Andes</b><small>Cambió de actividad · Medellín</small></span><span class="mk-pill w">Cambio</span></div>
-            <div class="mk-row s" data-cc="PE"><span class="av">PE</span><span class="who"><b>Constructora Pacífico</b><small>Constituida hace 5 días · Lima</small></span><span class="mk-pill g">Nueva</span></div>
-            <div class="mk-row s" data-cc="AR"><span class="av v">AR</span><span class="who"><b>Logística del Plata</b><small>Nueva sede · Rosario</small></span><span class="mk-pill">Creció</span></div>
+            <div class="mk-row s" data-cc="EC"><span class="av">EC</span><span class="who"><b>Constructora Pacífico</b><small>Inició actividades hace 5 días · Quito</small></span><span class="mk-pill g">Nueva</span></div>
+            <div class="mk-row s" data-cc="AR"><span class="av v">AR</span><span class="who"><b>Logística del Plata</b><small>Contrato social hace 9 días · Rosario</small></span><span class="mk-pill g">Nueva</span></div>
             <div class="mk-row s" data-cc="CL"><span class="av o">CL</span><span class="who"><b>Viña Cordillera</b><small>Cambió de actividad · Santiago</small></span><span class="mk-pill w">Cambio</span></div>
           </div>
         </div>
@@ -1293,19 +1293,19 @@ footer { padding: 0 0 40px; }
           <div class="mk"><small>Teléfono del lead</small><span class="phone-norm"><s>011 15 1234-5612</s><span class="to">+54 9 11 1234 5612</span></span><p>Con el 9 para móviles · tiene WhatsApp</p></div>
           <div class="mk"><small>Canal principal</small><b>WhatsApp con tu número oficial</b><p>Notas de voz grabadas en el navegador, como se habla allá.</p></div>
           <div class="mk"><small>Lista «No contactar»</small><b>Registro Nacional No Llame (AAIP)</b><p>Cargas los números inscritos y el dialer no los marca.</p></div>
-          <div class="mk"><small>Registro público de empresas</small><b>Registros societarios oficiales</b><p>Sociedades nuevas y cambios de actividad.</p></div>
+          <div class="mk"><small>Registro público de empresas</small><b>Registro Nacional de Sociedades (ARCA)</b><p>Sociedades por actividad, provincia y fecha de contrato social.</p></div>
         </div>
         <div class="cpanel" id="cp-cl" role="tabpanel" aria-labelledby="ct-cl" hidden>
           <div class="mk"><small>Teléfono del lead</small><span class="phone-norm"><s>09 1234 5612</s><span class="to">+56 9 1234 5612</span></span><p>Móvil con el 9 · tiene WhatsApp</p></div>
           <div class="mk"><small>Canal principal</small><b>WhatsApp, email y LinkedIn</b><p>En la misma cadencia, con la ventana horaria en la hora del lead.</p></div>
           <div class="mk"><small>Lista «No contactar»</small><b>No Molestar (SERNAC)</b><p>Aplica a llamadas y a WhatsApp.</p></div>
-          <div class="mk"><small>Registro público de empresas</small><b>Registro de Empresas y Sociedades</b><p>Empresas recién constituidas.</p></div>
+          <div class="mk"><small>Registro público de empresas</small><b>SII y Registro de Empresas y Sociedades</b><p>Empresas por actividad, región y tramo de ventas, y las recién constituidas.</p></div>
         </div>
         <div class="cpanel" id="cp-pe" role="tabpanel" aria-labelledby="ct-pe" hidden>
           <div class="mk"><small>Teléfono del lead</small><span class="phone-norm"><s>912 345 612</s><span class="to">+51 912 345 612</span></span><p>Móvil de 9 dígitos · tiene WhatsApp</p></div>
           <div class="mk"><small>Canal principal</small><b>WhatsApp con tu número oficial</b><p>Y la Bandeja junta las respuestas de todos los canales.</p></div>
           <div class="mk"><small>Bajas</small><b>Una baja vale en todos los canales</b><p>Si el lead pide no ser contactado, no le vuelve a escribir nadie.</p></div>
-          <div class="mk"><small>Registro público de empresas</small><b>SUNAT (RUC)</b><p>Empresas recién inscritas y su actividad.</p></div>
+          <div class="mk"><small>Registro público de empresas</small><b>Padrón RUC (SUNAT)</b><p>Empresas por departamento y razón social, con su estado ante la SUNAT.</p></div>
         </div>
       </div>
     </div>
@@ -1551,7 +1551,7 @@ footer { padding: 0 0 40px; }
       <details class="glass reveal"><summary>¿Reemplaza a mi CRM?</summary><p>Puede hacerlo: incluye oportunidades, cuentas y tareas. Si ya usas HubSpot, Pipedrive, Salesforce, Zoho, Kommo, Bitrix24 o RD Station, Predictable AI se conecta y sincroniza en lugar de duplicar.</p></details>
       <details class="glass reveal"><summary>¿Es seguro enviar por WhatsApp y LinkedIn?</summary><p>WhatsApp sale por tu número oficial con plantillas aprobadas por Meta, y vigilamos la calidad del número para frenar antes de un bloqueo. En LinkedIn respetamos topes diarios y semanales por cuenta. Toda baja se respeta en todos los canales.</p></details>
       <details class="glass reveal"><summary>¿La IA inventa datos o casos de éxito?</summary><p>No. Los mensajes solo citan los clientes y resultados que tú cargas. Si una respuesta no tiene evidencia, la marcamos como «No encontrado» en vez de adivinar.</p></details>
-      <details class="glass reveal"><summary>¿En qué países funciona?</summary><p>En toda Latam y también fuera de ella. Los registros públicos cubren los países de Latam, y la plataforma está en español, inglés y portugués.</p></details>
+      <details class="glass reveal"><summary>¿En qué países funciona?</summary><p>En toda Latam y también fuera de ella. Los registros públicos de empresas cubren 10 países (Argentina, Brasil, Chile, Colombia, Ecuador, México, Paraguay, Perú, República Dominicana y Uruguay), y la plataforma está en español, inglés y portugués.</p></details>
     </div>
   </div>
 </section>

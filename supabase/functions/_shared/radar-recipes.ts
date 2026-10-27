@@ -510,7 +510,7 @@ export const RADAR_RECIPES: RadarRecipe[] = [
     rationale: "Busca especialistas de pauta: invierte en anuncios y quiere más resultado por peso.",
     decision_maker_titles: MKT_TITLES,
     config: { job_titles: ["Performance Marketing Manager", "Paid Media Specialist", "Media Buyer", "Growth Marketing Manager", "Digital Marketing Specialist"], min_jobs: 1, posted_within_days: 30 } },
-  // ── Registros públicos (Brasil, México, Colombia) ────────────────────────
+  // ── Registros públicos (Latam: ver REGISTRY_BY_COUNTRY) ────────────────────────
   // La industria sale del ICP al correr; solo sirven si el plan apunta a uno
   // de esos países (kindAvailable lo decide con requires: ["registry"]).
   { id: "reg_new_companies", category: "registries", kind: "public_registry", weight: 70,

@@ -10,6 +10,11 @@
  *   México   DENUE (INEGI) — gratis. Sin RFC ni fecha de constitución.
  *   Colombia Registro mercantil de Confecámaras (datos.gov.co) — gratis.
  *            Sin tamaño; solo personas jurídicas.
+ *   Resto    (2026-10-27) Argentina, Chile, Perú, Ecuador, República
+ *            Dominicana, Uruguay y Paraguay: archivos abiertos
+ *            importados a Postgres (gratis). Qué filtro aplica en cada uno
+ *            sale de `can` en company-registry status; los países que no
+ *            publican su registro se nombran con el motivo.
  *
  * Todo pasa por la edge function `company-registry` (prospectingData.registry).
  * Cada empresa encontrada se puede:
@@ -27,11 +32,20 @@
 (function (global) {
   'use strict';
 
+  // Espejo de REGISTRY_BY_COUNTRY de supabase/functions/_shared/registries.ts.
   var COUNTRIES = [
+    { value: 'Argentina', label: 'Argentina', registry: 'rns', activity: 'Actividad', tax: 'CUIT' },
     { value: 'Brazil', label: 'Brasil', registry: 'cnpj', activity: 'CNAE', tax: 'CNPJ' },
-    { value: 'Mexico', label: 'México', registry: 'denue', activity: 'SCIAN', tax: '' },
+    { value: 'Chile', label: 'Chile', registry: 'sii', activity: 'Actividad SII', tax: 'RUT' },
     { value: 'Colombia', label: 'Colombia', registry: 'rues', activity: 'CIIU', tax: 'NIT' },
+    { value: 'Ecuador', label: 'Ecuador', registry: 'sri', activity: 'CIIU', tax: 'RUC' },
+    { value: 'Mexico', label: 'México', registry: 'denue', activity: 'SCIAN', tax: '' },
+    { value: 'Paraguay', label: 'Paraguay', registry: 'dnit', activity: 'Actividad', tax: 'RUC' },
+    { value: 'Peru', label: 'Perú', registry: 'sunat', activity: 'Actividad', tax: 'RUC' },
+    { value: 'Dominican Republic', label: 'República Dominicana', registry: 'dgii', activity: 'Actividad', tax: 'RNC' },
+    { value: 'Uruguay', label: 'Uruguay', registry: 'dei', activity: 'CIIU', tax: 'RUT' },
   ];
+  var UNAVAILABLE_LABEL = { Bolivia: 'Bolivia', Venezuela: 'Venezuela', Panama: 'Panamá', 'El Salvador': 'El Salvador', Honduras: 'Honduras', Nicaragua: 'Nicaragua', 'Costa Rica': 'Costa Rica', Guatemala: 'Guatemala' };
   // Mismo catálogo que BR_STATES / MX_STATES de supabase/functions/_shared/registries.ts.
   var BR_STATES = { AC: 'Acre', AL: 'Alagoas', AP: 'Amapá', AM: 'Amazonas', BA: 'Bahia', CE: 'Ceará', DF: 'Distrito Federal', ES: 'Espírito Santo', GO: 'Goiás', MA: 'Maranhão', MT: 'Mato Grosso', MS: 'Mato Grosso do Sul', MG: 'Minas Gerais', PA: 'Pará', PB: 'Paraíba', PR: 'Paraná', PE: 'Pernambuco', PI: 'Piauí', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte', RS: 'Rio Grande do Sul', RO: 'Rondônia', RR: 'Roraima', SC: 'Santa Catarina', SP: 'São Paulo', SE: 'Sergipe', TO: 'Tocantins' };
   var MX_STATES = { '01': 'Aguascalientes', '02': 'Baja California', '03': 'Baja California Sur', '04': 'Campeche', '05': 'Coahuila', '06': 'Colima', '07': 'Chiapas', '08': 'Chihuahua', '09': 'Ciudad de México', '10': 'Durango', '11': 'Guanajuato', '12': 'Guerrero', '13': 'Hidalgo', '14': 'Jalisco', '15': 'Estado de México', '16': 'Michoacán', '17': 'Morelos', '18': 'Nayarit', '19': 'Nuevo León', '20': 'Oaxaca', '21': 'Puebla', '22': 'Querétaro', '23': 'Quintana Roo', '24': 'San Luis Potosí', '25': 'Sinaloa', '26': 'Sonora', '27': 'Tabasco', '28': 'Tamaulipas', '29': 'Tlaxcala', '30': 'Veracruz', '31': 'Yucatán', '32': 'Zacatecas' };
@@ -58,6 +72,15 @@
     var reg = countryMeta(country).registry;
     return ((state.status && state.status.registries) || []).find(function (r) { return r.id === reg; }) || null;
   }
+  function canDo(country, what) {
+    var st = regStatus(country);
+    if (st && st.can) return !!st.can[what];
+    // Sin status todavía: lo que se sabía antes de los importados.
+    if (what === 'size') return country !== 'Colombia';
+    if (what === 'founded') return country !== 'Mexico';
+    return true;
+  }
+  function searchable(country) { return canDo(country, 'search'); }
   function keyOf(c) { return c.registry + '|' + c.registry_id; }
   function fmtDate(v) {
     if (!v) return '—';
@@ -87,7 +110,7 @@
       var row = r && r.data;
       if (!row) return;
       var cs = Array.isArray(row.icp_countries) ? row.icp_countries : [];
-      var first = COUNTRIES.find(function (c) { return cs.indexOf(c.value) !== -1; });
+      var first = COUNTRIES.find(function (c) { return cs.indexOf(c.value) !== -1 && searchable(c.value); });
       if (first && !state.f.country) state.f.country = first.value;
       state.icpIndustries = Array.isArray(row.icp_industry_tags) ? row.icp_industry_tags : [];
     } catch (_) { /* sin contexto: el usuario elige */ }
@@ -99,8 +122,8 @@
     return {
       country: f.country, industries: f.industries,
       activity_codes: f.activity_codes.split(/[,\s]+/).map(function (x) { return x.trim(); }).filter(Boolean),
-      sizes: f.country === 'Colombia' ? [] : f.sizes, region: f.region, city: f.city, name: f.name,
-      founded_from: f.country === 'Mexico' ? '' : f.founded_from,
+      sizes: canDo(f.country, 'size') ? f.sizes : [], region: f.region, city: f.city, name: f.name,
+      founded_from: canDo(f.country, 'founded') ? f.founded_from : '',
       active_only: f.active_only, require_phone: f.require_phone, require_email: f.require_email,
       limit: 25, cursor: cursor || '',
     };
@@ -205,8 +228,9 @@
     var meta = countryMeta(f.country);
     var country = h('select', null);
     COUNTRIES.forEach(function (c) {
+      if (!searchable(c.value)) return; // solo ficha (Paraguay): va abajo, en «Ficha de una empresa»
       var st = regStatus(c.value);
-      var o = h('option', { value: c.value, text: c.label + (st && !st.configured ? ' (no configurado)' : '') });
+      var o = h('option', { value: c.value, text: c.label + (st && !st.configured ? ' (no configurado)' : st && st.imported === false ? ' (pendiente de importar)' : '') });
       if (c.value === f.country) o.selected = true;
       country.appendChild(o);
     });
@@ -232,8 +256,8 @@
     var indBox = h('details', { class: 'rg-ind' }, h('summary', { text: f.industries.length ? f.industries.length + ' industria' + (f.industries.length === 1 ? '' : 's') + ' elegida' + (f.industries.length === 1 ? '' : 's') : 'Todas las industrias' }), icpBtn, inds);
 
     var region;
-    if (f.country === 'Colombia') {
-      region = bind(h('input', { type: 'text', value: f.region, placeholder: 'Bogotá, Medellín, Cali…' }), 'region');
+    if (f.country !== 'Brazil' && f.country !== 'Mexico') {
+      region = bind(h('input', { type: 'text', value: f.region, placeholder: f.country === 'Colombia' ? 'Bogotá, Medellín, Cali…' : 'Opcional' }), 'region');
     } else {
       region = h('select', null, h('option', { value: '', text: 'Todo el país' }));
       var map = f.country === 'Brazil' ? BR_STATES : MX_STATES;
@@ -249,7 +273,7 @@
     SIZES.forEach(function (s) {
       var cb = h('input', { type: 'checkbox' });
       cb.checked = f.sizes.indexOf(s.value) !== -1;
-      cb.disabled = f.country === 'Colombia';
+      cb.disabled = !canDo(f.country, 'size');
       cb.addEventListener('change', function () {
         var i = f.sizes.indexOf(s.value);
         if (cb.checked && i === -1) f.sizes.push(s.value); else if (!cb.checked && i !== -1) f.sizes.splice(i, 1);
@@ -271,19 +295,24 @@
     btn.addEventListener('click', function () { search(false); });
 
     var founded = bind(h('input', { type: 'date', value: f.founded_from }), 'founded_from', 'change');
-    founded.disabled = f.country === 'Mexico';
+    founded.disabled = !canDo(f.country, 'founded');
 
+    var countryHint = st && !st.configured ? 'Este registro todavía no está configurado en la plataforma.'
+      : st && st.imported === false ? st.label + ' · todavía no se importó: aparecerá con la primera importación.'
+      : st ? st.label + (st.kind === 'import' && st.updated_at ? ' · datos al ' + fmtDate(String(st.updated_at).slice(0, 10)) : '') : '';
+    var noRegistry = Object.keys(UNAVAILABLE_LABEL).map(function (k) { return UNAVAILABLE_LABEL[k]; }).join(', ');
     return h('div', { class: 'rg-filters' },
-      field('País', country, st && !st.configured ? 'Este registro todavía no está configurado en la plataforma.' : (st ? st.label : '')),
+      field('País', country, countryHint),
       field('Industria (de tu ICP)', indBox, 'Se traduce a códigos ' + meta.activity + '. Las industrias sin equivalente en el registro no filtran.'),
       field('Códigos ' + meta.activity, bind(h('input', { type: 'text', value: f.activity_codes, placeholder: f.country === 'Mexico' ? 'p. ej. 722, 4611' : 'p. ej. 62, 5611' }), 'activity_codes'), 'Opcional: prefijos o códigos completos, separados por coma.'),
-      field(f.country === 'Colombia' ? 'Cámara de comercio' : 'Estado', region),
+      field(f.country === 'Colombia' ? 'Cámara de comercio' : (f.country === 'Brazil' || f.country === 'Mexico') ? 'Estado' : 'Región, provincia o departamento', region),
       f.country !== 'Colombia' ? field('Ciudad o municipio', bind(h('input', { type: 'text', value: f.city, placeholder: 'Opcional' }), 'city')) : null,
       field('Razón social contiene', bind(h('input', { type: 'text', value: f.name, placeholder: 'Opcional' }), 'name')),
-      field('Tamaño', sizes, f.country === 'Colombia' ? 'El registro de Colombia no publica el tamaño.' : f.country === 'Brazil' ? 'En Brasil el porte es por facturación: «Demais» cuenta como mediana o grande.' : ''),
-      field(f.country === 'Colombia' ? 'Matriculadas desde' : 'Constituidas desde', founded, f.country === 'Mexico' ? 'El DENUE no publica la fecha de constitución.' : ''),
+      field('Tamaño', sizes, !canDo(f.country, 'size') ? 'Este registro no publica el tamaño.' : f.country === 'Brazil' ? 'En Brasil el porte es por facturación: «Demais» cuenta como mediana o grande.' : f.country === 'Chile' ? 'En Chile es el tramo de ventas del SII.' : ''),
+      field(f.country === 'Colombia' ? 'Matriculadas desde' : 'Constituidas desde', founded, !canDo(f.country, 'founded') ? 'Este registro no publica la fecha de constitución.' : ''),
       h('div', { class: 'rg-checks' }, check('active_only', 'Solo activas'), check('require_phone', 'Con teléfono'), check('require_email', 'Con email')),
-      btn);
+      btn,
+      h('div', { class: 'rg-hint', text: 'Sin registro público: ' + noRegistry + '. Esos países no publican su registro de empresas de forma abierta.' }));
   }
 
   function companyNode(c) {
@@ -371,7 +400,7 @@
 
   function lookupNode() {
     var L = state.lookup;
-    var input = h('input', { type: 'text', value: L.q, placeholder: 'CNPJ, NIT, razón social o dominio' });
+    var input = h('input', { type: 'text', value: L.q, placeholder: 'CUIT, RUT, RUC, CNPJ, NIT, RNC, razón social o dominio' });
     input.addEventListener('input', function () { L.q = input.value; });
     input.addEventListener('keydown', function (e) { if (e.key === 'Enter') runLookup(); });
     var country = h('select', null);
@@ -389,7 +418,7 @@
     }
     return h('div', { class: 'rg-lookup' },
       h('div', { class: 'rg-lookup-t', text: 'Ficha de una empresa' }),
-      h('div', { class: 'rg-hint', text: 'Por identificador fiscal (gratis), razón social (México y Colombia) o dominio del email de registro (Brasil, 1 crédito). Solo se muestra una ficha si la coincidencia es inequívoca.' }),
+      h('div', { class: 'rg-hint', text: 'Por identificador fiscal o razón social (gratis; en Brasil, por CNPJ o por el dominio del email de registro, 1 crédito). Solo se muestra una ficha si la coincidencia es inequívoca.' }),
       h('div', { class: 'rg-lookup-row' }, country, input, btn),
       out);
   }
@@ -450,7 +479,7 @@
     if (!state.status && !state.statusError) {
       host.textContent = 'Cargando registros públicos…';
       await Promise.all([loadStatus(), icpDefaults()]);
-      if (!state.f.country) state.f.country = 'Mexico';
+      if (!state.f.country || !searchable(state.f.country)) state.f.country = 'Mexico';
     }
     render();
   }

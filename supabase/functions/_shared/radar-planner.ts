@@ -26,7 +26,7 @@ export interface Availability {
   apollo_user: boolean;
   places: boolean;
   probe: boolean;
-  /** Algún país del plan tiene registro público conectado (Brasil, México, Colombia). */
+  /** Algún país del plan tiene registro público que se puede buscar (Brasil, México, Colombia, Argentina, Chile, Perú, Ecuador, Rep. Dominicana, Uruguay). */
   registry: boolean;
 }
 
@@ -52,7 +52,7 @@ Do NOT settle for what a database filters (industry, size, "uses HubSpot") nor f
 - Sells tech for marketplace sellers → site_probe { must_have: ["any_marketplace"] } + web_footprint { queries: ["site:{ml_site} tienda oficial {industry}", "marcas {industry} venden en Amazon {country}"] } + site_probe { must_have: ["any_ecommerce"], must_not_have: ["any_marketplace"] } + hiring for "Marketplace Manager".
 - Sells sales-predictability SaaS → hiring for SDR/AE titles, leadership (new VP Sales / CRO, ≤ 90 days), technographics using_any ["hubspot","pipedrive","salesforce"], news about missed-quota / restructured sales teams.
 - Sells asset liquidation in Mexico → news on concurso mercantil filings, tenders for auction services, leadership (new CFO / restructuring officer).
-- Sells to SMBs in Brazil, Mexico or Colombia (accounting, banking, payroll, POS, insurance, small-business software) → public_registry { event: "new_companies", window_days: 60 } (companies incorporated in the window, straight from the official registry: Apollo barely has them) + public_registry { event: "size_change" } for companies moving to a bigger size bracket.
+- Sells to SMBs in Brazil, Mexico, Colombia, Argentina, Chile, Ecuador or the Dominican Republic (accounting, banking, payroll, POS, insurance, small-business software) → public_registry { event: "new_companies", window_days: 60 } (companies incorporated in the window, straight from the official registry: Apollo barely has them) + public_registry { event: "size_change" } for companies moving to a bigger size bracket.
 - Sells cybersecurity → news on breaches/regulatory fines in the target countries, hiring for CISO / security analyst, technographics using_any ["wordpress_org","woocommerce"] (self-hosted stacks that get breached).
 
 Rules:

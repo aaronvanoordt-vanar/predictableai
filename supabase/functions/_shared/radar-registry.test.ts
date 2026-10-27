@@ -125,7 +125,7 @@ Deno.test("sin país con registro: el detector queda 'no está configurado'", as
   const detector: DetectorRow = { id: "d", user_id: "u", kind: "public_registry", name: "R", config: {}, cursor: {}, weight: 60 };
   let msg = "";
   try {
-    await runTick({ supa: {}, detector, ctx: ctx(), countries: ["Peru"], apollo: null, engine: "claude" as TickContext["engine"], knownNames: [], log: () => {} });
+    await runTick({ supa: {}, detector, ctx: ctx(), countries: ["Bolivia"], apollo: null, engine: "claude" as TickContext["engine"], knownNames: [], log: () => {} });
   } catch (e) { msg = (e as Error).message; }
   assert(/no está configurad/.test(msg), msg);
 });
