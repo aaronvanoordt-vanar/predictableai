@@ -2836,9 +2836,31 @@
    * No hay plantillas predeterminadas: cada paso de WhatsApp de una campaña
    * elige la suya en el asistente.
    */
+  var tplPoll = null;
+  /**
+   * Mientras la pestaña de WhatsApp está abierta y alguna plantilla espera a
+   * Meta, relee el estado (el servidor refresca el catálogo cada pocos minutos,
+   * campaign-run) y repinta solo si cambió algún estado: sin «Sincronizar».
+   */
+  function watchTemplateStatus(api) {
+    if (tplPoll) { clearInterval(tplPoll); tplPoll = null; }
+    var pending = templateCatalogue().some(function (t) { return !tplIsApproved(t.status) && !tplIsDead(t.status); });
+    if (!pending) return;
+    var sig = function () { return templateCatalogue().map(function (t) { return t.name + ':' + t.status; }).join('|'); };
+    tplPoll = setInterval(function () {
+      if (!global.document.body.contains(api.body)) { clearInterval(tplPoll); tplPoll = null; return; }
+      if (global.document.hidden) return;
+      var before = sig();
+      loadStatus().then(function () {
+        if (sig() !== before && global.document.body.contains(api.body)) renderWhatsAppDetails(api);
+      });
+    }, 60000);
+  }
+
   function renderWhatsAppDetails(api) {
     var body = api.body;
     body.innerHTML = '';
+    watchTemplateStatus(api);
     var cfg = watiCfg();
     var ws = waState();
     var sender = cfg.sender || {};
@@ -2853,7 +2875,7 @@
 
     body.appendChild(h('div', {
       class: 'pros-hint',
-      text: 'Estas son tus plantillas en WhatsApp. En cada paso de WhatsApp de una campaña eliges cuál se envía. Meta revisa cada plantilla nueva en minutos u horas y solo se envían las APROBADAS. "Sincronizar" trae las que Meta ya revisó.',
+      text: 'Estas son tus plantillas en WhatsApp. En cada paso de WhatsApp de una campaña eliges cuál se envía. Meta revisa cada plantilla nueva en minutos u horas y solo se envían las APROBADAS. El estado se actualiza solo cada pocos minutos; "Sincronizar" lo fuerza al instante.',
     }));
 
     // ── 1. Catálogo completo del tenant ────────────────────────────────────

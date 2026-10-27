@@ -247,22 +247,6 @@ interface Sender { name: string; role: string; company: string; }
 
 // ── Catálogo de plantillas, webhook y borrado ───────────────────────────────
 
-/** Fila del catálogo tal como se guarda en config (sin campos que no usamos). */
-function trimTemplate(t: wati.WatiTemplate) {
-  return {
-    id: t.id,
-    name: t.name,
-    status: t.status || "PENDING",
-    category: t.category,
-    language: t.language,
-    body: String(t.body ?? "").slice(0, 1024),
-    footer: t.footer,
-    quality: t.quality,
-    buttons: t.buttons.slice(0, 5),
-    last_modified: t.last_modified,
-  };
-}
-
 /**
  * La API de WATI SOLO permite crear webhooks: no hay GET para listarlos ni
  * DELETE para reemplazarlos (405, comprobado el 2026-09-14), y el tenant tiene
@@ -341,7 +325,7 @@ async function saveWatiSync(db: SupabaseClient, acc: Json): Promise<Json> {
   // para los pasos que aún no tienen plantilla elegida.
   set.templates = {
     ...prevT,
-    all: catalogue ? catalogue.map(trimTemplate) : (prevT.all ?? []),
+    all: catalogue ? catalogue.map(wati.trimTemplate) : (prevT.all ?? []),
     catalogue_error: catalogueError,
     error: null,
     synced_at: new Date().toISOString(),
@@ -890,7 +874,7 @@ Deno.serve(async (req) => {
       const prevT: Json = prev?.config?.templates ?? {};
       const templates: Json = {
         ...(prevT.items ? { items: prevT.items } : {}),
-        all: catalogue ? catalogue.map(trimTemplate) : (prevT.all ?? []),
+        all: catalogue ? catalogue.map(wati.trimTemplate) : (prevT.all ?? []),
         catalogue_error: catalogueError,
         error: null,
         synced_at: new Date().toISOString(),

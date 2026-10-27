@@ -1923,10 +1923,12 @@ Deno.serve(async (req) => {
   try { receipts = await reconcileReceiptsAll(ctx, loopStarted + 110_000); } catch (e) { console.error("[campaign-run] wati receipts:", e); }
   let metaChecked = 0;
   try { metaChecked = await refreshMetaAll(ctx, loopStarted + 120_000); } catch (e) { console.error("[campaign-run] meta quality:", e); }
+  let templatesRefreshed = 0;
+  try { templatesRefreshed = await refreshWatiTemplatesAll(ctx, loopStarted + 125_000); } catch (e) { console.error("[campaign-run] wati templates:", e); }
   let watiSynced = 0;
   // Lo que quede del presupuesto (~150 s del Edge Runtime) para el historial de WATI.
   try { watiSynced = await syncWatiHistoryAll(ctx, loopStarted + 130_000); } catch (e) { console.error("[campaign-run] wati history sync:", e); }
-  return json({ ok: true, due: due?.length ?? 0, processed, prepared, dripify_synced: synced, email_synced: emailSynced, wati_receipts: receipts, wati_history_synced: watiSynced, meta_checked: metaChecked });
+  return json({ ok: true, due: due?.length ?? 0, processed, prepared, dripify_synced: synced, email_synced: emailSynced, wati_receipts: receipts, templates_refreshed: templatesRefreshed, wati_history_synced: watiSynced, meta_checked: metaChecked });
 });
 
 // ── Recibos de WhatsApp ─────────────────────────────────────────────────────
@@ -1953,6 +1955,9 @@ async function reconcileReceiptsAll(ctx: Ctx, deadline: number): Promise<number>
 
 const META_PHONE_CHECK_MS = 60 * 60 * 1000;
 const META_TEMPLATES_CHECK_MS = 6 * 60 * 60 * 1000;
+// Con plantillas en revisión se relee cada pocos minutos: así el «Aprobada» de
+// Meta aparece solo, sin pulsar «Sincronizar» en Canales.
+const TEMPLATES_PENDING_CHECK_MS = 3 * 60 * 1000;
 
 async function refreshMetaAll(ctx: Ctx, deadline: number): Promise<number> {
   const { data: accounts } = await ctx.db.from("channel_accounts").select("id, user_id, provider, status, secret, config").eq("provider", "meta").eq("status", "connected");
@@ -1961,7 +1966,8 @@ async function refreshMetaAll(ctx: Ctx, deadline: number): Promise<number> {
     if (Date.now() > deadline - 5_000) break;
     const at = acc.config?.meta_sync ?? {};
     const phone = ctx.now.getTime() - (Date.parse(at.phone_at ?? "") || 0) >= META_PHONE_CHECK_MS;
-    const templates = ctx.now.getTime() - (Date.parse(at.templates_at ?? "") || 0) >= META_TEMPLATES_CHECK_MS;
+    const every = wati.hasPendingTemplates(acc.config?.templates?.all) ? TEMPLATES_PENDING_CHECK_MS : META_TEMPLATES_CHECK_MS;
+    const templates = ctx.now.getTime() - (Date.parse(at.templates_at ?? "") || 0) >= every;
     if (!phone && !templates) continue;
     await patchChannelConfig(ctx.db, acc.id, {
       meta_sync: { ...at, ...(phone ? { phone_at: ctx.now.toISOString() } : {}), ...(templates ? { templates_at: ctx.now.toISOString() } : {}) },
@@ -1971,6 +1977,33 @@ async function refreshMetaAll(ctx: Ctx, deadline: number): Promise<number> {
       n++;
     } catch (e) {
       console.error("[campaign-run] meta sync", acc.id, (e as Error)?.message ?? e);
+    }
+  }
+  return n;
+}
+
+// ── Catálogo de plantillas de WATI ──────────────────────────────────────────
+// Meta aprueba en minutos u horas y WATI no avisa: cada 3 min si hay alguna en
+// revisión, cada 6 h si no. Solo el catálogo (config.templates), con
+// patchChannelConfig; el resto de la sincronización (números, webhook) sigue
+// siendo del botón «Sincronizar».
+
+async function refreshWatiTemplatesAll(ctx: Ctx, deadline: number): Promise<number> {
+  const { data: accounts } = await ctx.db.from("channel_accounts").select("id, user_id, status, secret, config").eq("provider", "wati").eq("status", "connected");
+  let n = 0;
+  for (const acc of (accounts ?? []) as Json[]) {
+    if (Date.now() > deadline - 5_000) break;
+    const prevT: Json = acc.config?.templates ?? {};
+    const every = wati.hasPendingTemplates(prevT.all) ? TEMPLATES_PENDING_CHECK_MS : META_TEMPLATES_CHECK_MS;
+    if (ctx.now.getTime() - (Date.parse(prevT.synced_at ?? "") || 0) < every) continue;
+    try {
+      const list = await wati.listTemplates({ endpoint: acc.config?.endpoint, token: acc.secret });
+      await patchChannelConfig(ctx.db, acc.id, { templates: { ...prevT, all: list.map(wati.trimTemplate), catalogue_error: null, error: null, synced_at: ctx.now.toISOString() } });
+      n++;
+    } catch (e) {
+      // Se sella igual para no reintentar en cada pasada; el botón muestra el error.
+      await patchChannelConfig(ctx.db, acc.id, { templates: { ...prevT, synced_at: ctx.now.toISOString() } });
+      console.error("[campaign-run] wati templates", acc.id, (e as Error)?.message ?? e);
     }
   }
   return n;

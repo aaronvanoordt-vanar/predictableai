@@ -923,3 +923,24 @@ export function humanError(err: unknown): string {
   }
   return (err as Error)?.message || String(err);
 }
+
+/** Fila del catálogo tal como se guarda en config (sin campos que no usamos). */
+export function trimTemplate(t: WatiTemplate) {
+  return {
+    id: t.id,
+    name: t.name,
+    status: t.status || "PENDING",
+    category: t.category,
+    language: t.language,
+    body: String(t.body ?? "").slice(0, 1024),
+    footer: t.footer,
+    quality: t.quality,
+    buttons: t.buttons.slice(0, 5),
+    last_modified: t.last_modified,
+  };
+}
+
+/** ¿Alguna plantilla del catálogo sigue esperando el veredicto de Meta? */
+export function hasPendingTemplates(all: Array<{ status?: string | null }> | null | undefined): boolean {
+  return (all ?? []).some((t) => !isTemplateApproved(t.status) && !isTemplateDead(t.status));
+}
