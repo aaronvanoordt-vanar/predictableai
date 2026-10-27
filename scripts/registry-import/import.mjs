@@ -133,10 +133,21 @@ async function discover(src) {
 }
 
 async function download(url, dir) {
-  const res = await fetchWhy(url, { headers: { "User-Agent": UA, Accept: "*/*" }, redirect: "follow" });
-  if (!res.ok || !res.body) throw new Error(`${url} → HTTP ${res.status}`);
   const file = join(dir, "data-" + Date.now() + "-" + (url.split("/").pop() || "f").replace(/[^\w.-]/g, "_").slice(0, 80));
-  await pipeline(Readable.fromWeb(res.body), createWriteStream(file));
+  // fetchWhy reintenta si no hay respuesta; un portal que corta a mitad de la
+  // descarga ("terminated", DGII) se reintenta aquí, desde el principio.
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetchWhy(url, { headers: { "User-Agent": UA, Accept: "*/*" }, redirect: "follow" });
+    if (!res.ok || !res.body) throw new Error(`${url} → HTTP ${res.status}`);
+    try {
+      await pipeline(Readable.fromWeb(res.body), createWriteStream(file));
+      break;
+    } catch (e) {
+      if (attempt >= 4) throw new Error(`${url} → descarga cortada: ${e.message}`);
+      console.log(`  ${url} → descarga cortada (${e.message}); reintento ${attempt}/3 en ${10 * attempt} s`);
+      await new Promise((r) => setTimeout(r, 10000 * attempt));
+    }
+  }
   const head = Buffer.alloc(4);
   const fd = openSync(file, "r");
   readSync(fd, head, 0, 4, 0);
