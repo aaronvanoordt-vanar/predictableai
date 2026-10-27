@@ -52,13 +52,26 @@ if (!keys.length) {
 }
 
 // ── red ─────────────────────────────────────────────────────────────────────
-/** fetch con el motivo real del fallo de red (TLS, DNS, conexión) en vez de un "fetch failed" a secas. */
+/**
+ * fetch con el motivo real del fallo de red (TLS, DNS, conexión) en vez de un
+ * "fetch failed" a secas, y hasta 4 intentos ante un corte o un 5xx/429: los
+ * portales públicos (catalogodatos.gub.uy, por ejemplo) se caen a ratos.
+ */
 async function fetchWhy(url, init) {
-  try {
-    return await fetch(url, init);
-  } catch (e) {
-    const c = e?.cause;
-    throw new Error(`${url} → ${e.message}${c ? ` (${c.code || ""} ${c.message || c})` : ""}`);
+  for (let attempt = 1; ; attempt++) {
+    let res = null, err = null;
+    try { res = await fetch(url, init); } catch (e) { err = e; }
+    const transient = err || (res && (res.status >= 500 || res.status === 429));
+    if (!transient || attempt >= 4) {
+      if (err) {
+        const c = err?.cause;
+        throw new Error(`${url} → ${err.message}${c ? ` (${c.code || ""} ${c.message || c})` : ""}`);
+      }
+      return res;
+    }
+    console.log(`  ${url} → ${err ? "sin respuesta" : "HTTP " + res.status}; reintento ${attempt}/3 en ${5 * attempt} s`);
+    try { await res?.body?.cancel(); } catch { /* nada que liberar */ }
+    await new Promise((r) => setTimeout(r, 5000 * attempt));
   }
 }
 
