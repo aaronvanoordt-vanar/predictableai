@@ -6,7 +6,7 @@
 // normaliza la razón social (la búsqueda compara contra name_norm).
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
-  createRowParser, detectDelimiter, finishRow, isoDate, looksLikeHeader, normCompanyName as importNorm, resolveColumns, rowObject,
+  createRowParser, dedupeBatch, detectDelimiter, finishRow, isoDate, looksLikeHeader, normCompanyName as importNorm, resolveColumns, rowObject,
   siiSizeBucket, SOURCES, sourcesFor, splitActivity,
 } from "../../../scripts/registry-import/map.mjs";
 import { normCompanyName, normTaxId, REGISTRIES, type RegistryId } from "./registries.ts";
@@ -135,4 +135,23 @@ Deno.test("Perú, Ecuador, Rep. Dominicana y Paraguay: solo personas jurídicas"
   const py = SOURCES.dnit.columns;
   assertEquals(mapRow("dnit", py, ["80012345", "ACME SA", "6", "", "ACTIVO"])!.tax_id, "800123456");
   assertEquals(mapRow("dnit", py, ["1234567", "PEREZ, JUAN", "1", "", "ACTIVO"]), null);
+});
+
+Deno.test("un lote nunca lleva dos veces la misma empresa (ON CONFLICT no lo admite)", () => {
+  const out = dedupeBatch([
+    { registry: "rns", registry_id: "30712345678", legal_name: "ACME S.A.", city: "" },
+    { registry: "rns", registry_id: "30712345678", legal_name: "ACME SA", city: "ROSARIO" },
+    { registry: "dgii", registry_id: "30712345678", legal_name: "OTRA SRL" },
+  ]);
+  assertEquals(out.length, 2);
+  assertEquals(out[0], { registry: "rns", registry_id: "30712345678", legal_name: "ACME S.A.", city: "ROSARIO" });
+});
+
+Deno.test("«S/D» es un dato vacío y el nombre comercial igual a la razón social no se repite", () => {
+  const h = ["RUT", "Denominación Social", "Nombre comercial", "Departamento Estab. Principal"];
+  const a = mapRow("dei", h, ["213534080019", "SINDATEL SA", "SINDATEL S.A.", "S/D"])!;
+  assertEquals(a.region, "");
+  assertEquals(a.name_norm, "sindatel");
+  const b = mapRow("dei", h, ["219577980010", "OEHLER IT SAS", "S/D", "MONTEVIDEO"])!;
+  assertEquals([b.trade_name, b.name_norm], ["", "oehler it"]);
 });
