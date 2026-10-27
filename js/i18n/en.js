@@ -7023,4 +7023,5 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Convertimos el playbook de Eleva en una plataforma: lo que tu equipo hace hoy con cinco herramientas, la IA lo hace en una sola. Construida sobre los modelos de Claude.": "We turned Eleva's playbook into a platform: what your team does today with five tools, the AI does in one. Built on Claude models.",
   "Respaldados por Vanar, la plataforma corporativa que aporta el capital, la tecnología y las operaciones para convertir un servicio probado en producto.": "Backed by Vanar, the corporate platform that provides the capital, technology and operations to turn a proven service into a product.",
   "Sigue bajando: cada función se enciende al pasar.": "Keep scrolling: each feature lights up as you pass.",
+  "El Registro Mercantil solo publica estadísticas agregadas; el listado de sociedades del catálogo nacional no se puede descargar de forma automática.": "The Commercial Registry only publishes aggregate statistics; the national catalog's company list can't be downloaded automatically.",
 });

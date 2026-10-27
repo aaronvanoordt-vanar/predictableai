@@ -22,7 +22,7 @@ on:
         description: 'Registro a importar'
         required: true
         type: choice
-        options: [rns, sii, sunat, sri, dgii, rmgt, dei, dnit]
+        options: [rns, sii, sunat, sri, dgii, dei, dnit]
       url:
         description: 'Opcional: enlace directo al archivo (si el portal cambió la dirección)'
         required: false
@@ -46,7 +46,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        registry: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.registry)) || fromJSON('["rns","sii","sunat","sri","dgii","rmgt","dei","dnit"]') }}
+        registry: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.registry)) || fromJSON('["rns","sii","sunat","sri","dgii","dei","dnit"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

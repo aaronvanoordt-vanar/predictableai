@@ -179,6 +179,13 @@ export const PE_DEPARTMENTS = {
   "22": "San Martín", "23": "Tacna", "24": "Tumbes", "25": "Ucayali",
 };
 
+// Regiones de Chile por número (el Registro de Empresas y Sociedades las trae así).
+export const CL_REGIONS = {
+  "1": "Tarapacá", "2": "Antofagasta", "3": "Atacama", "4": "Coquimbo", "5": "Valparaíso", "6": "O'Higgins", "7": "Maule",
+  "8": "Biobío", "9": "La Araucanía", "10": "Los Lagos", "11": "Aysén", "12": "Magallanes", "13": "Metropolitana",
+  "14": "Los Ríos", "15": "Arica y Parinacota", "16": "Ñuble",
+};
+
 /** Tramo de ventas del SII (1–13) → tamaño. 2–4 micro, 5–7 pequeña, 8–9 mediana, 10–13 grande; 1 = sin ventas. */
 export function siiSizeBucket(tramo) {
   const n = Number(digits(tramo));
@@ -308,7 +315,7 @@ export const SOURCES = {
       return {
         registry_id: raw, tax_id: raw, legal_name: r.name,
         founded_on: isoDate(r.date), founded_label: "Constitución (Registro de Empresas y Sociedades)",
-        status_detail: r.kind, city: r.comuna, region: r.region,
+        status_detail: r.kind, city: r.comuna, region: CL_REGIONS[String(Number(digits(r.region)) || "")] || r.region,
         source_url: "https://datos.gob.cl/dataset/registro-de-empresas-y-sociedades",
       };
     },
@@ -402,33 +409,6 @@ export const SOURCES = {
         founded_on: date, founded_label: "Inicio de operaciones",
         status: /^ACTIVO/i.test(status) ? "active" : status ? "inactive" : "unknown", status_detail: [status, r.regime].filter(Boolean).join(" · "),
         source_url: "https://dgii.gov.do/herramientas/consultas/Paginas/RNC.aspx",
-      };
-    },
-  },
-
-  rmgt: {
-    registry: "rmgt", country: "Guatemala", activity_system: "local",
-    title: "Sociedades inscritas en el Registro Mercantil (MINECO)",
-    // El catálogo catalogo.senacyt.gob.gt responde 403 a los servidores de GitHub: se usa la página de datos del Registro Mercantil.
-    discover: { type: "page", url: "https://principal.registromercantil.gob.gt/datos-estadisticos/", link: /\.(csv|zip)(\?|$)/i },
-    pick: /sociedad|empresa|inscri/i,
-    fields: {
-      nit: ["nit"], reg: ["numero_de_registro", "registro", "no_registro", "expediente", "numero_registro"],
-      name: ["nombre_de_la_sociedad", "nombre_sociedad", "razon_social", "denominacion", "nombre"],
-      trade: ["nombre_comercial"], date: ["fecha_de_inscripcion", "fecha_inscripcion", "fecha"], type: ["tipo_de_sociedad", "tipo_sociedad", "tipo"],
-      activity: ["actividad", "actividad_economica", "objeto"], dept: ["departamento"], muni: ["municipio"],
-    },
-    required: ["name"],
-    map(r) {
-      const nit = String(r.nit || "").toUpperCase().replace(/[^0-9K]/g, "");
-      const reg = digits(r.reg);
-      const id = nit || (reg ? `reg-${reg}` : "");
-      if (!id) return null;
-      return {
-        registry_id: id, tax_id: nit, legal_name: r.name, trade_name: r.trade,
-        activity_description: r.activity, founded_on: isoDate(r.date), founded_label: "Inscripción en el Registro Mercantil",
-        status_detail: r.type, city: r.muni, region: r.dept,
-        source_url: "https://catalogo.senacyt.gob.gt/dataset/sociedades-inscritas-en-registro-mercantil",
       };
     },
   },

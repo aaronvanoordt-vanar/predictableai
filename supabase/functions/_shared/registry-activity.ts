@@ -8,8 +8,8 @@
  *     su adaptación "CIIU4.CL 2012" de 6 dígitos.
  *   - SCIAN 2018/2023 (México, INEGI), 6 dígitos.
  *   - "local": catálogos propios que no se pudieron confirmar como derivados
- *     de la CIIU Rev. 4 (DGII de República Dominicana, Registro Mercantil de
- *     Guatemala) o registros que no publican actividad (SUNAT, DNIT). Se
+ *     de la CIIU Rev. 4 (DGII de República Dominicana) o registros que no
+ *     publican actividad (SUNAT, DNIT). Se
  *     muestra la descripción oficial y se filtra por código, pero no se
  *     traduce a industrias del ICP: no se adivina.
  *

@@ -11,7 +11,7 @@
  *   Colombia Registro mercantil de Confecámaras (datos.gov.co) — gratis.
  *            Sin tamaño; solo personas jurídicas.
  *   Resto    (2026-10-27) Argentina, Chile, Perú, Ecuador, República
- *            Dominicana, Guatemala, Uruguay y Paraguay: archivos abiertos
+ *            Dominicana, Uruguay y Paraguay: archivos abiertos
  *            importados a Postgres (gratis). Qué filtro aplica en cada uno
  *            sale de `can` en company-registry status; los países que no
  *            publican su registro se nombran con el motivo.
@@ -39,14 +39,13 @@
     { value: 'Chile', label: 'Chile', registry: 'sii', activity: 'Actividad SII', tax: 'RUT' },
     { value: 'Colombia', label: 'Colombia', registry: 'rues', activity: 'CIIU', tax: 'NIT' },
     { value: 'Ecuador', label: 'Ecuador', registry: 'sri', activity: 'CIIU', tax: 'RUC' },
-    { value: 'Guatemala', label: 'Guatemala', registry: 'rmgt', activity: 'Actividad', tax: 'NIT' },
     { value: 'Mexico', label: 'México', registry: 'denue', activity: 'SCIAN', tax: '' },
     { value: 'Paraguay', label: 'Paraguay', registry: 'dnit', activity: 'Actividad', tax: 'RUC' },
     { value: 'Peru', label: 'Perú', registry: 'sunat', activity: 'Actividad', tax: 'RUC' },
     { value: 'Dominican Republic', label: 'República Dominicana', registry: 'dgii', activity: 'Actividad', tax: 'RNC' },
     { value: 'Uruguay', label: 'Uruguay', registry: 'dei', activity: 'CIIU', tax: 'RUT' },
   ];
-  var UNAVAILABLE_LABEL = { Bolivia: 'Bolivia', Venezuela: 'Venezuela', Panama: 'Panamá', 'El Salvador': 'El Salvador', Honduras: 'Honduras', Nicaragua: 'Nicaragua', 'Costa Rica': 'Costa Rica' };
+  var UNAVAILABLE_LABEL = { Bolivia: 'Bolivia', Venezuela: 'Venezuela', Panama: 'Panamá', 'El Salvador': 'El Salvador', Honduras: 'Honduras', Nicaragua: 'Nicaragua', 'Costa Rica': 'Costa Rica', Guatemala: 'Guatemala' };
   // Mismo catálogo que BR_STATES / MX_STATES de supabase/functions/_shared/registries.ts.
   var BR_STATES = { AC: 'Acre', AL: 'Alagoas', AP: 'Amapá', AM: 'Amazonas', BA: 'Bahia', CE: 'Ceará', DF: 'Distrito Federal', ES: 'Espírito Santo', GO: 'Goiás', MA: 'Maranhão', MT: 'Mato Grosso', MS: 'Mato Grosso do Sul', MG: 'Minas Gerais', PA: 'Pará', PB: 'Paraíba', PR: 'Paraná', PE: 'Pernambuco', PI: 'Piauí', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte', RS: 'Rio Grande do Sul', RO: 'Rondônia', RR: 'Roraima', SC: 'Santa Catarina', SP: 'São Paulo', SE: 'Sergipe', TO: 'Tocantins' };
   var MX_STATES = { '01': 'Aguascalientes', '02': 'Baja California', '03': 'Baja California Sur', '04': 'Campeche', '05': 'Coahuila', '06': 'Colima', '07': 'Chiapas', '08': 'Chihuahua', '09': 'Ciudad de México', '10': 'Durango', '11': 'Guanajuato', '12': 'Guerrero', '13': 'Hidalgo', '14': 'Jalisco', '15': 'Estado de México', '16': 'Michoacán', '17': 'Morelos', '18': 'Nayarit', '19': 'Nuevo León', '20': 'Oaxaca', '21': 'Puebla', '22': 'Querétaro', '23': 'Quintana Roo', '24': 'San Luis Potosí', '25': 'Sinaloa', '26': 'Sonora', '27': 'Tabasco', '28': 'Tamaulipas', '29': 'Tlaxcala', '30': 'Veracruz', '31': 'Yucatán', '32': 'Zacatecas' };

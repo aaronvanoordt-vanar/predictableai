@@ -5,8 +5,8 @@
  * (Listas → Investigación → «Datos de registro»). Brasil (CNPJ), México
  * (DENUE) y Colombia (registro mercantil en datos.gov.co) en vivo; el resto
  * de Latam, desde los archivos abiertos importados a `registry_companies`
- * (Argentina, Chile, Perú, Ecuador, República Dominicana, Guatemala, Uruguay
- * y Paraguay). La lógica vive en `_shared/registries.ts` (pura, `deno test`)
+ * (Argentina, Chile, Perú, Ecuador, República Dominicana, Uruguay y
+ * Paraguay). La lógica vive en `_shared/registries.ts` (pura, `deno test`)
  * y `_shared/registry-fetch.ts`. Investigación de cada registro, licencias y
  * los países que no publican el suyo en docs/REGISTROS.md.
  *

@@ -7173,4 +7173,5 @@ window.I18N_DICTS['pt-BR'] = {
   "Convertimos el playbook de Eleva en una plataforma: lo que tu equipo hace hoy con cinco herramientas, la IA lo hace en una sola. Construida sobre los modelos de Claude.": "Transformamos o playbook da Eleva em uma plataforma: o que sua equipe faz hoje com cinco ferramentas, a IA faz em uma só. Construída sobre os modelos do Claude.",
   "Respaldados por Vanar, la plataforma corporativa que aporta el capital, la tecnología y las operaciones para convertir un servicio probado en producto.": "Apoiados pela Vanar, a plataforma corporativa que fornece o capital, a tecnologia e as operações para transformar um serviço comprovado em produto.",
   "Sigue bajando: cada función se enciende al pasar.": "Continue descendo: cada função se acende ao passar.",
+  "El Registro Mercantil solo publica estadísticas agregadas; el listado de sociedades del catálogo nacional no se puede descargar de forma automática.": "O Registro Mercantil só publica estatísticas agregadas; a lista de sociedades do catálogo nacional não pode ser baixada de forma automática.",
 };

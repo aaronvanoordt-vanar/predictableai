@@ -25,11 +25,11 @@
  *            buscan ahí (kind "import"): Argentina (Registro Nacional de
  *            Sociedades), Chile (SII + Registro de Empresas y Sociedades),
  *            Perú (padrón RUC de SUNAT), Ecuador (catastro RUC del SRI),
- *            República Dominicana (RNC de la DGII), Guatemala (Registro
- *            Mercantil), Uruguay (Directorio de Empresas Industriales) y
- *            Paraguay (RUC de la DNIT, solo ficha). Bolivia, Venezuela,
- *            Panamá, El Salvador, Honduras, Nicaragua y Costa Rica no
- *            publican su registro de forma legal y legible: no están.
+ *            República Dominicana (RNC de la DGII), Uruguay (Directorio de
+ *            Empresas Industriales) y Paraguay (RUC de la DNIT, solo ficha).
+ *            Bolivia, Venezuela, Panamá, El Salvador, Honduras, Nicaragua,
+ *            Costa Rica y Guatemala no publican su registro de forma legal y
+ *            legible: no están.
  *
  * Reglas: nunca se inventa un dato que el registro no trae (campo vacío, no
  * estimado); de los socios solo entran nombre, cargo y fecha de ingreso —
@@ -42,17 +42,17 @@ import { type ActivitySystem, activityDigits, industriesForActivity } from "./re
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
-export type RegistryId = "cnpj" | "denue" | "rues" | "rns" | "sii" | "sunat" | "sri" | "dgii" | "rmgt" | "dei" | "dnit";
+export type RegistryId = "cnpj" | "denue" | "rues" | "rns" | "sii" | "sunat" | "sri" | "dgii" | "dei" | "dnit";
 export type RegistryCountry =
   | "Brazil" | "Mexico" | "Colombia" | "Argentina" | "Chile" | "Peru" | "Ecuador"
-  | "Dominican Republic" | "Guatemala" | "Uruguay" | "Paraguay";
+  | "Dominican Republic" | "Uruguay" | "Paraguay";
 export type SizeBucket = "micro" | "small" | "medium" | "large";
 export type CompanyStatus = "active" | "inactive" | "unknown";
 
 export const REGISTRY_BY_COUNTRY: Record<RegistryCountry, RegistryId> = {
   Brazil: "cnpj", Mexico: "denue", Colombia: "rues",
   Argentina: "rns", Chile: "sii", Peru: "sunat", Ecuador: "sri",
-  "Dominican Republic": "dgii", Guatemala: "rmgt", Uruguay: "dei", Paraguay: "dnit",
+  "Dominican Republic": "dgii", Uruguay: "dei", Paraguay: "dnit",
 };
 
 /** Países de Latam sin registro de empresas publicado de forma legal y legible (docs/REGISTROS.md). */
@@ -64,6 +64,7 @@ export const REGISTRY_UNAVAILABLE: Record<string, string> = {
   Honduras: "El Registro Mercantil no publica datos abiertos ni API.",
   Nicaragua: "El Registro Público Mercantil no publica datos abiertos ni API.",
   "Costa Rica": "Hacienda no publica un archivo ni una API documentada del registro de empresas.",
+  Guatemala: "El Registro Mercantil solo publica estadísticas agregadas; el listado de sociedades del catálogo nacional no se puede descargar de forma automática.",
 };
 
 export interface RegistryMeta {
@@ -143,13 +144,6 @@ export const REGISTRIES: Record<RegistryId, RegistryMeta> = {
     can: { search: true, lookup_tax_id: true, lookup_name: true, lookup_domain: false, founded: true, size: false, partners: false, contact: false },
     env: "", kind: "import",
     license: "Descarga pública de la DGII. Solo empresas (RNC de 9 dígitos); las cédulas de personas se descartan.",
-  },
-  rmgt: {
-    id: "rmgt", country: "Guatemala", label: "Registro Mercantil · MINECO", source: "Sociedades inscritas en el Registro Mercantil (Ministerio de Economía, datos abiertos)",
-    system: "local", activity_label: "Actividad", tax_id_label: "NIT",
-    can: { search: true, lookup_tax_id: true, lookup_name: true, lookup_domain: false, founded: true, size: false, partners: false, contact: false },
-    env: "", kind: "import",
-    license: "Datos abiertos del Ministerio de Economía de Guatemala (CC0). Solo sociedades.",
   },
   dei: {
     id: "dei", country: "Uruguay", label: "Directorio de Empresas Industriales · MIEM", source: "Directorio de Empresas Industriales del MIEM (catalogodatos.gub.uy)",
@@ -818,13 +812,13 @@ export function isImportedRegistry(id: unknown): boolean {
 }
 
 /**
- * Identificador fiscal comparable: solo dígitos (y la K del RUT chileno y del NIT guatemalteco).
+ * Identificador fiscal comparable: solo dígitos (y la K del RUT chileno).
  * Es como lo guarda el importador y como se busca: "30-71234567-8" → "30712345678",
  * "76.123.456-k" → "76123456K".
  */
 export function normTaxId(country: unknown, v: unknown): string {
   const t = String(v ?? "").toUpperCase();
-  return country === "Chile" || country === "Guatemala" ? t.replace(/[^0-9K]/g, "") : t.replace(/\D/g, "");
+  return country === "Chile" ? t.replace(/[^0-9K]/g, "") : t.replace(/\D/g, "");
 }
 
 /** Para mostrar: CUIT 30-71234567-8, RUT 76123456-K; el resto tal cual. */
