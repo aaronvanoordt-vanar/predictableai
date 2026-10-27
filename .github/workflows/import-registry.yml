@@ -7,7 +7,9 @@
 #     un enlace al archivo si el portal lo movió, y si solo quieres probar
 #     (dry run: descarga, lee y mapea sin escribir). Requiere la migración
 #     20261027200000_registry_companies.sql aplicada.
-#   · Mensual: refresca todos los registros importados (el 3 de cada mes), de a uno.
+#   · Sin corrida mensual por ahora: el 2026-10-27 la carga llenó el disco de
+#     la base de producción. Vuelve cuando haya un plan de almacenamiento
+#     (disco más grande o una base aparte); ver docs/REGISTROS.md.
 #   · En cada PR que toca el importador: dry run de todos los registros con un
 #     tope de filas, para ver contra los archivos reales que el mapeo sirve.
 #
@@ -31,8 +33,6 @@ on:
         description: 'Solo probar (no escribe en la base)'
         type: boolean
         default: false
-  schedule:
-    - cron: '17 6 3 * *'
   pull_request:
     paths:
       - 'scripts/registry-import/**'
