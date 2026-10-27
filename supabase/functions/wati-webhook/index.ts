@@ -47,6 +47,7 @@
  * Siempre responde 200.
  */
 
+import { sharedContactText } from "../_shared/shared-contact.ts";
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as wati from "../_shared/wati.ts";
 import { findMemberByPhone, ownerElsewhere } from "../_shared/wati-history.ts";
@@ -77,6 +78,7 @@ function inboundText(ev: Json): string {
   // del archivo (…/showFile?fileName=…), que no es texto del lead.
   if (ev?.text && !wati.mediaFileName(ev.text)) return String(ev.text);
   if (btn) return String(btn);
+  if (String(ev?.type ?? "") === "contacts") return sharedContactText(ev?.contacts, ev?.data, ev?.text);
   const label: Record<string, string> = {
     image: "📷 Foto", video: "🎬 Video", audio: "🎤 Audio", voice: "🎤 Audio",
     document: "📄 Documento", location: "📍 Ubicación", sticker: "Sticker", contacts: "👤 Contacto", reaction: "Reacción",

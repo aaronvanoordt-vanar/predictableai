@@ -30,6 +30,7 @@
  *    cuerpo crudo con el app secret>`.
  */
 
+import { sharedContactText } from "./shared-contact.ts";
 import * as policy from "./wati.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -536,6 +537,7 @@ export function toWaMessage(m: Json, profileName?: string | null): WaMessage {
   else if (reaction) text = reaction.emoji || "Reacción quitada";
   else if (buttonText) text = String(buttonText);
   else if (media?.caption) text = String(media.caption);
+  else if (type === "contacts") text = sharedContactText(m?.contacts);
   else text = LABEL[type] || (type === "unsupported" ? "Mensaje no compatible" : "Mensaje");
   return {
     wamid: String(m?.id ?? ""),
