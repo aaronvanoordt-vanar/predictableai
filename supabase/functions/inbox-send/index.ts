@@ -706,7 +706,7 @@ async function sendEmail(db: SupabaseClient, userId: string, member: Json, text:
 
 // ── Medios (entrantes y salientes) ────────────────────────────────────────────
 
-async function serveMedia(db: SupabaseClient, userId: string, id: string, cors: Record<string, string>): Promise<Response> {
+async function serveMedia(db: SupabaseClient, userId: string, id: string, cors: Record<string, string>, index = 0): Promise<Response> {
   if (!UUID_RE.test(id)) return json({ error: "id inválido" }, 400, cors);
   const { data: msg } = await db
     .from("inbox_messages")
@@ -715,6 +715,7 @@ async function serveMedia(db: SupabaseClient, userId: string, id: string, cors: 
   if (!msg) return json({ error: "El mensaje no existe o no es tuyo." }, 404, cors);
   const pl = msg.payload ?? {};
   const type = String(pl.type ?? "");
+  if (msg.channel === "linkedin" && msg.provider === "unipile") return await serveLinkedinMedia(db, userId, msg, cors, index);
   if (msg.channel !== "whatsapp" || !["wati", "meta"].includes(msg.provider) || !wati.isMediaType(type)) {
     return json({ error: "not_media", message: "Este mensaje no trae un archivo." }, 400, cors);
   }
@@ -766,6 +767,48 @@ async function serveMedia(db: SupabaseClient, userId: string, id: string, cors: 
       "Access-Control-Expose-Headers": "Content-Type",
     },
   });
+}
+
+/**
+ * Archivo de un mensaje de LinkedIn (cuenta propia, Unipile). Los adjuntos
+ * vienen en el aviso; un mensaje viejo o uno que se envió desde aquí no los
+ * trae, así que se leen del mensaje en Unipile y se recuerdan en el payload.
+ */
+async function serveLinkedinMedia(db: SupabaseClient, userId: string, msg: Json, cors: Record<string, string>, index: number): Promise<Response> {
+  const env = unipile.unipileEnv();
+  if (!env) return json({ error: "linkedin_not_connected", message: "LinkedIn no está configurado en la plataforma." }, 428, cors);
+  const pl = msg.payload ?? {};
+  const messageId = String(msg.provider_message_id ?? "");
+  if (!messageId) return json({ error: "media_unavailable", message: "Este mensaje no se guardó con su id de LinkedIn: ábrelo en LinkedIn." }, 404, cors);
+  let list: unipile.Attachment[] = Array.isArray(pl.attachments) ? pl.attachments : [];
+  try {
+    if (!list.length) {
+      list = unipile.toAttachments((await unipile.getMessage(env, messageId))?.attachments);
+      if (list.length) {
+        await db.from("inbox_messages").update({ payload: { ...pl, type: pl.type || list[0].type, media: true, file_name: pl.file_name || list[0].name, attachments: list } })
+          .eq("id", msg.id).eq("user_id", userId);
+      }
+    }
+    const att = list[Math.max(0, Math.min(index, list.length - 1))];
+    if (!att) return json({ error: "not_media", message: "LinkedIn no entregó el contenido de este mensaje: ábrelo en LinkedIn." }, 404, cors);
+    const got = await unipile.getAttachment(env, messageId, att.id);
+    return new Response(got.bytes, {
+      status: 200,
+      headers: {
+        ...cors,
+        "Content-Type": att.mime || got.type || "application/octet-stream",
+        "Cache-Control": "private, max-age=86400",
+        "Access-Control-Expose-Headers": "Content-Type",
+      },
+    });
+  } catch (e) {
+    const st = (e as { status?: number })?.status;
+    console.error("[inbox-send] linkedin media", msg.id, st, (e as Error)?.message);
+    return json({
+      error: "media_unavailable",
+      message: st === 413 ? "El archivo es demasiado grande para mostrarlo aquí: ábrelo en LinkedIn." : "LinkedIn no entregó este archivo: ábrelo en LinkedIn.",
+    }, st === 413 ? 413 : 404, cors);
+  }
 }
 
 /**
@@ -834,7 +877,7 @@ Deno.serve(async (req) => {
   const db = svc();
 
   try {
-    if (body?.action === "media") return await serveMedia(db, user.id, String(body.id ?? ""), cors);
+    if (body?.action === "media") return await serveMedia(db, user.id, String(body.id ?? ""), cors, Number(body.index ?? 0) || 0);
 
     if (body?.action === "sync_wati") return json(await syncWati(db, user.id), 200, cors);
 
@@ -879,7 +922,10 @@ Deno.serve(async (req) => {
 
     const channel = String(body?.channel ?? "");
     if (channel === "linkedin") {
-      const row = await sendLinkedin(db, user.id, String(body?.member_id ?? ""), String(body?.contact_ref ?? "").trim().slice(0, 300), String(body?.body ?? "").replace(/\r\n/g, "\n").trim().slice(0, 8000));
+      const liFile: File | null = body?.file instanceof File ? body.file : null;
+      if (liFile && liFile.size > wati.SEND_FILE_MAX_BYTES) return json({ error: "linkedin_file_too_large", message: "Envía archivos de hasta 16 MB por LinkedIn." }, 413, cors);
+      const row = await sendLinkedin(db, user.id, String(body?.member_id ?? ""), String(body?.contact_ref ?? "").trim().slice(0, 300), String(body?.body ?? "").replace(/\r\n/g, "\n").trim().slice(0, 8000),
+        liFile ? { file: liFile, voice: String(body?.voice ?? "") === "1" } : null);
       if (!row) {
         return json({
           error: "linkedin_send_unavailable",
@@ -951,12 +997,12 @@ Deno.serve(async (req) => {
  * Responder a mano no cobra créditos (inbox_reply = 0) ni cuenta para los
  * topes del motor: lo escribe una persona, a su ritmo.
  */
-async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string, contactRef: string, text: string): Promise<Json | null> {
+async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string, contactRef: string, text: string, out: unipile.OutFile | null = null): Promise<Json | null> {
   const env = unipile.unipileEnv();
   if (!env) return null;
   const { data: acc } = await db.from("channel_accounts").select("id, secret, status, config").eq("user_id", userId).eq("provider", "unipile").maybeSingle();
   if (!acc?.secret || acc.status === "disconnected") return null;
-  if (!text) throw new HttpError("Escribe un mensaje.", 400);
+  if (!text && !out) throw new HttpError("Escribe un mensaje.", 400);
   const block = activeBlock(acc.config);
   if (block) throw new HttpError(block.reason + (block.until ? "" : " Vuelve a conectar tu cuenta de LinkedIn en Campañas."), 409, "linkedin_blocked");
   if (memberId && !UUID_RE.test(memberId)) throw new HttpError("member_id inválido", 400);
@@ -983,12 +1029,12 @@ async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string
   let messageId: string | null = null;
   try {
     if (chatId) {
-      messageId = (await unipile.messageChat(env, chatId, text)).messageId;
+      messageId = (await unipile.messageChat(env, chatId, text, out)).messageId;
     } else {
       if (!profileUrl) throw new HttpError("El contacto no tiene URL de LinkedIn ni un chat abierto.", 400);
       const profile = await unipile.resolveUser(env, acc.secret, profileUrl);
       if (!profile.firstDegree) throw new HttpError("No son contactos en LinkedIn: LinkedIn solo deja escribirle a un contacto. Envíale una invitación desde una campaña.", 409, "linkedin_not_connected");
-      const r = await unipile.messageUser(env, acc.secret, profile.providerId, text);
+      const r = await unipile.messageUser(env, acc.secret, profile.providerId, text, out);
       chatId = r.chatId; messageId = r.messageId;
     }
   } catch (e) {
@@ -1000,13 +1046,25 @@ async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string
     // Sin lead en una lista, la bandeja agrupa por contact_ref tal cual: se
     // guarda el mismo que trajo la conversación (el del aviso de Unipile), no
     // la URL normalizada, o la respuesta aparecía en otra conversación.
-    contact_ref: (member ? profileUrl || contactRef : contactRef || profileUrl) || null, body: text, provider_message_id: messageId, provider_conversation_id: chatId,
+    contact_ref: (member ? profileUrl || contactRef : contactRef || profileUrl) || null, body: text || (out ? linkedinFileLabel(out) : ""), provider_message_id: messageId, provider_conversation_id: chatId,
     status: "sent", sent_at: new Date().toISOString(),
     campaign_id: lastRow?.campaign_id ?? enrollment?.campaign_id ?? null, enrollment_id: lastRow?.enrollment_id ?? enrollment?.id ?? null,
-    payload: { source: "inbox", chat_id: chatId },
+    payload: { source: "inbox", chat_id: chatId, ...(out ? { type: linkedinFileKind(out), media: true, file_name: out.file.name || null, voice: !!out.voice } : {}) },
   }).select("*").single();
   if (error) throw new HttpError(error.message, 500);
   return row;
+}
+
+function linkedinFileKind(out: unipile.OutFile): string {
+  const t = String(out.file.type || "").toLowerCase();
+  if (out.voice) return "voice";
+  if (/^image\//.test(t)) return "image";
+  if (/^video\//.test(t)) return "video";
+  if (/^audio\//.test(t)) return "audio";
+  return "document";
+}
+function linkedinFileLabel(out: unipile.OutFile): string {
+  return ({ image: "📷 Foto", video: "🎬 Video", audio: "🎤 Audio", voice: "🎤 Audio", document: "📄 Documento" } as Record<string, string>)[linkedinFileKind(out)];
 }
 
 /** Un pase de sincronización del historial de WATI para la cuenta del usuario. */

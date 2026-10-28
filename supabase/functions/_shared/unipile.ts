@@ -52,7 +52,7 @@ export function baseUrl(env: UnipileEnv): string {
   return `https://${env.dsn}/api/v1`;
 }
 
-async function call(env: UnipileEnv, method: string, path: string, opts: { json?: Json; form?: Record<string, string | string[]> } = {}): Promise<Json> {
+async function call(env: UnipileEnv, method: string, path: string, opts: { json?: Json; form?: Record<string, string | string[] | File> } = {}): Promise<Json> {
   const headers: Record<string, string> = { "X-API-KEY": env.apiKey, "Accept": "application/json" };
   let body: BodyInit | undefined;
   if (opts.json !== undefined) {
@@ -62,6 +62,7 @@ async function call(env: UnipileEnv, method: string, path: string, opts: { json?
     const fd = new FormData();
     for (const [k, v] of Object.entries(opts.form)) {
       if (Array.isArray(v)) v.forEach((x) => fd.append(k, x));
+      else if (v instanceof File) fd.append(k, v, v.name || "archivo");
       else fd.append(k, v);
     }
     body = fd;
@@ -222,13 +223,36 @@ export async function invite(env: UnipileEnv, accountId: string, providerId: str
 }
 
 /** Mensaje a un contacto de 1er grado: abre el chat o reusa el existente. */
-export async function messageUser(env: UnipileEnv, accountId: string, providerId: string, text: string): Promise<{ chatId: string | null; messageId: string | null }> {
-  const data = await call(env, "POST", "/chats", { form: { account_id: accountId, attendees_ids: [providerId], text } });
+/**
+ * Adjunto de un envío: un archivo (`attachments`) o una nota de voz
+ * (`voice_message`, que LinkedIn muestra con su reproductor). Si LinkedIn
+ * rechaza la nota de voz, se reintenta como archivo de audio.
+ */
+export interface OutFile { file: File; voice?: boolean }
+
+function msgForm(base: Record<string, string | string[]>, text: string, out?: OutFile | null, asVoice = true): Record<string, string | string[] | File> {
+  const form: Record<string, string | string[] | File> = { ...base };
+  if (text) form.text = text;
+  if (out) form[out.voice && asVoice ? "voice_message" : "attachments"] = out.file;
+  return form;
+}
+
+async function withVoiceFallback<T>(out: OutFile | null | undefined, send: (asVoice: boolean) => Promise<T>): Promise<T> {
+  try {
+    return await send(true);
+  } catch (e) {
+    if (!out?.voice || !(e instanceof UnipileError) || e.status >= 500) throw e;
+    return await send(false);
+  }
+}
+
+export async function messageUser(env: UnipileEnv, accountId: string, providerId: string, text: string, out?: OutFile | null): Promise<{ chatId: string | null; messageId: string | null }> {
+  const data = await withVoiceFallback(out, (v) => call(env, "POST", "/chats", { form: msgForm({ account_id: accountId, attendees_ids: [providerId] }, text, out, v) }));
   return { chatId: data?.chat_id ? String(data.chat_id) : null, messageId: data?.message_id ? String(data.message_id) : null };
 }
 
-export async function messageChat(env: UnipileEnv, chatId: string, text: string): Promise<{ messageId: string | null }> {
-  const data = await call(env, "POST", `/chats/${encodeURIComponent(chatId)}/messages`, { form: { text } });
+export async function messageChat(env: UnipileEnv, chatId: string, text: string, out?: OutFile | null): Promise<{ messageId: string | null }> {
+  const data = await withVoiceFallback(out, (v) => call(env, "POST", `/chats/${encodeURIComponent(chatId)}/messages`, { form: msgForm({}, text, out, v) }));
   return { messageId: data?.message_id ? String(data.message_id) : null };
 }
 
@@ -285,10 +309,54 @@ export async function ensureWebhooks(env: UnipileEnv, requestUrl: string, secret
 
 export type WebhookEvent =
   | { kind: "auth"; status: string; accountId: string; state: string }
-  | { kind: "message"; accountId: string; chatId: string; messageId: string; text: string; own: boolean; senderProviderId: string; senderName: string; senderProfileUrl: string; at: string }
+  | { kind: "message"; accountId: string; chatId: string; messageId: string; text: string; own: boolean; senderProviderId: string; senderName: string; senderProfileUrl: string; at: string; attachments: Attachment[] }
   | { kind: "relation"; accountId: string; providerId: string; publicIdentifier: string; name: string; profileUrl: string }
   | { kind: "account_status"; accountId: string; status: string }
   | { kind: "other" };
+
+/**
+ * Adjunto de un mensaje de LinkedIn (foto, video, audio, archivo). El archivo
+ * no viaja en el aviso: se baja después con getAttachment y la key de la
+ * plataforma. `type` usa los nombres de la Bandeja (los de WhatsApp).
+ */
+export interface Attachment { id: string; type: "image" | "video" | "audio" | "voice" | "sticker" | "document"; name: string | null; mime: string | null }
+
+export function toAttachments(list: unknown): Attachment[] {
+  if (!Array.isArray(list)) return [];
+  const out: Attachment[] = [];
+  for (const a of list) {
+    const id = String(a?.id ?? "");
+    if (!id || a?.unavailable === true) continue;
+    const t = String(a?.type ?? "").toLowerCase();
+    const type: Attachment["type"] | null = t === "img" ? (a?.sticker ? "sticker" : "image")
+      : t === "video" ? "video"
+      : t === "audio" ? (a?.voice_note ? "voice" : "audio")
+      : t === "file" ? "document"
+      : null; // linkedin_post, video_meeting: no son archivos
+    if (!type) continue;
+    out.push({ id, type, name: a?.file_name ? String(a.file_name).slice(0, 200) : null, mime: a?.mimetype ? String(a.mimetype).slice(0, 100) : null });
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
+/** Mensaje de LinkedIn por su id (para leer adjuntos de un aviso viejo). */
+export async function getMessage(env: UnipileEnv, messageId: string): Promise<Json> {
+  return await call(env, "GET", `/messages/${encodeURIComponent(messageId)}`);
+}
+
+/** Baja el archivo de un adjunto; tope de 16 MB como los de WhatsApp. */
+export async function getAttachment(env: UnipileEnv, messageId: string, attachmentId: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; type: string | null }> {
+  const res = await fetch(`${baseUrl(env)}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`, {
+    headers: { "X-API-KEY": env.apiKey }, signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) throw new UnipileError(`Unipile respondió ${res.status}`, res.status);
+  const len = Number(res.headers.get("content-length") ?? 0);
+  if (len > 16 * 1024 * 1024) throw new UnipileError("Archivo demasiado grande", 413);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.byteLength > 16 * 1024 * 1024) throw new UnipileError("Archivo demasiado grande", 413);
+  return { bytes, type: res.headers.get("content-type") };
+}
 
 function isoFrom(v: unknown): string {
   if (v === null || v === undefined || v === "") return new Date().toISOString();
@@ -317,6 +385,7 @@ export function parseWebhook(p: Json): WebhookEvent {
       senderName: String(sender.attendee_name ?? ""),
       senderProfileUrl: String(sender.attendee_profile_url ?? ""),
       at: isoFrom(p.timestamp),
+      attachments: toAttachments(p.attachments),
     };
   }
   if (event === "new_relation") {

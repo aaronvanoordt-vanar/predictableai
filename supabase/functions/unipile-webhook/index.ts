@@ -39,6 +39,9 @@ import * as suppression from "../_shared/suppression.ts";
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
+// Mismas etiquetas que la Bandeja usa para los archivos de WhatsApp.
+const MEDIA_LABEL: Record<string, string> = { image: "📷 Foto", sticker: "Sticker", video: "🎬 Video", audio: "🎤 Audio", voice: "🎤 Audio", document: "📄 Documento" };
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -179,10 +182,15 @@ Deno.serve(async (req) => {
       user_id: userId, member_id: member?.id ?? null, channel: "linkedin", provider: "unipile",
       direction: ev.own ? "out" : "in",
       contact_ref: member?.linkedin_url || leadUrl || leadProviderId,
-      body: ev.text, provider_message_id: ev.messageId, provider_conversation_id: ev.chatId,
+      body: ev.text || (ev.attachments.length ? MEDIA_LABEL[ev.attachments[0].type] : ""), provider_message_id: ev.messageId, provider_conversation_id: ev.chatId,
       status: ev.own ? "sent" : "delivered", sent_at: ev.at,
       campaign_id: primary?.campaign_id ?? null, enrollment_id: primary?.id ?? null,
-      payload: { source: "unipile_webhook", chat_id: ev.chatId, provider_id: leadProviderId || null, ...(member ? {} : { lead: { name: leadName || null, linkedin_url: leadUrl || null } }) },
+      payload: {
+        source: "unipile_webhook", chat_id: ev.chatId, provider_id: leadProviderId || null,
+        // Fotos, audios y archivos: el archivo se baja después (inbox-send media).
+        ...(ev.attachments.length ? { type: ev.attachments[0].type, media: true, file_name: ev.attachments[0].name, attachments: ev.attachments } : {}),
+        ...(member ? {} : { lead: { name: leadName || null, linkedin_url: leadUrl || null } }),
+      },
     }, { onConflict: "provider,provider_message_id", ignoreDuplicates: true }).select("id");
     if (error) console.warn("[unipile-webhook] bandeja:", error.message);
     // El mismo mensaje que el motor ya guardó al enviarlo (o un aviso repetido).

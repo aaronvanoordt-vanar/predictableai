@@ -1426,7 +1426,7 @@
   }
   async function sendReply(conv, channel, body, subject, template, onOptimistic, file) {
     if (!conv.member_id && !((channel === 'whatsapp' || channel === 'linkedin') && conv.contact_ref)) throw new Error('Este contacto no está en tus listas; guárdalo en una lista para responderle.');
-    if (file && channel !== 'whatsapp') file = null;
+    if (file && !canAttach(channel)) file = null;
     var text = String(body || '').trim();
     if (!text && !template && !file) throw new Error('Escribe el mensaje antes de enviar.');
     if (file && text && fileKind(file) === 'audio') {
@@ -4352,6 +4352,7 @@
     if (isReaction(msg)) return reactionLabel(msg);
     if (pl.kind === 'connection_note') return 'Solicitud de conexión con nota: ' + (msg.body || '');
     if (msg.body) return msg.body;
+    if (isLinkedinNativeMsg(msg) && msg.direction === 'in') return '';
     if (chanKey(msg.channel) === 'linkedin' && msg.direction === 'out') {
       if (pl.kind === 'connection_sent') return 'Solicitud de conexión enviada desde tu LinkedIn' + (pl.dripify_campaign_name ? ' (campaña «' + pl.dripify_campaign_name + '»)' : '') + '.';
       return 'Mensaje enviado desde tu campaña de LinkedIn' + (pl.dripify_campaign_name ? ' «' + pl.dripify_campaign_name + '»' : '') + ' (Dripify no entrega el texto por API).';
@@ -4405,7 +4406,17 @@
   // Entrantes y salientes: lo que mandaste desde WATI o desde aquí también se ve.
   function isMediaMsg(msg) {
     var pl = msg.payload || {};
+    if (isLinkedinNativeMsg(msg)) return MEDIA_TYPES.indexOf(String(pl.type || '')) !== -1 || (!msg.body && msg.direction === 'in');
     return chanKey(msg.channel) === 'whatsapp' && (msg.provider === 'wati' || msg.provider === 'meta') && MEDIA_TYPES.indexOf(String(pl.type || '')) !== -1;
+  }
+  // LinkedIn desde la cuenta propia (Unipile): también trae y manda archivos.
+  // Un entrante viejo sin texto puede ser una foto que el aviso no guardó:
+  // inbox-send la busca en el mensaje de Unipile.
+  function isLinkedinNativeMsg(msg) {
+    return chanKey(msg.channel) === 'linkedin' && msg.provider === 'unipile';
+  }
+  function canAttach(channel) {
+    return channel === 'whatsapp' || (channel === 'linkedin' && isConn(state.unipile));
   }
   // Adjuntos desde la bandeja. Mismo criterio que mediaKindForMime en
   // _shared/wati.ts: Meta solo acepta JPEG y PNG como foto.
@@ -4428,7 +4439,7 @@
     var kind = fileKind(file);
     var max = kind === 'image' ? IMAGE_MAX : FILE_MAX;
     if (!file.size) { toast('El archivo está vacío.', 'warn'); return false; }
-    if (file.size > max) { toast('WhatsApp acepta ' + (kind === 'image' ? 'fotos' : 'archivos') + ' de hasta ' + fmtSize(max) + ' (este pesa ' + fmtSize(file.size) + ').', 'warn'); return false; }
+    if (file.size > max) { toast('Se aceptan ' + (kind === 'image' ? 'fotos' : 'archivos') + ' de hasta ' + fmtSize(max) + ' (este pesa ' + fmtSize(file.size) + ').', 'warn'); return false; }
     state.replyFile[key] = file;
     return true;
   }
@@ -4515,18 +4526,19 @@
     if (rec.recorder.state !== 'inactive') rec.recorder.stop();
     else { stopRecTracks(rec); state.rec = null; }
   }
-  function loadMedia(id, msg) {
+  function loadMedia(id, msg, index) {
     var pl = (msg && msg.payload) || {};
     if (pl.local_url) return Promise.resolve({ url: pl.local_url, type: '' });
-    if (mediaCache[id]) return mediaCache[id];
-    mediaCache[id] = (async function () {
+    var ck = index ? id + ':' + index : id;
+    if (mediaCache[ck]) return mediaCache[ck];
+    mediaCache[ck] = (async function () {
       var sess = await sb().auth.getSession();
       var token = sess && sess.data && sess.data.session ? sess.data.session.access_token : null;
       if (!token) throw new Error('Sesión expirada. Vuelve a iniciar sesión.');
       var res = await fetch(global.SUPABASE_CONFIG.url + '/functions/v1/' + FN_INBOX, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-        body: JSON.stringify({ action: 'media', id: id }),
+        body: JSON.stringify(index ? { action: 'media', id: id, index: index } : { action: 'media', id: id }),
       });
       if (!res.ok) {
         var body = null;
@@ -4537,16 +4549,26 @@
       return { url: URL.createObjectURL(blob), type: blob.type || '' };
     })();
     // Un fallo no queda cacheado: al volver a abrir la conversación se reintenta.
-    mediaCache[id].catch(function () { delete mediaCache[id]; });
-    return mediaCache[id];
+    mediaCache[ck].catch(function () { delete mediaCache[ck]; });
+    return mediaCache[ck];
   }
   function renderMedia(msg) {
-    var kind = String((msg.payload || {}).type || '');
+    // Un mensaje de LinkedIn puede traer varios archivos: uno por recuadro.
+    var atts = isLinkedinNativeMsg(msg) && Array.isArray((msg.payload || {}).attachments) ? msg.payload.attachments : [];
+    if (atts.length > 1) {
+      var wrap = h('div');
+      atts.forEach(function (a, i) { wrap.appendChild(renderMediaAt(msg, i, a)); });
+      return wrap;
+    }
+    return renderMediaAt(msg, 0, atts[0] || null);
+  }
+  function renderMediaAt(msg, index, att) {
+    var kind = String((att && att.type) || (msg.payload || {}).type || '');
     var box = h('div', { class: 'cmp-media' + (kind === 'sticker' ? ' sticker' : '') });
     var note = h('div', { class: 'cmp-media-note', text: 'Cargando archivo…' });
     box.appendChild(note);
     var pl = msg.payload || {};
-    loadMedia(msg.id, msg).then(function (m) {
+    loadMedia(msg.id, msg, index).then(function (m) {
       box.innerHTML = '';
       var t = m.type;
       var el;
@@ -4559,8 +4581,8 @@
         el = h('audio', { src: m.url, controls: 'controls', preload: 'metadata' });
       } else {
         var ext = t === 'application/pdf' ? '.pdf' : '';
-        var fname = pl.file_name ? String(pl.file_name) : '';
-        el = h('a', { href: m.url, download: fname || ('documento-whatsapp' + ext), target: '_blank', rel: 'noopener', class: 'cmp-link', text: '📄 ' + (fname || 'Abrir documento') });
+        var fname = (att && att.name) || pl.file_name ? String((att && att.name) || pl.file_name) : '';
+        el = h('a', { href: m.url, download: fname || ((isLinkedinNativeMsg(msg) ? 'documento-linkedin' : 'documento-whatsapp') + ext), target: '_blank', rel: 'noopener', class: 'cmp-link', text: '📄 ' + (fname || 'Abrir documento') });
       }
       box.appendChild(el);
     }).catch(function (err) {
@@ -4666,7 +4688,7 @@
       // Los emails salientes guardan "Asunto: …" al inicio del cuerpo: el asunto ya va arriba.
       if (chanKey(msg.channel) === 'email' && pl.subject && raw.indexOf('Asunto: ') === 0) raw = raw.replace(/^Asunto: [^\n]*\n+/, '');
       // En un medio, el texto es la etiqueta ("Sticker", "📷 Foto"): solo se muestra si es un pie de foto real.
-      if (!media || MEDIA_LABELS.indexOf(String(raw).trim()) === -1) b.appendChild(h('div', { class: 'notranslate', style: 'white-space:pre-wrap', text: raw }));
+      if (!media || (raw && MEDIA_LABELS.indexOf(String(raw).trim()) === -1)) b.appendChild(h('div', { class: 'notranslate', style: 'white-space:pre-wrap', text: raw }));
       var meta = h('div', { class: 'cmp-bubble-meta', html: chanIcon(msg.channel) });
       if (msg.direction === 'out') {
         meta.appendChild(h('span', { text: fmtDateTime(msg.sent_at) }));
@@ -4795,19 +4817,9 @@
     top.appendChild(tabs);
     if (!m) top.appendChild(h('span', { class: 'pros-hint', text: 'Contacto sin lista: guárdalo para responderle también por email.' }));
     box.appendChild(top);
-    if (chosen === 'linkedin' && isConn(state.unipile)) {
-      // Con la cuenta de LinkedIn propia conectada la respuesta sale de aquí.
-      var nta = h('textarea', { placeholder: 'Escribe tu respuesta para LinkedIn…', 'data-action': 'reply-draft', 'data-key': conv.key });
-      nta.value = state.replyDraft[conv.key] || '';
-      box.appendChild(nta);
-      var nfoot = h('div', { class: 'cmp-reply-row' });
-      nfoot.appendChild(h('span', { class: 'pros-hint', text: 'Sale desde tu cuenta de LinkedIn. LinkedIn solo deja escribirle a un contacto (alguien que aceptó tu conexión).' }));
-      nfoot.appendChild(aiDraftBtn(conv, 'linkedin'));
-      nfoot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-send', 'data-key': conv.key, 'data-channel': 'linkedin', text: 'Enviar por LinkedIn' }));
-      box.appendChild(nfoot);
-      return box;
-    }
-    if (chosen === 'linkedin') {
+    // Con la cuenta de LinkedIn propia conectada (Unipile) la respuesta sale de
+    // aquí con el mismo cuadro que WhatsApp (texto, archivos y notas de voz).
+    if (chosen === 'linkedin' && !isConn(state.unipile)) {
       var lta = h('textarea', { placeholder: 'Escribe tu respuesta para LinkedIn…', 'data-action': 'reply-draft', 'data-key': conv.key });
       lta.value = state.replyDraft[conv.key] || '';
       box.appendChild(lta);
@@ -4842,9 +4854,10 @@
       var draftSubj = state.replyDraft[conv.key + ':subject'];
       box.appendChild(h('input', { type: 'text', placeholder: 'Asunto', value: draftSubj != null ? draftSubj : defSubj, 'data-action': 'reply-subject', 'data-key': conv.key }));
     }
-    var att = chosen === 'whatsapp' ? state.replyFile[conv.key] : null;
+    var attachable = canAttach(chosen);
+    var att = attachable ? state.replyFile[conv.key] : null;
     var isAudio = !!att && fileKind(att) === 'audio';
-    var recHere = chosen === 'whatsapp' && state.rec && state.rec.key === conv.key;
+    var recHere = attachable && state.rec && state.rec.key === conv.key;
     if (recHere) {
       var rbar = h('div', { class: 'cmp-rec', role: 'status' });
       rbar.appendChild(h('span', { class: 'cmp-rec-dot', 'aria-hidden': 'true' }));
@@ -4871,12 +4884,12 @@
       qchip.appendChild(h('button', { type: 'button', class: 'cmp-attach-x', 'data-action': 'reply-to-clear', 'data-key': conv.key, title: 'Quitar la cita', 'aria-label': 'Quitar la cita', text: '✕' }));
       box.appendChild(qchip);
     }
-    var ta = h('textarea', { placeholder: chosen === 'whatsapp' ? (att ? (isAudio ? 'Agrega un mensaje (opcional, sale después del audio)…' : 'Agrega un pie (opcional)…') : 'Escribe tu respuesta por WhatsApp…') : 'Escribe tu respuesta por email…', 'data-action': 'reply-draft', 'data-key': conv.key });
+    var ta = h('textarea', { placeholder: att ? (isAudio ? 'Agrega un mensaje (opcional, sale después del audio)…' : 'Agrega un pie (opcional)…') : chosen === 'whatsapp' ? 'Escribe tu respuesta por WhatsApp…' : chosen === 'linkedin' ? 'Escribe tu respuesta para LinkedIn…' : 'Escribe tu respuesta por email…', 'data-action': 'reply-draft', 'data-key': conv.key });
     ta.value = state.replyDraft[conv.key] || '';
     box.appendChild(ta);
     var foot = h('div', { class: 'cmp-reply-row' });
-    foot.appendChild(h('span', { class: 'pros-hint', text: (chosen === 'whatsapp' ? 'Texto, fotos, notas de voz y archivos dentro de las 24 h desde el último mensaje del lead. Sale desde tu número de WhatsApp.' : 'Sale como respuesta individual desde tu cuenta de email.') + ' Enter envía · Shift+Enter, nueva línea.' }));
-    if (chosen === 'whatsapp') {
+    foot.appendChild(h('span', { class: 'pros-hint', text: (chosen === 'whatsapp' ? 'Texto, fotos, notas de voz y archivos dentro de las 24 h desde el último mensaje del lead. Sale desde tu número de WhatsApp.' : chosen === 'linkedin' ? 'Texto, fotos, notas de voz y archivos desde tu cuenta de LinkedIn. LinkedIn solo deja escribirle a un contacto (alguien que aceptó tu conexión).' : 'Sale como respuesta individual desde tu cuenta de email.') + ' Enter envía · Shift+Enter, nueva línea.' }));
+    if (attachable) {
       foot.appendChild(h('input', { type: 'file', accept: FILE_ACCEPT, 'data-action': 'reply-file', 'data-key': conv.key, hidden: 'hidden', style: 'display:none' }));
       foot.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'reply-attach', 'data-key': conv.key, title: 'Foto (JPG o PNG, hasta 5 MB), video, audio o documento (hasta 16 MB). También puedes pegar una imagen en el cuadro.', text: '📎 Adjuntar' }));
       if (canRecordVoice()) {
@@ -5308,7 +5321,7 @@
       return sendReply(conv2, channel, ta ? ta.value : '', subj ? subj.value : '', null, function () {
         state.sendingKey[key] = false; // ya se pintó: se puede escribir y mandar el siguiente
         renderKeepingReplyFocus(key);
-      }, channel === 'whatsapp' ? state.replyFile[key] : null).then(function () {
+      }, canAttach(channel) ? state.replyFile[key] : null).then(function () {
         state.sendingKey[key] = false;
         delete state.replyDraft[key + ':subject'];
         if (state.view === 'inbox') renderKeepingReplyFocus(key);
@@ -5501,7 +5514,7 @@
     var t = e.target;
     if (!t || !t.getAttribute || t.getAttribute('data-action') !== 'reply-draft') return;
     var key = t.getAttribute('data-key');
-    if (!key || state.replyChannel[key] !== 'whatsapp') return;
+    if (!key || !canAttach(state.replyChannel[key])) return;
     var items = (e.clipboardData && e.clipboardData.files) || [];
     if (!items.length) return;
     e.preventDefault();
