@@ -1,6 +1,6 @@
 // deno test supabase/functions/_shared/unipile.test.ts
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { accountUsable, classifyError, humanError, parseWebhook, signState, toAccount, toUser, UnipileError, verifyState } from "./unipile.ts";
+import { accountUsable, classifyError, humanError, parseWebhook, signState, toAccount, toAttachments, toUser, UnipileError, verifyState } from "./unipile.ts";
 
 const uid = "0b6f2a4e-3c1d-4e5f-8a9b-0c1d2e3f4a5b";
 
@@ -28,6 +28,24 @@ Deno.test("parseWebhook: mensaje entrante vs. propio", () => {
   assert(inbound.kind === "message" && !inbound.own && inbound.text === "Hola, me interesa" && inbound.senderProviderId === "ACoLEAD");
   const own = parseWebhook({ ...base, sender: { attendee_provider_id: "ACoME" } });
   assert(own.kind === "message" && own.own);
+});
+
+Deno.test("parseWebhook: adjuntos de LinkedIn (foto sin texto)", () => {
+  const e = parseWebhook({
+    event: "message_received", account_id: "acc1", chat_id: "ch1", message_id: "m2", message: "",
+    sender: { attendee_provider_id: "ACoLEAD" },
+    attachments: [
+      { id: "a1", type: "img", mimetype: "image/jpeg" },
+      { id: "a2", type: "file", file_name: "propuesta.pdf", mimetype: "application/pdf" },
+      { id: "a3", type: "audio", voice_note: true },
+      { id: "a4", type: "linkedin_post" },
+      { id: "a5", type: "img", unavailable: true },
+    ],
+  });
+  assert(e.kind === "message");
+  assertEquals(e.attachments.map((a) => a.type), ["image", "document", "voice"]);
+  assertEquals(e.attachments[1].name, "propuesta.pdf");
+  assertEquals(toAttachments(null), []);
 });
 
 Deno.test("parseWebhook: nueva relación y estado de cuenta", () => {
