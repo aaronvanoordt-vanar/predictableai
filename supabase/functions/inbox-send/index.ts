@@ -997,7 +997,10 @@ async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string
   }
   const { data: row, error } = await db.from("inbox_messages").insert({
     user_id: userId, member_id: member?.id ?? null, channel: "linkedin", provider: "unipile", direction: "out",
-    contact_ref: profileUrl || contactRef || null, body: text, provider_message_id: messageId, provider_conversation_id: chatId,
+    // Sin lead en una lista, la bandeja agrupa por contact_ref tal cual: se
+    // guarda el mismo que trajo la conversación (el del aviso de Unipile), no
+    // la URL normalizada, o la respuesta aparecía en otra conversación.
+    contact_ref: (member ? profileUrl || contactRef : contactRef || profileUrl) || null, body: text, provider_message_id: messageId, provider_conversation_id: chatId,
     status: "sent", sent_at: new Date().toISOString(),
     campaign_id: lastRow?.campaign_id ?? enrollment?.campaign_id ?? null, enrollment_id: lastRow?.enrollment_id ?? enrollment?.id ?? null,
     payload: { source: "inbox", chat_id: chatId },
