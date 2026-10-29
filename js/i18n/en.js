@@ -1956,6 +1956,8 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Campaña {0}": "Campaign {0}",
   "· plantilla {0}": "· template {0}",
   "respuesta desde la bandeja{0}": "reply from the Inbox{0}",
+  "LinkedIn no acepta este formato de audio y este navegador no puede convertirlo: graba desde Chrome o Safari.": "LinkedIn doesn't accept this audio format and this browser can't convert it: record from Chrome or Safari.",
+  "LinkedIn rechazó el archivo (formato o tamaño no admitido).": "LinkedIn rejected the file (unsupported format or size).",
   "Se aceptan {0} de hasta {1} (este pesa {2}).": "Accepted: {0} up to {1} (this one is {2}).",
   "Texto, fotos, notas de voz y archivos desde tu cuenta de LinkedIn. LinkedIn solo deja escribirle a un contacto (alguien que aceptó tu conexión).": "Text, photos, voice notes and files from your LinkedIn account. LinkedIn only lets you message a connection (someone who accepted your invitation).",
   "LinkedIn no entregó este archivo: ábrelo en LinkedIn.": "LinkedIn didn't deliver this file: open it on LinkedIn.",

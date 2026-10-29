@@ -434,6 +434,7 @@ export function humanError(e: unknown): string {
   if (/checkpoint|action_required/.test(t)) return "LinkedIn pide verificar tu cuenta: vuelve a conectarla en Campañas → LinkedIn.";
   if (/restricted|insufficient_privileges/.test(t) || e.status === 403) return "LinkedIn restringió esta acción en tu cuenta.";
   if (/cannot_resend_yet|already_invited/.test(t)) return "Ya hay una invitación reciente a este lead.";
+  if (/media.*rejected|rejected.*media/i.test(e.message)) return "LinkedIn rechazó el archivo (formato o tamaño no admitido).";
   if (/limit_exceeded|too_many/.test(t) || e.status === 429) return "LinkedIn limitó los envíos de tu cuenta por ahora.";
   if (/no_connection|not_allowed/.test(t)) return "El lead no es tu contacto en LinkedIn: no admite mensajes directos.";
   if (/recipient|not_found/.test(t) || e.status === 404) return "LinkedIn no encontró el perfil del lead.";
