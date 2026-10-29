@@ -1424,6 +1424,35 @@
     t = t.replace(/\s+/g, ' ').trim();
     return t.length > 140 ? t.slice(0, 140) + '…' : t;
   }
+  /** Audio para LinkedIn: MP4/AAC, MP3 o WAV pasan; cualquier otro se convierte a WAV en el navegador. */
+  async function linkedinAudio(file) {
+    var t = String(file.type || '').toLowerCase();
+    if (/^audio\/(mp4|aac|x-m4a|m4a|mpeg|mp3|wav|x-wav)/.test(t)) return file;
+    var Ctx = global.AudioContext || global.webkitAudioContext;
+    if (!Ctx) throw new Error('LinkedIn no acepta este formato de audio y este navegador no puede convertirlo: graba desde Chrome o Safari.');
+    var ctx = new Ctx();
+    var buf;
+    try { buf = await ctx.decodeAudioData(await file.arrayBuffer()); } finally { if (ctx.close) ctx.close(); }
+    // Mono, 16 bits: una nota de voz de un minuto pesa ~5 MB a 44,1 kHz.
+    var rate = buf.sampleRate, n = buf.length, ch = buf.numberOfChannels;
+    var out = new DataView(new ArrayBuffer(44 + n * 2));
+    function str(o, v) { for (var i = 0; i < v.length; i++) out.setUint8(o + i, v.charCodeAt(i)); }
+    str(0, 'RIFF'); out.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+    out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
+    out.setUint32(24, rate, true); out.setUint32(28, rate * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true);
+    str(36, 'data'); out.setUint32(40, n * 2, true);
+    var data = [];
+    for (var c = 0; c < ch; c++) data.push(buf.getChannelData(c));
+    for (var i = 0; i < n; i++) {
+      var v = 0;
+      for (var k = 0; k < ch; k++) v += data[k][i];
+      v = Math.max(-1, Math.min(1, v / ch));
+      out.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+    }
+    var wav = new File([out.buffer], String(file.name || 'audio').replace(/\.[a-z0-9]+$/i, '') + '.wav', { type: 'audio/wav' });
+    wav.__voice = file.__voice;
+    return wav;
+  }
   async function sendReply(conv, channel, body, subject, template, onOptimistic, file) {
     if (!conv.member_id && !((channel === 'whatsapp' || channel === 'linkedin') && conv.contact_ref)) throw new Error('Este contacto no está en tus listas; guárdalo en una lista para responderle.');
     if (file && !canAttach(channel)) file = null;
@@ -1478,6 +1507,7 @@
     var r;
     try {
       if (file) {
+        if (channel === 'linkedin' && kind === 'audio') file = await linkedinAudio(file);
         var form = new FormData();
         Object.keys(payload).forEach(function (k) { form.append(k, payload[k]); });
         form.append('file', file, file.name || 'archivo');
@@ -4451,6 +4481,10 @@
   // ya graba Ogg y Safari MP4 (AAC); los dos pasan tal cual.
   var VOICE_MAX_MS = 10 * 60 * 1000;
   var VOICE_MIMES = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'];
+  // LinkedIn rechaza WebM y Ogg («The media has been rejected»): sus notas de
+  // voz son MP4/AAC, que Chrome y Safari ya graban. Si el navegador no puede
+  // (Firefox), el audio se pasa a WAV antes de enviarlo (linkedinAudio).
+  var VOICE_MIMES_LINKEDIN = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/aac'];
   function canRecordVoice() {
     return !!(global.navigator && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && global.MediaRecorder);
   }
@@ -4481,7 +4515,8 @@
       var denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
       return toast(denied ? 'Dale permiso al navegador para usar el micrófono y vuelve a intentarlo.' : 'No encontramos un micrófono disponible.', 'warn');
     }
-    var mime = VOICE_MIMES.find(function (m) { return MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m); }) || '';
+    var prefs = state.replyChannel[key] === 'linkedin' ? VOICE_MIMES_LINKEDIN.concat(VOICE_MIMES) : VOICE_MIMES;
+    var mime = prefs.find(function (m) { return MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m); }) || '';
     var recorder;
     try {
       recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);

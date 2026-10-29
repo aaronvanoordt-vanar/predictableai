@@ -2381,6 +2381,8 @@ window.I18N_DICTS['pt-BR'] = {
   "Campaña {0}": "Campanha {0}",
   "· plantilla {0}": "· modelo {0}",
   "respuesta desde la bandeja{0}": "resposta pela Caixa de entrada{0}",
+  "LinkedIn no acepta este formato de audio y este navegador no puede convertirlo: graba desde Chrome o Safari.": "O LinkedIn não aceita este formato de áudio e este navegador não consegue convertê-lo: grave pelo Chrome ou Safari.",
+  "LinkedIn rechazó el archivo (formato o tamaño no admitido).": "O LinkedIn rejeitou o arquivo (formato ou tamanho não suportado).",
   "Se aceptan {0} de hasta {1} (este pesa {2}).": "São aceitos {0} de até {1} (este tem {2}).",
   "Texto, fotos, notas de voz y archivos desde tu cuenta de LinkedIn. LinkedIn solo deja escribirle a un contacto (alguien que aceptó tu conexión).": "Texto, fotos, mensagens de voz e arquivos pela sua conta do LinkedIn. O LinkedIn só permite escrever para uma conexão (alguém que aceitou seu convite).",
   "LinkedIn no entregó este archivo: ábrelo en LinkedIn.": "O LinkedIn não entregou este arquivo: abra-o no LinkedIn.",
