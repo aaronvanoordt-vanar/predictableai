@@ -106,30 +106,27 @@ async function graph(token: string, method: string, path: string, body?: Json, o
  * canjearlo apenas llega.
  */
 /**
- * Canjea el código del popup. Con el SDK de JavaScript el código queda atado
- * al redirect_uri que el SDK usó por dentro y Meta no dice cuál: se prueba
- * sin redirect_uri (lo documentado) y, solo si Meta responde que no coincide
- * (#100 «redirect_uri»), con las URLs de la página que abrió el popup. Un
- * intento rechazado por redirect_uri no consume el código.
+ * Canjea el código de la ventana de Meta. El código queda atado al
+ * redirect_uri con que se abrió /dialog/oauth: hay que mandar exactamente el
+ * mismo (meta-callback.html). Sin redirect_uri es el canje del SDK de
+ * JavaScript, que ya no se usa.
  */
-export async function exchangeCode(appId: string, appSecret: string, code: string, redirectUris: string[] = []): Promise<string> {
-  const tries: (string | null)[] = [null, ...redirectUris.filter((u, i, a) => !!u && a.indexOf(u) === i)];
-  let last: MetaError | null = null;
-  for (const uri of tries) {
-    const q = new URLSearchParams({ client_id: appId, client_secret: appSecret, code });
-    if (uri !== null) q.set("redirect_uri", uri);
-    const res = await fetch(`${GRAPH}/${graphVersion()}/oauth/access_token?${q}`, { signal: AbortSignal.timeout(20_000) });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.access_token) return String(data.access_token);
-    last = new MetaError(errorText(data).slice(0, 400), res.ok ? 400 : res.status, data);
-    if (!isRedirectMismatch(data)) break;
-  }
-  throw last!;
+export async function exchangeCode(appId: string, appSecret: string, code: string, redirectUri = ""): Promise<string> {
+  const q = new URLSearchParams({ client_id: appId, client_secret: appSecret, code });
+  if (redirectUri) q.set("redirect_uri", redirectUri);
+  const res = await fetch(`${GRAPH}/${graphVersion()}/oauth/access_token?${q}`, { signal: AbortSignal.timeout(20_000) });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.access_token) throw new MetaError(errorText(data).slice(0, 400), res.ok ? 400 : res.status, data);
+  return String(data.access_token);
 }
 
-/** Meta rechazó el canje porque el redirect_uri no es el del popup. */
+/**
+ * Meta rechazó el canje por el redirect_uri: no coincide (#100) o no está
+ * autorizado en la app (#191). Es configuración de la app, no del cliente.
+ */
 export function isRedirectMismatch(data: Json): boolean {
-  return /redirect_uri/i.test(String(data?.error?.message ?? ""));
+  const code = Number(data?.error?.code ?? 0);
+  return code === 191 || /redirect_uri/i.test(String(data?.error?.message ?? ""));
 }
 
 /**

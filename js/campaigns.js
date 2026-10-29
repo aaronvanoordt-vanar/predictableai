@@ -2426,73 +2426,65 @@
   // channel-connect `meta_connect` lo canjea por el token: el token nunca pasa
   // por el navegador. Solo aparece si el servidor tiene la app de Meta
   // configurada (status.meta_signup); si no, todo sigue con WATI.
-  var fbSdkPromise = null;
-  function loadFbSdk(cfg) {
-    if (global.FB && global.FB.login && fbSdkPromise) return fbSdkPromise;
-    if (fbSdkPromise) return fbSdkPromise;
-    fbSdkPromise = new Promise(function (resolve, reject) {
-      global.fbAsyncInit = function () {
-        try {
-          global.FB.init({ appId: cfg.app_id, autoLogAppEvents: true, xfbml: false, version: cfg.graph_version || 'v26.0' });
-          resolve(global.FB);
-        } catch (e) { fbSdkPromise = null; reject(e); }
-      };
-      var sc = document.createElement('script');
-      sc.src = 'https://connect.facebook.net/en_US/sdk.js';
-      sc.async = true; sc.defer = true; sc.crossOrigin = 'anonymous';
-      sc.onerror = function () {
-        fbSdkPromise = null;
-        reject(new Error('No se pudo cargar la ventana de Meta. Revisa si un bloqueador de anuncios o de rastreadores la está frenando.'));
-      };
-      document.head.appendChild(sc);
+  // Sin el SDK de JavaScript de Meta (2026-10-29): el SDK ataba el código a
+  // un redirect_uri interno que Meta no informa, y el canje fallaba siempre con
+  // «redirect_uri is identical…». Ahora es OAuth estándar: el popup va a
+  // /dialog/oauth con el config_id del Embedded Signup y vuelve a
+  // meta-callback.html, que le pasa el código a esta ventana. El canje usa ese
+  // mismo redirect_uri. El WABA y el número se leen del aviso
+  // WA_EMBEDDED_SIGNUP si llega y, si no, del token (channel-connect).
+  function metaRedirectUri() { return global.location.origin + '/meta-callback.html'; }
+  function metaOAuthUrl(cfg, coexistence, stateTok) {
+    var extras = { setup: {}, sessionInfoVersion: '3' };
+    if (coexistence) extras.featureType = 'whatsapp_business_app_onboarding';
+    var q = new URLSearchParams({
+      client_id: cfg.app_id, config_id: cfg.config_id, redirect_uri: metaRedirectUri(),
+      response_type: 'code', override_default_response_type: 'true', state: stateTok, extras: JSON.stringify(extras),
     });
-    return fbSdkPromise;
+    return 'https://www.facebook.com/' + (cfg.graph_version || 'v21.0') + '/dialog/oauth?' + q.toString();
   }
   var ES_FINISH = ['FINISH', 'FINISH_ONLY_WABA', 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'];
-  /** Abre el popup de Meta y resuelve con {code, data, event} cuando terminó. Llamar dentro del clic. */
-  function runEmbeddedSignup(FB, cfg, coexistence) {
+  /**
+   * Abre la ventana de Meta (HAY que llamarla dentro del clic, o el navegador
+   * la bloquea) y resuelve con {code, data, event} cuando vuelve el código.
+   */
+  function runMetaOAuth(cfg, coexistence, onOpened) {
+    var stateTok = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    var w = global.open(metaOAuthUrl(cfg, coexistence, stateTok), 'predictable_meta', 'width=640,height=780');
     return new Promise(function (resolve, reject) {
-      var info = null, code = null, settled = false, waitTimer = null;
+      if (!w) return reject(new Error('El navegador bloqueó la ventana de Meta. Permite las ventanas emergentes para predictableai.vanarsi.com y vuelve a intentarlo.'));
+      if (onOpened) onOpened();
+      var info = null, settled = false;
       function finish(err, val) {
         if (settled) return;
         settled = true;
-        clearTimeout(waitTimer);
+        clearInterval(poll);
         global.removeEventListener('message', onMsg);
         if (err) reject(err); else resolve(val);
       }
-      function check() {
-        if (info && info.event === 'CANCEL') return finish(new Error('Cerraste la ventana de Meta antes de terminar' + (info.data && info.data.current_step ? ' (paso: ' + info.data.current_step + ')' : '') + '. Vuelve a intentarlo cuando quieras.'));
-        if (info && info.event === 'ERROR') return finish(new Error('Meta no pudo terminar la conexión: ' + ((info.data && info.data.error_message) || 'sin detalle') + '.'));
-        if (code && info && ES_FINISH.indexOf(info.event) !== -1) return finish(null, { code: code, data: info.data || {}, event: info.event });
-      }
       function onMsg(ev) {
+        var d = ev.data;
+        if (ev.origin === global.location.origin && d && d.type === 'predictable:meta-oauth') {
+          if (d.state !== stateTok) return; // otra pestaña u otro intento
+          if (d.error) return finish(new Error(d.error === 'access_denied' ? 'Cerraste la ventana de Meta antes de terminar. Vuelve a intentarlo cuando quieras.' : 'Meta no completó la conexión: ' + (d.error_description || d.error) + '.'));
+          if (!d.code) return finish(new Error('Meta no devolvió la autorización. Vuelve a intentarlo.'));
+          return finish(null, { code: d.code, data: (info && info.data) || {}, event: (info && info.event) || '' });
+        }
         var host = '';
         try { host = new URL(ev.origin).hostname; } catch (e) { return; }
         if (!/(^|\.)facebook\.com$/.test(host)) return;
-        var d = ev.data;
         try { if (typeof d === 'string') d = JSON.parse(d); } catch (e) { return; }
         if (!d || d.type !== 'WA_EMBEDDED_SIGNUP') return;
         info = d;
-        check();
+        if (d.event === 'ERROR') finish(new Error('Meta no pudo terminar la conexión: ' + ((d.data && d.data.error_message) || 'sin detalle') + '.'));
       }
       global.addEventListener('message', onMsg);
-      // sessionInfoVersion: sin él Meta no manda el mensaje WA_EMBEDDED_SIGNUP
-      // con el WABA y el número elegidos.
-      var extras = { setup: {}, sessionInfoVersion: '3' };
-      if (coexistence) extras.featureType = 'whatsapp_business_app_onboarding';
-      FB.login(function (response) {
-        code = response && response.authResponse && response.authResponse.code;
-        if (!code) return finish(new Error(info && info.event === 'CANCEL' ? 'Cerraste la ventana de Meta antes de terminar. Vuelve a intentarlo cuando quieras.' : 'No se completó la autorización en Meta.'));
-        check();
-        // El aviso con la cuenta suele llegar antes que el código; si no
-        // llega, no se puede saber qué número conectó.
-        // Si no llega, se manda el código igual: channel-connect lee del token
-        // los WABA que autorizaste (debug_token). El código vence en ~30 s.
-        waitTimer = setTimeout(function () {
-          if (info && (info.event === 'CANCEL' || info.event === 'ERROR')) return check();
-          finish(null, { code: code, data: (info && info.data) || {}, event: (info && info.event) || '' });
-        }, 8000);
-      }, { config_id: cfg.config_id, response_type: 'code', override_default_response_type: true, extras: extras });
+      // Cerrar la ventana sin terminar no avisa: se nota porque se cerró.
+      var poll = setInterval(function () {
+        var closed = true;
+        try { closed = w.closed; } catch (e) { closed = false; }
+        if (closed) setTimeout(function () { finish(new Error('Cerraste la ventana de Meta antes de terminar' + (info && info.data && info.data.current_step ? ' (paso: ' + info.data.current_step + ')' : '') + '. Vuelve a intentarlo cuando quieras.')); }, 1500);
+      }, 600);
     });
   }
   function metaSignupScreen(api, coexistence, back) {
@@ -2505,28 +2497,27 @@
     api.body.appendChild(h('div', { class: 'pros-hint', text: coexistence
       ? 'Sigues usando la app del celular como siempre: lo que escribes ahí también aparece en la Bandeja. Tus chats de los últimos meses llegan solos en las próximas horas.'
       : 'Los mensajes los cobra Meta directamente a tu tarjeta (la agregas en WhatsApp Manager → Pagos). Predictable no cobra extra por conectar.' }));
-    var status = h('div', { class: 'pros-hint', style: 'margin-top:8px', text: 'Preparando la ventana de Meta…' });
+    var status = h('div', { class: 'pros-hint', style: 'margin-top:8px', role: 'status', 'aria-live': 'polite' });
     api.body.appendChild(status);
-    var FBready = null;
-    loadFbSdk(cfg).then(function (FB) { FBready = FB; status.textContent = ''; }, function (e) { status.textContent = '⚠ ' + errMsg(e); });
     api.setActions([
       { label: 'Atrás', onClick: back },
       { label: 'Abrir Meta', className: 'btn btn-primary', onClick: function (m) {
-        if (!FBready) throw new Error('La ventana de Meta todavía está cargando. Espera un segundo y vuelve a intentarlo.');
         m.setBusy(true);
-        status.textContent = 'Termina los pasos en la ventana de Meta…';
-        return runEmbeddedSignup(FBready, cfg, coexistence).then(function (r) {
-          status.textContent = 'Conectando tu número…';
+        status.textContent = 'Abriendo la ventana de Meta…';
+        return runMetaOAuth(cfg, coexistence, function () {
+          status.textContent = 'Se abrió la ventana de Meta: termina los pasos ahí. Esta ventana se actualiza sola.';
+        }).then(function (r) {
+          status.textContent = 'Meta respondió. Conectando tu número…';
           return edgeFetch(FN_CHANNEL, {
             action: 'meta_connect',
             payload: {
               code: r.code,
-              // Candidatas al redirect_uri al que el SDK ató el código.
-              redirect_uris: [location.origin + location.pathname, location.origin + '/', location.href.split('#')[0]],
+              redirect_uri: metaRedirectUri(),
               waba_id: r.data.waba_id || '',
               phone_number_id: r.data.phone_number_id || '',
               business_id: r.data.business_id || '',
-              mode: r.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING' ? 'coexistence' : 'new',
+              // Sin el aviso de Meta, vale la opción que eligió el usuario.
+              mode: r.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING' || (!r.event && coexistence) ? 'coexistence' : 'new',
               sender: senderDefaults(),
             },
           });
