@@ -311,3 +311,9 @@ Deno.test("reactableWamid: solo mensajes reales de Meta con WAMID", () => {
   assertEquals(whatsapp.reactableWamid({ channel: "whatsapp", provider: "meta", provider_message_id: "abc", payload: {} }), null);
   assertEquals(whatsapp.reactableWamid(null), null);
 });
+
+Deno.test("isRedirectMismatch: solo el #100 del redirect_uri reintenta el canje", () => {
+  assert(meta.isRedirectMismatch({ error: { code: 100, message: "Error validating verification code. Please make sure your redirect_uri is identical to the one you used in the OAuth dialog request" } }));
+  assertFalse(meta.isRedirectMismatch({ error: { code: 100, message: "This authorization code has expired." } }));
+  assertFalse(meta.isRedirectMismatch(null));
+});

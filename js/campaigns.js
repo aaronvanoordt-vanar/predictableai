@@ -2521,6 +2521,8 @@
             action: 'meta_connect',
             payload: {
               code: r.code,
+              // Candidatas al redirect_uri al que el SDK ató el código.
+              redirect_uris: [location.origin + location.pathname, location.origin + '/', location.href.split('#')[0]],
               waba_id: r.data.waba_id || '',
               phone_number_id: r.data.phone_number_id || '',
               business_id: r.data.business_id || '',
