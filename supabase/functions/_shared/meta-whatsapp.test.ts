@@ -318,3 +318,11 @@ Deno.test("isRedirectMismatch: solo el #100 del redirect_uri reintenta el canje"
   assert(meta.isRedirectMismatch({ error: { code: 191, message: "O domínio dessa URL não está incluído nos domínios do app." } }));
   assertFalse(meta.isRedirectMismatch(null));
 });
+
+Deno.test("businessIdsFromDebug / scopesSummary: portafolios y permisos del token", () => {
+  const d = { data: { granular_scopes: [{ scope: "business_management", target_ids: ["111"] }, { scope: "whatsapp_business_messaging" }] } };
+  assertEquals(meta.businessIdsFromDebug(d), ["111"]);
+  assertEquals(meta.wabaIdsFromDebug(d), []);
+  assertEquals(meta.scopesSummary(d), "business_management (1), whatsapp_business_messaging");
+  assertEquals(meta.scopesSummary({ data: {} }), "ninguno");
+});

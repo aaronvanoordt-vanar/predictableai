@@ -444,17 +444,33 @@ async function metaConnect(db: SupabaseClient, userId: string, payload: Json, co
   // 2. No se confía en el WABA que manda el navegador: tiene que estar entre
   //    los que el cliente le dio a este token.
   let granted: string[] = [];
-  try { granted = await meta.grantedWabaIds(env.appId, env.appSecret, token); } catch (e) { console.warn("[channel-connect] debug_token:", meta.humanError(e)); }
-  // Sin el aviso del popup (no siempre llega), el WABA sale del token: el
-  // único autorizado o, si hay varios, el primero que tenga números.
+  let debug: Json = null;
+  let debugErr = "";
+  try { debug = await meta.debugToken(env.appId, env.appSecret, token); granted = meta.wabaIdsFromDebug(debug); }
+  catch (e) { debugErr = meta.humanError(e); console.warn("[channel-connect] debug_token:", debugErr); }
+
+  // Sin el aviso del popup (no siempre llega), el WABA sale del token: los
+  // autorizados y, si no hay, los de los portafolios autorizados. Se prefiere
+  // el que tiene el número elegido; si no, el primero con números.
   if (!wabaId) {
-    if (granted.length === 1) wabaId = granted[0];
-    else {
-      for (const id of granted) {
-        try { if ((await meta.listPhones(token, id)).length) { wabaId = id; break; } } catch { /* sigue con el siguiente */ }
-      }
+    let candidates = granted;
+    if (!candidates.length && debug) {
+      for (const biz of meta.businessIdsFromDebug(debug)) candidates = candidates.concat(await meta.businessWabaIds(token, biz));
     }
-    if (!wabaId) return json({ error: "Meta no devolvió los datos de tu cuenta. Vuelve a abrir la ventana de Meta y termina todos los pasos." }, 400, cors);
+    for (const id of candidates) {
+      try {
+        const ph = await meta.listPhones(token, id);
+        if (phoneNumberId ? ph.some((p) => p.id === phoneNumberId) : ph.length) { wabaId = id; break; }
+      } catch { /* sigue con el siguiente */ }
+    }
+    if (!wabaId) {
+      console.error("[channel-connect] meta sin WABA:", JSON.stringify({ es_event: payload.es_event ?? null, scopes: debug ? meta.scopesSummary(debug) : null, debugErr }));
+      return json({
+        error: "meta_no_waba",
+        message: "Meta autorizó a Predictable, pero no compartió ninguna cuenta de WhatsApp con un número. En la ventana de Meta hay que elegir la cuenta de WhatsApp y el número y llegar hasta la pantalla final. "
+          + `(Detalle para soporte: aviso de Meta «${clean(payload.es_event, 60) || "ninguno"}»; permisos: ${debug ? meta.scopesSummary(debug) : "no se pudieron leer: " + debugErr}.)`,
+      }, 400, cors);
+    }
   }
   const owns = granted.length ? granted.includes(wabaId) : await meta.canReadWaba(token, wabaId);
   if (!owns) return json({ error: "Esa cuenta de WhatsApp no es la que autorizaste en la ventana de Meta. Vuelve a conectarla." }, 403, cors);
