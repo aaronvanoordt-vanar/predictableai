@@ -2476,7 +2476,9 @@
         check();
       }
       global.addEventListener('message', onMsg);
-      var extras = { setup: {} };
+      // sessionInfoVersion: sin él Meta no manda el mensaje WA_EMBEDDED_SIGNUP
+      // con el WABA y el número elegidos.
+      var extras = { setup: {}, sessionInfoVersion: '3' };
       if (coexistence) extras.featureType = 'whatsapp_business_app_onboarding';
       FB.login(function (response) {
         code = response && response.authResponse && response.authResponse.code;
@@ -2484,7 +2486,12 @@
         check();
         // El aviso con la cuenta suele llegar antes que el código; si no
         // llega, no se puede saber qué número conectó.
-        waitTimer = setTimeout(function () { finish(new Error('Meta no devolvió los datos de tu cuenta de WhatsApp. Vuelve a intentarlo.')); }, 12000);
+        // Si no llega, se manda el código igual: channel-connect lee del token
+        // los WABA que autorizaste (debug_token). El código vence en ~30 s.
+        waitTimer = setTimeout(function () {
+          if (info && (info.event === 'CANCEL' || info.event === 'ERROR')) return check();
+          finish(null, { code: code, data: (info && info.data) || {}, event: (info && info.event) || '' });
+        }, 8000);
       }, { config_id: cfg.config_id, response_type: 'code', override_default_response_type: true, extras: extras });
     });
   }

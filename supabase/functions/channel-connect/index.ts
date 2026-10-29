@@ -419,11 +419,11 @@ async function metaConnect(db: SupabaseClient, userId: string, payload: Json, co
   const env = metaEnv();
   if (!metaSignupConfig()) return json({ error: "meta_not_configured", message: "La conexión directa con Meta todavía no está activada en Predictable." }, 503, cors);
   const code = clean(payload.code, 2000);
-  const wabaId = clean(payload.waba_id, 40).replace(/\D/g, "");
+  let wabaId = clean(payload.waba_id, 40).replace(/\D/g, "");
   let phoneNumberId = clean(payload.phone_number_id, 40).replace(/\D/g, "");
   const businessId = clean(payload.business_id, 40).replace(/\D/g, "");
   const coexistence = payload.mode === "coexistence";
-  if (!code || !wabaId) return json({ error: "Meta no devolvió los datos de tu cuenta. Vuelve a abrir la ventana de Meta y termina todos los pasos." }, 400, cors);
+  if (!code) return json({ error: "Meta no devolvió los datos de tu cuenta. Vuelve a abrir la ventana de Meta y termina todos los pasos." }, 400, cors);
 
   // 1. El código vence en ~30 s y es de un solo uso: se canjea primero.
   let token = "";
@@ -434,6 +434,17 @@ async function metaConnect(db: SupabaseClient, userId: string, payload: Json, co
   //    los que el cliente le dio a este token.
   let granted: string[] = [];
   try { granted = await meta.grantedWabaIds(env.appId, env.appSecret, token); } catch (e) { console.warn("[channel-connect] debug_token:", meta.humanError(e)); }
+  // Sin el aviso del popup (no siempre llega), el WABA sale del token: el
+  // único autorizado o, si hay varios, el primero que tenga números.
+  if (!wabaId) {
+    if (granted.length === 1) wabaId = granted[0];
+    else {
+      for (const id of granted) {
+        try { if ((await meta.listPhones(token, id)).length) { wabaId = id; break; } } catch { /* sigue con el siguiente */ }
+      }
+    }
+    if (!wabaId) return json({ error: "Meta no devolvió los datos de tu cuenta. Vuelve a abrir la ventana de Meta y termina todos los pasos." }, 400, cors);
+  }
   const owns = granted.length ? granted.includes(wabaId) : await meta.canReadWaba(token, wabaId);
   if (!owns) return json({ error: "Esa cuenta de WhatsApp no es la que autorizaste en la ventana de Meta. Vuelve a conectarla." }, 403, cors);
 
