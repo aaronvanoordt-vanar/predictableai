@@ -135,11 +135,46 @@ export function isRedirectMismatch(data: Json): boolean {
  * manda el navegador: si no está aquí, no es de este cliente.
  */
 export async function grantedWabaIds(appId: string, appSecret: string, token: string): Promise<string[]> {
+  return wabaIdsFromDebug(await debugToken(appId, appSecret, token));
+}
+
+/** Respuesta cruda de debug_token (permisos y a qué activos aplican). */
+export async function debugToken(appId: string, appSecret: string, token: string): Promise<Json> {
   const q = new URLSearchParams({ input_token: token, access_token: `${appId}|${appSecret}` });
   const res = await fetch(`${GRAPH}/${graphVersion()}/debug_token?${q}`, { signal: AbortSignal.timeout(20_000) });
   const data = await res.json().catch(() => null);
   if (!res.ok || data?.error) throw new MetaError(errorText(data).slice(0, 400), res.ok ? 400 : res.status, data);
-  return wabaIdsFromDebug(data);
+  return data;
+}
+
+/** Portafolios (business_management) que el cliente compartió con el token. */
+export function businessIdsFromDebug(data: Json): string[] {
+  const scopes: Json[] = Array.isArray(data?.data?.granular_scopes) ? data.data.granular_scopes : [];
+  const out = new Set<string>();
+  for (const s of scopes) {
+    if (String(s?.scope ?? "") !== "business_management") continue;
+    for (const id of Array.isArray(s?.target_ids) ? s.target_ids : []) out.add(String(id));
+  }
+  return [...out];
+}
+
+/** Resumen legible de los permisos del token, para el mensaje de error. */
+export function scopesSummary(data: Json): string {
+  const scopes: Json[] = Array.isArray(data?.data?.granular_scopes) ? data.data.granular_scopes : [];
+  const list = scopes.map((s) => `${s?.scope}${Array.isArray(s?.target_ids) ? ` (${s.target_ids.length})` : ""}`);
+  return list.length ? list.join(", ") : (Array.isArray(data?.data?.scopes) && data.data.scopes.length ? data.data.scopes.join(", ") : "ninguno");
+}
+
+/** Cuentas de WhatsApp de un portafolio (propias y de clientes). */
+export async function businessWabaIds(token: string, businessId: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const edge of ["owned_whatsapp_business_accounts", "client_whatsapp_business_accounts"]) {
+    try {
+      const d = await graph(token, "GET", `${businessId}/${edge}?fields=id&limit=50`);
+      for (const w of Array.isArray(d?.data) ? d.data : []) if (w?.id) out.push(String(w.id));
+    } catch { /* sin acceso a ese borde */ }
+  }
+  return [...new Set(out)];
 }
 
 /** Parte pura de grantedWabaIds (cubierta por deno test). */

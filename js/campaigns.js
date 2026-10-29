@@ -2513,6 +2513,8 @@
             payload: {
               code: r.code,
               redirect_uri: metaRedirectUri(),
+              // Solo para el mensaje de error si Meta no compartió la cuenta.
+              es_event: r.event || (r.data.current_step ? 'step:' + r.data.current_step : ''),
               waba_id: r.data.waba_id || '',
               phone_number_id: r.data.phone_number_id || '',
               business_id: r.data.business_id || '',
