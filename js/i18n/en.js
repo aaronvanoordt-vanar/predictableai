@@ -1963,6 +1963,8 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Meta respondió. Conectando tu número…": "Meta responded. Connecting your number…",
   "El navegador bloqueó la ventana de Meta. Permite las ventanas emergentes para predictableai.vanarsi.com y vuelve a intentarlo.": "The browser blocked the Meta window. Allow pop-ups for predictableai.vanarsi.com and try again.",
   "Meta no devolvió la autorización. Vuelve a intentarlo.": "Meta didn't return the authorization. Try again.",
+  "ID de tu cuenta de WhatsApp Business (opcional)": "Your WhatsApp Business Account ID (optional)",
+  "Llénalo solo si Meta no te muestra los pasos de WhatsApp. Lo ves en WhatsApp Manager → Configuración de la cuenta, o en tu app de Meta → WhatsApp → Configuración de la API («Identificador de la cuenta de WhatsApp Business»).": "Fill it in only if Meta doesn't show you the WhatsApp steps. You'll find it in WhatsApp Manager → Account settings, or in your Meta app → WhatsApp → API Setup (\"WhatsApp Business Account ID\").",
   "Se aceptan {0} de hasta {1} (este pesa {2}).": "Accepted: {0} up to {1} (this one is {2}).",
   "Texto, fotos, notas de voz y archivos desde tu cuenta de LinkedIn. LinkedIn solo deja escribirle a un contacto (alguien que aceptó tu conexión).": "Text, photos, voice notes and files from your LinkedIn account. LinkedIn only lets you message a connection (someone who accepted your invitation).",
   "LinkedIn no entregó este archivo: ábrelo en LinkedIn.": "LinkedIn didn't deliver this file: open it on LinkedIn.",

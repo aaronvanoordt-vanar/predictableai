@@ -467,7 +467,7 @@ async function metaConnect(db: SupabaseClient, userId: string, payload: Json, co
       console.error("[channel-connect] meta sin WABA:", JSON.stringify({ es_event: payload.es_event ?? null, scopes: debug ? meta.scopesSummary(debug) : null, debugErr }));
       return json({
         error: "meta_no_waba",
-        message: "Meta autorizó a Predictable, pero no compartió ninguna cuenta de WhatsApp con un número. En la ventana de Meta hay que elegir la cuenta de WhatsApp y el número y llegar hasta la pantalla final. "
+        message: "Meta autorizó a Predictable, pero no dijo qué cuenta de WhatsApp elegiste (suele pasar cuando Meta reutiliza una autorización anterior y no muestra los pasos de WhatsApp). Escribe el ID de tu cuenta de WhatsApp Business en el campo de esta ventana y vuelve a abrir Meta. "
           + `(Detalle para soporte: aviso de Meta «${clean(payload.es_event, 60) || "ninguno"}»; permisos: ${debug ? meta.scopesSummary(debug) : "no se pudieron leer: " + debugErr}.)`,
       }, 400, cors);
     }

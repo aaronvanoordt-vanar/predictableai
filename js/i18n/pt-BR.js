@@ -2388,6 +2388,8 @@ window.I18N_DICTS['pt-BR'] = {
   "Meta respondió. Conectando tu número…": "A Meta respondeu. Conectando seu número…",
   "El navegador bloqueó la ventana de Meta. Permite las ventanas emergentes para predictableai.vanarsi.com y vuelve a intentarlo.": "O navegador bloqueou a janela da Meta. Permita pop-ups para predictableai.vanarsi.com e tente novamente.",
   "Meta no devolvió la autorización. Vuelve a intentarlo.": "A Meta não retornou a autorização. Tente novamente.",
+  "ID de tu cuenta de WhatsApp Business (opcional)": "ID da sua conta do WhatsApp Business (opcional)",
+  "Llénalo solo si Meta no te muestra los pasos de WhatsApp. Lo ves en WhatsApp Manager → Configuración de la cuenta, o en tu app de Meta → WhatsApp → Configuración de la API («Identificador de la cuenta de WhatsApp Business»).": "Preencha apenas se a Meta não mostrar as etapas do WhatsApp. Você encontra no WhatsApp Manager → Configurações da conta, ou no seu app da Meta → WhatsApp → Configuração da API («Identificação da conta do WhatsApp Business»).",
   "Se aceptan {0} de hasta {1} (este pesa {2}).": "São aceitos {0} de até {1} (este tem {2}).",
   "Texto, fotos, notas de voz y archivos desde tu cuenta de LinkedIn. LinkedIn solo deja escribirle a un contacto (alguien que aceptó tu conexión).": "Texto, fotos, mensagens de voz e arquivos pela sua conta do LinkedIn. O LinkedIn só permite escrever para uma conexão (alguém que aceitou seu convite).",
   "LinkedIn no entregó este archivo: ábrelo en LinkedIn.": "O LinkedIn não entregou este arquivo: abra-o no LinkedIn.",

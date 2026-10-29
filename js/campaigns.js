@@ -153,6 +153,7 @@
     watiRow: null,             // fila de WATI (aunque Meta sea la activa)
     metaRow: null,             // fila de Meta (aunque esté en error)
     metaSignup: null,          // {app_id, config_id, graph_version} o null si Meta no está configurado
+    metaWabaId: '',            // ID de WABA escrito a mano (respaldo si Meta no informa la cuenta)
     dripify: null,
     unipile: null,             // LinkedIn nativo: la cuenta de LinkedIn propia (Unipile)
     liNative: false,           // linkedin_native_available (Unipile configurado en la plataforma)
@@ -2497,11 +2498,23 @@
     api.body.appendChild(h('div', { class: 'pros-hint', text: coexistence
       ? 'Sigues usando la app del celular como siempre: lo que escribes ahí también aparece en la Bandeja. Tus chats de los últimos meses llegan solos en las próximas horas.'
       : 'Los mensajes los cobra Meta directamente a tu tarjeta (la agregas en WhatsApp Manager → Pagos). Predictable no cobra extra por conectar.' }));
+    // Si Meta reutiliza una autorización anterior, no corre los pasos de
+    // WhatsApp ni dice qué cuenta se eligió: con este ID (no es secreto)
+    // channel-connect la busca y verifica con el token que sea del cliente.
+    var wabaWrap = h('label', { class: 'pros-hint', style: 'display:block;margin-top:10px' });
+    wabaWrap.appendChild(h('span', { style: 'display:block;font-weight:600;margin-bottom:4px', text: 'ID de tu cuenta de WhatsApp Business (opcional)' }));
+    var wabaInput = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'off', placeholder: 'Ej.: 1234567890123456', 'data-no-i18n': '1' });
+    wabaInput.value = state.metaWabaId || '';
+    wabaWrap.appendChild(wabaInput);
+    wabaWrap.appendChild(h('span', { style: 'display:block;margin-top:4px', text: 'Llénalo solo si Meta no te muestra los pasos de WhatsApp. Lo ves en WhatsApp Manager → Configuración de la cuenta, o en tu app de Meta → WhatsApp → Configuración de la API («Identificador de la cuenta de WhatsApp Business»).' }));
+    api.body.appendChild(wabaWrap);
     var status = h('div', { class: 'pros-hint', style: 'margin-top:8px', role: 'status', 'aria-live': 'polite' });
     api.body.appendChild(status);
     api.setActions([
       { label: 'Atrás', onClick: back },
       { label: 'Abrir Meta', className: 'btn btn-primary', onClick: function (m) {
+        var typedWaba = String(wabaInput.value || '').replace(/\D/g, '');
+        state.metaWabaId = typedWaba;
         m.setBusy(true);
         status.textContent = 'Abriendo la ventana de Meta…';
         return runMetaOAuth(cfg, coexistence, function () {
@@ -2515,7 +2528,7 @@
               redirect_uri: metaRedirectUri(),
               // Solo para el mensaje de error si Meta no compartió la cuenta.
               es_event: r.event || (r.data.current_step ? 'step:' + r.data.current_step : ''),
-              waba_id: r.data.waba_id || '',
+              waba_id: r.data.waba_id || typedWaba || '',
               phone_number_id: r.data.phone_number_id || '',
               business_id: r.data.business_id || '',
               // Sin el aviso de Meta, vale la opción que eligió el usuario.
