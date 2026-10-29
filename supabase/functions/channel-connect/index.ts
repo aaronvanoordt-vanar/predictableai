@@ -427,7 +427,10 @@ async function metaConnect(db: SupabaseClient, userId: string, payload: Json, co
 
   // 1. El código vence en ~30 s y es de un solo uso: se canjea primero.
   let token = "";
-  try { token = await meta.exchangeCode(env.appId, env.appSecret, code); }
+  // Solo URLs de la propia app: son candidatas al redirect_uri del SDK.
+  const pageUris = (Array.isArray(payload.redirect_uris) ? payload.redirect_uris : []).map((u: unknown) => clean(u, 300))
+    .filter((u: string) => /^https:\/\/predictableai\.vanarsi\.com(\/|$)/.test(u)).slice(0, 4);
+  try { token = await meta.exchangeCode(env.appId, env.appSecret, code, pageUris); }
   catch (e) { return json({ error: "Meta no aceptó la autorización (puede haber vencido): vuelve a intentarlo. " + meta.humanError(e) }, 400, cors); }
 
   // 2. No se confía en el WABA que manda el navegador: tiene que estar entre
