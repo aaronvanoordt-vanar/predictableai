@@ -34,11 +34,14 @@ revisar los pasos 3 y 4.
 ### 2. Dominio y webhook
 
 1. **Configuración de la app → Básica → Dominios de la app**: `predictableai.vanarsi.com`.
-2. **Facebook Login for Business → Configuración**: agrega
-   `https://predictableai.vanarsi.com/` a **Dominios permitidos para el SDK de JavaScript**
-   y a **URI de redireccionamiento de OAuth válidos**. Sin esto, el popup no
-   devuelve los datos de la cuenta.
-3. Inventa un texto aleatorio largo para `META_WEBHOOK_VERIFY_TOKEN` (p. ej.
+2. **Configuración de la app → Básica → Agregar plataforma → Sitio web**:
+   `https://predictableai.vanarsi.com/`.
+3. **Facebook Login for Business → Configuración**: «Inicio de sesión de OAuth
+   web» en Sí y, en **URI de redireccionamiento de OAuth válidos**, exactamente
+   `https://predictableai.vanarsi.com/meta-callback.html` (el modo estricto
+   exige la URL exacta). Sin esto Meta rechaza el canje del código (#100
+   «redirect_uri is identical…» o #191) y `meta_connect` lo dice.
+4. Inventa un texto aleatorio largo para `META_WEBHOOK_VERIFY_TOKEN` (p. ej.
    `openssl rand -hex 24`).
 4. **WhatsApp → Configuración → Webhook**:
    - URL de devolución de llamada: `https://<proyecto>.supabase.co/functions/v1/meta-whatsapp-webhook`
@@ -119,16 +122,24 @@ Con los tres primeros secrets puestos, `channel-connect status` devuelve
 
 ## 2. Cómo funciona
 
+**Sin el SDK de JavaScript de Meta (2026-10-29).** Con `FB.login` el código
+quedaba atado a un redirect_uri interno del SDK que Meta no informa, y el canje
+fallaba siempre con «redirect_uri is identical to the one you used in the OAuth
+dialog request» (con o sin redirect_uri). El popup ahora es OAuth estándar con
+una página de regreso propia, y el canje manda ese mismo redirect_uri. No
+vuelvas a `FB.login`.
+
 ### Conexión (Embedded Signup v4 + coexistencia)
 
 ```
 Navegador (js/campaigns.js)                channel-connect (meta_connect)            Meta
 ──────────────────────────                 ─────────────────────────────            ────
-FB.login({config_id, response_type:code,
-          extras:{setup:{}, featureType?}})  ──────────────────────────────────────▶ popup
-◀── message WA_EMBEDDED_SIGNUP {event, waba_id, phone_number_id, business_id}
-◀── callback {authResponse.code} (vence en ~30 s, un solo uso)
-POST meta_connect {code, waba_id, …, mode} ─▶ GET /oauth/access_token (code → token de negocio)
+window.open(/dialog/oauth?config_id, response_type=code,
+   redirect_uri=…/meta-callback.html, state,
+   extras={setup:{}, sessionInfoVersion:'3', featureType?}) ─────────────────────▶ popup
+◀── message WA_EMBEDDED_SIGNUP {event, waba_id, phone_number_id} (si llega; si no, el WABA sale del token)
+◀── meta-callback.html → postMessage {code, state} (vence en ~30 s, un solo uso)
+POST meta_connect {code, redirect_uri, waba_id?, …, mode} ─▶ GET /oauth/access_token (code + el MISMO redirect_uri)
                                               GET /debug_token → ¿el WABA es de este token?
                                               POST /{phone}/register {pin}      (solo número nuevo)
                                               POST /{waba}/subscribed_apps      (sin esto no hay webhooks)

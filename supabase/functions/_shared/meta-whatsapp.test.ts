@@ -315,5 +315,6 @@ Deno.test("reactableWamid: solo mensajes reales de Meta con WAMID", () => {
 Deno.test("isRedirectMismatch: solo el #100 del redirect_uri reintenta el canje", () => {
   assert(meta.isRedirectMismatch({ error: { code: 100, message: "Error validating verification code. Please make sure your redirect_uri is identical to the one you used in the OAuth dialog request" } }));
   assertFalse(meta.isRedirectMismatch({ error: { code: 100, message: "This authorization code has expired." } }));
+  assert(meta.isRedirectMismatch({ error: { code: 191, message: "O domínio dessa URL não está incluído nos domínios do app." } }));
   assertFalse(meta.isRedirectMismatch(null));
 });

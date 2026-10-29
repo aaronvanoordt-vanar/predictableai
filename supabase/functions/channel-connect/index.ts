@@ -427,11 +427,19 @@ async function metaConnect(db: SupabaseClient, userId: string, payload: Json, co
 
   // 1. El código vence en ~30 s y es de un solo uso: se canjea primero.
   let token = "";
-  // Solo URLs de la propia app: son candidatas al redirect_uri del SDK.
-  const pageUris = (Array.isArray(payload.redirect_uris) ? payload.redirect_uris : []).map((u: unknown) => clean(u, 300))
-    .filter((u: string) => /^https:\/\/predictableai\.vanarsi\.com(\/|$)/.test(u)).slice(0, 4);
-  try { token = await meta.exchangeCode(env.appId, env.appSecret, code, pageUris); }
-  catch (e) { return json({ error: "Meta no aceptó la autorización (puede haber vencido): vuelve a intentarlo. " + meta.humanError(e) }, 400, cors); }
+  // El redirect_uri con que se abrió la ventana de Meta: solo la página de
+  // regreso de Predictable (meta-callback.html), por https.
+  const redirectUri = clean(payload.redirect_uri, 300);
+  if (redirectUri && !/^https:\/\/[a-z0-9.-]+\/meta-callback\.html$/i.test(redirectUri)) return json({ error: "redirect_uri inválido." }, 400, cors);
+  try { token = await meta.exchangeCode(env.appId, env.appSecret, code, redirectUri); }
+  catch (e) {
+    // Configuración de la app de Meta, no un problema del cliente: se dice qué falta.
+    if (meta.isRedirectMismatch((e as meta.MetaError)?.body)) {
+      console.error("[channel-connect] meta redirect_uri:", redirectUri, meta.humanError(e));
+      return json({ error: "meta_redirect_uri", message: `La app de Meta no tiene autorizada la página de regreso. En developers.facebook.com → Inicio de sesión con Facebook para empresas → Configuración, agrega ${redirectUri || "https://predictableai.vanarsi.com/meta-callback.html"} en «URI de redireccionamiento de OAuth válidos» y guarda.` }, 400, cors);
+    }
+    return json({ error: "Meta no aceptó la autorización (puede haber vencido): vuelve a intentarlo. " + meta.humanError(e) }, 400, cors);
+  }
 
   // 2. No se confía en el WABA que manda el navegador: tiene que estar entre
   //    los que el cliente le dio a este token.
