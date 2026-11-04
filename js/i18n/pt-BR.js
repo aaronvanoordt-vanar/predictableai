@@ -7246,6 +7246,8 @@ window.I18N_DICTS['pt-BR'] = {
   "Conectado": "Conectado",
   "Desconectar": "Desconectar",
   "Reconectar": "Reconectar",
+  "Usar otra opción": "Usar outra opção",
+  "En la ventana de Meta elige conectar el número de tu app de WhatsApp Business o agregar un número nuevo. Los mensajes los cobra Meta directamente; Predictable no cobra extra por conectar.": "Na janela da Meta, escolha conectar o número do seu app WhatsApp Business ou adicionar um número novo. A Meta cobra as mensagens diretamente; a Predictable não cobra nada extra para conectar.",
   "Conecta el correo desde el que quieres prospectar. Los emails de tus campañas y tus respuestas de la Bandeja salen de ahí, con tu propio dominio.": "Conecte o e-mail pelo qual você quer prospectar. Os e-mails das campanhas e suas respostas da Caixa de entrada saem dele, com seu próprio domínio.",
   "Inicia sesión con Google.": "Entre com o Google.",
   "Inicia sesión con Microsoft.": "Entre com a Microsoft.",

@@ -7096,6 +7096,8 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Ajustes": "Settings",
   "Pausar": "Pause",
   "Guardar": "Save",
+  "Usar otra opción": "Use another option",
+  "En la ventana de Meta elige conectar el número de tu app de WhatsApp Business o agregar un número nuevo. Los mensajes los cobra Meta directamente; Predictable no cobra extra por conectar.": "In the Meta window, choose to connect your WhatsApp Business app number or add a new number. Meta bills messages directly; Predictable charges nothing extra to connect.",
   "Conecta el correo desde el que quieres prospectar. Los emails de tus campañas y tus respuestas de la Bandeja salen de ahí, con tu propio dominio.": "Connect the mailbox you want to prospect from. Your campaign emails and Inbox replies are sent from it, on your own domain.",
   "Inicia sesión con Google.": "Sign in with Google.",
   "Inicia sesión con Microsoft.": "Sign in with Microsoft.",
