@@ -95,6 +95,14 @@ Deno.test("twilio: DialCallStatus → estado y pista de resultado", () => {
   assertEquals(twilio.dialStatus("failed").status, "failed");
 });
 
+Deno.test("twilio: el ErrorCode de un callback se guarda como «código: texto»", () => {
+  assertEquals(twilio.callbackError({ ErrorCode: "13227", ErrorMessage: "No  International\nAuthorization" }), "13227: No International Authorization");
+  assertEquals(twilio.callbackError({ ErrorCode: "21219" }), "21219");
+  assertEquals(twilio.callbackError({ ErrorCode: "" }), null);
+  assertEquals(twilio.callbackError({ ErrorCode: "abc", ErrorMessage: "x" }), null);
+  assertEquals(twilio.callbackError({}), null);
+});
+
 Deno.test("cloudtalk: fila del historial → llamada común", () => {
   const c = normalizeCdr({ Cdr: { id: 27, type: "outgoing", public_external: "+525512345678", public_internal: "+525500000000", started_at: "2026-10-17 14:00:00", answered_at: "2026-10-17 14:00:12", ended_at: "2026-10-17 14:03:12", billsec: 180, recorded: true, recording_link: "https://analytics.cloudtalk.io/call-details/27", user_id: 9 } })!;
   assertEquals(c.provider_call_id, "27");

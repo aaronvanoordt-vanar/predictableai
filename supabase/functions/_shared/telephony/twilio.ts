@@ -156,6 +156,19 @@ export function dialStatus(s: string): { status: "completed" | "busy" | "no_answ
   }
 }
 
+/**
+ * El error que Twilio adjunta a un callback de la llamada (ErrorCode /
+ * ErrorMessage, p. ej. 13227 = país sin Geo permissions) como «13227: texto».
+ * Se guarda en calls.error_detail para que el dialer diga la causa en vez del
+ * genérico 31005 del navegador. Sin código, null.
+ */
+export function callbackError(p: Record<string, string>): string | null {
+  const code = String(p.ErrorCode ?? "").trim();
+  if (!/^\d{3,6}$/.test(code)) return null;
+  const msg = String(p.ErrorMessage ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+  return msg ? `${code}: ${msg}` : code;
+}
+
 function basic(env: TwilioEnv): string {
   return "Basic " + btoa(`${env.accountSid}:${env.authToken}`);
 }
