@@ -144,6 +144,26 @@ function serverCfg(v: Json, defPort: number, fallbackUser: string): { host: stri
   return { host, port, username, password };
 }
 
+/**
+ * Con un buzón conectado y SIN Apollo propio, el canal Email pasa a «Mis
+ * buzones». Antes quedaba en "apollo" (el default) y el canal seguía en «Sin
+ * conectar»: la opción para cambiarlo vive dentro del detalle del canal, que
+ * solo se abre con el canal conectado, así que el usuario no tenía salida.
+ * Si ya tiene Apollo conectado no se toca nada (no cambiamos por dónde envía).
+ * Devuelve el proveedor resultante, o null si no cambió.
+ */
+async function preferMailboxesWithoutApollo(db: SupabaseClient, uid: string, current: string | null): Promise<string | null> {
+  if (current === "mailboxes") return null;
+  const [{ count: mbx }, { count: apollo }] = await Promise.all([
+    db.from("email_mailboxes").select("id", { count: "exact", head: true }).eq("user_id", uid).eq("status", "connected"),
+    db.from("channel_accounts").select("id", { count: "exact", head: true }).eq("user_id", uid).eq("provider", "apollo").eq("status", "connected"),
+  ]);
+  if (!mbx || apollo) return null;
+  const { error } = await db.from("email_settings").upsert({ user_id: uid, provider: "mailboxes", updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+  if (error) { console.warn("[mailbox-connect] provider → mailboxes:", error.message); return null; }
+  return "mailboxes";
+}
+
 async function loadMine(db: SupabaseClient, uid: string, id: string): Promise<Json | null> {
   if (!/^[0-9a-f-]{36}$/i.test(String(id ?? ""))) return null;
   const { data } = await db.from("email_mailboxes").select("*").eq("id", id).eq("user_id", uid).maybeSingle();
@@ -191,9 +211,13 @@ Deno.serve(async (req) => {
         db.from("email_domain_health").select("domain, level, report, checked_at").eq("user_id", user.id),
       ]);
       if (error) return json({ error: "mailboxes_unavailable", message: "Los buzones propios todavía no están habilitados (falta aplicar la migración)." }, 503, cors);
+      const eff = settings ?? { provider: "apollo", unsubscribe_footer: false, footer_text: null };
+      // Repara a quien conectó un buzón antes de este cambio y quedó en «Sin conectar».
+      const switched = await preferMailboxesWithoutApollo(db, user.id, eff.provider);
+      if (switched) eff.provider = switched;
       return json({
         mailboxes: (rows ?? []).map(publicRow),
-        settings: settings ?? { provider: "apollo", unsubscribe_footer: false, footer_text: null },
+        settings: eff,
         oauth: oauthAvailability(),
         warmup_available: !!warmup.warmupProvider(),
         health: health ?? [],
@@ -220,6 +244,8 @@ Deno.serve(async (req) => {
         config: { scopes: got.scopes, connected_at: new Date().toISOString() },
         secret: await sealSecret(got.secret),
       });
+      const { data: cur } = await db.from("email_settings").select("provider").eq("user_id", user.id).maybeSingle();
+      await preferMailboxesWithoutApollo(db, user.id, cur?.provider ?? null);
       return json({ mailbox: publicRow(row) }, 200, cors);
     }
 
@@ -253,6 +279,8 @@ Deno.serve(async (req) => {
         config: { smtp: { host: smtp.host, port: smtp.port, username: smtp.username }, imap: { host: imap.host, port: imap.port, username: imap.username }, connected_at: new Date().toISOString() },
         secret: await sealSecret({ smtp_password: smtp.password, imap_password: imap.password }),
       });
+      const { data: cur } = await db.from("email_settings").select("provider").eq("user_id", user.id).maybeSingle();
+      await preferMailboxesWithoutApollo(db, user.id, cur?.provider ?? null);
       return json({ mailbox: publicRow(row) }, 200, cors);
     }
 
