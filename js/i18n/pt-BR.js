@@ -7246,4 +7246,6 @@ window.I18N_DICTS['pt-BR'] = {
   "Conectado": "Conectado",
   "Desconectar": "Desconectar",
   "Reconectar": "Reconectar",
+  "Usar otra opción": "Usar outra opção",
+  "En la ventana de Meta elige conectar el número de tu app de WhatsApp Business o agregar un número nuevo. Los mensajes los cobra Meta directamente; Predictable no cobra extra por conectar.": "Na janela da Meta, escolha conectar o número do seu app WhatsApp Business ou adicionar um número novo. A Meta cobra as mensagens diretamente; a Predictable não cobra nada extra para conectar.",
 };

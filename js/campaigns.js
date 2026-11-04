@@ -2547,6 +2547,58 @@
     ]);
   }
 
+  // Camino directo (2026-11-04, pedido del dueño): «Conectar WhatsApp» abre el
+  // popup de Meta en el mismo clic, sin pantallas previas. No se fuerza
+  // `featureType`: Meta muestra ahí mismo sus opciones (usar el número de la
+  // app de WhatsApp Business o agregar un número nuevo, incluido el que Meta
+  // ofrezca). `meta_connect` decide coexistencia o número nuevo por el evento
+  // FINISH que devuelve Meta.
+  function metaDirect(api, fallbackToChoice) {
+    var cfg = state.metaSignup;
+    api.setTitle('Conectar WhatsApp');
+    api.body.innerHTML = '';
+    var status = h('div', { class: 'pros-hint', role: 'status', 'aria-live': 'polite', text: 'Abriendo la ventana de Meta…' });
+    api.body.appendChild(status);
+    api.body.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:8px', text: 'En la ventana de Meta elige conectar el número de tu app de WhatsApp Business o agregar un número nuevo. Los mensajes los cobra Meta directamente; Predictable no cobra extra por conectar.' }));
+    api.setActions([{ label: 'Cancelar' }]);
+    function retryActions() {
+      api.setActions([
+        { label: 'Usar otra opción', onClick: fallbackToChoice },
+        { label: 'Reintentar', className: 'btn btn-primary', onClick: function () { metaDirect(api, fallbackToChoice); } },
+        { label: 'Cancelar' },
+      ]);
+    }
+    runMetaOAuth(cfg, false, function () {
+      status.textContent = 'Se abrió la ventana de Meta: termina los pasos ahí. Esta ventana se actualiza sola.';
+    }).then(function (r) {
+      status.textContent = 'Meta respondió. Conectando tu número…';
+      api.setActions([]);
+      return edgeFetch(FN_CHANNEL, {
+        action: 'meta_connect',
+        payload: {
+          code: r.code,
+          redirect_uri: metaRedirectUri(),
+          es_event: r.event || (r.data.current_step ? 'step:' + r.data.current_step : ''),
+          waba_id: r.data.waba_id || state.metaWabaId || '',
+          phone_number_id: r.data.phone_number_id || '',
+          business_id: r.data.business_id || '',
+          mode: r.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING' ? 'coexistence' : 'new',
+          sender: senderDefaults(),
+        },
+      });
+    }).then(function (res) {
+      api.close();
+      var probs = (res && res.problems) || [];
+      if (probs.length) toast('WhatsApp quedó conectado a medias: ' + probs.join(' '), 'warn');
+      else toast('WhatsApp conectado. Crea tus plantillas en la pestaña de WhatsApp para usarlas en tus campañas.', 'success');
+      return refreshStatus().then(function () { if (isConn(state.wati)) openChannelDetails('whatsapp'); });
+    }).catch(function (e) {
+      status.textContent = errMsg(e);
+      status.className = 'pros-note-red';
+      retryActions();
+    });
+  }
+
   function openWhatsAppWizard(startStep) {
     var api = openModal({ title: 'Conectar WhatsApp', width: 560 });
     function choice() {
@@ -2625,7 +2677,9 @@
         } },
       ]);
     }
-    (startStep === 'have' ? haveIt : choice)();
+    if (startStep === 'have') haveIt();
+    else if (state.metaSignup) metaDirect(api, choice); // abre Meta en el mismo clic
+    else choice();
     return api;
   }
 
