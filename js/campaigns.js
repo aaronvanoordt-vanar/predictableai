@@ -2562,9 +2562,21 @@
     api.body.appendChild(h('div', { class: 'pros-hint', style: 'margin-top:8px', text: 'En la ventana de Meta elige conectar el número de tu app de WhatsApp Business o agregar un número nuevo. Los mensajes los cobra Meta directamente; Predictable no cobra extra por conectar.' }));
     api.setActions([{ label: 'Cancelar' }]);
     function retryActions() {
+      // Si Meta reutiliza una autorización anterior no dice qué cuenta se eligió:
+      // con este ID (no es secreto) channel-connect la busca y la verifica.
+      var wabaWrap = h('label', { class: 'pros-hint', style: 'display:block;margin-top:10px' });
+      wabaWrap.appendChild(h('span', { style: 'display:block;font-weight:600;margin-bottom:4px', text: 'ID de tu cuenta de WhatsApp Business (opcional)' }));
+      var wabaInput = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'off', placeholder: 'Ej.: 1234567890123456', 'data-no-i18n': '1' });
+      wabaInput.value = state.metaWabaId || '';
+      wabaWrap.appendChild(wabaInput);
+      wabaWrap.appendChild(h('span', { style: 'display:block;margin-top:4px', text: 'Llénalo solo si Meta no te muestra los pasos de WhatsApp. Lo ves en WhatsApp Manager → Configuración de la cuenta, o en tu app de Meta → WhatsApp → Configuración de la API («Identificador de la cuenta de WhatsApp Business»).' }));
+      api.body.appendChild(wabaWrap);
       api.setActions([
         { label: 'Usar otra opción', onClick: fallbackToChoice },
-        { label: 'Reintentar', className: 'btn btn-primary', onClick: function () { metaDirect(api, fallbackToChoice); } },
+        { label: 'Reintentar', className: 'btn btn-primary', onClick: function () {
+          state.metaWabaId = String(wabaInput.value || '').replace(/\D/g, '');
+          metaDirect(api, fallbackToChoice);
+        } },
         { label: 'Cancelar' },
       ]);
     }
