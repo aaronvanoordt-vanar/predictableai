@@ -7314,4 +7314,6 @@ window.I18N_DICTS['pt-BR'] = {
   "Invitación sin nota: LinkedIn agotó el cupo de invitaciones con nota de tu cuenta.": "Convite sem nota: o LinkedIn esgotou a cota de convites com nota da sua conta.",
   "Demasiadas solicitudes seguidas a LinkedIn: se reintenta en unos minutos.": "Muitas solicitações seguidas ao LinkedIn: nova tentativa em alguns minutos.",
   "LinkedIn limitó los envíos de tu cuenta por ahora.": "O LinkedIn limitou os envios da sua conta por enquanto.",
+  "La nota de la invitación es más larga de lo que LinkedIn admite en esta cuenta (200 caracteres sin Premium).": "A nota do convite é mais longa do que o LinkedIn permite nesta conta (200 caracteres sem Premium).",
+  "Invitación sin nota: LinkedIn no aceptó la nota en esta cuenta.": "Convite sem nota: o LinkedIn não aceitou a nota nesta conta.",
 };

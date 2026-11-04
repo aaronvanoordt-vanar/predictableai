@@ -73,6 +73,9 @@ Deno.test("classifyError: cuenta, límite, destinatario, transitorio", () => {
   assertEquals(classifyError(new UnipileError("x", 429, "")), "throttle");
   assertEquals(classifyError(new UnipileError("x", 429, "errors/too_many_requests")), "throttle");
   assertEquals(classifyError(new UnipileError("x", 429, "errors/limit_exceeded")), "limit");
+  // Nota demasiado larga (cuenta sin Premium): es del texto, no de la cuenta.
+  assertEquals(classifyError(new UnipileError("x", 422, "errors/too_many_characters")), "too_long");
+  assert(/200 caracteres/.test(humanError(new UnipileError("x", 422, "errors/too_many_characters"))));
   assertEquals(classifyError(new UnipileError("x", 422, "errors/already_invited_recently")), "recipient");
   assertEquals(classifyError(new UnipileError("x", 422, "errors/invalid_recipient")), "recipient");
   assertEquals(classifyError(new UnipileError("x", 503, "")), "transient");

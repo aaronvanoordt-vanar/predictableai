@@ -1,6 +1,6 @@
 // deno test supabase/functions/_shared/linkedin-limits.test.ts
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { activeBlock, effectiveLimits, gapMs, LINKEDIN_LIMITS, noteLimitActive, pace } from "./linkedin-limits.ts";
+import { activeBlock, effectiveLimits, gapMs, LINKEDIN_LIMITS, noteLimitActive, noteMaxFor, pace } from "./linkedin-limits.ts";
 
 const now = new Date("2026-10-17T15:00:00Z");
 const old = "2026-01-01T00:00:00Z";
@@ -60,4 +60,11 @@ Deno.test("noteLimitActive: vigente hasta la fecha, luego se vuelve a probar con
   // El cupo de notas no baja los topes de la cuenta.
   assertEquals(effectiveLimits({ note_limit: { until: "2026-11-11T18:00:00Z" } }, "2026-01-01T00:00:00Z", now).reduced, false);
   assertEquals(LINKEDIN_LIMITS.note_limit_ms, 7 * 24 * 60 * 60 * 1000);
+});
+
+Deno.test("noteMaxFor: 200 sin Premium, 300 con Premium, o el tope que ya pasó", () => {
+  assertEquals(noteMaxFor({}), 200);
+  assertEquals(noteMaxFor({ premium: "sales_navigator" }), 300);
+  assertEquals(noteMaxFor({ premium: "premium", note_max: 200 }), 200);
+  assertEquals(noteMaxFor({ note_max: 999 }), 300);
 });

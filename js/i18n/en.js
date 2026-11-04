@@ -7165,4 +7165,6 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Invitación sin nota: LinkedIn agotó el cupo de invitaciones con nota de tu cuenta.": "Invitation without a note: LinkedIn used up your account's quota of invitations with a note.",
   "Demasiadas solicitudes seguidas a LinkedIn: se reintenta en unos minutos.": "Too many requests to LinkedIn in a row: retrying in a few minutes.",
   "LinkedIn limitó los envíos de tu cuenta por ahora.": "LinkedIn has limited sending from your account for now.",
+  "La nota de la invitación es más larga de lo que LinkedIn admite en esta cuenta (200 caracteres sin Premium).": "The invitation note is longer than LinkedIn allows on this account (200 characters without Premium).",
+  "Invitación sin nota: LinkedIn no aceptó la nota en esta cuenta.": "Invitation without a note: LinkedIn didn't accept the note on this account.",
 });
