@@ -2,7 +2,7 @@
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { countryOfE164, sameNumber, toE164 } from "./phone.ts";
 import * as twilio from "./twilio.ts";
-import { normalizeCdr, parseAgents, pickAgent } from "./cloudtalk.ts";
+import { ctError, normalizeCdr, parseAgents, pickAgent } from "./cloudtalk.ts";
 import { normalizeCall, transcriptText } from "./aircall.ts";
 import { normalizeEvent, verifyHs512 } from "./ringover.ts";
 import { adapterFor, catalog, PROVIDERS } from "./registry.ts";
@@ -101,6 +101,17 @@ Deno.test("twilio: el ErrorCode de un callback se guarda como «código: texto»
   assertEquals(twilio.callbackError({ ErrorCode: "" }), null);
   assertEquals(twilio.callbackError({ ErrorCode: "abc", ErrorMessage: "x" }), null);
   assertEquals(twilio.callbackError({}), null);
+});
+
+Deno.test("cloudtalk: un 403 al marcar no se reporta como API key rechazada", () => {
+  assert(/API key/.test(ctError(401, null, "/calls/create.json").message));
+  const dial = ctError(403, { responseData: { status: 403, message: "Agent is not online" } }, "/calls/create.json");
+  assert(!/rechazó la API key/.test(dial.message));
+  assert(/en línea/.test(dial.message));
+  assert(dial.message.includes("Agent is not online"));
+  assert(/Admin/.test(ctError(403, null, "/agents/index.json?limit=1000").message));
+  assertEquals(ctError(404, { responseData: { message: "Agent Not found" } }, "/calls/create.json").status, 502);
+  assert(/Agent Not found/.test(ctError(404, { responseData: { message: "Agent Not found" } }, "/calls/create.json").message));
 });
 
 Deno.test("cloudtalk: fila del historial → llamada común", () => {

@@ -44,9 +44,30 @@ async function ct(id: string, secret: string, path: string, init: RequestInit = 
   const text = await res.text();
   let data: Json = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = { message: text.slice(0, 200) }; }
-  if (res.status === 401 || res.status === 403) throw new TelephonyError("CloudTalk rechazó la API key (revisa el ID, el secreto y que tu usuario sea Admin).", 400);
-  if (!res.ok) throw new TelephonyError(`CloudTalk respondió ${res.status}: ${String(data?.responseData?.message ?? data?.message ?? "").slice(0, 160)}`, 502);
+  if (!res.ok) throw ctError(res.status, data, path);
   return data;
+}
+
+function ctMessage(data: Json): string {
+  return String(data?.responseData?.message ?? data?.message ?? data?.error ?? "").replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+/**
+ * Error de la API de CloudTalk → mensaje para el usuario. Exportada para los tests.
+ * Solo un 401 es la key. Un 403 al marcar (/calls/create) no es la key, porque
+ * con esa misma key se leyeron los agentes al conectar: CloudTalk lo usa cuando
+ * el agente no puede llamar (sin conexión en su app, sin número saliente o sin
+ * permiso). Antes los dos decían «rechazó la API key» y escondían el motivo.
+ */
+export function ctError(status: number, data: Json, path: string): TelephonyError {
+  const msg = ctMessage(data);
+  const detail = msg ? ` CloudTalk dijo: «${msg}».` : "";
+  if (status === 401) return new TelephonyError("CloudTalk rechazó la API key (revisa el ID, el secreto y que tu usuario sea Admin).", 400);
+  if (status === 403 && path.startsWith("/calls/create")) {
+    return new TelephonyError(`CloudTalk no dejó iniciar la llamada. Abre la app de CloudTalk, ponte en línea (Online) y revisa que tu agente tenga un número saliente asignado.${detail}`, 400);
+  }
+  if (status === 403) return new TelephonyError(`CloudTalk no permitió esta acción con tu API key (tu usuario debe ser Admin y el plan Essential o superior).${detail}`, 400);
+  return new TelephonyError(`CloudTalk respondió ${status}:${detail || " sin detalle."}`, 502);
 }
 
 /** Lista de agentes de la cuenta → { id, email, name }. Exportada para los tests. */
