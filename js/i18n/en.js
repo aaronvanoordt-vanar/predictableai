@@ -7140,4 +7140,13 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Este buzón no está conectado en este espacio. Conéctalo en Canales → Email para medirlo.": "This mailbox is not connected in this workspace. Connect it in Channels → Email to measure it.",
   "Este número no está conectado con Meta en este espacio. Conéctalo en Canales → WhatsApp para medirlo.": "This number is not connected with Meta in this workspace. Connect it in Channels → WhatsApp to measure it.",
   "Esta cuenta de LinkedIn no está conectada en este espacio. Conéctala en Canales → LinkedIn para medirla.": "This LinkedIn account is not connected in this workspace. Connect it in Channels → LinkedIn to measure it.",
+  "Mensajes enviados por día": "Messages sent per day",
+  "Total: {0}": "Total: {0}",
+  "Día": "Day",
+  "Solicitudes de conexión en LinkedIn": "LinkedIn connection requests",
+  "Mensajes enviados por día y por canal": "Messages sent per day and channel",
+  "Cifras declaradas por Vanarsi, sin registros que las respalden: no provienen de Predictable ni de la plataforma externa.": "Figures declared by Vanarsi, with no records to back them: they do not come from Predictable or from the external platform.",
+  "Cifras tomadas de las capturas de la plataforma externa.": "Figures taken from screenshots of the external platform.",
+  "Cifras tomadas de los registros de la plataforma externa.": "Figures taken from the external platform's logs.",
+  "Los registros de envío de esa plataforma no están disponibles.": "That platform's sending logs are not available.",
 });

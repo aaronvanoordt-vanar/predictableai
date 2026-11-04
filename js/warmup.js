@@ -11,8 +11,11 @@
  *   · La constancia y una barra de avance calculada con las fechas del
  *     periodo declarado (no con envíos: no hay registros de envío).
  *   · El aviso de que los registros de la plataforma externa no están
- *     disponibles. Nunca pinta mensajes, envíos, respuestas ni gráficos por
- *     día: no hay fuente para ellos (regla «sin datos inventados»).
+ *     disponibles. Nunca inventa mensajes ni respuestas.
+ *   · «Mensajes enviados por día» (gráfico apilado por canal + tabla) solo
+ *     con las cifras de `warmup_attestations.daily`, y siempre con su fuente
+ *     (`daily_source`): hoy 'declared' = «cifras declaradas por Vanarsi, sin
+ *     registros que las respalden» (pedido del dueño, 2026-11-04).
  *   · El estado REAL de cada cuenta, medido hoy por Predictable: buzón y
  *     salud del dominio (email_mailboxes / email_domain_health), calidad y
  *     tope de Meta (channel_accounts provider 'meta', config.quality) y la
@@ -68,7 +71,7 @@
     if (!client) return null;
     try {
       var r = await client.from('warmup_attestations')
-        .select('period_start, period_end, executed_on, accounts, logs_available, attested_by, note, updated_at')
+        .select('*')
         .maybeSingle();
       state.row = r && !r.error ? r.data : null;
     } catch (e) { state.row = null; }
@@ -115,6 +118,13 @@
       '.wu-acc{display:flex;flex-direction:column;gap:8px}',
       '.wu-acc dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:13px}',
       '.wu-acc dt{color:var(--muted)} .wu-acc dd{margin:0;color:var(--ink);word-break:break-word}',
+      '.wu-src{font-size:12px;color:var(--muted);margin:2px 0 10px}',
+      '.wu-legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--ink);margin-bottom:6px}',
+      '.wu-leg{display:inline-flex;align-items:center;gap:6px} .wu-leg i{width:10px;height:10px;border-radius:3px;display:inline-block}',
+      '.wu-chart{width:100%;height:auto;display:block}',
+      '.wu-details{margin-top:8px;font-size:13px} .wu-details summary{cursor:pointer;color:var(--muted)}',
+      '.wu-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:13px}',
+      '.wu-table th,.wu-table td{text-align:right;padding:4px 8px;border-bottom:1px solid var(--border)} .wu-table th:first-child,.wu-table td:first-child{text-align:left}',
       '@media (max-width:840px){#warmup-shell{padding:16px}.wu-grid{grid-template-columns:1fr}}',
     ].join('\n');
     document.head.appendChild(s);
@@ -190,6 +200,71 @@
       '</div>';
   }
 
+  // ── Envíos por día (cifras de la constancia, con su fuente a la vista) ────
+  var SERIES = [
+    { key: 'whatsapp', label: 'WhatsApp', color: 'var(--green)' },
+    { key: 'email', label: 'Email', color: 'var(--accent)' },
+    { key: 'linkedin', label: 'Solicitudes de conexión en LinkedIn', color: 'var(--cyan)' },
+  ];
+  var SOURCE_NOTE = {
+    declared: 'Cifras declaradas por Vanarsi, sin registros que las respalden: no provienen de Predictable ni de la plataforma externa.',
+    screenshots: 'Cifras tomadas de las capturas de la plataforma externa.',
+    platform_logs: 'Cifras tomadas de los registros de la plataforma externa.',
+  };
+
+  function num(v) { var n = Number(v); return isFinite(n) && n > 0 ? Math.round(n) : 0; }
+  function fmtShort(d) {
+    try { return parseDay(d).toLocaleDateString(locale(), { day: 'numeric', month: 'short' }); } catch (e) { return String(d || ''); }
+  }
+
+  function dailyChart(row) {
+    var days = (Array.isArray(row.daily) ? row.daily : []).filter(function (d) { return d && d.date; });
+    if (!days.length) return '';
+    var totals = days.map(function (d) { return SERIES.reduce(function (a, s) { return a + num(d[s.key]); }, 0); });
+    var max = Math.max.apply(null, totals.concat([1]));
+    var step = max <= 20 ? 5 : max <= 50 ? 10 : max <= 100 ? 20 : 50;
+    var top = Math.ceil(max / step) * step;
+    var W = 720, H = 260, L = 36, R = 8, T = 12, B = 34;
+    var pw = W - L - R, ph = H - T - B, n = days.length;
+    var slot = pw / n, bw = Math.max(6, Math.min(32, slot * 0.62));
+    var y = function (v) { return T + ph - (v / top) * ph; };
+    var svg = '';
+    for (var g = 0; g <= top; g += step) {
+      svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(g) + '" y2="' + y(g) + '" stroke="var(--border)" stroke-width="1"/>' +
+        '<text x="' + (L - 6) + '" y="' + (y(g) + 4) + '" text-anchor="end" font-size="11" fill="var(--muted)">' + g + '</text>';
+    }
+    days.forEach(function (d, i) {
+      var x = L + slot * i + (slot - bw) / 2, acc = 0;
+      var tip = fmtShort(d.date) + ': ' + SERIES.map(function (s) { return s.label + ' ' + num(d[s.key]); }).join(' · ') + ' · Total ' + totals[i];
+      svg += '<g><title>' + esc(tip) + '</title>';
+      SERIES.forEach(function (s) {
+        var v = num(d[s.key]);
+        if (!v) return;
+        var y1 = y(acc + v), h = y(acc) - y1;
+        svg += '<rect x="' + x.toFixed(1) + '" y="' + y1.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, h - 1).toFixed(1) + '" rx="2" fill="' + s.color + '"/>';
+        acc += v;
+      });
+      svg += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (y(totals[i]) - 4).toFixed(1) + '" text-anchor="middle" font-size="10" fill="var(--muted)">' + totals[i] + '</text></g>';
+      if (n <= 16 || i % 2 === 0) svg += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - B + 16) + '" text-anchor="middle" font-size="10" fill="var(--muted)">' + esc(fmtShort(d.date)) + '</text>';
+    });
+    var sums = SERIES.map(function (s) { return days.reduce(function (a, d) { return a + num(d[s.key]); }, 0); });
+    var grand = sums.reduce(function (a, b) { return a + b; }, 0);
+    var legend = SERIES.map(function (s, i) {
+      return '<span class="wu-leg"><i style="background:' + s.color + '"></i>' + esc(s.label) + ' <b>' + sums[i] + '</b></span>';
+    }).join('');
+    var table = '<table class="wu-table"><thead><tr><th>Día</th>' + SERIES.map(function (s) { return '<th>' + esc(s.label) + '</th>'; }).join('') + '<th>Total</th></tr></thead><tbody>' +
+      days.map(function (d, i) {
+        return '<tr><td>' + esc(fmtShort(d.date)) + '</td>' + SERIES.map(function (s) { return '<td>' + num(d[s.key]) + '</td>'; }).join('') + '<td>' + totals[i] + '</td></tr>';
+      }).join('') + '</tbody></table>';
+    return '<div class="wu-card">' +
+      '<div class="wu-row"><h3>Mensajes enviados por día</h3><span class="wu-muted">Total: ' + grand + '</span></div>' +
+      '<div class="wu-src">' + esc(SOURCE_NOTE[row.daily_source] || SOURCE_NOTE.declared) + '</div>' +
+      '<div class="wu-legend">' + legend + '</div>' +
+      '<svg class="wu-chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Mensajes enviados por día y por canal">' + svg + '</svg>' +
+      '<details class="wu-details"><summary>Ver como tabla</summary>' + table + '</details>' +
+      '</div>';
+  }
+
   function render() {
     var el = shell();
     if (!el) return;
@@ -213,7 +288,9 @@
     html += '<div class="wu-notice">' +
       '<strong>Hecho fuera de Predictable.</strong> ' +
       '<span>' + esc(row.attested_by) + ' declara que el warm-up de estas cuentas se hizo en este periodo en: ' + esc(row.executed_on) + '.</span> ' +
-      (row.logs_available ? '' : '<span>Los registros de envío de esa plataforma no están disponibles, por eso aquí no se muestran mensajes ni envíos por día.</span> ') +
+      (row.logs_available ? '' : (Array.isArray(row.daily) && row.daily.length
+        ? '<span>Los registros de envío de esa plataforma no están disponibles.</span> '
+        : '<span>Los registros de envío de esa plataforma no están disponibles, por eso aquí no se muestran mensajes ni envíos por día.</span> ')) +
       (row.note ? '<span>' + esc(row.note) + '</span>' : '') +
       '</div>';
     html += '<div><h3 style="margin:8px 0 4px;font-size:16px;font-weight:700;color:var(--ink)">Estado actual de las cuentas</h3>' +
@@ -226,6 +303,7 @@
         accountCard('whatsapp', accountLabel(row, 'whatsapp'), whatsappCard()) +
         accountCard('linkedin', accountLabel(row, 'linkedin'), linkedinCard()) +
         '</div>';
+      html += dailyChart(row);
     }
     el.innerHTML = html;
   }

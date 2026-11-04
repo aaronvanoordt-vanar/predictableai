@@ -7291,4 +7291,12 @@ window.I18N_DICTS['pt-BR'] = {
   "Este buzón no está conectado en este espacio. Conéctalo en Canales → Email para medirlo.": "Esta caixa de e-mail não está conectada neste espaço. Conecte em Canais → E-mail para medi-la.",
   "Este número no está conectado con Meta en este espacio. Conéctalo en Canales → WhatsApp para medirlo.": "Este número não está conectado com a Meta neste espaço. Conecte em Canais → WhatsApp para medi-lo.",
   "Esta cuenta de LinkedIn no está conectada en este espacio. Conéctala en Canales → LinkedIn para medirla.": "Esta conta do LinkedIn não está conectada neste espaço. Conecte em Canais → LinkedIn para medi-la.",
+  "Mensajes enviados por día": "Mensagens enviadas por dia",
+  "Día": "Dia",
+  "Solicitudes de conexión en LinkedIn": "Solicitações de conexão no LinkedIn",
+  "Mensajes enviados por día y por canal": "Mensagens enviadas por dia e por canal",
+  "Cifras declaradas por Vanarsi, sin registros que las respalden: no provienen de Predictable ni de la plataforma externa.": "Números declarados pela Vanarsi, sem registros que os comprovem: não vêm do Predictable nem da plataforma externa.",
+  "Cifras tomadas de las capturas de la plataforma externa.": "Números tirados das capturas de tela da plataforma externa.",
+  "Cifras tomadas de los registros de la plataforma externa.": "Números tirados dos registros da plataforma externa.",
+  "Los registros de envío de esa plataforma no están disponibles.": "Os registros de envio dessa plataforma não estão disponíveis.",
 };
