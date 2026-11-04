@@ -541,7 +541,7 @@
   function joinAnd(arr) { return global.i18n && global.i18n.list ? global.i18n.list(arr) : arr.join(' y '); }
   function isConn(acc) { return !!(acc && acc.status === 'connected'); }
   /** Paso con mensaje IA de Predictable (LinkedIn por Dripify no: el texto vive en Dripify). */
-  function aiStep(a) { var L = flowLib(); return a.content.kind === 'ai' && (!L.isLinkedin(a.channel) || L.isNativeLinkedin(a)); }
+  function aiStep(a) { var L = flowLib(); return a.content.kind === 'ai' && L.hasStepText(a); }
   function dripifyStep(a) { var L = flowLib(); return L.isLinkedin(a.channel) && !L.isNativeLinkedin(a); }
   function defaultEmailAccount() {
     var accs = state.emailAccounts || [];

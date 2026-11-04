@@ -78,6 +78,11 @@ export const FLOW_VERSION = 1;
 export const CHANNELS = ["whatsapp", "email", "linkedin_connect", "linkedin_message", "call"] as const;
 /** Tope de LinkedIn para la nota de una solicitud de conexión. */
 export const LINKEDIN_NOTE_MAX = 300;
+/**
+ * Días que un paso `linkedin_message` (cuenta propia) espera a que el lead
+ * acepte la invitación enviada en esta cadencia; después se omite.
+ */
+export const LINKEDIN_ACCEPT_WAIT_DAYS = 21;
 export const CONTENT_KINDS = ["template", "ai", "custom"] as const;
 /** Las tres ranuras fijas de antes (2026-10-02): se leen como `template`. */
 export const LEGACY_TEMPLATE_KINDS = ["template_a", "template_b", "template_c"] as const;
@@ -168,6 +173,18 @@ export function isLinkedin(channel: string): boolean {
  */
 export function isNativeLinkedin(node: { channel: string; settings?: Json }): boolean {
   return isLinkedin(node.channel) && node.settings?.linkedin_via === "unipile";
+}
+
+/**
+ * ¿El paso lleva un texto que escribe Predictable (IA o propio)? Todos menos
+ * la invitación de LinkedIn desde la cuenta propia: sale SIEMPRE sin nota
+ * (2026-11-04, decisión del dueño: la nota en la invitación es de LinkedIn
+ * Premium) y el mensaje va en un paso `linkedin_message` posterior, que
+ * espera a que el lead acepte. Tampoco Dripify: su texto vive en Dripify.
+ */
+export function hasStepText(node: { channel: string; settings?: Json }): boolean {
+  if (!isLinkedin(node.channel)) return true;
+  return isNativeLinkedin(node) && node.channel === "linkedin_message";
 }
 
 const isObj = (v: unknown): v is Record<string, Json> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -334,7 +351,7 @@ export function validate(raw: unknown): { ok: boolean; errors: FlowError[] } {
     if (a.content.kind === "template" && a.channel === "whatsapp" && !templateName(a) && !a.settings?.template_slot) {
       errors.push({ nodeId: a.id, message: `${label}: elige una plantilla de WhatsApp.` });
     }
-    if (a.content.kind === "custom") {
+    if (a.content.kind === "custom" && hasStepText(a)) {
       if (!a.content.body) errors.push({ nodeId: a.id, message: `${label}: el texto propio está vacío.` });
       if (a.channel === "email" && !a.content.subject) errors.push({ nodeId: a.id, message: `${label}: el email necesita asunto.` });
       if (a.channel === "linkedin_connect" && (a.content.body ?? "").length > LINKEDIN_NOTE_MAX) {
@@ -503,7 +520,7 @@ export function estimateCredits(flow: Flow, leads: number): { aiMessages: number
     sends++;
     if (isNativeLinkedin(a)) native++;
     // LinkedIn por Dripify: el mensaje lo escribe el usuario en Dripify, no la IA.
-    if (a.content.kind === "ai" && (!isLinkedin(a.channel) || isNativeLinkedin(a))) ai++;
+    if (a.content.kind === "ai" && hasStepText(a)) ai++;
   }
   return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + native * LINKEDIN_SEND_CREDITS + (sends ? LEAD_CREDITS : 0)) * n };
 }

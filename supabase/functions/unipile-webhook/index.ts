@@ -35,6 +35,7 @@ import * as unipile from "../_shared/unipile.ts";
 import { linkedinSlug } from "../_shared/dripify.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import * as suppression from "../_shared/suppression.ts";
+import { ACCEPT_WAIT_DETAIL } from "../_shared/linkedin-limits.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -160,6 +161,9 @@ Deno.serve(async (req) => {
       for (const en of ens) {
         if (en.linkedin_connected_at) continue;
         await db.from("campaign_enrollments").update({ linkedin_connected_at: at }).eq("id", en.id);
+        // Su mensaje de LinkedIn esperaba esta aceptación: sale en la próxima corrida.
+        await db.from("campaign_enrollments").update({ next_run_at: at, error_detail: null })
+          .eq("id", en.id).eq("status", "active").eq("error_detail", ACCEPT_WAIT_DETAIL);
         await stepEvent(db, en, userId, member?.id ?? null, "connection_accepted", `${ev.name || "El lead"} aceptó la conexión.`, { provider_id: ev.providerId });
       }
       await setCrm(db, member, "conexion_aceptada", at);
