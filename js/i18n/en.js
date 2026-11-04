@@ -7161,4 +7161,10 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Twilio recibió la llamada pero la cortó antes de que sonara. Causas habituales: el país no está activado en Geo permissions, la cuenta de Twilio es de prueba o el número con el que te ven dejó de estar verificado. El código exacto está en Twilio → Monitor → Logs → Errors.": "Twilio received the call but ended it before it rang. Common causes: the country isn't turned on in Geo permissions, the Twilio account is a trial account, or the number your leads see is no longer verified. The exact code is in Twilio → Monitor → Logs → Errors.",
   "Buscando por qué falló la llamada…": "Finding out why the call failed…",
   "La llamada no se pudo hacer. La causa está en el panel del dialer.": "The call couldn't be made. The cause is shown in the dialer panel.",
+  "LinkedIn agotó el cupo de invitaciones con nota de tu cuenta (las cuentas sin Premium tienen pocas al mes). Las invitaciones siguen saliendo sin nota hasta el {0}; tu texto puede ir en el mensaje después de que acepten.": "LinkedIn has used up your account's quota of invitations with a note (accounts without Premium get only a few per month). Invitations keep going out without a note until {0}; your text can go in the message after they accept.",
+  "Invitación sin nota: LinkedIn agotó el cupo de invitaciones con nota de tu cuenta.": "Invitation without a note: LinkedIn used up your account's quota of invitations with a note.",
+  "Demasiadas solicitudes seguidas a LinkedIn: se reintenta en unos minutos.": "Too many requests to LinkedIn in a row: retrying in a few minutes.",
+  "LinkedIn limitó los envíos de tu cuenta por ahora.": "LinkedIn has limited sending from your account for now.",
+  "La nota de la invitación es más larga de lo que LinkedIn admite en esta cuenta (200 caracteres sin Premium).": "The invitation note is longer than LinkedIn allows on this account (200 characters without Premium).",
+  "Invitación sin nota: LinkedIn no aceptó la nota en esta cuenta.": "Invitation without a note: LinkedIn didn't accept the note on this account.",
 });

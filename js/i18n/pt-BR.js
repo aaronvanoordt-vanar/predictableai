@@ -7310,4 +7310,10 @@ window.I18N_DICTS['pt-BR'] = {
   "Twilio recibió la llamada pero la cortó antes de que sonara. Causas habituales: el país no está activado en Geo permissions, la cuenta de Twilio es de prueba o el número con el que te ven dejó de estar verificado. El código exacto está en Twilio → Monitor → Logs → Errors.": "A Twilio recebeu a ligação, mas a encerrou antes de tocar. Causas comuns: o país não está ativado em Geo permissions, a conta da Twilio é de teste ou o número que seus leads veem deixou de estar verificado. O código exato está em Twilio → Monitor → Logs → Errors.",
   "Buscando por qué falló la llamada…": "Verificando por que a ligação falhou…",
   "La llamada no se pudo hacer. La causa está en el panel del dialer.": "Não foi possível fazer a ligação. A causa está no painel do discador.",
+  "LinkedIn agotó el cupo de invitaciones con nota de tu cuenta (las cuentas sin Premium tienen pocas al mes). Las invitaciones siguen saliendo sin nota hasta el {0}; tu texto puede ir en el mensaje después de que acepten.": "O LinkedIn esgotou a cota de convites com nota da sua conta (contas sem Premium têm poucos por mês). Os convites continuam saindo sem nota até {0}; seu texto pode ir na mensagem depois que aceitarem.",
+  "Invitación sin nota: LinkedIn agotó el cupo de invitaciones con nota de tu cuenta.": "Convite sem nota: o LinkedIn esgotou a cota de convites com nota da sua conta.",
+  "Demasiadas solicitudes seguidas a LinkedIn: se reintenta en unos minutos.": "Muitas solicitações seguidas ao LinkedIn: nova tentativa em alguns minutos.",
+  "LinkedIn limitó los envíos de tu cuenta por ahora.": "O LinkedIn limitou os envios da sua conta por enquanto.",
+  "La nota de la invitación es más larga de lo que LinkedIn admite en esta cuenta (200 caracteres sin Premium).": "A nota do convite é mais longa do que o LinkedIn permite nesta conta (200 caracteres sem Premium).",
+  "Invitación sin nota: LinkedIn no aceptó la nota en esta cuenta.": "Convite sem nota: o LinkedIn não aceitou a nota nesta conta.",
 };

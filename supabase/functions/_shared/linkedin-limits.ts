@@ -30,7 +30,35 @@ export const LINKEDIN_LIMITS = {
   warmup_days: 14,
   cooldown_days: 30,
   limit_block_ms: 24 * 60 * 60 * 1000,
+  throttle_block_ms: 30 * 60 * 1000,
+  note_limit_ms: 7 * 24 * 60 * 60 * 1000,
 } as const;
+
+/**
+ * Largo máximo de la nota de invitación para esta cuenta: 300 con Premium,
+ * 200 sin Premium (LinkedIn responde `too_many_characters`). Si LinkedIn ya
+ * rechazó una nota por larga, `config.note_max` guarda el tope que sí pasó.
+ */
+export const NOTE_MAX_PREMIUM = 300;
+export const NOTE_MAX_FREE = 200;
+export function noteMaxFor(config: Json): number {
+  const n = Math.floor(Number(config?.note_max));
+  if (Number.isFinite(n) && n > 0) return Math.min(n, NOTE_MAX_PREMIUM);
+  return config?.premium ? NOTE_MAX_PREMIUM : NOTE_MAX_FREE;
+}
+
+/**
+ * Cupo de invitaciones CON NOTA agotado (las cuentas sin Premium tienen pocas
+ * al mes). Se detecta empíricamente: la invitación con nota choca con un
+ * límite y la misma invitación sin nota sale. Mientras dure, las invitaciones
+ * van sin nota y la cuenta NO se bloquea ni baja a la mitad. Pasado el plazo
+ * se vuelve a probar con nota (si vuelve a chocar, se renueva).
+ */
+export function noteLimitActive(config: Json, now = new Date()): { until: Date } | null {
+  const until = config?.note_limit?.until ? new Date(config.note_limit.until) : null;
+  if (!until || Number.isNaN(until.getTime()) || until.getTime() <= now.getTime()) return null;
+  return { until };
+}
 
 export interface EffectiveLimits { invitesPerDay: number; invitesPerWeek: number; messagesPerDay: number; reduced: boolean }
 

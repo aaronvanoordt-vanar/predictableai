@@ -461,13 +461,19 @@ async function linkedinCounts(ctx: Ctx, userId: string): Promise<liLimits.SendCo
 async function unipileStepError(ctx: Ctx, acc: Json, e: unknown): Promise<StepError> {
   const cls = unipile.classifyError(e);
   const msg = unipile.humanError(e);
-  if (cls === "account" || cls === "limit") {
+  if (cls === "account" || cls === "limit" || cls === "throttle") {
     const at = ctx.now.toISOString();
-    const block: Json = { reason: msg, code: (e as unipile.UnipileError)?.type || cls, at };
+    const ue = e as unipile.UnipileError;
+    // El código y el detalle que devolvió LinkedIn/Unipile quedan a la vista
+    // en Canales → LinkedIn (antes había que ir a la base para saberlo).
+    const block: Json = { reason: msg, code: ue?.type || cls, status: ue?.status ?? null, detail: String(ue?.message ?? "").slice(0, 240), at };
     const set: Json = { send_block: block };
     if (cls === "limit") {
       block.until = new Date(ctx.now.getTime() + liLimits.LINKEDIN_LIMITS.limit_block_ms).toISOString();
       set.last_limited_at = at;
+    } else if (cls === "throttle") {
+      // Ritmo de la API de Unipile: pausa corta, sin last_limited_at (no baja los topes).
+      block.until = new Date(ctx.now.getTime() + liLimits.LINKEDIN_LIMITS.throttle_block_ms).toISOString();
     }
     const config = await patchChannelConfig(ctx.db, acc.id, set);
     acc.config = config ?? { ...(acc.config ?? {}), ...set };
@@ -488,12 +494,12 @@ async function linkedinText(ctx: Ctx, en: Json, step: StepLike, member: Json, se
   return { body: t.body.replace(new RegExp(AGENDA_RE.source, "gi"), agenda), messageId: t.messageId };
 }
 
-/** Nota de conexión ≤ 300 caracteres, cortada en una palabra. */
-function clampNote(text: string): string {
+/** Nota de conexión ≤ `max` caracteres (300 con Premium, 200 sin), cortada en una palabra. */
+function clampNote(text: string, max: number = flowLib.LINKEDIN_NOTE_MAX): string {
   const t = text.replace(/\s+/g, " ").trim();
-  if (t.length <= flowLib.LINKEDIN_NOTE_MAX) return t;
-  const cut = t.slice(0, flowLib.LINKEDIN_NOTE_MAX - 1);
-  return cut.slice(0, Math.max(cut.lastIndexOf(" "), 200)).trim() + "…";
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  return cut.slice(0, Math.max(cut.lastIndexOf(" "), Math.floor(max * 2 / 3))).trim() + "…";
 }
 
 async function campaignById(ctx: Ctx, id: string): Promise<Json | null> {
@@ -999,10 +1005,44 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
         throw new StepError("Ya son contactos en LinkedIn: no hace falta la invitación.", "skip");
       }
       if (profile.invitationPending) throw new StepError("Ya hay una invitación de LinkedIn pendiente para este lead.", "skip");
-      const note = clampNote(rawText);
-      let r: { invitationId: string | null };
-      try { r = await unipile.invite(env, acc.secret, profile.providerId, note); } catch (e) { throw await unipileStepError(ctx, acc, e); }
-      await event(ctx, en, "linkedin", "connection_sent", { provider_message_id: r.invitationId, detail: note ? note.slice(0, 200) : "Invitación sin nota.", ...meta, payload: { via: "unipile" } });
+      const noteLimit = liLimits.noteLimitActive(acc.config, ctx.now);
+      const fullNote = clampNote(rawText);
+      let note = noteLimit ? "" : clampNote(rawText, liLimits.noteMaxFor(acc.config));
+      let droppedNote = !!noteLimit && !!fullNote;
+      let r: { invitationId: string | null } | null = null;
+      // Una nota rechazada no es un problema de la cuenta: se prueba más corta
+      // (too_many_characters: 200 sin Premium) y, si no, sin nota. Un límite
+      // con nota puede ser solo el cupo de notas (cuentas sin Premium): se
+      // prueba sin nota; si sale, se marca el cupo y la cuenta sigue sin
+      // bloqueo; si tampoco sale, es un límite real y se bloquea como siempre.
+      const attempts = [note];
+      for (let i = 0; i < attempts.length && !r; i++) {
+        const n = attempts[i];
+        try {
+          r = await unipile.invite(env, acc.secret, profile.providerId, n);
+          note = n;
+        } catch (e) {
+          const cls = unipile.classifyError(e);
+          if (!n || (cls !== "too_long" && cls !== "limit")) throw await unipileStepError(ctx, acc, e);
+          const ue = e as unipile.UnipileError;
+          let set: Json;
+          if (cls === "too_long") {
+            const shorter = n.length > liLimits.NOTE_MAX_FREE ? clampNote(rawText, liLimits.NOTE_MAX_FREE) : "";
+            attempts.push(shorter);
+            set = { note_max: liLimits.NOTE_MAX_FREE };
+          } else {
+            attempts.push("");
+            set = { note_limit: { at: ctx.now.toISOString(), until: new Date(ctx.now.getTime() + liLimits.LINKEDIN_LIMITS.note_limit_ms).toISOString(), code: ue?.type || "limit", detail: String(ue?.message ?? "").slice(0, 240) } };
+          }
+          const config = await patchChannelConfig(db, acc.id, set);
+          acc.config = config ?? { ...(acc.config ?? {}), ...set };
+        }
+      }
+      if (!r) throw new StepError("LinkedIn no aceptó la invitación.", "hold_short");
+      if (!note && fullNote) droppedNote = true;
+      const shortened = !!note && note.length < fullNote.length;
+      const sentDetail = note ? (shortened ? "Nota recortada al largo que admite tu cuenta: " : "") + note.slice(0, 200) : droppedNote ? (liLimits.noteLimitActive(acc.config, ctx.now) ? "Invitación sin nota: LinkedIn agotó el cupo de invitaciones con nota de tu cuenta." : "Invitación sin nota: LinkedIn no aceptó la nota en esta cuenta.") : "Invitación sin nota.";
+      await event(ctx, en, "linkedin", "connection_sent", { provider_message_id: r.invitationId, detail: sentDetail, ...meta, payload: { via: "unipile", ...(droppedNote ? { note_dropped: true } : {}) } });
       counts.invitesDay++; counts.invitesWeek++;
       if (note) {
         await db.from("inbox_messages").insert({
