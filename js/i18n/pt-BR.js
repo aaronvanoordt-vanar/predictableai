@@ -583,6 +583,7 @@ window.I18N_DICTS['pt-BR'] = {
   "Enviando correo…": "Enviando e-mail…",
   "Te enviamos un email a": "Enviamos um e-mail para",
   "con el link para cambiar tu contraseña.": "com o link para redefinir sua senha.",
+  "No pudimos conectar con el servidor. Revisa tu conexión a internet; si usas un bloqueador de anuncios, una VPN o la red de tu empresa, permite el dominio supabase.co e intenta de nuevo.": "Não conseguimos conectar com o servidor. Verifique sua conexão com a internet; se você usa um bloqueador de anúncios, uma VPN ou a rede da sua empresa, permita o domínio supabase.co e tente novamente.",
   "Correo o contraseña incorrectos.": "E-mail ou senha incorretos.",
   "Ya existe una cuenta con ese correo. Prueba iniciar sesión.": "Já existe uma conta com esse e-mail. Tente entrar.",
   "Redirigiendo a {0}…": "Redirecionando para {0}…",
