@@ -70,10 +70,14 @@ Deno.test("classifyError: cuenta, límite, destinatario, transitorio", () => {
   assertEquals(classifyError(new UnipileError("x", 401, "errors/disconnected_account")), "account");
   assertEquals(classifyError(new UnipileError("x", 422, "errors/checkpoint_error")), "account");
   assertEquals(classifyError(new UnipileError("x", 422, "errors/limit_exceeded")), "limit");
-  assertEquals(classifyError(new UnipileError("x", 429, "")), "limit");
+  assertEquals(classifyError(new UnipileError("x", 429, "")), "throttle");
+  assertEquals(classifyError(new UnipileError("x", 429, "errors/too_many_requests")), "throttle");
+  assertEquals(classifyError(new UnipileError("x", 429, "errors/limit_exceeded")), "limit");
   assertEquals(classifyError(new UnipileError("x", 422, "errors/already_invited_recently")), "recipient");
   assertEquals(classifyError(new UnipileError("x", 422, "errors/invalid_recipient")), "recipient");
   assertEquals(classifyError(new UnipileError("x", 503, "")), "transient");
   assertEquals(classifyError(new Error("network")), "transient");
   assert(/desconectó/.test(humanError(new UnipileError("x", 401, "errors/disconnected_account"))));
+  assert(/limitó/.test(humanError(new UnipileError("x", 422, "errors/limit_exceeded"))));
+  assert(/reintenta/.test(humanError(new UnipileError("x", 429, ""))));
 });

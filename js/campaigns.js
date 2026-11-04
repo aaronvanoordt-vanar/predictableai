@@ -3431,7 +3431,13 @@
     var blocked = block && (!block.until || new Date(block.until).getTime() > Date.now());
     body.appendChild(h('p', { text: 'Cuenta de LinkedIn: ' + (cfg.name || 'conectada') + (cfg.connected_at ? ' · desde ' + fmtDate(cfg.connected_at) : '') + (cfg.premium ? ' · ' + String(cfg.premium).replace(/_/g, ' ') : '') }));
     if (!isConn(acc)) body.appendChild(h('div', { class: 'pros-note-red', text: acc.last_error || 'La conexión con LinkedIn tiene un problema: vuelve a conectar tu cuenta.' }));
-    else if (blocked) body.appendChild(h('div', { class: 'pros-note-red', text: block.reason + (block.until ? ' Los envíos siguen el ' + fmtDateTime(block.until) + '.' : ' Vuelve a conectar tu cuenta para seguir enviando.') }));
+    else if (blocked) {
+      body.appendChild(h('div', { class: 'pros-note-red', text: block.reason + (block.until ? ' Los envíos siguen el ' + fmtDateTime(block.until) + '.' : ' Vuelve a conectar tu cuenta para seguir enviando.') }));
+      // Lo que respondió LinkedIn tal cual, para saber la causa sin ir a la base.
+      if (block.code || block.detail) body.appendChild(h('div', { class: 'pros-hint', 'data-no-i18n': '1', text: 'LinkedIn: ' + [block.code, block.status, block.detail].filter(function (x) { return x != null && x !== ''; }).join(' · ') }));
+    }
+    var noteLimit = cfg.note_limit && cfg.note_limit.until && new Date(cfg.note_limit.until).getTime() > Date.now() ? cfg.note_limit : null;
+    if (isConn(acc) && noteLimit) body.appendChild(h('div', { class: 'pros-hint', text: 'LinkedIn agotó el cupo de invitaciones con nota de tu cuenta (las cuentas sin Premium tienen pocas al mes). Las invitaciones siguen saliendo sin nota hasta el ' + fmtDateTime(noteLimit.until) + '; tu texto puede ir en el mensaje después de que acepten.' }));
     body.appendChild(h('div', { class: 'pros-hint', text: 'Los pasos de LinkedIn que eligen «Desde mi cuenta de LinkedIn» envían la invitación y los mensajes desde aquí; las respuestas llegan a la Bandeja y puedes contestarlas desde ahí. Cuesta 1 crédito por envío de campaña; responder a mano no cuesta.' }));
     body.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:12px', text: 'Topes para cuidar tu cuenta' }));
     var u = cfg.limits || {};

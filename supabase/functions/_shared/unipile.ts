@@ -410,17 +410,21 @@ export function parseWebhook(p: Json): WebhookEvent {
  * account   → la cuenta de LinkedIn necesita atención (desconectada, credenciales,
  *             checkpoint, restringida): se retienen TODOS los envíos de LinkedIn.
  * limit     → LinkedIn limitó invitaciones o mensajes: se retiene la cuenta un día.
+ * throttle  → un 429 sin tipo de límite de LinkedIn (o `too_many_requests`): es
+ *             el ritmo de la API de Unipile, no LinkedIn; espera corta, sin
+ *             bajar los topes de la cuenta.
  * recipient → el problema es ESTE lead (perfil inválido, ya invitado, no es
  *             contacto, no admite mensajes): falla el paso y sigue la cadencia.
  * transient → 5xx / corte de red: se reintenta pronto sin culpar al lead.
  */
-export type ErrorClass = "account" | "limit" | "recipient" | "transient";
+export type ErrorClass = "account" | "limit" | "throttle" | "recipient" | "transient";
 
 export function classifyError(e: unknown): ErrorClass {
   if (!(e instanceof UnipileError)) return "transient";
   const t = e.type.toLowerCase();
   if (/disconnected|invalid_account|credentials|checkpoint|action_required|account_restricted|insufficient_privileges|unauthorized/.test(t)) return "account";
-  if (/limit_exceeded|cannot_resend_yet|too_many|rate_limit/.test(t) || e.status === 429) return "limit";
+  if (/limit_exceeded|cannot_resend_yet/.test(t)) return "limit";
+  if (/too_many|rate_limit/.test(t) || e.status === 429) return "throttle";
   if (/recipient|already_invited|already_connected|no_connection|not_allowed|blocked|not_found|invalid_parameters|unprocessable/.test(t)) return "recipient";
   if (e.status === 401 || e.status === 403) return "account";
   if (e.status === 404 || e.status === 400 || e.status === 422) return "recipient";
@@ -435,7 +439,8 @@ export function humanError(e: unknown): string {
   if (/restricted|insufficient_privileges/.test(t) || e.status === 403) return "LinkedIn restringió esta acción en tu cuenta.";
   if (/cannot_resend_yet|already_invited/.test(t)) return "Ya hay una invitación reciente a este lead.";
   if (/media.*rejected|rejected.*media/i.test(e.message)) return "LinkedIn rechazó el archivo (formato o tamaño no admitido).";
-  if (/limit_exceeded|too_many/.test(t) || e.status === 429) return "LinkedIn limitó los envíos de tu cuenta por ahora.";
+  if (/limit_exceeded/.test(t)) return "LinkedIn limitó los envíos de tu cuenta por ahora.";
+  if (/too_many|rate_limit/.test(t) || e.status === 429) return "Demasiadas solicitudes seguidas a LinkedIn: se reintenta en unos minutos.";
   if (/no_connection|not_allowed/.test(t)) return "El lead no es tu contacto en LinkedIn: no admite mensajes directos.";
   if (/recipient|not_found/.test(t) || e.status === 404) return "LinkedIn no encontró el perfil del lead.";
   return "LinkedIn respondió: " + e.message.slice(0, 200);
