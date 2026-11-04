@@ -73,7 +73,12 @@
 
     try {
       if (emailMode === 'login') {
-        const { error } = await window.supabaseClient.auth.signInWithPassword({ email, password });
+        let { error } = await window.supabaseClient.auth.signInWithPassword({ email, password });
+        // Un corte breve de red llega como "Failed to fetch": reintenta una vez.
+        if (error && isNetworkError(error.message)) {
+          await new Promise(r => setTimeout(r, 1500));
+          ({ error } = await window.supabaseClient.auth.signInWithPassword({ email, password }));
+        }
         if (error) throw error;
         // onAuthStateChange se encarga de rutear tras SIGNED_IN.
       } else {
@@ -112,13 +117,19 @@
       if (error) throw error;
       showStatus('ok', `Te enviamos un email a <strong>${escapeHtml(email)}</strong> con el link para cambiar tu contraseña.`);
     } catch (e) {
-      showStatus('err', 'Error: ' + escapeHtml(e.message));
+      showStatus('err', 'Error: ' + escapeHtml(mapAuthError(e.message)));
     } finally {
       link.disabled = false;
     }
   }
 
+  // fetch() falló sin respuesta del servidor (Chrome, Firefox, Safari).
+  function isNetworkError(msg) {
+    return /failed to fetch|networkerror|load failed|network request failed/i.test(msg || '');
+  }
+
   function mapAuthError(msg) {
+    if (isNetworkError(msg)) return 'No pudimos conectar con el servidor. Revisa tu conexión a internet; si usas un bloqueador de anuncios, una VPN o la red de tu empresa, permite el dominio supabase.co e intenta de nuevo.';
     if (/invalid login credentials/i.test(msg)) return 'Correo o contraseña incorrectos.';
     if (/user already registered/i.test(msg)) return 'Ya existe una cuenta con ese correo. Prueba iniciar sesión.';
     return msg;
