@@ -112,6 +112,7 @@ import { resolveEmailProvider } from "../_shared/mailbox-rotation.ts";
 import * as suppression from "../_shared/suppression.ts";
 import * as contactRules from "../_shared/contact-rules.ts";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import * as credits from "../_shared/credits.ts";
 import { bookingUrl, PUBLIC_APP_URL } from "../_shared/booking.ts";
 import { countryOfE164, toE164 } from "../_shared/telephony/phone.ts";
 import { checkDoNotCall } from "../_shared/telephony/dnc.ts";
@@ -1666,15 +1667,28 @@ async function preparePending(ctx: Ctx): Promise<number> {
     const { count } = await db.from("campaign_messages").select("id", { count: "exact", head: true }).eq("enrollment_id", en.id).eq("node_id", node.id);
     if ((count ?? 0) > 0) continue;
 
-    const base = { enrollment_id: en.id, campaign_id: campaign.id, member_id: en.member_id, user_id: en.user_id, node_id: node.id, channel: node.channel === "call" ? "phone" : node.channel, angle: node.content.angle ?? null };
+    // `channel` con la misma clave que los eventos (linkedin_connect /
+    // linkedin_message → linkedin, call → phone): el CHECK de la tabla solo
+    // admite whatsapp/email/linkedin/phone. Con el nombre del paso el guardado
+    // fallaba en silencio, el paso esperaba «Generando…» para siempre y cada
+    // corrida volvía a generar (y cobrar) el mismo mensaje (2026-11-04).
+    const base = { enrollment_id: en.id, campaign_id: campaign.id, member_id: en.member_id, user_id: en.user_id, node_id: node.id, channel: channelKey(node.channel), angle: node.content.angle ?? null };
     generated++;
     try {
       const out = await generateStepMessage(ctx, en, campaign, node);
-      await db.from("campaign_messages").upsert({
+      const { error: saveErr } = await db.from("campaign_messages").upsert({
         ...base, subject: out.subject, body: out.body,
         status: campaign.review_required ? "draft" : "approved",
         approved_at: campaign.review_required ? null : ctx.now.toISOString(),
       }, { onConflict: "enrollment_id,node_id", ignoreDuplicates: true });
+      if (saveErr) {
+        // El mensaje ya se cobró y no quedó guardado: se devuelve y la fila
+        // pasa a error (el paso se omite con el motivo) en vez de regenerarlo
+        // y cobrarlo en cada corrida.
+        console.error("[campaign-run] prepare save", en.id, node.id, saveErr.message);
+        await credits.refundCredits(db, en.user_id, CREDIT_COSTS.outreach_step, "outreach_message_refund");
+        throw new Error("No se pudo guardar el mensaje IA: " + saveErr.message);
+      }
       await event(ctx, en, channelKey(node.channel), "generated", {
         detail: (campaign.review_required ? "Mensaje IA listo para tu revisión: " : "Mensaje IA generado: ") + (out.subject || out.body).slice(0, 160),
         node_id: node.id, step_position: en.next_position,
