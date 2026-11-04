@@ -115,7 +115,7 @@ jobs:
             esac
 
             echo "::group::$fn $FLAGS"
-            if npx --yes supabase@latest functions deploy "$fn" --project-ref "$PROJECT_REF" $FLAGS; then
+            if npx --yes supabase@latest functions deploy "$fn" --project-ref "$PROJECT_REF" --yes $FLAGS; then
               echo "✓ $fn desplegada"
             else
               echo "::error::Falló el deploy de $fn"
