@@ -435,10 +435,9 @@
     }
     var k = node.content.kind;
     if (L.isNativeLinkedin(node)) {
+      if (node.channel === 'linkedin_connect') return 'Solo la solicitud de conexión desde tu cuenta de LinkedIn, sin nota.';
       if (k === 'custom') return node.content.body ? excerpt(node.content.body, 110) : 'Sin texto todavía.';
-      return node.channel === 'linkedin_message'
-        ? 'Mensaje desde tu cuenta de LinkedIn, escrito por la IA para cada lead. Solo si ya aceptó tu conexión.'
-        : 'Solicitud de conexión desde tu cuenta de LinkedIn, con una nota escrita por la IA para cada lead.';
+      return 'Mensaje desde tu cuenta de LinkedIn, escrito por la IA para cada lead. Sale cuando acepta tu conexión.';
     }
     if (L.isLinkedin(node.channel)) {
       var chosen = node.settings && (node.settings.dripify_campaign_name || node.settings.linkedin_campaign_name);
@@ -1318,9 +1317,10 @@
       if (L.isLinkedin(node.channel) && liNative) {
         var isConnect = node.channel === 'linkedin_connect';
         box.appendChild(h('div', { class: 'cb-hint', text: isConnect
-          ? 'Envía la solicitud de conexión con una nota (máx. ' + L.LINKEDIN_NOTE_MAX + ' caracteres) desde tu cuenta. Si ya son contactos, el paso se omite y la conexión cuenta como aceptada.'
-          : 'Envía un mensaje desde tu cuenta, solo si el lead ya aceptó tu conexión (si no, el paso se omite y sigue con el siguiente).' }));
+          ? 'Envía solo la solicitud de conexión desde tu cuenta, sin nota (la nota en la invitación es de LinkedIn Premium). Lo que quieras decirle va en un paso «LinkedIn · mensaje» después. Si ya son contactos, el paso se omite y la conexión cuenta como aceptada.'
+          : 'Envía un mensaje desde tu cuenta en cuanto el lead acepta tu conexión. Si todavía no aceptó, el paso espera (hasta ' + L.LINKEDIN_ACCEPT_WAIT_DAYS + ' días desde la invitación; luego se omite y sigue con el siguiente). Si no se le envió invitación, se omite.' }));
         box.appendChild(h('div', { class: 'cb-note', text: 'Topes por cuenta para cuidar tu LinkedIn: 20 invitaciones por día (100 por semana) y 50 mensajes por día, dentro de la ventana horaria de la campaña y con 2 a 8 minutos entre envíos. Cuesta 1 crédito por envío.' }));
+        if (isConnect) return box;
       } else if (L.isLinkedin(node.channel)) {
         var isMsg = node.channel === 'linkedin_message';
         var want = isMsg ? 'message' : 'connect';
@@ -1627,7 +1627,9 @@
         card.appendChild(head);
         var body = h('div', { class: 'cb-msg-body' });
         body.appendChild(contentFields(a, { compact: false }));
-        body.appendChild(L.isLinkedin(a.channel) && !L.isNativeLinkedin(a) ? renderLinkedinInfo(a) : renderPreview(a));
+        body.appendChild(L.hasStepText(a) ? renderPreview(a) : L.isNativeLinkedin(a)
+          ? h('div', { class: 'cb-hint', text: 'Solo la solicitud de conexión, sin nota: no hay mensaje que previsualizar.' })
+          : renderLinkedinInfo(a));
         card.appendChild(body);
         wrap.appendChild(card);
       });

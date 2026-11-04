@@ -112,7 +112,10 @@
   function isLinkedin(channel) { return channel === 'linkedin_connect' || channel === 'linkedin_message'; }
   /** Paso de LinkedIn que sale desde la cuenta propia conectada (Unipile). */
   function isNativeLinkedin(node) { return !!node && isLinkedin(node.channel) && !!node.settings && node.settings.linkedin_via === 'unipile'; }
+  /** Espejo de hasStepText: la invitación de LinkedIn desde la cuenta propia sale siempre sin nota. */
+  function hasStepText(node) { return !!node && (!isLinkedin(node.channel) || (isNativeLinkedin(node) && node.channel === 'linkedin_message')); }
   var LINKEDIN_NOTE_MAX = 300;
+  var LINKEDIN_ACCEPT_WAIT_DAYS = 21; // espejo de campaign-flow.ts
 
   function isObj(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
   function clampInt(v, min, max) {
@@ -270,7 +273,7 @@
       if (a.content.kind === 'template' && a.channel === 'whatsapp' && !templateName(a) && !(a.settings && a.settings.template_slot)) {
         errors.push({ nodeId: a.id, message: label + ': elige una plantilla de WhatsApp.' });
       }
-      if (a.content.kind === 'custom') {
+      if (a.content.kind === 'custom' && hasStepText(a)) {
         if (!a.content.body) errors.push({ nodeId: a.id, message: label + ': el texto propio está vacío.' });
         if (a.channel === 'email' && !a.content.subject) errors.push({ nodeId: a.id, message: label + ': el email necesita asunto.' });
         if (a.channel === 'linkedin_connect' && (a.content.body || '').length > LINKEDIN_NOTE_MAX) {
@@ -421,7 +424,7 @@
       sends++;
       if (isNativeLinkedin(a)) native++;
       // LinkedIn por Dripify: el mensaje lo escribe el usuario en Dripify, no la IA.
-      if (a.content.kind === 'ai' && (!isLinkedin(a.channel) || isNativeLinkedin(a))) ai++;
+      if (a.content.kind === 'ai' && hasStepText(a)) ai++;
     });
     return { aiMessages: ai * n, sends: sends * n, credits: (ai * AI_MESSAGE_CREDITS + native * LINKEDIN_SEND_CREDITS + (sends ? LEAD_CREDITS : 0)) * n };
   }
@@ -435,6 +438,7 @@
       return c ? '¿' + c.label + '?' : node.check;
     }
     var ch = CHANNEL_META[node.channel] || { label: node.channel };
+    if (isNativeLinkedin(node) && node.channel === 'linkedin_connect') return ch.label + ' · Sin nota';
     if (isNativeLinkedin(node)) {
       var nk = node.content.kind;
       return ch.label + ' · ' + (nk === 'custom' ? 'Mi texto' : 'IA: ' + (ANGLE_LABELS[node.content.angle] || node.content.angle || 'apertura').replace(/\s*\(.*\)$/, ''));
@@ -590,7 +594,7 @@
     AI_COLUMN_TYPES: AI_COLUMN_TYPES, AI_COLUMN_OPS: AI_COLUMN_OPS, AI_COLUMN_OP_LABELS: AI_COLUMN_OP_LABELS,
     normalizeAiColumnRule: normalizeAiColumnRule, aiColumnRuleLabel: aiColumnRuleLabel,
     ANGLE_LABELS: ANGLE_LABELS, CONDITION_LABELS: CONDITION_LABELS, CHANNEL_META: CHANNEL_META, KIND_LABELS: KIND_LABELS,
-    nodeTitle: nodeTitle, cloneWithNewIds: cloneWithNewIds, durationDays: durationDays, templates: templates, isLinkedin: isLinkedin, isNativeLinkedin: isNativeLinkedin, LINKEDIN_NOTE_MAX: LINKEDIN_NOTE_MAX,
+    nodeTitle: nodeTitle, cloneWithNewIds: cloneWithNewIds, durationDays: durationDays, templates: templates, isLinkedin: isLinkedin, isNativeLinkedin: isNativeLinkedin, hasStepText: hasStepText, LINKEDIN_NOTE_MAX: LINKEDIN_NOTE_MAX, LINKEDIN_ACCEPT_WAIT_DAYS: LINKEDIN_ACCEPT_WAIT_DAYS,
     newId: newId, emptyFlow: emptyFlow, normalize: normalize, validate: validate,
     actions: actions, ordinal: ordinal, find: find, firstNode: firstNode, nextAfter: nextAfter, enterBranch: enterBranch,
     delayMs: delayMs, legacyKind: legacyKind, callWaitDays: callWaitDays, templateName: templateName, LEGACY_TEMPLATE_KINDS: LEGACY_TEMPLATE_KINDS, LEGACY_SLOT_LABELS: LEGACY_SLOT_LABELS, fromLegacySteps: fromLegacySteps, estimateCredits: estimateCredits, delayLabel: delayLabel,

@@ -129,3 +129,10 @@ export function pace(kind: "invite" | "message", counts: SendCounts, limits: Eff
   }
   return { ok: true };
 }
+
+/**
+ * `error_detail` del enrolamiento cuyo paso de mensaje espera a que el lead
+ * acepte la invitación. La aceptación (webhook o sincronización de
+ * relaciones) adelanta `next_run_at` de los que esperan con este texto exacto.
+ */
+export const ACCEPT_WAIT_DETAIL = "Esperando a que acepte tu conexión de LinkedIn para enviarle el mensaje.";

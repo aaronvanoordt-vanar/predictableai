@@ -495,12 +495,27 @@ async function linkedinText(ctx: Ctx, en: Json, step: StepLike, member: Json, se
   return { body: t.body.replace(new RegExp(AGENDA_RE.source, "gi"), agenda), messageId: t.messageId };
 }
 
-/** Nota de conexión ≤ `max` caracteres (300 con Premium, 200 sin), cortada en una palabra. */
-function clampNote(text: string, max: number = flowLib.LINKEDIN_NOTE_MAX): string {
-  const t = text.replace(/\s+/g, " ").trim();
-  if (t.length <= max) return t;
-  const cut = t.slice(0, max - 1);
-  return cut.slice(0, Math.max(cut.lastIndexOf(" "), Math.floor(max * 2 / 3))).trim() + "…";
+/**
+ * Mensaje de LinkedIn (cuenta propia) a un lead que todavía no aceptó: si esta
+ * cadencia le mandó la invitación, el paso espera a que acepte (la aceptación
+ * lo despierta al momento: `unipile-webhook` y la sincronización de
+ * relaciones adelantan `next_run_at`), hasta LINKEDIN_ACCEPT_WAIT_DAYS desde
+ * la invitación; vencido el plazo, o sin invitación de esta cadencia, se
+ * omite y la cadencia sigue. Nunca vuelve si no hay que esperar ni omitir.
+ */
+async function waitForAcceptance(ctx: Ctx, en: Json): Promise<never> {
+  const { data: inv } = await ctx.db.from("campaign_events").select("created_at")
+    .eq("enrollment_id", en.id).eq("channel", "linkedin").eq("type", "connection_sent")
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (!inv?.created_at) {
+    throw new StepError("El lead no es tu contacto en LinkedIn y esta cadencia no le envió invitación: se omite el mensaje y sigue con el siguiente paso.", "skip");
+  }
+  const deadline = Date.parse(inv.created_at) + flowLib.LINKEDIN_ACCEPT_WAIT_DAYS * 24 * 60 * 60 * 1000;
+  if (ctx.now.getTime() >= deadline) {
+    throw new StepError(`No aceptó la conexión de LinkedIn en ${flowLib.LINKEDIN_ACCEPT_WAIT_DAYS} días: se omite el mensaje y sigue con el siguiente paso.`, "skip");
+  }
+  const retry = Math.min(ctx.now.getTime() + 60 * 60 * 1000, deadline);
+  throw new StepError(liLimits.ACCEPT_WAIT_DETAIL, "defer", new Date(retry));
 }
 
 async function campaignById(ctx: Ctx, id: string): Promise<Json | null> {
@@ -968,7 +983,9 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     await spendCredits(ctx, en);
   } else if (flowLib.isNativeLinkedin(step)) {
     // LinkedIn desde la cuenta propia (Unipile): el motor manda de verdad la
-    // invitación (con la nota del paso) o el mensaje (solo a un contacto).
+    // invitación (SIEMPRE sin nota: la nota es de LinkedIn Premium, decisión
+    // del dueño 2026-11-04) o el mensaje (solo a un contacto: espera a que el
+    // lead acepte la invitación que le mandó esta cadencia).
     const isMsg = step.channel === "linkedin_message";
     const acc = await unipileAccount(ctx, en.user_id);
     if (!acc) throw new StepError("Tu cuenta de LinkedIn no está conectada: conéctala en Campañas → LinkedIn.", "hold");
@@ -978,9 +995,7 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     if (block) throw new StepError(block.reason + (block.until ? "" : " Vuelve a conectar tu cuenta de LinkedIn."), "hold");
     const url = dripify.canonicalLinkedinUrl(member.linkedin_url);
     if (!url) throw new StepError("El lead no tiene URL de LinkedIn: se omite el paso y sigue con el siguiente.", "skip");
-    if (isMsg && !en.linkedin_connected_at) {
-      throw new StepError("El lead todavía no aceptó la conexión de LinkedIn: se omite el mensaje y sigue con el siguiente paso.", "skip");
-    }
+    if (isMsg && !en.linkedin_connected_at) await waitForAcceptance(ctx, en);
     // Ritmo ANTES de tocar LinkedIn: leer el perfil también cuenta como actividad.
     const counts = await linkedinCounts(ctx, en.user_id);
     const limits = liLimits.effectiveLimits(acc.config, acc.config?.connected_at, ctx.now);
@@ -989,7 +1004,8 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     const rand = counts.lastSendAt ? (Date.parse(counts.lastSendAt) % 1000) / 1000 : 0;
     const p = liLimits.pace(isMsg ? "message" : "invite", counts, limits, ctx.now, rand);
     if (!p.ok) throw new StepError(p.reason, "pace", p.retryAt);
-    const { body: rawText, messageId: aiRowId } = await linkedinText(ctx, en, step, member, sender);
+    // La invitación no lleva texto: no se genera (ni se cobra) mensaje IA.
+    const { body: rawText, messageId: aiRowId } = isMsg ? await linkedinText(ctx, en, step, member, sender) : { body: "", messageId: null };
     let profile: unipile.UnipileUser;
     try { profile = await unipile.resolveUser(env, acc.secret, url); } catch (e) { throw await unipileStepError(ctx, acc, e); }
     if (!profile.providerId) throw new StepError("LinkedIn no encontró el perfil del lead.", "fail");
@@ -1006,53 +1022,10 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
         throw new StepError("Ya son contactos en LinkedIn: no hace falta la invitación.", "skip");
       }
       if (profile.invitationPending) throw new StepError("Ya hay una invitación de LinkedIn pendiente para este lead.", "skip");
-      const noteLimit = liLimits.noteLimitActive(acc.config, ctx.now);
-      const fullNote = clampNote(rawText);
-      let note = noteLimit ? "" : clampNote(rawText, liLimits.noteMaxFor(acc.config));
-      let droppedNote = !!noteLimit && !!fullNote;
-      let r: { invitationId: string | null } | null = null;
-      // Una nota rechazada no es un problema de la cuenta: se prueba más corta
-      // (too_many_characters: 200 sin Premium) y, si no, sin nota. Un límite
-      // con nota puede ser solo el cupo de notas (cuentas sin Premium): se
-      // prueba sin nota; si sale, se marca el cupo y la cuenta sigue sin
-      // bloqueo; si tampoco sale, es un límite real y se bloquea como siempre.
-      const attempts = [note];
-      for (let i = 0; i < attempts.length && !r; i++) {
-        const n = attempts[i];
-        try {
-          r = await unipile.invite(env, acc.secret, profile.providerId, n);
-          note = n;
-        } catch (e) {
-          const cls = unipile.classifyError(e);
-          if (!n || (cls !== "too_long" && cls !== "limit")) throw await unipileStepError(ctx, acc, e);
-          const ue = e as unipile.UnipileError;
-          let set: Json;
-          if (cls === "too_long") {
-            const shorter = n.length > liLimits.NOTE_MAX_FREE ? clampNote(rawText, liLimits.NOTE_MAX_FREE) : "";
-            attempts.push(shorter);
-            set = { note_max: liLimits.NOTE_MAX_FREE };
-          } else {
-            attempts.push("");
-            set = { note_limit: { at: ctx.now.toISOString(), until: new Date(ctx.now.getTime() + liLimits.LINKEDIN_LIMITS.note_limit_ms).toISOString(), code: ue?.type || "limit", detail: String(ue?.message ?? "").slice(0, 240) } };
-          }
-          const config = await patchChannelConfig(db, acc.id, set);
-          acc.config = config ?? { ...(acc.config ?? {}), ...set };
-        }
-      }
-      if (!r) throw new StepError("LinkedIn no aceptó la invitación.", "hold_short");
-      if (!note && fullNote) droppedNote = true;
-      const shortened = !!note && note.length < fullNote.length;
-      const sentDetail = note ? (shortened ? "Nota recortada al largo que admite tu cuenta: " : "") + note.slice(0, 200) : droppedNote ? (liLimits.noteLimitActive(acc.config, ctx.now) ? "Invitación sin nota: LinkedIn agotó el cupo de invitaciones con nota de tu cuenta." : "Invitación sin nota: LinkedIn no aceptó la nota en esta cuenta.") : "Invitación sin nota.";
-      await event(ctx, en, "linkedin", "connection_sent", { provider_message_id: r.invitationId, detail: sentDetail, ...meta, payload: { via: "unipile", ...(droppedNote ? { note_dropped: true } : {}) } });
+      let r: { invitationId: string | null };
+      try { r = await unipile.invite(env, acc.secret, profile.providerId, ""); } catch (e) { throw await unipileStepError(ctx, acc, e); }
+      await event(ctx, en, "linkedin", "connection_sent", { provider_message_id: r.invitationId, detail: "Solicitud de conexión enviada (sin nota).", ...meta, payload: { via: "unipile" } });
       counts.invitesDay++; counts.invitesWeek++;
-      if (note) {
-        await db.from("inbox_messages").insert({
-          user_id: en.user_id, member_id: member.id, channel: "linkedin", provider: "unipile", direction: "out",
-          contact_ref: url, body: note, provider_message_id: r.invitationId ? `inv:${r.invitationId}` : null, status: "sent", sent_at: nowIso,
-          campaign_id: campaign.id, enrollment_id: en.id,
-          payload: { campaign_id: campaign.id, step_position: step.position, node_id: step.node_id, kind: "connection_note", provider_id: profile.providerId },
-        });
-      }
     } else {
       const text = rawText.trim();
       if (!text) throw new StepError("No hay mensaje de LinkedIn para este lead.", "skip");
@@ -1650,7 +1623,8 @@ async function preparePending(ctx: Ctx): Promise<number> {
     const loc = flowLib.find(flow, en.next_node_id);
     if (!loc || loc.node.type !== "action") continue;
     const node = loc.node;
-    if (node.content.kind !== "ai" || !(["email", "whatsapp", "call"].includes(node.channel) || flowLib.isNativeLinkedin(node))) continue;
+    // La invitación de LinkedIn sale sin nota: no hay mensaje que generar.
+    if (node.content.kind !== "ai" || !flowLib.hasStepText(node) || !(["email", "whatsapp", "call"].includes(node.channel) || flowLib.isNativeLinkedin(node))) continue;
     // Un mensaje de LinkedIn solo sale a un contacto: sin conexión aceptada se omitirá.
     if (node.channel === "linkedin_message" && !en.linkedin_connected_at) continue;
     // WhatsApp libre solo con sesión abierta: no gastar créditos si el paso se va a omitir.
@@ -2237,6 +2211,9 @@ async function syncUnipileRelations(ctx: Ctx, opts: SyncOpts = {}): Promise<numb
       const slug = dripify.linkedinSlug(en.provider_refs?.unipile_linkedin_url);
       if (!ids.has(pid) && !(slug && slugs.has(slug))) continue;
       await db.from("campaign_enrollments").update({ linkedin_connected_at: ctx.now.toISOString() }).eq("id", en.id);
+      // Su mensaje de LinkedIn esperaba esta aceptación: sale en la próxima corrida.
+      await db.from("campaign_enrollments").update({ next_run_at: ctx.now.toISOString(), error_detail: null })
+        .eq("id", en.id).eq("status", "active").eq("error_detail", liLimits.ACCEPT_WAIT_DETAIL);
       const { data: origin } = await db.from("campaign_events").select("node_id, step_position")
         .eq("enrollment_id", en.id).eq("channel", "linkedin").eq("type", "connection_sent").not("node_id", "is", null)
         .order("created_at", { ascending: false }).limit(1).maybeSingle();

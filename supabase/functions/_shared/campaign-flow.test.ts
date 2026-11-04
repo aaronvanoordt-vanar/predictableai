@@ -210,10 +210,26 @@ Deno.test("LinkedIn nativo (Unipile): sin campaña de Dripify, texto propio o IA
   assertEquals(kinds, ["custom", "ai", "ai"]); // Dripify sigue forzando IA; plantilla nunca en LinkedIn
   assert(cf.isNativeLinkedin(cf.actions(f)[0]));
   assert(!cf.isNativeLinkedin(cf.actions(f)[2]));
+  // La invitación desde la cuenta propia sale siempre sin nota (2026-11-04):
+  // un texto viejo guardado en el paso ya no se valida ni se envía.
   const long = cf.validate({ v: 1, nodes: [
     { id: "li", type: "action", channel: "linkedin_connect", content: { kind: "custom", body: "x".repeat(301) }, settings: native },
   ] });
-  assert(/hasta 300/.test(long.errors.map((e) => e.message).join(" ")));
+  assertEquals(long.errors, []);
+});
+
+Deno.test("hasStepText: la invitación de LinkedIn nativa no lleva texto ni mensaje IA", () => {
+  const native = { linkedin_via: "unipile" };
+  const f = cf.normalize({ v: 1, nodes: [
+    { id: "li", type: "action", channel: "linkedin_connect", content: { kind: "ai", angle: "apertura" }, settings: native },
+    { id: "lm", type: "action", channel: "linkedin_message", content: { kind: "ai" }, settings: native },
+    { id: "dr", type: "action", channel: "linkedin_connect", content: { kind: "ai" }, settings: { dripify_campaign_id: 1 } },
+    { id: "em", type: "action", channel: "email", content: { kind: "ai" } },
+  ] });
+  assertEquals(cf.actions(f).map((a) => cf.hasStepText(a)), [false, true, false, true]);
+  // por lead: 2 IA (4) + 2 envíos nativos (2) + entrada (1) = 7
+  assertEquals(cf.estimateCredits(f, 1), { aiMessages: 2, sends: 4, credits: 7 });
+  assert(cf.LINKEDIN_ACCEPT_WAIT_DAYS > 0);
 });
 
 Deno.test("estimateCredits: 1 crédito por envío de LinkedIn nativo", () => {
