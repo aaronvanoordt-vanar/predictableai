@@ -2864,9 +2864,36 @@
     return api;
   }
 
+  // Conectar Email desde cero: primero el correo directo (Gmail, Microsoft 365
+  // o SMTP/IMAP, js/email-mailboxes.js); Apollo queda como alternativa.
+  function openEmailWizard(btn) {
+    var mb = global.EmailMailboxes;
+    if (!mb) return state.apolloOauth ? connectEmail(btn) : openApolloKeyWizard();
+    return mb.load().then(function (S) {
+      if (!S || S.unavailable) return state.apolloOauth ? connectEmail(btn) : openApolloKeyWizard();
+      var api = openModal({ title: 'Conectar Email', width: 560 });
+      var oauth = S.oauth || {};
+      function done() { api.close(); render(); openChannelDetails('email'); }
+      api.body.appendChild(h('p', { text: 'Conecta el correo desde el que quieres prospectar. Los emails de tus campañas y tus respuestas de la Bandeja salen de ahí, con tu propio dominio.' }));
+      var opts = h('div', { class: 'cmp-wz-choices' });
+      function opt(title, sub, enabled, fn) {
+        var b = choiceBtn(title, sub, function () {
+          try { var r = fn(b); if (r && r.catch) r.catch(function (e) { toast(errMsg(e), 'error'); }); } catch (e) { toast(errMsg(e), 'error'); }
+        });
+        if (!enabled) { b.disabled = true; b.style.opacity = '.55'; }
+        opts.appendChild(b);
+      }
+      opt('Gmail / Google Workspace', oauth.gmail ? 'Inicia sesión con Google.' : 'Todavía no está habilitado: usa «Otro correo» con una contraseña de aplicación.', !!oauth.gmail, function (b) { return mb.connectOAuth('gmail', b, done); });
+      opt('Microsoft 365 / Outlook', oauth.microsoft ? 'Inicia sesión con Microsoft.' : 'Todavía no está habilitado: usa «Otro correo» con una contraseña de aplicación.', !!oauth.microsoft, function (b) { return mb.connectOAuth('microsoft', b, done); });
+      opt('Otro correo (SMTP / IMAP)', 'Zoho, Hostinger, GoDaddy, cPanel o el tuyo.', true, function () { api.close(); return mb.openSmtpWizard(function () { render(); openChannelDetails('email'); }); });
+      opt('Usar Apollo', 'Envía con tu cuenta de Apollo en lugar de tu correo.', true, function () { api.close(); return state.apolloOauth ? connectEmail(btn) : openApolloKeyWizard(); });
+      api.body.appendChild(opts);
+      api.setActions([{ label: 'Cancelar' }]);
+    });
+  }
+
   function openConnect(key, btn) {
-    // Con la app OAuth registrada se usa el consentimiento; si no, la key.
-    if (key === 'email') return state.apolloOauth ? connectEmail(btn) : openApolloKeyWizard();
+    if (key === 'email') return openEmailWizard(btn);
     if (key === 'whatsapp') return openWhatsAppWizard();
     if (key === 'linkedin') return openLinkedInWizard();
   }
