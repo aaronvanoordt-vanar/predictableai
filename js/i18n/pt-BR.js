@@ -7246,4 +7246,12 @@ window.I18N_DICTS['pt-BR'] = {
   "Conectado": "Conectado",
   "Desconectar": "Desconectar",
   "Reconectar": "Reconectar",
+  "Conecta el correo desde el que quieres prospectar. Los emails de tus campañas y tus respuestas de la Bandeja salen de ahí, con tu propio dominio.": "Conecte o e-mail pelo qual você quer prospectar. Os e-mails das campanhas e suas respostas da Caixa de entrada saem dele, com seu próprio domínio.",
+  "Inicia sesión con Google.": "Entre com o Google.",
+  "Inicia sesión con Microsoft.": "Entre com a Microsoft.",
+  "Todavía no está habilitado: usa «Otro correo» con una contraseña de aplicación.": "Ainda não está habilitado: use «Outro e-mail» com uma senha de aplicativo.",
+  "Otro correo (SMTP / IMAP)": "Outro e-mail (SMTP / IMAP)",
+  "Zoho, Hostinger, GoDaddy, cPanel o el tuyo.": "Zoho, Hostinger, GoDaddy, cPanel ou o seu.",
+  "Usar Apollo": "Usar o Apollo",
+  "Envía con tu cuenta de Apollo en lugar de tu correo.": "Envie com sua conta do Apollo em vez do seu e-mail.",
 };

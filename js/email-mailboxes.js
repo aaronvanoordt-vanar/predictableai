@@ -549,5 +549,6 @@
     init: init, load: load, current: current, connected: connected, provider: provider,
     activeForChannel: activeForChannel, renderSection: renderSection, builderPicker: builderPicker,
     campaignUsesMailboxes: campaignUsesMailboxes,
+    connectOAuth: connectOAuth, openSmtpWizard: openSmtpWizard,
   };
 })(window);
