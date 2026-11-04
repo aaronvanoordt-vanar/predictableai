@@ -293,6 +293,14 @@
       scriptBox(p);
     }
 
+    if (st.failNote && st.phase === 'after') {
+      p.appendChild(h('div', { class: 'dlr-warn', role: 'alert', text: st.failNote }));
+    }
+    if (st.phase === 'after' && st.failed && !st.callId) {
+      // La llamada nunca existió: no hay resultado que guardar.
+      return;
+    }
+
     if (st.phase === 'after' || st.phase === 'connector') {
       p.appendChild(h('div', { style: 'font-weight:600;margin-top:4px', text: '¿Cómo terminó la llamada?' }));
       var grid = h('div', { class: 'dlr-outcomes' });
@@ -325,6 +333,7 @@
     st.opts = opts || {};
     st.script = (opts && opts.script) || '';
     st.outcome = null; st.note = ''; st.callId = null; st.meetingId = null; st.coachOut = null; st.reportNote = '';
+    st.failNote = ''; st.failed = false;
     st.phase = 'ready'; st.pre = null;
     var p = panel(); p.innerHTML = ''; header(p); p.appendChild(h('div', { class: 'dlr-sub', text: 'Preparando…' }));
     try {
@@ -367,6 +376,8 @@
   async function startNative() {
     var pre = st.pre || {};
     var record = lsGet(LS_RECORD, true);
+    st.everAnswered = false; st.failNote = ''; st.failed = false;
+    st.dialStartedAt = Date.now();
     try {
       st.phase = 'dialing'; render();
       var dev = await ensureDevice();
@@ -381,7 +392,7 @@
       call.on('disconnect', onEnd);
       call.on('cancel', onEnd);
       call.on('reject', onEnd);
-      call.on('error', function (e) { console.warn('[Dialer] call error', e); toast('La llamada falló: ' + (e && e.message ? e.message : 'error de red'), 'error'); });
+      call.on('error', function (e) { console.warn('[Dialer] call error', e); explainFailure(call, e, pre); });
     } catch (e) {
       st.phase = 'ready'; render();
       toast(e.message || 'No se pudo iniciar la llamada.', 'error');
@@ -397,7 +408,77 @@
     return null;
   }
 
+  // ── Por qué falló una llamada ──────────────────────────────────────────
+  // El SDK solo dice «ConnectionError (31005): Error sent from gateway in
+  // HANGUP», que es Twilio cortando por un error suyo. La causa real se
+  // deduce de la fila de `calls`: si no existe, Twilio no pudo leer el TwiML
+  // de telephony-webhook (Voice URL, firma, despliegue); si existe, el tramo al
+  // lead falló y el webhook guardó el ErrorCode de Twilio en error_detail.
+  var GATEWAY_ERRORS = { 31000: 1, 31005: 1 };
+  var TWILIO_CAUSES = {
+    13227: 'Tu cuenta de Twilio no tiene permiso para llamar a ese país. Actívalo en Twilio → Voice → Settings → Geo permissions.',
+    21215: 'Tu cuenta de Twilio no tiene permiso para llamar a ese país. Actívalo en Twilio → Voice → Settings → Geo permissions.',
+    21219: 'La cuenta de Twilio es de prueba: solo puede llamar a números verificados. Pásala a una cuenta pagada.',
+    13214: 'Twilio no acepta el número con el que te ven los leads. Vuelve a verificarlo en Canales → Llamadas.',
+    21210: 'Twilio no acepta el número con el que te ven los leads. Vuelve a verificarlo en Canales → Llamadas.',
+    13223: 'El número del lead no es válido para Twilio. Revísalo en la ficha del lead.',
+    13224: 'El número del lead no es válido para Twilio. Revísalo en la ficha del lead.',
+    21211: 'El número del lead no es válido para Twilio. Revísalo en la ficha del lead.',
+    13225: 'Twilio bloquea las llamadas a ese número (tarifa especial o de alto riesgo).',
+  };
+
+  function webhookUrl() {
+    var base = (global.SUPABASE_CONFIG && global.SUPABASE_CONFIG.url) || 'https://<proyecto>.supabase.co';
+    return base.replace(/\/+$/, '') + '/functions/v1/telephony-webhook?provider=twilio&event=voice';
+  }
+
+  async function findFailedCall(sid, to) {
+    var row = null;
+    for (var i = 0; i < 6; i++) {
+      var q = sb().from('calls').select('id, status, error_detail, ended_at').eq('provider', 'twilio');
+      if (sid) q = q.eq('provider_call_id', sid);
+      else {
+        q = q.gte('created_at', new Date((st.dialStartedAt || Date.now()) - 5000).toISOString()).order('created_at', { ascending: false }).limit(1);
+        if (to) q = q.eq('to_number', to);
+      }
+      var r = await q;
+      row = r && r.data ? (Array.isArray(r.data) ? r.data[0] || null : r.data) : null;
+      if (row && (row.error_detail || row.ended_at)) return row;
+      await new Promise(function (res) { setTimeout(res, 800); });
+    }
+    return row;
+  }
+
+  function failureMessage(row) {
+    if (!row) return i18nFmt('Twilio no pudo leer las instrucciones de la llamada en Predictable, así que no se marcó ni se cobró. Avísale al administrador: la Voice URL de la TwiML App debe ser exactamente {0} (POST) y la función telephony-webhook debe estar desplegada sin verificación de JWT.', webhookUrl());
+    var m = /^(\d{3,6})/.exec(String(row.error_detail || ''));
+    if (m && TWILIO_CAUSES[m[1]]) return TWILIO_CAUSES[m[1]];
+    if (m) return i18nFmt('Twilio cortó la llamada con el código {0}. Búscalo en Twilio → Monitor → Logs → Errors.', m[1]);
+    return 'Twilio recibió la llamada pero la cortó antes de que sonara. Causas habituales: el país no está activado en Geo permissions, la cuenta de Twilio es de prueba o el número con el que te ven dejó de estar verificado. El código exacto está en Twilio → Monitor → Logs → Errors.';
+  }
+
+  function i18nFmt(tpl, arg) { return tpl.replace('{0}', arg); }
+
+  async function explainFailure(call, e, pre) {
+    var code = e && e.code;
+    if (!GATEWAY_ERRORS[code] || st.everAnswered) {
+      toast('La llamada falló: ' + (e && e.message ? e.message : 'error de red'), 'error');
+      return;
+    }
+    st.failed = true;
+    st.failNote = 'Buscando por qué falló la llamada…';
+    render();
+    var sid = call && call.parameters ? call.parameters.CallSid : null;
+    var row = null;
+    try { row = await findFailedCall(sid, pre && pre.to); } catch (err) { console.warn('[Dialer] diagnose', err); }
+    st.failNote = failureMessage(row);
+    if (row && row.id && !st.callId) st.callId = row.id;
+    render();
+    toast('La llamada no se pudo hacer. La causa está en el panel del dialer.', 'error');
+  }
+
   async function onAccept(call) {
+    st.everAnswered = true;
     st.phase = 'live';
     st.started = Date.now();
     st.answered = true;

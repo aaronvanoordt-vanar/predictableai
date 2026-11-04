@@ -105,6 +105,10 @@ async function twilioStatus(db: SupabaseClient, callId: string, p: Record<string
   const patch: Json = {};
   if (s === "ringing") patch.status = "ringing";
   if (s === "in-progress" || s === "answered") { patch.status = "in_progress"; patch.answered_at = new Date().toISOString(); }
+  // El tramo al lead falló con un código de Twilio (Geo permissions, número
+  // inválido…): se guarda aunque la fila ya no esté en cola, el dialer lo lee.
+  const err = twilio.callbackError(p);
+  if (err) await db.from("calls").update({ error_detail: err }).eq("id", callId).is("error_detail", null);
   if (!Object.keys(patch).length) return;
   await db.from("calls").update(patch).eq("id", callId).in("status", ["queued", "ringing"]);
 }
@@ -116,9 +120,11 @@ async function twilioDialDone(db: SupabaseClient, callId: string, p: Record<stri
   if (!call) return;
   const country = String(call.payload?.country ?? countryOfE164(call.to_number) ?? "");
   const cost = Math.min(Number(call.credits_reserved ?? 0), callCost(country, status === "completed" ? seconds : 0));
+  const err = twilio.callbackError(p) ?? (status === "failed" && !call.error_detail ? `DialCallStatus=${String(p.DialCallStatus ?? "failed").slice(0, 40)}` : null);
   // Se liquida una sola vez: solo la corrida que cierra la fila (ended_at null).
   const { data: claimed } = await db.from("calls").update({
     status, duration_seconds: status === "completed" ? seconds : 0, ended_at: new Date().toISOString(), credits_charged: cost,
+    ...(err && !call.error_detail ? { error_detail: err } : {}),
     ...(call.answered_at || status !== "completed" ? {} : { answered_at: new Date(Date.now() - seconds * 1000).toISOString() }),
   }).eq("id", callId).is("ended_at", null).select("id");
   if (!claimed?.length) return;
@@ -179,6 +185,9 @@ async function handleTwilio(db: SupabaseClient, req: Request, url: URL): Promise
   // traer otro esquema u host, así que se reconstruye con SUPABASE_URL.
   const base = `${Deno.env.get("SUPABASE_URL")}${FN_PATH}`;
   if (!(await twilio.validSignature(env.authToken, base + url.search, p, req.headers.get("X-Twilio-Signature")))) {
+    // Sin firma válida Twilio corta la llamada (31005 en el navegador). La URL
+    // firmada tiene que ser EXACTAMENTE la Voice URL de la TwiML App.
+    console.warn("[telephony-webhook] invalid Twilio signature for", base + url.search);
     return new Response("invalid signature", { status: 403 });
   }
   const event = url.searchParams.get("event") ?? "";
