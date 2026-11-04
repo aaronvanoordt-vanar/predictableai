@@ -12,7 +12,8 @@
  *     periodo declarado (no con envíos: no hay registros de envío).
  *   · El aviso de que los registros de la plataforma externa no están
  *     disponibles. Nunca inventa mensajes ni respuestas.
- *   · «Mensajes enviados por día» (gráfico apilado por canal + tabla) solo
+ *   · «Mensajes enviados por día» (gráfico de líneas por canal con desglose
+ *     al pasar el mouse o enfocar un día + tabla) solo
  *     con las cifras de `warmup_attestations.daily`, y siempre con su fuente
  *     (`daily_source`): hoy 'declared' = «cifras declaradas por Vanarsi, sin
  *     registros que las respalden» (pedido del dueño, 2026-11-04).
@@ -119,8 +120,14 @@
       '.wu-acc dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:13px}',
       '.wu-acc dt{color:var(--muted)} .wu-acc dd{margin:0;color:var(--ink);word-break:break-word}',
       '.wu-src{font-size:12px;color:var(--muted);margin:2px 0 10px}',
+      '.wu-plot{position:relative}',
+      '.wu-hit{cursor:crosshair;outline:none}',
+      '.wu-tip{position:absolute;top:8px;min-width:220px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:10px 12px;font-size:12px;color:var(--ink);pointer-events:none;z-index:2}',
+      '.wu-tip-h{font-weight:700;margin-bottom:6px}',
+      '.wu-tip-r{display:flex;align-items:center;gap:8px;margin:3px 0} .wu-tip-r span{flex:1;color:var(--muted)} .wu-tip-r i{width:10px;height:3px;border-radius:2px;display:inline-block}',
+      '.wu-tip-t{border-top:1px solid var(--border);padding-top:5px;margin-top:6px} .wu-tip-t span{color:var(--ink);font-weight:600}',
       '.wu-legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--ink);margin-bottom:6px}',
-      '.wu-leg{display:inline-flex;align-items:center;gap:6px} .wu-leg i{width:10px;height:10px;border-radius:3px;display:inline-block}',
+      '.wu-leg{display:inline-flex;align-items:center;gap:6px} .wu-leg i{width:14px;height:3px;border-radius:2px;display:inline-block}',
       '.wu-chart{width:100%;height:auto;display:block}',
       '.wu-details{margin-top:8px;font-size:13px} .wu-details summary{cursor:pointer;color:var(--muted)}',
       '.wu-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:13px}',
@@ -217,16 +224,54 @@
     try { return parseDay(d).toLocaleDateString(locale(), { day: 'numeric', month: 'short' }); } catch (e) { return String(d || ''); }
   }
 
+  var chartData = null;
+
+  function bindChart(root) {
+    var plot = root.querySelector('.wu-plot');
+    if (!plot || !chartData) return;
+    var svgEl = plot.querySelector('svg'), tip = plot.querySelector('.wu-tip'), guide = plot.querySelector('.wu-guide');
+    function show(i) {
+      var d = chartData.days[i];
+      if (!d) return;
+      tip.innerHTML = '<div class="wu-tip-h">' + esc(fmtDay(d.date)) + '</div>' +
+        SERIES.map(function (s) {
+          return '<div class="wu-tip-r"><i style="background:' + s.color + '"></i><span>' + esc(s.label) + '</span><b>' + num(d[s.key]) + '</b></div>';
+        }).join('') +
+        '<div class="wu-tip-r wu-tip-t"><span>Total</span><b>' + chartData.totals[i] + '</b></div>';
+      tip.hidden = false;
+      var x = chartData.xAt(i);
+      guide.setAttribute('x1', x); guide.setAttribute('x2', x); guide.style.display = '';
+      plot.querySelectorAll('.wu-dot').forEach(function (c) { c.setAttribute('r', c.getAttribute('data-i') === String(i) ? '5' : '3'); });
+      var scale = svgEl.getBoundingClientRect().width / chartData.W;
+      var px = x * scale, w = tip.offsetWidth, pwid = plot.clientWidth;
+      var left = px + 12 + w > pwid ? px - 12 - w : px + 12;
+      tip.style.left = Math.max(0, left) + 'px';
+    }
+    function hide() {
+      tip.hidden = true; guide.style.display = 'none';
+      plot.querySelectorAll('.wu-dot').forEach(function (c) { c.setAttribute('r', '3'); });
+    }
+    plot.querySelectorAll('.wu-hit').forEach(function (r) {
+      var i = Number(r.getAttribute('data-i'));
+      r.addEventListener('mouseenter', function () { show(i); });
+      r.addEventListener('focus', function () { show(i); });
+      r.addEventListener('touchstart', function () { show(i); }, { passive: true });
+      r.addEventListener('blur', hide);
+    });
+    plot.addEventListener('mouseleave', hide);
+  }
+
   function dailyChart(row) {
     var days = (Array.isArray(row.daily) ? row.daily : []).filter(function (d) { return d && d.date; });
     if (!days.length) return '';
     var totals = days.map(function (d) { return SERIES.reduce(function (a, s) { return a + num(d[s.key]); }, 0); });
-    var max = Math.max.apply(null, totals.concat([1]));
+    var max = 1;
+    days.forEach(function (d) { SERIES.forEach(function (s) { max = Math.max(max, num(d[s.key])); }); });
     var step = max <= 20 ? 5 : max <= 50 ? 10 : max <= 100 ? 20 : 50;
     var top = Math.ceil(max / step) * step;
-    var W = 720, H = 260, L = 36, R = 8, T = 12, B = 34;
+    var W = 720, H = 260, L = 36, R = 16, T = 14, B = 34;
     var pw = W - L - R, ph = H - T - B, n = days.length;
-    var slot = pw / n, bw = Math.max(6, Math.min(32, slot * 0.62));
+    var xAt = function (i) { return n === 1 ? L + pw / 2 : L + (pw * i) / (n - 1); };
     var y = function (v) { return T + ph - (v / top) * ph; };
     var svg = '';
     for (var g = 0; g <= top; g += step) {
@@ -234,19 +279,24 @@
         '<text x="' + (L - 6) + '" y="' + (y(g) + 4) + '" text-anchor="end" font-size="11" fill="var(--muted)">' + g + '</text>';
     }
     days.forEach(function (d, i) {
-      var x = L + slot * i + (slot - bw) / 2, acc = 0;
-      var tip = fmtShort(d.date) + ': ' + SERIES.map(function (s) { return s.label + ' ' + num(d[s.key]); }).join(' · ') + ' · Total ' + totals[i];
-      svg += '<g><title>' + esc(tip) + '</title>';
-      SERIES.forEach(function (s) {
-        var v = num(d[s.key]);
-        if (!v) return;
-        var y1 = y(acc + v), h = y(acc) - y1;
-        svg += '<rect x="' + x.toFixed(1) + '" y="' + y1.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, h - 1).toFixed(1) + '" rx="2" fill="' + s.color + '"/>';
-        acc += v;
-      });
-      svg += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (y(totals[i]) - 4).toFixed(1) + '" text-anchor="middle" font-size="10" fill="var(--muted)">' + totals[i] + '</text></g>';
-      if (n <= 16 || i % 2 === 0) svg += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - B + 16) + '" text-anchor="middle" font-size="10" fill="var(--muted)">' + esc(fmtShort(d.date)) + '</text>';
+      if (n <= 16 || i % 2 === 0) svg += '<text x="' + xAt(i).toFixed(1) + '" y="' + (H - B + 18) + '" text-anchor="middle" font-size="10" fill="var(--muted)">' + esc(fmtShort(d.date)) + '</text>';
     });
+    svg += '<line class="wu-guide" x1="0" x2="0" y1="' + T + '" y2="' + (T + ph) + '" stroke="var(--muted)" stroke-dasharray="3 3" stroke-width="1" style="display:none"/>';
+    SERIES.forEach(function (s) {
+      var pts = days.map(function (d, i) { return xAt(i).toFixed(1) + ',' + y(num(d[s.key])).toFixed(1); });
+      svg += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + s.color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
+      days.forEach(function (d, i) {
+        svg += '<circle class="wu-dot" data-i="' + i + '" cx="' + xAt(i).toFixed(1) + '" cy="' + y(num(d[s.key])).toFixed(1) + '" r="3" fill="var(--surface)" stroke="' + s.color + '" stroke-width="2"/>';
+      });
+    });
+    var half = n > 1 ? pw / (n - 1) / 2 : pw / 2;
+    days.forEach(function (d, i) {
+      var x0 = Math.max(L - 8, xAt(i) - half);
+      var x1 = Math.min(W - R + 8, xAt(i) + half);
+      svg += '<rect class="wu-hit" data-i="' + i + '" x="' + x0.toFixed(1) + '" y="' + T + '" width="' + (x1 - x0).toFixed(1) + '" height="' + ph + '" fill="transparent" tabindex="0" aria-label="' +
+        esc(fmtShort(d.date) + ': ' + SERIES.map(function (s) { return s.label + ' ' + num(d[s.key]); }).join(', ') + ', total ' + totals[i]) + '"/>';
+    });
+    chartData = { days: days, totals: totals, xAt: xAt, W: W };
     var sums = SERIES.map(function (s) { return days.reduce(function (a, d) { return a + num(d[s.key]); }, 0); });
     var grand = sums.reduce(function (a, b) { return a + b; }, 0);
     var legend = SERIES.map(function (s, i) {
@@ -260,7 +310,8 @@
       '<div class="wu-row"><h3>Mensajes enviados por día</h3><span class="wu-muted">Total: ' + grand + '</span></div>' +
       '<div class="wu-src">' + esc(SOURCE_NOTE[row.daily_source] || SOURCE_NOTE.declared) + '</div>' +
       '<div class="wu-legend">' + legend + '</div>' +
-      '<svg class="wu-chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Mensajes enviados por día y por canal">' + svg + '</svg>' +
+      '<div class="wu-plot"><svg class="wu-chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Mensajes enviados por día y por canal">' + svg + '</svg>' +
+      '<div class="wu-tip" role="status" aria-live="polite" hidden></div></div>' +
       '<details class="wu-details"><summary>Ver como tabla</summary>' + table + '</details>' +
       '</div>';
   }
@@ -306,6 +357,7 @@
       html += dailyChart(row);
     }
     el.innerHTML = html;
+    bindChart(el);
   }
 
   async function show() {
