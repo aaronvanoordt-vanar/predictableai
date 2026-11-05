@@ -519,13 +519,29 @@
   // ── Backend ──────────────────────────────────────────────────────────────
 
   async function post(fn, body) {
+    const expired = 'Tu sesión expiró. Recarga la página.';
     const session = (await global.supabaseClient.auth.getSession()).data.session;
-    if (!session) throw new Error('Tu sesión expiró. Recarga la página.');
-    const res = await fetch(global.SUPABASE_CONFIG.url + '/functions/v1/' + fn, {
+    if (!session) throw new Error(expired);
+    const payload = JSON.stringify(Object.assign({ engine: global.AIEngine && global.AIEngine.get('radar') }, body || {}));
+    const send = (tok) => fetch(global.SUPABASE_CONFIG.url + '/functions/v1/' + fn, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-      body: JSON.stringify(Object.assign({ engine: global.AIEngine && global.AIEngine.get('radar') }, body || {})),
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+      body: payload,
     });
+    let res = await send(session.access_token);
+    // Un 401 suele ser un access token vencido que el navegador no alcanzó a
+    // renovar (pestaña dormida, equipo suspendido, cambio de espacio): se
+    // renueva y se reintenta UNA vez, como edgeFetch de js/campaigns.js.
+    if (res.status === 401) {
+      let fresh = null;
+      try {
+        const r = await global.supabaseClient.auth.refreshSession();
+        fresh = r && r.data && r.data.session ? r.data.session.access_token : null;
+      } catch (e) { fresh = null; }
+      if (!fresh) throw new Error(expired);
+      res = await send(fresh);
+      if (res.status === 401) throw new Error(expired);
+    }
     const data = await res.json().catch(() => ({}));
     if (res.status === 402) throw new Error('No tienes créditos suficientes: esto cuesta ' + (data.cost || '?') + ' créditos y tienes ' + (data.balance || 0) + '.');
     // 409 market_analysis_required: el plan se diseña sobre el análisis de
