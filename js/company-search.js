@@ -128,7 +128,11 @@
 
   // ── búsqueda ───────────────────────────────────────────────────────────
   async function search(page) {
-    if (P().apolloConnected && !P().apolloConnected()) return toast('Conecta tu cuenta de Apollo para buscar empresas.', 'warn');
+    if (P().apolloConnected && !P().apolloConnected()) {
+      toast('Conecta tu cuenta de Apollo (arriba, en «Base de datos») para buscar empresas.', 'warn');
+      if (window.campaigns && typeof window.campaigns.connectApollo === 'function') window.campaigns.connectApollo();
+      return;
+    }
     if (!activeCount(state.f)) return toast('Agrega al menos un filtro: buscar todas las empresas de Apollo no sirve para prospectar.', 'warn');
     state.loading = true; state.error = ''; state.warning = ''; state.page = page || 1;
     render();
