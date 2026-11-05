@@ -282,6 +282,13 @@
     '#prospecting-shell .pros-pane { display:none; }',
     '#prospecting-shell .pros-pane.active { display:flex; flex-direction:column; gap:16px; }',
     '#prospecting-shell .pros-grid { display:grid; grid-template-columns:320px minmax(0,1fr); gap:18px; align-items:start; }',
+    '#prospecting-shell .pros-apollo-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 14px; margin-bottom:12px; border:1px solid var(--border); border-radius:12px; background:var(--surface2); }',
+    '#prospecting-shell .pros-apollo-dot { width:8px; height:8px; border-radius:50%; flex:none; background:var(--text3, #888); }',
+    '#prospecting-shell .pros-apollo-bar[data-state="on"] .pros-apollo-dot { background:var(--green, #22c55e); }',
+    '#prospecting-shell .pros-apollo-bar[data-state="off"] .pros-apollo-dot { background:var(--accent); }',
+    '#prospecting-shell .pros-apollo-txt { flex:1 1 260px; min-width:0; display:flex; flex-direction:column; gap:2px; font-size:13px; }',
+    '#prospecting-shell .pros-apollo-txt span { color:var(--text2); font-size:12px; }',
+    '#prospecting-shell .pros-apollo-acts { display:flex; gap:6px; flex-wrap:wrap; }',
     '#prospecting-shell .pros-grid.pros-grid-300 { grid-template-columns:300px minmax(0,1fr); }',
     '#prospecting-shell .pros-2col { display:grid; grid-template-columns:1fr 1fr; gap:18px; align-items:start; }',
     '@media (max-width:1000px) { #prospecting-shell .pros-grid, #prospecting-shell .pros-grid.pros-grid-300, #prospecting-shell .pros-2col { grid-template-columns:1fr; } }',
@@ -1715,6 +1722,49 @@
     }
   }
 
+  // ── Base de datos de Buscar: Apollo (2026-11-05, pedido del dueño) ────────
+  // Apollo se conecta AQUÍ, como base de datos, no en el canal Email: Canales
+  // → Email solo lo usa como remitente si ya está conectado. Sin conectarlo,
+  // Buscar usa los datos integrados (la key de la plataforma, apollo-proxy).
+  function renderApolloBar() {
+    var bar = state.search && state.search.apolloBar;
+    if (!bar) return;
+    bar.innerHTML = '';
+    var C = window.campaigns;
+    var canConnect = !!(C && typeof C.connectApollo === 'function');
+    var dot = h('span', { 'aria-hidden': 'true', class: 'pros-apollo-dot' });
+    var txt = h('div', { class: 'pros-apollo-txt' });
+    var acts = h('div', { class: 'pros-apollo-acts' });
+    function act(label, cls, fn) {
+      var b = h('button', { type: 'button', class: 'btn btn-sm ' + cls, text: label });
+      b.addEventListener('click', guarded(function () {
+        if (!canConnect) return toast('El módulo de canales no está cargado. Recarga la página.', 'warn');
+        return fn();
+      }));
+      acts.appendChild(b);
+    }
+    if (apollo.connected === null) {
+      txt.appendChild(h('b', { text: 'Base de datos' }));
+      txt.appendChild(h('span', { text: apollo.error ? 'No se pudo leer el estado de Apollo.' : 'Revisando tu cuenta de Apollo…' }));
+      bar.setAttribute('data-state', 'loading');
+      if (apollo.error) act('Reintentar', 'btn-ghost', function () { return checkApollo(true).then(renderApolloBar); });
+    } else if (apollo.connected) {
+      txt.appendChild(h('b', { text: 'Base de datos: tu Apollo' }));
+      txt.appendChild(h('span', { text: (apollo.detail ? apollo.detail + ' · ' : '') + 'Buscas y enriqueces con tus créditos de Apollo, y puedes buscar empresas.' }));
+      bar.setAttribute('data-state', 'on');
+      act('Cambiar API key', 'btn-ghost', function () { return window.campaigns.connectApollo('have'); });
+      act('Desconectar', 'btn-ghost', function () { return window.campaigns.disconnectApollo(); });
+    } else {
+      txt.appendChild(h('b', { text: 'Base de datos: datos integrados de Predictable' }));
+      txt.appendChild(h('span', { text: 'Conecta tu Apollo para buscar con tus propios créditos, buscar empresas y usarlo después como remitente de email.' }));
+      bar.setAttribute('data-state', 'off');
+      act('Conectar Apollo', 'btn-primary', function () { return window.campaigns.connectApollo(); });
+    }
+    bar.appendChild(dot);
+    bar.appendChild(txt);
+    bar.appendChild(acts);
+  }
+
   // Filtros de personas que vienen de fuera (enlace de Apollo importado):
   // reemplazan a los actuales, salvo las listas excluidas, que son de Predictable.
   function applyPeopleFilters(filters, opts) {
@@ -1747,6 +1797,11 @@
       if (!window.companySearch || !window.companySearch.openImport) return toast('El importador no está cargado. Recarga la página.', 'warn');
       window.companySearch.openImport();
     }));
+    var apolloBar = h('div', { class: 'pros-apollo-bar', role: 'status' });
+    state.search.apolloBar = apolloBar;
+    root.appendChild(apolloBar);
+    renderApolloBar();
+    checkApollo(false).then(renderApolloBar);
     root.appendChild(h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:12px' },
       h('div', { role: 'group', 'aria-label': 'Qué buscar', style: 'display:flex;gap:6px;flex-wrap:wrap' }, modeBtns[0], modeBtns[1], modeBtns[2]),
       importBtn));
@@ -4651,7 +4706,7 @@
   // conectar nada. El estado de la cuenta propia de Apollo se sigue leyendo
   // en segundo plano (js/campaigns.js, una sola fuente) solo para lo que sí
   // la exige: la búsqueda de empresas y el canal de Email.
-  var apollo = { connected: null, checking: null, error: null, pendingTab: null };
+  var apollo = { connected: null, detail: '', checking: null, error: null, pendingTab: null };
   /** Abre la pestaña Canales (sin Apollo), con el canal elegido. */
   function openChannels(key) {
     if (!window.campaigns || typeof window.campaigns.openChannels !== 'function') return;
@@ -4675,9 +4730,10 @@
     }
     if (apollo.checking && !force) return apollo.checking;
     apollo.checking = window.campaigns.apolloStatus(force).then(function (r) {
-      apollo.connected = !!(r && r.connected);
+      apollo.connected = r && r.error ? null : !!(r && r.connected);
+      apollo.detail = (r && r.detail) || '';
       apollo.error = (r && r.error) || null;
-      return apollo.connected;
+      return !!apollo.connected;
     }, function (e) {
       apollo.error = errMsg(e);
       return false;
@@ -4687,7 +4743,10 @@
   document.addEventListener('predictable:apollo-status', function (ev) {
     apollo.connected = !!(ev && ev.detail && ev.detail.connected);
     apollo.error = null;
-    // Conectó (o desconectó desde Campañas): repintar la pestaña actual.
+    // Conectó o desconectó: releer el detalle (cuenta) y repintar la cabecera de Buscar.
+    renderApolloBar();
+    if (apollo.connected) checkApollo(false).then(renderApolloBar);
+    else apollo.detail = '';
   });
 
   function switchTab(tabId) {

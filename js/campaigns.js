@@ -2349,7 +2349,10 @@
     return bar;
   }
 
-  // ── Conexión: Email (OAuth en ventana emergente) ─────────────────────────
+  // ── Conexión: Apollo (OAuth en ventana emergente) ────────────────────────
+  // Apollo es la BASE DE DATOS de Buscar (2026-11-05, pedido del dueño): se
+  // conecta desde la cabecera de Buscar (js/prospecting.js → connectApollo).
+  // El canal Email solo lo USA como remitente si ya está conectado.
   var apolloPopupTimer = null;
   var apolloListenerInstalled = false;
   function apolloRedirectUri() { return location.origin + location.pathname.replace(/[^\/]*$/, '') + 'apollo-callback.html'; }
@@ -2362,8 +2365,8 @@
       if (d.type !== 'predictable:channel-connected' || d.provider !== 'apollo') return;
       clearInterval(apolloPopupTimer);
       refreshStatus().then(function () {
-        var st = emailState();
-        toast('Email conectado' + (st.detail ? ' (' + st.detail + ')' : '') + '.', 'success');
+        var st = apolloEmailState();
+        toast(st.state === 'connected' && st.detail ? 'Apollo conectado (' + st.detail + ').' : 'Apollo conectado.', 'success');
       });
     });
   }
@@ -2374,7 +2377,7 @@
     await loadEmailAccounts();
     render();
   }
-  function connectEmail(btn) {
+  function connectApolloOAuth(btn) {
     var restore = btnLoading(btn, '⏳');
     var redirect = apolloRedirectUri();
     return edgeFetch(FN_CHANNEL, { action: 'apollo_auth_url', redirect_uri: redirect, payload: { redirect_uri: redirect } }).then(function (r) {
@@ -2829,12 +2832,16 @@
   // compartida de la plataforma: sus listas de Apollo no se ven aquí y lo que
   // crea aquí no llega a su Apollo.
   function openApolloKeyWizard(startStep) {
-    var api = openModal({ title: 'Conectar Email', width: 560 });
+    var api = openModal({ title: 'Conectar Apollo', width: 560 });
     function choice() {
-      api.setTitle('Conectar Email');
+      api.setTitle('Conectar Apollo');
       api.body.innerHTML = '';
-      api.body.appendChild(h('p', { text: 'El email de campaña y los datos de prospección salen de tu cuenta de Apollo. Conéctala para trabajar con tus propias listas, contactos y créditos.' }));
+      api.body.appendChild(h('p', { text: 'Conecta tu cuenta de Apollo como base de datos de Buscar: buscas y enriqueces con tus propios créditos de Apollo y puedes buscar empresas. Sin conectarla, Buscar usa los datos integrados de Predictable.' }));
       var opts = h('div', { class: 'cmp-wz-choices' });
+      if (state.apolloOauth) opts.appendChild(choiceBtn('Iniciar sesión con Apollo', 'Autoriza tu cuenta en una ventana de Apollo.', function () {
+        api.close();
+        connectApolloOAuth().catch(function (e) { toast(errMsg(e), 'error'); });
+      }));
       opts.appendChild(choiceBtn('Ya tengo cuenta de Apollo', 'Tengo mi API key lista.', haveIt));
       opts.appendChild(choiceBtn('Todavía no tengo', 'Muéstrame cómo crearla.', dontHave));
       api.body.appendChild(opts);
@@ -2844,13 +2851,13 @@
       api.setTitle('Crear tu cuenta de Apollo');
       api.body.innerHTML = '';
       var card = h('div', { class: 'cmp-wz-card' });
-      card.appendChild(h('p', { text: 'Apollo es la base de datos de prospectos y el remitente de los emails. La cuenta la pagas directamente a ellos; el acceso por API viene en sus planes de pago.' }));
+      card.appendChild(h('p', { text: 'Apollo es una base de datos de prospectos (y, si quieres, el remitente de tus emails). La cuenta la pagas directamente a ellos; el acceso por API viene en sus planes de pago.' }));
       card.appendChild(h('a', { href: CHANNEL_SIGNUP.apollo, target: '_blank', rel: 'noopener', class: 'btn btn-primary btn-sm', text: 'Crear mi cuenta' }));
       api.body.appendChild(card);
       api.setActions([{ label: 'Atrás', onClick: choice }, { label: 'Ya la tengo, continuar', className: 'btn btn-primary', onClick: haveIt }]);
     }
     function haveIt() {
-      api.setTitle('Conectar Email');
+      api.setTitle('Conectar Apollo');
       api.body.innerHTML = '';
       api.body.appendChild(pathBox('En tu cuenta de Apollo:', ['Settings → Integrations → API', 'Create new key (o edita la que ya tengas)', 'Copia la key y pégala aquí']));
       var keyI = h('input', { type: 'password', placeholder: 'API key', autocomplete: 'off' });
@@ -2858,7 +2865,7 @@
       api.body.appendChild(h('div', { class: 'pros-hint', text: 'Los créditos de enriquecimiento pasan a cobrarse en tu cuenta de Apollo, no en la de la plataforma.' }));
       api.setActions([
         { label: 'Atrás', onClick: choice },
-        { label: isConn(state.apollo) ? 'Guardar' : 'Conectar Email', className: 'btn btn-primary', onClick: function (m) {
+        { label: isConn(state.apollo) ? 'Guardar' : 'Conectar Apollo', className: 'btn btn-primary', onClick: function (m) {
           if (!keyI.value.trim()) throw new Error('Pega la API key.');
           m.setBusy(true);
           return edgeFetch(FN_CHANNEL, { action: 'apollo_connect_key', payload: { api_key: keyI.value.trim() } }).then(function (r) {
@@ -2867,7 +2874,6 @@
             toast('Apollo conectado con tu cuenta.', 'success');
             notifyApolloStatus();
             render();
-            openChannelDetails('email');
           });
         } },
       ]);
@@ -2880,9 +2886,9 @@
   // o SMTP/IMAP, js/email-mailboxes.js); Apollo queda como alternativa.
   function openEmailWizard(btn) {
     var mb = global.EmailMailboxes;
-    if (!mb) return state.apolloOauth ? connectEmail(btn) : openApolloKeyWizard();
+    if (!mb) return useApolloForEmail();
     return mb.load().then(function (S) {
-      if (!S || S.unavailable) return state.apolloOauth ? connectEmail(btn) : openApolloKeyWizard();
+      if (!S || S.unavailable) return useApolloForEmail();
       var api = openModal({ title: 'Conectar Email', width: 560 });
       var oauth = S.oauth || {};
       function done() { api.close(); render(); openChannelDetails('email'); }
@@ -2898,10 +2904,26 @@
       opt('Gmail / Google Workspace', oauth.gmail ? 'Inicia sesión con Google.' : 'Todavía no está habilitado: usa «Otro correo» con una contraseña de aplicación.', !!oauth.gmail, function (b) { return mb.connectOAuth('gmail', b, done); });
       opt('Microsoft 365 / Outlook', oauth.microsoft ? 'Inicia sesión con Microsoft.' : 'Todavía no está habilitado: usa «Otro correo» con una contraseña de aplicación.', !!oauth.microsoft, function (b) { return mb.connectOAuth('microsoft', b, done); });
       opt('Otro correo (SMTP / IMAP)', 'Zoho, Hostinger, GoDaddy, cPanel o el tuyo.', true, function () { api.close(); return mb.openSmtpWizard(function () { render(); openChannelDetails('email'); }); });
-      opt('Usar Apollo', 'Envía con tu cuenta de Apollo en lugar de tu correo.', true, function () { api.close(); return state.apolloOauth ? connectEmail(btn) : openApolloKeyWizard(); });
+      opt('Usar Apollo', isConn(state.apollo)
+        ? 'Envía con la cuenta de Apollo que conectaste en Buscar.'
+        : 'Primero conecta tu Apollo en Buscar; después puedes enviar con él.', true, function () { api.close(); return useApolloForEmail(); });
       api.body.appendChild(opts);
       api.setActions([{ label: 'Cancelar' }]);
     });
+  }
+
+  // El canal Email no conecta Apollo: lo usa si ya está conectado en Buscar;
+  // si no, lleva a Buscar y abre ahí la conexión.
+  function useApolloForEmail() {
+    if (isConn(state.apollo)) return openChannelDetails('email');
+    return connectApolloInSearch();
+  }
+  function connectApolloInSearch() {
+    var P = global.prospecting;
+    if (P && typeof P.goTab === 'function') {
+      try { P.goTab('busqueda'); } catch (e) { /* sigue con el asistente */ }
+    }
+    return connectApollo();
   }
 
   function openConnect(key, btn) {
@@ -2910,20 +2932,33 @@
     if (key === 'linkedin') return openLinkedInWizard();
   }
 
-  // ── Apollo como requisito de toda la Prospección (2026-10-02) ────────────
-  // js/prospecting.js no deja entrar a Buscar, Listas ni Campañas sin una
-  // cuenta de Apollo propia y reutiliza este mismo asistente para conectarla.
-  // Cada cambio de estado se avisa con 'predictable:apollo-status'.
+  // ── Apollo = base de datos de Buscar (2026-11-05) ────────────────────────
+  // Ya no bloquea la Prospección (2026-10-27): js/prospecting.js pinta en la
+  // cabecera de Buscar el estado y el botón «Conectar Apollo», que abre este
+  // asistente. Cada cambio de estado se avisa con 'predictable:apollo-status'.
   async function apolloStatus(force) {
     if (force || !state.status) await loadStatus();
-    return { connected: isConn(state.apollo), error: state.status ? null : (state.statusError || 'No se pudo leer el estado de Apollo.') };
+    var es = apolloEmailState();
+    var cfg = (state.apollo && state.apollo.config) || {};
+    return {
+      connected: isConn(state.apollo),
+      detail: es.state === 'connected' ? (es.detail || '') : '',
+      name: cfg.name || '',
+      connected_at: cfg.connected_at || null,
+      error: state.status ? null : (state.statusError || 'No se pudo leer el estado de Apollo.'),
+    };
   }
   function notifyApolloStatus() {
     try { document.dispatchEvent(new CustomEvent('predictable:apollo-status', { detail: { connected: isConn(state.apollo) } })); } catch (e) { /* navegador viejo */ }
   }
-  function connectApollo(btn) {
+  function connectApollo(startStep) {
     injectStyles();
-    return Promise.resolve(openConnect('email', btn));
+    var go = function () { return openApolloKeyWizard(startStep === 'have' ? 'have' : null); };
+    return Promise.resolve(state.status ? go() : loadStatus().then(go, go));
+  }
+  function disconnectApollo() {
+    injectStyles();
+    return disconnectChannel('email', 'apollo', null);
   }
 
   // ── Detalles por canal (modal) ───────────────────────────────────────────
@@ -2933,7 +2968,7 @@
       linkedin: provider === 'unipile'
         ? 'Los pasos de LinkedIn que salen desde tu cuenta dejarán de enviar hasta que vuelvas a conectarla, y ya no podrás responder por LinkedIn desde la Bandeja. Lo enviado y las conversaciones guardadas se quedan.'
         : 'Los pasos de LinkedIn dejarán de enrolar leads hasta que vuelvas a conectar el canal. Lo ya enrolado en tu cuenta de automatización sigue allá.',
-      email: 'Las campañas que envían con Apollo dejarán de enviar email hasta que vuelvas a conectar tu cuenta. Tus buzones propios siguen conectados.',
+      email: 'Buscar vuelve a los datos integrados de Predictable (sin búsqueda de empresas) y las campañas que envían con Apollo dejarán de enviar email hasta que vuelvas a conectar tu cuenta. Tus buzones propios siguen conectados.',
     };
     if (api) api.close();
     return confirmModal({
@@ -2945,7 +2980,7 @@
           else if (key === 'linkedin') state.dripify = null;
           if (key === 'email') { state.apollo = null; state.emailAccounts = null; }
           if (key === 'email') notifyApolloStatus();
-          toast(CH[key].label + ' desconectado.', 'success');
+          toast(key === 'email' ? 'Apollo desconectado.' : CH[key].label + ' desconectado.', 'success');
           // WhatsApp: al quitar Meta puede quedar WATI como cuenta activa.
           if (key === 'whatsapp') return refreshStatus();
           return (key === 'email' ? loadEmailAccounts() : Promise.resolve()).then(render);
@@ -3556,9 +3591,9 @@
       ap.appendChild(apHead);
       if (es.state === 'connected') {
         ap.appendChild(h('p', { class: 'emb-sub', text: 'Cuenta conectada: ' + (es.detail || '—') + (acfg.name ? ' (' + acfg.name + ')' : '') + (acfg.connected_at ? ' · desde ' + fmtDate(acfg.connected_at) : '') }));
-        ap.appendChild(h('p', { class: 'emb-sub', text: 'Los emails de campaña salen como mensajes individuales desde tu cuenta; los datos revelados se cobran a los créditos de tu propia cuenta, no a los de la plataforma.' }));
+        ap.appendChild(h('p', { class: 'emb-sub', text: 'La conectaste en Buscar como base de datos. Si eliges Apollo arriba, los emails de campaña salen como mensajes individuales desde esa cuenta.' }));
       } else {
-        ap.appendChild(h('p', { class: 'emb-sub', text: 'Conecta tu cuenta de Apollo para que las campañas envíen email desde tu buzón, con tus listas, tus contactos y tus créditos de Apollo.' }));
+        ap.appendChild(h('p', { class: 'emb-sub', text: 'Apollo se conecta en Buscar, como base de datos. Una vez conectado, también puedes enviar los emails de campaña con él.' }));
       }
       var accs = state.emailAccounts || [];
       if (accs.length && es.state === 'connected') {
@@ -3589,9 +3624,8 @@
         });
         apActs.appendChild(b);
       }
-      if (state.apolloOauth) apBtn(es.state === 'connected' ? 'Reconectar' : 'Conectar mi cuenta', function (m, btn) { return connectEmail(btn).then(function () { m.close(); }); }, es.state === 'connected' ? null : 'btn btn-primary btn-sm');
-      apBtn(es.state === 'connected' ? 'Cambiar API key' : 'Conectar con mi API key', function (m) { m.close(); openApolloKeyWizard('have'); });
-      if (es.state === 'connected') apBtn('Desconectar', function (m) { return disconnectChannel('email', 'apollo', m); }, 'btn btn-ghost btn-sm emb-danger');
+      apBtn(es.state === 'connected' ? 'Administrar en Buscar' : 'Conectar Apollo en Buscar', function (m) { m.close(); return connectApolloInSearch(); },
+        es.state === 'connected' ? null : 'btn btn-primary btn-sm');
       ap.appendChild(apActs);
       if (global.EmailMailboxes) {
         global.EmailMailboxes.renderSection(body, { connected: isConn(state.apollo), detail: (state.apollo && state.apollo.config && state.apollo.config.email) || '', node: ap }, function () {
@@ -5802,6 +5836,6 @@
   if (global.EmailMailboxes) {
     global.EmailMailboxes.init({ h: h, esc: esc, toast: toast, errMsg: errMsg, openModal: openModal, edgeFetch: edgeFetch, btnLoading: btnLoading, confirmModal: confirmModal, pill: pill, fmtDateTime: fmtDateTime, fmtDate: fmtDate });
   }
-  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openCalls: openCalls, openChannels: openChannels, openConversation: openConversation, openLinkedinDesigner: openLinkedinDesigner };
+  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, disconnectApollo: disconnectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openCalls: openCalls, openChannels: openChannels, openConversation: openConversation, openLinkedinDesigner: openLinkedinDesigner };
   console.log('[campaigns] module loaded');
 })(window);
