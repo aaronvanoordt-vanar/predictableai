@@ -462,6 +462,7 @@ async function linkedinCounts(ctx: Ctx, userId: string): Promise<liLimits.SendCo
 async function unipileStepError(ctx: Ctx, acc: Json, e: unknown): Promise<StepError> {
   const cls = unipile.classifyError(e);
   const msg = unipile.humanError(e);
+  if (cls === "session") return await unipileSessionError(ctx, acc, e, msg);
   if (cls === "account" || cls === "limit" || cls === "throttle") {
     const at = ctx.now.toISOString();
     const ue = e as unipile.UnipileError;
@@ -483,6 +484,43 @@ async function unipileStepError(ctx: Ctx, acc: Json, e: unknown): Promise<StepEr
   }
   if (cls === "recipient") return new StepError(msg, "fail");
   return new StepError(msg, "hold_short");
+}
+
+/**
+ * `no_client_session`: la sesión de la cuenta en Unipile está detenida. Antes
+ * se trataba como error pasajero y CADA lead lo reintentaba por su cuenta cada
+ * hora con el texto crudo de Unipile. Ahora es de la cuenta: se reinicia una
+ * vez y se retienen todos los envíos de LinkedIn SESSION_RETRY_MS; si al
+ * reintentar vuelve a fallar igual (dentro de SESSION_ESCALATE_MS), se pide
+ * reconectar (bloqueo sin fecha, como una cuenta desconectada).
+ */
+const SESSION_RETRY_MS = 20 * 60 * 1000;
+const SESSION_ESCALATE_MS = 3 * 60 * 60 * 1000;
+async function unipileSessionError(ctx: Ctx, acc: Json, e: unknown, msg: string): Promise<StepError> {
+  const ue = e as unipile.UnipileError;
+  const at = ctx.now.toISOString();
+  const prev = acc.config?.session_restart;
+  const recent = prev?.at && ctx.now.getTime() - Date.parse(prev.at) < SESSION_ESCALATE_MS;
+  const detail = String(ue?.message ?? "").slice(0, 240);
+  if (recent && Number(prev.count ?? 1) >= 2) {
+    const reason = "La sesión de tu cuenta de LinkedIn sigue detenida después de reiniciarla: vuelve a conectar tu cuenta en Canales → LinkedIn.";
+    const block: Json = { reason, code: ue?.type || "no_client_session", status: ue?.status ?? null, detail, at };
+    const config = await patchChannelConfig(ctx.db, acc.id, { send_block: block });
+    acc.config = config ?? { ...(acc.config ?? {}), send_block: block };
+    await ctx.db.from("channel_accounts").update({ status: "error", last_error: reason }).eq("id", acc.id);
+    return new StepError(reason, "hold");
+  }
+  const env = unipile.unipileEnv();
+  let restarted = false;
+  if (env) {
+    try { await unipile.restartAccount(env, acc.secret); restarted = true; } catch (re) { console.warn("[campaign-run] unipile restart", acc.user_id, unipile.humanError(re)); }
+  }
+  const until = new Date(ctx.now.getTime() + SESSION_RETRY_MS);
+  const block: Json = { reason: msg, code: ue?.type || "no_client_session", status: ue?.status ?? null, detail, at, until: until.toISOString() };
+  const restart: Json = { at: recent ? prev.at : at, count: (recent ? Number(prev.count ?? 1) : 0) + 1, ok: restarted };
+  const config = await patchChannelConfig(ctx.db, acc.id, { send_block: block, session_restart: restart });
+  acc.config = config ?? { ...(acc.config ?? {}), send_block: block, session_restart: restart };
+  return new StepError(msg, "defer", until);
 }
 
 /** Texto de un paso de LinkedIn nativo: propio (con variables) o el mensaje IA aprobado. */
@@ -992,7 +1030,8 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     const env = unipile.unipileEnv();
     if (!env) throw new StepError("El envío desde tu cuenta de LinkedIn no está habilitado en la plataforma.", "hold");
     const block = liLimits.activeBlock(acc.config, ctx.now);
-    if (block) throw new StepError(block.reason + (block.until ? "" : " Vuelve a conectar tu cuenta de LinkedIn."), "hold");
+    // Con fecha (límite, ritmo, sesión reiniciándose) se reintenta justo al vencer.
+    if (block) throw new StepError(block.reason + (block.until ? "" : " Vuelve a conectar tu cuenta de LinkedIn."), block.until ? "defer" : "hold", block.until);
     const url = dripify.canonicalLinkedinUrl(member.linkedin_url);
     if (!url) throw new StepError("El lead no tiene URL de LinkedIn: se omite el paso y sigue con el siguiente.", "skip");
     if (isMsg && !en.linkedin_connected_at) await waitForAcceptance(ctx, en);
@@ -1008,6 +1047,11 @@ async function executeStep(ctx: Ctx, en: Json, campaign: Json, member: Json, ste
     const { body: rawText, messageId: aiRowId } = isMsg ? await linkedinText(ctx, en, step, member, sender) : { body: "", messageId: null };
     let profile: unipile.UnipileUser;
     try { profile = await unipile.resolveUser(env, acc.secret, url); } catch (e) { throw await unipileStepError(ctx, acc, e); }
+    // La sesión responde: un reinicio anterior ya no cuenta para pedir reconectar.
+    if (acc.config?.session_restart) {
+      const config = await patchChannelConfig(ctx.db, acc.id, {}, ["session_restart"]);
+      if (config) acc.config = config; else delete acc.config.session_restart;
+    }
     if (!profile.providerId) throw new StepError("LinkedIn no encontró el perfil del lead.", "fail");
     const refs: Json = { ...(en.provider_refs ?? {}), unipile_provider_id: profile.providerId, unipile_linkedin_url: url };
     const patch: Json = { provider_refs: refs };
