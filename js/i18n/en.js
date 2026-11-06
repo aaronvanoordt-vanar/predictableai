@@ -7211,4 +7211,11 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Conecta tu cuenta de Apollo (arriba, en «Base de datos») para buscar empresas.": "Connect your Apollo account (above, under “Database”) to search companies.",
   "Conecta tu cuenta de Apollo en Buscar (Base de datos → Conectar Apollo) para enviar email con Apollo: la cuenta compartida de la plataforma no envía correo a tu nombre.": "Connect your Apollo account in Search (Database → Connect Apollo) to send email with Apollo: the platform's shared account doesn't send email on your behalf.",
   "Conecta tu cuenta de Apollo en Buscar (Base de datos → Conectar Apollo) para buscar empresas: cada página usa 1 crédito de tu Apollo.": "Connect your Apollo account in Search (Database → Connect Apollo) to search companies: each page uses 1 credit from your Apollo.",
+  "Enviar WhatsApp": "Send WhatsApp",
+  "Enviar email": "Send email",
+  "LinkedIn: conexión o mensaje": "LinkedIn: connection or message",
+  "Abre su perfil para que toques «Conectar»": "Opens their profile so you can tap “Connect”",
+  "Desde la Bandeja (solo a tus contactos)": "From the Inbox (connections only)",
+  "La URL de LinkedIn de este contacto no es válida.": "This contact's LinkedIn URL isn't valid.",
+  "Abrimos su perfil: toca «Conectar» en LinkedIn. Para enviar invitaciones en automático, agrégalo a una campaña.": "We opened their profile: tap “Connect” on LinkedIn. To send invitations automatically, add them to a campaign.",
 });
