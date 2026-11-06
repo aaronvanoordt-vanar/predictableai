@@ -8,7 +8,9 @@
  * Forma (v1):
  *   { v: 1, nodes: Node[] }
  *   Action    = { id, type: 'action', channel, delay, content, settings? }
- *   Condition = { id, type: 'condition', check, delay, settings?, yes: Action[], no: Action[] }  (delay siempre after_prev)
+ *   Condition = { id, type: 'condition', check, delay, settings?, yes: Node[], no: Node[] }  (delay siempre after_prev)
+ *               Las ramas admiten condiciones anidadas (2026-11-06) hasta
+ *               MAX_CONDITION_DEPTH niveles; más hondo se descartan.
  *               check 'ai_column' (2026-10-17) = respuesta de una Columna IA
  *               de Listas: settings.ai_column = { column_id, column_name,
  *               answer_type, op, value } (normalizeAiColumnRule).
@@ -218,21 +220,32 @@
     return typeof n === 'string' ? n.trim() : '';
   }
 
-  function normalizeList(raw, allowConditions) {
+  /** Niveles de condiciones: 1 = solo en la cadencia principal; 4 = hasta tres anidadas. */
+  var MAX_CONDITION_DEPTH = 4;
+
+  /** Profundidad de condición de un nodo: 0 en la cadencia principal, 1 dentro de una rama, … */
+  function depthOf(flow, nodeId) {
+    var d = 0;
+    var loc = find(flow, nodeId);
+    while (loc && loc.parent) { d++; loc = find(flow, loc.parent.id); }
+    return d;
+  }
+
+  function normalizeList(raw, depth) {
     var list = Array.isArray(raw) ? raw : [];
     var out = [];
     list.forEach(function (n) {
       if (!isObj(n)) return;
       if (n.type === 'condition') {
-        if (!allowConditions) return; // condiciones anidadas: se descartan
+        if (depth >= MAX_CONDITION_DEPTH) return; // demasiado anidada: se descarta
         var check = CONDITIONS.indexOf(n.check) !== -1 ? n.check : 'linkedin_connected';
         var cond = {
           id: typeof n.id === 'string' && n.id.trim() ? n.id.trim().slice(0, 40) : newId(),
           type: 'condition',
           check: check,
           delay: normalizeDelay(n.delay, false),
-          yes: normalizeList(n.yes, false),
-          no: normalizeList(n.no, false),
+          yes: normalizeList(n.yes, depth + 1),
+          no: normalizeList(n.no, depth + 1),
         };
         if (check === 'ai_column') cond.settings = { ai_column: normalizeAiColumnRule(n.settings && n.settings.ai_column) };
         out.push(cond);
@@ -247,7 +260,7 @@
 
   function normalize(raw) {
     var f = isObj(raw) ? raw : {};
-    return { v: FLOW_VERSION, nodes: normalizeList(f.nodes, true) };
+    return { v: FLOW_VERSION, nodes: normalizeList(f.nodes, 0) };
   }
 
   function validate(raw) {
@@ -285,32 +298,38 @@
       }
     }
     var count = 0;
-    f.nodes.forEach(function (n, i) {
-      if (n.type === 'condition') {
-        seen(n.id);
-        if (!n.yes.length && !n.no.length) errors.push({ nodeId: n.id, message: 'La condición no tiene pasos en ninguna rama.' });
-        if (n.check === 'ai_column') {
-          var r = n.settings && n.settings.ai_column;
-          if (!r) errors.push({ nodeId: n.id, message: 'La condición de columna IA necesita una columna de la lista.' });
-          else if (['gte', 'lte', 'is', 'contains'].indexOf(r.op) !== -1 && r.value === null) errors.push({ nodeId: n.id, message: 'La condición «' + (r.column_name || 'columna IA') + '» necesita un valor.' });
+    function walk(list, prefix) {
+      list.forEach(function (n, i) {
+        if (n.type === 'condition') {
+          seen(n.id);
+          if (!n.yes.length && !n.no.length) errors.push({ nodeId: n.id, message: 'La condición no tiene pasos en ninguna rama.' });
+          if (n.check === 'ai_column') {
+            var r = n.settings && n.settings.ai_column;
+            if (!r) errors.push({ nodeId: n.id, message: 'La condición de columna IA necesita una columna de la lista.' });
+            else if (['gte', 'lte', 'is', 'contains'].indexOf(r.op) !== -1 && r.value === null) errors.push({ nodeId: n.id, message: 'La condición «' + (r.column_name || 'columna IA') + '» necesita un valor.' });
+          }
+          walk(n.yes, prefix + 'Rama Sí, ');
+          walk(n.no, prefix + 'Rama No, ');
+          return;
         }
-        n.yes.forEach(function (a, j) { count++; checkAction(a, n.yes, j, 'Rama Sí, paso ' + (j + 1)); });
-        n.no.forEach(function (a, j) { count++; checkAction(a, n.no, j, 'Rama No, paso ' + (j + 1)); });
-        return;
-      }
-      count++;
-      checkAction(n, f.nodes, i, 'Paso ' + (i + 1));
-    });
+        count++;
+        checkAction(n, list, i, prefix ? prefix + 'paso ' + (i + 1) : 'Paso ' + (i + 1));
+      });
+    }
+    walk(f.nodes, '');
     if (!count) errors.push({ nodeId: null, message: 'Agrega al menos un paso a la cadencia.' });
     return { ok: !errors.length, errors: errors };
   }
 
   function actions(flow) {
     var out = [];
-    (flow && flow.nodes || []).forEach(function (n) {
-      if (n.type === 'action') out.push(n);
-      else { out.push.apply(out, n.yes); out.push.apply(out, n.no); }
-    });
+    function walk(list) {
+      list.forEach(function (n) {
+        if (n.type === 'action') out.push(n);
+        else { walk(n.yes); walk(n.no); }
+      });
+    }
+    walk(flow && flow.nodes || []);
     return out;
   }
 
@@ -322,20 +341,18 @@
 
   function find(flow, nodeId) {
     if (!nodeId || !flow) return null;
-    for (var i = 0; i < flow.nodes.length; i++) {
-      var n = flow.nodes[i];
-      if (n.id === nodeId) return { node: n, list: flow.nodes, index: i, parent: null, branch: null };
-      if (n.type === 'condition') {
-        var branches = ['yes', 'no'];
-        for (var b = 0; b < 2; b++) {
-          var br = branches[b];
-          for (var j = 0; j < n[br].length; j++) {
-            if (n[br][j].id === nodeId) return { node: n[br][j], list: n[br], index: j, parent: n, branch: br };
-          }
+    function search(list, parent, branch) {
+      for (var i = 0; i < list.length; i++) {
+        var n = list[i];
+        if (n.id === nodeId) return { node: n, list: list, index: i, parent: parent, branch: branch };
+        if (n.type === 'condition') {
+          var hit = search(n.yes, n, 'yes') || search(n.no, n, 'no');
+          if (hit) return hit;
         }
       }
+      return null;
     }
-    return null;
+    return search(flow.nodes || [], null, null);
   }
 
   function firstNode(flow) { return (flow && flow.nodes && flow.nodes[0]) || null; }
@@ -476,26 +493,29 @@
   function cloneWithNewIds(flow) {
     var f = normalize(flow);
     function act(a) { var c = JSON.parse(JSON.stringify(a)); c.id = newId(); return c; }
-    return { v: FLOW_VERSION, nodes: f.nodes.map(function (n) {
+    function node(n) {
       if (n.type === 'condition') {
-        var c = { id: newId(), type: 'condition', check: n.check, delay: n.delay, yes: n.yes.map(act), no: n.no.map(act) };
+        var c = { id: newId(), type: 'condition', check: n.check, delay: n.delay, yes: n.yes.map(node), no: n.no.map(node) };
         if (n.settings) c.settings = JSON.parse(JSON.stringify(n.settings));
         return c;
       }
       return act(n);
-    }) };
+    }
+    return { v: FLOW_VERSION, nodes: f.nodes.map(node) };
   }
 
   /** Duración aproximada en días: suma de esperas por el camino más largo. */
   function durationDays(flow) {
     var f = normalize(flow);
-    var total = 0;
-    function len(list) { var t = 0; list.forEach(function (a) { if (a.delay.mode === 'after_prev') t += a.delay.days + a.delay.hours / 24; }); return t; }
-    f.nodes.forEach(function (n) {
-      if (n.type === 'condition') { total += n.delay.days + n.delay.hours / 24 + Math.max(len(n.yes), len(n.no)); }
-      else if (n.delay.mode === 'after_prev') total += n.delay.days + n.delay.hours / 24;
-    });
-    return Math.round(total * 10) / 10;
+    function len(list) {
+      var t = 0;
+      list.forEach(function (n) {
+        if (n.type === 'condition') t += n.delay.days + n.delay.hours / 24 + Math.max(len(n.yes), len(n.no));
+        else if (n.delay.mode === 'after_prev') t += n.delay.days + n.delay.hours / 24;
+      });
+      return t;
+    }
+    return Math.round(len(f.nodes) * 10) / 10;
   }
 
   var A = function (channel, delay, content, extra) {
@@ -595,6 +615,7 @@
     normalizeAiColumnRule: normalizeAiColumnRule, aiColumnRuleLabel: aiColumnRuleLabel,
     ANGLE_LABELS: ANGLE_LABELS, CONDITION_LABELS: CONDITION_LABELS, CHANNEL_META: CHANNEL_META, KIND_LABELS: KIND_LABELS,
     nodeTitle: nodeTitle, cloneWithNewIds: cloneWithNewIds, durationDays: durationDays, templates: templates, isLinkedin: isLinkedin, isNativeLinkedin: isNativeLinkedin, hasStepText: hasStepText, LINKEDIN_NOTE_MAX: LINKEDIN_NOTE_MAX, LINKEDIN_ACCEPT_WAIT_DAYS: LINKEDIN_ACCEPT_WAIT_DAYS,
+    MAX_CONDITION_DEPTH: MAX_CONDITION_DEPTH, depthOf: depthOf,
     newId: newId, emptyFlow: emptyFlow, normalize: normalize, validate: validate,
     actions: actions, ordinal: ordinal, find: find, firstNode: firstNode, nextAfter: nextAfter, enterBranch: enterBranch,
     delayMs: delayMs, legacyKind: legacyKind, callWaitDays: callWaitDays, templateName: templateName, LEGACY_TEMPLATE_KINDS: LEGACY_TEMPLATE_KINDS, LEGACY_SLOT_LABELS: LEGACY_SLOT_LABELS, fromLegacySteps: fromLegacySteps, estimateCredits: estimateCredits, delayLabel: delayLabel,

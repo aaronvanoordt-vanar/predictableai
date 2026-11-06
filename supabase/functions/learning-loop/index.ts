@@ -108,10 +108,14 @@ interface Insight { scope: string; key: string; label: string; metrics: Json; ve
 // ─────────────────────────────────────────────────────────────────────────────
 function flowActions(flow: Json): Json[] {
   const out: Json[] = [];
-  for (const n of (Array.isArray(flow?.nodes) ? flow.nodes : [])) {
-    if (n?.type === "action") out.push(n);
-    else if (n?.type === "condition") { out.push(...(n.yes || [])); out.push(...(n.no || [])); }
-  }
+  // Las ramas admiten condiciones anidadas (2026-11-06): se recorre en profundidad.
+  const visit = (list: Json[]) => {
+    for (const n of list) {
+      if (n?.type === "action") out.push(n);
+      else if (n?.type === "condition") { visit(n.yes || []); visit(n.no || []); }
+    }
+  };
+  visit(Array.isArray(flow?.nodes) ? flow.nodes : []);
   return out;
 }
 function setNodeLearning(flow: Json, nodeId: string, learning: Json): boolean {

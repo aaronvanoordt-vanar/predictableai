@@ -9,7 +9,11 @@
  *   { v: 1, nodes: Node[] }
  *   Node = Action | Condition
  *   Action    = { id, type: "action", channel, delay, content, settings? }
- *   Condition = { id, type: "condition", check, delay?, settings?, yes: Action[], no: Action[] }
+ *   Condition = { id, type: "condition", check, delay?, settings?, yes: Node[], no: Node[] }
+ *               Las ramas admiten condiciones anidadas (2026-11-06, pedido del
+ *               dueño: «¿abrió el email?» dentro de la rama No de «¿leyó el
+ *               WhatsApp?») hasta MAX_CONDITION_DEPTH niveles; más hondo se
+ *               descartan al normalizar.
  *
  *   channel  whatsapp | email | linkedin_connect | linkedin_message | call
  *            Los dos canales de LinkedIn suben el lead a una campaña de
@@ -135,8 +139,8 @@ export interface ConditionNode {
   check: ConditionCheck;
   delay: Delay;
   settings?: { ai_column?: AiColumnRule | null } & Record<string, unknown>;
-  yes: ActionNode[];
-  no: ActionNode[];
+  yes: FlowNode[];
+  no: FlowNode[];
 }
 export type FlowNode = ActionNode | ConditionNode;
 export interface Flow { v: number; nodes: FlowNode[] }
@@ -294,21 +298,32 @@ export function templateName(node: ActionNode): string {
   return typeof n === "string" ? n.trim() : "";
 }
 
-function normalizeList(raw: unknown, allowConditions: boolean): FlowNode[] {
+/** Niveles de condiciones: 1 = solo en la cadencia principal; 4 = hasta tres anidadas. */
+export const MAX_CONDITION_DEPTH = 4;
+
+/** Profundidad de condición de un nodo: 0 en la cadencia principal, 1 dentro de una rama, … */
+export function depthOf(flow: Flow, nodeId: string): number {
+  let d = 0;
+  let loc = find(flow, nodeId);
+  while (loc && loc.parent) { d++; loc = find(flow, loc.parent.id); }
+  return d;
+}
+
+function normalizeList(raw: unknown, depth: number): FlowNode[] {
   const list = Array.isArray(raw) ? raw : [];
   const out: FlowNode[] = [];
   list.forEach((n: Json) => {
     if (!isObj(n)) return;
     if (n.type === "condition") {
-      if (!allowConditions) return; // condiciones anidadas: se descartan
+      if (depth >= MAX_CONDITION_DEPTH) return; // demasiado anidada: se descarta
       const check = (CONDITIONS as readonly string[]).includes(n.check) ? n.check as ConditionCheck : "linkedin_connected";
       const cond: ConditionNode = {
         id: typeof n.id === "string" && n.id.trim() ? n.id.trim().slice(0, 40) : newId(),
         type: "condition",
         check,
         delay: normalizeDelay(n.delay, false),
-        yes: normalizeList(n.yes, false) as ActionNode[],
-        no: normalizeList(n.no, false) as ActionNode[],
+        yes: normalizeList(n.yes, depth + 1),
+        no: normalizeList(n.no, depth + 1),
       };
       if (check === "ai_column") cond.settings = { ai_column: normalizeAiColumnRule(n.settings?.ai_column) };
       out.push(cond);
@@ -324,7 +339,7 @@ function normalizeList(raw: unknown, allowConditions: boolean): FlowNode[] {
 /** Coerce cualquier JSON al esquema. Nunca lanza. */
 export function normalize(raw: unknown): Flow {
   const f = isObj(raw) ? raw : {};
-  return { v: FLOW_VERSION, nodes: normalizeList(f.nodes, true) };
+  return { v: FLOW_VERSION, nodes: normalizeList(f.nodes, 0) };
 }
 
 /** Validación completa. `ok` solo si no hay errores. */
@@ -363,22 +378,25 @@ export function validate(raw: unknown): { ok: boolean; errors: FlowError[] } {
     }
   };
   let count = 0;
-  f.nodes.forEach((n, i) => {
-    if (n.type === "condition") {
-      seen(n.id);
-      if (!n.yes.length && !n.no.length) errors.push({ nodeId: n.id, message: "La condición no tiene pasos en ninguna rama." });
-      if (n.check === "ai_column") {
-        const r = n.settings?.ai_column;
-        if (!r) errors.push({ nodeId: n.id, message: "La condición de columna IA necesita una columna de la lista." });
-        else if (["gte", "lte", "is", "contains"].includes(r.op) && r.value === null) errors.push({ nodeId: n.id, message: `La condición «${r.column_name || "columna IA"}» necesita un valor.` });
+  const walk = (list: FlowNode[], prefix: string) => {
+    list.forEach((n, i) => {
+      if (n.type === "condition") {
+        seen(n.id);
+        if (!n.yes.length && !n.no.length) errors.push({ nodeId: n.id, message: "La condición no tiene pasos en ninguna rama." });
+        if (n.check === "ai_column") {
+          const r = n.settings?.ai_column;
+          if (!r) errors.push({ nodeId: n.id, message: "La condición de columna IA necesita una columna de la lista." });
+          else if (["gte", "lte", "is", "contains"].includes(r.op) && r.value === null) errors.push({ nodeId: n.id, message: `La condición «${r.column_name || "columna IA"}» necesita un valor.` });
+        }
+        walk(n.yes, `${prefix}Rama Sí, `);
+        walk(n.no, `${prefix}Rama No, `);
+        return;
       }
-      n.yes.forEach((a, j) => { count++; checkAction(a, n.yes, j, `Rama Sí, paso ${j + 1}`); });
-      n.no.forEach((a, j) => { count++; checkAction(a, n.no, j, `Rama No, paso ${j + 1}`); });
-      return;
-    }
-    count++;
-    checkAction(n, f.nodes, i, `Paso ${i + 1}`);
-  });
+      count++;
+      checkAction(n, list, i, prefix ? `${prefix}paso ${i + 1}` : `Paso ${i + 1}`);
+    });
+  };
+  walk(f.nodes, "");
   if (!count) errors.push({ nodeId: null, message: "Agrega al menos un paso a la cadencia." });
   return { ok: !errors.length, errors };
 }
@@ -386,10 +404,13 @@ export function validate(raw: unknown): { ok: boolean; errors: FlowError[] } {
 /** Todas las acciones en orden de lectura (principal, y dentro de cada condición: Sí y luego No). */
 export function actions(flow: Flow): ActionNode[] {
   const out: ActionNode[] = [];
-  for (const n of flow.nodes) {
-    if (n.type === "action") out.push(n);
-    else { out.push(...n.yes); out.push(...n.no); }
-  }
+  const walk = (list: FlowNode[]) => {
+    for (const n of list) {
+      if (n.type === "action") out.push(n);
+      else { walk(n.yes); walk(n.no); }
+    }
+  };
+  walk(flow.nodes);
   return out;
 }
 
@@ -400,17 +421,18 @@ export function ordinal(flow: Flow, nodeId: string): number {
 
 export function find(flow: Flow, nodeId: string | null | undefined): Located | null {
   if (!nodeId) return null;
-  for (let i = 0; i < flow.nodes.length; i++) {
-    const n = flow.nodes[i];
-    if (n.id === nodeId) return { node: n, list: flow.nodes, index: i, parent: null, branch: null };
-    if (n.type === "condition") {
-      for (const branch of ["yes", "no"] as const) {
-        const j = n[branch].findIndex((a) => a.id === nodeId);
-        if (j !== -1) return { node: n[branch][j], list: n[branch], index: j, parent: n, branch };
+  const search = (list: FlowNode[], parent: ConditionNode | null, branch: "yes" | "no" | null): Located | null => {
+    for (let i = 0; i < list.length; i++) {
+      const n = list[i];
+      if (n.id === nodeId) return { node: n, list, index: i, parent, branch };
+      if (n.type === "condition") {
+        const hit = search(n.yes, n, "yes") ?? search(n.no, n, "no");
+        if (hit) return hit;
       }
     }
-  }
-  return null;
+    return null;
+  };
+  return search(flow.nodes, null, null);
 }
 
 export function firstNode(flow: Flow): FlowNode | null {

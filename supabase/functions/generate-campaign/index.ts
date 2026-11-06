@@ -249,21 +249,26 @@ function businessErrors(flow: flowLib.Flow, ch: Channels): string[] {
     if (a.channel === "linkedin_message") errs.push("linkedin_message solo está disponible desde la cuenta de LinkedIn propia: usa linkedin_connect.");
   }
   let liBefore = false, waBefore = false, emBefore = false;
-  for (const n of flow.nodes) {
-    if (n.type === "condition") {
-      if (n.check === "linkedin_connected" && !liBefore) errs.push("linkedin_connected necesita un paso de LinkedIn antes.");
-      if (n.no.some((a) => a.channel === "linkedin_message") || (n.check !== "linkedin_connected" && n.yes.some((a) => a.channel === "linkedin_message"))) errs.push("linkedin_message va solo en la rama Sí de \"linkedin_connected\".");
-      if (n.check === "whatsapp_read" && (!waBefore || !ch.wati)) errs.push("whatsapp_read necesita WATI conectado y un WhatsApp antes.");
-      if (n.check === "email_opened" && !emBefore) errs.push("email_opened necesita un email antes.");
-      for (const a of [...n.yes, ...n.no]) { if (a.channel === "linkedin_connect") liBefore = true; if (a.channel === "whatsapp") waBefore = true; if (a.channel === "email") emBefore = true; }
-      continue;
+  // `inConnectedYes`: dentro (a cualquier profundidad) de la rama Sí de un
+  // "linkedin_connected". Las ramas admiten condiciones anidadas (2026-11-06).
+  const walk = (list: flowLib.FlowNode[], inConnectedYes: boolean) => {
+    for (const n of list) {
+      if (n.type === "condition") {
+        if (n.check === "linkedin_connected" && !liBefore) errs.push("linkedin_connected necesita un paso de LinkedIn antes.");
+        if (n.check === "whatsapp_read" && (!waBefore || !ch.wati)) errs.push("whatsapp_read necesita WATI conectado y un WhatsApp antes.");
+        if (n.check === "email_opened" && !emBefore) errs.push("email_opened necesita un email antes.");
+        walk(n.yes, inConnectedYes || n.check === "linkedin_connected");
+        walk(n.no, inConnectedYes);
+        continue;
+      }
+      if (n.channel === "linkedin_message" && !inConnectedYes) errs.push("linkedin_message va solo en la rama Sí de \"linkedin_connected\".");
+      if (n.channel === "linkedin_connect") liBefore = true;
+      if (n.channel === "whatsapp") waBefore = true;
+      if (n.channel === "email") emBefore = true;
     }
-    if (n.channel === "linkedin_message") errs.push("linkedin_message va solo en la rama Sí de \"linkedin_connected\".");
-    if (n.channel === "linkedin_connect") liBefore = true;
-    if (n.channel === "whatsapp") waBefore = true;
-    if (n.channel === "email") emBefore = true;
-  }
-  return errs;
+  };
+  walk(flow.nodes, false);
+  return [...new Set(errs)];
 }
 
 /** Quita ids del modelo (se generan nuevos), rellena el nombre de la campaña de Dripify. */
