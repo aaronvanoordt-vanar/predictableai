@@ -7361,4 +7361,11 @@ window.I18N_DICTS['pt-BR'] = {
   "Conecta tu cuenta de Apollo (arriba, en «Base de datos») para buscar empresas.": "Conecte sua conta do Apollo (acima, em «Base de dados») para buscar empresas.",
   "Conecta tu cuenta de Apollo en Buscar (Base de datos → Conectar Apollo) para enviar email con Apollo: la cuenta compartida de la plataforma no envía correo a tu nombre.": "Conecte sua conta do Apollo na Busca (Base de dados → Conectar Apollo) para enviar e-mail com o Apollo: a conta compartilhada da plataforma não envia e-mail em seu nome.",
   "Conecta tu cuenta de Apollo en Buscar (Base de datos → Conectar Apollo) para buscar empresas: cada página usa 1 crédito de tu Apollo.": "Conecte sua conta do Apollo na Busca (Base de dados → Conectar Apollo) para buscar empresas: cada página usa 1 crédito do seu Apollo.",
+  "Enviar WhatsApp": "Enviar WhatsApp",
+  "Enviar email": "Enviar e-mail",
+  "LinkedIn: conexión o mensaje": "LinkedIn: conexão ou mensagem",
+  "Abre su perfil para que toques «Conectar»": "Abre o perfil para você tocar em «Conectar»",
+  "Desde la Bandeja (solo a tus contactos)": "Pela Caixa de entrada (só para suas conexões)",
+  "La URL de LinkedIn de este contacto no es válida.": "A URL do LinkedIn deste contato não é válida.",
+  "Abrimos su perfil: toca «Conectar» en LinkedIn. Para enviar invitaciones en automático, agrégalo a una campaña.": "Abrimos o perfil: toque em «Conectar» no LinkedIn. Para enviar convites automaticamente, adicione-o a uma campanha.",
 };

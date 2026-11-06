@@ -529,6 +529,24 @@
   }
   document.addEventListener('predictable:push-status', function () { if (built && state.view === 'inbox') render(); });
 
+  /**
+   * Escribirle a un lead de Listas por un canal (botones de cada fila en
+   * js/prospecting.js): abre su conversación en la Bandeja con ese canal
+   * elegido, vacía si es la primera, como «Nuevo mensaje». El lead viaja en
+   * el borrador porque la Bandeja solo carga los contactos con mensajes.
+   */
+  function composeTo(member, channel) {
+    if (!member || !member.id) return;
+    var key = 'm:' + member.id;
+    state.inboxMembers[member.id] = Object.assign({}, state.inboxMembers[member.id] || {}, member);
+    if (channel) state.replyChannel[key] = channel;
+    // Un filtro activo de la Bandeja podría esconder su conversación.
+    state.inboxFilter = { campaign: '', channel: '', status: '', q: '' };
+    state.draftConv = { key: key, member_id: member.id, contact_ref: '', channel: channel || 'whatsapp', member: member };
+    state.convKey = key;
+    setView('inbox');
+  }
+
   /** Abre una conversación de la Bandeja (al tocar una notificación push). */
   function openConversation(key) {
     if (!key) return;
@@ -1330,7 +1348,7 @@
     // ya existe por sus mensajes y este borrador deja de hacer falta).
     var dr = state.draftConv;
     if (dr && !map[dr.key]) {
-      map[dr.key] = { key: dr.key, member_id: dr.member_id || null, contact_ref: dr.contact_ref || '', channel: dr.channel, member: dr.member_id ? (state.inboxMembers[dr.member_id] || null) : null, messages: [], channels: {}, unread: 0, unreadIds: [], campaigns: {}, inCount: 0, outCount: 0, draft: true };
+      map[dr.key] = { key: dr.key, member_id: dr.member_id || null, contact_ref: dr.contact_ref || '', channel: dr.channel, member: dr.member_id ? (state.inboxMembers[dr.member_id] || dr.member || null) : null, messages: [], channels: {}, unread: 0, unreadIds: [], campaigns: {}, inCount: 0, outCount: 0, draft: true };
       order.unshift(dr.key);
     }
     return order.map(function (k) {
@@ -5858,6 +5876,6 @@
   if (global.EmailMailboxes) {
     global.EmailMailboxes.init({ h: h, esc: esc, toast: toast, errMsg: errMsg, openModal: openModal, edgeFetch: edgeFetch, btnLoading: btnLoading, confirmModal: confirmModal, pill: pill, fmtDateTime: fmtDateTime, fmtDate: fmtDate });
   }
-  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, disconnectApollo: disconnectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openCalls: openCalls, openChannels: openChannels, openConversation: openConversation, openLinkedinDesigner: openLinkedinDesigner };
+  global.campaigns = { apolloStatus: apolloStatus, connectApollo: connectApollo, disconnectApollo: disconnectApollo, currentView: function () { return state.pendingView || state.view; }, show: show, newFromList: newFromList, newFromHub: newFromHub, refresh: refresh, setView: setView, openCalls: openCalls, openChannels: openChannels, openConversation: openConversation, composeTo: composeTo, openLinkedinDesigner: openLinkedinDesigner };
   console.log('[campaigns] module loaded');
 })(window);
