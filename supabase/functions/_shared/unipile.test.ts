@@ -1,6 +1,6 @@
 // deno test supabase/functions/_shared/unipile.test.ts
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { accountUsable, classifyError, humanError, parseWebhook, signState, toAccount, toAttachments, toUser, UnipileError, verifyState } from "./unipile.ts";
+import { accountUsable, classifyError, humanError, parseWebhook, shouldFallbackToCreate, signState, toAccount, toAttachments, toUser, UnipileError, verifyState } from "./unipile.ts";
 
 const uid = "0b6f2a4e-3c1d-4e5f-8a9b-0c1d2e3f4a5b";
 
@@ -71,6 +71,16 @@ Deno.test("classifyError: no_client_session es de la sesión de la cuenta, no tr
   assertEquals(classifyError(e), "session");
   assertEquals(classifyError(new UnipileError("No client session", 503, "")), "session");
   assert(/sesión de tu cuenta de LinkedIn se detuvo/.test(humanError(e)));
+});
+
+Deno.test("shouldFallbackToCreate: reconectar una cuenta muerta cae a un link nuevo", () => {
+  assert(shouldFallbackToCreate(new UnipileError("No client session", 503, "")));
+  assert(shouldFallbackToCreate(new UnipileError("x", 422, "errors/disconnected_account")));
+  assert(shouldFallbackToCreate(new UnipileError("x", 404, "errors/resource_not_found")));
+  assert(!shouldFallbackToCreate(new UnipileError("Unauthorized", 401, "")));
+  assert(!shouldFallbackToCreate(new UnipileError("x", 429, "")));
+  assert(!shouldFallbackToCreate(new UnipileError("x", 500, "")));
+  assert(!shouldFallbackToCreate(new Error("red")));
 });
 
 Deno.test("classifyError: cuenta, límite, destinatario, transitorio", () => {

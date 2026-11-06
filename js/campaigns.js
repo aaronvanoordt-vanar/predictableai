@@ -4010,10 +4010,12 @@
     });
     state.enrollments.forEach(function (e) { if (e.status === 'active' || e.status === 'processing') bump(e.next_node_id, 'waiting'); });
     // Todo nodo del grafo aparece aunque no tenga actividad.
-    campaignFlow(c).nodes.forEach(function (n) {
-      counters[n.id] = counters[n.id] || {};
-      if (n.type === 'condition') n.yes.concat(n.no).forEach(function (a) { counters[a.id] = counters[a.id] || {}; });
-    });
+    (function seed(list) {
+      list.forEach(function (n) {
+        counters[n.id] = counters[n.id] || {};
+        if (n.type === 'condition') { seed(n.yes); seed(n.no); }
+      });
+    })(campaignFlow(c).nodes);
     return counters;
   }
 
@@ -5312,10 +5314,12 @@
       if (!cR || !nodeId) return;
       var flowR = JSON.parse(JSON.stringify(cR.flow || {}));
       var hit = null;
-      (flowR.nodes || []).forEach(function (n) {
-        if (n.id === nodeId) hit = n;
-        (n.yes || []).concat(n.no || []).forEach(function (a) { if (a.id === nodeId) hit = a; });
-      });
+      (function look(list) {
+        (list || []).forEach(function (n) {
+          if (n.id === nodeId) hit = n;
+          if (n.type === 'condition') { look(n.yes); look(n.no); }
+        });
+      })(flowR.nodes);
       if (!hit) return;
       hit.settings = Object.assign({}, hit.settings || {}, { learning: Object.assign({}, (hit.settings || {}).learning || {}, { paused: false, reactivated_at: new Date().toISOString() }) });
       var rR = btnLoading(btn, '⏳');
