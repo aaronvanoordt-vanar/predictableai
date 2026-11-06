@@ -669,13 +669,25 @@ Deno.serve(async (req) => {
       // cubre las aceptaciones; los mensajes esperan al próximo intento).
       try { await unipile.ensureWebhooks(env, hookUrl, hookSecret); } catch (e) { console.warn("[channel-connect] unipile webhooks:", unipile.humanError(e)); }
       const prev = await loadAccount("unipile");
-      const url = await unipile.hostedLink(env, {
+      const linkInput = {
         state: await unipile.signState(hookSecret, user.id),
         notifyUrl: hookUrl,
         successUrl: `${ret}${sep}linkedin=ok`,
         failureUrl: `${ret}${sep}linkedin=error`,
-        reconnectAccountId: prev?.secret && prev.status !== "disconnected" ? prev.secret : null,
-      });
+      };
+      const reconnectId = prev?.secret && prev.status !== "disconnected" ? prev.secret : null;
+      let url: string;
+      try {
+        url = await unipile.hostedLink(env, { ...linkInput, reconnectAccountId: reconnectId });
+      } catch (e) {
+        // Reconectar la cuenta anterior falla si su sesión en Unipile está
+        // detenida (`no_client_session`) o la cuenta ya no existe allá: en
+        // vez de dejar al usuario sin poder conectar, se abre un link nuevo
+        // (`create`). La cuenta nueva reemplaza a la anterior al llegar el aviso.
+        if (!reconnectId || !unipile.shouldFallbackToCreate(e)) throw e;
+        console.warn("[channel-connect] unipile reconnect falló, se crea una conexión nueva:", unipile.humanError(e));
+        url = await unipile.hostedLink(env, { ...linkInput, reconnectAccountId: null });
+      }
       return json({ url }, 200, cors);
     }
 
