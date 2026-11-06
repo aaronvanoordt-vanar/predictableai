@@ -259,6 +259,7 @@
       '.cb-branch { border:1px dashed var(--hair); border-radius:var(--r-md); padding:8px; display:flex; flex-direction:column; }',
       '.cb-branch .cb-item { grid-template-columns:80px 1fr; }',
       '.cb-branch .cb-plus-wrap { grid-template-columns:80px 1fr; }',
+      '.cb-branch .cb-branches { grid-template-columns:1fr; margin-left:40px; padding-left:0; }',
       '.cb-branch-lbl { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:2px 8px; border-radius:6px; align-self:flex-start; margin-bottom:4px; }',
       '.cb-branch-lbl.yes { background:var(--green-soft); color:var(--green); }',
       '.cb-branch-lbl.no { background:var(--amber-soft); color:var(--amber); }',
@@ -341,7 +342,7 @@
       wrap.appendChild(h('div'));
       var line = h('div', { class: 'cb-plus-line', 'data-drop-list': listKey, 'data-drop-cond': condId || '', 'data-drop-index': String(index) });
       line.appendChild(h('button', { type: 'button', class: 'cb-plus' + (on ? ' on' : ''), title: 'Agregar paso aquí', 'data-action': 'cb-insert', 'data-list': listKey, 'data-cond': condId || '', 'data-index': String(index), html: ICONS.plus }));
-      if (on) line.appendChild(renderPicker(listKey === 'root', o.pickerDisabled || {}));
+      if (on) line.appendChild(renderPicker(listDepth(f, listKey, condId) < L.MAX_CONDITION_DEPTH, o.pickerDisabled || {}));
       wrap.appendChild(line);
       return wrap;
     }
@@ -382,35 +383,50 @@
       box.appendChild(h('div', { class: 'cb-branch-lbl ' + key, text: key === 'yes' ? 'Sí' : 'No' }));
       var list = cond[key];
       if (!list.length && o.readOnly) box.appendChild(h('div', { class: 'cb-branch-empty', text: 'Sigue con el paso que viene después de la condición.' }));
-      add(box, plus(key, cond.id, 0));
-      list.forEach(function (a, i) {
-        box.appendChild(card(a, i === 0, true));
-        add(box, plus(key, cond.id, i + 1));
-      });
+      renderList(box, list, key, cond.id, true);
       return box;
     }
 
-    add(tl, plus('root', null, 0));
-    f.nodes.forEach(function (n, i) {
-      if (n.type === 'condition') {
-        var wrap = h('div', { class: 'cb-cond' });
-        wrap.appendChild(card(n, i === 0, false));
-        var br = h('div', { class: 'cb-branches' });
-        br.appendChild(branch(n, 'yes'));
-        br.appendChild(branch(n, 'no'));
-        wrap.appendChild(br);
-        wrap.appendChild(h('div', { class: 'cb-join' }));
-        tl.appendChild(wrap);
-      } else {
-        tl.appendChild(card(n, i === 0, false));
-      }
-      add(tl, plus('root', null, i + 1));
-    });
+    // Una lista (la cadencia principal o una rama): las ramas admiten
+    // condiciones anidadas (2026-11-06), así que se pinta recursivamente.
+    function renderList(container, list, listKey, condId, inBranch) {
+      add(container, plus(listKey, condId, 0));
+      list.forEach(function (n, i) {
+        if (n.type === 'condition') {
+          var wrap = h('div', { class: 'cb-cond' });
+          wrap.appendChild(card(n, i === 0, inBranch));
+          var br = h('div', { class: 'cb-branches' });
+          br.appendChild(branch(n, 'yes'));
+          br.appendChild(branch(n, 'no'));
+          wrap.appendChild(br);
+          wrap.appendChild(h('div', { class: 'cb-join' }));
+          container.appendChild(wrap);
+        } else {
+          container.appendChild(card(n, i === 0, inBranch));
+        }
+        add(container, plus(listKey, condId, i + 1));
+      });
+    }
+
+    renderList(tl, f.nodes, 'root', null, false);
     if (!f.nodes.length && o.readOnly) tl.appendChild(h('div', { class: 'cb-hint', text: 'La cadencia está vacía.' }));
     var stop = h('div', { class: 'cb-item' }, h('div', { class: 'cb-when' }, h('span', { class: 'cb-chip static', text: 'Siempre' })),
       h('div', { class: 'cb-stopcard' }, icon('stop'), h('div', { text: 'La cadencia se detiene cuando el lead responde por cualquier canal, se da de baja o lo detienes tú.' })));
     tl.appendChild(stop);
     return tl;
+  }
+
+  /** Niveles de condición sobre una lista: 0 = cadencia principal, 1 = rama de una condición principal, … */
+  function listDepth(flow, listKey, condId) {
+    if (listKey === 'root' || !condId) return 0;
+    return lib().depthOf(flow, condId) + 1;
+  }
+  /** Niveles de condición que ocupa un nodo con todo lo que tiene dentro (acción = 0). */
+  function condHeight(node) {
+    if (!node || node.type !== 'condition') return 0;
+    var m = 0;
+    node.yes.concat(node.no).forEach(function (n) { m = Math.max(m, condHeight(n)); });
+    return 1 + m;
   }
 
   function renderPicker(allowCondition, disabled) {
@@ -420,7 +436,7 @@
       var m = L.CHANNEL_META[ch];
       p.appendChild(h('button', { type: 'button', class: 'cb-pick', 'data-action': 'cb-pick', 'data-kind': ch, title: disabled[ch] || '' }, icon(ch, m.tone), m.short === 'WA' ? 'WhatsApp' : m.short));
     });
-    var condDisabled = !allowCondition ? 'Las condiciones no se anidan: agrega la condición fuera de la rama.' : '';
+    var condDisabled = !allowCondition ? 'Ya hay ' + lib().MAX_CONDITION_DEPTH + ' condiciones una dentro de otra: agrega esta más afuera.' : '';
     p.appendChild(h('button', { type: 'button', class: 'cb-pick', 'data-action': 'cb-pick', 'data-kind': 'condition', disabled: !!condDisabled, title: condDisabled }, icon('condition', 'purple'), 'Condición'));
     p.appendChild(h('button', { type: 'button', class: 'cb-pick', 'data-action': 'cb-pick-close', title: 'Cerrar', text: '✕' }));
     return p;
@@ -734,8 +750,7 @@
         if (a.channel === 'email' && !apolloOk()) list.push('Email sin conectar');
         if (list.length) w[a.id] = list;
       });
-      st.draft.flow.nodes.forEach(function (n) {
-        if (n.type !== 'condition') return;
+      allConditions(st.draft.flow.nodes).forEach(function (n) {
         if (n.check === 'ai_column') {
           var r = n.settings && n.settings.ai_column;
           if (r && st.aiColumnsReady && st.aiColumnsListId === st.draft.list_id && !(st.aiColumns || []).some(function (c) { return String(c.id) === String(r.column_id); })) {
@@ -763,24 +778,52 @@
         if (want === 'linkedin') return L.isLinkedin(a.channel);
         return a.channel === want;
       };
-      var found = false;
-      var nodes = st.draft.flow.nodes;
-      for (var i = 0; i < nodes.length; i++) {
-        var x = nodes[i];
-        if (x.id === nodeId) return found;
-        if (x.type === 'action') { if (match(x)) found = true; continue; }
-        // Dentro de una condición: el nodo puede estar en una de sus ramas.
-        // Solo cuenta lo que hay ANTES en esa misma rama (lo de la otra rama
-        // no lo recorre este lead).
-        for (var b = 0; b < 2; b++) {
-          var branch = x[b === 0 ? 'yes' : 'no'];
-          for (var j = 0; j < branch.length; j++) {
-            if (branch[j].id === nodeId) return found;
-            if (match(branch[j])) found = true;
-          }
+      // Recorre en orden. Dentro de una condición, el nodo puede estar en una
+      // de sus ramas (a cualquier profundidad): solo cuenta lo que hay ANTES
+      // en ese camino (lo de la otra rama no lo recorre este lead). Una
+      // condición que no lo contiene cuenta entera, como antes.
+      function walk(list, found) {
+        for (var i = 0; i < list.length; i++) {
+          var x = list[i];
+          if (x.id === nodeId) return { hit: true, found: found };
+          if (x.type === 'action') { if (match(x)) found = true; continue; }
+          var y = walk(x.yes, found);
+          if (y.hit) return y;
+          var n = walk(x.no, found);
+          if (n.hit) return n;
+          found = y.found || n.found;
+        }
+        return { hit: false, found: found };
+      }
+      return walk(st.draft.flow.nodes, false).found;
+    }
+    function allConditions(list) {
+      var out = [];
+      (list || []).forEach(function (n) {
+        if (n.type !== 'condition') return;
+        out.push(n);
+        out.push.apply(out, allConditions(n.yes));
+        out.push.apply(out, allConditions(n.no));
+      });
+      return out;
+    }
+    /**
+     * ¿Se puede poner esta condición (id existente o null = una nueva) en esa
+     * lista? No dentro de sí misma y sin pasar MAX_CONDITION_DEPTH niveles.
+     */
+    function conditionFits(id, listKey, condId) {
+      var height = 1;
+      if (id) {
+        var loc = locate(id);
+        if (!loc) return false;
+        height = condHeight(loc.node);
+        for (var c = condId; c; ) {
+          if (c === id) return false;
+          var up = locate(c);
+          c = up && up.parent ? up.parent.id : null;
         }
       }
-      return found;
+      return listDepth(st.draft.flow, listKey, condId) + height <= L.MAX_CONDITION_DEPTH;
     }
     function stepBlockers(step) {
       var msgs = [];
@@ -845,6 +888,7 @@
       if (!p) return;
       var list = listFor(p.list, p.condId);
       if (!list) return;
+      if (kind === 'condition' && !conditionFits(null, p.list, p.condId)) { toast('Ya hay ' + L.MAX_CONDITION_DEPTH + ' condiciones una dentro de otra: agrega esta más afuera.', 'warn'); return; }
       var node = kind === 'condition' ? newCondition() : newAction(kind, p.list === 'root' && p.index === 0);
       list.splice(p.index, 0, node);
       st.draft.flow = L.normalize(st.draft.flow);
@@ -874,7 +918,7 @@
     function moveNodeTo(id, listKey, condId, index) {
       var loc = locate(id);
       if (!loc) return false;
-      if (loc.node.type === 'condition' && listKey !== 'root') { toast('Las condiciones no se anidan: suéltala fuera de las ramas.', 'warn'); return false; }
+      if (loc.node.type === 'condition' && !conditionFits(id, listKey, condId)) { toast(condId === id || listKey === 'root' ? 'Una condición no puede ir dentro de sus propias ramas.' : 'Ahí quedaría más de ' + L.MAX_CONDITION_DEPTH + ' condiciones una dentro de otra.', 'warn'); return false; }
       var target = listFor(listKey, condId);
       if (!target) return false;
       var at = index;
@@ -1105,10 +1149,12 @@
     function miniFlow(flow) {
       var f = L.normalize(flow);
       var m = h('div', { class: 'cb-mini' });
-      f.nodes.forEach(function (n) {
-        if (n.type === 'condition') { m.appendChild(h('span', { class: 'purple', title: L.nodeTitle(n) })); n.yes.concat(n.no).forEach(function (a) { m.appendChild(h('span', { class: (L.CHANNEL_META[a.channel] || {}).tone || 'gray', title: L.nodeTitle(a) })); }); }
-        else m.appendChild(h('span', { class: (L.CHANNEL_META[n.channel] || {}).tone || 'gray', title: L.nodeTitle(n) }));
-      });
+      (function dots(list) {
+        list.forEach(function (n) {
+          if (n.type === 'condition') { m.appendChild(h('span', { class: 'purple', title: L.nodeTitle(n) })); dots(n.yes); dots(n.no); }
+          else m.appendChild(h('span', { class: (L.CHANNEL_META[n.channel] || {}).tone || 'gray', title: L.nodeTitle(n) }));
+        });
+      })(f.nodes);
       return m;
     }
 
@@ -1878,11 +1924,12 @@
           var loc = locate(id);
           if (!loc) return;
           var isCond = loc.node.type === 'condition';
-          var heavy = (isCond && (loc.node.yes.length + loc.node.no.length) > 0) || st.hasLeads || (loc.node.type === 'action' && loc.node.content.kind === 'custom' && loc.node.content.body);
+          var inner = isCond ? L.actions({ nodes: [loc.node] }).length + allConditions(loc.node.yes.concat(loc.node.no)).length : 0;
+          var heavy = (isCond && inner > 0) || st.hasLeads || (loc.node.type === 'action' && loc.node.content.kind === 'custom' && loc.node.content.body);
           if (!heavy) { removeNode(id); return render(); }
           return confirmModal({
             title: isCond ? 'Eliminar la condición' : 'Eliminar el paso', danger: true, confirmLabel: 'Eliminar',
-            message: isCond ? 'Se eliminan también los ' + (loc.node.yes.length + loc.node.no.length) + ' pasos de sus ramas.' : (st.hasLeads ? 'Los leads que estaban por recibir este paso pasan al siguiente.' : 'Se pierde el texto que escribiste en este paso.'),
+            message: isCond ? 'Se eliminan también los ' + inner + ' pasos de sus ramas.' : (st.hasLeads ? 'Los leads que estaban por recibir este paso pasan al siguiente.' : 'Se pierde el texto que escribiste en este paso.'),
             onConfirm: function () { removeNode(id); render(); },
           });
         }
@@ -1927,7 +1974,8 @@
     function dropAllowed(z) {
       if (!drag) return false;
       var isCond = drag.kind === 'condition' || drag.cond;
-      return !(isCond && z.getAttribute('data-drop-list') !== 'root');
+      if (!isCond) return true;
+      return conditionFits(drag.id || null, z.getAttribute('data-drop-list'), z.getAttribute('data-drop-cond') || null);
     }
     function clearHot() { Array.prototype.forEach.call(root.querySelectorAll('.cb-drop-hot'), function (z) { z.classList.remove('cb-drop-hot'); }); }
     function onDragStart(e) {

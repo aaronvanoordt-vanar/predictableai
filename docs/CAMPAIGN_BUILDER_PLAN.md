@@ -24,7 +24,7 @@ Referencias estudiadas (2026-09-02): el builder de Apollo (cuatro puntos de part
 | Espera | **Desde el paso anterior** (`after_prev`) o **al mismo tiempo que el anterior** (`with_prev`, conserva el envío en paralelo). Tras una unión de ramas, cuenta desde la última acción que ese lead ejecutó en su rama. |
 | Flujo de creación | Wizard a pantalla completa en cuatro pasos: **1 Base** (nombre, lista, punto de partida) → **2 Cadencia** → **3 Mensajes** → **4 Revisar y lanzar**. Horario, zona horaria, días, topes y remitente viven en "Ajustes avanzados", colapsados, con valores por defecto. |
 | Puntos de partida | Recomendada por la IA según el contexto de la empresa (cobra créditos), tres plantillas fijas (WhatsApp primero · Email primero · LinkedIn primero), clonar una campaña, desde cero. |
-| Condiciones v1 | `linkedin_connected` (aceptó la conexión), `whatsapp_read` (leyó el WhatsApp), `email_opened` (abrió el email), `has_phone`, `has_email`, `has_linkedin`. Una condición se evalúa **una vez**, cuando el lead llega a ella (mismo criterio que Dripify), y **puede tener su propia espera** ("3 días después de la conexión, ¿la aceptó?"), porque una condición sin espera justo después de un paso de LinkedIn siempre daría No. No se anidan condiciones en v1. |
+| Condiciones v1 | `linkedin_connected` (aceptó la conexión), `whatsapp_read` (leyó el WhatsApp), `email_opened` (abrió el email), `has_phone`, `has_email`, `has_linkedin`. Una condición se evalúa **una vez**, cuando el lead llega a ella (mismo criterio que Dripify), y **puede tener su propia espera** ("3 días después de la conexión, ¿la aceptó?"), porque una condición sin espera justo después de un paso de LinkedIn siempre daría No. No se anidaban condiciones en v1; **desde el 2026-11-06 (pedido del dueño) una rama admite condiciones anidadas** hasta `MAX_CONDITION_DEPTH` = 4 niveles («¿leyó el WhatsApp? → No → email → ¿abrió el email?»). |
 | Regla de parada | **Fija y visible** como tarjeta al final de la cadencia: se detiene cuando el lead responde por cualquier canal, se da de baja o el usuario lo detiene. No es configurable. Por eso "respondió" no es una condición: nunca se llegaría a su rama. |
 | Mensaje IA por paso | Cada paso IA tiene su **ángulo** (apertura, seguimiento de valor, prueba social, objeción preventiva, última carta, libre) e **instrucciones** opcionales. Se genera **justo antes del envío** (ventana de 24 h) y queda en `campaign_messages`. Si la campaña pide revisión, espera aprobación en la bandeja. Costo: 3 créditos por mensaje, igual que hoy. El primer paso IA de email reutiliza el mensaje de 5 capas ya generado si existe, para no cobrar dos veces. |
 | Vista previa | En cada paso, con un lead real de la lista como muestra. |
@@ -56,7 +56,7 @@ Las ramas van **anidadas**: es más simple de renderizar, validar y recorrer que
       "settings": { "dripify_campaign_id": "…", "dripify_campaign_name": "…" } },
     { "id": "n4", "type": "condition", "check": "linkedin_connected",
       "delay": { "mode": "after_prev", "days": 3, "hours": 0 },
-      "yes": [ /* nodos action, sin condiciones anidadas */ ],
+      "yes": [ /* nodos action o condition (anidadas hasta MAX_CONDITION_DEPTH, 2026-11-06) */ ],
       "no":  [ { "id": "n5", "type": "action", "channel": "whatsapp",
                  "delay": { "mode": "after_prev", "days": 3 }, "content": { "kind": "template_b" } } ] },
     { "id": "n6", "type": "action", "channel": "whatsapp",
@@ -75,7 +75,7 @@ La definición del esquema, la **validación** y el recorrido viven en dos archi
 - `supabase/functions/_shared/campaign-flow.ts` (motor).
 - `js/campaign-flow.js` (builder). Exporta `validate(flow)`, `fromLegacySteps(steps)`, `actions(flow)` (lista plana), `templates()` (las tres cadencias fijas), `estimateCredits(flow, leads)`.
 
-Reglas de validación (mismas en ambos): ≥1 acción; sin condiciones anidadas; `linkedin_connect` con `dripify_campaign_id`; `custom` con `body` (y `subject` en email); `template_*` solo en WhatsApp; `with_prev` no permitido en el primer nodo de una rama ni de la cadencia; ids únicos.
+Reglas de validación (mismas en ambos): ≥1 acción; condiciones anidadas hasta `MAX_CONDITION_DEPTH` (las más hondas se descartan al normalizar); `linkedin_connect` con `dripify_campaign_id`; `custom` con `body` (y `subject` en email); `template_*` solo en WhatsApp; `with_prev` no permitido en el primer nodo de una rama ni de la cadencia; ids únicos.
 
 ### 3.2 Migración `20260903000001_campaign_flow.sql`
 

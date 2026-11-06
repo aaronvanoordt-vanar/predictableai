@@ -34,14 +34,50 @@ Deno.test("validate: sin pasos", () => {
   assert(!cf.validate({ v: 1, nodes: [{ id: "c", type: "condition", check: "has_email", yes: [], no: [] }] }).ok);
 });
 
-Deno.test("normalize: descarta condiciones anidadas y coerce content_kind viejo", () => {
+Deno.test("normalize: conserva condiciones anidadas y coerce content_kind viejo", () => {
   const f = cf.normalize({ nodes: [
     { id: "c", type: "condition", check: "linkedin_connected", yes: [{ id: "n", type: "condition", check: "has_email", yes: [], no: [] }, { id: "a", type: "action", channel: "email", content: { kind: "ai_personalized" } }], no: [] },
   ] });
   const c = f.nodes[0] as cf.ConditionNode;
-  assertEquals(c.yes.length, 1);
-  assertEquals(c.yes[0].content.kind, "ai");
-  assertEquals(c.yes[0].content.angle, "apertura");
+  assertEquals(c.yes.length, 2);
+  assertEquals(c.yes[0].type, "condition");
+  const a = c.yes[1] as cf.ActionNode;
+  assertEquals(a.content.kind, "ai");
+  assertEquals(a.content.angle, "apertura");
+});
+
+Deno.test("normalize: descarta condiciones más hondas que MAX_CONDITION_DEPTH", () => {
+  const cond = (id: string, inner: unknown[]) => ({ id, type: "condition", check: "has_email", yes: inner, no: [] });
+  let inner: unknown[] = [{ id: "leaf", type: "action", channel: "email", content: { kind: "ai" } }];
+  for (let i = cf.MAX_CONDITION_DEPTH + 1; i >= 1; i--) inner = [cond(`c${i}`, inner)];
+  const f = cf.normalize({ nodes: inner });
+  assert(cf.find(f, `c${cf.MAX_CONDITION_DEPTH}`));
+  assertEquals(cf.find(f, `c${cf.MAX_CONDITION_DEPTH + 1}`), null);
+  assertEquals(cf.depthOf(f, `c${cf.MAX_CONDITION_DEPTH}`), cf.MAX_CONDITION_DEPTH - 1);
+});
+
+Deno.test("recorrido: condición dentro de una rama", () => {
+  // email → ¿leyó WA? Sí: wa1 · No: [email2, ¿abrió? Sí: e3 · No: wa4] → final
+  const flow = cf.normalize({ v: 1, nodes: [
+    email("e1", 0),
+    { id: "c1", type: "condition", check: "whatsapp_read", delay: { mode: "after_prev", days: 2, hours: 0 },
+      yes: [wa("w1", 1)],
+      no: [
+        email("e2", 2),
+        { id: "c2", type: "condition", check: "email_opened", delay: { mode: "after_prev", days: 1, hours: 0 }, yes: [email("e3", 1)], no: [] },
+      ] },
+    email("fin", 3),
+  ] });
+  assert(cf.validate(flow).ok);
+  assertEquals(cf.actions(flow).map((a) => a.id), ["e1", "w1", "e2", "e3", "fin"]);
+  assertEquals(cf.find(flow, "c2")?.parent?.id, "c1");
+  assertEquals(cf.find(flow, "e3")?.parent?.id, "c2");
+  assertEquals(cf.nextAfter(flow, "e2")?.id, "c2");
+  assertEquals(cf.enterBranch(flow, "c2", "yes")?.id, "e3");
+  // Rama vacía → lo que sigue a la condición padre, subiendo los niveles.
+  assertEquals(cf.enterBranch(flow, "c2", "no")?.id, "fin");
+  assertEquals(cf.nextAfter(flow, "e3")?.id, "fin");
+  assertEquals(cf.depthOf(flow, "e3"), 2);
 });
 
 Deno.test("recorrido: rama Sí/No con unión", () => {
@@ -96,7 +132,7 @@ Deno.test("fromLegacySteps: offsets → esperas relativas, paralelo y condición
   assertEquals(e.delay, { mode: "after_prev", days: 4, hours: 0 });
   // Ángulos: el primer IA por canal es apertura, el siguiente valor.
   assertEquals(b.content.angle, "apertura");
-  assertEquals(cond.yes[1].content.angle, "valor");
+  assertEquals((cond.yes[1] as cf.ActionNode).content.angle, "valor");
   assertEquals(cf.estimateCredits(flow, 10), { aiMessages: 20, sends: 60, credits: 50 });
 });
 
