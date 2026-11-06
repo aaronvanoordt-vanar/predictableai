@@ -3476,22 +3476,40 @@
     body.appendChild(h('div', { class: 'pros-hint', text: 'Los pasos de LinkedIn que eligen «Desde mi cuenta de LinkedIn» envían la invitación y los mensajes desde aquí; las respuestas llegan a la Bandeja y puedes contestarlas desde ahí. Cuesta 1 crédito por envío de campaña; responder a mano no cuesta.' }));
     body.appendChild(h('div', { class: 'pros-lbl', style: 'margin-top:12px', text: 'Topes para cuidar tu cuenta' }));
     var u = cfg.limits || {};
-    function numI(v, max) { return h('input', { type: 'number', min: '0', max: String(max), value: String(v == null ? max : Math.min(v, max)), style: 'width:90px' }); }
-    var invD = numI(u.invites_per_day, lim.invites_per_day);
-    var invW = numI(u.invites_per_week, lim.invites_per_week);
-    var msgD = numI(u.messages_per_day, lim.messages_per_day);
+    // Recomendados (lim) y techo (top): desde el 2026-11-06 se pueden subir bajo
+    // el riesgo del usuario, que lo acepta con la casilla (channel-connect lo exige).
+    var top = (state.status && state.status.linkedin_limits_max) || { invites_per_day: 100, invites_per_week: 500, messages_per_day: 200 };
+    function numI(v, rec, max) { return h('input', { type: 'number', min: '0', max: String(max), value: String(v == null ? rec : Math.min(v, max)), style: 'width:90px' }); }
+    var invD = numI(u.invites_per_day, lim.invites_per_day, top.invites_per_day);
+    var invW = numI(u.invites_per_week, lim.invites_per_week, top.invites_per_week);
+    var msgD = numI(u.messages_per_day, lim.messages_per_day, top.messages_per_day);
     body.appendChild(h('div', { class: 'cmp-row', style: 'flex-wrap:wrap;gap:12px' },
-      h('label', { class: 'pros-hint' }, 'Invitaciones por día (máx. ' + lim.invites_per_day + ') ', invD),
-      h('label', { class: 'pros-hint' }, 'Invitaciones por semana (máx. ' + lim.invites_per_week + ') ', invW),
-      h('label', { class: 'pros-hint' }, 'Mensajes por día (máx. ' + lim.messages_per_day + ') ', msgD)));
-    body.appendChild(h('div', { class: 'pros-hint', text: 'Solo se pueden bajar. Una cuenta recién conectada, o que LinkedIn limitó hace poco, envía a la mitad. Los envíos salen dentro del horario de cada campaña y con 2 a 8 minutos entre uno y otro.' }));
+      h('label', { class: 'pros-hint' }, 'Invitaciones por día (recomendado ' + lim.invites_per_day + ') ', invD),
+      h('label', { class: 'pros-hint' }, 'Invitaciones por semana (recomendado ' + lim.invites_per_week + ') ', invW),
+      h('label', { class: 'pros-hint' }, 'Mensajes por día (recomendado ' + lim.messages_per_day + ') ', msgD)));
+    body.appendChild(h('div', { class: 'pros-hint', text: 'Puedes bajarlos o subirlos bajo tu propio riesgo (máximo ' + top.invites_per_day + ' invitaciones por día, ' + top.invites_per_week + ' por semana y ' + top.messages_per_day + ' mensajes por día). Una cuenta recién conectada, o que LinkedIn limitó hace poco, envía a la mitad. Los envíos salen dentro del horario de cada campaña y con 2 a 8 minutos entre uno y otro.' }));
+    var riskBox = h('input', { type: 'checkbox' });
+    if (cfg.limits_risk_accepted_at) riskBox.checked = true;
+    var riskRow = h('label', { class: 'pros-note-red', style: 'display:flex;gap:8px;align-items:flex-start;margin-top:10px;cursor:pointer' }, riskBox,
+      h('span', { text: 'Subiste un tope por encima de lo recomendado. Entiendo que LinkedIn puede limitar o restringir mi cuenta y que, si pasa, los envíos se pausan hasta 24 h o hasta que la vuelva a conectar.' }));
+    function aboveRec() {
+      return Number(invD.value) > lim.invites_per_day || Number(invW.value) > lim.invites_per_week || Number(msgD.value) > lim.messages_per_day;
+    }
+    function syncRisk() { riskRow.style.display = aboveRec() ? 'flex' : 'none'; }
+    [invD, invW, msgD].forEach(function (el) { el.addEventListener('input', syncRisk); });
+    syncRisk();
+    body.appendChild(riskRow);
     body.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:10px', text: 'LinkedIn no permite herramientas que automaticen conexiones o mensajes y puede restringir tu cuenta. Si LinkedIn la limita, Predictable pausa los envíos solo y te lo avisa aquí.' }));
     var actions = [
       { label: 'Guardar topes', className: 'btn btn-primary', onClick: function (m) {
+        var risky = aboveRec();
+        if (risky && !riskBox.checked) { toast('Para subir un tope por encima de lo recomendado, marca la casilla de riesgo.', 'error'); return; }
         m.setBusy(true);
-        return edgeFetch(FN_CHANNEL, { action: 'linkedin_limits', payload: { invites_per_day: invD.value, invites_per_week: invW.value, messages_per_day: msgD.value } }).then(function (r) {
+        return edgeFetch(FN_CHANNEL, { action: 'linkedin_limits', payload: { invites_per_day: invD.value, invites_per_week: invW.value, messages_per_day: msgD.value, accept_risk: risky && riskBox.checked } }).then(function (r) {
           if (r && r.account) state.unipile = r.account;
-          m.close(); toast('Topes de LinkedIn guardados.', 'success'); render();
+          m.close();
+          toast(r && r.clamped ? 'Topes de LinkedIn guardados. Uno superaba el máximo y se guardó en el máximo permitido.' : 'Topes de LinkedIn guardados.', 'success');
+          render();
         });
       } },
       { label: 'Volver a conectar', onClick: function (m) { m.close(); openLinkedInWizard('native'); } },

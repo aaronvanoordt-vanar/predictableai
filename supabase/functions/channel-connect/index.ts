@@ -95,7 +95,7 @@ import * as apollo from "../_shared/apollo-auth.ts";
 import { contactIdsFromOtherAccount } from "../_shared/apollo-platform.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import * as unipile from "../_shared/unipile.ts";
-import { LINKEDIN_LIMITS } from "../_shared/linkedin-limits.ts";
+import { LINKEDIN_LIMIT_CEILINGS, LINKEDIN_LIMITS, normalizeUserLimits } from "../_shared/linkedin-limits.ts";
 
 /** Reconectar Apollo conserva el buzón predeterminado que el usuario eligió, si sigue existiendo. */
 function keepDefaultEmailAccount(prevConfig: { default_email_account_id?: unknown } | null | undefined, accounts: apollo.ApolloEmailAccount[]): { default_email_account_id?: string } {
@@ -650,6 +650,7 @@ Deno.serve(async (req) => {
         apollo_oauth_available: apollo.oauthAvailable(),
         linkedin_native_available: !!unipile.unipileEnv() && !!(Deno.env.get("UNIPILE_WEBHOOK_SECRET") ?? "").trim(),
         linkedin_limits: LINKEDIN_LIMITS,
+        linkedin_limits_max: LINKEDIN_LIMIT_CEILINGS,
         meta_signup: metaSignupConfig(),
       }, 200, cors);
     }
@@ -699,17 +700,15 @@ Deno.serve(async (req) => {
     if (action === "linkedin_limits") {
       const acc = await loadAccount("unipile");
       if (!acc) return json({ error: "linkedin_not_connected" }, 428, cors);
-      const pick = (v: unknown, max: number) => {
-        const n = Math.floor(Number(v));
-        return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : max;
-      };
-      const limits = {
-        invites_per_day: pick(payload.invites_per_day, LINKEDIN_LIMITS.invites_per_day),
-        invites_per_week: pick(payload.invites_per_week, LINKEDIN_LIMITS.invites_per_week),
-        messages_per_day: pick(payload.messages_per_day, LINKEDIN_LIMITS.messages_per_day),
-      };
-      const config = await patchChannelConfig(db, acc.id, { limits });
-      return json({ account: publicRow({ ...acc, config: config ?? { ...acc.config, limits } }) }, 200, cors);
+      // Por encima de lo recomendado corre bajo el riesgo del usuario (2026-11-06):
+      // hay que aceptarlo explícitamente y queda la fecha en la cuenta.
+      const { limits, aboveRecommended, clamped } = normalizeUserLimits(payload);
+      if (aboveRecommended && payload.accept_risk !== true) {
+        return json({ error: "linkedin_limits_risk_required", limits, recommended: LINKEDIN_LIMITS }, 400, cors);
+      }
+      const patch: Record<string, unknown> = { limits, limits_risk_accepted_at: aboveRecommended ? new Date().toISOString() : null };
+      const config = await patchChannelConfig(db, acc.id, patch);
+      return json({ account: publicRow({ ...acc, config: config ?? { ...acc.config, ...patch } }), limits, clamped }, 200, cors);
     }
 
     if (action === "meta_connect") {

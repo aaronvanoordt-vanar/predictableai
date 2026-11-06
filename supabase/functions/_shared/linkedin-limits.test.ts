@@ -1,15 +1,29 @@
 // deno test supabase/functions/_shared/linkedin-limits.test.ts
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { activeBlock, effectiveLimits, gapMs, LINKEDIN_LIMITS, noteLimitActive, noteMaxFor, pace } from "./linkedin-limits.ts";
+import { activeBlock, effectiveLimits, gapMs, LINKEDIN_LIMIT_CEILINGS, LINKEDIN_LIMITS, noteLimitActive, noteMaxFor, normalizeUserLimits, pace } from "./linkedin-limits.ts";
 
 const now = new Date("2026-10-17T15:00:00Z");
 const old = "2026-01-01T00:00:00Z";
 const zero = { invitesDay: 0, invitesWeek: 0, messagesDay: 0, lastSendAt: null };
 
-Deno.test("effectiveLimits: 20/100/50 por defecto; el usuario solo baja", () => {
+Deno.test("effectiveLimits: 20/100/50 por defecto; el usuario baja o sube hasta el techo", () => {
   assertEquals(effectiveLimits({}, old, now), { invitesPerDay: 20, invitesPerWeek: 100, messagesPerDay: 50, reduced: false });
   const l = effectiveLimits({ limits: { invites_per_day: 10, invites_per_week: 500, messages_per_day: "x" } }, old, now);
-  assertEquals([l.invitesPerDay, l.invitesPerWeek, l.messagesPerDay], [10, 100, 50]);
+  assertEquals([l.invitesPerDay, l.invitesPerWeek, l.messagesPerDay], [10, 500, 50]);
+  const up = effectiveLimits({ limits: { invites_per_day: 25, invites_per_week: 9999, messages_per_day: 0 } }, old, now);
+  assertEquals([up.invitesPerDay, up.invitesPerWeek, up.messagesPerDay], [25, LINKEDIN_LIMIT_CEILINGS.invites_per_week, 0]);
+});
+
+Deno.test("normalizeUserLimits: subir exige riesgo; el techo recorta", () => {
+  const same = normalizeUserLimits({ invites_per_day: "15", invites_per_week: 100, messages_per_day: 50 });
+  assertEquals(same, { limits: { invites_per_day: 15, invites_per_week: 100, messages_per_day: 50 }, aboveRecommended: false, clamped: false });
+  const up = normalizeUserLimits({ invites_per_day: 25 });
+  assertEquals(up.limits.invites_per_day, 25);
+  assert(up.aboveRecommended && !up.clamped);
+  const huge = normalizeUserLimits({ messages_per_day: 5000 });
+  assertEquals(huge.limits.messages_per_day, LINKEDIN_LIMIT_CEILINGS.messages_per_day);
+  assert(huge.clamped);
+  assertEquals(normalizeUserLimits({}).limits, { invites_per_day: 20, invites_per_week: 100, messages_per_day: 50 });
 });
 
 Deno.test("effectiveLimits: a la mitad recién conectada o limitada hace poco", () => {

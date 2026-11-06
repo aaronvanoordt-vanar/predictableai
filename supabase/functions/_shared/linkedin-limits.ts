@@ -6,8 +6,11 @@
  * pone tope. Con envío nativo lo decide Predictable, y Unipile no regula nada:
  * si el motor manda 100 invitaciones en un minuto, salen. Por eso:
  *  • topes por cuenta (no por campaña: LinkedIn mide la cuenta): 20
- *    invitaciones por día, 100 por semana y 50 mensajes por día. El usuario
- *    solo puede bajarlos (`channel_accounts.config.limits`);
+ *    invitaciones por día, 100 por semana y 50 mensajes por día por defecto
+ *    (los recomendados). Desde el 2026-11-06 (pedido del dueño) el usuario
+ *    puede bajarlos o SUBIRLOS bajo su riesgo hasta `LINKEDIN_LIMIT_CEILINGS`
+ *    (`channel_accounts.config.limits`); subirlos exige aceptar el riesgo
+ *    (`normalizeUserLimits`, `config.limits_risk_accepted_at`);
  *  • nunca en ráfaga: entre dos envíos pasan 2 a 8 minutos al azar;
  *  • una cuenta recién conectada (14 días) o que LinkedIn limitó hace poco
  *    (30 días) va a la mitad;
@@ -33,6 +36,43 @@ export const LINKEDIN_LIMITS = {
   throttle_block_ms: 30 * 60 * 1000,
   note_limit_ms: 7 * 24 * 60 * 60 * 1000,
 } as const;
+
+/**
+ * Techo absoluto de lo que el usuario puede elegir (solo para frenar un
+ * error de tipeo: con 2–8 min entre envíos, una ventana de 10 h no da para
+ * mucho más). Por encima de `LINKEDIN_LIMITS` corre bajo su riesgo.
+ */
+export const LINKEDIN_LIMIT_CEILINGS = {
+  invites_per_day: 100,
+  invites_per_week: 500,
+  messages_per_day: 200,
+} as const;
+
+type LimitKey = keyof typeof LINKEDIN_LIMIT_CEILINGS;
+const LIMIT_KEYS: LimitKey[] = ["invites_per_day", "invites_per_week", "messages_per_day"];
+
+function clampUser(v: unknown, key: LimitKey): number {
+  const n = Math.floor(Number(v));
+  if (v === null || v === undefined || v === "" || !Number.isFinite(n) || n < 0) return LINKEDIN_LIMITS[key];
+  return Math.min(n, LINKEDIN_LIMIT_CEILINGS[key]);
+}
+
+/**
+ * Topes que eligió el usuario, acotados a [0, techo]. `aboveRecommended`
+ * dice si alguno supera el recomendado (la UI y channel-connect piden
+ * aceptar el riesgo); `clamped` si alguno se recortó al techo.
+ */
+export function normalizeUserLimits(input: Json): { limits: Record<LimitKey, number>; aboveRecommended: boolean; clamped: boolean } {
+  const limits = {} as Record<LimitKey, number>;
+  let above = false, clamped = false;
+  for (const k of LIMIT_KEYS) {
+    const raw = Math.floor(Number(input?.[k]));
+    limits[k] = clampUser(input?.[k], k);
+    if (Number.isFinite(raw) && raw > LINKEDIN_LIMIT_CEILINGS[k]) clamped = true;
+    if (limits[k] > LINKEDIN_LIMITS[k]) above = true;
+  }
+  return { limits, aboveRecommended: above, clamped };
+}
 
 /**
  * Largo máximo de la nota de invitación para esta cuenta: 300 con Premium,
@@ -64,12 +104,7 @@ export interface EffectiveLimits { invitesPerDay: number; invitesPerWeek: number
 
 const DAY = 24 * 60 * 60 * 1000;
 
-function lower(user: unknown, max: number): number {
-  const n = Math.floor(Number(user));
-  return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : max;
-}
-
-/** Topes vigentes de la cuenta: los del usuario (solo hacia abajo), a la mitad en calentamiento. */
+/** Topes vigentes de la cuenta: los del usuario (hasta el techo), a la mitad en calentamiento. */
 export function effectiveLimits(config: Json, connectedAt: string | null | undefined, now = new Date()): EffectiveLimits {
   const u = config?.limits ?? {};
   const connected = connectedAt ? Date.parse(connectedAt) : NaN;
@@ -78,9 +113,9 @@ export function effectiveLimits(config: Json, connectedAt: string | null | undef
     || (Number.isFinite(limited) && now.getTime() - limited < LINKEDIN_LIMITS.cooldown_days * DAY);
   const half = (n: number) => reduced ? Math.max(1, Math.floor(n / 2)) : n;
   return {
-    invitesPerDay: half(lower(u.invites_per_day, LINKEDIN_LIMITS.invites_per_day)),
-    invitesPerWeek: half(lower(u.invites_per_week, LINKEDIN_LIMITS.invites_per_week)),
-    messagesPerDay: half(lower(u.messages_per_day, LINKEDIN_LIMITS.messages_per_day)),
+    invitesPerDay: half(clampUser(u.invites_per_day, "invites_per_day")),
+    invitesPerWeek: half(clampUser(u.invites_per_week, "invites_per_week")),
+    messagesPerDay: half(clampUser(u.messages_per_day, "messages_per_day")),
     reduced,
   };
 }

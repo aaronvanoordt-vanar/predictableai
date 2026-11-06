@@ -6,7 +6,7 @@
 
 1. **Sí**, con Unipile, y con un **aviso explícito y una casilla obligatoria al conectar** (riesgo de la sección 8.2 de LinkedIn). Dripify sigue como opción.
 2. **La plataforma paga Unipile** y cobra **1 crédito por envío de campaña** (`linkedin_send`). Responder a mano desde la Bandeja no cuesta.
-3. **Topes por defecto aprobados**: 20 invitaciones/día, ≤ 100/semana, 50 mensajes/día; el usuario solo puede bajarlos.
+3. **Topes por defecto aprobados**: 20 invitaciones/día, ≤ 100/semana, 50 mensajes/día. Desde el 2026-11-06 (pedido del dueño) el usuario puede bajarlos o subirlos bajo su riesgo, hasta 100 invitaciones/día, 500/semana y 200 mensajes/día (`LINKEDIN_LIMIT_CEILINGS`); subirlos exige marcar la casilla de riesgo y `channel-connect` lo revalida (`linkedin_limits_risk_required`).
 
 ## Qué se quiere
 
