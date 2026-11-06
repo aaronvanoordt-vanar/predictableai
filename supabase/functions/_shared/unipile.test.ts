@@ -66,6 +66,13 @@ Deno.test("toAccount / toUser / accountUsable", () => {
   assert(toUser({ network_distance: "SECOND_DEGREE", invitation: { type: "SENT", status: "PENDING" } }).invitationPending);
 });
 
+Deno.test("classifyError: no_client_session es de la sesión de la cuenta, no transitorio", () => {
+  const e = new UnipileError("No client session is currently running.", 503, "errors/no_client_session");
+  assertEquals(classifyError(e), "session");
+  assertEquals(classifyError(new UnipileError("No client session", 503, "")), "session");
+  assert(/sesión de tu cuenta de LinkedIn se detuvo/.test(humanError(e)));
+});
+
 Deno.test("classifyError: cuenta, límite, destinatario, transitorio", () => {
   assertEquals(classifyError(new UnipileError("x", 401, "errors/disconnected_account")), "account");
   assertEquals(classifyError(new UnipileError("x", 422, "errors/checkpoint_error")), "account");

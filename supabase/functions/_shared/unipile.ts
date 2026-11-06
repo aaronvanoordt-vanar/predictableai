@@ -171,6 +171,15 @@ export async function getAccount(env: UnipileEnv, accountId: string): Promise<Un
   return toAccount(await call(env, "GET", `/accounts/${encodeURIComponent(accountId)}`));
 }
 
+/**
+ * Reinicia la sesión de la cuenta en Unipile (`no_client_session`: el
+ * proceso que mantiene abierto LinkedIn se detuvo). Si LinkedIn cerró la
+ * sesión de verdad, Unipile pasa la cuenta a CREDENTIALS y avisa por webhook.
+ */
+export async function restartAccount(env: UnipileEnv, accountId: string): Promise<void> {
+  await call(env, "POST", `/accounts/${encodeURIComponent(accountId)}/restart`);
+}
+
 export async function deleteAccount(env: UnipileEnv, accountId: string): Promise<void> {
   await call(env, "DELETE", `/accounts/${encodeURIComponent(accountId)}`);
 }
@@ -418,13 +427,19 @@ export function parseWebhook(p: Json): WebhookEvent {
  *             bajar los topes de la cuenta.
  * recipient → el problema es ESTE lead (perfil inválido, ya invitado, no es
  *             contacto, no admite mensajes): falla el paso y sigue la cadencia.
+ * session   → `no_client_session` / `no_channel`: la sesión de la cuenta en
+ *             Unipile está detenida. No es del lead: se reinicia la cuenta y se
+ *             retienen los envíos un rato; si vuelve a pasar, hay que reconectar.
  * transient → 5xx / corte de red: se reintenta pronto sin culpar al lead.
  */
-export type ErrorClass = "account" | "limit" | "throttle" | "too_long" | "recipient" | "transient";
+export type ErrorClass = "account" | "session" | "limit" | "throttle" | "too_long" | "recipient" | "transient";
+
+const SESSION_RE = /no_client_session|no_channel/;
 
 export function classifyError(e: unknown): ErrorClass {
   if (!(e instanceof UnipileError)) return "transient";
   const t = e.type.toLowerCase();
+  if (SESSION_RE.test(t) || /no client session/i.test(e.message)) return "session";
   if (/too_many_characters|too_long|text_length/.test(t)) return "too_long";
   if (/disconnected|invalid_account|credentials|checkpoint|action_required|account_restricted|insufficient_privileges|unauthorized/.test(t)) return "account";
   if (/limit_exceeded|cannot_resend_yet/.test(t)) return "limit";
@@ -438,6 +453,7 @@ export function classifyError(e: unknown): ErrorClass {
 export function humanError(e: unknown): string {
   if (!(e instanceof UnipileError)) return "No se pudo hablar con LinkedIn: " + String((e as Error)?.message ?? e).slice(0, 160);
   const t = e.type.toLowerCase();
+  if (SESSION_RE.test(t) || /no client session/i.test(e.message)) return "La sesión de tu cuenta de LinkedIn se detuvo (LinkedIn la cerró o perdió la conexión): la estamos reiniciando. Si sigue, vuelve a conectar tu cuenta en Canales → LinkedIn.";
   if (/disconnected|credentials|invalid_account/.test(t) || e.status === 401) return "Tu cuenta de LinkedIn se desconectó: vuelve a conectarla en Campañas → LinkedIn.";
   if (/checkpoint|action_required/.test(t)) return "LinkedIn pide verificar tu cuenta: vuelve a conectarla en Campañas → LinkedIn.";
   if (/restricted|insufficient_privileges/.test(t) || e.status === 403) return "LinkedIn restringió esta acción en tu cuenta.";
