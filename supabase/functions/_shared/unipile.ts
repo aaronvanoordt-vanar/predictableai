@@ -450,6 +450,18 @@ export function classifyError(e: unknown): ErrorClass {
   return "transient";
 }
 
+/**
+ * ¿Un link `reconnect` fallido se puede reintentar como `create`? Sí cuando el
+ * problema es la cuenta anterior (sesión detenida, desconectada, borrada en
+ * Unipile); no cuando es la plataforma (key inválida, ritmo, caída).
+ */
+export function shouldFallbackToCreate(e: unknown): boolean {
+  if (!(e instanceof UnipileError)) return false;
+  if (e.status === 401 && !e.type) return false; // key de la plataforma
+  const c = classifyError(e);
+  return c === "session" || c === "account" || c === "recipient";
+}
+
 export function humanError(e: unknown): string {
   if (!(e instanceof UnipileError)) return "No se pudo hablar con LinkedIn: " + String((e as Error)?.message ?? e).slice(0, 160);
   const t = e.type.toLowerCase();
