@@ -19,6 +19,18 @@ window.PREDICTABLE_CONFIG = {
   COACH_SILENCE_MS: 1200,
   COACH_MIN_NEW_WORDS: 6,
   COACH_ALERT_DEDUP_MS: 240000,
+
+  // Módulos a medio terminar ocultos en producción (2026-11-07, pedido del
+  // dueño: un lead está probando la app). Se esconden del sidebar, de la
+  // paleta ⌘K, de la restauración por #hash y de sus accesos indirectos
+  // (franja inbound y «Enviar mi agenda» de la Bandeja, {{link_agenda}} del
+  // asistente). El código y el backend siguen intactos: para volver a
+  // mostrarlos basta con quitarlos de esta lista.
+  HIDDEN_PAGES: ['linkedin-content', 'automations', 'agenda', 'inbound'],
+};
+window.isHiddenPage = function (page) {
+  var list = (window.PREDICTABLE_CONFIG && window.PREDICTABLE_CONFIG.HIDDEN_PAGES) || [];
+  return list.indexOf(page) !== -1;
 };
 /**
  * config.js — Credenciales públicas de Supabase para Predictable.ai

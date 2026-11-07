@@ -135,7 +135,10 @@
     // Enlace a tu agenda (Ventas → Agenda) con la referencia del lead: si
     // agenda, la cadencia se detiene y pasa a «reunión agendada».
     { key: '{{link_agenda}}', label: 'Enlace a tu agenda' },
-  ];
+  ].filter(function (v) {
+    // Agenda oculta (js/config.js HIDDEN_PAGES): sin la página no se puede activar.
+    return !(v.key === '{{link_agenda}}' && window.isHiddenPage && window.isHiddenPage('agenda'));
+  });
   function insertAtCursor(input, text) {
     if (!input) return;
     var start = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
