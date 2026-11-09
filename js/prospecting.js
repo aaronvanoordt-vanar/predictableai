@@ -2899,7 +2899,7 @@
     el.style.width = '230px';
     el.innerHTML =
       '<span class="pros-colpop-lbl">LinkedIn</span>' +
-      '<button type="button" role="menuitem" class="pros-colpop-opt" data-li="connect" style="width:100%;border:0;background:none;text-align:left;color:inherit;font:inherit">' +
+      '<button type="button" role="menuitem" class="pros-colpop-opt" data-li="connect" data-credit-cost="linkedin_send" data-credit-pos="inside" style="width:100%;border:0;background:none;text-align:left;color:inherit;font:inherit">' +
         '<span>Enviar solicitud de conexión<br><em>Sale desde tu LinkedIn conectado, sin nota</em></span></button>' +
       '<button type="button" role="menuitem" class="pros-colpop-opt" data-li="message" style="width:100%;border:0;background:none;text-align:left;color:inherit;font:inherit">' +
         '<span>Enviar mensaje<br><em>Desde la Bandeja (solo a tus contactos)</em></span></button>';
@@ -2931,8 +2931,9 @@
   }
   /**
    * Invitación de LinkedIn con un clic desde la cuenta propia (inbox-send
-   * `linkedin_invite`: mismos topes, bloqueos y lista «No contactar» que las
-   * campañas). Sin LinkedIn conectado abre su perfil para conectar a mano.
+   * `linkedin_invite`: mismos topes, bloqueos, lista «No contactar» y costo
+   * —1 crédito, solo si sale— que las campañas). Sin LinkedIn conectado
+   * abre su perfil para conectar a mano.
    */
   function sendLinkedinInvite(btn, m) {
     var pdApi = pd();
@@ -2945,6 +2946,7 @@
       else if (st === 'pending') toast('Ya tiene una invitación tuya pendiente en LinkedIn.', 'info');
       else {
         toast('Solicitud de conexión enviada desde tu LinkedIn.', 'success');
+        if (window.credits && window.credits.refresh) window.credits.refresh();
         if (m.contact_status === 'no_contactado' || m.contact_status === 'en_campana') {
           m.contact_status = 'conexion_enviada';
           renderListsRight();
