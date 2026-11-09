@@ -32,8 +32,9 @@
  *      la cuenta propia (Unipile), con un clic (2026-11-09). Respeta los mismos
  *      topes por cuenta que el motor (_shared/linkedin-limits.ts; cuenta como
  *      `connection_sent` con payload.via = "unipile", así el motor también la
- *      descuenta), el bloqueo de la cuenta y la lista «No contactar». Gratis
- *      como toda acción a mano. → { status: "sent" | "already_connected" | "pending" }
+ *      descuenta), el bloqueo de la cuenta y la lista «No contactar». Cobra
+ *      1 crédito (linkedin_send) solo si la invitación sale; sin saldo, 402
+ *      insufficient_credits. → { status: "sent" | "already_connected" | "pending", charged }
  *  • { channel: "linkedin", member_id | contact_ref, body }
  *      Con la cuenta de LinkedIn propia conectada (Unipile, 2026-10-17):
  *      responde en el chat de LinkedIn del lead (el chat de la conversación,
@@ -97,6 +98,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import { CREDIT_COSTS } from "../_shared/credit-costs.ts";
+import { reserveCredits, settleReservation } from "../_shared/credits.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import * as wati from "../_shared/wati.ts";
 import * as whatsapp from "../_shared/whatsapp.ts";
@@ -116,6 +118,7 @@ import { resolveEmailProvider } from "../_shared/mailbox-rotation.ts";
 type Json = any;
 
 const WHATSAPP_SESSION_MS = 24 * 60 * 60 * 1000;
+const LINKEDIN_SEND_COST: number = CREDIT_COSTS.linkedin_send; // invitación a mano desde Listas, igual que en campaña
 const REPLY_COST: number = CREDIT_COSTS.inbox_reply; // _shared/credit-costs.ts ↔ js/credit-costs.js
 const MAX_BODY = 4000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1069,7 +1072,8 @@ async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string
 /**
  * Invitación de LinkedIn a un lead de Listas, desde la cuenta propia
  * (Unipile). Siempre sin nota (la nota es de LinkedIn Premium, decisión del
- * dueño 2026-11-04). Mismos topes diarios y semanales que el motor; el
+ * dueño 2026-11-04). Cobra lo mismo que un envío de campaña (linkedin_send,
+ * decisión del dueño 2026-11-09). Mismos topes diarios y semanales que el motor; el
  * espaciado de 2–8 min no aplica porque la manda una persona con un clic.
  */
 async function sendLinkedinInvite(db: SupabaseClient, userId: string, memberId: string): Promise<Json> {
@@ -1104,18 +1108,28 @@ async function sendLinkedinInvite(db: SupabaseClient, userId: string, memberId: 
   const p = liLimits.pace("invite", counts, limits, now, 0);
   if (!p.ok) throw new HttpError(p.reason, 429, "linkedin_limit");
 
+  // 1 crédito por invitación enviada, igual que un envío de campaña: se
+  // reserva antes de tocar LinkedIn y se devuelve si no sale (ya eran
+  // contactos, invitación pendiente o error).
+  if (!(await reserveCredits(db, userId, LINKEDIN_SEND_COST))) {
+    throw new HttpError(`No tienes créditos suficientes: enviar una invitación de LinkedIn cuesta ${LINKEDIN_SEND_COST} crédito.`, 402, "insufficient_credits");
+  }
   let profile: unipile.UnipileUser;
   let invitationId: string | null = null;
   try {
     profile = await unipile.resolveUser(env, acc.secret, url);
     if (!profile.providerId) throw new HttpError("LinkedIn no encontró el perfil del lead.", 404, "linkedin_profile_not_found");
-    if (profile.firstDegree) return { status: "already_connected" };
-    if (profile.invitationPending) return { status: "pending" };
+    if (profile.firstDegree || profile.invitationPending) {
+      await settleReservation(db, userId, LINKEDIN_SEND_COST, 0, "linkedin_send");
+      return { status: profile.firstDegree ? "already_connected" : "pending", charged: 0 };
+    }
     invitationId = (await unipile.invite(env, acc.secret, profile.providerId, "")).invitationId;
   } catch (e) {
+    await settleReservation(db, userId, LINKEDIN_SEND_COST, 0, "linkedin_send");
     if (e instanceof HttpError) throw e;
     throw await linkedinAccountError(db, acc, e, now);
   }
+  await settleReservation(db, userId, LINKEDIN_SEND_COST, LINKEDIN_SEND_COST, "linkedin_send");
   const at = now.toISOString();
   await db.from("campaign_events").insert({
     user_id: userId, member_id: member.id, channel: "linkedin", type: "connection_sent",
@@ -1125,7 +1139,7 @@ async function sendLinkedinInvite(db: SupabaseClient, userId: string, memberId: 
   if (["no_contactado", "en_campana"].includes(member.contact_status)) {
     await db.from("prospect_list_members").update({ contact_status: "conexion_enviada", status_changed_at: at }).eq("id", member.id);
   }
-  return { status: "sent" };
+  return { status: "sent", charged: LINKEDIN_SEND_COST };
 }
 
 /**

@@ -7227,4 +7227,5 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "El inicio de sesión no respondió a tiempo.": "Sign-in didn't respond in time.",
   " · Vuelve a ": " · Go back to ",
   "iniciar sesión": "sign in",
+  "No tienes créditos suficientes: enviar una invitación de LinkedIn cuesta 1 crédito.": "You don't have enough credits: sending a LinkedIn invitation costs 1 credit.",
 });

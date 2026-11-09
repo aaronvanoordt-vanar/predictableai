@@ -7377,4 +7377,5 @@ window.I18N_DICTS['pt-BR'] = {
   "El inicio de sesión no respondió a tiempo.": "O login não respondeu a tempo.",
   " · Vuelve a ": " · Volte a ",
   "iniciar sesión": "entrar",
+  "No tienes créditos suficientes: enviar una invitación de LinkedIn cuesta 1 crédito.": "Você não tem créditos suficientes: enviar um convite do LinkedIn custa 1 crédito.",
 };
