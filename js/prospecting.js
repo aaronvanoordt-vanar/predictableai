@@ -249,6 +249,9 @@
   var SVG_TRASH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>';
   var SVG_USER_PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>';
   // Icon matching the Campañas sidebar glyph (CTA «Crear campaña con esta lista»).
+  var SVG_WA = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 20.5l1.3-4.2A8.5 8.5 0 1 1 8 19.4z"/><path d="M9 8.6c0 3.3 3 6.4 6.4 6.4l1-1.4-2-1-1 .8a4.6 4.6 0 0 1-2.8-2.8l.8-1-1-2z"/></svg>';
+  var SVG_MAIL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5L12 13l8.5-6.5"/></svg>';
+  var SVG_LI = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 10.5V17M8 7.2v.1M12 17v-6.5M12 13.2c0-1.6 1-2.7 2.4-2.7S16.5 11.4 16.5 13v4"/></svg>';
   var SVG_PHONE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h3.5l1.8 4.6-2.3 1.4a10 10 0 0 0 5 5l1.4-2.3L19 13.5V17a2 2 0 0 1-2.1 2A16 16 0 0 1 3 5.1 2 2 0 0 1 5 3z"/></svg>';
   var SVG_CAMPAIGN = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>';
 
@@ -328,6 +331,7 @@
     '#prospecting-shell .pros-enrich-bar > i { display:block; height:100%; background:var(--accent-2); border-radius:inherit; transition:width .4s; }',
     '#prospecting-shell .pros-iconbtn { border:0; background:transparent; cursor:pointer; color:var(--ink-4); padding:4px; border-radius:var(--r-xs); display:inline-flex; }',
     '#prospecting-shell .pros-iconbtn:hover { color:var(--red); background:var(--red-soft); }',
+    '#prospecting-shell .pros-iconbtn.pros-reach-btn:hover { color:var(--accent-ink); background:var(--surface3); }',
     '#prospecting-shell .pros-wa-preview { background:var(--wa-bg); border-radius:var(--r-md); padding:16px; }',
     '#prospecting-shell .pros-wa-bubble { background:var(--wa-bubble); border-radius:10px 10px 10px 2px; padding:9px 12px; font-size:13px; line-height:1.5; color:var(--text); max-width:360px; box-shadow:var(--shadow-1); word-break:break-word; white-space:pre-wrap; }',
     '#prospecting-shell .pros-chev { border:0; background:transparent; cursor:pointer; color:var(--ink-4); font-size:15px; line-height:1; padding:4px 6px; transition:transform .15s; }',
@@ -2848,13 +2852,118 @@
       '<td style="white-space:nowrap">' +
         // Clic para llamar (js/dialer.js): dialer de Predictable o el proveedor conectado.
         (window.Dialer && String(m.phone || '').replace(/\D/g, '').length >= 8
-          ? '<button type="button" class="pros-iconbtn" data-action="call-member" data-id="' + id + '" title="Llamar">' + SVG_PHONE + '</button>' : '') +
+          ? '<button type="button" class="pros-iconbtn" data-action="call-member" data-id="' + id + '" title="Llamar" aria-label="Llamar">' + SVG_PHONE + '</button>' : '') +
+        contactBtnsHtml(m, id) +
         championBtnHtml(m) +
         '<button type="button" class="pros-iconbtn" data-action="edit-member" data-id="' + id + '" title="Editar contacto">' + SVG_EDIT + '</button>' +
         '<button type="button" class="pros-iconbtn" data-action="delete-member" data-id="' + id + '" title="Eliminar contacto">' + SVG_TRASH + '</button>' +
       '</td>' +
       '</tr>' +
       (open ? '<tr class="pros-research-row"><td colspan="' + ((isAllList() ? 11 : 10) + aiColCount()) + '">' + researchPanelHtml(m) + '</td></tr>' : '');
+  }
+
+  // ── Escribirle desde la fila (2026-11-06) ──────────────────────────────
+  // WhatsApp, email y LinkedIn abren su conversación en la Bandeja con ese
+  // canal (campaigns.composeTo): el mismo cuadro de respuesta de siempre, con
+  // sus reglas (plantilla si la ventana de 24 h está cerrada, buzón propio o
+  // Apollo para el email, LinkedIn solo a contactos). La invitación de
+  // LinkedIn abre su perfil: no hay envío de invitaciones sueltas por API.
+  function canCompose() { return !!(window.campaigns && window.campaigns.composeTo); }
+  function contactBtnsHtml(m, id) {
+    if (!canCompose()) return '';
+    var out = '';
+    if (String(m.phone || '').replace(/\D/g, '').length >= 8) {
+      out += '<button type="button" class="pros-iconbtn pros-reach-btn" data-action="compose-member" data-channel="whatsapp" data-id="' + id + '" title="Enviar WhatsApp" aria-label="Enviar WhatsApp">' + SVG_WA + '</button>';
+    }
+    if (m.email && !isMaskedEmail(m.email)) {
+      out += '<button type="button" class="pros-iconbtn pros-reach-btn" data-action="compose-member" data-channel="email" data-id="' + id + '" title="Enviar email" aria-label="Enviar email">' + SVG_MAIL + '</button>';
+    }
+    if (m.linkedin_url) {
+      out += '<button type="button" class="pros-iconbtn pros-reach-btn" data-action="linkedin-menu" data-id="' + id + '" title="LinkedIn: conexión o mensaje" aria-label="LinkedIn: conexión o mensaje" aria-haspopup="menu">' + SVG_LI + '</button>';
+    }
+    return out;
+  }
+  var liMenu = null;
+  function closeLiMenu() {
+    if (!liMenu) return;
+    document.removeEventListener('mousedown', liMenu.onDown, true);
+    document.removeEventListener('keydown', liMenu.onKey, true);
+    if (liMenu.el.parentNode) liMenu.el.parentNode.removeChild(liMenu.el);
+    liMenu = null;
+  }
+  function openLiMenu(btn, m) {
+    closeLiMenu();
+    var el = document.createElement('div');
+    el.className = 'pros-colpop';
+    el.setAttribute('role', 'menu');
+    el.style.width = '230px';
+    el.innerHTML =
+      '<span class="pros-colpop-lbl">LinkedIn</span>' +
+      '<button type="button" role="menuitem" class="pros-colpop-opt" data-li="connect" style="width:100%;border:0;background:none;text-align:left;color:inherit;font:inherit">' +
+        '<span>Enviar solicitud de conexión<br><em>Sale desde tu LinkedIn conectado, sin nota</em></span></button>' +
+      '<button type="button" role="menuitem" class="pros-colpop-opt" data-li="message" style="width:100%;border:0;background:none;text-align:left;color:inherit;font:inherit">' +
+        '<span>Enviar mensaje<br><em>Desde la Bandeja (solo a tus contactos)</em></span></button>';
+    el.querySelectorAll('.pros-colpop-opt span').forEach(function (sp) { sp.style.whiteSpace = 'normal'; });
+    document.body.appendChild(el);
+    var r = btn.getBoundingClientRect();
+    var left = Math.min(Math.max(8, r.right - 230), window.innerWidth - 238);
+    var top = r.bottom + 6;
+    if (top + el.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - el.offsetHeight - 6);
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+    el.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-li]');
+      if (!b) return;
+      var kind = b.getAttribute('data-li');
+      closeLiMenu();
+      if (kind === 'connect') sendLinkedinInvite(btn, m);
+      else composeMember(m, 'linkedin');
+    });
+    liMenu = {
+      el: el,
+      onDown: function (e) { if (!el.contains(e.target) && e.target !== btn && !btn.contains(e.target)) closeLiMenu(); },
+      onKey: function (e) { if (e.key === 'Escape') { closeLiMenu(); btn.focus(); } },
+    };
+    document.addEventListener('mousedown', liMenu.onDown, true);
+    document.addEventListener('keydown', liMenu.onKey, true);
+    var first = el.querySelector('[data-li]');
+    if (first) first.focus();
+  }
+  /**
+   * Invitación de LinkedIn con un clic desde la cuenta propia (inbox-send
+   * `linkedin_invite`: mismos topes, bloqueos y lista «No contactar» que las
+   * campañas). Sin LinkedIn conectado abre su perfil para conectar a mano.
+   */
+  function sendLinkedinInvite(btn, m) {
+    var pdApi = pd();
+    if (!pdApi || !pdApi.linkedinInvite) return;
+    if (btn.disabled) return;
+    btn.disabled = true;
+    pdApi.linkedinInvite(m.id).then(function (r) {
+      var st = r && r.status;
+      if (st === 'already_connected') toast('Ya son contactos en LinkedIn: puedes escribirle un mensaje.', 'info');
+      else if (st === 'pending') toast('Ya tiene una invitación tuya pendiente en LinkedIn.', 'info');
+      else {
+        toast('Solicitud de conexión enviada desde tu LinkedIn.', 'success');
+        if (m.contact_status === 'no_contactado' || m.contact_status === 'en_campana') {
+          m.contact_status = 'conexion_enviada';
+          renderListsRight();
+        }
+      }
+    }, function (e) {
+      if (e && e.code === 'linkedin_account_required') {
+        var url = sUrl(m.linkedin_url);
+        if (url !== '#') window.open(url, '_blank', 'noopener');
+        toast('Conecta tu LinkedIn en Canales → LinkedIn para enviar invitaciones desde Predictable. Mientras, abrimos su perfil para que toques «Conectar».', 'warn');
+      } else toast((e && e.message) || 'No se pudo enviar la invitación de LinkedIn.', 'error');
+    }).then(function () { btn.disabled = false; });
+  }
+  function composeMember(m, channel) {
+    if (!m || !canCompose()) return;
+    var item = document.querySelector('.nav-item[data-page="pro-main"][data-pros-view="inbox"]');
+    window.campaigns.composeTo(m, channel);
+    if (item && typeof window.nav === 'function') window.nav(item, 'pro-main');
+    if (window.prospecting && window.prospecting.show) window.prospecting.show('campanas');
   }
 
   // ── Estado en el CRM (2026-10-17) ───────────────────────────────────────
@@ -3688,6 +3797,15 @@
     if (action === 'call-member') {
       var cm = findListMember(btn.getAttribute('data-id'));
       if (cm && window.Dialer) window.Dialer.call(cm, { onDone: function () { reloadMembers({ keepSelection: true }); } });
+      return;
+    }
+    if (action === 'compose-member') {
+      return composeMember(findListMember(btn.getAttribute('data-id')), btn.getAttribute('data-channel'));
+    }
+    if (action === 'linkedin-menu') {
+      var lm = findListMember(btn.getAttribute('data-id'));
+      if (liMenu && liMenu.btn === btn) return closeLiMenu();
+      if (lm) { openLiMenu(btn, lm); liMenu.btn = btn; }
       return;
     }
     if (action === 'power-dial') {

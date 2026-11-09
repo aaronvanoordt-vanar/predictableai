@@ -27,6 +27,13 @@
  *      (≤ 16 MB) con pie opcional (`body`). Misma ventana de 24 h que el
  *      texto; sale por POST /api/ext/v3/conversations/messages/file y se
  *      guarda con payload.type/media/wati_id para que la bandeja lo pinte.
+ *  • { action: "linkedin_invite", member_id }
+ *      Solicitud de conexión de LinkedIn (sin nota) a un lead de Listas desde
+ *      la cuenta propia (Unipile), con un clic (2026-11-09). Respeta los mismos
+ *      topes por cuenta que el motor (_shared/linkedin-limits.ts; cuenta como
+ *      `connection_sent` con payload.via = "unipile", así el motor también la
+ *      descuenta), el bloqueo de la cuenta y la lista «No contactar». Gratis
+ *      como toda acción a mano. → { status: "sent" | "already_connected" | "pending" }
  *  • { channel: "linkedin", member_id | contact_ref, body }
  *      Con la cuenta de LinkedIn propia conectada (Unipile, 2026-10-17):
  *      responde en el chat de LinkedIn del lead (el chat de la conversación,
@@ -98,7 +105,9 @@ import { isWebmAudio, WebmOpusError, webmOpusToOgg } from "../_shared/webm-opus.
 import { syncWatiHistory } from "../_shared/wati-history.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 import * as unipile from "../_shared/unipile.ts";
+import * as liLimits from "../_shared/linkedin-limits.ts";
 import { activeBlock } from "../_shared/linkedin-limits.ts";
+import * as suppression from "../_shared/suppression.ts";
 import { canonicalLinkedinUrl } from "../_shared/dripify.ts";
 import { loadEmailSettings, MailboxError, sendViaMailboxes } from "../_shared/mailbox-send.ts";
 import { resolveEmailProvider } from "../_shared/mailbox-rotation.ts";
@@ -898,6 +907,8 @@ Deno.serve(async (req) => {
       return json({ updated: data?.length ?? 0 }, 200, cors);
     }
 
+    if (body?.action === "linkedin_invite") return json(await sendLinkedinInvite(db, user.id, String(body.member_id ?? "")), 200, cors);
+
     if (body?.action === "react") return json({ message: await sendReaction(db, user.id, String(body.id ?? ""), body.emoji) }, 200, cors);
 
     if (body?.action === "link_member") {
@@ -1053,6 +1064,94 @@ async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string
   }).select("*").single();
   if (error) throw new HttpError(error.message, 500);
   return row;
+}
+
+/**
+ * Invitación de LinkedIn a un lead de Listas, desde la cuenta propia
+ * (Unipile). Siempre sin nota (la nota es de LinkedIn Premium, decisión del
+ * dueño 2026-11-04). Mismos topes diarios y semanales que el motor; el
+ * espaciado de 2–8 min no aplica porque la manda una persona con un clic.
+ */
+async function sendLinkedinInvite(db: SupabaseClient, userId: string, memberId: string): Promise<Json> {
+  if (!UUID_RE.test(memberId)) throw new HttpError("member_id inválido", 400);
+  const env = unipile.unipileEnv();
+  if (!env) throw new HttpError("El envío desde tu cuenta de LinkedIn no está habilitado en la plataforma.", 428, "linkedin_not_configured");
+  const { data: acc } = await db.from("channel_accounts").select("id, secret, status, config").eq("user_id", userId).eq("provider", "unipile").maybeSingle();
+  if (!acc?.secret || acc.status === "disconnected") {
+    throw new HttpError("Conecta tu cuenta de LinkedIn en Canales → LinkedIn para enviar invitaciones desde Predictable.", 428, "linkedin_account_required");
+  }
+  const now = new Date();
+  const block = activeBlock(acc.config, now);
+  if (block) throw new HttpError(block.reason + (block.until ? "" : " Vuelve a conectar tu cuenta de LinkedIn en Canales → LinkedIn."), 409, "linkedin_blocked");
+  const { data: member } = await db.from("prospect_list_members")
+    .select("id, linkedin_url, email, phone, company_domain, contact_status")
+    .eq("id", memberId).eq("user_id", userId).maybeSingle();
+  if (!member) throw new HttpError("El lead no existe o no es tuyo.", 404);
+  const url = canonicalLinkedinUrl(member.linkedin_url);
+  if (!url) throw new HttpError("El lead no tiene una URL de LinkedIn válida.", 400, "linkedin_url_missing");
+  // «No contactar»: si la lista no se puede leer, no se envía a ciegas.
+  const sup = await suppression.isSuppressed(db, userId, "linkedin", suppression.contactOfMember(member));
+  if (sup.error) throw new HttpError("No pudimos revisar tu lista «No contactar». Intenta de nuevo en unos minutos.", 503, "suppression_unavailable");
+  if (sup.suppressed) throw new HttpError(sup.reason || "Este lead está en tu lista «No contactar» para LinkedIn.", 409, "suppressed");
+  // Topes de la cuenta (los mismos eventos que cuenta campaign-run).
+  const day = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const week = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const base = () => db.from("campaign_events").select("id", { count: "exact", head: true })
+    .eq("user_id", userId).eq("channel", "linkedin").eq("type", "connection_sent").eq("payload->>via", "unipile");
+  const [d, w] = await Promise.all([base().gte("created_at", day), base().gte("created_at", week)]);
+  const counts: liLimits.SendCounts = { invitesDay: d.count ?? 0, invitesWeek: w.count ?? 0, messagesDay: 0, lastSendAt: null };
+  const limits = liLimits.effectiveLimits(acc.config, acc.config?.connected_at, now);
+  const p = liLimits.pace("invite", counts, limits, now, 0);
+  if (!p.ok) throw new HttpError(p.reason, 429, "linkedin_limit");
+
+  let profile: unipile.UnipileUser;
+  let invitationId: string | null = null;
+  try {
+    profile = await unipile.resolveUser(env, acc.secret, url);
+    if (!profile.providerId) throw new HttpError("LinkedIn no encontró el perfil del lead.", 404, "linkedin_profile_not_found");
+    if (profile.firstDegree) return { status: "already_connected" };
+    if (profile.invitationPending) return { status: "pending" };
+    invitationId = (await unipile.invite(env, acc.secret, profile.providerId, "")).invitationId;
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    throw await linkedinAccountError(db, acc, e, now);
+  }
+  const at = now.toISOString();
+  await db.from("campaign_events").insert({
+    user_id: userId, member_id: member.id, channel: "linkedin", type: "connection_sent",
+    provider_message_id: invitationId, detail: "Solicitud de conexión enviada desde Listas (sin nota).",
+    payload: { via: "unipile", source: "manual", provider_id: profile.providerId },
+  });
+  if (["no_contactado", "en_campana"].includes(member.contact_status)) {
+    await db.from("prospect_list_members").update({ contact_status: "conexion_enviada", status_changed_at: at }).eq("id", member.id);
+  }
+  return { status: "sent" };
+}
+
+/**
+ * Error de Unipile al invitar a mano. Lo que es de la CUENTA (desconectada,
+ * límite de LinkedIn, ritmo de la API) sella config.send_block igual que el
+ * motor, para que las campañas también se detengan; lo del lead solo se dice.
+ */
+async function linkedinAccountError(db: SupabaseClient, acc: Json, e: unknown, now: Date): Promise<HttpError> {
+  const cls = unipile.classifyError(e);
+  const msg = unipile.humanError(e);
+  if (cls === "account" || cls === "limit" || cls === "throttle") {
+    const ue = e as unipile.UnipileError;
+    const at = now.toISOString();
+    const block: Json = { reason: msg, code: ue?.type || cls, status: ue?.status ?? null, detail: String(ue?.message ?? "").slice(0, 240), at };
+    const set: Json = { send_block: block };
+    if (cls === "limit") {
+      block.until = new Date(now.getTime() + liLimits.LINKEDIN_LIMITS.limit_block_ms).toISOString();
+      set.last_limited_at = at;
+    } else if (cls === "throttle") {
+      block.until = new Date(now.getTime() + liLimits.LINKEDIN_LIMITS.throttle_block_ms).toISOString();
+    }
+    await patchChannelConfig(db, acc.id, set);
+    if (cls === "account") await db.from("channel_accounts").update({ status: "error", last_error: msg }).eq("id", acc.id);
+    return new HttpError(msg, 409, "linkedin_blocked");
+  }
+  return new HttpError(msg, cls === "transient" || cls === "session" ? 502 : 409, "linkedin_send_failed");
 }
 
 function linkedinFileKind(out: unipile.OutFile): string {
