@@ -7372,4 +7372,9 @@ window.I18N_DICTS['pt-BR'] = {
   "Conecta tu LinkedIn en Canales → LinkedIn para enviar invitaciones desde Predictable. Mientras, abrimos su perfil para que toques «Conectar».": "Conecte seu LinkedIn em Canais → LinkedIn para enviar convites pelo Predictable. Enquanto isso, abrimos o perfil para você tocar em «Conectar».",
   "No se pudo enviar la invitación de LinkedIn.": "Não foi possível enviar o convite do LinkedIn.",
   "No se pudo enviar la invitación de LinkedIn. Intenta de nuevo.": "Não foi possível enviar o convite do LinkedIn. Tente novamente.",
+  "Está tardando más de lo normal… Si tienes Predictable abierto en otra pestaña, ciérrala.": "Está demorando mais do que o normal… Se você tem o Predictable aberto em outra aba, feche-a.",
+  "No se pudo cargar el inicio de sesión. Revisa tu conexión.": "Não foi possível carregar o login. Verifique sua conexão.",
+  "El inicio de sesión no respondió a tiempo.": "O login não respondeu a tempo.",
+  " · Vuelve a ": " · Volte a ",
+  "iniciar sesión": "entrar",
 };

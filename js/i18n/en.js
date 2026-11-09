@@ -7222,4 +7222,9 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Conecta tu LinkedIn en Canales → LinkedIn para enviar invitaciones desde Predictable. Mientras, abrimos su perfil para que toques «Conectar».": "Connect your LinkedIn in Channels → LinkedIn to send invitations from Predictable. Meanwhile, we opened their profile so you can tap “Connect”.",
   "No se pudo enviar la invitación de LinkedIn.": "Couldn't send the LinkedIn invitation.",
   "No se pudo enviar la invitación de LinkedIn. Intenta de nuevo.": "Couldn't send the LinkedIn invitation. Try again.",
+  "Está tardando más de lo normal… Si tienes Predictable abierto en otra pestaña, ciérrala.": "This is taking longer than usual… If you have Predictable open in another tab, close it.",
+  "No se pudo cargar el inicio de sesión. Revisa tu conexión.": "Couldn't load sign-in. Check your connection.",
+  "El inicio de sesión no respondió a tiempo.": "Sign-in didn't respond in time.",
+  " · Vuelve a ": " · Go back to ",
+  "iniciar sesión": "sign in",
 });

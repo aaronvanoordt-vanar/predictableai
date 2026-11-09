@@ -4409,7 +4409,7 @@
 
     var left = h('div', { class: 'table-card' });
     // Leads inbound esperando su primer contacto, con cronómetro (js/inbound.js).
-    if (global.inbound && global.inbound.inboxStrip) left.appendChild(global.inbound.inboxStrip());
+    if (global.inbound && global.inbound.inboxStrip && !(global.isHiddenPage && global.isHiddenPage('inbound'))) left.appendChild(global.inbound.inboxStrip());
     var filters = h('div', { class: 'cmp-inbox-filters' });
     var search = h('input', { type: 'search', placeholder: 'Buscar por nombre, empresa o cargo…', 'data-action': 'inbox-filter-q', value: state.inboxFilter.q || '' });
     filters.appendChild(search);
@@ -5046,7 +5046,7 @@
       box.appendChild(lta);
       var lfoot = h('div', { class: 'cmp-reply-row' });
       lfoot.appendChild(h('span', { class: 'pros-hint', text: 'Ni Dripify ni LinkedIn permiten enviar mensajes por API: copiamos tu respuesta y abrimos el perfil para que la pegues en el chat. Enter copia y abre · Shift+Enter, nueva línea.' }));
-      lfoot.appendChild(agendaBtn(conv));
+      if (!(global.isHiddenPage && global.isHiddenPage('agenda'))) lfoot.appendChild(agendaBtn(conv));
       lfoot.appendChild(aiDraftBtn(conv, 'linkedin'));
       lfoot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-linkedin', 'data-key': conv.key, text: 'Copiar y abrir LinkedIn' }));
       box.appendChild(lfoot);
@@ -5122,7 +5122,7 @@
         }));
       }
     }
-    foot.appendChild(agendaBtn(conv));
+    if (!(global.isHiddenPage && global.isHiddenPage('agenda'))) foot.appendChild(agendaBtn(conv));
     foot.appendChild(aiDraftBtn(conv, chosen));
     foot.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-action': 'reply-send', 'data-key': conv.key, 'data-channel': chosen, text: 'Enviar por ' + CH[chosen].label }));
     box.appendChild(foot);
