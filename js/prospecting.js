@@ -2900,7 +2900,7 @@
     el.innerHTML =
       '<span class="pros-colpop-lbl">LinkedIn</span>' +
       '<button type="button" role="menuitem" class="pros-colpop-opt" data-li="connect" style="width:100%;border:0;background:none;text-align:left;color:inherit;font:inherit">' +
-        '<span>Enviar solicitud de conexión<br><em>Abre su perfil para que toques «Conectar»</em></span></button>' +
+        '<span>Enviar solicitud de conexión<br><em>Sale desde tu LinkedIn conectado, sin nota</em></span></button>' +
       '<button type="button" role="menuitem" class="pros-colpop-opt" data-li="message" style="width:100%;border:0;background:none;text-align:left;color:inherit;font:inherit">' +
         '<span>Enviar mensaje<br><em>Desde la Bandeja (solo a tus contactos)</em></span></button>';
     el.querySelectorAll('.pros-colpop-opt span').forEach(function (sp) { sp.style.whiteSpace = 'normal'; });
@@ -2916,12 +2916,8 @@
       if (!b) return;
       var kind = b.getAttribute('data-li');
       closeLiMenu();
-      if (kind === 'connect') {
-        var url = sUrl(m.linkedin_url);
-        if (url === '#') return toast('La URL de LinkedIn de este contacto no es válida.', 'warn');
-        window.open(url, '_blank', 'noopener');
-        toast('Abrimos su perfil: toca «Conectar» en LinkedIn. Para enviar invitaciones en automático, agrégalo a una campaña.', 'info');
-      } else composeMember(m, 'linkedin');
+      if (kind === 'connect') sendLinkedinInvite(btn, m);
+      else composeMember(m, 'linkedin');
     });
     liMenu = {
       el: el,
@@ -2932,6 +2928,35 @@
     document.addEventListener('keydown', liMenu.onKey, true);
     var first = el.querySelector('[data-li]');
     if (first) first.focus();
+  }
+  /**
+   * Invitación de LinkedIn con un clic desde la cuenta propia (inbox-send
+   * `linkedin_invite`: mismos topes, bloqueos y lista «No contactar» que las
+   * campañas). Sin LinkedIn conectado abre su perfil para conectar a mano.
+   */
+  function sendLinkedinInvite(btn, m) {
+    var pdApi = pd();
+    if (!pdApi || !pdApi.linkedinInvite) return;
+    if (btn.disabled) return;
+    btn.disabled = true;
+    pdApi.linkedinInvite(m.id).then(function (r) {
+      var st = r && r.status;
+      if (st === 'already_connected') toast('Ya son contactos en LinkedIn: puedes escribirle un mensaje.', 'info');
+      else if (st === 'pending') toast('Ya tiene una invitación tuya pendiente en LinkedIn.', 'info');
+      else {
+        toast('Solicitud de conexión enviada desde tu LinkedIn.', 'success');
+        if (m.contact_status === 'no_contactado' || m.contact_status === 'en_campana') {
+          m.contact_status = 'conexion_enviada';
+          renderListsRight();
+        }
+      }
+    }, function (e) {
+      if (e && e.code === 'linkedin_account_required') {
+        var url = sUrl(m.linkedin_url);
+        if (url !== '#') window.open(url, '_blank', 'noopener');
+        toast('Conecta tu LinkedIn en Canales → LinkedIn para enviar invitaciones desde Predictable. Mientras, abrimos su perfil para que toques «Conectar».', 'warn');
+      } else toast((e && e.message) || 'No se pudo enviar la invitación de LinkedIn.', 'error');
+    }).then(function () { btn.disabled = false; });
   }
   function composeMember(m, channel) {
     if (!m || !canCompose()) return;

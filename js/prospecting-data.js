@@ -1834,7 +1834,33 @@
   }
 
   // ── API pública ────────────────────────────────────────────
+  /**
+   * Solicitud de conexión de LinkedIn (sin nota) desde la cuenta propia del
+   * usuario (inbox-send `linkedin_invite`). Devuelve { status: 'sent' |
+   * 'already_connected' | 'pending' }; un error trae `code` (p. ej.
+   * 'linkedin_account_required' si no conectó su LinkedIn) y el mensaje para
+   * mostrar tal cual.
+   */
+  async function linkedinInvite(memberId) {
+    const token = await getAccessToken();
+    const res = await fetch(global.SUPABASE_CONFIG.url + '/functions/v1/inbox-send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ action: 'linkedin_invite', member_id: memberId }),
+    });
+    let body = null;
+    try { body = await res.json(); } catch (_) { /* respuesta no-JSON */ }
+    if (!res.ok) {
+      const err = new Error((body && body.message) || (res.status === 401 ? 'Sesión expirada. Vuelve a iniciar sesión.' : 'No se pudo enviar la invitación de LinkedIn. Intenta de nuevo.'));
+      err.status = res.status;
+      err.code = body && body.error;
+      throw err;
+    }
+    return body || {};
+  }
+
   global.prospectingData = {
+    linkedinInvite,
     CONTACT_STATUSES,
     MEETING_STATUSES,
     searchPeople,
