@@ -7361,4 +7361,9 @@ window.I18N_DICTS['pt-BR'] = {
   "Conecta tu cuenta de Apollo (arriba, en «Base de datos») para buscar empresas.": "Conecte sua conta do Apollo (acima, em «Base de dados») para buscar empresas.",
   "Conecta tu cuenta de Apollo en Buscar (Base de datos → Conectar Apollo) para enviar email con Apollo: la cuenta compartida de la plataforma no envía correo a tu nombre.": "Conecte sua conta do Apollo na Busca (Base de dados → Conectar Apollo) para enviar e-mail com o Apollo: a conta compartilhada da plataforma não envia e-mail em seu nome.",
   "Conecta tu cuenta de Apollo en Buscar (Base de datos → Conectar Apollo) para buscar empresas: cada página usa 1 crédito de tu Apollo.": "Conecte sua conta do Apollo na Busca (Base de dados → Conectar Apollo) para buscar empresas: cada página usa 1 crédito do seu Apollo.",
+  "Está tardando más de lo normal… Si tienes Predictable abierto en otra pestaña, ciérrala.": "Está demorando mais do que o normal… Se você tem o Predictable aberto em outra aba, feche-a.",
+  "No se pudo cargar el inicio de sesión. Revisa tu conexión.": "Não foi possível carregar o login. Verifique sua conexão.",
+  "El inicio de sesión no respondió a tiempo.": "O login não respondeu a tempo.",
+  " · Vuelve a ": " · Volte a ",
+  "iniciar sesión": "entrar",
 };
