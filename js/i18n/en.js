@@ -7211,4 +7211,9 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Conecta tu cuenta de Apollo (arriba, en «Base de datos») para buscar empresas.": "Connect your Apollo account (above, under “Database”) to search companies.",
   "Conecta tu cuenta de Apollo en Buscar (Base de datos → Conectar Apollo) para enviar email con Apollo: la cuenta compartida de la plataforma no envía correo a tu nombre.": "Connect your Apollo account in Search (Database → Connect Apollo) to send email with Apollo: the platform's shared account doesn't send email on your behalf.",
   "Conecta tu cuenta de Apollo en Buscar (Base de datos → Conectar Apollo) para buscar empresas: cada página usa 1 crédito de tu Apollo.": "Connect your Apollo account in Search (Database → Connect Apollo) to search companies: each page uses 1 credit from your Apollo.",
+  "Está tardando más de lo normal… Si tienes Predictable abierto en otra pestaña, ciérrala.": "This is taking longer than usual… If you have Predictable open in another tab, close it.",
+  "No se pudo cargar el inicio de sesión. Revisa tu conexión.": "Couldn't load sign-in. Check your connection.",
+  "El inicio de sesión no respondió a tiempo.": "Sign-in didn't respond in time.",
+  " · Vuelve a ": " · Go back to ",
+  "iniciar sesión": "sign in",
 });

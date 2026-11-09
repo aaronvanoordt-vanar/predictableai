@@ -29,35 +29,70 @@
 <script src="js/supabase-client.js"></script>
 <script src="js/i18n.js?v=20261023"></script>
 <script>
+  // Cada paso tiene un tiempo límite: antes, si Supabase no respondía (o el
+  // candado de la sesión lo tenía otra pestaña de la app), el spinner giraba
+  // para siempre sin decir nada.
   (async function () {
-    // detectSessionInUrl ya parseó el hash; ahora solo enrutamos.
+    const msgEl = document.getElementById('msg');
+    const errEl = document.getElementById('err');
+    function withTimeout(promise, ms) {
+      return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+      ]);
+    }
+    function fail(text) {
+      document.querySelector('.spinner').style.display = 'none';
+      msgEl.textContent = text;
+      errEl.innerHTML = '<a href="#" id="retry">Reintentar</a> · Vuelve a <a href="./auth.html">iniciar sesión</a>.';
+      document.getElementById('retry').addEventListener('click', (e) => { e.preventDefault(); location.reload(); });
+    }
+    const slowTimer = setTimeout(() => {
+      msgEl.textContent = 'Está tardando más de lo normal… Si tienes Predictable abierto en otra pestaña, ciérrala.';
+    }, 6000);
+
     try {
-      const session = await window.supabaseHelpers.getSession();
-      if (!session) {
-        // Quizá el hash aún no se procesó; esperar un tick
-        await new Promise(r => setTimeout(r, 800));
-        const s2 = await window.supabaseHelpers.getSession();
-        if (!s2) {
-          document.getElementById('msg').textContent = 'No se pudo iniciar sesión.';
-          document.getElementById('err').innerHTML = 'Vuelve a <a href="./auth.html">intentarlo</a>.';
-          return;
+      if (!window.supabaseHelpers) { clearTimeout(slowTimer); fail('No se pudo cargar el inicio de sesión. Revisa tu conexión.'); return; }
+
+      let session = null;
+      try {
+        session = await withTimeout(window.supabaseHelpers.getSession(), 15000);
+        if (!session) {
+          // Quizá el hash aún no se procesó; esperar un tick
+          await new Promise(r => setTimeout(r, 800));
+          session = await withTimeout(window.supabaseHelpers.getSession(), 10000);
         }
+      } catch (e) {
+        clearTimeout(slowTimer);
+        fail('El inicio de sesión no respondió a tiempo.');
+        return;
+      }
+      if (!session) {
+        clearTimeout(slowTimer);
+        fail('No se pudo iniciar sesión.');
+        return;
       }
       // Esperar 700ms para que el trigger handle_new_user haya corrido en Supabase
       await new Promise(r => setTimeout(r, 700));
 
       // Route based on onboarding status.
       // New users go to the multi-step onboarding wizard; completed users go to app.
-      const user = await window.supabaseHelpers.getUser();
-      const { data: profile } = await window.supabaseClient
-        .from('profiles')
-        .select('onboarded')
-        .eq('id', user.id)
-        .maybeSingle();
-
-      if (!profile || !profile.onboarded) {
-        window.location.replace('./onboarding.html');
-        return;
+      // Si el perfil no responde a tiempo se entra igual: auth-guard.js vuelve
+      // a revisar el onboarding dentro de la app y redirige si hace falta.
+      let profile = null;
+      try {
+        const { data } = await withTimeout(window.supabaseClient
+          .from('profiles')
+          .select('onboarded')
+          .eq('id', session.user.id)
+          .maybeSingle(), 10000);
+        profile = data;
+        if (!profile || !profile.onboarded) {
+          window.location.replace('./onboarding.html');
+          return;
+        }
+      } catch (e) {
+        console.warn('[auth-callback] perfil sin respuesta, entrando a la app', e);
       }
 
       // /miforms/ (Hub calibration survey) is optional — it's offered as a
@@ -65,7 +100,8 @@
       // blocking entry. See js/miforms-prompt.js.
       window.location.replace(window.APP_URL || './index.html');
     } catch (e) {
-      document.getElementById('err').textContent = 'Error: ' + e.message;
+      clearTimeout(slowTimer);
+      fail('Error: ' + e.message);
     }
   })();
 </script>
