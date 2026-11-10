@@ -279,6 +279,29 @@ export async function subscribeApp(token: string, wabaId: string): Promise<void>
 }
 
 /**
+ * Diagnóstico de entrega de webhooks: qué apps están suscritas al WABA (y si
+ * alguna desvía los avisos con override_callback_uri) y cómo ve Meta el
+ * número. Cada consulta falla por separado: el error queda en su campo.
+ */
+export async function webhookDiagnosis(token: string, wabaId: string, phoneNumberId: string): Promise<Json> {
+  const out: Json = { waba_id: wabaId, phone_number_id: phoneNumberId };
+  try {
+    const r = await graph(token, "GET", `${wabaId}/subscribed_apps`, undefined, { timeoutMs: 10_000 });
+    out.subscribed_apps = (Array.isArray(r?.data) ? r.data : []).map((a: Json) => ({
+      id: a?.whatsapp_business_api_data?.id ?? null,
+      name: a?.whatsapp_business_api_data?.name ?? null,
+      override_callback_uri: a?.override_callback_uri ?? null,
+    }));
+  } catch (e) { out.subscribed_apps_error = (e as Error).message; }
+  try {
+    out.phone = await graph(token, "GET",
+      `${phoneNumberId}?fields=display_phone_number,status,platform_type,is_on_biz_app,code_verification_status,webhook_configuration`,
+      undefined, { timeoutMs: 10_000 });
+  } catch (e) { out.phone_error = (e as Error).message; }
+  return out;
+}
+
+/**
  * Coexistencia: pide a Meta que mande por webhook los contactos
  * (`smb_app_state_sync`) y el historial de chats (`history`) de la app de
  * WhatsApp Business. Cada tipo se puede pedir UNA sola vez por número y solo

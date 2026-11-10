@@ -105,6 +105,32 @@ async function stampWebhookSeen(db: SupabaseClient, acc: Json, field: string) {
   acc.config = (await patchChannelConfig(db, acc.id, { webhook })) ?? { ...acc.config, webhook };
 }
 
+const DIAG_EVERY_MS = 60 * 60 * 1000;
+
+/**
+ * Diagnóstico (como mucho una vez por hora y cuenta): si los recibos llegan
+ * pero los mensajes del lead no, la causa está en Meta (otra app suscrita al
+ * WABA, un override_callback_uri, el número en otra plataforma). Se registra
+ * en el log y en config.webhook.diagnosis.
+ */
+async function maybeDiagnose(db: SupabaseClient, acc: Json) {
+  const wh: Json = acc.config?.webhook ?? {};
+  const last = wh.diagnosis?.at ? Date.parse(wh.diagnosis.at) : 0;
+  if (Date.now() - last < DIAG_EVERY_MS) return;
+  const token = whatsapp.metaSecret(acc).access_token;
+  const wabaId = String(acc.config?.waba_id ?? "");
+  const phoneId = String(acc.config?.phone_number_id ?? "");
+  if (!token || !wabaId || !phoneId) return;
+  try {
+    const diagnosis = { ...(await meta.webhookDiagnosis(token, wabaId, phoneId)), app_id: Deno.env.get("META_APP_ID") ?? null, at: new Date().toISOString() };
+    console.log("[meta-whatsapp-webhook] diagnosis", JSON.stringify(diagnosis));
+    const webhook = { ...(acc.config?.webhook ?? {}), diagnosis };
+    acc.config = (await patchChannelConfig(db, acc.id, { webhook })) ?? { ...acc.config, webhook };
+  } catch (e) {
+    console.error("[meta-whatsapp-webhook] diagnosis:", (e as Error).message);
+  }
+}
+
 // ── Entrante del lead ───────────────────────────────────────────────────────
 
 /** Mensaje ENTRANTE del lead: la regla común vive en _shared/whatsapp-inbound.ts (igual que WATI). */
@@ -272,7 +298,11 @@ Deno.serve(async (req) => {
           console.warn("[meta-whatsapp-webhook] sin cuenta conectada para phone_number_id", JSON.stringify({ kind: ev.kind, phone_number_id: ev.phoneNumberId, waba: ev.wabaId }));
           continue;
         }
-        if (!stamped.has(acc.id)) { stamped.add(acc.id); await stampWebhookSeen(db, acc, ev.kind); }
+        if (!stamped.has(acc.id)) {
+          stamped.add(acc.id);
+          await stampWebhookSeen(db, acc, ev.kind);
+          await maybeDiagnose(db, acc);
+        }
         if (ev.kind === "message") await handleInbound(db, acc, ev.message);
         else if (ev.kind === "echo") await recordOutgoingFromApp(db, acc, ev.message, "wa_app");
         else if (ev.kind === "history") {
