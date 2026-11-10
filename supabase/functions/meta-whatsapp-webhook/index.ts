@@ -109,7 +109,7 @@ async function stampWebhookSeen(db: SupabaseClient, acc: Json, field: string) {
 
 /** Mensaje ENTRANTE del lead: la regla común vive en _shared/whatsapp-inbound.ts (igual que WATI). */
 async function handleInbound(db: SupabaseClient, acc: Json, m: meta.WaMessage) {
-  await recordInbound(db, acc, {
+  const r = await recordInbound(db, acc, {
     provider: "meta",
     from: m.from,
     messageId: m.wamid,
@@ -120,6 +120,16 @@ async function handleInbound(db: SupabaseClient, acc: Json, m: meta.WaMessage) {
     reaction: m.reaction,
     payload: messagePayload(m),
   });
+  console.log("[meta-whatsapp-webhook] inbound", JSON.stringify({
+    account: acc.id, from: maskPhone(m.from), type: m.type, wamid: m.wamid.slice(-12),
+    stored: r.stored, duplicate: r.duplicate, member: r.memberId, opt_out: r.optOut, stopped: r.stopped,
+  }));
+}
+
+/** Diagnóstico: el número del lead sin sus dígitos del medio (los logs no guardan datos de contacto). */
+function maskPhone(p: string | null | undefined): string {
+  const d = String(p ?? "");
+  return d.length > 6 ? d.slice(0, 3) + "…" + d.slice(-3) : d ? "…" : "";
 }
 
 // ── Lo que el cliente escribió en la app (coexistencia) y el historial ─────
@@ -247,11 +257,21 @@ Deno.serve(async (req) => {
   const cache: AccountCache = new Map();
   const stamped = new Set<string>();
   const templateSyncs = new Set<string>();
-  for (const ev of meta.parseWebhook(body)) {
+  const events = meta.parseWebhook(body);
+  // Diagnóstico: qué trae cada aviso de Meta (campos y tipos, sin contenido).
+  console.log("[meta-whatsapp-webhook] received", JSON.stringify({
+    object: body?.object ?? null,
+    fields: (Array.isArray(body?.entry) ? body.entry : []).flatMap((e: Json) => (Array.isArray(e?.changes) ? e.changes : []).map((c: Json) => c?.field)),
+    events: events.map((e) => e.kind === "other" ? `other:${e.field}` : e.kind),
+  }));
+  for (const ev of events) {
     try {
       if (ev.kind === "message" || ev.kind === "echo" || ev.kind === "history" || ev.kind === "status") {
         const acc = await accountByPhone(db, cache, ev.phoneNumberId);
-        if (!acc) continue;
+        if (!acc) {
+          console.warn("[meta-whatsapp-webhook] sin cuenta conectada para phone_number_id", JSON.stringify({ kind: ev.kind, phone_number_id: ev.phoneNumberId, waba: ev.wabaId }));
+          continue;
+        }
         if (!stamped.has(acc.id)) { stamped.add(acc.id); await stampWebhookSeen(db, acc, ev.kind); }
         if (ev.kind === "message") await handleInbound(db, acc, ev.message);
         else if (ev.kind === "echo") await recordOutgoingFromApp(db, acc, ev.message, "wa_app");
