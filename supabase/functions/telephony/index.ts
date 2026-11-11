@@ -204,8 +204,29 @@ async function handle(db: SupabaseClient, userId: string, action: string, p: Jso
       const phone = toE164(p?.phone);
       if (!phone) throw new TelephonyError("Escribe tu número con el prefijo del país (+52…).");
       const { data: prof } = await db.from("profiles").select("full_name, email").eq("id", userId).maybeSingle();
-      const { validation_code } = await twilio.startCallerIdValidation(env, phone, `Predictable ${prof?.email ?? userId}`);
+      const tag = twilio.callerIdTag(String(prof?.email ?? userId));
       const existing = (await accounts(db, userId)).find((a) => a.provider === NATIVE_PROVIDER);
+      // El número puede estar ya verificado en Twilio (un intento anterior que no se guardó, o
+      // verificado a mano): pedir otra verificación responde «already verified» y el usuario queda trabado.
+      const found = await twilio.findCallerId(env, phone);
+      if (found) {
+        const { data: others } = await db.from("telephony_accounts").select("user_id")
+          .eq("provider", NATIVE_PROVIDER).neq("user_id", userId)
+          .or(`config->>caller_id.eq.${phone},config->>pending_caller_id.eq.${phone}`).limit(1);
+        const action = twilio.existingCallerIdAction(found.friendly_name, tag, (others ?? []).length > 0);
+        if (action === "taken") throw new TelephonyError("Ese número ya está verificado en otra cuenta de Predictable. Escríbenos a soporte si es tuyo.", 409);
+        if (action === "adopt") {
+          const accs = await accounts(db, userId);
+          const hasDefault = accs.some((a) => (a as Json).is_default);
+          const { pending_caller_id: _p, pending_since: _s, ...rest } = (existing?.config ?? {}) as Json;
+          const config = { ...rest, caller_id: phone, caller_id_kind: "verified" };
+          if (existing) await db.from("telephony_accounts").update({ config, is_default: !hasDefault || (existing as Json).is_default, status: "connected", last_error: null }).eq("id", existing.id);
+          else await db.from("telephony_accounts").insert({ user_id: userId, provider: NATIVE_PROVIDER, config, secret: "", webhook_secret: newSecret(), is_default: !hasDefault, status: "connected" });
+          return { phone, verified: true, caller_id: phone };
+        }
+        await twilio.deleteCallerId(env, found.sid);
+      }
+      const { validation_code } = await twilio.startCallerIdValidation(env, phone, tag);
       const config = { ...(existing?.config ?? {}), pending_caller_id: phone, pending_since: new Date().toISOString() };
       if (existing) await db.from("telephony_accounts").update({ config }).eq("id", existing.id);
       else await db.from("telephony_accounts").insert({ user_id: userId, provider: NATIVE_PROVIDER, config, secret: "", webhook_secret: newSecret() });

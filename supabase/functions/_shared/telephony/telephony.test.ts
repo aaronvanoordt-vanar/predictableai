@@ -236,3 +236,13 @@ Deno.test("cloudtalk: agentes por ID o por email", () => {
   assertEquals(pickAgent(agents, "123456"), null);
   assertEquals(pickAgent(agents, ""), null);
 });
+
+Deno.test("twilio: número ya verificado — adoptar, reverificar o rechazar", () => {
+  const tw = twilio;
+  const tag = tw.callerIdTag("ana@empresa.com");
+  assertEquals(tag, "Predictable ana@empresa.com");
+  assertEquals(tw.existingCallerIdAction("Predictable ana@empresa.com", tag, false), "adopt");
+  assertEquals(tw.existingCallerIdAction("Mi celular", tag, false), "reverify");
+  assertEquals(tw.existingCallerIdAction("Predictable ana@empresa.com", tag, true), "taken");
+  assertEquals(tw.callerIdTag("x".repeat(100)).length, 64);
+});

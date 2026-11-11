@@ -203,6 +203,40 @@ export async function callerIdVerified(env: TwilioEnv, e164: string): Promise<bo
   return Array.isArray(data?.outgoing_caller_ids) && data.outgoing_caller_ids.length > 0;
 }
 
+/** El identificador de llamada ya registrado en la cuenta de Twilio para ese número, si existe. */
+export async function findCallerId(env: TwilioEnv, e164: string): Promise<{ sid: string; friendly_name: string } | null> {
+  const res = await twilioFetch(env, `/OutgoingCallerIds.json?PhoneNumber=${encodeURIComponent(e164)}`);
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => ({}));
+  const row = Array.isArray(data?.outgoing_caller_ids) ? data.outgoing_caller_ids[0] : null;
+  return row?.sid ? { sid: String(row.sid), friendly_name: String(row.friendly_name ?? "") } : null;
+}
+
+/** Quita un identificador de llamada de la cuenta de Twilio (para volver a verificarlo). */
+export async function deleteCallerId(env: TwilioEnv, sid: string): Promise<void> {
+  if (!/^PN[0-9a-f]{32}$/i.test(sid)) throw new TelephonyError("Identificador inválido.", 400);
+  const res = await twilioFetch(env, `/OutgoingCallerIds/${sid}.json`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404) throw new TelephonyError(`Twilio no pudo reiniciar la verificación (${res.status}).`, 502);
+}
+
+/** La etiqueta con la que cada usuario registra su número en la cuenta compartida de Twilio. */
+export function callerIdTag(emailOrId: string): string {
+  return `Predictable ${emailOrId}`.slice(0, 64);
+}
+
+/**
+ * Qué hacer cuando el número ya figura verificado en Twilio:
+ *  - "adopt": lo verificó este mismo usuario (misma etiqueta) → se guarda sin otra llamada.
+ *  - "taken": lo usa otra cuenta de Predictable → no se entrega.
+ *  - "reverify": nadie de Predictable lo reclama (verificado a mano o etiqueta vieja) → se borra
+ *    y se vuelve a verificar, así el usuario prueba que el número es suyo.
+ */
+export function existingCallerIdAction(friendlyName: string, ownTag: string, claimedByOther: boolean): "adopt" | "taken" | "reverify" {
+  if (claimedByOther) return "taken";
+  if (friendlyName.trim() === ownTag.trim()) return "adopt";
+  return "reverify";
+}
+
 /** El audio de una grabación (mp3) para servirlo sin exponer las credenciales. */
 export async function fetchRecording(env: TwilioEnv, recordingSid: string): Promise<Response> {
   if (!/^RE[0-9a-f]{32}$/i.test(recordingSid)) throw new TelephonyError("Grabación inválida.", 400);

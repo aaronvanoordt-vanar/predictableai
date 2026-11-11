@@ -357,7 +357,11 @@
     row.appendChild(inp);
     row.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: n.caller_id ? 'Cambiar número' : 'Verificar mi número', onclick: async function (ev) {
       ev.target.disabled = true;
-      try { st.verify = await tel('caller_id_start', { phone: inp.value }); render(); }
+      try {
+        var r = await tel('caller_id_start', { phone: inp.value });
+        if (r && r.verified) { st.verify = null; toast('Ese número ya estaba verificado: quedó conectado.', 'success'); await loadStatus(); render(); }
+        else { st.verify = r; render(); }
+      }
       catch (e) { toast(e.message, 'error'); ev.target.disabled = false; }
     } }));
     card.appendChild(row);
