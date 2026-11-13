@@ -49,7 +49,7 @@ revisar los pasos 3 y 4.
    - Antes de pulsar **Verificar y guardar**, despliega la función y carga los
      secrets (paso 5): Meta llama a la URL en ese momento.
    - Suscribe los campos: `messages`, `message_template_status_update`,
-     `phone_number_quality_update`, `account_update`, `smb_message_echoes`,
+     `phone_number_quality_update`, `phone_number_name_update`, `account_update`, `smb_message_echoes`,
      `history`, `smb_app_state_sync` y `message_template_quality_update`.
 5. En **Configuración de la app → Avanzada**, fija la versión de la API de los
    webhooks en la más reciente (v26.0 al 2026-10-17).
@@ -202,6 +202,7 @@ recibos) o por el WABA (`entry.id`: plantillas, calidad, cuenta).
 | `history` | Coexistencia: chats anteriores. Entran como `source: wa_history`, ya leídos y sin efectos |
 | `message_template_status_update` | Se relee el catálogo de plantillas |
 | `phone_number_quality_update`, `account_update` | `config.quality` y `config.account_event` |
+| `phone_number_name_update` | Meta aprobó, rechazó o difirió el nombre visible: `config.display_name` (decisión, nombre pedido, motivo) + `config.quality.name_status`, y se relee el número. La pestaña de WhatsApp muestra siempre «Nombre visible» con su estado y «Verificar con Meta» |
 
 ### Monitor de calidad del número
 

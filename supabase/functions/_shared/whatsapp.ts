@@ -254,7 +254,7 @@ export async function syncMetaAccount(db: SupabaseClient, acc: Json, what: { tem
       set.verified_name = p.verified_name || acc.config?.verified_name || "";
       set.phone_info = p;
       set.quality = meta.mergeQuality(acc.config?.quality, {
-        rating: p.quality_rating, tier: p.messaging_limit_tier, status: p.status, name_status: p.name_status,
+        rating: p.quality_rating, tier: p.messaging_limit_tier, status: p.status, name_status: p.name_status, new_name_status: p.new_name_status,
       }, now);
       set.phone_error = null;
     } catch (e) {
