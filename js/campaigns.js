@@ -2757,6 +2757,16 @@
           // se dirige al link cuando el servidor lo devuelve.
           var popup = window.open('', 'predictable-linkedin', 'width=520,height=720');
           return edgeFetch(FN_CHANNEL, { action: 'linkedin_auth_url', payload: { return_url: linkedinReturnUrl() } }).then(function (r) {
+            // La cuenta ya estaba conectada en el proveedor: se recuperó sin otro login.
+            if (r && r.account) {
+              if (popup && !popup.closed) popup.close();
+              state.unipile = r.account;
+              m.close();
+              var cn = (r.account.config && r.account.config.name) || '';
+              toast(cn ? 'LinkedIn conectado: ' + cn + '. Tu cuenta ya estaba activa, no hizo falta volver a iniciar sesión.' : 'LinkedIn conectado. Tu cuenta ya estaba activa, no hizo falta volver a iniciar sesión.', 'success');
+              render();
+              return;
+            }
             if (!r || !r.url) throw new Error('No se pudo abrir la conexión con LinkedIn.');
             if (popup && !popup.closed) popup.location.href = r.url; else location.href = r.url;
             m.close();
