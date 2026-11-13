@@ -1,6 +1,6 @@
 // deno test supabase/functions/_shared/unipile.test.ts
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { accountUsable, classifyError, humanError, parseWebhook, shouldFallbackToCreate, signState, toAccount, toAttachments, toUser, UnipileError, verifyState } from "./unipile.ts";
+import { accountUsable, classifyError, humanError, humanLinkError, parseWebhook, pickAccountByName, shouldFallbackToCreate, signState, toAccount, toAttachments, toUser, UnipileError, verifyState } from "./unipile.ts";
 
 const uid = "0b6f2a4e-3c1d-4e5f-8a9b-0c1d2e3f4a5b";
 
@@ -100,4 +100,22 @@ Deno.test("classifyError: cuenta, límite, destinatario, transitorio", () => {
   assert(/desconectó/.test(humanError(new UnipileError("x", 401, "errors/disconnected_account"))));
   assert(/limitó/.test(humanError(new UnipileError("x", 422, "errors/limit_exceeded"))));
   assert(/reintenta/.test(humanError(new UnipileError("x", 429, ""))));
+});
+
+Deno.test("pickAccountByName: adopta la cuenta del usuario que funciona, aunque haya otra muerta", async () => {
+  const st = await signState("s", uid);
+  const items = [
+    { id: "dead", type: "LINKEDIN", name: st, sources: [{ status: "CREDENTIALS" }] },
+    { id: "other", type: "LINKEDIN", name: "otro", sources: [{ status: "OK" }] },
+    { id: "live", type: "LINKEDIN", name: st, sources: [{ status: "OK" }] },
+  ];
+  assertEquals(pickAccountByName(items, st)?.id, "live");
+  assertEquals(pickAccountByName(items.slice(0, 2), st)?.id, "dead");
+  assertEquals(pickAccountByName([items[1]], st), null);
+});
+
+Deno.test("humanLinkError: una sesión detenida al pedir el link no dice «la estamos reiniciando»", () => {
+  const msg = humanLinkError(new UnipileError("No client session", 503, ""));
+  assert(!/reiniciando/.test(msg));
+  assert(/vuelve a intentarlo/.test(msg));
 });

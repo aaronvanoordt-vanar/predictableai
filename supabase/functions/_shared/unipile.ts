@@ -531,6 +531,25 @@ export function humanStatus(status: string): string {
 export async function findAccountByName(env: UnipileEnv, name: string): Promise<UnipileAccount | null> {
   const data = await call(env, "GET", "/accounts?limit=250");
   const items: Json[] = Array.isArray(data?.items) ? data.items : [];
-  const hit = items.find((a) => String(a?.type ?? "").toUpperCase() === "LINKEDIN" && String(a?.name ?? "") === name);
-  return hit ? toAccount(hit) : null;
+  return pickAccountByName(items, name);
+}
+
+/**
+ * La cuenta de LinkedIn con ese nombre (el estado firmado del usuario). Si hay
+ * varias (el usuario conectó más de una vez), gana una que pueda enviar.
+ */
+export function pickAccountByName(items: Json[], name: string): UnipileAccount | null {
+  const mine = items
+    .filter((a) => String(a?.type ?? "").toUpperCase() === "LINKEDIN" && String(a?.name ?? "") === name)
+    .map(toAccount);
+  return mine.find((a) => accountUsable(a.status)) ?? mine[0] ?? null;
+}
+
+/**
+ * Error al pedir el link de conexión (no al enviar): el texto de envío
+ * («la estamos reiniciando») no aplica aquí.
+ */
+export function humanLinkError(e: unknown): string {
+  if (classifyError(e) === "session") return "Unipile no pudo abrir la ventana de conexión con LinkedIn en este momento (sesión detenida en el proveedor). Espera un par de minutos y vuelve a intentarlo.";
+  return humanError(e);
 }

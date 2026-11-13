@@ -670,8 +670,23 @@ Deno.serve(async (req) => {
       // cubre las aceptaciones; los mensajes esperan al próximo intento).
       try { await unipile.ensureWebhooks(env, hookUrl, hookSecret); } catch (e) { console.warn("[channel-connect] unipile webhooks:", unipile.humanError(e)); }
       const prev = await loadAccount("unipile");
+      const state = await unipile.signState(hookSecret, user.id);
+      // ¿Ya hay en Unipile una cuenta de LinkedIn de este usuario que funciona
+      // (la conectó antes con este mismo link firmado) pero Predictable la
+      // tiene desconectada o con otro id? Se adopta sin abrir otro login:
+      // pedir un link nuevo en ese caso puede fallar con «No client session»
+      // y dejaba al usuario sin poder conectar una cuenta que ya funcionaba.
+      const prevUsable = !!prev?.secret && prev.status === "connected";
+      if (!prevUsable) {
+        try {
+          const found = await unipile.findAccountByName(env, state);
+          if (found && unipile.accountUsable(found.status)) {
+            return json({ account: publicRow(await unipile.saveAccount(db, user.id, found)), adopted: true }, 200, cors);
+          }
+        } catch (e) { console.warn("[channel-connect] unipile buscar cuenta existente:", unipile.humanError(e)); }
+      }
       const linkInput = {
-        state: await unipile.signState(hookSecret, user.id),
+        state,
         notifyUrl: hookUrl,
         successUrl: `${ret}${sep}linkedin=ok`,
         failureUrl: `${ret}${sep}linkedin=error`,
@@ -679,15 +694,21 @@ Deno.serve(async (req) => {
       const reconnectId = prev?.secret && prev.status !== "disconnected" ? prev.secret : null;
       let url: string;
       try {
-        url = await unipile.hostedLink(env, { ...linkInput, reconnectAccountId: reconnectId });
+        try {
+          url = await unipile.hostedLink(env, { ...linkInput, reconnectAccountId: reconnectId });
+        } catch (e) {
+          // Reconectar la cuenta anterior falla si su sesión en Unipile está
+          // detenida (`no_client_session`) o la cuenta ya no existe allá: en
+          // vez de dejar al usuario sin poder conectar, se abre un link nuevo
+          // (`create`). La cuenta nueva reemplaza a la anterior al llegar el aviso.
+          if (!reconnectId || !unipile.shouldFallbackToCreate(e)) throw e;
+          console.warn("[channel-connect] unipile reconnect falló, se crea una conexión nueva:", unipile.humanError(e));
+          url = await unipile.hostedLink(env, { ...linkInput, reconnectAccountId: null });
+        }
       } catch (e) {
-        // Reconectar la cuenta anterior falla si su sesión en Unipile está
-        // detenida (`no_client_session`) o la cuenta ya no existe allá: en
-        // vez de dejar al usuario sin poder conectar, se abre un link nuevo
-        // (`create`). La cuenta nueva reemplaza a la anterior al llegar el aviso.
-        if (!reconnectId || !unipile.shouldFallbackToCreate(e)) throw e;
-        console.warn("[channel-connect] unipile reconnect falló, se crea una conexión nueva:", unipile.humanError(e));
-        url = await unipile.hostedLink(env, { ...linkInput, reconnectAccountId: null });
+        if (!(e instanceof unipile.UnipileError)) throw e;
+        console.warn("[channel-connect] unipile link:", e.status, e.type, e.message);
+        return json({ error: "linkedin_link_failed", message: unipile.humanLinkError(e), detail: [e.type, e.status, e.message].filter(Boolean).join(" · ") }, e.status >= 400 && e.status < 500 ? 400 : 502, cors);
       }
       return json({ url }, 200, cors);
     }
