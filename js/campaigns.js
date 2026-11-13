@@ -5108,7 +5108,7 @@
       return box;
     }
     if (chosen === 'whatsapp' && (state.waClosed[conv.key] || !sessionOpen(conv))) {
-      box.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:0', text: 'La ventana de 24 h de WhatsApp está cerrada (el lead no escribió en las últimas 24 h). Meta solo acepta una plantilla aprobada para reabrirla; cuando conteste, podrás escribirle texto libre.' }));
+      box.appendChild(h('div', { class: 'pros-note-red', style: 'margin-top:0', text: typeof state.waClosed[conv.key] === 'string' ? state.waClosed[conv.key] : 'La ventana de 24 h de WhatsApp está cerrada (el lead no escribió en las últimas 24 h). Meta solo acepta una plantilla aprobada para reabrirla; cuando conteste, podrás escribirle texto libre.' }));
       // Cualquier plantilla aprobada del catálogo del usuario sirve para
       // reabrir la ventana; todas valen igual (no hay plantillas "de saludo").
       var trow = h('div', { class: 'cmp-tpl-row' });
@@ -5605,7 +5605,7 @@
         if (state.view === 'inbox') renderKeepingReplyFocus(key);
       }, function (err) {
         state.sendingKey[key] = false;
-        if (err && err.code === 'whatsapp_window_closed') { state.waClosed[key] = true; render(); }
+        if (err && err.code === 'whatsapp_window_closed') { state.waClosed[key] = (err.message && /no está conectado/.test(err.message)) ? err.message : true; render(); }
         else if (state.view === 'inbox') renderKeepingReplyFocus(key);
         if (err && err.code === 'whatsapp_window_closed') return;
         throw err;

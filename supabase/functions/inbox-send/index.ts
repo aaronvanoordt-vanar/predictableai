@@ -240,6 +240,10 @@ function templateParams(body: string, m: Json | null): Record<string, string> {
  * waId del último entrante (con ese número abrió WATI la conversación), luego
  * el del lead y sus otras formas (52…/521…, 54…/549…).
  */
+function whatsappProviderLabel(provider: unknown): string {
+  return provider === "wati" ? "WATI" : provider === "meta" ? "WhatsApp con Meta" : "WhatsApp anterior";
+}
+
 function sessionTargets(phone: string, inboundRef: unknown): string[] {
   const first = wati.digits(inboundRef);
   const out = new Set<string>();
@@ -372,6 +376,18 @@ async function sendWhatsApp(db: SupabaseClient, userId: string, member: Json | n
     }).select("*").single().then((r) => r), spendCredits(db, userId)]);
     if (error) throw new HttpError("La plantilla salió pero no se pudo guardar en la bandeja: " + error.message, 500);
     return row;
+  }
+
+  // La ventana de 24 h es de UN número: si el lead escribió a otra cuenta
+  // (p. ej. el número de WATI, ya desconectado) y aquí se respondería desde
+  // la de Meta, con este número no hay conversación abierta. Meta rechazaría
+  // el texto (2026-11-13: respondía #131037 y la Bandeja lo mostraba como si
+  // faltara aprobar el nombre): solo una plantilla abre la conversación.
+  if (lastIn?.provider && lastIn.provider !== acc.provider) {
+    throw new HttpError(
+      `Este contacto te escribió a tu número de ${whatsappProviderLabel(lastIn.provider)}, que ya no está conectado. Con tu número actual de WhatsApp no tienes una conversación abierta con él: Meta solo acepta una plantilla aprobada para empezarla.`,
+      409, "whatsapp_window_closed",
+    );
   }
 
   // Ventana de 24 h: último entrante de ese número por WhatsApp.
