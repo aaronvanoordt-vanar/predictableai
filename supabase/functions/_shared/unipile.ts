@@ -528,10 +528,30 @@ export function humanStatus(status: string): string {
 }
 
 /** Cuenta de LinkedIn de la plataforma cuyo nombre es `name` (respaldo del aviso de conexión). */
-export async function findAccountByName(env: UnipileEnv, name: string): Promise<UnipileAccount | null> {
+export async function findAccountByName(env: UnipileEnv, name: string, identity: LinkedinIdentity = {}): Promise<UnipileAccount | null> {
   const data = await call(env, "GET", "/accounts?limit=250");
   const items: Json[] = Array.isArray(data?.items) ? data.items : [];
-  return pickAccountByName(items, name);
+  return pickAccountByName(items, name) ?? pickAccountByIdentity(items, identity);
+}
+
+/** Quién es en LinkedIn la cuenta que el usuario ya conectó (queda en config al desconectar). */
+export interface LinkedinIdentity { providerId?: string | null; publicIdentifier?: string | null }
+
+/**
+ * Respaldo de pickAccountByName: una cuenta reconectada desde el panel de
+ * Unipile (o creada fuera del link) pierde el estado firmado como nombre. Se
+ * reconoce por el perfil de LinkedIn que el usuario ya había conectado en
+ * Predictable (su provider_id, o su identificador público). Solo una cuenta
+ * que puede enviar: así nunca se adopta una muerta en lugar de pedir el login.
+ */
+export function pickAccountByIdentity(items: Json[], identity: LinkedinIdentity): UnipileAccount | null {
+  const pid = String(identity?.providerId ?? "").trim();
+  const pub = String(identity?.publicIdentifier ?? "").trim().toLowerCase();
+  if (!pid && !pub) return null;
+  return items
+    .filter((a) => String(a?.type ?? "").toUpperCase() === "LINKEDIN")
+    .map(toAccount)
+    .find((a) => accountUsable(a.status) && ((pid && a.providerId === pid) || (pub && a.publicIdentifier.toLowerCase() === pub))) ?? null;
 }
 
 /**

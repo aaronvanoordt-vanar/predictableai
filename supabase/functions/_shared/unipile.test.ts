@@ -1,6 +1,6 @@
 // deno test supabase/functions/_shared/unipile.test.ts
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { accountUsable, classifyError, humanError, humanLinkError, parseWebhook, pickAccountByName, shouldFallbackToCreate, signState, toAccount, toAttachments, toUser, UnipileError, verifyState } from "./unipile.ts";
+import { accountUsable, classifyError, humanError, humanLinkError, parseWebhook, pickAccountByIdentity, pickAccountByName, shouldFallbackToCreate, signState, toAccount, toAttachments, toUser, UnipileError, verifyState } from "./unipile.ts";
 
 const uid = "0b6f2a4e-3c1d-4e5f-8a9b-0c1d2e3f4a5b";
 
@@ -118,4 +118,15 @@ Deno.test("humanLinkError: una sesión detenida al pedir el link no dice «la es
   const msg = humanLinkError(new UnipileError("No client session", 503, ""));
   assert(!/reiniciando/.test(msg));
   assert(/vuelve a intentarlo/.test(msg));
+});
+
+Deno.test("findAccountByName → pickAccountByIdentity: reconoce la cuenta reconectada fuera del link por su perfil", () => {
+  const items = [
+    { id: "a", type: "LINKEDIN", name: "Aarón van Oordt", sources: [{ status: "OK" }], connection_params: { im: { id: "ACoAAX", publicIdentifier: "aaron" } } },
+    { id: "b", type: "LINKEDIN", name: "Otra", sources: [{ status: "CREDENTIALS" }], connection_params: { im: { id: "ACoAAY", publicIdentifier: "otra" } } },
+  ];
+  assertEquals(pickAccountByIdentity(items, { providerId: "ACoAAX" })?.id, "a");
+  assertEquals(pickAccountByIdentity(items, { publicIdentifier: "AARON" })?.id, "a");
+  assertEquals(pickAccountByIdentity(items, { providerId: "ACoAAY" }), null); // muerta: se pide login
+  assertEquals(pickAccountByIdentity(items, {}), null);
 });
