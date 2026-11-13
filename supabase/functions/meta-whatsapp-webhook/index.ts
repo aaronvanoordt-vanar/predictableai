@@ -32,6 +32,8 @@
  *      la bandeja como historial (`source: "wa_history"`, ya leídos), sin
  *      detener cadencias ni tocar el CRM.
  *  • message_template_status_update → se relee el catálogo de plantillas.
+ *  • phone_number_name_update → `config.display_name` + `config.quality.name_status`
+ *    (Meta aprobó o rechazó el nombre visible; se relee el número).
  *  • phone_number_quality_update / account_update → `config.quality` (la
  *      alarma de calidad de la pestaña de WhatsApp y la protección del motor).
  *
@@ -246,6 +248,19 @@ async function handleQuality(db: SupabaseClient, ev: Extract<meta.WaEvent, { kin
   }
 }
 
+async function handleName(db: SupabaseClient, ev: Extract<meta.WaEvent, { kind: "name" }>) {
+  for (const acc of await accountsByWaba(db, ev.wabaId)) {
+    const own = whatsapp.digits(acc.config?.phone);
+    if (ev.phone && own && ev.phone !== own) continue;
+    const at = new Date().toISOString();
+    const display_name = { decision: ev.decision, requested: ev.requestedName || null, reason: ev.reason, at };
+    const quality = meta.mergeQuality(acc.config?.quality, { name_status: meta.nameStatusFromDecision(ev.decision) }, at);
+    acc.config = (await patchChannelConfig(db, acc.id, { display_name, quality })) ?? { ...acc.config, display_name, quality };
+    // El nombre vigente (verified_name) y su estado se releen del número.
+    try { await whatsapp.syncMetaAccount(db, acc, { phone: true }); } catch (e) { console.error("[meta-whatsapp-webhook] name sync:", (e as Error).message); }
+  }
+}
+
 async function handleAccount(db: SupabaseClient, ev: Extract<meta.WaEvent, { kind: "account" }>) {
   for (const acc of await accountsByWaba(db, ev.wabaId)) {
     const at = new Date().toISOString();
@@ -317,6 +332,8 @@ Deno.serve(async (req) => {
         await handleQuality(db, ev);
       } else if (ev.kind === "account") {
         await handleAccount(db, ev);
+      } else if (ev.kind === "name") {
+        await handleName(db, ev);
       }
     } catch (e) {
       console.error("[meta-whatsapp-webhook]", ev.kind, e);

@@ -3245,6 +3245,61 @@
     TIER_2K: '2.000 contactos nuevos al día', TIER_5K: '5.000 contactos nuevos al día', TIER_10K: '10.000 contactos nuevos al día',
     TIER_100K: '100.000 contactos nuevos al día', TIER_UNLIMITED: 'Sin tope de contactos nuevos',
   };
+  /**
+   * Nombre visible (display name) del número según Meta: name_status del GET
+   * del número (lo relee campaign-run cada hora y «Verificar con Meta») y la
+   * decisión del webhook phone_number_name_update (config.display_name).
+   * Siempre visible, aprobado o no.
+   */
+  var NAME_STATUS_LABEL = {
+    APPROVED: ['Aprobado por Meta', 'green'],
+    AVAILABLE_WITHOUT_REVIEW: ['Aprobado por Meta', 'green'],
+    PENDING_REVIEW: ['En revisión de Meta', 'amber'],
+    DECLINED: ['Rechazado por Meta', 'red'],
+    EXPIRED: ['Vencido', 'red'],
+    NONE: ['Sin enviar a revisión', 'gray'],
+  };
+  function nameStatusPill(st) {
+    var l = NAME_STATUS_LABEL[String(st || '').toUpperCase()] || (st ? [String(st), 'gray'] : ['Sin dato de Meta todavía', 'gray']);
+    return pill(l[0], l[1]);
+  }
+  function renderDisplayName(body, cfg, api) {
+    var q = cfg.quality || {};
+    var dn = cfg.display_name || {};
+    var st = String(q.name_status || '').toUpperCase();
+    var name = cfg.verified_name || '';
+    var row = h('div', { class: 'cmp-tpl', style: 'margin-top:6px' });
+    row.appendChild(h('div', { html: '<span style="min-width:150px">Nombre visible</span>'
+      + (name ? '<b class="notranslate" style="margin-right:6px">' + esc(name) + '</b>' : '') + nameStatusPill(st) }));
+    var nst = String(q.new_name_status || '').toUpperCase();
+    if (nst && nst !== 'NONE') {
+      row.appendChild(h('div', { html: '<span style="min-width:150px">Cambio de nombre pedido</span>'
+        + (dn.requested ? '<b class="notranslate" style="margin-right:6px">' + esc(dn.requested) + '</b>' : '') + nameStatusPill(nst) }));
+    }
+    body.appendChild(row);
+    var hint = '';
+    if (st === 'PENDING_REVIEW' || nst === 'PENDING_REVIEW') hint = 'Meta suele revisar el nombre en uno a tres días hábiles. Te avisamos aquí apenas decida.';
+    else if (st === 'DECLINED' || nst === 'DECLINED') hint = 'Corrígelo en WhatsApp Manager (Números de teléfono → tu número → Nombre visible) siguiendo las reglas de nombres de Meta y vuelve a enviarlo.';
+    else if (st === 'EXPIRED') hint = 'La aprobación venció. Vuelve a enviar el nombre a revisión en WhatsApp Manager.';
+    else if (!st) hint = 'Todavía no leímos el estado del nombre en Meta. Pulsa «Verificar con Meta».';
+    if (hint) body.appendChild(h('div', { class: 'pros-hint', text: hint }));
+    if (dn.reason && /REJECT|DECLIN/.test(String(dn.decision || ''))) {
+      body.appendChild(h('div', { class: 'pros-note-red', text: 'Motivo de Meta: ' + dn.reason }));
+    }
+    var line = h('div', { class: 'cmp-row', style: 'margin:4px 0 0;align-items:center;gap:8px' });
+    var btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', title: 'Consulta ahora en Meta el estado del nombre visible y la calidad del número', text: '↻ Verificar con Meta' });
+    btn.addEventListener('click', guarded(function () {
+      return watiAction('sync_templates', {}, btn).then(function () {
+        var c = watiCfg();
+        if (c.phone_error) toast('Meta no respondió: ' + c.phone_error, 'error');
+        else toast('Estado del nombre visible actualizado desde Meta.', 'success');
+        renderWhatsAppDetails(api);
+      });
+    }));
+    line.appendChild(btn);
+    if (q.checked_at) line.appendChild(h('span', { class: 'pros-hint', style: 'margin:0', text: 'Consultado en Meta: ' + fmtDateTime(q.checked_at) }));
+    body.appendChild(line);
+  }
   function renderWhatsAppQuality(body, cfg, api) {
     var q = cfg.quality || {};
     var alert = q.alert || { level: 'ok', title: 'Calidad alta', message: '' };
@@ -3259,8 +3314,8 @@
     rows.appendChild(h('div', { html: '<span style="min-width:150px">Tope de envíos</span><span>' + esc(TIER_LABEL[String(q.tier || '').toUpperCase()] || (q.tier ? q.tier : 'Sin dato de Meta todavía')) + '</span>' }));
     var NUM_STATUS = { FLAGGED: 'Marcado por Meta', RESTRICTED: 'Restringido', BANNED: 'Bloqueado', DISCONNECTED: 'Desconectado', PENDING: 'Pendiente', MIGRATED: 'Migrado', UNVERIFIED: 'Sin verificar' };
     if (q.status && q.status !== 'CONNECTED') rows.appendChild(h('div', { html: '<span style="min-width:150px">Estado del número</span>' + pill(NUM_STATUS[q.status] || q.status, /FLAG|RESTRICT|BAN/.test(q.status) ? 'red' : 'amber') }));
-    if (q.name_status && q.name_status !== 'APPROVED' && q.name_status !== 'AVAILABLE_WITHOUT_REVIEW') rows.appendChild(h('div', { html: '<span style="min-width:150px">Nombre visible</span>' + pill(q.name_status === 'PENDING_REVIEW' ? 'En revisión de Meta' : q.name_status, 'amber') }));
     body.appendChild(rows);
+    renderDisplayName(body, cfg, api);
     if (cfg.phone_error) body.appendChild(h('div', { class: 'pros-hint', text: 'No pudimos leer el número en Meta: ' + cfg.phone_error }));
     var hist = (q.history || []).slice(-4).reverse().filter(function (x) { return x && x.at; });
     if (hist.length > 1) {

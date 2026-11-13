@@ -160,6 +160,25 @@ Deno.test("parseWebhook: plantillas, calidad, cuenta y lo desconocido", () => {
   assertEquals(meta.parseWebhook(null), []);
 });
 
+Deno.test("parseWebhook + nameStatusFromDecision: nombre visible", () => {
+  const ev = meta.parseWebhook({
+    object: "whatsapp_business_account",
+    entry: [{ id: "WABA9", changes: [
+      { field: "phone_number_name_update", value: { display_phone_number: "1 555 726 4442", decision: "REJECTED", requested_verified_name: "Vanar", rejection_reason: "NAME_FORMAT_UNACCEPTABLE" } },
+      { field: "phone_number_name_update", value: { display_phone_number: "1 555 726 4442", decision: "APPROVED", requested_verified_name: "Vanar", rejection_reason: "NONE" } },
+    ] }],
+  });
+  assertEquals(ev.map((e) => e.kind), ["name", "name"]);
+  if (ev[0].kind === "name") assertEquals([ev[0].phone, ev[0].decision, ev[0].requestedName, ev[0].reason], ["15557264442", "REJECTED", "Vanar", "NAME_FORMAT_UNACCEPTABLE"]);
+  if (ev[1].kind === "name") assertEquals(ev[1].reason, null);
+  assertEquals(meta.nameStatusFromDecision("approved"), "APPROVED");
+  assertEquals(meta.nameStatusFromDecision("REJECTED"), "DECLINED");
+  assertEquals(meta.nameStatusFromDecision("DEFERRED"), "PENDING_REVIEW");
+  assertEquals(meta.toPhoneInfo({ name_status: "pending_review", new_name_status: "approved" }).new_name_status, "APPROVED");
+  const q = meta.mergeQuality({ rating: "GREEN" }, { name_status: "DECLINED" }, "2026-11-13T00:00:00Z");
+  assertEquals(q.name_status, "DECLINED");
+});
+
 Deno.test("toTemplateRow: misma forma que el catálogo de WATI + formato de variables", () => {
   const named = meta.toTemplateRow({
     id: "1", name: "saludo", status: "APPROVED", category: "MARKETING", language: "es", parameter_format: "NAMED",

@@ -200,7 +200,9 @@ export interface PhoneInfo {
    * obsoleto y solo se usa si el primero falta.
    */
   messaging_limit_tier: string;  // TIER_250 | TIER_2K | TIER_10K | TIER_100K | TIER_UNLIMITED
-  name_status: string;           // APPROVED | PENDING_REVIEW | DECLINED | …
+  name_status: string;           // APPROVED | AVAILABLE_WITHOUT_REVIEW | PENDING_REVIEW | DECLINED | EXPIRED | NONE
+  /** Estado de un cambio de nombre pedido después (el vigente sigue en name_status). */
+  new_name_status: string;
   status: string;                // CONNECTED | FLAGGED | RESTRICTED | …
   platform_type: string;         // CLOUD_API | ON_PREMISE | NOT_APPLICABLE
   code_verification_status: string;
@@ -210,7 +212,7 @@ export interface PhoneInfo {
 
 const PHONE_FIELDS = [
   "display_phone_number", "verified_name", "quality_rating", "whatsapp_business_manager_messaging_limit", "name_status",
-  "status", "platform_type", "code_verification_status", "throughput", "is_on_biz_app",
+  "new_name_status", "status", "platform_type", "code_verification_status", "throughput", "is_on_biz_app",
 ].join(",");
 
 /** Normaliza la respuesta de GET /{phone_number_id} (pura: deno test). */
@@ -222,6 +224,7 @@ export function toPhoneInfo(p: Json): PhoneInfo {
     quality_rating: String(p?.quality_rating ?? "UNKNOWN").toUpperCase(),
     messaging_limit_tier: String(p?.whatsapp_business_manager_messaging_limit ?? p?.messaging_limit_tier ?? "").toUpperCase(),
     name_status: String(p?.name_status ?? "").toUpperCase(),
+    new_name_status: String(p?.new_name_status ?? "").toUpperCase(),
     status: String(p?.status ?? "").toUpperCase(),
     platform_type: String(p?.platform_type ?? "").toUpperCase(),
     code_verification_status: String(p?.code_verification_status ?? "").toUpperCase(),
@@ -585,6 +588,7 @@ export type WaEvent =
   | { kind: "template"; wabaId: string; name: string; templateId: string; status: string; reason: string | null }
   | { kind: "quality"; wabaId: string; phone: string; event: string; limit: string | null; oldLimit: string | null }
   | { kind: "account"; wabaId: string; event: string; detail: string | null }
+  | { kind: "name"; wabaId: string; phone: string; decision: string; requestedName: string; reason: string | null }
   | { kind: "other"; wabaId: string; field: string };
 
 const LABEL: Record<string, string> = {
@@ -706,6 +710,15 @@ export function parseWebhook(body: Json): WaEvent[] {
           limit: v?.current_limit ? String(v.current_limit).toUpperCase() : null,
           oldLimit: v?.old_limit ? String(v.old_limit).toUpperCase() : null,
         });
+      } else if (field === "phone_number_name_update") {
+        // Meta decidió sobre el nombre visible (display name) que se pidió.
+        out.push({
+          kind: "name", wabaId,
+          phone: policy.digits(v?.display_phone_number),
+          decision: String(v?.decision ?? "").toUpperCase(),
+          requestedName: String(v?.requested_verified_name ?? ""),
+          reason: v?.rejection_reason && String(v.rejection_reason).toUpperCase() !== "NONE" ? String(v.rejection_reason) : null,
+        });
       } else if (field === "account_update") {
         const detail = v?.ban_info?.waba_ban_state ?? v?.violation_info?.violation_type ?? v?.restriction_info?.[0]?.restriction_type ?? null;
         out.push({ kind: "account", wabaId, event: String(v?.event ?? "").toUpperCase(), detail: detail ? String(detail) : null });
@@ -715,6 +728,20 @@ export function parseWebhook(body: Json): WaEvent[] {
     }
   }
   return out;
+}
+
+// ── Nombre visible (display name) (puro: deno test) ─────────────────────────
+
+/**
+ * Traduce la decisión del webhook `phone_number_name_update` al mismo
+ * vocabulario de `name_status` que devuelve GET /{phone_number_id}.
+ */
+export function nameStatusFromDecision(decision: unknown): string {
+  const d = String(decision ?? "").toUpperCase();
+  if (d === "APPROVED") return "APPROVED";
+  if (d === "REJECTED" || d === "DECLINED") return "DECLINED";
+  if (d === "DEFERRED" || d === "PENDING" || d === "PENDING_REVIEW") return "PENDING_REVIEW";
+  return d;
 }
 
 // ── Calidad del número (puro: deno test) ────────────────────────────────────
@@ -737,6 +764,7 @@ export interface QualityState {
   tier: string;               // TIER_…
   status: string;             // CONNECTED | FLAGGED | RESTRICTED | …
   name_status: string;
+  new_name_status: string;
   last_event: string | null;  // FLAGGED | UNFLAGGED | DOWNGRADE | UPGRADE | …
   last_event_at: string | null;
 }
@@ -750,7 +778,7 @@ export interface QualityState {
 export function mergeQuality(prev: Json, next: Partial<QualityState>, at: string): Json {
   const base: Json = prev && typeof prev === "object" ? prev : {};
   const merged: Json = { ...base, checked_at: at };
-  for (const k of ["rating", "tier", "status", "name_status", "last_event", "last_event_at"] as const) {
+  for (const k of ["rating", "tier", "status", "name_status", "new_name_status", "last_event", "last_event_at"] as const) {
     const v = next[k];
     if (v !== undefined && v !== null && v !== "") merged[k] = v;
   }
