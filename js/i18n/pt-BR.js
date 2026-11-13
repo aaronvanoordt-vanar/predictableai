@@ -7393,4 +7393,6 @@ window.I18N_DICTS['pt-BR'] = {
   " · Vuelve a ": " · Volte a ",
   "iniciar sesión": "entrar",
   "No tienes créditos suficientes: enviar una invitación de LinkedIn cuesta 1 crédito.": "Você não tem créditos suficientes: enviar um convite do LinkedIn custa 1 crédito.",
+  "Este contacto te escribió a tu número de WATI, que ya no está conectado. Con tu número actual de WhatsApp no tienes una conversación abierta con él: Meta solo acepta una plantilla aprobada para empezarla.": "Este contato escreveu para o seu número do WATI, que não está mais conectado. Com o seu número atual do WhatsApp você não tem uma conversa aberta com ele: a Meta só aceita um modelo aprovado para iniciá-la.",
 };
+

@@ -7243,4 +7243,5 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   " · Vuelve a ": " · Go back to ",
   "iniciar sesión": "sign in",
   "No tienes créditos suficientes: enviar una invitación de LinkedIn cuesta 1 crédito.": "You don't have enough credits: sending a LinkedIn invitation costs 1 credit.",
+  "Este contacto te escribió a tu número de WATI, que ya no está conectado. Con tu número actual de WhatsApp no tienes una conversación abierta con él: Meta solo acepta una plantilla aprobada para empezarla.": "This contact wrote to your WATI number, which is no longer connected. Your current WhatsApp number has no open conversation with them: Meta only accepts an approved template to start one.",
 });
