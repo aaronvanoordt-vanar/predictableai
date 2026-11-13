@@ -637,6 +637,17 @@ Deno.serve(async (req) => {
     return data ?? null;
   };
 
+  // Perfil de LinkedIn que el usuario ya conectó (la config sobrevive a «Desconectar»).
+  const linkedinIdentity = (row: Json | null): unipile.LinkedinIdentity => ({
+    providerId: row?.config?.provider_id ?? null,
+    publicIdentifier: row?.config?.public_identifier ?? null,
+  });
+  // Una cuenta de Unipile atada a OTRO usuario nunca se adopta.
+  const unipileHeldByOther = async (accountId: string): Promise<boolean> => {
+    const { data } = await db.from("channel_accounts").select("user_id").eq("provider", "unipile").eq("secret", accountId).neq("user_id", user.id).limit(1);
+    return !!(data && data.length);
+  };
+
   try {
     if (action === "status") {
       const [w, m, d, a, u] = await Promise.all([loadAccount("wati"), loadAccount("meta"), loadAccount("dripify"), loadAccount("apollo"), loadAccount("unipile")]);
@@ -679,8 +690,8 @@ Deno.serve(async (req) => {
       const prevUsable = !!prev?.secret && prev.status === "connected";
       if (!prevUsable) {
         try {
-          const found = await unipile.findAccountByName(env, state);
-          if (found && unipile.accountUsable(found.status)) {
+          const found = await unipile.findAccountByName(env, state, linkedinIdentity(prev));
+          if (found && unipile.accountUsable(found.status) && !(await unipileHeldByOther(found.id))) {
             return json({ account: publicRow(await unipile.saveAccount(db, user.id, found)), adopted: true }, 200, cors);
           }
         } catch (e) { console.warn("[channel-connect] unipile buscar cuenta existente:", unipile.humanError(e)); }
@@ -708,7 +719,9 @@ Deno.serve(async (req) => {
       } catch (e) {
         if (!(e instanceof unipile.UnipileError)) throw e;
         console.warn("[channel-connect] unipile link:", e.status, e.type, e.message);
-        return json({ error: "linkedin_link_failed", message: unipile.humanLinkError(e), detail: [e.type, e.status, e.message].filter(Boolean).join(" · ") }, e.status >= 400 && e.status < 500 ? 400 : 502, cors);
+        const detail = [e.type, e.status, e.message].filter(Boolean).join(" · ");
+        // Lo que respondió Unipile, tal cual, a la vista: sin acceso a los logs no había forma de saber la causa.
+        return json({ error: "linkedin_link_failed", message: `${unipile.humanLinkError(e)} (Unipile: ${detail})`, detail }, e.status >= 400 && e.status < 500 ? 400 : 502, cors);
       }
       return json({ url }, 200, cors);
     }
@@ -725,8 +738,8 @@ Deno.serve(async (req) => {
       // El aviso de Unipile todavía no llegó (o no llegó nunca): se busca la
       // cuenta por el estado firmado del link, que Unipile guarda como nombre.
       const state = await unipile.signState(hookSecret, user.id);
-      const found = await unipile.findAccountByName(env, state);
-      if (!found) return json({ account: null }, 200, cors);
+      const found = await unipile.findAccountByName(env, state, linkedinIdentity(prev));
+      if (!found || await unipileHeldByOther(found.id)) return json({ account: null }, 200, cors);
       return json({ account: publicRow(await unipile.saveAccount(db, user.id, found)) }, 200, cors);
     }
 
