@@ -1,6 +1,6 @@
 // js/config.js
 window.PREDICTABLE_CONFIG = {
-  // El backend del Meeting Coach es el edge function `sales-coach` de
+  // El backend del AI Sales Coach es el edge function `sales-coach` de
   // Supabase — js/api.js deriva su URL desde SUPABASE_CONFIG.url.
   APOLLO_WORKER_URL: "https://predictable-apollo.aaron-78b.workers.dev/",
 
@@ -16,8 +16,11 @@ window.PREDICTABLE_CONFIG = {
   // silencio tras el fin del mensaje y hay al menos COACH_MIN_NEW_WORDS
   // palabras nuevas. Una alerta repetida (mismo título o misma frase) dentro
   // de COACH_ALERT_DEDUP_MS no se vuelve a mostrar.
+  // Cuando quien termina de hablar es el LEAD, el coach responde tras
+  // COACH_LEAD_PAUSE_MS (el vendedor necesita la respuesta ya).
   COACH_SILENCE_MS: 1200,
-  COACH_MIN_NEW_WORDS: 6,
+  COACH_LEAD_PAUSE_MS: 400,
+  COACH_MIN_NEW_WORDS: 4,
   COACH_ALERT_DEDUP_MS: 240000,
 
   // Módulos a medio terminar ocultos en producción (2026-11-07, pedido del

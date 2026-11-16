@@ -2,7 +2,7 @@
  * ai-training — Supabase Edge Function (2026-09-23)
  *
  * La trastienda de la página «Entrenamiento IA» (js/ai-training.js): cada
- * empresa entrena su Meeting Coach y sus campañas con metodologías de venta,
+ * empresa entrena su AI Sales Coach y sus campañas con metodologías de venta,
  * su estilo, sus reglas y su propia base de conocimiento. La configuración
  * (tabla `ai_training`) la escribe el cliente directo con RLS; esta función
  * solo hace lo que necesita la service role o un LLM:
@@ -64,7 +64,7 @@ const KIND_FOCUS: Record<string, string> = {
   other: "Extrae lo que una IA de ventas necesita saber de este material para vender mejor en nombre de este equipo.",
 };
 
-const SYSTEM_PROMPT = `Eres el analista que entrena a la IA de ventas de una empresa B2B. Recibes un documento que el equipo subió para entrenar a su Meeting Coach (que le sopla al vendedor qué decir en la reunión) y a su motor de campañas (que escribe los mensajes de prospección).
+const SYSTEM_PROMPT = `Eres el analista que entrena a la IA de ventas de una empresa B2B. Recibes un documento que el equipo subió para entrenar a su AI Sales Coach (que le sopla al vendedor qué decir en la reunión) y a su motor de campañas (que escribe los mensajes de prospección).
 
 Conviértelo en un MANUAL OPERATIVO para esa IA:
 - Principios accionables en imperativo ("Pregunta…", "Nunca…", "Cuando el lead diga X, responde…").

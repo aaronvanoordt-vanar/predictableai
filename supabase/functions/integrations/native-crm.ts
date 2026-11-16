@@ -12,7 +12,7 @@
  *   • Organizaciones / empresas → crm_companies.external_id (todas las
  *     plataformas que reciben listas).
  *   • De vuelta: un cambio de etapa hecho en Predictable (a mano, en el
- *     Meeting Coach o por la API) se envía al deal de HubSpot o Pipedrive si el
+ *     AI Sales Coach o por la API) se envía al deal de HubSpot o Pipedrive si el
  *     usuario lo activó (`native_sync.push`, apagado por defecto: escribe en su
  *     CRM). Lo que movió la integración no se reenvía.
  *

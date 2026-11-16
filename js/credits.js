@@ -261,7 +261,7 @@
         <li>Los 3 canales: email, WhatsApp y LinkedIn</li>
         <li>~150 leads al mes con email, 3 mensajes IA y campaña</li>
         <li>Radar con hasta 5 detectores activos · Hub semanal automático</li>
-        <li>Meeting Coach · búsqueda ilimitada · 1 usuario</li>
+        <li>AI Sales Coach · búsqueda ilimitada · 1 usuario</li>
       </ul>
       <button id="credits-subscribe" type="button" class="btn btn-primary" style="width:100%;justify-content:center">Activar Starter</button>
       <p style="margin:10px 0 0;${S.muted};line-height:1.5">

@@ -1486,7 +1486,7 @@
   // Personalización completa de 5 capas para un lead (modo por defecto de
   // generate-outreach): los 4 mensajes + el ángulo + coach_prep, guardados en
   // prospect_list_members.outreach por la propia edge function.
-  // Su ÚNICA entrada es "Preparar con IA" del Meeting Coach
+  // Su ÚNICA entrada es "Preparar con IA" del AI Sales Coach
   // (js/coach-lead-picker.js), que es lo que alimenta el brief del coach. Los
   // mensajes de una campaña NO salen de aquí: se escriben por paso
   // (generateStepMessage) y los de la Bandeja con generateReply.

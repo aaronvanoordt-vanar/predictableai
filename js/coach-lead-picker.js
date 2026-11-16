@@ -1,6 +1,6 @@
 // js/coach-lead-picker.js
 // ═══════════════════════════════════════════════════════════
-// Selector de lead del Meeting Coach (#mc-lead-select).
+// Selector de lead del AI Sales Coach (#mc-lead-select).
 // Llena el <select> con los contactos de las Listas guardadas
 // (Supabase, RLS por dueño) agrupados por lista, restaura el
 // último handoff de Prospección (coach_lead_context) y persiste

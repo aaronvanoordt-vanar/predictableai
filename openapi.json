@@ -4,7 +4,7 @@
     "title": "Predictable AI API",
     "version": "2026-09-23",
     "summary": "Conecta tu CRM, tus automatizaciones o tus agentes de IA a Predictable.",
-    "description": "API REST de Predictable AI. Lee y escribe listas, contactos, campañas omnicanal, mensajes de la Bandeja, señales del Radar y reuniones del Meeting Coach.\n\n**Autenticación:** crea una clave en Predictable → Desarrolladores y envíala en cada request como `Authorization: Bearer <tu clave>`. Las claves `read` solo leen; las `write` además escriben.\n\n**Límite:** 120 requests por minuto por clave (cabeceras `X-RateLimit-*`).\n\n**Paginación:** las listas devuelven `{ data, has_more, next_cursor }`; pide la página siguiente con `?cursor=<next_cursor>`.\n\n**Errores:** `{ error: { code, message, request_id } }` con el código HTTP correspondiente.\n\n**Webhooks:** registra una URL https y recibe eventos firmados (`Predictable-Signature: t=<unix>,v1=<HMAC-SHA256(secret, \"<t>.<body>\")>`).\n\n**MCP:** el mismo catálogo está disponible como servidor MCP en `/functions/v1/mcp`.",
+    "description": "API REST de Predictable AI. Lee y escribe listas, contactos, campañas omnicanal, mensajes de la Bandeja, señales del Radar y reuniones del AI Sales Coach.\n\n**Autenticación:** crea una clave en Predictable → Desarrolladores y envíala en cada request como `Authorization: Bearer <tu clave>`. Las claves `read` solo leen; las `write` además escriben.\n\n**Límite:** 120 requests por minuto por clave (cabeceras `X-RateLimit-*`).\n\n**Paginación:** las listas devuelven `{ data, has_more, next_cursor }`; pide la página siguiente con `?cursor=<next_cursor>`.\n\n**Errores:** `{ error: { code, message, request_id } }` con el código HTTP correspondiente.\n\n**Webhooks:** registra una URL https y recibe eventos firmados (`Predictable-Signature: t=<unix>,v1=<HMAC-SHA256(secret, \"<t>.<body>\")>`).\n\n**MCP:** el mismo catálogo está disponible como servidor MCP en `/functions/v1/mcp`.",
     "contact": {
       "name": "Predictable AI",
       "url": "https://predictableai.vanarsi.com/developers.html"
@@ -48,7 +48,7 @@
     },
     {
       "name": "Reuniones",
-      "description": "Reuniones analizadas por el Meeting Coach."
+      "description": "Reuniones analizadas por el AI Sales Coach."
     },
     {
       "name": "CRM",
@@ -2007,7 +2007,7 @@
         ],
         "operationId": "listMeetings",
         "summary": "Listar reuniones",
-        "description": "Reuniones analizadas por el Meeting Coach, con resumen, puntaje, resultado y siguiente paso.",
+        "description": "Reuniones analizadas por el AI Sales Coach, con resumen, puntaje, resultado y siguiente paso.",
         "parameters": [
           {
             "name": "created_after",
@@ -2091,7 +2091,7 @@
         ],
         "operationId": "getMeeting",
         "summary": "Ver reunión",
-        "description": "Incluye el reporte completo del Meeting Coach en `report`.",
+        "description": "Incluye el reporte completo del AI Sales Coach en `report`.",
         "parameters": [
           {
             "name": "meeting_id",
@@ -5132,7 +5132,7 @@
               "meeting_held",
               null
             ],
-            "description": "meeting_held = la etapa a la que el Meeting Coach mueve la oportunidad al cerrar una reunión."
+            "description": "meeting_held = la etapa a la que el AI Sales Coach mueve la oportunidad al cerrar una reunión."
           },
           "external_id": {
             "type": [

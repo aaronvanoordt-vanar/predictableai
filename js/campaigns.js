@@ -93,7 +93,7 @@
   // Llamadas (dialer de Predictable o CloudTalk / Aircall / Ringover, js/calls.js):
   // cuarto canal de la pestaña «Canales». No entra en CH_ORDER porque no es el
   // gate de «+ Nueva campaña» (un paso `call` es una tarea para el SDR).
-  CH.calls = { key: 'calls', label: 'Llamadas', icon: SVG.voice, desc: 'Llama con un clic desde Listas, la Bandeja y la cola «Por llamar» de tus campañas: con el dialer de Predictable (grabación, transcripción y Meeting Coach en vivo) o con tu proveedor (CloudTalk, Aircall o Ringover).' };
+  CH.calls = { key: 'calls', label: 'Llamadas', icon: SVG.voice, desc: 'Llama con un clic desde Listas, la Bandeja y la cola «Por llamar» de tus campañas: con el dialer de Predictable (grabación, transcripción y AI Sales Coach en vivo) o con tu proveedor (CloudTalk, Aircall o Ringover).' };
   var CHANNELS_PAGE_ORDER = CH_ORDER.concat(['calls']);
 
   var DAYS = [
@@ -1611,7 +1611,7 @@
           return edgeFetch(FN_INBOX, { action: 'link_member', member_id: memberId, channel: conv.channel, contact_ref: conv.contact_ref }).then(function () {
             // El contacto ya quedó guardado: si falla lo que venía después, se avisa y se puede repetir desde la conversación.
             if (then === 'favorite' && pdSafe().setFavorite) return Promise.resolve(pdSafe().setFavorite(memberId, true)).then(function () { return 'Guardado en «' + list.name + '» y marcado como favorito.'; }, function (err) { return { warn: 'Contacto guardado, pero no se pudo marcar como favorito: ' + err.message }; });
-            if (then === 'meeting' && pdSafe().setContactStatus) return Promise.resolve(pdSafe().setContactStatus(memberId, 'reunion_agendada')).then(function () { return 'Reunión conseguida registrada. Prepárala desde el Meeting Coach.'; }, function (err) { return { warn: 'Contacto guardado, pero no se pudo actualizar el estado: ' + err.message }; });
+            if (then === 'meeting' && pdSafe().setContactStatus) return Promise.resolve(pdSafe().setContactStatus(memberId, 'reunion_agendada')).then(function () { return 'Reunión conseguida registrada. Prepárala desde el AI Sales Coach.'; }, function (err) { return { warn: 'Contacto guardado, pero no se pudo actualizar el estado: ' + err.message }; });
             return 'Contacto guardado en «' + list.name + '».';
           }).then(function (msg) {
             m.close();
@@ -5532,7 +5532,7 @@
         });
       }).then(function () {
         rM();
-        toast('Reunión conseguida registrada. Prepárala desde el Meeting Coach.', 'success');
+        toast('Reunión conseguida registrada. Prepárala desde el AI Sales Coach.', 'success');
         render();
       }, function (err) { rM(); render(); toast('No se pudo actualizar el estado: ' + errMsg(err), 'error'); });
     }

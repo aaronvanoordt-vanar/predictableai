@@ -1,6 +1,6 @@
 // js/api.js
 // ───────────────────────────────────────────────────────────
-// Wrapper único para hablar con el backend del Meeting Coach:
+// Wrapper único para hablar con el backend del AI Sales Coach:
 // el edge function `sales-coach` de Supabase (reemplaza al
 // antiguo Apps Script). Autentica con el JWT de la sesión
 // Supabase; el backend identifica al usuario por el token.
@@ -25,7 +25,7 @@
     return token;
   }
 
-  async function call(action, payload = {}) {
+  async function call(action, payload = {}, opts = {}) {
     const url = salesCoachUrl();
     const token = await getAccessToken();
     const anonKey = (global.SUPABASE_CONFIG && global.SUPABASE_CONFIG.anonKey) || "";
@@ -46,6 +46,8 @@
         },
         body: JSON.stringify({ action, payload }),
         signal: controller.signal,
+        // keepalive: el envío termina aunque la pestaña se esté cerrando.
+        keepalive: !!opts.keepalive,
       });
 
       clearTimeout(timeout);
@@ -82,15 +84,17 @@
     // Healthcheck
     ping: () => call("ping", {}),
 
-    // ── Ventas AI (Meeting Coach) ──
+    // ── Ventas AI (AI Sales Coach) ──
     startMeeting:      (p) => call("startMeeting", p),
     getMeetingState:   (p) => call("getMeetingState", p),
     endMeeting:        (p) => call("endMeeting", p),
     getSDRReport:      (p) => call("getSDRReport", p),
-    ingestLocalChunks: (p) => call("ingestLocalChunks", p),
+    ingestLocalChunks: (p, opts) => call("ingestLocalChunks", p, opts),
     ingestLocalEvent:  (p) => call("ingestLocalEvent", p),
 
     getLastMeetingReport: (p) => call("getLastMeetingReport", p || {}),
+    // Todas las reuniones (propias, o del equipo si eres admin/director)
+    listMeetings: (p) => call("listMeetings", p || {}),
     // Reporte de una reunión específica (propia, o del equipo si eres admin/director)
     getMeetingReport: (p) => call("getMeetingReport", p),
     // Modo bot: la transcripción de Recall puede llegar minutos después de

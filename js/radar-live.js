@@ -835,7 +835,7 @@
   // Título y subtítulo viven en el <div class="topbar"> estático de index.html
   // (cabecera única, igual que Intelligence Hub y Contexto). Aquí solo se pinta
   // lo dinámico: el estado del monitoreo + su acción principal (topbar-actions,
-  // mismo patrón que Meeting Coach) y, dentro del shell, la fila de pestañas.
+  // mismo patrón que AI Sales Coach) y, dentro del shell, la fila de pestañas.
   function topbarActionsHtml() {
     const planStatus = state.plan ? state.plan.status : 'none';
     const pill = planStatus === 'active'

@@ -26,7 +26,7 @@
     { id: 's1', title: 'Explora tu Intelligence Hub', desc: 'Conoce los informes que tus agentes generan a diario.', page: 'mi-dashboard', icon: 'chart' },
     { id: 's4', title: 'Corre tu primera búsqueda', desc: 'Encuentra contactos que calzan tu ICP en segundos.', page: 'pro-main', icon: 'search' },
     { id: 's5', title: 'Guarda tu primera lista', desc: 'Crea un segmento reutilizable para tus campañas.', page: 'pro-main', icon: 'bookmark' },
-    { id: 's6', title: 'Prueba el Meeting Coach', desc: 'Recibe guía en vivo durante tus llamadas de venta.', page: 'ventas-coach', icon: 'mic' },
+    { id: 's6', title: 'Prueba el AI Sales Coach', desc: 'Recibe guía en vivo durante tus llamadas de venta.', page: 'ventas-coach', icon: 'mic' },
     { id: 's7', title: 'Revisa tu equipo y tu rol', desc: 'Tu rol lo asigna un administrador; el equipo se gestiona en Ajustes.', page: 'settings', icon: 'users' }
   ];
   var TOTAL = STEPS.length;

@@ -233,7 +233,7 @@
       var actions = [
         { label: 'Nueva campaña', hint: 'Campañas', run: navTo('.nav-item[data-pros-tab="campanas"]:not([data-pros-view])'), keys: 'nueva campaña crear cadencia' },
         { label: 'Buscar contactos', hint: 'Prospección', run: navTo('.nav-item[data-pros-tab="busqueda"]'), keys: 'buscar contactos apollo personas' },
-        { label: 'Iniciar Meeting Coach', hint: 'Ventas', run: navTo('.nav-item[data-page="ventas-coach"]'), keys: 'coach reunión meeting iniciar' },
+        { label: 'Iniciar AI Sales Coach', hint: 'Ventas', run: navTo('.nav-item[data-page="ventas-coach"]'), keys: 'coach reunión meeting iniciar' },
         { label: 'Ver la bandeja', hint: 'Respuestas', run: navTo('.nav-item[data-pros-view="inbox"]'), keys: 'bandeja inbox respuestas mensajes' },
         { label: 'Ajustes', hint: 'Cuenta', run: function () { if (typeof global.openSettingsPage === 'function') global.openSettingsPage(); }, keys: 'ajustes configuración perfil cuenta equipo' },
         { label: 'Plan y créditos', hint: 'Créditos', run: function () { var c = doc.getElementById('credits-chip'); if (c) c.click(); }, keys: 'créditos comprar saldo plan recargar suscripción facturación' },
@@ -254,7 +254,7 @@
       if (lab.indexOf(q) === 0) return 100;
       if (lab.indexOf(q) > -1) return 80;
       if (hay.indexOf(q) > -1) return 60;
-      // subsecuencia en la etiqueta (p. ej. "mc" → Meeting Coach)
+      // subsecuencia en la etiqueta (p. ej. "mc" → AI Sales Coach)
       var i = 0;
       for (var j = 0; j < lab.length && i < q.length; j++) if (lab[j] === q[i]) i++;
       return i === q.length ? 30 : 0;

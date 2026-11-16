@@ -8,7 +8,7 @@
  *
  * Solo funciones puras: qué credenciales necesita cada plataforma y cómo se
  * traduce un lead de Predictable (fila de prospect_list_members) o un reporte
- * del Meeting Coach al formato de cada API. La edge function `integrations`
+ * del AI Sales Coach al formato de cada API. La edge function `integrations`
  * hace el HTTP; esto lo cubre `integrations.test.ts`.
  *
  * Regla de producto: nunca se inventa un dato para satisfacer un campo
@@ -95,7 +95,7 @@ export const GOOGLE_SHEETS_SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
 ];
 
-// Lectura de eventos (reuniones próximas para el Meeting Coach) y creación
+// Lectura de eventos (reuniones próximas para el AI Sales Coach) y creación
 // del seguimiento acordado.
 export const GOOGLE_CALENDAR_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
@@ -381,7 +381,7 @@ export function notionTableBlocks(leads: Lead[]): Json[] {
   }));
 }
 
-/** El reporte del Meeting Coach como bloques de Notion (solo lo que existe). */
+/** El reporte del AI Sales Coach como bloques de Notion (solo lo que existe). */
 export function meetingReportBlocks(meeting: Json): Json[] {
   const r = meeting?.final_report ?? {};
   const blocks: Json[] = [];

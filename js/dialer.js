@@ -8,7 +8,7 @@
  *   • Dialer nativo (Twilio): llamada WebRTC desde el navegador con el SDK de
  *     Twilio Voice (cdn.jsdelivr.net, versión fija). El token de voz lo emite
  *     la edge function `telephony`; los minutos se reservan y se liquidan en
- *     `telephony-webhook`. La llamada en vivo entra al Meeting Coach por el
+ *     `telephony-webhook`. La llamada en vivo entra al AI Sales Coach por el
  *     MISMO camino de siempre (js/realtime-coach.js con el audio de la llamada
  *     en vez de la pantalla) y su reporte queda con la llamada y en la ficha
  *     del lead.
@@ -248,7 +248,7 @@
         var rec = h('input', { type: 'checkbox', checked: lsGet(LS_RECORD, true), onchange: function () { lsSet(LS_RECORD, rec.checked); } });
         p.appendChild(h('label', { class: 'dlr-chk' }, rec, 'Grabar y transcribir (al lead se le avisa al contestar)'));
         var coach = h('input', { type: 'checkbox', checked: lsGet(LS_COACH, true), onchange: function () { lsSet(LS_COACH, coach.checked); } });
-        var coachLbl = h('label', { class: 'dlr-chk' }, coach, 'Meeting Coach en vivo');
+        var coachLbl = h('label', { class: 'dlr-chk' }, coach, 'AI Sales Coach en vivo');
         p.appendChild(coachLbl);
         p.appendChild(h('div', { class: 'dlr-sub', text: 'El coach cobra como una reunión: 5 créditos por cada 10 min + 5 del reporte.' }));
       } else if (meta) {
@@ -486,7 +486,7 @@
     render();
     var sid = call && call.parameters ? call.parameters.CallSid : (st.call && st.call.parameters && st.call.parameters.CallSid);
     st.callId = await findCallId(sid);
-    // El Meeting Coach escucha la llamada con el audio de la propia llamada.
+    // El AI Sales Coach escucha la llamada con el audio de la propia llamada.
     if (lsGet(LS_COACH, true) && global.realtimeCoach && st.lead && st.lead.id && !global.realtimeCoach.isActive()) {
       try {
         var remote = st.call.getRemoteStream && st.call.getRemoteStream();

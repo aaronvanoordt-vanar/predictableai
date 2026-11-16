@@ -1090,7 +1090,7 @@ html, body {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   FIX: Meeting Coach ocupa todo el ancho
+   FIX: AI Sales Coach ocupa todo el ancho
 ═══════════════════════════════════════════════════════════ */
 .mc-mode-btn {
   flex: 1 1 0;
@@ -1149,7 +1149,7 @@ html, body {
 }
 .page { flex-shrink: 0 !important; }
 
-/* Meeting Coach: panel coach con scroll interno cuando se llena */
+/* AI Sales Coach: panel coach con scroll interno cuando se llena */
 #page-ventas-coach .mc-grid {
   display: grid !important;
   grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) !important;
@@ -2103,7 +2103,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
     <!-- Entrenamiento IA (2026-09-23, js/ai-training.js): metodologías de venta,
          estilo, reglas y base de conocimiento propias de esta empresa para el
-         Meeting Coach y las campañas. Va junto al Contexto: los dos definen
+         AI Sales Coach y las campañas. Va junto al Contexto: los dos definen
          "quién eres"; este define además "cómo vendes". -->
     <div class="nav-item" data-page="ai-training" onclick="nav(this,'ai-training');if(window.AITraining)window.AITraining.show()">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 3.5h4.5a1.5 1.5 0 011.5 1.5v8.5a1 1 0 00-1-1H2z"/><path d="M14 3.5H9.5A1.5 1.5 0 008 5v8.5a1 1 0 011-1h5z"/></svg>
@@ -2192,7 +2192,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <!-- CRM (2026-10-17, js/crm.js): oportunidades por etapas, cuentas
          (empresas, enlazadas por dominio a sus personas y a las señales del
          Radar) y tareas. Va primero en Ventas: la Bandeja trae la respuesta,
-         aquí nace la oportunidad y el Meeting Coach la avanza. -->
+         aquí nace la oportunidad y el AI Sales Coach la avanza. -->
     <div class="nav-item" data-page="crm" onclick="nav(this,'crm');if(window.crm)window.crm.show()">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1.5" y="2" width="3.5" height="12" rx="1"/><rect x="6.25" y="2" width="3.5" height="8" rx="1"/><rect x="11" y="2" width="3.5" height="5" rx="1"/></svg>
       CRM
@@ -2200,7 +2200,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
     <div class="nav-item" data-page="ventas-coach" onclick="nav(this,'ventas-coach')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M5 13v2M11 13v2M3 15h10"/></svg>
-      Meeting Coach
+      AI Sales Coach
     </div>
     <div class="nav-item" data-page="ventas-reportes" onclick="nav(this,'ventas-reportes')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M3 14V6l4-4h6v12H3z"/><path d="M7 2v4H3"/><path d="M6 9h4M6 11h3"/></svg>
@@ -2364,7 +2364,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="stat-card">
       <div class="stat-label">Score del equipo</div>
       <div class="stat-val" id="stat-score">—</div>
-      <div class="stat-sub">Se genera con el Meeting Coach</div>
+      <div class="stat-sub">Se genera con el AI Sales Coach</div>
     </div>
   </div>
 
@@ -2418,7 +2418,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         </div>
         <span class="area-go">→</span>
       </div>
-      <div class="area-name">Meeting Coach</div>
+      <div class="area-name">AI Sales Coach</div>
       <div class="area-desc">Coach en vivo durante tus llamadas y reportes por SDR al terminar.</div>
       <div class="area-meta">Iniciar una sesión →</div>
     </div>
@@ -2478,7 +2478,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   <div class="topbar">
     <div>
       <div class="topbar-title">Entrenamiento IA</div>
-      <div class="topbar-sub">Lo que solo sabe tu empresa: playbook, precios, casos, estilo y reglas para el Meeting Coach y tus campañas</div>
+      <div class="topbar-sub">Lo que solo sabe tu empresa: playbook, precios, casos, estilo y reglas para el AI Sales Coach y tus campañas</div>
     </div>
   </div>
   <div id="ai-training-shell"></div>
@@ -2643,8 +2643,8 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div style="display:flex;align-items:center;gap:14px">
       <div id="mc-dot" style="width:10px;height:10px;border-radius:50%;background:var(--green-soft);border:2px solid var(--green);transition:all .4s"></div>
       <div>
-        <div class="topbar-title">Meeting Coach</div>
-        <div class="topbar-sub" style="color:var(--text3)">El asistente que escucha tu llamada y te dice qué decir, en vivo.</div>
+        <div class="topbar-title">AI Sales Coach</div>
+        <div class="topbar-sub" style="color:var(--text3)">Escucha tu llamada y te dice qué decir en cada fase, en vivo y sobre tu reunión.</div>
       </div>
     </div>
     <div class="topbar-actions">
@@ -2659,13 +2659,18 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <!-- Hero izquierdo -->
     <div style="background:linear-gradient(145deg,rgba(6,182,212,.07) 0%,rgba(43,182,115,.04) 60%,transparent 100%);border:1px solid rgba(6,182,212,.18);border-radius:16px;padding:32px 36px;display:flex;flex-direction:column;gap:0">
 
-      <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:18px">MEETING COACH</div>
+      <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:18px">AI SALES COACH</div>
 
       <div style="font-size:30px;font-weight:800;color:var(--text);line-height:1.2;margin-bottom:8px">
         Tu copiloto para <span id="mc-prospect-name" style="color:var(--teal)">la próxima reunión</span>.
       </div>
 
       <div id="mc-prospect-meta" style="font-size:13px;color:var(--text3);margin-bottom:22px">Elige con quién es la reunión para cargar su brief — el coach no inicia sin un lead.</div>
+
+      <!-- Configuración del coach (js/coach-calendar.js): aviso de reunión desde
+           el calendario conectado y ventana flotante. La abre el botón
+           «Configuración» de la cabecera. -->
+      <div id="mc-config-panel" style="display:none;max-width:620px;margin:0 0 22px;padding:16px 18px;background:var(--surface);border:1px solid var(--border);border-radius:12px"></div>
 
       <!-- Resumen del entrenamiento del coach (js/ai-training.js): con qué
            documentos, estilo y reglas de la empresa habla este coach. -->
@@ -2739,22 +2744,22 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
           <div style="width:32px;height:32px;border-radius:8px;background:rgba(6,182,212,.12);display:flex;align-items:center;justify-content:center">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="2"><path d="M12 15c1.66 0 3-1.34 3-3V6c0-1.66-1.34-3-3-3S9 4.34 9 6v6c0 1.66 1.34 3 3 3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
           </div>
-          <div style="font-size:12px;font-weight:700;color:var(--text)">Captura audio + pantalla</div>
-          <div style="font-size:11px;color:var(--text3);line-height:1.5">Pantalla completa con audio + tu micrófono</div>
+          <div style="font-size:12px;font-weight:700;color:var(--text)">Te avisa y se une</div>
+          <div style="font-size:11px;color:var(--text3);line-height:1.5">Aviso antes de cada reunión de tu calendario</div>
         </div>
         <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
           <div style="width:32px;height:32px;border-radius:8px;background:rgba(43,182,115,.12);display:flex;align-items:center;justify-content:center">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
           </div>
-          <div style="font-size:12px;font-weight:700;color:var(--text)">IA entiende el contexto</div>
-          <div style="font-size:11px;color:var(--text3);line-height:1.5">ICP, historial, etapa</div>
+          <div style="font-size:12px;font-weight:700;color:var(--text)">Sabe en qué fase estás</div>
+          <div style="font-size:11px;color:var(--text3);line-height:1.5">Qué decir desde el primer segundo</div>
         </div>
         <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
           <div style="width:32px;height:32px;border-radius:8px;background:rgba(47,102,255,.12);display:flex;align-items:center;justify-content:center">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-ink)" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           </div>
-          <div style="font-size:12px;font-weight:700;color:var(--text)">Alertas en &lt;2s</div>
-          <div style="font-size:11px;color:var(--text3);line-height:1.5">Objeción, riesgo, señal</div>
+          <div style="font-size:12px;font-weight:700;color:var(--text)">Encima de tu reunión</div>
+          <div style="font-size:11px;color:var(--text3);line-height:1.5">Ventana flotante con la frase y las alertas</div>
         </div>
       </div>
     </div>
@@ -2817,7 +2822,11 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         <span style="color:var(--text3)">·</span>
         <span id="mc-timer" style="font-family:var(--font-mono);font-size:13px;color:var(--text3)">00:00:00</span>
       </div>
-      <div id="mc-live-prospect" style="font-size:12px;color:var(--text3)"></div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end">
+        <div id="mc-live-prospect" class="notranslate" style="font-size:12px;color:var(--text3)"></div>
+        <!-- Ventana siempre encima con la guía del coach (js/coach-live.js) -->
+        <button type="button" id="mc-hud-btn" class="btn btn-ghost btn-sm" onclick="window.CoachHUD && CoachHUD.toggle()">Ventana flotante</button>
+      </div>
     </div>
 
     <!-- HERO: último dicho -->
@@ -2847,7 +2856,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 
         <div style="background:linear-gradient(135deg,rgba(47,102,255,.06),rgba(47,102,255,.02));border:1px solid rgba(47,102,255,.18);border-radius:12px;padding:16px">
           <div style="font-size:10px;font-weight:700;color:var(--accent-ink);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Etapa actual</div>
-          <div id="mc-stage" style="font-size:20px;font-weight:800;color:var(--accent-ink);margin-bottom:12px">—</div>
+          <div id="mc-stage" style="font-size:20px;font-weight:800;color:var(--accent-ink)">—</div>
+          <div id="mc-stage-goal" style="font-size:12px;color:var(--text3);line-height:1.5;margin:2px 0 12px"></div>
+          <!-- La frase exacta para decir ahora: plantilla de la fase al instante,
+               y la del modelo (a medida del lead) en cuanto llega. -->
+          <div id="mc-say-box" style="display:none;background:var(--surface);border:1px solid rgba(47,102,255,.28);border-radius:10px;padding:12px;margin-bottom:12px">
+            <div id="mc-say-label" style="font-size:10px;font-weight:700;color:var(--accent-ink);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Di esto ahora</div>
+            <div id="mc-say" class="notranslate" style="font-size:15px;font-weight:650;color:var(--text);line-height:1.5"></div>
+          </div>
           <div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Qué hacer ahora</div>
           <div id="mc-next-steps" style="display:flex;flex-direction:column;gap:6px">
             <div style="font-size:12px;color:var(--text3);font-style:italic">Analizando...</div>
@@ -2899,7 +2915,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="tab" id="tab-rep-equipo" data-admin-tab="true" onclick="switchReportTab(this,'rep-equipo')">Equipo</div>
     <div class="tab" id="tab-rep-deals" data-admin-tab="true" onclick="switchReportTab(this,'rep-deals')">Deals perdidos</div>
     <div class="tab" onclick="switchReportTab(this,'rep-objeciones')">Objeciones</div>
-    <div class="tab" onclick="switchReportTab(this,'rep-meeting')">Última reunión</div>
+    <div class="tab" onclick="switchReportTab(this,'rep-meeting')">Reuniones</div>
   </div>
 
   <!-- TAB: MI RENDIMIENTO (SDR personal) -->
@@ -2910,7 +2926,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div id="my-perf-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--text3)">
       <div style="font-size:32px;margin-bottom:12px">📊</div>
       <div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:8px">Sin reuniones registradas todavía</div>
-      <div style="font-size:13px">Cuando completes sesiones con el Meeting Coach, tu historial de rendimiento aparecerá aquí.</div>
+      <div style="font-size:13px">Cuando completes sesiones con el AI Sales Coach, tu historial de rendimiento aparecerá aquí.</div>
       <button class="btn btn-jade" style="margin-top:20px" onclick="nav(document.querySelector('[data-page=ventas-coach]'),'ventas-coach')">Iniciar una sesión</button>
     </div>
     <div id="my-perf-content" style="display:none">
@@ -2937,7 +2953,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   <!-- TAB: EQUIPO -->
   <div id="rep-equipo" class="rep-tab" style="display:none">
     <div id="equipo-empty" class="card" style="padding:0">
-      <div class="empty"><div class="empty-ic"><svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><circle cx="7" cy="6.5" r="3"/><path d="M1.5 17c0-3 2.5-4.8 5.5-4.8S12.5 14 12.5 17M13.5 10a3 3 0 100-6M18.5 17c0-2.6-1.8-4.2-4-4.7"/></svg></div><div class="empty-title">Todavía no hay reportes de tu equipo</div><div class="empty-sub">Cuando tus SDRs completen sesiones con el Meeting Coach, aquí verás sus scores, reuniones y áreas de mejora.</div><button class="btn btn-jade btn-sm" onclick="iniciarCoachLive()">Iniciar una sesión</button></div>
+      <div class="empty"><div class="empty-ic"><svg fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5"><circle cx="7" cy="6.5" r="3"/><path d="M1.5 17c0-3 2.5-4.8 5.5-4.8S12.5 14 12.5 17M13.5 10a3 3 0 100-6M18.5 17c0-2.6-1.8-4.2-4-4.7"/></svg></div><div class="empty-title">Todavía no hay reportes de tu equipo</div><div class="empty-sub">Cuando tus SDRs completen sesiones con el AI Sales Coach, aquí verás sus scores, reuniones y áreas de mejora.</div><button class="btn btn-jade btn-sm" onclick="iniciarCoachLive()">Iniciar una sesión</button></div>
     </div>
     <div id="equipo-content" style="display:none">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
@@ -2987,11 +3003,11 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
   </div>
 
-  <!-- TAB: ÚLTIMA REUNIÓN (se renderiza completo desde loadLastMeeting con el reporte real) -->
+  <!-- TAB: REUNIONES (lista de todas las reuniones + reporte de cada una; js/meeting-report.js) -->
   <div id="rep-meeting" class="rep-tab" style="display:none">
 
   <div id="last-meeting-loading" style="text-align:center;padding:40px;color:var(--text3)">
-    <div style="font-size:13px">Cargando última reunión...</div>
+    <div style="font-size:13px">Cargando tus reuniones...</div>
   </div>
 
   <div id="last-meeting-content" style="display:none"></div>
@@ -2999,7 +3015,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   <div id="last-meeting-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--text3)">
     <div style="font-size:32px;margin-bottom:12px">🎙</div>
     <div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:8px">Sin reuniones grabadas todavía</div>
-    <div style="font-size:13px">Cuando termines tu primera sesión con el Meeting Coach, el reporte completo de la reunión aparecerá aquí.</div>
+    <div style="font-size:13px">Cuando termines tu primera sesión con el AI Sales Coach, aquí verás todas tus reuniones, con el reporte y la transcripción completa de cada una.</div>
     <button class="btn btn-jade" style="margin-top:20px" onclick="iniciarCoachLive()">Iniciar una sesión</button>
   </div>
 </div>
@@ -3121,7 +3137,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       </div>
 
       <div class="settings-row">
-        <div class="settings-row-label">Meeting Coach</div>
+        <div class="settings-row-label">AI Sales Coach</div>
         <div class="settings-row-value">
           <div data-ai-engine="coach" data-ai-engine-compact data-ai-engine-nolabel></div>
           <div class="settings-row-hint">Coaching en vivo durante la llamada y el reporte final de la reunión.</div>
@@ -3336,7 +3352,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/billing-cfdi.js"></script>
 <script src="js/skeletons.js"></script>
 <script src="js/i18n.js?v=20261023"></script>
-<script src="js/api.js"></script>
+<script src="js/api.js?v=20261116"></script>
 <script src="js/apollo-enums.js"></script>
 <script src="js/company-context.js?v=20260823"></script>
 <script src="js/prospecting-data.js?v=20261019co"></script>
@@ -3366,11 +3382,15 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/radar-live.js?v=20261017"></script>
 <script src="js/clients.js?v=20260824-sheets"></script>
 <script src="js/agency.js?v=20261019"></script>
-<script src="js/meeting-coach.js"></script>
-<script src="js/realtime-coach.js?v=20261017"></script>
+<!-- AI Sales Coach en vivo: playbook por fase → ventana flotante y capa instantánea → los dos caminos (bot / captura local) -->
+<script src="js/coach-playbook.js?v=20261116"></script>
+<script src="js/coach-live.js?v=20261116"></script>
+<script src="js/meeting-coach.js?v=20261116"></script>
+<script src="js/realtime-coach.js?v=20261116"></script>
+<script src="js/coach-calendar.js?v=20261116"></script>
 <script src="js/dialer.js?v=20261018"></script>
 <script src="js/calls.js?v=20261018b"></script>
-<script src="js/meeting-report.js"></script>
+<script src="js/meeting-report.js?v=20261116"></script>
 <script src="js/learning.js?v=20261017"></script>
 <script src="js/ai-training.js?v=20260923"></script>
 <script src="js/linkedin-content.js?v=20261017"></script>
@@ -3418,23 +3438,30 @@ function toggleBriefPanel() {
   panel.style.display = panel.style.display === 'none' ? '' : 'none';
 }
 
+// Configuración del coach: aviso de reunión (calendario) y ventana flotante.
 function toggleCoachConfig() {
-  if (window.uiHelpers && window.uiHelpers.toast) {
-    window.uiHelpers.toast('Configuración de coach próximamente', 'info');
-  }
+  const panel = document.getElementById('mc-config-panel');
+  if (!panel) return;
+  const open = panel.style.display === 'none';
+  panel.style.display = open ? 'block' : 'none';
+  if (open && window.CoachCalendar) window.CoachCalendar.mountSettings(panel);
+  if (open) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 // Modo de conexión elegido en la pantalla de idle: 'local' (compartir pantalla,
 // default) o 'bot' (el asistente entra solo vía Recall.ai). Se usa tanto para
 // decidir qué módulo lanzar en iniciarCoachLive() como para mostrar el badge
 // de costo correcto (coach_meeting vs. coach_bot_block).
-window.__coachMode = window.__coachMode || 'local';
+try { window.__coachMode = window.__coachMode || localStorage.getItem('predictable_coach_mode') || 'local'; }
+catch (e) { window.__coachMode = window.__coachMode || 'local'; }
 // Módulo activo durante una sesión en curso ('local' → realtimeCoach,
 // 'bot' → meetingCoach), para que "Finalizar sesión" sepa a quién llamar.
 window.__coachActiveMode = window.__coachActiveMode || null;
 
 function setCoachMode(mode) {
   window.__coachMode = mode === 'bot' ? 'bot' : 'local';
+  // Se recuerda: el aviso de reunión inicia el coach en el modo que usas.
+  try { localStorage.setItem('predictable_coach_mode', window.__coachMode); } catch (e) {}
   const btnLocal = document.getElementById('mc-mode-btn-local');
   const btnBot = document.getElementById('mc-mode-btn-bot');
   const hintLocal = document.getElementById('mc-mode-local-hint');
@@ -3457,6 +3484,9 @@ function setCoachMode(mode) {
   }
 }
 
+// Restaura el modo recordado (los botones nacen en «Compartir pantalla»).
+if (window.__coachMode === 'bot') { try { setCoachMode('bot'); } catch (e) {} }
+
 function endCoachSession() {
   if (window.__coachActiveMode === 'bot' && window.meetingCoach) {
     window.meetingCoach.end();
@@ -3475,6 +3505,8 @@ function coachShowIdle() {
   if (btnEnd) btnEnd.style.display = 'none';
   if (dot) { dot.style.background = 'var(--green-soft)'; dot.style.boxShadow = 'none'; }
   window.__coachActiveMode = null;
+  // Sin sesión viva (no arrancó o ya terminó) la ventana flotante no tiene qué mostrar.
+  if (window.CoachHUD && !(window.CoachLive && window.CoachLive.isLive())) window.CoachHUD.close();
 }
 
 function coachShowActive(prospectName) {
@@ -3583,6 +3615,29 @@ function loadCoachBrief(ctx) {
 }
 
 
+// Lo que el coach recibe del lead elegido (lo usan «Iniciar coach» y el aviso
+// de reunión de js/coach-calendar.js).
+function coachProspectPayload(ctx) {
+  return {
+    id: ctx.id,
+    name: ctx.name,
+    company: ctx.organization_name || ctx.company,
+    title: ctx.title,
+    deal_value: ctx.deal_value,
+    icp_score: ctx.icp_score,
+    // Preparación de reunión del nuevo generate-outreach (additivo:
+    // el coach en vivo la recibe como contexto extra si existe).
+    coach_prep: ctx.coach_prep || null,
+    person_hook: ctx.person_hook || null,
+    // Brief completo del lead (quién / por qué / riesgos) y el ángulo de
+    // outreach: antes se quedaban en el navegador y el coach no los veía.
+    brief_who: ctx.brief_who || null,
+    brief_why: ctx.brief_why || null,
+    brief_risks: ctx.brief_risks || null,
+    angle: (ctx.outreach && ctx.outreach.angle) || null
+  };
+}
+
 function iniciarCoachLive(prospectCtx) {
   nav(document.querySelector('[data-page=ventas-coach]'), 'ventas-coach');
   const ctx = prospectCtx || (window.predictable && window.predictable.currentProspect) || null;
@@ -3623,26 +3678,16 @@ function iniciarCoachLive(prospectCtx) {
     }
   }
 
+  // La ventana flotante solo se puede abrir dentro del clic: va ANTES de
+  // cualquier espera (el selector de pantalla tarda más que el gesto).
+  if (window.CoachHUD && window.CoachHUD.pref()) {
+    if (window.CoachLive) window.CoachLive.status('Preparando el coach…');
+    window.CoachHUD.open();
+  }
+
   loadCoachBrief(ctx);
   setTimeout(function () {
-    const prospectPayload = {
-      id: ctx.id,
-      name: ctx.name,
-      company: ctx.organization_name || ctx.company,
-      title: ctx.title,
-      deal_value: ctx.deal_value,
-      icp_score: ctx.icp_score,
-      // Preparación de reunión del nuevo generate-outreach (additivo:
-      // el coach en vivo la recibe como contexto extra si existe).
-      coach_prep: ctx.coach_prep || null,
-      person_hook: ctx.person_hook || null,
-      // Brief completo del lead (quién / por qué / riesgos) y el ángulo de
-      // outreach: antes se quedaban en el navegador y el coach no los veía.
-      brief_who: ctx.brief_who || null,
-      brief_why: ctx.brief_why || null,
-      brief_risks: ctx.brief_risks || null,
-      angle: (ctx.outreach && ctx.outreach.angle) || null
-    };
+    const prospectPayload = coachProspectPayload(ctx);
 
     if (mode === 'bot') {
       if (window.meetingCoach) {

@@ -5,8 +5,9 @@
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { buildTrainingBlock, coachDoctrine, hasTraining, NEURO_DOCTRINE, type Training, type TrainingRow } from "./sales-training.ts";
 
-Deno.test("sin entrenamiento: doctrina de neuroventas y ningún bloque", () => {
-  assertEquals(coachDoctrine(), NEURO_DOCTRINE);
+Deno.test("sin entrenamiento: neuroventas + playbook por fase, y ningún bloque", () => {
+  assert(coachDoctrine().startsWith(NEURO_DOCTRINE));
+  assertStringIncludes(coachDoctrine(), "PLAYBOOK POR FASE");
   const empty: Training = { row: null, docs: [], company: null };
   assertEquals(hasTraining(empty), false);
   for (const t of ["coach", "coach_live", "outreach", "cadence", "voice"] as const) assertEquals(buildTrainingBlock(empty, t), "");

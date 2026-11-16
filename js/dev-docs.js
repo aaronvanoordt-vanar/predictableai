@@ -224,7 +224,7 @@
     'message.sent': 'Salió un mensaje (de una campaña o respondido desde la Bandeja).',
     'signal.created': 'El Radar te entregó una señal de compra nueva (las del lote diario; la reserva no se envía).',
     'enrollment.status_changed': 'Un lead de una campaña respondió, se dio de baja, terminó la cadencia, se pausó o falló.',
-    'meeting.completed': 'El Meeting Coach terminó el reporte de una reunión.',
+    'meeting.completed': 'El AI Sales Coach terminó el reporte de una reunión.',
   };
 
   function section(id, title, body) {
