@@ -55,7 +55,7 @@ import {
   hubspotStatusOptions, runHubspotPull, saveSync, statusMapOf, syncConfig, validateDealOptions, writeMemberStates,
 } from "./crm.ts";
 import { sanitizeStatusMap } from "../_shared/hubspot-sync.ts";
-import { type AlertEvent, alertKey, dueAlerts, normalizeLead, pruneSent, pushPayload, REFRESH_MS } from "../_shared/meeting-alerts.ts";
+import { type AlertEvent, alertKey, dueAlerts, normalizeLead, pruneSent, pushPayload, REFRESH_MS, SERVER_PUSH_ENABLED } from "../_shared/meeting-alerts.ts";
 import { notifyUserDevices } from "../_shared/push-devices.ts";
 import { isTwoWay, linkCompanies, nativeSettings, nativeSyncOf, pipedriveToNative, runNativeSync } from "./native-crm.ts";
 import {
@@ -810,6 +810,7 @@ const ALERTS_MAX_REFRESH = 30;   // calendarios releídos por pasada (los más v
 async function meetingAlertsTick(admin: Ctx["admin"]): Promise<Json> {
   const began = Date.now();
   const out = { users: 0, refreshed: 0, sent: 0, errors: 0 };
+  if (!SERVER_PUSH_ENABLED) return { ...out, disabled: true };
   const { data: rows, error } = await admin.from("coach_meeting_alerts")
     .select("user_id, lead_minutes, events, sent, synced_at")
     .eq("enabled", true)
@@ -963,7 +964,7 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
       .select("enabled, lead_minutes, synced_at, last_error").eq("user_id", ctx.userId).maybeSingle();
     if (error) throw new HttpError("No se pudo leer el aviso de reunión: " + error.message, 500);
     const { count } = await ctx.admin.from("push_subscriptions").select("id", { count: "exact", head: true }).eq("user_id", ctx.userId);
-    return { saved: !!data, enabled: data?.enabled ?? false, lead: data?.lead_minutes ?? null, devices: count ?? 0, synced_at: data?.synced_at ?? null, last_error: data?.last_error ?? null };
+    return { saved: !!data && SERVER_PUSH_ENABLED, enabled: data?.enabled ?? false, lead: data?.lead_minutes ?? null, devices: count ?? 0, synced_at: data?.synced_at ?? null, last_error: data?.last_error ?? null };
   }
 
   if (action === "catalog") {

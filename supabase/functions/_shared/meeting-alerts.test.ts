@@ -2,7 +2,11 @@
 // Aviso de reunión desde el servidor: cuándo toca, que no se repita y que la
 // clave sea la misma que usa la página (un solo aviso por reunión).
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { alertKey, type AlertEvent, dueAlerts, LATE_MS, normalizeLead, pruneSent, pushPayload } from "./meeting-alerts.ts";
+import { alertKey, type AlertEvent, dueAlerts, LATE_MS, normalizeLead, pruneSent, pushPayload, SERVER_PUSH_ENABLED } from "./meeting-alerts.ts";
+
+Deno.test("el aviso por push está apagado hasta confirmar la causa del cierre de Arc", () => {
+  assertEquals(SERVER_PUSH_ENABLED, false);
+});
 
 const NOW = Date.parse("2026-11-16T15:00:00Z");
 const ev = (minFromNow: number, over: Partial<AlertEvent> = {}): AlertEvent => ({
@@ -46,7 +50,7 @@ Deno.test("el aviso: título por minutos e idioma, acciones y enlace de vuelta",
   const p = pushPayload(ev(2), "es", NOW);
   assertEquals(p.kind, "coach-meeting");
   assertEquals(p.body, "Demo · Ana");
-  assertEquals(p.actions.map((a) => a.action), ["coach", "join"]);
+  assertEquals("actions" in p, false);   // notificación simple, sin botones
   assert(p.url.startsWith("/index.html?coach_event="));
   assertEquals(p.tag, "coach-" + p.key);
 });

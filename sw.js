@@ -26,10 +26,11 @@ self.addEventListener('push', function (event) {
       body: data.body || '',
       tag: data.tag || undefined,
       renotify: !!data.tag,
-      requireInteraction: true,
+      // Notificación simple (sin botones ni requireInteraction), igual que las
+      // de la Bandeja: un aviso con botones es lo único que este push hacía
+      // distinto cuando Arc empezó a cerrarse solo (2026-11-16).
       icon: 'assets/pwa/icon-192.png?v=2',
       badge: 'assets/pwa/badge-96.png?v=2',
-      actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : [],
       data: { kind: 'coach-meeting', key: data.key || '', meeting_url: data.meeting_url || '' },
     }));
     return;
