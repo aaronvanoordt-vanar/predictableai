@@ -2,7 +2,8 @@
  * sw.js — Service worker de Predictable (2026-10-06).
  *
  * SOLO notificaciones: los push de la Bandeja (supabase/functions/push-send)
- * y el clic en el aviso de reunión del AI Sales Coach (js/coach-calendar.js).
+ * y el aviso de reunión del AI Sales Coach (lo manda el servidor por push, o
+ * la página con js/coach-calendar.js si no hay push).
  * No intercepta `fetch` ni guarda nada en caché a propósito: main es
  * producción y una caché vieja dejaría a la gente con una app desactualizada.
  *
@@ -18,6 +19,21 @@ self.addEventListener('push', function (event) {
   var data = {};
   try { data = event.data ? event.data.json() : {}; } catch (e) { data = { body: event.data ? event.data.text() : '' }; }
   var title = data.title || 'Predictable';
+  // Aviso de reunión del AI Sales Coach enviado por el servidor (integrations →
+  // meeting_alerts): llega aunque no haya ninguna pestaña de Predictable abierta.
+  if (data.kind === 'coach-meeting') {
+    event.waitUntil(self.registration.showNotification(title, {
+      body: data.body || '',
+      tag: data.tag || undefined,
+      renotify: !!data.tag,
+      requireInteraction: true,
+      icon: 'assets/pwa/icon-192.png?v=2',
+      badge: 'assets/pwa/badge-96.png?v=2',
+      actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : [],
+      data: { kind: 'coach-meeting', key: data.key || '', meeting_url: data.meeting_url || '' },
+    }));
+    return;
+  }
   // Safari exige mostrar una notificación por cada push: siempre se muestra.
   event.waitUntil(self.registration.showNotification(title, {
     body: data.body || 'Tienes un mensaje nuevo en la Bandeja.',

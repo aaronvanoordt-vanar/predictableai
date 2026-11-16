@@ -13,8 +13,13 @@
 // por el email del invitado) y el enlace ya puesto. Opcional y apagado por
 // defecto: enviar al asistente a la reunión sin clic.
 //
-// Límite honesto: el aviso lo dispara esta página, así que Predictable tiene
-// que estar abierto en alguna pestaña (no hace falta que esté a la vista).
+// Con Predictable CERRADO (2026-11-16): si este dispositivo tiene activadas
+// las notificaciones push (js/push.js), el aviso lo manda el servidor
+// (`integrations` → `meeting_alerts`, pg_cron cada minuto) y Chrome lo muestra
+// sin ninguna pestaña de Predictable abierta, como Google Meet. Esta página
+// guarda la preferencia en el servidor (`meeting_alerts_set`) y, para no avisar
+// dos veces, deja la notificación del sistema al servidor y pinta solo la
+// tarjeta. Sin push, el aviso lo dispara esta página y necesita una pestaña.
 //
 // Nada se inventa: sin calendario conectado no hay avisos y la configuración
 // lo dice. El título y los invitados son del calendario del usuario: se
@@ -37,6 +42,8 @@
   var loading = null;
   var started = false;
   var cards = {};                    // key → nodo de la tarjeta
+  var pushStatus = '';               // estado de js/push.js en este dispositivo ('on' = suscrito)
+  var server = null;                 // { saved, enabled, lead, devices } del servidor; null = sin respuesta
 
   function T(s) { return (global.i18n && global.i18n.t) ? global.i18n.t(s) : s; }
   function toast(m, t) { if (global.uiHelpers && global.uiHelpers.toast) global.uiHelpers.toast(m, t || 'info'); }
@@ -56,6 +63,23 @@
     try { localStorage.setItem(LS_PREFS, JSON.stringify(p)); } catch (e) {}
     return p;
   }
+  // El servidor avisa (push) cuando la preferencia está guardada allá y este
+  // dispositivo está suscrito.
+  function serverAlerts() { return !!(server && server.saved && server.enabled && pushStatus === 'on'); }
+  async function readPush() {
+    try { pushStatus = global.pushNotify ? await global.pushNotify.status() : 'unsupported'; }
+    catch (e) { pushStatus = ''; }
+    return pushStatus;
+  }
+  // Guarda la preferencia en el servidor. Si la función o la migración aún no
+  // están desplegadas falla en silencio: el aviso sigue saliendo de la página.
+  async function syncServer() {
+    var p = prefs();
+    try { server = await fn('meeting_alerts_set', { enabled: p.enabled, lead: p.lead }); }
+    catch (e) { server = null; }
+    paintSettings();
+  }
+
   function seen() {
     var s = {};
     try { s = JSON.parse(localStorage.getItem(LS_SEEN) || '{}') || {}; } catch (e) { s = {}; }
@@ -123,6 +147,7 @@
       events.forEach(function (e) { prev[keyOf(e)] = e; });
       events = all.map(function (e) { var p = prev[keyOf(e)]; if (p && p.ctx) e.ctx = p.ctx; return e; });
       loadedAt = Date.now();
+      await readPush();
       paintSettings();
     })();
     try { await loading; } finally { loading = null; }
@@ -303,6 +328,8 @@
 
   async function notify(ev, auto) {
     if (!('Notification' in global) || Notification.permission !== 'granted') return;
+    // El servidor ya manda este aviso por push a este dispositivo.
+    if (serverAlerts() && !auto) return;
     var who = ev.ctx && ev.ctx.name ? ev.ctx.name : '';
     var title = auto ? T('El asistente ya está entrando a tu reunión') : whenText(ev);
     var opts = {
@@ -353,6 +380,7 @@
   function focusEvent(key, action) {
     var ev = events.filter(function (e) { return keyOf(e) === key; })[0];
     if (!ev) return;
+    markSeen(key);   // ya se avisó (por push): la página no lo repite
     goToCoach();
     if (action === 'coach' && global.__coachMode === 'bot' && !coachBusy()) {
       resolveLead(ev).then(function () { closeCard(key); startFromEvent(ev); });
@@ -399,10 +427,10 @@
     var calNames = connected.map(function (c) { return PROVIDERS[c]; }).join(' · ');
     var r1 = row('Aviso de reunión',
       connected.length
-        ? 'Antes de cada reunión con enlace de videollamada en tu calendario (' + calNames + ') te avisamos para iniciar el coach con un clic. Predictable tiene que estar abierto en alguna pestaña.'
+        ? 'Antes de cada reunión con enlace de videollamada en tu calendario (' + calNames + ') te avisamos para iniciar el coach con un clic.'
         : 'Conecta Google Calendar u Outlook en Integraciones para que te avisemos antes de cada reunión.');
     if (connected.length) {
-      r1.right.appendChild(switchInput(p.enabled, function (on) { savePrefs({ enabled: on }); paintSettings(); }));
+      r1.right.appendChild(switchInput(p.enabled, function (on) { savePrefs({ enabled: on }); paintSettings(); syncServer(); }));
     } else {
       var b = el('button', 'btn btn-ghost btn-sm', 'Conectar calendario');
       b.type = 'button';
@@ -423,26 +451,37 @@
         if (o[0] === p.lead) op.selected = true;
         sel.appendChild(op);
       });
-      sel.addEventListener('change', function () { savePrefs({ lead: Number(sel.value) }); });
+      sel.addEventListener('change', function () { savePrefs({ lead: Number(sel.value) }); syncServer(); });
       r2.right.appendChild(sel);
       box.appendChild(r2.node);
 
-      // 3) Permiso del navegador
-      var perm = ('Notification' in global) ? Notification.permission : 'unsupported';
-      var r3 = row('Notificación del navegador',
-        perm === 'granted' ? 'Activada: el aviso aparece aunque estés en otra pestaña o en otra aplicación.'
-          : perm === 'denied' ? 'Las notificaciones de este sitio están bloqueadas. Actívalas desde el candado de la barra de direcciones; mientras tanto el aviso solo se ve dentro de Predictable.'
-          : perm === 'unsupported' ? 'Este navegador no muestra notificaciones; el aviso se ve dentro de Predictable.'
-          : 'Actívala para ver el aviso aunque estés en otra pestaña o en otra aplicación.');
-      if (perm === 'default') {
+      // 3) Con Predictable cerrado: push desde el servidor a este dispositivo
+      var st = pushStatus || (('Notification' in global) ? 'off' : 'unsupported');
+      var r3 = row('Avisar aunque Predictable esté cerrado',
+        st === 'on'
+          ? (serverAlerts()
+            ? 'Activado en este dispositivo: el aviso aparece aunque no tengas Predictable abierto. Solo necesitas que el navegador esté abierto.'
+            : 'Este dispositivo ya recibe notificaciones, pero el aviso desde el servidor todavía no está disponible: por ahora aparece solo con Predictable abierto en alguna pestaña.')
+          : st === 'denied' ? 'Las notificaciones de este sitio están bloqueadas. Actívalas desde el candado de la barra de direcciones; mientras tanto el aviso solo se ve con Predictable abierto.'
+          : st === 'needs-install' ? 'En iPhone, agrega Predictable a tu pantalla de inicio y ábrelo desde ahí para activar las notificaciones.'
+          : st === 'unsupported' ? 'Este navegador no admite notificaciones push; el aviso se ve con Predictable abierto.'
+          : 'Activa las notificaciones en este dispositivo y el aviso aparecerá aunque no tengas Predictable abierto, como en Google Meet. También recibirás aquí los avisos de mensajes nuevos de la Bandeja.');
+      if (st === 'off') {
         var nb = el('button', 'btn btn-jade btn-sm', 'Activar notificaciones');
         nb.type = 'button';
         nb.addEventListener('click', function () {
-          Notification.requestPermission().then(function () { swRegistration(); paintSettings(); });
+          nb.disabled = true;
+          // enable() pide el permiso dentro del clic y suscribe este dispositivo.
+          global.pushNotify.enable().then(function () {
+            return readPush().then(syncServer);
+          }).catch(function (e) {
+            toast((e && e.message) || 'No se pudieron activar las notificaciones.', 'error');
+            readPush().then(paintSettings);
+          });
         });
         r3.right.appendChild(nb);
-      } else if (perm === 'granted') {
-        r3.right.appendChild(el('span', 'pill pill-green', 'Activada'));
+      } else if (st === 'on' && serverAlerts()) {
+        r3.right.appendChild(el('span', 'pill pill-green', 'Activado'));
       }
       box.appendChild(r3.node);
 
@@ -508,7 +547,20 @@
   function start() {
     if (started || !sb()) return;
     started = true;
-    refresh(true).then(tick);
+    refresh(true).then(function () {
+      // Se abrió desde la notificación con la app cerrada: ?coach_event=<key>
+      try {
+        var k = new URLSearchParams(location.search).get('coach_event');
+        if (k) focusEvent(k);
+      } catch (e) {}
+      tick();
+      // La preferencia vive también en el servidor (aviso con la app cerrada).
+      if (connected.length) syncServer();
+    });
+    document.addEventListener('predictable:push-status', function (e) {
+      var st = e && e.detail && e.detail.status;
+      if (st && st !== pushStatus) { pushStatus = st; paintSettings(); }
+    });
     setInterval(function () { if (prefs().enabled) refresh(false); }, REFRESH_MS);
     setInterval(tick, TICK_MS);
     document.addEventListener('visibilitychange', function () {
@@ -520,11 +572,6 @@
         if (d.type === 'predictable:coach-meeting' && d.key) focusEvent(d.key, d.action);
       });
     }
-    // Se abrió desde la notificación con la app cerrada: ?coach_event=<key>
-    try {
-      var k = new URLSearchParams(location.search).get('coach_event');
-      if (k) refresh(true).then(function () { focusEvent(k); });
-    } catch (e) {}
   }
   document.addEventListener('predictable:profile-ready', start);
   if (global.currentProfile) start();

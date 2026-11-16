@@ -7388,4 +7388,16 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Duda de que funcione": "Doubts it will work",
   "Es justo que lo preguntes. ¿Qué necesitarías ver para estar tranquilo de que funciona en un caso como el tuyo?": "That's a fair question. What would you need to see to feel confident it works in a case like yours?",
   "Pregunta qué prueba necesita y usa solo casos reales; nunca inventes uno.": "Ask what proof they need and use only real cases; never make one up.",
+
+  // ── AI Sales Coach: aviso de reunión con Predictable cerrado (push del servidor) ──
+  "Avisar aunque Predictable esté cerrado": "Alert me even when Predictable is closed",
+  "Activado en este dispositivo: el aviso aparece aunque no tengas Predictable abierto. Solo necesitas que el navegador esté abierto.": "On for this device: the alert shows up even if Predictable isn't open. You only need your browser to be running.",
+  "Este dispositivo ya recibe notificaciones, pero el aviso desde el servidor todavía no está disponible: por ahora aparece solo con Predictable abierto en alguna pestaña.": "This device already gets notifications, but the server-side alert isn't available yet: for now it only shows with Predictable open in a tab.",
+  "Las notificaciones de este sitio están bloqueadas. Actívalas desde el candado de la barra de direcciones; mientras tanto el aviso solo se ve con Predictable abierto.": "Notifications for this site are blocked. Turn them on from the padlock in the address bar; until then the alert only shows with Predictable open.",
+  "En iPhone, agrega Predictable a tu pantalla de inicio y ábrelo desde ahí para activar las notificaciones.": "On iPhone, add Predictable to your home screen and open it from there to turn on notifications.",
+  "Este navegador no admite notificaciones push; el aviso se ve con Predictable abierto.": "This browser doesn't support push notifications; the alert shows with Predictable open.",
+  "Activa las notificaciones en este dispositivo y el aviso aparecerá aunque no tengas Predictable abierto, como en Google Meet. También recibirás aquí los avisos de mensajes nuevos de la Bandeja.": "Turn on notifications on this device and the alert will show up even if Predictable isn't open, like Google Meet. You'll also get alerts here for new Inbox messages.",
+  "Antes de cada reunión con enlace de videollamada en tu calendario ({0}) te avisamos para iniciar el coach con un clic.": "Before every meeting with a video-call link on your calendar ({0}) we alert you so you can start the coach in one click.",
+  "No se pudieron activar las notificaciones.": "Couldn't turn on notifications.",
+  "Activado": "On",
 });
