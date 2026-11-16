@@ -1444,101 +1444,6 @@
   // Personalización en 5 capas (Mercado → Industria → Empresa → Rol → Persona)
   // usando el brief del cliente (client_brief) + insights del Intelligence Hub.
 
-  // Garantiza que el brief ("MI Cliente", la síntesis de la matriz) exista
-  // antes de personalizar: si no está listo, dispara generate-client-brief y
-  // espera a que termine (~1 min). Si la matriz (intel_hub_intake) no existe,
-  // lanza — sin matriz no hay base honesta para personalizar.
-  // Devuelve el status final ('ready' | 'error' | ...) para que la UI avise
-  // si se generará solo con la matriz cruda.
-  let briefReadyUntil = 0; // cache: evita re-consultar en cada lead del lote
-  async function ensureBriefReady(onStatus) {
-    const notify = typeof onStatus === 'function' ? onStatus : function () {};
-    if (Date.now() < briefReadyUntil) return 'ready';
-    let brief = await fetchClientBrief();
-    if (brief?.status === 'ready') {
-      briefReadyUntil = Date.now() + 10 * 60 * 1000;
-      return 'ready';
-    }
-    if (!brief || brief.status !== 'generating') {
-      notify('Generando el contexto de tu empresa (matriz + investigación)…');
-      try {
-        await generateClientBrief();
-      } catch (e) {
-        // Sin matriz no hay nada que esperar: el error del server ya es accionable.
-        if (/onboarding|intake/i.test(String(e.detail || e.message))) throw e;
-        return brief?.status || 'missing';
-      }
-    } else {
-      notify('Tu contexto de empresa aún se está generando…');
-    }
-    for (let i = 0; i < 24; i++) { // hasta ~2 min
-      await new Promise((r) => setTimeout(r, 5000));
-      brief = await fetchClientBrief();
-      if (brief?.status === 'ready') {
-        briefReadyUntil = Date.now() + 10 * 60 * 1000;
-        return 'ready';
-      }
-      if (brief?.status === 'error') return 'error';
-    }
-    return brief?.status || 'missing';
-  }
-
-  // Personalización completa de 5 capas para un lead (modo por defecto de
-  // generate-outreach): los 4 mensajes + el ángulo + coach_prep, guardados en
-  // prospect_list_members.outreach por la propia edge function.
-  // Su ÚNICA entrada es "Preparar con IA" del AI Sales Coach
-  // (js/coach-lead-picker.js), que es lo que alimenta el brief del coach. Los
-  // mensajes de una campaña NO salen de aquí: se escriben por paso
-  // (generateStepMessage) y los de la Bandeja con generateReply.
-  // `engine` (opcional) adelanta el motor de IA elegido por quien llama;
-  // si falta, el del selector de outreach.
-  async function generateOutreach({ member, sender, engine }) {
-    if (!member) throw new Error('Falta el contacto.');
-    if (!member.name && !member.first_name) throw new Error('Este lead no tiene nombre — no se puede personalizar.');
-    if (!member.company && !member.title) throw new Error('Este lead no tiene empresa ni cargo — no hay contexto para personalizar el mensaje.');
-    const snap = member.snapshot || {};
-    const org = snap.organization || {};
-    const lead = {
-      name: member.name || '',
-      first_name: member.first_name || (member.name || '').split(' ')[0] || '',
-      title: member.title || '',
-      company: member.company || '',
-      company_domain: member.company_domain || org.primary_domain || '',
-      industry: org.industry || '',
-      country: member.country || '',
-      city: member.city || '',
-      linkedin_url: member.linkedin_url || '',
-      // Señales del enrichment (Apollo) — afinan las capas Rol/Empresa.
-      headline: snap.headline || '',
-      seniority: snap.seniority || '',
-      departments: snap.departments || [],
-      company_size: org.estimated_num_employees ? String(org.estimated_num_employees) : '',
-    };
-    // member_id lets the function persist the result server-side (survives
-    // the browser reloading or the tab closing mid-generation).
-    const data = await edgeFetch('generate-outreach', {
-      lead,
-      sender: sender || getSenderInfo(),
-      member_id: member.id,
-      // El backend re-lee la preferencia del perfil; esto solo la adelanta.
-      engine: engine || (global.AIEngine && global.AIEngine.get('outreach')),
-    });
-    if (!data?.whatsapp_followup || !data?.linkedin_message) {
-      throw new Error('La IA no devolvió los mensajes. Reintenta.');
-    }
-    return {
-      whatsapp_followup: data.whatsapp_followup,
-      linkedin_message: data.linkedin_message,
-      email_subject: data.email_subject || '',
-      email_body: data.email_body || '',
-      angle: (data.angle && typeof data.angle === 'object') ? data.angle : null,
-      // Preparación para la reunión (la consume el AI coach) — additivo,
-      // puede venir null en respuestas del backend anterior.
-      coach_prep: (data.coach_prep && typeof data.coach_prep === 'object') ? data.coach_prep : null,
-      generated_via: data.generated_via || null,
-    };
-  }
-
   // ── Mensaje de UN paso de campaña / UNA respuesta (modo step/reply) ──
   // Mismo generate-outreach, distinto modo: aquí el mensaje pertenece a la
   // CAMPAÑA (paso + ángulo + instrucciones) o a la conversación, no al lead
@@ -1737,28 +1642,21 @@
   // Persiste el handoff Prospección → coach en Supabase (una fila por usuario)
   // para que sobreviva recargas y otros dispositivos.
 
-  // Construye el contexto que viaja al coach desde un prospect_list_member:
-  // quién es, por qué le importa (hipótesis del angle), riesgos (objeción +
-  // neutralizador) y el outreach completo. Lo usan tanto el botón "Preparar
-  // reunión con el coach" (Prospección) como el selector de lead del coach.
+  // Construye el contexto que viaja al AI Sales Coach desde un
+  // prospect_list_member. SOLO datos del lead (2026-11-16, pedido del dueño):
+  // quién es, las notas del vendedor, el traspaso BANT de la agenda (sale de
+  // la conversación real) y si el puesto sigue vigente. Ya NO entran el
+  // ángulo de «Preparar con IA» (prospect_list_members.outreach), su
+  // coach_prep ni el ángulo de lead-research: eran hipótesis armadas con el
+  // Intelligence Hub, a menudo viejas, y desviaban al coach en la llamada.
+  // Lo usan el selector del coach, el aviso de reunión, el dialer y la agenda.
   function buildCoachLeadContext(m) {
-    const ang = (m.outreach && m.outreach.angle) || {};
-    // Investigación previa de Listas (lead-research): el ángulo cubre a los
-    // leads sin «Preparar con IA», y el estado del puesto avisa al coach.
     const res = (m.research && typeof m.research === 'object') ? m.research : {};
-    const rAng = res.angle || {};
     const emp = res.employment || {};
     const notes = (m.research_notes || '').trim();
-    const why = ang.hypothesis
-      ? ang.hypothesis + (ang.social_proof && ang.social_proof !== 'ninguno' ? ' Social proof sugerido: ' + ang.social_proof + '.' : '')
-      : (rAng.headline
-        ? rAng.headline + (rAng.why_now ? ' ' + rAng.why_now : '') + (rAng.proof ? ' Prueba a citar: ' + rAng.proof + '.' : '')
-        : 'Lead trabajado desde Prospección.');
     const risks = [];
     if (emp.status === 'outdated') risks.push('Puesto desactualizado: probablemente ya no trabaja en ' + (emp.listed_company || m.company || 'esa empresa') + (emp.current_company ? ' (hoy en ' + emp.current_company + ')' : '') + '.');
     else if (emp.status === 'unconfirmed') risks.push('Su cargo actual está por confirmar: valídalo al inicio de la reunión.');
-    if (ang.objection) risks.push('Objeción probable: ' + ang.objection + (ang.neutralizer ? '. Neutralizador: ' + ang.neutralizer + '.' : ''));
-    else if (rAng.avoid) risks.push('Cuidado: ' + rAng.avoid);
     // Traspaso al AE (nota BANT al agendar desde la agenda): lo que se sabe y
     // lo que falta preguntar. Lo «No se sabe todavía» se queda así.
     const ho = (m.meeting_handoff && m.meeting_handoff.bant) ? m.meeting_handoff : null;
@@ -1767,23 +1665,34 @@
       const f = ho.bant[k] || {};
       return BANT[k] + ': ' + (f.status === 'unknown' || !f.summary ? 'No se sabe todavía' : f.summary);
     }).join(' · ') : '';
-    if (ho && Array.isArray(ho.risks)) ho.risks.slice(0, 3).forEach(function (r) { risks.push(r); });
+    if (ho && Array.isArray(ho.risks)) ho.risks.slice(0, 3).forEach(function (r) { if (r) risks.push(String(r)); });
     return {
       id: String(m.id),
       name: m.name || '',
       title: m.title || '',
       company: m.company || '',
       brief_who: (m.name || '—') + (m.title ? ' · ' + m.title : '') + (m.company ? ' en ' + m.company : '') + '.',
-      brief_why: why + (notes ? ' Notas del vendedor: ' + notes.slice(0, 600) : '') +
-        (ho ? ' Traspaso BANT — ' + (ho.summary ? ho.summary + ' ' : '') + bantText + '.' : ''),
-      brief_risks: risks.length ? risks.join(' ') : 'Sin alertas previas.',
-      // Preparación de reunión generada junto con el outreach (nuevo
-      // generate-outreach). null para leads con outreach antiguo.
-      coach_prep: (m.outreach && m.outreach.coach_prep) || null,
-      person_hook: ang.person_hook || rAng.hook || null,
-      research_questions: (ho && Array.isArray(ho.next_questions) ? ho.next_questions : []).concat(Array.isArray(rAng.questions) ? rAng.questions : []).slice(0, 8),
-      handoff: ho,
-      outreach: m.outreach || null,
+      notes: notes ? notes.slice(0, 1200) : null,
+      handoff_summary: ho ? ((ho.summary ? ho.summary + ' ' : '') + bantText) : null,
+      risks: risks,
+      questions: (ho && Array.isArray(ho.next_questions) ? ho.next_questions : []).filter(Boolean).slice(0, 6),
+    };
+  }
+
+  // Un contexto guardado antes del 2026-11-16 (coach_lead_context) puede traer
+  // el ángulo y la preparación viejos: se reduce a lo que hoy usa el coach.
+  function cleanCoachContext(c) {
+    if (!c || typeof c !== 'object') return null;
+    return {
+      id: c.id != null ? String(c.id) : '',
+      name: c.name || '',
+      title: c.title || '',
+      company: c.company || '',
+      brief_who: c.brief_who || '',
+      notes: typeof c.notes === 'string' ? c.notes : null,
+      handoff_summary: typeof c.handoff_summary === 'string' ? c.handoff_summary : null,
+      risks: Array.isArray(c.risks) ? c.risks.filter(function (x) { return typeof x === 'string'; }) : [],
+      questions: Array.isArray(c.questions) ? c.questions.filter(function (x) { return typeof x === 'string'; }) : [],
     };
   }
 
@@ -1802,7 +1711,7 @@
       .select('lead, member_id, updated_at')
       .maybeSingle();
     if (error) throw new Error('No se pudo leer el contexto del coach: ' + error.message);
-    return data?.lead || null;
+    return cleanCoachContext(data?.lead);
   }
 
   // ── Remitente (para el saludo de WhatsApp) ─────────────────
@@ -1899,11 +1808,9 @@
     fetchGmailThread,
     sendApolloReply,
     fetchEmailAccounts,
-    generateOutreach,
     generateStepMessage,
     generateReply,
     generateSignalMessage,
-    ensureBriefReady,
     fetchClientBrief,
     generateClientBrief,
     fetchOutreachPlaybook,

@@ -9,6 +9,12 @@
 window.I18N_DICTS = window.I18N_DICTS || {};
 window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Buscar o ir a una página (⌘K)": "Search or go to a page (⌘K)",
+  // AI Sales Coach — «Lo que sabes del lead» (2026-11-16)
+  "Lo que sabes del lead": "What you know about the lead",
+  "Elige el lead de la reunión: aquí verás quién es, tus notas y lo que ya se sabe de conversaciones anteriores. Durante la llamada el coach se guía por lo que dice el lead, no por investigaciones previas.": "Pick the lead for this meeting: you'll see who they are, your notes, and what's already known from earlier conversations. During the call the coach follows what the lead says, not prior research.",
+  "LO QUE YA SABES": "WHAT YOU ALREADY KNOW",
+  "QUÉ FALTA PREGUNTAR": "WHAT'S LEFT TO ASK",
+  "Ver datos del lead": "View lead details",
   "Desarrolladores": "Developers",
   "Tema de la interfaz": "Interface theme",
   "Idioma de la interfaz": "Interface language",

@@ -186,7 +186,7 @@
       ctx = {
         name: (guest && (guest.name || guest.email)) || ev.title,
         company: '',
-        brief_why: 'Reunión del calendario: ' + ev.title,
+        notes: 'Reunión del calendario: ' + ev.title,
       };
     }
     ev.ctx = ctx;

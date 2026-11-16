@@ -10,6 +10,13 @@
  */
 window.I18N_DICTS = window.I18N_DICTS || {};
 window.I18N_DICTS['pt-BR'] = {
+  // AI Sales Coach — «Lo que sabes del lead» (2026-11-16)
+  "Lo que sabes del lead": "O que você sabe do lead",
+  "Elige el lead de la reunión: aquí verás quién es, tus notas y lo que ya se sabe de conversaciones anteriores. Durante la llamada el coach se guía por lo que dice el lead, no por investigaciones previas.": "Escolha o lead da reunião: aqui você verá quem é, suas notas e o que já se sabe de conversas anteriores. Durante a ligação o coach se guia pelo que o lead diz, não por pesquisas prévias.",
+  "LO QUE YA SABES": "O QUE VOCÊ JÁ SABE",
+  "QUÉ FALTA PREGUNTAR": "O QUE FALTA PERGUNTAR",
+  "Ver datos del lead": "Ver dados do lead",
+  "RIESGOS": "RISCOS",
 
   // ── Shell: barra lateral, dashboard, Ajustes, créditos, marca, AI Sales Coach ──
   "Contraer barra lateral": "Recolher barra lateral",

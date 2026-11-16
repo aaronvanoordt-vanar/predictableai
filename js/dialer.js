@@ -492,7 +492,7 @@
         var remote = st.call.getRemoteStream && st.call.getRemoteStream();
         var local = st.call.getLocalStream && st.call.getLocalStream();
         if (!remote) throw new Error('sin audio remoto');
-        var ctx = (global.prospectingData && global.prospectingData.buildCoachLeadContext && (st.lead.outreach !== undefined || st.lead.research !== undefined))
+        var ctx = (global.prospectingData && global.prospectingData.buildCoachLeadContext)
           ? global.prospectingData.buildCoachLeadContext(st.lead)
           : { id: String(st.lead.id), name: leadName(st.lead), title: st.lead.title || '', company: st.lead.company || '' };
         ctx.channel = 'phone';
