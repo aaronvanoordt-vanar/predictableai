@@ -24,7 +24,13 @@
 (function (global) {
   'use strict';
 
-  var LS_HUD = 'predictable_coach_hud';
+  // Clave nueva (2026-11-16, tarde): la ventana flotante pasa a ser OPCIONAL y
+  // apagada por defecto. El navegador del dueño (Arc) se cerraba solo mientras
+  // la usaba; la pila del cierre muestra a Arc liberando un objeto interno al
+  // pulsar un botón de su propia interfaz (p. ej. cerrar una ventana), no a
+  // Predictable. Predictable ya no crea ventanas extra salvo que el usuario lo
+  // pida, y nunca en Arc ni como ventana emergente.
+  var LS_HUD = 'predictable_coach_hud_optin';
   function T(s) { return (global.i18n && global.i18n.t) ? global.i18n.t(s) : s; }
   function PB() { return global.CoachPlaybook || null; }
   function lsGet(k, d) { try { var v = localStorage.getItem(k); return v == null ? d : v === '1'; } catch (e) { return d; } }
@@ -95,7 +101,7 @@
     } catch (e) { return false; }
   }
   function hudSupported() { return 'documentPictureInPicture' in global && !isArc(); }
-  function hudPref() { return lsGet(LS_HUD, true); }
+  function hudPref() { return hudSupported() && lsGet(LS_HUD, false); }
   function hudSetPref(on) { lsSet(LS_HUD, !!on); }
   function hudIsOpen() { return !!(hudWin && !hudWin.closed); }
 
@@ -213,12 +219,9 @@
   async function hudOpen() {
     if (hudIsOpen()) { hudRender(); return true; }
     try {
-      if (hudSupported()) {
-        hudWin = await global.documentPictureInPicture.requestWindow({ width: 380, height: 560 });
-      } else {
-        hudWin = global.open('', 'predictable-coach-hud', 'popup=yes,width=380,height=600');
-        if (!hudWin) return false;
-      }
+      // Sin ventana emergente de respaldo: fuera de Chrome y Edge no hay ventana.
+      if (!hudSupported()) return false;
+      hudWin = await global.documentPictureInPicture.requestWindow({ width: 380, height: 560 });
     } catch (e) {
       console.warn('[CoachHUD] no se pudo abrir la ventana flotante:', e && e.message);
       hudWin = null;
@@ -238,6 +241,7 @@
   function paintHudButton() {
     var b = document.getElementById('mc-hud-btn');
     if (!b) return;
+    b.style.display = hudSupported() ? '' : 'none';
     b.textContent = hudIsOpen() ? 'Cerrar ventana flotante' : 'Ventana flotante';
   }
   function hudToggle() { if (hudIsOpen()) hudClose(); else hudOpen(); }
