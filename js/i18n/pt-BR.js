@@ -7538,4 +7538,16 @@ window.I18N_DICTS['pt-BR'] = {
   "Duda de que funcione": "Duvida que funcione",
   "Es justo que lo preguntes. ¿Qué necesitarías ver para estar tranquilo de que funciona en un caso como el tuyo?": "É justo você perguntar. O que você precisaria ver para ficar tranquilo de que funciona em um caso como o seu?",
   "Pregunta qué prueba necesita y usa solo casos reales; nunca inventes uno.": "Pergunte que prova ele precisa e use só casos reais; nunca invente um.",
+
+  // ── AI Sales Coach: aviso de reunión con Predictable cerrado (push del servidor) ──
+  "Avisar aunque Predictable esté cerrado": "Avisar mesmo com o Predictable fechado",
+  "Activado en este dispositivo: el aviso aparece aunque no tengas Predictable abierto. Solo necesitas que el navegador esté abierto.": "Ativado neste dispositivo: o aviso aparece mesmo sem o Predictable aberto. Você só precisa que o navegador esteja aberto.",
+  "Este dispositivo ya recibe notificaciones, pero el aviso desde el servidor todavía no está disponible: por ahora aparece solo con Predictable abierto en alguna pestaña.": "Este dispositivo já recebe notificações, mas o aviso pelo servidor ainda não está disponível: por enquanto ele só aparece com o Predictable aberto em alguma aba.",
+  "Las notificaciones de este sitio están bloqueadas. Actívalas desde el candado de la barra de direcciones; mientras tanto el aviso solo se ve con Predictable abierto.": "As notificações deste site estão bloqueadas. Ative-as pelo cadeado da barra de endereços; enquanto isso o aviso só aparece com o Predictable aberto.",
+  "En iPhone, agrega Predictable a tu pantalla de inicio y ábrelo desde ahí para activar las notificaciones.": "No iPhone, adicione o Predictable à tela de início e abra-o por lá para ativar as notificações.",
+  "Este navegador no admite notificaciones push; el aviso se ve con Predictable abierto.": "Este navegador não aceita notificações push; o aviso aparece com o Predictable aberto.",
+  "Activa las notificaciones en este dispositivo y el aviso aparecerá aunque no tengas Predictable abierto, como en Google Meet. También recibirás aquí los avisos de mensajes nuevos de la Bandeja.": "Ative as notificações neste dispositivo e o aviso aparecerá mesmo sem o Predictable aberto, como no Google Meet. Você também receberá aqui os avisos de novas mensagens da Caixa de entrada.",
+  "Antes de cada reunión con enlace de videollamada en tu calendario ({0}) te avisamos para iniciar el coach con un clic.": "Antes de cada reunião com link de videochamada na sua agenda ({0}) avisamos você para iniciar o coach com um clique.",
+  "No se pudieron activar las notificaciones.": "Não foi possível ativar as notificações.",
+  "Activado": "Ativado",
 };

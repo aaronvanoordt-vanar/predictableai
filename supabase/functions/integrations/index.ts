@@ -55,6 +55,8 @@ import {
   hubspotStatusOptions, runHubspotPull, saveSync, statusMapOf, syncConfig, validateDealOptions, writeMemberStates,
 } from "./crm.ts";
 import { sanitizeStatusMap } from "../_shared/hubspot-sync.ts";
+import { type AlertEvent, alertKey, dueAlerts, normalizeLead, pruneSent, pushPayload, REFRESH_MS } from "../_shared/meeting-alerts.ts";
+import { notifyUserDevices } from "../_shared/push-devices.ts";
 import { isTwoWay, linkCompanies, nativeSettings, nativeSyncOf, pipedriveToNative, runNativeSync } from "./native-crm.ts";
 import {
   amplemarketListLeads,
@@ -770,6 +772,114 @@ async function linkExportToNative(ctx: Ctx, conn: Conn, links: { id: string; sta
   }
 }
 
+// ── Calendario: próximas reuniones ────────────────────────────────────────
+
+const CALENDAR_PROVIDERS: ProviderId[] = ["google_calendar", "outlook_calendar"];
+
+/** Eventos de los próximos `days` días del calendario conectado (Google u Outlook). */
+async function calendarItems(ctx: Ctx, conn: Conn, days: number): Promise<CalendarItem[]> {
+  const from = new Date().toISOString();
+  const to = new Date(Date.now() + days * 86400_000).toISOString();
+  if (conn.provider === "outlook_calendar") {
+    const u = new URL(GRAPH + "/me/calendarView");
+    u.searchParams.set("startDateTime", from);
+    u.searchParams.set("endDateTime", to);
+    u.searchParams.set("$orderby", "start/dateTime");
+    u.searchParams.set("$top", "50");
+    u.searchParams.set("$select", "id,subject,start,end,isAllDay,isCancelled,webLink,onlineMeeting,onlineMeetingUrl,location,bodyPreview,attendees");
+    const res = await apiCall(ctx, conn, u.toString(), { method: "GET", headers: { Prefer: 'outlook.timezone="UTC"' } }, "Outlook Calendar");
+    return (res?.value ?? []).filter((e: Json) => !e?.isCancelled).map((e: Json) => toOutlookCalendarItem(e, conn.account_label ?? ""));
+  }
+  const u = new URL("https://www.googleapis.com/calendar/v3/calendars/primary/events");
+  u.searchParams.set("timeMin", from);
+  u.searchParams.set("timeMax", to);
+  u.searchParams.set("singleEvents", "true");
+  u.searchParams.set("orderBy", "startTime");
+  u.searchParams.set("maxResults", "50");
+  const res = await apiCall(ctx, conn, u.toString(), { method: "GET" }, "Google Calendar");
+  return (res?.items ?? []).filter((e: Json) => e?.status !== "cancelled").map((e: Json) => toCalendarItem(e, conn.account_label ?? ""));
+}
+
+// ── Aviso de reunión del AI Sales Coach (push, con la app cerrada) ────────
+// pg_cron cada minuto con la service role. Lógica pura en
+// _shared/meeting-alerts.ts; aquí la base, el calendario y el push.
+
+const ALERTS_BUDGET_MS = 40_000;
+const ALERTS_MAX_REFRESH = 30;   // calendarios releídos por pasada (los más viejos primero)
+
+async function meetingAlertsTick(admin: Ctx["admin"]): Promise<Json> {
+  const began = Date.now();
+  const out = { users: 0, refreshed: 0, sent: 0, errors: 0 };
+  const { data: rows, error } = await admin.from("coach_meeting_alerts")
+    .select("user_id, lead_minutes, events, sent, synced_at")
+    .eq("enabled", true)
+    .order("synced_at", { ascending: true, nullsFirst: true })
+    .limit(500);
+  if (error) throw new HttpError("No se pudieron leer los avisos: " + error.message, 500);
+  if (!rows?.length) return out;
+
+  // Sin dispositivo suscrito no hay a quién avisar: ni se lee su calendario.
+  const ids = rows.map((r: Json) => r.user_id);
+  const { data: devs } = await admin.from("push_subscriptions").select("user_id").in("user_id", ids);
+  const withDevice = new Set((devs ?? []).map((d: Json) => d.user_id));
+
+  for (const row of rows as Json[]) {
+    if (Date.now() - began > ALERTS_BUDGET_MS) break;
+    if (!withDevice.has(row.user_id)) continue;
+    out.users++;
+    const ctx: Ctx = { admin, userId: row.user_id, userEmail: "" };
+    let events: AlertEvent[] = Array.isArray(row.events) ? row.events : [];
+    try {
+      const stale = !row.synced_at || Date.now() - Date.parse(row.synced_at) > REFRESH_MS;
+      if (stale && out.refreshed < ALERTS_MAX_REFRESH) {
+        out.refreshed++;
+        const { data: conns } = await admin.from("integration_connections")
+          .select("id, user_id, provider, auth_type, account_label, account_id, config, access_token, refresh_token, token_expires_at")
+          .eq("user_id", row.user_id).in("provider", CALENDAR_PROVIDERS).eq("status", "connected");
+        const fresh: AlertEvent[] = [];
+        let failed = "";
+        for (const c of (conns ?? []) as Conn[]) {
+          if (!c.access_token) continue;
+          try {
+            for (const it of await calendarItems(ctx, c, 1)) {
+              if (it.all_day || !/^https:\/\//i.test(it.meeting_url)) continue;
+              const guest = it.attendees[0];
+              fresh.push({ provider: c.provider, id: it.id, title: it.title, start: it.start, meeting_url: it.meeting_url, who: guest ? (guest.name || guest.email) : "" });
+            }
+          } catch (e) {
+            failed = e instanceof Error ? e.message : String(e);
+          }
+        }
+        // Si el calendario falló se conserva lo último leído: mejor un aviso
+        // con datos de hace 10 min que ninguno.
+        if (!failed) events = fresh;
+        await admin.from("coach_meeting_alerts")
+          .update({ events, synced_at: new Date().toISOString(), last_error: failed ? failed.slice(0, 300) : null })
+          .eq("user_id", row.user_id);
+        if (failed) out.errors++;
+      }
+
+      const now = Date.now();
+      const due = dueAlerts(events, row.sent, normalizeLead(row.lead_minutes), now);
+      if (!due.length) continue;
+      // Se marca ANTES de enviar: si esta pasada se corta, el aviso no se repite.
+      const sent = pruneSent(row.sent, now);
+      for (const ev of due) sent[alertKey(ev)] = now;
+      await admin.from("coach_meeting_alerts").update({ sent, updated_at: new Date().toISOString() }).eq("user_id", row.user_id);
+      const { data: prof } = await admin.from("profiles").select("ui_language").eq("id", row.user_id).maybeSingle();
+      for (const ev of due) {
+        const r = await notifyUserDevices(admin, row.user_id, pushPayload(ev, prof?.ui_language, now));
+        if (r.sent) out.sent++;
+        else { out.errors++; console.warn(`[integrations] aviso de reunión ${row.user_id}: ${r.error}`); }
+      }
+    } catch (e) {
+      out.errors++;
+      console.error(`[integrations] meeting_alerts ${row.user_id}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return out;
+}
+
 // ── Cron: HubSpot de vuelta + envío automático de leads nuevos ────────────
 
 const CRON_BUDGET_MS = 120_000;
@@ -839,7 +949,22 @@ function asProvider(v: unknown): ProviderId {
 }
 
 async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
-  if (action === "cron") throw new HttpError("El cron se llama con la service role.", 403);
+  if (action === "cron" || action === "meeting_alerts") throw new HttpError("El cron se llama con la service role.", 403);
+
+  // Aviso de reunión con la app cerrada: la preferencia del usuario vive en el
+  // servidor para que el cron sepa a quién avisar y con cuánta anticipación.
+  if (action === "meeting_alerts_get" || action === "meeting_alerts_set") {
+    if (action === "meeting_alerts_set") {
+      const row = { user_id: ctx.userId, enabled: p.enabled !== false, lead_minutes: normalizeLead(p.lead), updated_at: new Date().toISOString() };
+      const { error } = await ctx.admin.from("coach_meeting_alerts").upsert(row, { onConflict: "user_id" });
+      if (error) throw new HttpError("No se pudo guardar el aviso de reunión: " + error.message, 500);
+    }
+    const { data, error } = await ctx.admin.from("coach_meeting_alerts")
+      .select("enabled, lead_minutes, synced_at, last_error").eq("user_id", ctx.userId).maybeSingle();
+    if (error) throw new HttpError("No se pudo leer el aviso de reunión: " + error.message, 500);
+    const { count } = await ctx.admin.from("push_subscriptions").select("id", { count: "exact", head: true }).eq("user_id", ctx.userId);
+    return { saved: !!data, enabled: data?.enabled ?? false, lead: data?.lead_minutes ?? null, devices: count ?? 0, synced_at: data?.synced_at ?? null, last_error: data?.last_error ?? null };
+  }
 
   if (action === "catalog") {
     return {
@@ -924,28 +1049,7 @@ async function handle(ctx: Ctx, action: string, p: Json): Promise<Json> {
     const base = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
     if (action === "calendar_events") {
       const days = Math.min(Math.max(Number(p.days) || 14, 1), 60);
-      const from = new Date().toISOString();
-      const to = new Date(Date.now() + days * 86400_000).toISOString();
-      let items: CalendarItem[];
-      if (outlook) {
-        const u = new URL(GRAPH + "/me/calendarView");
-        u.searchParams.set("startDateTime", from);
-        u.searchParams.set("endDateTime", to);
-        u.searchParams.set("$orderby", "start/dateTime");
-        u.searchParams.set("$top", "50");
-        u.searchParams.set("$select", "id,subject,start,end,isAllDay,isCancelled,webLink,onlineMeeting,onlineMeetingUrl,location,bodyPreview,attendees");
-        const res = await apiCall(ctx, conn, u.toString(), { method: "GET", headers: { Prefer: 'outlook.timezone="UTC"' } }, "Outlook Calendar");
-        items = (res?.value ?? []).filter((e: Json) => !e?.isCancelled).map((e: Json) => toOutlookCalendarItem(e, conn.account_label ?? ""));
-      } else {
-        const u = new URL(base);
-        u.searchParams.set("timeMin", from);
-        u.searchParams.set("timeMax", to);
-        u.searchParams.set("singleEvents", "true");
-        u.searchParams.set("orderBy", "startTime");
-        u.searchParams.set("maxResults", "50");
-        const res = await apiCall(ctx, conn, u.toString(), { method: "GET" }, "Google Calendar");
-        items = (res?.items ?? []).filter((e: Json) => e?.status !== "cancelled").map((e: Json) => toCalendarItem(e, conn.account_label ?? ""));
-      }
+      const items = await calendarItems(ctx, conn, days);
       await patchConn(ctx, conn, { last_used_at: new Date().toISOString() });
       return { events: items };
     }
@@ -1152,9 +1256,10 @@ Deno.serve(async (req) => {
   if (serviceKey && token && (token === serviceKey || jwtRole(token) === "service_role")) {
     let b: Json = {};
     try { b = await req.json(); } catch (_) { /* vacío */ }
-    if (b?.action !== "cron") return json({ error: "Solo la acción cron con la service role." }, 400);
+    if (b?.action !== "cron" && b?.action !== "meeting_alerts") return json({ error: "Solo las acciones cron y meeting_alerts con la service role." }, 400);
     try {
-      return json(await cronRun(createClient(env("SUPABASE_URL"), serviceKey, { auth: { persistSession: false } })));
+      const admin = createClient(env("SUPABASE_URL"), serviceKey, { auth: { persistSession: false } });
+      return json(b.action === "meeting_alerts" ? await meetingAlertsTick(admin) : await cronRun(admin));
     } catch (e) {
       console.error("[integrations] cron:", e);
       return json({ error: e instanceof Error ? e.message : String(e) }, e instanceof HttpError ? e.status : 500);
