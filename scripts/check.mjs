@@ -7,7 +7,7 @@
 //   4. New hardcoded API-key-looking secrets
 // Usage: node scripts/check.mjs [file ...]   (no args = check whole repo)
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, extname, relative, isAbsolute } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname;
@@ -87,6 +87,15 @@ for (const f of files) {
     }
   } catch (e) {
     fail(f, `could not check: ${e.message}`);
+  }
+}
+
+// Files that nothing in the static site references but the backend fetches
+// from the public site. A cleanup deleted the first one as "unused" and the
+// notetaker joined meetings without its picture (PR #262).
+if (!args.length) {
+  for (const rel of ['assets/predictable-p-camera.jpg']) {
+    if (!existsSync(join(root, rel))) fail(join(root, rel), 'missing: the sales-coach edge function serves it as the notetaker camera image');
   }
 }
 
