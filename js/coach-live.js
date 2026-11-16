@@ -104,9 +104,16 @@
       return !!(cs.getPropertyValue('--arc-palette-title') || cs.getPropertyValue('--arc-palette-background')).trim();
     } catch (e) { return false; }
   }
-  function hudSupported() { return 'documentPictureInPicture' in global && !isArc(); }
-  function hudPref() { return hudSupported() && lsGet(LS_HUD, true); }
-  function hudSetPref(on) { lsSet(LS_HUD, !!on); }
+  // En Arc la ventana es OPCIONAL y apagada por defecto (decisión del dueño,
+  // 2026-11-16, noche): el usuario la enciende sabiendo el riesgo de cierre, con
+  // su propia preferencia, y sin la reapertura automática al cambiar de pestaña.
+  var LS_HUD_ARC = 'predictable_coach_hud_arc';
+  function hudSupported() { return 'documentPictureInPicture' in global; }
+  function hudPref() {
+    if (!hudSupported()) return false;
+    return isArc() ? lsGet(LS_HUD_ARC, false) : lsGet(LS_HUD, true);
+  }
+  function hudSetPref(on) { lsSet(isArc() ? LS_HUD_ARC : LS_HUD, !!on); }
   function hudIsOpen() { return !!(hudWin && !hudWin.closed); }
 
   function hudBuild(win) {
@@ -223,7 +230,7 @@
   async function hudOpen() {
     if (hudIsOpen()) { hudRender(); return true; }
     try {
-      // Sin ventana emergente de respaldo: fuera de Chrome y Edge no hay ventana.
+      // Sin ventana emergente de respaldo: sin Document Picture-in-Picture no hay ventana.
       if (!hudSupported()) return false;
       hudWin = await global.documentPictureInPicture.requestWindow({ width: 380, height: 560 });
     } catch (e) {
@@ -257,7 +264,7 @@
   // de apps web). Si el navegador no lo soporta, esto no hace nada.
   var autoPipOn = false;
   function setAutoPip(on) {
-    if (!hudSupported() || !('mediaSession' in navigator)) return;
+    if (!hudSupported() || isArc() || !('mediaSession' in navigator)) return;
     try {
       navigator.mediaSession.setActionHandler('enterpictureinpicture', on ? function () {
         if (state.live && hudPref() && !hudIsOpen()) hudOpen();
@@ -471,7 +478,7 @@
   }
 
   global.CoachHUD = {
-    supported: hudSupported, pref: hudPref, setPref: hudSetPref,
+    supported: hudSupported, isArc: isArc, pref: hudPref, setPref: hudSetPref,
     open: hudOpen, close: hudClose, toggle: hudToggle, isOpen: hudIsOpen,
   };
   global.CoachLive = {
