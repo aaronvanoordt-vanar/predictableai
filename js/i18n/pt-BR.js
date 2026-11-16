@@ -7413,6 +7413,7 @@ window.I18N_DICTS['pt-BR'] = {
   "Qué decir desde el primer segundo": "O que dizer desde o primeiro segundo",
   "Encima de tu reunión": "Sobre a sua reunião",
   "Ventana flotante con la frase y las alertas": "Janela flutuante com a frase e os alertas",
+  "Abrir ventana flotante": "Abrir janela flutuante",
   "Ventana flotante": "Janela flutuante",
   "Cerrar ventana flotante": "Fechar janela flutuante",
   "Di esto ahora": "Diga isto agora",
@@ -7557,6 +7558,6 @@ window.I18N_DICTS['pt-BR'] = {
   "Antes de cada reunión con enlace de videollamada en tu calendario ({0}) te avisamos para iniciar el coach con un clic.": "Antes de cada reunião com link de videochamada na sua agenda ({0}) avisamos você para iniciar o coach com um clique.",
   "No se pudieron activar las notificaciones.": "Não foi possível ativar as notificações.",
   "Activado": "Ativado",
-  "Opcional. Al iniciar el coach abre una ventana pequeña, siempre encima, con la fase, qué decir y las alertas. Si compartes tu pantalla completa en la reunión, el lead la vería: comparte una ventana o una pestaña.": "Opcional. Ao iniciar o coach, abre uma janela pequena, sempre visível, com a fase, o que dizer e os alertas. Se você compartilhar a tela inteira na reunião, o lead a veria: compartilhe uma janela ou uma aba.",
+  "Al iniciar el coach se abre una ventana pequeña, siempre encima, con la fase, qué decir y las alertas: la ves aunque estés compartiendo pantalla en otra app. Si compartes tu pantalla completa en la reunión, el lead la vería: comparte una ventana o una pestaña.": "Ao iniciar o coach, abre-se uma janela pequena, sempre visível, com a fase, o que dizer e os alertas: você a vê mesmo compartilhando a tela em outro app. Se você compartilhar a tela inteira na reunião, o lead a veria: compartilhe uma janela ou uma aba.",
   "No disponible en este navegador: solo funciona en Chrome y Edge de escritorio. La guía del coach se ve dentro de Predictable.": "Não disponível neste navegador: só funciona no Chrome e no Edge para computador. A orientação do coach aparece dentro do Predictable.",
 };

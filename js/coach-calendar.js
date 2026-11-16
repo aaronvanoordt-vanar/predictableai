@@ -502,7 +502,7 @@
     if (global.CoachHUD) {
       var r5 = row('Ventana flotante sobre la reunión',
         global.CoachHUD.supported()
-          ? 'Opcional. Al iniciar el coach abre una ventana pequeña, siempre encima, con la fase, qué decir y las alertas. Si compartes tu pantalla completa en la reunión, el lead la vería: comparte una ventana o una pestaña.'
+          ? 'Al iniciar el coach se abre una ventana pequeña, siempre encima, con la fase, qué decir y las alertas: la ves aunque estés compartiendo pantalla en otra app. Si compartes tu pantalla completa en la reunión, el lead la vería: comparte una ventana o una pestaña.'
           : 'No disponible en este navegador: solo funciona en Chrome y Edge de escritorio. La guía del coach se ve dentro de Predictable.');
       if (global.CoachHUD.supported()) r5.right.appendChild(switchInput(global.CoachHUD.pref(), function (on) { global.CoachHUD.setPref(on); }));
       box.appendChild(r5.node);
