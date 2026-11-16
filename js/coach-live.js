@@ -48,14 +48,17 @@
 
   var HUD_CSS = [
     '*{box-sizing:border-box}',
-    'html,body{margin:0;height:100%}',
-    'body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;background:#0b0f1a;color:#e8ecf5;display:flex;flex-direction:column;font-size:13px;line-height:1.45}',
+    // La ventana NO se desplaza: cabecera, última frase y botones quedan fijos y
+    // solo la zona central (.body) hace scroll.
+    'html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none}',
+    'body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;background:#0b0f1a;color:#e8ecf5;display:flex;flex-direction:column;height:100vh;font-size:13px;line-height:1.45}',
     '.top{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0}',
     '.dot{width:8px;height:8px;border-radius:50%;background:#2bb673;box-shadow:0 0 8px rgba(43,182,115,.8);flex-shrink:0}',
     '.dot.off{background:#5b6478;box-shadow:none}',
     '.st{font-weight:600;font-size:12px;color:#b7c0d4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}',
     '.tm{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#8b95ab}',
-    '.body{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}',
+    '.body{flex:1 1 0;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px;display:flex;flex-direction:column;gap:10px}',
+    '.body>*{flex-shrink:0}',
     '.lbl{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8b95ab;margin-bottom:4px}',
     '.stage{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}',
     '.stage b{font-size:16px;color:#9db4ff}',
