@@ -83,7 +83,18 @@
     '@media (prefers-reduced-motion:reduce){.pulse{animation:none}}',
   ].join('');
 
-  function hudSupported() { return 'documentPictureInPicture' in global; }
+  // Arc (Chromium) anuncia Document Picture-in-Picture pero su gestor de
+  // ventanas no lo implementa bien: el dueño reportó (2026-11-16) que Arc se
+  // cierra solo (EXC_BAD_ACCESS en el hilo principal) al usar el coach. Arc no
+  // se identifica en el user agent; sí inyecta sus variables de tema
+  // (--arc-palette-*) en la página. En Arc se usa la ventana emergente normal.
+  function isArc() {
+    try {
+      var cs = getComputedStyle(document.documentElement);
+      return !!(cs.getPropertyValue('--arc-palette-title') || cs.getPropertyValue('--arc-palette-background')).trim();
+    } catch (e) { return false; }
+  }
+  function hudSupported() { return 'documentPictureInPicture' in global && !isArc(); }
   function hudPref() { return lsGet(LS_HUD, true); }
   function hudSetPref(on) { lsSet(LS_HUD, !!on); }
   function hudIsOpen() { return !!(hudWin && !hudWin.closed); }
