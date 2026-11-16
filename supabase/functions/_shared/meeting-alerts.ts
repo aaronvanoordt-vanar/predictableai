@@ -24,6 +24,18 @@ export interface AlertEvent {
   who: string;
 }
 
+/**
+ * APAGADO (2026-11-16, tarde): el dueño reportó que su navegador (Arc) se
+ * cierra solo a los ~30 s de abrirse desde que este aviso salió a producción.
+ * La causa no está confirmada, pero el patrón calza con un push que tumba al
+ * navegador al mostrarse y que el servicio de push vuelve a entregar en cada
+ * arranque. Hasta confirmarlo el servidor no manda ningún aviso de reunión.
+ * No lo vuelvas a encender sin la pila del cierre o una prueba en Arc.
+ */
+export const SERVER_PUSH_ENABLED = false;
+/** Segundos que el servicio de push guarda un aviso sin entregar: pasada la reunión ya no sirve. */
+export const PUSH_TTL_SECONDS = 120;
+
 export const LEAD_OPTIONS = [1, 2, 5, 10];
 export const DEFAULT_LEAD = 2;
 /** Hasta cuánto después de empezar todavía vale la pena avisar. */
@@ -67,10 +79,10 @@ export function pruneSent(sent: Record<string, number> | null | undefined, nowMs
   return out;
 }
 
-const TEXT: Record<string, { now: string; one: string; many: (n: number) => string; start: string; join: string }> = {
-  es: { now: "Tu reunión ya empezó", one: "Tu reunión empieza en 1 minuto", many: (n) => `Tu reunión empieza en ${n} minutos`, start: "Iniciar coach", join: "Abrir reunión" },
-  en: { now: "Your meeting has started", one: "Your meeting starts in 1 minute", many: (n) => `Your meeting starts in ${n} minutes`, start: "Start coach", join: "Open meeting" },
-  "pt-BR": { now: "Sua reunião já começou", one: "Sua reunião começa em 1 minuto", many: (n) => `Sua reunião começa em ${n} minutos`, start: "Iniciar coach", join: "Abrir reunião" },
+const TEXT: Record<string, { now: string; one: string; many: (n: number) => string }> = {
+  es: { now: "Tu reunión ya empezó", one: "Tu reunión empieza en 1 minuto", many: (n) => `Tu reunión empieza en ${n} minutos` },
+  en: { now: "Your meeting has started", one: "Your meeting starts in 1 minute", many: (n) => `Your meeting starts in ${n} minutes` },
+  "pt-BR": { now: "Sua reunião já começou", one: "Sua reunião começa em 1 minuto", many: (n) => `Sua reunião começa em ${n} minutos` },
 };
 
 /** Lo que recibe sw.js (`kind: "coach-meeting"`). El título y el invitado son del calendario del usuario. */
@@ -86,6 +98,6 @@ export function pushPayload(ev: AlertEvent, lang: string | null | undefined, now
     key,
     meeting_url: ev.meeting_url,
     url: "/index.html?coach_event=" + encodeURIComponent(key),
-    actions: [{ action: "coach", title: t.start }, { action: "join", title: t.join }],
+    // Sin botones ni `requireInteraction`: notificación simple, como las de la Bandeja.
   };
 }

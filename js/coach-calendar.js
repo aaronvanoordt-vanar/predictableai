@@ -326,7 +326,13 @@
     } catch (e) { return null; }
   }
 
+  // APAGADO (2026-11-16): desde que salieron las notificaciones del sistema
+  // de este aviso, el navegador del dueño (Arc) se cierra solo. Hasta confirmar
+  // la causa, el aviso es solo la tarjeta dentro de la app. No lo reactives
+  // sin esa confirmación.
+  var SYSTEM_NOTIFICATIONS = false;
   async function notify(ev, auto) {
+    if (!SYSTEM_NOTIFICATIONS) return;
     if (!('Notification' in global) || Notification.permission !== 'granted') return;
     // El servidor ya manda este aviso por push a este dispositivo.
     if (serverAlerts() && !auto) return;
