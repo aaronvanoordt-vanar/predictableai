@@ -30,6 +30,10 @@
   // pulsar un botón de su propia interfaz (p. ej. cerrar una ventana), no a
   // Predictable. Predictable ya no crea ventanas extra salvo que el usuario lo
   // pida, y nunca en Arc ni como ventana emergente.
+  // Pedido del dueño (2026-11-16, noche): en Chrome y Edge la ventana vuelve a
+  // abrirse SOLA al iniciar — quien comparte pantalla en la llamada no puede
+  // volver a la pestaña de Predictable para leer al coach. Sigue apagable y
+  // nunca se abre en Arc ni como ventana emergente.
   var LS_HUD = 'predictable_coach_hud_optin';
   function T(s) { return (global.i18n && global.i18n.t) ? global.i18n.t(s) : s; }
   function PB() { return global.CoachPlaybook || null; }
@@ -101,7 +105,7 @@
     } catch (e) { return false; }
   }
   function hudSupported() { return 'documentPictureInPicture' in global && !isArc(); }
-  function hudPref() { return hudSupported() && lsGet(LS_HUD, false); }
+  function hudPref() { return hudSupported() && lsGet(LS_HUD, true); }
   function hudSetPref(on) { lsSet(LS_HUD, !!on); }
   function hudIsOpen() { return !!(hudWin && !hudWin.closed); }
 
@@ -242,7 +246,24 @@
     var b = document.getElementById('mc-hud-btn');
     if (!b) return;
     b.style.display = hudSupported() ? '' : 'none';
-    b.textContent = hudIsOpen() ? 'Cerrar ventana flotante' : 'Ventana flotante';
+    var open = hudIsOpen();
+    b.textContent = open ? 'Cerrar ventana flotante' : 'Abrir ventana flotante';
+    // Cerrada durante una sesión viva = botón destacado, para reabrirla en un clic.
+    b.className = 'btn btn-sm ' + (!open && state.live ? 'btn-jade' : 'btn-ghost');
+  }
+
+  // Chrome 134+ abre solo la ventana flotante al cambiar de pestaña o de app si
+  // la página usa la cámara, el micrófono o comparte pantalla (PiP automático
+  // de apps web). Si el navegador no lo soporta, esto no hace nada.
+  var autoPipOn = false;
+  function setAutoPip(on) {
+    if (!hudSupported() || !('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.setActionHandler('enterpictureinpicture', on ? function () {
+        if (state.live && hudPref() && !hudIsOpen()) hudOpen();
+      } : null);
+      autoPipOn = on;
+    } catch (e) { /* acción no soportada en este navegador */ }
   }
   function hudToggle() { if (hudIsOpen()) hudClose(); else hudOpen(); }
 
@@ -310,10 +331,12 @@
     ticker = setInterval(watch, 20000);
     paint();
     paintHudButton();
+    setAutoPip(true);
   }
 
   function end() {
     if (ticker) { clearInterval(ticker); ticker = null; }
+    if (autoPipOn) setAutoPip(false);
     state.live = false; state.thinking = false;
     state.status = 'Sesión finalizada';
     hudRender();

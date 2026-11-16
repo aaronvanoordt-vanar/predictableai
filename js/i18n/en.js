@@ -7262,6 +7262,7 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Qué decir desde el primer segundo": "What to say from the very first second",
   "Encima de tu reunión": "On top of your meeting",
   "Ventana flotante con la frase y las alertas": "Floating window with the line to say and the alerts",
+  "Abrir ventana flotante": "Open floating window",
   "Ventana flotante": "Floating window",
   "Cerrar ventana flotante": "Close floating window",
   "Di esto ahora": "Say this now",
@@ -7406,6 +7407,6 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Antes de cada reunión con enlace de videollamada en tu calendario ({0}) te avisamos para iniciar el coach con un clic.": "Before every meeting with a video-call link on your calendar ({0}) we alert you so you can start the coach in one click.",
   "No se pudieron activar las notificaciones.": "Couldn't turn on notifications.",
   "Activado": "On",
-  "Opcional. Al iniciar el coach abre una ventana pequeña, siempre encima, con la fase, qué decir y las alertas. Si compartes tu pantalla completa en la reunión, el lead la vería: comparte una ventana o una pestaña.": "Optional. When you start the coach it opens a small always-on-top window with the stage, what to say and the alerts. If you share your entire screen in the meeting, the lead would see it: share a window or a tab instead.",
+  "Al iniciar el coach se abre una ventana pequeña, siempre encima, con la fase, qué decir y las alertas: la ves aunque estés compartiendo pantalla en otra app. Si compartes tu pantalla completa en la reunión, el lead la vería: comparte una ventana o una pestaña.": "When you start the coach a small always-on-top window opens with the stage, what to say and the alerts: you see it even while sharing your screen from another app. If you share your entire screen in the meeting, the lead would see it: share a window or a tab instead.",
   "No disponible en este navegador: solo funciona en Chrome y Edge de escritorio. La guía del coach se ve dentro de Predictable.": "Not available in this browser: it only works in desktop Chrome and Edge. The coach's guidance shows inside Predictable.",
 });
