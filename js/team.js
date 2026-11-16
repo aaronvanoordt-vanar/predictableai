@@ -617,8 +617,8 @@
       (state.reviewErr ? '<div class="team-err">' + esc(state.reviewErr) + '</div>' : '') +
       '<div class="team-sub2">' + (isManager() ? 'Comentarios generales' : 'Comentarios de tu director') + '</div>' +
       (commentsHtml('general', '') || '<p class="team-note">Todavía no hay comentarios.</p>') +
-      '<div class="team-sub2">Reuniones del Meeting Coach</div>' +
-      (meetings.length ? meetings.map(meetingHtml).join('') : '<p class="team-note">' + (isManager() ? 'Esta persona todavía no tiene reuniones en el Meeting Coach.' : 'Todavía no tienes reuniones en el Meeting Coach.') + '</p>') +
+      '<div class="team-sub2">Reuniones del AI Sales Coach</div>' +
+      (meetings.length ? meetings.map(meetingHtml).join('') : '<p class="team-note">' + (isManager() ? 'Esta persona todavía no tiene reuniones en el AI Sales Coach.' : 'Todavía no tienes reuniones en el AI Sales Coach.') + '</p>') +
       '<div class="team-sub2">Llamadas</div>' + callsHtml +
       '</div>';
   }

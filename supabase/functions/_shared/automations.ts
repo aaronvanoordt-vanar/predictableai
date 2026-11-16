@@ -38,7 +38,7 @@ export const TRIGGER_KINDS = [
   "inbox_reply",       // llega una respuesta positiva o negativa a la Bandeja
   "campaign_no_reply", // un lead termina una campaña sin responder
   "meeting_booked",    // el lead pasa a «Reunión conseguida»
-  "meeting_closed",    // el lead pasa a «Reunión tomada» (también al cerrar el Meeting Coach)
+  "meeting_closed",    // el lead pasa a «Reunión tomada» (también al cerrar el AI Sales Coach)
 ] as const;
 export type TriggerKind = typeof TRIGGER_KINDS[number];
 

@@ -15,7 +15,7 @@
  *   dial {member_id|to, task_id?}      → clic para llamar por el conector elegido
  *   set_outcome {call_id, outcome, note?}
  *   skip_task {task_id}
- *   attach_coach {call_id, meeting_id} → el reporte del Meeting Coach queda con la llamada
+ *   attach_coach {call_id, meeting_id} → el reporte del AI Sales Coach queda con la llamada
  *   recording {call_id}               → audio de la grabación nativa (o el enlace del conector)
  *   sync                               → trae las llamadas de los conectores sin webhook
  *

@@ -10,8 +10,10 @@
  * El catálogo de metodologías de venta (libros: SPIN, Challenger, Sandler…)
  * se quitó el 2026-10-19 a pedido del dueño: quien no los leyó no sabía
  * cuáles elegir. Las columnas `coach_methods` / `campaign_methods` de
- * `ai_training` quedan en la tabla pero ya no se leen: el coach usa siempre
- * NEURO_DOCTRINE. No lo resucites.
+ * `ai_training` quedan en la tabla pero ya no se leen. No resucites el
+ * catálogo ELEGIBLE. Desde el 2026-11-16 (pedido del dueño) el coach aplica
+ * siempre, sin que nadie elija nada, NEURO_DOCTRINE + el playbook por fase
+ * destilado de esos libros (_shared/coach-playbook.ts).
  *
  * Este archivo es la ÚNICA definición de cómo ese entrenamiento se convierte
  * en instrucciones para el modelo. Lo consumen:
@@ -32,6 +34,8 @@
  * Sin fila de entrenamiento (o sin la tabla, migración sin aplicar) todo se
  * comporta exactamente como antes: doctrina de neuroventas y cero bloques.
  */
+
+import { playbookDoctrine } from "./coach-playbook.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -86,9 +90,12 @@ export const NEURO_DOCTRINE = [
   ...COACH_OBJECTIONS_AND_RULES,
 ].join("\n");
 
-/** Doctrina del coach: la misma para todas las cuentas. */
+/**
+ * Doctrina del coach: la misma para todas las cuentas. Neuroventas (la voz) +
+ * el playbook por fase de los libros de venta (qué toca en cada momento).
+ */
 export function coachDoctrine(): string {
-  return NEURO_DOCTRINE;
+  return NEURO_DOCTRINE + "\n\n" + playbookDoctrine();
 }
 
 // ───────────────────────────────────────────────────────────────────────────

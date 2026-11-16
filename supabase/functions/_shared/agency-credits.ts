@@ -30,7 +30,7 @@ export const USAGE_CATEGORIES: { key: string; label: string; prefixes: string[] 
   { key: "campaigns", label: "Campañas", prefixes: ["campaign_lead", "campaign_send", "inbox_", "linkedin_send"] },
   { key: "hub", label: "Intelligence Hub", prefixes: ["intel_hub", "market_analysis", "outreach_playbook"] },
   { key: "radar", label: "Radar", prefixes: ["radar_", "champion_"] },
-  { key: "coach", label: "Meeting Coach", prefixes: ["coach_"] },
+  { key: "coach", label: "AI Sales Coach", prefixes: ["coach_"] },
   { key: "voice", label: "Agente de voz", prefixes: ["voice_"] },
   // Minutos del dialer de Predictable (telefonía: `call_minutes`, `call_minutes_refund`).
   { key: "calls", label: "Llamadas", prefixes: ["call_minutes"] },

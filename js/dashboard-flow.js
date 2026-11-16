@@ -159,7 +159,7 @@
     else out.inbox = { state: 'todo', status: 'Sin respuestas aún', num: 0, unit: 'recibidas' };
     // Reuniones
     if (s.meetings == null) out.meetings = unknown();
-    else if (s.meetings > 0) out.meetings = { state: 'done', status: (s.coachMeetings || 0) > 0 ? fmt(s.coachMeetings) + ' con el Meeting Coach' : 'Marcadas en el CRM', num: s.meetings, unit: 'conseguidas' };
+    else if (s.meetings > 0) out.meetings = { state: 'done', status: (s.coachMeetings || 0) > 0 ? fmt(s.coachMeetings) + ' con el AI Sales Coach' : 'Marcadas en el CRM', num: s.meetings, unit: 'conseguidas' };
     else out.meetings = { state: 'todo', status: 'Ninguna aún', num: 0, unit: 'conseguidas' };
     return out;
   }

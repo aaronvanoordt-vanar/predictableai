@@ -49,7 +49,7 @@
     { id: 'meeting_booked', label: 'Reunión agendada', subject: 'lead',
       hint: 'Cuando marcas a un lead como «Reunión conseguida» (en Listas o en la Bandeja).' },
     { id: 'meeting_closed', label: 'Reunión tomada', subject: 'lead',
-      hint: 'Cuando el lead pasa a «Reunión tomada» (también al cerrar la reunión en el Meeting Coach).' },
+      hint: 'Cuando el lead pasa a «Reunión tomada» (también al cerrar la reunión en el AI Sales Coach).' },
   ];
 
   // Espejo de ACTION_TYPES (supabase/functions/_shared/automations.ts).
@@ -92,7 +92,7 @@
       rule: { trigger_kind: 'campaign_no_reply', trigger_config: {}, mode: 'approval',
         actions: [{ type: 'add_to_list', config: {} }, { type: 'create_task', config: { title: 'Llamar a {nombre} ({empresa})', due_days: 2 } }] } },
     { key: 'meeting_prep', name: 'Reunión agendada → investigar + aviso',
-      why: 'Llega a la reunión con la empresa investigada y el ángulo listo para el Meeting Coach.',
+      why: 'Llega a la reunión con la empresa investigada y el ángulo listo para el AI Sales Coach.',
       rule: { trigger_kind: 'meeting_booked', trigger_config: {}, mode: 'approval', actions: [{ type: 'research', config: {} }, { type: 'notify', config: { push: true } }] } },
     { key: 'meeting_followup', name: 'Reunión tomada → tarea de seguimiento',
       why: 'Que el siguiente paso acordado no se pierda.',

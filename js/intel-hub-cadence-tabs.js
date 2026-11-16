@@ -1633,7 +1633,7 @@
   const HUB_ACTION_META = {
     radar:      { label: 'Vigilar en el Radar',        hint: 'Crea un detector con esta señal (' + ((window.creditCosts && window.creditCosts.format('radar_detector_custom')) || '3 créditos') + ')', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.5"/><path d="M8 8l4-4"/></svg>' },
     trigger:    { label: 'Señal de compra',            hint: 'La guarda en «Dolores y señales de compra» de tu contexto', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6" stroke-linecap="round"><path d="M9 2L3 9h5l-1 5 6-7H8l1-5z"/></svg>' },
-    objection:  { label: 'Objeción para el coach',     hint: 'La añade a tus objeciones; el Meeting Coach la usa en vivo', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><path d="M2 3h12v7H7l-3 2.5V10H2z"/></svg>' },
+    objection:  { label: 'Objeción para el coach',     hint: 'La añade a tus objeciones; el AI Sales Coach la usa en vivo', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><path d="M2 3h12v7H7l-3 2.5V10H2z"/></svg>' },
     competitor: { label: 'Añadir competidor',          hint: 'Lo suma a «Competencia y exclusiones» de tu contexto', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><circle cx="5.5" cy="6" r="2.5"/><circle cx="11" cy="6" r="2.5"/><path d="M1.5 13c0-2.2 1.8-4 4-4s4 1.8 4 4M7 13c0-2.2 1.8-4 4-4s4 1.8 4 4"/></svg>' },
     search:     { label: 'Buscar contactos',           hint: 'Abre Buscar con estas palabras clave', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5L10.3 10.3"/></svg>' },
     campaign:   { label: 'Campaña con este ángulo',    hint: 'Abre el asistente con este hallazgo como instrucción del primer mensaje', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.6"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>' },
@@ -1720,7 +1720,7 @@
         const obj = t(it && it.objection) || t(it && it.pain) || t(title);
         const neutralizer = t(it && it.response) || t(it && it.your_move) || '';
         const added = await intakeAppend('common_objections', { objection: obj, neutralizer }, true);
-        hubToast(added ? 'Objeción añadida: el Meeting Coach la tendrá en vivo.' : 'Esa objeción ya estaba en tu contexto.', added ? 'success' : 'info');
+        hubToast(added ? 'Objeción añadida: el AI Sales Coach la tendrá en vivo.' : 'Esa objeción ya estaba en tu contexto.', added ? 'success' : 'info');
       } else if (act === 'competitor') {
         const name = t(it && it.actor) || t(it && it.name) || t(title);
         if (!name) throw new Error('Este hallazgo no nombra a un competidor.');

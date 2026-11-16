@@ -17,7 +17,7 @@
  *
  * Guarda el resultado en prospect_list_members.research (+ research_status) y
  * refresca el snapshot de Apollo del lead, así los pasos de campaña, las
- * respuestas de la Bandeja y el Meeting Coach lo leen sin volver a pagarlo
+ * respuestas de la Bandeja y el AI Sales Coach lo leen sin volver a pagarlo
  * (`buildResearchBlock`).
  *
  * Auth: Bearer <user JWT> (validado con auth.getUser), o la service role con

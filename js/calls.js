@@ -8,7 +8,7 @@
  *                    power dialer sobre la cola.
  *   Historial      → todas las llamadas (dialer nativo y conectores) con
  *                    resultado, grabación, transcripción y el resumen del
- *                    Meeting Coach.
+ *                    AI Sales Coach.
  *   Configuración  → vive en la pestaña «Canales» (2026-10-19): js/campaigns.js
  *                    la monta con Calls.mount(host, null, { configOnly: true }).
  *                    El número con el que te ven (dialer de Predictable) y los
@@ -281,13 +281,13 @@
     if (c.outcome_note) card.appendChild(h('div', { style: 'font-size:12px', text: c.outcome_note }));
     var coach = c.payload && c.payload.coach;
     if (coach) {
-      var cb = h('div', { style: 'border-left:3px solid var(--accent);padding:4px 10px;font-size:12px;line-height:1.5' }, h('div', { style: 'font-weight:700', text: 'Meeting Coach' + (coach.score !== null && coach.score !== undefined ? ' · ' + coach.score + '/100' : '') }));
+      var cb = h('div', { style: 'border-left:3px solid var(--accent);padding:4px 10px;font-size:12px;line-height:1.5' }, h('div', { style: 'font-weight:700', text: 'AI Sales Coach' + (coach.score !== null && coach.score !== undefined ? ' · ' + coach.score + '/100' : '') }));
       (Array.isArray(coach.resumen_corto) ? coach.resumen_corto : [coach.resumen_corto]).filter(Boolean).forEach(function (l) { cb.appendChild(h('div', { text: String(l) })); });
       var sp = coach.siguiente_paso;
       if (sp) cb.appendChild(h('div', { style: 'margin-top:4px' }, h('b', { text: 'Siguiente paso: ' }), typeof sp === 'string' ? sp : [sp.accion, sp.cuando].filter(Boolean).join(' · ')));
       card.appendChild(cb);
     } else if (c.coach_meeting_id) {
-      card.appendChild(h('div', { class: 'pros-hint', text: 'El Meeting Coach escuchó esta llamada; su reporte está en Reportes.' }));
+      card.appendChild(h('div', { class: 'pros-hint', text: 'El AI Sales Coach escuchó esta llamada; su reporte está en Reportes.' }));
     }
     if (c.transcript) {
       var d = h('details', null, h('summary', { style: 'cursor:pointer;font-size:12px', text: 'Transcripción' }));
@@ -326,7 +326,7 @@
     var n = (st.status && st.status.native) || {};
     var card = h('div', { class: 'chart-card', style: 'padding:16px;display:flex;flex-direction:column;gap:8px' });
     card.appendChild(h('div', { style: 'font-weight:700', text: 'Dialer de Predictable' }));
-    card.appendChild(h('div', { class: 'pros-hint', text: 'Llama desde el navegador con tu micrófono, con grabación, transcripción y el Meeting Coach en vivo. Cada minuto se paga en créditos según el país.' }));
+    card.appendChild(h('div', { class: 'pros-hint', text: 'Llama desde el navegador con tu micrófono, con grabación, transcripción y el AI Sales Coach en vivo. Cada minuto se paga en créditos según el país.' }));
     if (!n.available) {
       card.appendChild(h('div', { class: 'pros-note-red', text: 'Todavía no está activo en esta cuenta de Predictable. Mientras tanto puedes conectar tu proveedor abajo.' }));
       wrap.appendChild(card);
@@ -490,7 +490,7 @@
   // ── Equipo (js/team.js): las llamadas en la revisión del director ─────────
   // La RPC team_review_calls devuelve las llamadas de un miembro (él mismo, o
   // su director si está en la nómina). Cada una lleva su resultado, la nota y
-  // el resumen del Meeting Coach; los comentarios se guardan con
+  // el resumen del AI Sales Coach; los comentarios se guardan con
   // subject_kind = 'call'. La grabación nativa se escucha con «Escuchar»
   // (telephony `recording` valida el mismo permiso); la de un conector es su enlace.
   var PROVIDER_LABEL = { twilio: 'Dialer', cloudtalk: 'CloudTalk', aircall: 'Aircall', ringover: 'Ringover' };

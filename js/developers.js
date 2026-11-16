@@ -58,7 +58,7 @@
     ['campaigns_list', 'Listar campañas'], ['campaigns_get', 'Ver campaña y resultados'], ['campaigns_enrollments', 'Leads de una campaña'],
     ['campaigns_enroll', 'Enrolar contactos'], ['enrollments_update', 'Pausar / reanudar / detener un lead'],
     ['messages_list', 'Mensajes y respuestas'], ['signals_list', 'Señales del Radar'], ['signals_update', 'Guardar o descartar señal'],
-    ['meetings_list', 'Reuniones del Meeting Coach'], ['meetings_get', 'Reporte de una reunión'],
+    ['meetings_list', 'Reuniones del AI Sales Coach'], ['meetings_get', 'Reporte de una reunión'],
     ['pipeline_get', 'Etapas del pipeline'],
     ['companies_list', 'Listar cuentas'], ['companies_get', 'Ver cuenta con contactos y señales'],
     ['companies_upsert', 'Crear o actualizar cuenta'], ['companies_update', 'Cambiar datos de una cuenta'],
@@ -324,7 +324,7 @@
       '<div class="dv-card"><div class="dv-h">Qué se puede hacer</div><div class="dv-uses">' +
         use('Del CRM a Predictable', 'Cada lead nuevo del CRM entra a una lista (<code>POST /v1/contacts/bulk</code> con <code>external_id</code>) y, si quieres, a una campaña.') +
         use('De Predictable al CRM', 'Cuando un lead responde (<code>message.received</code>) o cambia de estado (<code>contact.status_changed</code>), el CRM actualiza su ficha.') +
-        use('Reuniones', 'Tu CRM marca <code>reunion_agendada</code> y el Meeting Coach devuelve el resumen y el siguiente paso (<code>meeting.completed</code>).') +
+        use('Reuniones', 'Tu CRM marca <code>reunion_agendada</code> y el AI Sales Coach devuelve el resumen y el siguiente paso (<code>meeting.completed</code>).') +
         use('Señales', 'Cada señal del Radar (<code>signal.created</code>) crea una oportunidad o una tarea en tu CRM.') +
       '</div></div>';
   }

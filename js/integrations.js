@@ -12,7 +12,7 @@
  *                    la etapa que elijas, envío automático de leads nuevos)
  *   Secuencias ..... Amplemarket (a una secuencia o a una lista nueva)
  *   Productividad .. Google Sheets (hoja por lista) · Google Calendar (próximas
- *                    reuniones → Meeting Coach, seguimientos) · Notion (listas y
+ *                    reuniones → AI Sales Coach, seguimientos) · Notion (listas y
  *                    reportes del coach como páginas) · ClickUp (tareas por lead
  *                    y por siguiente paso de una reunión)
  *
@@ -55,11 +55,11 @@
     { id: 'google_sheets', name: 'Google Sheets', category: 'productivity', mono: 'G', color: '#0F9D58',
       what: 'Exporta cualquier lista a una hoja de cálculo. Cada nuevo envío actualiza la misma hoja.' },
     { id: 'google_calendar', name: 'Google Calendar', category: 'productivity', mono: 'C', color: '#4285F4',
-      what: 'Ve tus próximas reuniones, ábrelas en el Meeting Coach con un clic y agenda seguimientos.' },
+      what: 'Ve tus próximas reuniones, ábrelas en el AI Sales Coach con un clic y agenda seguimientos.' },
     { id: 'outlook_calendar', name: 'Outlook Calendar', category: 'productivity', mono: 'O', color: '#0078D4',
-      what: 'Outlook o Microsoft 365: tus próximas reuniones en el Meeting Coach, seguimientos y la disponibilidad de tu Agenda con enlace de Teams.' },
+      what: 'Outlook o Microsoft 365: tus próximas reuniones en el AI Sales Coach, seguimientos y la disponibilidad de tu Agenda con enlace de Teams.' },
     { id: 'notion', name: 'Notion', category: 'productivity', mono: 'N', color: '#37352F',
-      what: 'Guarda tus listas y los reportes del Meeting Coach como páginas de Notion.',
+      what: 'Guarda tus listas y los reportes del AI Sales Coach como páginas de Notion.',
       token: { label: 'Secreto de la integración interna', placeholder: 'ntn_…', link: 'https://www.notion.so/profile/integrations',
         steps: ['Abre notion.so/profile/integrations y crea una integración interna.',
                 'Copia el «Internal Integration Secret» (empieza con ntn_) y pégalo aquí.',
@@ -556,9 +556,9 @@
   }
 
   function prepareInCoach(url) {
-    // El Meeting Coach está detrás del context-gate: no saltárselo.
+    // El AI Sales Coach está detrás del context-gate: no saltárselo.
     if (global.ContextGate && !global.ContextGate.isComplete()) {
-      toast('Completa y confirma tu Contexto para usar el Meeting Coach.', 'error');
+      toast('Completa y confirma tu Contexto para usar el AI Sales Coach.', 'error');
       return;
     }
     var input = document.getElementById('mc-meeting-url');
@@ -824,7 +824,7 @@
         return '<li class="itg-event"><div class="itg-event-main"><div class="itg-event-t">' + esc(ev.title) + '</div>' +
           '<div class="itg-muted">' + esc(ev.all_day ? fmtDate(ev.start, false) + ' · todo el día' : fmtDate(ev.start, true)) + (who ? ' · ' + esc(who + more) : '') + '</div></div>' +
           '<div class="itg-row">' +
-          (ev.meeting_url ? '<button class="btn btn-primary btn-sm" data-act="coach" data-url="' + esc(ev.meeting_url) + '">Preparar en Meeting Coach</button>' : '') +
+          (ev.meeting_url ? '<button class="btn btn-primary btn-sm" data-act="coach" data-url="' + esc(ev.meeting_url) + '">Preparar en AI Sales Coach</button>' : '') +
           (ev.html_link ? '<a class="itg-link" href="' + esc(safeUrl(ev.html_link)) + '" target="_blank" rel="noopener">Ver ↗</a>' : '') +
           '</div></li>';
       }).join('') + '</ul>';
@@ -861,7 +861,7 @@
       html += autoListRow(id);
       if (id === 'hubspot') html += hubspotSyncPanel();
       if (MEETING_TARGETS.indexOf(id) !== -1) {
-        html += '<div class="itg-sub">Enviar un reporte del Meeting Coach</div>';
+        html += '<div class="itg-sub">Enviar un reporte del AI Sales Coach</div>';
         if (!state.meetings.length) html += '<div class="itg-muted">Aún no tienes reuniones con reporte.</div>';
         else {
           html += '<div class="itg-grid"><label class="itg-field"><span>Reunión</span><select data-f="meeting_id" data-id="' + id + '"><option value="">Elige…</option>' +

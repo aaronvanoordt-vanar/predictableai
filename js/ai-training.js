@@ -3,7 +3,7 @@
  * empresa (2026-09-23).
  *
  * Página `ai-training` (shell `#ai-training-shell`). La empresa le enseña a
- * su Meeting Coach y a sus campañas lo que solo ella sabe:
+ * su AI Sales Coach y a sus campañas lo que solo ella sabe:
  *   1. Conocimiento de tu empresa: playbook, guiones, casos, precios,
  *      competencia, llamadas modelo — PDF (bucket privado `ai-training`),
  *      .txt/.md o texto pegado. La edge function `ai-training` los destila a
@@ -22,7 +22,7 @@
  * la empresa sube su playbook. No lo resucites.
  *
  * También pinta el resumen «Entrenado con…» en cualquier
- * `<div data-ai-training-badge="coach|campaigns">` (Meeting Coach y el
+ * `<div data-ai-training-badge="coach|campaigns">` (AI Sales Coach y el
  * asistente de campañas), y `AITraining.coachLivePrompt()` le da al coach en
  * vivo por el worker de OpenAI (js/realtime-coach.js) la misma doctrina y el
  * mismo bloque que usa sales-coach.
@@ -326,9 +326,9 @@
     el.innerHTML =
       '<div class="ait-card ait-hero">' +
         '<div class="ait-hero-top"><div><div class="ait-kicker">Tu Predictable</div><div class="ait-title">Enséñale a la IA cómo vende tu empresa</div>' +
-        '<p class="ait-p">Qué vendes, a quién y contra quién ya está en tu <a href="#" class="ait-link" data-ait="context">Contexto global</a>. Aquí suma lo que solo sabe tu equipo: tu playbook, tus precios, tus casos y cómo hablan. Lo usan el Meeting Coach, los mensajes de tus campañas, el diseño de cadencias y «Redactar con IA» de la Bandeja. Nada se inventa: la IA solo usa lo que tú le das.</p></div>' +
+        '<p class="ait-p">Qué vendes, a quién y contra quién ya está en tu <a href="#" class="ait-link" data-ait="context">Contexto global</a>. Aquí suma lo que solo sabe tu equipo: tu playbook, tus precios, tus casos y cómo hablan. Lo usan el AI Sales Coach, los mensajes de tus campañas, el diseño de cadencias y «Redactar con IA» de la Bandeja. Nada se inventa: la IA solo usa lo que tú le das.</p></div>' +
         '<button class="btn btn-ghost btn-sm" data-ait="preview">Ver lo que sabe tu IA</button></div>' +
-        '<div class="ait-sums">' + line('Meeting Coach', c) + line('Campañas', k) + '</div>' +
+        '<div class="ait-sums">' + line('AI Sales Coach', c) + line('Campañas', k) + '</div>' +
       '</div>';
   }
 
@@ -394,7 +394,7 @@
           '<label class="ait-field"><span>Qué es</span><select name="ait-doc-kind">' + DOC_KINDS.map(function (k) { return '<option value="' + k.value + '"' + (state.addKind === k.value ? ' selected' : '') + '>' + esc(k.label) + '</option>'; }).join('') + '</select></label>' +
           '<label class="ait-field"><span>Título (opcional)</span><input type="text" name="ait-doc-title" maxlength="200" placeholder="Ej: Playbook comercial 2026"></label>' +
           '<div class="ait-field"><span>Entrena a</span><div class="ait-checks">' +
-            '<label><input type="checkbox" name="ait-doc-coach" checked> Meeting Coach</label>' +
+            '<label><input type="checkbox" name="ait-doc-coach" checked> AI Sales Coach</label>' +
             '<label><input type="checkbox" name="ait-doc-campaigns" checked> Campañas</label>' +
           '</div></div>' +
         '</div>' +
@@ -494,7 +494,7 @@
     var ov = document.createElement('div');
     ov.className = 'ait-modal-ov';
     ov.innerHTML = '<div class="ait-modal" role="dialog" aria-modal="true" aria-label="Lo que sabe tu IA"><div class="ait-modal-head"><div><div class="ait-h">Lo que sabe tu IA</div><p class="ait-p">El texto exacto que se añade a las instrucciones de cada motor.</p></div><button type="button" class="btn btn-ghost btn-sm" data-close>Cerrar</button></div>' +
-      '<div class="ait-tabs" role="tablist"><button type="button" class="ait-tab on" data-pv="coach">Meeting Coach</button><button type="button" class="ait-tab" data-pv="outreach">Mensajes</button><button type="button" class="ait-tab" data-pv="cadence">Cadencias</button></div>' +
+      '<div class="ait-tabs" role="tablist"><button type="button" class="ait-tab on" data-pv="coach">AI Sales Coach</button><button type="button" class="ait-tab" data-pv="outreach">Mensajes</button><button type="button" class="ait-tab" data-pv="cadence">Cadencias</button></div>' +
       '<pre class="ait-pre" id="ait-pv-body">Cargando…</pre></div>';
     document.body.appendChild(ov);
     function close() { ov.remove(); document.removeEventListener('keydown', onKey); }

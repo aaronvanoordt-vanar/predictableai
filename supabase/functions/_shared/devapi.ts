@@ -1252,7 +1252,7 @@ export const OPERATIONS: Record<string, Operation> = {
   // ── Reuniones ─────────────────────────────────────────────────────────────
   "meetings.list": {
     scope: "read",
-    summary: "Reuniones analizadas por el Meeting Coach (resumen, puntaje, resultado y siguiente paso).",
+    summary: "Reuniones analizadas por el AI Sales Coach (resumen, puntaje, resultado y siguiente paso).",
     params: obj({ created_after: S.date("Solo las posteriores a esta fecha."), ...PAGE_PARAMS }),
     async run(ctx, input) {
       const p = page(input);
@@ -1267,7 +1267,7 @@ export const OPERATIONS: Record<string, Operation> = {
 
   "meetings.get": {
     scope: "read",
-    summary: "Una reunión con el reporte completo del Meeting Coach.",
+    summary: "Una reunión con el reporte completo del AI Sales Coach.",
     params: obj({ meeting_id: S.id("Id de la reunión.") }, ["meeting_id"]),
     async run(ctx, input) {
       const id = uuid(input.meeting_id ?? input.id, "meeting_id") as string;

@@ -3,6 +3,14 @@
 // Real-Time Coach v3 — Grant Token de Deepgram.
 // Worker da un token temporal (10 min). Cliente conecta DIRECTO
 // a Deepgram con ese token. Sin WebSocket relay = sin bugs.
+//
+// Velocidad (2026-11-16): el coach responde en cuanto el LEAD termina de
+// hablar (pausa corta, no el silencio largo de antes), la respuesta del
+// modelo llega en streaming y la frase a decir se pinta mientras se escribe;
+// la guía de la fase y la respuesta base a una objeción son instantáneas
+// (js/coach-live.js + js/coach-playbook.js, sin IA). Cada turno se guarda en
+// el servidor apenas se cierra: la transcripción completa no depende de que
+// la pestaña llegue viva al final.
 // ═══════════════════════════════════════════════════════════
 (function (global) {
   const cfg = global.PREDICTABLE_CONFIG || {};
@@ -36,6 +44,10 @@
   // tracks son de la llamada: el coach no los detiene al terminar.
   let callAudio = null;         // { remote: MediaStream, local: MediaStream|null }
   let sessionOpts = {};         // { meetingUrl, stayOnPage, onCoach(out), onEnded(meetingId) }
+  let flushTimer = null;        // vacía la cola de turnos cada pocos segundos
+  let streamOk = true;          // el worker aceptó `stream: true` (se apaga si lo rechaza)
+  let lastStage = '';           // última fase que devolvió el modelo
+  const Live = function () { return global.CoachLive || null; };
 
   function workerUrl(path) {
     const base = (cfg.WORKER_URL || '').replace(/\/$/, '');
@@ -71,7 +83,7 @@
       toast('WORKER_URL no configurado en js/config.js', 'error'); return;
     }
     // Sin lead no hay sesión: el reporte, el brief y el contexto del coach
-    // dependen del contacto elegido en el selector del Meeting Coach.
+    // dependen del contacto elegido en el selector del AI Sales Coach.
     if (!prospectContext || !(prospectContext.id || prospectContext.name)) {
       toast('Selecciona el lead de esta reunión antes de iniciar el coach.', 'warn');
       return;
@@ -153,9 +165,13 @@
       active = true;
 
       clearUI();
+      lastStage = '';
+      if (Live()) Live().begin(prospectContext, { status: 'Conectando…' });
       setStatus('connecting');
       elapsedSeconds = 0;
       elapsedTimer = setInterval(updateElapsed, 1000);
+      // La transcripción se guarda sola mientras la reunión corre.
+      flushTimer = setInterval(flushChunks, 4000);
 
       // Switch UI to active state
       if (!callAudio && typeof coachShowActive === 'function') {
@@ -171,7 +187,7 @@
           toast('Captura detenida', 'warn'); end();
         };
       }
-      toast('Coach en vivo iniciado', 'success');
+      toast('AI Sales Coach iniciado', 'success');
       return currentMeetingId;
     } catch (e) {
       console.error('[Coach] Start error:', e);
@@ -309,12 +325,18 @@
     const speaker = channelIdx === 1 ? 'SDR' : 'Lead';
     const isFinal = msg.is_final;
     showInterim(speaker, text, isFinal);
+    if (Live()) Live().heard(speaker, text, isFinal, speaker === 'Lead');
 
     // Alguien sigue hablando: el coach espera a que termine el mensaje.
     cancelScheduledCoaching();
     if (isFinal) {
       appendToTurn(speaker, text);
-      if (msg.speech_final) scheduleCoaching();
+      // El lead terminó una idea: es el momento en que el vendedor necesita la
+      // respuesta, así que la pausa es corta. Si habló el vendedor no hay
+      // apuro: se espera el silencio de siempre.
+      if (msg.speech_final) {
+        scheduleCoaching(speaker === 'Lead' ? (cfg.COACH_LEAD_PAUSE_MS || 400) : (cfg.COACH_SILENCE_MS || 1200));
+      }
     }
   }
 
@@ -336,6 +358,9 @@
     }
     totalWords += text.split(/\s+/).filter(Boolean).length;
     renderTurn(pendingTurn);
+    // Un monólogo largo se guarda por tramos: si la pestaña se cierra a mitad
+    // de la frase, se pierde como mucho el último tramo.
+    if (pendingTurn.text.split(/\s+/).length > 80) closeTurn();
   }
 
   function closeTurn() {
@@ -347,14 +372,16 @@
   // UtteranceEnd llega `utterance_end_ms` después de la última palabra (y por
   // canal, así que puede llegar dos veces). Encima esperamos COACH_SILENCE_MS
   // más: si el hablante retoma, cualquier resultado nuevo cancela el timer.
-  function handleUtteranceEnd() { scheduleCoaching(); }
+  // UtteranceEnd ya es 1 s de silencio medido por Deepgram: no se suma otra
+  // espera larga encima.
+  function handleUtteranceEnd() { scheduleCoaching(250); }
 
-  function scheduleCoaching() {
+  function scheduleCoaching(delayMs) {
     cancelScheduledCoaching();
     coachTimer = setTimeout(function () {
       coachTimer = null;
       maybeRunCoaching();
-    }, cfg.COACH_SILENCE_MS || 1200);
+    }, delayMs == null ? (cfg.COACH_SILENCE_MS || 1200) : delayMs);
   }
   function cancelScheduledCoaching() {
     if (coachTimer) { clearTimeout(coachTimer); coachTimer = null; }
@@ -364,7 +391,7 @@
     if (!active) return;
     if (coachInFlight) { coachPending = true; return; }
     // Sin contenido nuevo suficiente ("ok", "sí") no hay nada que analizar.
-    const minWords = cfg.COACH_MIN_NEW_WORDS || 6;
+    const minWords = cfg.COACH_MIN_NEW_WORDS || 4;
     if (totalWords - wordsAtLastCoach < minWords) return;
     runCoaching();
   }
@@ -393,7 +420,9 @@
     // vio de lo nuevo: las alertas deben salir SOLO de lo nuevo. Los
     // contadores se mueven antes de la llamada para que lo que llegue
     // mientras el modelo responde cuente como nuevo en el siguiente turno.
-    const windowTurns = recentTranscript.slice(-15);
+    // 10 turnos: suficiente para entender la fase y el prompt queda corto (cada
+    // token de entrada es latencia).
+    const windowTurns = recentTranscript.slice(-10);
     const newCount = Math.min(windowTurns.length, totalTurns - turnsAtLastCoach);
     const prior = windowTurns.slice(0, windowTurns.length - newCount).map(formatTurn).join('\n');
     const fresh = windowTurns.slice(windowTurns.length - newCount).map(formatTurn).join('\n');
@@ -415,8 +444,11 @@
     }
     function done() {
       coachInFlight = false;
-      if (coachPending && active) scheduleCoaching();
+      if (coachPending && active) scheduleCoaching(150);
     }
+    // Lo que el modelo necesita para ubicar la fase sin releer toda la llamada.
+    const minute = Live() ? Live().minutes() : Math.floor(elapsedSeconds / 60);
+    const position = 'Minuto de la llamada: ' + minute + '. Fase anterior: ' + (lastStage || 'rapport (la llamada acaba de empezar)') + '.';
 
     if (coachEngine() !== 'openai') {
       try {
@@ -426,6 +458,7 @@
           prior_transcript: prior,
           new_transcript: fresh,
           context: currentProspect || {},
+          position: position,
         });
         onSuccess(parsed);
       } catch (e) {
@@ -453,43 +486,63 @@
       'Objeciones en 3 movimientos: valida la emoción, reencuadra al miedo/deseo del lead, pregunta que lleva a un sí pequeño. Nunca pelees con su proveedor actual.',
       'Cada dato del lead (dolor, meta, plazo, presupuesto, decisor) es una puerta: si el vendedor la deja pasar, dile la pregunta exacta para abrirla.',
       'Si el vendedor habla más del 60 %, ordénale callarse y preguntar. Sin siguiente paso con fecha no hay cierre.',
-    ];
+    ].concat(global.CoachPlaybook ? ['Fases y objetivo de cada una (no se salta ninguna):'].concat(global.CoachPlaybook.STAGES.map(function (s) {
+      return '- ' + s.id + ' (' + s.label + '): ' + s.goal;
+    })) : []);
     const systemPrompt = [
       'Eres el coach de ventas de Predictable.ai en vivo, al oído del vendedor durante una llamada B2B.',
     ].concat(doctrine, [
       'La conversación tiene 2 hablantes: "Lead" y "SDR" (el vendedor).',
       'Recibes la parte de la conversación que ya analizaste (solo contexto) y lo NUEVO.',
       'Genera alertas SOLO sobre lo nuevo; no repitas alertas de la parte anterior.',
-      '"suggested_phrase" es la frase exacta que el vendedor puede decir AHORA. "next_step" es la orden para este instante, en imperativo, una frase; siempre trae una.',
-      'OUTPUT: SOLO JSON con schema:',
+      '"say_now" es LO PRIMERO que escribes: la frase exacta, lista para leer en voz alta, que el vendedor debe decir AHORA según la fase y lo último que dijo el lead (máximo 2 frases; siempre trae una, también al inicio de la llamada).',
+      '"next_step" es la orden para este instante, en imperativo, una frase; siempre trae una. "suggested_phrase" es la frase exacta de esa alerta.',
+      'Sé breve: máximo 2 alertas, explicación de una frase. La velocidad importa más que el detalle.',
+      'OUTPUT: SOLO JSON, con las claves en este orden:',
       '{',
-      '  "alerts": [{ "type":"objection|positive_signal|risk|stage_guidance", "title":"", "explanation":"", "suggested_phrase":"" }],',
+      '  "say_now": "",',
+      '  "next_step": "",',
       '  "stage": "rapport|discovery|reframe|demo|negotiation|close",',
-      '  "next_step": ""',
+      '  "alerts": [{ "type":"objection|positive_signal|risk|stage_guidance", "title":"", "explanation":"", "suggested_phrase":"" }]',
       '}',
       'Español neutro. NO inventes alertas: si no hay nada accionable, "alerts": [].'
     ]).join('\n') + ((trainedPrompt && trainedPrompt.block) ? '\n' + trainedPrompt.block : '') + outputLanguageDirective();
-    const userContent = 'Contexto del prospecto (brief del lead, ángulo y preparación):\n' + JSON.stringify(currentProspect || {}).slice(0, 4000) + '\n\n' +
+    const userContent = 'Contexto del prospecto (brief del lead, ángulo y preparación):\n' + JSON.stringify(currentProspect || {}).slice(0, 3000) + '\n\n' +
+      position + '\n\n' +
       (prior ? 'Conversación anterior (ya analizada, solo contexto):\n' + prior + '\n\n' : '') +
       'Lo nuevo (analiza solo esto):\n' + fresh;
 
+    const body = {
+      model: cfg.LLM_MODEL || 'gpt-4o-mini',
+      temperature: 0.3,
+      max_tokens: 450,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent }
+      ]
+    };
     try {
-      const resp = await fetch(workerUrl('/openai'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: cfg.LLM_MODEL || 'gpt-4o-mini',
-          temperature: 0.3,
-          response_format: { type: 'json_object' },
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userContent }
-          ]
-        })
-      });
-      if (!resp.ok) throw new Error('OpenAI ' + resp.status + ': ' + await resp.text());
-      const data = await resp.json();
-      const content = data.choices && data.choices[0] && data.choices[0].message.content;
+      let content = null;
+      if (streamOk) {
+        try { content = await streamCompletion(body); }
+        catch (e) {
+          // Un worker que no acepta streaming no deja al coach mudo: se repite
+          // la llamada completa y no se vuelve a intentar en esta sesión.
+          console.warn('[Coach] streaming no disponible, sigo sin él:', e && e.message);
+          streamOk = false;
+        }
+      }
+      if (content == null) {
+        const resp = await fetch(workerUrl('/openai'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        if (!resp.ok) throw new Error('OpenAI ' + resp.status + ': ' + await resp.text());
+        const data = await resp.json();
+        content = data.choices && data.choices[0] && data.choices[0].message.content;
+      }
       if (!content) throw new Error('vacío');
       onSuccess(JSON.parse(content));
     } catch (e) {
@@ -497,14 +550,83 @@
     } finally { done(); }
   }
 
-  // ─── Persistencia, UI, end(), cleanup() ────────────────────
-  function enqueueChunkForBackend(c) { chunkQueue.push(c); if (chunkQueue.length >= 3) flushChunks(); }
-  async function flushChunks() {
-    if (!currentMeetingId || chunkQueue.length === 0) return;
-    const batch = chunkQueue.splice(0);
-    try { await global.api.ingestLocalChunks({ meeting_id: currentMeetingId, chunks: batch }); }
-    catch (e) { chunkQueue = batch.concat(chunkQueue); }
+  // Respuesta en streaming (SSE de OpenAI a través del worker). Devuelve el
+  // JSON completo como texto y, mientras llega, pinta la frase "say_now" a
+  // medio escribir: el vendedor empieza a leer ~1 s antes de que termine.
+  async function streamCompletion(body) {
+    const resp = await fetch(workerUrl('/openai'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({}, body, { stream: true }))
+    });
+    if (!resp.ok) throw new Error('OpenAI ' + resp.status);
+    const type = resp.headers.get('content-type') || '';
+    if (type.indexOf('text/event-stream') === -1 || !resp.body) {
+      // El worker respondió completo (ignoró stream): sirve igual.
+      const data = await resp.json();
+      return (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '', content = '', shown = '';
+    for (;;) {
+      const r = await reader.read();
+      if (r.done) break;
+      buf += decoder.decode(r.value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (line.indexOf('data:') !== 0) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        try {
+          const j = JSON.parse(payload);
+          const d = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content;
+          if (d) content += d;
+        } catch (e) { /* línea partida: llega completa en el siguiente trozo */ }
+      }
+      const say = partialString(content, 'say_now');
+      if (say && say !== shown && say.length - shown.length >= 6 && Live() && active) {
+        shown = say;
+        Live().partial(say);
+      }
+    }
+    return content;
   }
+
+  // Valor (posiblemente sin terminar) de una clave string en un JSON a medio
+  // llegar. Corta en la última palabra completa para no pintar medias sílabas.
+  function partialString(json, key) {
+    const m = new RegExp('"' + key + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)').exec(json);
+    if (!m) return '';
+    let raw = m[1].replace(/\\$/, '');
+    try { raw = JSON.parse('"' + raw + '"'); } catch (e) { return ''; }
+    const closed = json.charAt(m.index + m[0].length) === '"';
+    return closed ? raw : raw.replace(/\s+\S*$/, '');
+  }
+
+  // ─── Persistencia, UI, end(), cleanup() ────────────────────
+  // Cada turno se manda al servidor apenas se cierra (antes se juntaban de a
+  // tres y, si la pestaña moría, se perdía el final de la reunión).
+  function enqueueChunkForBackend(c) { chunkQueue.push(c); flushChunks(); }
+  let flushing = false;
+  async function flushChunks(opts) {
+    if (!currentMeetingId || chunkQueue.length === 0 || flushing) return;
+    flushing = true;
+    const batch = chunkQueue.splice(0);
+    try { await global.api.ingestLocalChunks({ meeting_id: currentMeetingId, chunks: batch }, opts); }
+    catch (e) { chunkQueue = batch.concat(chunkQueue); }
+    finally { flushing = false; }
+  }
+  // La pestaña se cierra o se recarga con la reunión viva: se guarda lo que
+  // falte con keepalive para que el reporte tenga la transcripción completa.
+  global.addEventListener('pagehide', function () {
+    if (!active || !currentMeetingId) return;
+    closeTurn();
+    flushing = false;
+    flushChunks({ keepalive: true });
+  });
   async function enqueueEventForBackend(ev) {
     if (!currentMeetingId) return;
     try { await global.api.ingestLocalEvent({ meeting_id: currentMeetingId, event: ev }); } catch (e) {}
@@ -571,12 +693,14 @@
     });
     const events = document.getElementById('mc-events');
     if (events) alerts.forEach(function (a) { events.prepend(buildAlertCard(a)); });
+    const shown = { alerts: alerts, stage: out.stage || '', next_step: out.next_step || '', say_now: out.say_now || '' };
+    if (out.stage) lastStage = String(out.stage);
     if (typeof sessionOpts.onCoach === 'function') {
-      try { sessionOpts.onCoach({ alerts: alerts, stage: out.stage || '', next_step: out.next_step || '' }); } catch (e) {}
+      try { sessionOpts.onCoach(shown); } catch (e) {}
     }
-    if (out.stage) { const stEl = document.getElementById('mc-stage'); if (stEl) stEl.textContent = out.stage.charAt(0).toUpperCase() + out.stage.slice(1); }
-    if (out.next_step) { const ns = document.getElementById('mc-next-steps'); if (ns) ns.innerHTML = '<div style="font-size:12px;padding:6px 8px;background:var(--surface2);border-radius:6px">' + esc(out.next_step) + '</div>'; }
-    return { alerts: alerts, stage: out.stage || '', next_step: out.next_step || '' };
+    // Fase, frase a decir y orden: en la página y en la ventana flotante.
+    if (Live()) Live().coach(shown);
+    return shown;
   }
   function buildAlertCard(alert) {
     const card = document.createElement('div');
@@ -600,25 +724,35 @@
     el.style.cssText = 'border:1px dashed var(--teal);background:rgba(0,196,212,.05);animation:pulse 1.5s infinite';
     el.innerHTML = '<div class="ai-tag" style="color:var(--teal)">🧠 PROCESANDO</div>';
     const events = document.getElementById('mc-events'); if (events) events.prepend(el);
+    if (Live()) Live().thinking(true);
   }
-  function hideThinking() { const el = document.getElementById('mc-thinking'); if (el) el.remove(); }
+  function hideThinking() {
+    const el = document.getElementById('mc-thinking'); if (el) el.remove();
+    if (Live() && active) Live().thinking(false);
+  }
   function setStatus(s) {
     const el = document.getElementById('mc-status'); if (!el) return;
     const map = { connecting: 'Conectando...', live: '🎙 Escuchando (tú + lead)', ended: 'Sesión finalizada' };
     el.textContent = map[s] || s;
+    if (Live() && s !== 'ended') Live().status(s === 'live' ? 'Escuchando' : (map[s] || s));
   }
   function updateElapsed() {
     elapsedSeconds++;
     const pad = function (n) { return (n < 10 ? '0' : '') + n; };
     const el = document.getElementById('mc-timer');
-    if (el) el.textContent = pad(Math.floor(elapsedSeconds/3600)) + ':' + pad(Math.floor((elapsedSeconds%3600)/60)) + ':' + pad(elapsedSeconds%60);
+    const txt = pad(Math.floor(elapsedSeconds/3600)) + ':' + pad(Math.floor((elapsedSeconds%3600)/60)) + ':' + pad(elapsedSeconds%60);
+    if (el) el.textContent = txt;
+    if (Live()) Live().timer(txt);
   }
   async function end() {
     cancelScheduledCoaching();
     closeTurn();
+    // Espera el envío en curso (si lo hay) y manda lo que quedó en la cola.
+    for (let i = 0; flushing && i < 40; i++) await new Promise(function (r) { setTimeout(r, 50); });
     await flushChunks();
     cleanup();
     setStatus('ended');
+    if (Live()) Live().end();
     const meetId = currentMeetingId;
     currentMeetingId = null;
     active = false;
@@ -642,24 +776,19 @@
     }
 
     if (meetId) {
+      // El reporte se arma en segundo plano: se abre la reunión en Reportes de
+      // inmediato, con la transcripción ya visible, y el análisis aparece solo.
       try {
-        const final = await global.api.endMeeting({ meeting_id: meetId });
-        if (final && final.pending) {
-          toast('Sesión finalizada · Generando el reporte…', 'success');
-        } else {
-          toast('Sesión finalizada · Score: ' + ((final && final.score_total) || 0) + ' · Reporte guardado', 'success');
-        }
-        // Navigate to reports → last meeting tab
-        setTimeout(function () {
-          if (typeof nav === 'function') {
-            nav(document.querySelector('[data-page=ventas-reportes]'), 'ventas-reportes');
-            const lastMeetingTab = document.querySelector('#page-ventas-reportes .tab[onclick*="rep-meeting"]');
-            if (lastMeetingTab && typeof switchReportTab === 'function') switchReportTab(lastMeetingTab, 'rep-meeting');
-          }
-        }, 1000);
+        const final = await global.api.endMeeting({ meeting_id: meetId, background: true });
+        if (final && final.pending) toast('Sesión finalizada · Generando el reporte…', 'success');
+        else toast('Sesión finalizada · Reporte guardado', 'success');
       } catch (e) {
         console.warn('[Coach] endMeeting error:', e);
-        toast('Sesión finalizada · Reporte guardado localmente', 'success');
+        toast('Sesión finalizada. El reporte puede tardar: revísalo en Reportes → Reuniones.', 'warn');
+      }
+      if (typeof nav === 'function') {
+        nav(document.querySelector('[data-page=ventas-reportes]'), 'ventas-reportes');
+        if (global.MeetingReport) global.MeetingReport.open(meetId);
       }
     }
   }
@@ -673,6 +802,7 @@
     callAudio = null;
     if (dgSocket) { try { dgSocket.close(); } catch(e){} dgSocket = null; }
     if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+    if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
     cancelScheduledCoaching();
     coachPending = false;
     currentProspect = null;

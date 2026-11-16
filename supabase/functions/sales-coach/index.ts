@@ -304,10 +304,10 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
 // por el coach en vivo, el turno local y el reporte para que los tres hablen
 // igual. El SDR no necesita teoría: necesita saber QUÉ HACER AHORA.
 // ───────────────────────────────────────────────────────────────────────────
-// La doctrina vive en _shared/sales-training.ts (NEURO_DOCTRINE sigue siendo
-// el default). Desde el 2026-09-23 cada equipo la reemplaza o la combina con
-// las metodologías que elige en «Entrenamiento IA» (coachDoctrine), y suma su
-// estilo, sus reglas, lo que vende y su base de conocimiento
+// La doctrina vive en _shared/sales-training.ts: coachDoctrine() = neuroventas
+// (la voz) + el playbook por fase de los libros de venta
+// (_shared/coach-playbook.ts, 2026-11-16), igual para todas las cuentas. Cada
+// equipo le suma su estilo, sus reglas, lo que vende y su base de conocimiento
 // (buildTrainingBlock). Los tres prompts son funciones de esa doctrina.
 
 // El coach en modo bot analiza cada pocos segundos: el entrenamiento se cachea
@@ -524,7 +524,8 @@ function liveOpenAiModel(): string {
 
 // Minimum gap between two live analyses of the same meeting. Deepgram delivers
 // a chunk every 1-3 s; without this every webhook would fire its own LLM call.
-const LIVE_ANALYSIS_MIN_GAP_MS = 6_000;
+// 2.5 s (was 6 s): the wait was most of the delay the seller felt in bot mode.
+const LIVE_ANALYSIS_MIN_GAP_MS = 2_500;
 
 // JSON Schemas for structured outputs. Constraint notes: only supported
 // keywords (type/properties/required/additionalProperties:false/enum/items/
@@ -837,7 +838,7 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
 
   const totalChars = buffer.reduce((s: number, r: Json) => s + String(r.text ?? "").length, 0);
   const secondsSince = (Date.now() - new Date(buffer[0].ts).getTime()) / 1000;
-  if (totalChars <= 30 && secondsSince <= 6) return;
+  if (totalChars <= 30 && secondsSince <= 3) return;
 
   const { data: meeting } = await supa
     .from("coach_meetings")
@@ -1135,6 +1136,29 @@ async function actionGetMeetingState(ctx: Ctx, p: Json): Promise<Json> {
 // and builds the report with whatever chunks exist, so no meeting stays
 // "processing" forever.
 const PENDING_TRANSCRIPT_MAX_MS = 20 * 60 * 1000;
+// Captura local: el reporte se arma en segundo plano al cerrar. Si a los 150 s
+// (el tope de una tarea en segundo plano del Edge Runtime) sigue sin estar,
+// esa tarea murió y finalizeReport lo arma en la propia petición.
+const LOCAL_REPORT_RETRY_MS = 150 * 1000;
+
+/** Todos los chunks de una reunión, en orden. PostgREST corta en 1.000 filas por petición. */
+async function loadAllChunks(supa: SupabaseClient, meetingId: string, columns: string): Promise<Json[]> {
+  const out: Json[] = [];
+  const PAGE = 1000;
+  for (let from = 0; from < 20_000; from += PAGE) {
+    const { data, error } = await supa
+      .from("coach_transcript_chunks")
+      .select(columns)
+      .eq("meeting_id", meetingId)
+      .order("ts", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as unknown as Json[];
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+  }
+  return out;
+}
 
 /** Replaces the meeting's chunks with the full Recall transcript (source of truth once available). */
 async function replaceChunksWithRecallTranscript(
@@ -1187,17 +1211,55 @@ async function actionEndMeeting(ctx: Ctx, p: Json): Promise<Json> {
     if (full && full.length) {
       await replaceChunksWithRecallTranscript(ctx.supa, meeting.id, full, meeting.started_at);
       await ctx.supa.from("coach_meetings").update({ transcript_source: "recall_api" }).eq("id", meeting.id);
-      return finalizeMeeting(ctx, { ...meeting, ended_at: endedAt, transcript_source: "recall_api" }, endedAt);
+      const ready = { ...meeting, ended_at: endedAt, transcript_source: "recall_api" };
+      if (p?.background === true) {
+        const bg = await finalizeInBackground(ctx, ready, endedAt);
+        if (bg) return bg;
+      }
+      return finalizeMeeting(ctx, ready, endedAt);
     }
     await ctx.supa.from("coach_meetings").update({ status: "processing" }).eq("id", meeting.id);
     return { pending: true, meeting_id: meeting.id, ended_at: endedAt };
+  }
+
+  // Captura local con `background`: la respuesta vuelve al instante y el
+  // reporte se arma en segundo plano — la UI abre la reunión en Reportes con la
+  // transcripción ya visible y consulta finalizeReport hasta que esté listo.
+  // Sin `background` (el dialer) sigue siendo síncrono, como siempre.
+  if (p?.background === true) {
+    const bg = await finalizeInBackground(ctx, { ...meeting, ended_at: endedAt, transcript_source: "local" }, endedAt);
+    if (bg) return bg;
   }
 
   return finalizeMeeting(ctx, { ...meeting, ended_at: endedAt, transcript_source: "local" }, endedAt);
 }
 
 /**
- * Bot mode only: called by the Reportes page while a meeting is `processing`.
+ * Deja la reunión en `processing` y arma el reporte fuera de la petición.
+ * Devuelve la respuesta `pending` para el cliente, o null si la reunión ya no
+ * estaba viva (otro cierre se adelantó): ahí quien llama sigue síncrono.
+ */
+async function finalizeInBackground(ctx: Ctx, meeting: Json, endedAt: string): Promise<Json | null> {
+  const { data: claimed } = await ctx.supa.from("coach_meetings")
+    .update({ status: "processing", transcript_source: meeting.transcript_source })
+    .eq("id", meeting.id).eq("status", "live").select("id");
+  if (!claimed || !claimed.length) return null;
+  const work = finalizeMeeting(ctx, meeting, endedAt)
+    .catch((e) => console.error("[sales-coach] background report failed:", e));
+  // @ts-ignore — Supabase Edge Runtime global
+  if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+    // @ts-ignore
+    EdgeRuntime.waitUntil(work);
+    return { pending: true, meeting_id: meeting.id, ended_at: endedAt };
+  }
+  await work;
+  const { data: done } = await ctx.supa.from("coach_meetings")
+    .select("final_report").eq("id", meeting.id).maybeSingle();
+  return done?.final_report ?? { pending: true, meeting_id: meeting.id, ended_at: endedAt };
+}
+
+/**
+ * Called by the Reportes page while a meeting is `processing`.
  * Pulls the full transcript from Recall once it exists and builds the report;
  * after PENDING_TRANSCRIPT_MAX_MS it gives up waiting and reports on the
  * webhook chunks that did arrive.
@@ -1212,7 +1274,10 @@ async function actionFinalizeReport(ctx: Ctx, p: Json): Promise<Json> {
   const endedAt = meeting.ended_at ?? new Date().toISOString();
   const waitedMs = Date.now() - new Date(endedAt).getTime();
 
-  if (meeting.recall_bot_id) {
+  // Transcripción ya en Postgres (captura local, o modo bot con el transcript
+  // de Recall ya traído): el reporte se está armando en segundo plano.
+  const transcriptReady = !meeting.recall_bot_id || meeting.transcript_source === "recall_api";
+  if (!transcriptReady) {
     const full = await fetchRecallTranscript(meeting.recall_bot_id);
     if (full && full.length) {
       await replaceChunksWithRecallTranscript(ctx.supa, meeting.id, full, meeting.started_at);
@@ -1222,7 +1287,8 @@ async function actionFinalizeReport(ctx: Ctx, p: Json): Promise<Json> {
     }
   }
 
-  if (waitedMs < PENDING_TRANSCRIPT_MAX_MS) {
+  const maxWait = transcriptReady ? LOCAL_REPORT_RETRY_MS : PENDING_TRANSCRIPT_MAX_MS;
+  if (waitedMs < maxWait) {
     return { pending: true, meeting_id: meeting.id, waited_seconds: Math.round(waitedMs / 1000) };
   }
   // Recall never delivered a full transcript: report on what we have.
@@ -1236,13 +1302,9 @@ async function actionFinalizeReport(ctx: Ctx, p: Json): Promise<Json> {
  * Runs exactly once per meeting (callers guard on status/final_report).
  */
 async function finalizeMeeting(ctx: Ctx, meeting: Json, endedAt: string): Promise<Json> {
-  // Full transcript from Postgres (was: transcript_chunks sheet).
-  const { data: chunkRows } = await ctx.supa
-    .from("coach_transcript_chunks")
-    .select("speaker, text")
-    .eq("meeting_id", meeting.id)
-    .order("ts", { ascending: true });
-  const chunks = chunkRows ?? [];
+  // Full transcript from Postgres (was: transcript_chunks sheet). Paginated:
+  // a long bot-mode meeting has more chunks than one PostgREST page.
+  const chunks = await loadAllChunks(ctx.supa, meeting.id, "speaker, text");
   const fullTranscript = chunks
     .map((r: Json) => `${r.speaker}: ${r.text}`)
     .join("\n");
@@ -1262,16 +1324,23 @@ async function finalizeMeeting(ctx: Ctx, meeting: Json, endedAt: string): Promis
   if (chunks.length === 0 || fullTranscript.trim().length < 20) {
     report = insufficientReport();
   } else {
-    const engine = await engineForUser(
-      ctx.supa, meeting.user_id ?? ctx.userId, "coach",
-    );
+    const owner = meeting.user_id ?? ctx.userId;
+    // Las tres lecturas previas van en paralelo, y GPT-5 razona en "low": el
+    // reporte es extraer y evaluar sobre un transcript ya dado, y con el
+    // esfuerzo por defecto tardaba más de un minuto.
+    const [engine, system, learned] = await Promise.all([
+      engineForUser(ctx.supa, owner, "coach"),
+      trainedSystemPrompt(ctx.supa, owner, SYSTEM_PROMPT_REPORT, "coach"),
+      learnedObjectionsBlock(ctx.supa, owner),
+    ]);
     report = await callAi(
       engine,
       REPORT_MODEL,
-      await trainedSystemPrompt(ctx.supa, meeting.user_id ?? ctx.userId, SYSTEM_PROMPT_REPORT, "coach"),
-      buildReportUserPrompt(meeting, fullTranscript, sdrName, await learnedObjectionsBlock(ctx.supa, meeting.user_id ?? ctx.userId)),
+      system,
+      buildReportUserPrompt(meeting, fullTranscript, sdrName, learned),
       REPORT_SCHEMA,
       8192,
+      "low",
     );
   }
   const scoreTotal = numOrNull(report?.score_total) ?? 0;
@@ -1296,13 +1365,21 @@ async function finalizeMeeting(ctx: Ctx, meeting: Json, endedAt: string): Promis
     if (bkErr) console.warn("[sales-coach] bookings attendance:", bkErr.message);
   }
 
-  const { error: updErr } = await ctx.supa.from("coach_meetings").update({
+  // Cierre condicional: si otra ejecución (la tarea en segundo plano y el
+  // respaldo de finalizeReport pueden coincidir) ya cerró la reunión, esta no
+  // vuelve a cobrar ni a reescribir objeciones: devuelve el reporte guardado.
+  const { data: closedRows, error: updErr } = await ctx.supa.from("coach_meetings").update({
     status: "closed",
     ended_at: endedAt,
     final_report: report,
     score_total: scoreTotal,
-  }).eq("id", meeting.id);
+  }).eq("id", meeting.id).neq("status", "closed").select("id");
   if (updErr) throw new Error(updErr.message);
+  if (!closedRows || !closedRows.length) {
+    const { data: cur } = await ctx.supa.from("coach_meetings")
+      .select("final_report").eq("id", meeting.id).maybeSingle();
+    return cur?.final_report ?? report;
+  }
 
   // ── Cobro de la reunión (_shared/credit-costs.ts ↔ js/credit-costs.js) ──
   // Reporte (5) + por cada 10 min: 8 en modo bot (Recall.ai), 5 en captura
@@ -1513,13 +1590,9 @@ async function meetingReportPayload(ctx: Ctx, m: Json, includeTranscript: boolea
     payload.sdr_name = prof?.full_name ?? null;
   }
   if (includeTranscript) {
-    const { data: rows } = await ctx.supa
-      .from("coach_transcript_chunks")
-      .select("ts, speaker, text")
-      .eq("meeting_id", m.id)
-      .order("ts", { ascending: true })
-      .limit(600);
-    payload.transcript = (rows ?? []).map((r: Json) => ({ ts: r.ts, speaker: r.speaker, text: r.text }));
+    // La transcripción COMPLETA (antes se cortaba en 600 intervenciones).
+    const rows = await loadAllChunks(ctx.supa, m.id, "ts, speaker, text");
+    payload.transcript = rows.map((r: Json) => ({ ts: r.ts, speaker: r.speaker, text: r.text }));
   }
   return payload;
 }
@@ -1575,6 +1648,51 @@ async function actionGetLastMeetingReport(ctx: Ctx, p: Json): Promise<Json> {
     started_at: sr.started_at,
     score_total: sr.score_total || 0,
     report: sr.report ?? {},
+  };
+}
+
+/**
+ * Todas las reuniones del coach, de la más reciente a la más antigua: las
+ * propias, o las del equipo para admin/director (mismo alcance que el resto de
+ * Reportes). Solo trae lo que pinta la lista — el reporte completo se pide por
+ * reunión con getMeetingReport.
+ */
+async function actionListMeetings(ctx: Ctx, p: Json): Promise<Json> {
+  const emails = await scopeEmails(ctx);
+  const limit = Math.min(Math.max(Number(p?.limit) || 200, 1), 500);
+  let q = ctx.supa
+    .from("coach_meetings")
+    .select(
+      "id, prospect_name, sdr_email, started_at, ended_at, status, score_total, outcome, recall_bot_id, " +
+        "company:context->>company, temperatura:final_report->>temperatura_lead, verdict:final_report->>verdict",
+    )
+    .in("status", ["closed", "processing", "live"]);
+  if (emails) q = q.in("sdr_email", emails);
+  const { data, error } = await q
+    .order("started_at", { ascending: false, nullsFirst: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as unknown as Json[];
+  return {
+    team: !emails || emails.length > 1,
+    meetings: rows.map((m) => {
+      const started = m.started_at ? new Date(m.started_at).getTime() : null;
+      const ended = m.ended_at ? new Date(m.ended_at).getTime() : null;
+      return {
+        meeting_id: m.id,
+        prospect_name: m.prospect_name || "(sin nombre)",
+        prospect_company: strOrNull(m.company),
+        sdr_email: m.sdr_email || "",
+        started_at: m.started_at,
+        duration_seconds: (started && ended) ? Math.max(0, Math.round((ended - started) / 1000)) : null,
+        status: m.status,
+        meeting_type: m.recall_bot_id ? "bot" : "live",
+        score_total: numOrNull(m.score_total),
+        outcome: m.outcome ?? null,
+        temperatura: strOrNull(m.temperatura),
+        verdict: strOrNull(m.verdict),
+      };
+    }),
   };
 }
 
@@ -1669,6 +1787,10 @@ async function actionSetMeetingOutcome(ctx: Ctx, p: Json): Promise<Json> {
 const LIVE_TURN_SCHEMA = {
   type: "object",
   properties: {
+    // Primero lo que el vendedor lee: la frase y la orden. Las alertas después.
+    say_now: { type: "string" },
+    next_step: { type: "string" },
+    stage: { type: "string", enum: ["rapport", "discovery", "reframe", "demo", "negotiation", "close"] },
     alerts: {
       type: "array",
       items: {
@@ -1683,10 +1805,8 @@ const LIVE_TURN_SCHEMA = {
         additionalProperties: false,
       },
     },
-    stage: { type: "string", enum: ["rapport", "discovery", "reframe", "demo", "negotiation", "close"] },
-    next_step: { type: "string" },
   },
-  required: ["alerts", "stage", "next_step"],
+  required: ["say_now", "next_step", "stage", "alerts"],
   additionalProperties: false,
 };
 
@@ -1704,17 +1824,21 @@ const SYSTEM_PROMPT_LIVE_TURN = (doctrine: string): string => [
   '- "risk": el vendedor habla de más, pitchea antes de tiempo, discute o pierde el control →',
   '  "suggested_phrase" es lo que debe decir para recuperar el control.',
   '- "stage_guidance": toca cambiar de etapa → qué decir para pasar a la siguiente.',
+  '"say_now" es la frase exacta, lista para leer en voz alta, que el vendedor debe decir AHORA',
+  "según la fase y lo último que dijo el lead (máximo 2 frases). Siempre trae una, también al",
+  "inicio de la llamada.",
   '"next_step" es la orden para este instante, en imperativo y en una frase',
   '("Cállate y pregúntale cuánto pierde al mes con esto"). Siempre trae una.',
+  "Sé breve: máximo 2 alertas y explicaciones de una frase; la velocidad importa más que el detalle.",
   "Si recibes una parte ya analizada y una parte nueva, las alertas salen SOLO de",
   "la parte nueva: no repitas alertas que ya correspondían a la parte anterior.",
   "NUNCA inventes alertas, datos ni citas: si no hay nada accionable en la ventana",
-  'entregada, devuelve "alerts": [] (pero igual devuelve "next_step").',
+  'entregada, devuelve "alerts": [] (pero igual devuelve "say_now" y "next_step").',
 ].join("\n");
 
 async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
   const transcript = String(payload?.transcript ?? "").slice(0, 12_000).trim();
-  const empty = { alerts: [], stage: "", next_step: "" };
+  const empty = { say_now: "", next_step: "", stage: "", alerts: [] };
   if (!transcript) return empty;
 
   // El navegador pega los chunks de Deepgram en turnos y separa lo que el
@@ -1730,21 +1854,26 @@ async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
     ]
     : ["Conversación reciente:", transcript];
 
-  const engine = await engineForUser(ctx.supa, ctx.userId, "coach");
-  const learned = await learnedObjectionsBlock(ctx.supa, ctx.userId);
+  // Minuto de la llamada y fase anterior, para ubicar la fase sin releer todo.
+  const position = String(payload?.position ?? "").slice(0, 200).trim();
+  const [engine, learned, system] = await Promise.all([
+    engineForUser(ctx.supa, ctx.userId, "coach"),
+    learnedObjectionsBlock(ctx.supa, ctx.userId),
+    trainedSystemPrompt(ctx.supa, ctx.userId, SYSTEM_PROMPT_LIVE_TURN, "coach_live"),
+  ]);
   const userPrompt = [
     "Contexto del prospecto:",
     JSON.stringify(payload?.context ?? {}).slice(0, 4_000),
     ...(learned ? [learned] : []),
     "",
+    ...(position ? [position, ""] : []),
     ...conversation,
     "",
     "Devuelve el JSON.",
   ].join("\n");
 
   try {
-    const system = await trainedSystemPrompt(ctx.supa, ctx.userId, SYSTEM_PROMPT_LIVE_TURN, "coach_live");
-    return await callAi(engine, LIVE_COACH_MODEL, system, userPrompt, LIVE_TURN_SCHEMA, 2048, "low", liveOpenAiModel());
+    return await callAi(engine, LIVE_COACH_MODEL, system, userPrompt, LIVE_TURN_SCHEMA, 1024, "low", liveOpenAiModel());
   } catch (e) {
     // A dropped coaching turn must never break the live session.
     console.error("[sales-coach] coachTurn failed:", e);
@@ -1908,6 +2037,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
       case "finalizeReport":       data = await actionFinalizeReport(ctx, payload); break;
       case "getMeetingReport":     data = await actionGetMeetingReport(ctx, payload); break;
       case "getLastMeetingReport": data = await actionGetLastMeetingReport(ctx, payload); break;
+      case "listMeetings":         data = await actionListMeetings(ctx, payload); break;
       case "getSDRReport":         data = await actionGetSDRReport(ctx); break;
       case "setMeetingOutcome":    data = await actionSetMeetingOutcome(ctx, payload); break;
       case "getObjectionsReport":  data = await actionGetObjectionsReport(ctx); break;

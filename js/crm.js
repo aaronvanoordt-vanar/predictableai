@@ -12,14 +12,14 @@
  *   Cuentas        una por empresa (dominio) y usuario, enlazadas solas a sus
  *                  personas de Listas y a las señales del Radar. El detalle
  *                  junta en una línea de tiempo lo que YA existe (Bandeja,
- *                  campañas, Meeting Coach, Radar, cambios de etapa, tareas)
+ *                  campañas, AI Sales Coach, Radar, cambios de etapa, tareas)
  *                  leyendo sus tablas: no copia nada.
  *   Tareas         por lead, cuenta u oportunidad, con vencimiento. El
  *                  contador del sidebar (#nav-crm-badge) = vencidas + hoy.
  *
  * Reglas que viven en la base (migración 20261017100001, no solo aquí):
  * perder una oportunidad exige motivo (y nota con «Otro»); el cierre de una
- * reunión en el Meeting Coach mueve la oportunidad a «Reunión tomada»; el
+ * reunión en el AI Sales Coach mueve la oportunidad a «Reunión tomada»; el
  * motivo de pérdida entra al learning-loop (_shared/crm.ts → intelligence.ts).
  *
  * LOST_REASONS y CURRENCIES son espejo de _shared/crm.ts (crm.test.ts).
@@ -53,7 +53,7 @@
     'USD', 'MXN', 'COP', 'CLP', 'PEN', 'ARS', 'BRL', 'UYU', 'PYG', 'BOB',
     'GTQ', 'CRC', 'DOP', 'HNL', 'NIO', 'PAB', 'EUR',
   ];
-  var CHANGED_BY = { user: 'Tú', coach: 'Meeting Coach', api: 'API', integration: 'Integración' };
+  var CHANGED_BY = { user: 'Tú', coach: 'AI Sales Coach', api: 'API', integration: 'Integración' };
   var SUGGEST_STATUS = {
     reunion_tomada: { label: 'Reunión tomada', tone: 'jade', stage: 'meeting_held', source: 'meeting' },
     reunion_agendada: { label: 'Reunión agendada', tone: 'teal', stage: 'meeting_scheduled', source: 'reply' },
@@ -714,7 +714,7 @@
       (tl[3].data || []).forEach(function (m) {
         var sum = Array.isArray(m.resumen) ? m.resumen.join(' ') : (typeof m.resumen === 'string' ? m.resumen : '');
         var next = m.siguiente && typeof m.siguiente === 'object' ? m.siguiente.accion : '';
-        items.push({ at: m.ended_at || m.started_at, kind: 'meeting', icon: '●', title: 'Reunión en el Meeting Coach con ' + (m.prospect_name || personName(byId[m.prospect_id]) || 'el contacto') + (m.score_total != null && m.status === 'closed' ? ' · puntaje ' + m.score_total : ''),
+        items.push({ at: m.ended_at || m.started_at, kind: 'meeting', icon: '●', title: 'Reunión en el AI Sales Coach con ' + (m.prospect_name || personName(byId[m.prospect_id]) || 'el contacto') + (m.score_total != null && m.status === 'closed' ? ' · puntaje ' + m.score_total : ''),
           body: [sum, next ? 'Siguiente paso: ' + next : ''].filter(Boolean).join('\n') });
       });
       signals.forEach(function (s) {
@@ -987,7 +987,7 @@
     h += '</section>';
     // Línea de tiempo
     h += '<section class="crm-panel"><h3>Actividad</h3>';
-    if (!d.timeline.length) h += '<p class="crm-muted">Sin actividad todavía. Aquí aparecen los mensajes de la Bandeja, las campañas, las reuniones del Meeting Coach, las señales del Radar, los cambios de etapa y las tareas de esta cuenta.</p>';
+    if (!d.timeline.length) h += '<p class="crm-muted">Sin actividad todavía. Aquí aparecen los mensajes de la Bandeja, las campañas, las reuniones del AI Sales Coach, las señales del Radar, los cambios de etapa y las tareas de esta cuenta.</p>';
     else {
       h += '<ol class="crm-timeline">';
       d.timeline.slice(0, d.limit || 60).forEach(function (it) {
@@ -1191,7 +1191,7 @@
         (fixed ? pill(s.kind === 'won' ? 'Ganada' : 'Perdida', s.kind === 'won' ? 'jade' : 'red')
           : '<span class="crm-stage-btns"><button type="button" class="btn btn-ghost btn-sm" data-act="stage-up" aria-label="Subir">↑</button><button type="button" class="btn btn-ghost btn-sm" data-act="stage-down" aria-label="Bajar">↓</button>' +
             (s.id ? '<button type="button" class="btn btn-ghost btn-sm crm-danger" data-act="stage-del" data-id="' + esc(s.id) + '" aria-label="Borrar etapa">Borrar</button>' : '') + '</span>') +
-        (s.auto_key ? '<span class="crm-muted crm-block crm-stage-note">' + (s.auto_key === 'meeting_held' ? 'El Meeting Coach mueve aquí las oportunidades al cerrar una reunión.' : 'Las sugerencias de reunión agendada empiezan aquí.') + '</span>' : '') +
+        (s.auto_key ? '<span class="crm-muted crm-block crm-stage-note">' + (s.auto_key === 'meeting_held' ? 'El AI Sales Coach mueve aquí las oportunidades al cerrar una reunión.' : 'Las sugerencias de reunión agendada empiezan aquí.') + '</span>' : '') +
         '</li>';
     }).join('');
     return '<form data-form="stages"><h2 id="crm-modal-t">Configurar etapas</h2><p class="crm-muted">Renombra, reordena o agrega etapas en curso. «Ganada» y «Perdida» cierran la oportunidad; perder siempre pide el motivo.</p>' +

@@ -7,7 +7,7 @@
  *               respondió), los recordatorios que salieron por WhatsApp y
  *               email, la asistencia real («Se dio» / «No se presentó», que
  *               alimenta el CRM, las métricas y el learning-loop) y la nota BANT
- *               del traspaso al AE, que se abre en el Meeting Coach.
+ *               del traspaso al AE, que se abre en el AI Sales Coach.
  *   Configurar  enlace, tipos de reunión, disponibilidad semanal, preguntas de
  *               calificación y recordatorios (plantilla aprobada de WhatsApp +
  *               email). La disponibilidad real sale del Google Calendar u Outlook
@@ -205,7 +205,7 @@
       h('div', { class: 'ag-chips' }, [
         b.status === 'cancelled' ? chip('Cancelada', 'red') : chip(conf[0], conf[1]),
         b.reschedule_count ? chip('Reprogramada ' + b.reschedule_count + (b.reschedule_count === 1 ? ' vez' : ' veces'), 'blue') : null,
-        b.attendance === 'held' ? chip('Se dio', 'green', b.attendance_source === 'coach' ? 'Marcada al cerrar la reunión en el Meeting Coach' : null) : null,
+        b.attendance === 'held' ? chip('Se dio', 'green', b.attendance_source === 'coach' ? 'Marcada al cerrar la reunión en el AI Sales Coach' : null) : null,
         b.attendance === 'no_show' ? chip('No se presentó', 'red') : null,
         b.source && b.source.kind === 'campaign' ? chip('Campaña', 'gray') : b.source && b.source.kind === 'inbox' ? chip('Bandeja', 'gray') : null,
       ]),
@@ -221,7 +221,7 @@
       acts.appendChild(h('button', { type: 'button', class: 'btn btn-primary btn-sm', disabled: state.busy[b.id] ? true : null, text: 'Se dio', on: { click: function () { attend(b, 'held'); } } }));
       acts.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', disabled: state.busy[b.id] ? true : null, text: 'No se presentó', on: { click: function () { attend(b, 'no_show'); } } }));
     }
-    if (b.member_id && b.status !== 'cancelled') acts.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Abrir en Meeting Coach', on: { click: function () { openCoach(b); } } }));
+    if (b.member_id && b.status !== 'cancelled') acts.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Abrir en AI Sales Coach', on: { click: function () { openCoach(b); } } }));
     if (b.meeting_url && !past && b.status === 'scheduled') acts.appendChild(h('a', { class: 'btn btn-ghost btn-sm', href: b.meeting_url, target: '_blank', rel: 'noopener', text: 'Videollamada' }));
     if (b.calendar_html_link) acts.appendChild(h('a', { class: 'btn btn-ghost btn-sm', href: b.calendar_html_link, target: '_blank', rel: 'noopener', text: b.calendar_provider === 'outlook' ? 'Ver en Outlook' : 'Ver en Google Calendar' }));
     if (acts.childNodes.length) card.appendChild(acts);
@@ -284,7 +284,7 @@
     state.busy[b.id] = false; render();
   }
 
-  /** Deja el lead (con su nota BANT) elegido en el Meeting Coach y abre la página. */
+  /** Deja el lead (con su nota BANT) elegido en el AI Sales Coach y abre la página. */
   async function openCoach(b) {
     var pd = global.prospectingData;
     try {
@@ -293,7 +293,7 @@
       if (pd && pd.buildCoachLeadContext && pd.saveCoachContext) await pd.saveCoachContext(r.data.id, pd.buildCoachLeadContext(r.data));
       var nav = document.querySelector('.nav-item[data-page="ventas-coach"]');
       if (nav && typeof global.nav === 'function') global.nav(nav, 'ventas-coach');
-      toast('Lead listo en el Meeting Coach: usa «Preparar con IA» para el brief completo.', 'success');
+      toast('Lead listo en el AI Sales Coach: usa «Preparar con IA» para el brief completo.', 'success');
     } catch (e) { toast(e.message, 'error'); }
   }
 

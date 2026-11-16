@@ -41,7 +41,7 @@ const CORS = {
 
 const INSTRUCTIONS = [
   "Predictable es un Revenue OS: contexto de la empresa e ICP, Radar de señales de compra, listas de prospectos,",
-  "campañas omnicanal (WhatsApp, email, LinkedIn), Bandeja de respuestas y Meeting Coach.",
+  "campañas omnicanal (WhatsApp, email, LinkedIn), Bandeja de respuestas y AI Sales Coach.",
   "Flujo típico: context_get para entender a quién le vende la empresa → lists_list / contacts_list para ver prospectos →",
   "contacts_upsert o contacts_bulk_upsert para cargar leads (usa external_id con el id de tu CRM para no duplicar) →",
   "campaigns_list y campaigns_enroll para ponerlos en una cadencia → messages_list (direction=in) para ver respuestas.",

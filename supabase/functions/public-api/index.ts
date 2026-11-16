@@ -4,7 +4,7 @@
  * La API REST pública de Predictable, para que el CRM interno de un cliente
  * (o Zapier / Make / n8n / cualquier backend) lea y escriba sus datos:
  * listas, contactos, campañas, mensajes de la Bandeja, señales del Radar,
- * reuniones del Meeting Coach, eventos y webhooks.
+ * reuniones del AI Sales Coach, eventos y webhooks.
  *
  *   Base URL: https://<project-ref>.supabase.co/functions/v1/public-api
  *   Rutas:    /v1/...  (ver ROUTES en _shared/devapi.ts y /openapi.json)

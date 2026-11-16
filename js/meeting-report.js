@@ -1,12 +1,15 @@
 // js/meeting-report.js
 // ═══════════════════════════════════════════════════════════
-// Reporte post-reunión del Meeting Coach (pestaña "Última reunión"
-// de Reportes). Lee el reporte real generado por el edge function
-// sales-coach y lo pinta con los tokens del app; si la reunión sigue
-// en `processing` (modo bot: la transcripción de Recall llega minutos
-// después de cerrar) hace polling de finalizeReport hasta tenerlo.
+// Reuniones del AI Sales Coach (pestaña "Reuniones" de Reportes).
+// Lista TODAS las reuniones (2026-11-16; antes solo se veía la última) y
+// abre el reporte de cada una. Lee el reporte real generado por el edge
+// function sales-coach y lo pinta con los tokens del app; si la reunión
+// sigue en `processing` (el reporte se arma en segundo plano al cerrar)
+// muestra la transcripción completa de inmediato y consulta finalizeReport
+// hasta tener el análisis.
 //
-// API: MeetingReport.loadLast() · MeetingReport.open(meetingId)
+// API: MeetingReport.loadList() · MeetingReport.open(meetingId)
+//      MeetingReport.loadLast() es alias de loadList (lo llama switchReportTab).
 // ═══════════════════════════════════════════════════════════
 (function (global) {
   'use strict';
@@ -17,6 +20,11 @@
   };
 
   var POLL_MS = 8000;
+  var POLL_FAST_MS = 3000;          // primer par de minutos: el reporte suele estar en segundos
+  var POLL_FAST_WINDOW_MS = 120000;
+  var reqSeq = 0;                   // descarta la respuesta de una carga que ya fue reemplazada
+  var listRows = [];                // reuniones de la última lista cargada
+  var listTeam = false;
   var POLL_MAX_MS = 22 * 60 * 1000;
   var pollTimer = null;
   var pollingMeetingId = null;
@@ -100,6 +108,18 @@
       '.mr-spinner{width:34px;height:34px;border-radius:50%;border:3px solid var(--surface3);border-top-color:var(--accent);animation:mr-spin .9s linear infinite}',
       '@keyframes mr-spin{to{transform:rotate(360deg)}}',
       '.mr-back{font-size:12px;color:var(--accent-ink);cursor:pointer;background:none;border:0;padding:0;font-family:inherit;font-weight:600}',
+      '.mr-list-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}',
+      '.mr-list-head input{flex:1 1 220px;max-width:340px}',
+      '.mr-rows{display:flex;flex-direction:column;gap:8px}',
+      '.mr-row{display:flex;align-items:center;gap:14px;width:100%;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 16px;cursor:pointer;font-family:inherit;color:inherit;transition:border-color .15s,transform .15s}',
+      '.mr-row:hover,.mr-row:focus-visible{border-color:var(--accent);outline:none}',
+      '.mr-row .mr-r-sc{width:44px;height:44px;border-radius:12px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-weight:800;font-size:15px;flex-shrink:0}',
+      '.mr-row .mr-r-main{flex:1;min-width:0}',
+      '.mr-row .mr-r-nm{font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.mr-row .mr-r-mt{font-size:12px;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.mr-row .mr-r-vd{font-size:12px;color:var(--text2);margin-top:4px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}',
+      '.mr-row .mr-r-pills{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0;max-width:40%}',
+      '@media (max-width:640px){.mr-row{flex-wrap:wrap}.mr-row .mr-r-pills{max-width:100%;justify-content:flex-start;width:100%}}',
       '@media (max-width:640px){.mr-hero{padding:18px 16px}.mr-card{padding:16px}.mr-title{font-size:16px}.mr-kpis{width:100%;justify-content:space-between}}',
     ].join('');
     document.head.appendChild(st);
@@ -163,36 +183,118 @@
   }
 
   // ─── Carga ────────────────────────────────────────────────
-  async function loadLast() {
+  // Lista de todas las reuniones. Si el backend todavía no conoce
+  // `listMeetings` (función sin redesplegar), cae a la última reunión.
+  async function loadList() {
     stopPolling();
     currentMeetingId = null;
+    var seq = ++reqSeq;
     skeleton();
     show('loading');
+    var data = null;
+    try {
+      data = await global.api.listMeetings({});
+    } catch (err) {
+      console.warn('[meeting-report] listMeetings', err);
+      if (seq !== reqSeq) return;
+      return loadLastOnly(seq);
+    }
+    if (seq !== reqSeq) return;
+    listRows = (data && Array.isArray(data.meetings)) ? data.meetings : [];
+    listTeam = !!(data && data.team);
+    if (!listRows.length) { show('empty'); return; }
+    var e = els();
+    e.content.innerHTML = renderList('');
+    e.content.classList.add('sk-reveal');
+    show('content');
+    wireList();
+  }
+
+  async function loadLastOnly(seq) {
     try {
       var data = await global.api.getLastMeetingReport({});
+      if (seq !== reqSeq) return;
       handleData(data, false);
     } catch (err) {
       console.warn('[meeting-report] loadLast', err);
-      show('empty');
+      if (seq === reqSeq) show('empty');
     }
   }
 
+  function norm(v) {
+    return String(v == null ? '' : v).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  }
+
+  function rowsHtml(filter) {
+    var f = norm(filter).trim();
+    var rows = listRows.filter(function (m) {
+      return !f || norm(m.prospect_name).indexOf(f) !== -1 || norm(m.prospect_company).indexOf(f) !== -1 || norm(m.sdr_email).indexOf(f) !== -1;
+    });
+    if (!rows.length) return '<div class="mr-card mr-p" style="color:var(--text3)">Ninguna reunión coincide con esa búsqueda.</div>';
+    return rows.map(function (m) {
+      var hasScore = m.status === 'closed' && m.score_total != null;
+      var score = hasScore ? Math.round(Number(m.score_total) || 0) : null;
+      var insufficient = INSUFFICIENT_VERDICT.test(String(m.verdict || ''));
+      var temp = TEMP[String(m.temperatura || '').toLowerCase().replace('í', 'i')] || null;
+      var oc = OUTCOMES.filter(function (o) { return o[0] === String(m.outcome || '').toLowerCase(); })[0];
+      var meta = [fmtDate(m.started_at), fmtDuration(m.duration_seconds), listTeam ? m.sdr_email : ''].filter(Boolean).join(' · ');
+      var pills = '';
+      if (m.status === 'processing') pills += '<span class="pill pill-amber" style="font-size:10px">Generando reporte…</span>';
+      else if (m.status === 'live') pills += '<span class="pill pill-green" style="font-size:10px">En curso</span>';
+      else if (insufficient) pills += '<span class="pill pill-gray" style="font-size:10px">Sin contenido</span>';
+      if (temp && !insufficient && m.status === 'closed') pills += '<span class="pill" style="font-size:10px;background:' + temp.soft + ';color:' + temp.color + ';border-color:' + temp.color + '">' + temp.label + '</span>';
+      if (oc) pills += '<span class="pill pill-gray" style="font-size:10px">' + oc[1] + '</span>';
+      return '<button type="button" class="mr-row" data-meeting-id="' + esc(m.meeting_id) + '">' +
+        '<span class="mr-r-sc" style="color:' + (score != null && !insufficient ? scoreColor(score) : 'var(--text3)') + '">' + (score != null && !insufficient ? score : '—') + '</span>' +
+        '<span class="mr-r-main"><span class="mr-r-nm notranslate" style="display:block">' + esc(m.prospect_name || 'Prospecto') +
+          (m.prospect_company ? ' <span style="font-weight:600;color:var(--text3)">· ' + esc(m.prospect_company) + '</span>' : '') + '</span>' +
+        '<span class="mr-r-mt" style="display:block">' + esc(meta) + '</span>' +
+        (m.verdict && !insufficient ? '<span class="mr-r-vd notranslate">' + esc(m.verdict) + '</span>' : '') + '</span>' +
+        '<span class="mr-r-pills">' + pills + '</span></button>';
+    }).join('');
+  }
+
+  function renderList(filter) {
+    var n = listRows.length;
+    return '<div class="mr">' +
+      '<div class="mr-list-head">' +
+        '<div><div class="mr-title" style="font-size:16px">' + (listTeam ? 'Reuniones del equipo' : 'Todas tus reuniones') + '</div>' +
+        '<div class="mr-meta">' + (n === 1 ? '1 reunión con el AI Sales Coach' : n + ' reuniones con el AI Sales Coach') + ' · de la más reciente a la más antigua</div></div>' +
+        '<input type="search" id="mr-list-search" placeholder="Buscar por prospecto o empresa" aria-label="Buscar por prospecto o empresa" value="' + esc(filter || '') + '">' +
+      '</div>' +
+      '<div class="mr-rows" id="mr-list-rows">' + rowsHtml(filter) + '</div>' +
+    '</div>';
+  }
+
+  function wireList() {
+    var rows = document.getElementById('mr-list-rows');
+    var search = document.getElementById('mr-list-search');
+    if (rows) rows.addEventListener('click', function (ev) {
+      var btn = ev.target.closest ? ev.target.closest('.mr-row') : null;
+      if (btn && btn.dataset.meetingId) open(btn.dataset.meetingId);
+    });
+    if (search) search.addEventListener('input', function () { if (rows) rows.innerHTML = rowsHtml(search.value); });
+  }
+
   async function open(meetingId) {
-    if (!meetingId) return loadLast();
+    if (!meetingId) return loadList();
     stopPolling();
     var tab = document.querySelector('#page-ventas-reportes .tab[onclick*="rep-meeting"]');
     if (tab && typeof global.switchReportTab === 'function' && !tabVisible()) {
-      // switchReportTab llama a loadLastMeeting: se cancela abajo con la carga específica.
+      // switchReportTab carga la lista: `reqSeq` descarta esa respuesta.
       global.switchReportTab(tab, 'rep-meeting');
     }
+    var seq = ++reqSeq;
     currentMeetingId = meetingId;
     skeleton();
     show('loading');
     try {
       var data = await global.api.getMeetingReport({ meeting_id: meetingId, include_transcript: true });
+      if (seq !== reqSeq) return;
       handleData(data, true);
     } catch (err) {
       console.warn('[meeting-report] open', err);
+      if (seq !== reqSeq) return;
       toast('No se pudo cargar ese reporte: ' + (err && err.message ? err.message : 'error'), 'error');
       show('empty');
     }
@@ -214,18 +316,23 @@
     show('content');
   }
 
-  // ─── Pendiente (modo bot) ─────────────────────────────────
+  // ─── Pendiente: la transcripción ya está, el análisis llega solo ───
   function renderPending(data, specific) {
     var e = els();
     var since = data.ended_at ? Math.max(0, Math.round((Date.now() - new Date(data.ended_at).getTime()) / 1000)) : 0;
+    // Con la transcripción ya guardada (captura local, o modo bot con el
+    // transcript de Recall ya traído) el reporte tarda segundos, no minutos.
+    var ready = data.meeting_type !== 'bot' || data.transcript_source === 'recall_api';
     e.content.innerHTML =
-      (specific ? backLink() : '') +
+      '<div class="mr">' + (specific ? backLink() : '') +
       '<div class="mr-card mr-pending">' +
         '<div class="mr-spinner"></div>' +
-        '<div style="font-size:15px;font-weight:800;color:var(--text)">Generando el reporte de ' + esc(data.prospect_name || 'la reunión') + '…</div>' +
-        '<div class="mr-p" style="max-width:480px">El asistente ya salió de la reunión. Estamos esperando la transcripción completa para analizarla — con reuniones largas puede tardar unos minutos. Puedes seguir navegando; el reporte aparecerá aquí solo.</div>' +
+        '<div style="font-size:15px;font-weight:800;color:var(--text)">Generando el reporte de <span class="notranslate">' + esc(data.prospect_name || 'la reunión') + '</span>…</div>' +
+        '<div class="mr-p" style="max-width:480px">' + (ready
+          ? 'La transcripción completa ya está guardada y la estamos analizando. El reporte aparece aquí solo, normalmente en menos de un minuto; puedes seguir navegando.'
+          : 'El asistente ya salió de la reunión. Estamos esperando la transcripción completa para analizarla — con reuniones largas puede tardar unos minutos. Puedes seguir navegando; el reporte aparecerá aquí solo.') + '</div>' +
         '<div id="mr-pending-timer" style="font-family:var(--font-mono);font-size:12px;color:var(--text3)">esperando ' + since + 's</div>' +
-      '</div>';
+      '</div>' + transcriptBlock(data, true) + '</div>';
   }
 
   function startPolling(meetingId, data) {
@@ -234,6 +341,7 @@
     pollingMeetingId = meetingId;
     pollStartedAt = Date.now();
     var endedAt = data && data.ended_at ? new Date(data.ended_at).getTime() : Date.now();
+    var nextDelay = function () { return Date.now() - pollStartedAt < POLL_FAST_WINDOW_MS ? POLL_FAST_MS : POLL_MS; };
     var tick = async function () {
       if (pollingMeetingId !== meetingId) return;
       var timerEl = document.getElementById('mr-pending-timer');
@@ -242,6 +350,7 @@
       if (Date.now() - pollStartedAt > POLL_MAX_MS) { stopPolling(); return; }
       try {
         var res = await global.api.finalizeReport({ meeting_id: meetingId });
+        if (pollingMeetingId !== meetingId) return;
         if (res && res.pending === false) {
           stopPolling();
           toast('Reporte de la reunión listo', 'success');
@@ -251,7 +360,7 @@
       } catch (err) {
         console.warn('[meeting-report] finalizeReport', err);
       }
-      pollTimer = setTimeout(tick, POLL_MS);
+      pollTimer = setTimeout(tick, nextDelay());
     };
     pollTimer = setTimeout(tick, 2500);
   }
@@ -262,7 +371,7 @@
   }
 
   function backLink() {
-    return '<div style="margin-bottom:10px"><button type="button" class="mr-back" onclick="MeetingReport.loadLast()">← Volver a la última reunión</button></div>';
+    return '<div style="margin-bottom:10px"><button type="button" class="mr-back" onclick="MeetingReport.loadList()">← Todas las reuniones</button></div>';
   }
 
   // ─── Render del reporte ───────────────────────────────────
@@ -468,20 +577,25 @@
     }
 
     // Transcripción
-    var tr = Array.isArray(data.transcript) ? data.transcript.filter(function (c) { return c && c.text; }) : [];
-    if (tr.length) {
-      var sdrName = String(data.sdr_name || '').trim().toLowerCase();
-      html += '<details class="mr-details mr-card"><summary><span class="chev">▶</span><span class="mr-h" style="margin:0">Transcripción completa</span><span class="pill pill-gray" style="font-size:10px">' + tr.length + ' intervenciones</span></summary>';
-      html += '<div class="mr-tr" style="margin-top:12px">';
-      tr.forEach(function (c) {
-        var sp = String(c.speaker || '');
-        var isSdr = sp === 'SDR' || (sdrName && sp.trim().toLowerCase() === sdrName);
-        html += '<div><time>' + fmtClock(c.ts, data.started_at) + '</time><span class="sp" style="color:' + (isSdr ? 'var(--green)' : 'var(--cyan)') + '">' + esc(sp || '—') + ':</span><span style="color:var(--text2)">' + esc(c.text) + '</span></div>';
-      });
-      html += '</div></details>';
-    }
+    html += transcriptBlock(data, false);
 
     html += '</div>';
+    return html;
+  }
+
+  // ─── Transcripción completa ───────────────────────────────
+  function transcriptBlock(data, opened) {
+    var tr = Array.isArray(data.transcript) ? data.transcript.filter(function (c) { return c && c.text; }) : [];
+    if (!tr.length) return '';
+    var sdrName = String(data.sdr_name || '').trim().toLowerCase();
+    var html = '<details class="mr-details mr-card"' + (opened ? ' open' : '') + '><summary><span class="chev">▶</span><span class="mr-h" style="margin:0">Transcripción completa</span><span class="pill pill-gray" style="font-size:10px">' + tr.length + ' intervenciones</span></summary>';
+    html += '<div class="mr-tr notranslate" style="margin-top:12px">';
+    tr.forEach(function (c) {
+      var sp = String(c.speaker || '');
+      var isSdr = sp === 'SDR' || (sdrName && sp.trim().toLowerCase() === sdrName);
+      html += '<div><time>' + fmtClock(c.ts, data.started_at) + '</time><span class="sp" style="color:' + (isSdr ? 'var(--green)' : 'var(--cyan)') + '">' + esc(sp || '—') + ':</span><span style="color:var(--text2)">' + esc(c.text) + '</span></div>';
+    });
+    html += '</div></details>';
     return html;
   }
 
@@ -526,7 +640,8 @@
   ensureStyle();
 
   global.MeetingReport = {
-    loadLast: loadLast,
+    loadList: loadList,
+    loadLast: loadList,
     open: open,
     render: render,
     setOutcome: setOutcome,

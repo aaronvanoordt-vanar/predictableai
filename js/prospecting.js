@@ -3211,7 +3211,7 @@
     }
     if (r.generated_at) {
       html += '<div class="pros-cellsub">Investigado el ' + esc(fmtDay(r.generated_at)) +
-        (r.notes_used ? ' · usó tus notas' : '') + '. Lo usan los mensajes de campaña y el Meeting Coach de este lead.</div>';
+        (r.notes_used ? ' · usó tus notas' : '') + '. Lo usan los mensajes de campaña y el AI Sales Coach de este lead.</div>';
     }
     return html;
   }
@@ -3319,7 +3319,7 @@
           '<button type="button" class="btn btn-ai btn-sm" data-action="research-run" data-id="' + id + '" data-credit-cost="lead_research"' + (running ? ' disabled' : '') + '>' +
             (running ? 'Investigando…' : (r.angle ? 'Volver a investigar' : 'Investigar con IA')) + '</button></div>' +
         right +
-        // Las llamadas del lead con el reporte del Meeting Coach (js/calls.js).
+        // Las llamadas del lead con el reporte del AI Sales Coach (js/calls.js).
         '<div data-lead-calls="' + id + '"></div>' +
         // Agente de voz IA (js/voice-agent.js): llamadas a este lead con su resultado.
         '<div data-voice-mount="' + id + '"></div>' +

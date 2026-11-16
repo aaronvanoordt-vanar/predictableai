@@ -1,6 +1,6 @@
 // js/meeting-coach.js
 // ═══════════════════════════════════════════════════════════
-// Lógica del Meeting Coach: lanza el bot, hace polling,
+// Lógica del AI Sales Coach: lanza el bot, hace polling,
 // renderiza transcripción + alertas en tiempo real, y muestra
 // indicador "Analizando..." mientras el LLM procesa.
 // ═══════════════════════════════════════════════════════════
@@ -17,6 +17,13 @@
   let lastEventTs = null;     // timestamp del último coaching_event recibido
   let lastChunkTs = null;     // timestamp del último chunk recibido
   let everSawChunk = false;   // true en cuanto llega el primer chunk — la sesión ya no debe volver a "conectándose"
+  const Live = function () { return global.CoachLive || null; };
+  // Quién es el vendedor: en modo bot los hablantes traen su nombre real.
+  function isSeller(speaker) {
+    const me = String((global.currentProfile && global.currentProfile.full_name) || '').trim().toLowerCase();
+    const sp = String(speaker || '').trim().toLowerCase();
+    return sp === 'sdr' || (!!me && (sp === me || sp.indexOf(me) !== -1 || me.indexOf(sp) !== -1));
+  }
 
   // ─── INICIO ───────────────────────────────────────────────
   async function start(meetingUrl, prospectContext) {
@@ -53,10 +60,11 @@
       clearEvents();
       hideThinking();
 
+      // Fase de apertura y qué decir desde el segundo 0 (js/coach-live.js).
+      if (Live()) Live().begin(prospectContext, { status: 'El asistente se está uniendo…' });
       setStatus('connecting');
-      // 2 s: con transcripción en tiempo real el coach responde en ~5 s y el
-      // poll no debe ser el cuello de botella (getMeetingState es barato).
-      pollTimer = setInterval(poll, 2000);
+      // 1,2 s: el poll no debe ser el cuello de botella (getMeetingState es barato).
+      pollTimer = setInterval(poll, 1200);
       elapsedTimer = setInterval(updateElapsed, 1000);
       if (typeof global.coachShowActive === 'function') {
         global.coachShowActive(prospectContext && prospectContext.name);
@@ -84,6 +92,8 @@
 
       if (data.chunks && data.chunks.length) {
         renderTranscript(data.chunks);
+        // Capa instantánea: objeción conocida → respuesta base sin esperar al modelo.
+        if (Live()) data.chunks.forEach(function (c) { Live().heard(c.speaker, c.text, true, !isSeller(c.speaker)); });
         lastChunkTs = data.chunks[data.chunks.length - 1].ts;
         everSawChunk = true;
       }
@@ -143,7 +153,14 @@
     if (!c) return;
     events.forEach(function (ev) {
       (ev.alerts || []).forEach(function (a) { c.prepend(buildAlert(a)); });
-      if (ev.next_steps && ev.next_steps.length) {
+      // Fase, frase a decir y orden: en la página y en la ventana flotante.
+      if (Live()) {
+        Live().coach({
+          alerts: ev.alerts || [],
+          stage: (ev.state && ev.state.stage) || '',
+          next_step: (ev.next_steps && ev.next_steps[0]) || '',
+        });
+      } else if (ev.next_steps && ev.next_steps.length) {
         renderNextSteps(ev.next_steps, ev.state && ev.state.stage);
       }
     });
@@ -251,6 +268,7 @@
   function setStatus(status, override) {
     const el = document.getElementById('mc-status');
     if (!el) return;
+    if (Live() && status !== 'ended') Live().status(override || (status === 'live' ? 'Transcribiendo en vivo' : 'El asistente se está uniendo…'));
     if (override) { el.textContent = override; return; }
     el.textContent = ({
       connecting: 'Bot conectándose...',
@@ -266,6 +284,7 @@
     const s = (elapsedSeconds % 60).toString().padStart(2, '0');
     const el = document.getElementById('mc-timer');
     if (el) el.textContent = h + ':' + m + ':' + s;
+    if (Live()) Live().timer(h + ':' + m + ':' + s);
   }
 
   // ─── FINALIZAR ────────────────────────────────────────────
@@ -280,24 +299,19 @@
     if (typeof global.coachShowIdle === 'function') global.coachShowIdle();
     const urlInput = document.getElementById('mc-meeting-url');
     if (urlInput) urlInput.value = '';
+    if (Live()) Live().end();
+    // El reporte se arma en segundo plano: se abre la reunión en Reportes de
+    // inmediato y el análisis aparece solo (la transcripción de Recall puede
+    // tardar unos minutos en modo bot).
     try {
-      const final = await global.api.endMeeting({ meeting_id: meetId });
-      // Modo bot: la transcripción de Recall puede llegar minutos después;
-      // el backend devuelve pending y la pestaña "Última reunión" hace polling.
-      if (final && final.pending) {
-        toast('Reunión finalizada · Generando el reporte, puede tardar unos minutos', 'success');
-      } else {
-        toast('Reunión finalizada — score: ' + ((final && final.score_total) || 0), 'success');
-      }
-      setTimeout(function () {
-        if (typeof nav === 'function') {
-          nav(document.querySelector('[data-page=ventas-reportes]'), 'ventas-reportes');
-          const lastMeetingTab = document.querySelector('#page-ventas-reportes .tab[onclick*="rep-meeting"]');
-          if (lastMeetingTab && typeof switchReportTab === 'function') switchReportTab(lastMeetingTab, 'rep-meeting');
-        }
-      }, 800);
+      await global.api.endMeeting({ meeting_id: meetId, background: true });
+      toast('Reunión finalizada · Generando el reporte…', 'success');
     } catch (e) {
       toast('Error finalizando: ' + e.message, 'error');
+    }
+    if (typeof nav === 'function') {
+      nav(document.querySelector('[data-page=ventas-reportes]'), 'ventas-reportes');
+      if (global.MeetingReport) global.MeetingReport.open(meetId);
     }
   }
 

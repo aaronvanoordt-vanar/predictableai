@@ -90,7 +90,7 @@ export const CREDIT_COSTS = {
   // Tendencias de outbound (manual).
   outreach_playbook: 10,
 
-  // Meeting Coach (por cada 10 minutos, redondeando hacia arriba) + reporte.
+  // AI Sales Coach (por cada 10 minutos, redondeando hacia arriba) + reporte.
   coach_bot_block: 8,
   coach_local_block: 5,
   coach_report: 5,
