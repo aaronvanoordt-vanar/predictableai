@@ -2686,18 +2686,6 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
           Aún no tienes leads guardados. Busca prospectos y guárdalos en una lista desde Prospección; aquí podrás elegirlos para la reunión.
           <div style="margin-top:10px"><button class="btn btn-ghost btn-sm" onclick="nav(document.querySelector('[data-page=pro-main]'),'pro-main')">Ir a Prospección →</button></div>
         </div>
-        <!-- Preparación del lead con IA (js/coach-lead-picker.js): investiga al
-             lead en 5 capas y guarda el ángulo, la objeción probable y la
-             preparación de la reunión en prospect_list_members.outreach, que es
-             lo que lee el brief del coach. Antes esto se generaba al enrolar en
-             una campaña; desde el 2026-09-15 los mensajes de campaña son de la
-             campaña (campaign_messages) y esta es su única entrada. -->
-        <div id="mc-lead-prep" style="display:none;margin-top:10px">
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button id="mc-lead-prep-btn" class="btn btn-ghost btn-sm" type="button" data-credit-cost="outreach_full" data-credit-muted="">Preparar con IA</button>
-            <span id="mc-lead-prep-note" style="font-size:12px;color:var(--text3);line-height:1.5"></span>
-          </div>
-        </div>
       </div>
 
       <!-- Modo de conexión: compartir pantalla (local) vs. el asistente se une solo (bot) -->
@@ -2732,7 +2720,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         </button>
         <button class="btn btn-ghost btn-sm" style="padding:10px 18px;font-size:13px" onclick="toggleBriefPanel()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          Ver brief
+          Ver datos del lead
         </button>
       </div>
 
@@ -2764,47 +2752,34 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       </div>
     </div>
 
-    <!-- Brief automático -->
+    <!-- Lo que sabes del lead: SOLO datos del lead (quién, tus notas, el
+         traspaso BANT de la agenda, el estado del puesto). Desde el 2026-11-16
+         el coach ya no entra con la investigación de mercado ni con «Preparar
+         con IA» (ángulo, gancho, cómo abrir): eran hipótesis viejas que lo
+         desviaban. El Intelligence Hub mantiene a la IA al día fuera de la llamada. -->
     <div id="mc-brief-panel" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden">
-      <div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-        <div style="font-size:13px;font-weight:700">Brief automático</div>
-        <div style="font-size:10px;font-weight:700;color:var(--accent-ink);background:var(--accent-soft);padding:3px 8px;border-radius:20px;letter-spacing:.5px">AI</div>
+      <div style="padding:16px 18px;border-bottom:1px solid var(--border)">
+        <div style="font-size:13px;font-weight:700">Lo que sabes del lead</div>
       </div>
       <div id="mc-brief-placeholder" style="padding:26px 18px;color:var(--ink-3);font-size:12.5px;line-height:1.65">
-        El brief se genera automáticamente cuando inicias una sesión con un prospecto: quién es, por qué le importa y qué riesgos hay en el deal.
-      </div>
-      <div id="mc-brief-loading" style="display:none;padding:24px 18px;flex-direction:column;gap:10px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:4px">GENERANDO BRIEF...</div>
-        <span class="sk sk-line" style="height:10px"></span>
-        <span class="sk sk-line" style="height:10px;width:80%"></span>
-        <span class="sk sk-line" style="height:10px;width:90%"></span>
+        Elige el lead de la reunión: aquí verás quién es, tus notas y lo que ya se sabe de conversaciones anteriores. Durante la llamada el coach se guía por lo que dice el lead, no por investigaciones previas.
       </div>
       <div id="mc-brief-content" style="display:none;padding:0 18px 18px">
-        <div style="padding:14px 0;border-bottom:1px solid var(--border)">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">QUIÉN</div>
-          <div id="mc-brief-who" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
-          <div id="mc-brief-hook" style="display:none;margin-top:8px;padding:8px 10px;background:var(--accent-soft);border-radius:8px;font-size:12.5px;color:var(--accent-ink);line-height:1.55"></div>
-        </div>
-        <div style="padding:14px 0;border-bottom:1px solid var(--border)">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">POR QUÉ LE IMPORTA</div>
-          <div id="mc-brief-why" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
-        </div>
         <div style="padding:14px 0">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--red);margin-bottom:8px">RIESGOS</div>
-          <div id="mc-brief-risks" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">QUIÉN</div>
+          <div id="mc-brief-who" class="notranslate" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
         </div>
-        <!-- Preparación de reunión (coach_prep del nuevo generate-outreach) — oculta para leads con outreach antiguo -->
-        <div id="mc-brief-open-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--teal);margin-bottom:8px">CÓMO ABRIR</div>
-          <div id="mc-brief-open" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
+        <div id="mc-brief-known-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">LO QUE YA SABES</div>
+          <div id="mc-brief-known" class="notranslate" style="font-size:13px;color:var(--text2);line-height:1.6;white-space:pre-line"></div>
+        </div>
+        <div id="mc-brief-risks-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--red);margin-bottom:8px">RIESGOS</div>
+          <ul id="mc-brief-risks" style="margin:0;padding-left:16px;font-size:13px;color:var(--text2);line-height:1.7"></ul>
         </div>
         <div id="mc-brief-ask-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">QUÉ PREGUNTAR</div>
-          <ul id="mc-brief-ask" style="margin:0;padding-left:16px;font-size:13px;color:var(--text2);line-height:1.7"></ul>
-        </div>
-        <div id="mc-brief-signals-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--green);margin-bottom:8px">SEÑALES A VALIDAR</div>
-          <ul id="mc-brief-signals" style="margin:0;padding-left:16px;font-size:13px;color:var(--text2);line-height:1.7"></ul>
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">QUÉ FALTA PREGUNTAR</div>
+          <ul id="mc-brief-ask" class="notranslate" style="margin:0;padding-left:16px;font-size:13px;color:var(--text2);line-height:1.7"></ul>
         </div>
       </div>
     </div>
@@ -3537,104 +3512,57 @@ function coachShowActive(prospectName) {
   }
 }
 
-// Populate the landing brief with prospect context
+// Pinta «Lo que sabes del lead» con el contexto de buildCoachLeadContext:
+// solo datos del lead (quién, notas, traspaso BANT, estado del puesto).
 function loadCoachBrief(ctx) {
-  const loading = document.getElementById('mc-brief-loading');
-  const content = document.getElementById('mc-brief-content');
   const nameEl = document.getElementById('mc-prospect-name');
   const metaEl = document.getElementById('mc-prospect-meta');
-
   if (nameEl && ctx && ctx.name) nameEl.textContent = ctx.name;
   if (metaEl && ctx) {
     const parts = [ctx.title, ctx.company].filter(Boolean);
-    metaEl.textContent = parts.length ? parts.join(' · ') + (ctx.deal_value ? ' · ' + ctx.deal_value : '') + (ctx.icp_score ? ' · ICP-fit ' + ctx.icp_score : '') : 'Lead seleccionado para esta reunión';
+    metaEl.textContent = parts.length ? parts.join(' · ') : 'Lead seleccionado para esta reunión';
   }
-
-  if (loading) loading.style.display = 'none';
   const ph = document.getElementById('mc-brief-placeholder');
-  if (ph) ph.style.display = 'none';
-  if (content) content.style.display = 'block';
+  const content = document.getElementById('mc-brief-content');
+  if (ph) ph.style.display = ctx ? 'none' : '';
+  if (content) content.style.display = ctx ? 'block' : 'none';
+  if (!ctx) return;
 
+  const esc = window.escHtml || (s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
   const who = document.getElementById('mc-brief-who');
-  const why = document.getElementById('mc-brief-why');
-  const risks = document.getElementById('mc-brief-risks');
-  if (who && ctx) who.textContent = ctx.brief_who || (ctx.name ? ctx.name + (ctx.title ? ' · ' + ctx.title : '') + (ctx.company ? ' en ' + ctx.company : '') + '.' : '—');
-  if (why && ctx) why.textContent = ctx.brief_why || 'Contexto de la reunión disponible al iniciar el coach.';
+  if (who) who.textContent = ctx.brief_who || (ctx.name ? ctx.name + (ctx.title ? ' · ' + ctx.title : '') + (ctx.company ? ' en ' + ctx.company : '') + '.' : '—');
 
-  // RIESGOS: base del angle + riesgos específicos del coach_prep (si existen)
-  const prepForRisks = (ctx && ctx.coach_prep && typeof ctx.coach_prep === 'object') ? ctx.coach_prep : null;
-  const prepRisks = (prepForRisks && Array.isArray(prepForRisks.riesgos)) ? prepForRisks.riesgos.filter(Boolean) : [];
-  if (risks && ctx) {
-    const escR = window.escHtml || (s => String(s == null ? '' : s));
-    const baseRisk = ctx.brief_risks || 'Sin alertas previas.';
-    if (prepRisks.length) {
-      risks.innerHTML = escR(baseRisk) +
-        '<ul style="margin:6px 0 0;padding-left:16px">' +
-        prepRisks.map(r => '<li>' + escR(r) + '</li>').join('') +
-        '</ul>';
-    } else {
-      risks.textContent = baseRisk;
-    }
-  }
+  const knownSec = document.getElementById('mc-brief-known-sec');
+  const knownEl = document.getElementById('mc-brief-known');
+  const known = [ctx.notes, ctx.handoff_summary].filter(Boolean).join('\n\n');
+  if (knownSec) knownSec.style.display = known ? 'block' : 'none';
+  if (knownEl) knownEl.textContent = known;
 
-  // Gancho personal (angle.person_hook del nuevo generate-outreach)
-  const hookEl = document.getElementById('mc-brief-hook');
-  if (hookEl) {
-    const hook = ctx && ctx.person_hook;
-    if (hook) {
-      hookEl.textContent = 'Gancho personal: ' + hook;
-      hookEl.style.display = 'block';
-    } else {
-      hookEl.textContent = '';
-      hookEl.style.display = 'none';
-    }
-  }
-
-  // Preparación de reunión (coach_prep) — solo para leads con outreach nuevo;
-  // con outreach antiguo se mantiene el brief de QUIÉN / POR QUÉ / RIESGOS.
-  const prep = (ctx && ctx.coach_prep && typeof ctx.coach_prep === 'object') ? ctx.coach_prep : null;
-  const esc = window.escHtml || (s => String(s == null ? '' : s));
-
-  const openSec = document.getElementById('mc-brief-open-sec');
-  const openEl = document.getElementById('mc-brief-open');
-  const showOpen = !!(prep && prep.como_abrir);
-  if (openSec) openSec.style.display = showOpen ? 'block' : 'none';
-  if (openEl) openEl.textContent = showOpen ? prep.como_abrir : '';
-
-  const askSec = document.getElementById('mc-brief-ask-sec');
-  const askEl = document.getElementById('mc-brief-ask');
-  const asks = (prep && Array.isArray(prep.que_preguntar)) ? prep.que_preguntar.filter(Boolean) : [];
-  if (askSec) askSec.style.display = asks.length ? 'block' : 'none';
-  if (askEl) askEl.innerHTML = asks.map(q => '<li>' + esc(q) + '</li>').join('');
-
-  const sigSec = document.getElementById('mc-brief-signals-sec');
-  const sigEl = document.getElementById('mc-brief-signals');
-  const sigs = (prep && Array.isArray(prep.senales_a_validar)) ? prep.senales_a_validar.filter(Boolean) : [];
-  if (sigSec) sigSec.style.display = sigs.length ? 'block' : 'none';
-  if (sigEl) sigEl.innerHTML = sigs.map(s => '<li>' + esc(s) + '</li>').join('');
+  const list = (secId, elId, items) => {
+    const sec = document.getElementById(secId);
+    const el = document.getElementById(elId);
+    const arr = Array.isArray(items) ? items.filter(Boolean) : [];
+    if (sec) sec.style.display = arr.length ? 'block' : 'none';
+    if (el) el.innerHTML = arr.map(x => '<li>' + esc(x) + '</li>').join('');
+  };
+  list('mc-brief-risks-sec', 'mc-brief-risks', ctx.risks);
+  list('mc-brief-ask-sec', 'mc-brief-ask', ctx.questions);
 }
 
 
 // Lo que el coach recibe del lead elegido (lo usan «Iniciar coach» y el aviso
-// de reunión de js/coach-calendar.js).
+// de reunión de js/coach-calendar.js). Solo datos del lead: sin investigación
+// de mercado, ángulo de outreach ni preparación de IA (2026-11-16).
 function coachProspectPayload(ctx) {
   return {
     id: ctx.id,
     name: ctx.name,
     company: ctx.organization_name || ctx.company,
     title: ctx.title,
-    deal_value: ctx.deal_value,
-    icp_score: ctx.icp_score,
-    // Preparación de reunión del nuevo generate-outreach (additivo:
-    // el coach en vivo la recibe como contexto extra si existe).
-    coach_prep: ctx.coach_prep || null,
-    person_hook: ctx.person_hook || null,
-    // Brief completo del lead (quién / por qué / riesgos) y el ángulo de
-    // outreach: antes se quedaban en el navegador y el coach no los veía.
-    brief_who: ctx.brief_who || null,
-    brief_why: ctx.brief_why || null,
-    brief_risks: ctx.brief_risks || null,
-    angle: (ctx.outreach && ctx.outreach.angle) || null
+    notes: ctx.notes || null,
+    handoff_summary: ctx.handoff_summary || null,
+    risks: Array.isArray(ctx.risks) ? ctx.risks : [],
+    questions: Array.isArray(ctx.questions) ? ctx.questions : []
   };
 }
 

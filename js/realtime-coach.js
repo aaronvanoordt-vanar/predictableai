@@ -29,7 +29,7 @@
   let elapsedTimer = null;
   let elapsedSeconds = 0;
   let currentMeetingId = null;
-  let currentProspect = null;      // brief/ángulo del lead elegido; lo leen los turnos del coach
+  let currentProspect = null;      // datos del lead elegido (sin investigación de mercado); lo leen los turnos del coach
   let recentTranscript = [];    // últimos turnos {speaker, text, ts, el}
   let pendingTurn = null;       // turno abierto: sigue recibiendo chunks del mismo hablante
   let totalTurns = 0;
@@ -507,7 +507,7 @@
       '}',
       'Español neutro. NO inventes alertas: si no hay nada accionable, "alerts": [].'
     ]).join('\n') + ((trainedPrompt && trainedPrompt.block) ? '\n' + trainedPrompt.block : '') + outputLanguageDirective();
-    const userContent = 'Contexto del prospecto (brief del lead, ángulo y preparación):\n' + JSON.stringify(currentProspect || {}).slice(0, 3000) + '\n\n' +
+    const userContent = 'Contexto del prospecto (sus datos, tus notas y lo que ya se sabe de conversaciones anteriores):\n' + JSON.stringify(currentProspect || {}).slice(0, 3000) + '\n\n' +
       position + '\n\n' +
       (prior ? 'Conversación anterior (ya analizada, solo contexto):\n' + prior + '\n\n' : '') +
       'Lo nuevo (analiza solo esto):\n' + fresh;

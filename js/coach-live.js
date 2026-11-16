@@ -288,12 +288,6 @@
     modelSpoke = false; instantSeen = {}; nudgedStage = {};
     words = { sdr: 0, lead: 0, lastNudge: 0 };
     applyStage('rapport');
-    // Si el lead se preparó con IA, la apertura es la de SU preparación.
-    var prep = prospect && prospect.coach_prep;
-    if (prep && typeof prep === 'object' && prep.como_abrir) {
-      state.say = String(prep.como_abrir);   // texto del lead preparado: no se traduce
-      state.sayLabel = 'Cómo abrir (de tu preparación)';
-    }
     if (ticker) clearInterval(ticker);
     ticker = setInterval(watch, 20000);
     paint();
