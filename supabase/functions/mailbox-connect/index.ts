@@ -380,7 +380,7 @@ Deno.serve(async (req) => {
         await db.from("email_mailboxes").update({ warmup: { ...(mb.warmup ?? {}), state: "error", error: (e as Error).message.slice(0, 300), updated_at: new Date().toISOString() } }).eq("id", mb.id);
         return json({ error: (e as Error).message }, 502, cors);
       }
-      return await save({ warmup: { state: "active", provider: warmup.warmupProvider(), started_at: mb.warmup?.started_at ?? new Date().toISOString(), updated_at: new Date().toISOString() }, ramp_enabled: true });
+      return await save({ warmup: { ...(mb.warmup?.network ? { network: mb.warmup.network } : {}), state: "active", provider: warmup.warmupProvider(), started_at: mb.warmup?.started_at ?? new Date().toISOString(), updated_at: new Date().toISOString() }, ramp_enabled: true });
     }
 
     if (action === "warmup_disable") {

@@ -305,3 +305,110 @@ export async function imapFetchNew(
     try { conn.close(); } catch { /* ya cerrada */ }
   }
 }
+
+// ── Red de calentamiento: ubicar y rescatar un correo ───────────────────────
+
+export interface ImapLocateResult {
+  /** Dónde estaba el correo: bandeja, spam o todavía no llegó. */
+  placement: "inbox" | "spam" | "missing";
+  /** Estaba en spam y se movió a la bandeja. */
+  rescued: boolean;
+}
+
+/** Carpeta de spam de la respuesta a LIST: la que trae \Junk o, si no, la que se llama Spam / Junk. */
+export function junkFolderFrom(listLines: string[]): string | null {
+  let byName: string | null = null;
+  for (const line of listLines) {
+    const m = line.match(/^\* LIST \(([^)]*)\) (?:"[^"]*"|NIL) (.+)$/i);
+    if (!m) continue;
+    const name = m[2].trim().replace(/^"(.*)"$/, "$1");
+    if (/\\Junk/i.test(m[1])) return name;
+    if (!byName && /(^|[\/.\]])(spam|junk|junk e-?mail|correo no deseado|bulk mail)$/i.test(name)) byName = name;
+  }
+  return byName;
+}
+
+/**
+ * Busca un correo por su Message-ID en la bandeja y en spam (solo para la red
+ * de calentamiento, _shared/warmup-network.ts: son correos entre buzones de
+ * la red, nunca de un lead). En la bandeja lo marca leído y destacado; en
+ * spam, con `rescue`, lo mueve a la bandeja y lo marca igual — la señal que
+ * le dice al proveedor que ese remitente no es spam.
+ */
+export async function imapLocate(
+  cfg: ImapConfig,
+  messageId: string,
+  opts: { rescue?: boolean; flag?: boolean } = {},
+  connect: Connector = tlsConnect,
+): Promise<ImapLocateResult> {
+  let conn: Conn;
+  try {
+    conn = await connect(cfg.host, Number(cfg.port));
+  } catch (e) {
+    throw new ImapError(`No se pudo conectar a ${cfg.host}:${cfg.port} (${(e as Error)?.message ?? e}).`, "connect");
+  }
+  const enc = new TextEncoder();
+  const r = new ImapReader(conn);
+  let tagN = 0;
+  const run = async (cmd: string, stage: string): Promise<string[]> => {
+    const tag = "w" + (++tagN);
+    await conn.write(enc.encode(`${tag} ${cmd}\r\n`));
+    const lines: string[] = [];
+    while (true) {
+      const head = firstText(await r.response());
+      if (head.startsWith(tag + " ")) {
+        if (!/^\S+ OK/i.test(head)) throw new ImapError(head.slice(tag.length + 1, 300), stage);
+        return lines;
+      }
+      lines.push(head);
+    }
+  };
+  const id = "<" + String(messageId).replace(/^<|>$/g, "") + ">";
+  const find = async (): Promise<number[]> => {
+    const found = await run(`UID SEARCH HEADER Message-ID ${imapQuote(id)}`, "search");
+    return found.filter((l) => /^\* SEARCH/i.test(l)).flatMap((l) => l.replace(/^\* SEARCH/i, "").trim().split(/\s+/)).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+  };
+  const flags = opts.flag === false ? "(\\Seen)" : "(\\Seen \\Flagged)";
+  try {
+    const greet = firstText(await r.response());
+    if (!/^\* (OK|PREAUTH)/i.test(greet)) throw new ImapError("Saludo IMAP inesperado: " + greet.slice(0, 120), "greeting");
+    await run(`LOGIN ${imapQuote(cfg.username)} ${imapQuote(cfg.password)}`, "login");
+    await run("SELECT INBOX", "select");
+    const inInbox = await find();
+    if (inInbox.length) {
+      try { await run(`UID STORE ${inInbox[0]} +FLAGS ${flags}`, "store"); } catch { /* buzón de solo lectura: da igual */ }
+      try { await run("LOGOUT", "logout"); } catch { /* da igual */ }
+      return { placement: "inbox", rescued: false };
+    }
+    const junk = junkFolderFrom(await run('LIST "" "*"', "list"));
+    if (junk) {
+      await run(`SELECT ${imapQuote(junk)}`, "select");
+      const inJunk = await find();
+      if (inJunk.length) {
+        let rescued = false;
+        if (opts.rescue !== false) {
+          try {
+            try {
+              await run(`UID MOVE ${inJunk[0]} INBOX`, "move");
+            } catch {
+              // Servidor sin MOVE (RFC 6851): copiar, marcar borrado y purgar.
+              await run(`UID COPY ${inJunk[0]} INBOX`, "copy");
+              await run(`UID STORE ${inJunk[0]} +FLAGS (\\Deleted)`, "store");
+              await run("EXPUNGE", "expunge");
+            }
+            rescued = true;
+            await run("SELECT INBOX", "select");
+            const moved = await find();
+            if (moved.length) await run(`UID STORE ${moved[0]} +FLAGS ${flags}`, "store");
+          } catch { /* se queda en spam: se reporta igual */ }
+        }
+        try { await run("LOGOUT", "logout"); } catch { /* da igual */ }
+        return { placement: "spam", rescued };
+      }
+    }
+    try { await run("LOGOUT", "logout"); } catch { /* da igual */ }
+    return { placement: "missing", rescued: false };
+  } finally {
+    try { conn.close(); } catch { /* ya cerrada */ }
+  }
+}

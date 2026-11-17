@@ -12,14 +12,17 @@
  *    (`channel_accounts.config.limits`); subirlos exige aceptar el riesgo
  *    (`normalizeUserLimits`, `config.limits_risk_accepted_at`);
  *  • nunca en ráfaga: entre dos envíos pasan 2 a 8 minutos al azar;
- *  • una cuenta recién conectada (14 días) o que LinkedIn limitó hace poco
- *    (30 días) va a la mitad;
+ *  • una cuenta recién conectada sube de forma gradual 14 días y el tope de
+ *    cada día varía al azar (guardián de envíos, _shared/channel-guard.ts);
+ *    la que LinkedIn limitó hace poco (30 días) va a la mitad;
  *  • si LinkedIn limita o restringe la cuenta, `config.send_block` retiene
  *    todos los envíos hasta la fecha que dice (24 h por límite; hasta
  *    reconectar por restricción).
  * La ventana horaria y los días de envío de la campaña se aplican aparte
  * (windowCheck de campaign-run).
  */
+
+import { dayKey, daysSince, guardOverridden, LI_RAMP, linkedinDayCap } from "./channel-guard.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -100,23 +103,39 @@ export function noteLimitActive(config: Json, now = new Date()): { until: Date }
   return { until };
 }
 
-export interface EffectiveLimits { invitesPerDay: number; invitesPerWeek: number; messagesPerDay: number; reduced: boolean }
+export interface EffectiveLimits { invitesPerDay: number; invitesPerWeek: number; messagesPerDay: number; reduced: boolean; warming?: boolean }
 
 const DAY = 24 * 60 * 60 * 1000;
 
-/** Topes vigentes de la cuenta: los del usuario (hasta el techo), a la mitad en calentamiento. */
+/**
+ * Topes vigentes de la cuenta. Desde el 2026-11-17 (guardián de envíos,
+ * _shared/channel-guard.ts) una cuenta recién conectada ya no va «a la
+ * mitad» 14 días: sube de forma GRADUAL (5 invitaciones y 10 mensajes el
+ * primer día hasta el tope elegido el día 14) y el tope de cada día varía al
+ * azar entre el 80 % y el 100 % — nunca el mismo número dos días seguidos,
+ * como hace Dripify. El azar es estable por cuenta y día. Limitada hace poco
+ * (30 días) sigue a la mitad. `config.guard.override_at` (el usuario omitió
+ * el calentamiento bajo su riesgo) quita la rampa, no el azar ni la mitad.
+ */
 export function effectiveLimits(config: Json, connectedAt: string | null | undefined, now = new Date()): EffectiveLimits {
   const u = config?.limits ?? {};
-  const connected = connectedAt ? Date.parse(connectedAt) : NaN;
   const limited = config?.last_limited_at ? Date.parse(config.last_limited_at) : NaN;
-  const reduced = (Number.isFinite(connected) && now.getTime() - connected < LINKEDIN_LIMITS.warmup_days * DAY)
-    || (Number.isFinite(limited) && now.getTime() - limited < LINKEDIN_LIMITS.cooldown_days * DAY);
-  const half = (n: number) => reduced ? Math.max(1, Math.floor(n / 2)) : n;
+  const cooled = Number.isFinite(limited) && now.getTime() - limited < LINKEDIN_LIMITS.cooldown_days * DAY;
+  const half = (n: number) => cooled ? Math.max(1, Math.floor(n / 2)) : n;
+  const day = daysSince(connectedAt, now);
+  const overridden = guardOverridden(config);
+  const seed = `${connectedAt ?? ""}|${dayKey(now)}`;
+  const inv = linkedinDayCap(half(clampUser(u.invites_per_day, "invites_per_day")), LI_RAMP.invites_start, day, seed + "|inv", overridden);
+  const msg = linkedinDayCap(half(clampUser(u.messages_per_day, "messages_per_day")), LI_RAMP.messages_start, day, seed + "|msg", overridden);
+  const warming = inv.warming || msg.warming;
+  const week = half(clampUser(u.invites_per_week, "invites_per_week"));
   return {
-    invitesPerDay: half(clampUser(u.invites_per_day, "invites_per_day")),
-    invitesPerWeek: half(clampUser(u.invites_per_week, "invites_per_week")),
-    messagesPerDay: half(clampUser(u.messages_per_day, "messages_per_day")),
-    reduced,
+    invitesPerDay: inv.cap,
+    // En calentamiento la semana también va a la mitad (la suma de los días de rampa queda por debajo).
+    invitesPerWeek: warming ? Math.max(1, Math.floor(week / 2)) : week,
+    messagesPerDay: msg.cap,
+    reduced: cooled || warming,
+    warming,
   };
 }
 
@@ -146,7 +165,7 @@ export function activeBlock(config: Json, now = new Date()): { reason: string; u
  */
 export function pace(kind: "invite" | "message", counts: SendCounts, limits: EffectiveLimits, now: Date, rand: number): PaceResult {
   const hour = new Date(now.getTime() + 60 * 60 * 1000);
-  const half = limits.reduced ? " (a la mitad: cuenta recién conectada o limitada hace poco)" : "";
+  const half = limits.warming ? " (cuenta en calentamiento: el tope sube cada día)" : limits.reduced ? " (a la mitad: LinkedIn limitó la cuenta hace poco)" : "";
   if (kind === "invite") {
     if (counts.invitesWeek >= limits.invitesPerWeek) {
       return { ok: false, retryAt: new Date(now.getTime() + 6 * 60 * 60 * 1000), reason: `Tope semanal de invitaciones de LinkedIn alcanzado (${limits.invitesPerWeek} en 7 días${half}). Sigue cuando se libere cupo.` };

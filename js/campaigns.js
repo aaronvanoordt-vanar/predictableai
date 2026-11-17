@@ -748,6 +748,19 @@
   function dripifyCampaigns() { return (state.dripify && state.dripify.config && state.dripify.config.campaigns) || []; }
 
   // ── Datos ────────────────────────────────────────────────────────────────
+  // Guardián de envíos (js/warmup.js): cuando un canal pasa a conectado, el
+  // aviso con su plan de calentamiento aparece solo (pedido del dueño,
+  // 2026-11-17). La primera lectura solo guarda el estado: no avisa de lo
+  // que ya estaba conectado.
+  var guardSeen = null;
+  function notifyGuardOnConnect() {
+    var now = { whatsapp: isConn(state.wati), linkedin: isConn(state.unipile) };
+    if (guardSeen && global.warmup && global.warmup.onChannelConnected) {
+      Object.keys(now).forEach(function (k) { if (now[k] && !guardSeen[k]) global.warmup.onChannelConnected(k); });
+    }
+    guardSeen = now;
+  }
+
   async function loadStatus() {
     // Buzones propios: falla suave (sin la función desplegada el canal sigue con Apollo).
     var mbxLoad = global.EmailMailboxes ? global.EmailMailboxes.load(true) : null;
@@ -766,6 +779,7 @@
       state.apollo = r && r.apollo ? r.apollo : null;
       state.apolloOauth = !!(r && r.apollo_oauth_available === true);
       state.statusError = null;
+      notifyGuardOnConnect();
     } catch (e) {
       state.status = null;
       state.wati = null; state.watiRow = null; state.metaRow = null; state.metaSignup = null; state.dripify = null; state.unipile = null; state.apollo = null;
