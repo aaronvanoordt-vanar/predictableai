@@ -1344,8 +1344,13 @@
     function contentFields(node, fopts) {
       var box = h('div', { style: 'display:flex;flex-direction:column;gap:10px' });
       var liNative = L.isNativeLinkedin(node);
-      if (L.isLinkedin(node.channel) && (nativeOk() || liNative)) {
-        // Cómo sale el paso: desde la cuenta propia (Unipile) o por Dripify.
+      if (L.isLinkedin(node.channel) && liNative && !nativeOk()) {
+        box.appendChild(h('div', { class: 'cb-hint', text: 'Conecta tu cuenta de LinkedIn en Canales → LinkedIn para que este paso salga.' }));
+      }
+      // Dripify ya no se ofrece para pasos nuevos: solo se muestra el selector
+      // en un paso que ya lo usaba, para pasarlo a la cuenta propia.
+      if (L.isLinkedin(node.channel) && !liNative && nativeOk()) {
+        // Cómo sale el paso: desde la cuenta propia (Unipile) o por Dripify (heredado).
         var via = h('div', { class: 'cb-seg' });
         var viaBtn = function (native, label, small) {
           var b = h('button', { type: 'button', class: liNative === native ? 'on' : '', onclick: function () {
@@ -1360,7 +1365,7 @@
         };
         box.appendChild(h('div', { class: 'cb-lbl', text: 'Cómo sale' }));
         via.appendChild(viaBtn(true, 'Desde mi cuenta de LinkedIn', nativeOk() ? 'Predictable envía el texto de este paso' : 'Conecta tu cuenta en Campañas → LinkedIn'));
-        if (dripifyConnected() || !liNative) via.appendChild(viaBtn(false, 'Campaña de Dripify', 'Dripify envía con sus propias plantillas'));
+        via.appendChild(viaBtn(false, 'Campaña de Dripify (anterior)', 'Dripify envía con sus propias plantillas'));
         box.appendChild(via);
       }
       if (L.isLinkedin(node.channel) && liNative) {

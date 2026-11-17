@@ -7609,4 +7609,6 @@ window.I18N_DICTS['pt-BR'] = {
   "Escribe el nombre de tu empresa.": "Escreva o nome da sua empresa.",
   "Equipo creado. Ya eres la cuenta principal.": "Equipe criada. Agora você é a conta principal.",
   "¿Rechazar esta solicitud? La persona no verá el equipo.": "Recusar esta solicitação? A pessoa não verá a equipe.",
+  "Campaña de Dripify (anterior)": "Campanha do Dripify (anterior)",
+  "Conecta tu cuenta de LinkedIn en Canales → LinkedIn para que este paso salga.": "Conecte sua conta do LinkedIn em Canais → LinkedIn para que este passo seja enviado.",
 };
