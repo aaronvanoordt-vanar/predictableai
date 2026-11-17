@@ -2167,7 +2167,7 @@
     } else if (on) {
       body.innerHTML = '<span class="cmp-dot"></span><span class="cmp-ch-detail">' + esc(st.detail || '') + '</span>';
       if (st.sub) body.insertAdjacentHTML('beforeend', pill(st.sub, st.subKind));
-      if ((key === 'linkedin' || key === 'whatsapp') && st.state === 'connected' && !st.webhookOk) body.appendChild(h('span', { class: 'cmp-chip-warn', text: '⚠ Falta el webhook de respuestas' }));
+      if (key === 'whatsapp' && st.state === 'connected' && !st.webhookOk) body.appendChild(h('span', { class: 'cmp-chip-warn', text: '⚠ Falta el webhook de respuestas' }));
       foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'ch-details', 'data-channel': key, text: 'Configuración' }));
       if (key === 'calls') foot.appendChild(h('button', { type: 'button', class: 'cmp-link', 'data-action': 'cmp-calls', text: 'Ver la cola' }));
     } else {
@@ -2283,7 +2283,7 @@
     if (state.statusError) list.push({ key: null, label: 'Canales', text: state.statusError });
     CH_ORDER.forEach(function (k) {
       var st = channelState(k);
-      if (st.state === 'connected' && (k === 'linkedin' || k === 'whatsapp') && !st.webhookOk) list.push({ key: k, label: CH[k].label, text: 'Falta el webhook de respuestas' });
+      if (st.state === 'connected' && k === 'whatsapp' && !st.webhookOk) list.push({ key: k, label: CH[k].label, text: 'Falta el webhook de respuestas' });
       else if (st.state === 'connected' && (st.subKind === 'red' || st.subKind === 'amber') && st.sub) list.push({ key: k, label: CH[k].label, text: st.sub });
       else if (st.state !== 'connected' && st.error) list.push({ key: k, label: CH[k].label, text: st.error });
     });
