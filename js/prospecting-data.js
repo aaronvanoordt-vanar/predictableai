@@ -1549,10 +1549,13 @@
   // «Investigar con IA» de Listas: verifica el puesto (Apollo + web),
   // investiga la empresa y propone el ángulo. La edge function guarda el
   // resultado en la fila (research / research_status) aunque se cierre la pestaña.
-  async function researchLead(memberId) {
+  // opts.purpose = 'meeting' (desde el AI Sales Coach): el ángulo y las
+  // preguntas se orientan a la reunión con el entrenamiento del coach.
+  async function researchLead(memberId, opts) {
     if (!memberId) throw new Error('Falta el contacto.');
     return edgeFetch('lead-research', {
       member_id: memberId,
+      purpose: opts && opts.purpose === 'meeting' ? 'meeting' : undefined,
       engine: global.AIEngine && global.AIEngine.get('outreach'),
     });
   }
@@ -1646,9 +1649,11 @@
   // prospect_list_member. SOLO datos del lead (2026-11-16, pedido del dueño):
   // quién es, las notas del vendedor, el traspaso BANT de la agenda (sale de
   // la conversación real) y si el puesto sigue vigente. Ya NO entran el
-  // ángulo de «Preparar con IA» (prospect_list_members.outreach), su
-  // coach_prep ni el ángulo de lead-research: eran hipótesis armadas con el
-  // Intelligence Hub, a menudo viejas, y desviaban al coach en la llamada.
+  // ángulo de «Preparar con IA» (prospect_list_members.outreach) ni su
+  // coach_prep. La investigación con IA del lead (lead-research, la misma de
+  // Listas → Investigación) SÍ entra desde el 2026-11-17 (decisión del dueño,
+  // revierte la del 2026-11-16): se lanza desde el panel del coach o desde
+  // Listas, se guarda en la fila y viaja como `research` con su fecha.
   // Lo usan el selector del coach, el aviso de reunión, el dialer y la agenda.
   // `opp` (opcional, 2026-11-17, pedido del dueño) = la oportunidad del CRM
   // que tiene a este lead como contacto principal (fetchLeadOpportunities):
@@ -1682,7 +1687,45 @@
       opportunity: opportunityText(opp),
       risks: risks,
       questions: (ho && Array.isArray(ho.next_questions) ? ho.next_questions : []).filter(Boolean).slice(0, 6),
+      research: researchText(res),
+      research_state: researchState(m),
+      research_at: res.generated_at || null,
     };
+  }
+
+  // Estado de la investigación con IA de un lead: 'running' | 'ready' |
+  // 'error' | 'none' (sin investigar).
+  function researchState(m) {
+    const r = (m.research && typeof m.research === 'object') ? m.research : {};
+    if (m.research_status === 'running') return 'running';
+    if (r.angle || r.company || r.person) return 'ready';
+    if (m.research_status === 'error' || r.error) return 'error';
+    return 'none';
+  }
+
+  // Texto compacto de la investigación (lead-research) para el coach y el
+  // panel «Lo que sabes del lead». Solo lo que devolvió la investigación.
+  function researchText(r) {
+    if (!r || typeof r !== 'object' || !(r.angle || r.company || r.person)) return null;
+    const EMP = { current: 'Verificado en el cargo', outdated: 'Desactualizado: probablemente ya no está en la empresa', unconfirmed: 'Cargo por confirmar', unknown: 'Cargo sin verificar' };
+    const t = function (v, n) { return String(v == null ? '' : v).trim().slice(0, n); };
+    const out = [];
+    const emp = r.employment || {};
+    if (EMP[emp.status]) out.push('Puesto: ' + EMP[emp.status] + (emp.current_company && emp.status !== 'current' ? ' (hoy en ' + t(emp.current_company, 80) + ')' : ''));
+    if (r.person && r.person.summary) out.push('Persona: ' + t(r.person.summary, 400));
+    if (r.company && r.company.summary) out.push('Empresa: ' + t(r.company.summary, 400));
+    const sig = r.company && Array.isArray(r.company.signals) ? r.company.signals.map(function (x) { return x && t(x.text, 160); }).filter(Boolean).slice(0, 3) : [];
+    if (sig.length) out.push('Señales: ' + sig.join(' · '));
+    const a = r.angle || {};
+    if (a.headline) out.push('Ángulo: ' + t(a.headline, 160));
+    if (a.why_now) out.push('Por qué ahora: ' + t(a.why_now, 250));
+    if (a.pain) out.push('Dolor probable: ' + t(a.pain, 220));
+    if (a.value) out.push('Qué le resolvemos: ' + t(a.value, 220));
+    if (a.proof) out.push('Prueba social a citar: ' + t(a.proof, 180));
+    const qs = Array.isArray(a.questions) ? a.questions.map(function (q) { return t(q, 180); }).filter(Boolean).slice(0, 4) : [];
+    if (qs.length) out.push('Preguntas: ' + qs.join(' | '));
+    if (a.avoid) out.push('Evitar: ' + t(a.avoid, 180));
+    return out.length ? out.join('\n') : null;
   }
 
   // Reunión con varias personas (2026-11-17, pedido del dueño): el coach
@@ -1710,7 +1753,9 @@
     const risks = [];
     const questions = [];
     const oppTexts = [];
+    const research = [];
     ordered.forEach(function (c) {
+      if (c.research) research.push('— ' + (c.name || '(sin nombre)') + ' —\n' + c.research.slice(0, 900));
       if (c.notes) notes.push(tag(c, c.notes.slice(0, 400)));
       if (c.handoff_summary) handoff.push(tag(c, c.handoff_summary.slice(0, 400)));
       if (c.opportunity && oppTexts.indexOf(c.opportunity) === -1) oppTexts.push(c.opportunity.slice(0, 600));
@@ -1730,8 +1775,9 @@
         return '• ' + (c.name || '(sin nombre)') + (c.title ? ' · ' + c.title : '') + (c.company ? ' en ' + c.company : '');
       }).join('\n'),
       participants: ordered.map(function (c) {
-        return { id: c.id, name: c.name, title: c.title, company: c.company };
+        return { id: c.id, name: c.name, title: c.title, company: c.company, research_state: c.research_state, research_at: c.research_at, research: c.research };
       }),
+      research: research.length ? research.join('\n\n').slice(0, 4000) : null,
       member_ids: ordered.map(function (c) { return c.id; }),
       notes: notes.length ? notes.join('\n').slice(0, 2400) : null,
       handoff_summary: handoff.length ? handoff.join('\n').slice(0, 1600) : null,
@@ -1799,6 +1845,9 @@
       opportunity: typeof c.opportunity === 'string' ? c.opportunity : null,
       risks: Array.isArray(c.risks) ? c.risks.filter(function (x) { return typeof x === 'string'; }) : [],
       questions: Array.isArray(c.questions) ? c.questions.filter(function (x) { return typeof x === 'string'; }) : [],
+      research: typeof c.research === 'string' ? c.research : null,
+      research_state: typeof c.research_state === 'string' ? c.research_state : 'none',
+      research_at: typeof c.research_at === 'string' ? c.research_at : null,
     };
     // Reunión con una lista completa: se conserva quiénes participan.
     if (c.group && Array.isArray(c.participants)) {
@@ -1806,7 +1855,7 @@
       out.list_id = c.list_id != null ? String(c.list_id) : '';
       out.list_name = typeof c.list_name === 'string' ? c.list_name : '';
       out.participants = c.participants.filter(function (x) { return x && typeof x === 'object'; }).slice(0, COACH_GROUP_MAX).map(function (x) {
-        return { id: String(x.id || ''), name: x.name || '', title: x.title || '', company: x.company || '' };
+        return { id: String(x.id || ''), name: x.name || '', title: x.title || '', company: x.company || '', research_state: typeof x.research_state === 'string' ? x.research_state : 'none', research_at: typeof x.research_at === 'string' ? x.research_at : null };
       });
       out.member_ids = out.participants.map(function (x) { return x.id; }).filter(Boolean);
     }
