@@ -275,6 +275,12 @@ async function fetchRecallTranscript(recallBotId: string): Promise<Array<{ speak
   }
   return null;
 }
+// La investigación con IA de cada persona (context.research, 2026-11-17) es
+// preparación previa: el coach la usa, pero manda lo que el lead dice.
+const RESEARCH_CAVEAT =
+  "(Si trae «research»: es la investigación previa de cada persona; úsala para preguntar mejor y sugerir frases, " +
+  "pero es una hipótesis: si el lead dice otra cosa, manda lo que dice el lead.)";
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -876,6 +882,7 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
 
   const userPrompt = [
     "Contexto del prospecto:",
+    RESEARCH_CAVEAT,
     JSON.stringify(meeting.context ?? {}),
     "",
     "Estado anterior:",
@@ -1892,7 +1899,9 @@ async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
   ]);
   const userPrompt = [
     "Contexto del prospecto:",
-    JSON.stringify(payload?.context ?? {}).slice(0, 4_000),
+    RESEARCH_CAVEAT,
+    // 9.000: una reunión con una lista completa trae la investigación de cada persona.
+    JSON.stringify(payload?.context ?? {}).slice(0, 9_000),
     ...(learned ? [learned] : []),
     "",
     ...(position ? [position, ""] : []),
