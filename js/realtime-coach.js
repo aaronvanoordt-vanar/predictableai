@@ -507,7 +507,7 @@
       '}',
       'Español neutro. NO inventes alertas: si no hay nada accionable, "alerts": [].'
     ]).join('\n') + ((trainedPrompt && trainedPrompt.block) ? '\n' + trainedPrompt.block : '') + outputLanguageDirective();
-    const userContent = 'Contexto del prospecto (sus datos, tus notas y lo que ya se sabe de conversaciones anteriores):\n' + JSON.stringify(currentProspect || {}).slice(0, 3000) + '\n\n' +
+    const userContent = 'Contexto del prospecto (sus datos, tus notas, la oportunidad del CRM y lo que ya se sabe de conversaciones anteriores):\n' + JSON.stringify(currentProspect || {}).slice(0, 4000) + '\n\n' +
       position + '\n\n' +
       (prior ? 'Conversación anterior (ya analizada, solo contexto):\n' + prior + '\n\n' : '') +
       'Lo nuevo (analiza solo esto):\n' + fresh;

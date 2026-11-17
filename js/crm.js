@@ -1115,8 +1115,7 @@
       field('Moneda', '<select class="crm-input" name="currency">' + CURRENCIES.map(function (c) { return '<option' + (c === (o.currency || state.lastCurrency) ? ' selected' : '') + '>' + c + '</option>'; }).join('') + '</select>') +
       field('Fecha de cierre', input('close_date', o.close_date, ' type="date"')) +
       field('Responsable', input('owner_name', o.id ? o.owner_name : (o.owner_name || state.me.name), ' maxlength="120"'));
-    if (m.contact) h += '<div class="crm-field full"><span>Contacto principal</span><div class="crm-contact-chip"><b>' + esc(personName(m.contact)) + '</b> <span class="crm-muted">' + esc([m.contact.title, m.contact.company].filter(Boolean).join(' · ')) + '</span>' +
-      ' <button type="button" class="crm-link" data-act="drop-contact">Quitar</button></div></div>';
+    h += contactBoxHtml(m);
     h += '<div class="crm-lost-box full"' + (lost ? '' : ' hidden') + ' data-lost-box>' + lostFieldsHtml(o) + '</div>';
     h += field('Notas', '<textarea class="crm-input" name="notes" rows="3" maxlength="20000">' + esc(o.notes || '') + '</textarea>', true) + '</div>';
     if (o.id) {
@@ -1130,6 +1129,101 @@
     return h + modalFoot(o.id ? '<button type="button" class="btn btn-ghost btn-sm crm-danger" data-act="del-opp" data-id="' + esc(o.id) + '">Eliminar</button>' +
       (o.company_id ? '<button type="button" class="btn btn-ghost btn-sm" data-act="open-company" data-id="' + esc(o.company_id) + '">Ver cuenta</button>' : '') +
       '<button type="button" class="btn btn-ghost btn-sm" data-act="new-task" data-opp="' + esc(o.id) + '">Nueva tarea</button>' : '') + '</form>';
+  }
+
+  // Contacto principal de la oportunidad (un lead de Listas). Con el lead
+  // ligado, el AI Sales Coach recibe la etapa, el monto y las notas de la
+  // oportunidad al elegirlo para una reunión (buildCoachLeadContext).
+  // Se repinta solo esta caja (no el modal): el resto del formulario puede
+  // tener cambios sin guardar.
+  function contactBoxHtml(m) {
+    var o = m.opp || {};
+    var h = '<div class="crm-field full" data-contact-box><span>Contacto principal</span>';
+    if (m.contact) {
+      var saved = o.id ? oppById(o.id) : null;
+      var linked = !!(saved && saved.member_id && saved.member_id === m.contact.id);
+      h += '<div class="crm-contact-chip"><b class="notranslate">' + esc(personName(m.contact)) + '</b> <span class="crm-muted notranslate">' + esc([m.contact.title, m.contact.company].filter(Boolean).join(' · ')) + '</span>' +
+        ' <button type="button" class="crm-link" data-act="drop-contact">Quitar</button>' +
+        (linked ? ' <button type="button" class="crm-link crm-coach-link" data-act="coach-contact" data-id="' + esc(o.id) + '">Abrir en AI Sales Coach</button>' : '') + '</div>' +
+        '<small class="crm-muted">' + (linked ? 'El AI Sales Coach usa la etapa y las notas de esta oportunidad cuando eliges a este lead para una reunión.' :
+          'Guarda la oportunidad para que el AI Sales Coach use su etapa y sus notas en la reunión con este lead.') + '</small>';
+    } else {
+      h += '<input class="crm-input" type="search" data-contact-q autocomplete="off" maxlength="120" aria-label="Buscar un lead de tus listas" placeholder="Busca un lead de tus listas por nombre, empresa o email">' +
+        '<div class="crm-contact-results" data-contact-results></div>' +
+        '<small class="crm-muted">Con un lead ligado, el AI Sales Coach usa la etapa y las notas de esta oportunidad para guiar la reunión.</small>';
+    }
+    return h + '</div>';
+  }
+  function repaintContactBox() {
+    var box = modalRoot().querySelector('[data-contact-box]');
+    if (!box || !state.modal) return;
+    var tmp = document.createElement('div');
+    tmp.innerHTML = contactBoxHtml(state.modal);
+    box.replaceWith(tmp.firstChild);
+    var hidden = modalRoot().querySelector('[name="member_id"]');
+    if (hidden) hidden.value = (state.modal.opp && state.modal.opp.member_id) || '';
+  }
+
+  var contactTimer = null, contactSeq = 0;
+  async function searchContacts(q) {
+    var m = state.modal;
+    if (!m || m.type !== 'opp' || m.contact) return;
+    var term = String(q || '').replace(/[,()%*\\"]/g, ' ').replace(/\s+/g, ' ').trim();
+    var coId = m.opp && m.opp.company_id;
+    var seq = ++contactSeq;
+    var paint = function (html) { var box = modalRoot().querySelector('[data-contact-results]'); if (box && seq === contactSeq) box.innerHTML = html; };
+    if (term.length < 2 && !coId) { paint(''); return; }
+    var query = sb().from('prospect_list_members').select('id, name, first_name, last_name, title, email, company, contact_status')
+      .order('created_at', { ascending: false }).limit(24);
+    if (term.length >= 2) {
+      var like = '"%' + term + '%"';
+      query = query.or(['name', 'first_name', 'last_name', 'company', 'email'].map(function (c) { return c + '.ilike.' + like; }).join(','));
+    } else query = query.eq('company_id', coId);
+    var r = await query;
+    if (seq !== contactSeq || state.modal !== m) return;
+    if (r.error) { paint('<p class="crm-muted">No se pudieron buscar tus leads: ' + esc(errMsg(r.error)) + '</p>'); return; }
+    // El mismo lead puede estar en varias listas: una fila por persona.
+    var seen = {}, rows = [];
+    (r.data || []).forEach(function (x) {
+      var k = String(x.email || (personName(x) + '|' + (x.company || ''))).toLowerCase();
+      if (seen[k] || rows.length >= 8) return;
+      seen[k] = 1; rows.push(x);
+    });
+    m.contactResults = rows;
+    if (!rows.length) { paint('<p class="crm-muted">' + (term.length >= 2 ? 'Ningún lead de tus listas coincide. Guárdalo primero en una lista desde Buscar.' : 'Esta cuenta todavía no tiene leads en tus listas. Escribe para buscar en todas.') + '</p>'); return; }
+    paint(rows.map(function (x) {
+      return '<button type="button" class="crm-contact-opt" data-act="pick-contact" data-id="' + esc(x.id) + '"><b class="notranslate">' + esc(personName(x) || x.email || 'Sin nombre') + '</b>' +
+        '<span class="crm-muted notranslate">' + esc([x.title, x.company, x.email].filter(Boolean).join(' · ')) + '</span></button>';
+    }).join(''));
+  }
+  function pickContact(id) {
+    var m = state.modal;
+    if (!m || m.type !== 'opp') return;
+    var row = (m.contactResults || []).find(function (x) { return x.id === id; });
+    if (!row) return;
+    m.contact = row; m.opp.member_id = row.id; m.contactResults = null;
+    repaintContactBox();
+    // Sin cuenta escrita, se propone la empresa del lead (se puede cambiar).
+    var co = modalRoot().querySelector('[name="company_name"]');
+    if (co && !co.value.trim() && row.company) co.value = row.company;
+  }
+
+  /** Deja el lead de la oportunidad elegido en el AI Sales Coach, con las notas de ESTA oportunidad. */
+  async function openInCoach(oppId) {
+    var o = oppById(oppId);
+    var pd = global.prospectingData;
+    if (!o || !o.member_id) return;
+    if (!pd || !pd.buildCoachLeadContext) { toast('El AI Sales Coach no cargó. Recarga la página e intenta de nuevo.', 'error'); return; }
+    var r = await sb().from('prospect_list_members').select('*').eq('id', o.member_id).maybeSingle();
+    if (r.error || !r.data) { toast('Ese contacto ya no está en tus listas.', 'error'); return; }
+    var ctx = pd.buildCoachLeadContext(r.data, Object.assign({}, o, { stage: stageById(o.stage_id) }));
+    try { if (pd.saveCoachContext) await pd.saveCoachContext(r.data.id, ctx); } catch (e) { console.warn('[crm] contexto del coach:', e && e.message); }
+    global.predictable = global.predictable || {};
+    global.predictable.currentProspect = ctx;
+    state.modal = null; render();
+    var item = document.querySelector('.nav-item[data-page="ventas-coach"]');
+    if (item && typeof global.nav === 'function') global.nav(item, 'ventas-coach');
+    toast('Lead listo en el AI Sales Coach, con las notas de esta oportunidad.', 'success');
   }
 
   function lostFieldsHtml(o) {
@@ -1285,8 +1379,10 @@
       case 'open-opp': openOpp(id); break;
       case 'del-opp': deleteRow('crm_opportunities', id, 'esta oportunidad'); break;
       case 'drop-contact':
-        if (state.modal) { state.modal.contact = null; state.modal.opp.member_id = null; var hidden = modalRoot().querySelector('[name="member_id"]'); if (hidden) hidden.value = ''; var chip = a.closest('.crm-field'); if (chip) chip.remove(); }
+        if (state.modal) { state.modal.contact = null; state.modal.opp.member_id = null; state.modal.contactResults = null; repaintContactBox(); }
         break;
+      case 'pick-contact': pickContact(id); break;
+      case 'coach-contact': openInCoach(id); break;
       case 'new-company': state.modal = { type: 'company', company: {} }; render(); break;
       case 'edit-company': state.modal = { type: 'company', company: Object.assign({}, companyById(id) || (state.detail && state.detail.company) || {}) }; render(); break;
       case 'del-company': deleteRow('crm_companies', id, 'esta cuenta (sus contactos siguen en tus listas)'); break;
@@ -1353,6 +1449,11 @@
   var searchTimer = null;
   function onInput(e) {
     var t = e.target;
+    if (t.matches('[data-contact-q]')) {
+      clearTimeout(contactTimer);
+      contactTimer = setTimeout(function () { searchContacts(t.value); }, 220);
+      return;
+    }
     var f = t.getAttribute('data-field');
     if (f !== 'q' && f !== 'accQ') return;
     state[f] = t.value;
@@ -1363,6 +1464,12 @@
       var again = shell().querySelector('[data-field="' + f + '"]');
       if (again) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (err) { /* nada */ } }
     }, 160);
+  }
+
+  // Al enfocar el buscador vacío se ofrecen los leads de la cuenta de la oportunidad.
+  function onFocusIn(e) {
+    var t = e.target;
+    if (t && t.matches && t.matches('[data-contact-q]') && !t.value.trim()) searchContacts('');
   }
 
   function onSubmit(e) {
@@ -1430,6 +1537,7 @@
     el.addEventListener('click', onClick);
     el.addEventListener('change', onChange);
     el.addEventListener('input', onInput);
+    el.addEventListener('focusin', onFocusIn);
     el.addEventListener('submit', onSubmit);
     el.addEventListener('dragstart', onDragStart);
     el.addEventListener('dragover', onDragOver);
@@ -1564,6 +1672,13 @@
       '.crm-form{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}',
       '.crm-field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink-3);min-width:0}',
       '.crm-field.full,.crm-lost-box.full{grid-column:1/-1}',
+      '.crm-contact-results{display:flex;flex-direction:column;gap:4px}',
+      '.crm-contact-results:empty{display:none}',
+      '.crm-contact-results p{margin:2px 0;font-size:12.5px}',
+      '.crm-contact-opt{display:flex;flex-direction:column;gap:1px;text-align:left;font:inherit;font-size:13px;color:var(--ink);padding:7px 10px;border:1px solid var(--hair);border-radius:var(--r-sm);background:var(--surface2);cursor:pointer}',
+      '.crm-contact-opt:hover,.crm-contact-opt:focus-visible{border-color:var(--accent)}',
+      '.crm-contact-opt span{font-size:12px}',
+      '.crm-coach-link{color:var(--accent);margin-left:8px}',
       '.crm-contact-chip{font-size:13px;color:var(--ink);padding:8px 10px;border-radius:var(--r-sm);background:var(--surface2)}',
       '.crm-lost-box{border:1px solid var(--red);background:var(--red-soft);border-radius:var(--r-md);padding:10px 12px}',
       '.crm-lost-note{font-size:12px;color:var(--ink-2);margin:0 0 8px}',

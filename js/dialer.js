@@ -492,8 +492,10 @@
         var remote = st.call.getRemoteStream && st.call.getRemoteStream();
         var local = st.call.getLocalStream && st.call.getLocalStream();
         if (!remote) throw new Error('sin audio remoto');
-        var ctx = (global.prospectingData && global.prospectingData.buildCoachLeadContext)
-          ? global.prospectingData.buildCoachLeadContext(st.lead)
+        var pdx = global.prospectingData;
+        var leadOpps = (pdx && pdx.fetchLeadOpportunities) ? await pdx.fetchLeadOpportunities([st.lead.id]) : {};
+        var ctx = (pdx && pdx.buildCoachLeadContext)
+          ? pdx.buildCoachLeadContext(st.lead, leadOpps[st.lead.id])
           : { id: String(st.lead.id), name: leadName(st.lead), title: st.lead.title || '', company: st.lead.company || '' };
         ctx.channel = 'phone';
         var meetingId = await global.realtimeCoach.start(ctx, {
