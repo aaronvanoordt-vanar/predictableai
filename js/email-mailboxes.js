@@ -117,6 +117,11 @@
 
   function act(action, payload) { return H.edgeFetch(FN, { action: action, payload: payload || {} }); }
 
+  // Guardián de envíos (js/warmup.js): al conectar un buzón aparece su plan de calentamiento.
+  function guardNotice() {
+    if (global.warmup && global.warmup.onChannelConnected) global.warmup.onChannelConnected('email');
+  }
+
   // ── Conexión ─────────────────────────────────────────────────────────────
   function installListener(onDone) {
     if (listenerInstalled) return;
@@ -126,7 +131,7 @@
       var d = ev.data || {};
       if (d.type !== 'predictable:channel-connected' || d.provider !== 'mailbox') return;
       clearInterval(popupTimer);
-      load(true).then(function () { H.toast('Buzón conectado.', 'success'); if (onDone) onDone(); });
+      load(true).then(function () { H.toast('Buzón conectado.', 'success'); guardNotice(); if (onDone) onDone(); });
     });
   }
 
@@ -190,7 +195,7 @@
           restore();
           H.toast('Buzón conectado: ' + ((r && r.mailbox && r.mailbox.email) || email.value) + '.', 'success');
           m.close();
-          return load(true).then(function () { if (onDone) onDone(); });
+          return load(true).then(function () { guardNotice(); if (onDone) onDone(); });
         }, function (e) { restore(); m.setBusy(false); throw e; });
       } },
     ]);

@@ -103,6 +103,7 @@ import * as waReach from "../_shared/wa-reachability.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as unipile from "../_shared/unipile.ts";
 import * as liLimits from "../_shared/linkedin-limits.ts";
+import * as channelGuard from "../_shared/channel-guard.ts";
 import * as flowLib from "../_shared/campaign-flow.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 import * as gmail from "../_shared/gmail.ts";
@@ -1321,15 +1322,30 @@ async function preflight(ctx: Ctx, en: Json, campaign: Json, step: StepLike): Pr
   // Control) y desde la cuenta propia lo aplica el paso nativo por CUENTA
   // (_shared/linkedin-limits.ts). daily_caps.linkedin se ignora siempre.
   let cap = ch === "linkedin" ? 0 : Number(caps[ch] ?? 0);
+  let guardReason = "";
   // El tope del canal de WhatsApp (config.daily_cap, desde la tarjeta del canal)
   // manda sobre el de la campaña: el conteo ya junta todas las campañas.
   if (ch === "whatsapp") {
     const wa = await whatsappAccount(ctx, en.user_id);
     const chanCap = wa?.config?.daily_cap;
     if (chanCap !== undefined && chanCap !== null && Number.isFinite(Number(chanCap))) cap = Number(chanCap);
+    // Guardián de envíos (_shared/channel-guard.ts): un número recién
+    // conectado sube su volumen de a poco (20 el primer día, +30 % por día
+    // hasta el 80 % de su nivel de Meta) y con la calidad en amarillo va a la
+    // mitad. Si ese tope es el más bajo, manda y el motivo lo dice.
+    const g = wa ? channelGuard.whatsappGuardCap(wa, ctx.now) : null;
+    if (g && (cap <= 0 || g.cap < cap)) { cap = g.cap; guardReason = g.reason; }
   }
   if (cap > 0) {
     const used = await sentLast24h(ctx, en.user_id, ch);
+    if (used >= cap && guardReason) {
+      await finish(ctx, en, {
+        status: "active",
+        next_run_at: new Date(ctx.now.getTime() + 60 * 60 * 1000).toISOString(),
+        error_detail: `${guardReason} Mira el avance en Warm Up.`,
+      });
+      return null;
+    }
     if (used >= cap) {
       // El motivo queda a la vista: antes el lead decía "se envía en 1 hora"
       // sin explicar que el tope diario de la campaña lo estaba reteniendo.

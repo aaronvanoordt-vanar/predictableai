@@ -6,12 +6,23 @@ const now = new Date("2026-10-17T15:00:00Z");
 const old = "2026-01-01T00:00:00Z";
 const zero = { invitesDay: 0, invitesWeek: 0, messagesDay: 0, lastSendAt: null };
 
-Deno.test("effectiveLimits: 20/100/50 por defecto; el usuario baja o sube hasta el techo", () => {
-  assertEquals(effectiveLimits({}, old, now), { invitesPerDay: 20, invitesPerWeek: 100, messagesPerDay: 50, reduced: false });
+const between = (n: number, lo: number, hi: number) => n >= lo && n <= hi;
+
+Deno.test("effectiveLimits: 20/100/50 por defecto con azar diario (80–100 %); el usuario baja o sube hasta el techo", () => {
+  const d = effectiveLimits({}, old, now);
+  assert(between(d.invitesPerDay, 16, 20) && between(d.messagesPerDay, 40, 50));
+  assertEquals([d.invitesPerWeek, d.reduced, d.warming], [100, false, false]);
+  // Estable el mismo día; cambia entre días (nunca el mismo número siempre).
+  assertEquals(effectiveLimits({}, old, new Date("2026-10-17T22:00:00Z")).invitesPerDay, d.invitesPerDay);
+  const seen = new Set<number>();
+  for (let i = 0; i < 30; i++) seen.add(effectiveLimits({}, old, new Date(now.getTime() + i * 86400000)).invitesPerDay);
+  assert(seen.size >= 3);
   const l = effectiveLimits({ limits: { invites_per_day: 10, invites_per_week: 500, messages_per_day: "x" } }, old, now);
-  assertEquals([l.invitesPerDay, l.invitesPerWeek, l.messagesPerDay], [10, 500, 50]);
+  assert(between(l.invitesPerDay, 8, 10) && between(l.messagesPerDay, 40, 50));
+  assertEquals(l.invitesPerWeek, 500);
   const up = effectiveLimits({ limits: { invites_per_day: 25, invites_per_week: 9999, messages_per_day: 0 } }, old, now);
-  assertEquals([up.invitesPerDay, up.invitesPerWeek, up.messagesPerDay], [25, LINKEDIN_LIMIT_CEILINGS.invites_per_week, 0]);
+  assert(between(up.invitesPerDay, 20, 25));
+  assertEquals([up.invitesPerWeek, up.messagesPerDay], [LINKEDIN_LIMIT_CEILINGS.invites_per_week, 0]);
 });
 
 Deno.test("normalizeUserLimits: subir exige riesgo; el techo recorta", () => {
@@ -26,10 +37,28 @@ Deno.test("normalizeUserLimits: subir exige riesgo; el techo recorta", () => {
   assertEquals(normalizeUserLimits({}).limits, { invites_per_day: 20, invites_per_week: 100, messages_per_day: 50 });
 });
 
-Deno.test("effectiveLimits: a la mitad recién conectada o limitada hace poco", () => {
-  const fresh = effectiveLimits({}, "2026-10-10T00:00:00Z", now);
-  assertEquals([fresh.invitesPerDay, fresh.invitesPerWeek, fresh.messagesPerDay, fresh.reduced], [10, 50, 25, true]);
-  assert(effectiveLimits({ last_limited_at: "2026-10-01T00:00:00Z" }, old, now).reduced);
+Deno.test("effectiveLimits: recién conectada sube gradual; limitada hace poco va a la mitad", () => {
+  const conn = "2026-10-10T00:00:00Z";
+  const caps: number[] = [];
+  for (let day = 0; day < 14; day++) {
+    const l = effectiveLimits({}, conn, new Date(Date.parse(conn) + day * 86400000 + 3600000));
+    assert(l.warming && l.reduced);
+    assertEquals(l.invitesPerWeek, 50);
+    caps.push(l.invitesPerDay);
+  }
+  assert(between(caps[0], 4, 5), "día 1: ~5 invitaciones");
+  assert(caps[13] > caps[0] && caps[13] <= 20);
+  const fresh = effectiveLimits({}, conn, now); // día 7
+  assert(between(fresh.invitesPerDay, 10, 13) && between(fresh.messagesPerDay, 24, 30));
+  // Día 14 en adelante: tope completo (con azar), ya sin calentamiento.
+  const after = effectiveLimits({}, conn, new Date("2026-10-25T00:00:00Z"));
+  assert(!after.warming && between(after.invitesPerDay, 16, 20));
+  // Omitir el calentamiento bajo riesgo quita la rampa, no el azar.
+  const over = effectiveLimits({ guard: { override_at: "2026-10-11T00:00:00Z" } }, conn, now);
+  assert(!over.warming && between(over.invitesPerDay, 16, 20));
+  const cooled = effectiveLimits({ last_limited_at: "2026-10-01T00:00:00Z" }, old, now);
+  assert(cooled.reduced && !cooled.warming && between(cooled.invitesPerDay, 8, 10));
+  assertEquals(cooled.invitesPerWeek, 50);
   assert(!effectiveLimits({ last_limited_at: "2026-08-01T00:00:00Z" }, old, now).reduced);
 });
 
@@ -38,6 +67,9 @@ Deno.test("pace: topes diario y semanal de invitaciones, diario de mensajes", ()
   assert(pace("invite", zero, lim, now, 0.5).ok);
   const d = pace("invite", { ...zero, invitesDay: 20 }, lim, now, 0.5);
   assert(!d.ok && /diario de invitaciones/.test(d.reason));
+  const warm = effectiveLimits({}, "2026-10-16T00:00:00Z", now);
+  const dw = pace("invite", { ...zero, invitesDay: warm.invitesPerDay }, warm, now, 0.5);
+  assert(!dw.ok && /calentamiento/.test(dw.reason));
   const w = pace("invite", { ...zero, invitesWeek: 100 }, lim, now, 0.5);
   assert(!w.ok && /semanal/.test(w.reason));
   // El tope de invitaciones no frena los mensajes.

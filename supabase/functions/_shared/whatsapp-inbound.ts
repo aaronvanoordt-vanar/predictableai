@@ -35,6 +35,7 @@ import { findMemberByPhone } from "./wati-history.ts";
 import { markReach } from "./wa-reachability.ts";
 import * as suppression from "./suppression.ts";
 import { handleBookingReply } from "./booking-inbound.ts";
+import { interceptWhatsAppInbound } from "./warmup-network.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -143,6 +144,10 @@ export function enrollmentPatch(en: Json, at: string, optOut: boolean): { patch:
 export async function recordInbound(db: SupabaseClient, acc: Json, m: InboundMessage, hooks: InboundHooks = {}): Promise<InboundResult> {
   const none: InboundResult = { stored: false, duplicate: false, memberId: null, optOut: false, stopped: 0 };
   if (!m.from) return none;
+  // Red de calentamiento (_shared/warmup-network.ts): la plantilla que llega a
+  // un número semilla y la respuesta de la semilla no son de un lead: no
+  // entran a la Bandeja ni detienen cadencias.
+  if (await interceptWhatsAppInbound(db, acc, m.from)) return none;
   const member = await findMemberByPhone(db, acc.user_id, m.from);
   if (!member && hooks.ownedElsewhere && await hooks.ownedElsewhere()) return none;
 
