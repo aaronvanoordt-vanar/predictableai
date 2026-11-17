@@ -7632,4 +7632,10 @@ window.I18N_DICTS['pt-BR'] = {
   "(Claude, recomendado)": "(Claude, recomendado)",
   "No pudimos leer texto en este PDF (¿es escaneado o solo imágenes?). Prueba con «Pegar texto» o con un PDF exportado desde el documento original.": "Não conseguimos ler texto neste PDF (está digitalizado ou só tem imagens?). Tente «Colar texto» ou um PDF exportado do documento original.",
   "No pudimos leer texto en este documento. Revisa que el texto pegado no esté vacío.": "Não conseguimos ler texto neste documento. Verifique se o texto colado não está vazio.",
+  "Lead o lista de esta reunión": "Lead ou lista desta reunião",
+  "Selecciona el lead o la lista de esta reunión…": "Selecione o lead ou a lista desta reunião…",
+  "Selecciona el lead o la lista de esta reunión antes de iniciar el coach.": "Selecione o lead ou a lista desta reunião antes de iniciar o coach.",
+  "Toda la lista «{0}» — {1} personas": "A lista inteira «{0}» — {1} pessoas",
+  "Toda la lista «{0}» — 1 persona": "A lista inteira «{0}» — 1 pessoa",
+  "Lista «{0}»": "Lista «{0}»",
 };
