@@ -2114,11 +2114,6 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 12l4-4 3 3 5-6"/></svg>
       Intelligence Hub
     </div>
-    <div class="nav-item" data-page="radar" onclick="nav(this,'radar');if(window.radarLive)window.radarLive.show();else if(window.radar)window.radar.show()">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="3.5" opacity=".5"/><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/><path d="M8 8l4.2-4.2"/></svg>
-      Radar
-      <span id="nav-radar-badge" class="nav-badge accent" style="display:none">0</span>
-    </div>
 
     <!-- EJECUTAR -->
     <div class="sidebar-section">
@@ -2146,6 +2141,11 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="nav-item" data-page="pro-main" data-pros-tab="busqueda" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('busqueda')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5L10.3 10.3"/></svg>
       Buscar
+    </div>
+    <div class="nav-item" data-page="radar" onclick="nav(this,'radar');if(window.radarLive)window.radarLive.show();else if(window.radar)window.radar.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="3.5" opacity=".5"/><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/><path d="M8 8l4.2-4.2"/></svg>
+      Radar
+      <span id="nav-radar-badge" class="nav-badge accent" style="display:none">0</span>
     </div>
     <div class="nav-item" data-page="pro-main" data-pros-tab="listas" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('listas')">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 6h6M5 9h4"/></svg>
