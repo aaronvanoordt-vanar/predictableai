@@ -2114,33 +2114,10 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 12l4-4 3 3 5-6"/></svg>
       Intelligence Hub
     </div>
-    <div class="nav-item" data-page="radar" onclick="nav(this,'radar');if(window.radarLive)window.radarLive.show();else if(window.radar)window.radar.show()">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="3.5" opacity=".5"/><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/><path d="M8 8l4.2-4.2"/></svg>
-      Radar
-      <span id="nav-radar-badge" class="nav-badge accent" style="display:none">0</span>
-    </div>
 
     <!-- EJECUTAR -->
     <div class="sidebar-section">
       <div class="lbl">Prospección</div>
-    </div>
-    <!-- Journey lineal: Buscar → Listas (contactos + CRM) → Campañas (canales + respuestas).
-         Estas son las únicas pestañas de js/prospecting.js (no hay un padre "Prospección":
-         llevaba al mismo lugar que Buscar). Los ids viejos (resumen/contactos/outreach/
-         secuencias/bandeja) siguen resolviendo vía PRO_HASH_ALIASES y prospecting.show(). -->
-    <div class="nav-item" data-page="pro-main" data-pros-tab="busqueda" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('busqueda')">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5L10.3 10.3"/></svg>
-      Buscar
-    </div>
-    <div class="nav-item" data-page="pro-main" data-pros-tab="listas" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('listas')">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 6h6M5 9h4"/></svg>
-      Listas
-      <span id="nav-listas-badge" class="nav-badge teal" style="display:none">0</span>
-    </div>
-    <div class="nav-item" data-page="pro-main" data-pros-tab="campanas" onclick="nav(this,'pro-main');if(window.campaigns)window.campaigns.setView('campaigns');if(window.prospecting)window.prospecting.show('campanas')">
-      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>
-      Campañas
-      <span id="nav-campanas-badge" class="nav-badge teal" style="display:none">0</span>
     </div>
     <!-- Canales (2026-10-19): Email, WhatsApp, LinkedIn y Llamadas se conectan y
          configuran aquí (js/campaigns.js, vista 'channels'); antes eran la
@@ -2156,6 +2133,29 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     <div class="nav-item" data-page="warmup" style="display:none" onclick="nav(this,'warmup');if(window.warmup)window.warmup.show()">
       <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M8 1.8c.4 2.4 3.7 3.8 3.7 7.3A3.7 3.7 0 014.3 9.1c0-1.6.8-2.6 1.6-3.4.2 1.3.9 2 1.6 2.3C7.1 6 7.2 3.8 8 1.8z"/></svg>
       Warm Up
+    </div>
+    <!-- Journey lineal: Buscar → Listas (contactos + CRM) → Campañas (canales + respuestas).
+         Estas son las únicas pestañas de js/prospecting.js (no hay un padre "Prospección":
+         llevaba al mismo lugar que Buscar). Los ids viejos (resumen/contactos/outreach/
+         secuencias/bandeja) siguen resolviendo vía PRO_HASH_ALIASES y prospecting.show(). -->
+    <div class="nav-item" data-page="pro-main" data-pros-tab="busqueda" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('busqueda')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5L10.3 10.3"/></svg>
+      Buscar
+    </div>
+    <div class="nav-item" data-page="radar" onclick="nav(this,'radar');if(window.radarLive)window.radarLive.show();else if(window.radar)window.radar.show()">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="3.5" opacity=".5"/><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/><path d="M8 8l4.2-4.2"/></svg>
+      Radar
+      <span id="nav-radar-badge" class="nav-badge accent" style="display:none">0</span>
+    </div>
+    <div class="nav-item" data-page="pro-main" data-pros-tab="listas" onclick="nav(this,'pro-main');if(window.prospecting)window.prospecting.show('listas')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 6h6M5 9h4"/></svg>
+      Listas
+      <span id="nav-listas-badge" class="nav-badge teal" style="display:none">0</span>
+    </div>
+    <div class="nav-item" data-page="pro-main" data-pros-tab="campanas" onclick="nav(this,'pro-main');if(window.campaigns)window.campaigns.setView('campaigns');if(window.prospecting)window.prospecting.show('campanas')">
+      <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 16 16" stroke-width="1.5"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>
+      Campañas
+      <span id="nav-campanas-badge" class="nav-badge teal" style="display:none">0</span>
     </div>
     <!-- Bandeja omnicanal: la pinta js/campaigns.js (vista 'inbox') dentro del
          shell de Prospección, pero esta es su ÚNICA entrada. La pestaña
