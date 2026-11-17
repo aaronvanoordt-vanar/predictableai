@@ -2678,7 +2678,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 
       <!-- Selector de lead (obligatorio): se llena desde las Listas guardadas de Prospección -->
       <div id="mc-lead-block" style="max-width:440px;margin-bottom:24px">
-        <label for="mc-lead-select" style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Lead de esta reunión</label>
+        <label for="mc-lead-select" style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Lead o lista de esta reunión</label>
         <select id="mc-lead-select" style="width:100%">
           <option value="">Cargando tus leads…</option>
         </select>
@@ -2752,22 +2752,27 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       </div>
     </div>
 
-    <!-- Lo que sabes del lead: SOLO datos del lead (quién, tus notas, el
-         traspaso BANT de la agenda, el estado del puesto). Desde el 2026-11-16
-         el coach ya no entra con la investigación de mercado ni con «Preparar
-         con IA» (ángulo, gancho, cómo abrir): eran hipótesis viejas que lo
-         desviaban. El Intelligence Hub mantiene a la IA al día fuera de la llamada. -->
+    <!-- Lo que sabes del lead: datos del lead (quién, tus notas, el traspaso
+         BANT de la agenda, la oportunidad del CRM, el estado del puesto) y,
+         desde el 2026-11-17, la investigación con IA de cada persona
+         (lead-research, la misma de Listas). Sigue fuera el análisis de
+         mercado del Hub y «Preparar con IA». -->
     <div id="mc-brief-panel" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden">
       <div style="padding:16px 18px;border-bottom:1px solid var(--border)">
         <div style="font-size:13px;font-weight:700">Lo que sabes del lead</div>
       </div>
       <div id="mc-brief-placeholder" style="padding:26px 18px;color:var(--ink-3);font-size:12.5px;line-height:1.65">
-        Elige el lead de la reunión: aquí verás quién es, tus notas y lo que ya se sabe de conversaciones anteriores. Durante la llamada el coach se guía por lo que dice el lead, no por investigaciones previas.
+        Elige el lead o la lista de la reunión: aquí verás quién es cada persona, tus notas, lo que ya se sabe de conversaciones anteriores y su investigación con IA.
       </div>
       <div id="mc-brief-content" style="display:none;padding:0 18px 18px">
         <div style="padding:14px 0">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">QUIÉN</div>
-          <div id="mc-brief-who" class="notranslate" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
+          <div id="mc-brief-who" class="notranslate" style="font-size:13px;color:var(--text2);line-height:1.6;white-space:pre-line"></div>
+        </div>
+        <!-- Investigación con IA por persona (js/coach-research.js): misma que Listas → Investigación. -->
+        <div id="mc-brief-research-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:4px">INVESTIGACIÓN CON IA</div>
+          <div id="mc-brief-research"></div>
         </div>
         <div id="mc-brief-known-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">LO QUE YA SABES</div>
@@ -3093,7 +3098,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         </div>
         <div class="settings-card-title">Motores de IA</div>
       </div>
-      <div class="settings-card-sub">Elige qué motor genera cada cosa. Marcamos el recomendado para cada función: Perplexity donde manda la investigación con fuentes, Claude donde manda la redacción, OpenAI para el coach. Puedes cambiarlo aquí o desde cada sección — es la misma preferencia.</div>
+      <div class="settings-card-sub">Elige qué motor genera cada cosa. Marcamos el recomendado para cada función: Claude para la investigación y la redacción, OpenAI para el coach en vivo. Puedes cambiarlo aquí o desde cada sección — es la misma preferencia.</div>
 
       <div class="settings-row">
         <div class="settings-row-label">Intelligence Hub</div>
@@ -3140,6 +3145,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         <div class="settings-row-value">
           <div data-ai-engine="ai_columns" data-ai-engine-compact data-ai-engine-nolabel></div>
           <div class="settings-row-hint">Responde fila por fila las preguntas que agregas como columna en una lista. Cada columna puede usar otro motor.</div>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-label">Entrenamiento IA</div>
+        <div class="settings-row-value">
+          <div data-ai-engine="ai_training" data-ai-engine-compact data-ai-engine-nolabel></div>
+          <div class="settings-row-hint">Lee los documentos y PDFs que subes en Entrenamiento IA y los convierte en principios.</div>
         </div>
       </div>
     </div>
@@ -3321,7 +3334,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/branding.js?v=20261023"></script>
 <!-- ═════ Predictable JS modules ═════ -->
 <script src="js/ui-helpers.js"></script>
-<script src="js/ai-engine.js?v=20261017"></script>
+<script src="js/ai-engine.js?v=20261117"></script>
 <script src="js/credit-costs.js?v=20261018n"></script>
 <script src="js/credits.js"></script>
 <script src="js/billing-cfdi.js"></script>
@@ -3330,10 +3343,10 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/api.js?v=20261116"></script>
 <script src="js/apollo-enums.js"></script>
 <script src="js/company-context.js?v=20260823"></script>
-<script src="js/prospecting-data.js?v=20261019co"></script>
+<script src="js/prospecting-data.js?v=20261117"></script>
 <script src="js/phone-latam.js?v=20261018"></script>
 <script src="js/phone-lines.js?v=20261018"></script>
-<script src="js/ai-columns.js?v=20261017"></script>
+<script src="js/ai-columns.js?v=20261117"></script>
 <script src="js/prospecting.js?v=20261020ax"></script>
 <script src="js/voice-agent.js?v=20261018"></script>
 <script src="js/registry-search.js?v=20261017"></script>
@@ -3361,13 +3374,13 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/coach-playbook.js?v=20261116"></script>
 <script src="js/coach-live.js?v=20261116f"></script>
 <script src="js/meeting-coach.js?v=20261116"></script>
-<script src="js/realtime-coach.js?v=20261116"></script>
+<script src="js/realtime-coach.js?v=20261117"></script>
 <script src="js/coach-calendar.js?v=20261116f"></script>
 <script src="js/dialer.js?v=20261018"></script>
 <script src="js/calls.js?v=20261018b"></script>
 <script src="js/meeting-report.js?v=20261116"></script>
 <script src="js/learning.js?v=20261017"></script>
-<script src="js/ai-training.js?v=20260923"></script>
+<script src="js/ai-training.js?v=20261117"></script>
 <script src="js/linkedin-content.js?v=20261017"></script>
 <script src="js/integrations.js?v=20261018"></script>
 <script src="js/scheduling.js?v=20261018"></script>
@@ -3376,7 +3389,8 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/team-metrics.js?v=20261017"></script>
 <script src="js/team.js?v=20261018b"></script>
 <script src="js/crm.js?v=20261019"></script>
-<script src="js/coach-lead-picker.js?v=20260915"></script>
+<script src="js/coach-lead-picker.js?v=20261117"></script>
+<script src="js/coach-research.js?v=20261117"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js?v=20261023"></script>
 <script src="js/context-gate.js?v=20261018c"></script>
@@ -3519,7 +3533,9 @@ function loadCoachBrief(ctx) {
   const metaEl = document.getElementById('mc-prospect-meta');
   if (nameEl && ctx && ctx.name) nameEl.textContent = ctx.name;
   if (metaEl && ctx) {
-    const parts = [ctx.title, ctx.company].filter(Boolean);
+    const parts = ctx.group
+      ? ['Lista «' + (ctx.list_name || '') + '»', ctx.company].filter(Boolean)
+      : [ctx.title, ctx.company].filter(Boolean);
     metaEl.textContent = parts.length ? parts.join(' · ') : 'Lead seleccionado para esta reunión';
   }
   const ph = document.getElementById('mc-brief-placeholder');
@@ -3534,7 +3550,7 @@ function loadCoachBrief(ctx) {
 
   const knownSec = document.getElementById('mc-brief-known-sec');
   const knownEl = document.getElementById('mc-brief-known');
-  const known = [ctx.notes, ctx.handoff_summary].filter(Boolean).join('\n\n');
+  const known = [ctx.notes, ctx.opportunity, ctx.handoff_summary].filter(Boolean).join('\n\n');
   if (knownSec) knownSec.style.display = known ? 'block' : 'none';
   if (knownEl) knownEl.textContent = known;
 
@@ -3547,6 +3563,7 @@ function loadCoachBrief(ctx) {
   };
   list('mc-brief-risks-sec', 'mc-brief-risks', ctx.risks);
   list('mc-brief-ask-sec', 'mc-brief-ask', ctx.questions);
+  if (window.CoachResearch) window.CoachResearch.render(ctx);
 }
 
 
@@ -3561,8 +3578,20 @@ function coachProspectPayload(ctx) {
     title: ctx.title,
     notes: ctx.notes || null,
     handoff_summary: ctx.handoff_summary || null,
+    // La oportunidad del CRM ligada a este lead (etapa, monto y notas del vendedor).
+    opportunity: ctx.opportunity || null,
+    // Investigación con IA de cada persona (lead-research, 2026-11-17).
+    research: ctx.research || null,
     risks: Array.isArray(ctx.risks) ? ctx.risks : [],
-    questions: Array.isArray(ctx.questions) ? ctx.questions : []
+    questions: Array.isArray(ctx.questions) ? ctx.questions : [],
+    // Reunión con una lista completa: quiénes participan (sales-coach pasa a
+    // todos a «Reunión tomada» al cerrar y el reporte los nombra).
+    ...(ctx.group && Array.isArray(ctx.participants) ? {
+      group: true,
+      list_name: ctx.list_name || '',
+      participants: ctx.participants.map(p => ({ id: p.id, name: p.name, title: p.title, company: p.company })),
+      member_ids: Array.isArray(ctx.member_ids) ? ctx.member_ids : ctx.participants.map(p => p.id)
+    } : {})
   };
 }
 
@@ -3573,7 +3602,7 @@ function iniciarCoachLive(prospectCtx) {
   // Sin lead no hay sesión: el reporte y el brief dependen del contacto elegido.
   if (!ctx || !(ctx.id || ctx.name)) {
     if (window.uiHelpers && window.uiHelpers.toast) {
-      window.uiHelpers.toast('Selecciona el lead de esta reunión antes de iniciar el coach.', 'warn');
+      window.uiHelpers.toast('Selecciona el lead o la lista de esta reunión antes de iniciar el coach.', 'warn');
     }
     setTimeout(function () {
       const sel = document.getElementById('mc-lead-select');

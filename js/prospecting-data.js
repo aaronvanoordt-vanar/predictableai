@@ -1549,10 +1549,13 @@
   // «Investigar con IA» de Listas: verifica el puesto (Apollo + web),
   // investiga la empresa y propone el ángulo. La edge function guarda el
   // resultado en la fila (research / research_status) aunque se cierre la pestaña.
-  async function researchLead(memberId) {
+  // opts.purpose = 'meeting' (desde el AI Sales Coach): el ángulo y las
+  // preguntas se orientan a la reunión con el entrenamiento del coach.
+  async function researchLead(memberId, opts) {
     if (!memberId) throw new Error('Falta el contacto.');
     return edgeFetch('lead-research', {
       member_id: memberId,
+      purpose: opts && opts.purpose === 'meeting' ? 'meeting' : undefined,
       engine: global.AIEngine && global.AIEngine.get('outreach'),
     });
   }
@@ -1646,11 +1649,18 @@
   // prospect_list_member. SOLO datos del lead (2026-11-16, pedido del dueño):
   // quién es, las notas del vendedor, el traspaso BANT de la agenda (sale de
   // la conversación real) y si el puesto sigue vigente. Ya NO entran el
-  // ángulo de «Preparar con IA» (prospect_list_members.outreach), su
-  // coach_prep ni el ángulo de lead-research: eran hipótesis armadas con el
-  // Intelligence Hub, a menudo viejas, y desviaban al coach en la llamada.
+  // ángulo de «Preparar con IA» (prospect_list_members.outreach) ni su
+  // coach_prep. La investigación con IA del lead (lead-research, la misma de
+  // Listas → Investigación) SÍ entra desde el 2026-11-17 (decisión del dueño,
+  // revierte la del 2026-11-16): se lanza desde el panel del coach o desde
+  // Listas, se guarda en la fila y viaja como `research` con su fecha.
   // Lo usan el selector del coach, el aviso de reunión, el dialer y la agenda.
-  function buildCoachLeadContext(m) {
+  // `opp` (opcional, 2026-11-17, pedido del dueño) = la oportunidad del CRM
+  // que tiene a este lead como contacto principal (fetchLeadOpportunities):
+  // su etapa, monto y NOTAS del vendedor entran para que el coach guíe la
+  // reunión. Son datos que el vendedor escribió sobre este deal, no
+  // investigación de IA.
+  function buildCoachLeadContext(m, opp) {
     const res = (m.research && typeof m.research === 'object') ? m.research : {};
     const emp = res.employment || {};
     const notes = (m.research_notes || '').trim();
@@ -1674,16 +1684,157 @@
       brief_who: (m.name || '—') + (m.title ? ' · ' + m.title : '') + (m.company ? ' en ' + m.company : '') + '.',
       notes: notes ? notes.slice(0, 1200) : null,
       handoff_summary: ho ? ((ho.summary ? ho.summary + ' ' : '') + bantText) : null,
+      opportunity: opportunityText(opp),
       risks: risks,
       questions: (ho && Array.isArray(ho.next_questions) ? ho.next_questions : []).filter(Boolean).slice(0, 6),
+      research: researchText(res),
+      research_state: researchState(m),
+      research_at: res.generated_at || null,
     };
+  }
+
+  // Estado de la investigación con IA de un lead: 'running' | 'ready' |
+  // 'error' | 'none' (sin investigar).
+  function researchState(m) {
+    const r = (m.research && typeof m.research === 'object') ? m.research : {};
+    if (m.research_status === 'running') return 'running';
+    if (r.angle || r.company || r.person) return 'ready';
+    if (m.research_status === 'error' || r.error) return 'error';
+    return 'none';
+  }
+
+  // Texto compacto de la investigación (lead-research) para el coach y el
+  // panel «Lo que sabes del lead». Solo lo que devolvió la investigación.
+  function researchText(r) {
+    if (!r || typeof r !== 'object' || !(r.angle || r.company || r.person)) return null;
+    const EMP = { current: 'Verificado en el cargo', outdated: 'Desactualizado: probablemente ya no está en la empresa', unconfirmed: 'Cargo por confirmar', unknown: 'Cargo sin verificar' };
+    const t = function (v, n) { return String(v == null ? '' : v).trim().slice(0, n); };
+    const out = [];
+    const emp = r.employment || {};
+    if (EMP[emp.status]) out.push('Puesto: ' + EMP[emp.status] + (emp.current_company && emp.status !== 'current' ? ' (hoy en ' + t(emp.current_company, 80) + ')' : ''));
+    if (r.person && r.person.summary) out.push('Persona: ' + t(r.person.summary, 400));
+    if (r.company && r.company.summary) out.push('Empresa: ' + t(r.company.summary, 400));
+    const sig = r.company && Array.isArray(r.company.signals) ? r.company.signals.map(function (x) { return x && t(x.text, 160); }).filter(Boolean).slice(0, 3) : [];
+    if (sig.length) out.push('Señales: ' + sig.join(' · '));
+    const a = r.angle || {};
+    if (a.headline) out.push('Ángulo: ' + t(a.headline, 160));
+    if (a.why_now) out.push('Por qué ahora: ' + t(a.why_now, 250));
+    if (a.pain) out.push('Dolor probable: ' + t(a.pain, 220));
+    if (a.value) out.push('Qué le resolvemos: ' + t(a.value, 220));
+    if (a.proof) out.push('Prueba social a citar: ' + t(a.proof, 180));
+    const qs = Array.isArray(a.questions) ? a.questions.map(function (q) { return t(q, 180); }).filter(Boolean).slice(0, 4) : [];
+    if (qs.length) out.push('Preguntas: ' + qs.join(' | '));
+    if (a.avoid) out.push('Evitar: ' + t(a.avoid, 180));
+    return out.length ? out.join('\n') : null;
+  }
+
+  // Reunión con varias personas (2026-11-17, pedido del dueño): el coach
+  // también puede elegir una LISTA completa. Cada persona aporta solo sus
+  // datos (buildCoachLeadContext) y aquí se juntan con su nombre delante para
+  // que el coach sepa de quién es cada nota, riesgo o pregunta. `id` = el
+  // participante principal (el primero con oportunidad del CRM, si no el
+  // primero): así coach_meetings.prospect_id y los triggers que lo leen siguen
+  // funcionando; `member_ids` lleva a todos para que sales-coach los pase a
+  // «Reunión tomada» al cerrar. Tope COACH_GROUP_MAX personas.
+  const COACH_GROUP_MAX = 12;
+  function buildCoachGroupContext(list, members, oppByMember) {
+    const opps = oppByMember || {};
+    const people = (members || []).slice(0, COACH_GROUP_MAX).map(function (m) {
+      return buildCoachLeadContext(m, opps[m.id]);
+    });
+    if (!people.length) return null;
+    const primary = people.find(function (c) { return c.opportunity; }) || people[0];
+    const ordered = people; // el orden de la lista; el principal solo define `id`
+    const names = ordered.map(function (c) { return c.name || '(sin nombre)'; });
+    const companies = Array.from(new Set(ordered.map(function (c) { return c.company; }).filter(Boolean)));
+    const tag = function (c, text) { return (c.name || '(sin nombre)') + ': ' + text; };
+    const notes = [];
+    const handoff = [];
+    const risks = [];
+    const questions = [];
+    const oppTexts = [];
+    const research = [];
+    ordered.forEach(function (c) {
+      if (c.research) research.push('— ' + (c.name || '(sin nombre)') + ' —\n' + c.research.slice(0, 900));
+      if (c.notes) notes.push(tag(c, c.notes.slice(0, 400)));
+      if (c.handoff_summary) handoff.push(tag(c, c.handoff_summary.slice(0, 400)));
+      if (c.opportunity && oppTexts.indexOf(c.opportunity) === -1) oppTexts.push(c.opportunity.slice(0, 600));
+      c.risks.forEach(function (r) { risks.push(tag(c, r)); });
+      c.questions.slice(0, 3).forEach(function (q) { questions.push(tag(c, q)); });
+    });
+    const listName = (list && list.name) || 'Lista';
+    return {
+      id: primary.id,
+      group: true,
+      list_id: list && list.id != null ? String(list.id) : '',
+      list_name: listName,
+      name: names.length <= 3 ? names.join(', ') : names.slice(0, 2).join(', ') + ' y ' + (names.length - 2) + ' más',
+      title: '',
+      company: companies.join(', '),
+      brief_who: ordered.map(function (c) {
+        return '• ' + (c.name || '(sin nombre)') + (c.title ? ' · ' + c.title : '') + (c.company ? ' en ' + c.company : '');
+      }).join('\n'),
+      participants: ordered.map(function (c) {
+        return { id: c.id, name: c.name, title: c.title, company: c.company, research_state: c.research_state, research_at: c.research_at, research: c.research };
+      }),
+      research: research.length ? research.join('\n\n').slice(0, 4000) : null,
+      member_ids: ordered.map(function (c) { return c.id; }),
+      notes: notes.length ? notes.join('\n').slice(0, 2400) : null,
+      handoff_summary: handoff.length ? handoff.join('\n').slice(0, 1600) : null,
+      opportunity: oppTexts.length ? oppTexts.join('\n\n').slice(0, 1600) : null,
+      risks: risks.slice(0, 8),
+      questions: questions.slice(0, 8),
+    };
+  }
+
+  // Texto de la oportunidad para el coach: cabecera (nombre, etapa, monto,
+  // cierre) + las notas tal como las escribió el vendedor. Sin oportunidad, null.
+  function opportunityText(opp) {
+    if (!opp || typeof opp !== 'object') return null;
+    const head = [];
+    if (opp.name) head.push('Oportunidad: ' + opp.name);
+    if (opp.stage && opp.stage.name) head.push('Etapa: ' + opp.stage.name);
+    if (opp.amount != null && opp.amount !== '' && Number(opp.amount) > 0) head.push('Monto: ' + (opp.currency || 'USD') + ' ' + Number(opp.amount));
+    if (opp.close_date) head.push('Cierre estimado: ' + opp.close_date);
+    const notes = String(opp.notes || '').trim();
+    if (!head.length && !notes) return null;
+    return head.join(' · ') + (notes ? (head.length ? '\n' : '') + 'Notas de la oportunidad: ' + notes.slice(0, 1500) : '');
+  }
+
+  // Oportunidades del CRM por lead (contacto principal): { member_id: opp }.
+  // Si un lead tiene varias, gana la abierta más reciente. Sin el CRM (o si
+  // la consulta falla) devuelve {}: el coach sigue con los datos del lead.
+  async function fetchLeadOpportunities(memberIds) {
+    try {
+      let q = sb().from('crm_opportunities')
+        .select('id, name, member_id, amount, currency, close_date, notes, updated_at, stage:crm_stages(name, kind)')
+        .not('member_id', 'is', null)
+        .order('updated_at', { ascending: false })
+        .limit(2000);
+      if (Array.isArray(memberIds)) {
+        if (!memberIds.length) return {};
+        q = q.in('member_id', memberIds);
+      }
+      const { data, error } = await q;
+      if (error) throw error;
+      const out = {};
+      (data || []).forEach(function (o) {
+        const prev = out[o.member_id];
+        const open = !o.stage || o.stage.kind === 'open';
+        if (!prev || (open && prev.stage && prev.stage.kind !== 'open')) out[o.member_id] = o;
+      });
+      return out;
+    } catch (e) {
+      console.warn('[prospecting-data] oportunidades del CRM no disponibles:', e && e.message);
+      return {};
+    }
   }
 
   // Un contexto guardado antes del 2026-11-16 (coach_lead_context) puede traer
   // el ángulo y la preparación viejos: se reduce a lo que hoy usa el coach.
   function cleanCoachContext(c) {
     if (!c || typeof c !== 'object') return null;
-    return {
+    const out = {
       id: c.id != null ? String(c.id) : '',
       name: c.name || '',
       title: c.title || '',
@@ -1691,9 +1842,24 @@
       brief_who: c.brief_who || '',
       notes: typeof c.notes === 'string' ? c.notes : null,
       handoff_summary: typeof c.handoff_summary === 'string' ? c.handoff_summary : null,
+      opportunity: typeof c.opportunity === 'string' ? c.opportunity : null,
       risks: Array.isArray(c.risks) ? c.risks.filter(function (x) { return typeof x === 'string'; }) : [],
       questions: Array.isArray(c.questions) ? c.questions.filter(function (x) { return typeof x === 'string'; }) : [],
+      research: typeof c.research === 'string' ? c.research : null,
+      research_state: typeof c.research_state === 'string' ? c.research_state : 'none',
+      research_at: typeof c.research_at === 'string' ? c.research_at : null,
     };
+    // Reunión con una lista completa: se conserva quiénes participan.
+    if (c.group && Array.isArray(c.participants)) {
+      out.group = true;
+      out.list_id = c.list_id != null ? String(c.list_id) : '';
+      out.list_name = typeof c.list_name === 'string' ? c.list_name : '';
+      out.participants = c.participants.filter(function (x) { return x && typeof x === 'object'; }).slice(0, COACH_GROUP_MAX).map(function (x) {
+        return { id: String(x.id || ''), name: x.name || '', title: x.title || '', company: x.company || '', research_state: typeof x.research_state === 'string' ? x.research_state : 'none', research_at: typeof x.research_at === 'string' ? x.research_at : null };
+      });
+      out.member_ids = out.participants.map(function (x) { return x.id; }).filter(Boolean);
+    }
+    return out;
   }
 
   async function saveCoachContext(memberId, ctx) {
@@ -1821,6 +1987,8 @@
     addRegistryCompaniesToList,
     saveOutreachPlaybookPrefs,
     buildCoachLeadContext,
+    buildCoachGroupContext,
+    fetchLeadOpportunities,
     saveCoachContext,
     fetchLatestCoachContext,
     importLegacyLists,

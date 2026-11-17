@@ -115,6 +115,11 @@ Responde SOLO con este JSON (sin texto antes ni después):
 }
 Topes: signals ≤ 5, questions ≤ 4, sources ≤ 8.`;
 
+const MEETING_PURPOSE = `
+
+=== PARA QUÉ ES ESTA INVESTIGACIÓN ===
+El vendedor tiene una REUNIÓN con esta persona (puede haber más personas de su empresa en la misma reunión). Orienta el ángulo a esa conversación, siempre según el ENTRENAMIENTO DE ESTE EQUIPO de arriba (su playbook, su forma de vender, lo que vende y sus reglas): "hook" = cómo abrir la reunión con ella; "pain" = el dolor probable de SU rol; "value" = qué le resuelve el vendedor con las palabras del equipo; "questions" = 2-4 preguntas de descubrimiento para la reunión, coherentes con el playbook del equipo; "avoid" = qué no decirle a esta persona. "channel" sigue siendo el canal para un seguimiento.`;
+
 function marketAnalysisDigest(c: Json): string {
   if (!c || typeof c !== "object") return "";
   const lines = ["", "=== ANÁLISIS DE MERCADO DEL VENDEDOR (Intelligence Hub) ==="];
@@ -232,6 +237,11 @@ Deno.serve(withLlmContext(async (req: Request) => {
   let body: Json;
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400, h); }
   const memberId = typeof body?.member_id === "string" && /^[0-9a-f-]{36}$/i.test(body.member_id) ? body.member_id : null;
+  // «meeting» = la lanza el AI Sales Coach antes de una reunión (2026-11-17):
+  // mismo resultado y misma fila, pero el ángulo y las preguntas se orientan a
+  // esa conversación con el entrenamiento del coach (playbook, personalidad,
+  // lo que vende el equipo, reglas) además del de outreach.
+  const forMeeting = body?.purpose === "meeting";
   if (!memberId) return json({ error: "member_id required" }, 400, h);
 
   const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "").trim();
@@ -336,7 +346,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
     supa.from("intelligence_hub_reports").select("content")
       .eq("user_id", userId).eq("section_key", "market_analysis").eq("status", "ready")
       .order("generated_at", { ascending: false }).limit(1).maybeSingle(),
-    loadTraining(supa, userId),
+    loadTraining(supa, userId, { company: forMeeting }),
     radarBlocks(supa, userId, m),
   ]);
   const notes = str(m.research_notes, 4000);
@@ -344,11 +354,12 @@ Deno.serve(withLlmContext(async (req: Request) => {
     seller?.text || "=== SELLER CONTEXT ===\n(sin contexto cargado)",
     marketAnalysisDigest(marketRes?.data?.content),
     radar,
-    buildTrainingBlock(training, "outreach"),
+    buildTrainingBlock(training, forMeeting ? "coach" : "outreach"),
     leadBlock(m, snapshot),
     registryBlock(m),
     apolloBlock(apollo, apolloRan),
     notes ? `\n\n=== NOTAS DEL VENDEDOR SOBRE ESTE LEAD (mandan sobre lo inferido) ===\n${notes}` : "",
+    forMeeting ? MEETING_PURPOSE : "",
     `\n\nHoy es ${new Date().toISOString().slice(0, 10)}. Investiga y responde con el JSON.`,
   ].filter(Boolean).join("\n");
 
@@ -383,6 +394,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
       angle: out.angle,
       sources: out.sources,
       notes_used: !!notes,
+      purpose: forMeeting ? "meeting" : "outreach",
     };
     await settleReservation(supa, userId, aiCost, aiCost, "lead_research");
     const { error: saveErr } = await release("ready", { ...memberPatch, research });

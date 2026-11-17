@@ -275,6 +275,12 @@ async function fetchRecallTranscript(recallBotId: string): Promise<Array<{ speak
   }
   return null;
 }
+// La investigación con IA de cada persona (context.research, 2026-11-17) es
+// preparación previa: el coach la usa, pero manda lo que el lead dice.
+const RESEARCH_CAVEAT =
+  "(Si trae «research»: es la investigación previa de cada persona; úsala para preguntar mejor y sugerir frases, " +
+  "pero es una hipótesis: si el lead dice otra cosa, manda lo que dice el lead.)";
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -876,6 +882,7 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
 
   const userPrompt = [
     "Contexto del prospecto:",
+    RESEARCH_CAVEAT,
     JSON.stringify(meeting.context ?? {}),
     "",
     "Estado anterior:",
@@ -1349,17 +1356,22 @@ async function finalizeMeeting(ctx: Ctx, meeting: Json, endedAt: string): Promis
   // Listas (prospect_id = prospect_list_members.id), ese lead pasa a
   // "Reunión tomada" sin que nadie lo marque a mano. Solo avanza estados
   // anteriores; nunca pisa una baja ni una reunión ya marcada como tomada.
-  if (meeting.prospect_id && /^[0-9a-f-]{36}$/i.test(String(meeting.prospect_id)) && report?.resumen) {
-    await ctx.supa.from("prospect_list_members")
+  // Reunión con una lista completa (context.member_ids, 2026-11-17): pasan
+  // todos los participantes, siempre del mismo dueño de la reunión.
+  const leadIds = meetingMemberIds(meeting);
+  if (leadIds.length && report?.resumen) {
+    let upd = ctx.supa.from("prospect_list_members")
       .update({ contact_status: "reunion_tomada", status_changed_at: endedAt })
-      .eq("id", meeting.prospect_id)
+      .in("id", leadIds);
+    if (meeting.user_id) upd = upd.eq("user_id", meeting.user_id);
+    await upd
       .in("contact_status", ["no_contactado", "en_campana", "saludo_enviado", "conexion_enviada", "conexion_aceptada", "respondio", "reunion_agendada", "no_show"]);
     // La reunión agendada desde la agenda (± 12 h de hoy) se dio: asistencia
     // real para las métricas y el learning-loop. Falla suave sin la tabla.
     const around = Date.parse(endedAt);
     const { error: bkErr } = await ctx.supa.from("bookings")
       .update({ attendance: "held", attendance_source: "coach", attendance_marked_at: endedAt, status: "completed", updated_at: endedAt })
-      .eq("member_id", meeting.prospect_id).eq("attendance", "pending").neq("status", "cancelled")
+      .in("member_id", leadIds).eq("attendance", "pending").neq("status", "cancelled")
       .gte("start_at", new Date(around - 12 * 3600_000).toISOString())
       .lte("start_at", new Date(around + 12 * 3600_000).toISOString());
     if (bkErr) console.warn("[sales-coach] bookings attendance:", bkErr.message);
@@ -1471,12 +1483,36 @@ async function learnedObjectionsBlock(supa: SupabaseClient, userId: string): Pro
   } catch (_) { return ""; }
 }
 
+// Leads de Listas que participaron: el principal (prospect_id) y, en una
+// reunión con una lista completa, los de context.member_ids. Solo UUID, tope 20.
+const MEETING_MEMBER_MAX = 20;
+function meetingMemberIds(meeting: Json): string[] {
+  const ctx = (meeting.context && typeof meeting.context === "object") ? meeting.context : {};
+  const raw = [meeting.prospect_id, ...(Array.isArray(ctx.member_ids) ? ctx.member_ids : [])];
+  const out: string[] = [];
+  for (const v of raw) {
+    const id = typeof v === "string" ? v.trim() : "";
+    if (UUID_RE.test(id) && !out.includes(id)) out.push(id);
+    if (out.length >= MEETING_MEMBER_MAX) break;
+  }
+  return out;
+}
+
 function buildReportUserPrompt(meeting: Json, transcript: string, sdrName?: string | null, learned = ""): string {
   const ctx = (meeting.context && typeof meeting.context === "object") ? meeting.context : {};
   const lines = [
     "=== CONTEXTO DE LA REUNIÓN ===",
     `Prospecto: ${meeting.prospect_name || "(sin nombre)"}`,
   ];
+  const participants = Array.isArray(ctx.participants) ? ctx.participants.slice(0, MEETING_MEMBER_MAX) : [];
+  if (ctx.group && participants.length) {
+    lines.push(
+      "Reunión con varias personas del lado del prospecto (" + participants.length + "):",
+      ...participants.map((pp: Json) =>
+        "- " + [pp?.name, pp?.title, pp?.company].filter((x) => typeof x === "string" && x).join(" · ")
+      ),
+    );
+  }
   if (typeof ctx.company === "string" && ctx.company) {
     lines.push(`Empresa del prospecto: ${ctx.company}`);
   }
@@ -1863,7 +1899,9 @@ async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
   ]);
   const userPrompt = [
     "Contexto del prospecto:",
-    JSON.stringify(payload?.context ?? {}).slice(0, 4_000),
+    RESEARCH_CAVEAT,
+    // 9.000: una reunión con una lista completa trae la investigación de cada persona.
+    JSON.stringify(payload?.context ?? {}).slice(0, 9_000),
     ...(learned ? [learned] : []),
     "",
     ...(position ? [position, ""] : []),

@@ -21,8 +21,11 @@
  *                          usa el coach en vivo por el worker de OpenAI
  *                          (js/realtime-coach.js), que no pasa por sales-coach.
  *
- * Motor: el de "outreach" del usuario (Claude recomendado). Perplexity no lee
- * PDFs: callLLM cae a Claude solo. Gratis, como analyze-company-document; el
+ * Motor: el de "ai_training" del usuario (Claude recomendado; se elige en la
+ * misma página y en Ajustes). Perplexity no lee PDFs: callLLM cae a Claude
+ * solo. Si el motor elegido dice que no hay nada útil, se reintenta UNA vez con
+ * Claude antes de marcar el error (2026-11-17: material de producto real
+ * terminaba en «sin contenido útil»). Gratis, como analyze-company-document; el
  * tope es de 30 documentos por cuenta.
  *
  * Auth: Bearer <user JWT> validado con auth.getUser (la anon key sola no
@@ -30,7 +33,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
-import { callLLM, engineForUser, withLlmContext } from "../_shared/llm.ts";
+import { callLLM, type Engine, engineForUser, withLlmContext } from "../_shared/llm.ts";
 import { buildTrainingBlock, coachDoctrine, DOC_KINDS, hasTraining, loadTraining } from "../_shared/sales-training.ts";
 
 const MAX_DOCS = 30;
@@ -61,7 +64,7 @@ const KIND_FOCUS: Record<string, string> = {
   pricing: "Es la oferta y los precios. Extrae planes, qué incluye cada uno, precios o rangos tal como aparecen, condiciones y cómo presentarlos o defenderlos.",
   battlecard: "Es material sobre la competencia. Extrae por competidor: en qué nos diferenciamos, dónde ganan ellos, trampas a evitar y la respuesta cuando el lead los menciona.",
   call: "Son llamadas o mensajes modelo del equipo. Extrae la estructura, las frases que funcionan, el tono y el ritmo; cita máximo 3 frases textuales cortas que capturen su voz.",
-  other: "Extrae lo que una IA de ventas necesita saber de este material para vender mejor en nombre de este equipo.",
+  other: "Es material de producto u otro material de la empresa (ficha técnica, catálogo, FAQ, respuestas a clientes, documentación de soporte). Extrae qué es, para quién, qué problemas resuelve, características y beneficios, especificaciones o condiciones relevantes, preguntas frecuentes con su respuesta y cómo explicarlo a un cliente.",
 };
 
 const SYSTEM_PROMPT = `Eres el analista que entrena a la IA de ventas de una empresa B2B. Recibes un documento que el equipo subió para entrenar a su AI Sales Coach (que le sopla al vendedor qué decir en la reunión) y a su motor de campañas (que escribe los mensajes de prospección).
@@ -76,7 +79,12 @@ REGLAS DURAS:
 - Nunca inventes nada que no esté en el documento. Si el documento no trae algo, no lo menciones.
 - No copies pasajes largos: resume con tus palabras (máximo 3 citas textuales de una frase).
 - Máximo 450 palabras. Texto plano con viñetas "- " y encabezados cortos en mayúsculas terminados en ":" (sin markdown de #, sin negritas, sin JSON).
-- Si el documento está vacío, es ilegible o no tiene nada útil para vender, responde exactamente: SIN CONTENIDO UTIL`;
+- Todo documento con texto sobre la empresa, su producto o servicio, sus precios, sus clientes, sus procesos, su soporte o su mercado ES útil: el vendedor necesita conocer lo que vende. Aunque sea técnico, operativo o no hable de ventas, extrae lo que un vendedor necesita saber de él.
+- Solo si el documento no tiene NINGÚN texto legible (vacío, solo imágenes sin texto, caracteres sin sentido), responde exactamente: SIN CONTENIDO UTIL`;
+
+const RETRY_NOTE = "\n\nIMPORTANTE: este documento SÍ tiene contenido. Aunque sea técnico, de producto o de soporte, resume lo que un vendedor de esta empresa necesita saber de él. Responde SIN CONTENIDO UTIL solo si de verdad no hay ningún texto legible.";
+
+const isEmptyVerdict = (t: string) => !t || /^\s*SIN CONTENIDO [UÚ]TIL/i.test(t);
 
 // deno-lint-ignore no-explicit-any
 async function analyzeDoc(supa: any, userId: string, docId: string, engineHint?: string) {
@@ -90,7 +98,7 @@ async function analyzeDoc(supa: any, userId: string, docId: string, engineHint?:
     return { status: 403, body: { error: "forbidden_path" } };
   }
 
-  const engine = await engineForUser(supa, userId, "outreach", engineHint);
+  const engine = await engineForUser(supa, userId, "ai_training", engineHint);
   await supa.from("ai_training_docs").update({ status: "analyzing", error_message: null }).eq("id", doc.id);
 
   const work = (async () => {
@@ -98,29 +106,39 @@ async function analyzeDoc(supa: any, userId: string, docId: string, engineHint?:
       const focus = KIND_FOCUS[String(doc.kind)] ?? KIND_FOCUS.other;
       const label = DOC_KINDS[String(doc.kind)] ?? DOC_KINDS.other;
       const header = `Tipo: ${label}. Título: ${doc.title}.\n${focus}`;
-      let res;
+      let base64 = "";
       if (doc.source === "upload") {
         const { data: file, error: dlErr } = await supa.storage.from("ai-training").download(doc.storage_path);
         if (dlErr || !file) throw new Error(dlErr?.message || "No se pudo descargar el PDF");
-        const base64 = toBase64(new Uint8Array(await file.arrayBuffer()));
-        res = await callLLM({
-          engine, system: SYSTEM_PROMPT, maxTokens: 2500, retries: 1, timeoutMs: 140_000,
-          user: `${header}\n\nEl documento va adjunto (${doc.file_name || "documento.pdf"}). Escribe el manual operativo.`,
+        base64 = toBase64(new Uint8Array(await file.arrayBuffer()));
+      }
+      const run = (eng: Engine, note = "") => doc.source === "upload"
+        ? callLLM({
+          engine: eng, system: SYSTEM_PROMPT, maxTokens: 2500, retries: 1, timeoutMs: 140_000,
+          user: `${header}\n\nEl documento va adjunto (${doc.file_name || "documento.pdf"}). Escribe el manual operativo.${note}`,
           documents: [{ name: doc.file_name || "documento.pdf", base64 }],
           logPrefix: "[ai-training]",
-        });
-      } else {
-        res = await callLLM({
-          engine, system: SYSTEM_PROMPT, maxTokens: 2500, retries: 1, timeoutMs: 120_000,
-          user: `${header}\n\n=== DOCUMENTO ===\n${String(doc.raw_text ?? "").slice(0, 60_000)}\n=== FIN ===\n\nEscribe el manual operativo.`,
+        })
+        : callLLM({
+          engine: eng, system: SYSTEM_PROMPT, maxTokens: 2500, retries: 1, timeoutMs: 120_000,
+          user: `${header}\n\n=== DOCUMENTO ===\n${String(doc.raw_text ?? "").slice(0, 60_000)}\n=== FIN ===\n\nEscribe el manual operativo.${note}`,
           logPrefix: "[ai-training]",
         });
+      let res = await run(engine);
+      if (isEmptyVerdict(res.text.trim())) {
+        // Segunda opinión con Claude (lee PDFs nativo) y la instrucción explícita
+        // de que el documento sí trae contenido: un «sin contenido» del primer
+        // intento era casi siempre material de producto o soporte real.
+        console.warn(`[ai-training] ${doc.id}: ${res.engine} dijo sin contenido; reintento con Claude`);
+        res = await run("claude", RETRY_NOTE);
       }
       const summary = res.text.trim().replace(/\*\*/g, "").slice(0, 8000);
-      if (!summary || /^SIN CONTENIDO UTIL/i.test(summary)) {
+      if (isEmptyVerdict(summary)) {
         await supa.from("ai_training_docs").update({
           status: "error", summary: null,
-          error_message: "No encontramos contenido útil para vender en este documento (¿es un PDF escaneado o está vacío?).",
+          error_message: doc.source === "upload"
+            ? "No pudimos leer texto en este PDF (¿es escaneado o solo imágenes?). Prueba con «Pegar texto» o con un PDF exportado desde el documento original."
+            : "No pudimos leer texto en este documento. Revisa que el texto pegado no esté vacío.",
         }).eq("id", doc.id);
         return;
       }

@@ -2759,16 +2759,9 @@
       tfa.appendChild(h('b', { text: 'Importante: desactiva la verificación en dos pasos (2FA) de LinkedIn. ' }));
       tfa.appendChild(document.createTextNode('Si la tienes activa, la cuenta no se puede conectar. Desactívala en LinkedIn (Configuración → Inicio de sesión y seguridad → Verificación en dos pasos) antes de continuar.'));
       api.body.appendChild(tfa);
-      var risk = h('div', { class: 'pros-note-red', style: 'margin-top:10px' });
-      risk.appendChild(h('b', { text: 'Antes de conectar: ' }));
-      risk.appendChild(document.createTextNode('LinkedIn no permite herramientas que automaticen conexiones o mensajes (sección 8.2 de su Acuerdo de usuario). Como con cualquier herramienta de automatización, incluida Dripify, LinkedIn puede limitar o restringir tu cuenta. Los topes reducen ese riesgo, pero no lo eliminan.'));
-      api.body.appendChild(risk);
-      var acc = h('input', { type: 'checkbox' });
-      api.body.appendChild(h('label', { style: 'display:flex;align-items:center;gap:8px;margin-top:10px' }, acc, h('span', { text: 'Entiendo el riesgo y quiero enviar desde mi cuenta de LinkedIn.' })));
       api.setActions([
         { label: 'Cancelar' },
         { label: 'Continuar a LinkedIn', className: 'btn btn-primary', onClick: function (m) {
-          if (!acc.checked) throw new Error('Marca la casilla para continuar.');
           m.setBusy(true);
           // La ventana se abre en el clic (si no, el navegador la bloquea) y
           // se dirige al link cuando el servidor lo devuelve.

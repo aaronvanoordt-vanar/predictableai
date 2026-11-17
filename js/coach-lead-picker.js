@@ -10,11 +10,21 @@
 // con el Intelligence Hub) se eliminó el 2026-11-16 (pedido del dueño): esa
 // investigación envejecía y desviaba al coach en la llamada. El coach entra
 // solo con los datos del lead (buildCoachLeadContext). No la resucites.
+//
+// Reunión con varias personas (2026-11-17, pedido del dueño): cada lista con
+// 2 a GROUP_MAX contactos ofrece además «Toda la lista» (value `list:<id>`),
+// que junta a todos en un solo contexto (buildCoachGroupContext).
 // ═══════════════════════════════════════════════════════════
 (function (global) {
   let membersById = {};   // option value (member id) → contexto listo para el coach
   let wired = false;
+  let oppByMember = {};   // member id → oportunidad del CRM (contacto principal)
   let loading = null;     // promesa en curso para no duplicar cargas concurrentes
+  const GROUP_MAX = 12;   // espejo de COACH_GROUP_MAX (js/prospecting-data.js)
+
+  function valueOf(ctx) {
+    return ctx && ctx.group && ctx.list_id ? 'list:' + ctx.list_id : (ctx && ctx.id);
+  }
 
   function pd() { return global.prospectingData; }
   function toast(msg, type) {
@@ -30,6 +40,10 @@
   }
 
   function optionLabel(ctx) {
+    if (ctx.group) {
+      const n = (ctx.participants || []).length;
+      return 'Toda la lista «' + (ctx.list_name || '') + '» — ' + (n === 1 ? '1 persona' : n + ' personas');
+    }
     const meta = [ctx.title, ctx.company].filter(Boolean).join(' · ');
     return (ctx.name || '(sin nombre)') + (meta ? ' — ' + meta : '');
   }
@@ -61,6 +75,8 @@
 
   async function fetchAllMembers() {
     const lists = await pd().fetchLists();
+    // Oportunidades del CRM ligadas a un lead: sus notas entran al contexto.
+    oppByMember = pd().fetchLeadOpportunities ? await pd().fetchLeadOpportunities() : {};
     const perList = await Promise.all(lists.map(function (l) {
       return pd().fetchMembers(l.id).catch(function (e) {
         console.warn('[coach-picker] lista "' + l.name + '":', e.message);
@@ -78,7 +94,7 @@
 
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = 'Selecciona el lead de esta reunión…';
+    placeholder.textContent = 'Selecciona el lead o la lista de esta reunión…';
     ui.select.appendChild(placeholder);
 
     let total = 0;
@@ -86,8 +102,19 @@
       if (!g.members.length) return;
       const og = document.createElement('optgroup');
       og.label = g.list.name;
+      // Varias personas en la misma reunión: la lista entera como una opción.
+      if (g.members.length >= 2 && g.members.length <= GROUP_MAX && pd().buildCoachGroupContext) {
+        const gctx = pd().buildCoachGroupContext(g.list, g.members, oppByMember);
+        if (gctx) {
+          membersById[valueOf(gctx)] = gctx;
+          const gopt = document.createElement('option');
+          gopt.value = valueOf(gctx);
+          gopt.textContent = optionLabel(gctx);
+          og.appendChild(gopt);
+        }
+      }
       g.members.forEach(function (m) {
-        const ctx = pd().buildCoachLeadContext(m);
+        const ctx = pd().buildCoachLeadContext(m, oppByMember[m.id]);
         membersById[ctx.id] = ctx;
         const opt = document.createElement('option');
         opt.value = ctx.id;
@@ -101,10 +128,11 @@
     // Lead restaurado desde coach_lead_context que ya no está en ninguna
     // lista (lista borrada / miembro eliminado): ofrecerlo igual para no
     // perder la sesión elegida.
-    if (current && current.id && !membersById[current.id]) {
-      membersById[current.id] = current;
+    const curKey = valueOf(current);
+    if (current && curKey && !membersById[curKey]) {
+      membersById[curKey] = current;
       const opt = document.createElement('option');
-      opt.value = current.id;
+      opt.value = curKey;
       opt.textContent = optionLabel(current);
       ui.select.insertBefore(opt, ui.select.children[1] || null);
       total++;
@@ -114,10 +142,10 @@
     ui.select.style.display = hasLeads ? '' : 'none';
     if (ui.empty) ui.empty.style.display = hasLeads ? 'none' : '';
 
-    if (current && current.id && membersById[current.id]) {
-      ui.select.value = current.id;
+    if (current && curKey && membersById[curKey]) {
+      ui.select.value = curKey;
       // Se repinta con la fila actual del lead (no con la copia guardada).
-      applySelection(membersById[current.id], false);
+      applySelection(membersById[curKey], false);
     }
   }
 

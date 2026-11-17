@@ -7,10 +7,11 @@
 // (JSONB, una clave por función) y los edge functions la vuelven a leer del
 // servidor — este módulo solo la escribe y la muestra.
 //
-// El motor recomendado depende de la función:
-//   Inteligencia (Intelligence Hub, Contexto estratégico IA, Onboarding/research, Radar) → Perplexity
-//   Prospección (mensajes)                                                               → Claude
-//   AI Sales Coach                                                                       → OpenAI
+// El motor recomendado depende de la función (2026-11-17, decisión del dueño:
+// toda la investigación recomienda Claude):
+//   Investigación (Intelligence Hub, Contexto, Radar, Columnas IA, Entrenamiento IA) → Claude
+//   Prospección (mensajes)                                                          → Claude
+//   AI Sales Coach                                                                  → OpenAI
 //
 // Mantener RECOMMENDED en sync con RECOMMENDED_ENGINE de
 // supabase/functions/_shared/llm.ts.
@@ -49,12 +50,13 @@
 
   // clave de función → { label, recommended }
   var FEATURES = {
-    intel_hub:  { label: 'Intelligence Hub',   recommended: 'perplexity' },
-    outreach:   { label: 'Generación de mensajes', recommended: 'claude' },
-    coach:      { label: 'AI Sales Coach',     recommended: 'openai' },
-    onboarding: { label: 'Onboarding y contexto de empresa', recommended: 'perplexity' },
-    radar:      { label: 'Radar de señales',   recommended: 'perplexity' },
-    ai_columns: { label: 'Columnas IA de Listas', recommended: 'perplexity' },
+    intel_hub:   { label: 'Intelligence Hub',   recommended: 'claude' },
+    outreach:    { label: 'Generación de mensajes', recommended: 'claude' },
+    coach:       { label: 'AI Sales Coach',     recommended: 'openai' },
+    onboarding:  { label: 'Onboarding y contexto de empresa', recommended: 'claude' },
+    radar:       { label: 'Radar de señales',   recommended: 'claude' },
+    ai_columns:  { label: 'Columnas IA de Listas', recommended: 'claude' },
+    ai_training: { label: 'Entrenamiento IA (documentos)', recommended: 'claude' },
   };
 
   var LS_KEY = 'px_ai_engines';
