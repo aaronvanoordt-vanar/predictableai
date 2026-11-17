@@ -2724,9 +2724,8 @@
       api.body.innerHTML = '';
       var opts = h('div', { class: 'cmp-wz-choices' });
       if (state.liNative) {
-        api.body.appendChild(h('p', { text: 'Conecta tu cuenta de LinkedIn para que tus campañas envíen la solicitud de conexión y los mensajes, y para responder desde la Bandeja.' }));
-        opts.appendChild(choiceBtn('Conectar mi cuenta de LinkedIn', 'Recomendado. Inicias sesión en LinkedIn y listo; sin otra herramienta.', native));
-        opts.appendChild(choiceBtn('Usar mi cuenta de Dripify', 'Ya automatizo LinkedIn con Dripify y tengo la API key.', haveIt));
+        // Solo la cuenta propia (Unipile): ya no se ofrece Dripify al conectar.
+        return native();
       } else {
         api.body.appendChild(h('p', { text: 'Para automatizar conexiones y mensajes de LinkedIn necesitas una cuenta de automatización con acceso por API.' }));
         opts.appendChild(choiceBtn('Ya tengo mi cuenta de automatización', 'Tengo la API key lista.', haveIt));
@@ -2739,9 +2738,13 @@
       api.setTitle('Conectar tu cuenta de LinkedIn');
       api.body.innerHTML = '';
       var card = h('div', { class: 'cmp-wz-card' });
-      card.appendChild(h('p', { text: 'Se abre una ventana segura de nuestro proveedor de conexión, donde inicias sesión en LinkedIn (y confirmas el código si LinkedIn lo pide). Tu contraseña no pasa por Predictable.' }));
+      card.appendChild(h('p', { text: 'Se abre una ventana segura de nuestro proveedor de conexión, donde inicias sesión en LinkedIn. Tu contraseña no pasa por Predictable.' }));
       card.appendChild(h('p', { text: 'Para cuidar tu cuenta, Predictable envía como máximo 20 invitaciones por día (100 por semana) y 50 mensajes por día, solo dentro del horario de cada campaña y con varios minutos entre envíos. Las dos primeras semanas va a la mitad.' }));
       api.body.appendChild(card);
+      var tfa = h('div', { class: 'pros-note-red', style: 'margin-top:10px' });
+      tfa.appendChild(h('b', { text: 'Importante: desactiva la verificación en dos pasos (2FA) de LinkedIn. ' }));
+      tfa.appendChild(document.createTextNode('Si la tienes activa, la cuenta no se puede conectar. Desactívala en LinkedIn (Configuración → Inicio de sesión y seguridad → Verificación en dos pasos) antes de continuar.'));
+      api.body.appendChild(tfa);
       var risk = h('div', { class: 'pros-note-red', style: 'margin-top:10px' });
       risk.appendChild(h('b', { text: 'Antes de conectar: ' }));
       risk.appendChild(document.createTextNode('LinkedIn no permite herramientas que automaticen conexiones o mensajes (sección 8.2 de su Acuerdo de usuario). Como con cualquier herramienta de automatización, incluida Dripify, LinkedIn puede limitar o restringir tu cuenta. Los topes reducen ese riesgo, pero no lo eliminan.'));
@@ -2749,7 +2752,7 @@
       var acc = h('input', { type: 'checkbox' });
       api.body.appendChild(h('label', { style: 'display:flex;align-items:center;gap:8px;margin-top:10px' }, acc, h('span', { text: 'Entiendo el riesgo y quiero enviar desde mi cuenta de LinkedIn.' })));
       api.setActions([
-        { label: 'Atrás', onClick: choice },
+        { label: 'Cancelar' },
         { label: 'Continuar a LinkedIn', className: 'btn btn-primary', onClick: function (m) {
           if (!acc.checked) throw new Error('Marca la casilla para continuar.');
           m.setBusy(true);
@@ -2806,7 +2809,7 @@
         } },
       ]);
     }
-    (startStep === 'have' ? haveIt : startStep === 'native' && state.liNative ? native : choice)();
+    (startStep === 'have' ? haveIt : choice)();
     return api;
   }
 
