@@ -2334,6 +2334,8 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Aquí ves el hilo completo del lead en todos los canales — lo enviado y lo recibido — y le respondes por email, WhatsApp o LinkedIn.": "Here you see the lead's full thread across all channels — sent and received — and reply by email, WhatsApp or LinkedIn.",
   "Quitó su reacción": "Removed their reaction",
   "Quitaste tu reacción": "You removed your reaction",
+  "Respuesta recibida. Buscando el texto en tu Gmail… (si no aparece en unos minutos, revisa que sea el mismo buzón desde el que envías).": "Reply received. Searching your Gmail for the text… (if it doesn't show up in a few minutes, check that it's the same mailbox you send from).",
+  "Respuesta recibida. Conecta el Gmail desde el que envías para ver el texto aquí.": "Reply received. Connect the Gmail you send from to see the text here.",
   "Respuesta recibida (el texto no está disponible aquí).": "Reply received (the text isn't available here).",
   "Mensaje enviado (texto no guardado).": "Message sent (text not saved).",
   "No se envió": "Not sent",
