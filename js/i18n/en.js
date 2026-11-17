@@ -7458,4 +7458,6 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Escribe el nombre de tu empresa.": "Enter your company name.",
   "Equipo creado. Ya eres la cuenta principal.": "Team created. You're now the main account.",
   "¿Rechazar esta solicitud? La persona no verá el equipo.": "Decline this request? The person won't see the team.",
+  "Campaña de Dripify (anterior)": "Dripify campaign (legacy)",
+  "Conecta tu cuenta de LinkedIn en Canales → LinkedIn para que este paso salga.": "Connect your LinkedIn account in Channels → LinkedIn so this step can be sent.",
 });
