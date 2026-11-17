@@ -3735,7 +3735,11 @@
       } else {
         body.appendChild(h('div', { class: 'emb' }, ap));
       }
-      var acts = [{ label: 'Cerrar' }];
+      var acts = [];
+      if (es.state === 'connected') {
+        acts.push({ label: 'Desconectar Apollo', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('email', 'apollo', m); } });
+      }
+      acts.push({ label: 'Cerrar' });
       api.setActions(acts);
     }
   }
