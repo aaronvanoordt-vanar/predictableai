@@ -18,6 +18,13 @@
  * mediana de la rampa) viven en js/team-metrics.js, espejo de
  * supabase/functions/_shared/team-metrics.ts.
  *
+ * Equipo por dominio (2026-11-17, migración 20261117120000): quien tiene un
+ * email corporativo confirmado crea el equipo de su dominio y queda como
+ * CUENTA PRINCIPAL (`sales_teams`; administra como un director sin tocar
+ * `profiles.role`). Las demás personas de ese dominio ven la cuenta principal
+ * aquí y solicitan unirse (`team_request_join`); la cuenta principal aprueba
+ * o rechaza en Miembros (`team_decide_request`). Créditos: de cada uno.
+ *
  * Telefonía (2026-10-17, docs/TELEFONIA.md): `calls` = personas llamadas en
  * el período (team_member_activity cuenta la tabla `calls`); solo llega NULL
  * si falta la migración de telefonía, y entonces se muestra «Sin telefonía»,
@@ -171,7 +178,7 @@
         { id: 'goals', label: 'Metas' },
         { id: 'review', label: 'Revisión' },
         { id: 'ramp', label: 'Rampa' },
-        { id: 'members', label: 'Miembros' },
+        { id: 'members', label: (state.ov.requests || []).length ? 'Miembros (' + state.ov.requests.length + ')' : 'Miembros' },
       ];
     }
     return [
@@ -197,31 +204,79 @@
     }
     var ov = state.ov;
     if (!ov) { root.innerHTML = ''; return; }
-    if (!ov.company) {
-      root.innerHTML = '<div class="team-wrap"><div class="team-block team-empty">' +
-        '<div class="team-title">Primero, el nombre de tu empresa</div>' +
-        '<p class="team-p">El equipo se arma con las personas que tienen la misma empresa en su perfil. ' +
-        (ov.is_manager ? 'Escríbela en Ajustes → Empresa y vuelve aquí para agregar a tu equipo.' : 'Escríbela en Ajustes → Empresa y pide a tu director que te agregue al equipo.') +
-        '</p><button class="team-btn primary" data-act="settings">Abrir Ajustes</button></div></div>';
-      return;
-    }
     if (!canView()) {
-      root.innerHTML = '<div class="team-wrap"><div class="team-block team-empty">' +
-        '<div class="team-title">Todavía no estás en el equipo de ' + esc(ov.company) + '</div>' +
-        '<p class="team-p">Tu director o un admin de ' + esc(ov.company) + ' te agrega desde Equipo → Miembros. ' +
-        'Cuando lo haga verás tus metas, el ranking, tu rampa y sus comentarios de coaching.</p></div></div>';
+      root.innerHTML = '<div class="team-wrap">' + joinView(ov) + '</div>';
       return;
     }
     var t = tabs();
+    var reqs = (isManager() && ov.requests) || [];
     var head = '<div class="team-head"><div><div class="team-kicker">Equipo · ' + esc(ov.company) + '</div>' +
+      (ov.team ? '<div class="team-tiny">' + esc(ov.team.is_owner ? 'Eres la cuenta principal de @' + ov.team.domain : 'Cuenta principal: ' + ov.team.owner_name) + '</div>' : '') +
       '<div class="team-sub">' + (isManager()
         ? roster().length + (roster().length === 1 ? ' persona en el equipo' : ' personas en el equipo')
         : 'Tus números contra los de tu equipo, con los datos reales de Predictable') + '</div></div>' +
       '<div class="team-tabs" role="tablist">' + t.map(function (x) {
         return '<button role="tab" aria-selected="' + (state.tab === x.id) + '" class="team-tab' + (state.tab === x.id ? ' on' : '') + '" data-tab="' + x.id + '">' + esc(x.label) + '</button>';
       }).join('') + '</div></div>';
-    root.innerHTML = '<div class="team-wrap">' + head + '<div id="team-body"></div></div>';
+    var banner = reqs.length && state.tab !== 'members'
+      ? '<div class="team-block team-banner"><span>' + esc(reqs.length === 1 ? '1 persona pidió unirse a tu equipo' : reqs.length + ' personas pidieron unirse a tu equipo') + '</span>' +
+        '<button class="team-btn primary sm" data-tab="members">Revisar solicitudes</button></div>'
+      : '';
+    root.innerHTML = '<div class="team-wrap">' + head + banner + '<div id="team-body"></div></div>';
     renderBody();
+  }
+
+  // Fuera del equipo: la cuenta principal de tu dominio (solicitar unirse),
+  // crear el equipo de tu dominio o, sin email corporativo, el camino viejo.
+  function joinView(ov) {
+    var disc = ov.discover || [];
+    if (disc.length) {
+      return disc.map(function (t) {
+        var r = t.request || {};
+        var action;
+        if (r.status === 'pending') {
+          action = '<div class="team-row"><span class="team-status ok">Solicitud enviada</span>' +
+            '<button class="team-link" data-act="cancel-request">Cancelar solicitud</button></div>' +
+            '<p class="team-note">' + esc('Cuando ' + t.owner_name + ' la apruebe verás tus metas, el ranking, tu rampa y los comentarios de coaching.') + '</p>';
+        } else if (r.status === 'rejected') {
+          action = '<div class="team-row"><span class="team-status bad">Solicitud rechazada</span>' +
+            '<button class="team-btn sm" data-act="request-join" data-domain="' + esc(t.domain) + '">Volver a solicitar</button></div>';
+        } else {
+          action = '<button class="team-btn primary" data-act="request-join" data-domain="' + esc(t.domain) + '">Solicitar unirme</button>';
+        }
+        return '<div class="team-block team-empty">' +
+          '<div class="team-kicker">' + esc('Tu empresa en Predictable · @' + t.domain) + '</div>' +
+          '<div class="team-title">' + esc(t.company) + '</div>' +
+          '<p class="team-p"><span>' + esc('Cuenta principal: ' + t.owner_name) + '</span> · <span>' + esc(t.members === 1 ? '1 persona en el equipo' : t.members + ' personas en el equipo') + '</span></p>' +
+          '<p class="team-note">Al unirte, la cuenta principal ve tu actividad y tus resultados (metas, ranking, rampa y reportes del AI Sales Coach). Tus créditos, listas y campañas siguen siendo tuyos.</p>' +
+          action + '</div>';
+      }).join('');
+    }
+    if (ov.can_create) {
+      return '<div class="team-block team-empty">' +
+        '<div class="team-kicker">' + esc('Equipo de @' + ov.my_domain) + '</div>' +
+        '<div class="team-title">Crea el equipo de tu empresa</div>' +
+        '<p class="team-p">' + esc('Quedarás como cuenta principal: verás el rendimiento de todo tu equipo. Cada persona con un email @' + ov.my_domain + ' verá tu equipo aquí y podrá solicitar unirse; tú apruebas o rechazas.') + '</p>' +
+        '<p class="team-note">Cada persona mantiene sus propios créditos, listas y campañas.</p>' +
+        '<label class="team-field"><span>Nombre de la empresa</span><input type="text" class="team-input" data-team-name maxlength="80" value="' + esc(ov.suggested_name || '') + '" placeholder="Ej.: Claro Perú"></label>' +
+        '<button class="team-btn primary" data-act="create-team">Crear equipo</button></div>';
+    }
+    if (ov.company && !ov.domain_ok) {
+      return '<div class="team-block team-empty">' +
+        '<div class="team-title">Todavía no estás en el equipo de ' + esc(ov.company) + '</div>' +
+        '<p class="team-p">Tu director o un admin de ' + esc(ov.company) + ' te agrega desde Equipo → Miembros. ' +
+        'Cuando lo haga verás tus metas, el ranking, tu rampa y sus comentarios de coaching.</p></div>';
+    }
+    if (!ov.domain_ok) {
+      return '<div class="team-block team-empty">' +
+        '<div class="team-title">Entra con el email de tu empresa</div>' +
+        '<p class="team-p">Los equipos se arman por dominio: las personas con el mismo email corporativo (por ejemplo, @tuempresa.com) se encuentran aquí y se unen a la cuenta principal. Con un email personal (Gmail, Hotmail…) o sin confirmar no se puede.</p>' +
+        '<p class="team-note">Si tu director ya armó el equipo por el nombre de la empresa, escríbela en Ajustes → Empresa y pídele que te agregue.</p>' +
+        '<button class="team-btn" data-act="settings">Abrir Ajustes</button></div>';
+    }
+    // Dominio corporativo, ya en la nómina de otra empresa (caso raro).
+    return '<div class="team-block team-empty"><div class="team-title">Ya estás en otro equipo</div>' +
+      '<p class="team-p">Pide a la cuenta principal de ese equipo que te quite para unirte a otro.</p></div>';
   }
 
   function body() { return document.getElementById('team-body'); }
@@ -231,7 +286,7 @@
     if (!el) return;
     if (isManager() && !roster().length && state.tab !== 'members') {
       el.innerHTML = '<div class="team-block team-empty"><div class="team-title">Arma tu equipo</div>' +
-        '<p class="team-p">Agrega a tus SDRs en Miembros. Solo aparecen las personas cuyo perfil dice «' + esc(state.ov.company) + '».</p>' +
+        '<p class="team-p">Agrega a tus SDRs en Miembros o aprueba las solicitudes de quienes tienen tu dominio.</p>' +
         '<button class="team-btn primary" data-tab="members">Ir a Miembros</button></div>';
       return;
     }
@@ -649,20 +704,36 @@
     } catch (e) { toast('No se borró: ' + (e.message || e), 'error'); }
   }
 
-  // ── Miembros (director) ──
+  // ── Miembros (director / cuenta principal) ──
   function renderMembers(el) {
     var ov = state.ov;
     var cands = ov.candidates || [];
-    el.innerHTML = '<div class="team-block">' +
+    var reqs = ov.requests || [];
+    var dom = ov.team && ov.team.domain;
+    var who = dom ? 'perfiles cuya empresa en Ajustes es «' + ov.company + '» o con un email @' + dom : 'perfiles cuya empresa en Ajustes es «' + ov.company + '»';
+    var reqHtml = reqs.length
+      ? '<div class="team-title">Solicitudes para unirse</div>' +
+        '<div class="team-table-wrap"><table class="team-table"><tbody>' + reqs.map(function (r) {
+          return '<tr><td class="name">' + esc(r.full_name || r.email || 'Sin nombre') + (r.email && r.full_name ? '<div class="team-tiny">' + esc(r.email) + '</div>' : '') + '</td>' +
+            '<td class="team-tiny">' + esc('Pidió unirse el ' + fmtDate(r.created_at)) + '</td>' +
+            '<td class="act"><button class="team-btn primary sm" data-act="approve" data-id="' + esc(r.id) + '">Aprobar</button> ' +
+            '<button class="team-link danger" data-act="reject" data-id="' + esc(r.id) + '">Rechazar</button></td></tr>';
+        }).join('') + '</tbody></table></div>'
+      : '';
+    var linkDomain = !ov.team && ov.can_create
+      ? '<div class="team-block team-banner"><span>' + esc('Abre tu equipo a todo @' + ov.my_domain + ': quien tenga ese email lo verá aquí y podrá solicitar unirse.') + '</span>' +
+        '<button class="team-btn sm" data-act="create-team">Abrir a mi dominio</button></div>'
+      : '';
+    el.innerHTML = '<div class="team-block">' + linkDomain + reqHtml +
       '<div class="team-title">Tu equipo</div>' +
-      '<p class="team-note">El equipo lo armas tú: solo aparecen perfiles cuya empresa en Ajustes es «' + esc(ov.company) + '». ' +
-      'Quien no esté en el equipo no ve el ranking ni los números de nadie. La fecha de inicio marca la semana 1 de su rampa.</p>' +
+      '<p class="team-note"><span>' + esc('El equipo lo armas tú: solo aparecen ' + who + '.') + '</span> <span>' +
+      'Quien no esté en el equipo no ve el ranking ni los números de nadie. Cada persona mantiene sus propios créditos. La fecha de inicio marca la semana 1 de su rampa.</span></p>' +
       (roster().length ? '<div class="team-table-wrap"><table class="team-table"><thead><tr><th>Persona</th><th>Rol</th><th>Inicio de la rampa</th><th></th></tr></thead><tbody>' +
         roster().map(function (m) {
           return '<tr><td class="name">' + esc(nameOf(m.user_id)) + (m.email && m.full_name ? '<div class="team-tiny">' + esc(m.email) + '</div>' : '') + '</td>' +
-            '<td>' + esc(roleLabel(m.role)) + '</td>' +
+            '<td>' + esc(m.is_owner ? 'Cuenta principal' : roleLabel(m.role)) + '</td>' +
             '<td><input type="date" class="team-date" data-start="' + esc(m.user_id) + '" value="' + esc(m.started_at || '') + '" max="' + esc(isoDay(Date.now() + 31 * 86400000)) + '" aria-label="Inicio de la rampa"></td>' +
-            '<td class="act"><button class="team-link danger" data-act="remove" data-id="' + esc(m.user_id) + '">Quitar</button></td></tr>';
+            '<td class="act">' + (m.is_owner ? '' : '<button class="team-link danger" data-act="remove" data-id="' + esc(m.user_id) + '">Quitar</button>') + '</td></tr>';
         }).join('') + '</tbody></table></div>' : '<p class="team-note">Todavía no agregaste a nadie.</p>') +
       '<div class="team-title sm">Personas de ' + esc(ov.company) + ' fuera del equipo</div>' +
       (cands.length ? '<div class="team-table-wrap"><table class="team-table"><tbody>' + cands.map(function (c) {
@@ -670,7 +741,9 @@
           '<td>' + esc(roleLabel(c.role)) + '</td><td class="team-tiny">En Predictable desde ' + esc(fmtDate(c.joined_at)) + '</td>' +
           '<td class="act"><button class="team-btn sm" data-act="add" data-id="' + esc(c.user_id) + '">Agregar</button></td></tr>';
       }).join('') + '</tbody></table></div>'
-        : '<p class="team-note">No hay más perfiles con la empresa «' + esc(ov.company) + '». Cada persona la escribe en Ajustes → Empresa, exactamente igual.</p>') +
+        : '<p class="team-note">' + esc(dom
+          ? 'Nadie más con un email @' + dom + ' o con la empresa «' + ov.company + '» entró a Predictable todavía. Cuando lo hagan, aparecerán aquí o te llegará su solicitud.'
+          : 'No hay más perfiles con la empresa «' + ov.company + '». Cada persona la escribe en Ajustes → Empresa, exactamente igual.') + '</p>') +
       '</div>';
   }
   function roleLabel(r) { r = String(r || '').toLowerCase(); return r === 'admin' ? 'Admin' : r === 'director' ? 'Director' : 'SDR'; }
@@ -711,6 +784,19 @@
     else if (act === 'comment') addComment(el.getAttribute('data-kind'), id, el);
     else if (act === 'listen-call') listenCall(id, el);
     else if (act === 'del-comment') { if (global.confirm('¿Borrar este comentario?')) deleteComment(id); }
+    else if (act === 'request-join') memberAction('team_request_join', { p_domain: el.getAttribute('data-domain') }, 'Solicitud enviada.', el);
+    else if (act === 'cancel-request') memberAction('team_cancel_request', {}, 'Solicitud cancelada.', el);
+    else if (act === 'approve') memberAction('team_decide_request', { p_request: id, p_approve: true }, 'Agregado al equipo.', el);
+    else if (act === 'reject') {
+      if (global.confirm('¿Rechazar esta solicitud? La persona no verá el equipo.')) memberAction('team_decide_request', { p_request: id, p_approve: false }, 'Solicitud rechazada.', el);
+    }
+    else if (act === 'create-team') {
+      var inp = shell().querySelector('[data-team-name]');
+      var name = inp ? inp.value.trim() : '';
+      if (inp && name.length < 2) { toast('Escribe el nombre de tu empresa.', 'error'); inp.focus(); return; }
+      state.tab = null;
+      memberAction('team_create_for_domain', { p_company: name || null }, 'Equipo creado. Ya eres la cuenta principal.', el);
+    }
     else if (act === 'add') memberAction('team_add_member', { p_user: id, p_started_at: null }, 'Agregado al equipo.', el);
     else if (act === 'remove') {
       if (global.confirm('¿Quitar a ' + nameOf(id) + ' del equipo? Sus metas se borran; sus datos y los comentarios quedan.')) {
@@ -803,7 +889,10 @@
       '.team-field{display:flex;flex-direction:column;gap:4px}',
       '.team-field.inline{flex-direction:row;align-items:center;gap:8px}',
       '.team-field>span{font-size:10.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--ink-4)}',
-      '.team-field select,.team-date,.team-num,.team-composer textarea{font:inherit;font-size:12.5px;color:var(--ink);background:var(--surface2);border:1px solid var(--hair-2);border-radius:var(--r-sm,8px);padding:6px 9px;box-sizing:border-box;min-width:0}',
+      '.team-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2);border-color:var(--accent)}',
+      '.team-input{max-width:360px;width:100%}',
+      '.team-empty .team-field{margin:4px 0 12px}',
+      '.team-field select,.team-input,.team-date,.team-num,.team-composer textarea{font:inherit;font-size:12.5px;color:var(--ink);background:var(--surface2);border:1px solid var(--hair-2);border-radius:var(--r-sm,8px);padding:6px 9px;box-sizing:border-box;min-width:0}',
       '.team-num{width:78px}',
       '.team-btn{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink);background:var(--surface2);border:1px solid var(--hair-2);border-radius:999px;padding:7px 14px;cursor:pointer}',
       '.team-btn.primary{background:var(--grad-ai,var(--accent));color:#fff;border-color:transparent}',
