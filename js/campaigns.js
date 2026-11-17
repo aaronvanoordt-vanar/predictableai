@@ -4652,6 +4652,12 @@
       return 'Mensaje enviado desde tu campaña de LinkedIn' + (pl.dripify_campaign_name ? ' «' + pl.dripify_campaign_name + '»' : '') + ' (Dripify no entrega el texto por API).';
     }
     if (pl.subject && msg.direction === 'out') return pl.subject;
+    if (msg.direction === 'in' && chanKey(msg.channel) === 'email' && msg.provider === 'apollo') {
+      // Apollo solo avisa que respondió: el texto se lee del Gmail conectado
+      // (campaign-run lo rellena solo, también las respuestas anteriores).
+      if (state.gmail && state.gmail.connected) return 'Respuesta recibida. Buscando el texto en tu Gmail… (si no aparece en unos minutos, revisa que sea el mismo buzón desde el que envías).';
+      return 'Respuesta recibida. Conecta el Gmail desde el que envías para ver el texto aquí.';
+    }
     return msg.direction === 'in' ? 'Respuesta recibida (el texto no está disponible aquí).' : 'Mensaje enviado (texto no guardado).';
   }
   // Estado de un saliente como en WhatsApp: reloj mientras se envía, un check

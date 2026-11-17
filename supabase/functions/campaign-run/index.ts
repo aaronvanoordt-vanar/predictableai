@@ -139,6 +139,9 @@ const PREPARE_BUDGET_MS = 90 * 1000;           // tiempo máximo del pase por co
 const EMAIL_SYNC_EVERY_MS = 15 * 60 * 1000;
 const EMAIL_SYNC_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 const EMAIL_SYNC_BATCH = 40;
+/** Respuestas por email sin texto: se reintenta leerlas de Gmail cada 30 min durante 30 días. */
+const EMAIL_BACKFILL_EVERY_MS = 30 * 60 * 1000;
+const EMAIL_BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -1817,6 +1820,79 @@ async function gmailInboundFor(ctx: Ctx, ev: Json): Promise<{ body: string; subj
   return await gmailReply(ctx, ev.user_id, null, outRow.contact_ref, outRow.sent_at ?? ev.created_at ?? null);
 }
 
+/**
+ * Rellena el texto de las respuestas por email que quedaron sin él.
+ *
+ * Apollo solo avisa que el lead respondió; el texto se lee del Gmail
+ * conectado en el momento de detectar la respuesta. Si el usuario conectó
+ * Gmail DESPUÉS (o el refresh falló ese minuto), la fila de la Bandeja quedaba
+ * para siempre en «Respuesta recibida (el texto no está disponible aquí)»,
+ * porque el envío ya estaba `apollo_done` y nadie volvía a buscarla
+ * (2026-11-17). Aquí se reintenta, solo para usuarios con Gmail conectado,
+ * cada 30 min por fila durante 30 días (o al instante con «Sincronizar todo»).
+ */
+async function backfillEmailReplyBodies(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
+  const db = ctx.db;
+  if (!gmail.googleCredentials()) return 0;
+  let accQ = db.from("gmail_accounts").select("user_id").eq("status", "connected");
+  if (opts.userId) accQ = accQ.eq("user_id", opts.userId);
+  const { data: accts } = await accQ.limit(200);
+  const userIds = (accts ?? []).map((a: Json) => String(a.user_id));
+  if (!userIds.length) return 0;
+  const since = new Date(ctx.now.getTime() - EMAIL_BACKFILL_WINDOW_MS).toISOString();
+  const checkedBefore = new Date(ctx.now.getTime() - EMAIL_BACKFILL_EVERY_MS).toISOString();
+  let q = db.from("inbox_messages")
+    .select("id, user_id, member_id, enrollment_id, campaign_id, contact_ref, provider_conversation_id, sent_at, created_at, payload")
+    .eq("provider", "apollo").eq("channel", "email").eq("direction", "in")
+    .is("body", null)
+    .in("user_id", userIds)
+    .gte("created_at", since);
+  if (!opts.force) q = q.or(`payload->>gmail_checked_at.is.null,payload->>gmail_checked_at.lt.${checkedBefore}`);
+  const { data: rows } = await q.order("created_at", { ascending: false }).limit(opts.force ? 60 : 25);
+  let filled = 0;
+  for (const row of (rows ?? []) as Json[]) {
+    const pl: Json = row.payload ?? {};
+    // Envío original: da el email del lead y desde cuándo buscar.
+    let contactEmail: string | null = row.contact_ref ?? null;
+    let sentAt: string | null = null;
+    let threadId: string | null = row.provider_conversation_id ?? null;
+    if (pl.emailer_message_id) {
+      const { data: outRow } = await db.from("inbox_messages").select("contact_ref, sent_at, provider_conversation_id")
+        .eq("provider", "apollo").eq("provider_message_id", String(pl.emailer_message_id)).eq("direction", "out").maybeSingle();
+      if (outRow) {
+        contactEmail = contactEmail ?? outRow.contact_ref ?? null;
+        sentAt = outRow.sent_at ?? null;
+        threadId = threadId ?? outRow.provider_conversation_id ?? null;
+      }
+    }
+    if (!contactEmail && row.member_id) {
+      const { data: mem } = await db.from("prospect_list_members").select("email").eq("id", row.member_id).maybeSingle();
+      contactEmail = mem?.email ?? null;
+    }
+    let found = await gmailReply(ctx, row.user_id, threadId, contactEmail, sentAt);
+    // El id de hilo de Apollo no siempre es el de Gmail: se prueba por remitente.
+    if (!found && threadId && contactEmail) found = await gmailReply(ctx, row.user_id, null, contactEmail, sentAt);
+    if (!found) {
+      await db.from("inbox_messages").update({ payload: { ...pl, gmail_checked_at: ctx.now.toISOString() } }).eq("id", row.id);
+      continue;
+    }
+    await db.from("inbox_messages").update({
+      body: found.body,
+      ...(found.at ? { sent_at: found.at } : {}),
+      payload: { ...pl, subject: found.subject ?? pl.subject ?? null, body_source: "gmail", gmail_checked_at: ctx.now.toISOString() },
+    }).eq("id", row.id);
+    filled++;
+    // Con el texto a la vista, «no me escribas» = baja, como al detectarla.
+    if (found.body && suppression.isOptOutText(found.body) && row.enrollment_id) {
+      const { data: en } = await db.from("campaign_enrollments").select("*").eq("id", row.enrollment_id).maybeSingle();
+      if (en && en.status !== "unsubscribed") {
+        await markEmailOptOut(ctx, en, "reply", { text: found.body, provider_message_id: pl.emailer_message_id ?? null, campaign_id: row.campaign_id, subject: found.subject ?? null });
+      }
+    }
+  }
+  return filled;
+}
+
 async function syncApolloEmail(ctx: Ctx, opts: SyncOpts = {}): Promise<number> {
   const db = ctx.db;
   const since = new Date(ctx.now.getTime() - EMAIL_SYNC_WINDOW_MS).toISOString();
@@ -1960,6 +2036,7 @@ Deno.serve(async (req) => {
     try { linkedin = await syncDripify(ctx, opts); } catch (e) { errors.linkedin = String((e as Error)?.message ?? e).slice(0, 200); console.error("[campaign-run] dripify sync (manual):", e); }
     try { linkedin += await syncUnipileRelations(ctx, opts); } catch (e) { errors.linkedin = String((e as Error)?.message ?? e).slice(0, 200); console.error("[campaign-run] unipile sync (manual):", e); }
     try { email = await syncApolloEmail(ctx, opts); } catch (e) { errors.email = String((e as Error)?.message ?? e).slice(0, 200); console.error("[campaign-run] apollo email sync (manual):", e); }
+    try { email += await backfillEmailReplyBodies(ctx, opts); } catch (e) { errors.email = String((e as Error)?.message ?? e).slice(0, 200); console.error("[campaign-run] email reply backfill (manual):", e); }
     return json({ ok: true, linkedin, email, errors });
   }
 
@@ -2007,6 +2084,7 @@ Deno.serve(async (req) => {
   try { synced += await syncUnipileRelations(ctx); } catch (e) { console.error("[campaign-run] unipile sync:", e); }
   let emailSynced = 0;
   try { emailSynced = await syncApolloEmail(ctx); } catch (e) { console.error("[campaign-run] apollo email sync:", e); }
+  try { emailSynced += await backfillEmailReplyBodies(ctx); } catch (e) { console.error("[campaign-run] email reply backfill:", e); }
   let receipts = 0;
   try { receipts = await reconcileReceiptsAll(ctx, loopStarted + 110_000); } catch (e) { console.error("[campaign-run] wati receipts:", e); }
   let metaChecked = 0;

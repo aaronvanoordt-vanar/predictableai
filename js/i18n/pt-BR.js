@@ -2763,6 +2763,8 @@ window.I18N_DICTS['pt-BR'] = {
   "Aquí ves el hilo completo del lead en todos los canales — lo enviado y lo recibido — y le respondes por email, WhatsApp o LinkedIn.": "Aqui você vê a conversa completa do lead em todos os canais — o que foi enviado e o que foi recebido — e responde por e-mail, WhatsApp ou LinkedIn.",
   "Quitó su reacción": "Removeu a reação",
   "Quitaste tu reacción": "Você removeu sua reação",
+  "Respuesta recibida. Buscando el texto en tu Gmail… (si no aparece en unos minutos, revisa que sea el mismo buzón desde el que envías).": "Resposta recebida. Buscando o texto no seu Gmail… (se não aparecer em alguns minutos, confira se é a mesma caixa de onde você envia).",
+  "Respuesta recibida. Conecta el Gmail desde el que envías para ver el texto aquí.": "Resposta recebida. Conecte o Gmail de onde você envia para ver o texto aqui.",
   "Respuesta recibida (el texto no está disponible aquí).": "Resposta recebida (o texto não está disponível aqui).",
   "Mensaje enviado (texto no guardado).": "Mensagem enviada (texto não salvo).",
   "No se envió": "Não enviado",
