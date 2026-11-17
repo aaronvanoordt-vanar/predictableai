@@ -7481,4 +7481,10 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "(Claude, recomendado)": "(Claude, recommended)",
   "No pudimos leer texto en este PDF (¿es escaneado o solo imágenes?). Prueba con «Pegar texto» o con un PDF exportado desde el documento original.": "We couldn't read any text in this PDF (is it scanned or only images?). Try «Paste text» or a PDF exported from the original document.",
   "No pudimos leer texto en este documento. Revisa que el texto pegado no esté vacío.": "We couldn't read any text in this document. Check that the pasted text isn't empty.",
+  "Lead o lista de esta reunión": "Lead or list for this meeting",
+  "Selecciona el lead o la lista de esta reunión…": "Select the lead or list for this meeting…",
+  "Selecciona el lead o la lista de esta reunión antes de iniciar el coach.": "Select the lead or list for this meeting before starting the coach.",
+  "Toda la lista «{0}» — {1} personas": "The whole list «{0}» — {1} people",
+  "Toda la lista «{0}» — 1 persona": "The whole list «{0}» — 1 person",
+  "Lista «{0}»": "List «{0}»",
 });

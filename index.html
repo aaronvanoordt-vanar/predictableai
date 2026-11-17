@@ -2678,7 +2678,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 
       <!-- Selector de lead (obligatorio): se llena desde las Listas guardadas de Prospección -->
       <div id="mc-lead-block" style="max-width:440px;margin-bottom:24px">
-        <label for="mc-lead-select" style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Lead de esta reunión</label>
+        <label for="mc-lead-select" style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Lead o lista de esta reunión</label>
         <select id="mc-lead-select" style="width:100%">
           <option value="">Cargando tus leads…</option>
         </select>
@@ -2767,7 +2767,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
       <div id="mc-brief-content" style="display:none;padding:0 18px 18px">
         <div style="padding:14px 0">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">QUIÉN</div>
-          <div id="mc-brief-who" class="notranslate" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
+          <div id="mc-brief-who" class="notranslate" style="font-size:13px;color:var(--text2);line-height:1.6;white-space:pre-line"></div>
         </div>
         <div id="mc-brief-known-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">LO QUE YA SABES</div>
@@ -3527,7 +3527,9 @@ function loadCoachBrief(ctx) {
   const metaEl = document.getElementById('mc-prospect-meta');
   if (nameEl && ctx && ctx.name) nameEl.textContent = ctx.name;
   if (metaEl && ctx) {
-    const parts = [ctx.title, ctx.company].filter(Boolean);
+    const parts = ctx.group
+      ? ['Lista «' + (ctx.list_name || '') + '»', ctx.company].filter(Boolean)
+      : [ctx.title, ctx.company].filter(Boolean);
     metaEl.textContent = parts.length ? parts.join(' · ') : 'Lead seleccionado para esta reunión';
   }
   const ph = document.getElementById('mc-brief-placeholder');
@@ -3572,7 +3574,15 @@ function coachProspectPayload(ctx) {
     // La oportunidad del CRM ligada a este lead (etapa, monto y notas del vendedor).
     opportunity: ctx.opportunity || null,
     risks: Array.isArray(ctx.risks) ? ctx.risks : [],
-    questions: Array.isArray(ctx.questions) ? ctx.questions : []
+    questions: Array.isArray(ctx.questions) ? ctx.questions : [],
+    // Reunión con una lista completa: quiénes participan (sales-coach pasa a
+    // todos a «Reunión tomada» al cerrar y el reporte los nombra).
+    ...(ctx.group && Array.isArray(ctx.participants) ? {
+      group: true,
+      list_name: ctx.list_name || '',
+      participants: ctx.participants.map(p => ({ id: p.id, name: p.name, title: p.title, company: p.company })),
+      member_ids: Array.isArray(ctx.member_ids) ? ctx.member_ids : ctx.participants.map(p => p.id)
+    } : {})
   };
 }
 
@@ -3583,7 +3593,7 @@ function iniciarCoachLive(prospectCtx) {
   // Sin lead no hay sesión: el reporte y el brief dependen del contacto elegido.
   if (!ctx || !(ctx.id || ctx.name)) {
     if (window.uiHelpers && window.uiHelpers.toast) {
-      window.uiHelpers.toast('Selecciona el lead de esta reunión antes de iniciar el coach.', 'warn');
+      window.uiHelpers.toast('Selecciona el lead o la lista de esta reunión antes de iniciar el coach.', 'warn');
     }
     setTimeout(function () {
       const sel = document.getElementById('mc-lead-select');

@@ -1685,6 +1685,62 @@
     };
   }
 
+  // Reunión con varias personas (2026-11-17, pedido del dueño): el coach
+  // también puede elegir una LISTA completa. Cada persona aporta solo sus
+  // datos (buildCoachLeadContext) y aquí se juntan con su nombre delante para
+  // que el coach sepa de quién es cada nota, riesgo o pregunta. `id` = el
+  // participante principal (el primero con oportunidad del CRM, si no el
+  // primero): así coach_meetings.prospect_id y los triggers que lo leen siguen
+  // funcionando; `member_ids` lleva a todos para que sales-coach los pase a
+  // «Reunión tomada» al cerrar. Tope COACH_GROUP_MAX personas.
+  const COACH_GROUP_MAX = 12;
+  function buildCoachGroupContext(list, members, oppByMember) {
+    const opps = oppByMember || {};
+    const people = (members || []).slice(0, COACH_GROUP_MAX).map(function (m) {
+      return buildCoachLeadContext(m, opps[m.id]);
+    });
+    if (!people.length) return null;
+    const primary = people.find(function (c) { return c.opportunity; }) || people[0];
+    const ordered = people; // el orden de la lista; el principal solo define `id`
+    const names = ordered.map(function (c) { return c.name || '(sin nombre)'; });
+    const companies = Array.from(new Set(ordered.map(function (c) { return c.company; }).filter(Boolean)));
+    const tag = function (c, text) { return (c.name || '(sin nombre)') + ': ' + text; };
+    const notes = [];
+    const handoff = [];
+    const risks = [];
+    const questions = [];
+    const oppTexts = [];
+    ordered.forEach(function (c) {
+      if (c.notes) notes.push(tag(c, c.notes.slice(0, 400)));
+      if (c.handoff_summary) handoff.push(tag(c, c.handoff_summary.slice(0, 400)));
+      if (c.opportunity && oppTexts.indexOf(c.opportunity) === -1) oppTexts.push(c.opportunity.slice(0, 600));
+      c.risks.forEach(function (r) { risks.push(tag(c, r)); });
+      c.questions.slice(0, 3).forEach(function (q) { questions.push(tag(c, q)); });
+    });
+    const listName = (list && list.name) || 'Lista';
+    return {
+      id: primary.id,
+      group: true,
+      list_id: list && list.id != null ? String(list.id) : '',
+      list_name: listName,
+      name: names.length <= 3 ? names.join(', ') : names.slice(0, 2).join(', ') + ' y ' + (names.length - 2) + ' más',
+      title: '',
+      company: companies.join(', '),
+      brief_who: ordered.map(function (c) {
+        return '• ' + (c.name || '(sin nombre)') + (c.title ? ' · ' + c.title : '') + (c.company ? ' en ' + c.company : '');
+      }).join('\n'),
+      participants: ordered.map(function (c) {
+        return { id: c.id, name: c.name, title: c.title, company: c.company };
+      }),
+      member_ids: ordered.map(function (c) { return c.id; }),
+      notes: notes.length ? notes.join('\n').slice(0, 2400) : null,
+      handoff_summary: handoff.length ? handoff.join('\n').slice(0, 1600) : null,
+      opportunity: oppTexts.length ? oppTexts.join('\n\n').slice(0, 1600) : null,
+      risks: risks.slice(0, 8),
+      questions: questions.slice(0, 8),
+    };
+  }
+
   // Texto de la oportunidad para el coach: cabecera (nombre, etapa, monto,
   // cierre) + las notas tal como las escribió el vendedor. Sin oportunidad, null.
   function opportunityText(opp) {
@@ -1732,7 +1788,7 @@
   // el ángulo y la preparación viejos: se reduce a lo que hoy usa el coach.
   function cleanCoachContext(c) {
     if (!c || typeof c !== 'object') return null;
-    return {
+    const out = {
       id: c.id != null ? String(c.id) : '',
       name: c.name || '',
       title: c.title || '',
@@ -1744,6 +1800,17 @@
       risks: Array.isArray(c.risks) ? c.risks.filter(function (x) { return typeof x === 'string'; }) : [],
       questions: Array.isArray(c.questions) ? c.questions.filter(function (x) { return typeof x === 'string'; }) : [],
     };
+    // Reunión con una lista completa: se conserva quiénes participan.
+    if (c.group && Array.isArray(c.participants)) {
+      out.group = true;
+      out.list_id = c.list_id != null ? String(c.list_id) : '';
+      out.list_name = typeof c.list_name === 'string' ? c.list_name : '';
+      out.participants = c.participants.filter(function (x) { return x && typeof x === 'object'; }).slice(0, COACH_GROUP_MAX).map(function (x) {
+        return { id: String(x.id || ''), name: x.name || '', title: x.title || '', company: x.company || '' };
+      });
+      out.member_ids = out.participants.map(function (x) { return x.id; }).filter(Boolean);
+    }
+    return out;
   }
 
   async function saveCoachContext(memberId, ctx) {
@@ -1871,6 +1938,7 @@
     addRegistryCompaniesToList,
     saveOutreachPlaybookPrefs,
     buildCoachLeadContext,
+    buildCoachGroupContext,
     fetchLeadOpportunities,
     saveCoachContext,
     fetchLatestCoachContext,
