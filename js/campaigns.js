@@ -3600,7 +3600,6 @@
       } },
       { label: 'Volver a conectar', onClick: function (m) { m.close(); openLinkedInWizard('native'); } },
     ];
-    if (isConn(state.dripify)) actions.push({ label: 'Ver Dripify', onClick: function (m) { m.close(); openChannelDetails('linkedin', { dripify: true }); } });
     actions.push({ label: 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('linkedin', 'unipile', m); } });
     actions.push({ label: 'Cerrar' });
     api.setActions(actions);
