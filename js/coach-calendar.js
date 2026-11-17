@@ -178,7 +178,11 @@
         var rows = await allMembers();
         for (var i = 0; i < rows.length && !ctx; i++) {
           var em = String(rows[i].email || '').toLowerCase();
-          if (em && emails.indexOf(em) !== -1) ctx = global.prospectingData.buildCoachLeadContext(rows[i]);
+          if (em && emails.indexOf(em) !== -1) {
+            var pdx = global.prospectingData;
+            var opps = pdx.fetchLeadOpportunities ? await pdx.fetchLeadOpportunities([rows[i].id]) : {};
+            ctx = pdx.buildCoachLeadContext(rows[i], opps[rows[i].id]);
+          }
         }
       }
     } catch (e) { console.warn('[coach-calendar] no se pudo buscar el lead:', e && e.message); }

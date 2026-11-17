@@ -14,6 +14,7 @@
 (function (global) {
   let membersById = {};   // option value (member id) → contexto listo para el coach
   let wired = false;
+  let oppByMember = {};   // member id → oportunidad del CRM (contacto principal)
   let loading = null;     // promesa en curso para no duplicar cargas concurrentes
 
   function pd() { return global.prospectingData; }
@@ -61,6 +62,8 @@
 
   async function fetchAllMembers() {
     const lists = await pd().fetchLists();
+    // Oportunidades del CRM ligadas a un lead: sus notas entran al contexto.
+    oppByMember = pd().fetchLeadOpportunities ? await pd().fetchLeadOpportunities() : {};
     const perList = await Promise.all(lists.map(function (l) {
       return pd().fetchMembers(l.id).catch(function (e) {
         console.warn('[coach-picker] lista "' + l.name + '":', e.message);
@@ -87,7 +90,7 @@
       const og = document.createElement('optgroup');
       og.label = g.list.name;
       g.members.forEach(function (m) {
-        const ctx = pd().buildCoachLeadContext(m);
+        const ctx = pd().buildCoachLeadContext(m, oppByMember[m.id]);
         membersById[ctx.id] = ctx;
         const opt = document.createElement('option');
         opt.value = ctx.id;

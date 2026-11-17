@@ -3534,7 +3534,7 @@ function loadCoachBrief(ctx) {
 
   const knownSec = document.getElementById('mc-brief-known-sec');
   const knownEl = document.getElementById('mc-brief-known');
-  const known = [ctx.notes, ctx.handoff_summary].filter(Boolean).join('\n\n');
+  const known = [ctx.notes, ctx.opportunity, ctx.handoff_summary].filter(Boolean).join('\n\n');
   if (knownSec) knownSec.style.display = known ? 'block' : 'none';
   if (knownEl) knownEl.textContent = known;
 
@@ -3561,6 +3561,8 @@ function coachProspectPayload(ctx) {
     title: ctx.title,
     notes: ctx.notes || null,
     handoff_summary: ctx.handoff_summary || null,
+    // La oportunidad del CRM ligada a este lead (etapa, monto y notas del vendedor).
+    opportunity: ctx.opportunity || null,
     risks: Array.isArray(ctx.risks) ? ctx.risks : [],
     questions: Array.isArray(ctx.questions) ? ctx.questions : []
   };
