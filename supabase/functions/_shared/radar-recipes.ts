@@ -20,10 +20,12 @@
 
 import { countryLabelEs } from "./radar-geo.ts";
 import { normalizeDetector, type DetectorKind, type NormalizedDetector } from "./radar-plan.ts";
+import { TELCO_RECIPES } from "./radar-recipes-telco.ts";
 
 export type RecipeCategory =
   | "whatsapp" | "meta_ads" | "marketplaces" | "payments_logistics"
-  | "marketing_crm" | "web" | "it_compliance" | "expansion" | "talent" | "registries";
+  | "marketing_crm" | "web" | "it_compliance" | "expansion" | "talent" | "registries"
+  | "telco_pain" | "telco_sites" | "telco_digital" | "telco_verticals" | "telco_public";
 
 export const RECIPE_CATEGORIES: { id: RecipeCategory; label: string }[] = [
   { id: "whatsapp", label: "WhatsApp y conversación" },
@@ -36,6 +38,12 @@ export const RECIPE_CATEGORIES: { id: RecipeCategory; label: string }[] = [
   { id: "expansion", label: "Crecimiento y expansión" },
   { id: "talent", label: "Talento y liderazgo" },
   { id: "registries", label: "Registros públicos" },
+  // Conectividad para empresas (radar-recipes-telco.ts).
+  { id: "telco_pain", label: "Telecom: cortes y proveedor actual" },
+  { id: "telco_sites", label: "Telecom: sedes y aperturas" },
+  { id: "telco_digital", label: "Telecom: nube y operación digital" },
+  { id: "telco_verticals", label: "Telecom: sectores críticos" },
+  { id: "telco_public", label: "Telecom: licitaciones y Estado" },
 ];
 
 export interface RadarRecipe {
@@ -66,7 +74,7 @@ const FIN_TITLES = ["Chief Financial Officer", "Finance Manager", "Ecommerce Man
 const HR_TITLES = ["Human Resources Manager", "Head of Talent Acquisition", "Chief People Officer", "Recruiting Manager"];
 const CEO_TITLES = ["Chief Executive Officer", "Founder", "General Manager", "Chief Operating Officer"];
 
-export const RADAR_RECIPES: RadarRecipe[] = [
+const GENERAL_RECIPES: RadarRecipe[] = [
   // ── WhatsApp y conversación ───────────────────────────────────────────────
   { id: "wa_manual", category: "whatsapp", kind: "site_probe", weight: 80,
     name: "Atiende WhatsApp a mano",
@@ -539,6 +547,23 @@ export const RADAR_RECIPES: RadarRecipe[] = [
     config: { event: "size_change", sizes: ["small", "medium", "large"] } },
 ];
 
+export const RADAR_RECIPES: RadarRecipe[] = [...GENERAL_RECIPES, ...TELCO_RECIPES];
+
+/**
+ * Recetas de un sector vendedor concreto: el planificador solo las recibe si
+ * el contexto del vendedor habla de ese sector (son ~150 y no le sirven a
+ * quien vende otra cosa). En la biblioteca de la UI están siempre.
+ */
+const SELLER_VERTICALS: { prefix: string; match: RegExp }[] = [
+  { prefix: "telco_", match: /telecom|\btelco\b|internet (dedicado|empresarial|corporativo|para empresas)|conectividad|fibra [oó]ptica|banda ancha|sd-?wan|\bmpls\b|enlaces? (de datos|dedicados?)|\bISP\b|operador (m[oó]vil|de telefon[ií]a)|telefon[ií]a (ip|fija|m[oó]vil|corporativa)/i },
+];
+/** De un sector, al prompt solo van las de más peso: el resto se agrega a mano desde la biblioteca. */
+const VERTICAL_PROMPT_MIN_WEIGHT = 75;
+export function recipeForSeller(r: RadarRecipe, sellerText: string): boolean {
+  const v = SELLER_VERTICALS.find((x) => r.category.startsWith(x.prefix));
+  return !v || (r.weight >= VERTICAL_PROMPT_MIN_WEIGHT && v.match.test(sellerText || ""));
+}
+
 // ── Plantillas de consultas ─────────────────────────────────────────────────
 
 const ML_SITE: Record<string, string> = {
@@ -616,9 +641,13 @@ export function buildRecipeDetector(recipe: RadarRecipe, ctx: { countries: strin
   });
 }
 
-/** Lista compacta para el prompt del planificador: id, método y config exacta. */
-export function recipesPromptBlock(available: (kind: DetectorKind) => boolean): string {
-  const lines = RADAR_RECIPES.filter((r) => available(r.kind)).map((r) =>
+/**
+ * Lista compacta para el prompt del planificador: id, método y config exacta.
+ * `sellerText` = lo que el vendedor dice de sí mismo (contexto + prompt): las
+ * recetas de un sector solo entran si el vendedor es de ese sector.
+ */
+export function recipesPromptBlock(available: (kind: DetectorKind) => boolean, sellerText = ""): string {
+  const lines = RADAR_RECIPES.filter((r) => available(r.kind) && recipeForSeller(r, sellerText)).map((r) =>
     `- [${r.kind}] ${r.name} — for: ${r.for_who} — config: ${JSON.stringify(r.config)}`);
   return `\n\n=== PROVEN DETECTOR RECIPES (copy and adapt; placeholders {country} {industry} {ml_site} {amazon_site} are filled automatically) ===\n` +
     `Prefer a concrete recipe whose "for" matches what the seller sells over a vague news query. Adapt rules/keywords/titles to the seller. You may combine probe keys differently from these examples.\n` +

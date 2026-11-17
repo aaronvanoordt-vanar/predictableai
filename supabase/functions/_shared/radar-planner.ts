@@ -34,12 +34,12 @@ export function kindAvailable(kind: DetectorKind, av: Availability): boolean {
   return KIND_META[kind].requires.every((r: Requirement) => av[r]);
 }
 
-function availabilityBlock(av: Availability): string {
+function availabilityBlock(av: Availability, sellerText = ""): string {
   const ok = DETECTOR_KINDS.filter((k) => isPlannerKind(k) && kindAvailable(k, av));
   const ko = DETECTOR_KINDS.filter((k) => isPlannerKind(k) && !kindAvailable(k, av));
   return `\n\n=== AVAILABLE DETECTOR KINDS ===\nUse ONLY these kinds: ${ok.join(", ")}.` +
     (ko.length ? `\nNOT available for this account right now (do not propose them): ${ko.join(", ")}.` : "") +
-    recipesPromptBlock((k) => kindAvailable(k, av));
+    recipesPromptBlock((k) => kindAvailable(k, av), sellerText);
 }
 
 const PLAN_SYSTEM = `You are the "Radar" strategist of a B2B sales-intelligence platform. Given a seller's company context (and, when present, what their Intelligence Hub says the market is doing), design a PLAN OF BUYING SIGNALS: a set of DETECTORS, each a different, concrete, observable methodology that finds companies that need this seller RIGHT NOW.
@@ -98,7 +98,7 @@ export async function generatePlan(opts: {
     (opts.hubText ? "\n\n" + opts.hubText : "") +
     signalsRule(signals) +
     (opts.customPrompt ? `\n\n=== TARGET DESCRIPTION (from the seller — ground truth) ===\n${opts.customPrompt}` : "") +
-    availabilityBlock(opts.availability) +
+    availabilityBlock(opts.availability, opts.ctx.text + " " + (opts.customPrompt || "")) +
     `\n\nTarget countries from the context: ${opts.ctx.targets.countries.join(", ") || "(none declared — infer from the seller's country)"}.` +
     `\nToday is ${new Date().toISOString().slice(0, 10)}. Return the JSON now.`;
   const res = await callLLM({
@@ -171,7 +171,7 @@ export async function detectorsFromHub(opts: {
   const user = opts.ctx.text + "\n\n" + opts.hubText +
     `\n\n=== EXISTING DETECTORS (do not duplicate) ===\n` +
     opts.existing.map((d) => `- [${d.kind}] ${d.name}`).join("\n") +
-    availabilityBlock(opts.availability) +
+    availabilityBlock(opts.availability, opts.ctx.text) +
     `\n\nTarget countries: ${opts.ctx.targets.countries.join(", ") || "(from context)"}. Return the JSON now.`;
   const res = await callLLM({
     engine: opts.engine, system: HUB_SYSTEM, user, maxTokens: 3500,
