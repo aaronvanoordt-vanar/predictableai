@@ -1331,7 +1331,7 @@
     const total = L.recipes.length;
     if (!L.open) {
       return '<div class="card rl-lib-cta"><div><div class="rl-plan-t">Biblioteca de detectores</div>' +
-        '<div class="rl-hero-s">Más de 70 señales listas que van más allá de Apollo: leemos el sitio y el DNS de cada empresa (Meta Business Manager, WhatsApp sin plataforma o con un bot rígido, tiendas en Mercado Libre y Amazon, pasarelas de pago, email marketing, DMARC…) y buscamos su huella pública en internet. Se agregan con un clic, sin costo extra de IA.</div></div>' +
+        '<div class="rl-hero-s">Más de 270 señales listas que van más allá de Apollo: leemos el sitio y el DNS de cada empresa (Meta Business Manager, WhatsApp sin plataforma o con un bot rígido, tiendas en Mercado Libre y Amazon, pasarelas de pago, email marketing, DMARC…) y buscamos su huella pública en internet. Incluye cerca de 200 para quien vende conectividad y telecomunicaciones a empresas. Se agregan con un clic, sin costo extra de IA.</div></div>' +
         '<button class="btn btn-ghost" data-act="lib-open">Explorar biblioteca</button></div>';
     }
     let h = '<div class="card rl-lib">' +

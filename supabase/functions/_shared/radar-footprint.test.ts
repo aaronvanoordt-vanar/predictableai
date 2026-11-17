@@ -5,7 +5,7 @@ import {
   TECH_GROUPS, TECH_RULES, brandLabel, detectTech, evaluateProbeRules, isTechKey, probeHeadline, probeNeeds,
 } from "./site-probe.ts";
 import { DETECTOR_KINDS, KIND_META, PLAN_JSON_SPEC, normalizeDetector, signalFingerprint } from "./radar-plan.ts";
-import { RADAR_RECIPES, RECIPE_CATEGORIES, buildRecipeDetector, expandQueries, fillDetectorPlaceholders } from "./radar-recipes.ts";
+import { RADAR_RECIPES, RECIPE_CATEGORIES, buildRecipeDetector, expandQueries, fillDetectorPlaceholders, recipesPromptBlock } from "./radar-recipes.ts";
 import { minCadenceHours, radarDetectorMonthCost } from "./credit-costs.ts";
 
 const page = (body: string, head = "") =>
@@ -201,4 +201,73 @@ Deno.test("espejos: js/radar-live.js, js/intel-hub-cadence-tabs.js y el CHECK de
   for (const k of DETECTOR_KINDS) assert(new RegExp(`\\b${k}:`).test(mka), `MKA_KIND_LABEL sin ${k}`);
   const mig = await Deno.readTextFile(new URL("../../migrations/20261018170000_champion_watch.sql", import.meta.url));
   for (const k of DETECTOR_KINDS) assert(mig.includes(`'${k}'`), `CHECK sin ${k}`);
+});
+
+// ── conectividad y telecom (2026-11-17) ─────────────────────────────────────
+
+Deno.test("huellas de conectividad: lo que dice el sitio y el DNS, sin falsos positivos obvios", () => {
+  const has = (html: string, key: string) => detectTech(page(html)).includes(key);
+  assert(has(`<p>Tel: (55) 5555-1234 &nbsp; Fax: (55) 5555-1235</p>`, "fax_number"));
+  assert(!has(`<p>Envíanos tus faxes de felicitación</p>`, "fax_number"));
+  assert(has(`<p>Conmutador: 55 1234 5678 ext. 104</p>`, "pbx_extensions"));
+  assert(!has(`<p>Consulta el anexo 2 del contrato</p>`, "pbx_extensions"));
+  assert(has(`<p>Llámanos sin costo al 01 800 123 4567</p>`, "toll_free_line"));
+  assert(has(`<p>Línea gratuita 0800-12345</p>`, "toll_free_line"));
+  assert(has(`<p>Nuestro contact center atiende de lunes a sábado</p>`, "call_center"));
+  assert(has(`<a href="mailto:ventas.ferreteria@gmail.com">Escríbenos</a>`, "free_email_contact"));
+  assert(!has(`<a href="mailto:ventas@ferreteria.com">Escríbenos</a>`, "free_email_contact"));
+  assert(has(`<a href="https://ejemplo.com:2096">Correo</a>`, "webmail_link"));
+  assert(has(`<a href="/correo">Webmail</a>`, "webmail_link"));
+  assert(has(`<a href="/login">Portal de clientes</a>`, "client_portal"));
+  assert(has(`<p>Atención las 24 horas, los 365 días del año</p>`, "always_on"));
+  assert(has(`<li>WiFi gratis en todas las habitaciones</li>`, "guest_wifi"));
+  assert(!has(`<p>Vendemos routers wifi</p>`, "guest_wifi"));
+  assert(has(`<a href="/campus">Campus virtual</a>`, "virtual_campus"));
+  assert(has(`<p>Agenda tu videoconsulta con un especialista</p>`, "telehealth"));
+  assert(has(`<p>Sigue la transmisión en vivo</p>`, "live_streaming"));
+  assert(has(`<p>Rastreo satelital de tu flota en tiempo real</p>`, "gps_tracking"));
+  assert(has(`<p>Central de monitoreo y cámaras de seguridad</p>`, "video_surveillance"));
+  assert(has(`<p>Trabajo híbrido para todo el equipo</p>`, "remote_work"));
+  assert(has(`<p>Más de 120 sucursales en todo el país</p>`, "many_locations"));
+  assert(has(`<p>Presencia en 14 ciudades</p>`, "many_locations"));
+  assert(!has(`<p>Más de 20 años de experiencia</p>`, "many_locations"));
+  assert(has(`<a href="/facturacion">Factura tu ticket</a>`, "online_billing_portal"));
+  assert(has(`<p>Servidores dedicados y nube privada</p>`, "datacenter_hosting"));
+  assert(has(`<a href="https://acme.statuspage.io">Estado</a>`, "status_page"));
+  assert(has(`<script src="/cdn-cgi/scripts/7d0fa10a/cloudflare-static/email-decode.min.js"></script>`, "cdn_waf"));
+
+  const dns = (t: string) => detectTech("", t);
+  assert(dns(`MX 10 mail.prodigy.net.mx.`).includes("isp_hosted_email"));
+  assert(!dns(`MX 10 aspmx.l.google.com.`).includes("isp_hosted_email"));
+  assert(!dns(`MX 10 mail.claroscuro.com.`).includes("isp_hosted_email"));
+  assert(dns(`MX 10 mxa-00123.gslb.pphosted.com.`).includes("email_security_gateway"));
+  assert(dns(`TXT "slack-domain-verification=abc"`).includes("slack"));
+  assert(dns(`TXT "teamviewer-sso-verification=abc"`).includes("teamviewer"));
+  assert(dns(`TXT "cisco-ci-domain-verification=abc"`).includes("webex"));
+  assert(evaluateProbeRules(dns(`TXT "ZOOM_verify_abc"`), { must_have: ["any_video_conf"], must_not_have: [] }));
+  assertEquals(probeNeeds({ must_have: ["any_remote_access"], must_not_have: [] }), { html: false, dns: true });
+});
+
+Deno.test("recetas de telecom: más de 100, en sus cinco familias y solo para quien vende conectividad", () => {
+  const telco = RADAR_RECIPES.filter((r) => r.category.startsWith("telco_"));
+  assert(telco.length >= 100, `solo ${telco.length} recetas de telecom`);
+  for (const c of ["telco_pain", "telco_sites", "telco_digital", "telco_verticals", "telco_public"]) {
+    assert(telco.filter((r) => r.category === c).length >= 15, c);
+  }
+  for (const r of telco) {
+    assert(r.id.startsWith("tel_") && /^[a-z0-9_]{2,40}$/.test(r.id), r.id);
+    assert(r.rationale.length <= 400, `${r.id}: rationale largo`);
+    assert(r.decision_maker_titles.length > 0 && r.decision_maker_titles.length <= 8, r.id);
+    for (const q of (r.config.queries as string[] | undefined) || []) assert(q.length <= 200, `${r.id}: consulta de ${q.length}`);
+    for (const t of (r.config.job_titles as string[] | undefined) || []) assert(t.length <= 80, r.id);
+    assert(((r.config.job_titles as string[] | undefined) || []).length <= 10, r.id);
+  }
+  // El planificador solo las recibe si el vendedor es de telecomunicaciones.
+  const all = () => true;
+  const other = recipesPromptBlock(all, "Vendemos un chatbot de WhatsApp con IA para retail");
+  const claro = recipesPromptBlock(all, "Claro Empresas: internet dedicado y enlaces de datos para empresas");
+  assert(!other.includes("Caída masiva de un proveedor de internet"));
+  assert(other.includes("Atiende WhatsApp a mano"));
+  assert(claro.includes("Caída masiva de un proveedor de internet"));
+  assert(claro.includes("Atiende WhatsApp a mano"));
 });

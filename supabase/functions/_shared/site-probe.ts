@@ -25,7 +25,7 @@ export type TechCategory =
   | "whatsapp" | "chatbot" | "chat"
   | "marketplace" | "delivery" | "app" | "ecommerce" | "payments" | "shipping"
   | "email_marketing" | "reviews" | "crm" | "booking" | "recruiting" | "consent"
-  | "cms" | "email_infra" | "saas" | "site";
+  | "cms" | "email_infra" | "saas" | "site" | "network";
 
 export interface TechRule {
   key: string;
@@ -51,6 +51,7 @@ export const CATEGORY_LABEL: Record<TechCategory, string> = {
   booking: "Agenda en línea", recruiting: "Reclutamiento", consent: "Cookies y privacidad",
   cms: "Sitio web", email_infra: "Correo del dominio", saas: "Herramientas verificadas",
   site: "Contenido del sitio",
+  network: "Conectividad y operación",
 };
 
 /** Enlace (href) a un dominio, con o sin subdominio. `dom` es un fragmento de regex. */
@@ -320,6 +321,12 @@ export const TECH_RULES: TechRule[] = [
     dns: [/^DMARC\s+"?v=DMARC1[^\n]*;\s*p=(quarantine|reject)/im] },
   { key: "email_sending_service", label: "Envío masivo de correo (SendGrid, Mailgun, Amazon SES)", category: "email_infra",
     dns: [/^TXT\s+"?v=spf1[^\n]*(sendgrid\.net|mailgun\.org|amazonses\.com|sparkpostmail\.com|mailjet\.com)/im] },
+  // El MX apunta al correo que da un operador de telecomunicaciones (el dominio
+  // del operador, no su nombre suelto: "claro" a secas matchearía de más).
+  { key: "isp_hosted_email", label: "Correo alojado con un operador de telecom", category: "email_infra",
+    dns: [/^MX\s+\d+\s+\S*(prodigy\.net\.mx|telmex\.(com|net)|infinitummail\.com|telefonica\.|movistar\.|terra\.(com|cl|es)|une\.net\.co|etb\.net\.co|epm\.net\.co|tigo\.com|entelchile\.net|entel\.(cl|pe|bo)|vtr\.net|gtdinternet\.com|gtd\.cl|telecom\.com\.ar|fibertel\.com\.ar|arnet\.com\.ar|speedy\.com\.(ar|pe)|antel\.com\.uy|adinet\.com\.uy|cantv\.net|embratel\.|uol\.com\.br|claro\.(com|net)\.[a-z]{2}|cnt\.(gob|com)\.ec|andinanet\.net|ice\.co\.cr|racsa\.co\.cr|cwpanama\.net|tricom\.net|codetel\.net\.do)/im] },
+  { key: "email_security_gateway", label: "Filtro de correo empresarial (Proofpoint, Mimecast, Barracuda…)", category: "email_infra",
+    dns: [/^MX\s+\d+\s+\S*(pphosted\.com|mimecast\.com|barracudanetworks\.com|iphmx\.com|mailcontrol\.com|messagelabs\.com|trendmicro\.(com|eu)|hornetsecurity\.com|sophos\.com|fireeyecloud\.com|mx\.cloudflare\.net)/im] },
 
   // ── Herramientas que verificaron el dominio (DNS / meta) ─────────────────
   { key: "google_search_console", label: "Google Search Console", category: "saas",
@@ -329,6 +336,11 @@ export const TECH_RULES: TechRule[] = [
   { key: "adobe", label: "Adobe (cuentas de empresa)", category: "saas", dns: [/^TXT\s+"?adobe-idp-site-verification=/im] },
   { key: "apple_business", label: "Apple (dominio verificado)", category: "saas", dns: [/^TXT\s+"?apple-domain-verification=/im] },
   { key: "zoom", label: "Zoom (cuenta de empresa)", category: "saas", dns: [/^TXT\s+"?ZOOM_verify_/im] },
+  { key: "webex", label: "Cisco Webex (cuenta de empresa)", category: "saas", dns: [/^TXT\s+"?(webexdomainverification|cisco-ci-domain-verification)/im] },
+  { key: "slack", label: "Slack (dominio verificado)", category: "saas", dns: [/^TXT\s+"?slack-domain-verification=/im] },
+  { key: "dropbox", label: "Dropbox (cuenta de empresa)", category: "saas", dns: [/^TXT\s+"?dropbox-domain-verification=/im] },
+  { key: "teamviewer", label: "TeamViewer (acceso remoto)", category: "saas", dns: [/^TXT\s+"?teamviewer-sso-verification=/im] },
+  { key: "citrix", label: "Citrix (escritorios remotos)", category: "saas", dns: [/^TXT\s+"?citrix-verification-code=/im] },
 
   // ── Contenido del sitio ──────────────────────────────────────────────────
   { key: "mobile_viewport", label: "Sitio adaptado a celular", category: "site", patterns: [/<meta[^>]+name=["']viewport["']/i] },
@@ -352,6 +364,51 @@ export const TECH_RULES: TechRule[] = [
   { key: "multi_language", label: "Sitio en varios idiomas", category: "site", patterns: [/hreflang=["']?[a-z]{2}/i] },
   { key: "blog", label: "Blog", category: "site", patterns: [/href=["'][^"']*\/blog\b/i] },
   { key: "newsletter_signup", label: "Suscripción a newsletter", category: "site", patterns: [/suscr[ií]bete|newsletter|bolet[ií]n de noticias/i] },
+
+  // ── Conectividad y operación (2026-11-17) ────────────────────────────────
+  // Lo que el sitio dice de cómo opera la empresa y delata cuánta conectividad
+  // necesita: telefonía vieja, muchas sedes, operación continua, wifi para
+  // clientes, video, rastreo. Son frases del propio sitio, no inferencias.
+  { key: "fax_number", label: "Publica un número de fax", category: "network",
+    patterns: [/\bfax\b\s*(?:<[^>]{0,40}>\s*)?[:.]?\s*(?:<[^>]{0,40}>\s*)?\(?\+?\d[\d\s().-]{5,}/i] },
+  { key: "pbx_extensions", label: "Conmutador con extensiones", category: "network",
+    patterns: [/\bconmutador\b|\bPBX\b|\bext(?:\.|ensi[oó]n|ensiones)\s*:?\s*\d{2,5}\b|\banexo\s*:?\s*\d{3,4}\b|\bramal\s*:?\s*\d{3,4}\b/i] },
+  { key: "toll_free_line", label: "Línea 800 o gratuita de atención", category: "network",
+    patterns: [/\b01[\s-]?800[\s-]?\d|\b800[\s-]\d{3}[\s-]?\d{3,4}\b|\b0[\s-]?800[\s-]?\d|\b01[\s-]?8000[\s-]?\d|l[ií]nea (gratuita|sin costo)|llamada (gratuita|sin costo)|lada sin costo/i] },
+  { key: "call_center", label: "Call center o centro de contacto", category: "network",
+    patterns: [/\bcall ?cent(er|re)\b|\bcontact ?cent(er|re)\b|centro de contacto|centro de atenci[oó]n telef[oó]nica|central de atendimento/i] },
+  { key: "free_email_contact", label: "Contacto con correo gratuito (Gmail, Hotmail…)", category: "network",
+    patterns: [/mailto:[a-z0-9._%+-]+@(gmail|hotmail|outlook|yahoo|live|icloud|prodigy|aol)\.[a-z.]{2,6}/i] },
+  { key: "webmail_link", label: "Enlace a webmail (correo en servidor propio o de hosting)", category: "network",
+    patterns: [/href=["'][^"']*(\/\/webmail\.|\/webmail\b|:2096\b|\/owa\b|\/roundcube|\/zimbra)/i, />\s*webmail\s*</i] },
+  { key: "client_portal", label: "Portal de clientes, proveedores o intranet", category: "network",
+    patterns: [/portal de (clientes|proveedores|empleados|colaboradores|pagos)|zona (de )?clientes|acceso (a |de )?clientes|[aá]rea (de|do) clientes?|\bintranet\b|\bextranet\b|oficina virtual|sucursal virtual/i] },
+  { key: "always_on", label: "Opera 24/7", category: "network",
+    patterns: [/\b24\s?[\/x]\s?7\b|las 24 (horas|hrs)|24 horas (del d[ií]a|al d[ií]a)|los 365 d[ií]as|atendimento 24 ?h/i] },
+  { key: "guest_wifi", label: "Ofrece wifi a clientes o huéspedes", category: "network",
+    patterns: [/wi-?fi\s+(gratis|gratuito|de cortes[ií]a|libre|incluido|de alta velocidad|en todo|para (clientes|hu[eé]spedes))|free wi-?fi|wi-?fi gr[aá]tis|internet (inal[aá]mbrico|de alta velocidad)\b/i] },
+  { key: "virtual_campus", label: "Campus o aula virtual", category: "network",
+    patterns: [/campus virtual|aula virtual|aulas virtuales|plataforma educativa|\bmoodle\b|blackboard\.com|instructure\.com|classroom\.google\.com|ambiente virtual de aprendizagem/i] },
+  { key: "telehealth", label: "Telemedicina o consulta en línea", category: "network",
+    patterns: [/telemedicina|teleconsulta|videoconsulta|tele-?salud|consulta (m[eé]dica )?(en l[ií]nea|virtual|online|por videollamada)/i] },
+  { key: "live_streaming", label: "Transmite en vivo o hace webinars", category: "network",
+    patterns: [/transmisi[oó]n(es)? en (vivo|directo)|\bwebinars?\b|\bstreaming\b|se[nñ]al en vivo|ao vivo/i] },
+  { key: "gps_tracking", label: "Rastreo GPS, telemetría o IoT", category: "network",
+    patterns: [/rastreo (satelital|gps|vehicular|en tiempo real)|monitoreo (satelital|gps|vehicular)|localizaci[oó]n satelital|telemetr[ií]a|gesti[oó]n de flotas?|control de flotas?|\bIoT\b|internet de las cosas/i] },
+  { key: "video_surveillance", label: "Videovigilancia o monitoreo de alarmas", category: "network",
+    patterns: [/videovigilancia|video ?monitoreo|c[aá]maras de (seguridad|vigilancia)|\bCCTV\b|circuito cerrado|monitoreo de alarmas|central de monitoreo/i] },
+  { key: "remote_work", label: "Trabajo remoto o híbrido", category: "network",
+    patterns: [/home ?office|trabajo (remoto|h[ií]brido|a distancia)|teletrabajo|100\s?% remoto|remote[- ]first|trabalho (remoto|h[ií]brido)/i] },
+  { key: "many_locations", label: "Decenas de sedes o cobertura nacional", category: "network",
+    patterns: [/(m[aá]s de|\+)\s?\d{2,4}\s+(sucursales|tiendas|puntos de venta|oficinas|sedes|cl[ií]nicas|restaurantes|agencias|locales|estaciones|farmacias|lojas|unidades)|presencia en (m[aá]s de )?\d{1,3} (ciudades|estados|departamentos|provincias|pa[ií]ses)|cobertura (a nivel )?nacional|en todo el pa[ií]s/i] },
+  { key: "online_billing_portal", label: "Facturación en línea para clientes", category: "network",
+    patterns: [/facturaci[oó]n en l[ií]nea|genera tu factura|factura (aqu[ií]|tu (compra|ticket|consumo))|portal de facturaci[oó]n|href=["'][^"']*\/facturacion\b/i] },
+  { key: "datacenter_hosting", label: "Ofrece hosting, nube o centro de datos", category: "network",
+    patterns: [/centros? de datos|\bdata ?cent(er|re)s?\b|\bcolocation\b|servidores (dedicados|virtuales)|nube (privada|h[ií]brida)|cloud hosting|hospedaje web/i] },
+  { key: "status_page", label: "Página de estado del servicio", category: "network",
+    patterns: [/href=["']?https?:\/\/[a-z0-9.-]*(statuspage\.io|instatus\.com|status\.io|betteruptime\.com|betterstack\.com|uptimerobot\.com)/i] },
+  { key: "cdn_waf", label: "CDN o protección (Cloudflare, Akamai, CloudFront…)", category: "network",
+    patterns: [/\/cdn-cgi\/|\.cloudfront\.net|akamaihd\.net|akamaized\.net|\.fastly\.net|fastlylb\.net|\.azureedge\.net|\.b-cdn\.net|incapsula|sucuri\.net/i] },
 ];
 
 const RULE_BY_KEY: Map<string, TechRule> = new Map(TECH_RULES.map((r) => [r.key, r]));
@@ -390,6 +447,10 @@ export const TECH_GROUPS: Record<string, string[]> = {
   any_consent: keysOf("consent"),
   any_site_builder: ["wix", "squarespace", "godaddy_builder", "jimdo_weebly"],
   any_corporate_email: ["google_workspace", "microsoft_365", "zoho_mail"],
+  any_video_conf: ["zoom", "webex"],
+  any_cloud_collab: ["slack", "dropbox", "atlassian"],
+  any_remote_access: ["teamviewer", "citrix"],
+  any_legacy_telephony: ["fax_number", "pbx_extensions"],
 };
 
 const GROUP_LABEL: Record<string, string> = {
@@ -403,6 +464,8 @@ const GROUP_LABEL: Record<string, string> = {
   any_email_marketing: "email marketing", any_reviews: "reseñas", any_crm: "CRM", any_booking: "agenda en línea",
   any_ats: "sistema de reclutamiento", any_consent: "banner de cookies", any_site_builder: "constructor de sitios",
   any_corporate_email: "correo de Google o Microsoft",
+  any_video_conf: "videollamadas corporativas (Zoom o Webex)", any_cloud_collab: "colaboración en la nube (Slack, Dropbox, Atlassian)",
+  any_remote_access: "acceso remoto (TeamViewer o Citrix)", any_legacy_telephony: "telefonía tradicional (fax o conmutador)",
 };
 
 export function isTechKey(k: unknown): boolean {
