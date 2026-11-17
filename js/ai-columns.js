@@ -522,7 +522,7 @@
   // ── crear columna ───────────────────────────────────────────────────────
   var ENGINE_LABEL = { perplexity: 'Perplexity', claude: 'Claude', openai: 'OpenAI' };
   function prefLabel(pref) {
-    return 'Mi preferencia' + (ENGINE_LABEL[pref] ? ' (' + ENGINE_LABEL[pref] + ')' : ' (Perplexity, recomendado)');
+    return 'Mi preferencia' + (ENGINE_LABEL[pref] ? ' (' + ENGINE_LABEL[pref] + ')' : ' (Claude, recomendado)');
   }
   var ENGINE_OPTIONS = [
     ['', ''],

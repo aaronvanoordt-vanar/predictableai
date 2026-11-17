@@ -7460,4 +7460,12 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "¿Rechazar esta solicitud? La persona no verá el equipo.": "Decline this request? The person won't see the team.",
   "Campaña de Dripify (anterior)": "Dripify campaign (legacy)",
   "Conecta tu cuenta de LinkedIn en Canales → LinkedIn para que este paso salga.": "Connect your LinkedIn account in Channels → LinkedIn so this step can be sent.",
+  // Motores de IA: Claude recomendado + Entrenamiento IA (2026-11-17)
+  "Elige qué motor genera cada cosa. Marcamos el recomendado para cada función: Claude para la investigación y la redacción, OpenAI para el coach en vivo. Puedes cambiarlo aquí o desde cada sección — es la misma preferencia.": "Choose which engine generates each thing. We mark the recommended one for each feature: Claude for research and writing, OpenAI for the live coach. You can change it here or from each section — it's the same preference.",
+  "Lee los documentos y PDFs que subes en Entrenamiento IA y los convierte en principios.": "Reads the documents and PDFs you upload in AI training and turns them into principles.",
+  "Motor que lee el documento": "Engine that reads the document",
+  "Entrenamiento IA (documentos)": "AI training (documents)",
+  "(Claude, recomendado)": "(Claude, recommended)",
+  "No pudimos leer texto en este PDF (¿es escaneado o solo imágenes?). Prueba con «Pegar texto» o con un PDF exportado desde el documento original.": "We couldn't read any text in this PDF (is it scanned or only images?). Try «Paste text» or a PDF exported from the original document.",
+  "No pudimos leer texto en este documento. Revisa que el texto pegado no esté vacío.": "We couldn't read any text in this document. Check that the pasted text isn't empty.",
 });
