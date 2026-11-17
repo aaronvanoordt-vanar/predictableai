@@ -83,7 +83,7 @@ Cada función con IA puede correr sobre cualquiera de los tres motores. La prefe
 - `supabase/functions/_shared/llm.ts` — `RECOMMENDED_ENGINE` + `callLLM()`, el único sitio que sabe hablar con cada proveedor (web search, JSON schema, PDFs, reintentos). Toda edge function con IA pasa por aquí; ninguna vuelve a llamar a `api.anthropic.com` directamente. **Excepción pendiente (revisión 2026-09-25):** `generate-outreach` en modo completo con Claude usa la beta de Managed Agents con `fetch` directo (`maFetch`), sin fallback (la directiva de idioma viaja en el mensaje del usuario desde 2026-10-17); ver `docs/REVIEW_2026-09-25.md`.
 - `js/ai-engine.js` — `FEATURES` + el selector (`AIEngine.mount(...)`).
 
-Recomendados: `intel_hub`, `onboarding` (research inicial/Intelligence Hub) y `radar` (detección de señales) → **Perplexity**; `outreach` → **Claude**; `coach` → **OpenAI**.
+Recomendados (2026-11-17, decisión del dueño: **toda la investigación recomienda Claude**): `intel_hub`, `onboarding`, `radar`, `ai_columns`, `ai_training` (lectura de documentos de Entrenamiento IA, selector en esa página y en Ajustes) y `outreach` → **Claude**; `coach` → **OpenAI** (en vivo, no es investigación). Perplexity sigue disponible por función. `ai-training` reintenta UNA vez con Claude si el motor elegido dice «SIN CONTENIDO UTIL» (material de producto real terminaba en error).
 
 Reglas:
 - El motor del body de la request es solo un atajo: la edge function **siempre** revalida contra su allowlist y cae al recomendado si no reconoce el valor.

@@ -7611,4 +7611,12 @@ window.I18N_DICTS['pt-BR'] = {
   "¿Rechazar esta solicitud? La persona no verá el equipo.": "Recusar esta solicitação? A pessoa não verá a equipe.",
   "Campaña de Dripify (anterior)": "Campanha do Dripify (anterior)",
   "Conecta tu cuenta de LinkedIn en Canales → LinkedIn para que este paso salga.": "Conecte sua conta do LinkedIn em Canais → LinkedIn para que este passo seja enviado.",
+  // Motores de IA: Claude recomendado + Entrenamiento IA (2026-11-17)
+  "Elige qué motor genera cada cosa. Marcamos el recomendado para cada función: Claude para la investigación y la redacción, OpenAI para el coach en vivo. Puedes cambiarlo aquí o desde cada sección — es la misma preferencia.": "Escolha qual motor gera cada coisa. Marcamos o recomendado para cada função: Claude para a pesquisa e a redação, OpenAI para o coach ao vivo. Você pode alterar aqui ou em cada seção — é a mesma preferência.",
+  "Lee los documentos y PDFs que subes en Entrenamiento IA y los convierte en principios.": "Lê os documentos e PDFs que você envia no Treinamento da IA e os transforma em princípios.",
+  "Motor que lee el documento": "Motor que lê o documento",
+  "Entrenamiento IA (documentos)": "Treinamento da IA (documentos)",
+  "(Claude, recomendado)": "(Claude, recomendado)",
+  "No pudimos leer texto en este PDF (¿es escaneado o solo imágenes?). Prueba con «Pegar texto» o con un PDF exportado desde el documento original.": "Não conseguimos ler texto neste PDF (está digitalizado ou só tem imagens?). Tente «Colar texto» ou um PDF exportado do documento original.",
+  "No pudimos leer texto en este documento. Revisa que el texto pegado no esté vacío.": "Não conseguimos ler texto neste documento. Verifique se o texto colado não está vazio.",
 };

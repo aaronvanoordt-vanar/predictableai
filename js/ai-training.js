@@ -214,7 +214,7 @@
       if (ins.error) throw new Error(ins.error.message);
       resetAddForm();
       await reloadDocs();
-      await callFn({ action: 'analyze', doc_id: ins.data.id });
+      await callFn({ action: 'analyze', doc_id: ins.data.id, engine: engineChoice() });
       toast('Documento recibido. La IA lo está convirtiendo en principios para tu equipo.', 'success');
       reloadDocs();
     } catch (e) {
@@ -224,8 +224,14 @@
     }
   }
 
+  // Motor elegido para leer documentos (Claude recomendado). El servidor lo
+  // revalida contra su allowlist.
+  function engineChoice() {
+    return (global.AIEngine && global.AIEngine.get) ? global.AIEngine.get('ai_training') : undefined;
+  }
+
   async function reanalyze(id) {
-    try { await callFn({ action: 'analyze', doc_id: id }); reloadDocs(); }
+    try { await callFn({ action: 'analyze', doc_id: id, engine: engineChoice() }); reloadDocs(); }
     catch (e) { toast(e.message || String(e), 'error'); }
   }
 
@@ -397,6 +403,7 @@
             '<label><input type="checkbox" name="ait-doc-coach" checked> AI Sales Coach</label>' +
             '<label><input type="checkbox" name="ait-doc-campaigns" checked> Campañas</label>' +
           '</div></div>' +
+          '<div class="ait-field"><span>Motor que lee el documento</span><div id="ait-engine"></div></div>' +
         '</div>' +
         (upload
           ? '<label class="ait-drop" id="ait-drop"><input type="file" id="ait-file" accept="application/pdf,.pdf,.txt,.md,text/plain,text/markdown" hidden' + (full ? ' disabled' : '') + '>' +
@@ -406,6 +413,9 @@
             '<div class="ait-add-foot"><button type="button" class="btn btn-primary btn-sm" id="ait-add-btn" data-ait="add-text"' + (full ? ' disabled' : '') + '>Entrenar con este texto</button></div>') +
         (full ? '<p class="ait-note">Llegaste al máximo de ' + MAX_DOCS + ' documentos: borra uno para agregar otro.</p>' : '') +
       '</div>';
+    if (global.AIEngine && global.AIEngine.mount) {
+      try { global.AIEngine.mount('#ait-engine', 'ai_training', { compact: true, noLabel: true }); } catch (e) { console.warn('[ai-training] AIEngine:', e.message); }
+    }
     var input = document.getElementById('ait-file');
     var drop = document.getElementById('ait-drop');
     if (input) input.addEventListener('change', function () { if (input.files && input.files[0]) pickFile(input.files[0]); input.value = ''; });

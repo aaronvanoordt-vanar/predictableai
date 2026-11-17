@@ -9,12 +9,15 @@
 // each provider, so the feature functions only deal with prompts.
 //
 // Recommended engine per feature (mirrored in js/ai-engine.js — keep in sync):
-//   intel_hub  → perplexity   (Intelligence Hub — search-grounded research)
-//   onboarding → perplexity   (Intelligence Hub — company enrichment / brief / documents)
-//   outreach   → claude       (Prospección — message writing)
-//   radar      → perplexity   (Intelligence Hub — signal detection, search-grounded)
-//   coach      → openai       (AI Sales Coach)
-//   ai_columns → perplexity   (Listas — columnas IA, una búsqueda corta por fila)
+// (2026-11-17, decisión del dueño: toda la investigación de la plataforma
+// recomienda Claude; Perplexity y OpenAI siguen disponibles por función)
+//   intel_hub   → claude      (Intelligence Hub — search-grounded research)
+//   onboarding  → claude      (Intelligence Hub — company enrichment / brief / documents)
+//   outreach    → claude      (Prospección — message writing)
+//   radar       → claude      (Intelligence Hub — signal detection, search-grounded)
+//   coach       → openai      (AI Sales Coach — en vivo, no es investigación)
+//   ai_columns  → claude      (Listas — columnas IA, una búsqueda corta por fila)
+//   ai_training → claude      (Entrenamiento IA — lectura de documentos y PDFs)
 //
 // Required secrets (only the ones for engines actually used need to be set):
 //   ANTHROPIC_API_KEY, OPENAI_API_KEY, PERPLEXITY_API_KEY
@@ -82,16 +85,18 @@ export type Feature =
   | "coach"
   | "onboarding"
   | "radar"
-  | "ai_columns";
+  | "ai_columns"
+  | "ai_training";
 
 /** Default engine per feature when the user has not chosen one. */
 export const RECOMMENDED_ENGINE: Record<Feature, Engine> = {
-  intel_hub:  "perplexity",
-  onboarding: "perplexity",
-  outreach:   "claude",
-  radar:      "perplexity",
-  coach:      "openai",
-  ai_columns: "perplexity",
+  intel_hub:   "claude",
+  onboarding:  "claude",
+  outreach:    "claude",
+  radar:       "claude",
+  coach:       "openai",
+  ai_columns:  "claude",
+  ai_training: "claude",
 };
 
 export function isEngine(v: unknown): v is Engine {
