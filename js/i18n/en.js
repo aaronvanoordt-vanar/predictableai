@@ -7619,4 +7619,12 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "No se pudo investigar ({0}). Reintenta.": "Couldn't research ({0}). Try again.",
   "No se pudo investigar. Reintenta.": "Couldn't research. Try again.",
   "{0} investigaciones listas.": "{0} research reports ready.",
+  "Envíos retenidos: Meta aún no aprueba el nombre visible de tu número": "Sends on hold: Meta hasn't approved your number's display name yet",
+  "Envíos retenidos: Meta está bloqueando los envíos de tu número ({0})": "Sends on hold: Meta is blocking sends from your number ({0})",
+  "Meta rechaza todo envío del número hasta aprobar su nombre visible. Revísalo en WhatsApp Manager → Números de teléfono → Nombre visible; si lo rechazaron, corrígelo ahí.": "Meta rejects every send from this number until its display name is approved. Check it in WhatsApp Manager → Phone numbers → Display name; if it was rejected, fix it there.",
+  "Meta está rechazando los envíos del número. Revisa el estado del número en WhatsApp Manager.": "Meta is rejecting sends from this number. Check the number's status in WhatsApp Manager.",
+  "Tus campañas no pierden a ningún lead: quedan esperando en su paso de WhatsApp. Predictable prueba un envío cada 6 horas y, cuando Meta entregue uno, los demás salen solos.": "Your campaigns don't lose any lead: they wait at their WhatsApp step. Predictable tries one send every 6 hours and, once Meta delivers one, the rest go out on their own.",
+  "Último rechazo de Meta: {0}": "Last rejection from Meta: {0}",
+  "1 lead retenido por este bloqueo.": "1 lead on hold because of this block.",
+  "{0} leads retenidos por este bloqueo.": "{0} leads on hold because of this block.",
 });

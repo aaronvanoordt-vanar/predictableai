@@ -7769,4 +7769,12 @@ window.I18N_DICTS['pt-BR'] = {
   "No se pudo investigar ({0}). Reintenta.": "Não foi possível pesquisar ({0}). Tente de novo.",
   "No se pudo investigar. Reintenta.": "Não foi possível pesquisar. Tente de novo.",
   "{0} investigaciones listas.": "{0} pesquisas prontas.",
+  "Envíos retenidos: Meta aún no aprueba el nombre visible de tu número": "Envios retidos: a Meta ainda não aprovou o nome de exibição do seu número",
+  "Envíos retenidos: Meta está bloqueando los envíos de tu número ({0})": "Envios retidos: a Meta está bloqueando os envios do seu número ({0})",
+  "Meta rechaza todo envío del número hasta aprobar su nombre visible. Revísalo en WhatsApp Manager → Números de teléfono → Nombre visible; si lo rechazaron, corrígelo ahí.": "A Meta rejeita todo envio do número até aprovar o nome de exibição. Confira em WhatsApp Manager → Números de telefone → Nome de exibição; se foi rejeitado, corrija lá.",
+  "Meta está rechazando los envíos del número. Revisa el estado del número en WhatsApp Manager.": "A Meta está rejeitando os envios do número. Confira o status do número no WhatsApp Manager.",
+  "Tus campañas no pierden a ningún lead: quedan esperando en su paso de WhatsApp. Predictable prueba un envío cada 6 horas y, cuando Meta entregue uno, los demás salen solos.": "Suas campanhas não perdem nenhum lead: eles ficam esperando na etapa de WhatsApp. O Predictable testa um envio a cada 6 horas e, quando a Meta entregar um, os demais saem sozinhos.",
+  "Último rechazo de Meta: {0}": "Última rejeição da Meta: {0}",
+  "1 lead retenido por este bloqueo.": "1 lead retido por este bloqueio.",
+  "{0} leads retenidos por este bloqueo.": "{0} leads retidos por este bloqueio.",
 };
