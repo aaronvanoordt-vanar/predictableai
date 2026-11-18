@@ -678,6 +678,24 @@
     var q = (cfg || {}).quality || {};
     return q.alert && q.alert.level ? q.alert : null;
   }
+  /**
+   * Bloqueo de la CUENTA de WhatsApp (config.send_block: hoy 131037, nombre
+   * visible sin aprobar). Lo sella el recibo de falla y solo lo levanta un
+   * entregado/leído (_shared/wati-receipts.ts); mientras exista, campaign-run
+   * retiene todos los WhatsApp y prueba un envío cada 6 h. Aquí solo se pinta.
+   */
+  function waBlock(cfg) {
+    var b = (cfg || {}).send_block;
+    if (!b || !b.code) return null;
+    var code = String(b.code);
+    return {
+      code: code,
+      at: b.at || null,
+      title: code === '131037'
+        ? 'Envíos retenidos: Meta aún no aprueba el nombre visible de tu número'
+        : 'Envíos retenidos: Meta está bloqueando los envíos de tu número (' + code + ')',
+    };
+  }
   function waState() {
     if (state.status === undefined) return { state: 'loading' };
     if (!isConn(state.wati)) {
@@ -689,6 +707,10 @@
     var tpl = templateSummary(cfg);
     var qa = waQuality(cfg);
     var alert = qa && qa.level !== 'ok' ? qa : null;
+    // El bloqueo de la cuenta manda sobre la calidad y las plantillas: sin él
+    // resuelto no sale ningún WhatsApp de campaña.
+    var block = waBlock(cfg);
+    if (block) alert = { title: block.title, level: 'critical' };
     return {
       state: 'connected',
       detail: cfg.phone || cfg.phone_number || cfg.channel || 'Número conectado',
@@ -3096,6 +3118,26 @@
       text: 'Número: ' + (ws.detail || '—') + ' · Firma: ' + (sender.name || '—')
         + (sender.role ? ', ' + sender.role : '') + (sender.company ? ' de ' + sender.company : ''),
     }));
+
+    var block = waBlock(cfg);
+    if (block) {
+      var note = h('div', { class: 'pros-note-red' });
+      note.appendChild(h('b', { text: block.title }));
+      note.appendChild(h('div', { text: block.code === '131037'
+        ? 'Meta rechaza todo envío del número hasta aprobar su nombre visible. Revísalo en WhatsApp Manager → Números de teléfono → Nombre visible; si lo rechazaron, corrígelo ahí.'
+        : 'Meta está rechazando los envíos del número. Revisa el estado del número en WhatsApp Manager.' }));
+      note.appendChild(h('div', { text: 'Tus campañas no pierden a ningún lead: quedan esperando en su paso de WhatsApp. Predictable prueba un envío cada 6 horas y, cuando Meta entregue uno, los demás salen solos.' }));
+      if (block.at) note.appendChild(h('div', { class: 'pros-cellsub', text: 'Último rechazo de Meta: ' + fmtDateTime(block.at) }));
+      var heldLine = h('div', { class: 'pros-cellsub' });
+      note.appendChild(heldLine);
+      body.appendChild(note);
+      // Cuántos leads esperan por este bloqueo (el motor deja el motivo en error_detail).
+      sb().from('campaign_enrollments').select('id', { count: 'exact', head: true })
+        .eq('status', 'active').ilike('error_detail', '%(' + block.code + ')%')
+        .then(function (r) {
+          if (r && !r.error && r.count) heldLine.textContent = r.count === 1 ? '1 lead retenido por este bloqueo.' : r.count + ' leads retenidos por este bloqueo.';
+        }, function () {});
+    }
 
     if (waIsMeta()) renderWhatsAppQuality(body, cfg, api);
 
