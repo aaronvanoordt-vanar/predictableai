@@ -93,6 +93,8 @@
     // también (BrasilAPI). Brasil se busca en CNPJá, que cobra por consulta.
     registry_search_br:     { credits: 5,  label: 'por página de empresas de Brasil', variable: false },
     registry_lookup_br:     { credits: 1,  label: 'por ficha de Brasil buscada por dominio', variable: false },
+    // Buscar → Empresas con la base integrada (gratis con tu propio Apollo).
+    enrich_company_search:  { credits: 2,  label: 'por página de empresas', variable: false },
 
     // ── AI Sales Coach (por duración) ──────────────────────────────────
     // Captura local: 5 por cada 10 min + 5 del reporte final.

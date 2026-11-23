@@ -1754,13 +1754,13 @@
       if (apollo.error) act('Reintentar', 'btn-ghost', function () { return checkApollo(true).then(renderApolloBar); });
     } else if (apollo.connected) {
       txt.appendChild(h('b', { text: 'Base de datos: tu Apollo' }));
-      txt.appendChild(h('span', { text: (apollo.detail ? apollo.detail + ' · ' : '') + 'Buscas y enriqueces con tus créditos de Apollo, y puedes buscar empresas.' }));
+      txt.appendChild(h('span', { text: (apollo.detail ? apollo.detail + ' · ' : '') + 'Buscas personas y empresas y enriqueces con tus créditos de Apollo.' }));
       bar.setAttribute('data-state', 'on');
       act('Cambiar API key', 'btn-ghost', function () { return window.campaigns.connectApollo('have'); });
       act('Desconectar', 'btn-ghost', function () { return window.campaigns.disconnectApollo(); });
     } else {
       txt.appendChild(h('b', { text: 'Base de datos: datos integrados de Predictable' }));
-      txt.appendChild(h('span', { text: 'Conecta tu Apollo para buscar con tus propios créditos, buscar empresas y usarlo después como remitente de email.' }));
+      txt.appendChild(h('span', { text: 'Personas, empresas, enriquecimiento y registros públicos vienen incluidos. Si prefieres, conecta tu Apollo para buscar y enriquecer con tus propios créditos.' }));
       bar.setAttribute('data-state', 'off');
       act('Conectar Apollo', 'btn-primary', function () { return window.campaigns.connectApollo(); });
     }

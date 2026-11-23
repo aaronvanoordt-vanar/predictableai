@@ -36,6 +36,7 @@ Deno.test("js/credit-costs.js es espejo del tarifario que cobran las edge functi
     enrich_phone: CREDIT_COSTS.enrich_phone,
     registry_search_br: CREDIT_COSTS.registry_search_br,
     registry_lookup_br: CREDIT_COSTS.registry_lookup_br,
+    enrich_company_search: CREDIT_COSTS.enrich_company_search,
     enrich_email_waterfall: CREDIT_COSTS.enrich_email_waterfall,
     enrich_phone_waterfall: CREDIT_COSTS.enrich_phone_waterfall,
     email_verify: CREDIT_COSTS.email_verify,

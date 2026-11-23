@@ -6,7 +6,7 @@
  */
 
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { blockedInPlatformMode, contactAsPerson, contactIdsFromOtherAccount, sanitizePlatformSearch, stripAccountScopedFilters } from "./apollo-platform.ts";
+import { blockedInPlatformMode, contactAsPerson, contactIdsFromOtherAccount, sanitizePlatformCompanies, sanitizePlatformSearch, stripAccountScopedFilters } from "./apollo-platform.ts";
 
 Deno.test("POST /contacts no llega a la cuenta compartida", () => {
   assert(blockedInPlatformMode("/contacts"));
@@ -84,4 +84,23 @@ Deno.test("con la key compartida no viajan filtros que leen listas de la cuenta 
   });
   assertEquals(body, { person_titles: ["ceo"], organization_industry_tag_ids: ["5567cd4773696439b10b0000"], page: 1 });
   assertEquals(removed.sort(), ["contact_label_ids", "person_persona_ids", "prospected_by_current_team", "q_not_organization_search_list_id"]);
+});
+
+Deno.test("sanitizePlatformCompanies: las empresas guardadas en la cuenta compartida salen como organizaciones públicas", () => {
+  const out = sanitizePlatformCompanies({
+    accounts: [
+      { id: "acc1", organization_id: "org1", name: "Acme", primary_domain: "acme.com", owner_id: "u9", label_ids: ["l1"], account_stage_id: "s", typed_custom_fields: { x: 1 }, phone: "+52 55 1234 5678" },
+      { id: "acc2", organization_id: "org2", name: "Beta" },
+      { id: "acc3", name: "" },
+    ],
+    organizations: [{ id: "org2", name: "Beta" }, { id: "org3", name: "Gamma" }],
+    pagination: { page: 1 },
+  }) as Record<string, unknown>;
+  assertEquals(out.accounts, []);
+  assertEquals(out.organizations, [
+    { id: "org1", organization_id: "org1", name: "Acme", primary_domain: "acme.com" },
+    { id: "org2", name: "Beta" },
+    { id: "org3", name: "Gamma" },
+  ]);
+  assertEquals((out as Record<string, unknown>).pagination, { page: 1 });
 });

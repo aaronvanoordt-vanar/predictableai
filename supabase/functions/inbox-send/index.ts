@@ -520,7 +520,8 @@ async function emailRoute(db: SupabaseClient, userId: string, member: Json, repl
     .eq("user_id", userId).eq("member_id", member.id).eq("channel", "email")
     .order("sent_at", { ascending: false }).limit(1).maybeSingle();
   if (last?.provider === "mailbox") return { mailbox: true, thread: mailboxThreadOf(last) };
-  if (last?.provider === "apollo") return { mailbox: false, thread: null };
+  // Un hilo que empezó por Apollo también se responde desde los buzones propios
+  // (2026-11-23: Apollo ya no envía correo).
   const en = await latestEnrollment(db, userId, member.id);
   let sender: Json = null;
   if (en?.campaign_id) {

@@ -93,12 +93,11 @@ Deno.test("usageFromSends: cuenta 24 h móviles y guarda el último envío", () 
 });
 
 
-Deno.test("resolveEmailProvider: campaña > canal > Apollo", () => {
-  assertEquals(resolveEmailProvider(null, null), "apollo");
-  assertEquals(resolveEmailProvider({}, { provider: "mailboxes" }), "mailboxes");
-  assertEquals(resolveEmailProvider({ email_provider: "apollo" }, { provider: "mailboxes" }), "apollo");
+Deno.test("resolveEmailProvider: siempre los buzones propios (Apollo ya no envía)", () => {
+  assertEquals(resolveEmailProvider(null, null), "mailboxes");
+  assertEquals(resolveEmailProvider({}, { provider: "apollo" }), "mailboxes");
+  assertEquals(resolveEmailProvider({ email_provider: "apollo" }, { provider: "mailboxes" }), "mailboxes");
   assertEquals(resolveEmailProvider({ email_provider: "mailboxes" }, null), "mailboxes");
-  assertEquals(resolveEmailProvider({ email_provider: "otro" }, { provider: "raro" }), "apollo");
 });
 
 Deno.test("threadPlan: primer correo usa el asunto del paso; el seguimiento responde en el hilo", () => {

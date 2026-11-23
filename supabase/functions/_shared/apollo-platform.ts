@@ -62,6 +62,46 @@ export function sanitizePlatformSearch(data: unknown): unknown {
   return { ...d, contacts: [], people: [...fromContacts, ...people] };
 }
 
+// Campos públicos de una empresa (los que /mixed_companies/search trae de
+// cualquier organización de la base). Lo demás de una `account` guardada en la
+// cuenta compartida (dueño, etapa, etiquetas, campos propios, teléfono que
+// alguien cargó…) es de otro cliente y no sale.
+const PUBLIC_ORG_FIELDS = [
+  "id", "organization_id", "name", "website_url", "primary_domain", "domain", "linkedin_url",
+  "logo_url", "industry", "industries", "estimated_num_employees", "founded_year",
+  "city", "state", "country", "short_description", "keywords",
+];
+
+/**
+ * /mixed_companies/search con la key compartida (2026-11-23: Buscar → Empresas
+ * viene por defecto en toda cuenta). Apollo devuelve aparte las empresas
+ * guardadas en la cuenta (`accounts`): esa cuenta es de todos, así que se
+ * entregan como una organización más, solo con sus campos públicos y sin la
+ * marca de «guardada».
+ */
+export function sanitizePlatformCompanies(data: unknown): unknown {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const d = data as Json;
+  const accounts = Array.isArray(d.accounts) ? d.accounts as Json[] : [];
+  const orgs = Array.isArray(d.organizations) ? d.organizations as Json[] : [];
+  const key = (o: Json) => String(o?.organization_id ?? o?.id ?? "");
+  const seen = new Set(orgs.map(key));
+  const fromAccounts: Json[] = [];
+  for (const a of accounts) {
+    if (!a || typeof a !== "object") continue;
+    const o: Json = {};
+    for (const f of PUBLIC_ORG_FIELDS) if (a[f] !== undefined && a[f] !== null) o[f] = a[f];
+    // El id de una account es el de la cuenta compartida: se usa el de la organización.
+    if (a.organization_id != null) o.id = a.organization_id;
+    else delete o.id;
+    const k = key(o);
+    if (!o.name || (k && seen.has(k))) continue;
+    if (k) seen.add(k);
+    fromAccounts.push(o);
+  }
+  return { ...d, accounts: [], organizations: [...fromAccounts, ...orgs] };
+}
+
 /**
  * Filtros de búsqueda que apuntan a lo guardado en UNA cuenta de Apollo
  * (sus listas, sus personas tipo, «guardadas por tu equipo», el dueño…).

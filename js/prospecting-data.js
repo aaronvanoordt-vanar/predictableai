@@ -140,7 +140,7 @@
     // El proxy bloquea los endpoints de correo cuando la credencial es la key
     // compartida de la beta: ese buzón es de otra cuenta, no del usuario.
     if (d === 'apollo_account_required')
-      return 'Conecta tu cuenta de Apollo en Buscar (Base de datos → Conectar Apollo) para enviar email con Apollo: la cuenta compartida de la plataforma no envía correo a tu nombre.';
+      return 'Los emails salen de tu correo laboral: conéctalo en Canales → Email.';
     if (d === 'apollo_account_required_companies')
       return 'Conecta tu cuenta de Apollo en Buscar (Base de datos → Conectar Apollo) para buscar empresas: cada página usa 1 crédito de tu Apollo.';
     if (status === 401) return 'Sesión expirada. Vuelve a iniciar sesión.';
@@ -221,8 +221,8 @@
   }
 
   // ── Búsqueda de empresas (Buscar → Empresas) ────────────────
-  // /mixed_companies/search usa 1 crédito de la cuenta de Apollo conectada por
-  // página (no de Predictable; con la key compartida el proxy la rechaza).
+  // /mixed_companies/search: con el Apollo propio usa 1 crédito de esa cuenta
+  // por página; con la base integrada cobra 2 de Predictable (2026-11-23).
   // Apollo devuelve las empresas guardadas en la cuenta (`accounts`) aparte de
   // las demás (`organizations`): se juntan, sin repetir, con `saved` marcado.
   async function searchCompanies(filters) {

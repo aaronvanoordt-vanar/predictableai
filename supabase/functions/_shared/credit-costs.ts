@@ -34,6 +34,10 @@ export const CREDIT_COSTS = {
   // consulta: una página de hasta 25 empresas, o una ficha buscada por el
   // dominio del email de registro. Revisar con el contrato de CNPJá.
   registry_search_br: 5,
+  // Búsqueda de empresas (Buscar → Empresas) con la base integrada (la key de
+  // Apollo de la plataforma): cada página cuesta 1 crédito de Apollo. Desde el
+  // 2026-11-23 viene por defecto en toda cuenta; con el Apollo propio es gratis.
+  enrich_company_search: 2,
   registry_lookup_br: 1,
 
   // Mensajes IA.

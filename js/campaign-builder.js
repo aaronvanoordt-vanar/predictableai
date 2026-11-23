@@ -1842,7 +1842,7 @@
       var unlinked = acts.filter(function (a) { return a.channel === 'linkedin_connect' && a.settings && a.settings.linkedin_campaign_id && !a.settings.dripify_campaign_id; });
       if (unlinked.length) warns.push('La campaña de LinkedIn «' + (unlinked[0].settings.linkedin_campaign_name || '') + '» aún no existe en Dripify: el paso espera (reintento cada hora) y se vincula solo cuando la crees allá con ese nombre.');
       if (needs.email && !usesMailboxes() && !(st.draft.sender && st.draft.sender.email_account_id)) warns.push('Elige el buzón desde el que salen los emails.');
-      if (needs.email && usesMailboxes() && JSON.stringify(st.draft.flow.nodes || []).indexOf('"email_opened"') !== -1) warns.push('La condición «¿Abrió el email?» solo se mide con Apollo: con tus buzones no hay píxel de apertura y esos leads siempre van por la rama «No».');
+      if (needs.email && usesMailboxes() && JSON.stringify(st.draft.flow.nodes || []).indexOf('"email_opened"') !== -1) warns.push('La condición «¿Abrió el email?» no se mide: tus emails salen de tus buzones, sin píxel de apertura, y esos leads siempre van por la rama «No».');
       warns.forEach(function (w) { right.appendChild(h('div', { class: 'cb-note amber', text: '⚠ ' + w })); });
       grid.appendChild(right);
       wrap.appendChild(grid);
