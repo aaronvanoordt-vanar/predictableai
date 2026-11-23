@@ -578,12 +578,14 @@
   function emailState() {
     if (state.status === undefined) return { state: 'loading' };
     // Buzones propios (js/email-mailboxes.js) elegidos para el canal.
+    // Desde el 2026-11-23 el email sale SOLO de los buzones propios (Apollo
+    // es base de datos de Buscar, ya no remitente).
     var mbx = global.EmailMailboxes;
     if (mbx && mbx.activeForChannel()) {
       var n = mbx.connected().length;
       return { state: 'connected', detail: n + (n === 1 ? ' buzón propio' : ' buzones propios') };
     }
-    return apolloEmailState();
+    return { state: 'disconnected' };
   }
   /** Estado de la cuenta de Apollo como remitente de email (sin mirar los buzones propios). */
   function apolloEmailState() {
@@ -934,13 +936,8 @@
     var flow = L.normalize(draft.flow);
     var sender = Object.assign({}, draft.sender || {});
     var hasEmailStep = L.actions(flow).some(function (a) { return a.channel === 'email'; });
-    var viaMailboxes = !!(global.EmailMailboxes && global.EmailMailboxes.campaignUsesMailboxes(sender));
-    if (hasEmailStep && viaMailboxes && !global.EmailMailboxes.connected().length) throw new Error('La cadencia tiene emails y eligió tus buzones: conecta al menos uno en Campañas → Email.');
-    if (hasEmailStep && !viaMailboxes && !sender.email_account_id) {
-      var def = defaultEmailAccount();
-      if (def) { sender.email_account_id = def.id; sender.email = def.email || ''; }
-      else throw new Error('La cadencia tiene emails: conecta el canal Email primero.');
-    }
+    // Los emails salen solo de los buzones propios (2026-11-23).
+    if (hasEmailStep && !(global.EmailMailboxes && global.EmailMailboxes.connected().length)) throw new Error('La cadencia tiene emails: conecta tu correo laboral en Canales → Email.');
     if (pdSafe().saveSenderInfo) pdSafe().saveSenderInfo({ name: sender.name, role: sender.role, company: sender.company });
     var row = {
       user_id: uid,
@@ -958,7 +955,7 @@
       sender: {
         name: sender.name || '', role: sender.role || '', company: sender.company || '', email_account_id: sender.email_account_id || '', email: sender.email || '',
         // Buzones propios: '' = lo que diga el canal Email; mailbox_ids vacío = todos.
-        email_provider: sender.email_provider === 'apollo' || sender.email_provider === 'mailboxes' ? sender.email_provider : '',
+        email_provider: 'mailboxes',
         mailbox_ids: Array.isArray(sender.mailbox_ids) ? sender.mailbox_ids.map(String) : [],
       },
       flow: flow,
@@ -2942,13 +2939,13 @@
     return api;
   }
 
-  // Conectar Email desde cero: primero el correo directo (Gmail, Microsoft 365
-  // o SMTP/IMAP, js/email-mailboxes.js); Apollo queda como alternativa.
+  // Conectar Email = conectar el correo laboral (Gmail, Microsoft 365 o
+  // SMTP/IMAP, js/email-mailboxes.js). Apollo ya no envía emails (2026-11-23).
   function openEmailWizard(btn) {
     var mb = global.EmailMailboxes;
-    if (!mb) return useApolloForEmail();
+    if (!mb) { toast('No se pudo cargar la conexión de correo. Recarga la página.', 'error'); return; }
     return mb.load().then(function (S) {
-      if (!S || S.unavailable) return useApolloForEmail();
+      if (!S || S.unavailable) { toast('Conectar tu correo todavía no está habilitado en tu cuenta.', 'error'); return; }
       var api = openModal({ title: 'Conectar Email', width: 560 });
       var oauth = S.oauth || {};
       function done() { api.close(); render(); openChannelDetails('email'); }
@@ -2964,27 +2961,11 @@
       opt('Gmail / Google Workspace', oauth.gmail ? 'Inicia sesión con Google.' : 'Todavía no está habilitado: usa «Otro correo» con una contraseña de aplicación.', !!oauth.gmail, function (b) { return mb.connectOAuth('gmail', b, done); });
       opt('Microsoft 365 / Outlook', oauth.microsoft ? 'Inicia sesión con Microsoft.' : 'Todavía no está habilitado: usa «Otro correo» con una contraseña de aplicación.', !!oauth.microsoft, function (b) { return mb.connectOAuth('microsoft', b, done); });
       opt('Otro correo (SMTP / IMAP)', 'Zoho, Hostinger, GoDaddy, cPanel o el tuyo.', true, function () { api.close(); return mb.openSmtpWizard(function () { render(); openChannelDetails('email'); }); });
-      opt('Usar Apollo', isConn(state.apollo)
-        ? 'Envía con la cuenta de Apollo que conectaste en Buscar.'
-        : 'Primero conecta tu Apollo en Buscar; después puedes enviar con él.', true, function () { api.close(); return useApolloForEmail(); });
       api.body.appendChild(opts);
       api.setActions([{ label: 'Cancelar' }]);
     });
   }
 
-  // El canal Email no conecta Apollo: lo usa si ya está conectado en Buscar;
-  // si no, lleva a Buscar y abre ahí la conexión.
-  function useApolloForEmail() {
-    if (isConn(state.apollo)) return openChannelDetails('email');
-    return connectApolloInSearch();
-  }
-  function connectApolloInSearch() {
-    var P = global.prospecting;
-    if (P && typeof P.goTab === 'function') {
-      try { P.goTab('busqueda'); } catch (e) { /* sigue con el asistente */ }
-    }
-    return connectApollo();
-  }
 
   function openConnect(key, btn) {
     if (key === 'email') return openEmailWizard(btn);
@@ -3730,68 +3711,13 @@
         { label: 'Cerrar' },
       ]);
     } else {
-      var es = apolloEmailState();
-      var acfg = (state.apollo && state.apollo.config) || {};
-      // Sección «Apollo» en tarjeta propia, con sus acciones adentro (antes
-      // «Cambiar API key» y «Desconectar» quedaban al pie del panel y no se
-      // sabía si eran de Apollo o de los buzones).
-      var ap = h('section', { class: 'emb-sec' });
-      var apHead = h('div', { class: 'emb-sec-head' });
-      var apTitle = h('h4', { text: 'Apollo' });
-      apTitle.insertAdjacentHTML('beforeend', es.state === 'connected' ? pill('Conectado', 'green') : pill('Sin conectar', 'gray'));
-      apHead.appendChild(apTitle);
-      ap.appendChild(apHead);
-      if (es.state === 'connected') {
-        ap.appendChild(h('p', { class: 'emb-sub', text: 'Cuenta conectada: ' + (es.detail || '—') + (acfg.name ? ' (' + acfg.name + ')' : '') + (acfg.connected_at ? ' · desde ' + fmtDate(acfg.connected_at) : '') }));
-        ap.appendChild(h('p', { class: 'emb-sub', text: 'La conectaste en Buscar como base de datos. Si eliges Apollo arriba, los emails de campaña salen como mensajes individuales desde esa cuenta.' }));
-      } else {
-        ap.appendChild(h('p', { class: 'emb-sub', text: 'Apollo se conecta en Buscar, como base de datos. Una vez conectado, también puedes enviar los emails de campaña con él.' }));
-      }
-      var accs = state.emailAccounts || [];
-      if (accs.length && es.state === 'connected') {
-        var defAcc = defaultEmailAccount();
-        var sel = h('select', { 'aria-label': 'Enviar desde' });
-        accs.forEach(function (a) { sel.appendChild(h('option', { value: String(a.id), text: a.email || a.id, selected: !!defAcc && String(defAcc.id) === String(a.id) })); });
-        var saveSel = h('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: 'Guardar' });
-        saveSel.addEventListener('click', function () {
-          var r1 = btnLoading(saveSel, '⏳');
-          edgeFetch(FN_CHANNEL, { action: 'set_default_email_account', payload: { email_account_id: sel.value } }).then(function (r) {
-            r1();
-            state.apollo = (r && (r.account || r.apollo)) || state.apollo;
-            state.emailAccounts = null;
-            return loadEmailAccounts().then(function () {
-              toast('Los emails saldrán desde ' + (sel.options[sel.selectedIndex].text) + ' salvo que una campaña elija otro buzón.', 'success');
-              render(); api.close(); openChannelDetails('email');
-            });
-          }, function (e) { r1(); toast(e.message || 'No se pudo guardar el buzón.', 'error'); });
-        });
-        ap.appendChild(h('div', null, h('div', { class: 'pros-lbl', style: 'margin-bottom:6px', text: 'Enviar desde' }), h('div', { class: 'emb-inline' }, sel, saveSel)));
-        ap.appendChild(h('p', { class: 'emb-sub', text: 'Buzón con el que salen los emails y tus respuestas de la Bandeja. Cada campaña puede usar otro: lo eliges al lanzarla, en el resumen. Estos son todos los buzones que Apollo reporta en tu cuenta (' + accs.length + ').' }));
-      }
-      var apActs = h('div', { class: 'emb-acts' });
-      function apBtn(label, fn, cls) {
-        var b = h('button', { type: 'button', class: cls || 'btn btn-ghost btn-sm', text: label });
-        b.addEventListener('click', function () {
-          try { var r = fn(api, b); if (r && typeof r.catch === 'function') r.catch(function (e) { toast(errMsg(e), 'error'); }); } catch (e) { toast(errMsg(e), 'error'); }
-        });
-        apActs.appendChild(b);
-      }
-      apBtn(es.state === 'connected' ? 'Administrar en Buscar' : 'Conectar Apollo en Buscar', function (m) { m.close(); return connectApolloInSearch(); },
-        es.state === 'connected' ? null : 'btn btn-primary btn-sm');
-      ap.appendChild(apActs);
       if (global.EmailMailboxes) {
-        global.EmailMailboxes.renderSection(body, { connected: isConn(state.apollo), detail: (state.apollo && state.apollo.config && state.apollo.config.email) || '', node: ap }, function () {
+        // Solo los buzones propios: Apollo se administra en Buscar (base de datos).
+        global.EmailMailboxes.renderSection(body, null, function () {
           api.close(); render(); openChannelDetails('email');
         }, function () { api.close(); openSuppression(); });
-      } else {
-        body.appendChild(h('div', { class: 'emb' }, ap));
       }
-      var acts = [];
-      if (es.state === 'connected') {
-        acts.push({ label: 'Desconectar Apollo', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('email', 'apollo', m); } });
-      }
-      acts.push({ label: 'Cerrar' });
-      api.setActions(acts);
+      api.setActions([{ label: 'Cerrar' }]);
     }
   }
 

@@ -18,6 +18,12 @@
  *   attach_coach {call_id, meeting_id} → el reporte del AI Sales Coach queda con la llamada
  *   recording {call_id}               → audio de la grabación nativa (o el enlace del conector)
  *   sync                               → trae las llamadas de los conectores sin webhook
+ *   numbers {provider}                 → números del conector para elegir con cuál llamar (CloudTalk)
+ *   set_number {provider, number_id}   → guarda el número con el que salen las llamadas
+ *
+ * CloudTalk de la plataforma (2026-11-23): con los secrets CLOUDTALK_* toda
+ * cuenta tiene CloudTalk conectado (`ensurePlatformCloudTalk`, al leer el
+ * estado). No se puede desconectar: se elige otro proveedor para llamar.
  *
  * Los secretos de los conectores nunca salen de aquí (grants de columna). Los
  * minutos del dialer nativo se reservan y liquidan en `telephony-webhook`.
@@ -32,6 +38,7 @@ import { countryOfE164, toE164 } from "../_shared/telephony/phone.ts";
 import { checkDoNotCall } from "../_shared/telephony/dnc.ts";
 import { applyOutcome, isOutcome, recordProviderCall } from "../_shared/telephony/store.ts";
 import * as twilio from "../_shared/telephony/twilio.ts";
+import * as cloudtalk from "../_shared/telephony/cloudtalk.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -122,14 +129,51 @@ async function taskOf(db: SupabaseClient, userId: string, taskId: unknown): Prom
   return data;
 }
 
+/**
+ * CloudTalk de la plataforma: la fila se crea sola (sin secreto; las
+ * credenciales se leen de los secrets en cada uso). Nunca pisa un CloudTalk
+ * propio que el usuario ya conectó. Si falla, la telefonía sigue como estaba.
+ */
+async function ensurePlatformCloudTalk(db: SupabaseClient, userId: string, accs: TelephonyAccount[]): Promise<boolean> {
+  if (!cloudtalk.platformCloudTalk() || accs.some((a) => a.provider === "cloudtalk")) return false;
+  try {
+    const config = await cloudtalk.platformConfig();
+    const hasDefault = accs.some((a) => (a as Json).is_default);
+    const { error } = await db.from("telephony_accounts").insert({
+      user_id: userId, provider: "cloudtalk", config, secret: "", webhook_secret: newSecret(), is_default: !hasDefault, status: "connected",
+    });
+    return !error;
+  } catch (e) {
+    console.warn("[telephony] CloudTalk de la plataforma no disponible:", (e as Error)?.message);
+    return false;
+  }
+}
+
+/** Llamadas recientes de la cuenta compartida: una sola lectura por corrida del cron. */
+let platformCallsCache: { at: number; calls: Promise<Json[]> } | null = null;
+
 async function syncAccount(db: SupabaseClient, acc: TelephonyAccount): Promise<number> {
   const a = adapterFor(acc.provider);
   if (!a?.listCalls) return 0;
   const last = acc.config?.synced_at ? new Date(String(acc.config.synced_at)) : new Date(Date.now() - 2 * 24 * 3600_000);
   const since = new Date(Math.max(last.getTime() - 60 * 60_000, Date.now() - 7 * 24 * 3600_000));
+  const shared = !!acc.config?.platform;
   let n = 0;
   try {
-    for (const c of await a.listCalls(acc, since)) { if (await recordProviderCall(db, acc, c)) n++; }
+    let list: Json[];
+    if (shared) {
+      // Sin llamadas propias abiertas no hay nada que enlazar: no se lee la cuenta.
+      const { count } = await db.from("calls").select("id", { count: "exact", head: true })
+        .eq("user_id", acc.user_id).eq("provider", "cloudtalk").gte("created_at", new Date(Date.now() - 2 * 24 * 3600_000).toISOString());
+      if (!count) return 0;
+      if (!platformCallsCache || Date.now() - platformCallsCache.at > 60_000) {
+        platformCallsCache = { at: Date.now(), calls: a.listCalls(acc, new Date(Date.now() - 2 * 24 * 3600_000)) };
+      }
+      list = await platformCallsCache.calls;
+    } else {
+      list = await a.listCalls(acc, since);
+    }
+    for (const c of list) { if (await recordProviderCall(db, acc, c, { matchOnly: shared })) n++; }
     await db.from("telephony_accounts").update({ config: { ...(acc.config ?? {}), synced_at: new Date().toISOString() }, status: "connected", last_error: null }).eq("id", acc.id);
   } catch (e) {
     await db.from("telephony_accounts").update({ status: "error", last_error: String((e as Error)?.message ?? e).slice(0, 300) }).eq("id", acc.id);
@@ -162,7 +206,8 @@ async function handle(db: SupabaseClient, userId: string, action: string, p: Jso
 
   switch (action) {
     case "status": {
-      const accs = await accounts(db, userId);
+      let accs = await accounts(db, userId);
+      if (await ensurePlatformCloudTalk(db, userId, accs)) accs = await accounts(db, userId);
       const native = accs.find((a) => a.provider === NATIVE_PROVIDER);
       return {
         catalog: catalog(),
@@ -265,6 +310,8 @@ async function handle(db: SupabaseClient, userId: string, action: string, p: Jso
     case "disconnect": {
       const prov = String(p?.provider ?? "");
       if (!PROVIDERS[prov]) throw new TelephonyError("Proveedor desconocido.");
+      const cur = (await accounts(db, userId)).find((a) => a.provider === prov);
+      if (cur?.config?.platform) throw new TelephonyError("CloudTalk viene incluido con Predictable y no se desconecta. Si prefieres llamar con otro proveedor, elígelo con «Usar para llamar».");
       await db.from("telephony_accounts").delete().eq("user_id", userId).eq("provider", prov);
       return { ok: true };
     }
@@ -353,6 +400,30 @@ async function handle(db: SupabaseClient, userId: string, action: string, p: Jso
       }
       if (call.recording_url) return { url: call.recording_url };
       throw new TelephonyError("Esta llamada no tiene grabación.", 404);
+    }
+
+    case "numbers": {
+      const acc = (await accounts(db, userId)).find((a) => a.provider === String(p?.provider ?? ""));
+      if (!acc || acc.provider !== "cloudtalk") throw new TelephonyError("Elegir el número solo está disponible con CloudTalk.");
+      const numbers = await cloudtalk.listNumbers(acc);
+      return { numbers, selected: acc.config?.call_number_id ?? null };
+    }
+
+    case "set_number": {
+      const acc = (await accounts(db, userId)).find((a) => a.provider === String(p?.provider ?? ""));
+      if (!acc || acc.provider !== "cloudtalk") throw new TelephonyError("Elegir el número solo está disponible con CloudTalk.");
+      const id = String(p?.number_id ?? "");
+      const config: Json = { ...(acc.config ?? {}) };
+      if (!id) {
+        delete config.call_number_id; delete config.call_number; delete config.call_number_name;
+      } else {
+        // Solo un número que de verdad está en la cuenta (nunca uno escrito a mano).
+        const hit = (await cloudtalk.listNumbers(acc)).find((n) => n.id === id);
+        if (!hit) throw new TelephonyError("Ese número no está en la cuenta de CloudTalk.");
+        config.call_number_id = hit.id; config.call_number = hit.number; config.call_number_name = hit.name || null;
+      }
+      await db.from("telephony_accounts").update({ config }).eq("id", acc.id);
+      return { ok: true, config };
     }
 
     case "sync": {

@@ -75,8 +75,10 @@ export async function memberByPhone(db: Db, userId: string, number: string | nul
  * Guarda (o actualiza) una llamada que reportó un conector. Enlaza con la
  * fila que creó el clic para llamar (mismo número, últimos 30 min, sin id del
  * proveedor todavía) o con el lead que tiene ese número.
+ * `matchOnly` (cuenta compartida de la plataforma): solo enlaza llamadas que
+ * este usuario inició; nunca inserta una llamada de otro cliente.
  */
-export async function recordProviderCall(db: Db, account: TelephonyAccount, c: NormalizedCall): Promise<Json | null> {
+export async function recordProviderCall(db: Db, account: TelephonyAccount, c: NormalizedCall, opts: { matchOnly?: boolean } = {}): Promise<Json | null> {
   const userId = account.user_id;
   let { data: row } = await db.from("calls").select("*")
     .eq("user_id", userId).eq("provider", account.provider).eq("provider_call_id", c.provider_call_id).maybeSingle();
@@ -98,6 +100,7 @@ export async function recordProviderCall(db: Db, account: TelephonyAccount, c: N
     ...(c.recording_duration !== null ? { recording_duration: c.recording_duration } : {}),
     ...(c.transcript ? { transcript: c.transcript, transcript_status: "ready" } : {}),
   };
+  if (!row && opts.matchOnly) return null;
   if (row) {
     // Un evento atrasado (ringing después de hangup) no retrocede el estado.
     if (["completed", "no_answer", "busy", "failed", "canceled"].includes(row.status) && ["ringing", "in_progress", "queued"].includes(c.status)) delete patch.status;

@@ -1,11 +1,11 @@
 /**
  * js/email-mailboxes.js — buzones propios del canal Email (2026-10-17).
  *
- * El canal Email puede enviar con Apollo (como siempre) o con buzones propios
+ * El canal Email envía SOLO con los buzones propios del cliente (desde el
+ * 2026-11-23 Apollo ya no es remitente: queda como base de datos de Buscar),
  * conectados a Predictable: Gmail y Microsoft 365 / Outlook por OAuth, o
  * cualquier proveedor por SMTP (465) + IMAP (993). Este módulo pinta, dentro
  * del detalle del canal Email de Campañas:
- *   • «Enviar con»: Apollo o Mis buzones (email_settings.provider);
  *   • la lista de buzones (estado, envíos de hoy / tope, warm-up) con sus
  *     ajustes (tope diario, separación, rampa, horario), pausa, prueba y baja;
  *   • el monitor de entregabilidad por dominio (SPF / DKIM / DMARC / rebotes);
@@ -92,8 +92,8 @@
       S.mailboxes = S.mailboxes || [];
       return loadUsage();
     }, function (e) {
-      // Función sin desplegar o migración sin aplicar: el canal sigue con Apollo.
-      S = { unavailable: true, message: H.errMsg(e), mailboxes: [], settings: { provider: 'apollo' }, oauth: {}, health: [] };
+      // Función sin desplegar o migración sin aplicar: el canal queda sin buzones.
+      S = { unavailable: true, message: H.errMsg(e), mailboxes: [], settings: { provider: 'mailboxes' }, oauth: {}, health: [] };
       return S;
     }).then(function () { loading = null; return S; });
     return loading;
@@ -111,9 +111,13 @@
 
   function current() { return S; }
   function connected() { return (S && S.mailboxes || []).filter(function (m) { return m.status === 'connected'; }); }
-  function provider() { return (S && S.settings && S.settings.provider) || 'apollo'; }
-  /** El canal Email está "conectado" por buzones si eligió buzones y hay al menos uno conectado. */
-  function activeForChannel() { return provider() === 'mailboxes' && connected().length > 0; }
+  // Desde el 2026-11-23 (decisión del dueño) el email sale SOLO desde los
+  // buzones propios del cliente: Apollo queda como base de datos de Buscar,
+  // ya no como remitente. Una configuración vieja con provider = 'apollo' se
+  // ignora (el servidor hace lo mismo en resolveEmailProvider).
+  function provider() { return 'mailboxes'; }
+  /** El canal Email está "conectado" si hay al menos un buzón propio conectado. */
+  function activeForChannel() { return connected().length > 0; }
 
   function act(action, payload) { return H.edgeFetch(FN, { action: action, payload: payload || {} }); }
 
@@ -413,58 +417,31 @@
   }
 
   /**
-   * Sección completa dentro del detalle del canal Email. `apolloInfo` =
-   * {connected, detail} para pintar la opción Apollo; `rerender` vuelve a
+   * Sección completa dentro del detalle del canal Email (solo buzones
+   * propios; `_info` se ignora desde el 2026-11-23); `rerender` vuelve a
    * pintar el modal después de cada cambio; `onOpenSuppression` abre la
    * vista central «Bajas y exclusiones» de Campañas (js/suppression.js).
    */
-  function renderSection(container, apolloInfo, rerender, onOpenSuppression) {
-    var apolloNode = apolloInfo.node || null;
+  function renderSection(container, _info, rerender, onOpenSuppression) {
     if (!S) {
       container.appendChild(h('span', { class: 'pros-hint', text: 'Cargando buzones…' }));
-      if (apolloNode) container.appendChild(apolloNode);
       load().then(rerender);
       return;
     }
     var wrap = h('div', { class: 'emb' });
     if (S.unavailable) {
-      if (apolloNode) wrap.appendChild(apolloNode);
       wrap.appendChild(h('div', { class: 'pros-hint', text: 'Enviar desde tus propios buzones (Gmail, Microsoft 365 o SMTP) todavía no está habilitado en tu cuenta.' }));
       container.appendChild(wrap);
       return;
     }
     var conn = connected().length;
 
-    // ── 1. Con qué salen los emails ──
-    var how = h('section', { class: 'emb-sec' });
-    how.appendChild(h('div', { class: 'emb-sec-head' }, h('h4', { text: 'Cómo se envían tus emails' })));
-    how.appendChild(h('p', { class: 'emb-sub', text: 'Elige con qué salen los emails de tus campañas y tus respuestas de la Bandeja. Cada campaña puede cambiarlo en su resumen.' }));
-    var choice = h('div', { class: 'emb-opts', role: 'radiogroup', 'aria-label': 'Cómo se envían tus emails' });
-    [['mailboxes', 'Mis buzones', conn ? conn + (conn === 1 ? ' buzón conectado' : ' buzones conectados') + ', con rotación y warm-up' : 'Conecta un buzón abajo'],
-     ['apollo', 'Apollo', apolloInfo.connected ? (apolloInfo.detail || 'Cuenta conectada') : 'Sin conectar']].forEach(function (o) {
-      var radio = h('input', { type: 'radio', name: 'email-provider', value: o[0] });
-      radio.checked = provider() === o[0];
-      if (o[0] === 'mailboxes' && !conn) radio.disabled = true;
-      if (o[0] === 'apollo' && !apolloInfo.connected) radio.disabled = provider() !== 'apollo';
-      radio.addEventListener('change', function () {
-        act('settings', { provider: o[0] }).then(function (r) {
-          S.settings = (r && r.settings) || S.settings;
-          H.toast(o[0] === 'mailboxes' ? 'Las campañas y la Bandeja enviarán desde tus buzones (salvo que una campaña elija Apollo).' : 'Las campañas y la Bandeja enviarán con Apollo.', 'success');
-          rerender();
-        }, function (e) { H.toast(H.errMsg(e), 'error'); rerender(); });
-      });
-      var cls = 'emb-opt' + (radio.checked ? ' on' : '') + (radio.disabled ? ' off' : '');
-      choice.appendChild(h('label', { class: cls }, radio, h('span', null, h('b', { text: o[1] }), h('small', { text: o[2] }))));
-    });
-    how.appendChild(choice);
-    wrap.appendChild(how);
-
     // ── 2. Mis buzones ──
     var mbs = h('section', { class: 'emb-sec' });
     mbs.appendChild(h('div', { class: 'emb-sec-head' }, h('h4', { text: 'Mis buzones' })));
     mbs.appendChild(h('p', { class: 'emb-sub', text: S.mailboxes.length
-      ? 'Predictable reparte los envíos entre tus buzones, respeta el tope de cada uno y revisa respuestas y rebotes cada 5 minutos. Con buzones propios no se miden aperturas: la condición «¿abrió el email?» de la cadencia solo funciona con Apollo.'
-      : 'Sin buzones todavía. Conecta los buzones desde los que quieres prospectar: Predictable reparte los envíos entre ellos, respeta el tope de cada uno y detecta respuestas y rebotes.' }));
+      ? 'Predictable reparte los envíos entre tus buzones, respeta el tope de cada uno y revisa respuestas y rebotes cada 5 minutos. No se miden aperturas (no hay píxel de seguimiento): la condición «¿abrió el email?» de la cadencia siempre va por la rama «No».'
+      : 'Sin buzones todavía. Los emails de tus campañas y tus respuestas de la Bandeja salen de tu correo laboral: conecta los buzones desde los que quieres prospectar. Predictable reparte los envíos entre ellos, respeta el tope de cada uno y detecta respuestas y rebotes.' }));
     if (S.mailboxes.length) {
       var list = h('div', { class: 'emb-list' });
       S.mailboxes.forEach(function (mb) { list.appendChild(mailboxRow(mb, rerender)); });
@@ -487,9 +464,6 @@
     if (!oauth.gmail || !oauth.microsoft) mbs.appendChild(h('p', { class: 'emb-sub', text: 'Gmail y Microsoft 365 se conectan con su inicio de sesión cuando la plataforma los habilite; mientras tanto puedes conectarlos por SMTP/IMAP con una contraseña de aplicación (Gmail: smtp.gmail.com / imap.gmail.com).' }));
     wrap.appendChild(mbs);
 
-    // ── 3. Apollo (lo pinta js/campaigns.js) ──
-    if (apolloNode) wrap.appendChild(apolloNode);
-
     // ── 4 y 5. Avanzado: entregabilidad y baja (plegados) ──
     if (S.mailboxes.length) {
       var hb = healthBlock(rerender);
@@ -508,19 +482,11 @@
   function builderPicker(sender, onChange) {
     var wrap = h('div');
     if (!S || S.unavailable || !S.mailboxes.length) return null;
-    var sel = h('select', { style: 'width:100%' });
-    [['', 'Como el canal Email (' + (provider() === 'mailboxes' ? 'mis buzones' : 'Apollo') + ')'], ['apollo', 'Apollo'], ['mailboxes', 'Mis buzones']].forEach(function (o) {
-      var opt = h('option', { value: o[0], text: o[1] });
-      if (String(sender.email_provider || '') === o[0]) opt.selected = true;
-      sel.appendChild(opt);
-    });
-    wrap.appendChild(h('label', null, h('span', { class: 'pros-lbl', text: 'Enviar los emails con' }), sel));
+    sender.email_provider = 'mailboxes';
     var boxes = h('div', { class: 'cmp-check', style: 'margin-top:6px' });
     wrap.appendChild(boxes);
-    function effective() { return sender.email_provider || provider(); }
     function paintBoxes() {
       boxes.innerHTML = '';
-      if (effective() !== 'mailboxes') return;
       var chosen = Array.isArray(sender.mailbox_ids) ? sender.mailbox_ids.map(String) : [];
       boxes.appendChild(h('span', { class: 'pros-hint', text: 'Buzones de esta campaña (ninguno marcado = todos los conectados):' }));
       S.mailboxes.forEach(function (mb) {
@@ -534,21 +500,12 @@
         boxes.appendChild(h('label', { style: 'display:flex;gap:8px;align-items:center' }, cb, h('span', { text: mb.email + (mb.status !== 'connected' ? ' (' + (STATUS[mb.status] || [mb.status])[0].toLowerCase() + ')' : '') })));
       });
     }
-    sel.addEventListener('change', function () {
-      sender.email_provider = sel.value || '';
-      if (!sel.value || sel.value === 'apollo') sender.mailbox_ids = [];
-      paintBoxes();
-      onChange();
-    });
     paintBoxes();
     return wrap;
   }
 
-  /** ¿Esta campaña envía por buzones propios? (para no pedirle la cuenta de Apollo). */
-  function campaignUsesMailboxes(sender) {
-    var p = (sender && sender.email_provider) || provider();
-    return p === 'mailboxes';
-  }
+  /** Toda campaña envía por buzones propios (2026-11-23: Apollo ya no es remitente). */
+  function campaignUsesMailboxes() { return true; }
 
   global.EmailMailboxes = {
     init: init, load: load, current: current, connected: connected, provider: provider,

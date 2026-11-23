@@ -47,7 +47,7 @@ import type { ApolloAuth } from "../_shared/apollo-auth.ts";
 import { apolloBillableCount, CREDIT_COSTS } from "../_shared/credit-costs.ts";
 import { refundCredits, reserveCredits, settleReservation } from "../_shared/credits.ts";
 import { platformRevealsLeft, TRIAL_REVEAL_MESSAGE } from "../_shared/trial-limits.ts";
-import { blockedInPlatformMode, PLATFORM_SKIPPED_CONTACT, sanitizePlatformSearch, stripAccountScopedFilters } from "../_shared/apollo-platform.ts";
+import { blockedInPlatformMode, PLATFORM_SKIPPED_CONTACT, sanitizePlatformCompanies, sanitizePlatformSearch, stripAccountScopedFilters } from "../_shared/apollo-platform.ts";
 import {
   APOLLO_LIST_ENDPOINTS,
   apolloListsAllowed,
@@ -112,10 +112,11 @@ function requiresOwnApollo(endpoint: string): boolean {
   return OWN_ACCOUNT_ONLY.test(endpoint);
 }
 
-// La búsqueda de empresas cuesta créditos de Apollo (la de personas no): con
-// la key compartida, cada página de cada cliente saldría de la cuenta de la
-// plataforma sin cobrarse en Predictable. Solo con el Apollo del usuario.
-const OWN_APOLLO_SEARCH = new Set(["/mixed_companies/search"]);
+// La búsqueda de empresas cuesta créditos de Apollo (la de personas no).
+// Desde el 2026-11-23 viene por defecto en toda cuenta (decisión del dueño):
+// con la key compartida cada página se cobra en Predictable
+// (CREDIT_COSTS.enrich_company_search); con el Apollo propio, gratis.
+const PAID_PLATFORM_SEARCH = new Set(["/mixed_companies/search"]);
 
 function corsHeaders(origin: string) {
   return {
@@ -216,13 +217,6 @@ Deno.serve(async (req) => {
     }, 403, cors);
   }
 
-  if (auth.mode === "platform" && OWN_APOLLO_SEARCH.has(endpoint)) {
-    return json({
-      error: "apollo_account_required_companies",
-      message: "Conecta tu cuenta de Apollo para buscar empresas: cada página usa 1 crédito de tu Apollo.",
-    }, 403, cors);
-  }
-
   if (listMethod) {
     if (!apolloListsAllowed(user.id, auth.mode)) {
       return json({ error: "apollo_lists_not_enabled" }, 403, cors);
@@ -239,7 +233,7 @@ Deno.serve(async (req) => {
   // se queda solo en Predictable, con su RLS por dueño.
   // Filtros importados de Apollo que leen listas de UNA cuenta: con la key
   // compartida esa cuenta es de todos (ver _shared/apollo-platform.ts).
-  if (auth.mode === "platform" && endpoint === "/mixed_people/api_search") {
+  if (auth.mode === "platform" && (endpoint === "/mixed_people/api_search" || PAID_PLATFORM_SEARCH.has(endpoint))) {
     body = stripAccountScopedFilters(body).body;
   }
 
@@ -269,9 +263,16 @@ Deno.serve(async (req) => {
     creditCost = people * perPerson;
     creditReason = wantsPhone ? "enrich_phone" : "enrich_email";
   }
+  // Una página de empresas con la base integrada: precio fijo por página.
+  let flatCharge = false;
+  if (auth.mode === "platform" && PAID_PLATFORM_SEARCH.has(endpoint)) {
+    creditCost = CREDIT_COSTS.enrich_company_search;
+    creditReason = "enrich_company_search";
+    flatCharge = true;
+  }
 
   // Prueba gratis: tope de revelados con la key compartida (_shared/trial-limits.ts).
-  if (creditCost > 0) {
+  if (creditCost > 0 && !flatCharge) {
     const kind = wantsPhone ? "phone" : "email";
     const people = creditCost / perPerson;
     if ((await platformRevealsLeft(svc, user.id, kind)) < people) {
@@ -323,6 +324,14 @@ Deno.serve(async (req) => {
       return json({ error: "Respuesta de Apollo no válida" }, 502, cors);
     }
   }
+  if (res.ok && auth.mode === "platform" && PAID_PLATFORM_SEARCH.has(endpoint)) {
+    try {
+      text = JSON.stringify(sanitizePlatformCompanies(JSON.parse(text)));
+    } catch (_) {
+      if (admin) await refundCredits(admin, user.id, creditCost, creditReason + "_refund");
+      return json({ error: "Respuesta de Apollo no válida" }, 502, cors);
+    }
+  }
   if (res.ok && listMethod) {
     try {
       const parsed = JSON.parse(text);
@@ -338,7 +347,9 @@ Deno.serve(async (req) => {
   // Cobrar solo si Apollo respondió OK y solo por las personas con dato; el
   // resto de la reserva vuelve al saldo (todo, si Apollo falló).
   let charge = 0;
-  if (admin && res.ok) {
+  if (admin && res.ok && flatCharge) {
+    charge = creditCost;
+  } else if (admin && res.ok) {
     try {
       charge = apolloBillableCount(endpoint, JSON.parse(text), wantsPhone) * perPerson;
     } catch {

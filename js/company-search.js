@@ -4,9 +4,10 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Segundo modo de Buscar: lo monta js/prospecting.js con
  * `companySearch.mount(host)`. Busca empresas en Apollo
- * (/mixed_companies/search por apollo-proxy). Cada página usa 1 crédito de la
- * cuenta de Apollo conectada del usuario —no de Predictable— y con la key
- * compartida el proxy la rechaza, así que la UI lo dice antes de buscar.
+ * (/mixed_companies/search por apollo-proxy). Viene por defecto en toda cuenta
+ * (2026-11-23): con la base integrada cada página cobra 2 créditos de
+ * Predictable (enrich_company_search); con el Apollo propio conectado, 1
+ * crédito de esa cuenta y nada de Predictable.
  *
  * Desde una empresa se llega a sus personas: «Ver personas» (una) o «Buscar
  * personas en N empresas» (las seleccionadas con dominio) abren Buscar →
@@ -128,11 +129,6 @@
 
   // ── búsqueda ───────────────────────────────────────────────────────────
   async function search(page) {
-    if (P().apolloConnected && !P().apolloConnected()) {
-      toast('Conecta tu cuenta de Apollo (arriba, en «Base de datos») para buscar empresas.', 'warn');
-      if (window.campaigns && typeof window.campaigns.connectApollo === 'function') window.campaigns.connectApollo();
-      return;
-    }
     if (!activeCount(state.f)) return toast('Agrega al menos un filtro: buscar todas las empresas de Apollo no sirve para prospectar.', 'warn');
     state.loading = true; state.error = ''; state.warning = ''; state.page = page || 1;
     render();
@@ -461,7 +457,7 @@
       field('Vacantes abiertas con el cargo', tags('q_organization_job_titles', 'Ej. vendedor · Enter')),
       field('Ubicación de las vacantes', tags('organization_job_locations', 'País o ciudad · Enter')),
       field('Número de vacantes', minMax('jobs_min', 'jobs_max')),
-      h('div', { class: 'cs-hint', text: 'Cada página de resultados usa 1 crédito de tu cuenta de Apollo (no de Predictable).' }),
+      h('div', { class: 'cs-hint', text: (P().apolloConnected && P().apolloConnected()) ? 'Cada página de resultados usa 1 crédito de tu cuenta de Apollo (no de Predictable).' : 'Cada página de resultados usa 2 créditos de Predictable (gratis si conectas tu propio Apollo).' }),
       go,
       h('div', { style: 'display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap' }, clear, save));
   }

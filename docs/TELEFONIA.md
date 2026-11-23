@@ -87,6 +87,16 @@ Fuentes:
   - que `GET /v1/users/:id` traiga `numbers`;
   - el campo `recording` del objeto de llamada.
 
+## CloudTalk de la plataforma (2026-11-23)
+
+Decisión del dueño: la cuenta de CloudTalk de Predictable viene conectada en toda cuenta, y cada usuario elige con qué número de esa cuenta salen sus llamadas.
+
+- **Secrets de Supabase** (nunca en el repo): `CLOUDTALK_KEY_ID`, `CLOUDTALK_KEY_SECRET` y `CLOUDTALK_AGENT_EMAIL` (el email del agente que contesta en la app de CloudTalk; también acepta `CLOUDTALK_AGENT_ID`). Sin ellos todo sigue como antes.
+- `telephony` `status` crea la fila `cloudtalk` con `config.platform = true` (sin secreto) si el usuario no tiene CloudTalk; un CloudTalk propio conectado después la reemplaza.
+- Número: `numbers` lista `GET /numbers/index.json` y `set_number` guarda `config.call_number_id`. Como CloudTalk asigna el número saliente al agente, `dial` hace `POST /agents/edit/{agent}.json {call_number_id}` antes de `POST /calls/create.json`. Si CloudTalk no lo acepta, la llamada sale con el número predeterminado del agente y el aviso lo dice.
+- La cuenta es una sola: el agente es el mismo para todos y dos usuarios que llaman a la vez pueden pisarse el número saliente. La sincronización de una fila `platform` solo enlaza llamadas iniciadas por ese usuario (nunca importa las de otro cliente).
+- **Por verificar con la cuenta real**: los nombres de los campos de `/numbers/index.json` (se leen con alternativas: `CallNumber.id`, `caller_id_e164`/`public_number`/`number`, `internal_name`, `country_code`) y que `call_number_id` sea el campo del número saliente del agente.
+
 ## Paso de campaña `call`
 
 1. El nodo `call` crea una tarea en Campañas → Llamadas (`call_tasks`) con el guion: el IA, que se escribe 24 h antes con `generate-outreach` en modo paso y cuesta 2 créditos, o «Mi guion».

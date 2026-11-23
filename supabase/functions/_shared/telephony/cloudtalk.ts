@@ -17,6 +17,19 @@
  * No documenta webhooks por API, así que el registro llega por sincronización
  * (cron `telephony-sync` cada 10 min y el botón «Sincronizar»).
  *
+ * Cuenta de la plataforma (2026-11-23, decisión del dueño): Predictable trae
+ * SU cuenta de CloudTalk conectada en toda cuenta nueva. Las credenciales
+ * viven SOLO en los secrets de Supabase (`CLOUDTALK_KEY_ID`,
+ * `CLOUDTALK_KEY_SECRET`, `CLOUDTALK_AGENT_EMAIL`), nunca en el repo ni en la
+ * fila: la fila lleva `config.platform = true` y `secret` vacío.
+ *   • números: GET /numbers/index.json → el usuario elige con cuál sale.
+ *   • el número saliente en CloudTalk es del AGENTE (`call_number_id`, POST
+ *     /agents/edit/{id}.json): antes de cada clic para llamar se fija el
+ *     número elegido. Si CloudTalk no lo acepta, la llamada sale igual con el
+ *     número predeterminado del agente y se avisa.
+ *   • la cuenta es de todos: la sincronización solo enlaza las llamadas que
+ *     el propio usuario inició (nunca importa las de otro cliente).
+ *
  * Fuentes: https://developers.cloudtalk.io/api-reference/overview ·
  * https://developers.cloudtalk.io/api-reference/calls/make-a-call ·
  * https://developers.cloudtalk.io/guides/quickstart (docs/TELEFONIA.md).
@@ -24,6 +37,63 @@
 
 import type { NormalizedCall, ProviderMeta, TelephonyAccount, TelephonyAdapter } from "./types.ts";
 import { intOrNull, isoOrNull, readSecret, TelephonyError } from "./types.ts";
+
+/** Credenciales de la cuenta de CloudTalk de la plataforma, o null si no están los secrets. */
+export function platformCloudTalk(): { key_id: string; key_secret: string; agent: string } | null {
+  const key_id = (Deno.env.get("CLOUDTALK_KEY_ID") ?? "").trim();
+  const key_secret = (Deno.env.get("CLOUDTALK_KEY_SECRET") ?? "").trim();
+  const agent = (Deno.env.get("CLOUDTALK_AGENT_EMAIL") ?? Deno.env.get("CLOUDTALK_AGENT_ID") ?? "").trim();
+  return key_id && key_secret && agent ? { key_id, key_secret, agent } : null;
+}
+
+/** Credenciales de una cuenta: las de la plataforma o las que pegó el usuario. */
+function credsOf(account: Pick<TelephonyAccount, "config" | "secret">): { key_id: string; key_secret: string } {
+  if (account.config?.platform) {
+    const p = platformCloudTalk();
+    if (!p) throw new TelephonyError("La cuenta de CloudTalk de Predictable no está disponible en este momento.", 503);
+    return p;
+  }
+  const s = readSecret(account);
+  return { key_id: s.key_id ?? "", key_secret: s.key_secret ?? "" };
+}
+
+export interface CtNumber { id: string; number: string; name: string; country: string }
+
+/** Números de la cuenta (/numbers/index.json). Lee con alternativas: el esquema exacto no está verificado. */
+export function parseNumbers(data: Json): CtNumber[] {
+  const rows: Json[] = data?.responseData?.data ?? data?.data ?? [];
+  const out: CtNumber[] = [];
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const n = r?.CallNumber ?? r?.Number ?? r?.number_data ?? r;
+    if (n?.id === undefined || n?.id === null) continue;
+    const raw = n.caller_id_e164 ?? n.public_number ?? n.e164 ?? n.number ?? n.phone_number ?? "";
+    const num = toE164(String(raw)) ?? String(raw ?? "").trim();
+    if (!num) continue;
+    out.push({
+      id: String(n.id),
+      number: num,
+      name: String(n.internal_name ?? n.name ?? n.friendly_name ?? "").trim(),
+      country: String(n.country_code ?? n.country ?? "").trim().toUpperCase(),
+    });
+  }
+  return out;
+}
+
+/** Los números disponibles para llamar con esta cuenta. */
+export async function listNumbers(account: Pick<TelephonyAccount, "config" | "secret">): Promise<CtNumber[]> {
+  const c = credsOf(account);
+  return parseNumbers(await ct(c.key_id, c.key_secret, "/numbers/index.json?limit=1000"));
+}
+
+/** Resuelve el agente de la cuenta de la plataforma (por email o ID). */
+export async function platformConfig(): Promise<Record<string, unknown>> {
+  const p = platformCloudTalk();
+  if (!p) throw new TelephonyError("La cuenta de CloudTalk de Predictable no está configurada.", 503);
+  const agents = parseAgents(await ct(p.key_id, p.key_secret, "/agents/index.json?limit=1000"));
+  const hit = pickAgent(agents, p.agent) ?? (/^\d+$/.test(p.agent) ? { id: p.agent, email: "", name: "" } : null);
+  if (!hit) throw new TelephonyError("No encontramos el agente de la cuenta de CloudTalk de Predictable.", 503);
+  return { platform: true, agent_id: hit.id, agent_name: hit.name || null };
+}
 import { toE164 } from "./phone.ts";
 
 const BASE = "https://my.cloudtalk.io/api";
@@ -178,9 +248,20 @@ export const adapter: TelephonyAdapter = {
   },
 
   async dial(account: TelephonyAccount, to: string) {
-    const s = readSecret(account);
+    const s = credsOf(account);
     const agentId = Number(account.config?.agent_id);
     if (!agentId) throw new TelephonyError("Falta tu ID de agente de CloudTalk: vuelve a conectar la cuenta.");
+    // El número saliente es del agente: se fija el que eligió el usuario.
+    const numberId = Number(account.config?.call_number_id);
+    let numberNote = "";
+    if (numberId) {
+      try {
+        await ct(s.key_id, s.key_secret, `/agents/edit/${agentId}.json`, { method: "POST", body: JSON.stringify({ call_number_id: numberId }) });
+      } catch (e) {
+        console.warn("[cloudtalk] no se pudo fijar el número saliente", (e as Error)?.message);
+        numberNote = " No pudimos fijar el número elegido: sale con el número predeterminado de CloudTalk.";
+      }
+    }
     try {
       await ct(s.key_id, s.key_secret, "/calls/create.json", { method: "POST", body: JSON.stringify({ agent_id: agentId, callee_number: to }) });
     } catch (e) {
@@ -189,11 +270,12 @@ export const adapter: TelephonyAdapter = {
       }
       throw e;
     }
-    return { provider_call_id: null, detail: "CloudTalk te está llamando en su app: contesta y marcará al lead." };
+    const from = numberNote || (account.config?.call_number ? ` Sale con ${account.config.call_number}.` : "");
+    return { provider_call_id: null, detail: "CloudTalk te está llamando en su app: contesta y marcará al lead." + from };
   },
 
   async listCalls(account: TelephonyAccount, since: Date) {
-    const s = readSecret(account);
+    const s = credsOf(account);
     const out: NormalizedCall[] = [];
     for (let page = 1; page <= 5; page++) {
       const data = await ct(s.key_id, s.key_secret, `/calls/index.json?limit=100&page=${page}`);

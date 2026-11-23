@@ -173,14 +173,15 @@ export function usageFromSends(sends: Array<{ mailbox_id: string; sent_at: strin
 export type EmailProvider = "apollo" | "mailboxes";
 
 /**
- * Con qué sale un email: lo que eligió la campaña (sender.email_provider), si
- * no la preferencia del canal (email_settings.provider), si no Apollo — el
- * comportamiento de siempre para quien nunca tocó nada.
+ * Con qué sale un email. Desde el 2026-11-23 (decisión del dueño) SIEMPRE con
+ * los buzones propios del cliente (Gmail, Microsoft 365 o SMTP/IMAP): Apollo
+ * queda como base de datos de Buscar y ya no envía correo. Una campaña o un
+ * canal configurados antes con "apollo" también salen por los buzones; sin
+ * buzón conectado, el paso espera como cualquier canal sin conectar.
+ * La firma se conserva para no tocar a quien la llama.
  */
-export function resolveEmailProvider(campaignSender: { email_provider?: unknown } | null | undefined, settings: { provider?: unknown } | null | undefined): EmailProvider {
-  const c = String(campaignSender?.email_provider ?? "");
-  if (c === "apollo" || c === "mailboxes") return c;
-  return String(settings?.provider ?? "") === "mailboxes" ? "mailboxes" : "apollo";
+export function resolveEmailProvider(_campaignSender?: { email_provider?: unknown } | null, _settings?: { provider?: unknown } | null): EmailProvider {
+  return "mailboxes";
 }
 
 export interface PrevSend { message_id: string; references_ids?: string[] | null; thread_id?: string | null; subject?: string | null; mailbox_id?: string | null }

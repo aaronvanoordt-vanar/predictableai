@@ -379,13 +379,53 @@
     catch (e) { toast(e.message, 'error'); }
   }
 
+  // Número con el que salen las llamadas (CloudTalk, 2026-11-23): la lista la
+  // trae `telephony` (numbers) de la cuenta; nunca se escribe un número a mano.
+  function numberPicker(meta, acc) {
+    var cfg = acc.config || {};
+    var box = h('div', { style: 'display:flex;flex-direction:column;gap:6px' });
+    box.appendChild(h('div', { class: 'pros-hint', text: cfg.call_number
+      ? 'Número para tus llamadas: ' + cfg.call_number + (cfg.call_number_name ? ' (' + cfg.call_number_name + ')' : '') + '.'
+      : 'Tus llamadas salen con el número predeterminado de ' + meta.label + '. Elige con cuál quieres llamar.' }));
+    var btn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'align-self:flex-start', text: cfg.call_number ? 'Cambiar número' : 'Elegir número' });
+    btn.addEventListener('click', async function () {
+      btn.disabled = true; btn.textContent = 'Cargando números…';
+      var r;
+      try { r = await tel('numbers', { provider: meta.id }); }
+      catch (e) { toast(e.message, 'error'); btn.disabled = false; btn.textContent = cfg.call_number ? 'Cambiar número' : 'Elegir número'; return; }
+      var nums = (r && r.numbers) || [];
+      btn.remove();
+      if (!nums.length) { box.appendChild(h('div', { class: 'pros-hint', text: 'La cuenta de ' + meta.label + ' no tiene números disponibles.' })); return; }
+      var sel = h('select', { 'aria-label': 'Número para llamar', style: 'width:100%' });
+      sel.appendChild(h('option', { value: '', text: 'Número predeterminado de ' + meta.label }));
+      nums.forEach(function (n) {
+        var label = n.number + (n.name ? ' · ' + n.name : '') + (n.country ? ' (' + n.country + ')' : '');
+        var o = h('option', { value: String(n.id), text: label });
+        if (String(r.selected || '') === String(n.id)) o.selected = true;
+        sel.appendChild(o);
+      });
+      var save = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: 'Guardar' });
+      save.addEventListener('click', async function () {
+        save.disabled = true;
+        try { await tel('set_number', { provider: meta.id, number_id: sel.value }); toast(sel.value ? 'Listo: tus llamadas saldrán con ese número.' : 'Listo: tus llamadas saldrán con el número predeterminado.', 'success'); await loadStatus(); render(); }
+        catch (e) { toast(e.message, 'error'); save.disabled = false; }
+      });
+      box.appendChild(h('div', { style: 'display:flex;gap:6px;align-items:center' }, sel, save));
+    });
+    box.appendChild(btn);
+    return box;
+  }
+
   function connectorCard(meta, acc) {
+    var included = !!(acc && acc.config && acc.config.platform);
     var card = h('div', { class: 'chart-card', style: 'padding:16px;display:flex;flex-direction:column;gap:8px' });
     var top = h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, h('div', { style: 'font-weight:700;flex:1', text: meta.label }));
-    if (acc) top.appendChild(h('span', { class: 'pill pill-' + (acc.status === 'error' ? 'red' : 'green'), text: acc.status === 'error' ? 'Con error' : 'Conectado' }));
+    if (acc) top.appendChild(h('span', { class: 'pill pill-' + (acc.status === 'error' ? 'red' : 'green'), text: acc.status === 'error' ? 'Con error' : (included ? 'Incluido' : 'Conectado') }));
     card.appendChild(top);
+    if (included) card.appendChild(h('div', { class: 'pros-hint', text: 'Viene conectado con Predictable: no necesitas cuenta ni API key. Al hacer clic para llamar, ' + meta.label + ' llama primero en su app y después marca al lead.' }));
     if (acc) {
       if (acc.last_error) card.appendChild(h('div', { class: 'pros-note-red', text: acc.last_error }));
+      if (meta.id === 'cloudtalk') card.appendChild(numberPicker(meta, acc));
       if (acc.webhook_url) {
         card.appendChild(h('div', { class: 'pros-hint', text: 'Pega esta URL en los webhooks de ' + meta.label + ' (sigue el paso 3):' }));
         var url = h('input', { type: 'text', readonly: true, value: acc.webhook_url, style: 'width:100%;font-family:var(--font-mono,monospace);font-size:11px' });
@@ -395,7 +435,7 @@
       var row = h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' });
       if (st.status.default_provider === meta.id) row.appendChild(h('span', { class: 'pill pill-green', text: 'Con este sale el clic para llamar' }));
       else row.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Usar para llamar', onclick: function () { setDefault(meta.id); } }));
-      row.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'color:var(--red)', text: 'Desconectar', onclick: async function (ev) {
+      if (!included) row.appendChild(h('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'color:var(--red)', text: 'Desconectar', onclick: async function (ev) {
         if (!global.confirm('¿Desconectar ' + meta.label + '? Las llamadas ya guardadas se quedan.')) return;
         ev.target.disabled = true;
         try { await tel('disconnect', { provider: meta.id }); await loadStatus(); render(); }
@@ -405,7 +445,7 @@
     }
     var steps = h('ol', { style: 'margin:0;padding-left:18px;font-size:12px;line-height:1.6;color:var(--text2)' });
     (meta.steps || []).forEach(function (s) { steps.appendChild(h('li', { text: s })); });
-    var det = h('details', { open: !acc }, h('summary', { style: 'cursor:pointer;font-size:12px', text: acc ? 'Volver a conectar' : 'Conectar paso a paso' }), steps);
+    var det = h('details', { open: !acc }, h('summary', { style: 'cursor:pointer;font-size:12px', text: included ? 'Usar mi propia cuenta de ' + meta.label : acc ? 'Volver a conectar' : 'Conectar paso a paso' }), steps);
     var form = h('form', { style: 'display:flex;flex-direction:column;gap:6px;margin-top:8px' });
     var inputs = {};
     (meta.fields || []).forEach(function (f) {
