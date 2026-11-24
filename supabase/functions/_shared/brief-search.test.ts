@@ -2,7 +2,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
   briefText, canonicalCountry, checkBriefUrl, companyFilters, employeeRangesFor, hasSearch, LATAM_COUNTRIES,
-  normalizeExtraction, parseModelJson, peopleFilters,
+  BRIEF_SCHEMA, normalizeExtraction, parseModelJson, peopleFilters,
 } from "./brief-search.ts";
 
 // Lo que devolvería el modelo para un brief como el de Roomie IT (kickoff).
@@ -17,11 +17,11 @@ const ROOMIE = {
     "telecommunications", "government administration", "inventada"],
   keywords: ["manufacturing", "Retail"],
   exclude_keywords: [],
-  employee_min: 100,
-  employee_max: 10000,
+  employee_min: "100",
+  employee_max: "10k",
   employee_ranges: [],
-  revenue_min_usd: null,
-  revenue_max_usd: null,
+  revenue_min_usd: "",
+  revenue_max_usd: "",
   titles: ["CTO", "CIO", "Gerente de Administración y Finanzas", "Director de Transformación Digital", "Head of AI"],
   seniorities: ["c_suite", "director", "head", "jefe"],
   departments: ["information_technology", "finance"],
@@ -106,4 +106,21 @@ Deno.test("HTML → texto", () => {
 Deno.test("JSON del modelo envuelto", () => {
   assertEquals(parseModelJson('```json\n{"a":1}\n```'), { a: 1 });
   assertEquals(parseModelJson("no"), null);
+});
+
+Deno.test("el esquema no usa uniones de tipo (los tres motores lo aceptan)", () => {
+  const walk = (node: unknown): void => {
+    if (!node || typeof node !== "object") return;
+    const n = node as Record<string, unknown>;
+    if ("type" in n) assertEquals(typeof n.type, "string", JSON.stringify(n).slice(0, 80));
+    for (const v of Object.values(n)) walk(v);
+  };
+  walk(BRIEF_SCHEMA);
+});
+
+Deno.test("números como texto: 10k, 10,000, vacío", () => {
+  const x = normalizeExtraction({ countries: ["Peru"], employee_min: "1,000", employee_max: "10k", revenue_min_usd: "5 MM", revenue_max_usd: "" });
+  assertEquals([x.employee_min, x.employee_max], [1000, 10000]);
+  assertEquals([x.revenue_min, x.revenue_max], [5000000, null]);
+  assertEquals(normalizeExtraction({ employee_min: "mucho" }).employee_min, null);
 });

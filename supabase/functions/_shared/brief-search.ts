@@ -67,7 +67,16 @@ function countries(v: unknown, max = 25): string[] {
 }
 
 function num(v: unknown): number | null {
-  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN;
+  let n = NaN;
+  if (typeof v === "number") n = v;
+  else if (typeof v === "string" && v.trim()) {
+    const m = /^\s*([\d.,]+)\s*(k|m|mm)?\s*$/i.exec(v.replace(/\s*usd\s*/i, ""));
+    if (m) {
+      const base = Number(m[1].replace(/[.,](?=\d{3}(\D|$))/g, "").replace(",", "."));
+      const mult = !m[2] ? 1 : m[2].toLowerCase() === "k" ? 1e3 : 1e6;
+      n = base * mult;
+    }
+  }
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
 }
 
@@ -212,8 +221,8 @@ Reglas:
 - Usa únicamente lo que dice el brief. Si algo no aparece, déjalo vacío y agrégalo a "missing". Nunca inventes países, industrias, cargos, cifras ni empresas.
 - Países: nombres en inglés como en Apollo (Peru, Mexico, Dominican Republic…). Si el brief dice "todo Latam" o "Latinoamérica", pon all_latam = true. Los países que el brief marca como prioridad o "foco" van en focus_countries. Los que dice que NO van en exclude_countries.
 - industries: SOLO valores de la lista permitida (mapea "banca" → banking, "aseguradoras" → insurance, "telcom" → telecommunications, "oil & gas" → oil & energy, "logística" → logistics & supply chain, "CPG" → consumer goods, "gobierno" → government administration, etc.). Lo que no tenga equivalente va en keywords, en inglés y en minúsculas.
-- Empleados: si el brief da un rango ("100 a 10k"), pon employee_min y employee_max como números (10k = 10000). "Mid-market y enterprise" sin números: employee_min 200 y employee_max vacío.
-- Ingresos: solo si el brief da una cifra de facturación, en USD.
+- Empleados: si el brief da un rango ("100 a 10k"), pon employee_min y employee_max como números escritos solo con dígitos (10k = "10000"). "Mid-market y enterprise" sin números: employee_min "200" y employee_max "". Lo que el brief no diga va como "".
+- Ingresos: solo si el brief da una cifra de facturación, en USD y solo con dígitos (revenue_min_usd / revenue_max_usd); si no, "".
 - titles: los cargos tal como los usaría Apollo, en español y en inglés si ayuda (p. ej. "CTO", "CIO", "Gerente de Administración y Finanzas", "Director de Transformación Digital", "Head of AI"). Máximo 15.
 - seniorities y departments: SOLO valores de la lista permitida.
 - technologies: herramientas que el prospecto usa y que sirven de filtro (p. ej. "sap", "oracle", "salesforce"), solo si el brief las relaciona con el comprador.
@@ -233,7 +242,10 @@ ${text}
 }
 
 const strArr = { type: "array", items: { type: "string" } };
-const numOrNull = { type: ["number", "null"] };
+// Los números van como texto ("" = el brief no lo dice): un esquema sin
+// uniones de tipo (["number","null"]) lo aceptan los tres motores; num() lo
+// convierte y descarta lo que no sea un número.
+const numText = { type: "string" };
 
 export const BRIEF_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -248,11 +260,11 @@ export const BRIEF_SCHEMA: Record<string, unknown> = {
     industries: strArr,
     keywords: strArr,
     exclude_keywords: strArr,
-    employee_min: numOrNull,
-    employee_max: numOrNull,
+    employee_min: numText,
+    employee_max: numText,
     employee_ranges: strArr,
-    revenue_min_usd: numOrNull,
-    revenue_max_usd: numOrNull,
+    revenue_min_usd: numText,
+    revenue_max_usd: numText,
     titles: strArr,
     seniorities: strArr,
     departments: strArr,

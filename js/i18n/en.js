@@ -7741,4 +7741,5 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "← Otro brief": "← Another brief",
   "Revisa y ajusta los filtros en Buscar antes de guardar contactos.": "Review and adjust the filters in Search before saving contacts.",
   "por brief": "per brief",
+  "{0} Motivo: {1}": "{0} Reason: {1}",
 });
