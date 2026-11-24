@@ -1602,7 +1602,7 @@
     return { value: visibleRows().length, exact: false };
   }
 
-  function waitForBrief() {
+  function waitForBrief(say) {
     // Espera (poll cada 6s, máx ~2 min) a que generate-client-brief termine.
     var tries = 0;
     function step() {
@@ -1613,26 +1613,34 @@
           throw new Error('No se pudo generar tu brief: ' + (b.error_message || 'error desconocido') + '. Reintenta.');
         }
         if (tries >= 20) throw new Error('Tu brief sigue generándose. Vuelve a intentarlo en un minuto.');
-        setReco({ msg: 'La IA está leyendo tu web y tu LinkedIn para entender tu empresa… (' + (tries * 6) + 's)' });
+        (say || function (m) { setReco({ msg: m }); })('La IA está leyendo tu web y tu LinkedIn para entender tu empresa… (' + (tries * 6) + 's)');
         return new Promise(function (resolve) { setTimeout(resolve, 6000); }).then(step);
       });
     }
     return step();
   }
 
-  function runRecommendedSearch() {
-    var s = state.search;
-    if (s.reco.running || s.loading) return Promise.resolve();
-    setReco({ running: true, msg: 'Cargando el contexto de tu empresa…', note: '' });
+  // Brief listo con filtros recomendados: lo lee, lo genera si falta y espera
+  // a que termine. Lo usan la búsqueda recomendada de personas y la de
+  // empresas (js/company-search.js, vía prospecting.loadRecommendedBrief).
+  function ensureRecommendedBrief(onMsg) {
+    var say = onMsg || function () {};
     return Promise.resolve(pd().fetchClientBrief())
       .then(function (brief) {
         if (brief && brief.status === 'ready' && brief.recommended_filters) return brief;
         if (!brief || brief.status === 'error' || (brief.status === 'ready' && !brief.recommended_filters)) {
-          setReco({ msg: 'Aún no tienes un brief: lo estamos generando desde tu onboarding y tu web…' });
-          return Promise.resolve(pd().generateClientBrief()).then(waitForBrief);
+          say('Aún no tienes un brief: lo estamos generando desde tu onboarding y tu web…');
+          return Promise.resolve(pd().generateClientBrief()).then(function () { return waitForBrief(say); });
         }
-        return waitForBrief(); // status pending/generating
-      })
+        return waitForBrief(say); // status pending/generating
+      });
+  }
+
+  function runRecommendedSearch() {
+    var s = state.search;
+    if (s.reco.running || s.loading) return Promise.resolve();
+    setReco({ running: true, msg: 'Cargando el contexto de tu empresa…', note: '' });
+    return ensureRecommendedBrief(function (m) { setReco({ msg: m }); })
       .then(function (brief) {
         if (!brief.recommended_filters) throw new Error('Tu brief no incluye filtros recomendados. Revisa el ICP en Contexto de la empresa y vuelve a generar el Intelligence Hub.');
         applyRecommendedFilters(brief.recommended_filters);
@@ -4985,6 +4993,9 @@
     },
     apolloConnected: function () { return apollo.connected !== false; },
     tagInput: tagInput,
+    chipGroup: chipGroup,
+    techSlug: techSlug,
+    loadRecommendedBrief: ensureRecommendedBrief,
     show: function (tabId) {
       try {
         ensureBuilt();
