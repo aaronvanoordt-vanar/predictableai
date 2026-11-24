@@ -7742,4 +7742,13 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Revisa y ajusta los filtros en Buscar antes de guardar contactos.": "Review and adjust the filters in Search before saving contacts.",
   "por brief": "per brief",
   "{0} Motivo: {1}": "{0} Reason: {1}",
+  "Personas del ICP": "ICP people",
+  "Personas del ICP en las seleccionadas": "ICP people at the selected ones",
+  "Busca en esta empresa a las personas con los cargos y seniorities de tu ICP": "Find the people at this company with your ICP's job titles and seniorities",
+  "Busca en las empresas seleccionadas a las personas con los cargos y seniorities de tu ICP": "Find the people at the selected companies with your ICP's job titles and seniorities",
+  "Tu ICP no tiene cargos ni seniorities. Agrégalos en Contexto de tu empresa → Empresas objetivo para buscar a las personas que encajan.": "Your ICP has no job titles or seniorities. Add them in Company context → Target companies to find the people who fit.",
+  "No se pudo leer tu ICP en Contexto: {0}": "Couldn't read your ICP in Context: {0}",
+  "Buscando personas de tu ICP en {0} empresas": "Searching for your ICP people at {0} companies",
+  "Buscando personas de tu ICP en {0}": "Searching for your ICP people at {0}",
+  "Buscando personas de tu ICP en «{0}» (sin dominio: por nombre, revisa que sean de esa empresa)": "Searching for your ICP people at “{0}” (no domain: by name, check they belong to that company)",
 });

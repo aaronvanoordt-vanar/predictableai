@@ -7893,4 +7893,13 @@ window.I18N_DICTS['pt-BR'] = {
   "Revisa y ajusta los filtros en Buscar antes de guardar contactos.": "Revise e ajuste os filtros em Buscar antes de salvar contatos.",
   "por brief": "por brief",
   "{0} Motivo: {1}": "{0} Motivo: {1}",
+  "Personas del ICP": "Pessoas do ICP",
+  "Personas del ICP en las seleccionadas": "Pessoas do ICP nas selecionadas",
+  "Busca en esta empresa a las personas con los cargos y seniorities de tu ICP": "Busca nesta empresa as pessoas com os cargos e senioridades do seu ICP",
+  "Busca en las empresas seleccionadas a las personas con los cargos y seniorities de tu ICP": "Busca nas empresas selecionadas as pessoas com os cargos e senioridades do seu ICP",
+  "Tu ICP no tiene cargos ni seniorities. Agrégalos en Contexto de tu empresa → Empresas objetivo para buscar a las personas que encajan.": "Seu ICP não tem cargos nem senioridades. Adicione-os em Contexto da sua empresa → Empresas-alvo para buscar as pessoas que se encaixam.",
+  "No se pudo leer tu ICP en Contexto: {0}": "Não foi possível ler seu ICP no Contexto: {0}",
+  "Buscando personas de tu ICP en {0} empresas": "Buscando pessoas do seu ICP em {0} empresas",
+  "Buscando personas de tu ICP en {0}": "Buscando pessoas do seu ICP em {0}",
+  "Buscando personas de tu ICP en «{0}» (sin dominio: por nombre, revisa que sean de esa empresa)": "Buscando pessoas do seu ICP em «{0}» (sem domínio: pelo nome, confira se são dessa empresa)",
 };
