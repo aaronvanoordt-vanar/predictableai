@@ -8,6 +8,13 @@
  */
 window.I18N_DICTS = window.I18N_DICTS || {};
 window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
+  // Prospección — desplegables de Industrias y Cargos (2026-11-24)
+  "Busca o escribe cargos, separados por coma": "Search or type job titles, separated by commas",
+  "Elige de la lista o escribe varios separados por coma: se buscan todos.": "Pick from the list or type several separated by commas: all of them are searched.",
+  "Busca industrias o escribe varias separadas por coma": "Search industries or type several separated by commas",
+  "Elige de la lista o escribe varias separadas por coma: se incluyen todas.": "Pick from the list or type several separated by commas: all of them are included.",
+  "Sin coincidencias en la lista — Enter para agregarlo tal cual": "No matches in the list — press Enter to add it as typed",
+  "Sin coincidencias": "No matches",
   "Buscar o ir a una página (⌘K)": "Search or go to a page (⌘K)",
   // AI Sales Coach — «Lo que sabes del lead» (2026-11-16)
   "Lo que sabes del lead": "What you know about the lead",
