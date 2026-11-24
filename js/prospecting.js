@@ -1796,6 +1796,70 @@
     return runSearch(1, true);
   }
 
+  // Cargos del ICP declarado en Contexto (manda sobre cualquier inferencia);
+  // sin cargos declarados, los del brief de IA si ya existe. Nunca genera ni
+  // inventa: si no hay ninguno, devuelve null.
+  async function loadIcpPersonFilters() {
+    function arr(v) { return Array.isArray(v) ? v.filter(function (x) { return typeof x === 'string' && x.trim(); }) : []; }
+    var E = enums();
+    function allowed(list, values) {
+      var ok = new Set((list || []).map(function (o) { return o.value; }));
+      return values.filter(function (v) { return ok.has(v); });
+    }
+    var titles = [], seniorities = [];
+    var sb = window.supabaseClient;
+    if (sb) {
+      var q = sb.from('intel_hub_intake').select('icp_titles, icp_seniorities');
+      if (window.currentUser && window.currentUser.id) q = q.eq('user_id', window.currentUser.id);
+      var res = await q.maybeSingle();
+      if (res.error) throw new Error('No se pudo leer tu ICP en Contexto: ' + res.error.message);
+      titles = arr(res.data && res.data.icp_titles);
+      seniorities = arr(res.data && res.data.icp_seniorities);
+    }
+    if (!titles.length && !seniorities.length) {
+      try {
+        var brief = await pd().fetchClientBrief();
+        var rf = brief && brief.status === 'ready' && brief.recommended_filters;
+        if (rf) { titles = arr(rf.person_titles); seniorities = arr(rf.person_seniorities); }
+      } catch (_) { /* sin brief: se decide abajo */ }
+    }
+    seniorities = allowed(E.seniorities, seniorities);
+    titles = titles.slice(0, 15);
+    if (!titles.length && !seniorities.length) return null;
+    return { person_titles: titles, include_similar_titles: true, person_seniorities: seniorities };
+  }
+
+  // Empresas → «Personas del ICP»: personas de esas empresas (por dominio o,
+  // sin dominio, por nombre) con los cargos y seniorities de tu ICP. Reemplaza
+  // los filtros de personas por una búsqueda nueva (conserva solo las listas
+  // excluidas): la ubicación y el tamaño no se aplican porque la empresa ya
+  // está elegida.
+  async function searchCompanyPeopleIcp(opts) {
+    try {
+      var domains = (Array.isArray(opts.domains) ? opts.domains : [opts.domain]).map(normalizeDomain).filter(Boolean);
+      domains = domains.filter(function (d, i) { return domains.indexOf(d) === i; });
+      var name = String(opts.name || '').trim();
+      if (!domains.length && !name) return toast('Esta empresa no tiene dominio ni nombre para buscar.', 'warn');
+      var icp = await loadIcpPersonFilters();
+      if (!icp) {
+        return toast('Tu ICP no tiene cargos ni seniorities. Agrégalos en Contexto de tu empresa → Empresas objetivo para buscar a las personas que encajan.', 'warn');
+      }
+      var f = defaultFilters();
+      f.person_titles = icp.person_titles;
+      f.include_similar_titles = true;
+      f.person_seniorities = icp.person_seniorities;
+      f.q_organization_domains_list = domains;
+      f.q_keywords = domains.length ? '' : name;
+      toast(domains.length > 1 ? 'Buscando personas de tu ICP en ' + fmtNum(domains.length) + ' empresas'
+        : domains.length ? 'Buscando personas de tu ICP en ' + domains[0]
+        : 'Buscando personas de tu ICP en «' + name + '» (sin dominio: por nombre, revisa que sean de esa empresa)', 'info');
+      return applyPeopleFilters(f);
+    } catch (e) {
+      console.error('[prospecting]', e);
+      toast(errMsg(e), 'error');
+    }
+  }
+
   function buildSearchPane() {
     var root = state.panes.busqueda;
     var modeBtns = [
@@ -4957,6 +5021,7 @@
     // y el país. No borra el resto de los filtros a propósito: el usuario ve
     // y ajusta lo que se aplicó.
     searchCompanyPeople: function (opts) {
+      if (opts && opts.icp) return searchCompanyPeopleIcp(opts);
       try {
         ensureBuilt();
         switchTab('busqueda');

@@ -432,16 +432,16 @@
   }
   function keyOf(c) { return String(c.organization_id || c.id || domainOf(c) || c.name); }
 
-  function findPeople(list) {
+  function findPeople(list, icp) {
     var withDomain = list.map(domainOf).filter(Boolean);
     if (list.length === 1 && !withDomain.length) {
-      return P().searchCompanyPeople({ name: list[0].name || '' });
+      return P().searchCompanyPeople({ name: list[0].name || '', icp: !!icp });
     }
     if (!withDomain.length) return toast('Ninguna de las empresas elegidas tiene dominio: ábrelas una por una con «Ver personas».', 'warn');
     var left = list.length - withDomain.length;
     if (left === 1) toast('1 empresa sin dominio quedó fuera de la búsqueda de personas.', 'info');
     else if (left > 1) toast(left + ' empresas sin dominio quedaron fuera de la búsqueda de personas.', 'info');
-    return P().searchCompanyPeople({ domains: withDomain });
+    return P().searchCompanyPeople({ domains: withDomain, icp: !!icp });
   }
 
   // ── búsquedas guardadas ────────────────────────────────────────────────
@@ -852,13 +852,15 @@
     if (c.founded_year) facts.appendChild(h('span', { text: 'Fundada en ' + c.founded_year }));
     var people = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Ver personas' });
     people.addEventListener('click', function () { findPeople([c]); });
+    var icpPeople = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Personas del ICP', title: 'Busca en esta empresa a las personas con los cargos y seniorities de tu ICP' });
+    icpPeople.addEventListener('click', function () { findPeople([c], true); });
     return h('div', { class: 'cs-row' },
       cb, avatar,
       h('div', { style: 'min-width:0;flex:1' },
         h('div', { class: 'cs-name' }, h('span', { text: c.name || '—' }), c._saved ? h('span', { class: 'cs-badge', text: 'En tu Apollo' }) : null),
         facts.childNodes.length ? facts : null,
         links.childNodes.length ? links : null),
-      people);
+      h('div', { class: 'cs-row-acts' }, icpPeople, people));
   }
 
   function updateSelbar() {
@@ -866,7 +868,7 @@
     var el = state.host && state.host.querySelector('.cs-selbar');
     if (!el) return;
     el.querySelector('.cs-selbar-n').textContent = n ? n + (n === 1 ? ' empresa seleccionada' : ' empresas seleccionadas') : 'Selecciona empresas para buscar a sus personas';
-    el.querySelector('.cs-selbar-go').disabled = !n;
+    el.querySelectorAll('.cs-selbar-go').forEach(function (b) { b.disabled = !n; });
   }
 
   function resultsNode() {
@@ -908,12 +910,17 @@
       var list = Object.keys(state.selected).map(function (k) { return state.selected[k]; });
       if (list.length) findPeople(list);
     });
+    var goIcp = h('button', { type: 'button', class: 'btn btn-ghost btn-sm cs-selbar-go cs-selbar-icp', text: 'Personas del ICP en las seleccionadas', title: 'Busca en las empresas seleccionadas a las personas con los cargos y seniorities de tu ICP' });
+    goIcp.addEventListener('click', function () {
+      var list = Object.keys(state.selected).map(function (k) { return state.selected[k]; });
+      if (list.length) findPeople(list, true);
+    });
     var all = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Seleccionar la página' });
     all.addEventListener('click', function () {
       state.rows.forEach(function (c) { state.selected[keyOf(c)] = c; });
       render();
     });
-    box.appendChild(h('div', { class: 'cs-selbar' }, h('span', { class: 'cs-selbar-n' }), h('div', { style: 'display:flex;gap:6px' }, all, go)));
+    box.appendChild(h('div', { class: 'cs-selbar' }, h('span', { class: 'cs-selbar-n' }), h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end' }, all, goIcp, go)));
     state.rows.forEach(function (c) { box.appendChild(companyRow(c)); });
     return box;
   }
@@ -963,6 +970,7 @@
     '#prospecting-shell .cs-sec-body{display:flex;flex-direction:column;gap:12px;padding:2px 12px 12px}' +
     '#prospecting-shell .cs-ind{max-height:200px;overflow-y:auto;padding-right:4px}' +
     '#prospecting-shell .cs-reco-line{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}' +
+    '#prospecting-shell .cs-row-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}' +
     '@media (max-width:640px){#prospecting-shell .cs-row{flex-wrap:wrap}}';
 
   function injectCss() {
