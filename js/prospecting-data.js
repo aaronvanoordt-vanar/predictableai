@@ -1551,6 +1551,14 @@
   // resultado en la fila (research / research_status) aunque se cierre la pestaña.
   // opts.purpose = 'meeting' (desde el AI Sales Coach): el ángulo y las
   // preguntas se orientan a la reunión con el entrenamiento del coach.
+  // «Búsqueda desde un brief» (js/brief-search.js): { text } o { url } →
+  // filtros de Personas y de Empresas. 3 créditos (brief_search).
+  async function briefSearch(payload) {
+    return edgeFetch('brief-search', Object.assign({}, payload || {}, {
+      engine: global.AIEngine && global.AIEngine.get('onboarding'),
+    }));
+  }
+
   async function researchLead(memberId, opts) {
     if (!memberId) throw new Error('Falta el contacto.');
     return edgeFetch('lead-research', {
@@ -1954,6 +1962,7 @@
     fetchApolloListMemberIds,
     fetchSavedSearches,
     createSavedSearch,
+    briefSearch,
     updateSavedSearch,
     deleteSavedSearch,
     fetchMembers,
