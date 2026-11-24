@@ -17,6 +17,17 @@
  * Las búsquedas de empresas se guardan en prospect_saved_searches, igual que
  * las de personas, con filters._kind = 'companies'.
  *
+ * «Búsqueda recomendada» (2026-11-24, como en Personas): arma los filtros con
+ * el ICP declarado en Contexto (países, industrias, tamaño, ingresos,
+ * tecnologías, industrias excluidas) y rellena los huecos con los filtros que
+ * la IA dejó en el brief (client_brief.recommended_filters, el mismo que usa
+ * Personas). Si salen pocas empresas, amplía paso a paso (tecnologías →
+ * ingresos → tamaño) sin tocar nunca los países ni la industria. Oculta de
+ * los resultados a tus clientes, competidores y empresas excluidas
+ * (`hide_known`, se filtra en el navegador por dominio o nombre).
+ * La lógica pura es `recommendedFilters` / `broadenOnce` / `knownMatcher`
+ * (deno test en supabase/functions/_shared/company-search-reco.test.ts).
+ *
  * «Importar búsqueda de Apollo» (openImport): el usuario pega el enlace de una
  * búsqueda de Apollo (personas o empresas) y js/apollo-search-url.js la
  * traduce. No llama a Apollo: se muestra qué se aplicó y qué no (con motivo)
@@ -29,17 +40,30 @@
 
   var STORE_KEY = 'company_search_filters_v1';
   var PER_PAGE = 25;
+  // La búsqueda recomendada amplía hasta encontrar al menos esto.
+  var RECO_TARGET = 300;
+  var RECO_MAX_STEPS = 4;
 
   function defaultFilters() {
     return {
       q_organization_name: '',
       organization_locations: [], organization_not_locations: [],
       organization_num_employees_ranges: [],
-      q_organization_keyword_tags: [], q_organization_domains_list: [],
-      tech_any: [],
+      industry_tags: [], q_organization_keyword_tags: [], q_not_organization_keyword_tags: [],
+      naics_codes: [], sic_codes: [],
+      q_organization_domains_list: [],
+      tech_any: [], tech_all: [], tech_not: [],
       revenue_min: '', revenue_max: '',
+      founded_min: '', founded_max: '',
+      funding_stages: [],
+      funding_total_min: '', funding_total_max: '',
+      funding_latest_min: '', funding_latest_max: '',
+      funding_date_min: '', funding_date_max: '',
       q_organization_job_titles: [], organization_job_locations: [],
-      jobs_min: '', jobs_max: '',
+      jobs_min: '', jobs_max: '', job_posted_min: '', job_posted_max: '',
+      // No es un filtro de Apollo: oculta en el navegador a tus clientes,
+      // competidores y empresas excluidas (Contexto). No cuenta como filtro.
+      hide_known: false,
       // Filtros de un enlace de Apollo sin control propio aquí: viajan tal cual
       // (snake_case de la API). Ver js/apollo-search-url.js.
       apollo_extra: {},
@@ -51,6 +75,8 @@
     rows: [], page: 1, total: 0, totalPages: 0,
     loading: false, searched: false, error: '', selected: {},
     saved: null, savedError: '', activeSavedId: null,
+    hiddenKnown: 0, known: null,
+    reco: { running: false, msg: '', note: null },
   };
 
   function P() { return global.prospecting || {}; }
@@ -81,6 +107,8 @@
         if (Array.isArray(v)) d[k] = v.filter(function (x) { return typeof x === 'string' && x.trim(); }).map(function (x) { return x.trim(); });
       } else if (k === 'apollo_extra') {
         if (typeof v === 'object' && !Array.isArray(v)) d[k] = JSON.parse(JSON.stringify(v));
+      } else if (typeof d[k] === 'boolean') {
+        d[k] = v === true;
       } else if (typeof v === 'string' || typeof v === 'number') d[k] = String(v);
     });
     return d;
@@ -95,6 +123,7 @@
     var n = 0;
     Object.keys(f).forEach(function (k) {
       var v = f[k];
+      if (k === 'hide_known') return;
       if (k === 'apollo_extra') n += Object.keys(v || {}).length;
       else if (Array.isArray(v) ? v.length : (v !== '' && v != null)) n++;
     });
@@ -113,18 +142,249 @@
       return Object.keys(r).length ? r : null;
     }
     var b = withExtra === false ? {} : JSON.parse(JSON.stringify(f.apollo_extra || {}));
+    function dates(a, c) {
+      var r = {};
+      if (a) r.min = a;
+      if (c) r.max = c;
+      return Object.keys(r).length ? r : null;
+    }
     b.page = page || 1;
     b.per_page = PER_PAGE;
     if (f.q_organization_name.trim()) b.q_organization_name = f.q_organization_name.trim();
     ['organization_locations', 'organization_not_locations', 'organization_num_employees_ranges',
-      'q_organization_keyword_tags', 'q_organization_domains_list', 'q_organization_job_titles',
+      'q_not_organization_keyword_tags', 'q_organization_domains_list', 'q_organization_job_titles',
       'organization_job_locations'].forEach(function (k) { if (f[k].length) b[k] = f[k].slice(); });
+    // Las industrias de la taxonomía de Apollo se buscan como etiquetas, igual
+    // que en Personas.
+    var kw = f.industry_tags.concat(f.q_organization_keyword_tags).filter(function (v, i, a) { return a.indexOf(v) === i; });
+    if (kw.length) b.q_organization_keyword_tags = kw;
+    if (f.naics_codes.length) b.organization_naics_codes = f.naics_codes.slice();
+    if (f.sic_codes.length) b.organization_sic_codes = f.sic_codes.slice();
     if (f.tech_any.length) b.currently_using_any_of_technology_uids = f.tech_any.slice();
+    if (f.tech_all.length) b.currently_using_all_of_technology_uids = f.tech_all.slice();
+    if (f.tech_not.length) b.currently_not_using_any_of_technology_uids = f.tech_not.slice();
     var rev = range(f.revenue_min, f.revenue_max);
     if (rev) b.revenue_range = rev;
+    var fy = range(f.founded_min, f.founded_max);
+    if (fy) b.organization_founded_year_range = fy;
+    if (f.funding_stages.length) b.organization_latest_funding_stage_cd = f.funding_stages.slice();
+    var tf = range(f.funding_total_min, f.funding_total_max);
+    if (tf) b.total_funding_range = tf;
+    var lf = range(f.funding_latest_min, f.funding_latest_max);
+    if (lf) b.latest_funding_amount_range = lf;
+    var fd = dates(f.funding_date_min, f.funding_date_max);
+    if (fd) b.latest_funding_date_range = fd;
     var jobs = range(f.jobs_min, f.jobs_max);
     if (jobs) b.organization_num_jobs_range = jobs;
+    var posted = dates(f.job_posted_min, f.job_posted_max);
+    if (posted) b.organization_job_posted_at_range = posted;
     return b;
+  }
+
+  // ── búsqueda recomendada (pura: sin red ni DOM) ────────────────────────
+  // Rangos de ingresos del Contexto (company-context.js REVENUE_RANGES) → USD.
+  var REVENUE_BOUNDS = {
+    '<1M': [0, 1e6], '1M-10M': [1e6, 1e7], '10M-50M': [1e7, 5e7],
+    '50M-250M': [5e7, 2.5e8], '250M-1B': [2.5e8, 1e9], '1B+': [1e9, null],
+  };
+  function strs(v) { return Array.isArray(v) ? v.filter(function (x) { return typeof x === 'string' && x.trim(); }).map(function (x) { return x.trim(); }) : []; }
+  function uniq(a) { return a.filter(function (v, i) { return a.indexOf(v) === i; }); }
+  function slugTech(v) {
+    return String(v || '').trim().toLowerCase().replace(/[\s.]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+  }
+
+  /**
+   * ICP declarado (intel_hub_intake) + filtros del brief de IA → filtros de
+   * Empresas. Lo declarado manda; el brief solo rellena lo que falta.
+   * Devuelve { filters, sources } o null si no hay con qué armar la búsqueda
+   * (ni países ni industrias).
+   */
+  function recommendedFilters(intake, briefFilters, opts) {
+    var i = intake || {};
+    var b = briefFilters || {};
+    var allowedRanges = (opts && opts.employeeRanges) || null;
+    var f = defaultFilters();
+    var sources = { declared: [], ai: [] };
+    var countries = strs(i.icp_countries);
+    if (countries.length) sources.declared.push('países');
+    else { countries = strs(b.organization_locations).concat(strs(b.person_locations)); if (countries.length) sources.ai.push('países'); }
+    f.organization_locations = uniq(countries).slice(0, 20);
+    var industries = strs(i.icp_industry_tags);
+    if (industries.length) { f.industry_tags = uniq(industries).slice(0, 10); sources.declared.push('industrias'); }
+    else {
+      var kw = strs(b.q_organization_keyword_tags);
+      if (kw.length) { f.q_organization_keyword_tags = uniq(kw).slice(0, 6); sources.ai.push('industrias'); }
+    }
+    var ranges = strs(i.icp_employee_ranges);
+    if (ranges.length) sources.declared.push('tamaño');
+    else { ranges = strs(b.organization_num_employees_ranges); if (ranges.length) sources.ai.push('tamaño'); }
+    if (allowedRanges) ranges = ranges.filter(function (r) { return allowedRanges.indexOf(r) !== -1; });
+    f.organization_num_employees_ranges = uniq(ranges);
+    var lo = null, hi = null, open = false, anyRev = false;
+    strs(i.icp_revenue_ranges).forEach(function (r) {
+      var bnd = REVENUE_BOUNDS[r];
+      if (!bnd) return;
+      anyRev = true;
+      if (lo == null || bnd[0] < lo) lo = bnd[0];
+      if (bnd[1] == null) open = true;
+      else if (hi == null || bnd[1] > hi) hi = bnd[1];
+    });
+    if (anyRev) {
+      if (lo) f.revenue_min = String(lo);
+      if (!open && hi != null) f.revenue_max = String(hi);
+      if (f.revenue_min || f.revenue_max) sources.declared.push('ingresos');
+    }
+    var tech = uniq(strs(i.icp_tech_uses).map(slugTech).filter(Boolean)).slice(0, 10);
+    if (tech.length) { f.tech_any = tech; sources.declared.push('tecnologías'); }
+    var notInd = strs(i.icp_excluded_industries).filter(function (x) { return f.industry_tags.indexOf(x) === -1; });
+    if (notInd.length) { f.q_not_organization_keyword_tags = uniq(notInd).slice(0, 10); sources.declared.push('industrias excluidas'); }
+    f.hide_known = true;
+    if (!f.organization_locations.length && !f.industry_tags.length && !f.q_organization_keyword_tags.length) return null;
+    return { filters: f, sources: sources };
+  }
+
+  /**
+   * Un paso de ampliación (muta `f`). Devuelve la descripción o null cuando
+   * ya no hay nada razonable que ampliar: los países y la industria nunca se
+   * quitan (sin ellos la búsqueda deja de ser tu mercado).
+   */
+  function broadenOnce(f, employeeRanges) {
+    if (f.tech_any.length || f.tech_all.length) {
+      f.tech_any = []; f.tech_all = [];
+      return 'tecnologías quitadas';
+    }
+    if (f.revenue_min !== '' || f.revenue_max !== '') {
+      f.revenue_min = ''; f.revenue_max = '';
+      return 'filtro de ingresos quitado';
+    }
+    var all = employeeRanges || [];
+    var cur = f.organization_num_employees_ranges;
+    if (cur.length) {
+      var idx = cur.map(function (v) { return all.indexOf(v); }).filter(function (x) { return x >= 0; });
+      if (idx.length && cur.length < all.length) {
+        var a = Math.max(0, Math.min.apply(null, idx) - 1);
+        var z = Math.min(all.length - 1, Math.max.apply(null, idx) + 1);
+        var next = all.slice(a, z + 1);
+        if (next.length > cur.length) { f.organization_num_employees_ranges = next; return 'rango de empleados ampliado'; }
+      }
+      f.organization_num_employees_ranges = [];
+      return 'filtro de tamaño quitado';
+    }
+    return null;
+  }
+
+  // Nombre comparable: sin acentos, sin razón social ni puntuación.
+  var LEGAL = /\b(s\.?\s?a\.?\s?(de\s?c\.?\s?v\.?)?|s\.?\s?a\.?\s?c\.?|s\.?\s?a\.?\s?s\.?|s\.?\s?r\.?\s?l\.?|s\.?\s?de\s?r\.?\s?l\.?|ltda\.?|ltd\.?|inc\.?|llc|corp\.?|e\.?\s?i\.?\s?r\.?\s?l\.?|spa|me|eireli)\s*$/i;
+  function normName(n) {
+    var v = String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    for (var k = 0; k < 2; k++) v = v.replace(/[,\s]+$/, '').replace(LEGAL, '').trim();
+    return v.replace(/[^a-z0-9]+/g, ' ').trim();
+  }
+  function normDomain(d) {
+    return String(d || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[/?#]/)[0];
+  }
+
+  /**
+   * Clientes actuales, competidores, empresas excluidas y tu propia empresa
+   * → función que dice si una empresa de Apollo es una de ellas (por dominio
+   * o por nombre). Devuelve null si no hay nada que ocultar.
+   */
+  function knownMatcher(intake) {
+    var i = intake || {};
+    var domains = {}, names = {};
+    function add(name, domain) {
+      var d = normDomain(domain);
+      if (d && d.indexOf('.') !== -1) domains[d] = 1;
+      var n = normName(name);
+      if (n) names[n] = 1;
+    }
+    (Array.isArray(i.current_customers) ? i.current_customers : []).forEach(function (c) { if (c) add(c.name, c.domain); });
+    (Array.isArray(i.competitors) ? i.competitors : []).forEach(function (c) { if (c) add(c.name, c.domain); });
+    strs(i.excluded_companies).forEach(function (x) {
+      if (/^(https?:\/\/)?[^\s/]+\.[a-z]{2,}(\/.*)?$/i.test(x)) add('', x); else add(x, '');
+    });
+    if (i.company_website) add('', i.company_website);
+    if (!Object.keys(domains).length && !Object.keys(names).length) return null;
+    return function (c) {
+      var d = normDomain(c && (c.primary_domain || c.domain || c.website_url));
+      if (d && domains[d]) return true;
+      var n = normName(c && c.name);
+      return !!(n && names[n]);
+    };
+  }
+
+  var INTAKE_COLS = 'icp_countries, icp_industry_tags, icp_employee_ranges, icp_revenue_ranges, icp_tech_uses, ' +
+    'icp_excluded_industries, excluded_companies, current_customers, competitors, company_website';
+
+  async function loadIntake() {
+    var sb = global.supabaseClient;
+    if (!sb) throw new Error('Sesión no disponible. Recarga la página.');
+    var q = sb.from('intel_hub_intake').select(INTAKE_COLS);
+    if (global.currentUser && global.currentUser.id) q = q.eq('user_id', global.currentUser.id);
+    var res = await q.maybeSingle();
+    if (res.error) throw new Error('No se pudo leer tu Contexto: ' + res.error.message);
+    return res.data || null;
+  }
+
+  async function loadKnown() {
+    try {
+      state.known = knownMatcher(await loadIntake()) || function () { return false; };
+    } catch (e) {
+      state.known = null;
+      state.warning = 'No pudimos leer tus clientes y competidores para ocultarlos: ' + errMsg(e);
+    }
+  }
+
+  function setReco(patch) { Object.assign(state.reco, patch); render(); }
+
+  async function runRecommended() {
+    if (state.reco.running || state.loading) return;
+    setReco({ running: true, msg: 'Leyendo tu ICP en Contexto…', note: null });
+    try {
+      var intake = await loadIntake();
+      var brief = null;
+      try {
+        if (P().loadRecommendedBrief) brief = await P().loadRecommendedBrief(function (m) { setReco({ msg: m }); });
+      } catch (e) {
+        // Sin brief de IA se sigue con lo declarado; si tampoco hay ICP, abajo se dice.
+        console.warn('[company-search] brief', e);
+      }
+      var ranges = ((global.APOLLO_ENUMS || {}).employee_ranges || []).map(function (o) { return o.value; });
+      var reco = recommendedFilters(intake, brief && brief.recommended_filters, { employeeRanges: ranges.length ? ranges : null });
+      if (!reco) throw new Error('Tu ICP no tiene países ni industrias. Complétalos en Contexto de la empresa y vuelve a intentarlo.');
+      state.f = reco.filters;
+      state.activeSavedId = null;
+      state.known = knownMatcher(intake) || function () { return false; };
+      persist();
+      setReco({ msg: 'Buscando empresas con tu ICP…' });
+      var applied = [];
+      for (var step = 0; ; step++) {
+        await search(1);
+        if (state.error) throw new Error(state.error);
+        var exact = state.total > 0;
+        var total = exact ? state.total : state.rawCount || 0;
+        if (exact && total >= RECO_TARGET) break;
+        if (!exact && (state.rawCount || 0) >= PER_PAGE) break;
+        if (step >= RECO_MAX_STEPS) break;
+        var desc = broadenOnce(state.f, ranges);
+        if (!desc) break;
+        applied.push(desc);
+        persist();
+        setReco({ msg: 'Solo ' + fmtNum(total) + ' empresas — ampliando: ' + desc + '…' });
+      }
+      var n = state.total || state.rawCount || 0;
+      var status;
+      if (!state.total) status = '✓ Más de ' + fmtNum(n) + ' empresas encontradas con tu ICP.';
+      else if (n >= RECO_TARGET) status = '✓ ' + fmtNum(n) + ' empresas encontradas con tu ICP.';
+      else status = '✓ ' + fmtNum(n) + ' empresas — es lo máximo con tu ICP, incluso ampliado.';
+      // Cada parte en su propio nodo de texto: así i18n la traduce entera.
+      setReco({ running: false, msg: '', note: {
+        status: status, declared: reco.sources.declared, ai: reco.sources.ai, applied: applied,
+      } });
+    } catch (e) {
+      setReco({ running: false, msg: '', note: null });
+      toast(errMsg(e), 'error');
+    }
   }
 
   // ── búsqueda ───────────────────────────────────────────────────────────
@@ -133,6 +393,7 @@
     state.loading = true; state.error = ''; state.warning = ''; state.page = page || 1;
     render();
     try {
+      if (state.f.hide_known && !state.known) await loadKnown();
       var r;
       try {
         r = await pd().searchCompanies(apolloBody(state.f, state.page));
@@ -143,7 +404,16 @@
         r = await pd().searchCompanies(apolloBody(state.f, state.page, false));
         state.warning = 'Apollo rechazó los filtros importados (' + errMsg(e) + '). Estos resultados son SIN ellos: quítalos o vuelve a importar el enlace.';
       }
-      state.rows = r.companies || [];
+      var rows = r.companies || [];
+      state.hiddenKnown = 0;
+      if (state.f.hide_known && state.known) {
+        var isKnown = state.known;
+        var kept = rows.filter(function (c) { return !isKnown(c); });
+        state.hiddenKnown = rows.length - kept.length;
+        rows = kept;
+      }
+      state.rows = rows;
+      state.rawCount = (r.companies || []).length;
       state.total = r.pagination.total_entries || 0;
       state.totalPages = r.pagination.total_pages || (state.total ? Math.ceil(state.total / PER_PAGE) : 0);
       state.searched = true;
@@ -434,32 +704,126 @@
     go.disabled = state.loading;
     go.addEventListener('click', function () { search(1); });
     var clear = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: 'Limpiar filtros' });
-    clear.addEventListener('click', function () { state.f = defaultFilters(); state.activeSavedId = null; persist(); render(); });
+    clear.addEventListener('click', function () { state.f = defaultFilters(); state.activeSavedId = null; state.reco.note = null; persist(); render(); });
     var save = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '💾 Guardar búsqueda' });
     save.addEventListener('click', function () {
       if (!activeCount(state.f)) return toast('Agrega al menos un filtro antes de guardar.', 'warn');
       openSave();
     });
 
+    var enumsAll = global.APOLLO_ENUMS || {};
+    var slug = P().techSlug || slugTech;
+    var F = state.f;
+    function count(keys) {
+      return keys.reduce(function (n, k) {
+        var v = F[k];
+        return n + (Array.isArray(v) ? (v.length ? 1 : 0) : (v !== '' && v != null && v !== false ? 1 : 0));
+      }, 0);
+    }
+    var openSecs = state.openSecs || (state.openSecs = {});
+    function section(id, title, keys, defaultOpen, children) {
+      var n = count(keys);
+      var d = h('details', { class: 'cs-sec' });
+      d.open = openSecs[id] != null ? openSecs[id] : (defaultOpen || n > 0);
+      d.addEventListener('toggle', function () { openSecs[id] = d.open; });
+      d.appendChild(h('summary', null, h('span', { text: title }), n ? h('span', { class: 'cs-sec-n', text: String(n) }) : null));
+      var body = h('div', { class: 'cs-sec-body' });
+      children.forEach(function (c) { if (c) body.appendChild(c); });
+      d.appendChild(body);
+      return d;
+    }
+    function chips(key, options) {
+      if (P().chipGroup) return P().chipGroup({ options: options, get: function () { return F[key]; }, onChange: persist });
+      return tags(key, 'Escribe y presiona Enter');
+    }
+    function dateRange(a, b) {
+      function inp(k) {
+        var i = h('input', { type: 'date' });
+        i.value = F[k] || '';
+        i.addEventListener('input', function () { F[k] = i.value; persist(); });
+        return i;
+      }
+      return h('div', { class: 'cs-minmax' }, inp(a), h('span', { text: '–' }), inp(b));
+    }
+    var industries = h('div', { class: 'cs-ind' }, chips('industry_tags', enumsAll.industries || []));
+    var hide = h('input', { type: 'checkbox' });
+    hide.checked = !!F.hide_known;
+    hide.addEventListener('change', function () { F.hide_known = hide.checked; persist(); });
+
     return h('div', { class: 'cs-filters' },
       savedNode(),
       extraNode(),
-      field('Nombre de la empresa', text('q_organization_name', 'Ej. Colegio San Vicente')),
-      field('Ubicación de la empresa', tags('organization_locations', 'País, región o ciudad · Enter'), 'En inglés, como en Apollo: Peru, Mexico, Bogota…'),
-      field('Excluir ubicaciones', tags('organization_not_locations', 'País, región o ciudad · Enter')),
-      field('Número de empleados', emp),
-      field('Industria y palabras clave', tags('q_organization_keyword_tags', 'colegio, school, k-12 · Enter'), 'Busca en las etiquetas de la empresa en Apollo. Sirven tanto industrias como palabras clave.'),
-      field('Dominios', tags('q_organization_domains_list', 'empresa.com · Enter', function (v) {
-        return String(v).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
-      })),
-      field('Tecnologías que usa', tags('tech_any', 'salesforce, hubspot · Enter'), 'Con el nombre que usa Apollo (en minúsculas, con guion bajo en vez de espacios).'),
-      field('Ingresos anuales (USD)', minMax('revenue_min', 'revenue_max')),
-      field('Vacantes abiertas con el cargo', tags('q_organization_job_titles', 'Ej. vendedor · Enter')),
-      field('Ubicación de las vacantes', tags('organization_job_locations', 'País o ciudad · Enter')),
-      field('Número de vacantes', minMax('jobs_min', 'jobs_max')),
+      section('company', 'Empresa', ['q_organization_name', 'q_organization_domains_list'], true, [
+        field('Nombre de la empresa', text('q_organization_name', 'Ej. Colegio San Vicente')),
+        field('Dominios', tags('q_organization_domains_list', 'empresa.com · Enter', normDomain)),
+      ]),
+      section('location', 'Ubicación', ['organization_locations', 'organization_not_locations'], true, [
+        field('Ubicación de la empresa', tags('organization_locations', 'País, región o ciudad · Enter'), 'En inglés, como en Apollo: Peru, Mexico, Bogota…'),
+        field('Excluir ubicaciones', tags('organization_not_locations', 'País, región o ciudad · Enter')),
+      ]),
+      section('size', 'Tamaño', ['organization_num_employees_ranges', 'revenue_min', 'revenue_max', 'founded_min', 'founded_max'], true, [
+        field('Número de empleados', emp),
+        field('Ingresos anuales (USD)', minMax('revenue_min', 'revenue_max')),
+        field('Año de fundación', minMax('founded_min', 'founded_max')),
+      ]),
+      section('industry', 'Industria y palabras clave', ['industry_tags', 'q_organization_keyword_tags', 'q_not_organization_keyword_tags', 'naics_codes', 'sic_codes'], true, [
+        field('Industrias', industries),
+        field('Palabras clave', tags('q_organization_keyword_tags', 'colegio, school, k-12 · Enter'), 'Busca en las etiquetas de la empresa en Apollo.'),
+        field('Excluir palabras clave o industrias', tags('q_not_organization_keyword_tags', 'consultora, agencia · Enter')),
+        field('Códigos NAICS', tags('naics_codes', 'Ej. 611110 · Enter')),
+        field('Códigos SIC', tags('sic_codes', 'Ej. 8211 · Enter')),
+      ]),
+      section('tech', 'Tecnologías', ['tech_any', 'tech_all', 'tech_not'], false, [
+        field('Usa alguna de', tags('tech_any', 'salesforce, hubspot · Enter', slug)),
+        field('Usa todas', tags('tech_all', 'shopify · Enter', slug)),
+        field('No usa', tags('tech_not', 'sap · Enter', slug), 'Con el nombre que usa Apollo (en minúsculas, con guion bajo en vez de espacios).'),
+      ]),
+      section('funding', 'Inversión', ['funding_stages', 'funding_total_min', 'funding_total_max', 'funding_latest_min', 'funding_latest_max', 'funding_date_min', 'funding_date_max'], false, [
+        field('Etapa de la última ronda', chips('funding_stages', enumsAll.funding_stages || [])),
+        field('Inversión total (USD)', minMax('funding_total_min', 'funding_total_max')),
+        field('Monto de la última ronda (USD)', minMax('funding_latest_min', 'funding_latest_max')),
+        field('Fecha de la última ronda', dateRange('funding_date_min', 'funding_date_max')),
+      ]),
+      section('jobs', 'Vacantes', ['q_organization_job_titles', 'organization_job_locations', 'jobs_min', 'jobs_max', 'job_posted_min', 'job_posted_max'], false, [
+        field('Vacantes abiertas con el cargo', tags('q_organization_job_titles', 'Ej. vendedor · Enter')),
+        field('Ubicación de las vacantes', tags('organization_job_locations', 'País o ciudad · Enter')),
+        field('Número de vacantes', minMax('jobs_min', 'jobs_max')),
+        field('Publicadas entre', dateRange('job_posted_min', 'job_posted_max'), 'Útil para encontrar empresas que están contratando ahora.'),
+      ]),
+      h('label', { class: 'cs-check' }, hide, h('span', { text: 'Ocultar mis clientes, competidores y empresas excluidas' })),
+      h('div', { class: 'cs-hint', style: 'margin-top:-6px', text: 'Se toman de Contexto de la empresa.' }),
       h('div', { class: 'cs-hint', text: (P().apolloConnected && P().apolloConnected()) ? 'Cada página de resultados usa 1 crédito de tu cuenta de Apollo (no de Predictable).' : 'Cada página de resultados usa 2 créditos de Predictable (gratis si conectas tu propio Apollo).' }),
       go,
       h('div', { style: 'display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap' }, clear, save));
+  }
+
+  function recoNode() {
+    var r = state.reco;
+    var btn = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: r.running ? '⏳ Trabajando…' : 'Aplicar búsqueda recomendada' });
+    btn.disabled = !!r.running || state.loading;
+    btn.addEventListener('click', function () { runRecommended(); });
+    return h('div', { class: 'chart-card', style: 'margin-bottom:6px' },
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap' },
+        h('div', { style: 'min-width:220px;flex:1' },
+          h('div', { class: 'chart-title', text: 'Búsqueda recomendada según tu empresa' }),
+          h('div', { style: 'font-size:12.5px;color:var(--text3);margin-top:4px;line-height:1.5', text: 'Armamos los filtros con tu ICP y el brief de IA de tu empresa, ocultamos a tus clientes y competidores, y ampliamos hasta encontrar al menos ' + fmtNum(RECO_TARGET) + ' empresas. Cada búsqueda cobra su página: puede hacer hasta ' + (RECO_MAX_STEPS + 1) + '.' })),
+        btn),
+      r.msg ? h('div', { style: 'font-size:12px;color:var(--text2);margin-top:8px', text: r.msg }) : null,
+      r.note ? noteNode(r.note) : null);
+  }
+
+  function noteNode(n) {
+    function line(label, items) {
+      if (!items || !items.length) return null;
+      var row = h('div', { class: 'cs-reco-line' }, h('span', { text: label }));
+      items.forEach(function (x) { row.appendChild(h('span', { class: 'cs-badge', text: x })); });
+      return row;
+    }
+    return h('div', { style: 'font-size:12px;color:var(--accent-ink);margin-top:6px;line-height:1.5;display:flex;flex-direction:column;gap:4px' },
+      h('div', { text: n.status }),
+      line('De tu Contexto:', n.declared),
+      line('Sugerido por la IA:', n.ai),
+      line('Ajustes aplicados:', n.applied));
   }
 
   function companyRow(c) {
@@ -507,12 +871,13 @@
 
   function resultsNode() {
     var box = h('div', { class: 'cs-results' });
+    box.appendChild(recoNode());
     if (state.error) box.appendChild(h('div', { class: 'cs-error', text: state.error }));
     if (state.warning) box.appendChild(h('div', { class: 'cs-error', text: state.warning }));
     if (!state.searched && !state.loading) {
       box.appendChild(h('div', { class: 'cs-empty' },
         h('div', { class: 'cs-empty-t', text: 'Busca cuentas antes que personas' }),
-        h('div', { text: 'Filtra empresas por ubicación, tamaño, industria o tecnología y después busca a sus decision makers con «Ver personas». También puedes traer una búsqueda que ya armaste en Apollo con «Importar búsqueda de Apollo».' })));
+        h('div', { text: 'Aplica la búsqueda recomendada o filtra empresas por ubicación, tamaño, industria, tecnología, inversión o vacantes y después busca a sus decision makers con «Ver personas». También puedes traer una búsqueda que ya armaste en Apollo con «Importar búsqueda de Apollo».' })));
       return box;
     }
     if (state.loading) { box.appendChild(h('div', { class: 'cs-hint', text: 'Buscando en Apollo…' })); return box; }
@@ -524,11 +889,16 @@
     prev.disabled = state.page <= 1;
     prev.addEventListener('click', function () { search(state.page - 1); });
     var next = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '›', 'aria-label': 'Página siguiente' });
-    next.disabled = state.totalPages ? state.page >= state.totalPages : state.rows.length < PER_PAGE;
+    next.disabled = state.totalPages ? state.page >= state.totalPages : (state.rawCount || 0) < PER_PAGE;
     next.addEventListener('click', function () { search(state.page + 1); });
     var pagesLabel = state.totalPages ? 'Página ' + fmtNum(state.page) + ' de ' + fmtNum(state.totalPages) : 'Página ' + fmtNum(state.page);
     if (Object.keys(state.f.apollo_extra || {}).length && !state.warning) {
       box.appendChild(h('div', { class: 'cs-hint', style: 'margin:0', text: 'Incluye filtros importados de Apollo tal cual. Compara este total con el que muestra Apollo para la misma búsqueda.' }));
+    }
+    if (state.hiddenKnown) {
+      box.appendChild(h('div', { class: 'cs-hint', style: 'margin:0', text: state.hiddenKnown === 1
+        ? '1 empresa de esta página se ocultó: es tu cliente, tu competidor o está excluida.'
+        : state.hiddenKnown + ' empresas de esta página se ocultaron: son tus clientes, competidores o empresas excluidas.' }));
     }
     box.appendChild(h('div', { class: 'cs-head' },
       h('div', null, h('b', { text: fmtNum(state.total || state.rows.length) }), state.total ? ' empresas en Apollo para estos filtros' : ' empresas en esta página'),
@@ -584,6 +954,15 @@
     '#prospecting-shell .cs-extra{display:flex;flex-direction:column;gap:4px}' +
     '#prospecting-shell .cs-extra-row{display:flex;align-items:flex-start;gap:6px;font-size:12.5px;color:var(--text2);background:var(--surface2);border-radius:var(--r-sm,8px);padding:5px 8px;line-height:1.4;word-break:break-word}' +
     '#prospecting-shell .cs-extra-x{border:0;background:none;color:var(--text3);cursor:pointer;font-size:15px;line-height:1;padding:0 2px}' +
+    '#prospecting-shell .cs-sec{border:1px solid var(--border);border-radius:var(--r-md,12px);background:var(--surface)}' +
+    '#prospecting-shell .cs-sec>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:9px 12px;font-size:13px;font-weight:600;color:var(--text)}' +
+    '#prospecting-shell .cs-sec>summary::-webkit-details-marker{display:none}' +
+    '#prospecting-shell .cs-sec>summary::after{content:"›";margin-left:auto;color:var(--text3);transition:transform var(--dur-1,.15s)}' +
+    '#prospecting-shell .cs-sec[open]>summary::after{transform:rotate(90deg)}' +
+    '#prospecting-shell .cs-sec-n{font-size:10.5px;font-weight:700;border-radius:999px;padding:1px 7px;background:var(--accent);color:#fff}' +
+    '#prospecting-shell .cs-sec-body{display:flex;flex-direction:column;gap:12px;padding:2px 12px 12px}' +
+    '#prospecting-shell .cs-ind{max-height:200px;overflow-y:auto;padding-right:4px}' +
+    '#prospecting-shell .cs-reco-line{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}' +
     '@media (max-width:640px){#prospecting-shell .cs-row{flex-wrap:wrap}}';
 
   function injectCss() {
@@ -604,5 +983,10 @@
   }
 
   injectCss();
-  global.companySearch = { mount: mount, openImport: openImport };
+  global.companySearch = {
+    mount: mount, openImport: openImport,
+    // Puras, para el test (supabase/functions/_shared/company-search-reco.test.ts).
+    recommendedFilters: recommendedFilters, broadenOnce: broadenOnce, knownMatcher: knownMatcher,
+    apolloBody: apolloBody,
+  };
 })(window);
