@@ -5219,6 +5219,7 @@
     chipGroup: chipGroup,
     techSlug: techSlug,
     loadRecommendedBrief: ensureRecommendedBrief,
+    icpPersonFilters: loadIcpPersonFilters,
     show: function (tabId) {
       try {
         ensureBuilt();

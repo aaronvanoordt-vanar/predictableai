@@ -444,6 +444,123 @@
     return P().searchCompanyPeople({ domains: withDomain, icp: !!icp });
   }
 
+  // ── cruzar con una búsqueda de personas ────────────────────────────────
+  // Filtros de Empresas que Personas tiene como control (misma clave en los
+  // dos estados y el mismo parámetro de Apollo).
+  var SHARED_ORG_KEYS = ['organization_locations', 'organization_num_employees_ranges', 'industry_tags',
+    'q_organization_keyword_tags', 'q_organization_domains_list', 'tech_any', 'tech_all', 'tech_not',
+    'revenue_min', 'revenue_max', 'founded_min', 'founded_max', 'naics_codes', 'sic_codes',
+    'q_organization_job_titles', 'organization_job_locations', 'jobs_min', 'jobs_max',
+    'job_posted_min', 'job_posted_max'];
+  // Parámetros de Apollo que salen de esas claves: el resto del cuerpo de
+  // Empresas (nombre, ubicaciones o industrias excluidas, inversión, lo
+  // importado de un enlace) viaja tal cual en apollo_extra.
+  var SHARED_BODY_KEYS = ['organization_locations', 'organization_num_employees_ranges',
+    'q_organization_keyword_tags', 'q_organization_domains_list', 'currently_using_any_of_technology_uids',
+    'currently_using_all_of_technology_uids', 'currently_not_using_any_of_technology_uids', 'revenue_range',
+    'organization_founded_year_range', 'organization_naics_codes', 'organization_sic_codes',
+    'q_organization_job_titles', 'organization_job_locations', 'organization_num_jobs_range',
+    'organization_job_posted_at_range', 'page', 'per_page'];
+  // Filtros de la persona que se toman de la búsqueda de personas elegida
+  // (lo de la empresa lo pone siempre la búsqueda de Empresas).
+  var PERSON_KEYS = ['person_titles', 'include_similar_titles', 'person_seniorities', 'person_locations',
+    'contact_email_status', 'q_keywords', 'years_title_min', 'years_title_max', 'yoe_min', 'yoe_max',
+    'exclude_list_ids', 'exclude_apollo_list_ids', 'dept_counts'];
+
+  // Pura: filtros de Empresas + filtros de persona → filtros de Personas.
+  function crossFilters(companyF, personF) {
+    var out = {};
+    PERSON_KEYS.forEach(function (k) {
+      if (personF && personF[k] != null) out[k] = JSON.parse(JSON.stringify(personF[k]));
+    });
+    SHARED_ORG_KEYS.forEach(function (k) {
+      var v = companyF[k];
+      out[k] = Array.isArray(v) ? v.slice() : v;
+    });
+    var body = apolloBody(companyF, 1);
+    var extra = {};
+    Object.keys(body).forEach(function (k) { if (SHARED_BODY_KEYS.indexOf(k) === -1) extra[k] = body[k]; });
+    out.apollo_extra = extra;
+    return out;
+  }
+
+  async function openCross() {
+    if (!activeCount(state.f)) return toast('Primero filtra las empresas: sin filtros la búsqueda de personas no tendría en qué cruzarse.', 'warn');
+    var saved = [];
+    try {
+      saved = ((await P().loadSavedSearches(true)) || []).filter(function (r) {
+        return r && r.filters && r.filters._kind !== 'companies';
+      });
+    } catch (_) { saved = []; }
+    var choice = 'icp';
+    var opts = h('div', { class: 'cs-cross-opts', role: 'radiogroup', 'aria-label': 'Búsqueda de personas' });
+    function opt(value, title, desc, checked) {
+      var r = h('input', { type: 'radio', name: 'cs-cross', value: value });
+      r.checked = !!checked;
+      r.addEventListener('change', function () { if (r.checked) choice = value; });
+      opts.appendChild(h('label', { class: 'cs-cross-opt' }, r,
+        h('span', null, h('b', { class: value === 'icp' ? '' : 'notranslate', text: title }), desc ? h('span', { class: 'cs-hint', style: 'display:block;margin:2px 0 0', text: desc }) : null)));
+    }
+    opt('icp', 'Tu ICP (recomendada)', 'Cargos y seniorities que declaraste en Contexto de tu empresa.', true);
+    saved.forEach(function (r) {
+      var f = r.filters || {};
+      var bits = [];
+      if (Array.isArray(f.person_titles) && f.person_titles.length) bits.push(f.person_titles.slice(0, 3).join(', ') + (f.person_titles.length > 3 ? '…' : ''));
+      if (Array.isArray(f.person_seniorities) && f.person_seniorities.length) bits.push(f.person_seniorities.join(', '));
+      opt(String(r.id), r.name || 'Búsqueda sin nombre', bits.join(' · '), false);
+    });
+    var saveCb = h('input', { type: 'checkbox' });
+    var saveName = h('input', { type: 'text', placeholder: 'Nombre (p. ej. Gerentes de TI en empresas grandes de Perú)', style: 'width:100%;margin-top:6px;display:none' });
+    saveCb.addEventListener('change', function () { saveName.style.display = saveCb.checked ? '' : 'none'; if (saveCb.checked) saveName.focus(); });
+    var total = state.total || state.rows.length;
+    var body = h('div', null,
+      h('p', { style: 'font-size:12.5px;color:var(--text2);margin:0 0 10px;line-height:1.5', text: total
+        ? 'Busca a las personas de las ' + fmtNum(total) + ' empresas de esta búsqueda (todas, no solo esta página) que cumplen con la búsqueda de personas que elijas.'
+        : 'Busca a las personas de todas las empresas de esta búsqueda que cumplen con la búsqueda de personas que elijas.' }),
+      h('div', { class: 'cs-lbl', text: 'Búsqueda de personas' }),
+      opts,
+      h('div', { class: 'cs-hint', style: 'margin-top:8px', text: 'Los filtros de empresa (ubicación, tamaño, industria, tecnología…) salen de Empresas; de la búsqueda elegida se toman solo los de la persona (cargos, seniority, ubicación, listas excluidas).' }),
+      state.f.hide_known ? h('div', { class: 'cs-hint', text: 'Ojo: ocultar clientes y competidores solo aplica a la lista de empresas; en Personas revísalos tú.' }) : null,
+      h('div', { style: 'margin-top:12px' },
+        h('label', { class: 'cs-check' }, saveCb, h('span', { text: 'Guardarla también como búsqueda de personas' })),
+        saveName));
+    var api = P().openModal({
+      title: 'Buscar personas en todas estas empresas', bodyNode: body,
+      actions: [
+        { label: 'Cancelar', className: 'logout-btn logout-btn-cancel' },
+        { label: 'Buscar personas', className: 'btn btn-primary', onClick: async function () {
+          var name = saveName.value.trim();
+          if (saveCb.checked && !name) return toast('Escribe un nombre para guardar la búsqueda.', 'warn');
+          api.setBusy(true);
+          try {
+            var personF;
+            if (choice === 'icp') {
+              personF = await P().icpPersonFilters();
+              if (!personF) {
+                api.setBusy(false);
+                return toast('Tu ICP no tiene cargos ni seniorities. Agrégalos en Contexto de tu empresa → Empresas objetivo, o elige una búsqueda guardada.', 'warn');
+              }
+            } else {
+              var row = saved.find(function (r) { return String(r.id) === choice; });
+              personF = row ? row.filters : null;
+              if (!personF) { api.setBusy(false); return toast('No encontramos esa búsqueda. Vuelve a abrir esta ventana.', 'warn'); }
+            }
+            var filters = crossFilters(state.f, personF);
+            var savedId = null;
+            if (saveCb.checked) {
+              var created = await pd().createSavedSearch(name, JSON.parse(JSON.stringify(filters)));
+              savedId = created && created.id;
+              if (savedId && P().refreshSavedSearches) await P().refreshSavedSearches();
+            }
+            api.close();
+            await P().applyPeopleFilters(filters, { savedId: savedId });
+            toast(savedId ? 'Búsqueda de personas creada y guardada.' : 'Búsqueda de personas creada.', 'success');
+          } catch (e) { api.setBusy(false); toast(errMsg(e), 'error'); }
+        } },
+      ],
+    });
+  }
+
   // ── búsquedas guardadas ────────────────────────────────────────────────
   async function loadSaved(force) {
     try {
@@ -905,6 +1022,13 @@
     box.appendChild(h('div', { class: 'cs-head' },
       h('div', null, h('b', { text: fmtNum(state.total || state.rows.length) }), state.total ? ' empresas en Apollo para estos filtros' : ' empresas en esta página'),
       h('div', { style: 'display:flex;align-items:center;gap:6px' }, prev, h('span', { class: 'cs-hint', style: 'margin:0', text: pagesLabel }), next)));
+    var cross = h('button', { type: 'button', class: 'btn btn-primary btn-sm', text: 'Buscar personas en todas estas empresas', title: 'Crea una búsqueda de personas con los filtros de estas empresas y los cargos de tu ICP o de una búsqueda guardada' });
+    cross.addEventListener('click', function () { openCross(); });
+    box.appendChild(h('div', { class: 'cs-cross' },
+      h('div', null,
+        h('div', { class: 'cs-cross-t', text: 'Personas que encajan en todas estas empresas' }),
+        h('div', { class: 'cs-hint', style: 'margin:2px 0 0', text: 'Cruza esta búsqueda de empresas con tu ICP o con una búsqueda de personas guardada.' })),
+      cross));
     var go = h('button', { type: 'button', class: 'btn btn-primary btn-sm cs-selbar-go', text: 'Buscar personas en las seleccionadas' });
     go.addEventListener('click', function () {
       var list = Object.keys(state.selected).map(function (k) { return state.selected[k]; });
@@ -936,7 +1060,7 @@
     '#prospecting-shell .cs-filters{display:flex;flex-direction:column;gap:12px}' +
     '#prospecting-shell .cs-field input[type=text],#prospecting-shell .cs-field input[type=number]{width:100%}' +
     '#prospecting-shell .cs-lbl,.cs-lbl{font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}' +
-    '#prospecting-shell .cs-hint{font-size:11.5px;color:var(--text3);margin-top:4px;line-height:1.45}' +
+    '#prospecting-shell .cs-hint,.logout-modal .cs-hint{font-size:11.5px;color:var(--text3);margin-top:4px;line-height:1.45}' +
     '#prospecting-shell .cs-minmax{display:flex;align-items:center;gap:6px;color:var(--text3)}#prospecting-shell .cs-minmax input{min-width:0}' +
     '#prospecting-shell .cs-chips{display:flex;flex-wrap:wrap;gap:6px}' +
     '#prospecting-shell .cs-chip{border:1px solid var(--border);background:var(--surface2);color:var(--text2);border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer}' +
@@ -970,6 +1094,12 @@
     '#prospecting-shell .cs-sec-body{display:flex;flex-direction:column;gap:12px;padding:2px 12px 12px}' +
     '#prospecting-shell .cs-ind{max-height:200px;overflow-y:auto;padding-right:4px}' +
     '#prospecting-shell .cs-reco-line{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}' +
+    '#prospecting-shell .cs-cross{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border:1px solid var(--border);background:var(--surface);border-radius:var(--r-md,12px);padding:12px 14px;margin:8px 0}' +
+    '#prospecting-shell .cs-cross-t{font-weight:600;font-size:13.5px}' +
+    '.cs-cross-opts{display:flex;flex-direction:column;gap:6px;max-height:280px;overflow:auto;margin-top:6px}' +
+    '.logout-modal label.cs-cross-opt,.cs-cross-opt{text-transform:none;letter-spacing:0;font-weight:400;color:var(--text);font-family:inherit;margin:0;'+
+    'display:flex;gap:10px;align-items:flex-start;border:1px solid var(--border);border-radius:10px;padding:8px 10px;cursor:pointer;font-size:13px}' +
+    '.cs-cross-opt input{margin-top:3px}' +
     '#prospecting-shell .cs-row-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}' +
     '@media (max-width:640px){#prospecting-shell .cs-row{flex-wrap:wrap}}';
 
@@ -1013,5 +1143,6 @@
     // Puras, para el test (supabase/functions/_shared/company-search-reco.test.ts).
     recommendedFilters: recommendedFilters, broadenOnce: broadenOnce, knownMatcher: knownMatcher,
     apolloBody: apolloBody,
+    crossFilters: crossFilters,
   };
 })(window);
