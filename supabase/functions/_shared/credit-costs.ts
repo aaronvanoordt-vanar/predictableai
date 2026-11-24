@@ -48,6 +48,10 @@ export const CREDIT_COSTS = {
   // la empresa y propone el ángulo. El match de Apollo se cobra aparte como
   // enrich_email solo con la key de la plataforma.
   lead_research: 3,
+  // «Búsqueda desde un brief» (Buscar): la IA lee el brief pegado o la página
+  // del enlace (hasta 40.000 caracteres, sin búsqueda web) y arma los filtros
+  // de Personas y de Empresas. Se devuelve si falla o el brief no trae criterios.
+  brief_search: 3,
   // Nota BANT del traspaso al AE al agendar desde tu agenda (hilo + respuestas
   // de calificación + investigación previa). Agendar y los recordatorios no
   // cuestan: no hay IA.

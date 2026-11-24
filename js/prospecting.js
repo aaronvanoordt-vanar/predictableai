@@ -1809,6 +1809,11 @@
       if (!window.companySearch || !window.companySearch.openImport) return toast('El importador no está cargado. Recarga la página.', 'warn');
       window.companySearch.openImport();
     }));
+    var briefBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm', text: '✨ Búsqueda desde un brief', title: 'Pega tu brief de prospección y la IA arma la búsqueda de personas y de empresas' });
+    briefBtn.addEventListener('click', guarded(function () {
+      if (!window.briefSearch || !window.briefSearch.open) return toast('La búsqueda desde un brief no está cargada. Recarga la página.', 'warn');
+      window.briefSearch.open();
+    }));
     var apolloBar = h('div', { class: 'pros-apollo-bar', role: 'status' });
     state.search.apolloBar = apolloBar;
     root.appendChild(apolloBar);
@@ -1816,7 +1821,7 @@
     checkApollo(false).then(renderApolloBar);
     root.appendChild(h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:12px' },
       h('div', { role: 'group', 'aria-label': 'Qué buscar', style: 'display:flex;gap:6px;flex-wrap:wrap' }, modeBtns[0], modeBtns[1], modeBtns[2]),
-      importBtn));
+      h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' }, briefBtn, importBtn)));
     var pane = h('div', null);
     var companiesHost = h('div', { style: 'display:none' });
     var registryHost = h('div', { style: 'display:none' });

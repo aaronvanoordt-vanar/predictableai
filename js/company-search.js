@@ -983,8 +983,25 @@
   }
 
   injectCss();
+  // «Búsqueda desde un brief» (js/brief-search.js): aplica filtros ya armados
+  // y busca. Abre Buscar → Empresas aunque el usuario esté en Personas.
+  async function applyFilters(filters, opts) {
+    if (P().setSearchMode) P().setSearchMode('companies');
+    state.f = normalize(filters);
+    state.activeSavedId = (opts && opts.savedId) || null;
+    state.known = null;
+    persist();
+    if (!state.host) return;
+    await search(1);
+  }
+
+  async function reloadSaved() {
+    await loadSaved(true);
+    render();
+  }
+
   global.companySearch = {
-    mount: mount, openImport: openImport,
+    mount: mount, openImport: openImport, applyFilters: applyFilters, reloadSaved: reloadSaved,
     // Puras, para el test (supabase/functions/_shared/company-search-reco.test.ts).
     recommendedFilters: recommendedFilters, broadenOnce: broadenOnce, knownMatcher: knownMatcher,
     apolloBody: apolloBody,
