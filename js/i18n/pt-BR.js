@@ -10,6 +10,13 @@
  */
 window.I18N_DICTS = window.I18N_DICTS || {};
 window.I18N_DICTS['pt-BR'] = {
+  // Prospección — desplegables de Industrias y Cargos (2026-11-24)
+  "Busca o escribe cargos, separados por coma": "Busque ou digite cargos, separados por vírgula",
+  "Elige de la lista o escribe varios separados por coma: se buscan todos.": "Escolha da lista ou digite vários separados por vírgula: todos são buscados.",
+  "Busca industrias o escribe varias separadas por coma": "Busque setores ou digite vários separados por vírgula",
+  "Elige de la lista o escribe varias separadas por coma: se incluyen todas.": "Escolha da lista ou digite vários separados por vírgula: todos são incluídos.",
+  "Sin coincidencias en la lista — Enter para agregarlo tal cual": "Sem correspondências na lista — Enter para adicionar como está",
+  "Sin coincidencias": "Sem correspondências",
   // AI Sales Coach — «Lo que sabes del lead» (2026-11-16)
   "Lo que sabes del lead": "O que você sabe do lead",
   "Elige el lead de la reunión: aquí verás quién es, tus notas y lo que ya se sabe de conversaciones anteriores. Durante la llamada el coach se guía por lo que dice el lead, no por investigaciones previas.": "Escolha o lead da reunião: aqui você verá quem é, suas notas e o que já se sabe de conversas anteriores. Durante a ligação o coach se guia pelo que o lead diz, não por pesquisas prévias.",

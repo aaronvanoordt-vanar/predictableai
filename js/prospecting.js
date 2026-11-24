@@ -152,6 +152,26 @@
     PublicSector: 'Sector público',
   };
 
+  // Cargos sugeridos en el desplegable de «Cargos» (se puede escribir cualquier otro).
+  // Apollo busca el texto del cargo tal cual: van en español y en inglés.
+  var TITLE_SUGGESTIONS = [
+    'CEO', 'Gerente General', 'Director General', 'Fundador', 'Cofundador', 'Founder', 'Co-Founder', 'Owner', 'Dueño', 'Presidente', 'Socio', 'Partner',
+    'COO', 'Director de Operaciones', 'Gerente de Operaciones', 'Operations Manager',
+    'CFO', 'Chief Financial Officer', 'Director Financiero', 'Gerente de Finanzas', 'Gerente de Administración y Finanzas', 'Controller', 'Tesorero',
+    'CTO', 'Chief Technology Officer', 'CIO', 'Chief Information Officer', 'Director de Tecnología', 'Gerente de TI', 'Gerente de Sistemas', 'Head of IT', 'IT Manager', 'CISO', 'Gerente de Seguridad de la Información',
+    'CMO', 'Chief Marketing Officer', 'Director de Marketing', 'Gerente de Marketing', 'Marketing Manager', 'Head of Marketing', 'Gerente de Marca', 'Brand Manager', 'Gerente de Marketing Digital', 'Growth Manager',
+    'CRO', 'Chief Revenue Officer', 'Director Comercial', 'Gerente Comercial', 'Director de Ventas', 'Gerente de Ventas', 'Sales Manager', 'VP of Sales', 'Head of Sales', 'Gerente de Desarrollo de Negocios', 'Business Development Manager', 'Key Account Manager', 'Gerente de Cuentas Clave',
+    'Chief Customer Officer', 'Gerente de Experiencia del Cliente', 'Customer Success Manager', 'Gerente de Servicio al Cliente',
+    'CHRO', 'Director de Recursos Humanos', 'Gerente de Recursos Humanos', 'HR Manager', 'Head of People', 'Gerente de Talento',
+    'Gerente de Compras', 'Jefe de Compras', 'Procurement Manager', 'Director de Abastecimiento',
+    'Gerente de Logística', 'Gerente de Supply Chain', 'Supply Chain Manager', 'Gerente de Planta', 'Gerente de Producción',
+    'Gerente de Producto', 'Product Manager', 'Head of Product', 'CPO',
+    'Gerente de Innovación', 'Chief Digital Officer', 'Gerente de Transformación Digital',
+    'Gerente Legal', 'General Counsel', 'Director Jurídico', 'Gerente de Cumplimiento', 'Compliance Officer',
+    'Gerente de Proyectos', 'Project Manager', 'Gerente de Ecommerce', 'Ecommerce Manager', 'Gerente de Canales',
+    'Gerente Regional', 'Country Manager', 'Gerente de Sucursal',
+  ];
+
   // ── Tiny utils (lazy references to globals; never at parse time) ───────
   function pd() {
     var d = window.prospectingData;
@@ -312,6 +332,13 @@
     '#prospecting-shell .pros-tag-x { border:0; background:transparent; cursor:pointer; color:inherit; font-size:12px; line-height:1; padding:0 0 0 6px; opacity:.7; }',
     '#prospecting-shell .pros-tag-x:hover { opacity:1; }',
     '#prospecting-shell .pros-chips { display:flex; flex-wrap:wrap; gap:6px; }',
+    '#prospecting-shell .pros-combo-list { margin-top:4px; max-height:240px; overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-sm); padding:4px 0; box-shadow:0 8px 24px rgba(0,0,0,.12); }',
+    '#prospecting-shell .pros-combo-list[hidden] { display:none; }',
+    '#prospecting-shell .pros-combo-opt { padding:7px 12px; font-size:12.5px; color:var(--text); cursor:pointer; }',
+    '#prospecting-shell .pros-combo-opt.is-active, #prospecting-shell .pros-combo-opt:hover { background:var(--surface2); }',
+    '#prospecting-shell .pros-combo-grp { padding:8px 12px 3px; font-family:var(--font-mono); font-size:9px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-4); }',
+    '#prospecting-shell .pros-combo-empty { padding:8px 12px; font-size:12px; color:var(--text3); }',
+    '#prospecting-shell .pros-hint { font-size:11.5px; color:var(--text3); margin-top:5px; line-height:1.4; }',
     '#prospecting-shell .pros-chip-grouplbl { font-family:var(--font-mono); font-size:9px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-4); margin-top:4px; }',
     '#prospecting-shell .pros-minmax { display:flex; align-items:center; gap:8px; }',
     '#prospecting-shell .pros-minmax input, #prospecting-shell .pros-minmax select { flex:1; min-width:0; }',
@@ -923,6 +950,139 @@
     return wrap;
   }
 
+  // Desplegable con búsqueda (como Apollo): muestra todas las opciones al enfocar,
+  // filtra al escribir, y acepta varias separadas por coma (se incluyen todas).
+  // opts.options = [{ value, label, group? }]; opts.allowFree = acepta texto que no
+  // está en la lista; opts.groupLabels = nombres de grupo para los títulos.
+  function comboInput(opts) {
+    var wrap = h('div', { class: 'pros-combo' });
+    var box = h('div', { class: 'pros-tagbox' });
+    var input = h('input', { type: 'text', placeholder: opts.placeholder || '', autocomplete: 'off', role: 'combobox', 'aria-expanded': 'false', 'aria-autocomplete': 'list' });
+    var list = h('div', { class: 'pros-combo-list', role: 'listbox', hidden: 'hidden' });
+    var options = opts.options || [];
+    var active = -1;
+    var shown = [];
+    function norm(t) {
+      return String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+    }
+    function labelOf(val) {
+      for (var i = 0; i < options.length; i++) if (options[i].value === val) return options[i].label;
+      return val;
+    }
+    function fire() { if (opts.onChange) opts.onChange(); }
+    function has(val) { return opts.get().indexOf(val) > -1; }
+    function add(val) {
+      if (!val || has(val)) return false;
+      opts.get().push(val);
+      return true;
+    }
+    function resolve(piece) {
+      var n = norm(piece);
+      if (!n) return null;
+      for (var i = 0; i < options.length; i++) {
+        if (norm(options[i].label) === n || norm(options[i].value) === n) return options[i].value;
+      }
+      return opts.allowFree === false ? null : piece.trim();
+    }
+    function commitText() {
+      var raw = input.value;
+      var added = false;
+      var rejected = [];
+      raw.split(',').forEach(function (piece) {
+        if (!piece.trim()) return;
+        var val = resolve(piece);
+        if (val == null) { rejected.push(piece.trim()); return; }
+        if (add(val)) added = true;
+      });
+      input.value = rejected.join(', ');
+      if (added) { renderTags(); fire(); }
+      renderList();
+    }
+    function pick(o) {
+      if (add(o.value)) { renderTags(); fire(); }
+      input.value = '';
+      renderList();
+      input.focus();
+    }
+    function removeVal(val) {
+      var arr = opts.get();
+      var i = arr.indexOf(val);
+      if (i > -1) arr.splice(i, 1);
+      renderTags(); renderList(); fire();
+    }
+    function renderTags() {
+      // No saca el input del DOM: así no pierde el foco al agregar con coma o Enter.
+      Array.prototype.slice.call(box.children).forEach(function (c) { if (c !== input) box.removeChild(c); });
+      if (input.parentNode !== box) box.appendChild(input);
+      opts.get().forEach(function (val) {
+        var x = h('button', { type: 'button', class: 'pros-tag-x', 'aria-label': 'Quitar', text: '×' });
+        x.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        x.addEventListener('click', function () { removeVal(val); });
+        box.insertBefore(h('span', { class: 'icp-tag' + (opts.noTranslate ? ' notranslate' : '') }, labelOf(val), x), input);
+      });
+    }
+    function open() { list.hidden = false; input.setAttribute('aria-expanded', 'true'); }
+    function close() { list.hidden = true; input.setAttribute('aria-expanded', 'false'); active = -1; }
+    function renderList() {
+      // Filtra por lo último que se está escribiendo (después de la última coma).
+      var parts = input.value.split(',');
+      var q = norm(parts[parts.length - 1]);
+      list.innerHTML = '';
+      shown = options.filter(function (o) {
+        if (has(o.value)) return false;
+        return !q || norm(o.label).indexOf(q) > -1 || norm(o.value).indexOf(q) > -1;
+      });
+      if (active >= shown.length) active = shown.length - 1;
+      var lastGroup = null;
+      shown.forEach(function (o, idx) {
+        if (o.group && o.group !== lastGroup && !q) {
+          lastGroup = o.group;
+          list.appendChild(h('div', { class: 'pros-combo-grp', text: (opts.groupLabels && opts.groupLabels[o.group]) || o.group }));
+        }
+        var el = h('div', { class: 'pros-combo-opt' + (idx === active ? ' is-active' : '') + (opts.noTranslate ? ' notranslate' : ''), role: 'option', text: o.label });
+        el.addEventListener('mousedown', function (e) { e.preventDefault(); pick(o); });
+        list.appendChild(el);
+      });
+      if (!shown.length) {
+        list.appendChild(h('div', { class: 'pros-combo-empty', text: q && opts.allowFree !== false
+          ? 'Sin coincidencias en la lista — Enter para agregarlo tal cual'
+          : 'Sin coincidencias' }));
+      }
+    }
+    function move(d) {
+      if (list.hidden) { open(); renderList(); return; }
+      if (!shown.length) return;
+      active = (active + d + shown.length) % shown.length;
+      renderList();
+      var el = list.querySelectorAll('.pros-combo-opt')[active];
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+    }
+    input.addEventListener('focus', function () { open(); renderList(); });
+    input.addEventListener('input', function () { active = -1; open(); renderList(); });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+      else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (!list.hidden && active > -1 && shown[active]) pick(shown[active]);
+        else commitText();
+      } else if (e.key === ',') { e.preventDefault(); commitText(); }
+      else if (e.key === 'Escape') { close(); }
+      else if (e.key === 'Backspace' && !input.value) {
+        var arr = opts.get();
+        if (arr.length) removeVal(arr[arr.length - 1]);
+      }
+    });
+    input.addEventListener('paste', function () { setTimeout(function () { if (input.value.indexOf(',') > -1) commitText(); }, 0); });
+    input.addEventListener('blur', function () { if (input.value.trim()) commitText(); close(); });
+    box.addEventListener('click', function (e) { if (e.target === box) input.focus(); });
+    renderTags();
+    wrap.appendChild(box);
+    wrap.appendChild(list);
+    wrap.refreshTags = function () { renderTags(); if (!list.hidden) renderList(); };
+    return wrap;
+  }
+
   // Input bound to a scalar filter field.
   function boundInput(opts) {
     var attrs = { type: opts.type || 'text', placeholder: opts.placeholder || '' };
@@ -1167,10 +1327,13 @@
     // 2. Cargos
     section('Cargos', function (x) { return x.person_titles.length + x.person_seniorities.length; }, function (body) {
       body.appendChild(lbl('Cargos'));
-      body.appendChild(tagInput({
-        placeholder: 'Ej. Gerente de ventas — Enter para agregar',
+      body.appendChild(comboInput({
+        placeholder: 'Busca o escribe cargos, separados por coma',
+        options: TITLE_SUGGESTIONS.map(function (t) { return { value: t, label: t }; }),
+        noTranslate: true,
         get: function () { return f().person_titles; }, onChange: changed,
       }));
+      body.appendChild(h('div', { class: 'pros-hint', text: 'Elige de la lista o escribe varios separados por coma: se buscan todos.' }));
       body.appendChild(boundCheckbox('Incluir cargos similares', {
         get: function () { return f().include_similar_titles; },
         set: function (v) { f().include_similar_titles = v; }, onChange: changed,
@@ -1227,24 +1390,14 @@
       return x.industry_tags.length + x.q_organization_keyword_tags.length + x.market_segments.length +
         (x.q_keywords && String(x.q_keywords).trim() ? 1 : 0);
     }, function (body) {
-      var inds = enums().industries || [];
-      var groups = [];
-      var byGroup = {};
-      inds.forEach(function (i) {
-        var g = i.group || 'Otros';
-        if (!byGroup[g]) { byGroup[g] = []; groups.push(g); }
-        byGroup[g].push(i);
-      });
       body.appendChild(lbl('Industrias'));
-      var indWrap = h('div', { style: 'max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding-right:4px' });
-      groups.forEach(function (g) {
-        indWrap.appendChild(h('div', { class: 'pros-chip-grouplbl', text: INDUSTRY_GROUP_LABELS[g] || g }));
-        indWrap.appendChild(chipGroup({
-          options: byGroup[g],
-          get: function () { return f().industry_tags; }, onChange: changed,
-        }));
-      });
-      body.appendChild(indWrap);
+      body.appendChild(comboInput({
+        placeholder: 'Busca industrias o escribe varias separadas por coma',
+        options: enums().industries || [],
+        groupLabels: INDUSTRY_GROUP_LABELS,
+        get: function () { return f().industry_tags; }, onChange: changed,
+      }));
+      body.appendChild(h('div', { class: 'pros-hint', text: 'Elige de la lista o escribe varias separadas por coma: se incluyen todas.' }));
       body.appendChild(lbl('Keywords de la empresa'));
       body.appendChild(tagInput({
         placeholder: 'Ej. saas, logística — Enter para agregar',
