@@ -130,9 +130,12 @@ Deno.serve(withLlmContext(async (req: Request) => {
     if (!parsed) throw new Error("respuesta sin JSON");
     extraction = normalizeExtraction(parsed);
   } catch (e) {
-    console.error("[brief-search] ia:", String(e));
+    const reason = (e instanceof Error ? e.message : String(e)).replace(/\s+/g, " ").slice(0, 240);
+    console.error("[brief-search] ia:", reason);
     await refundCredits(supa, user.id, cost, "brief_search_refund");
-    return json({ error: "ai_failed" }, 502, h);
+    // detail = "ai_failed: <motivo>" para que la UI muestre por qué falló
+    // (edgeFetch expone body.detail como err.detail).
+    return json({ error: "ai_failed", detail: "ai_failed: " + reason }, 502, h);
   }
 
   if (!hasSearch(extraction)) {

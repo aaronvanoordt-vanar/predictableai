@@ -7892,4 +7892,5 @@ window.I18N_DICTS['pt-BR'] = {
   "← Otro brief": "← Outro brief",
   "Revisa y ajusta los filtros en Buscar antes de guardar contactos.": "Revise e ajuste os filtros em Buscar antes de salvar contatos.",
   "por brief": "por brief",
+  "{0} Motivo: {1}": "{0} Motivo: {1}",
 };

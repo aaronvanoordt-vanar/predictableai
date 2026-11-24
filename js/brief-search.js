@@ -37,8 +37,11 @@
     ai_failed: 'La IA no pudo leer el brief. Reintenta en un momento (no se cobraron créditos).',
   };
   function errText(e) {
-    var code = e && e.detail;
-    return ERRORS[code] || (e && e.message) || 'Error inesperado';
+    var raw = String((e && e.detail) || '');
+    var code = raw.split(':')[0];
+    var why = raw.indexOf(':') !== -1 ? raw.slice(raw.indexOf(':') + 1).trim() : '';
+    if (ERRORS[code]) return ERRORS[code] + (why ? ' Motivo: ' + why : '');
+    return (e && e.message) || 'Error inesperado';
   }
 
   function isClaudeLink(s) { return /^\s*https?:\/\/([a-z0-9-]+\.)*claude\.(ai|site)\b/i.test(String(s || '')); }
