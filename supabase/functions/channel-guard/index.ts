@@ -125,7 +125,7 @@ async function emailStatus(db: SupabaseClient, userId: string, accounts: Json[],
     if (apollo) return { channel: "email", connected: true, provider: "apollo", label: "Apollo", mailboxes: [], external: "Tus correos salen por Apollo: el tope por buzón y el calentamiento se configuran en Apollo. Conecta un buzón propio en Canales → Email para que Predictable lo caliente y lo cuide." };
     return { channel: "email", connected: false, mailboxes: [] };
   }
-  const { data: pool } = await db.from("warmup_pool").select("id, ref_id, active").eq("channel", "email");
+  const { data: pool, error: poolError } = await db.from("warmup_pool").select("id, ref_id, active").eq("channel", "email");
   const seedIds = new Map<string, Json>(((pool ?? []) as Json[]).map((p) => [String(p.ref_id), p]));
   const activeSeeds = ((pool ?? []) as Json[]).filter((p) => p.active).length;
   boxes = await Promise.all(boxes.map((mb) => (seedIds.has(String(mb.id)) || mb.status !== "connected" ? mb : net.ensureEmailNetwork(db, mb, now))));
@@ -136,12 +136,15 @@ async function emailStatus(db: SupabaseClient, userId: string, accounts: Json[],
     net.netStats(db, userId, "email", now),
   ]);
   const levelOf = new Map<string, string>(((health ?? []) as Json[]).map((h) => [String(h.domain), String(h.level)]));
+  const network = await networkPool(db, userId, boxes, poolError ? null : (pool ?? []) as Json[]);
   const mailboxes = boxes.map((mb) => {
     const mine = ((sends ?? []) as Json[]).filter((s) => String(s.mailbox_id) === String(mb.id));
     const st = stats.get(String(mb.id)) ?? null;
     const n = net.networkOf(mb);
     const isSeed = seedIds.has(String(mb.id));
     const day = guard.daysSince(n.started_at ?? mb.created_at, now) ?? 0;
+    // Sin nadie con quién conversar (ni semillas ni red entre clientes) no sale ningún correo de calentamiento.
+    const partners = network ? guard.partnerCount({ id: String(mb.id), userId, email: String(mb.email).toLowerCase(), seed: isSeed, peer: n.peer }, network) : null;
     const v = guard.mailboxVerdict({
       status: mb.status, paused_reason: mb.paused_reason, last_error: mb.last_error,
       limit: effectiveLimit(mb, now), target: clampLimit(mb.daily_limit), ramp_enabled: !!mb.ramp_enabled, ramp_started_at: mb.ramp_started_at,
@@ -152,13 +155,38 @@ async function emailStatus(db: SupabaseClient, userId: string, accounts: Json[],
       id: mb.id, email: mb.email, provider: mb.provider, verdict: v,
       warmup: {
         enabled: isSeed || n.enabled, peer: n.peer, tag: n.tag, is_seed: isSeed, seed_id: seedIds.get(String(mb.id))?.id ?? null,
-        today_target: (isSeed || n.enabled) && mb.status === "connected" ? guard.emailWarmupTarget(day, String(mb.id), now, isSeed) : 0,
+        today_target: (isSeed || n.enabled) && mb.status === "connected" && partners !== 0 ? guard.emailWarmupTarget(day, String(mb.id), now, isSeed) : 0,
+        partners,
         can_rescue: mb.provider === "smtp", stats: st,
       },
       can_seed: team && !isSeed && mb.status === "connected",
     };
   });
   return { channel: "email", connected: true, provider: "mailboxes", label: mailboxes.length === 1 ? mailboxes[0].email : `${mailboxes.length} buzones`, mailboxes, seeds: activeSeeds, apollo };
+}
+
+/**
+ * Los buzones de la red con los que podrían conversar los del usuario: semillas
+ * conectadas y, si alguno de sus buzones aceptó la red entre clientes, los de
+ * otros clientes que también la aceptaron. Mismo criterio que `emailRoster` del
+ * motor. null = no se pudo leer (la UI no afirma nada).
+ */
+async function networkPool(db: SupabaseClient, userId: string, boxes: Json[], pool: Json[] | null): Promise<guard.Participant[] | null> {
+  if (!pool) return null;
+  const seedIds = pool.filter((p) => p.active).map((p) => String(p.ref_id));
+  const wantsPeers = boxes.some((mb) => net.networkOf(mb).peer);
+  const [seedsRes, peersRes] = await Promise.all([
+    seedIds.length ? db.from("email_mailboxes").select("id, user_id, email").in("id", seedIds).eq("status", "connected") : Promise.resolve({ data: [], error: null }),
+    wantsPeers
+      ? db.from("email_mailboxes").select("id, user_id, email").eq("status", "connected").neq("user_id", userId)
+        .eq("warmup->network->>enabled", "true").eq("warmup->network->>peer", "true").limit(500)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (seedsRes.error || peersRes.error) return null;
+  const seedSet = new Set(seedIds);
+  return [...((seedsRes.data ?? []) as Json[]), ...((peersRes.data ?? []) as Json[])].map((mb) => ({
+    id: String(mb.id), userId: String(mb.user_id), email: String(mb.email).toLowerCase(), seed: seedSet.has(String(mb.id)), peer: !seedSet.has(String(mb.id)),
+  }));
 }
 
 /** Envíos por día (UTC) de los últimos 30 días: campaña (lo que salió de verdad) + calentamiento. */

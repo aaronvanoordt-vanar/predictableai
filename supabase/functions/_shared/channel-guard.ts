@@ -263,6 +263,11 @@ export function canPair(a: Participant, b: Participant): boolean {
   return a.peer && b.peer && a.userId !== b.userId;
 }
 
+/** Con cuántos buzones de la red puede conversar `me` (0 = hoy no sale ningún correo de calentamiento). */
+export function partnerCount(me: Participant, pool: Participant[]): number {
+  return pool.filter((p) => canPair(me, p)).length;
+}
+
 /**
  * A quién le escribe hoy `sender`: el que menos correos recibió hoy, luego el
  * par menos usado en la semana; empate al azar estable. No repite destinatario

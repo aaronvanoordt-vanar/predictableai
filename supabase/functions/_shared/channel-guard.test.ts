@@ -113,6 +113,8 @@ Deno.test("Email: quién puede escribirle a quién y a quién se elige", () => {
   assert(!g.canPair(a, b), "sin aceptar la red, un cliente no escribe a otro");
   assert(g.canPair(b, c) && !g.canPair(a2, a), "mismo dominio corporativo no");
   assert(!g.canPair(a, a));
+  assertEquals(g.partnerCount(a, [a, b]), 0, "sin semillas ni red entre clientes, nadie con quién conversar");
+  assertEquals(g.partnerCount(a, [a, b, seed]), 1);
   assert(g.canPair({ ...a, email: "x@gmail.com" }, { ...seed, email: "y@gmail.com" }), "gmail.com no es un dominio propio");
   const usage = { receivedToday: new Map([["s1", 3]]), pairToday: new Set<string>(), pairWeek: new Map<string, number>() };
   assertEquals(g.pickPartner(a, [seed, seed2, b, a2], usage, "k")?.id, "s2");

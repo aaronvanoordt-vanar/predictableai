@@ -460,7 +460,9 @@
       html += '<label class="wu-check"><input type="checkbox" data-wu="email-warmup" data-id="' + esc(m.id) + '"' + (w.enabled ? ' checked' : '') + '> <span>Calentar este buzón con conversaciones de la red</span></label>';
       if (w.enabled) {
         html += '<label class="wu-check"><input type="checkbox" data-wu="email-peer" data-id="' + esc(m.id) + '"' + (w.peer ? ' checked' : '') + '> <span>Escribirme también con buzones de otros clientes de Predictable</span></label>' +
-          '<div class="wu-muted">Hoy: hasta ' + num(w.today_target) + ' correos de calentamiento. Para no verlos en tu bandeja, crea un filtro con la palabra <code class="notranslate" data-no-i18n>' + esc(w.tag) + '</code>.</div>' +
+          (w.partners === 0
+            ? '<div class="wu-notice">Hoy no sale ningún correo de calentamiento: este buzón todavía no tiene con quién conversar en la red. Empieza solo cuando la plataforma tenga buzones semilla' + (w.peer ? ' o cuando otro cliente también acepte escribirse con los demás.' : ' o si activas «Escribirme también con buzones de otros clientes de Predictable» y otro cliente también lo acepta.') + '</div>'
+            : '<div class="wu-muted">Hoy: hasta ' + num(w.today_target) + ' correos de calentamiento. Para no verlos en tu bandeja, crea un filtro con la palabra <code class="notranslate" data-no-i18n>' + esc(w.tag) + '</code>.</div>') +
           statsLine(w.stats, true);
         if (!w.can_rescue) html += '<div class="wu-muted">Este buzón está conectado con permiso de solo lectura: se mide a dónde llegan los correos, pero no se pueden sacar de spam.</div>';
       }
@@ -478,7 +480,7 @@
     }
     var can = c.mailboxes.some(function (m) { return m.verdict.can_send; });
     return '<div class="wu-card wu-acc">' + channelHead('Email', can ? 'Hoy sí envía' : 'Hoy no envía', can ? 'ok' : 'bad') +
-      (c.seeds ? '' : '<div class="wu-muted">La plataforma todavía no tiene buzones semilla: el calentamiento con la red empieza cuando existan. La rampa de volumen ya corre.</div>') +
+      (c.seeds ? '' : '<div class="wu-muted">La plataforma todavía no tiene buzones semilla, así que la red de calentamiento solo funciona entre clientes que aceptaron escribirse. La rampa de volumen de las campañas sí corre: limita cuántos correos de campaña salen por día, pero no envía nada por sí sola.</div>') +
       c.mailboxes.map(mailboxBlock).join('') + '</div>';
   }
 
