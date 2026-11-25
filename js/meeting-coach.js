@@ -16,6 +16,8 @@
   let elapsedSeconds = 0;
   let lastEventTs = null;     // timestamp del último coaching_event recibido
   let lastChunkTs = null;     // timestamp del último chunk recibido
+  let polling = false;        // un poll a la vez: dos con el mismo since_ts duplicaban líneas y alertas
+  let ending = false;
   let everSawChunk = false;   // true en cuanto llega el primer chunk — la sesión ya no debe volver a "conectándose"
   const Live = function () { return global.CoachLive || null; };
   // Quién es el vendedor: en modo bot los hablantes traen su nombre real.
@@ -69,7 +71,7 @@
       if (typeof global.coachShowActive === 'function') {
         global.coachShowActive(prospectContext && prospectContext.name);
       }
-      toast('Bot lanzado a la reunión', 'success');
+      toast('El asistente va entrando a la reunión', 'success');
       if (res.transcript_provider === 'recallai') {
         toast('Transcripción en modo diferido: las alertas pueden tardar minutos. Activa Deepgram (RECALL_TRANSCRIPT_PROVIDER) para tiempo real.', 'warn');
       }
@@ -82,12 +84,18 @@
 
   // ─── POLLING ──────────────────────────────────────────────
   async function poll() {
-    if (!currentMeetingId) return;
+    // Si la respuesta anterior aún no llegó (función fría, red lenta), este
+    // turno se salta: antes dos consultas con el mismo `since_ts` traían los
+    // mismos chunks y la transcripción y las alertas salían repetidas.
+    if (!currentMeetingId || polling) return;
+    polling = true;
+    const meetingId = currentMeetingId;
     try {
       const data = await global.api.getMeetingState({
-        meeting_id: currentMeetingId,
+        meeting_id: meetingId,
         since_ts: lastSeenTs
       });
+      if (currentMeetingId !== meetingId) return;   // la sesión terminó mientras tanto
       lastSeenTs = data.server_ts;
 
       if (data.chunks && data.chunks.length) {
@@ -116,6 +124,8 @@
       setStatus(everSawChunk ? 'live' : 'connecting', !everSawChunk && data.bot_status && data.bot_status.message);
     } catch (e) {
       console.warn('Poll error', e);
+    } finally {
+      polling = false;
     }
   }
 
@@ -123,28 +133,27 @@
   function renderTranscript(chunks) {
     const c = document.getElementById('mc-transcript');
     if (c) {
+      const stick = c.scrollHeight - c.scrollTop - c.clientHeight < 60;
       chunks.forEach(function (chunk) {
         const div = document.createElement('div');
-        div.innerHTML =
-          '<span style="color:var(--teal);font-weight:700">' + esc(chunk.speaker) + ':</span> ' +
-          '<span style="color:var(--text2)">' + esc(chunk.text) + '</span>';
+        div.className = 'mc-tr-row notranslate' + (isSeller(chunk.speaker) ? ' is-sdr' : ' is-lead');
+        const who = document.createElement('span');
+        who.className = 'mc-tr-who';
+        who.textContent = chunk.speaker + ':';
+        const what = document.createElement('span');
+        what.className = 'mc-tr-text';
+        what.textContent = chunk.text;
+        div.appendChild(who); div.appendChild(document.createTextNode(' ')); div.appendChild(what);
         c.appendChild(div);
       });
-      c.scrollTop = c.scrollHeight;
+      if (stick) c.scrollTop = c.scrollHeight;
     }
-    const last = chunks[chunks.length - 1];
-    const heroEl = document.getElementById('mc-last-spoken');
-    if (last && heroEl) {
-      heroEl.innerHTML =
-        '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Lo último que se dijo</div>' +
-        '<div style="font-size:15px;color:var(--text);line-height:1.5">' +
-        '<strong style="color:var(--teal)">' + esc(last.speaker) + ':</strong> ' + esc(last.text) + '</div>';
-    }
+    // El subtítulo en vivo lo pinta CoachLive.heard() (js/coach-live.js).
   }
 
   function clearTranscript() {
     const c = document.getElementById('mc-transcript');
-    if (c) c.innerHTML = '';
+    if (c) c.textContent = '';
   }
 
   // ─── RENDER EVENTOS ───────────────────────────────────────
@@ -152,7 +161,9 @@
     const c = document.getElementById('mc-events');
     if (!c) return;
     events.forEach(function (ev) {
-      (ev.alerts || []).forEach(function (a) { c.prepend(buildAlert(a)); });
+      (ev.alerts || []).forEach(function (a) {
+        if (Live()) Live().showAlert(a); else c.prepend(buildAlert(a));
+      });
       // Fase, frase a decir y orden: en la página y en la ventana flotante.
       if (Live()) {
         Live().coach({
@@ -171,6 +182,8 @@
     if (!c) return;
     // Limpiar solo cards de alerta dinámicas, NO los cards estáticos (score / etapa)
     Array.from(c.querySelectorAll('.ai-alert-dynamic')).forEach(function (el) { el.remove(); });
+    const empty = document.getElementById('mc-events-empty');
+    if (empty) empty.style.display = '';
   }
 
   function buildAlert(alert) {
@@ -208,29 +221,17 @@
   }
 
   // ─── INDICADOR "PENSANDO" ─────────────────────────────────
-  function showThinking() {
-    if (document.getElementById('mc-thinking')) return;
-    const el = document.createElement('div');
-    el.id = 'mc-thinking';
-    el.className = 'ai-suggestion ai-alert-dynamic';
-    el.style.cssText =
-      'border:1px dashed var(--teal);background:rgba(0,196,212,.05);' +
-      'animation:pulse 1.5s infinite';
-    el.innerHTML =
-      '<div class="ai-tag" style="color:var(--teal)">🧠 ANALIZANDO LO ÚLTIMO QUE SE DIJO</div>' +
-      '<div class="ai-text" style="font-size:11px;color:var(--text3)">' +
-        'El coach está procesando la conversación...</div>';
-    const events = document.getElementById('mc-events');
-    if (events) events.prepend(el);
-  }
-  function hideThinking() {
-    const el = document.getElementById('mc-thinking');
-    if (el) el.remove();
-  }
+  // Señal discreta junto a la frase (antes, una tarjeta que entraba y salía
+  // de la lista de alertas en cada consulta).
+  function showThinking() { if (Live()) Live().thinking(true); }
+  function hideThinking() { if (Live()) Live().thinking(false); }
 
   // ─── SCORES ───────────────────────────────────────────────
   function renderScores(scores) {
     if (!scores) return;
+    // La tarjeta solo existe cuando hay puntajes reales (modo asistente).
+    const card = document.getElementById('mc-scores-card');
+    if (card) card.style.display = '';
     const map = {
       'mc-score-listening': scores.active_listening,
       'mc-score-pain': scores.pain_deepening,
@@ -271,8 +272,8 @@
     if (Live() && status !== 'ended') Live().status(override || (status === 'live' ? 'Transcribiendo en vivo' : 'El asistente se está uniendo…'));
     if (override) { el.textContent = override; return; }
     el.textContent = ({
-      connecting: 'Bot conectándose...',
-      live: '● Transcribiendo en vivo',
+      connecting: 'El asistente se está uniendo…',
+      live: 'Transcribiendo en vivo',
       ended: 'Reunión finalizada'
     })[status] || status;
   }
@@ -289,7 +290,8 @@
 
   // ─── FINALIZAR ────────────────────────────────────────────
   async function end() {
-    if (!currentMeetingId) return;
+    if (!currentMeetingId || ending) return;
+    ending = true;
     clearInterval(pollTimer);
     clearInterval(elapsedTimer);
     hideThinking();
@@ -313,6 +315,7 @@
       nav(document.querySelector('[data-page=ventas-reportes]'), 'ventas-reportes');
       if (global.MeetingReport) global.MeetingReport.open(meetId);
     }
+    ending = false;
   }
 
   // ─── HELPERS ──────────────────────────────────────────────

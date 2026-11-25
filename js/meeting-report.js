@@ -20,7 +20,7 @@
   };
 
   var POLL_MS = 8000;
-  var POLL_FAST_MS = 3000;          // primer par de minutos: el reporte suele estar en segundos
+  var POLL_FAST_MS = 2000;          // primer par de minutos: el reporte suele estar en segundos
   var POLL_FAST_WINDOW_MS = 120000;
   var reqSeq = 0;                   // descarta la respuesta de una carga que ya fue reemplazada
   var listRows = [];                // reuniones de la última lista cargada
@@ -307,7 +307,7 @@
     if (data.pending) {
       renderPending(data, specific);
       show('content');
-      startPolling(data.meeting_id, data);
+      startPolling(data.meeting_id, data, specific);
       return;
     }
     if (!data.report) { show('empty'); return; }
@@ -317,25 +317,49 @@
   }
 
   // ─── Pendiente: la transcripción ya está, el análisis llega solo ───
+  // Resumen rápido (sales-coach → quickPreview): qué pasó y el siguiente paso,
+  // en segundos, mientras se termina el análisis completo.
+  function previewHtml(pv) {
+    if (!pv || typeof pv !== 'object') return '';
+    var corto = (Array.isArray(pv.resumen_corto) ? pv.resumen_corto : []).filter(function (x) { return x && String(x).trim(); });
+    if (!corto.length) return '';
+    var sp = (pv.siguiente_paso && typeof pv.siguiente_paso === 'object') ? pv.siguiente_paso : {};
+    var html = '<div class="mr-card" id="mr-preview">' +
+      '<div class="mr-eyebrow">Resumen rápido</div>' +
+      '<ol class="mr-list notranslate" style="margin:8px 0 0;padding-left:18px">' + corto.slice(0, 3).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ol>';
+    if (sp.accion) {
+      html += '<div style="margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--surface2);border:1px solid var(--border)">' +
+        '<div class="mr-eyebrow" style="color:var(--accent-ink)">Siguiente paso</div>' +
+        '<div class="notranslate" style="font-size:14px;font-weight:700;color:var(--text);margin-top:4px">' + esc(sp.accion) + '</div>' +
+        ((sp.cuando || sp.por_que) ? '<div class="notranslate mr-p" style="margin-top:4px">' + esc([sp.cuando, sp.por_que].filter(Boolean).join(' · ')) + '</div>' : '') +
+        '</div>';
+    }
+    return html + '</div>';
+  }
+
   function renderPending(data, specific) {
     var e = els();
     var since = data.ended_at ? Math.max(0, Math.round((Date.now() - new Date(data.ended_at).getTime()) / 1000)) : 0;
     // Con la transcripción ya guardada (captura local, o modo bot con el
     // transcript de Recall ya traído) el reporte tarda segundos, no minutos.
     var ready = data.meeting_type !== 'bot' || data.transcript_source === 'recall_api';
+    var pv = previewHtml(data.preview);
     e.content.innerHTML =
       '<div class="mr">' + (specific ? backLink() : '') +
-      '<div class="mr-card mr-pending">' +
+      '<div id="mr-preview-slot">' + pv + '</div>' +
+      '<div class="mr-card mr-pending"' + (pv ? ' style="padding:22px 20px"' : '') + '>' +
         '<div class="mr-spinner"></div>' +
-        '<div style="font-size:15px;font-weight:800;color:var(--text)">Generando el reporte de <span class="notranslate">' + esc(data.prospect_name || 'la reunión') + '</span>…</div>' +
-        '<div class="mr-p" style="max-width:480px">' + (ready
-          ? 'La transcripción completa ya está guardada y la estamos analizando. El reporte aparece aquí solo, normalmente en menos de un minuto; puedes seguir navegando.'
+        '<div style="font-size:15px;font-weight:800;color:var(--text)">' + (pv ? 'Terminando el análisis completo de ' : 'Generando el reporte de ') + '<span class="notranslate">' + esc(data.prospect_name || 'la reunión') + '</span>…</div>' +
+        '<div class="mr-p" style="max-width:480px">' + (pv
+          ? 'Arriba tienes el resumen. Los puntajes, las objeciones y el feedback aparecen aquí solos en unos segundos; puedes seguir navegando.'
+          : ready
+          ? 'La transcripción completa ya está guardada y la estamos analizando. Primero aparece un resumen rápido y enseguida el reporte completo; puedes seguir navegando.'
           : 'El asistente ya salió de la reunión. Estamos esperando la transcripción completa para analizarla — con reuniones largas puede tardar unos minutos. Puedes seguir navegando; el reporte aparecerá aquí solo.') + '</div>' +
         '<div id="mr-pending-timer" style="font-family:var(--font-mono);font-size:12px;color:var(--text3)">esperando ' + since + 's</div>' +
       '</div>' + transcriptBlock(data, true) + '</div>';
   }
 
-  function startPolling(meetingId, data) {
+  function startPolling(meetingId, data, specific) {
     stopPolling();
     if (!meetingId) return;
     pollingMeetingId = meetingId;
@@ -357,12 +381,16 @@
           await open(meetingId);
           return;
         }
+        // Llegó el resumen rápido: se pinta sin esperar al reporte completo.
+        if (res && res.preview && !document.getElementById('mr-preview')) {
+          renderPending(Object.assign({}, data, { preview: res.preview }), specific);
+        }
       } catch (err) {
         console.warn('[meeting-report] finalizeReport', err);
       }
       pollTimer = setTimeout(tick, nextDelay());
     };
-    pollTimer = setTimeout(tick, 2500);
+    pollTimer = setTimeout(tick, 1500);
   }
   function stopPolling() {
     if (pollTimer) clearTimeout(pollTimer);

@@ -49,6 +49,8 @@
       stageId: '', stage: '', goal: '', doList: [],
       sayLabel: '', say: '', next: '', thinking: false,
       alerts: [], last: null,
+      turn: '', warn: false, sayAt: 0,
+      talk: { sdr: 0, lead: 0 },
     };
   }
   var state = blank();
@@ -56,41 +58,60 @@
   // ═══ CoachHUD ═════════════════════════════════════════════════════════
   var hudWin = null;      // Window de la ventana flotante
 
+  // Liquid Glass (2026-11-25): la ventana vive sobre la reunión, así que el
+  // vidrio se arma con su propia malla de color detrás y tarjetas translúcidas
+  // con borde especular. Colores de marca, sin depender del tema de la app.
   var HUD_CSS = [
     '*{box-sizing:border-box}',
     // La ventana NO se desplaza: cabecera, última frase y botones quedan fijos y
     // solo la zona central (.body) hace scroll.
     'html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none}',
-    'body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;background:#0b0f1a;color:#e8ecf5;display:flex;flex-direction:column;height:100vh;font-size:13px;line-height:1.45}',
-    '.top{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0}',
-    '.dot{width:8px;height:8px;border-radius:50%;background:#2bb673;box-shadow:0 0 8px rgba(43,182,115,.8);flex-shrink:0}',
+    'body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#eef2fb;display:flex;flex-direction:column;height:100vh;font-size:13px;line-height:1.45;',
+      'background:radial-gradient(120% 70% at 0% 0%,rgba(47,102,255,.42),transparent 60%),radial-gradient(90% 60% at 100% 12%,rgba(6,182,212,.30),transparent 62%),radial-gradient(110% 70% at 50% 110%,rgba(43,182,115,.24),transparent 60%),#070b16}',
+    '.glass{background:linear-gradient(180deg,rgba(255,255,255,.11),rgba(255,255,255,.05));border:1px solid rgba(255,255,255,.16);box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 10px 30px -18px rgba(0,0,0,.8);-webkit-backdrop-filter:blur(22px) saturate(1.6);backdrop-filter:blur(22px) saturate(1.6);border-radius:16px}',
+    '.top{display:flex;align-items:center;gap:8px;padding:10px 12px 8px;flex-shrink:0}',
+    '.dot{width:8px;height:8px;border-radius:50%;background:#2bb673;box-shadow:0 0 10px rgba(43,182,115,.9);flex-shrink:0}',
     '.dot.off{background:#5b6478;box-shadow:none}',
-    '.st{font-weight:600;font-size:12px;color:#b7c0d4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}',
-    '.tm{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#8b95ab}',
-    '.body{flex:1 1 0;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px;display:flex;flex-direction:column;gap:10px}',
+    '.dot.warn{background:#f5a524;box-shadow:0 0 10px rgba(245,165,36,.8)}',
+    '.st{font-weight:600;font-size:12px;color:#c5cde0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}',
+    '.turn{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);color:#dbe3f5;white-space:nowrap}',
+    '.turn.you{background:rgba(43,182,115,.22);border-color:rgba(43,182,115,.6);color:#8ff0bd}',
+    '.turn.lead{background:rgba(6,182,212,.2);border-color:rgba(6,182,212,.55);color:#9be9f7}',
+    '.turn:empty{display:none}',
+    '.tm{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#9aa5bd}',
+    '.steps{display:flex;gap:4px;padding:0 12px 8px;flex-shrink:0}',
+    '.steps i{flex:1;height:4px;border-radius:99px;background:rgba(255,255,255,.14);transition:background .3s}',
+    '.steps i.done{background:rgba(124,156,255,.55)}',
+    '.steps i.on{background:linear-gradient(90deg,#2f66ff,#06b6d4)}',
+    '.body{flex:1 1 0;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 12px 12px;display:flex;flex-direction:column;gap:10px}',
     '.body>*{flex-shrink:0}',
-    '.lbl{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8b95ab;margin-bottom:4px}',
+    '.lbl{font-size:11px;font-weight:600;color:#9aa5bd;margin-bottom:4px}',
     '.stage{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}',
-    '.stage b{font-size:16px;color:#9db4ff}',
-    '.goal{font-size:12px;color:#aab3c7;margin-top:2px}',
-    '.say{background:linear-gradient(135deg,rgba(47,102,255,.22),rgba(6,182,212,.14));border:1px solid rgba(124,156,255,.45);border-radius:12px;padding:12px}',
-    '.say .txt{font-size:16px;font-weight:650;color:#fff;line-height:1.4}',
-    '.say.think .txt{opacity:.75}',
-    '.next{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:10px;padding:10px 12px}',
+    '.stage b{font-size:15px;color:#fff}',
+    '.goal{font-size:12px;color:#b4bdd2;margin-top:2px}',
+    '.say{padding:14px;border-color:rgba(124,156,255,.6);background:linear-gradient(135deg,rgba(47,102,255,.34),rgba(6,182,212,.2))}',
+    '.say .lbl{color:#cfdcff}',
+    '.say .txt{font-size:17px;font-weight:650;color:#fff;line-height:1.4;letter-spacing:-.01em}',
+    '.say.think .txt{opacity:.8}',
+    '.say.fresh{animation:fresh .9s ease-out}',
+    '@keyframes fresh{0%{box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 0 0 3px rgba(124,156,255,.75)}100%{box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 0 0 0 rgba(124,156,255,0)}}',
+    '.next{padding:10px 12px}',
     '.next ul{margin:0;padding-left:16px}',
     '.next li{margin:2px 0}',
-    '.al{border-radius:10px;padding:10px 12px;border:1px solid;background:rgba(255,255,255,.04)}',
-    '.al .t{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;margin-bottom:3px}',
-    '.al .e{font-size:12px;color:#c3cbdb}',
+    '.al{padding:10px 12px;border-left-width:3px}',
+    '.al .t{font-size:12px;font-weight:700;margin-bottom:3px}',
+    '.al .e{font-size:12px;color:#c9d1e2}',
     '.al .p{font-size:13.5px;font-weight:600;color:#fff;margin-top:6px}',
-    '.last{font-size:11.5px;color:#8b95ab;border-top:1px solid rgba(255,255,255,.08);padding:8px 12px;flex-shrink:0;max-height:54px;overflow:hidden}',
-    '.last b{color:#b7c0d4}',
+    '.last{font-size:11.5px;color:#9aa5bd;border-top:1px solid rgba(255,255,255,.1);padding:8px 12px;flex-shrink:0;max-height:54px;overflow:hidden}',
+    '.last b{color:#c5cde0}',
     '.foot{display:flex;gap:8px;padding:8px 12px 10px;flex-shrink:0}',
-    'button{font:inherit;font-size:12px;font-weight:600;border-radius:8px;padding:7px 10px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#e8ecf5;cursor:pointer;flex:1}',
-    'button.end{color:#ff8d8d;border-color:rgba(225,84,84,.45)}',
+    'button{font:inherit;font-size:12px;font-weight:600;border-radius:999px;padding:8px 12px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.18);color:#eef2fb;cursor:pointer;flex:1}',
+    'button:hover{background:rgba(255,255,255,.14)}',
+    'button:focus-visible{outline:2px solid #7c9cff;outline-offset:2px}',
+    'button.end{color:#ffa0a0;border-color:rgba(225,84,84,.5)}',
     '.pulse{animation:p 1.2s ease-in-out infinite}',
     '@keyframes p{50%{opacity:.45}}',
-    '@media (prefers-reduced-motion:reduce){.pulse{animation:none}}',
+    '@media (prefers-reduced-motion:reduce){.pulse,.say.fresh{animation:none}.steps i{transition:none}}',
   ].join('');
 
   // Arc (Chromium) anuncia Document Picture-in-Picture pero su gestor de
@@ -132,16 +153,20 @@
     var top = el('div', 'top');
     top.appendChild(el('span', 'dot', 'h-dot'));
     top.appendChild(el('span', 'st', 'h-status'));
+    top.appendChild(el('span', 'turn', 'h-turn'));
     top.appendChild(el('span', 'tm', 'h-timer'));
+    // Las seis fases de la llamada: dónde vas y cuánto falta.
+    var steps = el('div', 'steps', 'h-steps');
+    ((PB() && PB().STAGES) || []).forEach(function (s) { var i = el('i'); i.setAttribute('data-stage', s.id); steps.appendChild(i); });
     var body = el('div', 'body');
     var stageBox = el('div');
     var stageLbl = el('div', 'lbl'); stageLbl.id = 'h-stage-lbl';
     var stageRow = el('div', 'stage'); stageRow.appendChild(el('b', '', 'h-stage'));
     stageBox.appendChild(stageLbl); stageBox.appendChild(stageRow); stageBox.appendChild(el('div', 'goal', 'h-goal'));
-    var say = el('div', 'say', 'h-say-box');
+    var say = el('div', 'say glass', 'h-say-box');
     say.appendChild(el('div', 'lbl', 'h-say-lbl'));
     say.appendChild(el('div', 'txt', 'h-say'));
-    var next = el('div', 'next', 'h-next-box');
+    var next = el('div', 'next glass', 'h-next-box');
     next.appendChild(el('div', 'lbl', 'h-next-lbl'));
     next.appendChild(el('div', '', 'h-next'));
     body.appendChild(stageBox); body.appendChild(say); body.appendChild(next);
@@ -154,7 +179,7 @@
       if (typeof global.endCoachSession === 'function') global.endCoachSession();
     });
     foot.appendChild(back); foot.appendChild(end);
-    d.body.appendChild(top); d.body.appendChild(body);
+    d.body.appendChild(top); d.body.appendChild(steps); d.body.appendChild(body);
     d.body.appendChild(el('div', 'last', 'h-last'));
     d.body.appendChild(foot);
   }
@@ -164,7 +189,11 @@
     var d = hudWin.document;
     function set(id, text) { var n = d.getElementById(id); if (n) n.textContent = text == null ? '' : String(text); return n; }
     var dot = d.getElementById('h-dot');
-    if (dot) dot.className = 'dot' + (state.live ? '' : ' off');
+    if (dot) dot.className = 'dot' + (!state.live ? ' off' : state.warn ? ' warn' : '');
+    var turn = d.getElementById('h-turn');
+    if (turn) { turn.textContent = state.live ? turnLabel() : ''; turn.className = 'turn' + (state.turn === 'you' ? ' you' : state.turn === 'lead' ? ' lead' : ''); }
+    var steps = d.getElementById('h-steps');
+    if (steps) paintSteps(steps.children);
     set('h-status', state.status ? T(state.status) : (state.live ? T('Escuchando') : T('Sin sesión activa')));
     set('h-timer', state.live ? state.timer : '');
     set('h-stage-lbl', T('Fase') + (state.prospect ? ' · ' + state.prospect : ''));
@@ -173,7 +202,8 @@
     var sayBox = d.getElementById('h-say-box');
     if (sayBox) {
       sayBox.style.display = state.say ? '' : 'none';
-      sayBox.className = 'say' + (state.thinking ? ' think' : '');
+      var fresh = state.sayAt && Date.now() - state.sayAt < 900;
+      sayBox.className = 'say glass' + (state.thinking ? ' think' : '') + (fresh ? ' fresh' : '');
     }
     set('h-say-lbl', T(state.sayLabel || 'Di esto ahora'));
     set('h-say', state.say);
@@ -198,7 +228,7 @@
       al.style.cssText = 'display:flex;flex-direction:column;gap:8px';
       state.alerts.slice(0, 2).forEach(function (a) {
         var c = ALERT_COLOR[a.type] || '#22c3d6';
-        var box = d.createElement('div'); box.className = 'al'; box.style.borderColor = c;
+        var box = d.createElement('div'); box.className = 'al glass'; box.style.borderLeftColor = c;
         var t = d.createElement('div'); t.className = 't'; t.style.color = c; t.textContent = a.title || '';
         box.appendChild(t);
         if (a.explanation) { var e = d.createElement('div'); e.className = 'e'; e.textContent = a.explanation; box.appendChild(e); }
@@ -277,13 +307,144 @@
   // ═══ CoachLive ════════════════════════════════════════════════════════
   var startedAt = 0;
   var ticker = null;
+  var turnTicker = null;
   var modelSpoke = false;        // el modelo ya dio una orden: manda sobre la plantilla
   var instantSeen = {};          // id de alerta instantánea → ts
   var nudgedStage = {};          // fase por la que ya se avisó el exceso de tiempo
   var words = { sdr: 0, lead: 0, lastNudge: 0 };
   var INSTANT_TTL_MS = 240000;
+  var MAX_ALERT_CARDS = 6;
+
+  // ─── Ritmo de la conversación (2026-11-25) ─────────────────────────────
+  // El vendedor lee mientras habla con una persona: una frase que cambia a
+  // media lectura marea más de lo que ayuda. Reglas, iguales para los dos
+  // caminos del coach:
+  //  • una frase nueva se queda en pantalla lo que toma leerla (dwell);
+  //  • mientras el vendedor habla no se le cambia (la está diciendo);
+  //  • si el lead ya dijo algo nuevo, la frase vieja caducó: entra la nueva ya;
+  //  • una objeción reconocida entra de inmediato (prioridad).
+  // Lo que llega antes de tiempo espera en `gate.queued` (gana lo último).
+  var lastLeadAt = 0, lastSdrAt = 0;
+  var gate = { minUntil: 0, queued: null, queuedAt: 0, timer: null, stream: null, leadWordsAtSay: 0, leadWords: 0 };
+  var HOLD_MAX_MS = 6000;
+  function dwellFor(text) { return Math.max(2200, Math.min(6500, 1000 + String(text || '').length * 40)); }
+  function sellerSpeaking() { return Date.now() - lastSdrAt < 900; }
+  function leadSpeaking() { return Date.now() - lastLeadAt < 1100; }
+  function gateOpen() {
+    var now = Date.now();
+    if (sellerSpeaking()) return false;
+    // El lead ya respondió a lo que había en pantalla: no hay nada que proteger.
+    if (gate.leadWords - gate.leadWordsAtSay >= 6) return now - state.sayAt >= 1200;
+    return now >= gate.minUntil;
+  }
+  function applySay(say, next, label) {
+    var changed = say && say !== state.say;
+    if (say) { state.say = say; state.sayLabel = label || 'Di esto ahora'; }
+    if (next != null) state.next = next;
+    if (changed) {
+      state.sayAt = Date.now();
+      gate.minUntil = state.sayAt + dwellFor(say);
+      gate.leadWordsAtSay = gate.leadWords;
+    }
+  }
+  function clearQueue() {
+    if (gate.timer) { clearTimeout(gate.timer); gate.timer = null; }
+    gate.queued = null; gate.queuedAt = 0;
+  }
+  function flushQueue() {
+    gate.timer = null;
+    if (!gate.queued || !state.live) { clearQueue(); return; }
+    if (gateOpen() || Date.now() - gate.queuedAt >= HOLD_MAX_MS) {
+      var q = gate.queued; clearQueue();
+      applySay(q.say, q.next);
+      paint();
+      return;
+    }
+    gate.timer = setTimeout(flushQueue, 300);
+  }
+  /** Ofrece una frase: entra ya si se puede; si no, espera su turno. */
+  function offerSay(say, next, priority) {
+    if (!say && !next) return;
+    if (!say || say === state.say) { clearQueue(); applySay('', next || state.next); return; }
+    if (priority || !state.say || gateOpen()) { clearQueue(); applySay(say, next || ''); return; }
+    if (!gate.queued) gate.queuedAt = Date.now();
+    gate.queued = { say: say, next: next || '' };
+    if (!gate.timer) gate.timer = setTimeout(flushQueue, 300);
+  }
+
+  function turnLabel() {
+    return state.turn === 'lead' ? T('Habla el lead · escucha')
+      : state.turn === 'sdr' ? T('Hablas tú')
+      : state.turn === 'you' ? T('Tu turno') : '';
+  }
+  function computeTurn() {
+    if (!state.live) return '';
+    if (leadSpeaking()) return 'lead';
+    if (Date.now() - lastSdrAt < 1100) return 'sdr';
+    if (lastLeadAt && lastLeadAt > lastSdrAt) return 'you';
+    return '';
+  }
+  function tickTurn() {
+    var t = computeTurn();
+    if (t === state.turn) return;
+    state.turn = t;
+    paintTurn();
+    if (hudIsOpen()) hudRender();
+  }
+
+  function paintSteps(nodes) {
+    var pb = PB();
+    var ids = ((pb && pb.STAGES) || []).map(function (x) { return x.id; });
+    var cur = ids.indexOf(state.stageId);
+    Array.prototype.forEach.call(nodes || [], function (n) {
+      var i = ids.indexOf(n.getAttribute('data-stage'));
+      var cls = (n.getAttribute('data-base') || '');
+      n.className = (cls + (i === cur ? ' on' : (cur >= 0 && i < cur) ? ' done' : '')).trim();
+      if (i === cur) n.setAttribute('aria-current', 'step'); else n.removeAttribute('aria-current');
+    });
+  }
+  function buildPageSteps() {
+    var host = document.getElementById('mc-steps');
+    var pb = PB();
+    if (!host || !pb || host.childElementCount) return;
+    pb.STAGES.forEach(function (s, i) {
+      var li = document.createElement('li');
+      li.setAttribute('data-stage', s.id);
+      li.setAttribute('data-base', 'mc-step');
+      li.className = 'mc-step';
+      var n = document.createElement('span'); n.className = 'mc-step-n notranslate'; n.textContent = String(i + 1);
+      var t = document.createElement('span'); t.className = 'mc-step-t'; t.textContent = s.label;
+      li.appendChild(n); li.appendChild(t);
+      host.appendChild(li);
+    });
+  }
+  function paintTurn() {
+    var el = document.getElementById('mc-turn');
+    if (!el) return;
+    var label = state.live ? turnLabel() : '';
+    el.textContent = label;
+    el.style.display = label ? '' : 'none';
+    el.className = 'mc-turn' + (state.turn === 'you' ? ' is-you' : state.turn === 'lead' ? ' is-lead' : '');
+  }
+  function paintTalk() {
+    var box = document.getElementById('mc-talk');
+    if (!box) return;
+    var total = state.talk.sdr + state.talk.lead;
+    var pct = total >= 30 ? Math.round(state.talk.sdr * 100 / total) : null;
+    var num = document.getElementById('mc-talk-num');
+    var fill = document.getElementById('mc-talk-fill');
+    var hint = document.getElementById('mc-talk-hint');
+    if (num) num.textContent = pct == null ? '—' : pct + '% / ' + (100 - pct) + '%';
+    if (fill) { fill.style.width = (pct == null ? 0 : pct) + '%'; fill.className = 'mc-talk-fill' + (pct != null && pct > 65 ? ' is-high' : ''); }
+    if (hint) hint.textContent = pct == null ? T('Se calcula cuando hay conversación suficiente.')
+      : pct > 65 ? T('Estás hablando de más: pregunta y escucha.')
+      : T('Buen balance: quien pregunta controla la llamada.');
+  }
 
   function paintPage() {
+    buildPageSteps();
+    var steps = document.getElementById('mc-steps');
+    if (steps) paintSteps(steps.children);
     var st = document.getElementById('mc-stage');
     if (st) st.textContent = state.stage || '—';
     var goal = document.getElementById('mc-stage-goal');
@@ -291,20 +452,29 @@
     var sayBox = document.getElementById('mc-say-box');
     var sayLbl = document.getElementById('mc-say-label');
     var say = document.getElementById('mc-say');
-    if (sayBox) sayBox.style.display = state.say ? '' : 'none';
+    if (sayBox) {
+      sayBox.style.display = state.say ? '' : 'none';
+      var fresh = state.sayAt && Date.now() - state.sayAt < 900;
+      sayBox.classList.toggle('is-fresh', !!fresh);
+      sayBox.classList.toggle('is-thinking', !!state.thinking);
+    }
     if (sayLbl) sayLbl.textContent = T(state.sayLabel || 'Di esto ahora');
-    if (say) { say.textContent = state.say || ''; say.style.opacity = state.thinking ? '.7' : '1'; }
+    if (say) say.textContent = state.say || '';
+    var think = document.getElementById('mc-thinking-chip');
+    if (think) think.style.display = state.thinking ? '' : 'none';
     var ns = document.getElementById('mc-next-steps');
     if (ns) {
       ns.textContent = '';
       var items = state.next ? [state.next] : (state.doList || []);
       items.forEach(function (x) {
         var div = document.createElement('div');
-        div.style.cssText = 'font-size:12px;padding:6px 8px;background:var(--surface2);border-radius:6px';
+        div.className = 'mc-next-item';
         div.textContent = x;
         ns.appendChild(div);
       });
     }
+    paintTurn();
+    paintTalk();
   }
   function paint() { paintPage(); hudRender(); }
 
@@ -320,12 +490,14 @@
     state.goal = T(s.goal);
     state.doList = s.do.map(T);
     if (changed && !keepModelText) {
-      state.say = T(s.say); state.sayLabel = 'Di esto ahora'; state.next = '';
+      clearQueue();
+      applySay(T(s.say), '');
     }
   }
 
   /** Arranca la sesión: fase de apertura y qué decir, antes de que nadie hable. */
   function begin(prospect, opts) {
+    clearQueue();
     state = blank();
     state.live = true;
     state.status = (opts && opts.status) || 'Conectando…';
@@ -333,9 +505,13 @@
     startedAt = Date.now();
     modelSpoke = false; instantSeen = {}; nudgedStage = {};
     words = { sdr: 0, lead: 0, lastNudge: 0 };
+    lastLeadAt = 0; lastSdrAt = 0;
+    gate = { minUntil: 0, queued: null, queuedAt: 0, timer: null, stream: null, leadWordsAtSay: 0, leadWords: 0 };
     applyStage('rapport');
     if (ticker) clearInterval(ticker);
     ticker = setInterval(watch, 20000);
+    if (turnTicker) clearInterval(turnTicker);
+    turnTicker = setInterval(tickTurn, 400);
     paint();
     paintHudButton();
     setAutoPip(true);
@@ -343,30 +519,48 @@
 
   function end() {
     if (ticker) { clearInterval(ticker); ticker = null; }
+    if (turnTicker) { clearInterval(turnTicker); turnTicker = null; }
+    clearQueue();
     if (autoPipOn) setAutoPip(false);
-    state.live = false; state.thinking = false;
+    state.live = false; state.thinking = false; state.turn = ''; state.warn = false;
     state.status = 'Sesión finalizada';
+    paintTurn();
     hudRender();
     // La ventana flotante solo tiene sentido con la sesión viva.
     setTimeout(function () { if (!state.live) hudClose(); }, 2500);
   }
 
-  function status(text) { state.status = text || ''; hudRender(); }
+  /** `warn` = algo pide atención (reconectando, sin audio): el punto pasa a ámbar. */
+  function status(text, warn) { state.status = text || ''; state.warn = !!warn; hudRender(); }
   function timer(text) { state.timer = text || ''; if (hudIsOpen()) { var n = hudWin.document.getElementById('h-timer'); if (n) n.textContent = state.timer; } }
-  function thinking(on) { state.thinking = !!on; paint(); }
+  function thinking(on) {
+    if (state.thinking === !!on) return;
+    state.thinking = !!on; paint();
+  }
 
-  /** Texto parcial de la frase a decir, mientras el modelo todavía escribe. */
-  function partial(sayText) {
+  /**
+   * Texto parcial de la frase a decir, mientras el modelo todavía escribe.
+   * `streamId` identifica la respuesta: solo se pinta a medio escribir si al
+   * empezar la frase anterior ya se podía reemplazar; si no, esa respuesta
+   * espera completa en la cola (nunca se cambia una frase a media lectura).
+   */
+  function partial(sayText, streamId) {
     if (!sayText) return;
-    state.say = sayText; state.sayLabel = 'Di esto ahora'; state.thinking = true;
+    if (gate.stream !== streamId) {
+      if (!(gateOpen() || !state.say)) return;
+      gate.stream = streamId;
+      clearQueue();
+    }
+    state.thinking = true;
+    applySay(sayText, '');
     paint();
   }
 
   /**
-   * Respuesta del modelo. Devuelve las alertas que se mostraron (las repetidas
-   * las filtra quien llama).
+   * Respuesta del modelo. La fase y las alertas entran de inmediato; la frase
+   * y la orden pasan por el ritmo de la conversación (offerSay).
    */
-  function coach(out) {
+  function coach(out, streamId) {
     out = out || {};
     state.thinking = false;
     if (out.stage) applyStage(String(out.stage).toLowerCase(), true);
@@ -377,8 +571,12 @@
         if (out.alerts[i] && out.alerts[i].suggested_phrase) { say = String(out.alerts[i].suggested_phrase); break; }
       }
     }
-    if (say) { state.say = say; state.sayLabel = 'Di esto ahora'; modelSpoke = true; }
-    if (next) { state.next = next; modelSpoke = true; }
+    if (say || next) modelSpoke = true;
+    // La respuesta que ya se venía pintando en streaming termina en su sitio.
+    var streaming = streamId != null && gate.stream === streamId;
+    gate.stream = null;
+    if (streaming) { clearQueue(); applySay(say, next); }
+    else offerSay(say, next, false);
     (Array.isArray(out.alerts) ? out.alerts : []).forEach(function (a) { pushAlert(a); });
     paint();
   }
@@ -389,39 +587,60 @@
     if (state.alerts.length > 4) state.alerts.length = 4;
   }
 
+  var ALERT_KIND = { objection: 'Objeción', positive_signal: 'Señal de compra', risk: 'Riesgo', stage_guidance: 'Cambio de fase' };
   function alertCard(a) {
-    var color = { objection: 'var(--amber)', positive_signal: 'var(--green)', risk: 'var(--red)', stage_guidance: 'var(--gold)' }[a.type] || 'var(--teal)';
+    var type = ALERT_KIND[a.type] ? a.type : 'stage_guidance';
     var card = document.createElement('div');
-    card.className = 'ai-suggestion ai-alert-dynamic';
-    card.style.cssText = 'border:2px solid ' + color + ';background:rgba(245,158,11,.06)';
-    var tag = document.createElement('div'); tag.className = 'ai-tag'; tag.style.color = color; tag.textContent = a.title || '';
+    card.className = 'ai-alert-dynamic mc-alert mc-alert--' + type;
+    var kind = document.createElement('div'); kind.className = 'mc-alert-kind'; kind.textContent = T(ALERT_KIND[type]);
+    card.appendChild(kind);
+    var tag = document.createElement('div'); tag.className = 'mc-alert-title notranslate'; tag.textContent = a.title || '';
     card.appendChild(tag);
-    if (a.explanation) { var tx = document.createElement('div'); tx.className = 'ai-text'; tx.textContent = a.explanation; card.appendChild(tx); }
+    if (a.explanation) { var tx = document.createElement('div'); tx.className = 'mc-alert-text notranslate'; tx.textContent = a.explanation; card.appendChild(tx); }
     if (a.suggested_phrase) {
-      var box = document.createElement('div');
-      box.style.cssText = 'background:var(--surface2);border-radius:6px;padding:10px;margin-top:8px;font-size:12px;line-height:1.7';
-      var strong = document.createElement('strong'); strong.style.color = color; strong.textContent = 'Di esto:';
-      box.appendChild(strong); box.appendChild(document.createElement('br'));
-      box.appendChild(document.createTextNode(a.suggested_phrase));
+      var box = document.createElement('div'); box.className = 'mc-alert-say';
+      var strong = document.createElement('span'); strong.className = 'mc-alert-say-k'; strong.textContent = T('Di esto:');
+      var ph = document.createElement('span'); ph.className = 'notranslate'; ph.textContent = a.suggested_phrase;
+      box.appendChild(strong); box.appendChild(ph);
       card.appendChild(box);
     }
     return card;
   }
+  /** Agrega la tarjeta a la página y recorta las más viejas (la lista no crece sin fin). */
+  function showAlert(a) {
+    var events = document.getElementById('mc-events');
+    if (!events || !a || typeof a !== 'object') return;
+    events.prepend(alertCard(a));
+    var cards = events.querySelectorAll('.mc-alert');
+    for (var i = MAX_ALERT_CARDS; i < cards.length; i++) cards[i].remove();
+    var empty = document.getElementById('mc-events-empty');
+    if (empty) empty.style.display = 'none';
+  }
 
   /** Alerta determinista (playbook): se pinta al instante, una vez por tema. */
-  function instant(key, a) {
+  function instant(key, a, priority) {
     var now = Date.now();
     if (instantSeen[key] && now - instantSeen[key] < INSTANT_TTL_MS) return null;
     instantSeen[key] = now;
     a.instant = true;
     pushAlert(a);
-    var events = document.getElementById('mc-events');
-    if (events) events.prepend(alertCard(a));
+    showAlert(a);
     // Mientras el modelo arma la respuesta a la medida, la plantilla es lo que
-    // el vendedor puede decir YA.
-    if (a.suggested_phrase) { state.say = a.suggested_phrase; state.sayLabel = 'Di esto ahora'; }
+    // el vendedor puede decir YA. Una objeción entra sin esperar turno.
+    if (a.suggested_phrase) offerSay(a.suggested_phrase, '', !!priority);
     paint();
     return a;
+  }
+
+  /** Subtítulo en vivo de la página: lo último que se dijo (o el aviso de espera). */
+  function caption(label, speaker, text, dim) {
+    var k = document.getElementById('mc-caption-k');
+    var who = document.getElementById('mc-caption-who');
+    var t = document.getElementById('mc-caption-t');
+    if (k) k.textContent = label || '';
+    if (who) { who.textContent = speaker ? speaker + ':' : ''; who.className = 'mc-caption-who notranslate' + (speaker === 'SDR' ? ' is-sdr' : ''); }
+    // Lo que dijo una persona no se traduce; el aviso de espera (sin hablante) sí.
+    if (t) { t.textContent = speaker ? (text || '') : T(text || ''); t.className = 'mc-caption-t notranslate' + (dim ? ' is-dim' : ''); }
   }
 
   /**
@@ -430,18 +649,23 @@
    */
   function heard(speaker, text, isFinal, isLead) {
     state.last = { speaker: speaker, text: text };
+    if (isLead) lastLeadAt = Date.now(); else lastSdrAt = Date.now();
+    caption(isFinal ? 'Lo último que se dijo' : 'Escuchando…', speaker, text, !isFinal);
     if (isFinal) {
       var n = String(text || '').split(/\s+/).filter(Boolean).length;
-      if (isLead) words.lead += n; else words.sdr += n;
+      if (isLead) { words.lead += n; state.talk.lead += n; gate.leadWords += n; }
+      else { words.sdr += n; state.talk.sdr += n; }
+      paintTalk();
       if (isLead && PB()) {
         var o = PB().detectObjection(text);
         if (o) {
           if (state.stageId !== 'close') applyStage('negotiation', true);
-          instant('obj:' + o.id, { type: 'objection', title: T(o.title), explanation: T(o.why), suggested_phrase: T(o.say) });
+          instant('obj:' + o.id, { type: 'objection', title: T(o.title), explanation: T(o.why), suggested_phrase: T(o.say) }, true);
           return;
         }
       }
     }
+    tickTurn();
     hudRender();
   }
 
@@ -483,7 +707,8 @@
   };
   global.CoachLive = {
     begin: begin, end: end, status: status, timer: timer, thinking: thinking,
-    partial: partial, coach: coach, heard: heard, alertCard: alertCard,
+    partial: partial, coach: coach, heard: heard, alertCard: alertCard, showAlert: showAlert, caption: caption,
+    sellerSpeaking: sellerSpeaking,
     stageId: function () { return state.stageId; },
     minutes: function () { return startedAt ? Math.floor((Date.now() - startedAt) / 60000) : 0; },
     isLive: function () { return state.live; },

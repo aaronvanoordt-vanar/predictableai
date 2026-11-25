@@ -112,7 +112,7 @@
  */
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
-import { callLLM, engineForUser, parseLlmJson, type Engine, withLlmContext } from "../_shared/llm.ts";
+import { callLLM, DEFAULT_CLAUDE_MODEL, engineForUser, parseLlmJson, type Engine, withLlmContext } from "../_shared/llm.ts";
 import { coachMeetingCost } from "../_shared/credit-costs.ts";
 import { buildTrainingBlock, coachDoctrine, loadTraining, type Training, type TrainingTarget } from "../_shared/sales-training.ts";
 
@@ -459,6 +459,7 @@ const SYSTEM_PROMPT_REPORT = (doctrine: string): string => [
   '- Reserva "temperatura_lead": "frio", "probabilidad_avance": 0, scores en 0 y "verdict": "Transcript insuficiente para analizar — la reunión fue muy corta o el audio no se capturó" únicamente para transcripts sin contenido analizable (solo saludos, silencio, audio no capturado, o texto sin preguntas ni respuestas sustantivas).',
   '- "siguiente_paso" es UNO solo y concreto (a quién, qué, cuándo). "next_steps" puede listar el resto en orden.',
   '- "resumen_corto" son exactamente 3 frases cortas; si el transcript es insuficiente, devuelve [] y "siguiente_paso" vacío.',
+  '- TOPES (un reporte largo no se lee y tarda más en llegar): "insights" máximo 4, "highlights" máximo 3, "missed" máximo 3, "next_steps" máximo 3, "fortalezas" y "areas_mejora" máximo 3 cada una. Cada elemento, una o dos frases. Las objeciones reales van todas.',
   "- Español neutro latinoamericano (tú). Sé directo y específico.",
 ].join("\n");
 
@@ -490,7 +491,12 @@ function insufficientReport() {
 // on Haiku (fires every few seconds, latency/cost-critical). No sampling
 // params: Opus 4.8 rejects temperature/top_p/top_k.
 // ───────────────────────────────────────────────────────────────────────────
-const REPORT_MODEL = "claude-opus-4-8";
+// 2026-11-25: el reporte tardaba más de un minuto y el vendedor se quedaba
+// esperando. Ahora (1) un resumen rápido con el modelo en vivo aparece en
+// segundos (quickPreview) y (2) el reporte completo corre en el modelo de
+// trabajo (Sonnet) con listas acotadas: evaluar un transcript ya dado no
+// necesita el modelo más lento. COACH_REPORT_CLAUDE_MODEL lo cambia sin desplegar.
+const REPORT_MODEL = Deno.env.get("COACH_REPORT_CLAUDE_MODEL") || DEFAULT_CLAUDE_MODEL;
 const LIVE_COACH_MODEL = "claude-haiku-4-5";
 
 async function callAi(
@@ -1251,7 +1257,7 @@ async function finalizeInBackground(ctx: Ctx, meeting: Json, endedAt: string): P
     .update({ status: "processing", transcript_source: meeting.transcript_source })
     .eq("id", meeting.id).eq("status", "live").select("id");
   if (!claimed || !claimed.length) return null;
-  const work = finalizeMeeting(ctx, meeting, endedAt)
+  const work = finalizeMeeting(ctx, { ...meeting, status: "processing" }, endedAt)
     .catch((e) => console.error("[sales-coach] background report failed:", e));
   // @ts-ignore — Supabase Edge Runtime global
   if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
@@ -1296,11 +1302,87 @@ async function actionFinalizeReport(ctx: Ctx, p: Json): Promise<Json> {
 
   const maxWait = transcriptReady ? LOCAL_REPORT_RETRY_MS : PENDING_TRANSCRIPT_MAX_MS;
   if (waitedMs < maxWait) {
-    return { pending: true, meeting_id: meeting.id, waited_seconds: Math.round(waitedMs / 1000) };
+    const mctx = (meeting.context && typeof meeting.context === "object") ? meeting.context : {};
+    return {
+      pending: true, meeting_id: meeting.id, waited_seconds: Math.round(waitedMs / 1000),
+      preview: mctx.preview_report ?? null,
+    };
   }
   // Recall never delivered a full transcript: report on what we have.
   const report = await finalizeMeeting(ctx, meeting, endedAt);
   return { pending: false, report, meeting_id: meeting.id };
+}
+
+// ── Resumen rápido ─────────────────────────────────────────────────────────
+// Mientras el reporte completo se arma, el vendedor ya lee qué pasó y cuál es
+// el siguiente paso. Lo escribe el modelo rápido del coach en vivo y se guarda
+// en `coach_meetings.context.preview_report` (sin columna nueva: `final_report`
+// sigue significando «reporte completo», que es lo que leen el CRM, la API y
+// las integraciones). Nunca bloquea ni rompe el reporte completo.
+const PREVIEW_SCHEMA = {
+  type: "object",
+  properties: {
+    resumen_corto: { type: "array", items: { type: "string" } },
+    siguiente_paso: {
+      type: "object",
+      properties: { accion: { type: "string" }, cuando: { type: "string" }, por_que: { type: "string" } },
+      required: ["accion", "cuando", "por_que"],
+      additionalProperties: false,
+    },
+    temperatura_lead: { type: "string", enum: ["frio", "tibio", "caliente"] },
+  },
+  required: ["resumen_corto", "siguiente_paso", "temperatura_lead"],
+  additionalProperties: false,
+};
+
+const SYSTEM_PROMPT_PREVIEW = [
+  "Eres el entrenador de ventas de Predictable.ai. Recibes el transcript de una reunión de",
+  "ventas B2B que acaba de terminar. Escribe SOLO el resumen inmediato para el vendedor:",
+  '- "resumen_corto": exactamente 3 frases cortas: qué pasó, qué mueve al lead y qué falta para avanzar.',
+  '- "siguiente_paso": UNA acción concreta en imperativo ("accion"), con fecha o plazo ("cuando") y el porqué en una frase ("por_que").',
+  '- "temperatura_lead": frio, tibio o caliente según lo que dijo el lead.',
+  "NUNCA inventes datos, nombres, cifras ni compromisos que no estén en el transcript. Si el",
+  'transcript no tiene contenido analizable (solo saludos o silencio), devuelve "resumen_corto": []',
+  'y "siguiente_paso" con los tres campos vacíos.',
+  "Español neutro latinoamericano (tú). Devuelve solo el JSON.",
+].join("\n");
+
+/** Transcript largo: el resumen rápido usa el inicio y, sobre todo, el final. */
+function previewTranscript(full: string): string {
+  const MAX = 24_000;
+  if (full.length <= MAX) return full;
+  return full.slice(0, 6_000) + "\n[…]\n" + full.slice(-(MAX - 6_000));
+}
+
+async function quickPreview(
+  ctx: Ctx, meeting: Json, engine: Engine, transcript: string, sdrName: string | null,
+): Promise<void> {
+  try {
+    const user = [
+      `Prospecto: ${meeting.prospect_name || "(sin nombre)"}`,
+      `Vendedor: ${sdrName || meeting.sdr_email || "SDR"} (en el transcript puede aparecer como "SDR" o con su nombre; cualquier otro hablante es del lado del prospecto).`,
+      "",
+      "=== TRANSCRIPT ===",
+      previewTranscript(transcript),
+    ].join("\n");
+    const out = await callAi(engine, LIVE_COACH_MODEL, SYSTEM_PROMPT_PREVIEW, user, PREVIEW_SCHEMA, 700, "low", liveOpenAiModel());
+    const corto = (Array.isArray(out?.resumen_corto) ? out.resumen_corto : [])
+      .filter((x: unknown) => typeof x === "string" && x.trim()).slice(0, 3);
+    if (!corto.length) return;
+    const preview = {
+      resumen_corto: corto,
+      siguiente_paso: out?.siguiente_paso ?? null,
+      temperatura_lead: strOrNull(out?.temperatura_lead),
+      at: new Date().toISOString(),
+    };
+    const context = (meeting.context && typeof meeting.context === "object") ? meeting.context : {};
+    // Solo mientras el completo no llegó: `.eq(status, processing)` evita pisar una reunión ya cerrada.
+    await ctx.supa.from("coach_meetings")
+      .update({ context: { ...context, preview_report: preview } })
+      .eq("id", meeting.id).eq("status", "processing");
+  } catch (e) {
+    console.warn("[sales-coach] quick preview failed:", e);
+  }
 }
 
 /**
@@ -1335,10 +1417,23 @@ async function finalizeMeeting(ctx: Ctx, meeting: Json, endedAt: string): Promis
     // Las tres lecturas previas van en paralelo, y GPT-5 razona en "low": el
     // reporte es extraer y evaluar sobre un transcript ya dado, y con el
     // esfuerzo por defecto tardaba más de un minuto.
-    const [engine, system, learned] = await Promise.all([
-      engineForUser(ctx.supa, owner, "coach"),
+    // El motor se resuelve primero y el resumen rápido sale ya, en paralelo con
+    // todo lo demás: el vendedor lo lee mientras se arma el reporte completo.
+    const engine = await engineForUser(ctx.supa, owner, "coach");
+    // Solo cuando alguien está mirando la pantalla de «generando» (reunión en
+    // `processing`); el cierre síncrono del dialer no lo necesita.
+    const preview = meeting.status === "processing"
+      ? quickPreview(ctx, meeting, engine, fullTranscript, sdrName)
+      : Promise.resolve();
+    const [system, learned] = await Promise.all([
       trainedSystemPrompt(ctx.supa, owner, SYSTEM_PROMPT_REPORT, "coach"),
       learnedObjectionsBlock(ctx.supa, owner),
+    ]);
+    // Que el resumen rápido termine de escribirse antes de cerrar la reunión
+    // (su UPDATE filtra por `processing`): así nunca llega después del completo.
+    const settle = () => Promise.race([
+      preview.catch(() => {}),
+      new Promise<void>((r) => setTimeout(r, 12_000)),
     ]);
     report = await callAi(
       engine,
@@ -1346,9 +1441,9 @@ async function finalizeMeeting(ctx: Ctx, meeting: Json, endedAt: string): Promis
       system,
       buildReportUserPrompt(meeting, fullTranscript, sdrName, learned),
       REPORT_SCHEMA,
-      8192,
+      6000,
       "low",
-    );
+    ).finally(settle);
   }
   const scoreTotal = numOrNull(report?.score_total) ?? 0;
 
@@ -1499,7 +1594,9 @@ function meetingMemberIds(meeting: Json): string[] {
 }
 
 function buildReportUserPrompt(meeting: Json, transcript: string, sdrName?: string | null, learned = ""): string {
-  const ctx = (meeting.context && typeof meeting.context === "object") ? meeting.context : {};
+  const raw = (meeting.context && typeof meeting.context === "object") ? meeting.context : {};
+  // El resumen rápido es salida de otro modelo, no contexto del lead.
+  const { preview_report: _preview, ...ctx } = raw as Json;
   const lines = [
     "=== CONTEXTO DE LA REUNIÓN ===",
     `Prospecto: ${meeting.prospect_name || "(sin nombre)"}`,
@@ -1614,6 +1711,8 @@ async function meetingReportPayload(ctx: Ctx, m: Json, includeTranscript: boolea
     pending: m.status === "processing",
     score_total: m.score_total || 0,
     report: m.final_report ?? null,
+    // Resumen rápido mientras el reporte completo se arma (quickPreview).
+    preview: m.status === "processing" ? (context.preview_report ?? null) : null,
     transcript_source: m.transcript_source ?? null,
     outcome: m.outcome ?? null,
     outcome_note: m.outcome_note ?? null,
