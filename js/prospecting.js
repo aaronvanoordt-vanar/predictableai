@@ -3473,6 +3473,9 @@
           ' title="' + (known ? 'Arma la nota con la investigación y los datos que ya tiene este contacto' : 'Investiga este contacto y arma la nota (usa créditos)') + '">' +
           (running ? 'Investigando…' : 'Generar con IA') + '</button>' +
         '<button type="button" class="btn btn-ghost btn-sm" data-action="toggle-research" data-id="' + id + '" aria-expanded="' + (open ? 'true' : 'false') + '">' + (open ? 'Ocultar detalle' : 'Ver detalle') + '</button>' +
+        // Acceso directo a las fuentes del lead (js/lead-sources.js): viven en el detalle.
+        (open ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-action="toggle-research" data-id="' + id + '" title="Enlaces y archivos de este lead o de su empresa para el coach y la investigación">' +
+          (Array.isArray(m.sources) && m.sources.length ? 'Fuentes (' + m.sources.length + ')' : 'Agregar fuentes') + '</button>') +
         '<span class="pros-cellsub" data-notes-state="' + id + '">' + esc(notesStateText(id)) + '</span>' +
       '</div>';
   }

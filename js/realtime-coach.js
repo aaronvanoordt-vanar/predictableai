@@ -22,6 +22,15 @@
 //    quedó vieja porque el lead siguió hablando se descarta.
 //  • El eco del lead que entra por el micrófono (parlantes) no cuenta como voz
 //    del vendedor.
+//
+// Voces por persona (2026-11-25, feedback de cliente): el audio de la reunión
+// trae a todos los remotos mezclados (leads y compañeros del vendedor que
+// entran desde otro equipo). Deepgram los separa (`diarize`) y cada voz nueva
+// aparece como «Persona N»; el vendedor la asigna con un clic a un lead o a
+// alguien de su equipo. Una voz del equipo deja de contar como lead (turnos,
+// objeciones, quién habla más) y al cerrar los nombres viajan al servidor para
+// corregir la transcripción guardada. La separación la hace el proveedor por
+// el timbre de voz: puede equivocarse, y por eso la asignación es manual.
 // ═══════════════════════════════════════════════════════════
 (function (global) {
   const cfg = global.PREDICTABLE_CONFIG || {};
@@ -72,13 +81,18 @@
   // Turnos: palabras por hablante y cuándo habló cada uno por última vez.
   let leadWords = 0, sdrWords = 0;
   let leadWordsAtCoach = 0, sdrWordsAtCoach = 0;
-  let lastLeadAt = 0, lastSdrAt = 0;
+  let lastLeadAt = 0, lastSdrAt = 0, lastRemoteAt = 0;
   let coachKind = '';           // 'lead' | 'sdr': quién disparó el análisis agendado
   let runSeq = 0;               // respuesta vigente; una vieja se descarta
   let inflight = null;          // { seq, abort, prevTurns, prevWords, prevLead, prevSdr, leadAtStart }
   let leadRecent = [];          // [{ts, text}] lo último que dijo el lead (anti-eco)
   let lastInterim = null;       // {speaker, text} dicho a medias, aún sin resultado final
-  const ghostEls = {};          // hablante → línea tenue de la transcripción
+  const ghostEls = {};          // clave de hablante → línea tenue de la transcripción
+  // Hablantes: el vendedor (micrófono) y cada voz remota que separa Deepgram.
+  // { key, label, side: 'seller' | 'lead', named, was: [etiquetas anteriores] }
+  const SDR = { key: 'sdr', label: 'SDR', side: 'seller', named: true, was: [] };
+  let remotes = {};             // índice de voz de Deepgram → hablante
+  let lastRemoteIdx = 0;
   const Live = function () { return global.CoachLive || null; };
 
   function workerUrl(path) {
@@ -381,7 +395,7 @@
       'interim_results=true', 'endpointing=300',
       'utterance_end_ms=1000', 'smart_format=true', 'punctuate=true', 'no_delay=true',
       'encoding=linear16', 'sample_rate=' + sampleRate, 'channels=2', 'multichannel=true'
-    ].join('&');
+    ].concat(callAudio ? [] : ['diarize=true']).join('&');   // el dialer trae una sola voz remota
 
     const url = 'wss://api.deepgram.com/v1/listen?' + params;
     console.log('[Coach] Conectando a Deepgram (' + dgModel + ')');
@@ -468,7 +482,7 @@
   function isEcho(text) {
     if (callAudio || !micStream) return false;          // el dialer trae canales limpios
     const now = Date.now();
-    if (now - lastLeadAt > 2500) return false;          // el lead no estaba hablando
+    if (now - lastRemoteAt > 2500) return false;        // nadie hablaba en la reunión
     const mine = tokens(text);
     if (mine.length < 3) return false;
     leadRecent = leadRecent.filter(function (r) { return now - r.ts < 6000; });
@@ -488,6 +502,56 @@
     return false;
   }
 
+  // ─── Voces remotas ─────────────────────────────────────────
+  function remoteSpeaker(idx) {
+    idx = (typeof idx === 'number' && idx >= 0) ? idx : 0;
+    let sp = remotes[idx];
+    if (!sp) {
+      const n = Object.keys(remotes).length;
+      // La primera voz es «Lead» (una llamada 1 a 1 se ve como siempre); las
+      // siguientes, «Persona N» hasta que el vendedor diga quiénes son.
+      sp = remotes[idx] = { key: 'r' + idx, label: n === 0 ? 'Lead' : 'Persona ' + (n + 1), side: 'lead', named: false, was: [] };
+      paintSpeakers();
+    }
+    lastRemoteIdx = idx;
+    return sp;
+  }
+  // Tramos de un resultado final por voz: [{ idx, text }]. Sin diarización (o
+  // con una sola voz) es un único tramo con el texto ya formateado.
+  function remoteSegments(alt, text) {
+    const words = Array.isArray(alt.words) ? alt.words.filter(function (w) { return w && typeof w.speaker === 'number'; }) : [];
+    if (!words.length) return [{ idx: lastRemoteIdx, text: text }];
+    const segs = [];
+    words.forEach(function (w) {
+      const t = String(w.punctuated_word || w.word || '').trim();
+      if (!t) return;
+      const last = segs[segs.length - 1];
+      if (last && last.idx === w.speaker) last.text += ' ' + t;
+      else segs.push({ idx: w.speaker, text: t });
+    });
+    if (segs.length <= 1) return [{ idx: segs.length ? segs[0].idx : lastRemoteIdx, text: text }];
+    // Un «cambio» de una o dos palabras en medio de una frase suele ser un
+    // error del separador: se pega a la voz vecina.
+    const out = [];
+    segs.forEach(function (sg) {
+      const prev = out[out.length - 1];
+      if (prev && wordCount(sg.text) < 3) prev.text += ' ' + sg.text;
+      else out.push(sg);
+    });
+    return out;
+  }
+  function dominantIdx(alt) {
+    const words = Array.isArray(alt.words) ? alt.words : [];
+    const count = {};
+    let best = lastRemoteIdx, max = 0;
+    words.forEach(function (w) {
+      if (!w || typeof w.speaker !== 'number') return;
+      count[w.speaker] = (count[w.speaker] || 0) + 1;
+      if (count[w.speaker] > max) { max = count[w.speaker]; best = w.speaker; }
+    });
+    return best;
+  }
+
   function handleTranscript(msg) {
     const alt = msg.channel && msg.channel.alternatives && msg.channel.alternatives[0];
     if (!alt || !alt.transcript) return;
@@ -495,22 +559,34 @@
     if (!text) return;
 
     const channelIdx = (msg.channel_index && msg.channel_index[0]) || 0;
-    const speaker = channelIdx === 1 ? 'SDR' : 'Lead';
-    const isLead = speaker === 'Lead';
     const isFinal = msg.is_final;
+    if (channelIdx === 1) { consume(SDR, text, isFinal, !!msg.speech_final); return; }
+    if (!isFinal) { consume(remoteSpeaker(dominantIdx(alt)), text, false, false); return; }
+    const segs = remoteSegments(alt, text);
+    segs.forEach(function (sg, i) {
+      consume(remoteSpeaker(sg.idx), sg.text, true, !!msg.speech_final && i === segs.length - 1);
+    });
+  }
+
+  // Algo dijo `sp` (el vendedor por el micrófono, o una voz de la reunión).
+  function consume(sp, text, isFinal, speechFinal) {
+    const speaker = sp.label;
+    const remote = sp !== SDR;
+    const isLead = sp.side === 'lead';
     const now = Date.now();
 
-    if (isLead) {
-      lastLeadAt = now;
+    if (remote) {
+      // Todo lo que suena en la reunión puede volver por el micrófono.
+      lastRemoteAt = now;
       leadRecent.push({ ts: now, text: text });
       if (leadRecent.length > 40) leadRecent.shift();
-    } else {
-      if (isEcho(text)) { setGhost('SDR', ''); return; }
-      lastSdrAt = now;
-    }
+    } else if (isEcho(text)) { setGhost(SDR, ''); return; }
+    if (isLead) lastLeadAt = now; else lastSdrAt = now;
 
-    setGhost(speaker, isFinal ? '' : text);
-    lastInterim = isFinal ? null : { speaker: speaker, text: text };
+    // Una sola línea tenue por canal: al confirmarse un tramo se limpia la de quien venía hablando.
+    if (remote) Object.keys(ghostEls).forEach(function (k) { if (k !== 'sdr' && k !== sp.key) { ghostEls[k].row.remove(); delete ghostEls[k]; } });
+    setGhost(sp, isFinal ? '' : text);
+    lastInterim = isFinal ? null : { sp: sp, text: text };
     if (Live()) Live().heard(speaker, text, isFinal, isLead);
 
     // El lead sigue hablando: cualquier análisis agendado espera a que termine.
@@ -519,22 +595,22 @@
     if (isLead || coachKind === 'sdr') cancelScheduledCoaching();
     if (!isFinal) return;
 
-    appendToTurn(speaker, text);
+    appendToTurn(sp, text);
     const n = wordCount(text);
     if (isLead) {
       leadWords += n;
       // El lead agregó contenido mientras el modelo respondía a lo anterior:
       // esa respuesta ya nació vieja. Se descarta y se responde a todo junto.
       if (inflight && leadWords - inflight.leadAtStart >= 6) supersede();
-      if (msg.speech_final) {
-        const turnText = pendingTurn && pendingTurn.speaker === 'Lead' ? pendingTurn.text : text;
+      if (speechFinal) {
+        const turnText = pendingTurn && pendingTurn.key === sp.key ? pendingTurn.text : text;
         scheduleCoaching(endsThought(turnText) ? (cfg.COACH_LEAD_PAUSE_MS || 450) : (cfg.COACH_LEAD_THINK_MS || 1100), 'lead');
       }
     } else {
       sdrWords += n;
       // El vendedor no necesita una frase nueva después de cada cosa que dice;
       // solo si lleva un buen tramo hablando (riesgo de monólogo).
-      if (msg.speech_final && sdrWords - sdrWordsAtCoach >= (cfg.COACH_SDR_MIN_WORDS || 35)) {
+      if (speechFinal && sdrWords - sdrWordsAtCoach >= (cfg.COACH_SDR_MIN_WORDS || 35)) {
         scheduleCoaching(cfg.COACH_SILENCE_MS || 1500, 'sdr');
       }
     }
@@ -546,12 +622,12 @@
   // mensaje largo disparaba 3 respuestas iguales. Ahora los chunks se pegan en
   // un solo turno por hablante; el turno se cierra al cambiar de hablante,
   // cuando el coach lo analiza o al terminar la sesión.
-  function appendToTurn(speaker, text) {
-    if (pendingTurn && pendingTurn.speaker === speaker) {
+  function appendToTurn(sp, text) {
+    if (pendingTurn && pendingTurn.key === sp.key) {
       pendingTurn.text += ' ' + text;
     } else {
       closeTurn();
-      pendingTurn = { speaker: speaker, text: text, ts: new Date().toISOString(), el: null };
+      pendingTurn = { key: sp.key, sp: sp, speaker: sp.label, text: text, ts: new Date().toISOString(), el: null };
       recentTranscript.push(pendingTurn);
       if (recentTranscript.length > 25) recentTranscript.shift();
       totalTurns++;
@@ -702,7 +778,7 @@
     // Lo que el modelo necesita para ubicar la fase sin releer toda la llamada.
     const minute = Live() ? Live().minutes() : Math.floor(elapsedSeconds / 60);
     const hadMeetings = currentProspect && Array.isArray(currentProspect.history) && currentProspect.history.length;
-    const position = 'Minuto de la llamada: ' + minute + '. Fase anterior: ' + (lastStage || (hadMeetings ? 'la llamada acaba de empezar; continúa desde la reunión anterior' : 'rapport (la llamada acaba de empezar)')) + '.';
+    const position = 'Minuto de la llamada: ' + minute + '. Fase anterior: ' + (lastStage || (hadMeetings ? 'la llamada acaba de empezar; continúa desde la reunión anterior' : 'rapport (la llamada acaba de empezar)')) + '.' + speakerMapText();
 
     if (coachEngine() !== 'openai') {
       try {
@@ -746,7 +822,7 @@
     const systemPrompt = [
       'Eres el coach de ventas de Predictable.ai en vivo, al oído del vendedor durante una llamada B2B.',
     ].concat(doctrine, [
-      'La conversación tiene 2 hablantes: "Lead" y "SDR" (el vendedor).',
+      'Hablantes: "SDR" es el vendedor. Los demás son del lado del lead ("Lead", "Persona N" o su nombre), salvo los que el contexto marque como del equipo del vendedor.',
       'Recibes la parte de la conversación que ya analizaste (solo contexto) y lo NUEVO.',
       'Genera alertas SOLO sobre lo nuevo; no repitas alertas de la parte anterior.',
       '"say_now" es LO PRIMERO que escribes: la frase exacta, lista para leer en voz alta, que el vendedor debe decir AHORA según la fase y lo último que dijo el lead (máximo 2 frases; siempre trae una, también al inicio de la llamada).',
@@ -922,7 +998,8 @@
     pendingTurn = null; recentTranscript = []; shownAlerts = [];
     totalTurns = 0; totalWords = 0; turnsAtLastCoach = 0; wordsAtLastCoach = 0;
     leadWords = 0; sdrWords = 0; leadWordsAtCoach = 0; sdrWordsAtCoach = 0;
-    lastLeadAt = 0; lastSdrAt = 0; leadRecent = []; lastInterim = null;
+    lastLeadAt = 0; lastSdrAt = 0; lastRemoteAt = 0; leadRecent = []; lastInterim = null;
+    remotes = {}; lastRemoteIdx = 0; closeSpeakerMenu(); paintSpeakers();
     inflight = null; coachInFlight = false;
     coachPending = false;
     Object.keys(ghostEls).forEach(function (k) { delete ghostEls[k]; });
@@ -932,12 +1009,22 @@
     const empty = document.getElementById('mc-events-empty'); if (empty) empty.style.display = '';
     hideThinking();
   }
-  function turnRow(speaker, ghost) {
+  function turnRow(sp, ghost) {
     const div = document.createElement('div');
-    div.className = 'mc-tr-row notranslate' + (speaker === 'SDR' ? ' is-sdr' : ' is-lead') + (ghost ? ' is-ghost' : '');
-    const who = document.createElement('span');
-    who.className = 'mc-tr-who';
-    who.textContent = speaker + ':';
+    div.className = 'mc-tr-row notranslate' + (sp.side === 'seller' ? ' is-sdr' : ' is-lead') + (ghost ? ' is-ghost' : '');
+    div.setAttribute('data-spk', sp.key);
+    let who;
+    if (sp === SDR || ghost) {
+      who = document.createElement('span');
+    } else {
+      // Una voz de la reunión: clic para decir quién es.
+      who = document.createElement('button');
+      who.type = 'button';
+      who.title = T('Decir quién es esta voz');
+      who.addEventListener('click', function () { openSpeakerMenu(sp, who); });
+    }
+    who.className = 'mc-tr-who' + (who.tagName === 'BUTTON' ? ' is-tag' : '');
+    who.textContent = sp.label + ':';
     const what = document.createElement('span');
     what.className = 'mc-tr-text';
     div.appendChild(who); div.appendChild(document.createTextNode(' ')); div.appendChild(what);
@@ -946,12 +1033,12 @@
   // Lo que se está diciendo AHORA, antes de que Deepgram lo dé por final: una
   // línea tenue al pie de la transcripción, por hablante. Así el texto aparece
   // mientras se habla y no un par de segundos después.
-  function setGhost(speaker, text) {
+  function setGhost(sp, text) {
     const c = document.getElementById('mc-transcript'); if (!c) return;
-    let g = ghostEls[speaker];
-    if (!text) { if (g) { g.row.remove(); delete ghostEls[speaker]; } return; }
+    let g = ghostEls[sp.key];
+    if (!text) { if (g) { g.row.remove(); delete ghostEls[sp.key]; } return; }
     const stick = c.scrollHeight - c.scrollTop - c.clientHeight < 60;
-    if (!g) { g = ghostEls[speaker] = turnRow(speaker, true); }
+    if (!g) { g = ghostEls[sp.key] = turnRow(sp, true); }
     g.text.textContent = text;
     c.appendChild(g.row);       // siempre al final
     if (stick) c.scrollTop = c.scrollHeight;
@@ -962,7 +1049,7 @@
     // Solo sigue el final si el usuario no subió a releer algo.
     const stick = c.scrollHeight - c.scrollTop - c.clientHeight < 60;
     if (!turn.el) {
-      const r = turnRow(turn.speaker, false);
+      const r = turnRow(turn.sp, false);
       c.appendChild(r.row);
       turn.el = r.text;
       // Las líneas tenues siempre quedan debajo de lo ya confirmado.
@@ -971,6 +1058,113 @@
     turn.el.textContent = turn.text;
     if (stick) c.scrollTop = c.scrollHeight;
   }
+
+  // ─── Decir quién es cada voz ───────────────────────────────
+  function T(x) { return (global.i18n && global.i18n.t) ? global.i18n.t(x) : x; }
+  function remoteList() { return Object.keys(remotes).map(function (k) { return remotes[k]; }); }
+  let speakerMenu = null;
+  function closeSpeakerMenu() { if (speakerMenu) { speakerMenu.remove(); speakerMenu = null; } }
+  // Tira «Voces en la reunión»: aparece cuando hay más de una voz remota.
+  function paintSpeakers() {
+    const host = document.getElementById('mc-speakers'); if (!host) return;
+    const list = remoteList();
+    host.textContent = '';
+    host.style.display = list.length > 1 ? '' : 'none';
+    if (list.length < 2) return;
+    const k = document.createElement('span'); k.className = 'mc-spk-k'; k.textContent = T('Voces en la reunión:');
+    host.appendChild(k);
+    list.forEach(function (sp) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'mc-spk notranslate' + (sp.side === 'seller' ? ' is-team' : '') + (sp.named ? '' : ' is-new');
+      b.textContent = sp.label + (sp.named ? (sp.side === 'seller' ? ' · ' + T('tu equipo') : ' · lead') : ' · ' + T('¿quién es?'));
+      b.addEventListener('click', function () { openSpeakerMenu(sp, b); });
+      host.appendChild(b);
+    });
+  }
+  function assignSpeaker(sp, name, side) {
+    name = String(name || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    if (!name || /^sdr$/i.test(name)) return;
+    if (sp.label !== name && sp.was.indexOf(sp.label) === -1) sp.was.push(sp.label);
+    sp.label = name; sp.side = side === 'seller' ? 'seller' : 'lead'; sp.named = true;
+    // Lo ya transcrito de esa voz toma el nombre (en pantalla y para el modelo).
+    recentTranscript.forEach(function (t) { if (t.key === sp.key) t.speaker = name; });
+    Array.prototype.forEach.call(document.querySelectorAll('#mc-transcript [data-spk="' + sp.key + '"]'), function (row) {
+      row.classList.toggle('is-sdr', sp.side === 'seller');
+      row.classList.toggle('is-lead', sp.side !== 'seller');
+      const who = row.querySelector('.mc-tr-who'); if (who) who.textContent = name + ':';
+    });
+    closeSpeakerMenu();
+    paintSpeakers();
+  }
+  function openSpeakerMenu(sp, anchor) {
+    closeSpeakerMenu();
+    const card = anchor.closest('.mc-transcript-card') || document.getElementById('mc-active');
+    if (!card) return;
+    const menu = speakerMenu = document.createElement('div');
+    menu.className = 'mc-spk-menu';
+    menu.setAttribute('role', 'dialog');
+    menu.setAttribute('aria-label', T('Decir quién es esta voz'));
+    const head = document.createElement('div'); head.className = 'mc-spk-menu-h';
+    head.textContent = T('¿Quién es esta voz?');
+    menu.appendChild(head);
+    // No se ocultan los nombres ya usados: el separador a veces parte a una
+    // misma persona en dos voces, y asignarles el mismo nombre las vuelve a unir.
+    const group = function (title, names, side) {
+      names = names.filter(Boolean);
+      if (!names.length) return;
+      const h = document.createElement('div'); h.className = 'mc-spk-menu-k'; h.textContent = title;
+      menu.appendChild(h);
+      names.forEach(function (n) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'mc-spk-opt notranslate'; b.textContent = n;
+        b.addEventListener('click', function () { assignSpeaker(sp, n, side); });
+        menu.appendChild(b);
+      });
+    };
+    const cp = currentProspect || {};
+    const leads = Array.isArray(cp.participants) && cp.participants.length
+      ? cp.participants.map(function (x) { return x && x.name; })
+      : [cp.name];
+    group(T('Lead'), leads.filter(Boolean), 'lead');
+    group(T('De tu equipo'), (Array.isArray(cp.team) ? cp.team : []).map(function (x) { return x && x.name; }).filter(Boolean), 'seller');
+    const other = document.createElement('div'); other.className = 'mc-spk-menu-k'; other.textContent = T('Otra persona');
+    menu.appendChild(other);
+    const input = document.createElement('input');
+    input.type = 'text'; input.maxLength = 60; input.placeholder = T('Nombre');
+    input.setAttribute('aria-label', T('Nombre de la persona'));
+    menu.appendChild(input);
+    const row = document.createElement('div'); row.className = 'mc-spk-menu-row';
+    [['Es un lead', 'lead'], ['Es de mi equipo', 'seller']].forEach(function (o) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'btn btn-ghost btn-sm'; b.textContent = T(o[0]);
+      b.addEventListener('click', function () { if (input.value.trim()) assignSpeaker(sp, input.value, o[1]); else input.focus(); });
+      row.appendChild(b);
+    });
+    menu.appendChild(row);
+    menu.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { closeSpeakerMenu(); try { anchor.focus(); } catch (e) {} } });
+    card.appendChild(menu);
+    const first = menu.querySelector('.mc-spk-opt') || input;
+    try { first.focus(); } catch (e) {}
+  }
+  document.addEventListener('click', function (ev) {
+    if (speakerMenu && !speakerMenu.contains(ev.target) && !(ev.target.closest && ev.target.closest('.mc-tr-who.is-tag, .mc-spk'))) closeSpeakerMenu();
+  });
+  // Para el modelo: quién es cada voz y de qué lado está.
+  function speakerMapText() {
+    const list = remoteList();
+    if (list.length < 2 && !list.some(function (x) { return x.named; })) return '';
+    return ' Hablantes: "SDR" = el vendedor; ' + list.map(function (x) {
+      return '"' + x.label + '" = ' + (x.side === 'seller' ? 'del equipo del vendedor (no es lead)' : x.named ? 'lead' : 'sin identificar (trátalo como lead salvo que sea claro que vende)');
+    }).join('; ') + '.';
+  }
+  // Para el servidor al cerrar: nombres asignados (corrige la transcripción guardada y el equipo).
+  function speakerTags() {
+    return remoteList().filter(function (x) { return x.named; }).map(function (x) {
+      return { name: x.label, side: x.side, from: x.was.slice(0, 4) };
+    });
+  }
+
   function alertKey(a) {
     return String(a.type || '') + '|' + String(a.title || '').toLowerCase()
       .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
@@ -1034,11 +1228,13 @@
     cancelScheduledCoaching();
     if (inflight) supersede();
     // Lo último que se estaba diciendo y Deepgram aún no cerró también va al reporte.
-    if (lastInterim && lastInterim.text) { appendToTurn(lastInterim.speaker, lastInterim.text); lastInterim = null; }
+    if (lastInterim && lastInterim.text) { appendToTurn(lastInterim.sp, lastInterim.text); lastInterim = null; }
     closeTurn();
     // Espera el envío en curso (si lo hay) y manda lo que quedó en la cola.
     for (let i = 0; flushing && i < 40; i++) await new Promise(function (r) { setTimeout(r, 50); });
     await flushChunks();
+    const tags = speakerTags();
+    closeSpeakerMenu();
     cleanup();
     setStatus('ended');
     if (Live()) Live().end();
@@ -1056,7 +1252,7 @@
       // Llamada del dialer: el reporte queda con la llamada y en la ficha del
       // lead; no se navega a Reportes en medio del trabajo.
       try {
-        const final = await global.api.endMeeting({ meeting_id: meetId });
+        const final = await global.api.endMeeting({ meeting_id: meetId, speakers: tags });
         if (typeof opts.onEnded === 'function') opts.onEnded(meetId, final);
       } catch (e) {
         console.warn('[Coach] endMeeting error:', e);
@@ -1069,7 +1265,7 @@
       // El reporte se arma en segundo plano: se abre la reunión en Reportes de
       // inmediato, con la transcripción ya visible, y el análisis aparece solo.
       try {
-        const final = await global.api.endMeeting({ meeting_id: meetId, background: true });
+        const final = await global.api.endMeeting({ meeting_id: meetId, background: true, speakers: tags });
         if (final && final.pending) toast('Sesión finalizada · Generando el reporte…', 'success');
         else toast('Sesión finalizada · Reporte guardado', 'success');
       } catch (e) {
