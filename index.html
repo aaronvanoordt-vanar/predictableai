@@ -1090,21 +1090,8 @@ html, body {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   FIX: AI Sales Coach ocupa todo el ancho
+   AI Sales Coach: el resto de su estilo vive en css/glass.css
 ═══════════════════════════════════════════════════════════ */
-.mc-mode-btn {
-  flex: 1 1 0;
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 10px 14px; font-size: 12.5px; font-weight: 700;
-  border-radius: 10px; border: 1px solid var(--border);
-  background: var(--surface2); color: var(--text3); cursor: pointer;
-  transition: all .15s;
-}
-.mc-mode-btn:hover { color: var(--text2); }
-.mc-mode-btn.active {
-  border-color: var(--teal); background: rgba(6,182,212,.1); color: var(--teal);
-}
-
 #page-ventas-coach {
   width: 100% !important;
   max-width: 100% !important;
@@ -1120,23 +1107,6 @@ html, body {
   box-sizing: border-box !important;
   flex-shrink: 0 !important;
 }
-#page-ventas-coach .mc-grid {
-  display: grid !important;
-  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) !important;
-  gap: 16px !important;
-  width: 100% !important;
-}
-#page-ventas-coach .mc-grid > * {
-  min-width: 0 !important;
-}
-
-/* Responsive: en pantallas chicas, colapsar a 1 columna */
-@media (max-width: 1024px) {
-  #page-ventas-coach .mc-grid {
-    grid-template-columns: 1fr !important;
-  }
-}
-
 /* ── FIX v3.5: Ancho exacto del .main para evitar overflow horizontal ── */
 .main {
   margin-left: var(--sidebar-w) !important;
@@ -1148,42 +1118,6 @@ html, body {
   overflow-x: hidden !important;
 }
 .page { flex-shrink: 0 !important; }
-
-/* AI Sales Coach: panel coach con scroll interno cuando se llena */
-#page-ventas-coach .mc-grid {
-  display: grid !important;
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) !important;
-  gap: 18px !important;
-  align-items: start !important;
-}
-#page-ventas-coach .mc-grid > * { min-width: 0 !important; }
-#page-ventas-coach .mc-grid > div:nth-child(2) {
-  max-height: calc(100vh - 280px) !important;
-  overflow-y: auto !important;
-  padding-right: 6px !important;
-}
-@media (max-width: 1024px) {
-  #page-ventas-coach .mc-grid { grid-template-columns: 1fr !important; }
-  #page-ventas-coach .mc-grid > div:nth-child(2) {
-    max-height: none !important; overflow-y: visible !important;
-  }
-  #mc-idle { grid-template-columns: 1fr !important; }
-}
-
-/* Coach idle/active state */
-#mc-idle {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 16px;
-  align-items: start;
-  width: 100%;
-}
-#mc-active {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  width: 100%;
-}
 
 /* ═══ Logout confirmation modal ═══ */
 .logout-overlay {
@@ -2636,12 +2570,16 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 
 
 <!-- ═══════ PAGE: VENTAS COACH ═══════ -->
+<!-- Estilo en css/glass.css (sección «AI Sales Coach»). La pantalla sigue la
+     secuencia del coach: 1) entrenamiento de la empresa, 2) las personas de la
+     reunión y su investigación, 3) el método de venta de base, 4) la ventana
+     flotante; después, la sesión en vivo. -->
 <div class="page fade-in" id="page-ventas-coach">
 
   <!-- Topbar -->
   <div class="topbar" style="margin:-26px -26px 20px;border-radius:0">
     <div style="display:flex;align-items:center;gap:14px">
-      <div id="mc-dot" style="width:10px;height:10px;border-radius:50%;background:var(--green-soft);border:2px solid var(--green);transition:all .4s"></div>
+      <div id="mc-dot" class="mc-dot"></div>
       <div>
         <div class="topbar-title">AI Sales Coach</div>
         <div class="topbar-sub" style="color:var(--text3)">Escucha tu llamada y te dice qué decir en cada fase, en vivo y sobre tu reunión.</div>
@@ -2649,49 +2587,85 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
     </div>
     <div class="topbar-actions">
       <button id="mc-btn-config" class="btn btn-ghost btn-sm" onclick="toggleCoachConfig()">Configuración</button>
-      <button id="mc-btn-end" class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(225,84,84,.28);display:none" onclick="endCoachSession()">■ Finalizar sesión</button>
+      <button id="mc-btn-end" class="btn btn-ghost btn-sm mc-end-btn" style="display:none" onclick="endCoachSession()">Finalizar sesión</button>
     </div>
   </div>
 
   <!-- ═══ IDLE STATE ═══ -->
   <div id="mc-idle">
 
-    <!-- Hero izquierdo -->
-    <div style="background:linear-gradient(145deg,rgba(6,182,212,.07) 0%,rgba(43,182,115,.04) 60%,transparent 100%);border:1px solid rgba(6,182,212,.18);border-radius:16px;padding:32px 36px;display:flex;flex-direction:column;gap:0">
-
-      <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:18px">AI SALES COACH</div>
-
-      <div style="font-size:30px;font-weight:800;color:var(--text);line-height:1.2;margin-bottom:8px">
-        Tu copiloto para <span id="mc-prospect-name" style="color:var(--teal)">la próxima reunión</span>.
+    <div class="mc-prep mc-glass">
+      <div class="mc-hero-title">
+        Tu copiloto para <span id="mc-prospect-name" class="mc-hero-name notranslate">la próxima reunión</span>.
       </div>
-
-      <div id="mc-prospect-meta" style="font-size:13px;color:var(--text3);margin-bottom:22px">Elige con quién es la reunión para cargar su brief — el coach no inicia sin un lead.</div>
+      <div id="mc-prospect-meta" class="mc-hero-meta">Elige con quién es la reunión: el coach se prepara con tu entrenamiento y con lo que se sabe de cada persona.</div>
 
       <!-- Configuración del coach (js/coach-calendar.js): aviso de reunión desde
            el calendario conectado y ventana flotante. La abre el botón
            «Configuración» de la cabecera. -->
-      <div id="mc-config-panel" style="display:none;max-width:620px;margin:0 0 22px;padding:16px 18px;background:var(--surface);border:1px solid var(--border);border-radius:12px"></div>
+      <div id="mc-config-panel" class="mc-config" style="display:none"></div>
 
-      <!-- Resumen del entrenamiento del coach (js/ai-training.js): con qué
-           documentos, estilo y reglas de la empresa habla este coach. -->
-      <div data-ai-training-badge="coach" style="max-width:560px;margin:-8px 0 20px"></div>
+      <ol class="mc-seq">
+        <!-- 1. Entrenamiento IA de la empresa -->
+        <li class="mc-seq-step">
+          <span class="mc-seq-n notranslate">1</span>
+          <div class="mc-seq-body">
+            <div class="mc-seq-title">Tu entrenamiento</div>
+            <div class="mc-seq-sub">El coach responde con el playbook, los precios, los casos y las reglas de tu empresa.</div>
+            <!-- Resumen del entrenamiento del coach (js/ai-training.js). -->
+            <div data-ai-training-badge="coach" class="mc-seq-slot"></div>
+          </div>
+        </li>
 
-      <!-- Selector de lead (obligatorio): se llena desde las Listas guardadas de Prospección -->
-      <div id="mc-lead-block" style="max-width:440px;margin-bottom:24px">
-        <label for="mc-lead-select" style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Lead o lista de esta reunión</label>
-        <select id="mc-lead-select" style="width:100%">
-          <option value="">Cargando tus leads…</option>
-        </select>
-        <div id="mc-lead-empty" style="display:none;font-size:12.5px;color:var(--text3);line-height:1.6">
-          Aún no tienes leads guardados. Busca prospectos y guárdalos en una lista desde Prospección; aquí podrás elegirlos para la reunión.
-          <div style="margin-top:10px"><button class="btn btn-ghost btn-sm" onclick="nav(document.querySelector('[data-page=pro-main]'),'pro-main')">Ir a Prospección →</button></div>
-        </div>
-      </div>
+        <!-- 2. Personas de la reunión + investigación de cada una -->
+        <li class="mc-seq-step">
+          <span class="mc-seq-n notranslate">2</span>
+          <div class="mc-seq-body">
+            <div class="mc-seq-title">Con quién es la reunión</div>
+            <div class="mc-seq-sub">Elige una persona o una lista completa. Con la investigación de cada una, las recomendaciones salen a su medida.</div>
+            <!-- Selector de lead (obligatorio): se llena desde las Listas guardadas de Prospección -->
+            <div id="mc-lead-block" class="mc-seq-slot">
+              <label for="mc-lead-select" class="mc-label">Lead o lista de esta reunión</label>
+              <select id="mc-lead-select" style="width:100%">
+                <option value="">Cargando tus leads…</option>
+              </select>
+              <div id="mc-lead-empty" class="mc-hint" style="display:none">
+                Aún no tienes leads guardados. Busca prospectos y guárdalos en una lista desde Prospección; aquí podrás elegirlos para la reunión.
+                <div style="margin-top:10px"><button class="btn btn-ghost btn-sm" onclick="nav(document.querySelector('[data-page=pro-main]'),'pro-main')">Ir a Prospección →</button></div>
+              </div>
+              <!-- Cuántas personas ya tienen investigación (js/coach-research.js). -->
+              <div id="mc-research-summary" class="mc-research-summary" style="display:none"></div>
+            </div>
+          </div>
+        </li>
+
+        <!-- 3. Método de base: siempre activo, igual para todas las cuentas -->
+        <li class="mc-seq-step">
+          <span class="mc-seq-n notranslate">3</span>
+          <div class="mc-seq-body">
+            <div class="mc-seq-title">Método de venta de Predictable <span class="mc-on-chip">Siempre activo</span></div>
+            <div class="mc-seq-sub">Guía cada fase de la llamada, las objeciones y las oportunidades con los libros de venta de referencia. No tienes que elegir nada.</div>
+            <div class="mc-books notranslate">
+              <span>SPIN Selling</span><span>The Challenger Sale</span><span>Sandler</span><span>Gap Selling</span><span>MEDDIC</span><span>Chris Voss</span><span>Cialdini</span>
+            </div>
+          </div>
+        </li>
+
+        <!-- 4. Ventana flotante -->
+        <li class="mc-seq-step">
+          <span class="mc-seq-n notranslate">4</span>
+          <div class="mc-seq-body">
+            <div class="mc-seq-title">Ventana flotante</div>
+            <div class="mc-seq-sub">La frase que toca decir queda encima de tu reunión, aunque compartas pantalla.</div>
+            <div id="mc-hud-step" class="mc-seq-slot mc-hud-step"></div>
+          </div>
+        </li>
+      </ol>
 
       <!-- Modo de conexión: compartir pantalla (local) vs. el asistente se une solo (bot) -->
-      <div id="mc-mode-block" style="max-width:440px;margin-bottom:20px">
-        <label style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Cómo se conecta el coach</label>
-        <div style="display:flex;gap:8px">
+      <div id="mc-mode-block" class="mc-mode">
+        <div class="mc-label">Cómo escucha el coach</div>
+        <div class="mc-mode-row">
           <button type="button" id="mc-mode-btn-local" class="mc-mode-btn active" onclick="setCoachMode('local')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></svg>
             Compartir pantalla
@@ -2701,55 +2675,26 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
             El asistente entra solo
           </button>
         </div>
-        <div id="mc-mode-local-hint" style="font-size:11.5px;color:var(--text3);line-height:1.6;margin-top:8px">
-          Comparte tu pantalla completa (con audio del sistema) mientras estás en la llamada. El coach escucha desde tu navegador.
+        <div id="mc-mode-local-hint" class="mc-hint">
+          Al iniciar, comparte la pestaña de la reunión con su audio, o la pantalla completa con «Compartir audio del sistema». El coach escucha desde tu navegador y responde más rápido.
         </div>
-        <div id="mc-mode-bot-hint" style="display:none;margin-top:8px">
-          <label for="mc-meeting-url" style="display:block;font-size:11px;color:var(--text3);margin-bottom:6px">Link de la reunión (Zoom, Google Meet o Microsoft Teams)</label>
+        <div id="mc-mode-bot-hint" style="display:none">
+          <label for="mc-meeting-url" class="mc-label" style="margin-top:10px">Link de la reunión (Zoom, Google Meet o Microsoft Teams)</label>
           <input type="url" id="mc-meeting-url" placeholder="https://meet.google.com/xxx-xxxx-xxx" style="width:100%">
-          <div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin-top:6px">
+          <div class="mc-hint">
             El asistente entra a la reunión como "Predictable AI" (con la P del logo en su cámara) y transcribe automáticamente — no necesitas compartir tu pantalla.
           </div>
         </div>
       </div>
 
-      <div style="display:flex;gap:10px;margin-bottom:32px;align-items:center">
-        <button id="mc-start-btn" class="btn btn-jade" style="padding:10px 22px;font-size:14px;gap:8px;display:flex;align-items:center" onclick="iniciarCoachLive()" data-credit-cost="coach_meeting" data-credit-muted>
+      <div class="mc-start-row">
+        <button id="mc-start-btn" class="btn btn-jade mc-start-btn" onclick="iniciarCoachLive()" data-credit-cost="coach_meeting" data-credit-muted>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 15c1.66 0 3-1.34 3-3V6c0-1.66-1.34-3-3-3S9 4.34 9 6v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 15.2 14.47 17 12 17s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V21c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
           Iniciar coach
         </button>
-        <button class="btn btn-ghost btn-sm" style="padding:10px 18px;font-size:13px" onclick="toggleBriefPanel()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          Ver datos del lead
-        </button>
       </div>
 
-      <div data-ai-engine="coach" style="margin:-20px 0 28px"></div>
-
-      <!-- Features -->
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
-        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
-          <div style="width:32px;height:32px;border-radius:8px;background:rgba(6,182,212,.12);display:flex;align-items:center;justify-content:center">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="2"><path d="M12 15c1.66 0 3-1.34 3-3V6c0-1.66-1.34-3-3-3S9 4.34 9 6v6c0 1.66 1.34 3 3 3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
-          </div>
-          <div style="font-size:12px;font-weight:700;color:var(--text)">Te avisa y se une</div>
-          <div style="font-size:11px;color:var(--text3);line-height:1.5">Aviso antes de cada reunión de tu calendario</div>
-        </div>
-        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
-          <div style="width:32px;height:32px;border-radius:8px;background:rgba(43,182,115,.12);display:flex;align-items:center;justify-content:center">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
-          </div>
-          <div style="font-size:12px;font-weight:700;color:var(--text)">Sabe en qué fase estás</div>
-          <div style="font-size:11px;color:var(--text3);line-height:1.5">Qué decir desde el primer segundo</div>
-        </div>
-        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
-          <div style="width:32px;height:32px;border-radius:8px;background:rgba(47,102,255,.12);display:flex;align-items:center;justify-content:center">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-ink)" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-          </div>
-          <div style="font-size:12px;font-weight:700;color:var(--text)">Encima de tu reunión</div>
-          <div style="font-size:11px;color:var(--text3);line-height:1.5">Ventana flotante con la frase y las alertas</div>
-        </div>
-      </div>
+      <div data-ai-engine="coach" class="mc-engine"></div>
     </div>
 
     <!-- Lo que sabes del lead: datos del lead (quién, tus notas, el traspaso
@@ -2757,34 +2702,32 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
          desde el 2026-11-17, la investigación con IA de cada persona
          (lead-research, la misma de Listas). Sigue fuera el análisis de
          mercado del Hub y «Preparar con IA». -->
-    <div id="mc-brief-panel" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden">
-      <div style="padding:16px 18px;border-bottom:1px solid var(--border)">
-        <div style="font-size:13px;font-weight:700">Lo que sabes del lead</div>
-      </div>
-      <div id="mc-brief-placeholder" style="padding:26px 18px;color:var(--ink-3);font-size:12.5px;line-height:1.65">
+    <div id="mc-brief-panel" class="mc-brief mc-glass">
+      <div class="mc-brief-head">Lo que sabes del lead</div>
+      <div id="mc-brief-placeholder" class="mc-brief-empty">
         Elige el lead o la lista de la reunión: aquí verás quién es cada persona, tus notas, lo que ya se sabe de conversaciones anteriores y su investigación con IA.
       </div>
-      <div id="mc-brief-content" style="display:none;padding:0 18px 18px">
-        <div style="padding:14px 0">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">QUIÉN</div>
-          <div id="mc-brief-who" class="notranslate" style="font-size:13px;color:var(--text2);line-height:1.6;white-space:pre-line"></div>
+      <div id="mc-brief-content" class="mc-brief-body" style="display:none">
+        <div class="mc-brief-sec">
+          <div class="mc-brief-k">Quién</div>
+          <div id="mc-brief-who" class="notranslate mc-brief-v"></div>
         </div>
         <!-- Investigación con IA por persona (js/coach-research.js): misma que Listas → Investigación. -->
-        <div id="mc-brief-research-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:4px">INVESTIGACIÓN CON IA</div>
+        <div id="mc-brief-research-sec" class="mc-brief-sec" style="display:none">
+          <div class="mc-brief-k">Investigación con IA</div>
           <div id="mc-brief-research"></div>
         </div>
-        <div id="mc-brief-known-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">LO QUE YA SABES</div>
-          <div id="mc-brief-known" class="notranslate" style="font-size:13px;color:var(--text2);line-height:1.6;white-space:pre-line"></div>
+        <div id="mc-brief-known-sec" class="mc-brief-sec" style="display:none">
+          <div class="mc-brief-k">Lo que ya sabes</div>
+          <div id="mc-brief-known" class="notranslate mc-brief-v"></div>
         </div>
-        <div id="mc-brief-risks-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--red);margin-bottom:8px">RIESGOS</div>
-          <ul id="mc-brief-risks" style="margin:0;padding-left:16px;font-size:13px;color:var(--text2);line-height:1.7"></ul>
+        <div id="mc-brief-risks-sec" class="mc-brief-sec" style="display:none">
+          <div class="mc-brief-k is-risk">Riesgos</div>
+          <ul id="mc-brief-risks" class="mc-brief-list"></ul>
         </div>
-        <div id="mc-brief-ask-sec" style="display:none;padding:14px 0;border-top:1px solid var(--border)">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">QUÉ FALTA PREGUNTAR</div>
-          <ul id="mc-brief-ask" class="notranslate" style="margin:0;padding-left:16px;font-size:13px;color:var(--text2);line-height:1.7"></ul>
+        <div id="mc-brief-ask-sec" class="mc-brief-sec" style="display:none">
+          <div class="mc-brief-k">Qué falta preguntar</div>
+          <ul id="mc-brief-ask" class="notranslate mc-brief-list"></ul>
         </div>
       </div>
     </div>
@@ -2792,66 +2735,83 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
   </div>
 
   <!-- ═══ ACTIVE STATE ═══ -->
-  <div id="mc-active" style="display:none;flex-direction:column;gap:14px">
+  <div id="mc-active" style="display:none">
 
-    <!-- Status bar en vivo -->
-    <div style="background:linear-gradient(90deg,rgba(43,182,115,.08),rgba(6,182,212,.05));border:1px solid rgba(43,182,115,.2);border-radius:10px;padding:12px 18px;display:flex;align-items:center;justify-content:space-between">
-      <div style="display:flex;align-items:center;gap:12px">
-        <div style="width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 10px rgba(43,182,115,.7)" class="pulse"></div>
-        <span id="mc-status" style="font-size:13px;font-weight:600;color:var(--text2)">Conectando...</span>
-        <span style="color:var(--text3)">·</span>
-        <span id="mc-timer" style="font-family:var(--font-mono);font-size:13px;color:var(--text3)">00:00:00</span>
+    <!-- Barra en vivo: estado, de quién es el turno, tiempo -->
+    <div id="mc-livebar" class="mc-livebar mc-glass">
+      <div class="mc-livebar-l">
+        <span class="mc-live-dot pulse"></span>
+        <span id="mc-status" class="mc-status" role="status" aria-live="polite">Conectando…</span>
+        <span id="mc-turn" class="mc-turn" style="display:none"></span>
       </div>
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end">
-        <div id="mc-live-prospect" class="notranslate" style="font-size:12px;color:var(--text3)"></div>
+      <div class="mc-livebar-r">
+        <span id="mc-live-prospect" class="notranslate mc-live-prospect"></span>
+        <span id="mc-timer" class="mc-timer notranslate">00:00:00</span>
         <!-- Ventana siempre encima con la guía del coach (js/coach-live.js) -->
         <button type="button" id="mc-hud-btn" class="btn btn-ghost btn-sm" onclick="window.CoachHUD && CoachHUD.toggle()">Abrir ventana flotante</button>
       </div>
     </div>
 
-    <!-- HERO: último dicho -->
-    <div style="background:linear-gradient(135deg,rgba(6,182,212,.06),rgba(43,182,115,.04));border:1px solid rgba(6,182,212,.18);border-radius:14px;padding:22px 28px;min-height:100px;display:flex;flex-direction:column;justify-content:center">
-      <div id="mc-last-spoken" style="min-height:60px">
-        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Esperando audio...</div>
-        <div style="font-size:14px;color:var(--text3);font-style:italic">Comparte tu pantalla completa con "Compartir audio del sistema" activado.</div>
-      </div>
-    </div>
+    <!-- Las seis fases de la llamada (js/coach-live.js las pinta desde el playbook) -->
+    <ol id="mc-steps" class="mc-steps" aria-label="Fases de la llamada"></ol>
 
-    <!-- Grid transcripción + coach -->
     <div class="mc-grid">
 
-      <!-- Columna izquierda: Transcripción -->
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;display:flex;flex-direction:column;min-height:400px;min-width:0">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border)">
-          <div style="font-size:12px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.5px">Transcripción completa</div>
-          <span class="pill pill-green" style="font-size:10px">Live</span>
+      <!-- Columna principal: qué decir ahora -->
+      <div class="mc-col">
+        <div class="mc-glass mc-coach-card">
+          <div class="mc-stage-row">
+            <span class="mc-label" style="margin:0">Fase</span>
+            <span id="mc-stage" class="mc-stage">—</span>
+          </div>
+          <div id="mc-stage-goal" class="mc-stage-goal"></div>
+
+          <!-- La frase exacta para decir ahora: plantilla de la fase al instante,
+               y la del modelo (a medida del lead) en cuanto llega. Una frase no
+               se cambia mientras el vendedor la está leyendo o diciendo. -->
+          <div id="mc-say-box" class="mc-say" style="display:none" aria-live="polite">
+            <div class="mc-say-head">
+              <span id="mc-say-label" class="mc-say-label">Di esto ahora</span>
+              <span id="mc-thinking-chip" class="mc-thinking pulse" style="display:none">Preparando la siguiente…</span>
+            </div>
+            <div id="mc-say" class="notranslate mc-say-text"></div>
+          </div>
+
+          <div class="mc-label">Qué hacer ahora</div>
+          <div id="mc-next-steps" class="mc-next"></div>
         </div>
-        <div id="mc-transcript" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;font-size:13px;line-height:1.7;max-height:500px;padding-right:6px;min-width:0;word-wrap:break-word;overflow-wrap:break-word">
-          <div style="color:var(--text3);font-size:12px;font-style:italic;text-align:center;padding:40px 0">La conversación aparecerá aquí en tiempo real...</div>
+
+        <div class="mc-glass mc-alerts-card">
+          <div class="mc-card-head">Alertas de la conversación</div>
+          <div id="mc-events-empty" class="mc-hint" style="margin:0">Aquí aparecen las objeciones, las señales de compra y los riesgos en cuanto ocurren.</div>
+          <div id="mc-events" class="mc-events"></div>
         </div>
       </div>
 
-      <!-- Columna derecha: Coach panel -->
-      <div style="display:flex;flex-direction:column;gap:12px;min-width:0">
-
-        <div style="background:linear-gradient(135deg,rgba(47,102,255,.06),rgba(47,102,255,.02));border:1px solid rgba(47,102,255,.18);border-radius:12px;padding:16px">
-          <div style="font-size:10px;font-weight:700;color:var(--accent-ink);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Etapa actual</div>
-          <div id="mc-stage" style="font-size:20px;font-weight:800;color:var(--accent-ink)">—</div>
-          <div id="mc-stage-goal" style="font-size:12px;color:var(--text3);line-height:1.5;margin:2px 0 12px"></div>
-          <!-- La frase exacta para decir ahora: plantilla de la fase al instante,
-               y la del modelo (a medida del lead) en cuanto llega. -->
-          <div id="mc-say-box" style="display:none;background:var(--surface);border:1px solid rgba(47,102,255,.28);border-radius:10px;padding:12px;margin-bottom:12px">
-            <div id="mc-say-label" style="font-size:10px;font-weight:700;color:var(--accent-ink);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Di esto ahora</div>
-            <div id="mc-say" class="notranslate" style="font-size:15px;font-weight:650;color:var(--text);line-height:1.5"></div>
+      <!-- Columna lateral: la conversación -->
+      <div class="mc-col">
+        <div class="mc-glass mc-transcript-card">
+          <div class="mc-card-head">
+            Transcripción
+            <span class="pill pill-green" style="font-size:10px">En vivo</span>
           </div>
-          <div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Qué hacer ahora</div>
-          <div id="mc-next-steps" style="display:flex;flex-direction:column;gap:6px">
-            <div style="font-size:12px;color:var(--text3);font-style:italic">Analizando...</div>
+          <div id="mc-last-spoken" class="mc-caption">
+            <div id="mc-caption-k" class="mc-caption-k">Esperando audio…</div>
+            <div><span id="mc-caption-who" class="mc-caption-who notranslate"></span> <span id="mc-caption-t" class="mc-caption-t notranslate"></span></div>
           </div>
+          <div id="mc-transcript" class="mc-transcript" tabindex="0" aria-label="Transcripción de la reunión"></div>
         </div>
 
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">
-          <div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px">Score en vivo</div>
+        <div id="mc-talk" class="mc-glass mc-talk-card">
+          <div class="mc-card-head">Quién habla más <span id="mc-talk-num" class="mc-talk-num notranslate">—</span></div>
+          <div class="mc-talk-bar"><div id="mc-talk-fill" class="mc-talk-fill" style="width:0%"></div></div>
+          <div class="mc-talk-legend"><span>Vendedor</span><span>Lead</span></div>
+          <div id="mc-talk-hint" class="mc-hint" style="margin:6px 0 0">Se calcula cuando hay conversación suficiente.</div>
+        </div>
+
+        <!-- Puntajes del modelo: solo en el modo asistente, cuando llegan de verdad. -->
+        <div id="mc-scores-card" class="mc-glass mc-scores-card" style="display:none">
+          <div class="mc-card-head">Puntaje en vivo</div>
           <div style="display:flex;flex-direction:column;gap:11px">
             <div id="mc-score-listening" class="score-row">
               <div class="score-label"><span style="font-size:11px;color:var(--text2)">Escucha activa</span><span class="score-num" style="font-size:11px;font-weight:700;color:var(--green)">—</span></div>
@@ -2871,9 +2831,6 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
             </div>
           </div>
         </div>
-
-        <div id="mc-events" style="display:flex;flex-direction:column;gap:10px"></div>
-
       </div>
     </div>
   </div>
@@ -3422,11 +3379,40 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script>
   
 // ── COACH: landing state helpers ──
-function toggleBriefPanel() {
-  const panel = document.getElementById('mc-brief-panel');
-  if (!panel) return;
-  panel.style.display = panel.style.display === 'none' ? '' : 'none';
+// Paso 4 de la preparación: cómo quedará la ventana flotante en ESTE navegador.
+function paintCoachHudStep() {
+  const host = document.getElementById('mc-hud-step');
+  const hud = window.CoachHUD;
+  if (!host || !hud) return;
+  host.textContent = '';
+  const txt = document.createElement('span');
+  txt.className = 'mc-hud-step-t';
+  const add = (label, fn, cls) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn btn-sm ' + (cls || 'btn-ghost'); b.textContent = label;
+    b.addEventListener('click', fn);
+    host.appendChild(b);
+  };
+  if (!hud.supported()) {
+    host.classList.add('is-off');
+    txt.textContent = 'Este navegador no la permite. Usa Chrome o Edge para tener al coach encima de la reunión; aquí lo verás en esta pestaña.';
+    host.appendChild(txt);
+    return;
+  }
+  const on = hud.pref();
+  host.classList.toggle('is-off', !on);
+  if (hud.isArc()) {
+    txt.textContent = on ? 'Activada en Arc: se abre al iniciar.' : 'Apagada en Arc. Puedes activarla en Configuración.';
+    host.appendChild(txt);
+    add('Configuración', () => { const p = document.getElementById('mc-config-panel'); if (p && p.style.display === 'none') toggleCoachConfig(); });
+    return;
+  }
+  txt.textContent = on ? 'Lista: se abre sola al iniciar.' : 'Apagada: verás al coach solo en esta pestaña.';
+  host.appendChild(txt);
+  add(on ? 'Apagar' : 'Activar', () => { hud.setPref(!on); paintCoachHudStep(); }, on ? 'btn-ghost' : 'btn-jade');
 }
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', paintCoachHudStep);
+else setTimeout(paintCoachHudStep, 0);
 
 // Configuración del coach: aviso de reunión (calendario) y ventana flotante.
 function toggleCoachConfig() {
@@ -3436,6 +3422,8 @@ function toggleCoachConfig() {
   panel.style.display = open ? 'block' : 'none';
   if (open && window.CoachCalendar) window.CoachCalendar.mountSettings(panel);
   if (open) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // Al cerrar, el paso 4 refleja lo que se cambió en Configuración.
+  if (!open) paintCoachHudStep();
 }
 
 // Modo de conexión elegido en la pantalla de idle: 'local' (compartir pantalla,
@@ -3493,7 +3481,10 @@ function coachShowIdle() {
   if (idle) idle.style.display = 'grid';
   if (active) active.style.display = 'none';
   if (btnEnd) btnEnd.style.display = 'none';
-  if (dot) { dot.style.background = 'var(--green-soft)'; dot.style.boxShadow = 'none'; }
+  if (dot) dot.classList.remove('is-live');
+  const startBtn = document.getElementById('mc-start-btn');
+  if (startBtn) startBtn.disabled = false;
+  paintCoachHudStep();
   window.__coachActiveMode = null;
   // Sin sesión viva (no arrancó o ya terminó) la ventana flotante no tiene qué mostrar.
   if (window.CoachHUD && !(window.CoachLive && window.CoachLive.isLive())) window.CoachHUD.close();
@@ -3508,22 +3499,18 @@ function coachShowActive(prospectName) {
   if (idle) idle.style.display = 'none';
   if (active) { active.style.display = 'flex'; }
   if (btnEnd) btnEnd.style.display = '';
-  if (dot) { dot.style.background = 'var(--green)'; dot.style.boxShadow = '0 0 10px rgba(43,182,115,.7)'; }
-  if (liveProspect && prospectName) liveProspect.textContent = prospectName;
+  if (dot) dot.classList.add('is-live');
+  if (liveProspect) liveProspect.textContent = prospectName || '';
+  const bar = document.getElementById('mc-livebar');
+  if (bar) bar.classList.remove('is-warn');
 
   // El texto de "esperando audio" depende de cómo se conecta el coach: en
-  // modo local se le pide al usuario compartir pantalla; en modo bot el
-  // asistente ya está entrando solo a la reunión.
-  const lastSpoken = document.getElementById('mc-last-spoken');
-  if (lastSpoken) {
-    const isBot = window.__coachActiveMode === 'bot';
-    lastSpoken.innerHTML =
-      '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Esperando audio...</div>' +
-      '<div style="font-size:14px;color:var(--text3);font-style:italic">' +
-      (isBot
-        ? 'El asistente se está uniendo a la reunión. La transcripción aparecerá en cuanto empiece a escuchar.'
-        : 'Comparte tu pantalla completa con "Compartir audio del sistema" activado.') +
-      '</div>';
+  // modo local se le pide al usuario compartir; en modo bot el asistente ya
+  // está entrando solo a la reunión.
+  if (window.CoachLive) {
+    window.CoachLive.caption('Esperando audio…', '', window.__coachActiveMode === 'bot'
+      ? 'El asistente se está uniendo a la reunión. La transcripción aparece en cuanto empiece a escuchar.'
+      : 'En cuanto alguien hable, lo verás aquí.', true);
   }
 }
 
@@ -3634,6 +3621,15 @@ function iniciarCoachLive(prospectCtx) {
       }
       return;
     }
+  }
+
+  // Un clic = un inicio: el botón queda apagado hasta que la sesión arranca o
+  // falla (coachShowIdle lo reactiva).
+  const startBtn = document.getElementById('mc-start-btn');
+  if (startBtn) {
+    if (startBtn.disabled) return;
+    startBtn.disabled = true;
+    setTimeout(function () { startBtn.disabled = false; }, 20000);
   }
 
   // La ventana flotante solo se puede abrir dentro del clic: va ANTES de

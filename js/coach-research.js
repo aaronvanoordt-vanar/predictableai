@@ -54,8 +54,43 @@
     return '<span class="mcr-chip">Sin investigar</span>';
   }
 
+  // Resumen bajo el selector (paso 2 de la preparación): cuántas personas de
+  // la reunión ya tienen investigación y un botón para completar las que faltan.
+  function renderSummary(people) {
+    const box = document.getElementById('mc-research-summary');
+    if (!box) return;
+    box.textContent = '';
+    if (!people.length) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    const ready = people.filter(function (p) { return stateOf(p) === 'ready'; }).length;
+    const run = people.filter(function (p) { return stateOf(p) === 'running'; }).length;
+    const missing = people.filter(function (p) { const s = stateOf(p); return s === 'none' || s === 'error'; });
+    const dot = document.createElement('span');
+    dot.className = 'mc-rs-dot' + (ready === people.length ? ' is-ok' : run ? ' is-run' : '');
+    const txt = document.createElement('span');
+    txt.className = 'mc-rs-t';
+    txt.textContent = people.length === 1
+      ? (ready ? 'Investigación con IA lista: el coach la usa en la reunión.'
+        : run ? 'Investigando a esta persona…'
+        : 'Sin investigación con IA: el coach solo tendrá sus datos básicos.')
+      : run ? 'Investigando… ' + ready + ' de ' + people.length + ' personas listas.'
+        : 'Investigación con IA: ' + ready + ' de ' + people.length + ' personas.';
+    box.appendChild(dot); box.appendChild(txt);
+    if (missing.length && !run) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn btn-ghost btn-sm';
+      b.setAttribute('data-mcr-all', '1');
+      b.setAttribute('data-credit-cost', 'lead_research');
+      b.textContent = missing.length === 1 ? 'Investigar con IA' : 'Investigar a los ' + missing.length + ' que faltan';
+      box.appendChild(b);
+      if (global.creditCosts && global.creditCosts.decorate) global.creditCosts.decorate(box);
+    }
+  }
+
   function render(ctx) {
     lastCtx = ctx || null;
+    renderSummary(peopleOf(ctx));
     const host = document.getElementById('mc-brief-research');
     const sec = document.getElementById('mc-brief-research-sec');
     if (!host || !sec) return;
@@ -134,7 +169,8 @@
   document.addEventListener('click', function (ev) {
     const btn = ev.target.closest && ev.target.closest('[data-mcr-id], [data-mcr-all]');
     const host = document.getElementById('mc-brief-research');
-    if (!btn || !host || !host.contains(btn)) return;
+    const summary = document.getElementById('mc-research-summary');
+    if (!btn || !((host && host.contains(btn)) || (summary && summary.contains(btn)))) return;
     const people = peopleOf(lastCtx);
     if (btn.hasAttribute('data-mcr-all')) {
       runMany(people.filter(function (p) { const s = stateOf(p); return s === 'none' || s === 'error'; }));

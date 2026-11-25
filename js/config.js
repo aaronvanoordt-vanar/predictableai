@@ -16,11 +16,16 @@ window.PREDICTABLE_CONFIG = {
   // silencio tras el fin del mensaje y hay al menos COACH_MIN_NEW_WORDS
   // palabras nuevas. Una alerta repetida (mismo título o misma frase) dentro
   // de COACH_ALERT_DEDUP_MS no se vuelve a mostrar.
-  // Cuando quien termina de hablar es el LEAD, el coach responde tras
-  // COACH_LEAD_PAUSE_MS (el vendedor necesita la respuesta ya).
-  COACH_SILENCE_MS: 1200,
-  COACH_LEAD_PAUSE_MS: 400,
-  COACH_MIN_NEW_WORDS: 4,
+  // Ritmo (2026-11-25): el coach responde cuando el LEAD termina una idea:
+  // COACH_LEAD_PAUSE_MS si cerró la frase, COACH_LEAD_THINK_MS si se quedó a
+  // media idea (está pensando). Menos de COACH_MIN_NEW_WORDS palabras del lead
+  // mientras el vendedor habla es un «ajá», no un turno. Lo que dice el
+  // vendedor solo dispara un análisis si habló COACH_SDR_MIN_WORDS seguidas.
+  COACH_SILENCE_MS: 1500,
+  COACH_LEAD_PAUSE_MS: 450,
+  COACH_LEAD_THINK_MS: 1100,
+  COACH_MIN_NEW_WORDS: 3,
+  COACH_SDR_MIN_WORDS: 35,
   COACH_ALERT_DEDUP_MS: 240000,
 
   // Módulos a medio terminar ocultos en producción (2026-11-07, pedido del

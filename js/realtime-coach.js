@@ -11,6 +11,17 @@
 // (js/coach-live.js + js/coach-playbook.js, sin IA). Cada turno se guarda en
 // el servidor apenas se cierra: la transcripción completa no depende de que
 // la pestaña llegue viva al final.
+//
+// Estabilidad y ritmo (2026-11-25):
+//  • Audio en tramos de 50 ms por AudioWorklet (antes 256 ms en el hilo de la
+//    página) y Deepgram nova-3 sin espera de formato: el texto aparece mientras
+//    se habla, también a medio decir (línea tenue en la transcripción).
+//  • Si la conexión con Deepgram se cae, se reconecta sola con un token nuevo.
+//  • El coach responde cuando el LEAD termina una idea (pausa según si cerró la
+//    frase), no con cada «ajá» ni mientras el vendedor habla; una respuesta que
+//    quedó vieja porque el lead siguió hablando se descarta.
+//  • El eco del lead que entra por el micrófono (parlantes) no cuenta como voz
+//    del vendedor.
 // ═══════════════════════════════════════════════════════════
 (function (global) {
   const cfg = global.PREDICTABLE_CONFIG || {};
@@ -47,6 +58,27 @@
   let flushTimer = null;        // vacía la cola de turnos cada pocos segundos
   let streamOk = true;          // el worker aceptó `stream: true` (se apaga si lo rechaza)
   let lastStage = '';           // última fase que devolvió el modelo
+  let ending = false;           // end() en curso (evita el doble cierre)
+  let workletNode = null;
+  let framesSent = 0;
+  let sampleRate = 16000;       // el real del AudioContext (va en la URL de Deepgram)
+  // Deepgram: modelo, reconexión y latido.
+  let dgModel = 'nova-3';
+  let dgEverOpened = false;     // esta sesión ya logró abrir el socket alguna vez
+  let dgOpenedThis = false;     // el socket actual llegó a abrirse
+  let dgRetries = 0;
+  let dgRetryTimer = null;
+  let dgKeepAlive = null;
+  // Turnos: palabras por hablante y cuándo habló cada uno por última vez.
+  let leadWords = 0, sdrWords = 0;
+  let leadWordsAtCoach = 0, sdrWordsAtCoach = 0;
+  let lastLeadAt = 0, lastSdrAt = 0;
+  let coachKind = '';           // 'lead' | 'sdr': quién disparó el análisis agendado
+  let runSeq = 0;               // respuesta vigente; una vieja se descarta
+  let inflight = null;          // { seq, abort, prevTurns, prevWords, prevLead, prevSdr, leadAtStart }
+  let leadRecent = [];          // [{ts, text}] lo último que dijo el lead (anti-eco)
+  let lastInterim = null;       // {speaker, text} dicho a medias, aún sin resultado final
+  const ghostEls = {};          // hablante → línea tenue de la transcripción
   const Live = function () { return global.CoachLive || null; };
 
   function workerUrl(path) {
@@ -92,6 +124,9 @@
     // el timer, el WebSocket y los tracks de mic/pantalla.
     if (active) { console.warn('[Coach] Ya hay una sesión activa; ignorando start().'); return; }
     active = true;
+    ending = false;
+    dgModel = cfg.COACH_STT_MODEL || 'nova-3';
+    dgEverOpened = false; dgRetries = 0; framesSent = 0;
     currentProspect = prospectContext || null;
     // El camino OpenAI arma su prompt en el navegador: trae en paralelo el
     // entrenamiento del equipo. Si no llega, el coach usa su prompt de siempre.
@@ -118,24 +153,20 @@
           selfBrowserSurface: 'exclude'
         });
 
-        // El navegador no permite FORZAR la superficie: validar lo elegido.
-        // Una pestaña o ventana deja de oírse en cuanto el cliente cambia de
-        // app/tab — solo pantalla completa garantiza capturar toda la reunión.
-        const vTrack = displayStream.getVideoTracks()[0];
-        const surface = (vTrack && typeof vTrack.getSettings === 'function')
-          ? vTrack.getSettings().displaySurface : null;
-        if (surface && surface !== 'monitor') {
-          cleanup();
-          toast('Compartiste una ' + (surface === 'browser' ? 'pestaña' : 'ventana') +
-            '. Comparte la pantalla completa para que el coach escuche toda la reunión.', 'error');
-          if (typeof coachShowIdle === 'function') coachShowIdle();
-          return;
-        }
-
+        // Lo que importa es que llegue AUDIO. Una pestaña (la de Meet, Zoom o
+        // Teams en el navegador) comparte su audio en cualquier sistema y se
+        // sigue oyendo aunque cambies de pestaña; la pantalla completa necesita
+        // «Compartir audio del sistema», que no todos los equipos ofrecen. Una
+        // ventana de aplicación nunca trae audio. (Antes se rechazaba la
+        // pestaña: en los equipos sin audio del sistema no había forma de iniciar.)
         if (displayStream.getAudioTracks().length === 0) {
+          const vTrack = displayStream.getVideoTracks()[0];
+          const surface = (vTrack && typeof vTrack.getSettings === 'function')
+            ? vTrack.getSettings().displaySurface : null;
           cleanup();
-          toast('No se captó el audio de la reunión. Al compartir la pantalla completa, ' +
-            'marca "Compartir audio del sistema" (requiere Chrome/Edge/Arc actualizado).', 'error');
+          toast(surface === 'window'
+            ? 'Una ventana no comparte audio. Comparte la pestaña de la reunión con «Compartir audio de la pestaña», o la pantalla completa con «Compartir audio del sistema».'
+            : 'No se captó el audio de la reunión. Al compartir, activa «Compartir audio de la pestaña» (o «Compartir audio del sistema» si compartes la pantalla completa).', 'error');
           if (typeof coachShowIdle === 'function') coachShowIdle();
           return;
         }
@@ -178,29 +209,67 @@
         coachShowActive(prospectContext && prospectContext.name);
       }
 
-      // ─── CONECTAR DIRECTO A DEEPGRAM CON TOKEN TEMPORAL ─
+      // ─── AUDIO PRIMERO (da la frecuencia real), LUEGO DEEPGRAM ─
+      await startAudioCapture();
+      if (!active) return;
       connectDeepgramDirect(dgToken);
-      startAudioCapture();
 
       if (displayStream) {
-        displayStream.getVideoTracks()[0].onended = function () {
-          toast('Captura detenida', 'warn'); end();
-        };
+        const stopped = function () { if (active && !ending) { toast('Dejaste de compartir: la sesión se cerró y el reporte se está generando.', 'warn'); end(); } };
+        displayStream.getVideoTracks().forEach(function (t) { t.onended = stopped; });
+        // El audio puede cortarse solo (se cerró la pestaña de la reunión).
+        displayStream.getAudioTracks().forEach(function (t) { t.onended = stopped; });
       }
       toast('AI Sales Coach iniciado', 'success');
       return currentMeetingId;
     } catch (e) {
       console.error('[Coach] Start error:', e);
-      toast('Error iniciando coach: ' + e.message, 'error');
+      // Cancelar el selector de pantalla no es un error: no asustes al usuario.
+      if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) {
+        toast('No se compartió nada, así que el coach no inició. Vuelve a intentarlo cuando quieras.', 'warn');
+      } else {
+        toast('No se pudo iniciar el coach: ' + (e && e.message ? e.message : 'error'), 'error');
+      }
       cleanup();
       if (typeof coachShowIdle === 'function') coachShowIdle();
     }
   }
 
-  function startAudioCapture() {
+  // Procesador de audio fuera del hilo de la página: junta 50 ms de PCM
+  // estéreo (canal 0 = reunión/lead, canal 1 = micrófono/vendedor) y los
+  // entrega listos para Deepgram. En el hilo principal (ScriptProcessor, 256 ms
+  // por tramo) cada repintado de la página atrasaba o cortaba el audio.
+  const WORKLET_SRC = [
+    'class PcmTap extends AudioWorkletProcessor {',
+    '  constructor(o){ super(); const n = (o && o.processorOptions && o.processorOptions.frames) || 800; this.buf = new Int16Array(n * 2); this.n = 0; }',
+    '  process(inputs){',
+    '    const inp = inputs[0]; if (!inp || !inp[0]) return true;',
+    '    const L = inp[0], R = inp[1] || null;',
+    '    for (let i = 0; i < L.length; i++) {',
+    '      const l = Math.max(-1, Math.min(1, L[i])), r = R ? Math.max(-1, Math.min(1, R[i])) : 0;',
+    '      this.buf[this.n++] = l < 0 ? l * 0x8000 : l * 0x7FFF;',
+    '      this.buf[this.n++] = r < 0 ? r * 0x8000 : r * 0x7FFF;',
+    '      if (this.n >= this.buf.length) { const out = this.buf.slice(0); this.port.postMessage(out.buffer, [out.buffer]); this.n = 0; }',
+    '    }',
+    '    return true;',
+    '  }',
+    '}',
+    "registerProcessor('pcm-tap', PcmTap);",
+  ].join('\n');
+
+  function sendAudio(buffer) {
+    if (!dgSocket || dgSocket.readyState !== WebSocket.OPEN) return;
+    dgSocket.send(buffer);
+    framesSent++;
+    if (framesSent === 1) console.log('[Coach] Primer tramo de audio estéreo enviado (L=Lead, R=SDR)');
+  }
+
+  async function startAudioCapture() {
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-      console.log('[Coach] AudioContext sampleRate:', audioCtx.sampleRate, 'state:', audioCtx.state);
+      // El navegador puede no respetar los 16 kHz: a Deepgram se le dice el real.
+      sampleRate = audioCtx.sampleRate || 16000;
+      console.log('[Coach] AudioContext sampleRate:', sampleRate, 'state:', audioCtx.state);
 
       // Chrome puede crear el contexto 'suspended' (política de autoplay):
       // sin resume() el pipeline no procesa NI UN frame y el coach queda
@@ -236,36 +305,59 @@
         silent.connect(merger, 0, 1);
       }
 
-      audioProcessor = audioCtx.createScriptProcessor(4096, 2, 2);
-      let frameCount = 0;
-      audioProcessor.onaudioprocess = function (e) {
-        if (!dgSocket || dgSocket.readyState !== WebSocket.OPEN) return;
-        const left = e.inputBuffer.getChannelData(0);   // canal 0 = tab/Lead
-        const right = e.inputBuffer.numberOfChannels > 1 ? e.inputBuffer.getChannelData(1) : new Float32Array(left.length);   // canal 1 = mic/SDR
-        // STEREO intercalado L,R,L,R,... → Deepgram lo separa por channel_index
-        const interleaved = new Int16Array(left.length * 2);
-        for (let i = 0; i < left.length; i++) {
-          const sL = Math.max(-1, Math.min(1, left[i]));
-          const sR = Math.max(-1, Math.min(1, right[i]));
-          interleaved[i*2] = sL < 0 ? sL * 0x8000 : sL * 0x7FFF;
-          interleaved[i*2+1] = sR < 0 ? sR * 0x8000 : sR * 0x7FFF;
+      // Salida muda hacia el destino: mantiene vivo el grafo sin que se oiga nada.
+      const mute = audioCtx.createGain();
+      mute.gain.value = 0;
+      mute.connect(audioCtx.destination);
+
+      let viaWorklet = false;
+      if (audioCtx.audioWorklet && typeof AudioWorkletNode === 'function') {
+        try {
+          const url = URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'application/javascript' }));
+          try { await audioCtx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+          if (!audioCtx) return;   // la sesión se canceló mientras cargaba
+          workletNode = new AudioWorkletNode(audioCtx, 'pcm-tap', {
+            numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+            channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'discrete',
+            processorOptions: { frames: Math.round(sampleRate * 0.05) },
+          });
+          workletNode.port.onmessage = function (ev) { sendAudio(ev.data); };
+          merger.connect(workletNode);
+          workletNode.connect(mute);
+          viaWorklet = true;
+        } catch (e) {
+          console.warn('[Coach] AudioWorklet no disponible, uso ScriptProcessor:', e && e.message);
+          workletNode = null;
         }
-        dgSocket.send(interleaved.buffer);
-        frameCount++;
-        if (frameCount === 1) console.log('[Coach] Primer frame de audio stereo enviado (L=Lead, R=SDR)');
-        if (frameCount % 100 === 0) console.log('[Coach] Frames enviados:', frameCount);
-      };
+      }
+      if (!viaWorklet) {
+        if (!audioCtx) return;
+        audioProcessor = audioCtx.createScriptProcessor(2048, 2, 2);
+        audioProcessor.onaudioprocess = function (e) {
+          const left = e.inputBuffer.getChannelData(0);   // canal 0 = tab/Lead
+          const right = e.inputBuffer.numberOfChannels > 1 ? e.inputBuffer.getChannelData(1) : new Float32Array(left.length);   // canal 1 = mic/SDR
+          // STEREO intercalado L,R,L,R,... → Deepgram lo separa por channel_index
+          const interleaved = new Int16Array(left.length * 2);
+          for (let i = 0; i < left.length; i++) {
+            const sL = Math.max(-1, Math.min(1, left[i]));
+            const sR = Math.max(-1, Math.min(1, right[i]));
+            interleaved[i*2] = sL < 0 ? sL * 0x8000 : sL * 0x7FFF;
+            interleaved[i*2+1] = sR < 0 ? sR * 0x8000 : sR * 0x7FFF;
+          }
+          sendAudio(interleaved.buffer);
+        };
+        merger.connect(audioProcessor);
+        audioProcessor.connect(mute);
+      }
+      console.log('[Coach] Captura de audio iniciada (' + (viaWorklet ? 'AudioWorklet 50 ms' : 'ScriptProcessor') + ')');
 
-      merger.connect(audioProcessor);
-      audioProcessor.connect(audioCtx.destination);
-      console.log('[Coach] Audio capture dual iniciada');
-
-      // Watchdog: si a los 8s no salió ni un frame de audio, avisar en la UI
+      // Watchdog: si a los 8s no salió ni un tramo de audio, avisar en la UI
       // en lugar de dejar la sesión "escuchando" en silencio indefinidamente.
       setTimeout(function () {
-        if (active && frameCount === 0) {
-          toast('No está llegando audio al coach. Verifica que marcaste "Compartir audio ' +
-            'del sistema" y el permiso del micrófono, y reinicia la sesión.', 'error');
+        if (active && framesSent === 0) {
+          toast('No está llegando audio al coach. Verifica que activaste el audio al compartir ' +
+            'y el permiso del micrófono, y reinicia la sesión.', 'error');
+          if (Live()) Live().status('Sin audio', true);
         }
       }, 8000);
     } catch (e) {
@@ -276,43 +368,118 @@
 
   // ─── DEEPGRAM DIRECTO (con token temporal) ─────────────────
   function connectDeepgramDirect(accessToken) {
-    // STEREO + multichannel para separar SDR (canal 1) y Lead (canal 0)
+    // STEREO + multichannel para separar SDR (canal 1) y Lead (canal 0).
+    // no_delay: el texto no espera al formateo (smart_format lo retenía).
     const params = [
-      'model=nova-2', 'language=multi',
+      'model=' + dgModel, 'language=multi',
       'interim_results=true', 'endpointing=300',
-      'utterance_end_ms=1000', 'smart_format=true', 'punctuate=true',
-      'encoding=linear16', 'sample_rate=16000', 'channels=2', 'multichannel=true'
+      'utterance_end_ms=1000', 'smart_format=true', 'punctuate=true', 'no_delay=true',
+      'encoding=linear16', 'sample_rate=' + sampleRate, 'channels=2', 'multichannel=true'
     ].join('&');
 
-    // JWT Grant Token: probamos primero como subprotocol bearer (forma correcta)
     const url = 'wss://api.deepgram.com/v1/listen?' + params;
-    console.log('[Coach] URL Deepgram:', url);
-    console.log('[Coach] Token (primeros 30 chars):', accessToken.substring(0, 30) + '...');
-    // Pasar JWT como Bearer en subprotocol
-    dgSocket = new WebSocket(url, ['bearer', accessToken]);
+    console.log('[Coach] Conectando a Deepgram (' + dgModel + ')');
+    // JWT Grant Token como Bearer en el subprotocolo. El token no se registra.
+    const socket = new WebSocket(url, ['bearer', accessToken]);
+    dgSocket = socket;
+    dgOpenedThis = false;
 
-    dgSocket.onopen = function () {
+    socket.onopen = function () {
+      if (dgSocket !== socket) return;
       console.log('[Coach] Deepgram WS abierto ✓');
+      dgOpenedThis = true; dgEverOpened = true; dgRetries = 0;
       setStatus('live');
+      // Latido: sin audio unos segundos (pestaña en pausa) Deepgram cierra el socket.
+      if (dgKeepAlive) clearInterval(dgKeepAlive);
+      dgKeepAlive = setInterval(function () {
+        if (socket.readyState === WebSocket.OPEN) { try { socket.send(JSON.stringify({ type: 'KeepAlive' })); } catch (e) {} }
+      }, 4000);
     };
-    dgSocket.onmessage = function (event) {
+    socket.onmessage = function (event) {
+      if (dgSocket !== socket) return;
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'Results') handleTranscript(msg);
-        else if (msg.type === 'UtteranceEnd') handleUtteranceEnd();
-        else if (msg.type === 'Metadata') console.log('[Coach] Deepgram metadata:', msg);
+        else if (msg.type === 'UtteranceEnd') handleUtteranceEnd(msg);
       } catch (e) { console.warn('[Coach] DG parse error', e); }
     };
-    dgSocket.onerror = function (e) {
-      console.error('[Coach] Deepgram error:', e);
-      toast('Error de Deepgram', 'error');
-    };
-    dgSocket.onclose = function (e) {
+    socket.onerror = function (e) { console.error('[Coach] Deepgram error:', e); };
+    socket.onclose = function (e) {
+      if (dgSocket !== socket) return;      // un socket viejo: ya hay otro
       console.log('[Coach] Deepgram cerrado:', e.code, e.reason || '(sin razón)', 'wasClean:', e.wasClean);
-      if (!e.wasClean && (e.code === 1011 || e.code === 1006 || e.code === 1002)) {
-        toast('Deepgram rechazó conexión (' + e.code + '). Revisa consola para detalles.', 'error');
-      }
+      if (dgKeepAlive) { clearInterval(dgKeepAlive); dgKeepAlive = null; }
+      dgSocket = null;
+      if (!active || ending) return;
+      reconnectDeepgram();
     };
+  }
+
+  // La conexión se cayó con la reunión viva (red, suspensión del equipo, o el
+  // modelo no está disponible para la cuenta): se vuelve a abrir sola con un
+  // token nuevo. Antes la transcripción se quedaba muda hasta reiniciar.
+  function reconnectDeepgram() {
+    if (dgRetryTimer || !active || ending) return;
+    // Nunca abrió con el modelo nuevo: la cuenta no lo tiene → el de siempre.
+    if (!dgEverOpened && !dgOpenedThis && dgModel !== 'nova-2') {
+      console.warn('[Coach] ' + dgModel + ' no abrió; sigo con nova-2');
+      dgModel = 'nova-2';
+    } else {
+      dgRetries++;
+    }
+    if (dgRetries > 8) {
+      setStatus('lost');
+      toast('Se perdió la conexión con la transcripción. Lo dicho hasta ahora está guardado: finaliza la sesión para ver el reporte.', 'error');
+      return;
+    }
+    setStatus('reconnecting');
+    const wait = dgRetries <= 1 ? 300 : Math.min(8000, 500 * Math.pow(2, dgRetries - 1));
+    dgRetryTimer = setTimeout(async function () {
+      dgRetryTimer = null;
+      if (!active || ending) return;
+      try {
+        const token = await getDeepgramToken();
+        if (!active || ending) return;
+        connectDeepgramDirect(token);
+      } catch (e) {
+        console.warn('[Coach] no se pudo renovar el token de Deepgram:', e && e.message);
+        reconnectDeepgram();
+      }
+    }, wait);
+  }
+  // Al volver la red o la pestaña, no esperes al siguiente reintento.
+  global.addEventListener('online', function () {
+    if (active && !ending && !dgSocket) { if (dgRetryTimer) { clearTimeout(dgRetryTimer); dgRetryTimer = null; } dgRetries = Math.min(dgRetries, 1); reconnectDeepgram(); }
+  });
+
+  // ─── Anti-eco ──────────────────────────────────────────────
+  // Sin audífonos, la voz del lead sale por los parlantes y vuelve a entrar por
+  // el micrófono: Deepgram la transcribe otra vez en el canal del vendedor. Eso
+  // duplicaba líneas, inflaba «estás hablando demasiado» y confundía los turnos.
+  function tokens(text) {
+    return String(text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9ñ ]/g, ' ').split(/\s+/).filter(function (w) { return w.length >= 3; });
+  }
+  function isEcho(text) {
+    if (callAudio || !micStream) return false;          // el dialer trae canales limpios
+    const now = Date.now();
+    if (now - lastLeadAt > 2500) return false;          // el lead no estaba hablando
+    const mine = tokens(text);
+    if (mine.length < 3) return false;
+    leadRecent = leadRecent.filter(function (r) { return now - r.ts < 6000; });
+    const bag = {};
+    leadRecent.forEach(function (r) { tokens(r.text).forEach(function (w) { bag[w] = true; }); });
+    let hit = 0;
+    mine.forEach(function (w) { if (bag[w]) hit++; });
+    return hit / mine.length >= 0.7;
+  }
+
+  function wordCount(text) { return String(text || '').split(/\s+/).filter(Boolean).length; }
+  // ¿La frase quedó cerrada? Si el lead se detuvo a media idea («y además…»),
+  // es una pausa para pensar: se le da más tiempo antes de responder.
+  function endsThought(text) {
+    const t = String(text || '').trim();
+    if (/[.?!…]$/.test(t)) return !/\b(y|o|pero|porque|que|de|con|para|entonces|and|but|so|e|mas|porque)[.?!…]*$/i.test(t);
+    return false;
   }
 
   function handleTranscript(msg) {
@@ -323,19 +490,46 @@
 
     const channelIdx = (msg.channel_index && msg.channel_index[0]) || 0;
     const speaker = channelIdx === 1 ? 'SDR' : 'Lead';
+    const isLead = speaker === 'Lead';
     const isFinal = msg.is_final;
-    showInterim(speaker, text, isFinal);
-    if (Live()) Live().heard(speaker, text, isFinal, speaker === 'Lead');
+    const now = Date.now();
 
-    // Alguien sigue hablando: el coach espera a que termine el mensaje.
-    cancelScheduledCoaching();
-    if (isFinal) {
-      appendToTurn(speaker, text);
-      // El lead terminó una idea: es el momento en que el vendedor necesita la
-      // respuesta, así que la pausa es corta. Si habló el vendedor no hay
-      // apuro: se espera el silencio de siempre.
+    if (isLead) {
+      lastLeadAt = now;
+      leadRecent.push({ ts: now, text: text });
+      if (leadRecent.length > 40) leadRecent.shift();
+    } else {
+      if (isEcho(text)) { setGhost('SDR', ''); return; }
+      lastSdrAt = now;
+    }
+
+    setGhost(speaker, isFinal ? '' : text);
+    lastInterim = isFinal ? null : { speaker: speaker, text: text };
+    if (Live()) Live().heard(speaker, text, isFinal, isLead);
+
+    // El lead sigue hablando: cualquier análisis agendado espera a que termine.
+    // Si habla el vendedor solo se cancela el análisis que disparó él mismo (el
+    // que responde al lead sigue: la respuesta le sirve igual al terminar).
+    if (isLead || coachKind === 'sdr') cancelScheduledCoaching();
+    if (!isFinal) return;
+
+    appendToTurn(speaker, text);
+    const n = wordCount(text);
+    if (isLead) {
+      leadWords += n;
+      // El lead agregó contenido mientras el modelo respondía a lo anterior:
+      // esa respuesta ya nació vieja. Se descarta y se responde a todo junto.
+      if (inflight && leadWords - inflight.leadAtStart >= 6) supersede();
       if (msg.speech_final) {
-        scheduleCoaching(speaker === 'Lead' ? (cfg.COACH_LEAD_PAUSE_MS || 400) : (cfg.COACH_SILENCE_MS || 1200));
+        const turnText = pendingTurn && pendingTurn.speaker === 'Lead' ? pendingTurn.text : text;
+        scheduleCoaching(endsThought(turnText) ? (cfg.COACH_LEAD_PAUSE_MS || 450) : (cfg.COACH_LEAD_THINK_MS || 1100), 'lead');
+      }
+    } else {
+      sdrWords += n;
+      // El vendedor no necesita una frase nueva después de cada cosa que dice;
+      // solo si lleva un buen tramo hablando (riesgo de monólogo).
+      if (msg.speech_final && sdrWords - sdrWordsAtCoach >= (cfg.COACH_SDR_MIN_WORDS || 35)) {
+        scheduleCoaching(cfg.COACH_SILENCE_MS || 1500, 'sdr');
       }
     }
   }
@@ -356,7 +550,7 @@
       if (recentTranscript.length > 25) recentTranscript.shift();
       totalTurns++;
     }
-    totalWords += text.split(/\s+/).filter(Boolean).length;
+    totalWords += wordCount(text);
     renderTurn(pendingTurn);
     // Un monólogo largo se guarda por tramos: si la pestaña se cierra a mitad
     // de la frase, se pierde como mucho el último tramo.
@@ -369,31 +563,60 @@
     pendingTurn = null;
   }
 
-  // UtteranceEnd llega `utterance_end_ms` después de la última palabra (y por
-  // canal, así que puede llegar dos veces). Encima esperamos COACH_SILENCE_MS
-  // más: si el hablante retoma, cualquier resultado nuevo cancela el timer.
-  // UtteranceEnd ya es 1 s de silencio medido por Deepgram: no se suma otra
-  // espera larga encima.
-  function handleUtteranceEnd() { scheduleCoaching(250); }
+  // UtteranceEnd = 1 s de silencio medido por Deepgram, POR CANAL
+  // (`channel: [índice, total]`). El del lead dispara la respuesta ya; el del
+  // vendedor solo cuenta si venía de un tramo largo.
+  function handleUtteranceEnd(msg) {
+    const idx = msg && Array.isArray(msg.channel) ? msg.channel[0] : 0;
+    if (idx === 1) {
+      if (sdrWords - sdrWordsAtCoach >= (cfg.COACH_SDR_MIN_WORDS || 35)) scheduleCoaching(400, 'sdr');
+      return;
+    }
+    if (leadWords > leadWordsAtCoach) scheduleCoaching(150, 'lead');
+  }
 
-  function scheduleCoaching(delayMs) {
+  function scheduleCoaching(delayMs, kind) {
     cancelScheduledCoaching();
+    coachKind = kind || 'lead';
     coachTimer = setTimeout(function () {
       coachTimer = null;
-      maybeRunCoaching();
-    }, delayMs == null ? (cfg.COACH_SILENCE_MS || 1200) : delayMs);
+      maybeRunCoaching(coachKind);
+    }, delayMs == null ? (cfg.COACH_SILENCE_MS || 1500) : delayMs);
   }
   function cancelScheduledCoaching() {
     if (coachTimer) { clearTimeout(coachTimer); coachTimer = null; }
   }
 
-  function maybeRunCoaching() {
-    if (!active) return;
+  function maybeRunCoaching(kind) {
+    if (!active || ending) return;
     if (coachInFlight) { coachPending = true; return; }
-    // Sin contenido nuevo suficiente ("ok", "sí") no hay nada que analizar.
-    const minWords = cfg.COACH_MIN_NEW_WORDS || 4;
-    if (totalWords - wordsAtLastCoach < minWords) return;
+    const newLead = leadWords - leadWordsAtCoach;
+    const newSdr = sdrWords - sdrWordsAtCoach;
+    if (kind === 'sdr') {
+      if (newSdr < (cfg.COACH_SDR_MIN_WORDS || 35)) return;
+    } else {
+      if (newLead < 1) return;
+      // Un «ajá» / «sí, claro» del lead mientras el vendedor habla es escucha
+      // activa, no un turno: no se interrumpe al vendedor con una frase nueva.
+      const sellerTalking = Date.now() - lastSdrAt < 1200;
+      if (newLead < (cfg.COACH_MIN_NEW_WORDS || 3) && sellerTalking) return;
+    }
     runCoaching();
+  }
+
+  // La respuesta en curso quedó vieja: se corta y los contadores vuelven a como
+  // estaban, para que el siguiente análisis vea todo lo nuevo junto.
+  function supersede() {
+    if (!inflight) return;
+    const f = inflight;
+    inflight = null;
+    runSeq++;
+    try { if (f.abort) f.abort.abort(); } catch (e) {}
+    turnsAtLastCoach = f.prevTurns; wordsAtLastCoach = f.prevWords;
+    leadWordsAtCoach = f.prevLead; sdrWordsAtCoach = f.prevSdr;
+    coachInFlight = false;
+    coachPending = false;
+    hideThinking();
   }
 
   // ─── COACHING ──────────────────────────────────────────────
@@ -416,35 +639,59 @@
     closeTurn();
     showThinking();
 
-    // Ventana de contexto = últimos 15 turnos, separando lo que el coach ya
+    // Ventana de contexto = últimos 10 turnos, separando lo que el coach ya
     // vio de lo nuevo: las alertas deben salir SOLO de lo nuevo. Los
     // contadores se mueven antes de la llamada para que lo que llegue
     // mientras el modelo responde cuente como nuevo en el siguiente turno.
     // 10 turnos: suficiente para entender la fase y el prompt queda corto (cada
     // token de entrada es latencia).
     const windowTurns = recentTranscript.slice(-10);
-    const newCount = Math.min(windowTurns.length, totalTurns - turnsAtLastCoach);
+    const newCount = Math.max(1, Math.min(windowTurns.length, totalTurns - turnsAtLastCoach));
     const prior = windowTurns.slice(0, windowTurns.length - newCount).map(formatTurn).join('\n');
     const fresh = windowTurns.slice(windowTurns.length - newCount).map(formatTurn).join('\n');
     const context = windowTurns.map(formatTurn).join('\n');
-    const prevTurns = turnsAtLastCoach, prevWords = wordsAtLastCoach;
+    const seq = ++runSeq;
+    const abort = (typeof AbortController === 'function') ? new AbortController() : null;
+    inflight = {
+      seq: seq, abort: abort,
+      prevTurns: turnsAtLastCoach, prevWords: wordsAtLastCoach,
+      prevLead: leadWordsAtCoach, prevSdr: sdrWordsAtCoach,
+      leadAtStart: leadWords,
+    };
     turnsAtLastCoach = totalTurns;
     wordsAtLastCoach = totalWords;
+    leadWordsAtCoach = leadWords;
+    sdrWordsAtCoach = sdrWords;
 
     function onFailure(e) {
+      if (seq !== runSeq) return;             // ya la reemplazó otra: nada que deshacer
       console.error('Coaching error', e);
       hideThinking();
       // Que lo nuevo se reintente en el siguiente silencio.
-      turnsAtLastCoach = prevTurns; wordsAtLastCoach = prevWords;
+      const f = inflight;
+      if (f && f.seq === seq) {
+        turnsAtLastCoach = f.prevTurns; wordsAtLastCoach = f.prevWords;
+        leadWordsAtCoach = f.prevLead; sdrWordsAtCoach = f.prevSdr;
+      }
     }
     function onSuccess(parsed) {
+      if (seq !== runSeq || !active) return;  // respuesta vieja: se descarta
+      const out = parsed || {};
+      // Un turno vacío (el servidor lo devuelve así cuando el modelo falló) no
+      // consume lo nuevo: se reintenta en el siguiente silencio.
+      if (!out.say_now && !out.next_step && !out.stage && !(out.alerts && out.alerts.length)) {
+        onFailure(new Error('turno vacío'));
+        return;
+      }
       hideThinking();
-      const shown = renderCoachOutput(parsed || {});
+      const shown = renderCoachOutput(out, seq);
       enqueueEventForBackend(shown);
     }
     function done() {
+      if (seq !== runSeq) return;             // la reemplazada no libera a la nueva
+      inflight = null;
       coachInFlight = false;
-      if (coachPending && active) scheduleCoaching(150);
+      if (coachPending && active) scheduleCoaching(150, 'lead');
     }
     // Lo que el modelo necesita para ubicar la fase sin releer toda la llamada.
     const minute = Live() ? Live().minutes() : Math.floor(elapsedSeconds / 60);
@@ -525,8 +772,9 @@
     try {
       let content = null;
       if (streamOk) {
-        try { content = await streamCompletion(body); }
+        try { content = await streamCompletion(body, seq, abort); }
         catch (e) {
+          if (seq !== runSeq) throw e;        // la cortamos nosotros: no es un fallo del worker
           // Un worker que no acepta streaming no deja al coach mudo: se repite
           // la llamada completa y no se vuelve a intentar en esta sesión.
           console.warn('[Coach] streaming no disponible, sigo sin él:', e && e.message);
@@ -537,7 +785,8 @@
         const resp = await fetch(workerUrl('/openai'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
+          body: JSON.stringify(body),
+          signal: abort ? abort.signal : undefined
         });
         if (!resp.ok) throw new Error('OpenAI ' + resp.status + ': ' + await resp.text());
         const data = await resp.json();
@@ -553,11 +802,12 @@
   // Respuesta en streaming (SSE de OpenAI a través del worker). Devuelve el
   // JSON completo como texto y, mientras llega, pinta la frase "say_now" a
   // medio escribir: el vendedor empieza a leer ~1 s antes de que termine.
-  async function streamCompletion(body) {
+  async function streamCompletion(body, seq, abort) {
     const resp = await fetch(workerUrl('/openai'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({}, body, { stream: true }))
+      body: JSON.stringify(Object.assign({}, body, { stream: true })),
+      signal: abort ? abort.signal : undefined
     });
     if (!resp.ok) throw new Error('OpenAI ' + resp.status);
     const type = resp.headers.get('content-type') || '';
@@ -587,9 +837,10 @@
         } catch (e) { /* línea partida: llega completa en el siguiente trozo */ }
       }
       const say = partialString(content, 'say_now');
+      if (seq !== runSeq) { try { reader.cancel(); } catch (e) {} throw new Error('reemplazada'); }
       if (say && say !== shown && say.length - shown.length >= 6 && Live() && active) {
         shown = say;
-        Live().partial(say);
+        Live().partial(say, seq);
       }
     }
     return content;
@@ -636,39 +887,55 @@
     cancelScheduledCoaching();
     pendingTurn = null; recentTranscript = []; shownAlerts = [];
     totalTurns = 0; totalWords = 0; turnsAtLastCoach = 0; wordsAtLastCoach = 0;
+    leadWords = 0; sdrWords = 0; leadWordsAtCoach = 0; sdrWordsAtCoach = 0;
+    lastLeadAt = 0; lastSdrAt = 0; leadRecent = []; lastInterim = null;
+    inflight = null; coachInFlight = false;
     coachPending = false;
-    const t = document.getElementById('mc-transcript'); if (t) t.innerHTML = '';
+    Object.keys(ghostEls).forEach(function (k) { delete ghostEls[k]; });
+    const t = document.getElementById('mc-transcript'); if (t) t.textContent = '';
     const e = document.getElementById('mc-events');
     if (e) Array.from(e.querySelectorAll('.ai-alert-dynamic')).forEach(function (el) { el.remove(); });
+    const empty = document.getElementById('mc-events-empty'); if (empty) empty.style.display = '';
     hideThinking();
   }
-  function showInterim(speaker, text, isFinal) {
-    const el = document.getElementById('mc-last-spoken'); if (!el) return;
-    const color = speaker === 'SDR' ? 'var(--green)' : 'var(--teal)';
-    el.innerHTML =
-      '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">' +
-      (isFinal ? 'Lo último que se dijo' : 'Escuchando...') + '</div>' +
-      '<div style="font-size:15px;color:' + (isFinal ? 'var(--text)' : 'var(--text3)') +
-      ';line-height:1.5;font-style:' + (isFinal ? 'normal' : 'italic') + '">' +
-      '<strong style="color:' + color + '">' + esc(speaker) + ':</strong> ' + esc(text) + '</div>';
+  function turnRow(speaker, ghost) {
+    const div = document.createElement('div');
+    div.className = 'mc-tr-row notranslate' + (speaker === 'SDR' ? ' is-sdr' : ' is-lead') + (ghost ? ' is-ghost' : '');
+    const who = document.createElement('span');
+    who.className = 'mc-tr-who';
+    who.textContent = speaker + ':';
+    const what = document.createElement('span');
+    what.className = 'mc-tr-text';
+    div.appendChild(who); div.appendChild(document.createTextNode(' ')); div.appendChild(what);
+    return { row: div, text: what };
+  }
+  // Lo que se está diciendo AHORA, antes de que Deepgram lo dé por final: una
+  // línea tenue al pie de la transcripción, por hablante. Así el texto aparece
+  // mientras se habla y no un par de segundos después.
+  function setGhost(speaker, text) {
+    const c = document.getElementById('mc-transcript'); if (!c) return;
+    let g = ghostEls[speaker];
+    if (!text) { if (g) { g.row.remove(); delete ghostEls[speaker]; } return; }
+    const stick = c.scrollHeight - c.scrollTop - c.clientHeight < 60;
+    if (!g) { g = ghostEls[speaker] = turnRow(speaker, true); }
+    g.text.textContent = text;
+    c.appendChild(g.row);       // siempre al final
+    if (stick) c.scrollTop = c.scrollHeight;
   }
   // Una línea por turno: mientras el hablante sigue, la misma línea crece.
   function renderTurn(turn) {
     const c = document.getElementById('mc-transcript'); if (!c) return;
+    // Solo sigue el final si el usuario no subió a releer algo.
+    const stick = c.scrollHeight - c.scrollTop - c.clientHeight < 60;
     if (!turn.el) {
-      const color = turn.speaker === 'SDR' ? 'var(--green)' : 'var(--teal)';
-      const div = document.createElement('div');
-      const who = document.createElement('span');
-      who.style.cssText = 'color:' + color + ';font-weight:700';
-      who.textContent = turn.speaker + ':';
-      const what = document.createElement('span');
-      what.style.color = 'var(--text2)';
-      div.appendChild(who); div.appendChild(document.createTextNode(' ')); div.appendChild(what);
-      c.appendChild(div);
-      turn.el = what;
+      const r = turnRow(turn.speaker, false);
+      c.appendChild(r.row);
+      turn.el = r.text;
+      // Las líneas tenues siempre quedan debajo de lo ya confirmado.
+      Object.keys(ghostEls).forEach(function (k) { c.appendChild(ghostEls[k].row); });
     }
     turn.el.textContent = turn.text;
-    c.scrollTop = c.scrollHeight;
+    if (stick) c.scrollTop = c.scrollHeight;
   }
   function alertKey(a) {
     return String(a.type || '') + '|' + String(a.title || '').toLowerCase()
@@ -685,56 +952,38 @@
     const phrase = String(a.suggested_phrase || '').trim().toLowerCase();
     return shownAlerts.some(function (s) { return s.key === key || (phrase && s.phrase === phrase); });
   }
-  function renderCoachOutput(out) {
+  function renderCoachOutput(out, seq) {
     const alerts = (out.alerts || []).filter(function (a) {
       if (!a || typeof a !== 'object' || isDuplicateAlert(a)) return false;
       shownAlerts.push({ key: alertKey(a), phrase: String(a.suggested_phrase || '').trim().toLowerCase(), ts: Date.now() });
       return true;
     });
-    const events = document.getElementById('mc-events');
-    if (events) alerts.forEach(function (a) { events.prepend(buildAlertCard(a)); });
+    // Mismas tarjetas que la capa instantánea (js/coach-live.js): un solo estilo.
+    if (Live()) alerts.forEach(function (a) { Live().showAlert(a); });
     const shown = { alerts: alerts, stage: out.stage || '', next_step: out.next_step || '', say_now: out.say_now || '' };
     if (out.stage) lastStage = String(out.stage);
     if (typeof sessionOpts.onCoach === 'function') {
       try { sessionOpts.onCoach(shown); } catch (e) {}
     }
     // Fase, frase a decir y orden: en la página y en la ventana flotante.
-    if (Live()) Live().coach(shown);
+    if (Live()) Live().coach(shown, seq);
     return shown;
   }
-  function buildAlertCard(alert) {
-    const card = document.createElement('div');
-    card.className = 'ai-suggestion ai-alert-dynamic';
-    const colors = { objection: 'var(--amber)', positive_signal: 'var(--green)', risk: 'var(--red)', stage_guidance: 'var(--gold)' };
-    const color = colors[alert.type] || 'var(--teal)';
-    card.style.cssText = 'border:2px solid ' + color + ';background:rgba(245,158,11,.06)';
-    let html = '<div class="ai-tag" style="color:' + color + '">' + esc(alert.title || alert.type.toUpperCase()) + '</div>' +
-               '<div class="ai-text">' + esc(alert.explanation || '') + '</div>';
-    if (alert.suggested_phrase) {
-      const phrase = esc(alert.suggested_phrase);
-      html += '<div style="background:var(--surface2);border-radius:6px;padding:10px;margin-top:8px;font-size:12px;line-height:1.7"><strong style="color:' + color + '">Di esto:</strong><br>' + phrase + '</div>';
-    }
-    card.innerHTML = html;
-    return card;
-  }
-  function showThinking() {
-    if (document.getElementById('mc-thinking')) return;
-    const el = document.createElement('div');
-    el.id = 'mc-thinking'; el.className = 'ai-suggestion ai-alert-dynamic';
-    el.style.cssText = 'border:1px dashed var(--teal);background:rgba(0,196,212,.05);animation:pulse 1.5s infinite';
-    el.innerHTML = '<div class="ai-tag" style="color:var(--teal)">🧠 PROCESANDO</div>';
-    const events = document.getElementById('mc-events'); if (events) events.prepend(el);
-    if (Live()) Live().thinking(true);
-  }
-  function hideThinking() {
-    const el = document.getElementById('mc-thinking'); if (el) el.remove();
-    if (Live() && active) Live().thinking(false);
-  }
+  // «Analizando»: una señal discreta junto a la frase (antes era una tarjeta
+  // que aparecía y desaparecía en la lista de alertas con cada turno).
+  function showThinking() { if (Live()) Live().thinking(true); }
+  function hideThinking() { if (Live() && active) Live().thinking(false); }
   function setStatus(s) {
     const el = document.getElementById('mc-status'); if (!el) return;
-    const map = { connecting: 'Conectando...', live: '🎙 Escuchando (tú + lead)', ended: 'Sesión finalizada' };
+    const map = {
+      connecting: 'Conectando…', live: 'Escuchando (tú y el lead)', ended: 'Sesión finalizada',
+      reconnecting: 'Reconectando la transcripción…', lost: 'Transcripción desconectada',
+    };
     el.textContent = map[s] || s;
-    if (Live() && s !== 'ended') Live().status(s === 'live' ? 'Escuchando' : (map[s] || s));
+    const warn = s === 'reconnecting' || s === 'lost';
+    const bar = document.getElementById('mc-livebar');
+    if (bar) bar.classList.toggle('is-warn', warn);
+    if (Live() && s !== 'ended') Live().status(s === 'live' ? 'Escuchando' : (map[s] || s), warn);
   }
   function updateElapsed() {
     elapsedSeconds++;
@@ -745,7 +994,13 @@
     if (Live()) Live().timer(txt);
   }
   async function end() {
+    // Doble clic en «Finalizar» (página + ventana flotante): un solo cierre.
+    if (ending || !active) return;
+    ending = true;
     cancelScheduledCoaching();
+    if (inflight) supersede();
+    // Lo último que se estaba diciendo y Deepgram aún no cerró también va al reporte.
+    if (lastInterim && lastInterim.text) { appendToTurn(lastInterim.speaker, lastInterim.text); lastInterim = null; }
     closeTurn();
     // Espera el envío en curso (si lo hay) y manda lo que quedó en la cola.
     for (let i = 0; flushing && i < 40; i++) await new Promise(function (r) { setTimeout(r, 50); });
@@ -756,6 +1011,7 @@
     const meetId = currentMeetingId;
     currentMeetingId = null;
     active = false;
+    ending = false;
 
     const opts = sessionOpts;
     sessionOpts = {};
@@ -793,6 +1049,9 @@
     }
   }
   function cleanup() {
+    if (workletNode) { try { workletNode.port.onmessage = null; workletNode.disconnect(); } catch(e){} workletNode = null; }
+    if (dgRetryTimer) { clearTimeout(dgRetryTimer); dgRetryTimer = null; }
+    if (dgKeepAlive) { clearInterval(dgKeepAlive); dgKeepAlive = null; }
     if (audioProcessor) { try { audioProcessor.disconnect(); } catch(e){} audioProcessor = null; }
     if (audioCtx) { try { audioCtx.close(); } catch(e){} audioCtx = null; }
     if (displayStream) { displayStream.getTracks().forEach(function(t){t.stop();}); displayStream = null; }
@@ -800,7 +1059,7 @@
     if (micStream && !callAudio) { micStream.getTracks().forEach(function(t){t.stop();}); }
     micStream = null;
     callAudio = null;
-    if (dgSocket) { try { dgSocket.close(); } catch(e){} dgSocket = null; }
+    if (dgSocket) { const sk = dgSocket; dgSocket = null; try { sk.close(); } catch(e){} }
     if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
     if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
     cancelScheduledCoaching();
